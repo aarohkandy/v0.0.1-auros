@@ -242,6 +242,49 @@ describe('rule 4 — no ubuntu-latest (D23)', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
+describe('rule 5 — a fromJSON matrix needs a fallback or a job-level if:', () => {
+  // A plan job, then two matrix jobs. The SECOND is the gate3.yml `faults` shape the first version
+  // of this rule never looked at, because it only matched the first fromJSON matrix in the file.
+  const job = (name, key, out, extra = '') => `  ${name}:
+    needs: plan
+${extra}    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        ${key}: \${{ fromJSON(needs.plan.outputs.${out}) }}
+    steps:
+      - run: echo \${{ matrix.${key} }}
+`
+  const wf = (a, b) => OK + a + b
+  const GUARD_A = "    if: needs.plan.outputs.shards != '[]'\n"
+  const GUARD_B = "    if: needs.plan.outputs.faults != ''\n"
+
+  test('FIRES on an unguarded matrix in the SECOND job when the first is guarded', () => {
+    const r = flags(one(wf(job('clean', 'shard', 'shards', GUARD_A), job('faults', 'scenario', 'faults'))), 'second job unguarded')
+    assert.match(r.out, /fromJSON/)
+    assert.match(r.out, /scenario:/, 'the finding must name the second matrix')
+    assert.doesNotMatch(r.out, /shard:/, 'the guarded first matrix must not be reported')
+  })
+
+  test('FIRES on both when neither is guarded', () => {
+    const r = flags(one(wf(job('clean', 'shard', 'shards'), job('faults', 'scenario', 'faults'))), 'two unguarded')
+    assert.match(r.out, /2 problem\(s\)/)
+  })
+
+  test('FIRES when the only if: mentioning it is a STEP condition, not the job', () => {
+    const stepIf = job('faults', 'scenario', 'faults').replace('      - run: echo',
+      "      - if: needs.plan.outputs.faults != '[]'\n        run: echo")
+    flags(one(OK + stepIf), 'step-level if: is not a guard')
+  })
+
+  test('QUIET when every job is guarded by its own if:, or has a fallback', () => {
+    clean(one(wf(job('clean', 'shard', 'shards', GUARD_A), job('faults', 'scenario', 'faults', GUARD_B))), 'both guarded')
+    const fallback = job('faults', 'scenario', 'faults').replace('outputs.faults)', "outputs.faults || '[\"none\"]')")
+    clean(one(wf(job('clean', 'shard', 'shards', GUARD_A), fallback)), 'guard + fallback')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
 describe('the linter fails CLOSED rather than reporting a pass it did not earn', () => {
   test('REFUSES to report a pass when given no roots', () => {
     let threw = null

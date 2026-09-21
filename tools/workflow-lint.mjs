@@ -112,22 +112,53 @@ const check = (file) => {
   //
   // These catch the two that actually occur: a matrix built from an input or expression that can be
   // empty or a non-list, and a `uses:` pointing at a local file that is not in the repository.
-  const matrixFrom = text.match(/matrix:\s*\n\s+\w+:\s*\$\{\{\s*fromJSON\(([^)]*)\)/)
-  // A job guarded by an `if:` that tests the same expression is SAFE: GitHub evaluates the condition
-  // first and skips the job, so the matrix is never expanded. That is the mitigation this rule's own
-  // message recommends, and the rule flagged a correctly-guarded job in propagate.yml until it
-  // accounted for it. A lint that does not honour its own advice teaches people to ignore it.
-  const guardedBy = matrixFrom
-    ? new RegExp('if:[^\\n]*' + matrixFrom[1].trim().split(/[.\s]/).pop().replace(/[^\w]/g, '')).test(text)
-      || /if:[^\n]*!=\s*'\[\]'/.test(text)
-    : false
-  if (matrixFrom && !guardedBy && !/\|\|/.test(matrixFrom[1]) && !/'\[/.test(matrixFrom[1])) {
-    problems.push({ file, line: lines.findIndex(l => l.includes('fromJSON(')) + 1, why:
-      'a matrix built from fromJSON() with no fallback. If the expression yields an empty list, null, ' +
-      'or a non-array, GitHub REJECTS the workflow at startup: zero jobs, the run listed by file path, ' +
-      'and --log-failed shows nothing because nothing ran. Give it a default, e.g. ' +
-      "fromJSON(needs.x.outputs.y || '[\"placeholder\"]'), or guard the job with an if:.",
-      text: matrixFrom[0].split('\n').pop().trim().slice(0, 120) })
+  //
+  // EVERY fromJSON matrix in EVERY job is checked. The first version matched only the first one in
+  // the file, so gate3.yml's second matrix (`faults`) was never looked at; and it accepted an `if:`
+  // ANYWHERE in the file as the guard, so a step's `if:` could silence a job-level hole.
+  //
+  // A job whose OWN `if:` tests the same expression is SAFE: GitHub evaluates the condition first
+  // and skips the job, so the matrix is never expanded. That is the mitigation this rule's message
+  // recommends, and the rule flagged a correctly-guarded job in propagate.yml until it accounted for
+  // it. A lint that does not honour its own advice teaches people to ignore it.
+  {
+    const jobsAt = lines.findIndex(l => /^jobs:\s*$/.test(l))
+    const starts = []
+    if (jobsAt !== -1) {
+      for (let i = jobsAt + 1; i < lines.length; i++) {
+        if (/^[A-Za-z]/.test(lines[i])) break                                  // next top-level key
+        if (/^  [\w-]+:\s*(#.*)?$/.test(lines[i])) starts.push(i)
+      }
+    }
+    starts.forEach((s, k) => {
+      const end = k + 1 < starts.length ? starts[k + 1] : lines.length
+      const job = lines.slice(s + 1, end)
+      // Job-level keys are the job's direct children: the indent of its first non-blank, non-comment line.
+      const first = job.find(l => l.trim() && !/^\s*#/.test(l))
+      const childIndent = first ? first.length - first.trimStart().length : 4
+      const jobIf = job.filter(l => l.length - l.trimStart().length === childIndent && /^\s*if:/.test(l)).join('\n')
+      let matrixIndent = -1
+      job.forEach((l, j) => {
+        if (!l.trim() || /^\s*#/.test(l)) return
+        const ind = l.length - l.trimStart().length
+        if (matrixIndent !== -1 && ind <= matrixIndent) matrixIndent = -1
+        const mm = /^(\s*)matrix:(.*)$/.exec(l)
+        let expr = null
+        if (mm) { matrixIndent = mm[1].length; expr = /\$\{\{\s*fromJSON\(([^)]*)\)/.exec(mm[2]) }
+        else if (matrixIndent !== -1) expr = /^\s*[\w-]+:\s*\$\{\{\s*fromJSON\(([^)]*)\)/.exec(l)
+        if (!expr) return
+        const arg = expr[1]
+        if (/\|\|/.test(arg) || /'\[/.test(arg)) return                        // has a fallback
+        const leaf = arg.trim().split(/[.\s]/).pop().replace(/[^\w]/g, '')
+        if (jobIf && (new RegExp('\\b' + leaf + '\\b').test(jobIf) || /!=\s*'\[\]'/.test(jobIf))) return
+        problems.push({ file, line: s + 2 + j, why:
+          'a matrix built from fromJSON() with no fallback. If the expression yields an empty list, null, ' +
+          'or a non-array, GitHub REJECTS the workflow at startup: zero jobs, the run listed by file path, ' +
+          'and --log-failed shows nothing because nothing ran. Give it a default, e.g. ' +
+          "fromJSON(needs.x.outputs.y || '[\"placeholder\"]'), or guard the job with an if:.",
+          text: l.trim().slice(0, 120) })
+      })
+    })
   }
   for (const m of text.matchAll(/^\s*uses:\s*(\.\/[^\s#]+)/gm)) {
     const rel = m[1].replace(/^\.\//, '')
