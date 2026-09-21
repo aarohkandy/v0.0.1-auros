@@ -11,8 +11,10 @@ Why this is needed at all: KDE's first-boot wizard is suppressed (auros-base `a5
 wizard, nothing creates an account, and every non-kiosk laptop boots to a sign-in screen with nobody
 on it. That commit's detector called this the `FIRST-BOOT ACCOUNT GAP`.
 
-Each open question is marked **[OWNER]** below and collected in §9. The parts that don't depend on one
-are built (§8).
+**Owner answers (2026-09-21):** A1 yes, A2 Auros generates, A4 Users page for `aurosadmin` on
+managed/locked, A6 yes for every account. A1, A2 and A4 are built (§2, §3, §8). A6 is built and
+**switched off**, because the graphical login screen can't handle an expired password (§5). A3, A5
+and A7 are still open (§9).
 
 ---
 
@@ -55,22 +57,52 @@ the installed laptop. It has one line per account, `name:<crypt(3) hash>`. That 
 `chpasswd -e` (man chpasswd: *"-e, --encrypted Supplied passwords are in encrypted form"*). It holds a
 hash, never a cleartext password, so even the bundle doesn't contain the password itself.
 
-**How it gets onto the laptop [OWNER — delivery mechanism, not built]:** the recommendation is that
-`tools/make-install-media.sh` takes `--enrolment FILE` and embeds the file in the ISO's kickstart.
-bootc-image-builder accepts `[customizations.installer.kickstart] contents` for `anaconda-iso`. Its
-README: *"Users can include kickstart file content that will be added to an ISO build"*. The kickstart
-would get a `%post` that writes the file mode 0600 into the target's `/etc`. Before building this,
-check three things:
+**How it gets onto the laptop (A1, built):**
+`tools/make-install-media.sh <digest ref> --enrolment FILE`.
 
-1. bib's README doesn't say whether `%post` is allowed. It only says not to repeat `ostreecontainer`.
-   It also says kickstart can't be combined with `[customizations.user]`, which we don't use.
-2. Whether `%post` for an ostreecontainer install runs chrooted into the deployment, so that `/etc` is
-   the deployed `/etc`.
-3. Whether anaconda copies the kickstart, and so the hash, to `/root/anaconda-ks.cfg` on the target.
-   If it does, the first-boot script must also delete that copy.
+- FILE must be mode 0600 or 0400, with `name:<crypt(3) hash>` lines (`#` comments are allowed). A
+  value that isn't a `$…` hash is refused as a plain password. The script never hashes and never
+  echoes one. A refusal names the line number, not the line.
+- After the pull it reads the image's own `/usr/lib/auros/accounts.json` and refuses when:
+  - the image declares accounts and no `--enrolment` was given,
+  - FILE names an account the image doesn't declare ("is this the right school's file?"),
+  - no declared admin gets a hash,
+  - `--enrolment` is given for an image with no accounts (a kiosk).
+- The hashes go into bib's `[customizations.installer.kickstart] contents` as a base64 payload in a
+  `%post --erroronfail`, which writes `/etc/auros/enrolment/accounts.secret` mode 0600. That is where
+  `auros-accounts` reads it. bib's README: once a kickstart is given, *"No other kickstart commands are
+  added by bootc-image-builder"* except `ostreecontainer`. So our kickstart also carries the
+  unattended-install lines from the README's example (`text --non-interactive`, `zerombr`, `clearpart
+  --all`, `autopart --noswap --type=lvm --fstype=xfs`, `network`), plus `reboot --eject`.
+- The three checks from the earlier draft:
+  1. `%post` allowed: the README only forbids repeating `ostreecontainer`. **Not proven on an ISO.**
+  2. `%post` lands in the deployed `/etc`: **not verified on a VM.** If it doesn't, the first boot
+     shows the §5.6 on-screen failure. It fails loudly, not silently.
+  3. Anaconda's kickstart copies: `auros-accounts` now deletes `/root/anaconda-ks.cfg` and
+     `/root/original-ks.cfg` when they contain the enrolment `%post`, on every exit path.
+- **The ISO is secret-bearing.** The script's final message says so, and says to keep the sticks apart
+  from the password sheet.
 
-Either way, **the ISO file itself becomes secret-bearing.** It's a per-school object that should be
-handled like a key, and the one-line `dd` instruction should say so.
+**Making FILE (A2, built):** `tools/make-enrolment.sh --out FILE school-it pupil`, run by Auros
+staff on the Linux build machine.
+
+- **One password per account.** A single shared password would give every pupil the IT password.
+- Each password is 20 characters from a 31-letter alphabet with no look-alikes, grouped in fives
+  (about 99 bits, from `/dev/urandom`).
+- The passwords are printed once, to a terminal. A stdout that isn't a terminal is refused before
+  anything is made.
+- Hashing uses `openssl passwd -6 -stdin`: SHA-512 crypt `$6$`, with the password on stdin and never
+  in argv. Only `name:hash` lines are written, mode 0600, and an existing file is never overwritten.
+  macOS's LibreSSL can't make `$6$`, and the script says so.
+- **Why `$6$` and not yescrypt:**
+  - `chpasswd -e` stores the value as given (man chpasswd: *"Supplied passwords are in encrypted
+    form"*). pam_unix then verifies it through libxcrypt, which supports both `$6$` (sha512crypt) and
+    `$y$` (yescrypt, Fedora's default for new passwords, crypt(5)).
+  - Stock OpenSSL can make `$6$`. Yescrypt would need `mkpasswd` from another package.
+  - At ~99 random bits, the hash's work factor isn't what protects the password.
+  - Measured on Ubuntu 24.04's libxcrypt: an `openssl passwd -6` hash verifies against its password
+    and rejects a wrong one. That wasn't re-measured on a Fedora 44 image, because the build machine's
+    disk is full.
 
 **What a school admin actually does:**
 
@@ -83,25 +115,40 @@ handled like a key, and the one-line `dd` instruction should say so.
 
 No terminal is involved, and nothing is typed per machine beyond choosing the boot device.
 
-**Who makes the password [OWNER]:** the recommendation is that Auros generates a random passphrase per
-school, hashes it (yescrypt `$y$` or SHA-512 `$6$`) into the bundle, and hands the passphrase over out
-of band. A school-chosen password would have to reach us, or reach a hashing tool, and both are worse.
+**Who makes the password (A2, owner: Auros):** see "Making FILE" above. The school never chooses the
+first password, and Auros keeps no copy: it exists on the handover sheet only.
 
 ## 3. Changing passwords later (GUI)
 
 - **open:** the admin is in `wheel`, the polkit admin identity there. System Settings → Users
   (`kcm_users`) changes any account's password after the admin types their own. No terminal.
-- **managed / locked — [OWNER, D4 conflict]:** both modes hide `kcm_users` for **everyone**
-  (`policy/{managed,locked}/kdeglobals/20-control-module-restrictions.ini`). So on those machines there
-  is currently **no GUI to change any password, including your own**. That breaks D4.1 for a task a
-  school will certainly need. The options:
-  - (a) Unhide `kcm_users` in `managed`. polkit `AUTH_ADMIN` still guards changes to other accounts,
-    and a pupil can change only their own. This is the recommendation for `managed`.
-  - (b) In `locked`, passwords change only by re-enrolment, which means a fresh bundle and a reinstall,
-    and that gets written into `locked/description.md`.
-  - (c) An Auros "change password" page that goes through polkit.
-
-  Not changed here. It's a policy-mode decision, not an accounts one.
+- **managed / locked (A4, built):** System Settings → Users (`kcm_users`) is shown to `aurosadmin`
+  members only.
+  - **Hidden by default.** `kcm_users` moved out of the immutable `[KDE Control Module Restrictions][$i]`
+    group in `/etc/xdg/kdeglobals`, into `policy/{managed,locked}/root/etc/kde5rc` as a per-key
+    immutable `kcm_users[$i]=false`.
+    - It has to be per key: KConfig reads `/etc/kde5rc` first, so a group-level `[$i]` there would lock
+      the group before kdeglobals added its pages.
+    - The file name is literal in KF6 (D25).
+  - **Shown to admins.** `/etc/xdg/plasma-workspace/env/50-auros-admin-users-page.sh` sets
+    `KDE_SKIP_KDERC=1` only when `id -nG` contains `aurosadmin`. kconfig.cpp checks that variable at
+    runtime and then skips `/etc/kde5rc`. startplasma sources these env scripts before it passes the
+    environment to D-Bus and systemd.
+  - **The lock is polkit, unchanged.** `org.freedesktop.accounts.*` is `AUTH_ADMIN` on managed and
+    `NO` on locked for anyone outside `aurosadmin`, and `AUTH_ADMIN` for its members. A pupil can
+    un-hide the page by setting the variable in their own session, just as they could escape any
+    kdeglobals restriction with `XDG_CONFIG_DIRS`, and it gets them nothing.
+  - **Consequence:** in locked, a pupil can't change even their own password after the first one. In
+    managed they need the IT password to do it. `change-own-password` sits under the same prefix.
+    **[OWNER: acceptable?]**
+  - **Proven by:**
+    - B5 `a_suite_accounts`: the probe, never in aurosadmin, gets `user-administration` answered 1 on
+      locked and not 0 on managed, and `open` is the control.
+    - B12 `AUROS_MODE_B12_USERS=aurosadmin`: for a pupil the page must refuse to open and polkit must
+      not grant. For an aurosadmin member the page must open and polkit must ask for their password.
+      The matrix session is one or the other, and `b12-modes.test.sh` drives both.
+    - `20-policy.test.sh` checks the files and the env script.
+    - **Not yet seen on a VM:** the page actually appearing in an admin's Plasma session.
 - **Fleet-wide rotation [OWNER, honest limit]:** each laptop keeps its own `/etc/shadow`. Changing the
   admin password on 180 machines means 180 changes, or a new bundle and a reinstall. There's no central
   directory, and a fleet console is out of scope here. Every laptop enrolled from one bundle shares one
@@ -154,10 +201,35 @@ An admin can set its password later (§3). **[OWNER: should pupil accounts get a
 from the bundle, or should they stay locked until an admin sets one?]** The recommendation is the
 bundle, because otherwise it's per-machine typing again.
 
-**[OWNER] Force a change at first sign-in?** `chage -d 0` (man chage: *"If the LAST_DAY is set to 0
-the user is forced to change his password on the next log on"*). Off by default. Plasma Login's
-handling of an expired password is unverified, and getting it wrong locks the admin out of all 180
-laptops at once.
+**Force a change at first sign-in (A6: owner said yes; built, SWITCHED OFF).** With
+`AUROS_EXPIRE_FIRST_PASSWORD=1` in the unit's environment, `auros-accounts` runs `chage -d 0` on every
+account it creates, after `chpasswd -e`. The order matters, because chpasswd resets the last-change
+day. man chage: *"If the LAST_DAY is set to 0 the user is forced to change his password on the next
+log on"*. The shipped unit has that line commented out, and a test fails if it's switched on.
+
+**Why it's off: Plasma Login (`plasmalogin`) can't finish a sign-in with an expired password.** From
+plasma-login-manager master:
+
+- `PamHandle::acctMgmt()` sees `PAM_NEW_AUTHTOK_REQD` and calls
+  `pam_chauthtok(PAM_CHANGE_EXPIRED_AUTHTOK)`.
+- The helper then asks the daemon for a three-prompt change request (current, new, repeat).
+- `Display::slotRequestChanged()` only answers requests of one prompt (the password) or two (user and
+  password). With three, it does nothing, so the change is never answered and the sign-in never
+  completes.
+- Expired-password support exists only on an unmerged `expired-password` branch: one 2023 commit
+  porting SDDM PR #776.
+
+A TTY `login` would handle it, but that's a terminal (D4). Switching it on as things stand would lock
+every account on every laptop out of the graphical sign-in at the same moment.
+
+**Proposed fallback [OWNER]:**
+
+1. Keep expiry off.
+2. Add a mandatory first-run step, "Choose your own password", to the Auros welcome flow. It runs in
+   the user's own session and changes the password through PAM (`passwd`), which needs only the
+   current password and no polkit. It is marked done when the shadow last-change day moves.
+3. Or wait until plasma-login-manager merges expired-password support, then uncomment the one line and
+   prove it on a VM first.
 
 ## 6. Security properties
 
@@ -171,8 +243,8 @@ laptops at once.
 | Never in logs or argv | stdin only; no `set -x`; tests assert the fake hash never appears in output | `accounts.test.sh` |
 | Only declared accounts get a password | undeclared names in the bundle are ignored | `accounts.test.sh` |
 
-Residual risks, stated: the ISO carries the hash (§2). A copy may land in `/root/anaconda-ks.cfg`
-(§2, check 3). One weak passphrase is crackable offline from any one laptop's shadow file and then
+Residual risks, stated: the ISO carries the hash (§2). Anaconda's kickstart copies in `/root` hold it
+between install and first boot, root-only, and are deleted then (§2, check 3). One weak passphrase is crackable offline from any one laptop's shadow file and then
 opens all of them (§3).
 
 ## 7. What is not verified
@@ -180,9 +252,12 @@ opens all of them (§3).
 - **Not booted.** Nothing here has run on a VM. The one behaviour a VM must show is that when the
   display manager is skipped, tty1's getty shows the issue text. Until then, the on-screen claim rests
   on the man pages cited above.
-- `make-install-media.sh` doesn't take a bundle yet (§2), so no laptop can get a password today. A
-  managed or open laptop installed today boots to the on-screen failure in §5.6. That is the intended
-  honest state, not a regression: it is the old GAP, now visible to the person at the machine.
+- **No enrolled ISO has been built or installed.** Three things are unproven: that bib accepts our
+  kickstart with `--rootfs xfs`, that the unattended install still completes, and that `%post` writes
+  into the deployed `/etc`. Before any school gets a stick, one enrolled ISO must be installed on a VM
+  and signed into.
+- The Users page appearing in an `aurosadmin` Plasma session (§3) has only been checked against stubs.
+- `plasmalogin` and expired passwords (§5) was established by reading the source, not by booting it.
 
 ## 8. What was built
 
@@ -192,16 +267,28 @@ opens all of them (§3).
 - **auros-base `agent/accounts`:** merges `agent/first-boot` (a5a8f75), then adds
   `desktop/accounts/{auros-accounts, auros-accounts.service, 50-auros-accounts.conf}`, the build
   install and assertions, the detector reporting `recipe`, `tests/accounts.test.sh`, and four prove-red
-  mutations.
+  mutations (7b81e93).
+- **auros-base `agent/accounts`, 0ff7c22 (owner answers):**
+  - `make-install-media.sh --enrolment` (A1)
+  - `tools/make-enrolment.sh` (A2)
+  - `kcm_users` via `/etc/kde5rc` plus the aurosadmin env script, B5 `a_suite_accounts`, B12
+    `AUROS_MODE_B12_USERS` (A4)
+  - `chage -d 0` behind `AUROS_EXPIRE_FIRST_PASSWORD`, off (A6)
+  - the kickstart-copy scrub
+  - tests: `make-enrolment.test.sh` is new. `make-install-media`, `accounts`, `20-policy`,
+    `assert-lib` and `b12-modes` gained cases.
+  - 8 new prove-red mutations (`ACCT:`), all caught.
+  - `run-all` passes 29/29 on macOS and on Linux, and Linux also checks each printed password against
+    its hash with real OpenSSL.
 
 ## 9. Owner decisions, in one place
 
 | # | Decision | Recommendation | Blocks |
 |---|---|---|---|
-| A1 | Bundle delivery: `make-install-media.sh --enrolment FILE` → kickstart `%post` | yes, after the three checks in §2 | any laptop having a password |
-| A2 | Who creates the first password | Auros generates it per school and hands it over separately | A1 |
+| A1 | Bundle delivery: `make-install-media.sh --enrolment FILE` → kickstart `%post` | **YES (owner). Built; not VM-verified** | — |
+| A2 | Who creates the first password | **Auros, per school (owner). Built: `make-enrolment.sh`, one password per account** | — |
 | A3 | Pupil (`user`) accounts: shared password from the bundle, or locked until an admin sets one | from the bundle | per-machine typing |
-| A4 | GUI password change on managed/locked (`kcm_users` hidden) | (a) unhide in managed; (b) re-enrol in locked, documented | D4.1 |
+| A4 | GUI password change on managed/locked (`kcm_users` hidden) | **Users page for aurosadmin only (owner). Built.** New: pupils can't change their own password later — OK? | — |
 | A5 | Admin group on managed/locked is `aurosadmin`, not `wheel` | confirm | — |
-| A6 | Force a password change at first sign-in | no, until verified on a VM | — |
+| A6 | Force a password change at first sign-in | **YES (owner). Built, OFF: plasmalogin can't answer the change request (§5). Pick the fallback** | plasmalogin |
 | A7 | One initial hash shared across a fleet (rotation = per machine or reinstall) | accept for now, state it to customers | — |
