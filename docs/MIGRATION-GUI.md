@@ -6,7 +6,7 @@ Section 4 holds DRAFT text for DECISIONS.md and BLOCKED.md. **The owner applies 
 branch does not edit either file.
 
 Conventions: **[source]** marks a fact with a citation. **[measured]** marks something run for this
-document (§1.5). **[judgment]** marks an opinion, and an opinion can be wrong.
+document (Appendix A). **[judgment]** marks an opinion, and an opinion can be wrong.
 
 ---
 
