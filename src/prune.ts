@@ -281,7 +281,7 @@ export function postConditions(plan: PrunePlan, recipe?: Recipe): PostCondition[
   const out: PostCondition[] = [
     {
       id: 'P1-floor',
-      assert: `the measured removal count is at least ${plan.floor}`,
+      assert: `the measured removal count is at least ${plan.floor} (check S11: base image minus built image)`,
       why:
         'This is the alarm that catches upstream quietly putting back something we took out. It is ' +
         'checked against what the build measured, never against the plan: the plan is the explicit ' +
@@ -474,13 +474,13 @@ plan["measured"] = {
     "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(__import__("os").environ.get("SOURCE_DATE_EPOCH", "0")))),
     "packages_installed_after": total,
 }
-plan["floor"]["met"] = removed >= plan["floor"]["must_remove_at_least"]
+# floor.met stays null: this script counts only what it named, and the floor is about the closure.
 json.dump(plan, open(report_path, "w"), indent=2, sort_keys=True)
 print("auros-prune: removed %d packages, %d bytes" % (removed, bytes_reclaimed))
 PY
 
-# The floor is asserted by the check matrix against the MEASURED count including the closure, not
-# here: this script sees only what it named. P1-floor in post_conditions is the gate.
+# The floor is asserted by check S11 in the matrix, against the base image minus the built image,
+# not here: this script sees only what it named.
 printf 'auros-prune: wrote %s\\n' "$REPORT"
 `;
 }

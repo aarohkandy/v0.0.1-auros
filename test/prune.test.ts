@@ -478,6 +478,9 @@ test('the prune runner, executed against stub rpm and dnf, removes exactly the p
   assert.equal(measured['removed_count'], planned.length);
   assert.ok((measured['bytes_reclaimed'] as number) > 0);
   assert.equal(measured['packages_installed_after'], guarded.length + 1, 'the after-count did not come from the package database');
+  // The runner counts only what it named, which is not the closure, so it must not judge the floor.
+  // A `met: false` here would sit in every report beside an image that check S11 passed.
+  assert.equal((r.report!['floor'] as Record<string, unknown>)['met'], null, 'the in-image runner judged the floor from the plan count');
   for (const item of r.report!['planned'] as Array<Record<string, unknown>>) {
     assert.equal(item['outcome'], 'removed', `${String(item['package'])} was not reported as removed`);
   }

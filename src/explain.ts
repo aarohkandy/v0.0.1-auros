@@ -138,8 +138,9 @@ export function explain(options: ExplainOptions): string {
     para(
       `Those are the ${plan.remove.length} packages this recipe names by hand. The real number will be ` +
         'larger, because removing a package releases the things only it needed, and that is most of ' +
-        `the work. The build measures the real number and this fleet's floor is ${plan.floor}: if the ` +
-        'build removes fewer than that, it fails and nothing is published. The floor exists to catch ' +
+        'the work. The real number is counted on the images, not taken from this list -- the packages ' +
+        `the base had that the built image does not -- and this fleet's floor is ${plan.floor}: if that ` +
+        'count is lower, check S11 fails the build and nothing is published. The floor exists to catch ' +
         'the quiet case -- upstream putting something back that we took out, with no error anywhere.',
     ),
   );

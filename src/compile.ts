@@ -430,7 +430,7 @@ export function compile(options: CompileOptions): string {
         `  ${plan.remove.length} packages named for removal` +
         (plan.keepOnly ? ', from "keep only the applications above"' : ', from the groups this recipe listed') +
         '\n' +
-        `  the floor is ${plan.floor}: a build that removes fewer FAILS\n` +
+        `  the floor is ${plan.floor}, counted on the images (base minus this one): fewer FAILS check S11\n` +
         `  ${plan.protectedKept.length} packages are kept whatever anybody asked, because the machine cannot start,\n` +
         '  update or roll back without them\n' +
         '\n' +

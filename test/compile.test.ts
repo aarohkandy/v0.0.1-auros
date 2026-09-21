@@ -227,7 +227,7 @@ test('every application in the recipe reaches the image, by exactly one mechanis
 test('the prune runs, and the floor and the protected count are stated in the file', () => {
   const text = build(school(), 'example-school', { baseDigest: DIGEST });
   assert.match(text, /RUN \/usr\/libexec\/auros\/auros-prune/);
-  assert.match(text, /the floor is 240: a build that removes fewer FAILS/);
+  assert.match(text, /the floor is 240, counted on the images \(base minus this one\): fewer FAILS check S11/);
   assert.match(text, /kept whatever anybody asked/);
 });
 

@@ -74,6 +74,9 @@ test('every number printed as a package count is one this text actually computed
       flat.includes(`this fleet's floor is ${plan.floor}`),
       `${fleet.dir}: the floor printed is not the recipe's floor`,
     );
+    // The promise must name the mechanism that keeps it: counted on the images, enforced by S11.
+    assert.match(flat, /counted on the images, not taken from this list/, `${fleet.dir}: the floor is not said to be counted on the images`);
+    assert.match(flat, /check S11 fails the build and nothing is published/, `${fleet.dir}: the floor sentence does not name the check that enforces it`);
     const apps = (recipe['apps'] as string[]).length;
     assert.match(flat, new RegExp(`What is on them: ${apps} application`, 'i'), `${fleet.dir}: the application count is wrong`);
   }
