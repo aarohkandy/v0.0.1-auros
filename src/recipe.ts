@@ -40,6 +40,8 @@ export interface Recipe {
     must_remove_at_least: number;
   };
   policy: Policy;
+  /** Required unless kiosk, refused under kiosk (schema). No secrets: the first password is in the enrolment bundle. */
+  accounts?: Array<{ name: string; role: 'admin' | 'user'; display_name: string }>;
   desktop?: {
     taskbar_and_start_menu?: boolean;
     explorer_like_file_manager?: boolean;

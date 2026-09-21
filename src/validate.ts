@@ -443,6 +443,25 @@ function kioskRefusals(recipe: Recipe, catalogue: Catalogue, out: Refusal[]): vo
   }
 }
 
+// uniqueItems compares whole objects, so two entries named alike with different roles pass the
+// schema. On the machine the second useradd would fail and one of the two people would not exist.
+function accountRefusals(recipe: Recipe, out: Refusal[]): void {
+  const seen = new Set<string>();
+  (recipe.accounts ?? []).forEach((a, i) => {
+    if (seen.has(a.name)) {
+      out.push(
+        refuse(
+          `accounts[${i}].name`,
+          `Two accounts are both called '${a.name}'.`,
+          'Every laptop creates each listed account once. A name used twice is one account the machine ' +
+            'cannot create, and which of the two entries wins would be an accident of order.',
+        ),
+      );
+    }
+    seen.add(a.name);
+  });
+}
+
 // -------------------------------------------------------------------------------------------------
 // 4. Rules about files outside the recipe
 // -------------------------------------------------------------------------------------------------
@@ -623,6 +642,7 @@ export function validateDocument(tool: Toolchain, doc: unknown, recipePath: stri
   appRefusals(recipe, tool.catalogue, refusals);
   pruneRefusals(recipe, refusals);
   kioskRefusals(recipe, tool.catalogue, refusals);
+  accountRefusals(recipe, refusals);
   crossFileRefusals(recipe, recipePath, tool.repoRoot, refusals, notes);
 
   // A field the machine ignores is a lie in a file whose claim is that it IS the machine. The theme

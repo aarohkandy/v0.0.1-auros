@@ -357,6 +357,33 @@ const MUTATIONS = [
     tests: ['test/recipe.test.ts'],
     catcher: /explicit false/,
   },
+  {
+    id: 'A01',
+    why: 'the account list reaches the image in the order it was written, so reordering it is a new image',
+    file: 'src/compile.ts',
+    find: 'const accounts = [...recipe.accounts].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));',
+    to: 'const accounts = [...recipe.accounts];',
+    tests: ['test/compile.test.ts'],
+    catcher: /reordering the list is the same image/,
+  },
+  {
+    id: 'A02',
+    why: 'two accounts with one name pass, and one of the two people never exists on the machine',
+    file: 'src/validate.ts',
+    find: '    if (seen.has(a.name)) {',
+    to: '    if (false) {',
+    tests: ['test/refusals.test.ts'],
+    catcher: /every refusal fires/,
+  },
+  {
+    id: 'A03',
+    why: 'a password inside an account is refused as an unknown key, and never told why there is no such field',
+    file: 'src/schema.ts',
+    find: "      const present = keys.filter((k) => k in objectAt(error.instancePath));",
+    to: "      const present = keys.filter((k) => k in objectAt(''));",
+    tests: ['test/refusals.test.ts'],
+    catcher: /every refusal fires/,
+  },
 ]
 
 // -------------------------------------------------------------------------------------------------

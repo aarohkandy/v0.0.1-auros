@@ -70,6 +70,16 @@ MUST_REFUSE = [
     # secrets in a public repo
     ("a wireless password", m(school, lambda d: d.update(wifi_password="hunter2"))),
     ("an API token", m(school, lambda d: d.update(token="abc"))),
+    ("a password on an account", m(school, lambda d: d["accounts"][0].update(password="not-a-real-password"))),
+    # accounts
+    ("a managed fleet with no accounts", m(school, lambda d: d.pop("accounts"))),
+    ("accounts with no admin", m(school, lambda d: d.update(accounts=[{"name": "pupil", "role": "user", "display_name": "Pupil"}]))),
+    ("an account named root", m(school, lambda d: d["accounts"][0].update(name="root"))),
+    ("an account with a systemd name", m(school, lambda d: d["accounts"][0].update(name="systemd-oom"))),
+    ("an uppercase account name", m(school, lambda d: d["accounts"][0].update(name="Pupil"))),
+    ("a colon in a display name", m(school, lambda d: d["accounts"][0].update(display_name="IT: desk"))),
+    ("a third role", m(school, lambda d: d["accounts"][0].update(role="teacher"))),
+    ("accounts on a kiosk", m(kiosk, lambda d: d.update(accounts=[{"name": "it", "role": "admin", "display_name": "IT"}]))),
     # honesty
     ("a blanket compatibility claim", m(school, lambda d: d.update(compatibility="most apps work"))),
     ("a testimonial", m(school, lambda d: d.update(testimonial="best OS ever"))),

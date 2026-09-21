@@ -305,6 +305,13 @@ export function compile(options: CompileOptions): string {
     ['/usr/share/auros/prune-plan.json', report, '0644'],
     ['/usr/libexec/auros/auros-prune', pruneScript(), '0755'],
   ];
+  // The base's first-boot unit (auros-base desktop/accounts/) creates exactly these accounts. Names
+  // are sorted so reordering the list is the same image. No secret is here or anywhere in this repo:
+  // the first password arrives in the enrolment bundle on the install media (docs/ACCOUNTS.md).
+  if (recipe.accounts) {
+    const accounts = [...recipe.accounts].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    files.push(['/usr/lib/auros/accounts.json', canonicalJson({ schema: 1, accounts }), '0644']);
+  }
   if (recipe.policy === 'kiosk' && recipe.kiosk) files.push(['/etc/auros/kiosk.conf', kioskConf(recipe, catalogue), '0644']);
   if (recipe.organisation.logo) {
     const bytes = readFileSync(join(dirname(options.recipePath), recipe.organisation.logo));

@@ -210,7 +210,12 @@ export function schemaRefusals(compiled: CompiledSchema, doc: unknown): Refusal[
   if (compiled.validate(doc)) return [];
   const errors = (compiled.validate.errors ?? []) as ErrorObject[];
   const root = compiled.schema;
-  const topLevel = (typeof doc === 'object' && doc !== null) ? (doc as Record<string, unknown>) : {};
+  // The object an error is about. The secrets refusal applies at the top level AND inside each
+  // account, so a by-name refusal is looked up where it fired rather than only at the root.
+  const objectAt = (path: string): Record<string, unknown> => {
+    const v = path === '' ? doc : valueAt(doc, path);
+    return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  };
 
   // A reserved key produces two errors: "unknown key" and the by-name refusal that explains why we
   // reserved it. Only the second teaches anything, so the first is dropped for that key.
@@ -218,7 +223,7 @@ export function schemaRefusals(compiled: CompiledSchema, doc: unknown): Refusal[
   for (const error of errors) {
     if (error.keyword !== 'not') continue;
     for (const key of refusedKeys(root, error.schemaPath)) {
-      if (key in topLevel) explainedByName.add(key);
+      if (key in objectAt(error.instancePath)) explainedByName.add(`${error.instancePath}|${key}`);
     }
   }
 
@@ -230,7 +235,7 @@ export function schemaRefusals(compiled: CompiledSchema, doc: unknown): Refusal[
 
     if (error.keyword === 'additionalProperties') {
       const key = String((error.params as { additionalProperty?: string }).additionalProperty ?? '');
-      if (explainedByName.has(key)) continue;
+      if (explainedByName.has(`${error.instancePath}|${key}`)) continue;
       const parent = chain(root, error.schemaPath.replace(/\/additionalProperties$/, '')).pop();
       const props = parent && typeof parent['properties'] === 'object' && parent['properties'] !== null
         ? Object.keys(parent['properties'] as Record<string, unknown>)
@@ -243,7 +248,7 @@ export function schemaRefusals(compiled: CompiledSchema, doc: unknown): Refusal[
 
     if (error.keyword === 'not') {
       const keys = refusedKeys(root, error.schemaPath);
-      const present = keys.filter((k) => k in topLevel);
+      const present = keys.filter((k) => k in objectAt(error.instancePath));
       if (keys.length > 0 && present.length === 0) continue; // fired for a document that does not have them
       const subject = present.length ? sentenceList(present.map((k) => `'${k}'`)) : 'this value';
       if (authored) push(out, seen, refuse(where, `${authored.title} (${subject}).`, authored.description));

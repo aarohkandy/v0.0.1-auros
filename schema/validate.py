@@ -149,6 +149,13 @@ def check_cross_file(doc, path, problems):
             print(f"  note  hardware/models: '{model}' has no row in hardware/compat.tsv yet.")
             print("        Allowed, and recorded on the build report as untested hardware.")
 
+    names = [a.get("name") for a in doc.get("accounts", []) if isinstance(a, dict)]
+    for name in sorted({n for n in names if n and names.count(n) > 1}):
+        problems.append(
+            f"accounts: two accounts are both called '{name}'.\n"
+            "      Every laptop creates each listed account once; a name used twice is one it cannot create."
+        )
+
     # Not checkable here, and said out loud so the boundary is visible:
     #   - application names must exist in the catalogue inside the pinned base image
     #   - the chosen language's fonts must cover first_boot_message
@@ -188,14 +195,16 @@ def validate(path, validator):
 
     # A reserved key produces two errors: "unknown key" and the by-name refusal that explains why
     # we reserved it. Only the second one teaches anything, so the first is dropped for that key.
-    named = {k for e in errors for k in refused_keys(e) if k in (doc or {})}
+    # Looked up on the object the rule fired on: the secrets rule also applies inside each account.
+    at = lambda e: e.instance if isinstance(e.instance, dict) else {}
+    named = {(tuple(e.absolute_path), k) for e in errors for k in refused_keys(e) if k in at(e)}
     kept = []
     for e in errors:
         if e.validator == "additionalProperties" and isinstance(e.instance, dict):
             allowed = set((e.schema or {}).get("properties", {}))
-            if all(k in named for k in e.instance if k not in allowed):
+            if all((tuple(e.absolute_path), k) in named for k in e.instance if k not in allowed):
                 continue
-        if e.validator == "not" and refused_keys(e) and not any(k in (doc or {}) for k in refused_keys(e)):
+        if e.validator == "not" and refused_keys(e) and not any(k in at(e) for k in refused_keys(e)):
             continue
         kept.append(e)
 

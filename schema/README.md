@@ -183,6 +183,7 @@ rules running ahead of the real ones.
 | `prune.also_remove` | with `keep_only:false` | Named groups from a published list. Under `keep_only:true` it is the *record of what was asked for* and removes nothing further — the sweep has already taken every one of those packages, and validation says so on the build report. | Anything outside that list. Accessibility tools are refused **by name, with a sentence**, not quietly ignored. |
 | `prune.must_remove_at_least` | yes | A floor. Fewer removed ⇒ the build fails. | Zero. A recipe that removes nothing is not a recipe we build. |
 | `policy` | yes | `open` / `managed` / `locked` / `kiosk`. | A fifth value. A mode we cannot prove is in force on a booted machine is a mode we cannot sell. |
+| `accounts` | yes, unless `kiosk` | The accounts every laptop creates on first boot: `name`, `role` (`admin` or `user`) and `display_name`. At least one `admin`. Compiled to `/usr/lib/auros/accounts.json`, which the base's first-boot unit reads. The first password of each account comes from the sealed enrolment bundle on the install media, never from here. | A password, hash or any other credential inside an account. Two accounts with one name. A system name (`root`, `aurosadmin`, `systemd-…`). A colon or comma in a display name. Any account at all under `kiosk`. |
 | `desktop` | no | The Windows-shaped layer, one readable line per behaviour. All default to the familiar answer. `desktop.layout` picks where things are on screen for every new user: `windows` (the default, and what leaving it out means), `browser-first`, `simple` or `mac`. A layout other than `windows` becomes one `RUN /usr/libexec/auros/set-desktop-layout <layout>` line in the Containerfile; `windows` emits nothing, because the base with no call already is the Windows layout. | Being present at all under `kiosk` (so a layout on a kiosk is refused, not ignored). A terminal on anything but `open`. Contradicting `locked`. Any layout outside those four words, including a package id or a path. A layout other than `windows` with `taskbar_and_start_menu: false`: every layout has a menu and a task list, so that pair asks for two opposite things. |
 | `kiosk` | with `policy: kiosk` | What the one window shows, where it may go, how long before the session is wiped. | Being present under any other policy. `http://`, `file://`, `data:`, a username in the address, a query string. An empty allow-list — a kiosk that can reach nothing is broken, not secure. |
 | `windows_apps` | no | The honest `.exe` capability. | Being present under `kiosk` (the compatibility layer is a desktop application and there is no desktop). A result of `works` with no note. Any list of tested programs while the layer is off. |
@@ -279,7 +280,9 @@ rule.
 ### It cannot carry a secret
 
 No password, no network key, no token. This repository is public, so anything written here is
-published to the world. See §4: this is a real gap and we are not dressing it up.
+published to the world. See §4: this is a real gap and we are not dressing it up. That includes the
+`accounts` list: it names who signs in and never how. Each account's first password travels in the
+enrolment bundle written onto the install media, and is deleted from the laptop once it has been used.
 
 ### It cannot make a general claim
 
@@ -381,7 +384,7 @@ something we assert.
 Some rules cannot be expressed in a schema and live in the validator: your `name` matching its folder and
 being unique, your models joining to `hardware/compat.tsv`, your application names existing in the
 catalogue inside the base image, and whether the fonts for your language cover your first-boot message.
-Four more were added after an audit found the gaps they close:
+Five more were added after an audit found the gaps they close:
 
 - **Your recipe folder holds four kinds of file and nothing else**: `recipe.yaml`, the `Containerfile`
   generated from it, `removal-floor.lock`, and the logo your recipe names. A stray `base.lock` beside a
@@ -395,6 +398,8 @@ Four more were added after an audit found the gaps they close:
   of this rule knew eleven scripts and let everything else through, including Chinese, Korean, Japanese,
   Armenian, Georgian and Khmer. The rule is in `src/scripts.ts`.
 - **`other_languages` may not repeat your primary `language`.**
+- **Two `accounts` may not share a `name`.** The schema can only refuse identical entries, and two
+  entries with one name and different roles would leave one person without an account.
 - **`schema:` must be written as the plain number `1`.** `1.0`, `0x1` and `+1` all load as 1, so the
   schema file alone cannot tell them apart. Both validators check how the field is written.
 

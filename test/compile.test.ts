@@ -455,3 +455,34 @@ test('desktop.layout: windows and an omitted field compile to the same bytes, wi
   assert.equal(windows, omitted);
   assert.doesNotMatch(omitted, /set-desktop-layout/);
 });
+
+// ---- accounts ---------------------------------------------------------------------------------
+// The declared accounts reach the image as /usr/lib/auros/accounts.json, which the base's first-boot
+// unit reads. Names only: a secret has no field to arrive through, and the file must not carry one.
+
+const ACCOUNTS_FILE = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > \/usr\/lib\/auros\/accounts\.json/g;
+function accountsIn(text: string): unknown[] {
+  return [...text.matchAll(ACCOUNTS_FILE)].map((m) => JSON.parse(Buffer.from(m[1]!, 'base64').toString('utf8')));
+}
+
+test('accounts: compiled to exactly one accounts.json, sorted by name, with no secret in it', () => {
+  const found = accountsIn(build(school(), 'example-school'));
+  assert.equal(found.length, 1);
+  assert.deepEqual(found[0], {
+    schema: 1,
+    accounts: [
+      { display_name: 'Pupil', name: 'pupil', role: 'user' },
+      { display_name: 'School IT', name: 'school-it', role: 'admin' },
+    ],
+  });
+  assert.doesNotMatch(JSON.stringify(found[0]), /pass|secret|hash|\$[0-9y]\$/i);
+});
+
+test('accounts: reordering the list is the same image', () => {
+  const reversed = mutate(school(), (d) => { (d['accounts'] as Doc[]).reverse(); });
+  assert.equal(build(reversed, 'example-school'), build(school(), 'example-school'));
+});
+
+test('accounts: a kiosk compiles no accounts file at all', () => {
+  assert.equal(accountsIn(build(kiosk(), 'example-kiosk')).length, 0);
+});

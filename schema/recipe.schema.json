@@ -245,6 +245,102 @@
         "kiosk"
       ]
     },
+    "accounts": {
+      "description": "The people who sign in to these machines, the same on every one of them. Each laptop creates exactly these accounts the first time it starts, so nobody types anything per machine. Required unless the policy is kiosk, and refused under kiosk, where nobody signs in. At least one account must be an admin: without one, nobody at the machine can change a password or approve a change. There is no password field here and there never will be, because this repository is public. The first password of each account arrives in the sealed enrolment bundle on the install media, never in this file (see schema/README.md).",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "contains": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "const": "admin"
+          }
+        },
+        "required": [
+          "role"
+        ]
+      },
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "$ref": "#/$defs/refusals/secrets"
+          }
+        ],
+        "required": [
+          "name",
+          "role",
+          "display_name"
+        ],
+        "properties": {
+          "name": {
+            "description": "The sign-in name. Lowercase letters, digits and single hyphens, starting with a letter, at most 32 characters: a name every Linux tool accepts without argument. Two accounts may not share a name.",
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+            "minLength": 2,
+            "maxLength": 32,
+            "allOf": [
+              {
+                "title": "An account cannot take the name of one the system already has",
+                "description": "These names belong to the operating system or to the Auros policy layer. An account with one of them would collide with the system account on first boot, or quietly inherit its powers.",
+                "not": {
+                  "enum": [
+                    "root",
+                    "bin",
+                    "daemon",
+                    "adm",
+                    "lp",
+                    "sync",
+                    "shutdown",
+                    "halt",
+                    "mail",
+                    "operator",
+                    "games",
+                    "ftp",
+                    "nobody",
+                    "wheel",
+                    "users",
+                    "sddm",
+                    "plasmalogin",
+                    "polkitd",
+                    "dbus",
+                    "auroskiosk",
+                    "aurosprobe",
+                    "aurosadmin"
+                  ]
+                }
+              },
+              {
+                "title": "An account cannot take a systemd name",
+                "description": "Names beginning systemd- are reserved for the service manager's own accounts.",
+                "not": {
+                  "pattern": "^systemd-"
+                }
+              }
+            ]
+          },
+          "role": {
+            "description": "admin: may change passwords and settings through the normal settings screens, after typing their own password. user: uses the machine and changes nothing about it. There is no third role.",
+            "enum": [
+              "admin",
+              "user"
+            ]
+          },
+          "display_name": {
+            "description": "The name shown on the sign-in screen, e.g. \"School IT\" or \"Pupil\". No colon and no comma: the system keeps this in a colon- and comma-separated file, and either character would split it.",
+            "allOf": [
+              {
+                "$ref": "#/$defs/line"
+              }
+            ],
+            "pattern": "^[^:,]+$",
+            "maxLength": 64
+          }
+        }
+      }
+    },
     "desktop": {
       "description": "The Windows-shaped layer, one readable line per behaviour, shipped in the image rather than left for each user to set up. Everything here defaults to the familiar answer, so this whole block is optional and most recipes leave it out.",
       "type": "object",
@@ -656,6 +752,48 @@
         "not": {
           "required": [
             "kiosk"
+          ]
+        }
+      }
+    },
+    {
+      "title": "A machine people sign in to needs the accounts they sign in with",
+      "description": "Every policy except kiosk ends at a sign-in screen. The first-time setup wizard is switched off on these machines, so nothing but this list creates an account: without it, 180 laptops start to a sign-in screen with nobody on it. List the accounts, with at least one admin.",
+      "if": {
+        "not": {
+          "properties": {
+            "policy": {
+              "const": "kiosk"
+            }
+          },
+          "required": [
+            "policy"
+          ]
+        }
+      },
+      "then": {
+        "required": [
+          "accounts"
+        ]
+      }
+    },
+    {
+      "title": "A kiosk has nobody to sign in",
+      "description": "A kiosk runs one application as a locked-down service account and never shows a sign-in screen, so an account listed here could never be used. It is refused rather than created and left lying about.",
+      "if": {
+        "properties": {
+          "policy": {
+            "const": "kiosk"
+          }
+        },
+        "required": [
+          "policy"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "accounts"
           ]
         }
       }

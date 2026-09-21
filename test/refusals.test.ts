@@ -240,6 +240,58 @@ const MUST_REFUSE: ReadonlyArray<Case> = [
     says: /credential|public/i,
   },
 
+  // ---- accounts: declared in public, secret-free --------------------------------------------------
+  {
+    label: 'a password written next to the account it belongs to',
+    doc: mutate(S, (d) => { ((d['accounts'] as Doc[])[0]!)['password'] = 'not-a-real-password'; }),
+    says: /no credential/i,
+  },
+  {
+    label: 'a password hash under another name',
+    doc: mutate(S, (d) => { ((d['accounts'] as Doc[])[0]!)['password_hash'] = '$6$fake$fake'; }),
+    says: /no credential|password_hash/i,
+  },
+  {
+    label: 'a managed fleet with no accounts, which boots to a sign-in screen with nobody on it',
+    doc: mutate(S, (d) => { delete d['accounts']; }),
+    says: /needs the accounts they sign in with/i,
+  },
+  {
+    label: 'accounts with no admin, so nobody can ever change a password',
+    doc: mutate(S, (d) => { d['accounts'] = [{ name: 'pupil', role: 'user', display_name: 'Pupil' }]; }),
+    says: /contain|admin/i,
+  },
+  {
+    label: 'two accounts with one name',
+    doc: mutate(S, (d) => {
+      d['accounts'] = [
+        { name: 'staff', role: 'admin', display_name: 'Staff' },
+        { name: 'staff', role: 'user', display_name: 'Staff too' },
+      ];
+    }),
+    says: /two accounts are both called 'staff'/i,
+  },
+  {
+    label: 'an account that takes over root',
+    doc: mutate(S, (d) => { ((d['accounts'] as Doc[])[0]!)['name'] = 'root'; }),
+    says: /one the system already has/i,
+  },
+  {
+    label: 'an account that joins the policy admin group by name',
+    doc: mutate(S, (d) => { ((d['accounts'] as Doc[])[0]!)['name'] = 'aurosadmin'; }),
+    says: /one the system already has/i,
+  },
+  {
+    label: 'a display name that would split the passwd line',
+    doc: mutate(S, (d) => { ((d['accounts'] as Doc[])[0]!)['display_name'] = 'IT: front desk'; }),
+    says: /pattern|must match|display_name/i,
+  },
+  {
+    label: 'an account on a kiosk, where nobody signs in',
+    doc: mutate(K, (d) => { d['accounts'] = [{ name: 'it', role: 'admin', display_name: 'IT' }]; }),
+    says: /a kiosk has nobody to sign in/i,
+  },
+
   // ---- claims we cannot evidence -----------------------------------------------------------------
   {
     label: 'a blanket compatibility claim',

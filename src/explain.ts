@@ -221,6 +221,9 @@ export function explain(options: ExplainOptions): string {
     out.push(field('Screen layout', LAYOUT_WORDS[recipe.desktop?.layout ?? 'windows'], 25));
     out.push(field('Familiar folder names', `${desktop.familiar_folder_names ? 'yes' : 'no'}`, 25));
     out.push(field('Guided first boot', `${desktop.guided_first_boot ? 'yes' : 'no'}`, 25));
+    for (const a of recipe.accounts ?? []) {
+      out.push(field(`Account ${a.name}`, `${a.display_name} (${a.role === 'admin' ? 'administrator' : 'user'})`, 25));
+    }
   }
   out.push('');
   // THIS LINE USED TO BE A CLAIM WE DO NOT KEEP.

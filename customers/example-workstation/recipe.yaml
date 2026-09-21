@@ -24,6 +24,8 @@ prune:
   also_remove: [games, sample wallpapers and media]
   must_remove_at_least: 40
 policy: open
+accounts:
+  - { name: maintainer, role: admin, display_name: Maintainer }
 desktop:
   guided_first_boot: false
   can_install_apps: true
