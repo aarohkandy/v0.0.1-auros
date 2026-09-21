@@ -277,7 +277,7 @@ opens all of them (§3).
   - the kickstart-copy scrub
   - tests: `make-enrolment.test.sh` is new. `make-install-media`, `accounts`, `20-policy`,
     `assert-lib` and `b12-modes` gained cases.
-  - 8 new prove-red mutations (`ACCT:`), all caught.
+  - 8 new prove-red mutations (`ACCT:`), all caught. The full prove-red run on Linux caught 115 of 115 after 666168d re-anchored one older mutation.
   - `run-all` passes 29/29 on macOS and on Linux, and Linux also checks each printed password against
     its hash with real OpenSSL.
 
