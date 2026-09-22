@@ -13,8 +13,11 @@ on it. That commit's detector called this the `FIRST-BOOT ACCOUNT GAP`.
 
 **Owner answers (2026-09-21):** A1 yes, A2 Auros generates, A4 Users page for `aurosadmin` on
 managed/locked, A6 yes for every account. A1, A2 and A4 are built (§2, §3, §8). A6 is built and
-**switched off**, because the graphical login screen can't handle an expired password (§5). A3, A5
-and A7 are still open (§9).
+**switched off**, because the graphical login screen can't handle an expired password (§5).
+
+**Owner decisions (2026-09-21, second round), built:** (1) the forced first change is a mandatory
+"choose your password" step in the first-run flow instead (§5.1); (2) on locked a pupil may change
+their own password in the GUI and nothing else (§3). A3, A5 and A7 are still open (§9).
 
 ---
 
@@ -122,10 +125,27 @@ first password, and Auros keeps no copy: it exists on the handover sheet only.
 
 - **open:** the admin is in `wheel`, the polkit admin identity there. System Settings → Users
   (`kcm_users`) changes any account's password after the admin types their own. No terminal.
-- **managed / locked (A4, built):** System Settings → Users (`kcm_users`) is shown to `aurosadmin`
+- **Every mode but kiosk: a person may change their OWN password (owner decision 2, built).**
+  - accountsservice checks `org.freedesktop.accounts.change-own-password` for `SetPassword` /
+    `SetPasswordMode` when the caller's uid is the target's, and `user-administration` for anyone
+    else (src/user.c `user_set_password`). Upstream default: `auth_admin`
+    (data/org.freedesktop.accounts.policy.in). KDE's Users page calls exactly that `SetPassword`
+    with a crypt(3) hash (plasma-workspace kcms/users/src/user.cpp `User::setPassword`).
+  - `policy/common/root/etc/polkit-1/rules.d/10-auros-own-password.rules` answers **YES** for that
+    one id, only for a subject in an active local session (a person at the seat; a daemon with no
+    session keeps `auth_admin`). locked and managed leave the id out of their guarded set so it
+    reaches that file; kiosk still refuses it.
+  - Honest cost: no current-password prompt. Someone at an unlocked, unattended session can change
+    that person's password; IT resets it. `AUTH_SELF` would ask, but `pkcheck` answers 2 for both
+    `auth_self` and `auth_admin`, so it could not be proven on a machine. **[OWNER: acceptable?]**
+- **locked (owner decision 2, built):** the Users page is shown to **everyone** (`policy/locked`
+  no longer ships `/etc/kde5rc` or the env script). For a pupil it can only change their own
+  password: `user-administration` and `change-own-user-data` (name, picture) stay `NO`;
+  `aurosadmin` gets `AUTH_ADMIN`.
+- **managed (A4, built):** System Settings → Users (`kcm_users`) is shown to `aurosadmin`
   members only.
   - **Hidden by default.** `kcm_users` moved out of the immutable `[KDE Control Module Restrictions][$i]`
-    group in `/etc/xdg/kdeglobals`, into `policy/{managed,locked}/root/etc/kde5rc` as a per-key
+    group in `/etc/xdg/kdeglobals`, into `policy/managed/root/etc/kde5rc` as a per-key
     immutable `kcm_users[$i]=false`.
     - It has to be per key: KConfig reads `/etc/kde5rc` first, so a group-level `[$i]` there would lock
       the group before kdeglobals added its pages.
@@ -134,21 +154,27 @@ first password, and Auros keeps no copy: it exists on the handover sheet only.
     `KDE_SKIP_KDERC=1` only when `id -nG` contains `aurosadmin`. kconfig.cpp checks that variable at
     runtime and then skips `/etc/kde5rc`. startplasma sources these env scripts before it passes the
     environment to D-Bus and systemd.
-  - **The lock is polkit, unchanged.** `org.freedesktop.accounts.*` is `AUTH_ADMIN` on managed and
-    `NO` on locked for anyone outside `aurosadmin`, and `AUTH_ADMIN` for its members. A pupil can
+  - **The lock is polkit.** `org.freedesktop.accounts.*` except `change-own-password` is
+    `AUTH_ADMIN` on managed for anyone, members included. A pupil can
     un-hide the page by setting the variable in their own session, just as they could escape any
     kdeglobals restriction with `XDG_CONFIG_DIRS`, and it gets them nothing.
-  - **Consequence:** in locked, a pupil can't change even their own password after the first one. In
-    managed they need the IT password to do it. `change-own-password` sits under the same prefix.
-    **[OWNER: acceptable?]**
-  - **Proven by:**
-    - B5 `a_suite_accounts`: the probe, never in aurosadmin, gets `user-administration` answered 1 on
-      locked and not 0 on managed, and `open` is the control.
-    - B12 `AUROS_MODE_B12_USERS=aurosadmin`: for a pupil the page must refuse to open and polkit must
-      not grant. For an aurosadmin member the page must open and polkit must ask for their password.
-      The matrix session is one or the other, and `b12-modes.test.sh` drives both.
-    - `20-policy.test.sh` checks the files and the env script.
-    - **Not yet seen on a VM:** the page actually appearing in an admin's Plasma session.
+  - A managed pupil still changes their own password (the first-run step opens the page with
+    `KDE_SKIP_KDERC=1`), but has no menu entry for it afterwards. **[OWNER: show the page on managed
+    too, as on locked?]**
+- **Proven by:**
+  - `20-policy.test.sh` evaluates the real rule files (node, polkit's first-answer-wins order): a pupil
+    at the seat gets `yes` for own password on locked/managed/open and not with no session; kiosk
+    refuses; locked refuses a pupil `user-administration` and `change-own-user-data`, gives
+    `aurosadmin` `auth_admin`.
+  - B5 `a_suite_accounts`: `user-administration` 1 on locked, not 0 on managed, `open` the control;
+    and `change-own-password` must be exactly 2 for the sessionless probe (1 = the mode's deny ate the
+    pupil's only door; 0 = granted without a session).
+  - B12: `AUROS_MODE_B12_USERS=own-password` on locked. For a pupil the page must open,
+    `change-own-password` must be 0 in the session, `user-administration` exactly 1. For
+    `aurosadmin`, `user-administration` must be answerable. managed keeps `aurosadmin`.
+    `b12-modes.test.sh` drives pupil and admin in both modes. B12 now reads pkcheck 2 as the
+    challenge (it read only 3, so an admin's prompt would have failed as an "error").
+  - **Not yet seen on a VM:** any of it in a real Plasma session.
 - **Fleet-wide rotation [OWNER, honest limit]:** each laptop keeps its own `/etc/shadow`. Changing the
   admin password on 180 machines means 180 changes, or a new bundle and a reinstall. There's no central
   directory, and a fleet console is out of scope here. Every laptop enrolled from one bundle shares one
@@ -222,14 +248,33 @@ plasma-login-manager master:
 A TTY `login` would handle it, but that's a terminal (D4). Switching it on as things stand would lock
 every account on every laptop out of the graphical sign-in at the same moment.
 
-**Proposed fallback [OWNER]:**
+### 5.1 Choose your password at first sign-in (owner decision 1, built)
 
-1. Keep expiry off.
-2. Add a mandatory first-run step, "Choose your own password", to the Auros welcome flow. It runs in
-   the user's own session and changes the password through PAM (`passwd`), which needs only the
-   current password and no polkit. It is marked done when the shadow last-change day moves.
-3. Or wait until plasma-login-manager merges expired-password support, then uncomment the one line and
-   prove it on a VM first.
+Expiry stays off. Instead:
+
+1. **Marker, root's.** When `auros-accounts` sets first passwords from the enrolment file, it writes
+   `/var/lib/auros/choose-password/<name>` (dir 0755, file 0600 root) holding the SHA-256 of the
+   hash it set, never the hash. Accounts with no first password get none.
+2. **Cleared only by a real change.** `auros-password-chosen.path` (`PathChanged=/etc/shadow`, enabled)
+   starts `auros-password-chosen`, which removes a marker only when that account's shadow hash no
+   longer matches. The user can't delete or forge it; the only way through is to set a password.
+3. **The step.** User unit `auros-choose-password.service`
+   (`ConditionPathExists=/var/lib/auros/choose-password/%u`, `TimeoutStartSec=infinity`) runs at every
+   sign-in until the marker is gone: a `kdialog` explains, then `KDE_SKIP_KDERC=1 kcmshell6 kcm_users`
+   opens KDE's Users page on the signed-in account ("Change Password", polkit as in §3). Closing it
+   without choosing loops back. `auros-first-run.service` is `After=` it, so the taskbar layout and
+   the welcome wizard come only after. The build installs `kdialog` if missing and dies without
+   `kdialog` or `kcmshell6`.
+4. **Honest limits.** Plasma itself is up behind the dialog; a pupil can ignore it and use the bare
+   desktop, but it returns at every sign-in until done. An admin resetting the password also clears
+   the step. Accounts first given a password later by an admin are not asked. Setting the same
+   password again counts (a new salt makes a new hash).
+5. **Proven by** `accounts.test.sh` (marker content and modes, clearing red/green, the step ending
+   only once root clears it) and `40-windows-feel.test.sh` (install/tool checks). Not seen on a VM,
+   including whether `PathChanged=` fires on shadow-utils' rename of `/etc/shadow`.
+
+If plasma-login-manager merges expired-password support, A6's one line can be switched on instead,
+after a VM proves it.
 
 ## 6. Security properties
 
@@ -280,6 +325,11 @@ opens all of them (§3).
   - 8 new prove-red mutations (`ACCT:`), all caught. The full prove-red run on Linux caught 115 of 115 after 666168d re-anchored one older mutation.
   - `run-all` passes 29/29 on macOS and on Linux, and Linux also checks each printed password against
     its hash with real OpenSSL.
+- **auros-base `agent/accounts`, e737f1c (owner decisions 1 and 2):** `10-auros-own-password.rules`,
+  locked's guarded-set exemption and visible Users page, the choose-your-password marker, root-side
+  clearing (`auros-password-chosen` + `.path`), the session step (`auros-choose-password` + user unit),
+  B5/B12 own-password assertions, and 9 prove-red `OWNPW:` mutations. `run-all` 29/29 on macOS and
+  Linux; full prove-red on Linux 124/124.
 
 ## 9. Owner decisions, in one place
 
@@ -288,7 +338,7 @@ opens all of them (§3).
 | A1 | Bundle delivery: `make-install-media.sh --enrolment FILE` → kickstart `%post` | **YES (owner). Built; not VM-verified** | — |
 | A2 | Who creates the first password | **Auros, per school (owner). Built: `make-enrolment.sh`, one password per account** | — |
 | A3 | Pupil (`user`) accounts: shared password from the bundle, or locked until an admin sets one | from the bundle | per-machine typing |
-| A4 | GUI password change on managed/locked (`kcm_users` hidden) | **Users page for aurosadmin only (owner). Built.** New: pupils can't change their own password later — OK? | — |
+| A4 | GUI password change on managed/locked (`kcm_users` hidden) | **Users page for aurosadmin only on managed; everyone on locked, own password only (owner). Built.** Open: show it to managed pupils too? | — |
 | A5 | Admin group on managed/locked is `aurosadmin`, not `wheel` | confirm | — |
-| A6 | Force a password change at first sign-in | **YES (owner). Built, OFF: plasmalogin can't answer the change request (§5). Pick the fallback** | plasmalogin |
+| A6 | Force a password change at first sign-in | **YES (owner). Expiry built, OFF (plasmalogin, §5); the first-run "choose your password" step is built instead (§5.1).** Open: own-password with no current-password prompt, OK? | — |
 | A7 | One initial hash shared across a fleet (rotation = per machine or reinstall) | accept for now, state it to customers | — |
