@@ -69,10 +69,13 @@ else ok "refuses a truncated manifest"; fi
 
 # The build refuses too: a copy of the tree with the broken manifest.
 if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-    mkdir -p "$TMP/tree/src" "$TMP/tree/tools"
+    mkdir -p "$TMP/tree/src" "$TMP/tree/tools/hw"
     cp -r build "$TMP/tree/"
     cp -r src/aurbridge "$TMP/tree/src/"
     cp tools/pe_payload.py tools/repo.sh "$TMP/tree/tools/"
+    # the matcher's facts, which build/aurbridge turns into C first (stream HW)
+    cp -r hw "$TMP/tree/"
+    cp tools/hw/gen-header.py "$TMP/tree/tools/hw/"
     cp "$TMP/dash.xml" "$TMP/tree/src/aurbridge/aurbridge.manifest"
     # The copy has no git remote: tell it which repository, as asked of
     # this checkout (build/aurbridge needs it for the website it names).
