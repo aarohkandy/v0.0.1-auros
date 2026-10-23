@@ -270,6 +270,12 @@ a cent) and nothing to Cloudflare until roughly 5,000 people a day use it
 (then $5 a month). The workflow `.github/workflows/cloud.yml` deploys it
 whenever the secrets below exist; without them it only runs the tests.
 
+**Wishes is switched off for everyone until the legal gates pass (decision
+D14):** the service is deployed but rests (`DAILY_BUDGET_USD = "0"` in
+`cloud/wrangler.toml`): it answers "Wishes are resting" and never calls
+Anthropic, so nothing is billed. An agent turns it on with a one-line change
+(`docs/CLOUD.md` §0) when you say so.
+
 **Already done (2026-10-23):** `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`
 and the Anthropic key as `ANTHROPIC_API` are set, the service is live at
 https://auros-wishes.aarohkandy.workers.dev. The workflow accepts the key

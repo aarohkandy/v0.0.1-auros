@@ -256,11 +256,11 @@ The wish schema both sides compile: `docs/wish-v1.schema.json`.
 | `POST /v1/wish` + Bearer | `{text, lang, schema:{v:1, triggers[], actions[]}, sensors:{compass, tilt, light}}` | `200 {kind:"wish", wish}` or `200 {kind:"cannot", missing, alt_wish?}` |
 | `POST /v1/ask` + Bearer | `{question, lang, context:{look}}` | `200 {help_page_id, wish?}` (`help_page_id` is a file name in `/usr/share/auros/help/` without `.html`, or `null`: no page covers it) |
 | `POST /v1/forget` + Bearer | `{}` | `204` (the token and its counters are gone) |
-| `GET /v1/health` | – | `200 {ok:true}` |
+| `GET /v1/health` | – | `200 {ok:true, wishes:"on"|"resting"}` |
 
 Errors (JSON, plus a `Retry-After` header where there is a `retry_after`):
 `400 {error:"request"|"too_long"}`; `400 {error:"pow", day, bits}`;
-`401 {error:"token"}`; `429 {retry_after, text:"You've made lots of wishes today — more tomorrow"}`;
+`401 {error:"token"}`; `403 {error:"region", text}` (register, wish and ask from a country outside `ALLOW_COUNTRIES`, default US, GB, CA, AU; forget and health are never refused; `aurwish` maps it to its "not available" state); `429 {retry_after, text:"You've made lots of wishes today — more tomorrow"}`;
 `503 {retry_after, text:"Wishes are resting for a little while"}`. The device
 writes its own sentences (§7.3); `text` is only a fallback.
 
@@ -305,7 +305,7 @@ days old and the service has returned it a wish (the service cannot see her
 Yes; that is the nearest thing it can observe). A request Claude never
 answered is not counted. `/register`: 3 per day per IPv4 /24 or IPv6 /64.
 No other per-address limit. At most 40 Claude calls in flight; more get 503
-at once. A daily budget (`DAILY_BUDGET_USD`) in fixed pools: 70 % established
+at once. **While Wishes is off for everyone (D14) the deployed value is `DAILY_BUDGET_USD = "0"`: every `/v1/wish` and `/v1/ask` answers 503 `retry_after` 3600 before anything is read or called** (docs/CLOUD.md §0). A daily budget (`DAILY_BUDGET_USD`) in fixed pools: 70 % established
 tokens, 20 % new tokens, 10 % `/ask`; an empty pool answers 503 until UTC
 midnight; the owner is told at 50 % (a log line, and a push to `ALERT_URL`
 if set). A request whose estimated cost is over $0.01 is refused. Tokens on

@@ -7,6 +7,15 @@
 
 ## Live
 
+- **RESTING (kill switch on) since the legal review AI-1/AI-6:**
+  `cloud/wrangler.toml` `DAILY_BUDGET_USD = "0"`; every wish/ask → 503, no
+  Anthropic call (live-proven by cloud.yml each deploy). To turn on: change that
+  one variable to "5" and push (docs/CLOUD.md §0). Country gate
+  `ALLOW_COUNTRIES = "US,GB,CA,AU"` (review says leave GB out until PRI-6 is
+  settled; the lead said include it: edit the variable to change). `metadata.user_id`
+  for Anthropic is NOT sent yet: AI-1 says add it in the change that enables
+  Wishes, with a test.
+
 - **https://auros-wishes.aarohkandy.workers.dev** (Cloudflare Worker
   `auros-wishes` + Durable Object `Ledger`), deployed by `cloud.yml` on every
   push to `cloud/**`, the schema or the help pages.

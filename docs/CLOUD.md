@@ -8,8 +8,42 @@
 > abuse by itself.
 
 Live address: **https://auros-wishes.aarohkandy.workers.dev** (deployed by
-`.github/workflows/cloud.yml`). The API is `docs/AI.md` §5; the wish
+`.github/workflows/cloud.yml`; **resting**, see §0). The API is `docs/AI.md` §5; the wish
 schema both sides compile is `docs/wish-v1.schema.json`; the code is `cloud/`.
+
+## 0. Status: resting (the kill switch is on)
+
+Wishes is not switched on for anyone (decision D14; the legal gates are in
+`docs/legal/COMPLIANCE.md`, AI-1 and AI-6). So the deployed Worker is
+**resting**: `cloud/wrangler.toml` has `DAILY_BUDGET_USD = "0"`, and with that
+value every `/v1/wish` and `/v1/ask` answers the plain
+`503 {"text":"Wishes are resting for a little while"}` (`retry_after` 3600)
+right after the token check, before the request is read, any counter is
+touched or Anthropic is called. Nothing is sent to Anthropic and nothing is
+billed. `/v1/health` stays up and says `{"ok":true,"wishes":"resting"}`;
+`/v1/register` and `/v1/forget` still work (the live check needs register; anyone
+may always delete her data). Every deploy proves this live (`cloud.yml`: a
+registered token's wish and question get 503, and the Worker's own log lines
+show `reason:"off"` and no token counts or cost).
+
+**Turning Wishes on is one variable and a push**, only after the legal gates
+pass: in `cloud/wrangler.toml` change `DAILY_BUDGET_USD = "0"` to the day's
+budget in dollars (`"5"`), commit, push. The workflow redeploys in two
+minutes, the next run's summary says "Wishes is on" and runs the real-model
+eval and the live checks (potato, compass, quota, ask). Turning it off again
+is the same edit back to `"0"`. An unreadable value (`abc`, `-1`) means off.
+(`BANNED` is a list of per-token tags for abuse; `BANNED=*` does nothing and is
+not a switch. To take the address off the internet entirely as well: Cloudflare
+dashboard → `auros-wishes` → Settings → Domains & Routes → disable workers.dev.)
+
+**Where Wishes is offered** (AI-6): `ALLOW_COUNTRIES` in `cloud/wrangler.toml`,
+default `US,GB,CA,AU` (`UK` is read as `GB`; `*` means everywhere). Register,
+wish and ask answer `403 {"error":"region","text":"Wishes is not available in
+your country yet."}` from anywhere else, including from a token made at home
+while travelling; `/v1/forget` and `/v1/health` are never refused. The country
+is Cloudflare's own `request.cf.country` (a client cannot set it); an unknown
+country or Tor is refused; the country itself is never logged. Narrowing it to
+`US` for the first cohort is the same kind of edit.
 
 ## 1. How it works
 
@@ -193,6 +227,7 @@ Where to look: Cloudflare dashboard → Workers & Pages → `auros-wishes` →
 
 | Symptom | What the logs say | What to do |
 |---|---|---|
+| Everyone gets "resting", and it should not | `reason:"off"` | The kill switch is on: `DAILY_BUDGET_USD` is `"0"` in `cloud/wrangler.toml` (§0). |
 | Everyone gets "resting" all day | `reason:"budget"` | Today's pool is empty. Wait for midnight UTC, or raise `DAILY_BUDGET_USD` in `cloud/wrangler.toml` and push (deploys in 2 minutes). The 50 % alert line (`ev:"budget_half"`, and a push to `WISHES_ALERT_URL` if set) comes first. |
 | "resting", and the Console shows the limit reached | `reason:"spend_limit"` | The Anthropic workspace's monthly limit is hit. Raise it in the Console (Settings → Workspaces → AurOS Wishes → Limits). |
 | "resting" for minutes, now and then | `reason:"rate_limit"` or `"busy"` | Anthropic's per-minute limit or the slot limit. If daily: request the next tier, then raise `MAX_INFLIGHT` (§2). |
@@ -202,7 +237,8 @@ Where to look: Cloudflare dashboard → Workers & Pages → `auros-wishes` →
 | Rotate the Anthropic key | – | Console: new key in the AurOS Wishes workspace → GitHub secret `ANTHROPIC_API` → Actions → cloud → Run workflow → delete the old key. No downtime. |
 | Rotate the token-signing secret (a leak, or start everyone fresh) | – | `cd cloud && npx wrangler secret delete TOKEN_SECRET`, then run the cloud workflow: it makes a new one. Every computer gets 401 once and registers again silently (a home with more than 3 computers finishes over two days). |
 | Rotate the Cloudflare token | – | Cloudflare: new token (§7 of OWNER-SETUP) → GitHub secret → revoke the old one. |
-| Switch Wishes off entirely | – | Cloudflare dashboard → `auros-wishes` → Settings → Domains & Routes → disable workers.dev. Her computers say "Wishes is not available" and everything else is unaffected. |
+| Switch Wishes off | – | Set `DAILY_BUDGET_USD = "0"` in `cloud/wrangler.toml` and push (§0): the plain 503, no Anthropic call. Faster, or to remove the address as well: Cloudflare dashboard → `auros-wishes` → Settings → Domains & Routes → disable workers.dev. Her computers say "Wishes is not available" and everything else is unaffected. |
+| 403 `region` for someone who should be allowed | `limited:"region"` | The country is not in `ALLOW_COUNTRIES` (§0), or Cloudflare could not tell (VPN, Tor). Add the code and push. |
 
 Changing the model is a code change (`MODEL` and `PRICE` in
 `cloud/src/app.js`) followed by `npm run live-eval` with a key: it is a safety
@@ -230,7 +266,8 @@ image. Proposal (owners: stream S5 for the channel, W1 for the reader):
 
 | Name | Deployed | Meaning |
 |---|---|---|
-| `DAILY_BUDGET_USD` | 5 | the day's Anthropic budget, split 70 % established / 20 % new / 10 % Ask |
+| `DAILY_BUDGET_USD` | **0 (resting, §0)** | the day's Anthropic budget in dollars, split 70 % established / 20 % new / 10 % Ask. **`0` is the kill switch.** |
+| `ALLOW_COUNTRIES` | US,GB,CA,AU | countries where Wishes is offered (§0) |
 | `QUOTA_ESTABLISHED`, `QUOTA_NEW` | 20, 3 | wishes (and, separately, questions) per token per day |
 | `ESTABLISH_DAYS` | 7 | how old a token must be (plus one wish received) to be established |
 | `REGISTER_PER_NET` | 3 | registrations per /24 or /64 per day |
