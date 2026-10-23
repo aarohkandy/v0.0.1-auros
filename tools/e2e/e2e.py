@@ -1032,11 +1032,14 @@ class Flow:
                     seen_label = b[1] if b else None
                     self.log(f"the store's button now reads {seen_label!r}")
                 if b and label_is(b[1], STORE_INSTALL) and time.time() - clicked > 75:
-                    if presses >= 3:
+                    if presses >= 4:
                         self.m.shot("store-install-did-nothing")
                         raise Failure(f"pressed '{STORE_INSTALL}' {presses} times over {int(time.time() - clicked)} s "
                                       "and the store showed no sign of installing: " + vision.text_of(words)[:400])
-                    self.m.click(*vision.centre(b[0]), label="install (again)")
+                    # Each try is a different hand, and the log says which one took:
+                    # 2: a hand arriving (small moves) and a slow press; 3: a double press
+                    how = {1: dict(jiggle=True, hold=0.4), 2: dict(double=True)}.get(presses, {})
+                    self.m.click(*vision.centre(b[0]), label=f"install (again, try {presses + 1}: {how or 'plain'})", **how)
                     self.m.move(1150, 300)
                     clicked, presses = time.time(), presses + 1
                     continue
