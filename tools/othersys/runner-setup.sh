@@ -18,8 +18,7 @@ sleep 1
 ls -l /dev/kvm >&2
 [ -w /dev/kvm ] || { echo "runner-setup: no usable /dev/kvm" >&2; exit 1; }
 nproc >&2; free -g >&2
-sudo apt-get update -q >&2
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+sh "$(dirname "$0")/../apt.sh" \
     qemu-system-x86 qemu-utils ovmf xorriso gdisk fdisk dosfstools mtools ntfs-3g \
     tesseract-ocr tesseract-ocr-eng python3-pil gpgv zip >&2
 for f in /usr/share/OVMF/OVMF_CODE_4M.ms.fd /usr/share/OVMF/OVMF_VARS_4M.ms.fd; do

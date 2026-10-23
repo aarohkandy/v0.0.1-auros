@@ -87,8 +87,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: tools
         run: |
-          sudo apt-get update -q
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+          sh tools/apt.sh \
               mingw-w64 wine wine64 osslsigncode openssl python3 gcc libc6-dev make \
               grub-common gdisk mtools dosfstools cpio sbsigntool libxml2-utils file \
               binutils zstd e2fsprogs fonts-dejavu-core
@@ -254,8 +253,7 @@ jobs:
               sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          sudo apt-get update -q
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+          sh tools/apt.sh \
               qemu-system-x86 qemu-utils ovmf gdisk dosfstools mtools e2fsprogs cpio python3 \
               zstd grub-common sbsigntool file binutils iproute2 gcc libc6-dev
           ls -l /dev/kvm

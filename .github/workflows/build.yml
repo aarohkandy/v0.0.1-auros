@@ -137,8 +137,7 @@ jobs:
           ( sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
               /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift \
               /usr/local/share/chromium /usr/local/julia* 2>/dev/null; echo removed > /tmp/freed ) &
-          sudo apt-get update -q
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+          sh tools/apt.sh \
               debootstrap squashfs-tools zstd gdisk dosfstools mtools e2fsprogs \
               sbsigntool mingw-w64 gcc libc6-dev make python3 cpio file binutils \
               osslsigncode libxml2-utils pigz
