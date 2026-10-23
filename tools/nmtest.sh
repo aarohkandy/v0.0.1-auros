@@ -72,10 +72,34 @@ fi
 
 echo
 echo "  her wifi, carried across from Windows"
-# Ferry's emitter and its uuid, taken out of the scripts rather than copied.
-eval "$(sed -n '/^stable_uuid() {/,/^}/p' src/ferry/ferry-common.sh)"
-eval "$(sed -n '/^emit_nmconnection() {/,/^}/p' src/ferry/ferry-wifi)"
-emit_nmconnection "Grandma's Wi-Fi" wpa-psk 'correct horse battery staple' 0 true > "$TMP/home.nmconnection"
+# The keyfile her Wi-Fi arrives as. Ferry wrote it once and no longer
+# does (fb90bcd: Ferry never carries a saved password); the installer's
+# D10 tick box is to write it (docs/AURBRIDGE.md, "Fast path"), and that
+# writer is not built yet. Until it is, this is the shape it must write,
+# what Ferry wrote, and NetworkManager's reading of it is what is
+# checked. When the writer exists, take its output here instead.
+cat > "$TMP/home.nmconnection" <<'EOF'
+[connection]
+id=Grandma's Wi-Fi
+uuid=1b6f3e1c-0d5a-4c2e-8a41-6f0e2b7d9c35
+type=wifi
+autoconnect=true
+
+[wifi]
+mode=infrastructure
+ssid=Grandma's Wi-Fi
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=correct horse battery staple
+
+[ipv4]
+method=auto
+
+[ipv6]
+addr-gen-mode=default
+method=auto
+EOF
 norm() { run_nmcli --offline connection modify connection.zone '' < "$1" > "$2" 2>&1; }
 norm "$TMP/home.nmconnection" "$TMP/home.out"
 check "NetworkManager accepts the keyfile"        grep -q '^type=wifi' "$TMP/home.out"

@@ -175,10 +175,15 @@ echo "  and the build's own signing step"
 # Built in a copy of the tree, as tools/manifesttest.sh does, so out/
 # (which other tests read) is left alone.
 if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-    mkdir -p "$TMP/tree/src" "$TMP/tree/tools"
-    cp -r build "$TMP/tree/"
-    cp -r src/aurbridge "$TMP/tree/src/"
-    cp tools/pe_payload.py "$TMP/tree/tools/"
+    # All of build/, src/ and tools/ (5 MB): build/aurbridge keeps
+    # reaching further (tools/repo.sh, src/aurstage), and a copy missing
+    # one fails these checks for that reason instead of the one asked.
+    mkdir -p "$TMP/tree"
+    cp -r build src tools "$TMP/tree/"
+    # The copy has no git remote: tell it which repository, as asked of
+    # this checkout (build/aurbridge bakes in the website it names).
+    AUROS_REPO=$(sh tools/repo.sh) || AUROS_REPO=""
+    export AUROS_REPO
     if sh "$TMP/tree/build/aurbridge" > "$TMP/b1.log" 2>&1 &&
        sh build/sign --check "$TMP/tree/out/aurbridge-wizard.exe" "$TMP/tree/out/aurbridge.exe" >/dev/null 2>&1; then
         ok "with a key configured, the build signs what it builds"
