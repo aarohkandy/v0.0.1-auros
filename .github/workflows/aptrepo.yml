@@ -471,19 +471,21 @@ jobs:
         run: sudo bash tools/updatepolicytest.sh dryrun work/rootfs --repo-config 2>&1 | tee fixed.txt
       - name: who else reads the image's name, in the built image
         run: |
-          cd work/rootfs
           # Every file that asks the system what it is: lsb_release, os-release,
           # the two update variables. Each is a reader that now sees AurOS/Nocturne.
-          sudo grep -rIlE 'lsb_release|distro_codename|distro_id|VERSION_CODENAME|os-release' \
-              etc usr/bin usr/sbin usr/lib/apt usr/lib/python3 usr/share/unattended-upgrades usr/lib/auros usr/lib/systemd lib 2>/dev/null |
-            grep -vE '/__pycache__/|\.pyc$|/usr/share/doc/|\.md5sums$' | sort > readers.txt || true
-          wc -l readers.txt
+          # (Written outside work/rootfs: that tree belongs to root.)
+          R=$PWD/work/rootfs; O=$RUNNER_TEMP/readers; mkdir -p "$O"
+          ( cd "$R" && sudo grep -rIlE 'lsb_release|distro_codename|distro_id|VERSION_CODENAME|os-release' \
+              etc usr/bin usr/sbin usr/lib/apt usr/lib/python3 usr/share/unattended-upgrades usr/lib/auros usr/lib/systemd lib 2>/dev/null ) |
+            { grep -vE '/__pycache__/|\.pyc$|/usr/share/doc/|\.md5sums$' || true; } | sort > "$O/readers.txt"
+          wc -l "$O/readers.txt"
           # With the package that owns each, from the image's own dpkg.
           while read -r f; do
-            o=$(sudo chroot . dpkg -S "/$f" 2>/dev/null | head -1 | cut -d: -f1)
-            printf '%-70s %s\n' "$f" "${o:-(not a package)}"
-          done < readers.txt | tee readers-owned.txt | head -400
-          { echo '### files that read the identity (file, owning package)'; echo '```'; head -400 readers-owned.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            o=$(sudo chroot "$R" dpkg -S "/$f" 2>/dev/null | head -1 | cut -d: -f1)
+            printf '%-72s %s\n' "$f" "${o:-(not a package)}"
+          done < "$O/readers.txt" > "$O/owned.txt"
+          head -400 "$O/owned.txt"
+          { echo '### files that read the identity (file, owning package)'; echo '```'; head -400 "$O/owned.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: summary
         run: |
           { echo '### as built'; echo '```'; cat asbuilt.txt; echo '```'
