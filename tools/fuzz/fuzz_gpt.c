@@ -51,7 +51,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     (void)gpt_add(&t, GPT_TYPE_LINUX_ROOT, "AUROS-ROOT-WITH-A-NAME-LONGER-THAN-36-CHARACTERS",
                   t.first_usable, s ? s - 1 : 0, NULL, why, sizeof why);
 
-    /* What commit_table() writes, read back the way gpt_read() would. */
+    /* What commit_table() writes, read back the way gpt_read() would.
+     * Only for a table read from the primary: rescue_capture() refuses a
+     * backup-only disk before any commit can happen (rescue.c), so a
+     * backup's entry_lba never becomes a primary header's. */
+    if (t.from_backup) return 0;
     size_t ab = gpt_array_bytes(&t);
     uint8_t *hdr = malloc(t.sector), *arr = malloc(ab ? ab : 1);
     if (!hdr || !arr) abort();

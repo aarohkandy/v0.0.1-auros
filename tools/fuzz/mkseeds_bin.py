@@ -10,6 +10,7 @@ import gzip
 import json
 import os
 import struct
+import sys
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -189,8 +190,33 @@ def aurwl_seeds():
     out("aurwl", "popup", win + popup + shell(7) + shell(10, b"\x05\x05"))
 
 
+# ── hive: [mode] KEY \n [NAME \n] regf, built by Ferry's own test generator
+def hive_seeds():
+    import subprocess, tempfile
+    gen = os.path.join(HERE, "..", "..", "src", "ferry", "tests", "mkhive.py")
+    spec = json.dumps({
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders": {
+            "Personal": ["exp", "%OneDrive%\\Documents"],
+            "My Video": ["exp", "D:\\Media\\Videos"],
+            "\u00e9t\u00e9": ["sz", "Unicode name"]},
+        "Control Panel\\Desktop": {"LogPixels": ["dword", 120], "TileWallpaper": ["sz", "0"]},
+        "Keyboard Layout\\Preload": {"1": ["sz", "00000809"], "2": ["multi", ["a", "b"]]},
+        "Policy\\Secrets": {"@": ["binary", "not a real secret"]},
+    })
+    with tempfile.TemporaryDirectory() as d:
+        f = os.path.join(d, "NTUSER.DAT")
+        subprocess.run([sys.executable, gen, f, spec], check=True)
+        hive = open(f, "rb").read()
+    folders = b"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders\n"
+    out("hive", "values", b"\x00" + folders + hive)
+    out("hive", "subkeys", b"\x01" + b"Software\\Microsoft\n" + hive)
+    out("hive", "typed", b"\x02" + b"Control Panel\\Desktop\nLogPixels\n" + hive)
+    out("hive", "default", b"\x03" + b"Policy\\Secrets\n@\n" + hive)
+
+
 if __name__ == "__main__":
     inflate_seeds()
     gpt_seeds()
     journal_seeds()
     aurwl_seeds()
+    hive_seeds()
