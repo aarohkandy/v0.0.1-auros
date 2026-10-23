@@ -87,43 +87,64 @@ enum {
 static int g_refuse_now = NOW_UNTOUCHED;
 
 /* AND HOW THIS MACHINE BOOTED. If the staging environment came from the
- * ESP, restarting reaches Windows, because BootNext was one-shot and
- * has already been consumed. If it came from the recovery stick,
- * restarting reaches the STICK again -- the firmware entry points at
- * it -- and the person loops. */
+ * ESP, restarting reaches Windows, because BootNext was one-shot and has
+ * already been consumed. If it came from the recovery stick, restarting
+ * reaches the STICK again -- the firmware entry points at it -- and the
+ * person loops, so then nothing restarts by itself and she is told to
+ * take the stick out.
+ *
+ * THE WORDS, for the console and the log (the screen has its own, in
+ * src/aurscreen/screen.c, and tells her the same things): "AurOS Setup"
+ * and "Install AurOS" are the names on the buttons she pressed
+ * (docs/DESIGN-DIRECTION.md section 4); the restart is automatic, because
+ * "turn it off and on again" asks her to hold a power button for several
+ * seconds on the one screen she cannot afford to get wrong. */
 static void say_what_happens_next(int now)
 {
     stage_say("%s", "");
+    static const char *const WHERE[] = { "untouched", "smaller", "auros", "windows", "room" };
+    stage_screen_note("aurstage-now %s", WHERE[now]);
     if (g_from_usb)
         stage_say("Take the AurOS memory stick out of this computer first.");
     switch (now) {
     case NOW_AUROS_NEXT:
-        stage_say("AurOS is installed. Turn this computer off and on again");
+        stage_say("AurOS is installed. This computer will restart by itself");
         stage_say("and AurOS will start. After that, Windows starts as usual");
         stage_say("until you tell AurOS that everything works.");
-        return;
+        break;
     case NOW_WINDOWS_NEXT:
-        stage_say("AurOS is installed. Turn this computer off and on again");
+        stage_say("AurOS is installed. This computer will restart by itself");
         stage_say("and Windows will start. To start AurOS, hold the key your");
         stage_say("computer shows at start-up for a boot menu and choose AurOS.");
-        return;
+        break;
     case NOW_ROOM_MADE:
-        stage_say("Turn this computer off and on again. Windows will start");
+        stage_say("This computer will restart by itself. Windows will start");
         stage_say("as usual, with every file on it. The room Windows made for");
         stage_say("AurOS goes back to drive C: by itself when Windows starts.");
+        stage_say("To try again, open AurOS Setup in Windows and press");
+        stage_say("Install AurOS.");
         break;
     case NOW_SMALLER:
-        stage_say("Turn this computer off and on again. Windows will start;");
+        stage_say("This computer will restart by itself. Windows will start;");
         stage_say("it may check its drive first. It has less free space than");
         stage_say("before, because room was made for AurOS.");
+        stage_say("To try again, open AurOS Setup in Windows and press");
+        stage_say("Install AurOS.");
         break;
     default:
-        stage_say("Turn this computer off and on again. Windows will start");
-        stage_say("as usual -- nothing on it has been changed.");
+        stage_say("This computer will restart by itself. Windows will start");
+        stage_say("as usual. Nothing on it has been changed.");
+        stage_say("To try again, open AurOS Setup in Windows and press");
+        stage_say("Install AurOS.");
         break;
     }
-    stage_say("To try again, open AurBridge in Windows and press");
-    stage_say("Start installing.");
+}
+
+/* Stop, and (unless this came from a stick) restart by itself. */
+static void stop_and_restart(void)
+{
+    if (!g_from_usb) stage_restart_soon();
+    for (;;) pause();
 }
 
 /* A refusal ABOVE the line: nothing has been touched. */
@@ -138,7 +159,7 @@ static void refuse(const char *why, const char *remedy, const char *verdict)
     }
     stage_say("aurstage-report v1 verdict=%s record=refused -", verdict);
     say_what_happens_next(g_refuse_now);
-    for (;;) pause();
+    stop_and_restart();
 }
 
 /* A failure BELOW the line: something has been changed, and `now` says
@@ -156,7 +177,7 @@ static void give_up(const char *why, const char *remedy, const char *verdict,
     }
     stage_say("aurstage-report v1 verdict=%s record=failed -", verdict);
     say_what_happens_next(now);
-    for (;;) pause();
+    stop_and_restart();
 }
 
 static void step(rec_step s, const char *note)
@@ -280,6 +301,7 @@ static void install_gap(const stage_machine *m, journal *j)
 {
     char why[280];
     g_refuse_now = NOW_ROOM_MADE;
+    stage_screen_note("aurstage-mode gap");
     stage_say("record   AurOS was written beside Windows before the restart");
 
     journal_verdict jv = journal_check(j, m, why, sizeof why);
@@ -333,12 +355,11 @@ static void install_gap(const stage_machine *m, journal *j)
     int gok = dfd >= 0 && gpt_read(dfd, (uint32_t)disk->logical_sector,
                                    disk->bytes, &old) == 0;
     if (dfd >= 0) close(dfd);
-    if (!gok) refuse("This computer's partition table could not be read.",
+    if (!gok) refuse("The way this computer's disk is divided up could not be read.",
                      NULL, "no-table");
     uint32_t ss = old.sector;
     int wi = gpt_find_start(&old, win->start_lba * 512ull / ss);
-    if (wi < 0) refuse("The Windows partition is not in this disk's table where "
-                       "it was expected.", NULL, "moved");
+    if (wi < 0) refuse("The Windows part of this disk is not where it was expected.", NULL, "moved");
     uint64_t min_root = j->min_root_bytes ? j->min_root_bytes : min_root_bytes();
     stage_layout L;
     if (plan_compute_prepared(&old, wi, j->root_len, j->boot_len, j->rsc_bytes,
@@ -375,7 +396,7 @@ static void install_gap(const stage_machine *m, journal *j)
     uint64_t root_off = L.root_first * (uint64_t)ss;
     uint64_t boot_off = L.rec_first * (uint64_t)ss;
     char h1[65], h2[65];
-    stage_say("checking the copy of AurOS written before the restart");
+    stage_say("Checking the copy of AurOS that Windows wrote.");
     fprintf(stderr, "aurstage: ");
     if (extent_sha(diskdev, root_off, j->root_len, h1, dots, 0, 95) != 0 ||
         extent_sha(diskdev, boot_off, j->boot_len, h2, dots, 95, 100) != 0)
@@ -473,7 +494,7 @@ static void install_gap(const stage_machine *m, journal *j)
     sync();
     if (stage_switch_root(rootdev) != 0)
         give_up("AurOS is installed but did not start.",
-                "Turn this computer off and on again.", "handover-failed",
+                "This computer will restart by itself.", "handover-failed",
                 reg == 0 ? NOW_AUROS_NEXT : NOW_WINDOWS_NEXT);
     for (;;) pause();
 }
@@ -787,14 +808,14 @@ void install_run(const stage_machine *m)
                                    disk->bytes, &old) == 0;
     if (dfd >= 0) close(dfd);
     if (!gok)
-        refuse("This computer's partition table could not be read.",
+        refuse("The way this computer's disk is divided up could not be read.",
                NULL, "no-table");
 
     uint32_t ss = old.sector;
     int wi = gpt_find_start(&old, win->start_lba * 512ull / ss);
     if (wi < 0)
-        refuse("The Windows partition is not in this disk's table where it "
-               "was expected.", NULL, "moved");
+        refuse("The Windows part of this disk is not where it was "
+               "expected.", NULL, "moved");
 
     /* How small it can actually get. */
     stage_say("measuring how small the Windows drive can get");
@@ -823,7 +844,14 @@ void install_run(const stage_machine *m)
     if (part_bytes < sp.current_bytes) part_bytes = sp.current_bytes;
     uint64_t win_target = shrink_pick_target(part_bytes, sp.smallest_bytes,
                                              install_need);
-    int already_small = sp.current_bytes <= win_target;
+    /* WITHIN A QUARTER OF A GIGABYTE COUNTS AS THERE. ntfsresize's idea
+     * of the floor moves by a few clusters after every resize, so a
+     * volume a previous attempt shrank to the floor measures a hair
+     * smaller than the target the next attempt computes -- and shrinking
+     * it again by those clusters, and again on every retry, is how a
+     * floor-sized target walks. On a real disk the target is 16-40 GiB
+     * below the volume, so this changes nothing there. */
+    int already_small = sp.current_bytes <= win_target + (256ull << 20);
     if (already_small)
         stage_say("Windows was already made %.1f GiB by an earlier attempt; "
                   "it is not made any smaller",
@@ -1168,7 +1196,7 @@ void install_run(const stage_machine *m)
     sync();
     if (stage_switch_root(rootdev) != 0)
         give_up("AurOS is installed but did not start.",
-                "Turn this computer off and on again.", "handover-failed",
+                "This computer will restart by itself.", "handover-failed",
                 reg == 0 ? NOW_AUROS_NEXT : NOW_WINDOWS_NEXT);
     for (;;) pause();
 }
@@ -1185,9 +1213,11 @@ static void stop_restore(void)
      * they were never given is a dead end on the one screen that has to
      * say what to do next. */
     stage_say("%s", "");
-    stage_say("Turn this computer off with the power button, then on again.");
-    stage_say("If you have an AurOS memory stick, plug it in first.");
+    stage_screen_note("aurstage-now windows");
+    stage_say("This computer will restart by itself and Windows will start.");
+    stage_say("If you have an AurOS memory stick, plug it in and try again.");
     sync();
+    stage_restart_soon();
     for (;;) pause();
 }
 
@@ -1327,6 +1357,19 @@ void restore_run(const stage_machine *m)
               m->disk[best_disk].name, oc.table_restored, oc.esp_restored,
               oc.volumes_grown, oc.volumes_left_small, oc.mbr_restored);
     stage_say("%s", "");
+    if (best_on_target) {
+        /* The copy was on this computer's own disk (no stick was used):
+         * restarting reaches Windows, so it restarts -- "the screen goes
+         * black, then Windows starts" is what she was told. */
+        stage_say("Windows is back. This computer will restart by itself");
+        stage_say("and Windows will start.");
+        sync();
+        for (int s = 15; s > 0; s--) {
+            stage_screen_note("aurstage-countdown %d", s);
+            sleep(1);
+        }
+        reboot(RB_AUTOBOOT);
+    }
     stage_say("Windows is back. This computer will switch itself off;");
     stage_say("switch it on again and Windows starts. If an AurOS memory");
     stage_say("stick is plugged in, take it out first.");

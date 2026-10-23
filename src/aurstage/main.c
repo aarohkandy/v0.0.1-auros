@@ -556,12 +556,22 @@ static void restore_must_be_fresh(void)
     for (;;) pause();
 }
 
-static void stop_here(const char *why)
+/* A stop before anything is decided. `untouched` is true only where the
+ * caller knows nothing was written; the screen says nothing it cannot
+ * stand behind (src/aurscreen/screen.c). The computer then restarts by
+ * itself rather than asking her to hold a power button down. */
+static void stop_here(const char *why, int untouched)
 {
     stage_warn("%s", why);
-    stage_say("Nothing on this computer has been changed.");
-    stage_say("Turn it off with the power button and start it again;");
-    stage_say("it will come back to Windows.");
+    if (untouched) {
+        stage_say("Nothing on this computer has been changed.");
+        stage_screen_note("aurstage-now untouched");
+    }
+    stage_say("This computer will restart by itself and Windows will start.");
+    stage_say("aurstage-report v1 verdict=stopped-early record=%s -",
+              untouched ? "refused" : "failed");
+    sync();
+    stage_restart_soon();
     for (;;) pause();
 }
 
@@ -618,7 +628,7 @@ int main(void)
             sync();
             reboot(RB_POWER_OFF);
         }
-        stop_here("AurOS cannot see the drive on this computer yet.");
+        stop_here("AurOS cannot see the drive on this computer yet.", 1);
     }
 
     stage_machine m;
@@ -648,13 +658,13 @@ int main(void)
     if (stage_cmdline_has("aurstage.restore")) {
         restore_must_be_fresh();
         restore_run(&m);
-        stop_here("the restore stopped unexpectedly");
+        stop_here("the restore stopped unexpectedly", 0);
     }
 
     if (stage_cmdline_has("aurstage.install")) {
         install_run(&m);
         /* install_run never returns. */
-        stop_here("the installer stopped unexpectedly");
+        stop_here("the installer stopped unexpectedly", 0);
     }
 
     if (dry) {
@@ -673,15 +683,15 @@ int main(void)
          * a machine with two. Stage B gets this from the journal
          * AurBridge wrote, which names it. */
         stop_here("nobody said which system to start "
-                  "(no aurstage.root= on the kernel command line)");
+                  "(no aurstage.root= on the kernel command line)", 1);
     }
 
     stage_say("asked to hand over to %s", root);
     if (stage_switch_root(root) != 0)
-        stop_here("that system could not be started");
+        stop_here("that system could not be started", 0);
 
     /* switch_root does not return. If we are here, exec failed after
      * the old root was already gone, and there is nothing left to try. */
-    stop_here("the handover did not complete");
+    stop_here("the handover did not complete", 0);
     return 0;
 }

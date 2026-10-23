@@ -362,7 +362,14 @@ for f in DejaVuSans.ttf DejaVuSans-Bold.ttf; do
     cp "$RFS/usr/share/fonts/truetype/dejavu/$f" usr/share/fonts/truetype/dejavu/ \
         || die "no $f in $RFS for the staging screen"
 done
-note "aurscreen $(du -h usr/bin/aurscreen | cut -f1), with DejaVu Sans"
+# The same face as the installer and the desktop (docs/DESIGN-DIRECTION.md
+# section 3, "Type"): about 50 KB each. DejaVu stays as the fallback.
+mkdir -p usr/share/auros/fonts
+cp "$ROOT/src/aurbridge/fonts/atkinsonnext-400.ttf" usr/share/auros/fonts/ui.ttf \
+    || die "no UI face for the staging screen"
+cp "$ROOT/src/aurbridge/fonts/atkinsonnext-700.ttf" usr/share/auros/fonts/ui-bold.ttf \
+    || die "no bold UI face for the staging screen"
+note "aurscreen $(du -h usr/bin/aurscreen | cut -f1), with the UI face and DejaVu Sans as fallback"
 
 # ── the programs it shells out to ──────────────────────────────────
 #

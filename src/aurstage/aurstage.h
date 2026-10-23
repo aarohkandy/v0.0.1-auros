@@ -196,5 +196,16 @@ void stage_warn(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void stage_screen_start(void);
 void stage_screen_stop(void);
 void stage_progress(int pct);
+/* One line for the screen alone ("aurstage-mode gap", "aurstage-now
+ * smaller", "aurstage-countdown 12": see src/aurscreen/screen.c). The
+ * console and the log do not get it. */
+void stage_screen_note(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+/* After a stop, restart the computer by itself -- so nobody has to hold
+ * a power button down, and the next start is the one-shot that was armed
+ * for it (Windows, or AurOS when it is installed). Counts down on the
+ * screen. `aurstage.restart_after=N` on the kernel line sets the seconds
+ * (default 60); 0 means stay put (the tests, a helper). Returns only
+ * when it is told to stay. */
+void stage_restart_soon(void);
 
 #endif

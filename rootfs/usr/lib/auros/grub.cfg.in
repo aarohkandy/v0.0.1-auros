@@ -151,7 +151,7 @@ submenu 'Put Windows back (remove AurOS)' --class windows --id put-windows-back 
         insmod part_gpt
         insmod fat
         search --no-floppy --file --set=root /EFI/AurOS/staging.efi
-        linux  /EFI/AurOS/staging.efi aurstage.restore aurstage.asked=${auros_req} console=tty0 ${aurstage_extra}
+        linux  /EFI/AurOS/staging.efi aurstage.restore aurstage.asked=${auros_req} console=tty0 gpt quiet loglevel=3 ${aurstage_extra}
         initrd /EFI/AurOS/staging.img
     }
 }

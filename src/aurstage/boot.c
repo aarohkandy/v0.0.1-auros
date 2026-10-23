@@ -26,6 +26,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/mount.h>
+#include <sys/reboot.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <signal.h>
@@ -173,6 +174,37 @@ void stage_progress(int pct)
     char b[32];
     int n = snprintf(b, sizeof b, "aurstage-progress %d\n", pct);
     if (n > 0) { ssize_t ignored = write(screen_fd, b, (size_t)n); (void)ignored; }
+}
+
+void stage_screen_note(const char *fmt, ...)
+{
+    if (screen_fd < 0) return;
+    char b[160];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(b, sizeof b - 1, fmt, ap);
+    va_end(ap);
+    if (n <= 0) return;
+    if (n > (int)sizeof b - 2) n = (int)sizeof b - 2;
+    b[n++] = '\n';
+    ssize_t ignored = write(screen_fd, b, (size_t)n); (void)ignored;
+}
+
+void stage_restart_soon(void)
+{
+    char v[16];
+    long secs = 60;
+    if (stage_cmdline_value("aurstage.restart_after=", v, sizeof v) == 0)
+        secs = strtol(v, NULL, 10);
+    if (secs <= 0) return;
+    if (secs > 600) secs = 600;
+    stage_say("this computer will restart by itself in %ld seconds", secs);
+    for (long s = secs; s > 0; s--) {
+        stage_screen_note("aurstage-countdown %ld", s);
+        sleep(1);
+    }
+    sync();
+    reboot(RB_AUTOBOOT);
 }
 
 static void say_v(const char *tag, const char *fmt, va_list ap)
