@@ -19,6 +19,45 @@ Counts of kept findings by final severity: before-anyone-uses 1, before-public-l
 
 ---
 
+## 0. Status (kept current by stream LEGAL; commits are on `main`)
+
+Last updated 2026-10-23. "Done" means the agent work is in and checked; "owner" and "other stream"
+say who holds the rest. The hand-offs with the exact strings are in `docs/handoff/streams/LEGAL.md`.
+
+| Item | Status | Where / commit |
+|---|---|---|
+| LIC-1 source and offer | **Done for `v0.1.0-618726b`**: `sources-v0.1.0-618726b` published and verified from its public copy (539 source packages, 2.7 GB); tool, workflow, tests (`build/sources`, `sources.yml`, `tools/legal/sourcestest.py`: 34 cases, 7 mutants). Open: stream E wires `sources.yml` into `release.yml` and `promote`; the owner's mailbox replaces `CONTACT_EMAIL` | 4225a73, run 39975787998 |
+| LIC-2 licenses page and footers | **Done**: `website/licenses.html`, footers on all five pages, link under both Get buttons, `check.py` fails without them; in-OS help page. Open: installer Licenses button (B), Settings > About link (C) | b1766ec, 1fc9cac |
+| LIC-3 installer notices | **Done in the repo**: `docs/legal/notices/NOTICES.txt`, `docs/RELINK.md`. Open: B embeds resources 200 and 202; A2's `STAGING-CONTENTS.txt` (the sources job already adds the build host's glibc) | b1766ec |
+| LIC-4 TERMS vs GPL | **Done** (rewritten: licenses win, firmware, no use restriction) | 5aec982 |
+| LIC-5 / TM-2 Canonical | Mark hygiene **done** (`check.py`, `marks` job); letter drafted (`CANONICAL-LETTER.md`, owner optional) | b1766ec, 68273c8 |
+| LIC-6 / TM-5 Firefox | `MOZILLA.md` written; forge tarball refusal is stream C's | 68273c8 |
+| LIC-7 firmware | Sentence done; the rootfs license-file check is open (stream C/E) | 5aec982 |
+| LIC-8 / LIC-9 notices | **Done**: `THIRD-PARTY-NOTICES`, `LICENSE` in the image, NOTICE files, Unicode header | b1766ec, b37b655 |
+| LIC-10 codecs | Sentence done; `MONETISATION-GATE.md`; the `media_codecs` switch and codec record are open (stream C) | 5aec982, 68273c8 |
+| LIC-11 / BIZ-3 / BIZ-4 | `CONTRIBUTING.md`, `PROVENANCE.md`, `templates/IP-ASSIGNMENT.md` done | 68273c8 |
+| TM-1 | Update origins fixed and proven by S5; `check.py image` reports the lsb-release leftover until stream C diverts it | S5 956af4a; b1766ec |
+| TM-3 | **Done** (footer paragraph with the Apple clause on every page) | b1766ec |
+| TM-4 | **Done: a real problem found** (`NAME-SEARCH.md`): UserTesting rebranded as Auros on 29 Sep 2026 and filed AUROS in class 42 in four countries; Emergent Systems holds US reg. 4512239 AUROS in class 9. Owner decision needed before the public link | ddfce87 |
+| PRI-1 | **Done** (site and footer sentences, code-signing page) | b1766ec |
+| PRI-2 | Privacy page rewritten to what is built; the egress test (WP-38) and the host lint are open | 5aec982, b1766ec |
+| PRI-3, 4, 5, 6, 9 | Later (Wishes gate): `WISHES-PRIVACY-DRAFT.md` keeps the old text | 5aec982 |
+| PRI-7 | Retention sentence **done**; `docs/ops/SUPPORT-OPS.md` written | 5aec982, c4db4df |
+| PRI-8, LIA-8 | Wording **done** ("AurOS itself is free"); `SALES-TERMS-OUTLINE.md`, `PAID-TERMS.md` | 5aec982, c4db4df |
+| LIA-1 Terms, Disclaimer, assent | Pages **done**, lawyer gate replaced (`README.md`); the Ready-page agreement line is open (B) | b1766ec |
+| LIA-2 risk sentence | Site and printed guide **done**; Ready page open (B) | b1766ec |
+| LIA-3 territory | Terms sentence **done**; the edge Worker's country check is open (OPS) | 5aec982 |
+| LIA-4 EU PLD | `docs/EU.md`; later | c4db4df |
+| LIA-5 data-loss playbook | **Done** (`docs/ops/INCIDENTS.md` playbook 5, step 6) | 0cc51ed |
+| LIA-6 / LIA-7 / BIZ-1,2,5,6 | Owner: `ENTITY-CHECKLIST.md`, `INSURANCE-QUESTIONS.md` | 68273c8 |
+| SL-1, SL-2 | `docs/security/CRA.md` | c4db4df |
+| SL-3 | `EXPORT.md` | 68273c8 |
+| AI-1 .. AI-8 | Later (Wishes gate); the Worker kill switch is stream CL's; `ANTHROPIC-CHECKLIST.md` | c4db4df |
+| WEB-1 | **Done** (pages, footer links, check; the D15 gate in `README.md`) | b1766ec |
+| WEB-2, WEB-4 | `docs/ACCESSIBILITY-CONFORMANCE.md` stub; axe-core and forced-colors are stream D's | c4db4df |
+| WEB-3 | **Done** (wording); the checkout move waits for a price | 5aec982 |
+| BIZ-7 | The by-channel money line waits for a price (`MONETISATION-GATE.md`) | 68273c8 |
+
 ## 1. Summary
 
 ### 1.1 What must be true before anyone uses AurOS
