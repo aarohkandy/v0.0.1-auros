@@ -44,7 +44,14 @@ mkdir "$LOCK" 2>/dev/null || { echo "another end-to-end test is running"; exit 2
 MTMP=$(mktemp -d "${TMPDIR:-/tmp}/installtest.XXXXXX")
 [ -n "$MTMP" ] && [ -d "$MTMP" ] || { rmdir "$LOCK"; echo "no scratch dir"; exit 2; }
 TMP="$MTMP"
-trap 'mountpoint -q "$MTMP/m" 2>/dev/null && umount "$MTMP/m"; rm -rf "$MTMP" "$LOCK"' EXIT
+# A kill (timeout, ^C) must not leak the images in $TMP: the EXIT trap alone
+# does not run on a signal in dash, and a leaked 3 GB disk image per run
+# once filled homebase. INT and TERM exit, which runs the EXIT trap, and
+# the background QEMU goes with it.
+_a2_clean() { kill $(jobs -p) 2>/dev/null; mountpoint -q "$MTMP/m" 2>/dev/null && umount "$MTMP/m"; rm -rf "$MTMP" "$LOCK"; }
+trap _a2_clean EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo
 echo "Does it actually install AurOS, and leave Windows intact?"

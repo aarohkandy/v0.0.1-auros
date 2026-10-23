@@ -60,7 +60,14 @@ nt() { p="$RFS/usr/sbin/$1"; [ -x "$p" ] || p="$RFS/usr/bin/$1"; shift
 LOCK="${TMPDIR:-/tmp}/matrixtest.lock"
 mkdir "$LOCK" 2>/dev/null || { echo "another matrixtest is running"; exit 2; }
 T=$(mktemp -d "${TMPDIR:-/tmp}/matrix.XXXXXX")
-trap 'mountpoint -q "$T/m" 2>/dev/null && umount "$T/m"; rm -rf "$T" "$LOCK"' EXIT
+# A kill (timeout, ^C) must not leak the images in $TMP: the EXIT trap alone
+# does not run on a signal in dash, and a leaked 3 GB disk image per run
+# once filled homebase. INT and TERM exit, which runs the EXIT trap, and
+# the background QEMU goes with it.
+_a2_clean() { kill $(jobs -p) 2>/dev/null; mountpoint -q "$T/m" 2>/dev/null && umount "$T/m"; rm -rf "$T" "$LOCK"; }
+trap _a2_clean EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 mkdir -p "$T/m"
 
 echo

@@ -33,7 +33,14 @@ nt() { p="$RFS/usr/sbin/$1"; [ -x "$p" ] || p="$RFS/usr/bin/$1"; shift
        "$LD" --library-path "$LP" "$p" "$@"; }
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/shrinktest.XXXXXX")
-trap 'mountpoint -q "$TMP/m" 2>/dev/null && umount "$TMP/m"; rm -rf "$TMP"' EXIT
+# A kill (timeout, ^C) must not leak the images in $TMP: the EXIT trap alone
+# does not run on a signal in dash, and a leaked 3 GB disk image per run
+# once filled homebase. INT and TERM exit, which runs the EXIT trap, and
+# the background QEMU goes with it.
+_a2_clean() { kill $(jobs -p) 2>/dev/null; mountpoint -q "$TMP/m" 2>/dev/null && umount "$TMP/m"; rm -rf "$TMP"; }
+trap _a2_clean EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo
 echo "Does the one irreversible step leave the files where they were?"

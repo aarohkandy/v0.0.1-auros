@@ -25,7 +25,14 @@ bad() { checked=$((checked+1)); fail=$((fail+1)); printf '    %-60s %s\n' "$1" "
 [ -x out/aurbridge-sim ] || { echo "run ./build/aurbridge first"; exit 2; }
 command -v sgdisk >/dev/null || { echo "need sgdisk"; exit 2; }
 T=$(mktemp -d "${TMPDIR:-/tmp}/aborttest.XXXXXX")
-trap 'rm -rf "$T"' EXIT
+# A kill (timeout, ^C) must not leak the images in $TMP: the EXIT trap alone
+# does not run on a signal in dash, and a leaked 3 GB disk image per run
+# once filled homebase. INT and TERM exit, which runs the EXIT trap, and
+# the background QEMU goes with it.
+_a2_clean() { kill $(jobs -p) 2>/dev/null; rm -rf "$T"; }
+trap _a2_clean EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo
 echo "Does closing the installer take back everything it did?"

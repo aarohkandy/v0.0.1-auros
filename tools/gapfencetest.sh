@@ -28,7 +28,14 @@ bad() { checked=$((checked+1)); fail=$((fail+1)); printf '    %-58s %s\n' "$1" "
 command -v sgdisk >/dev/null 2>&1 || { echo "  no sgdisk; skipping"; exit 0; }
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/gapfence.XXXXXX")
-trap 'rm -rf "$TMP"' EXIT
+# A kill (timeout, ^C) must not leak the images in $TMP: the EXIT trap alone
+# does not run on a signal in dash, and a leaked 3 GB disk image per run
+# once filled homebase. INT and TERM exit, which runs the EXIT trap, and
+# the background QEMU goes with it.
+_a2_clean() { kill $(jobs -p) 2>/dev/null; rm -rf "$TMP"; }
+trap _a2_clean EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # A harness that drives the real fence (plat_sim.c) and the real parser
 # (format.c). Nothing here is reimplemented.

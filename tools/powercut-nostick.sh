@@ -45,7 +45,14 @@ mach_need
 LOCK="${TMPDIR:-/tmp}/installtest.lock"
 mkdir "$LOCK" 2>/dev/null || { echo "another end-to-end test is running"; exit 2; }
 MTMP=$(mktemp -d "${TMPDIR:-/tmp}/powercut-nostick.XXXXXX")
-trap 'mountpoint -q "$MTMP/m" 2>/dev/null && umount "$MTMP/m"; rm -rf "$MTMP" "$LOCK"' EXIT
+# A kill (timeout, ^C) must not leak the images in $TMP: the EXIT trap alone
+# does not run on a signal in dash, and a leaked 3 GB disk image per run
+# once filled homebase. INT and TERM exit, which runs the EXIT trap, and
+# the background QEMU goes with it.
+_a2_clean() { kill $(jobs -p) 2>/dev/null; mountpoint -q "$MTMP/m" 2>/dev/null && umount "$MTMP/m"; rm -rf "$MTMP" "$LOCK"; }
+trap _a2_clean EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo
 echo "With no memory stick: if the power goes at the worst instant, is"
@@ -168,6 +175,7 @@ else
     bad "it installs" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -4)"
     echo; echo "nothing else here means anything without this."; exit 1
 fi
+cp --sparse=always "$MTMP/run.img" "$MTMP/installed.img"
 REF_T=$(ntfs_total "$MTMP/run.img" "$P2S" | cut -d' ' -f1)
 echo "    (Windows' filesystem after one install: $REF_T sectors, from $NTFSTOT)"
 
@@ -267,6 +275,76 @@ for pt in $POINTS; do
         fi ;;
     esac
 done
+
+# ── the power goes during Put Windows back ──────────────────────────
+#
+# The restore is run from AurOS, and once it has rewritten the partition
+# table the partition AurOS starts from is gone and nothing can start it
+# again (docs/safety, finding on rescue.c). So it does the part that needs
+# AurOS first -- the Windows startup files, and only the megabytes that
+# differ -- then the table, and last the filesystem, which Windows can
+# finish by itself. A cut before the table: AurOS is still in the table and
+# running the restore again finishes it. A cut after: Windows starts with
+# the right table and every file, and the only thing left is room.
+RESTORE_POINTS="${RESTORE_POINTS:-restore-esp-mid restore-array restore-sector restore-backup restore-grow}"
+if [ -z "${*:-}" ]; then
+  echo
+  echo "  the power goes during Put Windows back"
+  # Windows has changed its startup files since the install: two places
+  # in the EFI partition differ from what was saved, one before the
+  # middle of the restore and one after, so a cut in the middle leaves it
+  # half done.
+  tear_esp() { python3 - "$1" "$((P1S*512))" <<'EOPY'
+import sys, os
+f = open(sys.argv[1], 'r+b'); base = int(sys.argv[2])
+for mb in (20, 80):
+    f.seek(base + mb * 1048576 + 4096); f.write(os.urandom(4096))
+f.close()
+EOPY
+  }
+  for pt in $RESTORE_POINTS; do
+    printf '\n  ── %s\n' "$pt"
+    cp --sparse=always "$MTMP/installed.img" "$MTMP/torn.img"
+    tear_esp "$MTMP/torn.img"
+    [ "$(dd if="$MTMP/torn.img" bs=512 skip=$P1S count=$((P1E-P1S+1)) status=none | md5sum | cut -d' ' -f1)" != "$ESPMD5" ] \
+        && ok "(Windows has changed its startup files since the install)" \
+        || bad "(Windows has changed its startup files since the install)"
+    if boot "$MTMP/torn.img" "aurstage.restore aurstage.die_at=$pt" "AURSTAGE-FAULT $pt" 900; then
+        ok "the machine stops dead at $pt"
+    else
+        bad "the machine stops dead at $pt" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -3)"
+        continue
+    fi
+    cp --sparse=always "$MTMP/run.img" "$MTMP/cut.img"
+    win_files_ok "$MTMP/cut.img" "after the cut"
+    case "$pt" in
+      restore-esp-mid|restore-array)
+        # AurOS is still in the table: run it again.
+        _n=$(sgdisk -p "$MTMP/cut.img" 2>/dev/null | sed -n '/^Number/,$p' | tail -n +2 | grep -c .)
+        [ "$_n" = 7 ] && ok "AurOS is still in the table (7 partitions): it can be run again" \
+                      || bad "AurOS is still in the table, so it can be run again" "it has $_n"
+        if boot "$MTMP/cut.img" "aurstage.restore" "verdict=restored" 900; then
+            ok "running it again finishes the job"
+            back_to_normal "$MTMP/run.img" "after $pt, again"
+        else
+            bad "running it again finishes the job" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -4)"
+        fi ;;
+      *)
+        # The table is back; the partition AurOS started from is gone.
+        # Windows starts (and checks its drive).
+        _n=$(sgdisk -p "$MTMP/cut.img" 2>/dev/null | sed -n '/^Number/,$p' | tail -n +2 | grep -c .)
+        [ "$_n" = 3 ] && ok "the original three partitions are back" \
+                      || bad "the original three partitions are back" "it has $_n"
+        windows_checks_it "$MTMP/cut.img" || true
+        [ "$(dd if="$MTMP/cut.img" bs=512 skip=$P1S count=$((P1E-P1S+1)) status=none | md5sum | cut -d' ' -f1)" = "$ESPMD5" ] \
+            && ok "the EFI partition is byte-for-byte what it was (restored before the table)" \
+            || bad "the EFI partition is byte-for-byte what it was" "the table came first"
+        sgdisk -v "$MTMP/cut.img" 2>&1 | grep -q "No problems found" \
+            && ok "the table is valid" || bad "the table is valid" "$(sgdisk -v "$MTMP/cut.img" 2>&1 | head -2)"
+        win_files_ok "$MTMP/cut.img" "Windows starting" ;;
+    esac
+  done
+fi
 
 echo
 if [ "$fail" -gt 0 ]; then

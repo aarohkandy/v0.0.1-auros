@@ -59,6 +59,10 @@ no-guid-check)
     sub src/aurbridge/main.c 'if (_stricmp(g, want_guid) != 0) {' 'if (0) {' ;;
 no-sysdisk-check)
     sub src/aurbridge/main.c 'r.disks[r.system_disk].index == disk)' 'r.disks[r.system_disk].index == disk && 0)' ;;
+file-changed)
+    # applied by fastpath.yml between the engine's run and the independent
+    # check (it needs the throwaway disk); nothing to change in the source.
+    echo "mutant file-changed is applied by the workflow"; exit 0 ;;
 *)  echo "no such mutant: ${1:-}"; exit 2 ;;
 esac
 echo "mutant $1 applied"

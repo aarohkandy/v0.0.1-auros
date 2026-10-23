@@ -24,7 +24,14 @@ bad() { checked=$((checked+1)); fail=$((fail+1)); printf '    %-56s %s\n' "$1" "
         shift; for m in "$@"; do printf '      %s\n' "$m"; done; }
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/probetest.XXXXXX")
-trap 'mountpoint -q /probe 2>/dev/null && umount /probe; rm -rf "$TMP"' EXIT
+# A kill (timeout, ^C) must not leak the images in $TMP: the EXIT trap alone
+# does not run on a signal in dash, and a leaked 3 GB disk image per run
+# once filled homebase. INT and TERM exit, which runs the EXIT trap, and
+# the background QEMU goes with it.
+_a2_clean() { kill $(jobs -p) 2>/dev/null; mountpoint -q /probe 2>/dev/null && umount /probe; rm -rf "$TMP"; }
+trap _a2_clean EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo
 echo "Does it record the network without requiring it -- and still blame"
