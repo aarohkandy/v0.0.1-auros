@@ -2786,28 +2786,7 @@ static const pf_volume *sys_volume(void)
     return NULL;
 }
 
-/* HOW MUCH AurOS TAKES, AND WHAT WINDOWS KEEPS, the way the install
- * will decide it (shrink_pick_target in src/aurstage/shrink.c): Windows
- * keeps 15% of its drive free, and never less than 20 GiB; AurOS takes
- * what is left of the free space, up to 40 GiB, and never less than it
- * needs. Said in GiB with "GB" on them, which is what Windows' own
- * Explorer shows her. 0 for both when the space was not measured. */
 #define GIB (1024ULL * 1024 * 1024)
-static void space_split(uint64_t *auros, uint64_t *windows_free)
-{
-    *auros = 0; *windows_free = 0;
-    const pf_volume *v = sys_volume();
-    if (!v || !v->shrink_measured) return;
-    uint64_t reclaimable = v->offline_shrinkable;
-    uint64_t reserve = v->size_bytes / 100 * 15;
-    if (reserve < 20 * GIB) reserve = 20 * GIB;
-    uint64_t headroom = reclaimable > reserve ? reclaimable - reserve : 0;
-    uint64_t share = headroom < 40 * GIB ? headroom : 40 * GIB;
-    if (share < PF_AUROS_NEED_BYTES) share = PF_AUROS_NEED_BYTES;
-    if (share > reclaimable) share = reclaimable;
-    *auros = share;
-    *windows_free = reclaimable - share;
-}
 
 /* A tick box she can untick, ticked for her. The whole row is the
  * target, at least 44 px tall. */
@@ -2850,22 +2829,16 @@ static int page_ready(int x, int y, int w)
     /* tighter when the page carries the two optional lines (her Wi-Fi, the
      * drive lock): all eight still fit 1366x768 without scrolling */
     int extra = wifi_offered() + bitlocker_paused_here();
-    int gap = S(g_dense ? 6 : g_short ? 10 : extra ? 9 : 16);
+    int gap = S(g_dense ? 6 : g_short ? 10 : extra > 1 ? 6 : extra ? 9 : 16);
     wchar_t buf[300];
 
     y += page_head(L"Ready to install", NULL, x, y, w) + S(g_dense ? 12 : g_short ? 18 : 28);
 
-    y += glyph_row(G_HOME, L"Windows and all your files stay on this computer.", x, y, narrow) + gap;
-
-    uint64_t take, keep;
-    space_split(&take, &keep);
-    if (take)
-        _snwprintf(buf, 299, L"There is enough room for AurOS. Windows keeps %d GB free.",
-                   (int)(keep / GIB));
-    else
-        _snwprintf(buf, 299, L"There is enough room for AurOS. Windows keeps at least 20 GB free.");
-    buf[299] = 0;
-    y += glyph_row(G_DRIVE, buf, x, y, narrow) + gap;
+    y += glyph_row(G_HOME, L"Windows and all your files stay, and there is enough room for "
+                           L"AurOS.", x, y, narrow) + gap;
+    /* and the one thing that does not come with her (A-07, EASY rule 9: say
+     * it before, not after) */
+    y += glyph_row(G_INFO, L"Programs made for Windows don\u2019t run in AurOS.", x, y, narrow) + gap;
 
     y += glyph_row(G_LOOK, STYLES[g_sel_style].ready, x, y, narrow) + gap;
 
@@ -2889,8 +2862,8 @@ static int page_ready(int x, int y, int w)
     eta_range(&lo, &hi);
     wchar_t rng[64];
     range_words(lo, hi, rng, 64);
-    _snwprintf(buf, 299, L"It takes about %ls. The screen goes dark for a minute or two of "
-                         L"that.%ls", rng,
+    _snwprintf(buf, 299, L"It takes about %ls. The screen goes dark for a minute or "
+                         L"two.%ls", rng,
                disk_is_slow() == 1
                  ? L" This computer has an older, slower kind of drive." : L"");
     buf[299] = 0;
