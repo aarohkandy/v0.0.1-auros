@@ -48,8 +48,7 @@ HERE=/usr/lib/auros/lock
 NAME=${AUROS_LOCK_NAME:-auros-root}
 ESP=${AUROS_LOCK_ESP:-/boot/efi}
 REPIN=/run/auros-lock/repin
-ENROLL=systemd-cryptenroll
-command -v "$ENROLL" >/dev/null 2>&1 || ENROLL=/usr/bin/systemd-cryptenroll
+ENROLL=$(command -v systemd-cryptenroll 2>/dev/null) || ENROLL=/usr/bin/systemd-cryptenroll   # an absolute path: prepare tests it with -x
 
 say() { printf 'lockctl: %s\n' "$*" >&2; }
 die() { say "$*"; exit 1; }

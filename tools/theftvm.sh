@@ -34,6 +34,7 @@
 set -u
 cd "$(dirname "$0")/.."
 TOP=$PWD
+export PYTHONDONTWRITEBYTECODE=1    # as root in a container this would leave root-owned files in the checkout
 NOAES=0; [ "${1:-}" = --noaes ] && NOAES=1
 CODE=/usr/share/OVMF/OVMF_CODE_4M.ms.fd
 VARS=/usr/share/OVMF/OVMF_VARS_4M.ms.fd
@@ -115,9 +116,6 @@ for m in dev/pts dev sys proc; do umount "$R/$m"; done
 mkdir -p "$R/usr/lib/auros/lock"
 cp -a rootfs/usr/lib/auros/lock/. "$R/usr/lib/auros/lock/"
 install -m755 "$T/aurlock-pin" "$R/usr/lib/auros/lock/aurlock-pin"
-BG=$(sed -n 's/^bg="\{0,1\}#\{0,1\}\([0-9A-Fa-f]\{6\}\).*/\1/p' "$R/etc/auros/shell.conf" | head -1)
-ERR=$(sed -n 's/^err="\{0,1\}#\{0,1\}\([0-9A-Fa-f]\{6\}\).*/\1/p' "$R/etc/auros/shell.conf" | head -1)
-note "her look: background #${BG:-?}, warnings #${ERR:-?}"
 
 # Her letter. The words are made here, so nothing on the disk but the
 # letter contains them, and the raw disk can be searched for them later.
@@ -139,6 +137,8 @@ say "up $st"
 say "letter $(sha256sum /var/lib/auros-theft/letter.txt | cut -c1-64)"
 say "analyze $(systemd-analyze 2>/dev/null | head -1)"
 say "cmdline $(cat /proc/cmdline)"
+say "look $(grep -oE '(^|[[:space:]])(bg|err)="[^"]*"' /etc/auros/shell.conf 2>/dev/null | tr -d ' \t' | tr '\n' ' ')"
+say "cryptenroll $(ls -l /usr/bin/systemd-cryptenroll 2>&1)"
 grep -q 'aurlock-pin\|auros-lock' /proc/cmdline 2>/dev/null
 journalctl -b -o cat 2>/dev/null | grep -E 'aurlock-pin|auros-lock|lockctl' | while read -r l; do say "log $l"; done
 case "$st" in
@@ -273,11 +273,22 @@ EOP
 serial() { tr -d '\r' < "$SER"; }
 val() { serial | sed -n "s/^THEFT $1 //p" | tail -1; }
 
+# ── 0: shim's first start on a firmware that has no entry for AurOS yet
+# creates one and resets; QEMU is run with -no-reboot, so it exits. The
+# entry stays in the variable store for every start after this.
+power_on prime
+power_off 180
+
 # ── 1: plain AurOS, armed ─────────────────────────────────────────
 echo "  1  plain AurOS: lockctl prepare" | tee -a "$EV/summary.txt"
 power_on plain
 wait_for "THEFT poweroff" && ok "AurOS started plain and reported" || bad "AurOS started plain" "$(serial | tail -5)"
 power_off
+LOOK=$(val look)
+BG=$(echo "$LOOK" | sed -n 's/.*bg="#\{0,1\}\([0-9A-Fa-f]\{6\}\).*/\1/p')
+ERR=$(echo "$LOOK" | sed -n 's/.*err="#\{0,1\}\([0-9A-Fa-f]\{6\}\).*/\1/p')
+note "her look, read from the running system: background #${BG:-none, the page default}, warnings #${ERR:-none}"
+note "$(val cryptenroll)"
 serial | grep -q "THEFT prepare lockctl: armed" && ok "lockctl prepare armed it" || bad "lockctl prepare" "$(serial | grep 'THEFT prepare' | tail -4)"
 esp_ls /auros | grep -q '^.*grub\.cfg' && esp_ls /auros | grep -q 'initrd.img-' \
     && ok "the kernel, initramfs and menu are on the EFI partition" || bad "boot set on the EFI partition" "$(esp_ls /auros)"
