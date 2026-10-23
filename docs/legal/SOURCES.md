@@ -79,7 +79,7 @@ wait (stream E's hand-off).
 pretend Mozilla on 127.0.0.1, each case breaks something and requires the tool to say
 so; `--mutants` breaks the tool itself in 11 ways and requires the suite to go red);
 `python3 -I tools/legal/publishtest.py` does the same for the publisher against a pretend
-GitHub (a good release is never lost; `--mutants` breaks the publisher in 5 ways).
+GitHub (a good release is never lost; `--mutants` breaks the publisher in 7 ways).
 
 ## Rules
 
