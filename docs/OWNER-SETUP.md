@@ -120,6 +120,12 @@ Suite).
 
 **Both options:**
 
+- Your backup is now in `~/AurOS-update-key` on your Mac (only you can
+  open it). **When you have a USB stick: copy that folder onto it, put
+  the stick somewhere safe, then delete the folder from the Mac** (Move to
+  Trash, Empty Trash). Until then the Mac is the only backup: if it is
+  lost, AurOS computers can no longer be updated without a new install.
+
 5. Tell an agent: "the update key is in, fingerprint XXXX". The agent
    pushes an `[apt]` commit; that run (`.github/workflows/aptrepo.yml`)
    prints the key's public half and fingerprint and publishes nothing. The
