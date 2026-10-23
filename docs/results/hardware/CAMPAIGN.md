@@ -85,7 +85,8 @@ than anything else.
 3. Windows asks "Do you want to allow this app?" Press **Yes**. A box says
    where the report is saved (usually the Downloads folder) and that nothing
    was changed. Two files: `AurOS-report.txt` and `AurOS-report.json`.
-4. Open `AurOS-report.txt`. Three parts matter:
+4. Open `AurOS-report.txt` (`SAMPLE-REPORT.txt` in this folder is a made-up one,
+   so you know what to expect). Three parts matter:
    - **WOULD THE AurOS INSTALLER ACCEPT THIS PC?** A plain yes or no, and why.
    - **WHAT WILL WORK:** sentences like "Your Wi-Fi will work." and "Your
      camera won't work yet." These are what she would be told.

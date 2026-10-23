@@ -461,7 +461,7 @@ char *hwinv_text(const hw_inv *v, const char *tool, const char *made)
             sb_put(&b, "  [%s] %s  (%s)\r\n", v->pf_find[i].sev, v->pf_find[i].title, v->pf_find[i].id);
     }
 
-    sb_put(&b, "\r\nWHAT WILL WORK\r\n");
+    sb_put(&b, "\r\nWHAT WILL WORK (the sentences she would be shown)\r\n");
     if (v->n_verdicts == 0) sb_put(&b, "  (not judged by this version)\r\n");
     for (int i = 0; i < v->n_verdicts; i++) {
         const hw_verdict *x = &v->verdicts[i];

@@ -58,6 +58,13 @@ if $CC $WARN -Werror -O2 $CMP_INC -o "$T/cmp" "$T/cmp_main.c" hw/lib/hwcompat.c 
 else bad "hwcompat.c: its own cases" "$(grep -v ' ok$' "$T/cmp.log" | head -8; head -8 "$T/cc.log")"; fi
 if [ -f "$T/cmp.log" ] && grep -q "BCM4352" "$T/cmp.log"; then ok "the BCM4352 case ran"; else bad "the BCM4352 case ran"; fi
 
+# the sample report in the campaign folder is what the renderer prints today
+if $CC $WARN $CMP_INC -o "$T/sample" tools/hw/sample.c hw/lib/hwcompat.c $SRC/hwinv.c 2>"$T/cc.log" &&
+   "$T/sample" > "$T/sample.txt" && cmp -s "$T/sample.txt" docs/results/hardware/SAMPLE-REPORT.txt; then
+    ok "docs/results/hardware/SAMPLE-REPORT.txt is what the report prints"
+else bad "docs/results/hardware/SAMPLE-REPORT.txt is what the report prints" \
+         "regenerate: see tools/hw/sample.c (cc it with hwcompat.c and hwinv.c, run, save as the sample)"; fi
+
 # every sentence she can read passes the word rules (docs/EASY.md rule 2)
 if sh tools/wordlint.sh "$GEN/hwcompat_words.h" >"$T/wl.log" 2>&1; then
     ok "every sentence she reads passes wordlint"
