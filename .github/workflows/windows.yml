@@ -8,6 +8,9 @@
 # --selftest and --navtest only render and report, and getimage writes
 # files to the runner's temp directory.
 #
+#   gate               only for a push that changes what these jobs test
+#                      (the installer's sources and build), or says
+#                      [windows] in its subject, or a manual run
 #   build              the .exe files, from this commit, on Linux
 #   windows-source     those .exe files, started on Windows
 #   pins               what a person downloads today: this repository's
@@ -32,17 +35,47 @@ env:
   KNOWN_BAD_URL: https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/d2735b6b775b1952c724aabdfdf2567246ab6c74/AurOS-Installer-test.exe
   KNOWN_BAD_SHA256: 3e32e929f57c5c2673f4547a09b44c827743d191120d22a57dfc6f28a4f3e875
 
-# One run at a time per branch. A push while one runs queues the newest
-# and drops older queued ones (GitHub keeps one pending run per group), so
-# a fast stream of pushes cannot fill the runner pool -- the free plan caps
-# a repository at 20 concurrent jobs, and every push used to start up to
-# five of these -- and a run that has started always finishes, so there is
-# always a result for a recent commit.
-concurrency:
-  group: windows-${{ github.ref }}
-  cancel-in-progress: false
+# ONE OF EACH JOB AT A TIME PER BRANCH, NEVER CANCELLED, AND ONLY FOR
+# PUSHES THAT NEED IT. The group used to be on the workflow: every push
+# joined it, GitHub keeps one pending run per group, and with many
+# agents pushing docs every run was replaced while it waited -- in the
+# new repository this workflow never finished once. Now the gate decides
+# first, and each job that runs has its own group (a job whose `if` is
+# false never joins one), so a docs push replaces nothing, a run that
+# has started always finishes, and a fast stream of pushes still cannot
+# fill the 20-job pool.
 
 jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - id: g
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+          BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run=false
+          [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || run=true
+          # The word counts in the SUBJECT only, as everywhere else.
+          case "${MSG%%$'\n'*}" in *'[windows]'*) run=true ;; esac
+          # The files this push changed; the push payload does not list them.
+          case "$BEFORE" in
+            ''|0000000000000000000000000000000000000000)
+              files=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.files[].filename') ;;
+            *)
+              files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename') ;;
+          esac
+          printf '%s\n' "$files" > /tmp/files.txt
+          # What build/aurbridge compiles and reads, and this file.
+          if grep -qE '^(src/aurbridge/|src/aurstage/(gpt|plan)\.[ch]$|build/aurbridge$|tools/(pe_payload\.py|repo\.sh|manifesttest\.sh)$|\.github/workflows/windows\.yml$)' /tmp/files.txt; then
+            run=true
+          fi
+          echo "run=$run" | tee -a "$GITHUB_OUTPUT"
+
   # What a person downloads today, asked at run time, so promoting a
   # release edits nothing here: this repository's newest FULL release
   # (releases/latest never names a prerelease) -- its AurOS-Setup.exe
@@ -52,6 +85,9 @@ jobs:
   # hash. Anything else (the API down, a release missing a file) fails
   # here rather than quietly testing the old files.
   pins:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    concurrency: { group: 'windows-${{ github.ref }}-pins', cancel-in-progress: false }
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -95,6 +131,9 @@ jobs:
           echo "what a person downloads: $from" | tee -a "$GITHUB_STEP_SUMMARY"
 
   build:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    concurrency: { group: 'windows-${{ github.ref }}-build', cancel-in-progress: false }
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -129,6 +168,7 @@ jobs:
 
   windows-source:
     needs: build
+    concurrency: { group: 'windows-${{ github.ref }}-windows-source', cancel-in-progress: false }
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
@@ -326,6 +366,7 @@ jobs:
 
   windows-published:
     needs: pins
+    concurrency: { group: 'windows-${{ github.ref }}-windows-published', cancel-in-progress: false }
     runs-on: windows-latest
     timeout-minutes: 20
     env:
@@ -360,6 +401,9 @@ jobs:
           "the published installer was running after 8 seconds"
 
   windows-known-bad:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    concurrency: { group: 'windows-${{ github.ref }}-windows-known-bad', cancel-in-progress: false }
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -382,6 +426,7 @@ jobs:
 
   windows-download:
     needs: [build, pins]
+    concurrency: { group: 'windows-${{ github.ref }}-windows-download', cancel-in-progress: false }
     runs-on: windows-latest
     timeout-minutes: 60
     env:
