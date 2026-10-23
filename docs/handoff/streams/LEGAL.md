@@ -57,6 +57,19 @@ help pages (K), `build/aurbridge` resources and the Ready page (B/A2), `.github/
    `dpkg-query -W -f='${source:Package} ${source:Version}\n' libc6-dev >> dist/installer/host-sources.txt`
    (the installer artifact then carries it; `sources.yml` reads the publishing runner's until it does).
 5. `profiles.yml` prune must skip `sources-*` (it prunes only `profiles-*`; keep it so).
+6. `/etc/auros/release`: the written offer says "if this computer has the file /etc/auros/release, it names the
+   release". Make it true: `build.yml` passes `AUROS_BUILD_TAG="$TAG"` into `build/all`, and `build/forge`
+   (stage_configure, next to os-release) writes `[ -n "${AUROS_BUILD_TAG:-}" ] && echo "$AUROS_BUILD_TAG" > "$RFS/etc/auros/release"`.
+   Until then the offer's second route (the `auros` package version, which is in PACKAGES.txt) works.
+7. `marks` (in sources.yml) runs `tools/legal/check.py image` on the build's rootfs sample: it fails on Ubuntu
+   branding packages or an os-release/issue that says Ubuntu and only warns about `/etc/lsb-release`. Add it to
+   `promote`'s `needs` once stream C has diverted lsb-release (TM-1 item 1).
+8. `docs/legal/signpath-application.md` (yours): COMPLIANCE 4.9 lists its edits (say Setup reads the connected Wi-Fi
+   profile only with the tick and the BitLocker pause; a reputation paragraph; "plans to apply" like the site; soften
+   "The signature tells Windows who made it" to what a SignPath Foundation signature means; "Windows and every file stay"
+   -> "kept"). `tools/legal/check.py` does not scan it.
+9. `check.py --launch` (run it before any `[latest]`) lists what is still open for the public link: the owner's mailbox,
+   the Ready-page lines and resources 200/202 in the installer, and the review log.
 
 ### B (installer: `src/aurbridge/wizard.c`, `build/aurbridge`), via the lead -- the exact strings
 `tools/legal/check.py` has dated allowances (until 2026-11-30) for the old absolute words in `wizard.c`;
