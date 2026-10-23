@@ -170,8 +170,8 @@ gate checks every ELF in /usr/lib/ferry).
    over thousands of corrupted hives" is now true. Not fuzzed yet:
    `ffhash` (tiny, validated against real values), `ferry-winattr`, the
    shell parsers (ferry-wifi XML, windowsZones).
-6. `tools/nmtest.sh`: drop its Ferry Wi-Fi section (emitter deleted on
-   purpose in fb90bcd) — another stream's file, smallest edit.
+6. DONE (someone else, d782dca) `tools/nmtest.sh` no longer needs Ferry's
+   deleted Wi-Fi emitter.
 7. DONE `docs/FERRY.md` rewritten to match the code (passwords, copier,
    browser, way back, signal, tests).
 

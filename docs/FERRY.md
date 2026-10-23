@@ -344,6 +344,41 @@ machine hit each item, because the honesty is the product.
 
 ---
 
+## Success means what it says
+
+`result=ok` (from `answer.sh`) means every folder she has was brought
+across and at least one file came; it carries `files=N`. Everything else
+is a different word, and none of them is "your files are here":
+
+| exit | `result=` | meaning |
+|---|---|---|
+| 0, files=0 | `empty` | there was nothing on the Windows side to bring |
+| 2 | `partial` | something did not come: an online-only OneDrive file, a folder Windows kept on another drive or a network share, a locked file (all listed by name in her report) |
+| 3 | `refused` | Windows was hibernated or dirty; nothing was read |
+| 4 | `failed`, `code=4` | not enough room on this computer (refused before the first byte; a first import must fit with at least 1 GiB or 5 % of the disk left over for AurOS itself; a resumed one is not re-tested) |
+| 6 | `choose` | several Windows accounts and no way to tell whose files; `users=Bob,Harold`; the reply is `import:NAME` |
+| 124 | `failed`, `code=124` | stopped after the 12-hour cap in `answer.sh`; pressing it again carries on |
+| 1 | `failed` | nothing could be brought |
+
+**Whose files** is settled once, before any stage (`choose_user`):
+`--user NAME`, else the only account, else the only one that has files of
+its own (her report says `From the Windows account "Bob"`), else exit 6.
+Ferry never guesses between two people who both have files.
+
+A stage that was only partly done is recorded as failed, not done, so a
+retry (after she has made the online-only files available) redoes it
+instead of skipping it and saying all is well.
+
+**No one-hour limit, and a stopped copy resumes.** The unit has
+`TimeoutStartSec=infinity`; `answer.sh` bounds the import and the copy
+back by `timeout 43200`. A copy that is killed (power, restart, the cap)
+leaves complete files and hidden `.ferrypart-*` temporaries; the next run
+removes the temporaries and recognises what is already there (same size
+and time), so nothing is copied twice (tested by killing the copier
+part-way).
+
+---
+
 ## The way back — her new files go into Windows first
 
 "Put Windows back" removes AurOS, and with it everything she saved there
@@ -383,8 +418,8 @@ when they end:
 
 ```
   kind=import|back
-  result=ok|partial|refused|noroom|unopened|failed
-  files=<copied this run>
+  result=ok|partial|refused|noroom|unopened|chooseuser|failed
+  files=<brought across so far, from the manifest>
   at=<UTC time>
 ```
 
