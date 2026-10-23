@@ -477,10 +477,16 @@ stage_file_types() {
     install -d "$RFS/etc/xdg"
     cat > "$RFS/etc/xdg/mimeapps.list" <<'EOL'
 [Default Applications]
-# A downloaded program package. gdebi says what it is and installs it;
-# an archive manager would show her the inside of it instead, which is
-# how a person ends up with a folder full of files and no program.
-application/vnd.debian.binary-package=gdebi.desktop
+# A program's installer file -- a .deb from a web page, a Windows .exe
+# she brought across. Programs come from "Get more programs", which
+# checks them first; opening one of these says so and opens the store
+# (rootfs/usr/lib/auros/program-file). An archive manager would show
+# her the inside of it instead, which is how a person ends up with a
+# folder full of files and no program.
+application/vnd.debian.binary-package=auros-program-file.desktop
+application/x-ms-dos-executable=auros-program-file.desktop
+application/x-msdownload=auros-program-file.desktop
+application/x-msi=auros-program-file.desktop
 
 # Pictures
 image/jpeg=org.xfce.ristretto.desktop
@@ -595,7 +601,6 @@ thunar|Your files|Everything you have saved, in folders
 mpv|Music and video|Play a song or a film
 mate-calc|Calculator|Add up, and work things out
 system-config-printer|Printers|Set up a printer, or check one you have
-gdebi|Install a program you downloaded|Opens a program you have downloaded and puts it on this computer
 org.gnome.Evince|Documents|Read PDFs and other documents
 org.xfce.ristretto|Photos|Look at your pictures
 org.xfce.mousepad|Notes|Write and read plain notes
@@ -1601,16 +1606,15 @@ EOL
     #   the wifi                   which is what started all this
     #   INSTALLING ANYTHING        which is the one that matters most
     #
-    # That last one is the product's central sentence. profiles/
-    # desktop.profile says gdebi is "the closest thing Linux has to the
-    # .exe habit she has had for twenty years, and it is how Google
-    # Chrome is actually installed". It could not have worked. gdebi's
-    # own polkit action is auth_admin for ALL THREE cases -- including
-    # allow_active, so a logind session does not help it -- and there is
-    # no authentication agent in this session for the prompt to appear
-    # in. Double-clicking a downloaded .deb did nothing at all, in
-    # silence. The store was the same: every packagekit install, remove
-    # and update action is auth_admin too.
+    # That last one is the product's central sentence. The store's
+    # packagekit install, remove and update actions are auth_admin, and
+    # there is no authentication agent in this session for a prompt to
+    # appear in, so ungranted they fail in silence.
+    #
+    # A downloaded .deb is NOT granted any more. It was, through gdebi's
+    # pkexec action -- which made "a program she runs opens a .deb" the
+    # same thing as "root, no password". Programs come from the store
+    # until the PIN (docs/security/THEFT.md) can stand in front of that.
     #
     # Granting them is what allow_user_install="yes" already means. The
     # profile asks "may users install software?", and on a personal
@@ -1619,10 +1623,7 @@ EOL
     # it, which is the whole point of the knob.
     #
     # package-install-untrusted is deliberately NOT granted. It is
-    # "install this package although nothing vouches for it", and the
-    # path that actually needs it -- a .deb she downloaded -- is gdebi's,
-    # which shows her what the thing is before installing it. The store
-    # silently installing an unvouched-for file is a different act.
+    # "install this package although nothing vouches for it".
     #
     # A kiosk gets none of any of this: its user turns nothing off,
     # mounts nothing, chooses no network and installs nothing. That is
@@ -1653,8 +1654,7 @@ EOL
 
         install_cases=""
         if [ "$allow_user_install" = "yes" ]; then
-            install_cases='    case "com.ubuntu.pkexec.gdebi.gtk":
-    case "org.freedesktop.packagekit.package-install":
+            install_cases='    case "org.freedesktop.packagekit.package-install":
     case "org.freedesktop.packagekit.package-remove":
     case "org.freedesktop.packagekit.system-update":'
         fi

@@ -1,0 +1,22 @@
+#!/bin/sh
+# program-file — what happens when she opens a program's installer file.
+#
+# A .deb used to open gdebi, which installed it as root with no password
+# (a polkit grant made for it). That grant is gone: programs come from
+# "Get more programs", which checks them first. So opening an installer
+# file -- one downloaded from a web page, or a Windows .exe brought
+# across -- says that in her words and opens the store, rather than
+# showing an Install button that can no longer work.
+case "$1" in
+    *.[eE][xX][eE]|*.[mM][sS][iI])
+        s="This program is for Windows"
+        b="It cannot run on AurOS. Get more programs has programs for this computer, and many do the same job." ;;
+    *)
+        s="Programs come from Get more programs"
+        b="AurOS adds programs only from there, where they are checked first." ;;
+esac
+# The desktop's own card (aurshell is the notification server).
+busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications \
+    org.freedesktop.Notifications Notify 'susssasa{sv}i' \
+    "This computer" 0 "" "$s" "$b" 0 0 -1 >/dev/null 2>&1
+exec gnome-software

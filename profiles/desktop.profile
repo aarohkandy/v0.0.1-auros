@@ -269,10 +269,10 @@ browser_fallback="epiphany-browser"
 #   thunar     her files, in a window. Double-clicking something opens
 #              it with whatever claims that kind of file, which is what
 #              makes "make files openable" true rather than a plan.
-#   gdebi      double-click a downloaded .deb and it installs, with a
-#              screen first saying what it is. This is the closest thing
-#              Linux has to the .exe habit she has had for twenty years,
-#              and it is how Google Chrome is actually installed.
+#   (no gdebi: a .deb she downloads opens "Get more programs" instead,
+#              with a card saying programs come from there. Installing
+#              one as root needed a grant that made any program she ran
+#              root; it waits for the PIN, docs/security/THEFT.md.)
 #   ristretto  pictures      evince    PDFs
 #
 #              evince and not atril, which was here: atril draws EPUB
@@ -296,7 +296,6 @@ browser_fallback="epiphany-browser"
 # ones: ristretto is 8 packages where eog is 14, and this is a machine
 # from 2013.
 packages_files="thunar thunar-volman gvfs gvfs-backends udisks2
-                gdebi
                 ristretto evince mousepad xarchiver mpv mate-calc
                 shared-mime-info desktop-file-utils xdg-user-dirs"
 
@@ -319,14 +318,10 @@ allowed_apps=""           # empty = everything installed is allowed
 blocked_apps=""
 # May users install software?
 #
-# "yes" is what makes double-clicking a downloaded .deb work at all.
-# gdebi's own permission rule demands an administrator password in
-# every case, including for a person sitting at the machine, and this
-# product has no password prompt to show her and no password to give
-# her -- so without this the single sentence the whole product is built
-# around ("download it, double-click it, click Next") did nothing, in
-# silence. The same is true of the store: every install, remove and
-# update it performs is gated the same way.
+# "yes" is what makes "Get more programs" work at all: every install,
+# remove and update the store performs demands an administrator password
+# by default, and this product has no password prompt to show her and
+# no password to give her.
 #
 # Saying yes means the person at this computer can install and remove
 # software without being asked for anything. On a personal machine that
