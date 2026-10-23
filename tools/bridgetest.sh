@@ -54,6 +54,50 @@ else
     bad "and it builds clean for Windows" "$(head -5 "$T/mw.log")"
 fi
 
+# ── the clock: the journal is UTC, her PC's clock is local time ─────
+#
+# Windows keeps the hardware clock in local time and the staging kernel
+# reads it as UTC, so after an honest restart in California the clock
+# reads eight hours BEHIND the journal, and in Auckland thirteen ahead.
+# journal_clock() is the real check, linked here and asked directly.
+cat > "$T/clk.c" <<'EOC'
+#include <stdio.h>
+#include <string.h>
+#include "journal.h"
+int stage_gpt_sha256(const stage_disk *d, char *hex, size_t n)
+{ (void)d; if (n) hex[0] = 0; return -1; }
+int main(void)
+{
+    const long long W = 1760000000;    /* the journal, UTC            */
+    const struct { const char *what; long long now; journal_verdict want; } C[] = {
+        { "UTC-8 (US Pacific), restarted a minute later",  W - 8*3600 + 60,  JOURNAL_MATCH },
+        { "UTC-12, restarted a minute later",              W - 12*3600 + 60, JOURNAL_MATCH },
+        { "UTC+13 (Auckland), restarted a minute later",   W + 13*3600 + 60, JOURNAL_MATCH },
+        { "UTC, an hour later",                            W + 3600,         JOURNAL_MATCH },
+        { "a dead CMOS battery (2010)",                    1262304000,       JOURNAL_CLOCK },
+        { "behind by more than any time zone (17 hours)",  W - 17*3600,      JOURNAL_CLOCK },
+        { "a clock at zero",                               0,                JOURNAL_CLOCK },
+        { "four days later",                               W + 4*86400,      JOURNAL_STALE },
+    };
+    int bad = 0;
+    for (size_t i = 0; i < sizeof C / sizeof C[0]; i++) {
+        char why[200] = "";
+        journal_verdict v = journal_clock((unsigned long long)W, C[i].now, why, sizeof why);
+        printf("%s %s -> %s\n", v == C[i].want ? "OK  " : "FAIL", C[i].what,
+               journal_verdict_name(v));
+        if (v != C[i].want) bad++;
+    }
+    return bad;
+}
+EOC
+if cc -std=gnu11 -O2 -Isrc/aurstage -o "$T/clk" "$T/clk.c" src/aurstage/journal.c \
+     2>"$T/clk.cc" && "$T/clk" >"$T/clk.out" 2>&1; then
+    ok "the clock check: local-time clocks pass, a dead battery does not"
+else
+    bad "the clock check: local-time clocks pass, a dead battery does not" \
+        "$(grep -v '^OK' "$T/clk.out" "$T/clk.cc" 2>/dev/null | head -8)"
+fi
+
 # ── the journal: written by one half, read by the other ─────────────
 cat > "$T/j.c" <<'EOC'
 /* Links the real writer and the real reader. Nothing is reimplemented

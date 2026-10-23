@@ -150,4 +150,12 @@ journal_verdict journal_check(const journal *j, const stage_machine *m,
 /* A short, stable name for a verdict. Never translated. */
 const char *journal_verdict_name(journal_verdict v);
 
+/* The clock half of journal_check, on its own so it can be tested with
+ * any clock: `written` is the journal's written_unix (UTC, from
+ * Windows), `now` is what this kernel's clock says. JOURNAL_MATCH,
+ * JOURNAL_CLOCK or JOURNAL_STALE, with a sentence in `why` for the
+ * last two. See journal.c for why "now" may be up to 15 hours behind. */
+journal_verdict journal_clock(uint64_t written, int64_t now,
+                              char *why, size_t n);
+
 #endif

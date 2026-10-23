@@ -209,6 +209,51 @@ const char *journal_verdict_name(journal_verdict v)
  * user asked for and starts being a surprise. */
 #define JOURNAL_MAX_AGE_S  (3 * 24 * 60 * 60)
 
+/* HOW FAR BEHIND THE JOURNAL THIS CLOCK MAY BE AND STILL BE TRUE.
+ *
+ * written_unix is UTC: Windows' time(NULL). But Windows keeps the PC's
+ * hardware clock in LOCAL time (unless RealTimeIsUniversal is set,
+ * which almost nobody does), and this kernel reads that clock as UTC.
+ * West of Greenwich the clock therefore reads up to twelve hours
+ * BEHIND the journal on every honest machine -- and "behind" was a
+ * refusal, so every install in the Americas stopped here the moment it
+ * restarted. Tests never saw it: QEMU's clock is UTC.
+ *
+ * So "behind" means behind by more than any time zone can explain:
+ * UTC-12 is the furthest west, plus three hours for daylight saving,
+ * a drifting clock and a slow restart. A dead CMOS battery -- the case
+ * this check exists for -- puts the clock years behind, not hours.
+ * East of Greenwich the clock reads AHEAD by up to fourteen hours,
+ * which only brings the three-day staleness limit that much closer;
+ * nothing is refused for it. */
+#define JOURNAL_RTC_SLACK_S (15 * 60 * 60)
+
+journal_verdict journal_clock(uint64_t written, int64_t now,
+                              char *why, size_t n)
+{
+    if (!written) return JOURNAL_MATCH;
+    if (now <= 0 || (uint64_t)now + JOURNAL_RTC_SLACK_S < written) {
+        /* THE CLOCK IS BEHIND THE RECORD by more than a time zone, which
+         * cannot happen on a machine that is telling the truth about
+         * the time. A dead CMOS battery puts a laptop in 2010, and
+         * there is no network here and no NTP to correct it -- so the
+         * staleness check below, the thing that catches a BootNext
+         * consumed three weeks late, silently could not fire. */
+        snprintf(why, n,
+                 "This computer's clock is set earlier than when the "
+                 "installer prepared it, so AurOS cannot tell how "
+                 "long ago that was.");
+        return JOURNAL_CLOCK;
+    }
+    if ((uint64_t)now > written && (uint64_t)now - written > JOURNAL_MAX_AGE_S) {
+        snprintf(why, n,
+                 "This was prepared more than three days ago. Windows "
+                 "has had time to change the disk since.");
+        return JOURNAL_STALE;
+    }
+    return JOURNAL_MATCH;
+}
+
 /* Letters and digits only, case ignored: "S4EW NX0N-1234" and
  * "s4ewnx0n1234" are one serial written by two drivers. */
 static int serial_same(const char *a, const char *b)
@@ -400,28 +445,9 @@ journal_verdict journal_check(const journal *j, const stage_machine *m,
     }
 
     if (j->written_unix) {
-        time_t now = time(NULL);
-        if (now > 0 && (uint64_t)now < j->written_unix) {
-            /* THE CLOCK IS BEHIND THE RECORD, which cannot happen on a
-             * machine that is telling the truth about the time. A dead
-             * CMOS battery puts a laptop in 2010, and there is no
-             * network here and no NTP to correct it -- so the staleness
-             * check below, the thing that catches a BootNext consumed
-             * three weeks late, silently could not fire. Falling
-             * through to MATCH was the old behaviour and it was the
-             * wrong way to be wrong. */
-            snprintf(why, n,
-                     "This computer's clock is set earlier than when the "
-                     "installer prepared it, so AurOS cannot tell how "
-                     "long ago that was.");
-            return JOURNAL_CLOCK;
-        }
-        if (now > 0 && (uint64_t)now - j->written_unix > JOURNAL_MAX_AGE_S) {
-            snprintf(why, n,
-                     "This was prepared more than three days ago. Windows "
-                     "has had time to change the disk since.");
-            return JOURNAL_STALE;
-        }
+        journal_verdict cv = journal_clock(j->written_unix,
+                                           (int64_t)time(NULL), why, n);
+        if (cv != JOURNAL_MATCH) return cv;
     }
     snprintf(why, n, how == 3
              ? "This is the computer the installer was prepared for (its disk "
