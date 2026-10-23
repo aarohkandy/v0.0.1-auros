@@ -12,7 +12,7 @@
 #
 #  It is deliberately a unit test of plat_gap_* and fmt_gpt_parts: no
 #  QEMU, no root, no shrink. The shrink is Windows' own and is proven
-#  against real Windows in windows.yml's gapselftest; here we prove the
+#  against real Windows in fastpath.yml's gapselftest; here we prove the
 #  thing that stands between a raw write and somebody's Windows.
 #
 #    sh tools/gapfencetest.sh
