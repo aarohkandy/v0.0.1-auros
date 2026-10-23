@@ -22,9 +22,9 @@ running, it says so.
 - **Owner.** D website, B wizard, A2 staging screens (the drawing code is C's
   `src/aurscreen`), C desktop, W2 Wishes, K help pages. Other streams are
   named in full (BT boot, R Ferry, F e2e, P packages, S2 browser, OPS domain).
-- **Evidence.** A file under `docs/shots/` or `docs/research/`, or
-  `file:line` in the source. Quote a string with `git grep`; if it is gone the
-  finding is fixed.
+- **Evidence.** A file under `docs/shots/`, `docs/usability/renders/` or
+  `docs/research/`, or a source file with its function or a quoted string. Quote
+  the string with `git grep`; if it is gone the finding is fixed.
 
 ### What I could and could not see
 
@@ -114,7 +114,7 @@ Format: id, severity, who, where; what happens; the fix; the owner.
 
 **A-01 · S1 · M [E] · "Open this page on the Windows computer", phone and Mac**
 Where: `docs/shots/website/index-phone-fold.png`, `index-mac.png`;
-`website/assets/door.js:72`, `website/index.html:61`.
+`website/assets/door.js` (`mail-link`), `website/index.html` (`id="mail-link"`).
 What: Margaret opens the link on her iPhone. The page tells her to send
 herself the link. "Email me the link" is `mailto:?subject=...` with **no
 recipient**: Mail opens with an empty To line and she must type her own
@@ -172,7 +172,7 @@ exactly the three warnings.
 Owner: D.
 
 **A-06 · S2 · E, M · "Stuck? Show a helper" is not for her**
-Where: `website/index.html:104,162,204`; `guide-1366x768-full.jpg`.
+Where: `website/index.html` (the three "Stuck? Show a helper" buttons); `guide-1366x768-full.jpg`.
 What: She presses it while stuck. It opens "A page to print. For whoever is
 helping. Fill in the two blanks, print it..." with a "Their phone:" line. It
 helps a helper who is already there; it does nothing for her. "Show a helper"
@@ -198,7 +198,8 @@ What: the three pictures show the **dark** Setup from before the restyle; the
 real Setup is light. Each picture is 600 px for a 1,120 px window, so its text
 is about 10 px. She sees a dark window in the page and a light one on her
 screen and doubts it is the same program. The "Does everything work?" picture is
-a hand drawing, not a screenshot (no shot of the real panel exists).
+a hand drawing, not a screenshot (a real render of the panel now exists in
+`docs/usability/renders/2026-10-23/`).
 Fix: re-shoot from `docs/shots/wizard/`; keep the numbered rings and the
 sentence under each picture, which are what she reads; get C to commit a real
 shot of the first-run panel.
@@ -217,7 +218,7 @@ Owner: OPS (WP-15), then D.
 
 ### B. The file and the warnings
 
-**B-01 · S1 · E, M · S2 · R · The Edge picture does not match the Edge she has**
+**B-01 · S1 · E, M [R: S2] · The Edge picture does not match the Edge she has**
 Where: website step 1, second Edge picture ("Make sure you trust ... Delete,
 Show more, 4 Keep anyway", `index-1366x768-full.jpg`); real Edge in the
 release asset `e2e-39902908530` (`e2e-evidence-base.zip`, `flow/shots/0014`,
@@ -239,8 +240,9 @@ Owner: D (pictures), F (the evidence and a freshness check).
 Where: not on the site at all; `docs/research/journey-audit-2026-10-23.md` B2
 (estimated 25 to 40% of PCs in this age group have an OEM trial of Norton,
 McAfee or Avast).
-What: a red "Threat blocked" box from a program she trusts more than us. No
-numbered circle helps. She stops and calls someone, or deletes it.
+What: a warning from a program she trusts more than us, in that program's own
+look (I have not seen one). No numbered circle on our page matches it. She stops
+and calls someone, or deletes the file.
 Fix: a section "If your antivirus took the file" with a picture per big brand
 (WP-40), and screen recruits for their antivirus before a session.
 Owner: D, K.
@@ -520,10 +522,11 @@ Press Wi-Fi" and open the Wi-Fi panel.
 Owner: A2 (the engine), C (the check).
 
 **E-03 · S2 · R, E · After "Open Your files" the question comes back only when she closes the window**
-Where: `welcome_step()` in `welcome.c`; the comment in `foot.c` that starts "It is here because five of the six".
-What: Ray looks for an X; in five of six looks only the footer's **Close this**
-closes a window. Until it is closed the question is gone.
-Edith never finds the way back.
+Where: `welcome_step()` in `welcome.c`; the comment in `foot.c` that starts "It is
+here because five of the six".
+What: in "Like Windows" a window has its own X (`taskbar-1366x768-7-opens.png`);
+in the other three looks she can pick, only the footer's **Close this** closes
+one. Until it is closed the question is gone. Edith never finds the way back.
 Fix: keep the question visible as a strip ("Back to the question") while the
 check window is open.
 Owner: C.
@@ -569,19 +572,20 @@ Fix: C P1-12 (labels under the dock icons; "All my programs" in place of
 Owner: C.
 
 **F-03 · S2 · R · Windows habits that do nothing**
-Where: `src/aurshell/foot.c` (a window's close lives in the footer in
-five of six looks), `taskbar.c` (`case 125`, `KEY_LEFTMETA`: the Windows key opens the menu: only in
-that look).
-What: no X at the top right in five looks; right-click, Alt+Tab and a Recycle
-Bin are unverified (not found in the source). Each is a missed expectation, not a fault. Ray will press them
-all in the first five minutes.
+Where: `src/aurshell/foot.c` (a window's close lives in the footer in the looks
+that have no title bar: all but "Like Windows"), `taskbar.c` (`case 125`,
+`KEY_LEFTMETA`: the Windows key opens the menu: only in that look).
+What: no X at the top right in "Like a Mac", "Big and simple" and "One thing at a
+time"; right-click, Alt+Tab and a Recycle Bin are unverified (not found in the
+source). Each is a missed expectation, not a fault. Ray will press them all in
+the first five minutes.
 Fix: log them in the sessions; decide per look which the default look must
 honour (the X in "Like Windows" exists).
 Owner: C.
 
 **F-04 · S2 · M · "Photos" is not on the Home of "Big and simple"**
-Where: `docs/shots/shells/rail.png` (Internet, Your files, Documents, Notes,
-All my programs, Get more programs), `rail-all-programs.png`;
+Where: `docs/usability/renders/2026-10-23/rail-1366x768-4-desktop.png` (Internet,
+Your files, Documents, Make a wish, All my programs, Get more programs);
 `shell_home_pick()` in `shellcommon.c` (the Home keeps places for the store and, since
 `d23f421`, for Make a wish, so four are left for everything else).
 What: Margaret's first thought is "photos". It is under "All my programs", and
@@ -644,8 +648,9 @@ Owner: C.
 ### G. Get more programs
 
 **G-01 · S2 · all · The store is not ours**
-Where: the shell row is seen (`shells/*.png`); the store itself is GNOME
-Software and is not seen anywhere. `build/forge:395-420`; `software-ready.sh`.
+Where: the shell row is seen (every `*-4-desktop.png` render); the store itself is
+GNOME Software and is not seen anywhere. `build/forge` (the store stage);
+`rootfs/usr/lib/auros/software-ready.sh`.
 What: its screens carry words EASY rule 2 forbids ("Flathub", "runtime",
 "verified", "sources", "updates"), small type that Bigger does not touch (F-01),
 and an empty catalogue until the first online run (`software-ready.sh`:
@@ -671,7 +676,7 @@ once with a link in an email and once with the program he uses.
 Owner: D, K, PARITY.
 
 **G-03 · closed since the audit.** Programs appear in the list at once after
-install (`12d5201`) and Flathub is on the image (`build/forge:395-420`).
+install (`12d5201`) and Flathub is on the image (`build/forge`, the store stage).
 
 ### H. Wishes (real renders through `tools/wishsheet.c`; not in the v0.1 image, D14)
 
@@ -834,7 +839,7 @@ now gone or smaller (checked against the tree, not the commit message):
 - The wizard is three screens, no typing, no "Type AGREE", light, 20 px, one
   green button, no countdown (`7fb9b2d`), and a double press cannot skip Ready
   (`938ea78`).
-- "Get more programs" is on every home (`shells/*.png`), and a program appears
+- "Get more programs" is on every home (the `*-4-desktop.png` renders), and a program appears
   at once after install (`12d5201`).
 - No shared password (`77adbfe`); her look survives a restart (`482dab2`).
 - The Help button opens the help pages (`f3c42b0`).
@@ -847,11 +852,13 @@ now gone or smaller (checked against the tree, not the commit message):
 
 ## 7. The re-run after the restyle (part 3 of the brief)
 
-The wizard and website changes landed in `7fb9b2d` and `54fd273`, which this
-pass already reads. Still to land and to re-walk: staging screens (A2, C P0-3),
-first run and desktop in Light (C), the Wishes panel in a render (W2),
-`docs/shots/website/` step pictures (D). Plan: when `docs/shots/staging-*.png`
-and `docs/shots/shells/*.png` change again, write
-`docs/research/people-walkthrough-2026-10-restyle.md` with the same ids, a
-"now" column (closed, smaller, same, new) and the new top fifteen. Findings
-marked "inferred" must be settled by a booted image before the re-run.
+Done in this pass, because it landed while I worked: the wizard (`7fb9b2d`,
+`29c29da`, `7f4e150`), the website (`54fd273`), the first-run panel, the four
+desktops in Light and every Wishes screen (renders). **Still to re-walk, when it
+lands:** the staging screens (A2, C P0-3: still dark, still raw log lines), C's
+remaining P0 and P1 items (labels under the dock icons, unique icons, 18 px
+text, the footer's width), D's re-shot step pictures, and anything on a booted
+image. Plan: when `docs/shots/staging-*.png` changes, write
+`docs/research/people-walkthrough-2026-10-restyle.md` with the same ids, a "now"
+column (closed, smaller, same, new) and the new top fifteen. Findings marked
+"inferred" (E-01, F-01) must be settled on a booted image before that re-run.
