@@ -517,6 +517,7 @@ int hwcompat_selftest(void)
         { "PCI\\VEN_8086&DEV_272B&SUBSYS_00948086", "PCI\\VEN_8086&DEV_272B&CC_028000", "Intel(R) Wi-Fi 7 BE200", HW_V_WORKS, "wifi-driver" },
         { "PCI\\VEN_10EC&DEV_B852&SUBSYS_B8521A3B", "PCI\\VEN_10EC&DEV_B852&CC_028000", "Realtek RTL8852BE WiFi 6", HW_V_PARTIAL, "wifi-realtek-rtw89-unsteady" },
         { "PCI\\VEN_10EC&DEV_8922&SUBSYS_89221A3B", "PCI\\VEN_10EC&DEV_8922&CC_028000", "Realtek RTL8922AE WiFi 7", HW_V_WONT, "wifi-realtek-8922ae-newer-kernel" },
+        { "PCI\\VEN_10EC&DEV_B723&SUBSYS_B7231A3B", "PCI\\VEN_10EC&DEV_B723&CC_028000", "Realtek RTL8723BE 802.11 b/g/n", HW_V_PARTIAL, "wifi-realtek-8723be-weak-signal" },
         { "PCI\\VEN_14C3&DEV_0616&SUBSYS_E616185F", "PCI\\VEN_14C3&DEV_0616&CC_028000", "MediaTek MT7922 802.11ax", HW_V_WORKS, "wifi-driver" },
         { "PCI\\VEN_168C&DEV_003E&SUBSYS_0042168C", "PCI\\VEN_168C&DEV_003E&CC_028000", "Qualcomm Atheros QCA6174", HW_V_WORKS, "wifi-driver" },
         { "USB\\VID_0BDA&PID_8812", "", "Realtek RTL8812AU Wireless LAN 802.11ac USB NIC", HW_V_WONT, "wifi-no-driver" },

@@ -46,6 +46,10 @@
       "bus": "pci", "vid": "10ec", "did": ["8852", "b852", "c852", "b851"], "need": "driver",
       "why": "Realtek RTL8852/8851 (rtw89): the driver and firmware are in the image, but many owners report dropped connections until power saving is switched off. Not yet checked on this image: a lab machine with one of these is wanted (docs/results/hardware/CAMPAIGN.md)." },
 
+    { "id": "wifi-realtek-8723be-weak-signal", "verdict": "wifi", "state": "partial", "says": "wifi.partial",
+      "bus": "pci", "vid": "10ec", "did": ["b723"], "need": "driver",
+      "why": "Realtek RTL8723BE (very common in 2014-2016 budget laptops): the driver and firmware are in the image, but this chip is widely reported to have a weak signal until its antenna setting is changed (ant_sel). Not yet checked on this image." },
+
     { "id": "camera-intel-ipu", "verdict": "camera", "state": "wont", "says": "camera.wont",
       "bus": "pci", "vid": "8086", "did": ["9d32", "9a19", "4e19", "465d", "462e", "a75d", "7d19", "645d", "b05d"],
       "any_kind": true,
