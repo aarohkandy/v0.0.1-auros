@@ -2299,6 +2299,10 @@ int main(int argc, char **argv)
                             dirty = 1;
                             continue;
                         }
+                        /* Messages is open: Escape puts it away (notify.h). */
+                        if (ev.value == 1 && notify_key(&c, ev.code)) {
+                            c.key_text[0] = 0; dirty = 1; continue;
+                        }
                         if (!consumed && ev.value && L->key) L->key(&c, ev.code);
                         c.key_text[0] = 0;
                         dirty = 1;

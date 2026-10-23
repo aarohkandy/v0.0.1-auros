@@ -190,6 +190,12 @@ void notify_paint(shell_ctx *c, surface *s, shell_fonts *f);
  * list's or the clock's, in which case nothing else may act on it. */
 int  notify_click(shell_ctx *c, int x, int y);
 
+/* A key, while the Messages list is open: Escape closes it. Returns 1
+ * if it was taken -- every key is, while the list is up, for the reason
+ * the panels give. 0 when the list is shut, so a card never takes a key
+ * from the program she is typing in. */
+int  notify_key(shell_ctx *c, int keycode);
+
 /* Put one up from inside the shell itself, in her words. The battery
  * warning and "this program would not start" are notifications, not
  * on-screen messages: they are things she may want to read twice. */

@@ -431,6 +431,12 @@ int main(void)
            notify_click(&c, 2, c.screen_h - 2) == 1 && !notify_list_open());
         ok("a second press on the clock closes it",
            press(&c, k) && notify_list_open() && press(&c, k) && !notify_list_open());
+        ok("with Messages shut, a key is not taken (she may be typing)",
+           notify_key(&c, 1) == 0 && notify_key(&c, 30) == 0);
+        press(&c, k);
+        ok("with Messages open, a key is taken, and Escape closes it",
+           notify_key(&c, 30) == 1 && notify_list_open() &&
+           notify_key(&c, 1) == 1 && !notify_list_open());
     }
 
     /* ── REPLACE IN PLACE ─────────────────────────────────────────── */
@@ -789,19 +795,21 @@ done:
     {
         FILE *f = fopen("src/aurshell/main.c", "r");
         char line[512];
-        int presses = 0, taking = 0, cards = 0, timer = 0;
+        int presses = 0, taking = 0, cards = 0, timer = 0, keys = 0;
         while (f && fgets(line, sizeof line, f)) {
             if (strstr(line, "osd_press()")) {
                 presses++;
                 if (strstr(line, "taken")) taking++;
             }
             if (strstr(line, "notify_click(&c")) cards++;
+            if (strstr(line, "notify_key(&c")) keys++;
             if (strstr(line, "notify_step") || strstr(line, "osd_visible() ||")) timer++;
         }
         if (f) fclose(f);
         ok("every press puts the line away: click, tap and key", presses >= 3);
         ok("...and none of them is taken by it", presses && !taking);
         ok("a tap on the card is the card's, like a click", cards >= 2);
+        ok("keys reach Messages before the archetype", keys >= 1);
         ok("nothing is retired or repainted on a clock", f && !timer);
     }
 

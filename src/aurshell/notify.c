@@ -1152,6 +1152,14 @@ static int inside(rect r, int x, int y)
     return r.w > 0 && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
 }
 
+int notify_key(shell_ctx *c, int keycode)
+{
+    (void)c;
+    if (!N.list_open) return 0;
+    if (keycode == 1 /* KEY_ESC */) N.list_open = 0;
+    return 1;
+}
+
 int notify_click(shell_ctx *c, int x, int y)
 {
     notify_view v; notify_view_now(c, &v);
