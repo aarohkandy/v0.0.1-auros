@@ -154,12 +154,14 @@ DAEMON_MUTANTS = [
     ("daemon: any odd policy value counts as on", "main.c", 'forbids = strcmp(v, "on") != 0;', 'forbids = strcmp(v, "off") == 0;', ["policy_off"]),
     ("daemon: wishes sent without consent", "main.c", 'if (!ST->consent) {', 'if (0) {', ["potato"]),
     ("daemon: the same words sent twice", "main.c", '(last_text.at && now - last_text.at < 30 && last_text.hash == hs)', '0', ["errors"]),
-    ("daemon: lines never end", "main.c", 'if (c->len > LINE_IN) conn_close(c);', ';', ["socket"]),
+    # Not here, on purpose: "lines never end" (read() is bounded and a full buffer
+    # reads 0, so the explicit length check is a second guard on the same fact) and
+    # "token file world-readable" (umask 077 is set at start AND the file is created
+    # 0600). Removing either guard alone changes nothing a test can see.
     ("daemon: Forget does not tell the service", "main.c", 'static int io_forget(void *c) { (void)c; if (CL) cloud_forget(CL); return 0; }', 'static int io_forget(void *c) { (void)c; return 0; }', ["forget"]),
     ("cloud: numbers sent as they are", "cloud.c", 'if (digits >= 5) {', 'if (digits >= 500) {', ["errors"]),
     ("cloud: no silent re-registration", "cloud.c", 'if (r.http == 401 && !c->retried_auth) {', 'if (0) {', ["errors"]),
     ("cloud: the token on the command line", "cloud.c", '"--user-agent", "AurOS-Wishes/" VERSION,', '"--user-agent", c->token[0] ? c->token : "AurOS-Wishes/" VERSION,', ["token_not_in_ps"]),
-    ("cloud: token file world-readable", "cloud.c", 'O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);', 'O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0644);', ["potato"]),
     ("cloud: the token survives Forget", "cloud.c", '    if (c->token[0]) spawn_curl(c, "/v1/forget", "{}", 2, 1, 1);\n    unlink(c->cfg.token_path);', '    if (c->token[0]) spawn_curl(c, "/v1/forget", "{}", 2, 1, 1);', ["forget"]),
     ("cloud: a wrong clock is not corrected", "cloud.c", 'if (r.http == 400 && !c->retried_pow) {', 'if (0) {', ["errors"]),
     ("answer: help pages are any path", "answer.c", 'if (p && p->type == J_STR && page_name_ok(p->s)) {', 'if (p && p->type == J_STR) {', ["hostile_cloud"]),
