@@ -133,7 +133,7 @@ limits)
     losetup -d "\$L"; [ "\$fve" = 1 ] && fve_on
     [ -n "\$min" ] || exit 1
     echo "AURNOW=\$size"; echo "AURMIN=\$min"; echo "AURMAX=\$(( (next - first) * 512 ))"; echo "AUROFF=\$((first*512))"
-    ;;
+    exit 0 ;;
 resize)
     want=\$4
     uuid=\$(info | sed -n 's/^Partition unique GUID: //p')
@@ -259,7 +259,7 @@ else
     bad "the engine arms the machine, the fast way" "$(tail -4 "$S/err")"; WANT=""
 fi
 grep -q 'aurbridge-report v1 fast=1 ' "$S/out" && ok "...and says it took the fast way" \
-    || bad "...and says it took the fast way" "$(grep -a 'fast way' "$S/err" | head -3)" "$(sh "$S/sim/shrink.sh" limits "$S/disk.img" 2 2>&1 | head -5)"
+    || bad "...and says it took the fast way" "$(grep -a 'fast way' "$S/err" | head -3)" "ran.log: $(tail -4 "$S/sim/ran.log" 2>/dev/null)" "err: $(tail -6 "$S/err")"
 NOW=$(part_bytes "$S/disk.img" 2)
 [ "$NOW" -lt $(( (P2E-P2S+1) * 512 )) ] && ok "Windows' partition is smaller ($((NOW/1048576)) of $(((P2E-P2S+1)*512/1048576)) MiB): Windows shrank it" \
     || bad "Windows' partition is smaller" "$NOW"

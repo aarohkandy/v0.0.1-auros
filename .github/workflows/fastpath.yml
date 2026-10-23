@@ -19,6 +19,10 @@ on:
       - src/aurbridge/**
       - src/aurstage/gpt.*
       - src/aurstage/plan.*
+      - src/aurscreen/**
+      - rootfs/usr/lib/auros/wifi-across.sh
+      - tools/*test.sh
+      - tools/fasttest.sh
       - build/aurbridge
       - .github/workflows/fastpath.yml
   # By hand, optionally with a MUTANT: an engine (or a disk) broken on
@@ -60,11 +64,27 @@ jobs:
       - name: the engine against a simulated machine (aborttest, bridgetest)
         run: |
           sh tools/aborttest.sh
+          sh tools/armtest.sh
+          sh tools/esptest.sh
           sh tools/bridgetest.sh
+          sh tools/screentest.sh
       - uses: actions/upload-artifact@v4
         with:
           name: exe
           path: out/aurbridge.exe
+      # THE SAME INSTALLER WITH THE FAST PATH ON, for the real-Windows e2e
+      # (stream F points INSTALLER_URL at this): the Wi-Fi tick, the drive
+      # lock line and the fast path are compiled in. The default build above
+      # is what ships until the journey is green with this one.
+      - name: the installer with the fast path ON (AUROS_FASTPATH=1)
+        run: |
+          mkdir -p fast
+          AUROS_FASTPATH=1 sh build/aurbridge
+          cp out/aurbridge.exe out/aurbridge-wizard.exe fast/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exe-fast
+          path: fast/
 
   gapselftest:
     needs: build

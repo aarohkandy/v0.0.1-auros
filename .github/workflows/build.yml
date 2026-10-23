@@ -263,8 +263,17 @@ jobs:
 
       - name: build/aurbridge, pointed at this release
         id: installer
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           T=$(date +%s)
+          # THE FAST PATH, until it is the default (stream A2): a commit
+          # whose SUBJECT says [fastpath] builds the installer with it on --
+          # Windows makes the room, the Wi-Fi tick, the drive-lock line --
+          # so the real-Windows e2e can be pointed at a fast-path prerelease.
+          case "$(printf '%s' "$COMMIT_MSG" | head -1)" in
+              *'[fastpath]'*) export AUROS_FASTPATH=1; echo "the fast path is ON in this installer" | tee -a dist/installer/build-info.txt ;;
+          esac
           export AUROS_IMAGE_PIECES="$PWD/dist/pieces/pieces.txt"
           export AUROS_IMAGE_SHA256=$(cat dist/pieces/image.sha256)
           export AUROS_IMAGE_BYTES=$(cat dist/pieces/image.bytes)

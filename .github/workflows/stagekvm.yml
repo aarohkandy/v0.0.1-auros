@@ -19,6 +19,9 @@ on:
       - src/aurstage/**
       - src/aurbridge/phases.*
       - src/aurbridge/plat_sim.c
+      - src/aurbridge/plat.h
+      - src/aurscreen/**
+      - tools/fasttest.sh
       - src/aurbridge/simmain.c
       - src/aurbridge/format.*
       - build/staging
@@ -31,7 +34,7 @@ on:
     inputs:
       tests:
         description: "scripts in tools/ (no .sh), arguments joined by ':'"
-        default: "powercut-nostick nosticktest stagetest"
+        default: "fasttest powercut-nostick nosticktest stagetest"
 
 permissions:
   contents: read
@@ -106,7 +109,7 @@ jobs:
           ls -la out
       - name: the scripts, under KVM
         env:
-          TESTS: ${{ inputs.tests || 'powercut-nostick nosticktest stagetest' }}
+          TESTS: ${{ inputs.tests || 'fasttest powercut-nostick nosticktest stagetest' }}
         run: |
           rc=0
           for t in $TESTS; do
