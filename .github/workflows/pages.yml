@@ -51,7 +51,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     outputs:
       download: ${{ steps.download.outputs.ok }}
     steps:
@@ -62,7 +62,15 @@ jobs:
       - name: Playwright and Chromium
         run: |
           npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/pw" playwright@1.56.1
-          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+          pw="$RUNNER_TEMP/pw/node_modules/.bin/playwright"
+          "$pw" install chromium
+          # Chromium's system libraries are usually on the runner image already. Installing them
+          # (--with-deps is an apt-get) took ten minutes of a fifteen-minute job on a slow mirror
+          # (runs 40018977591, 40024591226), while the check itself takes under a minute. So: only
+          # when Chromium will not start, and bounded.
+          if ! NODE_PATH="$RUNNER_TEMP/pw/node_modules" node -e "require('playwright').chromium.launch().then(b => b.close())"; then
+            timeout 600 "$pw" install --with-deps chromium
+          fi
       - name: The site, with this repository written in
         run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"
       - name: Check the front door
