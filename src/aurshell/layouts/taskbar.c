@@ -127,7 +127,7 @@ static rect bar_slot(shell_ctx *c, int W, int H, int slot)
     /* "Make a wish" (src/aurshell/wish.c): the button after the
      * launcher, its words as wide as its text. Absent when the build has
      * no wishes. */
-    int ww = shell_wish_app(c) >= 0 ? (int)((float)bh * 2.5f) : 0;
+    int ww = shell_wish_app(c) >= 0 ? (int)((float)bh * 3.0f) : 0;
     if (ww > W / 5) ww = W / 5;
     rect wr = { lr.x + lr.w + gap, by + pad, ww, ih };
     if (slot == SLOT_WISH) return ww > 0 ? wr : none;
