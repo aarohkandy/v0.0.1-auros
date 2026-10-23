@@ -610,15 +610,15 @@ EOL
             "$src" > "$RFS/usr/local/share/applications/$desk.desktop"
     done <<'EOL'
 firefox|Internet|Websites, news and shopping
-thunar|Your files|Everything you have saved, in folders
+thunar|Your files|Everything you have saved
 mpv|Music and video|Play a song or a film
 mate-calc|Calculator|Add up, and work things out
-system-config-printer|Printers|Set up a printer, or check one you have
-org.gnome.Evince|Documents|Read PDFs and other documents
+system-config-printer|Printers|Set up or check a printer
+org.gnome.Evince|Documents|Read PDFs and documents
 org.xfce.ristretto|Photos|Look at your pictures
 org.xfce.mousepad|Notes|Write and read plain notes
-xarchiver|Zip files|Open a zip file, or make one
-org.gnome.Software|Get more programs|Find and add programs to this computer
+xarchiver|Zip files|Open or make a zip file
+org.gnome.Software|Get more programs|Find and add programs
 EOL
 
     # The database the desktop actually reads. Without this the file

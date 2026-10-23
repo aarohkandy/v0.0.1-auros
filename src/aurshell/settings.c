@@ -506,7 +506,13 @@ static void set_layout(const shell_ctx *c, int sw, int sh,
     g->list_y = g->sub_y + (int)(14.f * k);
     /* The one page whose sentence must be read whole (it says what is
      * lost) gets room for it to wrap. */
-    if (v->page == SET_PAGE_WINDOWS) g->list_y += (int)(52.f * k);
+    if (v->page == SET_PAGE_WINDOWS) {
+        /* ...but never at the cost of the two choices under it. */
+        int extra = (int)(52.f * k);
+        int spare = last_y - (int)(14.f * k) - g->list_y - 2 * g->row_h;
+        if (extra > spare) extra = spare > 0 ? spare : 0;
+        g->list_y += extra;
+    }
 
     int space = last_y - (int)(14.f * k) - g->list_y;
     g->n_vis = space / g->row_h;
@@ -732,9 +738,16 @@ void settings_paint(shell_ctx *c, surface *s, shell_fonts *f)
               "in AurOS goes with it. Windows gets all its space back."
                                    : "Anything you change here you can change back.";
     if (bodyf)
+    {
+        int lines = 1;
+        if (S.page == SET_PAGE_WINDOWS) {
+            lines = (g.list_y - g.sub_y) / (int)(26.f * k + 0.5f);
+            if (lines < 1) lines = 1;
+            if (lines > 3) lines = 3;
+        }
         shell_text_wrap(s, bodyf, (float)g.gx, (float)g.sub_y, (float)g.cw,
-                        26.f * k, sub, c->fg, 0.85f,
-                        S.page == SET_PAGE_WINDOWS ? 3 : 1);
+                        26.f * k, sub, c->fg, 0.85f, lines);
+    }
 
     int total = settings_rows_for(&v);
     int from = clampi_(S.first_row, 0, total > 0 ? total - 1 : 0);

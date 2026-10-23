@@ -21,18 +21,16 @@
 #define FOOT_RULE   0x6E7680u
 #define FOOT_HOT    0x23272Du
 
-/* The BUTTONS are at least 44px on their shorter side, per docs/EASY.md
- * rule 4, so the band has to be tall enough to hold one with room to
- * breathe. The first version of this sized the band at 46 and then took
- * padding out of it, which left 27px targets in the one piece of
- * furniture that exists for a person whose hands are not steady. */
-#define FOOT_TARGET 44
+/* The BUTTONS are at least 48px on their shorter side (DESIGN-DIRECTION
+ * §3; docs/EASY.md rule 4 says 44), so the band has to be tall enough to
+ * hold one with room to breathe. */
+#define FOOT_TARGET 48
 #define FOOT_PAD     6
 #define FOOT_MIN_H  (FOOT_TARGET + 2 * FOOT_PAD)
 /* And the words in it are never smaller than this, whatever she has
  * chosen, because this is the control she reaches for when everything
  * else has become unreadable. */
-#define FOOT_MIN_PX 15.f
+#define FOOT_MIN_PX 18.f
 
 /* The range she can choose within. Below 0.8 the shell's own furniture
  * stops fitting; above 2.0 a 1024x600 panel holds almost nothing, and
@@ -44,86 +42,126 @@
 enum { B_HELP, B_NET, B_SETTINGS, B_CLOSE, B_SMALLER, B_BIGGER,
        B_POWER, B_N };
 
+/* One name per thing, the name on the button (DESIGN-DIRECTION §4). */
 static const char *LABEL[B_N] = { "Help", "Wi-Fi", "Settings", "Close this",
-                                  "Smaller", "Bigger", "Turn off" };
+                                  "Smaller text", "Bigger text", "Turn off" };
+static const shell_icon ICON[B_N] = { ICON_HELP, ICON_WIFI, ICON_GEAR, ICON_CLOSE,
+                                      ICON_SMALLER, ICON_BIGGER, ICON_POWER };
 
 /* ── where the buttons are ──────────────────────────────────────────
  *
  * ONE function, called by painting, by hit-testing and by
- * tools/targets.c, per docs/SHELLS.md. Returns how many buttons this
- * machine actually has.
+ * tools/targets.c, per docs/SHELLS.md. Two groups: Help, Wi-Fi,
+ * Settings and Close this from the left corner; Turn off, Bigger text,
+ * a wide gap, Smaller text from the right one. Each item is an outlined
+ * 48 px-or-more box, icon above its label. When both groups do not fit
+ * on one row (big text, or a small screen) the left group takes the top
+ * row and the right group the bottom one. A control that moves between
+ * visits is one she has to find again: Close this is last on the left so
+ * the others never move.
  */
-#define FOOT_GAP 6
+#define FOOT_GAP 8
+#define FOOT_BIG_GAP 24     /* Bigger text and Smaller text: never neighbours */
+
+static float foot_k(const shell_ctx *c)
+{ return c->text_scale < 1.f ? 1.f : (c->text_scale > 2.f ? 2.f : c->text_scale); }
+
+/* The width of one item: its label at the type size, and room. An
+ * estimate on purpose -- geometry is a pure function of the policy and
+ * the sizes, so the harness can ask it everything without a font -- and
+ * a generous one, so a real label is never cut. */
+static int item_w(const shell_ctx *c, int which)
+{
+    float k = foot_k(c);
+    int w = (int)(10.4f * k * (float)strlen(LABEL[which])) + (int)(28.f * k);
+    return w < 96 ? 96 : w;
+}
+/* Icon above label up to 150% text. Past that the words are what she
+ * needs and the band is already two rows: the icon goes, so the band
+ * does not eat the screen (at 200% on 1024x600 it would take a third). */
+static int with_icons(const shell_ctx *c) { return foot_k(c) <= 1.5f; }
+static int item_h(const shell_ctx *c)
+{
+    float k = foot_k(c);
+    int h = with_icons(c) ? (int)(40.f + 14.f * k) : (int)(28.f * k);
+    return h < FOOT_TARGET ? FOOT_TARGET : h;
+}
+
+/* Which buttons this machine has at all. A build that forbids changing
+ * settings has no size controls; a kiosk has neither a way to turn the
+ * machine off nor a network of its own to choose, since an
+ * administrator sets a kiosk's network and a public terminal whose
+ * users can point it at any nearby wifi is a different product. A build
+ * that forbids changing settings does not get a button that refuses: it
+ * gets no button. Close this only when there is something to close, and
+ * last in the left group so that the buttons before it never move. */
+static void foot_which(const shell_ctx *c, int left[FOOT_MAX], int *nl,
+                       int right[FOOT_MAX], int *nr)
+{
+    *nl = *nr = 0;
+    left[(*nl)++] = B_HELP;
+    if (!c->kiosk && c->allow_network) left[(*nl)++] = B_NET;
+    if (!c->kiosk && c->allow_settings) left[(*nl)++] = B_SETTINGS;
+    if (!c->kiosk && c->n_wins > 0) left[(*nl)++] = B_CLOSE;
+    if (!c->kiosk) right[(*nr)++] = B_POWER;
+    if (c->allow_settings) { right[(*nr)++] = B_BIGGER; right[(*nr)++] = B_SMALLER; }
+}
+
+static int group_w(const shell_ctx *c, const int *g, int n)
+{
+    int w = 0;
+    for (int i = 0; i < n; i++) {
+        w += item_w(c, g[i]);
+        if (i) w += (g[i] == B_SMALLER) ? (int)(FOOT_BIG_GAP * foot_k(c)) : FOOT_GAP;
+    }
+    return w;
+}
+
+/* One row or two, for a panel this wide. */
+static int foot_rows(const shell_ctx *c, int sw)
+{
+    int left[FOOT_MAX], right[FOOT_MAX], nl, nr;
+    foot_which(c, left, &nl, right, &nr);
+    if (nl + nr == 0) return 0;
+    int need = group_w(c, left, nl) + group_w(c, right, nr) +
+               ((nl && nr) ? 2 * FOOT_GAP : 0) + 2 * FOOT_PAD;
+    return (nr && need > sw) ? 2 : 1;
+}
+
+static int foot_band_h(const shell_ctx *c, int rows)
+{
+    return rows * item_h(c) + (rows + 1) * FOOT_PAD;
+}
 
 int foot_buttons(const shell_ctx *c, int sw, int sh, rect *out, int *which)
 {
-    int h = foot_height(c);
-    if (h <= 0) return 0;
-    int top = sh - h;
-    int pad = FOOT_PAD;
-
-    /* Which buttons this machine has at all. A build that forbids
-     * changing settings has no size controls; a kiosk has neither a way
-     * to turn the machine off nor a network of its own to choose, since
-     * an administrator sets a kiosk's network and a public terminal
-     * whose users can point it at any nearby wifi is a different
-     * product. */
-    int left[FOOT_MAX], right[FOOT_MAX], nl = 0, nr = 0;
-    left[nl++] = B_HELP;
-    if (!c->kiosk && c->allow_network) left[nl++] = B_NET;
-    /* A build that forbids changing settings does not get a button
-     * that refuses: it gets no button. A control that looks like a
-     * control and is not is the failure this product keeps finding. */
-    if (!c->kiosk && c->allow_settings) left[nl++] = B_SETTINGS;
-    /* Only when there is something to close, and last in the left
-     * group so that the three buttons before it never move. A control
-     * that changes position between one visit and the next is a
-     * control she has to find again every time.
-     *
-     * It is here because five of the six archetypes have no way to
-     * close a window at all -- only `taskbar` grew a close button --
-     * so a program that will not close itself was permanent on this
-     * machine. */
-    if (!c->kiosk && c->n_wins > 0) left[nl++] = B_CLOSE;
-    if (!c->kiosk) right[nr++] = B_POWER;
-    if (c->allow_settings) { right[nr++] = B_BIGGER; right[nr++] = B_SMALLER; }
-
-    int n_all = nl + nr;
-    if (n_all <= 0) return 0;
-
-    /* Width follows the type, so the band stays proportionate when she
-     * makes everything bigger -- but never past what the screen can
-     * hold. The cap used to be a flat sw/5, which was right for four
-     * buttons and silently wrong for five: at the smallest panel and
-     * the largest type the row ran off the edge. Deriving it from how
-     * many buttons there actually are is the same rule stated once. */
-    int bw = (int)(96.f * (c->text_scale < 1.f ? 1.f : c->text_scale));
-    int room = sw - 2 * pad - (n_all - 1) * FOOT_GAP;
-    int fit  = room / n_all;
-    if (bw > fit) bw = fit;
-    if (bw < FOOT_TARGET) bw = FOOT_TARGET;   /* rule 4 wins over fitting;
-                                               * targets.c is what says so */
-    int bh = h - 2 * pad;
-    if (bh < FOOT_TARGET) bh = FOOT_TARGET;
-    if (bh > h) bh = h;
-    int by = top + (h - bh) / 2;
+    if (c->no_foot) return 0;
+    int left[FOOT_MAX], right[FOOT_MAX], nl, nr;
+    foot_which(c, left, &nl, right, &nr);
+    int rows = foot_rows(c, sw);
+    if (!rows) return 0;
+    int ih = item_h(c), h = foot_band_h(c, rows), top = sh - h;
+    int y0 = top + FOOT_PAD;
+    int y1 = rows == 2 ? y0 + ih + FOOT_PAD : y0;
 
     int n = 0;
     /* The left group starts flush in the corner. A corner cannot be
      * overshot by a hand that is not steady. */
-    int x = pad;
+    int x = FOOT_PAD;
     for (int i = 0; i < nl; i++) {
-        out[n] = (rect){ x, by, bw, bh };
-        which[n] = left[i]; n++;
-        x += bw + FOOT_GAP;
+        int w = item_w(c, left[i]);
+        out[n] = (rect){ x, y0, w, ih };
+        which[n++] = left[i];
+        x += w + FOOT_GAP;
     }
-    /* The right group runs inward from the other corner, in the order
-     * she would reach for them. */
-    x = sw - pad - bw;
+    /* The right group runs inward from the other corner. */
+    x = sw - FOOT_PAD;
     for (int i = 0; i < nr; i++) {
-        out[n] = (rect){ x, by, bw, bh };
-        which[n] = right[i]; n++;
-        x -= bw + FOOT_GAP;
+        int w = item_w(c, right[i]);
+        x -= w;
+        out[n] = (rect){ x, y1, w, ih };
+        which[n++] = right[i];
+        x -= (right[i] == B_BIGGER) ? (int)(FOOT_BIG_GAP * foot_k(c)) : FOOT_GAP;
     }
     return n;
 }
@@ -180,7 +218,7 @@ int foot_power_buttons(const shell_ctx *c, int sw, int sh,
      * the way out. */
     int gx = sw / 12; if (gx < 20) gx = 20;
     int w = sw - 2 * gx; if (w > (int)(560.f * k)) w = (int)(560.f * k);
-    int h = (int)(52.f + 26.f * k); if (h < FOOT_TARGET) h = FOOT_TARGET;
+    int h = (int)(46.f + 20.f * k); if (h < FOOT_TARGET) h = FOOT_TARGET;
     int gap = (int)(10.f * k); if (gap < 8) gap = 8;
 
     int total = n * h + (n - 1) * gap;
@@ -199,11 +237,8 @@ int foot_power_buttons(const shell_ctx *c, int sw, int sh,
 int foot_height(const shell_ctx *c)
 {
     if (!c || c->no_foot) return 0;
-    /* Grows with her choice. The floor is a floor, not a ceiling: the
-     * person who picks the biggest text needs the exit biggest of all. */
-    float px = FOOT_MIN_PX * (c->text_scale < 1.f ? 1.f : c->text_scale);
-    int h = (int)(px * 2.1f) + 2 * FOOT_PAD;
-    return h < FOOT_MIN_H ? FOOT_MIN_H : h;
+    int rows = foot_rows(c, c->screen_w > 0 ? c->screen_w : 1024);
+    return rows ? foot_band_h(c, rows) : 0;
 }
 
 int foot_help_open(const shell_ctx *c) { return c && c->help_open; }
@@ -316,16 +351,31 @@ void foot_save_text_scale(float scale)
 
 /* ── painting ───────────────────────────────────────────────────────*/
 
-static void paint_button(surface *s, shell_fonts *f, rect r,
-                         const char *label, int hot, float px)
+/* An outlined box on the fixed colours: a 2 px rule, radius 8, the
+ * icon above its label. Hover changes only the rule. */
+static void paint_button(surface *s, shell_fonts *f, rect r, shell_icon ic,
+                         const char *label, int hot, int icon)
 {
-    if (hot) draw_rect(s, r, FOOT_HOT, 1.f);
-    font *ft = f->mid ? f->mid : f->small;
-    if (!ft) return;
-    float by = shell_baseline(ft, (float)r.y, (float)r.h);
-    shell_text_elided(s, ft, (float)r.x + 12.f, by, (float)r.w - 24.f,
-                      label, hot ? FOOT_INK : FOOT_DIM, 1.f);
-    (void)px;
+    corners rr = corners_all(8.f);
+    draw_round_rect(s, r, rr, hot ? FOOT_HOT : FOOT_BG, 1.f);
+    draw_round_rect_border(s, r, rr, 2.f, hot ? FOOT_INK : FOOT_DIM, 1.f);
+    font *ft = f->label ? f->label : (f->mid ? f->mid : f->small);
+    float by;
+    if (icon) {
+        float isz = (float)r.h * 0.40f;
+        float icy = (float)r.y + (float)r.h * 0.30f;
+        shell_icon_draw(s, ic, (float)r.x + (float)r.w * 0.5f, icy, isz, FOOT_INK, FOOT_BG, 1.f);
+        if (!ft) return;
+        by = (float)r.y + (float)r.h - 8.f - font_descent(ft);
+    } else {
+        if (!ft) return;
+        by = shell_baseline(ft, (float)r.y, (float)r.h);
+    }
+    float tw = shell_text_w(ft, label);
+    if (tw <= (float)r.w - 10.f)
+        shell_text(s, ft, (float)r.x + ((float)r.w - tw) * 0.5f, by, label, FOOT_INK, 1.f);
+    else
+        shell_text_elided(s, ft, (float)r.x + 5.f, by, (float)r.w - 10.f, label, FOOT_INK, 1.f);
 }
 
 void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
@@ -386,10 +436,10 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
             static const char *LINES[] = {
                 "This bar at the bottom is always here. It never goes away.",
                 "",
-                "Smaller and Bigger change the size of the words everywhere.",
-                "If the screen has become hard to read, press Smaller.",
+                "Bigger text and Smaller text change the size of the words.",
+                "If the words have become too big to use, press Smaller text.",
                 "",
-                "Internet shows the wifi in range, so you can join yours.",
+                "Wi-Fi shows the networks in range, so you can join yours.",
                 "",
                 "Settings has the brightness, the sound and the clock.",
                 "",
@@ -452,47 +502,9 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
 
     rect r[B_N]; int which[B_N];
     int n = foot_buttons(c, s->w, s->h, r, which);
-    float px = FOOT_MIN_PX * (c->text_scale < 1.f ? 1.f : c->text_scale);
     for (int i = 0; i < n; i++)
-        paint_button(s, f, r[i], LABEL[which[i]], c->foot_hover == which[i], px);
-
-    /* What the size is now, so pressing Smaller twice is not a guess.
-     * Only when it is not the size it came at.
-     *
-     * It goes in whatever gap is left between the left-hand buttons
-     * and the right-hand ones, and it is not drawn at all when there
-     * is no gap. The first version put it at a fixed offset from the
-     * FIRST button, which was right while Help was alone on the left;
-     * the moment Internet joined it, the note, the button and the word
-     * Smaller were all painted through each other -- illegible, in the
-     * one strip of this product that exists to still work when
-     * everything else has stopped being legible. */
-    const char *note = NULL;
-    char msg[48];
-    if (c->allow_settings && c->text_scale > 1.01f) {
-        snprintf(msg, sizeof msg, "Words are %d%% bigger",
-                 (int)((c->text_scale - 1.f) * 100.f + 0.5f));
-        note = msg;
-    } else if (c->allow_settings && c->text_scale < 0.99f) {
-        note = "Words are smaller than usual";
-    }
-    if (note && n > 0) {
-        font *ft = f->small ? f->small : f->mid;
-        /* The gap is between the rightmost thing on the left and the
-         * leftmost thing on the right, whatever those turn out to be. */
-        int left_end = 0, right_start = s->w;
-        for (int i = 0; i < n; i++) {
-            int mid = r[i].x + r[i].w / 2;
-            if (mid < s->w / 2) {
-                if (r[i].x + r[i].w > left_end) left_end = r[i].x + r[i].w;
-            } else if (r[i].x < right_start) right_start = r[i].x;
-        }
-        int room = right_start - left_end - 2 * FOOT_GAP;
-        if (ft && room > 60)
-            shell_text_elided(s, ft, (float)(left_end + FOOT_GAP),
-                              shell_baseline(ft, (float)top, (float)h),
-                              (float)room, note, FOOT_DIM, 0.85f);
-    }
+        paint_button(s, f, r[i], ICON[which[i]], LABEL[which[i]],
+                     c->foot_hover == which[i], with_icons(c));
 }
 
 /* ── input ──────────────────────────────────────────────────────────*/

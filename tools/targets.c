@@ -101,6 +101,13 @@ static void band(const char *label, int kiosk, int allow_settings,
                 snprintf(nm, sizeof nm, "band button %d (text %.0f%%)",
                          i + 1, (double)(SCALES[k] * 100.f));
                 measure(nm, b[i], RES[r].w, RES[r].h);
+                /* DESIGN-DIRECTION §3: 96 x 48 at the least. */
+                if (b[i].w < 96 || b[i].h < 48) {
+                    printf("    FAIL band button %d is %dx%d, under 96x48 "
+                           "at %dx%d text %.0f%%\n", i + 1, b[i].w, b[i].h,
+                           RES[r].w, RES[r].h, (double)(SCALES[k] * 100.f));
+                    fail++;
+                }
             }
             /* And they must not overlap each other, which is the other
              * way a row of controls becomes unpressable. */

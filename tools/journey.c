@@ -81,6 +81,11 @@ static void shot(const char *name)
     printf("== %s\n", p);
     for (int i = 0; i < shell_text_log_n; i++)
         if (shell_text_log[i].w > 0) printf("   %s\n", shell_text_log[i].s);
+    /* And how tall each was drawn (ascent + descent: 22 for 18 px type,
+     * 14 for 12 px), so a test can hold a sentence to the 18 px floor. */
+    for (int i = 0; i < shell_text_log_n; i++)
+        if (shell_text_log[i].w > 0)
+            printf("## %d %s\n", shell_text_log[i].h, shell_text_log[i].s);
 }
 
 /* NEVER COVERS A BUTTON (docs/DESIGN-DIRECTION.md §5 C6).
@@ -164,7 +169,7 @@ int main(int argc, char **argv)
     snprintf(shf, sizeof shf, "shells/%s.shell", argv[2]);
     if (shell_archetype_load(&c, shf) < 0) { fprintf(stderr, "no %s\n", shf); return 1; }
     c.allow_install = c.allow_settings = c.allow_theme_change = c.allow_network = 1;
-    c.text_scale = 1.f;
+    c.text_scale = getenv("JOURNEY_SCALE") ? (float)atof(getenv("JOURNEY_SCALE")) : 1.f;
     c.focus = c.hover = c.foot_hover = -1;
     c.mouse_x = c.mouse_y = -1;
     shell_seed_apps(&c);

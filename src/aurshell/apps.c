@@ -706,7 +706,7 @@ int shell_scan_apps(shell_ctx *c)
             a->role = APP_ROLE_STORE;
             a->icon = ICON_STORE;
             snprintf(a->name, sizeof a->name, "%s", "Get more programs");
-            snprintf(a->hint, sizeof a->hint, "%s", "Find and add programs to this computer");
+            snprintf(a->hint, sizeof a->hint, "%s", "Find and add programs");
         } else if (pinned < 4) {
             /* The dock's favourites: the first four PROGRAMS. The store
              * has a labelled place of its own there. */
@@ -723,7 +723,7 @@ int shell_scan_apps(shell_ctx *c)
         memset(a, 0, sizeof *a);
         snprintf(a->id,   sizeof a->id,   "settings");
         snprintf(a->name, sizeof a->name, "Settings");
-        snprintf(a->hint, sizeof a->hint, "Change how this computer looks and works");
+        snprintf(a->hint, sizeof a->hint, "Change how this computer works");
         a->icon = ICON_SETTINGS;
         a->tint = c->fg;
         a->role = APP_ROLE_SETTINGS;

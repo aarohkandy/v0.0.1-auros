@@ -45,14 +45,14 @@ gcc -O2 -std=gnu11 -o /tmp/aurshell aurshell/main.c $SRC \
 A=/tmp/apps; mkdir -p $A
 e() { printf '[Desktop Entry]\nType=Application\nName=%s\nComment=%s\nCategories=%s\nExec=%s\n' "$2" "$3" "$4" "$5" > $A/$1.desktop; }
 e firefox "Internet" "Websites, news and shopping" "Network;WebBrowser;" "true firefox %u"
-e thunar "Your files" "Everything you have saved, in folders" "System;FileTools;FileManager;" "true thunar"
-e atril "Documents" "Read PDFs and other documents" "GTK;Office;Viewer;" "true atril %U"
+e thunar "Your files" "Everything you have saved" "System;FileTools;FileManager;" "true thunar"
+e atril "Documents" "Read PDFs and documents" "GTK;Office;Viewer;" "true atril %U"
 e org.xfce.mousepad "Notes" "Write and read plain notes" "Utility;TextEditor;" "true mousepad %F"
 e org.xfce.ristretto "Photos" "Look at your pictures" "Graphics;Viewer;" "true ristretto %U"
 e mpv "Music and video" "Play a song or a film" "AudioVideo;Audio;Video;Player;" "true mpv %U"
 e mate-calc "Calculator" "Add up, and work things out" "Utility;Calculator;" "true mate-calc"
-e system-config-printer "Printers" "Set up a printer, or check one you have" "System;Settings;Printing;" "true printers"
-e xarchiver "Zip files" "Open a zip file, or make one" "Archiving;Utility;" "true xarchiver %f"
+e system-config-printer "Printers" "Set up or check a printer" "System;Settings;Printing;" "true printers"
+e xarchiver "Zip files" "Open or make a zip file" "Archiving;Utility;" "true xarchiver %f"
 e org.gnome.Software "Software" "Add, remove or update software on this computer" "GNOME;GTK;System;PackageManager;" "true org.gnome.Software %U"
 
 export AUROS_APP_DIRS=$A HOME=/tmp/home AURSHELL_CLOCK=$(date -u -d '2025-10-23 09:41' +%s)

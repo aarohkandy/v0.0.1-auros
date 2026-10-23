@@ -406,6 +406,8 @@ void shell_text_elided(surface *s, font *f, float x, float y, float max_w,
 float shell_wordmark(shell_ctx *c, surface *s, shell_fonts *f, float x, float cy);
 int  shell_text_wrap(surface *s, font *f, float x, float y, float max_w,
                      float lh, const char *t, uint32_t col, float a, int max_lines);
+int  shell_text_wrap_centred(surface *s, font *f, float x, float y, float max_w,
+                             float lh, const char *t, uint32_t col, float a, int max_lines);
 /* Letter-spaced text, for the small rubrics that label a region the
  * way a folio labels a page. Drawn a codepoint at a time, so kerning
  * is deliberately dropped: tracked capitals do not want it. */
@@ -497,6 +499,7 @@ extern shell_text_rec shell_text_log[SHELL_TEXT_LOG_MAX];
  * loads. Safe to call with no compositor; it then only marks the slot,
  * which is what the preview renderers want. Returns the window index,
  * or -1. */
+void shell_open_net(shell_ctx *c);   /* the Wi-Fi page, from anywhere */
 int  shell_launch(shell_ctx *c, int app);
 
 /* Ask a window to close, the way its own title bar button would. */

@@ -87,7 +87,7 @@ radius_sm="8"          # buttons, pills, small chips
 gap="12"               # gap between tiled windows
 margin="14"            # gap from screen edge
 border="2"             # focus border thickness
-bar_height="38"        # top bar height
+bar_height="50"        # top bar height
 padding="14"           # internal padding of panels
 
 # ── Typography ─────────────────────────────────────────────────────
@@ -101,9 +101,9 @@ font_text="Inter-Regular"
 font_text_bold="Inter-SemiBold"
 font_sans="Inter"
 font_mono="JetBrainsMono"
-font_size="14"         # base UI size (px)
-font_size_sm="12"
-font_size_lg="19"
+font_size="20"         # base UI size (px)
+font_size_sm="18"
+font_size_lg="18"
 line_height="1.45"
 
 # ── Effects ────────────────────────────────────────────────────────

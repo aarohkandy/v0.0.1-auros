@@ -50,7 +50,8 @@ static rect card_rect(shell_ctx *c, int w, int h, int index)
     rail_priv *p = P(c);
     int top = c->bar_h + 8 + c->margin;
     int cw  = (int)((float)w * CARD_W_FRAC);
-    int ch  = h - top - c->margin - 26;
+    if (cw < 560 && w >= 560) cw = 560;          /* a name and what it does, side by side */
+    int ch  = h - top - 12;
     float off = (float)index - (p ? p->slide.value : 0.f);
 
     float d = fabsf(off);
@@ -72,19 +73,16 @@ static rect card_rect(shell_ctx *c, int w, int h, int index)
  * every panel. paint_home then sets the type INSIDE this band. */
 static int home_head(shell_ctx *c, rect a)
 {
+    (void)a;
     /* Measured from the THEME's type scale rather than from the loaded
      * font: font_size_lg is what load_fonts builds the display steps
      * from, so this tracks a retheme without either pass having to
-     * open a font. Guessing a fraction of the card instead put the
-     * closing rule straight through the sub-line on a 1024x600 panel,
-     * where a serif's ascent is a larger share of a shorter card. */
-    float em = (float)theme_int(&c->theme, "font_size_lg", 19) * 2.25f;
-    float sm = (float)theme_int(&c->theme, "font_size", 13);
-    int head = c->padding + 10 + (int)(em * 1.45f) + 14 + (int)(sm * 1.5f) + 40;
-    int lo = (int)((float)a.h * 0.18f), hi = (int)((float)a.h * 0.42f);
-    if (head < lo) head = lo;
-    if (head > hi) head = hi;
-    return head;
+     * open a font. The question at its display size (2.25 x the large
+     * step: 40 px), the sentence under it, and nothing else: no rule. */
+    float em = (float)theme_int(&c->theme, "font_size_lg", 18) * 2.25f;
+    float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
+    float sm = (float)theme_int(&c->theme, "font_size", 20);
+    return (int)(((float)(c->padding + 10) + em * 1.25f + 12.f + sm * 1.5f + 16.f) * k);
 }
 
 /* Home is an INDEX, not a grid of cards.
@@ -108,18 +106,14 @@ static int home_head(shell_ctx *c, rect a)
  * function, still called by both the painter and l_motion. */
 static rect tile_rect(shell_ctx *c, rect a, int index)
 {
-    const float LEAD = 1.45f;
+    /* Every row the same size: the first one is not more important than
+     * the rest, and a list whose rows differ makes her wonder why. */
     int top = a.y + home_head(c, a);
     int bot = a.y + a.h - c->padding;
     int avail = bot - top;
     if (avail < HOME_TILES) avail = HOME_TILES;
-
-    float unit = (float)avail / (LEAD + (float)(HOME_TILES - 1));
-    float y = (float)top;
-    for (int i = 0; i < index; i++) y += unit * (i == 0 ? LEAD : 1.f);
-    float hgt = unit * (index == 0 ? LEAD : 1.f);
-
-    rect t = { a.x, (int)y, a.w, (int)hgt };
+    int unit = avail / HOME_TILES;
+    rect t = { a.x, top + index * unit, a.w, unit };
     return t;
 }
 
@@ -153,14 +147,14 @@ static void row_face(const shell_ctx *c, int r, const char **name,
 {
     switch (r) {
     case ROW_ALL:  *name = "All my programs";
-                   *hint = "Everything on this computer, in one list";
+                   *hint = "Everything on this computer";
                    *ic = ICON_LIST; return;
     case ROW_BACK: *name = "Back to Home";
                    *hint = "";
-                   *ic = ICON_WINDOW; return;
+                   *ic = ICON_BACK; return;
     case ROW_MORE: *name = "Show more";
                    *hint = "The rest of the list";
-                   *ic = ICON_LIST; return;
+                   *ic = ICON_FORWARD; return;
     case ROW_TOP:  *name = "Back to the start of the list";
                    *hint = "";
                    *ic = ICON_LIST; return;
@@ -180,9 +174,8 @@ static void row_face(const shell_ctx *c, int r, const char **name,
 static int list_entries(const shell_ctx *c, int *out)
 {
     int n = 0, store = shell_store_app(c);
-    if (store >= 0) out[n++] = store;
     int first = n;
-    for (int i = 0; i < c->n_apps && n < LIST_MAX; i++) {
+    for (int i = 0; i < c->n_apps && n < LIST_MAX - 1; i++) {
         if (i == store) continue;
         /* insertion by name: what she looks for is a name */
         int k = n++;
@@ -191,6 +184,9 @@ static int list_entries(const shell_ctx *c, int *out)
         }
         out[k] = i;
     }
+    /* The way to more programs comes last, after everything she has
+     * (DESIGN-DIRECTION C P1-13): it is not one of them. */
+    if (store >= 0) out[n++] = store;
     return n;
 }
 
@@ -201,7 +197,7 @@ static int list_slots(const shell_ctx *c, rect a, int *row_h)
     int top = a.y + home_head((shell_ctx *)c, a);
     int bot = a.y + a.h - c->padding;
     int avail = bot - top;
-    int rh = avail / 7;
+    int rh = avail / 6;
     if (rh > 64) rh = 64;
     if (rh < 48) rh = 48;
     int n = avail / rh;
@@ -283,10 +279,9 @@ static void paint_home(shell_ctx *c, surface *s, rect a, shell_fonts *f,
         int vw = (a.x + a.w) - vx;
         if (vw <= 0) return;
         int mx = vx + (vw < 140 ? vw/2 - 5 : pad);
-        rect mark = { mx, a.y + 34, 10, 10 };
-        draw_rect(s, mark, c->accent, alpha);
+        draw_diamond(s, (float)mx + 7.f, (float)(a.y + 40), 14.f, c->accent, alpha);
         if (vw >= 140)
-            shell_text(s, f->mid, (float)(mx + 22),
+            shell_text(s, f->mid, (float)(mx + 24),
                        shell_baseline(f->mid, (float)(a.y + 26), 28.f),
                        "Home", c->fg_hi, alpha * 0.95f);
         return;
@@ -307,15 +302,8 @@ static void paint_home(shell_ctx *c, surface *s, rect a, shell_fonts *f,
 
     float hy = (float)(a.y + pad) + fa(tf, 30.f);
     shell_text(s, tf, x, hy, Q, c->fg_hi, alpha * 0.98f);
-    shell_text(s, f->small, x, hy + fdc(tf, 10.f) + 13.f + fa(f->small, 11.f),
-               SUB, c->subtle, alpha * 0.92f);
-
-    /* The rule that closes the headline. It stops at 46% of the measure
-     * instead of running the full width: a rule that reaches both
-     * margins is a border, and a border would box the headline back up
-     * into the card this composition is trying not to be. */
-    draw_hrule(s, (int)x, a.y + home_head(c, a) - 22, (int)(innw * 0.46f), 2,
-               c->fg_hi, alpha * 0.9f);
+    shell_text(s, f->small, x, hy + fdc(tf, 10.f) + 10.f + fa(f->small, 11.f),
+               SUB, c->subtle, alpha * 0.98f);
 
     int rows[LIST_MAX];
     int nr = p->list ? list_rows(c, a, p->list_first, rows) : home_rows(c, rows);
@@ -328,72 +316,45 @@ static void paint_home(shell_ctx *c, surface *s, rect a, shell_fonts *f,
         row_face(c, rows[i], &nm, &hn, &ic);
         int is_store = rows[i] >= 0 && c->apps[rows[i]].role == APP_ROLE_STORE;
 
-        /* Hover is a fill plus a bar down the left edge — the GOV.UK
-         * inset device. No shadow, no glow, no ring: the row simply
-         * becomes the piece of the page you are on. */
+        /* Hover is a fill plus a bar down the left edge: no shadow, no
+         * glow, no ring -- the row simply becomes the piece of the page
+         * you are on. */
         if (hot) {
             draw_rect(s, t, c->surface_hi, alpha);
             draw_rect(s, (rect){ t.x, t.y, 4, t.h }, c->accent, alpha);
             paper = c->surface_hi;
         }
-        /* The two fixed rows at the foot of Home sit under a heavier
-         * rule: they are a different kind of thing from the programs
-         * above them -- ways to more programs -- and the eye should see
-         * the line before it reads the words. */
-        if (i + 1 < nr) {
-            int heavy = !p->list && rows[i + 1] == ROW_ALL;
-            draw_hrule(s, t.x + pad, t.y + t.h - 1, (int)innw, heavy ? 2 : 1,
+        /* A heavier rule over the two fixed rows at the foot of Home:
+         * they are ways to more programs, not programs. */
+        if (i > 0) {
+            int heavy = !p->list && rows[i] == ROW_ALL;
+            draw_hrule(s, t.x + pad, t.y, (int)innw, heavy ? 2 : 1,
                        heavy ? c->fg : c->overlay, alpha * 0.95f);
         }
 
-        font *nf = (!p->list && i == 0) ? f->big : f->dmid;
+        font *nf = f->mid ? f->mid : f->small;
         float by  = shell_baseline(nf, (float)t.y, (float)t.h);
         float cy  = (float)t.y + (float)t.h * 0.5f;
-        float isz = clampf((float)t.h * 0.44f, 17.f, 34.f);
-
-        /* The entry number. An annual-report device, and it does real
-         * work: it gives the eye a fixed left edge to run down, which
-         * is the thing a ragged list of names does not have. In the
-         * list the rows are not numbered: a number there would be a
-         * position on a page that changes when she presses Show more. */
-        if (!p->list) {
-            char num[8];
-            snprintf(num, sizeof num, "%02d", i + 1);
-            shell_text_tracked(s, f->label, x, by, num,
-                               hot ? c->accent : c->muted, alpha * 0.95f, 1.3f);
-        }
+        float isz = 30.f;
 
         /* The store's mark is in the signal colour: it is the one row
          * that leads somewhere new. */
-        shell_icon_draw(s, ic, x + 52.f, cy, isz,
+        shell_icon_draw(s, ic, x + 17.f, cy, isz,
                         is_store ? c->accent : (rows[i] >= 0 ? c->apps[rows[i]].tint : c->fg),
                         paper, alpha);
-        /* Two columns, and the first one ends where the second begins.
-         * The name column is measured rather than assumed, so a package
-         * with a long name is cut instead of printing over the
-         * description beside it.
-         *
-         * On a narrow panel the second column does not fit, and the
-         * name wins: a row that says "Browse the web" with no name
-         * above it is not a shorter row, it is a row that has lost the
-         * only thing the user was looking for. 1024x600 is a real
-         * target, so this is a layout the product has, not an edge. */
-        float name_x = x + 52.f + isz * 0.5f + 20.f;
-        float hint_x = x + innw * 0.42f;
-        float name_w = hint_x - name_x - 16.f;
-        /* The store's name is never the one that gets cut: "Get more
-         * prog..." is a row nobody can find. It takes the whole row if
-         * it has to. */
-        if (is_store && shell_text_w(nf, nm) > name_w) name_w = 0.f;
-        if (name_w < 110.f || !hn[0]) {
-            shell_text_elided(s, nf, name_x, by, x + innw - name_x,
-                              nm, c->fg_hi, alpha * 0.98f);
-        } else {
-            shell_text_elided(s, nf, name_x, by, name_w,
-                              nm, c->fg_hi, alpha * 0.98f);
-            shell_text_elided(s, f->small, hint_x, by, x + innw - hint_x,
-                              hn, c->subtle, alpha * 0.92f);
-        }
+        /* Two columns: the name, and what it does when that fits WHOLE.
+         * Half a sentence is worse than none, so a line that does not
+         * fit is not drawn (the name always is). */
+        float name_x = x + 52.f;
+        float name_w = innw - 52.f;
+        float need = shell_text_w(nf, nm);
+        float hint_x = name_x + need + 28.f;
+        if (hint_x < x + innw * 0.5f) hint_x = x + innw * 0.5f;
+        font *hf = f->tiny ? f->tiny : f->small;
+        if (hn[0] && hf && hint_x + shell_text_w(hf, hn) <= x + innw)
+            shell_text(s, hf, hint_x, shell_baseline(hf, (float)t.y, (float)t.h),
+                       hn, c->subtle, alpha * 0.98f);
+        shell_text_elided(s, nf, name_x, by, name_w, nm, c->fg_hi, alpha * 0.98f);
     }
 }
 
@@ -406,7 +367,7 @@ static void paint_win(shell_ctx *c, surface *s, rect a, int wi, shell_fonts *f,
 
     /* A masthead, not a titlebar: a band of the deeper stock closed by
      * a hairline, with the name set in the bold text cut. */
-    int th = 50;
+    int th = 56;
     rect tb = { a.x, a.y, a.w, th };
     draw_rect(s, tb, c->bg_alt, alpha);
     draw_hrule(s, a.x, a.y + th, a.w, 1, c->overlay, alpha);
@@ -415,19 +376,10 @@ static void paint_win(shell_ctx *c, surface *s, rect a, int wi, shell_fonts *f,
      * the screen, and a header at a.x lands out of view, leaving the
      * card the user is invited to click with no label at all. */
     int vx = a.x < 0 ? 0 : a.x;
-    shell_icon_draw(s, ic, (float)(vx + c->padding + 8), (float)(a.y + th/2), 19.f,
+    shell_icon_draw(s, ic, (float)(vx + c->padding + 12), (float)(a.y + th/2), 26.f,
                     ink, c->bg_alt, alpha * 0.95f);
-    shell_text(s, f->mid, (float)(vx + c->padding + 28),
+    shell_text(s, f->mid, (float)(vx + c->padding + 36),
                shell_baseline(f->mid, (float)a.y, (float)th), w->title, c->fg_hi, alpha * 0.96f);
-
-    if (focused) {
-        int cs = 22;
-        rect cb = { a.x + a.w - c->padding - cs, a.y + (th - cs)/2, cs, cs };
-        float ccx = (float)cb.x + (float)cs * 0.5f, ccy = (float)cb.y + (float)cs * 0.5f;
-        draw_frame(s, cb, 1, c->overlay, alpha * 0.9f);
-        draw_line(s, ccx-4.5f, ccy-4.5f, ccx+4.5f, ccy+4.5f, 1.6f, c->subtle, alpha);
-        draw_line(s, ccx+4.5f, ccy-4.5f, ccx-4.5f, ccy+4.5f, 1.6f, c->subtle, alpha);
-    }
 
     if (w->content) {
         rect body = { a.x, a.y + th, a.w, a.h - th };

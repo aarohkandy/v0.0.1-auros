@@ -553,8 +553,9 @@ void shell_text_elided(surface *s, font *f, float x, float y, float max_w,
  * when even that many lines cannot hold it. Nothing she needs to read
  * is cut short (DESIGN-DIRECTION §3). s == NULL measures only. Returns
  * the lines used. y is the first baseline; lh the distance between. */
-int shell_text_wrap(surface *s, font *f, float x, float y, float max_w,
-                    float lh, const char *t, uint32_t col, float a, int max_lines)
+static int wrap_impl(surface *s, font *f, float x, float y, float max_w,
+                     float lh, const char *t, uint32_t col, float a, int max_lines,
+                     int centre)
 {
     if (!f || !t || !*t || max_w <= 0.f || max_lines < 1) return 0;
     int used = 0;
@@ -574,16 +575,37 @@ int shell_text_wrap(surface *s, font *f, float x, float y, float max_w,
             if (!*q) break;
             n = m + 1;
         }
+        float ly = y + lh * (float)used;
         if (!fit || used == max_lines - 1) {      /* last line, or one huge word */
-            if (s) shell_text_elided(s, f, x, y + lh * (float)used, max_w, p, col, a);
+            if (s) {
+                if (centre && font_text_width(f, p) <= max_w)
+                    shell_text(s, f, x + (max_w - font_text_width(f, p)) * 0.5f, ly, p, col, a);
+                else
+                    shell_text_elided(s, f, x, ly, max_w, p, col, a);
+            }
             return used + 1;
         }
         memcpy(buf, p, fit); buf[fit] = 0;
-        if (s) shell_text(s, f, x, y + lh * (float)used, buf, col, a);
+        if (s)
+            shell_text(s, f, centre ? x + (max_w - font_text_width(f, buf)) * 0.5f : x,
+                       ly, buf, col, a);
         used++;
         p += fit;
     }
     return used;
+}
+
+int shell_text_wrap(surface *s, font *f, float x, float y, float max_w,
+                    float lh, const char *t, uint32_t col, float a, int max_lines)
+{
+    return wrap_impl(s, f, x, y, max_w, lh, t, col, a, max_lines, 0);
+}
+
+/* The same, each line centred in the measure (an icon's label). */
+int shell_text_wrap_centred(surface *s, font *f, float x, float y, float max_w,
+                            float lh, const char *t, uint32_t col, float a, int max_lines)
+{
+    return wrap_impl(s, f, x, y, max_w, lh, t, col, a, max_lines, 1);
 }
 
 /* The wordmark: the mark -- a solid diamond as tall as the capitals --
@@ -823,7 +845,7 @@ void shell_fonts_load(shell_fonts *f, const shell_ctx *c)
 
     f->huge  = open_font(disp, lg * 2.25f);
     f->big   = open_font(disp, lg * 1.45f);
-    f->dmid  = open_font(disp, lg * 0.95f);
+    f->dmid  = open_font(disp, lg * 1.2f);
     f->mid   = open_font(bold, base * 1.10f);
     f->label = open_font(bold, sm);
     f->small = open_font(text, base);
@@ -864,6 +886,16 @@ static void copy_str(char *dst, size_t n, const char *src)
  * product exists to rescue, and a desktop that does nothing visible for
  * two seconds after a click has, to the person sitting there, ignored
  * them. The real window adopts this slot when it maps. */
+/* Open the Wi-Fi page, and only it: the same thing the band's Wi-Fi
+ * button does, for the other places that offer it (a look's own tray). */
+void shell_open_net(shell_ctx *c)
+{
+    c->help_open = c->settings_open = c->bt_open = c->power_open = 0;
+    c->welcome_open = c->guard_open = c->wish_open = 0;
+    c->power_sel = 0;
+    c->net_open = 1;
+}
+
 int shell_launch(shell_ctx *c, int app)
 {
     if (!c || app < 0 || app >= c->n_apps) return -1;
@@ -964,8 +996,22 @@ int shell_home_pick(const shell_ctx *c, int cap, int *out)
     int wish = cap >= 3 ? wish_app(c) : -1;
     int slots = cap - (store >= 0 ? 1 : 0) - (wish >= 0 ? 1 : 0);
     int n = 0;
-    for (int i = 0; i < c->n_apps && n < slots; i++)
-        if (i != store && i != wish) out[n++] = i;
+    /* What she reaches for, by KIND, in this order: the internet, her
+     * photos, her files, mail, a document, music. One of each, so a
+     * second text editor never takes the place of her photos -- which
+     * the table order did (people-walkthrough F-04: "Photos is not on
+     * the Home of Big and simple"). Whatever is left fills in order. */
+    static const shell_icon KIND[] = { ICON_GLOBE, ICON_PHOTOS, ICON_FILES,
+                                       ICON_MAIL, ICON_DOC, ICON_MUSIC };
+    for (size_t k = 0; k < sizeof KIND / sizeof KIND[0] && n < slots; k++)
+        for (int i = 0; i < c->n_apps; i++)
+            if (i != store && i != wish && c->apps[i].icon == KIND[k] &&
+                c->apps[i].role == APP_ROLE_PROGRAM) { out[n++] = i; break; }
+    for (int i = 0; i < c->n_apps && n < slots; i++) {
+        int there = 0;
+        for (int k = 0; k < n; k++) if (out[k] == i) there = 1;
+        if (!there && i != store && i != wish) out[n++] = i;
+    }
 
     /* The newest program she installed while the desktop was running,
      * if the table order did not already put it on this screen. It

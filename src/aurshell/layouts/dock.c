@@ -22,19 +22,22 @@
 #include <stdio.h>
 #include <math.h>
 
-#define DOCK_CELL     62      /* fixed pitch of one favourite            */
-#define DOCK_GAP      10
-#define DOCK_SEP      22      /* space a divider sits in                 */
-#define DOCK_FIND_W   88
+/* Every cell is the same: the icon, and under it the name in 18 px type,
+ * wrapping to two lines -- never cut, never icon-only (DESIGN-DIRECTION
+ * C P1-12). "All my programs" first, her favourites, and "Get more
+ * programs" at the end. */
+#define DOCK_CELL_W   116     /* one cell, at 100% text                  */
+#define DOCK_GAP      8
+#define DOCK_SEP      24      /* space a divider sits in                 */
 #define DOCK_PAD_T    10
-#define DOCK_DOT_BAND 20      /* room under the icons for running dots   */
-#define DOCK_ICON     40.f
-#define DOCK_MAG      0.14f   /* peak icon growth under the pointer      */
-#define DOCK_LIFT     4.f
-#define DOCK_SPREAD   1.35f   /* cells the lift falls off over           */
+#define DOCK_PAD_B    10
+#define DOCK_ICON_PX  56.f
+#define DOCK_LABEL_H  48      /* two lines of 18 px                      */
 #define WIN_TITLE_H   46
 #define CASCADE_STEP  110
-#define FIND_MAX      6
+#define FIND_MAX      16
+#define FIND_ROW_H    52
+#define FIND_TOP      76
 
 /* SLOT_STORE is "Get more programs": a labelled button beside Find,
  * outside the run of favourites so that it never moves and never moves
@@ -98,14 +101,16 @@ static int dock_slots(shell_ctx *c, dock_slot *out)
     int n = 0;
     out[n].kind = SLOT_FIND; out[n].app = -1; n++;
     int store = shell_store_app(c);
-    if (store >= 0) { out[n].kind = SLOT_STORE; out[n].app = store; n++; }
-    /* "Make a wish" is the same kind of thing as the store -- a labelled
-     * button that gets her something -- and so wears its slot. */
-    int wish = shell_wish_app(c);
-    if (wish >= 0) { out[n].kind = SLOT_STORE; out[n].app = wish; n++; }
 
     for (int i = 0; i < c->n_apps && n < MAX_SLOTS; i++)
         if (c->apps[i].pinned && i != store) { out[n].kind = SLOT_FAV; out[n].app = i; n++; }
+
+    /* The way to more programs, one icon, at the end of the favourites.
+     * "Make a wish" is the same kind of thing -- a labelled button that
+     * gets her something -- and wears the next slot. */
+    if (store >= 0) { out[n].kind = SLOT_STORE; out[n].app = store; n++; }
+    int wish = shell_wish_app(c);
+    if (wish >= 0) { out[n].kind = SLOT_STORE; out[n].app = wish; n++; }
 
     for (int w = 0; w < c->n_wins && n < MAX_SLOTS; w++) {
         int a = c->wins[w].app;
@@ -129,19 +134,16 @@ static int dock_slots(shell_ctx *c, dock_slot *out)
  * the target slides out from under you at the exact moment you are
  * aiming at it, and the muscle memory this archetype is selling is
  * undermined by its own animation. The icon grows; the slot does not. */
-/* The store's button is as wide as its words at her text size, so
- * "Get more programs" is never cut to "Get more prog...". */
-static int store_w(const shell_ctx *c)
+static float dock_k(const shell_ctx *c)
 {
     float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
-    return 74 + (int)(158.f * k);
+    return k < 1.f ? 1.f : (k > 2.f ? 2.f : k);
 }
 
-static int slot_w(const shell_ctx *c, const dock_slot *sl, int cell)
+static int cell_h(const shell_ctx *c)
 {
-    if (sl->kind == SLOT_FIND)  return DOCK_FIND_W;
-    if (sl->kind == SLOT_STORE) return store_w(c);
-    return cell;
+    float k = dock_k(c);
+    return (int)(DOCK_ICON_PX * k) + 8 + (int)((float)DOCK_LABEL_H * k);
 }
 
 static rect dock_rect(shell_ctx *c, int sw, int sh, int slot)
@@ -149,32 +151,35 @@ static rect dock_rect(shell_ctx *c, int sw, int sh, int slot)
     dock_slot sl[MAX_SLOTS];
     int n = dock_slots(c, sl);
 
-    int cell = c->target_large ? DOCK_CELL : DOCK_CELL - 10;
+    float k = dock_k(c);
+    int cell = (int)((float)DOCK_CELL_W * k);
     int gap = DOCK_GAP, sep = DOCK_SEP, pad = 12;
-    int avail = sw - 2 * c->margin, inner;
+    int avail = sw - 2 * c->margin;
 
     /* Shrink rather than scroll or wrap: a dock you have to scroll has
-     * stopped being a place and started being a list. Measured by the
-     * same walk that places the cells below, so the two cannot differ. */
+     * stopped being a place and started being a list. The favourites
+     * decide the width; what merely happens to be running is appended
+     * after them and never moves them. */
+    int fixed_n = 0;
+    for (int i = 0; i < n; i++) if (sl[i].kind != SLOT_RUN) fixed_n++;
+    int inner, fixed_inner;
     for (;;) {
-        inner = 0;
+        inner = 0; fixed_inner = 0;
         for (int i = 0; i < n; i++) {
-            inner += slot_w(c, &sl[i], cell);
+            inner += cell;
             if (i + 1 < n) inner += (sl[i + 1].kind != sl[i].kind) ? sep : gap;
+            if (i + 1 == fixed_n) fixed_inner = inner;
         }
-        if (inner + 2 * pad <= avail || cell <= 34) break;
+        if (inner + 2 * pad <= avail || cell <= 92) break;
         cell -= 2;
-        if (gap > 6) gap--;
     }
+    if (fixed_n == n) fixed_inner = inner;
 
-    int strip_h = DOCK_PAD_T + cell + DOCK_DOT_BAND;
-    /* Anchored to the left measure, not derived from the screen's
-     * centre. "Always in the same spot" means ABSOLUTELY fixed, and a
-     * centred strip is not: add one unpinned running app and every
-     * favourite in it slides sideways by half a cell. Pinning it to
-     * the margin makes the promise literally true, and puts the strip
-     * on the same measure as everything else on the page. */
-    int sx = c->margin * 2;
+    int strip_h = DOCK_PAD_T + cell_h(c) + DOCK_PAD_B;
+    /* CENTRED on the favourites alone (DESIGN-DIRECTION C P1-12): add a
+     * running program and nothing she reaches for slides sideways, which
+     * is the whole promise of this look. */
+    int sx = (sw - (fixed_inner + 2 * pad)) / 2;
     if (sx + inner + 2 * pad > sw - c->margin) sx = sw - c->margin - (inner + 2 * pad);
     if (sx < c->margin) sx = c->margin;
     rect strip = { sx, sh - c->margin - strip_h, inner + 2 * pad, strip_h };
@@ -183,9 +188,8 @@ static rect dock_rect(shell_ctx *c, int sw, int sh, int slot)
 
     int x = strip.x + pad;
     for (int i = 0; i < n; i++) {
-        int w = slot_w(c, &sl[i], cell);
-        if (i == slot) return (rect){ x, strip.y + DOCK_PAD_T, w, cell };
-        x += w;
+        if (i == slot) return (rect){ x, strip.y + DOCK_PAD_T, cell, cell_h(c) };
+        x += cell;
         if (i + 1 < n) x += (sl[i + 1].kind != sl[i].kind) ? sep : gap;
     }
     return (rect){ 0, 0, 0, 0 };
@@ -278,31 +282,40 @@ static int name_has(const char *hay, const char *needle)
     return 0;
 }
 
-/* With nothing typed the list is the programs that are NOT on the
- * dock, which is exactly the set the dock cannot answer for. */
+/* With nothing typed the list is EVERY program: "All my programs" opens
+ * the whole list, in the order she knows (not only what the dock cannot
+ * show). Typing narrows it. */
 static int find_search(shell_ctx *c, const char *q, find_hit *out)
 {
     int n = 0, empty = !q || !*q;
     for (int i = 0; i < c->n_apps && n < FIND_MAX; i++) {
-        if (empty ? c->apps[i].pinned : !name_has(c->apps[i].name, q)) continue;
-        out[n].name = c->apps[i].name; out[n].where = "Program";
+        if (!empty && !name_has(c->apps[i].name, q)) continue;
+        out[n].name = c->apps[i].name; out[n].where = "";
         out[n].ic = c->apps[i].icon;   out[n].tint = c->apps[i].tint;
         out[n].app = i; n++;
     }
     return n;
 }
 
+/* How many result rows fit between the field and the dock. */
+static int find_rows_fit(shell_ctx *c, int sh)
+{
+    dock_slot sl[MAX_SLOTS]; (void)sl;
+    int top = c->bar_h + 16;
+    int bottom = sh - c->margin - (DOCK_PAD_T + cell_h(c) + DOCK_PAD_B) - 12;
+    int rows = (bottom - top - FIND_TOP - 40) / FIND_ROW_H;
+    return rows < 1 ? 1 : (rows > FIND_MAX ? FIND_MAX : rows);
+}
+
 static rect find_panel_rect(shell_ctx *c, int sw, int sh, int nres)
 {
-    int pw = sw - 2 * (c->margin + 56); if (pw > 660) pw = 660; if (pw < 320) pw = 320;
-    int ph = 72 + (nres ? nres * 50 : 0) + 36;
-    /* On the same left measure as the dock below it, so the two things
-     * the archetype has line up down one edge instead of both floating
-     * on the screen's axis. */
-    int px = c->margin * 2;
-    if (px + pw > sw - c->margin) px = sw - c->margin - pw;
+    int pw = sw - 2 * (c->margin + 56); if (pw > 700) pw = 700; if (pw < 320) pw = 320;
+    int shown = nres < find_rows_fit(c, sh) ? nres : find_rows_fit(c, sh);
+    int ph = FIND_TOP + (shown ? shown * FIND_ROW_H : 52) + 40;
+    /* Centred over the dock, like the dock. */
+    int px = (sw - pw) / 2;
     if (px < c->margin) px = c->margin;
-    return (rect){ px, (int)((float)sh * 0.17f), pw, ph };
+    return (rect){ px, c->bar_h + 16, pw, ph };
 }
 
 /* ── helpers over the window list ───────────────────────────────── */
@@ -431,21 +444,16 @@ static void paint_dock(shell_ctx *c, surface *s, shell_fonts *f, float alpha)
     int n = dock_slots(c, sl);
     rect strip = dock_rect(c, s->w, s->h, -1);
     corners rc = corners_all((float)c->radius);
+    float k = dock_k(c);
 
     draw_round_rect(s, strip, rc, c->bg_alt, alpha);
-    draw_frame(s, strip, 1, c->overlay, alpha);
-    draw_hrule(s, strip.x, strip.y, strip.w, 2, c->fg, alpha * 0.85f);
+    draw_round_rect_border(s, strip, rc, 2.f, c->overlay, alpha);
 
-    int cell_h = strip.h - DOCK_PAD_T - DOCK_DOT_BAND;
-    float doty = (float)(strip.y + DOCK_PAD_T + cell_h) + 8.f;
-    int tip = -1; float tip_x = 0.f;
-
+    font *lf = f->tiny ? f->tiny : f->small;
     for (int i = 0; i < n; i++) {
         rect r = dock_rect(c, s->w, s->h, i);
-        float d = (p->hover >= 0) ? fabsf((float)(i - p->hover)) : 99.f;
-        float k = p->mag.value * expf(-(d * d) / (DOCK_SPREAD * DOCK_SPREAD));
         float cx = (float)r.x + (float)r.w * 0.5f;
-        float cy = (float)r.y + (float)r.h * 0.5f - DOCK_LIFT * k;
+        int hot = (i == p->hover);
 
         /* Divider wherever the kind changes: the favourites are one
          * thing, what merely happens to be open is another. */
@@ -453,103 +461,38 @@ static void paint_dock(shell_ctx *c, surface *s, shell_fonts *f, float alpha)
             draw_vrule(s, r.x + r.w + DOCK_SEP / 2, strip.y + 14,
                        strip.h - 28, 1, c->overlay, alpha);
 
+        /* Hover changes only the border (DESIGN-DIRECTION §3). */
+        if (hot)
+            draw_round_rect_border(s, r, corners_all((float)c->radius_sm), 2.f, c->fg, alpha);
+
+        const char *name; shell_icon ic; uint32_t ink; int running = 0, is_focus = 0;
         if (sl[i].kind == SLOT_FIND) {
-            /* The one item that is not a program. It is pinned to the
-             * far end, outside the run of favourites, so that opening it
-             * up never shifts a favourite by a pixel — and it is spelt
-             * out in a word because the archetype's stated cost is that
-             * typing to search is a habit some people never form. A
-             * button they can see is the cheapest way to start it. */
-            rect fp = { r.x, r.y + (r.h - 40) / 2, r.w, 40 };
-            int fhot = (i == p->hover);
-            uint32_t fpaper = fhot ? c->surface_hi : c->bg_alt;
-            if (fhot) draw_round_rect(s, fp, corners_all((float)c->radius_sm), fpaper, alpha);
-            draw_frame(s, fp, fhot ? 2 : 1, fhot ? c->fg : c->overlay, alpha);
-            shell_icon_draw(s, ICON_PLUS, (float)fp.x + 18.f, (float)fp.y + 20.f,
-                            13.f, c->fg, fpaper, alpha * 0.95f);
-            shell_text(s, f->mid, (float)fp.x + 30.f,
-                       shell_baseline(f->mid, (float)fp.y, 40.f), "Find",
-                       c->fg_hi, alpha);
-            continue;
-        }
-        if (sl[i].kind == SLOT_STORE) {
-            /* Filled, where Find is outlined: Find is a way to look, this
-             * is a way to get, and the two must not read as a pair of the
-             * same thing. The words are the button; the bag is in the
-             * signal colour, as on every other home. */
-            rect fp = { r.x, r.y + (r.h - 44) / 2, r.w, 44 };
-            int fhot = (i == p->hover);
-            uint32_t fpaper = fhot ? c->surface_hi : c->surface_c;
-            draw_round_rect(s, fp, corners_all((float)c->radius_sm), fpaper, alpha);
-            draw_frame(s, fp, fhot ? 2 : 1, fhot ? c->accent : c->fg, alpha);
-            shell_icon_draw(s, c->apps[sl[i].app].icon, (float)fp.x + 22.f, (float)fp.y + 22.f,
-                            22.f, c->apps[sl[i].app].role == APP_ROLE_STORE ? c->accent : c->fg,
-                            fpaper, alpha);
-            shell_text_elided(s, f->mid, (float)fp.x + 42.f,
-                              shell_baseline(f->mid, (float)fp.y, 44.f),
-                              (float)fp.w - 50.f, c->apps[sl[i].app].name,
-                              c->fg_hi, alpha);
+            name = "All my programs"; ic = ICON_LIST; ink = c->fg;
+        } else {
+            const app_entry *ap = &c->apps[sl[i].app];
+            name = ap->name; ic = ap->icon;
+            ink = ap->role == APP_ROLE_STORE ? c->accent : ap->tint;
             int wi = app_window(c, sl[i].app);
-            if (wi >= 0)
-                draw_hrule(s, fp.x + 42, (int)doty - 2, 28, 4,
-                           wi == c->focus ? c->accent : c->fg, alpha);
-            continue;
+            running = (wi >= 0);
+            is_focus = (wi >= 0 && wi == c->focus);
         }
-
-        const app_entry *ap = &c->apps[sl[i].app];
-        int wi = app_window(c, sl[i].app);
-        int running = (wi >= 0);
-        int is_focus = (wi >= 0 && wi == c->focus);
-
-        uint32_t paper = c->bg_alt;
-        if (i == p->hover && p->mag.value > 0.02f) {
-            draw_round_rect(s, r, corners_all((float)c->radius_sm),
-                            c->surface_hi, alpha * p->mag.value);
-            if (p->mag.value > 0.5f) paper = c->surface_hi;
-        }
-
-        float isz = DOCK_ICON * (1.f + DOCK_MAG * k);
-        /* A favourite that is not running is still a favourite, so it
-         * is drawn in the same ink as the rest. Greying it out would
-         * say "unavailable", which is the opposite of what a dock is
-         * for; whether it is open is said by the rule beneath it. */
-        shell_icon_draw(s, ap->icon, cx, cy, isz, ap->tint, paper,
-                        alpha * (running ? 1.f : 0.88f));
+        float isz = DOCK_ICON_PX * k;
+        shell_icon_draw(s, ic, cx, (float)r.y + isz * 0.5f + 2.f, isz, ink,
+                        c->bg_alt, alpha);
+        /* The name under it: two lines at most, each centred, never cut. */
+        shell_text_wrap_centred(s, lf, (float)r.x + 4.f,
+                                (float)r.y + isz + 8.f + font_ascent(lf),
+                                (float)r.w - 8.f, 22.f * k, name, c->fg_hi, alpha, 2);
 
         /* Running indicator. One mark per APP, never one per window:
          * "how many windows do I have" is the question a taskbar
-         * answers, and answering it here would quietly turn this strip
-         * into one. The app you are in gets a wider mark. */
-        /* A rule, not a dot. The app you are in gets a wide one in the
-         * signal colour; the others get a short one in ink. Two
-         * lengths and two values, no second shape. */
+         * answers, and answering it here would turn this strip into one.
+         * The app you are in gets a wider mark, in the signal colour. */
         if (running) {
-            if (is_focus)
-                draw_hrule(s, (int)(cx - 14.f), (int)doty - 2, 28, 4, c->accent, alpha);
-            else
-                draw_hrule(s, (int)(cx - 6.f), (int)doty, 12, 2, c->fg, alpha * 0.8f);
+            int y = strip.y + strip.h - 7;
+            if (is_focus) draw_hrule(s, (int)(cx - 14.f), y - 2, 28, 4, c->accent, alpha);
+            else          draw_hrule(s, (int)(cx - 6.f),  y, 12, 2, c->fg, alpha * 0.8f);
         }
-
-        if (i == p->hover && sl[i].kind != SLOT_STORE) { tip = sl[i].app; tip_x = cx; }
-    }
-
-    /* Name above the hovered icon — drawn last so it sits over its
-     * neighbours. An icon-only strip is fast once you know it and
-     * opaque until you do; this is the bridge, and it costs nothing
-     * when the pointer is elsewhere. */
-    if (tip >= 0 && p->mag.value > 0.05f) {
-        const char *nm = c->apps[tip].name;
-        float tw = shell_text_w(f->small, nm);
-        rect tp = { (int)(tip_x - tw * 0.5f) - 12, strip.y - 34, (int)tw + 24, 26 };
-        if (tp.x < c->margin) tp.x = c->margin;
-        if (tp.x + tp.w > s->w - c->margin) tp.x = s->w - c->margin - tp.w;
-        float ta = alpha * p->mag.value;
-        draw_round_rect(s, tp, corners_all((float)c->radius_sm), c->fg_hi, ta);
-        /* Ink block, paper letters. A label that has to survive
-         * landing on any part of the wallpaper is more legible as a
-         * reversed slug than as a translucent chip with a border. */
-        shell_text_centred(s, f->mid, (float)tp.x + (float)tp.w * 0.5f,
-                           shell_baseline(f->mid, (float)tp.y, (float)tp.h), nm, c->bg, ta);
     }
 }
 
@@ -559,38 +502,33 @@ static void paint_find(shell_ctx *c, surface *s, shell_fonts *f)
     dock_priv *p = P(c);
     find_hit hit[FIND_MAX];
     int nres = find_search(c, p->q, hit);
+    int fit = find_rows_fit(c, s->h);
+    int shown = nres < fit ? nres : fit;
     rect a = find_panel_rect(c, s->w, s->h, nres);
     float al = clampf(p->veil.value, 0.f, 1.f);
 
     draw_round_rect(s, a, corners_all((float)c->radius), c->surface_c, al);
-    draw_frame(s, a, 1, c->fg, al);
-    draw_hrule(s, a.x, a.y, a.w, 3, c->accent, al);
+    draw_round_rect_border(s, a, corners_all((float)c->radius), 2.f, c->fg, al);
 
     int pad = c->padding;
-    /* A tracked rubric above the field rather than a tinted chip
-     * inside it: the box says what it is the way a printed form says
-     * what a box is for, in small capitals over the rule. */
-    shell_text_tracked(s, f->label, (float)(a.x + pad), (float)(a.y + pad + 12),
-                       "FIND", c->subtle, al * 0.95f, 1.8f);
+    shell_text(s, f->dmid, (float)(a.x + pad), (float)(a.y + pad) + font_ascent(f->dmid),
+               p->qn ? "Find a program" : "All my programs", c->fg_hi, al);
 
     float qx = (float)(a.x + pad);
     float qb = (float)(a.y + 62);
     if (p->qn) {
-        shell_text(s, f->big, qx, qb, p->q, c->fg_hi, al * 0.98f);
-        qx += shell_text_w(f->big, p->q) + 4.f;
+        shell_text(s, f->mid, qx, qb, p->q, c->fg_hi, al * 0.98f);
+        qx += shell_text_w(f->mid, p->q) + 4.f;
+        draw_rect(s, (rect){ (int)qx, (int)qb - 20, 2, 24 }, c->accent, al * 0.95f);
+    } else {
+        draw_rect(s, (rect){ (int)qx, (int)qb - 20, 2, 24 }, c->accent, al * 0.95f);
+        shell_text(s, f->small, qx + 12.f, qb, "Type a name to find a program",
+                   c->subtle, al * 0.95f);
     }
-    /* A caret that does not blink. Blinking would keep the shell
-     * redrawing for ever on hardware that would rather be asleep, and
-     * it tells the user nothing the shape has not already told them. */
-    draw_rect(s, (rect){ (int)qx, (int)qb - 22, 2, 26 }, c->accent, al * 0.95f);
-    if (!p->qn)
-        shell_text(s, f->mid, qx + 12.f, qb,
-                   "the name of a program or a file", c->muted, al * 0.9f);
+    draw_hrule(s, a.x + pad, a.y + 70, a.w - pad * 2, 2, c->fg_hi, al * 0.85f);
 
-    draw_hrule(s, a.x + pad, a.y + 72, a.w - pad * 2, 2, c->fg_hi, al * 0.85f);
-
-    for (int i = 0; i < nres; i++) {
-        rect r = { a.x, a.y + 76 + i * 50, a.w, 50 };
+    for (int i = 0; i < shown; i++) {
+        rect r = { a.x, a.y + FIND_TOP + i * FIND_ROW_H, a.w, FIND_ROW_H };
         uint32_t paper = c->surface_c;
         if (i == p->find_sel) {
             draw_rect(s, r, c->surface_hi, al);
@@ -598,28 +536,28 @@ static void paint_find(shell_ctx *c, surface *s, shell_fonts *f)
             paper = c->surface_hi;
         }
         if (i) draw_hrule(s, r.x + pad, r.y, r.w - pad * 2, 1, c->overlay, al * 0.9f);
-        shell_icon_draw(s, hit[i].ic, (float)r.x + (float)pad + 10.f,
-                        (float)r.y + (float)r.h * 0.5f, 19.f, hit[i].tint, paper, al);
-        shell_text(s, f->dmid, (float)(r.x + pad) + 34.f,
-                   shell_baseline(f->dmid, (float)r.y, (float)r.h),
-                   hit[i].name, c->fg_hi, al * 0.98f);
-        float ww = shell_text_w(f->small, hit[i].where);
-        shell_text(s, f->small, (float)(r.x + r.w - pad) - ww,
-                   shell_baseline(f->small, (float)r.y, (float)r.h), hit[i].where,
-                   c->subtle, al * 0.88f);
+        shell_icon_draw(s, hit[i].ic, (float)r.x + (float)pad + 14.f,
+                        (float)r.y + (float)r.h * 0.5f, 28.f, hit[i].tint, paper, al);
+        shell_text_elided(s, f->mid, (float)(r.x + pad) + 44.f,
+                          shell_baseline(f->mid, (float)r.y, (float)r.h),
+                          (float)r.w - pad * 2 - 44.f, hit[i].name, c->fg_hi, al * 0.98f);
     }
     if (!nres)
-        shell_text(s, f->dmid, (float)(a.x + pad), (float)a.y + 110.f,
-                   "Nothing by that name here. Get more programs has more.",
-                   c->muted, al * 0.9f);
+        shell_text(s, f->small, (float)(a.x + pad), (float)a.y + FIND_TOP + 30.f,
+                   "Nothing has that name. Get more programs has more.",
+                   c->subtle, al);
 
-    rect foot = { a.x, a.y + a.h - 36, a.w, 36 };
+    rect foot = { a.x, a.y + a.h - 40, a.w, 40 };
     draw_hrule(s, foot.x + pad, foot.y, foot.w - pad * 2, 1, c->overlay, al * 0.9f);
-    float fb = shell_baseline(f->small, (float)foot.y, (float)foot.h);
-    shell_text(s, f->small, (float)(a.x + pad), fb, "Enter opens it", c->muted, al * 0.9f);
-    const char *esc = "Esc goes back";
-    shell_text(s, f->small, (float)(a.x + a.w - pad) - shell_text_w(f->small, esc), fb,
-               esc, c->muted, al * 0.9f);
+    float fb = shell_baseline(f->tiny ? f->tiny : f->small, (float)foot.y, (float)foot.h);
+    font *ff = f->tiny ? f->tiny : f->small;
+    if (nres > shown) {
+        char more[96];
+        snprintf(more, sizeof more, "%d more. Type a name to find them.", nres - shown);
+        shell_text(s, ff, (float)(a.x + pad), fb, more, c->subtle, al);
+    } else {
+        shell_text(s, ff, (float)(a.x + pad), fb, "Press Enter to open it", c->subtle, al);
+    }
 }
 
 /* ── paint ──────────────────────────────────────────────────────── */
@@ -772,8 +710,9 @@ static int l_click(shell_ctx *c, int x, int y)
         find_hit hit[FIND_MAX];
         int nres = find_search(c, p->q, hit);
         rect a = find_panel_rect(c, sw, sh, nres);
-        for (int i = 0; i < nres; i++) {
-            rect r = { a.x, a.y + 76 + i * 50, a.w, 50 };
+        int fit = find_rows_fit(c, sh);
+        for (int i = 0; i < nres && i < fit; i++) {
+            rect r = { a.x, a.y + FIND_TOP + i * FIND_ROW_H, a.w, FIND_ROW_H };
             if (x < r.x || x >= r.x + r.w || y < r.y || y >= r.y + r.h) continue;
             if (hit[i].app >= 0) raise_app(c, hit[i].app);
             find_open(c, 0);
@@ -934,7 +873,9 @@ static void l_key(shell_ctx *c, int k)
                     raise_app(c, hit[p->find_sel].app);
                 find_open(c, 0); return;
             case 103: p->find_sel = clampi(p->find_sel - 1, 0, nres ? nres - 1 : 0); return;
-            case 108: p->find_sel = clampi(p->find_sel + 1, 0, nres ? nres - 1 : 0); return;
+            case 108: p->find_sel = clampi(p->find_sel + 1, 0,
+                          (nres < find_rows_fit(c, c->screen_h) ? nres : find_rows_fit(c, c->screen_h)) - 1 < 0
+                          ? 0 : (nres < find_rows_fit(c, c->screen_h) ? nres : find_rows_fit(c, c->screen_h)) - 1); return;
             case 14:  text_backspace(p->q, &p->qn);                            /* BACKSPACE */
                       p->find_sel = 0; return;
             default: break;

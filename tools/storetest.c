@@ -82,14 +82,14 @@ static void entry(const char *dir, const char *id, const char *name,
 static void ship(const char *d)
 {
     entry(d, "firefox", "Internet", "Websites, news and shopping", "Network;WebBrowser;", "true firefox %u");
-    entry(d, "thunar", "Your files", "Everything you have saved, in folders", "System;FileTools;FileManager;", "true thunar");
-    entry(d, "atril", "Documents", "Read PDFs and other documents", "GTK;Office;Viewer;", "true atril %U");
+    entry(d, "thunar", "Your files", "Everything you have saved", "System;FileTools;FileManager;", "true thunar");
+    entry(d, "atril", "Documents", "Read PDFs and documents", "GTK;Office;Viewer;", "true atril %U");
     entry(d, "org.xfce.mousepad", "Notes", "Write and read plain notes", "Utility;TextEditor;", "true mousepad %F");
     entry(d, "org.xfce.ristretto", "Photos", "Look at your pictures", "Graphics;Viewer;", "true ristretto %U");
     entry(d, "mpv", "Music and video", "Play a song or a film", "AudioVideo;Audio;Video;Player;", "true mpv %U");
     entry(d, "mate-calc", "Calculator", "Add up, and work things out", "Utility;Calculator;", "true mate-calc");
-    entry(d, "system-config-printer", "Printers", "Set up a printer, or check one you have", "System;Settings;Printing;", "true printers");
-    entry(d, "xarchiver", "Zip files", "Open a zip file, or make one", "Archiving;Utility;", "true xarchiver %f");
+    entry(d, "system-config-printer", "Printers", "Set up or check a printer", "System;Settings;Printing;", "true printers");
+    entry(d, "xarchiver", "Zip files", "Open or make a zip file", "Archiving;Utility;", "true xarchiver %f");
     /* The store, under the package's OWN name: the shell must call it
      * "Get more programs" whatever the package says. */
     entry(d, "org.gnome.Software", "Software", "Add, remove or update software on this computer",
@@ -195,7 +195,10 @@ static int press(shell_ctx *c, const shell_layout *L, const shell_text_rec *r)
 static int reach(shell_ctx *c, const shell_layout *L, screen *sc, char *how, size_t hn)
 {
     land(c, L, sc);
+    /* A label that wraps (the dock's) is two lines: its first line is
+     * as much "the words" as the whole of it, and as pressable. */
     const shell_text_rec *r = find_words("Get more programs");
+    if (!r) r = find_words("Get more");
     if (r) {
         shell_text_rec keep = *r;
         if (press(c, L, &keep)) { snprintf(how, hn, "\"Get more programs\""); return 1; }
@@ -214,6 +217,7 @@ static int reach(shell_ctx *c, const shell_layout *L, screen *sc, char *how, siz
         press(c, L, &first[i]);
         paint(c, L, sc);
         const shell_text_rec *s2 = find_words("Get more programs");
+        if (!s2) s2 = find_words("Get more");
         if (!s2) continue;
         shell_text_rec keep = *s2;
         if (press(c, L, &keep)) {

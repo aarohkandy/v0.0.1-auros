@@ -116,10 +116,12 @@ static rect bar_slot(shell_ctx *c, int W, int H, int slot)
     rect none = { 0, 0, 0, 0 };
     if (slot == SLOT_BAR) { rect b = { 0, by, W, bh }; return b; }
 
-    int pad = 7, gap = 7, side = 10;
+    int pad = 4, gap = 8, side = 10;      /* 48 px controls in a 56 px bar */
     int ih  = bh - pad * 2;
 
-    int lw = (int)((float)bh * 3.05f);
+    /* Wide enough for "All my programs" at 22 px bold, which a font-free
+     * geometry function can only know as a number. */
+    int lw = (int)((float)bh * 4.3f);
     lw = clampi(lw, ih + 6, W / 3);
     rect lr = { side, by + pad, lw, ih };
     if (slot == SLOT_LAUNCH) return lr;
@@ -127,12 +129,12 @@ static rect bar_slot(shell_ctx *c, int W, int H, int slot)
     /* "Make a wish" (src/aurshell/wish.c): the button after the
      * launcher, its words as wide as its text. Absent when the build has
      * no wishes. */
-    int ww = shell_wish_app(c) >= 0 ? (int)((float)bh * 3.0f) : 0;
+    int ww = shell_wish_app(c) >= 0 ? (int)((float)bh * 3.5f) : 0;
     if (ww > W / 5) ww = W / 5;
     rect wr = { lr.x + lr.w + gap, by + pad, ww, ih };
     if (slot == SLOT_WISH) return ww > 0 ? wr : none;
 
-    int clock_w = c->show_clock ? (int)((float)bh * 2.15f) : 0;
+    int clock_w = c->show_clock ? (int)((float)bh * 1.5f) : 0;
     int tray_w  = TRAY_N * ih + gap;
     rect cr = { W - side - clock_w, by + pad, clock_w, ih };
     if (slot == SLOT_CLOCK) return c->show_clock ? cr : none;
@@ -153,7 +155,7 @@ static rect bar_slot(shell_ctx *c, int W, int H, int slot)
     if (avail < 0) avail = 0;
     int n  = c->n_wins < 1 ? 1 : c->n_wins;
     int bw = (avail - bgap * (n - 1)) / n;
-    bw = clampi(bw, 26, c->target_large ? 208 : 176);
+    bw = clampi(bw, 48, c->target_large ? 260 : 224);
 
     rect b = { x0 + slot * (bw + bgap), by + pad, bw, ih };
     if (b.x + b.w > tr.x - gap) b.w = 0;    /* no room left: not drawn, not clickable */
@@ -268,9 +270,11 @@ static void menu_metrics(const shell_ctx *c, int *row_h, int *col_w, int *head)
 {
     float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
     if (k < 1.f) k = 1.f;
-    *row_h = (int)((float)(c->target_large ? 46 : 38) * k);
-    *col_w = (int)((float)(c->target_large ? 262 : 226) * k);
-    *head  = (int)((float)(c->target_large ? 56 : 46) * k);
+    /* A name at 22 px and, under it, a line at 18: 60 px a row, 380 a
+     * column (DESIGN-DIRECTION C P1-11). */
+    *row_h = (int)((float)(c->target_large ? 66 : 60) * k);
+    *col_w = (int)((float)(c->target_large ? 400 : 380) * k);
+    *head  = (int)((float)(c->target_large ? 72 : 66) * k);
 }
 
 static void menu_shape(shell_ctx *c, int W, int H, int *cols, int *rows, int *shown)
@@ -287,6 +291,7 @@ static void menu_shape(shell_ctx *c, int W, int H, int *cols, int *rows, int *sh
     int n = c->n_apps, cc = 1, rr = n < 1 ? 1 : n;
     if (rr > fit) {
         cc = 2; rr = (n + 1) / 2;
+        if (rr > fit) { cc = 3; rr = (n + 2) / 3; }
         if (rr > fit) rr = fit;
     }
     int sh = rr * cc;
@@ -308,7 +313,7 @@ static rect menu_part(shell_ctx *c, int W, int H, int part)
     int pad   = c->padding;
 
     int pw = pad * 2 + cols * col_w;
-    if (pw > W - 20) pw = W - 20;
+    if (pw > W - 20) pw = W - 20;          /* three columns share the width */
     int ph = pad * 2 + head + rows * row_h;
     int bot = H - bar_height(c) - 8;
 
@@ -736,11 +741,11 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
     draw_frame(s, l, p->menu_open ? 2 : 1, p->menu_open ? c->fg : c->overlay, 1.f);
     /* A block of ink, not a dot in a halo. This is the one control on
      * the bar that is not a window, so it wears the brand's own mark. */
-    draw_diamond(s, (float)l.x + 20.f, (float)l.y + (float)l.h * 0.5f, 12.f, c->accent, 1.f);
+    draw_diamond(s, (float)l.x + 22.f, (float)l.y + (float)l.h * 0.5f, 14.f, c->accent, 1.f);
     char lb[48];
     const char *lt = fit_text(f->mid, "All my programs", lb, sizeof lb,
-                              (float)l.w - 44.f);
-    shell_text(s, f->mid, (float)l.x + 30.f, shell_baseline(f->mid, (float)l.y, (float)l.h),
+                              (float)l.w - 52.f);
+    shell_text(s, f->mid, (float)l.x + 40.f, shell_baseline(f->mid, (float)l.y, (float)l.h),
                lt, c->fg_hi, 1.f);
 
     /* Make a wish: outlined, as the launcher is when it is shut. */
@@ -750,12 +755,12 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
         draw_round_rect(s, wr, corners_all((float)c->radius_sm), whot ? c->surface_hi : c->bg, 1.f);
         draw_frame(s, wr, whot ? 2 : 1, whot ? c->fg : c->overlay, 1.f);
         int wa = shell_wish_app(c);
-        shell_icon_draw(s, ICON_WISH, (float)wr.x + 20.f, (float)wr.y + (float)wr.h / 2.f, 20.f,
+        shell_icon_draw(s, ICON_WISH, (float)wr.x + 24.f, (float)wr.y + (float)wr.h / 2.f, 24.f,
                         c->fg, whot ? c->surface_hi : c->bg, 1.f);
         char wb[48];
         const char *wt = fit_text(f->mid, wa >= 0 ? c->apps[wa].name : "Make a wish", wb, sizeof wb,
-                                  (float)wr.w - 44.f);
-        shell_text(s, f->mid, (float)wr.x + 38.f, shell_baseline(f->mid, (float)wr.y, (float)wr.h),
+                                  (float)wr.w - 56.f);
+        shell_text(s, f->mid, (float)wr.x + 44.f, shell_baseline(f->mid, (float)wr.y, (float)wr.h),
                    wt, c->fg_hi, 1.f);
     }
 
@@ -797,26 +802,27 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
                        more, c->subtle, 0.85f);
     }
 
-    /* Indicators. Read-only: this archetype keeps status where people
-     * expect it and does not pretend the corner is a control panel. */
+    /* Wi-Fi and sound. The Wi-Fi mark opens the Wi-Fi page, the same
+     * one the band opens; the sound mark is read-only (the volume keys
+     * and Settings are where sound is changed). */
     rect tr = bar_slot(c, W, H, SLOT_TRAY);
-    const shell_icon ind[TRAY_N] = { ICON_GLOBE, ICON_MUSIC };
+    const shell_icon ind[TRAY_N] = { ICON_WIFI, ICON_SPEAKER };
     for (int i = 0; i < TRAY_N; i++) {
         float cx = (float)tr.x + ((float)i + 0.5f) * (float)tr.h;
-        shell_icon_draw(s, ind[i], cx, (float)tr.y + (float)tr.h * 0.5f, 17.f,
-                        i == 0 ? c->ok : c->subtle, c->bg_alt, i == 0 ? 0.9f : 0.75f);
+        shell_icon_draw(s, ind[i], cx, (float)tr.y + (float)tr.h * 0.5f, 24.f,
+                        c->fg, c->bg_alt, 1.f);
     }
 
     if (c->show_clock && c->status_full) {
         rect cr = bar_slot(c, W, H, SLOT_CLOCK);
         char hm[32], dt[48];
         shell_clock(hm, sizeof hm, dt, sizeof dt);
-        float rx = (float)(cr.x + cr.w);
-        draw_vrule(s, cr.x - 10, cr.y + 4, cr.h - 8, 1, c->overlay, 1.f);
-        float y1 = (float)cr.y + (f->mid ? font_ascent(f->mid) : 16.f) + 1.f;
-        float y2 = y1 + (f->tiny ? font_line_height(f->tiny) : 16.f) + 1.f;
-        shell_text(s, f->mid, rx - shell_text_w(f->mid, hm), y1, hm, c->fg_hi, 1.f);
-        shell_text(s, f->tiny, rx - shell_text_w(f->tiny, dt), y2, dt, c->subtle, 0.9f);
+        draw_vrule(s, cr.x - 6, cr.y + 4, cr.h - 8, 1, c->overlay, 1.f);
+        /* The time, once and large: the date is on the top bar of the
+         * other looks and was a second line here that did not fit. */
+        shell_text(s, f->mid, (float)(cr.x + cr.w) - shell_text_w(f->mid, hm),
+                   shell_baseline(f->mid, (float)cr.y, (float)cr.h), hm, c->fg_hi, 1.f);
+        /* Where the clock is, for the Messages list it opens. */
         c->clock_r = (rect){ cr.x - 10, H - bar_height(c), W - cr.x + 10, bar_height(c) };
     }
 }
@@ -846,10 +852,10 @@ static void paint_menu(shell_ctx *c, surface *s, shell_fonts *f)
     shell_text(s, f->dmid, hx,
                (float)(a.y + c->padding) + (f->dmid ? font_ascent(f->dmid) : 16.f) + 2.f,
                "All my programs", c->fg_hi, t * 0.98f);
-    shell_text(s, f->small, hx,
+    shell_text(s, f->tiny ? f->tiny : f->small, hx,
                (float)(a.y + c->padding) + (f->dmid ? font_line_height(f->dmid) : 22.f)
-               + (f->small ? font_ascent(f->small) : 11.f) + 2.f,
-               "Everything on this computer", c->subtle, t * 0.88f);
+               + (f->tiny ? font_ascent(f->tiny) : 11.f) + 4.f,
+               "Everything on this computer", c->subtle, t * 0.95f);
     draw_hrule(s, a.x + c->padding, a.y + c->padding + head - 7,
                a.w - c->padding * 2, 2, c->fg_hi, t * 0.85f);
 
@@ -874,19 +880,26 @@ static void paint_menu(shell_ctx *c, surface *s, shell_fonts *f)
         if (i) draw_hrule(s, row.x + 8, row.y, row.w - 16, store ? 2 : 1,
                           store ? c->fg : c->overlay, t * 0.8f);
 
-        float icx = (float)row.x + 26.f, icy = (float)row.y + (float)row.h * 0.5f;
-        shell_icon_draw(s, c->apps[ai].icon, icx, icy, 20.f,
+        float icx = (float)row.x + 28.f, icy = (float)row.y + (float)row.h * 0.5f;
+        shell_icon_draw(s, c->apps[ai].icon, icx, icy, 26.f,
                         store ? c->accent : c->apps[ai].tint, paper, t);
 
-        float tx = (float)row.x + 48.f;
+        float tx = (float)row.x + 56.f;
         float room = (float)(row.x + row.w) - tx - 10.f;
-        char nb[64], hb[80];
-        const char *nm = fit_text(f->dmid, c->apps[ai].name, nb, sizeof nb, room);
-        float ny = (float)row.y + (float)row.h * 0.5f - 3.f;
-        shell_text(s, f->dmid, tx, ny, nm, c->fg_hi, t * 0.98f);
-        const char *ht = fit_text(f->small, c->apps[ai].hint, hb, sizeof hb, room);
-        shell_text(s, f->small, tx, ny + (f->small ? font_ascent(f->small) : 11.f) + 5.f,
-                   ht, c->subtle, t * 0.88f);
+        float nasc = f->mid ? font_ascent(f->mid) : 16.f;
+        float tasc = f->tiny ? font_ascent(f->tiny) : 12.f;
+        /* Name and line under it are one block, centred in the row. A
+         * line that does not fit whole is not drawn at all: half a
+         * sentence is worse than none (DESIGN-DIRECTION §3). */
+        int has_hint = c->apps[ai].hint[0] && f->tiny &&
+                       shell_text_w(f->tiny, c->apps[ai].hint) <= room;
+        float block = nasc + (has_hint ? tasc + 6.f : 0.f);
+        float ny = (float)row.y + ((float)row.h - block) * 0.5f + nasc;
+        char nb[64];
+        const char *nm = fit_text(f->mid, c->apps[ai].name, nb, sizeof nb, room);
+        shell_text(s, f->mid, tx, ny, nm, c->fg_hi, t * 0.98f);
+        if (has_hint)
+            shell_text(s, f->tiny, tx, ny + tasc + 6.f, c->apps[ai].hint, c->subtle, t * 0.95f);
     }
 
     /* Never silently swallow the tail of "all programs". */
@@ -999,6 +1012,11 @@ static int l_click(shell_ctx *c, int x, int y)
             set_menu(c, 0);
             shell_launch(c, shell_wish_app(c));      /* opens the panel */
             return 1;
+        }
+        /* The Wi-Fi mark in the tray opens the Wi-Fi page. */
+        {
+            rect tr = bar_slot(c, W, H, SLOT_TRAY);
+            if (pt_in((rect){ tr.x, tr.y, tr.h, tr.h }, x, y)) { shell_open_net(c); return 1; }
         }
         for (int i = 0; i < c->n_wins; i++) {
             if (!pt_in(bar_slot(c, W, H, i), x, y)) continue;

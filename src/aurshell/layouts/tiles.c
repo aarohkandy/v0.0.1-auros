@@ -25,8 +25,6 @@
 
 #define OPEN_SECS   0.42f
 #define CLOSE_SECS  0.34f
-#define DOTS_BAND   34      /* the page-dot strip, directly above Home   */
-#define DOT_PITCH   30      /* also the dot's hit width: big targets     */
 
 typedef struct {
     tween open;      /* 0 = the page of buttons, 1 = one thing, full screen */
@@ -34,6 +32,7 @@ typedef struct {
     int   page;      /* which page of buttons                               */
     int   hot;       /* app index under the pointer / key cursor, -1 none   */
     int   home_hot;  /* pointer is over the Home control                    */
+    int   nav_hot;   /* 0 previous page, 1 next page, -1 neither            */
 } tiles_priv;
 
 static tiles_priv *P(shell_ctx *c) { return (tiles_priv *)c->priv; }
@@ -93,7 +92,9 @@ static rect rect_scale(rect r, float k)
  * mechanism, expressed as arithmetic rather than as a promise: there is
  * no value of anything for which Home is off screen or covered. */
 static int  strip_h  (shell_ctx *c) { return c->bar_h + 8; }
-static int  homebar_h(shell_ctx *c) { return c->target_large ? 76 : 58; }
+static int  homebar_h(shell_ctx *c) { return c->target_large ? 84 : 72; }
+/* The question, at its display size, above the page of buttons. */
+#define HEAD_H 56
 
 static rect homebar_rect(shell_ctx *c, int w, int h)
 {
@@ -104,8 +105,8 @@ static rect homebar_rect(shell_ctx *c, int w, int h)
 static rect home_btn_rect(shell_ctx *c, int w, int h)
 {
     int bh  = homebar_h(c);
-    int hgt = bh - (c->target_large ? 18 : 14);
-    int wid = c->target_large ? 240 : 180;
+    int hgt = bh - 16;                 /* 56 px: 48 is the floor */
+    int wid = c->target_large ? 240 : 200;
     int max = w - c->margin * 4;
     if (wid > max) wid = max > 60 ? max : 60;
     /* OFF the horizontal centre, and constant.
@@ -125,12 +126,19 @@ static rect home_btn_rect(shell_ctx *c, int w, int h)
     return r;
 }
 
-/* The dot strip's top edge, owned here so grid_metrics() can leave room
- * above it and page_dot_rect() can put the dots in it without the two
- * drifting apart. */
-static int dots_band_y(shell_ctx *c, int h)
+/* Previous page and Next page, at the right end of the bottom bar
+ * (the page dots they replace were 30 px wide and 34 high). 0 = previous,
+ * 1 = next. Pages wrap round: a button that is dead on the first or last
+ * page is a button she presses twice to find out. */
+static rect nav_rect(shell_ctx *c, int w, int h, int which)
 {
-    return h - homebar_h(c) - c->margin - DOTS_BAND;
+    int bh = homebar_h(c);
+    int hgt = bh - 16;
+    int wn = 190, wp = 220;
+    int x_next = w - c->margin - wn;
+    rect r = { which ? x_next : x_next - 12 - wp, h - bh + (bh - hgt) / 2,
+               which ? wn : wp, hgt };
+    return r;
 }
 
 /* The area a thing fills when it is open: everything that is not
@@ -182,7 +190,7 @@ static grid_m grid_metrics(shell_ctx *c, int w, int h)
     g.cols = c->target_large ? 4 : 5;
     if (w < 1150) g.cols = c->target_large ? 3 : 4;
     if (w <  800) g.cols = 2;
-    g.rows = c->target_large ? 2 : 3;
+    g.rows = (c->target_large || h < 720) ? 2 : 3;
     /* Row 0 gives up LEAD_SPAN cells to the lead item and gets one
      * back, so a page holds that many fewer than cols*rows. */
     g.per  = g.cols * g.rows - (LEAD_SPAN - 1);
@@ -194,11 +202,8 @@ static grid_m grid_metrics(shell_ctx *c, int w, int h)
     g.gap = c->padding + 8;
     int left  = c->margin * 2;
     int right = w - c->margin * 2;
-    int top   = strip_h(c) + c->margin;
-    /* Reserve the dot strip only when there is a second page, so a
-     * one-page grid does not carry a band of nothing. */
-    int bot   = (g.pages > 1) ? dots_band_y(c, h) - c->padding
-                              : h - homebar_h(c) - c->margin;
+    int top   = strip_h(c) + c->margin + HEAD_H;
+    int bot   = h - homebar_h(c) - c->margin;
 
     int availw = (right - left) - g.gap * (g.cols - 1);
     int availh = (bot - top)    - g.gap * (g.rows - 1);
@@ -213,8 +218,8 @@ static grid_m grid_metrics(shell_ctx *c, int w, int h)
     float unit = (float)availh / (LEAD_H + (float)(g.rows - 1));
     g.th0 = (int)(unit * LEAD_H);
     g.th1 = (int)unit;
-    if (g.th0 < 40) g.th0 = 40;
-    if (g.th1 < 34) g.th1 = 34;
+    if (g.th0 < 48) g.th0 = 48;
+    if (g.th1 < 48) g.th1 = 48;
 
     /* Left measure, top measure. The block used to be centred in BOTH
      * axes inside whatever was left over, which is how a page ends up
@@ -295,17 +300,6 @@ static rect tile_rect(shell_ctx *c, int w, int h, int app)
     r.y = g.y0 + (row == 0 ? 0 : g.th0 + g.gap + (row - 1) * (g.th1 + g.gap));
     r.w = g.tw * span + g.gap * (span - 1);
     r.h = (row == 0) ? g.th0 : g.th1;
-    return r;
-}
-
-/* Left-aligned to the grid's own measure, not centred on the screen.
- * (void)pages: the count no longer moves the first one, which is the
- * whole difference between a measure and a centred ornament. */
-static rect page_dot_rect(shell_ctx *c, int w, int h, int i, int pages)
-{
-    (void)w; (void)pages;
-    int x0 = c->margin * 2;
-    rect r = { x0 + i * DOT_PITCH, dots_band_y(c, h), DOT_PITCH, DOTS_BAND };
     return r;
 }
 
@@ -412,52 +406,18 @@ static void paint_tile(shell_ctx *c, surface *s, shell_fonts *f, int app,
 
     float ha = fa(f->small, 11.f), hd = fdc(f->small, 4.f);
 
-    if (lead) {
-        /* TWO compositions on one page, and that is the point. The lead
-         * item is wide and short, so it is set ACROSS: a large mark on
-         * the left measure and the words beside it, closed by a rule.
-         * The ordinary tiles are set DOWN: mark in the corner, words at
-         * the foot. Two shapes of thing on one page is what a contents
-         * spread looks like; eight of one shape is what a grid looks
-         * like, and a grid is what the law forbids. */
-        float isz = clampf((float)t.h * 0.42f, 30.f, 148.f);
-        float x   = (float)(t.x + pad) + isz + 34.f;
-        float room = (float)(t.x + t.w - pad) - x;
-
-        font *nf = f->huge;
-        if (shell_text_w(nf, c->apps[app].name) > room) nf = f->big;
-        if (shell_text_w(nf, c->apps[app].name) > room) nf = f->dmid;
-        float la = fa(nf, 32.f), ld = fdc(nf, 12.f);
-
-        float block  = la + ld + 15.f + 2.f + 16.f + ha + hd;
-        float top    = (float)t.y + ((float)t.h - block) * 0.5f;
-        float name_b = top + la;
-        int   ruley  = (int)(name_b + ld + 15.f);
-
-        shell_icon_draw(s, c->apps[app].icon,
-                        (float)(t.x + pad) + isz * 0.5f,
-                        (float)t.y + (float)t.h * 0.5f,
-                        isz, ink, paper, alpha * 0.98f);
-        /* Bounded by the tile, not by hope. Package names and their
-         * descriptions are as long as their authors felt like, and an
-         * unbounded draw runs off the tile, past the screen edge, and
-         * over whatever is beside it. */
-        float tw = (float)(t.x + t.w - pad) - x;
-        shell_text_elided(s, nf, x, name_b, tw, c->apps[app].name, c->fg_hi, alpha * 0.98f);
-        draw_hrule(s, (int)x, ruley, (int)(room * 0.62f), 2, c->fg_hi, alpha * 0.85f);
-        shell_text_elided(s, f->small, x, (float)ruley + 16.f + ha, tw,
-                          c->apps[app].hint, c->subtle, alpha * 0.92f);
-        return;
-    }
-
-    float isz = clampf((float)t.h * 0.25f, 26.f, 64.f);
+    /* One composition for every tile, the lead included: the mark in the
+     * corner, the words at the foot. The lead is the same shape, wider,
+     * with its name a step larger (DESIGN-DIRECTION C P1-14). */
+    float isz = clampf((float)t.h * 0.25f, 30.f, lead ? 72.f : 56.f);
     shell_icon_draw(s, c->apps[app].icon,
                     (float)(t.x + pad) + isz * 0.5f,
                     (float)(t.y + pad) + isz * 0.5f,
                     isz, ink, paper, alpha * 0.98f);
 
-    font *nf = f->big;
+    font *nf = lead ? f->huge : f->big;
     float room = (float)t.w - (float)pad * 2.f;
+    if (shell_text_w(nf, c->apps[app].name) > room) nf = f->big;
     if (shell_text_w(nf, c->apps[app].name) > room) nf = f->dmid;
     if (shell_text_w(nf, c->apps[app].name) > room) nf = f->mid;
 
@@ -473,9 +433,9 @@ static void paint_tile(shell_ctx *c, surface *s, shell_fonts *f, int app,
     float tw = (float)(t.w - 2 * pad);
     shell_text_elided(s, nf, (float)(t.x + pad), name_b, tw, c->apps[app].name,
                       c->fg_hi, alpha * 0.98f);
-    if (hint)
-        shell_text_elided(s, f->small, (float)(t.x + pad), hint_b, tw,
-                          c->apps[app].hint, c->subtle, alpha * 0.92f);
+    if (hint && c->apps[app].hint[0] && shell_text_w(f->small, c->apps[app].hint) <= tw)
+        shell_text(s, f->small, (float)(t.x + pad), hint_b,
+                   c->apps[app].hint, c->subtle, alpha * 0.98f);
 }
 
 /* The growing thing. One composition, two sets of words: the button's
@@ -550,30 +510,40 @@ static void paint_open(shell_ctx *c, surface *s, shell_fonts *f,
     }
 }
 
-/* A measure, not a row of dots. Each page is a segment of rule; the
- * one you are on is heavier and carries the signal colour. The words
- * sit after it rather than under it, so the whole thing is one line of
- * a page rather than a centred ornament with a caption. */
-static void paint_dots(shell_ctx *c, surface *s, shell_fonts *f,
-                       int w, int h, int pages, float alpha)
+/* Previous page and Next page: outlined buttons with drawn chevrons, and
+ * where she is ("Page 1 of 3") between them and Home. */
+static void paint_nav(shell_ctx *c, surface *s, shell_fonts *f,
+                      int w, int h, int pages, float alpha)
 {
     if (pages < 2 || alpha <= 0.01f) return;
     tiles_priv *p = P(c);
-
-    for (int i = 0; i < pages; i++) {
-        rect d = page_dot_rect(c, w, h, i, pages);
-        int cur = (i == p->page);
-        int y = d.y + DOTS_BAND / 2;
-        draw_hrule(s, d.x, cur ? y - 2 : y, DOT_PITCH - 8, cur ? 4 : 2,
-                   cur ? c->accent : c->muted, alpha * (cur ? 1.f : 0.7f));
+    corners rr = corners_all(8.f);
+    for (int i = 0; i < 2; i++) {
+        rect r = nav_rect(c, w, h, i);
+        int hot = (p->nav_hot == i);
+        draw_round_rect(s, r, rr, hot ? c->surface_hi : c->surface_c, alpha);
+        draw_round_rect_border(s, r, rr, 2.f, hot ? c->fg : c->overlay, alpha);
+        font *ft = f->mid ? f->mid : f->small;
+        const char *lab = i ? "Next page" : "Previous page";
+        float tw = shell_text_w(ft, lab);
+        float cy = (float)r.y + (float)r.h * 0.5f;
+        float total = tw + 14.f + 22.f;
+        float x0 = (float)r.x + ((float)r.w - total) * 0.5f;
+        if (i) {
+            shell_text(s, ft, x0, shell_baseline(ft, (float)r.y, (float)r.h), lab, c->fg_hi, alpha);
+            shell_icon_draw(s, ICON_FORWARD, x0 + tw + 14.f + 11.f, cy, 24.f, c->fg_hi, c->surface_c, alpha);
+        } else {
+            shell_icon_draw(s, ICON_BACK, x0 + 11.f, cy, 24.f, c->fg_hi, c->surface_c, alpha);
+            shell_text(s, ft, x0 + 22.f + 14.f, shell_baseline(ft, (float)r.y, (float)r.h), lab, c->fg_hi, alpha);
+        }
     }
-
     char lab[40];
     snprintf(lab, sizeof lab, "Page %d of %d", p->page + 1, pages);
-    rect last = page_dot_rect(c, w, h, pages - 1, pages);
-    shell_text(s, f->small, (float)(last.x + DOT_PITCH + 10),
-               shell_baseline(f->small, (float)last.y, (float)DOTS_BAND),
-               lab, c->subtle, alpha * 0.85f);
+    rect hb = home_btn_rect(c, w, h), pv = nav_rect(c, w, h, 0);
+    float lx = (float)(hb.x + hb.w) + 24.f;
+    if (lx + shell_text_w(f->small, lab) < (float)pv.x - 12.f)
+        shell_text(s, f->small, lx, shell_baseline(f->small, (float)hb.y, (float)hb.h),
+                   lab, c->subtle, alpha);
 }
 
 static void paint_strip(shell_ctx *c, surface *s, shell_fonts *f, int w, float t)
@@ -614,13 +584,9 @@ static void paint_strip(shell_ctx *c, surface *s, shell_fonts *f, int w, float t
     /* After the brand, separated by a rule: a masthead reads left to
      * right as two facts, not as one string that happens to wrap. */
     float gx = brand_end + 18.f;
-    draw_vrule(s, (int)gx, 9, bh - 18, 1, c->overlay, 1.f);
+    if (p->win >= 0) draw_vrule(s, (int)gx, 9, bh - 18, 1, c->overlay, 1.f);
     gx += 18.f;
-    float qa = clampf(1.f - t * 2.5f, 0.f, 1.f);
     float na = clampf(t * 2.5f - 1.5f, 0.f, 1.f);
-    if (qa > 0.f)
-        shell_text(s, f->small, gx, shell_baseline(f->small, 0.f, (float)bh),
-                   "What would you like to do?", c->subtle, qa * 0.9f);
     if (na > 0.f && p->win >= 0) {
         const win_entry *win = &c->wins[p->win];
         uint32_t ink = (win->app >= 0) ? c->apps[win->app].tint : c->fg;
@@ -715,7 +681,12 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
             if (t > 0.001f) r = rect_scale(r, 1.f - 0.07f * t);
             paint_tile(c, s, f, i, r, 1.f - t, (k - first) == 0);
         }
-        paint_dots(c, s, f, w, h, g.pages, 1.f - t);
+        /* The question, at the display size. It is the page's one
+         * instruction, so it is the biggest thing on it. */
+        if (f->huge)
+            shell_text(s, f->huge, (float)(c->margin * 2),
+                       (float)(strip_h(c) + c->margin) + font_ascent(f->huge) * 0.92f,
+                       "What would you like to do?", c->fg_hi, (1.f - t) * 0.98f);
     }
 
     if (p->win >= 0)
@@ -727,6 +698,8 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
      * way back. */
     paint_strip(c, s, f, w, t);
     paint_homebar(c, s, f, w, h, t);
+    /* In the bar, so after it. */
+    if (t < 0.999f) paint_nav(c, s, f, w, h, g.pages, 1.f - t);
 }
 
 /* ── input ───────────────────────────────────────────────────────── */
@@ -744,7 +717,17 @@ static int l_click(shell_ctx *c, int x, int y)
 
     /* Home is tested first and wins every ambiguity, by construction. */
     if (inside(home_btn_rect(c, w, h), x, y)) { go_home(c); return 1; }
-    if (inside(homebar_rect(c, w, h), x, y))  return 1;   /* chrome swallows the rest */
+    if (inside(homebar_rect(c, w, h), x, y)) {
+        /* The page buttons are in the bar; the rest of it swallows. */
+        grid_m gp = grid_metrics(c, w, h);
+        if (gp.pages > 1 && t < 0.001f)
+            for (int i = 0; i < 2; i++)
+                if (inside(nav_rect(c, w, h, i), x, y)) {
+                    p->page = (p->page + (i ? 1 : gp.pages - 1)) % gp.pages;
+                    p->hot = -1;
+                }
+        return 1;
+    }
 
     /* Mid-transition nothing is where it will be, so no click is
      * honoured: half-delivered presses are how a user ends up somewhere
@@ -757,9 +740,11 @@ static int l_click(shell_ctx *c, int x, int y)
 
     grid_m g = grid_metrics(c, w, h);
     if (g.pages > 1)
-        for (int i = 0; i < g.pages; i++)
-            if (inside(page_dot_rect(c, w, h, i, g.pages), x, y)) {
-                p->page = i; p->hot = -1; return 1;
+        for (int i = 0; i < 2; i++)
+            if (inside(nav_rect(c, w, h, i), x, y)) {
+                p->page = (p->page + (i ? 1 : g.pages - 1)) % g.pages;   /* wraps round */
+                p->hot = -1;
+                return 1;
             }
 
     int first = p->page * g.per, last = first + g.per;
@@ -779,6 +764,7 @@ static void l_motion(shell_ctx *c, int x, int y)
     c->mouse_x = x; c->mouse_y = y;
 
     p->home_hot = inside(home_btn_rect(c, w, h), x, y);
+    p->nav_hot = inside(nav_rect(c, w, h, 0), x, y) ? 0 : inside(nav_rect(c, w, h, 1), x, y) ? 1 : -1;
     p->hot = -1;
     if (clampf(p->open.value, 0.f, 1.f) > 0.001f) return;
 
@@ -899,6 +885,7 @@ static void l_init(shell_ctx *c)
     static tiles_priv priv;
     memset(&priv, 0, sizeof priv);
     priv.hot = -1;
+    priv.nav_hot = -1;
     priv.win = -1;
     tween_set(&priv.open, 0.f);
     c->priv = &priv;
