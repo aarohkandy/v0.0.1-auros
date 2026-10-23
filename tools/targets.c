@@ -101,6 +101,14 @@ static void band(const char *label, int kiosk, int allow_settings,
                 snprintf(nm, sizeof nm, "band button %d (text %.0f%%)",
                          i + 1, (double)(SCALES[k] * 100.f));
                 measure(nm, b[i], RES[r].w, RES[r].h);
+                /* The icon above the label: the label's top clears the icon's
+                 * foot (22 px icon + 22 px per step of text + room). It
+                 * overlapped at 150% text before this was asked. */
+                if (SCALES[k] <= 1.5f && b[i].h < (int)(38.f + 22.f * (SCALES[k] < 1.f ? 1.f : SCALES[k]))) {
+                    printf("    FAIL band button %d is %d tall at text %.0f%%: its icon "
+                           "and label overlap\n", i + 1, b[i].h, (double)(SCALES[k] * 100.f));
+                    fail++;
+                }
                 /* DESIGN-DIRECTION §3: 96 x 48 at the least. */
                 if (b[i].w < 96 || b[i].h < 48) {
                     printf("    FAIL band button %d is %dx%d, under 96x48 "
