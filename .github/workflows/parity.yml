@@ -14,8 +14,8 @@
 #          below is the only thing a push starts, and it is seconds.
 #   image  the newest build with an unexpired `auros-pieces` artifact; else the
 #          newest v* prerelease's pieces.
-#   queue  one at a time (concurrency, queued, never cancelled), and the two
-#          jobs are chained (needs), so this never takes more than one runner.
+#   queue  one at a time (concurrency on the everyday job, queued, never cancelled),
+#          so this never takes more than one runner.
 #   proof  tools/parity/known-gaps.txt lists checks that fail TODAY for a named
 #          reason; one that fails is "GAP", one that starts passing fails the
 #          job until it is removed from the list. Each check is shown red once
@@ -52,10 +52,6 @@ on:
 permissions:
   contents: read
   actions: read
-
-concurrency:
-  group: parity
-  cancel-in-progress: false
 
 defaults:
   run:
@@ -105,6 +101,11 @@ jobs:
   everyday:
     needs: gate
     if: needs.gate.outputs.go == 'true'
+    # One at a time, queued, never cancelled. On the JOB, not the workflow: every push starts the gate,
+    # and gates sharing the group would replace a queued real run (the first LibreOffice run was lost so).
+    concurrency:
+      group: parity
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 170
     permissions:
