@@ -204,11 +204,11 @@ jobs:
               if (-not (Test-Path "$d\$w\$f")) { throw "$w did not write $f" }
             }
             $j = Get-Content "$d\$w\AurOS-report.json" -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($j.schema -ne 1) { throw "$w: schema is $($j.schema)" }
-            if (-not $j.machine.cpu) { throw "$w: the report has no processor" }
-            if ($j.windows.build -lt 10000) { throw "$w: the report has no Windows build" }
-            if ($j.installer.checked -ne $true) { throw "$w: the installer's own check is missing from the report" }
-            "$w: $($j.devices.Count) devices kept, $($j.devices_skipped) skipped, $($j.printers.Count) printers"
+            if ($j.schema -ne 1) { throw "${w}: schema is $($j.schema)" }
+            if (-not $j.machine.cpu) { throw "${w}: the report has no processor" }
+            if ($j.windows.build -lt 10000) { throw "${w}: the report has no Windows build" }
+            if ($j.installer.checked -ne $true) { throw "${w}: the installer's own check is missing from the report" }
+            "${w}: $($j.devices.Count) devices kept, $($j.devices_skipped) skipped, $($j.printers.Count) printers"
           }
           Get-Content "$d\wizard\AurOS-report.txt"
           "### The PC report on a real Windows VM (read-only)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
