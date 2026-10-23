@@ -22,12 +22,13 @@ docs/ops/live.txt page. The rest are "pending" and are listed in every run.
 to the owner (and the second responder), with the `gh` that is logged in.
 Exit 1 if a live check failed. docs/ops/INCIDENTS.md says what to do.
 """
-import hashlib, http.client, json, os, re, subprocess, sys, tempfile, time, urllib.error, urllib.request
+import hashlib, http.client, json, os, re, socket, subprocess, sys, tempfile, time, urllib.error, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-TIMEOUT = 25
+TIMEOUT = float(os.environ.get("MON_TIMEOUT", "25"))
 KEYRING = os.path.join(ROOT, "rootfs/usr/share/keyrings/auros-archive-keyring.asc")
+MIN_EXE = 1_000_000  # bytes: anything smaller is not AurOS-Setup.exe
 ALL = ["site", "download", "pieces", "channel", "wishes", "flathub"]
 
 
@@ -52,28 +53,37 @@ def addresses(env=os.environ):
     }
 
 
-def fetch(url, rng=None, body=True, tries=3):
-    """(status, headers, bytes|None). Retries a network error or a 5xx, so one hiccup pages nobody."""
-    last = None
-    for i in range(tries):
+def fetch(url, rng=None, body=True, tries=3, method=None, data=None):
+    """(status, headers, body): ALWAYS a definite answer, never None and never a raise.
+    status 0 means no answer at all (timeout, refused, DNS, a broken reply); body is
+    b"" when none was asked for or came. Retries a network error, 5xx and 429, so one
+    hiccup pages nobody. A monitor must not crash on the outage it exists to report."""
+    last = (0, {}, b"")
+    for _ in range(tries):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "auros-monitor", **({"Range": rng} if rng else {})})
+            req = urllib.request.Request(url, data=data, method=method,
+                                         headers={"User-Agent": "auros-monitor", **({"Range": rng} if rng else {})})
             with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-                return r.status, r.headers, (r.read() if body else None)
+                return r.status, {k.lower(): v for k, v in r.headers.items()}, (r.read() if body else b"")
         except urllib.error.HTTPError as e:
-            last = (e.code, e.headers, None)
+            last = (e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, b"")
             if e.code < 500 and e.code != 429:
                 return last
-        except (urllib.error.URLError, http.client.HTTPException, OSError) as e:
-            last = (0, {}, str(e).encode())
+        except Exception as e:  # URLError, timeout, ssl, http.client, ValueError for a bad URL, ...
+            last = (0, {}, str(e).encode()[:200])
         time.sleep(0 if os.environ.get("MON_FAST") else 3)
     return last
+
+
+def said(s):
+    """How an outage reads in a sentence."""
+    return str(s) if s else "nothing (no answer)"
 
 
 def check_site(a, deep):
     s, _, b = fetch(a["site"])
     if s != 200:
-        return f"{a['site']} answered {s or 'nothing'}"
+        return f"{a['site']} answered {said(s)}"
     if b"AurOS" not in b:
         return f"{a['site']} answered 200 but is not the AurOS page"
 
@@ -91,13 +101,17 @@ def sha_of(url):
 def check_download(a, deep):
     s, h, _ = fetch(a["get"], rng="bytes=0-0", body=False)
     if s not in (200, 206):
-        return f"{a['get']} answered {s or 'nothing'}"
+        return f"{a['get']} answered {said(s)}"
+    # An empty or truncated file also answers 200: the installer is tens of MB.
+    size = (h.get("content-range", "").rsplit("/", 1)[-1] if s == 206 else h.get("content-length", ""))
+    if not size.isdigit() or int(size) < MIN_EXE:
+        return f"{a['get']} answered {s} but its size is {size or 'unknown'} bytes, not an installer"
     if not deep:
         return
     s, _, sums = fetch(a["dir"] + "/SHA256SUMS")
     if s != 200:
-        return f"{a['dir']}/SHA256SUMS answered {s or 'nothing'}"
-    want = {l.split()[1].lstrip("*"): l.split()[0] for l in sums.decode().splitlines() if len(l.split()) == 2}
+        return f"{a['dir']}/SHA256SUMS answered {said(s)}"
+    want = {l.split()[1].lstrip("*"): l.split()[0] for l in sums.decode("utf-8", "replace").splitlines() if len(l.split()) == 2}
     if "AurOS-Setup.exe" not in want:
         return "SHA256SUMS has no AurOS-Setup.exe line"
     try:
@@ -111,8 +125,8 @@ def check_download(a, deep):
 def check_pieces(a, deep):
     s, _, b = fetch(a["dir"] + "/pieces.txt")
     if s != 200:
-        return f"{a['dir']}/pieces.txt answered {s or 'nothing'}"
-    lines = b.decode().splitlines()
+        return f"{a['dir']}/pieces.txt answered {said(s)}"
+    lines = b.decode("utf-8", "replace").splitlines()
     bases = [l.split()[1] for l in lines if l.startswith("base ")]
     pieces = [l.split() for l in lines if l.startswith("piece ")]
     if not bases or not pieces:
@@ -122,7 +136,7 @@ def check_pieces(a, deep):
         for p in pieces:
             s, h, _ = fetch(base + p[1], rng="bytes=0-0", body=False)
             if s != 206:
-                bad.append(f"{p[1]} answered {s or 'nothing'} to a Range request ({base})")
+                bad.append(f"{p[1]} answered {said(s)} to a Range request ({base})")
     if bad:
         return "; ".join(bad[:3]) + (f" (+{len(bad) - 3} more)" if len(bad) > 3 else "")
 
@@ -130,7 +144,7 @@ def check_pieces(a, deep):
 def check_channel(a, deep):
     s, _, b = fetch(a["apt"] + "InRelease")
     if s != 200:
-        return f"{a['apt']}InRelease answered {s or 'nothing'}"
+        return f"{a['apt']}InRelease answered {said(s)}"
     keyring = a["keyring"]
     with tempfile.TemporaryDirectory() as d:
         os.chmod(d, 0o700)
@@ -159,13 +173,19 @@ def check_wishes(a, deep):
         return "no Wishes address (set the repository variable AUROS_WISHES_URL)"
     s, _, b = fetch(a["wishes"].rstrip("/") + "/v1/health")
     if s != 200 or b'"ok":true' not in b.replace(b" ", b""):
-        return f"{a['wishes']}/v1/health answered {s or 'nothing'}: {(b or b'')[:80]!r}"
+        return f"{a['wishes']}/v1/health answered {said(s)}: {b[:80]!r}"
+    # The whole service is answering, not just the health route: a stranger (no
+    # token) must be refused with 401 before anything else is read. A 5xx here is
+    # the service resting or down (docs/CLOUD.md section 5).
+    s, _, b = fetch(a["wishes"].rstrip("/") + "/v1/wish", method="POST", data=b"{}", tries=2)
+    if s != 401:
+        return f"{a['wishes']}/v1/wish without a token answered {said(s)}, not 401: {b[:80]!r}"
 
 
 def check_flathub(a, deep):
     s, _, _ = fetch(a["flathub"], body=False)
     if s != 200:
-        return f"{a['flathub']} answered {s or 'nothing'}"
+        return f"{a['flathub']} answered {said(s)}"
 
 
 FUNCS = dict(site=check_site, download=check_download, pieces=check_pieces, channel=check_channel,
@@ -230,7 +250,7 @@ def issues(results):
 def selftest():
     import threading, http.server, shutil
     ok = True
-    exe = os.urandom(300_000)
+    exe = os.urandom(1_200_000)
     good_sum = hashlib.sha256(exe).hexdigest()
     gpg = shutil.which("gpg")
 
@@ -255,8 +275,30 @@ def selftest():
             if self.command != "HEAD":
                 self.wfile.write(body)
 
+        def outage(self):
+            """True if this path is broken on purpose (state["modes"][path]) and the reply was spoilt."""
+            mode = state.get("modes", {}).get(self.path)
+            if mode == "timeout":
+                time.sleep(TIMEOUT + 1.5)
+            elif mode == "404":
+                self.send(404)
+            elif mode == "empty":
+                self.send(200)
+            elif mode == "reset":
+                self.connection.close()
+            else:
+                return False
+            return True
+
+        def do_POST(self):
+            if self.outage():
+                return
+            self.send(401, b'{"error":"token"}') if self.path == "/wishes/v1/wish" else self.send(404)
+
         def do_GET(self):
             p, rng = self.path, self.headers.get("Range")
+            if self.outage():
+                return
             if state.get("down") == p.split("/")[1]:
                 return self.send(503)
             if p == "/site/":
@@ -281,6 +323,7 @@ def selftest():
             self.send(404)
 
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    srv.handle_error = lambda *a: None  # a client that gave up is the test, not a traceback
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     u = f"http://127.0.0.1:{srv.server_port}"
     env = dict(os.environ, MON_SITE=u + "/site/", MON_GET=u + "/get/AurOS-Setup.exe", MON_APT=u + "/apt/", MON_WISHES=u + "/wishes",
@@ -340,6 +383,55 @@ def selftest():
     env["MON_FLATHUB"] = u + "/nowhere"
     open(env["MON_LIVE_FILE"], "w").write("flathub wishes\n")
     expect("flathub down is information only -> warn, never fail", states(), {"flathub": "warn"})
+    # Every endpoint, broken four ways: the run must finish, say DOWN with a reason, and never "the check itself broke".
+    globals()["TIMEOUT"] = 0.4
+    open(env["MON_LIVE_FILE"], "w").write("site download pieces channel wishes\n")
+    cases = [("/site/", "site", False), ("/get/AurOS-Setup.exe", "download", False), ("/get/SHA256SUMS", "download", True),
+             ("/get/pieces.txt", "pieces", False), ("/get/piece", "pieces", False), ("/apt/InRelease", "channel", False),
+             ("/wishes/v1/health", "wishes", False), ("/wishes/v1/wish", "wishes", False)]
+    for path, check, deep in cases:
+        for mode in ("timeout", "404", "empty", "reset"):
+            if check == "channel" and not gpg:
+                continue
+            state["modes"] = {path: mode}
+            got = states(deep)
+            why = next(r["detail"] for r in last if r["check"] == check)
+            expect(f"{path} {mode} -> {check} DOWN with a reason", got, {check: "fail"})
+            good = bool(why) and "itself broke" not in why
+            print(("ok   " if good else "FAIL ") + f"   ... and says why: {why[:90]}")
+            ok = ok and good
+    state.clear()
+    dead = socket.socket(); dead.bind(("127.0.0.1", 0)); gone = f"http://127.0.0.1:{dead.getsockname()[1]}"; dead.close()
+    env2 = dict(env, MON_SITE=gone + "/", MON_GET=gone + "/get/AurOS-Setup.exe", MON_APT=gone + "/apt/", MON_WISHES=gone)
+    res = run(True, env2)
+    expect("nothing listens at all: every live check DOWN, none crashed", {r["check"]: r["state"] for r in res},
+           dict(site="fail", download="fail", pieces="fail", channel="fail", wishes="fail"))
+    good = all(r["detail"] and "itself broke" not in r["detail"] for r in res if r["state"] == "fail")
+    print(("ok   " if good else "FAIL ") + "   ... each with a reason"); ok = ok and good
+
+    # What pages: a fake gh records what the monitor asks of GitHub.
+    fakebin = os.path.join(tmp, "bin"); os.mkdir(fakebin)
+    gl, gq = os.path.join(tmp, "gh.log"), os.path.join(tmp, "gh.list")
+    open(os.path.join(fakebin, "gh"), "w").write('#!/bin/sh\necho "$@" >> "$GH_LOG"\n[ "$1 $2" = "issue list" ] && cat "$GH_LIST"\nexit 0\n')
+    os.chmod(os.path.join(fakebin, "gh"), 0o755)
+    genv = dict(os.environ, PATH=fakebin + os.pathsep + os.environ["PATH"], GH_LOG=gl, GH_LIST=gq, GITHUB_REPOSITORY="own/rep",
+                AUROS_SECOND_RESPONDER="helper")
+    saved = dict(os.environ); os.environ.update(genv)
+    bad = [dict(check="site", state="fail", detail="x answered 503", ms=1), dict(check="wishes", state="ok", detail="", ms=1),
+           dict(check="channel", state="pending", detail="404", ms=1)]
+    open(gq, "w").write("[]"); open(gl, "w").write("")
+    issues(bad); log = open(gl).read()
+    creates = [l for l in log.splitlines() if l.startswith("issue create")]
+    expect("a live failure opens one issue, assigned to the owner and the second responder",
+           {"n": len(creates), "owner": "--assignee own" in log, "second": "--assignee helper" in log, "label": "--label monitor" in log},
+           {"n": 1, "owner": True, "second": True, "label": True})
+    open(gl, "w").write(""); open(gq, "w").write('[{"number": 7, "title": "monitor: site is down"}]')
+    issues(bad)
+    expect("... the same failure again opens no second issue", {"creates": sum(l.startswith("issue create") for l in open(gl).read().splitlines())}, {"creates": 0})
+    open(gl, "w").write("")
+    issues([dict(check="site", state="ok", detail="", ms=1)])
+    expect("... and recovery closes it", {"closed": "issue close 7" in open(gl).read()}, {"closed": True})
+    os.environ.clear(); os.environ.update(saved)
     srv.shutdown()
     return 0 if ok else 1
 
