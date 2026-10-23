@@ -60,7 +60,20 @@ the hardware clock is UTC there and chrony only has the network to correct.
 America/Los_Angeles local time, online, three ways (the fix taken out; chrony
 alone; the image as it is) and checks the clock against the host's, `apt-get
 update`, and that the RTC is still in local time after the sync, and after a
-restart. Results: TIMETABLE
+restart. Measured on Actions (KVM, the image of build `4c16e98`, the clock
+in Los Angeles local time = 25200 s behind UTC, online):
+
+| | fix removed | chrony alone | the image as it is |
+|---|---|---|---|
+| clock at the first start, before any network | 25202 s behind | 25202 s behind | **1 s off** (first-boot setup) |
+| clock once the network is up | still 25202 s behind | **1 s off**, stepped by an NTS server (time.cloudflare.com) 10 s after the network | 1 s off |
+| `apt-get update` | refuses every Release file ("not valid yet", exit 100) | accepted | accepted |
+| the PC's hardware clock afterwards (Windows') | untouched | **still local time** (reads 25201 s behind UTC: not rewritten) | still local time, after a restart too |
+| clock after a restart, before any network | - | - | **1 s off** (systemd applies `/etc/adjtime` LOCAL) |
+| listening sockets of the time daemon | - | none | none |
+
+`tools/timeboottest.sh`, 14 checks, all ok; the first two columns are the
+control (the same checks fail without the fix).
 
 ## How it is proven
 
@@ -75,7 +88,7 @@ Three tests, all in the repository.
    seal and **the build stops on any FAIL**: an image without these
    controls cannot be made.
 2. **`tools/hardentest-mutants.sh`** takes the controls away one at a
-   time (35 mutations: a sysctl line, a cmdline option, the drop policy,
+   time (50 mutations: a sysctl line, a cmdline option, the drop policy,
    an extra open port, cups-browsed back, the safe-mode drop-in, the
    guard's thresholds, the dpkg repair's detection, ...) and requires
    hardentest to fail on the check that names that control.
