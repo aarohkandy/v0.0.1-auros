@@ -192,6 +192,32 @@ def aurwl_seeds():
     out("aurwl", "popup", win + popup + shell(7) + shell(10, b"\x05\x05"))
 
 
+# ── fuzz_textinput: fuzz_aurwl's encoding with the text-input manager (global
+# 10, after wl_shm) in the registry. Objects after aurwl_window(): [13] the
+# manager, [14] the text input. Request numbers: manager.get_text_input = 1;
+# text_input: destroy 0, enable 1, disable 2, set_surrounding_text 3,
+# set_text_change_cause 4, set_content_type 5, set_cursor_rectangle 6, commit 7.
+def textinput_seeds():
+    p = b"\x00"
+    base = aurwl_window()
+    base += p + b"\x01\x00" + b"\x0a\x00"            # bind text-input manager v1 -> [13]
+    base += p + b"\x0d\x01" + b"\x05"                # manager.get_text_input(seat) -> [14]
+    base += shell(1)                                   # the window gets the keyboard (and `enter`)
+    def typing():
+        # p o t a t o <space>, as evdev codes into aurwl_key
+        return b"".join(shell(5, bytes([c, 1])) + shell(5, bytes([c, 0])) for c in (25, 24, 20, 30, 20, 24, 57))
+    secret = (p + b"\x0e\x01" + p + b"\x0e\x05" + num(0x40 | 0x80) + num(8) + p + b"\x0e\x07")
+    plain = (p + b"\x0e\x01" + p + b"\x0e\x05" + num(0) + num(0) + p + b"\x0e\x07")
+    out("textinput", "password", base + secret + typing())
+    out("textinput", "plain", base + plain + typing())
+    # a field turns secret half-way through, the window goes, a second input enables
+    out("textinput", "switch", base + plain + typing() + secret + typing() + shell(8) + shell(7) +
+        p + b"\x0d\x01\x05" + p + b"\x0f\x01" + p + b"\x0f\x07" + plain + typing())
+    out("textinput", "hostile", base + p + b"\x0e\x07" + p + b"\x0e\x03" + s("x" * 16) + num(100) + num(-5) +
+        p + b"\x0e\x05" + num(-1) + num(99) + p + b"\x0e\x01" + p + b"\x0e\x01" + p + b"\x0e\x00" +
+        p + b"\x0e\x07" + shell(1) + shell(9, b"\x07"))
+
+
 # ── hive: [mode] KEY \n [NAME \n] regf, built by Ferry's own test generator
 def hive_seeds():
     import subprocess, tempfile
@@ -250,5 +276,6 @@ if __name__ == "__main__":
     gpt_seeds()
     journal_seeds()
     aurwl_seeds()
+    textinput_seeds()
     hive_seeds()
     wish_seeds()

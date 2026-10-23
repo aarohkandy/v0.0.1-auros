@@ -25,6 +25,7 @@
 
 struct wl_display;
 struct wl_client;
+struct wl_global;
 struct wl_resource;
 
 enum { TI_UNKNOWN,       /* the focused program has no text input enabled */
@@ -41,5 +42,11 @@ void textinput_focus(struct wl_client *client, struct wl_resource *surface);
 
 /* What the program with the keyboard has declared (above). */
 int  textinput_state(void);
+
+/* For tests and the fuzzer: the global (to number it in the registry), and
+ * whether anything is left behind once every program has gone (text
+ * inputs, a remembered focus). */
+extern struct wl_global *textinput_g;
+int  textinput_leftovers(void);
 
 #endif

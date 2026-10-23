@@ -158,6 +158,10 @@ static uint32_t global_name(prog *p, int k, const struct wl_interface **iface, i
         { &C->g_viewporter, &wp_viewporter_interface, 1 },
         { &C->g_xdg_output, &zxdg_output_manager_v1_interface, 3 },
         { NULL, &wl_shm_interface, 1 },
+#ifdef FUZZ_WITH_TEXTINPUT          /* fuzz_textinput.c: Wishes' zwp_text_input_v3 (stream W1).
+                                     * Last, so every index the seeds use keeps its meaning. */
+        { &textinput_g, &zwp_text_input_manager_v3_interface, 1 },
+#endif
     };
     const glob *g = &G[k % (int)(sizeof G / sizeof *G)];
     *iface = g->iface; *ver = g->ver;
@@ -436,5 +440,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         fprintf(stderr, "aurwl kept state for a program that has gone\n");
         abort();
     }
+#ifdef FUZZ_WITH_TEXTINPUT
+    if (textinput_leftovers()) {
+        fprintf(stderr, "text input kept state for a program that has gone\n");
+        abort();
+    }
+#endif
     return 0;
 }

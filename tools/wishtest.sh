@@ -49,6 +49,27 @@ if [ -f "$ROOT/tools/wishtest-hook.c" ]; then
     fi
 fi
 
+# The compositor really telling a password field from any other: the REAL aurwl.c
+# and a real Wayland client speaking text-input-v3 (Linux with libwayland and xkbcommon).
+if [ "$(uname)" = Linux ] && pkg-config --exists wayland-server wayland-client xkbcommon 2>/dev/null &&
+   [ -f "$ROOT/tools/wishtest-textinput.c" ]; then
+    G="$ROOT/src/aurwl/gen"
+    # shellcheck disable=SC2046,SC2086
+    if ${CC:-cc} -std=gnu11 -g -O1 -Wall -Wextra $SAN -I "$G" -I "$ROOT/src/aurwl" -o "$OUT/textinput" \
+            "$ROOT/tools/wishtest-textinput.c" "$ROOT/src/aurwl/aurwl.c" "$ROOT/src/aurwl/textinput.c" \
+            "$ROOT/src/aurwl/wishhook.c" "$ROOT/src/aurshell/draw.c" "$G/xdg-shell-protocol.c" \
+            "$G/xdg-decoration-protocol.c" "$G/viewporter-protocol.c" "$G/xdg-output-protocol.c" \
+            "$G/text-input-protocol.c" $(pkg-config --cflags --libs wayland-server wayland-client xkbcommon) -lm \
+            2>"$OUT/err" &&
+       ASAN_OPTIONS=detect_leaks=0 timeout 120 "$OUT/textinput" >"$OUT/log" 2>&1; then
+        echo "ok   wishtest-textinput: $(tail -1 "$OUT/log")"
+    else
+        echo "FAIL wishtest-textinput"; grep -E 'error' "$OUT/err" | head; grep -E 'FAIL|ERROR' "$OUT/log" | head; fail=1
+    fi
+else
+    echo "skip wishtest-textinput (needs Linux with libwayland-dev and libxkbcommon-dev)"
+fi
+
 # The five sounds a wish may play are made from nothing but sines and noise.
 if command -v python3 >/dev/null 2>&1 && [ -f "$ROOT/tools/wishtest-sounds.py" ]; then
     if python3 "$ROOT/tools/wishtest-sounds.py" >"$OUT/snd" 2>&1; then echo "ok   sounds: $(tail -1 "$OUT/snd")"

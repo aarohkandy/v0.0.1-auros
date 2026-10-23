@@ -63,6 +63,15 @@ A="$ROOT/src/aurwish"
 build wish    "$HERE/fuzz_wish.c" "$A/json.c" "$A/wish.c" "$A/text.c" "$A/store.c" "$A/engine.c" -- -lm
 # Stream R's registry reader (runs as root on her Windows disk's hives).
 build hive    "$HERE/fuzz_hive.c"
+# Stream W1's zwp_text_input_v3 (src/aurwl/textinput.c): fuzz_aurwl.c with the
+# manager in the registry; textinput.c and wishhook.c are included by the harness.
+if pkg-config --exists wayland-server xkbcommon 2>/dev/null; then
+    build textinput "$HERE/fuzz_textinput.c" "$S/draw.c" \
+        "$W/gen/xdg-shell-protocol.c" "$W/gen/xdg-decoration-protocol.c" \
+        "$W/gen/viewporter-protocol.c" "$W/gen/xdg-output-protocol.c" \
+        "$W/gen/text-input-protocol.c" \
+        -I"$W/gen" -I"$W" -- $(pkg-config --libs wayland-server xkbcommon) -lm
+fi
 # fuzz_aurwl.c includes aurwl.c itself (its end-of-input check reads the
 # compositor's lists).
 if pkg-config --exists wayland-server xkbcommon 2>/dev/null; then

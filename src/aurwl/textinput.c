@@ -26,6 +26,7 @@ static int                inited, n_total;
 static struct wl_client  *f_client;
 static struct wl_resource *f_surf;
 static struct wl_listener f_gone;
+struct wl_global *textinput_g;
 
 static void zero_state(struct ti *t)
 {
@@ -211,13 +212,20 @@ void textinput_init(struct wl_display *d)
     n_total = 0;
     f_client = NULL;
     f_surf = NULL;
-    inited = wl_global_create(d, &zwp_text_input_manager_v3_interface, 1, NULL, bind_manager) != NULL;
+    textinput_g = wl_global_create(d, &zwp_text_input_manager_v3_interface, 1, NULL, bind_manager);
+    inited = textinput_g != NULL;
+}
+
+int textinput_leftovers(void)
+{
+    return n_total != 0 || !wl_list_empty(&tis) || f_surf != NULL || f_client != NULL;
 }
 
 /* After the display (and with it every text input) is gone. */
 void textinput_shutdown(void)
 {
     inited = 0;
+    textinput_g = NULL;
     n_total = 0;
     f_client = NULL;
     f_surf = NULL;
