@@ -7,12 +7,14 @@ play() {   # NAME LABEL URL
     n=$1; label=$2; url=$3
     clear_report "$n"
     fx_start "http://127.0.0.1:8123/film.html?name=$n&$url"
-    sleep 20
+    sleep 12
+    rm -f "$OUT/$n.cpu"
     ( cpu_busy 6 > "$OUT/$n.cpu" ) &
     if wait_report "$n" 150; then
         note "$n: $(cut -c1-420 "$OUT/$n.json")"
         sleep 1; snap "$n"
         say "do pixels $n film.$label-visible 260 130 1020 690 12"; sleep 2
+        wait_for 15 test -s "$OUT/$n.cpu"
         c=$(jget "$OUT/$n.json" current_time); f=$(jget "$OUT/$n.json" frames); d=$(jget "$OUT/$n.json" dropped)
         note "perf $n frames=$f dropped=$d cpu=$(cat "$OUT/$n.cpu" 2>/dev/null)% size=$(jget "$OUT/$n.json" size) streams=$(pw-cli ls Node 2>/dev/null | grep -ci firefox)"
         if [ "$(jget "$OUT/$n.json" ok)" = True ]; then

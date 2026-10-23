@@ -168,7 +168,7 @@ jobs:
           if [ -z "$CHECKS" ] || [ -n "$EV" ]; then
             set +e
             sudo python3 tools/parity/run.py --image /mnt/parity/auros-desktop.img --out "$PWD/parity-out/everyday" \
-                --work /mnt/parity/work --timeout 2700 ${EV:+--checks "$EV"} ${APT:+--apt "$APT"} 2>&1 | tee parity-out/everyday.log
+                --work /mnt/parity/work --timeout 2700 --opt perf ${EV:+--checks "$EV"} ${APT:+--apt "$APT"} 2>&1 | tee parity-out/everyday.log
             rc1=${PIPESTATUS[0]}
             set -e
           fi
