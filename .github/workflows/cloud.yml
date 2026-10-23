@@ -20,6 +20,11 @@ on:
       - 'rootfs/usr/share/auros/help/**'
       - '.github/workflows/cloud.yml'
   workflow_dispatch:
+    inputs:
+      probe:
+        description: 'Only ask the API which output schemas it compiles (test/schema-probe.mjs)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,7 +42,23 @@ env:
   WRANGLER_SEND_METRICS: 'false'
 
 jobs:
+  probe:
+    if: inputs.probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || secrets.ANTHROPIC_API }}
+      ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID || secrets.ANTHROPIC_WORKSPACE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: timeout 300 npm ci --no-audit --no-fund && node build-help.mjs
+      - run: timeout 300 node test/schema-probe.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
   test:
+    if: ${{ !inputs.probe }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -52,7 +73,7 @@ jobs:
 
   deploy:
     needs: test
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && !inputs.probe
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
