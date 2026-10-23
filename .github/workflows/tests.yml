@@ -259,7 +259,8 @@ jobs:
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           cc -O2 -std=gnu11 -o "$RUNNER_TEMP/textsystest" tools/textsystest.c \
-             src/aurshell/textsys.c src/aurshell/run.c -I src/aurshell
+             src/aurshell/textsys.c src/aurshell/run.c src/aurshell/cursor.c src/aurshell/draw.c \
+             -I src/aurshell -lm
           "$RUNNER_TEMP/textsystest" 2>&1 | tee transcripts/textsystest.txt
       - name: fallbacktest (letters the UI face lacks are drawn, not boxed)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}

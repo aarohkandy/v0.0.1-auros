@@ -26,8 +26,16 @@ int  textsys_write_ini(const char *home, float scale);
  * holds the number. Pure, so tests can read it. */
 void textsys_gsettings_argv(float scale, char *buf, size_t n, const char *argv[6]);
 
-/* Both, for her own account ($HOME). Cheap and never waits: the
- * command is started detached. */
+/* The pointer's size in pixels for GTK's cursor-size setting: the size the
+ * shell draws its own pointer at (24 pixels a step, cursor_scale() steps), so
+ * a GTK program asks its theme for a picture of that size and is not
+ * stretched from a smaller one. Firefox reads this from GSettings. */
+int  textsys_cursor_px(float scale);
+/* The command that sets it, like textsys_gsettings_argv. */
+void textsys_cursor_argv(float scale, char *buf, size_t n, const char *argv[6]);
+
+/* All of it, for her own account ($HOME). Cheap and never waits: the
+ * commands are started detached. */
 void textsys_apply(float scale);
 
 /* gtk-xft-dpi for a scale: 96 dpi in 1024ths, times the scale. */

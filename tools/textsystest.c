@@ -8,7 +8,7 @@
  * does both when she presses the button and when the desktop starts.
  *
  *   cc -O2 -std=gnu11 -o /tmp/textsystest tools/textsystest.c \
- *      src/aurshell/textsys.c src/aurshell/run.c -I src/aurshell && /tmp/textsystest
+ *      src/aurshell/textsys.c src/aurshell/run.c src/aurshell/cursor.c src/aurshell/draw.c -I src/aurshell -lm && /tmp/textsystest
  *   (from the repository root)
  *
  * What it cannot see: whether Firefox on a booted image follows the
@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "../src/aurshell/textsys.h"
+#include "../src/aurshell/cursor.h"
 
 static int fail, checked;
 static void ok(const char *what, int good)
@@ -83,6 +84,16 @@ int main(void)
        !strcmp(argv[0], "gsettings") && !strcmp(argv[1], "set") &&
        !strcmp(argv[2], "org.gnome.desktop.interface") &&
        !strcmp(argv[3], "text-scaling-factor") && !strcmp(argv[4], "1.35") && !argv[5]);
+
+    ok("the pointer GTK asks its theme for is the size ours is drawn at (48, 72, 96)",
+       textsys_cursor_px(1.0f) == 48 && textsys_cursor_px(1.5f) == 72 && textsys_cursor_px(2.0f) == 96);
+    { int same = 1;
+      for (float s = 0.8f; s <= 2.01f; s += 0.05f) if (textsys_cursor_px(s) != 24 * cursor_scale(s)) same = 0;
+      ok("...for every size she can choose, the same number cursor.c draws with", same); }
+    textsys_cursor_argv(1.5f, buf, sizeof buf, argv);
+    ok("the command is gsettings set ... cursor-size 72",
+       !strcmp(argv[0], "gsettings") && !strcmp(argv[2], "org.gnome.desktop.interface") &&
+       !strcmp(argv[3], "cursor-size") && !strcmp(argv[4], "72") && !argv[5]);
 
     /* GTK 3 and 4, a file with other things in it, no trailing newline. */
     char d3[300], f3[340], f4[340];

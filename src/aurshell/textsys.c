@@ -32,6 +32,26 @@ void textsys_gsettings_argv(float scale, char *buf, size_t n, const char *argv[6
     argv[5] = NULL;
 }
 
+int textsys_cursor_px(float scale)
+{
+    float ts = clamp_scale(scale);
+    int sc = (int)(2.f * (ts < 1.f ? 1.f : ts) + 0.5f);     /* cursor.c's cursor_scale() */
+    if (sc < 2) sc = 2;
+    if (sc > 4) sc = 4;
+    return 24 * sc;
+}
+
+void textsys_cursor_argv(float scale, char *buf, size_t n, const char *argv[6])
+{
+    snprintf(buf, n, "%d", textsys_cursor_px(scale));
+    argv[0] = "gsettings";
+    argv[1] = "set";
+    argv[2] = "org.gnome.desktop.interface";
+    argv[3] = "cursor-size";
+    argv[4] = buf;
+    argv[5] = NULL;
+}
+
 /* One `key=value` line replaced or added under [Settings]; the rest of
  * the file is exactly as it was. */
 static int ini_set(const char *path, const char *key, const char *value)
@@ -95,6 +115,9 @@ void textsys_apply(float scale)
     char buf[16];
     const char *argv[6];
     textsys_gsettings_argv(scale, buf, sizeof buf, argv);
+    (void)run_detached(argv);
+    char cbuf[16];
+    textsys_cursor_argv(scale, cbuf, sizeof cbuf, argv);
     (void)run_detached(argv);
 }
 
