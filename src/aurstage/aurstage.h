@@ -173,6 +173,14 @@ int  stage_switch_root(const char *root_dev);
  * one of these -- a flag that changes the dry run's answer and not
  * the install's makes the hardware matrix a lie. */
 int  stage_cmdline_has(const char *word);
+
+/* Everything said so far is kept; when a verdict ("aurstage-report v1 ...") is said, the
+ * registered saver is called with all of it. main() registers the one that writes
+ * \EFI\AurOS\stage.log (stagelog.c); a program that links boot.c alone has none. */
+void stage_log_set_saver(void (*f)(const char *text, size_t n));
+/* stagelog.c: write `text` to \EFI\AurOS\stage.log on the EFI partition `esp` (a device
+ * node), if \EFI\AurOS is there. 1 if written. */
+int  stagelog_write(const char *esp, const char *text, size_t n);
 int  stage_cmdline_value(const char *key, char *out, size_t n);
 
 /* MemAvailable, in bytes; 0 if the kernel will not say. */

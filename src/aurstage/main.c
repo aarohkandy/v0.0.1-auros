@@ -575,6 +575,23 @@ static void stop_here(const char *why, int untouched)
     for (;;) pause();
 }
 
+/* The saver for the log (stagelog.c is the only file that writes it): find the EFI partitions
+ * and offer it to each until one takes it. aurstage.nolog turns it off (tests that assert a
+ * refusal leaves the disk byte for byte as it was). */
+static void save_log(const char *text, size_t n)
+{
+    static stage_machine mm;
+    if (n == 0 || stage_cmdline_has("aurstage.nolog")) return;
+    if (stage_survey(&mm) <= 0) return;
+    for (int d = 0; d < mm.n_disks; d++)
+        for (int p = 0; p < mm.disk[d].n_parts; p++) {
+            if (!mm.disk[d].part[p].is_esp) continue;
+            char dev[64];
+            snprintf(dev, sizeof dev, "/dev/%s", mm.disk[d].part[p].name);
+            if (stagelog_write(dev, text, n)) return;
+        }
+}
+
 int main(void)
 {
     /* stdout unbuffered: everything this says may be the last thing
@@ -583,6 +600,7 @@ int main(void)
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
+    stage_log_set_saver(save_log);
     stage_say("AurOS staging environment");
     stage_say("this is the one restart; nothing has been changed yet");
     /* AND IF THIS IS A TEST IMAGE, IT SAYS SO BEFORE ANYTHING ELSE.
