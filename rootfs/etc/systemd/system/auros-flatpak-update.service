@@ -4,7 +4,6 @@
 # Nothing asks, nothing restarts. docs/security/UPDATES.md
 [Unit]
 Description=Update the programs from Flathub
-Documentation=file:///usr/share/doc/auros/UPDATES.md
 ConditionPathExists=/usr/bin/flatpak
 After=network-online.target auros-software.service
 Wants=network-online.target
