@@ -18,8 +18,8 @@ key ctrl+s 6
 snap pdfform-save
 typing "filled-a"
 key ret 5
-# 2. Leave the last box first (click on the page), then save
-click 700 540; sleep 2
+# 2. Leave the last box first (Tab, as a form is normally filled in), then save
+key tab 2
 key ctrl+s 6
 typing "filled-b"
 key ret 5
