@@ -231,7 +231,7 @@ static int phase_inspect(const ab_choice *c, pf_report *r, ab_machine *m,
                      "the way this drive is divided up could not be read.");
             return -1;
         }
-        int found = 0;
+        int found = 0, n_esp = 0;
         for (uint32_t k = 0; k < ne; k++) {
             uint8_t e[4096];
             if (rd_disk(&rc0, elba * ss + (uint64_t)k * es, e, es) != 0) break;
@@ -242,10 +242,19 @@ static int phase_inspect(const ab_choice *c, pf_report *r, ab_machine *m,
             for (int i = 7; i >= 0; i--) first = (first << 8) | e[32 + i];
             for (int i = 7; i >= 0; i--) last  = (last  << 8) | e[40 + i];
             if (memcmp(e, ESP_TYPE_GUID, 16) == 0) {
-                m->esp.number    = k + 1;
-                m->esp.first_lba = first;
-                m->esp.blocks    = last - first + 1;
-                memcpy(m->esp.guid, e + 16, 16);
+                n_esp++;
+                /* ONLY THE ONE THE FILES WILL BE COPIED TO. plat_esp_open
+                 * mounts the partition preflight found (d->esp_offset), and
+                 * the boot entry has to name that same partition: taking
+                 * "the last EFI partition in the table" named a different
+                 * one on a computer with two, and the entry then started
+                 * nothing. */
+                if (first * ss == m->esp_offset) {
+                    m->esp.number    = k + 1;
+                    m->esp.first_lba = first;
+                    m->esp.blocks    = last - first + 1;
+                    memcpy(m->esp.guid, e + 16, 16);
+                }
             }
             if (first * ss != r->system_offset) continue;
             /* IN 512-BYTE UNITS, ALWAYS. journal.h says so at length:
@@ -271,6 +280,13 @@ static int phase_inspect(const ab_choice *c, pf_report *r, ab_machine *m,
                 }
             }
             found = 1;
+        }
+        if (n_esp > 1) {
+            snprintf(why, n,
+                     "this computer has two start-up partitions on its Windows "
+                     "drive, and AurOS cannot be sure which one Windows starts "
+                     "from. AurOS will not guess; nothing has been changed.");
+            return -1;
         }
         if (!found) {
             snprintf(why, n,
