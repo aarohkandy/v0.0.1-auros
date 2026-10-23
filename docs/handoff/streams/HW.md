@@ -136,12 +136,12 @@ in already tells which kind it is.
    whole path (BCM4352 → screen / staging refusal; AX201 → fine).
 3. First physical PC: `CAMPAIGN.md` step 1 only, then diff the report against
    what Device Manager shows; fix classification (`hwinv_kind`) from real names.
-4. After the image changes (kernel/firmware/printer packages): rebuild an image
-   tree and run `python3 -I tools/hw/gen-compat.py ROOTFS` (on CI the unit
-   job has `work/forge/desktop/rootfs`; locally a container with the profile's
-   `packages_hardware` installed works: `docker run ubuntu:24.04`, install
-   `$packages_hardware kmod python3-minimal`, run it with ROOTFS `/`), commit
-   `hw/compat.json`.
+4. After the image changes (kernel/firmware/printer packages): `sh tools/hw/regen.sh`
+   on homebase (fresh container, 2 GB for a few minutes, refuses under 33 GB free;
+   `--reuse NAME` for a container that already has the profile's `packages_hardware`),
+   or on CI `python3 -I tools/hw/gen-compat.py work/forge/desktop/rootfs`. Output is
+   deterministic (a re-run is byte-identical), so a diff of `hw/compat.json` is a diff
+   of what the image can drive. Commit it.
 
 ## How to verify
 
@@ -158,5 +158,4 @@ Z:/tmp/x`.
 - `hwinv_add_dev` keeps every PCI device and every whole USB device on purpose:
   an Intel IPU camera is a "System" device to Windows.
 - PowerShell: `"$w: x"` is a drive reference. Write `"${w}: x"` (E fixed my step).
-- homebase container `hw-noble` (ubuntu:24.04 + the image's hardware packages,
-  ~2 GB) is only needed to regenerate: `docker rm -f hw-noble` frees it.
+- No homebase container is left behind by HW (`regen.sh` makes and removes its own).
