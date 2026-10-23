@@ -121,3 +121,11 @@ it goes red after that date, and green-without-allowance once these land.
 - This worktree's remote is `aarohkandy/v0.0.1-auros`. The tag a release carries points at the tip
   of `main` when it was published, not at the built commit (release.yml says so in the notes):
   the exact built commit is in the notes and in the sources release.
+- Adding a Wayland protocol file under `src/aurwl/gen/` (or changing LICENSE, TERMS.md, the website fonts' OFL.txt)
+  makes `legal.yml` red until `python3 -I tools/legal/notices.py` (and `tools/legal/mkpages.py` for the Markdown
+  texts) is run and the result committed: the notices are generated, never typed. Say so to the stream that hits it.
+- The Python tools run on 3.9 (the Mac) and 3.12 (CI): no `match`, no `X | Y` types.
+- `sources.yml` needs the build run's `auros-rootfs` artifact, which lives 14 days. Make a release's sources before then
+  (`[sources TAG RUN-ID]`), or the offer for that release cannot be kept.
+- The sources job takes about 30 minutes (2.7 GB from Launchpad) and the upload another 10; it is serialised per tag.
+
