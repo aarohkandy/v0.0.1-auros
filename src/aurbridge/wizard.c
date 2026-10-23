@@ -1158,6 +1158,16 @@ static ab_machine g_ab_machine;
 static ab_choice  g_ab_choice;
 static char   g_ab_why[400];
 static volatile LONG g_ab_state;   /* 0 idle, 1 running, 2 done, 3 failed */
+/* SHE ASKED TO STOP while it was working. A step is never cut off half
+ * way: that could leave the one-time start-up setting armed, or
+ * BitLocker suspended, with nothing left to take them back (atlas
+ * review, finding 12). The engine is let finish the step it is on, then
+ * everything is taken back (ab_abort) and the window closes by itself.
+ * g_ab_gate is who got there first: 0 nothing yet, 1 the engine has
+ * started, 2 she stopped it before it did (it then never starts). */
+static volatile LONG g_stop_wanted;
+static volatile LONG g_ab_gate;
+static int    g_aborts;            /* ab_abort calls, for --navtest       */
 static int    g_ab_phase;          /* which ab_phase is running           */
 static int    g_ab_pct;
 
@@ -1238,6 +1248,11 @@ static DWORD WINAPI ab_worker(LPVOID p)
         WaitForSingleObject(g_dl_thread, INFINITE);
         CloseHandle(g_dl_thread);
         g_dl_thread = NULL;
+    }
+    if (InterlockedCompareExchange(&g_ab_gate, 1, 0) != 0) {
+        _snprintf(g_ab_why, sizeof g_ab_why - 1, "it was stopped.");
+        InterlockedExchange(&g_ab_state, 3);
+        return 0;
     }
     int rc = ab_run(AB_HANDOFF, &g_ab_choice, &g_report, &g_ab_machine,
                     ab_say_cb, ab_prog_cb, NULL, g_ab_why, sizeof g_ab_why);
@@ -1398,6 +1413,8 @@ static void install_begin(void)
     g_ab_why[0] = 0;
     g_install_running = 1;
     g_install_finished = 0;
+    g_stop_wanted = 0;
+    InterlockedExchange(&g_ab_gate, 0);
 
     choice_image_source(&g_ab_choice);
     choices_from_page(&g_ab_choice);
@@ -1468,7 +1485,9 @@ static void install_tick(void)
  * is undone -- which before the restart is all of it. */
 static void install_cancel(void)
 {
-    if (g_ab_state == 1) return;      /* a phase is mid-write; let it finish */
+    if (g_ab_state == 1) return;      /* a phase is mid-write: see g_stop_wanted */
+    g_aborts++;
+    if (g_nav_mode || g_shot_mode) return;
     ab_abort(&g_ab_machine, ab_say_cb, NULL);
     /* Give the machine's sleep timers back: the run is over, whether it
      * got as far as the engine or only started the background download.
@@ -2819,6 +2838,13 @@ static int page_progress(int x, int y, int w)
 
     y += text_draw(L"Setting up AurOS", g_f_title, C_FG_HI, x, y, w,
                    DT_WORDBREAK) + S(22);
+    if (g_stop_wanted) {
+        y += text_draw(L"Stopping.", g_f_bodyb, C_FG_HI, x, y, narrow, DT_WORDBREAK) + S(8);
+        y += text_draw(L"When the step it is on is done, everything is put back and this "
+                       L"window closes by itself. Windows and your files stay as they were.",
+                       g_f_body, C_FG, x, y, narrow, DT_WORDBREAK);
+        return y - y0;
+    }
     y += text_draw(stage_sentence(phase), g_f_bodyb, C_FG_HI, x, y,
                    narrow, DT_WORDBREAK) + S(16);
 
@@ -3821,6 +3847,52 @@ static void selftest_log(void)
     fclose(f);
 }
 
+static int ask(HWND h, const wchar_t *text, UINT icon)
+{
+    if (g_nav_mode) return 1;          /* --navtest: as if she said Yes */
+    return MessageBoxW(h, text, L"AurOS Setup", MB_YESNO | icon | MB_DEFBUTTON2) == IDYES;
+}
+
+/* The window's X. 1: it may close now. 0: not now -- she said No, or a
+ * step is running, and the window closes by itself when it has ended and
+ * everything is taken back (stop_tick). */
+static int close_asked(HWND h)
+{
+    if (g_install_running) {
+        if (g_stop_wanted) return 0;           /* already stopping */
+        if (!ask(h, L"Stop setting up AurOS?\n\nIt stops when the step it is on is "
+                    L"done, then takes everything back, so this computer starts "
+                    L"Windows as usual. This window closes by itself when it has.",
+                 MB_ICONQUESTION))
+            return 0;
+        /* Before the engine has started (it waits for the download that
+         * ran behind the pages, which only ever writes \AurOS\ ), there
+         * is nothing to finish: it never starts, and the window goes. */
+        if (InterlockedCompareExchange(&g_ab_gate, 2, 0) != 1) return 1;
+        if (g_ab_state == 1) { InterlockedExchange(&g_stop_wanted, 1); return 0; }
+        return 1;
+    }
+    /* READY, AND ABOUT TO BE THROWN AWAY. After the last step the
+     * window's X used to close it and take back the restart without
+     * a word. */
+    if (g_install_armed && !g_restarting &&
+        !ask(h, L"Close without restarting?\n\nAurOS is ready, but closing now takes it "
+                L"back, and this computer starts Windows as usual.\n\nTo finish, choose "
+                L"No, then press Restart now.", MB_ICONWARNING))
+        return 0;
+    return 1;
+}
+
+/* 1 when she asked to stop and the step has now ended: everything has
+ * been taken back, and the window can go. */
+static int stop_tick(void)
+{
+    if (!g_stop_wanted || g_ab_state == 1) return 0;
+    install_cancel();
+    g_install_running = 0;
+    return 1;
+}
+
 static void tick(void)
 {
     g_ticks++;
@@ -3848,6 +3920,7 @@ static void tick(void)
         else if (g_settle >= 0 && ++g_settle == 8) { check_advance(); need = 1; }
     } else if (g_page == PAGE_PROGRESS) {
         install_tick();
+        if (stop_tick()) { DestroyWindow(g_hwnd); return; }
         if (g_install_running) {
             int ph, pc;
             read_engine(&ph, &pc);
@@ -4096,26 +4169,8 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         return 0;
 
     case WM_CLOSE:
-        if (g_install_running) {
-            if (MessageBoxW(h, L"Stop setting up AurOS?\n\nWindows and your files "
-                               L"are not affected either way.",
-                            L"AurOS Setup", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2)
-                    != IDYES)
-                return 0;
-        }
-        /* READY, AND ABOUT TO BE THROWN AWAY. After the last step the
-         * window's X used to close it and take back the restart without
-         * a word. */
-        if (g_install_armed && !g_restarting) {
-            if (MessageBoxW(h, L"Close without restarting?\n\nAurOS is ready, but "
-                               L"closing now takes it back, and this computer "
-                               L"starts Windows as usual.\n\nTo finish, choose No, "
-                               L"then press Restart now.",
-                            L"AurOS Setup", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2)
-                    != IDYES)
-                return 0;
-        }
-        DestroyWindow(h);
+        if (close_asked(h)) DestroyWindow(h);
+        else InvalidateRect(h, NULL, FALSE);
         return 0;
 
     /* WINDOWS IS ENDING THE SESSION -- a restart from the Start menu, or
@@ -4691,6 +4746,30 @@ static int nav_test(const char *dir)
 #endif
         g_report.wifi_connected = 0;
         g_bring_wifi = 1;
+    }
+
+    if (g_nt) fprintf(g_nt, "\n13. closing in the middle of a step never cuts it off\n");
+    {
+        nt_fake_report(0);
+        g_page = PAGE_PROGRESS;
+        g_install_running = 1; g_install_finished = 0;
+        InterlockedExchange(&g_ab_state, 1);
+        InterlockedExchange(&g_ab_gate, 1);    /* the engine is in a step */
+        g_stop_wanted = 0; g_aborts = 0;
+        int may = close_asked(NULL);
+        nt_check(!may && g_stop_wanted && g_aborts == 0 && !stop_tick(),
+                 "closing in the middle of a step does not end it: the window waits");
+        InterlockedExchange(&g_ab_state, 2);    /* the step has ended */
+        nt_check(stop_tick() && g_aborts == 1,
+                 "when the step ends, everything is taken back, then the window goes");
+        g_install_running = 1; g_stop_wanted = 0; g_aborts = 0;
+        InterlockedExchange(&g_ab_state, 1);
+        InterlockedExchange(&g_ab_gate, 0);    /* only the download, behind the pages */
+        nt_check(close_asked(NULL) && g_ab_gate == 2,
+                 "before the engine has started it closes at once, and the engine never starts");
+        g_install_running = 0; g_stop_wanted = 0; g_aborts = 0;
+        InterlockedExchange(&g_ab_state, 0);
+        InterlockedExchange(&g_ab_gate, 0);
     }
 
     if (g_nt) fprintf(g_nt, "\n11. a screen reader can read every page and find its button\n");
