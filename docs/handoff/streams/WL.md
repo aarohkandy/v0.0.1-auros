@@ -56,6 +56,8 @@ its commit body).
   `aurwl_win_content()` against a reference model written separately in the test.
   Shown RED on the pre-fix compositor: `git show 3a6d0cd:src/aurwl/aurwl.c > /tmp/old.c;
   AURWL_C=/tmp/old.c sh tools/wltest-sub.sh` -> 3 of 20 pass (plain, frame, wreck).
+- **Mutation proofs**: `python3 tools/wltest-sub-mutants.py` breaks 25 things in a copy of aurwl.c (one exact replacement each, must match once) and requires the named scenario to fail; first run found 9 checks that could not fail (counted any release instead of that buffer's; never cleaned the window before testing partial damage; ...), fixed. Takes ~4 min on homebase; not in CI.
+- Fuzz: `tools/fuzz/corpus/aurwl/subsurface*` seeds (get_subsurface, set_position, sync/desync, place_below, viewport src/dst, input region); 7 min libFuzzer on homebase, 851k runs, no finding.
 - Runs in `.github/workflows/fuzz.yml` (S3's file; one added step) on every push touching src/aurwl.
 - homebase: `docker run --rm -v "$PWD":/w -w /w auros-s3-fuzz:latest sh tools/wltest-sub.sh`
   (that image has clang, libwayland-dev, libxkbcommon-dev). rsync the worktree to

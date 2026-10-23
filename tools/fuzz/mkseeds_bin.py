@@ -191,6 +191,36 @@ def aurwl_seeds():
              b"\x00\x0e\x06")                      # commit
     out("aurwl", "popup", win + popup + shell(7) + shell(10, b"\x05\x05"))
 
+    # Subsurfaces (stream WL). After aurwl_window(): [13] wl_subcompositor,
+    # [14] wp_viewporter, [15] a second surface, [16] its wl_subsurface (child
+    # of [6]), [17] its wp_viewport. wl_subsurface: destroy 0, set_position 1,
+    # place_above 2, place_below 3, set_sync 4, set_desync 5. An object
+    # argument is "the Nth object of that interface": 0 is the window's own
+    # surface, 1 the second.
+    sub = (b"\x00\x01\x00\x01\x00" +             # bind wl_subcompositor -> [13]
+           b"\x00\x01\x00\x07\x00" +             # bind wp_viewporter -> [14]
+           b"\x00\x02\x00" +                       # create_surface -> [15]
+           b"\x00\x0d\x01\x01\x00")              # get_subsurface(surface 1, parent 0) -> [16]
+    child_pos = b"\x00\x10\x01" + num(5) + num(5)          # set_position(5, 5)
+    child_paint = (b"\x00\x0f\x01\x00" + num(0) + num(0) +  # attach the buffer
+                   b"\x00\x0f\x02" + num(0) + num(0) + num(32) + num(32) +  # damage
+                   b"\x00\x0f\x06")                          # commit the child
+    parent_commit = b"\x00\x06\x06"
+    pointer = shell(2, num(10), num(10)) + shell(3, b"\x00\x01") + shell(2, num(200), num(60))
+    out("aurwl", "subsurface", win + sub + child_pos + child_paint + parent_commit + shell(7) + pointer + shell(3, b"\x00\x00"))
+    # synchronized: two commits before the parent's, a restack, desync, destroy.
+    out("aurwl", "subsurface-sync", win + sub + child_paint + child_paint + parent_commit + shell(7) +
+        b"\x00\x10\x03\x00" + parent_commit +            # place_below(parent)
+        b"\x00\x10\x05" + b"\x00\x0f\x06" + shell(7) +    # set_desync, commit
+        b"\x00\x10\x00" + parent_commit + shell(7))       # destroy
+    # a viewport on the child, a source rectangle, an empty input region
+    vp = (b"\x00\x0e\x01\x01" +                              # get_viewport(surface 1) -> [17]
+          b"\x00\x11\x02" + num(40) + num(30) +              # set_destination
+          b"\x00\x11\x01" + num(0) + num(0) + num(16) + num(16) +   # set_source
+          b"\x00\x02\x01" +                                  # create_region -> [18]
+          b"\x00\x0f\x05\x00")                              # set_input_region(region)
+    out("aurwl", "subsurface-viewport", win + sub + vp + child_pos + child_paint + parent_commit + shell(7) + pointer)
+
 
 # ── fuzz_textinput: fuzz_aurwl's encoding with the text-input manager (global
 # 10, after wl_shm) in the registry. Objects after aurwl_window(): [13] the

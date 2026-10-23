@@ -266,7 +266,6 @@ struct cl {
     int step;
     int failed;
     struct pev pe;
-    int released;                 /* wl_buffer.release events seen */
     int frames;                   /* frame callbacks fired */
 };
 
@@ -304,7 +303,7 @@ static const struct wl_pointer_listener ptr_l = {
     .axis_stop = p_axis_stop, .axis_discrete = p_axis_discrete,
 };
 
-static void buf_release(void *d, struct wl_buffer *b) { (void)b; ((struct cl *)d)->released++; }
+static void buf_release(void *d, struct wl_buffer *b) { (void)b; ++*(int *)d; }
 static const struct wl_buffer_listener buf_l = { buf_release };
 
 static void frame_done(void *d, struct wl_callback *cb, uint32_t t)
@@ -313,7 +312,7 @@ static const struct wl_callback_listener frame_l = { frame_done };
 
 /* A shared-memory picture the client keeps a mapping of, so a scenario
  * can change a few pixels and say only those changed. */
-typedef struct { struct wl_buffer *buf; uint32_t *map; int w, h; } shmbuf;
+typedef struct { struct wl_buffer *buf; uint32_t *map; int w, h; int *rel; } shmbuf;   /* rel: releases seen */
 
 static shmbuf mkbuf(struct cl *c, const img *m, uint32_t fmt)
 {
@@ -325,9 +324,11 @@ static shmbuf mkbuf(struct cl *c, const img *m, uint32_t fmt)
     memcpy(map, m->px, n);
     struct wl_shm_pool *pool = wl_shm_create_pool(c->shm, fd, (int)n);
     close(fd);
-    shmbuf b = { wl_shm_pool_create_buffer(pool, 0, m->w, m->h, m->w * 4, fmt), map, m->w, m->h };
+    shmbuf b = { wl_shm_pool_create_buffer(pool, 0, m->w, m->h, m->w * 4, fmt), map, m->w, m->h,
+                 calloc(1, sizeof(int)) };
     wl_shm_pool_destroy(pool);
-    wl_buffer_add_listener(b.buf, &buf_l, c);
+    wl_buffer_add_listener(b.buf, &buf_l, b.rel);
+    (void)c;
     return b;
 }
 
@@ -474,14 +475,16 @@ static void sc_sync(struct cl *c)
     img root = img_solid(50, 40, GREY), a = img_solid(20, 10, GREEN), b = img_solid(20, 10, BLUE);
     top *t = mktop(c, &root, XRGB);
     sub s = mksub(c, t->s, 5, 5, &a, XRGB, 0);        /* sync, committed: waits */
+    shmbuf first = s.b;
     expect(c, &root);
     show(c, &s, &b, XRGB);                           /* a newer frame, still waiting */
     expect(c, &root);
-    check(c, c->released >= 1, "the superseded frame was never released to its client");
+    check(c, *first.rel == 1, "the superseded frame was not released to its client (exactly once)");
     wl_surface_commit(t->s);
     img want = img_solid(50, 40, GREY);
     img_over(&want, 5, 5, &b);
     expect(c, &want);
+    check(c, *first.rel == 1 && *s.b.rel == 1, "a frame was released more or less than once");
 }
 
 /* 4. The cache is a snapshot taken AT the commit. Attaching again
@@ -491,6 +494,7 @@ static void sc_snapshot(struct cl *c)
     img root = img_solid(40, 30, GREY), a = img_solid(10, 10, GREEN), b = img_solid(10, 10, BLUE);
     top *t = mktop(c, &root, XRGB);
     sub s = mksub(c, t->s, 0, 0, &a, XRGB, 0);        /* green committed */
+    shmbuf ga = s.b;
     shmbuf nb = mkbuf(c, &b, XRGB);
     wl_surface_attach(s.s, nb.buf, 0, 0);            /* blue attached, NOT committed */
     wl_surface_commit(t->s);
@@ -502,6 +506,12 @@ static void sc_snapshot(struct cl *c)
     want = img_solid(40, 30, GREY);
     img_over(&want, 0, 0, &b);
     expect(c, &want);
+    /* a commit that carries no new buffer applies nothing, and must not
+     * hand a buffer back twice */
+    wl_surface_commit(s.s);
+    wl_surface_commit(t->s);
+    expect(c, &want);
+    check(c, *ga.rel == 1 && *nb.rel == 1, "a frame was released more or less than once");
 }
 
 /* 5. Trees. Everything synchronized: only the root's commit shows any of
@@ -529,13 +539,18 @@ static void sc_effective_sync(struct cl *c)
     img root = img_solid(60, 40, GREY), a = img_solid(30, 20, GREEN), b = img_solid(10, 6, RED);
     top *t = mktop(c, &root, XRGB);
     sub A = mksub(c, t->s, 4, 4, &a, XRGB, 0);        /* sync */
+    wl_surface_commit(t->s);                         /* A is on screen */
+    img base = img_solid(60, 40, GREY);
+    img_over(&base, 4, 4, &a);
+    expect(c, &base);
     sub B = mksub(c, A.s, 2, 3, NULL, XRGB, 1);      /* desync under a sync parent */
     show(c, &B, &b, XRGB);                           /* held: A is sync */
-    wl_surface_commit(A.s);                          /* A waits for the root */
-    expect(c, &root);
-    wl_surface_commit(t->s);
-    img want = img_solid(60, 40, GREY);
-    img_over(&want, 4, 4, &a);
+    expect(c, &base);
+    wl_surface_commit(A.s);                          /* A itself waits for the root */
+    expect(c, &base);
+    wl_surface_commit(t->s);                         /* now A's state, and B with it */
+    img want = base;
+    want.px = malloc(60 * 40 * 4); memcpy(want.px, base.px, 60 * 40 * 4);
     img_over(&want, 6, 7, &b);
     expect(c, &want);
 }
@@ -592,6 +607,14 @@ static void sc_zorder(struct cl *c)
     want = img_solid(60, 40, RED);
     img_over(&want, 0, 0, &rt);
     img_over(&want, 0, 0, &hi); img_over(&want, 3, 3, &mid);
+    expect(c, &want);
+    wl_subsurface_place_above(M.ss, t->s);          /* M right above the parent */
+    wl_subsurface_place_below(H.ss, t->s);          /* H right below the parent: over L only */
+    wl_surface_commit(t->s);
+    want = img_solid(60, 40, RED);
+    img_over(&want, 0, 0, &hi);                      /* L, H, parent, M */
+    img_over(&want, 0, 0, &rt);
+    img_over(&want, 3, 3, &mid);
     expect(c, &want);
 }
 
@@ -681,7 +704,9 @@ static void sc_damage(struct cl *c)
     top *t = mktop(c, &root, XRGB);
     sub p = mksub(c, t->s, 8, 4, &page, XRGB, 1);
     wl_surface_commit(t->s);
-    wl_display_roundtrip(c->dpy);                    /* the buffer is returned */
+    img first = img_solid(50, 40, GREY);
+    img_over(&first, 8, 4, &page);
+    expect(c, &first);                               /* the window is painted, nothing stale */
     for (int y = 4; y < 8; y++) for (int x = 4; x < 8; x++) p.b.map[y * 32 + x] = RED;      /* damaged */
     for (int y = 20; y < 24; y++) for (int x = 20; x < 24; x++) p.b.map[y * 32 + x] = BLUE; /* not reported */
     wl_surface_attach(p.s, p.b.buf, 0, 0);
@@ -698,20 +723,25 @@ static void sc_damage(struct cl *c)
  * gone at once, without waiting for the parent to commit. */
 static void sc_unmap(struct cl *c)
 {
-    img root = img_solid(40, 30, GREY), a = img_solid(10, 10, GREEN);
+    img root = img_solid(40, 30, GREY), a = img_solid(10, 10, GREEN), keep = img_solid(6, 6, BLUE);
     top *t = mktop(c, &root, XRGB);
     sub s = mksub(c, t->s, 2, 2, &a, XRGB, 1);
+    sub k = mksub(c, t->s, 30, 20, &keep, XRGB, 1);   /* stays, so the window stays flattened */
     wl_surface_commit(t->s);
+    img base = img_solid(40, 30, GREY);
+    img_over(&base, 30, 20, &keep);
     img want = img_solid(40, 30, GREY);
     img_over(&want, 2, 2, &a);
+    img_over(&want, 30, 20, &keep);
     expect(c, &want);
     wl_surface_attach(s.s, NULL, 0, 0);              /* unmap */
     wl_surface_commit(s.s);
-    expect(c, &root);
+    expect(c, &base);
     show(c, &s, &a, XRGB);                           /* and back */
     expect(c, &want);
     wl_subsurface_destroy(s.ss);                     /* no parent commit */
-    expect(c, &root);
+    expect(c, &base);
+    (void)k;
 }
 
 /* 15. Where the pointer is. The topmost subsurface that takes input at
@@ -840,10 +870,15 @@ static void sc_wreck(struct cl *c)
 {
     img root = img_solid(40, 30, GREY), a = img_solid(10, 10, GREEN);
     top *t = mktop(c, &root, XRGB);
-    sub s = mksub(c, t->s, 0, 0, &a, XRGB, 0);        /* held in the cache ... */
-    wl_buffer_destroy(s.b.buf);                      /* ... and its buffer is destroyed */
+    img next = img_solid(10, 10, BLUE), shown = img_solid(40, 30, GREY);
+    img_over(&shown, 0, 0, &a);
+    sub s = mksub(c, t->s, 0, 0, &a, XRGB, 0);
     wl_surface_commit(t->s);
-    expect(c, &root);                                /* that frame is lost; the window is fine */
+    expect(c, &shown);                               /* a frame on screen */
+    show(c, &s, &next, XRGB);                        /* its successor, held in the cache ... */
+    wl_buffer_destroy(s.b.buf);                      /* ... and the buffer is destroyed */
+    wl_surface_commit(t->s);
+    expect(c, &shown);                               /* that frame is lost; the old one stays */
     sub s2 = mksub(c, t->s, 0, 0, &a, XRGB, 1);
     wl_surface_commit(t->s);
     wl_surface_destroy(t->s);                         /* the parent goes first */
