@@ -91,13 +91,14 @@ bar_height="38"        # top bar height
 padding="14"           # internal padding of panels
 
 # ── Typography ─────────────────────────────────────────────────────
-# Three shell faces. The image ships one family, so display and text
-# resolve to the same file until a second is installed -- but the keys
-# are separate so that installing one is a theme edit and not a code
-# change. The size scale below is what carries the hierarchy meanwhile.
-font_display="Inter"
-font_text="Inter"
-font_text_bold="Inter"
+# Three shell faces, three weights of the one family the image ships:
+# headings in Inter Display SemiBold, names and labels in Inter SemiBold,
+# everything she reads in Inter Regular. Each is an exact file name
+# (build/forge links /usr/share/auros/fonts/<name>.ttf to it), because
+# the plain family name means its Regular cut and nothing heavier.
+font_display="InterDisplay-SemiBold"
+font_text="Inter-Regular"
+font_text_bold="Inter-SemiBold"
 font_sans="Inter"
 font_mono="JetBrainsMono"
 font_size="14"         # base UI size (px)

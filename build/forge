@@ -1179,8 +1179,14 @@ stage_overlay() {
         # Priority order matters: a plain find would happily return
         # "-Bold" before "-Regular" because B sorts before R, and the
         # whole UI would come up bold.
+        # A named weight is that exact file and nothing else. This used
+        # to add `${_want}*` as well, so a slot that said plain "Inter"
+        # matched every cut of the family and took the first in sort
+        # order -- Inter-Black.otf -- and every word on the desktop was
+        # drawn in the heaviest weight Inter has (tools/fonttest.sh).
+        # A plain family name falls through to the Regular search below.
         if [ "$_anyweight" = 1 ]; then
-            _pats="${_want}.ttf ${_want}.otf ${_want}*.ttf ${_want}*.otf"
+            _pats="${_want}.ttf ${_want}.otf"
         else
             _pats="${_want}-Regular.ttf ${_want}-Regular.otf
                    ${_want}Regular.ttf ${_want}Regular.otf
@@ -1238,9 +1244,14 @@ stage_overlay() {
     # Clear Sans, then to DejaVu -- never to nothing, because a desktop
     # with no text is not a recoverable state. Weight-qualified names
     # are allowed here (third argument), which is the whole point.
-    for _slot in "${_disp:-}" "${_text:-}" "${_tbold:-}"; do
+    # Every theme's faces, not only this build's: all of them ship, she
+    # can pick any in Settings, and a theme that inherits its fonts names
+    # them in its parent's file, which _key above never reads.
+    _all=$(sed -nE 's/^font_(display|text|text_bold)="([^"]*)".*/\2/p' \
+               "$ROOT"/themes/*.theme 2>/dev/null | sort -u)
+    for _slot in "${_disp:-}" "${_text:-}" "${_tbold:-}" $_all; do
         [ -n "$_slot" ] || continue
-        resolve_font "$_slot" "$_slot" 1 || {
+        resolve_font "$_slot" "$_slot" 1 || resolve_font "$_slot" "$_slot" || {
             note "WARNING: font '$_slot' not found; falling back"
             resolve_font ClearSans-Regular "$_slot" 1 ||
             resolve_font DejaVuSans "$_slot" || true
