@@ -552,7 +552,8 @@ char *hwinv_json(const hw_inv *v, const char *tool, const char *made)
         sb_put(&b, "%s\n    {\"kind\": \"%s\", \"state\": \"%s\", \"blocks\": %s, \"device\": %d, \"printer\": %d, \"id\": ",
                i ? "," : "", x->printer >= 0 ? "printer" : hwinv_kind_key(x->kind), hwinv_state_key(x->state),
                x->blocks ? "true" : "false", x->dev, x->printer);
-        sb_json(&b, x->id); sb_put(&b, ", \"says\": "); sb_json(&b, x->says);
+        sb_json(&b, x->id); sb_put(&b, ", \"link\": "); sb_json(&b, x->link);
+        sb_put(&b, ", \"says\": "); sb_json(&b, x->says);
         sb_put(&b, ", \"why\": "); sb_json(&b, x->why); sb_put(&b, "}");
     }
     sb_put(&b, "%s],\n", v->n_verdicts ? "\n  " : "");

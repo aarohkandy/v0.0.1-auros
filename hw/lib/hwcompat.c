@@ -179,6 +179,21 @@ static int eval_dev(const hw_inv *inv, int di, res *out)
         return 1;
     }
 
+    /* A USB Wi-Fi stick that Windows has no program for is an "unknown
+     * device" to Windows (no class, a problem code), and a stick is the one
+     * thing she is told to plug in: Setup reads the chip, not what Windows
+     * made of it. Only a Wi-Fi driver's own ids count here. */
+    if (d->kind == HW_K_OTHER && d->bus == HW_BUS_USB && d->has_ids) {
+        hwc_hit wh;
+        if (hwcompat_lookup(d, HW_K_WIFI, &wh) > 0 && !wh.fw_unusable) {
+            out->vkind = HW_K_WIFI;
+            out->state = HW_V_WORKS;
+            snprintf(out->id, sizeof out->id, "wifi-stick-unknown-to-windows");
+            why_driver(out->why, sizeof out->why, &wh, "USB Wi-Fi stick Windows has no program for");
+            return 1;
+        }
+    }
+
     switch (d->kind) {
     case HW_K_WIFI: case HW_K_ETHERNET: case HW_K_BLUETOOTH: {
         const char *key = d->kind == HW_K_WIFI ? "wifi" : d->kind == HW_K_ETHERNET ? "ethernet" : "bluetooth";
@@ -377,6 +392,8 @@ static void put(hw_inv *inv, int kind, hw_vstate st, const res *r, int printer, 
     v->kind = kind == HWC_K_PRINTER ? HW_K_OTHER : (hw_kind)kind;
     v->state = st; v->dev = r ? r->dev : -1; v->printer = printer; v->blocks = blocks;
     snprintf(v->id, sizeof v->id, "%s", r ? r->id : "");
+    /* a Wi-Fi that will not work: the page that says which stick to buy */
+    if (kind == HW_K_WIFI && st == HW_V_WONT) snprintf(v->link, sizeof v->link, "%s", L_wifi_sticks);
     snprintf(v->says, sizeof v->says, "%s", says ? says : "");
     snprintf(v->why, sizeof v->why, "%s", r ? r->why : "");
 }
@@ -484,6 +501,8 @@ int hwcompat_selftest(void)
     t("BCM4352, no cable socket: Wi-Fi won't work, and it blocks", is(x, HW_V_WONT, "wifi-broadcom-wl-only") && x->blocks == 1);
     t("  and she is told so plainly", x && strstr(x->says, "no place for a network cable") && strstr(x->says, "Nothing has been changed"));
     t("  and the reason is ours to read", x && strstr(x->why, "wl") && strstr(x->why, "bcma"));
+    t("  and it points to the page that says which USB Wi-Fi stick to buy, and names the chips",
+      x && !strcmp(x->link, "advanced.html#wifi-sticks") && strstr(x->says, "MT7612U") && strstr(x->says, "MT7601U"));
     {
         char j[128];
         size_t jl = hwinv_journal(v, j, sizeof j);
@@ -606,6 +625,16 @@ int hwcompat_selftest(void)
     t("a printer with a scanner on the same USB device: prints, scanner not yet",
       is(vp(v, p_sc), HW_V_PARTIAL, "printer-no-scan") && strstr(vp(v, p_sc)->says, "scanner won't work yet"));
     t("  and the scanner is not announced twice", !vk(v, HW_K_SCANNER));
+    hwinv_free(v);
+
+    /* the stick she was told to buy, plugged in on a computer whose Windows has no program for it:
+     * Windows files it under "unknown device", and Setup must still see a Wi-Fi stick that works */
+    v = laptop();
+    hwinv_add_dev(v, "Net", "PCI\\VEN_14E4&DEV_43B1&SUBSYS_0608105B", "PCI\\VEN_14E4&DEV_43B1&CC_028000", "Broadcom 802.11ac", "", "", 0, 71);
+    hwinv_add_dev(v, "", "USB\\VID_0E8D&PID_7612", "", "802.11 n WLAN", "", "", 28, 0);
+    hwcompat_judge(v);
+    t("a MediaTek MT7612U stick Windows has no program for still counts: Wi-Fi will work, nothing blocks",
+      is(vk(v, HW_K_WIFI), HW_V_WORKS, "wifi-stick-unknown-to-windows") && vk(v, HW_K_WIFI)->blocks == 0);
     hwinv_free(v);
 
     /* a Wi-Fi card is not "driven" by a sound driver that claims the same id */

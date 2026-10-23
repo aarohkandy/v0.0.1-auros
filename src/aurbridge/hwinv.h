@@ -125,6 +125,8 @@ typedef struct {
     int       blocks;        /* 1: AurOS cannot be used without it (the  */
                              /*    only network path she has)            */
     char      id[40];        /* stable code: "wifi-wl-only"              */
+    char      link[48];      /* a page on the website that helps, e.g.   */
+                             /* "advanced.html#wifi-sticks"; "" for none */
     char      says[320];     /* her sentence                             */
     char      why[240];      /* ours                                     */
 } hw_verdict;

@@ -132,6 +132,8 @@ def build(c):
           "#ifndef HWCOMPAT_WORDS_H\n#define HWCOMPAT_WORDS_H"]
     for k in sorted(c["words"]):
         ws.append("#define W_%s %s" % (re.sub(r"[^A-Za-z0-9]", "_", k), cstr(c["words"][k])))
+    for k in sorted(c.get("links", {})):
+        ws.append("#define L_%s %s" % (re.sub(r"[^A-Za-z0-9]", "_", k.replace("wifi.", "wifi_")), cstr(c["links"][k])))
     ws.append("#endif")
     return data, "\n".join(ws) + "\n"
 

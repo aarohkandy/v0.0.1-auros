@@ -177,6 +177,31 @@ if [ -n "$SAN" ]; then
     else bad "mutant: more devices than the table holds" "the fuzz did not notice"; fi
 fi
 
+# ── the USB Wi-Fi sticks she is told to buy ──────────────────────────
+if python3 -I tools/hw/sticks.py >"$T/st.log" 2>&1; then ok "sticks: every listed chip is driven (image kernel and HWE kernel), the page shows the list, nothing recommends a stick without a chip"
+else bad "sticks: the list, the page and the places that mention a stick" "$(cat "$T/st.log")"; fi
+mkdir -p "$T/stk"
+tree() {   # a copy of what sticks.py reads
+    rm -rf "$T/stk"; mkdir -p "$T/stk/rootfs/usr/share/auros" "$T/stk/src/aurbridge" "$T/stk/docs/results"
+    cp -r hw website "$T/stk/"; cp -r rootfs/usr/share/auros/help "$T/stk/rootfs/usr/share/auros/"
+    cp src/aurbridge/wizard.c src/aurbridge/fix_win.c "$T/stk/src/aurbridge/"; cp -r docs/results/hardware "$T/stk/docs/results/"
+}
+smutant() {   # label, a python statement that changes the copy at $1
+    label=$1; stmt=$2
+    tree
+    python3 -I -c "import sys; r=sys.argv[1]; $stmt" "$T/stk"
+    if STICKS_ROOT="$T/stk" python3 -I tools/hw/sticks.py >/dev/null 2>"$T/st2.log"; then bad "mutant: $label" "tools/hw/sticks.py still passed"
+    else ok "mutant: $label  -> red"; fi
+}
+smutant "a help page promises a stick with no chip" "open(r+'/rootfs/usr/share/auros/help/getting-online.html','a').write('<p>A small USB Wi-Fi stick (about \$15) fixes it.</p>')"
+smutant "the installer's own words promise a stick with no chip" "p=r+'/src/aurbridge/wizard.c'; open(p,'a').write('\nstatic const char *g_x = \"Plug in a USB Wi-Fi adapter and try again.\";\n')"
+smutant "the sentence on the screen loses its chips and its link" "import json; p=r+'/hw/seeds.json'; d=json.load(open(p)); d['words']['wifi.wont']='A USB Wi-Fi stick fixes this.'; json.dump(d,open(p,'w'))"
+smutant "a stick is added that the kernel has no driver for" "import json; p=r+'/hw/sticks.json'; d=json.load(open(p)); d['chips'][0]['ids'].append('0bda:8812'); json.dump(d,open(p,'w'))"
+smutant "a Realtek 8812AU stick is recommended" "import json; p=r+'/hw/sticks.json'; d=json.load(open(p)); d['chips'][0]['products'][0]['name']='TP-Link Archer T2U (RTL8812AU)'; json.dump(d,open(p,'w'))"
+smutant "a chip's firmware goes missing from the image" "import json; p=r+'/hw/compat.json'; d=json.load(open(p)); d['modules']['mt76x2u']['fw']='missing'; json.dump(d,open(p,'w'))"
+smutant "the HWE kernel loses a listed driver" "import json; p=r+'/hw/compat-hwe-wifi.json'; d=json.load(open(p)); d['modules'].pop('mt7921u'); json.dump(d,open(p,'w'))"
+smutant "the page's list is edited by hand" "p=r+'/website/advanced.html'; s=open(p).read(); open(p,'w').write(s.replace('NETGEAR A6210','NETGEAR A6200'))"
+
 # ── the table of real PCs ────────────────────────────────────────────
 if python3 -I tools/hw/results.py --dir tools/hw/fixtures/results --out "$T/res.md" 2>"$T/res.err" &&
    grep -q '^3 machines. Installed and kept working: 2. Refused by the installer: 1 (Lenovo IdeaPad 3 15ABA7: the Windows drive is encrypted' "$T/res.md" &&
@@ -242,6 +267,8 @@ hmutant "Wi-Fi blocks even with a cable socket" 's/if (!cable) { blocks = 1/if (
 hmutant "a Wi-Fi card is matched by any module, not a Wi-Fi one" 's/if (cat \&\& m->cat != cat) continue;//' hw/lib/hwcompat.c
 hmutant "the journal line forgets that the computer would have no internet" 's/if (v->verdicts\[i\].blocks) blk = 1;/blk = 0;/' $SRC/hwinv.c
 hmutant "a USB stick with exact ids is turned away when Windows gave no class" 's/if (a->vid == 0xFFFF || a->did == 0xFFFF) return 0;/return 0;/' hw/lib/hwcompat.c
+hmutant "a stick Windows has no program for is not seen" 's/if (d->kind == HW_K_OTHER \&\& d->bus == HW_BUS_USB \&\& d->has_ids) {/if (0) {/' hw/lib/hwcompat.c
+hmutant "a Wi-Fi that will not work forgets the page that says which stick to buy" 's/if (kind == HW_K_WIFI \&\& st == HW_V_WONT) snprintf(v->link/if (0) snprintf(v->link/' hw/lib/hwcompat.c
 hmutant "a missing firmware file is ignored" 's/if (m->fw_unusable) { if (!unusable_module)/if (0) { if (!unusable_module)/' hw/lib/hwcompat.c
 hmutant "a printer model matches part of a word" 's/snprintf(m, sizeof m, " %s ", model);/snprintf(m, sizeof m, "%s", model);/' hw/lib/hwcompat.c
 hmutant "the Windows subsystem ids are read the wrong way round" 's/uint16_t sv = (uint16_t)(d->subsys \& 0xFFFF), sd = (uint16_t)(d->subsys >> 16);/uint16_t sd = (uint16_t)(d->subsys \& 0xFFFF), sv = (uint16_t)(d->subsys >> 16);/' hw/lib/hwcompat.c

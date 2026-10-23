@@ -43,22 +43,24 @@ same trouble does the same job. **A sixth is worth having if you can: any
 Surface laptop or a Windows 10 tablet-style PC.** They break more rules
 than anything else.
 
-**Two USB Wi-Fi sticks, about $15 each.** The screen for a computer whose
-Wi-Fi will not work says "a small USB Wi-Fi stick (about $15) fixes this".
-That is only true for sticks whose chip the kernel knows. Buy one of each,
-read the chip off the listing, and plug each, one at a time, into computer 1
-(the Broadcom one, whose own Wi-Fi will not work) before Step 1. With stick A
-the report must say "Your Wi-Fi will work"; with stick B it must still say
-"won't work".
+**Three USB Wi-Fi sticks, $10 to $45 each.** The Setup screen for a
+computer whose own Wi-Fi will not work says that a USB Wi-Fi stick with a
+MediaTek MT7612U, MT7921 or MT7601U chip fixes it, and points to the list on
+the website (`website/advanced.html`, "Which USB Wi-Fi stick to buy", made
+from `hw/sticks.json` and checked by `tools/hw/sticks.py`). She will buy what
+that list says, so the list is tested here before anyone relies on it. Plug
+each stick, one at a time, into computer 1 (the Broadcom one, whose own Wi-Fi
+will not work) before Step 1, and run the report:
 
-| Stick | Chip to look for in the listing | Expected |
+| Stick | Buy | Expected |
 |---|---|---|
-| A | **MediaTek MT7612U** or MT7610U (often sold as "AC600/AC1200 USB 3.0 adapter, MT7612U"), or **Realtek RTL8811CU/RTL8821CU**, or **RTL8188EUS** (the cheapest "N150" ones) | works |
-| B | **Realtek RTL8812AU / RTL8821AU / RTL8811AU** (the very common cheap "AC600" ones, e.g. TP-Link Archer T2U Nano) | **won't work** in the present image: only the newer kernel has a driver |
+| A | the cheapest stick on the list: a **MediaTek MT7601U** one (the TP-Link TL-WN727N version 4, or whichever listing names the MT7601U) | the report says "Your Wi-Fi will work", and in AurOS it connects |
+| B | a **MediaTek MT7612U** or **MT7921AU** one from the list (ALFA AWUS036ACM, NETGEAR A6210, or the NETGEAR A8000) | the same |
+| C | one that is NOT on the list: a **Realtek RTL8812AU or RTL8821AU** one, such as the TP-Link Archer T2U Nano | the report decides: with the present kernel it says "won't work"; with the newer kernel it will say "works", and then AurOS itself must connect before that chip may ever join the list |
 
-If A or B behaves differently from the table, that is a finding, and the
-sentence on the screen has to change before launch: she will buy the stick
-the screen tells her to buy.
+If A or B behaves differently from the table, or a product on the list turns
+out to carry another chip, that is a finding: the list (and the sentence on
+the screen) changes before launch.
 
 ---
 

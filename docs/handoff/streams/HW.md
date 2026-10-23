@@ -55,11 +55,12 @@ on the generated words header). Printer verdicts carry `printer` = index into
 `HW_V_NONE` is never stored: no device, no sentence. The sentences, all from
 `hw/seeds.json` "words" (change them THERE, then `python3 -I tools/hw/gen-compat.py`):
 
-- Your Wi-Fi will work. / …may be slower or drop out sometimes. / Your Wi-Fi won't work with AurOS yet. A network cable will, and so will a small USB Wi-Fi stick (about $15). / the same, no cable socket → **blocks=1**: "…so AurOS would have no internet. A small USB Wi-Fi stick (about $15) fixes this: plug one in and start again. Nothing has been changed."
+- Your Wi-Fi will work. / …may be slower or drop out sometimes. / Your Wi-Fi won't work with AurOS yet. A network cable will. So will a USB Wi-Fi stick with a MediaTek MT7612U, MT7921 or MT7601U chip: the list of sticks is on our website. / the same, no cable socket → **blocks=1**: "…so AurOS would have no internet. A USB Wi-Fi stick with a MediaTek MT7612U, MT7921 or MT7601U chip fixes this: the list is on our website. Plug one in and start again. Nothing has been changed."
 - Your sound will work. · Your camera won't work yet. · Your Bluetooth will work. · Your screen will work, but games and 3D programs will be slow.
 - Your printer will work. · …will print, but its scanner won't work yet. · …won't work yet. Connecting it to Wi-Fi, if it can, is the way to make it work. · …only works with Windows… · We can't tell if your printer will work. Most printers made in the last ten years do.
 - Your fingerprint reader won't work. You will sign in with a short number instead.
 
+The no-Wi-Fi verdicts also have `link` (the page naming the sticks); show it as the way to "see the list".
 Show the cable-socket sentence only when Wi-Fi is not "works" (the matcher already
 leaves it out then). Suggested: tick for works, a plain note for the rest;
 nothing is a stop except `blocks`.
@@ -110,17 +111,35 @@ driver), `sane-airscan`/`sane-utils` (scanners), `printer-driver-foo2zjs`,
    door in 6.8 (no `brcmsmac` module built, `b43` needs firmware we do not
    ship): all "won't work yet". The one case that **blocks**.
 
-## Open design question (B, D, K, lead)
+## The USB Wi-Fi stick promise (fixed 2026-10-23)
 
-The no-Wi-Fi sentence promises "a small USB Wi-Fi stick (about $15) fixes this". True
-only for sticks whose chip the image's kernel drives. Supported (driver + firmware in
-the image): MediaTek MT7610U/MT7612U/MT7601U, Realtek RTL8188EUS/8192CU/8192EU/8821CU/
-8811CU/8822BU/8822CU, Atheros AR9271, Ralink RT2800/RT3070-family. **Not** supported in
-6.8 (they are in the 7.0 HWE kernel): Realtek RTL8812AU/8821AU/8814AU (the most common
-cheap "AC600" sticks, e.g. TP-Link Archer T2U Nano). Someone has to name chips or
-models the user can buy (website help page that the screen points to), and the lab
-confirms them (CAMPAIGN.md, "Two USB Wi-Fi sticks"). The report with the stick plugged
-in already tells which kind it is.
+The no-Wi-Fi sentence used to say "a small USB Wi-Fi stick (about $15) fixes this", true only
+for sticks whose chip the kernel drives. Now: the sentence names the chips (MediaTek MT7612U,
+MT7921, MT7601U) and every `wifi.wont` / `wifi.wont_alone` verdict carries
+`link = "advanced.html#wifi-sticks"` (a page on the site, from `hwinv_win.h`'s verdict struct:
+B turns it into a button/address with the site host it already bakes in).
+- The list: `hw/sticks.json` (4 chips, 12 example products from public Linux-friendly-stick lists,
+  each chip's USB ids), rendered into `website/advanced.html` between `sticks:begin/end` by
+  `python3 -I tools/hw/sticks.py --write` (never edit the block by hand: the check compares).
+- The check (`tools/hw/sticks.py`, run by `hwtest.sh`, so by the unit job): every listed id is
+  claimed by the named Wi-Fi driver with its firmware in the image, in the image's kernel
+  (`hw/compat.json`) AND the HWE kernel (`hw/compat-hwe-wifi.json`, 7.0.0-38, made by
+  `gen-compat.py --wifi-only` on a tree that has it); 2 to 4 products per chip; no Realtek
+  RTL8811AU/8812AU/8821AU/8814AU anywhere except under "Do not buy"; and every place a person
+  can read (website, help pages, installer and staging strings, the sentences in seeds.json,
+  `docs/results/hardware/*.md`) that mentions a USB Wi-Fi stick/adapter/dongle names a listed
+  chip or links `#wifi-sticks`. Eight mutants are shown red.
+- A stick Windows has no program for is an "unknown device" to Windows; the matcher now still
+  sees its chip (`wifi-stick-unknown-to-windows`), so "plug one in and start again" works even
+  when Windows cannot use the stick.
+- Verified from: morrownr's "Plug and Play" list (MT7612U, MT7610U, MT7921AU products and the
+  MT7601U ones from hardware databases), NETGEAR A6210 (0846:9053, mt76x2u). NOT verified on
+  hardware: that these products still carry these chips in their current revisions, and that the
+  sticks work in AurOS: `CAMPAIGN.md` buys three and tries them.
+- With the HWE kernel the matcher will call RTL8812AU/8821AU sticks "works" (drivers exist in
+  7.0); the list still does not recommend them until AurOS itself connects with one (CAMPAIGN stick C).
+- D owns the website: `tools/site/check.mjs` was NOT run on the new section (no browser here);
+  `pages.yml` will. If it objects to markup, fix `render()` in `tools/hw/sticks.py`.
 
 ## Half-done / not done
 

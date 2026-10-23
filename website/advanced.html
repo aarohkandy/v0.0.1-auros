@@ -34,6 +34,7 @@
         <li><a href="#bios">This computer starts up the older way (BIOS)</a></li>
         <li><a href="#rst">AurOS can&rsquo;t see this computer&rsquo;s drive (Intel RST or VMD)</a></li>
         <li><a href="#room">How much room AurOS needs</a></li>
+        <li><a href="#wifi-sticks">Which USB Wi-Fi stick to buy</a></li>
         <li><a href="#else">Other systems, and anything else</a></li>
       </ul>
     </div>
@@ -194,6 +195,48 @@
       <p class="totop"><a href="#main">Back to the top</a></p>
     </div>
   </section>
+
+<!-- sticks:begin (made by tools/hw/sticks.py from hw/sticks.json: edit that, then run it with --write) -->
+<section class="doc" id="wifi-sticks" aria-labelledby="wifi-sticks-title">
+  <div class="narrow">
+    <h2 id="wifi-sticks-title">Which USB Wi-Fi stick to buy</h2>
+    <p>If this computer&rsquo;s own Wi-Fi does not work with AurOS, a USB Wi-Fi stick can take its place. It has to be a stick whose chip AurOS already has a driver for. Each chip below was checked against the list of chips in AurOS&rsquo;s own kernel (Linux 6.8 and 7.0), including the firmware that driver needs.</p>
+    <p><b>Buy by the chip, not by the name.</b> Makers change the chip inside a model between versions without changing its name. If a product page does not say which chip is inside, do not buy it. Where a version is shown below, only that version.</p>
+    <p>Plug the stick in, then open AurOS Setup again: it reads the chip itself, so it does not matter that Windows may say it has no driver for it.</p>
+    <h3>MediaTek MT7612U (fast: 2.4 and 5 GHz, USB 3, &ldquo;AC1200&rdquo;)</h3>
+    <p>Driver <code>mt76x2u</code>.</p>
+    <ul>
+      <li>ALFA AWUS036ACM</li>
+      <li>Panda Wireless PAU0D</li>
+      <li>NETGEAR A6210</li>
+    </ul>
+    <h3>MediaTek MT7921AU (newest: Wi-Fi 6 and 6E, 2.4 and 5 GHz, &ldquo;AX1800&rdquo; or &ldquo;AXE3000&rdquo;)</h3>
+    <p>Driver <code>mt7921u</code>.</p>
+    <ul>
+      <li>ALFA AWUS036AXML</li>
+      <li>NETGEAR A8000 (the AXE3000 one)</li>
+      <li>EDUP EP-AX1672</li>
+      <li>Fenvi FU-AX1800, only the one whose listing says MT7921 (Fenvi also sells a look-alike with a Realtek chip)</li>
+    </ul>
+    <h3>MediaTek MT7610U (medium: 2.4 and 5 GHz, USB 2, &ldquo;AC600&rdquo;)</h3>
+    <p>Driver <code>mt76x0u</code>.</p>
+    <ul>
+      <li>ALFA AWUS036ACHM</li>
+      <li>Panda Wireless PAU0B</li>
+    </ul>
+    <h3>MediaTek MT7601U (plain and cheap: 2.4 GHz only, &ldquo;N150&rdquo;)</h3>
+    <p>Driver <code>mt7601u</code>.</p>
+    <ul>
+      <li>TP-Link TL-WN727N, version 4 only</li>
+      <li>D-Link DWA-127, revision B1 only</li>
+      <li>ASUS USB-N10, version 2 only</li>
+    </ul>
+    <h3>Do not buy these</h3>
+    <p>Realtek RTL8811AU, RTL8812AU, RTL8821AU and RTL8814AU sticks (the TP-Link Archer T2U Nano and many cheap &ldquo;AC600&rdquo; and &ldquo;AC1200&rdquo; sticks) are not on this list: their drivers are very new in the kernel and have not been tried on AurOS. A stick that does not name its chip may be one of them.</p>
+    <p class="totop"><a href="#main">Back to the top</a></p>
+  </div>
+</section>
+<!-- sticks:end -->
 
   <!-- ── anything else ──────────────────────────────────────────── -->
   <section class="doc sand" id="else" aria-labelledby="else-title">
