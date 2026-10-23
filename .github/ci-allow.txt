@@ -7,10 +7,6 @@
 #
 #   job name | expires YYYY-MM-DD | why
 #
-# 2026-10-23 (E): the only slice of the no-stick power cut that is red, on
-# run 39962229132: 3 of 57 checks, all in "a partition that was not AurOS's"
-# (a recovery partition resized after the install: Put Windows back does not
-# refuse, does not say why, and does not leave the disk untouched). It is
-# docs/safety/FINDINGS.md S-01/S-02, A2's. The other three slices (installs
-# cut at 13 instants, and the restore cut at 5) are green.
-powercut / e2e (powercut-nostick-restore)|2026-10-26|S-01/S-02: Put Windows back must refuse a partition it did not make (3 of 57 checks); A2
+# (empty) 2026-10-23: the one entry, powercut-nostick-restore (S-01/S-02), was removed by
+# A2 when the fix landed (50d623c): that slice is green on build 39977172780 and locally
+# (57 checks, 0 failed; the whole suite 201/0).
