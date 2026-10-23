@@ -23,7 +23,8 @@ its commit body).
 | **drag and drop** (wl_data_device.start_drag was `cancelled` for everyone: Thunar, the image's file manager, could not move a file by dragging): pointer belongs to the drag, enter/motion/leave/drop to the surface under it (subsurfaces in their own coordinates), accept/set_actions/action/target negotiation, finish/dnd_finished, Esc cancels, drag icon (`aurwl_drag_icon`, painted by session.c), release off every window still ends it (session.c edit) | done; `wltest-sub dnd` + 8 mutants; **real Thunar moved a.txt into a folder** (`DND_FROM=285,175 DND_TO=210,180 sh tools/wltest-apps.sh thunar-dnd 24`) |
 | other protocols (see "Protocol review") | in progress |
 | real programs through the real shell (`sh tools/wltest-apps.sh firefox|gtk4|qt|mpv`, headless `aurshell --png --with-app`): Firefox 158 draws toolbar + page (+ its welcome dialog), GTK4 widget-factory, Qt5 terminal, mpv video (wlshm subsurface) | all draw; PNGs in the Progress log of SESSION-2026-10-23-B.md |
-| PARITY `call.visible` flips to PASS on a booted image | waiting for a build of this commit |
+| PARITY `call.visible` flips to PASS on a booted image | **done**: PARITY confirmed on the real image (call.visible, webrtc, films PASS) |
+| painting cannot be made expensive by a client (3000 stretched subsurfaces) | work budget in `compose_node`; `wltest-sub budget` |
 
 ## How it works (read this before touching `aurwl.c`)
 
@@ -64,6 +65,21 @@ New protocols are generated to `src/aurwl/gen/<name>-protocol.inc` and `#include
 generator loop), so no list of source files elsewhere (forge, fuzz build.sh, wishtest.sh, shots.sh, ...) needs to learn them.
 Add the XML to that loop + the README loop, `#include` the .inc in aurwl.c, add a row to fuzz_aurwl.c's `global_name` table
 (AFTER the existing rows: seeds index into it).
+
+## Not done, in order of value (each program works without them; what it costs her)
+
+1. **Cursor shapes**: a client's cursor surface is accepted and NOT shown (the shell draws one arrow), so no hand over a
+   link and no I-beam. wp_cursor_shape would not help Firefox (GTK3 sets cursor surfaces, not shapes). Idea: show the
+   client's cursor surface scaled to the shell's cursor size when it is not the plain arrow (hotspot != default); needs
+   a decision about accessible cursor size (stream C owns paint_cursor).
+2. **Primary selection** (middle-click paste), **xdg-activation** (raise the window a link opened), **presentation-time**,
+   **fractional-scale**: not offered; Firefox, GTK4, Qt, mpv all work without. Add by the `.inc` recipe above.
+3. **linux-dmabuf**: not needed for correctness (every program falls back to shm; GTK4's EGL fails and it uses cairo).
+   It would let Firefox/GTK use the GPU on a machine that has one (LINEAR modifier only, CPU copy); a performance feature.
+4. **Idle inhibit over D-Bus** (org.freedesktop.ScreenSaver): the shell owns the bus (stream C, on their list).
+5. `wl_touch` events are never sent (the shell turns a touchscreen into pointer clicks, which goes through the same path).
+6. Popups: `xdg_popup.grab` is accepted and ignored (no `popup_done` on an outside click, Esc is the client's own).
+7. Qt6 was not run (no Qt6 GUI app in the container; Qt5 qterminal and the same QtWayland client draw).
 
 ## Tests
 
