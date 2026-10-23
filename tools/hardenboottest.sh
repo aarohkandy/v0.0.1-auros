@@ -553,6 +553,9 @@ make_disk() { # hard|base  [static]
     [ "$1" = base ] && strip_controls
     if [ "${2:-}" = static ]; then
         RFS="$T/m" HARDEN_QUIET=1 sh tools/hardentest.sh > "$T/static.$1" 2>&1; echo $? > "$T/static.$1.rc"
+        # The static checks, each shown to fail when its control is taken
+        # away, on this very image (a few MB of it are copied out).
+        [ "$1" = hard ] && { RFS="$T/m" sh tools/hardentest-mutants.sh > "$T/mutants.out" 2>&1; echo $? > "$T/mutants.rc"; }
     fi
     umount_root
 }
@@ -589,6 +592,7 @@ EOPY
 done
 RH="$T/rec.hard/result"; RB="$T/rec.base/result"
 cat "$T/menu.hard" >> "$RH"; cat "$T/menu.base" >> "$RB"
+{ echo "mutants_rc=$(cat "$T/mutants.rc" 2>/dev/null)"; echo "mutants=$(tail -1 "$T/mutants.out" 2>/dev/null)"; } >> "$RH"
 
 # ── the verdicts ────────────────────────────────────────────────────
 val() { awk -v k="$1" 'index($0, k "=") == 1 { v = substr($0, length(k) + 2) } END { print v }' "$2"; }
@@ -658,6 +662,7 @@ say "|---|---|---|---|"
 row both    "the machine starts, the desktop comes up, every check runs" up
 row both    "Secure Boot is on" sb_on
 row control "tools/hardentest.sh passes on the disk" static_ok
+row keep    "tools/hardentest-mutants.sh: every static check fails without its control" is mutants_rc 0
 row control "GRUB: editing a start line asks for a password" is grub_edit asks
 row control "GRUB: its command line asks for a password" is grub_console asks
 if [ -n "$SHELL_ID" ]; then
@@ -734,6 +739,18 @@ else
 fi
 mkdir -p "$(dirname "$REPORT")"; cp "$T/report" "$REPORT"
 # What a person debugging a FAIL needs, next to the report.
-tar -C "$T" -czf "${REPORT%.*}-evidence.tar.gz" rec.hard rec.base serial.hard serial.base static.hard static.base \
-    $(cd "$T" && ls shot.*.ppm 2>/dev/null) menu.hard menu.base serial.hard.edit serial.hard.console serial.base.edit serial.base.console 2>/dev/null
+# Screenshots as PNG (the monitor writes PPM: 3 MB each).
+python3 - "$T" <<'EOPY'
+import glob, struct, sys, zlib
+for f in glob.glob(sys.argv[1] + '/shot.*.ppm'):
+    d = open(f, 'rb').read().split(b'\n', 3)
+    w, h = map(int, d[1].split()); px = d[3]
+    raw = b''.join(b'\x00' + px[y * w * 3:(y + 1) * w * 3] for y in range(h))
+    def ch(t, c): return struct.pack('>I', len(c)) + t + c + struct.pack('>I', zlib.crc32(t + c) & 0xffffffff)
+    open(f[:-4] + '.png', 'wb').write(b'\x89PNG\r\n\x1a\n' + ch(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))
+                                    + ch(b'IDAT', zlib.compress(raw, 6)) + ch(b'IEND', b''))
+EOPY
+tar -C "$T" -czf "${REPORT%.*}-evidence.tar.gz" rec.hard rec.base $(cd "$T" && ls -d rec.*.m* shot.*.png 2>/dev/null) \
+    serial.hard serial.base static.hard static.base mutants.out menu.hard menu.base \
+    serial.hard.edit serial.hard.console serial.base.edit serial.base.console 2>/dev/null
 [ "$fail" -eq 0 ]
