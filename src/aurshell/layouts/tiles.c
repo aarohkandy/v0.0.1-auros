@@ -93,8 +93,14 @@ static rect rect_scale(rect r, float k)
  * no value of anything for which Home is off screen or covered. */
 static int  strip_h  (shell_ctx *c) { return c->bar_h + 8; }
 static int  homebar_h(shell_ctx *c) { return c->target_large ? 84 : 72; }
-/* The question, at its display size, above the page of buttons. */
-#define HEAD_H 56
+/* The question, at its display size, above the page of buttons (and, with
+ * it, the page buttons). Up to 125% text; past that the words are big
+ * enough on their own, the question goes and the page buttons move down
+ * into the bar, so the tiles keep the room. */
+#define HEAD_H_BASE 56
+static float tk(const shell_ctx *c) { return c->text_scale > 1.f ? c->text_scale : 1.f; }
+static int head_on(const shell_ctx *c) { return tk(c) <= 1.25f; }
+static int head_h(const shell_ctx *c) { return head_on(c) ? HEAD_H_BASE : 0; }
 
 static rect homebar_rect(shell_ctx *c, int w, int h)
 {
@@ -134,10 +140,17 @@ static rect home_btn_rect(shell_ctx *c, int w, int h)
  * lands and a message must never cover a button. */
 static rect nav_rect(shell_ctx *c, int w, int h, int which)
 {
-    (void)h;
-    int hgt = HEAD_H - 4;                     /* 52 px */
     int wn = 190, wp = 220;
     int x_next = w - c->margin - wn;
+    if (!head_on(c)) {                         /* at large text: in the bar */
+        int bh = homebar_h(c), hgt = bh - 16;
+        int bw_n = (int)(9.f * 10.4f * tk(c)) + 64, bw_p = (int)(13.f * 10.4f * tk(c)) + 64;
+        int xn = w - c->margin - bw_n;
+        rect r = { which ? xn : xn - 12 - bw_p, h - bh + (bh - hgt) / 2,
+                   which ? bw_n : bw_p, hgt };
+        return r;
+    }
+    int hgt = HEAD_H_BASE - 4;                 /* 52 px */
     rect r = { which ? x_next : x_next - 12 - wp, strip_h(c) + c->margin,
                which ? wn : wp, hgt };
     return r;
@@ -204,7 +217,7 @@ static grid_m grid_metrics(shell_ctx *c, int w, int h)
     g.gap = c->padding + 8;
     int left  = c->margin * 2;
     int right = w - c->margin * 2;
-    int top   = strip_h(c) + c->margin + HEAD_H;
+    int top   = strip_h(c) + c->margin + head_h(c);
     int bot   = h - homebar_h(c) - c->margin;
 
     int availw = (right - left) - g.gap * (g.cols - 1);
@@ -541,9 +554,12 @@ static void paint_nav(shell_ctx *c, surface *s, shell_fonts *f,
     }
     char lab[40];
     snprintf(lab, sizeof lab, "Page %d of %d", p->page + 1, pages);
-    rect hb = home_btn_rect(c, w, h);
-    shell_text(s, f->small, (float)(hb.x + hb.w) + 24.f,
-               shell_baseline(f->small, (float)hb.y, (float)hb.h), lab, c->subtle, alpha);
+    rect hb = home_btn_rect(c, w, h), pv = nav_rect(c, w, h, 0);
+    float lx = (float)(hb.x + hb.w) + 24.f;
+    /* Where she is, when there is room for it beside the buttons. */
+    if (pv.y < hb.y || lx + shell_text_w(f->small, lab) < (float)pv.x - 12.f)
+        shell_text(s, f->small, lx, shell_baseline(f->small, (float)hb.y, (float)hb.h),
+                   lab, c->subtle, alpha);
 }
 
 static void paint_strip(shell_ctx *c, surface *s, shell_fonts *f, int w, float t)
@@ -683,7 +699,7 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
         }
         /* The question, at the display size. It is the page's one
          * instruction, so it is the biggest thing on it. */
-        if (f->huge)
+        if (f->huge && head_on(c))
             shell_text(s, f->huge, (float)(c->margin * 2),
                        (float)(strip_h(c) + c->margin) + font_ascent(f->huge) * 0.92f,
                        "What would you like to do?", c->fg_hi, (1.f - t) * 0.98f);

@@ -73,7 +73,6 @@ static rect card_rect(shell_ctx *c, int w, int h, int index)
  * every panel. paint_home then sets the type INSIDE this band. */
 static int home_head(shell_ctx *c, rect a)
 {
-    (void)a;
     /* Measured from the THEME's type scale rather than from the loaded
      * font: font_size_lg is what load_fonts builds the display steps
      * from, so this tracks a retheme without either pass having to
@@ -82,7 +81,11 @@ static int home_head(shell_ctx *c, rect a)
     float em = (float)theme_int(&c->theme, "font_size_lg", 18) * 2.25f;
     float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
     float sm = (float)theme_int(&c->theme, "font_size", 20);
-    return (int)(((float)(c->padding + 10) + em * 1.25f + 12.f + sm * 1.5f + 16.f) * k);
+    int head = (int)(((float)(c->padding + 10) + em * 1.25f + 12.f + sm * 1.5f + 16.f) * k);
+    /* At the largest text the question would eat the card: it is capped,
+     * and the headline steps down a size (paint_home) to fit. */
+    if (head > (int)((float)a.h * 0.34f)) head = (int)((float)a.h * 0.34f);
+    return head;
 }
 
 /* Home is an INDEX, not a grid of cards.
@@ -104,6 +107,17 @@ static int home_head(shell_ctx *c, rect a)
  * that is already centred has nothing to click through to), so the
  * rect is free to be whatever composition reads best. It is still one
  * function, still called by both the painter and l_motion. */
+/* How many rows Home can hold at this size and text: six when they can be
+ * 50 px each, fewer when the text is so big they could not be (the last
+ * two, All my programs and the store, never go). */
+static int home_cap(shell_ctx *c, rect a)
+{
+    int top = a.y + home_head(c, a);
+    int bot = a.y + a.h - c->padding;
+    int cap = (bot - top) / 50;
+    return cap < 3 ? 3 : (cap > HOME_TILES ? HOME_TILES : cap);
+}
+
 static rect tile_rect(shell_ctx *c, rect a, int index)
 {
     /* Every row the same size: the first one is not more important than
@@ -111,8 +125,9 @@ static rect tile_rect(shell_ctx *c, rect a, int index)
     int top = a.y + home_head(c, a);
     int bot = a.y + a.h - c->padding;
     int avail = bot - top;
-    if (avail < HOME_TILES) avail = HOME_TILES;
-    int unit = avail / HOME_TILES;
+    int cap = home_cap(c, a);
+    if (avail < cap) avail = cap;
+    int unit = avail / cap;
     rect t = { a.x, top + index * unit, a.w, unit };
     return t;
 }
@@ -127,11 +142,12 @@ static rect tile_rect(shell_ctx *c, rect a, int index)
  * ranked seventh, so on the default desktop of this product there was
  * no way to install anything, and no way to reach any program past
  * the sixth either. */
-static int home_rows(const shell_ctx *c, int *rows)
+static int home_rows(shell_ctx *c, rect a, int *rows)
 {
     int pick[HOME_TILES];
     int store = shell_store_app(c);
-    int n = shell_home_pick(c, HOME_TILES - 1, pick);
+    int cap = home_cap(c, a);
+    int n = shell_home_pick(c, cap - 1, pick);
     int k = 0;
     for (int i = 0; i < n; i++) {
         if (store >= 0 && pick[i] == store) rows[k++] = ROW_ALL;
@@ -294,6 +310,12 @@ static void paint_home(shell_ctx *c, surface *s, rect a, shell_fonts *f,
      * a step rather than shrinking continuously keeps the two display
      * sizes in the system the only two on screen. */
     font *tf = f->huge;
+    {   /* the biggest step whose line (and the one under it) fits the head */
+        int room = home_head(c, a) - pad;
+        float sub = f->small ? font_line_height(f->small) * 1.3f : 24.f;
+        if (tf && font_line_height(tf) * 1.1f + sub > (float)room) tf = f->big;
+        if (tf && font_line_height(tf) * 1.1f + sub > (float)room) tf = f->dmid;
+    }
     const char *Q = p->list ? "All my programs" : "What would you like to do?";
     const char *SUB = p->list ? "Everything on this computer. Press one to open it."
                               : "Pick one. You can always come back here.";
@@ -302,11 +324,14 @@ static void paint_home(shell_ctx *c, surface *s, rect a, shell_fonts *f,
 
     float hy = (float)(a.y + pad) + fa(tf, 30.f);
     shell_text(s, tf, x, hy, Q, c->fg_hi, alpha * 0.98f);
-    shell_text(s, f->small, x, hy + fdc(tf, 10.f) + 10.f + fa(f->small, 11.f),
-               SUB, c->subtle, alpha * 0.98f);
+    /* The line under the question only when it fits whole: at the largest
+     * text it is the first thing to go (the question and the rows are not). */
+    if (shell_text_w(f->small, SUB) <= innw)
+        shell_text(s, f->small, x, hy + fdc(tf, 10.f) + 10.f + fa(f->small, 11.f),
+                   SUB, c->subtle, alpha * 0.98f);
 
     int rows[LIST_MAX];
-    int nr = p->list ? list_rows(c, a, p->list_first, rows) : home_rows(c, rows);
+    int nr = p->list ? list_rows(c, a, p->list_first, rows) : home_rows(c, a, rows);
     for (int i = 0; i < nr; i++) {
         rect t = p->list ? list_rect(c, a, i) : tile_rect(c, a, i);
         int hot = (p->hover_tile == i);
@@ -540,7 +565,7 @@ static int l_click(shell_ctx *c, int x, int y)
         rail_priv *p = P(c);
         rect a = card_rect(c, c->screen_w, c->screen_h, 0);
         int rows[LIST_MAX];
-        int nr = p->list ? list_rows(c, a, p->list_first, rows) : home_rows(c, rows);
+        int nr = p->list ? list_rows(c, a, p->list_first, rows) : home_rows(c, a, rows);
         for (int i = 0; i < nr; i++) {
             rect t = p->list ? list_rect(c, a, i) : tile_rect(c, a, i);
             if (x < t.x || x >= t.x + t.w || y < t.y || y >= t.y + t.h) continue;
@@ -582,7 +607,7 @@ static void l_motion(shell_ctx *c, int x, int y)
     if (c->focus != -1) return;
     rect a = card_rect(c, c->screen_w, c->screen_h, 0);
     int rows[LIST_MAX];
-    int nr = p->list ? list_rows(c, a, p->list_first, rows) : home_rows(c, rows);
+    int nr = p->list ? list_rows(c, a, p->list_first, rows) : home_rows(c, a, rows);
     for (int i = 0; i < nr; i++) {
         rect t = p->list ? list_rect(c, a, i) : tile_rect(c, a, i);
         if (x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + t.h) { p->hover_tile = i; return; }

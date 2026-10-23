@@ -83,7 +83,9 @@ static int with_icons(const shell_ctx *c) { return foot_k(c) <= 1.5f; }
 static int item_h(const shell_ctx *c)
 {
     float k = foot_k(c);
-    int h = with_icons(c) ? (int)(40.f + 14.f * k) : (int)(28.f * k);
+    /* icon (22) above the label (22 px per step of text), with room: the
+     * label's top must clear the icon's foot at every size. */
+    int h = with_icons(c) ? (int)(38.f + 22.f * k) : (int)(28.f * k);
     return h < FOOT_TARGET ? FOOT_TARGET : h;
 }
 
@@ -362,8 +364,8 @@ static void paint_button(surface *s, shell_fonts *f, rect r, shell_icon ic,
     font *ft = f->label ? f->label : (f->mid ? f->mid : f->small);
     float by;
     if (icon) {
-        float isz = (float)r.h * 0.40f;
-        float icy = (float)r.y + (float)r.h * 0.30f;
+        float isz = 22.f;
+        float icy = (float)r.y + 6.f + isz * 0.5f;
         shell_icon_draw(s, ic, (float)r.x + (float)r.w * 0.5f, icy, isz, FOOT_INK, FOOT_BG, 1.f);
         if (!ft) return;
         by = (float)r.y + (float)r.h - 8.f - font_descent(ft);

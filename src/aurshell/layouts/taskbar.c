@@ -272,7 +272,11 @@ static void menu_metrics(const shell_ctx *c, int *row_h, int *col_w, int *head)
     if (k < 1.f) k = 1.f;
     /* A name at 22 px and, under it, a line at 18: 60 px a row, 380 a
      * column (DESIGN-DIRECTION C P1-11). */
-    *row_h = (int)((float)(c->target_large ? 60 : 52) * k);
+    /* Past 125% a name and a line under it would be two lines of very big
+     * type: the rows keep the name only (so twelve programs still fit in
+     * three columns), and the line is drawn only when its row is tall
+     * enough for it, whole. */
+    *row_h = (int)((float)(k <= 1.25f ? (c->target_large ? 60 : 52) : 42) * k);
     *col_w = (int)((float)(c->target_large ? 400 : 372) * k);
     *head  = (int)((float)(c->target_large ? 72 : 66) * k);
 }
@@ -892,6 +896,7 @@ static void paint_menu(shell_ctx *c, surface *s, shell_fonts *f)
          * line that does not fit whole is not drawn at all: half a
          * sentence is worse than none (DESIGN-DIRECTION §3). */
         int has_hint = c->apps[ai].hint[0] && f->tiny &&
+                       row.h >= (int)(50.f * (c->text_scale > 1.f ? c->text_scale : 1.f)) &&
                        shell_text_w(f->tiny, c->apps[ai].hint) <= room;
         float block = nasc + (has_hint ? tasc + 6.f : 0.f);
         float ny = (float)row.y + ((float)row.h - block) * 0.5f + nasc;

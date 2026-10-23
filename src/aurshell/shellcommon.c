@@ -703,7 +703,7 @@ void shell_theme_load(shell_ctx *c, const theme_t *t)
     c->fg         = theme_color(t, "col_fg",          theme_color(t, "fg", 0xD4DCEA));
     c->fg_hi      = theme_color(t, "col_fg_hi",       theme_color(t, "fg_hi", 0xF3F7FD));
     c->accent     = theme_color(t, "col_accent",      theme_color(t, "accent", 0x0B5D4F));
-    c->accent_alt = theme_color(t, "col_accent_alt",  theme_color(t, "accent_alt", 0xA78BFA));
+    c->accent_alt = theme_color(t, "col_accent_alt",  theme_color(t, "accent_alt", 0x3A3D42));
     c->accent_warm= theme_color(t, "col_accent_warm", theme_color(t, "accent_warm", 0xF2B880));
     c->err        = theme_color(t, "col_err",         theme_color(t, "err", 0xF2788D));
     c->ok         = theme_color(t, "col_ok",          theme_color(t, "ok", 0x0B5D4F));
