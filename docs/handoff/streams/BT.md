@@ -109,6 +109,13 @@ before and passes after:
 
 ## Next steps, in order
 
+0. **Asked by C, not done** (the lead had told BT to stop): with the machine-id emptied in `build/forge`
+   `seal_identity` (2ff8442), boot the image in TWO VMs and check they get different ids on first start, and
+   that a first start enables nothing new (`00-auros.preset`). `firstboottest`'s harness is the place
+   (a second `fresh_machine`, read `/etc/machine-id` through the e2e stand-in). Also: C's `stick:/dev/NAME`
+   word (`request.c`) and the `stick` case in `answer.sh` (03ce09a) are in BT's files; `aurfirsttest` covers
+   them (121 checks per C); a booted-image run of the `stick` path is not done.
+
 1. Watch the first CI run of `tests` with `windowsboottest` and `rollbacktest` (both gating now) and
    of the changed `firstboottest` (its stand-in waits for the keeper). Pushed as 69ca6b1; the
    keeper part was proven by `firstboottest` D and E only (not yet the full A, B, C with the new
