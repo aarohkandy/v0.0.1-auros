@@ -34,7 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OVMF_CODE = os.environ.get("OVMF_CODE", "/usr/share/OVMF/OVMF_CODE_4M.fd")
 OVMF_VARS = os.environ.get("OVMF_VARS", "/usr/share/OVMF/OVMF_VARS_4M.fd")
 W, H = 1280, 800
-ALL = ["desktop", "call", "film", "print", "office", "pdfform"]
+ALL = ["desktop", "call", "film", "print", "office", "pdfform"]    # apps is a separate, long run
 
 QCODE = {}
 for c in "abcdefghijklmnopqrstuvwxyz0123456789":
@@ -123,8 +123,8 @@ def inject(mnt, opts):
     for f in ("session.sh", "root.sh", "run.sh"):
         os.chmod(os.path.join(dst, f), 0o755)
     with open(os.path.join(dst, "config"), "w") as f:
-        f.write("CHECKS='%s'\nOPTS='%s'\nWITHOUT='%s'\nAPT='%s'\n" % (
-            " ".join(opts.checks), " ".join(opts.opt), " ".join(opts.without), " ".join(opts.apt)))
+        f.write("CHECKS='%s'\nOPTS='%s'\nWITHOUT='%s'\nAPT='%s'\nAPPS='%s'\n" % (
+            " ".join(opts.checks), " ".join(opts.opt), " ".join(opts.without), " ".join(opts.apt), " ".join(opts.apps)))
     d = os.path.join(mnt, "etc/systemd/system/aurshell.service.d")
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "60-parity.conf"), "w") as f:
@@ -372,6 +372,7 @@ def main():
     ap.add_argument("--checks", default=",".join(ALL))
     ap.add_argument("--without", default="", help="comma list of packages to remove first (red proof)")
     ap.add_argument("--apt", default="", help="comma list of Ubuntu packages to install first (what the image should have carried)")
+    ap.add_argument("--apps", default="", help="restrict the apps check to these app ids or short names (comma list)")
     ap.add_argument("--opt", default="", help="comma list of guest options (e.g. libreoffice)")
     ap.add_argument("--mem", type=int, default=4096)
     ap.add_argument("--smp", type=int, default=4)
@@ -387,6 +388,7 @@ def main():
     a.without = [c for c in a.without.split(",") if c]
     a.opt = [c for c in a.opt.split(",") if c]
     a.apt = [c for c in a.apt.split(",") if c]
+    a.apps = [c for c in a.apps.split(",") if c]
     expect_fail = [c for c in a.expect_fail.split(",") if c]
     out = os.path.abspath(a.out)
     os.makedirs(out, exist_ok=True)

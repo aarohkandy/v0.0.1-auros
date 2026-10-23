@@ -31,7 +31,8 @@ for c in $CHECKS; do
             timeout 900 sh "$f" 2>&1 | while IFS= read -r l; do say "note | $l"; done
             result adhoc pass "ran"; rc=0
         else
-            timeout 1500 sh "$f"; rc=$?
+            T=1500; [ "$c" = apps ] && T=5400
+            timeout "$T" sh "$f"; rc=$?
         fi
         [ "$rc" -eq 124 ] && result "$c" fail "the check ran out of time"
     else
