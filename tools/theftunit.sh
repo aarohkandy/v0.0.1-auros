@@ -225,6 +225,12 @@ cryptsetup isLuks --type luks2 "$DU" && cryptsetup luksDump "$DU" | grep -qE 'se
     && ok "a partition not a multiple of 4096 bytes encrypts, with 512-byte sectors" \
     || bad "a partition not a multiple of 4096 bytes encrypts" "$(cryptsetup luksDump "$DU" 2>&1 | grep -E 'sector|not' | head -2)"
 cryptsetup luksDump "$D" | grep -qE 'sector: *4096' && ok "a 4096-aligned one gets 4096-byte sectors" || bad "a 4096-aligned one gets 4096-byte sectors"
+# A CPU without AES instructions: Adiantum, and the keyslot has to be
+# usable too (the VM run: "Cannot use ... cipher for keyslot encryption").
+mkdrive "$T/n.img" 1100 0; DNA=$DRV
+out=$(AUROS_LOCK_NOAES=1 enc_init "$DNA")
+cryptsetup isLuks "$DNA" && cryptsetup luksDump "$DNA" | grep -q 'xchacha12,aes-adiantum-plain64' \
+    && ok "without AES instructions the drive is Adiantum" || bad "without AES instructions the drive is Adiantum" "$out"
 # The size is chosen from the device, said out loud, and checked in the header.
 mkdrive "$T/v.img" 1100 0; DV=$DRV
 out=$("$ENCINIT" "$DV" 2>&1)

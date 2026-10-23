@@ -30,7 +30,11 @@ for lib in cryptsetup/libcryptsetup-token-systemd-tpm2.so libcryptsetup.so.12 \
         [ -e "$f" ] && copy_exec "$f"
     done
 done
-manual_add_modules dm_mod dm_zero dm_crypt xts adiantum nhpoly1305 nhpoly1305_avx2 nhpoly1305_sse2 \
+# af_alg + algif_skcipher: cryptsetup uses the kernel's crypto from
+# userspace for ciphers its own library has not got (Adiantum): without
+# them "Cannot use xchacha12,aes-adiantum-plain64 cipher for keyslot
+# encryption" (measured: the no-AES VM run).
+manual_add_modules af_alg algif_skcipher algif_hash dm_mod dm_zero dm_crypt xts adiantum nhpoly1305 nhpoly1305_avx2 nhpoly1305_sse2 \
     chacha_generic chacha_x86_64 aesni_intel aes_generic tpm_crb tpm_tis \
     evdev atkbd i8042 hid_generic usbhid xhci_pci ehci_pci
 
