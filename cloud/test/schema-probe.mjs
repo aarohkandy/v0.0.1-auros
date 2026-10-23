@@ -10,17 +10,37 @@ const clone = (x) => JSON.parse(JSON.stringify(x));
 const variant = (name, edit) => { const s = clone(WISH_OUTPUT); edit(s); return [name, s]; };
 const uniqTypes = (variants) => { const seen = new Set(); return variants.filter((v) => { const t = v.properties.type.const ?? v.properties.type.enum?.join(); return seen.has(t) ? false : seen.add(t); }); };
 
+// Merge variants that differ only in `type` (their limits are dropped for decoding anyway).
+const noDesc = (n) => JSON.parse(JSON.stringify(n, (k, v) => (k === "description" ? undefined : v)));
+function mergeByShape(variants) {
+  const groups = new Map();
+  for (const v of variants) {
+    const { type, ...rest } = v.properties;
+    const key = JSON.stringify([noDesc(rest), [...v.required].sort()]);
+    const types = type.enum ?? [type.const];
+    if (groups.has(key)) groups.get(key).properties.type.enum.push(...types);
+    else groups.set(key, { ...clone(v), properties: { ...clone(v.properties), type: { type: "string", enum: [...types] } } });
+  }
+  return [...groups.values()];
+}
+// One action object: type plus every field, optional.
+function generic(variants) {
+  const props = {};
+  for (const v of variants) for (const [k, sch] of Object.entries(v.properties)) if (k !== "type") props[k] ??= noDesc(sch);
+  return [{ type: "object", additionalProperties: false, required: ["type"], properties: { type: { type: "string", enum: [...new Set(variants.flatMap((v) => v.properties.type.enum ?? [v.properties.type.const]))] }, ...props } }];
+}
+const count = (s) => `${s.$defs.when.anyOf.length} when, ${s.$defs.action.anyOf.length} action variants`;
+
 const VARIANTS = [
-  variant("full", () => {}),
-  variant("emoji as string", (s) => { s.$defs.emoji = { type: "string" }; }),
-  variant("wish not nullable", (s) => { s.properties.wish = { $ref: "#/$defs/wish" }; }),
-  variant("actions: one variant per type (16)", (s) => { s.$defs.action.anyOf = uniqTypes(s.$defs.action.anyOf); }),
-  variant("actions: first 10", (s) => { s.$defs.action.anyOf = s.$defs.action.anyOf.slice(0, 10); }),
-  variant("when: first 5", (s) => { s.$defs.when.anyOf = s.$defs.when.anyOf.slice(0, 5); }),
-  variant("wish without when", (s) => { delete s.$defs.wish.properties.when; s.$defs.wish.required = s.$defs.wish.required.filter((r) => r !== "when"); }),
-  variant("wish without do", (s) => { delete s.$defs.wish.properties.do; s.$defs.wish.required = s.$defs.wish.required.filter((r) => r !== "do"); }),
-  variant("emoji string + not nullable + one per type", (s) => { s.$defs.emoji = { type: "string" }; s.properties.wish = { $ref: "#/$defs/wish" }; s.$defs.action.anyOf = uniqTypes(s.$defs.action.anyOf); }),
-  variant("no descriptions", (s) => { const strip = (n) => { if (n && typeof n === "object") { delete n.description; Object.values(n).forEach(strip); } }; strip(s); }),
+  variant("merged by shape", (s) => { s.$defs.action.anyOf = mergeByShape(s.$defs.action.anyOf); s.$defs.when.anyOf = mergeByShape(s.$defs.when.anyOf); }),
+  variant("merged by shape, emoji as string", (s) => { s.$defs.emoji = { type: "string" }; s.$defs.action.anyOf = mergeByShape(s.$defs.action.anyOf); s.$defs.when.anyOf = mergeByShape(s.$defs.when.anyOf); }),
+  variant("merged actions only", (s) => { s.$defs.action.anyOf = mergeByShape(s.$defs.action.anyOf); }),
+  variant("generic action, merged when", (s) => { s.$defs.action.anyOf = generic(s.$defs.action.anyOf); s.$defs.when.anyOf = mergeByShape(s.$defs.when.anyOf); }),
+  variant("generic action, full when", (s) => { s.$defs.action.anyOf = generic(s.$defs.action.anyOf); }),
+  variant("first 12 actions", (s) => { s.$defs.action.anyOf = s.$defs.action.anyOf.slice(0, 12); }),
+  variant("first 14 actions", (s) => { s.$defs.action.anyOf = s.$defs.action.anyOf.slice(0, 14); }),
+  variant("first 10 actions, merged when", (s) => { s.$defs.action.anyOf = s.$defs.action.anyOf.slice(0, 10); s.$defs.when.anyOf = mergeByShape(s.$defs.when.anyOf); }),
+  variant("first 13 actions, when first 6", (s) => { s.$defs.action.anyOf = s.$defs.action.anyOf.slice(0, 13); s.$defs.when.anyOf = s.$defs.when.anyOf.slice(0, 6); }),
 ];
 
 for (const [name, schema] of VARIANTS) {
@@ -31,8 +51,8 @@ for (const [name, schema] of VARIANTS) {
       messages: [{ role: "user", content: "Answer kind cannot, missing other, wish null if allowed, else the smallest valid wish." }],
       output_config: { format: { type: "json_schema", schema } },
     });
-    console.log(`ACCEPTED ${name}: ${Date.now() - t} ms, stop ${m.stop_reason}, in ${m.usage.input_tokens} out ${m.usage.output_tokens}`);
+    console.log(`ACCEPTED ${name} (${count(schema)}): ${Date.now() - t} ms, stop ${m.stop_reason}, in ${m.usage.input_tokens} out ${m.usage.output_tokens}`);
   } catch (e) {
-    console.log(`REFUSED  ${name}: ${Date.now() - t} ms, ${e.status} ${String(e.error?.error?.message ?? e.message).slice(0, 160)}`);
+    console.log(`REFUSED  ${name} (${count(schema)}): ${Date.now() - t} ms, ${e.status} ${String(e.error?.error?.message ?? e.message).slice(0, 160)}`);
   }
 }
