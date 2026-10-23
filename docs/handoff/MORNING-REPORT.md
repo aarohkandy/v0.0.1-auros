@@ -4,6 +4,11 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Done overnight (proof)
 
+- **AurOS installs on real Windows 11 and reaches its first screen in about 8 minutes** (fast path, machine time:
+  website +1:29, download clicks +2:19, three installer screens, Restart now +6:36, install step 18 s, "Does
+  everything work?" +8:06). One step still fails right after: "Start AurOS from now on" (making AurOS the
+  default) — being fixed now. Evidence: e2e runs 40025060913 / 40025046920.
+
 - **Release candidate 1 is green and published as a prerelease**: v0.1.0-fc52718 (every gating test passed;
   both installers: normal and fast path). The real-Windows journeys on it are running now. Not public.
 
