@@ -307,19 +307,25 @@ jobs:
             grep -qxF "$a" keep.txt || { gh release delete-asset apt "$a" -R "$R" -y; echo "removed $a"; }
           done
 
+      # Always, even when this version is already what the channel serves
+      # (nothing was uploaded): `[apt]` is then a health check of what
+      # computers will find. GitHub's download address can answer 404 for
+      # a few seconds after the release is created, and curl does not
+      # retry a 404 unless told to.
       - name: read back through GitHub's redirect, and checked again
-        if: steps.newer.outputs.go == 'true'
         run: |
           base=$(build/aptchannel url)
           mkdir -p back
-          for f in $(cat keep.txt); do
-            curl -fsSL --retry 5 -o "back/$f" "$base$f"
-            cmp "back/$f" "repo/$f"
-          done
+          get() { curl -fsSL --retry 10 --retry-delay 6 --retry-all-errors -o "back/$1" "$base$1"; }
+          for f in InRelease Release Release.gpg Packages Packages.gz; do get "$f"; done
+          for f in $(sed -n 's#^Filename: \./##p' back/Packages); do get "$f"; done
+          if [ -d repo ]; then for f in $(cat keep.txt); do cmp "back/$f" "repo/$f"; done; fi
           build/aptchannel verify back "$KR"
+          got=$(awk '/^Package: auros$/{p=1} p && /^Version:/{print $2; exit}' back/Packages)
+          [ "$got" = "$NEW" ] || { echo "::error::the channel serves auros $got, not $NEW"; exit 1; }
+          echo "the channel serves auros $got, signed by the committed key"
 
       - name: a real apt on a fresh Ubuntu sees it and fetches it
-        if: steps.newer.outputs.go == 'true'
         run: |
           docker run --rm -v "$PWD":/w:ro -w /w -e URL="$(build/aptchannel url)" -e NEW="$NEW" ubuntu:24.04 bash -c '
             set -e
