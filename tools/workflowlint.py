@@ -46,6 +46,12 @@ def lint(path, text):
         for u in uses:
             if u and not u.startswith("./") and not re.search(r"@[0-9a-f]{40}$", u):
                 out.append("%s: job %s uses %s, not pinned to a full commit SHA" % (path, name, u))
+        seen = ""
+        for st in job.get("steps") or []:
+            u = (st.get("uses") or "") if isinstance(st, dict) else ""
+            if u.startswith("actions/download-artifact"): seen = u
+            if u.startswith("actions/checkout") and seen:
+                out.append("%s: job %s checks out after a download-artifact: checkout deletes the downloaded files" % (path, name))
         if "AUROS_APT_SIGNING_KEY" in yaml.dump(job):
             env = job.get("environment")
             env = env.get("name") if isinstance(env, dict) else env
@@ -75,6 +81,10 @@ def selftest():
          good + "      - uses: actions/checkout@v4\n", 1),
         ("an action pinned to a full SHA passes",
          good + "      - uses: actions/checkout@" + "a" * 40 + " # v4\n", 0),
+        ("a checkout after a download is refused",
+         good + "      - uses: actions/download-artifact@" + "a" * 40 + "\n      - uses: actions/checkout@" + "a" * 40 + "\n", 1),
+        ("a checkout before a download passes",
+         good + "      - uses: actions/checkout@" + "a" * 40 + "\n      - uses: actions/download-artifact@" + "a" * 40 + "\n", 0),
         ("workflow-level contents: write is refused",
          "permissions:\n  contents: write\n" + good, 1),
         ("job-level contents: write passes",

@@ -65,7 +65,7 @@ jobs:
           pw="$RUNNER_TEMP/pw/node_modules/.bin/playwright"
           "$pw" install chromium
           # Chromium's system libraries are usually on the runner image already. Installing them
-          # (--with-deps is an apt-get) took ten minutes of a fifteen-minute job on a slow mirror
+          # (--with-deps runs apt) took ten minutes of a fifteen-minute job on a slow mirror
           # (runs 40018977591, 40024591226), while the check itself takes under a minute. So: only
           # when Chromium will not start, and bounded.
           if ! NODE_PATH="$RUNNER_TEMP/pw/node_modules" node -e "require('playwright').chromium.launch().then(b => b.close())"; then

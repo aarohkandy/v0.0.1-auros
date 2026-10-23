@@ -278,6 +278,10 @@ jobs:
       UNSIGNED_SHA256: ${{ needs.sign.outputs.unsigned_sha256 }}
       SIGNED_SHA256: ${{ needs.sign.outputs.signed_sha256 }}
     steps:
+      # tools/legal/notes.sh (the written offer of source) lives in the tree.
+      # FIRST: checkout cleans untracked files, and it once ran after the
+      # downloads and deleted dist/installer (RC3's publish, run 40026374421).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: auros-installer
@@ -289,8 +293,6 @@ jobs:
         with:
           name: auros-setup-signed
           path: dist/signed
-      # tools/legal/notes.sh (the written offer of source) lives in the tree
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: auros-pieces
