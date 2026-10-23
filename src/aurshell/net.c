@@ -444,6 +444,8 @@ static void start_join(void)
     }
 }
 
+int net_page(void) { return N.page; }
+
 void net_opened(shell_ctx *c)
 {
     (void)c;

@@ -80,4 +80,7 @@ int  settings_targets(const shell_ctx *c, int sw, int sh, const set_view *v,
 /* How many rows a page has, for a machine described by the view. */
 int  settings_rows_for(const set_view *v);
 
+/* Which page of Settings is showing (SET_PAGE_*), for press.h. */
+int  settings_page(void);
+
 #endif

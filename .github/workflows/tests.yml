@@ -164,6 +164,11 @@ jobs:
       - name: fonttest (every word in the weight the theme asked for)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/fonttest.sh 2>&1 | tee transcripts/fonttest.txt
+      - name: presstest (a double-click is one press)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/presstest" tools/presstest.c src/aurshell/press.c
+          "$RUNNER_TEMP/presstest" 2>&1 | tee transcripts/presstest.txt
       - name: lookboottest (the look she picked survives a restart)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |

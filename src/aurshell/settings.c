@@ -419,6 +419,8 @@ static int ask_root(const char *word)
     return k == (ssize_t)strlen(word) ? 0 : -1;
 }
 
+int settings_page(void) { return S.page; }
+
 void settings_opened(shell_ctx *c)
 {
     (void)c;

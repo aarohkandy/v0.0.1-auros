@@ -195,4 +195,7 @@ typedef struct {
 int  net_targets(const shell_ctx *c, int sw, int sh, const net_view *v,
                  rect *out, int max);
 
+/* Which page of the Wi-Fi panel is showing (P_*), for press.h. */
+int  net_page(void);
+
 #endif

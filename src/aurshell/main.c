@@ -45,6 +45,7 @@
 #include "watch.h"
 #include "appwatch.h"
 #include "run.h"
+#include "press.h"
 #include "../aurwl/aurwl.h"
 #include "pad.h"
 #include "kms.h"
@@ -1186,7 +1187,17 @@ int main(int argc, char **argv)
     #define WAKE_DEADTIME_MS 250
     int64_t  woke_at_ms = 0;
 
+    press_state pr = {0};
     while (!want_quit) {
+        /* What she is looking at, for "one press is one press": any
+         * change of panel, page or question starts the dead time. */
+        press_screen(&pr, now_ms(),
+            (unsigned)(c.help_open | c.net_open << 1 | c.settings_open << 2 |
+                       c.bt_open << 3 | c.power_open << 4 | c.welcome_open << 5 |
+                       c.guard_open << 6 | c.wish_open << 7) |
+            (unsigned)(c.welcome_open ? welcome_page() : 0) << 8 |
+            (unsigned)(c.settings_open ? settings_page() : 0) << 12 |
+            (unsigned)(c.net_open ? net_page() : 0) << 16);
         if (want_reload || c.want_reload) {
             want_reload = 0;
             c.want_reload = 0;
@@ -1992,7 +2003,8 @@ int main(int argc, char **argv)
                 } else if (ev.type == EV_KEY && (in.kind[i] & DEV_PAD) &&
                            pad_event_kind(ev.code) >= 0) {
                     if (pad_button(&in.pad[i], pad_event_kind(ev.code),
-                                   ev.value != 0, now_ms())) {
+                                   ev.value != 0, now_ms()) &&
+                        press_accept(&pr, now_ms(), c.mouse_x, c.mouse_y)) {
                         /* A tap is a press and a release in one go, so
                          * the layout sees the same sequence a physical
                          * click produces and drags still work.
@@ -2046,6 +2058,12 @@ int main(int argc, char **argv)
                      * moved without clicking something. */
                     int is_btn = (ev.code == BTN_LEFT) ||
                                  (ev.code == BTN_TOUCH && (in.kind[i] & DEV_DIRECT));
+                    if (is_btn && !press_filter(&pr, ev.value != 0, now_ms(),
+                                                c.mouse_x, c.mouse_y)) {
+                        /* A press that is ignored is ignored whole. */
+                        c.mouse_down = 0;
+                        continue;
+                    }
                     if (is_btn) {
                         c.mouse_down = (ev.value != 0);
                         /* Dispatch on PRESS. Release would let a user
