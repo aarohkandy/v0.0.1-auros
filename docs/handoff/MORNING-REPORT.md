@@ -101,13 +101,11 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 0. **Commits the permission system refused to push** (the lead does not push around a refusal; your call):
    - the profiles agent's two (per-edition desktop screenshots; ~1 h of CI), in worktree `wt-p`;
-   - the installer agent's **DLL-hijacking protection (SEC-003, high)**, commit fb463fb in worktree `wt-b`
-     (tested on homebase; its last amend may not have completed);
    - the help-pages agent's **full help-page rework to the current desktop** (aabfc81 in worktree `wt-k`; the
      release-blocking check is already green on main without it).
    - the encrypted-disk agent's **41 commits** (disk encryption + PIN, proven in a real-image VM with a virtual
      TPM, switched OFF by default) on branch `wt-s4`.
-   Say "push B's commit" / "push P's commits" / "push K's commit" / "push S4's commits" (or "push all held
+   Say "push P's commits" / "push K's commit" / "push S4's commits" (or "push all held
    commits"). Or say "allow agent pushes" and I add a project permission rule so this stops happening.
 
 1. **Buy a short domain** (Cloudflare Registrar, ~$10/yr). Installed computers then never depend
