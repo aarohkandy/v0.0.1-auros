@@ -247,7 +247,7 @@ power_on() { # NAME
         $TPMARGS \
         -drive file="$DISK",format=raw,if=none,id=d0 -device virtio-blk-pci,drive=d0 \
         -device virtio-vga -display none -serial file:"$SER" -net none \
-        -monitor unix:"$T/mon.sock",server,nowait >/dev/null 2>&1 &
+        -monitor unix:"$T/mon.sock",server,nowait >"$EV/qemu-$N-$1.txt" 2>&1 &
     QP=$!
     T0=$(date +%s)
 }
@@ -409,7 +409,7 @@ if wait_for "aurlock-pin: asking for the PIN" 300; then
         note "the wrong PIN took: $(serial | grep -o 'aurlock-pin: PIN wrong in [0-9]* ms' | head -1) (argon2id, by design)"
     fi
 else
-    bad "the PIN page appeared" "$(serial | tail -8)"
+    bad "the PIN page appeared" "$(serial | tail -8)" "qemu said: $(tail -3 "$EV/qemu-$N-pin.txt" 2>/dev/null)" "qemu alive: $(kill -0 "$QP" 2>&1 && echo yes || echo no)"
 fi
 power_off
 
