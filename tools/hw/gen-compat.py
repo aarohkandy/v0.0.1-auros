@@ -35,10 +35,12 @@ CATS = [
     ("drivers/staging/rtl", "wifi"), ("drivers/staging/r8", "wifi"),
     ("drivers/net/ethernet/", "ethernet"), ("drivers/net/usb/", "ethernet"),
     ("drivers/bluetooth/", "bluetooth"),
-    ("sound/pci/", "audio"), ("sound/soc/sof/", "audio"), ("sound/soc/amd/", "audio"),
-    ("sound/soc/intel/", "audio"), ("sound/usb/", "audio"),
+    # all of sound/: the 7.0 kernel moved snd-hda-intel from sound/pci/ to
+    # sound/hda/controllers/, and a prefix list would have silently dropped
+    # every Intel sound controller
+    ("sound/", "audio"),
     ("drivers/media/usb/uvc/", "camera"), ("drivers/media/pci/intel/", "camera"),
-    ("drivers/media/usb/gspca/", "camera"), ("drivers/staging/media/ipu3", "camera"),
+    ("drivers/media/usb/gspca/", "camera"), ("drivers/staging/media/ipu", "camera"),
     ("drivers/gpu/drm/", "gpu"),
     ("drivers/bcma/", "bus"), ("drivers/ssb/", "bus"),
 ]
@@ -91,42 +93,91 @@ def read_modules(root, kver):
     dep = os.path.join(base, "modules.dep")
     if not os.path.exists(dep):
         die("no %s" % dep)
-    mods, deps = {}, {}
+    mods, deps, paths = {}, {}, {}
     for line in open(dep, encoding="utf-8"):
         path, _, rest = line.partition(":")
         deps[modname(path)] = [modname(x) for x in rest.split()]
+        paths[modname(path)] = path
         cat = category(path)
         if cat:
             mods[modname(path)] = {"cat": cat, "path": path}
     for n in mods:
         mods[n]["deps"] = deps.get(n, [])
-    return base, mods, deps
+    return base, mods, deps, paths
+
+
+def read_builtin(base, mods):
+    """Drivers compiled into the kernel have no .ko and no modules.alias
+    line; their ids are in modules.builtin.modinfo as 'name.alias=pci:...'."""
+    bi = os.path.join(base, "modules.builtin")
+    if not os.path.exists(bi):
+        return
+    for line in open(bi, encoding="utf-8"):
+        path = line.strip()
+        cat = category(path)
+        if cat:
+            mods.setdefault(modname(path), {"cat": cat, "path": path, "deps": [], "builtin": True})
+    mi = os.path.join(base, "modules.builtin.modinfo")
+    if os.path.exists(mi):
+        for item in open(mi, "rb").read().split(b"\0"):
+            t = item.decode("utf-8", "replace")
+            if ".alias=" not in t:
+                continue
+            name, _, al = t.partition(".alias=")
+            name = name.replace("-", "_")
+            if name in mods and mods[name].get("builtin"):
+                feed_alias("alias " + al + " " + name, mods)
+
+
+SUSPECT = ("wireless", "wifi", "bluetooth", "sound", "snd", "audio", "camera", "video", "media", "drm", "gpu", "ipu", "net/")
+
+
+def uncategorized(base, mods, paths):
+    """Drivers with PCI or USB ids that no category claims, by folder. A
+    kernel that moves a driver (7.0 moved snd-hda-intel) would otherwise
+    make its devices look unsupported without a word."""
+    seen, out = set(), {}
+    for line in open(os.path.join(base, "modules.alias"), encoding="utf-8", errors="replace"):
+        m = PCI.match(line) or USB.match(line)
+        if not m:
+            continue
+        mod = m.groups()[-1].replace("-", "_")
+        if mod in mods or mod in seen or mod not in paths:
+            continue
+        seen.add(mod)
+        d = os.path.dirname(paths[mod]).replace("kernel/", "", 1)
+        out[d] = out.get(d, 0) + 1
+    # old framebuffer drivers (nvidiafb, atyfb...) are not what drives a screen now
+    return {d: n for d, n in sorted(out.items())
+            if any(k in d for k in SUSPECT) and not d.startswith("drivers/video/fbdev")}
+
+
+def feed_alias(line, mods):
+    m = PCI.match(line)
+    if m:
+        mod = m.group(8).replace("-", "_")
+        if mod in mods:
+            s, cls = ids_pci(m.groups()[:7])
+            if not (s == "*:*" and not cls):
+                mods[mod].setdefault("pci", set()).add(s if not cls else s + "@" + cls)
+        return
+    m = USB.match(line)
+    if m:
+        v, p, dc, dsc, dp, ic, isc, ip, mod = m.groups()
+        mod = mod.replace("-", "_")
+        if mod in mods:
+            low = lambda x: "*" if x == "*" else x.lower()
+            s = low(v) + ":" + low(p)
+            c, sc, pr = (ic, isc, ip) if ic != "*" else (dc, dsc, dp)
+            if c != "*":
+                s += "@" + c.lower() + (sc.lower() if sc != "*" else "**") + (pr.lower() if pr != "*" else "**")
+            if s != "*:*":
+                mods[mod].setdefault("usb", set()).add(s)
 
 
 def read_aliases(base, mods):
     for line in open(os.path.join(base, "modules.alias"), encoding="utf-8", errors="replace"):
-        m = PCI.match(line)
-        if m:
-            mod = m.group(8).replace("-", "_")
-            if mod in mods:
-                s, cls = ids_pci(m.groups()[:7])
-                if s == "*:*" and not cls:
-                    continue
-                mods[mod].setdefault("pci", set()).add(s if not cls else s + "@" + cls)
-            continue
-        m = USB.match(line)
-        if m:
-            v, p, dc, dsc, dp, ic, isc, ip, mod = m.groups()
-            mod = mod.replace("-", "_")
-            if mod in mods:
-                low = lambda x: "*" if x == "*" else x.lower()
-                s = low(v) + ":" + low(p)
-                c, sc, pr = (ic, isc, ip) if ic != "*" else (dc, dsc, dp)
-                if c != "*":
-                    s += "@" + c.lower() + (sc.lower() if sc != "*" else "**") + (pr.lower() if pr != "*" else "**")
-                if s == "*:*":
-                    continue          # matches every USB device: not a statement about any
-                mods[mod].setdefault("usb", set()).add(s)
+        feed_alias(line, mods)
 
 
 def firmware_files(root):
@@ -250,8 +301,13 @@ def build(root):
     if not kvers:
         die("no kernel under %s" % libmods)
     kver = kvers[-1]
-    base, mods, deps = read_modules(root, kver)
+    base, mods, deps, paths = read_modules(root, kver)
     read_aliases(base, mods)
+    read_builtin(base, mods)
+    for d, n in uncategorized(base, mods, paths).items():
+        print("gen-compat: warning: %d driver(s) with PCI/USB ids in %s are in no category" % (n, d), file=sys.stderr)
+    for n in mods:
+        mods[n].setdefault("deps", [])
     have = firmware_files(root)
     pk = dpkg(root)
     read_firmware(root, kver, mods, have, pk)

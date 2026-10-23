@@ -77,12 +77,22 @@ driver), `sane-airscan`/`sane-utils` (scanners), `printer-driver-foo2zjs`,
 
 ## Findings the lead should hear
 
-1. **The image ships the 6.8 GA kernel.** `linux-image-generic-hwe-24.04` is at
-   7.0 in the archive today. Anything newer than ~2024 (Wi-Fi 7 Realtek 8922,
-   Intel IPU6/IPU7 cameras, newest AMD/Intel sound and graphics) has no driver
-   in 6.8; the matcher says so, honestly, per chip. Moving the image to the HWE
-   kernel is the single biggest hardware-coverage change available; re-run
-   `gen-compat.py` against it to see the delta. Not my call: P/BT/S5 own it.
+1. **The image ships the 6.8 GA kernel; the HWE kernel is 7.0 today**
+   (`linux-image-generic-hwe-24.04`, one 166 MB modules package). Measured with
+   the same generator on both (not installed, only read): 7.0 gains PCI ids
+   for 12 Wi-Fi chips (Realtek RTL8922AE Wi-Fi 7, RTL8852BTE, MediaTek
+   MT7920/7996, newer Intel and Broadcom), **144 USB Wi-Fi ids** (and loses 77
+   of old staging drivers), 38 Intel graphics ids (`xe`: Lunar/Panther Lake and
+   Arc), 13 sound ids (SOF for the newest Intel/AMD), 5 Bluetooth, and the
+   **Intel IPU6/IPU7 camera drivers** (8 ids; the userspace camera stack is
+   still missing, so the camera verdict would stay "won't work yet"). It loses
+   three PCI Wi-Fi ids (07aa:0044/0047, 8086:272f: worth a look before
+   switching). Anything newer than ~2024 is better served. Not my call:
+   P/BT/S5 own the kernel; to see the delta again, `gen-compat.py` takes any
+   tree that has `lib/modules/KVER`. **Also found:** Ubuntu ships signed,
+   prebuilt Nvidia kernel modules per kernel (`linux-modules-nvidia-580-7.0.0-38-generic`
+   + `nvidia-driver-580`), the way to give Nvidia machines their real driver
+   with Secure Boot on; today they get nouveau ("slow games").
 2. USB printers: with no `ipp-usb` in the image a USB printer not in the HP/
    Gutenprint lists is "won't work yet" (over Wi-Fi it is fine). WP-25 already
    lists `ipp-usb`; the verdict flips by itself when it lands.

@@ -3003,9 +3003,9 @@
   },
   "snd_vx222": {
    "cat": "audio",
-   "fw": "none",
+   "fw": "missing",
    "fw_required": false,
-   "fw_declared": 0,
+   "fw_declared": 13,
    "fw_present": 0,
    "pci": "10b5:9030/1369:* 10b5:9050/1369:*"
   },
