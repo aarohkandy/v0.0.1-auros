@@ -194,6 +194,31 @@ Written before the code landed; each is now in `main`.
    upload the PNGs).
 7. When D lands real E2E shots, compare with the Wine ones.
 
+### From the usability walkthrough (`docs/research/people-walkthrough-2026-10.md`)
+
+Done here: C-01 (save work first), C-03 (a range, hours on an HDD, labelled
+unmeasured: replace with F's journey clock, WP-40), C-04 (no GB figures; "enough
+room"), C-05 (the button's real words), C-06 ("Part 3 of 4"), C-07 (X in the window),
+C-08 (nothing armed until Restart now), C-11 (BitLocker words), D-01 (the black
+screen, and what she then sees), A-07 (Windows programs don't run), A-08
+(re-shot: `docs/shots/wizard/`, D can use them).
+Not done / judgement calls: **C-02** descriptions under every look were NOT
+added (DESIGN-DIRECTION B-7 wants name + picture only; adding a 2-line
+description shrinks the pictures to 160x100 at 1366x768). The line under the
+grid now says "Picked for you: X. Press another look to change it." If the
+sessions show she needs words, switch `pick_mode` to the 4-across layout.
+**C-12** (Next green while checking: watch). **C-10** is K's page. **A-03**
+the slashed zero: C's fontTools script, then regenerate `fonts/*.ttf` here.
+
+### Wizard work packages in `docs/PLAN-END-TO-END.md` owned by B, not started
+
+WP-04a (withdrawn check in the first exe), WP-16 ("How it went" in Windows), WP-17
+("Before you switch": the programs that will not come, sites, hardware verdict),
+WP-18 (disclaimer, consent record), WP-79/80/81, WP-87 (Close and Cancel: mostly
+done by B-14/15), WP-90 (wizard contract freeze: this file's "Changed for e2e" is
+the start of it), WP-94 (self-check against the signed SHA256SUMS), WP-95.
+These are new screens or engine records, not a restyle: plan them with A2/K first.
+
 ## Traps
 
 - **`AUROS_REPO=owner/name` must be set** to run `sh tools/wizard/check.sh`
