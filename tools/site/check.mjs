@@ -341,6 +341,13 @@ for (const v of [
     const o = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth }));
     check(o.sw <= o.cw + 1, "advanced.html 320px wide: no sideways scrolling", `${o.sw}px of content in ${o.cw}px`);
     await ctx.close();
+    // Every address on it is this repository's or this site's: it is the
+    // page a helper follows from the installer, so a link elsewhere is one
+    // more thing that can move, or be imitated.
+    const mine = [`https://github.com/${AUROS_REPO}`, repoSh("site").replace(/\/$/, "")];
+    const away = [...fs.readFileSync(adv, "utf8").matchAll(/(?:href|src)="((?:https?:)?\/\/[^"]*)"/g)]
+      .map((m) => m[1]).filter((u) => !mine.some((b) => u === b || u.startsWith(b + "/")));
+    check(away.length === 0, "advanced.html: every address is this repository's or this site's", away.join(" "));
   }
 }
 
