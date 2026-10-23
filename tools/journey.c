@@ -225,8 +225,18 @@ int main(int argc, char **argv)
     }
 
     /* 5. She installed VLC from "Get more programs": the table is read
-     * again (as appwatch makes the shell do) and the card says so. */
+     * again (as appwatch makes the shell do) and the card says so. She
+     * is IN the store when it does -- so the program list of "Like
+     * Windows", which opens by itself on an empty desktop, is shut. */
     if (argc > 6) {
+        int sa = shell_store_app(&c);
+        if (sa >= 0) {
+            int sw_ = shell_launch(&c, sa);
+            if (sw_ >= 0) {
+                if (L->present) L->present(&c, sw_); else c.focus = sw_;
+                settle();
+            }
+        }
         char dirs[1024];
         const char *had = getenv("AUROS_APP_DIRS");
         snprintf(dirs, sizeof dirs, "%s:%s", had ? had : "", argv[6]);

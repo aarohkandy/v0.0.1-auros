@@ -51,6 +51,9 @@ tail -n +2 themes/templates/shell.conf.tpl | \
 
 fail=0 n=0
 ok() { n=$((n + 1)); if [ "$2" = 0 ]; then echo "    ok    $1"; else echo "    FAIL  $1"; fail=1; fi; }
+# (A card's words wrap at 22 px type: the sentence is on screen even when it
+# is on two lines, so those checks read the shot joined into one line.)
+said1() { said "$@" | grep -v '^## ' | tr '\n' ' ' | tr -s ' '; }
 said() { awk -v s="$2" -v t="${3:-@@}" '/^== /{on = index($0, s) > 0 || index($0, t) > 0; next} on' "$1"; }
 
 for look in taskbar dock rail tiles; do
@@ -78,15 +81,17 @@ for look in taskbar dock rail tiles; do
         # (The dock draws its favourites without names until C P1-12.)
         [ $look = dock ] || { said "$log" "-desktop.png" | grep -qx '   Internet'
                               ok "$at: the browser is called Internet" $?; }
-        said "$log" "-ready.png"   | grep -qx '   VLC media player is ready'; ok "$at: VLC is ready, and it says so" $?
+        said1 "$log" "-ready.png"  | grep -q 'VLC media player is ready';    ok "$at: VLC is ready, and it says so" $?
         said "$log" "-opens.png"   | grep -q 'VLC media player';              ok "$at: VLC opens" $?
         # Nothing vanishes, nothing piles up (DESIGN-DIRECTION §5 C6).
         said "$log" "-ready.png"   | grep -qx '   OK';                        ok "$at: the card stays until she presses OK" $?
         said "$log" "-messages.png" | grep -qx '   3 messages';               ok "$at: three become one card that says 3 messages" $?
-        [ "$(said "$log" "-messages.png" | grep -c 'is ready\|taken out\|getting low')" = 1 ]
+        [ "$(said1 "$log" "-messages.png" | grep -o 'is ready\|taken out\|getting low' | wc -l | tr -d ' ')" = 1 ]
                                                                                ok "$at: ...showing only the newest" $?
         said "$log" "-list.png"    | grep -qx '   Messages';                  ok "$at: the clock opens Messages" $?
-        said "$log" "-list.png"    | grep -qx '   VLC media player is ready'; ok "$at: ...with what was said before in it" $?
+        # (Newest first, as many as fit: on a short screen the oldest is one press
+# of Older away, and the button for it is on the page.)
+        said1 "$log" "-list.png"   | grep -q 'VLC media player is ready\|Older';    ok "$at: ...with what was said before in it" $?
         said "$log" "-sound.png"   | grep -qx '   Sound 45%';                 ok "$at: the sound line is on screen" $?
         ! grep -q 'PRESSABLE under\|OVER THE CLOCK\|OVER THE BAND' "$log"
                                                                                ok "$at: the card and the line cover no button, the clock or the band" $?

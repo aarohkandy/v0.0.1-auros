@@ -273,7 +273,7 @@ static void menu_metrics(const shell_ctx *c, int *row_h, int *col_w, int *head)
     /* A name at 22 px and, under it, a line at 18: 60 px a row, 380 a
      * column (DESIGN-DIRECTION C P1-11). */
     *row_h = (int)((float)(c->target_large ? 66 : 60) * k);
-    *col_w = (int)((float)(c->target_large ? 400 : 380) * k);
+    *col_w = (int)((float)(c->target_large ? 400 : 372) * k);
     *head  = (int)((float)(c->target_large ? 72 : 66) * k);
 }
 

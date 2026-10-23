@@ -126,17 +126,19 @@ static rect home_btn_rect(shell_ctx *c, int w, int h)
     return r;
 }
 
-/* Previous page and Next page, at the right end of the bottom bar
- * (the page dots they replace were 30 px wide and 34 high). 0 = previous,
+/* Previous page and Next page, at the right end of the heading row (the
+ * page dots they replace were 30 px wide and 34 high). 0 = previous,
  * 1 = next. Pages wrap round: a button that is dead on the first or last
- * page is a button she presses twice to find out. */
+ * page is a button she presses twice to find out. They are up here, not
+ * in the bar, because the bottom right is where a program's message
+ * lands and a message must never cover a button. */
 static rect nav_rect(shell_ctx *c, int w, int h, int which)
 {
-    int bh = homebar_h(c);
-    int hgt = bh - 16;
+    (void)h;
+    int hgt = HEAD_H - 4;                     /* 52 px */
     int wn = 190, wp = 220;
     int x_next = w - c->margin - wn;
-    rect r = { which ? x_next : x_next - 12 - wp, h - bh + (bh - hgt) / 2,
+    rect r = { which ? x_next : x_next - 12 - wp, strip_h(c) + c->margin,
                which ? wn : wp, hgt };
     return r;
 }
@@ -539,11 +541,9 @@ static void paint_nav(shell_ctx *c, surface *s, shell_fonts *f,
     }
     char lab[40];
     snprintf(lab, sizeof lab, "Page %d of %d", p->page + 1, pages);
-    rect hb = home_btn_rect(c, w, h), pv = nav_rect(c, w, h, 0);
-    float lx = (float)(hb.x + hb.w) + 24.f;
-    if (lx + shell_text_w(f->small, lab) < (float)pv.x - 12.f)
-        shell_text(s, f->small, lx, shell_baseline(f->small, (float)hb.y, (float)hb.h),
-                   lab, c->subtle, alpha);
+    rect hb = home_btn_rect(c, w, h);
+    shell_text(s, f->small, (float)(hb.x + hb.w) + 24.f,
+               shell_baseline(f->small, (float)hb.y, (float)hb.h), lab, c->subtle, alpha);
 }
 
 static void paint_strip(shell_ctx *c, surface *s, shell_fonts *f, int w, float t)
@@ -698,7 +698,7 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
      * way back. */
     paint_strip(c, s, f, w, t);
     paint_homebar(c, s, f, w, h, t);
-    /* In the bar, so after it. */
+    /* The page label sits in the bar, the buttons in the heading row. */
     if (t < 0.999f) paint_nav(c, s, f, w, h, g.pages, 1.f - t);
 }
 
@@ -717,17 +717,7 @@ static int l_click(shell_ctx *c, int x, int y)
 
     /* Home is tested first and wins every ambiguity, by construction. */
     if (inside(home_btn_rect(c, w, h), x, y)) { go_home(c); return 1; }
-    if (inside(homebar_rect(c, w, h), x, y)) {
-        /* The page buttons are in the bar; the rest of it swallows. */
-        grid_m gp = grid_metrics(c, w, h);
-        if (gp.pages > 1 && t < 0.001f)
-            for (int i = 0; i < 2; i++)
-                if (inside(nav_rect(c, w, h, i), x, y)) {
-                    p->page = (p->page + (i ? 1 : gp.pages - 1)) % gp.pages;
-                    p->hot = -1;
-                }
-        return 1;
-    }
+    if (inside(homebar_rect(c, w, h), x, y))  return 1;   /* chrome swallows the rest */
 
     /* Mid-transition nothing is where it will be, so no click is
      * honoured: half-delivered presses are how a user ends up somewhere
