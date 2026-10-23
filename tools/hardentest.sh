@@ -402,6 +402,28 @@ if [ -f "$PRE" ]; then
     done
 fi
 
+# ── 8. no login on any console ───────────────────────────────────────
+#
+# A login prompt is a question with no answer here (nobody has a password
+# to type), on a black screen reached by accident. The serial console
+# stays for the kernel log and the tests; a login on it never.
+say ""
+say "Console logins"
+masked() { [ "$(readlink "$RFS/etc/systemd/system/$1" 2>/dev/null)" = /dev/null ]; }
+for u in serial-getty@.service console-getty.service; do
+    if masked "$u"; then ok "$u is masked (no login on the serial console)"
+    else bad "$u is masked (no login on the serial console)" "etc/systemd/system/$u is not a link to /dev/null: the kernel's console=ttyS0 would start a login prompt"; fi
+done
+if grep -qsE '^allow_tty[[:space:]]*=[[:space:]]*no' "$RFS/etc/auros/policy.conf"; then
+    miss=""
+    for n in 1 2 3 4 5 6; do masked "getty@tty$n.service" || masked "getty@.service" || miss="$miss tty$n"; done
+    [ -z "$miss" ] && ok "no login prompt on the virtual consoles (allow_tty = no)" \
+        || bad "no login prompt on the virtual consoles (allow_tty = no)" "getty is not masked on:$miss"
+    grep -qsE '^NAutoVTs=0' "$RFS"/etc/systemd/logind.conf.d/*.conf \
+        && ok "...and Ctrl-Alt-F2 starts none (NAutoVTs=0)" \
+        || bad "...and Ctrl-Alt-F2 starts none (NAutoVTs=0)" "no NAutoVTs=0 under etc/systemd/logind.conf.d"
+fi
+
 say ""
 if [ "$fail" -eq 0 ]; then
     echo "hardentest: $checked checks, all ok"

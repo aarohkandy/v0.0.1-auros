@@ -199,7 +199,7 @@ put secureboot "$(mokutil --sb-state 2>&1 | head -1)"
 put lockdown "$(cat /sys/kernel/security/lockdown 2>&1)"
 # Login prompts a person at the machine could reach (reported, not judged
 # here: the account's password is another stream's).
-put gettys "$(systemctl list-units --plain --no-legend --state=active 'getty@*' 'serial-getty@*' 'autovt@*' | awk '{print $1}' | tr '\n' ' ')"
+put gettys "$(systemctl list-units --plain --no-legend --state=active 'getty@*' 'serial-getty@*' 'autovt@*' 'console-getty*' | awk '{print $1}' | tr '\n' ' ')"
 put nautovts "$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager NAutoVTs 2>/dev/null | awk '{print $2}')"
 for k in $(cat "$C/keys"); do put "sysctl.$k" "$(sysctl -n "$k" 2>/dev/null)"; done
 # An ordinary program asking for a DCCP socket is how CVE-2017-6074
@@ -404,7 +404,8 @@ strip_controls() {
           "$M/etc/systemd/system/multi-user.target.wants/auros-dpkg-repair.service" \
           "$M/etc/systemd/system/aurshell.service.d/50-auros-safe-mode.conf" \
           "$M/etc/systemd/journald.conf.d/50-auros.conf" \
-          "$M/etc/polkit-1/rules.d/40-auros-remote-access.rules"   # S2's
+          "$M/etc/polkit-1/rules.d/40-auros-remote-access.rules" \
+          "$M/etc/systemd/system/serial-getty@.service" "$M/etc/systemd/system/console-getty.service"
     sed -i 's/^disable-publishing=yes/disable-publishing=no/' "$M/etc/avahi/avahi-daemon.conf"
     for o in $KOPTS; do sed -i "s/ $o\( \|\$\)/\1/" "$M/boot/grub/grub.cfg"; done
     # The boot menu's lock (stream BT): no superusers, no password.
@@ -566,6 +567,8 @@ power_on() { # disk label mode timeout
     k=$(tr -d '\r' < "$SER" | grep -ao 'Out of memory: Killed process [0-9]* ([a-z]*)' | head -1)
     [ -n "$k" ] && printf 'kernel_oom=%s\n' "$k" >> "$T/rec.$2/result"
     [ -f "$T/probe.$2" ] && cat "$T/probe.$2" >> "$T/rec.$2/result"
+    # A login prompt on the serial console ("auros login:")?
+    if tr -d '\r' < "$SER" | grep -aqE '^[A-Za-z0-9_.-]+ login: ?'; then echo serial_login=yes; else echo serial_login=no; fi >> "$T/rec.$2/result"
     umount_root
 }
 
@@ -702,6 +705,7 @@ dccp_refused() { not_is "$1" dccp_socket 0 && is "$1" dccp_loaded no; }
 hog_by_earlyoom() { is "$1" hog_killer earlyoom && [ "$(val hog_secs "$1")" != never ]; }
 zram_used() { is "$1" zram yes && [ "$(val swap_peak_kb "$1")" -gt 102400 ]; }
 safe_mode() { case "$(val safe_cmdline "$1")" in *"--shell /usr/share/auros/shells/rail.shell --conf /etc/auros/shell.conf"*) is "$1" safe_level 1 ;; *) return 1 ;; esac; }
+no_login()      { [ -z "$(val gettys "$1" | tr -d ' ')" ] && is "$1" serial_login no; }
 page_shown()    { is "$1" page_up yes && is "$1" shot_page page; }
 esc_one_stays() { page_shown "$1" && is "$1" alive_after_esc yes && is "$1" shot_after-esc page; }
 cad_card()      { page_shown "$1" && is "$1" shot_cad card; }
@@ -741,6 +745,7 @@ row both    "...and that check sees a listener when there is one" sees_listener
 row control "a stranger's TCP connection reaches nothing (firewall)" tcp_refused
 row control "a stranger's UDP 631 packet reaches nothing (firewall)" udp_refused
 row control "the computer does not announce itself (avahi)" is avahi_self silent
+row control "no login prompt on any console (no getty unit running, no \"login:\" on the serial port)" no_login
 row control "the system journal is capped at 200 MB" journal_capped
 row control "an update cut off half-way is finished at the next start" dpkg_fixed
 row control "a runaway program fills zram swap first" zram_used

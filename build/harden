@@ -67,6 +67,18 @@ stage_harden() {
     pkg_installed systemd-timesyncd && die "systemd-timesyncd and chrony are both installed: two time daemons"
     note "clock: chrony, never writes the PC's hardware clock"
 
+    # ── no login on the serial console ────────────────────────────
+    # console=ttyS0 stays on the kernel line (the kernel log and the
+    # tests read the serial port), but systemd's getty generator turns it
+    # into `serial-getty@ttyS0`: a login prompt, on a machine in which
+    # nobody has a password to type. Masked whatever the profile says;
+    # the virtual consoles are forge's allow_tty, below it.
+    install -d "$RFS/etc/systemd/system"
+    for u in serial-getty@.service console-getty.service container-getty@.service; do
+        ln -sf /dev/null "$RFS/etc/systemd/system/$u"
+    done
+    note "no login prompt on the serial console"
+
     # ── recovery ──────────────────────────────────────────────────
     enable_unit auros-dpkg-repair.service multi-user.target
     chmod 755 "$RFS/usr/lib/auros/shell-guard" "$RFS/usr/lib/auros/dpkg-repair"

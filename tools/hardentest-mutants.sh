@@ -25,7 +25,8 @@ PATHS="etc/sysctl.d usr/lib/sysctl.d etc/sysctl.conf
        etc/systemd/journald.conf.d etc/default/zramswap etc/default/earlyoom
        usr/share/auros/shells/rail.shell etc/apparmor.d/flatpak usr/bin/flatpak
        etc/chrony etc/NetworkManager/dispatcher.d usr/lib/auros/choices.sh
-       etc/machine-id var/lib/dbus/machine-id etc/systemd/system-preset"
+       etc/machine-id var/lib/dbus/machine-id etc/systemd/system-preset
+       etc/auros/policy.conf etc/systemd/logind.conf.d"
 mkdir -p "$T/good"
 for p in $PATHS; do
     [ -e "$RFS/$p" ] || [ -L "$RFS/$p" ] || continue
@@ -121,6 +122,12 @@ mutate "/var/lib/dbus/machine-id is the same file" "rm var/lib/dbus/machine-id; 
 mutate "the first start asks nothing on the console" "rm etc/systemd/system/systemd-firstboot.service"
 mutate "the first start changes no unit"     "sed -i '/^disable \*/d' etc/systemd/system-preset/00-auros.preset"
 mutate "is still enabled by it"              "sed -i '/^enable aurshell.service/d' etc/systemd/system-preset/00-auros.preset"
+
+# Console logins
+mutate "serial-getty@.service is masked"   "rm etc/systemd/system/serial-getty@.service"
+mutate "console-getty.service is masked"   "rm etc/systemd/system/console-getty.service"
+mutate "no login prompt on the virtual consoles" "rm -f etc/systemd/system/getty@tty3.service etc/systemd/system/getty@.service"
+mutate "Ctrl-Alt-F2 starts none"           "rm -f etc/systemd/logind.conf.d/*.conf"
 
 echo
 if [ $fail -eq 0 ]; then echo "hardentest-mutants: $n mutations, all caught"; exit 0; fi
