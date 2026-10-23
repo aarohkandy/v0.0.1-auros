@@ -81,10 +81,30 @@ def main():
         """every live check is green"""
         return all(states()[c] == "ok" for c in ("download", "pieces", "channel"))
 
-    def issue(check):
-        # the list API, not --search: the search index lags by minutes and made the first run miss its own issue
+    def issues_of(check):
+        # newest first. GitHub's issue lists lag a few seconds behind a creation or a close (both the
+        # search and the label filter): never read a list right after a write, poll it.
         j = json.loads(gh("issue", "list", "-R", R, "--label", "drill", "--state", "all", "--limit", "50", "--json", "number,title,state,assignees"))
-        return [i for i in j if i["title"] == f"drill: {check} is down"]
+        return sorted((i for i in j if i["title"] == f"drill: {check} is down"), key=lambda i: -i["number"])
+
+    def open_assigned(check):
+        """the drill's issue for this check is open and assigned"""
+        i = issues_of(check)
+        return i[0] if i and i[0]["state"] == "OPEN" and i[0]["assignees"] else None
+
+    def closed(check):
+        """the drill's issue for this check is closed"""
+        i = issues_of(check)
+        return bool(i) and i[0]["state"] == "CLOSED"
+
+    def until_value(fn, timeout=180, every=3):
+        t = time.time()
+        while time.time() - t < timeout:
+            v = fn()
+            if v:
+                return v
+            time.sleep(every)
+        raise SystemExit(f"drill: timed out after {timeout}s waiting for {fn.__doc__}")
 
     try:
         gh("release", "create", TAG, "-R", R, "--prerelease", "--title", f"drill {TAG} (throwaway, deleted by the drill)",
@@ -96,11 +116,11 @@ def main():
         t_break = time.time(); gh("release", "upload", TAG, other, "-R", R, "--clobber")
         detect = until(lambda: red("download"), 600, 5)
         monitor.issues(monitor.run(True, env))
-        i = issue("download"); assert i and i[0]["state"] == "OPEN" and i[0]["assignees"], f"no assigned open issue: {i}"
+        i = until_value(lambda: [open_assigned("download")] if open_assigned("download") else None)
         paged = time.time() - t_break
         t_fix = time.time(); gh("release", "upload", TAG, good, "-R", R, "--clobber")
         until(green_all, 900, 5); restore = time.time() - t_fix
-        monitor.issues(monitor.run(True, env)); assert issue("download")[0]["state"] == "CLOSED", "issue did not close"
+        monitor.issues(monitor.run(True, env)); until(lambda: closed("download"), 180, 3)
         rows.append(("A. the installer is swapped (playbook 1/2)", detect, paged, restore, f"assigned to {i[0]['assignees'][0]['login']}"))
 
         # B. the signed index is taken away (playbook 3a halt), then put back
@@ -109,18 +129,20 @@ def main():
             gh("release", "delete-asset", TAG, n, "-R", R, "-y")
         detect = until(lambda: red("channel"), 600, 5)
         monitor.issues(monitor.run(True, env))
-        i = issue("channel"); assert i and i[0]["state"] == "OPEN" and i[0]["assignees"], f"no assigned open issue: {i}"
+        i = until_value(lambda: [open_assigned("channel")] if open_assigned("channel") else None)
         paged = time.time() - t_break
         t_fix = time.time(); gh("release", "upload", TAG, *[os.path.join(d, n) for n in ("InRelease", "Release", "Release.gpg")], "-R", R)
         until(green_all, 900, 5); restore = time.time() - t_fix
-        monitor.issues(monitor.run(True, env)); assert issue("channel")[0]["state"] == "CLOSED", "issue did not close"
+        monitor.issues(monitor.run(True, env)); until(lambda: closed("channel"), 180, 3)
         rows.append(("B. the signed index is removed, then put back (playbook 3a)", detect, paged, restore, f"assigned to {i[0]['assignees'][0]['login']}"))
     finally:
         # only the tag this run made
         if re.fullmatch(r"drill-\d+-\d+", TAG):
             gh("release", "delete", TAG, "-R", R, "--cleanup-tag", "-y", check=False)
-        for i in json.loads(gh("issue", "list", "-R", R, "--label", "drill", "--state", "open", "--json", "number", check=False) or "[]"):
-            gh("issue", "close", str(i["number"]), "-R", R, "--comment", "the drill ended", check=False)
+        for _ in range(8):  # an issue made seconds ago may not be listed yet
+            for i in json.loads(gh("issue", "list", "-R", R, "--label", "drill", "--state", "open", "--json", "number", check=False) or "[]"):
+                gh("issue", "close", str(i["number"]), "-R", R, "--comment", "the drill ended", check=False)
+            time.sleep(4)
 
     out = ["| what was broken | monitor went red after (s) | the issue was open and assigned after (s) | repaired and green after (s) | who it was assigned to |", "|---|---|---|---|---|"]
     out += [f"| {a} | {b:.0f} | {c:.0f} | {d_:.0f} | {e} |" for a, b, c, d_, e in rows]
