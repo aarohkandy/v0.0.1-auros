@@ -111,6 +111,10 @@ static void test_json_deep_nesting(void)
     memset(d, '[', 10000); memset(d + 10000, ']', 10000);
     CHECK(jparse(d, 20000) != 0);              /* no stack overflow, refused */
     J_OK("[[[[]]]]");
+    /* small values, too many bytes */
+    static char pad[9001];
+    memset(pad, ' ', 9000); pad[0] = '{'; pad[8999] = '}';
+    CHECK(jparse(pad, 9000) != 0);
     J_BAD("[[[[[[]]]]]]");                     /* depth 6 > 5 */
 }
 
@@ -678,7 +682,8 @@ static void test_store_corrupt_never_blocks(void)
     /* a symlink planted where the file should be is not followed */
     char target[700];
     snprintf(target, sizeof target, "%s/elsewhere", tmpdir);
-    put(target, "{\"v\":1,\"wishes\":[]}");
+    put(target, "{\"v\":1,\"wishes\":[{\"id\":\"w1\",\"said\":\"x\",\"wish\":"
+                "{\"v\":1,\"when\":{\"type\":\"now\"},\"do\":[{\"type\":\"speak_time\"}]}}]}");
     unlink(path);
     if (symlink(target, path) == 0) {
         CHECK(store_load(&st, path, &ENV) == 0 && st.n == 0);
@@ -700,7 +705,7 @@ static void test_store_keeps_what_it_cannot_read(void)
         "{\"id\":\"w2\",\"status\":\"on\",\"said\":\"x\",\"wish\":{\"v\":2,\"when\":{\"type\":\"teleport\"}}},"
         "{\"id\":\"w3\",\"status\":\"on\",\"said\":\"remind me to call mum\",\"wish\":"
         "{\"v\":1,\"when\":{\"type\":\"time\",\"at\":\"09:00\"},"
-        "\"do\":[{\"type\":\"remind\",\"text\":\"Call Microsoft support now\"}]}},"
+        "\"do\":[{\"type\":\"remind\",\"text\":\"Call Bob now\"}]}},"
         "{\"id\":\"w1\",\"status\":\"on\",\"said\":\"x\",\"wish\":"
         "{\"v\":1,\"when\":{\"type\":\"now\"},\"do\":[{\"type\":\"speak_time\"}]}},"
         "{\"id\":\"w4\",\"status\":\"on\",\"said\":\"x\",\"wish\":"

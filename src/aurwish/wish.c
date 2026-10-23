@@ -118,10 +118,12 @@ static int desktop_read(const char *path, char *name, size_t nn, char *wm, size_
         line[strcspn(line, "\r\n")] = 0;
         if (line[0] == '[') { in = !strcmp(line, "[Desktop Entry]"); continue; }
         if (!in) continue;
-        if (!strncmp(line, "Name=", 5) && !name[0]) snprintf(name, nn, "%s", line + 5);
+        /* A value that does not fit is not cut (a cut can land inside a
+         * UTF-8 letter): it is left empty, which skips the program. */
+        if (!strncmp(line, "Name=", 5) && !name[0] && strlen(line + 5) < nn) memcpy(name, line + 5, strlen(line + 5) + 1);
         else if (!strcmp(line, "Type=Application")) app = 1;
         else if (!strcmp(line, "NoDisplay=true") || !strcmp(line, "Hidden=true")) hidden = 1;
-        else if (!strncmp(line, "StartupWMClass=", 15)) snprintf(wm, wn, "%s", line + 15);
+        else if (!strncmp(line, "StartupWMClass=", 15) && strlen(line + 15) < wn) memcpy(wm, line + 15, strlen(line + 15) + 1);
     }
     fclose(f);
     return app && !hidden && name[0] ? 0 : -1;
@@ -147,7 +149,7 @@ static const char *last_part(const char *id)
  * only among what is installed. Ambiguous is the same as absent. */
 static int find_app(const char *want, const char *dirs, wish_app *out)
 {
-    char defdirs[1024];
+    char defdirs[1200];
     if (!dirs) {
         const char *home = getenv("HOME");
         const char *xdh = getenv("XDG_DATA_HOME");
@@ -161,8 +163,8 @@ static int find_app(const char *want, const char *dirs, wish_app *out)
         dirs = defdirs;
     }
     int found = 0;
-    char dl[1024];
-    snprintf(dl, sizeof dl, "%s", dirs);
+    char dl[1200];
+    snprintf(dl, sizeof dl, "%.*s", (int)sizeof dl - 1, dirs);
     for (char *save = NULL, *d = strtok_r(dl, ":", &save); d; d = strtok_r(NULL, ":", &save)) {
         DIR *dh = opendir(d);
         if (!dh) continue;
@@ -174,17 +176,17 @@ static int find_app(const char *want, const char *dirs, wish_app *out)
             char id[128];
             snprintf(id, sizeof id, "%.*s", (int)(l - 8), e->d_name);
             if (!id_ok(id)) continue;
-            char path[1200], name[256], wm[256];
+            char path[1400], name[64], wm[128];
             snprintf(path, sizeof path, "%s/%s", d, e->d_name);
             if (desktop_read(path, name, sizeof name, wm, sizeof wm) < 0) continue;
             if (!text_eq(name, want) && !text_eq(id, want) && !text_eq(last_part(id), want))
                 continue;
-            if (!text_label_ok(name, 40) || strlen(name) >= sizeof out->label) continue;
+            if (!text_label_ok(name, 40)) continue;
             if (found && strcmp(out->id, id)) { closedir(dh); return -2; }   /* two programs */
             if (!found) {
                 snprintf(out->id, sizeof out->id, "%s", id);
-                snprintf(out->label, sizeof out->label, "%s", name);
-                snprintf(out->wmclass, sizeof out->wmclass, "%s", id_ok(wm) ? wm : "");
+                memcpy(out->label, name, sizeof out->label);       /* same size */
+                memcpy(out->wmclass, id_ok(wm) ? wm : "", id_ok(wm) ? sizeof out->wmclass : 1);
             }
             found = 1;
         }
@@ -217,7 +219,7 @@ static int find_theme(const char *want, const char *dir, char *id, size_t idn,
         while (fgets(line, sizeof line, f))
             if (!strncmp(line, "theme_name=\"", 12)) {
                 char *q = strchr(line + 12, '"');
-                if (q) { *q = 0; snprintf(name, sizeof name, "%s", line + 12); }
+                if (q && q - (line + 12) < (long)sizeof name) { *q = 0; memcpy(name, line + 12, (size_t)(q - line - 12) + 1); }
                 break;
             }
         fclose(f);
