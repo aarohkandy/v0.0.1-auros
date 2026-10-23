@@ -21,7 +21,15 @@ on:
       - src/aurstage/plan.*
       - build/aurbridge
       - .github/workflows/fastpath.yml
+  # By hand, optionally with a MUTANT: an engine (or a disk) broken on
+  # purpose by tools/fastpath-mutant.sh. Every mutant must turn the run
+  # red, at the check named in that script; a mutant that stays green is
+  # a check that checks nothing (docs/handoff/FIELD-MANUAL.md section 6.2).
   workflow_dispatch:
+    inputs:
+      mutant:
+        description: "none, or a mutant from tools/fastpath-mutant.sh (the run must then go red)"
+        default: none
 
 concurrency:
   group: fastpath-${{ github.ref }}
@@ -43,6 +51,10 @@ jobs:
             sleep 10
           done
           exit 1
+      - name: a deliberately broken engine, when one was asked for
+        if: github.event_name == 'workflow_dispatch' && inputs.mutant != 'none'
+        env: { MUTANT: "${{ inputs.mutant }}" }
+        run: sh tools/fastpath-mutant.sh "$MUTANT"
       - name: build/aurbridge
         run: sh build/aurbridge
       - uses: actions/upload-artifact@v4
@@ -114,9 +126,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "gapselftest write exited $LASTEXITCODE" }
           if (-not (Select-String -Path write.log -Pattern 'verdict=ok phase=write' -Quiet)) { throw "no verdict=ok" }
           $refused = (Select-String -Path write.log -Pattern 'fence1 refused=').Count
-          if ($refused -ne 5) { throw "fence one refused $refused writes, not 5" }
+          if ($refused -ne 6) { throw "fence one refused $refused writes, not 6" }
+          if (-not (Select-String -Path write.log -Pattern 'fence1 arm-refused' -Quiet)) { throw "a gap reaching into NTFS was armed" }
           if (-not (Select-String -Path write.log -Pattern 'fence2 ntfs=1' -Quiet)) { throw "Windows did not refuse the raw write into NTFS" }
           Get-Partition -DiskNumber $env:DISK | Format-Table PartitionNumber, Offset, Size, GptType -AutoSize | Out-String | Write-Output
+      - name: "mutant file-changed: one of her files is changed behind the engine's back"
+        if: github.event_name == 'workflow_dispatch' && inputs.mutant == 'file-changed'
+        shell: pwsh
+        run: '[System.IO.File]::AppendAllText("$env:LETTER\photos\img7.bin", "x")'
       - name: checked independently while it is shrunk -- the files, chkdsk, and the raw bytes in the gap
         shell: pwsh
         run: |
