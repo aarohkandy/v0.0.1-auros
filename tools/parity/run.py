@@ -141,6 +141,9 @@ def inject(mnt, opts):
 class Qemu:
     def __init__(self, disk, work, mem, smp, serial, accel):
         self.q = os.path.join(work, "qmp.sock")
+        self.chan = os.path.join(work, "chan")           # shared with the guest over 9p: the host's acknowledgements
+        os.makedirs(self.chan, exist_ok=True)
+        open(os.path.join(self.chan, "acks"), "w").write("0\n")
         self.serial = serial
         vars_ = os.path.join(work, "vars.fd")
         shutil.copy(OVMF_VARS, vars_)
@@ -155,6 +158,7 @@ class Qemu:
                 "-device", "usb-kbd,bus=xhci.0",
                 "-audiodev", "none,id=snd0", "-device", "intel-hda", "-device", "hda-duplex,audiodev=snd0",
                 "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0",
+                "-virtfs", "local,path=%s,mount_tag=parity,security_model=none,id=chan" % self.chan,
                 "-serial", "file:" + serial, "-qmp", "unix:%s,server=on,wait=off" % self.q]
         open(serial, "w").close()
         self.p = subprocess.Popen(argv, stdout=open(os.path.join(work, "qemu.log"), "w"),
@@ -339,20 +343,41 @@ WELCOME = [((256, 307), (256, 377)),      # builds from 2026-10-23 noon: buttons
 GREEN = (11, 93, 79)
 
 
+def card_button(rows, bpp):
+    """Where to press to get past the first-run card, or None when no card is on screen."""
+    for (px, py), press in WELCOME:
+        if all(abs(rows[py][px * bpp + i] - GREEN[i]) <= 10 for i in range(3)):
+            return press
+    return None
+
+
+def desktop_up(rows, bpp):
+    """The shell is drawing: a dark bar along the bottom and a light, non-black page above it."""
+    bar, body = rows[780][640 * bpp:640 * bpp + 3], rows[300][640 * bpp:640 * bpp + 3]
+    return sum(bar) < 150 and sum(body) > 300
+
+
 def welcome(q, shots):
-    for attempt in range(3):
-        tmp = os.path.join(shots, "welcome-%d.png" % attempt)
+    """Press 'Let me look first' (whichever design) once the card has appeared, and see it gone. Waits up to 90 s:
+    the card is drawn some seconds after the desktop starts, and 'no card yet' must not be read as 'no card'."""
+    t0, presses, calm = time.time(), 0, 0
+    tmp = os.path.join(shots, "welcome-probe.png")
+    while time.time() - t0 < 90:
         q.screendump(tmp)
         w, h, bpp, rows = png_pixels(tmp)
-        hit = None
-        for (px, py), press in WELCOME:
-            if all(abs(rows[py][px * bpp + i] - GREEN[i]) <= 10 for i in range(3)):
-                hit = press
-        if not hit:
-            return attempt == 0 or True, "the first-run card is gone (pressed Let me look first %d time(s))" % attempt
-        q.click(*hit)
-        time.sleep(4)
-    return False, "the first-run card is still there after three presses of Let me look first"
+        press = card_button(rows, bpp)
+        if press:
+            q.click(*press)
+            presses += 1
+            calm = 0
+            time.sleep(4)
+            continue
+        calm = calm + 1 if desktop_up(rows, bpp) else 0
+        if calm >= 3 and (presses or time.time() - t0 > 20):
+            os.remove(tmp)
+            return True, "the first-run card is gone (pressed Let me look first %d time(s))" % presses
+        time.sleep(3)
+    return False, "the first-run card could not be dismissed in 90 s (pressed %d time(s))" % presses
 
 
 # ── the run ─────────────────────────────────────────────────────────
@@ -374,11 +399,18 @@ def parse_line(line):
     return m.group(1).strip() if m else None
 
 
+def ack(q, n):
+    """Tell the guest that its n-th request has been carried out (the 9p share the guest has mounted)."""
+    tmp = os.path.join(q.chan, ".acks")
+    open(tmp, "w").write("%d\n" % n)
+    os.replace(tmp, os.path.join(q.chan, "acks"))
+
+
 def drive(q, out, timeout, checks):
     """Follow the serial port until the guest says done (or the time is up)."""
     shots = os.path.join(out, "screenshots")
     os.makedirs(shots, exist_ok=True)
-    results, notes, seen = {}, [], 0
+    results, notes, seen, do_n = {}, [], 0, 0
     t0 = time.time()
     done = False
     buf = b""
@@ -402,6 +434,7 @@ def drive(q, out, timeout, checks):
                 say("%-28s %-5s %s" % (name, status, " ".join(detail)[:120]))
             elif tag == "do":
                 act, _, arg = rest.partition(" ")
+                do_n += 1
                 if act == "snap":
                     q.screendump(os.path.join(shots, arg + ".png"))
                     say("screenshot", arg)
@@ -439,6 +472,7 @@ def drive(q, out, timeout, checks):
                 elif act == "click":
                     x, y = arg.split()[:2]
                     q.click(int(x), int(y), double="double" in arg)
+                ack(q, do_n)                  # the guest waits for this, so it never races the screen
             elif tag == "note":
                 notes.append(rest)
                 say("note:", rest[:160])

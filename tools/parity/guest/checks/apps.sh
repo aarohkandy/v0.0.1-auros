@@ -50,7 +50,7 @@ grep -v '^#' "$P/apps.tsv" | while IFS="$(printf '\t')" read -r id name what; do
         sleep 12
         title=$(grep -ao 'xdg_toplevel@[0-9]*.set_title("[^"]*")' "$log" | tail -1 | sed 's/.*set_title("//; s/")$//')
         snap "apps-$name"
-        say "do changed apps-$name-before apps-$name apps.$name.visible 260 130 1020 690 8"; sleep 4
+        act changed apps-$name-before apps-$name apps.$name.visible 260 130 1020 690 8
         result "apps.$name" pass "installed in $inst s ($size), window \"$title\" opened $win s after the press"
     else
         note "$name log: $(head -c 600 "$log" | tr '\n' '|')"

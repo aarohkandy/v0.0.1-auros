@@ -21,7 +21,7 @@ unset DISPLAY
 wait_for 120 test -f /var/lib/auros/firstboot.done
 
 # The first thing she sees: the welcome card ("Let me look first" is the button she would press).
-sleep 4; say "do welcome"; sleep 14; snap welcome-dismissed
+act welcome; snap welcome-dismissed
 
 for c in $CHECKS; do
     f=$P/checks/$c.sh
