@@ -7,3 +7,14 @@
 Unattended-Upgrade::Origins-Pattern {
         "origin=AurOS,label=AurOS,archive=stable";
 };
+
+// Nobody is at a terminal to answer "keep your version of this setting
+// or take the new one?", and unattended-upgrades skips any package that
+// would ask -- for good, silently, and with it every package that must
+// move at the same time (all of AurOS's do). So the question is
+// answered in advance: a setting changed on this computer is kept, and
+// everything else is updated. tools/updatetest.sh proves it.
+DPkg::Options {
+        "--force-confdef";
+        "--force-confold";
+};

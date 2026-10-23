@@ -20,6 +20,8 @@
 #    aptchannel repo DEBDIR REPODIR
 #        a flat apt repository from a directory of .debs (newest
 #        version of each package): Packages, Packages.gz, Release.
+#    aptchannel release REPODIR
+#        Packages.gz and Release again, for the Packages in REPODIR.
 #    aptchannel sign REPODIR KEYID...
 #        InRelease and Release.gpg, with the key(s) in $GNUPGHOME.
 #    aptchannel verify REPODIR KEYRING
@@ -57,6 +59,10 @@ SUITE=stable
 ARCH=amd64
 MAINTAINER="AurOS <noreply@auros.invalid>"
 
+# The one profile whose images point at the channel (aptrepo.yml
+# publishes that profile's release).
+CHANNEL_PROFILE=desktop
+
 PACKAGES="auros-desktop auros-first auros-bootchain auros-ferry auros-config auros-archive-keyring"
 
 die()  { printf 'aptchannel: %s\n' "$*" >&2; exit 1; }
@@ -66,20 +72,16 @@ warn() { printf 'aptchannel: WARNING: %s\n' "$*" >&2; }
 # ── where it lives ─────────────────────────────────────────────────
 #
 # Derived, so that a fork or a move to another repository publishes and
-# points at itself without anybody editing a file: GITHUB_REPOSITORY on
-# Actions, else the checkout's own origin. AUROS_APT_URL overrides both
-# (a mirror, or a test's local server).
+# points at itself without anybody editing a file: tools/repo.sh (AUROS_REPO,
+# else GITHUB_REPOSITORY on Actions, else the checkout's own origin).
+# AUROS_APT_URL overrides it (a mirror, or a test's local server).
 channel_url() {
     if [ -n "${AUROS_APT_URL:-}" ]; then
         printf '%s\n' "$AUROS_APT_URL"; return 0
     fi
-    local slug=${GITHUB_REPOSITORY:-} server=${GITHUB_SERVER_URL:-https://github.com}
-    if [ -z "$slug" ]; then
-        slug=$(git -C "$ROOT" remote get-url origin 2>/dev/null |
-               sed -n -e 's#\.git$##' -e 's#^.*github\.com[:/]\([^/]*/[^/]*\)/*$#\1#p') || true
-    fi
-    [ -n "$slug" ] || return 1
-    printf '%s/%s/releases/download/%s/\n' "$server" "$slug" "$APT_TAG"
+    local rel
+    rel=$(sh "$ROOT/tools/repo.sh" releases 2>/dev/null) || return 1
+    printf '%s/download/%s/\n' "$rel" "$APT_TAG"
 }
 
 source_entry() { # URL
@@ -114,8 +116,6 @@ channel_version() { # OS_VERSION
 # not here would be reported as unclaimed by tools/updatetest.sh.
 pkg_of() { # path relative to the root, no leading slash
     case "$1" in
-        # Written per image by `image` below, from the derived address.
-        etc/apt/sources.list.d/auros.sources) ;;
         # forge's dpkg-divert puts Ubuntu's at *.ubuntu and copies ours
         # here; a package shipping this path would itself be diverted
         # over Ubuntu's real one. auros-bootchain's postinst refreshes it.
@@ -138,9 +138,14 @@ pkg_of() { # path relative to the root, no leading slash
 
 # What the build compiles or installs that has no verbatim copy in the
 # repository. Paths, plus whole directories that are ours alone.
+#
+# The apt source is one of them: written by `image` from the derived
+# address, and a conffile of auros-config, so that if the repository
+# ever moves, one update from the old address carries the new one.
 BUILT_PATHS="usr/bin/aurshell usr/bin/aursorry usr/bin/aurwall usr/bin/aurctl
              usr/bin/aurora usr/sbin/aurinit usr/sbin/aurfirst
-             usr/sbin/auros-bootchain usr/bin/ferry"
+             usr/sbin/auros-bootchain usr/bin/ferry
+             etc/apt/sources.list.d/auros.sources"
 OUR_DIRS="usr/lib/ferry usr/share/ferry usr/share/auros/themes
           usr/share/auros/templates usr/share/auros/shells"
 
@@ -389,6 +394,26 @@ cmd_image() { # RFS [PROFILE_ID OS_VERSION]
     local fd="$rfs$FACTORY_DIR"
     rm -rf "$fd"; mkdir -p "$fd"
     printf '\n:: AurOS update channel: packing AurOS %s for %s\n' "$ver" "${prof:-this image}"
+    # The source first, so auros-config carries it. Only if this image
+    # carries the key that checks it: an image never points at a
+    # repository it cannot verify. And only for the profile the channel
+    # publishes: another profile's computers would otherwise take this
+    # one's files over their own (those files are unowned on them).
+    local url why=""
+    mkdir -p "$rfs/etc/auros"
+    rm -f "$rfs$SOURCE_PATH"
+    if [ "${prof:-$CHANNEL_PROFILE}" != "$CHANNEL_PROFILE" ]; then
+        why="the channel publishes the $CHANNEL_PROFILE profile, not $prof"
+    elif [ ! -s "$rfs$KEYRING_PATH" ]; then
+        why="no archive key at $KEYRING_PATH (docs/OWNER-SETUP.md 4a; until then AurOS's own fixes reach nobody)"
+    elif ! url=$(channel_url); then
+        why="cannot tell which repository publishes it (set AUROS_APT_URL, or build from a clone of the GitHub repository)"
+    else
+        case "$url" in https://*/) ;; *) die "channel address '$url' is not an https:// directory" ;; esac
+        mkdir -p "$rfs/etc/apt/sources.list.d"
+        source_entry "$url" > "$rfs$SOURCE_PATH"
+        chmod 0644 "$rfs$SOURCE_PATH"
+    fi
     cmd_pack "$rfs" "$fd" "$ver"
     (cd "$fd" && sha256sum ./*.deb > SHA256SUMS)
     # Ownership, not new files: dpkg unpacks bytes identical to what is
@@ -401,25 +426,10 @@ cmd_image() { # RFS [PROFILE_ID OS_VERSION]
     [ -z "$bad" ] || die "AurOS's packages do not match the files in the image:
 $bad"
     note "registered with dpkg: $(chroot "$rfs" /usr/bin/dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'auros*' 2>/dev/null | awk '$1=="ii"{printf "%s ", $2}')"
-    # The source -- only if this image carries the key that checks it.
-    # An image never points at a repository it cannot verify.
-    local url
-    mkdir -p "$rfs/etc/auros"
-    if [ ! -s "$rfs$KEYRING_PATH" ]; then
-        rm -f "$rfs$SOURCE_PATH"
-        warn "update channel OFF in this image: no archive key at $KEYRING_PATH"
-        warn "(docs/OWNER-SETUP.md 4a; until then AurOS's own fixes reach nobody)"
-        printf 'update_channel=off (no archive key)\n' >> "$rfs/etc/auros/build-warnings"
-    elif ! url=$(channel_url); then
-        rm -f "$rfs$SOURCE_PATH"
-        warn "update channel OFF in this image: cannot tell which repository publishes it"
-        warn "(set AUROS_APT_URL, or build from a clone of the GitHub repository)"
-        printf 'update_channel=off (no address)\n' >> "$rfs/etc/auros/build-warnings"
+    if [ -n "$why" ]; then
+        warn "update channel OFF in this image: $why"
+        printf 'update_channel=off (%s)\n' "${why%% (*}" >> "$rfs/etc/auros/build-warnings"
     else
-        case "$url" in https://*/) ;; *) die "channel address '$url' is not an https:// directory" ;; esac
-        mkdir -p "$rfs/etc/apt/sources.list.d"
-        source_entry "$url" > "$rfs$SOURCE_PATH"
-        chmod 0644 "$rfs$SOURCE_PATH"
         note "apt source: $url (signed by $KEYRING_PATH)"
     fi
     # For the build job (an artifact, or a release asset later).
@@ -459,6 +469,13 @@ cmd_repo() { # DEBDIR REPODIR
             "$(sha256sum "$out/$name" | cut -d' ' -f1)" \
             "$(sha512sum "$out/$name" | cut -d' ' -f1)"
     done > "$out/Packages"
+    cmd_release "$out"
+}
+
+cmd_release() { # REPODIR
+    local out=${1:?REPODIR} h f
+    [ -s "$out/Packages" ] || die "no Packages in $out"
+    rm -f "$out"/Release "$out"/InRelease "$out"/Release.gpg
     gzip -9n -c "$out/Packages" > "$out/Packages.gz"
     {
         printf 'Origin: %s\nLabel: %s\nSuite: %s\nCodename: %s\n' "$ORIGIN" "$LABEL" "$SUITE" "$SUITE"
@@ -528,11 +545,12 @@ case "${1:-}" in
     image)  shift; cmd_image "$@" ;;
     pack)   shift; cmd_pack "$@" ;;
     repo)   shift; cmd_repo "$@" ;;
+    release) shift; cmd_release "$@" ;;
     sign)   shift; cmd_sign "$@" ;;
     verify) shift; cmd_verify "$@" ;;
     url)    channel_url || die "cannot tell which repository publishes the channel; set AUROS_APT_URL" ;;
     source) shift; source_entry "${1:?URL}" ;;
     version) shift; channel_version "${1:?OS_VERSION}" ;;
     list)   shift; collect "${1:?RFS}" ;;
-    *) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    *) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
