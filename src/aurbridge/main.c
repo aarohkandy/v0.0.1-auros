@@ -376,6 +376,16 @@ int main(int argc, char **argv)
     if (!strcmp(cmd, "report")) return hwinv_report_main(argc > 2 ? argv[2] : NULL, 0, NULL);
     if (!strcmp(cmd, "getimage")) return getimage(argc, argv);
     if (!strcmp(cmd, "gapselftest")) return gapselftest(argc, argv);
+    /* `runcheck COMMAND-LINE`: what plat_run does with it, and nothing else --
+     * so CI can plant a fake schtasks.exe beside this exe and prove it never
+     * runs (docs/security SEC-002). Prints one line; no side effects of its
+     * own. */
+    if (!strcmp(cmd, "runcheck") && argc >= 3) {
+        char tail[512] = "";
+        int rc = plat_run(argv[2], tail, sizeof tail);
+        printf("runcheck rc=%d tail=%s\n", rc, tail);
+        return 0;
+    }
     /* The install's first step, alone, so that a real Windows machine
      * can be asked whether it works (.github/workflows/windows.yml). */
     if (!strcmp(cmd, "fast-startup-off")) {

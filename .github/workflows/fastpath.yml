@@ -73,6 +73,18 @@ jobs:
         with:
           name: exe
           path: out/aurbridge.exe
+      # Programs that must never run: the same names Windows' own tools have,
+      # put beside the installer by the runcheck job below (SEC-002).
+      - name: planted programs
+        run: |
+          mkdir -p planted
+          for n in schtasks mountvol manage-bde powercfg bcdedit icacls netsh reg; do
+              x86_64-w64-mingw32-gcc -O1 -o "planted/$n.exe" tools/planted.c
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: planted
+          path: planted/
       # THE SAME INSTALLER WITH THE FAST PATH ON, for the real-Windows e2e
       # (stream F points INSTALLER_URL at this): the Wi-Fi tick, the drive
       # lock line and the fast path are compiled in. The default build above
@@ -214,3 +226,42 @@ jobs:
           .\exe\aurbridge.exe gapselftest $env:DISK $env:PART $env:GUID undo $env:ORIG
           if ($LASTEXITCODE -ne 0) { throw "with BitLocker on, the undo exited $LASTEXITCODE" }
           "shrink, gap write and undo all worked with BitLocker on; nothing was decrypted"
+
+  # SEC-002: a program planted beside the installer is never started by it.
+  # The installer runs elevated from Downloads, a folder anything can write
+  # to, and used to start schtasks / mountvol / manage-bde by bare name.
+  runcheck:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: exe, path: exe }
+      - uses: actions/download-artifact@v4
+        with: { name: planted, path: exe }
+      - name: bare names resolve to Windows' own programs, and nothing else starts
+        shell: pwsh
+        run: |
+          Set-Location exe
+          Remove-Item PLANTED-RAN.txt, C:\PLANTED-RAN-ELEVATED.txt -ErrorAction SilentlyContinue
+          $fail = $false
+          foreach ($c in 'schtasks /?', 'schtasks.exe /?', 'powercfg /?', 'manage-bde -?', 'bcdedit /?', 'netsh /?', 'mountvol /?') {
+              $o = .\aurbridge.exe runcheck $c
+              "$c -> $o"
+              if ($o -notmatch 'runcheck rc=\d+ tail=') { $fail = $true; "no answer for $c" }
+          }
+          if (Test-Path PLANTED-RAN.txt) { throw "A PLANTED PROGRAM RAN (beside the exe)" }
+          if (Test-Path C:\PLANTED-RAN-ELEVATED.txt) { throw "A PLANTED PROGRAM RAN (elevated marker)" }
+          # The real one answered: schtasks prints its own usage.
+          $o = .\aurbridge.exe runcheck 'schtasks /?'
+          if ($o -notmatch 'SCHTASKS') { throw "schtasks did not run (or the wrong one did): $o" }
+          # Absolute paths: Windows' own, accepted; anything else refused.
+          $o = .\aurbridge.exe runcheck "$env:SystemRoot\System32\schtasks.exe /?"
+          if ($o -notmatch 'SCHTASKS') { throw "the absolute system path was refused: $o" }
+          foreach ($c in "$PWD\schtasks.exe /?", 'C:\Users\Public\evil.exe', "$env:SystemRoot\System32\..\..\Users\x.exe", 'cmd.exe /c echo hi', 'notepad') {
+              $o = .\aurbridge.exe runcheck $c
+              "$c -> $o"
+              if ($o -notmatch 'rc=-1' -or $o -notmatch 'belong to Windows') { throw "was not refused: $c -> $o" }
+          }
+          if (Test-Path PLANTED-RAN.txt) { throw "A PLANTED PROGRAM RAN (after the refusals)" }
+          "ok: only Windows' own programs start, and a planted one never does"

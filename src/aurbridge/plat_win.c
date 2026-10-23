@@ -1553,14 +1553,112 @@ static size_t load_option(unsigned char *out, size_t n,
 
 /* ── running something else ──────────────────────────────────────── */
 
+/* ── WHICH PROGRAM, EXACTLY (docs/security SEC-002) ───────────────────
+ *
+ * This runs with an administrator's token, from a folder -- Downloads --
+ * that any program the person has run can write to. CreateProcessW(NULL,
+ * "schtasks ...") searches THE EXE'S OWN FOLDER FIRST, so a schtasks.exe
+ * dropped beside the installer would be started as an administrator. So the
+ * first word of every command is resolved here, by us, to a file in the
+ * system directory and handed to CreateProcessW as lpApplicationName, and
+ * a command whose first word is anything else is refused. Callers may
+ * write a bare name from the short list below, or an absolute path that
+ * already lies under the system directory (the PowerShell and powercfg
+ * callers build theirs from GetSystemDirectory). */
+static int sysdir_w(wchar_t *out, size_t cch)
+{
+    UINT k = GetSystemDirectoryW(out, (UINT)cch);
+    return k > 0 && k < cch;
+}
+
+static int under_sysdir(const wchar_t *path, const wchar_t *sys)
+{
+    size_t n = wcslen(sys);
+    if (_wcsnicmp(path, sys, n) != 0 || (path[n] != L'\\' && path[n] != L'/')) return 0;
+    /* no way back out of it */
+    return wcsstr(path, L"..") == NULL;
+}
+
+/* Fills `app` with the program's full path and `cmd` with the command line
+ * made from it; 0, or -1 and `why`. */
+static int resolve_program(const wchar_t *in, wchar_t *app, size_t appn,
+                           wchar_t *cmd, size_t cmdn, char *why, size_t wn)
+{
+    static const struct { const wchar_t *name, *rel; } OK[] = {
+        { L"manage-bde",  L"manage-bde.exe" },  { L"powercfg",  L"powercfg.exe" },
+        { L"schtasks",    L"schtasks.exe" },    { L"mountvol",  L"mountvol.exe" },
+        { L"bcdedit",     L"bcdedit.exe" },     { L"icacls",    L"icacls.exe" },
+        { L"netsh",       L"netsh.exe" },       { L"reg",       L"reg.exe" },
+        { L"diskpart",    L"diskpart.exe" },
+        { L"powershell",  L"WindowsPowerShell\\v1.0\\powershell.exe" },
+    };
+    wchar_t sys[MAX_PATH];
+    if (!sysdir_w(sys, MAX_PATH)) {
+        snprintf(why, wn, "the system folder could not be found");
+        return -1;
+    }
+    const wchar_t *p = in;
+    while (*p == L' ') p++;
+    wchar_t tok[MAX_PATH + 1];
+    size_t k = 0;
+    if (*p == L'"') {
+        p++;
+        while (*p && *p != L'"' && k < MAX_PATH) tok[k++] = *p++;
+        if (*p != L'"') { snprintf(why, wn, "the command was not understood"); return -1; }
+        p++;
+    } else {
+        while (*p && *p != L' ' && k < MAX_PATH) tok[k++] = *p++;
+    }
+    tok[k] = 0;
+    if (!k || k >= MAX_PATH) { snprintf(why, wn, "the command was not understood"); return -1; }
+
+    if (wcschr(tok, L'\\') || wcschr(tok, L'/') || wcschr(tok, L':')) {
+        if (!under_sysdir(tok, sys)) {
+            snprintf(why, wn, "AurOS will only start programs that belong to Windows");
+            return -1;
+        }
+        wcsncpy(app, tok, appn - 1); app[appn - 1] = 0;
+    } else {
+        wchar_t low[64];
+        size_t i = 0;
+        for (; tok[i] && i + 1 < 64; i++) low[i] = (wchar_t)towlower(tok[i]);
+        low[i] = 0;
+        size_t L_ = wcslen(low);
+        if (L_ > 4 && !wcscmp(low + L_ - 4, L".exe")) low[L_ - 4] = 0;
+        const wchar_t *rel = NULL;
+        for (size_t q = 0; q < sizeof OK / sizeof OK[0]; q++)
+            if (!wcscmp(low, OK[q].name)) { rel = OK[q].rel; break; }
+        if (!rel) {
+            snprintf(why, wn, "AurOS will only start programs that belong to Windows");
+            return -1;
+        }
+        if ((size_t)_snwprintf(app, appn, L"%ls\\%ls", sys, rel) >= appn) return -1;
+    }
+    if ((size_t)_snwprintf(cmd, cmdn, L"\"%ls\"%ls", app, p) >= cmdn) {
+        snprintf(why, wn, "the command was too long");
+        return -1;
+    }
+    return 0;
+}
+
 int plat_run(const char *cmdline, char *tail, size_t n)
 {
     if (tail && n) tail[0] = 0;
-    wchar_t w[8192];          /* 16 KB of stack: plat_run may run on two threads */
-    if (to_wide(cmdline, w, 8192) != 0) {
+    wchar_t in[8192];         /* 16 KB of stack each: plat_run may run on two threads */
+    wchar_t w[8192], app[MAX_PATH + 64];
+    if (to_wide(cmdline, in, 8192) != 0) {
         if (tail && n) snprintf(tail, n, "the command could not be read");
         return -1;
     }
+    {
+        char why[PLAT_WHY] = "";
+        if (resolve_program(in, app, MAX_PATH + 64, w, 8192, why, sizeof why) != 0) {
+            if (tail && n) snprintf(tail, n, "%s", why);
+            return -1;
+        }
+    }
+    wchar_t cwd[MAX_PATH];
+    int have_cwd = sysdir_w(cwd, MAX_PATH);
 
     SECURITY_ATTRIBUTES sa;
     memset(&sa, 0, sizeof sa);
@@ -1581,8 +1679,8 @@ int plat_run(const char *cmdline, char *tail, size_t n)
 
     PROCESS_INFORMATION pi;
     memset(&pi, 0, sizeof pi);
-    if (!CreateProcessW(NULL, w, NULL, NULL, TRUE, CREATE_NO_WINDOW,
-                        NULL, NULL, &si, &pi)) {
+    if (!CreateProcessW(app, w, NULL, NULL, TRUE, CREATE_NO_WINDOW,
+                        NULL, have_cwd ? cwd : NULL, &si, &pi)) {
         CloseHandle(rd); CloseHandle(wrh);
         if (tail && n) snprintf(tail, n, "it would not start");
         return -1;
