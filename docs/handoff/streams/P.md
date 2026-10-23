@@ -1,7 +1,8 @@
 # Stream P — every profile builds and boots
 
 Owner of: `.github/workflows/profiles.yml`, `profiles/{office,revive,school-kiosk,multilingual}.profile`,
-`tools/profiletest*`, this file. Branch `claude/brave-hypatia-x72g1m` only (rules: `docs/handoff/STREAMS.md`).
+`tools/profiletest*`, this file. Session B: repository aarohkandy/v0.0.1-auros, branch `main`,
+worktree `wt-p` (environment and push loop: `docs/handoff/FIELD-MANUAL.md`).
 
 ## Goal
 
@@ -20,6 +21,12 @@ with a screenshot, an image size and a boot result for each.
 
 ## Done and pushed
 
+- `07ee591` (session B) selftest green again. lint_one now reads `packages_security` (stream S1
+  moved zram-tools/earlyoom/nftables there; forge stage 2 installs it, lint did not read it, so
+  every desktop-inheriting profile "asked for zram with no zram-tools"). The kiosk boot fixture
+  now reports a hardened boot (`swap=/dev/zram0 partition 1.9G;`, `earlyoom=active`). New
+  mutants prove the zram/swap/earlyoom checks fail when broken. apt in profiles.yml bounded.
+
 - `47f6d90` office: `thunderbird` removed (noble's is a snap stub; forge pins stubs to -1, so the
   build died). revive: exclude list uses noble's real names (one unknown name made apt purge
   nothing). school-kiosk: neutral brand name, blank enrollment URL.
@@ -37,8 +44,7 @@ with a screenshot, an image size and a boot result for each.
 
 ## Half-done / not pushed
 
-- `.github/workflows/profiles.yml` pushed (first run in flight); step 1 below describes it. If it is not on the
-  branch, write it as below.
+- Run 39902765034 (commit 07ee591): first full build+boot of all four, one at a time.
 
 ## Next 5 steps
 
@@ -67,6 +73,11 @@ with a screenshot, an image size and a boot result for each.
 - Any push touching `profiles/` also triggers the desktop `build.yml` (its gate greps `^profiles/`).
   Batch profile edits.
 - Free plan: 20 concurrent jobs shared by ~15 agents. Keep max-parallel 1.
+- This checkout's `remote.origin.fetch` maps only the old branch, so `git fetch origin main`
+  does NOT move `origin/main` and the field manual's push loop rebases onto a stale tip. Use
+  `git fetch -q origin +main:refs/remotes/origin/main` in the loop.
+- lint must read every list forge's stage 2 installs (build/forge `local pkgs=`); when someone
+  adds a new packages_* key there, add it to lint_one and the selftest index loop too.
 - `school-kiosk`'s work dir is `work/forge/school-kiosk/` (forge uses `profile_id`).
 - forge refuses a build whose browser fell back to Epiphany unless `ALLOW_BROWSER_FALLBACK=1`;
   on Actions Mozilla is reachable, so do not set it.
