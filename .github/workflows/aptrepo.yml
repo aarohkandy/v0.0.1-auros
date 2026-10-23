@@ -93,7 +93,7 @@ jobs:
                 *)
                   files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename' || true) ;;
               esac
-              if printf '%s\n' "$files" | grep -qE '^(build/aptchannel|tools/update(policy)?test\.sh|tools/repo\.sh|rootfs/etc/apt/|rootfs/usr/lib/auros/(hold-running-apps|keep-previous|rollback|shell-guard)|\.github/workflows/aptrepo\.yml$)'; then
+              if printf '%s\n' "$files" | grep -qE '^(build/aptchannel|tools/(update(policy)?|flatpakupdate)test\.sh|tools/repo\.sh|rootfs/etc/apt/|rootfs/etc/systemd/system/auros-flatpak-update|rootfs/usr/lib/auros/(hold-running-apps|keep-previous|rollback|shell-guard)|\.github/workflows/aptrepo\.yml$)'; then
                 test=true
               fi ;;
           esac
@@ -131,6 +131,22 @@ jobs:
           done
           { echo '### updatetest'; echo '```'; grep -E ' ok$| FAIL$|^updatetest|^==' updatetest.log; echo '```'
             echo 'Each of --break=trusted, signedby, pin, origin, keep made it fail, as it must.'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: her Flathub programs update by themselves (the unit's own commands, a local stand-in for Flathub)
+        run: |
+          fp() {
+            docker run --rm --privileged -v "$PWD":/w:ro -w /w ubuntu:24.04 bash -c '
+              for i in 1 2 3; do
+                timeout 300 apt-get update -q && timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
+                  --no-install-recommends flatpak ostree ca-certificates && break
+                sleep 10
+              done > /tmp/deps.log 2>&1 || { tail -30 /tmp/deps.log; exit 3; }
+              bash tools/flatpakupdatetest.sh "$@"' _ "$@"
+          }
+          fp | tee flatpak.log
+          set +e; fp --break=unit > break.log 2>&1; rc=$?; set -e
+          grep -E 'FAIL$|^flatpakupdatetest' break.log | sed 's/^/[--break=unit] /'
+          [ "$rc" = 1 ] || { cat break.log; echo "::error::with the update line broken the test exited $rc, not 1"; exit 1; }
+          { echo '### flatpakupdatetest'; echo '```'; grep -E ' ok$| FAIL$|^flatpakupdatetest' flatpak.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Firefox updates by itself, never while it is open (packages.mozilla.org, real unattended-upgrade)
         run: |
           ff() {
