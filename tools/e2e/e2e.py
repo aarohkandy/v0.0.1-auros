@@ -305,6 +305,34 @@ class Flow:
             return "unknown", "unknown", 0.0
         return m.group(1), m.group(2), float(m.group(3))
 
+    def turn_on_bitlocker(self):
+        """BitLocker as a PC with a TPM has it: on C:, a TPM protector and a
+        recovery password, protection on, used space encrypted, waited until
+        done. Here, not at Windows' first logon: BitLocker refuses to start
+        while a bootable CD is attached ("detected bootable media", run
+        40024967637), and the install ISO is attached until Setup is over."""
+        with self.rec.phase("windows: BitLocker on, as the PC has it"):
+            out = self.guest(
+                "$v = Get-BitLockerVolume -MountPoint C:; "
+                "if ($v.VolumeStatus -eq 'FullyDecrypted') { "
+                "  Enable-BitLocker -MountPoint C: -EncryptionMethod XtsAes128 -UsedSpaceOnly -TpmProtector "
+                "    -SkipHardwareTest -ErrorAction Stop | Out-Null }; "
+                "if (-not ((Get-BitLockerVolume -MountPoint C:).KeyProtector | "
+                "    Where-Object KeyProtectorType -eq 'RecoveryPassword')) { "
+                "  Add-BitLockerKeyProtector -MountPoint C: -RecoveryPasswordProtector | Out-Null }; "
+                "'started'")
+            self.log("BitLocker: " + out.strip()[:600])
+            deadline = time.time() + 25 * 60
+            while time.time() < deadline:
+                vol, prot, pct = self.bitlocker_state("while it encrypts")
+                if vol == "FullyEncrypted":
+                    break
+                time.sleep(20)
+            if vol != "FullyEncrypted":
+                raise Failure(f"BitLocker did not finish encrypting C: in 25 minutes ({vol}, {pct}%): " + out.strip()[:300])
+            if prot != "On":
+                self.guest("Resume-BitLocker -MountPoint C: | Out-Null")
+
     def check_bitlocker_before_restart(self):
         """D11/D13: the installer PAUSES BitLocker, it never decrypts. At the
         page before the restart the drive must still be fully encrypted
@@ -457,6 +485,8 @@ class Flow:
                 "Get-CimInstance Win32_DiskPartition | Format-Table Index,Type,Size,StartingOffset -AutoSize; "
                 "Get-CimInstance Win32_VideoController | Format-List Name,CurrentHorizontalResolution,CurrentVerticalResolution")
             self.log("windows, as the installer will find it:\n" + facts.strip())
+            if VARIANT == "bitlocker":
+                self.turn_on_bitlocker()
             vol, prot, pct = self.bitlocker_state("at the start")
             bad = bitlocker_verdict(VARIANT, vol, prot) if vol != "unknown" else None
             if bad:
@@ -1230,6 +1260,9 @@ def diagnose_partition(rec, p, fs, mnt):
             try:
                 lines.append(run(["sudo", "sh", "-c",
                                   f"ls -la {mnt}/var/log {mnt}/var/log/journal 2>&1 | head -40; echo; "
+                                  f"for f in {mnt}/var/log/auros-answer.log {mnt}/var/log/auros-firstboot.log; do "
+                                  "echo \"== $f\"; head -c 3000 \"$f\" 2>&1; echo; done; "
+                                  f"ls -laR {mnt}/var/lib/auros {mnt}/etc/auros 2>&1 | head -40; echo; "
                                   f"ls -la {mnt}/var/lib/flatpak/app {mnt}/var/lib/flatpak/repo 2>&1 | head -20; echo; "
                                   f"ls {mnt}/etc/polkit-1/rules.d {mnt}/usr/share/polkit-1/rules.d 2>&1; echo; "
                                   f"cat {mnt}/etc/polkit-1/rules.d/49-auros.rules 2>&1 | head -60; echo; "

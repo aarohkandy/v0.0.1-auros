@@ -74,28 +74,9 @@ if (Test-Path "$Src\variant.txt") { $variant = (Get-Content "$Src\variant.txt" -
 Set-Content C:\e2e\variant.txt $variant
 switch ($variant) {
   'bitlocker' {
-    # Device encryption as a PC with a TPM has it: BitLocker on C:, a TPM
-    # protector and a recovery password, protection ON, used space
-    # encrypted. Windows' own automatic start is switched off for every
-    # variant (specialize.cmd, so that the plain PC is plain); this is the
-    # owner or maker turning it on by hand. If it had started anyway, this
-    # waits for it and adds what is missing. Waits until it is done.
-    $facts.variant = Fact {
-      $v = Get-BitLockerVolume -MountPoint C:
-      if ($v.VolumeStatus -eq 'FullyDecrypted') {
-        Enable-BitLocker -MountPoint C: -EncryptionMethod XtsAes128 -UsedSpaceOnly -TpmProtector -SkipHardwareTest
-      }
-      for ($i = 0; $i -lt 360; $i++) {
-        if ((Get-BitLockerVolume -MountPoint C:).VolumeStatus -eq 'FullyEncrypted') { break }
-        Start-Sleep 10
-      }
-      $v = Get-BitLockerVolume -MountPoint C:
-      if (-not ($v.KeyProtector | Where-Object KeyProtectorType -eq 'RecoveryPassword')) {
-        Add-BitLockerKeyProtector -MountPoint C: -RecoveryPasswordProtector | Out-Null
-      }
-      if ((Get-BitLockerVolume -MountPoint C:).ProtectionStatus -ne 'On') { Resume-BitLocker -MountPoint C: }
-      Get-BitLockerVolume -MountPoint C: | Select-Object VolumeStatus, ProtectionStatus, EncryptionPercentage, KeyProtector | Format-List
-    }
+    # Made at the test's own logon by the flow (e2e.py turn_on_bitlocker):
+    # BitLocker will not start while the install CD is still attached.
+    $facts.variant = 'BitLocker is turned on by the flow, after Setup is over'
   }
   'smalldisk' {
     # A small drive with years of leftovers in Windows' temp folder: too
