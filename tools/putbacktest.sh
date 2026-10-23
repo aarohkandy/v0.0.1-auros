@@ -21,6 +21,12 @@
 #            partition with aurstage.restore -- under Secure Boot. The
 #            restore reports. next_entry is gone afterwards.
 #    boot 3  an ordinary start: AurOS, not the restore again.
+#    boot 4  she presses it again, and this time the firmware does not
+#            act on the restart it was asked for (it starts Windows).
+#    boot 5  three weeks later (the clock moved on) AurOS is started:
+#            the stale request reaches the restore, which must refuse
+#            it -- nothing changed -- and restart by itself.
+#    boot 6  an ordinary start: AurOS.
 #
 #  The "Windows" disk here holds an EFI partition with the installer's
 #  files in \EFI\AurOS and nothing to restore, so the restore's verdict
@@ -174,6 +180,7 @@ python3 "$E" "$NV" set-order 0000 &&
 python3 "$E" "$NV" set-next 0002 || { echo "  could not make the firmware"; exit 2; }
 
 BOOTN=0
+QEXTRA=""
 power_on() { # mode
     BOOTN=$((BOOTN + 1))
     mount_root || return 1
@@ -187,7 +194,7 @@ power_on() { # mode
         -drive if=pflash,format=raw,unit=1,file="$NV" \
         -drive file="$DISK",format=raw,if=none,id=d0 -device virtio-blk-pci,drive=d0 \
         -drive file="$WIN",format=raw,if=none,id=d1 -device virtio-blk-pci,drive=d1 \
-        -device virtio-vga -display none -serial file:"$SER" -net none \
+        -device virtio-vga -display none -serial file:"$SER" -net none $QEXTRA \
         >/dev/null 2>&1 &
     QP=$!
     i=0
@@ -214,9 +221,10 @@ case "$R" in *"request=putback"*"result=ok"*) ok "answer.sh answered ok" ;;
     *) bad "answer.sh answered ok" "$(echo "$R" | tr '\n' ' ')" "$AL" ;; esac
 case "$L" in *"NO RESTART"*) bad "...and restarted the computer itself" ;;
     *) ok "...and restarted the computer itself" ;; esac
-[ "$(grubenv_list)" = "next_entry=put-windows-back>put-windows-back-yes" ] \
-  && ok "the menu will take the restore entry next" \
-  || bad "the menu will take the restore entry next" "$(grubenv_list)"
+GL=$(grubenv_list)
+case "$GL" in "next_entry=put-windows-back>put-windows-back-yes
+auros_asked="[0-9]*) ok "the menu will take the restore entry next, and knows when" ;;
+    *) bad "the menu will take the restore entry next, and knows when" "$GL" ;; esac
 [ "$(python3 "$E" "$NV" bootnext)" = "0002" ] \
   && ok "and the firmware will start AurOS's menu, though she declined" \
   || bad "and the firmware will start AurOS's menu, though she declined" \
@@ -268,8 +276,57 @@ L=$(e2e_log)
 case "$L" in *"3 up mode=none"*) ok "...it starts AurOS" ;;
     *) bad "...it starts AurOS" "$(echo "$L" | tail -3)" ;; esac
 
+# ── boot 4 and 5: a request the firmware never acted on ─────────────
+echo
+echo "  boot 4: she presses it again; the firmware then starts Windows instead"
+python3 "$E" "$NV" set-next 0002 >/dev/null
+power_on putback
+mount_root; R=$(cat "$T/m/var/lib/auros-e2e/result.4" 2>/dev/null); umount_root
+GL=$(grubenv_list)
+case "$R" in *"request=putback"*"result=ok"*) ok "answered ok again" ;;
+    *) bad "answered ok again" "$(echo "$R" | tr '\n' ' ')" ;; esac
+case "$GL" in *"next_entry=put-windows-back>put-windows-back-yes"*"auros_asked="[0-9]*)
+        ok "...and the request says when it was made" ;;
+    *) bad "...and the request says when it was made" "$GL" ;; esac
+echo "  (boot 4b: Windows starts instead -- nothing of AurOS's runs)"
+mount_root && grub-editenv "$T/m/boot/grub/grubenv" set \
+    "aurstage_extra=console=ttyS0,115200n8"; umount_root
+echo
+echo "  boot 5: three weeks later, AurOS is started again"
+QEXTRA="-rtc base=$(date -u -d '+21 days' '+%Y-%m-%dT%H:%M:%S')"
+python3 "$E" "$NV" set-next 0002 >/dev/null
+power_on none
+QEXTRA=""
+S5=$(tr -d '\r' < "$T/serial.5")
+echo "$S5" | grep -aq 'Command line:.*aurstage.restore.*aurstage.asked=[0-9]' \
+  && ok "the menu still took the old request to the restore" \
+  || bad "the menu still took the old request to the restore" \
+         "$(echo "$S5" | grep -a 'Command line' | head -2)"
+V=$(echo "$S5" | grep -ao 'aurstage-report v1 verdict=restore[a-z-]*' | head -1)
+[ "$V" = "aurstage-report v1 verdict=restore-stale" ] \
+  && ok "...which refused it as stale, and did not run" \
+  || bad "...which refused it as stale, and did not run" "${V:-no report}" \
+         "$(echo "$S5" | grep -a 'aurstage' | tail -5)"
+[ "$(md5sum "$WIN" | cut -d' ' -f1)" = "$WIN_BEFORE" ] \
+  && ok "...and changed nothing on Windows' disk" || bad "...and changed nothing on Windows' disk"
+GL=$(grubenv_list)
+case "$GL" in *next_entry=put*|*auros_asked=[0-9]*) bad "...and the request is used up" "$GL" ;;
+    *) ok "...and the request is used up" ;; esac
+echo
+echo "  boot 6: the start after that"
+python3 "$E" "$NV" set-next 0002 >/dev/null
+power_on none
+S6=$(tr -d '\r' < "$T/serial.6")
+echo "$S6" | grep -aq 'aurstage.restore' \
+  && bad "it does not go to the restore" "$(echo "$S6" | grep -a 'Command line' | head -2)" \
+  || ok "it does not go to the restore"
+L=$(e2e_log)
+case "$L" in *"6 up mode=none"*) ok "...it starts AurOS" ;;
+    *) bad "...it starts AurOS" "$(echo "$L" | tail -3)" ;; esac
+
 echo
 if [ "$fail" -gt 0 ]; then echo "$fail of $checked wrong."; exit 1; fi
 echo "$checked checks: the button in AurOS restarts into the restore, once,"
-echo "through AurOS's own menu, with Secure Boot on."
+echo "through AurOS's own menu, with Secure Boot on; and a request three"
+echo "weeks old is refused, with nothing changed."
 exit 0

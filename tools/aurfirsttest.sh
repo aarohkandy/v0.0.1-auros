@@ -623,11 +623,13 @@ pb() { # -> the result file's contents
     AUROS_ANSWER_OUT="$AO" AUROS_STATE="$TMP/state2" \
     AUROS_BIN="$TMP/bin" AUROS_LOG="$TMP/answer.log" \
     AF_RUN_USER="$AR" AUROS_GRUBENV="$GE" AUROS_ESP_ROOTS="$ESP" \
-    AUROS_REBOOT="touch $TMP/rebooted" AUROS_REBOOT_DELAY=0 \
+    AUROS_REBOOT="touch $TMP/rebooted" AUROS_REBOOT_DELAY=0 AUROS_RTC="$TMP/rtc" \
         sh rootfs/usr/lib/auros/answer.sh >/dev/null 2>&1
     cat "$AO/result" 2>/dev/null
 }
+echo 1792310400 > "$TMP/rtc"
 next_entry() { sed -n 's/^next_entry=//p' "$GE" 2>/dev/null; }
+asked() { sed -n 's/^auros_asked=//p' "$GE" 2>/dev/null; }
 empty_env() { { printf '# GRUB Environment Block\n'; head -c 999 /dev/zero | tr '\0' '#'; } > "$GE"; }
 
 # A converted machine whose person said "it does not work": Windows is
@@ -657,10 +659,14 @@ esac
 [ "$(next_entry)" = "put-windows-back>put-windows-back-yes" ] \
   && ok "...the menu will take the restore entry, by its id" \
   || bad "...the menu will take the restore entry, by its id" "next_entry='$(next_entry)'"
+[ "$(asked)" = 1792310400 ] \
+  && ok "...and says when it was asked, by the hardware clock" \
+  || bad "...and says when it was asked, by the hardware clock" "auros_asked='$(asked)'"
 [ "$(wc -c < "$GE")" = 1024 ] && ok "...in a block of exactly 1024 bytes" \
   || bad "...in a block of exactly 1024 bytes" "$(wc -c < "$GE") bytes"
 if command -v grub-editenv >/dev/null 2>&1; then
-    [ "$(grub-editenv "$GE" list 2>/dev/null)" = "next_entry=put-windows-back>put-windows-back-yes" ] \
+    [ "$(grub-editenv "$GE" list 2>/dev/null)" = "next_entry=put-windows-back>put-windows-back-yes
+auros_asked=1792310400" ] \
       && ok "...which grub's own tool reads back the same" \
       || bad "...which grub's own tool reads back the same" "$(grub-editenv "$GE" list 2>&1)"
 else
@@ -672,6 +678,20 @@ fi
 [ "$(read_order)" = "0000" ] && ok "...without touching BootOrder" \
   || bad "...without touching BootOrder" "BootOrder=$(read_order)"
 [ -f "$TMP/rebooted" ] && ok "...and then it restarts" || bad "...and then it restarts"
+
+# 2b. The clock cannot be read: a request that cannot say when it was
+#     made is one the restore could not tell from a stale one.
+empty_env; rm -f "$TMP/rebooted"
+mv "$TMP/rtc" "$TMP/rtc.away"
+R=$(pb)
+mv "$TMP/rtc.away" "$TMP/rtc"
+case "$R" in
+  *"result=failed"*"clock"*) ok "with no clock to read, it refuses and says why" ;;
+  *) bad "with no clock to read, it refuses and says why" "$(echo "$R" | tr '\n' ' ')" ;;
+esac
+[ -z "$(next_entry)" ] && [ ! -f "$TMP/rebooted" ] \
+  && ok "...and arranges nothing, and does not restart" \
+  || bad "...and arranges nothing, and does not restart" "next_entry='$(next_entry)'"
 
 # 3. The firmware will not take BootNext (no entry of ours): what was
 #    already written to the menu is taken back.

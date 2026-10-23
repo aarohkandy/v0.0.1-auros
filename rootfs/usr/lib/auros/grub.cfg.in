@@ -33,25 +33,37 @@ terminal_output console serial
 # start. aurstage_extra is for tools/putbacktest.sh and nothing else:
 # it adds a serial console to the restore so the test can read it.
 if [ -s ($root)/boot/grub/grubenv ]; then
-  load_env --file ($root)/boot/grub/grubenv next_entry aurstage_extra
+  load_env --file ($root)/boot/grub/grubenv next_entry auros_asked aurstage_extra
   export aurstage_extra
 fi
 @FALLBACK@
+# A REQUEST THAT SAYS WHEN IT WAS MADE, AND ONLY THAT. answer.sh writes
+# the hardware clock's reading beside next_entry as auros_asked; it goes
+# to the restore as aurstage.asked=, and the restore will not run one
+# more than an hour old (src/aurstage/main.c). grub has no clock, and a
+# next_entry the firmware never acted on -- it started Windows instead
+# -- would otherwise remove AurOS weeks later at whatever start next
+# reached this menu. A next_entry WITHOUT a time is not ours to trust
+# and is dropped. Chosen by hand from the menu, the restore gets an
+# empty aurstage.asked=: somebody at the keyboard now is fresh.
 if [ "${next_entry}" ]; then
-  set default="${next_entry}"
-  # No fallback for this one start: if the restore cannot be started,
-  # starting AurOS instead -- silently, with next_entry already used
-  # up -- would leave the person who asked for Windows back in AurOS
-  # with no idea why. The menu stays up instead.
-  unset fallback
+  if [ "${auros_asked}" ]; then
+    set default="${next_entry}"
+    # No fallback for this one start: if the restore cannot be started,
+    # starting AurOS instead -- silently, with next_entry already used
+    # up -- would leave the person who asked for Windows back in AurOS
+    # with no idea why. The menu stays up instead.
+    unset fallback
+    # TEN SECONDS WITH IT ON SCREEN, not three: a visible moment to
+    # press a key and choose otherwise.
+    set timeout=10
+    set timeout_style=menu
+  fi
+  set auros_req="${auros_asked}"
+  export auros_req
   set next_entry=
-  save_env --file ($root)/boot/grub/grubenv next_entry
-  # TEN SECONDS WITH IT ON SCREEN, not three. The only next_entry
-  # anything writes is the restore, and it removes AurOS; a person who
-  # did not mean it -- or meant it weeks ago and then started Windows
-  # instead -- gets a visible moment to press a key and choose otherwise.
-  set timeout=10
-  set timeout_style=menu
+  set auros_asked=
+  save_env --file ($root)/boot/grub/grubenv next_entry auros_asked
 fi
 
 # THE KERNEL'S OWN HARDENING, on every AurOS line below and on the
@@ -134,7 +146,7 @@ submenu 'Put Windows back (remove AurOS)' --class windows --id put-windows-back 
         insmod part_gpt
         insmod fat
         search --no-floppy --file --set=root /EFI/AurOS/staging.efi
-        linux  /EFI/AurOS/staging.efi aurstage.restore console=tty0 ${aurstage_extra}
+        linux  /EFI/AurOS/staging.efi aurstage.restore aurstage.asked=${auros_req} console=tty0 ${aurstage_extra}
         initrd /EFI/AurOS/staging.img
     }
 }

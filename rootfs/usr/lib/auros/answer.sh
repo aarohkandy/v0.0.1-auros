@@ -40,6 +40,9 @@ LOG=${AUROS_LOG:-/var/log/auros-answer.log}
 RES="$OUT/result"
 GRUBENV=${AUROS_GRUBENV:-/boot/grub/grubenv}
 REBOOT=${AUROS_REBOOT:-systemctl --no-block reboot}
+# The hardware clock, as UTC seconds: the reading the restore compares
+# its own with (src/aurstage/main.c, restore_must_be_fresh).
+RTC=${AUROS_RTC:-/sys/class/rtc/rtc0/since_epoch}
 # The one entry "Put Windows back" restarts into: the "Yes" inside the
 # submenu build/mkimage writes, by id.
 PUTBACK_ENTRY='put-windows-back>put-windows-back-yes'
@@ -63,10 +66,10 @@ say() { printf '%s\n' "$*" >> "$RES.new"; }
 # written beside and moved over, so a power cut leaves the old block or
 # the new one and never half of each. Written here rather than with
 # grub-editenv so that the one thing this depends on is sh.
-grubenv_put() { # [key=value]
+grubenv_put() { # [key=value ...]
     t="$GRUBENV.new"
     { printf '# GRUB Environment Block\n'
-      if [ -n "${1:-}" ]; then printf '%s\n' "$1"; fi
+      for kv in "$@"; do printf '%s\n' "$kv"; done
     } > "$t" || return 1
     have=$(wc -c < "$t")
     [ "$have" -le 1024 ] || { rm -f "$t"; return 1; }
@@ -186,10 +189,19 @@ case "$word" in
     # restarts. Each step that fails takes the ones before it back: a
     # next_entry left behind would remove AurOS on some later start
     # nobody asked for.
+    # WHEN SHE ASKED, written beside the request. The restore runs only
+    # if it starts within the hour (src/aurstage/main.c): a request the
+    # firmware did not act on -- it started Windows instead -- must not
+    # remove AurOS at whatever later start next reaches this menu.
+    asked=$(cat "$RTC" 2>/dev/null)
+    case "$asked" in ''|*[!0-9]*) asked= ;; esac
     if ! staging_present; then
         say "result=failed"
         say "note=the files that put Windows back are not on this computer any more"
-    elif ! grubenv_put "next_entry=$PUTBACK_ENTRY"; then
+    elif [ -z "$asked" ]; then
+        say "result=failed"
+        say "note=AurOS could not read this computer's clock"
+    elif ! grubenv_put "next_entry=$PUTBACK_ENTRY" "auros_asked=$asked"; then
         say "result=failed"
         say "note=AurOS could not set its start-up menu"
     elif ! "$BIN/aurfirst" putback 2>&1; then

@@ -516,6 +516,46 @@ static void dry_run(const stage_machine *m)
 
 /* A staging environment that fails has to stop in a way a person can
  * describe over the telephone. Not a panic, not a reboot loop. */
+/* A RESTORE MUST BE ASKED FOR NOW, NOT WEEKS AGO.
+ *
+ * "Put Windows back" in AurOS writes, in grub's environment block, the
+ * restore entry for the next start AND the hardware clock's reading at
+ * that moment (rootfs/usr/lib/auros/answer.sh); grub hands the reading
+ * on as aurstage.asked=. If the firmware ignored the restart it was
+ * asked for and started Windows instead, the request sat there until
+ * somebody next started AurOS -- and then removed AurOS, unasked, weeks
+ * later. grub has no clock to tell; this program does.
+ *
+ * Both readings are the same hardware clock read the same way (as UTC
+ * seconds), so a PC that keeps local time is not a problem. A request
+ * from the future, or more than an hour old, is not run: nothing is
+ * changed and the PC restarts into whatever it starts by default.
+ * No aurstage.asked, or an empty one, is the restore chosen by hand in
+ * the start-up menu a moment ago, which is as fresh as a request gets. */
+#define RESTORE_FRESH_S   (60 * 60)
+#define RESTORE_FUTURE_S  (10 * 60)
+static void restore_must_be_fresh(void)
+{
+    char v[32];
+    if (stage_cmdline_value("aurstage.asked=", v, sizeof v) != 0) return;
+    char *end = NULL;
+    long long asked = strtoll(v, &end, 10);
+    long long now = (long long)time(NULL);
+    if (end && *end == 0 && asked > 0 && now > 0 &&
+        now + RESTORE_FUTURE_S >= asked && now - asked <= RESTORE_FRESH_S)
+        return;
+    stage_say("%s", "");
+    stage_say("Putting Windows back was asked for a while ago, not just now,");
+    stage_say("so nothing has been changed. This computer will restart by");
+    stage_say("itself in a moment.");
+    stage_say("aurstage-report v1 verdict=restore-stale record=none "
+              "asked=%s now=%lld", v, now);
+    sync();
+    sleep(10);
+    reboot(RB_AUTOBOOT);
+    for (;;) pause();
+}
+
 static void stop_here(const char *why)
 {
     stage_warn("%s", why);
@@ -606,6 +646,7 @@ int main(void)
      * a machine arriving here with both flags set is a machine
      * somebody is trying to rescue, and the rescue wins. */
     if (stage_cmdline_has("aurstage.restore")) {
+        restore_must_be_fresh();
         restore_run(&m);
         stop_here("the restore stopped unexpectedly");
     }
