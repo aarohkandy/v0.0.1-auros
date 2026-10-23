@@ -22,6 +22,7 @@ on:
       - 'src/aurstage/gpt.*'
       - 'src/aurstage/journal.*'
       - 'tools/fuzz/**'
+      - 'tools/wltest-sub.*'
       - 'tools/checksec.sh'
       - 'build/cflags'
       - '.github/workflows/fuzz.yml'
@@ -47,5 +48,9 @@ jobs:
           done
       - name: fuzz regressions (ASan + UBSan)
         run: sh tools/fuzz/regress.sh "$RUNNER_TEMP/fuzz"
+      # Stream WL: subsurfaces composited into the window, byte for byte, and
+      # the pointer routed through them (the Firefox-is-blank bug).
+      - name: wltest-sub (subsurfaces, ASan + UBSan)
+        run: sh tools/wltest-sub.sh -asan
       - name: hardening gate selftest
         run: sh tools/checksec.sh --selftest

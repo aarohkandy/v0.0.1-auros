@@ -109,6 +109,13 @@ static const char *role_name(int r)
     }
 }
 
+/* A half-open rectangle, x0 <= x < x1. Everywhere damage is tracked. */
+typedef struct { int x0, y0, x1, y1; } irect;
+
+/* wl_surface.set_input_region, as far as we keep it: the whole surface,
+ * nothing at all (a click falls through to what is behind), or one box. */
+enum { IN_ALL = 0, IN_NONE, IN_BOX };
+
 /* The half of wl_surface state that is double-buffered. Wayland's
  * central promise is that a frame is atomic: everything between two
  * commits lands together or not at all. Getting this wrong produces
@@ -123,6 +130,9 @@ typedef struct {
     int                 transform;
     /* viewporter */
     int                 vp_dst_w, vp_dst_h;
+    int                 vp_src_set, vp_sx, vp_sy, vp_sw, vp_sh;  /* buffer px */
+    /* input region */
+    int                 in_kind, in_x0, in_y0, in_x1, in_y1;
 } surf_state;
 
 struct aurwl_win {
@@ -158,6 +168,7 @@ struct aurwl_win {
     int                 role;
     int                 mapped;
     int                 dead;
+    int                 opaque_fmt;   /* the last buffer was XRGB: every pixel opaque */
 
     /* xdg */
     struct wl_resource *xdg_surface;
@@ -187,13 +198,47 @@ struct aurwl_win {
     int                 px, py;
     struct aurwl_win   *parent;
 
-    /* subsurface */
+    /* SUBSURFACES.
+     *
+     * A toplevel is not one buffer but a tree of them: Firefox draws its
+     * frame into the toplevel and the whole page into a wl_subsurface;
+     * Chromium puts video in one, GTK4 and Qt put popups and video in
+     * them. Each surface keeps its own pixels (`store`); the tree is
+     * flattened into `flat` when the shell asks for the window's content.
+     *
+     * Stacking is wayland.xml's: a parent keeps one ordered list of its
+     * children AND ITSELF, bottom to top, so "below the parent" is a
+     * place in the list rather than a special case. There are two such
+     * lists because place_above/place_below and set_position are state of
+     * the PARENT, double-buffered: they take effect when the parent's own
+     * state is applied. `sub_pend` is what the requests edit; `sub_cur` is
+     * what is drawn and hit-tested. */
     struct wl_resource *subsurface;
-    int                 sub_x, sub_y;
-    int                 sub_sync;
-    int                 sub_cached;         /* a synced commit is waiting */
+    int                 sub_x, sub_y;           /* applied; parent coordinates */
+    int                 sub_px, sub_py;         /* requested; applied with the parent */
+    int                 sub_sync;               /* this one's own mode        */
+    /* A synchronized commit's state waits here until the parent's state
+     * is applied (wayland.xml, wl_subsurface). It is a snapshot taken AT
+     * the commit: attach, damage and the like made afterwards belong to
+     * the next one, and `pending` goes on collecting them. */
+    surf_state          cached;
+    int                 has_cache;
+    struct wl_listener  cbuf_gone;
+    struct wl_resource *cbuf_listening;
+    struct wl_list      sub_pend, sub_cur;      /* the stack, bottom first    */
+    struct wl_list      self_pend, self_cur;    /* where THIS surface sits in it */
+    struct wl_list      pend_link, cur_link;    /* this one, in its parent's  */
 
-    struct wl_list      children;            /* subsurfaces, by link     */
+    /* The flattened window: this surface and everything stacked on it,
+     * in the surface's own pixels. Only a root has one, and only while
+     * it has a visible subsurface -- a plain window is shown straight
+     * from `store`, as it always was. Recomposed lazily, and only the
+     * part that changed. */
+    surface            *flat;
+    irect               fdirty;
+    int                 has_fdirty, fdirty_all;
+
+    struct wl_list      children;            /* popups, by child_link    */
     struct wl_list      child_link;
     struct wl_list      link;                /* c->surfaces              */
 };
@@ -230,7 +275,12 @@ struct aurwl {
     size_t              keymap_size;
 
     aurwl_win          *focus;        /* keyboard                        */
-    aurwl_win          *ptr_focus;    /* pointer                         */
+    aurwl_win          *ptr_focus;    /* pointer: the window (a root)    */
+    /* The SURFACE the pointer is on -- the window itself, or one of the
+     * subsurfaces stacked on it. This is the one that was sent
+     * wl_pointer.enter and the one that gets motion and buttons. */
+    aurwl_win          *ptr_surf;
+    int                 btns_down;    /* for the implicit grab           */
     int                 ptr_x, ptr_y; /* surface-local, last sent        */
 
     /* clipboard: the one data source currently offered as the selection */
@@ -406,7 +456,11 @@ static void viewport_destroy(struct wl_client *cl, struct wl_resource *r)
 {
     (void)cl;
     aurwl_win *w = wl_resource_get_user_data(r);
-    if (w && w->viewport == r) { w->pending.vp_dst_w = w->pending.vp_dst_h = 0; w->viewport = NULL; }
+    if (w && w->viewport == r) {
+        w->pending.vp_dst_w = w->pending.vp_dst_h = 0;
+        w->pending.vp_src_set = 0;
+        w->viewport = NULL;
+    }
     wl_resource_destroy(r);
 }
 static void viewport_gone(struct wl_resource *r)
@@ -414,17 +468,47 @@ static void viewport_gone(struct wl_resource *r)
     aurwl_win *w = wl_resource_get_user_data(r);
     if (w && w->viewport == r) w->viewport = NULL;
 }
-/* Not implemented, and it says so rather than pretending. A source
- * rectangle crops the buffer before scaling; nothing this desktop
- * runs uses one. What it must NOT do is stay silent after the surface
- * has gone, which the protocol makes an error. */
+/* 24.8 fixed to whole pixels, rounding up, without overflowing: both
+ * numbers are the client's. */
+static int fixed_ceil(wl_fixed_t f)
+{
+    int64_t v = ((int64_t)f + 255) >> 8;
+    return v > MAX_DIM ? MAX_DIM : (v < 1 ? 1 : (int)v);
+}
+
+/* The source rectangle crops the buffer before it is scaled -- Chromium
+ * and mpv use it to hide the padding rows a video decoder adds. It is
+ * kept in whole buffer pixels (the fraction is dropped: a video frame is
+ * never cropped to half a pixel on purpose) and applied only where we
+ * scale at all, which is when a subsurface is composited.
+ *
+ * (-1,-1,-1,-1) forgets it. Anything else with a negative origin or a
+ * non-positive size is bad_value, and after the surface has gone every
+ * request is no_surface. */
 static void viewport_set_source(struct wl_client *cl, struct wl_resource *r,
                                 wl_fixed_t x, wl_fixed_t y, wl_fixed_t w, wl_fixed_t h)
 {
-    (void)cl; (void)x; (void)y; (void)w; (void)h;
-    if (!wl_resource_get_user_data(r))
+    (void)cl;
+    aurwl_win *s = wl_resource_get_user_data(r);
+    if (!s) {
         wl_resource_post_error(r, WP_VIEWPORT_ERROR_NO_SURFACE,
                                "the surface this viewport belongs to is gone");
+        return;
+    }
+    const wl_fixed_t m1 = wl_fixed_from_int(-1);
+    if (x == m1 && y == m1 && w == m1 && h == m1) { s->pending.vp_src_set = 0; return; }
+    if (x < 0 || y < 0 || w <= 0 || h <= 0) {
+        wl_resource_post_error(r, WP_VIEWPORT_ERROR_BAD_VALUE,
+                               "source rectangle is not a rectangle");
+        return;
+    }
+    /* Clamped: a fixed-point 24.8 value is at most 2^23, far past any
+     * buffer we accept, and everything downstream is bounded by MAX_DIM. */
+    s->pending.vp_src_set = 1;
+    s->pending.vp_sx = clampi(wl_fixed_to_int(x), 0, MAX_DIM);
+    s->pending.vp_sy = clampi(wl_fixed_to_int(y), 0, MAX_DIM);
+    s->pending.vp_sw = fixed_ceil(w);
+    s->pending.vp_sh = fixed_ceil(h);
 }
 /* SIX REQUESTS USED TO FREEZE THE WHOLE MACHINE.
  *
@@ -496,9 +580,15 @@ static const struct wp_viewport_interface viewport_impl = {
 /* Copy the damaged rows of a freshly committed shm buffer into our own
  * store. Returns 0 if the buffer was unusable, in which case the caller
  * still releases it -- refusing to copy is not a reason to strand a
- * client waiting for its buffer back. */
-static int take_buffer(aurwl_win *w, struct wl_resource *buf)
+ * client waiting for its buffer back.
+ *
+ * `copied` is the rectangle of the store that was rewritten (buffer
+ * pixels), and `resized` says the store is a different size from before
+ * (or new): the flattened window needs that to repaint only what moved. */
+static int take_buffer(aurwl_win *w, struct wl_resource *buf, irect *copied, int *resized)
 {
+    *copied = (irect){0, 0, 0, 0};
+    *resized = 0;
     struct wl_shm_buffer *shm = wl_shm_buffer_get(buf);
     if (!shm) {
         /* No dmabuf support: a client that somehow got a non-shm buffer
@@ -524,8 +614,10 @@ static int take_buffer(aurwl_win *w, struct wl_resource *buf)
         w->store = surface_new(bw, bh);
         if (!w->store) return 0;
         full = 1;                       /* a new store has no old pixels */
+        *resized = 1;
     }
     w->cw = bw; w->ch = bh;
+    w->opaque_fmt = (fmt == WL_SHM_FORMAT_XRGB8888);
 
     int x0 = 0, y0 = 0, x1 = bw, y1 = bh;
     if (!full && w->current.has_damage) {
@@ -535,6 +627,7 @@ static int take_buffer(aurwl_win *w, struct wl_resource *buf)
         y1 = clampi(w->current.dmg_y1, 0, bh);
     }
     if (x1 <= x0 || y1 <= y0) return 1;  /* committed with nothing new */
+    *copied = (irect){ x0, y0, x1, y1 };
 
     /* begin_access installs libwayland's SIGBUS handler, so a client
      * that truncates the shm file under us fails the copy instead of
@@ -605,10 +698,308 @@ static void logical_size(const aurwl_win *w, int *lw, int *lh)
     if (lh) *lh = bh > 0 ? bh : 1;
 }
 
+/* ── the subsurface tree ────────────────────────────────────────── */
+
+/* Total pixels one flattened window may take: 128 MiB. A 4K screen is
+ * 8 million. Past this the window is shown without its subsurfaces
+ * rather than allocating whatever a client asked for. */
+#define FLAT_MAX_PIXELS (32 * 1024 * 1024)
+
+/* A list node that is always safe to remove again. */
+static void unlink_init(struct wl_list *n) { wl_list_remove(n); wl_list_init(n); }
+
+/* The surface at the top of this one's chain of parents: the toplevel or
+ * popup the shell actually shows. */
+static aurwl_win *root_of(aurwl_win *w)
+{
+    for (int i = 0; w && w->role == ROLE_SUBSURFACE && w->parent; i++) {
+        if (i > PARENT_MAX) return NULL;
+        w = w->parent;
+    }
+    return w;
+}
+
+/* wayland.xml, wl_subsurface: a surface behaves as synchronized if it is
+ * set to, OR if its parent does -- "even if it is set to desynchronized,
+ * a parent sub-surface may override it". So the question is asked of the
+ * whole chain. */
+static int eff_sync(const aurwl_win *w)
+{
+    for (int i = 0; w && w->role == ROLE_SUBSURFACE && w->parent; w = w->parent) {
+        if (w->sub_sync) return 1;
+        if (++i > PARENT_MAX) return 1;
+    }
+    return 0;
+}
+
+/* The surface's size in ITS OWN coordinates: what set_position and the
+ * pointer are measured in. A viewport destination wins, then a source
+ * rectangle with no destination, else the buffer divided by its scale.
+ * (aurwl_win_logical_size() is a different question -- it also knows
+ * the window geometry, which only a toplevel has.) */
+static void surf_lsize(const aurwl_win *w, int *lw, int *lh)
+{
+    const surf_state *c = &w->current;
+    int x = w->cw, y = w->ch;
+    if (c->vp_dst_w > 0 && c->vp_dst_h > 0) { x = c->vp_dst_w; y = c->vp_dst_h; }
+    else if (c->vp_src_set)                 { x = c->vp_sw;    y = c->vp_sh; }
+    else {
+        int sc = c->scale < 1 ? 1 : c->scale;
+        x = (x + sc - 1) / sc; y = (y + sc - 1) / sc;
+    }
+    *lw = x > 0 ? x : 0; *lh = y > 0 ? y : 0;
+}
+
+/* How many flattened pixels are one unit of surface coordinates. 1,
+ * unless the toplevel itself uses a buffer scale and no viewport. */
+static int root_k(const aurwl_win *r)
+{
+    const surf_state *c = &r->current;
+    if ((c->vp_dst_w > 0 && c->vp_dst_h > 0) || c->vp_src_set) return 1;
+    return c->scale < 1 ? 1 : c->scale;
+}
+
+static int flat_dims(const aurwl_win *r, int *fw, int *fh)
+{
+    int lw, lh; surf_lsize(r, &lw, &lh);
+    int64_t k = root_k(r), w = lw * k, h = lh * k;
+    if (w <= 0 || h <= 0 || w > MAX_DIM * k || h > MAX_DIM * k || w * h > FLAT_MAX_PIXELS)
+        return 0;
+    *fw = (int)w; *fh = (int)h;
+    return 1;
+}
+
+/* ── which part of the flattened window is stale ─────────────────── */
+/* One rectangle, grown to cover everything reported. A caret blinking in
+ * the page is a few hundred pixels; a video overlay moving is the whole
+ * window. Two rectangles would repaint less in the rare case where both
+ * happen at once, and cost a list on every commit of every frame. */
+static void dirty_add(aurwl_win *r, int64_t x0, int64_t y0, int64_t x1, int64_t y1)
+{
+    if (r->fdirty_all) return;
+    const int64_t B = (int64_t)1 << 30;      /* keep every sum inside int */
+    if (x0 < -B) x0 = -B;
+    if (y0 < -B) y0 = -B;
+    if (x1 > B) x1 = B;
+    if (y1 > B) y1 = B;
+    if (x1 <= x0 || y1 <= y0) return;
+    if (!r->has_fdirty) {
+        r->fdirty = (irect){ (int)x0, (int)y0, (int)x1, (int)y1 };
+        r->has_fdirty = 1;
+        return;
+    }
+    if (x0 < r->fdirty.x0) r->fdirty.x0 = (int)x0;
+    if (y0 < r->fdirty.y0) r->fdirty.y0 = (int)y0;
+    if (x1 > r->fdirty.x1) r->fdirty.x1 = (int)x1;
+    if (y1 > r->fdirty.y1) r->fdirty.y1 = (int)y1;
+}
+
+/* Something about the stack changed shape (a surface came, went, moved,
+ * was restacked, resized): repaint the whole window. These are rare next
+ * to content damage, and working out the exact union of old and new
+ * rectangles for a restack is where the bugs would be. */
+static void dirty_all(aurwl_win *w)
+{
+    aurwl_win *r = root_of(w);
+    if (r) r->fdirty_all = 1;
+}
+
+/* A surface's own damage. `buf` is in its buffer's pixels, or NULL for
+ * all of it. Mapped through the surface's position and, if the buffer is
+ * being scaled to a different size, widened to the whole surface. */
+static void dirty_surface(aurwl_win *w, const irect *buf)
+{
+    aurwl_win *r = root_of(w);
+    if (!r || r->fdirty_all) return;
+    int ax = 0, ay = 0, i = 0;
+    for (const aurwl_win *a = w; a->role == ROLE_SUBSURFACE && a->parent; a = a->parent) {
+        ax += a->sub_x; ay += a->sub_y;
+        if (++i > PARENT_MAX) { r->fdirty_all = 1; return; }
+    }
+    int64_t k = root_k(r);
+    int lw, lh; surf_lsize(w, &lw, &lh);
+    int64_t dw = lw * k, dh = lh * k, ox = ax * k, oy = ay * k;
+    if (buf && dw == w->cw && dh == w->ch && !w->current.vp_src_set)
+        dirty_add(r, ox + buf->x0, oy + buf->y0, ox + buf->x1, oy + buf->y1);
+    else
+        dirty_add(r, ox, oy, ox + dw, oy + dh);
+}
+
+/* ── compositing ─────────────────────────────────────────────────── */
+
+/* v * a / 255, rounded. */
+static inline uint32_t mul255(uint32_t v, uint32_t a)
+{ uint32_t t = v * a + 128; return (t + (t >> 8)) >> 8; }
+
+/* Source over destination, both premultiplied ARGB -- what wl_shm hands
+ * us and what the store holds. Each channel is s + d * (255 - sa) / 255,
+ * so alpha composites the same way colour does. */
+static inline uint32_t over_px(uint32_t d, uint32_t s)
+{
+    uint32_t sa = s >> 24;
+    if (sa == 255) return s;
+    if (sa == 0)   return d;
+    uint32_t ia = 255 - sa, out = 0;
+    for (int sh = 0; sh < 32; sh += 8) {
+        uint32_t v = mul255((d >> sh) & 255, ia) + ((s >> sh) & 255);
+        out |= (v > 255 ? 255 : v) << sh;
+    }
+    return out;
+}
+
+/* Put the `sr` part of `src` on the dw x dh rectangle at (dx,dy) of
+ * `dst`, inside `clip` only. The same size is a straight copy per row;
+ * a different size (a viewport) is nearest-neighbour, sampled at pixel
+ * centres. Nearest, because this runs on the CPU of a 2013 laptop for
+ * every damaged pixel of a video, and the shell's own bilinear pass
+ * still runs once over the result. */
+static void blit_over(surface *dst, const irect *clip,
+                      int64_t dx, int64_t dy, int64_t dw, int64_t dh,
+                      const surface *src, irect sr, int opaque)
+{
+    int64_t x0 = dx > clip->x0 ? dx : clip->x0;
+    int64_t y0 = dy > clip->y0 ? dy : clip->y0;
+    int64_t x1 = dx + dw < clip->x1 ? dx + dw : clip->x1;
+    int64_t y1 = dy + dh < clip->y1 ? dy + dh : clip->y1;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > dst->w) x1 = dst->w;
+    if (y1 > dst->h) y1 = dst->h;
+    int64_t srw = sr.x1 - sr.x0, srh = sr.y1 - sr.y0;
+    if (x0 >= x1 || y0 >= y1 || srw <= 0 || srh <= 0 || dw <= 0 || dh <= 0) return;
+
+    int same = (dw == srw && dh == srh);
+    for (int64_t y = y0; y < y1; y++) {
+        int64_t sy = sr.y0 + (same ? y - dy : ((2 * (y - dy) + 1) * srh) / (2 * dh));
+        const uint32_t *srow = src->px + (size_t)sy * src->stride;
+        uint32_t *drow = dst->px + (size_t)y * dst->stride;
+        if (same) {
+            const uint32_t *sp = srow + sr.x0 + (x0 - dx);
+            if (opaque) memcpy(drow + x0, sp, (size_t)(x1 - x0) * 4);
+            else for (int64_t x = x0; x < x1; x++) drow[x] = over_px(drow[x], sp[x - x0]);
+        } else {
+            for (int64_t x = x0; x < x1; x++) {
+                int64_t sx = sr.x0 + ((2 * (x - dx) + 1) * srw) / (2 * dw);
+                drow[x] = over_px(drow[x], srow[sx]);
+            }
+        }
+    }
+}
+
+/* Paint `s` and everything stacked with it, bottom to top. The surface
+ * itself is one entry in its own stack, so a child placed below it is
+ * painted first and shows through wherever the surface is transparent. */
+static void compose_node(aurwl_win *s, int64_t ox, int64_t oy, int64_t k,
+                         surface *flat, const irect *clip, int depth)
+{
+    /* No buffer means not mapped, and a surface that is not mapped takes
+     * everything stacked on it out of sight with it. */
+    if (depth > PARENT_MAX || !s->store) return;
+    for (struct wl_list *n = s->sub_cur.next; n != &s->sub_cur; n = n->next) {
+        if (n == &s->self_cur) {
+            int lw, lh; surf_lsize(s, &lw, &lh);
+            irect sr = { 0, 0, s->store->w, s->store->h };
+            if (s->current.vp_src_set) {
+                irect q = { s->current.vp_sx, s->current.vp_sy,
+                            s->current.vp_sx + s->current.vp_sw,
+                            s->current.vp_sy + s->current.vp_sh };
+                if (q.x1 > sr.x1) q.x1 = sr.x1;
+                if (q.y1 > sr.y1) q.y1 = sr.y1;
+                if (q.x0 < q.x1 && q.y0 < q.y1) sr = q;
+            }
+            blit_over(flat, clip, ox, oy, lw * k, lh * k, s->store, sr, s->opaque_fmt);
+        } else {
+            aurwl_win *ch = wl_container_of(n, ch, cur_link);
+            compose_node(ch, ox + (int64_t)ch->sub_x * k, oy + (int64_t)ch->sub_y * k,
+                         k, flat, clip, depth + 1);
+        }
+    }
+}
+
+static int has_visible_sub(const aurwl_win *r)
+{
+    for (const struct wl_list *n = r->sub_cur.next; n != &r->sub_cur; n = n->next) {
+        if (n == &r->self_cur) continue;
+        const aurwl_win *ch = wl_container_of(n, ch, cur_link);
+        if (ch->store) return 1;
+    }
+    return 0;
+}
+
+/* The window as one picture, or NULL when it IS one picture (no visible
+ * subsurface) and `store` should be shown directly. Brings the picture up
+ * to date first -- only the rectangle that changed since the last call. */
+static surface *flat_get(aurwl_win *r)
+{
+    int fw, fh;
+    if (r->role == ROLE_SUBSURFACE || !r->store || !has_visible_sub(r) ||
+        !flat_dims(r, &fw, &fh)) {
+        if (r->flat) { surface_free(r->flat); r->flat = NULL; }
+        r->fdirty_all = 1;          /* nothing kept up to date meanwhile */
+        return NULL;
+    }
+    if (!r->flat || r->flat->w != fw || r->flat->h != fh) {
+        if (r->flat) surface_free(r->flat);
+        r->flat = surface_new(fw, fh);
+        if (!r->flat) return NULL;
+        r->fdirty_all = 1;
+    }
+    if (!r->fdirty_all && !r->has_fdirty) return r->flat;
+
+    irect clip = r->fdirty_all ? (irect){ 0, 0, fw, fh } : r->fdirty;
+    if (clip.x0 < 0) clip.x0 = 0;
+    if (clip.y0 < 0) clip.y0 = 0;
+    if (clip.x1 > fw) clip.x1 = fw;
+    if (clip.y1 > fh) clip.y1 = fh;
+    if (clip.x0 < clip.x1 && clip.y0 < clip.y1) {
+        for (int y = clip.y0; y < clip.y1; y++)
+            memset(r->flat->px + (size_t)y * r->flat->stride + clip.x0, 0,
+                   (size_t)(clip.x1 - clip.x0) * 4);
+        compose_node(r, 0, 0, root_k(r), r->flat, &clip, 0);
+    }
+    r->fdirty_all = r->has_fdirty = 0;
+    return r->flat;
+}
+
+/* ── which surface is under a point ──────────────────────────────── */
+
+static int in_input(const aurwl_win *s, int x, int y)
+{
+    int lw, lh; surf_lsize(s, &lw, &lh);
+    if (x < 0 || y < 0 || x >= lw || y >= lh) return 0;
+    const surf_state *c = &s->current;
+    switch (c->in_kind) {
+    case IN_NONE: return 0;
+    case IN_BOX:  return x >= c->in_x0 && x < c->in_x1 && y >= c->in_y0 && y < c->in_y1;
+    default:      return 1;
+    }
+}
+
+/* The topmost surface in `s`'s tree that takes input at (x,y), given in
+ * `s`'s coordinates; *lx,*ly come back in that surface's own. Top down,
+ * so what is drawn on top is what is clicked. A surface with an empty
+ * input region is transparent to the pointer, which is how an overlay
+ * lets clicks through to the page under it. */
+static aurwl_win *pick(aurwl_win *s, int x, int y, int *lx, int *ly, int depth)
+{
+    if (depth > PARENT_MAX || !s->store) return NULL;
+    for (struct wl_list *n = s->sub_cur.prev; n != &s->sub_cur; n = n->prev) {
+        if (n == &s->self_cur) {
+            if (in_input(s, x, y)) { *lx = x; *ly = y; return s; }
+            continue;
+        }
+        aurwl_win *ch = wl_container_of(n, ch, cur_link);
+        aurwl_win *hit = pick(ch, x - ch->sub_x, y - ch->sub_y, lx, ly, depth + 1);
+        if (hit) return hit;
+    }
+    return NULL;
+}
+
 /* ── wl_surface ─────────────────────────────────────────────────── */
 
 static void surface_map(aurwl_win *w);
 static void surface_unmap(aurwl_win *w);
+static void ptr_leave(aurwl *c);
 
 static void buffer_gone(struct wl_listener *l, void *data)
 {
@@ -630,6 +1021,28 @@ static void watch_buffer(aurwl_win *w, struct wl_resource *buf)
     w->buf_gone.notify = buffer_gone;
     wl_resource_add_destroy_listener(buf, &w->buf_gone);
     w->buf_listening = buf;
+}
+
+/* The same for a buffer parked in the cache of a synchronized
+ * subsurface: the client may destroy it before the parent commits. The
+ * frame is lost -- the surface goes on showing its last one -- but the
+ * rest of that commit still lands. */
+static void cbuffer_gone(struct wl_listener *l, void *data)
+{
+    (void)data;
+    aurwl_win *w = wl_container_of(l, w, cbuf_gone);
+    w->cached.buffer = NULL;
+    w->cached.attached = 0;
+    w->cbuf_listening = NULL;
+}
+static void cwatch_buffer(aurwl_win *w, struct wl_resource *buf)
+{
+    if (w->cbuf_listening == buf) return;
+    if (w->cbuf_listening) { wl_list_remove(&w->cbuf_gone.link); w->cbuf_listening = NULL; }
+    if (!buf) return;
+    w->cbuf_gone.notify = cbuffer_gone;
+    wl_resource_add_destroy_listener(buf, &w->cbuf_gone);
+    w->cbuf_listening = buf;
 }
 
 static void surf_attach(struct wl_client *cl, struct wl_resource *r,
@@ -690,8 +1103,20 @@ static void surf_frame(struct wl_client *cl, struct wl_resource *r, uint32_t id)
 }
 static void surf_set_opaque(struct wl_client *cl, struct wl_resource *r, struct wl_resource *reg)
 { (void)cl; (void)r; (void)reg; }
+/* Where the surface takes the pointer. NULL is "everywhere"; a region
+ * with nothing in it is "nowhere" -- a click goes to whatever is behind --
+ * and anything else is the box around what was added (see aurwl_region).
+ * The region is copied now: changing the wl_region later changes nothing. */
 static void surf_set_input(struct wl_client *cl, struct wl_resource *r, struct wl_resource *reg)
-{ (void)cl; (void)r; (void)reg; }
+{
+    (void)cl; aurwl_win *w = wl_resource_get_user_data(r);
+    surf_state *p = &w->pending;
+    aurwl_region *g = reg ? wl_resource_get_user_data(reg) : NULL;
+    if (!reg || !g)  { p->in_kind = IN_ALL; return; }
+    if (!g->set)     { p->in_kind = IN_NONE; return; }
+    p->in_kind = IN_BOX;
+    p->in_x0 = g->x0; p->in_y0 = g->y0; p->in_x1 = g->x1; p->in_y1 = g->y1;
+}
 static void surf_set_transform(struct wl_client *cl, struct wl_resource *r, int32_t t)
 { (void)cl; aurwl_win *w = wl_resource_get_user_data(r); w->pending.transform = t; }
 static void surf_set_scale(struct wl_client *cl, struct wl_resource *r, int32_t s)
@@ -701,72 +1126,205 @@ static void surf_set_scale(struct wl_client *cl, struct wl_resource *r, int32_t 
     w->pending.scale = s;
 }
 
-static void apply_commit(aurwl_win *w, int depth)
+/* THE COMMIT, AND THE CACHE.
+ *
+ * A commit takes the pending state and applies it -- unless the surface
+ * is a subsurface that behaves as synchronized, in which case it is set
+ * aside until its parent's state is applied. That is what lets a parent
+ * and its children change together: a window and the page inside it
+ * resize as one frame instead of tearing against each other.
+ *
+ * Both paths start the same way: fold what `pending` holds into the
+ * cache. Pending is then empty and goes on collecting the NEXT frame;
+ * the cache is the frame. Two synchronized commits before the parent's
+ * merge into one, the newer buffer winning and the older being released
+ * to its client unseen. */
+static void cache_pending(aurwl_win *w)
 {
-    /* Not an infinite recursion -- sub_cached is cleared before
-     * recursing and nothing inside ever sets it, so a ring terminates.
-     * What is unbounded is the DEPTH: a chain of a hundred thousand
-     * synchronized subsurfaces, each committed once, recurses that far
-     * on one commit and walks off the end of the stack. That is
-     * affordable for a client to build. */
-    if (depth > PARENT_MAX) return;
-    surf_state *p = &w->pending;
+    surf_state *p = &w->pending, *k = &w->cached;
+    if (!w->has_cache) { memset(k, 0, sizeof *k); w->has_cache = 1; }
+    if (p->attached) {
+        if (k->attached && k->buffer && k->buffer != p->buffer)
+            wl_buffer_send_release(k->buffer);        /* never reached the screen */
+        k->buffer = p->buffer; k->attached = 1;
+        cwatch_buffer(w, p->buffer);
+    }
+    if (p->has_damage) {
+        if (!k->has_damage) {
+            k->dmg_x0 = p->dmg_x0; k->dmg_y0 = p->dmg_y0;
+            k->dmg_x1 = p->dmg_x1; k->dmg_y1 = p->dmg_y1; k->has_damage = 1;
+        } else {
+            if (p->dmg_x0 < k->dmg_x0) k->dmg_x0 = p->dmg_x0;
+            if (p->dmg_y0 < k->dmg_y0) k->dmg_y0 = p->dmg_y0;
+            if (p->dmg_x1 > k->dmg_x1) k->dmg_x1 = p->dmg_x1;
+            if (p->dmg_y1 > k->dmg_y1) k->dmg_y1 = p->dmg_y1;
+        }
+    }
+    /* Everything else is a standing value, not an event: the newest wins. */
+    k->scale = p->scale; k->transform = p->transform;
+    k->vp_dst_w = p->vp_dst_w; k->vp_dst_h = p->vp_dst_h;
+    k->vp_src_set = p->vp_src_set;
+    k->vp_sx = p->vp_sx; k->vp_sy = p->vp_sy; k->vp_sw = p->vp_sw; k->vp_sh = p->vp_sh;
+    k->in_kind = p->in_kind;
+    k->in_x0 = p->in_x0; k->in_y0 = p->in_y0; k->in_x1 = p->in_x1; k->in_y1 = p->in_y1;
+
+    p->attached = 0; p->buffer = NULL; p->has_damage = 0;
+    watch_buffer(w, NULL);
+}
+
+static void drop_cache(aurwl_win *w)
+{
+    if (!w->has_cache) return;
+    if (w->cached.attached && w->cached.buffer) wl_buffer_send_release(w->cached.buffer);
+    cwatch_buffer(w, NULL);
+    memset(&w->cached, 0, sizeof w->cached);
+    w->has_cache = 0;
+}
+
+static void apply_cached(aurwl_win *w, int depth);
+
+/* The parent's state has just taken effect: its children's positions and
+ * stacking take effect with it, and so does anything a synchronized child
+ * was holding back for this moment. */
+static void children_apply(aurwl_win *p, int depth)
+{
+    int changed = 0;
+    for (struct wl_list *n = p->sub_pend.next; n != &p->sub_pend; n = n->next) {
+        if (n == &p->self_pend) continue;
+        aurwl_win *ch = wl_container_of(n, ch, pend_link);
+        if (ch->sub_x != ch->sub_px || ch->sub_y != ch->sub_py) {
+            ch->sub_x = ch->sub_px; ch->sub_y = ch->sub_py;
+            changed = 1;
+        }
+    }
+    /* Same order as the one being drawn? Walk both. */
+    struct wl_list *a = p->sub_pend.next, *b = p->sub_cur.next;
+    int same = 1;
+    for (; a != &p->sub_pend && b != &p->sub_cur; a = a->next, b = b->next) {
+        const aurwl_win *wa = (a == &p->self_pend) ? p : wl_container_of(a, wa, pend_link);
+        const aurwl_win *wb = (b == &p->self_cur)  ? p : wl_container_of(b, wb, cur_link);
+        if (wa != wb) { same = 0; break; }
+    }
+    if (same && (a != &p->sub_pend || b != &p->sub_cur)) same = 0;
+    if (!same) {
+        wl_list_init(&p->sub_cur);
+        for (struct wl_list *n = p->sub_pend.next; n != &p->sub_pend; n = n->next) {
+            if (n == &p->self_pend) { wl_list_insert(p->sub_cur.prev, &p->self_cur); continue; }
+            aurwl_win *ch = wl_container_of(n, ch, pend_link);
+            wl_list_insert(p->sub_cur.prev, &ch->cur_link);
+        }
+        changed = 1;
+    }
+    if (changed) { dirty_all(p); p->c->damage_seq++; }
+
+    for (struct wl_list *n = p->sub_pend.next; n != &p->sub_pend; n = n->next) {
+        if (n == &p->self_pend) continue;
+        aurwl_win *ch = wl_container_of(n, ch, pend_link);
+        if (ch->has_cache) apply_cached(ch, depth + 1);
+    }
+}
+
+/* Make `st` this surface's current state. */
+static void apply_state(aurwl_win *w, surf_state *st, int depth)
+{
+    aurwl *c = w->c;
+    surf_state *cur = &w->current;
+
+    int restyled = cur->scale != st->scale || cur->transform != st->transform ||
+                   cur->vp_dst_w != st->vp_dst_w || cur->vp_dst_h != st->vp_dst_h ||
+                   cur->vp_src_set != st->vp_src_set ||
+                   (st->vp_src_set && (cur->vp_sx != st->vp_sx || cur->vp_sy != st->vp_sy ||
+                                       cur->vp_sw != st->vp_sw || cur->vp_sh != st->vp_sh));
 
     /* Carry damage into current before take_buffer reads it, since the
      * copy is bounded by the damage that arrived with this buffer. */
-    w->current.has_damage = p->has_damage;
-    w->current.dmg_x0 = p->dmg_x0; w->current.dmg_y0 = p->dmg_y0;
-    w->current.dmg_x1 = p->dmg_x1; w->current.dmg_y1 = p->dmg_y1;
-    w->current.scale = p->scale;
-    w->current.transform = p->transform;
-    w->current.vp_dst_w = p->vp_dst_w;
-    w->current.vp_dst_h = p->vp_dst_h;
+    cur->has_damage = st->has_damage;
+    cur->dmg_x0 = st->dmg_x0; cur->dmg_y0 = st->dmg_y0;
+    cur->dmg_x1 = st->dmg_x1; cur->dmg_y1 = st->dmg_y1;
+    cur->scale = st->scale; cur->transform = st->transform;
+    cur->vp_dst_w = st->vp_dst_w; cur->vp_dst_h = st->vp_dst_h;
+    cur->vp_src_set = st->vp_src_set;
+    cur->vp_sx = st->vp_sx; cur->vp_sy = st->vp_sy; cur->vp_sw = st->vp_sw; cur->vp_sh = st->vp_sh;
+    cur->in_kind = st->in_kind;
+    cur->in_x0 = st->in_x0; cur->in_y0 = st->in_y0; cur->in_x1 = st->in_x1; cur->in_y1 = st->in_y1;
 
-    if (p->attached) {
-        if (p->buffer) {
-            take_buffer(w, p->buffer);
-            w->c->damage_seq++;
-            wl_buffer_send_release(p->buffer);
+    if (st->attached) {
+        if (st->buffer) {
+            irect cp; int resized;
+            int was_mapped = w->mapped;
+            take_buffer(w, st->buffer, &cp, &resized);
+            c->damage_seq++;
+            wl_buffer_send_release(st->buffer);
             if (!w->mapped) surface_map(w);
+            if (resized || !was_mapped || restyled) dirty_surface(w, NULL);
+            else if (cp.x1 > cp.x0 && cp.y1 > cp.y0) dirty_surface(w, &cp);
         } else {
             /* attach(NULL) is how a client unmaps itself. */
             if (w->mapped) surface_unmap(w);
             if (w->store) { surface_free(w->store); w->store = NULL; }
             w->cw = w->ch = 0;
+            dirty_all(w);
+            c->damage_seq++;
         }
+    } else if (restyled) {
+        dirty_surface(w, NULL);
+        c->damage_seq++;
     }
-    p->attached = 0; p->buffer = NULL; p->has_damage = 0;
-    watch_buffer(w, NULL);
 
-    /* A synchronized subsurface's own commit does not take effect until
-     * its parent commits; that is what makes a parent and its children
-     * resize as one thing instead of tearing against each other. */
-    aurwl_win *ch;
-    wl_list_for_each(ch, &w->children, child_link)
-        if (ch->sub_sync && ch->sub_cached) { ch->sub_cached = 0; apply_commit(ch, depth + 1); }
+    children_apply(w, depth);
+}
+
+/* Not an infinite recursion -- the cache is emptied before its state is
+ * applied and nothing inside refills it, so a ring terminates. What is
+ * unbounded is the DEPTH: a chain of a hundred thousand synchronized
+ * subsurfaces, each committed once, recurses that far on one commit and
+ * walks off the end of the stack. That is affordable for a client to
+ * build, so the depth is capped. */
+static void apply_cached(aurwl_win *w, int depth)
+{
+    if (depth > PARENT_MAX) return;
+    surf_state st = w->cached;
+    w->has_cache = 0;
+    memset(&w->cached, 0, sizeof w->cached);
+    cwatch_buffer(w, NULL);
+    apply_state(w, &st, depth);
+}
+
+/* A surface that has just stopped being synchronized (its own set_desync,
+ * or its parent's) applies what it was holding -- and so does anything
+ * below it that was only held because of it. */
+static void flush_desync(aurwl_win *w, int depth)
+{
+    if (depth > PARENT_MAX) return;
+    if (w->has_cache && !eff_sync(w)) { apply_cached(w, depth); return; }
+    for (struct wl_list *n = w->sub_pend.next; n != &w->sub_pend; n = n->next) {
+        if (n == &w->self_pend) continue;
+        aurwl_win *ch = wl_container_of(n, ch, pend_link);
+        flush_desync(ch, depth + 1);
+    }
 }
 
 static void surf_commit(struct wl_client *cl, struct wl_resource *r)
 {
     (void)cl; aurwl_win *w = wl_resource_get_user_data(r);
 
-    if (w->role == ROLE_SUBSURFACE && w->sub_sync) { w->sub_cached = 1; return; }
+    cache_pending(w);
+    if (w->role == ROLE_SUBSURFACE && eff_sync(w)) return;   /* waits for the parent */
 
     /* xdg-shell's handshake: the first commit carries no buffer and
      * asks us what size to be. Answering it is not optional -- a client
      * that never receives a configure never draws, which presents as a
      * window that silently fails to appear. */
-    if (w->xdg_surface && !w->acked && !w->pending.buffer) {
-        apply_commit(w, 0);
+    int handshake = w->xdg_surface && !w->acked && !w->cached.buffer;
+    apply_cached(w, 0);
+    if (handshake) {
         if (w->xdg_toplevel) {
             struct wl_array states; wl_array_init(&states);
             xdg_toplevel_send_configure(w->xdg_toplevel, 0, 0, &states);
             wl_array_release(&states);
         }
         send_configure(w);
-        return;
     }
-    apply_commit(w, 0);
 }
 
 static const struct wl_surface_interface surface_impl = {
@@ -781,7 +1339,11 @@ static const struct wl_surface_interface surface_impl = {
 
 static void surface_map(aurwl_win *w)
 {
-    if (w->role != ROLE_TOPLEVEL && w->role != ROLE_POPUP) { w->mapped = 1; return; }
+    /* Cursors and drag icons are not on any output the client cares
+     * about; everything else -- including a subsurface, which toolkits
+     * read their scale from independently of the window it belongs to --
+     * is told. */
+    if (w->role == ROLE_CURSOR || w->role == ROLE_NONE) { w->mapped = 1; return; }
     w->mapped = 1;
     /* The client needs to know which output it is on before it can pick
      * a scale factor; GTK will not finish its first layout without it. */
@@ -815,15 +1377,12 @@ static void surface_unmap(aurwl_win *w)
         c->focus = NULL;
         if (textinput_focus) textinput_focus(NULL, NULL);
     }
-    if (c->ptr_focus == w) {
-        struct wl_client *cl = win_client(w);
-        FOR_EACH_RES(pp, &c->pointers)
-            if (wl_resource_get_client(pp) == cl) {
-                wl_pointer_send_leave(pp, ser, w->res);
-                if (wl_resource_get_version(pp) >= WL_POINTER_FRAME_SINCE_VERSION)
-                    wl_pointer_send_frame(pp);
-            }
-        c->ptr_focus = NULL;
+    /* The pointer may be on this very surface, or on a subsurface of it
+     * (this is the window the shell knew about). Either way it has to be
+     * told, or the client goes on thinking it is hovering a button. */
+    if (c->ptr_surf == w || c->ptr_focus == w) {
+        ptr_leave(c);
+        if (c->ptr_focus == w) c->ptr_focus = NULL;
     }
 }
 
@@ -833,7 +1392,8 @@ static void surface_free_res(struct wl_resource *r)
     if (!w) return;
     aurwl *c = w->c;
     if (c->focus == w)     c->focus = NULL;
-    if (c->ptr_focus == w) c->ptr_focus = NULL;
+    if (c->ptr_surf == w)  c->ptr_surf = NULL;
+    if (c->ptr_focus == w) { c->ptr_focus = NULL; c->ptr_surf = NULL; }
 
     /* When a client dies, libwayland destroys its resources in an order
      * we do not choose -- and it destroyed the wl_surface BEFORE the
@@ -866,6 +1426,22 @@ static void surface_free_res(struct wl_resource *r)
         wl_list_init(&ch->child_link);
         ch->parent = NULL;
     }
+    /* The subsurfaces stacked on this one are orphaned: still the
+     * client's objects, but part of no window any more. */
+    for (struct wl_list *n = w->sub_pend.next, *nx; n != &w->sub_pend; n = nx) {
+        nx = n->next;
+        if (n == &w->self_pend) continue;
+        aurwl_win *sc = wl_container_of(n, sc, pend_link);
+        unlink_init(&sc->pend_link);
+        unlink_init(&sc->cur_link);
+        sc->parent = NULL;
+    }
+    /* And if this one was itself a subsurface, the window it was part of
+     * must stop showing it. Before the link is cut: finding that window
+     * is what the link is for. */
+    if (w->role == ROLE_SUBSURFACE && w->parent) dirty_all(w);
+    unlink_init(&w->pend_link);
+    unlink_init(&w->cur_link);
     /* child_link is wl_list_init()'d at creation, so it is always a
      * valid node -- removing one that was never inserted just re-points
      * it at itself. */
@@ -873,6 +1449,8 @@ static void surface_free_res(struct wl_resource *r)
     w->parent = NULL;
 
     watch_buffer(w, NULL);
+    cwatch_buffer(w, NULL);
+    if (w->flat) surface_free(w->flat);
 
     struct wl_resource *cb, *cbt;
     wl_resource_for_each_safe(cb, cbt, &w->frame_cbs) wl_resource_destroy(cb);
@@ -918,6 +1496,12 @@ static void comp_create_surface(struct wl_client *cl, struct wl_resource *r, uin
     wl_list_init(&w->frame_cbs);
     wl_list_init(&w->children);
     wl_list_init(&w->child_link);
+    /* Every surface is the one entry in its own stack until something is
+     * stacked on it. */
+    wl_list_init(&w->sub_pend);  wl_list_init(&w->sub_cur);
+    wl_list_init(&w->pend_link); wl_list_init(&w->cur_link);
+    wl_list_insert(&w->sub_pend, &w->self_pend);
+    wl_list_insert(&w->sub_cur,  &w->self_cur);
 
     w->res = wl_resource_create(cl, &wl_surface_interface, wl_resource_get_version(r), id);
     if (!w->res) { free(w); wl_client_post_no_memory(cl); return; }
@@ -948,23 +1532,58 @@ static void bind_compositor(struct wl_client *cl, void *data, uint32_t ver, uint
 
 /* ── wl_subsurface ──────────────────────────────────────────────── */
 
+/* The surface stops being part of its parent's window, at once and
+ * without waiting for the parent to commit (wayland.xml: "the wl_surface
+ * is unmapped immediately"). Its contents go with it: a surface that is
+ * made a subsurface again starts with nothing. */
+static void sub_detach(aurwl_win *w)
+{
+    if (w->parent) {
+        dirty_all(w);                      /* while the chain to the window is intact */
+        unlink_init(&w->pend_link);
+        unlink_init(&w->cur_link);
+        w->parent = NULL;
+        w->c->damage_seq++;
+    }
+    drop_cache(w);
+    watch_buffer(w, NULL);
+    w->pending.attached = 0; w->pending.buffer = NULL; w->pending.has_damage = 0;
+    if (w->mapped) surface_unmap(w);
+    if (w->store) { surface_free(w->store); w->store = NULL; }
+    w->cw = w->ch = 0;
+}
+
 static void sub_destroy(struct wl_client *cl, struct wl_resource *r)
 {
     (void)cl;
-    aurwl_win *w = wl_resource_get_user_data(r);
-    if (w && w->subsurface == r) {
-        if (w->parent) { wl_list_remove(&w->child_link); wl_list_init(&w->child_link); w->parent = NULL; }
-        w->subsurface = NULL;
-    }
     wl_resource_destroy(r);
 }
+static void subsurface_gone(struct wl_resource *r)
+{
+    aurwl_win *w = wl_resource_get_user_data(r);
+    if (!w || w->subsurface != r) return;
+    w->subsurface = NULL;
+    sub_detach(w);
+}
+
+/* Position and stacking are state of the PARENT: they are recorded now
+ * and take effect when the parent's own state is applied
+ * (children_apply). A client that moves a subsurface and then commits
+ * only the subsurface sees nothing move -- which is the protocol, and the
+ * reason a video overlay and the page around it never disagree. */
 static void sub_set_position(struct wl_client *cl, struct wl_resource *r, int32_t x, int32_t y)
-{ (void)cl; aurwl_win *w = wl_resource_get_user_data(r); if (w) { w->sub_x = x; w->sub_y = y; } }
+{
+    (void)cl; aurwl_win *w = wl_resource_get_user_data(r);
+    if (!w) return;
+    w->sub_px = clampi(x, -MAX_DIM, MAX_DIM);
+    w->sub_py = clampi(y, -MAX_DIM, MAX_DIM);
+}
 
 static void sub_place(struct wl_resource *r, aurwl_win *w,
                      struct wl_resource *sib_res, int above)
 {
     if (!w || !w->parent) return;
+    aurwl_win *p = w->parent;
     aurwl_win *sib = sib_res ? wl_resource_get_user_data(sib_res) : NULL;
 
     /* The sibling must be an actual sibling, or the parent. A client
@@ -981,23 +1600,26 @@ static void sub_place(struct wl_resource *r, aurwl_win *w,
      *     goes, this child keeps a pointer to freed memory -- which the
      *     shell dereferences every frame in session_paint_popups().
      *
-     * Two sources of truth, `parent` and `child_link`, and this was the
+     * Two sources of truth, `parent` and the stack, and this was the
      * one function that could pull them apart. */
     if (sib == w) {
         wl_resource_post_error(r, WL_SUBSURFACE_ERROR_BAD_SURFACE,
                                "a subsurface cannot be its own sibling");
         return;
     }
-    if (sib && sib != w->parent && sib->parent != w->parent) {
+    struct wl_list *at;
+    if (sib && sib == p)                                         at = &p->self_pend;
+    else if (sib && sib->role == ROLE_SUBSURFACE && sib->parent == p) at = &sib->pend_link;
+    else {
         wl_resource_post_error(r, WL_SUBSURFACE_ERROR_BAD_SURFACE,
                                "not a sibling of this subsurface");
         return;
     }
-    wl_list_remove(&w->child_link);
-    if (sib && sib != w->parent)
-        wl_list_insert(above ? &sib->child_link : sib->child_link.prev, &w->child_link);
-    else
-        wl_list_insert(above ? w->parent->children.prev : &w->parent->children, &w->child_link);
+    /* The parent is IN the stack, so "below the parent" is a place like
+     * any other. Cut first, then read where to put it: the neighbour may
+     * have been this very node. */
+    unlink_init(&w->pend_link);
+    wl_list_insert(above ? at : at->prev, &w->pend_link);
 }
 static void sub_place_above(struct wl_client *cl, struct wl_resource *r, struct wl_resource *s)
 { (void)cl; sub_place(r, wl_resource_get_user_data(r), s, 1); }
@@ -1010,18 +1632,15 @@ static void sub_set_desync(struct wl_client *cl, struct wl_resource *r)
     (void)cl; aurwl_win *w = wl_resource_get_user_data(r);
     if (!w) return;
     w->sub_sync = 0;
-    if (w->sub_cached) { w->sub_cached = 0; apply_commit(w, 0); }
+    /* Becoming independent applies what was being held -- but only if no
+     * ancestor is still holding THIS one: then it waits for them. */
+    flush_desync(w, 0);
 }
 static const struct wl_subsurface_interface subsurface_impl = {
     .destroy = sub_destroy, .set_position = sub_set_position,
     .place_above = sub_place_above, .place_below = sub_place_below,
     .set_sync = sub_set_sync, .set_desync = sub_set_desync,
 };
-static void subsurface_gone(struct wl_resource *r)
-{
-    aurwl_win *w = wl_resource_get_user_data(r);
-    if (w && w->subsurface == r) w->subsurface = NULL;
-}
 
 /* Would making `cand` the parent of `w` close a loop?
  *
@@ -1074,9 +1693,15 @@ static void subcomp_get(struct wl_client *cl, struct wl_resource *r, uint32_t id
     wl_resource_set_implementation(res, &subsurface_impl, w, subsurface_gone);
     w->subsurface = res;
     w->sub_sync = 1;                 /* the protocol's default */
-    if (w->parent) wl_list_remove(&w->child_link);
+    w->sub_x = w->sub_y = w->sub_px = w->sub_py = 0;
+    unlink_init(&w->pend_link);
+    unlink_init(&w->cur_link);
     w->parent = p;
-    wl_list_insert(p->children.prev, &w->child_link);
+    /* On top of its siblings, and at (0,0). Entered in both stacks at
+     * once: it has no position or order to be late with, and a child
+     * that commits before its parent does should still be drawn. */
+    wl_list_insert(p->sub_pend.prev, &w->pend_link);
+    wl_list_insert(p->sub_cur.prev,  &w->cur_link);
 }
 static const struct wl_subcompositor_interface subcompositor_impl = {
     .destroy = noop_destroy, .get_subsurface = subcomp_get,
@@ -2228,6 +2853,29 @@ aurwl_win *aurwl_window_at(const aurwl *c, int i)
 uint32_t    aurwl_win_id(const aurwl_win *w)     { return w ? w->id : 0; }
 const char *aurwl_win_title(const aurwl_win *w)  { return w ? w->title : ""; }
 const char *aurwl_win_app_id(const aurwl_win *w) { return w ? w->app_id : ""; }
+/* What the window's geometry is measured against: the flattened tree
+ * when it has one, else the toplevel's own buffer. */
+static const surface *content_base(aurwl_win *w)
+{
+    surface *f = flat_get(w);
+    return f ? f : w->store;
+}
+
+/* The same question for the const callers, which must not repaint: the
+ * flattened picture has the size flat_dims() gives, and that is all they
+ * need to clamp against. */
+static int content_dims(const aurwl_win *w, int *cw, int *ch)
+{
+    int fw, fh;
+    if (w->store && w->role != ROLE_SUBSURFACE && has_visible_sub(w) && flat_dims(w, &fw, &fh)) {
+        *cw = fw; *ch = fh;
+        return 1;
+    }
+    if (!w->store) return 0;
+    *cw = w->store->w; *ch = w->store->h;
+    return 1;
+}
+
 /* THE WINDOW, NOT THE BUFFER.
  *
  * A GTK client draws its own drop shadow into a margin all the way
@@ -2249,7 +2897,7 @@ const char *aurwl_win_app_id(const aurwl_win *w) { return w ? w->app_id : ""; }
 surface *aurwl_win_content(aurwl_win *w)
 {
     if (!w || !w->store) return NULL;
-    surface *s = w->store;
+    const surface *s = content_base(w);
     int gx = 0, gy = 0, gw = s->w, gh = s->h;
     if (w->has_geo) {
         gx = w->geo_x; gy = w->geo_y; gw = w->geo_w; gh = w->geo_h;
@@ -2273,11 +2921,11 @@ surface *aurwl_win_content(aurwl_win *w)
  * left of where she pressed. */
 void aurwl_win_content_offset(const aurwl_win *w, int *x, int *y)
 {
-    int gx = 0, gy = 0;
-    if (w && w->has_geo && w->store) {
+    int gx = 0, gy = 0, bw, bh;
+    if (w && w->has_geo && content_dims(w, &bw, &bh)) {
         gx = w->geo_x; gy = w->geo_y;
-        if (gx < 0 || gx >= w->store->w) gx = 0;
-        if (gy < 0 || gy >= w->store->h) gy = 0;
+        if (gx < 0 || gx >= bw) gx = 0;
+        if (gy < 0 || gy >= bh) gy = 0;
     }
     if (x) *x = gx;
     if (y) *y = gy;
@@ -2413,41 +3061,85 @@ void aurwl_set_focus(aurwl *c, aurwl_win *w)
 
 aurwl_win *aurwl_focus(const aurwl *c) { return c ? c->focus : NULL; }
 
+/* The pointer leaves whatever surface it is on. */
+static void ptr_leave(aurwl *c)
+{
+    aurwl_win *s = c->ptr_surf;
+    c->ptr_surf = NULL;
+    if (!s) return;
+    struct wl_client *cl = win_client(s);
+    uint32_t ser = serial_of(c);
+    FOR_EACH_RES(p, &c->pointers)
+        if (wl_resource_get_client(p) == cl) {
+            wl_pointer_send_leave(p, ser, s->res);
+            if (wl_resource_get_version(p) >= WL_POINTER_FRAME_SINCE_VERSION)
+                wl_pointer_send_frame(p);
+        }
+}
+
+/* A SURFACE IS NOT A WINDOW.
+ *
+ * `w` is the window the shell found under the pointer, and (sx,sy) is the
+ * point in that window's surface coordinates. The surface that should
+ * hear about it is not necessarily the window's own: Firefox's page is a
+ * subsurface, and a click on it sent to the toplevel is a click on the
+ * frame around it. So the point is resolved down the window's tree to
+ * the surface actually under it, and enter, leave, motion and buttons
+ * all go there, in THAT surface's coordinates.
+ *
+ * While a button is held the pointer stays on the surface it went down
+ * on, as the protocol's implicit grab requires -- dragging a selection
+ * out of the page into the frame must not tell the page the pointer has
+ * left, or the selection stops. */
 void aurwl_pointer_motion(aurwl *c, aurwl_win *w, int sx, int sy, uint32_t t)
 {
     if (!c) return;
     if (w && !win_visible(w)) w = NULL;
+    /* The shell does not pass on a release that happens off every window,
+     * so a grab must not outlive the pointer leaving them all. */
+    if (!w) c->btns_down = 0;
 
-    if (c->ptr_focus != w) {
-        if (c->ptr_focus) {
-            struct wl_client *old = win_client(c->ptr_focus);
-            uint32_t ser = serial_of(c);
-            FOR_EACH_RES(p, &c->pointers)
-                if (wl_resource_get_client(p) == old) {
-                    wl_pointer_send_leave(p, ser, c->ptr_focus->res);
-                    if (wl_resource_get_version(p) >= WL_POINTER_FRAME_SINCE_VERSION)
-                        wl_pointer_send_frame(p);
-                }
+    aurwl_win *hit = NULL;
+    int lx = sx, ly = sy;
+    if (w) {
+        if (c->btns_down > 0 && c->ptr_surf && c->ptr_focus == w && root_of(c->ptr_surf) == w) {
+            int ax = 0, ay = 0, i = 0;
+            for (const aurwl_win *a = c->ptr_surf; a->role == ROLE_SUBSURFACE && a->parent; a = a->parent) {
+                ax += a->sub_x; ay += a->sub_y;
+                if (++i > PARENT_MAX) break;
+            }
+            hit = c->ptr_surf; lx = sx - ax; ly = sy - ay;
+        } else {
+            hit = pick(w, sx, sy, &lx, &ly, 0);
+            /* Nothing takes input there -- a region that excludes the
+             * point, say. The shell has already decided the pointer is
+             * in this window, so the window it is. */
+            if (!hit) { hit = w; lx = sx; ly = sy; }
         }
-        c->ptr_focus = w;
-        if (w) {
-            struct wl_client *nw = win_client(w);
+    }
+
+    if (c->ptr_surf != hit) {
+        ptr_leave(c);
+        c->ptr_surf = hit;
+        if (hit) {
+            struct wl_client *nw = win_client(hit);
             uint32_t ser = serial_of(c);
             FOR_EACH_RES(p, &c->pointers)
                 if (wl_resource_get_client(p) == nw) {
-                    wl_pointer_send_enter(p, ser, w->res,
-                                          wl_fixed_from_int(sx), wl_fixed_from_int(sy));
+                    wl_pointer_send_enter(p, ser, hit->res,
+                                          wl_fixed_from_int(lx), wl_fixed_from_int(ly));
                     if (wl_resource_get_version(p) >= WL_POINTER_FRAME_SINCE_VERSION)
                         wl_pointer_send_frame(p);
                 }
         }
     }
-    c->ptr_x = sx; c->ptr_y = sy;
-    if (!w) return;
-    struct wl_client *cl = win_client(w);
+    c->ptr_focus = w;
+    c->ptr_x = lx; c->ptr_y = ly;
+    if (!hit) return;
+    struct wl_client *cl = win_client(hit);
     FOR_EACH_RES(p, &c->pointers)
         if (wl_resource_get_client(p) == cl) {
-            wl_pointer_send_motion(p, t, wl_fixed_from_int(sx), wl_fixed_from_int(sy));
+            wl_pointer_send_motion(p, t, wl_fixed_from_int(lx), wl_fixed_from_int(ly));
             if (wl_resource_get_version(p) >= WL_POINTER_FRAME_SINCE_VERSION)
                 wl_pointer_send_frame(p);
         }
@@ -2456,8 +3148,14 @@ void aurwl_pointer_motion(aurwl *c, aurwl_win *w, int sx, int sy, uint32_t t)
 void aurwl_pointer_button(aurwl *c, uint32_t button, int pressed, uint32_t t)
 {
     if (pressed && wishhook_reset) wishhook_reset();
-    if (!c || !c->ptr_focus) return;
-    struct wl_client *cl = win_client(c->ptr_focus);
+    if (!c) return;
+    /* Counted for the implicit grab above. Bounded below: a release the
+     * shell sends for a press that went to the shell itself must not
+     * leave the count negative and the next real press unbalanced. */
+    if (pressed) { if (c->btns_down < 64) c->btns_down++; }
+    else if (c->btns_down > 0) c->btns_down--;
+    if (!c->ptr_surf) return;
+    struct wl_client *cl = win_client(c->ptr_surf);
     uint32_t ser = serial_of(c);
     FOR_EACH_RES(p, &c->pointers)
         if (wl_resource_get_client(p) == cl) {
@@ -2470,8 +3168,8 @@ void aurwl_pointer_button(aurwl *c, uint32_t button, int pressed, uint32_t t)
 
 void aurwl_pointer_axis(aurwl *c, int horizontal, double step, uint32_t t)
 {
-    if (!c || !c->ptr_focus) return;
-    struct wl_client *cl = win_client(c->ptr_focus);
+    if (!c || !c->ptr_surf) return;
+    struct wl_client *cl = win_client(c->ptr_surf);
     uint32_t axis = horizontal ? WL_POINTER_AXIS_HORIZONTAL_SCROLL
                                : WL_POINTER_AXIS_VERTICAL_SCROLL;
     FOR_EACH_RES(p, &c->pointers)
