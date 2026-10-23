@@ -1,0 +1,5 @@
+node_modules/
+src/help.gen.js
+.wrangler/
+.dev.vars
+dist/

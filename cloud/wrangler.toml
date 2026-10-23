@@ -1,0 +1,31 @@
+# AurOS Wishes: one Worker + one Durable Object. Deployed by
+# .github/workflows/cloud.yml; secrets (ANTHROPIC_API_KEY, TOKEN_SECRET,
+# optional ALERT_URL) are set there, never here. docs/CLOUD.md explains each knob.
+name = "auros-wishes"
+main = "src/worker.js"
+compatibility_date = "2026-09-15"
+workers_dev = true
+
+[build]
+command = "node build-help.mjs"
+
+[vars]
+DAILY_BUDGET_USD = "5"
+QUOTA_ESTABLISHED = "20"
+QUOTA_NEW = "3"
+ESTABLISH_DAYS = "7"
+REGISTER_PER_NET = "3"
+MAX_INFLIGHT = "40"
+POW_BITS = "22"
+BANNED = ""
+
+[[durable_objects.bindings]]
+name = "LEDGER"
+class_name = "Ledger"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Ledger"]
+
+[observability]
+enabled = true

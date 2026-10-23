@@ -1,0 +1,23 @@
+{
+  "name": "auros-cloud",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.132.0",
+    "@cfworker/json-schema": "4.1.1"
+  },
+  "devDependencies": {
+    "autocannon": "8.0.0"
+  },
+  "description": "AurOS Wishes cloud service (docs/CLOUD.md)",
+  "scripts": {
+    "build": "node build-help.mjs",
+    "test": "node build-help.mjs && node --test test/*.test.js",
+    "load": "node build-help.mjs && node test/load.mjs",
+    "live-eval": "node build-help.mjs && node test/live-eval.mjs",
+    "smoke": "node test/smoke.mjs"
+  }
+}
