@@ -68,6 +68,7 @@ if [ "${1:-}" = --mutants ]; then
     mutant no-reencrypt       rootfs/usr/lib/auros/lock/encrypt-init 's/--init-only --batch-mode/--init-only --batch-mode --test-passphrase-nope/'
     mutant fixed-rescue       rootfs/usr/lib/auros/lock/lockctl 's/\$((b % 10))/1/'
     mutant pin-unchecked      rootfs/usr/lib/auros/lock/lockctl 's/if ! pin_checks "\$dev" "\$pin"; then/if false; then/'
+    mutant sector-always-4096 rootfs/usr/lib/auros/lock/encrypt-init 's/else ss=512; fi/else ss=4096; fi/'
     mutant small-keys         src/aurshell/lockpin.c 's/int kw = (int)(84 \* k)/int kw = (int)(40 * k)/'
     mutant repin-ignored      rootfs/usr/lib/auros/lock/lockctl 's/^    \[ -s "\$REPIN" \] || exit 0/    exit 0/'
     echo
@@ -137,8 +138,8 @@ tpm_start "$T/tpm1"
 
 # ── a drive with her files on it ──────────────────────────────────
 # Sets DRV to the loop device. Not a $(...), for the same reason as below.
-mkdrive() { # FILE MB
-    truncate -s "${2}M" "$1"
+mkdrive() { # FILE MB [EXTRA-BYTES]
+    truncate -s "$(( $2 * 1048576 + ${3:-0} ))" "$1"
     local l; l=$(losetup -f --show "$1") || return 1
     LOOPS="$LOOPS $l"; DRV=$l
     mkfs.ext4 -q -L AUROS-ROOT "$l"
@@ -198,6 +199,15 @@ n=$(grep -ac HER-LETTER-PLAINTEXT "$IMG")
 [ "$n" = 0 ] && ok "no plaintext of hers is left on the raw drive" || bad "no plaintext left on the raw drive" "$n lines found"
 cryptsetup luksDump "$D" | grep -q 'aes-xts-plain64' && ok "AES-XTS on a CPU with AES instructions" \
     || bad "AES-XTS on a CPU with AES instructions"
+
+# A partition whose size is not a multiple of 4096 (the first VM run
+# found real ones: cryptsetup refuses 4096-byte sectors on them).
+mkdrive "$T/u.img" 1100 512; DU=$DRV
+"$ENCINIT" "$DU" >/dev/null 2>&1
+cryptsetup isLuks --type luks2 "$DU" && cryptsetup luksDump "$DU" | grep -qE 'sector: *512' \
+    && ok "a partition not a multiple of 4096 bytes encrypts, with 512-byte sectors" \
+    || bad "a partition not a multiple of 4096 bytes encrypts" "$(cryptsetup luksDump "$DU" 2>&1 | grep -E 'sector|not' | head -2)"
+cryptsetup luksDump "$D" | grep -qE 'sector: *4096' && ok "a 4096-aligned one gets 4096-byte sectors" || bad "a 4096-aligned one gets 4096-byte sectors"
 
 echo
 echo "  the first PIN (sealed in the chip, bound to no PCR)"

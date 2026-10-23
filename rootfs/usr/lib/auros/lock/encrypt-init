@@ -59,8 +59,14 @@ else
     cipher=xchacha12,aes-adiantum-plain64; bits=256
 fi
 
+# 4096-byte sectors are faster, and cryptsetup refuses them unless the
+# partition's size is a multiple of 4096 (measured in the VM: a real
+# partition ends wherever the table says, "Device size is not aligned
+# to requested sector size"). Otherwise 512.
+if [ $((size % 4096)) -eq 0 ]; then ss=4096; else ss=512; fi
+
 printf '%s' "$TEMP_KEY" | cryptsetup reencrypt --encrypt --init-only --batch-mode \
-    --type luks2 --reduce-device-size 32M --sector-size 4096 \
+    --type luks2 --reduce-device-size 32M --sector-size "$ss" \
     --cipher "$cipher" --key-size "$bits" --pbkdf pbkdf2 --pbkdf-force-iterations 1000 \
     --key-slot 0 --key-file - "$DEV" >"$ERR" 2>&1
 rc=$?
