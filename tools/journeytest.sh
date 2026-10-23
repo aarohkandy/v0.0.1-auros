@@ -16,7 +16,7 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 T=$(mktemp -d "${TMPDIR:-/tmp}/journey.XXXXXX") || exit 2
-trap 'rm -rf "$T"' EXIT
+trap 'rm -rf "$T"' EXIT INT TERM
 OUT=${1:-$T/shots}
 mkdir -p "$OUT" "$T/apps" "$T/vlc" "$T/st/c"
 

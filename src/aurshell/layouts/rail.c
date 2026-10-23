@@ -518,10 +518,7 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
     /* A solid square, not a dot. A circle in the accent beside a word
      * is the "brand bubble" every product page has; a square block of
      * ink is a printer's mark, and it is one draw_rect. */
-    draw_rect(s, (rect){ c->margin, bh/2 - 4, 8, 8 }, c->accent, 1.f);
-    shell_text_tracked(s, f->label, (float)(c->margin + 20),
-                       shell_baseline(f->label, 0.f, (float)bh),
-                       c->brand, c->subtle, 0.95f, 1.6f);
+    shell_wordmark(c, s, f, (float)c->margin, (float)bh * 0.5f);
 
     if (c->show_clock) {
         char hm[32], dt[48];

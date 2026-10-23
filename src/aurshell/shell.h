@@ -41,7 +41,15 @@ typedef enum {
     ICON_STORE, ICON_LIST,
     /* "Make a wish" (docs/AI.md §4): a speech bubble -- she says what
      * she wants -- with three dots cut out of it. */
-    ICON_WISH
+    ICON_WISH,
+    /* No two things share a silhouette (DESIGN-DIRECTION §3): a page
+     * with a folded corner (Documents), a printer, a box with a zip,
+     * and a gear (Settings). The band's own: Wi-Fi, sound, bigger and
+     * smaller text, turn off, close, back, forward, and the check. */
+    ICON_DOC, ICON_PRINTER, ICON_ZIP, ICON_GEAR,
+    ICON_WIFI, ICON_SPEAKER, ICON_BIGGER, ICON_SMALLER, ICON_POWER,
+    ICON_CLOSE, ICON_BACK, ICON_FORWARD, ICON_CHECK,
+    ICON_N
 } shell_icon;
 
 /* What an entry IS, beyond being something to start. */
@@ -389,6 +397,8 @@ float shell_text_w(font *f, const char *t);
  * Application names come from packages and are as long as they like. */
 void shell_text_elided(surface *s, font *f, float x, float y, float max_w,
                        const char *t, uint32_t col, float a);
+/* The brand's mark and name, once per screen; returns where it ends. */
+float shell_wordmark(shell_ctx *c, surface *s, shell_fonts *f, float x, float cy);
 int  shell_text_wrap(surface *s, font *f, float x, float y, float max_w,
                      float lh, const char *t, uint32_t col, float a, int max_lines);
 /* Letter-spaced text, for the small rubrics that label a region the

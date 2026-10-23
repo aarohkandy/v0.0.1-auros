@@ -584,10 +584,7 @@ static void paint_strip(shell_ctx *c, surface *s, shell_fonts *f, int w, float t
 
     draw_rect(s, r, c->bg_alt, 1.f);
     draw_hrule(s, 0, bh, w, 1, c->overlay, 1.f);
-    draw_rect(s, (rect){ c->margin, bh/2 - 4, 8, 8 }, c->accent, 1.f);
-    shell_text_tracked(s, f->label, (float)(c->margin + 20),
-                       shell_baseline(f->label, 0.f, (float)bh),
-                       c->brand, c->subtle, 0.95f, 1.6f);
+    float brand_end = shell_wordmark(c, s, f, (float)c->margin, (float)bh * 0.5f);
 
     if (c->show_clock) {
         char hm[32], dt[48];
@@ -614,8 +611,7 @@ static void paint_strip(shell_ctx *c, surface *s, shell_fonts *f, int w, float t
      * stacked is not a composition, it is a default. */
     /* After the brand, separated by a rule: a masthead reads left to
      * right as two facts, not as one string that happens to wrap. */
-    float gx = (float)(c->margin + 20)
-             + shell_text_tracked_w(f->label, c->brand, 1.6f) + 18.f;
+    float gx = brand_end + 18.f;
     draw_vrule(s, (int)gx, 9, bh - 18, 1, c->overlay, 1.f);
     gx += 18.f;
     float qa = clampf(1.f - t * 2.5f, 0.f, 1.f);

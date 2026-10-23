@@ -151,10 +151,26 @@ static rect mk_box(float cx, float cy, float x, float y, float w, float h, float
     return r;
 }
 
+/* A line along an arc of the circle at (ox,oy), angles in degrees, 0 at
+ * the right and growing clockwise (screen coordinates). */
+static void arc_line(surface *s, float ox, float oy, float r, float from, float to,
+                     float w, uint32_t ink, float a)
+{
+    float px = 0.f, py = 0.f;
+    for (int i = 0; i <= 16; i++) {
+        float t = (from + (to - from) * (float)i / 16.f) * 0.0174533f;
+        float x = ox + cosf(t) * r, y = oy + sinf(t) * r;
+        if (i) draw_line(s, px, py, x, y, w, ink, a);
+        px = x; py = y;
+    }
+}
+
 void shell_icon_draw(surface *s, shell_icon ic, float cx, float cy, float sz,
                      uint32_t ink, uint32_t paper, float a)
 {
     float u = sz / 24.f;
+#define GX(v) (cx + (v) * u)
+#define GY(v) (cy + (v) * u)
 
     switch (ic) {
 
@@ -163,10 +179,12 @@ void shell_icon_draw(surface *s, shell_icon ic, float cx, float cy, float sz,
      * 64px it is still a globe. */
     case ICON_GLOBE:
         draw_circle(s, cx, cy, 10.5f*u, ink, a);
-        draw_rect(s, mk_box(cx, cy, -10.5f, -0.9f, 21.0f, 1.8f, u), paper, a);
-        draw_rect(s, mk_box(cx, cy,  -9.2f, -5.6f, 18.4f, 1.5f, u), paper, a);
-        draw_rect(s, mk_box(cx, cy,  -9.2f,  4.1f, 18.4f, 1.5f, u), paper, a);
-        draw_rect(s, mk_box(cx, cy,  -0.8f,-10.5f,  1.7f,21.0f, u), paper, a);
+        draw_rect(s, mk_box(cx, cy, -10.5f, -0.8f, 21.0f, 1.6f, u), paper, a);
+        /* The one meridian: an ellipse, stamped along its length. */
+        for (int i = 0; i < 48; i++) {
+            float t = (float)i * 6.2832f / 48.f;
+            draw_circle(s, GX(4.6f * cosf(t)), GY(10.5f * sinf(t)), 0.85f*u, paper, a);
+        }
         break;
 
     /* Email. A sealed slab with the flap cut into it. */
@@ -204,37 +222,127 @@ void shell_icon_draw(surface *s, shell_icon ic, float cx, float cy, float sz,
     case ICON_FILES:
         draw_rect(s, mk_box(cx, cy, -11.f, -10.5f, 11.5f, 5.2f, u), ink, a);
         draw_rect(s, mk_box(cx, cy, -11.f,  -5.6f, 22.f, 16.6f, u), ink, a);
-        /* The lip of the front flap, set high and short so the mark
-         * does not read as an equals sign at 17px — which is the size
-         * it lands at in the rail's index. */
-        draw_rect(s, mk_box(cx, cy,  -7.f,  -0.6f, 12.f,  1.4f, u), paper, a);
+        /* Plain: a tab and a body. (It carried a bar across the front
+         * "so it has a mouth", which read as a minus sign.) A hairline
+         * of paper under the tab is all the separation it needs. */
+        draw_rect(s, mk_box(cx, cy, 0.9f, -5.6f, 10.1f, 0.9f, u), paper, a);
         break;
 
-    /* Settings. Not a gear -- a bank of faders. Almost pure rule-work,
-     * the lightest mark in the set, and it says "adjust" rather than
-     * "machinery", which is the right promise for this button. */
-    case ICON_SETTINGS: {
-        const float ys[3] = { -7.2f, 0.f, 7.2f };
-        const float ks[3] = { -2.5f, 4.0f, -5.5f };
-        for (int i = 0; i < 3; i++) {
-            draw_rect(s, mk_box(cx, cy, -10.5f, ys[i] - 0.7f, 21.f, 1.4f, u), ink, a);
-            draw_rect(s, mk_box(cx, cy, ks[i] - 1.9f, ys[i] - 3.4f, 3.8f, 6.8f, u), ink, a);
+    /* Settings. A gear: eight teeth round a ring with the hub cut out. */
+    case ICON_SETTINGS:
+    case ICON_GEAR:
+        for (int k = 0; k < 8; k++) {
+            float t = (float)k * 0.785398f;
+            draw_line(s, GX(cosf(t) * 6.f), GY(sinf(t) * 6.f),
+                      GX(cosf(t) * 10.2f), GY(sinf(t) * 10.2f), 4.4f*u, ink, a);
         }
+        draw_circle(s, cx, cy, 7.6f*u, ink, a);
+        draw_circle(s, cx, cy, 3.1f*u, paper, a);
+        break;
+
+    /* Documents. A page with its corner folded over. */
+    case ICON_DOC: {
+        float pg[10] = { GX(-8.5f), GY(-11.f), GX(2.5f), GY(-11.f), GX(8.5f), GY(-5.f),
+                         GX(8.5f), GY(11.f),  GX(-8.5f), GY(11.f) };
+        draw_poly(s, pg, 5, ink, a);
+        float fold[6] = { GX(3.4f), GY(-8.8f), GX(3.4f), GY(-5.9f), GX(6.3f), GY(-5.9f) };
+        draw_poly(s, fold, 3, paper, a);
+        for (int i = 0; i < 3; i++)
+            draw_rect(s, mk_box(cx, cy, -5.4f, -1.2f + (float)i*4.2f,
+                                i == 2 ? 7.f : 10.8f, 1.6f, u), paper, a);
         break; }
+
+    /* Printers. A wide body with the paper standing out of the top and
+     * lying out of the bottom: the only mark that is wider than tall
+     * with a sheet on both sides. */
+    case ICON_PRINTER:
+        draw_rect(s, mk_box(cx, cy, -5.f, -10.5f, 10.f, 7.5f, u), ink, a);
+        draw_rect(s, mk_box(cx, cy, -3.4f, -8.9f, 6.8f, 5.f, u), paper, a);
+        draw_round_rect(s, mk_box(cx, cy, -11.f, -4.f, 22.f, 10.5f, u),
+                        corners_all(2.2f*u), ink, a);
+        draw_rect(s, mk_box(cx, cy, -6.4f, 3.4f, 12.8f, 7.6f, u), ink, a);
+        draw_rect(s, mk_box(cx, cy, -4.8f, 5.f, 9.6f, 4.4f, u), paper, a);
+        draw_circle(s, GX(7.6f), GY(-0.6f), 1.2f*u, paper, a);
+        break;
+
+    /* Zip files. A box with a lid and a zip running down its middle. */
+    case ICON_ZIP:
+        draw_rect(s, mk_box(cx, cy, -11.f, -10.f, 22.f, 6.f, u), ink, a);
+        draw_rect(s, mk_box(cx, cy, -9.5f, -3.f, 19.f, 13.f, u), ink, a);
+        for (int i = 0; i < 6; i++)
+            draw_rect(s, mk_box(cx, cy, (i & 1) ? 0.1f : -2.1f, -9.2f + (float)i*2.9f,
+                                2.f, 1.8f, u), paper, a);
+        draw_rect(s, mk_box(cx, cy, -2.4f, 5.4f, 4.8f, 3.6f, u), paper, a);
+        draw_rect(s, mk_box(cx, cy, -1.1f, 6.7f, 2.2f, 1.2f, u), ink, a);
+        break;
+
+    /* Wi-Fi. Three arcs and a dot. */
+    case ICON_WIFI:
+        arc_line(s, cx, GY(7.f), 5.f*u,  -135.f, -45.f, 2.6f*u, ink, a);
+        arc_line(s, cx, GY(7.f), 9.f*u,  -135.f, -45.f, 2.6f*u, ink, a);
+        arc_line(s, cx, GY(7.f), 13.f*u, -135.f, -45.f, 2.6f*u, ink, a);
+        draw_circle(s, cx, GY(7.f), 2.1f*u, ink, a);
+        break;
+
+    /* Sound. A speaker and two waves. */
+    case ICON_SPEAKER: {
+        draw_rect(s, mk_box(cx, cy, -11.f, -3.6f, 4.6f, 7.2f, u), ink, a);
+        float cone[8] = { GX(-7.f), GY(-3.6f), GX(-0.5f), GY(-9.f),
+                          GX(-0.5f), GY(9.f),  GX(-7.f), GY(3.6f) };
+        draw_poly(s, cone, 4, ink, a);
+        arc_line(s, GX(1.f), cy, 5.f*u,  -50.f, 50.f, 2.4f*u, ink, a);
+        arc_line(s, GX(1.f), cy, 9.f*u,  -50.f, 50.f, 2.4f*u, ink, a);
+        break; }
+
+    /* Bigger text and smaller text. An A; a plus or a minus beside it. */
+    case ICON_BIGGER:
+    case ICON_SMALLER: {
+        draw_line(s, GX(-4.4f), GY(-9.5f), GX(-10.4f), GY(10.f), 2.8f*u, ink, a);
+        draw_line(s, GX(-4.4f), GY(-9.5f), GX(1.6f),   GY(10.f), 2.8f*u, ink, a);
+        draw_rect(s, mk_box(cx, cy, -8.6f, 3.2f, 8.4f, 2.4f, u), ink, a);
+        draw_rect(s, mk_box(cx, cy, 5.f, -5.2f, 7.f, 2.4f, u), ink, a);
+        if (ic == ICON_BIGGER)
+            draw_rect(s, mk_box(cx, cy, 7.3f, -7.5f, 2.4f, 7.f, u), ink, a);
+        break; }
+
+    /* Turn off. The ring with its gap, and the bar. */
+    case ICON_POWER:
+        arc_line(s, cx, GY(1.2f), 8.f*u, -60.f, 240.f, 2.8f*u, ink, a);
+        draw_line(s, cx, GY(-10.5f), cx, GY(-0.5f), 2.8f*u, ink, a);
+        break;
+
+    /* Close this. A cross in a square. */
+    case ICON_CLOSE:
+        draw_frame(s, mk_box(cx, cy, -10.f, -10.f, 20.f, 20.f, u),
+                   (int)(2.f*u + 0.5f) < 1 ? 1 : (int)(2.f*u + 0.5f), ink, a);
+        draw_line(s, GX(-4.6f), GY(-4.6f), GX(4.6f), GY(4.6f), 2.4f*u, ink, a);
+        draw_line(s, GX(4.6f), GY(-4.6f), GX(-4.6f), GY(4.6f), 2.4f*u, ink, a);
+        break;
+
+    /* Back and forward: a drawn chevron, never a typed one. */
+    case ICON_BACK:
+        draw_line(s, GX(4.f), GY(-8.f), GX(-4.f), cy, 3.2f*u, ink, a);
+        draw_line(s, GX(-4.f), cy, GX(4.f), GY(8.f), 3.2f*u, ink, a);
+        break;
+    case ICON_FORWARD:
+        draw_line(s, GX(-4.f), GY(-8.f), GX(4.f), cy, 3.2f*u, ink, a);
+        draw_line(s, GX(4.f), cy, GX(-4.f), GY(8.f), 3.2f*u, ink, a);
+        break;
+
+    /* Chosen. A filled check mark. */
+    case ICON_CHECK:
+        draw_line(s, GX(-9.f), GY(1.f), GX(-3.2f), GY(7.6f), 3.6f*u, ink, a);
+        draw_line(s, GX(-3.2f), GY(7.6f), GX(9.4f), GY(-7.6f), 3.6f*u, ink, a);
+        break;
 
     /* Help. A solid disc with the question cut out of it: the mark is
      * the ink, the meaning is the hole. */
     case ICON_HELP:
         draw_circle(s, cx, cy, 11.f*u, ink, a);
-        /* The hook wants a big radius and a THIN stroke, or the discs
-         * that draw it close the counter and the whole mark comes back
-         * as a blob with a notch. Measured at 33px, where it lands on
-         * the locked archetype's switcher. */
-        for (float g = 2.85f; g > -1.15f; g -= 0.07f)
-            draw_circle(s, cx + cosf(g)*5.2f*u, cy - 3.9f*u + sinf(g)*5.2f*u,
-                        1.35f*u, paper, a);
-        draw_rect(s, mk_box(cx, cy, -1.3f, 0.6f, 2.7f, 3.9f, u), paper, a);
-        draw_rect(s, mk_box(cx, cy, -1.5f, 6.2f, 3.1f, 3.1f, u), paper, a);
+        arc_line(s, cx, GY(-3.2f), 4.3f*u, -195.f, 75.f, 2.7f*u, paper, a);
+        draw_line(s, GX(2.2f), GY(0.6f), cx, GY(2.9f), 2.7f*u, paper, a);
+        draw_line(s, cx, GY(2.9f), cx, GY(4.4f), 2.7f*u, paper, a);
+        draw_circle(s, cx, GY(7.6f), 1.7f*u, paper, a);
         break;
 
     /* A window: hollow, with a title band. Its opposite number is
@@ -253,14 +361,17 @@ void shell_icon_draw(surface *s, shell_icon ic, float cx, float cy, float sz,
         draw_rect(s, mk_box(cx, cy, -2.2f, -10.f, 4.4f, 20.f, u), ink, a);
         break;
 
-    /* Writing. A sheet with ragged lines knocked out: the only mark
-     * whose interior is deliberately uneven, because writing is. */
+    /* Notes. A lined page with a pencil lying across its corner. */
     case ICON_TEXT: {
-        draw_rect(s, mk_box(cx, cy, -8.5f, -11.f, 17.f, 22.f, u), ink, a);
-        const float ws[5] = { 10.5f, 11.5f, 9.f, 11.5f, 5.5f };
-        for (int i = 0; i < 5; i++)
-            draw_rect(s, mk_box(cx, cy, -5.8f, -7.6f + (float)i*3.6f, ws[i], 1.5f, u),
+        draw_rect(s, mk_box(cx, cy, -10.5f, -11.f, 15.f, 22.f, u), ink, a);
+        const float ws[4] = { 9.f, 10.f, 8.f, 5.f };
+        for (int i = 0; i < 4; i++)
+            draw_rect(s, mk_box(cx, cy, -7.8f, -7.4f + (float)i*3.9f, ws[i], 1.5f, u),
                       paper, a);
+        draw_line(s, GX(3.2f), GY(9.4f), GX(10.6f), GY(2.f), 6.4f*u, paper, a);
+        draw_line(s, GX(4.2f), GY(8.4f), GX(10.2f), GY(2.4f), 3.4f*u, ink, a);
+        float tip[6] = { GX(1.6f), GY(11.2f), GX(2.9f), GY(7.6f), GX(5.f), GY(9.7f) };
+        draw_poly(s, tip, 3, ink, a);
         break; }
 
     /* Music. All positive shape, no knockout at all -- the one mark in
@@ -331,7 +442,10 @@ void shell_icon_draw(surface *s, shell_icon ic, float cx, float cy, float sz,
                 draw_rect(s, mk_box(cx, cy, -5.8f + (float)k*4.3f,
                                     -0.6f + (float)r*4.6f, 2.9f, 2.9f, u), paper, a);
         break; }
+    case ICON_N: break;
     }
+#undef GX
+#undef GY
 }
 
 /* The starter set of things the machine can do.
@@ -470,6 +584,22 @@ int shell_text_wrap(surface *s, font *f, float x, float y, float max_w,
         p += fit;
     }
     return used;
+}
+
+/* The wordmark: the mark -- a solid diamond as tall as the capitals --
+ * a third of an em of space, and the name, in the bold face. Once per
+ * screen, in the accent, never decorative (DESIGN-DIRECTION §2). Draws
+ * from x, centred on cy; returns the x where it ends. */
+float shell_wordmark(shell_ctx *c, surface *s, shell_fonts *f, float x, float cy)
+{
+    font *ft = f->mid ? f->mid : f->small;
+    float cap = ft ? font_ascent(ft) * 0.72f : 14.f;
+    if (cap < 12.f) cap = 12.f;
+    draw_diamond(s, x + cap * 0.5f, cy, cap, c->accent, 1.f);
+    float tx = x + cap + cap * 0.45f;
+    if (!ft || !c->brand[0]) return tx;
+    shell_text(s, ft, tx, shell_baseline(ft, cy - 24.f, 48.f), c->brand, c->fg_hi, 1.f);
+    return tx + shell_text_w(ft, c->brand);
 }
 
 /* Tracked capitals, drawn a codepoint at a time. The tracking is what

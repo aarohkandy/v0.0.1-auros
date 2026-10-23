@@ -17,7 +17,7 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 T=$(mktemp -d "${TMPDIR:-/tmp}/fonttest.XXXXXX") || exit 2
-trap 'rm -rf "$T"' EXIT
+trap 'rm -rf "$T"' EXIT INT TERM
 fail=0
 ok() { if [ "$2" = 0 ]; then echo "    ok    $1"; else echo "    FAIL  $1"; fail=1; fi; }
 

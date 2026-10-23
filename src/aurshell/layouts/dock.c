@@ -666,10 +666,7 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
     int bh = c->bar_h;
     draw_rect(s, (rect){ 0, 0, s->w, bh }, c->bg_alt, 1.f);
     draw_hrule(s, 0, bh, s->w, 1, c->overlay, 1.f);
-    draw_rect(s, (rect){ c->margin, bh/2 - 4, 8, 8 }, c->accent, 1.f);
-    shell_text_tracked(s, f->label, (float)(c->margin + 20),
-                       shell_baseline(f->label, 0.f, (float)bh),
-                       c->brand, c->subtle, 0.95f, 1.6f);
+    shell_wordmark(c, s, f, (float)c->margin, (float)bh * 0.5f);
 
     if (c->show_clock) {
         char hm[32], dt[48];

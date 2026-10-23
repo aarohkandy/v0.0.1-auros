@@ -78,6 +78,7 @@ int main(void)
 
     printf("\n  and the shell asks\n");
     ok("main.c tells it what screen she is on", source_has("press_screen(&pr"));
+    ok("...by a number that names the panel and its page", source_has("screen_signature(&c)"));
     ok("main.c filters mouse buttons through it", source_has("press_filter(&pr"));
     ok("main.c filters touchpad taps through it", source_has("press_accept(&pr"));
 

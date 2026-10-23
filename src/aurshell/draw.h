@@ -78,6 +78,16 @@ void draw_vrule(surface *s, int x, int y, int h, int weight, uint32_t rgb, float
  * hit rect the same rectangle. */
 void draw_frame(surface *s, rect r, int weight, uint32_t rgb, float a);
 void draw_circle(surface *s, float cx, float cy, float radius, uint32_t rgb, float a);
+
+/* A filled CONVEX polygon, anti-aliased by the signed distance to its
+ * edges (xy is n x,y pairs, either winding). The shell had no filled
+ * polygon at all: every shape was a rectangle, a circle or a thick
+ * line, which is why the brand's mark -- a diamond -- could not be
+ * drawn. Concave shapes are drawn as several of these. */
+void draw_poly(surface *s, const float *xy, int n, uint32_t rgb, float a);
+/* The mark, "the waypoint": a solid square turned 45 degrees, `h` tall
+ * (its diagonal), centred on cx,cy. Always drawn, never typed. */
+void draw_diamond(surface *s, float cx, float cy, float h, uint32_t rgb, float a);
 void draw_line(surface *s, float x0, float y0, float x1, float y1,
                float width, uint32_t rgb, float a);
 

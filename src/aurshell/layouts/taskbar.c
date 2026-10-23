@@ -736,7 +736,7 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
     draw_frame(s, l, p->menu_open ? 2 : 1, p->menu_open ? c->fg : c->overlay, 1.f);
     /* A block of ink, not a dot in a halo. This is the one control on
      * the bar that is not a window, so it wears the brand's own mark. */
-    draw_rect(s, (rect){ l.x + 14, l.y + l.h/2 - 4, 8, 8 }, c->accent, 1.f);
+    draw_diamond(s, (float)l.x + 20.f, (float)l.y + (float)l.h * 0.5f, 12.f, c->accent, 1.f);
     char lb[48];
     const char *lt = fit_text(f->mid, "All my programs", lb, sizeof lb,
                               (float)l.w - 44.f);
@@ -918,10 +918,7 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
         rect st = { 0, 0, s->w, sh };
         draw_rect(s, st, c->bg_alt, 1.f);
         draw_hrule(s, 0, sh, s->w, 1, c->overlay, 1.f);
-        draw_rect(s, (rect){ c->margin, sh/2 - 4, 8, 8 }, c->accent, 1.f);
-        shell_text_tracked(s, f->label, (float)(c->margin + 20),
-                           shell_baseline(f->label, 0.f, (float)sh),
-                           c->brand, c->subtle, 0.95f, 1.6f);
+        shell_wordmark(c, s, f, (float)c->margin, (float)sh * 0.5f);
         if (c->show_clock) {
             char hm[32], dt[48];
             shell_clock(hm, sizeof hm, dt, sizeof dt);

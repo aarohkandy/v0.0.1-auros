@@ -413,17 +413,26 @@ static int resolve_program(const char *argv0, char *out, size_t cap)
  * translation of the desktop needs no new artwork. */
 static shell_icon icon_for(const entry *e)
 {
+    /* Most specific first, and every kind of thing she is shown has an
+     * icon of its own: two programs sharing a silhouette are two
+     * programs she cannot tell apart (DESIGN-DIRECTION §3, and
+     * tools/icontest.c). Documents, Photos, Printers, Zip files and
+     * Settings used to share three marks between them -- Printers
+     * wore Settings' faders and Zip files a bare window. */
+    if (has_cat(e, "Archiving") || has_cat(e, "Compression"))  return ICON_ZIP;
+    if (has_cat(e, "Printing"))                          return ICON_PRINTER;
     if (has_cat(e, "WebBrowser"))                        return ICON_GLOBE;
     if (has_cat(e, "Email"))                             return ICON_MAIL;
     if (has_cat(e, "TerminalEmulator"))                  return ICON_TERMINAL;
     if (has_cat(e, "Calculator"))                        return ICON_CALC;
     if (has_cat(e, "FileManager") || has_cat(e, "FileTools")) return ICON_FILES;
     if (has_cat(e, "Settings")   || has_cat(e, "System")) return ICON_SETTINGS;
+    if (has_cat(e, "Office")     || has_cat(e, "WordProcessor")
+     || has_cat(e, "Spreadsheet")|| has_cat(e, "Presentation")) return ICON_DOC;
+    if (has_cat(e, "TextEditor"))                        return ICON_TEXT;
     if (has_cat(e, "Photography")|| has_cat(e, "Graphics")) return ICON_PHOTOS;
     if (has_cat(e, "Audio")      || has_cat(e, "Music")
      || has_cat(e, "AudioVideo") || has_cat(e, "Video"))  return ICON_MUSIC;
-    if (has_cat(e, "TextEditor") || has_cat(e, "Office")
-     || has_cat(e, "WordProcessor"))                      return ICON_TEXT;
     if (has_cat(e, "Documentation"))                      return ICON_HELP;
     if (has_cat(e, "Network"))                            return ICON_GLOBE;
     return ICON_WINDOW;

@@ -478,6 +478,50 @@ void draw_circle(surface *s, float cx, float cy, float radius, uint32_t rgb, flo
         }
 }
 
+void draw_poly(surface *s, const float *xy, int n, uint32_t rgb, float a)
+{
+    if (!xy || n < 3 || n > 16) return;
+    float minx = xy[0], maxx = xy[0], miny = xy[1], maxy = xy[1], area2 = 0.f;
+    for (int i = 0; i < n; i++) {
+        float x = xy[2*i], y = xy[2*i+1];
+        float nx = xy[2*((i+1)%n)], ny = xy[2*((i+1)%n)+1];
+        if (x < minx) minx = x;
+        if (x > maxx) maxx = x;
+        if (y < miny) miny = y;
+        if (y > maxy) maxy = y;
+        area2 += x * ny - nx * y;
+    }
+    float sgn = area2 >= 0.f ? 1.f : -1.f;
+    int x0 = f2i(floorf(minx)) - 1, y0 = f2i(floorf(miny)) - 1;
+    int x1 = f2i(ceilf(maxx)) + 1,  y1 = f2i(ceilf(maxy)) + 1;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > s->w) x1 = s->w;
+    if (y1 > s->h) y1 = s->h;
+    for (int y = y0; y < y1; y++)
+        for (int x = x0; x < x1; x++) {
+            float px = (float)x + 0.5f, py = (float)y + 0.5f, inside = 1e9f;
+            for (int i = 0; i < n; i++) {
+                float ax = xy[2*i], ay = xy[2*i+1];
+                float bx = xy[2*((i+1)%n)], by = xy[2*((i+1)%n)+1];
+                float ex = bx - ax, ey = by - ay, len = sqrtf(ex*ex + ey*ey);
+                if (len < 1e-6f) continue;
+                /* positive inside, in pixels */
+                float d = sgn * (ex * (py - ay) - ey * (px - ax)) / len;
+                if (d < inside) inside = d;
+            }
+            float cov = clampf(0.5f + inside, 0.f, 1.f);
+            if (cov > 0.f) draw_blend_px(s, x, y, rgb, cov * a);
+        }
+}
+
+void draw_diamond(surface *s, float cx, float cy, float h, uint32_t rgb, float a)
+{
+    float r = h * 0.5f;
+    float xy[8] = { cx, cy - r,  cx + r, cy,  cx, cy + r,  cx - r, cy };
+    draw_poly(s, xy, 4, rgb, a);
+}
+
 void draw_line(surface *s, float x0, float y0, float x1, float y1,
                float width, uint32_t rgb, float a)
 {

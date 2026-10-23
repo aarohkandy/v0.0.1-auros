@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.." || exit 2
 A=${AURSHELL:-}
 [ -n "$A" ] && [ -x "$A" ] || { echo "set AURSHELL to a built aurshell"; exit 2; }
 T=$(mktemp -d "${TMPDIR:-/tmp}/lookboot.XXXXXX") || exit 2
-trap 'rm -rf "$T"' EXIT
+trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/home/.config/auros" "$T/st/c" "$T/apps"
 
 # Her pick: Sandstone, resolved the way Settings resolves it.
