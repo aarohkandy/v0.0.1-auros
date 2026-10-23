@@ -175,8 +175,12 @@ static int make_name(const char *orig, int n, char out[NAME_LIMIT + 1])
     size_t room = NAME_LIMIT - extlen - suflen;
     int shortened = 0;
     if (stem > room) {
-        stem = room;
-        while (stem > 0 && ((unsigned char)orig[stem] & 0xC0) == 0x80) stem--;
+        size_t cut = room;
+        while (cut > 0 && ((unsigned char)orig[cut] & 0xC0) == 0x80) cut--;
+        /* Bytes that are all continuation bytes are not text and have no
+         * character boundary to cut at (found by the fuzzer: the name came
+         * out empty). Cut them where they stand rather than lose the file. */
+        stem = cut > 0 ? cut : room;
         shortened = 1;
     }
     memcpy(out, orig, stem);

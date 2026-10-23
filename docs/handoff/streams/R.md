@@ -153,17 +153,23 @@ gate checks every ELF in /usr/lib/ferry).
    (import) or `/run/auros-answer/putback.log` (back). Ask C to show the
    `note=` from `/run/auros-answer/result` on failure, and to decide what
    to offer when it fails (see "For the lead").
-5. Fuzz: `fuzz/{hive,names,marks}.c` + `fuzz/run.sh` are written but NEVER
-   RUN (no crash claims). Run `sh fuzz/run.sh 120` on homebase with the
-   `auros-s3-fuzz` image (clang 18; mount the repo, `docker run --rm -v
-   ... auros-s3-fuzz sh -c 'cd src/ferry && FUZZ_WORK=... sh fuzz/run.sh
-   120'`); add `ffhash` and the win_safe/nreg code as harnesses too.
-   hivepeek's INT32_MIN negation is fixed (finding 7); stream S3 also has
-   `fuzz_hive.c` (bd946e9) — findings go to R. Regression inputs →
-   `tests/regress/hive-*` plus a suite step feeding each to
-   `ferry-hivepeek` (exit 0/1/2, never a signal), and an ASan build of
-   hivepeek over corrupted hives in the suite (FERRY.md used to claim
-   one; none exists).
+5. DONE fuzz: `fuzz/{hive,names,marks}.c` + `fuzz/run.sh` (libFuzzer +
+   ASan + UBSan; clang is in homebase's `auros-s3-fuzz` image:
+   `docker run --rm -v <repo>:/w:ro -v <out>:/out auros-s3-fuzz sh -c 'cp
+   -r /w/src/ferry /tmp/f && cd /tmp/f && FUZZ_WORK=/tmp/fw sh
+   fuzz/run.sh 60'`). Clean after fixes: hive 0.8M, names 2.6M (incl. the
+   Windows-name sanitizer and case-folding registry), bookmarks 2.0M
+   executions in 60 s each. FOUND AND FIXED: (a) chromemarks.c read up to 4
+   bytes past the end of the file when it ended mid-"true/null/false"
+   (heap over-read, ASan); (b) make_name returned an EMPTY name for a
+   name of only UTF-8 continuation bytes; (c) hivepeek negated INT32_MIN
+   (UB). Kept found: `tests/regress/*` replayed by `tests/run.sh` under
+   gcc ASan+UBSan through `fuzz/replay.c`, plus 3,000 corrupted hives and
+   1,500 corrupted bookmark files made with a fixed seed; mutants put (a)
+   (b) (c) back and watch the replay fail. The old FERRY.md claim of "ASan
+   over thousands of corrupted hives" is now true. Not fuzzed yet:
+   `ffhash` (tiny, validated against real values), `ferry-winattr`, the
+   shell parsers (ferry-wifi XML, windowsZones).
 6. `tools/nmtest.sh`: drop its Ferry Wi-Fi section (emitter deleted on
    purpose in fb90bcd) — another stream's file, smallest edit.
 7. DONE `docs/FERRY.md` rewritten to match the code (passwords, copier,

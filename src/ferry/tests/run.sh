@@ -458,6 +458,52 @@ refute "no Wi-Fi key, no Firefox login, anywhere under the new home or state" \
 refute "no password file anywhere under the new home" \
     sh -c "find '$HOME1' -iname 'logins*.json' -o -iname 'key[34].db' -o -iname 'signons*' | grep -q ."
 
+echo "parsers of hostile data, under AddressSanitizer and UndefinedBehaviorSanitizer:"
+# fuzz/*.c are libFuzzer harnesses; fuzz/replay.c runs them over files so
+# this suite (gcc, no clang) can. Inputs that once broke something are in
+# tests/regress/; thousands of corrupted ones are made here.
+RP="$TMP/replay"; mkdir -p "$RP/corrupt" "$RP/corrupt-marks"
+SAN="-g -O1 -fsanitize=address,undefined -fno-sanitize-recover=undefined"
+_san=1
+for _h in hive names marks; do
+    cc $SAN -o "$RP/$_h" "$FERRY/fuzz/$_h.c" "$FERRY/fuzz/replay.c" 2>"$RP/$_h.err" || _san=0
+done
+if [ "$_san" = 1 ]; then
+    python3 - "$WIN/Windows/System32/config/SOFTWARE" "$NT" "$WIN/users/Bob/AppData/Local/Microsoft/Edge/User Data/Default/Bookmarks" "$RP" <<'PY'
+import random, struct, sys
+random.seed(1)
+hives = [open(p, "rb").read() for p in sys.argv[1:3]]
+marks = open(sys.argv[3], "rb").read()
+out = sys.argv[4]
+for i in range(3000):
+    h = bytearray(random.choice(hives))
+    for _ in range(random.randint(1, 16)):
+        if random.random() < 0.5:                       # a byte
+            h[random.randrange(len(h))] = random.randrange(256)
+        else:                                           # a 32-bit field gone bad
+            o = random.randrange(0, len(h) - 4) & ~3
+            struct.pack_into("<I", h, o, random.choice([0, 0xFFFFFFFF, 0x80000000, 0x7FFFFFFF, 0xFFFFFFFC, 4, 0x1000]))
+    if random.random() < 0.2:
+        del h[random.randrange(4096, len(h)):]          # cut off
+    open("%s/corrupt/c%04d" % (out, i), "wb").write(h)
+for i in range(1500):
+    m = bytearray(marks)
+    for _ in range(random.randint(1, 8)):
+        m[random.randrange(len(m))] = random.choice(b'{}[]",:\\tfn0123456789e-.u"')
+    if random.random() < 0.4:
+        del m[random.randrange(1, len(m)):]
+    open("%s/corrupt-marks/m%04d" % (out, i), "wb").write(m)
+PY
+    assert "inputs that once broke the registry reader replay clean (a hostile cell size)" "$RP/hive" "$FERRY"/tests/regress/hive-*
+    assert "inputs that once broke the name maker replay clean (a name of stray bytes)" "$RP/names" "$FERRY"/tests/regress/names-*
+    assert "inputs that once broke the bookmarks reader replay clean (a file cut off mid-word)" "$RP/marks" "$FERRY"/tests/regress/marks-*
+    assert "3,000 corrupted registry hives: no crash, no overflow, no undefined behaviour" "$RP/hive" "$RP"/corrupt/*
+    assert "1,500 corrupted bookmark files: no crash, no overflow, no undefined behaviour" "$RP/marks" "$RP"/corrupt-marks/*
+    assert "her real-shaped bookmarks go through the sanitizers too" "$RP/marks" "$WIN/users/Bob/AppData/Local/Microsoft/Edge/User Data/Default/Bookmarks"
+else
+    echo "  (skipped: this compiler has no AddressSanitizer/UndefinedBehaviorSanitizer)"
+fi
+
 echo "hardening (the image build refuses a program without it):"
 CS="$FERRY/../../tools/checksec.sh"
 if [ -f "$CS" ] && command -v gcc >/dev/null 2>&1; then

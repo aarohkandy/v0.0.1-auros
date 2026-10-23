@@ -172,10 +172,13 @@ static struct jv *jvalue(void)
         return v;
     }
     if (*p == '"') { v->type = J_STR; if (!(v->str = jstring())) goto bad; return v; }
-    if (!strncmp(p, "true", 4) || !strncmp(p, "null", 4)) {
+    /* The buffer is the file as read, with no terminator: every
+     * comparison is bounded by what is left (found by the fuzzer: a file
+     * ending in "tru" was read four bytes past its end). */
+    if (end - p >= 4 && (!strncmp(p, "true", 4) || !strncmp(p, "null", 4))) {
         v->type = *p == 't' ? J_BOOL : J_NULL; p += 4; return v;
     }
-    if (!strncmp(p, "false", 5)) { v->type = J_BOOL; p += 5; return v; }
+    if (end - p >= 5 && !strncmp(p, "false", 5)) { v->type = J_BOOL; p += 5; return v; }
     if (*p == '-' || (*p >= '0' && *p <= '9')) {
         const char *s = p;
         while (p < end && strchr("+-.0123456789eE", *p)) p++;

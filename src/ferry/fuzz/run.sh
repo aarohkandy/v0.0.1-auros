@@ -35,8 +35,8 @@ for h in hive names marks; do
     echo "fuzzing $h for ${SECS}s"
     "$W/fuzz-$h" -max_total_time="$SECS" -timeout=10 -rss_limit_mb=2048 \
         -artifact_prefix="$HERE/found/$h/" -print_final_stats=1 \
-        "$W/corpus-$h" "$W/seed-$h" 2>&1 | grep -E 'stat::number_of_executed_units|stat::new_units_added|ERROR|SUMMARY|Test unit written|BINGO' || true
-    if ls "$HERE/found/$h"/crash-* "$HERE/found/$h"/leak-* "$HERE/found/$h"/timeout-* >/dev/null 2>&1; then
+        "$W/corpus-$h" "$W/seed-$h" 2>&1 | grep -E 'stat::number_of_executed_units|stat::new_units_added|ERROR|SUMMARY|Test unit written|BINGO|invariant' || true
+    if [ -n "$(find "$HERE/found/$h" \( -name 'crash-*' -o -name 'leak-*' -o -name 'timeout-*' -o -name 'oom-*' \) 2>/dev/null)" ]; then
         echo "  $h: FOUND something, see fuzz/found/$h/"; rc=1
     else
         echo "  $h: nothing found"

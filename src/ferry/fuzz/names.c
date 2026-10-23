@@ -24,6 +24,8 @@ static int valid_utf8(const unsigned char *s, size_t n)
     return 1;
 }
 
+#define BAD(n) do { fprintf(stderr, "names invariant %d broken\n", n); abort(); } while (0)
+
 int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size)
 {
     char name[800], out[NAME_LIMIT + 1];
@@ -37,12 +39,34 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size)
 
     int shortened = make_name(name, count, out);
     size_t len = strlen(out);
-    if (len == 0 || len > NAME_LIMIT) abort();
-    if (strchr(out, '/')) abort();
-    if (!strcmp(out, ".") || !strcmp(out, "..")) abort();
-    if (count == 0 && !shortened && strcmp(out, name)) abort();
-    if (n <= NAME_LIMIT - 30 && shortened) abort();      /* shortened for no reason */
+    if (len == 0 || len > NAME_LIMIT) BAD(1);
+    if (strchr(out, '/')) BAD(2);
+    if (!strcmp(out, ".") || !strcmp(out, "..")) BAD(3);
+    if (count == 0 && !shortened && strcmp(out, name)) BAD(4);
+    if (n <= NAME_LIMIT - 30 && shortened) BAD(5);      /* shortened for no reason */
     if (valid_utf8((const unsigned char *)name, n) &&
-        !valid_utf8((const unsigned char *)out, len)) abort();
+        !valid_utf8((const unsigned char *)out, len)) BAD(6);
+
+    /* The name Windows will hold: win_safe on ANY bytes (Linux allows
+     * any but NUL and '/'), through make_name at any collision count. */
+    {
+        char safe[NAME_LIMIT + 1], fin[NAME_LIMIT + 1], low[NAME_LIMIT * 4 + 8];
+        win_safe(name, safe);
+        size_t sl = strlen(safe);
+        if (sl == 0 || sl > NAME_LIMIT) BAD(7);
+        if (!valid_utf8((const unsigned char *)safe, sl)) BAD(8);
+        for (size_t i = 0; i < sl; i++) {
+            unsigned char c = (unsigned char)safe[i];
+            if (c < 0x20 || strchr("<>:\"/\\|?*", c)) BAD(9);
+        }
+        if (safe[sl - 1] == '.' || safe[sl - 1] == ' ') BAD(10);
+        make_name(safe, count, fin);
+        if (!strlen(fin) || strlen(fin) > NAME_LIMIT) BAD(11);
+        fold(fin, low, sizeof low);                 /* must not overrun */
+        struct nreg r = { 0 };
+        nreg_put(&r, low, fin);
+        if (!nreg_get(&r, low)) BAD(12);
+        nreg_free(&r);
+    }
     return 0;
 }

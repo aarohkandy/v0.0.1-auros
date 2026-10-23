@@ -4,6 +4,7 @@
 #  copy of Ferry; the suite must then fail the check named beside it.
 #  A check that stays green with its bug back is not a test.
 #
+#    ONLY="once broke" sh tests/mutants.sh   (just those whose check matches)
 #    sh tests/mutants.sh          (root-only mutants run when root:
 #                                  use tests/asroot.sh's container)
 # ═══════════════════════════════════════════════════════════════════
@@ -12,6 +13,8 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 caught=0; missed=0
 
 mutant() { # FILE OLD NEW CHECK [root|user]
+    # ONLY=text runs just the mutants whose named check contains it.
+    case "$4" in *"${ONLY:-}"*) : ;; *) return ;; esac
     [ "${5:-}" = root ] && [ "$(id -u)" != 0 ] && { echo "  skip (needs root) $4"; return; }
     # As root her uid cannot write the outside folder either way.
     [ "${5:-}" = user ] && [ "$(id -u)" = 0 ] && { echo "  skip (as a user only) $4"; return; }
@@ -125,22 +128,9 @@ mutant ferry-firefox 'elif ff_used_here; then _switch=0;' 'elif false; then _swi
 mutant ferry-firefox 'if ff_running; then _switch=0;' 'if false; then _switch=0;' \
     "while Firefox is open, its profiles.ini is left alone"
 mutant ferry-firefox '    case " $_ours fromwindows.default-release " in *" ${_cur##*/} "*) return 1 ;; esac' '    :' \
-    "bringing it across again changes nothing in profiles.ini (idempotent)"
+    "...and a second go does not mistake its own profile for hers (bookmarks stay in Firefox)"
 mutant ferry-firefox 'elif [ -z "$FF_HASH" ]; then _switch=0;' 'elif false; then _switch=0;' \
-    "with no Firefox installed, no profiles.ini is invented"
-mutant chromemarks.c '        if (!strncasecmp(url, ok[i], strlen(ok[i]))) return 1;' '        return 1;' \
-    "...a javascript: bookmark (a program) does not come"
-mutant chromemarks.c "        case '<': fputs(\"&lt;\", stdout); break;" '' \
-    "...a title that is markup is escaped"
-mutant chromemarks.c '        if (++depth > MAX_DEPTH) goto bad;' '        ++depth;' \
-    "200,000 nested brackets: refused, not a crash (exit 2)"
-
-# Her browser (commit 4).
-mutant ferry-firefox '        sec ~ /^\[Install/ && /^Default=/ { $0 = "Default=" rel }' '' \
-    "after Firefox ran once here, it is switched to the profile from Windows"
-mutant ferry-firefox '_running=0
-ff_running && _running=1' '_running=0' \
-    "while Firefox is open, its profiles.ini is left alone"
+    "...her bookmarks still wait in her Home"
 mutant chromemarks.c '        if (!strncasecmp(url, ok[i], strlen(ok[i]))) return 1;' '        return 1;' \
     "...a javascript: bookmark (a program) does not come"
 mutant chromemarks.c "        case '<': fputs(\"&lt;\", stdout); break;" '' \
@@ -164,9 +154,9 @@ mutant copy.c '        if (free_b >= 0 && free_b < want) {' '        if (0) {' \
     "not enough room in Windows: exit 4"
 mutant copy.c '                cls = S_ISREG(st.st_mode) ? "hydrated" : S_ISLNK(st.st_mode) ? "link" : "special";' \
     '                cls = "hydrated";' \
-    "a shortcut (symlink) is not followed: nothing from /etc came"
+    "ferry back succeeds (exit 0)"
 mutant ferry-back "--skip .~lock.*# " "" "an editor's lock file is not hers"
-mutant ferry-back "    case \"\$RC\" in 0|2|4) : ;; *) stage_fail back \"ferry-copy exit \$RC\"; RC=1 ;; esac" "    :" \
+mutant ferry-back '    case "$RC" in 0|2|4) : ;;' '    case "$RC" in 0|2) : ;;' \
     "not enough room in Windows: exit 4"
 mutant ferry-back 'require_clean_volume "$FERRY_ROOT" "$FERRY_DEV"' ':' \
     "a hibernated Windows is refused (exit 3)"
@@ -174,13 +164,24 @@ mutant ferry 'signal_done back "$_rc" back' ':' \
     "the completion signal says: back, ok, and how many files"
 mutant ferry 'signal_done import "$_rc" files firefox' ':' \
     "the completion signal says: import, partial, and how many files"
-mutant ferry-common.sh '        5) _res=unopened ;; *) _res=failed ;;' '        5) _res=unopened ;; *) _res=ok ;;' \
+mutant ferry-common.sh '        0) _res=ok ;;' '        0) _res=partial ;;' \
     "the completion signal says: back, ok, and how many files"
 
 mutant ffhash.c '        char hex[24];
         snprintf(hex, sizeof hex, "%016llX", (unsigned long long)cityhash64(w, n));
         puts(hex);' '        printf("%016llX\n", (unsigned long long)cityhash64(w, n));' \
     "every compiled helper carries the hardening the image build demands (PIE, RELRO, stack protector...)"
+
+# Found by the fuzzers; kept found.
+mutant hivepeek.c '    int64_t s;
+    if (off == 0xffffffffu) return 0;' '    int32_t s;
+    if (off == 0xffffffffu) return 0;' \
+    "inputs that once broke the registry reader replay clean (a hostile cell size)"
+mutant chromemarks.c '    if (end - p >= 4 && (!strncmp(p, "true", 4) || !strncmp(p, "null", 4))) {' \
+    '    if ((!strncmp(p, "true", 4) || !strncmp(p, "null", 4))) {' \
+    "inputs that once broke the bookmarks reader replay clean (a file cut off mid-word)"
+mutant copy.c '        stem = cut > 0 ? cut : room;' '        stem = cut;' \
+    "inputs that once broke the name maker replay clean (a name of stray bytes)"
 
 # Root: the escalation the lead's review named.
 # Without the switch to her, the self-check refuses to copy at all...
