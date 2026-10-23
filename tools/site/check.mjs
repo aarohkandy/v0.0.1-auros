@@ -343,8 +343,10 @@ for (const v of [
     ]) {
       const { ctx, page } = await visit({ ...v, url: HOME + "advanced.html", ua: UA.winEdge, uad: UAD.winX64 });
       textFindings(v.name, await page.evaluate(measureText));
-      const ids = await page.evaluate(() => ["bios", "rst"].filter((id) => document.getElementById(id)));
-      check(ids.length === 2, `${v.name}: has the BIOS and the Intel storage sections`, ids.join(","));
+      // The places the installer and the front door send a helper to.
+      const want = ["bios", "rst", "smart-app-control", "secure-boot", "room"];
+      const ids = await page.evaluate((w) => w.filter((id) => document.getElementById(id)), want);
+      check(ids.length === want.length, `${v.name}: has the BIOS, Intel storage, Smart App Control, Secure Boot and room sections`, ids.join(","));
       await ctx.close();
     }
     const { ctx, page } = await visit({ name: "advanced.html 320px", url: HOME + "advanced.html", ua: UA.winEdge, uad: UAD.winX64, viewport: { width: 320, height: 640 } });
@@ -499,6 +501,10 @@ for (const [at, want] of [
     look: (t) => /static const style_info STYLES\[\][\s\S]*?\};/.exec(wizard)?.[0].includes(`L"${t}"`),
     "look-says": (t) => /static const style_info STYLES\[\][\s\S]*?\};/.exec(wizard)?.[0].includes(`L"${t}"`),
     desktop: (t) => shellSrc.includes(`"${t}"`),
+    // A title Setup shows on a can't-go-on page (fix_win.c, preflight.c,
+    // sbdb.c, wizard.c), quoted by advanced.html for the helper.
+    setup: (t) => [wizard, fixWin, read("src/aurbridge/preflight.c"), read("src/aurbridge/sbdb.c")]
+      .some((src) => src.includes(`"${t}"`)),
   };
   // Said once, false for this build. Each with where the truth is.
   const STALE = [
