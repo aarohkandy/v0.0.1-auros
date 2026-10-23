@@ -178,7 +178,7 @@ menuentry 'AurOS (recovery shell)' --class recovery --id auros-recovery {
 # compares the TPM's PCR 4 and 7 both ways.
 if search --no-floppy --file --set=winesp /EFI/Microsoft/Boot/bootmgfw.efi ; then
 menuentry 'Windows' --class windows --id windows {
-    linux  /boot/vmlinuz-@KVER@ root=UUID=@ROOT_UUID@ ro quiet init=/usr/lib/auros/start-windows console=tty0 console=ttyS0,115200n8 init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes
+    linux  /boot/vmlinuz-@KVER@ root=UUID=@ROOT_UUID@ ro quiet init=/usr/lib/auros/start-windows console=tty0 console=ttyS0,115200n8 init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes lockdown=integrity
     initrd /boot/initrd.img-@KVER@
 }
 fi
