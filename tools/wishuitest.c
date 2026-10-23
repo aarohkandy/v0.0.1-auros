@@ -491,6 +491,27 @@ static void overlays(void)
         ok("and every button on it is still at least 48 px", n2 > 0 && !small);
         drop_card(O.n - 1);
     }
+    {
+        /* The shell's own messages (notify.c) hang in the corner with no
+         * button under it: top right where the clock is up there, bottom
+         * right where it is down in the bar, and in One thing at a time.
+         * Where they are at the bottom the wishes' cards go bottom left. */
+        shell_ctx s3 = c;
+        ogeom g3;
+        int sw3 = s3.screen_w;
+        s3.clock_r = (rect){ sw3 - 220, 0, 220, 46 };
+        olayout(&s3, sw3, s3.screen_h, &g3);
+        int up = g3.card[0].x > sw3 / 2;
+        s3.clock_r = (rect){ sw3 - 220, s3.screen_h - 56, 220, 56 };
+        olayout(&s3, sw3, s3.screen_h, &g3);
+        int down = g3.card[0].x >= 0 && g3.card[0].x < 40;
+        s3.clock_r = (rect){ 0, 0, 0, 0 };
+        snprintf(s3.layout_id, sizeof s3.layout_id, "%s", "tiles");
+        olayout(&s3, sw3, s3.screen_h, &g3);
+        int tiles = g3.card[0].x >= 0 && g3.card[0].x < 40;
+        ok("with the clock at the top the cards are bottom right, so they never cover her messages", up);
+        ok("with the clock in the bar, and in One thing at a time, they are bottom left", down && tiles);
+    }
     ok("a press outside the card goes to what is underneath", wishover_click(&c, 5, 5) == 0);
     int close_i = -1;
     for (int i = 0; i < on; i++) if (ot[i].kind == WOT_CLOSE) close_i = i;

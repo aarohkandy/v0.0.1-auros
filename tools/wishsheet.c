@@ -141,9 +141,17 @@ static const state STATES[] = {
 };
 #define NSTATES ((int)(sizeof STATES / sizeof STATES[0]))
 
+static int clipped_total;
 static int save(const char *dir, const char *look, int w, int h, const char *name, surface *s)
 {
     char path[512];
+    /* Words cut off while painting this picture: the layout is there so
+     * that there are none (tools/wishpainttest.sh). */
+    int cut = wish_clipped() + wishover_clipped();
+    if (cut) {
+        printf("CLIPPED %s %dx%d %s: %d (\"%s\")\n", look, w, h, name, cut, wish_clip_what());
+        clipped_total += cut;
+    }
     snprintf(path, sizeof path, "%s/%s-%dx%d-%s.png", dir, look, w, h, name);
     uint32_t *o = malloc((size_t)w * h * sizeof *o);
     if (!o) return -1;
@@ -259,5 +267,5 @@ int main(int argc, char **argv)
 
     printf("%s %dx%d text %.0f%%: %d pictures in %s\n", look, W_, H_,
            (double)(scale * 100.f), NSTATES + 6, argv[3]);
-    return 0;
+    return (clipped_total && getenv("WISHSHEET_STRICT")) ? 3 : 0;
 }

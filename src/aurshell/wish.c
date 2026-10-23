@@ -1516,12 +1516,14 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
     int lh_label = with_labels ? (int)(18.f * k * 1.45f) + 8 : 0;
     int floor_y = sh - bottom;
 
-    static const int HEAD_LEN[WP_N] = { 22, 40, 13, 26, 25, 22, 20, 11, 16, 36, 9, 22, 26 };
     int y = top;
     if (with_head) {
-        g->head_lines = est_w(HEAD_LEN[page], g->px_head) > g->cw ? 2 : 1;
+        g->head_lines = est_w(v->head_len > 0 ? v->head_len : 24, g->px_head) > g->cw ? 2 : 1;
         g->head_y = top;
-        g->head_h = (int)((float)g->px_head * 1.2f) * g->head_lines;
+        /* A line is 1.35 em: the face is 1.3 em from the top of its tallest
+         * letter to the bottom of its lowest, and a box shorter than that
+         * paints nothing at all. */
+        g->head_h = (int)((float)g->px_head * 1.35f) * g->head_lines;
         y = top + g->head_h + g->group;
     }
 
@@ -1604,7 +1606,9 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
         y += said_lh * lines + (lines ? g->group : 0);
         g->a[A_BAR] = (rect){ g->gx, y, (int)(180.f * k), (int)(8.f * k) < 6 ? 6 : (int)(8.f * k) };
         y += g->a[A_BAR].h + g->gap;
-        int nl = est_w(70, g->px_body) > g->cw ? 2 : 1;
+        int nl = (est_w(70, g->px_body) + g->cw - 1) / g->cw;
+        if (nl < 1) nl = 1;
+        if (nl > 3) nl = 3;
         g->a[A_NOTE] = (rect){ g->gx, y, g->cw, lh_body * nl };
         y += lh_body * nl + g->group;
         int kinds[1] = { WT_CANCEL };
@@ -1698,6 +1702,10 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
                  : (page == WP_ANSWER || page == WP_CANNOT) && v->has_offer ? sl * 2 + lh_label + sl * 3
                  : sl * 3 + g->gap + lh_body * 2;
         int least = page == WP_CONSENT ? lh_body * 6 : sl * 2;
+        /* With an offered sentence under the first line, room for it at the
+         * smallest size it is ever drawn: three lines of 18 px. */
+        if ((page == WP_ANSWER || page == WP_CANNOT) && v->has_offer)
+            least = sl + g->group + lh_label + 3 * (int)(18.f * 1.5f);
         if (room < least) { g->overflow = 1; room = least; }
         g->a[A_TEXT2] = (rect){ g->gx, y, g->cw, room < want ? room : want };
         y += g->a[A_TEXT2].h + g->group;
@@ -1705,8 +1713,9 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
         break;
     }
     case WP_TODAY: {
-        g->a[A_SUB] = (rect){ g->gx, y, g->cw, lh_body };
-        y += lh_body + g->gap;
+        int sub_n = est_w(v->sub_len, g->px_body) > g->cw ? 2 : 1;
+        g->a[A_SUB] = (rect){ g->gx, y, g->cw, lh_body * sub_n };
+        y += lh_body * sub_n + g->gap;
         int kk[4], nk = 0;
         if (v->more) kk[nk++] = WT_MORE;
         kk[nk++] = WT_STOP_ALL;
@@ -1776,8 +1785,9 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
         break;
     }
     case WP_MINE: {
-        g->a[A_SUB] = (rect){ g->gx, y, g->cw, lh_body };
-        y += lh_body + g->gap;
+        int sub_n = est_w(v->sub_len, g->px_body) > g->cw ? 2 : 1;
+        g->a[A_SUB] = (rect){ g->gx, y, g->cw, lh_body * sub_n };
+        y += lh_body * sub_n + g->gap;
         int kinds[5] = { WT_NEW, WT_MORE, WT_ALL_OFF, WT_RESTORE, WT_CLOSE };
         int nk = 0, kk[5];
         for (int i = 0; i < 5; i++)
@@ -1785,9 +1795,18 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
         int h = row_height(g, page, kk, nk, 0);
         int by = floor_y - h;
         int sw_w = (int)(112.f * k), rm_w = est_w(6, g->px_lead) + 2 * g->pad;
-        int ctl_w = sw_w + g->group + rm_w;
+        /* "Remove it" and "Keep it", asked when she presses Remove: wider
+         * than the switch and Remove they replace, and each as wide as its
+         * own name. */
+        int yes_w = est_w(9, g->px_lead) + 2 * g->pad, no_w = est_w(7, g->px_lead) + 2 * g->pad;
+        int norm_w = sw_w + g->group + rm_w, ask_w = yes_w + g->group + no_w;
+        int ctl_w = norm_w > ask_w ? norm_w : ask_w;
         int stacked = (g->cw - ctl_w - g->group) < (int)(0.5f * (float)g->cw);
-        int text_h = 2 * lh_body;
+        /* Two lines of each wish, three or four when the longest on the page
+         * needs them: the sentence is never cut off. */
+        int tw = stacked ? g->cw : g->cw - ctl_w - g->group;
+        int need = (est_w(v->mine_long, g->px_body) + (tw > 1 ? tw : 1) - 1) / (tw > 1 ? tw : 1);
+        int text_h = (need < 2 ? 2 : need > 4 ? 4 : need) * lh_body;
         int row_h = stacked ? text_h + 8 + g->btn_h + g->group
                             : (text_h > g->btn_h ? text_h : g->btn_h) + g->group;
         int fit = (by - y) / row_h;
@@ -1796,12 +1815,12 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
         for (int i = 0; i < n; i++) {
             int ry = y + i * row_h;
             int cy = stacked ? ry + text_h + 8 : ry + (row_h - g->group - g->btn_h) / 2;
-            int cx = stacked ? g->gx : g->gx + g->cw - ctl_w;
             if (v->removing == i) {
-                int half = (ctl_w - g->group) / 2;
-                add_t(g, (rect){ cx, cy, half, g->btn_h }, WT_REMOVE_YES, i);
-                add_t(g, (rect){ cx + half + g->group, cy, half, g->btn_h }, WT_REMOVE_NO, i);
+                int cx = stacked ? g->gx : g->gx + g->cw - ask_w;
+                add_t(g, (rect){ cx, cy, yes_w, g->btn_h }, WT_REMOVE_YES, i);
+                add_t(g, (rect){ cx + yes_w + g->group, cy, no_w, g->btn_h }, WT_REMOVE_NO, i);
             } else {
+                int cx = stacked ? g->gx : g->gx + g->cw - norm_w;
                 add_t(g, (rect){ cx, cy, sw_w, g->btn_h }, WT_SWITCH, i);
                 add_t(g, (rect){ cx + sw_w + g->group, cy, rm_w, g->btn_h }, WT_REMOVE, i);
             }
@@ -1898,6 +1917,21 @@ static const char *pick_head(void)
     return s ? s->ask : "Pick a wish";
 }
 
+/* The line under the heading of My wishes and of What my wishes did today:
+ * one function for the painter and for the geometry, so the room made for it
+ * is the room it takes. */
+static const char *sub_text(int page)
+{
+    if (page == WP_TODAY)
+        return W.n_today ? "Each time one of your wishes did something today."
+                         : "None of your wishes has done anything today.";
+    return W.n_rows ? (W.all_off ? "All your wishes are off. Press Turn my wishes back on to start them again."
+                                 : "Each wish keeps working until you turn it off.")
+                    : "You have no wishes yet. Press Make a new wish to start.";
+}
+
+static const char *head_of(void);
+
 static wish_view view_now(const shell_ctx *c)
 {
     wish_view v;
@@ -1913,9 +1947,15 @@ static wish_view view_now(const shell_ctx *c)
     v.removing = W.removing;
     v.said_len = (int)strlen(W.said);
     v.sent_len = (int)strlen(W.sentence);
+    v.head_len = (int)strlen(head_of());
+    if (W.page == WP_MINE || W.page == WP_TODAY) v.sub_len = (int)strlen(sub_text(W.page));
     if (W.page == WP_MINE) {
         v.n_rows = W.n_rows - W.first_row;
         if (v.n_rows < 0) v.n_rows = 0;
+        for (int i = W.first_row; i < W.n_rows; i++) {
+            int l = (int)strlen(W.rows[i].sentence) + (W.removing >= 0 ? 18 : 0);
+            if (l > v.mine_long) v.mine_long = l;
+        }
         /* Whether there are more than fit is itself geometry: ask it,
          * with the Show more button in, since that takes room too. */
         v.more = 1;
@@ -2100,6 +2140,15 @@ static int count_lines(font *f, const char *t, float w)
     return lines;
 }
 
+/* Words cut off while painting: the geometry exists so that there are none,
+ * and tools/wishpainttest.sh paints every page at every size and fails if
+ * there is one. Read and cleared by wish_clipped(). */
+static int clip_n;
+static char clip_what[40];
+#define CLIP(text) (clip_n++, snprintf(clip_what, sizeof clip_what, "%.39s", (text)))
+int wish_clipped(void) { int n = clip_n; clip_n = 0; return n; }
+const char *wish_clip_what(void) { return clip_what; }       /* the start of the last text cut off */
+
 /* Plain text wrapped into a box. Returns the y below the last line. If
  * the box is too short the last line that fits is ended with an
  * ellipsis -- a last resort the geometry exists to avoid. */
@@ -2110,7 +2159,7 @@ static int draw_wrapped(surface *s, font *f, rect box, const char *t,
     size_t pos = 0, n = strlen(t);
     float y = (float)box.y + font_ascent(f);
     while (pos < n) {
-        if (box.h > 0 && y + font_descent(f) > (float)(box.y + box.h) + 1.f) break;
+        if (box.h > 0 && y + font_descent(f) > (float)(box.y + box.h) + 1.f) { CLIP(t); break; }
         size_t at = pos;
         size_t l = fit_line(f, t, &pos, (float)box.w);
         while (at < n && t[at] == ' ') at++;
@@ -2119,6 +2168,7 @@ static int draw_wrapped(surface *s, font *f, rect box, const char *t,
         memcpy(line, t + at, l); line[l] = 0;
         int last = box.h > 0 && (y + lh + font_descent(f) > (float)(box.y + box.h) + 1.f);
         if (last && pos < n) {
+            CLIP(t);
             strcat(line, " \xE2\x80\xA6");
             shell_text_elided(s, f, (float)box.x, y, (float)box.w, line, col, 1.f);
         } else {
@@ -2132,9 +2182,11 @@ static int draw_wrapped(surface *s, font *f, rect box, const char *t,
 
 /* The device's sentence: `*` toggles bold (docs/AI.md §3.7). Wrapped
  * word by word across the two faces. Returns 1 if it all fitted. */
+static int rich_end_y;          /* the y under the last line draw_rich drew */
 static int draw_rich(surface *s, font *r, font *b, rect box, const char *t,
                      uint32_t col, int measure_only)
 {
+    rich_end_y = box.y;
     if (!r || !t) return 1;
     if (!b) b = r;
     float lh = font_line_height(r) * 1.15f;
@@ -2187,8 +2239,76 @@ static int draw_rich(surface *s, font *r, font *b, rect box, const char *t,
         }
         x += space;
         p = q;
+        rich_end_y = (int)(y + font_descent(r));
     }
     return fits;
+}
+
+/* Her own words (plain text) at the size given if they fit in the box; a size
+ * smaller at a time if not, never below 18 px. Returns the face to draw them
+ * in; a smaller one is kept between calls. */
+static font *plain_fit(const shell_ctx *c, font *f0, float px0, rect box, const char *text, float lh_mul)
+{
+    static font *pf;
+    static char pkey[SENT_MAX + 48];
+    if (!f0 || !text) return f0;
+    float lh0 = font_line_height(f0) * lh_mul;
+    if ((float)count_lines(f0, text, (float)box.w) * lh0 <= (float)box.h) return f0;
+    char key[SENT_MAX + 48];
+    snprintf(key, sizeof key, "%d|%d|%.1f|%.2f|%s", box.w, box.h, (double)px0, (double)lh_mul, text);
+    if (pf && !strcmp(key, pkey)) return pf;
+    const char *tp = theme_str(&c->theme, "font_text", "");
+    font *best = NULL;
+    for (float px = px0 - 2.f; px >= 18.f; px -= 2.f) {
+        font *nf = open_abs(tp, px);
+        if (!nf) break;
+        if (best) font_free(best);
+        best = nf;
+        if ((float)count_lines(best, text, (float)box.w) * font_line_height(best) * lh_mul <= (float)box.h) break;
+    }
+    if (!best) return f0;
+    if (pf) font_free(pf);
+    pf = best;
+    snprintf(pkey, sizeof pkey, "%s", key);
+    return pf;
+}
+
+/* The device's sentence in its box at full size if all of it fits there; a
+ * size smaller at a time if not, never below the 18 px floor and never cut
+ * off. The fitted pair is kept between frames, so this is worked out once
+ * per sentence, not once per frame. Leaves rich_end_y under the last line. */
+static void draw_fitted(surface *s, const shell_ctx *c, font *r0, font *b0, float k,
+                        rect box, const char *text, uint32_t col)
+{
+    static font *fr, *fb;
+    static char fkey[SENT_MAX + 48];
+    char key[SENT_MAX + 48];
+    snprintf(key, sizeof key, "%d|%d|%.2f|%s", box.w, box.h, (double)k, text);
+    font *r = r0, *b = b0;
+    if (!strcmp(key, fkey) && fr && fb) { r = fr; b = fb; }
+    else if (!draw_rich(s, r, b, box, text, col, 1)) {
+        if (fr) font_free(fr);
+        if (fb) font_free(fb);
+        fr = fb = NULL;
+        const char *tp = theme_str(&c->theme, "font_text", "");
+        const char *bp = theme_str(&c->theme, "font_text_bold", tp);
+        for (float px = 26.f * k - 2.5f; px >= 18.f; px -= 2.5f) {
+            font *nr = open_abs(tp, px), *nb = open_abs(bp, px);
+            if (!nr || !nb) { if (nr) font_free(nr); if (nb) font_free(nb); break; }
+            if (fr) font_free(fr);
+            if (fb) font_free(fb);
+            fr = nr; fb = nb;
+            r = fr; b = fb;
+            if (draw_rich(s, r, b, box, text, col, 1)) break;
+        }
+        snprintf(fkey, sizeof fkey, "%s", key);
+    } else {
+        snprintf(fkey, sizeof fkey, "%s", key);
+        if (fr) font_free(fr);
+        if (fb) font_free(fb);
+        fr = fb = NULL;
+    }
+    if (!draw_rich(s, r, b, box, text, col, 0)) CLIP(text);
 }
 
 /* Pressable: radius 8, a 2 px rule, or the go fill for the one primary.
@@ -2212,6 +2332,7 @@ static void paint_button(surface *s, const shell_ctx *c, rect r, const char *lab
     pressable(s, c, r, prim, hot, sel);
     if (!f) return;
     float w = shell_text_w(f, label);
+    if (w > (float)r.w - 24.f) CLIP(label);          /* a button whose name is cut off */
     float x = (float)r.x + ((float)r.w - w) / 2.f;
     if (x < (float)r.x + 12.f) x = (float)r.x + 12.f;
     shell_text_elided(s, f, x, shell_baseline(f, (float)r.y, (float)r.h),
@@ -2344,10 +2465,11 @@ void wish_paint(shell_ctx *c, surface *s, shell_fonts *f)
             float cwid = lead ? shell_text_w(lead, chg) : 0.f;
             rect in = { t->r.x + g.pad, t->r.y + g.pad / 2,
                         t->r.w - 3 * g.pad - (int)cwid, t->r.h - g.pad };
-            int lines = count_lines(said, W.said, (float)in.w);
-            float lh = font_line_height(said);
+            font *sf = plain_fit(c, said, 24.f * g.k, in, W.said, 1.f);
+            int lines = count_lines(sf, W.said, (float)in.w);
+            float lh = font_line_height(sf);
             in.y = t->r.y + (int)(((float)t->r.h - (float)lines * lh) / 2.f);
-            draw_wrapped(s, said, in, W.said, c->fg_hi, lh);
+            draw_wrapped(s, sf, in, W.said, c->fg_hi, lh);
             if (lead)
                 shell_text(s, lead, (float)(t->r.x + t->r.w - g.pad) - cwid,
                            shell_baseline(lead, (float)t->r.y, (float)t->r.h),
@@ -2442,9 +2564,9 @@ void wish_paint(shell_ctx *c, surface *s, shell_fonts *f)
                             corners_all((float)b.h / 2.f),
                             i == lit ? c->accent : c->overlay, i == lit ? 1.f : 0.35f);
         if (body)
-            shell_text(s, body, (float)g.a[A_NOTE].x, (float)g.a[A_NOTE].y + font_ascent(body),
-                       W.page == WP_WAIT ? "This usually takes a few seconds. Nothing changes until you say yes."
-                                         : "Your voice stays on this computer.", c->subtle, 1.f);
+            draw_wrapped(s, body, g.a[A_NOTE],
+                         W.page == WP_WAIT ? "This usually takes a few seconds. Nothing changes until you say yes."
+                                           : "Your voice stays on this computer.", c->subtle, lh_body);
         break;
     }
     case WP_CONFIRM: {
@@ -2455,39 +2577,8 @@ void wish_paint(shell_ctx *c, surface *s, shell_fonts *f)
                        "If you press Yes", c->subtle, 1.f);
         }
         /* The sentence at full size if it fits; a step smaller each time
-         * it does not, never below the 18 px floor and never cut off.
-         * The fitted pair is kept, so this is worked out once per
-         * sentence, not once per frame. */
-        static font *fr, *fb;
-        static char fkey[SENT_MAX + 48];
-        char key[SENT_MAX + 48];
-        snprintf(key, sizeof key, "%d|%d|%.2f|%s", g.a[A_TEXT2].w, g.a[A_TEXT2].h,
-                 (double)g.k, W.sentence);
-        font *r = sent, *b = sentb;
-        if (!strcmp(key, fkey) && fr && fb) { r = fr; b = fb; }
-        else if (!draw_rich(s, r, b, g.a[A_TEXT2], W.sentence, c->fg_hi, 1)) {
-            if (fr) font_free(fr);
-            if (fb) font_free(fb);
-            fr = fb = NULL;
-            const char *tp = theme_str(&c->theme, "font_text", "");
-            const char *bp = theme_str(&c->theme, "font_text_bold", tp);
-            for (float px = 26.f * g.k - 2.5f; px >= 18.f; px -= 2.5f) {
-                font *nr = open_abs(tp, px), *nb = open_abs(bp, px);
-                if (!nr || !nb) { if (nr) font_free(nr); if (nb) font_free(nb); break; }
-                if (fr) font_free(fr);
-                if (fb) font_free(fb);
-                fr = nr; fb = nb;
-                r = fr; b = fb;
-                if (draw_rich(s, r, b, g.a[A_TEXT2], W.sentence, c->fg_hi, 1)) break;
-            }
-            snprintf(fkey, sizeof fkey, "%s", key);
-        } else {
-            snprintf(fkey, sizeof fkey, "%s", key);
-            if (fr) font_free(fr);
-            if (fb) font_free(fb);
-            fr = fb = NULL;
-        }
-        draw_rich(s, r, b, g.a[A_TEXT2], W.sentence, c->fg_hi, 0);
+         * it does not, never below the 18 px floor and never cut off. */
+        draw_fitted(s, c, sent, sentb, g.k, g.a[A_TEXT2], W.sentence, c->fg_hi);
         if (W.dest[0]) {
             rect d = g.a[A_DEST];
             if (label && g.labels) shell_text(s, label, (float)d.x, (float)d.y + font_ascent(label),
@@ -2517,50 +2608,63 @@ void wish_paint(shell_ctx *c, surface *s, shell_fonts *f)
         }
         const char *line = W.page == WP_CANNOT ? W.note
                          : (W.note[0] ? W.note : retry[0] ? retry : ERRS[W.err].line);
-        int y = draw_wrapped(s, sent, a, line, c->fg_hi, font_line_height(sent) * 1.1f);
-        if (W.page == WP_CANNOT && W.pending[0] && W.sentence[0]) {
+        /* What she is asked to say Yes to must be whole, so the line above it
+         * gives way first, to a smaller size. */
+        int offer = W.page == WP_CANNOT && W.pending[0] && W.sentence[0];
+        int lab = g.labels ? (int)(18.f * g.k * 1.45f) + 8 : 0;
+        rect first = a;
+        if (offer) { first.h -= g.group + lab + (int)(3.f * 18.f * 1.5f); if (first.h < 0) first.h = 0; }
+        font *ff = offer ? plain_fit(c, sent, 26.f * g.k, first, line, 1.1f) : sent;
+        int y = draw_wrapped(s, ff, offer ? first : a, line, c->fg_hi, font_line_height(ff) * 1.1f);
+        if (offer) {
             rect b = { a.x, y + g.group, a.w, a.y + a.h - y - g.group };
             if (label && g.labels) shell_text(s, label, (float)b.x, (float)b.y + font_ascent(label),
                                               "But I can do this", c->subtle, 1.f);
-            int lab = g.labels ? (int)(18.f * g.k * 1.45f) + 8 : 0;
             b.y += lab; b.h -= lab;
-            draw_rich(s, sent, sentb, b, W.sentence, c->fg_hi, 0);
+            draw_fitted(s, c, sent, sentb, g.k, b, W.sentence, c->fg_hi);
         } else if (W.page == WP_CANNOT && body) {
             rect b = { a.x, y + g.gap, a.w, a.y + a.h - y - g.gap };
-            if (b.h >= (int)lh_body)
-                draw_wrapped(s, body, b, "Try asking in a different way, or press "
-                             "Try something else to see what Wishes can do.",
-                             c->subtle, lh_body);
+            const char *fine = "Try asking in a different way, or press "
+                               "Try something else to see what Wishes can do.";
+            if (count_lines(body, fine, (float)b.w) * (int)lh_body <= b.h)
+                draw_wrapped(s, body, b, fine, c->subtle, lh_body);
         }
         break;
     }
     case WP_ANSWER: {
         rect a = g.a[A_TEXT2];
-        int y = draw_wrapped(s, sent, a, W.help_page[0]
-                             ? "A page in Help shows you, step by step. Press Show me how to open it."
-                             : "I don't have an answer for that yet.",
-                             c->fg_hi, font_line_height(sent) * 1.1f);
-        if (W.pending[0] && W.sentence[0]) {
+        const char *line = W.help_page[0]
+                         ? "A page in Help shows you, step by step. Press Show me how to open it."
+                         : "I don't have an answer for that yet.";
+        int offer = W.pending[0] && W.sentence[0];
+        int lab = g.labels ? (int)(18.f * g.k * 1.45f) + 8 : 0;
+        rect first = a;
+        if (offer) { first.h -= g.group + lab + (int)(3.f * 18.f * 1.5f); if (first.h < 0) first.h = 0; }
+        font *ff = offer ? plain_fit(c, sent, 26.f * g.k, first, line, 1.1f) : sent;
+        int y = draw_wrapped(s, ff, offer ? first : a, line, c->fg_hi, font_line_height(ff) * 1.1f);
+        if (offer) {
             rect b = { a.x, y + g.group, a.w, a.y + a.h - y - g.group };
-            if (label) shell_text(s, label, (float)b.x, (float)b.y + font_ascent(label),
+            if (label && g.labels) shell_text(s, label, (float)b.x, (float)b.y + font_ascent(label),
                                   "Or I can do it for you", c->subtle, 1.f);
-            b.y += (int)(18.f * g.k * 1.45f) + 8;
-            b.h -= (int)(18.f * g.k * 1.45f) + 8;
-            draw_rich(s, sent, sentb, b, W.sentence, c->fg_hi, 0);
+            b.y += lab;
+            b.h -= lab;
+            draw_fitted(s, c, sent, sentb, g.k, b, W.sentence, c->fg_hi);
         }
         break;
     }
     case WP_DONE: {
         rect a = g.a[A_TEXT2];
-        draw_rich(s, sent, sentb, a, W.sentence, c->fg_hi, 0);
-        int used = (int)(font_line_height(sent) * 1.15f *
-                         (float)(count_lines(sent, W.sentence, (float)a.w) + 0)) + g.gap;
+        draw_fitted(s, c, sent, sentb, g.k, a, W.sentence, c->fg_hi);
+        int used = rich_end_y - a.y + g.gap;
         rect b = { a.x, a.y + used, a.w, a.h - used };
-        if (b.h >= (int)lh_body && body && W.title[0])
-            draw_wrapped(s, body, b, W.undo_until
+        /* The small print only if all of it fits: a sentence ending in an
+         * ellipsis is worse than one that is not there. */
+        const char *fine = W.undo_until
                          ? "Changed your mind? Press Undo my last wish in the next 10 minutes."
                          : "It keeps working until you turn it off. You can do that in "
-                           "Settings, under My wishes.", c->subtle, lh_body);
+                           "Settings, under My wishes.";
+        if (body && W.title[0] && count_lines(body, fine, (float)b.w) * (int)lh_body <= b.h)
+            draw_wrapped(s, body, b, fine, c->subtle, lh_body);
         break;
     }
     case WP_CONSENT: {
@@ -2579,9 +2683,7 @@ void wish_paint(shell_ctx *c, surface *s, shell_fonts *f)
     }
     case WP_TODAY: {
         if (body)
-            draw_wrapped(s, body, g.a[A_SUB], W.n_today
-                         ? "Each time one of your wishes did something today."
-                         : "None of your wishes has done anything today.", c->subtle, lh_body);
+            draw_wrapped(s, body, g.a[A_SUB], sub_text(WP_TODAY), c->subtle, lh_body);
         rect tx = g.a[A_TEXT1];
         for (int i = 0; i < g.mine_n; i++) {
             int ri = v.first_item + i;
@@ -2604,11 +2706,7 @@ void wish_paint(shell_ctx *c, surface *s, shell_fonts *f)
         break;
     case WP_MINE: {
         if (body)
-            draw_wrapped(s, body, g.a[A_SUB], W.n_rows
-                         ? (W.all_off ? "All your wishes are off. Press Turn my wishes back on to start them again."
-                                      : "Each wish keeps working until you turn it off.")
-                         : "You have no wishes yet. Press Make a new wish to start.",
-                         c->subtle, lh_body);
+            draw_wrapped(s, body, g.a[A_SUB], sub_text(WP_MINE), c->subtle, lh_body);
         rect tx = g.a[A_TEXT1];
         for (int i = 0; i < g.mine_n; i++) {
             int ri = W.first_row + i;

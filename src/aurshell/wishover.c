@@ -193,6 +193,7 @@ typedef struct {
     int btn_h, gap, group, pad;
     int lines[CARDS_MAX];          /* text lines each card has room for */
     int overflow;
+    int trunc;                      /* some card's words do not all fit  */
     rect bar;                       /* the fill's top strip           */
     rect fill_stop;
     rect card[CARDS_MAX];
@@ -239,6 +240,34 @@ static const char *ot_label(int kind, const card *k)
 
 static int est(const char *s, int px) { return (int)(0.54f * (float)px * (float)strlen(s)); }
 
+/* The shell's own messages ("the USB stick can be taken out", notify.c) hang
+ * in the corner of her look that has no button under it: the top right where
+ * the clock is up there, the bottom right where the clock is down in the bar,
+ * and in "One thing at a time". Wish cards are in the bottom right too, so
+ * where the messages are there they go to the bottom left instead, and neither
+ * ever covers the other. This is the rule of notify_view_now() (`bottom`);
+ * change one, change the other. */
+static int cards_left(const shell_ctx *c)
+{
+    int sh = c->screen_h;
+    int clock_low = c->clock_r.w > 0 && c->clock_r.y > sh / 2;
+    return clock_low || !strcmp(c->layout_id, "tiles");
+}
+
+/* The words a card shows, in one place for the geometry and the painter. */
+static void card_text(const card *k, char *text, size_t n)
+{
+    if (k->kind == WO_REMIND && k->privately && !k->revealed)
+        snprintf(text, n, "You have a reminder.");
+    else if (k->kind == WO_REMIND && k->when[0])
+        snprintf(text, n, "%s  (This was for %s.)", k->text, k->when);
+    else if (k->kind == WO_MESSAGE && k->wish[0])
+        snprintf(text, n, "Your note: %s", k->text);
+    else if (k->keep_what)
+        snprintf(text, n, "%s If you do nothing, it goes back by itself.", k->text);
+    else snprintf(text, n, "%s", k->text);
+}
+
 static void olayout_k(const shell_ctx *c, int sw, int sh, ogeom *g, float k, int tight)
 {
     memset(g, 0, sizeof *g);
@@ -268,6 +297,7 @@ static void olayout_k(const shell_ctx *c, int sw, int sh, ogeom *g, float k, int
      * band, which is not in `sh`. */
     int full_h = sh + foot_height(c);
     int margin = sw <= 1100 ? 24 : 32;
+    int left = cards_left(c);
     int w = (int)(600.f * k);
     if (w > sw / 2) w = sw / 2;
     if (w < 280) w = sw - 2 * margin < 280 ? sw - 2 * margin : 280;
@@ -286,7 +316,14 @@ static void olayout_k(const shell_ctx *c, int sw, int sh, ogeom *g, float k, int
             if (rowx && rowx + g->group + bw[b] > inner) { rows++; rowx = 0; }
             rowx += (rowx ? g->group : 0) + bw[b];
         }
-        int lines = 3;
+        /* As many lines as the words need (up to five); fewer only if the
+         * card would then be over half the screen, and that is for the
+         * caller to answer with smaller words, not an ellipsis. */
+        char ctext[OTEXT + 80];
+        card_text(kd, ctext, sizeof ctext);
+        int need = (int)((float)est(ctext, (int)(26.f * k)) * 1.1f) / (inner > 1 ? inner : 1) + 1;
+        if (need > 5) need = 5;
+        int lines = need;
         int h;
         for (;;) {
             h = g->pad + lab_h + lines * lh + g->gap + rows * g->btn_h + (rows - 1) * g->gap + g->pad;
@@ -294,10 +331,11 @@ static void olayout_k(const shell_ctx *c, int sw, int sh, ogeom *g, float k, int
             lines--;
         }
         if (h > full_h / 2) g->overflow = 1;
+        if (lines < need) g->trunc = 1;
         g->lines[i] = lines;
         y -= h;
         if (y < margin) { g->overflow = 1; break; }   /* a short screen holds fewer */
-        rect r = { sw - margin - w, y, w, h };
+        rect r = { left ? margin : sw - margin - w, y, w, h };
         g->card[i] = r;
         int bx = r.x + g->pad;
         int by = r.y + h - g->pad - rows * g->btn_h - (rows - 1) * g->gap;
@@ -312,14 +350,14 @@ static void olayout_k(const shell_ctx *c, int sw, int sh, ogeom *g, float k, int
     }
 }
 
-/* Her text size if the cards fit at it; a tenth smaller at a time if
- * not, never below the theme's own size. */
+/* Her text size if the cards fit at it with all their words; a tenth
+ * smaller at a time if not, never below the theme's own size. */
 static void olayout(const shell_ctx *c, int sw, int sh, ogeom *g)
 {
     float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
     for (;;) {
         olayout_k(c, sw, sh, g, k, 0);
-        if (!g->overflow || k <= 1.f) break;
+        if ((!g->overflow && !g->trunc) || k <= 1.f) break;
         k -= 0.1f;
         if (k < 1.f) k = 1.f;
     }
@@ -849,6 +887,11 @@ int wishover_draw_emoji(surface *s, const char *emoji, rect r)
 /* Cheap and repeatable: the same screen every time for the same wish. */
 static unsigned hash(unsigned x) { x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16; return x; }
 
+/* Words of a card cut off with an ellipsis while painting; read and cleared
+ * (tools/wishpainttest.sh wants none, at any size). */
+static int oclip_n;
+int wishover_clipped(void) { int n = oclip_n; oclip_n = 0; return n; }
+
 static void paint_btn(surface *s, const shell_ctx *c, rect r, const char *label,
                       int primary, int hot, font *f)
 {
@@ -858,6 +901,7 @@ static void paint_btn(surface *s, const shell_ctx *c, rect r, const char *label,
         draw_round_rect_border(s, r, corners_all(8.f), 2.f, hot ? c->fg : c->overlay, 1.f);
     if (f) {
         float w = shell_text_w(f, label);
+        if (w > (float)r.w - 24.f) oclip_n++;        /* a button whose name is cut off */
         float x = (float)r.x + ((float)r.w - w) / 2.f;
         if (x < (float)r.x + 12.f) x = (float)r.x + 12.f;
         shell_text_elided(s, f, x, shell_baseline(f, (float)r.y, (float)r.h),
@@ -948,23 +992,15 @@ void wishover_paint(shell_ctx *c, surface *s, shell_fonts *f)
         if (lab) shell_text_elided(s, lab, (float)x, (float)y + font_ascent(lab),
                                    (float)(r.w - 2 * g.pad), head, c->subtle, 1.f);
         y += (int)(18.f * g.k * 1.45f) + 8;
-        char text[OTEXT + 40];
-        if (k->kind == WO_REMIND && k->privately && !k->revealed)
-            snprintf(text, sizeof text, "You have a reminder.");
-        else if (k->kind == WO_REMIND && k->when[0])
-            snprintf(text, sizeof text, "%s  (This was for %s.)", k->text, k->when);
-        else if (k->kind == WO_MESSAGE && k->wish[0])
-            snprintf(text, sizeof text, "Your note: %s", k->text);
-        else if (k->keep_what)
-            snprintf(text, sizeof text, "%s If you do nothing, it goes back by itself.", k->text);
-        else snprintf(text, sizeof text, "%s", k->text);
+        char text[OTEXT + 80];
+        card_text(k, text, sizeof text);
         if (body) {
-            /* Up to three lines, broken at spaces. */
+            /* As many lines as the geometry made room for, broken at spaces. */
             const char *p = text;
             float lh = 26.f * g.k * 1.3f;
             int maxl = g.lines[i] > 0 ? g.lines[i] : 1;
             for (int ln = 0; ln < maxl && *p; ln++) {
-                char buf[OTEXT + 40];
+                char buf[OTEXT + 80];
                 size_t best = 0, j = 0, L = strlen(p);
                 while (j <= L) {
                     if (p[j] == ' ' || p[j] == 0) {
@@ -978,6 +1014,7 @@ void wishover_paint(shell_ctx *c, surface *s, shell_fonts *f)
                 if (!best) best = L;
                 memcpy(buf, p, best); buf[best] = 0;
                 if (ln == maxl - 1 && p[best]) {
+                    oclip_n++;
                     shell_text_elided(s, body, (float)x, (float)y + font_ascent(body),
                                       (float)(r.w - 2 * g.pad), p, c->fg_hi, 1.f);
                 } else {

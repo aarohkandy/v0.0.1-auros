@@ -82,6 +82,9 @@ typedef struct {
     int pick_mode;      /* PICK: 0 a list of lines, 1 words, 2 pictures */
     int first_item;     /* PICK: the first one shown                   */
     int pick_long;      /* PICK: the longest label, in characters      */
+    int sub_len;        /* MINE, TODAY: the line under the heading, in characters */
+    int head_len;       /* the heading, in characters                  */
+    int mine_long;      /* MINE: the longest wish sentence on the page (with the question, if asked), in characters */
 } wish_view;
 
 /* What a target IS, for pressing and for the test. */
@@ -135,6 +138,8 @@ int  wish_restore_look(shell_ctx *c, const char *look);
 /* "Undo my last wish" is offered for 10 minutes after a wish that
  * changed something now. 1 while it is. */
 int  wish_undo_offered(void);
+int  wish_clipped(void);          /* texts cut off since the last call (a test hook) */
+const char *wish_clip_what(void); /* ... and the start of the last text that was */
 void wish_undo(shell_ctx *c);
 
 /* From the shell's host loop: c->want_wish was set by a button that is not

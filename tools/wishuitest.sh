@@ -83,6 +83,7 @@ wishover.c^a card takes the keyboard^if (!O.fill) return 0;^if (!O.fill && !O.n)
 wishover.c^the release of the press that ended a fill is not used up^O.fill = 0;\n        c->wishfill_open = 0;\n        O.ate_press = 1;^O.fill = 0;\n        c->wishfill_open = 0;
 wishover.c^Keep this? never puts it back^now - k->t0 >= (uint64_t)WO_KEEP_S * 1000u^now - k->t0 >= 100u * (uint64_t)WO_KEEP_S * 1000u
 wishover.c^a fill has no way to stop its wish^if (O.wid[0]) add(g, g->fill_stop, WOT_STOP, -1);^
+wishover.c^cards sit over her messages in the corner^return clock_low || !strcmp(c->layout_id, "tiles");^return 0;
 wishover.c^a card is taller than half the screen^if (h <= full_h / 2 || lines == 1) break;^if (1) break;
 wishover.c^the PNG decoder reads past its input^if (s->ip >= s->inn) return -1;^if (0) return -1;
 EOF

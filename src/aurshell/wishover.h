@@ -39,6 +39,7 @@ void wishover_keep(shell_ctx *c, int what, const char *old, const char *wish);
 
 int  wishover_fill_on(void);
 int  wishover_cards(void);          /* how many cards are up */
+int  wishover_clipped(void);        /* card words cut off since the last call (a test hook) */
 void wishover_paint(shell_ctx *c, surface *s, shell_fonts *f);
 /* Full-height screen coordinates. 1 if it took the press. */
 int  wishover_click(shell_ctx *c, int x, int y);

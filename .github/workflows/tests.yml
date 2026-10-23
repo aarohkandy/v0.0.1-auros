@@ -288,6 +288,9 @@ jobs:
       - name: wishgallerytest (every wish she can press is one the engine accepts)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/wishgallerytest.sh 2>&1 | tee transcripts/wishgallerytest.txt
+      - name: wishpainttest (no word she has to read is ever cut off; then 8 deliberate breakages)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/wishpainttest.sh 2>&1 | tee transcripts/wishpainttest.txt
       - name: wishe2e (the potato, end to end through W1's real engine)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/wishe2e.sh 2>&1 | tee transcripts/wishe2e.txt
