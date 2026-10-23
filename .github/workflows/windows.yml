@@ -411,6 +411,9 @@ jobs:
           if ($LASTEXITCODE -eq 0) { throw "it ran on a disk it was not named" }
           if (-not (Select-String -Path guid.log -Pattern 'not the disk that was named' -Quiet)) { throw "refused, but not for the GUID" }
           "both refused"
+          # pwsh steps exit with the last native command's code, which here
+          # is the (wanted) refusal; this step's verdict is the throws above.
+          exit 0
       - name: the engine shrinks with Windows' own shrink and writes only into the gap
         shell: pwsh
         run: |
