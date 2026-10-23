@@ -60,7 +60,9 @@ function LP([string]$p) { if ($p.Length -lt 240 -or $p.StartsWith('\\?\')) { $p 
 function Sha256File([string]$path) {
     if (-not $path) { throw 'Sha256File was given no path' }
     $h = [System.Security.Cryptography.SHA256]::Create()
-    $s = [System.IO.File]::Open((LP $path), 'Open', 'Read', 'Read')
+    $full = LP $path
+    try { $s = [System.IO.File]::Open($full, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read) }
+    catch { throw ("could not open '" + $path + "' as '" + $full + "': " + $_.Exception.Message) }
     try { $b = $h.ComputeHash($s) } finally { $s.Dispose(); $h.Dispose() }
     ([System.BitConverter]::ToString($b) -replace '-', '').ToLowerInvariant()
 }
