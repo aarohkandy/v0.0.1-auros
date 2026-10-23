@@ -14,8 +14,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 - **Scam protection**: remote-control apps (AnyDesk, TeamViewer…) blocked on first install
   with a plain warning; "Get me out of this page" always works (Esc×3, Ctrl+Alt+Delete, Help).
 - **Help** button works in every look; help pages rewritten; helper page for experts.
-- **Wishes backend live** on Cloudflare (https://auros-wishes.aarohkandy.workers.dev),
-  refuses strangers, logs nothing she says; real-Claude tests running with your workspace key.
+- **Wishes backend proven end to end with the real Claude** (https://auros-wishes.aarohkandy.workers.dev):
+  your potato and compass examples work; 26/26 hostile tests handled (all 8 dangerous asks refused);
+  strangers refused; nothing she says is logged; **$0.00009 per wish (~$80/month at 10,000 people a day)**.
 - Plans: expert map (docs/ATLAS.md), master plan (docs/PLAN-END-TO-END.md), design direction
   (docs/DESIGN-DIRECTION.md), AI contract v1 after a red team (docs/AI.md §7).
 
@@ -36,4 +37,8 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 3. **5 real used PCs** for testing (one hard disk, one Wi-Fi-only, one BitLocker).
 4. **A second person** who can pause downloads if something goes wrong.
 5. **USB stick** for the update key (now in ~/AurOS-update-key on your Mac).
-6. Set the watchdog task to Auto mode (Scheduled → "AurOS: restart the swarm if it stopped").
+6. **Cloudflare Workers Paid, $5/month** (dash.cloudflare.com → Workers & Pages → Plans): the free
+   plan's 10 ms CPU limit is tighter than the service's 11-33 ms cold starts.
+7. **Anthropic paperwork** (console.anthropic.com): accept the Data Processing Addendum, request zero
+   data retention, and confirm the AurOS Wishes workspace has a monthly spend limit (docs/OWNER-SETUP.md §7b).
+8. Set the watchdog task to Auto mode (Scheduled → "AurOS: restart the swarm if it stopped").
