@@ -454,7 +454,7 @@ static const char *ACT_LABEL[A_N] = {
 };
 /* The one sentence for each moment (docs/handoff/streams/K.md, "One
  * truth about going back"), checked against what aurfirst does. */
-#define SAY_YES "AurOS starts every time from now on. Windows and its files stay on this computer."
+#define SAY_YES "AurOS starts every time from now on. Windows and its files are meant to stay on this computer."
 #define SAY_NO  "Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted."
 static const char *ACT_LINE[A_N] = {
     SAY_YES,
@@ -773,7 +773,7 @@ static const char *sub_of(int page, int can_import)
     case W_CONFIRMED: return can_import
                           ? "Your documents and pictures are still in Windows. "
                             "AurOS can copy them here."
-                          : "Windows and its files stay on this computer.";
+                          : "Windows and its files are meant to stay on this computer.";
     case W_IMPORTING: return "Your files are copied. Nothing in Windows changes.";
     case W_IMPORTED:  return "Open Your files to see them.";
     case W_DECLINED:  return "Press Restart now to go back to Windows.";

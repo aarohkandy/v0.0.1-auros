@@ -194,6 +194,7 @@ BANNED = [
     (r"nothing on this computer has been lost", "an absolute: say what is meant to be kept, not that nothing was lost"),
     (r"stays,? with all your files", "an absolute (LIA-2): 'Windows and your files are meant to stay'"),
     (r"computer is (safe|fine)\b", "an absolute (LIA-2): say what the page can and cannot do"),
+    (r"windows and its files stay", "an absolute (LIA-2): 'Windows and its files are meant to stay'"),
 ]
 # Texts a person reads. C files: only lines that are not comments.
 TEXT_GLOBS = ["website", "rootfs/usr/share/auros/help", "README.md", "docs/legal/TERMS.md", "docs/legal/PRIVACY.md",

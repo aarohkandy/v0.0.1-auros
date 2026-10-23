@@ -73,7 +73,7 @@ Checked in code: `aurfirst decline` sets the next start to Windows and deletes n
 
 | Moment | The one sentence |
 |---|---|
-| Yes, it all works | AurOS starts every time from now on. Windows and its files stay on this computer. |
+| Yes, it all works | AurOS starts every time from now on. Windows and its files are meant to stay on this computer. |
 | Let me look first | Nothing changes. AurOS asks again the next time it starts. |
 | No, go back to Windows | Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted. |
 | Declined screen | AurOS is still on this computer, but Windows starts. To use AurOS again, or to remove it, ask someone who knows computers. |
