@@ -1,0 +1,11 @@
+# What the monitor (tools/ops/monitor.py) must find up, and pages the owner for
+# when it does not: one word per check, from: site download pieces channel wishes
+# A check not listed here still runs and is shown, as "pending", but opens no
+# issue. Add each word the day that thing is really live:
+#   wishes   up since 2026-10-23 (the Worker)
+#   site     after the first [latest] release deploys the website
+#   download after the first [latest] release (Get AurOS delivers AurOS-Setup.exe)
+#   pieces   with download
+#   channel  after the first [apt] publish (docs/security/UPDATES.md)
+# tools/ops/waves.py refuses to open wave 1 while any of the five is missing.
+wishes

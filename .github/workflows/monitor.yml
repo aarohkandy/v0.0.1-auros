@@ -1,0 +1,87 @@
+# Is AurOS up? (WP-35, stream OPS.) One small job every 15 minutes: the
+# website, "Get AurOS", the image pieces, the update channel and the Wishes
+# Worker, against today's addresses (GitHub's until the repository variable
+# AUROS_DOMAIN is set, then the owner's). Hourly it also downloads the exe
+# and compares its sha256 with SHA256SUMS. A live check that fails opens ONE
+# GitHub issue assigned to the owner (and to the repository variable
+# AUROS_SECOND_RESPONDER), labelled `monitor`; it closes itself when the
+# check passes. Which checks are live: docs/ops/live.txt. What to do about
+# each: docs/ops/INCIDENTS.md. Details: docs/ops/MONITOR.md.
+#
+# Also on a push to tools/ops/** : the self-tests (every check is shown red
+# by a broken copy of what it watches), and no real check.
+name: monitor
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      deep:
+        description: also download the exe and compare its hash
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - 'tools/ops/**'
+      - 'infra/**'
+      - '.github/workflows/monitor.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+# One monitor at a time; a newer run replaces one still waiting.
+concurrency:
+  group: monitor-${{ github.event_name == 'push' && 'selftest' || 'live' }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: the monitor, the address scan, the wave rules, each shown red by a broken copy
+        run: |
+          python3 -I tools/ops/monitor.py --selftest
+          python3 -I tools/ops/addrtest.py --selftest
+          sh tools/repotest.sh
+          if [ -f tools/ops/waves_test.py ]; then python3 -I tools/ops/waves_test.py; fi
+          if [ -f infra/edge/package.json ]; then cd infra/edge && node --test test/; fi
+
+  monitor:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+      AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
+      WISHES_URL: ${{ vars.AUROS_WISHES_URL || format('https://auros-wishes.{0}.workers.dev', github.repository_owner) }}
+      AUROS_SECOND_RESPONDER: ${{ vars.AUROS_SECOND_RESPONDER }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            tools/repo.sh
+            tools/ops
+            docs/ops
+            rootfs/usr/share/keyrings
+      - name: check everything, open or close the issues
+        run: |
+          deep=""
+          if [ "${{ inputs.deep }}" = "true" ] || [ "$(date -u +%M)" -lt 15 ]; then deep="--deep"; fi
+          set +e
+          python3 -I tools/ops/monitor.py $deep --out status.json --issues 2>&1 | tee monitor.txt
+          rc=${PIPESTATUS[0]}
+          { echo '### AurOS monitor'; echo '```'; cat monitor.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: status
+          path: status.json
+          retention-days: 3
+          if-no-files-found: ignore
