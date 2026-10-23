@@ -132,10 +132,14 @@ lint_one() { # profile-name-or-path [index-file]
     [ -f "shells/$sh_.shell" ] && ok "desktop '$sh_' exists" \
         || bad "desktop '$sh_' exists" "no shells/$sh_.shell -- forge would quietly use rail"
 
-    # Every list stage 2 hands to one `apt-get install`.
+    # Every list stage 2 hands to one `apt-get install` -- the same
+    # lists, in forge's order (build/forge, stage 2's `local pkgs=`).
+    # packages_security was missing here, so a profile that inherits
+    # desktop's zram-tools looked as if it asked for zram with nothing
+    # to provide it.
     names="locales"
-    for k in packages_hardware packages_boot packages_base packages_desktop \
-             packages_files packages_apps packages_extra; do
+    for k in packages_hardware packages_boot packages_base packages_security \
+             packages_desktop packages_files packages_apps packages_extra; do
         names="$names $(pval "$p" $k)"
     done
     missing=""; stubs=""
@@ -349,8 +353,8 @@ EOP
     # The index is the real names the desktop and office profiles use
     # (so this part needs no network), plus Ubuntu's thunderbird stub.
     for p in desktop office; do
-        for k in packages_hardware packages_boot packages_base packages_desktop \
-                 packages_files packages_apps packages_extra packages_exclude; do
+        for k in packages_hardware packages_boot packages_base packages_security \
+                 packages_desktop packages_files packages_apps packages_extra packages_exclude; do
             for n in $(pval $p $k); do echo "$n 1.0"; done
         done
     done | grep -v '^thunderbird ' | sort -u > "$T/real.idx"
@@ -368,6 +372,7 @@ EOP
         one "...excluding a name apt does not know" 's/^shell_archetype=.*/&\npackages_exclude="snapd tracker3"/'
         one "...in a theme that does not exist" 's/^theme=.*/theme="no-such-theme"/'
         one "...on a desktop that does not exist" 's/^shell_archetype=.*/shell_archetype="plain"/'
+        one "...asking for zram with no zram-tools to provide it" 's/^shell_archetype=.*/&\npackages_security="nftables earlyoom"/'
     else
         printf '    %-62s %s\n' "the office profile as it is now" "FAILS ($base): fix it first"
         fail=$((fail+1))
@@ -419,6 +424,8 @@ PROFILETEST lang=LANG=en_US.UTF-8
 PROFILETEST locales=C.utf8 en_US.utf8 POSIX
 PROFILETEST browser=/usr/bin/firefox
 PROFILETEST failed=
+PROFILETEST swap=/dev/zram0 partition 1.9G;
+PROFILETEST earlyoom=active
 PROFILETEST tty2=masked
 PROFILETEST done
 EOR
@@ -447,6 +454,9 @@ EOR
     rep "...with no browser"                  's/browser=.*/browser=/'
     rep "...with a console on Ctrl-Alt-F2"    's/tty2=masked/tty2=enabled/'
     rep "...with aurshell crashed"            's/aurshell=active/aurshell=failed/'
+    rep "...with no swap at all"              's/swap=.*/swap=/'
+    rep "...swapping to the disk, not memory" 's|swap=.*|swap=/swapfile file 2G;|'
+    rep "...with earlyoom not running"        's/earlyoom=active/earlyoom=inactive/'
     good | sed 's/locales=.*/locales=C.utf8 POSIX/' > "$T/r.bad"
     b=$( fail=0; checked=0; judge_report school-kiosk "$T/r.bad" >/dev/null; echo "$fail" )
     if [ "$b" -ge 1 ]; then printf '    %-62s %s\n' "...with its language never generated" "refused"

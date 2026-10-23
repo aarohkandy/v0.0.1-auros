@@ -25,8 +25,6 @@
 #            the development container; release assets can.)
 #   summary  the table of sizes and results in the release notes, and
 #            only the newest four profiles-* prereleases kept.
-#
-# workflow_dispatch is not an option: it only works on the default branch.
 name: profiles
 
 on:
@@ -136,11 +134,15 @@ jobs:
               sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          sudo apt-get update -q
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-              debootstrap squashfs-tools zstd gdisk dosfstools mtools e2fsprogs \
-              sbsigntool gcc libc6-dev make python3 cpio file binutils pigz \
-              qemu-system-x86 qemu-utils ovmf
+          # Bounded: a hung mirror must cost five minutes, not the job's 150.
+          for i in 1 2 3; do
+            sudo timeout 300 apt-get update -q &&
+            sudo DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y -q --no-install-recommends \
+                debootstrap squashfs-tools zstd gdisk dosfstools mtools e2fsprogs \
+                sbsigntool gcc libc6-dev make python3 cpio file binutils pigz \
+                qemu-system-x86 qemu-utils ovmf && break
+            [ "$i" = 3 ] && exit 1; sleep 15
+          done
           while [ ! -f /tmp/freed ]; do sleep 2; done
           ls -l /dev/kvm; df -h /
 
