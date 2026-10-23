@@ -128,6 +128,11 @@ if [ "${1:-}" = --mutants ]; then
     DM=""
     if [ "$(uname)" = Linux ] && pkg-config --exists dbus-1 2>/dev/null && command -v dbus-daemon >/dev/null 2>&1 &&
        command -v curl >/dev/null 2>&1; then DM=--daemon; fi
+    # ... and the compositor-side ones need libwayland and xkbcommon
+    if [ "$(uname)" = Linux ] && pkg-config --exists wayland-server wayland-client xkbcommon 2>/dev/null; then
+        DM="$DM --textinput"
+    fi
+    # shellcheck disable=SC2086
     if python3 "$ROOT/tools/wishtest-mutants.py" $DM >"$OUT/mut" 2>&1; then
         echo "ok   mutants: $(grep -c '^caught' "$OUT/mut") checks each shown to fail when removed"
     else
