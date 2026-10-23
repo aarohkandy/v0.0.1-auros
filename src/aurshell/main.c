@@ -46,6 +46,7 @@
 #include "appwatch.h"
 #include "run.h"
 #include "press.h"
+#include "textsys.h"
 #include "../aurwl/aurwl.h"
 #include "pad.h"
 #include "kms.h"
@@ -1167,6 +1168,10 @@ int main(int argc, char **argv)
      * and it comes back the next time the machine is switched on if
      * she closed it without answering. See src/aurshell/welcome.h. */
     welcome_init(&c);
+    /* Her size from last time, handed to her programs again: the
+     * settings daemon may have been reset, and a program started now
+     * should open at the size she chose. Not in a still render. */
+    if (c.text_scale < 0.99f || c.text_scale > 1.01f) textsys_apply(c.text_scale);
     /* The wifi panel as of the last pass, and what had the keyboard
      * before it took it. See the transition handler in the loop. */
     int net_open_last = 0;
@@ -1544,6 +1549,7 @@ int main(int argc, char **argv)
          * and she sees the result of the press immediately. */
         if (c.text_changed) {
             c.text_changed = 0;
+            textsys_apply(c.text_scale);      /* and her programs' */
             free_fonts(&f);
             load_fonts(&f, &c);
             c.screen_h = disp->height - foot_height(&c);

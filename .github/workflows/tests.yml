@@ -181,6 +181,12 @@ jobs:
              src/aurshell/shellcommon.c src/aurshell/anim.c src/aurshell/layouts/*.c \
              src/common/theme.c src/common/font.c src/common/png.c -I src/aurshell -I src/common -lm
           "$RUNNER_TEMP/icontest" "$RUNNER_TEMP/icons.png" 2>&1 | tee transcripts/icontest.txt
+      - name: textsystest (Bigger reaches her programs)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/textsystest" tools/textsystest.c \
+             src/aurshell/textsys.c src/aurshell/run.c -I src/aurshell
+          "$RUNNER_TEMP/textsystest" 2>&1 | tee transcripts/textsystest.txt
       - name: lookboottest (the look she picked survives a restart)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
