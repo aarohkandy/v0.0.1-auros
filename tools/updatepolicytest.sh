@@ -182,9 +182,11 @@ static() {
 keycheck() { # ROOTFS SOURCE KEY
     local R=$1 src=$2 key=$3 T url
     T=$(mktemp -d); mkdir -p "$T/parts" "$T/lists/partial" "$T/cache/archives/partial" "$T/repo" "$T/d/DEBIAN"
-    aptq() { apt-get -q -o Dir::Etc::sourcelist=/dev/null -o Dir::Etc::sourceparts="$T/parts" \
-               -o Dir::State::lists="$T/lists" -o Dir::Cache="$T/cache" -o APT::Sandbox::User=root \
-               -o Dir::Etc::preferencesparts=/dev/null "$@"; }
+    local O=(-o Dir::Etc::sourcelist=/dev/null -o Dir::Etc::sourceparts="$T/parts"
+             -o Dir::State::lists="$T/lists" -o Dir::Cache="$T/cache" -o APT::Sandbox::User=root
+             -o Dir::Etc::preferencesparts=/dev/null)
+    aptq() { apt-get -q "${O[@]}" "$@"; }
+    aptc() { apt-cache "${O[@]}" "$@"; }
     printf 'Package: auros\nVersion: 99\nArchitecture: amd64\nMaintainer: x <x@invalid>\nDescription: x\n x\n' > "$T/d/DEBIAN/control"
     dpkg-deb --root-owner-group --build "$T/d" "$T/repo/auros_99_amd64.deb" >/dev/null
     ( export GNUPGHOME="$T/g"; mkdir -m 700 "$GNUPGHOME"
@@ -205,7 +207,7 @@ keycheck() { # ROOTFS SOURCE KEY
         sed "s#^Signed-By: #Signed-By: $R#" "$src" > "$T/parts/auros.sources"
         rm -rf "$T/lists"; mkdir -p "$T/lists/partial"
         aptq update > "$T/u2.log" 2>&1
-        ! grep -qE '^(W|E):' "$T/u2.log" && aptq -o Dir::Etc::preferencesparts=/dev/null policy auros 2>/dev/null | grep -q 'Candidate: [0-9]' &&
+        ! grep -qE '^(W|E):' "$T/u2.log" && aptc policy auros 2>/dev/null | grep -q 'Candidate: [0-9]' &&
             ok "the image's key accepts the published channel ($url)" ||
             bad "the image's key accepts the published channel" "$(sed 's/^/  | /' "$T/u2.log")"
     else

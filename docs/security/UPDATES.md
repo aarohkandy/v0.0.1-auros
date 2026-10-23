@@ -317,16 +317,30 @@ Revisit when S4's TPM re-seal exists, and possibly then fwupd for dbx only.
   running desktop; the fix installed by itself. It also found a real bug:
   the set before the update was not kept (keep-previous depended on apt's
   cache, and a `file:` repository does not fill it), so the rollback had
-  nothing to go back to. Fixed in 9865f88, which also makes the VM test
-  serve its repository over HTTP; the re-run is recorded below when green.
+  nothing to go back to. Fixed in 9865f88 (which also makes the VM test
+  serve its repository over HTTP).
+- **2026-10-23, the VM test, green** (aptrepo run 39965081792, job `boot`, the
+  image of build 39961608618, which has the fix; 16 of 16): the day's update
+  installed AurOS by itself while the desktop ran (pid 816 before and after,
+  0 restarts) and kept the set before it; the next start ran the new
+  version with nothing newly failed; the broken version arrived the same
+  way without touching the running desktop; on the next start its desktop
+  failed through both safe-mode steps, `shell-guard` rolled back (up again
+  after 400 s, on the earlier version, `rollback.log` says so), the broken
+  version was pinned out and the next day's update did not bring it back,
+  and the fixed version then installed by itself. One earlier run of the
+  same test (39962993549) passed 15 of 16 and failed on that last
+  step; the repositories had all been made in the same second, so the test
+  now gives each day's repository a new modification time, as a real
+  publication has. That is the likely cause, consistent with how apt asks
+  a server whether an index is newer; it was not isolated further.
 
 Not proven yet, said plainly:
 
 - a real Flathub update (the commands are proven against a local
   repository; Flathub's reachability is `software-ready.sh`'s job);
-- an update arriving **while she uses the desktop** in a VM, the next start
-  updated and healthy, and a broken AurOS update rolled back on a real boot
-  (the KVM test; the mechanisms are proven in a container);
+- the VM test has passed once in full (16 of 16) and is not yet part of
+  every build: it runs on `[updateboot]` only;
 - phased `-updates` behaviour over days on a real computer;
 - that Firefox's "restart" page never shows (the hold is tested; the
   Firefox UI is not).
