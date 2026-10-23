@@ -8,8 +8,8 @@
 # /etc/auros/features. A release image must come out with, and this
 # asks the finished rootfs rather than the script that made it:
 #   - /etc/auros/features says wishes=off;
-#   - no aurwish program or unit anywhere in the image (stream W1's
-#     engine and its user service);
+#   - no aurwish program or unit, and no aurvoice, anywhere in the image
+#     (stream W1's engine and its user service; W2's voice);
 #   - the shell has no "Make a wish" door: its home tile's text is not in
 #     the binary (the tile is behind AUROS_WISHES, so a shell built with
 #     it off carries no copy of that sentence).
@@ -24,8 +24,8 @@ check() { # ROOTFS -> prints one line per failure, exit 1 if any
     f=$r/etc/auros/features
     if [ ! -f "$f" ]; then echo "no /etc/auros/features (build/forge writes it)"; n=$((n+1))
     elif ! grep -qx 'wishes=off' "$f"; then echo "/etc/auros/features says: $(grep '^wishes=' "$f" | head -1)"; n=$((n+1)); fi
-    found=$(find "$r/usr" "$r/etc" "$r/opt" -name 'aurwish*' 2>/dev/null | head -3)
-    if [ -n "$found" ]; then echo "an aurwish file is in the image: $found"; n=$((n+1)); fi
+    found=$(find "$r/usr" "$r/etc" "$r/opt" \( -name 'aurwish*' -o -name 'aurvoice*' \) 2>/dev/null | head -3)
+    if [ -n "$found" ]; then echo "an aurwish or aurvoice file is in the image: $found"; n=$((n+1)); fi
     sh=$r/usr/bin/aurshell
     if [ -f "$sh" ] && grep -aqF "$CANARY" "$sh"; then
         echo "the shell carries the Make a wish tile (built with AUROS_WISHES=1)"; n=$((n+1)); fi
@@ -46,6 +46,8 @@ if [ "${1:-}" = selftest ]; then
     fresh; rm "$t/r/etc/auros/features"; expect "no features file is refused" 1
     fresh; : > "$t/r/usr/bin/aurwish"; expect "an aurwish program is refused" 1
     fresh; mkdir -p "$t/r/etc/systemd/user"; : > "$t/r/etc/systemd/user/aurwish.service"; expect "an aurwish unit is refused" 1
+    fresh; mkdir -p "$t/r/usr/lib/auros"; : > "$t/r/usr/lib/auros/aurvoice"; expect "an aurvoice program is refused" 1
+    fresh; : > "$t/r/usr/bin/aurvoice"; expect "an aurvoice link is refused" 1
     fresh; echo "x $CANARY y" > "$t/r/usr/bin/aurshell"; expect "a shell with the Make a wish tile is refused" 1
     [ "$fails" = 0 ] && echo "wishesoff selftest: ok" || echo "wishesoff selftest: $fails wrong"
     exit "$fails"

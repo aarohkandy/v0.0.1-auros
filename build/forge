@@ -1208,6 +1208,16 @@ stage_overlay() {
             || die "the Wishes sounds could not be made"
         _wishbin="$RFS/usr/bin/aurwish"
         note "aurwish built ($(du -h "$RFS/usr/bin/aurwish" | cut -f1)) and enabled for the user (wishes=on)"
+        # aurvoice: her voice in, the computer's voice out (src/aurwish/voice.c, docs/VOICE.md).
+        # aurwish starts it by its bare name, so it is in /usr/bin too. It downloads nothing:
+        # the voice pack (about 250 MB) is not in the image and arrives through the update
+        # channel (S5); until it does, "Say it" says the computer has no microphone it can use
+        # and offers to type the wish.
+        inchroot "install -d /usr/lib/auros && cd /usr/src/auros/aurwish && gcc $HARDEN_CFLAGS -std=gnu11 -Wall -Wextra -o /usr/lib/auros/aurvoice voice.c" \
+            || die "aurvoice did not build"
+        ln -sf /usr/lib/auros/aurvoice "$RFS/usr/bin/aurvoice"
+        _wishbin="$_wishbin $RFS/usr/lib/auros/aurvoice"
+        note "aurvoice built ($(du -h "$RFS/usr/lib/auros/aurvoice" | cut -f1))"
     fi
 
     # AND THE FLAGS ARE CHECKED ON THE BINARIES, not trusted from the
