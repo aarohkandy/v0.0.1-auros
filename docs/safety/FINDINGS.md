@@ -14,10 +14,10 @@
 
 | ID | Sev | Owner | Title | Where | Status on main (5c16a39) |
 |---|---|---|---|---|---|
-| S-01 | high | A2 | Restore erases a partition added after the install and grows C: over it | `src/aurstage/rescue.c:879` | open |
-| S-02 | high | A2 | Same defect, second report | `src/aurstage/rescue.c:1200` | open |
-| S-03 | high | A2 | No-stick restore writes the table before the EFI partition | `src/aurstage/rescue.c:1297` | open |
-| S-04 | high | A2 | Boot entry cannot be written (NVRAM full), install still "succeeds" | `src/aurstage/loader.c:187` | open |
+| S-01 | high | A2 | Restore erases a partition added after the install and grows C: over it | `src/aurstage/rescue.c:879` | fixed in `c994042` (foreign_partition(): refused before any write; powercut-nostick "a partition that was not AurOS's") |
+| S-02 | high | A2 | Same defect, second report | `src/aurstage/rescue.c:1200` | fixed in `c994042` (same) |
+| S-03 | high | A2 | No-stick restore writes the table before the EFI partition | `src/aurstage/rescue.c:1297` | fixed in `c994042` (the EFI partition is restored first, only differing megabytes) |
+| S-04 | high | A2 | Boot entry cannot be written (NVRAM full), install still "succeeds" | `src/aurstage/loader.c:187` | fixed in `0d0e047` (nvram_probe at the gate of both paths; nvram_boot_repurpose; nvramtest 27 checks) |
 | S-05 | high | C | The hold re-arms AurOS before the desktop exists | `rootfs/etc/systemd/system/auros-hold.service:19` | open |
 | S-06 | high | C | Same defect, second report | `rootfs/etc/systemd/system/auros-hold.service:19` | open |
 | S-07 | high | C | New kernel is the default before it has ever booted | `rootfs/usr/lib/auros/bootchain:257` | open |
@@ -27,8 +27,8 @@
 | S-11 | high | E CI | powercuttest misses the shipped mode and runs in no CI job | `tools/powercuttest.sh:162` | largely addressed |
 | S-12 | high | A2 | Clock-behind refusal for every PC west of UTC | `src/aurstage/journal.c:404` | fixed |
 | S-13 | medium | B | BitLocker C: passes preflight in every state | `src/aurbridge/preflight.c:1601` | fixed |
-| S-14 | medium | A2 | A restore that stops after the table rewrite can never be finished | `src/aurstage/rescue.c:1475` | open |
-| S-15 | medium | A2 | Restore commits table and ESP before checking C: can be grown | `src/aurstage/rescue.c:1475` | open |
+| S-14 | medium | A2 | A restore that stops after the table rewrite can never be finished | `src/aurstage/rescue.c:1475` | fixed in `c994042` + `0d0e047` (ESP first; growability asked before the first write) |
+| S-15 | medium | A2 | Restore commits table and ESP before checking C: can be grown | `src/aurstage/rescue.c:1475` | fixed in `0d0e047` (growable() before the first write; ntfs_read_state unsure until looked at) |
 | S-16 | medium | A2 | GPT commit relies on an unvalidated old backup | `src/aurstage/commit.c:90` | fixed |
 | S-17 | medium | A2 | A retry captures the shrunk C: as the original | `src/aurstage/rescue.c:590` | fixed |
 | S-18 | medium | A2 | A kernel that loads and then panics is chosen at every start | `rootfs/usr/lib/auros/grub.cfg.in:3` | open |
@@ -36,7 +36,7 @@
 | S-20 | medium | B | EFI partition checked with a 1 MiB margin, files stay for good | `src/aurbridge/preflight.c:1405` | partly fixed |
 | S-21 | medium | B | RAID system volume passes preflight; staging cannot find it | `src/aurbridge/preflight.c:1757` | fixed |
 | S-22 | medium | B | Early download is not counted by the check that passes | `src/aurbridge/preflight.c:1267` | open |
-| S-23 | medium | A2 | Hibernation switched off for good, even after Stop | `src/aurbridge/plat_win.c:1391` | fixed for Stop; Put Windows back leg open |
+| S-23 | medium | A2 | Hibernation switched off for good, even after Stop | `src/aurbridge/plat_win.c:1391` | fixed: Stop/abort in `fe7702f`; the Put Windows back leg in `0d0e047` (the put-back task restores hibernation) |
 | S-24 | medium | A2 + B | When Windows moves itself first in BootOrder, nothing brings AurOS back | `src/aurfirst/state.c:377` | open |
 | S-25 | medium | C + A2 | Deleting AUROS-ROOT in Disk Management leaves a `grub>` prompt | `build/mkimage:253` | open |
 | S-26 | medium | B | Encryption fix decrypts every fixed drive and ignores failure | `src/aurbridge/fix_win.c:351` | fixed (code removed) |
