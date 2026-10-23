@@ -20,8 +20,8 @@ Until then every address is GitHub's and nothing is deployed. Nothing built so f
   Fails on github.com / github.io / githubusercontent.com / workers.dev when `AUROS_DOMAIN` is set (or `--strict`);
   before that it reports. `--selftest`: planted string in each of the three places, a wide string, a dpkg-listed file,
   an Ubuntu file that must be ignored. On build 39907966817 it finds exactly: the pieces base, the wizard host
-  twice; `tools/ops/addr-allow.txt` lists ntfs-3g's and shim's own upstream URLs. **Not yet seen on a real rootfs**
-  (CI's first run of the new tests.yml step will show it; look at `transcripts/addrtest.txt`).
+  twice; `tools/ops/addr-allow.txt` lists ntfs-3g's and shim's own upstream URLs. Also run on the real
+  rootfs of build 39926230164 (207 AurOS files, extracted on homebase): exactly one hit, `auros.sources`' GitHub address.
 - **WP-15 website** (stamp.sh, door.js, check.mjs, pages.yml): with the domain, Get AurOS goes to `get.<d>`,
   the page names no GitHub release address. check.mjs ran on homebase with and without a domain: identical.
 - **WP-15 edge Worker** (`infra/edge`, `edge.yml`): get./updates./status./www./apex passing on to GitHub; 14 node
