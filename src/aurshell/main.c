@@ -39,6 +39,7 @@
 #include "settings.h"
 #include "bt.h"
 #include "welcome.h"
+#include "guard.h"
 #include "watch.h"
 #include "appwatch.h"
 #include "run.h"
@@ -1376,6 +1377,11 @@ int main(int argc, char **argv)
          * sure it is never the only way. */
         if (notify_pump(&c))  dirty = 1;
         if (notify_step(&c)) dirty = 1;
+        /* A remote-control program being installed: polkit stopped it,
+         * and the card asks her (guard.h). */
+        if (guard_pump(&c)) dirty = 1;
+        /* One line a panel wants said (c.say), said once. */
+        if (c.say[0]) { osd_say(c.say); c.say[0] = 0; dirty = 1; }
 
         /* A PROGRAM WAS INSTALLED (or removed). Read the table again
          * and show it, now -- see appwatch.h. The archetype is told
@@ -1514,6 +1520,10 @@ int main(int argc, char **argv)
          * band sets the flag and the host does it, because which
          * window is "this" is the session's business. */
         if (c.want_close_win) {
+            /* 2 is "Get me out of this page" (guard.c): stop it NOW. A
+             * scam page is the one thing that answers a polite request
+             * by asking her something else. */
+            int force = (c.want_close_win == 2);
             c.want_close_win = 0;
             /* ONLY the window she is looking at, and only when the
              * archetype says there IS one.
@@ -1555,7 +1565,11 @@ int main(int argc, char **argv)
                      * no-op this was written to stop being. So the
                      * second press within a few seconds takes it. */
                     uint32_t nowm = (uint32_t)now_ms();
-                    if (close_asked_wid == c.wins[w].wid &&
+                    if (force) {
+                        aurwl_win_kill(win);
+                        osd_say("That page is closed.");
+                        close_asked_wid = 0;
+                    } else if (close_asked_wid == c.wins[w].wid &&
                         (uint32_t)(nowm - close_asked_ms) < CLOSE_INSIST_MS) {
                         aurwl_win_kill(win);
                         osd_say("That program was not answering, so it was "
@@ -1584,6 +1598,10 @@ int main(int argc, char **argv)
             }
             dirty = 1;
         }
+
+        /* AFTER the close above: the sound "Get me out" turned off comes
+         * back only once the page that was making it has gone. */
+        if (guard_step(&c)) dirty = 1;
 
         if (c.want_power_off) {
             int what = c.want_power_off;
@@ -1687,6 +1705,9 @@ int main(int argc, char **argv)
              * underneath one she did open -- and the band stays on top
              * because the way out of everything is always the band. */
             welcome_paint(&c, fb, &f);
+            /* Over the welcome question too: a page shouting at her, or
+             * a stranger's program arriving, outranks it. Under the band. */
+            guard_paint(&c, fb, &f);
             foot_paint(&c, fb, &f);
             /* Last, over everything including the band: it is the
              * answer to a key that was just pressed, and an answer
@@ -1970,6 +1991,8 @@ int main(int argc, char **argv)
                          * band stays ahead of it: the way out of
                          * everything is always the band. */
                         if (!pad_taken)
+                            pad_taken = guard_click(&c, c.mouse_x, c.mouse_y);
+                        if (!pad_taken)
                             pad_taken = welcome_click(&c, c.mouse_x, c.mouse_y);
                         if (!pad_taken) pad_taken = net_click(&c, c.mouse_x, c.mouse_y);
                         if (!pad_taken)
@@ -2026,7 +2049,9 @@ int main(int argc, char **argv)
                         if (!taken && ev.value) {
                             /* Painted last, so asked first. See the
                              * note on the other click path. */
-                            taken = welcome_click(&c, c.mouse_x, c.mouse_y);
+                            taken = guard_click(&c, c.mouse_x, c.mouse_y);
+                            if (!taken)
+                                taken = welcome_click(&c, c.mouse_x, c.mouse_y);
                             if (!taken)
                                 taken = net_click(&c, c.mouse_x, c.mouse_y);
                             if (!taken)
@@ -2073,6 +2098,18 @@ int main(int argc, char **argv)
                             super_down = (ev.value != 0);
 
                         if (ev.value && ev.code == KEY_ESC && c.kiosk) continue;
+
+                        /* THE KEYS NO PAGE CAN HAVE. Escape three times,
+                         * or Ctrl+Alt+Delete, opens "Get me out of this
+                         * page" -- seen here, before any program is
+                         * told, so nothing on screen can swallow them
+                         * (guard.h). The press that opens it, and its
+                         * release, go nowhere else. */
+                        if (guard_watch_key(&c, ev.code, ev.value, now_ms())) {
+                            c.key_text[0] = 0;
+                            dirty = 1;
+                            continue;
+                        }
 
                         /* Super belongs to the desktop, always. Without
                          * one chord the shell keeps for itself, a
@@ -2174,7 +2211,8 @@ int main(int argc, char **argv)
                              * second. Arrows still repeat: that is how a
                              * slider is moved by holding a key. */
                             if (ev.value == 1 || (ev.value == 2 && ev.code != 28)) {
-                                if      (c.net_open)      net_key(&c, ev.code);
+                                if      (c.guard_open)    guard_key(&c, ev.code);
+                                else if (c.net_open)      net_key(&c, ev.code);
                                 else if (c.settings_open) settings_key(&c, ev.code);
                                 else if (c.bt_open)       bt_key(&c, ev.code);
                                 else if (c.welcome_open)  welcome_key(&c, ev.code);
@@ -2203,6 +2241,7 @@ int main(int argc, char **argv)
             settings_motion(&c, c.mouse_x, c.mouse_y);
             bt_motion(&c, c.mouse_x, c.mouse_y);
             welcome_motion(&c, c.mouse_x, c.mouse_y);
+            guard_motion(&c, c.mouse_x, c.mouse_y);
             session_motion(&c, c.mouse_x, c.mouse_y);
             if (L->motion) L->motion(&c, c.mouse_x, c.mouse_y);
         }

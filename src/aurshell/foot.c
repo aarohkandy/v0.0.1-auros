@@ -213,6 +213,23 @@ int foot_help_open(const shell_ctx *c) { return c && c->help_open; }
  * The panel explains the band; the pages show everything else, step by
  * step. First on the panel, because it is the thing she came for. */
 #define HOVER_PAGES (-200)       /* foot_hover; the power choices use -10x */
+#define HOVER_OUT   (-201)
+
+/* "Get me out of this page" (src/aurshell/guard.c), above it whenever a
+ * program is open: a frightened person presses Help (docs/EASY.md rule
+ * 7), and getting away from a page that shouts at her comes before
+ * reading how to do things. Same size, same place, every look. */
+int foot_help_out(const shell_ctx *c, int sw, int sh, rect *out)
+{
+    if (!c || c->kiosk || c->n_wins <= 0) return 0;
+    float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
+    int top = sh - foot_height(c);
+    int gx = sw / 12; if (gx < 20) gx = 20;
+    int w = (int)(440.f * k); if (w > sw - 2 * gx) w = sw - 2 * gx;
+    int h = (int)(56.f * k);  if (h < FOOT_TARGET) h = FOOT_TARGET;
+    *out = (rect){ gx, top / 12, w, h };
+    return 1;
+}
 
 int foot_help_button(const shell_ctx *c, int sw, int sh, rect *out)
 {
@@ -222,8 +239,18 @@ int foot_help_button(const shell_ctx *c, int sw, int sh, rect *out)
     int gx = sw / 12; if (gx < 20) gx = 20;
     int w = (int)(440.f * k); if (w > sw - 2 * gx) w = sw - 2 * gx;
     int h = (int)(56.f * k);  if (h < FOOT_TARGET) h = FOOT_TARGET;
-    *out = (rect){ gx, top / 12, w, h };
+    rect o;
+    int y = top / 12;
+    if (foot_help_out(c, sw, sh, &o)) y = o.y + o.h + (int)(12.f * k);
+    *out = (rect){ gx, y, w, h };
     return 1;
+}
+
+static int out_button_at(const shell_ctx *c, int x, int y)
+{
+    rect r;
+    return foot_help_out(c, c->screen_w, c->screen_h + foot_height(c), &r) &&
+           x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
 }
 
 static int help_pages_here(void) { return access(FOOT_HELP_PAGES, R_OK) == 0; }
@@ -317,6 +344,21 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
         font *body = f->small ? f->small : f->mid;
         int x = s->w / 12, y = top / 6;
         rect hb;
+        if (foot_help_out(c, s->w, s->h, &hb)) {
+            float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
+            draw_rect(s, hb, FOOT_INK, 1.f);
+            if (c->foot_hover == HOVER_OUT)
+                draw_frame(s, (rect){ hb.x - 4, hb.y - 4, hb.w + 8, hb.h + 8 },
+                           2, FOOT_INK, 1.f);
+            font *nm = f->mid ? f->mid : f->small;
+            if (nm)
+                shell_text_elided(s, nm, (float)hb.x + 18.f,
+                                  shell_baseline(nm, (float)hb.y, (float)hb.h),
+                                  (float)hb.w - 36.f, "Get me out of this page",
+                                  FOOT_BG, 1.f);
+            x = hb.x;
+            y = hb.y + hb.h + (int)(28.f * k);
+        }
         if (help_pages_here() && foot_help_button(c, s->w, s->h, &hb)) {
             /* Filled, the one lit thing on the panel: it is what she
              * came for. Hover rings it rather than recolouring it. */
@@ -477,6 +519,7 @@ void foot_motion(shell_ctx *c, int x, int y)
         if (c->power_sel) c->foot_hover = -100 - c->power_sel;
         return;
     }
+    if (c->help_open && out_button_at(c, x, y)) { c->foot_hover = HOVER_OUT; return; }
     if (c->help_open && help_button_at(c, x, y)) { c->foot_hover = HOVER_PAGES; return; }
     rect r[B_N]; int which[B_N];
     int n = foot_buttons(c, c->screen_w, c->screen_h + foot_height(c), r, which);
@@ -511,6 +554,7 @@ void foot_open_only(shell_ctx *c, int *flag)
      * "Let me look first" does, and it is the right meaning for
      * "she pressed Settings" too. */
     c->welcome_open = 0;
+    c->guard_open = 0;
     c->power_sel = 0;          /* nothing is chosen until she chooses */
     *flag = want;
 }
@@ -640,6 +684,7 @@ int foot_click(shell_ctx *c, int x, int y)
      * the same small button again to get rid of the thing that exists
      * to help her would be a joke at her expense. */
     if (c->help_open && y < c->screen_h) {
+        if (out_button_at(c, x, y)) { foot_open_only(c, &c->guard_open); return 1; }
         if (help_button_at(c, x, y)) open_help_pages(c);
         c->help_open = 0;
         return 1;

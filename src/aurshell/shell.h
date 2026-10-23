@@ -239,6 +239,11 @@ typedef struct shell_ctx_s {
      * is the one panel nothing on the band opens: it opens itself, on
      * the first frame of every session, until it has been answered. */
     int   welcome_open;
+    /* "Get me out of this page", and "Before you install this" for a
+     * remote-control program. Same arrangement again: only the flag
+     * lives here, so Help (foot.c) can open it; src/aurshell/guard.c
+     * owns the rest. */
+    int   guard_open;
     /* A program the host should start, as an index into apps plus one,
      * or 0. Set by things that are not the archetype -- the "VLC is
      * ready" card -- because only the host knows the archetype's
@@ -294,8 +299,8 @@ typedef struct shell_ctx_s {
 
 /* ONE test for "something is covering the desktop".
  *
- * There are six of these now -- help, the wifi, Settings, headphones,
- * the three power choices and the welcome question -- and every place
+ * There are seven of these now -- help, the wifi, Settings, headphones,
+ * the three power choices, the welcome question and guard.c's card -- and every place
  * that has to behave
  * differently while one is up was listing them by hand. Four such
  * lists drifted apart: the scroll wheel knew about three of them, the
@@ -310,7 +315,8 @@ typedef struct shell_ctx_s {
  * updated in four. */
 #define SHELL_PANEL_OPEN(c) \
     ((c)->help_open || (c)->net_open || (c)->settings_open || \
-     (c)->bt_open   || (c)->power_open || (c)->welcome_open)
+     (c)->bt_open   || (c)->power_open || (c)->welcome_open || \
+     (c)->guard_open)
 
 typedef struct {
     const char *id;

@@ -73,13 +73,15 @@ static int *flag_any(shell_ctx *c, int i)
 {
     if (i < 5) return flag_of(c, i);
     if (i == 5) return &c->welcome_open;
+    if (i == 6) return &c->guard_open;     /* guard.c: Help, keys, polkit */
     return NULL;
 }
-static const char *NAMES[6] = { "help", "wifi", "settings",
+static const char *NAMES[7] = { "help", "wifi", "settings",
                                 "headphones", "the power question",
-                                "the welcome question" };
+                                "the welcome question",
+                                "the way out of a page" };
 #define N_PANELS 5        /* the ones the band opens */
-#define N_FLAGS  6        /* every one that covers the desktop */
+#define N_FLAGS  7        /* every one that covers the desktop */
 
 static void fresh(shell_ctx *c)
 {
@@ -369,9 +371,9 @@ static void nothing_behind(void)
      * markers are exactly the sort of thing that goes stale. */
     static const char *F[] = { "c.help_open", "c.net_open",
                                "c.settings_open", "c.bt_open",
-                               "c.power_open" };
+                               "c.power_open", "c.guard_open" };
     static const char *EXEMPT[] = {
-        "foot_key", "net_key", "settings_key", "bt_key",
+        "foot_key", "net_key", "settings_key", "bt_key", "guard_key",
         "net_click", "settings_click", "bt_click",
         "_open_last", "_opened(", "_closed(",
     };

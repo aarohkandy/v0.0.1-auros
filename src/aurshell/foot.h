@@ -108,6 +108,9 @@ int  foot_help_open(const shell_ctx *c);
  * computer. */
 #define FOOT_HELP_PAGES "/usr/share/auros/help/index.html"
 int  foot_help_button(const shell_ctx *c, int sw, int sh, rect *out);
+/* Above it, whenever a program is open: "Get me out of this page",
+ * which opens src/aurshell/guard.c's card. 0 when there is none. */
+int  foot_help_out(const shell_ctx *c, int sw, int sh, rect *out);
 
 /* A key, while the band's own overlays are up. Returns 1 if it was
  * taken -- which is EVERY key while one of them is showing, because
