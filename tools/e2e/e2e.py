@@ -90,10 +90,21 @@ VARIANT_EXPECT = {
 
 HUB = "http://10.0.2.2:8000"
 DEADLINE = time.time() + 60 * float(E("E2E_MINUTES", "300"))
+# Edge's words for a download it holds back until the person says keep
+WARN_RX = (r"(isn.t commonly downloaded|can.t be downloaded securely|might be dangerous|"
+           r"download blocked|was blocked|unsafe|couldn.t verify)")
 
 
 def left():
     return DEADLINE - time.time()
+
+
+def inside(e, box, slack=4):
+    """UI element e lies within element box (both [x, y, w, h])."""
+    x, y, w, h = e.get("rect") or (0, 0, 0, 0)
+    bx, by, bw, bh = box["rect"]
+    return (w > 0 and x >= bx - slack and y >= by - slack
+            and x + w <= bx + bw + slack and y + h <= by + bh + slack)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -441,25 +452,41 @@ class Flow:
                             raise Failure(f"the downloaded installer is {h}, expected {INSTALLER_SHA256}")
                         self.m.shot("downloaded")
                         return
-                    warn = re.search(r"(isn.t commonly downloaded|can.t be downloaded securely|"
-                                     r"might be dangerous|download blocked|was blocked|unsafe|"
-                                     r"couldn.t verify)", names, re.I)
-                    more = self.pick(els, r"^(More actions|See more|More options)", ("Button", "SplitButton", "MenuItem"))
-                    if warn and more and pressed.count("more") < 4:
+                    warn = re.search(WARN_RX, names, re.I)
+                    # The flyout's header has its own "More options" (open the
+                    # downloads page, clear history...): no Keep in it. Close it.
+                    if self.pick(els, r"^(Open downloads page|Clear all download history)$", ("MenuItem",)):
+                        self.m.key("esc", label="close the flyout's own menu")
+                        time.sleep(2)
+                        continue
+                    item = None
+                    for t in ("ListItem", "Text") if warn else ():
+                        item = item or next((e for e in els if e.get("type") == t and
+                                             re.search(WARN_RX, e.get("name") or "", re.I)), None)
+                    # The warned item's own buttons, which Edge shows while the
+                    # pointer is on it: "More actions" holds Keep.
+                    more = item and self.pick([e for e in els if e is not item and inside(e, item)],
+                                              r"^(More actions|More options|See more)",
+                                              ("Button", "SplitButton", "MenuItem"))
+                    if more and pressed.count("more") < 4:
                         self.click_el(more, "edge download item: more actions")
                         pressed.append("more")
                         time.sleep(3)
                         continue
-                    if warn and not more:
-                        # Edge shows an item's buttons when the pointer is on it
-                        item = next((e for e in els if e.get("type") in ("ListItem", "Text", "Button") and
-                                     re.search(warn.group(1), e.get("name") or "", re.I)), None)
-                        if item and pressed.count("hover") < 6:
-                            x, y, w, h = item["rect"]
-                            self.m.move(x + w // 2, y + h // 2)
-                            pressed.append("hover")
-                            time.sleep(2)
-                            continue
+                    if item and pressed.count("hover") < 4:
+                        x, y, w, h = item["rect"]
+                        self.m.move(x + w // 2, y + h // 2)
+                        pressed.append("hover")
+                        time.sleep(2)
+                        continue
+                    if item and pressed.count("right") < 2:
+                        # Edge's context menu on a download item is the same menu
+                        x, y, w, h = item["rect"]
+                        self.m.click(x + w // 2, y + h // 2, button="right",
+                                     label="edge download item: context menu")
+                        pressed.append("right")
+                        time.sleep(3)
+                        continue
                     if not warn and pressed.count("flyout") < 3:
                         # the flyout went away: the toolbar's Downloads button
                         tb = self.pick(els, r"^Downloads", ("Button", "SplitButton"))

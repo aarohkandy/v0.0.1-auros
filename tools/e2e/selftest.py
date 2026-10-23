@@ -7,7 +7,10 @@
    Rewording either one would otherwise make the variant fail on a good
    installer, or a loosened pattern pass on the wrong page; and no
    pattern matches another variant's titles.
-2. publish.sh's four ways out (the run's release; at the default branch;
+2. Edge's download flyout: the warned item's own "More actions" is
+   found, never the flyout header's "More options" (run 39896941765
+   pressed that four times and stalled; rectangles from its log).
+3. publish.sh's four ways out (the run's release; at the default branch;
    the newest e2e-* release as r<run>-*; none at all), with a fake gh.
 
 Run from anywhere: python3 tools/e2e/selftest.py
@@ -62,6 +65,17 @@ def test_expect():
                           f"{v}: /{want['page']}/ does not match {other}'s {where} title")
 
 
+def test_edge_item():
+    tree = ast.parse(open(os.path.join(HERE, "e2e.py")).read())
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "inside")
+    ns = {}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "e2e.py", "exec"), ns)
+    item = {"rect": [789, 130, 344, 100]}
+    check(not ns["inside"]({"rect": [1105, 84, 32, 33]}, item), "edge: the flyout header's More options is not the item's")
+    check(ns["inside"]({"rect": [1093, 146, 32, 32]}, item), "edge: a button on the item is the item's")
+    check(not ns["inside"]({"rect": [0, 0, 0, 0]}, item), "edge: an element with no rectangle is nobody's")
+
+
 FAKE_GH = r'''#!/bin/bash
 echo "gh $*" >> "$T/calls"
 case "$1 $2" in
@@ -104,6 +118,7 @@ def test_publish():
 
 
 test_expect()
+test_edge_item()
 test_publish()
 print(f"\n{len(fails)} failed" if fails else "\nall passed")
 sys.exit(1 if fails else 0)

@@ -38,8 +38,11 @@ answered with the keyboard.
    `INSTALLER_URL: https://github.com/${{ github.repository }}/releases/download/<TAG>/AurOS-Setup.exe`
    and `INSTALLER_SHA256: <its sha256>` (empty accepts any file and prints
    its hash).
-2. Commit and push to a `claude/**` branch. Changing `e2e.yml` is what
-   starts the run (so does `[e2e]` in a commit message). With the
+2. Commit and push to `main`. Changing `e2e.yml` is what
+   starts the run (so does `[e2e]` in the commit's subject). Without an
+   edit: `gh workflow run e2e.yml -f installer_url=URL -f installer_sha256=HASH
+   -f variants=base`, and `release.yml` can call it the same way
+   (`workflow_call`, same three inputs). With the
    installed Windows cached, M2 starts about 8 minutes after the push.
 3. Watch `https://github.com/OWNER/REPO/releases/download/e2e-<RUN_ID>/live-<VARIANT>.png`
    and `.../live-<VARIANT>.txt` (refreshed every 3 minutes); when a
@@ -82,8 +85,8 @@ The variant's Windows is set up by `guest/firstlogon.ps1` from
 
 ## Running it
 
-It runs on GitHub Actions (`.github/workflows/e2e.yml`) when a push to a
-`claude/**` branch changes `tools/e2e/**` or the workflow, or when the
+It runs on GitHub Actions (`.github/workflows/e2e.yml`) when a push to
+`main` changes `tools/e2e/**` or the workflow, or when the
 head commit message contains `[e2e]`. It needs nothing else: the
 repository is public, KVM is on the standard runners, and the evidence
 goes to a prerelease using the workflow's own token.

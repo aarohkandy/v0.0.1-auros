@@ -34,10 +34,18 @@ fi
 grep -m1 -o -E 'vmx|svm' /proc/cpuinfo >&2 || true
 nproc >&2; free -g >&2
 
-sudo apt-get update -q >&2
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+# bounded: a stuck mirror must not hold a runner for hours (3 tries, 5 min each)
+apt() {
+    for i in 1 2 3; do
+        sudo DEBIAN_FRONTEND=noninteractive timeout 300 apt-get "$@" >&2 && return 0
+        say "apt-get $1 failed (try $i)"; sleep $((i * 15))
+    done
+    return 1
+}
+apt update -q
+apt install -y -q --no-install-recommends \
     qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools xorriso \
-    tesseract-ocr tesseract-ocr-eng python3-numpy python3-pil zstd unzip gdisk >&2
+    tesseract-ocr tesseract-ocr-eng python3-numpy python3-pil zstd unzip gdisk
 qemu-system-x86_64 --version >&2
 # Ubuntu confines swtpm to libvirt's directories; this TPM's state lives
 # beside the disk image.

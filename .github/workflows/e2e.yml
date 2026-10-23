@@ -23,6 +23,19 @@ name: e2e
 on:
   push:
     branches: [main]
+  # release.yml calls this on a fresh prerelease (installer_url and its
+  # SHA-256); a person can start it from the Actions tab the same way.
+  # Without inputs the env pins below are what is tested.
+  workflow_call:
+    inputs:
+      installer_url: {type: string, required: false, default: ''}
+      installer_sha256: {type: string, required: false, default: ''}
+      variants: {type: string, required: false, default: base}
+  workflow_dispatch:
+    inputs:
+      installer_url: {type: string, required: false, default: ''}
+      installer_sha256: {type: string, required: false, default: ''}
+      variants: {type: string, required: false, default: base}
 
 permissions:
   contents: write
@@ -32,6 +45,9 @@ env:
   # To test a fresh build instead, set INSTALLER_PATH to the file on the
   # runner (an artifact from an earlier job); the website's links are
   # then pointed at it, served from the runner.
+  # (plain lines: release.yml's promote reads INSTALLER_SHA256 from this
+  # file at the run's commit; the inputs of a called run override them in
+  # the flow step)
   INSTALLER_URL: https://github.com/ComputerDude771/auros-from-scratch/raw/image-desktop/AurOS-Installer-test.exe
   INSTALLER_SHA256: ef903efd9cdeb10e15e52b3ce9e4eac83788f3396ac9f029ed04f2cfca1c5891
   INSTALLER_PATH: ''
@@ -55,7 +71,16 @@ jobs:
           MSG: ${{ github.event.head_commit.message }}
           BEFORE: ${{ github.event.before }}
           GH_TOKEN: ${{ github.token }}
+          IN_URL: ${{ inputs.installer_url }}
+          IN_VARIANTS: ${{ inputs.variants }}
+          EVENT: ${{ github.event_name }}
         run: |
+          # called (release.yml) or started by hand: the inputs say it all
+          if [ -n "$IN_URL" ] || [ "$EVENT" = workflow_dispatch ]; then
+            echo "run=true" | tee -a "$GITHUB_OUTPUT"
+            echo "variants=$(printf '%s' "${IN_VARIANTS:-base}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split(",")))')" | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
           run=false
           case "$MSG" in *'[e2e]'*) run=true ;; esac
           # the files this push changed (the payload does not list them)
@@ -180,7 +205,13 @@ jobs:
 
       - name: M2/M3 - website, download, wizard, restart, AurOS, the store
         id: flow
+        env:
+          IN_URL: ${{ inputs.installer_url }}
+          IN_SHA256: ${{ inputs.installer_sha256 }}
         run: |
+          if [ -n "$IN_URL" ]; then INSTALLER_URL=$IN_URL INSTALLER_SHA256=$IN_SHA256; fi
+          echo "installer: $INSTALLER_URL (SHA-256 ${INSTALLER_SHA256:-not pinned})"
+          export INSTALLER_URL INSTALLER_SHA256
           [ -z "$INSTALLER_PATH" ] || INSTALLER_PATH=$(realpath "$INSTALLER_PATH")
           [ "$WEBSITE_DIR" = none ] || WEBSITE_DIR=$(realpath "$WEBSITE_DIR")
           # what is left of the job's 355 minutes, less time to publish
