@@ -4,6 +4,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Done overnight (proof)
 
+- **Release candidate 1 is green and published as a prerelease**: v0.1.0-fc52718 (every gating test passed;
+  both installers: normal and fast path). The real-Windows journeys on it are running now. Not public.
+
 - **Video calls and films now proven on the real image, with the picture checked** (corrected runs
   40015793857/40021364066 after an earlier false pass was retracted): camera + microphone, H.264 and streaming
   video with sound, printing to a network printer, LibreOffice Writer/Calc open and save, PDF forms.
