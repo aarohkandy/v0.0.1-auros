@@ -91,7 +91,8 @@ static() {
     # lsb_release reads os-release, and AurOS's NAME and codename are not
     # Ubuntu's. `dryrun` proves this on the built image; this is the cheap
     # half that fails first.
-    if grep -rqE '\$\{distro_(id|codename)\}' "$R/etc/apt/apt.conf.d/53auros-updates"; then
+    # (Lines that are comments do not count: the file explains the rule.)
+    if grep -vE '^[[:space:]]*//' "$R/etc/apt/apt.conf.d/53auros-updates" | grep -qE '\$\{distro_(id|codename)\}'; then
         bad "no origin of ours depends on \${distro_id} or \${distro_codename}" "(53auros-updates)"
     else ok "no origin of ours depends on \${distro_id} or \${distro_codename}"; fi
     has 'DPkg::Options:: "--force-confold";' && has 'DPkg::Options:: "--force-confdef";' &&
