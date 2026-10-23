@@ -469,17 +469,18 @@ for (const [at, want] of [
     .map(read).join("\n");
   const num = (src, re, what) => { const m = src.match(re); if (!m) fail(`promises: cannot read ${what} from the source (${re})`); return m ? Number(m[1]) : NaN; };
 
-  // How long: wizard.c eta_range() with nothing measured yet, as Ready says it.
+  // How long: wizard.c eta_range() with nothing measured yet, worded as range_words() words it.
   function eta(slow) {
     const d = (n) => num(wizard, new RegExp(`#define ${n}\\s+([\\d.]+)`), n);
     const [lo1, hi1] = (wizard.match(/double dl_lo = ([\d.]+), dl_hi = ([\d.]+);/) || []).slice(1).map(Number);
-    const sw = num(wizard, /ETA_SSD_WORK_MIN \* ([\d.]+)/, "the SSD margin"), hw = num(wizard, /ETA_HDD_WORK_MIN \* ([\d.]+)/, "the hard disk margin");
+    const margin = num(wizard, /double hi_m = dl \* dl_hi \+ w \* ([\d.]+);/, "how much longer the top of the range is");
     const dl = d("DL_BYTES_FALLBACK") / d("ETA_LINK_BPS") / 60;
-    const lo_m = dl * lo1 + (slow ? d("ETA_HDD_WORK_MIN") + d("ETA_HDD_AFTER_MIN") : d("ETA_SSD_WORK_MIN") + d("ETA_SSD_AFTER_MIN"));
-    const hi_m = dl * hi1 + (slow ? d("ETA_HDD_WORK_MIN") * hw + d("ETA_HDD_AFTER_MIN") : d("ETA_SSD_WORK_MIN") * sw + d("ETA_SSD_AFTER_MIN"));
+    const w = slow ? d("ETA_HDD_WORK_MIN") : d("ETA_SSD_WORK_MIN");
+    const lo_m = dl * lo1 + w, hi_m = dl * hi1 + w * margin;
     let l = Math.max(5, Math.floor(lo_m / 5) * 5), h = Math.ceil(hi_m / 5) * 5;
     if (h > 30) h = Math.ceil(hi_m / 15) * 15;
     if (h <= l) h = l + 5;
+    if (h >= 120) { const lh = Math.max(1, Math.floor(l / 60)); let hh = Math.ceil(h / 60); if (hh <= lh) hh = lh + 1; return `${lh} to ${hh} hours`; }
     return `${l} to ${h}`;
   }
   const FACTS = {
@@ -498,6 +499,7 @@ for (const [at, want] of [
     charger: /\{\s*"not-on-ac",\s*FIX_WAIT/.test(fixWin) ? "required" : "not-required",
     // promote (the job that makes a release the one the button gets)
     // needs the real-Windows e2e of that very file, and pages needs promote
+    dark: /Restart now: the screen goes black for a minute or two/.test(wizard) ? "minute-or-two" : "other",
     release: (() => { const y = read(".github/workflows/release.yml"); const p = (y.match(/\n  promote:\n[\s\S]*?(?=\n  [a-z][\w-]*:\n)/) || [""])[0];
       return /needs: \[[^\]]*\be2e\b/.test(p) && /\|success\$/.test(p) && /\n  pages:\n\s+needs: promote/.test(y) ? "tested" : "untested"; })(),
   };
@@ -643,6 +645,28 @@ for (const [at, want] of [
     check(/^Copied\. Now paste it|press and hold this address/i.test(cp.text) && cp.size >= 22 && cp.right <= cp.vw, `${v.name}: Copy the link answers in a big sentence that fits the screen`, `${cp.size}px ${JSON.stringify(cp.text)}`);
     textFindings(`${v.name} after copying`, await page.evaluate(measureText));
     if (v.name === "iPhone") await shot(page, "index-phone-copied.png");
+    await ctx.close();
+  }
+
+  // The letters: the zero is a plain oval in every weight the site loads
+  // (the upstream zero is slashed; docs/research/people-walkthrough-2026-10.md A-03).
+  {
+    const { ctx, page } = await visit({ name: "letters", ua: UA.winEdge, uad: UAD.winX64 });
+    const holes = await page.evaluate(async () => {
+      const out = {};
+      for (const w of [400, 700, 800]) {
+        await document.fonts.load(`${w} 100px "Atkinson Hyperlegible Next"`);
+        const c = document.createElement("canvas"); c.width = 200; c.height = 160;
+        const g = c.getContext("2d"); g.font = `${w} 100px "Atkinson Hyperlegible Next"`; g.textBaseline = "alphabetic";
+        const x = 40; g.fillText("0", x, 120);
+        const mid = x + g.measureText("0").width / 2;
+        const px = g.getImageData(Math.round(mid) - 2, 120 - 35 - 2, 5, 5).data;
+        let ink = 0; for (let i = 3; i < px.length; i += 4) ink += px[i];
+        out[w] = { ink, loaded: document.fonts.check(`${w} 100px "Atkinson Hyperlegible Next"`) };
+      }
+      return out;
+    });
+    for (const [w, h] of Object.entries(holes)) check(h.loaded && h.ink === 0, `letters: the zero has no slash in the ${w} weight`, JSON.stringify(h));
     await ctx.close();
   }
 
