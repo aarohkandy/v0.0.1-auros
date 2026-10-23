@@ -1478,7 +1478,10 @@ static void surface_free_res(struct wl_resource *r)
         if (c->drag.icon == w) c->drag.icon = NULL;
     }
     if (c->focus == w)     c->focus = NULL;
-    if (c->cursor.surf == w) cursor_reset(c);
+    /* Whatever the pointer was asked to look like was asked by the program
+     * that is going: it is not left behind (the fuzzer: a program that
+     * named a shape and quit left the shape set). */
+    if (c->cursor.surf == w || c->ptr_surf == w || c->ptr_focus == w) cursor_reset(c);
     if (c->ptr_surf == w)  c->ptr_surf = NULL;
     if (c->ptr_focus == w) { c->ptr_focus = NULL; c->ptr_surf = NULL; }
 

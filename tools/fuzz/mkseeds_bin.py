@@ -234,7 +234,24 @@ def aurwl_seeds():
             b"\x00\x10\x00\x00\x00\x01" + SERIAL +         # start_drag(source, window, icon, serial)
             shell(2, b"\x90\x90") + shell(2, b"\x20\x20") + shell(3, b"\x00\x00") + shell(7))
     out("aurwl", "drag", win + drag + shell(2, b"\x40\x40") + shell(7))
-    # ... and the same, escaped from
+    # The pointer's picture: [13] wp_cursor_shape_manager_v1 (the 12th global),
+    # [14] its device for the pointer [11], [15] a second surface used as the
+    # cursor. A shape, then a picture with a hotspot, then a hide, with the
+    # pointer entering and leaving between.
+    cur = (b"\x00\x01\x00\x0b\x00" +                       # bind wp_cursor_shape_manager_v1 -> [13]
+           b"\x00\x0d\x01\x00" +                           # get_pointer(pointer) -> [14]
+           b"\x00\x02\x00" +                               # create_surface -> [15]
+           shell(1) + shell(2, b"\x80\x80") +
+           b"\x00\x0e\x01" + SERIAL + num(4) +             # set_shape(serial, pointer)
+           b"\x00\x0f\x01\x00" + num(0) + num(0) +         # attach the buffer to the cursor surface
+           b"\x00\x0f\x06" +                               # commit
+           b"\x00\x0b\x00" + SERIAL + b"\x01" + num(2) + num(2) +   # set_cursor(serial, surface, 2, 2)
+           shell(2, b"\x10\x10") + shell(7) +
+           b"\x00\x0b\x00" + SERIAL + b"\x01" + num(-3) + num(0x7fffffff) +  # a hotspot at the edge
+           b"\x00\x0e\x01" + SERIAL + num(99) +            # a shape that does not exist
+           shell(2, b"\xf0\xf0") + shell(7))
+    out("aurwl", "cursor", win + cur)
+    # ... and the drag, escaped from
     out("aurwl", "drag-escape", win + drag[:-len(shell(3, b"\x00\x00") + shell(7))] + shell(5, b"\x01\x01") + shell(7))
 
 

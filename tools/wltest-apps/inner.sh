@@ -10,7 +10,12 @@ APP=${1:-firefox}; SECS=${2:-30}; SHELLF=${SHELLF:-taskbar}
 cd /w/src
 mkdir -p /out /tmp/run && chmod 700 /tmp/run
 export XDG_RUNTIME_DIR=/tmp/run HOME=/tmp/home
-mkdir -p "$HOME"
+mkdir -p "$HOME" "$HOME/.config/gtk-3.0" "$HOME/.config/gtk-4.0"
+# Her text-size setting ("Bigger text"), if the run is to show it: 1.5 is 150%.
+if [ -n "${TEXT_SCALE:-}" ]; then mkdir -p "$HOME/.config/auros" && echo "$TEXT_SCALE" > "$HOME/.config/auros/text-scale"; fi
+# What build/forge writes into her home (cursor size included): programs ask
+# their cursor theme for this size.
+for v in 3.0 4.0; do printf '[Settings]\ngtk-cursor-theme-size=%s\n' "${CURSOR_SIZE:-48}" > "$HOME/.config/gtk-$v/settings.ini"; done
 
 if [ ! -x /out/aurshell ] || [ -n "${REBUILD:-}" ]; then
     SRC=$(for f in aurshell/*.c aurshell/layouts/*.c; do grep -q '^int main(' "$f" && continue; printf '%s ' "$f"; done)
@@ -32,6 +37,8 @@ cat > /tmp/test.html <<'HTML'
 <!doctype html><meta charset=utf-8><title>wltest page</title>
 <body style="margin:0;font:22px sans-serif;background:#fff">
 <div style="background:#c0392b;color:#fff;padding:8px">RED BAR: if you can read this, the page subsurface is on screen</div>
+<a href="#top" style="display:block;background:#dfe9f5;padding:10px;font-size:24px;color:#0645ad">A LINK: the pointer should be a hand here</a>
+<input type=text value="a text field: the pointer should be an I-beam here" style="font-size:24px;width:700px;margin:6px">
 <div style="display:flex;align-items:flex-start">
 <div style="width:120px;height:180px;background:#27ae60"></div>
 <div style="width:120px;height:180px;background:#2980b9"></div>
@@ -81,6 +88,16 @@ JS
     /out/dnd-probe "$SECS" /out/thunar.png "${DND_FROM:-0,0}" "${DND_TO:-0,0}" -- thunar /tmp/dnd
     echo "-- after:"; ls -R /tmp/dnd
     exit 0 ;;
+  cursor-probe)     # what picture does Firefox give the pointer over a link / a field / the page? (window points)
+    mkdir -p /tmp/ffprofile
+    cp /dev/null /tmp/ffprofile/user.js
+    for kv in 'browser.aboutwelcome.enabled false' 'browser.preonboarding.enabled false' 'termsofuse.bypassNotification true' 'browser.shell.checkDefaultBrowser false'; do
+        set -- $kv; echo "user_pref(\"$1\", $2);" >> /tmp/ffprofile/user.js; done
+    export MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_DISABLE_SOCKET_PROCESS_SANDBOX=1 MOZ_DISABLE_GMP_SANDBOX=1
+    gcc -O1 -g -std=gnu11 -o /out/cursor-probe /w/tools/wltest-apps/cursor-probe.c aurwl/aurwl.c aurshell/draw.c \
+        aurwl/gen/xdg-shell-protocol.c aurwl/gen/xdg-decoration-protocol.c aurwl/gen/viewporter-protocol.c \
+        aurwl/gen/xdg-output-protocol.c -Iaurwl/gen $(pkg-config --cflags --libs wayland-server xkbcommon) -lm || exit 1
+    exec /out/cursor-probe "$SECS" ${PROBE_POINTS:-300,320 400,380 900,500} -- firefox --no-remote --new-instance --profile /tmp/ffprofile file:///tmp/test.html ;;
   gtk4) CMD="GSK_RENDERER=cairo gtk4-widget-factory" ;;
   gtk4gl) CMD="gtk4-widget-factory" ;;
   qt)   CMD="qterminal" ;;
@@ -90,4 +107,4 @@ JS
 esac
 echo "== $APP: $CMD"
 /out/aurshell --shell "/w/shells/$SHELLF.shell" --png "/out/$(echo "$APP" | tr -c 'a-z0-9\n' _).png" \
-    --size 1280 800 --app-wait "$SECS" --with-app "$CMD" 2>&1 | tail -15
+    --size 1280 800 ${MOUSE:+--mouse $MOUSE} --app-wait "$SECS" --with-app "$CMD" 2>&1 | tail -15

@@ -21,6 +21,7 @@ its commit body).
 | keyboard focus (and with it W1's text-input-v3 focus) stays on the toplevel, as in every compositor; W1's weak hooks untouched | proven: `wltest-sub textinput`, and REAL Firefox (page in a subsurface): `sh tools/wltest-apps.sh firefox-pw` shows textinput_state 1 (plain) in a text field, **2 (sensitive; purpose 8, hint 0xc0)** in a password field, 0 outside any field |
 | **zwp_idle_inhibit_v1** (a film must not go dark: the shell blanks after 10 idle minutes; mpv/Firefox/VLC ask for an inhibitor; `aurwl_idle_inhibited()` + 5 lines in main.c) | done; real mpv binds it and creates one (WAYLAND_DEBUG); `wltest-sub idle`. NOT covered: apps that inhibit through D-Bus org.freedesktop.ScreenSaver (the shell owns the bus: stream C) |
 | **drag and drop** (wl_data_device.start_drag was `cancelled` for everyone: Thunar, the image's file manager, could not move a file by dragging): pointer belongs to the drag, enter/motion/leave/drop to the surface under it (subsurfaces in their own coordinates), accept/set_actions/action/target negotiation, finish/dnd_finished, Esc cancels, drag icon (`aurwl_drag_icon`, painted by session.c), release off every window still ends it (session.c edit) | done; `wltest-sub dnd` + 8 mutants; **real Thunar moved a.txt into a folder** (`DND_FROM=285,175 DND_TO=210,180 sh tools/wltest-apps.sh thunar-dnd 24`) |
+| **pointer pictures** (the lead's "she never sees the hand / I-beam"): wl_pointer.set_cursor (surface, hotspot, attach offsets, animation, null = hide) and wp_cursor_shape_v1, honoured only from the program under the pointer quoting its latest enter, forgotten on enter/leave/quit; `aurwl_cursor()`; shell: `src/aurshell/cursor.{c,h}` (11 glyphs black+white outline, 34 shapes mapped, a program's own picture scaled so its canvas is 24 px x text step) + `session_paint_cursor` | done; `tools/cursortest.sh` (byte-exact vs a reference), wltest-sub `cursor`/`cursor-shape`, 20 mutants; **real Firefox on the real aurshell shows the hand over a link, the I-beam in a field, the arrow on the page, and larger at 200% text** (`MOUSE="300 261" SHELLF=workbench TEXT_SCALE=2.0 sh tools/wltest-apps.sh firefox 30`). Firefox gives 32x32 images (GTK3 ignores XCURSOR_SIZE and settings.ini's gtk-cursor-theme-size; it reads GSettings org.gnome.desktop.interface cursor-size): scaling 1.5x is soft; stream C could set that key beside text-scaling-factor in textsys.c for crisp 48 |
 | other protocols (see "Protocol review") | in progress |
 | real programs through the real shell (`sh tools/wltest-apps.sh firefox|gtk4|qt|mpv`, headless `aurshell --png --with-app`): Firefox 158 draws toolbar + page (+ its welcome dialog), GTK4 widget-factory, Qt5 terminal, mpv video (wlshm subsurface) | all draw; PNGs in the Progress log of SESSION-2026-10-23-B.md |
 | PARITY `call.visible` flips to PASS on a booted image | **done**: PARITY confirmed on the real image (call.visible, webrtc, films PASS) |
@@ -68,10 +69,8 @@ Add the XML to that loop + the README loop, `#include` the .inc in aurwl.c, add 
 
 ## Not done, in order of value (each program works without them; what it costs her)
 
-1. **Cursor shapes**: a client's cursor surface is accepted and NOT shown (the shell draws one arrow), so no hand over a
-   link and no I-beam. wp_cursor_shape would not help Firefox (GTK3 sets cursor surfaces, not shapes). Idea: show the
-   client's cursor surface scaled to the shell's cursor size when it is not the plain arrow (hotspot != default); needs
-   a decision about accessible cursor size (stream C owns paint_cursor).
+1. (done: cursor pictures, see the table.) Possible polish: a drag cursor (the arrow with a +/- during a drag), and
+   crisp 48 px images (see the GSettings note).
 2. **Primary selection** (middle-click paste), **xdg-activation** (raise the window a link opened), **presentation-time**,
    **fractional-scale**: not offered; Firefox, GTK4, Qt, mpv all work without. Add by the `.inc` recipe above.
 3. **linux-dmabuf**: not needed for correctness (every program falls back to shm; GTK4's EGL fails and it uses cairo).

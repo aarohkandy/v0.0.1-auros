@@ -13,4 +13,4 @@ OUT="${OUT:-$PWD/wltest-apps-out}"
 mkdir -p "$OUT"
 docker image inspect auros-wl:dev >/dev/null 2>&1 || docker build -q -t auros-wl:dev "$HERE/wltest-apps"
 exec docker run --rm --memory 6g --shm-size 1g --security-opt seccomp=unconfined \
-    -v "$ROOT":/w:ro -v "$OUT":/out -e SHELLF -e REBUILD -e DND_FROM -e DND_TO auros-wl:dev sh /w/tools/wltest-apps/inner.sh "$@"
+    -v "$ROOT":/w:ro -v "$OUT":/out -e SHELLF -e REBUILD -e MOUSE -e TEXT_SCALE -e PROBE_POINTS -e DND_FROM -e DND_TO auros-wl:dev sh /w/tools/wltest-apps/inner.sh "$@"
