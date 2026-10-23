@@ -112,7 +112,7 @@ the hardened image and **fails** with the control removed:
 
 | control | hardened | controls removed |
 |---|---|---|
-| 24 sysctl settings (kptr_restrict, BPF, io_uring, ...) | in force | 15 fail; 9 are Ubuntu's own default (the static test alone sees those go) |
+| 24 sysctl settings (kptr_restrict, BPF, io_uring, ...) | in force | 13 fail; 11 are Ubuntu's own default (the static test alone sees those go) |
 | 8 kernel options (init_on_alloc, slab_nomerge, ..., lockdown=integrity) | all on `/proc/cmdline` | all missing |
 | 32 kernel modules cannot load: `socket(AF_INET, SOCK_DCCP)` | refused, module not loaded | allowed |
 | firewall: a stranger's TCP connection / UDP 631 packet | reach nothing, though a listener is waiting | reach it (a banner comes back) |
