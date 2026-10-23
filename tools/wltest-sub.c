@@ -45,8 +45,14 @@
 #include <wayland-client.h>
 #include "xdg-shell-client.h"
 #include "viewporter-client.h"
+#include "text-input-client.h"
 
 #include "../src/aurwl/aurwl.h"
+#include "../src/aurwl/textinput.h"
+
+/* Stream W1's text-input-v3 half is linked in by wltest-sub.sh; where it
+ * is not, the scenario that needs it says so and passes. */
+int textinput_state(void) __attribute__((weak));
 
 /* ── pictures and the reference model ─────────────────────────────── */
 
@@ -114,7 +120,7 @@ static void img_rect(img *m, int x, int y, int w, int h, uint32_t argb)
 
 /* ── the line between the two processes ───────────────────────────── */
 
-enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_END };
+enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_TI, M_END };
 typedef struct { int kind, a, b, c, d; } msg;
 
 static int xfer(int fd, void *buf, size_t n, int wr)
@@ -223,6 +229,12 @@ static int serve(aurwl *c, int chan, pid_t kid, int *child_result)
             if (reply) { printf("      logical size is %dx%d, expected %dx%d\n", lw, lh, m.a, m.b); fails_here++; }
             break;
         }
+        case M_TI: {      /* "what does the compositor think the field is?" */
+            int st = textinput_state ? textinput_state() : m.a;
+            reply = (uint8_t)(st == m.a ? 0 : 1);
+            if (reply) { printf("      text input state is %d, expected %d\n", st, m.a); fails_here++; }
+            break;
+        }
         case M_END: *child_result = m.a; (void)xfer(chan, &reply, 1, 1);
                     { int st; waitpid(kid, &st, 0); } return 0;
         }
@@ -247,6 +259,9 @@ struct cl {
     struct wp_viewporter *vper;
     struct wl_seat *seat;
     struct wl_pointer *ptr;
+    struct zwp_text_input_manager_v3 *timgr;
+    struct wl_surface *ti_in;     /* where text input was last entered */
+    int ti_enters;
     int chan;
     int step;
     int failed;
@@ -264,6 +279,7 @@ static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char
     else if (!strcmp(iface, "xdg_wm_base"))      c->wm   = wl_registry_bind(r, name, &xdg_wm_base_interface, 2);
     else if (!strcmp(iface, "wp_viewporter"))    c->vper = wl_registry_bind(r, name, &wp_viewporter_interface, 1);
     else if (!strcmp(iface, "wl_seat"))          c->seat = wl_registry_bind(r, name, &wl_seat_interface, 5);
+    else if (!strcmp(iface, "zwp_text_input_manager_v3")) c->timgr = wl_registry_bind(r, name, &zwp_text_input_manager_v3_interface, 1);
 }
 static void reg_remove(void *d, struct wl_registry *r, uint32_t n) { (void)d; (void)r; (void)n; }
 static const struct wl_registry_listener reg_l = { reg_global, reg_remove };
@@ -838,6 +854,60 @@ static void sc_wreck(struct cl *c)
     check(c, wl_display_get_error(c->dpy) == 0, "the compositor disconnected us");
 }
 
+/* 21. Text input follows the keyboard, and the keyboard is on the toplevel
+ * -- as in every compositor -- even though the thing being typed into is
+ * a subsurface (Firefox's page). Wishes (docs/AI.md 3.5) must know when
+ * that field is a password, so the declaration made by a program whose
+ * page is a subsurface has to arrive, and the pointer wandering over the
+ * page must not disturb it. */
+static void ti_enter(void *d, struct zwp_text_input_v3 *t, struct wl_surface *s)
+{ (void)t; struct cl *c = d; c->ti_in = s; c->ti_enters++; }
+static void ti_leave(void *d, struct zwp_text_input_v3 *t, struct wl_surface *s)
+{ (void)t; (void)s; struct cl *c = d; c->ti_in = NULL; }
+static void ti_preedit(void *d, struct zwp_text_input_v3 *t, const char *s, int32_t a, int32_t b)
+{ (void)d; (void)t; (void)s; (void)a; (void)b; }
+static void ti_commit_string(void *d, struct zwp_text_input_v3 *t, const char *s)
+{ (void)d; (void)t; (void)s; }
+static void ti_delete(void *d, struct zwp_text_input_v3 *t, uint32_t a, uint32_t b)
+{ (void)d; (void)t; (void)a; (void)b; }
+static void ti_done(void *d, struct zwp_text_input_v3 *t, uint32_t s) { (void)d; (void)t; (void)s; }
+static const struct zwp_text_input_v3_listener ti_l = {
+    ti_enter, ti_leave, ti_preedit, ti_commit_string, ti_delete, ti_done,
+};
+
+static void sc_textinput(struct cl *c)
+{
+    if (!c->timgr) { printf("      (text-input-v3 is not linked in: skipped)\n"); return; }
+    img root = img_solid(100, 80, GREY), page = img_solid(60, 40, GREEN);
+    top *t = mktop(c, &root, XRGB);
+    sub P = mksub(c, t->s, 10, 10, &page, XRGB, 1);
+    wl_surface_commit(t->s);
+    struct zwp_text_input_v3 *ti = zwp_text_input_manager_v3_get_text_input(c->timgr, c->seat);
+    zwp_text_input_v3_add_listener(ti, &ti_l, c);
+    ask(c, M_FOCUS, 0, 0);
+    wl_display_roundtrip(c->dpy);
+    check(c, c->ti_enters == 1, "text input was not entered when the window got the keyboard");
+    check(c, c->ti_in == t->s, "text input was entered on something other than the toplevel");
+
+    ask(c, M_MOVE, 15, 15);                          /* the pointer is over the page */
+    zwp_text_input_v3_enable(ti);
+    zwp_text_input_v3_set_content_type(ti, ZWP_TEXT_INPUT_V3_CONTENT_HINT_NONE,
+                                       ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PASSWORD);
+    zwp_text_input_v3_commit(ti);
+    wl_display_roundtrip(c->dpy);
+    ask(c, M_TI, TI_SENSITIVE, 0);
+    ask(c, M_MOVE, 5, 5);                            /* and off it: nothing changes */
+    ask(c, M_TI, TI_SENSITIVE, 0);
+
+    zwp_text_input_v3_enable(ti);                    /* a different field */
+    zwp_text_input_v3_set_content_type(ti, ZWP_TEXT_INPUT_V3_CONTENT_HINT_NONE,
+                                       ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_NORMAL);
+    zwp_text_input_v3_commit(ti);
+    wl_display_roundtrip(c->dpy);
+    ask(c, M_TI, TI_PLAIN, 0);
+    (void)P;
+}
+
 static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "plain",            sc_plain },
     { "page",             sc_page },
@@ -859,6 +929,7 @@ static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "frame",            sc_frame },
     { "geometry",         sc_geometry },
     { "wreck",            sc_wreck },
+    { "textinput",        sc_textinput },
 };
 #define NSC ((int)(sizeof SC / sizeof SC[0]))
 

@@ -27,7 +27,7 @@ fi
 AURWL_C="${AURWL_C:-$W/aurwl.c}"
 # aurwl.c includes its protocol headers by bare name.
 cc $CFLAGS -o "$OUT/wltest-sub" "$HERE/wltest-sub.c" "$AURWL_C" "$ROOT/src/aurshell/draw.c" \
-   "$W/gen/xdg-shell-protocol.c" "$W/gen/xdg-decoration-protocol.c" \
+   "$W/textinput.c" "$W/gen/text-input-protocol.c" "$W/gen/xdg-shell-protocol.c" "$W/gen/xdg-decoration-protocol.c" \
    "$W/gen/viewporter-protocol.c" "$W/gen/xdg-output-protocol.c" \
    -I"$W/gen" -I"$W" $(pkg-config --cflags --libs wayland-server wayland-client xkbcommon) -lm
 "$OUT/wltest-sub" "$@"

@@ -18,9 +18,9 @@ its commit body).
 | flattened window (`aurwl_win_content()` returns the tree composited, clipped to the toplevel's buffer / viewport size; damage-based; nothing changes for a window with no visible subsurface) | done |
 | wp_viewport on subsurfaces and roots: destination scaling (nearest, pixel centres), source crop (`set_source`) | done |
 | pointer hit-testing through the tree, input regions (`set_input_region`), implicit grab, per-surface enter/leave in the surface's own coordinates | done |
-| keyboard focus stays on the toplevel (as every compositor does) | unchanged |
+| keyboard focus (and with it W1's text-input-v3 focus) stays on the toplevel, as in every compositor; W1's weak hooks untouched | proven: `wltest-sub textinput`, and REAL Firefox (page in a subsurface): `sh tools/wltest-apps.sh firefox-pw` shows textinput_state 1 (plain) in a text field, **2 (sensitive; purpose 8, hint 0xc0)** in a password field, 0 outside any field |
 | other protocols mainstream apps need (see "Protocol review") | in progress |
-| real programs: Firefox, GTK4, Qt, video in Firefox | in progress |
+| real programs through the real shell (`sh tools/wltest-apps.sh firefox|gtk4|qt|mpv`, headless `aurshell --png --with-app`): Firefox 158 draws toolbar + page (+ its welcome dialog), GTK4 widget-factory, Qt5 terminal, mpv video (wlshm subsurface) | all draw; PNGs in the Progress log of SESSION-2026-10-23-B.md |
 | PARITY `call.visible` flips to PASS on a booted image | waiting for a build of this commit |
 
 ## How it works (read this before touching `aurwl.c`)

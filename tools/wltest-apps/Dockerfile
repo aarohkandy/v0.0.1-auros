@@ -11,3 +11,7 @@ RUN for i in 1 2 3; do timeout 300 apt-get update -q && \
         qterminal qt6-wayland \
         mpv && break; sleep 10; done; \
     rm -rf /var/lib/apt/lists/*
+# Qt: qterminal is Qt5 (needs qtwayland5); featherpad and pcmanfm-qt are Qt6.
+RUN for i in 1 2 3; do timeout 300 apt-get update -q && \
+      timeout 600 apt-get install -y -q --no-install-recommends qtwayland5 featherpad && break; sleep 10; done; \
+    rm -rf /var/lib/apt/lists/*
