@@ -10,6 +10,10 @@
         installer, open it, answer Windows' warnings, go through the
         wizard, restart, watch AurOS install itself, say it works, then
         get a program from the store.
+    e2e.py aur OUT IMAGE WORK
+        AurOS alone: boot the release's raw image (no Windows) and do the
+        AurOS half: the first screen, "Yes, it all works" if asked, the
+        store, a program installed and opened.
     e2e.py inspect OUT WORK
         After the flow: read the disk with the machine off (did the
         program really land on AurOS's disk?).
@@ -1009,6 +1013,69 @@ class Flow:
             self.m.stop("powerdown", 300)
 
 
+class AurFlow(Flow):
+    """AurOS alone: boot the release's image (no Windows, no installer) and do
+    the AurOS half of the journey with the same hands: answer "does it work?"
+    if it is asked, open "Get more programs", install a program, open it.
+    Minutes a try, for fixing the store's steps without a Windows each time."""
+
+    def __init__(self, a):
+        self.a = a
+        self.rec = Recorder(a.out)
+        self.hub = Hub(self.rec)
+        os.makedirs(a.work, exist_ok=True)
+        # (named win.qcow2 so that `inspect` reads it like any other run's disk)
+        self.disk = os.path.join(a.work, "win.qcow2")
+        self.vars = os.path.join(a.work, "vars.fd")
+        self.tpm = os.path.join(a.work, "tpm")
+        os.makedirs(self.tpm, exist_ok=True)
+        # larger than the image: its first start grows the root file system
+        run(["qemu-img", "create", "-f", "qcow2", "-F", "raw", "-b", os.path.abspath(a.image),
+             self.disk, f"{a.grow_gb}G"], self.rec)
+        shutil.copyfile(OVMF_VARS, self.vars)
+        self.m = Machine(self.rec, a.work, self.disk, self.vars, self.tpm)
+        self.wizard_pages, self.fix_presses, self.fix_restarts = [], 0, 0
+        self._named_diag = False
+
+    def first_screen(self):
+        with self.rec.phase("aurOS: start, to its first screen"):
+            self.m.start()
+            self.m.auto_shots(10)
+            p, _, words = self.wait_text(["Yes, it all works", STORE_NAME, "What would you like to do"],
+                                         min(left(), 20 * 60), every=10)
+            if not p:
+                raise Failure("AurOS showed none of its first screens within 20 minutes")
+            self.log(f"first AurOS screen: {p}")
+            self.m.shot("aur-first-screen")
+            return p
+
+
+def cmd_aur(a):
+    f = AurFlow(a)
+    rc = 1
+    try:
+        first = f.first_screen()
+        if first == "Yes, it all works":
+            f.answer_yes()
+        f.store()
+        rc = 0
+    except Failure as e:
+        f.log(f"FAILED: {e}")
+        with open(os.path.join(a.out, "FAILED.txt"), "w") as fh:
+            fh.write(str(e) + "\n")
+        if f.m.alive():
+            f.m.shot("failure")
+    finally:
+        try:
+            if f.m.alive():
+                f.shutdown()
+        except Failure as e:
+            f.log(f"shutdown: {e}")
+        f.m.stop("quit", 5)
+        f.rec.write_timings()
+    return rc
+
+
 def cmd_flow(a):
     f = Flow(a)
     rc = 1
@@ -1165,12 +1232,15 @@ def main():
     w.add_argument("--iso", required=True); w.add_argument("--answer", required=True)
     fl = sub.add_parser("flow")
     fl.add_argument("out"); fl.add_argument("golden"); fl.add_argument("work")
+    au = sub.add_parser("aur")
+    au.add_argument("out"); au.add_argument("image"); au.add_argument("work")
+    au.add_argument("--grow-gb", type=int, default=16)
     i = sub.add_parser("inspect")
     i.add_argument("out"); i.add_argument("work")
     i.add_argument("--diag", action="store_true", help="after a failed flow: say what the disk holds, no verdict")
     a = p.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    return {"windows": cmd_windows, "flow": cmd_flow, "inspect": cmd_inspect}[a.cmd](a)
+    return {"windows": cmd_windows, "flow": cmd_flow, "aur": cmd_aur, "inspect": cmd_inspect}[a.cmd](a)
 
 
 if __name__ == "__main__":

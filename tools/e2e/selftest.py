@@ -182,6 +182,44 @@ def test_windows_dry():
         (e2e.Machine, e2e.Hub, e2e.pass_cd_prompt, e2e.run, e2e.time.sleep, e2e.OVMF_VARS) = saved
 
 
+def test_aur_dry():
+    """e2e.py aur against a fake machine whose screen says what AurOS says:
+    first screen, the question answered, the store entered, its Failure
+    reported with a FAILED.txt (it cannot go on without OCR, which is the point:
+    what matters here is that nothing before it is a typo)."""
+    try:
+        import e2e, types
+    except ImportError:
+        return
+    calls, shots = [], []
+
+    class FakeMachine:
+        def __init__(self, *a, **k): self.up = True
+        def start(self): calls.append("start")
+        def auto_shots(self, n): pass
+        def shot(self, l): shots.append(l)
+        def alive(self): return self.up
+        def stop(self, how="powerdown", t=0): self.up = False; calls.append(how)
+
+    saved = (e2e.Machine, e2e.run, e2e.OVMF_VARS, e2e.AurFlow.wait_text)
+    try:
+        with tempfile.TemporaryDirectory() as t:
+            open(f"{t}/vars", "w").close()
+            e2e.Machine, e2e.OVMF_VARS = FakeMachine, f"{t}/vars"
+            e2e.run = lambda cmd, rec=None, **k: calls.append(" ".join(cmd))
+            e2e.AurFlow.wait_text = lambda self, phrases, timeout, every=10, fail=(): (None, None, None)
+            a = types.SimpleNamespace(out=f"{t}/out", image="/img/auros.img", work=f"{t}/work", grow_gb=16)
+            os.makedirs(a.out)
+            rc = e2e.cmd_aur(a)
+            check(rc == 1 and os.path.exists(f"{a.out}/FAILED.txt"),
+                  "aur: an AurOS that shows no first screen fails with its words, nothing before it is a typo")
+            check(any(c.startswith("qemu-img create") and "-b /img/auros.img" in c and c.endswith("win.qcow2 16G") for c in calls),
+                  "aur: the image is booted from an overlay larger than itself (its first start grows the root)")
+            check("quit" in calls, "aur: the machine is always stopped")
+    finally:
+        (e2e.Machine, e2e.run, e2e.OVMF_VARS, e2e.AurFlow.wait_text) = saved
+
+
 def test_flow_helpers():
     try:
         import e2e
@@ -291,6 +329,7 @@ test_stops()
 test_bitlocker_verdict()
 test_timings_summary()
 test_windows_dry()
+test_aur_dry()
 test_flow_helpers()
 test_measure()
 test_edge_item()

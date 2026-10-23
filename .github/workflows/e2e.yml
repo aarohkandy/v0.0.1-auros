@@ -71,6 +71,7 @@ jobs:
     outputs:
       run: ${{ steps.g.outputs.run }}
       variants: ${{ steps.g.outputs.variants }}
+      aur: ${{ steps.g.outputs.aur }}
     steps:
       - id: g
         env:
@@ -81,10 +82,17 @@ jobs:
           IN_VARIANTS: ${{ inputs.variants }}
           EVENT: ${{ github.event_name }}
         run: |
+          # "aur" is not a Windows: it boots the AurOS image alone and drives its
+          # store (the M3 half), a few minutes instead of an hour. The rest are the
+          # matrix's variants.
+          emit() {
+            case ",$1," in *,aur,*) echo "aur=true" >> "$GITHUB_OUTPUT" ;; *) echo "aur=false" >> "$GITHUB_OUTPUT" ;; esac
+            echo "variants=$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps([x for x in sys.stdin.read().split(",") if x and x != "aur"]))')" | tee -a "$GITHUB_OUTPUT"
+          }
           # called (release.yml) or started by hand: the inputs say it all
           if [ -n "$IN_URL" ] || [ "$EVENT" = workflow_dispatch ]; then
             echo "run=true" | tee -a "$GITHUB_OUTPUT"
-            echo "variants=$(printf '%s' "${IN_VARIANTS:-base}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split(",")))')" | tee -a "$GITHUB_OUTPUT"
+            emit "${IN_VARIANTS:-base}"
             exit 0
           fi
           run=false
@@ -111,11 +119,11 @@ jobs:
             *)    run=true ;;
           esac
           echo "run=$run" | tee -a "$GITHUB_OUTPUT"
-          echo "variants=$(printf '%s' "$list" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split(",")))')" | tee -a "$GITHUB_OUTPUT"
+          emit "$list"
 
   e2e:
     needs: gate
-    if: needs.gate.outputs.run == 'true'
+    if: needs.gate.outputs.run == 'true' && needs.gate.outputs.variants != '[]'
     # One machine at a time per branch. On the job, not the workflow: every
     # push runs the gate, and a workflow-wide group let a push that changes
     # nothing here cancel a run that was waiting.
@@ -261,4 +269,74 @@ jobs:
         with:
           name: e2e-evidence-${{ matrix.variant }}
           path: ${{ env.E2E_DIR }}/out/e2e-evidence-${{ matrix.variant }}.zip
+          if-no-files-found: ignore
+
+  # The AurOS half alone: boot the image of the release under test (no Windows,
+  # no installer) and do what she does after "Yes, it all works": open "Get more
+  # programs", install a program, open it. A few minutes a try, so the store and
+  # its light-theme words can be fixed without a Windows install each time.
+  # Run it with: gh workflow run e2e.yml -f variants=aur [-f installer_url=...]
+  aur:
+    needs: gate
+    if: needs.gate.outputs.aur == 'true'
+    concurrency:
+      group: e2e-aur-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    timeout-minutes: 120
+    env:
+      E2E_VARIANT: aur
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: the harness's own checks
+        run: |
+          sh tools/apt.sh python3-numpy python3-pil
+          python3 tools/e2e/selftest.py
+      - name: runner (disk, KVM, packages)
+        run: |
+          echo "E2E_T0=$(date +%s)" >> "$GITHUB_ENV"
+          bash tools/e2e/runner-setup.sh | tee -a "$GITHUB_ENV"
+      - name: the evidence's prerelease, refreshed while the run goes on
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash tools/e2e/publish.sh init
+          mkdir -p "$E2E_DIR/out"
+          nohup bash tools/e2e/publish.sh live "$E2E_DIR/out" >/dev/null 2>&1 &
+      - name: the image of the release under test
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IN_URL: ${{ inputs.installer_url }}
+        run: |
+          url=${IN_URL:-$INSTALLER_URL}
+          tag=$(printf '%s' "$url" | sed -n 's|.*/releases/download/\([^/]*\)/.*|\1|p')
+          [ -n "$tag" ] || { echo "no release tag in $url"; exit 1; }
+          echo "image of $tag"
+          mkdir -p "$E2E_DIR/pieces"
+          for i in 1 2 3; do
+            gh release download "$tag" -R "$GITHUB_REPOSITORY" -p 'auros-desktop.img.gz.*' -D "$E2E_DIR/pieces" --clobber && break
+            sleep $((i * 20))
+          done
+          ls -l "$E2E_DIR/pieces" | head -20
+          cat "$E2E_DIR"/pieces/auros-desktop.img.gz.* | gzip -dc > "$E2E_DIR/auros.img"
+          rm -rf "$E2E_DIR/pieces"
+          ls -l "$E2E_DIR/auros.img"; df -h "$E2E_DIR"
+      - name: AurOS alone - the first screen, the store, a program installed and opened
+        id: flow
+        run: /usr/bin/python3 tools/e2e/e2e.py aur "$E2E_DIR/out/flow" "$E2E_DIR/auros.img" "$E2E_DIR/work"
+      - name: the program is on AurOS's disk (machine off)
+        if: steps.flow.outcome == 'success'
+        run: /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/inspect" "$E2E_DIR/work"
+      - name: publish the evidence (prerelease e2e-${{ github.run_id }})
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/e2e/publish.sh final "$E2E_DIR/out"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: e2e-evidence-aur
+          path: ${{ env.E2E_DIR }}/out/e2e-evidence-aur.zip
           if-no-files-found: ignore
