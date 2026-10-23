@@ -54,7 +54,7 @@ and 40021364066 (desktop, call, pdfform, office) on build 2e04025 are the first 
 2. Nightly: let `parity.yml` run (03:17 UTC) and read `parity-<run>`; a gap that starts passing fails the run until it is removed from `known-gaps.txt`.
 3. v0.2 (WP-56): Widevine demo with the EME policy; the 10-form PDF test; scanning (simple-scan, sane-airscan); Flathub-down plain sentence; a 40-app table; media-perf on a CPU-limited VM (`--smp 2`); sites campaign by the owner (sites.md); USB printers (ipp-usb) once C adds it.
 4. Red proofs (done, homebase or CI): `--without firefox` (call, film), `--without evince` (pdfform), `--without avahi-daemon --apt libnss-mdns` (print), `--without libreoffice-writer,libreoffice-calc` (office.save). Not yet: apps (`--without flatpak`; needs ~25 GB, run it in Actions).
-5. homebase: `~/work/auros/parity/auros-desktop.img` is the image of build 2e04025 (3.0 GB: keep the directory under 3 GB, delete the image when you are done; `tools/parity/dev.sh` rsyncs and runs).
+5. homebase: the image was DELETED to stay under the 3 GB budget; re-fetch one when needed (the curl-redirect recipe under "Environment traps": artifact zip, python zipfile, `cat pieces | gzip -dc`), run `tools/parity/dev.sh`, delete it again.
 
 ## Environment traps
 
