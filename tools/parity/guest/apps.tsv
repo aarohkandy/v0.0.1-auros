@@ -7,7 +7,7 @@ com.github.IsmaelMartinez.teams_for_linux	teams	Teams, Skype's successor
 com.spotify.Client	spotify	music
 org.videolan.VLC	vlc	films and music
 org.gnome.Aisleriot	solitaire	solitaire
-org.mozilla.Thunderbird	thunderbird	email
+org.mozilla.thunderbird	thunderbird	email
 org.gnome.gThumb	photos	photos
 org.libreoffice.LibreOffice	libreoffice	Word and Excel files
 org.chromium.Chromium	chromium	the call browser
