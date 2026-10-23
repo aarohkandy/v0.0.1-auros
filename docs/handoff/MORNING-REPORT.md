@@ -29,6 +29,10 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Still red / in progress
 
+- **Found overnight, being fixed: Firefox opens as a blank window** (AurOS's compositor did not draw the
+  inner surfaces browsers and video players paint into). A new agent owns the compositor and is fixing it;
+  a check proves it once fixed. This is exactly why the nightly 'everyday tasks' tests exist.
+
 - **The one blocker that matters most:** on a real Windows 11 (in the test VM) everything works up to the restart
   (Get AurOS → Restart now in 4 min 19 s), then the install step refuses: the Linux tool that shrinks Windows
   could not read a fresh Windows 11 drive (`cannot-measure`). Being diagnosed now. If it is general, the
