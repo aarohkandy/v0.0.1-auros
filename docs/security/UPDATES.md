@@ -34,6 +34,60 @@ Every apt source in an image must be one of these. `updatepolicytest static`
 fails a build that adds a source nothing updates from (this is how Firefox
 went unpatched: its source was added, its origin was never allowed).
 
+## What the image calls itself, and why update config never asks
+
+AurOS writes its own `/usr/lib/os-release` (`NAME="AurOS"`,
+`VERSION_CODENAME=Nocturne`, `ID_LIKE=ubuntu`, `UBUNTU_CODENAME=noble`).
+`lsb_release`, which unattended-upgrades uses for `${distro_id}` and
+`${distro_codename}`, reads os-release, so on AurOS they are `AurOS` and
+`Nocturne` (`/etc/lsb-release` still says Ubuntu/noble and is ignored).
+
+**This was a launch-stopping defect, found by the legal review (TM-1) and
+proven on the built image.** Ubuntu's own `50unattended-upgrades` allows
+`${distro_id}:${distro_codename}-security`, which resolved to
+`AurOS:Nocturne-security`: no repository has that, so Ubuntu's security
+updates matched nothing and were never installed, silently. AurOS's own
+`-updates` line used `${distro_codename}` too. Fixed (956af4a):
+`53auros-updates` names the repositories literally,
+`origin=Ubuntu,archive=noble-security` and `noble-updates`, so it holds
+whatever os-release says, including after base-files puts Ubuntu's back.
+Proof and guard: `updatepolicytest.sh dryrun` runs the built image's own
+`unattended-upgrade --dry-run --debug` with a leaf package recorded as an
+old version and asks whether it WOULD install it; it is a gating step of
+`tests.yml`'s unit job, and `static` refuses `${distro_id}` or
+`${distro_codename}` in our update config. The next release upgrade changes
+the two literals (see the 26.04 plan).
+
+Other readers of the identity in the built image (33 files; the list is the
+`identity` job in `aptrepo.yml`): all harmless (an AppArmor profile, grub's
+defaults, kernel-install, os-probes, Python's `platform` and `distro`, the
+stock `50unattended-upgrades` whose lines are now dead, the MOTD header)
+except `python3-apt`'s `aptsources` and `software-properties`, whose
+"Software Repositories" dialog and `add-apt-repository` fail with an unknown
+distribution: not part of any AurOS flow. Not in the image: needrestart,
+apport, fwupd, snapd, update-notifier, whoopsie, popularity-contest,
+ubuntu-report. unattended-upgrade also logged "Could not figure out
+development release" on every run (AurOS is not in distro-info's table):
+`Unattended-Upgrade::DevRelease "false"` skips the lookup.
+
+## Nothing phones Canonical
+
+The same scan found `ubuntu-pro-client` INSTALLED and active in the built
+image (the profile excludes only its old name, `ubuntu-advantage-tools`):
+`ua-timer.timer`, `ubuntu-advantage.service` and `ua-reboot-cmds.service`
+enabled, its `20apt-esm-hook.conf` on every `apt update`, ESM pin files, and
+`motd-news.timer` (motd.ubuntu.com) enabled. That breaks the no-telemetry
+bar. It cannot be removed: `apt-get -s purge ubuntu-pro-client` also removes
+`software-properties-gtk`, `gnome-software` and its Flathub plugin
+(gnome-software needs software-properties-gtk, which needs it), i.e. the
+store. So it stays and is inert: `rootfs/etc/systemd/system` masks (symlinks
+to `/dev/null`) the nine units that contact Canonical, and
+`20apt-esm-hook.conf` (the package's conffile) is a comment; a newer package
+is answered "keep ours". `updatepolicytest.sh canonical`, part of `static`
+on every build, fails if any of those units is live, if any apt hook names
+Ubuntu Pro / ESM / Canonical, or if an enabled unit runs a command naming a
+Canonical host other than the archive.
+
 ## Never interrupting her
 
 - **Timing.** Ubuntu's timers: lists at 06:00 and 18:00 (randomized over
@@ -293,6 +347,23 @@ Revisit when S4's TPM re-seal exists, and possibly then fwupd for dbx only.
 | `tools/bootupdatetest.sh` | kernel/grub/shim updates under Secure Boot; previous-kernel fallback | `tests.yml` e2e matrix, every build |
 
 ### Evidence log
+
+- **2026-10-23, TM-1 proven and fixed on the real image.** aptrepo run
+  39973254357 (job `identity`, the rootfs of build 39961608618, an overlay
+  chroot so the rootfs is untouched, the image's own tools, `avahi-utils`
+  recorded as an old version, its newer version in `noble-security`):
+  as built, `lsb_release` says AurOS / Nocturne, the allowed origins are
+  `o=AurOS,a=Nocturne-security ...`, and `unattended-upgrade --dry-run
+  --debug` says "No packages found that can be upgraded unattended" (3 of 3
+  FAIL). With this repository's `53auros-updates` laid over the same rootfs:
+  "Packages that will be upgraded: avahi-utils", allowed origins
+  `origin=Ubuntu,archive=noble-security` and `noble-updates` (3 of 3 ok).
+  **Every image built before 956af4a has this defect** and would have
+  installed no Ubuntu security update.
+- **2026-10-23, Canonical contact** (aptrepo run 39975861450, same rootfs):
+  as built, the nine Ubuntu Pro / motd-news units are live and the apt hook
+  names Ubuntu Pro (2 of 3 FAIL); with the repository's `rootfs/` laid over
+  it as forge does, masked and neutral (3 of 3 ok).
 
 - **2026-10-23, the channel is live.** First publish of release
   `v0.1.0-618726b` (a prerelease): aptrepo run 39928994508 packed the
