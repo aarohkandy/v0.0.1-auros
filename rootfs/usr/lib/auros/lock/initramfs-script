@@ -1,0 +1,52 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  local-top/auros-lock — open AurOS's encrypted partition at start
+#  (docs/security/THEFT.md). Linked into /etc/initramfs-tools/scripts/
+#  by `lockctl prepare`; inert without auros.lock= on the command line,
+#  which only the menu on the EFI partition (lockctl boot-sync) has.
+#
+#  A plain partition is encrypted in place first (encrypt-init). Then
+#  aurlock-pin opens it: silently while the temporary key still works,
+#  otherwise with the PIN page. If the page cannot run at all, the
+#  plain cryptsetup prompt does the same job: never a dead end.
+# ═══════════════════════════════════════════════════════════════════
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
+
+LOCK=""
+for x in $(cat /proc/cmdline); do
+    case "$x" in auros.lock=PARTUUID=*) LOCK=${x#auros.lock=PARTUUID=} ;; esac
+done
+[ -n "$LOCK" ] || exit 0
+
+L=/usr/lib/auros/lock
+# Without device-mapper's udev rules in this initramfs, libdevmapper
+# would wait for a udev answer that never comes: it makes the node itself.
+export DM_DISABLE_UDEV=1
+for m in dm_crypt xts aesni_intel adiantum nhpoly1305 chacha_generic tpm_crb tpm_tis; do
+    modprobe -q "$m" 2>/dev/null
+done
+
+DEV=/dev/disk/by-partuuid/$LOCK
+i=0
+while [ ! -b "$DEV" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+if [ ! -b "$DEV" ]; then
+    echo "auros-lock: partition $LOCK did not appear" >&2
+    exit 0
+fi
+
+if ! cryptsetup isLuks "$DEV" 2>/dev/null; then
+    "$L/encrypt-init" "$DEV" || exit 0           # refused: start plain, as before
+fi
+
+n=0
+while [ ! -b /dev/mapper/auros-root ] && [ "$n" -lt 3 ]; do
+    "$L/aurlock-pin" "$DEV" auros-root
+    n=$((n + 1))
+done
+while [ ! -b /dev/mapper/auros-root ]; do
+    cryptsetup open --allow-discards "$DEV" auros-root
+done
+echo "ROOT=/dev/mapper/auros-root" >> /conf/param.conf
+exit 0

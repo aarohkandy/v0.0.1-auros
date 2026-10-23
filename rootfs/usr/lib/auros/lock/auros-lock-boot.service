@@ -1,0 +1,6 @@
+[Unit]
+Description=AurOS: copy the menu and kernels to the EFI partition
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/auros/lock/lockctl boot-sync

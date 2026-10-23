@@ -1,0 +1,49 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  hooks/auros-lock — what the start page needs inside the initramfs
+#  (docs/security/THEFT.md). Linked into /etc/initramfs-tools/hooks/ by
+#  `lockctl prepare`; adds nothing unless /etc/auros/lock says armed=1.
+#
+#  The libraries are named one by one because nothing links them:
+#  aurlock-pin dlopens libcryptsetup and libtss2, libcryptsetup dlopens
+#  systemd's TPM token, and the TCTI loader dlopens the device TCTI.
+#  copy_exec follows only what a file links (docs/handoff/streams/S4.md,
+#  traps).
+# ═══════════════════════════════════════════════════════════════════
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "${1:-}" in prereqs) prereqs; exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+
+[ "$(sed -n 's/^armed=//p' /etc/auros/lock 2>/dev/null)" = 1 ] || exit 0
+L=/usr/lib/auros/lock
+
+copy_exec "$L/aurlock-pin"
+copy_file script "$L/encrypt-init"
+for b in cryptsetup e2fsck resize2fs dumpe2fs blockdev blkid; do
+    p=$(command -v "$b" 2>/dev/null) && copy_exec "$p"
+done
+for lib in cryptsetup/libcryptsetup-token-systemd-tpm2.so libcryptsetup.so.12 \
+           libtss2-esys.so.0 libtss2-tctildr.so.0 libtss2-tcti-device.so.0 \
+           libtss2-mu.so.0 libtss2-rc.so.0 libtss2-sys.so.1; do
+    for f in /usr/lib/*-linux-gnu/$lib; do
+        [ -e "$f" ] && copy_exec "$f"
+    done
+done
+manual_add_modules dm_crypt xts adiantum nhpoly1305 nhpoly1305_avx2 nhpoly1305_sse2 \
+    chacha_generic chacha_x86_64 aesni_intel aes_generic tpm_crb tpm_tis
+
+# Her look: the colours and the three faces she chose, and DejaVu for
+# when a face is missing.
+if [ -f /etc/auros/shell.conf ]; then
+    copy_file config /etc/auros/shell.conf
+    for key in font_display font_text font_text_bold; do
+        name=$(sed -n "s/^$key=\"\{0,1\}\([^\"]*\)\"\{0,1\}.*/\1/p" /etc/auros/shell.conf | head -1)
+        f=/usr/share/auros/fonts/$name.ttf
+        [ -n "$name" ] && [ -e "$f" ] && copy_file font "$(readlink -f "$f")" "$f"
+    done
+fi
+for f in DejaVuSans.ttf DejaVuSans-Bold.ttf; do
+    [ -e "/usr/share/fonts/truetype/dejavu/$f" ] && copy_file font "/usr/share/fonts/truetype/dejavu/$f"
+done
+exit 0

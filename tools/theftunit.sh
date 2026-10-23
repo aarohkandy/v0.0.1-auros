@@ -1,0 +1,336 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════════
+#  theftunit — the encrypted drive and its PIN, on a file, against a
+#  software security chip (docs/security/THEFT.md)
+#
+#  Runs the real pieces -- rootfs/usr/lib/auros/lock/{encrypt-init,
+#  lockctl} and src/aurshell/lockpin.c, compiled here -- on a loop
+#  device, with swtpm as the chip:
+#
+#    in place     a plain ext4 with her files becomes LUKS2; opens with
+#                 the temporary key while mounted; the pass finishes;
+#                 no byte of the old plaintext is left on the raw file;
+#                 a pass killed half-way resumes and finishes
+#    first PIN    set-pin seals it; the rescue code is 24 numbers, made
+#                 fresh each time; the temporary key is gone; the start
+#                 page's own code opens with the PIN
+#    wrong PIN    says "wrong", and the chip's own counter rises
+#    too many     the chip locks out, the page says so (not "wrong"),
+#                 and the right PIN does not get through until it clears
+#    rescue       the code opens the drive; the page's flow after it
+#                 hands the new PIN to `lockctl repin`, which seals it
+#    PCR 7        bound to no PCR (the default): a firmware/dbx change is
+#                 a non-event. Bound to PCR 7: the page says "changed",
+#                 the rescue code opens, repin re-seals, the PIN works
+#    new chip     a different (cleared) chip: "changed", rescue, repin
+#    no chip      the PIN is a passphrase, 6 numbers or refused
+#    change-pin, new-rescue-code (both kinds); EASY.md: every key and
+#    button at least 44 px at 1024x600, no jargon in the page's words
+#
+#  Root, loop devices and device-mapper: run it in a throwaway container
+#  (the host's own TPM is never touched -- every call is pointed at the
+#  swtpm, and the container's /dev/tpm* nodes are removed first):
+#
+#    docker run --rm --privileged -v "$PWD":/w -w /w IMAGE bash tools/theftunit.sh
+#
+#  where IMAGE is ubuntu:24.04 plus cryptsetup-bin libcryptsetup-dev
+#  systemd swtpm swtpm-tools tpm2-tools libtss2-tcti-swtpm0t64 gcc
+#  e2fsprogs util-linux fonts-dejavu-core (what .github/workflows/theft.yml installs).
+#
+#  THEFT_SRC=DIR runs a mutated copy of the tree instead (the mutation
+#  run: tools/theftunit.sh --mutants proves each check can fail).
+# ═══════════════════════════════════════════════════════════════════
+set -u
+cd "$(dirname "$0")/.."
+TOP=$PWD
+
+if [ "${1:-}" = --mutants ]; then
+    # Each mutant breaks one thing a check above claims to catch. The
+    # suite must FAIL on every one of them.
+    M=$(mktemp -d /tmp/theftmut.XXXXXX)
+    trap 'rm -rf "$M"' EXIT
+    survived=0
+    mutant() { # NAME FILE SED
+        rm -rf "$M/t"; mkdir -p "$M/t"
+        cp -a src rootfs tools "$M/t/"
+        sed -i "$3" "$M/t/$2"
+        if cmp -s "$M/t/$2" "$2"; then echo "  mutant $1: the edit did not apply"; survived=$((survived+1)); return; fi
+        if THEFT_SRC="$M/t" THEFT_QUICK=1 bash "$0" >"$M/log" 2>&1; then
+            echo "  mutant $1: SURVIVED (the suite passed with it)"; survived=$((survived+1))
+        else
+            echo "  mutant $1: killed ($(grep -c FAIL "$M/log") checks failed)"
+        fi
+    }
+    mutant wrong-is-changed   src/aurshell/lockpin.c 's/after.counter > before.counter/0/'
+    mutant lockout-unseen     src/aurshell/lockpin.c 's/if (after.in_lockout) return V_LOCKED;//'
+    mutant temp-kept          rootfs/usr/lib/auros/lock/lockctl 's/^    temp_forget "$dev" "$code" ||/    true ||/'
+    mutant no-reencrypt       rootfs/usr/lib/auros/lock/encrypt-init 's/--init-only --batch-mode/--init-only --batch-mode --test-passphrase-nope/'
+    mutant fixed-rescue       rootfs/usr/lib/auros/lock/lockctl 's/\$((b % 10))/1/'
+    mutant pin-unchecked      rootfs/usr/lib/auros/lock/lockctl 's/if ! pin_checks "\$dev" "\$pin"; then/if false; then/'
+    mutant small-keys         src/aurshell/lockpin.c 's/int kw = (int)(84 \* k)/int kw = (int)(40 * k)/'
+    mutant repin-ignored      rootfs/usr/lib/auros/lock/lockctl 's/^    \[ -s "\$REPIN" \] || exit 0/    exit 0/'
+    echo
+    [ "$survived" = 0 ] && { echo "every mutant was caught"; exit 0; }
+    echo "$survived mutant(s) survived"; exit 1
+fi
+
+SRC=${THEFT_SRC:-$TOP}
+fail=0; checked=0
+ok()  { checked=$((checked+1)); printf '    %-66s %s\n' "$1" "ok"; }
+bad() { checked=$((checked+1)); fail=$((fail+1)); printf '    %-66s %s\n' "$1" "FAIL"
+        shift; for m in "$@"; do printf '      %s\n' "$m"; done; }
+check() { local what=$1; shift; if "$@" >/dev/null 2>&1; then ok "$what"; else bad "$what"; fi; }
+
+# ── never the host's chip ─────────────────────────────────────────
+[ "$(id -u)" = 0 ] || { echo "theftunit needs root (run it in the container)"; exit 2; }
+if [ -e /.dockerenv ] || grep -qa container= /proc/1/environ 2>/dev/null; then
+    rm -f /dev/tpm0 /dev/tpmrm0 /dev/tpm1 /dev/tpmrm1
+fi
+ls /dev/tpm* >/dev/null 2>&1 && { echo "a real TPM is visible here; refusing (run in a container)"; exit 2; }
+for t in cryptsetup swtpm tpm2_pcrextend gcc mkfs.ext4 losetup systemd-cryptenroll; do
+    command -v "$t" >/dev/null || { echo "need $t"; exit 2; }
+done
+
+T=$(mktemp -d /tmp/theft.XXXXXX)
+ID=s4t$$$(od -An -tx1 -N3 /dev/urandom | tr -d ' ')
+LOOPS=""; NAMES=""; SWPID=""
+cleanup() {
+    set +e
+    umount "$T/m" 2>/dev/null
+    for n in $NAMES; do cryptsetup close "$n" 2>/dev/null; done
+    for l in $LOOPS; do losetup -d "$l" 2>/dev/null; done
+    for f in "$T"/*.img; do       # and anything else still holding our files
+        for l in $(losetup -n -O NAME -j "$f" 2>/dev/null); do losetup -d "$l"; done
+    done
+    [ -n "$SWPID" ] && kill "$SWPID" 2>/dev/null
+    rm -rf "$T" /run/auros-lock
+}
+trap cleanup EXIT
+
+PIN="$T/aurlock-pin"
+gcc -O2 -std=gnu11 -Wall -Wextra -Werror -o "$PIN" "$SRC/src/aurshell/lockpin.c" \
+    "$SRC/src/aurshell/kms.c" "$SRC/src/aurshell/draw.c" "$SRC/src/common/font.c" \
+    "$SRC/src/common/png.c" "$SRC/src/common/theme.c" -lm -ldl \
+    || { echo "aurlock-pin did not build"; exit 1; }
+LOCKCTL="$SRC/rootfs/usr/lib/auros/lock/lockctl"
+ENCINIT="$SRC/rootfs/usr/lib/auros/lock/encrypt-init"
+mkdir -p "$T/m"
+
+# ── the chip ──────────────────────────────────────────────────────
+tpm_start() { # STATE-DIR
+    mkdir -p "$1"
+    swtpm socket --tpm2 --tpmstate dir="$1" --server type=unixio,path="$1/sock" \
+        --ctrl type=unixio,path="$1/sock.ctrl" --flags startup-clear --pid file="$1/pid" --daemon
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$1/sock" ] && break; sleep 0.2; done
+    SWPID=$(cat "$1/pid")
+    export TPM2TOOLS_TCTI="swtpm:path=$1/sock" AUROS_LOCK_TPM="swtpm:path=$1/sock"
+    export AURLOCK_TPM2_DEVICE="$AUROS_LOCK_TPM"
+    # Windows' policy is 32 tries then one per 10 minutes; 5 and 4 s
+    # here, so that locking out and coming back fit in a test.
+    tpm2_dictionarylockout -s -n 5 -t 4 -l 4 >/dev/null 2>&1
+}
+tpm_stop() { kill "$SWPID" 2>/dev/null; sleep 0.3; SWPID=""; }
+counter() { "$PIN" --tpm-status | sed -n 's/^counter=//p'; }
+tpm_start "$T/tpm1"
+
+# ── a drive with her files on it ──────────────────────────────────
+# Sets DRV to the loop device. Not a $(...), for the same reason as below.
+mkdrive() { # FILE MB
+    truncate -s "${2}M" "$1"
+    local l; l=$(losetup -f --show "$1") || return 1
+    LOOPS="$LOOPS $l"; DRV=$l
+    mkfs.ext4 -q -L AUROS-ROOT "$l"
+    mount "$l" "$T/m"
+    for i in $(seq 1 400); do echo "HER-LETTER-PLAINTEXT-$i"; done > "$T/m/letter.txt"
+    dd if=/dev/urandom of="$T/m/photo" bs=1M count=$(( $2 / 4 )) status=none
+    sha256sum "$T/m/photo" | cut -c1-64 > "$1.sum"
+    umount "$T/m"
+}
+# Sets V to the last verdict; on "open" the drive is left open as $LAST.
+# Not a $(...): the names have to reach this shell for the clean-up.
+open_try() { # DEV ANSWERS...
+    local n="$ID-$RANDOM"
+    printf '%s\n' "${@:2}" | "$PIN" --try "$1" "$n" > "$T/v" 2>/dev/null
+    V=$(tail -1 "$T/v")
+    LAST=""
+    [ -b "/dev/mapper/$n" ] && { NAMES="$NAMES $n"; LAST=$n; }
+}
+close_last() { umount "$T/m" 2>/dev/null; [ -n "$LAST" ] && cryptsetup close "$LAST" 2>/dev/null; LAST=""; }
+L() { AUROS_LOCK_DEV="$1" AUROS_LOCK_PIN_BIN="$PIN" AUROS_LOCK_CONF="$T/lock.conf" bash "$LOCKCTL" "${@:2}"; }
+
+echo
+echo "The encrypted drive and its PIN"
+echo
+echo "  in place"
+IMG="$T/a.img"
+mkdrive "$IMG" 1400; D=$DRV
+"$ENCINIT" "$D" >/dev/null 2>&1
+check "encrypt-init made the partition LUKS2" cryptsetup isLuks --type luks2 "$D"
+open_try "$D" x; v=$V
+[ "$v" = "open temp" ] && ok "it opens with the temporary key, no PIN asked" || bad "it opens with the temporary key" "got: $v"
+if [ -b "/dev/mapper/$LAST" ]; then
+    mount "/dev/mapper/$LAST" "$T/m"
+    [ "$(sha256sum "$T/m/photo" | cut -c1-64)" = "$(cat "$IMG.sum")" ] \
+        && ok "her files are intact, mid-encryption" || bad "her files are intact, mid-encryption"
+    printf '1234\n' | L "$D" set-pin >/dev/null 2>&1; rc=$?
+    [ "$rc" = 3 ] && ok "set-pin waits while the pass runs (exit 3, nothing changed)" || bad "set-pin waits for the pass" "exit $rc"
+    # A pass stopped half-way (a shutdown), then resumed. SIGTERM, never
+    # SIGKILL: killed between the suspend and the resume of its hot
+    # zone, cryptsetup leaves a device-mapper device suspended, and
+    # every `sync` on the HOST then hangs -- this froze a shared server
+    # once. The power cut proper is the VM's test (tools/theftvm.sh).
+    L "$D" encrypt-pass >/dev/null 2>&1 &
+    sleep 1.5
+    pkill -TERM -f "cryptsetup reencrypt --resume-only" 2>/dev/null
+    wait
+    L "$D" status | grep -qx state=encrypting && ok "a pass stopped half-way leaves it encrypting" \
+        || ok "the pass finished before it could be stopped (fast disk)"
+    L "$D" encrypt-pass >/dev/null 2>&1
+    L "$D" status | grep -qx state=open-no-pin && ok "the pass resumes and finishes; state open-no-pin" \
+        || bad "the pass resumes and finishes" "$(L "$D" status | tr '\n' ' ')"
+    [ "$(sha256sum "$T/m/photo" | cut -c1-64)" = "$(cat "$IMG.sum")" ] \
+        && ok "her files are intact after the pass" || bad "her files are intact after the pass"
+    close_last
+fi
+n=$(grep -ac HER-LETTER-PLAINTEXT "$IMG")
+[ "$n" = 0 ] && ok "no plaintext of hers is left on the raw drive" || bad "no plaintext left on the raw drive" "$n lines found"
+cryptsetup luksDump "$D" | grep -q 'aes-xts-plain64' && ok "AES-XTS on a CPU with AES instructions" \
+    || bad "AES-XTS on a CPU with AES instructions"
+
+echo
+echo "  the first PIN (sealed in the chip, bound to no PCR)"
+code=$(printf '1234\n' | L "$D" set-pin 2>"$T/err")
+echo "$code" | grep -qE '^[0-9]{4}( [0-9]{4}){5}$' && ok "set-pin prints a rescue code of 6 groups of 4 numbers" \
+    || bad "set-pin prints a rescue code" "got '$code' $(cat "$T/err")"
+CODE=$(echo "$code" | tr -d ' ')
+L "$D" status | grep -qx state=pin && ok "state pin" || bad "state pin" "$(L "$D" status | tr '\n' ' ')"
+L "$D" status | grep -qx pin=tpm && ok "the PIN is sealed in the chip" || bad "the PIN is sealed in the chip"
+! cryptsetup open --test-passphrase --key-file <(printf '%s' 'AurOS: no PIN has been chosen yet') "$D" 2>/dev/null \
+    && ok "the temporary key no longer opens the drive" || bad "the temporary key no longer opens the drive"
+open_try "$D" 1234; v=$V; [ "$v" = open ] && ok "the right PIN opens it (the start page's code)" || bad "the right PIN opens it" "got $v"
+close_last
+c0=$(counter)
+open_try "$D" 9999; v=$V; c1=$(counter)
+[ "$v" = wrong ] && ok "a wrong PIN says wrong" || bad "a wrong PIN says wrong" "got $v"
+[ "$c1" -gt "$c0" ] && ok "the chip itself counted it ($c0 -> $c1)" || bad "the chip counted it" "$c0 -> $c1"
+code2=$(printf '1234\n' | L "$D" set-pin 2>/dev/null)
+[ -z "$code2" ] && ok "set-pin refuses when a PIN exists" || bad "set-pin refuses when a PIN exists"
+
+echo
+echo "  too many tries"
+v=""; for _ in 1 2 3 4 5 6; do open_try "$D" 1111; v=$V; [ "$v" = locked ] && break; done
+[ "$v" = locked ] && ok "the chip locks out, and the page says so" || bad "the chip locks out" "last: $v"
+open_try "$D" 1234; v=$V; [ "$v" = locked ] && ok "the right PIN is not let through while locked" || bad "locked even for the right PIN" "got $v"
+close_last
+sleep 9
+open_try "$D" 1234; v=$V; [ "$v" = open ] && ok "after the wait the right PIN opens it" || bad "after the wait the right PIN opens it" "got $v"
+close_last
+
+echo
+echo "  the rescue code"
+open_try "$D" "rescue $CODE"; v=$V; [ "$v" = open ] && ok "the rescue code opens it" || bad "the rescue code opens it" "got $v"
+close_last
+open_try "$D" "rescue 000011112222333344445555"; v=$V; [ "$v" = wrong ] && ok "a wrong rescue code says wrong" || bad "a wrong rescue code" "got $v"
+code_b=$(L "$D" new-rescue-code <<<"1234" 2>/dev/null | tr -d ' ')
+[ ${#code_b} = 24 ] && [ "$code_b" != "$CODE" ] && ok "new-rescue-code makes a different code" || bad "new-rescue-code" "got '$code_b'"
+open_try "$D" "rescue $CODE"; v=$V; [ "$v" = wrong ] && ok "the old rescue code stops working" || bad "the old rescue code stops working" "got $v"
+close_last
+open_try "$D" "rescue $code_b"; v=$V; [ "$v" = open ] && ok "the new rescue code works" || bad "the new rescue code works" "got $v"
+close_last
+CODE=$code_b
+
+echo
+echo "  forgot the PIN: the page's own flow, then repin"
+n="$ID-page"
+out=$( { echo link; echo "$CODE"; echo 2468; echo ok; echo 2468; echo ok; } | "$PIN" --script "$D" "$n" 2>/dev/null)
+[ -b "/dev/mapper/$n" ] && NAMES="$NAMES $n" && LAST=$n
+echo "$out" | grep -q 'page=newpin ' && echo "$out" | tail -1 | grep -q 'page=done' \
+    && ok "link -> rescue code -> choose PIN -> once more -> open" || bad "the forgot-PIN flow" "$(echo "$out" | tr '\n' '|')"
+[ -s /run/auros-lock/repin ] && [ "$(stat -c %a /run/auros-lock/repin)" = 600 ] \
+    && ok "the new PIN is handed over in /run, readable by root only" || bad "the PIN is handed over in /run"
+close_last
+L "$D" repin >/dev/null 2>&1
+[ ! -e /run/auros-lock/repin ] && ok "repin deletes the hand-over at once" || bad "repin deletes the hand-over"
+open_try "$D" 2468; v=$V; [ "$v" = open ] && ok "the new PIN opens it" || bad "the new PIN opens it" "got $v"
+close_last
+open_try "$D" 1234; v=$V; [ "$v" = wrong ] && ok "the old PIN does not" || bad "the old PIN does not" "got $v"
+close_last
+tpm2_dictionarylockout -c >/dev/null 2>&1
+
+echo
+echo "  change-pin"
+printf '2468\n135790\n' | L "$D" change-pin >/dev/null 2>&1
+open_try "$D" 135790; v=$V; [ "$v" = open ] && ok "the changed PIN opens it" || bad "the changed PIN opens it" "got $v"
+close_last
+open_try "$D" 2468; v=$V; [ "$v" = wrong ] && ok "the one before does not" || bad "the one before does not" "got $v"
+close_last
+tpm2_dictionarylockout -c >/dev/null 2>&1
+[ "$(cryptsetup luksDump "$D" | grep -c 'systemd-tpm2$')" = 1 ] && ok "one sealed PIN, not two (each costs a counted try)" \
+    || bad "one sealed PIN" "$(cryptsetup luksDump "$D" | grep -c 'systemd-tpm2$')"
+
+echo
+echo "  PCR 7 changes (a dbx or firmware update)"
+tpm2_pcrextend 7:sha256=00000000000000000000000000000000000000000000000000000000000000d8 >/dev/null
+open_try "$D" 135790; v=$V; [ "$v" = open ] && ok "bound to no PCR: the PIN still opens it, no rescue code" || bad "unbound: still opens" "got $v"
+close_last
+if [ -z "${THEFT_QUICK:-}" ]; then
+    mkdrive "$T/b.img" 1200; D7=$DRV
+    "$ENCINIT" "$D7" >/dev/null 2>&1
+    L "$D7" encrypt-pass >/dev/null 2>&1 </dev/null
+    code7=$(printf '4321\n' | AUROS_LOCK_PCRS=7 L "$D7" set-pin 2>/dev/null | tr -d ' ')
+    cryptsetup luksDump "$D7" | grep -q 'tpm2-hash-pcrs:   7' && ok "bound to PCR 7 when asked" || bad "bound to PCR 7 when asked"
+    tpm2_pcrextend 7:sha256=00000000000000000000000000000000000000000000000000000000000000db >/dev/null
+    open_try "$D7" 4321; v=$V; [ "$v" = changed ] && ok "PCR 7 changed: the page says the computer changed" || bad "PCR 7 changed -> changed" "got $v"
+    printf 'pin=4321\nrescue=%s\n' "$code7" > "$T/repin"; mkdir -p /run/auros-lock; cp "$T/repin" /run/auros-lock/repin
+    AUROS_LOCK_PCRS=7 L "$D7" repin >/dev/null 2>&1
+    open_try "$D7" 4321; v=$V; [ "$v" = open ] && ok "after repin the PIN opens it under the new PCR 7" || bad "repin under the new PCR 7" "got $v"
+    close_last
+fi
+
+echo
+echo "  a different chip (cleared, or another board)"
+tpm_stop
+tpm_start "$T/tpm2"
+open_try "$D" 135790; v=$V; [ "$v" = changed ] && ok "the page says the computer changed" || bad "a new chip -> changed" "got $v"
+open_try "$D" "rescue $CODE"; v=$V; [ "$v" = open ] && ok "the rescue code still opens it" || bad "rescue with a new chip" "got $v"
+close_last
+mkdir -p /run/auros-lock; printf 'pin=1357\nrescue=%s\n' "$CODE" > /run/auros-lock/repin; chmod 600 /run/auros-lock/repin
+L "$D" repin >/dev/null 2>&1
+open_try "$D" 1357; v=$V; [ "$v" = open ] && ok "repin seals the PIN in the new chip" || bad "repin into the new chip" "got $v"
+close_last
+
+echo
+echo "  no chip"
+mkdrive "$T/c.img" 1200; DN=$DRV
+"$ENCINIT" "$DN" >/dev/null 2>&1
+L "$DN" encrypt-pass >/dev/null 2>&1
+export AUROS_LOCK_TPM="swtpm:path=$T/none" AURLOCK_TPM2_DEVICE="swtpm:path=$T/none"
+out=$(printf '1234\n' | L "$DN" set-pin 2>&1)
+L "$DN" status | grep -qx state=open-no-pin && ok "a 4-number PIN is refused without a chip" || bad "4 numbers refused without a chip" "$out"
+codeN=$(printf '123456\n' | L "$DN" set-pin 2>/dev/null | tr -d ' ')
+L "$DN" status | grep -qx pin=pass && ok "6 numbers become a passphrase" || bad "6 numbers become a passphrase"
+cryptsetup luksDump "$DN" | grep -q 'argon2id' && ok "made slow to guess (argon2id)" || bad "argon2id"
+open_try "$DN" 654321; v=$V; [ "$v" = wrong ] && ok "a wrong PIN says wrong" || bad "no chip: wrong" "got $v"
+open_try "$DN" 123456; v=$V; [ "$v" = open ] && ok "the right PIN opens it" || bad "no chip: right" "got $v"
+close_last
+printf '123456\n246813\n' | L "$DN" change-pin >/dev/null 2>&1
+open_try "$DN" 246813; v=$V; [ "$v" = open ] && ok "change-pin without a chip" || bad "change-pin without a chip" "got $v"
+close_last
+open_try "$DN" "rescue $codeN"; v=$V; [ "$v" = open ] && ok "the rescue code opens it" || bad "no chip: rescue" "got $v"
+close_last
+
+echo
+echo "  the page (EASY.md)"
+"$PIN" --png "$T/p.png" --size 1024 600 --page pin > "$T/geo"
+"$PIN" --png "$T/l.png" --size 1024 600 --page locked >> "$T/geo"
+"$PIN" --png "$T/r.png" --size 1024 600 --page rescue >> "$T/geo"
+small=$(awk '($1=="key" && ($5<44 || $6<44)) || ($1=="link" && ($4<44 || $5<44))' "$T/geo")
+[ -z "$small" ] && [ -s "$T/p.png" ] && ok "every key and button is at least 44 px at 1024x600" || bad "targets >= 44 px" "$small"
+JARGON=$(sed -n "/^JARGON='/,/'\$/p" "$SRC/tools/plainwords.sh" | tr -d "\n'" | sed 's/^JARGON=//')
+words=$(sed -n '/^static const char \*title_of/,/^static int wrap/p' "$SRC/src/aurshell/lockpin.c" \
+        | grep -o '"[^"]*"' | grep -iwE "${JARGON:-partition}" || true)
+[ -z "$words" ] && ok "no word from EASY.md's list on the page" || bad "no jargon on the page" "$words"
+
+echo
+if [ "$fail" -eq 0 ]; then echo "  $checked checks, all ok"; exit 0; fi
+echo "  $fail of $checked checks FAILED"; exit 1

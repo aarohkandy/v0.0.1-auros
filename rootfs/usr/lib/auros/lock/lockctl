@@ -1,0 +1,477 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════════
+#  lockctl — AurOS's encrypted drive and its PIN (docs/security/THEFT.md)
+#
+#  NOT SWITCHED ON. Nothing in the image runs this until `lockctl
+#  prepare` is run, and nothing runs `prepare` (docs/handoff/streams/S4.md
+#  says what has to be proven, and who has to say yes, first).
+#
+#    lockctl status            key=value lines: what state the drive is in
+#    lockctl prepare           arm it: the next start encrypts AurOS's
+#                              partition in place (THEFT.md section 1)
+#    lockctl encrypt-pass      finish the in-place pass, at idle priority
+#                              (auros-lock-encrypt.service)
+#    lockctl set-pin           the first PIN, on stdin, once the pass is over
+#                              (exit 3 until then). Seals the key in the
+#                              security chip (or, with none, makes the PIN
+#                              a passphrase of 6 numbers), makes the rescue
+#                              code and prints it ONCE on stdout
+#    lockctl change-pin        old PIN, then new PIN, on stdin
+#    lockctl new-rescue-code   the PIN on stdin; prints the new code once
+#    lockctl repin             after the rescue code opened the drive at
+#                              start: seal the PIN aurlock-pin left in
+#                              /run/auros-lock/repin (auros-lock-repin.service)
+#    lockctl boot-sync         kernels and the menu onto the EFI partition
+#                              (kernel and initramfs hooks)
+#
+#  A PIN or a code is never an argument (anyone can read those) and is
+#  never written anywhere: it goes to cryptsetup and systemd-cryptenroll
+#  through a pipe or their documented environment variable.
+#
+#  Keyslots: 0 the temporary key (until a PIN exists and the pass is
+#  done), the rescue code, and the PIN -- a TPM object, or with no chip a
+#  passphrase. Which slot is which is in the "auros-hint" token, with the
+#  PIN's length (the start page fills the dots and needs no OK).
+#
+#  Tests (tools/theftunit.sh) point it elsewhere: AUROS_LOCK_DEV (the
+#  partition), AUROS_LOCK_TPM (a TCTI such as swtpm:path=...),
+#  AUROS_LOCK_PCRS, AUROS_LOCK_NOAES=1, AUROS_LOCK_CONF, AUROS_LOCK_PIN_BIN.
+# ═══════════════════════════════════════════════════════════════════
+set -u
+umask 077
+export LC_ALL=C
+
+TEMP_KEY='AurOS: no PIN has been chosen yet'   # = TEMP_KEY in src/aurshell/lockpin.c
+CONF=${AUROS_LOCK_CONF:-/etc/auros/lock}
+PINBIN=${AUROS_LOCK_PIN_BIN:-/usr/lib/auros/lock/aurlock-pin}
+HERE=/usr/lib/auros/lock
+NAME=${AUROS_LOCK_NAME:-auros-root}
+ESP=${AUROS_LOCK_ESP:-/boot/efi}
+REPIN=/run/auros-lock/repin
+ENROLL=systemd-cryptenroll
+command -v "$ENROLL" >/dev/null 2>&1 || ENROLL=/usr/bin/systemd-cryptenroll
+
+say() { printf 'lockctl: %s\n' "$*" >&2; }
+die() { say "$*"; exit 1; }
+conf() { sed -n "s/^$1=//p" "$CONF" 2>/dev/null | tail -1; }
+
+# ── where things are ───────────────────────────────────────────────
+
+# AurOS's partition: the one under the opened drive, or under / when
+# it is still plain.
+device() {
+    if [ -n "${AUROS_LOCK_DEV:-}" ]; then echo "$AUROS_LOCK_DEV"; return; fi
+    if [ -e "/dev/mapper/$NAME" ]; then
+        cryptsetup status "$NAME" 2>/dev/null | sed -n 's/^ *device: *//p'
+        return
+    fi
+    findmnt -n -o SOURCE / 2>/dev/null
+}
+
+pcrs() { echo "${AUROS_LOCK_PCRS-$(conf pcrs)}"; }
+
+tpm_dev() { echo "${AUROS_LOCK_TPM:-auto}"; }
+has_tpm() {
+    if [ -n "${AUROS_LOCK_TPM:-}" ]; then
+        AURLOCK_TPM2_DEVICE="$AUROS_LOCK_TPM" "$PINBIN" --tpm-status | grep -qx tpm=yes
+    else
+        [ -e /dev/tpmrm0 ] && "$PINBIN" --tpm-status | grep -qx tpm=yes
+    fi
+}
+
+is_luks() { cryptsetup isLuks --type luks2 "$1" 2>/dev/null; }
+in_pass() { cryptsetup luksDump "$1" 2>/dev/null | grep -q 'online-reencrypt'; }
+slot_used() { cryptsetup luksDump "$1" 2>/dev/null | grep -qE "^  $2: luks2"; }
+
+# The hint token: {"type":"auros-hint","keyslots":[],...}. Read as
+# key=value; written whole.
+hint() { # DEV KEY
+    local j
+    j=$(cryptsetup token export --token-id "$(hint_id "$1")" "$1" 2>/dev/null) || return 1
+    printf '%s' "$j" | sed -n "s/.*\"$2\":\"\{0,1\}\([^,\"}]*\).*/\1/p"
+}
+hint_id() { # DEV
+    local i
+    for i in $(cryptsetup luksDump "$1" 2>/dev/null | sed -n '/^Tokens:/,/^Digests:/s/^  \([0-9]*\): auros-hint$/\1/p'); do
+        echo "$i"; return 0
+    done
+    echo 31
+}
+hint_write() { # DEV pin_length pin_kind pin_slot rescue_slot
+    cryptsetup token remove --token-id "$(hint_id "$1")" "$1" 2>/dev/null
+    printf '{"type":"auros-hint","keyslots":[],"pin_length":%s,"pin_kind":"%s","pin_slot":%s,"rescue_slot":%s}' \
+        "$2" "$3" "$4" "$5" | cryptsetup token import --token-id 31 "$1"
+}
+
+# ── reading PINs from stdin, never from argv ──────────────────────
+
+read_digits() { # MIN MAX -> REPLY
+    IFS= read -r REPLY || return 1
+    REPLY=${REPLY%$'\r'}
+    case "$REPLY" in ''|*[!0-9]*) return 1 ;; esac
+    [ "${#REPLY}" -ge "$1" ] && [ "${#REPLY}" -le "$2" ]
+}
+
+# 24 numbers, every one equally likely: bytes >= 250 are thrown away
+# so that `% 10` has no bias.
+rescue_new() {
+    local out="" b
+    while [ "${#out}" -lt 24 ]; do
+        for b in $(od -An -tu1 -N64 /dev/urandom); do
+            [ "$b" -lt 250 ] && out="$out$((b % 10))"
+            [ "${#out}" -ge 24 ] && break
+        done
+    done
+    echo "${out:0:24}"
+}
+rescue_show() { echo "$1" | sed 's/\(....\)/\1 /g; s/ $//'; }
+
+# ── keyslot work ───────────────────────────────────────────────────
+
+# luksAddKey with both keys through pipes. $1 dev, $2 existing key,
+# $3 new key, $4 slot or "", rest: extra options.
+add_key() {
+    local dev=$1 old=$2 new=$3 slot=$4; shift 4
+    cryptsetup luksAddKey --batch-mode ${slot:+--new-key-slot "$slot"} "$@" \
+        --key-file <(printf '%s' "$old") "$dev" <(printf '%s' "$new")
+}
+opens_with() { # DEV KEY [SLOT]
+    cryptsetup open --test-passphrase ${3:+--key-slot "$3"} --key-file <(printf '%s' "$2") "$1" 2>/dev/null
+}
+free_slot() { # DEV FROM -> first unused slot >= FROM
+    local s=$2
+    while slot_used "$1" "$s"; do s=$((s+1)); done
+    echo "$s"
+}
+
+# The PIN into the chip (or a passphrase without one). Prints the slot.
+# $1 dev, $2 a key that opens it, $3 the PIN.
+pin_enrol() {
+    local dev=$1 key=$2 pin=$3 before after s
+    if has_tpm; then
+        before=$(cryptsetup luksDump "$dev" | sed -n 's/^  \([0-9]*\): luks2$/\1/p' | tr '\n' ' ')
+        PASSWORD="$key" NEWPIN="$pin" "$ENROLL" --tpm2-device="$(tpm_dev)" \
+            --tpm2-pcrs="$(pcrs)" --tpm2-with-pin=yes "$dev" >/dev/null 2>&1 || return 1
+        after=$(cryptsetup luksDump "$dev" | sed -n 's/^  \([0-9]*\): luks2$/\1/p' | tr '\n' ' ')
+        for s in $after; do case " $before " in *" $s "*) ;; *) echo "tpm $s"; return 0 ;; esac; done
+        return 1
+    fi
+    [ "${#pin}" -ge 6 ] || return 2
+    s=$(free_slot "$dev" 2)
+    add_key "$dev" "$key" "$pin" "$s" --pbkdf argon2id >/dev/null 2>&1 || return 1
+    echo "pass $s"
+}
+
+# Does this PIN open it, through exactly the code that runs at start?
+pin_checks() { # DEV PIN
+    local v
+    v=$(printf '%s\n' "$2" | AURLOCK_TPM2_DEVICE="${AUROS_LOCK_TPM:-}" \
+        "$PINBIN" --check "$1" 2>/dev/null | tail -1)
+    [ "$v" = open ]
+}
+
+pin_wipe() { # DEV KIND SLOT KEY
+    case "$2" in
+        tpm)  PASSWORD="$4" "$ENROLL" --wipe-slot=tpm2 "$1" >/dev/null 2>&1 ;;
+        pass) cryptsetup luksKillSlot --batch-mode --key-file <(printf '%s' "$4") "$1" "$3" >/dev/null 2>&1 ;;
+    esac
+}
+
+temp_forget() { # DEV RESCUE-CODE
+    slot_used "$1" 0 || return 0
+    opens_with "$1" "$TEMP_KEY" 0 || return 0       # slot 0 is not ours
+    cryptsetup luksKillSlot --batch-mode --key-file <(printf '%s' "$2") "$1" 0 >/dev/null 2>&1
+}
+
+# ── status ─────────────────────────────────────────────────────────
+
+cmd_status() {
+    local dev state kind
+    dev=$(device)
+    [ -n "$dev" ] || die "cannot tell which partition AurOS is on"
+    if ! is_luks "$dev"; then
+        [ "$(conf armed)" = 1 ] && state=armed || state=plain
+    elif in_pass "$dev"; then state=encrypting
+    elif opens_with "$dev" "$TEMP_KEY" 0; then state=open-no-pin
+    else state=pin
+    fi
+    kind=$( is_luks "$dev" && hint "$dev" pin_kind )
+    echo "device=$dev"
+    echo "state=$state"
+    echo "pin=${kind:-none}"
+    is_luks "$dev" && cryptsetup luksDump "$dev" | sed -n 's/^[[:space:]]*cipher: *\(.*\)$/cipher=\1/p' | head -1
+    if [ -n "${AUROS_LOCK_TPM:-}" ]; then
+        AURLOCK_TPM2_DEVICE="$AUROS_LOCK_TPM" "$PINBIN" --tpm-status
+    else
+        "$PINBIN" --tpm-status 2>/dev/null || echo tpm=no
+    fi
+    echo "pcrs=$(pcrs)"
+}
+
+# ── the first PIN ──────────────────────────────────────────────────
+
+cmd_set_pin() {
+    local dev pin code got kind slot rslot min
+    dev=$(device)
+    is_luks "$dev" || die "the drive is not encrypted yet; nothing to put a PIN on"
+    opens_with "$dev" "$TEMP_KEY" 0 || die "a PIN exists already (change-pin changes it)"
+    # LUKS2 refuses every keyslot and token change while the in-place
+    # pass runs (measured: "Operation incompatible with device marked
+    # for LUKS2 reencryption"). The desktop shows the pass's progress and
+    # asks for the PIN when it is done; this is the backstop.
+    in_pass "$dev" && { say "the drive is still being locked; try again when it has finished"; exit 3; }
+    min=4; has_tpm || min=6
+    read_digits "$min" 6 || die "the PIN must be $min to 6 numbers"
+    pin=$REPLY
+
+    # Anything a half-finished earlier try left is removed first. Only
+    # while the temporary key still opens the drive is this allowed:
+    # there is nothing of hers it protects yet.
+    for slot in $(cryptsetup luksDump "$dev" | sed -n 's/^  \([0-9]*\): luks2$/\1/p'); do
+        [ "$slot" = 0 ] && continue
+        cryptsetup luksKillSlot --batch-mode --key-file <(printf '%s' "$TEMP_KEY") "$dev" "$slot" >/dev/null 2>&1
+    done
+    for t in $(cryptsetup luksDump "$dev" | sed -n '/^Tokens:/,/^Digests:/s/^  \([0-9]*\): .*$/\1/p'); do
+        cryptsetup token remove --token-id "$t" "$dev" 2>/dev/null
+    done
+
+    code=$(rescue_new)
+    rslot=$(free_slot "$dev" 1)
+    add_key "$dev" "$TEMP_KEY" "$code" "$rslot" --pbkdf argon2id >/dev/null 2>&1 \
+        || die "could not add the rescue code"
+    opens_with "$dev" "$code" "$rslot" || die "the rescue code did not open the drive; nothing changed"
+
+    got=$(pin_enrol "$dev" "$code" "$pin") || {
+        cryptsetup luksKillSlot --batch-mode --key-file <(printf '%s' "$TEMP_KEY") "$dev" "$rslot" >/dev/null 2>&1
+        die "could not seal the PIN; nothing changed"
+    }
+    kind=${got% *}; slot=${got#* }
+    hint_write "$dev" "${#pin}" "$kind" "$slot" "$rslot" || die "could not record the PIN's length"
+
+    # Refuse first: the PIN is proven to open the drive, through the code
+    # the start page runs, before anything else can depend on it.
+    if ! pin_checks "$dev" "$pin"; then
+        pin_wipe "$dev" "$kind" "$slot" "$code"
+        cryptsetup luksKillSlot --batch-mode --key-file <(printf '%s' "$TEMP_KEY") "$dev" "$rslot" >/dev/null 2>&1
+        cryptsetup token remove --token-id 31 "$dev" 2>/dev/null
+        die "the new PIN did not open the drive; nothing changed"
+    fi
+
+    temp_forget "$dev" "$code" || die "could not forget the temporary key"
+    rescue_show "$code"
+    pin=; code=
+}
+
+# A key nobody will ever type, authorised by the PIN through the start
+# page's own code (aurlock-pin --add-key: through the chip when the key
+# is sealed there), for systemd-cryptenroll to start from. Prints
+# "SLOT KEY". The caller removes the slot.
+one_time() { # DEV PIN
+    local k s
+    k=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')
+    s=$(printf '%s\n%s\n' "$2" "$k" | AURLOCK_TPM2_DEVICE="${AUROS_LOCK_TPM:-}" \
+        "$PINBIN" --add-key "$1" 2>/dev/null) || return 1
+    echo "$s $k"
+}
+
+cmd_change_pin() {
+    local dev old new kind slot got ot oslot okey
+    dev=$(device)
+    read_digits 4 6 || die "the old PIN must be 4 to 6 numbers"; old=$REPLY
+    read_digits 4 6 || die "the new PIN must be 4 to 6 numbers"; new=$REPLY
+    pin_checks "$dev" "$old" || die "the old PIN did not open the drive"
+    kind=$(hint "$dev" pin_kind); slot=$(hint "$dev" pin_slot)
+    has_tpm || [ "${#new}" -ge 6 ] || die "with no security chip the PIN must be 6 numbers"
+    ot=$(one_time "$dev" "$old") || die "could not open the drive with the old PIN"
+    oslot=${ot% *}; okey=${ot#* }
+    # Old out, new in, new proven; if the new one does not prove, the
+    # old one goes back. Two sealed PINs side by side would cost a
+    # counted try at every start (the chip is asked about each in turn).
+    pin_wipe "$dev" "$kind" "$slot" "$okey"
+    if ! got=$(pin_enrol "$dev" "$okey" "$new") || ! pin_checks "$dev" "$new"; then
+        [ -n "${got:-}" ] && pin_wipe "$dev" "${got% *}" "${got#* }" "$okey"
+        got=$(pin_enrol "$dev" "$okey" "$old") && hint_write "$dev" "${#old}" "${got% *}" "${got#* }" "$(hint "$dev" rescue_slot)"
+        cryptsetup luksKillSlot --batch-mode "$dev" "$oslot" >/dev/null 2>&1
+        die "the new PIN did not work; the old PIN still opens the drive"
+    fi
+    hint_write "$dev" "${#new}" "${got% *}" "${got#* }" "$(hint "$dev" rescue_slot)"
+    cryptsetup luksKillSlot --batch-mode "$dev" "$oslot" >/dev/null 2>&1
+    old=; new=; okey=
+}
+
+# After the rescue code opened the drive at start, with the PIN she
+# chose on the start page.
+cmd_repin() {
+    local dev pin code kind slot got min
+    [ -s "$REPIN" ] || exit 0
+    pin=$(sed -n 's/^pin=//p' "$REPIN"); code=$(sed -n 's/^rescue=//p' "$REPIN")
+    rm -f "$REPIN"
+    dev=$(device)
+    is_luks "$dev" || die "repin: no encrypted drive"
+    opens_with "$dev" "$code" || die "repin: the rescue code from the start page does not open the drive"
+    min=4; has_tpm || min=6
+    [ "${#pin}" -ge "$min" ] || die "repin: the PIN is too short for this computer"
+    kind=$(hint "$dev" pin_kind); slot=$(hint "$dev" pin_slot)
+    # The old PIN is useless (a different or cleared chip, or forgotten);
+    # every PIN slot goes, and the new one is sealed in the chip there is.
+    PASSWORD="$code" "$ENROLL" --wipe-slot=tpm2 "$dev" >/dev/null 2>&1
+    [ "$kind" = pass ] && [ -n "$slot" ] && pin_wipe "$dev" pass "$slot" "$code"
+    got=$(pin_enrol "$dev" "$code" "$pin") || die "repin: could not seal the PIN; the rescue code still opens the drive"
+    hint_write "$dev" "${#pin}" "${got% *}" "${got#* }" "$(hint "$dev" rescue_slot)"
+    pin_checks "$dev" "$pin" || die "repin: the new PIN did not check; the rescue code still opens the drive"
+    say "repin: the PIN is sealed again (${got% *})"
+}
+
+cmd_new_rescue_code() {
+    local dev pin code old rslot
+    dev=$(device)
+    read_digits 4 6 || die "the PIN must be 4 to 6 numbers"; pin=$REPLY
+    pin_checks "$dev" "$pin" || die "that PIN did not open the drive"
+    old=$(hint "$dev" rescue_slot)
+    code=$(rescue_new)
+    rslot=$(printf '%s\n%s\n' "$pin" "$code" | AURLOCK_TPM2_DEVICE="${AUROS_LOCK_TPM:-}" \
+        "$PINBIN" --add-key "$dev" 2>/dev/null) || die "could not add the new code"
+    opens_with "$dev" "$code" "$rslot" || die "the new code did not open the drive"
+    [ -n "$old" ] && [ "$old" != "$rslot" ] && cryptsetup luksKillSlot --batch-mode "$dev" "$old" >/dev/null 2>&1
+    hint_write "$dev" "$(hint "$dev" pin_length)" "$(hint "$dev" pin_kind)" "$(hint "$dev" pin_slot)" "$rslot"
+    rescue_show "$code"
+    pin=; code=
+}
+
+# ── the in-place pass ──────────────────────────────────────────────
+
+cmd_encrypt_pass() {
+    local dev
+    dev=$(device)
+    is_luks "$dev" && in_pass "$dev" || exit 0
+    # Only the temporary key can drive the pass: a PIN cannot be set
+    # until it is over (set-pin), so the two never meet.
+    opens_with "$dev" "$TEMP_KEY" 0 || die "the pass is not finished and the temporary key is gone"
+    say "encrypting the rest of the drive, at idle priority"
+    ionice -c3 nice -n 19 cryptsetup reencrypt --resume-only --batch-mode \
+        --key-file <(printf '%s' "$TEMP_KEY") "$dev" >/dev/null 2>&1 \
+        || die "the pass stopped; it carries on at the next start"
+    say "the whole drive is encrypted"
+}
+
+# ── the boot set on the EFI partition (THEFT.md section 2) ─────────
+
+cmd_boot_sync() {
+    local cfg=/boot/grub/grub.cfg out espuuid rootuuid partuuid k n
+    [ "$(conf armed)" = 1 ] || exit 0
+    mountpoint -q "$ESP" || die "the EFI partition is not mounted at $ESP"
+    espuuid=$(findmnt -n -o UUID "$ESP")
+    partuuid=$(conf partuuid)
+    rootuuid=$(sed -n 's/^search --no-floppy --fs-uuid --set=root \([0-9A-Fa-f-]*\)$/\1/p' "$cfg" | head -1)
+    [ -n "$espuuid" ] && [ -n "$partuuid" ] && [ -n "$rootuuid" ] || die "boot-sync: cannot read the UUIDs"
+    mkdir -p "$ESP/auros"
+    for k in $(sed -n 's#^[[:space:]]*linux[[:space:]]\{1,\}/boot/vmlinuz-\([^ ]*\) .*#\1#p' "$cfg" | sort -u); do
+        for f in "vmlinuz-$k" "initrd.img-$k"; do
+            [ -f "/boot/$f" ] || die "boot-sync: /boot/$f is missing"
+            cmp -s "/boot/$f" "$ESP/auros/$f" && continue
+            cp "/boot/$f" "$ESP/auros/$f.new" && sync && mv -f "$ESP/auros/$f.new" "$ESP/auros/$f" \
+                || die "boot-sync: no room for $f on the EFI partition"
+        done
+    done
+    out="$ESP/auros/grub.cfg.new"
+    sed -e "s#^search --no-floppy --fs-uuid --set=root $rootuuid\$#search --no-floppy --fs-uuid --set=root $espuuid#" \
+        -e 's#/boot/vmlinuz-#/auros/vmlinuz-#g; s#/boot/initrd.img-#/auros/initrd.img-#g' \
+        -e 's#(\$root)/boot/grub/grubenv#($root)/auros/grubenv#g' \
+        -e 's#configfile /boot/grub/grub.cfg#configfile /auros/grub.cfg#' \
+        -e "s#\\(root=UUID=[^ ]*\\)#\\1 auros.lock=PARTUUID=$partuuid#" \
+        -e 's#^source /etc/auros/grub-theme.cfg#source /auros/grub-theme.cfg#' \
+        "$cfg" > "$out" || die "boot-sync: could not write the menu"
+    # Every kernel line must start from the EFI partition and carry the
+    # lock, and nothing outside a comment may still read /boot.
+    n=$(grep -cE '^[[:space:]]*linux[[:space:]]+/auros/vmlinuz-.* auros\.lock=PARTUUID=' "$out")
+    [ "$n" -ge 1 ] && ! grep -v '^[[:space:]]*#' "$out" | grep -q '/boot/' \
+        || { rm -f "$out"; die "boot-sync: the menu did not convert cleanly; the old one stays"; }
+    for k in $(sed -n 's#^[[:space:]]*linux[[:space:]]\{1,\}/auros/\(vmlinuz-[^ ]*\) .*#\1#p' "$out"); do
+        [ -f "$ESP/auros/$k" ] || { rm -f "$out"; die "boot-sync: $k is not on the EFI partition"; }
+    done
+    # the menu's colours (aurora writes them), which grub would otherwise
+    # look for on a partition it can no longer read
+    [ -f /etc/auros/grub-theme.cfg ] && ! cmp -s /etc/auros/grub-theme.cfg "$ESP/auros/grub-theme.cfg" \
+        && cp /etc/auros/grub-theme.cfg "$ESP/auros/grub-theme.cfg"
+    sync; mv -f "$out" "$ESP/auros/grub.cfg"
+    [ -f "$ESP/auros/grubenv" ] || grub-editenv "$ESP/auros/grubenv" create
+    # kernels no menu line names any more
+    for f in "$ESP"/auros/vmlinuz-* "$ESP"/auros/initrd.img-*; do
+        [ -e "$f" ] || continue
+        k=${f##*/}; k=${k#vmlinuz-}; k=${k#initrd.img-}
+        grep -q "vmlinuz-$k " "$ESP/auros/grub.cfg" || rm -f "$f"
+    done
+    sync
+}
+
+# The three stubs grub reads first. Each tries the menu on the EFI
+# partition, and falls back to the one on AurOS's own partition, so a
+# missing or half-written /auros still starts a plain AurOS.
+stubs_write() { # ESPUUID ROOTUUID
+    local d
+    for d in AurOS BOOT ubuntu; do
+        [ -f "$ESP/EFI/$d/grub.cfg" ] || continue
+        cat > "$ESP/EFI/$d/grub.cfg.new" <<EOF
+search --no-floppy --fs-uuid --set=root $1
+if [ -f (\$root)/auros/grub.cfg ]; then
+  set prefix=(\$root)/auros
+  configfile (\$root)/auros/grub.cfg
+fi
+search --no-floppy --fs-uuid --set=root $2
+set prefix=(\$root)/boot/grub
+configfile (\$root)/boot/grub/grub.cfg
+EOF
+        sync; mv -f "$ESP/EFI/$d/grub.cfg.new" "$ESP/EFI/$d/grub.cfg"
+    done
+}
+
+cmd_prepare() {
+    local dev partuuid espuuid rootuuid fstype need free
+    [ "$(id -u)" = 0 ] || die "prepare needs root"
+    dev=$(device)
+    [ -b "$dev" ] || die "cannot tell which partition AurOS is on"
+    is_luks "$dev" && die "the drive is encrypted already"
+    fstype=$(findmnt -n -o FSTYPE /)
+    [ "$fstype" = ext4 ] || die "AurOS is on $fstype, not ext4: refusing"
+    [ -d /sys/firmware/efi ] || die "this computer did not start through UEFI: refusing"
+    partuuid=$(blkid -s PARTUUID -o value "$dev")
+    [ -n "$partuuid" ] || die "AurOS's partition has no GPT identity: refusing"
+    mountpoint -q "$ESP" || die "the EFI partition is not mounted: refusing"
+    espuuid=$(findmnt -n -o UUID "$ESP")
+    rootuuid=$(findmnt -n -o UUID /)
+    for b in "$PINBIN" "$(command -v cryptsetup)" "$ENROLL" "$(command -v resize2fs)"; do
+        [ -x "$b" ] || die "missing: ${b:-a program}"
+    done
+    # Two kernels and two initramfs images, and a margin.
+    need=$(( $(du -cm /boot/vmlinuz-* /boot/initrd.img-* 2>/dev/null | tail -1 | cut -f1) + 32 ))
+    free=$(df -Pm "$ESP" | awk 'NR==2 {print $4}')
+    [ "$free" -ge "$need" ] || die "the EFI partition has ${free} MB free and needs ${need} MB: refusing"
+
+    mkdir -p "$(dirname "$CONF")"
+    printf 'armed=1\npartuuid=%s\npcrs=%s\n' "$partuuid" "${AUROS_LOCK_PCRS-}" > "$CONF"
+    ln -sf "$HERE/initramfs-hook"   /etc/initramfs-tools/hooks/auros-lock
+    ln -sf "$HERE/initramfs-script" /etc/initramfs-tools/scripts/local-top/auros-lock
+    mkdir -p /etc/kernel/postinst.d /etc/initramfs/post-update.d
+    ln -sf "$HERE/boot-sync-hook" /etc/kernel/postinst.d/zzz-auros-lock
+    ln -sf "$HERE/boot-sync-hook" /etc/initramfs/post-update.d/zzz-auros-lock
+    systemctl link "$HERE/auros-lock-boot.service" >/dev/null 2>&1
+    systemctl enable "$HERE/auros-lock-encrypt.service" "$HERE/auros-lock-repin.service" \
+        "$HERE/auros-lock-boot.path" >/dev/null 2>&1 \
+        || die "could not enable the lock services"
+    update-initramfs -u -k all >/dev/null || die "update-initramfs failed"
+    cmd_boot_sync
+    stubs_write "$espuuid" "$rootuuid"
+    say "armed: the next start encrypts AurOS's partition ($dev)"
+}
+
+case "${1:-}" in
+    status)          cmd_status ;;
+    prepare)         cmd_prepare ;;
+    encrypt-pass)    cmd_encrypt_pass ;;
+    set-pin)         cmd_set_pin ;;
+    change-pin)      cmd_change_pin ;;
+    new-rescue-code) cmd_new_rescue_code ;;
+    repin)           cmd_repin ;;
+    boot-sync)       cmd_boot_sync ;;
+    *) sed -n '2,30s/^#  \{0,1\}//p' "$0" >&2; exit 2 ;;
+esac
