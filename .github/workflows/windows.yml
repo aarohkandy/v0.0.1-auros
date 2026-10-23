@@ -10,8 +10,10 @@
 #
 #   build              the .exe files, from this commit, on Linux
 #   windows-source     those .exe files, started on Windows
-#   windows-published  the file a person downloads from image-desktop,
-#                      started on Windows, pinned by its SHA-256
+#   pins               what a person downloads today: this repository's
+#                      newest full release, asked at run time
+#   windows-published  that AurOS-Setup.exe, started on Windows, checked
+#                      against the release's SHA256SUMS
 #   windows-known-bad  the 2026-09-25 test build must FAIL to start here,
 #                      or the jobs above prove nothing
 #   windows-download   WinHTTP fetches the published image pieces and
@@ -24,20 +26,11 @@ on:
   workflow_dispatch:
 
 env:
-  # The installer published on branch image-desktop. Change both lines
-  # together when a new one is published.
-  PUBLISHED_URL: https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/image-desktop/AurOS-Installer-test.exe
-  PUBLISHED_SHA256: ef903efd9cdeb10e15e52b3ce9e4eac83788f3396ac9f029ed04f2cfca1c5891
   # The known-bad file is in a commit of the image-desktop branch, which
   # only the old repository has (it was not moved: 7 GB). Pinned by its
   # hash, so where it is read from does not matter.
   KNOWN_BAD_URL: https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/d2735b6b775b1952c724aabdfdf2567246ab6c74/AurOS-Installer-test.exe
   KNOWN_BAD_SHA256: 3e32e929f57c5c2673f4547a09b44c827743d191120d22a57dfc6f28a4f3e875
-  # The image the published installer downloads: its piece list, and
-  # what the whole image must hash to. Change with the installer.
-  IMAGE_PIECES_URL: https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/image-desktop/v4/pieces.txt
-  IMAGE_SHA256: b36100653b1b3dd339c6209cdd60ab169706717f512f2bb5dee0273dd404da41
-  IMAGE_BYTES: 5333057536
 
 # One run at a time per branch. A push while one runs queues the newest
 # and drops older queued ones (GitHub keeps one pending run per group), so
@@ -50,6 +43,57 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # What a person downloads today, asked at run time, so promoting a
+  # release edits nothing here: this repository's newest FULL release
+  # (releases/latest never names a prerelease) -- its AurOS-Setup.exe
+  # with the hash its SHA256SUMS gives, its pieces.txt, and the image's
+  # image.sha256 and image.bytes. Only while this repository has no full
+  # release at all (a 404): the old repository's v4 files, pinned by
+  # hash. Anything else (the API down, a release missing a file) fails
+  # here rather than quietly testing the old files.
+  pins:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      published_url: ${{ steps.p.outputs.published_url }}
+      published_sha256: ${{ steps.p.outputs.published_sha256 }}
+      pieces_url: ${{ steps.p.outputs.pieces_url }}
+      image_sha256: ${{ steps.p.outputs.image_sha256 }}
+      image_bytes: ${{ steps.p.outputs.image_bytes }}
+    steps:
+      - id: p
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          code=$(curl -sS --retry 5 -o latest.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+                 "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest")
+          case "$code" in
+            200)
+              tag=$(python3 -c 'import json; print(json.load(open("latest.json"))["tag_name"])')
+              base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+              for f in SHA256SUMS image.sha256 image.bytes; do curl -fsSL --retry 5 -o "$f" "$base/$f"; done
+              published_url=$base/AurOS-Setup.exe
+              published_sha256=$(awk '$2 == "AurOS-Setup.exe" || $2 == "*AurOS-Setup.exe" {print $1}' SHA256SUMS)
+              pieces_url=$base/pieces.txt
+              image_sha256=$(tr -d ' \r\n' < image.sha256)
+              image_bytes=$(tr -d ' \r\n' < image.bytes)
+              from="release $tag of $GITHUB_REPOSITORY" ;;
+            404)
+              published_url=https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/image-desktop/AurOS-Installer-test.exe
+              published_sha256=ef903efd9cdeb10e15e52b3ce9e4eac83788f3396ac9f029ed04f2cfca1c5891
+              pieces_url=https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/image-desktop/v4/pieces.txt
+              image_sha256=b36100653b1b3dd339c6209cdd60ab169706717f512f2bb5dee0273dd404da41
+              image_bytes=5333057536
+              from="the old repository's v4 files: $GITHUB_REPOSITORY has no full release yet" ;;
+            *) echo "::error::the releases API answered $code"; cat latest.json; exit 1 ;;
+          esac
+          [[ $published_sha256 =~ ^[0-9a-f]{64}$ && $image_sha256 =~ ^[0-9a-f]{64}$ && $image_bytes =~ ^[0-9]+$ ]] \
+            || { echo "::error::$from: no AurOS-Setup.exe in SHA256SUMS, or no image.sha256/image.bytes"; exit 1; }
+          { echo "published_url=$published_url"; echo "published_sha256=$published_sha256"
+            echo "pieces_url=$pieces_url"; echo "image_sha256=$image_sha256"; echo "image_bytes=$image_bytes"; } | tee -a "$GITHUB_OUTPUT"
+          echo "what a person downloads: $from" | tee -a "$GITHUB_STEP_SUMMARY"
+
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -281,8 +325,12 @@ jobs:
           "the wizard was running after 8 seconds"
 
   windows-published:
+    needs: pins
     runs-on: windows-latest
     timeout-minutes: 20
+    env:
+      PUBLISHED_URL: ${{ needs.pins.outputs.published_url }}
+      PUBLISHED_SHA256: ${{ needs.pins.outputs.published_sha256 }}
     steps:
       - name: download what a person downloads
         shell: pwsh
@@ -290,7 +338,7 @@ jobs:
           Invoke-WebRequest -Uri $env:PUBLISHED_URL -OutFile AurOS-Installer-test.exe
           $h = (Get-FileHash AurOS-Installer-test.exe -Algorithm SHA256).Hash.ToLower()
           "SHA-256 $h"
-          if ($h -ne $env:PUBLISHED_SHA256) { throw "the published file is not the one this workflow was pinned to" }
+          if ($h -ne $env:PUBLISHED_SHA256) { throw "the published file is not the one its release lists" }
       - name: it starts, navigates, runs preflight
         shell: pwsh
         run: |
@@ -333,9 +381,13 @@ jobs:
           if ($started) { throw "the known-bad build started: this machine cannot tell a good installer from a bad one" }
 
   windows-download:
-    needs: build
+    needs: [build, pins]
     runs-on: windows-latest
     timeout-minutes: 60
+    env:
+      IMAGE_PIECES_URL: ${{ needs.pins.outputs.pieces_url }}
+      IMAGE_SHA256: ${{ needs.pins.outputs.image_sha256 }}
+      IMAGE_BYTES: ${{ needs.pins.outputs.image_bytes }}
     steps:
       - uses: actions/download-artifact@v4
         with: { name: exe, path: exe }
