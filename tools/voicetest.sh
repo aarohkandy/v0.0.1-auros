@@ -52,6 +52,7 @@ EOF
 cat > "$T/bin/whisper.sh" <<EOF
 #!/bin/sh
 touch "$T/whisper.ran"
+basename "\$0" > "$T/whisper.which"
 printf '%s\n' "\$@" > "$T/whisper.args"
 f=""; prev=""
 for a in "\$@"; do [ "\$prev" = "-f" ] && f="\$a"; prev="\$a"; done
@@ -92,16 +93,25 @@ cat > "$T/bin/espeak.sh" <<EOF
 #!/bin/sh
 printf '%s\n' "\$@" > "$T/espeak.args"
 EOF
+cp "$T/bin/whisper.sh" "$T/bin/whisper-fast.sh"
 chmod +x "$T/bin/"*.sh
+: > "$T/model.bin"; : > "$T/model-fast.bin"
+echo 'flags		: fpu vme sse sse2 sse4_2 popcnt' > "$T/cpuinfo.slow"
+echo 'flags		: fpu vme sse sse2 sse4_2 popcnt avx avx2 fma f16c bmi2' > "$T/cpuinfo.fast"
+echo 'flags		: fpu vme avx2 fma f16c' > "$T/cpuinfo.part"
+cp "$T/cpuinfo.slow" "$T/cpuinfo"
 echo '{ "audio": { "sample_rate": 16000 }, "espeak": { "voice": "en-us" } }' > "$T/voice.onnx.json"
 : > "$T/voice.onnx"
 
-build() {   # $1 = voice.c, $2 = out, $3 = recorder macro value
-    cc -O1 -g -std=gnu11 -w -o "$2" "$1" \
+build() {   # $1 = voice.c, $2 = out, $3 = recorder macro value, $4... = more flags
+    _src=$1; _out=$2; _rec=$3; shift 3
+    cc -O1 -g -std=gnu11 -w -o "$_out" "$_src" "$@" \
        -DAURVOICE_WHISPER="\"$T/bin/whisper.sh\"" -DAURVOICE_MODEL="\"$T/model.bin\"" \
        -DAURVOICE_PIPER="\"$T/bin/piper.sh\"" -DAURVOICE_VOICE="\"$T/voice.onnx\"" \
        -DAURVOICE_ESPEAK="\"$T/bin/espeak.sh\"" -DAURVOICE_WHISPER_MS=2500 \
-       -DAURVOICE_RECORDERS="$3" \
+       -DAURVOICE_WHISPER_FAST="\"$T/bin/whisper-fast.sh\"" -DAURVOICE_CPUINFO="\"$T/cpuinfo\"" \
+       -DAURVOICE_MODEL_FAST="\"$T/model-fast.bin\"" \
+       -DAURVOICE_RECORDERS="$_rec" \
        -DAURVOICE_PLAYERS="{ \"$T/bin/player.sh\", \"--raw\", \"--rate=%RATE%\", NULL }"
 }
 REC_OK="{ \"$T/bin/rec.sh\", NULL }"
@@ -129,6 +139,13 @@ run_all() {   # $1 = binary under test; prints nothing, sets fails/checks
     else [ "$owner" = 0 ]; ok "no core dump can hold her voice while it is recording (not dumpable)" $?; fi
     grep -qx -- '-l' "$T/whisper.args" && grep -qx 'en' "$T/whisper.args" && ! grep -qiE 'http|://|--server' "$T/whisper.args"
     ok "the recogniser is asked for English and given no address" $?
+    grep -qx -- '-ac' "$T/whisper.args" && grep -qx '750' "$T/whisper.args"
+    ok "a short clip is looked at through a 15-second window, not 30" $?
+    # ...and a long one is not squeezed into it.
+    echo ok > "$T/whisper.mode"; rm -f "$T/whisper.args"
+    "$B_LONG" listen --max 2 > "$T/out.long" 2>&1 & pid=$!; sleep 1.2; kill -USR1 $pid; finish $pid
+    ! grep -qx -- '-ac' "$T/whisper.args"
+    ok "a clip longer than that gets the whole 30 seconds" $?
 
     # listen: the time limit is hers, and it is kept.
     rm -f "$T/whisper.ran"
@@ -168,6 +185,17 @@ run_all() {   # $1 = binary under test; prints nothing, sets fails/checks
     echo tone > "$T/rec.mode"
     "$A" listen --max 2 > "$T/out.9" 2>&1 & pid=$!; sleep 1.2; kill -USR1 $pid; finish $pid
     [ "$(cat "$T/out.9")" = "heard Thank you." ]; ok "'Thank you.' said out loud is believed" $?
+
+    # listen: which recogniser, by the processor.
+    echo tone > "$T/rec.mode"; echo ok > "$T/whisper.mode"
+    for kind in fast:whisper-fast.sh slow:whisper.sh part:whisper.sh; do
+        cp "$T/cpuinfo.${kind%%:*}" "$T/cpuinfo"; rm -f "$T/whisper.which"
+        "$A" listen --max 2 > "$T/out.cpu" 2>&1 & pid=$!; sleep 1.2; kill -USR1 $pid; finish $pid
+        want_model="$T/model.bin"; [ "${kind%%:*}" = fast ] && want_model="$T/model-fast.bin"
+        [ "$(cat "$T/whisper.which" 2>/dev/null)" = "${kind#*:}" ] && grep -qx -- "$want_model" "$T/whisper.args"
+        ok "processor '${kind%%:*}': the recogniser run is ${kind#*:}, with its own model" $?
+    done
+    cp "$T/cpuinfo.slow" "$T/cpuinfo"
 
     # listen: a recorder that hands over a WAV.
     echo wav > "$T/rec.mode"; echo ok > "$T/whisper.mode"
@@ -225,7 +253,8 @@ build "$ROOT/src/aurwish/voice.c" "$T/real-nomic" "$REC_NONE"
 cc -O1 -std=gnu11 -w -o "$T/real-nopiper" "$ROOT/src/aurwish/voice.c" \
    -DAURVOICE_PIPER="\"$T/bin/none\"" -DAURVOICE_ESPEAK="\"$T/bin/espeak.sh\"" \
    -DAURVOICE_RECORDERS="$REC_NONE" -DAURVOICE_PLAYERS='{ "/nonexistent/player", NULL }'
-B_NOMIC="$T/real-nomic"; B_NOPIPER="$T/real-nopiper"
+build "$ROOT/src/aurwish/voice.c" "$T/real-long" "$REC_OK" -DAURVOICE_AC_MAX_S=1
+B_NOMIC="$T/real-nomic"; B_NOPIPER="$T/real-nopiper"; B_LONG="$T/real-long"
 run_all "$T/real"
 echo
 echo "$checks checks, $fails failed"
@@ -245,6 +274,11 @@ control characters are kept^if (c < 0x20 || c == 0x7f) c = ' ';\n        if (c =
 a leading dash is a flag for espeak^"-s", "140", "--", t, NULL^"-s", "140", t, NULL
 the recogniser is not given a memory file^syscall(SYS_memfd_create, "aurvoice", 0u)^syscall(SYS_memfd_create, "", 0u)
 a hung recogniser is waited for ever^if (now_ms() - t0 > WHISPER_MS) break;^
+the fast recogniser is run on any processor^return ok;^return 1;
+the baseline recogniser is run on every processor^ok = strstr(pad, " avx2 ") && strstr(pad, " fma ") &&^ok = strstr(pad, " avx2 ") ||
+the larger model is never used^const char *model = (fast && access(AURVOICE_MODEL_FAST, R_OK) == 0) ? AURVOICE_MODEL_FAST^const char *model = (0 && access(AURVOICE_MODEL_FAST, R_OK) == 0) ? AURVOICE_MODEL_FAST
+every clip is squeezed into the short window^int short_clip = (b->n / 32000) <= AURVOICE_AC_MAX_S;^int short_clip = 1;
+no clip gets the short window^int short_clip = (b->n / 32000) <= AURVOICE_AC_MAX_S;^int short_clip = 0;
 the sentence is not capped for the voice^for (; *in && o + 1 < outn && o < TEXT_MAX; in++) {^for (; *in && o + 1 < outn; in++) {
 EOF
 n=0; bad=0
@@ -268,7 +302,8 @@ PY
     cc -O1 -std=gnu11 -w -o "$M/real-nopiper" "$M/voice.c" -DAURVOICE_PIPER="\"$T/bin/none\"" \
        -DAURVOICE_ESPEAK="\"$T/bin/espeak.sh\"" -DAURVOICE_RECORDERS="$REC_NONE" \
        -DAURVOICE_PLAYERS='{ "/nonexistent/player", NULL }' 2>/dev/null
-    B_NOMIC="$M/real-nomic"; B_NOPIPER="$M/real-nopiper"
+    build "$M/voice.c" "$M/real-long" "$REC_OK" -DAURVOICE_AC_MAX_S=1 2>/dev/null
+    B_NOMIC="$M/real-nomic"; B_NOPIPER="$M/real-nopiper"; B_LONG="$M/real-long"
     f0=$fails; c0=$checks
     run_all "$M/real" > "$M/log" 2>&1
     if [ "$fails" -gt "$f0" ]; then echo "  killed    $n: $what"; else echo "  SURVIVED  $n: $what"; bad=$((bad + 1)); fi

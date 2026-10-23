@@ -279,15 +279,18 @@ jobs:
              src/aurshell/layouts/[a-z]*.c src/common/theme.c src/common/font.c \
              -I src/aurshell -I src/common -lm
           "$RUNNER_TEMP/looktest" 2>&1 | tee transcripts/looktest.txt
-      - name: wishuitest (Wishes, what she sees and says; then 23 deliberate breakages)
+      - name: wishuitest (Wishes, what she sees and says; then 34 deliberate breakages)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/wishuitest.sh 2>&1 | tee transcripts/wishuitest.txt
-      - name: voicetest (aurvoice, her voice stays in memory; 12 deliberate breakages)
+      - name: voicetest (aurvoice, her voice stays in memory; 17 deliberate breakages)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/voicetest.sh 2>&1 | tee transcripts/voicetest.txt
       - name: wishgallerytest (every wish she can press is one the engine accepts)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/wishgallerytest.sh 2>&1 | tee transcripts/wishgallerytest.txt
+      - name: wishe2e (the potato, end to end through W1's real engine)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/wishe2e.sh 2>&1 | tee transcripts/wishe2e.txt
       - name: nvramtest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sudo sh tools/nvramtest.sh 2>&1 | tee transcripts/nvramtest.txt

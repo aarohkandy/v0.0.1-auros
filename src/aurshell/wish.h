@@ -29,6 +29,7 @@
 /* c->wish_open: which part of the panel is up. */
 #define WISH_OPEN_ASK   1      /* "What would you like your computer to do?" */
 #define WISH_OPEN_MINE  2      /* My wishes, from Settings                    */
+#define WISH_OPEN_TODAY 3      /* What my wishes did today, from Help         */
 
 /* The engine's socket, in $XDG_RUNTIME_DIR. Overridable for tests. */
 #ifndef WISH_SOCK_NAME
@@ -56,6 +57,8 @@ enum {
     WP_DONE,      /* it is on                                           */
     WP_ERROR,     /* offline, busy, resting: one plain line             */
     WP_MINE,      /* My wishes                                          */
+    WP_PICK,      /* wishes she can press: the gallery and its blanks   */
+    WP_TODAY,     /* What my wishes did today                           */
     WP_N
 };
 
@@ -75,6 +78,10 @@ typedef struct {
     int said_len;       /* CONFIRM/WAIT: bytes of what she said        */
     int sent_len;       /* CONFIRM: bytes of the device's sentence     */
     int now_wish;       /* DONE: it ran once (Undo), not a lasting wish */
+    int n_items;        /* PICK: choices on this page (before paging)  */
+    int pick_mode;      /* PICK: 0 a list of lines, 1 words, 2 pictures */
+    int first_item;     /* PICK: the first one shown                   */
+    int pick_long;      /* PICK: the longest label, in characters      */
 } wish_view;
 
 /* What a target IS, for pressing and for the test. */
@@ -83,7 +90,7 @@ enum {
     WT_STOP_LISTEN, WT_CANCEL, WT_SAID, WT_YES, WT_NO, WT_SHOW, WT_READ,
     WT_AGAIN, WT_HELP, WT_UNDO, WT_CONSENT_YES, WT_CONSENT_NO,
     WT_SWITCH, WT_REMOVE, WT_REMOVE_YES, WT_REMOVE_NO, WT_ALL_OFF,
-    WT_RESTORE, WT_MORE, WT_NEW
+    WT_RESTORE, WT_MORE, WT_NEW, WT_GALLERY, WT_BACK, WT_ITEM, WT_STOP_ALL
 };
 
 #define WISH_MAX_TARGETS 40
@@ -105,6 +112,9 @@ int  wish_key(shell_ctx *c, int k);        /* 1 if this panel took it   */
  * trigger words, the look) arrive, so it runs whether or not the panel
  * is open. */
 int  wish_step(shell_ctx *c);
+/* Called on every real input event. At most once a second the engine is
+ * told somebody is here (idle wishes, and "3 seconds with no typing"). */
+void wish_input_seen(void);
 /* The socket, for the host's poll(), or -1. */
 int  wish_fd(void);
 /* How long the host may sleep, in ms, or -1 for "no opinion". */
@@ -126,6 +136,14 @@ int  wish_restore_look(shell_ctx *c, const char *look);
  * changed something now. 1 while it is. */
 int  wish_undo_offered(void);
 void wish_undo(shell_ctx *c);
+
+/* From the shell's host loop: c->want_wish was set by a button that is not
+ * Wishes' own (Help's "What my wishes did today" and "Stop all wishes").
+ * WISH_CMD_TODAY opens the page; WISH_CMD_STOP_ALL turns every wish off at
+ * once and says so. */
+#define WISH_CMD_TODAY     1
+#define WISH_CMD_STOP_ALL  2
+void wish_command(shell_ctx *c, int cmd);
 
 /* Wishes are not on this machine at all (a kiosk, a policy that says
  * wishes="off"): no button anywhere. */
@@ -149,5 +167,7 @@ int  wish_page(void);
 void wish_feed_line(shell_ctx *c, const char *line);
 /* The last request line the panel wrote (or would have written). */
 const char *wish_last_sent(void);
+/* The last line the engine sent (for the end-to-end test's diagnostics). */
+const char *wish_last_recv(void);
 
 #endif

@@ -554,6 +554,7 @@ static void load_policy(shell_ctx *c, const char *path)
     c->allow_tty          = strcmp(theme_str(&p, "allow_tty",             "yes"), "no") != 0;
     c->allow_network      = strcmp(theme_str(&p, "allow_network_change",  "yes"), "no") != 0;
     c->kiosk              = strcmp(theme_str(&p, "kiosk_mode",            "no"),  "yes") == 0;
+    c->no_wishes          = strcmp(theme_str(&p, "wishes",                "on"),  "off") == 0;
     /* Clamped, not trusted. A profile that says 100000 is a machine
      * whose screen never goes off; one that says -1 would have been an
      * enormous unsigned wait. Two hours is longer than anybody means
@@ -1525,6 +1526,7 @@ int main(int argc, char **argv)
         /* The engine's socket, the microphone, and what a wish has put
          * on the screen -- whether or not the panel is open. */
         if (wish_step(&c)) dirty = 1;
+        if (c.want_wish) { wish_command(&c, c.want_wish); c.want_wish = 0; dirty = 1; }
         run_reap();
         /* The indicator needs one more frame AFTER it goes, to paint
          * the screen without it. Without the falling edge it stayed on
@@ -1945,6 +1947,7 @@ int main(int argc, char **argv)
                 if (ev.type != EV_SYN) {
                     int64_t tnow = now_ms();
                     last_input_ms = tnow;
+                    wish_input_seen();
                     if (screen_dark) {
                         /* THE PRESS THAT WAKES IT DOES NOTHING ELSE.
                          *

@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include "../src/aurshell/wish.c"
+#include "../src/aurshell/wishgallery.c"
 #include "../src/aurshell/foot.h"
 #include "../src/common/png.h"
 #include "../src/common/wall.h"
@@ -115,6 +116,16 @@ static void s_mine(shell_ctx *c) { (void)c; rows(4); go(WP_MINE); }
 static void s_mine_many(shell_ctx *c) { (void)c; rows(7); go(WP_MINE); }
 static void s_mine_remove(shell_ctx *c) { (void)c; rows(4); go(WP_MINE); W.removing = 1; }
 static void s_mine_empty(shell_ctx *c) { (void)c; rows(0); go(WP_MINE); }
+static void s_today(shell_ctx *c) { (void)c;
+    W.n_today = 3;
+    snprintf(W.today[0].title, sizeof W.today[0].title, "Potatoes"); W.today[0].times = 3;
+    snprintf(W.today[1].title, sizeof W.today[1].title, "Pills at 9"); W.today[1].times = 1;
+    snprintf(W.today[2].title, sizeof W.today[2].title, "Good morning"); W.today[2].times = 1;
+    W.first_row = 0; go(WP_TODAY); }
+static void s_pick_list(shell_ctx *c) { (void)c; W.g_stage = -1; W.g_first = 0; go(WP_PICK); }
+static void s_pick_pic(shell_ctx *c) { (void)c; W.g_tmpl = 13; W.g_stage = 0; W.g_first = 0; go(WP_PICK); }
+static void s_pick_word(shell_ctx *c) { (void)c; W.g_tmpl = 13; W.g_stage = 1; W.g_first = 0; go(WP_PICK); }
+static void s_pick_time(shell_ctx *c) { (void)c; W.g_tmpl = 9; W.g_stage = 0; W.g_first = 0; go(WP_PICK); }
 
 static const state STATES[] = {
     { "01-consent", s_consent }, { "02-ask", s_ask }, { "03-ask-typed", s_typed },
@@ -124,7 +135,9 @@ static const state STATES[] = {
     { "13-done-now", s_done_now }, { "14-offline", s_offline }, { "15-limit", s_limit },
     { "16-broken", s_broken }, { "17-nomic", s_nomic }, { "18-mine", s_mine },
     { "19-mine-many", s_mine_many }, { "20-mine-remove", s_mine_remove },
-    { "21-mine-empty", s_mine_empty },
+    { "21-mine-empty", s_mine_empty }, { "22-pick-list", s_pick_list },
+    { "23-pick-picture", s_pick_pic }, { "24-pick-word", s_pick_word },
+    { "25-pick-time", s_pick_time }, { "26-today", s_today },
 };
 #define NSTATES ((int)(sizeof STATES / sizeof STATES[0]))
 
@@ -229,8 +242,22 @@ int main(int argc, char **argv)
     HOME(); foot_paint(&c, s, &f); wishover_paint(&c, s, &f);
     snprintf(nm, sizeof nm, "33-keep-this%s", sc);
     save(argv[3], look, W_, H_, nm, s);
+    {   /* She presses Keep it: that card goes. */
+        wish_target kt[24];
+        int kn = wishover_targets(&c, c.screen_w, c.screen_h, kt, 24);
+        for (int i = 0; i < kn; i++)
+            if (kt[i].kind == WOT_KEEP) { wishover_click(&c, kt[i].r.x + 3, kt[i].r.y + 3); break; }
+        wishover_take_release();
+    }
+
+    W.undo_until = fake_ms + 600000;
+    wishover_card(&c, WO_UNDO, "It is done. If it is not what you wanted, you can put it back.",
+                  "Bigger words", NULL, NULL, 0);
+    HOME(); foot_paint(&c, s, &f); wishover_paint(&c, s, &f);
+    snprintf(nm, sizeof nm, "34-undo%s", sc);
+    save(argv[3], look, W_, H_, nm, s);
 
     printf("%s %dx%d text %.0f%%: %d pictures in %s\n", look, W_, H_,
-           (double)(scale * 100.f), NSTATES + 5, argv[3]);
+           (double)(scale * 100.f), NSTATES + 6, argv[3]);
     return 0;
 }

@@ -97,7 +97,8 @@ static card *slot_for(const char *wid, int kind)
 {
     /* One per wish: a new firing replaces the old card (§3.5). */
     for (int i = 0; i < O.n; i++)
-        if ((wid && *wid && !strcmp(O.cards[i].wid, wid)) ||
+        if ((kind == WO_UNDO && O.cards[i].kind == WO_UNDO) ||
+            (wid && *wid && !strcmp(O.cards[i].wid, wid)) ||
             (kind == WO_KEEP && O.cards[i].keep_what && O.cards[i].kind == WO_KEEP))
             return &O.cards[i];
     if (O.n == CARDS_MAX) drop_card(0);            /* the oldest goes */
@@ -162,6 +163,9 @@ int wishover_step(shell_ctx *c)
     }
     for (int i = O.n - 1; i >= 0; i--) {
         card *k = &O.cards[i];
+        /* Undo is there for ten minutes after a wish that changed something
+         * now (docs/AI.md §7 change 7), and then it is not. */
+        if (k->kind == WO_UNDO && !wish_undo_offered()) { drop_card(i); dirty = 1; continue; }
         if (k->keep_what) {
             /* 15 s with no answer: it goes back (§7.7). */
             if (now - k->t0 >= (uint64_t)WO_KEEP_S * 1000u) {
@@ -210,6 +214,7 @@ static int card_buttons(const card *k, int *kinds)
         kinds[n++] = WOT_REVEAL;
         return n;
     }
+    if (k->kind == WO_UNDO)         { kinds[n++] = WOT_UNDOWISH; kinds[n++] = WOT_CLOSE; return n; }
     if (k->keep_what)               { kinds[n++] = WOT_KEEP; kinds[n++] = WOT_UNDO; return n; }
     if (k->kind == WO_KEEP)         { kinds[n++] = WOT_KEEP; kinds[n++] = WOT_STOP; return n; }
     kinds[n++] = WOT_CLOSE;
@@ -227,6 +232,7 @@ static const char *ot_label(int kind, const card *k)
     case WOT_KEEP:   return "Keep it";
     case WOT_UNDO:   return k && k->keep_what ? "Put it back" : "Turn this wish off";
     case WOT_REVEAL: return "Show it";
+    case WOT_UNDOWISH: return "Undo my last wish";
     }
     return "";
 }
@@ -830,6 +836,16 @@ static void blit_scaled(surface *s, const uint32_t *src, int sw_, int sh_,
     }
 }
 
+int wishover_draw_emoji(surface *s, const char *emoji, rect r)
+{
+    int ew = 0, eh = 0;
+    const uint32_t *em = wishover_emoji(emoji, &ew, &eh);
+    if (!em) return 0;
+    int size = r.w < r.h ? r.w : r.h;
+    blit_scaled(s, em, ew, eh, r.x + (r.w - size) / 2, r.y + (r.h - size) / 2, size, 1.f);
+    return 1;
+}
+
 /* Cheap and repeatable: the same screen every time for the same wish. */
 static unsigned hash(unsigned x) { x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16; return x; }
 
@@ -924,7 +940,8 @@ void wishover_paint(shell_ctx *c, surface *s, shell_fonts *f)
         draw_round_rect_border(s, r, corners_all(12.f), 2.f, c->fg, 1.f);
         int x = r.x + g.pad, y = r.y + g.pad;
         char head[120];
-        if (k->keep_what)            snprintf(head, sizeof head, "Keep this?");
+        if (k->kind == WO_UNDO)      snprintf(head, sizeof head, "Your wish is done");
+        else if (k->keep_what)       snprintf(head, sizeof head, "Keep this?");
         else if (k->kind == WO_KEEP) snprintf(head, sizeof head, "Keep this wish?");
         else if (k->wish[0])         snprintf(head, sizeof head, "Your wish \xE2\x80\x9C%s\xE2\x80\x9D", k->wish);
         else                         snprintf(head, sizeof head, "Wishes");
@@ -1014,6 +1031,7 @@ int wishover_click(shell_ctx *c, int x, int y)
         case WOT_CLOSE:  drop_card(i); break;
         case WOT_SNOOZE: wish_send_snooze(k->wid, 10); drop_card(i); break;
         case WOT_REVEAL: k->revealed = 1; break;
+        case WOT_UNDOWISH: wish_undo(c); drop_card(i); break;
         case WOT_KEEP:
             if (!k->keep_what) wish_send_keep(k->wid, 1);
             drop_card(i);

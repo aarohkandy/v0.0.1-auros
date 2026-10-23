@@ -48,7 +48,7 @@ static int row_applies(int row, const set_view *v)
     if (row == R_SOUND)   return v->sound;
     if (row == R_BATTERY) return v->battery;
     if (row == R_WINDOWS) return v->windows;
-    if (row == R_WISHES)  return AUROS_WISHES;   /* D14: not in the v0.1 image */
+    if (row == R_WISHES)  return AUROS_WISHES && v->wishes;   /* D14: not in the v0.1 image */
     return 1;
 }
 
@@ -193,7 +193,7 @@ static set_view view_now(const shell_ctx *c)
     v.sound     = S.volume >= 0;
     v.n_rows    = S.n_ch;
     v.windows   = S.converted;
-    (void)c;
+    v.wishes    = shell_wish_app(c) >= 0;
     return v;
 }
 

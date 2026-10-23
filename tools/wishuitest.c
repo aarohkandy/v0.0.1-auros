@@ -23,6 +23,7 @@
 
 #include "../src/aurshell/wish.c"
 #include "../src/aurshell/wishover.c"
+#include "../src/aurshell/wishgallery.c"
 #include "../src/aurshell/foot.h"
 #include "../src/common/png.h"
 
@@ -37,17 +38,31 @@ static void ok(const char *what, int good)
 static uint64_t T = 5000000;
 static uint64_t test_now(void) { return T; }
 
-/* The compositor's half, as the shell sees it: what it was handed. */
+/* The compositor's half, as the shell sees it: what it was handed
+ * (src/aurwl/wishhook.h). */
 static char got_words[10][33];
 static int  got_nw = -1;
-int wishhook_set_triggers(const char *const *words, int n_words,
-                          const char *const *apps, int n_apps)
+static char q_word[33], q_app[128];
+void wishhook_set(const char *const *words, int nwords, const char *const *apps, int napps)
 {
-    (void)apps; (void)n_apps;
-    got_nw = n_words;
-    for (int i = 0; i < n_words && i < 10; i++)
+    (void)apps; (void)napps;
+    got_nw = nwords;
+    for (int i = 0; i < nwords && i < 10; i++)
         snprintf(got_words[i], sizeof got_words[i], "%s", words[i]);
-    return 0;
+}
+int wishhook_take_word(char out[33])
+{
+    if (!q_word[0]) return 0;
+    snprintf(out, 33, "%s", q_word);
+    q_word[0] = 0;
+    return 1;
+}
+int wishhook_take_app(char out[128])
+{
+    if (!q_app[0]) return 0;
+    snprintf(out, 128, "%s", q_app);
+    q_app[0] = 0;
+    return 1;
 }
 
 static int eng = -1;                  /* the engine's end */
@@ -232,11 +247,29 @@ static void asking(void)
        strstr(wrote, "\"pending\":\"p8\""));
     snprintf(line, sizeof line, "{\"id\":%d,\"kind\":\"done\"}", last_id("confirm"));
     say(&c, line);
-    ok("a wish that ran now is Done, with Undo for ten minutes",
-       W.page == WP_DONE && wish_undo_offered());
+    ok("a wish that ran now is Done, with Undo for exactly ten minutes",
+       W.page == WP_DONE && wish_undo_offered() && W.undo_until == T + 10 * 60 * 1000);
+    ok("and a card with 'Undo my last wish' stands ready for her to find",
+       wishover_cards() == 1 && O.cards[0].kind == WO_UNDO);
+    {
+        wish_target ot[24];
+        c.wish_open = 0;
+        int on = wishover_targets(&c, c.screen_w, c.screen_h, ot, 24);
+        int ui = -1;
+        for (int i = 0; i < on; i++) if (ot[i].kind == WOT_UNDOWISH) ui = i;
+        drain();
+        int took = ui >= 0 && wishover_click(&c, ot[ui].r.x + 3, ot[ui].r.y + 3) == 1;
+        drain();
+        ok("pressing it asks the engine to undo, and the card goes",
+           took && strstr(wrote, "{\"op\":\"undo\"") && wishover_cards() == 0 && !wish_undo_offered());
+        wishover_take_release();
+    }
+    /* A second wish, and this time nobody presses it. */
+    W.undo_until = T + 10 * 60 * 1000;
+    wishover_card(&c, WO_UNDO, "It is done.", NULL, NULL, NULL, 0);
     T += 10 * 60 * 1000 + 1;
     wish_step(&c);
-    ok("and Undo is gone after ten minutes", !wish_undo_offered());
+    ok("and Undo is gone after ten minutes, card and all", !wish_undo_offered() && wishover_cards() == 0);
 
     /* §7.9: the same words within 30 s are not sent again. */
     fresh(&c);
@@ -361,14 +394,30 @@ static void trouble(void)
     ok("the engine stopping says so at once, not after 20 seconds",
        W.page == WP_ERROR && !strcmp(ERRS[W.err].code, "broken") && K.fd < 0);
 
-    /* A line over 4096 bytes closes the connection (§3.7). */
+    /* The engine may send a long list: up to 64 KB a line (§3.7). */
     plug();
-    char *big = malloc(6000);
-    memset(big, 'a', 5998); big[5998] = '\n'; big[5999] = 0;
-    if (send(eng, big, 5999, MSG_NOSIGNAL) < 0) perror("send");
+    {
+        char *lst = malloc(30000), *p = lst;
+        p += sprintf(p, "{\"id\":99,\"kind\":\"list\",\"all_off\":false,\"undo\":false,\"wishes\":[");
+        for (int i = 0; i < 50; i++)
+            p += sprintf(p, "%s{\"wid\":\"w%d\",\"title\":\"T%d\",\"sentence\":\"Every time you type the word potato, your screen fills with potatoes for *3 seconds*.\",\"status\":\"on\"}",
+                         i ? "," : "", i, i);
+        p += sprintf(p, "]}\n");
+        if (send(eng, lst, (size_t)(p - lst), MSG_NOSIGNAL) < 0) perror("send");
+        wish_step(&c);
+        ok("a 50-wish list, a line of several thousand bytes, is taken whole", K.fd >= 0 && W.n_rows == 50);
+        free(lst);
+    }
+    /* A line over 64 KB closes the connection (§3.7). */
+    char *big = malloc(70000);
+    memset(big, 'a', 69998); big[69998] = '\n'; big[69999] = 0;
+    for (size_t off = 0; off < 69999; ) {
+        ssize_t k = send(eng, big + off, 69999 - off, MSG_NOSIGNAL | MSG_DONTWAIT);
+        if (k > 0) off += (size_t)k; else { wish_step(&c); if (K.fd < 0) break; }
+    }
     free(big);
-    wish_step(&c);
-    ok("a line longer than 4096 bytes closes the connection", K.fd < 0);
+    wish_step(&c); wish_step(&c);
+    ok("a line longer than 64 KB closes the connection", K.fd < 0);
 }
 
 /* ── 4. what a wish puts on the screen ──────────────────────────── */
@@ -564,6 +613,8 @@ static void targets(void)
                     v.can_retry = 1; v.now_wish = var;
                     v.n_rows = var ? 9 : 2; v.more = var; v.removing = var ? 0 : -1;
                     v.said_len = var ? 290 : 40; v.sent_len = var ? 200 : 90;
+                    v.n_items = var ? 12 : 20; v.pick_mode = var ? 2 : 0; v.pick_long = 60;
+                    v.first_item = 0; if (p == WP_PICK) v.more = var;
                     wish_target t[WISH_MAX_TARGETS];
                     int n = wish_targets(&c, c.screen_w, c.screen_h, &v, t, WISH_MAX_TARGETS);
                     pages++;
@@ -596,6 +647,283 @@ static void targets(void)
     char w[96];
     snprintf(w, sizeof w, "%d pages: every target >= 48 px, on screen, not overlapping", pages);
     ok(w, bad == 0);
+}
+
+static wish_target *find_kind(wish_target *t, int n, int kind, int arg)
+{
+    for (int i = 0; i < n; i++)
+        if (t[i].kind == kind && (arg < 0 || t[i].arg == arg)) return &t[i];
+    return NULL;
+}
+
+static int press(shell_ctx *c, int kind, int arg)
+{
+    wish_view v = view_now(c);
+    wish_target t[WISH_MAX_TARGETS];
+    int n = wish_targets(c, c->screen_w, c->screen_h, &v, t, WISH_MAX_TARGETS);
+    wish_target *x = find_kind(t, n, kind, arg);
+    if (!x) return 0;
+    wish_click(c, x->r.x + 3, x->r.y + 3);
+    return 1;
+}
+
+/* ── 6d. what the engine says it cannot do, and what it can ───────── */
+
+static void cannot(void)
+{
+    printf("\nwhen the engine cannot, and offers what it can\n");
+    shell_ctx c;
+    fresh(&c);
+    c.wish_open = WISH_OPEN_ASK;
+    wish_opened(&c);
+    char line[800];
+    go(WP_ASK);
+    W.last_ms = 0;
+    snprintf(W.text, sizeof W.text, "When my laptop points north, make the screen brighter");
+    submit(&c);
+    drain();
+    snprintf(line, sizeof line,
+             "{\"id\":%d,\"kind\":\"cannot\",\"missing\":\"compass\",\"text\":\"This computer has no compass.\","
+             "\"alt\":{\"pending\":\"p3\",\"title\":\"Brighter\",\"sentence\":\"*Now*, the screen gets *brighter*.\"}}", last_id("wish"));
+    say(&c, line);
+    ok("a cannot with an alternative: her words, then 'But I can do this', with Yes and No",
+       W.page == WP_CANNOT && !strcmp(W.pending, "p3") && strstr(W.sentence, "brighter") && ({
+        wish_view v = view_now(&c); wish_target t[WISH_MAX_TARGETS];
+        int n = wish_targets(&c, c.screen_w, c.screen_h, &v, t, WISH_MAX_TARGETS);
+        find_kind(t, n, WT_YES, -1) && find_kind(t, n, WT_NO, -1) && !find_kind(t, n, WT_AGAIN, -1); }));
+    drain();
+    press(&c, WT_YES, -1);
+    drain();
+    ok("Yes confirms the alternative", strstr(wrote, "{\"op\":\"confirm\"") && strstr(wrote, "\"pending\":\"p3\""));
+    go(WP_ASK);
+    W.last_ms = 0;
+    snprintf(W.text, sizeof W.text, "Fill my screen with something unusual please");
+    submit(&c);
+    drain();
+    snprintf(line, sizeof line,
+             "{\"id\":%d,\"kind\":\"cannot\",\"missing\":\"other\",\"text\":\"That is not something a wish can do yet.\"}", last_id("wish"));
+    say(&c, line);
+    ok("a cannot with no alternative offers another go and the list instead", W.page == WP_CANNOT && !W.pending[0] && ({
+        wish_view v = view_now(&c); wish_target t[WISH_MAX_TARGETS];
+        int n = wish_targets(&c, c.screen_w, c.screen_h, &v, t, WISH_MAX_TARGETS);
+        find_kind(t, n, WT_AGAIN, -1) && find_kind(t, n, WT_GALLERY, -1) && !find_kind(t, n, WT_YES, -1); }));
+    go(WP_ASK);
+    W.last_ms = 0;
+    snprintf(W.text, sizeof W.text, "Make the screen darker please now");
+    submit(&c);
+    drain();
+    snprintf(line, sizeof line,
+             "{\"id\":%d,\"kind\":\"error\",\"error\":\"busy\",\"retry_after\":300}", last_id("wish"));
+    say(&c, line);
+    ok("an error with retry_after is kept for the page to say", W.page == WP_ERROR && W.retry_after == 300);
+    snprintf(line, sizeof line, "{\"id\":%d,\"kind\":\"error\",\"error\":\"busy\",\"retry_after\":99999}", last_id("wish"));
+    W.req_id = last_id("wish");
+    say(&c, line);
+    ok("a retry_after over an hour is not believed", W.retry_after == 0);
+    snprintf(line, sizeof line, "{\"id\":7,\"kind\":\"help\",\"page\":null,\"pending\":\"p4\",\"sentence\":\"*Now*, the printer settings open.\"}");
+    W.req_id = 7;
+    say(&c, line);
+    ok("a help answer with no page and an offer shows the offer", W.page == WP_ANSWER && !W.help_page[0] && !strcmp(W.pending, "p4"));
+}
+
+/* ── 6c. what my wishes did today, and Stop all wishes ──────────── */
+
+static void today(void)
+{
+    printf("\nwhat my wishes did today, and stopping them all\n");
+    shell_ctx c;
+    fresh(&c);
+    c.want_wish = WISH_CMD_TODAY;
+    wish_command(&c, c.want_wish);
+    ok("Help's button opens the Today page", c.wish_open == WISH_OPEN_TODAY);
+    drain();
+    wish_opened(&c);
+    drain();
+    ok("which asks the engine what happened", strstr(wrote, "{\"op\":\"today\"") != NULL && W.page == WP_TODAY);
+    char line[400];
+    snprintf(line, sizeof line, "{\"id\":%d,\"kind\":\"today\",\"items\":[{\"wid\":\"w1\",\"title\":\"Potatoes\",\"times\":3},"
+             "{\"wid\":\"w2\",\"title\":\"Pills at 9\",\"times\":1}]}", last_id("today"));
+    say(&c, line);
+    ok("and shows each wish with how often it ran", W.n_today == 2 && !strcmp(W.today[0].title, "Potatoes") &&
+       W.today[0].times == 3 && W.today[1].times == 1);
+    ok("Stop all wishes is on that page, big enough", ({
+        wish_view v = view_now(&c); wish_target t[WISH_MAX_TARGETS];
+        int n = wish_targets(&c, c.screen_w, c.screen_h, &v, t, WISH_MAX_TARGETS);
+        wish_target *x = find_kind(t, n, WT_STOP_ALL, -1);
+        x && x->r.w >= 48 && x->r.h >= 48; }));
+    drain();
+    press(&c, WT_STOP_ALL, -1);
+    drain();
+    ok("pressing it turns every wish off and says so", strstr(wrote, "{\"op\":\"all_off\"") != NULL &&
+       W.page == WP_DONE && W.all_off);
+
+    /* From Help directly, without opening the panel. */
+    fresh(&c);
+    wishover_fill(&c, "\xF0\x9F\xA5\x94", NULL, 5, "Potatoes", "w1");
+    c.want_wish = WISH_CMD_STOP_ALL;
+    drain();
+    wish_command(&c, c.want_wish);
+    drain();
+    ok("Stop all wishes from Help: the engine is told, the screen is cleared, and a card says it is done",
+       strstr(wrote, "{\"op\":\"all_off\"") != NULL && !wishover_fill_on() && wishover_cards() == 1 &&
+       strstr(O.cards[0].text, "All your wishes are off"));
+    shell_ctx kiosk;
+    fresh(&kiosk);
+    kiosk.kiosk = 1;
+    wish_command(&kiosk, WISH_CMD_TODAY);
+    ok("a kiosk has no wishes to look at", kiosk.wish_open == 0);
+
+    /* wishes="off" in the policy: no button anywhere. */
+    shell_ctx on, off;
+    memset(&on, 0, sizeof on); memset(&off, 0, sizeof off);
+    theme_t th = {0};
+    shell_theme_load(&on, &th); shell_theme_load(&off, &th);
+    off.no_wishes = 1;
+    shell_seed_apps(&on); shell_seed_apps(&off);
+    ok("with Wishes on, the Make a wish entry is on the home", shell_wish_app(&on) >= 0);
+    int has = 0;
+    for (int i = 0; i < off.n_apps; i++) if (off.apps[i].role == APP_ROLE_WISH) has = 1;
+    ok("with wishes=off in the policy there is no entry and no button to find", shell_wish_app(&off) < 0 && !has);
+}
+
+/* ── 6a. keeping a wish from interrupting her ─────────────────────── */
+
+static void presence(void)
+{
+    printf("\nwhat the engine is told about her\n");
+    shell_ctx c;
+    fresh(&c);
+    hold_sent[0] = 0; input_pending = 0; input_sent_ms = 0;
+    drain();
+    wish_step(&c);
+    drain();
+    ok("with nothing in the way, the engine is told the hold is empty", strstr(wrote, "{\"op\":\"hold\",\"reasons\":[]}") != NULL);
+    wish_step(&c);
+    drain();
+    ok("and is not told again while it stays so", !strstr(wrote, "\"op\":\"hold\""));
+    c.net_open = 1;
+    wish_step(&c);
+    drain();
+    ok("while she is joining a network, the hold is 'password'", strstr(wrote, "\"reasons\":[\"password\"]") != NULL);
+    c.net_open = 0;
+    wish_step(&c);
+    drain();
+    ok("and it is lifted again", strstr(wrote, "\"reasons\":[]") != NULL);
+    c.bt_open = 1;
+    wish_step(&c);
+    drain();
+    ok("the headphones panel's PIN is held the same way", strstr(wrote, "\"reasons\":[\"password\"]") != NULL);
+    c.bt_open = 0;
+    wish_step(&c);
+    drain();
+
+    /* What the compositor matched is handed on, and nothing else. */
+    snprintf(q_word, sizeof q_word, "potato");
+    snprintf(q_app, sizeof q_app, "firefox");
+    wish_step(&c);
+    drain();
+    ok("a typed word and an opened program go to the engine as typed and app lines",
+       strstr(wrote, "{\"op\":\"typed\",\"word\":\"potato\"}") && strstr(wrote, "{\"op\":\"app\",\"app\":\"firefox\"}"));
+    wish_step(&c);
+    drain();
+    ok("each only once", !strstr(wrote, "\"op\":\"typed\"") && !strstr(wrote, "\"op\":\"app\""));
+    wish_input_seen();
+    wish_step(&c);
+    drain();
+    ok("a press or a keystroke tells the engine somebody is here", strstr(wrote, "{\"op\":\"input\"}") != NULL);
+    wish_input_seen();
+    wish_step(&c);
+    drain();
+    ok("but not more than once a second", !strstr(wrote, "{\"op\":\"input\"}"));
+    T += 1001;
+    wish_step(&c);
+    drain();
+    ok("after a second, again", strstr(wrote, "{\"op\":\"input\"}") != NULL);
+}
+
+/* ── 6b. the gallery: wishes she presses, offline ─────────────────── */
+
+/* Press an item, paging with Show more until it is on the screen. */
+static int press_item(shell_ctx *c, int idx)
+{
+    for (int tries = 0; tries < 12; tries++) {
+        if (press(c, WT_ITEM, idx)) return 1;
+        if (!press(c, WT_MORE, -1)) return 0;
+    }
+    return 0;
+}
+
+static void gallery(void)
+{
+    printf("\nthe gallery, pressed\n");
+    shell_ctx c;
+    fresh(&c);
+    c.screen_w = 1024; c.screen_h = 600 - foot_height(&c);
+    c.wish_open = WISH_OPEN_ASK;
+    wish_opened(&c);
+    ok("the question page offers Pick from a list", press(&c, WT_GALLERY, -1) && W.page == WP_PICK);
+
+    /* Every one of the templates can be reached, by paging. */
+    int seen[64] = { 0 }, guard = 0;
+    for (;;) {
+        wish_view v = view_now(&c);
+        wish_target t[WISH_MAX_TARGETS];
+        int n = wish_targets(&c, c.screen_w, c.screen_h, &v, t, WISH_MAX_TARGETS);
+        for (int i = 0; i < n; i++) if (t[i].kind == WT_ITEM && t[i].arg < 64) seen[t[i].arg] = 1;
+        if (!find_kind(t, n, WT_MORE, -1) || ++guard > 12) break;
+        press(&c, WT_MORE, -1);
+    }
+    int all = 1;
+    for (int i = 0; i < wg_count(); i++) if (!seen[i]) all = 0;
+    ok("at 1024x600 every template can be pressed, by paging with Show more", all && guard > 0);
+    W.g_first = 0;
+
+    /* A template with no blanks goes straight to the engine. */
+    drain();
+    press(&c, WT_ITEM, 0);
+    drain();
+    ok("a template with no blanks is sent as a check at once",
+       strstr(wrote, "{\"op\":\"check\"") &&
+       strstr(wrote, "\"wish\":{\"v\":1,\"when\":{\"type\":\"now\"},\"do\":[{\"type\":\"set_text_size\",\"size\":\"bigger\"}]}") &&
+       strstr(wrote, "\"said\":\"Make the words bigger\"") && !strstr(wrote, "\"op\":\"wish\"") && W.page == WP_WAIT);
+    char line[512];
+    snprintf(line, sizeof line, "{\"id\":%d,\"kind\":\"wish\",\"pending\":\"g1\",\"sentence\":\"*Now*, the words get *bigger*.\"}", last_id("check"));
+    say(&c, line);
+    ok("the engine's sentence brings the confirmation, with her pressed words as 'You said'",
+       W.page == WP_CONFIRM && !strcmp(W.said, "Make the words bigger"));
+
+    /* Two blanks, and the way back through them. */
+    fresh(&c);
+    c.screen_w = 1024; c.screen_h = 600 - foot_height(&c);
+    c.wish_open = WISH_OPEN_ASK;
+    wish_opened(&c);
+    press(&c, WT_GALLERY, -1);
+    press_item(&c, 9);                                 /* Remind me at a time */
+    ok("a template with blanks asks for the first one", W.page == WP_PICK && W.g_stage == 0);
+    press_item(&c, 2);                                 /* 9:00 in the morning */
+    ok("then the second", W.page == WP_PICK && W.g_stage == 1);
+    press(&c, WT_BACK, -1);
+    ok("Go back returns to the first blank", W.g_stage == 0);
+    press(&c, WT_BACK, -1);
+    ok("and then to the list", W.g_stage == -1 && W.page == WP_PICK);
+    wish_key(&c, 1);
+    ok("Escape on the list returns to the question", W.page == WP_ASK);
+    press(&c, WT_GALLERY, -1);
+    press_item(&c, 9);
+    press_item(&c, 2);
+    drain();
+    press_item(&c, 0);                                 /* Take my pills */
+    drain();
+    ok("both blanks chosen: the check carries the time and the message",
+       strstr(wrote, "\"when\":{\"type\":\"time\",\"at\":\"09:00\"}") &&
+       strstr(wrote, "\"type\":\"remind\",\"text\":\"Take my pills\"") &&
+       strstr(wrote, "\"said\":\"Remind me at 9:00 am: Take my pills\"") && W.page == WP_WAIT);
+
+    /* When the service is out of reach, the list is the way out. */
+    set_error("limit", NULL);
+    ok("an error page offers Pick a wish from a list", press(&c, WT_GALLERY, -1) && W.page == WP_PICK);
+    set_error("offline", NULL);
+    ok("and so does 'offline'", press(&c, WT_GALLERY, -1) && W.page == WP_PICK);
 }
 
 /* ── 7. the emoji ───────────────────────────────────────────────── */
@@ -695,6 +1023,10 @@ int main(void)
     overlays();
     shell_actions();
     targets();
+    presence();
+    cannot();
+    today();
+    gallery();
     emoji();
     printf("\n%d checks, %d failed\n", checked, failed);
     return failed ? 1 : 0;

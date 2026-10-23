@@ -160,6 +160,10 @@ typedef struct shell_ctx_s {
 
     /* ── policy, from the profile ───────────────────────────────── */
     int   allow_install, allow_settings, allow_theme_change, kiosk;
+    /* wishes="off" in the policy (docs/AI.md section 7, change 12): an
+     * administrator, a school, a guest account. No Wish button anywhere,
+     * no My wishes row, nothing listening. */
+    int   no_wishes;
     /* May the person using this machine choose its wifi? On a personal
      * computer, obviously yes -- it is her house and her router. On a
      * school laptop or a machine on a counter, the network is the
@@ -266,6 +270,10 @@ typedef struct shell_ctx_s {
      * the key that ends it never reaches the program underneath. */
     int   wish_open;
     int   wishfill_open;
+    /* A button outside Wishes asked it for something: WISH_CMD_* in
+     * wish.h. Help sets it (it cannot call into wish.c: every harness
+     * links the band without it); the host loop carries it out. */
+    int   want_wish;
     /* A program the host should start, as an index into apps plus one,
      * or 0. Set by things that are not the archetype -- the "VLC is
      * ready" card -- because only the host knows the archetype's

@@ -20,7 +20,7 @@
 #include "shell.h"
 #include "wish.h"
 
-enum { WO_MESSAGE = 1, WO_REMIND, WO_KEEP };
+enum { WO_MESSAGE = 1, WO_REMIND, WO_KEEP, WO_UNDO };
 enum { WO_KEEP_LOOK = 1, WO_KEEP_TEXT };
 
 #define WO_FILL_MAX_S  10
@@ -59,7 +59,7 @@ void wishover_set_clock(uint64_t (*now)(void));
 
 /* For tests: every target, in full-height screen coordinates. */
 enum { WOT_STOP = 1, WOT_CLOSE, WOT_SNOOZE, WOT_KEEP, WOT_UNDO, WOT_REVEAL,
-       WOT_FILL };
+       WOT_FILL, WOT_UNDOWISH };
 int  wishover_targets(const shell_ctx *c, int sw, int sh,
                       wish_target *out, int max);
 
@@ -68,6 +68,9 @@ int  wishover_targets(const shell_ctx *c, int sw, int sh,
  * RGBA bitmap `*w` x `*h`, premultiplied 0xAARRGGBB, owned by the cache,
  * or NULL if this emoji or the font is not here. Exposed for the test. */
 const uint32_t *wishover_emoji(const char *utf8, int *w, int *h);
+/* The emoji scaled into `r` (square, centred). 0 if this computer cannot
+ * draw it, so the caller can show its name instead. */
+int  wishover_draw_emoji(surface *s, const char *emoji, rect r);
 /* The font file it reads; overridable for the test. */
 #ifndef WISH_EMOJI_FONT
 #define WISH_EMOJI_FONT "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"

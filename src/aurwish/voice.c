@@ -53,14 +53,33 @@
 #ifndef AURVOICE_WHISPER
 #define AURVOICE_WHISPER "/usr/lib/auros/whisper-cli"
 #endif
+/* The same recogniser built for processors with AVX2, about three times as
+ * fast where they exist; the baseline one runs on anything made since 2008. */
+#ifndef AURVOICE_WHISPER_FAST
+#define AURVOICE_WHISPER_FAST "/usr/lib/auros/whisper-cli-avx2"
+#endif
+#ifndef AURVOICE_CPUINFO
+#define AURVOICE_CPUINFO "/proc/cpuinfo"
+#endif
+/* Two sizes of the same English model, 8-bit (the 5-bit one is slower on
+ * processors without AVX: its arithmetic has no short cut there). The
+ * small one understands careful speech and runs on anything; the larger
+ * one is better with a quiet or unsteady voice and is used where the
+ * processor has AVX2 and can afford it (docs/VOICE.md has the numbers). */
 #ifndef AURVOICE_MODEL
-#define AURVOICE_MODEL   "/usr/share/auros/voice/ggml-base.en-q5_1.bin"
+#define AURVOICE_MODEL   "/usr/share/auros/voice/ggml-tiny.en-q8_0.bin"
+#endif
+#ifndef AURVOICE_MODEL_FAST
+#define AURVOICE_MODEL_FAST "/usr/share/auros/voice/ggml-base.en-q8_0.bin"
 #endif
 #ifndef AURVOICE_PIPER
 #define AURVOICE_PIPER   "/usr/lib/auros/piper/piper"
 #endif
+/* ljspeech is public domain: no attribution to carry, no licence that could
+ * change under us (the Lessac voices are under the Blizzard 2013 licence,
+ * Ryan is non-commercial). docs/VOICE.md has the comparison. */
 #ifndef AURVOICE_VOICE
-#define AURVOICE_VOICE   "/usr/share/auros/voice/en_US-lessac-low.onnx"
+#define AURVOICE_VOICE   "/usr/share/auros/voice/en_US-ljspeech-medium.onnx"
 #endif
 #ifndef AURVOICE_ESPEAK
 #define AURVOICE_ESPEAK  "espeak-ng"
@@ -81,6 +100,9 @@
     { "aplay", "-q", "-t", "raw", "-f", "S16_LE", "-r", "%RATE%", "-c", "1", NULL }
 #endif
 
+#ifndef AURVOICE_AC_MAX_S
+#define AURVOICE_AC_MAX_S 14                    /* seconds of speech that fit in a 15 s window */
+#endif
 #define RATE_HZ        16000
 #define MAX_SECONDS    30
 #define MIN_SAMPLES    (RATE_HZ * 4 / 10)       /* under 0.4 s is not a sentence */
@@ -268,6 +290,32 @@ static int wav_memfd(const pcm_t *b)
     return fd;
 }
 
+/* Does this processor have what the fast build uses? (AVX2, FMA, F16C, BMI2:
+ * what ggml's default x86 build turns on.) */
+static int cpu_fast(void)
+{
+    FILE *f = fopen(AURVOICE_CPUINFO, "r");
+    if (!f) return 0;
+    char line[4096];
+    int ok = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (strncmp(line, "flags", 5)) continue;
+        char *p = strchr(line, ':');
+        if (!p) continue;
+        /* Whole words only, with spaces round them. */
+        char pad[4200];
+        snprintf(pad, sizeof pad, " %s", p + 1);
+        for (char *q = pad; *q; q++) if (*q == '\n' || *q == '\t') *q = ' ';
+        size_t n = strlen(pad);
+        if (n + 1 < sizeof pad) { pad[n] = ' '; pad[n + 1] = 0; }
+        ok = strstr(pad, " avx2 ") && strstr(pad, " fma ") &&
+             strstr(pad, " f16c ") && strstr(pad, " bmi2 ");
+        break;
+    }
+    fclose(f);
+    return ok;
+}
+
 static int cpu_threads(void)
 {
     long n = sysconf(_SC_NPROCESSORS_ONLN);
@@ -283,8 +331,18 @@ static int transcribe(const pcm_t *b, char *out, size_t outn)
     char path[48], thr[8];
     snprintf(path, sizeof path, "/proc/self/fd/%d", mfd);
     snprintf(thr, sizeof thr, "%d", cpu_threads());
-    char *argv[] = { (char *)AURVOICE_WHISPER, "-m", (char *)AURVOICE_MODEL, "-f", path,
-                     "-l", "en", "-t", thr, "-nt", "-np", "-ng", NULL };
+    int fast = cpu_fast() && access(AURVOICE_WHISPER_FAST, X_OK) == 0;
+    const char *cli = fast ? AURVOICE_WHISPER_FAST : AURVOICE_WHISPER;
+    const char *model = (fast && access(AURVOICE_MODEL_FAST, R_OK) == 0) ? AURVOICE_MODEL_FAST
+                                                                         : AURVOICE_MODEL;
+    /* The recogniser looks at 30 seconds of sound however short the clip;
+     * for one that fits in 15 it looks at 15, which halves the time and, in
+     * the measurements (docs/VOICE.md), changes nothing it hears. A tighter
+     * window than that does cost accuracy, so there is no tighter one. */
+    int short_clip = (b->n / 32000) <= AURVOICE_AC_MAX_S;
+    char *argv[] = { (char *)cli, "-m", (char *)model, "-f", path,
+                     "-l", "en", "-t", thr, "-nt", "-np", "-ng",
+                     short_clip ? "-ac" : NULL, short_clip ? "750" : NULL, NULL };
     int rfd;
     pid_t pid = spawn_pipe(argv, &rfd);
     if (pid < 0) { close(mfd); return -1; }

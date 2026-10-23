@@ -17,6 +17,8 @@
 
 #include "wish.h"
 #include "wishover.h"
+#include "wishgallery.h"
+#include "aurfeatures.h"
 #include "foot.h"
 #include "draw.h"
 #include "run.h"
@@ -24,8 +26,9 @@
 #define TEXT_MAX   300         /* the service takes 300 characters      */
 #define SENT_MAX   480
 #define TITLE_MAX  64
-#define ROWS_MAX   32
-#define WLINE_MAX  4096        /* docs/AI.md §3.7: a longer line closes  */
+#define ROWS_MAX   50          /* a list of 50 wishes is long: so is the line */
+#define WLINE_OUT  4096        /* docs/AI.md §3.7: shell -> engine        */
+#define WLINE_MAX  65536       /* engine -> shell: a longer line closes   */
 #define WAIT_GIVE_UP_MS  20000 /* §7.9: waiting gives up after 20 s     */
 #define SAME_TEXT_MS     30000 /* §7.9: the same text within 30 s       */
 #define UNDO_MS   (10 * 60 * 1000)
@@ -118,6 +121,8 @@ static struct {
     char title[TITLE_MAX];
     char pending[48];
     char dest[96];              /* an outward action's destination      */
+    char dest_host[96];         /* and the address it is on, if told    */
+    int  retry_after;           /* seconds, from an error, or 0         */
     char help_page[48];
     char note[SENT_MAX];        /* cannot / error: the engine's line    */
     int  err;                   /* index into ERRS                       */
@@ -132,6 +137,8 @@ static struct {
     int  all_off;
     int  shown_once;            /* the first open shows all six examples */
 
+    struct { char title[TITLE_MAX]; int times; char tstr[24]; } today[ROWS_MAX];
+    int  n_today;
     wish_row rows[ROWS_MAX];
     int  n_rows, first_row, removing;
     int  undo_engine;           /* the engine says Undo is available    */
@@ -148,9 +155,15 @@ static struct {
     size_t vn;
     uint64_t v_t0;
 
-    char sent_last[WLINE_MAX];
+    /* The gallery: which template, which blank she is on (-1 = the list
+     * of templates), what she chose so far, and how far down the list. */
+    int  g_tmpl, g_stage, g_first;
+    int  g_choice[WG_MAX_SLOTS];
+
+    char sent_last[WLINE_OUT];
+    char recv_last[512];
 } W = { .page = WP_ASK, .consent = -1, .removing = -1, .hover = -1,
-        .sel = -1, .box_focus = 1, .vpid = 0, .vfd = -1 };
+        .sel = -1, .box_focus = 1, .vpid = 0, .vfd = -1, .g_stage = -1 };
 
 /* ── a very small JSON reader ──────────────────────────────────────
  *
@@ -376,7 +389,7 @@ static struct {
     int fd;
     char in[WLINE_MAX * 2];
     size_t in_n;
-    char out[WLINE_MAX * 4];
+    char out[WLINE_OUT * 4];
     size_t out_n;
     uint64_t next_try;
     int next_id;
@@ -384,6 +397,11 @@ static struct {
 } K = { .fd = -1, .next_id = 1 };
 
 static void handle_line(shell_ctx *c, const char *line, size_t len);
+
+/* What the engine was last told about her (see send_presence). */
+static int      input_pending;
+static uint64_t input_sent_ms;
+static char     hold_sent[160];
 
 static int sock_path(char *out, size_t n)
 {
@@ -426,7 +444,7 @@ static int k_take(int id)
 static int k_send(int op, const char *opname, const char *rest)
 {
     int id = K.next_id++;
-    char line[WLINE_MAX];
+    char line[WLINE_OUT];
     int n = snprintf(line, sizeof line, "{\"op\":\"%s\",\"id\":%d%s}\n",
                      opname, id, rest ? rest : "");
     if (n <= 0 || n >= (int)sizeof line) return -1;
@@ -485,6 +503,7 @@ static int k_connect(void)
     }
     K.fd = fd;
     K.in_n = K.out_n = 0;
+    hold_sent[0] = 0;                    /* say it again to a new engine */
     k_send(OP_HELLO, "hello", NULL);
     return 0;
 }
@@ -519,7 +538,7 @@ static int k_pump(shell_ctx *c)
     return dirty;
 }
 
-int wish_fd(void) { return K.fd; }
+int wish_fd(void) { return AUROS_WISHES ? K.fd : -1; }
 
 /* ── pages ───────────────────────────────────────────────────────── */
 
@@ -541,6 +560,7 @@ static int err_index(const char *code)
 static void set_error(const char *code, const char *line)
 {
     W.err = err_index(code ? code : "broken");
+    W.retry_after = 0;
     snprintf(W.note, sizeof W.note, "%s", line && *line ? line : "");
     go(WP_ERROR);
 }
@@ -647,7 +667,7 @@ static void send_text(shell_ctx *c, const char *text_in, int voice)
     if (K.fd < 0) k_connect();
     if (K.fd < 0) { set_error("broken", NULL); return; }
     if (W.consent == 0) { go(WP_CONSENT); return; }
-    char q[TEXT_MAX * 6 + 8], rest[WLINE_MAX];
+    char q[TEXT_MAX * 6 + 8], rest[WLINE_OUT];
     js_quote(q, sizeof q, text);
     snprintf(rest, sizeof rest, ",\"text\":%s,\"lang\":\"en\",\"voice\":%s",
              q, voice ? "true" : "false");
@@ -717,6 +737,24 @@ static void on_reply(shell_ctx *c, int id, int op, const char *kind,
         if (W.first_row >= W.n_rows) W.first_row = 0;
         return;
     }
+    if (!strcmp(kind, "today")) {
+        const char *ve, *arr = js_get(L, E, "items", &ve);
+        W.n_today = 0;
+        for (const char *it = arr ? js_first(arr, ve) : NULL; it && W.n_today < ROWS_MAX;
+             it = js_next(it, ve)) {
+            const char *ie = js_skip(it, ve, 1);
+            if (!ie || *it != '{') continue;
+            int i = W.n_today;
+            W.today[i].title[0] = W.today[i].tstr[0] = 0;
+            js_getstr(it, ie, "title", W.today[i].title, sizeof W.today[i].title);
+            const char *tv, *t = js_get(it, ie, "times", &tv);
+            W.today[i].times = t ? (int)js_int(it, ie, "times", -1) : -1;
+            if (t && W.today[i].times < 0) js_getstr(it, ie, "times", W.today[i].tstr, sizeof W.today[i].tstr);
+            if (W.today[i].title[0]) W.n_today++;
+        }
+        if (W.first_row >= W.n_today) W.first_row = 0;
+        return;
+    }
     if (!strcmp(kind, "error")) {
         char code[24], line[SENT_MAX];
         js_getstr(L, E, "error", code, sizeof code);
@@ -724,7 +762,9 @@ static void on_reply(shell_ctx *c, int id, int op, const char *kind,
         if (!mine && op != OP_CONSENT) return;
         W.req_id = 0;
         if (!strcmp(code, "consent")) { W.consent = 0; go(WP_CONSENT); return; }
+        long ra = js_int(L, E, "retry_after", 0);
         set_error(code, line);
+        W.retry_after = ra > 0 && ra <= 3600 ? (int)ra : 0;
         return;
     }
     if (!strcmp(kind, "wish") && mine) {
@@ -732,9 +772,12 @@ static void on_reply(shell_ctx *c, int id, int op, const char *kind,
         js_getstr(L, E, "pending", W.pending, sizeof W.pending);
         js_getstr(L, E, "sentence", W.sentence, sizeof W.sentence);
         js_getstr(L, E, "title", W.title, sizeof W.title);
-        W.dest[0] = 0;
+        W.dest[0] = W.dest_host[0] = 0;
         const char *ve, *o = js_get(L, E, "outward", &ve);
-        if (o) js_getstr(o, ve, "name", W.dest, sizeof W.dest);
+        if (o) {
+            js_getstr(o, ve, "name", W.dest, sizeof W.dest);
+            js_getstr(o, ve, "host", W.dest_host, sizeof W.dest_host);
+        }
         if (!W.pending[0] || !W.sentence[0]) { set_error("broken", NULL); return; }
         go(WP_CONFIRM);
         if (W.voice) say_aloud(W.sentence);
@@ -753,7 +796,21 @@ static void on_reply(shell_ctx *c, int id, int op, const char *kind,
                      !strcmp(miss, "install") ? "Wishes cannot install programs. Get more programs can." :
                                                 "That is not something a wish can do yet.");
         }
-        W.pending[0] = 0;
+        /* "I can't do that, but I can ...": the nearest wish the engine can do,
+         * already checked and waiting for her Yes. */
+        W.pending[0] = W.sentence[0] = W.title[0] = W.dest[0] = W.dest_host[0] = 0;
+        const char *ae, *alt = js_get(L, E, "alt", &ae);
+        if (alt && *alt == '{') {
+            js_getstr(alt, ae, "pending", W.pending, sizeof W.pending);
+            js_getstr(alt, ae, "sentence", W.sentence, sizeof W.sentence);
+            js_getstr(alt, ae, "title", W.title, sizeof W.title);
+            const char *oe, *o = js_get(alt, ae, "outward", &oe);
+            if (o && *o == '{') {
+                js_getstr(o, oe, "name", W.dest, sizeof W.dest);
+                js_getstr(o, oe, "host", W.dest_host, sizeof W.dest_host);
+            }
+            if (!W.sentence[0]) W.pending[0] = 0;
+        }
         go(WP_CANNOT);
         if (W.voice) say_aloud(W.note);
         return;
@@ -774,6 +831,12 @@ static void on_reply(shell_ctx *c, int id, int op, const char *kind,
             /* A `now` wish has no wid: it ran, and Undo is offered. */
             W.undo_until = wid[0] ? 0 : now_ms() + UNDO_MS;
             go(WP_DONE);
+            /* Next to where she makes wishes, for ten minutes: a button
+             * that puts it back. It is a card, so it is there when she
+             * closes the panel, and it never takes the keyboard. */
+            if (W.undo_until)
+                wishover_card(c, WO_UNDO, "It is done. If it is not what you wanted, you can put it back.",
+                              W.title[0] ? W.title : NULL, NULL, NULL, 0);
         } else if (op == OP_CONSENT && W.consent == 1 && W.said[0]) {
             W.last_ms = 0;
             snprintf(W.text, sizeof W.text, "%s", W.said);
@@ -955,11 +1018,10 @@ static void do_shell(shell_ctx *c, const char *L, const char *E)
 /* The typed-word matcher is the compositor's (src/aurwl/wishhook.c,
  * stream W1). The shell hands it the list and passes on what it found.
  * Weak, so this file links into every harness that has no compositor. */
-extern int wishhook_set_triggers(const char *const *words, int n_words,
-                                 const char *const *apps, int n_apps)
-    __attribute__((weak));
-extern int wishhook_take(char *kind, size_t kn, char *val, size_t vn)
-    __attribute__((weak));
+extern void wishhook_set(const char *const *words, int nwords,
+                         const char *const *apps, int napps) __attribute__((weak));
+extern int  wishhook_take_word(char out[33]) __attribute__((weak));
+extern int  wishhook_take_app(char out[128]) __attribute__((weak));
 
 static void on_triggers(const char *L, const char *E)
 {
@@ -980,7 +1042,7 @@ static void on_triggers(const char *L, const char *E)
             ap[na] = apps[na]; na++;
         }
     }
-    if (wishhook_set_triggers) wishhook_set_triggers(wp, nw, ap, na);
+    if (wishhook_set) wishhook_set(wp, nw, ap, na);
 }
 
 static void on_event(shell_ctx *c, const char *ev, const char *L, const char *E)
@@ -1029,6 +1091,7 @@ static void on_event(shell_ctx *c, const char *ev, const char *L, const char *E)
 
 static void handle_line(shell_ctx *c, const char *line, size_t len)
 {
+    snprintf(W.recv_last, sizeof W.recv_last, "%.*s", (int)(len < sizeof W.recv_last - 1 ? len : sizeof W.recv_last - 1), line);
     const char *E = line + len;
     const char *p = js_ws(line, E);
     if (p >= E || *p != '{' || js_skip(p, E, 0) == NULL) return;
@@ -1045,6 +1108,7 @@ void wish_feed_line(shell_ctx *c, const char *line)
     handle_line(c, line, strlen(line));
 }
 const char *wish_last_sent(void) { return W.sent_last; }
+const char *wish_last_recv(void) { return W.recv_last; }
 
 /* ── voice: tap to start, tap to stop, at most 30 s (§7.9) ────────── */
 
@@ -1147,6 +1211,24 @@ static int voice_step(shell_ctx *c)
 
 /* ── the host's half ─────────────────────────────────────────────── */
 
+void wish_command(shell_ctx *c, int cmd)
+{
+    if (!c || c->kiosk || c->no_wishes || !AUROS_WISHES) return;
+    if (cmd == WISH_CMD_TODAY) {
+        c->wish_open = 0;                    /* foot_open_only toggles */
+        foot_open_only(c, &c->wish_open);
+        c->wish_open = WISH_OPEN_TODAY;      /* the host loop calls wish_opened */
+    } else if (cmd == WISH_CMD_STOP_ALL) {
+        if (K.fd < 0) k_connect();
+        k_send(OP_ALLOFF, "all_off", NULL);
+        wishover_clear(c);
+        W.all_off = 1;
+        W.undo_until = 0;
+        wishover_card(c, WO_MESSAGE, "All your wishes are off. You can turn them back on in My wishes.",
+                      NULL, NULL, NULL, 0);
+    }
+}
+
 int wish_available(const shell_ctx *c)
 {
     return c && !c->kiosk;
@@ -1156,6 +1238,12 @@ void wish_opened(shell_ctx *c)
 {
     W.open_kind = c->wish_open;
     if (K.fd < 0) k_connect();
+    if (c->wish_open == WISH_OPEN_TODAY) {
+        W.first_row = 0;
+        go(WP_TODAY);
+        k_send(OP_TODAY, "today", NULL);
+        return;
+    }
     if (c->wish_open == WISH_OPEN_MINE) {
         W.first_row = 0;
         go(WP_MINE);
@@ -1163,6 +1251,8 @@ void wish_opened(shell_ctx *c)
         return;
     }
     if (W.req_id) { go(WP_WAIT); return; }
+    W.g_stage = -1;
+    W.g_first = 0;
     W.text[0] = 0;
     W.hint[0] = 0;
     W.voice = 0;
@@ -1183,13 +1273,44 @@ void wish_closed(shell_ctx *c)
     W.shown_once = 1;
 }
 
+/* What the engine must know to keep a wish from interrupting her
+ * (docs/AI.md §3.5, §3.7): somebody is here, and what she is in the middle
+ * of. */
+void wish_input_seen(void) { if (AUROS_WISHES) input_pending = 1; }
+
+static void send_presence(shell_ctx *c)
+{
+    if (K.fd < 0) return;
+    /* The shell's own panel where she types a password: nothing a wish
+     * does may land on it. (The compositor adds `call`, `camera`,
+     * `share`, `fullscreen` and sensitive fields through wishhook.) */
+    char reasons[64] = "";
+    if (c->net_open || c->bt_open) snprintf(reasons, sizeof reasons, "%s", "\"password\"");
+    char line[160];
+    snprintf(line, sizeof line, "{\"op\":\"hold\",\"reasons\":[%s]}", reasons);
+    if (strcmp(line, hold_sent)) {
+        k_send_raw(line);
+        snprintf(hold_sent, sizeof hold_sent, "%s", line);
+    }
+    uint64_t t = now_ms();
+    if (input_pending && t - input_sent_ms >= 1000) {
+        k_send_raw("{\"op\":\"input\"}");
+        input_sent_ms = t;
+        input_pending = 0;
+    }
+}
+
 int wish_step(shell_ctx *c)
 {
+    /* A build without Wishes (D14) never looks for the engine, never wakes
+     * the loop, never sends a line. */
+    if (!AUROS_WISHES) return 0;
     int dirty = 0;
     if (K.fd < 0 && now_ms() >= K.next_try && !c->kiosk) {
         if (k_connect() == 0) dirty = 1;
     }
     if (k_pump(c)) dirty = 1;
+    send_presence(c);
     if (voice_step(c)) dirty = 1;
     if (W.req_id && now_ms() - W.req_t0 > WAIT_GIVE_UP_MS) {
         cancel_request();
@@ -1197,19 +1318,19 @@ int wish_step(shell_ctx *c)
         dirty = 1;
     }
     /* The compositor's half: what it matched, handed on. */
-    if (wishhook_take) {
-        char kind[16], val[64];
-        while (wishhook_take(kind, sizeof kind, val, sizeof val) > 0) {
-            char q[160], line[200];
-            js_quote(q, sizeof q, val);
-            if (!strcmp(kind, "typed"))
-                snprintf(line, sizeof line, "{\"op\":\"typed\",\"word\":%s}", q);
-            else if (!strcmp(kind, "app"))
-                snprintf(line, sizeof line, "{\"op\":\"app\",\"app\":%s}", q);
-            else continue;
+    char got[128], q[560], line[640];
+    if (wishhook_take_word)
+        while (wishhook_take_word(got)) {
+            js_quote(q, sizeof q, got);
+            snprintf(line, sizeof line, "{\"op\":\"typed\",\"word\":%s}", q);
             k_send_raw(line);
         }
-    }
+    if (wishhook_take_app)
+        while (wishhook_take_app(got)) {
+            js_quote(q, sizeof q, got);
+            snprintf(line, sizeof line, "{\"op\":\"app\",\"app\":%s}", q);
+            k_send_raw(line);
+        }
     if (W.undo_until && now_ms() > W.undo_until) { W.undo_until = 0; dirty = 1; }
     if (wishover_step(c)) dirty = 1;
     /* While waiting, the three dots breathe. */
@@ -1220,6 +1341,7 @@ int wish_step(shell_ctx *c)
 
 int wish_wait_ms(void)
 {
+    if (!AUROS_WISHES) return -1;
     int w = wishover_wait_ms();
     int mine = (W.req_id || W.vpid > 0 || W.vfd >= 0) ? 120 : -1;
     if (K.fd < 0 && mine < 0) mine = 5000;
@@ -1365,6 +1487,11 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
                         wgeom *g, float k, int with_head, int with_labels)
 {
     (void)c;
+    /* While her text is bigger than the theme's own, a page that cannot
+     * show its main thing at that size is a page to try again at a smaller
+     * one, not to squeeze: the sentence she must read, or at least a few
+     * choices. At the theme's own size there is nothing smaller to try. */
+    int strict = k > 1.001f;
     memset(g, 0, sizeof *g);
     g->k = k;
     g->sh = sh;
@@ -1389,7 +1516,7 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
     int lh_label = with_labels ? (int)(18.f * k * 1.45f) + 8 : 0;
     int floor_y = sh - bottom;
 
-    static const int HEAD_LEN[WP_N] = { 22, 40, 13, 26, 25, 22, 20, 11, 16, 36, 9 };
+    static const int HEAD_LEN[WP_N] = { 22, 40, 13, 26, 25, 22, 20, 11, 16, 36, 9, 22, 26 };
     int y = top;
     if (with_head) {
         g->head_lines = est_w(HEAD_LEN[page], g->px_head) > g->cw ? 2 : 1;
@@ -1407,8 +1534,8 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
         if (mic_w && mic_w < est_w(6, g->px_lead) + g->pad) mic_w = est_w(6, g->px_lead) + g->pad;
         if (mic_w > g->cw / 3) mic_w = g->cw / 3;
         int bx_w = g->cw - (mic_w ? mic_w + g->gap : 0);
-        int kinds[3] = { WT_ASK, WT_MINE, WT_CLOSE };
-        int bh = row_height(g, page, kinds, 3, 0);
+        int kinds[4] = { WT_ASK, WT_GALLERY, WT_MINE, WT_CLOSE };
+        int bh = row_height(g, page, kinds, 4, 0);
         if (y + box_h + 8 + lh_body + g->group + bh > floor_y) {
             g->overflow = 1;
             box_h = g->btn_h + said_lh;
@@ -1449,7 +1576,7 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
         g->n_ex = n;
         int brow = n ? rowy - g->gap + g->group : y;
         if (brow > by) brow = by;
-        place_row(g, page, brow, kinds, 3, 0);
+        place_row(g, page, brow, kinds, 4, 0);
         break;
     }
     case WP_LISTEN: {
@@ -1502,9 +1629,16 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
         int said_pad = g->pad / 2 < 12 ? 12 : g->pad / 2;
         int said_h = said_lh * said_lines + 2 * said_pad;
         if (said_h < g->btn_h) said_h = g->btn_h;
-        int dest_h = v->has_dest ? lh_label + (int)((float)g->px_head * 1.25f) : 0;
+        int dest_h = v->has_dest ? lh_label + (int)((float)g->px_head * 1.25f) +
+                                   (v->has_dest > 1 ? lh_label : 0) : 0;
         int sl = (int)((float)g->px_sent * 1.3f);
         int sent_min = (int)(18.f * 1.3f) * 3;       /* three lines at the floor */
+        if (strict) {
+            int cwid = g->cw > 1 ? g->cw : 1;
+            int lines_needed = est_w(v->sent_len, g->px_sent) / cwid + 2;
+            if (lines_needed > 4) lines_needed = 4;
+            sent_min = lines_needed * sl;
+        }
         int rows = h1 + g->gap + h2;
         int fixed = lh_label + said_h + g->group + lh_label + g->group + dest_h + rows;
         int room = floor_y - y - fixed;
@@ -1531,8 +1665,13 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
     case WP_DONE:
     case WP_ERROR:
     case WP_CONSENT: {
-        int kinds[5], nk = 0;
-        if (page == WP_CANNOT) { kinds[nk++] = WT_AGAIN; kinds[nk++] = WT_CLOSE; }
+        int kinds[6], nk = 0;
+        if (page == WP_CANNOT && v->has_offer) {
+            /* "I can't do that, but I can ...": her answer to what the engine can do. */
+            kinds[nk++] = WT_YES; kinds[nk++] = WT_NO; kinds[nk++] = WT_CLOSE;
+        } else if (page == WP_CANNOT) {
+            kinds[nk++] = WT_AGAIN; kinds[nk++] = WT_GALLERY; kinds[nk++] = WT_CLOSE;
+        }
         if (page == WP_ANSWER) {
             if (v->has_help) kinds[nk++] = WT_HELP;
             if (v->has_offer) { kinds[nk++] = WT_YES; kinds[nk++] = WT_NO; }
@@ -1545,21 +1684,95 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
         }
         if (page == WP_ERROR) {
             if (v->can_retry) kinds[nk++] = WT_AGAIN;
+            /* When the service is out of reach or resting for the day, the
+             * list is still there: it needs no internet (docs/AI.md §1.6). */
+            kinds[nk++] = WT_GALLERY;
             kinds[nk++] = WT_CLOSE;
         }
         if (page == WP_CONSENT) { kinds[nk++] = WT_CONSENT_YES; kinds[nk++] = WT_CONSENT_NO; }
-        int eq = (page == WP_CONSENT);
+        int eq = (page == WP_CONSENT) || (page == WP_CANNOT && v->has_offer);
         int h = row_height(g, page, kinds, nk, eq);
         int room = floor_y - h - g->group - y;
         int sl = (int)((float)g->px_sent * 1.3f);
         int want = page == WP_CONSENT ? lh_body * 16
-                 : page == WP_ANSWER && v->has_offer ? sl * 2 + lh_label + sl * 3
+                 : (page == WP_ANSWER || page == WP_CANNOT) && v->has_offer ? sl * 2 + lh_label + sl * 3
                  : sl * 3 + g->gap + lh_body * 2;
         int least = page == WP_CONSENT ? lh_body * 6 : sl * 2;
         if (room < least) { g->overflow = 1; room = least; }
         g->a[A_TEXT2] = (rect){ g->gx, y, g->cw, room < want ? room : want };
         y += g->a[A_TEXT2].h + g->group;
         place_row(g, page, y, kinds, nk, eq);
+        break;
+    }
+    case WP_TODAY: {
+        g->a[A_SUB] = (rect){ g->gx, y, g->cw, lh_body };
+        y += lh_body + g->gap;
+        int kk[4], nk = 0;
+        if (v->more) kk[nk++] = WT_MORE;
+        kk[nk++] = WT_STOP_ALL;
+        kk[nk++] = WT_MINE;
+        kk[nk++] = WT_CLOSE;
+        int h = row_height(g, page, kk, nk, 0);
+        int by = floor_y - h - g->group;
+        int row_h = lh_body + g->gap / 2;
+        int fit = (by - y) / row_h;
+        if (fit < (strict && v->n_rows - v->first_item > 2 ? 3 : 1)) { g->overflow = 1; if (fit < 1) fit = 1; }
+        int n = v->n_rows - v->first_item;
+        if (n > fit) n = fit;
+        if (n < 0) n = 0;
+        g->a[A_TEXT1] = (rect){ g->gx, y, g->cw, n * row_h };
+        g->mine_n = n; g->mine_row_h = row_h;
+        place_row(g, page, floor_y - h, kk, nk, 0);
+        break;
+    }
+    case WP_PICK: {
+        /* A page of choices: lines (the templates), words, or pictures. As
+         * many as fit, then Show more; Go back is always there. */
+        g->a[A_SUB] = (rect){ g->gx, y, g->cw, lh_body };
+        y += lh_body + g->gap;
+        int kk[3], nk = 0;
+        if (v->more) kk[nk++] = WT_MORE;
+        kk[nk++] = WT_BACK;
+        kk[nk++] = WT_CLOSE;
+        int h = row_height(g, page, kk, nk, 0);
+        int by = floor_y - h - g->group;
+        int cols, cell_w, cell_h;
+        if (v->pick_mode == 2) {
+            cell_w = (int)(132.f * k); cell_h = (int)(104.f * k);
+            if (cell_h < g->btn_h) cell_h = g->btn_h;
+            cols = (g->cw + g->gap) / (cell_w + g->gap);
+            if (cols < 2) cols = 2;
+            cell_w = (g->cw - (cols - 1) * g->gap) / cols;
+        } else if (v->pick_mode == 1) {
+            cols = est_w(26, g->px_body) + 2 * g->pad + g->gap <= g->cw / 3 ? 3
+                 : est_w(26, g->px_body) + 2 * g->pad + g->gap <= g->cw / 2 ? 2 : 1;
+            cell_w = (g->cw - (cols - 1) * g->gap) / cols;
+            cell_h = g->btn_h;
+        } else {
+            cols = 1;
+            cell_w = g->cw;
+            cell_h = g->btn_h;
+        }
+        g->ex_cols = cols;
+        int rowh = cell_h;
+        /* A label too long for its cell gets two lines, never an ellipsis. */
+        if (v->pick_mode != 2 && est_w(v->pick_long, g->px_body) > cell_w - 2 * g->pad)
+            rowh = 2 * lh_body + g->gap;
+        int shown = 0, ry = y;
+        for (int i = v->first_item; i < v->n_items; i += cols) {
+            if (ry + rowh > by) break;
+            for (int j = i; j < i + cols && j < v->n_items; j++) {
+                add_t(g, (rect){ g->gx + (j - i) * (cell_w + g->gap), ry, cell_w, rowh }, WT_ITEM, j);
+                shown++;
+            }
+            ry += rowh + g->gap;
+        }
+        int want_shown = v->n_items - v->first_item;
+        if (want_shown > 3) want_shown = 3;
+        if (shown < want_shown && (strict || shown == 0)) g->overflow = 1;
+        g->n_ex = shown;
+        g->mine_n = shown;
+        place_row(g, page, floor_y - h, kk, nk, 0);
         break;
     }
     case WP_MINE: {
@@ -1578,7 +1791,7 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
         int row_h = stacked ? text_h + 8 + g->btn_h + g->group
                             : (text_h > g->btn_h ? text_h : g->btn_h) + g->group;
         int fit = (by - y) / row_h;
-        if (fit < 1 && v->n_rows > 0) { g->overflow = 1; fit = 1; }
+        if (fit < (strict && v->n_rows > 1 ? 2 : 1) && v->n_rows > 0) { g->overflow = 1; fit = 1; }
         int n = v->n_rows < fit ? v->n_rows : fit;
         for (int i = 0; i < n; i++) {
             int ry = y + i * row_h;
@@ -1644,6 +1857,47 @@ static int rows_shown(const shell_ctx *c, const wish_view *v)
     return g.mine_n;
 }
 
+/* ── the gallery's page (src/aurshell/wishgallery.c has the tables) ── */
+
+/* How many choices this stage has, how to show them, and the longest. */
+static int pick_items(int *mode, int *longest)
+{
+    int n, lo = 0;
+    if (W.g_stage < 0) {
+        n = wg_count();
+        *mode = 0;
+        for (int i = 0; i < n; i++) { int l = (int)strlen(wg_get(i)->pick); if (l > lo) lo = l; }
+    } else {
+        const wg_tmpl *t = wg_get(W.g_tmpl);
+        const wg_slot *s = t ? wg_slot_get(t->slot[W.g_stage]) : NULL;
+        if (!s) { *mode = 0; *longest = 0; return 0; }
+        n = s->n;
+        *mode = s->pic ? 2 : 1;
+        for (int i = 0; i < n; i++) { int l = (int)strlen(s->opts[i].label); if (l > lo) lo = l; }
+    }
+    *longest = lo;
+    return n;
+}
+
+static const char *pick_label(int i, const char **emoji)
+{
+    *emoji = NULL;
+    if (W.g_stage < 0) { const wg_tmpl *t = wg_get(i); return t ? t->pick : ""; }
+    const wg_tmpl *t = wg_get(W.g_tmpl);
+    const wg_slot *s = t ? wg_slot_get(t->slot[W.g_stage]) : NULL;
+    if (!s || i < 0 || i >= s->n) return "";
+    if (s->pic) *emoji = s->opts[i].value;
+    return s->opts[i].label;
+}
+
+static const char *pick_head(void)
+{
+    if (W.g_stage < 0) return "Pick a wish";
+    const wg_tmpl *t = wg_get(W.g_tmpl);
+    const wg_slot *s = t ? wg_slot_get(t->slot[W.g_stage]) : NULL;
+    return s ? s->ask : "Pick a wish";
+}
+
 static wish_view view_now(const shell_ctx *c)
 {
     wish_view v;
@@ -1651,9 +1905,9 @@ static wish_view view_now(const shell_ctx *c)
     v.page = W.page;
     v.n_examples = W.shown_once ? 3 : N_EXAMPLES;
     v.voice = 1;
-    v.has_dest = W.dest[0] != 0;
+    v.has_dest = (W.dest[0] != 0) + (W.dest[0] != 0 && W.dest_host[0] != 0);
     v.has_help = W.help_page[0] != 0;
-    v.has_offer = (W.page == WP_ANSWER && W.pending[0]);
+    v.has_offer = ((W.page == WP_ANSWER || W.page == WP_CANNOT) && W.pending[0]);
     v.now_wish = (W.page == WP_DONE && W.undo_until != 0);
     v.can_retry = ERRS[W.err].retry;
     v.removing = W.removing;
@@ -1667,6 +1921,20 @@ static wish_view view_now(const shell_ctx *c)
         v.more = 1;
         int shown = rows_shown(c, &v);
         v.more = (shown < v.n_rows) || W.first_row > 0;
+    }
+    if (W.page == WP_TODAY) {
+        v.n_rows = W.n_today;
+        v.first_item = W.first_row < W.n_today ? W.first_row : 0;
+        v.more = 1;
+        int shown = rows_shown(c, &v);
+        v.more = (v.first_item + shown < W.n_today) || v.first_item > 0;
+    }
+    if (W.page == WP_PICK) {
+        v.n_items = pick_items(&v.pick_mode, &v.pick_long);
+        v.first_item = W.g_first < v.n_items ? W.g_first : 0;
+        v.more = 1;
+        int shown = rows_shown(c, &v);
+        v.more = (v.first_item + shown < v.n_items) || v.first_item > 0;
     }
     return v;
 }
@@ -1699,6 +1967,9 @@ static const char *label_of(int kind, int page)
     case WT_RESTORE:     return "Put everything back how it was";
     case WT_MORE:        return "Show more wishes";
     case WT_NEW:         return "Make a new wish";
+    case WT_GALLERY:     return page == WP_ASK ? "Pick from a list" : "Pick a wish from a list";
+    case WT_BACK:        return "Go back";
+    case WT_STOP_ALL:    return "Stop all wishes";
     case WT_SAID:        return "Change";
     }
     return "";
@@ -1724,6 +1995,8 @@ static const char *head_of(void)
     case WP_DONE:    return W.undo_until ? "Done." : "Your wish is on.";
     case WP_ERROR:   return ERRS[W.err].head;
     case WP_MINE:    return "My wishes";
+    case WP_PICK:    return pick_head();
+    case WP_TODAY:   return "What my wishes did today";
     }
     return "";
 }
@@ -2081,6 +2354,30 @@ void wish_paint(shell_ctx *c, surface *s, shell_fonts *f)
                            chg, c->fg, 1.f);
             break;
         }
+        case WT_ITEM: {
+            const char *em = NULL;
+            const char *lab = pick_label(t->arg, &em);
+            pressable(s, c, t->r, 0, hot, sel);
+            if (em) {
+                int sz = (int)(40.f * g.k);
+                rect er = { t->r.x + (t->r.w - sz) / 2, t->r.y + (int)(10.f * g.k), sz, sz };
+                int drawn = wishover_draw_emoji(s, em, er);
+                font *lf = label ? label : body;
+                if (lf) {
+                    float ly = drawn ? (float)(er.y + er.h) + 6.f * g.k + font_ascent(lf)
+                                     : shell_baseline(lf, (float)t->r.y, (float)t->r.h);
+                    shell_text_centred(s, lf, (float)t->r.x + (float)t->r.w / 2.f, ly, lab, c->fg, 1.f);
+                }
+            } else if (body) {
+                rect in = { t->r.x + g.pad, t->r.y, t->r.w - 2 * g.pad, t->r.h };
+                int lines = count_lines(body, lab, (float)in.w);
+                float th = (float)lines * lh_body;
+                in.y = t->r.y + (int)(((float)t->r.h - th) / 2.f);
+                in.h = (int)th + 2;
+                draw_wrapped(s, body, in, lab, c->fg, lh_body);
+            }
+            break;
+        }
         case WT_SWITCH: {
             int ri = W.first_row + t->arg;
             int on = ri < W.n_rows && W.rows[ri].on && !W.all_off;
@@ -2196,19 +2493,39 @@ void wish_paint(shell_ctx *c, surface *s, shell_fonts *f)
             if (label && g.labels) shell_text(s, label, (float)d.x, (float)d.y + font_ascent(label),
                                   "This opens", c->subtle, 1.f);
             font *df = ty->title ? ty->title : lead;
+            int host_h = W.dest_host[0] ? (int)(18.f * g.k * 1.45f) + 8 : 0;
             if (df) shell_text_elided(s, df, (float)d.x,
-                                      (float)(d.y + d.h) - font_descent(df),
+                                      (float)(d.y + d.h - host_h) - font_descent(df),
                                       (float)d.w, W.dest, c->fg_hi, 1.f);
+            if (W.dest_host[0] && label)
+                shell_text_elided(s, label, (float)d.x, (float)(d.y + d.h) - font_descent(label),
+                                  (float)d.w, W.dest_host, c->subtle, 1.f);
         }
         break;
     }
     case WP_CANNOT:
     case WP_ERROR: {
         rect a = g.a[A_TEXT2];
+        char retry[96];
+        retry[0] = 0;
+        if (W.page == WP_ERROR && !W.note[0] && W.retry_after > 0 &&
+            (!strcmp(ERRS[W.err].code, "busy") || !strcmp(ERRS[W.err].code, "resting"))) {
+            int m = (W.retry_after + 59) / 60;
+            if (m <= 1)       snprintf(retry, sizeof retry, "%s", "Try again in a minute.");
+            else if (m < 90)  snprintf(retry, sizeof retry, "Try again in about %d minutes.", m);
+            else              snprintf(retry, sizeof retry, "Try again in about %d hours.", (m + 30) / 60);
+        }
         const char *line = W.page == WP_CANNOT ? W.note
-                         : (W.note[0] ? W.note : ERRS[W.err].line);
+                         : (W.note[0] ? W.note : retry[0] ? retry : ERRS[W.err].line);
         int y = draw_wrapped(s, sent, a, line, c->fg_hi, font_line_height(sent) * 1.1f);
-        if (W.page == WP_CANNOT && body) {
+        if (W.page == WP_CANNOT && W.pending[0] && W.sentence[0]) {
+            rect b = { a.x, y + g.group, a.w, a.y + a.h - y - g.group };
+            if (label && g.labels) shell_text(s, label, (float)b.x, (float)b.y + font_ascent(label),
+                                              "But I can do this", c->subtle, 1.f);
+            int lab = g.labels ? (int)(18.f * g.k * 1.45f) + 8 : 0;
+            b.y += lab; b.h -= lab;
+            draw_rich(s, sent, sentb, b, W.sentence, c->fg_hi, 0);
+        } else if (W.page == WP_CANNOT && body) {
             rect b = { a.x, y + g.gap, a.w, a.y + a.h - y - g.gap };
             if (b.h >= (int)lh_body)
                 draw_wrapped(s, body, b, "Try asking in a different way, or press "
@@ -2260,6 +2577,31 @@ void wish_paint(shell_ctx *c, surface *s, shell_fonts *f)
         }
         break;
     }
+    case WP_TODAY: {
+        if (body)
+            draw_wrapped(s, body, g.a[A_SUB], W.n_today
+                         ? "Each time one of your wishes did something today."
+                         : "None of your wishes has done anything today.", c->subtle, lh_body);
+        rect tx = g.a[A_TEXT1];
+        for (int i = 0; i < g.mine_n; i++) {
+            int ri = v.first_item + i;
+            if (ri >= W.n_today) break;
+            char buf[TITLE_MAX + 48];
+            if (W.today[ri].times == 1) snprintf(buf, sizeof buf, "%s: once", W.today[ri].title);
+            else if (W.today[ri].times > 1) snprintf(buf, sizeof buf, "%s: %d times", W.today[ri].title, W.today[ri].times);
+            else snprintf(buf, sizeof buf, "%s%s%s", W.today[ri].title, W.today[ri].tstr[0] ? ": " : "", W.today[ri].tstr);
+            if (body)
+                draw_wrapped(s, body, (rect){ tx.x, tx.y + i * g.mine_row_h, tx.w, g.mine_row_h },
+                             buf, c->fg_hi, lh_body);
+        }
+        break;
+    }
+    case WP_PICK:
+        if (body)
+            draw_wrapped(s, body, g.a[A_SUB],
+                         W.g_stage < 0 ? "These work even when the internet doesn't. Press one."
+                                       : wg_get(W.g_tmpl)->pick, c->subtle, lh_body);
+        break;
     case WP_MINE: {
         if (body)
             draw_wrapped(s, body, g.a[A_SUB], W.n_rows
@@ -2303,9 +2645,80 @@ void wish_paint(shell_ctx *c, surface *s, shell_fonts *f)
 static int hit(rect r, int x, int y)
 { return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h; }
 
+/* She has chosen every blank: build the wish from the tables and ask the
+ * engine to check it. Nothing goes to the internet; the engine checks it
+ * as it checks one from the cloud and writes its own sentence. */
+static void gallery_send(shell_ctx *c)
+{
+    (void)c;
+    char said[300], doc[700];
+    if (wg_build(W.g_tmpl, W.g_choice, said, sizeof said, doc, sizeof doc) < 0) {
+        set_error("broken", NULL);
+        return;
+    }
+    W.g_stage = -1;
+    W.g_first = 0;
+    if (W.req_id) return;
+    if (K.fd < 0) k_connect();
+    if (K.fd < 0) { set_error("broken", NULL); return; }
+    char q[700], rest[1700];
+    js_quote(q, sizeof q, said);
+    snprintf(rest, sizeof rest, ",\"wish\":%s,\"said\":%s,\"voice\":false", doc, q);
+    int id = k_send(OP_CHECK, "check", rest);
+    if (id < 0) { set_error("broken", NULL); return; }
+    snprintf(W.said, sizeof W.said, "%s", said);
+    W.voice = 0;
+    begin_request(OP_CHECK, id);
+    go(WP_WAIT);
+}
+
+static void pick_back(void)
+{
+    W.g_first = 0;
+    if (W.g_stage > 0) { W.g_stage--; W.hover = W.sel = -1; return; }
+    if (W.g_stage == 0) { W.g_stage = -1; W.hover = W.sel = -1; return; }
+    go(WP_ASK);
+}
+
 static void act(shell_ctx *c, const wish_target *t)
 {
     switch (t->kind) {
+    case WT_STOP_ALL:
+        wish_command(c, WISH_CMD_STOP_ALL);
+        snprintf(W.sentence, sizeof W.sentence, "%s",
+                 "All your wishes are off. You can turn them back on in My wishes.");
+        W.title[0] = 0;
+        go(WP_DONE);
+        break;
+    case WT_GALLERY:
+        W.g_stage = -1;
+        W.g_first = 0;
+        go(WP_PICK);
+        break;
+    case WT_BACK:
+        pick_back();
+        break;
+    case WT_ITEM: {
+        if (W.page != WP_PICK) break;
+        if (W.g_stage < 0) {
+            const wg_tmpl *tp = wg_get(t->arg);
+            if (!tp) break;
+            W.g_tmpl = t->arg;
+            memset(W.g_choice, 0, sizeof W.g_choice);
+            W.g_first = 0;
+            W.hover = W.sel = -1;
+            if (tp->n_slots == 0) gallery_send(c);
+            else W.g_stage = 0;
+        } else {
+            const wg_tmpl *tp = wg_get(W.g_tmpl);
+            if (!tp) break;
+            W.g_choice[W.g_stage] = t->arg;
+            W.g_first = 0;
+            W.hover = W.sel = -1;
+            if (++W.g_stage >= tp->n_slots) gallery_send(c);
+        }
+        break;
+    }
     case WT_BOX:      W.box_focus = 1; break;
     case WT_MIC:      W.box_focus = 0; voice_start(); break;
     case WT_ASK:      submit(c); break;
@@ -2440,6 +2853,17 @@ static void act(shell_ctx *c, const wish_target *t)
     case WT_MORE: {
         wish_view v = view_now(c);
         int shown = rows_shown(c, &v);
+        if (W.page == WP_TODAY) {
+            W.first_row += shown > 0 ? shown : 1;
+            if (W.first_row >= W.n_today) W.first_row = 0;
+            break;
+        }
+        if (W.page == WP_PICK) {
+            W.g_first += shown > 0 ? shown : 1;
+            if (W.g_first >= v.n_items) W.g_first = 0;
+            W.hover = W.sel = -1;
+            break;
+        }
         W.first_row += shown > 0 ? shown : 1;
         if (W.first_row >= W.n_rows) W.first_row = 0;
         W.removing = -1;
@@ -2504,7 +2928,8 @@ int wish_key(shell_ctx *c, int k)
     if (k == 1) {
         /* Escape is "back" where there is a back, and "close" where
          * there is not -- never "yes". */
-        if (W.page == WP_LISTEN || W.page == WP_HEARING) { voice_cancel(); go(WP_ASK); }
+        if (W.page == WP_PICK) { pick_back(); }
+        else if (W.page == WP_LISTEN || W.page == WP_HEARING) { voice_cancel(); go(WP_ASK); }
         else if (W.page == WP_WAIT) { cancel_request(); go(WP_ASK); }
         else if (W.page == WP_CONFIRM) {
             wish_target t = { .kind = WT_NO };

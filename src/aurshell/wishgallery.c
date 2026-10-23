@@ -128,7 +128,7 @@ typedef struct {
 
 #define NOW(...)  "{\"v\":1,\"when\":{\"type\":\"now\"},\"do\":[" __VA_ARGS__ "]}"
 
-static const gtmpl T[] = {
+static const gtmpl TMPLS[] = {
     { { "Make the words bigger", 0, {0} },
       "Make the words bigger",
       NOW("{\"type\":\"set_text_size\",\"size\":\"bigger\"}") },
@@ -191,10 +191,10 @@ static const gtmpl T[] = {
       "Tell me when the battery is low: @1",
       "{\"v\":1,\"when\":{\"type\":\"battery_below\",\"percent\":20},\"do\":[{\"type\":\"show_message\",\"text\":\"@1\"}]}" },
 };
-#define N_T ((int)(sizeof T / sizeof T[0]))
+#define N_T ((int)(sizeof TMPLS / sizeof TMPLS[0]))
 
 int wg_count(void) { return N_T; }
-const wg_tmpl *wg_get(int i) { return (i >= 0 && i < N_T) ? &T[i].pub : NULL; }
+const wg_tmpl *wg_get(int i) { return (i >= 0 && i < N_T) ? &TMPLS[i].pub : NULL; }
 const wg_slot *wg_slot_get(int id) { return (id >= 0 && id < S_N) ? &SLOTS[id] : NULL; }
 
 /* `pat` with @1 and @2 replaced. */
@@ -227,12 +227,12 @@ int wg_build(int t, const int *choice, char *said, size_t sn, char *doc, size_t 
 {
     if (t < 0 || t >= N_T) return -1;
     const wg_opt *o[WG_MAX_SLOTS] = { NULL, NULL };
-    for (int k = 0; k < T[t].pub.n_slots; k++) {
-        const wg_slot *s = wg_slot_get(T[t].pub.slot[k]);
+    for (int k = 0; k < TMPLS[t].pub.n_slots; k++) {
+        const wg_slot *s = wg_slot_get(TMPLS[t].pub.slot[k]);
         if (!s || !choice || choice[k] < 0 || choice[k] >= s->n) return -1;
         o[k] = &s->opts[choice[k]];
     }
-    if (fill(T[t].say, o[0], o[1], 1, said, sn) < 0) return -1;
-    if (fill(T[t].doc, o[0], o[1], 0, doc, dn) < 0) return -1;
+    if (fill(TMPLS[t].say, o[0], o[1], 1, said, sn) < 0) return -1;
+    if (fill(TMPLS[t].doc, o[0], o[1], 0, doc, dn) < 0) return -1;
     return 0;
 }

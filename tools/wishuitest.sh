@@ -21,19 +21,28 @@ if cc -fsanitize=address,undefined -fno-sanitize-recover=all -o "$T/san" "$T/san
 fi
 echo "sanitizer: ${SAN:-none (not available here)}"
 
-build() {   # $1 = tree root, $2 = output
-    cc -O1 -g -std=gnu11 -w $SAN -o "$2" "$1/tools/wishuitest.c" \
+SRCS="foot.c run.c draw.c shellcommon.c anim.c"
+build() {   # $1 = tree root, $2 = output (and $2-inert: the same panel built as the release is)
+    cc -O1 -g -std=gnu11 -w $SAN -DAUROS_WISHES=1 -o "$2" "$1/tools/wishuitest.c" \
+       "$1/src/aurshell/foot.c" "$1/src/aurshell/run.c" "$1/src/aurshell/draw.c" \
+       "$1/src/aurshell/shellcommon.c" "$1/src/aurshell/anim.c" \
+       "$1"/src/aurshell/layouts/[a-z]*.c "$1/src/common/theme.c" \
+       "$1/src/common/font.c" "$1/src/common/png.c" \
+       -I "$1/src/aurshell" -I "$1/src/common" -lm
+    cc -O1 -g -std=gnu11 -w $SAN -o "$2-inert" "$1/tools/wishinert.c" \
        "$1/src/aurshell/foot.c" "$1/src/aurshell/run.c" "$1/src/aurshell/draw.c" \
        "$1/src/aurshell/shellcommon.c" "$1/src/aurshell/anim.c" \
        "$1"/src/aurshell/layouts/[a-z]*.c "$1/src/common/theme.c" \
        "$1/src/common/font.c" "$1/src/common/png.c" \
        -I "$1/src/aurshell" -I "$1/src/common" -lm
 }
+# Both programs; nonzero if either goes red.
+both() { (cd "$ROOT" && "$1" && "$1-inert"); }
 
 echo "== the real tree"
 build "$ROOT" "$T/real"
-(cd "$ROOT" && "$T/real") | tee "$T/real.log" | tail -4
-grep -q ' 0 failed$' "$T/real.log" || { echo "the unbroken tree fails its own test"; exit 1; }
+both "$T/real" | tee "$T/real.log" | tail -4
+[ "$(grep -c ' 0 failed$' "$T/real.log")" = 2 ] || { echo "the unbroken tree fails its own test"; exit 1; }
 [ "${1:-}" = "--no-mutants" ] && exit 0
 
 # Each mutant: file ^ what it breaks ^ text to find ^ text to put in its place.
@@ -56,6 +65,18 @@ wish.c^Yes and No differ in size^for (int i = 0; i < n; i++) w[i] = maxw;^for (i
 wish.c^panel buttons shrink below 48 px^g->btn_h = (int)(36.f + 20.f * k); if (g->btn_h < 48) g->btn_h = 48;^g->btn_h = (int)(20.f + 20.f * k);
 wishover.c^card buttons shrink below 48 px^g->btn_h = (int)(36.f + 20.f * k); if (g->btn_h < 48) g->btn_h = 48;^g->btn_h = (int)(20.f + 20.f * k);
 wish.c^a refused consent still sends her words^if (W.consent == 0) { go(WP_CONSENT); return; }^if (0) { go(WP_CONSENT); return; }
+wish.c^the gallery sends nothing to the engine^int id = k_send(OP_CHECK, "check", rest);^int id = -1;
+wish.c^a template with blanks is sent before the blanks are filled^else W.g_stage = 0;^else gallery_send(c);
+wish.c^Go back from the first blank leaves the gallery^if (W.g_stage == 0) { W.g_stage = -1; W.hover = W.sel = -1; return; }^if (W.g_stage == 0) { go(WP_ASK); return; }
+wish.c^an error page does not offer the list^kinds[nk++] = WT_GALLERY;\n            kinds[nk++] = WT_CLOSE;\n        }\n        if (page == WP_CONSENT)^kinds[nk++] = WT_CLOSE;\n        }\n        if (page == WP_CONSENT)
+wish.c^the engine is never told she is here^if (input_pending && t - input_sent_ms >= 1000) {^if (0) {
+wish.c^the engine is told on every key^if (input_pending && t - input_sent_ms >= 1000) {^if (input_pending) {
+wish.c^a password panel does not hold wishes^if (c->net_open || c->bt_open) snprintf(reasons, sizeof reasons, "%s", "\"password\"");^
+wish.c^the headphones PIN is not held^if (c->net_open || c->bt_open) snprintf^if (c->net_open) snprintf
+wish.c^Stop all wishes from Help does not tell the engine^if (K.fd < 0) k_connect();\n        k_send(OP_ALLOFF, "all_off", NULL);^if (K.fd < 0) k_connect();
+wish.c^Help's Today button opens nothing^c->wish_open = WISH_OPEN_TODAY;      /* the host loop calls wish_opened */^c->wish_open = 0;
+shellcommon.c^wishes=off still shows the button^if ((c->kiosk || c->no_wishes) && !strcmp(A[c->n_apps - 1].id, "wish")) c->n_apps--;^
+wish.c^a build without Wishes still looks for the engine^if (!AUROS_WISHES) return 0;\n    int dirty = 0;^int dirty = 0;
 wishover.c^a fill is not held to 10 seconds^if (seconds > WO_FILL_MAX_S) seconds = WO_FILL_MAX_S;  /* §2.2 cap, here too */^
 wishover.c^the key that ends a fill reaches the program^c->wishfill_open = 0;\n    return 1;\n}\n\nvoid wishover_motion^c->wishfill_open = 0;\n    return 0;\n}\n\nvoid wishover_motion
 wishover.c^a card takes the keyboard^if (!O.fill) return 0;^if (!O.fill && !O.n) return 0;
@@ -98,7 +119,7 @@ PY
         bad=$((bad + 1)); rm -rf "$M"; continue
     fi
     # A mutant may crash instead of failing a check; that is red too.
-    if (cd "$ROOT" && timeout 60 "$M/bin" >"$M/out.log" 2>&1); then
+    if (cd "$ROOT" && timeout 120 sh -c '"$1" && "$1-inert"' sh "$M/bin" >"$M/out.log" 2>&1); then
         echo "  SURVIVED  $n: $what"
         bad=$((bad + 1))
     else

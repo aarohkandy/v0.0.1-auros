@@ -481,6 +481,9 @@ void shell_seed_apps(shell_ctx *c)
     };
     c->n_apps = (int)(sizeof A / sizeof A[0]);
     if (c->n_apps > SHELL_MAX_APPS) c->n_apps = SHELL_MAX_APPS;
+    /* "Make a wish" is the last entry. Not on a kiosk, and not where an
+     * administrator has turned Wishes off (policy wishes="off"). */
+    if ((c->kiosk || c->no_wishes) && !strcmp(A[c->n_apps - 1].id, "wish")) c->n_apps--;
     for (int i = 0; i < c->n_apps; i++) {
         snprintf(c->apps[i].id,   sizeof c->apps[i].id,   "%s", A[i].id);
         snprintf(c->apps[i].name, sizeof c->apps[i].name, "%s", A[i].name);
@@ -992,7 +995,7 @@ int shell_store_app(const shell_ctx *c)
 
 int shell_wish_app(const shell_ctx *c)
 {
-    if (!c) return -1;
+    if (!c || c->no_wishes) return -1;
     for (int i = 0; i < c->n_apps; i++)
         if (c->apps[i].role == APP_ROLE_WISH) return i;
     return -1;
