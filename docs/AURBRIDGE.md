@@ -1114,14 +1114,23 @@ the written bytes are in unallocated space). That is why `plat.h`'s
 fence is "only inside the computed gap, re-checked against the live
 table, never overlapping a partition" rather than "only the stick".
 
-**Left to do, next three steps**
+**Proven on real Windows (2026-10-23):** `aurbridge gapselftest`
+(`main.c`) in `.github/workflows/fastpath.yml` on a GitHub Windows Server
+runner, against a diskpart VHDX (GPT, 2 GB NTFS with 300 known files, a
+recovery partition after it): Windows' online shrink (~6 s), the shared
+planner, 256 MB + 8 MB written into the gap and read back, fence one
+refusing six writes (each fence-one check shown alone) and an arm over
+NTFS, fence two (Windows refuses a raw write inside the mounted NTFS
+with error 5 and accepts one in the gap), the files and `Repair-Volume
+-Scan` checked independently, the gap read raw by .NET, the undo
+growing it back exactly -- and all of it again with the volume
+BitLocker-encrypted (FullyEncrypted, protection on), nothing decrypted.
+`tools/fastpath-mutant.sh` breaks each check on purpose; each mutant
+must turn the run red (results: `docs/handoff/streams/A2.md`).
 
-1. `gapselftest <disk number>` console subcommand (`main.c`) + a real
-   Windows job in `.github/workflows/windows.yml`: build a VHDX with
-   diskpart (NTFS + known files), run shrink + gap-write + read-back
-   verify + a fence refusal + undo (extend back), and check the files
-   are intact and `chkdsk` clean. This is where the Windows APIs meet
-   real Windows; make it thorough. Bonus: a BitLocker-enabled VHDX.
+**Left to do, next steps** (`docs/handoff/streams/A2.md` has the detail)
+
+1. (done: gapselftest, above; the journal's `image_on=gap`, f01f753)
 2. The shared planner: compile `src/aurstage/plan.c` into aurbridge
    (with a buffer GPT parse) so the Windows side lays out the gap
    exactly as `commit.c` will, and the new journal mode
