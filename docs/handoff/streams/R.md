@@ -175,6 +175,25 @@ gate checks every ELF in /usr/lib/ferry).
 7. DONE `docs/FERRY.md` rewritten to match the code (passwords, copier,
    browser, way back, signal, tests).
 
+## Where things stand (end of this session; read this first)
+
+Pushed and green on homebase: `tests/run.sh` 261 as a user / 245 as root;
+`tests/insystemd.sh` (the answer unit's real sandbox) 55/55; the real-Firefox
+test 14/14 (last run before the handover work; it does not depend on it).
+Mutants: every check added in each commit was shown to fail with its bug
+put back, run per commit with `ONLY="text" sh tests/mutants.sh`; a FULL
+sweep (`sh tests/mutants.sh`, then `sh tests/asroot.sh mutants`, ~70
+mutants, ~40 min each when homebase is idle, hours when it is busy) was not
+completed after the last few commits: run it when the machine is quiet and
+repair any MISSED (usually a check name that no longer matches).
+What is NOT Ferry's and blocks the product: (1) C's panel: "whose files?"
+for `result=choose` + `import:NAME` (and aurfirst's word list), a sentence
+for `result=empty`, "Save my files to a USB stick first" screen; (2) A2's
+put-back wrapper that makes/attaches/detaches the handover volume and the
+Windows-side consumer; (3) a way out for a locked Windows drive when no
+handover volume was made (exit 5/7 blocks Put Windows back by design).
+Not fuzzed yet: ffhash, ferry-winattr, the shell XML/zone parsers.
+
 ## Handover volume and USB stick (lead's product decision, 2026-10-23)
 
 For BitLocker PCs (and later all PCs) the copy-back is a handover: Ferry

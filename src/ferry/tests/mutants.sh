@@ -250,6 +250,24 @@ mutant ferry-common.sh "            if [ -L \"\$_src\" ]; then _any=1; break; fi
 mutant ferry-common.sh "-name '.Trash-*' -o -name '.thumbnails' \\) -prune" "-name '.Trash-x' -o -name '.thumbnails' \\) -prune" \
     "a trash folder and an editor's lock file are not files to save (exit 0, drive not looked at)"
 
+# The handover volume and the stick.
+mutant copy.c '        if (fd_rows >= 0) sha_update(&sh, buf, (size_t)k);' '' \
+    "...the photo's hash in the manifest is the hash of the file on HER disk"
+mutant ferry-handover 'if [ -s "$VL" ]; then' 'if false; then' \
+    "a file damaged after it was written: found by the read-back (exit 1)"
+mutant ferry-handover '[ "$BAD" = 0 ] || { stage_fail "$STAGE" "a folder could not be saved"; exit 2; }' ':' \
+    "a shortcut where Documents should be: some could not be saved (exit 2)"
+mutant ferry-handover '( cd "$H" && sha256sum manifest.tsv ) |' '( cd "$H" && sha256sum version ) |' \
+    "...and the Windows side's reference checks pass (tests/verify-handover.sh)"
+mutant ferry-handover '# ── Only now: complete.
+if [ "$STICK" = 0 ]; then' '# ── Only now: complete.
+if true; then' \
+    "...and no DONE (it is not a handover for Windows to consume)"
+mutant ferry '    [ "$(cat "$FERRY_STATE/state/back.via" 2>/dev/null)" != handover ] || _stg=handover' '    :' \
+    "...the screen is told it is checked and ready for Windows (not 'in Windows')"
+mutant ferry 'function v(k,   m, t) { if (match($0, "(^| )" k' 'function v(k,   m, t) { if (match($0, k' \
+    "ferry stick list names only the sticks she could use, in plain words"
+
 # Root: the escalation the lead's review named.
 # Without the switch to her, the self-check refuses to copy at all...
 mutant copy.c 'if (setgroups(1, &gg) || setresgid(g, g, g) || setresuid(u, u, u))' \
