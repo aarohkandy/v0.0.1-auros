@@ -199,28 +199,91 @@ shipped site list, never from the model), `set_wallpaper` carries `color` or
   question ("how do I print?") with an offer to do it.
 - Spoken back aloud if she used her voice.
 
-## 5. The cloud service (CL: `cloud/`)
+## 5. The cloud service (CL: `cloud/`) — v1, as built (follows §7)
 
-Portable fetch-handler service (runs on Cloudflare Workers; also Deno/Node
-for tests). Holds the Anthropic key; she never needs an account.
+One Cloudflare Worker and one Durable Object (`cloud/`, `docs/CLOUD.md`);
+the same handler runs under Node for tests. It holds the Anthropic key; she
+never has an account. **Only the engine (`aurwish`) talks to it** (the shell
+never does). The engine treats every answer as hostile (§7.1): the checks
+here save cost and keep answers useful; they are not the safety layer.
+The wish schema both sides compile: `docs/wish-v1.schema.json`.
 
-| Endpoint | Request | Response |
+| Endpoint | Request (JSON body) | Response |
 |---|---|---|
-| `POST /v1/register` | `{install_id, version}` | `{token}` (opaque, per install) |
-| `POST /v1/wish` | `{text, lang, caps:{sensors[], apps[], looks[], themes[]}, existing:[titles]}` + `Authorization: Bearer` | `{kind:"wish", wish}` · `{kind:"answer", text, wish?}` · `{kind:"cannot", text}` |
-| `POST /v1/ask` | `{question, lang, context:{look}}` | `{kind:"answer", text, wish?}` (help grounded in AurOS's help pages) |
-| errors | | `429 {retry_after, text}` (her limit), `503 {text}` (busy/budget), `400` |
+| `POST /v1/register` | `{install_id, version, consent_version, pow:{day, nonce}}` | `200 {token, expires_at}` |
+| `POST /v1/wish` + Bearer | `{text, lang, schema:{v:1, triggers[], actions[]}, sensors:{compass, tilt, light}}` | `200 {kind:"wish", wish}` or `200 {kind:"cannot", missing, alt_wish?}` |
+| `POST /v1/ask` + Bearer | `{question, lang, context:{look}}` | `200 {help_page_id, wish?}` (`help_page_id` is a file name in `/usr/share/auros/help/` without `.html`, or `null`: no page covers it) |
+| `POST /v1/forget` + Bearer | `{}` | `204` (the token and its counters are gone) |
+| `GET /v1/health` | – | `200 {ok:true}` |
 
-- Claude produces the wish through **structured output** constrained to the
-  v1 schema; the service validates again before answering.
-- Limits: per token per day, per IP per day, global daily spend cap (a
-  plain "Wishes are resting until tomorrow" when hit), identical-request
-  cache.
-- Logs: counts, latency, cost. Never the text of a wish.
-- Deploy: `.github/workflows/cloud.yml` with the owner's secrets
-  (`docs/OWNER-SETUP.md`); never a key in the repository or the image.
-- The address AurOS uses is baked at build time (like the repository
-  address) so a move is one variable.
+Errors (JSON, plus a `Retry-After` header where there is a `retry_after`):
+`400 {error:"request"|"too_long"}`; `400 {error:"pow", day, bits}`;
+`401 {error:"token"}`; `429 {retry_after, text:"You've made lots of wishes today — more tomorrow"}`;
+`503 {retry_after, text:"Wishes are resting for a little while"}`. The device
+writes its own sentences (§7.3); `text` is only a fallback.
+
+**Field rules.** `text`/`question`: 1–300 characters (code points). Body
+≤ 8 KB. `lang`: a BCP 47 tag (`en`, `de`, `pt-BR`). `schema.triggers` /
+`schema.actions`: the type names this engine supports (the model uses
+nothing else; a wish with another type comes back as `cannot`). `sensors`:
+which sensors exist (a sensor wish without one is `cannot`/`compass` etc.).
+Unknown extra fields are ignored. `install_id`: 128 random bits made when she
+agrees (§7.12), base64url (22 characters) or hex. `consent_version`: the
+consent text she agreed to (`"1"`).
+
+**`missing`** (why a wish can't be made; the device writes the sentence):
+`unclear` (gibberish, say it another way) · `question` (a question, not a
+wish: offer Ask AurOS) · `compass` / `tilt` / `light` (this computer has no
+such sensor) · `install` · `files` · `messages` (e-mail, messages, calls) ·
+`money` · `private` (passwords, personal details) · `security` (network,
+firewall, updates, protections, accounts, remote access) · `other`.
+`alt_wish`, when present, is the nearest wish it can do, schema-valid.
+
+**Proof of work for `/register`.** Find a `nonce` (1–32 letters/digits) such
+that `SHA-256("auros-register-v1:" + day + ":" + install_id + ":" + nonce)`
+starts with `bits` zero bits (22 today: about 4 million hashes, roughly 2 s
+in C on a 2013 laptop). `day` is the UTC date `YYYY-MM-DD`; yesterday, today
+and tomorrow are accepted. If her clock is wrong the 400 carries the
+server's `day` and `bits`: compute again with those.
+
+**Tokens and the device flow.** The token is opaque
+(`[A-Za-z0-9_-]{22}.[A-Za-z0-9_-]{43}`); keep it with the `install_id` in a
+0600 file in her home. It expires after 90 days (`expires_at`). On any 401:
+register again silently (the same `install_id` gives the same token and keeps
+her standing) and retry that request once. On 429/503: no automatic retry
+(§7.9); show the device's sentence and allow a new try after `retry_after`
+seconds. "Forget everything" / turning Wishes off: `POST /v1/forget`, then
+delete the token and make a new `install_id` next time. Anthropic's copy of
+past requests expires on Anthropic's schedule; the service cannot delete it.
+
+**Limits** (one Durable Object holds them all). Per token and per day: 3
+`/wish` and 3 `/ask` while the token is new; 20 and 20 once it is at least 7
+days old and the service has returned it a wish (the service cannot see her
+Yes; that is the nearest thing it can observe). A request Claude never
+answered is not counted. `/register`: 3 per day per IPv4 /24 or IPv6 /64.
+No other per-address limit. At most 40 Claude calls in flight; more get 503
+at once. A daily budget (`DAILY_BUDGET_USD`) in fixed pools: 70 % established
+tokens, 20 % new tokens, 10 % `/ask`; an empty pool answers 503 until UTC
+midnight; the owner is told at 50 % (a log line, and a push to `ALERT_URL`
+if set). A request whose estimated cost is over $0.01 is refused. Tokens on
+the `BANNED` list get 401. No cache of answers.
+
+**The model.** `claude-haiku-5-5`, thinking off, `max_tokens` 400 (`/wish`)
+and 300 (`/ask`), a fixed system prompt (prompt-cached) and structured
+output constrained to the wish schema (vocabulary enums kept; numeric,
+length and pattern limits checked after). Her words go in the user message,
+escaped, as data; everything else as quoted JSON. Anthropic 429/529 and
+timeouts: two retries with backoff inside a 15 s deadline, then 503.
+
+**Privacy.** Logs: one line per request with route, status, latency,
+tokens, cost, `kind`/`missing`/`help_page_id` and a failure reason; never a
+body, a header, a token, an id or an address (a CI test fails otherwise).
+Stored: for each token, its first day and whether it is established (90
+days); daily counters keyed by `HMAC(day key, token)` and `HMAC(day key,
+/24)`, the day key deleted after 48 hours; daily spend. Nothing else.
+
+**The address** comes from a signed package config (§7.11), not the image:
+`docs/CLOUD.md` "How AurOS finds the service".
 
 ## 6. Order of work
 
