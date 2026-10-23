@@ -51,6 +51,33 @@
 #include <windowsx.h>
 #include <oleacc.h>
 #include <shellapi.h>
+
+/* OLEACC.DLL IS LOADED BY NAME FROM SYSTEM32 WHEN FIRST ASKED, NOT LINKED (SEC-003):
+ * a linked DLL is resolved before WinMain from the folder the installer sits in. */
+void *plat_load_system_dll(const char *name);
+static HRESULT (WINAPI *p_AOFW)(HWND, DWORD, REFIID, void **);
+static HRESULT (WINAPI *p_CSAO)(HWND, LONG, REFIID, void **);
+static LRESULT (WINAPI *p_LFO)(REFIID, WPARAM, LPUNKNOWN);
+static int oleacc_ready(void)
+{
+    if (p_AOFW) return 1;
+    HMODULE m = (HMODULE)plat_load_system_dll("oleacc.dll");
+    if (!m) return 0;
+    p_CSAO = (void *)GetProcAddress(m, "CreateStdAccessibleObject");
+    p_LFO  = (void *)GetProcAddress(m, "LresultFromObject");
+    p_AOFW = (void *)GetProcAddress(m, "AccessibleObjectFromWindow");
+    if (!p_CSAO || !p_LFO || !p_AOFW) { p_AOFW = NULL; return 0; }
+    return 1;
+}
+static HRESULT acc_AccessibleObjectFromWindow(HWND h, DWORD id, REFIID r, void **pv)
+{ return oleacc_ready() ? p_AOFW(h, id, r, pv) : E_FAIL; }
+static HRESULT acc_CreateStdAccessibleObject(HWND h, LONG id, REFIID r, void **pv)
+{ return oleacc_ready() ? p_CSAO(h, id, r, pv) : E_FAIL; }
+static LRESULT acc_LresultFromObject(REFIID r, WPARAM w, LPUNKNOWN u)
+{ return oleacc_ready() ? p_LFO(r, w, u) : 0; }
+#define AccessibleObjectFromWindow acc_AccessibleObjectFromWindow
+#define CreateStdAccessibleObject  acc_CreateStdAccessibleObject
+#define LresultFromObject          acc_LresultFromObject
 #include <shlobj.h>
 #include <stdint.h>
 #include <stdio.h>

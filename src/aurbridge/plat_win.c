@@ -2246,6 +2246,40 @@ void plat_payload_free(void)
  */
 #include <winhttp.h>
 
+/* WINHTTP.DLL IS LOADED BY NAME FROM SYSTEM32, NOT LINKED (SEC-003). A DLL that is
+ * linked is resolved before main runs, from the folder the installer sits in first --
+ * Downloads, which anything can write to -- and runs as the administrator the
+ * installer is. The names below become pointers; the calls in this file are unchanged. */
+#define WH_ALL(X) \
+    X(WinHttpAddRequestHeaders) X(WinHttpCloseHandle) X(WinHttpConnect) X(WinHttpCrackUrl) \
+    X(WinHttpOpen) X(WinHttpOpenRequest) X(WinHttpQueryHeaders) X(WinHttpReadData) \
+    X(WinHttpReceiveResponse) X(WinHttpSendRequest) X(WinHttpSetTimeouts)
+#define WH_DECL(n) static __typeof__(&n) p_##n;
+WH_ALL(WH_DECL)
+#undef WH_DECL
+static int winhttp_ready(void)
+{
+    if (p_WinHttpOpen) return 1;
+    HMODULE m = (HMODULE)plat_load_system_dll("winhttp.dll");
+    if (!m) return 0;
+#define WH_LOAD(n) p_##n = (__typeof__(&n))(void *)GetProcAddress(m, #n); \
+                   if (!p_##n) { p_WinHttpOpen = NULL; return 0; }
+    WH_ALL(WH_LOAD)
+#undef WH_LOAD
+    return 1;
+}
+#define WinHttpAddRequestHeaders p_WinHttpAddRequestHeaders
+#define WinHttpCloseHandle       p_WinHttpCloseHandle
+#define WinHttpConnect           p_WinHttpConnect
+#define WinHttpCrackUrl          p_WinHttpCrackUrl
+#define WinHttpOpen              p_WinHttpOpen
+#define WinHttpOpenRequest       p_WinHttpOpenRequest
+#define WinHttpQueryHeaders      p_WinHttpQueryHeaders
+#define WinHttpReadData          p_WinHttpReadData
+#define WinHttpReceiveResponse   p_WinHttpReceiveResponse
+#define WinHttpSendRequest       p_WinHttpSendRequest
+#define WinHttpSetTimeouts       p_WinHttpSetTimeouts
+
 static int fetch_progress_cancel(int (*cb)(uint64_t, uint64_t, void *),
                                  void *ud, uint64_t got, uint64_t total)
 { return cb ? cb(got, total, ud) : 0; }
@@ -2424,6 +2458,11 @@ int plat_fetch(const char *url, const char *dest,
                int (*progress)(uint64_t got, uint64_t total, void *ud),
                void *ud, char *why, size_t wn)
 {
+    if (!winhttp_ready()) {
+        snprintf(why, wn, "this computer's part of Windows that talks to the internet "
+                          "would not start.");
+        return -1;
+    }
     wchar_t wurl[1024];
     if (to_wide(url, wurl, 1024) != 0) {
         snprintf(why, wn, "that address is not one AurOS can use."); return -1;

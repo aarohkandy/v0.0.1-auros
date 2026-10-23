@@ -72,6 +72,20 @@ jobs:
         run: sh tools/fastpath-mutant.sh "$MUTANT"
       - name: build/aurbridge
         run: sh build/aurbridge
+      # SEC-003: a DLL the installer is LINKED against is resolved before main from the
+      # folder it sits in. Only Windows' KnownDLLs (always taken from System32) may be linked;
+      # anything else is loaded by name, from System32, when it is first needed.
+      - name: the installer is linked against KnownDLLs only
+        run: |
+          known=" advapi32 kernel32 user32 gdi32 shell32 ole32 oleaut32 setupapi msvcrt ws2_32 shlwapi comdlg32 imm32 psapi rpcrt4 sechost combase wldap32 nsi normaliz imagehlp clbcatq coml2 msctf shcore gdiplus "
+          bad=""
+          for f in out/aurbridge.exe out/aurbridge-wizard.exe; do
+              for d in $(x86_64-w64-mingw32-objdump -p "$f" | sed -n 's/^\tDLL Name: //p' | tr 'A-Z' 'a-z' | sed 's/\.dll$//'); do
+                  case "$known" in *" $d "*) ;; *) bad="$bad $f:$d" ;; esac
+              done
+          done
+          [ -z "$bad" ] || { echo "linked against DLLs that are not KnownDLLs:$bad"; exit 1; }
+          echo "ok: every linked DLL is a KnownDLL"
       - name: the engine against a simulated machine (aborttest, bridgetest)
         run: |
           sh tools/aborttest.sh
@@ -83,7 +97,9 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: exe
-          path: out/aurbridge.exe
+          path: |
+            out/aurbridge.exe
+            out/aurbridge-wizard.exe
       # Programs that must never run: the same names Windows' own tools have,
       # put beside the installer by the runcheck job below (SEC-002).
       - name: planted programs
@@ -93,7 +109,9 @@ jobs:
               x86_64-w64-mingw32-gcc -O1 -o "planted/$n.exe" tools/planted.c
           done
           # And DLLs the installer loads by bare name at run time (SEC-003).
-          x86_64-w64-mingw32-gcc -O1 -shared -o planted/wlanapi.dll tools/planted_dll.c
+          for n in wlanapi winhttp oleacc; do
+              x86_64-w64-mingw32-gcc -O1 -shared -o "planted/$n.dll" tools/planted_dll.c
+          done
           x86_64-w64-mingw32-gcc -O1 -shared -o planted/winspool.drv tools/planted_dll.c
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -283,17 +301,27 @@ jobs:
           if (Test-Path PLANTED-RAN.txt) { throw "A PLANTED PROGRAM RAN (after the refusals)" }
           "ok: only Windows' own programs start, and a planted one never does"
 
-      # SEC-003: the same folder holds a wlanapi.dll and a winspool.drv that
-      # write a marker when loaded. The installer loads both by name (the Wi-Fi
-      # check and the printer inventory), and used to find these first.
+      # SEC-003: the same folder holds a wlanapi.dll, a winspool.drv, a winhttp.dll and
+      # an oleacc.dll that write a marker when loaded. The installer loads all four by
+      # name from System32 (the Wi-Fi check, the printer inventory, the download, the
+      # screen-reader object); WINHTTP and OLEACC used to be linked, so they were
+      # resolved before main from this very folder.
       - name: a DLL planted beside the installer is never loaded
         shell: pwsh
         run: |
           Set-Location exe
           Remove-Item C:\PLANTED-DLL-RAN.txt -ErrorAction SilentlyContinue
-          if (-not ((Test-Path wlanapi.dll) -and (Test-Path winspool.drv))) { throw "setup: the planted DLLs are not here" }
+          foreach ($f in 'wlanapi.dll', 'winspool.drv', 'winhttp.dll', 'oleacc.dll', 'aurbridge-wizard.exe') {
+              if (-not (Test-Path $f)) { throw "setup: $f is not here" }
+          }
           $null = .\aurbridge.exe preflight 2>&1 | Out-String
           $null = .\aurbridge.exe report "$env:RUNNER_TEMP\rep" 2>&1 | Out-String
+          # the download: winhttp is loaded now, from System32, and the connection is refused
+          "piece-list`nbase http://127.0.0.1:9/`n" | Set-Content -Encoding ASCII "$env:RUNNER_TEMP\pieces.txt"
+          $o = .\aurbridge.exe getimage "$env:RUNNER_TEMP\pieces.txt" "$env:RUNNER_TEMP\img" 0000000000000000000000000000000000000000000000000000000000000000 1 2>&1 | Out-String
+          "getimage: $o"
+          # the wizard: oleacc and winhttp were linked, so merely starting it used to load them
+          $null = .\aurbridge-wizard.exe --report "$env:RUNNER_TEMP\rep2" 2>&1 | Out-String
           if (Test-Path C:\PLANTED-DLL-RAN.txt) { throw "A PLANTED DLL WAS LOADED by the installer" }
           "ok: DLLs the installer names are looked for in System32 only"
 

@@ -47,8 +47,13 @@
 #                      -> red: "inherits permissions" / "somebody else can use it"
 #    file-keeps-acl    a file moved in keeps the permissions it came with (SEC-010)
 #                      -> red: "the moved-in file is still owned by" / "open to somebody else"
-#    no-dll-harden     the installer searches its own folder for DLLs (SEC-003)
+#    no-dll-harden     the installer's default DLL search includes its own folder (SEC-003)
+#                      -> red: "A PLANTED DLL WAS LOADED" if a dependent DLL is the planted one
+#    no-dll-flag       a by-name load searches the installer's own folder
 #                      -> red: "A PLANTED DLL WAS LOADED"
+#    link-oleacc       the wizard is linked against OLEACC.dll again
+#                      -> red: "linked against DLLs that are not KnownDLLs", and the planted
+#                         oleacc.dll loads when the wizard starts
 #    file-changed      (in the workflow, not here) one of her files changes
 #                      -> red: "A FILE CHANGED"
 # ═══════════════════════════════════════════════════════════════════
@@ -89,6 +94,11 @@ dir-open-acl)
     sub src/aurbridge/plat_win.c 'L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"' 'L"D:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;BU)"' ;;
 no-dll-harden)
     sub src/aurbridge/plat_win.c 'if (!f || !f(0x800)) SetDllDirectoryW(L"");' '(void)f;' ;;
+no-dll-flag)
+    sub src/aurbridge/plat_win.c 'HMODULE m = LoadLibraryExW(w, NULL, 0x800 /* LOAD_LIBRARY_SEARCH_SYSTEM32 */);' 'HMODULE m = LoadLibraryExW(w, NULL, 0);' ;;
+link-oleacc)
+    sub src/aurbridge/wizard.c '#define AccessibleObjectFromWindow acc_AccessibleObjectFromWindow' ''
+    sub build/aurbridge '    -loleaut32 -lole32 -luuid \' '    -loleacc -loleaut32 -lole32 -luuid \' ;;
 file-keeps-acl)
     sub src/aurbridge/plat_win.c '            SetNamedSecurityInfoW(wt, SE_FILE_OBJECT,' '            if (0) SetNamedSecurityInfoW(wt, SE_FILE_OBJECT,' ;;
 putback-no-hash)
