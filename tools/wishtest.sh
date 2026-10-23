@@ -46,13 +46,22 @@ if [ -f "$ROOT/docs/wish-v1.schema.json" ] && command -v python3 >/dev/null 2>&1
     fi
 fi
 
-# The daemon itself builds only where its Linux headers are.
-if [ "$(uname)" = Linux ] && [ -f "$W/build.sh" ] && pkg-config --exists dbus-1 2>/dev/null; then
+# The daemon itself, whole, against fakes: a Wishes service on 127.0.0.1, a
+# private D-Bus with a stand-in iio-sensor-proxy, fake sysfs and fake players.
+# Linux with libdbus-1-dev, dbus-daemon and curl; elsewhere it says so.
+if [ "$(uname)" = Linux ] && pkg-config --exists dbus-1 2>/dev/null; then
     if sh "$ROOT/src/aurwish/build.sh" "$OUT/aurwish" >"$OUT/err" 2>&1; then
-        echo "ok   aurwish builds"
+        echo "ok   aurwish builds (hardened flags, no warnings as errors)"
     else
         echo "FAIL aurwish build"; cat "$OUT/err"; fail=1
     fi
+    if python3 "$ROOT/tools/wishtest-daemon.py" >"$OUT/daemon" 2>&1; then
+        echo "ok   daemon: $(tail -1 "$OUT/daemon")"
+    else
+        echo "FAIL daemon"; grep -vE '^\s+(File|\^)' "$OUT/daemon" | tail -40; fail=1
+    fi
+else
+    echo "skip daemon test (needs Linux with libdbus-1-dev)"
 fi
 
 if [ "${1:-}" = --mutants ]; then

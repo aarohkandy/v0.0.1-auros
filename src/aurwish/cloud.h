@@ -43,6 +43,7 @@ cloud *cloud_new(const cloud_cfg *cfg);
 void   cloud_free(cloud *c);
 
 int    cloud_available(const cloud *c);
+void   cloud_set_sensors(cloud *c, unsigned sensors);
 int    cloud_busy(const cloud *c);
 
 /* Starts one request. `text` must already be cleaned (cloud_clean_text);

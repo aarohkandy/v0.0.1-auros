@@ -140,7 +140,7 @@ static const char *SOUNDS_DIR = "/usr/share/auros/sounds";
 
 static int io_bright_get(void *c) { (void)c; return power_brightness(); }
 static int io_bright_set(void *c, int p) { (void)c; return power_brightness_set(p); }
-static int io_vol_get(void *c) { (void)c; return power_volume(); }
+static int io_vol_get(void *c) { (void)c; power_refresh(); return power_volume(); }
 static int io_vol_set(void *c, int p) { (void)c; power_volume_set(p); return 0; }
 
 static int io_sound(void *c, int s)
@@ -382,6 +382,7 @@ int main(int argc, char **argv)
     unsigned have = sensors_have(SN, time(NULL), 1);
     cc.sensors = have;
     env.sensors = have;
+    cloud_set_sensors(CL, have);
     store_recheck(&ST, &env);
 
     engine_io io = { io_emit, io_bright_get, io_bright_set, io_vol_get, io_vol_set,
@@ -403,7 +404,11 @@ int main(int argc, char **argv)
     while (!want_quit) {
         long long now = (long long)time(NULL);
         int fast = engine_wants_fast(E, now);
-        int timeout = cloud_cpu(CL) ? 10 : fast ? 1000 : 15000;
+        int slow = 10000;                       /* nothing waiting: look every 10 s */
+#ifdef AURWISH_TEST
+        if (getenv("AURWISH_SLOW_TICK_MS")) slow = atoi(getenv("AURWISH_SLOW_TICK_MS"));
+#endif
+        int timeout = cloud_cpu(CL) ? 10 : fast ? 1000 : slow;
         struct pollfd pf[MAX_CONNS + 3];
         int np = 0;
         pf[np++] = (struct pollfd){ lfd, POLLIN, 0 };
@@ -447,7 +452,7 @@ int main(int argc, char **argv)
                 c->len -= ll + 1;
                 if (ll == 0) continue;
 #ifdef AURWISH_TEST
-                if (!strncmp(line, "{\"op\":\"inject\"", 14)) {
+                if (strstr(line, "\"inject\"")) {          /* a fake plugging, for tests */
                     if (strstr(line, "\"usb\"")) engine_usb(E, now);
                     continue;
                 }
@@ -457,7 +462,7 @@ int main(int argc, char **argv)
                 if (r == 1) cloud_op(E, &ST, c, i, line, ll, now, reply);
                 else if (reply[0]) reply_to(c, reply);
                 if (c->fd < 0) break;
-                if (r == 0 && strstr(line, "\"op\":\"hello\"")) {
+                if (r == 0 && strstr(reply, "\"kind\":\"hello\"")) {
                     /* hello's reply is out; now the words the compositor may match */
                     c->hello = 1;
                     engine_triggers_line(E, trig, sizeof trig);
@@ -490,7 +495,7 @@ int main(int argc, char **argv)
             unsigned want = engine_wants(E);
             if (want != claimed || (want & (WANT_COMPASS | WANT_TILT | WANT_LIGHT))) {
                 unsigned have2 = sensors_have(SN, now, 0);
-                if (have2 != have) { have = have2; env.sensors = have; cc.sensors = have; engine_sensors(E, have); }
+                if (have2 != have) { have = have2; env.sensors = have; cloud_set_sensors(CL, have); engine_sensors(E, have); }
                 sensors_want(SN, want, now);
                 claimed = want;
                 sensor_reading sr;
@@ -507,6 +512,7 @@ int main(int argc, char **argv)
             }
             engine_tick(E, now);
         }
+        power_step();                           /* flushes a volume she just set */
         run_reap();
     }
 

@@ -158,7 +158,7 @@ struct cloud {
     cloud_cfg cfg;
     char install_id[40], token[96];
     long long expires_at;
-    int st, kind, retried;
+    int st, kind, retried_auth, retried_pow;
     long long id, started;
     char path[16];
     char body[8192];
@@ -193,6 +193,7 @@ cloud *cloud_new(const cloud_cfg *cfg)
 }
 
 int cloud_available(const cloud *c) { return c->cfg.url[0] != 0; }
+void cloud_set_sensors(cloud *c, unsigned sensors) { c->cfg.sensors = sensors; }
 int cloud_busy(const cloud *c) { return c->st != IDLE; }
 int cloud_fd(const cloud *c) { return c->fd; }
 int cloud_cpu(const cloud *c) { return c->st == POW; }
@@ -307,16 +308,26 @@ static int spawn_curl(cloud *c, const char *path, const char *body, size_t blen,
     pid_t pid = fork();
     if (pid < 0) goto fail;
     if (pid == 0) {
-        /* The child has three pipes and nothing else. */
-        dup2(pin[0], 0);
+        /* The child has three pipes and nothing else. curl reads its
+         * config (the URL and the token) from stdin -- `--config -`; it
+         * cannot read one from a pipe by path -- and the body from a
+         * second pipe, which it can. */
+        dup2(pcfg[0], 0);
         dup2(pout[1], 1);
+#ifdef AURWISH_TEST
+        int nul = getenv("AURWISH_CURL_ERR") ? open(getenv("AURWISH_CURL_ERR"), O_WRONLY | O_APPEND | O_CREAT, 0600)
+                                             : open("/dev/null", O_WRONLY);
+#else
         int nul = open("/dev/null", O_WRONLY);
+#endif
         if (nul >= 0) { dup2(nul, 2); if (nul > 3) close(nul); }
-        int cfd = fcntl(pcfg[0], F_DUPFD, 10);          /* not O_CLOEXEC: curl reads it */
-        for (int i = 3; i < 10; i++) close(i);
-        for (int i = 11; i < 256; i++) close(i);
-        char cfgpath[24];
-        snprintf(cfgpath, sizeof cfgpath, "/dev/fd/%d", cfd);
+        /* The body pipe becomes descriptor 10 exactly (not "the next free
+         * one": that was closed again by the loop below once). */
+        if (pin[0] != 10) dup2(pin[0], 10);
+        else fcntl(10, F_SETFD, 0);                  /* not close-on-exec: curl reads it */
+        for (int i = 3; i < 256; i++) if (i != 10) close(i);
+        char bodypath[24];
+        snprintf(bodypath, sizeof bodypath, "@/dev/fd/10");
         signal(SIGPIPE, SIG_DFL);
         const char *proto = c->cfg.allow_http ? "=http,https" : "=https";
         const char *argv[] = { "curl", "--silent", "--show-error", "--proto", proto,
@@ -329,8 +340,8 @@ static int spawn_curl(cloud *c, const char *path, const char *body, size_t blen,
                                "--user-agent", "AurOS-Wishes/" VERSION,
                                "--dump-header", "/dev/fd/1",
                                "--write-out", "\n%{http_code}",
-                               "--data-binary", "@-",
-                               "--config", cfgpath, NULL };
+                               "--data-binary", bodypath,
+                               "--config", "-", NULL };
         execvp("curl", (char *const *)argv);
         _exit(127);
     }
@@ -402,7 +413,11 @@ static int pow_slice(cloud *c)
 
 static int begin_register(cloud *c, long long now)
 {
-    pow_begin(c, now, NULL, 21);
+    int bits = 21;                  /* what the service asks today; a 400 corrects it */
+#ifdef AURWISH_TEST
+    if (getenv("AURWISH_POW_BITS")) bits = atoi(getenv("AURWISH_POW_BITS"));
+#endif
+    pow_begin(c, now, NULL, bits);
     return 0;
 }
 
@@ -462,7 +477,7 @@ int cloud_start(cloud *c, int kind, long long id, const char *text, const char *
     c->kind = kind;
     c->id = id;
     c->started = mono_ms();
-    c->retried = 0;
+    c->retried_auth = c->retried_pow = 0;
     token_load(c);
     *err = "offline";
     if (!c->token[0] || c->expires_at - 86400 <= now) return begin_register(c, now), 0;
@@ -564,18 +579,20 @@ int cloud_step(cloud *c, long long now, cloud_result *out)
     memset(&r, 0, sizeof r);
     if (split(c, &r) < 0 || r.http == 0) {
         /* curl could not connect, or died: she is offline for our purposes */
-        return finish(out, c, 0, WIFEXITED(status) && WEXITSTATUS(status) == 28 ? "busy" : "offline");
+        int ex = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        /* 28: timed out; 63: the answer was bigger than we will read */
+        return finish(out, c, 0, ex == 28 ? "busy" : ex == 63 ? "broken" : "offline");
     }
     if (c->st == REG) {
         static char mem[8192];
         jarena a = { mem, sizeof mem, 0, NULL };
         static const jlimits L = { 4096, 3, 20, 256 };
         const jv *o = json_parse(&a, &L, r.body, r.len);
-        if (r.http == 400 && !c->retried) {
+        if (r.http == 400 && !c->retried_pow) {
             /* her clock is wrong: the service tells us its day and bits */
             const jv *d = jget(o, "day"), *b = jget(o, "bits");
             if (d && d->type == J_STR && strlen(d->s) == 10 && b && b->type == J_INT && b->i > 0 && b->i <= 30) {
-                c->retried = 1;
+                c->retried_pow = 1;
                 char day[16];
                 snprintf(day, sizeof day, "%s", d->s);
                 pow_begin(c, now, day, (int)b->i);
@@ -597,8 +614,8 @@ int cloud_step(cloud *c, long long now, cloud_result *out)
         return 1;
     }
     /* CALL */
-    if (r.http == 401 && !c->retried) {                  /* §5: register again, once, silently */
-        c->retried = 1;
+    if (r.http == 401 && !c->retried_auth) {             /* §5: register again, once, silently */
+        c->retried_auth = 1;
         c->token[0] = 0;
         unlink(c->cfg.token_path);
         begin_register(c, now);
