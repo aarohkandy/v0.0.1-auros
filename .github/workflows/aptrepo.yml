@@ -489,6 +489,7 @@ jobs:
           { echo '### files that read the identity (file, owning package)'; echo '```'; head -400 "$O/owned.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: what else in the built image talks to Canonical (Ubuntu Pro, ESM, news, reports)
         run: |
+          set +e +o pipefail   # an empty grep is an answer here, not an error
           R=$PWD/work/rootfs
           {
             echo "--- packages that talk to Canonical, installed?"
