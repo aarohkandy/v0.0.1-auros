@@ -11,11 +11,19 @@
 #include <stdio.h>
 #include <string.h>
 #include "wishhook.h"
+#include "textinput.h"
 
 static int fails, passes, utf8_calls;
 static const char *cur;
 #define CHECK(c) do { if (c) passes++; else { fails++; \
     fprintf(stderr, "FAIL %s:%d %s: %s\n", __FILE__, __LINE__, cur, #c); } } while (0)
+
+/* What the compositor knows about the focused program, set by each test. */
+static int ti_now = TI_PLAIN;
+static const char *app_now = "org.gnome.gedit";
+int textinput_state(void) { return ti_now; }
+aurwl_win *aurwl_focus(const aurwl *c) { (void)c; return (aurwl_win *)&ti_now; }
+const char *aurwl_win_app_id(const aurwl_win *w) { (void)w; return app_now; }
 
 /* char -> (evdev code, shift) for the keys these tests press */
 static const struct { char ch; int code, shift; } MAP[] = {
@@ -71,6 +79,8 @@ static int any_word(void) { char o[33]; return wishhook_take_word(o); }
 
 static void setup(void)
 {
+    ti_now = TI_PLAIN;
+    app_now = "org.gnome.gedit";
     const char *w[] = { "potato", "carrot" };
     const char *a[] = { "firefox", "org.videolan.VLC" };
     wishhook_set(w, 2, a, 2);
@@ -185,6 +195,75 @@ static void test_registered_list_rules(void)
     CHECK(any_word() == 0);
 }
 
+static void test_password_fields(void)
+{
+    cur = __func__;
+    setup();
+    /* The program says this is a password: a registered word typed into it is nobody's business. */
+    ti_now = TI_SENSITIVE;
+    type("potato ");
+    CHECK(any_word() == 0);
+    CHECK(wishhook_buffered() == 0);                    /* ... and nothing is held */
+    type("pot");
+    CHECK(wishhook_buffered() == 0);
+    /* She tabs to an ordinary field: what was typed in the password is not carried over. */
+    ti_now = TI_PLAIN;
+    type("ato ");
+    CHECK(any_word() == 0);
+    type("potato ");
+    CHECK(got("potato") == 1);                           /* an ordinary field works again */
+    /* And the other way: halfway through a word in an ordinary field, the field turns secret. */
+    type("pot");
+    ti_now = TI_SENSITIVE;
+    type("a");
+    CHECK(wishhook_buffered() == 0);
+    ti_now = TI_PLAIN;
+    type("to ");
+    CHECK(any_word() == 0);
+    /* A click or a change of focus while secret does not make it ordinary. */
+    ti_now = TI_SENSITIVE;
+    wishhook_reset();
+    type("potato ");
+    CHECK(any_word() == 0);
+}
+
+static void test_unknown_means_hold_for_browsers(void)
+{
+    cur = __func__;
+    setup();
+    ti_now = TI_UNKNOWN;
+    static const char *const HOLD[] = { "firefox", "org.mozilla.firefox", "Firefox-esr", "chromium",
+                                        "google-chrome", "org.gnome.Epiphany", "brave-browser",
+                                        "org.keepassxc.KeePassXC", "pinentry-gnome3",
+                                        "polkit-gnome-authentication-agent-1", "", NULL };
+    for (int i = 0; HOLD[i]; i++) {
+        app_now = HOLD[i];
+        type("potato ");
+        CHECK(any_word() == 0);
+    }
+    app_now = NULL;                                       /* a program that will not say who it is */
+    type("potato ");
+    CHECK(any_word() == 0);
+    static const char *const ALLOW[] = { "org.gnome.gedit", "xterm", "org.libreoffice.LibreOffice", "mpv", NULL };
+    for (int i = 0; ALLOW[i]; i++) {
+        app_now = ALLOW[i];
+        wishhook_reset();
+        type("potato ");
+        CHECK(got("potato") == 1);
+    }
+    /* A browser that has announced an ordinary field is trusted about it. */
+    app_now = "firefox";
+    ti_now = TI_PLAIN;
+    wishhook_reset();
+    type("potato ");
+    CHECK(got("potato") == 1);
+    /* ... and one that announced a secret is not, whoever it is. */
+    app_now = "org.gnome.gedit";
+    ti_now = TI_SENSITIVE;
+    type("potato ");
+    CHECK(any_word() == 0);
+}
+
 static void test_apps(void)
 {
     cur = __func__;
@@ -219,6 +298,8 @@ int main(void)
     test_edits_and_movement();
     test_keeps_nothing();
     test_registered_list_rules();
+    test_password_fields();
+    test_unknown_means_hold_for_browsers();
     test_apps();
     test_queue_is_bounded();
     printf("wishtest-hook: %d checks, %d failed\n", passes + fails, fails);

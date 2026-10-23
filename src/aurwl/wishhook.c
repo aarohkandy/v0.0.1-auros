@@ -4,6 +4,11 @@
 #include <stdio.h>
 #include <string.h>
 #include "wishhook.h"
+#include "textinput.h"
+
+/* Weak: a build that links wishhook.c without textinput.c (the unit test)
+ * has no way to know, and then every program is "unknown". */
+int textinput_state(void) __attribute__((weak));
 
 #define MAX_WORDS 10
 #define MAX_APPS  20
@@ -26,6 +31,7 @@ static int   napps;
  * movement happened): it cannot be reported, whatever it spells. */
 static char  buf[WORD_MAX + 1];
 static int   len, bad;
+static int   was_sensitive;      /* the last key was typed into a secret field */
 
 static char  qwords[QUEUE][WORD_MAX + 1];
 static int   qw_head, qw_n;
@@ -88,6 +94,7 @@ void wishhook_reset(void)
 {
     wipe();
     bad = 0;
+    was_sensitive = 0;
 }
 
 static void end_of_word(void)
@@ -107,9 +114,45 @@ static void end_of_word(void)
     bad = 0;
 }
 
+/* Programs that are asked for secrets, or likely to be, and that say nothing
+ * about what their text fields hold. For these "unknown" means "do not
+ * look". Matched as a case-insensitive substring of the application id. */
+static const char *const SECRETIVE[] = {
+    "firefox", "chrom", "brave", "vivaldi", "opera", "edge", "epiphany", "falkon", "midori",
+    "librewolf", "browser", "keepass", "bitwarden", "1password", "pinentry", "polkit",
+    "seahorse", "gcr", "keyring", "password", "wallet", "login", "auth", NULL };
+
+static int secretive_app(const char *app)
+{
+    if (!app || !*app) return 1;                   /* a program that will not say who it is */
+    char low[128];
+    size_t i = 0;
+    for (; app[i] && i + 1 < sizeof low; i++) low[i] = (char)tolower((unsigned char)app[i]);
+    low[i] = 0;
+    for (int k = 0; SECRETIVE[k]; k++)
+        if (strstr(low, SECRETIVE[k])) return 1;
+    return 0;
+}
+
+/* docs/AI.md §3.5: no matching in a field that says it holds a secret. */
+static int sensitive_now(aurwl *c)
+{
+    int st = textinput_state ? textinput_state() : TI_UNKNOWN;
+    if (st == TI_SENSITIVE) return 1;
+    if (st == TI_PLAIN) return 0;
+    return secretive_app(aurwl_win_app_id(aurwl_focus(c)));
+}
+
 void wishhook_key(aurwl *c, uint32_t code, int pressed)
 {
     if (!nwords || !pressed) return;              /* nothing registered: do not even look */
+    if (sensitive_now(c)) {                       /* a secret: drop what we hold, hold nothing */
+        wipe();
+        bad = 1;
+        was_sensitive = 1;
+        return;
+    }
+    if (was_sensitive) { wipe(); bad = 0; was_sensitive = 0; }
     switch (code) {
     case K_LSHIFT: case K_RSHIFT: case K_LCTRL: case K_RCTRL: case K_LALT: case K_RALT:
     case K_LMETA: case K_RMETA: case K_CAPS: case K_COMPOSE:

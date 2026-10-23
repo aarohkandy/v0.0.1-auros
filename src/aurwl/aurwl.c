@@ -40,6 +40,11 @@
 void wishhook_key(aurwl *c, uint32_t code, int pressed) __attribute__((weak));
 void wishhook_reset(void) __attribute__((weak));
 void wishhook_app(const char *app_id) __attribute__((weak));
+/* ... and the text-input-v3 half, which lets Wishes tell a password field
+ * from any other (textinput.c; same rule). */
+void textinput_init(struct wl_display *d) __attribute__((weak));
+void textinput_shutdown(void) __attribute__((weak));
+void textinput_focus(struct wl_client *client, struct wl_resource *surface) __attribute__((weak));
 
 /* ── limits ─────────────────────────────────────────────────────── */
 /* Bounds, not capacity planning: a client that asks for a 40000x40000
@@ -808,6 +813,7 @@ static void surface_unmap(aurwl_win *w)
         FOR_EACH_RES(k, &c->keyboards)
             if (wl_resource_get_client(k) == cl) wl_keyboard_send_leave(k, ser, w->res);
         c->focus = NULL;
+        if (textinput_focus) textinput_focus(NULL, NULL);
     }
     if (c->ptr_focus == w) {
         struct wl_client *cl = win_client(w);
@@ -2133,6 +2139,7 @@ aurwl *aurwl_create(int w, int h, int refresh_mhz)
         fprintf(stderr, "aurwl: could not create globals\n");
         aurwl_destroy(c); return NULL;
     }
+    if (textinput_init) textinput_init(c->display);
 
     if (build_keymap(c) < 0)
         fprintf(stderr, "aurwl: no xkb keymap; clients will get no key translation\n");
@@ -2175,6 +2182,7 @@ void aurwl_destroy(aurwl *c)
          * notices is broken. */
         wl_display_destroy_clients(c->display);
         wl_display_destroy(c->display);
+        if (textinput_shutdown) textinput_shutdown();
     }
     free(c);
 }
@@ -2384,7 +2392,7 @@ void aurwl_set_focus(aurwl *c, aurwl_win *w)
                 wl_keyboard_send_leave(k, ser, c->focus->res);
     }
     c->focus = w;
-    if (!w) return;
+    if (!w) { if (textinput_focus) textinput_focus(NULL, NULL); return; }
 
     struct wl_client *nw = win_client(w);
     struct wl_array keys; wl_array_init(&keys);          /* nothing held */
@@ -2398,6 +2406,9 @@ void aurwl_set_focus(aurwl *c, aurwl_win *w)
      * its paste menu is drawn, not after the user tries to use it. */
     FOR_EACH_RES(dev, &c->devices)
         if (wl_resource_get_client(dev) == nw) send_selection_to(c, dev);
+
+    /* After the keyboard has entered, text input follows the keyboard. */
+    if (textinput_focus) textinput_focus(nw, w->res);
 }
 
 aurwl_win *aurwl_focus(const aurwl *c) { return c ? c->focus : NULL; }
