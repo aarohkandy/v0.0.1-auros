@@ -1783,7 +1783,6 @@ polkit.addRule(function(action, subject) {
     case "org.freedesktop.login1.suspend":
     case "org.freedesktop.login1.suspend-multiple-sessions":
     case "org.freedesktop.udisks2.filesystem-mount":
-    case "org.freedesktop.udisks2.filesystem-mount-system":
     case "org.freedesktop.udisks2.eject-media":
     // Thunar's "safely remove", which is the honest way to take a USB
     // stick out and is the one a person is told to use. Ungranted, it

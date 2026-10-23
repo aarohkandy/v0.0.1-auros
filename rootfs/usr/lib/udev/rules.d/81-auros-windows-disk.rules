@@ -1,0 +1,9 @@
+# The Windows disk inside this computer is not offered in the file
+# manager. Opening it (udisks' filesystem-mount-system) used to be
+# granted to her account without a password, so any program running as
+# her could mount Windows read-write -- and writing to a Windows that
+# is hibernated (Fast Startup) loses what it had open. Her files come
+# across from it read-only (Ferry, as root); nothing else touches it.
+# Hidden rather than refused, so the file manager shows no button that
+# only answers "not authorised". A USB disk is still hers to open.
+SUBSYSTEM=="block", ENV{ID_BUS}!="usb", ENV{ID_FS_TYPE}=="ntfs|BitLocker", ENV{UDISKS_IGNORE}="1"

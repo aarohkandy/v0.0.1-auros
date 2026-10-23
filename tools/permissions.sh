@@ -412,6 +412,14 @@ else
 ' "logind may start a login prompt (NAutoVTs)"
     hit "logind may start a console login"
 fi
+# Static: the rule that keeps the Windows disk out of the file manager
+# is in the image (a booted image is the only place it can be watched).
+if grep -qsE 'ID_FS_TYPE}=="ntfs[^"]*".*UDISKS_IGNORE}="1"' "$RFS"/usr/lib/udev/rules.d/*.rules; then
+    printf '  %-58s ok\n' "the Windows disk is not offered in the file manager"
+else
+    printf '  %-58s NO\n' "the Windows disk is offered in the file manager"
+    hit "the Windows disk is offered to her programs"
+fi
 for act in com.ubuntu.pkexec.gdebi.gtk \
            org.freedesktop.udisks2.filesystem-mount-system \
            org.freedesktop.packagekit.package-install-untrusted \
