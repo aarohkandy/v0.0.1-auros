@@ -518,6 +518,7 @@ fi
 if want handover; then
 echo
 echo "  Put Windows back with her files: the handover volume becomes a partition"
+modprobe exfat 2>/dev/null
 command -v mkfs.exfat >/dev/null 2>&1 || { bad "mkfs.exfat is needed for this scenario (exfatprogs)"; WANT=""; }
 new_machine handover
 if [ -n "$WANT" ] && { ! run_engine || ! grep -q 'aurbridge-report v1 fast=1 ' "$S/out"; }; then

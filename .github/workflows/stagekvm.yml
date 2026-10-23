@@ -71,7 +71,7 @@ jobs:
           sh tools/apt.sh \
               qemu-system-x86 qemu-utils ovmf gdisk dosfstools mtools e2fsprogs cpio python3 \
               zstd grub-common sbsigntool file binutils iproute2 gcc libc6-dev gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev \
-              libxml2-utils busybox-static
+              libxml2-utils busybox-static exfatprogs
           [ -w /dev/kvm ] || { echo "no usable /dev/kvm"; exit 1; }
           sudo tee /usr/local/bin/qemu-system-x86_64 >/dev/null <<'EOF'
           #!/bin/sh
