@@ -20,6 +20,10 @@
 #             is not AurOS's, sealed with AurOS's own key, is refused; a
 #             key rotation goes through; a setting edited on the computer
 #             neither stops the update nor is overwritten.
+#    rollback the update keeps the version before it; when the desktop
+#             fails in its last safe mode, shell-guard puts it back and
+#             pins the broken version out; the daily update does not
+#             bring it back; a newer fix still installs.
 #
 #  Every protection can be removed, to watch the test catch it:
 #    --break=trusted    the source says Trusted: yes (no signature check)
@@ -27,6 +31,8 @@
 #    --break=pin        no preferences.d/auros: the repository may replace
 #                       any package
 #    --break=origin     no 53auros-updates: nothing installs by itself
+#    --break=keep       no keep-previous hook: a broken update cannot be
+#                       undone
 #  Each must make this exit 1.
 #
 #    sudo bash tools/updatetest.sh            (in a throwaway ubuntu:24.04)
@@ -45,7 +51,7 @@ AC="$ROOT/build/aptchannel"
 BREAK=""
 for a in "$@"; do
     case "$a" in
-        --break=trusted|--break=signedby|--break=pin|--break=origin) BREAK=${a#--break=} ;;
+        --break=trusted|--break=signedby|--break=pin|--break=origin|--break=keep) BREAK=${a#--break=} ;;
         *) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
     esac
 done
@@ -98,7 +104,7 @@ gpg --armor --export "$A" "$C" > "$T/AC.asc"   # one block, both keys: a rotatio
 F="$T/src"; mkdir -p "$F/build" "$F/tools" "$F/rootfs/etc/auros"
 cp "$AC" "$F/build/aptchannel"; cp "$ROOT/tools/repo.sh" "$F/tools/"
 export SOURCE_DATE_EPOCH=1767225600
-V0=0.1.0.20260101000000; V1=0.1.0.20260102000000; V2=0.1.0.20260103000000
+V0=0.1.0.20260101000000; V1=0.1.0.20260102000000; V2=0.1.0.20260103000000; V3=0.1.0.20260104000000
 mkrfs() { # DIR SAYS SETTING
     rm -rf "$1"; mkdir -p "$1/usr/bin" "$1/etc/auros"
     printf '#!/bin/sh\necho %s\n' "$2" > "$1/usr/bin/aurshell"; chmod 0755 "$1/usr/bin/aurshell"
@@ -119,6 +125,7 @@ pack v1   one  1 $V1
 pack v2   two  2 $V2
 pack evil evil 2 $V2      # what an attacker would like to be v2
 pack v2b  two  2 $V2      # v2 again: must be the same bytes
+pack v3   three 2 $V3     # the fix after a broken v2
 
 # The stand-in for one of Ubuntu's packages, at a version that would
 # win, as somebody holding AurOS's key could publish it.
@@ -165,6 +172,7 @@ repo vendor  "$T/debs-v2" "$B"
 repo old     "$T/debs-v0" "$A"
 repo newkey  "$T/debs-v2" "$C"
 repo both    "$T/debs-v2" "$A" "$C"
+repo fixed   "$T/debs-v3" "$A"
 # A .deb changed after it was signed for.
 repo baddeb  "$T/debs-v2" "$A"
 cp "$T/debs-evil/auros-desktop_${V2}_amd64.deb" "$T/r-baddeb/"
@@ -228,6 +236,9 @@ mkdir -p /etc/apt/preferences.d /etc/apt/apt.conf.d /etc/apt/trusted.gpg.d /usr/
 rm -f /etc/apt/preferences.d/auros /etc/apt/apt.conf.d/53auros-updates
 [ "$BREAK" = pin ]    || cp "$ROOT/rootfs/etc/apt/preferences.d/auros" /etc/apt/preferences.d/auros
 [ "$BREAK" = origin ] || cp "$ROOT/rootfs/etc/apt/apt.conf.d/53auros-updates" /etc/apt/apt.conf.d/
+[ "$BREAK" = keep ] && sed -i '/keep-previous/d' /etc/apt/apt.conf.d/53auros-updates
+mkdir -p /usr/lib/auros
+install -m 0755 "$ROOT/rootfs/usr/lib/auros/keep-previous" "$ROOT/rootfs/usr/lib/auros/rollback" /usr/lib/auros/
 cp "$T/B.asc" /etc/apt/trusted.gpg.d/another-vendor-test.asc
 KR=/usr/share/keyrings/auros-archive-keyring.asc
 bash "$AC" source "$URL" > /etc/apt/sources.list.d/auros.sources
@@ -246,8 +257,16 @@ computer() { # CASE KEYRING [EDIT]
     local n=$1 L="$T/log/$1"
     dpkg --purge auros auros-desktop auros-config >/dev/null 2>&1
     dpkg -i "$T"/debs-v1/*.deb > "$L" 2>&1 || { cat "$L"; need "could not install AurOS v1"; }
+    # As the image has it: the installed set kept at /var/lib/auros/debs.
+    rm -rf /var/lib/auros/debs /var/lib/auros/debs-previous /etc/apt/preferences.d/00auros-broken-*
+    mkdir -p /var/lib/auros/debs; cp "$T"/debs-v1/*.deb /var/lib/auros/debs/
+    (cd /var/lib/auros/debs && sha256sum ./*.deb > SHA256SUMS)
     [ "${3:-}" = edit ] && printf 'setting=hers\n' > /etc/auros/updatetest.conf
     cp "$2" "$KR"
+    daily "$n" "$L"
+}
+daily() { # REPO LOG: the repository served, then one day of apt-daily and apt-daily-upgrade
+    local n=$1 L=$2
     rm -rf "$SRV"; cp -a "$T/r-$n" "$SRV"
     rm -rf /var/lib/apt/lists/*
     { echo "== apt-get update"; apt-get update 2>&1
@@ -308,6 +327,31 @@ computer good "$T/A.asc" edit
 expect "a setting edited on the computer does not stop the update" good "$V2"
 [ "$(cat /etc/auros/updatetest.conf)" = 'setting=hers' ] &&
     ok "  ... and her setting is kept" || bad "  ... and her setting is kept" "$(cat /etc/auros/updatetest.conf)"
+
+echo
+echo "== a broken AurOS update is undone"
+kept() { ls "$1"/auros_*_amd64.deb 2>/dev/null | sed 's#.*/auros_\(.*\)_amd64\.deb$#\1#'; }
+computer good "$T/A.asc"
+[ "$(kept /var/lib/auros/debs)" = "$V2" ] && [ "$(kept /var/lib/auros/debs-previous)" = "$V1" ] &&
+    ok "the update keeps the version before it" ||
+    bad "the update keeps the version before it" "debs: $(kept /var/lib/auros/debs); previous: $(kept /var/lib/auros/debs-previous)"
+# The desktop at its last safe mode, failing three more times: the
+# real shell-guard, as aurshell.service's ExecStartPre runs it.
+gd="$T/guard"; rm -rf "$gd"; mkdir -p "$gd"; echo 2 > "$gd/level"
+for t in 10 20 30; do SERVICE_RESULT=signal AUROS_GUARD_DIR="$gd" AUROS_GUARD_NOW=$t sh "$ROOT/rootfs/usr/lib/auros/shell-guard" stopped; done
+AUROS_GUARD_DIR="$gd" AUROS_GUARD_NOW=40 sh "$ROOT/rootfs/usr/lib/auros/shell-guard" start 2> "$T/log/guard"
+[ "$(ver auros-desktop)" = "$V1" ] && [ "$(/usr/bin/aurshell)" = one ] && [ "$(cat "$gd/level")" = 0 ] &&
+    ok "failing in its last safe mode: back to the version before" ||
+    bad "failing in its last safe mode: back to the version before" "auros-desktop $(ver auros-desktop); level $(cat "$gd/level")" \
+        "$(cat "$T/log/guard" /var/lib/auros/rollback.log 2>/dev/null | tail -5)"
+daily good "$T/log/after-rollback"
+[ "$(ver auros-desktop)" = "$V1" ] && grep -q "$V2" "$T/log/after-rollback" &&
+    ok "  ... and the daily update does not bring the broken one back" ||
+    bad "  ... and the daily update does not bring the broken one back" "auros-desktop $(ver auros-desktop)"
+daily fixed "$T/log/fixed"
+[ "$(ver auros-desktop)" = "$V3" ] && [ "$(/usr/bin/aurshell)" = three ] &&
+    ok "  ... while a newer fix installs by itself" ||
+    bad "  ... while a newer fix installs by itself" "auros-desktop $(ver auros-desktop)" "$(tail -15 "$T/log/fixed" | sed 's/^/  | /')"
 
 echo
 if [ "$fail" -eq 0 ]; then echo "updatetest: $checked checks, all passed${BREAK:+ (with --break=$BREAK: the test did NOT catch it)}"; exit 0; fi

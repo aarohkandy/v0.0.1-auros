@@ -1,0 +1,33 @@
+#!/bin/sh
+# Undo AurOS's last update. shell-guard calls this, as root, when the
+# desktop has failed even in its last safe mode: the program itself is
+# broken, not her settings. The version that broke is pinned out, so
+# the daily update does not bring it back; a newer fix still installs.
+# docs/security/UPDATES.md; tools/updatetest.sh proves it.
+#
+# Exit 0: rolled back (start the desktop again). 1: nothing done.
+set -u
+D=${AUROS_DEBS:-/var/lib/auros/debs}
+P=$D-previous
+PREF=${AUROS_PREFERENCES_D:-/etc/apt/preferences.d}
+LOG=${AUROS_ROLLBACK_LOG:-/var/lib/auros/rollback.log}
+log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG"; }
+cur=$(dpkg-query -W -f='${Version}' auros 2>/dev/null) || exit 1
+prev=$(ls "$P"/auros_*_amd64.deb 2>/dev/null | head -1 | sed 's#.*/auros_\(.*\)_amd64\.deb$#\1#')
+[ -n "$prev" ] || { log "AurOS $cur: no earlier version kept, nothing to go back to"; exit 1; }
+dpkg --compare-versions "$prev" lt "$cur" || { log "the kept $prev is not older than $cur"; exit 1; }
+( cd "$P" && sha256sum -c --quiet SHA256SUMS ) >/dev/null 2>&1 || { log "the kept copy of $prev is damaged"; exit 1; }
+# First, so that nothing installs it again even if what follows fails.
+# The name sorts before preferences.d/auros (apt takes the FIRST record
+# that matches a version, reading the files in order), and has no dots
+# (apt ignores a file whose "extension" is not .pref).
+mkdir -p "$PREF"
+printf '# /usr/lib/auros/rollback: AurOS %s did not start on this computer.\nPackage: auros auros-*\nPin: version %s\nPin-Priority: -1\n' \
+    "$cur" "$cur" > "$PREF/00auros-broken-$(printf '%s' "$cur" | tr -c 'A-Za-z0-9\n' -)"
+if DEBIAN_FRONTEND=noninteractive dpkg --force-confdef --force-confold -i "$P"/*.deb >> "$LOG" 2>&1; then
+    rm -rf "$D" && mv "$P" "$D"
+    log "AurOS $cur did not start; went back to $prev"
+    exit 0
+fi
+log "AurOS $cur did not start; dpkg could not put $prev back (tried again at the next failures)"
+exit 1

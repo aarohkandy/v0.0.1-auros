@@ -39,3 +39,8 @@ DPkg::Options {
 // time she starts the computer (Ubuntu's default too; written down so
 // nothing changes it by accident).
 Unattended-Upgrade::Automatic-Reboot "false";
+
+// After apt moves AurOS's own packages forward, keep the set from
+// before, so an update that breaks the desktop can be undone
+// (/usr/lib/auros/rollback, called by shell-guard).
+DPkg::Post-Invoke { "[ ! -x /usr/lib/auros/keep-previous ] || /usr/lib/auros/keep-previous"; };

@@ -1,0 +1,34 @@
+#!/bin/sh
+# DPkg::Post-Invoke (apt.conf.d/53auros-updates): when apt has moved
+# AurOS's own packages forward, keep the set that was installed before,
+# so that an update which breaks the desktop can be undone
+# (/usr/lib/auros/rollback). docs/security/UPDATES.md
+#
+#   /var/lib/auros/debs           the set installed now (the image's own
+#                                 at first; build/aptchannel put it there)
+#   /var/lib/auros/debs-previous  the set before the last update
+#
+# Runs after every apt-driven dpkg run, so it is one dpkg-query when
+# nothing of AurOS's changed. Never fails: it must not fail an update.
+set -u
+D=${AUROS_DEBS:-/var/lib/auros/debs}
+P=$D-previous
+C=${AUROS_APT_CACHE:-/var/cache/apt/archives}
+ver_of() { ls "$1"/auros_*_amd64.deb 2>/dev/null | head -1 | sed 's#.*/auros_\(.*\)_amd64\.deb$#\1#'; }
+cur=$(dpkg-query -W -f='${Version}' auros 2>/dev/null) || exit 0
+have=$(ver_of "$D")
+[ -n "$cur" ] && [ -n "$have" ] && [ "$cur" != "$have" ] || exit 0
+# Forward only: a rollback moves the sets itself.
+dpkg --compare-versions "$cur" gt "$have" || exit 0
+new=$(mktemp -d "$D.new.XXXXXX") || exit 0
+for p in $(dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 'auros' 'auros-*' 2>/dev/null | awk '$1=="ii"{print $2}'); do
+    v=$(dpkg-query -W -f='${Version}' "$p")
+    f="$C/${p}_$(printf '%s' "$v" | sed 's/:/%3a/')_amd64.deb"
+    # Not every part has moved yet (a later dpkg run of the same update
+    # will), or apt did not keep the file: keep what there is.
+    if [ "$v" != "$cur" ] || [ ! -f "$f" ]; then rm -rf "$new"; exit 0; fi
+    cp "$f" "$new/" || { rm -rf "$new"; exit 0; }
+done
+( cd "$new" && sha256sum ./*.deb > SHA256SUMS ) || { rm -rf "$new"; exit 0; }
+rm -rf "$P" && mv "$D" "$P" && mv "$new" "$D"
+exit 0

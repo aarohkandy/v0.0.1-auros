@@ -87,7 +87,8 @@ package: `auros-desktop`, `auros-first`, `auros-bootchain`, `auros-ferry`,
 metapackage `auros`, which depends on each at exactly its own version so
 they always move together. The files are registered with dpkg in the image
 (byte-identical, so nothing changes on disk) and the `.deb`s are kept in
-`/var/lib/auros/debs/` (about 4 MB).
+`/var/lib/auros/debs/` (about 4 MB; after an update, the set installed
+now, with the one before it in `debs-previous`).
 
 - Version: `<os_version>.<commit time, UTC, YYYYMMDDHHMMSS>`, which only
   ever rises.
@@ -258,17 +259,28 @@ Revisit when S4's TPM re-seal exists, and possibly then fwupd for dbx only.
 - **An interrupted update:** finished at the next start (`dpkg-repair`).
 - **A desktop that keeps failing because of her settings:** safe mode
   (`shell-guard`).
-- **A broken AurOS update (aurshell itself crashes):** NOT YET HANDLED. Safe
-  mode runs the same broken program. Planned: keep the previous version's
-  `.deb`s, and when the desktop also fails in safe mode after an AurOS
-  update, reinstall them and pin the broken version out (a newer fix still
-  installs). Test: KVM, below.
+- **A broken AurOS update (aurshell itself crashes):** undone by itself.
+  When apt moves AurOS forward, `/usr/lib/auros/keep-previous` (an apt
+  `DPkg::Post-Invoke`, `53auros-updates`) keeps the set from before in
+  `/var/lib/auros/debs-previous`. `/var/lib/auros/debs` always holds the set
+  installed now. Safe mode alone cannot help here: it runs the same broken
+  program. So when the desktop also fails three times in safe mode's last
+  step, `shell-guard` calls `/usr/lib/auros/rollback`. That pins the broken
+  version to -1 (`preferences.d/00auros-broken-<version>`, sorted before
+  `preferences.d/auros` because apt takes the first matching record),
+  reinstalls the kept set, and starts her own desktop again. The daily
+  update does not bring the broken version back, and a newer fix still
+  installs. Once per three failures, never in a loop. Log:
+  `/var/lib/auros/rollback.log`. From the first crash to the rollback is
+  about nine restarts of the desktop, with the apology screen between.
+  Proven by `tools/updatetest.sh` (real apt, the real hook, the real
+  shell-guard; `--break=keep` turns it red). Not yet proven in a VM.
 
 ## Proof, and what is not proven
 
 | Test | Proves | Runs |
 |---|---|---|
-| `tools/updatetest.sh` (+4 mutants) | AurOS's channel: signed installs, every refusal, rotation, conffiles | `aptrepo.yml` test job, every change; homebase |
+| `tools/updatetest.sh` (+5 mutants) | AurOS's channel: signed installs, every refusal, rotation, conffiles; a broken update rolled back | `aptrepo.yml` test job, every change; homebase |
 | `tools/updatepolicytest.sh firefox` (+mutant) | Firefox updates by itself, not while open | `aptrepo.yml` test job |
 | `tools/updatepolicytest.sh static` | the built image's policy, sources, timers, store, base up to date, the image's key | `tests.yml` unit job, every build |
 | `aptrepo.yml` publish | the real repository, signed, read back, fetched by a real apt | every publish |
@@ -278,8 +290,8 @@ Not proven yet, said plainly:
 
 - a real Flathub update (only the timer and the command are checked);
 - an update arriving **while she uses the desktop** in a VM, the next start
-  updated and healthy, and a broken AurOS update rolled back (the KVM test
-  of item 8: to be built with the rollback above);
+  updated and healthy, and a broken AurOS update rolled back on a real boot
+  (the KVM test; the mechanisms are proven in a container);
 - phased `-updates` behaviour over days on a real computer;
 - that Firefox's "restart" page never shows (the hold is tested; the
   Firefox UI is not).

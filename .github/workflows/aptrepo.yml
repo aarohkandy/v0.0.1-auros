@@ -87,7 +87,7 @@ jobs:
                 *)
                   files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename' || true) ;;
               esac
-              if printf '%s\n' "$files" | grep -qE '^(build/aptchannel|tools/update(policy)?test\.sh|tools/repo\.sh|rootfs/etc/apt/|rootfs/usr/lib/auros/hold-running-apps|\.github/workflows/aptrepo\.yml$)'; then
+              if printf '%s\n' "$files" | grep -qE '^(build/aptchannel|tools/update(policy)?test\.sh|tools/repo\.sh|rootfs/etc/apt/|rootfs/usr/lib/auros/(hold-running-apps|keep-previous|rollback|shell-guard)|\.github/workflows/aptrepo\.yml$)'; then
                 test=true
               fi ;;
           esac
@@ -118,13 +118,13 @@ jobs:
               bash tools/updatetest.sh "$@"' _ "$@"
           }
           run | tee updatetest.log
-          for b in trusted signedby pin origin; do
+          for b in trusted signedby pin origin keep; do
             set +e; run --break=$b > break.log 2>&1; rc=$?; set -e
             grep -E 'FAIL$|^updatetest' break.log | sed "s/^/[--break=$b] /"
             [ "$rc" = 1 ] || { cat break.log; echo "::error::with --break=$b the test exited $rc, not 1: it did not catch a removed protection"; exit 1; }
           done
           { echo '### updatetest'; echo '```'; grep -E ' ok$| FAIL$|^updatetest|^==' updatetest.log; echo '```'
-            echo 'Each of --break=trusted, signedby, pin, origin made it fail, as it must.'; } >> "$GITHUB_STEP_SUMMARY"
+            echo 'Each of --break=trusted, signedby, pin, origin, keep made it fail, as it must.'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Firefox updates by itself, never while it is open (packages.mozilla.org, real unattended-upgrade)
         run: |
           ff() {

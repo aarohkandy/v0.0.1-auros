@@ -70,6 +70,17 @@ case "${1:-}" in
             : > "$F"
             echo "shell-guard: the desktop stopped $n times in $((WINDOW / 60)) minutes;" \
                  "starting it in safe mode $level until the computer restarts" >&2
+        elif [ "$n" -ge "$LIMIT" ]; then
+            # Even the last safe mode fails: the program is broken, not
+            # her settings. Undo AurOS's last update (S5,
+            # docs/security/UPDATES.md) and try her own desktop again;
+            # once per LIMIT failures, not at every restart.
+            : > "$F"
+            if "${AUROS_ROLLBACK:-/usr/lib/auros/rollback}" 2>/dev/null; then
+                level=0
+                printf '0\n' > "$L"
+                echo "shell-guard: the desktop failed in safe mode too; AurOS's last update was undone" >&2
+            fi
         fi
         write_env
         ;;
