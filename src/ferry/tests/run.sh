@@ -282,7 +282,61 @@ refute "logins.json (saved passwords) NOT copied" test -e "$FP/logins.json"
 refute "a password file in odd case NOT copied" test -e "$FP/LOGINS-BACKUP.JSON"
 assert "the report says passwords were left on Windows" \
     grep -q 'firefox/passwords' "$FERRY_STATE/report.d/firefox.tsv"
-assert "profiles.ini copied" test -f "$HOME1/.mozilla/firefox/profiles.ini"
+PI="$HOME1/.mozilla/firefox/profiles.ini"
+assert "Firefox will open her Windows profile (profiles.ini names it, Default=1)" \
+    sh -c "awk '/^Path=Profiles\/a1b2c3d4.default-release\$/ {p=1; next} p && /^Default=1\$/ {f=1} /^\[/ {p=0} END {exit !f}' '$PI'"
+refute "...and Windows' [Install] claim on it did not come (Linux Firefox would make an empty profile)" \
+    grep -q 'Install308046B0AF4A39CB' "$PI"
+EB="$HOME1/Bookmarks from Edge.html"
+assert "with a Windows Firefox too, her Edge bookmarks are saved in her Home" \
+    grep -q 'https://photos.example.org/family?a=1&amp;b=2' "$EB"
+assert "...with plain steps in her report" grep -q 'Import Bookmarks from HTML' "$FERRY_STATE/report.d/firefox.tsv"
+assert "...a title that is markup is escaped" grep -q 'Grandkids &amp; &lt;photos&gt;' "$EB"
+refute "...a javascript: bookmark (a program) does not come" grep -q 'javascript:' "$EB"
+refute "...nor a file: link to a Windows path" grep -q 'file:///' "$EB"
+assert "...folders and accents survive" sh -c "grep -q '>Money</H3>' '$EB' && grep -q 'Recipes été' '$EB'"
+assert "...her Chrome bookmarks are a folder of their own" grep -q 'Bookmarks from Chrome' "$EB"
+
+echo "Edge, and no Firefox, on Windows (most of the people AurOS is for):"
+E="$TMP/edgeonly"; cp -r "$WIN" "$E"; rm -rf "$E/users/Bob/AppData/Roaming/Mozilla"
+HE="$TMP/home-edge"; mkdir -p "$HE"; hers "$HE"
+FERRY_STATE="$TMP/state-edge" ferry-firefox --root "$E" --home "$HE" --owner "$OWNER" >/dev/null 2>&1
+eq "the browser stage succeeds (exit 0)" "$?" 0
+FE="$HE/.mozilla/firefox"
+assert "her Edge bar becomes Firefox's toolbar, in a new profile" \
+    grep -q 'PERSONAL_TOOLBAR_FOLDER="true"' "$FE/fromwindows.default-release/bookmarks.html"
+assert "...which Firefox will open (Default=1, nothing claiming another)" \
+    sh -c "grep -q '^Path=fromwindows.default-release\$' '$FE/profiles.ini' && grep -q '^Default=1\$' '$FE/profiles.ini' && ! grep -q '^\[Install' '$FE/profiles.ini'"
+assert "...and her report says so" grep -q 'will be in Firefox the first time you open it' "$TMP/state-edge/report.d/firefox.tsv"
+
+# She opened Firefox on AurOS before bringing her files across.
+HF="$TMP/home-ffran"; FR="$HF/.mozilla/firefox"; mkdir -p "$FR/abc.default-release"
+printf '[Install4F96D1932A9F858E]\nDefault=abc.default-release\nLocked=1\n\n[Profile0]\nName=default-release\nIsRelative=1\nPath=abc.default-release\nDefault=1\n\n[General]\nStartWithLastProfile=1\nVersion=2\n' > "$FR/profiles.ini"
+printf '[4F96D1932A9F858E]\nDefault=abc.default-release\nLocked=1\n' > "$FR/installs.ini"
+cp "$FR/profiles.ini" "$TMP/profiles.before"; hers "$HF"
+FERRY_STATE="$TMP/state-ffran" ferry-firefox --root "$E" --home "$HF" --owner "$OWNER" >/dev/null 2>&1
+assert "after Firefox ran once here, it is switched to the profile from Windows" \
+    sh -c "grep -A1 '^\[Install4F96D1932A9F858E\]' '$FR/profiles.ini' | grep -q '^Default=fromwindows.default-release\$' && grep -q '^Default=fromwindows.default-release\$' '$FR/installs.ini'"
+eq "...only one profile is the default" "$(grep -c '^Default=1$' "$FR/profiles.ini")" 1
+assert "...and the old profiles.ini is kept beside it" cmp -s "$TMP/profiles.before" "$FR/profiles.ini.before-windows"
+
+# Firefox is open while she brings her files across.
+HO="$TMP/home-ffopen"; FO="$HO/.mozilla/firefox"; mkdir -p "$FO/abc.default-release"
+cp "$TMP/profiles.before" "$FO/profiles.ini"; ln -s "127.0.0.1:+$$" "$FO/abc.default-release/lock"; hers "$HO"
+FERRY_STATE="$TMP/state-ffopen" ferry-firefox --root "$E" --home "$HO" --owner "$OWNER" >/dev/null 2>&1
+assert "while Firefox is open, its profiles.ini is left alone" cmp -s "$TMP/profiles.before" "$FO/profiles.ini"
+assert "...and her Edge bookmarks wait in her Home instead" test -s "$HO/Bookmarks from Edge.html"
+
+echo "bookmarks reader on hostile files:"
+python3 -c 'print("[" * 200000)' > "$TMP/deep.json"
+ferry-chromemarks Edge "$TMP/deep.json" >/dev/null 2>&1
+eq "200,000 nested brackets: refused, not a crash (exit 2)" "$?" 2
+head -c 4096 /dev/urandom > "$TMP/noise.json"
+ferry-chromemarks Edge "$TMP/noise.json" >/dev/null 2>&1
+eq "random bytes: refused (exit 2)" "$?" 2
+printf '{"roots":{"bookmark_bar":{"children":[{"type":"url","name":"x","url":"https://a.example/"}],"name":"B","type":"folder"}}' > "$TMP/cut.json"
+ferry-chromemarks Edge "$TMP/cut.json" >/dev/null 2>&1
+eq "a file cut off mid-way: refused (exit 2)" "$?" 2
 refute "installs.ini (claims the profile for Windows) NOT copied" \
     test -e "$HOME1/.mozilla/firefox/installs.ini"
 refute "cache NOT copied" test -e "$FP/cache2"

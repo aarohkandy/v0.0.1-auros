@@ -11,8 +11,10 @@ set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 caught=0; missed=0
 
-mutant() { # FILE OLD NEW CHECK [root]
+mutant() { # FILE OLD NEW CHECK [root|user]
     [ "${5:-}" = root ] && [ "$(id -u)" != 0 ] && { echo "  skip (needs root) $4"; return; }
+    # As root her uid cannot write the outside folder either way.
+    [ "${5:-}" = user ] && [ "$(id -u)" = 0 ] && { echo "  skip (as a user only) $4"; return; }
     W=$(mktemp -d "${TMPDIR:-/tmp}/ferrymut.XXXXXX")
     cp -r "$HERE"/. "$W"/
     rm -rf "$W/build"
@@ -71,7 +73,7 @@ mutant ferry-common.sh '        *) _v="" ;;
     printf' '        *) : ;;
     esac
     printf' \
-    "a user-dirs.dirs pointing out of her home is not obeyed (absolute)"
+    "a user-dirs.dirs pointing out of her home is not obeyed (absolute)" user
 mutant ferry-firefox 'for _n in $SKIP_FILES $SECRET_FILES; do' 'for _n in $SKIP_FILES; do' \
     "logins.json (saved passwords) NOT copied"
 # The import in its real context (commit 2).
@@ -98,9 +100,28 @@ mutant ferry '        exec 3>&1 >>"$FERRY_STATE/ferry.log" 2>&1' '        exec 3
 mutant ferry-files '"Windows kept this folder on another drive' '"the registry redirects this folder to another drive' \
     "...and has no jargon in it"
 
+# Her browser (commit 4).
+mutant ferry-firefox '        sec ~ /^\[Install/ && /^Default=/ { $0 = "Default=" rel }' '' \
+    "after Firefox ran once here, it is switched to the profile from Windows"
+mutant ferry-firefox '_running=0
+ff_running && _running=1' '_running=0' \
+    "while Firefox is open, its profiles.ini is left alone"
+mutant chromemarks.c '        if (!strncasecmp(url, ok[i], strlen(ok[i]))) return 1;' '        return 1;' \
+    "...a javascript: bookmark (a program) does not come"
+mutant chromemarks.c "        case '<': fputs(\"&lt;\", stdout); break;" '' \
+    "...a title that is markup is escaped"
+mutant chromemarks.c '        if (++depth > MAX_DEPTH) goto bad;' '        ++depth;' \
+    "200,000 nested brackets: refused, not a crash (exit 2)"
+
 # Root: the escalation the lead's review named.
+# Without the switch to her, the self-check refuses to copy at all...
 mutant copy.c 'if (setgroups(1, &gg) || setresgid(g, g, g) || setresuid(u, u, u))' \
-    'if (0)' "nothing was written through her symlinks into a root-owned folder" root
+    'if (0)' "her files did come, and every one of them is hers" root
+# ...and without the self-check too, root writes through her symlink.
+mutant copy.c '            if (setgroups(1, &gg) || setresgid(g, g, g) || setresuid(u, u, u))
+                die("could not become %u:%u: %s", u, g, strerror(errno));
+            if (u != 0 && setuid(0) == 0) die("still root after dropping privileges");' \
+    '            (void)gg;' "nothing was written through her symlinks into a root-owned folder" root
 mutant copy.c '        die("will not write into a home as root (pass --as UID:GID)");' '        ;' \
     "ferry-copy refuses to write as root without --as (exit 1)" root
 

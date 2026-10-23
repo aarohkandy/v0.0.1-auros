@@ -189,9 +189,8 @@ emit_plain() {
             printf "  %-12s %d file%s\n", $3, n, n == 1 ? "" : "s" }')
     printf '%s\n' "${_folders:-  No folders came across.}"
 
-    if printf '%s\n' "$_rows" | grep -q '^firefox/profile	'; then
-        printf '\nYour web browser\n  Your Firefox bookmarks, history and settings came across.\n'
-    fi
+    _web=$(printf '%s\n' "$_rows" | awk -F'\t' '$1 ~ /^firefox\// && $1 != "firefox/passwords" { print "  " $4 }')
+    [ -z "$_web" ] || printf '\nYour web browser\n%s\n' "$_web"
 
     _miss=$(printf '%s\n' "$_rows" | awk -F'\t' '($1=="files"||$1=="firefox") && ($2=="skipped"||$2=="blocked") && $3 != "Room"')
     if [ -n "$_miss" ]; then

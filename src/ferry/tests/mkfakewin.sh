@@ -162,7 +162,44 @@ mkdir -p "$P/cache2/entries" "$P/storage/default"
 echo "cachejunk"                > "$P/cache2/entries/DEADBEEF"
 echo "lock"                     > "$P/.parentlock"
 
-echo '{"roots":{}}'             > "$ROOT/users/Bob/AppData/Local/Google/Chrome/User Data/Default/Bookmarks"
+# Her Edge bookmarks, as Edge writes them: a bar, a folder inside it,
+# "Other", a bookmarklet (a program: never comes), a file: link, and a
+# title that is markup. Chrome has one, to become a folder.
+mkdir -p "$ROOT/users/Bob/AppData/Local/Microsoft/Edge/User Data/Default"
+cat > "$ROOT/users/Bob/AppData/Local/Microsoft/Edge/User Data/Default/Bookmarks" <<'JSON'
+{
+   "checksum": "0123456789abcdef",
+   "roots": {
+      "bookmark_bar": {
+         "children": [ {
+            "date_added": "13300000000000000", "guid": "a", "id": "5",
+            "name": "Grandkids \u0026 <photos>", "type": "url",
+            "url": "https://photos.example.org/family?a=1&b=2"
+         }, {
+            "children": [ {
+               "date_added": "13300000000000000", "guid": "b", "id": "7",
+               "name": "Savings", "type": "url", "url": "https://savings.example.com/"
+            } ],
+            "date_added": "13300000000000000", "guid": "c", "id": "6",
+            "name": "Money", "type": "folder"
+         }, {
+            "name": "Bookmarklet", "type": "url", "url": "javascript:alert(1)"
+         }, {
+            "name": "Old file", "type": "url", "url": "file:///C:/Users/Bob/x.html"
+         } ],
+         "name": "Favorites bar", "type": "folder"
+      },
+      "other": { "children": [ {
+            "name": "Recipes \u00e9t\u00e9", "type": "url", "url": "https://recipes.example.net/"
+         } ], "name": "Other favorites", "type": "folder" },
+      "synced": { "children": [], "name": "Mobile favorites", "type": "folder" }
+   },
+   "version": 1
+}
+JSON
+cat > "$ROOT/users/Bob/AppData/Local/Google/Chrome/User Data/Default/Bookmarks" <<'JSON'
+{"roots":{"bookmark_bar":{"children":[{"name":"News","type":"url","url":"https://news.example.com/"}],"name":"Bookmarks bar","type":"folder"},"other":{"children":[],"name":"Other bookmarks","type":"folder"}},"version":1}
+JSON
 echo 'prefs'                    > "$ROOT/users/Bob/AppData/Local/Google/Chrome/User Data/Default/Preferences"
 echo 'SQLite Login Data'        > "$ROOT/users/Bob/AppData/Local/Google/Chrome/User Data/Default/Login Data"
 echo '{"os_crypt":{"encrypted_key":"RFBBUEkAAAA="}}' > "$ROOT/users/Bob/AppData/Local/Google/Chrome/User Data/Local State"

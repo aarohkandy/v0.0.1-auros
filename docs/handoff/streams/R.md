@@ -66,7 +66,7 @@ gate checks every ELF in /usr/lib/ferry).
   hostile home (user-dirs.dirs pointing out by `..` and absolutely;
   as root: symlinks to a root-owned folder at ~/Pictures and ~/.local).
   `tests/mutants.sh` puts each bug back and checks the named test fails.
-- `bench.sh`: see Measurements.
+- `bench.sh`: see Measurements. `mutants.sh`: 31 mutants (user and root).
 
 ## In progress / next, in order
 
@@ -98,27 +98,54 @@ gate checks every ELF in /usr/lib/ferry).
    sentence, renamed ones, Wi-Fi network names, the passwords sentence.
    Suggest to the welcome panel's owner: its line "written down in the
    report" could say "in “What came from Windows” in your Home folder".
-3. Commit 4 bookmarks: `chromemarks.c` (written, untested) → Edge/Chrome
-   `Bookmarks` JSON → bookmarks.html. Plan: one Firefox profile "from
-   Windows" made the default (profiles.ini/installs.ini rewritten as her,
-   backups kept; Windows `[Install…]` sections dropped — finding 6); a
-   fresh profile with bookmarks.html imports it on first start. Prove
-   with a real Firefox (homebase docker, Mozilla apt).
-4. Commit 5 fuzz: `fuzz/{hive,names,marks}.c` + `fuzz/run.sh` (clang;
-   the `auros-s3-fuzz` image on homebase has clang 18). hivepeek's
-   INT32_MIN negation is fixed in the tree (finding 7). Regression
-   inputs → `tests/regress/`, and an ASan build of hivepeek over
-   corrupted hives in the suite (FERRY.md claims one exists; it doesn't).
+3. DONE (suite) commit 4 bookmarks: `chromemarks.c` → `ferry-chromemarks`
+   (Edge/Chrome/Brave `Bookmarks` JSON → bookmarks.html; http/https/ftp
+   only, HTML-escaped, depth and size capped). `ferry-firefox` rewritten:
+   copies her Windows Firefox profile(s) via ferry-copy; Windows'
+   profiles.ini is NOT copied (its [Install…] section claims the profile
+   for Windows Firefox — finding 6); Linux profiles.ini/installs.ini are
+   rewritten as her to make the Windows profile the default (backup
+   `profiles.ini.before-windows`); with no Windows Firefox, a new profile
+   `fromwindows.default-release` holding bookmarks.html is made the
+   default (Firefox imports bookmarks.html into a new places.sqlite on
+   first start); with a Windows Firefox AND Edge, Edge's file lands in her
+   Home with plain steps; if Firefox is running here nothing is switched
+   (it would write its own profiles.ini back). Suite 115 user / 121 root,
+   mutants for each.
+   **NOT YET PROVEN WITH A REAL FIREFOX**: `tests/realfirefox.sh` +
+   `tests/infirefox.sh` (docker, Mozilla apt Firefox 158) exist and the
+   first run FAILED for a test-harness reason, not (yet) a product one:
+   Firefox printed "Exiting due to channel error" and never wrote
+   places.sqlite — headless Firefox as a setpriv'd user in a container
+   needs a working HOME/XDG_RUNTIME_DIR/dbus (try `MOZ_DISABLE_CONTENT_SANDBOX=1`,
+   `--profile` for the case-0 control, or run Firefox as the container's
+   non-root user with `HOME` set and `/tmp` writable; first prove a
+   control: a fresh Firefox start creates places.sqlite). Until that
+   passes, "her Edge bookmarks appear in Firefox" is unverified.
+4. Commit 5 fuzz: `fuzz/{hive,names,marks}.c` + `fuzz/run.sh` are written
+   but NEVER RUN (no crash claims). Run `sh fuzz/run.sh 120` on homebase
+   with the `auros-s3-fuzz` image (clang 18; mount the repo, `docker run
+   --rm -v ... auros-s3-fuzz sh -c 'cd src/ferry && FUZZ_WORK=... sh
+   fuzz/run.sh 120'`). hivepeek's INT32_MIN negation is already fixed in
+   the tree (finding 7); stream S3 also has `fuzz_hive.c` (bd946e9) —
+   findings go to R. Regression inputs → `tests/regress/hive-*` (the
+   runner already seeds from them) plus a suite step that feeds every
+   file there to `ferry-hivepeek` and expects exit 0/1/2, never a signal;
+   and an ASan build of hivepeek over corrupted hives in the suite
+   (FERRY.md claims one; none exists).
 5. `tools/nmtest.sh`: drop its Ferry Wi-Fi section (emitter deleted on
    purpose in fb90bcd) — another stream's file, smallest edit.
 6. `docs/FERRY.md`: still says passwords and Wi-Fi keys migrate and
    describes safe_copy; rewrite those sections.
 
-## Measurements (homebase, shared and busy; ext4 on NVMe)
+## Measurements (homebase, shared and busy; ext4 on NVMe; `tests/bench.sh 5000 10`)
 
-See the commit-1 message / bench.sh output. The shell copier this
-replaced: ~26 ms per file (131 s for 5,000 small files, measured in the
-old container).
+5,000 files of 4 KB in three folders plus ten 20 MB videos (5,010 files,
+219 MB), `ferry-files --only Pictures`:
+- new (ferry-copy): **3.6 s** first run (1,400 files/s, 62 MB/s), 0.35 s
+  re-run with everything already there;
+- old shell copier (df2b5d8): **266 s** first run, 348 s re-run.
+75x faster; 5,000 photos is seconds, not minutes.
 
 ## Traps
 

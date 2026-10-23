@@ -67,11 +67,15 @@ static uint32_t rd32(size_t off)
 static size_t cell(uint32_t off, size_t need)
 {
     size_t at, sz;
+    int64_t s;
     if (off == 0xffffffffu) return 0;
     at = (size_t)HIVE_BASE + off;
     if (!ok(at, 4)) return 0;
-    sz = (size_t)(int32_t)rd32(at);
-    if ((int32_t)rd32(at) < 0) sz = (size_t)(-(int32_t)rd32(at)); /* allocated */
+    /* Negative = allocated. Widened before negating: -INT32_MIN in 32
+     * bits is undefined, and a hostile hive will say exactly that. */
+    s = (int32_t)rd32(at);
+    if (s < 0) s = -s;
+    sz = (size_t)s;
     if (sz < 4 || !ok(at, sz)) return 0;
     if (need && sz - 4 < need) return 0;
     return at + 4;
@@ -79,7 +83,7 @@ static size_t cell(uint32_t off, size_t need)
 static size_t cell_size(uint32_t off)
 {
     size_t at = (size_t)HIVE_BASE + off;
-    int32_t s;
+    int64_t s;
     if (!ok(at, 4)) return 0;
     s = (int32_t)rd32(at);
     if (s < 0) s = -s;
