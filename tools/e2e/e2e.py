@@ -108,6 +108,22 @@ def left():
     return DEADLINE - time.time()
 
 
+def bitlocker_verdict(variant, vol, prot):
+    """The PC must be the one the variant claims: BitLocker on (fully
+    encrypted, protection on) for `bitlocker`, none at all (fully
+    decrypted) for every other. Windows 11 turns device encryption on by
+    itself on a TPM + Secure Boot PC, which once made the plain PC an
+    encrypted one without anybody noticing (run 39923720924). Returns the
+    reason it is not, or None."""
+    if variant == "bitlocker":
+        if vol != "FullyEncrypted" or prot != "On":
+            return f"the bitlocker PC is {vol}, protection {prot}: BitLocker is not fully on"
+    elif vol != "FullyDecrypted":
+        return (f"the {variant} PC has BitLocker on its drive ({vol}, protection {prot}): "
+                "Windows turned device encryption on by itself; the plain PC must have none")
+    return None
+
+
 def close_verdict(variant, page):
     """Why the installer ended on Close. On the stop this variant's PC was
     made for, no way on is the right red (D13: BitLocker PCs must get
@@ -177,6 +193,14 @@ def cmd_windows(a):
                 raise Failure("Windows did not reach its first logon")
         with open(os.path.join(a.out, "windows-facts.json"), "w") as f:
             f.write(facts)
+        golden = E("E2E_GOLDEN", "base")
+        m = re.search(r"VolumeStatus\s*:\s*(\w+)\s+ProtectionStatus\s*:\s*(\w+)",
+                      str(json.loads(facts).get("bitlocker")))
+        if golden != "bitlocker":     # (that one is made encrypted after these facts; the flow checks it)
+            bad = bitlocker_verdict("base", m.group(1), m.group(2)) if m else \
+                "BitLocker's state is not in the first-logon facts"
+            if bad:
+                raise Failure(bad)
         for k, v in json.loads(facts).items():
             rec.log(f"windows {k}: {str(v).strip()}")
         with rec.phase("windows: settle on the desktop"):
@@ -224,6 +248,7 @@ class Flow:
         self.wizard_pages = []      # the text of each page a button was pressed on
         self.fix_presses = 0
         self.fix_restarts = 0
+        self._named_diag = False
 
     def check_variant(self):
         """After the wizard: the variant's PC got the stop it was made
@@ -252,7 +277,12 @@ class Flow:
         m = re.search(r"STATE (\w+)\|(\w+)\|([\d.]+)", out)
         self.log(f"bitlocker {when}: {m.group(0) if m else 'unreadable'}\n{out.strip()[:900]}")
         if not m:
-            raise Failure(f"variant bitlocker: cannot read BitLocker's state {when}: {out.strip()[:300]}")
+            # (the helper is elevated, and can read it; if it cannot, only the
+            # bitlocker variant depends on knowing, the staging screen refuses
+            # an encrypted drive anyway)
+            if VARIANT == "bitlocker":
+                raise Failure(f"variant bitlocker: cannot read BitLocker's state {when}: {out.strip()[:300]}")
+            return "unknown", "unknown", 0.0
         return m.group(1), m.group(2), float(m.group(3))
 
     def check_bitlocker_before_restart(self):
@@ -407,6 +437,10 @@ class Flow:
                 "Get-CimInstance Win32_DiskPartition | Format-Table Index,Type,Size,StartingOffset -AutoSize; "
                 "Get-CimInstance Win32_VideoController | Format-List Name,CurrentHorizontalResolution,CurrentVerticalResolution")
             self.log("windows, as the installer will find it:\n" + facts.strip())
+            vol, prot, pct = self.bitlocker_state("at the start")
+            bad = bitlocker_verdict(VARIANT, vol, prot) if vol != "unknown" else None
+            if bad:
+                raise Failure(bad)
             with open(os.path.join(self.a.out, "windows-facts.txt"), "w") as fh:
                 fh.write(facts)
         self.m.auto_shots(30)
@@ -637,10 +671,18 @@ class Flow:
         installer without one, or a helper that cannot see inside it."""
         if not win or not win.get("proc"):
             return []
-        return [e for e in self.elements("^" + re.escape(win["proc"]) + "$",
-                                         ["Button", "RadioButton", "CheckBox", "Pane"],
-                                         max=80, quiet=True)
-                if e.get("proc") == win["proc"]]
+        match = "^" + re.escape(win["proc"]) + "$"
+        got = [e for e in self.elements(match, ["Button", "RadioButton", "CheckBox", "Pane"],
+                                        max=80, quiet=True)
+               if e.get("proc") == win["proc"]]
+        if not got and not self._named_diag:
+            # Once, so that the evidence says why names could not be read
+            # (not elevated, an installer without the screen-reader object...)
+            self._named_diag = True
+            self.log("installer window as UI Automation sees it: " + json.dumps(win))
+            self.elements(match, ["Button", "RadioButton", "CheckBox", "Pane", "Window", "Custom",
+                                  "Text", "Document", "Group", "List", "ListItem", "Image"], max=60)
+        return got
 
     def drive_wizard(self):
         """Press the primary button whenever it is enabled (found by name:

@@ -98,6 +98,23 @@ def test_stops():
           "base: a BitLocker page on the plain PC is not the right red")
 
 
+def test_bitlocker_verdict():
+    tree = ast.parse(open(os.path.join(HERE, "e2e.py")).read())
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "bitlocker_verdict")
+    ns = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[fn], type_ignores=[])), "e2e.py", "exec"), ns)
+    v = ns["bitlocker_verdict"]
+    check(v("base", "FullyDecrypted", "Off") is None, "bitlocker: the plain PC with no BitLocker is the plain PC")
+    check(v("base", "EncryptionInProgress", "Off") is not None, "bitlocker: a plain PC that Windows began encrypting is refused (run 39923720924)")
+    check(v("smalldisk", "FullyEncrypted", "On") is not None, "bitlocker: any non-bitlocker PC with BitLocker on is refused")
+    check(v("bitlocker", "FullyEncrypted", "On") is None, "bitlocker: the BitLocker PC fully on is the BitLocker PC")
+    check(v("bitlocker", "FullyEncrypted", "Off") is not None, "bitlocker: protection off is not a BitLocker PC")
+    check(v("bitlocker", "FullyDecrypted", "Off") is not None, "bitlocker: no BitLocker is not a BitLocker PC")
+    with open(os.path.join(HERE, "guest", "specialize.cmd")) as f:
+        sp = f.read()
+    check("PreventDeviceEncryption" in sp, "the plain PC: Windows' automatic device encryption is switched off in specialize.cmd")
+
+
 def test_edge_item():
     tree = ast.parse(open(os.path.join(HERE, "e2e.py")).read())
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "inside")
@@ -153,6 +170,7 @@ def test_publish():
 test_expect()
 test_wizard_contract()
 test_stops()
+test_bitlocker_verdict()
 test_edge_item()
 test_publish()
 print(f"\n{len(fails)} failed" if fails else "\nall passed")
