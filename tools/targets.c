@@ -158,6 +158,27 @@ static void band(const char *label, int kiosk, int allow_settings,
                     fail++;
                 }
             }
+
+            /* And the help panel's "Show me how to do things", which
+             * opens the help pages. */
+            rect hb;
+            if (foot_help_button(&c, RES[r].w, RES[r].h, &hb)) {
+                char nm[64];
+                snprintf(nm, sizeof nm, "show me how (text %.0f%%)",
+                         (double)(SCALES[k] * 100.f));
+                measure(nm, hb, RES[r].w, RES[r].h);
+                if (hb.x < 0 || hb.y < 0 || hb.x + hb.w > RES[r].w ||
+                    hb.y + hb.h > c.screen_h) {
+                    printf("    FAIL show me how is outside the screen "
+                           "at %dx%d text %.0f%%\n", RES[r].w, RES[r].h,
+                           (double)(SCALES[k] * 100.f));
+                    fail++;
+                }
+            } else if (!kiosk) {
+                printf("    FAIL no show me how button at %dx%d\n",
+                       RES[r].w, RES[r].h);
+                fail++;
+            }
         }
 }
 

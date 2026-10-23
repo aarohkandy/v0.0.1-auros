@@ -101,6 +101,14 @@ void foot_motion(shell_ctx *c, int x, int y);
  * archetype underneath it. */
 int  foot_help_open(const shell_ctx *c);
 
+/* The help panel's one button, "Show me how to do things": the help
+ * pages (rootfs/usr/share/auros/help), opened in a new browser window.
+ * ONE function for painting, pressing and tools/targets.c. 0 in a
+ * kiosk; the panel also leaves it out when the pages are not on this
+ * computer. */
+#define FOOT_HELP_PAGES "/usr/share/auros/help/index.html"
+int  foot_help_button(const shell_ctx *c, int sw, int sh, rect *out);
+
 /* A key, while the band's own overlays are up. Returns 1 if it was
  * taken -- which is EVERY key while one of them is showing, because
  * they cover the screen and a key that fell through would land in an

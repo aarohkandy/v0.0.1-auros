@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "foot.h"
 #include "draw.h"
@@ -207,6 +208,49 @@ int foot_height(const shell_ctx *c)
 
 int foot_help_open(const shell_ctx *c) { return c && c->help_open; }
 
+/* ── "Show me how to do things" ─────────────────────────────────────
+ *
+ * The panel explains the band; the pages show everything else, step by
+ * step. First on the panel, because it is the thing she came for. */
+#define HOVER_PAGES (-200)       /* foot_hover; the power choices use -10x */
+
+int foot_help_button(const shell_ctx *c, int sw, int sh, rect *out)
+{
+    if (!c || c->kiosk) return 0;     /* a kiosk has no way to close it */
+    float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
+    int top = sh - foot_height(c);
+    int gx = sw / 12; if (gx < 20) gx = 20;
+    int w = (int)(440.f * k); if (w > sw - 2 * gx) w = sw - 2 * gx;
+    int h = (int)(56.f * k);  if (h < FOOT_TARGET) h = FOOT_TARGET;
+    *out = (rect){ gx, top / 12, w, h };
+    return 1;
+}
+
+static int help_pages_here(void) { return access(FOOT_HELP_PAGES, R_OK) == 0; }
+
+static int help_button_at(const shell_ctx *c, int x, int y)
+{
+    rect r;
+    return help_pages_here() &&
+           foot_help_button(c, c->screen_w, c->screen_h + foot_height(c), &r) &&
+           x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+}
+
+static void open_help_pages(shell_ctx *c)
+{
+    c->help_open = 0;
+    if (!c->spawn || !help_pages_here()) return;
+    /* A NEW window, because a new window is what the shell brings to
+     * the front. A page handed to a browser that is already open
+     * becomes a tab in a window she may not be looking at. */
+    static const char ARGV[] =
+        "sh\0-c\0"
+        "command -v firefox >/dev/null 2>&1 && exec firefox --new-window \"$0\"; "
+        "exec xdg-open \"$0\"\0"
+        "file://" FOOT_HELP_PAGES;
+    c->spawn(c, ARGV, 4);
+}
+
 /* ── her chosen size, kept where she can own it ─────────────────────
  *
  * Her own settings file, not the system theme: changing how big the
@@ -272,6 +316,24 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
         font *big = f->big ? f->big : f->mid;
         font *body = f->small ? f->small : f->mid;
         int x = s->w / 12, y = top / 6;
+        rect hb;
+        if (help_pages_here() && foot_help_button(c, s->w, s->h, &hb)) {
+            /* Filled, the one lit thing on the panel: it is what she
+             * came for. Hover rings it rather than recolouring it. */
+            float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
+            draw_rect(s, hb, FOOT_INK, 1.f);
+            if (c->foot_hover == HOVER_PAGES)
+                draw_frame(s, (rect){ hb.x - 4, hb.y - 4, hb.w + 8, hb.h + 8 },
+                           2, FOOT_INK, 1.f);
+            font *nm = f->mid ? f->mid : f->small;
+            if (nm)
+                shell_text_elided(s, nm, (float)hb.x + 18.f,
+                                  shell_baseline(nm, (float)hb.y, (float)hb.h),
+                                  (float)hb.w - 36.f, "Show me how to do things",
+                                  FOOT_BG, 1.f);
+            x = hb.x;
+            y = hb.y + hb.h + (int)(28.f * k);
+        }
         if (big) {
             shell_text(s, big, (float)x, (float)y + font_ascent(big),
                        "Where you are", FOOT_INK, 1.f);
@@ -415,6 +477,7 @@ void foot_motion(shell_ctx *c, int x, int y)
         if (c->power_sel) c->foot_hover = -100 - c->power_sel;
         return;
     }
+    if (c->help_open && help_button_at(c, x, y)) { c->foot_hover = HOVER_PAGES; return; }
     rect r[B_N]; int which[B_N];
     int n = foot_buttons(c, c->screen_w, c->screen_h + foot_height(c), r, which);
     for (int i = 0; i < n; i++)
@@ -506,7 +569,12 @@ int foot_key(shell_ctx *c, int k)
     /* Any key closes help, for the same reason any click does: asking
      * her to find one particular small button again, to get rid of the
      * thing that exists to help her, would be a joke at her expense. */
-    if (c->help_open) { c->help_open = 0; return 1; }
+    if (c->help_open) {
+        /* Return is the panel's one button, "Show me how". */
+        if (k == 28 || k == 96) open_help_pages(c);
+        c->help_open = 0;
+        return 1;
+    }
     return 0;
 }
 
@@ -571,7 +639,11 @@ int foot_click(shell_ctx *c, int x, int y)
     /* A press anywhere on the help panel closes it. Asking her to find
      * the same small button again to get rid of the thing that exists
      * to help her would be a joke at her expense. */
-    if (c->help_open && y < c->screen_h) { c->help_open = 0; return 1; }
+    if (c->help_open && y < c->screen_h) {
+        if (help_button_at(c, x, y)) open_help_pages(c);
+        c->help_open = 0;
+        return 1;
+    }
 
     /* Inside the band but not on a button: swallowed, so a near-miss
      * does not fall through and press whatever the archetype has at the
