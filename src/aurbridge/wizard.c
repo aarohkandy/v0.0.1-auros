@@ -51,6 +51,7 @@
 #include <windowsx.h>
 #include <oleacc.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -4860,6 +4861,24 @@ static int nav_test(const char *dir)
         g_page = PAGE_BLOCKED;
         nt_check(fixable_now() == 0 && !wcscmp(primary_label(), L"Close AurOS Setup"),
                  "on an encrypted drive the one button is Close");
+        /* THE ONLY FOLDERS SWEPT are named, never read from TEMP or TMP:
+         * those can point at her documents. Point them there and ask. */
+        {
+            wchar_t keep[MAX_PATH], roots[2][MAX_PATH], la[MAX_PATH];
+            GetEnvironmentVariableW(L"TEMP", keep, MAX_PATH);          /* to put back */
+            SetEnvironmentVariableW(L"TEMP", L"C:\\Users\\her\\Documents");
+            SetEnvironmentVariableW(L"TMP",  L"C:\\Users\\her\\Documents");
+            int n = fix_temp_roots(roots);
+            SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, la);
+            int ok = n == 2 && !_wcsnicmp(roots[0], la, wcslen(la)) &&
+                     !_wcsicmp(roots[0] + wcslen(la), L"\\Temp") &&
+                     !_wcsicmp(roots[1] + wcslen(roots[1]) - 5, L"\\Temp") &&
+                     !wcsstr(roots[0], L"Documents") && !wcsstr(roots[1], L"Documents");
+            nt_check(ok, "the space fix sweeps LocalAppData\\Temp and Windows\\Temp by name, "
+                         "never the folder TEMP points at (her documents)");
+            SetEnvironmentVariableW(L"TEMP", keep[0] ? keep : NULL);
+            SetEnvironmentVariableW(L"TMP", NULL);
+        }
         /* The space fix deletes only old temporary files, and says how
          * much before she presses; with next to nothing to delete there
          * is no Fix button, only what she can move. */

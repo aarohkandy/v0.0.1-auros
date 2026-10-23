@@ -294,6 +294,29 @@ static uint64_t temp_walk(const wchar_t *dir, int depth, ULONGLONG cutoff, int d
     return bytes;
 }
 
+/* THE ONLY TWO FOLDERS EVER SWEPT, by their names and not by what the
+ * environment says. This used to sweep whatever GetTempPathW returned:
+ * TEMP and TMP are ordinary settings, a person (or a program) can point
+ * them at her profile or at a folder she uses, and a sweep of "temporary
+ * files" there deletes her files (atlas review, the safety skeptics).
+ * Now: the Temp folder inside this user's own LocalAppData, and Temp
+ * inside the Windows folder, exactly; and neither if it is a link. */
+int fix_temp_roots(wchar_t out[2][MAX_PATH])
+{
+    int n = 0;
+    wchar_t d[MAX_PATH];
+    if (SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, SHGFP_TYPE_CURRENT, d) == S_OK &&
+        wcslen(d) + 6 < MAX_PATH) {
+        wcscat(d, L"\\Temp");
+        wcscpy(out[n++], d);
+    }
+    if (GetWindowsDirectoryW(d, MAX_PATH) && wcslen(d) + 6 < MAX_PATH) {
+        wcscat(d, L"\\Temp");
+        wcscpy(out[n++], d);
+    }
+    return n;
+}
+
 static uint64_t temp_folders(int del)
 {
     FILETIME now;
@@ -302,15 +325,13 @@ static uint64_t temp_folders(int del)
     t.LowPart = now.dwLowDateTime; t.HighPart = now.dwHighDateTime;
     ULONGLONG cutoff = t.QuadPart - (ULONGLONG)TEMP_AGE_DAYS * 24 * 3600 * 10000000ULL;
     uint64_t bytes = 0;
-    wchar_t d[MAX_PATH];
-    DWORD k = GetTempPathW(MAX_PATH, d);
-    if (k > 3 && k < MAX_PATH) {
-        if (d[k - 1] == L'\\') d[k - 1] = 0;
-        bytes += temp_walk(d, 0, cutoff, del);
-    }
-    if (GetWindowsDirectoryW(d, MAX_PATH)) {
-        wcsncat(d, L"\\Temp", MAX_PATH - wcslen(d) - 1);
-        bytes += temp_walk(d, 0, cutoff, del);
+    wchar_t roots[2][MAX_PATH];
+    int n = fix_temp_roots(roots);
+    for (int i = 0; i < n; i++) {
+        DWORD a = GetFileAttributesW(roots[i]);
+        if (a == INVALID_FILE_ATTRIBUTES || !(a & FILE_ATTRIBUTE_DIRECTORY) ||
+            (a & FILE_ATTRIBUTE_REPARSE_POINT)) continue;
+        bytes += temp_walk(roots[i], 0, cutoff, del);
     }
     return bytes;
 }

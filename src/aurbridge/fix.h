@@ -61,6 +61,12 @@ int fix_run(const char *id, char *why, size_t n);
  * Read-only. Slow on a big folder: call it from a worker thread. */
 uint64_t fix_temp_bytes(void);
 
+/* The folders the space fix sweeps, and the only ones: this user's
+ * LocalAppData\Temp and the Windows folder's Temp, by name, never by the
+ * TEMP and TMP settings (those can point at her documents). Returns how
+ * many (0 to 2); fills `out`. */
+int fix_temp_roots(wchar_t out[2][260]);            /* 260 is MAX_PATH */
+
 /* For FIX_RESTART: arrange for this installer to open again, elevated,
  * the next time this person signs in, then restart Windows. The task it
  * leaves is removed by fix_resume_done(), which the reopened installer

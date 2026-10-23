@@ -276,8 +276,20 @@ jobs:
           [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile("$keep\binned.txt", 'OnlyErrorDialogs', 'SendToRecycleBin')
           $before = @((New-Object -ComObject Shell.Application).NameSpace(10).Items()).Count
           if ($before -lt 1) { "::warning::this runner has no Recycle Bin to test with" }
+          # TEMP and TMP are ordinary settings and can point at her documents.
+          # The fix sweeps the two Temp folders by their names and must
+          # leave an old file in whatever TEMP says alone.
+          $docs = "$keep\documents"
+          New-Item -ItemType Directory -Force $docs | Out-Null
+          Set-Content "$docs\her-old-letter.txt" 'her letter, a month old'
+          $i = Get-Item "$docs\her-old-letter.txt"; $i.CreationTime = $old; $i.LastWriteTime = $old
+          $realTemp = $env:TEMP; $realTmp = $env:TMP
+          $env:TEMP = $docs; $env:TMP = $docs
           .\exe\aurbridge.exe fix insufficient-space
-          if ($LASTEXITCODE -ne 0) { throw "fix insufficient-space exited $LASTEXITCODE" }
+          $code = $LASTEXITCODE
+          $env:TEMP = $realTemp; $env:TMP = $realTmp
+          if ($code -ne 0) { throw "fix insufficient-space exited $code" }
+          if (-not (Test-Path "$docs\her-old-letter.txt")) { throw "AN OLD FILE IN THE FOLDER TEMP POINTED AT WAS DELETED: the fix follows TEMP" }
           if (Test-Path "$env:TEMP\aurtest\deeper\junk.tmp") { throw "an old file in %TEMP% is still there" }
           if (Test-Path "$env:WINDIR\Temp\aurtest-junk.tmp") { throw "an old file in Windows\Temp is still there" }
           if (-not (Test-Path "$env:TEMP\aurtest-today.tmp")) { throw "A FILE WRITTEN TODAY WAS DELETED" }
