@@ -530,19 +530,35 @@ static void ground(void)
 /* ═══════════════════════════════════════════════════════════════════
  *  Text
  * ═══════════════════════════════════════════════════════════════════ */
+/* --navtest ASKS EVERY LETTER IT DRAWS whether the face has it: a glyph the
+ * face lacks is drawn from another font, in another shape (the typed ›
+ * was one). g_missing counts them, g_missing_cp is the first. */
+static int g_missing, g_missing_cp, g_face_ok_early;
+static void glyph_audit(HFONT f, const wchar_t *s, int n)
+{
+    if (!g_nav_mode || !g_face_ok_early || !s) return;
+    if (n < 0) n = (int)wcslen(s);
+    WORD idx[512];
+    if (n > 512) n = 512;
+    SelectObject(g_mdc, f);
+    if (GetGlyphIndicesW(g_mdc, s, n, idx, GGI_MARK_NONEXISTING_GLYPHS) == GDI_ERROR) return;
+    for (int i = 0; i < n; i++)
+        if (idx[i] == 0xFFFF && s[i] > 32) { if (!g_missing++) g_missing_cp = s[i]; }
+}
+
 /* ONE TYPEFACE, TWO WEIGHTS, FIVE SIZES (fonts_make). Each size has its
  * own line height: a paragraph at one and a half times its size, which
  * older eyes read far more easily than the font's own spacing (about
  * 1.2, all DrawText offers; WCAG 1.4.12), and a title held tighter. So
  * paragraphs are broken into lines here, a whole word at a time. */
-static struct { HFONT *f; int px, weight; float lh; int line, tm; } TYPE[] = {
-    { &g_f_title,  32, FW_BOLD,   1.25f, 0, 0 },   /* the page's one title: 32/40 */
-    { &g_f_h3,     22, FW_BOLD,   1.36f, 0, 0 },   /* a look's name, a status: 22/30 */
-    { &g_f_body,   20, FW_NORMAL, 1.50f, 0, 0 },   /* what she reads: 20/30 */
-    { &g_f_bodyb,  20, FW_BOLD,   1.50f, 0, 0 },
-    { &g_f_small,  18, FW_NORMAL, 1.45f, 0, 0 },   /* the floor: 18/26      */
-    { &g_f_smallb, 18, FW_BOLD,   1.45f, 0, 0 },
-    { &g_f_btn,    20, FW_BOLD,   1.20f, 0, 0 },   /* a button's label      */
+static struct { HFONT *f; int px, weight; float lh; int line, tm; int display; } TYPE[] = {
+    { &g_f_title,  32, FW_NORMAL, 1.25f, 0, 0, 1 },  /* the page's one title, 800: 32/40 */
+    { &g_f_h3,     22, FW_BOLD,   1.36f, 0, 0, 0 },  /* a look's name, a status: 22/30 */
+    { &g_f_body,   20, FW_NORMAL, 1.50f, 0, 0, 0 },  /* what she reads: 20/30 */
+    { &g_f_bodyb,  20, FW_BOLD,   1.50f, 0, 0, 0 },
+    { &g_f_small,  18, FW_NORMAL, 1.45f, 0, 0, 0 },  /* the floor: 18/26      */
+    { &g_f_smallb, 18, FW_BOLD,   1.45f, 0, 0, 0 },
+    { &g_f_btn,    20, FW_BOLD,   1.20f, 0, 0, 0 },  /* a button's label      */
 };
 #define N_TYPE ((int)(sizeof TYPE / sizeof TYPE[0]))
 
@@ -573,6 +589,7 @@ static int para(const wchar_t *s, HFONT f, uint32_t col, int x, int y, int w, in
             if (!*q || *q == L'\n') break;
             end = q + 1;
         }
+        glyph_audit(f, p, (int)(fit - p));
         if (draw) TextOutW(g_mdc, x, y + n * lh + off, p, (int)(fit - p));
         n++;
         p = fit;
@@ -604,6 +621,7 @@ static int text_draw(const wchar_t *s, HFONT f, uint32_t col,
 {
     if (flags & DT_WORDBREAK) return para(s, f, col, x, y, w, 1);
     RECT r = { x, y, x + w, y + (1 << 20) };
+    glyph_audit(f, s, -1);
     SelectObject(g_mdc, f);
     SetTextColor(g_mdc, CR(col));
     SetBkMode(g_mdc, TRANSPARENT);
@@ -613,6 +631,7 @@ static int text_draw(const wchar_t *s, HFONT f, uint32_t col,
 
 static void text_in(const wchar_t *s, HFONT f, uint32_t col, RECT box, UINT flags)
 {
+    glyph_audit(f, s, -1);
     SelectObject(g_mdc, f);
     SetTextColor(g_mdc, CR(col));
     SetBkMode(g_mdc, TRANSPARENT);
@@ -1969,6 +1988,26 @@ static int page_welcome(int x, int y, int w)
  * own screen with the one line to change marked. Every maker's screen
  * is a little different; the sketch uses the commonest words and the
  * card's text names the others. draw=0 measures only. */
+/* A drawn chevron, never a typed one: the face has none (DESIGN-DIRECTION
+ * §3, "arrows are drawn as icons"). Width about 0.6 s. */
+static void chevron(float cx, float cy, float s, uint32_t col)
+{
+    aa_line(cx - s * 0.22f, cy - s * 0.42f, cx + s * 0.22f, cy, (float)S(2), col, 1.f);
+    aa_line(cx + s * 0.22f, cy, cx - s * 0.22f, cy + s * 0.42f, (float)S(2), col, 1.f);
+}
+
+/* "a", a chevron, "b" on one line, vertically centred in [y, y+h) */
+static void text_chev(const wchar_t *a, const wchar_t *b, HFONT f, uint32_t col, int x, int y, int h,
+                      int maxw)
+{
+    RECT ra = { x, y, x + maxw, y + h };
+    text_in(a, f, col, ra, DT_SINGLELINE | DT_VCENTER);
+    int ax = x + text_w(a, f) + S(10);
+    chevron((float)ax + (float)S(6), (float)y + (float)h * 0.5f, (float)S(18), col);
+    RECT rb = { ax + S(22), y, x + maxw, y + h };
+    text_in(b, f, col, rb, DT_SINGLELINE | DT_VCENTER);
+}
+
 static int sb_figure(int x, int y, int w, int draw)
 {
     static const wchar_t *const way[] = {
@@ -1979,7 +2018,7 @@ static int sb_figure(int x, int y, int w, int draw)
     int y0 = y;
     int line = TYPE[type_of(g_f_small)].line;
     int chip_h = S(34), pad = S(12), gap = S(8);
-    int sep_w = text_w(L"›", g_f_small) + S(12);
+    int sep_w = S(26);
 
     if (draw) text_draw(L"The way there, from Windows", g_f_smallb, C_INK, x, y, w, DT_SINGLELINE);
     y += line + S(6);
@@ -1998,7 +2037,9 @@ static int sb_figure(int x, int y, int w, int draw)
                     DT_SINGLELINE | DT_CENTER | DT_VCENTER);
             if (i < nway - 1) {
                 RECT sb = { cx + cw, y, cx + cw + sep_w, y + chip_h };
-                text_in(L"›", g_f_small, C_INK2, sb, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+                (void)sb;
+                chevron((float)(cx + cw) + (float)sep_w * 0.5f, (float)y + (float)chip_h * 0.5f,
+                        (float)S(18), C_INK2);
             }
         }
         cx += cw + sep_w;
@@ -2016,11 +2057,11 @@ static int sb_figure(int x, int y, int w, int draw)
         fill_rr((float)x + 1.f, (float)y + 1.f, (float)sw - 2.f, (float)row, (float)S(7),
                 C_SOFT, 1.f);
         RECT hb = { x + S(14), y, x + sw - S(14), y + row };
-        text_in(L"Security  ›  Secure Boot", g_f_smallb, C_INK, hb,
-                DT_SINGLELINE | DT_VCENTER);
+        text_chev(L"Security", L"Secure Boot", g_f_smallb, C_INK, hb.left, hb.top, row,
+                  hb.right - hb.left);
         static const struct { const wchar_t *k, *v; int mark; } R[] = {
             { L"Secure Boot",                        L"[Enabled]  leave it on", 0 },
-            { L"Allow Microsoft 3rd Party UEFI CA",  L"[Disabled] › [Enabled]", 1 },
+            { L"Allow Microsoft 3rd Party UEFI CA",  L"[Disabled]|[Enabled]", 1 },
             { L"Secure Boot Mode",                   L"[Standard]", 0 },
         };
         for (int i = 0; i < 3; i++) {
@@ -2035,8 +2076,17 @@ static int sb_figure(int x, int y, int w, int draw)
             RECT vb = { x + sw * 60 / 100, ry, x + sw - S(14), ry + row - S(2) };
             text_in(R[i].k, R[i].mark ? g_f_smallb : g_f_small, C_INK, kb,
                     DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-            text_in(R[i].v, R[i].mark ? g_f_smallb : g_f_small, R[i].mark ? C_WARN : C_INK2,
-                    vb, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+            if (wcschr(R[i].v, L'|')) {            /* "[from] chevron [to]" */
+                wchar_t from[40], to[40];
+                const wchar_t *bar = wcschr(R[i].v, L'|');
+                wcsncpy(from, R[i].v, (size_t)(bar - R[i].v)); from[bar - R[i].v] = 0;
+                wcscpy(to, bar + 1);
+                text_chev(from, to, g_f_smallb, C_WARN, vb.left, vb.top, vb.bottom - vb.top,
+                          vb.right - vb.left);
+            } else {
+                text_in(R[i].v, R[i].mark ? g_f_smallb : g_f_small, C_INK2,
+                        vb, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+            }
         }
     }
     y += sh + S(12);
@@ -3495,27 +3545,33 @@ static int dpi_for(HWND h)
     return d >= 72 ? d : 96;
 }
 
-/* THE WEBSITE'S LETTERS. AurOS Sans is Atkinson Hyperlegible, drawn for
- * readers with low vision, and the face the website is set in
- * (src/aurbridge/fonts/OFL.txt). It travels inside this file
- * (aurbridge-info.rc) and is lent to this process only, so nothing is
- * installed. A build without it, or a Windows that will not take it,
- * gets Segoe UI, which every Windows since Vista has. */
-#define FACE_TEXT     L"AurOS Sans"
+/* THE UI FACE: Atkinson Hyperlegible Next, drawn for readers with low
+ * vision (I, l and 1 differ), and the face the website is set in
+ * (src/aurbridge/fonts/OFL.txt, no Reserved Font Name). Three static
+ * faces travel inside this file (aurbridge-info.rc) and are lent to this
+ * process only, so nothing is installed: 400 and 700 are one family at
+ * FW_NORMAL and FW_BOLD, and 800 (the page title) is a family of its own
+ * at FW_NORMAL, which is how GDI sees them (the legacy family name).
+ * A build without them, or a Windows that will not take them, gets
+ * Segoe UI (bold for the title), which every Windows has. */
+#define FACE_TEXT     L"Atkinson Hyperlegible Next"
+#define FACE_DISPLAY  L"Atkinson Hyperlegible Next ExtraBold"
 #define FACE_FALLBACK L"Segoe UI"
 static int g_face_ok;
 
 static void fonts_load(void)
 {
-    static const int ids[] = { 100, 101 };
-    for (int i = 0; i < 2; i++) {
+    static const int ids[] = { 100, 101, 102 };
+    int ok = 0;
+    for (int i = 0; i < 3; i++) {
         HRSRC r = FindResourceW(NULL, MAKEINTRESOURCEW(ids[i]), L"AURFONT");
         HGLOBAL g = r ? LoadResource(NULL, r) : NULL;
         void *b = g ? LockResource(g) : NULL;
         DWORD n = 0;
-        if (b && AddFontMemResourceEx(b, SizeofResource(NULL, r), NULL, &n) && n) g_face_ok++;
+        if (b && AddFontMemResourceEx(b, SizeofResource(NULL, r), NULL, &n) && n) ok++;
     }
-    g_face_ok = g_face_ok == 2;
+    g_face_ok = ok == 3;
+    g_face_ok_early = g_face_ok;
 }
 
 static void fonts_free(void)
@@ -3536,10 +3592,13 @@ static void fonts_make(void)
         int px = TYPE[i].px;
         if (g_dense && px == 20 && TYPE[i].f != &g_f_btn) px = 18;
         if (g_dense && px == 32) px = 28;
-        *TYPE[i].f = CreateFontW(-S(px), 0, 0, 0, TYPE[i].weight, 0, 0, 0,
+        *TYPE[i].f = CreateFontW(-S(px), 0, 0, 0,
+                                 g_face_ok || !TYPE[i].display ? TYPE[i].weight : FW_BOLD,
+                                 0, 0, 0,
                                  DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
                                  CLEARTYPE_QUALITY, (BYTE)(VARIABLE_PITCH | FF_SWISS),
-                                 g_face_ok ? FACE_TEXT : FACE_FALLBACK);
+                                 !g_face_ok ? FACE_FALLBACK
+                                            : TYPE[i].display ? FACE_DISPLAY : FACE_TEXT);
         TEXTMETRICW tm;
         int th = S(px);
         if (dc) {
@@ -5179,6 +5238,35 @@ static int nav_test(const char *dir)
         g_sel_style = STYLE_DEFAULT;
         g_install_finished = 0;
         InterlockedExchange(&g_ab_state, 0);
+    }
+
+    if (g_nt) fprintf(g_nt, "\n14. every letter on every page is in the face\n");
+    {
+        /* the pages at every size were drawn above; draw the ones that only
+         * show with a particular finding, and the whole fix table */
+        g_missing = 0;
+        memset(&g_report, 0, sizeof g_report);
+        g_report.system_disk = -1;
+        sbdb_judge(&g_report, 1, 0, (const unsigned char *)"", 0, -1, NULL, 0,
+                   "Microsoft Corporation UEFI CA 2011\n");
+        g_pf_valid = 1; g_page = PAGE_BLOCKED; g_sb_helper = 1;
+        render();
+        g_sb_helper = 0;
+        for (int i = 0; fix_at(i); i++) {
+            const fix_info *f = fix_at(i);
+            fx_machine(0);
+            fx_add(f->id, PF_BLOCK, "a synthetic problem");
+            g_page = PAGE_BLOCKED; render();
+            const wchar_t *x = fix_instead(f->id), *y = fix_note(f->id);
+            if (x) glyph_audit(g_f_body, x, -1);
+            if (y) glyph_audit(g_f_body, y, -1);
+            if (f->after) glyph_audit(g_f_body, f->after, -1);
+        }
+        char what[96];
+        snprintf(what, sizeof what, "every letter drawn is in the face (first missing: U+%04X)",
+                 g_missing_cp);
+        nt_check(g_missing == 0 || !g_face_ok_early, what);
+        nt_check(g_face_ok_early, "the face loaded from inside the .exe (else Segoe UI is drawing)");
     }
 
     if (g_nt) {

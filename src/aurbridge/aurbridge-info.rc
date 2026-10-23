@@ -18,8 +18,9 @@
 /* The installer's letters (fonts/OFL.txt): the website's typeface, loaded
  * from here at start (wizard.c, fonts_load). Its own resource type: the
  * staging payload owns RCDATA 1-5. */
-100 AURFONT "fonts/aurossans-400.ttf"
-101 AURFONT "fonts/aurossans-700.ttf"
+100 AURFONT "fonts/atkinsonnext-400.ttf"
+101 AURFONT "fonts/atkinsonnext-700.ttf"
+102 AURFONT "fonts/atkinsonnext-800.ttf"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION    AUROS_VER_MAJOR, AUROS_VER_MINOR, AUROS_VER_PATCH, 0
