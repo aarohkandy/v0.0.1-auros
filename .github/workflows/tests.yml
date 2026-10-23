@@ -399,6 +399,9 @@ jobs:
       - name: bootchaintest (auros-bootchain refuses what would not start)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sudo sh tools/bootchaintest.sh work/forge/desktop/rootfs 2>&1 | tee transcripts/bootchaintest.txt
+      - name: grubshelltest (no grub menu AurOS writes offers a shell)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/grubshelltest.sh work/forge/desktop/rootfs 2>&1 | tee transcripts/grubshelltest.txt
       - name: manifesttest (the published wizard)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/manifesttest.sh dl/installer/AurOS-Setup.exe 2>&1 | tee transcripts/manifesttest.txt
