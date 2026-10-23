@@ -5,6 +5,7 @@
 > push there). The old repository (ComputerDude771/auros-from-scratch) is
 > read-only for us. Workflows run on `main`; `workflow_dispatch` works now.
 > Current session log: `docs/handoff/SESSION-2026-10-23-B.md`.**
+> **Expert map: [docs/ATLAS.md](docs/ATLAS.md). State right now: [docs/handoff/CURRENT-STATE.md](docs/handoff/CURRENT-STATE.md).**
 
 > **The plan: [docs/ROADMAP.md](docs/ROADMAP.md) (v0.1 it works → v0.2 every PC under an hour → v0.3 safe for years → v1.0 people pay).**
 
