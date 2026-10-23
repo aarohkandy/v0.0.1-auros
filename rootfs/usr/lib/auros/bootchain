@@ -990,12 +990,46 @@ def sha(path):
         return None
 
 
+# What this computer's firmware trusts, written into every record below
+# (WP-31). Measurement, not a gate: the gates are in `sync`.
+FW_NOTES = {}
+
+
+def fw_notes(fw, grub_data=None):
+    """What the phone helper (and later the outcome ping) needs to know
+    about this PC's Secure Boot trust, as key=value for the boot record:
+    is Secure Boot on, does db hold Microsoft's 2011 and 2023 third-party
+    UEFI CAs (the CA that signs the shim), the SBAT revocation level in
+    NVRAM, and whether that level already revokes the grub installed."""
+    names = []
+    for c in fw["db"]:
+        try:
+            names.append(c.subject.rfc4514_string())
+        except Exception:
+            pass
+    notes = {
+        "fw_secureboot": "on" if fw["secureboot"] else "off",
+        "fw_ca2011": "yes" if any("Microsoft Corporation UEFI CA 2011" in n for n in names) else "no",
+        "fw_ca2023": "yes" if any("Microsoft UEFI CA 2023" in n for n in names) else "no",
+        "fw_sbat_level": ",".join("%s:%d" % kv for kv in sorted(fw["sbat"].items())) or "none",
+    }
+    if grub_data is not None:
+        try:
+            r = revoked_by(PE(grub_data).sbat(), fw["sbat"])
+            notes["fw_sbat_revokes_grub"] = ("yes: " + ", ".join("%s %d<%d" % x for x in r)) if r else "no"
+        except Exception:
+            notes["fw_sbat_revokes_grub"] = "unknown"
+    return notes
+
+
 def record(root, **kv):
     """Write the state `status` shows. The last update is kept across
     the runs that find nothing to do -- dpkg runs this several times per
     upgrade, and the one that installed something is the one a person
     helping on the phone needs to see: when, and what it checked."""
     kv["when"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    for k, v in FW_NOTES.items():
+        kv.setdefault(k, v)
     if kv.get("result", "").startswith("updated"):
         kv["last_update"] = kv["when"]
     else:
@@ -1122,6 +1156,13 @@ def sync(args, root, dry):
     cur_grub = os.path.join(aur, "grubx64.efi")
 
     fw = firmware(efivars)
+    if fw is not None:
+        try:
+            FW_NOTES.update(fw_notes(fw, read(cur_grub)))
+        except OSError:
+            FW_NOTES.update(fw_notes(fw))
+    else:
+        FW_NOTES["fw_secureboot"] = "unreadable"
     if fw is None:
         reason = "this computer's Secure Boot variables cannot be read"
         print("bootchain: keeping the boot chain this computer has: " + reason)
@@ -1241,7 +1282,10 @@ def cmd_status(args):
             sys.stdout.write(f.read())
     except OSError:
         print("result=never-run")
-    return cmd_sync(args, dry=True)
+    rc = cmd_sync(args, dry=True)
+    if FW_NOTES:
+        print("firmware now: " + "  ".join("%s=%s" % kv for kv in FW_NOTES.items()))
+    return rc
 
 
 def cmd_relock(args):

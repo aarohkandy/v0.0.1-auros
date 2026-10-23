@@ -80,6 +80,12 @@ before and passes after:
   the call (29 checks; red with the call removed). NOT proven end to end under UEFI NVRAM: nosticktest's
   Secure Boot section installs under OVMF but does not restore there; a restore under real NVRAM is unproven.
 
+- **WP-31 residual**: `bootchain` records, in `var/lib/auros/bootchain.state` and in `status`, `fw_secureboot`,
+  `fw_ca2011`, `fw_ca2023` (Microsoft's third-party UEFI CAs in db), `fw_sbat_level` and `fw_sbat_revokes_grub`
+  (yes: component have<need), `unreadable` when the variables cannot be read. Measurement only; WP-53 is the
+  fix, and the journal/outcome-ping side (WP-73) reads these. `bootchaintest` 88/89, red with the recording
+  removed (OVMF 2011-only and 2023-only fixtures, an SBAT level above the grub).
+
 ## Next steps, in order
 
 1. Watch the first CI run of `tests` with `windowsboottest` and `rollbacktest` (both gating now) and

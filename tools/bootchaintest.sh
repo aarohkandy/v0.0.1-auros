@@ -406,6 +406,23 @@ grep -q "^result=current" "$SR/var/lib/auros/bootchain.state" && \
   && ok "...and status still says when it last updated, and what it judged" \
   || bad "...and status still says when it last updated, and what it judged" "$(cat "$SR/var/lib/auros/bootchain.state")"
 
+# WP-31: what this PC's firmware trusts is written into the boot record.
+ST="$SR/var/lib/auros/bootchain.state"
+grep -q '^fw_secureboot=on$' "$ST" && grep -q '^fw_ca2011=yes$' "$ST" && grep -q '^fw_ca2023=' "$ST" && grep -q '^fw_sbat_revokes_grub=no$' "$ST" \
+  && ok "the boot record says Secure Boot is on, the 2011 CA is in db, and the SBAT level revokes nothing" \
+  || bad "the boot record says Secure Boot is on, the 2011 CA is in db, and the SBAT level revokes nothing" "$(grep '^fw_' "$ST")"
+newesp "$ESP"; run "$FW23" >/dev/null 2>&1
+grep -q '^fw_ca2011=no$' "$ST" && grep -q '^result=refused' "$ST" \
+  && ok "a PC whose db has only the new CA is recorded as such (fw_ca2011=no, fw_ca2023=$(sed -n 's/^fw_ca2023=//p' "$ST"))" \
+  || bad "a PC whose db has only the new CA is recorded as such" "$(grep '^fw_\|^result' "$ST")"
+newesp "$ESP"; run "$FWS" >/dev/null 2>&1
+grep -q '^fw_sbat_revokes_grub=yes' "$ST" \
+  && ok "an NVRAM SBAT level above the installed grub is recorded: $(sed -n 's/^fw_sbat_revokes_grub=//p' "$ST")" \
+  || bad "an NVRAM SBAT level above the installed grub is recorded" "$(grep '^fw_' "$ST")"
+newesp "$ESP"; run "$FWN" >/dev/null 2>&1
+grep -q '^fw_secureboot=unreadable$' "$ST" \
+  && ok "variables that cannot be read are recorded as unreadable, not as off" \
+  || bad "variables that cannot be read are recorded as unreadable, not as off" "$(grep '^fw_' "$ST")"
 newesp "$ESP"
 out=$(AUROS_BOOTCHAIN_FAIL_AFTER=grubx64.efi run "$FW" 2>&1); rc=$?
 if [ "$rc" = 9 ] && cmp -s "$ESP/EFI/AurOS/grubx64.efi" "$GRUB" && \
