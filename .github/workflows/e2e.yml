@@ -135,7 +135,12 @@ jobs:
       # seconds, before hours: the variants' expected words still match
       # the wizard's, and the evidence still has somewhere to go
       - name: the harness's own checks
-        run: python3 tools/e2e/selftest.py
+        # selftest.py imports vm.py (numpy) since e76010f, before the
+        # runner step below installs its packages: this is why run
+        # 39928216928 died here. Bounded apt, a few seconds.
+        run: |
+          sh tools/apt.sh python3-numpy python3-pil
+          python3 tools/e2e/selftest.py
 
       - name: which PC this is
         run: |
