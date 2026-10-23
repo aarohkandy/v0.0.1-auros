@@ -1047,10 +1047,13 @@ class Flow:
             if not found:
                 raise Failure(f"no '{STORE_RESULT}' in the search results after three searches")
             self.m.click(*vision.centre(found), label="open result " + STORE_RESULT)
-            # The page's one big button: "Install", then (when done) "Open". Read by
-            # its colour and the word on it, not by hunting the word on the whole
-            # screen: full-screen OCR missed "Install" on a gold button (run
-            # 40005591638) and would also match the "Installed" tab.
+            # The page's one big button: "Install", then (when done) "Open". Found as
+            # the solid block of the theme's accent in the page header and read by
+            # OCR on its own; full-screen OCR missed "Install" on a gold button (run
+            # 40005591638). On the light theme its letters are dark on dark green and
+            # cannot be read at all (run 40038619603, 0025-store-no-install.png), so
+            # an UNREADABLE block in the header counts as the button, and what it does
+            # is watched in pixels: it goes away while installing and comes back as Open.
             deadline = time.time() + 300
             btn = None
             while time.time() < deadline and not btn:
@@ -1058,33 +1061,49 @@ class Flow:
                 img = self.m.screendump()
                 b = self.store_button(img)
                 if b:
-                    self.log(f"the store's button reads '{b[1]}' at {b[0]}")
-                if b and label_is(b[1], STORE_INSTALL):
-                    btn = b[0]
-                else:
+                    self.log(f"the store's button reads {b[1]!r} at {b[0]}")
+                    if not b[1] or label_is(b[1], STORE_INSTALL):
+                        btn = b[0]
+                if not btn:
                     btn = vision.find_lone_word(vision.ocr(img), STORE_INSTALL)
             if not btn:
                 self.m.shot("store-no-install")
                 raise Failure(f"no '{STORE_INSTALL}' button")
+            self.m.move(1150, 300)
+            time.sleep(1)
+            sig0 = self.header_sig(self.m.screendump())      # the page before the press
             self.m.click(*vision.centre(btn), label="install")
             # Hands off the button: the pointer drawn over its letters makes them
             # unreadable (run 40011085445 read nothing for nine minutes)
             self.m.move(1150, 300)
             done = None
             deadline = time.time() + 45 * 60
-            clicked, presses, seen_label = time.time(), 1, None
+            clicked, presses, seen = time.time(), 1, None
+            left_install = False        # the button went away: it is installing
+            open_words = [o for o in STORE_OPEN.split("|") if " " not in o]
             while time.time() < deadline and not done:
                 time.sleep(15)
                 img = self.m.screendump()
                 words = vision.ocr(img)
-                # A press that changed nothing (run 40008357634: five minutes
-                # later the page still said Install, the pointer on it): a person
-                # presses again, and says so if it never takes.
+                for bad in ("Authentication", "Failed to install", "Unable to install"):
+                    if vision.find_text(words, bad):
+                        self.m.save(img, "store-" + bad)
+                        raise Failure(f"the store says '{bad}': {vision.text_of(words)[:500]}")
                 b = self.store_button(img)
-                if (b[1] if b else None) != seen_label:
-                    seen_label = b[1] if b else None
-                    self.log(f"the store's button now reads {seen_label!r}")
-                if b and label_is(b[1], STORE_INSTALL) and time.time() - clicked > 75:
+                changed = self.header_sig(img) != sig0
+                state = (bool(b), b[1] if b else None, changed, left_install)
+                if state != seen:
+                    seen = state
+                    self.log(f"the store's button now {'reads %r' % b[1] if b else 'is gone'}; page changed: {changed}")
+                if not b:
+                    left_install = True
+                elif label_is(b[1], *open_words) or (left_install and not label_is(b[1], STORE_INSTALL)):
+                    done = (b[1] or "Open", b[0])
+                    break
+                # A press that changed nothing (run 40008357634: five minutes later
+                # the page still said Install): a person presses again, and says so
+                # if it never takes.
+                if b and not changed and not left_install and time.time() - clicked > 75:
                     if presses >= 4:
                         self.m.shot("store-install-did-nothing")
                         raise Failure(f"pressed '{STORE_INSTALL}' {presses} times over {int(time.time() - clicked)} s "
@@ -1096,14 +1115,6 @@ class Flow:
                     self.m.move(1150, 300)
                     clicked, presses = time.time(), presses + 1
                     continue
-                for bad in ("Authentication", "Failed to install", "Unable to install"):
-                    if vision.find_text(words, bad):
-                        self.m.save(img, "store-" + bad)
-                        raise Failure(f"the store says '{bad}': {vision.text_of(words)[:500]}")
-                b = self.store_button(img)
-                if b and label_is(b[1], *[o for o in STORE_OPEN.split("|") if " " not in o]):
-                    done = (b[1], b[0])
-                    break
                 for o in STORE_OPEN.split("|"):
                     box = (vision.find_lone_word(words, o) if " " not in o
                            else vision.find_text(words, o))
@@ -1125,11 +1136,16 @@ class Flow:
         (AurOS's gold, its green, the old teal), read by OCR on its own: a
         button's few letters are read far better alone than among a screen."""
         for rgb in STORE_ACCENTS:
-            for b in vision.find_buttons(img, (240, 100, 800, 330), rgb)[:2]:
-                label = vision.text_of(vision.ocr(img, b, psm=7)).strip()
-                if label:
-                    return b, label
+            for b in vision.find_buttons(img, (240, 100, 800, 330), rgb)[:1]:
+                return b, vision.text_of(vision.ocr(img, b, psm=7)).strip()     # '' if unreadable
         return None
+
+    @staticmethod
+    def header_sig(img):
+        """A fingerprint of the store page's header: what changes when the button
+        is pressed and something starts (the pointer is kept away from it)."""
+        import hashlib
+        return hashlib.md5(img[100:330:3, 240:1040:3].tobytes()).hexdigest()
 
     def shutdown(self):
         with self.rec.phase("aurOS: shut down"):
