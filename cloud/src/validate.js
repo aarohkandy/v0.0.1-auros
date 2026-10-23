@@ -108,43 +108,37 @@ export function checkWish(wish, allowed) {
   return null;
 }
 
-// Constrained decoding takes a subset of JSON Schema (no numeric or length
-// limits, no pattern): those keywords move into the description, which Claude
-// reads, and checkWish enforces them. Unlike the SDK's own transform this
-// keeps enum and const, so the vocabulary itself is enforced while Claude writes.
-const DROP = ["minimum", "maximum", "minLength", "maxLength", "maxItems", "pattern", "uniqueItems"];
-function forApi(node) {
-  if (Array.isArray(node)) return node.map(forApi);
-  if (node === null || typeof node !== "object") return node;
-  const out = {};
-  const moved = [];
-  for (const [k, val] of Object.entries(node)) {
-    if (k === "$schema" || k === "title") continue;
-    if (DROP.includes(k) || (k === "minItems" && val > 1)) moved.push(`${k}: ${JSON.stringify(val)}`);
-    else if (k === "properties" || k === "$defs") out[k] = Object.fromEntries(Object.entries(val).map(([n, s]) => [n, forApi(s)]));
-    else out[k] = forApi(val);
-  }
-  if (moved.length) out.description = `${out.description ? out.description + " " : ""}{${moved.join(", ")}}`;
-  return out;
-}
-
-const { $defs, ...wishBody } = wishSchema;
-const outputSchema = (properties) => forApi({
+// What Claude's answer is constrained to. The wish itself is NOT in the
+// grammar: the API compiles at most ~20 alternatives, and the vocabulary has
+// 26 shapes (probed 2026-10-23: test/schema-probe.mjs, docs/CLOUD.md). So the
+// answer is a small closed envelope and the wish travels inside it as JSON
+// text, which checkWish() then holds to the whole shared schema. A wish that
+// does not parse or validate becomes "cannot", never a pass-through.
+export const WISH_OUTPUT = {
   type: "object",
   additionalProperties: false,
-  required: Object.keys(properties),
-  properties,
-  $defs: { ...$defs, wish: wishBody },
-});
-const WISH_OR_NULL = { anyOf: [{ $ref: "#/$defs/wish" }, { type: "null" }] };
+  required: ["kind", "missing", "wish_json"],
+  properties: {
+    kind: { type: "string", enum: ["wish", "cannot"] },
+    missing: { type: "string", enum: ["none", ...MISSING], description: "kind wish: none" },
+    wish_json: { type: "string", description: "The wish as JSON text. kind cannot: the nearest wish you can do, or an empty string." },
+  },
+};
 
-export const WISH_OUTPUT = outputSchema({
-  kind: { type: "string", enum: ["wish", "cannot"] },
-  missing: { type: "string", enum: ["none", ...MISSING], description: "kind wish: none" },
-  wish: { ...WISH_OR_NULL, description: "kind wish: the wish. kind cannot: the nearest wish you can do, or null" },
-});
+export const ASK_OUTPUT = {
+  type: "object",
+  additionalProperties: false,
+  required: ["help_page_id", "wish_json"],
+  properties: {
+    help_page_id: { type: "string", enum: [...HELP_IDS, "none"] },
+    wish_json: { type: "string", description: "A one-off (when now) wish as JSON text that does what she asked, or an empty string." },
+  },
+};
 
-export const ASK_OUTPUT = outputSchema({
-  help_page_id: { type: "string", enum: [...HELP_IDS, "none"] },
-  wish: { ...WISH_OR_NULL, description: "a one-off (when now) wish that does what she asked, or null" },
-});
+export function parseWish(text) {
+  if (typeof text !== "string" || text.length === 0 || text.length > 4000) return null;
+  try {
+    const w = JSON.parse(text);
+    return w !== null && typeof w === "object" && !Array.isArray(w) ? w : null;
+  } catch { return null; }
+}

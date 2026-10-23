@@ -3,7 +3,9 @@
 // the input price. Everything from her computer goes in the user message:
 // facts as quoted JSON, her words escaped inside their own tag.
 import help from "./help.gen.js";
-import { MISSING } from "./validate.js";
+import { MISSING, wishSchema } from "./validate.js";
+
+const EMOJI = wishSchema.$defs.emoji.enum.join(" ");
 
 const VOCABULARY = `A wish is {"v":1, "when": one trigger, "do": 1 to 4 actions run in order, "enabled": true}.
 
@@ -21,7 +23,7 @@ Triggers ("when"):
 - {"type":"sensor","sensor":"light","below_lux":n} or {"type":"sensor","sensor":"light","above_lux":n}
 
 Actions ("do"):
-- {"type":"fill_screen","emoji":one emoji from the allowed list,"seconds":1..10} or {"type":"fill_screen","text":up to 24 characters,"seconds":1..10}
+- {"type":"fill_screen","emoji":one emoji from the allowed list below,"seconds":1..10} or {"type":"fill_screen","text":up to 24 characters,"seconds":1..10}
 - {"type":"show_message","text":up to 140 characters}
 - {"type":"remind","text":up to 140 characters}: a reminder card that stays until she presses OK.
 - {"type":"speak","text":up to 200 characters}: the computer says her note aloud.
@@ -37,6 +39,8 @@ Actions ("do"):
 - {"type":"set_wallpaper","color":"#RRGGBB"} or {"type":"set_wallpaper","theme_name":...}
 - {"type":"night_light","on":true|false}
 - {"type":"do_not_disturb","on":true|false}, optional "until":"HH:MM"
+
+Allowed emoji for fill_screen (exactly one of these, nothing else): ${EMOJI}
 
 Which triggers may use which actions:
 - Repeating triggers (every, idle, startup, sensor, typed_word, app_opened, battery_below, plugged_in, unplugged, usb_inserted) may only use fill_screen, play_sound, brightness, night_light and show_message; brightness and volume only with set_percent there.
@@ -55,19 +59,29 @@ ${VOCABULARY}`;
 
 export const WISH_SYSTEM = `${BASE}
 
-Your answer is {"kind","missing","wish"}:
+Your answer is {"kind","missing","wish_json"}. wish_json is the wish written as JSON text: a string that contains the JSON object, exactly as in the vocabulary (no extra fields, nothing but the object).
 - kind "wish": you can do what she asked with a trigger and actions her computer has (the facts list them as "triggers", "actions" and "sensors"; use nothing else). missing is "none".
-- kind "cannot": you cannot do it. missing says why, from: ${MISSING.map((m) => `"${m}"`).join(", ")}. Use "question" when she asked a question instead of asking for something to happen; "unclear" when the words are gibberish or have no clear meaning; a sensor name when the wish needs a sensor her computer does not have; "install" for installing programs; "files", "messages", "money", "private" or "security" when the wish touches those; "other" for anything else outside the vocabulary. wish is then the nearest thing you CAN do for her, if there is a sensible one, else null.
+- kind "cannot": you cannot do it. missing says why, from: ${MISSING.map((m) => `"${m}"`).join(", ")}. Use "question" when she asked a question instead of asking for something to happen; "unclear" when the words are gibberish or have no clear meaning; a sensor name when the wish needs a sensor her computer does not have; "install" for installing programs; "files", "messages", "money", "private" or "security" when the wish touches those; "other" for anything else outside the vocabulary. wish_json is then the nearest thing you CAN do for her, if there is a sensible one, else "".
 
 Never possible (kind "cannot"): deleting, moving, renaming, opening or sending files; e-mail, messages or calls; buying, paying or banking; passwords, codes or personal details; Wi-Fi, network, firewall, security, scam protection, updates, user accounts or remote access; turning any protection off; installing programs; typing for her; reading her screen, files, camera or microphone. If one part of a wish is impossible, answer "cannot" for the whole wish.
 
-Choose sensible values when she does not say (3 seconds, a gentle sound, 100 for "brighter" from a sensor). The fill_screen emoji must be one of the allowed ones; pick the closest.`;
+Choose sensible values when she does not say (3 seconds, a gentle sound, 100 for "brighter" from a sensor).
+
+Examples (answers only):
+"every time I type potato, fill my screen with potatoes" ->
+{"kind":"wish","missing":"none","wish_json":"{\\"v\\":1,\\"when\\":{\\"type\\":\\"typed_word\\",\\"word\\":\\"potato\\"},\\"do\\":[{\\"type\\":\\"fill_screen\\",\\"emoji\\":\\"🥔\\",\\"seconds\\":3}],\\"enabled\\":true}"}
+"when my laptop points north, make the screen brighter" (compass available) ->
+{"kind":"wish","missing":"none","wish_json":"{\\"v\\":1,\\"when\\":{\\"type\\":\\"sensor\\",\\"sensor\\":\\"compass\\",\\"heading\\":\\"north\\",\\"tolerance_deg\\":20},\\"do\\":[{\\"type\\":\\"brightness\\",\\"set_percent\\":100}],\\"enabled\\":true}"}
+the same words, but sensors has compass false ->
+{"kind":"cannot","missing":"compass","wish_json":""}
+"delete my old photos" ->
+{"kind":"cannot","missing":"files","wish_json":""}`;
 
 export const ASK_SYSTEM = `${BASE}
 
-This request is a question from AurOS's Help ("Ask AurOS"). Your answer is {"help_page_id","wish"}:
+This request is a question from AurOS's Help ("Ask AurOS"). Your answer is {"help_page_id","wish_json"}:
 - help_page_id: the one help page below that answers her question best, or "none" if no page covers it.
-- wish: if a single one-off ("now") wish would do what she asked (for example bigger text), that wish; else null.
+- wish_json: if a single one-off ("now") wish would do what she asked (for example bigger text), that wish written as JSON text (a string containing the JSON object, as in the vocabulary); else "". Never a wish for something she only asked about.
 
 <help_pages>
 ${help.map((p) => `<page id="${p.id}" title="${p.title}">\n${p.text}\n</page>`).join("\n")}

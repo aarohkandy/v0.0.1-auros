@@ -4,7 +4,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Validator } from "@cfworker/json-schema";
 import schema from "../../docs/wish-v1.schema.json" with { type: "json" };
-import { ASK_OUTPUT, HELP_IDS, MISSING, WISH_OUTPUT, checkWish, badText } from "../src/validate.js";
+import { ASK_OUTPUT, HELP_IDS, MISSING, WISH_OUTPUT, checkWish, badText, parseWish } from "../src/validate.js";
+import { WISH_SYSTEM } from "../src/prompts.js";
 import { ALL, NORTH, POTATO } from "./helpers.js";
 
 const valid = (w) => new Validator(schema, "2020-12", false).validate(w).valid;
@@ -81,7 +82,7 @@ function walk(node, visit, path = "$") {
     for (const [k, v] of Object.entries(node)) walk(v, visit, `${path}.${k}`);
   }
 }
-const SUPPORTED = new Set(["type", "properties", "required", "additionalProperties", "items", "enum", "const", "anyOf", "$ref", "$defs", "description", "minItems"]);
+const SUPPORTED = new Set(["type", "properties", "required", "additionalProperties", "items", "enum", "description"]);
 
 for (const [name, s] of [["WISH_OUTPUT", WISH_OUTPUT], ["ASK_OUTPUT", ASK_OUTPUT]]) {
   test(`${name} uses only what constrained decoding supports`, () => {
@@ -107,5 +108,18 @@ test("output enums: every missing value, every help page", () => {
   assert.deepEqual(WISH_OUTPUT.properties.missing.enum, ["none", ...MISSING]);
   assert.deepEqual(ASK_OUTPUT.properties.help_page_id.enum, [...HELP_IDS, "none"]);
   assert.ok(HELP_IDS.includes("printing") && HELP_IDS.includes("index"));
-  assert.ok(WISH_OUTPUT.$defs.emoji.enum.includes("🥔"), "the emoji allowlist survives into the API schema");
+});
+
+test("the prompt carries the whole emoji allowlist and its examples are valid answers", () => {
+  for (const e of schema.$defs.emoji.enum) assert.ok(WISH_SYSTEM.includes(e), e);
+  assert.ok(WISH_SYSTEM.includes("🥔"));
+  const answers = [...WISH_SYSTEM.matchAll(/^\{"kind":.*\}$/gm)].map((m) => JSON.parse(m[0]));
+  assert.equal(answers.length, 4);
+  for (const a of answers) {
+    assert.ok(a.kind === "wish" ? a.missing === "none" : MISSING.includes(a.missing));
+    const w = parseWish(a.wish_json);
+    if (a.kind === "wish") assert.equal(checkWish(w, { ...ALL, sensors: { compass: true } }), null, a.wish_json);
+    else assert.equal(a.wish_json, "");
+  }
+  assert.equal(parseWish(answers[0].wish_json).do[0].emoji, "🥔");
 });

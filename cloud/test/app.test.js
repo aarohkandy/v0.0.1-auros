@@ -244,7 +244,7 @@ test("health, unknown paths and methods", async () => {
 test("the request to Claude: fixed model, max_tokens, cached system prompt, structured output", async () => {
   const app = makeApp({ respond: () => wishOut(POTATO) });
   const { token } = await register(app);
-  await app.call("/v1/wish", wishBody("potato"), { token });
+  await app.call("/v1/wish", wishBody("zebra-quartz potato"), { token });
   await app.call("/v1/wish", wishBody("something else entirely"), { token });
   await app.call("/v1/ask", { question: "how do I print?" }, { token });
   const [a, b, c] = app.calls;
@@ -255,7 +255,9 @@ test("the request to Claude: fixed model, max_tokens, cached system prompt, stru
   assert.deepEqual(a.system[0].cache_control, { type: "ephemeral" });
   assert.equal(JSON.stringify(a.system), JSON.stringify(b.system), "system prompt identical between requests: cacheable");
   assert.equal(a.output_config.format.type, "json_schema");
-  assert.ok(!JSON.stringify(a.system).includes("potato"), "her words are never in the system prompt");
+  assert.ok(!JSON.stringify(a.system).includes("zebra-quartz"), "her words are never in the system prompt");
+  assert.ok(a.messages[0].content.includes("zebra-quartz"));
+  assert.deepEqual(Object.keys(a.output_config.format.schema.properties), ["kind", "missing", "wish_json"]);
 });
 
 void ALL;

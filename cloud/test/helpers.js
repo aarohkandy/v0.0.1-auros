@@ -10,6 +10,11 @@ export const TEST_ENV = { TOKEN_SECRET: "test-secret-not-real", ANTHROPIC_API_KE
 
 // A Messages API response carrying `out` as the structured-output JSON.
 export function message(out, { stop = "end_turn", usage } = {}) {
+  // Tests write `wish: {...}`/`wish: null`; the API answer carries it as JSON text.
+  if (out && typeof out === "object" && "wish" in out) {
+    const { wish, ...rest } = out;
+    out = { ...rest, wish_json: wish ? JSON.stringify(wish) : "" };
+  }
   return {
     id: "msg_mock", type: "message", role: "assistant", model: "claude-haiku-5-5",
     content: out === undefined ? [] : [{ type: "text", text: typeof out === "string" ? out : JSON.stringify(out) }],

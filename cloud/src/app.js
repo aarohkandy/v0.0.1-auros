@@ -2,7 +2,7 @@
 // fetch handler, so the same code runs on Cloudflare Workers (src/worker.js)
 // and under Node (tests, dev-server.mjs).
 import Anthropic from "@anthropic-ai/sdk";
-import { ASK_OUTPUT, MAX_TEXT, MISSING, WISH_OUTPUT, checkRequest, checkWish } from "./validate.js";
+import { ASK_OUTPUT, MAX_TEXT, MISSING, WISH_OUTPUT, checkRequest, checkWish, parseWish } from "./validate.js";
 import { ASK_SYSTEM, WISH_SYSTEM, askMessage, wishMessage } from "./prompts.js";
 import { DAY_MS, dayOf } from "./ledger.js";
 
@@ -208,18 +208,15 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
     if (g.res) return g.res;
     const allowed = { triggers: body.schema.triggers, actions: body.schema.actions, sensors: body.sensors };
     const o = g.out;
+    const w = o ? parseWish(o.wish_json) : null;
+    const bad = w ? checkWish(w, allowed) : o && o.wish_json ? "json" : null;
+    if (bad) m.rejected = bad;
     let res;
-    if (o && o.kind === "wish" && o.wish) {
-      const bad = checkWish(o.wish, allowed);
-      if (!bad) res = { kind: "wish", wish: o.wish };
-      else { m.rejected = bad; res = { kind: "cannot", missing: bad === "sensor" ? o.wish.when.sensor : "other" }; }
-    } else {
-      const missing = o && MISSING.includes(o.missing) ? o.missing : "other";
-      res = { kind: "cannot", missing };
-      if (o && o.wish) {
-        const bad = checkWish(o.wish, allowed);
-        if (bad) m.rejected = "alt_" + bad; else res.alt_wish = o.wish;
-      }
+    if (o && o.kind === "wish" && w && !bad) res = { kind: "wish", wish: w };
+    else if (o && o.kind === "wish") res = { kind: "cannot", missing: bad === "sensor" && ["compass", "tilt", "light"].includes(w?.when?.sensor) ? w.when.sensor : "other" };
+    else {
+      res = { kind: "cannot", missing: o && MISSING.includes(o.missing) ? o.missing : "other" };
+      if (w && !bad) res.alt_wish = w;
     }
     m.kind = res.kind;
     m.missing = res.missing;
@@ -236,9 +233,10 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
     if (g.res) return g.res;
     const o = g.out;
     const res = { help_page_id: o && typeof o.help_page_id === "string" && o.help_page_id !== "none" && ASK_OUTPUT.properties.help_page_id.enum.includes(o.help_page_id) ? o.help_page_id : null };
-    if (o && o.wish) {
-      const bad = checkWish(o.wish, null);
-      if (bad) m.rejected = bad; else res.wish = o.wish;
+    const w = o ? parseWish(o.wish_json) : null;
+    if (w) {
+      const bad = checkWish(w, null);
+      if (bad) m.rejected = bad; else res.wish = w;
     }
     m.help = res.help_page_id;
     await g.settle(false);
