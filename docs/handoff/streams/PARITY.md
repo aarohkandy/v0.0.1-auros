@@ -12,64 +12,51 @@ Owns: `tools/parity/**`, `tools/apptest*`, `.github/workflows/parity.yml`
 
 ## Status (update this section every push)
 
-Harness pushed (`c5badfa` and later): `tools/parity/run.py` + `guest/`. Develop on homebase with
-`sh tools/parity/dev.sh --checks call` (rsyncs tools/parity, runs a privileged container, copies
-results to ./parity-out/ incl. serial.txt and screenshots/). `PARITY_SCRIPT=file.sh sh tools/parity/dev.sh`
-runs an ad-hoc script in the guest as the desktop user (notes appear in serial.txt as `PARITY note |`).
+Everything lives in `tools/parity/` (README.md there: how it works, how to run, what is simulated). CI: `.github/workflows/parity.yml`
+(nightly 03:17 UTC, `[parity]` / `[parity RUN-ID]` in a commit subject, or `gh workflow run parity.yml --ref main -f run-id=<build run>
+-f checks=call,film -f apps=vlc -f apt=... -f opt=capfix`). Evidence: prerelease `parity-<run>` (every screenshot, results.md/json, serial log).
+The image under test is picked by build run id: the newest build with an `auros-pieces` artifact (NOTE: a `build.yml` run whose `build`
+job is skipped has none: use `gh api repos/aarohkandy/v0.0.1-auros/actions/artifacts?name=auros-pieces`).
 
-| check | state |
+| check | state on build 39972421083 (956af4a, has WL's subsurface fix) |
 |---|---|
-| desktop (boots, net, sound) | pass; desktop up ~10 s after power-on under KVM |
-| (a) call | WebRTC passes (vivid camera + PipeWire tone mic, remote gets video and sound); `call.visible` FAILS: see P0 below. Listed in known-gaps.txt |
-| (b) film, (c) print, (d) office, (e) PDF form, (f) apps | not written yet |
+| desktop (boots, net, sound, first-run card dismissed) | pass; desktop up ~10 s after power-on under KVM |
+| (a) call | WebRTC PASS (vivid camera + PipeWire tone mic; far side gets video+sound). `call.visible` was reported PASS from run 39974574596 but its screenshots were covered by the new first-run card ("Does everything work?", buttons on the left): RETRACTED. The check now presses the right button for either card design and counts saturated hues; re-run 40003736776 decides. |
+| (b) film | H.264/AAC MP4 and DASH (Media Source) play with sound out of the decoder; picture check as for call; 720p clip with `--opt perf`. Widevine = v0.2 |
+| (c) print | `print.discover` PASS (DNS-SD finds the printer through the image's nftables rule). `print.pdf` FAILS: libnss-mdns is not in the image, so CUPS cannot resolve `parity-printer.local` ("Temporary failure in name resolution"). With `--apt libnss-mdns` the whole check is green (a PDF arrives). Red proof: `--without avahi-daemon` fails print.discover. |
+| (d) office | RED, three separate causes: no LibreOffice in the image (WP-25 not landed); `.docx`/`.xlsx` double-click opens the ARCHIVE MANAGER (xarchiver claims zip); `xdg-mime query filetype` is EMPTY for every local file on this desktop, so any program that calls `xdg-open file` opens it in Firefox instead (cause: unknown desktop name, `file` package absent; `gio open` and the file manager work). Fix candidates: ship Writer+Calc, set docx/xlsx defaults, install `file` or wrap xdg-open as `gio open`. Size of the LibreOffice debs: see `docs/results/apps.md` once the `--apt libreoffice-*` run has finished. |
+| (e) PDF form | `pdfform.saved` passes with Evince (click box, type, Tab, Save a copy: both boxes in the file). `pdfform.last-box` FAILS: saving straight after typing loses the box she is still in (Evince commits a box when she leaves it). Known gap; the viewer decision is WP-56. In CI the Ctrl+S path was MISSING once (card on top); re-run decides. |
+| (f) top ten apps | all ten INSTALL with no password (4-67 s each, 7.3 GB of runtimes in total) but NONE STARTS: see P0 below. `apps.catalogue` (a search finds Zoom 2 s after online) passes. Thunderbird installed with rc=0 but no launcher appeared (investigate with the install output now in the notes). |
 
-### P0 FOUND: Firefox opens as a BLANK window on AurOS
+### P0 #1 (FIXED by WL, confirmed in principle): Firefox opened as a blank window
+aurwl never composited `wl_subsurface`s (Firefox draws its page into one). Fixed by 54b783b + 990fdae + 7799b6d. The regression
+check is `call.visible` / `film.*-visible`; see the retraction above: re-verify before believing "PASS".
 
-Proven on build 39906221767 (75e3321) in the nightly harness and by a control: Mousepad (GTK3) draws its
-text in the same shell; Firefox 158 shows its title bar and a window-sized area filled with one colour
-(252,250,245), for 60+ s, while its page demonstrably runs (the call page reports over HTTP).
-Cause (WAYLAND_DEBUG trace): Firefox puts only its client-side frame in the toplevel surface (a 845x646
-buffer) and draws the page into a `wl_subsurface` (793x594 at offset 26,23). `src/aurwl/aurwl.c` keeps each
-surface's buffer in its own `store` and `aurwl_win_content()` returns only the toplevel's; no code
-composites subsurfaces into the window. Same for anything else that renders through a subsurface
-(Chromium/Electron apps use one for video, GTK4 and Qt apps for popups/video). Fix belongs in aurwl
-(S3 owns it, C owns the shell): flatten a toplevel's subsurface tree (positions `sub_x/sub_y`, sync/desync) into
-what `aurwl_win_content()` returns. A regression check for it is `call.visible` (and `film.visible`):
-they flip to PASS the day it is fixed, and run.py then fails the job until the gap is removed from known-gaps.txt.
+### P0 #2 (open, C is fixing): NO Flathub program can start (blocks e2e M3 "install VLC from the store and open it": tell F)
+`flatpak run` fails with `bwrap: Unexpected capabilities but not setuid, old file caps config?` then `error: ldconfig failed, exit status 256`.
+Measured in the booted image (`/proc/<pid>/status`): aurshell and everything below it (the private session bus, every program it
+launches, anything the user starts) have CAP_WAKE_ALARM (bit 35) in CapInh, CapPrm, CapEff and CapAmb; `systemd --user` has it in CapInh;
+`aurshell.service` itself sets no AmbientCapabilities and our PAM stack has no pam_cap, so it comes from systemd's session setup.
+bubblewrap 0.9.0 is not setuid and refuses to run with any capability. Candidate fix (tested): `CapabilityBoundingSet=~CAP_WAKE_ALARM` in
+aurshell.service empties all four sets and bwrap gets past the check (`--opt capfix`; run 40003821764 proves flatpak run end to end).
+C owns the fix (static + boot check). After it lands: run all ten apps on the first build that has it, report to the lead.
 
-Other measured facts (image of 39906221767):
+### Other measured facts (image of 39906221767 and 39972421083)
 
-- The image is a raw disk: ESP (512 MiB) + AUROS-ROOT (3.8 GiB, 2.25 GB installed, 831 packages).
-  First boot grows the root to the disk (`growpart` + `resize2fs`, ~16 GB in the harness), but it finishes
-  a few seconds AFTER the desktop starts: the harness waits for `/var/lib/auros/firstboot.done`.
-- Present: firefox 158 (Mozilla apt), mpv, evince, poppler-utils, cups + `cups-ipp-utils` (ippeveprinter),
-  avahi-daemon, flatpak + gnome-software(-plugin-flatpak), pipewire/wireplumber/pipewire-pulse, libavcodec60,
-  python3 (full stdlib), `pw-loopback`/`pw-play`/`wpctl`; user `auros` is in video, audio, lpadmin, input, bluetooth.
-- The image blacklists the `vivid` test camera (`/etc/modprobe.d/auros-hardening.conf`); root.sh loads it with
-  `modprobe --ignore-install`. v4l2loopback exists but needs a feeder (no ffmpeg/gstreamer CLI in the image).
-- ABSENT: any LibreOffice package, `ffmpeg`, `unzip`, `pactl`. Check (d) is a real gap today (WP-25).
-- `/etc/xdg/mimeapps.list` has no docx/xlsx/pptx/odt entries (WP-25).
-- cups-browsed is deliberately NOT installed; a network printer is added with `lpadmin -m everywhere`.
-- The welcome card ("AurOS is on this computer", Yes / Let me look first / No) covers the desktop at first boot;
-  run.sh presses "Let me look first" (click 620,703 at 1280x800).
-- aurshell runs as a unit with PAMName (a real logind session). The harness wraps it: drop-in
-  `aurshell.service.d/60-parity.conf` runs `session.sh`, which starts the real, unmodified aurshell and the
-  checks side by side in the SAME session cgroup, so polkit/sound/session-bus see the checks as the person at the keyboard.
+- Disk/first boot: ESP 512 MiB + AUROS-ROOT 3.8 GiB (2.25 GB installed, 831 packages). First boot grows the root to the disk, a few seconds AFTER
+  the desktop starts (the harness waits for `/var/lib/auros/firstboot.done`, then `parity-grow` makes sure).
+- Present: firefox 158 (Mozilla apt), mpv, evince, poppler-utils, cups + `cups-ipp-utils`, avahi-daemon (publishing disabled), flatpak + gnome-software,
+  pipewire/wireplumber, libavcodec60, python3 with full stdlib; user `auros` is in video, audio, lpadmin, input, bluetooth, netdev.
+- The image blacklists the `vivid` test camera (`/etc/modprobe.d/auros-hardening.conf`): root.sh loads it with `--ignore-install`.
+- ABSENT: LibreOffice, `ffmpeg`, `unzip`, `pactl`, `file`, libnss-mdns.
+- The first-run card covers the whole desktop until answered; its layout changed between builds (buttons were at the bottom, now on the left).
+- Dropped frames in the VM (software rendering, 4 vCPU, no GPU): 25-125 of ~250 at 360p; this says nothing about a 2013 laptop (v0.2: media-perf.md).
 
-## Plan, in order
-
-1. `tools/parity/run.py`: host runner. Boots the image under KVM (OVMF, 4 GB, virtio-net
-   user networking, QMP), injects a probe via a scratch copy of the root, reads results
-   from the serial port, takes screenshots over QMP (`screendump`), writes
-   `results.json` + a markdown table. Known gaps live in `tools/parity/known-gaps.txt`
-   (a gap that fails is "GAP", a gap that passes is a failure: remove it from the list).
-2. Checks (a) call, (b) film, (c) print, (d) office, (e) PDF form: `tools/parity/guest/`.
-3. `.github/workflows/parity.yml`: nightly cron + `[parity]` subject; downloads the newest
-   `auros-pieces` artifact (gh) or prerelease; job timeouts; bounded apt; concurrency queued;
-   publishes `parity-<run>` prerelease with screenshots.
-4. `tools/apptest.sh` (+ `tools/apptest/apps.list`): top ten Flathub apps.
-5. `--without <pkg>` red proofs per check.
-6. Results docs: `docs/results/{apps,sites,media-perf,pdf-forms}.md`.
+### Things for other streams (exact asks)
+- **C**: the CAP_WAKE_ALARM fix above (P0 #2); WP-25: libnss-mdns, Writer+Calc, docx/xlsx/pptx/odt defaults (and keep xarchiver off them); make
+  `xdg-open <file>` work (install `file`, or ship a wrapper `xdg-open` -> `gio open`); aurshell prints nothing about windows, so tests read WAYLAND_DEBUG.
+- **F (e2e)**: M3's "install VLC then open it" cannot pass until P0 #2 is fixed (the install itself works).
+- **S3/WL**: none now.
 
 ## Environment traps
 
