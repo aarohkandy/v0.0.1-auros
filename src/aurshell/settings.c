@@ -841,7 +841,13 @@ void settings_paint(shell_ctx *c, surface *s, shell_fonts *f)
             int name_room = g.ctl[i][T_MINUS].x - r.x;
             if (tiny && name_room > r.w * 2 / 5) {
                 char n[8];
-                snprintf(n, sizeof n, "%d%%", clampi_(val, 0, 100));
+                /* The size of the words is a size (100%, 150%), not where the
+                 * handle sits between the smallest and the largest -- which read
+                 * as "17%" at the size she started with. */
+                if (which == R_WORDS) {
+                    float tk = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
+                    snprintf(n, sizeof n, "%d%%", (int)(tk * 100.f + 0.5f));
+                } else snprintf(n, sizeof n, "%d%%", clampi_(val, 0, 100));
                 float nw = shell_text_w(tiny, n);
                 shell_text(s, tiny,
                            (float)g.ctl[i][T_MINUS].x - nw - 12.f,

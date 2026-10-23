@@ -102,9 +102,16 @@ int main(void)
     shell_fonts_load(&F, &C);
     SURF = surface_new(1280, 800);
 
-    printf("Put Windows back: her files first\n");
+    printf("Settings: the size of the words\n");
     C.settings_open = 1;
     settings_opened(&C);
+    ok(shown("100%"), "at the size it came at, the words row says 100%");
+    ok(!shown("17%"), "...not where the handle sits between smallest and largest (that read 17%)");
+    C.text_scale = 1.5f;
+    ok(shown("150%"), "bigger words say 150%");
+    C.text_scale = 1.f;
+
+    printf("Put Windows back: her files first\n");
     ok(press("Put Windows back"), "\"Put Windows back\" opens its page");
     ok(shown("Save my files to a USB stick first"), "the page has \"Save my files to a USB stick first\"");
     ok(shown("Keep AurOS") && shown("Start Windows this once") && shown("Remove AurOS and put Windows back"),
