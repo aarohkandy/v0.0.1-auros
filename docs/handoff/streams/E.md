@@ -1,125 +1,121 @@
 # Stream E: build, test and publish AurOS on GitHub Actions
 
-Owner of: `.github/workflows/{build,tests,release}.yml`, `build/sign`,
-`docs/{SIGNING,RELEASE,HANDOFF-RUNBOOK}.md`, this file.
-Updated 2026-10-23 04:20 UTC.
+Owner of: `.github/workflows/{build,release,tests}.yml`, `build/sign`,
+`tools/apt.sh`, `docs/{SIGNING,RELEASE,HANDOFF-RUNBOOK}.md`, this file.
+Session B also: the release -> e2e -> promote -> Pages chain (with F for
+`e2e.yml`) and `windows.yml`'s gate and pins (lead's orders).
+Repository: https://github.com/aarohkandy/v0.0.1-auros, branch `main`.
+Updated 2026-10-23 05:25 UTC.
 
 ## Goal
 
-Every change is built on GitHub's `ubuntu-24.04` runners (KVM, open
-network; the development container has neither), tested under KVM, and
-published as a GitHub Release that `AurOS-Setup.exe` downloads its image
-from. The website's button is
-`https://github.com/ComputerDude771/auros-from-scratch/releases/latest/download/AurOS-Setup.exe`,
+Every change is built on GitHub's `ubuntu-24.04` runners, tested under
+KVM, and published as a GitHub Release that `AurOS-Setup.exe` downloads
+its image from. One commit subject `[release] [latest]` takes it all the
+way to the website with nobody touching it. The website's button is
+`https://github.com/aarohkandy/v0.0.1-auros/releases/latest/download/AurOS-Setup.exe`,
 which only a **full** (non-pre) release moves.
 
-## Trigger words: in the commit SUBJECT only (first line)
+## The chain (release.yml), and the trigger words (commit SUBJECT only)
 
-| Subject contains | What runs |
-|---|---|
-| `[build]`, or any change under `build/ src/ rootfs/ profiles/ themes/ shells/` or to `build.yml`/`tests.yml` | `build.yml`: build, then `tests.yml` |
-| `[test]` | `tests.yml` alone, against the newest build of the branch with artifacts (14 days) |
-| `[release]` | build + tests + prerelease `v<os_version>-<sha7>` if all passed |
-| `[publish]` or `[publish RUN-ID]` | `release.yml` alone: prerelease of the newest build run whose build job and every test passed (or that run); nothing rebuilt |
-| add `[latest]` to either | after the read-back and Windows checks, `promote` makes it the full release (only if a passing `e2e.yml` run pinned that AurOS-Setup.exe's SHA-256), then `pages` deploys `website/` |
+```
+[release] [latest]:  build -> tests -> publish (prerelease) -> windows ┐
+                                                             -> e2e    ├-> promote -> pages
+                                                             -> site   ┘
+[release]:           the same, stops before promote
+[publish RUN-ID]:    publish -> windows + e2e + site (build RUN-ID, nothing rebuilt)
+[publish RUN-ID] [latest]: ... -> promote -> pages (e2e runs again on that exe first)
+```
 
-Empty commits are fine: `git commit --allow-empty -m "[publish 39895845920] ..."`.
-A body that mentions the words does nothing (the first commit's body did,
-and nearly published a full release; that is why).
+- `e2e` = `e2e.yml` called with `installer_url` = this release's
+  AurOS-Setup.exe and `installer_sha256` = the hash `publish` computed;
+  the harness refuses a download that does not hash to it. Hours.
+- `site` = website stamped + `tools/site/check.mjs` (as pages.yml), its
+  github-pages artifact is what `pages` deploys.
+- `promote` needs windows, e2e and site, and asks this run's jobs API
+  that at least one `e2e / e2e (...)` job ran and all of them passed (a
+  skipped e2e cannot count). No hand-pinned SHA anywhere.
+- **Only the lead pushes `[latest]`.**
 
-## Done and pushed
+## Done (session B)
 
-- `build.yml` (gate → build → tests → release). Build job 9-15 min:
-  `build/all desktop --keep=raw` **without** `ALLOW_BROWSER_FALLBACK`
-  (Firefox arrives from Mozilla's apt repo: build-warnings say
-  `browser=firefox (mozilla-apt)`, `flathub=build (...)`), `build/staging`,
-  `pigz -9` + `split` into 90 MiB pieces, `pieces.txt` with
-  `base https://github.com/ComputerDude771/auros-from-scratch/releases/download/<tag>/`,
-  `AUROS_RELEASE=1 build/aurbridge`, checks of the `.exe` (resources 1-5,
-  baked address, shim key, manifesttest), and `aurbridge-sim getimage`
-  fetching every piece over HTTP and checking the image. debootstrap is
-  cached (release pocket only, safe). Artifacts: `auros-installer`
-  (AurOS-Setup.exe, aurbridge.exe, aurbridge-sim, staging files,
-  `staging-work.tar.zst`, pieces.txt, hashes, build-warnings, timings,
-  build-info.txt), `auros-pieces`, `auros-rootfs`.
-- `tests.yml`: `unit` (aurfirsttest, choicestest with the image's own
-  aurshell, nmtest, sessionenvtest, looktest, storetest,
-  shrinktargettest, probetest, nvramtest, bridgetest, manifesttest,
-  Ferry, sim selftests, `aurbridge.exe selftest` under Wine, signtest) and
-  `e2e` matrix (installtest, nosticktest, firstboottest,
-  choicesboottest, putbacktest), max-parallel 2. A `qemu-system-x86_64`
-  wrapper in `/usr/local/bin` turns the scripts' `accel=tcg` into
-  `accel=kvm` (or `$AUROS_QEMU_ACCEL`); no test script is edited.
-- `release.yml`: `which` → `publish` (always a prerelease; re-reads every
-  file through GitHub's 302, a Range request must be a 206 from the right
-  byte) → `windows` (downloads AurOS-Setup.exe, `--navtest`, starts it;
-  `aurbridge.exe getimage` fetches the image from the release with
-  WinHTTP) → `promote` (`[latest]` only, e2e-gated) → `pages`.
-- Unsigned by the owner's decision: `build/aurbridge` no longer refuses
-  an unsigned `AUROS_RELEASE=1` build; `tools/signtest.sh` 13/13;
-  `docs/SIGNING.md` has the clicks she sees.
-- **First fully green build: run 39895845920** (commit `dd39389`):
-  https://github.com/ComputerDude771/auros-from-scratch/actions/runs/39895845920
-  build 529 s; unit green; installtest 399 s, nosticktest 1338 s,
-  firstboottest 430 s, putbacktest 170 s, choicesboottest 208 s.
-  Image 4,855,955,456 bytes, SHA-256 `9e3e7b9d461f2bbd1095f5cb8a82a5b07f77cdef449145fca65c51d0b7acce52`;
-  download 1,477,945,274 bytes in 16 pieces;
-  AurOS-Setup.exe 35,001,391 bytes, SHA-256 `89b49e4bb7538abf56fee31399b4f71f74d1fa5f245484bed9e317e1a8a02a3d`.
+- `d782dca` signtest builds in a whole copy of build/ src/ tools/ (it
+  broke when build/aurbridge started reading tools/repo.sh and
+  src/aurstage); nmtest checks the Wi-Fi keyfile without Ferry's deleted
+  emitter (stream R removed it in fb90bcd).
+- `0de2e5f` `tools/apt.sh`: every apt-get under `timeout 300`, 3 tries,
+  `dpkg --configure -a` between; used by build/tests/othersys(+its
+  runner-setup). profiles.yml already bounded (P). Every job in those
+  four files has `timeout-minutes`. Proven on homebase with PATH shims:
+  a hung apt-get gives up after 3 bounded tries (exit 1); a flaky one
+  succeeds on the 2nd.
+- `e8f2744` windows.yml `pins` job: PUBLISHED_*/IMAGE_* come from this
+  repo's newest FULL release at run time (SHA256SUMS, image.sha256,
+  image.bytes); only on a 404 (no full release yet) the old repo's v4
+  files. Any other API answer or a missing file fails. Checked on the
+  Mac: this repo -> v4 fallback; cli/cli (release without SHA256SUMS) ->
+  fails.
+- `4506100` release.yml publishes `image.sha256` and `image.bytes` too.
+- `29ea18c` the chain above (release.yml + one line in F's e2e.yml: the
+  e2e job's concurrency group gains the installer SHA, so a release's
+  e2e is never replaced by an `[e2e]` push while it waits). promote gate
+  checked on fixtures + run 39901973428.
+- `c336d84` windows.yml gated: runs only when src/aurbridge/,
+  src/aurstage/{gpt,plan}.[ch], build/aurbridge, tools/{pe_payload.py,
+  repo.sh,manifesttest.sh} or windows.yml change, `[windows]` in the
+  subject, or by hand; per-job concurrency groups (a docs push replaces
+  nothing; a started run finishes). It had never completed in this repo.
+- `e74c062` tests.yml: gpttest, committest, bootchaintest (unit);
+  powercuttest (own fault-injection staging build) and bootupdatetest
+  (e2e matrix); e2e lanes 2 -> 4, longest first.
 
-## Half-done (check first)
+## In flight (check first)
 
-- Prerelease `v0.1.0-dd39389` of run 39895845920: the first `[publish]`
-  (release run 39899061212) failed with HTTP 403 creating the release
-  (a GITHUB_TOKEN may tag only its own run's commit). Fixed in `89b79c7`,
-  which also re-requests the publish. Check
-  `https://github.com/ComputerDude771/auros-from-scratch/releases/tag/v0.1.0-dd39389`
-  and the newest `release.yml` run. If it failed again, read its
-  `publish` job log tail.
+- Build run 39903639529 (`[release]` of 4506100): build 9 min green;
+  tests running. When green, release.yml (as of 4506100: no e2e yet)
+  publishes prerelease `v0.1.0-4506100`. Then post its tag + exe SHA-256
+  here and in the session log (stream F needs it).
+- Build of e74c062 (tests.yml change): first CI run of the new suites.
 
 ## Next steps
 
-1. Confirm the prerelease exists with 19 assets (AurOS-Setup.exe,
-   pieces.txt, SHA256SUMS, 16 pieces) and that `release / windows` passed.
-2. Ask stream F (e2e) to pin `INSTALLER_URL` to
-   `https://github.com/ComputerDude771/auros-from-scratch/releases/download/v0.1.0-dd39389/AurOS-Setup.exe`
-   and `INSTALLER_SHA256` to its hash in `e2e.yml`; when that run's `e2e`
-   job passes, push `[publish 39895845920] [latest]`.
-3. Pages needs the owner's click once: Settings → Pages → Source: GitHub
-   Actions. The `pages` job says so if not.
-4. Tell whoever owns `windows.yml` the new `PUBLISHED_URL`/`PUBLISHED_SHA256`
-   and `IMAGE_PIECES_URL`/`IMAGE_SHA256`/`IMAGE_BYTES` (above) once the
-   release is the one people get.
-5. Optional: an `apt-cacher-ng` cache for the chroot's apt (forge cleans
-   its archive, so actions/cache cannot hold it); downloads are a minute
-   of the build today, so it is low value.
+1. First prerelease: confirm 21 assets (exe, pieces.txt, SHA256SUMS,
+   image.sha256, image.bytes, 16 pieces) and `release / windows` green.
+2. Exercise the chain without rebuilding: `[publish 39903639529]`
+   (windows + e2e + site; no promote). Prove the e2e SHA gate refuses:
+   `gh workflow run e2e.yml -f installer_url=<that exe> -f
+   installer_sha256=<wrong>` must fail at the download.
+3. Wall clock push -> promoted: measure on the first full chain (below).
+
+## Wall clock (measured)
+
+| Stage | Run 39901973428 (old) | Notes |
+|---|---|---|
+| push -> build done | 8 m 40 s | tools 65 s, debootstrap 59 s (cache miss), forge+mkimage 213 s, staging 7 s, pieces 66 s, aurbridge 15 s, local getimage 52 s |
 
 ## Traps
 
-- Unnamed `run:` shell is `bash -e` **without pipefail**; every workflow
-  sets `defaults.run.shell: bash`. Then `strings | grep -q`, `tail | head`
-  and similar pipes fail on SIGPIPE: read files instead.
-- Concurrency belongs on the **build job**, not the workflow: at workflow
-  level a docs-only push replaces a queued build (GitHub keeps one
-  pending run per group). A job whose `if` is false never joins a group.
-- `workflow_dispatch` and `workflow_run` only work for workflows on the
-  default branch (`claude/linux-distro-from-scratch-tt5dx1`): hence the
-  subject words.
+- `git fetch origin main` in a worktree of the lead's checkout does not
+  move `origin/main` (its refspec maps only the old branch): use
+  `git fetch origin main:refs/remotes/origin/main`.
+- A `[release]` re-run with `gh run rerun` uses the run's own commit:
+  a fix to a test needs a new `[release]`, not a rerun.
+- Unnamed `run:` shell is `bash -e` without pipefail; every workflow
+  sets `defaults.run.shell: bash` (windows.yml's ubuntu jobs do not).
+- Concurrency belongs on jobs, never the workflow: GitHub keeps one
+  pending run per group, so a workflow-level group lets every docs push
+  replace a waiting real run (windows.yml never finished because of it).
 - A called workflow cannot have more permissions than its caller job;
-  build.yml's `release` job grants what release.yml's jobs ask for
-  (contents, actions, pages, id-token).
-- Artifacts cannot be downloaded into the development container (blob
-  storage 403). Read job logs (`get_job_logs` tail; each job ends with a
-  summary) or publish to a release.
-- The free plan runs 20 jobs at once for the whole repository; every
-  job has a timeout so a hang cannot hold a queue.
-- `tools/machine.sh` needs `work/staging/lib/modules` as well as the
-  rootfs; tests.yml restores it from `staging-work.tar.zst` (or rebuilds
-  it for older artifacts).
+  build.yml's `release` job grants what release.yml asks for.
+- `[publish` anywhere in a commit message starts release.yml's `which`
+  (seconds; it then reads the subject only).
+- The free plan runs 20 jobs at once for the whole repository.
 
 ## How to verify
 
 ```sh
-curl -s https://api.github.com/repos/ComputerDude771/auros-from-scratch/actions/workflows/build.yml/runs?per_page=5
-curl -s https://api.github.com/repos/ComputerDude771/auros-from-scratch/releases/tags/v0.1.0-dd39389
-curl -sSL -o x.exe https://github.com/ComputerDude771/auros-from-scratch/releases/download/v0.1.0-dd39389/AurOS-Setup.exe && sha256sum x.exe
+gh run list -R aarohkandy/v0.0.1-auros -w build -L 5
+gh release list -R aarohkandy/v0.0.1-auros
+gh release view <tag> -R aarohkandy/v0.0.1-auros --json assets --jq '.assets[].name'
+curl -sSL -o x.exe https://github.com/aarohkandy/v0.0.1-auros/releases/download/<tag>/AurOS-Setup.exe && shasum -a 256 x.exe
 ```
