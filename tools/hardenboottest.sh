@@ -258,6 +258,7 @@ else put remote_signal no; fi
 pkcheck --action-id org.freedesktop.packagekit.package-install --process "$sp" --detail package_ids \
     "teamviewer;15.58.4;amd64;local" > "$OUT/pk3.txt" 2>&1
 put remote_deb "$?"
+journalctl -u polkit.service -b --no-pager -o cat 2>&1 | tail -20 > "$OUT/polkit.txt"
 sleep 2
 if grep -q '"teamviewer"' "$OUT/guard-signal.txt"; then
     put remote_deb_signal yes; host keys esc   # "Don't install it"
@@ -283,22 +284,26 @@ gone() { # firefox ended within 15 s?
     i=0; while pgrep -u "$u" -x firefox-bin >/dev/null && [ $i -lt 15 ]; do sleep 1; i=$((i+1)); done
     pgrep -u "$u" -x firefox-bin >/dev/null && echo still-open || echo closed
 }
+alive() { pgrep -u "$u" -x firefox-bin >/dev/null && echo yes || echo no; }
 page
-put page_up "$(pgrep -u "$u" -x firefox-bin >/dev/null && echo yes || echo no)"
+put page_up "$(alive)"
 ls -l /usr/bin/firefox /usr/lib/firefox/firefox >> "$OUT/firefox.txt" 2>&1
-host shot page
+host shot page                 # the trap page, red
 host keys esc tab ret          # ONE Escape: no card, so the page keeps her keys
-put out_one_esc "$(gone)"
+host shot after-esc
+put alive_after_esc "$(alive)"
+host keys ctrl-alt-delete      # Ctrl+Alt+Delete: the card, not a restart
+host shot cad
+host keys esc                  # the card's own Escape: back to the page
+host shot back
+put alive_after_back "$(alive)"
 host keys esc esc esc          # three: the card, over the page
-host shot card-esc
+host shot esc3
 host keys tab ret              # "Close this page"
 put out_three_esc "$(gone)"
-page
-put page_up2 "$(pgrep -u "$u" -x firefox-bin >/dev/null && echo yes || echo no)"
-host keys ctrl-alt-delete
-host shot card-cad
-host keys tab ret
-put out_cad "$(gone)"
+# (A second Firefox started after this one was killed died of a Wayland
+# protocol error from aurwl: "xdg_surface: no configure with serial N
+# was sent" -- see docs/handoff/streams/S1.md. Hence one launch, not two.)
 pkill -u "$u" -x firefox-bin 2>/dev/null
 
 # ── the desktop crashing, three times ──
@@ -547,6 +552,27 @@ power_on() { # disk label mode timeout
     umount_root
 }
 
+# What a screenshot shows: the trap page is red, the desktop's cards are
+# cream. Appended to that boot's record as shot_<name>=page|card|other.
+shotkinds() { # label
+    for f in "$T"/shot.$1.*.ppm; do
+        [ -f "$f" ] || continue
+        n=${f#"$T"/shot.$1.}; n=${n%.ppm}
+        k=$(python3 - "$f" <<'EOPY'
+import sys
+d = open(sys.argv[1], 'rb').read().split(b'\n', 3)
+w, h = map(int, d[1].split()); px = d[3]
+def at(x, y): i = (y * w + x) * 3; return px[i], px[i + 1], px[i + 2]
+pts = [at(x, y) for x, y in ((250, 300), (640, 300), (1000, 300), (640, 500))]
+red = sum(1 for r, g, b in pts if r > 150 and g < 60 and b < 60)
+cream = sum(1 for r, g, b in pts if r > 200 and g > 200 and b > 190)
+print('page' if red >= 3 else 'card' if cream >= 3 else 'other')
+EOPY
+)
+        echo "shot_$n=$k" >> "$T/rec.$1/result"
+    done
+}
+
 # ── the two disks ───────────────────────────────────────────────────
 # The sysctl list (key, value) is hardentest's, so the two never disagree.
 awk "/^done <<'EOF'\$/ {f=1; next} f && /^EOF\$/ {exit} f {print \$1, \$2}" tools/hardentest.sh > "$T/keys"
@@ -590,6 +616,7 @@ for d in hard base; do
     } > "$T/menu.$d"
     echo "  $d: a full boot with every check (about 8 minutes under KVM)"
     power_on "$T/disk.img" $d full "$FULL_TIMEOUT"
+    shotkinds $d
     rm -f "$T/disk.img"
 done
 RH="$T/rec.hard/result"; RB="$T/rec.base/result"
@@ -651,9 +678,11 @@ dccp_refused() { not_is "$1" dccp_socket 0 && is "$1" dccp_loaded no; }
 hog_by_earlyoom() { is "$1" hog_killer earlyoom && [ "$(val hog_secs "$1")" != never ]; }
 zram_used() { is "$1" zram yes && [ "$(val swap_peak_kb "$1")" -gt 102400 ]; }
 safe_mode() { case "$(val safe_cmdline "$1")" in *"--shell /usr/share/auros/shells/rail.shell --conf /etc/auros/shell.conf"*) is "$1" safe_level 1 ;; *) return 1 ;; esac; }
-esc_one_stays() { is "$1" page_up yes && is "$1" out_one_esc still-open; }
-esc3_closes()   { esc_one_stays "$1" && is "$1" out_three_esc closed; }
-cad_closes()    { is "$1" page_up2 yes && is "$1" out_cad closed; }
+page_shown()    { is "$1" page_up yes && is "$1" shot_page page; }
+esc_one_stays() { page_shown "$1" && is "$1" alive_after_esc yes && is "$1" shot_after-esc page; }
+cad_card()      { page_shown "$1" && is "$1" shot_cad card; }
+back_ok()       { cad_card "$1" && is "$1" alive_after_back yes && is "$1" shot_back page; }
+esc3_closes()   { back_ok "$1" && is "$1" shot_esc3 card && is "$1" out_three_esc closed; }
 remote_gate() { not_is "$1" remote_first 0 && is "$1" remote_signal yes; }
 remote_yes() { is "$1" remote_consent "$(val desktop_user "$1")" && is "$1" remote_after_yes 0; }
 deb_gate() { not_is "$1" remote_deb 0 && is "$1" remote_deb_signal yes; }
@@ -696,10 +725,11 @@ row control "three desktop crashes: the 4th start is safe mode" safe_mode
 row control "S2: AnyDesk from the store, first time: refused, card asked for" remote_gate
 row keep    "S2: ...she answers on the card with the keyboard; the next try works" remote_yes
 row control "S2: TeamViewer through PackageKit: refused, card asked for" deb_gate
-row both    "S2: Firefox full screen on a trap page" is page_up yes
-row both    "S2: one Escape does not take the page away (the check can tell)" esc_one_stays
-row both    "S2: Escape x3 over the page: the card closes it" esc3_closes
-row both    "S2: Ctrl+Alt+Delete over the page: the card, not a restart" cad_closes
+row both    "S2: Firefox full screen on a trap page" page_shown
+row both    "S2: one Escape does not take the page away, and shows no card" esc_one_stays
+row both    "S2: Ctrl+Alt+Delete over the page: the card, not a restart" cad_card
+row both    "S2: the card's Escape leaves her page as it was" back_ok
+row both    "S2: Escape x3 over the page: the card, and Close this page closes it" esc3_closes
 
 say ""
 say "Details: hog stopped after $(val hog_secs "$RH") s (exit $(val hog_rc "$RH")), zram took $(( $(num swap_peak_kb "$RH") / 1024 )) MB;" \
