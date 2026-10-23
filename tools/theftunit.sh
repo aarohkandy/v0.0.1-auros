@@ -89,6 +89,10 @@ check() { local what=$1; shift; if "$@" >/dev/null 2>&1; then ok "$what"; else b
 [ "$(id -u)" = 0 ] || { echo "theftunit needs root (run it in the container)"; exit 2; }
 if [ -e /.dockerenv ] || grep -qa container= /proc/1/environ 2>/dev/null; then
     rm -f /dev/tpm0 /dev/tpmrm0 /dev/tpm1 /dev/tpmrm1
+    # A container's /dev is a snapshot: on a busy host the free loop
+    # devices have high numbers it has no nodes for ("failed to set up
+    # loop device: No such file or directory").
+    for i in $(seq 0 127); do [ -e /dev/loop$i ] || mknod /dev/loop$i b 7 $i 2>/dev/null; done
 fi
 ls /dev/tpm* >/dev/null 2>&1 && { echo "a real TPM is visible here; refusing (run in a container)"; exit 2; }
 for t in cryptsetup swtpm tpm2_pcrextend gcc mkfs.ext4 losetup systemd-cryptenroll; do
