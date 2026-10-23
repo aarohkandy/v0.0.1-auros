@@ -189,7 +189,6 @@ PENDING = [
     ("src/aurbridge/wizard.c", r"all (your|her) files stay", "stream B: Ready and Welcome strings", "2026-11-30"),
     ("src/aurbridge/wizard.c", r"windows and all your files", "stream B: Ready and Welcome strings", "2026-11-30"),
     ("src/aurscreen/screen.c", r"exactly as (it|they) (was|were)", "stream A2: the put-back screen", "2026-11-30"),
-    ("README.md", r"byte-identical every time", "stream D/lead: README", "2026-11-30"),
 ]
 
 

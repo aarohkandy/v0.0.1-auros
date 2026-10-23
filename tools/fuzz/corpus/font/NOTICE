@@ -1,0 +1,8 @@
+The font files here are small subsets used only as fuzzing input; they are not in the AurOS image.
+They keep their makers' licenses:
+- dejavu-sans.ttf: DejaVu fonts, copyright Bitstream, Inc. (Bitstream Vera license) with public-domain
+  changes: see the DejaVu section of docs/legal/licenses/component-copyrights.txt.
+- liberation-sans.ttf: Liberation fonts, SIL Open Font License 1.1 (docs/legal/licenses has the text
+  in website/assets/fonts/OFL.txt's form).
+- freesans.ttf: GNU FreeFont, GNU GPL version 3 or later with the font exception.
+- inter.otf, inter-bold.otf: Inter, SIL Open Font License 1.1, copyright The Inter Project Authors.

@@ -73,8 +73,8 @@ The goal, stated as a testable contract:
   `docs/results/`.
 - **Power cuts on purpose** — the installer names its own dangerous
   instants and a fault build stops dead at each one. With a memory stick,
-  Windows comes back with every file byte-identical every time
-  (`tools/powercuttest.sh`, on every build). The installer people
+  Windows comes back with every file byte-identical at every named
+  instant, in the test (`tools/powercuttest.sh`, on every build). The installer people
   download has no stick; that mode has its own power-cut test
   (`tools/powercut-nostick.sh`, four CI jobs on every build), and it is
   still finding failures: `docs/safety/FINDINGS.md`.
@@ -188,6 +188,16 @@ hard stop is implemented, and it is right. Every hard stop it names is a
 requirement on AurBridge, and the ones that are implemented carry their
 register id in the code.
 
-## Licence
+## License
 
-MIT. See [`LICENSE`](LICENSE).
+AurOS's own code is MIT: see [`LICENSE`](LICENSE). AurOS includes programs by others (the Linux
+kernel, Firefox, many from Ubuntu), each under its own license; their notices are in
+`rootfs/usr/share/doc/auros/THIRD-PARTY-NOTICES` and `docs/legal/notices/NOTICES.txt`, and the source
+code of every release is published beside it as the release `sources-<release>`
+(`docs/legal/SOURCES.md`; the written offer is `rootfs/usr/share/doc/auros/SOURCE-OFFER`). Files under
+`tools/scamtest` and `tools/fuzz/corpus/font` keep their own licenses (see the `NOTICE` files there).
+
+AurOS is built from Ubuntu 24.04 LTS software. It is not made, endorsed or supported by Canonical.
+Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation,
+Windows and Microsoft of the Microsoft group of companies. AurOS is not made, approved or supported
+by any of them. No lawyer has read the documents in `docs/legal/` (decision D15).

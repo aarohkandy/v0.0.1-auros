@@ -1,0 +1,5 @@
+The files firefox-*-policies-schema.json and firefox-pref-allowlist.txt are taken from Mozilla's
+Firefox source code (https://firefox-source-docs.mozilla.org/, the enterprise policies schema and the
+preference allow-list) and are under the Mozilla Public License 2.0, whose text is in
+docs/legal/licenses/MPL-2.0.txt. The source is at https://archive.mozilla.org/pub/firefox/releases/ .
+They are test inputs only and are not in the AurOS image.
