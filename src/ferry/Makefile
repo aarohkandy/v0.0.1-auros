@@ -13,7 +13,7 @@ BUILD   := build
 HELPERS := $(BUILD)/ferry-hivepeek $(BUILD)/ferry-winattr $(BUILD)/ferry-copy \
            $(BUILD)/ferry-chromemarks $(BUILD)/ferry-ffhash
 
-SCRIPTS := ferry ferry-detect ferry-wifi ferry-files ferry-firefox \
+SCRIPTS := ferry ferry-detect ferry-wifi ferry-files ferry-firefox ferry-back \
            ferry-settings ferry-report ferry-hive ferry-common.sh install.sh
 
 PREFIX  ?= /usr

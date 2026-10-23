@@ -334,6 +334,8 @@ assert "...and her report says so" grep -q 'will be in Firefox the first time yo
 ferry-firefox --root "$E" --home "$HE" --owner "$OWNER" --force >/dev/null 2>&1
 eq "bringing it across again changes nothing in profiles.ini (idempotent)" \
    "$(grep -c '^\[Profile' "$FE/profiles.ini")|$(grep -c '^\[Install' "$FE/profiles.ini")" "1|1"
+refute "...and a second go does not mistake its own profile for hers (bookmarks stay in Firefox)" \
+    test -e "$HE/Bookmarks from Edge.html"
 
 # Firefox 147+ keeps its profiles under ~/.config/mozilla/firefox.
 HX="$TMP/home-xdg"; mkdir -p "$HX/.config/mozilla/firefox"; hers "$HX"
@@ -361,11 +363,14 @@ FERRY_STATE="$TMP/state-ffran" ferry-firefox --root "$E" --home "$HF" --owner "$
 assert "after she used Firefox here, it is NOT switched away from her profile" cmp -s "$TMP/profiles.before" "$FR/profiles.ini"
 assert "...her Edge bookmarks wait in her Home with steps" test -s "$HF/Bookmarks from Edge.html"
 
-# Firefox is open while she brings her files across.
+# Firefox is open while she brings her files across. (Its profiles.ini
+# has no section for this install, so only "it is open" can stop us.)
 HO="$TMP/home-ffopen"; FO="$HO/.mozilla/firefox"; mkdir -p "$FO/abc.default-release"
-cp "$TMP/profiles.before" "$FO/profiles.ini"; ln -s "127.0.0.1:+$$" "$FO/abc.default-release/lock"; hers "$HO"
+printf '[Profile0]\nName=default\nIsRelative=1\nPath=abc.default-release\nDefault=1\n\n[General]\nStartWithLastProfile=1\nVersion=2\n' > "$FO/profiles.ini"
+cp "$FO/profiles.ini" "$TMP/profiles.open"
+ln -s "127.0.0.1:+$$" "$FO/abc.default-release/lock"; hers "$HO"
 FERRY_STATE="$TMP/state-ffopen" ferry-firefox --root "$E" --home "$HO" --owner "$OWNER" >/dev/null 2>&1
-assert "while Firefox is open, its profiles.ini is left alone" cmp -s "$TMP/profiles.before" "$FO/profiles.ini"
+assert "while Firefox is open, its profiles.ini is left alone" cmp -s "$TMP/profiles.open" "$FO/profiles.ini"
 assert "...and her Edge bookmarks wait in her Home instead" test -s "$HO/Bookmarks from Edge.html"
 
 # No Firefox on this computer to name.
@@ -471,17 +476,101 @@ mkdir -p "$TMP/usrbin"; ln -s "$FERRY/ferry" "$TMP/usrbin/ferry"
 assert "ferry started through a link finds its own tools" \
     sh -c "env -u FERRY_HIVE_BACKEND PATH=/usr/bin:/bin '$TMP/usrbin/ferry' backend | grep -q ."
 
+echo "the way back (her AurOS files into Windows before Put Windows back):"
+BK="$TMP/win-back"; cp -r "$WIN" "$BK"; hers "$BK"
+AH="$TMP/aurhome"; mkdir -p "$AH/Pictures/2024" "$AH/Documents" "$AH/Desktop" "$AH/Downloads" "$AH/Music" "$AH/Videos"
+head -c 300000 /dev/urandom > "$AH/Pictures/2024/holiday.jpg"
+touch -d '2024-07-01 10:00:00' "$AH/Pictures/2024/holiday.jpg"
+echo "my new letter"  > "$AH/Documents/letter.txt"
+echo "UPPER" > "$AH/Documents/Report.docx"; echo "lower" > "$AH/Documents/report.docx"
+echo 1 > "$AH/Documents/a:b.txt"; echo 2 > "$AH/Documents/what?.txt"; echo 3 > "$AH/Documents/CON.txt"
+echo 4 > "$AH/Documents/trailing."; echo 5 > "$AH/Documents/bad<name>.txt"; echo 6 > "$AH/Documents/q\"uote|pipe.txt"
+echo 7 > "$AH/Documents/$(printf 'raw\377byte.txt')"
+echo 8 > "$AH/Documents/caf$(printf '\303\211').txt"; echo 9 > "$AH/Documents/caf$(printf '\303\251').txt"
+echo lock > "$AH/Documents/.~lock.letter.txt#"
+ln -s /etc/passwd "$AH/Documents/shortcut"
+mkdir -p "$AH/Documents/.Trash-1000"; echo trash > "$AH/Documents/.Trash-1000/x"
+mkdir -p "$BK/users/Bob/From AurOS/Documents"; echo "windows version of the letter" > "$BK/users/Bob/From AurOS/Documents/letter.txt"
+echo "keep me" > "$BK/users/Bob/Documents/windows-only.txt"
+hers "$AH" "$BK"
+( cd "$BK" && find . -type f -not -path './users/Bob/From AurOS/*' -exec stat -c '%n %s %Y' {} + | sort ) > "$TMP/bk.before"
+BKENV() { _bn=$1 _br=$2; shift 2
+          env FERRY_CHOICES="$TMP/run-choices" FERRY_STATE="$TMP/state-back$_bn" FERRY_ROOT="$_br" FERRY_HOME="$AH" \
+              FERRY_OWNER="$OWNER" FERRY_SIGNAL="$TMP/back$_bn.done" "$@"; }
+BKENV 1 "$BK" ferry back --plain > "$TMP/back1.out" 2>&1
+eq "ferry back succeeds (exit 0)" "$?" 0
+FA="$BK/users/Bob/From AurOS"
+assert "a photo saved in AurOS is in her Windows folder, byte for byte" cmp -s "$AH/Pictures/2024/holiday.jpg" "$FA/Pictures/2024/holiday.jpg"
+eq "...with the date she saved it" "$(stat -c %Y "$FA/Pictures/2024/holiday.jpg")" "$(stat -c %Y "$AH/Pictures/2024/holiday.jpg")"
+eq "a file Windows already had is NOT overwritten" "$(cat "$FA/Documents/letter.txt")" "windows version of the letter"
+eq "...hers lands beside it" "$(cat "$FA/Documents/letter (from AurOS).txt")" "my new letter"
+eq "Report.docx and report.docx are kept apart (Windows sees them as one name)" \
+   "$(find "$FA/Documents" -iname 'report*.docx' | wc -l | tr -d ' ')|$(find "$FA/Documents" -iname 'report.docx' | wc -l | tr -d ' ')" "2|1"
+eq "...both contents survive" "$( (cat "$FA/Documents"/[Rr]eport*.docx) | sort | tr '\n' ' ')" "UPPER lower "
+_cafE=$(printf 'caf\303\211.txt'); _cafe2=$(printf 'caf\303\251 (from AurOS).txt')
+eq "an accented capital and its small letter are one name to Windows too: the second is kept apart" \
+   "$(cat "$FA/Documents/$_cafE" 2>/dev/null)|$(cat "$FA/Documents/$_cafe2" 2>/dev/null)" "8|9"
+refute "no name Windows cannot hold was created" sh -c "find '$FA' -name '*[:*?\"<>|]*' | grep -q ."
+eq "a colon becomes an underscore" "$(cat "$FA/Documents/a_b.txt")" 1
+eq "a question mark too" "$(cat "$FA/Documents/what_.txt")" 2
+eq "CON is a device name in Windows: it is saved as _CON.txt" "$(cat "$FA/Documents/_CON.txt")" 3
+eq "a trailing dot (Windows cannot open it) is replaced" "$(cat "$FA/Documents/trailing_")" 4
+eq "bytes that are not text are replaced, the rest kept" "$(cat "$FA/Documents/raw_byte.txt")" 7
+refute "an editor's lock file is not hers" test -e "$FA/Documents/.~lock.letter.txt#"
+refute "...nor the desktop's trash" test -e "$FA/Documents/.Trash-1000"
+refute "a shortcut (symlink) is not followed: nothing from /etc came" sh -c "grep -rq 'root:' '$FA'"
+assert "the names that had to change are in the note, in her words" \
+    sh -c "grep -q 'Windows cannot hold some of the letters' '$FERRY_STATE/../state-back1/report.d/back-copy.tsv' 2>/dev/null || grep -q 'Windows cannot hold some of the letters' '$TMP/state-back1/report.d/back-copy.tsv'"
+assert "a note for her is in the folder, with Windows line endings" sh -c "grep -q 'files you saved while you used AurOS' '$FA/Read me.txt' && grep -q \"$(printf '\r')\" '$FA/Read me.txt'"
+( cd "$BK" && find . -type f -not -path './users/Bob/From AurOS/*' -exec stat -c '%n %s %Y' {} + | sort ) > "$TMP/bk.after"
+assert "nothing else on the Windows drive changed" cmp -s "$TMP/bk.before" "$TMP/bk.after"
+eq "what she reads is plain" "$(grep -cvE '^(Getting ready to save your files in Windows\.|Saving your [A-Za-z]+ in Windows: [0-9,]+ of [0-9,]+ files\.( (Less than a minute|About (a|[0-9]+) minutes?|About (an|[0-9]+) hours?) left\.)?|Your files are saved in Windows, in the folder "From AurOS"\.)$' "$TMP/back1.out")" 0
+assert "...ending with the sentence that says it is done" sh -c "tail -1 '$TMP/back1.out' | grep -q 'Your files are saved in Windows'"
+assert "the completion signal says: back, ok, and how many files" \
+    sh -c "grep -qx 'kind=back' '$TMP/back1.done' && grep -qx 'result=ok' '$TMP/back1.done' && grep -qE '^files=[0-9]+\$' '$TMP/back1.done' && ! grep -qx 'files=0' '$TMP/back1.done'"
+
+# Run again: nothing is saved twice.
+BKENV 1 "$BK" ferry back --plain > /dev/null 2>&1
+eq "run again: no second copy of anything" "$(find "$FA" -type f | wc -l | tr -d ' ')" "$(find "$FA" -type f | wc -l | tr -d ' ')"
+eq "...(the same files)" "$(find "$FA" -name '*(from AurOS 2)*' | wc -l | tr -d ' ')" 0
+
+# Not enough room: nothing is copied, and she is told.
+BK2="$TMP/win-back2"; cp -r "$WIN" "$BK2"; hers "$BK2"
+BKENV 2 "$BK2" env FERRY_ROOM_BYTES=1000000 ferry back --plain > "$TMP/back2.out" 2>&1
+eq "not enough room in Windows: exit 4" "$?" 4
+refute "...and not one of her files was copied" sh -c "find '$BK2/users/Bob/From AurOS' -type f -not -name 'Read me.txt' | grep -q ."
+assert "...she is told, plainly" grep -q 'There is not enough room in Windows for your files' "$TMP/back2.out"
+assert "...the report says how much" grep -q 'they need about' "$TMP/state-back2/report.d/back-copy.tsv"
+assert "...and the signal says noroom" grep -qx 'result=noroom' "$TMP/back2.done"
+
+# A hibernated Windows is refused before anything is written.
+BK3="$TMP/win-back3"; sh "$HERE/mkfakewin.sh" "$BK3" --hibernated >/dev/null; hers "$BK3"
+BKENV 3 "$BK3" ferry back --plain > "$TMP/back3.out" 2>&1
+eq "a hibernated Windows is refused (exit 3)" "$?" 3
+refute "...and nothing was written to it" test -e "$BK3/users/Bob/From AurOS"
+assert "...the signal says refused" grep -qx 'result=refused' "$TMP/back3.done"
+assert "...and she is told what to do" grep -q 'Start Windows, shut it down fully' "$TMP/back3.out"
+
+# The way in never writes to the Windows drive: only `ferry back` can mount it for writing.
+eq "only ferry (for ferry back) and the common file call mount_rw" \
+   "$(cd "$FERRY" && grep -l '^[^#]*mount_rw' ferry ferry-* 2>/dev/null | tr '\n' ' ')" "ferry ferry-common.sh "
+eq "...and the writable mount is asked for in exactly one place" \
+   "$(cd "$FERRY" && grep -c 'FERRY_RW=1' ferry)" 1
+
 echo "ferry run says what happened (answer.sh turns it into her screen):"
 # The installer's choices stand, so no stage tries to change this
 # machine's clock, language or keyboard while the tests run.
 printf 'timezone=Etc/UTC\nlanguage=en_US.UTF-8\nkeyboard=us\n' > "$TMP/run-choices"
 runit() { FERRY_CHOICES="$TMP/run-choices" FERRY_STATE="$TMP/state-run$1" FERRY_ROOT="$2" \
-          FERRY_HOME="$3" FERRY_OWNER="$OWNER" ferry run --auto >/dev/null 2>&1; }
+          FERRY_HOME="$3" FERRY_OWNER="$OWNER" FERRY_SIGNAL="$TMP/run$1.done" ferry run --auto >/dev/null 2>&1; }
 mkdir -p "$TMP/run-home"; hers "$TMP/run-home"
 runit 1 "$WIN" "$TMP/run-home"
 eq "some files online-only: exit 2 (\"some things could not be brought across\")" "$?" 2
+assert "the completion signal says: import, partial, and how many files" \
+    sh -c "grep -qx 'kind=import' '$TMP/run1.done' && grep -qx 'result=partial' '$TMP/run1.done' && grep -qE '^files=[1-9][0-9]*\$' '$TMP/run1.done'"
 runit 2 "$TMP/hib" "$TMP/run-home"
 eq "a hibernated Windows: exit 3 (refused, nothing read)" "$?" 3
+assert "...and the signal says refused" grep -qx 'result=refused' "$TMP/run2.done"
 # What she reads while it runs, and afterwards.
 mkdir -p "$TMP/plain-home"; hers "$TMP/plain-home"
 FERRY_CHOICES="$TMP/run-choices" FERRY_STATE="$TMP/state-plain" FERRY_ROOT="$WIN" \

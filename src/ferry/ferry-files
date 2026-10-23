@@ -56,6 +56,9 @@ require_clean_volume "$FERRY_ROOT" "$FERRY_DEV"
 resolve_target
 select_profile || die "could not identify which Windows profile to import (pass --user NAME)"
 say "importing files for '$_WIN_USERNAME' -> $FERRY_HOME"
+# Remembered, so that "Put Windows back" saves her new files into the
+# same Windows user's folder (ferry-back).
+[ "$FERRY_DRYRUN" = 1 ] || printf '%s\n' "$_WIN_USERNAME" > "$FERRY_STATE/winuser"
 
 # Who the files are for: ferry-copy becomes this user before it opens
 # anything in her home, so root never writes there.

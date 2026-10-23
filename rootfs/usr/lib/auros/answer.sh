@@ -108,6 +108,37 @@ staging_present() {
     done
     return 1
 }
+# WHEN SHE ASKED, read as late as possible (see putback).
+read_asked() {
+    asked=$(cat "$RTC" 2>/dev/null)
+    case "$asked" in ''|*[!0-9]*) asked= ;; esac
+    [ -n "$asked" ]
+}
+
+# SAVE HER FILES IN WINDOWS BEFORE WINDOWS IS PUT BACK. Returns 0 only
+# when they are saved (or there is no Ferry to do it: an image without
+# one cannot have brought anything across either). Exit codes are
+# `ferry back`'s: 2 some could not be saved, 3 the Windows drive was not
+# shut down properly, 4 not enough room, 5 the drive could not be opened.
+back_files() {
+    [ -x "${AUROS_FERRY:-/usr/bin/ferry}" ] || return 0
+    : > "$OUT/putback.log"
+    chmod 0644 "$OUT/putback.log" 2>/dev/null
+    "${AUROS_FERRY:-/usr/bin/ferry}" back --plain >>"$OUT/putback.log" 2>&1
+    brc=$?
+    [ "$brc" = 0 ] && return 0
+    say "result=failed"
+    say "code=$brc"
+    case "$brc" in
+      2) say "note=some of your files could not be saved in Windows first, so Windows was not put back" ;;
+      3) say "note=Windows was not shut down properly, so your files could not be saved in it first; start Windows, shut it down fully, then try again" ;;
+      4) say "note=there is not enough room in Windows to save your files first, so Windows was not put back" ;;
+      5) say "note=your files could not be saved in Windows first (its drive could not be opened), so Windows was not put back" ;;
+      *) say "note=your files could not be saved in Windows first, so Windows was not put back" ;;
+    esac
+    return 1
+}
+
 : > "$RES.new"
 say "request=$word"
 
@@ -196,12 +227,21 @@ case "$word" in
     # if it starts within the hour (src/aurstage/main.c): a request the
     # firmware did not act on -- it started Windows instead -- must not
     # remove AurOS at whatever later start next reaches this menu.
-    asked=$(cat "$RTC" 2>/dev/null)
-    case "$asked" in ''|*[!0-9]*) asked= ;; esac
+    # THE FILES SHE SAVED IN AUROS GO INTO WINDOWS FIRST. Putting Windows
+    # back removes AurOS and everything she kept in it; `ferry back`
+    # copies her Documents, Pictures, Desktop, Downloads, Music and
+    # Videos into her Windows user folder, under "From AurOS", and
+    # nothing is armed unless that finished. Its plain progress lines are
+    # in $OUT/putback.log (the newest is what the screen shows) and, when
+    # it ends, $OUT/ferry.done says how (src/ferry/ferry-common.sh).
+    # AFTER THE COPY, because it can take a long time and "within the
+    # hour" below is counted from the moment the restore is armed.
     if ! staging_present; then
         say "result=failed"
         say "note=the files that put Windows back are not on this computer any more"
-    elif [ -z "$asked" ]; then
+    elif ! back_files; then
+        :   # back_files has said why
+    elif ! read_asked; then
         say "result=failed"
         say "note=AurOS could not read this computer's clock"
     elif ! grubenv_put "next_entry=$PUTBACK_ENTRY" "auros_asked=$asked"; then

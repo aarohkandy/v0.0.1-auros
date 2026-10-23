@@ -49,14 +49,17 @@ HR=$(getent passwd ferryher | cut -d: -f6)
 
 # The unit's sandbox, property by property, so a change to the unit is
 # a change to this test.
+unit_lines() {
+    sed -n '/^\[Service\]/,/^\[/p' "$UNIT" | while IFS= read -r _p; do
+        case "$_p" in
+            ''|'#'*|'['*|Type=*|ExecStart=*|TimeoutStartSec=*|SuccessExitStatus=*) continue ;;
+        esac
+        printf '%s\n' "$_p"
+    done
+}
 set --
-while IFS= read -r _p; do
-    case "$_p" in
-        ''|'#'*|'['*|Type=*|ExecStart=*|TimeoutStartSec=*|SuccessExitStatus=*) continue ;;
-    esac
-    set -- "$@" -p "$_p"
-done <<EOF
-$(sed -n '/^\[Service\]/,/^\[/p' "$UNIT")
+while IFS= read -r _p; do set -- "$@" -p "$_p"; done <<EOF
+$(unit_lines)
 EOF
 echo "sandbox: $(($# / 2)) properties from $(basename "$UNIT")"
 
@@ -136,6 +139,122 @@ PY
         bad "ntfs-3g could not mount the test volume"
     fi
     losetup -d "$LOOP"
+fi
+rm -f "$IMG"
+
+# ═══ 3. Put Windows back, from the button to the files in Windows ═════
+#  answer.sh's `putback` request, in the unit's sandbox, on a real NTFS
+#  volume: the photo she saved in AurOS must be on Windows afterwards,
+#  and the restart must be armed only if it is. The restore itself (the
+#  partition table) is installtest's and putbacktest's; this is the
+#  step that decides whether her files are still alive when it runs.
+echo "3. Put Windows back (the button, in the sandbox, on a real NTFS volume):"
+mkdir -p /usr/lib/auros /srv/stubbin /srv/esp/EFI/AurOS /var/lib/auros
+cp "$REPO/rootfs/usr/lib/auros/answer.sh" /usr/lib/auros/answer.sh
+# What is not under test: the request itself, the menu arming, the restart.
+printf '#!/bin/sh\ncase "$1" in request) echo putback ;; *) exit 0 ;; esac\n' > /srv/stubbin/aurfirst
+printf '#!/bin/sh\ntouch /var/lib/auros/rebooted\n' > /srv/stubbin/reboot
+chmod +x /srv/stubbin/aurfirst /srv/stubbin/reboot
+: > /srv/esp/EFI/AurOS/staging.efi; : > /srv/esp/EFI/AurOS/staging.img
+echo 1700000000 > /srv/rtc
+
+make_windows() { # LOOP [hibernated] -> a fresh NTFS volume holding the fake Windows tree
+    mkntfs -q -F -f -L Windows "$1" >/dev/null 2>&1 || return 1
+    mkdir -p "$MP"; ntfs-3g "$1" "$MP" || return 1
+    rm -f /srv/fakewin/users/Bob/OneDrive/Documents/vacation-video.mp4
+    cp -r /srv/fakewin/. "$MP"/
+    mkdir -p "$MP/users/Bob/From AurOS/Documents"
+    echo "windows version of the letter" > "$MP/users/Bob/From AurOS/Documents/letter.txt"
+    [ "${2:-}" != hibernated ] || printf 'HIBR' | dd of="$MP/hiberfil.sys" bs=4 count=1 conv=notrunc 2>/dev/null
+    umount "$MP"
+}
+outside_hash() { # LOOP -> hashes of everything in Windows except "From AurOS"
+    ntfs-3g -o ro "$1" "$MP" || return 1
+    ( cd "$MP" && find . -type f -not -path './users/Bob/From AurOS/*' -print0 | sort -z | xargs -0 sha256sum )
+    umount "$MP"
+}
+run_answer() { # LOOP [ENV=VALUE...]: the putback request, under the unit's sandbox
+    _lp=$1; shift
+    _extra=$(printf '%s\n' "$@")
+    rm -f /run/auros-answer/result /run/auros-answer/ferry.done /var/lib/auros/grubenv /var/lib/auros/rebooted
+    set --
+    while IFS= read -r _p; do [ -n "$_p" ] && set -- "$@" -p "$_p"; done <<EOP
+$(unit_lines)
+EOP
+    while IFS= read -r _v; do [ -n "$_v" ] && set -- "$@" -p "Environment=$_v"; done <<EOP
+$_extra
+EOP
+    systemd-run --quiet --wait --pipe --collect "$@" \
+        -p Environment=AUROS_BIN=/srv/stubbin -p Environment=AUROS_STATE=/var/lib/auros \
+        -p Environment=AUROS_LOG=/var/log/answer-sandbox.log \
+        -p Environment=AUROS_GRUBENV=/var/lib/auros/grubenv \
+        -p Environment=AUROS_REBOOT=/srv/stubbin/reboot \
+        -p Environment=AUROS_ESP_ROOTS=/srv/esp -p Environment=AUROS_RTC=/srv/rtc \
+        -p Environment=AUROS_REBOOT_DELAY=0 -p Environment=FERRY_OWNER=ferryher \
+        -p Environment=FERRY_DEV="$_lp" /usr/lib/auros/answer.sh >/srv/answer-run.log 2>&1
+    cat /run/auros-answer/result 2>/dev/null
+}
+armed() { [ -e /var/lib/auros/rebooted ] || [ -e /var/lib/auros/grubenv ]; }
+
+# Her AurOS home: a photo she took and a letter she wrote since she began.
+rm -rf "$HR/Pictures" "$HR/Documents" "$HR/Desktop"
+mkdir -p "$HR/Pictures/2024" "$HR/Documents"
+head -c 3000000 /dev/urandom > "$HR/Pictures/2024/holiday.jpg"
+echo "my new letter" > "$HR/Documents/letter.txt"
+echo "colon in a name" > "$HR/Documents/a:b.txt"
+chown -R ferryher: "$HR/Pictures" "$HR/Documents"
+PHOTO=$(sha256sum "$HR/Pictures/2024/holiday.jpg" | cut -d' ' -f1)
+
+IMG=/srv/windows3.img
+rm -f "$IMG"; truncate -s 256M "$IMG"
+LOOP=$(losetup -f --show "$IMG") || { bad "no loop device"; LOOP=""; }
+[ -n "$LOOP" ] && trap 'umount "$MP" 2>/dev/null; losetup -d "$LOOP" 2>/dev/null' EXIT INT TERM
+if [ -n "$LOOP" ] && make_windows "$LOOP"; then
+    outside_hash "$LOOP" > /srv/outside.before
+    R=$(run_answer "$LOOP")
+    if printf '%s\n' "$R" | grep -qx 'result=ok'; then ok "Put Windows back answers ok"
+    else
+        bad "Put Windows back answers ok"; printf '%s\n' "$R" | sed 's/^/  | /'
+        tail -8 /srv/answer-run.log | sed 's/^/  | /'; tail -12 /var/log/answer-sandbox.log 2>/dev/null | sed 's/^/  | /'; tail -5 /run/auros-answer/putback.log 2>/dev/null | sed 's/^/  | /'
+    fi
+    [ -e /var/lib/auros/rebooted ] && ok "...and the restart was armed" || bad "...and the restart was armed"
+    ntfs-3g -o ro "$LOOP" "$MP"
+    eq "THE PHOTO SHE SAVED IN AUROS IS ON WINDOWS" \
+       "$(sha256sum "$MP/users/Bob/From AurOS/Pictures/2024/holiday.jpg" 2>/dev/null | cut -d' ' -f1)" "$PHOTO"
+    eq "...Windows' own copy of the letter was not overwritten" \
+       "$(cat "$MP/users/Bob/From AurOS/Documents/letter.txt" 2>/dev/null)" "windows version of the letter"
+    eq "...hers is beside it" "$(cat "$MP/users/Bob/From AurOS/Documents/letter (from AurOS).txt" 2>/dev/null)" "my new letter"
+    eq "...a name Windows cannot hold was changed, not lost" "$(cat "$MP/users/Bob/From AurOS/Documents/a_b.txt" 2>/dev/null)" "colon in a name"
+    [ -s "$MP/users/Bob/From AurOS/Read me.txt" ] && ok "...and a note for her is there" || bad "...and a note for her is there"
+    umount "$MP"
+    eq "nothing else on the Windows volume changed" "$(outside_hash "$LOOP" | md5sum)" "$(md5sum < /srv/outside.before)"
+    if grep -qx 'kind=back' /run/auros-answer/ferry.done && grep -qx 'result=ok' /run/auros-answer/ferry.done; then
+        ok "the completion signal the desktop waits for says: back, ok"; else bad "the completion signal the desktop waits for says: back, ok"; fi
+    if tail -1 /run/auros-answer/putback.log | grep -q 'Your files are saved in Windows'; then
+        ok "the screen's last line says her files are saved"; else bad "the screen's last line says her files are saved"; fi
+    if grep -q "$LOOP" /proc/mounts; then bad "the volume is not left mounted"; else ok "the volume is not left mounted"; fi
+
+    # Not enough room in Windows: the restart is NOT armed.
+    outside_hash "$LOOP" > /srv/outside.before
+    R=$(run_answer "$LOOP" FERRY_ROOM_BYTES=1000000)
+    if printf '%s\n' "$R" | grep -qx 'result=failed' && printf '%s\n' "$R" | grep -qx 'code=4'; then
+        ok "no room in Windows: the answer is failed (4)"; else bad "no room in Windows: the answer is failed (4)"; printf '%s\n' "$R" | sed 's/^/  | /'; fi
+    if armed; then bad "...and Windows was NOT put back (nothing armed)"; else ok "...and Windows was NOT put back (nothing armed)"; fi
+else
+    bad "could not build the NTFS volume"
+fi
+if [ -n "$LOOP" ]; then
+    # A Windows that was not shut down properly (Fast Startup): refused before it is touched.
+    make_windows "$LOOP" hibernated
+    outside_hash "$LOOP" > /srv/outside.before
+    R=$(run_answer "$LOOP")
+    if printf '%s\n' "$R" | grep -qx 'code=3'; then ok "a hibernated Windows: the answer is failed (3)"
+    else bad "a hibernated Windows: the answer is failed (3)"; printf '%s\n' "$R" | sed 's/^/  | /'; fi
+    if armed; then bad "...and Windows was NOT put back"; else ok "...and Windows was NOT put back"; fi
+    ntfs-3g -o ro "$LOOP" "$MP" 2>/dev/null
+    if [ -d "$MP/users/Bob/From AurOS/Pictures" ]; then bad "...and nothing was written to it"; else ok "...and nothing was written to it"; fi
+    umount "$MP" 2>/dev/null
+    losetup -d "$LOOP"; LOOP=""
 fi
 rm -f "$IMG"
 

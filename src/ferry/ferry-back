@@ -1,0 +1,125 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  ferry-back — the way back: her AurOS files go into Windows.
+#
+#  "Put Windows back" removes AurOS, and with it every file she saved
+#  there since she began using it. (Ferry brought her Windows files
+#  across; this brings her new ones back.) Before anything is removed,
+#  her Documents, Pictures, Desktop, Downloads, Music and Videos are
+#  copied into her Windows user folder, under "From AurOS":
+#
+#      C:\Users\<her>\From AurOS\Pictures\...
+#
+#  - the same copier as the way in (ferry-copy --to-windows), so the same
+#    promises: as her and never through a link, nothing in Windows is
+#    overwritten (a name that is taken becomes "name (from AurOS)"), no
+#    half file is ever visible, honest progress in plain words;
+#  - names are made safe for Windows, and names that differ only in
+#    capitals are kept apart;
+#  - the free space is checked first. Not enough room copies NOTHING
+#    (exit 4) and says how much is needed;
+#  - the Windows drive is mounted read-write for this and nothing else
+#    (ferry-common.sh: mount_rw), and a hibernated or dirty drive is
+#    refused (exit 3) before it is touched;
+#  - a "Read me.txt" in "From AurOS" tells her, in plain words, what is
+#    there and anything that could not be copied.
+#
+#  Which Windows user: the one the files were brought from (recorded by
+#  ferry-files), else the only one on the computer; with several and no
+#  record, the shared folder C:\Users\Public.
+#
+#    ferry-back [--root DIR] [--device DEV] [--home DIR] [--owner USER]
+#
+#  exit 0 all saved · 2 some could not be · 3 refused (hibernated or
+#  dirty drive) · 4 not enough room · 1 failed
+# ═══════════════════════════════════════════════════════════════════
+set -eu
+. "$(dirname "$0")/ferry-common.sh"
+
+while [ $# -gt 0 ]; do
+    common_opt "$@"
+    if [ "${_consumed:-0}" -gt 0 ]; then shift "$_consumed"; continue; fi
+    case $1 in
+        -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) die "unknown option '$1'" ;;
+    esac
+done
+
+[ -n "$FERRY_ROOT" ] || die "ferry-back needs the Windows drive (--root)"
+stage_begin back
+require_clean_volume "$FERRY_ROOT" "$FERRY_DEV"
+resolve_target
+[ -n "$FERRY_OWNER" ] || die "no AurOS user whose files to save (pass --owner NAME)"
+
+# Where in Windows.
+_who=${FERRY_WINUSER:-}
+[ -n "$_who" ] || _who=$(cat "$FERRY_STATE/winuser" 2>/dev/null || true)
+_base=""
+if select_profile "$_who" 2>/dev/null; then
+    _base=$_WIN_PROFILE_DIR
+else
+    _base=$(path_ci "$FERRY_ROOT" "Users/Public" 2>/dev/null || true)
+fi
+[ -n "$_base" ] && [ -d "$_base" ] || die "no Windows user folder to save into"
+_into="$_base/From AurOS"
+say "saving $FERRY_OWNER's files into '${_into#"$FERRY_ROOT"/}'"
+
+# One job per folder she has anything in.
+set --
+while IFS='|' read -r _label _val _xdg _def; do
+    [ -n "$_label" ] || continue
+    _src=$(xdg_dir "$_xdg" "$_def")
+    [ -e "$_src" ] || [ -L "$_src" ] || continue
+    if [ -L "$_src" ] || [ ! -d "$_src" ]; then
+        note back blocked "$_label" \
+            "This is a shortcut to somewhere else, not a folder, so AurOS did not follow it. Copy it into Windows by hand."
+        _bad=1
+        continue
+    fi
+    [ -n "$(as_her find "$_src" -mindepth 1 -print -quit 2>/dev/null)" ] || continue
+    set -- "$@" --job "$_label" "$_src" "$_into/$_label"
+done <<EOF2
+$FERRY_FOLDERS
+EOF2
+_bad=${_bad:-0}
+
+RC=0
+if [ $# -gt 0 ]; then
+    # Files an editor or the desktop leaves about; never hers.
+    _skips="--skip .~lock.*# --skip .directory --skip-dir .Trash-* --skip-dir .thumbnails"
+    # shellcheck disable=SC2086
+    ferry-copy $(copy_as) --state "$FERRY_STATE" --stage back --to-windows $_skips \
+        $([ "$FERRY_DRYRUN" = 1 ] && echo --dry-run) "$@" || RC=$?
+    case "$RC" in 0|2|4) : ;; *) stage_fail back "ferry-copy exit $RC"; RC=1 ;; esac
+else
+    say "no files of hers in AurOS to save"
+fi
+[ "$_bad" = 0 ] || [ "$RC" != 0 ] || RC=2
+
+# Her note in Windows: what is there, and what is not.
+if [ "$FERRY_DRYRUN" = 0 ] && [ "$RC" != 4 ] && [ $# -gt 0 ]; then
+    _led="$FERRY_STATE/report.d/back-copy.tsv"
+    {
+        printf 'These are the files you saved while you used AurOS.\r\n'
+        printf 'They were copied here when you put Windows back.\r\n\r\n'
+        printf 'Your Documents, Pictures, Desktop, Downloads, Music and Videos\r\n'
+        printf 'are in the folders beside this note.\r\n'
+        _miss=$( { cat "$_led" "$FERRY_STATE/report.d/back.tsv"; } 2>/dev/null |
+            awk -F'\t' '$2 == "blocked" || $2 == "skipped" { print "  " $3 ": " $4 }')
+        if [ -n "$_miss" ]; then
+            printf '\r\nThese could not be copied:\r\n'
+            printf '%s\n' "$_miss" | sed 's/$/\r/'
+        fi
+        _moved=$(cat "$_led" 2>/dev/null | awk -F'\t' '$2 == "partial" { print "  " $3 ": " $4 }')
+        if [ -n "$_moved" ]; then
+            printf '\r\nThese were saved under another name:\r\n'
+            printf '%s\n' "$_moved" | sed 's/$/\r/'
+        fi
+    } | as_her sh -c 'mkdir -p "$1" && cat > "$1/Read me.txt"' sh "$_into" ||
+        warn "could not write the note in $_into"
+fi
+
+_n=$(awk -F'\t' '$2 == "back" && ($3 == "copy" || $3 == "collision")' "$FERRY_STATE/manifest.tsv" 2>/dev/null | wc -l | tr -d ' ')
+say "back: $_n file(s) saved in Windows"
+if [ "$RC" = 0 ]; then stage_done back "$_n files"; else stage_fail back "exit $RC"; fi
+exit "$RC"

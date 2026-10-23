@@ -27,16 +27,20 @@ wins and this file is the bug.
 These are not aspirations. Each is enforced in code and checked by the
 test suite, and each maps to a hard requirement of the product.
 
-1. **The Windows partition is mounted read-only, always.** There is no
-   code path in Ferry that mounts it any other way. `mount_ro` passes
-   `ro` as both a driver option and a mount flag and then re-reads
-   `/proc/mounts` to confirm the kernel agrees, unmounting again if it
-   does not. The test suite snapshots every file on the source volume
-   before the stages run and asserts not one byte, size or mtime changed
-   after.
+1. **The way in only ever reads the Windows drive.** The partition is
+   mounted read-only (`mount_ro` passes `ro` as both a driver option and
+   a mount flag, then checks the kernel's own `/proc/mounts` options
+   column and unmounts again if it disagrees), sources are opened
+   `O_RDONLY`, and no link on the Windows side is ever followed. The test
+   suite snapshots every file on the source volume before the stages run
+   and asserts not one byte, size or mtime changed after. **The single
+   exception is the way back** (below): when she asks to put Windows
+   back, her new AurOS files are first copied into Windows. It is the
+   only caller of `mount_rw` (a test checks that), it uses ntfs-3g
+   without `force`, and a hibernated or dirty drive is refused first.
 
 2. **A hibernated or dirty volume is refused, out loud, with the fix.**
-   Not because we might corrupt it — we never write to it — but because
+   Not because we might corrupt it — the way in never writes to it — but because
    a hibernated volume is *stale*: the newest copy of the user's work is
    inside `hiberfil.sys`, not in the files. Importing from it copies
    yesterday's spreadsheet and calls it today's. Windows 8+ "Fast
@@ -49,24 +53,36 @@ test suite, and each maps to a hard requirement of the product.
 
 3. **Every operation is idempotent and resumable.** First boot can be
    interrupted by a flat battery or an impatient user. A re-run must not
-   duplicate, must not skip, must not overwrite. Two mechanisms provide
-   this: stages record their own completion (`ferry run` skips finished
-   ones), and within a stage `safe_copy` is content-aware (same size and
-   mtime ⇒ already done) and writes through a `.ferrypart` temp so a
-   half-copy never exists at the destination.
+   duplicate, must not skip, must not overwrite. Stages record their own
+   completion (`ferry run` skips finished ones), and within a stage the
+   copier (`ferry-copy`) recognises a file already brought across (same
+   size and mtime) and writes through a hidden `.ferrypart-*` temporary
+   that is renamed into place only after a batch has been flushed to the
+   disk, so a half-copy never exists at the destination; leftovers of a
+   cut-off run are removed on the next one.
 
-4. **Never overwrite a destination without recording it.** If something
-   already sits where an imported file would go, Ferry keeps *both* — the
-   Windows copy lands beside it as `name (from Windows).ext` — and writes
-   a collision row to the manifest and the report. We never choose which
-   of two files the user meant to keep. `safe_copy` is the only function
-   allowed to create a file in the user's home, so this rule cannot be
-   bypassed by a careless stage.
+4. **Never overwrite a destination without recording it, and never write
+   as root into her home.** If something already sits where an imported
+   file would go, Ferry keeps *both* — the Windows copy lands beside it as
+   `name (from Windows).ext`, then `(from Windows 2)` — via
+   `renameat2(RENAME_NOREPLACE)`, and writes the row to the manifest and
+   the report. Root opens the Windows folders and Ferry's own records,
+   then `ferry-copy` becomes her (`setresuid`, checked) before it touches
+   her home, so a symlink she planted at `~/Pictures` gains nothing. No
+   path that comes out of the registry may contain `..` or pass through a
+   link (`path_ci` refuses both), and `user-dirs.dirs` is read as her and
+   obeyed only inside her home.
 
-5. **Progress is reportable.** Ferry runs behind a UI. Each stage writes
-   a JSON progress line to `$FERRY_STATE/state/<stage>.progress` (and
-   appends to `$FERRY_PROGRESS` when set), so the UI polls a file rather
-   than speaking a protocol to a daemon.
+5. **Progress is honest and in plain words.** Every folder is walked
+   first, so the total is known before the first byte moves, and the bar
+   is by bytes (plus a fixed cost per file), not by file count. About once
+   a second the copier says one plain line (`Copying your Pictures: 1,200
+   of 5,000 files. About 4 minutes left.`; `Saving your Pictures in
+   Windows: …` on the way back) on `$FERRY_PLAIN_FD`, and a JSON line in
+   `$FERRY_STATE/state/<stage>.progress` for anything that wants numbers.
+   `ferry run --plain` / `ferry back --plain` print only those sentences;
+   everything else goes to `$FERRY_STATE/ferry.log`. No file name ever
+   reaches her screen.
 
 6. **What could not migrate is a feature, not an apology.** The final
    report reads from a ledger every stage writes as it works, and states
@@ -77,53 +93,60 @@ test suite, and each maps to a hard requirement of the product.
 
 ---
 
-## The three findings that shape everything
+## The findings that shape everything
 
-From the research (`migration.md` §"The three findings"), because they
-explain why Ferry is shaped the way it is:
+From the research (`migration.md`), because they explain why Ferry is
+shaped the way it is — and what the owner decided about them:
 
 - **DPAPI is the gatekeeper.** Windows encrypts user secrets — browser
   passwords, cookies, saved credentials — with a key derived from the
-  user's *Windows logon password*. Without that password, those secrets
-  are mathematically unrecoverable from an offline disk. A Windows Hello
-  PIN does not help; it is a different protector.
+  user's *Windows logon password*. Without that password they are
+  unrecoverable from an offline disk.
 
-- **Two things escape DPAPI's user layer.** WiFi PSKs are encrypted
-  under the *machine* DPAPI key, whose protector lives in on-disk hives,
-  so they are recoverable offline with no user password. And Firefox
-  does not use DPAPI at all — its login key is self-contained in
-  `key4.db` — so the entire Firefox profile migrates verbatim.
+- **Two things escape DPAPI's user layer — and Ferry deliberately takes
+  neither.** Wi-Fi keys (machine DPAPI) and Firefox's saved logins
+  (`key4.db`) could be brought across. **Saved passwords never cross**:
+  Ferry does not copy or decrypt any password, key or card, whoever could
+  have made it work. Her current Wi-Fi comes across through the
+  installer's own visible tick box (D10), not here.
 
-- **Chromium passwords need the old Windows password.** Chrome/Edge/Brave
-  wrap their key in user-context DPAPI (plus an App-Bound SYSTEM layer on
-  recent versions). The SYSTEM layer strips offline; the user layer does
-  not. Migrating them requires prompting for the previous password, and
-  the UX must be honest that it is optional.
+- **Chromium passwords need the old Windows password**, and are not
+  attempted for the same reason. Chromium *bookmarks* are plain JSON and
+  do come.
+
+- **Firefox 67+ ignores a profile that is merely marked default.** Each
+  install has its own `[Install<hash>]` section; without one, Firefox
+  makes a new empty profile (found by running Firefox 158). See
+  "Her browser" below.
 
 ---
 
 ## Architecture
 
-Ferry is POSIX shell plus two small C helpers, matching the house style
-(`src/aurora/aurora`, `src/common/theme.c`): dense comments that explain
-*why*, `_`-prefixed locals because busybox `ash` has no lexical scope,
-no dependency beyond busybox and awk.
+Ferry is POSIX shell plus a handful of small C helpers, matching the
+house style (`src/aurora/aurora`, `src/common/theme.c`): dense comments
+that explain *why*, `_`-prefixed locals because busybox `ash` has no
+lexical scope, no dependency beyond busybox and awk. `install.sh` is the
+one list of what ships.
 
 ```
-  ferry                orchestrator: mounts ro, runs stages in spec order,
-                       resumes, prints the report
+  ferry                orchestrator: mounts, runs stages in spec order,
+                       resumes, writes the report and the done-signal
   ferry-detect         READ-ONLY discovery -> JSON for the UI
-  ferry-wifi       (1) WiFi profiles  -> NetworkManager keyfiles
+  ferry-wifi       (1) lists her Wi-Fi networks by name (never a key)
   ferry-settings   (2) timezone/locale/keyboard/wallpaper/…
-  ferry-files      (3) known folders  -> XDG dirs (placeholder-aware)
-  ferry-firefox    (4) whole Firefox profile -> ~/.mozilla
-  ferry-report         the "what we could NOT migrate" report
+  ferry-files      (3) known folders -> XDG dirs (placeholder-aware)
+  ferry-firefox    (4) her Firefox profile, and Edge/Chrome/Brave bookmarks
+  ferry-back           THE WAY BACK: her AurOS files -> Windows
+  ferry-report         the "what could NOT migrate" report (+ --plain)
   ferry-hive           registry access: hivex if present, else our reader
-  ferry-dpapi          the offline-DPAPI call-out (interface only; see below)
-  ferry-common.sh      the shared rules: read-only mount, volume health,
-                       idempotent copy, path/registry/known-folder logic
-  hivepeek.c           a from-scratch read-only `regf` hive parser
-  winattr.c            NTFS-attribute / OneDrive-placeholder classifier
+  ferry-common.sh      the shared rules: mounts, volume health, paths,
+                       registry / known-folder logic, as_her, the signal
+  ferry-copy           (C) the copier, one process for all folders
+  ferry-winattr        (C) NTFS-attribute / OneDrive-placeholder classifier
+  ferry-hivepeek       (C) a from-scratch read-only `regf` hive parser
+  ferry-chromemarks    (C) Chromium Bookmarks JSON -> bookmarks.html
+  ferry-ffhash         (C) the name Firefox gives an install in profiles.ini
   data/windowsZones.tab  CLDR Windows-timezone -> IANA mapping
   data/klid.tab          Windows keyboard-layout-id -> XKB mapping
 ```
@@ -132,29 +155,28 @@ The order of the stages is load-bearing and comes straight from the spec
 (§8): **WiFi first**, because getting online is what makes every later
 re-sync — mail, browser accounts, OneDrive — possible at all.
 
-### Why two C helpers, and only two
+### Why C where it is
 
 Everything that *can* be shell *is* shell, because shell is auditable by
-the people who audit this project. Two jobs cannot be:
+the people who audit this project. What cannot be:
 
+- **Copying fast and as her.** The shell loop this replaced cost ~26 ms
+  per file (5,000 photos took 266 s on homebase; `ferry-copy` takes 3.6 s
+  for the same tree plus ten 20 MB videos). It is one process: plan the
+  totals, drop to her uid, copy through temporaries, flush in batches.
 - **Parsing a registry hive.** A `regf` file is a binary B-tree. `hivex`
-  (`hivexget`/`hivexsh`) is the mature tool and Ferry prefers it when it
-  is installed — but AurOS is built from source and cannot assume
-  libhivex is present on a first boot, so `hivepeek.c` is a dependency-
-  free fallback that produces identical output. It is deliberately
-  minimal: read-only, no LOG replay, no checksum enforcement (a hive
-  lifted from a machine that used Fast Startup has stale sequence numbers
-  and is still perfectly readable). It parses hostile input as root, so
-  every access is bounds-checked and every list walk has a visit budget;
-  the test suite fuzzes it with thousands of corrupted hives under
-  AddressSanitizer without a crash.
+  is preferred when installed; `hivepeek.c` is the dependency-free
+  fallback. Read-only, bounds-checked, every list walk has a visit
+  budget, and a hostile cell size cannot overflow (it used to negate
+  `INT32_MIN`).
+- **Classifying an NTFS file** as real data or a cloud placeholder
+  (`winattr.c`; see "The OneDrive trap").
+- **Reading Chromium's bookmarks** (`chromemarks.c`): JSON from a disk we
+  did not build, parsed as her, with caps and escaping.
+- **Naming a Firefox install** (`ffhash.c`): CityHash64 of the UTF-16
+  folder holding the binary, checked against a real Firefox.
 
-- **Classifying an NTFS file as real data or a cloud placeholder.** This
-  needs the NTFS attribute word and the reparse tag, which ntfs-3g and
-  the ntfs3 driver expose as extended attributes. `winattr.c` reads them
-  and applies the decision below. See "The OneDrive trap".
-
-Both helpers accept a test seam (`FERRY_WINATTR_MAP`, `user.*` xattrs,
+The classifier and the hive reader accept a test seam (`FERRY_WINATTR_MAP`, `user.*` xattrs,
 `FERRY_HIVE_BACKEND`) so the whole engine can be tested on an ordinary
 ext4 tree with no NTFS image and no root — which is exactly what
 `tests/run.sh` does.
@@ -163,32 +185,20 @@ ext4 tree with no NTFS image and no root — which is exactly what
 
 ## What migrates
 
-### WiFi (`ferry-wifi`) — the automatic win
+### Wi-Fi (`ferry-wifi`) — listed, never copied
 
-Parses every `ProgramData/Microsoft/Wlansvc/.../*.xml`, maps
-authentication to a NetworkManager `key-mgmt` (open → `none`, WPA/WPA2-PSK
-→ `wpa-psk`, WPA3 → `sae`), and writes a `.nmconnection` keyfile at mode
-`0600 root:root` (NetworkManager ignores anything looser) with a
-deterministic UUID so a re-run updates rather than duplicates. Handles
-hidden networks, the hex SSID form, and open networks. Fully implemented
-and tested.
-
-The **PSK** is the one caveat. A cleartext key (`<protected>false`) is
-imported directly. A DPAPI-encrypted key is handed to a single isolated
-call-out, `dpapi_decrypt` → `ferry-dpapi`/`$FERRY_DPAPI_HELPER`. **That
-decryption is not implemented in this build** (see below). When no helper
-answers, Ferry still creates the connection — correctly, with the right
-security type — but *without* a saved password, and reports the network
-so the user types the password once on first connect. It never writes a
-connection with a wrong or empty PSK and pretends it works.
-
-Enterprise **802.1X/EAP** networks are reported, never faked: their
-credentials are per-user DPAPI and the user re-enters them.
+Parses every `ProgramData/Microsoft/Wlansvc/.../*.xml` and lists the
+networks Windows knew **by name** in the report ("each will ask for its
+password once"). It writes no NetworkManager file and decrypts nothing:
+saved passwords never cross (above). Her *current* network comes across
+through the installer's tick box. Hidden networks, hex-only SSIDs and
+enterprise (802.1X) networks are all listed.
 
 ### User files (`ferry-files`) — the one that must not lie
 
 Copies Desktop, Documents, Downloads, Pictures, Music and Videos to the
-XDG directories. Two things make this more than a `cp -r`:
+XDG directories, through one `ferry-copy` run so the progress she sees
+covers all six. Two things make this more than a `cp -r`:
 
 **It resolves redirection.** It never assumes `\Users\<name>\Documents`.
 It reads each folder's real location from
@@ -210,7 +220,9 @@ drive letter that is not part of the migration is reported as
 
 Idempotent, resumable, and collision-safe as described in the governing
 rules. Windows junk (`desktop.ini`, `Thumbs.db`) is filtered so the "what
-came across" count stays trustworthy.
+came across" count stays trustworthy. Names longer than 255 bytes are
+shortened at a character boundary and reported; odd names (newlines,
+tabs, quotes, leading dashes, CJK) come across exactly.
 
 ### The OneDrive trap — the #1 invisible data-loss path
 
@@ -218,7 +230,12 @@ OneDrive Files-On-Demand leaves files that look completely normal from
 Linux: right name, right size in `ls`, right modification time. They
 contain **nothing** — the bytes are on a server, and the directory entry
 is an NTFS reparse point with tag `IO_REPARSE_TAG_CLOUD (0x9000001A)` and
-the `OFFLINE` / `RECALL_ON_DATA_ACCESS` attributes set. Copying one
+the `OFFLINE` / `RECALL_ON_DATA_ACCESS` attributes set. **The tag alone
+does not mean "not here"**: OneDrive keeps its cloud tag on files that
+*are* on the computer ("Always keep on this device"), and an earlier
+version of this classifier skipped every file of a OneDrive-backed
+Documents folder — Windows 11's default — because of it. Only the
+attributes say whether the bytes are here. Copying one
 yields a stub or an I/O error, *not* the file. On a migration that is
 silent, invisible data loss: the filename appears in the new Documents
 folder and the user believes the photo is there.
@@ -228,11 +245,12 @@ the only thing allowed to say "hydrated", and it is built to refuse the
 optimistic answer:
 
 ```
-  reparse tag is a cloud tag ............... placeholder   (report, don't copy)
-  OFFLINE / RECALL_* / UNPINNED attr set ... placeholder   (report, don't copy)
+  OFFLINE / RECALL_ON_* attr set ........... placeholder   (report, don't copy)
   EFS-encrypted attr set ................... encrypted     (report, can't read)
-  other reparse point (junction/symlink) ... reparse       (report, don't follow)
-  size > 0 but zero blocks allocated ....... suspect       (copy AND flag to verify)
+  name-surrogate reparse (junction/link) ... reparse       (report, don't follow)
+  size > 0 but zero blocks allocated ....... suspect       (read it: any non-zero byte
+                                                            and it is real; all zeros
+                                                            and it was never here)
   size == 0 ................................ hydrated       (legitimately empty)
   blocks allocated ......................... hydrated       (bytes are on disk)
   no attribute source, can't tell .......... unknown        (report, don't assume)
@@ -247,18 +265,34 @@ have been**, with the one-line fix ("right-click in OneDrive → Always
 keep on this device, then re-run"). Nothing is ever silently skipped and
 nothing is ever silently copied as a stub.
 
-### Firefox (`ferry-firefox`) — the clean win
+### Her browser (`ferry-firefox`)
 
-Firefox migrates completely and offline with no Windows password, so the
-strategy is not to parse anything — it is to copy the whole profile
-folder to `~/.mozilla/firefox/`. Bookmarks, history, open tabs, cookies
-*and saved passwords* all work verbatim, because Firefox on Linux reads
-the identical files. Every profile in `profiles.ini` is enumerated (a
-second profile is a second person's bookmarks). Caches, stale locks and
-`compatibility.ini` (which pins the profile to the old binary's path) are
-dropped from the copy; everything else is byte-for-byte. The only
-possible caveat, noted in the report, is a Primary Password — the logins
-still migrate, and Firefox asks for it once.
+Two sources, one destination (Firefox on AurOS):
+
+- **Her Windows Firefox profile** is copied (caches, locks,
+  `compatibility.ini` and every password/card file are dropped).
+- **Her Edge / Chrome / Brave bookmarks** (plain JSON; the browser's
+  passwords never come) become the `bookmarks.html` Firefox imports; her
+  main browser's bar is Firefox's toolbar.
+
+What was found by running Firefox 158 (`tests/realfirefox.sh`):
+
+1. Profiles live in `~/.config/mozilla/firefox` (Firefox 147+), or in
+   `~/.mozilla/firefox` when that is all there is. Ferry uses the XDG
+   folder if it exists, else the old one.
+2. A profile marked `Default=1` is **ignored**; Firefox makes a new empty
+   one and writes `[Install<hash>]`. So Ferry writes
+   `[Install<hash>] Default=<profile>` (and `[<hash>]` in installs.ini).
+   `<hash>` is CityHash64 of the UTF-16 folder of the firefox binary
+   (`/usr/lib/firefox` → `4F96D1932A9F858E`).
+3. `bookmarks.html` in a never-run profile is imported on first start, once.
+4. `[ProfileN]` numbers must be contiguous or Firefox stops reading.
+
+Policy: Firefox is pointed at the profile from Windows only if she has not
+used Firefox here (or the profile is one an earlier Ferry run made); if
+she has, or it is open, nothing is switched and her bookmarks wait in her
+Home with plain steps. Windows' own profiles.ini and installs.ini are
+never copied.
 
 ### Settings (`ferry-settings`)
 
@@ -306,34 +340,63 @@ machine hit each item, because the honesty is the product.
 | Print & device drivers | hardware/OS-specific | Linux supplies its own |
 | Windows Hello PIN / biometrics | sealed to this PC's TPM | set up again |
 | Outlook `.ost` / Windows Mail store | server caches | re-add the account; it re-syncs |
-| WiFi PSKs (this build) | DPAPI decryption not yet implemented | enter each password once on connect |
+| Saved passwords of any kind (Firefox, Chrome, Edge, Wi-Fi, Windows) | never copied or decrypted, on purpose | websites and networks ask once |
 
 ---
 
-## The DPAPI seam — honest about what is not built
+## The way back — her new files go into Windows first
 
-WiFi PSKs are, per the research, recoverable offline **without** the
-user's password, because they are machine-DPAPI encrypted and the
-protecting `DPAPI_SYSTEM` LSA secret is in the on-disk `SECURITY` and
-`SYSTEM` hives. Ferry implements everything up to the crypto — finding
-the profiles, parsing the XML, mapping to NetworkManager, writing the
-keyfiles — and isolates the decryption itself behind one call-out so it
-can be filled in without touching any of that.
+"Put Windows back" removes AurOS, and with it everything she saved there
+since she began. So `answer.sh`'s `putback` request runs `ferry back`
+**before anything is armed** (the restore itself runs later, from a
+separate staging environment that cannot see her decrypted home):
 
-`ferry-dpapi` is currently a **stub that fails loudly** (exit 75) rather
-than a helper that fails silently. Its header documents exactly what a
-real implementation must do (read the SYSKEY from `SYSTEM`, decrypt the
-LSA secrets in `SECURITY` to get `DPAPI_SYSTEM`, unwrap the SYSTEM DPAPI
-master key from `Windows\System32\Microsoft\Protect\S-1-5-18\…`, then
-decrypt the blob — what `secretsdump -system -security` does offline).
-Until it exists, WiFi networks import without their saved password and
-are flagged in the report. An external, complete implementation can be
-dropped in via `$FERRY_DPAPI_HELPER` with no other change; the helper
-seam is tested end-to-end with a mock.
+```
+  C:\Users\<her>\From AurOS\Documents | Pictures | Desktop | Downloads | Music | Videos
+                              Read me.txt   (what is there, and what could not be copied)
+```
 
-This is the one place the design deliberately ships an interface instead
-of an implementation, and it is called out here, in the code comments,
-and in the report, rather than hidden.
+- the same copier (`ferry-copy --to-windows`), so the same promises: as
+  her, no link followed, nothing in Windows overwritten (`name (from
+  AurOS).ext`), no half file ever visible, plain progress;
+- names are made safe for Windows (`: * ? " < > |` and control characters
+  → `_`, no trailing dot/space, `CON`/`NUL`/`COM1`… prefixed, bytes that
+  are not text replaced), and names that differ only in capitals are kept
+  apart (Windows sees one name);
+- the free space is checked before a byte moves: not enough room copies
+  **nothing** (exit 4) and says how much is needed;
+- the drive is opened for writing only for this (`mount_rw`, ntfs-3g, as
+  her uid); a hibernated or dirty drive is refused first (exit 3);
+- which Windows user: the one `ferry-files` recorded
+  (`$FERRY_STATE/winuser`), else the only one, else `C:\Users\Public`.
+
+Exit codes: `0` all saved · `2` some could not be · `3` Windows was not
+shut down properly · `4` not enough room · `5` the drive could not be
+opened · `1` failed. `answer.sh` arms the restart only on `0`; any other
+answers `result=failed` with a plain `note=` and `code=N`, and Windows is
+not put back.
+
+**The completion signal** (for the desktop, which asks "Can you see your
+photos?" only after a copy has finished): `ferry run` and `ferry back`
+remove `/run/auros-answer/ferry.done` when they start and write it, whole,
+when they end:
+
+```
+  kind=import|back
+  result=ok|partial|refused|noroom|unopened|failed
+  files=<copied this run>
+  at=<UTC time>
+```
+
+Its absence means "not finished". While running, the newest line of
+`/run/auros-answer/import.log` (import) or `putback.log` (back) is the
+plain sentence to show.
+
+Proven by `tests/sandbox.sh` scenario 3: `answer.sh`'s `putback` under
+every property of `auros-answer.service`, on a real NTFS volume — the
+photo saved in AurOS is on Windows byte for byte, Windows' own files are
+not overwritten, everything else on the volume is unchanged, and with no
+room or a hibernated drive nothing is armed.
 
 ---
 
@@ -346,13 +409,16 @@ Everything Ferry knows lives under `$FERRY_STATE` (default
   state/<stage>.status     running | done | failed (+ timestamp)
   state/<stage>.progress   latest JSON progress line, for the UI
   report.d/<stage>.tsv     the ledger: category, severity, item, detail
+                           (<stage>-copy.tsv: the copier's, rewritten each run)
+  ferry.log                Ferry's own chatter when run with --plain
+  winuser                  the Windows user her files came from
   manifest.tsv             every destination byte written, incl. collisions
   suggested.conf           settings suggestions for the welcome UI
 ```
 
 `ferry run` after a crash reads the status files, skips finished stages,
 and re-runs a partial one — which copies only what is missing, because
-`safe_copy` is content-aware. The manifest is the single source of truth
+`ferry-copy` recognises files already brought across. The manifest is the single source of truth
 for "what did we create", including the files we declined to overwrite;
 "never overwrite without recording" is enforced by making the recording
 the only way to write.
@@ -363,7 +429,8 @@ the only way to write.
 
 ```
   ferry detect [--device DEV | --root DIR] [--human]   find Windows (read-only)
-  ferry run                                             mount, import, report
+  ferry run [--auto] [--plain]                          mount, import, report
+  ferry back [--plain]                                  the way back (see above)
   ferry wifi | files | firefox | settings [opts]        one stage
   ferry report [--json | --brief]                       the report
   ferry status                                          where a resume picks up
@@ -382,31 +449,42 @@ guess between two real accounts), `--home DIR`, `--owner USER`,
 Ferry cannot be tested against a real Windows disk in CI, so
 `tests/mkfakewin.sh` builds a synthetic NTFS-like tree containing every
 trap the real world has — a Documents folder redirected into OneDrive,
-cloud placeholders mixed with hydrated files, a Videos folder on a second
-drive, a wrong-case `users` directory, a DPAPI-protected WiFi PSK next to
-a cleartext and an enterprise one, and a destination collision — and
-`tests/mkhive.py` writes real binary `regf` hives. `tests/run.sh` asserts
-Ferry does the honest thing with each (42 checks, all passing), including
-the read-only guarantee (a before/after snapshot of the whole source
-volume) and the safety gate (a hibernated volume is refused). The C
-helpers build warning-clean under `-Wall -Wextra` and pass
-AddressSanitizer against thousands of corrupted hives.
+cloud placeholders mixed with hydrated files (one that keeps the cloud
+tag), a Videos folder on a second drive, a wrong-case `users` directory,
+odd file names, a destination collision, real Edge/Chrome `Bookmarks` —
+and `tests/mkhive.py` writes real binary `regf` hives.
 
 ```
-  make            build the two C helpers into build/
-  make check      shellcheck-syntax every script + run the suite
+  make; sh tests/run.sh       the suite as a user (read-only guarantee,
+                              safety gate, hostile volume and home, odd
+                              names, progress, plain words, bookmarks,
+                              the way back)
+  sh tests/asroot.sh          the same as root, in a docker container:
+                              root never writes into her home, a symlink
+                              she planted gains nothing
+  sh tests/mutants.sh         puts each bug back and checks the NAMED test
+                              goes red (also `asroot.sh mutants`)
+  sh tests/insystemd.sh       inside auros-answer.service's real sandbox,
+                              on real NTFS volumes: the import, and
+                              "Put Windows back" with the photo check
+  sh tests/infirefox.sh       Mozilla's Firefox 158 reads the result
+  sh tests/bench.sh 5000 10   speed on a large fixture
+  sh fuzz/run.sh 120          libFuzzer + ASan/UBSan (clang)
 ```
-
----
 
 ## Known limitations
 
-- **SYSTEM-DPAPI WiFi PSK decryption is not implemented** (the interface
-  is; see the DPAPI seam). This is the single biggest gap versus the
-  spec's "fully automatable, no prompt" ambition for WiFi.
-- **Chromium password migration is not implemented.** The spec describes
-  the old-password prompt path; this build reports the limitation and
-  does not prompt.
+- **Saved passwords never come across** — by decision, not by gap.
+- **The way back needs the Windows drive to be openable.** A BitLocker
+  drive that is locked cannot be written by ntfs-3g, so "Put Windows
+  back" is stopped (exit 5) rather than removing AurOS with her files in
+  it. The desktop needs a way to offer "save them to a memory stick
+  instead" or "put Windows back anyway" — that is a decision for it.
+- **Paths longer than 260 characters** that AurOS allows are saved but
+  Explorer cannot open them.
+- **`ffhash` vouches only for install folders up to 32 characters**
+  (`/usr/lib/firefox`, `/opt/firefox`); a longer one is refused and her
+  bookmarks wait in her Home instead.
 - **Mail (.pst → MBOX) and the application inventory are not
   implemented** as importing stages. `ferry-detect` counts `.pst`/`.ost`
   and reports them; conversion and the app-equivalence list are Forge's

@@ -405,6 +405,55 @@ is_ro_mount() {
 }
 unmount_ro() { umount "$1" 2>/dev/null || true; }
 
+# THE ONE READ-WRITE MOUNT, and why it is allowed. Everything Ferry does
+# on the way in only reads the Windows drive. "Put Windows back" is the
+# other direction: it removes AurOS, and with it everything she saved
+# there, so first her files are copied INTO Windows ("ferry back", and
+# nothing else ever calls this -- tests/run.sh checks that). It is
+# ntfs-3g, the mature NTFS writer, without `force`: a hibernated, dirty
+# or unclean volume is refused by the driver itself, and require_clean_
+# volume has refused it before that. The files are created as HER
+# (uid/gid below) by ferry-copy, never as root.
+mount_rw() {
+    _dev=$1 _mnt=$2 _u=$3 _g=$4
+    mkdir -p "$_mnt" || return 1
+    if mountpoint -q "$_mnt" 2>/dev/null; then is_ro_mount "$_mnt" && return 1; return 0; fi
+    mount -t ntfs-3g -o "rw,noatime,nosuid,nodev,noexec,uid=$_u,gid=$_g,umask=022" \
+          "$_dev" "$_mnt" 2>/dev/null || return 1
+    if is_ro_mount "$_mnt"; then umount "$_mnt" 2>/dev/null || true; return 1; fi
+    return 0
+}
+
+# ── The completion signal. The desktop asks "Can you see your photos?"
+#    only after the copy has finished, and needs a way to know that
+#    which is not "the log stopped changing". Written when a run is over
+#    (and removed when one starts, so its presence means "finished"):
+#      kind=import|back  result=ok|partial|refused|noroom|unopened|failed
+#      files=N (copied this run, from the manifest)  at=UTC time
+#    in a directory the desktop can read (the answer unit's
+#    /run/auros-answer), mode 0644, replaced whole.
+: "${FERRY_SIGNAL:=/run/auros-answer/ferry.done}"
+signal_clear() { rm -f "$FERRY_SIGNAL" 2>/dev/null || true; }
+signal_done() { # KIND EXIT-CODE [STAGES...]
+    _k=$1 _c=$2; shift 2
+    case "$_c" in
+        0) _res=ok ;; 2) _res=partial ;; 3) _res=refused ;; 4) _res=noroom ;;
+        5) _res=unopened ;; *) _res=failed ;;
+    esac
+    _n=0
+    for _st in "$@"; do
+        _m=$(awk -F'\t' -v s="$_st" '$2 == s && ($3 == "copy" || $3 == "collision")' \
+             "$FERRY_STATE/manifest.tsv" 2>/dev/null | wc -l | tr -d ' ')
+        _n=$((_n + _m))
+    done
+    mkdir -p "$(dirname "$FERRY_SIGNAL")" 2>/dev/null || return 0
+    printf 'kind=%s\nresult=%s\nfiles=%s\nat=%s\n' "$_k" "$_res" "$_n" "$(now)" \
+        > "$FERRY_SIGNAL.new" 2>/dev/null &&
+        chmod 0644 "$FERRY_SIGNAL.new" 2>/dev/null &&
+        mv -f "$FERRY_SIGNAL.new" "$FERRY_SIGNAL" 2>/dev/null || true
+    return 0
+}
+
 # A Windows install is exactly one thing: System32 under a Windows dir.
 # Not the presence of `Users`, which every disk imaged from a backup has.
 is_windows_root() {

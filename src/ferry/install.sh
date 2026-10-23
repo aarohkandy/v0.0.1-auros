@@ -22,7 +22,7 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 
 SCRIPTS="ferry ferry-detect ferry-wifi ferry-files ferry-firefox \
-ferry-settings ferry-report ferry-hive ferry-common.sh"
+ferry-settings ferry-report ferry-hive ferry-back ferry-common.sh"
 # name:source
 HELPERS="ferry-hivepeek:hivepeek.c ferry-winattr:winattr.c ferry-copy:copy.c \
 ferry-chromemarks:chromemarks.c ferry-ffhash:ffhash.c"

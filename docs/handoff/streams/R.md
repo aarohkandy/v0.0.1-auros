@@ -123,21 +123,68 @@ gate checks every ELF in /usr/lib/ferry).
    if she has, or it is open, nothing is switched and Edge's file goes
    to her Home with plain steps. Windows profiles.ini/installs.ini are
    never copied. Suite 125 user / 131 root.
-4. Commit 5 fuzz: `fuzz/{hive,names,marks}.c` + `fuzz/run.sh` are written
-   but NEVER RUN (no crash claims). Run `sh fuzz/run.sh 120` on homebase
-   with the `auros-s3-fuzz` image (clang 18; mount the repo, `docker run
-   --rm -v ... auros-s3-fuzz sh -c 'cd src/ferry && FUZZ_WORK=... sh
-   fuzz/run.sh 120'`). hivepeek's INT32_MIN negation is already fixed in
-   the tree (finding 7); stream S3 also has `fuzz_hive.c` (bd946e9) —
-   findings go to R. Regression inputs → `tests/regress/hive-*` (the
-   runner already seeds from them) plus a suite step that feeds every
-   file there to `ferry-hivepeek` and expects exit 0/1/2, never a signal;
-   and an ASan build of hivepeek over corrupted hives in the suite
-   (FERRY.md claims one; none exists).
-5. `tools/nmtest.sh`: drop its Ferry Wi-Fi section (emitter deleted on
+4. DONE (needs mutants confirmed) REVERSE FERRY — lead's I-01/E-01:
+   "Put Windows back" no longer deletes what she saved in AurOS.
+   `ferry back [--plain]` (`ferry-back` + `ferry-copy --to-windows`)
+   copies her AurOS Documents/Pictures/Desktop/Downloads/Music/Videos
+   into `C:\Users\<her>\From AurOS\<Folder>` (plus `Read me.txt`),
+   from INSIDE AurOS at the moment she asks, because the restore later
+   runs from a staging environment that cannot see her decrypted home.
+   No change in src/aurstage was needed. Hook: `answer.sh` `putback`
+   runs `back_files` after `staging_present` and BEFORE reading the
+   clock/arming; only exit 0 arms the restart, anything else answers
+   `result=failed` + `code=N` + a plain `note=`. Exit codes 0 all saved,
+   2 some not, 3 Windows hibernated/dirty, 4 not enough room (nothing
+   copied), 5 drive could not be opened, 1 failed. Windows-safe names,
+   case-blind collisions (`name (from AurOS).ext`), nothing overwritten,
+   room checked first (`FERRY_ROOM_BYTES` is the test seam), the drive
+   mounted read-write only here (`mount_rw`, ntfs-3g, her uid; a test
+   checks nothing else can). Windows user = `$FERRY_STATE/winuser`
+   (recorded by ferry-files), else the only user, else `Users\Public`.
+   Proof: `tests/sandbox.sh` scenario 3 (27/27 in `tests/insystemd.sh`):
+   the photo saved in AurOS is on a real NTFS volume byte for byte after
+   `answer.sh putback` under every property of the unit; no room /
+   hibernated: nothing armed. Suite 164 user / 170 root.
+   **COMPLETION SIGNAL for stream C (E-01)**: `ferry run` and `ferry back`
+   remove `/run/auros-answer/ferry.done` at start and write it whole at
+   the end: `kind=import|back`, `result=ok|partial|refused|noroom|
+   unopened|failed`, `files=N`, `at=`. Absent = not finished. Progress
+   text while running: newest line of `/run/auros-answer/import.log`
+   (import) or `/run/auros-answer/putback.log` (back). Ask C to show the
+   `note=` from `/run/auros-answer/result` on failure, and to decide what
+   to offer when it fails (see "For the lead").
+5. Fuzz: `fuzz/{hive,names,marks}.c` + `fuzz/run.sh` are written but NEVER
+   RUN (no crash claims). Run `sh fuzz/run.sh 120` on homebase with the
+   `auros-s3-fuzz` image (clang 18; mount the repo, `docker run --rm -v
+   ... auros-s3-fuzz sh -c 'cd src/ferry && FUZZ_WORK=... sh fuzz/run.sh
+   120'`); add `ffhash` and the win_safe/nreg code as harnesses too.
+   hivepeek's INT32_MIN negation is fixed (finding 7); stream S3 also has
+   `fuzz_hive.c` (bd946e9) — findings go to R. Regression inputs →
+   `tests/regress/hive-*` plus a suite step feeding each to
+   `ferry-hivepeek` (exit 0/1/2, never a signal), and an ASan build of
+   hivepeek over corrupted hives in the suite (FERRY.md used to claim
+   one; none exists).
+6. `tools/nmtest.sh`: drop its Ferry Wi-Fi section (emitter deleted on
    purpose in fb90bcd) — another stream's file, smallest edit.
-6. `docs/FERRY.md`: still says passwords and Wi-Fi keys migrate and
-   describes safe_copy; rewrite those sections.
+7. DONE `docs/FERRY.md` rewritten to match the code (passwords, copier,
+   browser, way back, signal, tests).
+
+## For the lead (decisions and risks that are not mine to make)
+
+- **A BitLocker-locked or otherwise unopenable Windows drive blocks "Put
+  Windows back"** (exit 5): the files cannot be saved there, and removing
+  AurOS would delete them. Safe default, but she needs a way out: "save
+  them to a memory stick", or "put Windows back anyway". That is a UI
+  decision (stream C/B) plus a new answer word in aurfirst's request
+  allow-list (`src/aurfirst/request.c`); Ferry exposes everything needed
+  (`code=`, `note=`, `putback.log`).
+- Not enough room in Windows is the next most likely block (the install
+  shrank C:). The note says so; freeing space in Windows is the fix.
+- The first `ferry back` of a large library can take many minutes; the
+  "within the hour" freshness check of the restore is read AFTER the
+  copy (answer.sh `read_asked`) so it does not eat into it.
+- The unit (`auros-answer.service`, stream BT's) now has `ProtectHome=no`
+  and `-/home`; `ProtectHome=read-only` + ReadWritePaths does not work.
 
 ## Measurements (homebase, shared and busy; ext4 on NVMe; `tests/bench.sh 5000 10`)
 

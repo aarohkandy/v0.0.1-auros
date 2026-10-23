@@ -38,21 +38,37 @@
  *     are measured in).
  *
  *    ferry-copy [--as UID:GID] [--state DIR] [--stage NAME] [--dry-run]
- *               [--skip NAME]... [--skip-dir NAME]...
+ *               [--to-windows] [--skip NAME]... [--skip-dir NAME]...
  *               --job LABEL SRC DEST [--job LABEL SRC DEST]...
+ *
+ *  --to-windows is the way back ("Put Windows back"): her AurOS files
+ *  go onto the Windows volume. Windows is stricter than Linux about
+ *  names, so each is made safe (no : * ? " < > | \ or control
+ *  characters, no trailing dot or space, no CON/NUL/COM1...), names that
+ *  differ only in capitals are kept apart (Windows treats them as one
+ *  file), a collision is "(from AurOS)", and before a single byte moves
+ *  the free space is checked against what is needed: not enough room
+ *  copies nothing and exits 4. Same safety otherwise: as her, no link
+ *  followed, nothing overwritten.
  *
  *  Report rows (what did not come, and why) go to
  *  STATE/report.d/STAGE-copy.tsv, rewritten whole each run so a re-run
  *  tells the current truth; copies are appended to STATE/manifest.tsv.
  *
  *  exit 0 everything that could come came · 2 something of hers did
- *  not (it is in the report) · 1 could not run, or not one file came
+ *  not (it is in the report) · 4 not enough room (nothing copied) ·
+ *  1 could not run, or not one file came
  * ═══════════════════════════════════════════════════════════════════ */
 #define _GNU_SOURCE
 #define WINATTR_NO_MAIN
 #include "winattr.c"
 
+#include <ctype.h>
 #include <dirent.h>
+#include <fnmatch.h>
+#include <locale.h>
+#include <wctype.h>
+#include <sys/statvfs.h>
 #include <fcntl.h>
 #include <grp.h>
 #include <limits.h>
@@ -85,11 +101,13 @@ static int njobs;
 static const char *skip_names[MAX_SKIPS], *skip_dirs[MAX_SKIPS];
 static int nskip, nskipd;
 static const char *stage = "files";
-static int dry_run;
+static int dry_run, to_win;
+static long long need_bytes;                 /* --to-windows: space the plan needs */
 static int fd_manifest = -1, fd_report = -1, fd_progress = -1, fd_plain = -1;
 static int fd_proglog = -1;                 /* FERRY_PROGRESS: every line, appended */
 static long long tick_ns = 1000000000ll;    /* FERRY_TICK_MS (tests) */
 static unsigned char *buf;
+static const char *from_word = "Windows";    /* "(from Windows)" / "(from AurOS)" */
 
 /* Counting. disp_* is what she is told ("1,200 of 5,000 files");
  * work_* drives the bar and the time left, and leaves out files that
@@ -125,7 +143,7 @@ static int ieq_name(const char *a, const char *b) { return strcasecmp(a, b) == 0
 static int in_list(const char *name, const char **list, int n)
 {
     for (int i = 0; i < n; i++)
-        if (ieq_name(name, list[i])) return 1;
+        if (ieq_name(name, list[i]) || fnmatch(list[i], name, FNM_CASEFOLD) == 0) return 1;
     return 0;
 }
 
@@ -150,9 +168,9 @@ static int make_name(const char *orig, int n, char out[NAME_LIMIT + 1])
     size_t stem = len;
     if (dot && dot != orig && strlen(dot) <= 32) stem = (size_t)(dot - orig);
     size_t extlen = len - stem;
-    char suf[32] = "";
-    if (n == 1) snprintf(suf, sizeof suf, " (from Windows)");
-    else if (n > 1) snprintf(suf, sizeof suf, " (from Windows %d)", n);
+    char suf[40] = "";
+    if (n == 1) snprintf(suf, sizeof suf, " (from %s)", from_word);
+    else if (n > 1) snprintf(suf, sizeof suf, " (from %s %d)", from_word, n);
     size_t suflen = strlen(suf);
     size_t room = NAME_LIMIT - extlen - suflen;
     int shortened = 0;
@@ -168,7 +186,126 @@ static int make_name(const char *orig, int n, char out[NAME_LIMIT + 1])
     return shortened;
 }
 
-/* ── the ledgers ─────────────────────────────────────────────────── */
+/* ── Windows names ─────────────────────────────────────────────────
+ * What Linux allows in a name and Windows does not. Returns 1 when the
+ * name had to change. Bytes that are not UTF-8 (Linux allows any) would
+ * make the NTFS driver refuse the file, so each becomes "_" too. */
+static int win_safe(const char *in, char out[NAME_LIMIT + 1])
+{
+    size_t o = 0, i = 0, n = strlen(in);
+    int changed = 0;
+    while (i < n && o < NAME_LIMIT) {
+        unsigned char c = (unsigned char)in[i];
+        size_t k = c < 0x80 ? 0 : (c & 0xE0) == 0xC0 ? 1 : (c & 0xF0) == 0xE0 ? 2
+                 : (c & 0xF8) == 0xF0 ? 3 : 9;
+        int good = k != 9 && i + k < n + (k == 0);
+        for (size_t j = 1; good && j <= k; j++)
+            if (((unsigned char)in[i + j] & 0xC0) != 0x80) good = 0;
+        if (good && c >= 0x20 && !strchr("<>:\"/\\|?*", c) && !(c == 0 )) {
+            if (o + k + 1 > NAME_LIMIT) break;
+            memcpy(out + o, in + i, k + 1); o += k + 1; i += k + 1;
+        } else {
+            out[o++] = '_'; i += good ? k + 1 : 1; changed = 1;
+        }
+    }
+    if (i < n) changed = 1;                 /* cut at the limit; make_name shortens properly */
+    while (o > 0 && (out[o - 1] == '.' || out[o - 1] == ' ')) { out[o - 1] = '_'; changed = 1; }
+    if (o == 0) { out[o++] = '_'; changed = 1; }
+    out[o] = '\0';
+    {   /* CON, PRN, AUX, NUL, COM1-9, LPT1-9, with or without an extension */
+        char stem[8]; size_t sl = 0;
+        while (out[sl] && out[sl] != '.' && sl < 7) { stem[sl] = (char)toupper((unsigned char)out[sl]); sl++; }
+        stem[sl] = '\0';
+        if (out[sl] == '\0' || out[sl] == '.') {
+            int bad = !strcmp(stem, "CON") || !strcmp(stem, "PRN") || !strcmp(stem, "AUX") ||
+                      !strcmp(stem, "NUL") ||
+                      ((!strncmp(stem, "COM", 3) || !strncmp(stem, "LPT", 3)) && sl == 4 &&
+                       stem[3] >= '1' && stem[3] <= '9');
+            if (bad && o + 1 <= NAME_LIMIT) { memmove(out + 1, out, o + 1); out[0] = '_'; changed = 1; }
+        }
+    }
+    return changed;
+}
+
+/* Windows treats Report.docx and report.docx as one file, so on the way
+ * back the names already in a folder are remembered by their lower-case
+ * form. A small hash table; folding is by character, not byte, so an
+ * accented capital meets its small letter too. */
+struct ent { char *low, *orig; };
+struct nreg { struct ent *t; size_t cap, n; };
+
+static void fold(const char *s, char *out, size_t cap)
+{
+    size_t o = 0;
+    for (size_t i = 0; s[i] && o + 5 < cap;) {
+        unsigned char c = (unsigned char)s[i];
+        size_t k = c < 0x80 ? 0 : (c & 0xE0) == 0xC0 ? 1 : (c & 0xF0) == 0xE0 ? 2 : (c & 0xF8) == 0xF0 ? 3 : 9;
+        if (k == 0 || k == 9) { out[o++] = (char)tolower(c); i++; continue; }
+        wchar_t w = c & (0x3F >> k);
+        size_t j;
+        for (j = 1; j <= k && s[i + j]; j++) w = (w << 6) | ((unsigned char)s[i + j] & 0x3F);
+        if (j <= k) { out[o++] = (char)c; i++; continue; }
+        w = (wchar_t)towlower((wint_t)w);
+        if (w < 0x800) { out[o++] = (char)(0xC0 | (w >> 6)); out[o++] = (char)(0x80 | (w & 0x3F)); }
+        else if (w < 0x10000) { out[o++] = (char)(0xE0 | (w >> 12)); out[o++] = (char)(0x80 | ((w >> 6) & 0x3F));
+                                out[o++] = (char)(0x80 | (w & 0x3F)); }
+        else { out[o++] = (char)(0xF0 | (w >> 18)); out[o++] = (char)(0x80 | ((w >> 12) & 0x3F));
+               out[o++] = (char)(0x80 | ((w >> 6) & 0x3F)); out[o++] = (char)(0x80 | (w & 0x3F)); }
+        i += k + 1;
+    }
+    out[o] = '\0';
+}
+static uint32_t fnv(const char *s)
+{
+    uint32_t h = 2166136261u;
+    for (; *s; s++) h = (h ^ (unsigned char)*s) * 16777619u;
+    return h;
+}
+static const char *nreg_get(struct nreg *r, const char *low)
+{
+    if (!r->cap) return NULL;
+    for (size_t i = fnv(low) & (r->cap - 1); r->t[i].low; i = (i + 1) & (r->cap - 1))
+        if (!strcmp(r->t[i].low, low)) return r->t[i].orig;
+    return NULL;
+}
+static void nreg_put(struct nreg *r, const char *low, const char *orig)
+{
+    if (r->n * 2 >= r->cap) {
+        struct ent *old = r->t; size_t oc = r->cap;
+        r->cap = oc ? oc * 2 : 64;
+        if (!(r->t = calloc(r->cap, sizeof *r->t))) die("out of memory");
+        r->n = 0;
+        for (size_t i = 0; i < oc; i++) if (old[i].low) nreg_put(r, old[i].low, old[i].orig), free(old[i].low), free(old[i].orig);
+        free(old);
+    }
+    size_t i = fnv(low) & (r->cap - 1);
+    while (r->t[i].low) i = (i + 1) & (r->cap - 1);
+    if (!(r->t[i].low = strdup(low)) || !(r->t[i].orig = strdup(orig))) die("out of memory");
+    r->n++;
+}
+static void nreg_free(struct nreg *r)
+{
+    for (size_t i = 0; i < r->cap; i++) if (r->t[i].low) { free(r->t[i].low); free(r->t[i].orig); }
+    free(r->t); memset(r, 0, sizeof *r);
+}
+static void nreg_load(struct nreg *r, int dfd)
+{
+    int c = fcntl(dfd, F_DUPFD_CLOEXEC, 0);
+    DIR *d = c >= 0 ? fdopendir(c) : NULL;
+    struct dirent *e;
+    char low[NAME_LIMIT * 4 + 8];
+    if (!d) { if (c >= 0) close(c); return; }
+    rewinddir(d);
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") ||
+            !strncmp(e->d_name, ".ferrypart-", 11)) continue;
+        fold(e->d_name, low, sizeof low);
+        nreg_put(r, low, e->d_name);
+    }
+    closedir(d);
+}
+
+/* The ledgers */
 
 /* A field for a TSV row: tabs and newlines in a filename would forge
  * a column or a row, so they become spaces (as the shell's note() does). */
@@ -183,11 +320,26 @@ static void flat(char *dst, size_t n, const char *src)
 static void note(const char *sev, const struct job *j, const char *rel,
                  const char *detail)
 {
-    char item[PATH_MAX];
+    char item[PATH_MAX], msg[NAME_LIMIT * 2 + 400];
     if (fd_report < 0) return;
     flat(item, sizeof item, rel);
+    /* The words were written for the way in; on the way back the same
+     * two places swap. */
+    snprintf(msg, sizeof msg, "%s", detail);
+    if (to_win) {
+        static const char *pair[][2] = { { "from the Windows drive", "from this computer" },
+                                         { "on this computer", "in Windows" } };
+        for (int i = 0; i < 2; i++) {
+            char *at = strstr(msg, pair[i][0]);
+            if (at) {
+                char tail[sizeof msg];
+                snprintf(tail, sizeof tail, "%s", at + strlen(pair[i][0]));
+                snprintf(at, sizeof msg - (size_t)(at - msg), "%s%s", pair[i][1], tail);
+            }
+        }
+    }
     dprintf(fd_report, "%s\t%s\t%s%s%s\t%s\n", stage, sev, j->label,
-            *item ? "/" : "", item, detail);
+            *item ? "/" : "", item, msg);
 }
 
 static void stamp(char *out, size_t n)
@@ -246,8 +398,12 @@ static void tick(int force)
     count_words(disp_done, a, sizeof a);
     count_words(disp_total, b, sizeof b);
     time_left(now, eta, sizeof eta);
-    snprintf(line, sizeof line, "Copying your %s: %s of %s files.%s",
-             cur_label, a, b, eta);
+    if (to_win)
+        snprintf(line, sizeof line, "Saving your %s in Windows: %s of %s files.%s",
+                 cur_label, a, b, eta);
+    else
+        snprintf(line, sizeof line, "Copying your %s: %s of %s files.%s",
+                 cur_label, a, b, eta);
     int pct = work_total > 0 ? (int)(work_done * 100 / work_total) : 100;
     if (pct > 100) pct = 100;
     if (disp_done >= disp_total) pct = 100;
@@ -287,7 +443,7 @@ static void placed_note(const struct job *j, const char *rel, const char *cand,
 
 /* ── putting files in place ─────────────────────────────────────── */
 
-struct pend { int dfd; dev_t dev; char tmp[48]; char *name, *rel; long long size; struct job *j; };
+struct pend { int dfd; dev_t dev; char tmp[48]; char *name, *rel, *want; long long size; struct job *j; };
 static struct pend pend[BATCH_FILES];
 static int npend;
 static long long pend_bytes, last_commit;
@@ -307,7 +463,16 @@ static void commit(void)
         struct pend *p = &pend[i];
         char cand[NAME_LIMIT + 1];
         int placed = -1, shortened = 0;
-        for (int n = 0; n < 100 && placed < 0; n++) {
+        if (p->want) {
+            /* On the way back the final name was chosen, case-blind, when
+             * the file was copied; it only has to be put there. */
+            snprintf(cand, sizeof cand, "%s", p->want);
+            if (renameat2(p->dfd, p->tmp, p->dfd, cand, RENAME_NOREPLACE) == 0 ||
+                ((errno == EINVAL || errno == ENOSYS) &&
+                 linkat(p->dfd, p->tmp, p->dfd, cand, 0) == 0 && unlinkat(p->dfd, p->tmp, 0) == 0))
+                placed = 0;
+        }
+        for (int n = 0; !p->want && n < 100 && placed < 0; n++) {
             shortened = make_name(p->name, n, cand);
             if (renameat2(p->dfd, p->tmp, p->dfd, cand, RENAME_NOREPLACE) == 0) { placed = n; break; }
             if (errno == EINVAL || errno == ENOSYS) {      /* no NOREPLACE here */
@@ -336,14 +501,15 @@ static void commit(void)
         close(p->dfd);
         free(p->name);
         free(p->rel);
+        free(p->want);
     }
     npend = 0;
     pend_bytes = 0;
     last_commit = now_ns();
 }
 
-static void pend_add(int dfd, const char *tmp, const char *name, const char *rel,
-                     long long size, struct job *j)
+static void pend_add(int dfd, const char *tmp, const char *name, const char *want,
+                     const char *rel, long long size, struct job *j)
 {
     struct pend *p = &pend[npend];
     struct stat st;
@@ -352,6 +518,7 @@ static void pend_add(int dfd, const char *tmp, const char *name, const char *rel
     snprintf(p->tmp, sizeof p->tmp, "%s", tmp);
     p->name = strdup(name);
     p->rel = strdup(rel);
+    p->want = want ? strdup(want) : NULL;
     p->size = size;
     p->j = j;
     if (p->dfd < 0 || !p->name || !p->rel) die("out of memory or descriptors");
@@ -386,12 +553,64 @@ static int same(const struct stat *a, const struct stat *b)
     return S_ISREG(b->st_mode) && a->st_size == b->st_size && d >= -2 && d <= 2;
 }
 
-static void copy_one(struct job *j, int sfd, int dfd, const char *name,
-                     const struct stat *st, int suspect, const char *rel)
+/* The name this file will have in Windows, chosen now and case-blind:
+ * its own made safe for Windows, then "(from AurOS)", "(from AurOS 2)"...
+ * until one is free (or is already this very file). Returns 1 when the
+ * file is already there. `final` receives the name. */
+static int pick_windows_name(struct nreg *R, int dfd, const char *name, const struct stat *st,
+                             const struct job *j, const char *rel, char final[NAME_LIMIT + 1])
 {
-    char cand[NAME_LIMIT + 1], tmp[48];
-    struct stat dst;
+    char safe[NAME_LIMIT + 1], low[NAME_LIMIT * 4 + 8];
+    int renamed = win_safe(name, safe);
+    for (int n = 0; n < 1000; n++) {
+        int shortened = make_name(safe, n, final);
+        const char *have;
+        fold(final, low, sizeof low);
+        have = nreg_get(R, low);
+        if (have) {
+            struct stat dst;
+            if (fstatat(dfd, have, &dst, AT_SYMLINK_NOFOLLOW) == 0 && same(st, &dst)) {
+                snprintf(final, NAME_LIMIT + 1, "%s", have);
+                return 1;
+            }
+            continue;
+        }
+        nreg_put(R, low, final);
+        if (renamed || shortened || n > 0) {
+            char msg[NAME_LIMIT + 200];
+            if (n > 0)
+                snprintf(msg, sizeof msg, "A different file with this name was already in Windows "
+                         "(Windows treats big and small letters as the same), so this one is saved "
+                         "beside it as \"%s\".", final);
+            else
+                snprintf(msg, sizeof msg, "Windows cannot hold some of the letters in this name, "
+                         "so it was saved as \"%s\".", final);
+            note("partial", j, rel, msg);
+        }
+        return 0;
+    }
+    final[0] = '\0';
+    return 0;
+}
 
+static void copy_one(struct job *j, int sfd, int dfd, const char *name,
+                     const struct stat *st, int suspect, const char *rel, struct nreg *R)
+{
+    char cand[NAME_LIMIT + 1], tmp[48], want[NAME_LIMIT + 1];
+    struct stat dst;
+    int have_want = 0;
+
+    if (to_win) {
+        if (pick_windows_name(R, dfd, name, st, j, rel, want)) {
+            j->already++;
+            disp_done++;
+            work_total -= st->st_size + FILE_COST;
+            tick(0);
+            return;
+        }
+        if (!want[0]) { note("blocked", j, rel, "It could not be saved on this computer."); j->failed++; missing_any = 1; disp_done++; return; }
+        have_want = 1;
+    } else
     /* Already here, under its own name or a "(from Windows)" one? */
     for (int n = 0; n < 100; n++) {
         int shortened = make_name(name, n, cand);
@@ -444,7 +663,7 @@ static void copy_one(struct job *j, int sfd, int dfd, const char *name,
     if (close(df) != 0) { df = -1; goto unwritable; }
     close(sf);
     work_done += FILE_COST;
-    pend_add(dfd, tmp, name, rel, st->st_size, j);
+    pend_add(dfd, tmp, name, have_want ? want : NULL, rel, st->st_size, j);
     goto done;
 
 unwritable:
@@ -485,10 +704,21 @@ static void clean_temps(int fd)
 
 /* A folder on her side, made as her. A file already using the name gets
  * the folder beside it, "(from Windows)". */
-static int dest_dir(int dfd, const char *name, char *used)
+static int dest_dir(int dfd, const char *name, char *used, struct nreg *R)
 {
+    char safe[NAME_LIMIT + 1], low[NAME_LIMIT * 4 + 8];
+    if (to_win) win_safe(name, safe); else snprintf(safe, sizeof safe, "%s", name);
     for (int n = 0; n < 100; n++) {
-        make_name(name, n, used);
+        make_name(safe, n, used);
+        if (to_win) {
+            /* Case-blind: a folder that is there under other capitals is
+             * the same folder to Windows. */
+            const char *have;
+            fold(used, low, sizeof low);
+            have = nreg_get(R, low);
+            if (have) snprintf(used, NAME_LIMIT + 1, "%s", have);
+            else nreg_put(R, low, used);
+        }
         int fd = openat(dfd, used, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
         if (fd < 0 && errno == ENOENT) {
             if (mkdirat(dfd, used, 0755) != 0 && errno != EEXIST) return -1;
@@ -535,6 +765,8 @@ static void walk(struct job *j, int sfd, int dfd, char *rel, size_t rlen,
     }
     closedir(d);
     qsort(names, n, sizeof *names, by_name);
+    struct nreg R = { 0 };
+    if (copy && to_win && dfd >= 0) nreg_load(&R, dfd);
 
     for (size_t i = 0; i < n; i++) {
         const char *name = names[i];
@@ -563,7 +795,7 @@ static void walk(struct job *j, int sfd, int dfd, char *rel, size_t rlen,
             int cd = -1;
             if (copy && !dry_run) {
                 char used[NAME_LIMIT + 1];
-                cd = dest_dir(dfd, name, used);
+                cd = dest_dir(dfd, name, used, &R);
                 if (cd < 0) {
                     note("blocked", j, rel, "This folder could not be made on this computer.");
                     missing_any = 1;
@@ -583,17 +815,32 @@ static void walk(struct job *j, int sfd, int dfd, char *rel, size_t rlen,
 
         {
             char xp[NAME_LIMIT + 48], key[PATH_MAX * 2];
-            uint32_t attrib, tag;
-            snprintf(xp, sizeof xp, "/proc/self/fd/%d/%s", sfd, name);
-            if (map_path) snprintf(key, sizeof key, "%s/%s", j->src, rel);
-            int have = winattr_read(xp, map_path ? key : xp, &attrib, &tag);
-            const char *cls = classify(&st, attrib, tag, have);
+            uint32_t attrib = 0, tag = 0;
+            const char *cls;
+            if (to_win) {
+                /* Her AurOS files are ordinary files; the NTFS rules (cloud
+                 * placeholders, reparse points) do not apply to this side.
+                 * A link is not a file Windows can hold, and is never
+                 * followed. */
+                cls = S_ISREG(st.st_mode) ? "hydrated" : S_ISLNK(st.st_mode) ? "link" : "special";
+            } else {
+                snprintf(xp, sizeof xp, "/proc/self/fd/%d/%s", sfd, name);
+                if (map_path) snprintf(key, sizeof key, "%s/%s", j->src, rel);
+                int have = winattr_read(xp, map_path ? key : xp, &attrib, &tag);
+                cls = classify(&st, attrib, tag, have);
+            }
             int data = !strcmp(cls, "hydrated") || !strcmp(cls, "suspect");
 
             if (!copy) {
                 if (data) {
                     disp_total++;
                     work_total += st.st_size + FILE_COST;
+                    /* NTFS keeps a file in whole clusters (4 KiB) plus a
+                     * record of its own; this is what the room check weighs. */
+                    need_bytes += ((long long)st.st_size + 4095) / 4096 * 4096 + 1024;
+                } else if (to_win && !strcmp(cls, "link")) {
+                    note("skipped", j, rel, "It is a shortcut to another place, which Windows "
+                         "cannot hold. Nothing of yours is in it.");
                 } else if (!strcmp(cls, "placeholder")) {
                     note("skipped", j, rel, "It is kept online by OneDrive, not on this "
                          "computer, so it could not come across. It is still in your OneDrive.");
@@ -617,7 +864,7 @@ static void walk(struct job *j, int sfd, int dfd, char *rel, size_t rlen,
                     work_done += st.st_size + FILE_COST;
                     tick(0);
                 } else {
-                    copy_one(j, sfd, dfd, name, &st, !strcmp(cls, "suspect"), rel);
+                    copy_one(j, sfd, dfd, name, &st, !strcmp(cls, "suspect"), rel, &R);
                     if (out_of_room) { rel[rlen] = '\0'; break; }
                 }
             }
@@ -627,6 +874,7 @@ next:
     }
     for (size_t i = 0; i < n; i++) free(names[i]);
     free(names);
+    nreg_free(&R);
 }
 
 static int mkdir_p(const char *path)
@@ -670,11 +918,13 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "--skip-dir") && a + 1 < argc && nskipd < MAX_SKIPS)
             skip_dirs[nskipd++] = argv[++a];
         else if (!strcmp(argv[a], "--dry-run")) dry_run = 1;
+        else if (!strcmp(argv[a], "--to-windows")) { to_win = 1; from_word = "AurOS"; }
         else die("usage: ferry-copy [--as UID:GID] [--state DIR] [--stage NAME] "
-                 "[--dry-run] [--skip NAME]... [--skip-dir NAME]... "
+                 "[--dry-run] [--to-windows] [--skip NAME]... [--skip-dir NAME]... "
                  "--job LABEL SRC DEST...");
     }
     if (!njobs) die("nothing to do (no --job)");
+    if (to_win && !setlocale(LC_CTYPE, "C.UTF-8")) setlocale(LC_CTYPE, "en_US.UTF-8");
     map_path = getenv("FERRY_WINATTR_MAP");
     if (map_path && !*map_path) map_path = NULL;
 
@@ -741,6 +991,38 @@ int main(int argc, char **argv)
         walk(&jobs[i], jobs[i].srcfd, -1, rel, 0, 0, 0);
     }
     t_start = now_ns();
+    if (to_win && !dry_run && need_bytes > 0) {
+        /* Is there room in Windows for all of it? Asked before a byte
+         * moves, so a full C: never leaves half her photos there while
+         * the rest is about to be removed with AurOS. */
+        char probe[PATH_MAX];
+        struct statvfs sv;
+        long long free_b = -1, want = need_bytes + need_bytes / 50 + (64ll << 20);
+        const char *ov = getenv("FERRY_ROOM_BYTES");          /* tests */
+        if (ov && *ov) free_b = atoll(ov);
+        else {
+            snprintf(probe, sizeof probe, "%s", jobs[0].dst);
+            for (;;) {
+                if (statvfs(probe, &sv) == 0) { free_b = (long long)sv.f_bavail * (long long)sv.f_frsize; break; }
+                char *sl = strrchr(probe, '/');
+                if (!sl || sl == probe) break;
+                *sl = '\0';
+            }
+        }
+        if (free_b >= 0 && free_b < want) {
+            char a[32], b[32];
+            snprintf(a, sizeof a, "%lld", (want + (1 << 20) - 1) >> 20);
+            snprintf(b, sizeof b, "%lld", free_b >> 20);
+            if (fd_report >= 0)
+                dprintf(fd_report, "%s\tblocked\tRoom\tThere is not enough room in Windows for your files: "
+                        "they need about %s MB and Windows has %s MB free. Free some space in Windows, "
+                        "then try again.\n", stage, a, b);
+            if (fd_plain >= 0)
+                dprintf(fd_plain, "There is not enough room in Windows for your files.\n");
+            fprintf(stderr, "  -> not enough room: need %s MB, have %s MB\n", a, b);
+            return 4;
+        }
+    }
     for (int i = 0; i < njobs && !out_of_room; i++) {
         struct job *j = &jobs[i];
         int dfd = -1;

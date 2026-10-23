@@ -29,6 +29,11 @@
 #                              in the report), 3 refused (hibernated or
 #                              dirty volume), 1 could not import at all
 #    ferry <stage> [...]       one stage (wifi|files|firefox|settings|…)
+#    ferry back [--plain]      the way back: save her AurOS files into
+#                              Windows (before "Put Windows back");
+#                              exit 0 all saved, 2 some not, 3 drive not
+#                              shut down properly, 4 not enough room,
+#                              5 drive could not be opened, 1 failed
 #    ferry report [--json]     the what-could-not-migrate report
 #    ferry status              where a resumed run would pick up
 #    ferry unmount             release the read-only mount
@@ -40,6 +45,10 @@ SELF=$(dirname "$(readlink -f "$0")")
 . "$SELF/ferry-common.sh"
 
 MOUNTED_HERE=0
+
+# "The Windows drive could not be opened" is exit 5 on the way back (a
+# distinct answer for the desktop), a plain failure on the way in.
+mdie() { if [ "${FERRY_RW:-0}" = 1 ]; then warn "$*"; exit 5; fi; die "$*"; }
 
 # Bring up the read-only mount if we were given a device, or find one.
 ensure_mounted() {
@@ -59,15 +68,25 @@ ensure_mounted() {
             unmount_ro "$_m"; rmdir "$_m" 2>/dev/null || true
         done
         set -- $_cands
-        [ $# -ge 1 ] || die "no Windows partition found on any disk"
-        [ $# -eq 1 ] || die "found more than one Windows partition ($*); choose one with --device"
+        [ $# -ge 1 ] || mdie "no Windows partition found on any disk"
+        [ $# -eq 1 ] || mdie "found more than one Windows partition ($*); choose one with --device"
         FERRY_DEV=$1
     fi
     mount_ro "$FERRY_DEV" "$FERRY_MNT" || \
-        die "could not mount $FERRY_DEV read-only (is ntfs3 or ntfs-3g available?)"
+        mdie "could not mount $FERRY_DEV read-only (is ntfs3 or ntfs-3g available?)"
     FERRY_ROOT=$FERRY_MNT
     MOUNTED_HERE=1
     say "mounted $FERRY_DEV read-only at $FERRY_MNT ($(awk -v m="$FERRY_MNT" '$2 == m { t = $3 } END { print t }' /proc/mounts))"
+    if [ "${FERRY_RW:-0}" = 1 ]; then
+        # The way back writes. Look first (read-only), then remount for
+        # writing as her, so that a hibernated or dirty drive is refused
+        # before anything can be written to it.
+        require_clean_volume "$FERRY_ROOT" "$FERRY_DEV"
+        unmount_ro "$FERRY_MNT"
+        mount_rw "$FERRY_DEV" "$FERRY_MNT" "$(id -u "$FERRY_OWNER")" "$(id -g "$FERRY_OWNER")" || \
+            { MOUNTED_HERE=0; mdie "could not open $FERRY_DEV for writing (is ntfs-3g available?)"; }
+        say "mounted $FERRY_DEV for writing at $FERRY_MNT"
+    fi
 }
 
 maybe_unmount() {
@@ -122,7 +141,8 @@ stage_if_needed() {
 # Ferry says goes to STATE/ferry.log, for whoever helps her.
 plain() { [ "${FERRY_PLAIN_FD:-}" = 3 ] && printf '%s\n' "$*" >&3; return 0; }
 
-cmd_run() {
+_cmd_run() {
+    trap maybe_unmount EXIT
     _auto=1 _plain=0
     for _a in "$@"; do
         case "$_a" in --auto) _auto=1 ;; --all) _auto=0 ;; --plain) _plain=1 ;; esac
@@ -158,6 +178,57 @@ cmd_run() {
     exit "$RUN_RC"
 }
 
+# A run is announced as finished only once it is (the desktop waits for
+# this before asking "Can you see your photos?"), whatever way it ended.
+cmd_run() {
+    ferry_state_init
+    signal_clear
+    ( _cmd_run "$@" ) && _rc=0 || _rc=$?
+    signal_done import "$_rc" files firefox
+    exit "$_rc"
+}
+
+# THE WAY BACK. Her AurOS files into Windows, before "Put Windows back"
+# removes AurOS. See ferry-back. Exit: 0 all saved, 2 some not, 3 the
+# Windows drive was not shut down properly, 4 not enough room, 5 the
+# Windows drive could not be opened, 1 failed.
+_cmd_back() {
+    FERRY_RW=1; export FERRY_RW
+    trap maybe_unmount EXIT
+    _plain=0
+    for _a in "$@"; do case "$_a" in --plain) _plain=1 ;; esac; done
+    ferry_state_init
+    if [ "$_plain" = 1 ]; then
+        exec 3>&1 >>"$FERRY_STATE/ferry.log" 2>&1
+        FERRY_PLAIN_FD=3; export FERRY_PLAIN_FD
+        echo "=== ferry back $(now) ==="
+    fi
+    # Who the files are, and are for, before anything is opened.
+    resolve_target
+    [ -n "$FERRY_OWNER" ] || die "no AurOS user whose files to save"
+    plain "Getting ready to save your files in Windows."
+    ensure_mounted
+    run_stage ferry-back
+}
+# The last plain line is printed after the subshell (which owned FD 3)
+# is gone, so it is the newest line in putback.log.
+last_line() { [ "${_PLAIN_OUT:-0}" = 1 ] && printf '%s\n' "$*"; return 0; }
+cmd_back() {
+    ferry_state_init
+    signal_clear
+    ( _cmd_back "$@" ) && _rc=0 || _rc=$?
+    case "$_rc" in
+        0) last_line "Your files are saved in Windows, in the folder \"From AurOS\"." ;;
+        2) last_line "Some of your files could not be saved in Windows." ;;
+        3) last_line "Windows was not shut down properly. Start Windows, shut it down fully, then try again." ;;
+        4) : ;;                                  # ferry-copy has said how much room is missing
+        5) last_line "AurOS could not open the Windows drive to save your files." ;;
+        *) last_line "AurOS could not save your files in Windows." ;;
+    esac
+    signal_done back "$_rc" back
+    exit "$_rc"
+}
+
 cmd_status() {
     ferry_state_init
     printf '  %sFerry stage status%s\n' "$C_OK" "$C_RST"
@@ -182,6 +253,7 @@ case "$_cmd" in
         run_stage "ferry-$_cmd" "$@"
         maybe_unmount ;;
     run)      cmd_run "$@" ;;
+    back)     case " $* " in *" --plain "*) _PLAIN_OUT=1 ;; esac; cmd_back "$@" ;;
     report)   "$SELF/ferry-report" "$@" ;;
     status)   cmd_status "$@" ;;
     unmount|umount)
