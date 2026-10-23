@@ -168,9 +168,34 @@ int main(void)
             if (welcome_page() == W_SURE_NO) to_no = 1;
         }
         ok("no button on the question writes an answer", n >= 3 && !wrote);
+        ok("the question has the one check and the three answers", n == 4);
         ok("\"Yes, it all works\" asks again, on its own page", to_yes);
         ok("\"No, go back to Windows\" asks again, on its own page", to_no);
         c.want_launch = 0; c.welcome_open = 1;
+    }
+
+    /* E-03: she went to check something, so the question steps aside and
+     * a chip stays to say how to come back. */
+    printf("\n  and checking something\n");
+    {
+        welcome_set_page(W_ASK);
+        c.welcome_open = 1;
+        welcome_view v = { W_ASK, 0 };
+        rect b[16];
+        welcome_targets(&c, c.screen_w, c.screen_h, &v, b, 16);
+        c.n_apps = 0;
+        /* the check button is first; with no program to open it does nothing,
+         * so make one the way the shell would */
+        c.n_apps = 1;
+        memset(&c.apps[0], 0, sizeof c.apps[0]);
+        c.apps[0].icon = ICON_GLOBE;
+        welcome_click(&c, b[0].x + b[0].w / 2, b[0].y + b[0].h / 2);
+        ok("pressing the check opens it and puts the question aside",
+           c.welcome_open == 0 && c.want_launch == 1);
+        ok("...and the way back is a press away, in the same place every time",
+           welcome_click(&c, c.screen_w / 2, 20) == 1 && c.welcome_open == 1);
+        ok("...which brings the question back at the first page", welcome_page() == W_ASK);
+        c.n_apps = 0; c.want_launch = 0;
     }
 
     printf("\n  the three answers\n");

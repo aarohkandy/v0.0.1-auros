@@ -32,14 +32,14 @@ cc -O2 -std=gnu11 -o "$T/journey" tools/journey.c \
 e() { printf '[Desktop Entry]\nType=Application\nName=%s\nComment=%s\nCategories=%s\nExec=true %s\n' \
           "$2" "$3" "$4" "$1" > "$5/$1.desktop"; }
 e firefox "Internet" "Websites, news and shopping" "Network;WebBrowser;" "$T/apps"
-e thunar "Your files" "Everything you have saved, in folders" "System;FileTools;FileManager;" "$T/apps"
-e org.gnome.Evince "Documents" "Read PDFs and other documents" "GNOME;GTK;Office;Viewer;Graphics;" "$T/apps"
+e thunar "Your files" "Everything you have saved" "System;FileTools;FileManager;" "$T/apps"
+e org.gnome.Evince "Documents" "Read PDFs and documents" "GNOME;GTK;Office;Viewer;Graphics;" "$T/apps"
 e org.xfce.mousepad "Notes" "Write and read plain notes" "Utility;TextEditor;" "$T/apps"
 e org.xfce.ristretto "Photos" "Look at your pictures" "Graphics;Viewer;Photography;" "$T/apps"
 e mpv "Music and video" "Play a song or a film" "AudioVideo;Audio;Video;Player;" "$T/apps"
 e mate-calc "Calculator" "Add up, and work things out" "Utility;Calculator;" "$T/apps"
-e system-config-printer "Printers" "Set up a printer, or check one you have" "System;Settings;Printing;" "$T/apps"
-e xarchiver "Zip files" "Open a zip file, or make one" "Archiving;Utility;" "$T/apps"
+e system-config-printer "Printers" "Set up or check a printer" "System;Settings;Printing;" "$T/apps"
+e xarchiver "Zip files" "Open or make a zip file" "Archiving;Utility;" "$T/apps"
 e org.gnome.Software "Software" "Add, remove or update software" "GNOME;GTK;System;PackageManager;" "$T/apps"
 e org.videolan.VLC "VLC media player" "Read, capture, broadcast your multimedia streams" "AudioVideo;Player;" "$T/vlc"
 
@@ -64,7 +64,16 @@ for look in taskbar dock rail tiles; do
         said "$log" "-asks.png"    | grep -qx '   Does everything work?';     ok "$at: the first start asks" $?
         said "$log" "-sure.png"    | grep -qx '   Start AurOS from now on';   ok "$at: Yes asks once more before it decides" $?
         ! said "$log" "-asks.png" "-sure.png" | grep -q '…';             ok "$at: the question is never cut short" $?
-        said "$log" "-desktop.png" | grep -qx '   Get more programs';         ok "$at: Get more programs is on her desktop" $?
+        # What each answer does is read at 18 px or more (22 tall drawn;
+        # a 12 px line is 14), on the screen that decides for good.
+        small=$(said "$log" "-asks.png" | awk '/^## /{ if ($2 < 21) print }' | grep -v "Help\|Wi-Fi\|Settings\|Smaller\|Bigger\|Turn off" | wc -l)
+        [ "$small" -eq 0 ];                                              ok "$at: nothing on the question is under 18 px" $?
+        said "$log" "-asks.png" | grep -q '^   Windows starts the next time this computer starts'
+        ok "$at: what No does is on the screen" $?
+        # (A dock label wraps onto two lines: both halves are on screen.)
+        { said "$log" "-desktop.png" | grep -qx '   Get more programs'; } ||
+        { said "$log" "-desktop.png" | grep -qx '   Get more' && said "$log" "-desktop.png" | grep -qx '   programs'; }
+        ok "$at: Get more programs is on her desktop" $?
         said "$log" "-desktop.png" | grep -qx '   Wi-Fi';                     ok "$at: the band says Wi-Fi (one name per thing)" $?
         # (The dock draws its favourites without names until C P1-12.)
         [ $look = dock ] || { said "$log" "-desktop.png" | grep -qx '   Internet'
@@ -88,7 +97,7 @@ for look in taskbar dock rail tiles; do
                      ok "$at: the program list gets out of its way" $?
                      said "$log" "-desktop.png" | grep -qx '   All my programs'
                      ok "$at: the button is called All my programs" $? ;;
-            tiles)   ! said "$log" "-opens.png" | grep -qx '   Find and add programs to this computer'
+            tiles)   ! said "$log" "-opens.png" | grep -qx '   Find and add programs'
                      ok "$at: it fills the screen, not hidden behind the buttons" $? ;;
         esac
     done
