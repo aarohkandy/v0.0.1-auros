@@ -126,6 +126,12 @@ static void identify(int fd, stage_part *p)
     if (!memcmp(b + 0x52, "FAT32   ", 8) ||
         (!memcmp(b + 0x36, "FAT", 3) && b[510] == 0x55 && b[511] == 0xAA)) {
         snprintf(p->fstype, sizeof p->fstype, "vfat");
+        /* The volume label, 11 bytes padded with spaces: at 0x47 in a FAT32 boot sector,
+         * 0x2B in FAT12/16. (stage_log_save skips AurOS's own start-up partition by it.) */
+        const unsigned char *lab = b + (memcmp(b + 0x52, "FAT32   ", 8) == 0 ? 0x47 : 0x2B);
+        int n = 11;
+        while (n > 0 && (lab[n - 1] == ' ' || lab[n - 1] == 0)) n--;
+        if (n) snprintf(p->label, sizeof p->label, "%.*s", n, (const char *)lab);
         return;
     }
     /* ext2/3/4: magic 0xEF53 at 0x38 of the superblock, which lives at

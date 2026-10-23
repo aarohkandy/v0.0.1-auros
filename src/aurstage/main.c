@@ -586,6 +586,9 @@ static void save_log(const char *text, size_t n)
     for (int d = 0; d < mm.n_disks; d++)
         for (int p = 0; p < mm.disk[d].n_parts; p++) {
             if (!mm.disk[d].part[p].is_esp) continue;
+            /* AurOS's own start-up partition has the ESP type too (and an \EFI\AurOS in it),
+             * and is not the machine's: its label is AUROS-ESP (build/mkimage). */
+            if (strncmp(mm.disk[d].part[p].label, "AUROS", 5) == 0) continue;
             char dev[64];
             snprintf(dev, sizeof dev, "/dev/%s", mm.disk[d].part[p].name);
             if (stagelog_write(dev, text, n)) return;
