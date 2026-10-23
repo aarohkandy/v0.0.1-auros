@@ -75,6 +75,12 @@ licenses in /usr/share/common-licenses. Where the source of these programs is: S
     s.append("The file src/ferry/data/windowsZones.tab is derived from data of the Unicode Common Locale Data\nRepository (CLDR). Unicode's license:\n\n")
     s.append(rd(LIC + "/Unicode-3.0.txt").rstrip("\n") + "\n")
     if for_installer:
+        s.append(rule("AurOS-Setup.exe: the boot files it carries"))
+        s.append("""The installer carries three boot files from Ubuntu: the Linux kernel (GNU GPL version 2, with the Linux
+syscall note), GRUB (GNU GPL version 3 or later) and shim, with its MokManager (BSD 2-clause; shim includes code
+from OpenSSL under the Apache License 2.0 and from other projects named in its source). Their copyright files are
+in section 3 and the license texts in section 4; their source is in the sources release.
+""")
         s.append(rule("AurOS-Setup.exe: the MinGW-w64 runtime"))
         s.append("""AurOS-Setup.exe was built with MinGW-w64 and is statically linked to its runtime. Parts of that
 runtime ask for their copyright and license terms to be included when the program is passed on; they

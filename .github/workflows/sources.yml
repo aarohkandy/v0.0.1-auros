@@ -195,7 +195,7 @@ jobs:
           # (root-owned): nothing is run, nothing is trusted, a few paths are read.
           zstd -dc dist/rootfs.tar.zst | tar -x -C meta --strip-components=1 --no-same-owner --wildcards \
               'rootfs/var/lib/dpkg/status' 'rootfs/etc/auros/build-warnings' 'rootfs/opt/firefox/application.ini' \
-              'rootfs/usr/lib/os-release' 'rootfs/etc/issue' 'rootfs/etc/lsb-release' || true
+              'rootfs/usr/lib/os-release' 'rootfs/etc/issue' 'rootfs/etc/lsb-release' 'rootfs/var/lib/dpkg/info/*.list' || true
           test -s meta/var/lib/dpkg/status || { echo "::error::the rootfs artifact has no dpkg database"; exit 1; }
           rm -f dist/rootfs.tar.zst
           grep -c '^Package: ' meta/var/lib/dpkg/status | sed 's/$/ packages in the image/'
@@ -326,6 +326,10 @@ jobs:
         item: ${{ fromJSON(needs.which.outputs.todo) }}
     permissions:
       contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RID: ${{ matrix.item.run }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -337,6 +341,11 @@ jobs:
         run: |
           [ -s meta/var/lib/dpkg/status ] || { echo "no image sample for this release (it already existed); nothing to check"; exit 0; }
           python3 -I tools/legal/check.py image --status meta/var/lib/dpkg/status --root meta
+      - name: every Ubuntu program inside the installer's small system is in its NOTICES
+        run: |
+          [ -d meta/var/lib/dpkg/info ] || { echo "no dpkg file lists for this release; nothing to check"; exit 0; }
+          gh run download "$RID" -R "$GITHUB_REPOSITORY" -n auros-installer -D inst
+          python3 -I tools/legal/stagingcheck.py --cpio inst/auros-staging.img --info meta/var/lib/dpkg/info
 
   reverify:
     needs: [which, make, verify]

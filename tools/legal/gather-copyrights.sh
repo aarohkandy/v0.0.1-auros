@@ -5,14 +5,15 @@
 #
 #     sh tools/legal/gather-copyrights.sh > docs/legal/licenses/component-copyrights.txt
 #
-# The list is the closure of what build/staging copies into the small system
+# The list is what tools/legal/stagingcheck.py finds in the real staging cpio (and fails on if one is
+# missing) plus the three boot files and the fonts. It was the closure of what build/staging copies into the small system
 # that runs after the restart (modprobe, ntfsresize, ntfsinfo, e2fsck,
 # resize2fs, with the libraries `ldd` finds for them), the DejaVu fonts, and
 # the three boot files the installer carries (Linux, GRUB, shim). The exact
 # versions of a given release are in the sources release (PACKAGES.txt); a
 # license does not change between two builds of one version series.
 set -eu
-PKGS="linux-image-generic grub-common grub-efi-amd64-signed shim-signed kmod libkmod2 ntfs-3g libntfs-3g89t64 e2fsprogs libext2fs2t64 libcom-err2 libss2 libblkid1 libuuid1 libmount1 libc6 libssl3t64 libzstd1 liblzma5 zlib1g fonts-dejavu-core"
+PKGS="linux-image-generic grub-common grub-efi-amd64-signed shim-signed kmod ntfs-3g libntfs-3g89t64 e2fsprogs libext2fs2t64 libcom-err2 libblkid1 libuuid1 libc6 libssl3t64 libzstd1 liblzma5 fonts-dejavu-core"
 echo "# Copyright files of the programs inside AurOS-Setup.exe's small system and boot files"
 echo "# (taken from Ubuntu 24.04 LTS; the licenses they name are in the full texts that follow)."
 seen=""

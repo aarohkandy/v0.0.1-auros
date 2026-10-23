@@ -45,6 +45,7 @@ jobs:
         run: |
           python3 -I tools/legal/sourcestest.py
           python3 -I tools/legal/sourcestest.py --mutants
+          python3 -I tools/legal/stagingcheck.py selftest
       - name: the legal texts keep their promises
         run: |
           python3 -I tools/legal/check.py selftest

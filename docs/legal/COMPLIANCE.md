@@ -31,7 +31,7 @@ say who holds the rest. The hand-offs with the exact strings are in `docs/handof
 | LIC-3 installer notices | **Done in the repo**: `docs/legal/notices/NOTICES.txt`, `docs/RELINK.md`. Open: B embeds resources 200 and 202; A2's `STAGING-CONTENTS.txt` (the sources job already adds the build host's glibc) | b1766ec |
 | LIC-4 TERMS vs GPL | **Done** (rewritten: licenses win, firmware, no use restriction) | 5aec982 |
 | LIC-5 / TM-2 Canonical | Mark hygiene **done** (`check.py`, `marks` job); letter drafted (`CANONICAL-LETTER.md`, owner optional) | b1766ec, 68273c8 |
-| LIC-6 / TM-5 Firefox | `MOZILLA.md` written; forge tarball refusal is stream C's | 68273c8 |
+| LIC-6 / TM-5 Firefox | **Upgraded by the skeptic review to before-public-launch (recommended):** Mozilla's page names a force-installed extension and changed defaults as needing prior written permission; `MOZILLA.md` has the options (ask Mozilla, or change the configuration); forge tarball refusal is stream C's | 68273c8, this round |
 | LIC-7 firmware | Sentence done; the rootfs license-file check is open (stream C/E) | 5aec982 |
 | LIC-8 / LIC-9 notices | **Done**: `THIRD-PARTY-NOTICES`, `LICENSE` in the image, NOTICE files, Unicode header | b1766ec, b37b655 |
 | LIC-10 codecs | Sentence done; `MONETISATION-GATE.md`; the `media_codecs` switch and codec record are open (stream C) | 5aec982, 68273c8 |
