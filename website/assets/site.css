@@ -98,6 +98,16 @@ button.get { border: 0; cursor: pointer; }
 .k-linux [data-kind~="linux"], .k-arm [data-kind~="arm"], .k-win32 [data-kind~="win32"] { display: block; }
 .else-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 18px 0 8px; }
 .k-mac #copy-link { order: -1; }
+/* On a phone, the picture of what she gets comes before "Send yourself
+ * the link" (DESIGN-DIRECTION 5, D P2-12). */
+.k-phone .hero .wrap { display: flex; flex-direction: column; }
+.is-elsewhere .hero .hint { display: none; }
+.k-phone .hero { padding-top: 24px; }
+.k-phone .hero .device { order: 1; width: 62%; margin: 0 auto 16px; }
+.k-phone .hero .promise { margin-bottom: 20px; }
+.k-phone .hero .caption { display: none; }
+.k-phone .hero .elsewhere { order: 2; }
+.k-phone .hero .hint { order: 3; }
 .copied { min-height: 1.5em; color: var(--ink); font-weight: 700; margin: 0; }
 .anyway { margin: 10px 0 0; }
 

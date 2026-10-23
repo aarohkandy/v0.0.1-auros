@@ -61,7 +61,7 @@ phones/Macs get "open this on your Windows PC" + send-yourself-the-link.
 - The slashed zero in "10" is the font's (P2: AurOS Sans, C/B/D together).
 
 ## Half-done / next
-- P2-12 phones: a 16:10 crop of the home screen above "Send yourself the link".
+- P2-12 done: on a phone the picture comes before "Send yourself the link"; a Mac gets Copy first.
 
 ## How to verify
 ```sh
