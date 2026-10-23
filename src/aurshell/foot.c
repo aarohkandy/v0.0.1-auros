@@ -388,7 +388,7 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
      * the way out of it is never covered by it. */
     if (c->help_open) {
         rect all = { 0, 0, s->w, top };
-        draw_rect(s, all, FOOT_BG, 0.94f);
+        draw_rect(s, all, FOOT_BG, 1.f);
 
         font *big = f->big ? f->big : f->mid;
         font *body = f->small ? f->small : f->mid;
@@ -463,7 +463,7 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
      * the way out of them is never covered by them. */
     if (c->power_open) {
         rect all = { 0, 0, s->w, top };
-        draw_rect(s, all, FOOT_BG, 0.96f);
+        draw_rect(s, all, FOOT_BG, 1.f);
 
         font *big = f->big ? f->big : f->mid;
         font *nm  = f->mid ? f->mid : f->small;

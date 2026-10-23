@@ -73,6 +73,8 @@ for look in taskbar dock rail tiles; do
         [ "$small" -eq 0 ];                                              ok "$at: nothing on the question is under 18 px" $?
         said "$log" "-asks.png" | grep -q '^   Windows starts the next time this computer starts'
         ok "$at: what No does is on the screen" $?
+        said "$log" "-online.png"  | grep -qx '   Press the name of your Wi-Fi.'
+        ok "$at: the Wi-Fi page says Wi-Fi, the one name" $?
         # (A dock label wraps onto two lines: both halves are on screen.)
         { said "$log" "-desktop.png" | grep -qx '   Get more programs'; } ||
         { said "$log" "-desktop.png" | grep -qx '   Get more' && said "$log" "-desktop.png" | grep -qx '   programs'; }

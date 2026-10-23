@@ -860,7 +860,7 @@ void net_paint(shell_ctx *c, surface *s, shell_fonts *f)
     float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
 
     rect body = { 0, 0, sw, sh };
-    draw_rect(s, body, c->bg, 0.97f);
+    draw_rect(s, body, c->bg, 1.f);
 
     font *head = f->huge ? f->huge : (f->big ? f->big : f->mid);
     font *name = f->mid ? f->mid : f->small;
@@ -882,10 +882,10 @@ void net_paint(shell_ctx *c, surface *s, shell_fonts *f)
     case P_LIST:
         if (!N.asked_devices)      subtext = "Looking...";
         else if (N.n_aps == 0)     subtext = N.scanning
-                                      ? "Looking for wifi near you..."
-                                      : "No wifi found near this computer.";
-        else if (N.scanning)       subtext = "Nearby wifi. Still looking...";
-        else                       subtext = "Press the name of your wifi.";
+                                      ? "Looking for Wi-Fi near you..."
+                                      : "No Wi-Fi found near this computer.";
+        else if (N.scanning)       subtext = "Nearby Wi-Fi. Still looking...";
+        else                       subtext = "Press the name of your Wi-Fi.";
         break;
     case P_PASSWORD:
         snprintf(sub, sizeof sub, "Type the password for %s", N.pick);
@@ -907,19 +907,19 @@ void net_paint(shell_ctx *c, surface *s, shell_fonts *f)
                      "%s is not there any more. Try another one?", N.pick);
             break;
         case T_NOTALLOWED:
-            subtext = "This computer will not let the wifi be changed here.";
+            subtext = "This computer will not let the Wi-Fi be changed here.";
             break;
         case T_NOWIFI:
-            subtext = "This computer has no wifi of its own.";
+            subtext = "This computer has no Wi-Fi of its own.";
             break;
         case T_NOANSWER:
-            subtext = "This computer could not look for wifi just now.";
+            subtext = "This computer could not look for Wi-Fi just now.";
             break;
         case T_NOTOOL:
-            subtext = "This computer cannot search for wifi.";
+            subtext = "This computer cannot search for Wi-Fi.";
             break;
         default:
-            subtext = "The wifi did not join. You can try again.";
+            subtext = "The Wi-Fi did not join. You can try again.";
             break;
         }
         break;

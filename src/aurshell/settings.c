@@ -713,7 +713,7 @@ void settings_paint(shell_ctx *c, surface *s, shell_fonts *f)
     set_layout(c, sw, sh, &v, &g);
     float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
 
-    draw_rect(s, (rect){ 0, 0, sw, sh }, c->bg, 0.97f);
+    draw_rect(s, (rect){ 0, 0, sw, sh }, c->bg, 1.f);
 
     font *head = f->huge ? f->huge : (f->big ? f->big : f->mid);
     font *name = f->mid ? f->mid : f->small;
