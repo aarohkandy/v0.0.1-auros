@@ -64,5 +64,44 @@ d=$(target "$(sed -nE 's/^font_display="([^"]*)".*/\1/p' themes/nocturne.theme)"
 t=$(target "$(sed -nE 's/^font_text="([^"]*)".*/\1/p' themes/nocturne.theme)")
 [ "$d" != "$t" ]; ok "headings ($d) are a different weight from text ($t)" $?
 
+# And the shell READS a theme's font by name. open_font() used to load
+# only absolute paths, so a theme that said font_text="X" (a .theme
+# file, or shellpreview, which reads one) got the first fallback face.
+echo "fonttest: the shell opens a face by the name a theme gives it"
+M=/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf
+if [ -f "$M" ] && command -v cc >/dev/null 2>&1; then
+    mkdir -p "$T/fonts"; ln -s "$M" "$T/fonts/Narrow.ttf"
+    cat > "$T/name.c" <<'EOC'
+#include <stdio.h>
+#include <string.h>
+#include "shell.h"
+int main(int argc, char **argv)
+{
+    theme_t t = {0};
+    if (theme_load(&t, argv[1]) < 0) return 2;
+    shell_ctx c; memset(&c, 0, sizeof c);
+    shell_theme_load(&c, &t);
+    c.text_scale = 1.f;
+    shell_fonts f; shell_fonts_load(&f, &c);
+    font *want = font_load(argv[2], 14.f);
+    if (!f.small || !want) return 2;
+    float a = font_text_width(f.small, "iiiiWWWW"), b = font_text_width(want, "iiiiWWWW");
+    printf("%.1f %.1f\n", a, b);
+    return (a > b - 0.5f && a < b + 0.5f) ? 0 : 1;
+}
+EOC
+    printf 'font_text = Narrow\nfont_size = 14\n' > "$T/theme.conf"
+    if cc -O2 -std=gnu11 -o "$T/name" "$T/name.c" -DAUROS_FONT_DIR="\"$T/fonts\"" \
+           -I src/aurshell -I src/common src/aurshell/shellcommon.c src/aurshell/draw.c \
+           src/aurshell/anim.c src/aurshell/layouts/*.c src/common/theme.c \
+           src/common/font.c -lm 2>"$T/cc.log"; then
+        "$T/name" "$T/theme.conf" "$M" >/dev/null; ok "font_text=\"Narrow\" draws in the face named Narrow" $?
+    else
+        cat "$T/cc.log"; ok "the name check builds" 1
+    fi
+else
+    echo "    (skipped: no DejaVu Sans Mono or no compiler here)"
+fi
+
 [ $fail = 0 ] && echo "fonttest: all good" || echo "fonttest: FAILED"
 exit $fail

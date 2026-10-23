@@ -150,6 +150,9 @@ jobs:
       - name: journeytest (her first ten minutes, every look, both sizes)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/journeytest.sh 2>&1 | tee transcripts/journeytest.txt
+      - name: fonttest (every word in the weight the theme asked for)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/fonttest.sh 2>&1 | tee transcripts/fonttest.txt
       - name: lookboottest (the look she picked survives a restart)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |

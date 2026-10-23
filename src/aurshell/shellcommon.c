@@ -548,10 +548,26 @@ const shell_layout *shell_layout_by_id(const char *id)
 }
 
 /* ── fonts ───────────────────────────────────────────────────────── */
+/* Where build/forge links each face a theme names, as <name>.ttf.
+ * Overridable at compile time for tools/fonttest.sh and nothing else. */
+#ifndef AUROS_FONT_DIR
+#define AUROS_FONT_DIR "/usr/share/auros/fonts"
+#endif
+
 static font *open_font(const char *named, float px)
 {
     if (named && named[0] == '/') {
         font *f = font_load(named, px);
+        if (f) return f;
+    } else if (named && *named && !strchr(named, '.') && strlen(named) < 96) {
+        /* A theme file says a NAME ("Inter-SemiBold"); only a resolved
+         * shell.conf says a path. Without this every font a theme chose
+         * was ignored wherever the theme itself was read, and the text
+         * came out in the first fallback below. No '.' in the name, so
+         * it cannot climb out of the directory. */
+        char p[160];
+        snprintf(p, sizeof p, "%s/%s.ttf", AUROS_FONT_DIR, named);
+        font *f = font_load(p, px);
         if (f) return f;
     }
     /* A desktop with the wrong font is recoverable; one with no text is

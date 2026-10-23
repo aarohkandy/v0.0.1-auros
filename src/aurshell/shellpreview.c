@@ -6,17 +6,6 @@
 #include "../common/wall.h"
 #include "../common/png.h"
 
-static font *openf(const char *p, float px)
-{
-    font *f = (p && *p) ? font_load(p, px) : NULL;
-    if (f) return f;
-    const char *fb[] = {
-      "work/forge/desktop/rootfs/usr/share/fonts/opentype/inter/Inter-Regular.otf", /* from the checkout */
-      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", NULL };
-    for (int i = 0; fb[i]; i++) { f = font_load(fb[i], px); if (f) return f; }
-    return NULL;
-}
-
 /* A representative machine: some things open, some not. Every layout
  * renders the SAME state, so the previews are genuinely comparable.
  * The app set comes from shell_seed_apps() so this harness cannot drift
@@ -60,25 +49,11 @@ int main(int argc, char **argv)
     c.screen_w = W; c.screen_h = H;   /* before init: hit-testing needs it */
     if (L->init) L->init(&c);
 
-    /* The same two-face split the shell itself loads, so a preview is
-     * a preview and not a differently-typeset picture. */
-    const char *fs = theme_str(&t, "font_sans", "");
-    const char *fd = theme_str(&t, "font_display", fs);
-    const char *ft = theme_str(&t, "font_text", fs);
-    const char *fbo = theme_str(&t, "font_text_bold", ft);
-    float base = (float)theme_int(&t, "font_size", 14);
-    float sm   = (float)theme_int(&t, "font_size_sm", 12);
-    float lg   = (float)theme_int(&t, "font_size_lg", 19);
-    shell_fonts f = {
-        .huge  = openf(fd, lg * 2.25f),
-        .big   = openf(fd, lg * 1.45f),
-        .dmid  = openf(fd, lg * 0.95f),
-        .mid   = openf(fbo, base * 1.10f),
-        .label = openf(fbo, sm),
-        .small = openf(ft, base),
-        .tiny  = openf(ft, sm),
-        .lh    = (float)theme_num(&t, "line_height", 1.45),
-    };
+    /* The shell's own loader, so a preview is typeset exactly as the
+     * desktop is, theme names included. */
+    shell_fonts f;
+    c.text_scale = 1.f;
+    shell_fonts_load(&f, &c);
 
     surface *s = surface_new(W, H), *wall = surface_new(W, H);
     uint32_t *tmp = malloc((size_t)W*H*sizeof *tmp);
