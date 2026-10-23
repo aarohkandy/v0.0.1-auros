@@ -80,7 +80,10 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 0. **Commits the permission system refused to push** (the lead does not push around a refusal; your call):
    - the profiles agent's two (per-edition desktop screenshots; ~1 h of CI), in worktree `wt-p`;
    - the installer agent's **DLL-hijacking protection (SEC-003, high)**, commit fb463fb in worktree `wt-b`
-     (tested on homebase; its last amend may not have completed). Say "push B's commit" / "push P's commits".
+     (tested on homebase; its last amend may not have completed);
+   - the help-pages agent's **full help-page rework to the current desktop** (aabfc81 in worktree `wt-k`; the
+     release-blocking check is already green on main without it).
+   Say "push B's commit" / "push P's commits" / "push K's commit" (or "push all held commits").
 
 1. **Buy a short domain** (Cloudflare Registrar, ~$10/yr). Installed computers then never depend
    on GitHub addresses. Nothing goes public before this or your explicit "promote without it".
