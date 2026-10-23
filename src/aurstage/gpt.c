@@ -97,7 +97,8 @@ static int src_read(const gpt_src *s, void *buf, size_t n, uint64_t off)
 { return s->rd(s->ud, off, buf, n); }
 
 /* Parse one header block. 0 on success. */
-static int parse_header(const uint8_t *h, uint32_t sector, gpt_table *t)
+static int parse_header(const uint8_t *h, uint32_t sector, uint64_t at_lba,
+                        gpt_table *t)
 {
     if (memcmp(h, "EFI PART", 8) != 0) return -1;
 
@@ -128,7 +129,49 @@ static int parse_header(const uint8_t *h, uint32_t sector, gpt_table *t)
         t->entry_size % 8 || t->n_entries == 0 ||
         t->n_entries > GPT_MAX_ENT)
         return -1;
-    if (t->entry_lba < 2 && t->my_lba == 1) return -1;
+    /* UEFI's own validity checks (2.10, 5.3.2), which a header with a
+     * good CRC can still fail. It must say where it is; describe only
+     * space this disk has; and keep its entry array out of the space it
+     * describes. A table that breaks one of these is a disk cloned onto
+     * a smaller one, or one somebody built by hand -- and what this
+     * program would do with it is write the new array where the header
+     * points, which is then inside a partition or on top of the
+     * protective MBR. Found by tools/fuzz/fuzz_gpt.c. */
+    uint64_t arr_secs = ((uint64_t)t->n_entries * t->entry_size + sector - 1) / sector;
+    if (t->my_lba != at_lba) return -1;
+    if (t->first_usable < 2 || t->first_usable > t->last_usable ||
+        t->last_usable >= t->disk_sectors) return -1;
+    if (t->entry_lba < 2 || t->entry_lba >= t->disk_sectors ||
+        arr_secs > t->disk_sectors - t->entry_lba) return -1;
+    if (t->entry_lba <= t->last_usable && t->entry_lba + arr_secs > t->first_usable)
+        return -1;
+    /* WHERE EACH COPY OF THE ARRAY IS, AND WHERE THE COMMIT WRITES.
+     *
+     * commit_table() writes four things: this array and LBA 1, and the
+     * backup array and header, which it puts at the LAST blocks of the
+     * disk by arithmetic -- not where this table says its backup is. So
+     * each must lie outside [first_usable, last_usable], the only place a
+     * partition can be, and the two arrays must not lie on each other or
+     * on the other table's header:
+     *   - the primary table's array is wholly BELOW the usable space
+     *     (entry_lba + arr_secs <= first_usable), as on every disk made
+     *     by a tool: an array "after" the usable space is where the
+     *     backup goes;
+     *   - the backup table's array is wholly ABOVE it and below its own
+     *     header;
+     *   - and the usable space stops short of where the backup the commit
+     *     writes would start (last_usable < disk_sectors - 1 - arr_secs),
+     *     whichever table this is. A partition running to the end of the
+     *     disk is a table the next commit would write over. */
+    if (at_lba == 1) {
+        if (t->entry_lba + arr_secs > t->first_usable) return -1;
+    } else {
+        if (t->entry_lba <= t->last_usable || t->entry_lba + arr_secs > at_lba)
+            return -1;
+    }
+    if (arr_secs >= t->disk_sectors - 1 ||
+        t->last_usable >= t->disk_sectors - 1 - arr_secs)
+        return -1;
     return 0;
 }
 
@@ -152,6 +195,14 @@ static int parse_entries(const gpt_src *src, const uint8_t *h, gpt_table *t)
         t->ent[i].attrs = rd64(e + 48);
         for (int c = 0; c < GPT_NAME_CH; c++)
             t->ent[i].name[c] = rd16(e + 56 + c * 2);
+        /* A partition outside the usable space overlaps the table
+         * itself (or runs off the disk), and the commit rewrites the
+         * table in place -- over the start of that partition. UEFI
+         * forbids it; so do we. */
+        if (gpt_used(&t->ent[i]) &&
+            (t->ent[i].first > t->ent[i].last ||
+             t->ent[i].first < t->first_usable || t->ent[i].last > t->last_usable))
+            goto out;
     }
     rc = 0;
 out:
@@ -180,7 +231,7 @@ int gpt_read_with(int (*rd)(void *ud, uint64_t off, void *buf, size_t n),
 
     /* The primary first. */
     if (src_read(&src, h, sector, sector) == 0 &&
-        parse_header(h, sector, t) == 0 &&
+        parse_header(h, sector, 1, t) == 0 &&
         parse_entries(&src, h, t) == 0) {
         t->valid = 1;
         return 0;
@@ -197,7 +248,7 @@ int gpt_read_with(int (*rd)(void *ud, uint64_t off, void *buf, size_t n),
     t->disk_sectors = disk_bytes / sector;
     uint64_t alt = t->disk_sectors - 1;
     if (src_read(&src, h, sector, alt * sector) != 0) return -1;
-    if (parse_header(h, sector, t) != 0) return -1;
+    if (parse_header(h, sector, alt, t) != 0) return -1;
     if (parse_entries(&src, h, t) != 0) return -1;
     t->valid = 1;
     t->from_backup = 1;

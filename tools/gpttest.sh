@@ -26,7 +26,14 @@ bad() { checked=$((checked+1)); fail=$((fail+1)); printf '    %-56s %s\n' "$1" "
 
 command -v sgdisk >/dev/null 2>&1 || { echo "need sgdisk"; exit 2; }
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/gpttest.XXXXXX")
-trap 'rm -rf "$TMP"' EXIT
+# A kill (timeout, ^C) must not leak the images in $TMP: the EXIT trap alone
+# does not run on a signal in dash, and a leaked 3 GB disk image per run
+# once filled homebase. INT and TERM exit, which runs the EXIT trap, and
+# the background QEMU goes with it.
+_a2_clean() { kill $(jobs -p) 2>/dev/null; rm -rf "$TMP"; }
+trap _a2_clean EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo
 echo "Does the partition table survive being read and written back?"
@@ -268,6 +275,106 @@ F=why; case "$(get fill "$D" 512)" in
   *"full"*"will not enlarge"*) ok "...and says so in words" ;;
   *) bad "...and says so in words" "it said: $(get fill "$D" 512)" ;;
 esac
+
+echo
+echo "  tables that would make the commit write into a partition"
+# commit_table() writes the primary array and LBA 1, and the backup array
+# and header at the last blocks of the disk. A table whose own fields put
+# any of those inside a partition -- or let a partition run into them --
+# is a commit that overwrites her data, and used to be believed (found by
+# the GPT fuzzer, tools/fuzz/fuzz_gpt.c). Each is built by hand with every
+# CRC right, so only the SHAPE is wrong. The first two are the fuzzer's
+# own reproducers, replayed.
+python3 - "$TMP" <<'EOPY'
+import sys, struct, zlib, os
+d = sys.argv[1]
+
+def crc(b): return zlib.crc32(b) & 0xffffffff
+
+def gpt(name, ss=512, disk=40000, entry_lba=2, first_usable=None, last_usable=None,
+        parts=((2048, 20000),), primary=True, backup=True, esize=128, nent=128):
+    arr_secs = (nent * esize + ss - 1) // ss
+    if first_usable is None: first_usable = 2 + arr_secs
+    if last_usable is None: last_usable = disk - 2 - arr_secs
+    arr = bytearray(nent * esize)
+    for i, (f, l) in enumerate(parts):
+        e = i * esize
+        arr[e:e+16] = bytes([0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44, 0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7])
+        arr[e+16:e+32] = os.urandom(16)
+        struct.pack_into('<QQQ', arr, e + 32, f, l, 0)
+    def hdr(my, alt, ela):
+        h = bytearray(ss)
+        h[0:8] = b'EFI PART'
+        struct.pack_into('<IIII', h, 8, 0x10000, 92, 0, 0)
+        struct.pack_into('<QQQQ', h, 24, my, alt, first_usable, last_usable)
+        h[56:72] = bytes(range(16))
+        struct.pack_into('<QIII', h, 72, ela, nent, esize, crc(bytes(arr)))
+        struct.pack_into('<I', h, 16, crc(bytes(h[:92])))
+        return h
+    img = bytearray(disk * ss)
+    mbr = bytearray(ss); mbr[510:512] = b'\x55\xaa'
+    img[0:ss] = mbr
+    if primary:
+        img[ss:2*ss] = hdr(1, disk - 1, entry_lba)
+        a = entry_lba * ss
+        if a + len(arr) <= len(img): img[a:a+len(arr)] = arr
+    if backup:
+        ba = disk - 1 - arr_secs
+        img[(disk-1)*ss:disk*ss] = hdr(disk - 1, 1, ba)
+        img[ba*ss:ba*ss+len(arr)] = arr
+    open(os.path.join(d, name), 'wb').write(img)
+
+gpt('good-512')                                   # an ordinary disk
+gpt('good-4k', ss=4096, disk=20000, parts=((256, 9000),))
+# the primary array lies inside the first partition
+# (no backup in the four "array" cases: with one, a reader falls back to
+# the spare copy -- correctly, and it is never committed -- and the point
+# here is that the primary is not believed.)
+gpt('array-in-partition', parts=((34, 20000),), entry_lba=1000, first_usable=34, backup=False)
+# a partition starts below the usable space, on top of the array
+gpt('partition-on-array', parts=((10, 20000),))
+# a partition runs to the very end of the usable space AND that space
+# reaches into the blocks the commit writes the backup table to
+gpt('partition-to-the-end', parts=((2048, 39998),), last_usable=39998)
+gpt('partition-to-the-end-4k', ss=4096, disk=20000, parts=((256, 19998),), last_usable=19998)
+# the primary array at the tail, where the backup goes
+gpt('array-at-the-tail', entry_lba=39900, first_usable=34, backup=False)
+# the array on top of LBA 1 / the protective MBR
+gpt('array-at-1', entry_lba=1, backup=False)
+gpt('array-at-0', entry_lba=0, backup=False)
+# usable space beyond the disk (cloned onto a smaller one)
+gpt('usable-beyond-the-disk', last_usable=999999)
+# header that does not know where it is
+gpt('header-misplaced', backup=False)
+EOPY
+for n in good-512 good-4k; do
+    ss=512; [ "$n" = good-4k ] && ss=4096
+    got=$("$TMP/g" list "$TMP/$n" $ss 2>&1 | sed -n 1p)
+    [ "$got" = "read=ok" ] && ok "an ordinary table still reads ($n)" \
+                           || bad "an ordinary table still reads ($n)" "$got"
+done
+for n in array-in-partition partition-on-array partition-to-the-end \
+         partition-to-the-end-4k array-at-the-tail array-at-1 array-at-0 \
+         usable-beyond-the-disk; do
+    ss=512; case "$n" in *-4k) ss=4096 ;; esac
+    got=$("$TMP/g" list "$TMP/$n" $ss 2>&1 | sed -n 1p)
+    [ "$got" = "read=failed" ] && ok "refused: $n" || bad "refused: $n" "$got"
+done
+# The fuzzer's reproducers: [sector byte][disk image].
+for r in tools/fuzz/pending/gpt/array-inside-windows tools/fuzz/pending/gpt/partition-over-array; do
+    [ -f "$r" ] || continue
+    b=$(head -c1 "$r" | od -An -tu1 | tr -d ' ')
+    ss=512; [ $((b & 1)) = 1 ] && ss=4096
+    tail -c +2 "$r" > "$TMP/repro"
+    out=$("$TMP/g" list "$TMP/repro" $ss 2>&1)
+    # Refused, or read only from the spare copy (which is never committed).
+    if [ "$(printf '%s\n' "$out" | sed -n 1p)" = "read=failed" ] ||
+       printf '%s\n' "$out" | grep -qx 'from_backup=1'; then
+        ok "refused (or only the spare copy read): the fuzzer's $(basename "$r")"
+    else
+        bad "refused: the fuzzer's $(basename "$r")" "$(printf '%s' "$out" | head -3)"
+    fi
+done
 
 echo
 echo "  when the primary is torn"
