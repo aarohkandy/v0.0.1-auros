@@ -701,6 +701,7 @@ class Flow:
         seen_events = len(self.m.qmp.events)
         last_text, text_since = "", time.time()
         last_sig, cand = None, [None, 0.0]     # the button about to be pressed, since when
+        run_start = time.time()                # when the label pressed now was first pressed
         rect = self.wizard_rect()
         stage = [self.rec.phase("wizard: first page")]
         stage[0].__enter__()
@@ -782,9 +783,15 @@ class Flow:
                         self.log(f"wizard page before '{label}': {page[:400]}")
                     if re.search(r"fix these", label, re.I):
                         self.fix_presses += 1
-                    if label == last_label and n >= 6:
+                    if label != last_label:
+                        run_start = time.time()
+                    # (B: the primary button is always there and pressing it early is
+                    # harmless, so a page that is still working gets pressed again and
+                    # again: stuck is many presses over minutes, not six in a row)
+                    if label == last_label and n >= 6 and time.time() - run_start > 300:
                         self.m.save(img, "wizard-stuck")
-                        raise Failure(f"pressed '{label}' six times and the page did not move on: " +
+                        raise Failure(f"pressed '{label}' {n} times over {int(time.time() - run_start)} s "
+                                      "and the page did not move on: " +
                                       vision.text_of(vision.ocr(img, rect))[:900])
                     if VARIANT == "bitlocker" and re.search(r"restart", label, re.I):
                         self.check_bitlocker_before_restart()      # while Windows is still up
