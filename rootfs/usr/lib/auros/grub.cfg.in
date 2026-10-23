@@ -49,7 +49,7 @@ terminal_output console serial
 # start. aurstage_extra is for tools/putbacktest.sh and nothing else:
 # it adds a serial console to the restore so the test can read it.
 if [ -s ($root)/boot/grub/grubenv ]; then
-  load_env --file ($root)/boot/grub/grubenv next_entry auros_asked auros_win auros_try auros_bad aurstage_extra
+  load_env --file ($root)/boot/grub/grubenv next_entry auros_asked auros_win auros_try auros_bad aurstage_extra auros_handover
   export aurstage_extra
 fi
 @FALLBACK@
@@ -63,7 +63,13 @@ fi
 # and is dropped. Chosen by hand from the menu, the restore gets an
 # empty aurstage.asked=: somebody at the keyboard now is fresh.
 if [ "${next_entry}" ]; then
+  set auros_ho=
   if [ "${auros_asked}" ]; then
+    # Her AurOS files, left for Windows (handover.sh): where on the disk, how many blocks,
+    # and the SHA-256 of them. Handed to THIS restore only, and used up with the request,
+    # like next_entry: a restore chosen by hand later gets none, and a record left behind
+    # would describe a volume AurOS may have changed since.
+    set auros_ho="${auros_handover}"
     set default="${next_entry}"
     # No fallback for this one start: if the restore cannot be started,
     # starting AurOS instead -- silently, with next_entry already used
@@ -77,9 +83,11 @@ if [ "${next_entry}" ]; then
   fi
   set auros_req="${auros_asked}"
   export auros_req
+  export auros_ho
   set next_entry=
   set auros_asked=
-  save_env --file ($root)/boot/grub/grubenv next_entry auros_asked
+  set auros_handover=
+  save_env --file ($root)/boot/grub/grubenv next_entry auros_asked auros_handover
 fi
 
 # AUROS ALWAYS STARTS: BOOT COUNTING, AND THE KERNEL BEFORE.
@@ -243,7 +251,7 @@ submenu 'Put Windows back (remove AurOS)' --class windows --unrestricted --id pu
         insmod part_gpt
         insmod fat
         search --no-floppy --file --set=root /EFI/AurOS/staging.efi
-        linux  /EFI/AurOS/staging.efi aurstage.restore aurstage.asked=${auros_req} console=tty0 gpt quiet loglevel=3 ${aurstage_extra}
+        linux  /EFI/AurOS/staging.efi aurstage.restore aurstage.asked=${auros_req} aurstage.handover=${auros_ho} console=tty0 gpt quiet loglevel=3 ${aurstage_extra}
         initrd /EFI/AurOS/staging.img
     }
 }

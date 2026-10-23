@@ -533,7 +533,7 @@ for n in 1 2 3 4 5 6 7; do
     [ -e "/dev/${lb}p$n" ] || { [ -e "/sys/class/block/${lb}p$n/dev" ] && mknod "/dev/${lb}p$n" b $(sed 's/:/ /' "/sys/class/block/${lb}p$n/dev"); }
 done
 set -- $(mach_part "$MTMP/inst.img" AUROS-ROOT); RN=$1
-mkdir -p "$MTMP/aroot" "$MTMP/her/Documents" "$MTMP/her/Pictures"
+mkdir -p "$MTMP/aroot" "$MTMP/chk" "$MTMP/her/Documents" "$MTMP/her/Pictures"
 head -c 4000000 /dev/urandom > "$MTMP/her/Documents/book.pdf"
 head -c 7000000 /dev/urandom > "$MTMP/her/Pictures/photo one.jpg"
 printf 'hello\n' > "$MTMP/her/Documents/note.txt"
@@ -616,8 +616,10 @@ for pt in handover-checked restore-esp-mid restore-array restore-sector restore-
     case "$pt" in
       handover-checked|restore-esp-mid|restore-array)
         # AurOS is still in the table: the restore can simply be run again, and ends as it should.
-        set -- $(mach_part "$MTMP/cut.img" AUROS-ROOT)
-        [ -n "${1:-}" ] && ok "AurOS is still in the table (and so are her files)" || bad "AurOS is still in the table"
+        # (sgdisk checks the header's CRC and reads the spare table when the main one is torn,
+        # as the kernel does; mach_part reads whatever the main header points at)
+        sgdisk -p "$MTMP/cut.img" 2>/dev/null | grep -q AUROS-ROOT \
+            && ok "AurOS is still in the table (and so are her files)" || bad "AurOS is still in the table"
         if restore_end "$MTMP/cut.img" "aurstage.handover=$REC" && grep -aq 'verdict=restored' "$MTMP/out.txt"; then
             ok "run again: it ends restored"
         else bad "run again: it ends restored" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -3)"; fi

@@ -133,10 +133,46 @@ read_asked() {
 # one cannot have brought anything across either). Exit codes are
 # `ferry back`'s: 2 some could not be saved, 3 the Windows drive was not
 # shut down properly, 4 not enough room, 5 the drive could not be opened.
+HANDOVER=${AUROS_HANDOVER:-/usr/lib/auros/handover.sh}
+INSTALL_CHOICES=${AUROS_INSTALLER_CHOICES:-/etc/auros/installer-choices.conf}
+handover_rec=
+# HER FILES GO TO A HANDOVER VOLUME, NOT INTO WINDOWS, when this install was made by the fast
+# path (choices.sh records via=gap): only that install registered the Windows task that takes
+# them out of it and into her profile. Windows' drive is not touched at all -- on a BitLocker PC
+# AurOS could not open it. (docs/AURBRIDGE.md, "Put Windows back with her files".)
+handover_wanted() {
+    [ -x "$HANDOVER" ] && grep -qx 'via=gap' "$INSTALL_CHOICES" 2>/dev/null
+}
 back_files() {
     [ -x "${AUROS_FERRY:-/usr/bin/ferry}" ] || return 0
     : > "$OUT/putback.log"
     chmod 0644 "$OUT/putback.log" 2>/dev/null
+    HV=
+    handover_rec=
+    if handover_wanted; then
+        need=$("${AUROS_FERRY:-/usr/bin/ferry}" handover --need 2>>"$OUT/putback.log")
+        case "$need" in ''|*[!0-9]*) need=-1 ;; esac
+        if [ "$need" = -1 ]; then
+            say "result=failed"
+            say "note=AurOS could not work out how much room your files need, so Windows was not put back. Nothing of yours was deleted"
+            return 1
+        fi
+        if [ "$need" -gt 0 ]; then
+            HV=$("$HANDOVER" prepare 2>>"$OUT/putback.log"); hrc=$?
+            if [ "$hrc" != 0 ]; then
+                say "result=failed"
+                say "code=$hrc"
+                case "$hrc" in
+                  3|4) say "note=your files are more than AurOS can set aside to hand to Windows, so Windows was not put back. Nothing of yours was deleted. Save them to a USB stick first, then try again" ;;
+                  5)   say "note=AurOS cannot hand your files to Windows on this computer (its drive is encrypted), so Windows was not put back. Nothing of yours was deleted. Save them to a USB stick first, then try again" ;;
+                  *)   say "note=AurOS could not set aside room for your files, so Windows was not put back. Nothing of yours was deleted" ;;
+                esac
+                return 1
+            fi
+            FERRY_HANDOVER_DEV=$HV
+            export FERRY_HANDOVER_DEV
+        fi
+    fi
     # The same long limit as the import, for the same reason (it is not
     # the unit's any more); a copy that is stopped is picked up again.
     timeout "${AUROS_IMPORT_LIMIT:-43200}" "${AUROS_FERRY:-/usr/bin/ferry}" back --plain >>"$OUT/putback.log" 2>&1
@@ -144,6 +180,21 @@ back_files() {
     # Saved: say how many, so the screen can tell her what was and was not
     # saved rather than "your files are safe".
     bfiles=$(sed -n 's/^files=//p' "$OUT/ferry.done" 2>/dev/null | head -1)
+    if [ -n "$HV" ]; then
+        unset FERRY_HANDOVER_DEV
+        if [ "$brc" = 0 ]; then
+            # The volume is finished and unmounted: detach it, and say exactly where on the
+            # disk it lies, proved by reading the disk.
+            if ! handover_rec=$("$HANDOVER" finish 2>>"$OUT/putback.log"); then
+                "$HANDOVER" cancel
+                say "result=failed"
+                say "note=AurOS could not leave your files where Windows can find them, so Windows was not put back. Nothing of yours was deleted. Save them to a USB stick first, then try again"
+                return 1
+            fi
+        else
+            "$HANDOVER" cancel
+        fi
+    fi
     [ "$brc" = 0 ] && return 0
     say "result=failed"
     say "code=$brc"
@@ -307,10 +358,16 @@ case "$word" in
     elif ! read_asked; then
         say "result=failed"
         say "note=AurOS could not read this computer's clock"
-    elif ! grubenv_put "next_entry=$PUTBACK_ENTRY" "auros_asked=$asked"; then
+    elif ! { if [ -n "$handover_rec" ]; then
+                 grubenv_put "next_entry=$PUTBACK_ENTRY" "auros_asked=$asked" "auros_handover=$handover_rec"
+             else
+                 grubenv_put "next_entry=$PUTBACK_ENTRY" "auros_asked=$asked"
+             fi; }; then
+        [ -n "$handover_rec" ] && "$HANDOVER" cancel
         say "result=failed"
         say "note=AurOS could not set its start-up menu"
     elif ! "$BIN/aurfirst" putback 2>&1; then
+        [ -n "$handover_rec" ] && "$HANDOVER" cancel
         say "result=failed"
         # THE TAKE-BACK IS CHECKED. A next_entry left behind would run
         # the restore at some later start, so if it cannot be cleared the

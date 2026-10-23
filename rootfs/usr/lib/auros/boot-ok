@@ -25,6 +25,10 @@ F=${AUROS_GRUBENV:-/boot/grub/grubenv}
 # The desktop up for N seconds (the same answer auros-keeper asks for).
 "$LIB/desktop-up" "$N" || exit 0
 
+# A handover file from a "Put Windows back" that was not carried out is room she may need.
+# (This start is running, so the request was not acted on.)
+rm -f "${AUROS_STATE:-/var/lib/auros}/handover.img" "${AUROS_STATE:-/var/lib/auros}/handover.dev"
+
 [ -f "$F" ] || exit 0
 run=$(uname -r)
 bad=$(sed -n 's/^auros_bad=//p' "$F" 2>/dev/null | head -1)

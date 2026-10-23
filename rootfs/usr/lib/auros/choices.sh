@@ -281,5 +281,14 @@ if [ -n "$v" ]; then
     fi
 fi
 
+# How it was installed. "gap" is the fast path, which is what registers the Windows task
+# that takes her files out of a handover partition when Windows is put back
+# (rootfs/usr/lib/auros/handover.sh, answer.sh).
+v=$(get via)
+if [ "$v" = gap ]; then
+    record via gap
+    say "installed by the fast path"
+fi
+
 mv "$OUT.new" "$OUT"
 exit 0
