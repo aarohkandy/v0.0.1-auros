@@ -41,6 +41,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Still red / in progress
 
+- **Found and being fixed: programs from "Get more programs" installed but would not start** (an extra
+  permission in the desktop session that the app sandbox refuses). One-line fix being proven end to end.
+
 - **Caught before anyone used it: Ubuntu security updates would never have installed** (renaming the system to
   AurOS broke the updater's source names). **Fixed and proven on the real image** (956af4a); now a release gate.
 
