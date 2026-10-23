@@ -31,8 +31,11 @@ help pages (K), `build/aurbridge` resources and the Ready page (B/A2), `.github/
   set, never emptied first). Tests: `build/sources` + `tools/legal/sourcestest.py` (11 mutants), `publishtest.py` (a pretend
   GitHub, 7 mutants), `stagingcheck.py` (the real staging cpio's 12 Ubuntu packages are all in NOTICES), all in `legal.yml`.
   **The published `sources-v0.1.0-618726b` was damaged on 2026-10-23 by cancelling a run that had already started replacing
-  it with the old unsafe tool (a part was gone): it is being remade with the safe one** (`[sources v0.1.0-618726b
-  39905858387 again]`); see the end of this file for what it ended as.
+  it with the old unsafe tool (a part was gone). It was remade with the safe publisher** (`[sources v0.1.0-618726b
+  39905858387 again]`, run 40016834276): 8 files (two parts of 1.9 GB and 0.7 GB, SOURCES.txt, PACKAGES.txt, SHA256SUMS, NOTICES.txt,
+  AurOS's own source, Firefox's source tarball), GitHub's digests equal SHA256SUMS, and the job downloaded every file again from its
+  public address and `build/sources verify` passed. The first attempt failed in the `which` job (no repository context) and the
+  second only on the very last step (an artifact may not hold a file named with a colon): both are fixed.
 - **LIC-2/3/5, TM-1/2/3 done in the repo:** `website/{licenses,terms,disclaimer,privacy}.html` (generated from `docs/legal/*.md`
   by `tools/legal/mkpages.py`), one legal footer on every page, the one trademark paragraph (`docs/legal/TRADEMARKS.txt`), notices
   (`tools/legal/notices.py`), `docs/RELINK.md`, the in-OS help page, `tools/legal/check.py` (pages, claims, marks, image,
