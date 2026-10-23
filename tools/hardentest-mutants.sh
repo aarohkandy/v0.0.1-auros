@@ -23,7 +23,8 @@ PATHS="etc/sysctl.d usr/lib/sysctl.d etc/sysctl.conf
        etc/systemd/system var/lib/dpkg/status etc/cups/cupsd.conf
        usr/lib/cups/backend/usb etc/avahi/avahi-daemon.conf etc/modprobe.d
        etc/systemd/journald.conf.d etc/default/zramswap etc/default/earlyoom
-       usr/share/auros/shells/rail.shell etc/apparmor.d/flatpak usr/bin/flatpak"
+       usr/share/auros/shells/rail.shell etc/apparmor.d/flatpak usr/bin/flatpak
+       etc/chrony etc/NetworkManager/dispatcher.d usr/lib/auros/choices.sh"
 mkdir -p "$T/good"
 for p in $PATHS; do
     [ -e "$RFS/$p" ] || [ -L "$RFS/$p" ] || continue
@@ -96,6 +97,21 @@ mutate "a kiosk's safe mode is still locked" "sed -i 's/kiosk_mode\\[/kiosk_mod[
 mutate "an interrupted update is finished at the next start" "rm etc/systemd/system/multi-user.target.wants/auros-dpkg-repair.service"
 mutate "a half-configured package is configured" "sed -i 's/half-configured|//' usr/lib/auros/dpkg-repair"
 mutate "a clean machine costs nothing"       "sed -i 's/^interrupted || exit 0/true/' usr/lib/auros/dpkg-repair"
+# The clock
+C=etc/chrony/chrony.conf
+mutate "chrony never writes the PC's hardware clock" "echo rtcsync >> $C"
+mutate "a clock that is hours out is stepped"        "sed -i 's/^makestep.*/makestep 1 3/' $C"
+mutate "chrony asks for the time and answers nobody" "sed -i '/^port 0/d' $C"
+mutate "chrony asks for the time and answers nobody" "sed -i '/^cmdport 0/d' $C"
+mutate "time over NTS"                               "rm etc/chrony/sources.d/auros-nts.sources"
+mutate "ordinary pool servers are the way in"        "sed -i '/^pool /d' $C"
+mutate "chrony starts at boot"                       "rm etc/systemd/system/multi-user.target.wants/chrony.service"
+mutate "chrony is installed"                         "sed -i '/^Package: chrony\$/,/^\$/d' var/lib/dpkg/status"
+mutate "there is no second time daemon"              "printf '\nPackage: systemd-timesyncd\nStatus: install ok installed\n' >> var/lib/dpkg/status"
+mutate "a network coming up makes chrony look"       "rm etc/NetworkManager/dispatcher.d/30-auros-time"
+mutate "reads the PC's clock as local time"          "sed -i '/etc\/adjtime/d' usr/lib/auros/choices.sh"
+mutate "unless Windows keeps its clock in UTC"       "sed -i 's/ = utc \]/ = never ]/' usr/lib/auros/choices.sh"
+mutate "no time zone chosen, no change to the clock" "sed -i 's/^TEXT=\$(find_choices)\$/&\nmkdir -p \"\$ROOT\/etc\"; : > \"\$ROOT\/etc\/adjtime\"/' usr/lib/auros/choices.sh"
 
 echo
 if [ $fail -eq 0 ]; then echo "hardentest-mutants: $n mutations, all caught"; exit 0; fi

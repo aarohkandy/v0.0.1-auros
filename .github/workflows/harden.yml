@@ -30,7 +30,7 @@ defaults:
     shell: bash
 
 env:
-  HARDENING_INPUTS: '^(build/harden|build/forge|profiles/desktop\.profile|rootfs/etc/(sysctl\.d|modprobe\.d|nftables\.conf|systemd/journald\.conf\.d|avahi|cups)|rootfs/etc/systemd/system/(aurshell\.service|auros-dpkg-repair\.service)|rootfs/usr/lib/auros/(grub\.cfg\.in|bootchain|shell-guard|dpkg-repair)|tools/hardenboottest\.sh|tools/hardentest|\.github/workflows/harden\.yml)'
+  HARDENING_INPUTS: '^(build/harden|build/forge|profiles/desktop\.profile|rootfs/etc/(sysctl\.d|modprobe\.d|nftables\.conf|systemd/journald\.conf\.d|avahi|cups|chrony|NetworkManager/dispatcher\.d)|rootfs/etc/systemd/system/(aurshell\.service|auros-dpkg-repair\.service)|rootfs/usr/lib/auros/(grub\.cfg\.in|bootchain|shell-guard|dpkg-repair|choices\.sh)|tools/hardenboottest\.sh|tools/timeboottest\.sh|tools/hardentest|\.github/workflows/harden\.yml)'
 
 jobs:
   which:
@@ -76,7 +76,7 @@ jobs:
             esac
             # A push that changes the image itself waits for its build
             # (the workflow_run above); this one only tests the test.
-            files=$(printf '%s\n' "$files" | grep -E '^(tools/hardenboottest\.sh|tools/hardentest|\.github/workflows/harden\.yml)' || true)
+            files=$(printf '%s\n' "$files" | grep -E '^(tools/hardenboottest\.sh|tools/timeboottest\.sh|tools/hardentest|\.github/workflows/harden\.yml)' || true)
           fi
           printf '%s\n' "$files" | sed -n '1,40p'
           if [ -n "$rid" ] && { [ "$word" = true ] || printf '%s\n' "$files" | grep -qE "$HARDENING_INPUTS"; }; then go=true; fi
@@ -90,7 +90,7 @@ jobs:
     needs: which
     if: needs.which.outputs.go == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 80
+    timeout-minutes: 120
     # One at a time, queued; the newest waiting one wins, a running one
     # is never cancelled.
     concurrency:
@@ -130,6 +130,17 @@ jobs:
           set -e
           cat out/hardenboot.md >> "$GITHUB_STEP_SUMMARY" || true
           exit $rc
+      # The clock, on the same image (tools/timeboottest.sh): a PC whose
+      # hardware clock Windows keeps in local time, online, three ways.
+      - name: timeboottest under KVM
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          sudo env PATH="$PATH" TIME_REPORT=out/timeboot.md sh tools/timeboottest.sh out/auros-desktop.img 2>&1 | tee out/timeboottest.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          cat out/timeboot.md >> "$GITHUB_STEP_SUMMARY" || true
+          exit $rc
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
@@ -138,4 +149,7 @@ jobs:
             out/hardenboot.md
             out/hardenboot-evidence.tar.gz
             out/hardenboottest.txt
+            out/timeboot.md
+            out/timeboot-evidence.tar.gz
+            out/timeboottest.txt
           retention-days: 30

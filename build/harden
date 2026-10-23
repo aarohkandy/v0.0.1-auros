@@ -58,6 +58,15 @@ stage_harden() {
         note "avahi: looks for printers, announces nothing"
     fi
 
+    # ── the clock ─────────────────────────────────────────────────
+    # chrony's own postinst enables it; this makes the image say so, and
+    # refuses one that has a second time daemon (they fight over the clock).
+    [ -f "$RFS/usr/lib/systemd/system/chrony.service" ] || [ -f "$RFS/lib/systemd/system/chrony.service" ] \
+        || die "chrony is not installed, so this image would have no time daemon. It is in packages_security (profiles/desktop.profile)."
+    enable_unit chrony.service multi-user.target
+    pkg_installed systemd-timesyncd && die "systemd-timesyncd and chrony are both installed: two time daemons"
+    note "clock: chrony, never writes the PC's hardware clock"
+
     # ── recovery ──────────────────────────────────────────────────
     enable_unit auros-dpkg-repair.service multi-user.target
     chmod 755 "$RFS/usr/lib/auros/shell-guard" "$RFS/usr/lib/auros/dpkg-repair"

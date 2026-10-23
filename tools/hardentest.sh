@@ -317,6 +317,59 @@ else
     bad "the dpkg repair is in the image" "no executable usr/lib/auros/dpkg-repair"
 fi
 
+# ── 7. the clock ─────────────────────────────────────────────────────
+#
+# Windows keeps the PC's hardware clock in local time. Without a time
+# daemon, and with the clock read as UTC, a machine in the Americas was
+# hours behind and apt refused every update ("not valid yet"). And a time
+# daemon that lets the kernel write the hardware clock back would leave
+# Windows' clock hours wrong after she went back to it.
+say ""
+say "The clock"
+CH="$RFS/etc/chrony/chrony.conf"
+if installed chrony; then ok "chrony is installed (the time daemon)"; else bad "chrony is installed (the time daemon)" "dpkg says it is not"; fi
+if installed systemd-timesyncd; then bad "there is no second time daemon" "systemd-timesyncd is installed beside chrony"
+else ok "there is no second time daemon"; fi
+if enabled multi-user.target chrony.service; then ok "chrony starts at boot"
+else bad "chrony starts at boot" "no multi-user.target.wants/chrony.service link"; fi
+conf() { sed -e 's/#.*//' "$CH" 2>/dev/null; }
+if conf | grep -Eq '^[[:space:]]*rtcsync([[:space:]]|$)'; then
+    bad "chrony never writes the PC's hardware clock (no rtcsync)" "etc/chrony/chrony.conf has rtcsync: Windows' clock would be set to UTC every 11 minutes"
+else ok "chrony never writes the PC's hardware clock (no rtcsync)"; fi
+if conf | grep -Eq '^[[:space:]]*makestep[[:space:]]+[0-9.]+[[:space:]]+-1[[:space:]]*$'; then ok "a clock that is hours out is stepped, whenever it is found"
+else bad "a clock that is hours out is stepped, whenever it is found" "no 'makestep <s> -1' in etc/chrony/chrony.conf (the default steps only in the first three updates)"; fi
+if conf | grep -Eq '^[[:space:]]*port[[:space:]]+0[[:space:]]*$' && conf | grep -Eq '^[[:space:]]*cmdport[[:space:]]+0[[:space:]]*$'; then
+    ok "chrony asks for the time and answers nobody (no listening port)"
+else bad "chrony asks for the time and answers nobody (no listening port)" "port 0 / cmdport 0 missing in etc/chrony/chrony.conf"; fi
+if sed -e 's/#.*//' "$RFS"/etc/chrony/sources.d/*.sources 2>/dev/null | grep -Eq '^[[:space:]]*server[[:space:]].*[[:space:]]nts([[:space:]]|$)'; then
+    ok "time over NTS (authenticated) is asked for first"
+else bad "time over NTS (authenticated) is asked for first" "no 'server ... nts' line under etc/chrony/sources.d"; fi
+if conf | grep -Eq '^[[:space:]]*pool[[:space:]]'; then ok "...and ordinary pool servers are the way in on a network that blocks NTS"
+else bad "...and ordinary pool servers are the way in on a network that blocks NTS" "no pool line in etc/chrony/chrony.conf"; fi
+[ -x "$RFS/etc/NetworkManager/dispatcher.d/30-auros-time" ] && ok "a network coming up makes chrony look for its servers now" \
+    || bad "a network coming up makes chrony look for its servers now" "no executable etc/NetworkManager/dispatcher.d/30-auros-time"
+# What the installer's answers do to the clock: the shipped choices.sh,
+# run against a scratch root.
+CS="$RFS/usr/lib/auros/choices.sh"
+if [ -f "$CS" ]; then
+    cr="$T/croot"; mkdir -p "$cr/usr/share/zoneinfo/America"; : > "$cr/usr/share/zoneinfo/America/Los_Angeles"
+    printf 'timezone=iana:America/Los_Angeles\n' > "$T/c1.conf"
+    AUROS_CHOICES_ROOT="$cr" AUROS_CHOICES_FILE="$T/c1.conf" sh "$CS" >/dev/null 2>&1
+    if [ "$(sed -n 3p "$cr/etc/adjtime" 2>/dev/null)" = LOCAL ]; then ok "an install beside Windows reads the PC's clock as local time (adjtime LOCAL)"
+    else bad "an install beside Windows reads the PC's clock as local time (adjtime LOCAL)" "choices.sh with a time zone left no 'LOCAL' in etc/adjtime"; fi
+    rm -rf "$cr"; mkdir -p "$cr/usr/share/zoneinfo/America"; : > "$cr/usr/share/zoneinfo/America/Los_Angeles"
+    printf 'timezone=iana:America/Los_Angeles\nrtc=utc\n' > "$T/c2.conf"
+    AUROS_CHOICES_ROOT="$cr" AUROS_CHOICES_FILE="$T/c2.conf" sh "$CS" >/dev/null 2>&1
+    if [ ! -e "$cr/etc/adjtime" ]; then ok "...unless Windows keeps its clock in UTC (rtc=utc)"
+    else bad "...unless Windows keeps its clock in UTC (rtc=utc)" "etc/adjtime was written"; fi
+    rm -rf "$cr"; mkdir -p "$cr"
+    printf 'theme=moss\n' > "$T/c3.conf"
+    AUROS_CHOICES_ROOT="$cr" AUROS_CHOICES_FILE="$T/c3.conf" sh "$CS" >/dev/null 2>&1
+    if [ ! -e "$cr/etc/adjtime" ]; then ok "...and no time zone chosen, no change to the clock"
+    else bad "...and no time zone chosen, no change to the clock" "etc/adjtime was written without a zone"; fi
+    rm -rf "$cr"
+else bad "choices.sh is in the image" "no usr/lib/auros/choices.sh"; fi
+
 say ""
 if [ "$fail" -eq 0 ]; then
     echo "hardentest: $checked checks, all ok"

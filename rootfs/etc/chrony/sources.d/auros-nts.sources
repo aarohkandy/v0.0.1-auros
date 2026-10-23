@@ -1,0 +1,7 @@
+# Time over NTS (RFC 8915): the answer is authenticated, so someone on
+# the same café Wi-Fi cannot move her clock. Three independent operators.
+# If a network blocks NTS (TCP 4460), Ubuntu's pool servers in chrony.conf
+# still set the clock, and these are tried again.
+server time.cloudflare.com iburst nts
+server nts.netnod.se       iburst nts
+server ptbtime1.ptb.de     iburst nts

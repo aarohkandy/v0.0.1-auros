@@ -26,6 +26,7 @@
 #      language=es_ES.UTF-8
 #      keyboard=xkb:es            or  keyboard=klid:0000040A
 #      timezone=iana:Europe/Madrid or  timezone=windows:Romance Standard Time
+#      rtc=utc                    (optional: Windows keeps the PC's clock in UTC)
 #      theme=moss
 #      shell=taskbar
 #
@@ -162,6 +163,44 @@ if [ -n "$v" ]; then
     fi
 fi
 
+# ── the PC's clock ─────────────────────────────────────────────────
+#
+# THIS INSTALL LIVES BESIDE WINDOWS, and Windows keeps the PC's hardware
+# clock in LOCAL time. Linux reads it as UTC unless told otherwise, so
+# every machine west of Greenwich started hours BEHIND: apt refused every
+# Release file as "not valid yet", unattended-upgrades never installed a
+# fix, and every certificate looked wrong until something corrected the
+# clock. So, once the zone is known:
+#
+#   /etc/adjtime says LOCAL. From the next start systemd (as on any
+#     dual-boot PC) applies the zone's offset to what the clock says, so
+#     the time is right before the network is up.
+#   And right now, once, if the clock still shows the hardware's value
+#     (it is hours out, and not years: a dead battery is not "a zone"),
+#     the time is set from the hardware clock read as local time.
+#
+# chrony (rootfs/etc/chrony/chrony.conf) then corrects any remaining
+# error from the network, and never writes the hardware clock back, so
+# Windows' clock stays as it was. `rtc=utc` in choices.conf (for a
+# Windows that was told to keep UTC) leaves all of this alone.
+clock_local() { # zone
+    if [ "$(get rtc)" = utc ]; then
+        say "clock: kept in UTC, as Windows says; left as it is"
+        return
+    fi
+    printf '0.0 0 0.0\n0\nLOCAL\n' > "$ROOT/etc/adjtime" || return
+    say "clock: the PC's clock is read as local time, as Windows keeps it"
+    [ -z "$ROOT" ] || return             # tests: files only
+    d=$(cat /sys/class/rtc/rtc0/date 2>/dev/null); t=$(cat /sys/class/rtc/rtc0/time 2>/dev/null)
+    [ -n "$d" ] && [ -n "$t" ] || return
+    rl=$(TZ="$1" date -d "$d $t" +%s 2>/dev/null) || return
+    delta=$((rl - $(date +%s)))
+    a=${delta#-}
+    if [ "$a" -ge 600 ] && [ "$a" -le 54000 ]; then
+        date -u -s "@$rl" >/dev/null 2>&1 && say "clock: set from the PC's clock, $delta seconds"
+    fi
+}
+
 # ── time zone ──────────────────────────────────────────────────────
 #
 # An IANA name, or a Windows one mapped through the same CLDR table
@@ -181,6 +220,7 @@ if [ -n "$v" ]; then
         printf '%s\n' "$tz" > "$ROOT/etc/timezone"
         record timezone "$tz"
         say "time zone: $tz"
+        clock_local "$tz"
     else
         say "time zone '$v' is not one this system has; left as it was"
     fi

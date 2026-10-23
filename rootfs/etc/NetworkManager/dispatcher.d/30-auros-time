@@ -1,0 +1,12 @@
+#!/bin/sh
+# A network has just come up: have chrony look for its servers now
+# rather than at its next retry, which can be a minute or more away on a
+# first start. NetworkManager runs this as root with ($1 interface,
+# $2 what happened); chronyc reaches the daemon over its local socket.
+case "${2:-}" in
+    up|dhcp4-change|dhcp6-change|connectivity-change)
+        command -v chronyc >/dev/null 2>&1 || exit 0
+        chronyc -n refresh >/dev/null 2>&1
+        chronyc -n burst 3/6 >/dev/null 2>&1 ;;
+esac
+exit 0

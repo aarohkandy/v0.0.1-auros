@@ -179,11 +179,18 @@ packages_base="systemd-sysv dbus udev sudo less nano apparmor
 #   zram-tools   compressed swap in RAM, so 4 GB behaves like ~6
 #   earlyoom     when memory runs out anyway, the biggest program is
 #                stopped while the machine still answers, never the desktop
+#   chrony       the clock. Without a time daemon the clock was the PC's
+#                hardware clock read in the wrong zone (Windows keeps it
+#                in local time): hours out, apt refusing every update as
+#                "not valid yet". chrony, unlike systemd-timesyncd, can be
+#                told never to write that hardware clock back (no rtcsync:
+#                rootfs/etc/chrony/chrony.conf), so Windows' clock stays as
+#                it was; it also speaks NTS, authenticated time.
 #
-# Under 1 MB together. cups-browsed is NOT in this image (build/harden
+# A few MB together. cups-browsed is NOT in this image (build/harden
 # removes it whichever profile asks): it was the network listener of the
 # CVE-2024-47176 printing attack, and printing works without it.
-packages_security="nftables zram-tools earlyoom"
+packages_security="nftables zram-tools earlyoom chrony"
 zram_percent="50"
 zram_algorithm="zstd"
 earlyoom_min_free_percent="5"

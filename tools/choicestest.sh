@@ -104,6 +104,8 @@ check "the keyboard is Spanish"            grep -qx 'XKBLAYOUT="es"' "$R/etc/def
 check "...keeping the model and options"   grep -qx 'XKBOPTIONS="compose:ralt"' "$R/etc/default/keyboard"
 check "the clock is in Madrid" \
     test "$(readlink "$R/etc/localtime")" = /usr/share/zoneinfo/Europe/Madrid
+check "the PC's clock is read as local time, as Windows keeps it" \
+    test "$(sed -n 3p "$R/etc/adjtime" 2>/dev/null)" = LOCAL
 check "the look is Moss"                   grep -qx moss "$R/etc/auros/theme"
 check "the desktop is the taskbar one" \
     test "$(readlink "$R/etc/auros/shell/active.shell")" = /usr/share/auros/shells/taskbar.shell

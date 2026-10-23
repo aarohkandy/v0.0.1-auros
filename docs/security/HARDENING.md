@@ -24,12 +24,43 @@ the control is removed**; that is proven, not assumed (below).
 | R4 | **The desktop's safe mode**: 3 failures in 10 minutes and the next start is the plain home with the machine's own settings (then also the built-in look). Her own settings are not touched; restarting the computer tries them again. | `rootfs/usr/lib/auros/shell-guard`, `aurshell.service.d/50-auros-safe-mode.conf` | A crash caused by something she chose must not loop for ever. |
 | R5 | **An update cut off by a power cut is finished at the next start** (`dpkg --configure -a`, keeping her config files); a clean machine costs one directory listing. | `rootfs/usr/lib/auros/dpkg-repair`, `auros-dpkg-repair.service` | Otherwise every later update refuses with a message she will never read, and security fixes silently stop. |
 | R6 | **The journal is capped**: 200 MB, always 1 GB of the disk left free, 48 MB in RAM, 3 months. | `rootfs/etc/systemd/journald.conf.d/50-auros.conf` | A noisy driver cannot fill her disk. |
+| R8 | **The clock is right** (finding SEC-007). Windows keeps the PC's hardware clock in local time; this system read it as UTC and had no time daemon, so every machine west of Greenwich started 4-12 hours behind, apt refused every Release file ("not valid yet"), and unattended-upgrades never installed a fix. Now: **chrony** (no `rtcsync`, `makestep 1 -1`, NTS servers first, no listening port) and, for an install made by the installer, `/etc/adjtime` LOCAL plus a one-time correction from the hardware clock at first start. | `profiles/desktop.profile` (`chrony`), `rootfs/etc/chrony/`, `rootfs/etc/NetworkManager/dispatcher.d/30-auros-time`, `rootfs/usr/lib/auros/choices.sh` (`clock_local`), `build/harden` | See "The clock" below. |
 | R7 | **A damaged disk is repaired at start** without asking (`fsck.repair=yes`). | K3 | Instead of stopping at "requires a manual fsck". |
 
 Not S1's, and listed so nobody thinks they are covered here: the GRUB
 menu's edit/command-line/recovery-shell lock and boot counting (stream
 BT), the shared account password (atlas risk 5), Firefox and scams (S2),
 disk encryption (S4), the update channel (S5).
+
+## The clock
+
+Why chrony and not systemd-timesyncd, which is smaller and already part of
+systemd: timesyncd tells the kernel the clock is synchronised, and the
+kernel then writes it into the PC's hardware clock every 11 minutes, **in
+UTC**. On a PC that also runs Windows that is Windows' clock, kept in
+local time: after her first minutes in AurOS, Windows would show the wrong
+time (hours out) when she went back to it, until it next synchronised. AurOS
+must leave Windows as it found it. chrony without `rtcsync` never lets the
+kernel do that; it needs no other configuration to step a wrong clock
+(`makestep 1 -1`) and it can ask for **authenticated** time (NTS), which a
+stranger on the same café Wi-Fi cannot move. Cost: a few MB of disk, about
+2 MB of RAM, nothing listening (`port 0`, `cmdport 0`).
+
+What the installer's answers do (`choices.sh`, first start, only on an
+install made by AurBridge): `/etc/adjtime` says LOCAL, so from the next
+start systemd applies the zone's offset (the clock is right before any
+network); and right now, once, if the clock still shows the hardware's value
+(hours out, never years: a dead battery is not "a zone"), the time is set from
+the hardware clock read as local time. `rtc=utc` in `choices.conf` (for a
+Windows that was told to keep UTC; AurBridge does not send it yet) leaves it
+alone. A PC without Windows, or an install without answers, is untouched:
+the hardware clock is UTC there and chrony only has the network to correct.
+
+`tools/timeboottest.sh` boots the image in a VM whose RTC is in
+America/Los_Angeles local time, online, three ways (the fix taken out; chrony
+alone; the image as it is) and checks the clock against the host's, `apt-get
+update`, and that the RTC is still in local time after the sync, and after a
+restart. Results: TIMETABLE
 
 ## How it is proven
 
