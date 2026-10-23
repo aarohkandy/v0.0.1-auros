@@ -546,7 +546,11 @@ class Flow:
                         continue
                 img = self.m.screendump()
                 words = vision.ocr(img)
-                if vision.find_text(words, "allow this app to make changes"):
+                # "Do you want to allow this app to make changes to your
+                # device?", or, for an unsigned file (run 39906470700, shot
+                # 0018): "...this app from an unknown publisher to make changes..."
+                if (vision.find_text(words, "to make changes to your") or
+                        vision.find_text(words, "User Account Control")):
                     # The secure desktop: UI Automation cannot see it, and
                     # neither can anything else on the normal desktop. The
                     # keyboard reaches it: Alt+Y is "Yes".
