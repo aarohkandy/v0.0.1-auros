@@ -117,6 +117,40 @@ EOP
 then ok "the JSON parses, keeps quotes, tabs and accents, and has the ids"
 else bad "the JSON parses, keeps quotes, tabs and accents, and has the ids" "$(cat "$T/cc.log" 2>/dev/null)"; fi
 
+# the verdicts are in the JSON too, and a printer's says "printer"
+cat > "$T/dump2.c" <<'EOC'
+#include "hwcompat.h"
+#include <stdio.h>
+#include <string.h>
+int main(int argc, char **argv)
+{
+    hw_inv *v = hwinv_new();
+    hwinv_add_dev(v, "Net", "PCI\\VEN_14E4&DEV_43B1&SUBSYS_0608105B", "PCI\\VEN_14E4&DEV_43B1&CC_028000", "Broadcom", "", "", 0, 71);
+    hwinv_add_printer(v, "HP DeskJet 970Cxi", "HP Deskjet 970c", "USB001", 1);
+    hwcompat_judge(v);
+    char *js = hwinv_json(v, "t", "now");
+    FILE *f = fopen(argv[1], "wb"); fputs(js, f); fclose(f);
+    return 0;
+}
+EOC
+cat > "$T/jcheck.py" <<'EOP'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+v = {(x["kind"], x["printer"]): x for x in d["verdicts"]}
+assert v[("wifi", -1)]["state"] == "wont" and v[("wifi", -1)]["blocks"] is True, d["verdicts"]
+assert v[("printer", 0)]["state"] == "works" and "Your printer will work" in v[("printer", 0)]["says"], d["verdicts"]
+EOP
+if $CC $WARN $CMP_INC -o "$T/dump2" "$T/dump2.c" hw/lib/hwcompat.c $SRC/hwinv.c 2>"$T/cc.log" && "$T/dump2" "$T/o2.json" &&
+   python3 -I "$T/jcheck.py" "$T/o2.json"
+then ok "the JSON carries the verdicts, with her sentences, and the printer's says printer"
+else bad "the JSON carries the verdicts, with her sentences, and the printer's says printer" "$(cat "$T/cc.log" 2>/dev/null)"; fi
+sed 's/x->printer >= 0 ? "printer" : hwinv_kind_key(x->kind)/hwinv_kind_key(x->kind)/' $SRC/hwinv.c > "$T/jm.c"
+if cmp -s "$T/jm.c" $SRC/hwinv.c; then bad "mutant: a printer's verdict is filed as 'other' in the JSON" "the mutation changed nothing (stale sed)"
+elif $CC $WARN $CMP_INC -o "$T/dump3" "$T/dump2.c" hw/lib/hwcompat.c "$T/jm.c" 2>/dev/null && "$T/dump3" "$T/o3.json" &&
+     ! python3 -I "$T/jcheck.py" "$T/o3.json" 2>/dev/null
+then ok "mutant: a printer's verdict is filed as 'other' in the JSON  -> red"
+else bad "mutant: a printer's verdict is filed as 'other' in the JSON" "the JSON check still passed"; fi
+
 # ── the Windows part has to at least build clean for Windows ─────────
 MW="${MW:-x86_64-w64-mingw32-gcc}"
 if command -v "$MW" >/dev/null 2>&1; then

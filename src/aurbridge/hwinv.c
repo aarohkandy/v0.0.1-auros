@@ -550,7 +550,7 @@ char *hwinv_json(const hw_inv *v, const char *tool, const char *made)
     for (int i = 0; i < v->n_verdicts; i++) {
         const hw_verdict *x = &v->verdicts[i];
         sb_put(&b, "%s\n    {\"kind\": \"%s\", \"state\": \"%s\", \"blocks\": %s, \"device\": %d, \"printer\": %d, \"id\": ",
-               i ? "," : "", hwinv_kind_key(x->kind), hwinv_state_key(x->state),
+               i ? "," : "", x->printer >= 0 ? "printer" : hwinv_kind_key(x->kind), hwinv_state_key(x->state),
                x->blocks ? "true" : "false", x->dev, x->printer);
         sb_json(&b, x->id); sb_put(&b, ", \"says\": "); sb_json(&b, x->says);
         sb_put(&b, ", \"why\": "); sb_json(&b, x->why); sb_put(&b, "}");
