@@ -35,8 +35,9 @@ does it is pushed; the commit hash is added when it lands.
    follow, or find buttons by accessible name.
 2. **The primary button is always there**, in the same place. When it
    cannot act yet (Next while the check runs) it is still green; a press
-   says why beside it and does nothing. Its MSAA state is then
-   `STATE_SYSTEM_UNAVAILABLE`. Pressing it early is harmless.
+   says why beside it and does nothing (its MSAA description says why;
+   its state is normal, not UNAVAILABLE, so a screen reader can press it).
+   Pressing it early is harmless.
 3. **No restart countdown.** "Not yet" is gone. The finish page ("Ready
    to restart", title unchanged) has **Restart now** (primary) and
    **Restart later** (secondary: closes Setup, AurOS goes on at her next

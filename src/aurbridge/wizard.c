@@ -3036,29 +3036,6 @@ static const wchar_t *primary_label(void)
     }
 }
 
-static const wchar_t *footer_hint(void)
-{
-    switch (g_page) {
-    case PAGE_WELCOME:
-        return welcome_passed() ? L"Next, you pick how it looks."
-                                : L"This only looks at your computer.";
-    case PAGE_BLOCKED:
-        return any_cannot()       ? L"Nothing was changed. You can close this."
-             : fixable_now() == 2 ? L"It restarts once; this opens again by itself."
-             : fixable_now()      ? L"When it’s fixed, we carry on by ourselves."
-                                  : L"We check again every few seconds, by ourselves.";
-    case PAGE_STYLE:
-        return L"The one with the tick is the one you get.";
-    case PAGE_READY:
-        return L"Closing this before the restart puts everything back.";
-    case PAGE_PROGRESS:
-        return install_ok()     ? L"Save your work first."
-             : install_failed() ? L"You can try again now, or another day."
-                                : L"It keeps the computer awake until it is done.";
-    default: return L"";
-    }
-}
-
 static int back_visible(void)
 {
     /* Not while "Install AurOS" is checking: that button was pressed. */
@@ -3606,54 +3583,78 @@ static int          g_acc_page = -1;
 static void acc_page_name(wchar_t *out, int n)
 {
     out[0] = 0;
+    int k = 0;
+#define SAY(...) do { if (k >= 0 && k < n - 1) { int w_ = _snwprintf(out + k, (size_t)(n - k), __VA_ARGS__); k = w_ < 0 ? -1 : k + w_; } } while (0)
     switch (g_page) {
     case PAGE_WELCOME:
-        _snwprintf(out, (size_t)n, L"Let’s put AurOS on this computer. %ls",
-                   welcome_passed() ? L"This computer can take AurOS. Press Enter for Next."
-                   : (g_pf_valid && !g_checking && !pf_is_go(&g_report))
-                       ? L"Something needs sorting out first."
-                       : L"Looking at this computer. This only looks; nothing is changed.");
+        SAY(L"Let’s put AurOS on this computer. %ls",
+            welcome_passed() ? L"This computer can take AurOS. Press Enter for Next."
+            : (g_pf_valid && !g_checking && !pf_is_go(&g_report))
+                ? L"Something needs sorting out first."
+                : L"Looking at this computer. This only looks; nothing is changed.");
         break;
-    case PAGE_BLOCKED: {
-        int k = _snwprintf(out, (size_t)n, L"%ls. ", any_cannot()
-                           ? L"AurOS can’t go on this computer yet"
-                           : L"Almost there. A few things first");
+    case PAGE_BLOCKED:
+        if (sb_page()) {
+            SAY(L"One setting needs changing first. This computer is set to start only "
+                L"Windows. Someone who knows computers can change it in about five "
+                L"minutes. Nothing on this computer has been changed. Press Enter for "
+                L"%ls.", g_sb_helper ? L"Check again" : L"Show a helper how");
+            break;
+        }
+        SAY(L"%ls. Nothing on this computer has been changed. ",
+            any_cannot() ? L"AurOS can’t go on this computer yet"
+                         : L"A few things to sort out first");
+        /* each problem, and what happens about it: not just its name */
         for (int i = 0; i < g_report.n && k > 0 && k < n - 200; i++) {
             const pf_result *r = &g_report.results[i];
             if (r->sev != PF_BLOCK) continue;
-            const fix_info *f = fix_lookup(r->id);
-            if (f) k += _snwprintf(out + k, (size_t)(n - k), L"%ls. ", f->problem);
+            if (any_cannot() && kind_of(r) != FIX_CANNOT) continue;   /* as on the screen */
+            wchar_t prob[160], fix[600];
+            stop_line(r, any_cannot(), prob, fix);
+            SAY(L"%ls. %ls ", prob, fix);
         }
         break;
-    }
     case PAGE_STYLE:
-        _snwprintf(out, (size_t)n, L"Pick the look you want. Chosen: %ls.",
-                   STYLES[style_ok() ? g_sel_style : 0].name);
+        SAY(L"Pick the look you want. Four looks, each a picture of the screen. "
+            L"Chosen: %ls.", STYLES[style_ok() ? g_sel_style : 0].name);
         break;
     case PAGE_READY: {
         int lo, hi;
         eta_range(&lo, &hi);
-        _snwprintf(out, (size_t)n, L"Ready to install. Windows and all your files stay "
-                   L"on this computer. %ls The computer restarts once. It takes about "
-                   L"%d to %d minutes. Press Enter to install AurOS.",
-                   STYLES[style_ok() ? g_sel_style : 0].ready, lo, hi);
+        SAY(L"Ready to install. Windows and all your files stay on this computer. %ls "
+            L"The computer restarts once. It takes about %d to %d minutes. Press "
+            L"Enter to install AurOS.",
+            STYLES[style_ok() ? g_sel_style : 0].ready, lo, hi);
         break;
     }
     case PAGE_PROGRESS:
         if (install_ok())
-            wcsncpy(out, L"Ready to restart. Save anything you’re working on. It "
-                         L"restarts by itself in a minute; press Enter to restart now, "
-                         L"or Escape for not yet.", (size_t)n);
+            SAY(L"Ready to restart. Save anything you’re working on, then press "
+                L"Enter to restart now. Or press Restart later: AurOS goes on next time "
+                L"you restart.");
         else if (install_failed())
-            wcsncpy(out, L"The install stopped before the restart. Your files are safe. "
-                         L"Press Enter to try again.", (size_t)n);
+            SAY(L"The install stopped before the restart. Your files are safe. Press "
+                L"Enter to try again.");
+        else if (g_stop_wanted)
+            SAY(L"Stopping. When the step it is on is done, everything is put back and "
+                L"this window closes by itself.");
         else
-            wcsncpy(out, L"Setting up AurOS. You can leave it; it carries on by itself.",
-                    (size_t)n);
+            SAY(L"Setting up AurOS. You can walk away. When you come back, press "
+                L"Restart now.");
         break;
     default: break;
     }
+#undef SAY
     out[n - 1] = 0;
+}
+
+/* What a screen reader says under the name, when it is asked: nothing the
+ * page does not already say on its screen. */
+static const wchar_t *acc_description(int id)
+{
+    /* the big button, pressed too early, says why it waits */
+    if (id == ID_PRIMARY && primary_visible() && !primary_enabled()) return early_words();
+    return NULL;
 }
 
 static int acc_primary_index(void)
@@ -3730,7 +3731,7 @@ static HRESULT STDMETHODCALLTYPE acc_get_accDescription(IAccessible *t, VARIANT 
         *s = acc_str(STYLES[g_w[c].id - ID_STYLE].line);
         return S_OK;
     }
-    *s = c == -1 ? acc_str(footer_hint()) : NULL;
+    *s = c >= 0 ? acc_str(acc_description(g_w[c].id)) : NULL;
     return *s ? S_OK : S_FALSE;
 }
 static HRESULT STDMETHODCALLTYPE acc_get_accRole(IAccessible *t, VARIANT v, VARIANT *r)
