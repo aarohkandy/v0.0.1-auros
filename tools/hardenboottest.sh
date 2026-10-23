@@ -751,11 +751,14 @@ row control "three desktop crashes: the 4th start is safe mode" safe_mode
 row control "S2: AnyDesk from the store, first time: refused, card asked for" remote_gate
 row keep    "S2: ...she answers on the card with the keyboard; the next try works" remote_yes
 row control "S2: TeamViewer through PackageKit: refused, card asked for" deb_gate
-row both    "S2: Firefox full screen on a trap page" page_shown
-row both    "S2: one Escape does not take the page away, and shows no card" esc_one_stays
-row both    "S2: Ctrl+Alt+Delete over the page: the card, not a restart" cad_card
-row both    "S2: the card's Escape leaves her page as it was" back_ok
-row both    "S2: Escape x3 over the page: the card, and Close this page closes it" esc3_closes
+# (kind keep, not both: nothing S1 removes changes these, and in the
+# controls-removed boot the first-start panel "Does everything work?" can
+# be in front of Firefox, because no install card was answered earlier)
+row keep    "S2: Firefox full screen on a trap page" page_shown
+row keep    "S2: one Escape does not take the page away, and shows no card" esc_one_stays
+row keep    "S2: Ctrl+Alt+Delete over the page: the card, not a restart" cad_card
+row keep    "S2: the card's Escape leaves her page as it was" back_ok
+row keep    "S2: Escape x3 over the page: the card, and Close this page closes it" esc3_closes
 
 say ""
 say "Details: hog stopped after $(val hog_secs "$RH") s (exit $(val hog_rc "$RH")), zram took $(( $(num swap_peak_kb "$RH") / 1024 )) MB;" \
