@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Is AurOS working today?</title>
+<meta name="description" content="Whether the AurOS website, the download and the updates are working right now.">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#F6F2E9">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Cpath%20d='M16%202L30%2016L16%2030L2%2016Z'%20fill='%230B5D4F'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the page</a>
+
+<header class="bar">
+  <div class="wrap bar-in">
+    <a class="brand" href="index.html"><svg class="mark" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M5 0L10 5L5 10L0 5Z"/></svg>AurOS</a>
+    <a class="bar-link" href="index.html">Back to the simple page</a>
+  </div>
+</header>
+
+<main id="main">
+  <section class="page-head" aria-labelledby="status-title">
+    <div class="narrow">
+      <h1 id="status-title">Is AurOS working today?</h1>
+      <p class="lede" id="status-line" role="status">This page shows the latest check when your browser can run scripts. Nothing on it asks for anything or sends anything.</p>
+    </div>
+  </section>
+
+  <section class="section soft" style="padding-top:clamp(40px,6vw,72px)" aria-labelledby="parts-title">
+    <div class="narrow">
+      <h2 id="parts-title">What is checked</h2>
+      <p>Every 15 minutes, a computer we do not own asks each of these the way you would. If one stops answering, the person who looks after AurOS is told at once.</p>
+      <ul class="toc" id="parts">
+        <li><b>This website</b>: <span data-part="site">not checked yet</span></li>
+        <li><b>The download</b> (the Get AurOS button): <span data-part="download">not checked yet</span></li>
+        <li><b>The files Setup fetches</b> after you open it: <span data-part="pieces">not checked yet</span></li>
+        <li><b>Updates for computers that already have AurOS</b>: <span data-part="channel">not checked yet</span></li>
+        <li><b>Wishes</b>, the assistant that does what you ask in your own words: <span data-part="wishes">not checked yet</span></li>
+        <li><b>Get more programs</b> (Flathub, run by someone else): <span data-part="flathub">not checked yet</span></li>
+      </ul>
+      <h2 style="margin-top:48px">If something here says it is not working</h2>
+      <p>Your computer is safe. Computers that already have AurOS keep working whatever this page says. If the download is not working, try again in an hour. Setup never changes anything on your computer until you say so.</p>
+      <p id="status-when"></p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <ul class="foot-links">
+      <li><a href="index.html">The simple page</a></li>
+      <li><a href="advanced.html">For someone who knows computers</a></li>
+      <li><a href="https://github.com/@AUROS_REPO@/issues">Ask a question</a></li>
+      <li><a href="https://github.com/@AUROS_REPO@">The source code</a></li>
+    </ul>
+    <p>No cookies, no tracking, no ads. AurOS is free software (MIT license). Set in Atkinson Hyperlegible Next (<a href="assets/fonts/OFL.txt">license</a>).</p>
+  </div>
+</footer>
+
+<script>
+/* The latest check is status.json, next to this page (the monitor, tools/ops/monitor.py, writes it
+   on the owner's own address; the copy shipped with the site says "not checked yet"). Nothing is sent. */
+(function () {
+  "use strict";
+  var WORDS = { ok: "working", fail: "not working", pending: "not open yet", warn: "not answering (it is not ours)" };
+  fetch("status.json", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (s) {
+    var line = document.getElementById("status-line"), when = document.getElementById("status-when");
+    if (!s || !s.checked_at || !s.results) return;
+    var mins = Math.max(0, Math.round((Date.now() - Date.parse(s.checked_at)) / 60000));
+    if (isNaN(mins)) return;
+    var stale = mins > 60, bad = [];
+    s.results.forEach(function (r) {
+      var el = document.querySelector('[data-part="' + r.check + '"]');
+      if (el && WORDS[r.state]) el.textContent = stale ? "not checked lately" : WORDS[r.state];
+      if (r.state === "fail") bad.push(r.check);
+    });
+    line.textContent = stale ? "Not checked for over an hour. The checking itself may have stopped."
+      : bad.length ? "Something is not working. We know, and we are fixing it."
+      : "Everything that is open is working.";
+    when.textContent = "Last checked " + (mins < 2 ? "a minute ago" : mins + " minutes ago") + ".";
+  }).catch(function () { /* the page keeps its plain default */ });
+})();
+</script>
+</body>
+</html>
