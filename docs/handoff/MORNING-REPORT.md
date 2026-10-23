@@ -4,6 +4,8 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Done overnight (proof)
 
+- **All four extra editions build and boot** (office, revive, school kiosk, multilingual): desktop in 14-18 s; revive idles at 313 MB RAM.
+
 - **Moved to your repository** (aarohkandy/v0.0.1-auros, branch main). CI, Pages (on), secrets
   all in. Update-signing key built into AurOS (afa7755, fingerprint checked by the lead).
 - **Website redesigned** (light, one green, real AurOS pictures, every promise checked against
@@ -25,6 +27,8 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 - Safety review, security audit and legal review: results arriving.
 
 ## Waiting for you (each with my recommendation)
+
+0. Two commits from the profiles agent were refused by the permission system (desktop screenshots per edition; ~1 h of CI). They sit in the scratchpad worktree wt-p. Say "push P's commits" if you want them.
 
 1. **Buy a short domain** (Cloudflare Registrar, ~$10/yr). Installed computers then never depend
    on GitHub addresses. Nothing goes public before this or your explicit "promote without it".
