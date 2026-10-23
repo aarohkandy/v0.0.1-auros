@@ -85,6 +85,10 @@ done
 # its own WinMain. Unicode comes from the W-suffixed APIs, which is
 # the only way that works the same on Windows 7 and 11.
 WARN="-Wall -Wextra -Wno-unused-parameter -std=gnu11"
+# ASLR (64-bit), DEP and the stack protector for the two .exe files;
+# checked on the binaries below by tools/checksec.sh (stream S3).
+# shellcheck source=build/cflags
+. "$ROOT/build/cflags"
 
 # ── what this installer carries and where it fetches from ──────────
 #
@@ -284,14 +288,14 @@ fi
 
 step "aurbridge.exe (console)"
 # shellcheck disable=SC2086
-$CC -O2 $WARN $IMGDEF -I "$OUT" $STAGE_INC -o "$OUT/aurbridge.exe" "$SRC/main.c" $LIB $PAYLOAD_OBJ \
+$CC -O2 $HARDEN_PE $WARN $IMGDEF -I "$OUT" $STAGE_INC -o "$OUT/aurbridge.exe" "$SRC/main.c" $LIB $PAYLOAD_OBJ \
     -lwinhttp -lsetupapi -lcfgmgr32 \
     || die "the console tool did not build"
 note "$(du -h "$OUT/aurbridge.exe" | cut -f1)"
 
 step "aurbridge-wizard.exe"
 # shellcheck disable=SC2086
-$CC -O2 $WARN $IMGDEF -I "$OUT" $STAGE_INC -mwindows -o "$OUT/aurbridge-wizard.exe" \
+$CC -O2 $HARDEN_PE $WARN $IMGDEF -I "$OUT" $STAGE_INC -mwindows -o "$OUT/aurbridge-wizard.exe" \
     "$SRC/wizard.c" $LIB $PAYLOAD_OBJ $MANIFEST_OBJ \
     -lgdi32 -lcomctl32 -lwinhttp -lsetupapi -lcfgmgr32 \
     -loleacc -loleaut32 -lole32 -luuid \
@@ -302,6 +306,10 @@ if [ -n "$MANIFEST_OBJ" ]; then
         || die "the manifest inside aurbridge-wizard.exe is one Windows would refuse"
     note "manifest inside the .exe checked: Windows can load it"
 fi
+
+CS=$(sh "$ROOT/tools/checksec.sh" "$OUT/aurbridge.exe" "$OUT/aurbridge-wizard.exe" 2>&1) \
+    || { printf '%s\n' "$CS" >&2; die "the installer was built without ASLR or DEP (above)"; }
+note "ASLR + DEP checked on both .exe files"
 
 # ── the host-side simulation ───────────────────────────────────────
 #

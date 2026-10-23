@@ -280,7 +280,10 @@ if [ "${AURSTAGE_FAULT:-0}" = 1 ]; then
     warn "building a FAULT INJECTION image: aurstage.die_at= will stop"
     warn "this machine dead in the middle of writing to a disk."
 fi
-gcc -O2 -std=gnu11 -Wall -Wextra -static $FAULTDEF -o init \
+# shellcheck source=build/cflags
+. "$ROOT/build/cflags"
+# shellcheck disable=SC2086
+gcc $HARDEN_STATIC -std=gnu11 -Wall -Wextra $FAULTDEF -o init \
     "$ROOT"/src/aurstage/*.c -I "$ROOT/src/aurstage" \
     || die "aurstage did not build"
 # NOT A PIPELINE INTO grep -q. Third time in this file; see the two
@@ -289,7 +292,7 @@ gcc -O2 -std=gnu11 -Wall -Wextra -static $FAULTDEF -o init \
 # fails for a reason nobody can find.
 FILEOUT=$(file init 2>/dev/null || true)
 case "$FILEOUT" in
-  *"statically linked"*) ;;
+  *"statically linked"*|*"static-pie linked"*) ;;
   *) die "init is not statically linked; PID 1 would depend on the build host" ;;
 esac
 
@@ -340,14 +343,21 @@ note "init $(du -h init | cut -f1)"
 # framebuffer, no GPU driver) and two fonts; without either it exits
 # and the console text is what is left, as before.
 mkdir -p usr/bin usr/share/fonts/truetype/dejavu
-gcc -O2 -std=gnu11 -Wall -Wextra -static -o usr/bin/aurscreen \
+# shellcheck disable=SC2086
+gcc $HARDEN_STATIC -std=gnu11 -Wall -Wextra -o usr/bin/aurscreen \
     "$ROOT/src/aurscreen/screen.c" "$ROOT/src/aurshell/kms.c" \
     "$ROOT/src/aurshell/draw.c" "$ROOT/src/common/font.c" "$ROOT/src/common/png.c" -lm \
     || die "aurscreen did not build"
 case "$(file usr/bin/aurscreen 2>/dev/null || true)" in
-  *"statically linked"*) ;;
+  *"statically linked"*|*"static-pie linked"*) ;;
   *) die "aurscreen is not statically linked" ;;
 esac
+# Position-independent, full RELRO, NX, CET: proved on the binaries
+# (tools/checksec.sh; it says why ssp/fortify cannot be read from a
+# static binary).
+CS=$(sh "$ROOT/tools/checksec.sh" init usr/bin/aurscreen 2>&1) \
+    || { printf '%s\n' "$CS" >&2; die "PID 1 or its screen was built without its hardening (above)"; }
+note "compiler hardening: $(printf '%s\n' "$CS" | tail -1)"
 for f in DejaVuSans.ttf DejaVuSans-Bold.ttf; do
     cp "$RFS/usr/share/fonts/truetype/dejavu/$f" usr/share/fonts/truetype/dejavu/ \
         || die "no $f in $RFS for the staging screen"

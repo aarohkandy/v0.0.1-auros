@@ -49,6 +49,9 @@ warn_note() {
 # The hardening stage and its seal-time check (stream S1).
 # shellcheck source=build/harden
 . "$ROOT/build/harden"
+# The compiler flags every C program we ship is built with (stream S3).
+# shellcheck source=build/cflags
+. "$ROOT/build/cflags"
 
 # ── profile loading, with single-parent inheritance ────────────────
 load_profile() {
@@ -902,12 +905,12 @@ stage_overlay() {
               libwayland-dev libwayland-bin wayland-protocols libxkbcommon-dev" \
         >/dev/null 2>&1 || true
     inchroot "cd /usr/src/auros && \
-        gcc -O2 -std=gnu11 -o /usr/sbin/aurinit aurinit/aurinit.c && \
-        gcc -O2 -std=gnu11 -o /usr/bin/aurctl  aurinit/aurctl.c && \
-        gcc -O2 -std=gnu11 -o /usr/bin/aurwall aurwall/main.c common/theme.c common/wall.c common/png.c -lm && \
-        gcc -O2 -std=gnu11 -o /usr/bin/aursorry aurshell/sorry.c aurshell/kms.c \
+        gcc $HARDEN_CFLAGS -std=gnu11 -o /usr/sbin/aurinit aurinit/aurinit.c && \
+        gcc $HARDEN_CFLAGS -std=gnu11 -o /usr/bin/aurctl  aurinit/aurctl.c && \
+        gcc $HARDEN_CFLAGS -std=gnu11 -o /usr/bin/aurwall aurwall/main.c common/theme.c common/wall.c common/png.c -lm && \
+        gcc $HARDEN_CFLAGS -std=gnu11 -o /usr/bin/aursorry aurshell/sorry.c aurshell/kms.c \
             aurshell/draw.c common/font.c common/png.c -lm && \
-        gcc -O2 -std=gnu11 -Wall -Wextra -o /usr/sbin/aurfirst aurfirst/*.c -I aurfirst" \
+        gcc $HARDEN_CFLAGS -std=gnu11 -Wall -Wextra -o /usr/sbin/aurfirst aurfirst/*.c -I aurfirst" \
         || die "building the AurOS stack inside the image failed"
 
     # Ferry — first-boot migration. Its own install.sh holds the list of
@@ -992,7 +995,7 @@ stage_overlay() {
         esac
     done
 
-    if inchroot "cd /usr/src/auros && gcc -O2 -std=gnu11 -o /usr/bin/aurshell \
+    if inchroot "cd /usr/src/auros && gcc $HARDEN_CFLAGS -std=gnu11 -o /usr/bin/aurshell \
             $SHELL_SRC \
             aurwl/aurwl.c aurwl/gen/xdg-shell-protocol.c \
             aurwl/gen/xdg-decoration-protocol.c aurwl/gen/viewporter-protocol.c \
@@ -1004,6 +1007,19 @@ stage_overlay() {
     else
         die "aurshell did not build - the image would boot to a console"
     fi
+
+    # AND THE FLAGS ARE CHECKED ON THE BINARIES, not trusted from the
+    # command lines above: tools/checksec.sh (PIE, full RELRO, NX, CET,
+    # stack protector, FORTIFY), the same gate whose --selftest proves
+    # each check fails on a binary built without its flag.
+    local _cs
+    if ! _cs=$(sh "$ROOT/tools/checksec.sh" "$RFS/usr/sbin/aurinit" "$RFS/usr/bin/aurctl" \
+            "$RFS/usr/bin/aurwall" "$RFS/usr/bin/aursorry" "$RFS/usr/sbin/aurfirst" \
+            "$RFS/usr/bin/aurshell" "$RFS"/usr/lib/ferry/ferry-* 2>&1); then
+        printf '%s\n' "$_cs" >&2
+        die "a program in this image was built without its hardening (above); build/cflags"
+    fi
+    note "compiler hardening: $(printf '%s\n' "$_cs" | tail -1)"
 
     # ── THE WHOLE rootfs/ TREE, not a list of files from it ────────
     #

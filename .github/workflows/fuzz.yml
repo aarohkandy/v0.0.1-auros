@@ -1,0 +1,51 @@
+# fuzz.yml -- stream S3: every crash the fuzzers ever found stays fixed,
+# and the hardening gate still tells a hardened binary from one that is not.
+#
+#   tools/fuzz/regress.sh       every harness under ASan+UBSan over its seed
+#                               corpus and tools/fuzz/regress/<target>/
+#   tools/checksec.sh --selftest  each hardening check fails on a binary
+#                               built without its flag (ELF and PE)
+#
+# Cheap (a few minutes, no KVM), so it runs on every push that touches
+# what it checks. The long fuzzing runs happen elsewhere (docs/handoff/
+# streams/S3.md); this only keeps their findings from coming back.
+name: fuzz
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/common/**'
+      - 'src/aurwl/**'
+      - 'src/aurshell/**'
+      - 'src/aurbridge/inflate.*'
+      - 'src/aurstage/gpt.*'
+      - 'src/aurstage/journal.*'
+      - 'tools/fuzz/**'
+      - 'tools/checksec.sh'
+      - 'build/cflags'
+      - '.github/workflows/fuzz.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  regress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: tools
+        run: |
+          for i in 1 2 3; do
+            sudo timeout 300 apt-get update -q &&
+            sudo DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y -q --no-install-recommends \
+                clang libwayland-dev libxkbcommon-dev xkb-data pkg-config mingw-w64 && break
+            [ "$i" = 3 ] && exit 1; sleep 15
+          done
+      - name: fuzz regressions (ASan + UBSan)
+        run: sh tools/fuzz/regress.sh "$RUNNER_TEMP/fuzz"
+      - name: hardening gate selftest
+        run: sh tools/checksec.sh --selftest
