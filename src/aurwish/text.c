@@ -370,23 +370,19 @@ const char *word_rule(const char *w, char out[33])
     return NULL;
 }
 
-/* ── emoji (§7.3: about 60 friendly ones; the owner's list) ───────── */
+/* ── emoji (§7.3: the 60 friendly ones both sides agree on) ───────── */
 
 static const char *const EMOJI[] = {
-    /* food */
-    "🥔", "🍎", "🍌", "🍓", "🍒", "🍉", "🍕", "🍰", "🎂", "🍪", "🍩", "🍦",
-    "🥕", "🌽", "🍋", "☕", "🍫", "🥐", "🍇", "🍊",
-    /* animals */
-    "🐱", "🐶", "🐰", "🐻", "🐼", "🐸", "🐝", "🦋", "🐞", "🐢", "🐠", "🐬",
-    "🦆", "🐧", "🦉", "🐴", "🐮", "🐷", "🐔",
-    /* hearts */
-    "❤️", "💛", "💚", "💙", "💜", "💖", "💕",
-    /* flowers and trees */
-    "🌸", "🌹", "🌻", "🌷", "🌼", "🍀", "🌳", "🍁",
-    /* stars and weather */
-    "⭐", "🌟", "✨", "💫", "☀️", "🌈", "☁️", "❄️", "☔", "🌙", "⛄",
-    /* celebrations and cheer */
-    "🎉", "🎈", "🎁", "🎊", "🥳", "🎵", "🎶", "🙂", "😊", "😄", "👍", "👏", "🔔",
+    /* docs/wish-v1.schema.json $defs.emoji, in its order. tools/wishtest-schema.py
+     * fails if the two ever differ: the cloud may send exactly these. */
+    "🥔", "🍎", "🍌", "🍓", "🍒", "🍕", "🍰", "🧁",
+    "🍪", "🍩", "☕", "🍵", "🐶", "🐱", "🐰", "🐻",
+    "🐼", "🐨", "🐸", "🐢", "🐠", "🐦", "🦋", "🐝",
+    "❤️", "🧡", "💛", "💚", "💙", "💜", "🌸", "🌻",
+    "🌷", "🌹", "🌼", "🍀", "⭐", "🌟", "✨", "🌙",
+    "☀️", "🌈", "☁️", "⛅", "🌧️", "❄️", "⛄", "🎉",
+    "🎈", "🎂", "🎁", "🎊", "🎄", "🎃", "🥳", "😀",
+    "😊", "😂", "😍", "👍",
     NULL };
 
 const char *emoji_allowed(const char *e)

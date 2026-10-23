@@ -345,9 +345,8 @@ static int parse_when(const jv *o, const wish_env *env, wish_when *w, wish_err *
         if (w->sensor == S_COMPASS) {
             w->heading = pick(sval(o, "heading"), HEADINGS);
             if (w->heading < 0) NO("other", "bad heading", "when.heading");
-            int r = ival(o, "tolerance_deg", 5, 45, &w->tol);
-            if (r < 0) NO("other", "tolerance out of range", "when.tolerance_deg");
-            if (r == 0) w->tol = 20;
+            if (ival(o, "tolerance_deg", 5, 45, &w->tol) != 1)
+                NO("other", "tolerance missing or out of range", "when.tolerance_deg");
         } else if (w->sensor == S_TILT) {
             w->orient = pick(sval(o, "orientation"), ORIENTS);
             if (w->orient < 0) NO("other", "bad orientation", "when.orientation");

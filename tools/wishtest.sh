@@ -37,6 +37,15 @@ for cc in gcc clang cc; do
     done
 done
 
+# The engine and the cloud must agree on the document (docs/wish-v1.schema.json).
+if [ -f "$ROOT/docs/wish-v1.schema.json" ] && command -v python3 >/dev/null 2>&1; then
+    if python3 "$ROOT/tools/wishtest-schema.py" >"$OUT/schema" 2>&1; then
+        echo "ok   schema: $(tail -1 "$OUT/schema")"
+    else
+        echo "FAIL schema agreement"; grep -E 'FAIL|Error' "$OUT/schema" | head -20; fail=1
+    fi
+fi
+
 # The daemon itself builds only where its Linux headers are.
 if [ "$(uname)" = Linux ] && [ -f "$W/build.sh" ] && pkg-config --exists dbus-1 2>/dev/null; then
     if sh "$ROOT/src/aurwish/build.sh" "$OUT/aurwish" >"$OUT/err" 2>&1; then
