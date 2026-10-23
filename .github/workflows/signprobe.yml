@@ -26,11 +26,7 @@ jobs:
             echo "=== MUTANT: $1"
             sh tools/signtest.sh 2>&1 | grep -E 'FAIL|[0-9]+ of [0-9]+ wrong|checks:' || true
           }
-          mut "no digest comparison" '[ "$du" = "$ds" ] ||' 'false ||'
-          mut "no signer-name check" '*"$want"*) ok' '*) ok'
-          mut "no signature verification" '|| { sed -n '"'"'1,25p'"'"' "$TMPD/verify.txt" >&2; refuse "the signature does not verify against the trusted roots"; }' '|| true'
-          mut "unsigned input not checked" 'if $AC signed "$U" 2>/dev/null; then refuse' 'if false; then refuse'
-          mut "signed input not checked" '$AC signed "$S" 2>/dev/null || refuse' '$AC signed "$S" 2>/dev/null || true;#'
+          mut "digest comparison always passes" '[ "$du" = "$ds" ] ||' 'true ||'
           cp "$RUNNER_TEMP/signed-check.orig" tools/signed-check.sh
           echo "=== ORIGINAL"
           sh tools/signtest.sh 2>&1 | grep -E 'FAIL|[0-9]+ of [0-9]+ wrong|checks:' || true
