@@ -59,3 +59,10 @@ DPkg::Post-Invoke { "[ ! -x /usr/lib/auros/keep-previous ] || /usr/lib/auros/kee
 // apt may delete a package file as soon as it is installed. The copy in
 // apt's cache is where keep-previous takes the new set from.
 APT::Keep-Downloaded-Packages "true";
+
+// AurOS's name is not in Ubuntu's table of releases (distro-info), so
+// unattended-upgrade logged "Could not figure out development release:
+// ... auros.csv" on every run. AurOS is never a development series; skip
+// the lookup (the only other effect of "false" is to refuse to run when
+// the description says "(development branch)", which AurOS's never does).
+Unattended-Upgrade::DevRelease "false";
