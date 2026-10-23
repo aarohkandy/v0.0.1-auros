@@ -1838,6 +1838,14 @@ static void glyph_down(float cx, float cy, float s, uint32_t c, float a)
     aa_line(cx + s * 0.20f, cy - s * 0.08f, cx, cy + s * 0.12f, s * 0.09f, c, a);
     aa_line(cx - s * 0.40f, cy + s * 0.40f, cx + s * 0.40f, cy + s * 0.40f, s * 0.09f, c, a);
 }
+static void glyph_lock(float cx, float cy, float s, uint32_t c, float a)
+{
+    /* the drive lock: a padlock */
+    stroke_rr(cx - s * 0.36f, cy - s * 0.04f, s * 0.72f, s * 0.46f, s * 0.07f, s * 0.09f, c, a);
+    glyph_arc(cx, cy - s * 0.06f, s * 0.22f, 3.14159f, 6.28318f, s * 0.09f, c, a);
+    aa_line(cx - s * 0.22f, cy - s * 0.06f, cx - s * 0.22f, cy - s * 0.04f, s * 0.09f, c, a);
+    aa_line(cx + s * 0.22f, cy - s * 0.06f, cx + s * 0.22f, cy - s * 0.04f, s * 0.09f, c, a);
+}
 static void glyph_info(float cx, float cy, float s, uint32_t c, float a)
 {
     stroke_circle(cx, cy, s * 0.44f, s * 0.08f, c, a);
@@ -1848,7 +1856,7 @@ static void glyph_info(float cx, float cy, float s, uint32_t c, float a)
 /* A glyph, and a sentence beside it. The shape the Ready page is made of.
  * The glyphs are ink-2: they help her find a line again, and should not
  * be what she looks at first. */
-enum { G_HOME = 0, G_UNDO, G_CLOCK, G_DRIVE, G_LOOK, G_DOWN, G_INFO };
+enum { G_HOME = 0, G_UNDO, G_CLOCK, G_DRIVE, G_LOOK, G_DOWN, G_INFO, G_LOCK };
 static void glyph_at(int glyph, float cx, float cy, float gs, uint32_t c)
 {
     switch (glyph) {
@@ -1859,6 +1867,7 @@ static void glyph_at(int glyph, float cx, float cy, float gs, uint32_t c)
     case G_LOOK:  glyph_look (cx, cy, gs, c, 1.f); break;
     case G_DOWN:  glyph_down (cx, cy, gs, c, 1.f); break;
     case G_INFO:  glyph_info (cx, cy, gs, c, 1.f); break;
+    case G_LOCK:  glyph_lock (cx, cy, gs, c, 1.f); break;
     default: break;
     }
 }
@@ -2791,7 +2800,10 @@ static int page_ready(int x, int y, int w)
 {
     int y0 = y;
     int narrow = w > S(760) ? S(760) : w;
-    int gap = S(g_dense ? 6 : g_short ? 10 : 16);
+    /* tighter when the page carries the two optional lines (her Wi-Fi, the
+     * drive lock): all eight still fit 1366x768 without scrolling */
+    int extra = wifi_offered() + bitlocker_paused_here();
+    int gap = S(g_dense ? 6 : g_short ? 10 : extra ? 9 : 16);
     wchar_t buf[300];
 
     y += page_head(L"Ready to install", NULL, x, y, w) + S(g_dense ? 12 : g_short ? 18 : 28);
@@ -2822,7 +2834,7 @@ static int page_ready(int x, int y, int w)
 
     /* D11, in her words, on a computer whose drive is locked. */
     if (bitlocker_paused_here())
-        y += glyph_row(G_HOME, L"Windows’ drive lock is paused for one restart and "
+        y += glyph_row(G_LOCK, L"Windows’ drive lock is paused for one restart and "
                                L"comes back on by itself.", x, y, narrow) + gap;
 
     y += glyph_row(G_UNDO, L"The computer restarts once. Then AurOS asks if everything "
@@ -4605,6 +4617,15 @@ static int shot_run(const char *dir)
     g_focus = -1; g_focus_ring = 0; g_sel_style = STYLE_DEFAULT;
 
     g_page = PAGE_READY; shot_save(dir, "4a-ready");
+#if defined(AB_CHOICE_BRING_WIFI) && defined(AB_CHOICE_BITLOCKER_PAUSE)
+    /* only when the engine can carry them (A2): her Wi-Fi, and the drive
+     * lock paused for one restart (D10, D11, D13) */
+    g_report.wifi_connected = 1;
+    snprintf(g_report.wifi_name, sizeof g_report.wifi_name, "HomeNet");
+    g_report.volumes[0].bitlocker = 1;
+    g_page = PAGE_READY; shot_save(dir, "4c-ready-wifi-lock");
+    g_report.wifi_connected = 0; g_report.volumes[0].bitlocker = 0;
+#endif
     fx_machine(1); fx_ready(); g_sel_style = 2;
     g_page = PAGE_READY; shot_save(dir, "4b-ready-hard-disk");
     fx_machine(0); fx_ready(); g_sel_style = STYLE_DEFAULT;
@@ -5115,6 +5136,7 @@ static int nav_test(const char *dir)
         nt_check(!box, "not on Wi-Fi: no Wi-Fi box");
         g_report.wifi_connected = 1;
         snprintf(g_report.wifi_name, sizeof g_report.wifi_name, "HomeNet");
+        g_report.volumes[0].bitlocker = 1;     /* and a locked drive: the longest Ready page */
         render();
         box = -1;
         for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_WIFI) box = i;
@@ -5138,6 +5160,7 @@ static int nav_test(const char *dir)
         nt_check(box < 0, "on Wi-Fi, but the engine cannot carry it yet: no box, no promise");
 #endif
         g_report.wifi_connected = 0;
+        g_report.volumes[0].bitlocker = 0;
         g_bring_wifi = 1;
     }
 
