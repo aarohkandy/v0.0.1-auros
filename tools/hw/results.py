@@ -98,7 +98,7 @@ def judge(pred, obs):
 def load(dirp):
     rows = []
     for p in sorted(glob.glob(os.path.join(dirp, "*.txt"))):
-        if os.path.basename(p) in ("TEMPLATE.txt",):
+        if os.path.basename(p) in ("TEMPLATE.txt", "SAMPLE-REPORT.txt"):
             continue
         d = parse(p)
         rp = p[:-4] + ".report.json"
