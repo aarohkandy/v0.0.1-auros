@@ -44,7 +44,13 @@ done_() {
 }
 
 static() {
-    local R=${1:?ROOTFS}
+    # Absolute: it is written into an apt source's Signed-By below.
+    local R; R=$(cd "${1:?ROOTFS}" 2>/dev/null && pwd) || need "no rootfs at $1"
+    # An enabled unit is a symlink whose target is absolute *inside the
+    # image* (/etc/systemd/system/x.timer): seen from outside it dangles
+    # unless the host happens to have the same file, so -e is not the
+    # question; -L is (as build/forge's enable_unit asks it).
+    enabled() { [ -L "$1" ] || [ -e "$1" ]; }
     [ "$(id -u)" = 0 ] || need "static needs root (it asks apt inside the image)"
     [ -x "$R/usr/bin/apt-config" ] || need "no apt in $R"
     inr() { chroot "$R" /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C "$@"; }
@@ -71,7 +77,7 @@ static() {
         [ -x "$R/usr/lib/auros/hold-running-apps" ] &&
         ok "a program she has open is not updated under her" || bad "a program she has open is not updated under her"
     for t in apt-daily.timer apt-daily-upgrade.timer; do
-        [ -e "$R/etc/systemd/system/timers.target.wants/$t" ] && ok "$t is enabled" || bad "$t is enabled"
+        enabled "$R/etc/systemd/system/timers.target.wants/$t" && ok "$t is enabled" || bad "$t is enabled"
     done
 
     echo
@@ -128,7 +134,7 @@ static() {
     echo
     echo "== programs from Flathub"
     if [ -x "$R/usr/bin/flatpak" ]; then
-        [ -e "$R/etc/systemd/system/timers.target.wants/auros-flatpak-update.timer" ] &&
+        enabled "$R/etc/systemd/system/timers.target.wants/auros-flatpak-update.timer" &&
             ok "auros-flatpak-update.timer is enabled" || bad "auros-flatpak-update.timer is enabled"
         grep -q '^ExecStart=/usr/bin/flatpak update --system --noninteractive' "$R/etc/systemd/system/auros-flatpak-update.service" 2>/dev/null &&
             ok "it updates the system installation, asking nothing" || bad "it updates the system installation, asking nothing"
@@ -270,6 +276,9 @@ firefox() {
 
 case "${1:-}" in
     static)  shift; static "$@" ;;
+    keycheck) shift  # ROOTFS: only the key part (a rootfs with just the source and key will do)
+              R=$(cd "${1:?ROOTFS}" && pwd) || need "no rootfs"
+              keycheck "$R" "$R/etc/apt/sources.list.d/auros.sources" "$R/usr/share/keyrings/auros-archive-keyring.asc"; done_ ;;
     firefox) shift; case "${1:-}" in --break=origin) firefox origin ;; '') firefox ;; *) need "unknown $1" ;; esac ;;
     *) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
