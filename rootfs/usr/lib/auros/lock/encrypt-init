@@ -48,7 +48,7 @@ blocks=$(dumpe2fs -h "$DEV" 2>/dev/null | sed -n 's/^Block count: *//p')
 room=$(( (size - SHIFT) / 4096 * 4096 ))
 [ "$room" -gt $((1024 * 1024 * 1024)) ] || refuse "the partition is too small"
 if [ $((bs * blocks)) -gt "$room" ]; then
-    resize2fs "$DEV" "$((room / 1024))K" >"$ERR" 2>&1 || refuse "the filesystem could not give up 32 MiB: $(tail -2 "$ERR")"
+    resize2fs "$DEV" "$((room / 1024))K" >"$ERR" 2>&1 || refuse "the filesystem could not give up 32 MiB: $(cat "$ERR")"
 fi
 
 # A CPU with AES instructions: AES-XTS. Without (Atom, Celeron N, old
@@ -86,7 +86,11 @@ if cryptsetup isLuks "$DEV" 2>/dev/null; then
     # The header must say what was asked for. The partition is LUKS now
     # either way and will open, so a disagreement is exit 2 -- loud, and
     # NOT "start plain": a plain start of a LUKS partition cannot boot.
-    got=$(cryptsetup luksDump "$DEV" 2>/dev/null | sed -n 's/^[[:space:]]*sector:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+    # no head/tail/tr in here: the initramfs's busybox has not got them
+    # (measured: "head: not found"), and a script that runs there may use
+    # only what is there; tools/theftunit.sh runs it with exactly that.
+    set -- $(cryptsetup luksDump "$DEV" 2>/dev/null | sed -n 's/^[[:space:]]*sector:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+    got=${1:-}
     if [ "$got" = "$ss" ]; then
         log "the drive is being encrypted ($cipher, header sector size $got: as asked)"
         exit 0
@@ -94,4 +98,4 @@ if cryptsetup isLuks "$DEV" 2>/dev/null; then
     log "ERROR: the header has sector size '$got', not the $ss that was asked for; the drive will still open"
     exit 2
 fi
-refuse "cryptsetup said $rc: $(tail -3 "$ERR" | tr '\n' ' ')"
+refuse "cryptsetup said $rc: $(cat "$ERR")"

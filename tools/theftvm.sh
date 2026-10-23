@@ -156,6 +156,7 @@ case "$st" in
     lsinitramfs "/boot/initrd.img-$(uname -r)" 2>&1 | grep -E 'auros|cryptsetup|tss2|libsystemd-shared|dejavu|dm-crypt|dm-mod|dm-zero|tpm|evdev|e2fsck|resize2fs|dumpe2fs|blkid|aes|xts|adiantum|ORDER' | while read -r l; do say "initrd $l"; done
     say "ORDER $(lsinitramfs "/boot/initrd.img-$(uname -r)" 2>&1 | grep -c 'scripts/local-top/auros-lock') $(unmkinitramfs "/boot/initrd.img-$(uname -r)" /tmp/ir >/dev/null 2>&1; cat /tmp/ir/main/scripts/local-top/ORDER 2>/dev/null | tr '\n' ' ')"
     ls -l /tmp/ir/main/scripts/local-top/ 2>&1 | while read -r l; do say "localtop $l"; done
+    say "initrd-bin $(ls /tmp/ir/main/usr/bin /tmp/ir/main/bin /tmp/ir/main/usr/sbin 2>/dev/null | tr '\n' ' ')"
     say "stub $(tr '\n' ' ' < /boot/efi/EFI/AurOS/grub.cfg)"
     ;;
 *state=encrypting*|*state=open-no-pin*)
@@ -235,7 +236,7 @@ power_on() { # NAME
     TPMARGS=""
     if [ "$NOTPM" = 0 ]; then
         swtpm socket --tpm2 --tpmstate dir="$TPMD" --ctrl type=unixio,path="$TPMD/sock" \
-            --pid file="$TPMD/pid" --daemon || return 1
+            --pid file="$TPMD/pid" --daemon || { echo "swtpm would not start" | tee -a "$EV/summary.txt"; return 1; }
         SWP=$(cat "$TPMD/pid")
         TPMARGS="-chardev socket,id=chrtpm,path=$TPMD/sock -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-crb,tpmdev=tpm0"
     fi
@@ -263,7 +264,14 @@ power_off() { # wait for the VM to switch itself off, or pull the plug
     local i=0
     while kill -0 "$QP" 2>/dev/null && [ "$i" -lt "${1:-120}" ]; do sleep 1; i=$((i + 1)); done
     kill -9 "$QP" 2>/dev/null; wait "$QP" 2>/dev/null; QP=""
-    kill "$SWP" 2>/dev/null; sleep 0.5; SWP=""
+    # the next start's swtpm needs this one gone (it locks its state dir):
+    # found the hard way, a start that never happened and a silent log
+    if [ -n "$SWP" ]; then
+        kill "$SWP" 2>/dev/null
+        for _ in $(seq 1 50); do kill -0 "$SWP" 2>/dev/null || break; sleep 0.2; done
+        SWP=""
+    fi
+    rm -f "$TPMD/sock" "$TPMD/sock.ctrl" 2>/dev/null
 }
 mon() { python3 -c 'import socket,sys,time
 s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); time.sleep(0.1); s.recv(4096)

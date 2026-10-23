@@ -69,6 +69,7 @@ if [ "${1:-}" = --mutants ]; then
     mutant fixed-rescue       rootfs/usr/lib/auros/lock/lockctl 's/\$((b % 10))/1/'
     mutant pin-unchecked      rootfs/usr/lib/auros/lock/lockctl 's/if ! pin_checks "\$dev" "\$pin"; then/if false; then/'
     mutant header-unchecked rootfs/usr/lib/auros/lock/encrypt-init 's/if \[ "\$got" = "\$ss" \]; then/if true; then/'
+    mutant needs-head rootfs/usr/lib/auros/lock/encrypt-init 's/got=\${1:-}/got=$(echo "${1:-}" | head -1)/'
     mutant sector-always-4096 rootfs/usr/lib/auros/lock/encrypt-init 's/else ss=512; fi/else ss=4096; fi/'
     mutant small-keys         src/aurshell/lockpin.c 's/int kw = (int)(84 \* k)/int kw = (int)(40 * k)/'
     mutant repin-ignored      rootfs/usr/lib/auros/lock/lockctl 's/^    \[ -s "\$REPIN" \] || exit 0/    exit 0/'
@@ -168,7 +169,18 @@ echo
 echo "  in place"
 IMG="$T/a.img"
 mkdrive "$IMG" 1400; D=$DRV
-"$ENCINIT" "$D" >/dev/null 2>&1
+# Run with ONLY the tools an initramfs has (no head, tail, tr, cut, awk,
+# od...): the first VM run found "head: not found" in the real one.
+mkdir -p "$T/rb"
+for t in sh cat sed grep printf mkdir sleep cryptsetup blkid blockdev dumpe2fs e2fsck resize2fs modprobe; do
+    p=$(command -v "$t") && ln -sf "$p" "$T/rb/$t"
+done
+ln -sf "$(command -v bash)" "$T/rb/bash"
+enc_init() { env -i PATH="$T/rb" bash "$ENCINIT" "$@" 2>&1; }
+out=$(enc_init "$D"); rc=$?
+[ "$rc" = 0 ] && ! echo "$out" | grep -q 'not found' && echo "$out" | grep -q 'as asked' \
+    && ok "encrypt-init runs with only the tools an initramfs has, and its header check passes" \
+    || bad "encrypt-init with only the initramfs's tools" "rc=$rc $out"
 check "encrypt-init made the partition LUKS2" cryptsetup isLuks --type luks2 "$D"
 open_try "$D" x; v=$V
 [ "$v" = "open temp" ] && ok "it opens with the temporary key, no PIN asked" || bad "it opens with the temporary key" "got: $v"

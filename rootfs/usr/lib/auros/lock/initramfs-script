@@ -59,7 +59,7 @@ if ! cryptsetup isLuks "$DEV" >> "$LOG" 2>&1; then
     # partition is still plain, so start it plain.
     if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then
         note "not encrypted (see /run/auros-lock.log in the started system); starting plain"
-        tail -n 5 "$LOG" > /dev/console 2>/dev/null
+        cat "$LOG" > /dev/console 2>/dev/null
         exit 0
     fi
     [ "$rc" = 2 ] && note "WARNING: encrypted, but the header is not what was asked for"
