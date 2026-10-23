@@ -1062,6 +1062,34 @@ static int nav_allowed(page_id p)
 
 static int g_max_page;
 
+/* ONE PRESS IS ONE PRESS (docs/DESIGN-DIRECTION.md, "Input"). Her habit
+ * is to double-click, and "Next" on the look page sits where "Install
+ * AurOS" sits on Ready: a double-click on Next started the install
+ * without her ever seeing the page that says what it costs. So every
+ * press is ignored for 700 ms after the page -- or what its big button
+ * does -- changes, and a second press on the same thing within 500 ms
+ * is ignored too: by mouse, keyboard and screen reader alike. */
+#define PRESS_SETTLE_MS 700
+#define PRESS_REPEAT_MS 500
+static ULONGLONG g_changed_at, g_pressed_at;
+static int       g_pressed_id;
+static ULONGLONG g_nt_clock = 100000;  /* --navtest's clock               */
+static int       g_nt_auto = 1;        /* it moves on 1 s before each press */
+
+static ULONGLONG now_ms(void) { return g_nav_mode ? g_nt_clock : GetTickCount64(); }
+static void page_changed(void) { g_changed_at = now_ms(); }
+
+static int press_allowed(int id)
+{
+    if (g_nav_mode && g_nt_auto) g_nt_clock += 1000;
+    ULONGLONG t = now_ms();
+    if (t - g_changed_at < PRESS_SETTLE_MS) return 0;
+    if (id == g_pressed_id && t - g_pressed_at < PRESS_REPEAT_MS) return 0;
+    g_pressed_id = id;
+    g_pressed_at = t;
+    return 1;
+}
+
 static void goto_page(page_id p)
 {
     if (!nav_allowed(p)) {
@@ -1072,6 +1100,7 @@ static void goto_page(page_id p)
         return;
     }
     g_page = p;
+    page_changed();
     if ((int)p > g_max_page) g_max_page = (int)p;
     g_focus = -1;
     g_focus_ring = 0;
@@ -3071,6 +3100,14 @@ static void render(void)
 
     draw_footer();
 
+    /* The big button now does something else (Next became enabled,
+     * "Fix these for me" became "Check again"): that is a new page too. */
+    {
+        static wchar_t last[64];
+        const wchar_t *pl = primary_visible() && primary_enabled() ? primary_label() : L"";
+        if (wcsncmp(last, pl, 63)) { wcsncpy(last, pl, 63); last[63] = 0; page_changed(); }
+    }
+
     if (g_want_focus_id) {
         for (int i = 0; i < g_nw; i++)
             if (g_w[i].id == g_want_focus_id && g_w[i].enabled) { g_focus = i; break; }
@@ -3209,7 +3246,7 @@ static void do_primary(void)
     }
 }
 
-static void widget_activate(int id)
+static void widget_do(int id)
 {
     switch (id) {
     case ID_PRIMARY: do_primary(); return;
@@ -3220,6 +3257,12 @@ static void widget_activate(int id)
     default: break;
     }
     if (id >= ID_STYLE && id < ID_STYLE + N_STYLES) { select_style(id - ID_STYLE); return; }
+}
+
+/* Every press she makes comes through here (or the keyboard's, below). */
+static void widget_activate(int id)
+{
+    if (press_allowed(id)) widget_do(id);
 }
 
 /* The part of the screen a window may use (without the taskbar), on the
@@ -3951,7 +3994,8 @@ static void tick(void)
         int settled = g_pf_valid && !g_checking &&
                       (g_page == PAGE_BLOCKED ||
                        (g_page == PAGE_WELCOME && g_reveal >= N_CHK && g_settle > 8));
-        if (step == 0 && settled) {
+        /* and the page has stood still long enough for a press to count */
+        if (step == 0 && settled && now_ms() - g_changed_at > PRESS_SETTLE_MS + 100) {
             step = 1; at = g_ticks;
             /* NEVER ON THE STOP PAGE: Enter there is "Fix these for me",
              * which can empty folders or restart the machine running the
@@ -3981,15 +4025,18 @@ static void on_key(WPARAM k)
     /* ENTER AND SPACE PRESS THE BIG BUTTON, unless she has tabbed to
      * another one. On a picture card they choose it, and go on. */
     case VK_RETURN:
-    case VK_SPACE:
+    case VK_SPACE: {
+        int id = (fk >= 0 && !(fk == W_TOGGLE && k == VK_RETURN)) ? g_w[g_focus].id : ID_PRIMARY;
+        if (!press_allowed(id)) break;
         if (fk == W_TOGGLE) {
-            if (k == VK_SPACE) widget_activate(g_w[g_focus].id);
+            if (k == VK_SPACE) widget_do(g_w[g_focus].id);
             else do_primary();
         }
-        else if (fk == W_BUTTON) widget_activate(g_w[g_focus].id);
-        else if (fk == W_CARD) { widget_activate(g_w[g_focus].id); do_primary(); }
+        else if (fk == W_BUTTON) widget_do(g_w[g_focus].id);
+        else if (fk == W_CARD) { widget_do(g_w[g_focus].id); do_primary(); }
         else do_primary();
         break;
+    }
     /* ESC NEVER DESTROYS ANYTHING: it stops the restart count, or goes
      * back a page, and that is all. It used to close the window. */
     case VK_ESCAPE:
@@ -4164,6 +4211,8 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         break;
 
     case WM_KEYDOWN:
+        /* a held-down Enter repeats; that is not another press */
+        if ((wp == VK_RETURN || wp == VK_SPACE) && (lp & (1L << 30))) return 0;
         on_key(wp);
         InvalidateRect(h, NULL, FALSE);
         return 0;
@@ -4478,6 +4527,39 @@ static int nav_test(const char *dir)
     check_advance();                       /* what the re-check does when clean */
     nt_check(g_page == PAGE_PROGRESS, "a clean re-check starts the install");
     g_page = PAGE_WELCOME;
+
+    if (g_nt) fprintf(g_nt, "\n3b. one press is one press: a double-click never skips Ready\n");
+    {
+        nt_fake_report(0);
+        g_check_next = PAGE_STYLE;
+        g_nt_auto = 0;
+        g_nt_clock += 5000;
+        goto_page(PAGE_STYLE);
+        g_nt_clock += 2000;
+        widget_activate(ID_PRIMARY);           /* Next, by mouse */
+        g_nt_clock += 300;
+        render();
+        widget_activate(ID_PRIMARY);           /* ... and again, 300 ms later */
+        nt_check(g_page == PAGE_READY && !g_checking && g_check_next != PAGE_PROGRESS,
+                 "two clicks on Next within 300 ms land on Ready, not on the install");
+        g_nt_clock += 300;
+        on_key(VK_RETURN);                     /* Enter, 600 ms after the page came */
+        nt_check(g_page == PAGE_READY && !g_checking,
+                 "Enter within 700 ms of Ready appearing does nothing");
+        goto_page(PAGE_STYLE);
+        g_nt_clock += 2000;
+        on_key(VK_RETURN);
+        g_nt_clock += 200;
+        on_key(VK_RETURN);
+        nt_check(g_page == PAGE_READY && !g_checking,
+                 "two Enters within 200 ms land on Ready, not on the install");
+        g_nt_clock += 2000;
+        nt_check(press_allowed(ID_PRIMARY) && !press_allowed(ID_PRIMARY),
+                 "after the page has stood still, one press goes through, its echo does not");
+        g_nt_auto = 1;
+        g_check_next = PAGE_STYLE;
+        g_page = PAGE_WELCOME;
+    }
 
     if (g_nt) fprintf(g_nt, "\n4. nothing to type, nothing to tick, nothing small\n");
     {
