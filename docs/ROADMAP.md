@@ -33,6 +33,14 @@ Four promises, in this order, decide every trade-off:
 - [ ] One design language across website, installer, AurOS and help.
 - [ ] Measured: wall clock for an SSD PC and an HDD PC (e2e `hdd` variant).
 
+## v0.1+ "Wishes" (AI, in parallel with v0.1)
+
+- [ ] She says what she wants her computer to do; Claude turns it into a
+      safe wish she confirms; her computer does it (`docs/AI.md`).
+- [ ] A cloud service that holds the key, scales by itself, caps cost and
+      abuse, logs no words (`docs/CLOUD.md`).
+- [ ] "Ask AurOS": plain answers to "how do I…?", with an offer to do it.
+
 ## v0.2 "Every PC, under an hour"
 
 - [ ] The fast path: Windows shrinks itself and AurOS is written during the
@@ -54,9 +62,8 @@ Four promises, in this order, decide every trade-off:
 
 ## v1.0 "Something people pay for"
 
-- [ ] Her wishes: she says what she wants the computer for (video calls with
-      family, photos, email, cards, music, writing letters, bigger text) and
-      AurOS arrives set up for exactly that, programs already installed.
+- [ ] Wishes grow up: sandboxed mini-programs Claude writes for her, and
+      "set my computer up for video calls with my grandchildren" at install time.
 - [ ] Help that answers in her words, on the computer and on the website.
 - [ ] Translations; a screen reader in AurOS; the other editions (office,
       school kiosk, revive, multilingual).

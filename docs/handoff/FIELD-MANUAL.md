@@ -107,7 +107,7 @@ Trigger words are read from the commit **SUBJECT** only:
 
 ## 5. Save constantly (the session can end at any minute)
 
-- Push every green step (at least every 30 minutes of work).
+- Push every green step, at least every 15 minutes of work (owner: "push extremely frequently so I have a safe"). Small commits beat big ones.
 - Keep `docs/handoff/streams/<ID>.md` current: goal, done (with commit
   hashes), half-done, next steps in order, traps, how to verify. Written for
   an engineer with zero context.
