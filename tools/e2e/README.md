@@ -67,7 +67,7 @@ minutes, and `hdd` uses the base one.
 | Variant | The PC | How it is made |
 |---|---|---|
 | `base` | Windows 11, 128 GB SSD, Fast Startup on (Windows' default) | as described above |
-| `hdd` | the same, on a hard disk | QEMU block throttling: 100 MB/s, 120 IO/s (`E2E_DISK_THROTTLE`); the timings are the wall clock on such a disk |
+| `hdd` | the same, on a hard disk | QEMU block throttling: 100 MB/s, 300 IO/s (`E2E_DISK_THROTTLE`; dispatch input `hdd_throttle`, e.g. `bps=104857600,iops=120` for a 5400 rpm laptop drive); the timings are the wall clock on such a disk |
 | `bitlocker` | BitLocker / device encryption on | first logon: `Enable-BitLocker C: -TpmProtector -UsedSpaceOnly`, waited until fully encrypted; the installer must deal with it |
 | `smalldisk` | a 72 GB drive whose leftovers in `C:\Windows\Temp` leave 30 GB free | first logon makes one leftover file of (free − 30 GB): 22 GB to give against the 28 needed, enough once the installer's space fix empties that folder |
 | `pending` | Windows waiting for a restart after servicing | at the test's logon a scheduled task enables a Windows feature with `/norestart` (real `RebootPending`, cleared by a real restart) |

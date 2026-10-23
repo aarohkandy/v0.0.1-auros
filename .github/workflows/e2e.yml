@@ -31,11 +31,13 @@ on:
       installer_url: {type: string, required: false, default: ''}
       installer_sha256: {type: string, required: false, default: ''}
       variants: {type: string, required: false, default: base}
+      hdd_throttle: {type: string, required: false, default: ''}
   workflow_dispatch:
     inputs:
       installer_url: {type: string, required: false, default: ''}
       installer_sha256: {type: string, required: false, default: ''}
       variants: {type: string, required: false, default: base}
+      hdd_throttle: {type: string, required: false, default: ''}
 
 # contents: write is for the jobs that make or fill a release, and only
 # those (SEC-005): a job that runs a lot of code cannot replace what a
@@ -148,13 +150,18 @@ jobs:
           python3 tools/e2e/selftest.py
 
       - name: which PC this is
+        env:
+          HDD_THROTTLE: ${{ inputs.hdd_throttle }}
         run: |
           # GOLDEN: which installed Windows (cached separately); the rest
           # is the machine around it
           golden=$E2E_VARIANT disk=128 winver=11 throttle=
           case $E2E_VARIANT in
             base)      ;;
-            hdd)       golden=base throttle=bps=104857600,iops=120 ;;
+            # a hard disk: ~100 MB/s and a number of random operations a second.
+            # 120 (a 5400 rpm laptop drive, QD1) made Windows take 18 minutes to
+            # boot (run 39972010732); 300 is a 7200 rpm drive with queueing.
+            hdd)       golden=base throttle=${HDD_THROTTLE:-bps=104857600,iops=300} ;;
             bitlocker) ;;
             smalldisk) disk=72 ;;
             pending)   ;;
