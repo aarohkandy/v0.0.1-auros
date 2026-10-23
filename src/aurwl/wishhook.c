@@ -90,6 +90,21 @@ int wishhook_take_app(char out[128])
 
 int wishhook_buffered(void) { return len; }
 
+int wishhook_set_triggers(const char *const *w, int nw, const char *const *a, int na)
+{
+    wishhook_set(w, nw, a, na);
+    return 0;
+}
+
+int wishhook_take(char *kind, size_t kn, char *val, size_t vn)
+{
+    char tmp[128];
+    if (!kind || !val || !kn || !vn) return 0;
+    if (wishhook_take_word(tmp)) { snprintf(kind, kn, "typed"); snprintf(val, vn, "%s", tmp); return 1; }
+    if (wishhook_take_app(tmp))  { snprintf(kind, kn, "app");   snprintf(val, vn, "%s", tmp); return 1; }
+    return 0;
+}
+
 void wishhook_reset(void)
 {
     wipe();

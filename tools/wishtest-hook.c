@@ -326,6 +326,27 @@ static void test_apps(void)
     wishhook_app("firefox");                 CHECK(!wishhook_take_app(o));   /* nothing registered */
 }
 
+/* The two functions the shell actually calls (src/aurshell/wish.c). */
+static void test_the_shells_calls(void)
+{
+    cur = __func__;
+    const char *w[] = { "potato" };
+    const char *a[] = { "firefox" };
+    CHECK(wishhook_set_triggers(w, 1, a, 1) == 0);
+    wishhook_reset();
+    char kind[16], val[64];
+    CHECK(wishhook_take(kind, sizeof kind, val, sizeof val) == 0);
+    type("potato ");
+    wishhook_app("firefox");
+    CHECK(wishhook_take(kind, sizeof kind, val, sizeof val) == 1 && !strcmp(kind, "typed") && !strcmp(val, "potato"));
+    CHECK(wishhook_take(kind, sizeof kind, val, sizeof val) == 1 && !strcmp(kind, "app") && !strcmp(val, "firefox"));
+    CHECK(wishhook_take(kind, sizeof kind, val, sizeof val) == 0);
+    char tiny[4];
+    type("potato ");
+    CHECK(wishhook_take(kind, 3, tiny, sizeof tiny) == 1 && !strcmp(tiny, "pot"));   /* truncated, never overrun */
+    CHECK(wishhook_take(NULL, 0, NULL, 0) == 0);
+}
+
 static void test_queue_is_bounded(void)
 {
     cur = __func__;
@@ -348,6 +369,7 @@ int main(void)
     test_unknown_means_hold_for_browsers();
     test_dialogs_that_ask_for_secrets();
     test_apps();
+    test_the_shells_calls();
     test_queue_is_bounded();
     printf("wishtest-hook: %d checks, %d failed\n", passes + fails, fails);
     return fails ? 1 : 0;

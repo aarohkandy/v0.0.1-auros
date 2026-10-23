@@ -40,6 +40,13 @@ void wishhook_set(const char *const *words, int nwords, const char *const *apps,
 int  wishhook_take_word(char out[33]);
 int  wishhook_take_app(char out[128]);
 
+/* The names the shell (src/aurshell/wish.c) calls. Weak references on its
+ * side, so a build without a compositor links without them. `wishhook_take`
+ * returns 1 and fills `kind` ("typed" or "app") and `val` (the registered
+ * word, or the application id), 0 when nothing is waiting. */
+int  wishhook_set_triggers(const char *const *words, int n_words, const char *const *apps, int n_apps);
+int  wishhook_take(char *kind, size_t kn, char *val, size_t vn);
+
 /* The hooks aurwl.c calls (weakly). */
 void wishhook_key(aurwl *c, uint32_t evdev_code, int pressed);
 void wishhook_reset(void);                 /* a click, a change of focus */

@@ -193,9 +193,9 @@ overlay and withdraws every trigger word.
 **The compositor's half** is `src/aurwl/wishhook.{c,h}` and
 `src/aurwl/textinput.{c,h}` (linked only when the profile says `wishes="on"`,
 through weak one-line hooks in aurwl.c): the shell calls
-`wishhook_set(words, apps)` with the latest `triggers` line, and each frame
-drains `wishhook_take_word()` / `wishhook_take_app()` into `typed` / `app`
-lines. The matcher sees only keys delivered to a client window, keeps at most
+`wishhook_set_triggers(words, n, apps, n)` with the latest `triggers` line, and
+each frame drains `wishhook_take(kind, val)` (kind `typed` or `app`) into
+`typed` / `app` lines. The matcher sees only keys delivered to a client window, keeps at most
 the 32 letters of the word being typed, reports a registered word only when
 typed whole, and does nothing at all while no word is registered.
 
