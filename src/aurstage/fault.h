@@ -47,6 +47,12 @@
  * nothing when AURSTAGE_FAULT is not defined. */
 void fault_maybe(const char *name);
 
+/* 1 if the kernel command line asked the step `name` to FAIL
+ * (aurstage.fail_at=<name>) -- the ordinary failure path of that step,
+ * taken on purpose, so a test can read what she is told then. Always 0
+ * when AURSTAGE_FAULT is not defined. */
+int  fault_fail(const char *name);
+
 /* 1 if this is a fault-injection build. Used by the banner. */
 int  fault_build(void);
 

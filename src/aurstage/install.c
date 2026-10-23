@@ -62,22 +62,49 @@ static void let_go_of_windows(void)
         stage_warn("%s", w);
 }
 
-/* WHAT TO DO NEXT, and it depends on how this machine booted.
- *
- * If the staging environment came from the ESP, restarting reaches
- * Windows, because BootNext was one-shot and has already been
- * consumed. If it came from the recovery stick, restarting reaches
- * the STICK again -- the firmware entry points at it -- and the person
- * loops. */
-static void say_what_happens_next(void)
+/* WHAT THE DISK IS LIKE when the run stops, which decides what the next
+ * restart does and therefore what she is told. Every sentence below is
+ * true in its state and in no other: "nothing on it has been changed"
+ * used to follow "The Windows drive is smaller", and "Windows will
+ * start" used to be said with BootNext pointing at AurOS (docs/ATLAS.md
+ * section 2, gap 2). */
+enum {
+    NOW_UNTOUCHED,     /* nothing on this computer has changed          */
+    NOW_SMALLER,       /* Windows was made smaller; the old table holds  */
+    NOW_AUROS_NEXT,    /* AurOS is installed and BootNext points at it  */
+    NOW_WINDOWS_NEXT,  /* AurOS is installed; the next start is Windows */
+};
+
+/* AND HOW THIS MACHINE BOOTED. If the staging environment came from the
+ * ESP, restarting reaches Windows, because BootNext was one-shot and
+ * has already been consumed. If it came from the recovery stick,
+ * restarting reaches the STICK again -- the firmware entry points at
+ * it -- and the person loops. */
+static void say_what_happens_next(int now)
 {
     stage_say("%s", "");
-    if (g_from_usb) {
-        stage_say("Take the AurOS memory stick out of this computer, then");
-        stage_say("turn it off and on again. Windows will start as usual.");
-    } else {
+    if (g_from_usb)
+        stage_say("Take the AurOS memory stick out of this computer first.");
+    switch (now) {
+    case NOW_AUROS_NEXT:
+        stage_say("AurOS is installed. Turn this computer off and on again");
+        stage_say("and AurOS will start. After that, Windows starts as usual");
+        stage_say("until you tell AurOS that everything works.");
+        return;
+    case NOW_WINDOWS_NEXT:
+        stage_say("AurOS is installed. Turn this computer off and on again");
+        stage_say("and Windows will start. To start AurOS, hold the key your");
+        stage_say("computer shows at start-up for a boot menu and choose AurOS.");
+        return;
+    case NOW_SMALLER:
+        stage_say("Turn this computer off and on again. Windows will start;");
+        stage_say("it may check its drive first. It has less free space than");
+        stage_say("before, because room was made for AurOS.");
+        break;
+    default:
         stage_say("Turn this computer off and on again. Windows will start");
         stage_say("as usual -- nothing on it has been changed.");
+        break;
     }
     stage_say("To try again, open AurBridge in Windows and press");
     stage_say("Start installing.");
@@ -94,15 +121,15 @@ static void refuse(const char *why, const char *remedy, const char *verdict)
         rec_write(&g_rec, REC_REFUSED, verdict, w, sizeof w);
     }
     stage_say("aurstage-report v1 verdict=%s record=refused -", verdict);
-    say_what_happens_next();
+    say_what_happens_next(NOW_UNTOUCHED);
     for (;;) pause();
 }
 
-/* A failure BELOW the line: something has been changed, and the
- * sentence has to be honest about that without frightening somebody
+/* A failure BELOW the line: something has been changed, and `now` says
+ * what, so the sentence is honest about it without frightening somebody
  * whose Windows is in fact still fine. */
 static void give_up(const char *why, const char *remedy, const char *verdict,
-                    int windows_still_boots)
+                    int now)
 {
     let_go_of_windows();
     stage_warn("%s", why);
@@ -112,15 +139,7 @@ static void give_up(const char *why, const char *remedy, const char *verdict,
         rec_write(&g_rec, REC_FAILED, verdict, w, sizeof w);
     }
     stage_say("aurstage-report v1 verdict=%s record=failed -", verdict);
-    if (windows_still_boots) {
-        stage_say("%s", "");
-        stage_say("Windows itself has not been damaged and will still start.");
-        say_what_happens_next();
-    } else {
-        stage_say("%s", "");
-        stage_say("Start this computer from the AurOS memory stick and");
-        stage_say("choose \"Put Windows back\".");
-    }
+    say_what_happens_next(now);
     for (;;) pause();
 }
 
@@ -309,7 +328,7 @@ void install_run(const stage_machine *m)
         resume_from != REC_FAILED) {
         give_up("AurOS has already been installed on this computer.",
                 "Restart it and choose AurOS from the menu.",
-                "already-installed", 1);
+                "already-installed", NOW_WINDOWS_NEXT);
     }
     /* An interrupted shrink is the one row of the power-loss table
      * with no automatic answer. */
@@ -317,7 +336,7 @@ void install_run(const stage_machine *m)
         give_up("The last attempt was interrupted while it was resizing the "
                 "Windows drive.",
                 "Windows may need to check itself. Start it and let it.",
-                "shrink-interrupted", 1);
+                "shrink-interrupted", NOW_SMALLER);
     }
 
     step(REC_BEGIN, NULL);
@@ -641,10 +660,10 @@ void install_run(const stage_machine *m)
     if (!sr.ok) {
         if (!sr.started)
             give_up(sr.why, "Nothing on the Windows drive was touched.",
-                    "shrink-could-not-start", 1);
+                    "shrink-could-not-start", NOW_UNTOUCHED);
         give_up("The Windows drive could not be resized.",
                 "Start Windows and let it check the drive.",
-                "shrink-failed", 1);
+                "shrink-failed", NOW_SMALLER);
     }
     step(REC_SHRINK_END, sr.why);
     fault_maybe("shrink-end");
@@ -658,12 +677,12 @@ void install_run(const stage_machine *m)
                      boot_need, rsc_need, min_root_bytes(), &L,
                      why, sizeof why) != 0)
         give_up(why, "The Windows drive is smaller but nothing else has "
-                     "changed.", "no-room-after-shrink", 1);
+                     "changed.", "no-room-after-shrink", NOW_SMALLER);
 
     /* ── phases 5 and 6 ──────────────────────────────────────────── */
     wr_target t;
     if (wr_open(&t, diskdev, why, sizeof why) != 0)
-        give_up(why, NULL, "disk-not-writable", 1);
+        give_up(why, NULL, "disk-not-writable", NOW_SMALLER);
     uint64_t root_off = L.root_first * (uint64_t)ss;
     uint64_t root_end = (L.root_last + 1) * (uint64_t)ss;
     /* NO STICK: THE WAY BACK GOES ONTO THIS DISK FIRST, before a single
@@ -683,7 +702,7 @@ void install_run(const stage_machine *m)
             rescue_mirror(&t, &rsc, &rp0, L.rsc_first * (uint64_t)ss,
                           why, sizeof why) != 0)
             give_up(why, "The Windows drive is smaller but still works.",
-                    "saved-copy-failed", 1);
+                    "saved-copy-failed", NOW_SMALLER);
         wr_disarm(&t, WR_MIRROR);
         stage_say("saved    the way back is on this computer, read back and "
                   "checked");
@@ -692,18 +711,19 @@ void install_run(const stage_machine *m)
          * it into space outside it. */
         if (winvol_mount(windev, winroot, sizeof winroot, why, sizeof why) != 0)
             give_up(why, "The Windows drive is smaller but still works.",
-                    "windows-unreadable", 1);
+                    "windows-unreadable", NOW_SMALLER);
     }
     if (wr_arm(&t, WR_ROOT, root_off, root_end, why, sizeof why) != 0)
-        give_up(why, NULL, "cannot-arm", 1);
+        give_up(why, NULL, "cannot-arm", NOW_SMALLER);
 
     stage_say("%s", "");
     stage_say("Copying AurOS onto this computer.");
     step(REC_WRITE_BEGIN, NULL);
     fprintf(stderr, "aurstage: ");
-    if (image_write_root(&t, &img, root_off, dots_write, why, sizeof why) != 0)
+    if (image_write_root(&t, &img, root_off, dots_write, why, sizeof why) != 0 ||
+        fault_fail("write"))
         give_up(why, "The Windows drive is smaller but still works.",
-                "write-failed", 1);
+                "write-failed", NOW_SMALLER);
     step(REC_WRITE_END, NULL);
     fault_maybe("write-end");
     wr_disarm(&t, WR_ROOT);
@@ -722,13 +742,13 @@ void install_run(const stage_machine *m)
     fprintf(stderr, "aurstage: ");
     if (loader_write_boot(&t, &img, &L, ss, dots_boot, why, sizeof why) != 0)
         give_up(why, "The Windows drive is smaller but still works.",
-                "boot-write-failed", 1);
+                "boot-write-failed", NOW_SMALLER);
     fprintf(stderr, "\n");
     step(REC_BOOT_END, NULL);
     fault_maybe("boot-end");
     if (g_nostick && winvol_umount(why, sizeof why) != 0)
         give_up(why, "The Windows drive is smaller but still works.",
-                "windows-still-open", 1);
+                "windows-still-open", NOW_SMALLER);
 
     /* ── phase 7 ─────────────────────────────────────────────────── */
     stage_say("%s", "");
@@ -754,7 +774,7 @@ void install_run(const stage_machine *m)
                     "a network cable and try again, or send us the support file."
                   : "The Windows drive is smaller but still works. This is a "
                     "fault in AurOS, not in this computer.",
-                probe_verdict_name(pr.verdict), 1);
+                probe_verdict_name(pr.verdict), NOW_SMALLER);
     }
     stage_say("checks   %s", pr.why);
     step(REC_PROBE_END, pr.why);
@@ -762,7 +782,7 @@ void install_run(const stage_machine *m)
     /* ── phase 8 ─────────────────────────────────────────────────── */
     gpt_table nw;
     if (commit_build(&old, &L, &nw, why, sizeof why) != 0)
-        give_up(why, NULL, "cannot-build-table", 1);
+        give_up(why, NULL, "cannot-build-table", NOW_SMALLER);
 
     size_t ab = gpt_array_bytes(&nw);
     uint64_t alt = nw.disk_sectors - 1;
@@ -771,7 +791,7 @@ void install_run(const stage_machine *m)
                why, sizeof why) != 0 ||
         wr_arm(&t, WR_GPT_BACKUP, barr * ss, (alt + 1) * ss,
                why, sizeof why) != 0)
-        give_up(why, NULL, "cannot-arm-table", 1);
+        give_up(why, NULL, "cannot-arm-table", NOW_SMALLER);
 
     /* THE PLAN, CHECKED AGAINST THE TABLE ONE LAST TIME. plan.h says
      * this happens "before every step that acts on the layout"; it
@@ -781,12 +801,12 @@ void install_run(const stage_machine *m)
     if (plan_check(&old, &L, img.root_len, boot_need, rsc_need,
                    min_root_bytes(), why, sizeof why) != 0)
         give_up(why, "The Windows drive is smaller but still works.",
-                "plan-changed", 1);
+                "plan-changed", NOW_SMALLER);
 
     stage_say("%s", "");
     stage_say("Writing the new layout.");
     if (commit_table(&t, &nw, commit_note, NULL, why, sizeof why) != 0)
-        give_up(why, NULL, "commit-failed", 1);
+        give_up(why, NULL, "commit-failed", NOW_SMALLER);
     /* AND THE TWO MOST DANGEROUS WINDOWS IN THE PRODUCT ARE SHUT.
      *
      * wr.h: "Disarm one window, so that a phase which is finished
@@ -876,9 +896,11 @@ void install_run(const stage_machine *m)
     part_dev(rootdev, sizeof rootdev, disk->name, rootidx + 1);
 
     stage_say("Making AurOS fill the space it was given.");
-    int st = commit_settle(diskdev, rootdev, why, sizeof why);
+    int st = fault_fail("settle") ? -1
+           : commit_settle(diskdev, rootdev, why, sizeof why);
     if (st < 0)
-        give_up(why, NULL, "settle-failed", 1);
+        give_up(why, NULL, "settle-failed",
+                reg == 0 ? NOW_AUROS_NEXT : NOW_WINDOWS_NEXT);
     if (st > 0)
         stage_warn("%s", why);
     step(REC_SETTLE_END, NULL);
@@ -892,7 +914,8 @@ void install_run(const stage_machine *m)
     sync();
     if (stage_switch_root(rootdev) != 0)
         give_up("AurOS is installed but did not start.",
-                "Turn this computer off and on again.", "handover-failed", 1);
+                "Turn this computer off and on again.", "handover-failed",
+                reg == 0 ? NOW_AUROS_NEXT : NOW_WINDOWS_NEXT);
     for (;;) pause();
 }
 

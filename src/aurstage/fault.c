@@ -41,9 +41,20 @@ void fault_maybe(const char *name)
     for (;;) pause();
 }
 
+int fault_fail(const char *name)
+{
+    char want[64];
+    if (stage_cmdline_value("aurstage.fail_at=", want, sizeof want) != 0)
+        return 0;
+    if (strcmp(want, name) != 0) return 0;
+    fprintf(stderr, "\nAURSTAGE-FAIL %s\n", name);
+    return 1;
+}
+
 #else
 
 int  fault_build(void) { return 0; }
 void fault_maybe(const char *name) { (void)name; }
+int  fault_fail(const char *name) { (void)name; return 0; }
 
 #endif
