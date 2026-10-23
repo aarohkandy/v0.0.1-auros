@@ -49,5 +49,20 @@ line)
 Licenses and the complete source code for this release: $rel/tag/sources-$tag . Our written offer of source is in the notes of that release, on the website's Licenses page and, on an installed computer, in /usr/share/doc/auros/SOURCE-OFFER.
 EOF
     ;;
-*) echo "usage: sh tools/legal/notes.sh sources TAG COMMIT RUN_ID | line TAG" >&2; exit 2 ;;
+contact-in-releases)
+    # After the owner has a mailbox (python3 -I tools/legal/check.py set-contact ADDRESS): the releases already
+    # published carry the placeholder in their notes. Replace it in every release's notes (gh must be logged in).
+    # The NOTICES.txt asset of a sources release is only refreshed by `[sources TAG RUN-ID again]` while the build run's
+    # artifacts live (14 days); older ones keep the placeholder in that one file and say so in their notes.
+    addr=${2:?ADDRESS}; dry=${3:-}
+    case "$addr" in *[!A-Za-z0-9._%+@-]*|*@*@*|@*|*@|"") echo "notes.sh: not an address" >&2; exit 1 ;; esac
+    repo=$(sh "$root/tools/repo.sh" repo)
+    for tag in $(gh release list -R "$repo" --limit 200 --json tagName --jq '.[].tagName'); do
+        body=$(gh release view "$tag" -R "$repo" --json body --jq .body)
+        case "$body" in *CONTACT_EMAIL*) ;; *) continue ;; esac
+        echo "$tag: CONTACT_EMAIL -> $addr"
+        [ "$dry" = --dry-run ] || printf '%s\n' "$body" | sed "s|CONTACT_EMAIL|$addr|g" | gh release edit "$tag" -R "$repo" --notes-file - >/dev/null
+    done
+    ;;
+*) echo "usage: sh tools/legal/notes.sh sources TAG COMMIT RUN_ID | line TAG | contact-in-releases ADDRESS [--dry-run]" >&2; exit 2 ;;
 esac

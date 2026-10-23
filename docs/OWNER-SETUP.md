@@ -353,14 +353,21 @@ you choose one. The playbooks for what to do are in `docs/ops/INCIDENTS.md`. Wha
 
 ## 9. The legal basics (stream LEGAL; the whole list is `docs/legal/COMPLIANCE.md` section 3)
 
-- **Never delete a release whose name starts with `sources-`.** Each one is the
-  source code that the licences of Linux, Firefox and the rest entitle people to,
-  and our written offer promises it for at least three years after the matching
-  AurOS release was last offered (`docs/legal/SOURCES.md`). Not from the
-  releases page, not with `gh release delete`, not to tidy up. A weekly check
-  (the `sources` workflow) fails if one has lost a file. Optional: also upload
-  a copy of each to the Internet Archive (free).
-- **A mailbox people can write to.** The written offer, the terms and the
-  privacy policy say `CONTACT_EMAIL` until you have one. A free address is
-  enough. When it exists: `python3 -I tools/legal/check.py set-contact you@example.org`
-  puts it in every document at once; commit and push.
+In the order that matters before the public link (`python3 -I tools/legal/check.py --launch` lists what is still open):
+
+1. **Decide about the name.** `docs/legal/NAME-SEARCH.md`: UserTesting renamed itself **Auros** on 29 Sep 2026 and filed AUROS
+   in the US, UK, EU and Australia; another company has held the US mark AUROS for software since 2014. Rename before the
+   public link, or have a trademark lawyer spend one hour on it, or accept the risk on purpose. Do not file for AUROS.
+2. **A mailbox people can write to.** The written offer of source, the Terms and the privacy page say `CONTACT_EMAIL` until
+   you have one (a free address is enough). Then: `python3 -I tools/legal/check.py set-contact you@example.org`, commit and
+   push, and `sh tools/legal/notes.sh contact-in-releases you@example.org` for the releases already published.
+3. **Firefox and Mozilla.** Mozilla's policy page says changed defaults and added extensions need its written permission.
+   `docs/legal/MOZILLA.md` has the options: ask (free email), or change the configuration, or rename the browser.
+4. **Never delete a release whose name starts with `sources-`.** Each one is the source code that the licenses of Linux,
+   Firefox and the rest entitle people to, and our written offer promises it for at least three years after the matching
+   AurOS release was last offered (`docs/legal/SOURCES.md`). Not from the releases page, not with `gh release delete`, not to
+   tidy up. The `sources` workflow makes one for every release by itself and fails if one has lost a file. Optional and
+   cheap insurance: upload a copy of each to the Internet Archive or Software Heritage, so the offer does not rest on
+   GitHub alone.
+5. The rest of the legal checklist (company, insurance, Canonical's notice, the wave plan) is `docs/legal/COMPLIANCE.md`
+   section 3; none of it blocks a free v0.1 for testers.
