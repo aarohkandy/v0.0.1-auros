@@ -33,7 +33,10 @@ set -uo pipefail
 what=$1
 run=${GITHUB_RUN_ID:-local}
 url=${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}
-variant=${E2E_VARIANT:-base}
+# E2E_LABEL ("-fastpath"): when one run tests two installers (release.yml calls
+# this for AurOS-Setup.exe and for AurOS-Setup-fastpath.exe, both "base", in one
+# run id), their files must not overwrite each other (e2e-evidence-base.zip).
+variant=${E2E_VARIANT:-base}${E2E_LABEL:-}
 STATE=${E2E_PUBLISH_STATE:-${RUNNER_TEMP:-/tmp}/e2e-publish-$run.state}
 have_gh() { [ -n "${GH_TOKEN:-}" ]; }
 # gh works out the repository from the git checkout it runs in; the
@@ -156,7 +159,7 @@ final)
           echo; echo "Run: $url/actions/runs/$run"; } > notes-all.md
         gh release edit "$tag" --notes-file notes-all.md >/dev/null
     fi
-    [ "$variant" = base ] && [ "$own" = 1 ] || exit 0
+    [ "$variant" = base ] && [ "$own" = 1 ] || exit 0   # (a labelled variant never prunes)
     keep=${E2E_KEEP_RELEASES:-8}
     gh release list --limit 200 --json tagName,createdAt \
         --jq '[.[] | select(.tagName | startswith("e2e-"))] | sort_by(.createdAt) | reverse | .[].tagName' |

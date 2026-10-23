@@ -148,6 +148,8 @@ jobs:
     timeout-minutes: 355
     env:
       E2E_VARIANT: ${{ matrix.variant }}
+      # two installers in one run id (release.yml) must not share file names
+      E2E_LABEL: ${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -271,8 +273,8 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: e2e-evidence-${{ matrix.variant }}
-          path: ${{ env.E2E_DIR }}/out/e2e-evidence-${{ matrix.variant }}.zip
+          name: e2e-evidence-${{ matrix.variant }}${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}
+          path: ${{ env.E2E_DIR }}/out/e2e-evidence-${{ matrix.variant }}${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}.zip
           if-no-files-found: ignore
 
   # The AurOS half alone: boot the image of the release under test (no Windows,

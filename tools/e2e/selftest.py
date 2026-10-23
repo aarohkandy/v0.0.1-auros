@@ -332,13 +332,16 @@ exit 0
 
 def test_publish():
     want = {"ok": "e2e-222 e2e-evidence-base.zip", "sha403": "e2e-222 e2e-evidence-base.zip",
-            "all403": "e2e-111 r222-e2e-evidence-base.zip", "none": None}
+            "all403": "e2e-111 r222-e2e-evidence-base.zip", "none": None,
+            # one run id, two installers: the second's files must not overwrite the first's
+            "label": "e2e-222 e2e-evidence-base-fastpath.zip"}
     for mode, upload in want.items():
         with tempfile.TemporaryDirectory() as t:
             os.makedirs(f"{t}/bin"); os.makedirs(f"{t}/out/flow/shots")
             open(f"{t}/bin/gh", "w").write(FAKE_GH); os.chmod(f"{t}/bin/gh", 0o755)
             open(f"{t}/out/flow/timings.md", "w").write("# t\n\n| a | 1 |\n")
-            env = dict(os.environ, T=t, MODE=mode, PATH=f"{t}/bin:" + os.environ["PATH"], GH_TOKEN="x",
+            env = dict(os.environ, T=t, MODE="ok" if mode == "label" else mode,
+                       E2E_LABEL="-fastpath" if mode == "label" else "", PATH=f"{t}/bin:" + os.environ["PATH"], GH_TOKEN="x",
                        GH_REPO="o/r", GITHUB_RUN_ID="222", GITHUB_SHA="abc", E2E_VARIANT="base",
                        E2E_PUBLISH_STATE=f"{t}/state", GITHUB_STEP_SUMMARY=f"{t}/summary")
             pub = os.path.join(HERE, "publish.sh")
@@ -350,7 +353,8 @@ def test_publish():
             else:
                 check(ups == "", f"publish ({mode}): nothing is uploaded")
             warned = "::warning::" in a.stdout + a.stderr
-            check(warned == (mode != "ok"), f"publish ({mode}): {'warns' if mode != 'ok' else 'no warning'}")
+            quiet = mode in ("ok", "label")
+            check(warned == (not quiet), f"publish ({mode}): {'no warning' if quiet else 'warns'}")
             check(a.returncode == 0 and b.returncode == 0, f"publish ({mode}): never fails the job")
 
 

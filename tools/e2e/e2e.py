@@ -333,6 +333,15 @@ class Flow:
             if prot != "On":
                 self.guest("Resume-BitLocker -MountPoint C: | Out-Null")
 
+    def check_plain_before_restart(self):
+        """The plain PC must still have no BitLocker when the installer is done
+        (not only when the run began): Windows 11 can start device encryption
+        by itself at any time, and the 'base' journey must test the plain path."""
+        vol, prot, pct = self.bitlocker_state("before the restart")
+        bad = bitlocker_verdict(VARIANT, vol, prot) if vol != "unknown" else None
+        if bad:
+            raise Failure("at the installer's Restart now: " + bad)
+
     def check_bitlocker_before_restart(self):
         """D11/D13: the installer PAUSES BitLocker, it never decrypts. At the
         page before the restart the drive must still be fully encrypted
@@ -844,8 +853,11 @@ class Flow:
                         raise Failure(f"pressed '{label}' {n} times over {int(time.time() - run_start)} s "
                                       "and the page did not move on: " +
                                       vision.text_of(vision.ocr(img, rect))[:900])
-                    if VARIANT == "bitlocker" and re.search(r"restart", label, re.I):
-                        self.check_bitlocker_before_restart()      # while Windows is still up
+                    if re.search(r"restart", label, re.I):
+                        if VARIANT == "bitlocker":
+                            self.check_bitlocker_before_restart()  # while Windows is still up
+                        else:
+                            self.check_plain_before_restart()
                     self.m.click(*vision.centre(b), label="wizard " + label)
                     cand[0] = None
                     if re.search(r"install|erase", label, re.I):
@@ -1001,9 +1013,11 @@ class Flow:
                 raise Failure(f"no '{STORE_NAME}' anywhere a person would look: " +
                               vision.text_of(words)[:600])
             self.m.click(*vision.centre(b), label="open " + STORE_NAME)
-            p, _, _ = self.wait_text(["Search", "Explore", "Installed", "Updates"], 300, every=10)
+            p, _, words = self.wait_text(["Search", "Explore", "Installed", "Updates", "Software"], 300, every=10)
             if not p:
-                raise Failure("the store did not open")
+                self.m.shot("store-did-not-open")
+                raise Failure("the store did not open (nothing of its window read on screen in 5 minutes): " +
+                              vision.text_of(vision.ocr(self.m.screendump()))[:400])
             self.m.shot("store-open")
         with self.rec.phase("aurOS: find and install " + STORE_QUERY):
             found = None
