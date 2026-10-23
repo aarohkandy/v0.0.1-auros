@@ -49,6 +49,8 @@
  *   aurscreen --mode install|restore|dry   instead of /proc/cmdline
  *   aurscreen --fonts DIR            where ui.ttf / ui-bold.ttf are
  *   aurscreen --code VERDICT         print the helper code of a verdict
+ *   aurscreen --said                 with --png/--state: also print every
+ *                                    string the picture draws, "said=..."
  *
  * Off-screen only (--png, --state), stdin may also carry, for tests:
  *   aurscreen-at SECONDS     the clock, for "About N minutes left"
@@ -182,6 +184,26 @@ static int has_size(const char *t)
     return 0;
 }
 
+/* aurstage's own words are being reworded (install.c's last two lines
+ * of "what next" still say AurBridge and Start installing, and that is
+ * stream A2's file). Her screen never says the old names, whatever
+ * build of aurstage is feeding it.
+ * ponytail: delete when install.c says AurOS Setup / Install AurOS. */
+static void plain(char *dst, size_t n, const char *src)
+{
+    static const char *const W[][2] = { { "AurBridge", "AurOS Setup" },
+                                        { "Start installing", "Install AurOS" } };
+    snprintf(dst, n, "%s", src);
+    for (size_t i = 0; i < sizeof W / sizeof W[0]; i++) {
+        char *p;
+        while ((p = strstr(dst, W[i][0]))) {
+            char rest[512];
+            snprintf(rest, sizeof rest, "%s", p + strlen(W[i][0]));
+            snprintf(p, n - (size_t)(p - dst), "%s%s", W[i][1], rest);
+        }
+    }
+}
+
 static void set_step(state *s, int i)
 {
     s->step = i; s->pct = -1; s->p_t0 = -1;
@@ -261,6 +283,9 @@ static void feed(state *s, char *line, double now)
         return;
     }
     if (is_detail(t)) return;
+    char fixed[480];
+    plain(fixed, sizeof fixed, t);
+    t = fixed;
     int cap = t[0] >= 'A' && t[0] <= 'Z';
     /* A new sentence on a new line starts a new paragraph even without
      * a blank line before it: what she reads is the latest sentence. */
@@ -334,6 +359,15 @@ static int minutes_left(const state *s)
     return m < 1 ? 1 : m;
 }
 
+/* "Step N of M" and, once it can be measured, "About N minutes left". */
+static void steps_said(const state *st, char a[32], char m[48])
+{
+    int n = st->mode == M_RESTORE ? NRSTEP : NSTEP, left = minutes_left(st);
+    snprintf(a, 32, "Step %d of %d", st->step + 1, n);
+    m[0] = 0;
+    if (left > 0) snprintf(m, 48, "About %d minute%s left", left, left == 1 ? "" : "s");
+}
+
 /* ── painting ───────────────────────────────────────────────────── */
 
 static const char *fontdir = "/usr/share/auros/fonts";
@@ -388,13 +422,23 @@ static faces *faces_for(int h)
     return &F;
 }
 
+/* tools/screentest.sh asks (--said) what a picture says: every string
+ * drawn, once, whole. The pixels cannot be searched for words. */
+static FILE *said;
+
 /* One line of text in a box `lh` tall whose top is y. */
-static void text(surface *s, face fc, int x, int y, const char *t, uint32_t c)
+static void text_line(surface *s, face fc, int x, int y, const char *t, uint32_t c)
 {
     if (!fc.f || !t || !*t) return;
     float asc = font_ascent(fc.f), desc = font_descent(fc.f);
     font_draw(fc.f, s->px, s->w, s->h, s->stride, (float)x,
               (float)y + ((float)fc.lh + asc - desc) / 2.f, t, c, 1.f);
+}
+
+static void text(surface *s, face fc, int x, int y, const char *t, uint32_t c)
+{
+    if (said && t && *t) fprintf(said, "said=%s\n", t);
+    text_line(s, fc, x, y, t, c);
 }
 
 static int text_w(face fc, const char *t) { return fc.f ? (int)ceilf(font_text_width(fc.f, t)) : 0; }
@@ -403,6 +447,7 @@ static int text_w(face fc, const char *t) { return fc.f ? (int)ceilf(font_text_w
  * height used. Nothing she reads is cut off with "...". */
 static int wrap(surface *s, face fc, int x, int y, int w, const char *t, uint32_t c)
 {
+    if (said && s && t && *t) fprintf(said, "said=%s\n", t);
     if (!fc.f || !t) return 0;
     char line[512] = "", next[512];
     int used = 0;
@@ -413,14 +458,14 @@ static int wrap(surface *s, face fc, int x, int y, int w, const char *t, uint32_
         int wl = (int)strcspn(p, " ");
         snprintf(next, sizeof next, "%s%s%.*s", line, line[0] ? " " : "", wl, p);
         if (line[0] && text_w(fc, next) > w) {
-            if (s) text(s, fc, x, y + used, line, c);
+            if (s) text_line(s, fc, x, y + used, line, c);
             used += fc.lh; line[0] = 0;
             continue;
         }
         snprintf(line, sizeof line, "%s", next);
         p += wl;
     }
-    if (line[0]) { if (s) text(s, fc, x, y + used, line, c); used += fc.lh; }
+    if (line[0]) { if (s) text_line(s, fc, x, y + used, line, c); used += fc.lh; }
     return used;
 }
 
@@ -573,6 +618,45 @@ static void paint_pointer(surface *s, int x, int y, float k)
 
 typedef struct { int x, y, seen, hover, keyed; } pointer;
 
+/* THE RESTORE'S LAST ACT. restore_run (aurstage/install.c) ends with
+ * reboot(RB_POWER_OFF): the computer switches itself off and she turns
+ * it on again, which aurstage's own closing sentence says. The design
+ * wants "The screen goes black, then Windows starts. About 2 minutes."
+ * before a restart. Saying it while the machine powers off would leave
+ * her waiting at a dark screen, so it is built in only once the restore
+ * restarts instead: compile with -DRESTORE_RESTARTS=1 then. */
+#ifndef RESTORE_RESTARTS
+#define RESTORE_RESTARTS 0
+#endif
+#define RESTART_SAYS "The screen goes black, then Windows starts. About 2 minutes."
+
+/* A code on a screen where nothing went wrong looks like an error. */
+static int shows_code(const state *st) { return st->stopped; }
+
+/* The box at the foot: what she must not do, then what she will see.
+ * From the first irreversible write to the end. Returns its lines;
+ * l[0] is the one in bold. */
+static int band(const state *st, const char *l[2])
+{
+    l[0] = l[1] = NULL;
+    if (st->stopped) return 0;
+    if (st->mode == M_RESTORE) {
+        if (st->finished) { l[0] = RESTORE_RESTARTS ? RESTART_SAYS : NULL; return l[0] != NULL; }
+        if (!RESTORE_RESTARTS) {
+            l[0] = "Do not turn the computer off. It switches itself off when it is done.";
+            return 1;
+        }
+        l[0] = "Do not turn the computer off. It restarts by itself when it is done.";
+        l[1] = RESTART_SAYS;
+        return 2;
+    }
+    if (st->mode == M_INSTALL && st->step >= RISKY_FROM && !st->handover) {
+        l[0] = "Do not turn the computer off. AurOS starts by itself when it is done.";
+        return 1;
+    }
+    return 0;
+}
+
 static void paint(surface *s, const state *st, const pointer *pt)
 {
     faces *F = faces_for(s->h);
@@ -598,7 +682,7 @@ static void paint(surface *s, const state *st, const pointer *pt)
             y += wrap(s, F->body, f.L, y, f.W, st->para[i], INK) + (int)(8 * f.k);
         y += (int)(16 * f.k);
 
-        if (st->stopped) {
+        if (shows_code(st)) {
             /* The number, and why it is there: a group of its own. */
             y += (int)(8 * f.k);
             char code[12];
@@ -611,32 +695,20 @@ static void paint(surface *s, const state *st, const pointer *pt)
                 paint_steps(s, st, F, f, &y);
                 if (!st->handover && !st->finished) {
                     char a[32], m[48];
-                    int n = st->mode == M_RESTORE ? NRSTEP : NSTEP, left = minutes_left(st);
-                    snprintf(a, sizeof a, "Step %d of %d", st->step + 1, n);
+                    steps_said(st, a, m);
                     y += (int)(4 * f.k);
                     text(s, F->small, f.L, y, a, INK2);
-                    if (left > 0) {
-                        snprintf(m, sizeof m, "About %d minute%s left", left, left == 1 ? "" : "s");
-                        text(s, F->small, f.L + text_w(F->small, a) + (int)(32 * f.k), y, m, INK2);
-                    }
+                    if (m[0]) text(s, F->small, f.L + text_w(F->small, a) + (int)(32 * f.k), y, m, INK2);
                 }
             }
-            /* Do not turn it off: from the first irreversible write to
-             * the end. A box she cannot press, so no border: a tint and
-             * a bar, the text in ink. */
-            int risky = st->mode == M_RESTORE ? st->verdict[0] == 0
-                      : st->mode == M_INSTALL && st->step >= RISKY_FROM && !st->handover;
-            const char *say = st->mode == M_RESTORE
-                ? "Do not turn the computer off. It restarts by itself when it is done."
-                : "Do not turn the computer off. AurOS starts by itself when it is done.";
-            /* What she will see, said before she sees it (§3 Motion). */
-            const char *then = st->mode == M_RESTORE
-                ? "The screen goes black, then Windows starts. About 2 minutes." : NULL;
-            if (st->mode == M_RESTORE && st->finished) { say = then; then = NULL; }
-            if (risky || (st->mode == M_RESTORE && st->finished)) {
+            /* A box she cannot press, so no border: a tint and a bar,
+             * the text in ink. */
+            const char *bl[2];
+            int nb = band(st, bl);
+            if (nb) {
                 int pad = (int)(14 * f.k), ic = (int)(24 * f.k), tw = f.W - 2 * pad - ic - pad;
-                int th = wrap(NULL, F->bodyb, 0, 0, tw, say, INK);
-                int bh = th + (then ? wrap(NULL, F->body, 0, 0, tw, then, INK) : 0) + 2 * pad;
+                int th = wrap(NULL, F->bodyb, 0, 0, tw, bl[0], INK);
+                int bh = th + (nb > 1 ? wrap(NULL, F->body, 0, 0, tw, bl[1], INK) : 0) + 2 * pad;
                 int by = s->h - f.in - bh;
                 draw_round_rect(s, (rect){ f.L, by, f.W, bh }, corners_all(8.f * f.k), WARNT, 1.f);
                 draw_rect(s, (rect){ f.L, by, (int)(4 * f.k), bh }, WARN, 1.f);
@@ -644,8 +716,8 @@ static void paint(surface *s, const state *st, const pointer *pt)
                 draw_circle(s, cx, cy, (float)ic / 2.f, WARN, 1.f);
                 draw_rect(s, (rect){ (int)cx - (int)(1.5f * f.k), (int)(cy - 7 * f.k), (int)(3 * f.k), (int)(8 * f.k) }, WARNT, 1.f);
                 draw_rect(s, (rect){ (int)cx - (int)(1.5f * f.k), (int)(cy + 3 * f.k), (int)(3 * f.k), (int)(3 * f.k) }, WARNT, 1.f);
-                if (then) wrap(s, F->body, f.L + pad + ic + pad, by + pad + th, tw, then, INK);
-                wrap(s, F->bodyb, f.L + pad + ic + pad, by + pad, tw, say, INK);
+                wrap(s, F->bodyb, f.L + pad + ic + pad, by + pad, tw, bl[0], INK);
+                if (nb > 1) wrap(s, F->body, f.L + pad + ic + pad, by + pad + th, tw, bl[1], INK);
             }
         }
     }
@@ -797,6 +869,7 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "--png") && i + 1 < argc) png = argv[++i];
         else if (!strcmp(argv[i], "--size") && i + 2 < argc) { pw = atoi(argv[++i]); ph = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--state")) dump = 1;
+        else if (!strcmp(argv[i], "--said")) said = stdout;
         else if (!strcmp(argv[i], "--fonts") && i + 1 < argc) fontdir = argv[++i];
         else if (!strcmp(argv[i], "--code") && i + 1 < argc) {
             char c[12]; helper_code(argv[++i], c); printf("%s\n", c); return 0;
@@ -813,7 +886,7 @@ int main(int argc, char **argv)
     pointer pt = { 0, 0, 0, 0, 0 };
 
     /* Off-screen: everything on stdin, then one picture or one report. */
-    if (png || dump) {
+    if (png || dump || said) {
         if (pw < 16 || ph < 16 || pw > 8192 || ph > 8192) return 1;
         char line[1024];
         double now = 0;
@@ -830,7 +903,7 @@ int main(int argc, char **argv)
         pt.hover = pt.seen && has_button(&st) && inside(button_rect(pw, ph, faces_for(ph)), pt.x, pt.y);
         if (dump) {
             char code[12] = "-";
-            if (st.stopped) helper_code(st.verdict, code);
+            if (shows_code(&st)) helper_code(st.verdict, code);
             printf("mode=%d step=%d label=%s pct=%d stopped=%d handover=%d finished=%d verdict=%s "
                    "left=%d details=%d code=%s\n",
                    st.mode, st.step, st.mode == M_RESTORE ? RSTEP[st.step].label : STEP[st.step].label,
@@ -838,12 +911,15 @@ int main(int argc, char **argv)
                    minutes_left(&st), st.details, code);
             for (int i = 0; i < st.npara; i++) printf("para=%s\n", st.para[i]);
             if (st.warn[0]) printf("why=%s\n", st.warn);
+            const char *bl[2];
+            int nb = band(&st, bl);
+            for (int i = 0; i < nb; i++) printf("band=%s\n", bl[i]);
         }
-        if (png) {
+        if (png || said) {
             surface *o = surface_new(pw, ph);
             if (!o) return 1;
             paint(o, &st, &pt);
-            int rc = png_write_rgb(png, o->px, o->w, o->h);
+            int rc = png ? png_write_rgb(png, o->px, o->w, o->h) : 0;
             surface_free(o);
             if (rc < 0) { fprintf(stderr, "aurscreen: cannot write %s\n", png); return 1; }
         }

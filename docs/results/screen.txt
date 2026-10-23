@@ -32,6 +32,28 @@ The staging screen
     a new sentence on the next line replaces the last              ok
     one sentence over two console lines is one paragraph           ok
     a failure: what happens next on her page, why on the helper's  ok
+    the old names never reach her (AurBridge, Start installing)    ok
+
+  every word on the screen
+    a failed install says: AurOS didn’t go on this time          ok
+    ...then how to try again, the number's line, and the button    ok
+    ...and the number itself, as drawn                             ok
+    the helper's page starts as it should, and the button says Hide details ok
+    installing says: Step 4 of 7, About 6 minutes left             ok
+    a restore has the same list, and its step count                ok
+    a restore that failed says so, and what to do                  ok
+    nothing machine on her screen (said.f)                         ok
+    nothing machine on her screen (said.i)                         ok
+    nothing machine on her screen (said.r)                         ok
+    nothing machine on her screen (said.rf)                        ok
+    ...but the helper's page has the report line, to photograph    ok
+
+  the box at the foot
+    installing, from making room: do not turn it off               ok
+    before anything is changed: no warning                         ok
+    after a failure: no warning                                    ok
+    a restore that powers off does not promise a restart           ok
+    a restore that restarts says what she will see, before         ok
 
   the helper code
     none while nothing has failed                                  ok
@@ -64,5 +86,6 @@ The staging screen
     Light: the page is paper                                       ok
     no text below 18 px (smallest 18)                              ok
     titles use ui-bold.ttf when it is there                        ok
+  pictures left in /o/shots2
 
-screentest: 50/50
+screentest: 68/68

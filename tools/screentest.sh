@@ -56,6 +56,7 @@ while IFS= read -r s; do
 done < "$T/starts"
 
 say() { printf 'aurstage: %s\n' "$@"; }
+at() { printf 'aurscreen-at %s\n' "$1"; }     # the clock, off-screen only
 part() {
     say "AurOS staging environment" "" "── installing AurOS ──" "drive    healthy"
     say "" "Saving this computer's Windows startup, so it can be put back." "saved    12 MB"
@@ -173,11 +174,89 @@ case "$S" in *"para=Windows itself"*"para=Turn this computer off and on again. W
         *) ok "a failure: what happens next on her page, why on the helper's" ;; esac ;;
     *) bad "a failure: what happens next on her page, why on the helper's" "$S" ;; esac
 
+# The sentences install.c says today. AurBridge is not a name she knows
+# and Start installing is not the button's name (DESIGN-DIRECTION rule 2):
+# whatever aurstage says, her screen does not.
+S=$( { part; say "WARNING: the copy of AurOS could not be read back" \
+        "aurstage-report v1 verdict=copy-failed record=failed -" "" \
+        "Turn this computer off and on again. Windows will start" "as usual -- nothing on it has been changed." \
+        "To try again, open AurBridge in Windows and press" "Start installing."; } | st install)
+case "$S" in *"para=To try again, open AurOS Setup in Windows and press Install AurOS."*)
+    case "$S" in *AurBridge*|*"Start installing"*) bad "the old names never reach her" "$S" ;;
+        *) ok "the old names never reach her (AurBridge, Start installing)" ;; esac ;;
+    *) bad "the old names never reach her (AurBridge, Start installing)" "$S" ;; esac
+
+echo
+echo "  every word on the screen"
+sd() { "$B" --mode "$1" --said --png /dev/null --size 1024 600; }
+
+sd install < /dev/null > "$T/said"   # nothing yet
+failed | sd install > "$T/said.f"
+{ failed; at 999; echo aurscreen-key; } | sd install > "$T/said.d"
+{ part; at 400; printf 'aurstage-progress 80\n'; } | sd install > "$T/said.i"
+{ say "restoring /dev/vda"; } | sd restore > "$T/said.r"
+{ say "restoring /dev/vda"; say "WARNING: the saved copy could not be written back" \
+    "aurstage-report v1 verdict=restore-failed record=none table=0 esp=0" "" \
+    "Turn this computer off with the power button, then on again."; } | sd restore > "$T/said.rf"
+has() { grep -qxF "said=$2" "$1"; }
+all() { has "$T/said.f" "$1" && has "$T/said.d" "$1" || return 1; }
+if has "$T/said.f" "AurOS didn’t go on this time"; then ok "a failed install says: AurOS didn’t go on this time"
+else bad "a failed install says: AurOS didn’t go on this time" "$(cat "$T/said.f")"; fi
+if has "$T/said.f" "To try again, open AurOS Setup in Windows and press Install AurOS." || \
+   has "$T/said.f" "If you need help, read this number to them."; then
+    has "$T/said.f" "To try again, open AurOS Setup in Windows and press Install AurOS." \
+        && has "$T/said.f" "If you need help, read this number to them." \
+        && has "$T/said.f" "Show details for a helper" \
+        && ok "...then how to try again, the number's line, and the button" \
+        || bad "...then how to try again, the number's line, and the button" "$(cat "$T/said.f")"
+else bad "...then how to try again, the number's line, and the button" "$(cat "$T/said.f")"; fi
+has "$T/said.f" "$("$B" --code copy-failed)" && ok "...and the number itself, as drawn" || bad "...and the number itself, as drawn" "$(cat "$T/said.f")"
+has "$T/said.d" "This is for a helper. Pressing this did not change anything." && has "$T/said.d" "Hide details" \
+    && ok "the helper's page starts as it should, and the button says Hide details" \
+    || bad "the helper's page starts as it should, and the button says Hide details" "$(cat "$T/said.d")"
+if has "$T/said.i" "Step 4 of 7" && has "$T/said.i" "About 6 minutes left"; then ok "installing says: Step 4 of 7, About 6 minutes left"
+else bad "installing says: Step 4 of 7, About 6 minutes left" "$(cat "$T/said.i")"; fi
+has "$T/said.r" "Step 3 of 3" && has "$T/said.r" "Putting Windows back" && ok "a restore has the same list, and its step count" \
+    || bad "a restore has the same list, and its step count" "$(cat "$T/said.r")"
+has "$T/said.rf" "Windows was not put back" && has "$T/said.rf" "Turn this computer off with the power button, then on again." \
+    && ok "a restore that failed says so, and what to do" || bad "a restore that failed says so, and what to do" "$(cat "$T/said.rf")"
+# Nothing machine on her screen: sizes, file names, log words, the old names.
+# The helper's page is the one place the report line may be.
+for f in said.f said.i said.r said.rf; do
+    if grep -Eq 'GiB|MiB| MB|KiB|/dev/|verdict=|aurstage|AurBridge|Start installing| -- |\.ko|0x[0-9a-f]+|[Ee]rror [0-9]' "$T/$f"; then
+        bad "nothing machine on her screen ($f)" "$(grep -E 'GiB|MiB| MB|KiB|/dev/|verdict=|aurstage|AurBridge|Start installing| -- |\.ko|0x[0-9a-f]+' "$T/$f")"
+    else ok "nothing machine on her screen ($f)"; fi
+done
+has "$T/said.d" "aurstage-report v1 verdict=copy-failed record=failed -" \
+    && ok "...but the helper's page has the report line, to photograph" \
+    || bad "...but the helper's page has the report line, to photograph" "$(cat "$T/said.d")"
+
+echo
+echo "  the box at the foot"
+case "$(part | st install)" in *"band=Do not turn the computer off. AurOS starts by itself when it is done."*) ok "installing, from making room: do not turn it off" ;;
+    *) bad "installing, from making room: do not turn it off" "$(part | st install)" ;; esac
+case "$(start | st install)" in *band=*) bad "before anything is changed: no warning" "$(start | st install)" ;;
+    *) ok "before anything is changed: no warning" ;; esac
+case "$(failed | st install)" in *band=*) bad "after a failure: no warning" ;; *) ok "after a failure: no warning" ;; esac
+# restore_run ends with reboot(RB_POWER_OFF): the machine does not restart,
+# so the screen must not promise that it will.
+S=$( { say "restoring /dev/vda"; } | st restore)
+case "$S" in *"band=Do not turn the computer off. It switches itself off when it is done."*)
+    case "$S" in *"Windows starts"*) bad "a restore that powers off does not promise a restart" "$S" ;;
+        *) ok "a restore that powers off does not promise a restart" ;; esac ;;
+    *) bad "a restore that powers off does not promise a restart" "$S" ;; esac
+gcc -O2 -std=gnu11 -DRESTORE_RESTARTS=1 -o "$T/aurscreen-restarts" src/aurscreen/screen.c \
+    src/aurshell/kms.c src/aurshell/draw.c src/common/font.c src/common/png.c -lm
+S=$( { say "restoring /dev/vda"; } | "$T/aurscreen-restarts" --mode restore --state)
+case "$S" in *"band=The screen goes black, then Windows starts. About 2 minutes."*"") ok "a restore that restarts says what she will see, before" ;;
+    *) bad "a restore that restarts says what she will see, before" "$S" ;; esac
+
 echo
 echo "  the helper code"
 case "$(part | st install)" in *"code=-"*) ok "none while nothing has failed" ;;
     *) bad "none while nothing has failed" "$(part | st install)" ;; esac
 C=$("$B" --code copy-failed)
+S=$(failed | st install)
 case "$S" in *"code=$C"*) ok "a failure shows the code of its verdict ($C)" ;; *) bad "a failure shows the code of its verdict" "$S" ;; esac
 if printf '%s\n' "$C" | grep -Eq '^[2-9]{3} [2-9]{3} [2-9]{3}$'; then ok "nine digits, 2 to 9, in groups of three"
 else bad "nine digits, 2 to 9, in groups of three" "$C"; fi
@@ -191,7 +270,6 @@ nc=$(while read -r v; do "$B" --code "$v"; done < "$T/verdicts" | sort -u | wc -
 
 echo
 echo "  About N minutes left"
-at() { printf 'aurscreen-at %s\n' "$1"; }
 S=$( { part; at 400; printf 'aurstage-progress 80\n'; } | st install)
 # The copy was at 30% at 0 s and is at 80% at 400 s: 8 s a percent, 160 s
 # to go, and a minute for each of the three short steps after it: 6.
@@ -269,6 +347,33 @@ if [ -n "$LOG" ]; then
     S=$(tr -d '\r' < "$LOG" | grep -a '^aurstage' | st install)
     case "$S" in *"step=6 "*"handover=1 "*) ok "followed it to the end: every step, handed over" ;;
         *) bad "followed it to the end: every step, handed over" "$S" ;; esac
+fi
+
+# SHOTS=dir: also leave a picture of every state there, at the two
+# smallest panels this product supports and the commonest laptop one.
+# ui.ttf and ui-bold.ttf stand in as Inter, as in the image.
+if [ -n "${SHOTS:-}" ]; then
+    mkdir -p "$SHOTS" "$T/f"
+    I=/usr/share/fonts/opentype/inter
+    [ -f "$I/Inter-Regular.otf" ] && ln -sf "$I/Inter-Regular.otf" "$T/f/ui.ttf" && ln -sf "$I/Inter-SemiBold.otf" "$T/f/ui-bold.ttf"
+    refused() { start; say "WARNING: This computer is running on its battery." \
+        "aurstage-report v1 verdict=on-battery record=refused -" "" "Nothing on this computer has been changed." "" \
+        "Turn this computer off and on again. Windows will start" "as usual." "" \
+        "To try again, open AurOS Setup in Windows and press" "Install AurOS."; }
+    checking() { start; at 0; printf 'aurstage-progress 3\n'; at 40; printf 'aurstage-progress 37\n'; }
+    installing() { part; at 400; printf 'aurstage-progress 47\n'; }
+    restoring() { say "AurOS staging environment" "" "── putting Windows back ──" "checking the saved copy on /dev/sdb1" "restoring /dev/sda"; }
+    restorefail() { restoring; say "WARNING: the saved copy could not be written back" \
+        "aurstage-report v1 verdict=restore-failed record=none table=0 esp=0" "" \
+        "Turn this computer off with the power button, then on again." "If you have an AurOS memory stick, plug it in first."; }
+    for sz in "1366 768" "1024 600"; do
+        set -- $sz
+        for m in checking:install installing:install failed:install refused:install restoring:restore restorefail:restore; do
+            "${m%%:*}" | "$B" --fonts "$T/f" --mode "${m##*:}" --png "$SHOTS/${m%%:*}-$1x$2.png" --size "$1" "$2"
+        done
+        { failed; at 999; echo aurscreen-key; } | "$B" --fonts "$T/f" --mode install --png "$SHOTS/failed-details-$1x$2.png" --size "$1" "$2"
+    done
+    echo "  pictures left in $SHOTS"
 fi
 
 echo
