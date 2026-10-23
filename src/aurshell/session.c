@@ -331,6 +331,24 @@ int session_key(shell_ctx *c, int code, int pressed)
     return aurwl_key(c->wl, (uint32_t)code, pressed, now_ms());
 }
 
+/* ── full screen ────────────────────────────────────────────────── */
+
+/* A program that asked for the whole screen gets everything above the band.
+ * Black round it if its picture does not fit exactly; recorded like any
+ * window, so her clicks reach it. Painted after the archetype, before the
+ * menus and panels. */
+void session_paint_full(shell_ctx *c, surface *fb)
+{
+    for (int i = 0; i < c->n_wins; i++) {
+        win_entry *e = &c->wins[i];
+        if (!e->full || !e->content || e->minimised) continue;
+        rect all = { 0, 0, c->screen_w, c->screen_h };
+        draw_rect(fb, all, 0xFF000000u, 1.f);
+        draw_content_fit(fb, e->content, all, corners_all(0.f), 1.f);
+        return;
+    }
+}
+
 /* ── popups ─────────────────────────────────────────────────────── */
 
 /* Menus are separate surfaces the client positions against its parent.
