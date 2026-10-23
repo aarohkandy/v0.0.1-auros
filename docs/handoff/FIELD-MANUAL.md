@@ -38,6 +38,9 @@ beautiful.** When two conflict, the lower number wins.
   git -C "$M" worktree add -b wt-<id> "$S/wt-<id>" origin/main   # once
   cd "$S/wt-<id>"
   ```
+- **Pushing to `main` is authorized by the owner and REQUIRED** ("push to GitHub
+  extremely frequently so I have a safe"). The repository is public on purpose. Never
+  hold a finished commit back on a local branch: an unpushed commit is lost work.
 - **Push loop** (retry 2/4/8/16 s on a race):
   `git fetch -q origin main && git rebase origin/main && git push origin HEAD:main`
 - Commits: plain subject; a body that says why; last line exactly
