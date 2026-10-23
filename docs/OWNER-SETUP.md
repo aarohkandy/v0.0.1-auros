@@ -43,7 +43,7 @@ accessible by integration", this page is where to look.
 
 | Secret name | What it is | When it's needed | How to make it |
 |---|---|---|---|
-| `AUROS_APT_SIGNING_KEY` | the private half of AurOS's own update-signing key (OpenPGP). Computers running AurOS trust only updates sealed with it. **Not Microsoft, not a certificate, free.** | when the update channel (stream S5) goes live | the exact commands are added here by stream S5; in short: make a key pair on your Mac, paste the private key here, the public half goes into the repo |
+| `AUROS_APT_SIGNING_KEY` | the private half of AurOS's own update-signing key (OpenPGP). Computers running AurOS trust only updates sealed with it. **Not Microsoft, not a certificate, free.** | **before the first public release**: computers installed from a release made without it never get AurOS's own fixes | §4a below, about 5 minutes on your Mac |
 
 ### 4a. `AUROS_APT_SIGNING_KEY`, step by step (once, about 5 minutes)
 
@@ -52,11 +52,12 @@ This is the key that seals AurOS's own updates (stream S5,
 shared or cloud machine. You need GnuPG: on Linux it is already there
 (`gpg --version`); on a Mac, `brew install gnupg` (or GPG Suite).
 
-1. Open a terminal and paste these lines (they make the key in a fresh,
-   temporary folder, so nothing mixes with any key you already have):
+1. Open Terminal and paste these lines (they make the key in a fresh,
+   temporary folder, so nothing mixes with any key you already have, and
+   leave two files in your home folder):
 
    ```sh
-   export GNUPGHOME="$(mktemp -d)"
+   cd ~ && export GNUPGHOME="$(mktemp -d)"
    gpg --batch --passphrase '' --quick-gen-key 'AurOS updates' ed25519 sign 3y
    gpg --list-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}'
    gpg --armor --export-secret-keys > auros-apt-signing-key.PRIVATE.asc
@@ -65,11 +66,14 @@ shared or cloud machine. You need GnuPG: on Linux it is already there
 
    The third line prints the key's **fingerprint** (40 letters and digits).
    Write it down.
-2. Open `https://github.com/OWNER/REPO/settings/secrets/actions` →
-   **New repository secret**. Name: `AUROS_APT_SIGNING_KEY`. Value: open
-   `auros-apt-signing-key.PRIVATE.asc` in a text editor and paste **all**
-   of it, from `-----BEGIN PGP PRIVATE KEY BLOCK-----` to the matching
-   `END` line. **Add secret.**
+2. In the same Terminal, `pbcopy < auros-apt-signing-key.PRIVATE.asc`
+   (the whole private key is now on the clipboard). Open
+   https://github.com/aarohkandy/v0.0.1-auros/settings/secrets/actions →
+   **New repository secret**. Name: `AUROS_APT_SIGNING_KEY`. Value: paste
+   (it starts `-----BEGIN PGP PRIVATE KEY BLOCK-----` and ends with the
+   matching `END` line). **Add secret.** Then `pbcopy < /dev/null` to
+   empty the clipboard. (Another repository: its own
+   `.../settings/secrets/actions` page.)
 3. Copy both `.asc` files to a USB stick and put it somewhere safe. Anyone
    holding the PRIVATE file can send updates to every AurOS computer: treat
    it like the master key of a house. You need it again only to move to a
@@ -78,11 +82,14 @@ shared or cloud machine. You need GnuPG: on Linux it is already there
 4. Delete the copies from the computer: `rm -rf "$GNUPGHOME"
    auros-apt-signing-key.PRIVATE.asc` (keep `auros-archive-keyring.asc` if
    you like; it is the public half and is safe to share).
-5. Tell an agent: "the update key is in, fingerprint XXXX". The next
-   `[apt]` run publishes the public half; the agent commits it as
-   `rootfs/usr/share/keyrings/auros-archive-keyring.asc` after checking it
-   has your fingerprint. From the next image on, AurOS computers trust
-   updates sealed with it, and only those.
+5. Tell an agent: "the update key is in, fingerprint XXXX". The agent
+   pushes an `[apt]` commit; that run (`.github/workflows/aptrepo.yml`)
+   prints the key's public half and fingerprint and publishes nothing. The
+   agent commits the public half as
+   `rootfs/usr/share/keyrings/auros-archive-keyring.asc` only if the
+   fingerprint is the one you gave. From the next image on, AurOS
+   computers trust updates sealed with it, and only those; every promoted
+   release is then published to them automatically.
 
 Nothing else is needed: no certificate, no company, no Microsoft account,
 no payment.
@@ -91,8 +98,9 @@ Rules for every secret:
 - Paste it only into that Settings page. Never into a file, an issue, a chat, or a commit.
 - Keep an offline copy (a USB stick in a drawer) of the update-signing key: if it is lost,
   existing AurOS computers can no longer be updated without a new install.
-- If it may have leaked: make a new key, replace the secret, and publish an update signed
-  with the old key that installs the new public key (stream S5 documents this rotation).
+- If the update-signing key may have leaked, tell an agent at once: whoever has it can
+  install anything on every AurOS computer that has not yet moved to a new key. The way
+  out is a new key, rotated in as `docs/security/UPDATES.md` "Key rotation" describes.
 
 ## 5. Not required, by the owner's decision
 

@@ -1,0 +1,296 @@
+# AurOS's own update channel: test it, and publish it.
+# docs/security/UPDATES.md is the whole story; this is the machinery.
+#
+#   gate     decides. A push that touches the channel's files runs the
+#            test. [apt] in the commit SUBJECT publishes the latest
+#            (website) release; [apt TAG] publishes that release (an
+#            urgent fix that is still a prerelease). A build or release
+#            run that promoted a release ([latest] in its subject, and
+#            green) publishes it by itself -- so a promoted fix reaches
+#            every AurOS computer with nobody remembering to. Also
+#            workflow_dispatch (tag optional).
+#   test     tools/updatetest.sh in a fresh ubuntu:24.04 with a throwaway
+#            key, then once with each protection removed: each of those
+#            must FAIL, or the test is not testing anything.
+#   publish  needs the test. Takes the .debs out of the RELEASED IMAGE
+#            (what computers have is what the channel serves), refuses
+#            anything older than what is published, signs with the secret
+#            AUROS_APT_SIGNING_KEY only if that key is the committed
+#            rootfs/usr/share/keyrings/auros-archive-keyring.asc, checks
+#            the signature against the committed file, uploads to the
+#            prerelease tag `apt` (never "latest"), reads every file back
+#            through GitHub's redirect, and has a real apt on a fresh
+#            Ubuntu see and fetch it.
+#
+# No committed key yet (the owner's step, docs/OWNER-SETUP.md 4a): the
+# publish job prints the secret's public half and fingerprint in its
+# summary (and as an artifact) and stops, publishing nothing.
+name: aptrepo
+
+on:
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: [build, release]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release tag to publish (empty: the latest release)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    # A workflow_run counts only after a green run that promoted a
+    # release; decided here, without a runner, for all the others.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       contains(github.event.workflow_run.head_commit.message, '[latest]'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      test: ${{ steps.g.outputs.test }}
+      publish: ${{ steps.g.outputs.publish }}
+      tag: ${{ steps.g.outputs.tag }}
+    steps:
+      - id: g
+        env:
+          EVENT: ${{ github.event_name }}
+          MSG: ${{ github.event.head_commit.message }}
+          BEFORE: ${{ github.event.before }}
+          IN_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test=false; publish=false; tag=""
+          case "$EVENT" in
+            workflow_run) test=true; publish=true ;;
+            workflow_dispatch) test=true; publish=true; tag=$IN_TAG ;;
+            push)
+              SUBJ=${MSG%%$'\n'*}
+              case "$SUBJ" in *'[apt]'*|*'[apt '*)
+                test=true; publish=true
+                tag=$(printf '%s' "$SUBJ" | sed -n 's/.*\[apt \([A-Za-z0-9._+-]*\)\].*/\1/p' | head -1) ;;
+              esac
+              case "$BEFORE" in
+                ''|0000000000000000000000000000000000000000)
+                  files=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.files[].filename' || true) ;;
+                *)
+                  files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename' || true) ;;
+              esac
+              if printf '%s\n' "$files" | grep -qE '^(build/aptchannel|tools/updatetest\.sh|tools/repo\.sh|rootfs/etc/apt/|\.github/workflows/aptrepo\.yml$)'; then
+                test=true
+              fi ;;
+          esac
+          { echo "test=$test"; echo "publish=$publish"; echo "tag=$tag"; } | tee -a "$GITHUB_OUTPUT"
+
+  test:
+    needs: gate
+    if: needs.gate.outputs.test == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: the address is derived, never typed
+        run: |
+          want="https://github.com/$GITHUB_REPOSITORY/releases/download/apt/"
+          got=$(build/aptchannel url); [ "$got" = "$want" ] || { echo "from GITHUB_REPOSITORY: $got, wanted $want"; exit 1; }
+          got=$(env -u GITHUB_REPOSITORY build/aptchannel url); [ "$got" = "$want" ] || { echo "from the origin remote: $got, wanted $want"; exit 1; }
+          echo "$want"
+      - name: a fresh ubuntu:24.04, a throwaway key, and each protection removed
+        run: |
+          run() {
+            docker run --rm -v "$PWD":/w:ro -w /w ubuntu:24.04 bash -c '
+              for i in 1 2 3; do
+                timeout 300 apt-get update -q && timeout 300 env DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
+                  --no-install-recommends unattended-upgrades gnupg gpgv python3 hello xz-utils && break
+                sleep 10
+              done > /tmp/deps.log 2>&1 || { tail -30 /tmp/deps.log; exit 3; }
+              bash tools/updatetest.sh "$@"' _ "$@"
+          }
+          run | tee updatetest.log
+          for b in trusted signedby pin origin; do
+            set +e; run --break=$b > break.log 2>&1; rc=$?; set -e
+            grep -E 'FAIL$|^updatetest' break.log | sed "s/^/[--break=$b] /"
+            [ "$rc" = 1 ] || { cat break.log; echo "::error::with --break=$b the test exited $rc, not 1: it did not catch a removed protection"; exit 1; }
+          done
+          { echo '### updatetest'; echo '```'; grep -E ' ok$| FAIL$|^updatetest|^==' updatetest.log; echo '```'
+            echo 'Each of --break=trusted, signedby, pin, origin made it fail, as it must.'; } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: [gate, test]
+    if: needs.gate.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    concurrency:
+      group: aptrepo-publish
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      IN_TAG: ${{ needs.gate.outputs.tag }}
+      KR: rootfs/usr/share/keyrings/auros-archive-keyring.asc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: the signing key is the one AurOS computers trust
+        env:
+          SIGNING_KEY: ${{ secrets.AUROS_APT_SIGNING_KEY }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::error::No update-signing key yet. The owner adds the secret AUROS_APT_SIGNING_KEY once (docs/OWNER-SETUP.md 4a). Nothing was published."
+            exit 1
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"; mkdir -m 700 "$GNUPGHOME"; echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          printf '%s\n' "$SIGNING_KEY" | gpg --batch --quiet --import
+          # Every secret key in the secret (two during a rotation).
+          fprs=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec:/{s=1; next} s && /^fpr:/{print $10; s=0}')
+          [ -n "$fprs" ] || { echo "::error::the secret AUROS_APT_SIGNING_KEY holds no OpenPGP private key"; exit 1; }
+          if [ ! -s "$KR" ]; then
+            gpg --armor --export $fprs > auros-archive-keyring.asc
+            { echo "### The update key's public half, to commit"
+              echo "Fingerprint(s): \`$(echo $fprs)\`"
+              echo
+              echo "Check it is the fingerprint the owner wrote down, then commit this file as \`$KR\` (also this run's artifact \`auros-archive-keyring\`):"
+              echo '```'; cat auros-archive-keyring.asc; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::$KR is not committed yet: nothing was published. The key's public half (fingerprint $(echo $fprs)) is in this run's summary and artifact. Commit it, then [release], [latest], and the channel publishes."
+            exit 1
+          fi
+          pub=$(gpg --batch --with-colons --import-options show-only --import "$KR" 2>/dev/null | awk -F: '/^fpr:/{print $10}')
+          for f in $fprs; do
+            printf '%s\n' "$pub" | grep -qx "$f" || { echo "::error::the secret's key $f is not in the committed $KR. Refusing to sign with a key no AurOS computer trusts."; exit 1; }
+            exp=$(gpg --list-keys --with-colons "$f" | awk -F: '/^pub:/{print $7; exit}')
+            if [ -n "$exp" ]; then
+              days=$(( (exp - $(date +%s)) / 86400 ))
+              echo "key $f expires in $days days"
+              [ "$days" -ge 180 ] || echo "::warning::the update key $f expires in $days days: rotate it now (docs/security/UPDATES.md, 'Key rotation')"
+            fi
+          done
+          echo "FPRS=$(echo $fprs)" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        if: failure() && hashFiles('auros-archive-keyring.asc') != ''
+        with:
+          name: auros-archive-keyring
+          path: auros-archive-keyring.asc
+
+      - name: which release
+        run: |
+          tag=$IN_TAG
+          case "$tag" in *[!A-Za-z0-9._+-]*) echo "::error::'$tag' is not a release tag"; exit 1 ;; esac
+          if [ -z "$tag" ]; then
+            tag=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null) ||
+              { echo "::error::no release is the latest yet; name one with [apt TAG]"; exit 1; }
+          fi
+          gh release view "$tag" -R "$GITHUB_REPOSITORY" --json tagName,isPrerelease --jq '"\(.tagName) prerelease=\(.isPrerelease)"' ||
+            { echo "::error::no release $tag"; exit 1; }
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: its packages, taken out of the released image itself
+        run: |
+          mkdir -p rel
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D rel -p pieces.txt -p 'auros-desktop.img.gz.*'
+          ( cd rel && grep '^piece ' pieces.txt | awk '{print $4"  "$2}' | sha256sum -c --quiet )
+          cat rel/auros-desktop.img.gz.* | gzip -dc > "$RUNNER_TEMP/img"
+          rm -rf rel
+          start=$(sfdisk -J "$RUNNER_TEMP/img" | python3 -c 'import json,sys; p=json.load(sys.stdin)["partitiontable"]["partitions"]; print(p[1]["start"])')
+          fs="$RUNNER_TEMP/img?offset=$((start * 512))"
+          debugfs -R "rdump /var/lib/auros/debs $PWD" "$fs" 2>/dev/null
+          debugfs -R "dump /etc/apt/sources.list.d/auros.sources $PWD/image.sources" "$fs" 2>/dev/null
+          debugfs -R "dump /usr/share/keyrings/auros-archive-keyring.asc $PWD/image-key.asc" "$fs" 2>/dev/null
+          rm -f "$RUNNER_TEMP/img"
+          [ -s debs/SHA256SUMS ] || { echo "::error::$TAG's image has no /var/lib/auros/debs: it was built before the update channel existed"; exit 1; }
+          ( cd debs && sha256sum -c --quiet SHA256SUMS )
+          # What this image's computers trust and ask must be this key
+          # and this address, or publishing it here reaches nobody.
+          [ -s image-key.asc ] && cmp -s image-key.asc "$KR" ||
+            { echo "::error::$TAG's image does not carry the committed key $KR (built before the key was committed?)"; exit 1; }
+          want=$(build/aptchannel url)
+          grep -qx "URIs: $want" image.sources ||
+            { echo "::error::$TAG's image asks $(sed -n 's/^URIs: //p' image.sources) for updates, not $want"; exit 1; }
+          ls -la debs
+
+      - name: newer than what is published
+        id: newer
+        run: |
+          new=$(dpkg-deb -f debs/auros_*_amd64.deb Version)
+          echo "NEW=$new" >> "$GITHUB_ENV"
+          go=true
+          if curl -fsSL --retry 3 -o published.Packages "$(build/aptchannel url)Packages" 2>/dev/null; then
+            old=$(awk '/^Package: auros$/{p=1} p && /^Version:/{print $2; exit}' published.Packages)
+            echo "published: auros $old; this release: auros $new"
+            if [ -n "$old" ] && dpkg --compare-versions "$new" lt "$old"; then
+              echo "::error::$TAG (auros $new) is older than what the channel already serves ($old). Computers never go back; nothing was published."
+              exit 1
+            fi
+            if [ "$new" = "$old" ]; then go=false; echo "auros $new is already what the channel serves: nothing to do"; fi
+          else
+            echo "nothing published yet"
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+
+      - name: the repository, signed, checked against the committed key
+        if: steps.newer.outputs.go == 'true'
+        run: |
+          build/aptchannel repo debs repo
+          build/aptchannel sign repo $FPRS
+          build/aptchannel verify repo "$KR"
+
+      - name: publish (packages first, the signed index last)
+        if: steps.newer.outputs.go == 'true'
+        run: |
+          R=$GITHUB_REPOSITORY
+          if ! gh release view apt -R "$R" >/dev/null 2>&1; then
+            printf '%s\n' "This is not an installer. It is the signed apt repository AurOS computers update their own parts from, by themselves (docs/security/UPDATES.md). To install AurOS, use the latest release." > apt-notes.md
+            gh release create apt -R "$R" --prerelease --latest=false --target "$GITHUB_SHA" \
+                --title "AurOS updates (apt repository)" --notes-file apt-notes.md
+          fi
+          # A computer that read the old index a moment ago still finds
+          # what it names until the end; one that reads the new index
+          # finds its packages already there.
+          gh release upload apt -R "$R" --clobber repo/*.deb
+          gh release upload apt -R "$R" --clobber repo/Packages repo/Packages.gz
+          gh release upload apt -R "$R" --clobber repo/Release repo/Release.gpg
+          gh release upload apt -R "$R" --clobber repo/InRelease
+          ( cd repo && ls ) > keep.txt
+          gh release view apt -R "$R" --json assets --jq '.assets[].name' | while read -r a; do
+            grep -qxF "$a" keep.txt || { gh release delete-asset apt "$a" -R "$R" -y; echo "removed $a"; }
+          done
+
+      - name: read back through GitHub's redirect, and checked again
+        if: steps.newer.outputs.go == 'true'
+        run: |
+          base=$(build/aptchannel url)
+          mkdir -p back
+          for f in $(cat keep.txt); do
+            curl -fsSL --retry 5 -o "back/$f" "$base$f"
+            cmp "back/$f" "repo/$f"
+          done
+          build/aptchannel verify back "$KR"
+
+      - name: a real apt on a fresh Ubuntu sees it and fetches it
+        if: steps.newer.outputs.go == 'true'
+        run: |
+          docker run --rm -v "$PWD":/w:ro -w /w -e URL="$(build/aptchannel url)" -e NEW="$NEW" ubuntu:24.04 bash -c '
+            set -e
+            for i in 1 2 3; do timeout 300 apt-get update -q && timeout 300 apt-get install -y -q ca-certificates && break; sleep 10; done > /tmp/deps.log 2>&1
+            cp rootfs/usr/share/keyrings/auros-archive-keyring.asc /usr/share/keyrings/
+            cp rootfs/etc/apt/preferences.d/auros /etc/apt/preferences.d/
+            bash build/aptchannel source "$URL" > /etc/apt/sources.list.d/auros.sources
+            timeout 300 apt-get update 2>&1 | tee /tmp/u.log
+            if grep -E "^(W|E):" /tmp/u.log | grep -qF "releases/download/apt"; then exit 1; fi
+            apt-cache policy auros | tee /tmp/p.log
+            grep -q "Candidate: $NEW" /tmp/p.log
+            cd /tmp && apt-get download $(apt-cache pkgnames auros)
+            ls -la /tmp/*.deb'
+          { echo "### AurOS updates: auros $NEW from $TAG"
+            echo "Published at $(build/aptchannel url), signed by \`$FPRS\`; read back and fetched by a real apt."; } >> "$GITHUB_STEP_SUMMARY"
