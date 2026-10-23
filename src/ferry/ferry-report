@@ -181,6 +181,8 @@ emit_json() {
 # plainly. Read from the same ledger as everything else.
 emit_plain() {
     printf 'What came from Windows\n\n'
+    _wu=$(cat "$FERRY_STATE/winuser" 2>/dev/null || true)
+    [ -z "$_wu" ] || printf 'From the Windows account "%s".\n\n' "$_wu"
     _rows=$(all_notes)
 
     printf 'Your folders\n'

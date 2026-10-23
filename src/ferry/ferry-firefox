@@ -292,5 +292,7 @@ fi
 
 _written=$(awk -F'\t' -v s=firefox '$2==s && $3=="copy"' "$FERRY_STATE/manifest.tsv" 2>/dev/null | wc -l | tr -d ' ')
 say "firefox: $_written file(s) copied, opens '${_main:-}'"
-stage_done firefox
+# Done only if it all went (see ferry-files): a retry must redo a stage
+# that was not a success.
+if [ "$RC" = 0 ]; then stage_done firefox; else stage_fail firefox "exit $RC"; fi
 exit "$RC"

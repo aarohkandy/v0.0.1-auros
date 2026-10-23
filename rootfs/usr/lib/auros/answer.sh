@@ -59,6 +59,19 @@ word=$("$BIN/aurfirst" request 2>/dev/null)
 rc=$?
 [ "$rc" = 1 ] && { echo "nothing to answer"; exit 0; }
 
+# "import:NAME" is "import, and the files are NAME's": the answer to
+# "whose files?" (result=choose below). NAME is only ever an argument to
+# `ferry run --user`, which accepts nothing but a real Windows account.
+iuser=
+case "$word" in
+  import:*)
+    iuser=${word#import:}
+    word=import
+    case "$iuser" in ''|-*) iuser=- ;; esac
+    [ "${#iuser}" -le 64 ] || iuser=-
+    ;;
+esac
+
 say() { printf '%s\n' "$*" >> "$RES.new"; }
 
 # GRUB'S ENVIRONMENT BLOCK, WRITTEN WHOLE. Exactly 1024 bytes, which
@@ -124,7 +137,9 @@ back_files() {
     [ -x "${AUROS_FERRY:-/usr/bin/ferry}" ] || return 0
     : > "$OUT/putback.log"
     chmod 0644 "$OUT/putback.log" 2>/dev/null
-    "${AUROS_FERRY:-/usr/bin/ferry}" back --plain >>"$OUT/putback.log" 2>&1
+    # The same long limit as the import, for the same reason (it is not
+    # the unit's any more); a copy that is stopped is picked up again.
+    timeout "${AUROS_IMPORT_LIMIT:-43200}" "${AUROS_FERRY:-/usr/bin/ferry}" back --plain >>"$OUT/putback.log" 2>&1
     brc=$?
     [ "$brc" = 0 ] && return 0
     say "result=failed"
@@ -170,36 +185,71 @@ case "$word" in
     if ! "$BIN/aurfirst" ferry >/dev/null 2>&1; then
         say "result=refused"
         say "note=AurOS has not been confirmed yet"
-    elif [ ! -x /usr/bin/ferry ]; then
+    elif [ "$iuser" = - ]; then
+        say "result=failed"
+        say "note=that is not the name of a Windows account"
+    elif [ ! -x "${AUROS_FERRY:-/usr/bin/ferry}" ]; then
         say "result=failed"
         say "note=this image has no way to import from Windows"
     else
+        FERRY=${AUROS_FERRY:-/usr/bin/ferry}
         : > "$OUT/import.log"
         chmod 0644 "$OUT/import.log" 2>/dev/null
         # --plain: import.log, whose newest line is what she reads while
         # it runs, gets only plain sentences; Ferry's own chatter goes to
         # /var/lib/ferry/ferry.log.
-        /usr/bin/ferry run --auto --plain >>"$OUT/import.log" 2>&1
+        #
+        # NO ONE-HOUR LIMIT. A big photo library on a ten-year-old disk
+        # takes hours, and the unit used to be killed at TimeoutStartSec=
+        # 3600 in the middle of it (the unit has none now). A cap remains
+        # here, a long one, only so that a drive that has stopped
+        # answering cannot hold every later request for ever. A run that
+        # is stopped -- by this, by power, by a restart -- is picked up by
+        # the next one without copying anything twice (ferry-copy).
+        if [ -n "$iuser" ]; then
+            timeout "${AUROS_IMPORT_LIMIT:-43200}" "$FERRY" run --auto --plain --user "$iuser" >>"$OUT/import.log" 2>&1
+        else
+            timeout "${AUROS_IMPORT_LIMIT:-43200}" "$FERRY" run --auto --plain >>"$OUT/import.log" 2>&1
+        fi
         # CAPTURED BEFORE ANYTHING ELSE RUNS. `$?` inside an else
         # branch is the status of the last command executed, which
         # after one line of reporting is the reporting.
         frc=$?
         mkdir -p "$STATE"
-        /usr/bin/ferry report > "$STATE/import-report.txt" 2>/dev/null
+        "$FERRY" report > "$STATE/import-report.txt" 2>/dev/null
         cp "$STATE/import-report.txt" "$OUT/import-report.txt" 2>/dev/null
         chmod 0644 "$OUT/import-report.txt" 2>/dev/null
+        # How many files Ferry says it has brought across, so that "ok"
+        # can never mean "ok, and nothing came".
+        nfiles=$(sed -n 's/^files=//p' "$OUT/ferry.done" 2>/dev/null | head -1)
         # FERRY'S 3 IS NOT A PARTIAL IMPORT. ferry-common.sh's refuse()
         # exits 3 before any stage starts -- a hibernated or dirty
         # volume, which Fast Startup makes the COMMON case -- and
         # nothing was read at all. Reporting that as "partial" made the
         # desktop say "Your files are here" on the most likely import
         # failure there is.
-        if [ "$frc" = 0 ]; then
+        if [ "$frc" = 0 ] && [ "${nfiles:-x}" = 0 ]; then
+            # Everything it was asked to bring came -- and there was
+            # nothing. Not "your files are here".
+            say "result=empty"
+            say "files=0"
+            say "note=there were no files on the Windows side to bring across"
+        elif [ "$frc" = 0 ]; then
             say "result=ok"
+            [ -z "$nfiles" ] || say "files=$nfiles"
         elif [ "$frc" = 3 ]; then
             say "result=refused"
             say "code=3"
             say "note=the Windows drive was not shut down properly"
+        elif [ "$frc" = 6 ]; then
+            # Several Windows accounts and no way to tell whose files are
+            # hers. Ferry does not guess between people. The names are
+            # for the desktop to ask with; the answer comes back as
+            # "import:NAME".
+            say "result=choose"
+            say "code=6"
+            say "users=$(tr '\n' ',' < "${FERRY_STATE:-/var/lib/ferry}/users" 2>/dev/null | sed 's/,$//')"
+            say "note=more than one person uses Windows on this computer, so AurOS needs to be told whose files to bring"
         elif [ "$frc" = 2 ]; then
             # Ferry's 2: it ran, and something of hers did not come (an
             # online-only OneDrive file, a file Windows locked). Its 1
@@ -207,6 +257,15 @@ case "$word" in
             # here" must never answer.
             say "result=partial"
             say "code=2"
+            [ -z "$nfiles" ] || say "files=$nfiles"
+        elif [ "$frc" = 4 ]; then
+            say "result=failed"
+            say "code=4"
+            say "note=there is not enough room on this computer for your files; nothing was copied"
+        elif [ "$frc" = 124 ] || [ "$frc" = 137 ]; then
+            say "result=failed"
+            say "code=$frc"
+            say "note=bringing your files across took far too long and was stopped; press it again and it carries on where it stopped"
         else
             say "result=failed"
             say "code=$frc"

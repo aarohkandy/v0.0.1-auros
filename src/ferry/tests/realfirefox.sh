@@ -32,6 +32,7 @@ check() { _l=$1; shift; if "$@" >/dev/null 2>&1; then ok "$_l"; else bad "$_l"; 
 [ "$(id -u)" = 0 ] && command -v firefox >/dev/null || { echo "realfirefox.sh: needs root and firefox"; exit 2; }
 T=$(mktemp -d /tmp/realff.XXXXXX); chmod 0755 "$T"
 trap 'rm -rf "$T"' EXIT
+trap 'rm -rf "$T"; exit 130' INT TERM HUP PIPE
 sh "$HERE/mkfakewin.sh" "$T/win" >/dev/null
 E="$T/edge"; cp -r "$T/win" "$E"; rm -rf "$E/users/Bob/AppData/Roaming/Mozilla"
 

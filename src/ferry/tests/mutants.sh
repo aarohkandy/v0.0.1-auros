@@ -10,6 +10,7 @@
 # ═══════════════════════════════════════════════════════════════════
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+REPO=$(cd "$HERE/../.." 2>/dev/null && pwd)
 caught=0; missed=0
 
 mutant() { # FILE OLD NEW CHECK [root|user]
@@ -18,10 +19,20 @@ mutant() { # FILE OLD NEW CHECK [root|user]
     [ "${5:-}" = root ] && [ "$(id -u)" != 0 ] && { echo "  skip (needs root) $4"; return; }
     # As root her uid cannot write the outside folder either way.
     [ "${5:-}" = user ] && [ "$(id -u)" = 0 ] && { echo "  skip (as a user only) $4"; return; }
+    # A copy of the tree the suite looks at: src/ferry, and (when this is
+    # a checkout) the two files outside it that Ferry's behaviour ends in,
+    # answer.sh and the unit, at the same relative places.
     W=$(mktemp -d "${TMPDIR:-/tmp}/ferrymut.XXXXXX")
-    cp -r "$HERE"/. "$W"/
-    rm -rf "$W/build"
-    if ! python3 - "$W/$1" "$2" "$3" <<'PY'
+    trap 'rm -rf "$W"' EXIT
+    trap 'rm -rf "$W"; exit 130' INT TERM HUP
+    mkdir -p "$W/src" "$W/rootfs/usr/lib/auros" "$W/rootfs/etc/systemd/system" "$W/tools"
+    cp -r "$HERE" "$W/src/ferry"
+    rm -rf "$W/src/ferry/build"
+    for _f in rootfs/usr/lib/auros/answer.sh rootfs/etc/systemd/system/auros-answer.service tools/checksec.sh; do
+        [ -f "$REPO/$_f" ] && cp "$REPO/$_f" "$W/$_f"
+    done
+    case "$1" in rootfs/*|tools/*) _target="$W/$1" ;; *) _target="$W/src/ferry/$1" ;; esac
+    if ! python3 - "$_target" "$2" "$3" <<'PY'
 import sys
 p, old, new = sys.argv[1:4]
 s = open(p).read()
@@ -30,7 +41,11 @@ if s.count(old) != 1:
 open(p, "w").write(s.replace(old, new))
 PY
     then missed=$((missed+1)); echo "  BROKEN MUTANT  $4"; rm -rf "$W"; return; fi
-    if (cd "$W" && make -s >/dev/null 2>&1; sh tests/run.sh 2>&1) | grep -qF "FAIL $4"; then
+    # Output to a FILE, never straight into `grep -q`: grep -q leaves at the
+    # first match, the suite then dies of SIGPIPE half-way and leaves its
+    # test directory behind (340 MB, once per mutant).
+    (cd "$W/src/ferry" && make -s >/dev/null 2>&1; sh tests/run.sh > "$W/out.txt" 2>&1)
+    if grep -qF "FAIL $4" "$W/out.txt"; then
         caught=$((caught+1)); echo "  caught  $4"
     else
         missed=$((missed+1)); echo "  MISSED  $4"
@@ -182,6 +197,48 @@ mutant chromemarks.c '    if (end - p >= 4 && (!strncmp(p, "true", 4) || !strncm
     "inputs that once broke the bookmarks reader replay clean (a file cut off mid-word)"
 mutant copy.c '        stem = cut > 0 ? cut : room;' '        stem = cut;' \
     "inputs that once broke the name maker replay clean (a name of stray bytes)"
+
+# Whose files, and what counts as success (S-08); the one-hour kill (R-19).
+mutant ferry-files '[ "$_skipped" = 0 ] || [ "$RC" != 0 ] || RC=2' ':' \
+    "Videos kept on another drive: the files stage is partial (exit 2), not ok"
+mutant ferry-files 'if [ "$RC" = 0 ]; then stage_done files "$_copied files"
+else stage_fail files "exit $RC: $_copied files"; fi' 'stage_done files "$_copied files"' \
+    "...and it is not recorded as done"
+mutant ferry-common.sh '    if [ "$_nw" = 1 ]; then' '    if [ "$_nw" -ge 1 ]; then' \
+    "two accounts, both with files: Ferry stops (exit 6), never 'ok'"
+mutant ferry-common.sh '    [ -n "$_rows" ] || return 1
+    _n=$(printf' '    _n=1; _rows=$(printf "%s\n" "$_rows" | head -1)
+    [ -n "$_rows" ] || return 1
+    _n=$(printf' \
+    "two accounts, both with files: Ferry stops (exit 6), never 'ok'"
+mutant ferry '           exit 6 ;;' '           exit 0 ;;' \
+    "two accounts, both with files: Ferry stops (exit 6), never 'ok'"
+mutant ferry-report '    [ -z "$_wu" ] || printf' '    [ -n "$_wu" ] || printf' \
+    "...and her report says which account"
+mutant rootfs/usr/lib/auros/answer.sh '[ "${nfiles:-x}" = 0 ]' '[ "${nfiles:-x}" = zero ]' \
+    "Ferry exits 0 but nothing came: NOT ok (empty)"
+mutant rootfs/usr/lib/auros/answer.sh 'elif [ "$frc" = 6 ]; then' 'elif [ "$frc" = 66 ]; then' \
+    "several accounts: choose"
+mutant rootfs/usr/lib/auros/answer.sh '            timeout "${AUROS_IMPORT_LIMIT:-43200}" "$FERRY" run --auto --plain --user "$iuser" >>"$OUT/import.log" 2>&1' \
+    '            timeout "${AUROS_IMPORT_LIMIT:-43200}" "$FERRY" run --auto --plain >>"$OUT/import.log" 2>&1' \
+    "import:Harold: Ferry is told --user Harold"
+mutant rootfs/usr/lib/auros/answer.sh "    case \"\$iuser\" in ''|-*) iuser=- ;; esac" "    :" \
+    "a name that starts with a dash is not accepted"
+mutant rootfs/etc/systemd/system/auros-answer.service 'TimeoutStartSec=infinity' 'TimeoutStartSec=3600' \
+    "auros-answer.service has no time limit that could kill a long import"
+
+mutant copy.c '        if (to_win) want = need_bytes + need_bytes / 50 + (64ll << 20);
+        else {' '        if (to_win) want = need_bytes + need_bytes / 50 + (64ll << 20);
+        else if (0) {' \
+    "room for the files but not for AurOS's own reserve (500 MB free): refused too"
+mutant copy.c '    if (!dry_run && !no_room_check && need_bytes > 0) {' '    if (!dry_run && need_bytes > 0) {' \
+    "a resumed import is not refused for room (what is there would be counted twice)"
+mutant ferry-files '    4) stage_fail files "not enough room"; exit 4 ;;' '    4) stage_fail files "not enough room"; exit 1 ;;' \
+    "not enough room on this computer for her files: exit 4"
+mutant ferry '        4) RUN_RC=4 ;;                       # not enough room on this computer' '        4) : ;;' \
+    "ferry run with no room says so: exit 4"
+mutant rootfs/usr/lib/auros/answer.sh 'elif [ "$frc" = 4 ]; then' 'elif [ "$frc" = 44 ]; then' \
+    "not enough room on this computer: failed, nothing copied"
 
 # Root: the escalation the lead's review named.
 # Without the switch to her, the self-check refuses to copy at all...

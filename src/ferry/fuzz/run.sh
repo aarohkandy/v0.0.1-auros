@@ -13,6 +13,8 @@ SECS=${1:-120}
 HERE=$(cd "$(dirname "$0")" && pwd)
 FERRY=$(dirname "$HERE")
 W=${FUZZ_WORK:-$(mktemp -d "${TMPDIR:-/tmp}/ferryfuzz.XXXXXX")}
+# Removed however this ends, unless the caller named the directory.
+[ -n "${FUZZ_WORK:-}" ] || { trap 'rm -rf "$W"' EXIT; trap 'rm -rf "$W"; exit 130' INT TERM HUP; }
 mkdir -p "$W" "$HERE/found"
 CFLAGS="-g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined"
 

@@ -27,7 +27,10 @@
 #                              (--plain: only her plain lines on stdout);
 #                              exit 0 all came, 2 something did not (it is
 #                              in the report), 3 refused (hibernated or
-#                              dirty volume), 1 could not import at all
+#                              dirty volume), 6 several Windows accounts
+#                              and no way to tell whose files (the names
+#                              are in $FERRY_STATE/users; run again with
+#                              --user NAME), 1 could not import at all
 #    ferry <stage> [...]       one stage (wifi|files|firefox|settings|…)
 #    ferry back [--plain]      the way back: save her AurOS files into
 #                              Windows (before "Put Windows back");
@@ -129,7 +132,8 @@ stage_if_needed() {
     run_stage "$_tool" "$@" || _rc=$?
     case "$_rc" in
         0) : ;;
-        2) [ "$RUN_RC" = 1 ] || RUN_RC=2 ;;
+        2) [ "$RUN_RC" = 1 ] || [ "$RUN_RC" = 4 ] || RUN_RC=2 ;;
+        4) RUN_RC=4 ;;                       # not enough room on this computer
         3) exit 3 ;;
         *) warn "$_name did not complete (exit $_rc; see report)"
            if [ "$_name" = files ]; then RUN_RC=1; elif [ "$RUN_RC" = 0 ]; then RUN_RC=2; fi ;;
@@ -144,8 +148,11 @@ plain() { [ "${FERRY_PLAIN_FD:-}" = 3 ] && printf '%s\n' "$*" >&3; return 0; }
 _cmd_run() {
     trap maybe_unmount EXIT
     _auto=1 _plain=0
-    for _a in "$@"; do
-        case "$_a" in --auto) _auto=1 ;; --all) _auto=0 ;; --plain) _plain=1 ;; esac
+    while [ $# -gt 0 ]; do
+        common_opt "$@"                      # --user NAME, --root DIR, ...
+        if [ "${_consumed:-0}" -gt 0 ]; then shift "$_consumed"; continue; fi
+        case "$1" in --auto) _auto=1 ;; --all) _auto=0 ;; --plain) _plain=1 ;; esac
+        shift
     done
     ferry_state_init
     if [ "$_plain" = 1 ]; then
@@ -158,6 +165,20 @@ _cmd_run() {
     # The gate: refuse the whole run on a bad volume, once, up front, so
     # the user gets one clear message instead of five stage failures.
     require_clean_volume "$FERRY_ROOT" "$FERRY_DEV"
+
+    # WHOSE files, settled once and before any stage. A stage that cannot
+    # tell used to die on its own and be swallowed, and the run ended
+    # "fine" with an empty home. Now: the chosen account, the only one
+    # with files, or a stop (exit 6) with the names for the desktop to ask.
+    _cr=0; choose_user || _cr=$?
+    case "$_cr" in
+        0) : ;;
+        6) plain "More than one person uses Windows on this computer."
+           warn "several Windows accounts and no way to tell whose files; see $FERRY_STATE/users"
+           exit 6 ;;
+        *) plain "AurOS could not find a Windows user to bring files from."
+           die "no Windows user found on $FERRY_ROOT" ;;
+    esac
 
     # Spec §8 automatic order.
     stage_if_needed wifi     ferry-wifi

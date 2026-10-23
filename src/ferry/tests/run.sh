@@ -20,8 +20,16 @@ export PATH="$FERRY:$FERRY/build:$PATH"
 export FERRY_HIVE_BACKEND=hivepeek
 export NO_COLOR=1
 
+# The room check asks the real disk; the suite is about everything else,
+# so by default there is plenty (the room tests set their own).
+export FERRY_ROOM_BYTES=1099511627776
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/ferrytest.XXXXXX")
+# Removed however this ends: finished, interrupted, terminated, or the
+# reader of a pipe went away (SIGPIPE; mutants.sh once did that to this
+# script on every run, and each left up to 340 MB behind). dash runs an
+# EXIT trap only on a normal exit, so the signals are trapped too.
 trap 'rm -rf "$TMP"' EXIT
+trap 'rm -rf "$TMP"; exit 130' INT TERM HUP PIPE
 WIN="$TMP/win"
 export FERRY_STATE="$TMP/state"
 # As root (tests/asroot.sh), ferry-copy must be told whom to become.
@@ -177,7 +185,7 @@ refute "no temporary is left anywhere" sh -c "find '$HOME1' -name '.ferrypart-*'
 # bytes, the bar is nearly full after the first file; by count it would
 # say 1 %.
 P="$TMP/prog"; mkdir -p "$P/src"; [ -z "$ASME" ] || chown 4242 "$P"
-python3 -c 'import sys; open(sys.argv[1], "wb").write(b"x" * (64 << 20))' "$P/src/a-big.bin"
+python3 -c 'import sys; open(sys.argv[1], "wb").write(b"x" * (32 << 20))' "$P/src/a-big.bin"
 for i in $(seq 1 100); do echo small > "$P/src/s$i.txt"; done
 FERRY_TICK_MS=0 FERRY_PROGRESS="$P/log" FERRY_PLAIN_FD=3 \
     ferry-copy $ASME --state "$P/state" --stage prog --job Pictures "$P/src" "$P/dst" 3>"$P/plain" 2>/dev/null
@@ -203,6 +211,7 @@ ln -s "$P/src" "$P/linked-src"
 ferry-copy $ASME --job Pictures "$P/linked-src" "$P/via-link" >/dev/null 2>&1
 eq "a source folder that is a link is refused (exit 2, reported)" "$?" 2
 refute "...and nothing came through it" test -e "$P/via-link/a-big.bin"
+rm -rf "$P"                                        # the big files are not needed again
 
 echo "hostile Windows volume and hostile home:"
 # Every path below comes from data on her disk or in her home, and each
@@ -500,6 +509,7 @@ PY
     assert "3,000 corrupted registry hives: no crash, no overflow, no undefined behaviour" "$RP/hive" "$RP"/corrupt/*
     assert "1,500 corrupted bookmark files: no crash, no overflow, no undefined behaviour" "$RP/marks" "$RP"/corrupt-marks/*
     assert "her real-shaped bookmarks go through the sanitizers too" "$RP/marks" "$WIN/users/Bob/AppData/Local/Microsoft/Edge/User Data/Default/Bookmarks"
+    rm -rf "$RP"
 else
     echo "  (skipped: this compiler has no AddressSanitizer/UndefinedBehaviorSanitizer)"
 fi
@@ -654,6 +664,128 @@ runit 3 "$WIN" "$TMP/run-ro/home"
 eq "her files could not be copied at all: exit 1, never 'partial'" "$?" 1
 chmod 0755 "$TMP/run-ro"
 
+echo "whose files, and what counts as success (S-08):"
+# A. two Windows accounts, only Bob's has files: Bob's come, and it is said.
+T2="$TMP/win-two"; sh "$HERE/mkfakewin.sh" "$T2" >/dev/null; sh "$HERE/addaccount.sh" "$T2" Harold >/dev/null
+H2="$TMP/home-two"; mkdir -p "$H2"; hers "$H2"
+runw() { _n=$1 _r=$2 _h=$3; shift 3
+         env FERRY_CHOICES="$TMP/run-choices" FERRY_STATE="$TMP/state-w$_n" FERRY_ROOT="$_r" FERRY_HOME="$_h" \
+             FERRY_OWNER="$OWNER" FERRY_SIGNAL="$TMP/w$_n.done" ferry run --auto "$@" >"$TMP/w$_n.out" 2>&1; }
+runw 1 "$T2" "$H2"
+assert "two accounts, only Bob has files: Bob's arrive without being asked" test -f "$H2/Desktop/report.docx"
+eq "...and Ferry remembers whose files they are" "$(cat "$TMP/state-w1/winuser" 2>/dev/null)" Bob
+assert "...and her report says which account" sh -c "grep -q 'From the Windows account \"Bob\"' '$H2/What came from Windows.txt'"
+# B. both have files: Ferry does not guess, and says so, and copies nothing.
+T3="$TMP/win-both"; sh "$HERE/mkfakewin.sh" "$T3" >/dev/null; sh "$HERE/addaccount.sh" "$T3" Harold files >/dev/null
+H3="$TMP/home-both"; mkdir -p "$H3"; hers "$H3"
+runw 2 "$T3" "$H3"
+eq "two accounts, both with files: Ferry stops (exit 6), never 'ok'" "$?" 6
+eq "...and copied nothing at all" "$(find "$H3" -type f | wc -l | tr -d ' ')" 0
+eq "...the names for the desktop to ask with" "$(sort "$TMP/state-w2/users" | tr '\n' ' ')" "Bob Harold "
+assert "...and the signal says chooseuser" grep -qx 'result=chooseuser' "$TMP/w2.done"
+refute "...no stage ran (nothing in the manifest)" sh -c "[ -s '$TMP/state-w2/manifest.tsv' ]"
+# C. she chooses: only that account's files come, never the other's.
+runw 3 "$T3" "$H3" --user Harold
+assert "choosing Harold brings Harold's files" test -f "$H3/Documents/private-letter.txt"
+refute "...and none of Bob's" test -e "$H3/Desktop/report.docx"
+H3b="$TMP/home-both2"; mkdir -p "$H3b"; hers "$H3b"
+runw 4 "$T3" "$H3b" --user Bob
+refute "choosing Bob brings none of Harold's" sh -c "grep -rqs \"Harold's\" '$H3b'"
+runw 5 "$T3" "$H3b" --user Nobody
+eq "an account that is not there is not guessed at (exit 6)" "$?" 6
+# D. a folder she expected that could not come makes the run partial, never ok.
+H4="$TMP/home-vid"; mkdir -p "$H4"; hers "$H4"
+FERRY_STATE="$TMP/state-vid" ferry-files --root "$WIN" --home "$H4" --owner "$OWNER" --only Videos >/dev/null 2>&1
+eq "Videos kept on another drive: the files stage is partial (exit 2), not ok" "$?" 2
+assert "...and it is not recorded as done" sh -c "! [ \"\$(FERRY_STATE='$TMP/state-vid' ferry status 2>/dev/null | awk '\$1 == \"files\" {print \$2}')\" = done ]"
+FERRY_STATE="$TMP/state-desk" ferry-files --root "$WIN" --home "$H4" --owner "$OWNER" --only Desktop >/dev/null 2>&1
+eq "a folder that all came: exit 0" "$?" 0
+assert "...and that one IS recorded as done" sh -c "[ \"\$(FERRY_STATE='$TMP/state-desk' ferry status 2>/dev/null | awk '\$1 == \"files\" {print \$2}')\" = done ]"
+# E. a retry after a partial run does the stage again (does not skip it and say all is well).
+runw 6 "$WIN" "$TMP/home-retry"
+runw 6 "$WIN" "$TMP/home-retry"
+refute "a second run does not skip a stage that was only partly done" grep -q 'files: already done' "$TMP/w6.out"
+# F. nothing to bring is said as such.
+T5="$TMP/win-empty"; cp -r "$WIN" "$T5"
+rm -rf "$T5/users/Bob/Desktop" "$T5/users/Bob/Documents" "$T5/users/Bob/Pictures" "$T5/users/Bob/Music" \
+       "$T5/users/Bob/Downloads" "$T5/users/Bob/Videos" "$T5/users/Bob/OneDrive" "$T5/users/Bob/AppData"
+# and ordinary folder locations, nothing redirected to another drive
+python3 "$HERE/mkhive.py" "$T5/users/Bob/NTUSER.DAT" '{
+  "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders": {
+    "Desktop": ["exp", "%USERPROFILE%\\Desktop"], "Personal": ["exp", "%USERPROFILE%\\Documents"],
+    "My Pictures": ["exp", "%USERPROFILE%\\Pictures"], "My Music": ["exp", "%USERPROFILE%\\Music"],
+    "My Video": ["exp", "%USERPROFILE%\\Videos"]
+  }
+}'
+H5="$TMP/home-empty"; mkdir -p "$H5"; hers "$H5"
+runw 7 "$T5" "$H5"
+eq "a Windows with no files of hers: exit 0..." "$?" 0
+assert "...but the signal counts them: files=0, so nothing says 'your files are here'" grep -qx 'files=0' "$TMP/w7.done"
+
+# R-18: her files must not fill AurOS's own disk.
+H6="$TMP/home-room"; mkdir -p "$H6"; hers "$H6"
+FERRY_ROOM_BYTES=5000000 FERRY_STATE="$TMP/state-room" ferry-files --root "$WIN" --home "$H6" --owner "$OWNER" >"$TMP/room.out" 2>&1
+eq "not enough room on this computer for her files: exit 4" "$?" 4
+eq "...and not one file was copied" "$(find "$H6" -type f | wc -l | tr -d ' ')" 0
+assert "...the report says how much room, in her words" grep -q 'not enough room on this computer for your files' "$TMP/state-room/report.d/files-copy.tsv"
+FERRY_ROOM_BYTES=500000000 FERRY_STATE="$TMP/state-room2" ferry-files --root "$WIN" --home "$H6" --owner "$OWNER" >/dev/null 2>&1
+eq "room for the files but not for AurOS's own reserve (500 MB free): refused too" "$?" 4
+FERRY_STATE="$TMP/state-room3" ferry-files --root "$WIN" --home "$H6" --owner "$OWNER" >/dev/null 2>&1
+FERRY_ROOM_BYTES=1000 FERRY_STATE="$TMP/state-room3" ferry-files --root "$WIN" --home "$H6" --owner "$OWNER" >/dev/null 2>&1
+case "$?" in 0|2) ok "a resumed import is not refused for room (what is there would be counted twice)" ;;
+             *) bad "a resumed import is not refused for room" ;; esac
+FERRY_ROOM_BYTES=5000000 FERRY_STATE="$TMP/state-w9" FERRY_ROOT="$WIN" FERRY_HOME="$TMP/home-room-run2" FERRY_OWNER="$OWNER" \
+    FERRY_SIGNAL="$TMP/w9.done" ferry run --auto >/dev/null 2>&1
+eq "ferry run with no room says so: exit 4" "$?" 4
+assert "...and the signal says noroom" grep -qx 'result=noroom' "$TMP/w9.done"
+
+# R-19: a killed copy is picked up again, copying nothing twice.
+echo "a copy that is killed in the middle (power cut, restart, systemd) is resumable:"
+KS="$TMP/kill-src"; KD="$TMP/kill-dst"; mkdir -p "$KS/d1" "$KS/d2"; rm -rf "$KD"; mkdir -p "$KD"; hers "$KD" "$KS"
+python3 - "$KS" <<'PY'
+import os, sys
+r = sys.argv[1]
+blob = os.urandom(1 << 20)
+for i in range(600):
+    d = os.path.join(r, "d%d" % (1 + i % 2))
+    with open(os.path.join(d, "f%03d.bin" % i), "wb") as f:
+        f.write(blob[: 20000 + i * 7])
+PY
+FERRY_BATCH_FILES=10 ferry-copy $ASME --stage kill --job K "$KS" "$KD/out" >/dev/null 2>&1 &
+_kp=$!
+_i=0; while [ "$_i" -lt 2000 ]; do
+    _got=$(find "$KD/out" -type f -not -name '.ferrypart-*' 2>/dev/null | wc -l | tr -d ' ')
+    [ "$_got" -ge 30 ] && break; _i=$((_i+1)); sleep 0.002
+done
+kill -9 "$_kp" 2>/dev/null; wait "$_kp" 2>/dev/null
+_mid=$(find "$KD/out" -type f -not -name '.ferrypart-*' 2>/dev/null | wc -l | tr -d ' ')
+assert "(it was killed part-way: some files there, not all of them, $_mid of 600)" test "$_mid" -gt 0 -a "$_mid" -lt 600
+ferry-copy $ASME --stage kill --job K "$KS" "$KD/out" >/dev/null 2>&1
+eq "the next run finishes with exit 0" "$?" 0
+eq "...every file is there exactly once" "$(find "$KD/out" -type f | wc -l | tr -d ' ')" 600
+eq "...none of them is a second copy under another name" "$(find "$KD/out" -name '*(from Windows*' | wc -l | tr -d ' ')" 0
+eq "...no half-written temporary is left" "$(find "$KD/out" -name '.ferrypart-*' | wc -l | tr -d ' ')" 0
+eq "...and every one is byte for byte what it should be" \
+   "$(cd "$KS" && find . -type f | while read -r f; do cmp -s "$f" "$KD/out/$f" || echo bad; done | wc -l | tr -d ' ')" 0
+rm -rf "$KS" "$KD"
+
+# R-19: the unit that runs the import has no one-hour limit.
+UNIT="$FERRY/../../rootfs/etc/systemd/system/auros-answer.service"
+if [ -f "$UNIT" ]; then
+    assert "auros-answer.service has no time limit that could kill a long import" \
+        grep -qx 'TimeoutStartSec=infinity' "$UNIT"
+fi
+
+echo "what answer.sh tells the screen (tests/answertest.sh):"
+if [ -f "$FERRY/../../rootfs/usr/lib/auros/answer.sh" ] && command -v timeout >/dev/null 2>&1; then
+    sh "$HERE/answertest.sh" > "$TMP/answertest.out" 2>&1
+    cat "$TMP/answertest.out" | grep -E '^  (ok|FAIL)'
+    pass=$((pass + $(grep -c '^  ok' "$TMP/answertest.out")))
+    fail=$((fail + $(grep -c '^  FAIL' "$TMP/answertest.out")))
+else
+    echo "  (skipped: answer.sh or timeout not here)"
+fi
+
 echo "read-only mount check:"
 # mount_ro undoes any mount the kernel does not report as read-only; it
 # must recognise a read-only one, or no import from a disk can start.
@@ -673,6 +805,16 @@ else
     bad "source Windows tree was modified:"
     diff "$TMP/win.before" "$TMP/win.after" | head
 fi
+
+echo "no mess left behind:"
+# This run's own directory must be gone when the run is over. (Removed
+# here, ahead of the trap, so the check can look.) Another run's leftover
+# is not this run's to delete, but is said, with its size.
+rm -rf "$TMP"
+assert "the test directory is removed at the end of the run" test ! -e "$TMP"
+for _d in "${TMPDIR:-/tmp}"/ferrytest.*; do
+    [ -d "$_d" ] && printf '  note  an earlier run left %s (%s): a killed run does that; delete it\n' "$_d" "$(du -sh "$_d" 2>/dev/null | cut -f1)"
+done
 
 echo
 printf 'ferry tests: %d passed, %d failed\n' "$pass" "$fail"

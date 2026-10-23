@@ -56,7 +56,8 @@
  *  tells the current truth; copies are appended to STATE/manifest.tsv.
  *
  *  exit 0 everything that could come came · 2 something of hers did
- *  not (it is in the report) · 4 not enough room (nothing copied) ·
+ *  not (it is in the report) · 4 not enough room (nothing copied;
+ *  --no-room-check skips the test, for a resumed run) ·
  *  1 could not run, or not one file came
  * ═══════════════════════════════════════════════════════════════════ */
 #define _GNU_SOURCE
@@ -101,11 +102,12 @@ static int njobs;
 static const char *skip_names[MAX_SKIPS], *skip_dirs[MAX_SKIPS];
 static int nskip, nskipd;
 static const char *stage = "files";
-static int dry_run, to_win;
+static int dry_run, to_win, no_room_check;
 static long long need_bytes;                 /* --to-windows: space the plan needs */
 static int fd_manifest = -1, fd_report = -1, fd_progress = -1, fd_plain = -1;
 static int fd_proglog = -1;                 /* FERRY_PROGRESS: every line, appended */
 static long long tick_ns = 1000000000ll;    /* FERRY_TICK_MS (tests) */
+static int batch_files = BATCH_FILES;       /* FERRY_BATCH_FILES (tests): how many files per flush */
 static unsigned char *buf;
 static const char *from_word = "Windows";    /* "(from Windows)" / "(from AurOS)" */
 
@@ -528,7 +530,7 @@ static void pend_add(int dfd, const char *tmp, const char *name, const char *wan
     if (p->dfd < 0 || !p->name || !p->rel) die("out of memory or descriptors");
     npend++;
     pend_bytes += size;
-    if (npend == BATCH_FILES || pend_bytes >= BATCH_BYTES ||
+    if (npend >= batch_files || pend_bytes >= BATCH_BYTES ||
         now_ns() - last_commit >= BATCH_NS)
         commit();
 }
@@ -923,6 +925,7 @@ int main(int argc, char **argv)
             skip_dirs[nskipd++] = argv[++a];
         else if (!strcmp(argv[a], "--dry-run")) dry_run = 1;
         else if (!strcmp(argv[a], "--to-windows")) { to_win = 1; from_word = "AurOS"; }
+        else if (!strcmp(argv[a], "--no-room-check")) no_room_check = 1;
         else die("usage: ferry-copy [--as UID:GID] [--state DIR] [--stage NAME] "
                  "[--dry-run] [--to-windows] [--skip NAME]... [--skip-dir NAME]... "
                  "--job LABEL SRC DEST...");
@@ -953,6 +956,10 @@ int main(int argc, char **argv)
     if (plog && *plog && fd_progress >= 0)
         fd_proglog = open(plog, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0644);
     if (tms && *tms) tick_ns = atoll(tms) * 1000000ll;
+    {
+        const char *bf = getenv("FERRY_BATCH_FILES");
+        if (bf && *bf && atoi(bf) >= 1 && atoi(bf) <= BATCH_FILES) batch_files = atoi(bf);
+    }
     const char *pfd = getenv("FERRY_PLAIN_FD");
     if (pfd && *pfd) {
         fd_plain = atoi(pfd);
@@ -995,35 +1002,57 @@ int main(int argc, char **argv)
         walk(&jobs[i], jobs[i].srcfd, -1, rel, 0, 0, 0);
     }
     t_start = now_ns();
-    if (to_win && !dry_run && need_bytes > 0) {
-        /* Is there room in Windows for all of it? Asked before a byte
-         * moves, so a full C: never leaves half her photos there while
-         * the rest is about to be removed with AurOS. */
+    if (!dry_run && !no_room_check && need_bytes > 0) {
+        /* Is there room for all of it? Asked before a byte moves. On the
+         * way back so a full C: never leaves half her photos in Windows
+         * while the rest is removed with AurOS; on the way in so that
+         * her files cannot fill AurOS's own disk (which leaves the
+         * desktop unable to write its settings). The way in keeps a
+         * reserve free: at least 1 GiB, or 5 % of the disk. A resumed
+         * import skips this (--no-room-check): what is already there
+         * would be counted twice. */
         char probe[PATH_MAX];
         struct statvfs sv;
-        long long free_b = -1, want = need_bytes + need_bytes / 50 + (64ll << 20);
+        long long free_b = -1, total_b = 0, want;
         const char *ov = getenv("FERRY_ROOM_BYTES");          /* tests */
         if (ov && *ov) free_b = atoll(ov);
         else {
             snprintf(probe, sizeof probe, "%s", jobs[0].dst);
             for (;;) {
-                if (statvfs(probe, &sv) == 0) { free_b = (long long)sv.f_bavail * (long long)sv.f_frsize; break; }
+                if (statvfs(probe, &sv) == 0) {
+                    free_b = (long long)sv.f_bavail * (long long)sv.f_frsize;
+                    total_b = (long long)sv.f_blocks * (long long)sv.f_frsize;
+                    break;
+                }
                 char *sl = strrchr(probe, '/');
                 if (!sl || sl == probe) break;
                 *sl = '\0';
             }
         }
+        if (to_win) want = need_bytes + need_bytes / 50 + (64ll << 20);
+        else {
+            long long reserve = total_b / 20 > (1ll << 30) ? total_b / 20 : (1ll << 30);
+            want = need_bytes + reserve;
+        }
         if (free_b >= 0 && free_b < want) {
-            char a[32], b[32];
-            snprintf(a, sizeof a, "%lld", (want + (1 << 20) - 1) >> 20);
+            char a[32], b[32], c[32];
+            snprintf(a, sizeof a, "%lld", (need_bytes + (1 << 20) - 1) >> 20);
             snprintf(b, sizeof b, "%lld", free_b >> 20);
-            if (fd_report >= 0)
-                dprintf(fd_report, "%s\tblocked\tRoom\tThere is not enough room in Windows for your files: "
-                        "they need about %s MB and Windows has %s MB free. Free some space in Windows, "
-                        "then try again.\n", stage, a, b);
+            snprintf(c, sizeof c, "%lld", (want + (1 << 20) - 1) >> 20);
+            if (fd_report >= 0) {
+                if (to_win)
+                    dprintf(fd_report, "%s\tblocked\tRoom\tThere is not enough room in Windows for your files: "
+                            "they need about %s MB and Windows has %s MB free. Free some space in Windows, "
+                            "then try again.\n", stage, c, b);
+                else
+                    dprintf(fd_report, "%s\tblocked\tRoom\tThere is not enough room on this computer for your "
+                            "files: they are about %s MB and AurOS needs some room left over (about %s MB all "
+                            "together), but only %s MB is free. Nothing was copied.\n", stage, a, c, b);
+            }
             if (fd_plain >= 0)
-                dprintf(fd_plain, "There is not enough room in Windows for your files.\n");
-            fprintf(stderr, "  -> not enough room: need %s MB, have %s MB\n", a, b);
+                dprintf(fd_plain, to_win ? "There is not enough room in Windows for your files.\n"
+                                         : "There is not enough room on this computer for your files.\n");
+            fprintf(stderr, "  -> not enough room: need %s MB, have %s MB\n", c, b);
             return 4;
         }
     }

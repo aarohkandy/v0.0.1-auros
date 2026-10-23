@@ -428,8 +428,9 @@ mount_rw() {
 #    only after the copy has finished, and needs a way to know that
 #    which is not "the log stopped changing". Written when a run is over
 #    (and removed when one starts, so its presence means "finished"):
-#      kind=import|back  result=ok|partial|refused|noroom|unopened|failed
-#      files=N (copied this run, from the manifest)  at=UTC time
+#      kind=import|back
+#      result=ok|partial|refused|noroom|unopened|chooseuser|failed
+#      files=N (brought across so far, from the manifest)  at=UTC time
 #    in a directory the desktop can read (the answer unit's
 #    /run/auros-answer), mode 0644, replaced whole.
 : "${FERRY_SIGNAL:=/run/auros-answer/ferry.done}"
@@ -438,7 +439,7 @@ signal_done() { # KIND EXIT-CODE [STAGES...]
     _k=$1 _c=$2; shift 2
     case "$_c" in
         0) _res=ok ;; 2) _res=partial ;; 3) _res=refused ;; 4) _res=noroom ;;
-        5) _res=unopened ;; *) _res=failed ;;
+        5) _res=unopened ;; 6) _res=chooseuser ;; *) _res=failed ;;
     esac
     _n=0
     for _st in "$@"; do
@@ -634,6 +635,57 @@ select_profile() {
     _WIN_NTUSER=$(path_ci "$_WIN_PROFILE_DIR" "NTUSER.DAT" 2>/dev/null || true)
     _WIN_ONEDRIVE=$(onedrive_root "$_WIN_NTUSER")
     return 0
+}
+
+# WHOSE FILES. Ferry never guesses between real people's accounts, and
+# it must never fall through to "nothing came" either. In order:
+#   --user NAME (what she or the desktop chose);
+#   the only account on the computer;
+#   of several, the only one that has files of its own (the other is an
+#     administrator account somebody made, or one nobody uses) -- said
+#     in the report, so she can see whose files they are;
+#   otherwise exit 6, with the names in $FERRY_STATE/users, one per
+#     line, for the desktop to ask "whose files?" and send one back.
+# Sets FERRY_WINUSER. Returns 0, 1 (no Windows user at all) or 6.
+account_has_files() { # PROFILE_DIR
+    for _d in Desktop Documents Pictures Downloads Music Videos; do
+        _p=$(path_ci "$1" "$_d" 2>/dev/null) || continue
+        [ -n "$(find "$_p" -type f ! -iname desktop.ini ! -iname thumbs.db -print -quit 2>/dev/null)" ] && return 0
+    done
+    for _p in "$1"/OneDrive*; do
+        [ -d "$_p" ] && [ -n "$(find "$_p" -type f -print -quit 2>/dev/null)" ] && return 0
+    done
+    return 1
+}
+choose_user() {
+    if [ -n "$FERRY_WINUSER" ]; then
+        select_profile "$FERRY_WINUSER" && return 0
+        warn "no Windows user called '$FERRY_WINUSER' on this computer"
+        _list_users > "$FERRY_STATE/users"
+        return 6
+    fi
+    _rows=$(list_profiles | awk -F'\t' '$4 == "user"')
+    [ -n "$_rows" ] || return 1
+    _n=$(printf '%s\n' "$_rows" | wc -l | tr -d ' ')
+    if [ "$_n" = 1 ]; then FERRY_WINUSER=$(printf '%s' "$_rows" | cut -f2); return 0; fi
+    _with=""; _nw=0
+    while IFS='	' read -r _sid _nm _pip _kind; do
+        _pd=$(path_ci "$FERRY_ROOT" "$(win_to_rel "$_pip")" 2>/dev/null) || continue
+        if account_has_files "$_pd"; then _with="$_nm"; _nw=$((_nw + 1)); fi
+    done <<EOF
+$_rows
+EOF
+    if [ "$_nw" = 1 ]; then
+        FERRY_WINUSER=$_with
+        say "$_n accounts on this Windows; only '$_with' has files, so those are the ones brought"
+        return 0
+    fi
+    _list_users > "$FERRY_STATE/users"
+    return 6
+}
+# The account names, one per line, as plain text safe for a list.
+_list_users() {
+    list_profiles | awk -F'\t' '$4 == "user" { gsub(/[^[:print:]]/, "", $2); gsub(/,/, "", $2); print $2 }'
 }
 
 # OneDrive's own idea of where it syncs, which is not always

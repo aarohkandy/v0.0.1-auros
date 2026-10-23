@@ -175,7 +175,28 @@ gate checks every ELF in /usr/lib/ferry).
 7. DONE `docs/FERRY.md` rewritten to match the code (passwords, copier,
    browser, way back, signal, tests).
 
+## Disk hygiene (rules this stream learned the hard way)
+
+`tests/run.sh` once left a 340 MB `/tmp/ferrytest.*` per mutant on homebase
+(234 of them, 28 GB): `mutants.sh` piped the suite into `grep -q`, which
+leaves at the first match, the suite died of SIGPIPE, and dash runs an
+EXIT trap only on a normal exit. Now: every script that makes a directory
+traps EXIT **and** INT TERM HUP PIPE; mutants.sh writes to a file instead
+of a pipe; the suite frees its big fixtures as soon as they are used,
+removes its directory itself at the end and ASSERTS it is gone ("no mess
+left behind"); data is smaller (progress file 32 MB, kill test 600 x 20
+KB). Checked: gone after normal end, SIGPIPE, TERM and INT; and with the
+fix removed a directory is left. Never `pkill -f` a pattern that appears
+in your own ssh command line.
+
 ## For the lead (decisions and risks that are not mine to make)
+
+- **S-08 / R-18 / R-19 (FINDINGS.md) are fixed on Ferry's side; C owns
+  the panel.** `result=choose` + `users=Bob,Harold` (several Windows
+  accounts, none chosen) needs a "whose files?" screen that sends back
+  `import:NAME`, and `src/aurfirst/request.c`'s fixed word list (`is_one_of_ours`)
+  must learn `import:` + a name; `result=empty` (`files=0`) needs its own
+  sentence; `result=ok` now always carries `files=N`.
 
 - **A BitLocker-locked or otherwise unopenable Windows drive blocks "Put
   Windows back"** (exit 5): the files cannot be saved there, and removing

@@ -17,7 +17,14 @@ ExecStart=/usr/lib/auros/answer.sh
 RuntimeDirectory=auros-answer ferry
 RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
-TimeoutStartSec=3600
+# NO TIME LIMIT HERE. This was 3600, and an import of a large library
+# from a slow disk takes longer: systemd killed it in the middle of the
+# copy. The requests that are quick finish in seconds; the two that can
+# take hours (bringing her files across, and saving them back into
+# Windows before Windows is put back) are bounded inside answer.sh by a
+# much longer limit of its own, so a drive that has stopped answering
+# cannot hold every later request for ever.
+TimeoutStartSec=infinity
 # Defence in depth, not the fix -- the fix is the directory above.
 NoNewPrivileges=yes
 ProtectSystem=strict

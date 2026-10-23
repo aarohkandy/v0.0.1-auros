@@ -18,6 +18,7 @@ export PATH="$FERRY:$FERRY/build:$PATH" FERRY_HIVE_BACKEND=hivepeek NO_COLOR=1
 N=${1:-5000} BIG=${2:-10}
 T=$(mktemp -d "${TMPDIR:-/tmp}/ferrybench.XXXXXX")
 trap 'rm -rf "$T"' EXIT
+trap 'rm -rf "$T"; exit 130' INT TERM HUP PIPE
 sh "$HERE/mkfakewin.sh" "$T/win" >/dev/null
 python3 - "$T/win/users/Bob/Pictures/Camera" "$N" "$BIG" <<'PY'
 import os, sys
