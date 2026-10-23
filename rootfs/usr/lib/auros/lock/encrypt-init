@@ -59,11 +59,21 @@ else
     cipher=xchacha12,aes-adiantum-plain64; bits=256
 fi
 
-# 4096-byte sectors are faster, and cryptsetup refuses them unless the
-# partition's size is a multiple of 4096 (measured in the VM: a real
-# partition ends wherever the table says, "Device size is not aligned
-# to requested sector size"). Otherwise 512.
-if [ $((size % 4096)) -eq 0 ]; then ss=4096; else ss=512; fi
+# THE LUKS SECTOR SIZE comes from the device, not from a guess. It may
+# not be smaller than the device's own logical block size (a 4Kn disk
+# has 4096 and cannot take 512), and the partition's size has to be a
+# multiple of it ("Device size is not aligned to requested sector
+# size": measured in the VM, where a real partition ended off a 4096
+# boundary). 4096 is faster, so it is used whenever the size allows;
+# else the device's logical block size. AurOS's own layout should keep
+# partitions 4 KiB-aligned (docs/handoff/streams/S4.md), which makes the
+# second branch unreachable on AurOS installs.
+lss=$(blockdev --getss "$DEV" 2>/dev/null)
+case "$lss" in 512|1024|2048|4096) ;; *) refuse "cannot read the device's logical block size ('$lss')" ;; esac
+if [ $((size % 4096)) -eq 0 ]; then ss=4096; else ss=$lss; fi
+{ [ "$ss" -ge "$lss" ] && [ $((size % ss)) -eq 0 ]; } \
+    || refuse "no usable sector size: logical block $lss, partition $size bytes"
+log "sector size $ss (the device's logical block size is $lss, the partition is $size bytes)"
 
 printf '%s' "$TEMP_KEY" | cryptsetup reencrypt --encrypt --init-only --batch-mode \
     --type luks2 --reduce-device-size 32M --sector-size "$ss" \
@@ -73,7 +83,15 @@ rc=$?
 # Even a failure can leave a header behind (a power cut between the
 # move and the end): then it is LUKS2, and opening it finishes the move.
 if cryptsetup isLuks "$DEV" 2>/dev/null; then
-    log "the drive is being encrypted ($cipher)"
-    exit 0
+    # The header must say what was asked for. The partition is LUKS now
+    # either way and will open, so a disagreement is exit 2 -- loud, and
+    # NOT "start plain": a plain start of a LUKS partition cannot boot.
+    got=$(cryptsetup luksDump "$DEV" 2>/dev/null | sed -n 's/^[[:space:]]*sector:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+    if [ "$got" = "$ss" ]; then
+        log "the drive is being encrypted ($cipher, header sector size $got: as asked)"
+        exit 0
+    fi
+    log "ERROR: the header has sector size '$got', not the $ss that was asked for; the drive will still open"
+    exit 2
 fi
 refuse "cryptsetup said $rc: $(tail -3 "$ERR" | tr '\n' ' ')"

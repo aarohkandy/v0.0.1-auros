@@ -68,6 +68,7 @@ if [ "${1:-}" = --mutants ]; then
     mutant no-reencrypt       rootfs/usr/lib/auros/lock/encrypt-init 's/--init-only --batch-mode/--init-only --batch-mode --test-passphrase-nope/'
     mutant fixed-rescue       rootfs/usr/lib/auros/lock/lockctl 's/\$((b % 10))/1/'
     mutant pin-unchecked      rootfs/usr/lib/auros/lock/lockctl 's/if ! pin_checks "\$dev" "\$pin"; then/if false; then/'
+    mutant header-unchecked rootfs/usr/lib/auros/lock/encrypt-init 's/if \[ "\$got" = "\$ss" \]; then/if true; then/'
     mutant sector-always-4096 rootfs/usr/lib/auros/lock/encrypt-init 's/else ss=512; fi/else ss=4096; fi/'
     mutant small-keys         src/aurshell/lockpin.c 's/int kw = (int)(84 \* k)/int kw = (int)(40 * k)/'
     mutant repin-ignored      rootfs/usr/lib/auros/lock/lockctl 's/^    \[ -s "\$REPIN" \] || exit 0/    exit 0/'
@@ -138,9 +139,9 @@ tpm_start "$T/tpm1"
 
 # ── a drive with her files on it ──────────────────────────────────
 # Sets DRV to the loop device. Not a $(...), for the same reason as below.
-mkdrive() { # FILE MB [EXTRA-BYTES]
+mkdrive() { # FILE MB [EXTRA-BYTES [LOGICAL-BLOCK-SIZE]]
     truncate -s "$(( $2 * 1048576 + ${3:-0} ))" "$1"
-    local l; l=$(losetup -f --show "$1") || return 1
+    local l; l=$(losetup -f --show ${4:+--sector-size $4} "$1") || return 1
     LOOPS="$LOOPS $l"; DRV=$l
     mkfs.ext4 -q -L AUROS-ROOT "$l"
     mount "$l" "$T/m"
@@ -208,6 +209,39 @@ cryptsetup isLuks --type luks2 "$DU" && cryptsetup luksDump "$DU" | grep -qE 'se
     && ok "a partition not a multiple of 4096 bytes encrypts, with 512-byte sectors" \
     || bad "a partition not a multiple of 4096 bytes encrypts" "$(cryptsetup luksDump "$DU" 2>&1 | grep -E 'sector|not' | head -2)"
 cryptsetup luksDump "$D" | grep -qE 'sector: *4096' && ok "a 4096-aligned one gets 4096-byte sectors" || bad "a 4096-aligned one gets 4096-byte sectors"
+# The size is chosen from the device, said out loud, and checked in the header.
+mkdrive "$T/v.img" 1100 0; DV=$DRV
+out=$("$ENCINIT" "$DV" 2>&1)
+echo "$out" | grep -q 'sector size 4096 (the device.s logical block size is 512' && echo "$out" | grep -q 'header sector size 4096: as asked' \
+    && ok "encrypt-init says which sector size it chose, and why, and checks the header" \
+    || bad "encrypt-init says which sector size it chose, and checks the header" "$out"
+# a 4Kn disk: the sector size cannot go below its logical block size
+if mkdrive "$T/w.img" 1100 0 4096 2>/dev/null; then
+    DW=$DRV; out=$("$ENCINIT" "$DW" 2>&1)
+    echo "$out" | grep -q 'logical block size is 4096' && cryptsetup luksDump "$DW" | grep -qE 'sector: *4096' \
+        && ok "a 4096-byte-block disk is encrypted with 4096-byte sectors" || bad "a 4096-byte-block disk" "$out"
+else ok "(this kernel has no 4096-byte loop devices: the 4Kn case is not run here)"; fi
+# the header disagreeing with the request: a cryptsetup that quietly
+# writes 512-byte sectors. Exit 2, loudly, the partition still LUKS.
+mkdir -p "$T/fake"
+REALCS=$(command -v cryptsetup)
+cat > "$T/fake/cryptsetup" <<FAKE
+#!/bin/sh
+p=""
+for a do
+    shift
+    if [ "\$p" = "--sector-size" ]; then n=512; else n=\$a; fi
+    p=\$a
+    set -- "\$@" "\$n"
+done
+exec $REALCS "\$@"
+FAKE
+chmod 755 "$T/fake/cryptsetup"
+mkdrive "$T/x.img" 1100 0; DX=$DRV
+out=$(PATH="$T/fake:$PATH" "$ENCINIT" "$DX" 2>&1); rc=$?
+[ "$rc" = 2 ] && cryptsetup isLuks "$DX" && echo "$out" | grep -q 'ERROR: the header has sector size' \
+    && ok "a header that disagrees with the request is exit 2, loud, and still a LUKS drive" \
+    || bad "a header that disagrees is caught" "rc=$rc $out"
 
 echo
 echo "  the first PIN (sealed in the chip, bound to no PCR)"

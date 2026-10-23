@@ -42,6 +42,7 @@ IMG=${THEFT_IMAGE:-out/auros-desktop.img}
 EV=${THEFT_EVIDENCE:-out/theft-evidence}
 TIMEOUT=${THEFT_TIMEOUT:-900}
 PIN1=1234 PIN2=2580
+PASSLIM=${THEFT_PASS_LIMIT:-900}     # seconds the in-place pass may take in the guest
 # 7: the key is sealed to PCR 7 (the design). "none": to no PCR.
 PCRS=${THEFT_PCRS:-7}; [ "$PCRS" = none ] && PCRS=''
 CUR=$PIN1
@@ -153,10 +154,21 @@ case "$st" in
     ;;
 *state=encrypting*|*state=open-no-pin*)
     say "pass waiting"
-    t0=$(date +%s)
+    t0=$(date +%s); n=0
     while $L status | grep -q state=encrypting; do
-        sleep 2
-        [ $(( $(date +%s) - t0 )) -gt 2400 ] && { say "pass TIMEOUT"; break; }
+        sleep 2; n=$((n + 1))
+        # what the pass is doing, every 30 s: how far along (the data
+        # segment's offset moves), whether its process lives and what it
+        # waits on, and whether any device-mapper device is suspended
+        if [ $((n % 15)) -eq 0 ]; then
+            say "pass-progress t=$(( $(date +%s) - t0 )) svc=$(systemctl is-active auros-lock-encrypt) seg=[$(cryptsetup luksDump "$dev" 2>/dev/null | grep -E '^ *(offset|length|[0-9]: )' | tr -s ' \t' ' ' | tr '\n' ' ' | cut -c1-240)] ps=[$(ps -eo pid,stat,pcpu,wchan:20,cmd | grep '[c]ryptsetup reencrypt' | head -2 | tr -s ' ' | tr '\n' '|')] dm=[$(for d in /sys/block/dm-*; do printf '%s:susp=%s ' "$(cat $d/dm/name 2>/dev/null)" "$(cat $d/dm/suspended 2>/dev/null)"; done)] mem=[$(grep -E 'MemAvailable|SwapFree' /proc/meminfo | tr -s ' ' | tr '\n' ' ')]"
+        fi
+        if [ $(( $(date +%s) - t0 )) -gt @PASSLIM@ ]; then
+            say "pass TIMEOUT"
+            say "pass-journal $(journalctl -u auros-lock-encrypt -b -o cat 2>/dev/null | tail -6 | tr '\n' '|')"
+            say "pass-dmesg $(dmesg 2>/dev/null | tail -10 | tr '\n' '|')"
+            break
+        fi
     done
     say "pass done in $(( $(date +%s) - t0 )) s (this start)"
     say "letter-after-pass $(sha256sum /var/lib/auros-theft/letter.txt | cut -c1-64)"
@@ -182,7 +194,7 @@ say "poweroff"
 sync
 systemctl poweroff
 EOS
-sed -i "s/@PIN1@/$PIN1/; s/@PCRS@/$PCRS/" "$R/usr/lib/auros/lock/theft-e2e"
+sed -i "s/@PIN1@/$PIN1/; s/@PCRS@/$PCRS/; s/@PASSLIM@/$PASSLIM/" "$R/usr/lib/auros/lock/theft-e2e"
 chmod 755 "$R/usr/lib/auros/lock/theft-e2e"
 cat > "$R/etc/systemd/system/auros-theft-e2e.service" <<'EOU'
 [Unit]
@@ -317,10 +329,17 @@ fi
 power_off 5
 if [ "$CUT" = 1 ]; then
     power_on resume
-    wait_for "THEFT pass done" && ok "the next start resumed the pass and finished it" \
-        || bad "the pass resumed after the power cut" "$(serial | tail -6)"
+    wait_for "THEFT pass done" $((PASSLIM + 300))
 fi
-wait_for "THEFT poweroff"
+wait_for "THEFT poweroff" 300
+if [ "$CUT" = 1 ]; then
+    serial | grep -q "THEFT pass done" && ! serial | grep -q "THEFT pass TIMEOUT" \
+        && ok "the next start resumed the pass and finished it ($(val 'pass done in'))" \
+        || bad "the pass resumed after the power cut and finished" "$(serial | grep -E 'THEFT pass' | tail -3)"
+else
+    ! serial | grep -q "THEFT pass TIMEOUT" && ok "the in-place pass finished" \
+        || bad "the in-place pass finished within ${PASSLIM} s" "$(serial | grep -E 'THEFT pass' | tail -3)"
+fi
 [ "$(val letter-after-pass)" = "$LSUM" ] && ok "her letter is intact" || bad "her letter is intact" "$(val letter-after-pass) != $LSUM"
 serial | grep -q "THEFT up .*state=encrypting.*cipher=" || true
 CODE=$(val RESCUE | tr -d ' ')
