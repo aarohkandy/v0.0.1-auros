@@ -73,6 +73,9 @@ jobs:
               zstd grub-common sbsigntool file binutils iproute2 gcc libc6-dev gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev \
               libxml2-utils busybox-static exfatprogs
           [ -w /dev/kvm ] || { echo "no usable /dev/kvm"; exit 1; }
+          # the handover scenario mounts an exFAT volume on the runner; the azure kernel keeps exfat in -extra
+          sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)" >/dev/null 2>&1 || true
+          sudo modprobe exfat || echo "::warning::this runner's kernel has no exfat; the handover scenario will fail"
           sudo tee /usr/local/bin/qemu-system-x86_64 >/dev/null <<'EOF'
           #!/bin/sh
           # CI only: the scripts ask for TCG; this runner has KVM.
@@ -103,8 +106,9 @@ jobs:
           zstd -dc dl/rootfs/rootfs.tar.zst | sudo tar -C work/forge/desktop --numeric-owner -xf -
           rm -rf dl/rootfs
           zstd -dc dl/installer/staging-work.tar.zst | sudo tar -C work --numeric-owner -xf -
-          sh build/aurbridge > transcripts/build-aurbridge.txt 2>&1 || { tail -20 transcripts/build-aurbridge.txt; exit 1; }
           sudo ./build/staging desktop > transcripts/build-staging.txt 2>&1 || { tail -20 transcripts/build-staging.txt; exit 1; }
+          # (the engine carries the signed shim and grub the line above leaves in out/, so it is built after it)
+          sh build/aurbridge > transcripts/build-aurbridge.txt 2>&1 || { tail -20 transcripts/build-aurbridge.txt; exit 1; }
           sudo AURSTAGE_FAULT=1 ./build/staging desktop > transcripts/build-staging-fault.txt 2>&1 || { tail -20 transcripts/build-staging-fault.txt; exit 1; }
           ls -la out
       - name: the scripts, under KVM
