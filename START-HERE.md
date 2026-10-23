@@ -6,6 +6,8 @@
 > read-only for us. Workflows run on `main`; `workflow_dispatch` works now.
 > Current session log: `docs/handoff/SESSION-2026-10-23-B.md`.**
 
+> **The plan: [docs/ROADMAP.md](docs/ROADMAP.md) (v0.1 it works → v0.2 every PC under an hour → v0.3 safe for years → v1.0 people pay).**
+
 
 You are taking over AurOS from a session that ran out of usage on
 2026-10-23. Everything you need is in this repository; nothing else
