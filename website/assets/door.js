@@ -21,7 +21,10 @@
    * (a custom domain, a test server) the href above stands: the deploy
    * writes the repository it publishes from into it (tools/site/stamp.sh). */
   var gh = /^([a-z0-9-]+)\.github\.io$/i.exec(location.hostname);
-  if (gh && location.protocol === "https:") {
+  /* Only while the button still points at GitHub's release address: on the owner's own
+   * domain it points at get.<domain> (tools/site/stamp.sh), and that stands even when the
+   * page is read through its github.io copy. */
+  if (gh && location.protocol === "https:" && /^https:\/\/github\.com\//.test(DOWNLOAD_URL)) {
     var first = location.pathname.split("/")[1] || "";
     var name = (first && !/\.html?$/i.test(first)) ? first : gh[1] + ".github.io";
     if (/^[A-Za-z0-9._-]+$/.test(name)) {

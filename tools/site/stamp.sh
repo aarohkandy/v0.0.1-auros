@@ -32,6 +32,16 @@ grep -rlI -e '@AUROS_' "$dst" | while IFS= read -r f; do
     sed -e "s|@AUROS_REPO@|$repo|g" -e "s|@AUROS_ADDRESS@|$address|g" "$f" > "$f.stamp"
     mv "$f.stamp" "$f"
 done
+# The owner's domain (AUROS_DOMAIN, docs/ops/DOMAIN.md): "Get AurOS" goes to
+# get.<domain>, which passes it on to GitHub, so the page never names GitHub's
+# release address. Without the variable nothing changes.
+if [ -n "${AUROS_DOMAIN:-}" ]; then
+    gh_get="https://github.com/$repo/releases/latest/download/AurOS-Setup.exe"
+    get=$(sh "$here/../repo.sh" get)
+    grep -rlIF -e "$gh_get" "$dst" | while IFS= read -r f; do
+        sed -e "s|$gh_get|$get|g" "$f" > "$f.stamp"; mv "$f.stamp" "$f"
+    done
+fi
 if left=$(grep -rnI -e '@AUROS_[A-Z_]*@' "$dst"); then
     echo "stamp: placeholders nobody fills:" >&2; echo "$left" >&2; exit 1
 fi

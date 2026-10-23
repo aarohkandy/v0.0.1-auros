@@ -53,7 +53,8 @@ const REPO = path.resolve(HERE, "..", "..");
 // GITHUB_REPOSITORY, else the origin remote): never written here.
 const repoSh = (what) => execFileSync("sh", [path.join(REPO, "tools", "repo.sh"), what]).toString().trim();
 const AUROS_REPO = repoSh("repo");
-const RELEASE_URL = `https://github.com/${AUROS_REPO}/releases/latest/download/AurOS-Setup.exe`;
+// The installer: GitHub's release address, or get.<domain> once AUROS_DOMAIN is set (tools/repo.sh).
+const RELEASE_URL = repoSh("get");
 const PAGES_HOST = repoSh("host");                      // owner.github.io/name/
 const BASE = PAGES_HOST.slice(PAGES_HOST.indexOf("/"));  // /name/, or / for owner.github.io
 

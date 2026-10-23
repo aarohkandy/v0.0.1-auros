@@ -48,6 +48,15 @@ $left"
 grep -rqIF -e Some-One/their-copy -e some-one.github.io/their-copy "$t/site" ||
     bad "the stamped site names no repository at all (did the placeholders go?)"
 
+# 2b. ... and with the owner's domain: Get AurOS goes to get.<domain>, the page
+# names no GitHub release address and no github.io, and says the domain.
+AUROS_REPO=Some-One/their-copy AUROS_DOMAIN=example.org sh tools/site/stamp.sh website "$t/site-d" > /dev/null || bad "stamp.sh failed with AUROS_DOMAIN"
+grep -rIq "releases/latest/download" "$t/site-d" --include='*.html' && bad "a site stamped with AUROS_DOMAIN still names GitHub's release address:
+$(grep -rnI 'releases/latest/download' "$t/site-d" --include='*.html' | head -3)"
+grep -rIq 'href="https://get.example.org/"' "$t/site-d" || bad "a site stamped with AUROS_DOMAIN does not send Get AurOS to get.example.org"
+grep -rIqiE '(href|src)="[^"]*github\.io' "$t/site-d" --include='*.html' && bad "a site stamped with AUROS_DOMAIN still links to github.io"
+grep -rIqF "example.org" "$t/site-d/guide.html" || bad "the printable guide does not say example.org"
+
 # 3. tools/repo.sh, told the repository.
 want() { got=$(AUROS_REPO=$1 sh tools/repo.sh "$2" 2>/dev/null) || got="(refused)"
          [ "$got" = "$3" ] || bad "AUROS_REPO=$1 repo.sh $2 gave $got, not $3"; }

@@ -39,6 +39,11 @@ permissions:
   pages: write
   id-token: write
 
+# The owner's domain (docs/ops/DOMAIN.md): the site is stamped with it, and the
+# Get AurOS button goes to get.<domain>. Empty until he sets the variable.
+env:
+  AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
+
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -69,6 +74,8 @@ jobs:
         run: |
           url=$(grep -o 'id="get" href="[^"]*"' "$RUNNER_TEMP/site/index.html" | head -1 | sed 's/.*href="//; s/"$//')
           if [ -z "$url" ]; then echo "::error::no #get link in website/index.html"; exit 1; fi
+          # get.<domain> may be shut on purpose (a wave that is full or not yet open): what must exist is the file itself.
+          if [ -n "$AUROS_DOMAIN" ]; then url=$(env -u AUROS_DOMAIN sh tools/repo.sh get); fi
           # GitHub redirects to a signed address that may refuse HEAD;
           # ask for the first byte, as a browser would ask for the file.
           code=$(curl -sSL -r 0-0 -o /dev/null -w '%{http_code}' --retry 3 --retry-delay 5 "$url" || true)
