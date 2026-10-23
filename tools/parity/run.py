@@ -123,8 +123,8 @@ def inject(mnt, opts):
     for f in ("session.sh", "root.sh", "run.sh"):
         os.chmod(os.path.join(dst, f), 0o755)
     with open(os.path.join(dst, "config"), "w") as f:
-        f.write("CHECKS='%s'\nOPTS='%s'\nWITHOUT='%s'\n" % (
-            " ".join(opts.checks), " ".join(opts.opt), " ".join(opts.without)))
+        f.write("CHECKS='%s'\nOPTS='%s'\nWITHOUT='%s'\nAPT='%s'\n" % (
+            " ".join(opts.checks), " ".join(opts.opt), " ".join(opts.without), " ".join(opts.apt)))
     d = os.path.join(mnt, "etc/systemd/system/aurshell.service.d")
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "60-parity.conf"), "w") as f:
@@ -371,6 +371,7 @@ def main():
     ap.add_argument("--out", default="parity-out")
     ap.add_argument("--checks", default=",".join(ALL))
     ap.add_argument("--without", default="", help="comma list of packages to remove first (red proof)")
+    ap.add_argument("--apt", default="", help="comma list of Ubuntu packages to install first (what the image should have carried)")
     ap.add_argument("--opt", default="", help="comma list of guest options (e.g. libreoffice)")
     ap.add_argument("--mem", type=int, default=4096)
     ap.add_argument("--smp", type=int, default=4)
@@ -385,6 +386,7 @@ def main():
         a.checks = ["adhoc"] if a.checks == ALL else a.checks + ["adhoc"]
     a.without = [c for c in a.without.split(",") if c]
     a.opt = [c for c in a.opt.split(",") if c]
+    a.apt = [c for c in a.apt.split(",") if c]
     expect_fail = [c for c in a.expect_fail.split(",") if c]
     out = os.path.abspath(a.out)
     os.makedirs(out, exist_ok=True)
@@ -441,7 +443,7 @@ def main():
             rows.append(("  " + k, results[k]["status"], results[k]["detail"], ""))
     json.dump({"checks": {n: {"status": s, "detail": d, "gap": g} for n, s, d, g in rows},
                "notes": notes, "guest_done": done, "seconds": int(secs),
-               "without": a.without, "opt": a.opt, "failures": bad},
+               "without": a.without, "opt": a.opt, "apt": a.apt, "failures": bad},
               open(os.path.join(out, "results.json"), "w"), indent=1)
     with open(os.path.join(out, "results.md"), "w") as f:
         f.write("| check | result | detail |\n|---|---|---|\n")
