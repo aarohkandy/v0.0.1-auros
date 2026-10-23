@@ -6,7 +6,7 @@ result() { say "result $1 $2 $3"; }          # name pass|fail detail words
 note()   { say "note $*"; }
 snap()   { say "do snap $1"; sleep 2; }      # the host takes the picture
 key()    { say "do key $1"; sleep "${2:-1}"; }   # e.g. ctrl+s, ret
-typing() { say "do type $1"; sleep 1; }
+typing() { say "do type $1"; sleep $(( ${#1} / 3 + 3 )); }   # slow: the programs redraw on every key
 click()  { say "do click $1 $2"; sleep 1; }
 opt()    { case " $OPTS " in *" $1 "*) return 0 ;; esac; return 1; }
 # wait_for SECONDS CMD...  -> 0 as soon as CMD succeeds

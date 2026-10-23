@@ -201,7 +201,7 @@ class Qemu:
                 self.keys("shift", QCODE[SHIFTED[ch]])
             elif ch in QCODE:
                 self.keys(QCODE[ch])
-            time.sleep(0.04)
+            time.sleep(0.12)
 
     def click(self, x, y, button="left", double=False):
         ax, ay = int(x * 32767 / W), int(y * 32767 / H)
