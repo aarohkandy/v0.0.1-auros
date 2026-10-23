@@ -917,7 +917,7 @@ int main(int argc, char **argv)
                 poll(&wp, 1, 16);
                 aurwl_dispatch(c.wl);
                 aurwl_reap(c.wl);
-                session_sync(&c, L->present, L->removed);
+                session_sync(&c, L);
                 aurwl_frame_done(c.wl, el);
                 /* Paint each pass: the tracker records where windows
                  * landed, and a client that never learns its size keeps
@@ -1181,6 +1181,8 @@ int main(int argc, char **argv)
      * settings daemon may have been reset, and a program started now
      * should open at the size she chose. Not in a still render. */
     if (c.text_scale < 0.99f || c.text_scale > 1.01f) textsys_apply(c.text_scale);
+    /* The buttons her programs' own title bars show are this look's. */
+    textsys_buttons(L->id);
     /* The wifi panel as of the last pass, and what had the keyboard
      * before it took it. See the transition handler in the loop. */
     int net_open_last = 0;
@@ -1279,6 +1281,7 @@ int main(int argc, char **argv)
                     c.priv = NULL;
                     L = NL;
                     if (L->init) L->init(&c);
+                    textsys_buttons(L->id);
                     fprintf(stderr, "aurshell: archetype now '%s' (%s)\n",
                             L->id, c.shell_name);
                     /* AND THE KEYBOARD GOES WHERE THE NEW ONE SAYS.
@@ -1546,7 +1549,7 @@ int main(int argc, char **argv)
             aurwl_dispatch(c.wl);
             aurwl_reap(c.wl);
             int before = c.n_wins;
-            session_sync(&c, L->present, L->removed);
+            session_sync(&c, L);
             uint32_t seq = aurwl_damage_seq(c.wl);
             if (seq != last_damage || c.n_wins != before) { last_damage = seq; dirty = 1; }
         }

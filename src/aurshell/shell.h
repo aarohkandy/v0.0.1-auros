@@ -109,7 +109,17 @@ typedef struct {
     uint32_t  wid;
     int       starting;
     uint32_t  start_ms;        /* when the wait began; 0 = not yet set */
+
+    /* The program draws its own title bar and window buttons (Firefox,
+     * GTK programs), so the archetype draws none over it: two sets of
+     * buttons, one above the other, is the thing nobody can work out.
+     * The footer's "Close this" is still the one place to close. */
+    int       csd;
 } win_entry;
+
+/* What a program's own title bar can ask of the archetype (the same bits
+ * as AURWL_REQ_*; session.c checks that they agree). */
+enum { WREQ_MOVE = 1, WREQ_MAXIMIZE = 2, WREQ_RESTORE = 4, WREQ_MINIMIZE = 8 };
 
 /* Two faces, not one, at two real weights.
  *
@@ -379,6 +389,15 @@ typedef struct {
      * the one that actually happens; an archetype's own close button
      * does its bookkeeping inline. */
     void (*removed)(shell_ctx *c, int win);
+    /* A window's own title bar asked for something (WREQ_* bits). An
+     * archetype acts on what it can and drops the rest: a button in the
+     * program's bar that did nothing is the one thing worse than none, so
+     * what the program is allowed to show follows from this (textsys.c's
+     * buttons). Optional. */
+    void (*request)(shell_ctx *c, int win, unsigned req);
+    /* 1 when the window is as large as this archetype ever makes it, so
+     * the program can show the right button. Optional; default 0. */
+    int  (*maxed)(const shell_ctx *c, int win);
 } shell_layout;
 
 /* Shared helpers every layout may use, so six renderers do not each

@@ -34,6 +34,8 @@
 #define DOCK_ICON_PX  56.f
 #define DOCK_LABEL_H  48      /* two lines of 18 px                      */
 #define WIN_TITLE_H   46
+/* A program that draws its own title bar gets none of ours. */
+#define TITLE_OF(c, i) ((c)->wins[i].csd ? 0 : WIN_TITLE_H)
 #define CASCADE_STEP  110
 #define FIND_MAX      16
 #define FIND_ROW_H    52
@@ -373,37 +375,46 @@ static void paint_win(shell_ctx *c, surface *s, shell_fonts *f, int i, int focus
     uint32_t paper = focused ? c->surface_c : c->bg_alt;
     draw_round_rect(s, a, rc, paper, 1.f);
 
-    rect tb = { a.x, a.y, a.w, WIN_TITLE_H };
-    corners tc = { (float)c->radius, (float)c->radius, 0, 0 };
-    draw_round_rect(s, tb, tc, focused ? c->bg_alt : c->bg, 1.f);
-    draw_hrule(s, a.x, a.y + WIN_TITLE_H - 1, a.w, 1, c->overlay, 1.f);
+    int th = TITLE_OF(c, i);
+    if (th > 0) {
+        rect tb = { a.x, a.y, a.w, th };
+        corners tc = { (float)c->radius, (float)c->radius, 0, 0 };
+        draw_round_rect(s, tb, tc, focused ? c->bg_alt : c->bg, 1.f);
+        draw_hrule(s, a.x, a.y + th - 1, a.w, 1, c->overlay, 1.f);
 
-    shell_icon_draw(s, ic, (float)(a.x + c->padding + 8), (float)(a.y + WIN_TITLE_H / 2),
-                    18.f, tint, focused ? c->bg_alt : c->bg, al * (focused ? 1.f : 0.7f));
-    float tx = (float)(a.x + c->padding + 28);
-    float by = shell_baseline(f->mid, (float)a.y, (float)WIN_TITLE_H);
-    shell_text(s, f->mid, tx, by, w->title, focused ? c->fg_hi : c->subtle, al);
-    if (w->subtitle[0]) {
-        float dx = tx + shell_text_w(f->mid, w->title) + 14.f;
-        draw_vrule(s, (int)dx, a.y + 13, WIN_TITLE_H - 26, 1, c->overlay, al);
-        shell_text(s, f->small, dx + 12.f, shell_baseline(f->small, (float)a.y, (float)WIN_TITLE_H),
-                   w->subtitle, c->subtle, al * (focused ? 0.9f : 0.6f));
+        shell_icon_draw(s, ic, (float)(a.x + c->padding + 8), (float)(a.y + th / 2),
+                        18.f, tint, focused ? c->bg_alt : c->bg, al * (focused ? 1.f : 0.7f));
+        /* The name and the line after it stop short of the two buttons: a
+         * long page title used to run on underneath them. */
+        float tx = (float)(a.x + c->padding + 28);
+        float stop = (float)(a.x + a.w - c->padding - 11) - 30.f - 5.f - 16.f;
+        float room = stop - tx;
+        float nw = shell_text_w(f->mid, w->title);
+        float by = shell_baseline(f->mid, (float)a.y, (float)th);
+        shell_text_elided(s, f->mid, tx, by, room, w->title, focused ? c->fg_hi : c->subtle, al);
+        if (w->subtitle[0] && nw + 14.f + 12.f + shell_text_w(f->small, w->subtitle) <= room) {
+            float dx = tx + nw + 14.f;
+            draw_vrule(s, (int)dx, a.y + 13, th - 26, 1, c->overlay, al);
+            shell_text(s, f->small, dx + 12.f, shell_baseline(f->small, (float)a.y, (float)th),
+                       w->subtitle, c->subtle, al * (focused ? 0.9f : 0.6f));
+        }
+
+        /* Minimise then close. Minimising is safe here precisely because the
+         * dock is a fixed place to get the window back from. Two square
+         * wells, not two discs: a circle behind a glyph is the one shape
+         * this whole theme is trying not to repeat. */
+        float cy = (float)(a.y + th / 2);
+        float bx = (float)(a.x + a.w - c->padding - 11);
+        draw_line(s, bx - 4.f, cy - 4.f, bx + 4.f, cy + 4.f, 1.7f, c->fg, al * 0.95f);
+        draw_line(s, bx + 4.f, cy - 4.f, bx - 4.f, cy + 4.f, 1.7f, c->fg, al * 0.95f);
+        bx -= 30.f;
+        draw_hrule(s, (int)(bx - 5.f), (int)(cy + 3.f), 11, 2, c->fg, al * 0.95f);
     }
 
-    /* Minimise then close. Minimising is safe here precisely because the
-     * dock is a fixed place to get the window back from. Two square
-     * wells, not two discs: a circle behind a glyph is the one shape
-     * this whole theme is trying not to repeat. */
-    float cy = (float)(a.y + WIN_TITLE_H / 2);
-    float bx = (float)(a.x + a.w - c->padding - 11);
-    draw_line(s, bx - 4.f, cy - 4.f, bx + 4.f, cy + 4.f, 1.7f, c->fg, al * 0.95f);
-    draw_line(s, bx + 4.f, cy - 4.f, bx - 4.f, cy + 4.f, 1.7f, c->fg, al * 0.95f);
-    bx -= 30.f;
-    draw_hrule(s, (int)(bx - 5.f), (int)(cy + 3.f), 11, 2, c->fg, al * 0.95f);
-
-    rect body = { a.x, a.y + WIN_TITLE_H, a.w, a.h - WIN_TITLE_H };
+    rect body = { a.x, a.y + th, a.w, a.h - th };
     if (w->content) {
         corners bc = { 0, 0, (float)c->radius, (float)c->radius };
+        if (th == 0) bc = rc;                 /* its own bar is the top of it */
         draw_content_fit(s, w->content, body, bc, al);
     } else {
         /* Centre icon and captions as one block sized to the body, and
@@ -433,7 +444,8 @@ static void paint_win(shell_ctx *c, surface *s, shell_fonts *f, int i, int focus
      * surface and the wallpaper are close enough in value that without
      * one the window stops having a shape. */
     draw_frame(s, a, focused ? 2 : 1, focused ? c->fg : c->overlay, 1.f);
-    if (focused) draw_hrule(s, a.x, a.y, a.w, 3, c->accent, 1.f);
+    /* Not over a program's own title bar: three pixels of its tab strip. */
+    if (focused && th > 0) draw_hrule(s, a.x, a.y, a.w, 3, c->accent, 1.f);
 }
 
 /* ── painting: the dock ─────────────────────────────────────────── */
@@ -700,6 +712,41 @@ static void raise_app(shell_ctx *c, int app)
     c->focus = wi;
 }
 
+/* The X on a window ASKS its program to close, the way "Close this" does
+ * (a document with unsaved work can object; a second press stops one that
+ * is stuck). It used to be swallowed: a close button that closed nothing.
+ * A slot with no program behind it yet is the shell's to drop. */
+static void ask_close(shell_ctx *c, int i)
+{
+    if (i < 0 || i >= c->n_wins) return;
+    if (!c->wins[i].wid) { shell_close_win(c, i); return; }
+    c->focus = i;
+    c->want_close_win = 1;
+}
+
+/* A program's own title bar asks for what the dock's own does: to be
+ * moved, and to be put away. Maximise is dropped (the dock has no such
+ * thing, so textsys_buttons does not show the button). */
+static void l_request(shell_ctx *c, int i, unsigned rq)
+{
+    dock_priv *p = P(c);
+    if (!p || i < 0 || i >= c->n_wins) return;
+    if (rq & WREQ_MINIMIZE) {
+        c->wins[i].minimised = 1;
+        if (c->focus == i) {
+            c->focus = -1;
+            for (int k = 0; k < c->n_wins; k++)
+                if (!c->wins[k].minimised) { c->focus = k; break; }
+        }
+        return;
+    }
+    if ((rq & WREQ_MOVE) && c->mouse_down) {
+        rect a = win_rect(c, c->screen_w, c->screen_h, i);
+        c->focus = i;
+        p->drag = i; p->grab_x = c->mouse_x - a.x; p->grab_y = c->mouse_y - a.y;
+    }
+}
+
 static int l_click(shell_ctx *c, int x, int y)
 {
     dock_priv *p = P(c);
@@ -762,9 +809,9 @@ static int l_click(shell_ctx *c, int x, int y)
             rect a = win_rect(c, sw, sh, i);
             if (x < a.x || x >= a.x + a.w || y < a.y || y >= a.y + a.h) continue;
             c->focus = i;
-            if (y < a.y + WIN_TITLE_H) {
+            if (y < a.y + TITLE_OF(c, i)) {
                 float bx = (float)(a.x + a.w - c->padding - 12);
-                if (x > bx - 14.f) return 1;                    /* close   */
+                if (x > bx - 14.f) { ask_close(c, i); return 1; }   /* close   */
                 if (x > bx - 44.f) { c->wins[i].minimised = 1; return 1; }
                 p->drag = i; p->grab_x = x - a.x; p->grab_y = y - a.y;
             }
@@ -914,6 +961,7 @@ static void l_fini(shell_ctx *c) { c->priv = NULL; }
 
 const shell_layout layout_dock = {
     .id = "dock",
+    .request = l_request,
     .init = l_init,
     .paint = l_paint,
     .click = l_click,

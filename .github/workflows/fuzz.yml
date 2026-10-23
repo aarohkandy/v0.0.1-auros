@@ -23,6 +23,7 @@ on:
       - 'src/aurstage/journal.*'
       - 'tools/fuzz/**'
       - 'tools/wltest-sub.*'
+      - 'tools/wltest-deco.*'
       - 'tools/checksec.sh'
       - 'build/cflags'
       - '.github/workflows/fuzz.yml'
@@ -52,5 +53,9 @@ jobs:
       # the pointer routed through them (the Firefox-is-blank bug).
       - name: wltest-sub (subsurfaces, ASan + UBSan)
         run: sh tools/wltest-sub.sh -asan
+      # Stream C: which windows draw their own title bar (Firefox, GTK), and what
+      # that bar can ask of the shell, so the shell draws one set of buttons.
+      - name: wltest-deco (a program's own title bar)
+        run: sh tools/wltest-deco.sh
       - name: hardening gate selftest
         run: sh tools/checksec.sh --selftest

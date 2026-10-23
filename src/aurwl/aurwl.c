@@ -184,6 +184,8 @@ struct aurwl_win {
     struct wl_resource *xdg_toplevel;
     struct wl_resource *xdg_popup;
     struct wl_resource *decoration;
+    int                 deco_client;         /* it asked to draw its own bar */
+    unsigned            req;                 /* AURWL_REQ_*, until the shell takes them */
     struct wl_resource *viewport;
     char                title[128];
     char                app_id[128];
@@ -2325,8 +2327,14 @@ static void tl_set_app_id(struct wl_client *cl, struct wl_resource *r, const cha
 static void tl_show_menu(struct wl_client *cl, struct wl_resource *r, struct wl_resource *s,
                          uint32_t ser, int32_t x, int32_t y)
 { (void)cl; (void)r; (void)s; (void)ser; (void)x; (void)y; }
+/* What a client's own title bar can ask of us. They are not acted on here:
+ * the shell owns where windows are, so they are written down and the shell
+ * takes them once a frame (aurwl_win_take_requests). The serial is not
+ * checked: the shell only moves a window while the button is down. */
+static void win_ask(struct wl_resource *r, unsigned bit)
+{ aurwl_win *w = wl_resource_get_user_data(r); if (w) w->req |= bit; }
 static void tl_move(struct wl_client *cl, struct wl_resource *r, struct wl_resource *s, uint32_t ser)
-{ (void)cl; (void)r; (void)s; (void)ser; }
+{ (void)cl; (void)s; (void)ser; win_ask(r, AURWL_REQ_MOVE); }
 static void tl_resize(struct wl_client *cl, struct wl_resource *r, struct wl_resource *s,
                       uint32_t ser, uint32_t edges)
 { (void)cl; (void)r; (void)s; (void)ser; (void)edges; }
@@ -2335,14 +2343,17 @@ static void tl_set_max(struct wl_client *cl, struct wl_resource *r, int32_t w_, 
 static void tl_set_min(struct wl_client *cl, struct wl_resource *r, int32_t w_, int32_t h_)
 { (void)cl; (void)r; (void)w_; (void)h_; }
 static void tl_maximize(struct wl_client *cl, struct wl_resource *r)
-{ (void)cl; aurwl_win *w = wl_resource_get_user_data(r); if (!w) return; w->want_max = 1; configure_toplevel(w); }
+{ (void)cl; aurwl_win *w = wl_resource_get_user_data(r); if (!w) return;
+  w->req |= AURWL_REQ_MAXIMIZE; w->want_max = 1; configure_toplevel(w); }
 static void tl_unmaximize(struct wl_client *cl, struct wl_resource *r)
-{ (void)cl; aurwl_win *w = wl_resource_get_user_data(r); if (!w) return; w->want_max = 0; configure_toplevel(w); }
+{ (void)cl; aurwl_win *w = wl_resource_get_user_data(r); if (!w) return;
+  w->req |= AURWL_REQ_RESTORE; w->want_max = 0; configure_toplevel(w); }
 static void tl_fullscreen(struct wl_client *cl, struct wl_resource *r, struct wl_resource *o)
 { (void)cl; (void)o; aurwl_win *w = wl_resource_get_user_data(r); if (!w) return; w->want_full = 1; configure_toplevel(w); }
 static void tl_unfullscreen(struct wl_client *cl, struct wl_resource *r)
 { (void)cl; aurwl_win *w = wl_resource_get_user_data(r); if (!w) return; w->want_full = 0; configure_toplevel(w); }
-static void tl_minimize(struct wl_client *cl, struct wl_resource *r) { (void)cl; (void)r; }
+static void tl_minimize(struct wl_client *cl, struct wl_resource *r)
+{ (void)cl; win_ask(r, AURWL_REQ_MINIMIZE); }
 
 static const struct xdg_toplevel_interface toplevel_impl = {
     .destroy = noop_destroy, .set_parent = tl_set_parent, .set_title = tl_set_title,
@@ -2424,15 +2435,15 @@ static void xs_get_toplevel(struct wl_client *cl, struct wl_resource *r, uint32_
 
     /* Version 5 says this must arrive before the first configure. What
      * goes in it is what we actually do: maximize and fullscreen are
-     * handled; the window menu is not, and minimising is the shell's
-     * own idea rather than something a client can ask for, so claiming
-     * either would put a button in the client's title bar that does
-     * nothing. */
+     * handled, and so is minimise (the shell takes the request); the
+     * window menu is not, so claiming it would put a button in the
+     * client's title bar that does nothing. */
     if (wl_resource_get_version(tl) >= XDG_TOPLEVEL_WM_CAPABILITIES_SINCE_VERSION) {
         struct wl_array caps; wl_array_init(&caps);
         uint32_t *cp;
         cp = wl_array_add(&caps, 4); if (cp) *cp = XDG_TOPLEVEL_WM_CAPABILITIES_MAXIMIZE;
         cp = wl_array_add(&caps, 4); if (cp) *cp = XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN;
+        cp = wl_array_add(&caps, 4); if (cp) *cp = XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE;
         xdg_toplevel_send_wm_capabilities(tl, &caps);
         wl_array_release(&caps);
     }
@@ -2587,16 +2598,32 @@ static void bind_wm_base(struct wl_client *cl, void *data, uint32_t ver, uint32_
  * configure handler, so a set_mode after mapping did not take effect
  * until some unrelated later configure happened to arrive. Two title
  * bars, or none. */
-static void deco_answer(struct wl_resource *r)
+static void deco_answer(struct wl_resource *r, uint32_t mode)
 {
-    zxdg_toplevel_decoration_v1_send_configure(r, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    zxdg_toplevel_decoration_v1_send_configure(r, mode);
     aurwl_win *w = wl_resource_get_user_data(r);
     if (w) send_configure(w);
 }
+/* A client that says "I draw my own" is believed. The shell then draws no
+ * bar over the top of it (aurwl_win_csd): two sets of window buttons, the
+ * client's and ours, is the one thing nobody can work out. Anything else
+ * -- no preference, or "you draw it" -- gets ours. */
 static void deco_set_mode(struct wl_client *cl, struct wl_resource *r, uint32_t mode)
-{ (void)cl; (void)mode; deco_answer(r); }
+{
+    (void)cl;
+    aurwl_win *w = wl_resource_get_user_data(r);
+    int own = (mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+    if (w) w->deco_client = own;
+    deco_answer(r, own ? ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE
+                       : ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+}
 static void deco_unset_mode(struct wl_client *cl, struct wl_resource *r)
-{ (void)cl; deco_answer(r); }
+{
+    (void)cl;
+    aurwl_win *w = wl_resource_get_user_data(r);
+    if (w) w->deco_client = 0;
+    deco_answer(r, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+}
 static const struct zxdg_toplevel_decoration_v1_interface deco_impl = {
     .destroy = noop_destroy, .set_mode = deco_set_mode, .unset_mode = deco_unset_mode,
 };
@@ -2961,6 +2988,22 @@ aurwl_win *aurwl_window_at(const aurwl *c, int i)
 uint32_t    aurwl_win_id(const aurwl_win *w)     { return w ? w->id : 0; }
 const char *aurwl_win_title(const aurwl_win *w)  { return w ? w->title : ""; }
 const char *aurwl_win_app_id(const aurwl_win *w) { return w ? w->app_id : ""; }
+/* A toplevel draws its own title bar unless it was given ours: no
+ * xdg-decoration object means "clients continue to self-decorate" (the
+ * protocol's words), and so does a request for client-side. Settled
+ * before the first buffer, because the decoration object must exist
+ * before one is attached. Firefox and GTK 3 programs are this. */
+int aurwl_win_csd(const aurwl_win *w)
+{
+    return w && w->xdg_toplevel && (!w->decoration || w->deco_client);
+}
+unsigned aurwl_win_take_requests(aurwl_win *w)
+{
+    if (!w) return 0;
+    unsigned r = w->req;
+    w->req = 0;
+    return r;
+}
 /* What the window's geometry is measured against: the flattened tree
  * when it has one, else the toplevel's own buffer. */
 static const surface *content_base(aurwl_win *w)

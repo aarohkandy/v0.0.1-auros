@@ -74,6 +74,18 @@ uint32_t    aurwl_win_id(const aurwl_win *w);
 const char *aurwl_win_title(const aurwl_win *w);
 const char *aurwl_win_app_id(const aurwl_win *w);
 
+/* 1 when this toplevel draws its own title bar and window buttons (it
+ * negotiated no server-side decoration), so the shell must not draw a
+ * second set over the top of it. */
+int         aurwl_win_csd(const aurwl_win *w);
+
+/* What its own title bar asked of the shell since the last call -- a
+ * mask of AURWL_REQ_* -- and forget it. The shell decides what each means
+ * in its layout; a request it cannot honour is simply dropped. */
+enum { AURWL_REQ_MOVE = 1, AURWL_REQ_MAXIMIZE = 2, AURWL_REQ_RESTORE = 4,
+       AURWL_REQ_MINIMIZE = 8 };
+unsigned    aurwl_win_take_requests(aurwl_win *w);
+
 /* The window's current content: our own copy of the client's last
  * committed buffer, so it stays valid and unchanging for as long as the
  * shell needs to paint it. NULL before the first buffer arrives. */

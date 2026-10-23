@@ -86,6 +86,9 @@ static rect  lerp_rect(rect a, rect b, float t)
  * not just read-only text. */
 static int bar_height(shell_ctx *c) { return c->bar_h + (c->target_large ? 14 : 6); }
 static int title_h(shell_ctx *c)    { return c->target_large ? 44 : 36; }
+/* A program that draws its own title bar and buttons gets none of ours:
+ * two sets, one above the other, is what nobody can work out. */
+static int title_of(shell_ctx *c, int i) { return c->wins[i].csd ? 0 : title_h(c); }
 
 /* Each window in the cascade steps down by slightly more than a
  * titlebar. That is the one free improvement this model allows: the
@@ -231,7 +234,7 @@ static rect cascade_geom(shell_ctx *c, int W, int H, int i)
 static rect win_part(shell_ctx *c, int W, int H, int i, int part)
 {
     tb_priv *p = P(c);
-    int top = work_top(c), bot = H - bar_height(c), th = title_h(c);
+    int top = work_top(c), bot = H - bar_height(c), th = title_of(c, i);
     rect a;
 
     if (p && p->maxed[i]) {
@@ -252,6 +255,7 @@ static rect win_part(shell_ctx *c, int W, int H, int i, int part)
     if (part == WP_TITLE) { rect t = { a.x, a.y, a.w, th }; return t; }
     if (part == WP_BODY)  { rect b = { a.x, a.y + th, a.w, a.h - th }; return b; }
 
+    if (th == 0) return (rect){ 0, 0, 0, 0 };        /* its own bar has them */
     int bs = th - 14; if (bs < 18) bs = 18;
     int idx = (part == WP_CLOSE) ? 0 : (part == WP_MAX ? 1 : 2);
     rect b = { a.x + a.w - 8 - bs - idx * (bs + 4), a.y + (th - bs) / 2, bs, bs };
@@ -401,6 +405,20 @@ static void restore_win(shell_ctx *c, int i)
     c->focus = i;
 }
 
+static void close_win(shell_ctx *c, int i);
+/* The X on a window that has a program behind it ASKS the program, the
+ * way "Close this" does (so a document with unsaved work can object, and
+ * a second press stops one that is stuck). It used to drop the slot and
+ * leave the program running, and the next frame made the slot again: a
+ * close button that closed nothing. A slot with no program yet is ours. */
+static void close_or_ask(shell_ctx *c, int i)
+{
+    if (i < 0 || i >= c->n_wins) return;
+    if (!c->wins[i].wid) { close_win(c, i); return; }
+    c->focus = i;
+    c->want_close_win = 1;
+}
+
 static void close_win(shell_ctx *c, int i)
 {
     tb_priv *p = P(c);
@@ -465,6 +483,29 @@ static void toggle_max(shell_ctx *c, int i)
     }
     raise_win(c, i);
     c->focus = i;
+}
+
+/* A program's own title bar (Firefox, GTK programs) can ask for the same
+ * three things ours can, and for the drag. The three window buttons it
+ * shows are exactly these (textsys_buttons), so none of them is dead. */
+static void l_request(shell_ctx *c, int i, unsigned rq)
+{
+    tb_priv *p = P(c);
+    if (!p || i < 0 || i >= c->n_wins) return;
+    if (rq & WREQ_MINIMIZE) { minimise_win(c, i); return; }
+    if ((rq & WREQ_MAXIMIZE) && !p->maxed[i]) toggle_max(c, i);
+    if ((rq & WREQ_RESTORE) && p->maxed[i]) toggle_max(c, i);
+    if ((rq & WREQ_MOVE) && c->mouse_down && !p->maxed[i]) {
+        rect a = win_part(c, c->screen_w, c->screen_h, i, WP_FRAME);
+        raise_win(c, i);
+        c->focus = i;
+        p->drag_win = i; p->drag_dx = c->mouse_x - a.x; p->drag_dy = c->mouse_y - a.y;
+    }
+}
+static int l_maxed(const shell_ctx *c, int i)
+{
+    const tb_priv *p = (const tb_priv *)c->priv;
+    return p && i >= 0 && i < c->n_wins && p->maxed[i];
 }
 
 /* Starting the program is shell_launch()'s job: it finds an existing
@@ -592,7 +633,7 @@ static void paint_window(shell_ctx *c, surface *s, shell_fonts *f, int i,
 {
     tb_priv *p = P(c);
     uint32_t tint = win_tint(c, i);
-    int th = title_h(c);
+    int th = title_of(c, i);
     float r = (float)c->radius;
     corners fc = p->maxed[i] ? (corners){ r, r, 0.f, 0.f } : corners_all(r);
     corners tc = { fc.tl, fc.tr, 0.f, 0.f };
@@ -612,41 +653,54 @@ static void paint_window(shell_ctx *c, surface *s, shell_fonts *f, int i,
      * a rule along its top edge in the signal colour. */
     draw_round_rect(s, a, fc, focused ? c->surface_c : c->bg_alt, alpha);
 
-    rect tb = { a.x, a.y, a.w, th };
-    draw_round_rect(s, tb, tc, focused ? c->bg_alt : c->bg, alpha);
-    draw_hrule(s, a.x, a.y + th - 1, a.w, 1, c->overlay, alpha);
-
-    draw_frame(s, a, focused ? 2 : 1, focused ? c->fg : c->overlay, alpha);
-    if (focused) draw_hrule(s, a.x, a.y, a.w, 3, c->accent, alpha);
-
-    /* Title row: icon, name, and the subtitle trailing it when there is
-     * room — the same line a browser would put a page title on. */
-    float tx = (float)(a.x + 12);
-    shell_icon_draw(s, win_icon(c, i), tx + 10.f, (float)(a.y + th / 2), 20.f,
-                    tint, c->surface_c, alpha * (focused ? 1.f : 0.72f));
-    tx += 30.f;
-    rect cb = win_part(c, c->screen_w, c->screen_h, i, WP_MIN);
-    float room = (float)cb.x - tx - 12.f;
-    char buf[80];
-    const char *name = fit_text(f->mid, c->wins[i].title, buf, sizeof buf, room);
-    float by = shell_baseline(f->mid, (float)a.y, (float)th);
-    shell_text(s, f->mid, tx, by, name, focused ? c->fg_hi : c->subtle,
-               alpha * (focused ? 0.98f : 0.85f));
-
-    float used = shell_text_w(f->mid, name);
-    if (c->wins[i].subtitle[0] && room - used > 90.f) {
-        char sb[110];
-        const char *sub = fit_text(f->small, c->wins[i].subtitle, sb, sizeof sb,
-                                   room - used - 16.f);
-        shell_text(s, f->small, tx + used + 14.f,
-                   shell_baseline(f->small, (float)a.y, (float)th), sub,
-                   c->muted, alpha * (focused ? 0.85f : 0.6f));
+    /* Its own title bar and buttons: the program's picture, in a plain
+     * edge, and nothing of ours on it. The edge goes on AFTER, so the
+     * window is one object whatever its own corners are. */
+    if (c->wins[i].csd && c->wins[i].content) {
+        draw_content_fit(s, c->wins[i].content, a, fc, alpha);
+        draw_frame(s, a, focused ? 2 : 1, focused ? c->fg : c->overlay, alpha);
+        return;
     }
 
-    for (int part = WP_MIN; part <= WP_CLOSE; part++) {
-        rect b = win_part(c, c->screen_w, c->screen_h, i, part);
-        paint_ctrl(c, s, b, part, p->hover_win == i && p->hover_btn == part,
-                   alpha * (focused ? 1.f : 0.7f));
+    if (th > 0) {
+        rect tb = { a.x, a.y, a.w, th };
+        draw_round_rect(s, tb, tc, focused ? c->bg_alt : c->bg, alpha);
+        draw_hrule(s, a.x, a.y + th - 1, a.w, 1, c->overlay, alpha);
+
+        draw_frame(s, a, focused ? 2 : 1, focused ? c->fg : c->overlay, alpha);
+        if (focused) draw_hrule(s, a.x, a.y, a.w, 3, c->accent, alpha);
+
+        /* Title row: icon, name, and the subtitle trailing it when there is
+         * room — the same line a browser would put a page title on. */
+        float tx = (float)(a.x + 12);
+        shell_icon_draw(s, win_icon(c, i), tx + 10.f, (float)(a.y + th / 2), 20.f,
+                        tint, c->surface_c, alpha * (focused ? 1.f : 0.72f));
+        tx += 30.f;
+        rect cb = win_part(c, c->screen_w, c->screen_h, i, WP_MIN);
+        float room = (float)cb.x - tx - 12.f;
+        char buf[80];
+        const char *name = fit_text(f->mid, c->wins[i].title, buf, sizeof buf, room);
+        float by = shell_baseline(f->mid, (float)a.y, (float)th);
+        shell_text(s, f->mid, tx, by, name, focused ? c->fg_hi : c->subtle,
+                   alpha * (focused ? 0.98f : 0.85f));
+
+        float used = shell_text_w(f->mid, name);
+        if (c->wins[i].subtitle[0] && room - used > 90.f) {
+            char sb[110];
+            const char *sub = fit_text(f->small, c->wins[i].subtitle, sb, sizeof sb,
+                                       room - used - 16.f);
+            shell_text(s, f->small, tx + used + 14.f,
+                       shell_baseline(f->small, (float)a.y, (float)th), sub,
+                       c->muted, alpha * (focused ? 0.85f : 0.6f));
+        }
+
+        for (int part = WP_MIN; part <= WP_CLOSE; part++) {
+            rect b = win_part(c, c->screen_w, c->screen_h, i, part);
+            paint_ctrl(c, s, b, part, p->hover_win == i && p->hover_btn == part,
+                       alpha * (focused ? 1.f : 0.7f));
+        }
+    } else {
+        draw_frame(s, a, focused ? 2 : 1, focused ? c->fg : c->overlay, alpha);
     }
 
     rect body = win_part(c, c->screen_w, c->screen_h, i, WP_BODY);
@@ -1039,7 +1093,7 @@ static int l_click(shell_ctx *c, int x, int y)
         if (c->wins[i].minimised) continue;
         if (!pt_in(win_part(c, W, H, i, WP_FRAME), x, y)) continue;
 
-        if (pt_in(win_part(c, W, H, i, WP_CLOSE), x, y)) { close_win(c, i); return 1; }
+        if (pt_in(win_part(c, W, H, i, WP_CLOSE), x, y)) { close_or_ask(c, i); return 1; }
         if (pt_in(win_part(c, W, H, i, WP_MAX), x, y))   { toggle_max(c, i); return 1; }
         if (pt_in(win_part(c, W, H, i, WP_MIN), x, y))   { minimise_win(c, i); return 1; }
 
@@ -1066,6 +1120,10 @@ static void l_motion(shell_ctx *c, int x, int y)
         if (!c->mouse_down || p->drag_win >= c->n_wins) { p->drag_win = -1; }
         else {
             rect g = c->wins[p->drag_win].geom;
+            /* A window still placed by the cascade has no rectangle of
+             * its own yet: start from where it is, or the first move of
+             * the pointer is thrown away. */
+            if (g.w <= 0 || g.h <= 0) g = win_part(c, W, H, p->drag_win, WP_FRAME);
             g.x = x - p->drag_dx; g.y = y - p->drag_dy;
             c->wins[p->drag_win].geom = g;      /* win_part() does the clamping */
             c->wins[p->drag_win].geom = win_part(c, W, H, p->drag_win, WP_FRAME);
@@ -1182,6 +1240,8 @@ const shell_layout layout_taskbar = {
     .key = l_key,
     .step = l_step,
     .present = l_present,
+    .request = l_request,
+    .maxed = l_maxed,
     .fini = l_fini,
     .removed = l_removed,
 };

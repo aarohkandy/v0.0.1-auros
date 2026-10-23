@@ -932,8 +932,17 @@ static void l_present(shell_ctx *c, int win)
 
 static void l_fini(shell_ctx *c) { c->priv = NULL; }
 
+/* The program is already the whole screen and has no bar of ours: the
+ * one thing its own bar can ask that means anything is "put me away",
+ * which is Home. */
+static void l_request(shell_ctx *c, int win, unsigned rq)
+{
+    if ((rq & WREQ_MINIMIZE) && P(c)->win == win) go_home(c);
+}
+
 const shell_layout layout_tiles = {
     .id = "tiles",
+    .request = l_request,
     .init = l_init,
     .paint = l_paint,
     .click = l_click,

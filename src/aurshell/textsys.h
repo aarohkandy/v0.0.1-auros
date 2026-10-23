@@ -32,4 +32,24 @@ void textsys_apply(float scale);
 
 /* gtk-xft-dpi for a scale: 96 dpi in 1024ths, times the scale. */
 int  textsys_xft_dpi(float scale);
+
+/* WINDOW BUTTONS.
+ *
+ * Firefox and GTK programs draw their own title bar with their own
+ * buttons, and the desktop draws none over them (session.c). So the
+ * buttons they show must be exactly the ones this look's own windows
+ * have, or one of them is dead: "Like Windows" has minimise, maximise and
+ * close; "Like a Mac" has minimise and close; the two looks that have no
+ * buttons on a window at all (Big and simple, One thing at a time) show
+ * none, and "Close this" in the footer is the way out there.
+ *
+ * The string is GTK's gtk-decoration-layout: buttons after the colon sit
+ * at the right. Pure, for the tests. Any look it does not know has none. */
+const char *textsys_buttons_for(const char *layout_id);
+
+/* Written to her GTK 3 and 4 settings.ini, and handed to GNOME's
+ * button-layout (gsettings), which running GTK programs follow at once.
+ * Cheap and never waits. */
+int  textsys_write_buttons(const char *home, const char *layout_id);
+void textsys_buttons(const char *layout_id);
 #endif

@@ -79,9 +79,14 @@ static int slot_for_wid(shell_ctx *c, uint32_t wid)
 
 /* ── the reconcile ──────────────────────────────────────────────── */
 
-void session_sync(shell_ctx *c, void (*present)(shell_ctx *, int),
-                  void (*removed)(shell_ctx *, int))
+_Static_assert(WREQ_MOVE == AURWL_REQ_MOVE && WREQ_MAXIMIZE == AURWL_REQ_MAXIMIZE &&
+               WREQ_RESTORE == AURWL_REQ_RESTORE && WREQ_MINIMIZE == AURWL_REQ_MINIMIZE,
+               "the shell's request bits are the compositor's");
+
+void session_sync(shell_ctx *c, const shell_layout *L)
 {
+    void (*present)(shell_ctx *, int) = L ? L->present : NULL;
+    void (*removed)(shell_ctx *, int) = L ? L->removed : NULL;
     if (!c->wl) return;
     aurwl *wl = c->wl;
 
@@ -147,6 +152,11 @@ void session_sync(shell_ctx *c, void (*present)(shell_ctx *, int),
             e->subtitle[m] = 0;
         }
         e->content = aurwl_win_content(w);
+        e->csd = aurwl_win_csd(w);
+        /* What its own title bar asked for, once a frame, after the slot
+         * exists: the archetype is the one that knows where windows are. */
+        unsigned rq = aurwl_win_take_requests(w);
+        if (rq && L && L->request) L->request(c, i, rq);
 
         /* Ask the client to draw at exactly the size the archetype set
          * aside for it, so its text is rendered rather than resampled.
@@ -161,12 +171,13 @@ void session_sync(shell_ctx *c, void (*present)(shell_ctx *, int),
          * configure is idempotent, and draw_fit_rect() centres it at
          * its natural size rather than stretching it. */
         rect slot;
+        int mx = (L && L->maxed) ? L->maxed(c, i) : 0;
         if (e->content && draw_track_slot(e->content, &slot) && slot.w > 0 && slot.h > 0)
-            aurwl_win_configure(w, slot.w, slot.h, i == c->focus, 0, 0);
+            aurwl_win_configure(w, slot.w, slot.h, i == c->focus, mx, 0);
         else if (e->geom.w > 0 && e->geom.h > 0)
-            aurwl_win_configure(w, e->geom.w, e->geom.h, i == c->focus, 0, 0);
+            aurwl_win_configure(w, e->geom.w, e->geom.h, i == c->focus, mx, 0);
         else
-            aurwl_win_configure(w, 0, 0, i == c->focus, 0, 0);
+            aurwl_win_configure(w, 0, 0, i == c->focus, mx, 0);
     }
 
     uint32_t t = now_ms();

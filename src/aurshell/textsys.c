@@ -97,3 +97,36 @@ void textsys_apply(float scale)
     textsys_gsettings_argv(scale, buf, sizeof buf, argv);
     (void)run_detached(argv);
 }
+
+const char *textsys_buttons_for(const char *id)
+{
+    if (id && !strcmp(id, "taskbar")) return ":minimize,maximize,close";
+    if (id && !strcmp(id, "dock"))    return ":minimize,close";
+    return ":";
+}
+
+int textsys_write_buttons(const char *home, const char *id)
+{
+    if (!home || !*home || strlen(home) > 400) return -1;
+    const char *v = textsys_buttons_for(id);
+    char dir[600], path[700];
+    int bad = 0;
+    for (int g = 3; g <= 4; g++) {
+        snprintf(dir, sizeof dir, "%s/.config", home);
+        mkdir(dir, 0755);
+        snprintf(dir, sizeof dir, "%s/.config/gtk-%d.0", home, g);
+        if (mkdir(dir, 0755) < 0 && errno != EEXIST) { bad = 1; continue; }
+        snprintf(path, sizeof path, "%s/settings.ini", dir);
+        if (ini_set(path, "gtk-decoration-layout", v) < 0) bad = 1;
+    }
+    return bad ? -1 : 0;
+}
+
+void textsys_buttons(const char *id)
+{
+    const char *home = getenv("HOME");
+    if (home && *home) (void)textsys_write_buttons(home, id);
+    const char *argv[] = { "gsettings", "set", "org.gnome.desktop.wm.preferences",
+                           "button-layout", textsys_buttons_for(id), NULL };
+    (void)run_detached(argv);
+}

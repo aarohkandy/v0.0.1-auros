@@ -390,6 +390,15 @@ static void paint_win(shell_ctx *c, surface *s, rect a, int wi, shell_fonts *f,
     uint32_t ink = (w->app >= 0) ? c->apps[w->app].tint : c->fg;
     shell_icon ic = (w->app >= 0) ? c->apps[w->app].icon : ICON_WINDOW;
 
+    /* A program that draws its own title bar is the whole card: a band
+     * with its name above a band with its name and its buttons is the
+     * two-sets-of-everything this look exists to avoid. */
+    if (w->csd && w->content) {
+        draw_content_fit(s, w->content, a, corners_all((float)c->radius), alpha);
+        draw_frame(s, a, 1, c->overlay, 1.f);
+        return;
+    }
+
     /* A masthead, not a titlebar: a band of the deeper stock closed by
      * a hairline, with the name set in the bold text cut. */
     int th = 56;
@@ -642,7 +651,16 @@ static int  l_step(shell_ctx *c, float dt) { return tween_step(&P(c)->slide, dt)
 static void l_present(shell_ctx *c, int win) { focus_card(c, win + 1, 0.30f); }
 static void l_fini(shell_ctx *c) { c->priv = NULL; }
 
+/* Every card is already as big as it gets, and nothing here is put
+ * away: the only thing a program's own bar can ask for that means
+ * anything is "get this out of my way", which is Home. */
+static void l_request(shell_ctx *c, int win, unsigned rq)
+{
+    if (rq & WREQ_MINIMIZE) { (void)win; P(c)->list = 0; focus_card(c, 0, 0.36f); }
+}
+
 const shell_layout layout_rail = {
+    .request = l_request,
     .id = "rail",
     .init = l_init,
     .paint = l_paint,
