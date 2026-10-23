@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -229,7 +230,28 @@ int af_efivars_present(void)
     return stat(AF_DIR_EFIVARS, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+/* CAN THE BOOT VARIABLES BE WRITTEN. After a Windows install the answer is
+ * "not yet", and that used to end every "Yes, it all works".
+ *
+ * The installer's staging environment mounts efivarfs READ-ONLY (it
+ * writes boot variables only through a remount of its own, put back
+ * after) and hands the system over in the SAME boot, /sys and what is
+ * mounted on it moved across. So the first start after an install has a
+ * read-only variable store, where every later start (and the bare image,
+ * which the tests started from) has a writable one. aurfirst took that
+ * for "this computer does not let AurOS change what it starts" and the
+ * first screen she ever sees asked a question that could never be
+ * answered (RC1, a real Windows 11 VM, both installers).
+ *
+ * aurfirst runs as root and is the one thing that is meant to write
+ * these variables, so on a read-only store it asks for the store to be
+ * writable, the way a normal start already has it. Not for anything
+ * else: a refused remount (or no EROFS to begin with) is still "no". */
 int af_efivars_writable(void)
 {
+    if (access(AF_DIR_EFIVARS, W_OK) == 0) return 1;
+    if (errno != EROFS) return 0;
+    if (mount("efivarfs", AF_DIR_EFIVARS, "efivarfs", MS_REMOUNT, NULL) != 0)
+        return 0;
     return access(AF_DIR_EFIVARS, W_OK) == 0;
 }

@@ -138,15 +138,25 @@ i=0
 while [ ! -d /run/auros ] && [ "$i" -lt 300 ]; do sleep 1; i=$((i+1)); done
 if [ -d /run/auros ]; then log "desktop $(stat -c %U:%a /run/auros) after ${i}s"
 else log "desktop NEVER after ${i}s: $(systemctl is-active aurshell.service)"; fi
-if [ "$mode" = confirm ] || [ "$mode" = decline ]; then
+if [ "$mode" = confirm ] || [ "$mode" = decline ] || [ "$mode" = confirmro ]; then
+    word=${mode%ro}
+    if [ "$mode" = confirmro ]; then
+        # THE FIRST START AFTER AN INSTALL. The installer's staging
+        # environment mounts efivarfs READ-ONLY (it writes boot variables
+        # only through a remount of its own) and hands it over, mounted so,
+        # to the system it starts in the same boot. This puts it back to
+        # that state, in the booted image, under the real answer unit.
+        mount -o remount,ro /sys/firmware/efi/efivars \
+            && log "efivarfs is read-only, as staging hands it over" || log "COULD NOT make efivarfs read-only"
+    fi
     # EXACTLY what welcome.c does: the bare word, O_CREAT|O_EXCL, 0600,
     # as the desktop user. `set -C` is the shell's O_EXCL.
     u=$(stat -c %U /run/auros 2>/dev/null)
-    if runuser -u "$u" -- sh -c "umask 077; set -C; printf %s $mode > /run/auros/answer"
-    then log "pressed $mode as $u"; else log "could not press $mode as $u"; fi
+    if runuser -u "$u" -- sh -c "umask 077; set -C; printf %s $word > /run/auros/answer"
+    then log "pressed $word as $u"; else log "could not press $word as $u"; fi
     i=0
     while [ "$i" -lt 180 ]; do
-        grep -qx "request=$mode" /run/auros-answer/result 2>/dev/null && break
+        grep -qx "request=$word" /run/auros-answer/result 2>/dev/null && break
         sleep 1; i=$((i+1))
     done
     cp /run/auros-answer/result "$OUT/result.$n" 2>/dev/null \
@@ -432,6 +442,34 @@ started 0002 && ok "AurOS is reached again (the firmware's menu)" \
     || bad "...and once its desktop works it is first again" "BootOrder: $(order)" "$(why_not)"
 case " $(order) " in *" 0000 "*) ok "...with Windows still in the list" ;;
     *) bad "...with Windows still in the list" "BootOrder: $(order)" ;; esac
+fi
+
+# ═══ F. the first start after an install ════════════════════════════════
+#
+# RC1 on a real Windows 11 VM: website -> AurOS's first screen in 8 minutes,
+# "Yes, it all works", and 12 seconds later "That did not work. this
+# computer would not let AurOS change what it starts". It worked on the
+# bare image, which starts from the firmware; the installed one starts in
+# the SAME boot as staging, which mounts efivarfs read-only and hands it
+# over so. aurfirst saw a variable store it could not write and said no.
+# docs/handoff/streams/BT.md. Here the same state is made inside the
+# booted image (confirmro in the stand-in), under the real answer unit.
+if want F; then
+echo
+echo "  the first start after an install: staging handed over with efivarfs read-only"
+fresh_machine || { echo "  could not prepare the machine"; exit 2; }
+power_on confirmro; read_back
+said "efivarfs is read-only" && ok "the variable store is read-only when she presses it" \
+    || bad "the variable store is read-only when she presses it" "$(why_not)"
+grep -qx "result=ok" "$R/result.$BOOTN" 2>/dev/null \
+    && ok "\"Yes, it all works\" is carried out" \
+    || bad "\"Yes, it all works\" is carried out" \
+           "$(tr '\n' ' ' < "$R/result.$BOOTN" 2>/dev/null || echo 'no result file')" \
+           "$(tail -4 "$R/answer.log.$BOOTN" 2>/dev/null)"
+[ "$(first_in_order)" = "0002" ] && ok "AurOS is now first in BootOrder" \
+    || bad "AurOS is now first in BootOrder" "BootOrder: $(order)"
+[ -e "$R/stamps/converted.confirmed" ] && ok "and the answer is recorded" \
+    || bad "and the answer is recorded" "$(ls "$R/stamps")"
 fi
 
 # ═══ C. two entries called AurOS ═══════════════════════════════════════

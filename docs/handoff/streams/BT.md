@@ -107,6 +107,17 @@ before and passes after:
   `SecureBoot` variable inside AurOS instead, Ferry is a stub on the stand-in Windows. The old "it does not
   restore again" checks on the kernel line could no longer fail; they read the banner now.
 
+- **RC1 "this computer would not let AurOS change what it starts" (real Windows 11 VM, both installers)**:
+  staging mounts efivarfs READ-ONLY (`boot.c`, `stage_mount_pseudo`; nvram.c remounts around its own writes) and
+  `stage_switch_root` moves /sys across, so the first start after an install, which is the SAME boot, has a
+  read-only variable store; `af_efivars_writable()` said no and confirm/decline/putback/windows all failed.
+  Every later start (and the bare image) has it writable, which is why only the installed path failed.
+  Fix: aurfirst (root, the sanctioned writer) remounts a read-only efivarfs writable (`efivar.c`).
+  `firstboottest` case F makes the same state in the booted image (`confirmro`: remount ro, then press) under the
+  real answer unit: red on the unfixed image with the exact message, green fixed. Suggested for A2 (not done by
+  BT): staging could `umount /sys/firmware/efi/efivars` before `carry_across("/sys")` so systemd mounts it
+  fresh, which also fixes bootchain's reads; harmless either way now.
+
 ## Next steps, in order
 
 0. **Asked by C, not done** (the lead had told BT to stop): with the machine-id emptied in `build/forge`
