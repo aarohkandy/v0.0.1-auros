@@ -179,8 +179,9 @@ Written before the code landed; each is now in `main`.
 1. ~~B-3, the face~~ done: the installer embeds the website's Atkinson
    Hyperlegible Next 400/700/800 (`src/aurbridge/fonts/atkinsonnext-*.ttf`,
    converted from `website/assets/fonts/atkinson-next-*.woff2`; AURFONT 100-102).
-   Still open: the plain zero (P2, a repeatable fontTools script; the face
-   ships a slashed zero), the per-glyph DejaVu fallback is C's.
+   The plain zero came with the website's fonts (`tools/site/plainzero.py`);
+   `python3 tools/wizard/fonts.py` regenerates the installer's TTFs from them.
+   The per-glyph DejaVu fallback is C's.
 2. ~~B-14~~ and ~~B-15~~ are done (`close_asked`/`leave_confirmed`, `page_confirm`,
    a **Stop** button only while AurOS has only been downloading).
 3. (kept for numbering)
@@ -208,7 +209,7 @@ description shrinks the pictures to 160x100 at 1366x768). The line under the
 grid now says "Picked for you: X. Press another look to change it." If the
 sessions show she needs words, switch `pick_mode` to the 4-across layout.
 **C-12** (Next green while checking: watch). **C-10** is K's page. **A-03**
-the slashed zero: C's fontTools script, then regenerate `fonts/*.ttf` here.
+the slashed zero: done (the website's plain zero, `tools/wizard/fonts.py`).
 
 ### Wizard work packages in `docs/PLAN-END-TO-END.md` owned by B, not started
 
