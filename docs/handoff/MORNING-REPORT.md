@@ -55,7 +55,10 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Waiting for you (each with my recommendation)
 
-0. Two commits from the profiles agent were refused by the permission system (desktop screenshots per edition; ~1 h of CI). They sit in the scratchpad worktree wt-p. Say "push P's commits" if you want them.
+0. **Commits the permission system refused to push** (the lead does not push around a refusal; your call):
+   - the profiles agent's two (per-edition desktop screenshots; ~1 h of CI), in worktree `wt-p`;
+   - the installer agent's **DLL-hijacking protection (SEC-003, high)**, commit fb463fb in worktree `wt-b`
+     (tested on homebase; its last amend may not have completed). Say "push B's commit" / "push P's commits".
 
 1. **Buy a short domain** (Cloudflare Registrar, ~$10/yr). Installed computers then never depend
    on GitHub addresses. Nothing goes public before this or your explicit "promote without it".
