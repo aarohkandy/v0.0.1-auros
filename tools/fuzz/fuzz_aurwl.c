@@ -322,7 +322,23 @@ static void shell_step(void)
         aurwl_win_configure(w, cw, ch, act & 1, max & 1, full & 1);
     } break;
     case 1: aurwl_set_focus(C, w); break;
-    case 2: { int x = (int)num(), y = (int)num(); aurwl_pointer_motion(C, w, x, y, t); } break;
+    case 2: {
+        /* The point, mapped the way session.c's window_under() maps
+         * it: a fraction of the way across the window's rectangle,
+         * scaled into the space the CLIENT says it measures in, plus
+         * its shadow offset. Both of those are the client's numbers,
+         * which is the point. */
+        uint8_t fx = u8(), fy = u8();
+        int sx = 0, sy = 0;
+        if (w) {
+            int ox = 0, oy = 0, lw = 1, lh = 1;
+            aurwl_win_content_offset(w, &ox, &oy);
+            aurwl_win_logical_size(w, &lw, &lh);
+            sx = ox + (int)((long)fx * lw / 256);
+            sy = oy + (int)((long)fy * lh / 256);
+        }
+        aurwl_pointer_motion(C, w, sx, sy, t);
+    } break;
     case 3: { uint8_t b = u8(), down = u8(); aurwl_pointer_button(C, 0x110 + b % 3, down & 1, t); } break;
     case 4: { uint8_t h = u8(), v = u8(); aurwl_pointer_axis(C, h & 1, (double)(int8_t)v / 4.0, t); } break;
     case 5: {

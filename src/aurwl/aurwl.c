@@ -1813,8 +1813,16 @@ static void xs_set_geometry(struct wl_client *cl, struct wl_resource *r,
                                "a window cannot be %dx%d", ww, hh);
         return;
     }
-    w->geo_w = ww; w->geo_h = hh; w->has_geo = 1;
-    w->geo_x = x;  w->geo_y = y;
+    /* Bounded like every other size here. Unbounded, a 2^31-wide
+     * geometry became the window's logical size, the shell scaled the
+     * pointer into it and aurwl multiplied that by 256 for wl_fixed --
+     * a signed overflow on every mouse movement; and a parent at
+     * x = 2^31-1 overflowed popup placement (px + x). Found by
+     * tools/fuzz/fuzz_aurwl.c. */
+    w->geo_w = clampi(ww, 1, MAX_DIM); w->geo_h = clampi(hh, 1, MAX_DIM);
+    w->geo_x = clampi(x, -MAX_DIM, MAX_DIM);
+    w->geo_y = clampi(y, -MAX_DIM, MAX_DIM);
+    w->has_geo = 1;
 }
 /* The serial has to be one we actually sent. Anything is accepted
  * otherwise, which means a client that never received a configure --
