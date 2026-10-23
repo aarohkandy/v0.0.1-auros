@@ -554,6 +554,12 @@ jobs:
         run: |
           npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/pw" playwright@1.56.1
           "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+      # A release that is about to become [latest] is not made public while the legal pack is not ready
+      # (stream LEGAL: the owner's mailbox, the installer's agreement line and Licenses button, the
+      # reviews). The step says what is missing. Other runs are not held up by it.
+      - name: the legal pack is ready for the public (tools/legal/check.py --launch)
+        if: needs.which.outputs.latest == 'true'
+        run: python3 -I tools/legal/check.py --launch
       # website/ names no repository; this one is written in (as pages.yml does).
       - name: the site, with this repository written in
         run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"

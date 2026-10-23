@@ -99,6 +99,10 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # The public site is not put up while the legal pack is not ready (stream LEGAL: the owner's
+      # mailbox, the installer's agreement line and Licenses button, the reviews). It says what is missing.
+      - name: The legal pack is ready for the public (tools/legal/check.py --launch)
+        run: python3 -I tools/legal/check.py --launch
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
       - name: The site, with this repository written in
         run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"
