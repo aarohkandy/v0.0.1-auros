@@ -56,11 +56,11 @@ function Status([string]$phase, [string]$text) {
 # Long names: the \\?\ form, but ONLY for a name that needs it. powershell.exe runs .NET with
 # legacy path handling, where the prefix is not understood by File.Open on every volume; a name
 # under 240 characters never needs it.
-function LP([string]$p) { if ($p.Length -lt 240 -or $p.StartsWith('\\?\')) { $p } else { '\\?\' + $p } }
+function LongPath([string]$p) { if ($p.Length -lt 240 -or $p.StartsWith('\\?\')) { $p } else { '\\?\' + $p } }
 function Sha256File([string]$path) {
     if (-not $path) { throw 'Sha256File was given no path' }
     $h = [System.Security.Cryptography.SHA256]::Create()
-    $full = LP $path
+    $full = LongPath $path
     try { $s = [System.IO.File]::Open($full, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read) }
     catch { throw ("could not open '" + $path + "' as '" + $full + "': " + $_.Exception.Message) }
     try { $b = $h.ComputeHash($s) } finally { $s.Dispose(); $h.Dispose() }
@@ -101,7 +101,7 @@ function No-Links([string]$root, [string]$path) {
     foreach ($seg in $rest.Split('\')) { if ($seg) { $cur = $cur + '\' + $seg; $chain += $cur } }
     foreach ($c in $chain) {
         $a = $null
-        try { $a = [System.IO.File]::GetAttributes((LP $c)) } catch { continue }   # not there yet
+        try { $a = [System.IO.File]::GetAttributes((LongPath $c)) } catch { continue }   # not there yet
         if ($a -band [System.IO.FileAttributes]::ReparsePoint) { return $false }
     }
     return $true
@@ -190,7 +190,7 @@ if ($Mode -eq 'user') {
             if ($saved.ContainsKey($key)) {
                 $d = $saved[$key]
                 try {
-                    if ((Inside $d $into) -and (No-Links $prof $d) -and [System.IO.File]::Exists((LP $d)) -and (Sha256File $d) -eq $r.Sha) { $ok = $true }
+                    if ((Inside $d $into) -and (No-Links $prof $d) -and [System.IO.File]::Exists((LongPath $d)) -and (Sha256File $d) -eq $r.Sha) { $ok = $true }
                 } catch {}
             }
             if (-not $ok) {
@@ -199,7 +199,7 @@ if ($Mode -eq 'user') {
                 if (-not (Inside $dest $into) -or -not (No-Links $prof $dest)) {
                     Log "refused (it would go through a link or outside From AurOS): $key"; $blocked++; continue
                 }
-                [void][System.IO.Directory]::CreateDirectory((LP $dir))
+                [void][System.IO.Directory]::CreateDirectory((LongPath $dir))
                 if (-not (No-Links $prof $dir)) { Log "refused (a link): $key"; $blocked++; continue }
                 # Never overwrite. A file already there with these very bytes is the file.
                 $k = 1
@@ -207,18 +207,18 @@ if ($Mode -eq 'user') {
                 $stem = [System.IO.Path]::GetFileNameWithoutExtension($leaf)
                 $ext = [System.IO.Path]::GetExtension($leaf)
                 $cand = $dest
-                while ([System.IO.File]::Exists((LP $cand)) -and (Sha256File $cand) -ne $r.Sha) {
+                while ([System.IO.File]::Exists((LongPath $cand)) -and (Sha256File $cand) -ne $r.Sha) {
                     $tag = if ($k -eq 1) { ' (from AurOS)' } else { " (from AurOS $k)" }
                     $cand = Join-Path $dir ($stem + $tag + $ext)
                     $k++
                 }
-                if (-not [System.IO.File]::Exists((LP $cand))) {
+                if (-not [System.IO.File]::Exists((LongPath $cand))) {
                     $part = $cand + '.aurpart'
-                    if ([System.IO.File]::Exists((LP $part))) { [System.IO.File]::Delete((LP $part)) }
+                    if ([System.IO.File]::Exists((LongPath $part))) { [System.IO.File]::Delete((LongPath $part)) }
                     $src = Join-Path $hroot ('files\' + $r.Folder + '\' + $rel)
                     $h = [System.Security.Cryptography.SHA256]::Create()
-                    $in = [System.IO.File]::Open((LP $src), 'Open', 'Read', 'Read')
-                    $out = [System.IO.File]::Open((LP $part), 'CreateNew', 'Write', 'None')
+                    $in = [System.IO.File]::Open((LongPath $src), 'Open', 'Read', 'Read')
+                    $out = [System.IO.File]::Open((LongPath $part), 'CreateNew', 'Write', 'None')
                     try {
                         $buf = New-Object byte[] (4MB)
                         while (($got = $in.Read($buf, 0, $buf.Length)) -gt 0) {
@@ -230,11 +230,11 @@ if ($Mode -eq 'user') {
                     $gh = ([System.BitConverter]::ToString($h.Hash) -replace '-', '').ToLowerInvariant()
                     $h.Dispose()
                     if ($gh -ne $r.Sha) {
-                        [System.IO.File]::Delete((LP $part))
+                        [System.IO.File]::Delete((LongPath $part))
                         Log "the copy of $key does not match what AurOS wrote"; $blocked++; continue
                     }
-                    [System.IO.File]::Move((LP $part), (LP $cand))
-                    try { [System.IO.File]::SetLastWriteTimeUtc((LP $cand), [DateTimeOffset]::FromUnixTimeSeconds($r.Mtime).UtcDateTime) } catch {}
+                    [System.IO.File]::Move((LongPath $part), (LongPath $cand))
+                    try { [System.IO.File]::SetLastWriteTimeUtc((LongPath $cand), [DateTimeOffset]::FromUnixTimeSeconds($r.Mtime).UtcDateTime) } catch {}
                 }
                 # Verified where it now lives, not where it came from.
                 if ((Sha256File $cand) -ne $r.Sha) { Log "the saved copy of $key does not match"; $blocked++; continue }
@@ -247,8 +247,8 @@ if ($Mode -eq 'user') {
             if ($TestDieAfter -gt 0 -and $n -ge $TestDieAfter) { Log "test: stopping after $n files"; exit 97 }
         }
         $readme = Join-Path $into 'Read me.txt'
-        if ($blocked -eq 0 -and -not [System.IO.File]::Exists((LP $readme))) {
-            try { [System.IO.File]::WriteAllText((LP $readme), "These are the files you saved while you used AurOS.`r`nThey were copied here when you put Windows back.`r`n") } catch {}
+        if ($blocked -eq 0 -and -not [System.IO.File]::Exists((LongPath $readme))) {
+            try { [System.IO.File]::WriteAllText((LongPath $readme), "These are the files you saved while you used AurOS.`r`nThey were copied here when you put Windows back.`r`n") } catch {}
         }
         if ($blocked -gt 0) {
             Tick ("$blocked of your files could not be saved safely. They are still safe in AurOS-Handover; please ask someone you trust to look.") 100
@@ -337,7 +337,7 @@ function All-Saved($rows, [string]$prof) {
         $dest = $saved[$key]
         try {
             if (-not (Inside $dest $into) -or -not (No-Links $prof $dest)) { continue }
-            if (-not [System.IO.File]::Exists((LP $dest))) { continue }
+            if (-not [System.IO.File]::Exists((LongPath $dest))) { continue }
             if ((Sha256File $dest) -ne $r.Sha) { continue }
             $script:verified[$key] = $true
             $n++
