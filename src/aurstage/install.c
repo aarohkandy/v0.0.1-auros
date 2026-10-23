@@ -1381,6 +1381,24 @@ void restore_run(const stage_machine *m)
               m->disk[best_disk].name, oc.table_restored, oc.esp_restored,
               oc.volumes_grown, oc.volumes_left_small, oc.mbr_restored);
     stage_say("%s", "");
+    /* AUROS IS GONE, SO ITS START-UP ENTRIES GO TOO. The partition they
+     * name no longer exists. Left behind -- and after "it works" the
+     * first one in BootOrder -- the firmware tries a dead entry at every
+     * switch-on before it reaches Windows, and some firmware stops
+     * there. Only entries whose description is exactly ours go
+     * (nvram_boot_forget never matches a prefix); BootOrder is not
+     * touched (this program has no way to write it, on purpose), and a
+     * number in it that names no entry is skipped by the firmware.
+     * Failing to remove them changes nothing about the restore. */
+    {
+        char gone[200];
+        if (nvram_present()) {
+            if (nvram_boot_forget(LOADER_ENTRY_DESC, gone, sizeof gone) < 0)
+                stage_warn("%s", gone);
+            if (nvram_boot_forget(LOADER_INSTALLER_DESC, gone, sizeof gone) < 0)
+                stage_warn("%s", gone);
+        }
+    }
     if (best_on_target) {
         /* The copy was on this computer's own disk (no stick was used):
          * restarting reaches Windows, so it restarts -- "the screen goes

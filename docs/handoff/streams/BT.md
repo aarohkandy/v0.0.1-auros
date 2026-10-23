@@ -74,14 +74,20 @@ before and passes after:
   Note: a kernel line added anywhere (the Windows start line was missed once) needs S1's options; run
   `tools/hardentest.sh` (it checks every kernel line) before pushing a change to `grub.cfg.in` or `bootchain`.
 
+- **5 dead entry after a restore**: `restore_run` (A2's install.c, one block) removes the entries described exactly
+  "AurOS" and "AurOS Installer" once the restore's verdict is `restored` (BootOrder is not written: staging has
+  no BootOrder writer by design and the firmware skips a number with no entry). `nvramtest` reads the code for
+  the call (29 checks; red with the call removed). NOT proven end to end under UEFI NVRAM: nosticktest's
+  Secure Boot section installs under OVMF but does not restore there; a restore under real NVRAM is unproven.
+
 ## Next steps, in order
 
 1. Watch the first CI run of `tests` with `windowsboottest` and `rollbacktest` (both gating now) and
    of the changed `firstboottest` (its stand-in waits for the keeper). Pushed as 69ca6b1; the
    keeper part was proven by `firstboottest` D and E only (not yet the full A, B, C with the new
    stand-in: run it on homebase if CI shows red).
-2. Item 5: dead AurOS entry after a restore: `nvram_boot_forget("AurOS")` at the end of
-   `restore_run` (A2's file; one call) plus the BootOrder entry; test in `putbacktest`/`powercuttest`.
+2. Prove item 5 under UEFI: extend nosticktest's Secure Boot section with a restore on the same NVRAM and
+   assert `efivarstore entry AurOS` is gone (A2's file).
 3. WP-30 full: safe graphics (nomodeset) on boot 3, previous debs, boot-4 menu that waits for her;
    hang and crash-loop cases (needs a watchdog: `softlockup_panic`, systemd `RuntimeWatchdogSec`).
 4. WP-77 Windows-side keeper task (with B) and the `windows-once` variant (F); WP-31 residual (CA and

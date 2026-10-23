@@ -336,6 +336,27 @@ R=$("$TMP/n" forget "AurOS")
   && ok "a description is matched whole, never as a prefix" \
   || bad "a description is matched whole, never as a prefix" "$R $(ls "$VD")"
 
+# ── the restore removes what it leaves dead ─────────────────────────
+# Put Windows back deletes AurOS's partitions. The firmware entries that
+# name them stay unless the restore removes them: after "it works" the
+# first one in BootOrder, tried (and failed) at every switch-on. The
+# call is in install.c's restore_run, between the verdict and the
+# restart, and this reads the CODE (comments are not code) for it. A
+# restore under real UEFI NVRAM is the long KVM test's (nosticktest).
+if icode=$(gcc -fpreprocessed -dD -E src/aurstage/install.c 2>/dev/null) && [ -n "$icode" ]; then
+    tail=$(printf '%s\n' "$icode" | awk '/verdict=restored record=done/{f=1} f{print} /reboot\(RB_AUTOBOOT\)/{if(f)exit}')
+    case "$tail" in
+      *nvram_boot_forget*LOADER_ENTRY_DESC*) ok "a finished restore removes AurOS's start-up entry" ;;
+      *) bad "a finished restore removes AurOS's start-up entry" "restore_run does not call nvram_boot_forget(LOADER_ENTRY_DESC) after its verdict" ;;
+    esac
+    case "$tail" in
+      *nvram_boot_forget*LOADER_INSTALLER_DESC*) ok "...and the installer's, if it is still there" ;;
+      *) bad "...and the installer's, if it is still there" ;;
+    esac
+else
+    bad "a finished restore removes AurOS's start-up entry" "install.c would not preprocess"
+fi
+
 # ── a full menu ─────────────────────────────────────────────────────
 # docs/safety S-04. An old Lenovo or HP can have no room for a NEW entry.
 # The install used to find that out after the partition table was committed:
