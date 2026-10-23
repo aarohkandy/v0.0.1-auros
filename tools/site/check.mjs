@@ -462,7 +462,7 @@ for (const [at, want] of [
 //    and some old claims are false for this build and must not come back.
 {
   const read = (f) => { try { return fs.readFileSync(path.join(REPO, f), "utf8"); } catch { return ""; } };
-  const wizard = read("src/aurbridge/wizard.c"), preflightH = read("src/aurbridge/preflight.h");
+  const plan = read("src/aurstage/plan.c"), wizard = read("src/aurbridge/wizard.c"), preflightH = read("src/aurbridge/preflight.h");
   const fixWin = read("src/aurbridge/fix_win.c"), phases = read("src/aurbridge/phases.h");
   const shellSrc = ["src/aurshell"].concat(fs.readdirSync(path.join(REPO, "src/aurshell/layouts")).map((f) => "src/aurshell/layouts/" + f))
     .flatMap((d) => d.endsWith(".c") ? [d] : fs.readdirSync(path.join(REPO, d)).filter((f) => f.endsWith(".c")).map((f) => d + "/" + f))
@@ -486,8 +486,9 @@ for (const [at, want] of [
   const FACTS = {
     "auros-need-gb": String(num(preflightH, /PF_AUROS_NEED_BYTES\s+\(\s*(\d+)ULL \* 1024 \* 1024 \* 1024\)/, "what AurOS needs")),
     "windows-floor-gb": String(num(preflightH, /PF_WINDOWS_KEEP_BYTES\s+\(\s*(\d+)ULL \* 1024 \* 1024 \* 1024\)/, "what Windows keeps at least")),
-    "auros-max-gb": String(num(wizard, /headroom < (\d+) \* GIB \? headroom : \1 \* GIB/, "the most AurOS takes")),
-    "windows-room-gb": String(num(wizard, /if \(reserve < (\d+) \* GIB\)/, "what Windows keeps when there is room")),
+    // the shrink policy: src/aurstage/plan.c shrink_pick_target() (the installer no longer shows these figures)
+    "auros-max-gb": String(num(plan, /headroom < (\d+) \* PLAN_GIB \? headroom : \1 \* PLAN_GIB/, "the most AurOS takes")),
+    "windows-room-gb": String(num(plan, /if \(reserve < (\d+) \* PLAN_GIB\)/, "what Windows keeps when there is room")),
     "time-ssd": eta(false),
     "time-hdd": eta(true),
   };
