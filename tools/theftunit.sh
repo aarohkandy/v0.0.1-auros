@@ -492,7 +492,7 @@ if [ -s "$CFG" ] && bash "$LOCKCTL" convert-menu "$CFG" "$T/esp.cfg" "$ESPU" "$R
     if command -v grub-script-check >/dev/null 2>&1; then
         grub-script-check "$T/esp.cfg" >/dev/null 2>&1 && ok "grub accepts the converted menu's syntax (grub-script-check)" || bad "grub accepts the converted menu" "$(grub-script-check "$T/esp.cfg" 2>&1 | head -3)"
     fi
-else bad "the current menu converts for the EFI partition" "bootchain or convert-menu refused: $(python3 -I "$SRC/rootfs/usr/lib/auros/bootchain" menu --root "$M" --running none 2>&1 | head -2)"; fi
+else bad "the current menu converts for the EFI partition" "bootchain (needs python3-cryptography) or convert-menu refused: $(python3 -I "$SRC/rootfs/usr/lib/auros/bootchain" menu --root "$M" --running none 2>&1 | tail -2)"; fi
 
 echo
 if [ "$fail" -eq 0 ]; then echo "  $checked checks, all ok"; exit 0; fi
