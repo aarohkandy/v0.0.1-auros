@@ -82,7 +82,8 @@ def main():
         return all(states()[c] == "ok" for c in ("download", "pieces", "channel"))
 
     def issue(check):
-        j = json.loads(gh("issue", "list", "-R", R, "--label", "drill", "--state", "all", "--search", f"drill: {check} is down", "--json", "number,title,state,assignees"))
+        # the list API, not --search: the search index lags by minutes and made the first run miss its own issue
+        j = json.loads(gh("issue", "list", "-R", R, "--label", "drill", "--state", "all", "--limit", "50", "--json", "number,title,state,assignees"))
         return [i for i in j if i["title"] == f"drill: {check} is down"]
 
     try:
