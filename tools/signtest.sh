@@ -233,6 +233,10 @@ if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     # one fails these checks for that reason instead of the one asked.
     mkdir -p "$TMP/tree"
     cp -r build src tools hw "$TMP/tree/"
+    # The licences and the Terms travel inside the .exe (LEGAL, 9693e80):
+    # build/aurbridge reads docs/legal/notices, so the copy needs it
+    # (RC3 run 40038558072: both build checks died on "NOTICES.txt is missing").
+    mkdir -p "$TMP/tree/docs/legal" && cp -r docs/legal/notices "$TMP/tree/docs/legal/"
     # The copy has no git remote: tell it which repository, as asked of
     # this checkout (build/aurbridge bakes in the website it names).
     AUROS_REPO=$(sh tools/repo.sh) || AUROS_REPO=""
