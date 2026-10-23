@@ -15,6 +15,16 @@
 int commit_build(const gpt_table *old, const stage_layout *L,
                  gpt_table *out, char *why, size_t n)
 {
+    /* A TABLE READ FROM THE BACKUP IS NEVER COMMITTED. Its array is at
+     * the end of the disk, where the primary's must not be, and a
+     * primary that was torn is a disk something else is wrong with
+     * (rescue_capture refuses it first; this is the second lock). */
+    if (old->from_backup) {
+        snprintf(why, n,
+                 "this disk's main partition table is damaged, and AurOS will "
+                 "not change a disk it is reading from its spare copy");
+        return -1;
+    }
     *out = *old;
     out->from_backup = 0;
 
@@ -83,34 +93,56 @@ int commit_table(wr_target *t, const gpt_table *nw,
     uint64_t alt  = nw->disk_sectors - 1;
     uint64_t barr = alt - (ab + ss - 1) / ss;
 
-    /* 1. THE PRIMARY ENTRY ARRAY. This invalidates the primary header
-     *    -- its CRC covers the array -- so from here until step 2
-     *    every reader falls back to the backup, which is still the
-     *    OLD one. The disk goes on reading exactly as it did. */
+    /* 1. THE NEW BACKUP, FIRST, at the last block of the disk, array
+     *    then header (so a torn backup has no valid header and is simply
+     *    not believed), flushed, and READ BACK before anything primary is
+     *    touched. This used to be last, and the step before it
+     *    invalidated the primary and relied on whatever backup the disk
+     *    already had -- one nothing had ever looked at. A disk whose old
+     *    backup was missing, stale or never at the end (cloned, resized,
+     *    a vendor tool) had no readable partition table at all between
+     *    the primary array and LBA 1, and a power cut there is a
+     *    computer that starts nothing (docs/safety, finding on commit.c).
+     *    Now the primary is still the old, valid table: readers use it
+     *    and the new backup just sits at the end. */
+    if (wr_bytes(t, WR_GPT_BACKUP, barr * ss, arr, ab, why, n) != 0) goto out;
+    if (wr_bytes(t, WR_GPT_BACKUP, alt * ss, bhdr, ss, why, n) != 0) goto out;
+    if (wr_flush(t) != 0) {
+        snprintf(why, n, "this computer's disk would not finish writing");
+        goto out;
+    }
+    {
+        uint64_t bad1 = 0;
+        if (wr_check(t, barr * ss, arr, ab, &bad1) != 0 ||
+            wr_check(t, alt * ss, bhdr, ss, &bad1) != 0) {
+            snprintf(why, n,
+                     "the spare copy of the new partition table did not read "
+                     "back the same as it was written. Nothing in the "
+                     "partition table in use has been changed.");
+            goto out;
+        }
+    }
+    if (after) after(1, ud);
+
+    /* 2. THE PRIMARY ENTRY ARRAY. Its header's CRC covers it, so the
+     *    moment any of it lands the primary is rejected and every reader
+     *    falls back to the backup -- which is now the NEW table, whole
+     *    and checked. From here the disk reads as the new layout,
+     *    whether this write finishes or tears. There is no instant at
+     *    which a reader finds neither table or a mixture: it reads the
+     *    old one (primary valid) or the new one (backup, or primary
+     *    again), and it only ever moves old -> new. */
     if (wr_bytes(t, WR_GPT_PRIMARY, nw->entry_lba * ss, arr, ab, why, n) != 0)
         goto out;
     if (wr_flush(t) != 0) {
         snprintf(why, n, "this computer's disk would not finish writing");
         goto out;
     }
-    if (after) after(1, ud);
-
-    /* 2. AND THE SECTOR. THIS IS THE COMMIT, and it is the whole of
-     *    it: one sector, and a sector write is atomic on every real
-     *    device. Before it the machine has its old partitions; after
-     *    it, its new ones. */
-    if (wr_bytes(t, WR_GPT_PRIMARY, 1ull * ss, phdr, ss, why, n) != 0) goto out;
-    if (wr_flush(t) != 0) {
-        snprintf(why, n, "this computer's disk would not finish writing");
-        goto out;
-    }
     if (after) after(2, ud);
 
-    /* 3. The backup catches up. A machine that loses power between
-     *    step 2 and here has a correct primary and a stale backup,
-     *    and every reader prefers the primary. */
-    if (wr_bytes(t, WR_GPT_BACKUP, barr * ss, arr, ab, why, n) != 0) goto out;
-    if (wr_bytes(t, WR_GPT_BACKUP, alt * ss, bhdr, ss, why, n) != 0) goto out;
+    /* 3. LBA 1: the primary header, one sector, and the primary agrees
+     *    with the backup again. */
+    if (wr_bytes(t, WR_GPT_PRIMARY, 1ull * ss, phdr, ss, why, n) != 0) goto out;
     if (wr_flush(t) != 0) {
         snprintf(why, n, "this computer's disk would not finish writing");
         goto out;

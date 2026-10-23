@@ -27,11 +27,18 @@ bad() { checked=$((checked+1)); fail=$((fail+1)); printf '    %-56s %s\n' "$1" "
 
 command -v sgdisk >/dev/null 2>&1 || { echo "need sgdisk"; exit 2; }
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/committest.XXXXXX")
-trap 'rm -rf "$TMP"' EXIT
+# A kill (timeout, ^C) must not leak the images in $TMP: the EXIT trap alone
+# does not run on a signal in dash, and a leaked 3 GB disk image per run
+# once filled homebase. INT and TERM exit, which runs the EXIT trap, and
+# the background QEMU goes with it.
+_a2_clean() { kill $(jobs -p) 2>/dev/null; [ -n "${KEEP:-}" ] || rm -rf "$TMP"; }
+trap _a2_clean EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo
-echo "Is the commit really one sector -- and does the disk read as the"
-echo "old layout until that sector lands?"
+echo "Is there ever an instant at which the disk has no whole table, and"
+echo "does the layout move from old to new exactly once?"
 echo
 
 cat > "$TMP/c.c" <<'EOC'
@@ -56,8 +63,16 @@ static void snap(int step, void *ud)
     snprintf(dst, sizeof dst, "%s.step%d", g_img, step);
     int a = open(g_img, O_RDONLY), b = open(dst, O_WRONLY|O_CREAT|O_TRUNC, 0644);
     if (a >= 0 && b >= 0) {
-        char buf[1 << 16]; ssize_t k;
-        while ((k = read(a, buf, sizeof buf)) > 0) { ssize_t w = write(b, buf, k); (void)w; }
+        /* SPARSE: the disk is 3 GiB of which a few MiB are not zero, and
+         * a full copy per step once filled the build server's disk. */
+        static char buf[1 << 16], zero[1 << 16];
+        ssize_t k;
+        while ((k = read(a, buf, sizeof buf)) > 0) {
+            if (memcmp(buf, zero, (size_t)k) == 0) { lseek(b, k, SEEK_CUR); continue; }
+            ssize_t w = write(b, buf, (size_t)k); (void)w;
+        }
+        off_t end = lseek(a, 0, SEEK_END);
+        if (ftruncate(b, end) != 0) { /* the copy is merely longer */ }
     }
     if (a >= 0) close(a);
     if (b >= 0) close(b);
@@ -166,32 +181,42 @@ printf '%s\n' "$AFTER" | sed 's/^/      p/'
 
 echo
 echo "  and what a reader would have seen at each instant"
-# Snapshots were taken after each flush. Until LBA 1 lands the disk
-# must still read as the OLD layout -- that is the whole claim.
-for s in 1; do
-    if [ -f "$D.step$s" ]; then
-        GOT=$(parts "$D.step$s")
-        if [ "$GOT" = "$BEFORE" ]; then
-            ok "after step $s the disk still reads as the old layout"
-        else
-            bad "after step $s the disk still reads as the old layout" \
-                "it already shows the new one -- the commit is not one sector"
-        fi
-    else
-        bad "after step $s the disk still reads as the old layout" "no snapshot"
-    fi
-done
+# Snapshots were taken after each flush. The layout must move from the
+# old one to the new one exactly once, and every snapshot must be a disk
+# a reader can read.
+if [ -f "$D.step1" ]; then
+    GOT=$(parts "$D.step1")
+    [ "$GOT" = "$BEFORE" ] && ok "after step 1 (the new backup is down) it still reads as the old layout" \
+        || bad "after step 1 it still reads as the old layout" \
+               "the primary was touched before the backup was safe"
+    V=$(sgdisk -v "$D.step1" 2>&1)
+    printf '%s' "$V" | grep -q "Main partition table: OK" \
+        && ok "...and its primary table is intact" \
+        || bad "...and its primary table is intact" "$(printf '%s' "$V" | head -3)"
+else
+    bad "after step 1 it still reads as the old layout" "no snapshot"
+fi
 if [ -f "$D.step2" ]; then
     GOT=$(parts "$D.step2")
-    [ "$GOT" != "$BEFORE" ] && ok "after step 2 -- the one sector -- it reads as the new one" \
-                            || bad "after step 2 it reads as the new one" "still the old layout"
+    [ "$GOT" != "$BEFORE" ] && ok "after step 2 (the primary array is down) it reads as the new layout" \
+                            || bad "after step 2 it reads as the new layout" "still the old layout"
+    # fdisk (libfdisk) is a reader that validates both CRCs the way the
+    # kernel and the firmware do, and says which table it fell back to.
+    if command -v fdisk >/dev/null 2>&1; then
+        V=$(fdisk -l "$D.step2" 2>&1)
+        printf '%s' "$V" | grep -q "primary GPT table is corrupt, but the backup appears OK" \
+            && ok "...through a backup table that is whole (a reader falls back to it)" \
+            || bad "...through a backup table that is whole" "$(printf '%s' "$V" | head -3)"
+        [ "$(printf '%s' "$V" | grep -c "^$D.step2p")" = 7 ] \
+            && ok "...and that table lists all 7 partitions" \
+            || bad "...and that table lists all 7 partitions" "$(printf '%s' "$V" | grep -c "^$D.step2p")"
+    fi
 else
-    bad "after step 2 it reads as the new one" "no snapshot"
+    bad "after step 2 it reads as the new layout" "no snapshot"
 fi
-# And the backup, written afterwards, must agree with the primary.
 if [ -f "$D.step3" ]; then
     if sgdisk -v "$D.step3" 2>&1 | grep -q "No problems found"; then
-        ok "and after step 3 both copies of the table agree"
+        ok "and after step 3 (LBA 1) both copies of the table agree"
     else
         bad "and after step 3 both copies of the table agree" \
             "$(sgdisk -v "$D.step3" 2>&1 | head -3)"
@@ -199,10 +224,7 @@ if [ -f "$D.step3" ]; then
 fi
 
 echo
-echo "  and a power cut before that sector"
-# Stop the program dead after step 1 -- the array is down, the commit
-# sector is not -- the way losing power would, and then ask what is on
-# the disk.
+echo "  and a power cut after the new backup is down"
 D2="$TMP/d2.img"; mkdisk "$D2"
 B2=$(parts "$D2")
 "$TMP/c" "$D2" "$WS" 536870912 268435456 209715200 200000000 1 >/dev/null 2>&1
@@ -211,26 +233,31 @@ A2=$(parts "$D2" 2>/dev/null)
                   || bad "the machine still has exactly its old partitions" \
                          "before: $(printf '%s' "$B2" | tr '\n' ' ')" \
                          "after:  $(printf '%s' "$A2" | tr '\n' ' ')"
+sgdisk -v "$D2" 2>&1 | grep -q "Main partition table: OK" \
+    && ok "...read from a primary table that is whole" \
+    || bad "...read from a primary table that is whole" "$(sgdisk -v "$D2" 2>&1 | head -3)"
 
-# WHAT A CORRECT INTERRUPTED DISK LOOKS LIKE, which is not "no
-# problems found". The primary array has been rewritten and the
-# primary header has not, so the primary CRC fails BY DESIGN and every
-# reader falls back to the backup -- which is still the old table and
-# is intact. That is the property: the machine has its old partitions
-# and a valid table to read them from.
-V=$(sgdisk -v "$D2" 2>&1)
-if printf '%s' "$V" | grep -q "Backup partition table: OK"; then
-    ok "...with an intact backup table for a reader to fall back to"
-else
-    bad "...with an intact backup table for a reader to fall back to" \
-        "$(printf '%s' "$V" | head -4)"
-fi
-if printf '%s' "$V" | grep -q "Main partition table: ERROR"; then
-    ok "...and the half-written primary is REJECTED, not believed"
-else
-    bad "...and the half-written primary is REJECTED, not believed" \
-        "a reader would have used a table we never committed"
-fi
+echo
+echo "  and a power cut at either instant, whatever the OLD backup was"
+# THE CASE THE OLD ORDER FAILED. A disk whose original backup table is
+# missing (cloned, resized, a vendor tool zeroed it) had, in the old
+# order, no readable table at all between the primary array and LBA 1.
+# Now the cut at step 1 leaves the old (valid) primary, and the cut at
+# step 2 the new table through the backup written at step 1.
+for kind in intact zeroed; do
+    for stop in 1 2; do
+        D3="$TMP/d3-$kind-$stop.img"; mkdisk "$D3"
+        if [ "$kind" = zeroed ]; then
+            SZ=$(stat -c%s "$D3")
+            dd if=/dev/zero of="$D3" bs=512 seek=$((SZ/512 - 34)) count=34 conv=notrunc status=none
+        fi
+        "$TMP/c" "$D3" "$WS" 536870912 268435456 209715200 200000000 $stop >/dev/null 2>&1
+        N3=$(parts "$D3" 2>/dev/null | wc -l)
+        want=$([ "$stop" = 1 ] && echo 4 || echo 7)
+        [ "$N3" = "$want" ] && ok "$kind old backup, cut at step $stop: $want partitions readable" \
+                            || bad "$kind old backup, cut at step $stop: a readable table" "$N3 partitions read, wanted $want"
+    done
+done
 
 # And on the disk that DID commit, Windows is smaller than it was.
 WOLD=$(printf '%s\n' "$BEFORE" | sed -n '3p' | cut -d: -f3)
@@ -243,11 +270,22 @@ else
 fi
 
 echo
+echo "  and a disk whose main table is damaged is not committed onto"
+D4="$TMP/d4.img"; mkdisk "$D4"
+dd if=/dev/zero of="$D4" bs=512 seek=1 count=1 conv=notrunc status=none
+S4=$(cksum < "$D4")
+OUT4=$("$TMP/c" "$D4" "$WS" 536870912 268435456 209715200 200000000 2>/dev/null)
+[ "$(printf '%s\n' "$OUT4" | G build)" = "failed" ] && ok "building from the spare copy is refused" \
+    || bad "building from the spare copy is refused" "$OUT4"
+[ "$(cksum < "$D4")" = "$S4" ] && ok "...and the disk is byte-for-byte untouched" \
+    || bad "...and the disk is byte-for-byte untouched"
+
+echo
 if [ "$fail" -gt 0 ]; then
     echo "$fail of $checked wrong."
     echo "This is the sector that decides where a stranger's partitions are."
     exit 1
 fi
-echo "$checked checks: the commit is one sector, and until it lands the"
-echo "disk reads exactly as it did before anything started."
+echo "$checked checks: at no instant is there no whole table, and the layout"
+echo "moves from the old one to the new one exactly once."
 exit 0
