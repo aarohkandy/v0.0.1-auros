@@ -955,23 +955,31 @@ class Flow:
             self.m.shot("store-open")
         with self.rec.phase("aurOS: find and install " + STORE_QUERY):
             found = None
-            for attempt in range(4):
+            for attempt in range(3):
                 b, _ = self.ocr_find("Search")
                 if b:
                     self.m.click(*vision.centre(b), label="store search")
                 else:
-                    self.m.key("ctrl", "f", label="store search (Ctrl+F)")
+                    # The search is a magnifying glass at the left of the store's
+                    # Explore tab (no word on it; run 40003466428). A person clicks
+                    # it; Ctrl+F reached nothing, the keyboard was not in that window.
+                    ex, _ = self.ocr_find("Explore")
+                    if ex:
+                        cx, cy = vision.centre(ex)
+                        self.m.click(cx - 206, cy, label="store search (the magnifying glass)")
+                    else:
+                        self.m.key("ctrl", "f", label="store search (Ctrl+F)")
                 time.sleep(2)
                 self.m.key("ctrl", "a")
                 self.m.type(STORE_QUERY, label="search")
                 self.m.key("ret")
                 # the catalogue can take a minute or two after first going online
-                p, found, _ = self.wait_text([STORE_RESULT], 120, every=10)
+                p, found, _ = self.wait_text([STORE_RESULT], 90, every=10)
                 if p:
                     break
                 self.m.shot("store-no-result-yet")
             if not found:
-                raise Failure(f"no '{STORE_RESULT}' in the search results after four searches")
+                raise Failure(f"no '{STORE_RESULT}' in the search results after three searches")
             self.m.click(*vision.centre(found), label="open result " + STORE_RESULT)
             # "Install" exactly: OCR would happily match the "Installed" tab
             deadline = time.time() + 300
