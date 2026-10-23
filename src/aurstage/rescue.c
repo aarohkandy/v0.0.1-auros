@@ -1424,6 +1424,21 @@ int rescue_restore(const char *disk_dev, const rescue_area *area,
          * exactly, and left every restore saying Windows had less
          * space than it did. */
         uint64_t want_bytes = (want_sectors + 1) * (uint64_t)bps;
+        /* AND AT LEAST THE PARTITION IT WAS CAPTURED IN.
+         *
+         * An install that shrank this filesystem and stopped before its
+         * commit (a power cut, a refusal) leaves NTFS smaller than its
+         * partition; when it is run again, the capture records the
+         * smaller filesystem -- and putting "the size it was" back would
+         * leave Windows that much smaller for ever. The table the
+         * restore has just put back is the one from before any of it,
+         * and NTFS that fills its partition is what Windows makes. So
+         * the target is whichever is larger, and a filesystem is never
+         * made smaller either way. */
+        if (sb->aux2 >= sb->disk_lba) {
+            uint64_t part_bytes = (sb->aux2 - sb->disk_lba + 1) * (uint64_t)sec;
+            if (part_bytes > want_bytes) want_bytes = part_bytes;
+        }
         if (now_bytes > want_bytes) {
             free(cap_arr); free(cap_aarr); close(stick);
             snprintf(why, n,

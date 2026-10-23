@@ -534,13 +534,36 @@ void install_run(const stage_machine *m)
      * See pick_win_target(). The install need is min_root plus the two
      * small partitions, with a little slack for megabyte alignment. */
     uint64_t install_need = min_root_bytes() + boot_need + rsc_need + 4 * 1024 * 1024;
-    uint64_t win_target = shrink_pick_target(sp.current_bytes, sp.smallest_bytes,
+    /* FROM THE PARTITION, NOT THE FILESYSTEM, AND NEVER TWICE.
+     *
+     * The target used to be picked from the filesystem's current size.
+     * An attempt that shrank NTFS and then stopped before the commit --
+     * a power cut, a refusal further down -- leaves the partition entry
+     * at its old size and the filesystem inside it smaller; the next
+     * attempt measured the smaller filesystem, picked a target 16-40
+     * GiB below THAT, and Windows lost the space again on every retry
+     * (docs/ATLAS.md section 2, gap 3). The partition entry does not
+     * change until the commit, so a target picked from it is the same
+     * target on every attempt, and a filesystem already at or below it
+     * is not shrunk again. */
+    uint64_t part_bytes = win->sectors * 512ull;
+    if (part_bytes < sp.current_bytes) part_bytes = sp.current_bytes;
+    uint64_t win_target = shrink_pick_target(part_bytes, sp.smallest_bytes,
                                              install_need);
-    stage_say("Windows is %.1f GiB; it will be made %.1f GiB, freeing %.1f GiB "
-              "for AurOS",
-              (double)sp.current_bytes / (1024.0*1024*1024),
-              (double)win_target       / (1024.0*1024*1024),
-              (double)(sp.current_bytes - win_target) / (1024.0*1024*1024));
+    int already_small = sp.current_bytes <= win_target;
+    if (already_small)
+        stage_say("Windows was already made %.1f GiB by an earlier attempt; "
+                  "it is not made any smaller",
+                  (double)sp.current_bytes / (1024.0*1024*1024));
+    else
+        stage_say("Windows is %.1f GiB; it will be made %.1f GiB, freeing %.1f "
+                  "GiB for AurOS",
+                  (double)sp.current_bytes / (1024.0*1024*1024),
+                  (double)win_target       / (1024.0*1024*1024),
+                  (double)(sp.current_bytes - win_target) / (1024.0*1024*1024));
+    /* What the filesystem will be, and what is checked and planned
+     * from here on. */
+    if (already_small) win_target = sp.current_bytes;
 
     /* The surface of the space that would be reclaimed. R5. Only the
      * region actually being freed -- [win_target, current] -- not every
@@ -550,7 +573,9 @@ void install_run(const stage_machine *m)
     stage_say("reading every sector of the space that would be reclaimed");
     fprintf(stderr, "aurstage: ");
     uint64_t bad = 0;
-    if (surface_test(windev, win_target, sp.current_bytes,
+    /* Up to the end of the PARTITION: on a retry the space a previous
+     * attempt freed is still to be reclaimed, and still to be read. */
+    if (surface_test(windev, win_target, part_bytes,
                      (uint32_t)disk->logical_sector, &bad, surf_dots) != 0) {
         snprintf(why, sizeof why,
                  "This disk could not read the space %llu MB into the Windows "
@@ -604,7 +629,15 @@ void install_run(const stage_machine *m)
     fault_maybe("shrink-begin");
     fprintf(stderr, "aurstage: ");
     shrink_result sr;
-    shrink_do(windev, win_target, dots, &sr);
+    if (already_small) {
+        memset(&sr, 0, sizeof sr);
+        sr.ok = 1;
+        sr.achieved_bytes = sp.current_bytes;
+        snprintf(sr.why, sizeof sr.why, "already %llu bytes; not shrunk again",
+                 (unsigned long long)sp.current_bytes);
+    } else {
+        shrink_do(windev, win_target, dots, &sr);
+    }
     if (!sr.ok) {
         if (!sr.started)
             give_up(sr.why, "Nothing on the Windows drive was touched.",
