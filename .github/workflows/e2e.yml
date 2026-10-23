@@ -113,8 +113,10 @@ jobs:
     # One machine at a time per branch. On the job, not the workflow: every
     # push runs the gate, and a workflow-wide group let a push that changes
     # nothing here cancel a run that was waiting.
+    # (A called run is a release's: its own group per installer, so an
+    # [e2e] push queued behind it cannot replace it while it waits.)
     concurrency:
-      group: e2e-${{ github.ref }}-${{ matrix.variant }}
+      group: e2e-${{ github.ref }}-${{ matrix.variant }}-${{ inputs.installer_sha256 }}
       cancel-in-progress: false
     strategy:
       fail-fast: false

@@ -15,10 +15,9 @@
 # The release is v<os_version>-<sha7 of the BUILT commit> -- the address
 # baked into that build's installer -- and is always made a prerelease
 # first. [latest] asks the promote job to make it the full release once
-# every check has passed, including a real-Windows end-to-end run of
-# THIS AurOS-Setup.exe (e2e.yml with INSTALLER_SHA256 pinned to it).
-# Only a full release moves releases/latest/download/AurOS-Setup.exe,
-# which the website links to.
+# every check has passed, including the real-Windows end-to-end run of
+# THIS AurOS-Setup.exe in this same run. Only a full release moves
+# releases/latest/download/AurOS-Setup.exe, which the website links to.
 #
 #   publish   the release, with AurOS-Setup.exe, the image pieces,
 #             pieces.txt, SHA256SUMS, image.sha256 and image.bytes; then
@@ -29,13 +28,25 @@
 #             starts and passes its navigation test, and the installer's
 #             own WinHTTP code fetches the image from the release and
 #             checks it.
-#   promote   [latest] only: finds a successful e2e.yml run whose
-#             INSTALLER_SHA256 is this AurOS-Setup.exe (the website, the
-#             download, the wizard, the restart and AurOS, on a real
-#             Windows 11 VM), then makes the release the full, latest one.
-#   pages     after promote: deploys website/ to GitHub Pages (a release
-#             made with GITHUB_TOKEN starts no other workflow). Needs the
-#             owner's one click: Settings -> Pages -> Source: GitHub Actions.
+#   e2e       beside windows: e2e.yml (stream F's) on this release's
+#             AurOS-Setup.exe, its SHA-256 handed over, so a file that
+#             does not hash to what was built is refused: the website in
+#             Edge, the download, the wizard, the restart, AurOS, a
+#             program from the store, on a real Windows 11 VM. Hours.
+#   site      the website as it will be deployed, checked the way she
+#             meets it (tools/site/check.mjs, as pages.yml does).
+#   promote   [latest] only, and only after windows, e2e and site passed
+#             in THIS run: makes the release the full, latest one.
+#             Nothing is pinned by hand.
+#   pages     after promote: deploys the site that was checked to GitHub
+#             Pages (a release made with GITHUB_TOKEN starts no other
+#             workflow). Needs the owner's one click: Settings -> Pages
+#             -> Source: GitHub Actions.
+#
+# So `[release] [latest]` in a subject goes build -> tests -> prerelease
+# -> windows + e2e -> promote -> Pages with nobody touching it, and
+# `[release]` alone stops after e2e. `[publish RUN-ID] [latest]` runs
+# e2e again on that build before promoting it.
 #
 # A flaky test: re-run the failed jobs of the build run (the run page's
 # "Re-run failed jobs", or the GitHub tools' rerun_failed_jobs); the jobs
@@ -316,8 +327,48 @@ jobs:
           if (-not (Select-String -Path getimage.log -Pattern 'verdict=ok' -Quiet)) { throw "no verdict=ok" }
           "fetched and checked in $([int]((Get-Date) - $t).TotalSeconds) s"
 
+  e2e:
+    needs: publish
+    uses: ./.github/workflows/e2e.yml
+    permissions:
+      contents: write
+    with:
+      installer_url: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}/AurOS-Setup.exe
+      installer_sha256: ${{ needs.publish.outputs.setup_sha256 }}
+
+  # Before anything is promoted, not after: a site that fails its check
+  # stops the promote, instead of leaving a new release behind an old
+  # website. What is checked is what pages deploys (this run's
+  # github-pages artifact).
+  site:
+    needs: which
+    if: needs.which.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Playwright and Chromium
+        # its --with-deps runs apt-get: bounded here
+        timeout-minutes: 10
+        run: |
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/pw" playwright@1.56.1
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+      # website/ names no repository; this one is written in (as pages.yml does).
+      - name: the site, with this repository written in
+        run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"
+      - name: the front door, checked the way she meets it
+        env:
+          PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
+        run: node tools/site/check.mjs --dir "$RUNNER_TEMP/site"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/site
+
   promote:
-    needs: [which, publish, windows]
+    needs: [which, publish, windows, e2e, site]
     if: needs.which.outputs.latest == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -329,24 +380,23 @@ jobs:
       TAG: ${{ needs.publish.outputs.tag }}
       SETUP_SHA256: ${{ needs.publish.outputs.setup_sha256 }}
     steps:
-      - name: a real Windows has installed THIS AurOS-Setup.exe end to end
+      - name: a real Windows installed THIS AurOS-Setup.exe end to end, in this run
         run: |
-          # e2e.yml pins what it tests in its own env; a run counts if
-          # its e2e job passed and the file it ran pinned this hash.
-          ok=""
-          for r in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/e2e.yml/runs?status=success&per_page=50" \
-                       --jq '.workflow_runs[] | "\(.id),\(.head_sha)"'); do
-            id=${r%,*}; sha=${r#*,}
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs" --jq '.jobs[] | select(.name == "e2e") | .conclusion' > /tmp/c.txt
-            grep -qx success /tmp/c.txt || continue
-            gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/e2e.yml?ref=$sha" --jq .content | base64 -d > /tmp/e2e.yml
-            if grep -qE "INSTALLER_SHA256: *'?$SETUP_SHA256'?" /tmp/e2e.yml; then ok=$id; break; fi
-          done
-          if [ -z "$ok" ]; then
-            echo "::error::no passing e2e.yml run has tested AurOS-Setup.exe $SETUP_SHA256. Pin INSTALLER_URL to https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/AurOS-Setup.exe and INSTALLER_SHA256 to it in e2e.yml, let it pass, then push [publish] [latest] again. $TAG stays a prerelease."
+          # `needs` already says e2e did not fail. This asks the jobs
+          # themselves, so an e2e that was skipped (its gate said no)
+          # cannot count as one that passed: at least one e2e job of
+          # this run, and every one of them, succeeded. They were handed
+          # this release's address and SHA-256 (the e2e job above) and
+          # refuse a download that does not hash to it.
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" \
+              --jq '.jobs[] | "\(.name)|\(.conclusion)"' > /tmp/jobs.txt
+          grep -E '(^|/ )e2e / e2e \(' /tmp/jobs.txt > /tmp/e2e.txt || true
+          cat /tmp/e2e.txt
+          if [ ! -s /tmp/e2e.txt ] || grep -qv '|success$' /tmp/e2e.txt; then
+            echo "::error::no passing real-Windows e2e of AurOS-Setup.exe $SETUP_SHA256 in this run; $TAG stays a prerelease"
             exit 1
           fi
-          echo "e2e run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$ok installed this AurOS-Setup.exe on Windows"
+          echo "e2e passed in $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID on AurOS-Setup.exe $SETUP_SHA256"
       - name: the full release
         run: |
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest
@@ -386,13 +436,7 @@ jobs:
             exit 1
           fi
           echo "Pages is on ($(cat /tmp/pages.txt))"
-      - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
-      # website/ names no repository; this one is written in (as pages.yml does).
-      - name: the site, with this repository written in
-        run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: ${{ runner.temp }}/site
+      # the github-pages artifact the site job checked
       - id: deploy
         uses: actions/deploy-pages@v4
