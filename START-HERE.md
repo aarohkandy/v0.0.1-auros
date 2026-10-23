@@ -85,11 +85,13 @@ that people will pay for it.
 
 ## 4. Your environment, and what you need
 
-- **Git**: branch `claude/brave-hypatia-x72g1m` (PR
-  https://github.com/ComputerDude771/auros-from-scratch/pull/1 tracks it). Push
-  with `git fetch && git rebase origin/<branch> && git push origin HEAD:<branch>`;
-  never another branch; commit trailers per `docs/handoff/STREAMS.md` rule 5
-  (if your harness gives different attribution lines, use those).
+- **Git**: https://github.com/aarohkandy/v0.0.1-auros, branch `main` (no PRs).
+  Push with `git fetch -q origin +main:refs/remotes/origin/main && git rebase
+  origin/main && git push origin HEAD:main` (the refspec is spelled out: a
+  checkout cloned for the old branch does not move `origin/main` on a plain
+  `git fetch origin main`); never another branch; commit trailers per
+  `docs/handoff/FIELD-MANUAL.md` §1 (if your harness gives different
+  attribution lines, use those).
 - **Heavy work runs on GitHub Actions** (public repo; KVM on Linux runners;
   20 concurrent jobs max). Image builds need Linux (they can't run on a Mac);
   a Mac can edit, push, and watch CI. Workflows and their trigger words:
@@ -98,8 +100,8 @@ that people will pay for it.
   a GitHub MCP server). Evidence is published as (pre)release assets, e.g.
   `releases/download/e2e-<run_id>/e2e-evidence.zip`.
 - Owner-only clicks still pending (ask him once, plainly):
-  Pages → Source: GitHub Actions; Environments → github-pages → No restriction;
-  default branch → the working branch; later one secret for the update channel.
+  Pages → Source: GitHub Actions; later one secret for the update channel
+  (`docs/OWNER-SETUP.md`; `main` is already the default branch).
 
 ## 5. How to resume the work
 

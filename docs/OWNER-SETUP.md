@@ -7,25 +7,27 @@ repository** — this file only says what each secret is, where it goes,
 and how to make it.
 
 Replace `OWNER/REPO` with the repository (today:
-`ComputerDude771/auros-from-scratch`).
+`aarohkandy/v0.0.1-auros`, branch `main`).
 
 ## 1. Turn on the website (2 minutes, needed now)
 
 1. `https://github.com/OWNER/REPO/settings/pages` → **Build and deployment** →
    **Source: GitHub Actions**.
-2. `https://github.com/OWNER/REPO/settings/environments` → **github-pages** →
-   **Deployment branches and tags**: choose **No restriction**, or add a rule
-   for the working branch (`claude/brave-hypatia-x72g1m` today).
+2. Nothing else while `main` is the default branch: the `github-pages`
+   environment GitHub creates trusts the default branch. Only if a deploy
+   fails with "Branch main is not allowed to deploy to github-pages":
+   `https://github.com/OWNER/REPO/settings/environments` → **github-pages** →
+   **Deployment branches and tags** → add `main`.
 3. The site goes live on the next release (the release workflow deploys it),
    at `https://OWNER.github.io/REPO/`.
 
-## 2. Make the working branch the default (1 minute, recommended)
+## 2. The branch we push to is the default (done for aarohkandy/v0.0.1-auros)
 
-`https://github.com/OWNER/REPO/settings` → **Default branch** → switch to the
-working branch. Why: GitHub only shows a "Run workflow" button for workflows
-on the default branch, and the Pages environment trusts the default branch
-by default. Today the default is `claude/linux-distro-from-scratch-tt5dx1`,
-an old branch.
+`https://github.com/OWNER/REPO/settings` → **Default branch** → the branch
+everyone pushes to (`main`). Why: GitHub only shows a "Run workflow" button
+for workflows on the default branch, and the Pages environment trusts the
+default branch. In `aarohkandy/v0.0.1-auros` it already is `main`
+(checked 2026-10-23); only a future move needs this again.
 
 ## 3. Workflow permissions (check once)
 
