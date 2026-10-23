@@ -55,9 +55,17 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
   (12 high, 0 blockers after 3 skeptics each); 9 already fixed, the rest assigned with tests required.
 - **Security audit done** (docs/security/FINDINGS.md): 0 critical, 8 high, all assigned: installer trust and
   DLL hijacking, the update-signing key's exposure, mutable release files, no boot fallback, no network time
-  (updates silently stop in the US), no disk encryption yet. Legal review: writing its final document.
+  (updates silently stop in the US), no disk encryption yet. - **Legal review done** (docs/legal/COMPLIANCE.md, 58 findings, no lawyer per your D15): before anyone uses
+  AurOS we must publish the full source of the Ubuntu software we ship (GPL) and have a contact address; the
+  legal agent is building the source release, licences page, terms and honest wording now.
 
 ## Waiting for you (each with my recommendation)
+
+- **Legal, in order (docs/legal/COMPLIANCE.md §3):** (a) don't share the current prerelease link yet;
+  (b) create one contact email someone reads (a free address is fine for now) and tell me it;
+  (c) GitHub → Settings → Advanced Security → turn on private vulnerability reporting;
+  (d) the domain (also removes GitHub addresses from installed PCs); (e) before public launch: a single-member
+  LLC in your state + EIN + business bank account, and insurance quotes (tech E&O + cyber).
 
 0. **Commits the permission system refused to push** (the lead does not push around a refusal; your call):
    - the profiles agent's two (per-edition desktop screenshots; ~1 h of CI), in worktree `wt-p`;
