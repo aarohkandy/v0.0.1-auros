@@ -126,7 +126,7 @@ jobs:
             cat /tmp/jobs.txt
             # Files, not a pipe: under pipefail a SIGPIPE in the middle
             # would turn "refused" into "passed".
-            python3 -I tools/releasegate.py /tmp/jobs.txt .github/ci-allow.txt > /tmp/gate.txt 2>&1 && g=0 || g=$?
+            python3 -I tools/releasegate.py /tmp/jobs.txt .github/ci-allow.txt $( [ "$latest" = true ] && echo --latest ) > /tmp/gate.txt 2>&1 && g=0 || g=$?
             cat /tmp/gate.txt
             return $g
           }

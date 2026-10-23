@@ -1,9 +1,16 @@
-# Jobs of a build run that may FAIL and still let a release through, by
+# Jobs of a build run that may FAIL and still let a PRERELEASE through, by
 # name, with a reason and a date (UTC, inclusive). tools/releasegate.py reads
 # this; release.yml's `which` job runs it for every release and every
 # [publish]. A date in the past counts as no entry. Only `powercut / e2e (...)`
 # jobs can be listed: a failing build, unit or gating test always refuses.
+# An entry never lets the FULL release out ([latest]): that needs it green.
 #
 #   job name | expires YYYY-MM-DD | why
 #
-# (None yet. A failing power-cut job refuses the release.)
+# 2026-10-23 (E): the only slice of the no-stick power cut that is red, on
+# run 39962229132: 3 of 57 checks, all in "a partition that was not AurOS's"
+# (a recovery partition resized after the install: Put Windows back does not
+# refuse, does not say why, and does not leave the disk untouched). It is
+# docs/safety/FINDINGS.md S-01/S-02, A2's. The other three slices (installs
+# cut at 13 instants, and the restore cut at 5) are green.
+powercut / e2e (powercut-nostick-restore)|2026-10-26|S-01/S-02: Put Windows back must refuse a partition it did not make (3 of 57 checks); A2

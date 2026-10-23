@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """releasegate -- may this build run be published as a release?
 
-    python3 -I tools/releasegate.py JOBS ALLOW [TODAY]   JOBS: lines "name|conclusion"
+    python3 -I tools/releasegate.py JOBS ALLOW [TODAY] [--latest]   JOBS: lines "name|conclusion"
     python3 -I tools/releasegate.py selftest             each rule refuses what it exists to refuse
 
 JOBS is the build run's job list (release.yml's `which` job fetches it
@@ -19,7 +19,10 @@ The rules (docs/safety/FINDINGS.md S-11 is why the power-cut ones are here):
      power-cut job is let through: a named job, a reason, a date. A date
      in the past counts as no entry at all.
   Nothing else can be allow-listed: a failing build, unit or gating test
-  always refuses.
+  always refuses. And with --latest (the release is to become the full
+  release the website serves) an allow-list entry excuses nothing: a
+  failure the allow-list tolerates lets a PRERELEASE out, never the
+  download button.
 
 ALLOW lines:  job name | expires YYYY-MM-DD (UTC, inclusive) | why
 e.g.          powercut / e2e (powercut-nostick-early)|2026-10-30|S-03: ...
@@ -43,7 +46,7 @@ def load_allow(text):
     return out
 
 
-def judge(jobs_text, allow, today):
+def judge(jobs_text, allow, today, latest=False):
     """-> (refusals, notes)"""
     jobs = {}
     for line in jobs_text.splitlines():
@@ -69,7 +72,9 @@ def judge(jobs_text, allow, today):
         if c == "success":
             continue
         entry = allow.get(n)
-        if c == "failure" and entry and entry[0] >= today:
+        if c == "failure" and entry and latest:
+            why.append("%s: failed; an allow-list entry (%s) lets a prerelease out, never the full release" % (n, entry[1]))
+        elif c == "failure" and entry and entry[0] >= today:
             notes.append("ALLOWED TO FAIL until %s: %s (%s)" % (entry[0], n, entry[1]))
         elif c == "failure" and entry:
             why.append("%s: failed, and its allow-list entry expired on %s" % (n, entry[0]))
@@ -87,9 +92,9 @@ def selftest():
     allow = {"powercut / e2e (p2)": ("2026-10-30", "S-03"), "powercut / e2e (p3)": ("2026-10-20", "old")}
     bad = 0
 
-    def case(what, jobs, allow_, want_refused):
+    def case(what, jobs, allow_, want_refused, latest=False):
         nonlocal bad
-        why, _ = judge(jobs, allow_, today)
+        why, _ = judge(jobs, allow_, today, latest)
         got = bool(why)
         print("    %-62s %s" % (what, "ok" if got == want_refused else "FAIL"))
         bad += got != want_refused
@@ -98,6 +103,8 @@ def selftest():
     case("a failing power-cut job is refused", green.replace("p1)|success", "p1)|failure"), {}, True)
     case("...also when it is cancelled", green.replace("p1)|success", "p1)|cancelled"), {}, True)
     case("a failing power-cut job on the allow-list passes", green.replace("p2)|success", "p2)|failure"), allow, False)
+    case("...but never for the full release (--latest)", green.replace("p2)|success", "p2)|failure"), allow, True, latest=True)
+    case("...and a green full release passes", green, allow, False, latest=True)
     case("...but not once its entry has expired", green.replace("p3)|success", "p3)|failure"), allow, True)
     case("...and an allow-list entry never excuses a cancelled job", green.replace("p2)|success", "p2)|cancelled"), allow, True)
     case("no power-cut jobs at all is refused", "\n".join(l for l in green.splitlines() if not l.startswith("powercut")), {}, True)
@@ -122,9 +129,11 @@ def main(argv):
     if len(argv) < 3:
         print(__doc__, file=sys.stderr)
         return 2
-    today = argv[3] if len(argv) > 3 else datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-    allow = load_allow(open(argv[2], encoding="utf-8").read())
-    why, notes = judge(open(argv[1], encoding="utf-8").read(), allow, today)
+    latest = "--latest" in argv
+    rest = [a for a in argv[1:] if a != "--latest"]
+    today = rest[2] if len(rest) > 2 else datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    allow = load_allow(open(rest[1], encoding="utf-8").read())
+    why, notes = judge(open(rest[0], encoding="utf-8").read(), allow, today, latest)
     for n in notes:
         print("releasegate:", n)
     for w in why:
