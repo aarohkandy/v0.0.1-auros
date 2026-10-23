@@ -51,7 +51,7 @@ REPORT="${TIME_REPORT:-out/timeboot.md}"
 CODE=/usr/share/OVMF/OVMF_CODE_4M.ms.fd
 VARS=/usr/share/OVMF/OVMF_VARS_4M.ms.fd
 
-for t in qemu-system-x86_64 sgdisk losetup mount python3; do
+for t in qemu-system-x86_64 sgdisk losetup mount python3 mkfs.vfat mcopy mmd; do
     command -v "$t" >/dev/null 2>&1 || { echo "need $t"; exit 2; }
 done
 [ -f "$CODE" ] && [ -f "$VARS" ] || { echo "need OVMF with Microsoft's keys ($CODE)"; exit 2; }
@@ -113,6 +113,8 @@ R="$D/result.$n"; : > "$R"
 put() { printf '%s=%s\n' "$1" "$2" >> "$R"; }
 tm() { printf 'AUROS-TIME b%s-%s %s rtc=%s\n' "$n" "$1" "$(date +%s)" "$(cat /sys/class/rtc/rtc0/since_epoch)" > /dev/ttyS0; }
 tm up
+cp /var/log/auros-firstboot.log $D/firstboot.$n 2>/dev/null
+lsblk -rpno NAME,PARTTYPE,FSTYPE > $D/lsblk.$n 2>&1
 put chrony_unit "$(systemctl is-enabled chrony.service 2>&1 | head -1)"
 put chrony_active "$(systemctl is-active chrony.service 2>&1 | head -1)"
 # the network
@@ -208,11 +210,23 @@ make_disk() { # scenario
     if [ "$1" = after ]; then echo reboot > "$T/m/etc/auros-time-mode"; else echo off > "$T/m/etc/auros-time-mode"; fi
     cp "$T/m/usr/lib/auros/choices.sh" "$T/choices.sh.$1" 2>/dev/null
     umount_part
-    # AurBridge's answers, where first boot looks for them
-    mount_part "$T/disk.img" AUROS-ESP || exit 2
-    mkdir -p "$T/m/EFI/AurOS"
-    printf 'language=en_US.UTF-8\ntimezone=iana:%s\n' "$ZONE" > "$T/m/EFI/AurOS/choices.conf"
-    umount_part
+}
+
+# AurBridge's answers, where first boot looks for them: on the PC's own
+# EFI partition, which is a second disk here (tools/choicesboottest.sh
+# does the same).
+make_esp() {
+    E="$T/esp.img"; rm -f "$E" "$T/fat.img"
+    truncate -s 64M "$E"
+    sgdisk --zap-all "$E" >/dev/null 2>&1
+    sgdisk -n 1:2048:0 -t 1:ef00 -c 1:"EFI" "$E" >/dev/null 2>&1
+    truncate -s 62M "$T/fat.img"
+    mkfs.vfat -F32 -n EFI "$T/fat.img" >/dev/null 2>&1
+    export MTOOLS_SKIP_CHECK=1
+    mmd -i "$T/fat.img" ::/EFI ::/EFI/AurOS
+    printf 'language=en_US.UTF-8\ntimezone=iana:%s\n' "$ZONE" > "$T/choices.conf"
+    mcopy -i "$T/fat.img" "$T/choices.conf" ::/EFI/AurOS/choices.conf
+    dd if="$T/fat.img" of="$E" bs=1M seek=1 conv=notrunc status=none
 }
 
 # One VM, however many guest starts it takes (a guest restart keeps the
@@ -227,15 +241,18 @@ run_vm() { # scenario
         -drive if=pflash,format=raw,unit=0,readonly=on,file="$CODE" \
         -drive if=pflash,format=raw,unit=1,file="$T/vars.$s" \
         -drive file="$T/disk.img",format=raw,if=none,id=d0 -device virtio-blk-pci,drive=d0 \
+        -drive file="$T/esp.img",format=raw,if=none,id=d1 -device virtio-blk-pci,drive=d1 \
         -device virtio-vga -display none -serial file:"$SER" \
         -netdev user,id=n0 -device virtio-net-pci,netdev=n0 > "$T/qemu.$s" 2>&1 &
     QP=$!; i=0; seen=0; done_marks=1; [ "$s" = after ] && done_marks=2
     while kill -0 "$QP" 2>/dev/null && [ $i -lt "${TIME_TIMEOUT:-1500}" ]; do
         # Stamp each AUROS-TIME line with the host's own clock as it arrives.
-        n=$(tr -d '\r' < "$SER" | grep -a -c '^AUROS-TIME ')
+        # (not anchored to the start of the line: the console may be
+        # in the middle of a line of somebody else's when ours arrives)
+        n=$(tr -d '\r' < "$SER" | grep -a -c 'AUROS-TIME ')
         if [ "$n" -gt "$seen" ]; then
             h=$(date +%s)
-            tr -d '\r' < "$SER" | grep -a '^AUROS-TIME ' | sed -n "$((seen + 1)),${n}p" | sed "s/^/$h /" >> "$T/ev.$s"
+            tr -d '\r' < "$SER" | grep -a 'AUROS-TIME ' | sed -n "$((seen + 1)),${n}p" | sed -e 's/.*AUROS-TIME /AUROS-TIME /' -e "s/^/$h /" >> "$T/ev.$s"
             seen=$n
         fi
         [ "$(grep -c -- '-done ' "$T/ev.$s")" -ge "$done_marks" ] && { sleep 8; break; }
@@ -263,6 +280,7 @@ within() { [ -n "$1" ] && [ "$(abs $(( $1 - $2 )))" -le "$3" ]; }   # value targ
 for s in before ntponly after; do
     echo "  $s: starting the machine (RTC in $ZONE local time, online)"
     make_disk $s
+    make_esp
     run_vm $s
 done
 

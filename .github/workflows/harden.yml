@@ -118,7 +118,7 @@ jobs:
               sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          sh tools/apt.sh qemu-system-x86 qemu-utils ovmf gdisk e2fsprogs python3 zstd
+          sh tools/apt.sh qemu-system-x86 qemu-utils ovmf gdisk e2fsprogs python3 zstd dosfstools mtools
           [ -w /dev/kvm ] || { echo "no usable /dev/kvm"; exit 1; }
           ls -l /usr/share/OVMF/
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
