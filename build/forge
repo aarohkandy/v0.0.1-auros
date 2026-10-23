@@ -1216,6 +1216,14 @@ stage_overlay() {
     # answered; the path unit is how the desktop asks for the three
     # things that have to happen as root. See src/aurfirst/aurfirst.h.
     enable_unit auros-hold.service  multi-user.target
+    # "This start worked", said two minutes after the desktop is up; the
+    # start-up menu falls back to the kernel before without it
+    # (rootfs/usr/lib/auros/grub.cfg.in, boot counting).
+    enable_unit auros-boot-ok.service multi-user.target
+    # After the desktop has worked for a while: the way back into AurOS
+    # while she decides, and AurOS first again after an update moved it
+    # (rootfs/usr/lib/auros/keeper).
+    enable_unit auros-keeper.service multi-user.target
     enable_unit auros-answer.path   multi-user.target
     # The store's catalogue and Flathub, fetched the first time the
     # computer is online (rootfs/usr/lib/auros/software-ready.sh).
@@ -2076,11 +2084,18 @@ squash_preconditions() {
              etc/systemd/system/apt-daily-upgrade.service.d/50-auros-first-hour.conf \
              usr/lib/auros/bootchain \
              usr/lib/auros/grub.cfg.in \
+             usr/lib/auros/start-windows \
+             usr/lib/auros/boot-ok \
+             usr/lib/auros/desktop-up \
+             usr/lib/auros/keeper \
+             usr/lib/auros/grubenv \
              usr/lib/python3/dist-packages/cryptography \
              usr/sbin/update-grub.ubuntu \
              usr/sbin/grub-install.ubuntu \
              etc/apt/apt.conf.d/52auros-bootchain \
              etc/systemd/system/auros-hold.service \
+             etc/systemd/system/auros-boot-ok.service \
+             etc/systemd/system/auros-keeper.service \
              etc/systemd/system/auros-answer.path \
              etc/systemd/system/auros-answer.service \
              etc/systemd/system/auros-firstboot.service \
@@ -2090,6 +2105,8 @@ squash_preconditions() {
     done
     # The enables, by the link systemd actually writes.
     for f in multi-user.target.wants/auros-hold.service \
+             multi-user.target.wants/auros-boot-ok.service \
+             multi-user.target.wants/auros-keeper.service \
              multi-user.target.wants/auros-answer.path \
              multi-user.target.wants/auros-firstboot.service \
              multi-user.target.wants/auros-software.service \

@@ -131,8 +131,13 @@ int  af_look(af_state *s);
 void af_publish(const af_state *s);
 
 /* Arm BootNext at our entry, so the next start reaches AurOS once.
- * Does nothing at all once the question has been answered either way.
- * Returns 0 armed, 1 nothing to do, -1 with a sentence. */
+ * Does nothing once she has said no. Once she has said it works, it
+ * puts AurOS back first in BootOrder if something else (Windows Update,
+ * a BIOS update) has moved it (S-24); nothing else is touched.
+ * Run by auros-keeper after the desktop has worked for a while, never
+ * before it exists (S-05, S-06).
+ * Returns 0 armed, 1 nothing to do, 2 put back first in BootOrder,
+ * -1 with a sentence. */
 int  af_hold(const af_state *s, char *why, size_t n);
 
 /* "This works." Put our entry at the head of BootOrder, clear
@@ -150,11 +155,16 @@ int  af_decline(const af_state *s, char *why, size_t n);
  * start Windows. Writes BootNext only; never BootOrder. 0 on success,
  * -1 with `why` set. */
 int  af_putback(const af_state *s, char *why, size_t n);
+/* "Windows" in AurOS's start-up menu: arm BootNext at Windows Boot
+ * Manager's own entry, so the firmware -- not shim and grub -- starts
+ * it and BitLocker sees the start it sealed its key to. Writes BootNext
+ * only. Returns the entry's number, or -1 with `why` set. */
+int  af_windows(char *why, size_t n);
 
 /* ── the one word the desktop is allowed to ask for ───────────────── */
 
 /* Take the request out of the desktop's runtime directory and remove
- * it. `out` gets one of "confirm", "decline", "import", or the literal
+ * it. `out` gets one of "confirm", "decline", "import", "putback", "windows", or the literal
  * "unknown". Returns 0 for one of ours, 1 for unknown, -1 for nothing
  * there. See request.c for why this is not three lines of shell. */
 int af_request_take(char *out, size_t n);

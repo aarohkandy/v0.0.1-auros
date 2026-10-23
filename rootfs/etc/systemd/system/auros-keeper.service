@@ -1,0 +1,27 @@
+[Unit]
+Description=AurOS: keep this computer coming back to AurOS, once the desktop works
+Documentation=man:aurfirst(8)
+# Runs on every start, after the desktop has worked for a while.
+#
+#   - Until she answers "does it work?", the next start is AurOS once
+#     more, so she keeps meeting it while it works. The installer arms
+#     BootNext and the firmware eats it; this puts it back.
+#   - After she said it works: if Windows Update or a BIOS update has put
+#     Windows first again, AurOS is put back at the front.
+#
+# NOT BEFORE THE DESKTOP. It used to run first (auros-hold.service), so a
+# desktop that never appeared sent every restart back into AurOS. Now a
+# start that never got a working desktop arms nothing, and the next one
+# reaches Windows. See /usr/lib/auros/keeper.
+After=aurshell.service auros-hold.service sys-firmware-efi-efivars.mount
+ConditionPathExists=/sys/firmware/efi/efivars
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/auros/keeper
+# A machine whose firmware will not take a boot variable must still
+# boot. It comes up in AurOS either way -- this boot already did.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target

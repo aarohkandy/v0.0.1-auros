@@ -205,6 +205,7 @@ PREVIOUS = """
 menuentry 'AurOS (previous kernel, {v})' --class auros --id auros-previous {{
     linux  /boot/vmlinuz-{v} root=UUID={u} ro quiet splash console=tty0 console=ttyS0,115200n8 init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes lockdown=integrity
     initrd /boot/initrd.img-{v}
+    auros_count
 }}
 """
 
@@ -257,10 +258,12 @@ def render_menu(root, uuid=None, running=None):
     out = (t.replace("@ROOT_UUID@", uuid).replace("@KVER@", ks[0])
             .replace("@THEME@", theme).replace("@PREVIOUS@", prev))
     if prev:
-        out = out.replace("@FALLBACK@", "set fallback=%d\n" % fallback_index(
+        # auros_prev tells the menu's boot counting there is a kernel to
+        # fall back to; without one there is nothing to count towards.
+        out = out.replace("@FALLBACK@", "set fallback=%d\nset auros_prev=1\n" % fallback_index(
             out.replace("@FALLBACK@", "")))
     else:
-        out = out.replace("@FALLBACK@", "")
+        out = out.replace("@FALLBACK@", "set auros_prev=\n")
     left = re.findall(r"@[A-Z_]+@", out)
     if left:
         raise ValueError("template has placeholders nothing fills: " + " ".join(sorted(set(left))))

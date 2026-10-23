@@ -59,11 +59,11 @@ AF="$TMP/af"
 AF_OWN_BOOT_PARTUUID=none; export AF_OWN_BOOT_PARTUUID
 
 # ── the fixture ─────────────────────────────────────────────────────
-plant() { # slot description [load-option-attributes, default ACTIVE]
-    python3 - "$VD/Boot$1-$G" "$2" "${3:-1}" <<'EOPY'
+plant() { # slot description [load-option-attributes, default ACTIVE] [loader path]
+    python3 - "$VD/Boot$1-$G" "$2" "${3:-1}" "${4:-\\EFI\\x.efi}" <<'EOPY'
 import sys, struct
 d = sys.argv[2].encode('utf-16-le') + b'\x00\x00'
-f = '\\EFI\\x.efi'.encode('utf-16-le') + b'\x00\x00'
+f = sys.argv[4].encode('utf-16-le') + b'\x00\x00'
 dp = struct.pack('<BBH', 4, 4, 4 + len(f)) + f + struct.pack('<BBH', 0x7F, 0xFF, 4)
 attrs = int(sys.argv[3], 0)
 open(sys.argv[1], 'wb').write(struct.pack('<I', 7) +
@@ -496,7 +496,7 @@ ask() { # word-or-nothing  -> the result file's contents
 before=$fail
 for w in 'reboot' 'CONFIRM' 'confirm; rm -rf /tmp/xx' '../../bin/sh' '' \
          'importx' 'ferry run' 'confirmx' 'PUTBACK' 'putbackx' 'put back' \
-         'con firm' 'decline!'; do
+         'con firm' 'decline!' 'WINDOWS' 'windowsx' 'windows back'; do
     R=$(ask "$w")
     case "$R" in
       *"note=unknown request"*) : ;;
@@ -606,6 +606,95 @@ case "$R" in
 esac
 [ ! -f "$AO/import.log" ] && ok "...and nothing was mounted or read" \
                           || bad "...and nothing was mounted or read"
+
+# ── Windows Update moves itself first ───────────────────────────────
+echo
+echo "  and Windows Update, or a BIOS update, puts Windows first after she said it works"
+# S-24. The keeper (auros-keeper, once the desktop works) runs `hold`; for
+# a machine she confirmed, that puts AurOS back at the front -- and only
+# that. She must still be able to say no.
+fresh; plant 0000 "Windows Boot Manager"; plant 0003 "AurOS"; plant 0005 "Fedora"; order 0000 0005
+"$AF" confirm >/dev/null 2>&1
+order 0000 0003 0005                       # what the update did
+"$AF" hold >/dev/null 2>&1
+[ "$(read_order)" = "0003 0000 0005" ] && [ ! -f "$VD/BootNext-$G" ] \
+  && ok "hold puts AurOS back first, keeps every other entry in its order" \
+  || bad "hold puts AurOS back first, keeps every other entry in its order" \
+         "BootOrder=$(read_order) BootNext=$(read_next)"
+order 0000 0005                            # the update dropped our number
+"$AF" hold >/dev/null 2>&1
+[ "$(read_order)" = "0003 0000 0005" ] \
+  && ok "...also when the update dropped AurOS from the list" \
+  || bad "...also when the update dropped AurOS from the list" "BootOrder=$(read_order)"
+before=$(od -An -tx1 "$VD/BootOrder-$G")
+"$AF" hold >/dev/null 2>&1
+[ "$(od -An -tx1 "$VD/BootOrder-$G")" = "$before" ] \
+  && ok "...and writes nothing when AurOS is already first" \
+  || bad "...and writes nothing when AurOS is already first"
+"$AF" decline >/dev/null 2>&1
+order 0000 0003 0005
+"$AF" hold >/dev/null 2>&1
+[ "$(read_order)" = "0000 0003 0005" ] \
+  && ok "after she says go back to Windows, hold never puts AurOS first again" \
+  || bad "after she says go back to Windows, hold never puts AurOS first again" "BootOrder=$(read_order)"
+
+# ── starting Windows from AurOS's menu ──────────────────────────────
+echo
+echo "  and starting Windows from AurOS's menu, which the firmware must do"
+# BitLocker seals to what the TPM measured when the firmware started
+# Windows Boot Manager. `aurfirst windows` is what makes the firmware do
+# it again: BootNext at the entry that starts bootmgfw.efi, nothing else.
+WBM='\EFI\Microsoft\Boot\bootmgfw.efi'
+fresh; plant 0003 "AurOS"; plant 0000 "Windows Boot Manager" 1 "$WBM"; order 0003 0000
+"$AF" confirm >/dev/null 2>&1
+"$AF" windows >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && [ "$(read_next)" = "0000" ] \
+  && ok "BootNext is armed at Windows Boot Manager's entry" \
+  || bad "BootNext is armed at Windows Boot Manager's entry" "rc=$rc BootNext=$(read_next)"
+[ "$(read_order)" = "0003 0000" ] && ok "...and BootOrder is untouched: AurOS stays first" \
+  || bad "...and BootOrder is untouched: AurOS stays first" "BootOrder=$(read_order)"
+# Found by the file it starts, not by its name: some firmware renames it,
+# and an entry called "Windows Boot Manager" can start something else.
+fresh; plant 0001 "Windows Boot Manager" 1 '\EFI\Other\thing.efi'
+plant 0005 "Contoso PC" 1 '\EFI\Microsoft\Boot\BOOTMGFW.EFI'; plant 0003 "AurOS"; order 0003 0001 0005
+"$AF" windows >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && [ "$(read_next)" = "0005" ] \
+  && ok "found by the file it starts, whatever it is called" \
+  || bad "found by the file it starts, whatever it is called" "rc=$rc BootNext=$(read_next)"
+# No such entry: refuse, arm nothing.
+fresh; plant 0003 "AurOS"; plant 0001 "Windows Boot Manager" 1 '\EFI\Other\thing.efi'; order 0003 0001
+"$AF" windows >/dev/null 2>&1; rc=$?
+[ "$rc" != 0 ] && [ "$(read_next)" = "(none)" ] \
+  && ok "with no entry that starts Windows it refuses, and arms nothing" \
+  || bad "with no entry that starts Windows it refuses, and arms nothing" "rc=$rc BootNext=$(read_next)"
+
+# …and the button for it, which is a word the desktop may ask for.
+GE="$TMP/grubenv"; ESP="$TMP/esp"
+wn() { # -> the result file's contents
+    rm -f "$AO/result" "$TMP/rebooted"
+    printf 'windows' > "$AR/answer"
+    AUROS_ANSWER_OUT="$AO" AUROS_STATE="$TMP/state2" \
+    AUROS_BIN="$TMP/bin" AUROS_LOG="$TMP/answer.log" \
+    AF_RUN_USER="$AR" AUROS_GRUBENV="$GE" AUROS_REBOOT="touch $TMP/rebooted" \
+    AUROS_REBOOT_DELAY=0 sh rootfs/usr/lib/auros/answer.sh >/dev/null 2>&1
+    cat "$AO/result" 2>/dev/null
+}
+fresh; plant 0003 "AurOS"; plant 0000 "Windows Boot Manager" 1 "$WBM"; order 0003 0000
+"$AF" confirm >/dev/null 2>&1
+R=$(wn)
+case "$R" in *"request=windows"*"result=ok"*) ok "\"windows\" is answered ok" ;;
+    *) bad "\"windows\" is answered ok" "$(echo "$R" | tr '\n' ' ')" ;; esac
+[ "$(read_next)" = "0000" ] && [ "$(read_order)" = "0003 0000" ] && [ -f "$TMP/rebooted" ] \
+  && ok "...BootNext at Windows, BootOrder untouched, and it restarts" \
+  || bad "...BootNext at Windows, BootOrder untouched, and it restarts" \
+         "BootNext=$(read_next) BootOrder=$(read_order) rebooted=$([ -f "$TMP/rebooted" ] && echo yes || echo no)"
+fresh; plant 0003 "AurOS"; order 0003
+R=$(wn)
+case "$R" in *"result=failed"*) ok "with no Windows Boot Manager entry it fails, and says so" ;;
+    *) bad "with no Windows Boot Manager entry it fails, and says so" "$(echo "$R" | tr '\n' ' ')" ;; esac
+[ "$(read_next)" = "(none)" ] && [ ! -f "$TMP/rebooted" ] \
+  && ok "...and arms nothing, and does not restart" \
+  || bad "...and arms nothing, and does not restart" "BootNext=$(read_next)"
 
 # ── putting Windows back ────────────────────────────────────────────
 echo

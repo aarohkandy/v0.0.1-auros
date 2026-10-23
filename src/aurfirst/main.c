@@ -24,6 +24,7 @@ static void usage(void)
       "  aurfirst confirm   \"this works\": make AurOS what it starts by default\n"
       "  aurfirst decline   \"it does not\": the next start reaches Windows\n"
       "  aurfirst putback   the next start reaches AurOS's menu, to put Windows back\n"
+      "  aurfirst windows   the next start is Windows, started by the firmware itself\n"
       "  aurfirst ferry     whether importing from Windows may run yet\n"
       "  aurfirst request   take the desktop's one word, safely\n"
       "\n"
@@ -81,6 +82,11 @@ int main(int argc, char **argv)
         PUBLISH();
         if (rc < 0) { fprintf(stderr, "aurfirst: %s\n", why); return 1; }
         if (rc == 1) return 0;
+        if (rc == 2) {
+            fprintf(stderr, "aurfirst: AurOS is first in the start-up list "
+                            "again (entry %04X)\n", s.entry);
+            return 0;
+        }
         fprintf(stderr, "aurfirst: the next start will reach AurOS once "
                         "(entry %04X); Windows is still the default\n", s.entry);
         return 0;
@@ -119,6 +125,16 @@ int main(int argc, char **argv)
         }
         fprintf(stderr, "aurfirst: the next start will reach AurOS's start-up "
                         "menu (entry %04X)\n", s.entry);
+        return 0;
+    }
+
+    /* Not about the answer at all, and so not published: the one
+     * start after this is Windows, whatever was answered. Run by
+     * /usr/lib/auros/start-windows, which the menu's "Windows" starts. */
+    if (!strcmp(cmd, "windows")) {
+        int rc = af_windows(why, sizeof why);
+        if (rc < 0) { fprintf(stderr, "aurfirst: %s\n", why); return 1; }
+        fprintf(stderr, "aurfirst: the next start is Windows (entry %04X)\n", rc);
         return 0;
     }
 

@@ -1,0 +1,43 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  grubenv — change grub's environment block, keeping everything else
+#
+#    grubenv set KEY=VALUE ...      grubenv unset KEY ...
+#
+#  /boot/grub/grubenv is how AurOS talks to the next start's menu: the
+#  restore asked for (next_entry, auros_asked), Windows the old way
+#  (auros_win), failed starts of a new kernel (auros_tries, auros_bad).
+#  Several things write it, so each write keeps the keys it is not
+#  about: rewriting the block whole used to be harmless only because
+#  there was one key in it.
+#
+#  Exactly 1024 bytes, which is the format grub's load_env and save_env
+#  read and rewrite in place; written beside and moved over, so a power
+#  cut leaves the old block or the new one and never half of each.
+#  grub-editenv writes over the file where it stands. Only sh, grep,
+#  head, tr and mv: this also runs as PID 1 (start-windows).
+# ═══════════════════════════════════════════════════════════════════
+set -u
+F=${AUROS_GRUBENV:-/boot/grub/grubenv}
+op=${1:-}
+case "$op" in
+  set|unset) shift ;;
+  *) echo "usage: grubenv set KEY=VALUE... | grubenv unset KEY..." >&2; exit 2 ;;
+esac
+t="$F.new"
+{
+    printf '# GRUB Environment Block\n'
+    if [ -f "$F" ]; then
+        grep -a '^[A-Za-z_][A-Za-z0-9_]*=' "$F" | while IFS= read -r line; do
+            keep=1
+            for a in "$@"; do [ "${a%%=*}" = "${line%%=*}" ] && keep=0; done
+            if [ "$keep" = 1 ]; then printf '%s\n' "$line"; fi
+        done
+    fi
+    if [ "$op" = set ]; then for a in "$@"; do printf '%s\n' "$a"; done; fi
+} > "$t" || exit 1
+have=$(wc -c < "$t")
+[ "$have" -le 1024 ] || { rm -f "$t"; exit 1; }
+head -c $((1024 - have)) /dev/zero | tr '\0' '#' >> "$t" || exit 1
+sync "$t" 2>/dev/null
+mv -f "$t" "$F"

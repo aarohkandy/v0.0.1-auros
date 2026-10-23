@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <string.h>
 #include <strings.h>
+#include <ctype.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <unistd.h>
@@ -367,6 +368,8 @@ void af_publish(const af_state *s)
     if (rename(tmp, AF_STATE_FILE) != 0) unlink(tmp);
 }
 
+static int promote(const af_state *s, char *why, size_t n);
+
 int af_hold(const af_state *s, char *why, size_t n)
 {
     /* A machine that cannot say whether it was answered is a machine
@@ -374,8 +377,24 @@ int af_hold(const af_state *s, char *why, size_t n)
      * the failure mode, and doing nothing costs at most one boot that
      * reaches Windows -- which is the safe direction. */
     if (s->unknown) return 1;
-    if (s->confirmed || s->declined) return 1;
+    /* "No, go back to Windows" is hers to say, and is kept: nothing
+     * here ever puts AurOS back after it. */
+    if (s->declined) return 1;
     if (!s->have_entry) return 1;
+    if (s->confirmed) {
+        /* S-24. SHE SAID IT WORKS, and Windows Update (or a BIOS update)
+         * has since put Windows Boot Manager first again, or removed
+         * AurOS from the list: the next start would be Windows with no
+         * word about why. This runs only once the desktop has been up
+         * for a while (auros-keeper), i.e. when AurOS has just been
+         * reached -- from the firmware's menu, or from "Start Windows
+         * this once" having ended -- so the order she chose is the
+         * order she gets back. Nothing else is touched. */
+        if (s->is_default) return 1;
+        if (!s->efivars || !s->writable) return 1;
+        if (promote(s, why, n) != 0) return -1;
+        return 2;
+    }
     /* Already the default: there is nothing for a one-shot to add, and
      * arming it every boot on a machine that has been confirmed would
      * be an NVRAM write per boot for ever. */
@@ -431,38 +450,100 @@ int af_putback(const af_state *s, char *why, size_t n)
     return 0;
 }
 
-/* ── the one function in this tree that writes BootOrder ───────────── */
-int af_confirm(const af_state *s, char *why, size_t n)
+/* ── "Windows" in AurOS's start-up menu ──────────────────────────────
+ *
+ * The menu used to chainload \EFI\Microsoft\Boot\bootmgfw.efi through
+ * shim and grub. Windows then starts with the TPM having measured shim,
+ * grub and Microsoft's third-party CA instead of what it measured when
+ * BitLocker sealed its key, and a BitLocker PC stops at the blue
+ * recovery-key screen -- a 48-digit number she has never seen.
+ *
+ * So the menu starts a few seconds of AurOS whose only job is this:
+ * tell the firmware to start Windows Boot Manager next, and restart.
+ * The firmware then starts Windows itself, exactly as on any other
+ * morning, and measures exactly what it always does.
+ *
+ * Windows Boot Manager is found by the file its entry starts, not by
+ * its name: the name is the firmware's to show and some write their
+ * own. Writes BootNext only; never BootOrder. */
+static int file_is(const uint8_t *opt, int len, const char *want)
 {
-    /* "NO ENTRY" AND "COULD NOT LOOK" ARE NOT THE SAME ANSWER, and
-     * they used to be. have_entry is false when efivarfs is not
-     * mounted, when opendir fails, and when every read fails -- and
-     * every one of those stamped consent, returned success, and made
-     * the desktop say "AurOS starts from now on" about a machine
-     * whose BootOrder had never been touched. Worse, the stamp is
-     * permanent, so the hold stopped re-arming and the machine fell
-     * back to Windows for good while the desktop insisted otherwise
-     * and never asked again. */
-    if (!s->efivars) {
-        snprintf(why, n, "AurOS cannot reach this computer's start-up "
-                         "settings, so it cannot make itself what this "
-                         "computer starts.");
-        return -1;
+    if (len < 6) return 0;
+    int fpl = opt[4] | (opt[5] << 8);
+    int i = 6;
+    while (i + 1 < len && (opt[i] | opt[i + 1])) i += 2;   /* description */
+    i += 2;
+    int end = i + fpl;
+    if (end > len) return 0;
+    while (i + 4 <= end) {
+        int type = opt[i], sub = opt[i + 1];
+        int nl = opt[i + 2] | (opt[i + 3] << 8);
+        if (nl < 4 || i + nl > end) return 0;
+        if (type == 0x7F && sub == 0xFF) return 0;
+        if (type == 0x04 && sub == 0x04) {          /* media: file path */
+            size_t k = 0, w = strlen(want);
+            int j = i + 4, ok = 1;
+            for (; j + 1 < i + nl; j += 2, k++) {
+                uint16_t c = (uint16_t)(opt[j] | (opt[j + 1] << 8));
+                if (!c) break;
+                char a = c < 0x80 ? (char)c : 0;
+                if (a == '/') a = '\\';
+                if (k >= w || !a || tolower((unsigned char)a) !=
+                                    tolower((unsigned char)want[k])) { ok = 0; break; }
+            }
+            if (ok && k == w) return 1;
+        }
+        i += nl;
     }
-    if (!s->have_entry) {
-        /* Nothing to promote. This is not a failure: it is what a
-         * machine AurOS was installed onto directly, rather than
-         * converted from Windows, looks like. Record the answer and
-         * stop asking. */
-        if (stamp(AF_CONFIRMED, why, n) != 0) return -1;
-        return 1;
-    }
-    if (!s->writable) {
-        snprintf(why, n, "this computer does not let AurOS change what it "
-                         "starts by default");
-        return -1;
-    }
+    return 0;
+}
 
+int af_windows(char *why, size_t n)
+{
+    if (!af_efivars_present() || !af_efivars_writable()) {
+        snprintf(why, n, "AurOS cannot reach this computer's start-up settings");
+        return -1;
+    }
+    /* In BootOrder's order first, so that of two the one the firmware
+     * itself would start wins; then any other, active ones before the
+     * rest. */
+    uint16_t order[MAX_BOOTS], all[MAX_BOOTS], cand[MAX_BOOTS * 2];
+    int k = 0, have = read_order(order, MAX_BOOTS);
+    for (int i = 0; i < have; i++) cand[k++] = order[i];
+    int an = af_boot_numbers(all, MAX_BOOTS);
+    for (int pass = 0; pass < 2; pass++)
+        for (int i = 0; i < an; i++)
+            if ((af_boot_bootable(all[i]) != 0) == (pass == 0)) cand[k++] = all[i];
+    for (int i = 0; i < k; i++) {
+        char name[16];
+        snprintf(name, sizeof name, "Boot%04X", cand[i]);
+        uint8_t opt[AF_OPT_MAX];
+        int len = af_var_get(name, opt, sizeof opt);
+        if (len < 6 || !file_is(opt, len, "\\EFI\\Microsoft\\Boot\\bootmgfw.efi"))
+            continue;
+        uint8_t v[2] = { (uint8_t)(cand[i] & 0xFF), (uint8_t)(cand[i] >> 8) };
+        if (af_var_put("BootNext", v, sizeof v, why, n) != 0) return -1;
+        uint8_t back[8];
+        if (af_var_get("BootNext", back, sizeof back) != 2 || memcmp(back, v, 2) != 0) {
+            snprintf(why, n, "this computer's firmware did not keep what AurOS "
+                             "asked it to start next time");
+            return -1;
+        }
+        return cand[i];
+    }
+    snprintf(why, n, "this computer's start-up menu has no Windows Boot Manager");
+    return -1;
+}
+
+/* AurOS FIRST IN BootOrder, everything else kept, read back, and put
+ * back as it was if the firmware did not keep it. The one place that
+ * writes the order for "AurOS is what this computer starts": `confirm`
+ * calls it once, and the start-up keeper (af_hold, below) calls it when
+ * Windows Update or a BIOS update has moved Windows Boot Manager to the
+ * front of a machine she has already said works. Not the stamp, not
+ * BootNext. */
+static int promote(const af_state *s, char *why, size_t n)
+{
     uint16_t order[MAX_BOOTS], nw[MAX_BOOTS];
     int have = read_order(order, MAX_BOOTS);
     if (have == -2) {
@@ -561,6 +642,42 @@ int af_confirm(const af_state *s, char *why, size_t n)
                          "start-up order, so it has been put back as it was");
         return -1;
     }
+    return 0;
+}
+
+/* ── the one function in this tree that writes BootOrder ───────────── */
+int af_confirm(const af_state *s, char *why, size_t n)
+{
+    /* "NO ENTRY" AND "COULD NOT LOOK" ARE NOT THE SAME ANSWER, and
+     * they used to be. have_entry is false when efivarfs is not
+     * mounted, when opendir fails, and when every read fails -- and
+     * every one of those stamped consent, returned success, and made
+     * the desktop say "AurOS starts from now on" about a machine
+     * whose BootOrder had never been touched. Worse, the stamp is
+     * permanent, so the hold stopped re-arming and the machine fell
+     * back to Windows for good while the desktop insisted otherwise
+     * and never asked again. */
+    if (!s->efivars) {
+        snprintf(why, n, "AurOS cannot reach this computer's start-up "
+                         "settings, so it cannot make itself what this "
+                         "computer starts.");
+        return -1;
+    }
+    if (!s->have_entry) {
+        /* Nothing to promote. This is not a failure: it is what a
+         * machine AurOS was installed onto directly, rather than
+         * converted from Windows, looks like. Record the answer and
+         * stop asking. */
+        if (stamp(AF_CONFIRMED, why, n) != 0) return -1;
+        return 1;
+    }
+    if (!s->writable) {
+        snprintf(why, n, "this computer does not let AurOS change what it "
+                         "starts by default");
+        return -1;
+    }
+
+    if (promote(s, why, n) != 0) return -1;
 
     /* The one-shot has done its job and an armed BootNext that is
      * consumed weeks from now is a surprise. Its removal is not

@@ -1,0 +1,22 @@
+[Unit]
+Description=AurOS: this start worked, so the next one need not fall back
+Documentation=file:///usr/lib/auros/boot-ok
+# Says "this start worked" once the desktop has been up two minutes.
+# Until it does, the start-up menu counts the start as unconfirmed, and
+# two in a row make the next one use the kernel before. See
+# /usr/lib/auros/grub.cfg.in, "boot counting".
+After=auros-hold.service
+ConditionPathExists=/boot/grub/grubenv
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/auros/boot-ok
+# /boot/grub, for grub's environment block, and nothing else.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/boot/grub
+
+[Install]
+WantedBy=multi-user.target

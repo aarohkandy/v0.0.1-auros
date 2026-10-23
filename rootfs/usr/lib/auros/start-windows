@@ -1,0 +1,63 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  start-windows — what "Windows" in AurOS's start-up menu runs
+#
+#  PID 1 for a few seconds: grub starts AurOS's own kernel with
+#  init=/usr/lib/auros/start-windows, root read-only. It asks the
+#  firmware to start Windows Boot Manager next (BootNext, `aurfirst
+#  windows`) and restarts. The firmware then starts Windows itself,
+#  exactly as on any other morning, and the TPM measures exactly what
+#  BitLocker sealed its key to.
+#
+#  WHY NOT CHAINLOAD. That is what this menu line used to do: grub
+#  started \EFI\Microsoft\Boot\bootmgfw.efi through shim. The TPM then
+#  has shim, grub and Microsoft's third-party CA in PCR 4 and 7 where
+#  BitLocker expects only Windows Boot Manager, and a BitLocker PC stops
+#  at the blue screen that asks for a 48-digit recovery key. Shown by
+#  tools/windowsboottest.sh, with a real TPM emulator.
+#
+#  WHEN THE FIRMWARE WILL NOT TAKE IT -- no Windows Boot Manager entry,
+#  a start-up store that will not be written -- grub may still start
+#  Windows the old way, but only on a PC with no BitLocker volume: this
+#  leaves auros_win=chain in grub's environment and restarts, and grub
+#  chainloads it once. With BitLocker it says so, plainly, and restarts
+#  into AurOS.
+# ═══════════════════════════════════════════════════════════════════
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+LIB=${AUROS_LIB:-/usr/lib/auros}
+
+say() { printf '\n  %s\n' "$*" > /dev/console 2>/dev/null || printf '\n  %s\n' "$*"; }
+restart() {
+    sync
+    echo b > /proc/sysrq-trigger 2>/dev/null
+    reboot -ff 2>/dev/null
+    sleep 30
+}
+
+mountpoint -q /proc || mount -t proc proc /proc
+mountpoint -q /sys  || mount -t sysfs sysfs /sys
+E=/sys/firmware/efi/efivars
+if [ -d "$E" ] && ! mountpoint -q "$E"; then mount -t efivarfs efivarfs "$E"; fi
+
+say "Starting Windows..."
+if aurfirst windows; then restart; fi
+
+bitlocker=no
+for p in /sys/class/block/*/partition; do
+    [ -e "$p" ] || continue
+    d=/dev/${p#/sys/class/block/}; d=${d%/partition}
+    if [ "$(dd if="$d" bs=1 skip=3 count=8 2>/dev/null)" = "-FVE-FS-" ]; then
+        bitlocker=yes
+    fi
+done
+echo "start-windows: no BootNext; BitLocker=$bitlocker"
+if [ "$bitlocker" = no ] && mount -o remount,rw / && "$LIB/grubenv" set auros_win=chain; then
+    mount -o remount,ro /
+    restart
+fi
+mount -o remount,ro / 2>/dev/null
+say "Windows could not be started from this menu."
+say "This computer will restart in a moment."
+sleep 15
+restart

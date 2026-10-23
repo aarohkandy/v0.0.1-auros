@@ -113,6 +113,14 @@ python3 "$BC" menu --root "$M" --running none >/dev/null 2>&1; rc=$?
   && ok "fstab without a / line: the UUID yesterday's menu booted" \
   || bad "fstab without a / line: the UUID yesterday's menu booted" "rc=$rc"
 mv "$T/fstab" "$M/etc/fstab"
+# Every variable the menu counts with is one load_env is told to read:
+# one that is written and never loaded is a counter stuck at 1 for ever
+# (found by tools/rollbacktest.sh, after a replace that matched nothing).
+for v in auros_try auros_bad next_entry auros_asked; do
+    grep '^  load_env ' "$C" | grep -qw "$v" \
+      && ok "the menu reads $v back from grub's environment block" \
+      || bad "the menu reads $v back from grub's environment block"
+done
 grep -q -- "--id put-windows-back-yes" "$C" && grep -q "bootmgfw.efi" "$C" \
   && ok "Put Windows back and the Windows entry are still there" \
   || bad "Put Windows back and the Windows entry are still there"

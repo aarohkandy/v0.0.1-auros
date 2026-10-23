@@ -54,6 +54,9 @@ CODE=/usr/share/OVMF/OVMF_CODE_4M.fd
 VARS=/usr/share/OVMF/OVMF_VARS_4M.fd
 BOOT_TIMEOUT="${FIRSTBOOT_TIMEOUT:-1200}"   # seconds; TCG boots a whole desktop
 
+# FIRSTBOOT_ONLY="D E" runs just those cases (A and B are the ones before C).
+want() { [ -z "${FIRSTBOOT_ONLY:-}" ] || case " $FIRSTBOOT_ONLY " in *" $1 "*) true ;; *) false ;; esac; }
+
 fail=0; checked=0
 ok()  { checked=$((checked+1)); printf '    %-60s %s\n' "$1" "ok"; }
 bad() { checked=$((checked+1)); fail=$((fail+1)); printf '    %-60s %s\n' "$1" "FAIL"
@@ -119,6 +122,16 @@ log "up mode=$mode"
 log "hold $(systemctl show -p Result --value auros-hold.service) \
 exit=$(systemctl show -p ExecMainStatus --value auros-hold.service)"
 cp /run/auros-first.state "$OUT/first.state.$n" 2>/dev/null
+if [ "$mode" = nodesktop ]; then
+    # aurshell.service is made to fail (the test's drop-in). Long enough
+    # for the keeper, which waits only 5 s here, to arm anything it is
+    # going to: it must not.
+    sleep 45
+    log "no desktop: aurshell $(systemctl is-active aurshell.service), keeper $(systemctl is-active auros-keeper.service)"
+    sync
+    systemctl poweroff
+    exit 0
+fi
 # The desktop's own directory. It is aurshell.service's
 # RuntimeDirectory, so its existence says the desktop came up.
 i=0
@@ -141,9 +154,14 @@ if [ "$mode" = confirm ] || [ "$mode" = decline ]; then
     # And it must have been consumed: the root side takes the request.
     [ -e /run/auros/answer ] && log "request LEFT BEHIND" || log "request consumed"
 fi
+# THE KEEPER ARMS THINGS ONLY ONCE THE DESKTOP HAS WORKED FOR A WHILE
+# (5 s here, 30 s on a real machine); let it finish before the power goes.
+k=0
+while systemctl is-active --quiet auros-keeper.service && [ "$k" -lt 120 ]; do sleep 1; k=$((k+1)); done
+log "keeper $(systemctl is-active auros-keeper.service) after ${k}s"
 journalctl -b --no-pager -o short-monotonic \
-    -u auros-hold.service -u auros-answer.path -u auros-answer.service \
-    -u aurshell.service > "$OUT/journal.$n" 2>&1
+    -u auros-hold.service -u auros-keeper.service -u auros-answer.path \
+    -u auros-answer.service -u aurshell.service > "$OUT/journal.$n" 2>&1
 cp /var/log/auros-answer.log "$OUT/answer.log.$n" 2>/dev/null
 sync
 systemctl poweroff
@@ -162,6 +180,9 @@ WantedBy=multi-user.target
 EOU
     ln -sf /etc/systemd/system/auros-e2e.service \
         "$T/m/etc/systemd/system/multi-user.target.wants/auros-e2e.service"
+    mkdir -p "$T/m/etc/systemd/system/auros-keeper.service.d"
+    printf '[Service]\nEnvironment=AUROS_KEEPER_SECS=5\n' \
+        > "$T/m/etc/systemd/system/auros-keeper.service.d/test.conf"
 }
 
 # ── a machine, fresh: the image, and firmware as an install leaves it ─
@@ -193,6 +214,15 @@ power_on() { # mode
     mount_root "$DISK" || return 1
     printf '%s\n' "$1" > "$T/m/etc/auros-e2e/mode"
     printf '%s\n' "$BOOTN" > "$T/m/etc/auros-e2e/boot"
+    # A desktop that never appears: the program is /bin/false, for this
+    # start only.
+    BR="$T/m/etc/systemd/system/aurshell.service.d"
+    if [ "$1" = nodesktop ]; then
+        mkdir -p "$BR"
+        printf '[Service]\nExecStart=\nExecStart=/bin/false\nExecStopPost=\nRestart=no\n' > "$BR/broken.conf"
+    else
+        rm -f "$BR/broken.conf"
+    fi
     umount_root
     SER="$T/serial.$BOOTN"; : > "$SER"
     qemu-system-x86_64 -machine q35,accel=tcg -m 2048 -smp 2 -no-reboot \
@@ -350,6 +380,60 @@ started 0002 && bad "and never to AurOS's own entry" "$(bds | tail -4)" \
                  || bad "and nothing ever re-arms the one-shot" "BootNext: $(next)"
 fi
 
+# ═══ D. a desktop that never appears ═══════════════════════════════════
+#
+# docs/safety/FINDINGS.md S-05, S-06. The hold used to arm BootNext
+# before the desktop existed, so a desktop that failed on every start
+# (graphics, a bad update) sent every restart straight back into AurOS,
+# and the only way out was a menu she could not use. The promise on the
+# website is the other one: "if AurOS ever fails to start, I start
+# Windows by myself".
+if want D; then
+echo
+echo "  a desktop that never appears, on a machine nobody has answered"
+fresh_machine || { echo "  could not prepare the machine"; exit 2; }
+power_on nodesktop; read_back
+started 0002 && ok "AurOS starts from its own entry (BootNext)" \
+             || bad "AurOS starts from its own entry (BootNext)" "$(why_not)"
+said "no desktop: aurshell [a-z]*, keeper active" && ok "...and the desktop is not there" \
+    || bad "...and the desktop is not there" "$(sed -n "s/^$BOOTN /  harness: /p" "$R/log" | tail -3)"
+[ -z "$(next)" ] && ok "so nothing arms the way back into AurOS" \
+                 || bad "so nothing arms the way back into AurOS" \
+                        "BootNext is $(next): a restart now would land in AurOS again, desktop or none"
+power_on none; read_back
+[ "$(first_tried)" = "Boot0000" ] \
+    && ok "the next start goes to Windows first" \
+    || bad "the next start goes to Windows first" "first tried: $(first_tried)" "$(why_not)"
+started 0002 && bad "...and never to AurOS's own entry" "$(bds | tail -4)" \
+             || ok "...and never to AurOS's own entry"
+fi
+
+# ═══ E. Windows Update moves itself first ═══════════════════════════════
+#
+# S-24. She said it works. Later an update puts Windows Boot Manager at
+# the front of BootOrder; the next start is Windows with no word about
+# why. Whenever AurOS is reached again (the firmware's own menu, or the
+# end of "Start Windows this once") and its desktop has worked for a
+# while, it takes the front place back. Not before she has said it works,
+# and never after she has said no.
+if want E; then
+echo
+echo "  and after she said it works, an update puts Windows first again"
+fresh_machine || { echo "  could not prepare the machine"; exit 2; }
+power_on confirm; read_back
+[ "$(first_in_order)" = "0002" ] && ok "she says it works: AurOS is first" \
+    || bad "she says it works: AurOS is first" "BootOrder: $(order)"
+python3 "$E" "$NV" set-order 0000 0002 && python3 "$E" "$NV" set-next 0002
+power_on none; read_back
+started 0002 && ok "AurOS is reached again (the firmware's menu)" \
+             || bad "AurOS is reached again (the firmware's menu)" "$(why_not)"
+[ "$(first_in_order)" = "0002" ] \
+    && ok "...and once its desktop works it is first again" \
+    || bad "...and once its desktop works it is first again" "BootOrder: $(order)" "$(why_not)"
+case " $(order) " in *" 0000 "*) ok "...with Windows still in the list" ;;
+    *) bad "...with Windows still in the list" "BootOrder: $(order)" ;; esac
+fi
+
 # ═══ C. two entries called AurOS ═══════════════════════════════════════
 #
 # The firmware menu can hold two entries called AurOS, and the ordinary
@@ -390,7 +474,7 @@ other_disk() {
     EXTRA_DRIVES="-drive file=$OD,format=raw,if=none,id=d1 -device virtio-blk-pci,drive=d1"
 }
 
-if [ -z "${FIRSTBOOT_ONLY:-}" ] || [ "${FIRSTBOOT_ONLY:-}" = C ]; then
+if want C; then
 echo
 echo "  two entries called AurOS, and the other one comes first"
 fresh_machine || { echo "  could not prepare the machine"; exit 2; }

@@ -1,6 +1,6 @@
 #!/bin/sh
 # ═══════════════════════════════════════════════════════════════════
-#  answer.sh — the four things the desktop may ask for as root
+#  answer.sh — the five things the desktop may ask for as root
 #
 #  Started by auros-answer.path when a file appears in /run/auros,
 #  which is aurshell.service's own RuntimeDirectory: mode 0700, owned
@@ -321,6 +321,23 @@ case "$word" in
         say "result=ok"
         say "note=restarting to put Windows back"
         putback_restart=1
+    fi
+    ;;
+  windows)
+    # START WINDOWS, THIS ONCE. The firmware is told to start Windows Boot
+    # Manager next (BootNext) and the computer restarts; BootOrder and
+    # her answer are not touched, so the start after that is AurOS again.
+    # Windows is started by the firmware itself, not by this menu or by
+    # grub, so BitLocker sees the start it sealed its key to
+    # (rootfs/usr/lib/auros/start-windows says why). Untimed: it is a
+    # button, not a firmware menu with a clock.
+    if "$BIN/aurfirst" windows 2>&1; then
+        say "result=ok"
+        say "note=restarting to start Windows"
+        putback_restart=1
+    else
+        say "result=failed"
+        say "note=this computer would not let AurOS start Windows this once"
     fi
     ;;
   *)

@@ -72,15 +72,18 @@ static const char *run_dir(void)
     return AF_RUN_USER;
 }
 
-/* The four, and nothing else. Spelled here so that the shell around
+/* The five, and nothing else. Spelled here so that the shell around
  * this cannot widen the list by accident. `putback` restarts the
  * computer into the restore that removes AurOS: the bound is still
  * "nothing she could not have asked for by pressing the button in
- * front of her", and that button asks twice. */
+ * front of her", and that button asks twice. `windows` starts Windows
+ * for one start and changes nothing else: BootNext at the entry that
+ * starts Windows Boot Manager (aurfirst windows), then a restart. */
 static int is_one_of_ours(const char *w)
 {
     return !strcmp(w, "confirm") || !strcmp(w, "decline") ||
-           !strcmp(w, "import")  || !strcmp(w, "putback");
+           !strcmp(w, "import")  || !strcmp(w, "putback") ||
+           !strcmp(w, "windows");
 }
 
 /* Remove it, whatever it turned out to be. unlinkat on the directory

@@ -109,6 +109,8 @@ jobs:
               t("updateboottest", "updateboottest", image=True),
               t("choicesboottest", "choicesboottest", image=True),
               t("putbacktest", "putbacktest", image=True),
+              t("windowsboottest", "windowsboottest", image=True),
+              t("rollbacktest", "rollbacktest", image=True),
           ]
           # tools/powercut-nostick.sh takes instants as arguments; with none it
           # also runs "what the screen says" and the restore half. About 60
@@ -398,7 +400,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           sh tools/apt.sh \
               qemu-system-x86 qemu-utils ovmf gdisk dosfstools mtools e2fsprogs cpio python3 \
-              zstd grub-common sbsigntool file binutils iproute2 gcc libc6-dev
+              zstd grub-common sbsigntool file binutils iproute2 gcc libc6-dev swtpm python3-cryptography
           ls -l /dev/kvm
           [ -w /dev/kvm ] || { echo "no usable /dev/kvm"; exit 1; }
           ls -l /usr/share/OVMF/

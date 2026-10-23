@@ -176,6 +176,7 @@ static struct {
     int armed;
     uint32_t armed_at;         /* when the first press was, in ms        */
     int asked;
+    const char *asked_word;    /* "putback" or "windows"                 */
     time_t asked_at;           /* an answer older than this is not ours */
 } S = { .sel = -1, .drag_row = -1, .hover_act = -1, .cur_ch = -1 };
 
@@ -363,6 +364,12 @@ static void fill_page(shell_ctx *c)
     if (S.page == SET_PAGE_WINDOWS) {
         S.armed = 0;
         add_choice("keep", "Keep AurOS", "Nothing changes");
+        /* START WINDOWS, THIS ONCE: one press, and nothing is removed.
+         * The firmware starts Windows itself (BootNext), so a PC with
+         * BitLocker does not ask for its recovery key, and AurOS starts
+         * again after that (aurfirst windows; answer.sh "windows"). */
+        add_choice("windows", "Start Windows this once",
+                   "The computer restarts into Windows. AurOS starts again after that.");
         add_choice("putback", "Remove AurOS and put Windows back",
                    "Anything you saved in AurOS goes with it.");
         S.cur_ch = 0;
@@ -410,6 +417,14 @@ static int came_from_windows(void)
  * there is one the root side has not picked up, and two presses must
  * not make two. 1 means one is already waiting -- which is NOT ours
  * sent, and the page must not say it is restarting when it is not. */
+/* The row with this id on the current page, or -1. */
+static int row_of(const char *id)
+{
+    for (int i = 0; i < S.n_ch; i++)
+        if (!strcmp(S.ch[i].id, id)) return i;
+    return -1;
+}
+
 static int ask_root(const char *word)
 {
     char path[512];
@@ -1027,11 +1042,38 @@ static void choose(shell_ctx *c, int idx)
      * between -- "Keep AurOS", Go back, Escape -- disarms it. */
     if (S.page == SET_PAGE_WINDOWS) {
         if (S.asked) return;
+        int pb = row_of("putback");
+        if (!strcmp(id, "windows")) {
+            /* ONE PRESS: it removes nothing. */
+            S.armed = 0;
+            if (pb >= 0)
+                snprintf(S.ch[pb].label, CHOICE_LEN, "%s",
+                         "Remove AurOS and put Windows back");
+            int rc = ask_root("windows");
+            if (rc == 1) {
+                snprintf(S.said, sizeof S.said, "%s",
+                         "Something else is still being done. Try again in a moment.");
+                return;
+            }
+            if (rc != 0) {
+                snprintf(S.said, sizeof S.said, "%s",
+                         "That could not be asked for just now. Nothing has changed.");
+                return;
+            }
+            S.asked = 1;
+            S.asked_word = "windows";
+            S.asked_at = time(NULL);
+            S.cur_ch = idx;
+            snprintf(S.said, sizeof S.said, "%s",
+                     "Restarting into Windows. AurOS starts again after that.");
+            return;
+        }
         if (strcmp(id, "putback") != 0) {
             S.armed = 0;
             S.cur_ch = idx;
-            snprintf(S.ch[1].label, CHOICE_LEN, "%s",
-                     "Remove AurOS and put Windows back");
+            if (pb >= 0)
+                snprintf(S.ch[pb].label, CHOICE_LEN, "%s",
+                         "Remove AurOS and put Windows back");
             snprintf(S.said, sizeof S.said, "%s",
                      "Nothing has changed. AurOS stays.");
             return;
@@ -1062,6 +1104,7 @@ static void choose(shell_ctx *c, int idx)
             return;
         }
         S.asked = 1;
+        S.asked_word = "putback";
         S.asked_at = time(NULL);
         S.cur_ch = idx;
         snprintf(S.said, sizeof S.said, "%s",
@@ -1356,7 +1399,7 @@ int settings_key(shell_ctx *c, int k)
  * something new to show. This is where a change that could not take
  * effect immediately -- a theme still being written to disk -- becomes
  * a reload, rather than in painting, which must not have consequences. */
-/* The root side's answer to "putback", if it has one: a refusal is
+/* The root side's answer to "putback" or "windows", if it has one: a refusal is
  * something she has to be told, because otherwise the screen says
  * "Restarting" for ever on a computer that is not going to. */
 static int putback_answered(void)
@@ -1370,7 +1413,8 @@ static int putback_answered(void)
     int ours = 0, failed = 0;
     while (fgets(line, sizeof line, f)) {
         line[strcspn(line, "\n")] = 0;
-        if (!strcmp(line, "request=putback")) ours = 1;
+        if (S.asked_word && !strncmp(line, "request=", 8) &&
+            !strcmp(line + 8, S.asked_word)) ours = 1;
         else if (!strncmp(line, "result=", 7) && strcmp(line + 7, "ok")) failed = 1;
         else if (!strncmp(line, "note=", 5)) snprintf(note, sizeof note, "%.140s", line + 5);
     }
@@ -1379,7 +1423,9 @@ static int putback_answered(void)
     S.asked = 0;
     S.armed = 0;
     S.cur_ch = 0;
-    snprintf(S.ch[1].label, CHOICE_LEN, "%s", "Remove AurOS and put Windows back");
+    int pb = row_of("putback");
+    if (pb >= 0)
+        snprintf(S.ch[pb].label, CHOICE_LEN, "%s", "Remove AurOS and put Windows back");
     snprintf(S.said, sizeof S.said, "Nothing has changed: %s.",
              note[0] ? note : "this computer said no");
     return 1;

@@ -250,11 +250,26 @@ cp "$MNT/usr/lib/shim/mmx64.efi"        "$ESP/EFI/AurOS/mmx64.efi" 2>/dev/null |
 printf 'shimx64.efi,AurOS,,AurOS\n' | iconv -f UTF-8 -t UTF-16LE > "$ESP/EFI/AurOS/BOOTX64.CSV"
 note "fallback CSV: $(iconv -f UTF-16LE -t UTF-8 < "$ESP/EFI/AurOS/BOOTX64.CSV" | tr -d '\n')"
 
+# IF AUROS'S OWN PARTITION IS NOT THERE, THE FIRMWARE GETS THE MACHINE
+# BACK. Somebody who deletes AUROS-ROOT in Disk Management (or a restore
+# that stopped half way) leaves an AurOS boot entry whose grub finds no
+# filesystem to read: it used to fall to a bare "grub>" prompt, on a
+# screen she cannot do anything with. `exit` returns to the firmware,
+# which starts the next entry in its own list -- Windows -- with nothing
+# measured differently from any other morning. (tools/windowsboottest.sh,
+# case F.)
 for d in ubuntu AurOS BOOT; do
 cat > "$ESP/EFI/$d/grub.cfg" <<EOF
-search --no-floppy --fs-uuid --set=root $ROOT_UUID
-set prefix=(\$root)/boot/grub
-configfile (\$root)/boot/grub/grub.cfg
+if search --no-floppy --fs-uuid --set=root $ROOT_UUID ; then
+  set prefix=(\$root)/boot/grub
+  configfile (\$root)/boot/grub/grub.cfg
+else
+  echo
+  echo "  AurOS is not on this computer any more."
+  echo "  This computer will start what comes next."
+  sleep 6
+fi
+exit
 EOF
 done
 
