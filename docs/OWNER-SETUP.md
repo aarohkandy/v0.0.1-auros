@@ -135,6 +135,13 @@ Rules for every secret:
   install anything on every AurOS computer that has not yet moved to a new key. The way
   out is a new key, rotated in as `docs/security/UPDATES.md` "Key rotation" describes.
 
+### 4b. Private security reports (1 minute, before launch)
+
+`SECURITY.md` tells people to report problems privately through GitHub. That
+is off until you switch it on: `https://github.com/OWNER/REPO/settings/security_analysis`
+→ **Private vulnerability reporting** → **Enable**. (Checked 2026-10-23: off.)
+Also put a security contact address in `SECURITY.md` where it says `[OWNER: ...]`.
+
 ## 5. Not required, by the owner's decision
 
 - **No code-signing certificate, no Azure, no Microsoft account.** The installer
