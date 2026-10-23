@@ -32,7 +32,8 @@ superseded versions), then archive.ubuntu.com's pool. Python 3 standard
 library only. tools/legal/sourcestest.py is the test, mutation-checked.
 """
 import argparse, concurrent.futures, datetime, hashlib, json, os, re, shutil
-import sys, tarfile, tempfile, time, urllib.error, urllib.parse, urllib.request
+from http.client import HTTPException
+import sys, tarfile, tempfile, threading, time, urllib.error, urllib.parse, urllib.request
 
 UA = "auros-build-sources (https://github.com/aarohkandy/v0.0.1-auros)"
 # (kind, url): "lp" is <url>/<source>/<version>/<file>; "pool" is Debian's
@@ -189,7 +190,7 @@ def retrying(fn, what, tries=4):
             if e.code in (403, 404, 410):
                 raise
             last = e
-        except (urllib.error.URLError, OSError, TimeoutError, Fail) as e:
+        except (urllib.error.URLError, OSError, TimeoutError, HTTPException, Fail) as e:
             last = e
         if i + 1 < tries:
             time.sleep(min(2 ** (i + 1), 16) * float(os.environ.get("SOURCES_SLEEP", "1")))
@@ -268,7 +269,10 @@ def get_file(bases, src, ver, name, dest, want=None):
     for url in candidate_urls(bases, src, ver, name):
         def once(url=url):
             h, n = hashlib.sha256(), 0
-            with http(url) as r, open(dest + ".part", "wb") as o:
+            # one name per thread: two versions of one source share their orig tarball's name,
+            # and two threads must never write the same partial file
+            part = "%s.part%d" % (dest, threading.get_ident())
+            with http(url) as r, open(part, "wb") as o:
                 while True:
                     b = r.read(1 << 20)
                     if not b:
@@ -279,7 +283,7 @@ def get_file(bases, src, ver, name, dest, want=None):
             if want and (n, h.hexdigest()) != want:
                 raise Fail("%s is %d bytes sha256 %s, its .dsc says %d bytes %s"
                            % (url, n, h.hexdigest(), want[0], want[1]))
-            os.replace(dest + ".part", dest)
+            os.replace(part, dest)
             return n, h.hexdigest()
         try:
             return retrying(once, url)

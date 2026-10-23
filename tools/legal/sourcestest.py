@@ -41,14 +41,17 @@ class Archive:
                 self.end_headers()
                 self.wfile.write(b)
             do_HEAD = do_GET
-        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        class Quiet(http.server.ThreadingHTTPServer):
+            def handle_error(self, request, client_address):
+                pass   # a client that hangs up after a 404 is not news
+        self.srv = Quiet(("127.0.0.1", 0), H)
         self.url = "http://127.0.0.1:%d/lp" % self.srv.server_address[1]
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
 
-    def add(self, src, ver, extra=0, signed=False, missing=None, corrupt=None):
+    def add(self, src, ver, extra=0, signed=False, missing=None, corrupt=None, orig=None):
         up = ver.split(":")[-1]
         base = up.rsplit("-", 1)[0]
-        parts = {"%s_%s.orig.tar.xz" % (src, base): os.urandom(2000 + extra),
+        parts = {"%s_%s.orig.tar.xz" % (src, base): orig if orig is not None else os.urandom(2000 + extra),
                  "%s_%s.debian.tar.xz" % (src, up): os.urandom(500)}
         lines = ["Format: 3.0 (quilt)", "Source: " + src, "Binary: x", "Architecture: any", "Version: " + ver,
                  "Checksums-Sha256:"]
@@ -182,6 +185,7 @@ def main():
         arch.add("heldsrc", "3-1", extra=1000)
         arch.add("hostglibc", "2.39-0ubuntu8.9")
         arch.add("bu1", "1.0-1"); arch.add("bu2", "2:3.4-5")
+        shared = os.urandom(3000); arch.add("dup", "1.0-1", orig=shared); arch.add("dup", "1.0-2", orig=shared)
         maint = "Ubuntu Developers <x@y>"
         pkgs = [("libfoo1", "1.2-3build1", "foo (1:1.2-3)", maint, "install ok installed"),
                 ("foo-tools", "1.2-3", "foo (1:1.2-3)", maint, "install ok installed"),
@@ -189,7 +193,8 @@ def main():
                 ("held", "3-1", "heldsrc", maint, "hold ok installed"),
                 ("auros-desktop", "0.1.0.2026", None, "AurOS <noreply@auros.invalid>", "install ok installed"),
                 ("firefox", "158.0~build2", None, "Mozilla <release@mozilla.com>", "install ok installed"),
-                ("bar-signed", "2.0-1+sig", "bar-signed", maint, "install ok installed", "bu1 (= 1.0-1), bu2 (= 2:3.4-5)")]
+                ("bar-signed", "2.0-1+sig", "bar-signed", maint, "install ok installed", "bu1 (= 1.0-1), bu2 (= 2:3.4-5)"),
+                ("dup-a", "1.0-1", "dup", maint, "install ok installed"), ("dup-b", "1.0-2", "dup", maint, "install ok installed")]
         arch.add("bar-signed", "2.0-1+sig")
         root = root_dir(tmp, pkgs)
         extra = os.path.join(tmp, "host.txt")
@@ -198,13 +203,13 @@ def main():
         base = ["--base", "lp:" + arch.url, "--no-online"]
 
         rc, o = run("plan", "--root", root, "--extra", extra)
-        check(rc == 0 and "7 Ubuntu source packages" in o and "foo\t1:1.2-3\tfoo-tools,libfoo1" in o,
+        check(rc == 0 and "9 Ubuntu source packages" in o and "foo\t1:1.2-3\tfoo-tools,libfoo1" in o,
               "plan lists one source per (name, version), with its binaries")
         check("bu1\t1.0-1\t(Built-Using of bar-signed)" in o and "bu2\t2:3.4-5" in o,
               "plan adds every Built-Using source of an installed package (a signed copy, a static link)")
 
         rc, o = run("plan", "--root", root, "--extra", extra, "--resolve", "--base", "lp:" + arch.url)
-        check(rc == 0 and "7 of 7 source packages resolve" in o,
+        check(rc == 0 and "9 of 9 source packages resolve" in o,
               "plan --resolve finds every .dsc on a complete archive")
         a0 = Archive(); a0.add("foo", "1:1.2-3"); a0.add("bar", "2.0-1"); a0.add("hostglibc", "2.39-0ubuntu8.9")
         rc, o = run("plan", "--root", root, "--extra", extra, "--resolve", "--base", "lp:" + a0.url)
@@ -244,17 +249,17 @@ def main():
                  "--base", "lp:" + a4.url, "--no-online"], "heldsrc 3-1")
         refuses("AurOS's own package and no archive of AurOS's source",
                 ["make", "--root", root, "--out", os.path.join(tmp, "r5"), "--tag", "v9"] + base, "--own-archive")
-        a5 = Archive(); a5.add("foo", "1:1.2-3", extra=900); a5.add("bar", "2.0-1"); a5.add("heldsrc", "3-1"); a5.add("bar-signed", "2.0-1+sig"); a5.add("bu1", "1.0-1"); a5.add("bu2", "2:3.4-5")
+        a5 = Archive(); a5.add("foo", "1:1.2-3", extra=900); a5.add("bar", "2.0-1"); a5.add("heldsrc", "3-1"); a5.add("bar-signed", "2.0-1+sig"); a5.add("bu1", "1.0-1"); a5.add("bu2", "2:3.4-5"); a5.add("dup", "1.0-1"); a5.add("dup", "1.0-2")
         refuses("one source package larger than a part",
                 ["make", "--root", root, "--out", os.path.join(tmp, "r6"), "--tag", "v9", "--own-archive", own,
                  "--part-bytes", "1000", "--base", "lp:" + a5.url, "--no-online"], "more than one part")
-        a6 = Archive(); a6.add("foo", "1:1.2-3"); a6.add("bar", "2.0-1"); a6.add("heldsrc", "3-1"); a6.add("bar-signed", "2.0-1+sig"); a6.add("bu1", "1.0-1"); a6.add("bu2", "2:3.4-5")
+        a6 = Archive(); a6.add("foo", "1:1.2-3"); a6.add("bar", "2.0-1"); a6.add("heldsrc", "3-1"); a6.add("bar-signed", "2.0-1+sig"); a6.add("bu1", "1.0-1"); a6.add("bu2", "2:3.4-5"); a6.add("dup", "1.0-1"); a6.add("dup", "1.0-2")
         d = "/lp/bar/2.0-1/bar_2.0-1.dsc"
         a6.files[d] = a6.files[d].replace(b"Version: 2.0-1", b"Version: 2.0-2")
         refuses("a .dsc that is another version than the one asked for",
                 ["make", "--root", root, "--out", os.path.join(tmp, "r7"), "--tag", "v9", "--own-archive", own,
                  "--base", "lp:" + a6.url, "--no-online"], "not bar 2.0-1")
-        a7 = Archive(); [a7.add(*x) for x in (("foo", "1:1.2-3"), ("bar", "2.0-1"), ("heldsrc", "3-1"), ("bar-signed", "2.0-1+sig"), ("bu2", "2:3.4-5"))]
+        a7 = Archive(); [a7.add(*x) for x in (("foo", "1:1.2-3"), ("bar", "2.0-1"), ("heldsrc", "3-1"), ("bar-signed", "2.0-1+sig"), ("bu2", "2:3.4-5"), ("dup", "1.0-1"), ("dup", "1.0-2"))]
         refuses("a Built-Using source that is nowhere (a signed copy's origin)",
                 ["make", "--root", root, "--out", os.path.join(tmp, "r9"), "--tag", "v9", "--own-archive", own,
                  "--base", "lp:" + a7.url, "--no-online"], "bu1 1.0-1")
