@@ -123,7 +123,8 @@ mkdir -p "$OUT"
 mode=$(cat /etc/auros-e2e/mode 2>/dev/null || echo none)
 n=$(cat /etc/auros-e2e/boot 2>/dev/null || echo 0)
 log() { printf '%s %s\n' "$n" "$*" >> "$OUT/log"; sync; }
-log "up mode=$mode"
+sb=$(od -An -t u1 /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c 2>/dev/null | awk '{print $NF}')
+log "up mode=$mode sb=$sb"
 i=0
 while [ ! -d /run/auros ] && [ "$i" -lt 300 ]; do sleep 1; i=$((i+1)); done
 [ -d /run/auros ] && log "desktop after ${i}s" || log "desktop NEVER"
@@ -149,6 +150,16 @@ sync
 systemctl poweroff
 EOS
 chmod 755 "$T/m/usr/lib/auros-e2e/run.sh"
+# "Put Windows back" first saves her files into Windows (`ferry back`,
+# answer.sh). This machine's "Windows" is an EFI partition with the
+# installer's files and no Windows drive to save into, which the real
+# Ferry refuses (exit 7) -- correctly, and that is Ferry's own test
+# (src/ferry/tests/sandbox.sh, scenario 3, under this unit's sandbox).
+# What this test is about is the chain after it, so Ferry is a program
+# that saved everything.
+rm -f "$T/m/usr/bin/ferry"
+printf '#!/bin/sh\n# NOT PART OF AUROS: tools/putbacktest.sh. Ferry'"'"'s own tests save files.\nexit 0\n' > "$T/m/usr/bin/ferry"
+chmod 755 "$T/m/usr/bin/ferry"
 cat > "$T/m/etc/systemd/system/auros-e2e.service" <<'EOU'
 [Unit]
 Description=NOT PART OF AUROS: putbacktest's stand-in for one button press
@@ -244,13 +255,18 @@ S2=$(tr -d '\r' < "$T/serial.2")
 echo "$S2" | grep -aq 'starting Boot0002 "AurOS"' \
   && ok "the firmware started AurOS's entry" \
   || bad "the firmware started AurOS's entry" "$(echo "$S2" | grep -ao 'BdsDxe:.*' | head -3)"
-echo "$S2" | grep -aq 'Command line:.*aurstage.restore' \
+# THE KERNEL'S OWN LINES ARE QUIET NOW ("quiet loglevel=3" on the restore
+# line, so that she sees one calm screen), so the command line is not on
+# the serial line any more. What is: the staging environment's own, and
+# "putting Windows back" is printed only when it was started with
+# aurstage.restore. It could only be started by grub through shim, with
+# Secure Boot on (read inside AurOS on boot 1, same firmware, same keys).
+echo "$S2" | grep -aq 'AurOS staging environment' && echo "$S2" | grep -aq 'putting Windows back' \
   && ok "grub started the staging kernel with aurstage.restore" \
   || bad "grub started the staging kernel with aurstage.restore" \
-         "$(echo "$S2" | grep -a 'Command line' | head -2)"
-echo "$S2" | grep -aqi 'secure boot.*enabled\|Secure boot enabled\|secure   Secure Boot on' \
-  && ok "...with Secure Boot on" \
-  || bad "...with Secure Boot on" "$(echo "$S2" | grep -ai 'secure' | head -3)"
+         "$(echo "$S2" | grep -a 'aurstage' | head -3)"
+case "$(e2e_log)" in *"1 up mode=putback sb=1"*) ok "...with Secure Boot on (SecureBoot=1, read inside AurOS)" ;;
+    *) bad "...with Secure Boot on (SecureBoot=1, read inside AurOS)" "$(e2e_log | grep '^1 up')" ;; esac
 V=$(echo "$S2" | grep -ao 'aurstage-report v1 verdict=restore[a-z-]*' | head -1)
 [ "$V" = "aurstage-report v1 verdict=restore-nothing-saved" ] \
   && ok "the restore ran, and found nothing on this test disk to put back" \
@@ -269,8 +285,8 @@ mount_root && grub-editenv "$T/m/boot/grub/grubenv" unset aurstage_extra; umount
 python3 "$E" "$NV" set-next 0002 >/dev/null
 power_on none
 S3=$(tr -d '\r' < "$T/serial.3")
-echo "$S3" | grep -aq 'aurstage.restore' \
-  && bad "it does not restore again" "$(echo "$S3" | grep -a 'Command line' | head -2)" \
+echo "$S3" | grep -aq 'AurOS staging environment' \
+  && bad "it does not restore again" "$(echo "$S3" | grep -a 'aurstage' | head -2)" \
   || ok "it does not restore again"
 L=$(e2e_log)
 case "$L" in *"3 up mode=none"*) ok "...it starts AurOS" ;;
@@ -298,10 +314,10 @@ python3 "$E" "$NV" set-next 0002 >/dev/null
 power_on none
 QEXTRA=""
 S5=$(tr -d '\r' < "$T/serial.5")
-echo "$S5" | grep -aq 'Command line:.*aurstage.restore.*aurstage.asked=[0-9]' \
+echo "$S5" | grep -aq 'AurOS staging environment' \
   && ok "the menu still took the old request to the restore" \
   || bad "the menu still took the old request to the restore" \
-         "$(echo "$S5" | grep -a 'Command line' | head -2)"
+         "$(echo "$S5" | grep -a 'aurstage' | head -2)"
 V=$(echo "$S5" | grep -ao 'aurstage-report v1 verdict=restore[a-z-]*' | head -1)
 [ "$V" = "aurstage-report v1 verdict=restore-stale" ] \
   && ok "...which refused it as stale, and did not run" \
@@ -317,13 +333,15 @@ echo "  boot 6: the start after that"
 python3 "$E" "$NV" set-next 0002 >/dev/null
 power_on none
 S6=$(tr -d '\r' < "$T/serial.6")
-echo "$S6" | grep -aq 'aurstage.restore' \
-  && bad "it does not go to the restore" "$(echo "$S6" | grep -a 'Command line' | head -2)" \
+echo "$S6" | grep -aq 'AurOS staging environment' \
+  && bad "it does not go to the restore" "$(echo "$S6" | grep -a 'aurstage' | head -2)" \
   || ok "it does not go to the restore"
 L=$(e2e_log)
 case "$L" in *"6 up mode=none"*) ok "...it starts AurOS" ;;
     *) bad "...it starts AurOS" "$(echo "$L" | tail -3)" ;; esac
 
+# For whoever is working out why it failed: the serial lines, kept.
+if [ -n "${PUTBACK_KEEP:-}" ]; then mkdir -p "$PUTBACK_KEEP"; cp "$T"/serial.* "$PUTBACK_KEEP"/ 2>/dev/null; fi
 echo
 if [ "$fail" -gt 0 ]; then echo "$fail of $checked wrong."; exit 1; fi
 echo "$checked checks: the button in AurOS restarts into the restore, once,"
