@@ -218,7 +218,7 @@ static int gapselftest(int argc, char **argv)
 
     uint64_t now = 0, smin = 0, smax = 0;
     double t0 = st_now();
-    if (plat_shrink_limits(disk, part, &now, &smin, &smax, why, sizeof why) != 0)
+    if (plat_shrink_limits(disk, part, &now, &smin, &smax, NULL, why, sizeof why) != 0)
         return st_fail("plat_shrink_limits", why);
     double t1 = st_now();
     printf("gapselftest limits seconds=%.1f now=%llu min=%llu max=%llu\n", t1 - t0,

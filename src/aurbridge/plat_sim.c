@@ -295,44 +295,159 @@ int plat_gap_write(int index, uint64_t off, const void *buf, size_t n,
 int plat_gap_flush(int index, char *why, size_t wn)
 { return plat_flush(index, why, wn); }
 
-/* THE SIMULATION DOES NOT RUN WINDOWS' SHRINK, for the same reason it
- * does not run manage-bde, chkdsk or diskpart: there is no Windows
- * here. A test that exercises the gap fence arranges the layout itself
- * (sgdisk) and arms the gap over it; it does not call this. Written
- * down and refused, rather than silently pretending. */
-int plat_shrink_system(int index, int part_number, uint64_t target_bytes,
-                       uint64_t *achieved_bytes, char *why, size_t wn)
+/* WINDOWS' ONLINE SHRINK, THROUGH A HELPER THE TEST PROVIDES.
+ *
+ * There is no Windows here, so the simulation does what Windows'
+ * Resize-Partition leaves behind -- the filesystem resized and the GPT
+ * entry rewritten -- by running $AURBRIDGE_SIM/shrink.sh:
+ *
+ *   shrink.sh limits DISK-FILE PART        prints AURNOW= AURMIN= AURMAX=
+ *                                          AUROFF= (bytes), one per line
+ *   shrink.sh resize DISK-FILE PART BYTES  makes it so; exit 0
+ *
+ * tools/fasttest.sh writes one (ntfsresize on a loop of the partition,
+ * then sgdisk). With no helper these refuse, as they always did: a test
+ * that does not provide Windows does not get a pretend one. */
+static int sim_tail_value(const char *t, const char *key, uint64_t *out)
 {
-    (void)index; (void)part_number; (void)target_bytes;
-    char cmd[128];
-    snprintf(cmd, sizeof cmd, "resize-partition disk=%d part=%d to=%llu",
-             index, part_number, (unsigned long long)target_bytes);
-    char tail[8]; plat_run(cmd, tail, sizeof tail);
-    if (achieved_bytes) *achieved_bytes = 0;
-    snprintf(why, wn,
-             "the simulation does not run Windows' online shrink; a test sets "
-             "the layout up itself");
-    return -1;
+    const char *p = strstr(t, key);
+    if (!p) return -1;
+    p += strlen(key);
+    if (*p < '0' || *p > '9') return -1;
+    *out = strtoull(p, NULL, 10);
+    return 0;
 }
 
-int plat_grow_system(int index, int part_number, uint64_t to_bytes,
-                     uint64_t *achieved_bytes, char *why, size_t wn)
+static int sim_helper(int index, const char *args, char *out, size_t n)
 {
-    char cmd[96];
-    snprintf(cmd, sizeof cmd, "grow-partition disk=%d part=%d to=%llu",
-             index, part_number, (unsigned long long)to_bytes);
-    char tail[8]; plat_run(cmd, tail, sizeof tail);
-    if (achieved_bytes) *achieved_bytes = 0;
-    snprintf(why, wn, "the simulation does not run Windows' partition resize");
-    return -1;
+    char sh[600];
+    simpath(sh, sizeof sh, "shrink.sh");
+    int i = find_disk(index);
+    if (i < 0 || access(sh, X_OK) != 0) return -1;
+    char cmd[2400];
+    snprintf(cmd, sizeof cmd, "'%s' %s", sh, args);
+    char tail[8];
+    plat_run(cmd, tail, sizeof tail);           /* written down, as ever */
+    FILE *f = popen(cmd, "r");
+    if (!f) return -1;
+    size_t k = fread(out, 1, n - 1, f);
+    out[k] = 0;
+    int rc = pclose(f);
+    return rc == 0 ? 0 : -1;
 }
 
 int plat_shrink_limits(int index, int part_number, uint64_t *now,
                        uint64_t *smallest, uint64_t *largest,
-                       char *why, size_t wn)
+                       uint64_t *offset, char *why, size_t wn)
 {
-    (void)index; (void)part_number; (void)now; (void)smallest; (void)largest;
-    snprintf(why, wn, "the simulation does not run Windows' online shrink");
+    int i = find_disk(index);
+    char args[1200], t[1024];
+    if (i < 0) { snprintf(why, wn, "there is no disk %d", index); return -1; }
+    snprintf(args, sizeof args, "limits '%s' %d", g_path[i], part_number);
+    uint64_t a = 0, b = 0, c = 0, o = 0;
+    if (sim_helper(index, args, t, sizeof t) != 0 ||
+        sim_tail_value(t, "AURNOW=", &a) != 0 || sim_tail_value(t, "AURMIN=", &b) != 0 ||
+        sim_tail_value(t, "AURMAX=", &c) != 0 || sim_tail_value(t, "AUROFF=", &o) != 0 ||
+        !a || !b || b > c) {
+        snprintf(why, wn, "the simulation has no Windows shrink to ask (no "
+                          "shrink.sh, or it did not answer)");
+        return -1;
+    }
+    if (now) *now = a;
+    if (smallest) *smallest = b;
+    if (largest) *largest = c;
+    if (offset) *offset = o;
+    return 0;
+}
+
+static int sim_resize(int index, int part_number, uint64_t bytes)
+{
+    int i = find_disk(index);
+    char args[1200], t[256];
+    if (i < 0) return -1;
+    snprintf(args, sizeof args, "resize '%s' %d %llu", g_path[i], part_number,
+             (unsigned long long)bytes);
+    return sim_helper(index, args, t, sizeof t);
+}
+
+/* The same contract as plat_win.c's, so the engine cannot tell. */
+int plat_shrink_system(int index, int part_number, uint64_t target,
+                       uint64_t *achieved, char *why, size_t wn)
+{
+    if (achieved) *achieved = 0;
+    uint64_t now = 0, smin = 0, smax = 0;
+    if (plat_shrink_limits(index, part_number, &now, &smin, &smax, NULL, why, wn) != 0)
+        return -1;
+    uint64_t want = target < smin ? smin : target;
+    want = (want + (1u << 20) - 1) / (1u << 20) * (1u << 20);
+    if (want >= now) {
+        snprintf(why, wn, "Windows can only make drive C: %llu MB smaller, "
+                          "which is not enough. Nothing on this computer has "
+                          "been changed.",
+                 (unsigned long long)((now - (smin < now ? smin : now)) >> 20));
+        return -1;
+    }
+    if (sim_resize(index, part_number, want) != 0) {
+        snprintf(why, wn, "Windows could not make drive C: smaller (simulated).");
+        return -1;
+    }
+    uint64_t got = 0;
+    if (plat_shrink_limits(index, part_number, &got, NULL, NULL, NULL, why, wn) != 0)
+        return -1;
+    if (achieved) *achieved = got;
+    if (got >= now) {
+        snprintf(why, wn, "Windows said it made drive C: smaller, and it is not.");
+        return -1;
+    }
+    return 0;
+}
+
+int plat_grow_system(int index, int part_number, uint64_t to_bytes,
+                     uint64_t *achieved, char *why, size_t wn)
+{
+    if (achieved) *achieved = 0;
+    uint64_t now = 0, smin = 0, smax = 0;
+    if (plat_shrink_limits(index, part_number, &now, &smin, &smax, NULL, why, wn) != 0)
+        return -1;
+    uint64_t want = to_bytes && to_bytes < smax ? to_bytes : smax;
+    if (want > now && sim_resize(index, part_number, want) != 0) {
+        snprintf(why, wn, "Windows could not make drive C: its full size again "
+                          "(simulated).");
+        return -1;
+    }
+    uint64_t got = 0;
+    if (plat_shrink_limits(index, part_number, &got, NULL, NULL, NULL, why, wn) != 0)
+        return -1;
+    if (achieved) *achieved = got;
+    if (got < want) {
+        snprintf(why, wn, "drive C: is %llu MB short of its full size.",
+                 (unsigned long long)((want - got) >> 20));
+        return -1;
+    }
+    return 0;
+}
+
+/* The put-back task, as a file a test can read: guid offset shrunk orig. */
+int plat_putback_task(const char *disk_guid, uint64_t win_offset,
+                      uint64_t shrunk_bytes, uint64_t orig_bytes,
+                      char *why, size_t wn)
+{
+    char p[600];
+    simpath(p, sizeof p, "putback-task.txt");
+    FILE *f = fopen(p, "w");
+    if (!f) { snprintf(why, wn, "the put-back task could not be made"); return -1; }
+    fprintf(f, "%s %llu %llu %llu\n", disk_guid, (unsigned long long)win_offset,
+            (unsigned long long)shrunk_bytes, (unsigned long long)orig_bytes);
+    fclose(f);
+    return 0;
+}
+
+int plat_putback_task_remove(char *why, size_t wn)
+{
+    char p[600];
+    simpath(p, sizeof p, "putback-task.txt");
+    if (unlink(p) == 0 || errno == ENOENT) return 0;
+    snprintf(why, wn, "the put-back task could not be removed");
     return -1;
 }
 

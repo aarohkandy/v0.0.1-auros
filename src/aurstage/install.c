@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/reboot.h>
@@ -25,6 +26,7 @@
 #include "loader.h"
 #include "fault.h"
 #include "winvol.h"
+#include "sha256.h"
 
 #define MIN_ROOT_DEFAULT (24ull * 1000 * 1000 * 1000)
 
@@ -73,7 +75,16 @@ enum {
     NOW_SMALLER,       /* Windows was made smaller; the old table holds  */
     NOW_AUROS_NEXT,    /* AurOS is installed and BootNext points at it  */
     NOW_WINDOWS_NEXT,  /* AurOS is installed; the next start is Windows */
+    NOW_ROOM_MADE,     /* the fast path: Windows made room before the
+                        * restart; the old table holds, and Windows takes
+                        * the room back when it starts (the "AurOS
+                        * put-back" task AurBridge left there)          */
 };
+
+/* What a refusal says. Above the line nothing is changed -- except on
+ * the fast path, where Windows had already made room before the restart
+ * and saying "nothing has been changed" would be untrue. */
+static int g_refuse_now = NOW_UNTOUCHED;
 
 /* AND HOW THIS MACHINE BOOTED. If the staging environment came from the
  * ESP, restarting reaches Windows, because BootNext was one-shot and
@@ -96,6 +107,11 @@ static void say_what_happens_next(int now)
         stage_say("and Windows will start. To start AurOS, hold the key your");
         stage_say("computer shows at start-up for a boot menu and choose AurOS.");
         return;
+    case NOW_ROOM_MADE:
+        stage_say("Turn this computer off and on again. Windows will start");
+        stage_say("as usual, with every file on it. The room Windows made for");
+        stage_say("AurOS goes back to drive C: by itself when Windows starts.");
+        break;
     case NOW_SMALLER:
         stage_say("Turn this computer off and on again. Windows will start;");
         stage_say("it may check its drive first. It has less free space than");
@@ -121,7 +137,7 @@ static void refuse(const char *why, const char *remedy, const char *verdict)
         rec_write(&g_rec, REC_REFUSED, verdict, w, sizeof w);
     }
     stage_say("aurstage-report v1 verdict=%s record=refused -", verdict);
-    say_what_happens_next(NOW_UNTOUCHED);
+    say_what_happens_next(g_refuse_now);
     for (;;) pause();
 }
 
@@ -226,6 +242,242 @@ static void part_dev(char *out, size_t n, const char *disk, int idx1)
     snprintf(out, n, "/dev/%s%s%d", disk, digit ? "p" : "", idx1);
 }
 
+/* ── the fast path: AurOS is already on the disk ───────────────────
+ *
+ * docs/AURBRIDGE.md, "Fast path". Before the restart Windows shrank C:
+ * itself and AurBridge wrote the image's root and EFI partitions raw
+ * into the gap, and the journal (image_on=gap) says where and what they
+ * hash to. So nothing here shrinks, copies or MOUNTS anything of
+ * Windows -- its partition may be BitLocker-encrypted, and is never read
+ * past its first sector by this code. What is left: check the machine
+ * and the plan against the journal, check every written byte against
+ * its hash, keep the way back, then commit, register and hand over.
+ * Everything up to the commit leaves the old table in force. */
+static int extent_sha(const char *dev, uint64_t off, uint64_t len,
+                      char hex[65], void (*progress)(int), int lo, int hi)
+{
+    int fd = open(dev, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    static unsigned char buf[1 << 20];
+    sha256 h; sha256_start(&h);
+    int rc = 0, last = -1;
+    for (uint64_t at = 0; at < len; ) {
+        size_t t = len - at > sizeof buf ? sizeof buf : (size_t)(len - at);
+        if (pread(fd, buf, t, (off_t)(off + at)) != (ssize_t)t) { rc = -1; break; }
+        sha256_feed(&h, buf, t);
+        at += t;
+        int pct = lo + (int)((uint64_t)(hi - lo) * at / len);
+        if (progress && pct != last) { progress(pct); last = pct; }
+    }
+    close(fd);
+    unsigned char d[32];
+    sha256_done(&h, d);
+    sha256_hex(d, hex, 65);
+    return rc;
+}
+
+static void install_gap(const stage_machine *m, journal *j)
+{
+    char why[280];
+    g_refuse_now = NOW_ROOM_MADE;
+    stage_say("record   AurOS was written beside Windows before the restart");
+
+    journal_verdict jv = journal_check(j, m, why, sizeof why);
+    if (jv != JOURNAL_MATCH)
+        refuse(why, "The installer will check this computer again.",
+               journal_verdict_name(jv));
+    stage_say("record   %s", why);
+    const stage_disk *disk = journal_disk(j, m, NULL);
+    if (!disk)
+        refuse("This is not the computer the installer was prepared for.",
+               NULL, "wrong-disk");
+    if (!disk->sector_known || !disk->gpt)
+        refuse("This computer's disk is not the kind the installer prepared.",
+               NULL, "not-gpt");
+    char diskdev[80];
+    snprintf(diskdev, sizeof diskdev, "/dev/%s", disk->name);
+    const stage_part *win = NULL;
+    for (int k = 0; k < disk->n_parts; k++)
+        if (disk->part[k].start_lba == j->win_start_lba) win = &disk->part[k];
+    if (!win)
+        refuse("The Windows part of this disk is not where it was.", NULL, "moved");
+
+    /* Somebody else's encryption (BitLocker is Windows' own and is left
+     * exactly as it is). */
+    char who[64], espdev[80] = "";
+    for (int k = 0; k < disk->n_parts; k++)
+        if (disk->part[k].is_esp)
+            snprintf(espdev, sizeof espdev, "/dev/%s", disk->part[k].name);
+    fde_verdict fv = fde_scan_disk(diskdev, espdev[0] ? espdev : NULL,
+                                   who, sizeof who);
+    if (fv == FDE_NAMED) {
+        snprintf(why, sizeof why, "This computer's drive is protected by %s.", who);
+        refuse(why, "That has to be turned off first.", "third-party-encryption");
+    }
+    if (fv == FDE_UNSURE)
+        refuse("AurOS could not check whether this drive is encrypted by "
+               "other software.", NULL, "encryption-unsure");
+    smart_state sm;
+    smart_read(diskdev, &sm);
+    if (sm.verdict == SMART_FAILING) refuse(sm.why, sm.remedy, "drive-failing");
+    stage_say("drive    %s", sm.why);
+    power_state pw; char pwhy[200];
+    power_read(NULL, &pw);
+    if (!power_ok(&pw, pwhy, sizeof pwhy))
+        refuse(pwhy, "Plug it in and try again.", "on-battery");
+
+    /* THE PLAN, BY THE FUNCTION AURBRIDGE MADE IT WITH, from the table
+     * as it is now: every extent must be the one the journal recorded. */
+    int dfd = open(diskdev, O_RDONLY | O_CLOEXEC);
+    gpt_table old;
+    int gok = dfd >= 0 && gpt_read(dfd, (uint32_t)disk->logical_sector,
+                                   disk->bytes, &old) == 0;
+    if (dfd >= 0) close(dfd);
+    if (!gok) refuse("This computer's partition table could not be read.",
+                     NULL, "no-table");
+    uint32_t ss = old.sector;
+    int wi = gpt_find_start(&old, win->start_lba * 512ull / ss);
+    if (wi < 0) refuse("The Windows partition is not in this disk's table where "
+                       "it was expected.", NULL, "moved");
+    uint64_t min_root = j->min_root_bytes ? j->min_root_bytes : min_root_bytes();
+    stage_layout L;
+    if (plan_compute_prepared(&old, wi, j->root_len, j->boot_len, j->rsc_bytes,
+                              min_root, &L, why, sizeof why) != 0)
+        refuse(why, NULL, "no-room");
+    if (L.root_first != j->gap_root_first || L.root_last != j->gap_root_last ||
+        L.rsc_first  != j->gap_rsc_first  || L.rsc_last  != j->gap_rsc_last  ||
+        L.rec_first  != j->gap_rec_first  || L.rec_last  != j->gap_rec_last)
+        refuse("The space AurOS was written into is not where the installer "
+               "said it would be.", "Run the installer in Windows again.",
+               "plan-mismatch");
+    plan_say(&L);
+
+    /* THE WAY BACK must fit where the plan put it. */
+    rescue_area rsc;
+    memset(&rsc, 0, sizeof rsc);
+    uint64_t rsc_need = 0;
+    if (rescue_size_needed(disk, &rsc_need, why, sizeof why) != 0)
+        refuse(why, NULL, "cannot-size-rescue");
+    if (rsc_need > (L.rsc_last - L.rsc_first + 1) * (uint64_t)ss)
+        refuse("The room set aside for the way back to Windows is too small "
+               "for this computer.", "Run the installer in Windows again.",
+               "rescue-too-small");
+    uint64_t avail = stage_mem_available();
+    if (!avail || rsc_need + (256ull << 20) > avail)
+        refuse("This computer does not have enough memory to hold a copy of "
+               "its Windows startup while AurOS is installed.", NULL, "no-memory");
+    snprintf(rsc.dev, sizeof rsc.dev, "/run/aurstage/saved.bin");
+    rsc.part_bytes = rsc_need;
+    if (wr_scratch(rsc.dev, rsc_need, why, sizeof why) != 0)
+        refuse(why, NULL, "no-memory");
+
+    /* EVERY BYTE AURBRIDGE WROTE, against the hash it recorded. */
+    uint64_t root_off = L.root_first * (uint64_t)ss;
+    uint64_t boot_off = L.rec_first * (uint64_t)ss;
+    char h1[65], h2[65];
+    stage_say("checking the copy of AurOS written before the restart");
+    fprintf(stderr, "aurstage: ");
+    if (extent_sha(diskdev, root_off, j->root_len, h1, dots, 0, 95) != 0 ||
+        extent_sha(diskdev, boot_off, j->boot_len, h2, dots, 95, 100) != 0)
+        refuse("The copy of AurOS written before the restart could not be read.",
+               NULL, "gap-unreadable");
+    fprintf(stderr, "\n");
+    if (strcasecmp(h1, j->root_sha256) != 0 || strcasecmp(h2, j->boot_sha256) != 0)
+        refuse("The copy of AurOS written before the restart is damaged.",
+               "Run the installer in Windows again.", "gap-damaged");
+    stage_say("image    the copy written before the restart is exactly right");
+
+    stage_say("Saving this computer's Windows startup, so it can be put back.");
+    fprintf(stderr, "aurstage: ");
+    if (rescue_capture(disk, &rsc, j->run_id, dots, why, sizeof why) != 0)
+        refuse(why, NULL, "rescue-capture-failed");
+    fprintf(stderr, "\n");
+    step(REC_GATE_OK, NULL);
+    fault_maybe("gate");
+    stage_say("Everything AurOS can check has been checked.");
+
+    /* ════ BELOW THIS LINE THE DISK CHANGES (inside the gap only, until
+     * the commit) ═══════════════════════════════════════════════════ */
+    wr_target t;
+    if (wr_open(&t, diskdev, why, sizeof why) != 0)
+        give_up(why, NULL, "disk-not-writable", NOW_ROOM_MADE);
+    stage_say("Keeping the way back on this computer, before anything else.");
+    rescue_payload rp0;
+    if (wr_arm(&t, WR_MIRROR, L.rsc_first * (uint64_t)ss,
+               (L.rsc_last + 1) * (uint64_t)ss, why, sizeof why) != 0 ||
+        rescue_open(&rsc, &rp0, why, sizeof why) != 0 ||
+        rescue_mirror(&t, &rsc, &rp0, L.rsc_first * (uint64_t)ss,
+                      why, sizeof why) != 0)
+        give_up(why, NULL, "saved-copy-failed", NOW_ROOM_MADE);
+    wr_disarm(&t, WR_MIRROR);
+    stage_say("saved    the way back is on this computer, read back and checked");
+    fault_maybe("mirror-end");
+
+    stage_say("Checking that this computer works under AurOS.");
+    probe_result pr;
+    probe_run_at(diskdev, root_off, &pr);
+    if (pr.verdict != PROBE_OK)
+        give_up(pr.why, "This is a fault in AurOS, not in this computer.",
+                probe_verdict_name(pr.verdict), NOW_ROOM_MADE);
+    stage_say("checks   %s", pr.why);
+
+    gpt_table nw;
+    if (commit_build(&old, &L, &nw, why, sizeof why) != 0)
+        give_up(why, NULL, "cannot-build-table", NOW_ROOM_MADE);
+    size_t ab = gpt_array_bytes(&nw);
+    uint64_t alt = nw.disk_sectors - 1;
+    uint64_t barr = alt - (ab + ss - 1) / ss;
+    if (wr_arm(&t, WR_GPT_PRIMARY, 1ull * ss, nw.entry_lba * ss + ab,
+               why, sizeof why) != 0 ||
+        wr_arm(&t, WR_GPT_BACKUP, barr * ss, (alt + 1) * ss, why, sizeof why) != 0)
+        give_up(why, NULL, "cannot-arm-table", NOW_ROOM_MADE);
+    if (plan_check(&old, &L, j->root_len, j->boot_len, j->rsc_bytes, min_root,
+                   why, sizeof why) != 0)
+        give_up(why, NULL, "plan-changed", NOW_ROOM_MADE);
+    stage_say("Writing the new layout.");
+    if (commit_table(&t, &nw, commit_note, NULL, why, sizeof why) != 0)
+        give_up(why, NULL, "commit-failed", NOW_ROOM_MADE);
+    wr_disarm(&t, WR_GPT_PRIMARY);
+    wr_disarm(&t, WR_GPT_BACKUP);
+    wr_close(&t);
+
+    uint16_t boot_entry = 0;
+    int reg = loader_register(&nw, &L, &boot_entry, why, sizeof why);
+    if (reg != 0)
+        stage_warn("AurOS is installed but this computer would not be asked to "
+                   "start it next (%s). Hold the key your computer shows at "
+                   "start-up for a boot menu and choose AurOS.", why);
+    else
+        stage_say("startup  AurOS is in this computer's start-up menu (entry "
+                  "%04X); Windows is still what it starts by default", boot_entry);
+    fault_maybe("boot-entry");
+
+    int rootidx = -1;
+    for (uint32_t k = 0; k < nw.n_entries; k++)
+        if (gpt_used(&nw.ent[k]) && nw.ent[k].first == L.root_first)
+            rootidx = (int)k;
+    char rootdev[80];
+    part_dev(rootdev, sizeof rootdev, disk->name, rootidx + 1);
+    stage_say("Making AurOS fill the space it was given.");
+    int st = fault_fail("settle") ? -1
+           : commit_settle(diskdev, rootdev, why, sizeof why);
+    if (st < 0)
+        give_up(why, NULL, "settle-failed",
+                reg == 0 ? NOW_AUROS_NEXT : NOW_WINDOWS_NEXT);
+    if (st > 0) stage_warn("%s", why);
+    fault_maybe("settle-end");
+    stage_say("%s", "");
+    stage_say("aurstage-report v1 verdict=installed record=done disk=%s mode=gap",
+              disk->name);
+    stage_say("AurOS is installed. Starting it now.");
+    sync();
+    if (stage_switch_root(rootdev) != 0)
+        give_up("AurOS is installed but did not start.",
+                "Turn this computer off and on again.", "handover-failed",
+                reg == 0 ? NOW_AUROS_NEXT : NOW_WINDOWS_NEXT);
+    for (;;) pause();
+}
+
 /* ── the run ─────────────────────────────────────────────────────── */
 
 void install_run(const stage_machine *m)
@@ -283,6 +535,8 @@ void install_run(const stage_machine *m)
     g_from_usb = !strcmp(j.boot_from, "usb");
     g_nostick  = !strcmp(j.image_on, "windows");
     stage_say_secure();
+    /* THE FAST PATH has no stick, no record and no image to copy. */
+    if (!strcmp(j.image_on, "gap")) install_gap(m, &j);
     if (j.image_on[0] && !g_nostick && strcmp(j.image_on, "stick") != 0)
         refuse("The note the installer left says the copy of AurOS is "
                "somewhere this version of AurOS does not know how to look.",

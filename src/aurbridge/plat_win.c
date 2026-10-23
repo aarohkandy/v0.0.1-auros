@@ -641,7 +641,8 @@ out:
  * in the output" (what this used to read) is whatever a warning said. */
 static int ps_run(const char *script, char *tail, size_t tn)
 {
-    char sys[MAX_PATH], cmd[4096];
+    static char cmd[8000];          /* plat_run takes up to 8 K characters */
+    char sys[MAX_PATH];
     if (!GetSystemDirectoryA(sys, sizeof sys))
         snprintf(sys, sizeof sys, "C:\\Windows\\System32");
     if ((size_t)snprintf(cmd, sizeof cmd,
@@ -680,19 +681,21 @@ static int tail_value(const char *tail, const char *key, uint64_t *out)
  * back from the LIVE layout after the fact, because unmovable files can
  * stop a shrink short and the plan must be made from what happened. */
 int plat_shrink_limits(int index, int part, uint64_t *now, uint64_t *smin,
-                       uint64_t *smax, char *why, size_t wn)
+                       uint64_t *smax, uint64_t *offset, char *why, size_t wn)
 {
     char script[512], tail[1024];
     snprintf(script, sizeof script,
              "$p=Get-Partition -DiskNumber %d -PartitionNumber %d; "
              "$s=Get-PartitionSupportedSize -DiskNumber %d -PartitionNumber %d; "
-             "'AURNOW='+$p.Size; 'AURMIN='+$s.SizeMin; 'AURMAX='+$s.SizeMax",
+             "'AURNOW='+$p.Size; 'AURMIN='+$s.SizeMin; 'AURMAX='+$s.SizeMax; "
+             "'AUROFF='+$p.Offset",
              index, part, index, part);
-    uint64_t a = 0, b = 0, c = 0;
+    uint64_t a = 0, b = 0, c = 0, o = 0;
     if (ps_run(script, tail, sizeof tail) != 0 ||
         tail_value(tail, "AURNOW=", &a) != 0 ||
         tail_value(tail, "AURMIN=", &b) != 0 ||
-        tail_value(tail, "AURMAX=", &c) != 0 || !a || !b || b > c) {
+        tail_value(tail, "AURMAX=", &c) != 0 ||
+        tail_value(tail, "AUROFF=", &o) != 0 || !a || !b || b > c) {
         snprintf(why, wn, "Windows would not say how small or large drive C: "
                           "can be made (%s).", tail[0] ? tail : "no answer");
         return -1;
@@ -700,6 +703,7 @@ int plat_shrink_limits(int index, int part, uint64_t *now, uint64_t *smin,
     if (now) *now = a;
     if (smin) *smin = b;
     if (smax) *smax = c;
+    if (offset) *offset = o;
     return 0;
 }
 
@@ -727,7 +731,7 @@ int plat_shrink_system(int index, int part_number, uint64_t target,
 {
     if (achieved) *achieved = 0;
     uint64_t now = 0, smin = 0, smax = 0;
-    if (plat_shrink_limits(index, part_number, &now, &smin, &smax, why, wn) != 0)
+    if (plat_shrink_limits(index, part_number, &now, &smin, &smax, NULL, why, wn) != 0)
         return -1;
     /* Never below what Windows allows, and to a whole megabyte, which is
      * what Disk Management itself asks for. */
@@ -774,7 +778,7 @@ int plat_grow_system(int index, int part_number, uint64_t to_bytes,
 {
     if (achieved) *achieved = 0;
     uint64_t now = 0, smin = 0, smax = 0;
-    if (plat_shrink_limits(index, part_number, &now, &smin, &smax, why, wn) != 0)
+    if (plat_shrink_limits(index, part_number, &now, &smin, &smax, NULL, why, wn) != 0)
         return -1;
     /* UP TO WHAT IT WAS, never past it: the undo gives back what the
      * install took and nothing that was unallocated before. */
@@ -796,6 +800,104 @@ int plat_grow_system(int index, int part_number, uint64_t to_bytes,
     if (got < want) {
         snprintf(why, wn, "drive C: is %llu MB short of its full size.",
                  (unsigned long long)((want - got) >> 20));
+        return -1;
+    }
+    return 0;
+}
+
+/* ── "Put Windows back": the startup task ───────────────────────────
+ * See plat.h. The script is passed to the task as -EncodedCommand
+ * (UTF-16LE, base64), so it is part of the task definition and there is
+ * no file anywhere that a non-administrator could edit to have SYSTEM
+ * run something else. */
+#define PUTBACK_TASK "AurOS put-back"
+
+static size_t b64_utf16(const char *in, char *out, size_t cap)
+{
+    static const char T[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t n = strlen(in) * 2, o = 0;
+    for (size_t i = 0; i < n; i += 3) {
+        unsigned char b[3] = { 0, 0, 0 };
+        size_t k = 0;
+        for (; k < 3 && i + k < n; k++) {
+            size_t j = i + k;               /* byte j of the UTF-16LE text */
+            b[k] = (j & 1) ? 0 : (unsigned char)in[j / 2];
+        }
+        if (o + 5 > cap) return 0;
+        out[o++] = T[b[0] >> 2];
+        out[o++] = T[((b[0] & 3) << 4) | (b[1] >> 4)];
+        out[o++] = k > 1 ? T[((b[1] & 15) << 2) | (b[2] >> 6)] : '=';
+        out[o++] = k > 2 ? T[b[2] & 63] : '=';
+    }
+    out[o] = 0;
+    return o;
+}
+
+int plat_putback_task(const char *disk_guid, uint64_t win_offset,
+                      uint64_t shrunk_bytes, uint64_t orig_bytes,
+                      char *why, size_t wn)
+{
+    for (const char *p = disk_guid; *p; p++)
+        if (!strchr("{}-0123456789abcdefABCDEF", *p)) {
+            snprintf(why, wn, "the disk could not be named for the task.");
+            return -1;
+        }
+    char inner[1400];
+    snprintf(inner, sizeof inner,
+        "$ErrorActionPreference='Stop';"
+        "$g='%s';$o=%llu;$s=%llu;$w=%llu;$n='" PUTBACK_TASK "';"
+        "$d=Get-Disk|Where-Object{$_.Guid -eq $g}|Select-Object -First 1;"
+        "if(-not $d){exit 0};"
+        "$p=Get-Partition -DiskNumber $d.Number|Where-Object{$_.Offset -eq $o}|Select-Object -First 1;"
+        "if(-not $p){exit 0};"
+        "if($p.Size -ge $w){Unregister-ScheduledTask -TaskName $n -Confirm:$false;exit 0};"
+        "if($p.Size -lt $s){exit 0};"
+        "$m=(Get-PartitionSupportedSize -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber).SizeMax;"
+        "$t=[Math]::Min($w,$m);"
+        "if($t -gt $p.Size){Resize-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber -Size $t};"
+        "if((Get-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber).Size -ge $w)"
+        "{Unregister-ScheduledTask -TaskName $n -Confirm:$false}",
+        disk_guid, (unsigned long long)win_offset,
+        (unsigned long long)shrunk_bytes, (unsigned long long)orig_bytes);
+    static char b64[4000];
+    if (!b64_utf16(inner, b64, sizeof b64)) {
+        snprintf(why, wn, "the task's instructions did not fit.");
+        return -1;
+    }
+    static char script[7000];
+    char tail[1024];
+    int sl = snprintf(script, sizeof script,
+        "$a=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "
+        "'-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand %s';"
+        "$t=New-ScheduledTaskTrigger -AtStartup;"
+        "$p=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest;"
+        "Register-ScheduledTask -TaskName '" PUTBACK_TASK "' -Action $a -Trigger $t "
+        "-Principal $p -Force -Description 'Gives drive C: back the room AurOS "
+        "used, once AurOS is removed.' | Out-Null;"
+        "'AURTASK='+(Get-ScheduledTask -TaskName '" PUTBACK_TASK "').State", b64);
+    if (sl <= 0 || (size_t)sl >= sizeof script) {
+        snprintf(why, wn, "the task's instructions did not fit.");
+        return -1;
+    }
+    if (ps_run(script, tail, sizeof tail) != 0 || !strstr(tail, "AURTASK=Ready")) {
+        snprintf(why, wn, "Windows would not keep the note that gives drive C: "
+                          "its room back (%s).", tail[0] ? tail : "no answer");
+        return -1;
+    }
+    return 0;
+}
+
+int plat_putback_task_remove(char *why, size_t wn)
+{
+    char tail[512];
+    if (ps_run("Unregister-ScheduledTask -TaskName '" PUTBACK_TASK "' "
+               "-Confirm:$false -ErrorAction SilentlyContinue; "
+               "if (Get-ScheduledTask -TaskName '" PUTBACK_TASK "' "
+               "-ErrorAction SilentlyContinue) { 'AURTASK=still' } "
+               "else { 'AURTASK=gone' }", tail, sizeof tail) != 0 ||
+        !strstr(tail, "AURTASK=gone")) {
+        snprintf(why, wn, "the put-back task could not be removed (%s).", tail);
         return -1;
     }
     return 0;

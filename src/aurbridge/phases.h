@@ -35,6 +35,7 @@
 #include <stdint.h>
 #include "preflight.h"
 #include "plat.h"
+#include "plan.h"          /* stage_layout: the fast path's plan     */
 
 typedef enum {
     AB_INSPECT = 0,
@@ -183,6 +184,24 @@ typedef struct {
      * once the engine honours them end to end. */
     int  bring_wifi;
     int  bitlocker_pause;
+
+    /* THE FAST PATH ITSELF (docs/AURBRIDGE.md, "Fast path"): Windows
+     * shrinks C: with its own online shrink and the image is written raw
+     * into the gap before the restart (journal image_on=gap). Asked for
+     * here; phase 0 decides whether THIS computer can have it, and falls
+     * back to the no-stick path when it cannot (or refuses, on a
+     * BitLocker drive, which the no-stick path cannot install on). Needs
+     * no_stick and pieces_text. */
+    int  fast_path;
+    /* The smallest AurOS root the plan may make, in bytes; 0 is the
+     * product's 24 GB. Tests on small synthetic disks set it. */
+    uint64_t min_root_bytes;
+    /* While the shrink runs, the wizard's early download may still be
+     * fetching the pieces. If set, phase 2 calls this (it waits for that
+     * download to end) before it reads them; it then fetches whatever is
+     * still missing itself. NULL: phase 2 fetches them. */
+    void (*pieces_wait)(void *ud);
+    void *pieces_wait_ud;
 } ab_choice;
 
 /* What phases 0 and 2 learned, carried to 3 and written into the
@@ -223,6 +242,17 @@ typedef struct {
     int      fast_startup_off;
     int      esp_written;
     int      boot_made;
+
+    /* ── the fast path (set by phase 0 when this run takes it) ──────── */
+    int      fast;
+    int      bitlocker;          /* C: is BitLocker-protected          */
+    int      win_part_number;    /* Windows' PartitionNumber of C:     */
+    uint64_t win_orig_bytes;     /* C: before this run shrank it       */
+    uint64_t shrink_target;      /* what phase 2 asks Windows for      */
+    int      shrunk;             /* ab_abort grows C: back             */
+    stage_layout plan;           /* the gap, as plan_compute_prepared  */
+    uint64_t root_len, boot_len, rsc_bytes, min_root_bytes;
+    char     root_sha256[65], boot_sha256[65];
 } ab_machine;
 
 /* Every phase says what it is doing, because a person is watching a

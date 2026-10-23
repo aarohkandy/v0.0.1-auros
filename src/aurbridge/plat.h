@@ -130,11 +130,13 @@ int  plat_gap_os_fence_probe(int disk_index, uint64_t off, char *why, size_t wn)
 
 /* What Windows says partition `part_number` (1-based) on this disk is
  * now, and the smallest and largest it could be resized to in place
- * (Get-PartitionSupportedSize). Read-only, but slow: Windows analyses
- * the volume to answer. Any of the three pointers may be NULL. */
+ * (Get-PartitionSupportedSize), and where it starts (bytes) -- which is
+ * how a caller checks that Windows' partition number names the entry it
+ * means. Read-only, but slow: Windows analyses the volume to answer. Any
+ * of the four pointers may be NULL. */
 int  plat_shrink_limits(int disk_index, int part_number, uint64_t *now,
                         uint64_t *smallest, uint64_t *largest,
-                        char *why, size_t wn);
+                        uint64_t *offset, char *why, size_t wn);
 
 /* Shrink the system volume with WINDOWS' OWN online shrink (works with
  * BitLocker on; no decryption). `part_number` is the 1-based GPT entry
@@ -155,6 +157,23 @@ int  plat_shrink_system(int disk_index, int part_number,
  * 0, or -1 with a sentence. */
 int  plat_grow_system(int disk_index, int part_number, uint64_t to_bytes,
                       uint64_t *achieved_bytes, char *why, size_t wn);
+
+/* "PUT WINDOWS BACK", THE WINDOWS HALF (the fast path). After the fast
+ * path, C: is smaller than it was, and the staging environment cannot
+ * grow it back (it never touches C:, which may be BitLocker-encrypted),
+ * so Windows does: a startup task, run as SYSTEM, that grows the
+ * partition at byte `win_offset` of the disk whose GPT GUID is
+ * `disk_guid` back toward `orig_bytes` whenever the space after it is
+ * unallocated again -- AurOS removed by "Put Windows back", or never
+ * committed because the install stopped -- and only while it is at
+ * least `shrunk_bytes` (a size she chose herself is left alone). It
+ * removes itself once C: is whole. Its script lives inside the task,
+ * which only an administrator can change. 0, or -1 with a sentence. */
+int plat_putback_task(const char *disk_guid, uint64_t win_offset,
+                      uint64_t shrunk_bytes, uint64_t orig_bytes,
+                      char *why, size_t wn);
+/* And take it away again (an abort that grew C: back itself). */
+int plat_putback_task_remove(char *why, size_t wn);
 
 /* ── ordinary files ──────────────────────────────────────────────── */
 

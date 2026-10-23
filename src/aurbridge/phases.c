@@ -11,6 +11,8 @@
 #include "phases.h"
 #include "plat.h"
 #include "format.h"
+#include "gpt.h"
+#include "plan.h"
 
 #define MIB (1024ull * 1024)
 
@@ -140,6 +142,9 @@ static int rd_disk(void *ud, uint64_t off, void *buf, size_t n)
  * phase 0, where the answers are free. */
 static int prepare_possible(const ab_choice *c, ab_machine *m,
                             char *why, size_t n);
+static int fast_inspect(const ab_choice *c, pf_report *r, ab_machine *m,
+                        ab_say say, void *ud, char *why, size_t n);
+static int hex_ok(const char *h);
 
 /* ── phase 0: look, and refuse ───────────────────────────────────── */
 
@@ -296,13 +301,16 @@ static int phase_inspect(const ab_choice *c, pf_report *r, ab_machine *m,
          (unsigned long long)m->win_start_lba,
          (unsigned long long)(m->win_sectors * 512 / 1000000000ull));
 
+    /* THE FAST PATH, if it was asked for and this computer can have it. */
+    if (c->fast_path && fast_inspect(c, r, m, say, ud, why, n) != 0) return -1;
+
     /* THE NO-STICK MODE COUNTS THE IMAGE AS WELL. Preflight measured
      * what the Windows drive could give up before five gigabytes of
      * AurOS arrived on it, and in this mode they stay there through the
      * shrink -- the shrink cannot give back space a file is sitting in.
      * Asked here, where the answer costs nothing, rather than after the
      * download and the restart. */
-    if (c->no_stick && r->system_volume >= 0) {
+    if (c->no_stick && !m->fast && r->system_volume >= 0) {
         const pf_volume *v = &r->volumes[r->system_volume];
         uint64_t have_img = 0;
         plat_file_size(c->image_path, &have_img);
@@ -347,6 +355,20 @@ static int phase_consent(const ab_choice *c, pf_report *r, ab_machine *m,
     if (!c->consent_given) {
         snprintf(why, n, "nobody has agreed to this yet.");
         return -1;
+    }
+    /* THE FAST PATH NEVER NEEDS THE RECOVERY KEY: the drive is never
+     * decrypted and never mounted by anything but Windows, and its lock
+     * is paused for one restart (D11) -- which she was shown, in those
+     * words, on the page where she pressed Install. Without that, no. */
+    if (m->fast) {
+        if (m->bitlocker && !c->bitlocker_pause) {
+            snprintf(why, n, "this computer's drive is locked with BitLocker, "
+                             "and pausing the lock for one restart was not "
+                             "agreed to. Nothing has been changed.");
+            return -1;
+        }
+        talk(say, ud, "agreed: AurOS will be installed alongside Windows");
+        return 0;
     }
     int locked = 0;
     if (r->system_volume >= 0)
@@ -459,7 +481,8 @@ static int profile_ok(const char *p, char *why, size_t n)
     return 0;
 }
 
-static int prepare_possible_nostick(const ab_choice *c, char *why, size_t n)
+static int prepare_possible_nostick(const ab_choice *c, const ab_machine *m,
+                                    char *why, size_t n)
 {
     if (!c->kernel_path[0] && !plat_payload_embedded()) {
         snprintf(why, n,
@@ -491,7 +514,8 @@ static int prepare_possible_nostick(const ab_choice *c, char *why, size_t n)
     if (pieces && have < c->image_expect) {
         static ab_pieces pc;
         if (ab_pieces_parse(c->pieces_text, &pc, why, n) != 0) return -1;
-        uint64_t need = c->image_expect + pc.total;
+        /* The fast path keeps only the pieces on the Windows drive. */
+        uint64_t need = (m->fast ? 0 : c->image_expect) + pc.total;
         uint64_t free_now = plat_free_space(c->image_path);
         if (free_now && free_now < need) {
             snprintf(why, n,
@@ -510,7 +534,7 @@ static int prepare_possible(const ab_choice *c, ab_machine *m,
                             char *why, size_t n)
 {
     if (profile_ok(c->profile, why, n) != 0) return -1;
-    if (c->no_stick) return prepare_possible_nostick(c, why, n);
+    if (c->no_stick) return prepare_possible_nostick(c, m, why, n);
     if (find_stick(c, m, why, n) != 0) return -1;
     if (!m->stick_sector) {
         /* The same refusal the system disk gets, for the same reason.
@@ -842,6 +866,62 @@ static int image_write(void *ud, const uint8_t *buf, size_t n)
     return 0;
 }
 
+/* Every piece here and right, fetching what is not -- resumed when a
+ * connection drops, from nothing when a piece arrives wrong. Shared by
+ * the whole-image path below and the fast path, which never unpacks to
+ * the Windows drive at all. */
+static int fetch_pieces(const ab_pieces *pc, const char *dir, ab_say say,
+                        ab_progress prog, void *ud, char *why, size_t n)
+{
+    uint64_t done = 0;
+    for (int i = 0; i < pc->n; i++) {
+        const ab_piece *q = &pc->p[i];
+        char path[900], url[512];
+        snprintf(path, sizeof path, "%s%s", dir, q->name);
+        if ((size_t)snprintf(url, sizeof url, "%s%s", pc->base, q->name)
+                >= sizeof url) {
+            snprintf(why, n, "an address in this installer is too long.");
+            return -1;
+        }
+        if (piece_ok(path, q)) { done += q->bytes; continue; }
+        talk(say, ud, "downloading AurOS, part %d of %d", i + 1, pc->n);
+        int ok = 0;
+        char last[PLAT_WHY] = "";
+        for (int attempt = 0; attempt < 8 && !ok; attempt++) {
+            if (g_ab_cancel) { snprintf(why, n, "stopped."); return -1; }
+            uint64_t have = 0;
+            plat_file_size(path, &have);
+            /* Longer than it should be, or whole and wrong (piece_ok has
+             * already said so): from nothing. Shorter: carry on. */
+            if (have >= q->bytes) have = 0;
+            if (have == 0 && plat_file_put(path, "", 0, why, n) != 0)
+                return -1;
+            if (have < q->bytes) {
+                span_prog sp = { prog, ud, done, pc->total, 0, 60 };
+                if (plat_fetch(url, path, piece_progress, &sp, last,
+                               sizeof last) != 0) {
+                    talk(say, ud, "the download stopped (%s); carrying on", last);
+                    continue;
+                }
+            }
+            if (piece_ok(path, q)) { ok = 1; break; }
+            talk(say, ud, "part %d did not arrive intact; fetching it again",
+                 i + 1);
+        }
+        if (!ok) {
+            snprintf(why, n,
+                     "part %d of AurOS could not be downloaded intact%s%s. "
+                     "Check this computer is online and press Start "
+                     "installing again -- what has already arrived is kept.",
+                     i + 1, last[0] ? ": " : "", last);
+            return -1;
+        }
+        done += q->bytes;
+    }
+
+    return 0;
+}
+
 /* THE PIECES, FETCHED, CHECKED, JOINED, UNPACKED AND CHECKED AGAIN.
  *
  * Each piece is resumed rather than restarted when a connection drops,
@@ -880,51 +960,7 @@ static int ensure_image_pieces(const ab_choice *c, int present,
 
     char dir[600];
     dir_of(c->image_path, dir, sizeof dir);
-    uint64_t done = 0;
-    for (int i = 0; i < pc.n; i++) {
-        const ab_piece *q = &pc.p[i];
-        char path[900], url[512];
-        snprintf(path, sizeof path, "%s%s", dir, q->name);
-        if ((size_t)snprintf(url, sizeof url, "%s%s", pc.base, q->name)
-                >= sizeof url) {
-            snprintf(why, n, "an address in this installer is too long.");
-            return -1;
-        }
-        if (piece_ok(path, q)) { done += q->bytes; continue; }
-        talk(say, ud, "downloading AurOS, part %d of %d", i + 1, pc.n);
-        int ok = 0;
-        char last[PLAT_WHY] = "";
-        for (int attempt = 0; attempt < 8 && !ok; attempt++) {
-            if (g_ab_cancel) { snprintf(why, n, "stopped."); return -1; }
-            uint64_t have = 0;
-            plat_file_size(path, &have);
-            /* Longer than it should be, or whole and wrong (piece_ok has
-             * already said so): from nothing. Shorter: carry on. */
-            if (have >= q->bytes) have = 0;
-            if (have == 0 && plat_file_put(path, "", 0, why, n) != 0)
-                return -1;
-            if (have < q->bytes) {
-                span_prog sp = { prog, ud, done, pc.total, 0, 60 };
-                if (plat_fetch(url, path, piece_progress, &sp, last,
-                               sizeof last) != 0) {
-                    talk(say, ud, "the download stopped (%s); carrying on", last);
-                    continue;
-                }
-            }
-            if (piece_ok(path, q)) { ok = 1; break; }
-            talk(say, ud, "part %d did not arrive intact; fetching it again",
-                 i + 1);
-        }
-        if (!ok) {
-            snprintf(why, n,
-                     "part %d of AurOS could not be downloaded intact%s%s. "
-                     "Check this computer is online and press Start "
-                     "installing again -- what has already arrived is kept.",
-                     i + 1, last[0] ? ": " : "", last);
-            return -1;
-        }
-        done += q->bytes;
-    }
+    if (fetch_pieces(&pc, dir, say, prog, ud, why, n) != 0) return -1;
 
     talk(say, ud, "unpacking AurOS (about %llu MB)",
          (unsigned long long)(c->image_expect / MIB));
@@ -1107,12 +1143,26 @@ static int ensure_image(const ab_choice *c, ab_say say, ab_progress prog,
 int ab_fetch_image(const ab_choice *c, ab_say say, ab_progress prog,
                    void *ud, char *why, size_t n)
 {
+    /* THE FAST PATH NEVER UNPACKS ONTO THE WINDOWS DRIVE: the pieces are
+     * all it needs there, and phase 2 streams them into the gap. If this
+     * computer turns out not to be able to have the fast path, the
+     * no-stick path finds the pieces here and unpacks them then. */
+    if (c->fast_path && c->pieces_text && c->pieces_text[0]) {
+        static ab_pieces pc;
+        char dir[600];
+        if (ab_pieces_parse(c->pieces_text, &pc, why, n) != 0) return -1;
+        dir_of(c->image_path, dir, sizeof dir);
+        return fetch_pieces(&pc, dir, say, prog, ud, why, n);
+    }
     return ensure_image(c, say, prog, ud, why, n);
 }
 
 static int phase_prepare_nostick(const ab_choice *c, ab_machine *m,
                                  ab_say say, ab_progress prog, void *ud,
                                  char *why, size_t n);
+static int phase_prepare_gap(const ab_choice *c, ab_machine *m,
+                             ab_say say, ab_progress prog, void *ud,
+                             char *why, size_t n);
 
 static int phase_prepare(const ab_choice *c, pf_report *r, ab_machine *m,
                          ab_say say, ab_progress prog, void *ud,
@@ -1127,6 +1177,8 @@ static int phase_prepare(const ab_choice *c, pf_report *r, ab_machine *m,
     /* Marked before the call: a half-done switch-off is put back too. */
     m->fast_startup_off = 1;
     if (plat_fast_startup_off(why, n) != 0) return -1;
+    if (m->fast)
+        return phase_prepare_gap(c, m, say, prog, ud, why, n);
     if (c->no_stick)
         return phase_prepare_nostick(c, m, say, prog, ud, why, n);
     if (find_stick(c, m, why, n) != 0) return -1;
@@ -1406,6 +1458,384 @@ static int phase_prepare_nostick(const ab_choice *c, ab_machine *m,
     return 0;
 }
 
+/* ── the fast path: Windows makes the room, AurOS goes into it ───── */
+/*
+ * docs/AURBRIDGE.md, "Fast path". Windows shrinks C: with its own online
+ * shrink (BitLocker or not; nothing is decrypted), and the image's two
+ * partitions are written raw into the gap that frees, from the pieces,
+ * never unpacked onto the Windows drive. Nothing points at those bytes
+ * until the staging environment, after the restart, has checked them
+ * against the journal and committed the table. Undo before the restart:
+ * ab_abort grows C: back over them.
+ */
+
+/* What the plan has to fit before the image is here to measure: the
+ * image's EFI partition is ESP_MB (512 MiB) in build/mkimage, the same
+ * number src/aurstage/loader.h carries. Only the shrink target uses it;
+ * the plan uses the image's own number. */
+#define AB_BOOT_ESTIMATE (528ull * MIB)
+#define AB_MIN_ROOT      (24ull * 1000 * 1000 * 1000)
+
+static int fast_inspect(const ab_choice *c, pf_report *r, ab_machine *m,
+                        ab_say say, void *ud, char *why, size_t n)
+{
+    const pf_volume *v = &r->volumes[r->system_volume];
+    m->bitlocker = v->bitlocker == 1;
+    m->min_root_bytes = c->min_root_bytes ? c->min_root_bytes : AB_MIN_ROOT;
+    m->rsc_bytes = ab_saved_bytes(m->esp_length, m->logical_sector,
+                                  r->n_volumes);
+    char whynot[PLAT_WHY] = "";
+    static ab_pieces pc;
+    int can = c->no_stick && c->pieces_text && c->pieces_text[0] &&
+              hex_ok(c->image_sha256) && c->image_expect &&
+              ab_pieces_parse(c->pieces_text, &pc, whynot, sizeof whynot) == 0;
+    if (!can && !whynot[0])
+        snprintf(whynot, sizeof whynot, "this installer has no image in pieces");
+
+    uint64_t now = 0, smin = 0, smax = 0, off = 0;
+    if (can) {
+        m->win_part_number = atoi(m->win_part);
+        if (plat_shrink_limits(m->disk_index, m->win_part_number, &now, &smin,
+                               &smax, &off, whynot, sizeof whynot) != 0)
+            can = 0;
+    }
+    /* WINDOWS' PARTITION NUMBER MUST NAME THE ENTRY WE READ, or the shrink
+     * would be done to some other partition. Checked by where it starts
+     * and how big it is, both, against the table. */
+    if (can && (off != m->win_start_lba * 512 || now != m->win_sectors * 512)) {
+        snprintf(whynot, sizeof whynot, "Windows' partition %d is not the one "
+                 "this installer read in the table", m->win_part_number);
+        can = 0;
+    }
+    if (can) {
+        m->win_orig_bytes = now;
+        uint64_t need = m->min_root_bytes + AB_BOOT_ESTIMATE + m->rsc_bytes +
+                        16 * MIB;
+        uint64_t target = shrink_pick_target(now, smin, need);
+        /* AND ROOM LEFT ON C: FOR THE PIECES STILL TO COME, which arrive
+         * there while (or after) Windows shrinks: the target is raised
+         * until what will be free holds them with two gigabytes over. */
+        uint64_t free_now = plat_free_space(c->image_path);
+        if (free_now && free_now < now) {
+            uint64_t used = now - free_now, keep = used + pc.total + 2048 * MIB;
+            if (target < keep) target = keep;
+        }
+        /* Whatever unallocated space is already after C: counts too. */
+        uint64_t gap_now = 0;
+        {
+            static gpt_table t;
+            rd_ctx rc = { m->disk_index };
+            uint32_t ss = m->logical_sector;
+            if (gpt_read_with(rd_disk, &rc, ss, m->disk_bytes, &t) == 0) {
+                uint64_t last = (m->win_start_lba * 512 + now) / ss;   /* exclusive */
+                uint64_t end = gpt_gap_end(&t, last);
+                if (end > t.last_usable + 1) end = t.last_usable + 1;
+                gap_now = end > last ? (end - last) * ss : 0;
+            }
+        }
+        if (target >= now || (now - target) + gap_now < need) {
+            snprintf(whynot, sizeof whynot,
+                     "Windows can make about %llu GB of room on drive C:, and "
+                     "AurOS needs %llu GB",
+                     (unsigned long long)((now > smin ? now - smin : 0) / 1000000000ull),
+                     (unsigned long long)(need / 1000000000ull));
+            can = 0;
+        } else {
+            m->shrink_target = target;
+        }
+    }
+    if (can) {
+        m->fast = 1;
+        talk(say, ud, "the fast way: Windows makes about %llu GB of room on "
+                      "drive C: while AurOS downloads%s",
+             (unsigned long long)((now - m->shrink_target) / 1000000000ull),
+             m->bitlocker ? "; its drive lock stays on" : "");
+        return 0;
+    }
+    /* THE NO-STICK PATH CANNOT INSTALL BESIDE A LOCKED DRIVE (staging
+     * would have to read the image through it), so on a BitLocker PC
+     * the fast path is the only path, and not having it is a refusal --
+     * now, with nothing changed, rather than after the restart. */
+    if (m->bitlocker) {
+        snprintf(why, n,
+                 "this computer's drive is locked with BitLocker and AurOS "
+                 "cannot make room beside it: %s. Nothing has been changed.",
+                 whynot);
+        return -1;
+    }
+    talk(say, ud, "NOTE: the fast way is not possible on this computer (%s); "
+                  "using the no-stick way", whynot);
+    return 0;
+}
+
+/* THE IMAGE, STREAMED. Every byte of it is hashed (the image's own
+ * SHA-256, baked into this program, is the verdict); the bytes of its EFI
+ * partition and its root partition are also hashed on their own and
+ * written to their planned places in the gap, through the gap fence and
+ * nothing else, a buffer at a time so the writes are whole sectors. */
+typedef struct {
+    int      disk;
+    uint64_t pos, expect;
+    uint64_t esp_off, esp_len, root_off, root_len;   /* in the image  */
+    uint64_t esp_dst, root_dst;                      /* on the disk   */
+    fmt_sha  whole, esp, root;
+    uint8_t *buf;
+    size_t   buf_n, buf_cap;
+    uint64_t buf_dst;
+    /* the first megabytes, for the image's own GPT (head-only pass)  */
+    uint8_t *head;
+    size_t   head_n, head_cap;
+    int      head_only;
+    span_prog sp;
+    char    *why; size_t wn;
+} gap_sink;
+
+static int gap_flush_buf(gap_sink *g)
+{
+    if (!g->buf_n) return 0;
+    if (plat_gap_write(g->disk, g->buf_dst, g->buf, g->buf_n, g->why, g->wn) != 0)
+        return -1;
+    g->buf_dst += g->buf_n;
+    g->buf_n = 0;
+    return 0;
+}
+
+static int gap_put(gap_sink *g, uint64_t dst, const uint8_t *b, size_t k)
+{
+    if (g->buf_n && g->buf_dst + g->buf_n != dst && gap_flush_buf(g) != 0)
+        return -1;
+    if (!g->buf_n) g->buf_dst = dst;
+    while (k) {
+        size_t room = g->buf_cap - g->buf_n, t = k < room ? k : room;
+        memcpy(g->buf + g->buf_n, b, t);
+        g->buf_n += t; b += t; k -= t;
+        if (g->buf_n == g->buf_cap && gap_flush_buf(g) != 0) return -1;
+    }
+    return 0;
+}
+
+static int gap_write_cb(void *ud, const uint8_t *b, size_t n)
+{
+    gap_sink *g = ud;
+    if (g->head_only) {
+        size_t t = g->head_cap - g->head_n < n ? g->head_cap - g->head_n : n;
+        memcpy(g->head + g->head_n, b, t);
+        g->head_n += t;
+        if (g->head_n == g->head_cap) {
+            snprintf(g->why, g->wn, "head");
+            return -1;                  /* enough: stop the inflate here */
+        }
+        return 0;
+    }
+    if (g->pos + n > g->expect) {
+        snprintf(g->why, g->wn, "the downloaded AurOS unpacks to more than it "
+                                "should. It is not the one this installer was "
+                                "built for.");
+        return -1;
+    }
+    fmt_sha_feed(&g->whole, b, n);
+    while (n) {
+        uint64_t p = g->pos;
+        size_t t = n;
+        if (p >= g->esp_off && p < g->esp_off + g->esp_len) {
+            uint64_t left = g->esp_off + g->esp_len - p;
+            if (t > left) t = (size_t)left;
+            fmt_sha_feed(&g->esp, b, t);
+            if (gap_put(g, g->esp_dst + (p - g->esp_off), b, t) != 0) return -1;
+        } else if (p >= g->root_off && p < g->root_off + g->root_len) {
+            uint64_t left = g->root_off + g->root_len - p;
+            if (t > left) t = (size_t)left;
+            fmt_sha_feed(&g->root, b, t);
+            if (gap_put(g, g->root_dst + (p - g->root_off), b, t) != 0) return -1;
+        } else {
+            /* Not in either: up to whichever starts next. */
+            uint64_t nxt = UINT64_MAX;
+            if (g->esp_off > p && g->esp_off < nxt) nxt = g->esp_off;
+            if (g->root_off > p && g->root_off < nxt) nxt = g->root_off;
+            if (nxt != UINT64_MAX && t > nxt - p) t = (size_t)(nxt - p);
+        }
+        g->pos += t; b += t; n -= t;
+    }
+    if (piece_progress(g->pos, g->expect, &g->sp)) {
+        snprintf(g->why, g->wn, "stopped.");
+        return -1;
+    }
+    return 0;
+}
+
+/* Read `len` bytes at `at` back off the disk and hash them. */
+static int gap_readback(int disk, uint64_t at, uint64_t len, uint8_t *buf,
+                        size_t cap, unsigned char out[32], char *why, size_t n)
+{
+    fmt_sha h; fmt_sha_start(&h);
+    for (uint64_t o = 0; o < len; ) {
+        size_t t = len - o < cap ? (size_t)(len - o) : cap;
+        if (plat_read(disk, at + o, buf, t, why, n) != 0) return -1;
+        fmt_sha_feed(&h, buf, t);
+        o += t;
+        if (g_ab_cancel) { snprintf(why, n, "stopped."); return -1; }
+    }
+    fmt_sha_done(&h, out);
+    return 0;
+}
+
+static int phase_prepare_gap(const ab_choice *c, ab_machine *m,
+                             ab_say say, ab_progress prog, void *ud,
+                             char *why, size_t n)
+{
+    uint32_t ss = m->logical_sector;
+    static ab_pieces pc;
+    if (ab_pieces_parse(c->pieces_text, &pc, why, n) != 0) return -1;
+    char dir[600];
+    dir_of(c->image_path, dir, sizeof dir);
+
+    /* 1. WINDOWS MAKES THE ROOM, with its own online shrink. Marked
+     * before the call: a shrink that stopped part-way is grown back on
+     * an abort as well. */
+    talk(say, ud, "Windows is making room for AurOS on drive C:");
+    m->shrunk = 1;
+    uint64_t achieved = 0;
+    if (plat_shrink_system(m->disk_index, m->win_part_number, m->shrink_target,
+                           &achieved, why, n) != 0)
+        return -1;
+    talk(say, ud, "drive C: is now %llu GB; it was %llu GB",
+         (unsigned long long)(achieved / 1000000000ull),
+         (unsigned long long)(m->win_orig_bytes / 1000000000ull));
+
+    /* 2. THE PIECES: whatever the early download fetched, and the rest. */
+    if (c->pieces_wait) c->pieces_wait(c->pieces_wait_ud);
+    if (fetch_pieces(&pc, dir, say, prog, ud, why, n) != 0) return -1;
+
+    /* 3. THE IMAGE'S OWN LAYOUT, out of its own GPT in its first
+     * kilobytes -- the partitions to copy and how big they are. */
+    static uint8_t head[2 * 512 + 16384];
+    gap_sink g;
+    memset(&g, 0, sizeof g);
+    g.head = head; g.head_cap = sizeof head; g.head_only = 1;
+    g.why = why; g.wn = n;
+    {
+        piece_reader rd = { &pc, dir, 0, 0, why, n };
+        uint64_t out = 0;
+        if (gz_inflate(piece_read, &rd, gap_write_cb, &g, &out, why, n) != 0 &&
+            g.head_n != g.head_cap)
+            return -1;
+    }
+    uint64_t root_off = 0, root_len = 0, esp_off = 0, esp_len = 0;
+    if (fmt_image_root_extent(head, sizeof head, 512, &root_off, &root_len,
+                              why, n) != 0 ||
+        fmt_image_esp_extent(head, sizeof head, 512, &esp_off, &esp_len,
+                             why, n) != 0)
+        return -1;
+    if (!root_len || root_off > c->image_expect ||
+        root_len > c->image_expect - root_off ||
+        esp_len < 8 * MIB || esp_len > 2048 * MIB || esp_off > c->image_expect ||
+        esp_len > c->image_expect - esp_off ||
+        (esp_off < root_off + root_len && root_off < esp_off + esp_len)) {
+        snprintf(why, n, "the downloaded AurOS does not describe itself the way "
+                         "this installer expects. Nothing will be installed.");
+        return -1;
+    }
+    m->root_len = root_len;
+    m->boot_len = esp_len;
+
+    /* 4. THE PLAN, by the function the staging environment checks it
+     * with, against the table as Windows has just left it. */
+    static gpt_table t;
+    rd_ctx rc = { m->disk_index };
+    if (gpt_read_with(rd_disk, &rc, ss, m->disk_bytes, &t) != 0 || !t.valid) {
+        snprintf(why, n, "the way this drive is divided up could not be read "
+                         "after Windows made room.");
+        return -1;
+    }
+    int wi = gpt_find_start(&t, m->win_start_lba * 512 / ss);
+    if (wi < 0 || (t.ent[wi].last - t.ent[wi].first + 1) * ss != achieved) {
+        snprintf(why, n, "Windows and the partition table disagree about drive "
+                         "C: after the shrink. Nothing will be installed.");
+        return -1;
+    }
+    if (plan_compute_prepared(&t, wi, root_len, esp_len, m->rsc_bytes,
+                              m->min_root_bytes, &m->plan, why, n) != 0)
+        return -1;
+    /* What the journal says Windows is now, and the table's hash: the
+     * staging environment compares both with what it finds. */
+    m->win_sectors = achieved / 512;
+    if (fmt_gpt_sha256(rd_disk, &rc, ss, m->gpt_sha256,
+                       sizeof m->gpt_sha256) != 0) {
+        snprintf(why, n, "the way this drive is divided up could not be read.");
+        return -1;
+    }
+
+    /* 5. WRITE, into the gap and nowhere else. */
+    uint64_t lo = m->plan.root_first * ss, hi = (m->plan.rec_last + 1) * ss;
+    if (plat_gap_allow(m->disk_index, lo, hi, why, n) != 0) return -1;
+    talk(say, ud, "writing AurOS into the room Windows made (%llu MB)",
+         (unsigned long long)((root_len + esp_len) / MIB));
+    static uint8_t wbuf[4u << 20];
+    memset(&g, 0, sizeof g);
+    g.disk = m->disk_index; g.expect = c->image_expect;
+    g.esp_off = esp_off; g.esp_len = esp_len;
+    g.root_off = root_off; g.root_len = root_len;
+    g.esp_dst = m->plan.rec_first * ss; g.root_dst = m->plan.root_first * ss;
+    g.buf = wbuf; g.buf_cap = sizeof wbuf;
+    g.sp.prog = prog; g.sp.ud = ud; g.sp.total = c->image_expect;
+    g.sp.lo = 60; g.sp.hi = 92;
+    g.why = why; g.wn = n;
+    fmt_sha_start(&g.whole); fmt_sha_start(&g.esp); fmt_sha_start(&g.root);
+    {
+        piece_reader rd = { &pc, dir, 0, 0, why, n };
+        uint64_t out = 0;
+        if (gz_inflate(piece_read, &rd, gap_write_cb, &g, &out, why, n) != 0)
+            return -1;
+    }
+    if (gap_flush_buf(&g) != 0 || plat_gap_flush(m->disk_index, why, n) != 0)
+        return -1;
+    plat_gap_forbid();
+    unsigned char dw[32], de[32], dr[32];
+    fmt_sha_done(&g.whole, dw);
+    fmt_sha_done(&g.esp, de);
+    fmt_sha_done(&g.root, dr);
+    if (g.pos != c->image_expect || !hex_eq(dw, c->image_sha256)) {
+        /* Every piece matched its own hash, so the network did not do
+         * this: what was published is not what this was built for. */
+        snprintf(why, n,
+                 "the downloaded AurOS does not match what this installer "
+                 "expects. This is a mistake in how this version was "
+                 "published, not in your computer or your internet. "
+                 "Everything has been put back.");
+        return -1;
+    }
+
+    /* 6. READ IT ALL BACK, from the disk, and compare. */
+    talk(say, ud, "checking what was written");
+    unsigned char be[32], br[32];
+    if (gap_readback(m->disk_index, g.esp_dst, esp_len, wbuf, sizeof wbuf,
+                     be, why, n) != 0 ||
+        gap_readback(m->disk_index, g.root_dst, root_len, wbuf, sizeof wbuf,
+                     br, why, n) != 0)
+        return -1;
+    if (memcmp(be, de, 32) != 0 || memcmp(br, dr, 32) != 0) {
+        snprintf(why, n, "what was written to this computer's drive did not "
+                         "read back the same. The drive may be failing; "
+                         "nothing will be installed, and everything has been "
+                         "put back.");
+        return -1;
+    }
+    fmt_sha_hex(dr, m->root_sha256, sizeof m->root_sha256);
+    fmt_sha_hex(de, m->boot_sha256, sizeof m->boot_sha256);
+    if (prog) prog(95, ud);
+
+    /* 7. The pieces have done their job; the room goes back to her. */
+    {
+        char p[900], w[PLAT_WHY];
+        for (int i = 0; i < pc.n; i++) {
+            snprintf(p, sizeof p, "%s%s", dir, pc.p[i].name);
+            plat_file_delete(p, w, sizeof w);
+        }
+    }
+    talk(say, ud, "AurOS is written beside Windows and checked");
+    return 0;
+}
+
 /* ── what she chose, for the installed system ────────────────────── */
 
 /* A value that goes into choices.conf: printable, no '=' ambiguity is
@@ -1575,7 +2005,20 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
      * finds first, on a stick that may hold two. */
     snprintf(j.profile, sizeof j.profile, "%s", c->profile);
     snprintf(j.image_on, sizeof j.image_on, "%s",
-             c->no_stick ? "windows" : "stick");
+             m->fast ? "gap" : c->no_stick ? "windows" : "stick");
+    if (m->fast) {
+        j.gap_root_first = m->plan.root_first; j.gap_root_last = m->plan.root_last;
+        j.gap_rsc_first  = m->plan.rsc_first;  j.gap_rsc_last  = m->plan.rsc_last;
+        j.gap_rec_first  = m->plan.rec_first;  j.gap_rec_last  = m->plan.rec_last;
+        j.root_len = m->root_len; j.boot_len = m->boot_len;
+        snprintf(j.root_sha256, sizeof j.root_sha256, "%s", m->root_sha256);
+        snprintf(j.boot_sha256, sizeof j.boot_sha256, "%s", m->boot_sha256);
+        j.rsc_bytes = m->rsc_bytes;
+        j.min_root_bytes = m->min_root_bytes;
+        j.win_orig_sectors = m->win_orig_bytes / 512;
+        j.bitlocker = m->bitlocker;
+        j.wifi = 0;
+    }
     j.run_id = m->run_id;
     j.written_unix = (uint64_t)time(NULL);
 
@@ -1743,6 +2186,27 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
         return -1;
     m->boot_made = 1;
 
+    /* D11: THE DRIVE LOCK, PAUSED FOR THE RESTART AND NEVER DECRYPTED.
+     * -RebootCount 2: protection comes back by itself at the second
+     * start of Windows, so the restart into AurOS and the first start of
+     * Windows after it never ask for the recovery key. Last but one, so
+     * that nothing after it can fail and leave it paused; ab_abort
+     * turns it back on. Shown to her on the Ready page, and agreed. */
+    if (m->fast && m->bitlocker) {
+        char tail[512];
+        m->bitlocker_suspended = 1;
+        if (plat_run("manage-bde -protectors -disable C: -RebootCount 2",
+                     tail, sizeof tail) != 0) {
+            snprintf(why, n,
+                     "Windows would not pause its drive lock for the restart "
+                     "(%s). Nothing will be installed, and everything has "
+                     "been put back.", tail);
+            return -1;
+        }
+        talk(say, ud, "Windows' drive lock is paused for one restart; it "
+                      "turns itself back on");
+    }
+
     /* BOOTNEXT AND NOT BOOTORDER. It is one-shot: the firmware clears
      * it as it uses it, so a machine that fails to start AurOS comes
      * back to Windows by itself, with nobody doing anything and
@@ -1866,6 +2330,24 @@ void ab_abort(ab_machine *m, ab_say say, void *ud)
             }
             plat_esp_close();
             m->esp_written = 0;
+        }
+    }
+    /* AND DRIVE C: ITS FULL SIZE AGAIN, by Windows' own resize, up to
+     * what it was and never past it. The bytes written into the gap are
+     * in unallocated space that C: now takes back; nothing pointed at
+     * them. */
+    plat_gap_forbid();
+    if (m->shrunk) {
+        char w[PLAT_WHY];
+        uint64_t got = 0;
+        if (plat_grow_system(m->disk_index, m->win_part_number,
+                             m->win_orig_bytes, &got, w, sizeof w) == 0) {
+            m->shrunk = 0;
+            talk(say, ud, "drive C: is its full size again");
+        } else {
+            talk(say, ud, "drive C: could not be made its full size again "
+                          "(%s). Nothing on it is lost: open Disk Management, "
+                          "right-click C: and choose Extend Volume.", w);
         }
     }
     if (m->fast_startup_off) {

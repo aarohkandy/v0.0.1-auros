@@ -101,7 +101,9 @@ void pf_run(pf_report *r)
             uint8_t b[4096];
             if (plat_read(d[i].index, first * ss, b, ss, why, sizeof why) != 0)
                 continue;
-            if (memcmp(b + 3, "NTFS    ", 8) != 0) continue;
+            /* Or BitLocker's: "-FVE-FS-" where NTFS puts its name. */
+            int fve = memcmp(b + 3, "-FVE-FS-", 8) == 0;
+            if (!fve && memcmp(b + 3, "NTFS    ", 8) != 0) continue;
             if (r->n_volumes >= PF_MAX_VOLUMES) continue;
             pf_volume *v = &r->volumes[r->n_volumes];
             memset(v, 0, sizeof *v);
@@ -109,7 +111,7 @@ void pf_run(pf_report *r)
             snprintf(v->fs, sizeof v->fs, "NTFS");
             v->size_bytes = (last - first + 1) * ss;
             v->disk_index = r->n_disks;
-            v->bitlocker = 0; v->dirty = 0; v->hibernated = 0;
+            v->bitlocker = fve; v->dirty = 0; v->hibernated = 0;
             v->shrink_measured = 1;
             v->cluster_bytes = 4096;
             /* The FIRST NTFS volume on a non-removable disk is taken to

@@ -171,6 +171,17 @@ int main(int argc, char **argv)
      * ab_selftest checks and this does not, because a test that has to
      * click a button is a test nobody runs. */
     c.consent_given = 1;
+    /* The fast path (tools/fasttest.sh): AURBRIDGE_FAST=1, the plan's
+     * floor in GB (the synthetic disk is three), and the Ready page's
+     * BitLocker line as shown and agreed. */
+    if (getenv("AURBRIDGE_FAST")) c.fast_path = 1;
+    if (getenv("AURBRIDGE_MIN_ROOT_GB"))
+        c.min_root_bytes = strtoull(getenv("AURBRIDGE_MIN_ROOT_GB"), NULL, 10)
+                           * 1000ull * 1000 * 1000;
+    if (getenv("AURBRIDGE_MIN_ROOT_MB"))
+        c.min_root_bytes = strtoull(getenv("AURBRIDGE_MIN_ROOT_MB"), NULL, 10)
+                           * 1000ull * 1000;
+    if (getenv("AURBRIDGE_BITLOCKER_PAUSE")) c.bitlocker_pause = 1;
 
     pf_report r;
     pf_run(&r);
@@ -196,6 +207,18 @@ int main(int argc, char **argv)
            (unsigned long long)m.record_part_off,
            (unsigned long long)m.saved_part_off,
            m.boot_entry, (unsigned long long)m.run_id);
+    if (m.fast)
+        printf("aurbridge-report v1 fast=1 bitlocker=%d win_orig=%llu "
+               "root=%llu..%llu saved=%llu..%llu boot=%llu..%llu "
+               "root_sha=%s boot_sha=%s\n", m.bitlocker,
+               (unsigned long long)m.win_orig_bytes,
+               (unsigned long long)m.plan.root_first,
+               (unsigned long long)m.plan.root_last,
+               (unsigned long long)m.plan.rsc_first,
+               (unsigned long long)m.plan.rsc_last,
+               (unsigned long long)m.plan.rec_first,
+               (unsigned long long)m.plan.rec_last,
+               m.root_sha256, m.boot_sha256);
     /* And taken back, the way closing the window takes it back
      * (tools/aborttest.sh): AURBRIDGE_ABORT runs ab_abort on the armed
      * machine, AURBRIDGE_FORGET then deletes the download. */
