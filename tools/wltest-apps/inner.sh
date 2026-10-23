@@ -111,6 +111,17 @@ JS
         aurwl/gen/xdg-shell-protocol.c aurwl/gen/xdg-decoration-protocol.c aurwl/gen/viewporter-protocol.c \
         aurwl/gen/xdg-output-protocol.c -Iaurwl/gen $(pkg-config --cflags --libs wayland-server xkbcommon) -lm || exit 1
     exec /out/stall-probe "$SECS" firefox-bin -- firefox --no-remote --new-instance --profile /tmp/ffprofile file:///tmp/test.html ;;
+  flatpak-install)  # FPREF=org.videolan.VLC: download it (and its runtime) into /fp; nothing is drawn
+    flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+    exec flatpak install -y --noninteractive flathub ${FPREF:?set FPREF} ;;
+  flatpak)          # FPREF=org.videolan.VLC [FPARGS=--nosocket=wayland]: an installed Flatpak on the real shell, through X11
+    CMD="flatpak run ${FPARGS:-} ${FPREF:?set FPREF}" ;;
+  click)            # click points in a program's window and show what it was sent (run with WAYLAND_DEBUG=client);
+                    # CLICKS="x,y x,y" (window points), XCMD="the program"; for the store: flatpak image, see GS.md notes in WL.md
+    gcc -O1 -g -std=gnu11 -o /out/click-probe /w/tools/wltest-apps/click-probe.c aurwl/aurwl.c aurshell/draw.c common/png.c \
+        aurwl/gen/xdg-shell-protocol.c aurwl/gen/xdg-decoration-protocol.c aurwl/gen/viewporter-protocol.c \
+        aurwl/gen/xdg-output-protocol.c -Iaurwl/gen $(pkg-config --cflags --libs wayland-server xkbcommon) -lm || exit 1
+    exec /out/click-probe "$SECS" /out/click.png ${CLICKS:-} -- ${XCMD:?set XCMD} ;;
   xterm)  CMD="xterm -fa Monospace -fs 14 -e sh -c 'echo X11 via Xwayland; sleep 600'" ;;
   xeyes)  CMD="xeyes" ;;
   x11-firefox)                                  # a big GTK3 program, forced onto X11
@@ -135,5 +146,8 @@ JS
   *) echo "unknown app $APP"; exit 2 ;;
 esac
 echo "== $APP: $CMD"
-/out/aurshell --shell "/w/shells/$SHELLF.shell" --png "/out/$(echo "$APP" | tr -c 'a-z0-9\n' _).png" \
+# SCLICKS="x,y x,y": screen points the shell's own pointer path clicks (aurshell --click)
+CK=""; for pt in ${SCLICKS:-}; do CK="$CK --click ${pt%,*} ${pt#*,}"; done
+# shellcheck disable=SC2086
+/out/aurshell --shell "/w/shells/$SHELLF.shell" $CK --png "/out/$(echo "$APP" | tr -c 'a-z0-9\n' _).png" \
     --size 1280 800 ${MOUSE:+--mouse $MOUSE} --app-wait "$SECS" --with-app "$CMD" 2>&1 | grep -a -v "Could not resolve keysym" | tail -${TAIL:-15}

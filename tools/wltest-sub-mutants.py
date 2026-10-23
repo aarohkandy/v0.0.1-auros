@@ -191,6 +191,9 @@ MUTANTS = [
     ("a serial not yet sent is taken for a forgotten one", "slow-future",
      "        return (int32_t)(ser - w->ack_floor) >= 0 && (int32_t)(oldest - ser) > 0;",
      "        (void)oldest; return (int32_t)(ser - w->ack_floor) >= 0;"),
+    ("a viewport destination overrides the window geometry (clicks land 20% off in GTK4)", "csd-viewport",
+     "    int bw = w->cw, bh = w->ch;\n    if (w->has_geo) {\n        /* The window, not the surface:",
+     "    int bw = w->cw, bh = w->ch;\n    if (0) {\n        /* The window, not the surface:"),
 ]
 
 def main():

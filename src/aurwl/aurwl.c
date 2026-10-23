@@ -800,11 +800,18 @@ static int take_buffer(aurwl_win *w, struct wl_resource *buf, irect *copied, int
 static void logical_size(const aurwl_win *w, int *lw, int *lh)
 {
     int bw = w->cw, bh = w->ch;
-    if (w->current.vp_dst_w > 0 && w->current.vp_dst_h > 0) {
+    if (w->has_geo) {
+        /* The window, not the surface: aurwl_win_content() hands the shell
+         * the window's rectangle, and a point on it is mapped over THAT.
+         * Geometry first even when the surface has a viewport destination:
+         * GTK4 sets one to the size of its whole buffer, shadow included,
+         * so mapping the pointer over it put every click 20% too far right
+         * and down -- big rows still opened, the Install button in the
+         * store never did (seen with the real store on the real shell). */
+        bw = w->geo_w; bh = w->geo_h;
+    } else if (w->current.vp_dst_w > 0 && w->current.vp_dst_h > 0) {
         bw = w->current.vp_dst_w;
         bh = w->current.vp_dst_h;
-    } else if (w->has_geo) {
-        bw = w->geo_w; bh = w->geo_h;
     }
     if (lw) *lw = bw > 0 ? bw : 1;
     if (lh) *lh = bh > 0 ? bh : 1;

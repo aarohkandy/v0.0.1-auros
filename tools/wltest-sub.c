@@ -779,6 +779,28 @@ static void sc_stretched_root(struct cl *c)
     ask(c, M_ASK, 40, 30);
 }
 
+/* 13a. A window with a shadow AND a viewport. GTK4 sets a viewport
+ * destination the size of its whole buffer and the window geometry inside
+ * it; the shell maps the pointer over the window it draws, which is the
+ * geometry. The size aurwl reports must be the window's, or every click
+ * lands in the wrong place (the store's Install button never worked). */
+static void sc_csd_viewport(struct cl *c)
+{
+    img root = img_solid(80, 60, GREY), page = img_solid(30, 20, GREEN);
+    top *t = mktop(c, &root, XRGB);
+    mksub(c, t->s, 12, 9, &page, XRGB, 1);
+    struct wp_viewport *vp = wp_viewporter_get_viewport(c->vper, t->s);
+    wp_viewport_set_destination(vp, 80, 60);
+    xdg_surface_set_window_geometry(t->xs, 10, 5, 60, 45);
+    wl_surface_commit(t->s);
+    img full = img_solid(80, 60, GREY);
+    img_over(&full, 12, 9, &page);
+    img want = img_new(60, 45);
+    for (int y = 0; y < 45; y++) for (int x = 0; x < 60; x++) want.px[y * 60 + x] = full.px[(y + 5) * 80 + x + 10];
+    expect(c, &want);
+    ask(c, M_ASK, 60, 45);                           /* the window, not the 80x60 surface */
+}
+
 /* 13. Damage: only the damaged part of a frame is taken from the client.
  * The client rewrites two areas of its buffer but reports one, so the
  * other must still show the old pixels. */
@@ -1457,6 +1479,7 @@ static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "clip",             sc_clip },
     { "viewport",         sc_viewport },
     { "stretched-root",   sc_stretched_root },
+    { "csd-viewport",     sc_csd_viewport },
     { "damage",           sc_damage },
     { "unmap",            sc_unmap },
     { "pointer",          sc_pointer },

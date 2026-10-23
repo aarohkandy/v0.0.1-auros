@@ -697,6 +697,7 @@ int main(int argc, char **argv)
     int png_w = 1600, png_h = 900, nopen = 0, once = 0, frames = 1;
     int mouse_x0 = -1, mouse_y0 = -1, input_test = 0;
     const char *with_app = NULL; int app_wait = 12;
+    int click_x[8], click_y[8], n_click = 0;       /* --click X Y: harness only, see the --with-app loop */
 
     for (int i = 1; i < argc; i++) {
         if      (!strcmp(argv[i], "--conf")   && i+1 < argc) { conf   = argv[++i]; conf_forced  = 1; }
@@ -707,6 +708,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--size")   && i+2 < argc) { png_w = atoi(argv[++i]); png_h = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--open")   && i+1 < argc) nopen = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--mouse")  && i+2 < argc) { mouse_x0 = atoi(argv[++i]); mouse_y0 = atoi(argv[++i]); }
+        else if (!strcmp(argv[i], "--click")  && i+2 < argc && n_click < 8) { click_x[n_click] = atoi(argv[++i]); click_y[n_click++] = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--frames") && i+1 < argc) frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--with-app") && i+1 < argc) with_app = argv[++i];
         else if (!strcmp(argv[i], "--app-wait") && i+1 < argc) app_wait = atoi(argv[++i]);
@@ -716,7 +718,7 @@ int main(int argc, char **argv)
             fputs("aurshell [--shell FILE] [--conf FILE] [--policy FILE]\n"
                   "         [--card /dev/dri/cardN] [--png OUT --size W H]\n"
                   "         [--frames N] [--open N] [--once] [--input-test]\n"
-                  "         [--with-app CMD [--app-wait SECONDS]]\n"
+                  "         [--with-app CMD [--app-wait SECONDS] [--mouse X Y] [--click X Y]...]\n"
                   "  --with-app  start the compositor, launch CMD, wait for its\n"
                   "              window and render the desktop with the real\n"
                   "              application in it. This is how the shell is\n"
@@ -871,6 +873,7 @@ int main(int argc, char **argv)
                 free_fonts(&f); return 1;
             }
             struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
+            int click_done = 0, click_stage = 0; uint32_t click_next = 0;
             for (;;) {
                 struct timespec tn; clock_gettime(CLOCK_MONOTONIC, &tn);
                 uint32_t el = (uint32_t)((tn.tv_sec - t0.tv_sec) * 1000
@@ -898,6 +901,19 @@ int main(int argc, char **argv)
                 /* The pointer is where --mouse put it, so the program under
                  * it is told and answers with the picture it wants. */
                 if (c.mouse_x >= 0) session_motion(&c, c.mouse_x, c.mouse_y);
+                /* --click: the pointer goes to each screen point a third of the
+                 * way in, rests 400 ms, presses, 100 ms later lets go, and
+                 * waits 2.5 s -- through the same session_button the real
+                 * mouse uses, windows configured by the shell every frame. */
+                if (click_done < n_click && el > (uint32_t)app_wait * 333u && el >= click_next) {
+                    int cx = click_x[click_done], cy = click_y[click_done];
+                    if (click_stage == 0)      { c.mouse_x = cx; c.mouse_y = cy; session_motion(&c, cx, cy);
+                                                 click_stage = 1; click_next = el + 400; }
+                    else if (click_stage == 1) { session_button(&c, cx, cy, 0x110, 1);
+                                                 click_stage = 2; click_next = el + 100; }
+                    else                       { session_button(&c, cx, cy, 0x110, 0);
+                                                 click_stage = 0; click_done++; click_next = el + 2500; }
+                }
                 if (c.n_wins > 0 && !aurwl_focus(c.wl)) {
                     int n = aurwl_window_count(c.wl);
                     if (n) aurwl_set_focus(c.wl, aurwl_window_at(c.wl, 0));

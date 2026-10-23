@@ -1,0 +1,12 @@
+# auros-wl plus Flatpak, for the programs that only speak X11 (VLC, Zoom,
+# Spotify, Electron wrappers): they ship as Flatpaks on the image, so that is
+# how they are run here. Built by tools/wltest-apps.sh for the flatpak modes.
+FROM auros-wl:dev
+ENV DEBIAN_FRONTEND=noninteractive
+RUN for i in 1 2 3; do timeout 300 apt-get update -q && \
+      timeout 600 apt-get install -y -q --no-install-recommends flatpak xdg-dbus-proxy ca-certificates && break; sleep 10; done; \
+    rm -rf /var/lib/apt/lists/*
+# The store the image ships ("Get more programs"): GTK4 + libadwaita, a flatpak front end.
+RUN for i in 1 2 3; do timeout 300 apt-get update -q && \
+      timeout 900 apt-get install -y -q --no-install-recommends gnome-software gnome-software-plugin-flatpak && break; sleep 10; done; \
+    rm -rf /var/lib/apt/lists/*
