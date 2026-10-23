@@ -496,7 +496,7 @@ char *hwinv_text(const hw_inv *v, const char *tool, const char *made)
         }
     }
 
-    sb_put(&b, "\r\nPRINTERS (and what they are connected to)\r\n");
+    sb_put(&b, "\r\nPRINTERS (the names are the ones set up in Windows: they may be somebody's own words)\r\n");
     if (!v->n_printers) sb_put(&b, "  none set up in Windows\r\n");
     for (int i = 0; i < v->n_printers; i++) {
         const hw_printer *p = &v->printers[i];
