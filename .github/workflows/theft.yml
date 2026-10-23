@@ -113,10 +113,15 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        cpu: [aes, noaes]
-    name: vm (${{ matrix.cpu }})
+        include:
+          - { cpu: aes,   pcrs: '7' }
+          - { cpu: noaes, pcrs: '7' }
+          - { cpu: aes,   pcrs: none }
+    name: vm (${{ matrix.cpu }}, PCR ${{ matrix.pcrs }})
     env:
       TAG: theft-${{ github.run_id }}
+      EVD: out/theft-evidence-${{ matrix.cpu }}-pcr${{ matrix.pcrs }}
+      THEFT_PCRS: ${{ matrix.pcrs }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
@@ -157,15 +162,15 @@ jobs:
         run: |
           flag=""; [ "${{ matrix.cpu }}" = noaes ] && flag=--noaes
           set +e
-          sudo env PATH="$PATH" THEFT_EVIDENCE="$PWD/out/theft-evidence-${{ matrix.cpu }}" bash tools/theftvm.sh $flag
+          sudo env PATH="$PATH" THEFT_PCRS="$THEFT_PCRS" THEFT_EVIDENCE="$PWD/$EVD" bash tools/theftvm.sh $flag
           rc=$?
-          { echo '### theftvm (${{ matrix.cpu }})'; echo '```'; cat "out/theft-evidence-${{ matrix.cpu }}/summary.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### theftvm (${{ matrix.cpu }}, PCR ${{ matrix.pcrs }})"; echo '```'; cat "$EVD/summary.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
-          name: theft-vm-${{ matrix.cpu }}
-          path: out/theft-evidence-${{ matrix.cpu }}/
+          name: theft-vm-${{ matrix.cpu }}-pcr${{ matrix.pcrs }}
+          path: ${{ env.EVD }}/
       - name: evidence as a prerelease
         if: ${{ !cancelled() }}
         run: |
@@ -173,7 +178,8 @@ jobs:
                    --title "theft: encrypted drive and PIN, run $GITHUB_RUN_ID" \
                    --notes "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"; }
           gh release view "$TAG" >/dev/null 2>&1 || mk "$GITHUB_SHA" || mk main || true
-          d=out/theft-evidence-${{ matrix.cpu }}
-          cp "$d/summary.txt" "$d/theft-evidence-${{ matrix.cpu }}.txt" 2>/dev/null || true
-          ( cd "$d" && for f in theft-evidence-*.txt screen-*.png serial-*.txt; do
+          n=${{ matrix.cpu }}-pcr${{ matrix.pcrs }}
+          cp "$EVD/summary.txt" "$EVD/theft-evidence-$n.txt" 2>/dev/null || true
+          for f in "$EVD"/screen-*.png; do [ -f "$f" ] && cp "$f" "$EVD/$n-$(basename "$f")"; done
+          ( cd "$EVD" && for f in theft-evidence-*.txt "$n"-screen-*.png; do
               [ -f "$f" ] && gh release upload "$TAG" "$f" --clobber || true; done )

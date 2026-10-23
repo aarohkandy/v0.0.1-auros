@@ -26,7 +26,7 @@ L=/usr/lib/auros/lock
 export DM_DISABLE_UDEV=1
 # evdev: the page reads the keyboard through it (built in on Ubuntu's
 # kernel today; a module tomorrow would be a page nobody can type into)
-for m in dm_crypt xts aesni_intel adiantum nhpoly1305 chacha_generic tpm_crb tpm_tis evdev; do
+for m in dm_mod dm_zero dm_crypt xts aesni_intel adiantum nhpoly1305 chacha_generic tpm_crb tpm_tis evdev; do
     modprobe -q "$m" 2>/dev/null
 done
 

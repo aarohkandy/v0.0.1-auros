@@ -41,6 +41,9 @@ IMG=${THEFT_IMAGE:-out/auros-desktop.img}
 EV=${THEFT_EVIDENCE:-out/theft-evidence}
 TIMEOUT=${THEFT_TIMEOUT:-900}
 PIN1=1234 PIN2=2580
+# 7: the key is sealed to PCR 7 (the design). "none": to no PCR.
+PCRS=${THEFT_PCRS:-7}; [ "$PCRS" = none ] && PCRS=''
+CUR=$PIN1
 
 fail=0; checked=0
 ok()  { checked=$((checked+1)); printf '    %-66s %s\n' "$1" "ok" | tee -a "$EV/summary.txt"; }
@@ -85,7 +88,7 @@ export MTOOLS_SKIP_CHECK=1
 esp_ls() { mdir -b -i "$DISK@@$ESPOFF" "::$1" 2>/dev/null; }
 
 echo
-echo "AurOS's encrypted drive and PIN, in a VM with Secure Boot and a TPM 2.0$([ $NOAES = 1 ] && echo ', on a CPU without AES instructions')" | tee -a "$EV/summary.txt"
+echo "AurOS's encrypted drive and PIN, in a VM with Secure Boot and a TPM 2.0$([ $NOAES = 1 ] && echo ', on a CPU without AES instructions'), key sealed to ${PCRS:+PCR $PCRS}${PCRS:-no PCR}" | tee -a "$EV/summary.txt"
 echo
 
 # ── what the image is given (what the forge would install once this is switched on)
@@ -138,7 +141,7 @@ grep -q 'aurlock-pin\|auros-lock' /proc/cmdline 2>/dev/null
 journalctl -b -o cat 2>/dev/null | grep -E 'aurlock-pin|auros-lock|lockctl' | while read -r l; do say "log $l"; done
 case "$st" in
 *state=plain*)
-    $L prepare 2>&1 | while read -r l; do say "prepare $l"; done
+    AUROS_LOCK_PCRS="@PCRS@" $L prepare 2>&1 | while read -r l; do say "prepare $l"; done
     say "esp $(ls /boot/efi/auros 2>&1 | tr '\n' ' ')"
     say "stub $(tr '\n' ' ' < /boot/efi/EFI/AurOS/grub.cfg)"
     ;;
@@ -173,7 +176,7 @@ say "poweroff"
 sync
 systemctl poweroff
 EOS
-sed -i "s/@PIN1@/$PIN1/" "$R/usr/lib/auros/lock/theft-e2e"
+sed -i "s/@PIN1@/$PIN1/; s/@PCRS@/$PCRS/" "$R/usr/lib/auros/lock/theft-e2e"
 chmod 755 "$R/usr/lib/auros/lock/theft-e2e"
 cat > "$R/etc/systemd/system/auros-theft-e2e.service" <<'EOU'
 [Unit]
@@ -366,20 +369,41 @@ print('dbx grew from %d to %d bytes' % (len(old), len(old) + len(lst)))
 EOP
 power_on dbx
 if wait_for "aurlock-pin: asking for the PIN" 300; then
-    sleep 2; keys "$PIN1"
-    wait_for "THEFT poweroff" && ok "after the dbx update the PIN still starts AurOS, no rescue code" \
-        || bad "the PIN after a dbx update" "$(serial | grep aurlock-pin | tail -3)"
+    sleep 2; keys "$CUR"; sleep 4
+    if [ -n "$PCRS" ]; then
+        shot dbx-changed
+        serial | grep -q 'aurlock-pin: PIN changed' && ok "PCR 7 changed: the page says the computer changed (not \"wrong PIN\")" \
+            || bad "a dbx update -> changed" "$(serial | grep aurlock-pin | tail -3)"
+        keys "$CODE"; sleep 5
+        serial | grep -q 'aurlock-pin: rescue code open' && ok "the rescue code opened the drive" || bad "the rescue code after a dbx update" "$(serial | grep aurlock-pin | tail -3)"
+        keys "$PIN1"; keys ret; sleep 1; keys "$PIN1"; keys ret
+        wait_for "THEFT poweroff" && ok "she chose her PIN again and AurOS started" || bad "AurOS started after the rescue code" "$(serial | tail -5)"
+        val repin | grep -q 'sealed again' && ok "the PIN is sealed again, to the new PCR 7" || bad "re-seal after a dbx update" "$(val repin)"
+        CUR=$PIN1
+    else
+        wait_for "THEFT poweroff" && ok "bound to no PCR: after the dbx update the PIN still starts AurOS" \
+            || bad "the PIN after a dbx update (no PCR)" "$(serial | grep aurlock-pin | tail -3)"
+    fi
 else
     bad "the PIN page after a dbx update" "$(serial | tail -6)"
 fi
 power_off
+if [ -n "$PCRS" ]; then
+    # and the re-seal held: the same PIN opens it at the next start
+    power_on reseal
+    if wait_for "aurlock-pin: asking for the PIN" 300; then
+        sleep 2; keys "$CUR"
+        wait_for "THEFT poweroff" && ok "the next start: the same PIN, no rescue code" || bad "the PIN after the re-seal" "$(serial | grep aurlock-pin | tail -3)"
+    else bad "the PIN page after the re-seal" "$(serial | tail -6)"; fi
+    power_off
+fi
 
 # ── 5: a different chip ───────────────────────────────────────────
 echo "  5  a different security chip" | tee -a "$EV/summary.txt"
 TPMD="$T/tpm-b"; mkdir -p "$TPMD"
 power_on newchip
 if wait_for "aurlock-pin: asking for the PIN" 300; then
-    sleep 2; keys "$PIN1"; sleep 4
+    sleep 2; keys "$CUR"; sleep 4
     shot changed
     serial | grep -q 'aurlock-pin: PIN changed' && ok "the page knows the computer changed (not \"wrong PIN\")" \
         || bad "a new chip -> changed" "$(serial | grep aurlock-pin)"

@@ -30,7 +30,7 @@ for lib in cryptsetup/libcryptsetup-token-systemd-tpm2.so libcryptsetup.so.12 \
         [ -e "$f" ] && copy_exec "$f"
     done
 done
-manual_add_modules dm_crypt xts adiantum nhpoly1305 nhpoly1305_avx2 nhpoly1305_sse2 \
+manual_add_modules dm_mod dm_zero dm_crypt xts adiantum nhpoly1305 nhpoly1305_avx2 nhpoly1305_sse2 \
     chacha_generic chacha_x86_64 aesni_intel aes_generic tpm_crb tpm_tis \
     evdev atkbd i8042 hid_generic usbhid xhci_pci ehci_pci
 

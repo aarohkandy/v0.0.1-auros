@@ -448,7 +448,9 @@ cmd_prepare() {
     [ "$free" -ge "$need" ] || die "the EFI partition has ${free} MB free and needs ${need} MB: refusing"
 
     mkdir -p "$(dirname "$CONF")"
-    printf 'armed=1\npartuuid=%s\npcrs=%s\n' "$partuuid" "${AUROS_LOCK_PCRS-}" > "$CONF"
+    # PCR 7 is the design (THEFT.md section 3). pcrs= (empty) binds the key
+# to no PCR: a dbx or shim change then never asks for the rescue code.
+    printf 'armed=1\npartuuid=%s\npcrs=%s\n' "$partuuid" "${AUROS_LOCK_PCRS-7}" > "$CONF"
     ln -sf "$HERE/initramfs-hook"   /etc/initramfs-tools/hooks/auros-lock
     ln -sf "$HERE/initramfs-script" /etc/initramfs-tools/scripts/local-top/auros-lock
     mkdir -p /etc/kernel/postinst.d /etc/initramfs/post-update.d
