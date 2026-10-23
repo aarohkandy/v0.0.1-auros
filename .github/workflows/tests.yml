@@ -90,7 +90,7 @@ jobs:
       - name: tools
         run: |
           sh tools/apt.sh \
-              mingw-w64 wine wine64 osslsigncode openssl python3 gcc libc6-dev make \
+              gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev wine wine64 osslsigncode openssl python3 gcc libc6-dev make \
               grub-common gdisk mtools dosfstools cpio sbsigntool libxml2-utils file \
               binutils zstd e2fsprogs fonts-dejavu-core ovmf pkg-config libdbus-1-dev
       - uses: actions/download-artifact@v4

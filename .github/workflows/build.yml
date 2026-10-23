@@ -145,7 +145,7 @@ jobs:
               /usr/local/share/chromium /usr/local/julia* 2>/dev/null; echo removed > /tmp/freed ) &
           sh tools/apt.sh \
               debootstrap squashfs-tools zstd gdisk dosfstools mtools e2fsprogs \
-              sbsigntool mingw-w64 gcc libc6-dev make python3 cpio file binutils \
+              sbsigntool gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev gcc libc6-dev make python3 cpio file binutils \
               osslsigncode libxml2-utils pigz
           while [ ! -f /tmp/freed ]; do sleep 2; done
           df -h /
