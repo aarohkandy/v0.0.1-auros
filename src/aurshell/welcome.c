@@ -203,10 +203,14 @@ static const char *ACT_LABEL[A_N] = {
     "Open Your files", "Open Internet", "Restart now", "Restart later",
     "Try again",
 };
+/* The one sentence for each moment (docs/handoff/streams/K.md, "One
+ * truth about going back"), checked against what aurfirst does. */
+#define SAY_YES "AurOS starts every time from now on. Windows and its files stay on this computer."
+#define SAY_NO  "Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted."
 static const char *ACT_LINE[A_N] = {
-    "Switching on starts AurOS from now on.",
-    "Nothing changes. This comes back next time.",
-    "Switching on starts Windows again.",
+    SAY_YES,
+    "Nothing changes. AurOS asks again the next time it starts.",
+    SAY_NO,
     NULL, NULL, "Back to the question. Nothing changes.",
     NULL, "You can do this later from Settings.", NULL,
     NULL, NULL, NULL, "AurOS stays open until you switch off.",
@@ -255,6 +259,7 @@ static int actions_for(const welcome_view *v, int *which)
 }
 
 static int body_of(int page, int partial, const char *lines[3]);
+static const char *sub_of(int page, int can_import);
 
 /* ONE FUNCTION OWNS WHERE EVERYTHING IS: painting, pressing and
  * tools/targets.c all ask it. A column of answers when a row does not
@@ -274,11 +279,17 @@ static void welcome_layout(const shell_ctx *c, int sw, int sh,
     int act_h = (int)(34.f + 16.f * k); if (act_h < 48) act_h = 48;
     int gap   = (int)(12.f * k); if (gap < 8) gap = 8;
     int wide  = (int)(32.f * k);            /* before the way out    */
-    int line  = (int)(30.f * k);            /* a line under a button */
+    int line  = (int)(22.f * k);            /* a line under a button */
 
     g->head_y = (int)((float)sh * 0.12f + 40.f * k);
     g->sub_y  = g->head_y + (int)(44.f * k);
-    g->body_y = g->sub_y + (int)(38.f * k);
+    /* Text wraps rather than being cut, so the room it takes is
+     * estimated here (a body character is about 8 px at 1x). */
+    int per_line = (int)((float)g->cw / (8.f * k)); if (per_line < 10) per_line = 10;
+    const char *sub0 = sub_of(v->page, v->can_import);
+    int sub_lines = sub0[0] ? 1 + (int)strlen(sub0) / per_line : 1;
+    if (sub_lines > 3) sub_lines = 3;
+    g->body_y = g->sub_y + (int)(8.f * k) + sub_lines * (int)(30.f * k);
 
     int which[A_N];
     int na = actions_for(v, which);
@@ -287,7 +298,9 @@ static void welcome_layout(const shell_ctx *c, int sw, int sh,
     /* The two things she checks, on the question page only, each with
      * the button that lets her check it. */
     const char *bl[3];
-    int nbody = body_of(v->page, W.partial, bl) + (v->page == W_TROUBLE && W.note[0]);
+    int nb = body_of(v->page, W.partial, bl), nbody = 0;
+    for (int i = 0; i < nb; i++) nbody += 1 + (int)strlen(bl[i]) / per_line;
+    if (v->page == W_TROUBLE && W.note[0]) nbody += 1 + (int)strlen(W.note) / per_line;
     int y = nbody ? g->body_y + nbody * (int)(30.f * k) : g->body_y - (int)(6.f * k);
     if (v->page == W_ASK) {
         y = g->body_y - (int)(18.f * k);
@@ -307,7 +320,7 @@ static void welcome_layout(const shell_ctx *c, int sw, int sh,
     for (int i = 0; i < na; i++) if (ACT_LINE[which[i]]) has_lines = 1;
 
     int column = na > 1 && want > g->cw;
-    int need = column ? na * act_h + (na - 1) * gap : act_h + (has_lines ? line : 0);
+    int need = column ? na * act_h + (na - 1) * gap : act_h + (has_lines ? 3 * line : 0);
     int bottom = sh - (int)(16.f * k);
     if (y + need > bottom && g->checks_y) {          /* checks go first */
         y = g->checks_y; g->checks_y = 0;
@@ -385,15 +398,13 @@ static const char *sub_of(int page, int can_import)
 {
     switch (page) {
     case W_ASK:       return "Check two things first.";
-    case W_SURE_YES:  return "Switching this computer on will start AurOS. "
-                             "Windows stays on the disk.";
-    case W_SURE_NO:   return "Switching this computer on will start Windows "
-                             "again. AurOS stays on the disk.";
+    case W_SURE_YES:  return SAY_YES;
+    case W_SURE_NO:   return SAY_NO;
     case W_WORKING:   return "";
     case W_CONFIRMED: return can_import
                           ? "Your documents and pictures are still in Windows. "
                             "AurOS can copy them here."
-                          : "Windows is still on this disk.";
+                          : "Windows and its files stay on this computer.";
     case W_IMPORTING: return "Your files are copied. Nothing in Windows changes.";
     case W_IMPORTED:  return "Open Your files to see them.";
     case W_DECLINED:  return "Press Restart now to go back to Windows.";
@@ -417,7 +428,9 @@ static int body_of(int page, int partial, const char *lines[3])
         if (partial) lines[n++] = "Some things could not be brought across.";
         break;
     case W_DECLINED:
-        lines[n++] = "AurOS is still on this disk. Nothing has been deleted.";
+        lines[n++] = "AurOS is still on this computer, but Windows starts. "
+                     "To use AurOS again, or to remove it, ask someone who "
+                     "knows computers.";
         break;
     default: break;
     }
@@ -466,21 +479,20 @@ void welcome_paint(shell_ctx *c, surface *s, shell_fonts *f)
     if (head)
         shell_text(s, head, (float)g.gx, (float)g.head_y, head_of(W.page), c->fg, 1.f);
     const char *sub = sub_of(W.page, W.can_import);
+    float lh = 30.f * k;
     if (bodyf && sub[0] && !g.no_sub)
-        shell_text_elided(s, bodyf, (float)g.gx, (float)g.sub_y, (float)g.cw,
-                          sub, c->subtle, 1.f);
+        shell_text_wrap(s, bodyf, (float)g.gx, (float)g.sub_y, (float)g.cw, lh,
+                        sub, c->subtle, 1.f, 3);
 
     const char *lines[3];
     int nl = body_of(W.page, W.partial, lines);
     int y = g.body_y;
-    for (int i = 0; i < nl && bodyf && y <= g.body_max_y; i++) {
-        shell_text_elided(s, bodyf, (float)g.gx, (float)y, (float)g.cw,
-                          lines[i], c->fg, 1.f);
-        y += (int)(30.f * k);
-    }
+    for (int i = 0; i < nl && bodyf && y <= g.body_max_y; i++)
+        y += (int)lh * shell_text_wrap(s, bodyf, (float)g.gx, (float)y, (float)g.cw,
+                                       lh, lines[i], c->fg, 1.f, 3);
     if (W.page == W_TROUBLE && W.note[0] && bodyf && y <= g.body_max_y)
-        shell_text_elided(s, bodyf, (float)g.gx, (float)y, (float)g.cw,
-                          W.note, c->fg, 1.f);
+        shell_text_wrap(s, bodyf, (float)g.gx, (float)y, (float)g.cw, lh,
+                        W.note, c->fg, 1.f, 3);
 
     /* The two checks: a question on the left, its button on the right,
      * a rule under each. */
@@ -510,8 +522,8 @@ void welcome_paint(shell_ctx *c, surface *s, shell_fonts *f)
             float lx = (float)r.x, lw = (float)(g.gx + g.cw) - lx;
             if (i + 1 < g.n_acts && g.acts[i + 1].y == r.y)
                 lw = (float)g.acts[i + 1].x - 12.f - lx;
-            shell_text_elided(s, f->tiny, lx, (float)(r.y + r.h) + 24.f * k, lw,
-                              ACT_LINE[id], c->subtle, 1.f);
+            shell_text_wrap(s, f->tiny, lx, (float)(r.y + r.h) + 24.f * k, lw,
+                            22.f * k, ACT_LINE[id], c->subtle, 1.f, 3);
         }
     }
 }

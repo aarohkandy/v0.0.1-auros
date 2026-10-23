@@ -362,7 +362,7 @@ static void fill_page(shell_ctx *c)
         S.armed = 0;
         add_choice("keep", "Keep AurOS", "Nothing changes");
         add_choice("putback", "Remove AurOS and put Windows back",
-                   "The computer restarts. Windows gets all of its drive back.");
+                   "Anything you saved in AurOS goes with it.");
         S.cur_ch = 0;
         return;
     }
@@ -500,6 +500,9 @@ static void set_layout(const shell_ctx *c, int sw, int sh,
      * reach, and a settings screen that pages is one she gives up on. */
     g->row_h = (int)(38.f + 28.f * k); if (g->row_h < 56) g->row_h = 56;
     g->list_y = g->sub_y + (int)(14.f * k);
+    /* The one page whose sentence must be read whole (it says what is
+     * lost) gets room for it to wrap. */
+    if (v->page == SET_PAGE_WINDOWS) g->list_y += (int)(52.f * k);
 
     int space = last_y - (int)(14.f * k) - g->list_y;
     g->n_vis = space / g->row_h;
@@ -721,11 +724,13 @@ void settings_paint(shell_ctx *c, surface *s, shell_fonts *f)
         : S.page == SET_PAGE_SHELL ? "Press one. The desktop changes straight away."
         : S.page == SET_PAGE_LOOK  ? "Press one to try it."
         : S.page == SET_PAGE_WINDOWS
-            ? "This removes AurOS and everything saved in it."
+            ? "This computer restarts and removes AurOS. Anything you saved "
+              "in AurOS goes with it. Windows gets all its space back."
                                    : "Anything you change here you can change back.";
     if (bodyf)
-        shell_text_elided(s, bodyf, (float)g.gx, (float)g.sub_y, (float)g.cw,
-                          sub, c->fg, 0.85f);
+        shell_text_wrap(s, bodyf, (float)g.gx, (float)g.sub_y, (float)g.cw,
+                        26.f * k, sub, c->fg, 0.85f,
+                        S.page == SET_PAGE_WINDOWS ? 3 : 1);
 
     int total = settings_rows_for(&v);
     int from = clampi_(S.first_row, 0, total > 0 ? total - 1 : 0);

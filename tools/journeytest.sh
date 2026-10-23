@@ -51,7 +51,7 @@ tail -n +2 themes/templates/shell.conf.tpl | \
 
 fail=0 n=0
 ok() { n=$((n + 1)); if [ "$2" = 0 ]; then echo "    ok    $1"; else echo "    FAIL  $1"; fail=1; fi; }
-said() { awk -v s="$2" '/^== /{on = index($0, s) > 0; next} on' "$1"; }
+said() { awk -v s="$2" -v t="${3:-@@}" '/^== /{on = index($0, s) > 0 || index($0, t) > 0; next} on' "$1"; }
 
 for look in taskbar dock rail tiles; do
     for sz in "1366 768" "1024 600"; do
@@ -63,6 +63,7 @@ for look in taskbar dock rail tiles; do
         at="$look $1x$2"
         said "$log" "-asks.png"    | grep -qx '   Does everything work?';     ok "$at: the first start asks" $?
         said "$log" "-sure.png"    | grep -qx '   Start AurOS from now on';   ok "$at: Yes asks once more before it decides" $?
+        ! said "$log" "-asks.png" "-sure.png" | grep -q '…';             ok "$at: the question is never cut short" $?
         said "$log" "-desktop.png" | grep -qx '   Get more programs';         ok "$at: Get more programs is on her desktop" $?
         said "$log" "-desktop.png" | grep -qx '   Wi-Fi';                     ok "$at: the band says Wi-Fi (one name per thing)" $?
         # (The dock draws its favourites without names until C P1-12.)

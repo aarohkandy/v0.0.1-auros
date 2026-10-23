@@ -389,6 +389,8 @@ float shell_text_w(font *f, const char *t);
  * Application names come from packages and are as long as they like. */
 void shell_text_elided(surface *s, font *f, float x, float y, float max_w,
                        const char *t, uint32_t col, float a);
+int  shell_text_wrap(surface *s, font *f, float x, float y, float max_w,
+                     float lh, const char *t, uint32_t col, float a, int max_lines);
 /* Letter-spaced text, for the small rubrics that label a region the
  * way a folio labels a page. Drawn a codepoint at a time, so kerning
  * is deliberately dropped: tracked capitals do not want it. */

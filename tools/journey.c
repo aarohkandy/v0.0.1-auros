@@ -53,10 +53,13 @@ static void shot(const char *name)
 {
     draw_track_reset();
     shell_text_log_n = 0;
-    shell_text_log_on = 1;
+    /* The question is opaque paper over the desktop: what is under it is
+     * not what she reads, so it is not logged as what the screen said. */
+    shell_text_log_on = !c.welcome_open;
     surface body = *S;
     body.h = c.screen_h;
     L->paint(&c, &body, &F, WALL);
+    shell_text_log_on = 1;
     if (!SHELL_PANEL_OPEN(&c)) notify_paint(&c, S, &F);
     net_paint(&c, S, &F);
     welcome_paint(&c, S, &F);

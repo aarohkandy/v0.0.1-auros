@@ -431,6 +431,44 @@ void shell_text_elided(surface *s, font *f, float x, float y, float max_w,
     shell_text(s, f, x, y, buf, col, a);
 }
 
+/* Words that do not fit one line go onto the next, at word breaks,
+ * up to max_lines; only the last line may end in an ellipsis, and only
+ * when even that many lines cannot hold it. Nothing she needs to read
+ * is cut short (DESIGN-DIRECTION §3). s == NULL measures only. Returns
+ * the lines used. y is the first baseline; lh the distance between. */
+int shell_text_wrap(surface *s, font *f, float x, float y, float max_w,
+                    float lh, const char *t, uint32_t col, float a, int max_lines)
+{
+    if (!f || !t || !*t || max_w <= 0.f || max_lines < 1) return 0;
+    int used = 0;
+    const char *p = t;
+    char buf[256];
+    while (*p && used < max_lines) {
+        while (*p == ' ') p++;
+        size_t fit = 0, n = 0;
+        for (;;) {                                /* grow word by word */
+            const char *q = p + n;
+            while (*q && *q != ' ') q++;
+            size_t m = (size_t)(q - p);
+            if (m >= sizeof buf) break;
+            memcpy(buf, p, m); buf[m] = 0;
+            if (font_text_width(f, buf) > max_w) break;
+            fit = m;
+            if (!*q) break;
+            n = m + 1;
+        }
+        if (!fit || used == max_lines - 1) {      /* last line, or one huge word */
+            if (s) shell_text_elided(s, f, x, y + lh * (float)used, max_w, p, col, a);
+            return used + 1;
+        }
+        memcpy(buf, p, fit); buf[fit] = 0;
+        if (s) shell_text(s, f, x, y + lh * (float)used, buf, col, a);
+        used++;
+        p += fit;
+    }
+    return used;
+}
+
 /* Tracked capitals, drawn a codepoint at a time. The tracking is what
  * makes a 10px label read as a rubric rather than as shouted body
  * text -- a printed form does the same thing above a field. Kerning is
