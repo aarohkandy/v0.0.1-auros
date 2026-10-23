@@ -137,7 +137,8 @@ def referenced_texts():
 def notices_txt():
     referenced_texts()
     s = ["AUROS: LICENSES AND NOTICES\n\n" + NOTE + "\n\n"
-         "This file is inside AurOS-Setup.exe so that you can read it with no internet. It has, in order:\n"
+         "This file has the licenses and notices of the programs AurOS carries. It is attached to every AurOS release and\n"
+         "every sources release on the project's releases page, so that you can read it with no other file. It has, in order:\n"
          "  1. our written offer of the source code\n"
          "  2. the notices of the programs AurOS carries (third-party notices)\n"
          "  3. the copyright files of the programs inside the installer's small system and boot files\n"

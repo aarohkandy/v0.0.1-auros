@@ -38,9 +38,11 @@ notes of the AurOS release itself).
 
 Every three hours the workflow looks at the AurOS releases (tags that start with `v`)
 and makes the sources of each published one that has none, from the build run named in
-its notes. The weekly-style check in the same run goes red if any `sources-*` release
-has lost an asset, any binary package has lost its source, or an AurOS release more
-than a day old has no sources release. `release.yml` may call it too, to make `promote`
+its notes. It also adds, to the notes of the AurOS release itself, the line that points to the
+source (GPLv3 6(d)), and attaches `NOTICES.txt` to the AurOS release (added, never replaced). The
+`reverify` job of the same run goes red if any `sources-*` release has lost an asset or changed
+(GitHub's own digests are compared, no multi-GB download), a binary package has lost its source,
+or an AurOS release more than a day old has no sources release. `release.yml` may call it too, to make `promote`
 wait (stream E's hand-off).
 
 ## How a release is made (`build/sources`)
@@ -67,14 +69,17 @@ wait (stream E's hand-off).
    E records it; until then from the machine that makes the release, said in
    `SOURCES.txt`'s header).
 5. The result is verified as a whole (`build/sources verify`) before it is
-   published, then published as a draft, filled (a failed upload fails the job),
-   and only then made a prerelease. A second job downloads the public release
-   again and verifies it against the image's own package list.
+   published. `tools/legal/publish.py` publishes it: a new release is a draft,
+   filled (a failed upload fails the job and the draft stays a draft), and only
+   then made a prerelease. A published release is **never written into** except by
+   `again` (below). The same job then downloads the public release again and
+   verifies it against the image's own package list and against GitHub's digests.
 
 `python3 -I tools/legal/sourcestest.py` is the test (a pretend Launchpad and a
-pretend Mozilla on 127.0.0.1, 43 cases, each of which breaks something and requires
-the tool to say so; `--mutants` breaks the tool itself in 10 ways and requires the
-suite to go red).
+pretend Mozilla on 127.0.0.1, each case breaks something and requires the tool to say
+so; `--mutants` breaks the tool itself in 11 ways and requires the suite to go red);
+`python3 -I tools/legal/publishtest.py` does the same for the publisher against a pretend
+GitHub (a good release is never lost; `--mutants` breaks the publisher in 5 ways).
 
 ## Rules
 
@@ -88,9 +93,20 @@ suite to go red).
 
 ## Redoing one by hand
 
-`git commit --allow-empty -m "sources of an existing release [sources TAG RUN-ID]"` and push
-(RUN-ID is the build run whose rootfs artifact made that release; artifacts live
-14 days). An existing published `sources-TAG` is only verified, never rewritten.
+`git commit --allow-empty -m "[sources TAG RUN-ID] why"` and push. The subject must **start** with
+the bracket (a commit that only quotes it, a revert for example, does nothing), TAG must be a
+published AurOS release and its notes must name RUN-ID, the build run whose rootfs artifact
+made it (artifacts live 14 days). An existing published `sources-TAG` is then only verified,
+not rewritten.
+
+With the word `again` after the run id (`[sources TAG RUN-ID again]`) a published `sources-TAG`
+is made again with the current tool, for example after the tool learned to include more. Nothing
+of the old release is touched until the new set is complete: `publish.py` refuses a set that
+lacks a source package the published release has, uploads every file under the name `new-<name>`,
+checks GitHub's own digest of each against `SHA256SUMS`, and only then, file by file (`SHA256SUMS`
+last), deletes the old file and renames the new one. If anything fails before that, the release is
+as it was. **Never cancel a run that may be uploading** (the swap takes minutes); if a run did
+die in the swap, the next `again` deletes the strays and starts over.
 
 ## Not covered, said plainly
 
@@ -110,3 +126,13 @@ suite to go red).
   (`host-sources.txt`); `SOURCES.txt`'s header says which happened.
 - A subject that says `[sources ...]` is read only on the newest commit of a push; a push of
   several commits at once ignores an earlier one (the schedule catches up).
+- GitHub shows "Source code (zip)" and "(tar.gz)" links on every release page. They are the
+  repository at the tag, which for a sources release is the head of the main branch on the day it
+  was published, not the commit the image was built from. The notes of every sources release say
+  so; the right copy of our own code is the file `auros-source-<commit>.tar.gz`.
+- Launchpad answering with a server error for a file is retried and then the archive.ubuntu.com
+  pool is tried; if both fail the build stops (fail closed: no release with a missing program).
+- The source for the Firefox in an image is Mozilla's published tarball, named in `SOURCES.txt` with
+  Mozilla's own hash and mirrored in the release; whether the Firefox binary came from Mozilla's
+  apt archive or from the Mozilla Team's archive (`browser_source`, `build/forge`) the same
+  upstream source applies, and `verify` checks that the pointer and the mirror agree.

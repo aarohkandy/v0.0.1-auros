@@ -2,7 +2,8 @@ AUROS: LICENSES AND NOTICES
 
 Prepared by the AurOS project without a lawyer. Not legal advice.
 
-This file is inside AurOS-Setup.exe so that you can read it with no internet. It has, in order:
+This file has the licenses and notices of the programs AurOS carries. It is attached to every AurOS release and
+every sources release on the project's releases page, so that you can read it with no other file. It has, in order:
   1. our written offer of the source code
   2. the notices of the programs AurOS carries (third-party notices)
   3. the copyright files of the programs inside the installer's small system and boot files
@@ -45,7 +46,9 @@ WHICH RELEASE YOU HAVE
 If this computer has the file /etc/auros/release, it names the release.
 If not, type "dpkg -l auros" in a terminal: the version shown is also
 written in the file PACKAGES.txt of the sources release that matches.
-If you are not sure, write to us (below) and say what you can see.
+If you have only the Windows installer AurOS-Setup.exe, the release is
+the one on whose page you found it. If you are not sure, write to us
+(below) and say what you can see.
 
 HOW LONG
 
@@ -57,7 +60,9 @@ IF YOU CANNOT GET IT THAT WAY
 
 Write to CONTACT_EMAIL and say which release you have. We will send you
 the source on a USB stick or a disc, for no more than the cost of the
-medium and the postage.
+medium and the postage. This offer is valid for at least three years
+after the last day we offer that release for download, and for as long
+as we support it.
 
 This offer is open to anyone, whether or not they have a copy of AurOS. Programs your computer later updates from Ubuntu
 or from Mozilla come with source from them, at their own addresses.

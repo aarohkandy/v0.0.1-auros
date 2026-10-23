@@ -43,7 +43,7 @@
           <span>Get AurOS</span>
         </a>
         <p class="facts-line">Any change to a drive carries some risk. Copy photos you can&rsquo;t replace to a memory stick first.</p>
-        <p class="facts-line">Free. For Windows&nbsp;10 and&nbsp;11. About <span data-fact="time-ssd">25 to 60</span>&nbsp;minutes. Older computers take longer.</p>
+        <p class="facts-line">Free. About <span data-fact="time-ssd">25 to 60</span>&nbsp;minutes. Tried so far only on a pretend computer, not a real one.</p>
         <p class="facts-line not-sure">Not sure which Windows you have? Press <b>Get AurOS</b>. Setup checks, and <span data-claim="stop:nothing-changed">changes nothing if it can&rsquo;t go on</span>.</p>
         <ul class="foot-links under-get"><li><a href="licenses.html">Licenses and source code</a></li></ul>
         <p class="old-win" id="old-win" hidden>AurOS needs Windows&nbsp;10 or&nbsp;11, and this computer may have an older Windows. AurOS Setup checks first and tells you.</p>
@@ -231,9 +231,10 @@
           <div class="step-text">
             <span class="num" aria-hidden="true">3</span>
             <h3><span class="vh">Step 3: </span>Pick a look, then press Install&nbsp;AurOS</h3>
-            <p>AurOS Setup checks your computer first. If anything would stop AurOS working, it tells you <b>before it changes anything</b>.</p>
+            <p>AurOS Setup checks your computer first. If anything would stop AurOS working, it tells you <b>before it changes Windows</b>.</p>
             <p>Press <b data-ui="wizard">Next</b>, pick the look you like, press <b data-ui="wizard">Next</b> again, then <b data-ui="wizard">Install AurOS</b>. The computer <b>restarts once, by itself</b>. <span data-claim="dark:minute-or-two">The screen goes dark for a minute or two.</span> Leave the computer switched on.</p>
-            <p data-claim="hold:rearms">When AurOS starts, it asks whether everything works. Until you answer, AurOS starts each time you switch on, and <b>Windows and your files stay on this computer.</b> If AurOS fails to start, the computer starts Windows instead.</p>
+            <p>Installing makes Windows smaller to fit AurOS, which changes how your drive is divided. Any change to a drive carries some risk, so copy photos you can&rsquo;t replace to a memory stick first.</p>
+            <p data-claim="hold:rearms">When AurOS starts, it asks whether everything works. Until you answer, AurOS is set to start each time you switch on, and <b>Windows and your files are meant to stay on this computer.</b> If AurOS fails to start, the computer should start Windows instead. If it does not, ask someone to help (the button below).</p>
             <p><b data-ui="desktop">No, go back to Windows</b>: Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted.</p>
             <p class="helper"><a class="btn2" href="guide.html">Stuck? Ask someone to help</a></p>
           </div>
@@ -327,6 +328,7 @@
       <dl class="facts">
         <div><dt>How long it takes</dt><dd>About <span data-fact="time-ssd">25 to 60</span>&nbsp;minutes. Older computers take longer, about <span data-fact="time-hdd">1 to 3 hours</span>. AurOS Setup tells you the time for your computer before you start.</dd></div>
         <div><dt>Which computers</dt><dd>A Windows&nbsp;10 or Windows&nbsp;11 computer made since about 2013. Not Macs, Chromebooks, phones or tablets.</dd></div>
+        <div><dt>The download</dt><dd>As soon as AurOS Setup says your computer can take AurOS, it starts downloading AurOS, about 2&nbsp;GB, before you press <b data-ui="wizard">Install AurOS</b>. If your internet has a data limit, or you are on a phone&rsquo;s hotspot, close AurOS Setup instead. Closing it deletes what it downloaded.</dd></div>
         <div><dt>Room it needs</dt><dd>AurOS needs some empty room on your computer. AurOS Setup checks, and tells you if there isn&rsquo;t enough.</dd></div>
         <div><dt>Keep it plugged in</dt><dd data-claim="charger:required">Plug in the charger before you start, and leave it in until AurOS has started. AurOS Setup waits for it.</dd></div>
         <div><dt>Locked drives</dt><dd>
@@ -351,7 +353,7 @@
       <div class="head"><h2 id="faq-title">Questions.</h2></div>
       <div class="qa"><h3>Is it free?</h3><div><p>Yes. No ads and no subscription. AurOS is made in the open, so anyone can check how it works.</p></div></div>
       <div class="qa"><h3>Will I lose my files?</h3><div><p>AurOS is made to keep your files. To make room it makes Windows smaller, and moves Windows&rsquo; files to do it. If the power fails or the computer crashes while it does that, Windows or your files could be damaged and might not come back. No change to a drive is free of risk, so copy the photos you treasure onto a memory stick first.</p></div></div>
-      <div class="qa"><h3>Can I go back to Windows?</h3><div><p>That is what it is made for. Until you tell AurOS that everything works, Windows and your files stay on this computer, and you can go back. After <b data-ui="desktop">No, go back to Windows</b>, Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted.</p><p>Later, <b data-ui="desktop">Put Windows back</b> in AurOS&rsquo;s Settings removes AurOS, and anything you saved in AurOS goes with it, so copy what you want to keep onto a memory stick first.</p></div></div>
+      <div class="qa"><h3>Can I go back to Windows?</h3><div><p>That is what it is made for. Until you tell AurOS that everything works, Windows and your files stay on this computer, and you can go back. After <b data-ui="desktop">No, go back to Windows</b>, Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted.</p><p>Later, <b data-ui="desktop">Put Windows back</b> in AurOS&rsquo;s Settings removes AurOS, and anything you saved in AurOS goes with it, so copy what you want to keep onto a memory stick first. It changes the drive again, so it carries some risk too.</p></div></div>
       <div class="qa"><h3>What about my programs, like Microsoft Office?</h3><div><p>Programs made for Windows don&rsquo;t run in AurOS. AurOS comes with its own programs for the internet, notes, photos, music and video, and <b data-ui="desktop">Get more programs</b> has many more, free. You can use Microsoft Office on the internet, at office.com.</p></div></div>
       <div class="qa"><h3>Is it safe?</h3><div><p>AurOS Setup checks your computer before it changes Windows, and says so if AurOS can&rsquo;t go on. Windows and your internet browser ask if you trust AurOS because they don&rsquo;t know it yet. No change to a drive is free of risk, so copy the photos you treasure onto a memory stick first.</p></div></div>
       <div class="qa" id="help"><h3>What if I get stuck?</h3><div>
@@ -395,7 +397,7 @@
     </ul>
     <p>No cookies and no ads. This site collects nothing about you. GitHub, which hosts it, keeps its own records of the internet addresses that visit. Write to us: CONTACT_EMAIL.</p>
     <p>AurOS&rsquo;s own code is free software (MIT license). It includes programs by others, each under its own license: <a href="licenses.html">licenses and source code</a>. Set in Atkinson Hyperlegible Next (<a href="assets/fonts/OFL.txt">license</a>).</p>
-    <p>AurOS includes software from Ubuntu 24.04 LTS, put together and changed by its maker. It is not made, endorsed or supported by Canonical. Windows, Microsoft, Edge, BitLocker, Defender and SmartScreen are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome and Safe Browsing are trademarks of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. Linux is the registered trademark of Linus Torvalds. Intel is a trademark of Intel Corporation. Other names are trademarks of their owners. AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, or otherwise approved by Apple Inc. The names are used only to say what something is made from, resembles or works with.</p>
+    <p>AurOS is built from Ubuntu 24.04 LTS software that we have put together and changed. It is not made, endorsed or supported by Canonical. Windows, Microsoft, Edge, BitLocker, Defender and SmartScreen are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome and Safe Browsing are trademarks of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. Linux is the registered trademark of Linus Torvalds in the U.S. and other countries. Intel is a trademark of Intel Corporation or its subsidiaries. Other names are trademarks of their owners. AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, or otherwise approved by Apple Inc. The names are used only to say what a program is, what AurOS is made from, or what it works with.</p>
     <!-- /legal-footer -->
   </div>
 </footer>

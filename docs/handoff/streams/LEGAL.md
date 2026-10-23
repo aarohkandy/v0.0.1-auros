@@ -21,25 +21,29 @@ help pages (K), `build/aurbridge` resources and the Ready page (B/A2), `.github/
 4. TM-4  free knockout search for "AurOS" (`docs/legal/NAME-SEARCH.md`).
 5. Keep `docs/legal/COMPLIANCE.md` status current; two skeptics review each public document.
 
-## Status (2026-10-24; commits on `main`)
+## Status (2026-10-23; commits on `main`)
 
-- **LIC-1 done and self-running.** `sources-v0.1.0-618726b` is published and verified from its public copy (first made 4225a73,
-  run 39975787998; remade complete with Built-Using, NOTICES.txt and Firefox's source by `[sources v0.1.0-618726b 39905858387 again]`,
-  run 40007739483: see the end of this file for its result). `.github/workflows/sources.yml` now **sweeps every three hours**:
-  every published AurOS release without a sources release gets one from the build run named in its notes, so no one has to
-  wire anything; it also re-checks every `sources-*` release against GitHub's digests and fails if an AurOS release older than
-  a day has none. `build/sources` + `tools/legal/sourcestest.py` (43 cases, 10 mutants), `legal.yml` (also
-  `stagingcheck.py`: the real staging cpio's 12 Ubuntu packages are all in NOTICES).
+- **LIC-1 done and self-running.** `.github/workflows/sources.yml` **sweeps every three hours**: every published AurOS release
+  without a sources release gets one from the build run named in its notes, so no one has to wire anything; it adds the
+  source pointer line to that AurOS release's notes and attaches `NOTICES.txt` to it (add only); it re-checks every
+  `sources-*` release against GitHub's digests and fails if an AurOS release older than a day has none. Publishing goes
+  through `tools/legal/publish.py` (draft first; a published release is only replaced by a complete, digest-checked
+  set, never emptied first). Tests: `build/sources` + `tools/legal/sourcestest.py` (11 mutants), `publishtest.py` (a pretend
+  GitHub, 5 mutants), `stagingcheck.py` (the real staging cpio's 12 Ubuntu packages are all in NOTICES), all in `legal.yml`.
+  **The published `sources-v0.1.0-618726b` was damaged on 2026-10-23 by cancelling a run that had already started replacing
+  it with the old unsafe tool (a part was gone): it is being remade with the safe one** (`[sources v0.1.0-618726b
+  39905858387 again]`); see the end of this file for what it ended as.
 - **LIC-2/3/5, TM-1/2/3 done in the repo:** `website/{licenses,terms,disclaimer,privacy}.html` (generated from `docs/legal/*.md`
   by `tools/legal/mkpages.py`), one legal footer on every page, the one trademark paragraph (`docs/legal/TRADEMARKS.txt`), notices
   (`tools/legal/notices.py`), `docs/RELINK.md`, the in-OS help page, `tools/legal/check.py` (pages, claims, marks, image,
-  `--launch`). Terms/Disclaimer/Privacy/Licenses are **v2** after the skeptic review.
+  `--launch`). Terms/Disclaimer/Privacy/Licenses are **v3** after two skeptic rounds.
 - **LIA-1/2, WEB-1/3, PRI-1/2/7, LIA-5 done in the texts;** the installer half is stream B's (strings below).
 - **TM-4 done, and it found a real problem** (`docs/legal/NAME-SEARCH.md`): UserTesting rebranded as Auros on 29 Sep 2026 and
   filed AUROS in four countries; Emergent Systems holds US reg. 4512239 AUROS in class 9. Owner decision before the public link.
-- **Two skeptic reviews** (`docs/legal/REVIEWS.md`, 38 findings, each answered; open ones belong to B, A2, D, C, E or the owner).
+- **Four skeptic reads in two rounds** (`docs/legal/REVIEWS.md`, 69 findings, each answered; open ones belong to B, A2, D, C, E, F or the owner).
 - **Not linked publicly until:** `python3 -I tools/legal/check.py --launch` is clean (the owner's mailbox, the installer's agreement
-  line / risk sentence / Licenses button / resources 200 and 202, no finding marked NOT DONE). E: run it in `promote`.
+  line / risk sentence / Licenses button / resources 200 and 202, no finding marked NOT DONE). It now runs as a step of `pages.yml`
+  `deploy` and of `release.yml` `site` (only for a run that would become [latest]), so the public site and a [latest] release wait for it.
 - **Owner:** a mailbox (`check.py set-contact`), the name decision, Mozilla (`MOZILLA.md`), optional mirror of each sources release.
 
 ## Hand-offs to other streams (via the lead)
@@ -56,7 +60,8 @@ help pages (K), `build/aurbridge` resources and the Ready page (B/A2), `.github/
    ```
    and add `sources` to `promote`'s `needs` (and its `if` must require `needs.sources.result == 'success'`).
    `sources.yml` makes the draft, uploads, publishes the prerelease `sources-<tag>`, downloads it again and
-   verifies. It needs the build run's `auros-rootfs` artifact (14 days).
+   verifies. It needs the build run's `auros-rootfs` artifact (14 days). Until this is wired the 3-hourly sweep does the same
+   job, so a release is never without sources for long; wiring it makes `promote` wait for them.
 2. The notes in `publish` ("notes.md"): append `sh tools/legal/notes.sh line "$TAG"` (two lines: the sources release
    and the offer).
 3. `tests.yml`: add `python3 -I tools/legal/sourcestest.py` and `python3 -I tools/legal/check.py` (seconds; legal.yml also runs them).
@@ -75,8 +80,11 @@ help pages (K), `build/aurbridge` resources and the Ready page (B/A2), `.github/
    profile only with the tick and the BitLocker pause; a reputation paragraph; "plans to apply" like the site; soften
    "The signature tells Windows who made it" to what a SignPath Foundation signature means; "Windows and every file stay"
    -> "kept"). `tools/legal/check.py` does not scan it.
-9. `check.py --launch` (run it before any `[latest]`) lists what is still open for the public link: the owner's mailbox,
-   the Ready-page lines and resources 200/202 in the installer, and the review log.
+9. `check.py --launch` is now a step of `release.yml` `site` (LEGAL added it, one step, for a run that would become [latest]) and of
+   `pages.yml` `deploy`; it lists what is still open for the public link: the owner's mailbox, the Ready-page lines and
+   resources 200/202 in the installer, and the review log. Do not remove it.
+10. A tag must never be moved or deleted for a release whose `sources-<tag>` exists, and never cancel a `sources` run that may be
+   uploading (the swap in `publish.py` takes minutes; a cancel in the middle needs the next `again` to clean up).
 
 ### B (installer: `src/aurbridge/wizard.c`, `build/aurbridge`), via the lead -- the exact strings
 `tools/legal/check.py` has dated allowances (until 2026-11-30) for the old absolute words in `wizard.c`/`screen.c`; it goes red
@@ -88,13 +96,13 @@ after that date, and green-without-allowance once these land. The skeptic review
 2. DIRECTLY above the Install AurOS button, normal body size and contrast (NOT `C_QUIET`):
    `By pressing Install AurOS you agree to the AurOS Terms.` and, beside or under it, a text button
    `Read the Terms` that opens an in-wizard read-only pane with resource 202 (works offline; no browser).
-   Write `terms accepted: v2, <timestamp>` to the install journal (local only). "v2" is the Terms' version
+   Write `terms accepted: v3, <timestamp>` to the install journal (local only). "v3" is the Terms' version
    (`docs/legal/TERMS.md` line 3). Keep Ready's one primary button `Install AurOS`; update the navtest strings.
 3. `page_welcome` subtitle (now "... Windows stays, with all your files. ..."): `AurOS is a free, simple new way to use this computer. AurOS is made to keep Windows and your files. If AurOS isn’t for you, you can go back to Windows.`
    and the line "This only looks. Nothing on this computer is changed." is true only until the check passes: from then on the
-   five-gigabyte download is running into `C:\AurOS\` (`check_passed`/`download_begin`) and a close leaves the part that was
-   fetched there (`install_cancel`). Say so on the page the check ends on ("AurOS is downloading while you read; it uses several
-   gigabytes of data and room") -- the Terms and privacy page now say it, and S-22 (the room check ignores this download) is B/A2's.
+   download (about 2 GB; the manifest has the size) is running into `C:\AurOS\` (`check_passed`/`download_begin`); closing Setup
+   before Install deletes it (`install_forget`), a power cut can leave part. Say so on the page the check ends on ("AurOS is
+   downloading while you read, about 2 GB. If your internet has a data limit, close this window: closing deletes it.") -- the Terms and privacy page now say it, and S-22 (the room check ignores this download) is B/A2's.
 4. `SAY(...)` for PAGE_READY: say the new first row, then the rest.
 5. The install-stopped page (now "It stopped before the restart. Your files are safe. ..."): `Setup stopped. If Windows does not start, ask someone to help you.` plus the specific plain reason; never "safe".
 6. A `Licenses` button in the wizard footer (the exact word `Licenses`; `check.py --launch` looks for `L"Licenses"`) that
@@ -109,7 +117,11 @@ after that date, and green-without-allowance once these land. The skeptic review
 9. Not B's, for A2: `src/aurscreen/screen.c` "Putting Windows back exactly as it was." -> "Putting Windows back." and
    "Windows is back, with every file in it." is only true after the engine's own verification: keep it only if
    it is shown after that check. "Your Windows files are safe." (stopped screens) -> say what was verified.
-10. `docs/AURBRIDGE.md`-level facts the Terms now state and the installer should too: Fast Startup and hibernation are
+10. Round 2 (skeptic C): the Ready page's "what happens" list should also say that Fast Startup and hibernation are turned off and stay
+   off while AurOS is there, that AurOS's start-up files go on the start-up partition, and that Setup leaves a Windows task "AurOS put-back"
+   (SYSTEM, at every start, files in `C:\ProgramData\AurOS`) that does nothing until AurOS is removed. The Terms (section 4) say all of it.
+   If Setup is closed by the person who pressed Install for someone else, nothing special is needed; the Terms (section 2) cover it.
+11. `docs/AURBRIDGE.md`-level facts the Terms now state and the installer should too: Fast Startup and hibernation are
    turned off first (`phase_prepare`); after "No, go back to Windows" AurOS (about 28 GB) stays until Put Windows back.
 
 ### D (website)
@@ -119,6 +131,7 @@ after that date, and green-without-allowance once these land. The skeptic review
   `code-signing.html` "plans to apply". `node tools/site/check.mjs`: 404 passed, 0 failed (homebase).
 - For D: `advanced.html` #room says "Setup shows both numbers before it changes anything" but `page_ready` shows no size (the 28 GB appears only when it blocks): either B adds the size to Ready or the sentence goes. `check.mjs` STALE list still says "updates itself" is false; since S5 it is true (update channel proven):
   the Terms say "AurOS gets security fixes ... while your computer is online" to stay clear of that regex until you update it.
+- Round 2 left for D: the h1 "Your computer, new again." (skeptic C 3: a promise as an adjective; the repo's own rule is "reassure with facts, never adjectives"; LEGAL added the facts to the hero and Step 3, it did not change the headline); the "25 to 60 minutes" assumes 24 Mbit/s and an SSD (`ETA_LINK_BPS`); `check.mjs` STALE list still has regexes for old claims ("updates by itself"), which is why LEGAL words some sentences around them; the screenshots of Welcome and Ready (`assets/shots/setup-*.jpg`) must be re-shot after B's strings land; LEGAL removed the Wishes line from `status.html` (Wishes is not in this version) and reworded two "Your computer is fine/safe" lines in help (K).
 - A later `[latest]` publishes these pages: do it only after the two skeptic reviews in `docs/legal/REVIEWS.md` are marked done.
 
 ### K (help) and C (aurshell)

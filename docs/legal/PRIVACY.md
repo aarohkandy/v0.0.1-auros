@@ -1,15 +1,15 @@
 # AurOS Privacy
 
-Version 2, 24 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. This page is not legal advice.
+Version 3, 23 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. This page is not legal advice.
 
 Who is responsible: the person who makes AurOS, on the AurOS project page on GitHub. There is no company yet. To ask us anything about privacy, write to CONTACT_EMAIL.
 
 ## 1. In short
 
-- AurOS does not collect information about you or your computer. There is no account, no sign-in, no advert and no tracking on the website, in AurOS Setup, or on your computer. (If you write to us, we keep what you send: section 5.)
+- AurOS does not collect information about you or your computer. There is no account, no sign-in and no tracking on the website, in AurOS Setup, or on your computer, and AurOS shows no adverts of its own. (If you write to us, we keep what you send: section 5.)
 - AurOS Setup and AurOS send nothing about you or your computer to us. Your files, your passwords and what you do stay on your computer.
 - To work, your computer does talk to **other organizations' servers**: GitHub, Ubuntu, Mozilla, Flathub, Google's Safe Browsing and others (section 4). They see what any website you visit sees, such as your internet address. We don't control their records, and each has its own privacy policy.
-- If we ever add something that sends anything about you or your computer to us, we will say so on this page **before** the update that does it, and it will be your choice.
+- If we ever add something that sends anything about you or your computer to us, we will say so on this page **before** the update that does it.
 
 ## 2. The website
 
@@ -21,9 +21,9 @@ If the website, the downloads or the updates are ever served from a web address 
 
 ## 3. AurOS Setup (AurOS-Setup.exe)
 
-AurOS Setup runs on your Windows computer. To decide whether AurOS can go on it safely, it **looks at your computer**: the Windows version, the kind of firmware, how the drive is divided and how much room is free, whether the drive is locked, the drive's health, and similar facts. **It looks at these on your computer and does not send them anywhere.**
+AurOS Setup runs on your Windows computer. To decide whether AurOS can go on it safely, it **looks at your computer**: the Windows version, the kind of firmware, how the drive is divided and how much room is free, whether the drive is locked, the drive's health, the name of the Wi-Fi network you are connected to, the printers, camera and Bluetooth devices attached, your language, keyboard and time zone, and similar facts. **It looks at these on your computer and does not send them anywhere.** If you press **Save a report for a helper**, Setup writes these facts into a text file on your Desktop. Nothing sends that file anywhere; it goes to a helper only if you give it to them.
 
-As soon as Setup finds that AurOS can go on your computer, it starts downloading AurOS (several gigabytes) from **GitHub Releases**, while you read the pages. GitHub sees your internet address, as it does for any download. The download goes into a folder called AurOS on your Windows drive; if you close Setup before you press Install AurOS it stays there, so a later try can carry on, and you may delete the folder.
+As soon as Setup finds that AurOS can go on your computer, it starts downloading AurOS (about 2 GB at the time of writing) from **GitHub Releases**, while you read the pages and before you press Install AurOS. GitHub sees your internet address, as it does for any download. The download goes into a folder called AurOS on your Windows drive. If you close Setup before you press Install AurOS, Setup deletes it; if Setup is stopped some other way, for example by a power cut, part of it may stay there, and you may delete the folder.
 
 While it works, Setup writes notes on your computer so that it can finish, or undo, the install after the restart. They stay on your computer. We see them only if you send them to us yourself.
 
@@ -36,10 +36,11 @@ To keep your computer working and safe, AurOS and the programs it comes with mai
 | Service | Run by | What AurOS uses it for |
 |---|---|---|
 | Ubuntu's software archive | Canonical Ltd | Security fixes for the system, and the software list |
-| Mozilla's software archive | Mozilla | Firefox and its updates |
-| Firefox's own services | Mozilla | Add-ons (including uBlock Origin, from addons.mozilla.org), block lists, checking whether you are online, and the search box. Firefox's usage reports (telemetry) are switched off. |
+| Mozilla's software archive | Mozilla (for some versions of AurOS, the Mozilla Team's archive on Launchpad, which Canonical runs) | Firefox and its updates |
+| Firefox's own services | Mozilla | Add-ons (including uBlock Origin, from addons.mozilla.org), block lists and checking whether you are online. Firefox's usage reports (telemetry) are switched off. |
 | uBlock Origin's lists | The list makers (several are hosted on GitHub) | Keeping the ad and scam block lists up to date |
-| Safe Browsing, inside Firefox | Google | Warns before a dangerous website or download. Firefox checks addresses against a list it downloads. For some downloads it sends details of the file (not the file itself) to Google to check it. This check is always on in AurOS's Firefox. |
+| Safe Browsing, inside Firefox | Google | Warns before a dangerous website or download. Firefox checks addresses against a list it downloads. For some downloads it sends the file's web address, a fingerprint of the file and similar details (not the file itself) to Google to check it. This check is always on in AurOS's Firefox. |
+| The search box in Firefox | The search engine Firefox is set to (Google, unless you change it) | Firefox sends what you type, and suggestions for it, to that search engine. AurOS does not change Firefox's search engine. |
 | Flathub | Flathub, with the GNOME Foundation and partners | The catalog and downloads in **Get more programs**. The store may also ask the GNOME project's review service for ratings. |
 | AurOS's update channel | GitHub, Inc. (GitHub Releases) | AurOS's own updates |
 | Time servers | Ubuntu, the NTP pool, Cloudflare, Netnod, PTB | Keeping the clock right |
@@ -64,4 +65,4 @@ Because AurOS does not collect information about the people who use it, there is
 
 ## 8. Changes
 
-If this page changes, the new version will be on the website with a new date and number, before the change takes effect. If AurOS ever starts to send anything new about you or your computer to anyone, we will say so **before** the update that does it.
+If this page changes, the new version will be on the website with a new date and number, before the change takes effect. If AurOS ever starts to send anything new about you or your computer to anyone, we will say so on this page **before** the update that does it.

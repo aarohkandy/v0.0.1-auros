@@ -1,6 +1,6 @@
 # AurOS Disclaimer
 
-Version 2, 24 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. This page is not legal advice. It goes with the AurOS Terms.
+Version 3, 23 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. This page is not legal advice. It goes with the AurOS Terms.
 
 ## AurOS is free, and comes as it is
 
@@ -8,7 +8,7 @@ AurOS is free software, made by one person with the help of AI software, and giv
 
 ## Copy your important files first
 
-Installing AurOS changes how your computer's drive is divided. It makes Windows smaller to free room, and moves Windows' files to do it. AurOS is made to keep Windows and your files and to let you go back, but any change to a drive carries some risk. If the power fails or the computer crashes while Windows is being made smaller, Windows or your files could be damaged and might not come back. Before you start, copy anything you can't replace, such as photos and papers, to a memory stick or another drive, and keep the computer plugged in.
+Installing AurOS changes how your computer's drive is divided. It makes Windows smaller to free room, and moves Windows' files to do it. Putting Windows back later changes the drive again. AurOS is made to keep Windows and your files and to let you go back, but any change to a drive carries some risk. If the power fails or the computer crashes while Windows is being made smaller, Windows or your files could be damaged and might not come back. Before you start, copy anything you can't replace, such as photos and papers, to a memory stick or another drive, and keep the computer plugged in.
 
 ## What we have tested, and what we haven't
 
@@ -16,7 +16,7 @@ Before a version of AurOS goes on this website, the whole install is run on a vi
 
 ## You decide
 
-AurOS Setup looks at your computer and tells you in plain words what it will do, before it makes any change to Windows. Going ahead is your choice. To the extent the law allows, we are not responsible for lost data or other loss that comes from installing, using or removing AurOS. This does not take away any right you have by law where you live. The Terms say more.
+AurOS Setup looks at your computer and tells you in plain words what it will do, before it makes any change to Windows, except that it starts downloading AurOS as soon as it finds that AurOS can go on the computer. Going ahead is your choice. To the extent the law allows, we are not responsible for lost data or other loss that comes from installing, using or removing AurOS. This does not take away any right you have by law where you live. The Terms say more.
 
 ## The help here is general
 
@@ -24,9 +24,9 @@ The help on this website and in AurOS is general guidance, not advice for your p
 
 ## Not connected to any other company
 
-AurOS includes software from Ubuntu 24.04 LTS, put together and changed by its maker. It is not made, endorsed or supported by Canonical.
+AurOS is built from Ubuntu 24.04 LTS software that we have put together and changed. It is not made, endorsed or supported by Canonical.
 
-Windows, Microsoft, Edge, BitLocker, Defender and SmartScreen are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome and Safe Browsing are trademarks of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. Linux is the registered trademark of Linus Torvalds. Intel is a trademark of Intel Corporation. Other names are trademarks of their owners. AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, or otherwise approved by Apple Inc. The names are used only to say what something is made from, resembles or works with.
+Windows, Microsoft, Edge, BitLocker, Defender and SmartScreen are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome and Safe Browsing are trademarks of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. Linux is the registered trademark of Linus Torvalds in the U.S. and other countries. Intel is a trademark of Intel Corporation or its subsidiaries. Other names are trademarks of their owners. AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, or otherwise approved by Apple Inc. The names are used only to say what a program is, what AurOS is made from, or what it works with.
 
 ## Other people's programs
 

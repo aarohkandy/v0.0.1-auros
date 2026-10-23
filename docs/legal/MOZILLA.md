@@ -1,7 +1,7 @@
 # Firefox in AurOS: what we change, and what Mozilla's rules say
 
 Prepared by the AurOS agents without a lawyer (D15). Rules: Mozilla's Unaltered Software Distribution Policy
-(https://www.mozilla.org/en-US/foundation/trademarks/distribution-policy/, read again on 24 October 2026) and MPL 2.0
+(https://www.mozilla.org/en-US/foundation/trademarks/distribution-policy/, read again on 23 October 2026) and MPL 2.0
 (`COMPLIANCE.md` LIC-6, TM-5). **Corrected after the skeptic review: this is not "later". AurOS's Firefox is outside the
 policy's plain words, so the owner should ask Mozilla, or change the configuration, before the public link.**
 
@@ -18,6 +18,13 @@ policy's plain words, so the owner should ask Mozilla, or change the configurati
 3. **The launcher is called "Internet"** in AurOS's own shell (`build/forge` rename table). The Firefox window and about box
    still say Firefox.
 4. `SkipTermsOfUse` is not set.
+5. **The version is the one the build installed, and updates depend on the route.** The policy asks for the most recent
+   version of an unaltered Firefox. With `DisableAppUpdate`, an image updates Firefox only through an apt source: Mozilla's
+   repository or the mozillateam PPA. The hash-checked tarball route (a last resort) leaves a Firefox that never updates, so a
+   release build should not use it (`COMPLIANCE.md` LIC-6).
+6. The footer, Terms, Disclaimer and Licenses pages say the names are used only "to say what a program is, what AurOS is made
+   from, or what it works with". For Firefox that is true of the name, and the two things above (force-installed extension,
+   locked defaults) are what Mozilla's page says need its permission; this file is the record of that open question.
 
 ## What Mozilla's page says (summarized)
 

@@ -23,14 +23,15 @@ We make AurOS, a free desktop that a person installs beside Windows with one dow
 software from Ubuntu 24.04 LTS (noble), put together and changed by us. We write to say so plainly, and to
 tell you what we do.
 
-- The programs are Canonical's and the Ubuntu community's, installed from the Ubuntu archive
-  (archive.ubuntu.com and security.ubuntu.com) as published, and updated from the same places
-  (noble-updates and noble-security). We do not recompile them. Our changes are configuration and
-  our own programs, which are MIT licensed.
+- The programs are Canonical's and the Ubuntu community's, installed as binary packages from the Ubuntu
+  archive (archive.ubuntu.com and security.ubuntu.com) as published, and updated from the same places
+  (noble-updates and noble-security). We have not rebuilt them. We add our own programs, which are
+  MIT licensed, and our own configuration, and we leave out Ubuntu's branding and artwork packages so
+  that AurOS does not present itself as Ubuntu.
 - AurOS's own screens, installer and website use no Ubuntu logo or artwork and never call AurOS
   "Ubuntu"; the name appears only in sentences that say what AurOS is built from. Some Ubuntu strings remain where they come from Ubuntu's own packages and
   files (the kernel version string, package copyright files, the boot file name of Canonical's
-  signed GRUB). The website says: "AurOS includes software from Ubuntu 24.04 LTS, put together and changed by its maker. It is not made,
+  signed GRUB). The website says: "AurOS is built from Ubuntu 24.04 LTS software that we have put together and changed. It is not made,
   endorsed or supported by Canonical. Ubuntu is a registered trademark of Canonical Ltd."
 - The source code for every release is published beside it (a release named sources-<release>
   on our GitHub project, with the Ubuntu source packages in the exact versions).

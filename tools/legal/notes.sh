@@ -33,10 +33,12 @@ The source code of AurOS $tag: the Ubuntu source packages in the exact versions 
 | \`PACKAGES.txt\` | Every program in the image, and the source package it was built from. |
 | \`SHA256SUMS\` | \`sha256sum -c SHA256SUMS\` checks every file here. |
 | \`auros-source-*.tar.gz\` | AurOS's own code, at the commit the image was built from (MIT license). |
-| \`NOTICES.txt\` | The license texts (GPL 2 and 3, LGPL 2.1, MPL 2.0, Apache 2.0, Unicode), the notices that travel with AurOS's programs, and the copyright files of the programs inside the installer. |
+| \`NOTICES.txt\` | The license texts (the GNU GPL and LGPL, GFDL, Artistic, MPL 2.0, Apache 2.0, Unicode), the notices that travel with AurOS's programs, and the copyright files of the programs inside the installer. |
 | \`firefox-*.source.tar.xz\` | A copy of Mozilla's source code of the Firefox in this release, checked against Mozilla's own SHA-256 (Mozilla also publishes it). |
 
 This release is checked after it is published: every file is downloaded again and every program in the image must have its source here (\`build/sources verify\`). It is never deleted.
+
+**GitHub's own "Source code (zip)" and "(tar.gz)" links** on this page are the repository as it stood when this release was published, not the commit the image was built from. Use the files in the table: \`auros-source-*.tar.gz\` is the right copy of AurOS's own code.
 
 ---
 

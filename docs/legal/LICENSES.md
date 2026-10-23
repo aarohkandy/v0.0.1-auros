@@ -1,6 +1,6 @@
 # Licenses and source code
 
-Version 2, 24 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. This page is not legal advice.
+Version 3, 23 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. This page is not legal advice.
 
 AurOS's own programs are free software under the MIT license. AurOS also includes programs made by other people, including the Linux system underneath, Firefox and many programs from Ubuntu. Each one has its own license. You are free to use and share almost all of them, and most can be changed too. Firmware from hardware makers is under its makers' own terms. This page says where the licenses are and how to get the source code.
 
@@ -46,7 +46,7 @@ Nothing here limits the rights that the licenses of these programs give you. If 
 
 ## The Windows installer
 
-AurOS-Setup.exe contains the Linux kernel, GRUB and shim, and a small system that runs after the restart, which includes programs under the GPL and LGPL. The license texts are inside AurOS-Setup.exe (the Licenses button) and in the file NOTICES.txt of every sources release, and the source is in the same sources release. The small system's own programs are linked to the C library in a way that lets you replace the library; the file docs/RELINK.md in the source code says how.
+AurOS-Setup.exe contains the Linux kernel, GRUB and shim, and a small system that runs after the restart, which includes programs under the GPL and LGPL. The license texts are in the file NOTICES.txt, which is attached to every AurOS release next to the installer and to every sources release, and the source is in the same sources release. The small system's own programs are linked to the C library in a way that lets you replace the library; the file docs/RELINK.md in the source code says how.
 
 ## Video, music and photos
 
@@ -54,6 +54,6 @@ AurOS includes programs that play video, music and photos. Some ways of doing th
 
 ## Names
 
-AurOS includes software from Ubuntu 24.04 LTS, put together and changed by its maker. It is not made, endorsed or supported by Canonical.
+AurOS is built from Ubuntu 24.04 LTS software that we have put together and changed. It is not made, endorsed or supported by Canonical.
 
-Windows, Microsoft, Edge, BitLocker, Defender and SmartScreen are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome and Safe Browsing are trademarks of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. Linux is the registered trademark of Linus Torvalds. Intel is a trademark of Intel Corporation. Other names are trademarks of their owners. AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, or otherwise approved by Apple Inc. The names are used only to say what something is made from, resembles or works with.
+Windows, Microsoft, Edge, BitLocker, Defender and SmartScreen are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome and Safe Browsing are trademarks of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. Linux is the registered trademark of Linus Torvalds in the U.S. and other countries. Intel is a trademark of Intel Corporation or its subsidiaries. Other names are trademarks of their owners. AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, or otherwise approved by Apple Inc. The names are used only to say what a program is, what AurOS is made from, or what it works with.

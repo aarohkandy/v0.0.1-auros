@@ -189,6 +189,11 @@ BANNED = [
     (r"completely safe|100% safe|risk-free|\bno risk\b|zero risk", "no change to a drive is free of risk (LIA-2)"),
     (r"go back whenever you like", "Put Windows back refuses in some cases (rescue.c) and a locked drive needs a handover (LIA-2)"),
     (r"your (windows )?files are safe", "an absolute at the point of risk (LIA-2): say what is kept and what the risk is"),
+    (r"files are not touched", "an absolute at the point of risk: the shrink moves Windows' files (TERMS 4)"),
+    (r"with every file in it", "an absolute: say what was done and what is meant to be kept"),
+    (r"nothing on this computer has been lost", "an absolute: say what is meant to be kept, not that nothing was lost"),
+    (r"stays,? with all your files", "an absolute (LIA-2): 'Windows and your files are meant to stay'"),
+    (r"computer is (safe|fine)\b", "an absolute (LIA-2): say what the page can and cannot do"),
 ]
 # Texts a person reads. C files: only lines that are not comments.
 TEXT_GLOBS = ["website", "rootfs/usr/share/auros/help", "README.md", "docs/legal/TERMS.md", "docs/legal/PRIVACY.md",
@@ -203,6 +208,10 @@ PENDING = [
     ("src/aurscreen/screen.c", r"exactly as (it|they) (was|were)", "stream A2: the put-back screen", "2026-11-30"),
     ("src/aurbridge/wizard.c", r"your (windows )?files are safe", "stream B: the install-stopped page", "2026-11-30"),
     ("src/aurscreen/screen.c", r"your (windows )?files are safe", "stream A2: the stopped screens", "2026-11-30"),
+    ("src/aurscreen/screen.c", r"files are not touched", "stream A2: the put-back and stopped screens", "2026-11-30"),
+    ("src/aurscreen/screen.c", r"with every file in it", "stream A2: the put-back screen", "2026-11-30"),
+    ("src/aurscreen/screen.c", r"nothing on this computer has been lost", "stream A2: the stopped screens", "2026-11-30"),
+    ("src/aurbridge/wizard.c", r"stays,? with all your files", "stream B: the Welcome page", "2026-11-30"),
 ]
 
 
