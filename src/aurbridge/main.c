@@ -11,6 +11,7 @@
 #include "fix.h"
 #include "gpt.h"
 #include "plan.h"
+#include "hwinv.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -334,6 +335,7 @@ static void usage(void)
     "  aurbridge preflight            check this PC and report (read-only)\n"
     "  aurbridge preflight --json     same, machine-readable for the wizard\n"
     "  aurbridge selftest             check this binary, not this PC\n"
+    "  aurbridge report [DIR]         what is inside this PC: AurOS-report.txt/.json (read-only)\n"
     "  aurbridge fast-startup-off     what an install does first: Fast Startup off\n"
     "  aurbridge fix ID               what the wizard's Fix button does for ID\n"
     "  aurbridge resume-arm|resume-done\n"
@@ -368,6 +370,9 @@ int main(int argc, char **argv)
      * that are pure -- the parsers, the thresholds, the report
      * plumbing -- and those are exactly the parts a build should
      * refuse to ship broken. */
+    /* What is inside this PC, for the owner's lab and for screening
+     * (src/aurbridge/hwinv.h). The wizard has the same as --report. */
+    if (!strcmp(cmd, "report")) return hwinv_report_main(argc > 2 ? argv[2] : NULL, 0, NULL);
     if (!strcmp(cmd, "getimage")) return getimage(argc, argv);
     if (!strcmp(cmd, "gapselftest")) return gapselftest(argc, argv);
     /* The install's first step, alone, so that a real Windows machine
@@ -412,7 +417,7 @@ int main(int argc, char **argv)
         return 0;
     }
     if (!strcmp(cmd, "selftest")) {
-        int bad = pf_selftest() + gz_selftest() + sbdb_selftest();
+        int bad = pf_selftest() + gz_selftest() + sbdb_selftest() + hwinv_selftest();
         if (bad == 0) puts("aurbridge selftest: ok");
         else fprintf(stderr, "aurbridge selftest: %d check%s wrong\n",
                      bad, bad == 1 ? "" : "s");

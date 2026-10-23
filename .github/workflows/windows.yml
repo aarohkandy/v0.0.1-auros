@@ -186,6 +186,35 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "version exited $LASTEXITCODE" }
           .\exe\aurbridge.exe selftest
           if ($LASTEXITCODE -ne 0) { throw "selftest exited $LASTEXITCODE" }
+      - name: the PC report, from the console tool and from the installer (read-only)
+        shell: pwsh
+        run: |
+          # `AurOS-Setup.exe --report` (stream HW, src/aurbridge/hwinv.h):
+          # what is inside this PC, as plain text and JSON. Two files,
+          # nothing else written. The wizard is a windowed program, so it
+          # is started and waited for.
+          $d = Join-Path $env:RUNNER_TEMP 'report'
+          New-Item -ItemType Directory -Force -Path "$d\console", "$d\wizard" | Out-Null
+          .\exe\aurbridge.exe report "$d\console"
+          if ($LASTEXITCODE -ne 0) { throw "report exited $LASTEXITCODE" }
+          $p = Start-Process -FilePath (Resolve-Path .\exe\aurbridge-wizard.exe).Path -ArgumentList '--report', "$d\wizard" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "--report exited $($p.ExitCode)" }
+          foreach ($w in 'console', 'wizard') {
+            foreach ($f in 'AurOS-report.txt', 'AurOS-report.json') {
+              if (-not (Test-Path "$d\$w\$f")) { throw "$w did not write $f" }
+            }
+            $j = Get-Content "$d\$w\AurOS-report.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($j.schema -ne 1) { throw "$w: schema is $($j.schema)" }
+            if (-not $j.machine.cpu) { throw "$w: the report has no processor" }
+            if ($j.windows.build -lt 10000) { throw "$w: the report has no Windows build" }
+            if ($j.installer.checked -ne $true) { throw "$w: the installer's own check is missing from the report" }
+            "$w: $($j.devices.Count) devices kept, $($j.devices_skipped) skipped, $($j.printers.Count) printers"
+          }
+          Get-Content "$d\wizard\AurOS-report.txt"
+          "### The PC report on a real Windows VM (read-only)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          '```' | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          Get-Content "$d\wizard\AurOS-report.txt" -Encoding UTF8 | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          '```' | Out-File $env:GITHUB_STEP_SUMMARY -Append
       - name: preflight on a real Windows machine (read-only)
         shell: pwsh
         run: |

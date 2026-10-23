@@ -72,6 +72,7 @@
 #include "sbdb.h"
 #include "phases.h"
 #include "fix.h"
+#include "hwinv.h"
 
 /* Baked in by build/aurbridge. A build that has not been told where
  * the image lives produces an installer that expects it to be sitting
@@ -5106,10 +5107,16 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 
     /* Dev harness switches. They only render and report; none of them can
      * change anything on the machine. */
-    const char *shot = NULL, *navtest = NULL;
-    int resume = 0;
+    const char *shot = NULL, *navtest = NULL, *report_dir = NULL;
+    int resume = 0, report = 0;
     for (int i = 1; i < __argc; i++) {
         if (!strcmp(__argv[i], "--resume")) resume = 1;
+        /* `AurOS-Setup.exe --report [FOLDER]`: write what is inside this
+         * PC and stop (src/aurbridge/hwinv.h). Read-only. */
+        else if (!strcmp(__argv[i], "--report")) {
+            report = 1;
+            if (i + 1 < __argc && __argv[i + 1][0] != '-') report_dir = __argv[++i];
+        }
         else if (!strcmp(__argv[i], "--shot") && i + 1 < __argc) shot = __argv[++i];
         else if (!strcmp(__argv[i], "--navtest") && i + 1 < __argc) navtest = __argv[++i];
         else if (!strcmp(__argv[i], "--selftest") && i + 1 < __argc) {
@@ -5119,6 +5126,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         }
     }
 
+    if (report) return hwinv_report_main(report_dir, report_dir == NULL, NULL);
     dpi_opt_in();
     fonts_load();
     if (shot) return shot_run(shot);
