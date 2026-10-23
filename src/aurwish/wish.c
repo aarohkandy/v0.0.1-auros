@@ -33,6 +33,8 @@ static const char *const DAYS[] = { "mon", "tue", "wed", "thu", "fri", "sat", "s
 static const char *const DAY_NAMES[] = { "Mondays", "Tuesdays", "Wednesdays", "Thursdays",
                                          "Fridays", "Saturdays", "Sundays" };
 
+const char *wish_when_name(int i) { return i >= 0 && i < W_N ? WHEN_NAMES[i] : ""; }
+const char *wish_do_name(int i) { return i >= 0 && i < A_N ? DO_NAMES[i] : ""; }
 const char *wish_sound_name(int s) { return s >= 0 && s < SND_N ? SOUNDS[s] : "chime"; }
 const char *wish_look_id(int l) { return l >= 0 && l < 4 ? LOOKS[l] : "rail"; }
 

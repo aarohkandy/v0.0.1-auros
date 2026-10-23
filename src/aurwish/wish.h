@@ -106,6 +106,8 @@ int wish_do_outward(int type);   /* open_app, open_website */
 /* The parse limits for one wish document. */
 extern const jlimits WISH_LIMITS;
 
+const char *wish_when_name(int i);    /* the v1 trigger names, for the cloud's schema field */
+const char *wish_do_name(int i);      /* ... and action names */
 const char *wish_sound_name(int s);
 const char *wish_look_id(int l);
 

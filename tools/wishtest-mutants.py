@@ -79,8 +79,8 @@ MUTANTS = [
 
 ENGINE_MUTANTS = [
     ("engine: no 3 s of quiet", "engine.c", 'if (e->last_input && now - e->last_input < TYPING_QUIET) return 0;', ''),
-    ("engine: holds ignored", "engine.c", 'if (e->holds || e->lholds || e->dnd) return 0;', 'if (e->dnd) return 0;'),
-    ("engine: password words queued", "engine.c", '    if ((e->holds | e->lholds) & H_PASSWORD) return;\n', ''),
+    ("engine: holds ignored", "engine.c", 'if (e->holds || e->dnd) return 0;', 'if (e->dnd) return 0;'),
+    ("engine: password words queued", "engine.c", '    if (e->holds & H_PASSWORD) return;\n', ''),
     ("engine: sound at night", "engine.c", '            if (wish_do_sound(d->type)) continue;\n', ''),
     ("engine: automatic cards at night", "engine.c",
      'if (wish_do_overlay(d->type) && !(flags & (F_TYPED | F_APP)) && !remind) continue;', ''),
@@ -124,7 +124,7 @@ ENGINE_MUTANTS = [
     ("engine: invalid alt_wish offered", "engine.c", 'int have = doc && wish_parse(doc, &env, &w, &err) == 0;', 'int have = doc != NULL; if (have) wish_parse(doc, &env, &w, &err);'),
     ("engine: turning off does not forget", "engine.c", 'if (was && !e->st->consent && e->io.forget) e->io.forget(e->io.ctx);', ''),
     ("engine: forget does not forget", "engine.c", '        if (e->io.forget) e->io.forget(e->io.ctx);\n        store_free(e->st);', '        store_free(e->st);'),
-    ("engine: camera hold ignored", "engine.c", 'if (e->holds || e->lholds || e->dnd) return 0;', 'if (e->holds || e->dnd) return 0;'),
+    ("engine: camera hold ignored", "engine.c", 'if (e->io.holds && e->io.holds(e->io.ctx)) return 0;', ''),
     ("engine: stopped words still sent", "engine.c",
      "if (e->st->all_off || !s->ok || s->status != ST_ON || s->w.when.type != W_TYPED) continue;",
      "if (!s->ok || s->w.when.type != W_TYPED) continue;"),

@@ -166,6 +166,29 @@ int text_label_ok(const char *s, int max_g)
     return text_graphemes(s) <= max_g;
 }
 
+int text_valid(const char *s)
+{
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        unsigned c = *p;
+        int n = c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 :
+                (c & 0xF8) == 0xF0 ? 4 : 0;
+        if (!n) return 0;
+        unsigned min = n == 2 ? 0x80 : n == 3 ? 0x800 : 0x10000;
+        if (n > 1) c &= (0xFFu >> (n + 1));
+        for (int i = 1; i < n; i++) {
+            if ((p[i] & 0xC0) != 0x80) return 0;
+            c = (c << 6) | (p[i] & 0x3F);
+        }
+        if (n > 1 && c < min) return 0;
+        if (c < 0x20 || (c >= 0x7F && c <= 0x9F)) return 0;
+        if ((c >= 0xD800 && c <= 0xDFFF) || c > 0x10FFFF || (c & 0xFFFE) == 0xFFFE ||
+            (c >= 0xFDD0 && c <= 0xFDEF)) return 0;
+        p += n;
+    }
+    return 1;
+}
+
 int text_eq(const char *a, const char *b)
 {
     for (;;) {

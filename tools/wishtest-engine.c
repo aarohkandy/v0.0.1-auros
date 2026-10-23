@@ -42,6 +42,8 @@ static int f_vset(void *c, int p) { (void)c; vol = p; return p; }
 static int f_sound(void *c, int s) { (void)c; (void)s; sounds++; return 0; }
 static int f_say(void *c, const char *t) { (void)c; says++; snprintf(said_last, sizeof said_last, "%s", t); return 0; }
 static int forgets;
+static unsigned fake_hold;
+static unsigned f_holds(void *c) { (void)c; return fake_hold; }
 static int f_forget(void *c) { (void)c; forgets++; return 0; }
 
 static store ST;
@@ -65,10 +67,10 @@ static void fresh(void)
     memset(&ST, 0, sizeof ST);
     ST.next = 1;
     ENV.sensors = 1u << S_COMPASS | 1u << S_TILT | 1u << S_LIGHT;
-    static const engine_io io = { f_emit, f_bget, f_bset, f_vget, f_vset, f_sound, f_say, NULL, f_forget };
+    static const engine_io io = { f_emit, f_bget, f_bset, f_vget, f_vset, f_sound, f_say, NULL, f_forget, f_holds };
     unlink(path);
     E = engine_new(&ST, path, &ENV, &io);
-    bright = 50; vol = 40; sounds = says = forgets = 0; shells = 1;
+    bright = 50; vol = 40; sounds = says = forgets = 0; shells = 1; fake_hold = 0;
     clear();
 }
 
@@ -723,12 +725,12 @@ static void test_local_holds_and_wants(void)
     add(POTATO, "potato", t);
     CHECK(engine_wants(E) == 0 && !engine_wants_fast(E, t + 100));
     clear();
-    engine_hold_local(E, H_CAMERA);                       /* found by the daemon, not the shell */
+    fake_hold = H_CAMERA;                                 /* found by the daemon, not the shell */
     req("{\"op\":\"typed\",\"word\":\"potato\"}", t + 100);
     engine_tick(E, t + 110);
     CHECK(seen("\"ev\":\"fill\"") == 0);
     CHECK(engine_wants_fast(E, t + 111));                 /* a held card wants a quick tick */
-    engine_hold_local(E, 0);
+    fake_hold = 0;
     engine_tick(E, t + 112);
     CHECK(seen("\"ev\":\"fill\"") == 1);
     add(COMPASS, "north", t);

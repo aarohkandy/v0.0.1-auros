@@ -56,7 +56,7 @@ struct engine {
      * wish's share is given back, so pausing the one that broke the
      * limit is enough and the others carry on. */
     struct { long long t; char wid[12]; } overall[OVERALL_HOUR];
-    unsigned holds, lholds;
+    unsigned holds;
     long long last_input;
     int dnd;
     long long dnd_until;       /* 0 = until turned off */
@@ -267,7 +267,8 @@ static int held_kind(int t) { return wish_do_overlay(t) || wish_do_sound(t) || w
 
 static int may_interrupt(engine *e, long long now)
 {
-    if (e->holds || e->lholds || e->dnd) return 0;
+    if (e->holds || e->dnd) return 0;
+    if (e->io.holds && e->io.holds(e->io.ctx)) return 0;       /* camera, microphone */
     if (e->last_input && now - e->last_input < TYPING_QUIET) return 0;
     return 1;
 }
@@ -506,7 +507,7 @@ void engine_typed(engine *e, const char *word, long long now)
     /* §7.6: a word typed while a password is being asked for is not
      * held for later, it is dropped -- a potato appearing after the
      * dialog closes would say what she typed into it. */
-    if ((e->holds | e->lholds) & H_PASSWORD) return;
+    if (e->holds & H_PASSWORD) return;
     for (int i = 0; i < e->st->n; i++) {
         stored *s = e->st->s[i];
         if (s->ok && s->w.when.type == W_TYPED && !strcmp(s->w.when.word, w))
@@ -535,7 +536,6 @@ void engine_app(engine *e, const char *app, long long now)
 void engine_input(engine *e, long long now) { e->last_input = now; }
 
 void engine_hold(engine *e, unsigned reasons, long long now) { (void)now; e->holds = reasons; }
-void engine_hold_local(engine *e, unsigned reasons) { e->lholds = reasons; }
 
 void engine_battery(engine *e, int present, int pct, int plugged, long long now)
 {

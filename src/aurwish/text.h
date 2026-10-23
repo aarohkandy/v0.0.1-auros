@@ -50,6 +50,10 @@ int site_find(const char *site, const char **name, const char **url);
  * max_g graphemes. 1 when it may be shown. */
 int text_label_ok(const char *s, int max_g);
 
+/* Her own typing, before it is sent: strict UTF-8, no control characters
+ * (a new line included), no surrogates or noncharacters. 1 when valid. */
+int text_valid(const char *s);
+
 /* Case-insensitive compare after folding (ASCII and Latin-1). */
 int text_eq(const char *a, const char *b);
 

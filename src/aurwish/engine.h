@@ -24,6 +24,10 @@ typedef struct {
     /* "Forget everything" / Wishes turned off (§7.12): the daemon tells
      * the cloud and deletes the token. May be NULL. */
     int  (*forget)(void *ctx);
+    /* §7.6: holds the daemon finds for itself (camera, microphone: H_CAMERA,
+     * H_MIC), asked only at the moment something is about to be shown.
+     * May be NULL. */
+    unsigned (*holds)(void *ctx);
 } engine_io;
 
 /* §7.6 reasons the shell reports. */
@@ -43,8 +47,7 @@ void engine_startup(engine *e, long long now);        /* once per login */
 void engine_typed(engine *e, const char *word, long long now);
 void engine_app(engine *e, const char *app, long long now);
 void engine_input(engine *e, long long now);
-void engine_hold(engine *e, unsigned reasons, long long now);        /* from the shell */
-void engine_hold_local(engine *e, unsigned reasons);                 /* found by the daemon */
+void engine_hold(engine *e, unsigned reasons, long long now);
 void engine_battery(engine *e, int present, int percent, int plugged, long long now);
 void engine_usb(engine *e, long long now);
 void engine_compass(engine *e, double heading, long long now);

@@ -1,0 +1,43 @@
+# AurOS Wishes: the engine on her computer (docs/AI.md §3).
+#
+# A USER service: her uid, never root. Installed by build/forge ONLY when the
+# profile says wishes="on" (owner decision D14: Wishes are not in the first
+# image), and then it still exits at once unless /etc/auros/policy.conf says
+# `wishes = on`. Nothing that depends on it waits for it, so a crash or a bad
+# wishes.json cannot stop her logging in.
+[Unit]
+Description=AurOS Wishes (the engine on this computer)
+ConditionPathExists=/usr/bin/aurwish
+ConditionPathExists=/etc/auros/policy.conf
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/aurwish
+# 0 means "Wishes is off here": do not restart that.
+Restart=on-failure
+RestartSec=10
+# A wish engine needs very little, and must never be the reason her
+# computer is slow or out of memory.
+MemoryMax=64M
+Nice=10
+# What it may be and do. It reads sensors over D-Bus, listens to the
+# kernel's uevents, writes the backlight, starts curl/mpv/aurvoice, and
+# keeps one file in her data directory. It never needs to gain privilege.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+ProtectSystem=strict
+ReadWritePaths=%h/.local/share/auros %h/.config/auros
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+UMask=0077
+
+[Install]
+WantedBy=default.target
