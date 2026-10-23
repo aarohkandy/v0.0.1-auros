@@ -1,8 +1,29 @@
 # Stream F: install AurOS from a real Windows, end to end (handoff)
 
-Updated 2026-10-23 04:50 UTC. Branch `claude/brave-hypatia-x72g1m`.
+Updated 2026-10-23 05:00 UTC (session B). Repository
+https://github.com/aarohkandy/v0.0.1-auros, branch `main`.
 Files: `.github/workflows/e2e.yml`, `tools/e2e/**` (nothing else).
 Full user guide: `tools/e2e/README.md`. This page is the state of the work.
+
+## Session B: now
+
+| What | State |
+|---|---|
+| Golden Windows in this repo's (empty) Actions cache | run **39902908530** (`dac418d`) doing M1 + save, then an M2 smoke on the old v4 installer |
+| Edge download stall (run 39896941765, old repo) | fixed in `dac418d`: only the warned item's own "More actions" (selftest has the rectangles) |
+| `workflow_call` / `workflow_dispatch` inputs | DONE in `dac418d`: `installer_url`, `installer_sha256`, `variants` (default base). Stream E: call with `uses: ./.github/workflows/e2e.yml` + `with:`; the caller job must grant `contents: write`. The pinned `INSTALLER_URL`/`INSTALLER_SHA256` env lines stay plain (promote greps them). |
+| Point at this repo's first prerelease | waiting for stream E (`gh release list -R aarohkandy/v0.0.1-auros`) |
+
+**For stream E (release.yml promote gate, line ~333):** it selects
+`.jobs[] | select(.name == "e2e")`, but the matrix job is named
+`e2e (base)`, so no run can ever count. Use
+`select(.name == "e2e (base)")` (or `startswith("e2e (")` with every one
+green). A run made by `workflow_call` is not an e2e.yml run at all (its
+jobs belong to the caller's run), so that path needs its own check.
+
+## What she sees (findings for the design owners; screenshot paths)
+
+(filled from every M2/M3 screenshot as runs land)
 
 ## Goal
 
