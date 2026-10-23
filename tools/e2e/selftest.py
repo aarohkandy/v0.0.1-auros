@@ -221,6 +221,18 @@ def test_flow_helpers():
         e2e.VARIANT = saved
 
 
+def test_measure():
+    """The staging's measure step against a real volume's ntfsresize output (measuretest.sh)."""
+    r = subprocess.run(["sh", os.path.join(HERE, "measuretest.sh")], capture_output=True, text=True)
+    out = r.stdout + r.stderr
+    if "skipped" in out:
+        print("skip  " + out.strip())
+        return
+    check(r.returncode == 0, "staging: ntfsresize's 1,660 progress lines do not hide its answer (measuretest.sh)")
+    if r.returncode != 0:
+        print(out)
+
+
 def test_edge_item():
     tree = ast.parse(open(os.path.join(HERE, "e2e.py")).read())
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "inside")
@@ -280,6 +292,7 @@ test_bitlocker_verdict()
 test_timings_summary()
 test_windows_dry()
 test_flow_helpers()
+test_measure()
 test_edge_item()
 test_publish()
 print(f"\n{len(fails)} failed" if fails else "\nall passed")

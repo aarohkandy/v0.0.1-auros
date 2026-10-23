@@ -123,10 +123,20 @@ static int capture(const char *const argv[], char *out, size_t n, int timeout_s)
             for (size_t i = 0; i < have; i++)
                 flat[i] = tail[(size_t)(nseen - have + i) % sizeof tail];
             flat[have] = 0;
-            size_t room2 = n - 1 - got;
-            size_t take = have < room2 ? have : room2;
-            memcpy(out + got, flat + (have - take), take);
-            out[got + take] = 0;
+            /* THE TAIL ALWAYS FITS, BY TAKING THE HEAD'S END. The head
+             * is full whenever there was an overflow (that is what an
+             * overflow is), so "as much as still fits" was zero bytes:
+             * the stitching never stitched, and "You might resize at"
+             * never arrived. A real Windows volume prints ~1,660
+             * progress lines (~41 KB) however big it is, so every real
+             * PC was refused "could be read but not measured"
+             * (cannot-measure; e2e runs 39931612628, 39959768382). The
+             * volume line is in the first few hundred bytes, which the
+             * tail overwrites only if the buffer is smaller than it. */
+            size_t take = have < n - 1 ? have : n - 1;
+            size_t at = got + take <= n - 1 ? got : n - 1 - take;
+            memcpy(out + at, flat + (have - take), take);
+            out[at + take] = 0;
         }
     }
     close(p[0]);
