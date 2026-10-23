@@ -11,9 +11,11 @@ name: drill
 on:
   workflow_dispatch:
 
+# contents: write is for the jobs that make or fill a release, and only
+# those (SEC-005): a job that runs a lot of code cannot replace what a
+# person downloads.
 permissions:
-  contents: write
-  issues: write
+  contents: read
 
 concurrency:
   group: drill
@@ -22,10 +24,13 @@ concurrency:
 jobs:
   drill:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      issues: write
     timeout-minutes: 40
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: python3 -I tools/ops/monitor.py --selftest
       - run: python3 -I tools/ops/drill.py

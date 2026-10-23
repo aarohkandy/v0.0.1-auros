@@ -31,8 +31,11 @@ on:
   push:
     branches: [main]
 
+# contents: write is for the jobs that make or fill a release, and only
+# those (SEC-005): a job that runs a lot of code cannot replace what a
+# person downloads.
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 defaults:
@@ -96,7 +99,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: every check refuses what it exists to refuse
         run: sh tools/profiletest.sh selftest
       - name: every profile asks only for what its suite has
@@ -106,6 +109,9 @@ jobs:
     needs: [gate, lint]
     if: needs.gate.outputs.go == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
     timeout-minutes: 150
     strategy:
       max-parallel: 1
@@ -122,7 +128,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: room, tools, KVM
         run: |
@@ -171,7 +177,7 @@ jobs:
                  sed -n '/^stage_bootstrap()/,/^}/p' build/forge
                  dpkg-query -W debootstrap; } | sha256sum | cut -c1-16)
           echo "key=debootstrap-desktop-$k" | tee -a "$GITHUB_OUTPUT"
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: dist/cache/base.tar.zst
           key: ${{ steps.basekey.outputs.key }}
@@ -240,7 +246,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       # The same files as an Actions artifact, so a release that could
       # not be made never loses the evidence (gh run download fetches it).
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: profile-${{ matrix.profile }}
@@ -251,6 +257,9 @@ jobs:
     needs: [gate, profile]
     if: ${{ always() && needs.gate.outputs.go == 'true' }}
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
     timeout-minutes: 10
     env:
       TAG: profiles-${{ github.run_id }}

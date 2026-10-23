@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: toolchain
         timeout-minutes: 12
         run: |
@@ -69,7 +69,7 @@ jobs:
           sh tools/wifitest.sh
           sh tools/bridgetest.sh
           sh tools/screentest.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: exe
           path: out/aurbridge.exe
@@ -81,7 +81,7 @@ jobs:
           for n in schtasks mountvol manage-bde powercfg bcdedit icacls netsh reg; do
               x86_64-w64-mingw32-gcc -O1 -o "planted/$n.exe" tools/planted.c
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: planted
           path: planted/
@@ -94,7 +94,7 @@ jobs:
           mkdir -p fast
           AUROS_FASTPATH=1 sh build/aurbridge
           cp out/aurbridge.exe out/aurbridge-wizard.exe fast/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: exe-fast
           path: fast/
@@ -104,7 +104,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { name: exe, path: exe }
       - name: a throwaway disk shaped like a PC's, full of known files
         shell: pwsh
@@ -235,9 +235,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { name: exe, path: exe }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { name: planted, path: exe }
       - name: bare names resolve to Windows' own programs, and nothing else starts
         shell: pwsh

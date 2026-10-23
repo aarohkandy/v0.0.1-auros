@@ -37,8 +37,11 @@ on:
       installer_sha256: {type: string, required: false, default: ''}
       variants: {type: string, required: false, default: base}
 
+# contents: write is for the jobs that make or fill a release, and only
+# those (SEC-005): a job that runs a lot of code cannot replace what a
+# person downloads.
 permissions:
-  contents: write
+  contents: read
 
 env:
   # What a person downloads. INSTALLER_SHA256 empty = accept and print.
@@ -126,11 +129,13 @@ jobs:
       matrix:
         variant: ${{ fromJSON(needs.gate.outputs.variants) }}
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     timeout-minutes: 355
     env:
       E2E_VARIANT: ${{ matrix.variant }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # seconds, before hours: the variants' expected words still match
       # the wizard's, and the evidence still has somewhere to go
@@ -187,7 +192,7 @@ jobs:
       - name: the installed Windows, from the cache
         id: golden
         if: env.E2E_GOLDEN == 'base'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.E2E_DIR }}/golden
           key: ${{ steps.key.outputs.key }}
@@ -206,7 +211,7 @@ jobs:
       - name: keep the installed Windows for the next run
         if: env.E2E_GOLDEN == 'base' && steps.golden.outputs.cache-hit != 'true' && success()
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.E2E_DIR }}/golden
           key: ${{ steps.key.outputs.key }}
@@ -244,7 +249,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash tools/e2e/publish.sh final "$E2E_DIR/out"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: e2e-evidence-${{ matrix.variant }}

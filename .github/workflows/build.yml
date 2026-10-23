@@ -117,7 +117,7 @@ jobs:
       # one piece, not the image.
       PIECE_BYTES: 94371840
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: what this build will be called
         id: id
@@ -167,7 +167,7 @@ jobs:
                  sed -n '/^stage_bootstrap()/,/^}/p' build/forge
                  dpkg-query -W debootstrap; } | sha256sum | cut -c1-16)
           echo "key=debootstrap-desktop-$k" | tee -a "$GITHUB_OUTPUT"
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: base
         with:
           path: dist/cache/base.tar.zst
@@ -187,7 +187,7 @@ jobs:
             echo "debootstrap $(( $(date +%s) - T )) s" >> dist/installer/timings.txt
           fi
           ls -la dist/cache
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         if: steps.base.outputs.cache-hit != 'true'
         continue-on-error: true
         with:
@@ -382,20 +382,20 @@ jobs:
           cat dist/installer/timings.txt
           { echo "### $TAG"; echo '```'; cat dist/installer/build-info.txt; echo; cat dist/installer/timings.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: auros-installer
           path: dist/installer/
           retention-days: 30
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: auros-pieces
           path: dist/pieces/
           retention-days: 14
           compression-level: 0
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: auros-rootfs
           path: dist/rootfs.tar.zst
@@ -423,9 +423,8 @@ jobs:
     with:
       run-id: ${{ github.run_id }}
 
-  # The power cut in the mode that ships (S-11): the same test suite file,
-  # the nostick slice, beside the release and not in front of it (see the
-  # comment in tests.yml). Its result is on this run, red until A2's fixes.
+  # The power cut in the mode that ships (S-11): the nostick slice of
+  # tests.yml, four jobs, in parallel with `tests`. A gate of `release`.
   powercut:
     needs: build
     uses: ./.github/workflows/tests.yml
@@ -434,8 +433,14 @@ jobs:
       suite: nostick
 
   release:
-    needs: [gate, build, tests]
-    if: needs.gate.outputs.release == 'true'
+    # The power cut in the shipped mode (S-11) is a gate like the tests: it
+    # is `needs`ed, and release.yml's `which` job (tools/releasegate.py)
+    # refuses unless every one of its jobs passed or is on the expiring
+    # allow-list (.github/ci-allow.txt). `if` lets a FAILED powercut reach
+    # that decision (a failed need would skip this job, and the refusal
+    # would never be seen); a cancelled or skipped one does not pass.
+    needs: [gate, build, tests, powercut]
+    if: ${{ !cancelled() && needs.gate.outputs.release == 'true' && needs.build.result == 'success' && needs.tests.result == 'success' && contains(fromJSON('["success","failure"]'), needs.powercut.result) }}
     uses: ./.github/workflows/release.yml
     # SIGNPATH_API_TOKEN, if the owner has added it (docs/SIGNING.md):
     # a called workflow sees no secret that is not passed down.

@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: What the tests need
         run: |
           for i in 1 2 3; do timeout 300 sudo apt-get update -qq && break; sleep 10; done

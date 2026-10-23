@@ -1,0 +1,9 @@
+# Jobs of a build run that may FAIL and still let a release through, by
+# name, with a reason and a date (UTC, inclusive). tools/releasegate.py reads
+# this; release.yml's `which` job runs it for every release and every
+# [publish]. A date in the past counts as no entry. Only `powercut / e2e (...)`
+# jobs can be listed: a failing build, unit or gating test always refuses.
+#
+#   job name | expires YYYY-MM-DD | why
+#
+# (None yet. A failing power-cut job refuses the release.)

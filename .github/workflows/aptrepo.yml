@@ -105,7 +105,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: the address is derived, never typed
         run: |
           want="https://github.com/$GITHUB_REPOSITORY/releases/download/apt/"
@@ -172,6 +172,15 @@ jobs:
     concurrency:
       group: aptrepo-publish
       cancel-in-progress: false
+    # SEC-004: the update-signing key is root on every AurOS computer, so
+    # the only job that names it runs in an environment the owner locks to
+    # `main` with himself as the required reviewer, and holds the secret
+    # there rather than for the whole repository (docs/OWNER-SETUP.md
+    # section 4a; tools/workflowlint.py fails a job that names the key
+    # without this line). Until the owner creates those rules the
+    # environment is created empty by GitHub on first use and the
+    # repository-level secret still reaches it; nothing breaks.
+    environment: apt-signing
     permissions:
       contents: write
     env:
@@ -181,7 +190,7 @@ jobs:
       # The owned address (docs/ops/DOMAIN.md); empty = GitHub's.
       AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: the signing key is the one AurOS computers trust
         env:
@@ -217,7 +226,7 @@ jobs:
             fi
           done
           echo "FPRS=$(echo $fprs)" >> "$GITHUB_ENV"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure() && hashFiles('auros-archive-keyring.asc') != ''
         with:
           name: auros-archive-keyring
@@ -358,7 +367,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       IN_RUN: ${{ needs.gate.outputs.bootrun }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: which build
         id: run
         run: |
@@ -373,7 +382,7 @@ jobs:
           [ -n "$rid" ] || { echo "::error::no build run with a built image"; exit 1; }
           echo "build run $rid: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$rid"
           echo "rid=$rid" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: auros-pieces
           path: dl/pieces
@@ -396,7 +405,7 @@ jobs:
         run: |
           sudo env PATH="$PATH" sh tools/updateboottest.sh 2>&1 | tee updateboottest.txt
           { echo '### updateboottest'; echo '```'; grep -E ' ok$| FAIL$|^updateboottest|^  boot' updateboottest.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: updateboottest

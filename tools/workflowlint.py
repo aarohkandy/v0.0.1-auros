@@ -11,6 +11,14 @@
    repository's 20 runners until someone cancels it).
 3. No unbounded apt-get: a workflow `run:` that calls apt-get must go
    through tools/apt.sh or bound the call with `timeout` itself.
+4. Every action is pinned to a full commit SHA (`uses: owner/repo@<40 hex>
+   # v4.1.0`), never a tag that can move (SEC-005). Local workflows
+   (`./.github/...`) are the repository's own.
+5. No workflow-level `contents: write`: it belongs to the few jobs that make
+   or fill a release (SEC-005).
+6. The update-signing key (secrets.AUROS_APT_SIGNING_KEY) is named only in
+   a job that runs in the environment `apt-signing`, whose deployment
+   branches and reviewer the owner sets (SEC-004, docs/OWNER-SETUP.md).
 """
 import glob, os, re, sys
 
@@ -28,9 +36,21 @@ def lint(path, text):
         return ["%s: does not parse: %s" % (path, str(e).replace("\n", " ")[:160])]
     if not isinstance(doc, dict) or not isinstance(doc.get("jobs"), dict):
         return ["%s: no jobs" % path]
+    perms = doc.get("permissions")
+    if perms == "write-all" or (isinstance(perms, dict) and perms.get("contents") == "write"):
+        out.append("%s: workflow-level contents: write (give it to the job that needs it)" % path)
     for name, job in doc["jobs"].items():
         if not isinstance(job, dict):
             out.append("%s: job %s is not a mapping" % (path, name)); continue
+        uses = [job.get("uses")] + [st.get("uses") for st in job.get("steps") or [] if isinstance(st, dict)]
+        for u in uses:
+            if u and not u.startswith("./") and not re.search(r"@[0-9a-f]{40}$", u):
+                out.append("%s: job %s uses %s, not pinned to a full commit SHA" % (path, name, u))
+        if "AUROS_APT_SIGNING_KEY" in yaml.dump(job):
+            env = job.get("environment")
+            env = env.get("name") if isinstance(env, dict) else env
+            if env != "apt-signing":
+                out.append("%s: job %s uses the update-signing key outside the apt-signing environment" % (path, name))
         if "uses" not in job and "timeout-minutes" not in job:
             out.append("%s: job %s has no timeout-minutes" % (path, name))
         for step in job.get("steps") or []:
@@ -51,6 +71,18 @@ def selftest():
         ("a bounded apt-get passes", good.replace("sh tools/apt.sh gcc", "sudo timeout 300 apt-get install -y gcc"), 0),
         ("a job that only calls a workflow needs no timeout",
          "jobs:\n  a:\n    uses: ./.github/workflows/x.yml\n", 0),
+        ("an action pinned to a tag is refused",
+         good + "      - uses: actions/checkout@v4\n", 1),
+        ("an action pinned to a full SHA passes",
+         good + "      - uses: actions/checkout@" + "a" * 40 + " # v4\n", 0),
+        ("workflow-level contents: write is refused",
+         "permissions:\n  contents: write\n" + good, 1),
+        ("job-level contents: write passes",
+         good.replace("    steps:", "    permissions:\n      contents: write\n    steps:"), 0),
+        ("the signing key outside the apt-signing environment is refused",
+         good + "      - run: echo ${{ secrets.AUROS_APT_SIGNING_KEY }}\n", 1),
+        ("the signing key inside the apt-signing environment passes",
+         good.replace("    steps:", "    environment: apt-signing\n    steps:") + "      - run: echo ${{ secrets.AUROS_APT_SIGNING_KEY }}\n", 0),
     ]
     bad = 0
     for what, text, want in cases:

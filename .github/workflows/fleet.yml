@@ -12,8 +12,11 @@ on:
     branches: [main]
     paths: ['tools/ops/fleet.py']
 
+# contents: write is for the jobs that make or fill a release, and only
+# those (SEC-005): a job that runs a lot of code cannot replace what a
+# person downloads.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: fleet
@@ -22,12 +25,14 @@ concurrency:
 jobs:
   fleet:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     timeout-minutes: 5
     env:
       GH_TOKEN: ${{ github.token }}
       AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           sparse-checkout: tools/ops
       - run: python3 -I tools/ops/fleet.py --selftest

@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: the monitor, the address scan, the wave rules, each shown red by a broken copy
         run: |
           python3 -I tools/ops/monitor.py --selftest
@@ -64,7 +64,7 @@ jobs:
       OPS_TOKEN: ${{ secrets.AUROS_OPS_TOKEN }}
       OUTCOMES_URL: ${{ vars.AUROS_OUTCOMES_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           sparse-checkout: |
             tools/repo.sh
@@ -88,7 +88,7 @@ jobs:
         run: |
           python3 -I tools/ops/waves.py post-status status.json > /dev/null
           python3 -I tools/ops/waves.py stop-rules | tee -a "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: status
