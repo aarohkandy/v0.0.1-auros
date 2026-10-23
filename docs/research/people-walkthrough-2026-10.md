@@ -38,7 +38,7 @@ running, it says so.
 | First-run "Does everything work?" | **Seen as a real render** (`tools/journeytest.sh`, the shipping paint code, Light, 1366x768 and 1024x600): `docs/usability/renders/2026-10-23/`. Not seen on a booted machine. The harness uses the container's fonts, not the image's UI face, so widths are approximate. |
 | Desktop, four looks | The same renders, in Light. `docs/shots/shells/*` are older and dark: ignore them. |
 | "Get more programs" | The shell row is seen. The store itself (GNOME Software) is not seen anywhere. |
-| Wishes | Not seen. `docs/shots/wishes/` does not exist. Read from `wish.c`. D14: not in the v0.1 image. |
+| Wishes | **Seen as real renders** (`tools/wishsheet.c`, the shell's own paint path): `docs/usability/renders/2026-10-23/wishes/`. `docs/shots/wishes/` does not exist yet. D14: not in the v0.1 image. |
 
 Part 3 of my brief is to repeat this after the restyle lands. The wizard,
 website, first-run panel and desktop are now walked in their Light form; staging
@@ -673,37 +673,71 @@ Owner: D, K, PARITY.
 **G-03 · closed since the audit.** Programs appear in the list at once after
 install (`12d5201`) and Flathub is on the image (`build/forge:395-420`).
 
-### H. Wishes (read from `wish.c`; not rendered; not in the v0.1 image, D14)
+### H. Wishes (real renders through `tools/wishsheet.c`; not in the v0.1 image, D14)
 
-**H-01 · S2 · all · The consent screen is a legal text**
-Where: `src/aurshell/wish.c` (`CONSENT[]`: five sentences naming Cloudflare,
-Anthropic, Claude, "the United States", "up to 30 days, or up to 2 years if its
-safety checks flag them").
+Seen in `docs/usability/renders/2026-10-23/wishes/` (the "Big and simple" look,
+Light, 1366x768, the container's fonts). The Wishes screens are the best-made in
+the product: 20 px body, 56 px buttons, one green button, equal Yes and No, words
+on the On/Off switches, Undo. They are what the rest of the desktop should be
+sized to. The findings are about words and a timer, not about size.
+
+**H-01 · S2 · all · The consent screen is a legal text, and its green button is Yes**
+Where: `wishes/rail-1366x768-01-consent.png`; `src/aurshell/wish.c` (`CONSENT[]`:
+five paragraphs naming Cloudflare, Anthropic, Claude, "the United States", "up to
+30 days, or up to 2 years if its safety checks flag them").
 What: Edith's real question is "is someone listening to me?" The text answers a
-regulator's question. She presses "No, keep Wishes off" or, worse, "Yes, turn on
-Wishes" without reading.
-Fix: three sentences in her words with the choice first, the names behind
-"More". The family-first cohort (D14) is the right place to read what she does.
+regulator's question. The only filled, green button is **Yes, turn on Wishes**;
+`docs/PLAN-END-TO-END.md` WP-47 says this screen "defaults to No". She presses
+the green one, or the grey one, without reading five paragraphs.
+Fix: three sentences in her words with the choice first ("Your words go over the
+internet to a company's computer, to work out what you mean. Nothing else
+leaves this computer."), the names behind "More"; neither button green, or
+"No" the green one. The family-first cohort (D14) is the place to watch it.
 Owner: W2, K.
 
 **H-02 · S2 · E, M · "Make a wish" sits among the programs**
-Where: `apps.c` ("Make a wish is the shell's own": hint "Tell this computer what to do"), `shellcommon.c`.
-What: she reads a wish as a prize, a lottery, a gift. Ask in the session what
-she thinks it does before she presses it.
-Fix: the hint is right; make it the label's second line on every Home.
+Where: `apps.c` ("Make a wish is the shell's own": hint "Tell this computer what
+to do"), `taskbar-1366x768-4-desktop.png`, `rail-1366x768-4-desktop.png`.
+What: she reads a wish as a prize, a lottery, a gift. The hint under it is right
+and is the smallest, greyest text on the line. Ask in the session
+what she thinks it does before she presses it.
+Fix: make the hint the label: "Tell the computer what to do".
 Owner: W2.
 
 **H-03 · S3 · all · Six examples, one of them nonsense**
-Where: `wish.c` (the six examples: "Fill my screen with potatoes when I type potato").
-What: it is the owner's own example and funny to him. To Edith it is a computer
-that fills a screen with potatoes.
+Where: `wishes/rail-1366x768-02-ask.png`.
+What: "Fill my screen with potatoes when I type potato" is the owner's own example
+and funny to him. To Edith it is a computer that fills a screen with potatoes.
+"Make the words bigger" and "Remind me to take my pills at 9" are the ones she
+will press.
 Owner: W2.
 
 **H-04 · S3 · E · Voice**
 Where: `WT_STOP_LISTEN` "I've finished", up to 30 seconds, tap to start and stop.
 What: a double press stops it before she speaks; she hears "I didn't quite
-catch that". Fine; test with a tremor.
+catch that". Test with a tremor.
 Owner: W2.
+
+**H-05 · S2 · E · "Keep this?" goes back by itself**
+Where: `wishes/rail-1366x768-33-keep-this.png`: "The words are a new size. If you
+do nothing, it goes back by itself." (15 seconds, `docs/AI.md` section 7, item 7.)
+What: the screen she asked for, and for which she needed the bigger words, is
+undone while she is still reading the question, because she reads slowly and
+her hand is slow to the button. DD section 6 rule 9: no timers on anything she
+reads or answers.
+Fix: no timer on "Keep this?" for a text-size change: a bigger size she did not
+choose is the one thing she can undo with the footer's Smaller.
+Owner: W2.
+
+**H-06 · S1 (for task T4) · E · "The words on this computer are now bigger" is not true of her programs**
+Where: `wishes/rail-1366x768-13-done-now.png`: the sentence after "Make the words
+bigger"; the wish's action is the same shell text scale as the Bigger button
+(finding F-01).
+What: the one example wish she will most want to press tells her the job is done,
+in a screen that has just got bigger, while Internet, the store and her
+documents did not.
+Fix: with F-01.
+Owner: C, W2.
 
 ### I. Going back
 
@@ -776,7 +810,7 @@ Hypotheses, each a thing to watch for in `docs/usability/SCRIPT.md`:
 8. Does the first check fail (E-01, E-02)? Record what she answers.
 9. Press Bigger and then open Internet (F-01): what does she say?
 10. Does anyone choose "Restart later" and what happens at the next start (C-08)?
-11. Does anyone read the Wishes consent screen to the end (H-01)?
+11. Does anyone read the Wishes consent screen to the end, and which button does she press (H-01)? Does the 15-second "Keep this?" undo a size she wanted (H-05)?
 12. After "get back to Windows" is every file she saved where she expects (I-01)?
 
 Predicted minutes, unmeasured, to compare with the stopwatch tables:
