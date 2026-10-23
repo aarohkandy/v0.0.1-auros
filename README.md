@@ -197,7 +197,7 @@ code of every release is published beside it as the release `sources-<release>`
 (`docs/legal/SOURCES.md`; the written offer is `rootfs/usr/share/doc/auros/SOURCE-OFFER`). Files under
 `tools/scamtest` and `tools/fuzz/corpus/font` keep their own licenses (see the `NOTICE` files there).
 
-AurOS is built from Ubuntu 24.04 LTS software. It is not made, endorsed or supported by Canonical.
-Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation,
+AurOS includes software from Ubuntu 24.04 LTS, put together and changed by its maker. It is not made, endorsed or supported by
+Canonical. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation,
 Windows and Microsoft of the Microsoft group of companies. AurOS is not made, approved or supported
 by any of them. No lawyer has read the documents in `docs/legal/` (decision D15).

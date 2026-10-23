@@ -1522,6 +1522,15 @@ HOME_URL="$brand_url"
 LOGO=auros
 EOL
     ln -sf ../usr/lib/os-release "$RFS/etc/os-release"
+    # The release this image belongs to (build.yml hands over its tag): the written offer of source
+    # tells her to look here to find the matching sources-<release> (docs/legal/SOURCES.md).
+    if [ -n "${AUROS_BUILD_TAG:-}" ]; then
+        case "$AUROS_BUILD_TAG" in
+            *[!0-9A-Za-z.+-]*) die "AUROS_BUILD_TAG '$AUROS_BUILD_TAG' is not a release name" ;;
+        esac
+        mkdir -p "$RFS/etc/auros"
+        printf '%s\n' "$AUROS_BUILD_TAG" > "$RFS/etc/auros/release"
+    fi
     echo "$brand_short" > "$RFS/etc/hostname"
 
     # Branding the login prompts. Without this the first thing a user

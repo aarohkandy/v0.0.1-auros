@@ -58,9 +58,9 @@ help pages (K), `build/aurbridge` resources and the Ready page (B/A2), `.github/
    (the installer artifact then carries it; `sources.yml` reads the publishing runner's until it does).
 5. `profiles.yml` prune must skip `sources-*` (it prunes only `profiles-*`; keep it so).
 6. `/etc/auros/release`: the written offer says "if this computer has the file /etc/auros/release, it names the
-   release". Make it true: `build.yml` passes `AUROS_BUILD_TAG="$TAG"` into `build/all`, and `build/forge`
-   (stage_configure, next to os-release) writes `[ -n "${AUROS_BUILD_TAG:-}" ] && echo "$AUROS_BUILD_TAG" > "$RFS/etc/auros/release"`.
-   Until then the offer's second route (the `auros` package version, which is in PACKAGES.txt) works.
+   release". `build/forge` now writes it from `AUROS_BUILD_TAG` (done by LEGAL, a no-op without it). **E: `build.yml` must pass
+   `AUROS_BUILD_TAG="$TAG"` in the `sudo env ... ./build/all desktop` line.** Until then the offer's second route (the `auros`
+   package version, which is in PACKAGES.txt) works.
 7. `marks` (in sources.yml) runs `tools/legal/check.py image` on the build's rootfs sample: it fails on Ubuntu
    branding packages or an os-release/issue that says Ubuntu and only warns about `/etc/lsb-release`. Add it to
    `promote`'s `needs` once stream C has diverted lsb-release (TM-1 item 1).
@@ -116,7 +116,7 @@ after that date, and green-without-allowance once these land. The skeptic review
 
 ### K (help) and C (aurshell)
 - Done by LEGAL: `rootfs/usr/share/auros/help/licenses.html` (+ the index entry, + `licenses.html` in `tools/helptest.py` TOPICS; 46 checks green).
-- For C: aurshell Settings > About should link/open that help page (file `src/aurshell/*`, not touched);
+- For C: `check.py image` (sources.yml `marks`) fails on `ubuntu-mono` in the published image: find what pulls it in and purge it (`packages_exclude`); `ubuntu-advantage-desktop-daemon` and `ubuntu-pro-client` are S5's (masked), the Canonical IP policy is about artwork and names, not these. aurshell Settings > About should link/open that help page (file `src/aurshell/*`, not touched);
   `build/forge` is to `dpkg-divert` /etc/lsb-release to say DISTRIB_ID=AurOS (TM-1 item 1; `check.py image` warns until then).
 
 ## Traps
