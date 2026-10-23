@@ -64,7 +64,8 @@ verify() { # both modes: the state afterwards
     check "humanity-icon-theme is not installed" sh -c '! dpkg-query -W -f="\${Status}" humanity-icon-theme 2>/dev/null | grep -q "ok installed"'
     check "...and neither theme is on the disk" sh -c '! ls /usr/share/icons | grep -qi "ubuntu-mono\|humanity"'
     check "GTK's icons stay: adwaita-icon-theme is installed" sh -c 'dpkg-query -W -f="\${Status}" adwaita-icon-theme | grep -q "ok installed"'
-    check "...with its dependency answered by auros-icon-theme" sh -c 'dpkg-query -W -f="\${Status} \${Provides}" auros-icon-theme | grep -q "ok installed.*ubuntu-mono"'
+    check "...with its dependency answered by aurosicons" sh -c 'dpkg-query -W -f="\${Status} \${Provides}" aurosicons | grep -q "ok installed.*ubuntu-mono"'
+    check "...and it is not in auros-*, the update channel's namespace (keep-previous, rollback)" sh -c '[ -z "$(dpkg-query -W -f="\${Package}\n" auros "auros-*" 2>/dev/null)" ]'
     check "apt-get check is clean" apt-get check
     check "dpkg --audit has nothing to say" sh -c '[ -z "$(dpkg --audit)" ]'
     check "apt will not put Ubuntu's icon theme back (pinned out)" sh -c '! apt-get -s install ubuntu-mono 2>&1 | grep -q "^Inst ubuntu-mono"'

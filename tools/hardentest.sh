@@ -466,6 +466,19 @@ if installed adwaita-icon-theme; then
     else bad "apt is told never to fetch Ubuntu's icon theme back" "no etc/apt/preferences.d/auros-no-ubuntu-icons pinning ubuntu-mono to -1"; fi
 else bad "GTK's icons: adwaita-icon-theme is installed" "it is not: every GTK program would have no icons"; fi
 
+# AurOS's own packages move together. keep-previous (the rollback's set) and
+# rollback treat every installed `auros` and `auros-*` as a part of the update
+# channel at the version of `auros` itself; one with a version of its own makes
+# keep-previous keep nothing, and a broken update could not be undone.
+say ""
+say "AurOS's own packages (the update channel)"
+v=$(awk 'BEGIN { RS = ""; FS = "\n" }
+         /Status: install ok installed/ { pk = ""; ver = ""
+             for (i = 1; i <= NF; i++) { if ($i ~ /^Package: /) pk = substr($i, 10); if ($i ~ /^Version: /) ver = substr($i, 10) }
+             if (pk == "auros" || pk ~ /^auros-/) print ver }' "$RFS/var/lib/dpkg/status" 2>/dev/null | sort -u)
+if [ "$(printf '%s\n' "$v" | grep -c .)" -le 1 ]; then ok "every auros-* package is at one version (an update keeps the set to roll back to only so)"
+else bad "every auros-* package is at one version (an update keeps the set to roll back to only so)" "versions: $(echo $v)"; fi
+
 # ── 8. no login on any console ───────────────────────────────────────
 #
 # A login prompt is a question with no answer here (nobody has a password

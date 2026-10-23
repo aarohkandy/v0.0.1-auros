@@ -208,6 +208,7 @@ def main():
                 ("bar", "2.0-1", None, maint, "install ok installed"),
                 ("held", "3-1", "heldsrc", maint, "hold ok installed"),
                 ("auros-desktop", "0.1.0.2026", None, "AurOS <noreply@auros.invalid>", "install ok installed"),
+                ("aurosicons", "1", None, "AurOS <noreply@auros.invalid>", "install ok installed"),   # build/forge's file-less stand-in: AurOS's own, no Ubuntu source
                 ("firefox", "158.0~build2", None, "Mozilla <release@mozilla.com>", "install ok installed"),
                 ("bar-signed", "2.0-1+sig", "bar-signed", maint, "install ok installed", "bu1 (= 1.0-1), bu2 (= 2:3.4-5)"),
                 ("dup-a", "1.0-1", "dup", maint, "install ok installed"), ("dup-b", "1.0-2", "dup", maint, "install ok installed")]

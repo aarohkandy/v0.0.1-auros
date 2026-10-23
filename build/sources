@@ -121,8 +121,14 @@ def parse_status(text):
     return out
 
 
+# File-less packages build/forge makes to answer an Ubuntu dependency (aurosicons: Provides
+# ubuntu-mono, whose artwork the image does not carry). They are AurOS's own, but not parts of
+# the update channel, so they stay out of the auros-* namespace keep-previous and rollback use.
+OWN_STUBS = ("aurosicons",)
+
+
 def classify(p):
-    if (p["bin"] == "auros" or p["bin"].startswith("auros-")) and p["maint"].startswith("AurOS "):
+    if (p["bin"] == "auros" or p["bin"].startswith("auros-") or p["bin"] in OWN_STUBS) and p["maint"].startswith("AurOS "):
         return "own"
     if p["bin"] == "firefox" and not p["has_source"] and "Mozilla" in p["maint"]:
         return "mozilla"

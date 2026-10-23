@@ -1581,16 +1581,25 @@ write_lsb_release() {
 # depends on ubuntu-mono, and that on humanity-icon-theme: Ubuntu's own
 # artwork, which this image may not carry. They cannot just be purged --
 # apt would take adwaita and with it every GTK program's icons. So a
-# package with no files, auros-icon-theme, Provides ubuntu-mono (the
+# package with no files, aurosicons, Provides ubuntu-mono (the
 # dependency stays met, dpkg and apt stay consistent), the two go, and a
 # pin keeps apt from fetching them back. The plan is checked first: if
 # apt would remove anything else, the build stops.
+#
+# NOT NAMED auros-*. Everything in that namespace is a part of the update
+# channel (build/aptchannel): keep-previous keeps the set of them for a
+# rollback only if every one is at the version of `auros` itself, and
+# rollback pins them all. A part with no .deb in the channel and a version
+# of its own (this was auros-icon-theme, 1) made keep-previous keep nothing
+# and updateboottest's rollback fail on the first build that had it.
+# build/sources counts it as AurOS's own code by name (OWN_STUBS), and
+# tools/hardentest.sh checks that every auros-* package has one version.
 unbrand_icons() {
     pkg_installed ubuntu-mono || pkg_installed humanity-icon-theme || return 0
-    local d="$RFS/tmp/auros-icon-theme" plan p
+    local d="$RFS/tmp/aurosicons" plan p
     rm -rf "$d"; mkdir -p "$d/DEBIAN"
     cat > "$d/DEBIAN/control" <<EOL
-Package: auros-icon-theme
+Package: aurosicons
 Version: 1
 Architecture: all
 Maintainer: AurOS <noreply@auros.invalid>
@@ -1602,10 +1611,10 @@ Description: answers adwaita-icon-theme's need for ubuntu-mono
  artwork. This package has no files; it only answers that dependency, so the
  artwork can be left out of AurOS.
 EOL
-    inchroot "dpkg-deb --root-owner-group --build /tmp/auros-icon-theme /tmp/auros-icon-theme.deb >/dev/null \
-              && dpkg -i /tmp/auros-icon-theme.deb >/dev/null" \
-        || die "could not install auros-icon-theme"
-    rm -rf "$d" "$RFS/tmp/auros-icon-theme.deb"
+    inchroot "dpkg-deb --root-owner-group --build /tmp/aurosicons /tmp/aurosicons.deb >/dev/null \
+              && dpkg -i /tmp/aurosicons.deb >/dev/null" \
+        || die "could not install aurosicons"
+    rm -rf "$d" "$RFS/tmp/aurosicons.deb"
     plan=$(inchroot "apt-get -s purge ubuntu-mono humanity-icon-theme" | awk '/^(Remv|Purg) /{print $2}')
     for p in $plan; do
         case $p in ubuntu-mono|humanity-icon-theme) ;;
@@ -1617,13 +1626,13 @@ EOL
         || die "could not purge ubuntu-mono"
     install -d "$RFS/etc/apt/preferences.d"
     {
-        echo "# Written by build/forge. Ubuntu's icon artwork is not in AurOS; auros-icon-theme"
+        echo "# Written by build/forge. Ubuntu's icon artwork is not in AurOS; aurosicons"
         echo "# answers the dependency on it."
         for p in ubuntu-mono humanity-icon-theme; do
             printf '\nPackage: %s\nPin: release a=*\nPin-Priority: -1\n' "$p"
         done
     } > "$RFS/etc/apt/preferences.d/auros-no-ubuntu-icons"
-    note "ubuntu-mono and humanity-icon-theme gone; auros-icon-theme answers adwaita's dependency"
+    note "ubuntu-mono and humanity-icon-theme gone; aurosicons answers adwaita's dependency"
 }
 
 # ── stage 4: identity, locale, users, policy ───────────────────────

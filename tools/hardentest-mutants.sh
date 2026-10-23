@@ -142,6 +142,8 @@ mutate "humanity-icon-theme (Ubuntu's icon artwork) is not in the image" "mkdir 
 mutate "adwaita's dependency on ubuntu-mono is answered" "sed -i '/^Provides:.*ubuntu-mono/d' var/lib/dpkg/status"
 mutate "apt is told never to fetch Ubuntu's icon theme back" "rm etc/apt/preferences.d/auros-no-ubuntu-icons"
 
+mutate "every auros-* package is at one version" "printf 'Package: auros-stand-in\nStatus: install ok installed\nVersion: 1\n\nPackage: auros-other\nStatus: install ok installed\nVersion: 2\n\n' >> var/lib/dpkg/status"
+
 # Console logins
 mutate "serial-getty@.service is masked"   "rm etc/systemd/system/serial-getty@.service"
 mutate "console-getty.service is masked"   "rm etc/systemd/system/console-getty.service"
