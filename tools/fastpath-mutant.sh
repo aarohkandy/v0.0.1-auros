@@ -48,8 +48,10 @@
 #    file-keeps-acl    a file moved in keeps the permissions it came with (SEC-010)
 #                      -> red: "the moved-in file is still owned by" / "open to somebody else"
 #    no-dll-harden     the installer's default DLL search includes its own folder (SEC-003)
-#                      -> red: "A PLANTED DLL WAS LOADED" if a dependent DLL is the planted one
+#                      -> stays GREEN by itself: the per-call System32 flag covers it
 #    no-dll-flag       a by-name load searches the installer's own folder
+#                      -> stays GREEN by itself: SetDefaultDllDirectories covers it
+#    no-dll-protection both layers removed (the two above together)
 #                      -> red: "A PLANTED DLL WAS LOADED"
 #    link-oleacc       the wizard is linked against OLEACC.dll again
 #                      -> red: "linked against DLLs that are not KnownDLLs", and the planted
@@ -95,6 +97,11 @@ dir-open-acl)
 no-dll-harden)
     sub src/aurbridge/plat_win.c 'if (!f || !f(0x800)) SetDllDirectoryW(L"");' '(void)f;' ;;
 no-dll-flag)
+    sub src/aurbridge/plat_win.c 'HMODULE m = LoadLibraryExW(w, NULL, 0x800 /* LOAD_LIBRARY_SEARCH_SYSTEM32 */);' 'HMODULE m = LoadLibraryExW(w, NULL, 0);' ;;
+no-dll-protection)
+    # BOTH layers, because either alone is covered by the other (SetDefaultDllDirectories also
+    # governs LoadLibraryEx without flags): the canary can only go red when neither is there.
+    sub src/aurbridge/plat_win.c 'if (!f || !f(0x800)) SetDllDirectoryW(L"");' '(void)f;'
     sub src/aurbridge/plat_win.c 'HMODULE m = LoadLibraryExW(w, NULL, 0x800 /* LOAD_LIBRARY_SEARCH_SYSTEM32 */);' 'HMODULE m = LoadLibraryExW(w, NULL, 0);' ;;
 link-oleacc)
     sub src/aurbridge/wizard.c '#define AccessibleObjectFromWindow acc_AccessibleObjectFromWindow' ''
