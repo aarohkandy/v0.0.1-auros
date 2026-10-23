@@ -209,8 +209,11 @@ menu_default() { # entry id, or "" for the menu as built
     mount_root || return 1
     cp "$T/grub.cfg.orig" "$T/m/boot/grub/grub.cfg"
     if [ "$1" = windows-old ]; then
+        # --unrestricted: the menu is locked since c506219 (superusers), and an
+        # entry without it asks for a password nobody has -- which is why this
+        # control sat at the menu in run 39975129610 (21/23, only case C red).
         cat >> "$T/m/boot/grub/grub.cfg" <<'EOG'
-menuentry 'Windows (the old way)' --id windows-old {
+menuentry 'Windows (the old way)' --unrestricted --id windows-old {
     insmod part_gpt
     insmod fat
     insmod chain
