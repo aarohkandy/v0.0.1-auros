@@ -17,7 +17,7 @@
 #      it was;
 #    - before the commit, she does what the screen tells her: starts
 #      Windows (which checks the drive -- emulated with ntfsfix -d) and
-#      presses Start installing again. That second install must finish,
+#      presses Install AurOS again. That second install must finish,
 #      with Windows made smaller ONCE, not once per attempt (the retry
 #      used to take another 16-40 GiB each time), and "Put Windows back"
 #      afterwards must give back her whole Windows;
@@ -99,7 +99,7 @@ boot() { # disk  kargs  marker  [timeout]
     qemu-system-x86_64 -machine q35,accel=tcg -m 1536 -smp 2 \
         -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
         -drive if=pflash,format=raw,unit=1,file="$MTMP/vars.fd" \
-        -no-reboot -kernel "$KERN" -initrd "$INITRD" -append "console=ttyS0 $2" \
+        -no-reboot -kernel "$KERN" -initrd "$INITRD" -append "console=ttyS0 gpt $2" \
         -drive file="$MTMP/run.img",format=raw,if=none,id=d0 \
         -device virtio-blk-pci,drive=d0,serial=AUROSTEST \
         -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
@@ -218,6 +218,7 @@ fi
 [ "${*:-}" = messages ] && set --
 
 POINTS="${*:-gate shrink-begin shrink-end mirror-end write-mid write-end boot-mid boot-end commit-array commit-sector commit-backup boot-entry settle-end}"
+[ "${ONLY:-}" = restore ] && POINTS=""
 for pt in $POINTS; do
     printf '\n  ── %s\n' "$pt"
     if boot "$DISK" "aurstage.install aurstage.min_gb=1 aurstage.die_at=$pt" \
@@ -249,7 +250,7 @@ for pt in $POINTS; do
         fi ;;
       *)
         # Before the commit: she starts Windows (it checks the drive)
-        # and presses Start installing again.
+        # and presses Install AurOS again.
         windows_checks_it "$MTMP/cut.img" \
             || bad "Windows can check the drive" "ntfsfix -d refused it"
         if boot "$MTMP/cut.img" "aurstage.install aurstage.min_gb=1" \
@@ -321,13 +322,13 @@ EOPY
       restore-esp-mid|restore-array)
         # AurOS is still in the table: run it again.
         _n=$(sgdisk -p "$MTMP/cut.img" 2>/dev/null | sed -n '/^Number/,$p' | tail -n +2 | grep -c .)
-        [ "$_n" = 7 ] && ok "AurOS is still in the table (7 partitions): it can be run again" \
+        [ "$_n" = 6 ] && ok "AurOS is still in the table (6 partitions): it can be run again" \
                       || bad "AurOS is still in the table, so it can be run again" "it has $_n"
         if boot "$MTMP/cut.img" "aurstage.restore" "verdict=restored" 900; then
             ok "running it again finishes the job"
             back_to_normal "$MTMP/run.img" "after $pt, again"
         else
-            bad "running it again finishes the job" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -4)"
+            bad "running it again finishes the job" "$(grep -a 'aurstage' "$MTMP/out.txt" | grep -av 'drivers\|loaded' | tail -9)"
         fi ;;
       *)
         # The table is back; the partition AurOS started from is gone.
@@ -339,10 +340,56 @@ EOPY
         [ "$(dd if="$MTMP/cut.img" bs=512 skip=$P1S count=$((P1E-P1S+1)) status=none | md5sum | cut -d' ' -f1)" = "$ESPMD5" ] \
             && ok "the EFI partition is byte-for-byte what it was (restored before the table)" \
             || bad "the EFI partition is byte-for-byte what it was" "the table came first"
-        sgdisk -v "$MTMP/cut.img" 2>&1 | grep -q "No problems found" \
-            && ok "the table is valid" || bad "the table is valid" "$(sgdisk -v "$MTMP/cut.img" 2>&1 | head -2)"
+        # At restore-sector the spare copy still describes the AurOS layout
+        # (it catches up at restore-backup): the main table is whole and
+        # is what every reader uses.
+        sgdisk -v "$MTMP/cut.img" 2>&1 | grep -qE "No problems found|Main partition table: OK|Main and backup partition tables differ" \
+            && ok "the table is valid (the spare copy catches up next)" || bad "the table is valid" "$(sgdisk -v "$MTMP/cut.img" 2>&1 | head -2)"
         win_files_ok "$MTMP/cut.img" "Windows starting" ;;
     esac
+  done
+
+  # ── and a partition that was not AurOS's ────────────────────────────
+  # Put Windows back writes the saved table over the live one. Anything on
+  # the disk that is neither AurOS's nor in the saved table would be
+  # erased, and Windows' drive grown over it: a recovery partition
+  # Windows Update made or resized after the install, one a helper added.
+  # The restore must refuse, before changing a byte.
+  echo
+  echo "  ── a partition that was not AurOS's"
+  for kind in new changed; do
+    cp --sparse=always "$MTMP/installed.img" "$MTMP/foreign.img"
+    if [ "$kind" = new ]; then
+        # Free the last 200 MB of AurOS's root and make a partition of it
+        # that holds somebody's data.
+        set -- $(mach_part "$MTMP/foreign.img" AUROS-ROOT)
+        RN=$1; RF=$2; RL=$3
+        FF=$((RL - 409600 + 1))
+        sgdisk -d "$RN" -n "$RN:$RF:$((FF - 1))" -t "$RN:8304" -c "$RN:AUROS-ROOT" "$MTMP/foreign.img" >/dev/null 2>&1
+        sgdisk -n "7:$FF:$RL" -t 7:0700 -c 7:SOMEBODYS "$MTMP/foreign.img" >/dev/null 2>&1
+        python3 - "$MTMP/foreign.img" "$((FF*512))" <<'EOPY'
+import sys
+f = open(sys.argv[1], 'r+b'); f.seek(int(sys.argv[2]))
+f.write(b'IRREPLACEABLE-' * 4000); f.close()
+EOPY
+        label="a partition added after the install"
+    else
+        # Windows Update resized WinRE after the install.
+        U=$(sgdisk -i 3 "$MTMP/foreign.img" | sed -n 's/^Partition unique GUID: //p')
+        WRF=$(sgdisk -i 3 "$MTMP/foreign.img" | sed -n 's/^First sector: \([0-9]*\).*/\1/p')
+        WRL=$(sgdisk -i 3 "$MTMP/foreign.img" | sed -n 's/^Last sector: \([0-9]*\).*/\1/p')
+        sgdisk -d 3 -n "3:$WRF:$((WRL - 4096))" -t 3:2700 -u "3:$U" -c 3:WinRE "$MTMP/foreign.img" >/dev/null 2>&1
+        label="a recovery partition resized after the install"
+    fi
+    BEFORE=$(md5sum "$MTMP/foreign.img" | cut -d' ' -f1)
+    boot "$MTMP/foreign.img" "aurstage.restore" "aurstage-report v1 verdict=restore" 600 || true
+    grep -aq "verdict=restored" "$MTMP/out.txt" \
+        && bad "$label: Put Windows back refuses" "it ran" \
+        || ok "$label: Put Windows back refuses"
+    grep -aq "has changed since AurOS was installed" "$MTMP/out.txt" \
+        && ok "...and says why, in words" || bad "...and says why, in words" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -5)"
+    [ "$(md5sum "$MTMP/run.img" | cut -d' ' -f1)" = "$BEFORE" ] \
+        && ok "...and the disk is byte for byte untouched" || bad "...and the disk is byte for byte untouched"
   done
 fi
 

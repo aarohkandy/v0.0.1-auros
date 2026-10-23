@@ -250,18 +250,20 @@ typedef struct {
  * Order, and every step of it is idempotent so that the whole thing
  * can simply be run again:
  *
- *   1. the partition table, committed in one sector
- *   2. the EFI partition, whole
+ *   1. the EFI partition, whole -- and only the megabytes that differ
+ *   2. the partition table, committed (array, LBA 1, backup)
  *   3. each NTFS volume grown back to the size it claimed
  *
- * The grow is last because it is the only step that is both long and
- * documented-restartable, and because a machine interrupted after step
- * 2 boots Windows with a smaller C: -- which is a machine somebody can
- * use, back up from, and finish the restore on -- while a machine
- * interrupted between 1 and 2 boots nothing at all. That window is
- * unavoidable: the restore's whole job is to delete the partition
- * AurOS is on, and there is no ordering in which both systems are
- * bootable throughout.
+ * THE EFI PARTITION IS FIRST because it is the same partition in both
+ * layouts and needs no table, and because after step 2 the partition AurOS
+ * starts from is gone: nothing can start this again. Everything before the
+ * table leaves AurOS in the table and startable, so a stop there is
+ * finished by running the restore again. After the table only the NTFS
+ * grow remains (and, on the fast path, there is none: Windows made its own
+ * room and Windows takes it back, see plat_putback_task); a stop there
+ * leaves Windows starting with the right table and a filesystem that is
+ * smaller than its partition, which is a machine somebody can use and
+ * finish in Disk Management.
  *
  * Returns 0 if Windows should now start. */
 int rescue_restore(const char *disk_dev, const rescue_area *area,

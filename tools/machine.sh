@@ -471,7 +471,7 @@ mach_boot() {
         -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
         -drive if=pflash,format=raw,unit=1,file="$MTMP/vars.fd" \
         -no-reboot -kernel "$_kern" \
-        -initrd "$MTMP/initrd.img" -append "console=ttyS0 $_kargs" \
+        -initrd "$MTMP/initrd.img" -append "console=ttyS0 gpt $_kargs" \
         -drive file="$MTMP/run.img",format=raw,if=none,id=d0 \
         -device virtio-blk-pci,drive=d0,serial=AUROSTEST \
         -drive file="$MTMP/stk.img",format=raw,if=none,id=d1 \

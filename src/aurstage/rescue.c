@@ -835,6 +835,59 @@ static void talk(rescue_say say, void *ud, const char *fmt, ...)
  * resize or delete is checked against the bytes on the disk RIGHT NOW,
  * not against anything recorded: a recorded flag can be stale and the
  * disk cannot. */
+/* ── A PARTITION THIS DID NOT MAKE ─────────────────────────────────────
+ *
+ * The restore writes the captured table over the live one and grows
+ * Windows' drive into whatever that frees. Anything on the disk that is
+ * neither AurOS's own nor in the capture is therefore ERASED: a recovery
+ * partition Windows Update made or moved after the install (WinRE is
+ * resized by updates), one a helper added in Disk Management, one in the
+ * room AurOS used. Windows' own entry may be smaller than captured (the
+ * install shrank it) and nothing else may differ. Anything else is a
+ * refusal, before anything is changed, and the sentence says so
+ * (docs/safety, finding on rescue.c). Returns the offending live entry
+ * index, or -1 when every one is AurOS's, captured, or Windows' shrunk. */
+static int ascii_name_is(const gpt_entry *e, const char *want)
+{
+    for (int i = 0; i < GPT_NAME_CH; i++) {
+        char c = want[i];
+        if (e->name[i] != (uint16_t)(unsigned char)c) return 0;
+        if (!c) return 1;
+    }
+    return want[GPT_NAME_CH] == 0;
+}
+
+static int is_auros_own(const gpt_entry *e)
+{
+    if (memcmp(e->type, GPT_TYPE_LINUX_ROOT, 16) == 0 && ascii_name_is(e, "AUROS-ROOT")) return 1;
+    if (memcmp(e->type, RESCUE_TYPE_GUID, 16) == 0 && ascii_name_is(e, "AUROS-SAVED")) return 1;
+    if (memcmp(e->type, GPT_TYPE_ESP, 16) == 0 && ascii_name_is(e, "AUROS-BOOT")) return 1;
+    return 0;
+}
+
+static int foreign_partition(const gpt_table *live, const uint8_t *cap_arr,
+                             uint32_t n_ent, uint32_t ent_sz)
+{
+    for (uint32_t i = 0; i < live->n_entries; i++) {
+        const gpt_entry *e = &live->ent[i];
+        if (!gpt_used(e) || is_auros_own(e)) continue;
+        int ok = 0;
+        for (uint32_t k = 0; k < n_ent && !ok; k++) {
+            const uint8_t *c = cap_arr + (size_t)k * ent_sz;
+            int used = 0;
+            for (int q = 0; q < 16; q++) if (c[q]) { used = 1; break; }
+            if (!used || memcmp(c + 16, e->uuid, 16) != 0) continue;
+            uint64_t cf = rd64(c + 32), cl = rd64(c + 40);
+            if (e->first == cf && e->last == cl) ok = 1;
+            /* Windows' own, made smaller by the install: same start, the
+             * end no further than it was. */
+            else if (e->first == cf && e->last < cl) ok = 1;
+        }
+        if (!ok) return (int)i;
+    }
+    return -1;
+}
+
 static int fde_guard(int disk_fd, uint32_t sector,
                      const gpt_table *live, int live_ok,
                      const uint8_t *cap_arr, uint32_t n_ent, uint32_t ent_sz,
@@ -1191,6 +1244,20 @@ int rescue_restore(const char *disk_dev, const rescue_area *area,
         return -1;
     }
 
+    if (live_ok) {
+        int f = foreign_partition(&live, cap_arr, n_ent, ent_sz);
+        if (f >= 0) {
+            free(cap_arr); free(cap_aarr); close(stick); close(disk_fd);
+            snprintf(why, n,
+                     "Something on this computer's drive has changed since "
+                     "AurOS was installed: a part of the drive was added or "
+                     "changed. Putting Windows back would erase it, so AurOS "
+                     "has not touched anything. Ask someone who knows "
+                     "computers to look at the drive in Disk Management.");
+            return -1;
+        }
+    }
+
     if (fde_guard(disk_fd, sec, &live, live_ok, cap_arr, n_ent, ent_sz,
                   why, n) != 0) {
         free(cap_arr); free(cap_aarr); close(stick); close(disk_fd);
@@ -1269,6 +1336,70 @@ int rescue_restore(const char *disk_dev, const rescue_area *area,
         wr_close(&t); free(cap_arr); free(cap_aarr); close(stick); return -1;
     }
 
+    /* ── the EFI partition, FIRST ─────────────────────────────────────
+     *
+     * It used to follow the table, and that made the restore impossible
+     * to finish from any instant after the table: once the table is
+     * back, the partition AurOS starts from is gone, and nothing can
+     * start the restore again (docs/safety, finding on rescue.c). The
+     * machine's EFI partition is the same partition in both layouts, so
+     * it does not need the table, and doing it first means every stop
+     * before the table commit leaves AurOS in the table and startable --
+     * the restore can simply be run again.
+     *
+     * AND ONLY WHAT DIFFERS IS WRITTEN. AurOS never changes this
+     * partition (R12), so on an ordinary machine every megabyte already
+     * is what was saved and nothing is written at all; a cut can only
+     * tear a megabyte that was really different. */
+    talk(say, ud, "putting the Windows startup files back");
+    int rfd = open(disk_dev, O_RDONLY | O_CLOEXEC);
+    if (rfd < 0) {
+        snprintf(why, n, "the disk in this computer could not be read");
+        goto esp_failed;
+    }
+    uint64_t esp_written = 0;
+    if (wr_arm(&t, WR_RESTORE, s_esp->disk_lba * sec,
+               s_esp->disk_lba * sec + s_esp->len, why, n) != 0)
+        goto esp_failed;
+    {
+        static uint8_t buf[1u << 20];
+        uint64_t at = 0;
+        while (at < s_esp->len) {
+            size_t chunk = (size_t)(s_esp->len - at);
+            if (chunk > sizeof buf) chunk = sizeof buf;
+            if (read_at(stick, buf, chunk, area->part_off + s_esp->off + at)
+                    != 0) {
+                snprintf(why, n, "the saved startup files could not be read "
+                                 "off the memory stick.");
+                goto esp_failed;
+            }
+            static uint8_t have[1u << 20];
+            int same = read_at(rfd, have, chunk, s_esp->disk_lba * sec + at) == 0 &&
+                       memcmp(have, buf, chunk) == 0;
+            if (!same) {
+                if (wr_bytes(&t, WR_RESTORE, s_esp->disk_lba * sec + at,
+                             buf, chunk, why, n) != 0 ||
+                    checked(&t, s_esp->disk_lba * sec + at, buf, chunk,
+                            "the Windows startup files", why, n) != 0) {
+                    close(rfd);
+                    goto esp_failed;
+                }
+                esp_written += chunk;
+            }
+            at += chunk;
+            if (at * 2 >= s_esp->len) fault_maybe("restore-esp-mid");
+        }
+    }
+    if (wr_flush(&t) != 0) {
+        snprintf(why, n, "the disk would not confirm the startup files");
+        goto esp_failed;
+    }
+    close(rfd);
+    wr_disarm(&t, WR_RESTORE);
+    out->esp_restored = 1;
+    talk(say, ud, esp_written ? "the Windows startup files are back"
+                              : "the Windows startup files are as they were saved");
+
     talk(say, ud, "putting this computer's original layout back");
     if (mbr_differs) {
         if (wr_bytes(&t, WR_GPT_PRIMARY, 0, cap_mbr, sec, why, n) != 0 ||
@@ -1295,26 +1426,37 @@ int rescue_restore(const char *disk_dev, const rescue_area *area,
         checked(&t, hdr_lba * sec, cap_hdr, sec,
                 "the partition table", why, n) != 0) goto table_failed;
     fault_maybe("restore-sector");
-    /* Step 3: the spare copy catches up. */
-    /* FROM ITS OWN SECTION, not from the primary's buffer. The two
-     * arrays are the same bytes on every table this product has ever
-     * made, and writing the primary's with the BACKUP's length was a
-     * heap over-read waiting for the day they were not -- and it made
-     * the captured backup array, sixteen kilobytes this spends time
-     * reading, hashing and checking, dead weight. */
-    if (read_at(stick, cap_aarr, (size_t)s_aar->len,
-                area->part_off + s_aar->off) != 0) {
-        snprintf(why, n, "the saved copy could not be read off the stick.");
+    /* Step 3: the spare copy catches up.
+     *
+     * MADE FROM THE MAIN TABLE THAT WAS JUST WRITTEN, and not copied from
+     * what the capture found at the end of the disk. Those are the same on
+     * a disk nobody has touched -- and not on one where an earlier,
+     * interrupted install had already written its own spare copy before
+     * stopping (commit.c writes the new spare first): the capture then
+     * recorded THAT, and putting it back left a main table and a spare one
+     * that disagree, which Windows repairs by trusting one of them. The
+     * spare is the main table's array again, and its header is the main
+     * header with the two addresses swapped and its own checksum. */
+    if (s_arr->len > s_aar->len) {
+        snprintf(why, n, "the saved partition table describes itself wrongly.");
         goto table_failed;
     }
-    if (wr_bytes(&t, WR_GPT_BACKUP, aarr_lba * sec, cap_aarr,
-                 (size_t)s_aar->len, why, n) != 0 ||
-        wr_bytes(&t, WR_GPT_BACKUP, alt_lba * sec, cap_ahd, sec,
+    uint8_t derived[4096];
+    if (sec > sizeof derived) { snprintf(why, n, "this disk's blocks are too large"); goto table_failed; }
+    memcpy(derived, cap_hdr, sec);
+    wr64(derived + 24, alt_lba);          /* MyLBA: the last block        */
+    wr64(derived + 32, hdr_lba);          /* AlternateLBA: the main one   */
+    wr64(derived + 72, aarr_lba);         /* where this copy's array is   */
+    wr32(derived + 16, 0);
+    wr32(derived + 16, gpt_crc32(derived, rd32(cap_hdr + 12)));
+    if (wr_bytes(&t, WR_GPT_BACKUP, aarr_lba * sec, cap_arr,
+                 (size_t)s_arr->len, why, n) != 0 ||
+        wr_bytes(&t, WR_GPT_BACKUP, alt_lba * sec, derived, sec,
                  why, n) != 0 ||
         wr_flush(&t) != 0 ||
-        checked(&t, aarr_lba * sec, cap_aarr, (size_t)s_aar->len,
+        checked(&t, aarr_lba * sec, cap_arr, (size_t)s_arr->len,
                 "the spare partition table", why, n) != 0 ||
-        checked(&t, alt_lba * sec, cap_ahd, sec,
+        checked(&t, alt_lba * sec, derived, sec,
                 "the spare partition table", why, n) != 0) goto table_failed;
     fault_maybe("restore-backup");
     wr_disarm(&t, WR_GPT_PRIMARY);
@@ -1328,40 +1470,6 @@ int rescue_restore(const char *disk_dev, const rescue_area *area,
         int f = open(disk_dev, O_RDONLY | O_CLOEXEC);
         if (f >= 0) { ioctl(f, _IO(0x12, 95)); close(f); }
     }
-
-    /* ── the EFI partition, whole, streamed off the stick ─────────── */
-    talk(say, ud, "putting the Windows startup files back");
-    if (wr_arm(&t, WR_RESTORE, s_esp->disk_lba * sec,
-               s_esp->disk_lba * sec + s_esp->len, why, n) != 0)
-        goto esp_failed;
-    {
-        static uint8_t buf[1u << 20];
-        uint64_t at = 0;
-        while (at < s_esp->len) {
-            size_t chunk = (size_t)(s_esp->len - at);
-            if (chunk > sizeof buf) chunk = sizeof buf;
-            if (read_at(stick, buf, chunk, area->part_off + s_esp->off + at)
-                    != 0) {
-                snprintf(why, n, "the saved startup files could not be read "
-                                 "off the memory stick.");
-                goto esp_failed;
-            }
-            if (wr_bytes(&t, WR_RESTORE, s_esp->disk_lba * sec + at,
-                         buf, chunk, why, n) != 0 ||
-                checked(&t, s_esp->disk_lba * sec + at, buf, chunk,
-                        "the Windows startup files", why, n) != 0)
-                goto esp_failed;
-            at += chunk;
-            if (at * 2 >= s_esp->len) fault_maybe("restore-esp-mid");
-        }
-    }
-    if (wr_flush(&t) != 0) {
-        snprintf(why, n, "the disk would not confirm the startup files");
-        goto esp_failed;
-    }
-    wr_disarm(&t, WR_RESTORE);
-    out->esp_restored = 1;
-    talk(say, ud, "the Windows startup files are back");
     wr_close(&t);
 
     /* ── and the filesystems ──────────────────────────────────────── */
