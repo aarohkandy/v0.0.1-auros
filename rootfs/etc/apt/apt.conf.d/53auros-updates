@@ -1,11 +1,27 @@
-// AurOS: AurOS's own fixes install by themselves, the same way and at
-// the same time as Ubuntu's security updates (20auto-upgrades,
-// 51auros-unattended). The origin is AurOS's own signed repository
-// (sources.list.d/auros.sources, Signed-By pinned to AurOS's key);
-// preferences.d/auros limits it to AurOS's packages.
-// docs/security/UPDATES.md
+// AurOS: what installs by itself, every day, with nobody asked.
+// docs/security/UPDATES.md is the whole policy; tools/updatetest.sh and
+// tools/updatepolicytest.sh prove it.
+//
+// Ubuntu's own 50unattended-upgrades allows the -security pocket (and
+// ESM, which AurOS does not use). Added here:
+//
+//   AurOS's own fixes, from AurOS's signed repository
+//     (sources.list.d/auros.sources, Signed-By pinned to AurOS's key;
+//     preferences.d/auros lets it supply only auros* packages).
+//   Ubuntu's -updates: the bug fixes. Ubuntu Desktop installs them
+//     after a weekly "updates are available" question; AurOS asks no
+//     question, so without this line she would never get a single one.
+//     They arrive phased, as on every Ubuntu: a few percent of
+//     computers first, the rest only if no regression is reported.
+//   Firefox, from Mozilla's repository or the mozillateam PPA (the
+//     image has one or the other; preferences.d/mozilla lets it supply
+//     firefox* only). Firefox's own updater is off (policies.json),
+//     because apt is how it updates; without these lines it never did.
 Unattended-Upgrade::Origins-Pattern {
         "origin=AurOS,label=AurOS,archive=stable";
+        "origin=Ubuntu,archive=${distro_codename}-updates";
+        "site=packages.mozilla.org";
+        "origin=LP-PPA-mozillateam";
 };
 
 // Nobody is at a terminal to answer "keep your version of this setting
@@ -18,3 +34,8 @@ DPkg::Options {
         "--force-confdef";
         "--force-confold";
 };
+
+// Never a restart she did not choose. A new kernel waits for the next
+// time she starts the computer (Ubuntu's default too; written down so
+// nothing changes it by accident).
+Unattended-Upgrade::Automatic-Reboot "false";

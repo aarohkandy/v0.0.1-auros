@@ -1,0 +1,24 @@
+# AurOS: the programs she installed from "Get more programs" (Flathub)
+# update by themselves, quietly. A program that is open keeps running
+# the version it started with; the new one is what opens next time.
+# Nothing asks, nothing restarts. docs/security/UPDATES.md
+[Unit]
+Description=Update the programs from Flathub
+Documentation=file:///usr/share/doc/auros/UPDATES.md
+ConditionPathExists=/usr/bin/flatpak
+After=network-online.target auros-software.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Not in the first hour, when she is installing her programs and the
+# store needs the same lock (the rule apt-daily follows too).
+ExecCondition=/usr/lib/auros/not-first-hour
+ExecStart=/usr/bin/flatpak update --system --noninteractive --assumeyes
+# Runtimes nothing uses any more, so the disk does not fill with them.
+ExecStart=/usr/bin/flatpak uninstall --system --unused --noninteractive --assumeyes
+# Felt by nobody: the lowest CPU and disk priority there is.
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+TimeoutStartSec=2h

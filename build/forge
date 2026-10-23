@@ -239,6 +239,13 @@ stage_packages() {
     # not happened yet.
     pin_no_snap
     inchroot "apt-get update -qq"
+    # Every package the base already has, at its newest -updates and
+    # -security version first. debootstrap reads only the release
+    # pocket, and `install` upgrades only what a new package needs, so
+    # images shipped dozens of base packages (gpgv, libssl, util-linux,
+    # ...) with known fixes left out. docs/security/UPDATES.md
+    inchroot "apt-get -y --no-install-recommends full-upgrade" \
+        || die "could not bring the base up to date (apt-get full-upgrade)"
     inchroot "apt-get install -y --no-install-recommends $pkgs" \
         || die "package install failed — see the log above"
     # ON ONE LINE, like the install list twelve lines above.
@@ -728,10 +735,20 @@ try_mozilla_apt() {
     cat > "$RFS/etc/apt/sources.list.d/mozilla.list" <<'EOL'
 deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main
 EOL
+    # Firefox only. Mozilla's page pins EVERY package of its repository
+    # at 1000, which would let that repository replace any of Ubuntu's
+    # (libc included) and even downgrade them. The update policy lets
+    # unattended-upgrades take what this repository supplies
+    # (rootfs/etc/apt/apt.conf.d/53auros-updates), so it supplies
+    # Firefox and nothing else. docs/security/UPDATES.md
     cat > "$RFS/etc/apt/preferences.d/mozilla" <<'EOL'
-Package: *
+Package: firefox*
 Pin: origin packages.mozilla.org
 Pin-Priority: 1000
+
+Package: *
+Pin: origin packages.mozilla.org
+Pin-Priority: -1
 EOL
     inchroot "apt-get update -qq && apt-get install -y --no-install-recommends $browser" \
         >/dev/null 2>&1
@@ -1086,6 +1103,12 @@ stage_overlay() {
     # umask-free copy then gives them.
     cp -a --no-preserve=ownership "$ROOT/rootfs/." "$RFS/" \
         || die "could not lay down rootfs/"
+    # Our gschema overrides (the store's update settings) take effect
+    # only once compiled; the packages' own triggers ran before this.
+    if [ -x "$RFS/usr/bin/glib-compile-schemas" ]; then
+        inchroot "glib-compile-schemas /usr/share/glib-2.0/schemas" \
+            || die "glib-compile-schemas failed on rootfs/usr/share/glib-2.0/schemas"
+    fi
     # AND NOTHING THROUGH A MOUNT. This copy now runs inside the
     # chroot_prep window, where $RFS/dev is a bind mount of the build
     # host's /dev and /proc and /sys are mounted -- so a rootfs/dev/
@@ -1157,6 +1180,10 @@ stage_overlay() {
     # The store's catalogue and Flathub, fetched the first time the
     # computer is online (rootfs/usr/lib/auros/software-ready.sh).
     enable_unit auros-software.service multi-user.target
+    # Her Flathub programs update by themselves (docs/security/UPDATES.md).
+    if [ -x "$RFS/usr/bin/flatpak" ]; then
+        enable_unit auros-flatpak-update.timer timers.target
+    fi
     # Not `[ -x ... ] && enable_unit ...`: under `set -e` a false test
     # at the end of a list ends the build with no message at all.
     if [ -x "$RFS/usr/bin/aurshell" ]; then
@@ -2075,6 +2102,12 @@ seal_rootfs() {
         warn "Firefox AND the fallback browser are both in this image; the"
         warn "fallback (and its own copy of WebKit) is about 125 MB of nothing."
     fi
+    # What this image ships with a known fix left out, by the lists of
+    # this build (stage 2 upgrades everything; this says whether it
+    # held). tools/updatepolicytest.sh reads it.
+    local pending
+    pending=$(inchroot "apt-get -s full-upgrade 2>/dev/null" | grep -c '^Inst ' || true)
+    warn_note "pending_updates=${pending:-unknown}"
     before=$(du -sxm "$RFS" | cut -f1)
     find "$RFS/var/lib/apt/lists" -maxdepth 2 -type f ! -name lock -delete 2>/dev/null || true
     rm -f "$RFS/var/cache/apt/pkgcache.bin" "$RFS/var/cache/apt/srcpkgcache.bin"

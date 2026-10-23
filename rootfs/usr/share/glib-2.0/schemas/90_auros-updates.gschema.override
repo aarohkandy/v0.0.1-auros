@@ -1,0 +1,10 @@
+# AurOS: the store (GNOME Software) is where she finds programs, never
+# where she is asked about updates. Updates are AurOS's job and happen
+# by themselves (docs/security/UPDATES.md). Left at its defaults, the
+# store would, once opened, download apt updates through PackageKit and
+# then ask her to "Restart & Install" -- a restart she did not choose,
+# into an update screen -- and pop up "Software updated" notices.
+[org.gnome.software]
+allow-updates=false
+download-updates=false
+download-updates-notify=false
