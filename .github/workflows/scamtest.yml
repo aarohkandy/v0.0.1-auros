@@ -1,0 +1,58 @@
+# The scam protections (stream S2, docs/handoff/streams/S2.md), each
+# check proven able to fail:
+#
+#   tools/scamtest.sh               Firefox's policy against Firefox's own
+#                                   schemas; the remote-control gate (polkit
+#                                   rule + helper); the desktop's way out of
+#                                   a page and its install card (guardtest,
+#                                   rebuilt with 16 protections broken)
+#   tools/scamtest/polkit.sh        the same gate under a real polkitd 124 in
+#                                   an Ubuntu 24.04 container, with the
+#                                   desktop's own listener as a non-root user
+name: scamtest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'rootfs/etc/firefox/**'
+      - 'rootfs/etc/polkit-1/**'
+      - 'rootfs/usr/lib/auros/remote-access-gate'
+      - 'rootfs/usr/lib/tmpfiles.d/auros-remote-access.conf'
+      - 'src/aurshell/guard.*'
+      - 'src/aurshell/foot.*'
+      - 'src/aurshell/main.c'
+      - 'src/aurshell/shell.h'
+      - 'tools/scamtest.sh'
+      - 'tools/scamtest/**'
+      - 'tools/guardtest.c'
+      - '.github/workflows/scamtest.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scamtest-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scamtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: What the tests need
+        run: |
+          for i in 1 2 3; do timeout 300 sudo apt-get update -qq && break; sleep 10; done
+          for i in 1 2 3; do
+            timeout 300 sudo apt-get install -y -qq --no-install-recommends \
+              python3-jsonschema libdbus-1-dev pkg-config && break
+            sleep 10
+          done
+      - name: scamtest (Firefox policy, remote-control gate, the way out of a page)
+        run: sh tools/scamtest.sh
+      - name: the gate under a real polkitd
+        run: |
+          timeout 900 docker run --rm -v "$PWD":/w -w /w ubuntu:24.04 \
+            sh tools/scamtest/polkit.sh --prove

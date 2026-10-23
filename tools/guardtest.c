@@ -399,8 +399,35 @@ static void wired(const char *main_c)
     ok("what the card says afterwards is shown", strstr(s, "osd_say(c.say)") != NULL);
 }
 
+/* --listen SECONDS: the desktop's half of tools/scamtest/polkit.sh. Sits
+ * on the REAL system bus as the person, through guard_pump() exactly as
+ * the shell does, and when polkit's helper says a program was stopped,
+ * presses "I called someone I know" the way she would -- which writes
+ * her answer into GUARD_CONSENT_DIR. Exit 0 once that happened. */
+static int listen_and_answer(int seconds)
+{
+    shell_ctx c;
+    memset(&c, 0, sizeof c);
+    fresh(&c, 1);
+    for (int i = 0; i < seconds * 20; i++) {
+        guard_pump(&c);
+        if (c.guard_open && guard_mode() == GUARD_REMOTE) {
+            press_button(&c, G_YES);
+            printf("guardtest: heard polkit, answered yes (%s)\n",
+                   guard_mode() == GUARD_REMOTE_OK ? "written" : "NOT written");
+            fflush(stdout);
+            return guard_mode() == GUARD_REMOTE_OK ? 0 : 1;
+        }
+        usleep(50000);
+    }
+    printf("guardtest: heard nothing in %d s\n", seconds);
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
+    if (argc > 2 && !strcmp(argv[1], "--listen"))
+        return listen_and_answer(atoi(argv[2]));
     printf("\nCan a page trap her, and is a stranger's program stopped?\n\n");
     keys();
     way_out();
