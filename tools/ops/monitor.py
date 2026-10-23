@@ -240,20 +240,22 @@ def gh(*args, check=True):
 
 
 def issues(results):
-    """One open issue per live failing check, assigned to the owner (and the second responder); closed when it recovers."""
+    """One open issue per live failing check, assigned to the owner (and the second responder); closed when it recovers.
+    MON_ISSUE_PREFIX ("monitor") names the label and the titles; the drill uses "drill" so it never mixes with a real alert."""
     repo_ = os.environ["GITHUB_REPOSITORY"]
+    pre = os.environ.get("MON_ISSUE_PREFIX", "monitor")
     assignees = [os.environ.get("GITHUB_REPOSITORY_OWNER") or repo_.split("/")[0]]
     if os.environ.get("AUROS_SECOND_RESPONDER"):
         assignees.append(os.environ["AUROS_SECOND_RESPONDER"])
-    gh("label", "create", "monitor", "--color", "B60205", "--description", "the monitor found AurOS broken", "--force", "-R", repo_, check=False)
-    open_ = {i["title"]: i["number"] for i in json.loads(gh("issue", "list", "-R", repo_, "--label", "monitor", "--state", "open", "--json", "number,title"))}
+    gh("label", "create", pre, "--color", "B60205", "--description", f"{pre}: AurOS is broken" if pre == "monitor" else "a rehearsal", "--force", "-R", repo_, check=False)
+    open_ = {i["title"]: i["number"] for i in json.loads(gh("issue", "list", "-R", repo_, "--label", pre, "--state", "open", "--json", "number,title"))}
     run_url = f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{repo_}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
     for r in results:
-        title = f"monitor: {r['check']} is down"
+        title = f"{pre}: {r['check']} is down"
         if r["state"] == "fail" and title not in open_:
-            body = (f"{r['detail']}\n\nSeen by the monitor at {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())}: {run_url}\n\n"
+            body = (f"{r['detail']}\n\nSeen at {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())}: {run_url}\n\n"
                     f"What to do: docs/ops/INCIDENTS.md (find `{r['check']}`). This issue closes itself when the check passes again.")
-            args = ["issue", "create", "-R", repo_, "--title", title, "--label", "monitor", "--body", body]
+            args = ["issue", "create", "-R", repo_, "--title", title, "--label", pre, "--body", body]
             for who in assignees:
                 args += ["--assignee", who]
             gh(*args)

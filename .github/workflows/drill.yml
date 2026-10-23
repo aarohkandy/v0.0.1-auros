@@ -1,0 +1,31 @@
+# Rehearse docs/ops/INCIDENTS.md for real (WP-35, stream OPS): a throwaway prerelease
+# `drill-<run>-<time>` is made, broken in two of the ways the playbooks cover (the
+# installer swapped; the signed update index removed), the monitor must see it, the
+# alert issue must open and be assigned to the owner, the playbook's repair must turn it
+# green and the issue must close. The prerelease is removed at the end. Never scheduled:
+# run it by hand before opening a wave, and after changing the monitor or the playbooks:
+#   gh workflow run drill.yml --ref main
+# Timings are written to the run's summary; copy them to docs/ops/drills.md.
+name: drill
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: drill
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -I tools/ops/monitor.py --selftest
+      - run: python3 -I tools/ops/drill.py
