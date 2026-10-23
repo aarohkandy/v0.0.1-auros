@@ -117,7 +117,7 @@ static const struct {
     { "Saving this computer's Windows startup", "Saving the way back to Windows",
       "Saving what Windows needs to start, so it can always be put back.", 1, 1, 60, 45 },
     { "Making room on the Windows drive", "Making room for AurOS",
-      "Making room for AurOS. Your Windows files are not touched.", 1, 0, 600, 0 },
+      "Making room for AurOS. Windows is being made smaller.", 1, 0, 600, 0 },
     { "Copying AurOS onto this computer", "Copying AurOS",
       "Putting AurOS on this computer.", 1, 0, 420, 0 },
     { "Making this computer able to start AurOS", "Setting up how it starts",
@@ -295,17 +295,21 @@ static void compose(state *s)
                  : "This computer will restart by itself in %d seconds.", s->countdown);
     (void)again;
     if (s->mode == M_RESTORE) {
+        /* LEGAL (LIA-2): no absolute about her files. "Back" is shown only once the
+         * engine has read its own work back (verdict=restored); until then she is
+         * told to leave the computer alone, and a stop says what to do if it fails. */
         if (s->stopped)
             set_para(s, s->warn[0] && for_her(s->warn) ? s->warn : plain_for(s),
-                     "Nothing on this computer has been lost.",
+                     "This stopped before it finished. If Windows does not start, ask someone to help you.",
                      s->countdown >= 0 ? cd : NULL,
                      NULL);
         else if (s->finished)
-            set_para(s, "Windows is back, with every file in it.",
-                     "The screen goes black, then Windows starts. About two minutes.", NULL, NULL);
+            set_para(s, "Windows has been put back and checked.",
+                     "The screen goes black, then Windows starts. About two minutes.",
+                     "If Windows does not start, ask someone to help you.", NULL);
         else
-            set_para(s, "Putting Windows back exactly as it was.",
-                     "Your files are not touched.", NULL, NULL);
+            set_para(s, "Putting Windows back.",
+                     "Please don't turn this computer off.", NULL, NULL);
         return;
     }
     if (s->mode == M_DRY) {
@@ -317,10 +321,10 @@ static void compose(state *s)
         const char *state_line =
             s->where == W_UNTOUCHED ? "Nothing on this computer has been changed."
           : s->where == W_ROOM || s->where == W_SMALLER
-              ? "Your Windows files are safe. Windows will start as usual."
+              ? "Windows was made smaller to make room for AurOS. It should start as usual. If it does not, ask someone to help you."
           : s->where == W_AUROS ? "AurOS is on this computer. It will start now."
           : s->where == W_WINDOWS ? "AurOS is on this computer, and Windows will start first."
-          : "Nothing on this computer has been lost.";
+          : "Setup stopped. If Windows does not start, ask someone to help you.";
         const char *next = s->countdown >= 0 ? cd : NULL;
         const char *again = (s->where == W_AUROS || s->where == W_WINDOWS) ? NULL
             : "To try again, open AurOS Setup in Windows and press Install AurOS.";

@@ -339,7 +339,7 @@ element's radius + 3. The website's 14/16/18 go to 8/12.
 |---|---|---|
 | 1 | AurOS is on this computer | **Does everything work?** Check two things first. |
 | 2 | It restarts by itself in 52 seconds. | **Ready to restart.** Save anything you're working on, then press Restart now. |
-| 3 | windows  the Windows drive is now 8 MB | Making room for AurOS. Your Windows files are not touched. |
+| 3 | windows  the Windows drive is now 8 MB | Making room for AurOS. Windows is being made smaller. |
 | 4 | To try again, open AurBridge in Windows and press Start installing. | To try again, open AurOS Setup in Windows and press Install AurOS. |
 | 5 | This PC trusts Microsoft's key for Windows (Microsoft Corporation UEFI CA 2011)… | **One setting needs changing first.** This computer is set to start only Windows. Someone who knows computers can change it in about five minutes. Nothing has been changed. |
 | 6 | Drive C: is encrypted. We switch encryption off. | Windows has locked this drive. We unlock it. This can take an hour or more, so leave the computer on and plugged in. |

@@ -119,9 +119,9 @@ static void say_what_happens_next(int now)
         stage_say("computer shows at start-up for a boot menu and choose AurOS.");
         break;
     case NOW_ROOM_MADE:
-        stage_say("This computer will restart by itself. Windows will start");
-        stage_say("as usual, with every file on it. The room Windows made for");
-        stage_say("AurOS goes back to drive C: by itself when Windows starts.");
+        stage_say("This computer will restart by itself. Windows should start");
+        stage_say("as usual. The room Windows made for AurOS goes back to");
+        stage_say("drive C: by itself when Windows starts.");
         stage_say("To try again, open AurOS Setup in Windows and press");
         stage_say("Install AurOS.");
         break;

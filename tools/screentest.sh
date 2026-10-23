@@ -122,7 +122,7 @@ S=$( { part; say "WARNING: what was written to this computer's disk did not read
         "aurstage-report v1 verdict=write-failed record=failed -"; printf 'aurstage-now smaller\naurstage-countdown 41\n'; } | st install)
 [ "$(fld "$S" stopped)" = 1 ] && [ "$(fld "$S" verdict)" = write-failed ] \
     && ok "a failure: stopped, verdict kept" || bad "a failure: stopped, verdict kept" "$S"
-case "$S" in *"para=Your Windows files are safe. Windows will start as usual."*) ok "...and says where Windows is" ;;
+case "$S" in *"para=Windows was made smaller to make room for AurOS. It should start as usual. If it does not, ask someone to help you."*) ok "...and says where Windows is" ;;
     *) bad "...and says where Windows is" "$S" ;; esac
 case "$S" in *"para=This computer will restart by itself in 41 seconds."*) ok "...and that it restarts by itself, in how long" ;;
     *) bad "...and that it restarts by itself, in how long" "$S" ;; esac
@@ -183,7 +183,7 @@ case "$S" in *"para=AurOS is starting. About one minute. Please don't press anyt
     *) bad "start-up: AurOS is starting, about a minute" "$S" ;; esac
 S=$( say "AurOS staging environment" "5 drivers loaded" "── putting Windows back ──" \
          "checking the saved copy on /dev/vdb" "restoring /dev/vda" | st restore)
-case "$S" in *"para=Putting Windows back exactly as it was."*) ok "a restore under way: says what it is doing" ;;
+case "$S" in *"para=Putting Windows back."*) ok "a restore under way: says what it is doing" ;;
     *) bad "a restore under way: says what it is doing" "$S" ;; esac
 
 S=$( { head -c 20000 /dev/urandom; printf '\naurstage-progress 999\naurstage-progress -5\n'; } | st install)

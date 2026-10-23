@@ -1858,8 +1858,9 @@ ho_ok:;
                       "smaller than they were; running this again after "
                       "Windows has started will finish the job.");
     else
-        talk(say, ud, "Windows is back exactly as it was. Restart the "
-                      "computer.");
+        talk(say, ud, "Windows has been put back and checked. Restart the "
+                      "computer. If Windows does not start, ask someone "
+                      "to help you.");
     return 0;
 
 table_failed:
