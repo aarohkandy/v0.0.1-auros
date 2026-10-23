@@ -87,7 +87,7 @@ jobs:
               timeout 300 apt-get update -q && timeout 600 apt-get install -y -q --no-install-recommends \
                 cryptsetup-bin libcryptsetup-dev systemd swtpm swtpm-tools tpm2-tools \
                 libtss2-tcti-swtpm0t64 libtss2-esys-3.0.2-0t64 libtss2-tctildr0t64 \
-                gcc libc6-dev e2fsprogs util-linux fonts-dejavu-core kmod procps && break
+                gcc libc6-dev e2fsprogs util-linux fonts-dejavu-core kmod procps python3 grub-common && break
               [ "$i" = 3 ] && exit 1; sleep 10
             done
             set +e
