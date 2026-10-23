@@ -74,12 +74,17 @@ static() {
     has 'APT::Periodic::Unattended-Upgrade "1";' && has 'APT::Periodic::Update-Package-Lists "1";' &&
         ok "lists fetched and updates installed every day" || bad "lists fetched and updates installed every day"
     [ -x "$R/usr/bin/unattended-upgrade" ] && ok "unattended-upgrades is installed" || bad "unattended-upgrades is installed"
-    for o in 'origin=AurOS,label=AurOS,archive=stable' 'origin=Ubuntu,archive=${distro_codename}-updates' \
-             'site=packages.mozilla.org' 'origin=LP-PPA-mozillateam'; do
+    for o in 'origin=Ubuntu,archive=noble-security' 'origin=Ubuntu,archive=noble-updates' \
+             'origin=AurOS,label=AurOS,archive=stable' 'site=packages.mozilla.org' 'origin=LP-PPA-mozillateam'; do
         has "Unattended-Upgrade::Origins-Pattern:: \"$o\";" && ok "allowed: $o" || bad "allowed: $o"
     done
-    printf '%s\n' "$cfg" | grep -q 'Unattended-Upgrade::Allowed-Origins:: "${distro_id}:${distro_codename}-security";' &&
-        ok "allowed: Ubuntu -security (Ubuntu's own default)" || bad "allowed: Ubuntu -security (Ubuntu's own default)"
+    # No origin of ours may depend on what the image calls itself (TM-1):
+    # lsb_release reads os-release, and AurOS's NAME and codename are not
+    # Ubuntu's. `dryrun` proves this on the built image; this is the cheap
+    # half that fails first.
+    if grep -rqE '\$\{distro_(id|codename)\}' "$R/etc/apt/apt.conf.d/53auros-updates"; then
+        bad "no origin of ours depends on \${distro_id} or \${distro_codename}" "(53auros-updates)"
+    else ok "no origin of ours depends on \${distro_id} or \${distro_codename}"; fi
     has 'DPkg::Options:: "--force-confold";' && has 'DPkg::Options:: "--force-confdef";' &&
         ok "a changed setting never stops an update" || bad "a changed setting never stops an update"
     if printf '%s\n' "$cfg" | grep -qE '^Unattended-Upgrade::Automatic-Reboot "(true|1|yes)";'; then

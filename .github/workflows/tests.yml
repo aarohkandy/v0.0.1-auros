@@ -264,6 +264,9 @@ jobs:
       - name: updatepolicytest (everything updates by itself; nothing interrupts her; the image's key)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sudo bash tools/updatepolicytest.sh static work/forge/desktop/rootfs 2>&1 | tee transcripts/updatepolicytest.txt
+      - name: updatepolicytest dryrun (would the built image's own unattended-upgrade install an Ubuntu security update? TM-1)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo bash tools/updatepolicytest.sh dryrun work/forge/desktop/rootfs 2>&1 | tee transcripts/updatepolicytest-dryrun.txt
       - name: sessionenvtest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |

@@ -1392,6 +1392,7 @@ ID_LIKE=ubuntu
 VERSION="$os_version ($os_codename)"
 VERSION_ID="$os_version"
 VERSION_CODENAME=$os_codename
+UBUNTU_CODENAME=$base_suite
 HOME_URL="$brand_url"
 LOGO=auros
 EOL
