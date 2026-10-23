@@ -19,7 +19,7 @@
 
 Run from anywhere: python3 tools/e2e/selftest.py
 """
-import ast, os, re, subprocess, sys, tempfile
+import ast, json, os, re, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "..", "..", "src", "aurbridge")
@@ -133,6 +133,46 @@ def test_timings_summary():
         check("whole journey" not in r.summary(), "timings: a journey that failed has no total")
 
 
+def test_windows_dry():
+    """cmd_windows end to end against a fake machine: a slip in it once
+    cost a 13-minute Windows install (a variable shadowed the machine)."""
+    try:
+        import e2e, types
+    except ImportError as e:
+        print(f"skip  cmd_windows dry run (needs numpy and PIL: {e})")
+        return
+    facts = lambda vol: json.dumps({"bitlocker": f"\r\nVolumeStatus         : {vol}\r\nProtectionStatus     : Off\r\n",
+                                    "variant_name": "base"})
+
+    class FakeMachine:
+        def __init__(self, *a, **k): self.up = True
+        def start(self): pass
+        def auto_shots(self, n): pass
+        def shot(self, l): pass
+        def alive(self): return self.up
+        def stop(self, how="powerdown", t=0): self.up = False
+
+    class FakeHub:
+        text = ""
+        def __init__(self, rec, www=None): pass
+        def wait_event(self, name, timeout, since=0.0, alive=None): return FakeHub.text if name == "firstlogon" else "{}"
+        def ask(self, op, **kw): return {"windows": []}
+
+    saved = (e2e.Machine, e2e.Hub, e2e.pass_cd_prompt, e2e.run, e2e.time.sleep, e2e.OVMF_VARS)
+    try:
+        with tempfile.TemporaryDirectory() as t:
+            open(f"{t}/vars", "w").close()
+            e2e.Machine, e2e.Hub, e2e.pass_cd_prompt = FakeMachine, FakeHub, lambda m: True
+            e2e.run, e2e.time.sleep, e2e.OVMF_VARS = (lambda *a, **k: None), (lambda s: None), f"{t}/vars"
+            for vol, rc in (("FullyDecrypted", 0), ("EncryptionInProgress", 1)):
+                FakeHub.text = facts(vol)
+                a = types.SimpleNamespace(out=f"{t}/out-{vol}", vm=f"{t}/vm-{vol}", iso="i", answer="a")
+                os.makedirs(a.out)
+                check(e2e.cmd_windows(a) == rc, f"cmd_windows: a Windows that says {vol} gives exit {rc}")
+    finally:
+        (e2e.Machine, e2e.Hub, e2e.pass_cd_prompt, e2e.run, e2e.time.sleep, e2e.OVMF_VARS) = saved
+
+
 def test_edge_item():
     tree = ast.parse(open(os.path.join(HERE, "e2e.py")).read())
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "inside")
@@ -190,6 +230,7 @@ test_wizard_contract()
 test_stops()
 test_bitlocker_verdict()
 test_timings_summary()
+test_windows_dry()
 test_edge_item()
 test_publish()
 print(f"\n{len(fails)} failed" if fails else "\nall passed")

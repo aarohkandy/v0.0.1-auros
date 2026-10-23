@@ -194,10 +194,10 @@ def cmd_windows(a):
         with open(os.path.join(a.out, "windows-facts.json"), "w") as f:
             f.write(facts)
         golden = E("E2E_GOLDEN", "base")
-        m = re.search(r"VolumeStatus\s*:\s*(\w+)\s+ProtectionStatus\s*:\s*(\w+)",
-                      str(json.loads(facts).get("bitlocker")))
+        bl = re.search(r"VolumeStatus\s*:\s*(\w+)\s+ProtectionStatus\s*:\s*(\w+)",
+                       str(json.loads(facts).get("bitlocker")))
         if golden != "bitlocker":     # (that one is made encrypted after these facts; the flow checks it)
-            bad = bitlocker_verdict("base", m.group(1), m.group(2)) if m else \
+            bad = bitlocker_verdict("base", bl.group(1), bl.group(2)) if bl else \
                 "BitLocker's state is not in the first-logon facts"
             if bad:
                 raise Failure(bad)
