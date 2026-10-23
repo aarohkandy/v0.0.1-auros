@@ -477,6 +477,16 @@ int hwcompat_selftest(void)
     t("BCM4352, no cable socket: Wi-Fi won't work, and it blocks", is(x, HW_V_WONT, "wifi-broadcom-wl-only") && x->blocks == 1);
     t("  and she is told so plainly", x && strstr(x->says, "no place for a network cable") && strstr(x->says, "Nothing has been changed"));
     t("  and the reason is ours to read", x && strstr(x->why, "wl") && strstr(x->why, "bcma"));
+    {
+        char j[128];
+        size_t jl = hwinv_journal(v, j, sizeof j);
+        t("  and the journal line says so: wifi=wont and blk=1, short, plain ASCII",
+          !strcmp(j, "hw1;wifi=wont;eth=none;bt=none;audio=none;cam=none;gpu=none;scan=none;fp=none;prn=0;prnbad=0;blk=1") &&
+          jl == strlen(j) && jl < 128);
+        char tiny[12];
+        hwinv_journal(v, tiny, sizeof tiny);
+        t("  and a journal line that does not fit is cut, not overrun", strlen(tiny) == 11);
+    }
     hwinv_free(v);
 
     /* the same chip with a cable socket: warned, not stopped */

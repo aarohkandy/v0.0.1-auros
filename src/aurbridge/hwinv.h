@@ -230,6 +230,16 @@ void hwinv_pair_usb_printers(hw_inv *, hw_usbprn *u, int n);
 char *hwinv_text(const hw_inv *, const char *tool, const char *made);
 char *hwinv_json(const hw_inv *, const char *tool, const char *made);
 
+/* One short ASCII line for the install journal (stream A2): at most
+ * `n - 1` bytes, `n` >= 128 (src/aurstage/journal.h's JOURNAL_STR). Keys,
+ * ';'-separated, no spaces, nothing she typed:
+ *   hw1;wifi=wont;eth=none;bt=works;audio=works;cam=wont;gpu=partial;
+ *   scan=none;fp=wont;prn=2;prnbad=1;blk=1
+ * Each state is works|partial|wont|unknown|none; `blk=1` means the matcher
+ * says AurOS would have no way to the internet on this computer. Call it
+ * after the verdicts exist (hwcompat_judge). Returns the length. */
+size_t hwinv_journal(const hw_inv *, char *out, size_t n);
+
 /* The unit test: parsing, classification, dropping, rendering. Prints
  * one line per case; returns the number wrong. */
 int  hwinv_selftest(void);

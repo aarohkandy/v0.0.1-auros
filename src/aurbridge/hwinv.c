@@ -589,6 +589,31 @@ char *hwinv_json(const hw_inv *v, const char *tool, const char *made)
     return sb_done(&b);
 }
 
+/* ── the line the journal carries ─────────────────────────────────── */
+size_t hwinv_journal(const hw_inv *v, char *out, size_t n)
+{
+    static const struct { const char *key; hw_kind kind; } K[] = {
+        { "wifi", HW_K_WIFI }, { "eth", HW_K_ETHERNET }, { "bt", HW_K_BLUETOOTH }, { "audio", HW_K_AUDIO },
+        { "cam", HW_K_CAMERA }, { "gpu", HW_K_GPU }, { "scan", HW_K_SCANNER }, { "fp", HW_K_FINGERPRINT } };
+    if (!n) return 0;
+    out[0] = 0;
+    size_t w = (size_t)snprintf(out, n, "hw1");
+    for (size_t k = 0; k < sizeof K / sizeof K[0] && w < n; k++) {
+        const char *st = "none";
+        for (int i = 0; i < v->n_verdicts; i++)
+            if (v->verdicts[i].kind == K[k].kind && v->verdicts[i].printer < 0) st = hwinv_state_key(v->verdicts[i].state);
+        w += (size_t)snprintf(out + w, n - w, ";%s=%s", K[k].key, st);
+    }
+    int prn = 0, bad = 0, blk = 0;
+    for (int i = 0; i < v->n_verdicts; i++) {
+        if (v->verdicts[i].printer >= 0) { prn++; if (v->verdicts[i].state == HW_V_WONT) bad++; }
+        if (v->verdicts[i].blocks) blk = 1;
+    }
+    if (w < n) w += (size_t)snprintf(out + w, n - w, ";prn=%d;prnbad=%d;blk=%d", prn, bad, blk);
+    if (w >= n) { out[n - 1] = 0; w = n - 1; }
+    return w;
+}
+
 /* ═══════════════════════════════════════════════════════════════════
  *  selftest: real hardware-ID strings (the shapes Windows really
  *  produces), what they must be called, and that the report is JSON.

@@ -146,13 +146,14 @@ hmutant() {
     label=$1; expr=$2; file=$3
     sed "$expr" "$file" > "$T/hm.c"
     if cmp -s "$file" "$T/hm.c"; then bad "mutant: $label" "the mutation changed nothing (stale sed)"; return; fi
-    mkdir -p "$T/hmgen"; cp "$GEN"/*.h "$T/hmgen/"
+    rm -rf "$T/hmgen"; mkdir -p "$T/hmgen"; cp "$GEN"/*.h "$T/hmgen/"
+    src=hw/lib/hwcompat.c; inv=$SRC/hwinv.c
     case "$file" in
-      *hwcompat_data.h) cp "$T/hm.c" "$T/hmgen/hwcompat_data.h"; src=hw/lib/hwcompat.c ;;
-      *) src="$T/hm.c" ;;
+      *hwcompat_data.h) cp "$T/hm.c" "$T/hmgen/hwcompat_data.h" ;;
+      *hwinv.c)         inv="$T/hm.c" ;;
+      *)                src="$T/hm.c" ;;
     esac
-    if $CC $WARN -O2 -I$SRC -I"$(dirname "$file" | sed 's|^'"$GEN"'$|'"$T"'/hmgen|')" -I"$T/hmgen" -Ihw/lib \
-         -o "$T/hm" "$T/cmp_main.c" "$src" $SRC/hwinv.c 2>"$T/hcc.log"; then
+    if $CC $WARN -O2 -I$SRC -I"$T/hmgen" -Ihw/lib -o "$T/hm" "$T/cmp_main.c" "$src" "$inv" 2>"$T/hcc.log"; then
         if "$T/hm" >/dev/null 2>&1; then bad "mutant: $label" "the matcher's cases still passed: they cannot see this"
         else ok "mutant: $label  -> red"; fi
     else bad "mutant: $label" "mutant did not compile: $(head -3 "$T/hcc.log")"; fi
@@ -162,6 +163,7 @@ hmutant "a rule that wants 'no driver' applies to working chips too" 's/if (r->n
 hmutant "the best device no longer wins (the worst does)" 's/rank(all\[i\].state) < rank(all\[best\].state)/rank(all[i].state) > rank(all[best].state)/' hw/lib/hwcompat.c
 hmutant "Wi-Fi blocks even with a cable socket" 's/if (!cable) { blocks = 1/if (1) { blocks = 1/' hw/lib/hwcompat.c
 hmutant "a Wi-Fi card is matched by any module, not a Wi-Fi one" 's/if (cat \&\& m->cat != cat) continue;//' hw/lib/hwcompat.c
+hmutant "the journal line forgets that the computer would have no internet" 's/if (v->verdicts\[i\].blocks) blk = 1;/blk = 0;/' $SRC/hwinv.c
 hmutant "a missing firmware file is ignored" 's/if (m->fw_unusable) { if (!unusable_module)/if (0) { if (!unusable_module)/' hw/lib/hwcompat.c
 hmutant "a printer model matches part of a word" 's/snprintf(m, sizeof m, " %s ", model);/snprintf(m, sizeof m, "%s", model);/' hw/lib/hwcompat.c
 hmutant "the Windows subsystem ids are read the wrong way round" 's/uint16_t sv = (uint16_t)(d->subsys \& 0xFFFF), sd = (uint16_t)(d->subsys >> 16);/uint16_t sd = (uint16_t)(d->subsys \& 0xFFFF), sv = (uint16_t)(d->subsys >> 16);/' hw/lib/hwcompat.c

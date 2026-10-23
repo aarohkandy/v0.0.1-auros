@@ -16,6 +16,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include "hwinv.h"
+#include "hwinv_win.h"
 #include "hwcompat.h"
 #include "preflight.h"
 #include <stdio.h>
@@ -318,6 +319,20 @@ int hwinv_collect(hw_inv *inv)
     return 0;
 }
 
+int hwinv_scan(hw_inv *inv, const pf_report *pf)
+{
+    hwinv_collect(inv);
+    if (pf) collect_from_preflight(inv, pf);
+    hwcompat_judge(inv);
+    return 0;
+}
+
+int hwinv_blocks(const hw_inv *inv)
+{
+    for (int i = 0; i < inv->n_verdicts; i++) if (inv->verdicts[i].blocks) return 1;
+    return 0;
+}
+
 /* ── --report ────────────────────────────────────────────────────── */
 static int write_file(const WCHAR *path, const char *bytes, size_t n, int bom)
 {
@@ -372,11 +387,9 @@ int hwinv_report_main(const char *dir, int gui, const char *tool)
     pf_report *pr = calloc(1, sizeof *pr);        /* 70 KB: not on the stack */
     if (!inv || !pr) { free(inv); free(pr); return 1; }
 
-    hwinv_collect(inv);
     pf_run(pr);
-    collect_from_preflight(inv, pr);
+    hwinv_scan(inv, pr);
     free(pr);
-    hwcompat_judge(inv);
 
     SYSTEMTIME t; GetLocalTime(&t);
     char made[48];
