@@ -16,6 +16,17 @@ echo "=== AurOS first boot $(date -Is) ==="
 
 [ -f "$STAMP" ] && { echo "already done"; exit 0; }
 
+# ── 0. This machine's own lock on the start-up menu.
+#
+# The menu asks for a password before anybody can edit a start line, and
+# nobody knows it: it is made at random and only its hash is kept
+# (rootfs/usr/lib/auros/bootchain, lock_line). The image carries one made
+# when it was built; the first start makes this machine's own, so that no
+# two machines share one. Not worth failing a start for.
+if [ -x /usr/lib/auros/bootchain ]; then
+    /usr/lib/auros/bootchain relock 2>&1 || echo "bootchain relock: the image's lock stays"
+fi
+
 # ── 1. Grow the root filesystem to fill its partition.
 #
 # The installer writes a fixed-size image, so the filesystem is smaller

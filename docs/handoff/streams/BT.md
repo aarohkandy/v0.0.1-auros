@@ -62,25 +62,31 @@ before and passes after:
   `aurfirst hold`: unconfirmed -> BootNext (only after a desktop worked), confirmed + AurOS no
   longer first -> `promote()` puts it first again (declined: never). `aurfirsttest` S-24 cases.
 
+- **3 menu lock (BLOCKER)**: `set superusers="auros"` + `password_pbkdf2` in the rendered menu; the
+  password is 32 random bytes made by `bootchain` and thrown away, only the PBKDF2-SHA512 hash is kept
+  (`/var/lib/auros/grub-lock`, 0600); `bootchain relock` (called by `firstboot.sh`) makes this machine's own.
+  AurOS, verbose, the previous kernel, Windows (both entries) and Put Windows back are `--unrestricted`;
+  aurinit asks; the `init=/bin/bash` recovery entry is gone; `render_menu` refuses a template that lost the
+  lock or would ask for a password to start AurOS or has a shell line. `bootchaintest` 84/85 (the miss is
+  `losetup -P` inside docker), `tools/bootlocktest.sh` 8/8 on KVM: `e` and `c` ask for a user name, Windows
+  does not ask and starts, a hands-off start never asks and reaches the desktop; mutants `nolock` (edit
+  opens) and `lockedboot` (ordinary start asks) go red. S1's `hardenboottest` rows for the lock should now be green.
+  Note: a kernel line added anywhere (the Windows start line was missed once) needs S1's options; run
+  `tools/hardentest.sh` (it checks every kernel line) before pushing a change to `grub.cfg.in` or `bootchain`.
+
 ## Next steps, in order
 
 1. Watch the first CI run of `tests` with `windowsboottest` and `rollbacktest` (both gating now) and
    of the changed `firstboottest` (its stand-in waits for the keeper). Pushed as 69ca6b1; the
    keeper part was proven by `firstboottest` D and E only (not yet the full A, B, C with the new
    stand-in: run it on homebase if CI shows red).
-2. Item 3, BLOCKER: GRUB superusers with a per-machine PBKDF2 (every normal entry `--unrestricted`),
-   delete the `auros-recovery` (`init=/bin/bash`) entry. The image has ONE fixed `/etc/machine-id`,
-   so the secret must be generated at first boot or by `bootchain menu` on the machine, written to
-   `/boot/grub/auros-users.cfg`, not at image build. Test: `e` asks for a password; AurOS, previous
-   kernel and Windows entries never do. S1's `hardenboottest` reaches the shell entry with arrow
-   keys and will need the new answer.
-3. Item 5: dead AurOS entry after a restore: `nvram_boot_forget("AurOS")` at the end of
+2. Item 5: dead AurOS entry after a restore: `nvram_boot_forget("AurOS")` at the end of
    `restore_run` (A2's file; one call) plus the BootOrder entry; test in `putbacktest`/`powercuttest`.
-4. WP-30 full: safe graphics (nomodeset) on boot 3, previous debs, boot-4 menu that waits for her;
+3. WP-30 full: safe graphics (nomodeset) on boot 3, previous debs, boot-4 menu that waits for her;
    hang and crash-loop cases (needs a watchdog: `softlockup_panic`, systemd `RuntimeWatchdogSec`).
-5. WP-77 Windows-side keeper task (with B) and the `windows-once` variant (F); WP-31 residual (CA and
+4. WP-77 Windows-side keeper task (with B) and the `windows-once` variant (F); WP-31 residual (CA and
    SBAT recorded in the journal); WP-53 fwupd.
-6. FINDINGS.md statuses for S-05/06/07/18/24/25 and R-10/17/22 are marked (69ca6b1).
+5. FINDINGS.md statuses for S-05/06/07/18/24/25 and R-10/17/22 are marked (69ca6b1).
 
 ## How to verify (homebase, KVM)
 

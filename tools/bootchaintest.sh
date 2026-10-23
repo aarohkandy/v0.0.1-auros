@@ -126,6 +126,46 @@ grep -q -- "--id put-windows-back-yes" "$C" && grep -q "bootmgfw.efi" "$C" \
   || bad "Put Windows back and the Windows entry are still there"
 grep -q "@[A-Z_]*@" "$C" && bad "no placeholder left unfilled" "$(grep -o '@[A-Z_]*@' "$C" | sort -u)" \
   || ok "no placeholder left unfilled"
+# ── the lock on the menu (nobody edits a start line; nobody knows the password)
+H1=$(sed -n 's/^password_pbkdf2 auros //p' "$C")
+grep -q '^set superusers="auros"$' "$C" && ok "the menu has a superuser" || bad "the menu has a superuser"
+echo "$H1" | grep -Eq '^grub\.pbkdf2\.sha512\.10000\.[0-9A-F]{32}\.[0-9A-F]{128}$' \
+  && ok "...whose password is a PBKDF2 hash, not a password" \
+  || bad "...whose password is a PBKDF2 hash, not a password" "$H1"
+[ "$(cat "$M/var/lib/auros/grub-lock" 2>/dev/null)" = "$H1" ] && [ "$(stat -c %a "$M/var/lib/auros/grub-lock" 2>/dev/null)" = 600 ] \
+  && ok "...kept (root only) so that every later menu is locked the same way" \
+  || bad "...kept (root only) so that every later menu is locked the same way"
+python3 "$BC" menu --root "$M" --running none >/dev/null 2>&1
+[ "$(sed -n 's/^password_pbkdf2 auros //p' "$C")" = "$H1" ] \
+  && ok "a kernel update writes the menu with the same lock" \
+  || bad "a kernel update writes the menu with the same lock"
+python3 "$BC" relock --root "$M" --running none >/dev/null 2>&1
+H2=$(sed -n 's/^password_pbkdf2 auros //p' "$C")
+[ -n "$H2" ] && [ "$H2" != "$H1" ] && ok "relock (a machine's first start) makes a new one" \
+  || bad "relock (a machine's first start) makes a new one"
+grep -q 'password' "$M/var/lib/auros/grub-lock" && bad "no password is kept anywhere, only its hash" || ok "no password is kept anywhere, only its hash"
+bad_entries=$(grep -E '^[[:space:]]*(menuentry|submenu) ' "$C" | grep -E -- "--id (auros|auros-verbose|auros-previous|windows|windows-chain|put-windows-back|put-windows-back-no|put-windows-back-yes)( |\{|$)" | grep -v -- '--unrestricted')
+[ -z "$bad_entries" ] && ok "starting AurOS, the kernel before it, Windows and Put Windows back never ask" \
+  || bad "starting AurOS, the kernel before it, Windows and Put Windows back never ask" "$bad_entries"
+grep -E '^[[:space:]]*menuentry ' "$C" | grep -q -- '--id auros-aurinit' && ! grep -E -- '--id auros-aurinit' "$C" | grep -q -- '--unrestricted' \
+  && ok "...and everything else (aurinit, edit, the command line) does" \
+  || bad "...and everything else (aurinit, edit, the command line) does"
+grep -v '^[[:space:]]*#' "$C" | grep -Eq 'init=/(usr/)?bin/(ba|da)?sh'  && bad "no entry starts a shell" || ok "no entry starts a shell"
+cp "$M/usr/lib/auros/grub.cfg.in" "$T/tmpl.keep"; cp "$C" "$T/good2.cfg"
+sed -i '/@GRUBLOCK@/d' "$M/usr/lib/auros/grub.cfg.in"
+python3 "$BC" menu --root "$M" --running none >/dev/null 2>&1; rc=$?
+[ "$rc" != 0 ] && cmp -s "$C" "$T/good2.cfg" \
+  && ok "a template that lost the lock: refused, and yesterday's menu kept" \
+  || bad "a template that lost the lock: refused, and yesterday's menu kept" "rc=$rc"
+cp "$T/tmpl.keep" "$M/usr/lib/auros/grub.cfg.in"
+sed -i "s/--class auros --unrestricted --id auros {/--class auros --id auros {/" "$M/usr/lib/auros/grub.cfg.in"
+python3 "$BC" menu --root "$M" --running none >/dev/null 2>&1; rc=$?
+[ "$rc" != 0 ] && cmp -s "$C" "$T/good2.cfg" \
+  && ok "a template where starting AurOS would ask for a password: refused" \
+  || bad "a template where starting AurOS would ask for a password: refused" "rc=$rc"
+cp "$T/tmpl.keep" "$M/usr/lib/auros/grub.cfg.in"
+python3 "$BC" menu --root "$M" --running none >/dev/null 2>&1
+
 rm -f "$M/boot/vmlinuz-6.8.0-9-generic"
 python3 "$BC" menu --root "$M" --running none >/dev/null 2>&1
 if grep -q "^set fallback=\|--id auros-previous" "$C"; then bad "one kernel: no fallback to a kernel that is not there"

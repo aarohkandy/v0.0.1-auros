@@ -80,6 +80,9 @@ TEMPLATE = "usr/lib/auros/grub.cfg.in"
 GRUBCFG = "boot/grub/grub.cfg"
 THEMECFG = "etc/auros/grub-theme.cfg"
 STATE = "var/lib/auros/bootchain.state"
+# One line: the PBKDF2 hash of the menu lock's password. The password
+# itself is never kept (render_menu, lock_line).
+LOCKSTATE = "var/lib/auros/grub-lock"
 
 # Most wanted first; the first that passes every check wins. .previous
 # only when Ubuntu's own shim-signed postinst chose it (update-
@@ -202,7 +205,7 @@ PREVIOUS = """
 # own if the newest cannot be (a signature this shim refuses, a
 # truncated file). Written by auros-bootchain; there is one only when
 # two kernels are installed.
-menuentry 'AurOS (previous kernel, {v})' --class auros --id auros-previous {{
+menuentry 'AurOS (previous kernel, {v})' --class auros --unrestricted --id auros-previous {{
     linux  /boot/vmlinuz-{v} root=UUID={u} ro quiet splash console=tty0 console=ttyS0,115200n8 init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes lockdown=integrity
     initrd /boot/initrd.img-{v}
     auros_count
@@ -235,7 +238,39 @@ def fallback_index(cfg):
     raise ValueError("no auros-previous entry")
 
 
-def render_menu(root, uuid=None, running=None):
+LOCK_RE = re.compile(r"grub\.pbkdf2\.sha512\.[0-9]{4,7}\.[0-9A-F]{16,128}\.[0-9A-F]{64,256}")
+
+
+def lock_line(root, fresh=False):
+    """The two lines that lock the menu. The password is 32 random bytes
+    that exist only in this process: nobody is ever told one, so nobody
+    can type one, and what protects the menu is that there is none to
+    find. The hash is kept so that every later menu is locked the same
+    way (and `relock` makes a new one: per machine, at first start)."""
+    path = os.path.join(root, LOCKSTATE)
+    h = None
+    if not fresh:
+        try:
+            with open(path) as f:
+                h = f.read().strip()
+        except OSError:
+            pass
+        if h is not None and not LOCK_RE.fullmatch(h):
+            h = None
+    if h is None:
+        salt = os.urandom(16)
+        pw = os.urandom(32)
+        dk = hashlib.pbkdf2_hmac("sha512", pw, salt, 10000, 64)
+        h = "grub.pbkdf2.sha512.10000.%s.%s" % (salt.hex().upper(), dk.hex().upper())
+        del pw
+        try:
+            write_atomic(path, (h + "\n").encode(), 0o600)
+        except OSError:
+            pass            # still locked this time; a new hash next time
+    return 'set superusers="auros"\npassword_pbkdf2 auros %s' % h
+
+
+def render_menu(root, uuid=None, running=None, fresh_lock=False):
     with open(os.path.join(root, TEMPLATE)) as f:
         t = f.read()
     ks = kernels(root)
@@ -256,7 +291,8 @@ def render_menu(root, uuid=None, running=None):
         back = running if running in ks[1:] else ks[1]
         prev = PREVIOUS.format(v=back, u=uuid)
     out = (t.replace("@ROOT_UUID@", uuid).replace("@KVER@", ks[0])
-            .replace("@THEME@", theme).replace("@PREVIOUS@", prev))
+            .replace("@THEME@", theme).replace("@PREVIOUS@", prev)
+           .replace("@GRUBLOCK@", lock_line(root, fresh_lock)))
     if prev:
         # auros_prev tells the menu's boot counting there is a kernel to
         # fall back to; without one there is nothing to count towards.
@@ -272,13 +308,23 @@ def render_menu(root, uuid=None, running=None):
     for must in ("--id auros {", "--id put-windows-back-yes"):
         if must not in out:
             raise ValueError("template lost '%s'" % must)
+    # A template edited into a shape that leaves the menu open, or that
+    # locks the ordinary start, is refused here rather than at a start.
+    if not re.search(r"^set superusers=", out, re.M) or not re.search(r"^password_pbkdf2 \S+ grub\.pbkdf2\.", out, re.M):
+        raise ValueError("template lost the menu's lock")
+    for e in re.findall(r"^\s*menuentry .*$", out, re.M):
+        if re.search(r"--id (auros|auros-verbose|auros-previous|windows|put-windows-back-yes)(?= |\{|$)", e) and "--unrestricted" not in e:
+            raise ValueError("an ordinary start would ask for a password: " + e.strip())
+    for line in out.splitlines():
+        if not line.lstrip().startswith("#") and re.search(r"init=/(usr/)?bin/(ba|da)?sh\b", line):
+            raise ValueError("template starts a shell")
     return out, ks
 
 
-def cmd_menu(args):
+def cmd_menu(args, fresh_lock=False):
     root = args.get("root", "/")
     try:
-        out, ks = render_menu(root, args.get("root-uuid"), args.get("running"))
+        out, ks = render_menu(root, args.get("root-uuid"), args.get("running"), fresh_lock)
     except (OSError, ValueError) as e:
         # The old grub.cfg stays. A machine with yesterday's menu starts;
         # a machine with no menu does not.
@@ -1198,12 +1244,18 @@ def cmd_status(args):
     return cmd_sync(args, dry=True)
 
 
-USAGE = ("usage: bootchain menu|sync|status [--root DIR] [--esp DIR] [--efivars DIR]\n"
+def cmd_relock(args):
+    """A new lock for the menu: run once at a machine's first start, so
+    that no two machines (and no image) share one."""
+    return cmd_menu(args, fresh_lock=True)
+
+
+USAGE = ("usage: bootchain menu|relock|sync|status [--root DIR] [--esp DIR] [--efivars DIR]\n"
          "                 [--esp-roots DIR:DIR] [--esp-scan DEV] [--root-uuid UUID] [--running KVER]")
 
 
 def main(argv):
-    if len(argv) < 2 or argv[1] not in ("menu", "sync", "status"):
+    if len(argv) < 2 or argv[1] not in ("menu", "relock", "sync", "status"):
         print(USAGE, file=sys.stderr)
         return 2
     args = {}
@@ -1213,7 +1265,7 @@ def main(argv):
         if not k.startswith("--") or not a:
             die("bad argument: %s" % k, 2)
         args[k[2:]] = a.pop(0)
-    return {"menu": cmd_menu, "sync": cmd_sync, "status": cmd_status}[argv[1]](args)
+    return {"menu": cmd_menu, "relock": cmd_relock, "sync": cmd_sync, "status": cmd_status}[argv[1]](args)
 
 
 if __name__ == "__main__":
