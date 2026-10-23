@@ -21,8 +21,19 @@ on:
       - src/aurstage/plan.*
       - src/aurscreen/**
       - rootfs/usr/lib/auros/wifi-across.sh
-      - tools/*test.sh
-      - tools/fasttest.sh
+      # Only the tests this workflow runs: a push that changes some other stream's
+      # tools/*test.sh must not queue Windows runners and cancel the run for the
+      # commit that did change the fast path.
+      - tools/aborttest.sh
+      - tools/armtest.sh
+      - tools/esptest.sh
+      - tools/wifitest.sh
+      - tools/bridgetest.sh
+      - tools/screentest.sh
+      - tools/handovertest.ps1
+      - tools/fastpath-mutant.sh
+      - tools/planted*.c
+      - rootfs/usr/lib/auros/handover.sh
       - build/aurbridge
       - .github/workflows/fastpath.yml
   # By hand, optionally with a MUTANT: an engine (or a disk) broken on
