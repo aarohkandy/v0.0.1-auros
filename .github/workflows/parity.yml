@@ -144,7 +144,13 @@ jobs:
                   --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .workflow_run.id // empty')
           fi
           if [ -n "$RID" ]; then
-            gh run download "$RID" -R "$GITHUB_REPOSITORY" -n auros-pieces -D "$D"
+            # a 1.4 GB download: one reset connection must not cost the night (3 tries)
+            for try in 1 2 3; do
+              rm -rf "$D"; mkdir -p "$D"
+              gh run download "$RID" -R "$GITHUB_REPOSITORY" -n auros-pieces -D "$D" && break
+              [ "$try" -lt 3 ] || { echo "::error::could not download auros-pieces of run $RID"; exit 1; }
+              sleep 20
+            done
             SHA=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RID" --jq .head_sha)
             SRC="build run $RID, commit $SHA"
           else
