@@ -1401,9 +1401,10 @@ int main(int argc, char **argv)
         /* And tell that bus where the screen is, so the portal Flathub
          * programs open their Open and Save dialogs through can find it
          * (run.h, run_publish_env). */
-        if (c.wl && run_publish_env(aurwl_socket(c.wl)))
+        if (c.wl && run_publish_env(aurwl_socket(c.wl), aurwl_x_display(c.wl)))
             fprintf(stderr, "aurshell: told the session where this desktop is "
-                            "(WAYLAND_DISPLAY=%s)\n", aurwl_socket(c.wl));
+                            "(WAYLAND_DISPLAY=%s, DISPLAY=%s)\n", aurwl_socket(c.wl),
+                    aurwl_x_display(c.wl) ? aurwl_x_display(c.wl) : "none");
         /* Idempotent, rate-limited inside, and it notices for itself
          * when the address has changed -- which the line above is not
          * the only thing that can do, since a spawn adopts too. */

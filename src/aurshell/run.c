@@ -129,7 +129,7 @@ int run_adopt_user_bus(void)
     return 1;
 }
 
-int run_publish_env(const char *wayland_display)
+int run_publish_env(const char *wayland_display, const char *x_display)
 {
     static int done = 0;
     if (done || !wayland_display || !*wayland_display) return 0;
@@ -140,15 +140,27 @@ int run_publish_env(const char *wayland_display)
     snprintf(want, sizeof want, "unix:path=%s/bus", rd);
     if (strcmp(bus, want) != 0) return 0;         /* not on logind's bus yet */
 
-    char wd[160], dd[2200];
+    char wd[160], xd[48], dd[2200];
     snprintf(wd, sizeof wd, "WAYLAND_DISPLAY=%s", wayland_display);
     const char *xdd = getenv("XDG_DATA_DIRS");
     snprintf(dd, sizeof dd, "XDG_DATA_DIRS=%s",
              xdd && *xdd ? xdd : "/usr/local/share:/usr/share");
-    const char *argv[] = {
-        "dbus-update-activation-environment", "--systemd",
-        wd, "XDG_CURRENT_DESKTOP=AurOS", "XDG_SESSION_TYPE=wayland", dd, NULL
-    };
+    /* DISPLAY beside WAYLAND_DISPLAY: a program the BUS starts (the store's
+     * Open button, anything a portal launches) is an X program as often as
+     * not -- VLC, Zoom, Discord -- and finds Xwayland only through this. */
+    const char *argv[10];
+    int n = 0;
+    argv[n++] = "dbus-update-activation-environment";
+    argv[n++] = "--systemd";
+    argv[n++] = wd;
+    if (x_display && *x_display) {
+        snprintf(xd, sizeof xd, "DISPLAY=%.30s", x_display);
+        argv[n++] = xd;
+    }
+    argv[n++] = "XDG_CURRENT_DESKTOP=AurOS";
+    argv[n++] = "XDG_SESSION_TYPE=wayland";
+    argv[n++] = dd;
+    argv[n] = NULL;
     done = 1;                 /* once: a helper that fails is not retried
                                  sixty times a second */
     return run_detached(argv) == 0;

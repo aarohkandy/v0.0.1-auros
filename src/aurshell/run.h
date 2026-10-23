@@ -80,21 +80,22 @@ void run_reap(void);
 int  run_adopt_user_bus(void);
 
 /* Tell the session bus and the user's systemd where this desktop is:
- * WAYLAND_DISPLAY, XDG_CURRENT_DESKTOP=AurOS, XDG_SESSION_TYPE=wayland
- * and XDG_DATA_DIRS, through dbus-update-activation-environment
- * --systemd.
+ * WAYLAND_DISPLAY, DISPLAY (Xwayland's, x_display; NULL when there is
+ * none), XDG_CURRENT_DESKTOP=AurOS, XDG_SESSION_TYPE=wayland and
+ * XDG_DATA_DIRS, through dbus-update-activation-environment --systemd.
  *
  * The programs this shell starts get those from its own environment.
  * The ones the BUS starts do not: xdg-desktop-portal is started by the
  * user's systemd when a Flathub program first asks for a file, and with
  * none of these set it cannot find the screen to put the Open and Save
  * dialogs on, and does not know which portal belongs to this desktop.
- * The dialog simply never appears.
+ * The dialog simply never appears. Nor does an X program (VLC, Zoom)
+ * the bus starts find Xwayland without DISPLAY.
  *
  * Only once the shell is on logind's bus (run_adopt_user_bus) -- that
  * is the bus the user's systemd and the portal are on. Returns 1 the
  * one time it starts the helper; call it every pass, it is a strcmp
  * until then and nothing after. */
-int  run_publish_env(const char *wayland_display);
+int  run_publish_env(const char *wayland_display, const char *x_display);
 
 #endif
