@@ -32,12 +32,16 @@ on:
       installer_sha256: {type: string, required: false, default: ''}
       variants: {type: string, required: false, default: base}
       hdd_throttle: {type: string, required: false, default: ''}
+      build_run: {type: string, required: false, default: ''}
   workflow_dispatch:
     inputs:
       installer_url: {type: string, required: false, default: ''}
       installer_sha256: {type: string, required: false, default: ''}
       variants: {type: string, required: false, default: base}
       hdd_throttle: {type: string, required: false, default: ''}
+      # variants=aur only: the image of this build run (its auros-pieces artifact)
+      # instead of a release's, e.g. a green build newer than the last prerelease
+      build_run: {type: string, required: false, default: ''}
 
 # contents: write is for the jobs that make or fill a release, and only
 # those (SEC-005): a job that runs a lot of code cannot replace what a
@@ -305,20 +309,29 @@ jobs:
           bash tools/e2e/publish.sh init
           mkdir -p "$E2E_DIR/out"
           nohup bash tools/e2e/publish.sh live "$E2E_DIR/out" >/dev/null 2>&1 &
-      - name: the image of the release under test
+      - name: the image under test (a build run's pieces, else the release's)
         env:
           GH_TOKEN: ${{ github.token }}
           IN_URL: ${{ inputs.installer_url }}
+          BUILD_RUN: ${{ inputs.build_run }}
         run: |
-          url=${IN_URL:-$INSTALLER_URL}
-          tag=$(printf '%s' "$url" | sed -n 's|.*/releases/download/\([^/]*\)/.*|\1|p')
-          [ -n "$tag" ] || { echo "no release tag in $url"; exit 1; }
-          echo "image of $tag"
           mkdir -p "$E2E_DIR/pieces"
-          for i in 1 2 3; do
-            gh release download "$tag" -R "$GITHUB_REPOSITORY" -p 'auros-desktop.img.gz.*' -D "$E2E_DIR/pieces" --clobber && break
-            sleep $((i * 20))
-          done
+          if [ -n "$BUILD_RUN" ]; then
+            echo "image of build run $BUILD_RUN"
+            for i in 1 2 3; do
+              gh run download "$BUILD_RUN" -R "$GITHUB_REPOSITORY" -n auros-pieces -D "$E2E_DIR/pieces" && break
+              sleep $((i * 20))
+            done
+          else
+            url=${IN_URL:-$INSTALLER_URL}
+            tag=$(printf '%s' "$url" | sed -n 's|.*/releases/download/\([^/]*\)/.*|\1|p')
+            [ -n "$tag" ] || { echo "no release tag in $url"; exit 1; }
+            echo "image of $tag"
+            for i in 1 2 3; do
+              gh release download "$tag" -R "$GITHUB_REPOSITORY" -p 'auros-desktop.img.gz.*' -D "$E2E_DIR/pieces" --clobber && break
+              sleep $((i * 20))
+            done
+          fi
           ls -l "$E2E_DIR/pieces" | head -20
           cat "$E2E_DIR"/pieces/auros-desktop.img.gz.* | gzip -dc > "$E2E_DIR/auros.img"
           rm -rf "$E2E_DIR/pieces"
