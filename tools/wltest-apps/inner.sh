@@ -18,7 +18,6 @@ if [ ! -x /out/aurshell ] || [ -n "${REBUILD:-}" ]; then
     gcc -O1 -g -std=gnu11 -DAUROS_WISHES=0 -o /out/aurshell aurshell/main.c $SRC \
         aurwl/aurwl.c aurwl/gen/xdg-shell-protocol.c aurwl/gen/xdg-decoration-protocol.c \
         aurwl/gen/viewporter-protocol.c aurwl/gen/xdg-output-protocol.c \
-        $(for g in aurwl/gen/*-protocol.c; do case $g in */xdg-shell-*|*/xdg-decoration-*|*/viewporter-*|*/xdg-output-*|*/text-input-*) ;; *) echo $g;; esac; done) \
         common/theme.c common/wall.c common/font.c common/png.c \
         -Iaurwl/gen $(pkg-config --cflags dbus-1) -lwayland-server -lxkbcommon $(pkg-config --libs dbus-1) -lm \
         2>&1 | tail -20

@@ -159,6 +159,12 @@ int         aurwl_key_utf8(const aurwl *c, uint32_t evdev_code, char *out, size_
  * a cursor blinking in a text field. */
 uint32_t    aurwl_damage_seq(const aurwl *c);
 
+/* 1 while a program that is playing something has asked the screen to stay
+ * on (zwp_idle_inhibitor_v1) AND the window it asked it for is on screen.
+ * The shell asks this where it decides the person has gone away: a film is
+ * two hours without a keypress. */
+int         aurwl_idle_inhibited(const aurwl *c);
+
 /* ── frame ──────────────────────────────────────────────────────── */
 
 /* Call after presenting. Fires frame callbacks, so clients that throttle

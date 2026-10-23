@@ -19,7 +19,8 @@ its commit body).
 | wp_viewport on subsurfaces and roots: destination scaling (nearest, pixel centres), source crop (`set_source`) | done |
 | pointer hit-testing through the tree, input regions (`set_input_region`), implicit grab, per-surface enter/leave in the surface's own coordinates | done |
 | keyboard focus (and with it W1's text-input-v3 focus) stays on the toplevel, as in every compositor; W1's weak hooks untouched | proven: `wltest-sub textinput`, and REAL Firefox (page in a subsurface): `sh tools/wltest-apps.sh firefox-pw` shows textinput_state 1 (plain) in a text field, **2 (sensitive; purpose 8, hint 0xc0)** in a password field, 0 outside any field |
-| other protocols mainstream apps need (see "Protocol review") | in progress |
+| **zwp_idle_inhibit_v1** (a film must not go dark: the shell blanks after 10 idle minutes; mpv/Firefox/VLC ask for an inhibitor; `aurwl_idle_inhibited()` + 5 lines in main.c) | done; real mpv binds it and creates one (WAYLAND_DEBUG); `wltest-sub idle`. NOT covered: apps that inhibit through D-Bus org.freedesktop.ScreenSaver (the shell owns the bus: stream C) |
+| other protocols (see "Protocol review") | in progress |
 | real programs through the real shell (`sh tools/wltest-apps.sh firefox|gtk4|qt|mpv`, headless `aurshell --png --with-app`): Firefox 158 draws toolbar + page (+ its welcome dialog), GTK4 widget-factory, Qt5 terminal, mpv video (wlshm subsurface) | all draw; PNGs in the Progress log of SESSION-2026-10-23-B.md |
 | PARITY `call.visible` flips to PASS on a booted image | waiting for a build of this commit |
 
@@ -48,6 +49,20 @@ its commit body).
   `enter`) separately from `c->ptr_focus` (the root). `btns_down` is the implicit grab.
 - **Touch**: the shell turns a touchscreen into pointer clicks (main.c DEV_DIRECT), so it goes
   through the same path. aurwl has no `wl_touch` event path at all (advertised, never sent).
+
+## Protocol review (what the real programs bind, WAYLAND_DEBUG on Firefox 158, GTK4, mpv)
+
+Bound and served: wl_shm, wl_compositor (v3-5), wl_subcompositor, wl_seat (v5-7), wl_output (v2-3), xdg_wm_base,
+wl_data_device_manager, wp_viewporter, zxdg_output_manager_v1, (Qt) zxdg_decoration_manager_v1, zwp_idle_inhibit_manager_v1.
+Firefox and GTK never bind xdg-decoration (GTK never implements it) -> they draw their own title bar. Not offered, and
+every program works without: linux-dmabuf (shm path), presentation-time, fractional-scale, primary selection,
+cursor-shape, xdg-activation. Programs fall back; what each costs: no middle-click paste, one arrow cursor for every
+control, no raise-on-link-click.
+
+New protocols are generated to `src/aurwl/gen/<name>-protocol.inc` and `#include`d INTO aurwl.c (forge's second
+generator loop), so no list of source files elsewhere (forge, fuzz build.sh, wishtest.sh, shots.sh, ...) needs to learn them.
+Add the XML to that loop + the README loop, `#include` the .inc in aurwl.c, add a row to fuzz_aurwl.c's `global_name` table
+(AFTER the existing rows: seeds index into it).
 
 ## Tests
 

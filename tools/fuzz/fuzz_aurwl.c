@@ -162,6 +162,7 @@ static uint32_t global_name(prog *p, int k, const struct wl_interface **iface, i
                                      * Last, so every index the seeds use keeps its meaning. */
         { &textinput_g, &zwp_text_input_manager_v3_interface, 1 },
 #endif
+        { &C->g_idle_inhibit, &zwp_idle_inhibit_manager_v1_interface, 1 },   /* stream WL: after the above */
     };
     const glob *g = &G[k % (int)(sizeof G / sizeof *G)];
     *iface = g->iface; *ver = g->ver;
@@ -436,7 +437,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         !wl_list_empty(&C->pointers) || !wl_list_empty(&C->keyboards) ||
         !wl_list_empty(&C->touches) || !wl_list_empty(&C->outputs) ||
         !wl_list_empty(&C->devices) || !wl_list_empty(&C->offers) ||
-        !wl_list_empty(&C->xdg_outputs)) {
+        !wl_list_empty(&C->xdg_outputs) || !wl_list_empty(&C->inhibitors)) {
         fprintf(stderr, "aurwl kept state for a program that has gone\n");
         abort();
     }

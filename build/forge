@@ -979,8 +979,15 @@ stage_overlay() {
                 n=\$(basename \$p .xml | sed -e 's/-unstable-v[13]//'); \
                 wayland-scanner server-header \$p gen/\$n-server.h || exit 1; \
                 wayland-scanner private-code  \$p gen/\$n-protocol.c || exit 1; \
+            done; \
+            for p in /usr/share/wayland-protocols/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml; do \
+                n=\$(basename \$p .xml | sed -e 's/-unstable-v[13]//'); \
+                wayland-scanner server-header \$p gen/\$n-server.h || exit 1; \
+                wayland-scanner private-code  \$p gen/\$n-protocol.inc || exit 1; \
             done" \
         || die "wayland-scanner failed: no compositor could be built"
+    # (The second loop is the protocols compiled INTO aurwl.c: .inc, so that no
+    # list of source files has to name them. See the include in aurwl.c.)
 
     # The source list is READ FROM THE DIRECTORY, not typed out here. A
     # hand-written list is a second place to remember, and it was

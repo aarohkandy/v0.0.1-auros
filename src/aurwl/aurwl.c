@@ -32,6 +32,15 @@
 #include "viewporter-server.h"
 #include "xdg-output-server.h"
 
+/* Protocols added after the build lists were written are compiled INTO this
+ * file: the generated marshalling code is included rather than linked, so
+ * that a new protocol is one XML line in build/forge's generator loop and
+ * one include here, and no list of source files in the forge, the fuzzers,
+ * the test scripts or the screenshot tool has to learn about it. (They are
+ * .inc, not .c, so a glob over *-protocol.c cannot link them twice.) */
+#include "idle-inhibit-server.h"
+#include "idle-inhibit-protocol.inc"
+
 #include "aurwl.h"
 
 /* Wishes (docs/AI.md §3.5): the typed-word matcher lives in wishhook.c and is
@@ -243,6 +252,13 @@ struct aurwl_win {
     struct wl_list      link;                /* c->surfaces              */
 };
 
+/* One zwp_idle_inhibitor_v1 (see "idle inhibit" below). */
+struct idle_inh {
+    struct wl_resource *res;
+    aurwl_win          *w;          /* NULL once its surface has gone */
+    struct wl_list      link;
+};
+
 struct aurwl {
     struct wl_display  *display;
     struct wl_event_loop *loop;
@@ -250,6 +266,7 @@ struct aurwl {
 
     struct wl_global   *g_compositor, *g_subcompositor, *g_seat, *g_output;
     struct wl_global   *g_xdg, *g_ddm, *g_deco, *g_viewporter, *g_xdg_output;
+    struct wl_global   *g_idle_inhibit;
 
     struct wl_list      surfaces;
     struct wl_list      seats;        /* wl_seat resources              */
@@ -263,6 +280,9 @@ struct aurwl {
      * not before, so after a resize every client kept the old screen
      * size and sized its full-screen windows to it. */
     struct wl_list      xdg_outputs;
+    /* zwp_idle_inhibitor_v1 objects: while one of them is on a visible
+     * window the desktop must not turn the screen off. */
+    struct wl_list      inhibitors;
 
     int                 ow, oh, refresh_mhz;
     uint32_t            next_id;
@@ -1452,6 +1472,13 @@ static void surface_free_res(struct wl_resource *r)
     cwatch_buffer(w, NULL);
     if (w->flat) surface_free(w->flat);
 
+    /* An inhibitor outlives its surface until the client destroys it; it
+     * must stop pointing at it. (It then inhibits nothing: the window it
+     * was for is gone.) */
+    struct idle_inh *ih;
+    wl_list_for_each(ih, &c->inhibitors, link)
+        if (ih->w == w) ih->w = NULL;
+
     struct wl_resource *cb, *cbt;
     wl_resource_for_each_safe(cb, cbt, &w->frame_cbs) wl_resource_destroy(cb);
 
@@ -2595,6 +2622,65 @@ static void bind_deco(struct wl_client *cl, void *data, uint32_t ver, uint32_t i
     wl_resource_set_implementation(r, &decomgr_impl, data, NULL);
 }
 
+/* ── idle inhibit ───────────────────────────────────────────────── */
+/* THE FILM THAT WENT DARK.
+ *
+ * The shell turns the screen off after ten minutes without a key or a
+ * click, because on a laptop that was left alone that is right. A film
+ * is the case it gets wrong: nobody touches anything for two hours. The
+ * program that is playing one knows -- Firefox, mpv and VLC all create a
+ * zwp_idle_inhibitor_v1 on their window while a video plays -- and this
+ * is how it tells the desktop. An inhibitor only counts while the window
+ * it belongs to is on screen: a hidden browser tab cannot keep the
+ * screen lit.
+ *
+ * aurwl does not decide what idleness means; it answers one question for
+ * the shell (aurwl_idle_inhibited) and the shell does the rest. */
+
+static void inh_destroy(struct wl_client *cl, struct wl_resource *r)
+{ (void)cl; wl_resource_destroy(r); }
+static const struct zwp_idle_inhibitor_v1_interface inh_impl = { .destroy = inh_destroy };
+static void inh_gone(struct wl_resource *r)
+{
+    struct idle_inh *ih = wl_resource_get_user_data(r);
+    if (!ih) return;
+    wl_list_remove(&ih->link);
+    free(ih);
+}
+
+static void inhmgr_create(struct wl_client *cl, struct wl_resource *r, uint32_t id,
+                          struct wl_resource *surf)
+{
+    aurwl *c = wl_resource_get_user_data(r);
+    aurwl_win *w = surf ? wl_resource_get_user_data(surf) : NULL;
+    /* Per program, like every other thing a client can make as many of as
+     * it likes: they are walked by the shell every frame. */
+    int mine = 0;
+    struct idle_inh *o;
+    wl_list_for_each(o, &c->inhibitors, link)
+        if (wl_resource_get_client(o->res) == cl) mine++;
+    if (mine >= MAX_DATA_OBJ) {
+        wl_resource_post_error(r, 0, "no more than %d idle inhibitors per program", MAX_DATA_OBJ);
+        return;
+    }
+    struct idle_inh *ih = calloc(1, sizeof *ih);
+    if (!ih) { wl_client_post_no_memory(cl); return; }
+    ih->res = wl_resource_create(cl, &zwp_idle_inhibitor_v1_interface, wl_resource_get_version(r), id);
+    if (!ih->res) { free(ih); wl_client_post_no_memory(cl); return; }
+    ih->w = w;
+    wl_list_insert(&c->inhibitors, &ih->link);
+    wl_resource_set_implementation(ih->res, &inh_impl, ih, inh_gone);
+}
+static const struct zwp_idle_inhibit_manager_v1_interface inhmgr_impl = {
+    .destroy = noop_destroy, .create_inhibitor = inhmgr_create,
+};
+static void bind_idle_inhibit(struct wl_client *cl, void *data, uint32_t ver, uint32_t id)
+{
+    struct wl_resource *r = wl_resource_create(cl, &zwp_idle_inhibit_manager_v1_interface, (int)ver, id);
+    if (!r) { wl_client_post_no_memory(cl); return; }
+    wl_resource_set_implementation(r, &inhmgr_impl, data, NULL);
+}
+
 /* ── keymap ─────────────────────────────────────────────────────── */
 
 /* The client does its own key translation from a keymap we hand it.
@@ -2739,6 +2825,7 @@ aurwl *aurwl_create(int w, int h, int refresh_mhz)
     wl_list_init(&c->devices);
     wl_list_init(&c->offers);
     wl_list_init(&c->xdg_outputs);
+    wl_list_init(&c->inhibitors);
 
     c->display = wl_display_create();
     if (!c->display) { free(c); return NULL; }
@@ -2758,9 +2845,11 @@ aurwl *aurwl_create(int w, int h, int refresh_mhz)
     c->g_deco          = wl_global_create(c->display, &zxdg_decoration_manager_v1_interface, 1, c, bind_deco);
     c->g_viewporter    = wl_global_create(c->display, &wp_viewporter_interface, 1, c, bind_viewporter);
     c->g_xdg_output    = wl_global_create(c->display, &zxdg_output_manager_v1_interface, 3, c, bind_xdg_output);
+    c->g_idle_inhibit  = wl_global_create(c->display, &zwp_idle_inhibit_manager_v1_interface, 1, c, bind_idle_inhibit);
 
     if (!c->g_compositor || !c->g_subcompositor || !c->g_seat || !c->g_output ||
-        !c->g_xdg || !c->g_ddm || !c->g_deco || !c->g_viewporter || !c->g_xdg_output) {
+        !c->g_xdg || !c->g_ddm || !c->g_deco || !c->g_viewporter || !c->g_xdg_output ||
+        !c->g_idle_inhibit) {
         fprintf(stderr, "aurwl: could not create globals\n");
         aurwl_destroy(c); return NULL;
     }
@@ -2835,6 +2924,18 @@ void aurwl_resize_output(aurwl *c, int w, int h)
 
 static int win_visible(const aurwl_win *w)
 { return w->mapped && !w->dead && (w->role == ROLE_TOPLEVEL || w->role == ROLE_POPUP); }
+
+int aurwl_idle_inhibited(const aurwl *c)
+{
+    if (!c) return 0;
+    struct idle_inh *ih;
+    wl_list_for_each(ih, &c->inhibitors, link) {
+        if (!ih->w || !ih->w->store || !ih->w->mapped) continue;
+        aurwl_win *r = root_of(ih->w);       /* on screen means its window is */
+        if (r && win_visible(r)) return 1;
+    }
+    return 0;
+}
 
 int aurwl_window_count(const aurwl *c)
 {

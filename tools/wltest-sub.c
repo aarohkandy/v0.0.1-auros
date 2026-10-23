@@ -46,6 +46,7 @@
 #include "xdg-shell-client.h"
 #include "viewporter-client.h"
 #include "text-input-client.h"
+#include "idle-inhibit-client.h"
 
 #include "../src/aurwl/aurwl.h"
 #include "../src/aurwl/textinput.h"
@@ -120,7 +121,7 @@ static void img_rect(img *m, int x, int y, int w, int h, uint32_t argb)
 
 /* ── the line between the two processes ───────────────────────────── */
 
-enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_TI, M_END };
+enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_TI, M_IDLE, M_END };
 typedef struct { int kind, a, b, c, d; } msg;
 
 static int xfer(int fd, void *buf, size_t n, int wr)
@@ -235,6 +236,12 @@ static int serve(aurwl *c, int chan, pid_t kid, int *child_result)
             if (reply) { printf("      text input state is %d, expected %d\n", st, m.a); fails_here++; }
             break;
         }
+        case M_IDLE: {    /* "is the screen allowed to go dark?" (m.a: 1 = inhibited) */
+            int got = aurwl_idle_inhibited(c);
+            reply = (uint8_t)(got == m.a ? 0 : 1);
+            if (reply) { printf("      idle inhibited is %d, expected %d\n", got, m.a); fails_here++; }
+            break;
+        }
         case M_END: *child_result = m.a; (void)xfer(chan, &reply, 1, 1);
                     { int st; waitpid(kid, &st, 0); } return 0;
         }
@@ -260,6 +267,7 @@ struct cl {
     struct wl_seat *seat;
     struct wl_pointer *ptr;
     struct zwp_text_input_manager_v3 *timgr;
+    struct zwp_idle_inhibit_manager_v1 *inhmgr;
     struct wl_surface *ti_in;     /* where text input was last entered */
     int ti_enters;
     int chan;
@@ -278,6 +286,7 @@ static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char
     else if (!strcmp(iface, "xdg_wm_base"))      c->wm   = wl_registry_bind(r, name, &xdg_wm_base_interface, 2);
     else if (!strcmp(iface, "wp_viewporter"))    c->vper = wl_registry_bind(r, name, &wp_viewporter_interface, 1);
     else if (!strcmp(iface, "wl_seat"))          c->seat = wl_registry_bind(r, name, &wl_seat_interface, 5);
+    else if (!strcmp(iface, "zwp_idle_inhibit_manager_v1")) c->inhmgr = wl_registry_bind(r, name, &zwp_idle_inhibit_manager_v1_interface, 1);
     else if (!strcmp(iface, "zwp_text_input_manager_v3")) c->timgr = wl_registry_bind(r, name, &zwp_text_input_manager_v3_interface, 1);
 }
 static void reg_remove(void *d, struct wl_registry *r, uint32_t n) { (void)d; (void)r; (void)n; }
@@ -943,6 +952,34 @@ static void sc_textinput(struct cl *c)
     (void)P;
 }
 
+/* 22. A film keeps the screen lit -- but only while the window it is
+ * playing in is on screen. Firefox puts the inhibitor on the toplevel;
+ * mpv on its video subsurface; either must count. */
+static void sc_idle(struct cl *c)
+{
+    if (!c->inhmgr) { printf("      no idle-inhibit global\n"); c->failed = 1; return; }
+    img root = img_solid(40, 30, GREY), vid = img_solid(10, 10, GREEN);
+    top *t = mktop(c, &root, XRGB);
+    sub v = mksub(c, t->s, 5, 5, &vid, XRGB, 1);
+    wl_surface_commit(t->s);
+    ask(c, M_IDLE, 0, 0);                            /* nobody has asked yet */
+    struct zwp_idle_inhibitor_v1 *on_window = zwp_idle_inhibit_manager_v1_create_inhibitor(c->inhmgr, t->s);
+    ask(c, M_IDLE, 1, 0);                            /* the toplevel's */
+    zwp_idle_inhibitor_v1_destroy(on_window);
+    ask(c, M_IDLE, 0, 0);
+    struct zwp_idle_inhibitor_v1 *on_video = zwp_idle_inhibit_manager_v1_create_inhibitor(c->inhmgr, v.s);
+    ask(c, M_IDLE, 1, 0);                            /* a subsurface's counts too */
+    wl_surface_attach(v.s, NULL, 0, 0);              /* the video goes away ... */
+    wl_surface_commit(v.s);
+    ask(c, M_IDLE, 0, 0);                            /* ... so does the reason */
+    show(c, &v, &vid, XRGB);
+    ask(c, M_IDLE, 1, 0);
+    wl_surface_attach(t->s, NULL, 0, 0);             /* the whole window is hidden */
+    wl_surface_commit(t->s);
+    ask(c, M_IDLE, 0, 0);
+    (void)on_video;
+}
+
 static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "plain",            sc_plain },
     { "page",             sc_page },
@@ -965,6 +1002,7 @@ static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "geometry",         sc_geometry },
     { "wreck",            sc_wreck },
     { "textinput",        sc_textinput },
+    { "idle",             sc_idle },
 };
 #define NSC ((int)(sizeof SC / sizeof SC[0]))
 

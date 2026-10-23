@@ -168,6 +168,12 @@ for x in /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml \
   wayland-scanner server-header "$x" "build/gen/$n-server.h"
   wayland-scanner private-code  "$x" "build/gen/$n-protocol.c"
 done
+# protocols compiled into aurwl.c (included, not linked: .inc)
+for x in /usr/share/wayland-protocols/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml; do
+  n=$(basename "$x" .xml | sed s/-unstable-v1//)
+  wayland-scanner server-header "$x" "build/gen/$n-server.h"
+  wayland-scanner private-code  "$x" "build/gen/$n-protocol.inc"
+done
 cc -O2 -std=gnu11 -o /tmp/wltest tools/wltest.c src/aurwl/aurwl.c \
    src/aurshell/draw.c src/common/png.c build/gen/*-protocol.c \
    -Ibuild/gen $(pkg-config --cflags --libs wayland-server xkbcommon) -lm

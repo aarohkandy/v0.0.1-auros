@@ -1377,9 +1377,13 @@ int main(int argc, char **argv)
          * against the last INPUT, not the last repaint: a video
          * playing does not count as somebody being there, which is
          * wrong for a film and right for a machine that was left
-         * showing one. (A player that wants to stop this asks for
-         * an idle inhibitor, which is a thing to add when something
-         * on this machine asks for one.) */
+         * showing one. A player that wants to stop this asks for an
+         * idle inhibitor (Firefox, mpv and VLC all do while a video
+         * plays); aurwl answers whether one is on a window that is on
+         * screen, and that counts as her being here -- as of now, so the
+         * ten minutes start when the film ends, not two hours ago.
+         * (stream WL's edit; stream C owns this file) */
+        if (c.wl && aurwl_idle_inhibited(c.wl)) last_input_ms = now_ms();
         if (c.screen_off_min > 0 && !screen_dark) {
             int64_t idle = now_ms() - last_input_ms;
             if (idle > (int64_t)c.screen_off_min * 60000) {
