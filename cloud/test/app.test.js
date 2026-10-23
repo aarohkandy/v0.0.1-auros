@@ -260,4 +260,85 @@ test("the request to Claude: fixed model, max_tokens, cached system prompt, stru
   assert.deepEqual(Object.keys(a.output_config.format.schema.properties), ["kind", "missing", "wish_json"]);
 });
 
-void ALL;
+test("kill switch: a budget of 0 answers every wish and ask with the plain 503, no Claude, no counters", async () => {
+  const app = makeApp({ respond: () => wishOut(POTATO), env: { DAILY_BUDGET_USD: "0", ledger: { budgetUsd: 0 } } });
+  const { res, token } = await register(app); // registering still works (the live check needs it)
+  assert.equal(res.status, 200);
+  for (const [path, body] of [["/v1/wish", wishBody("every time I type potato")], ["/v1/ask", { question: "how do I print?" }], ["/v1/wish", null], ["/v1/ask", null]]) {
+    const r = await app.call(path, body, { token, raw: body ? undefined : "garbage" });
+    assert.equal(r.status, 503, path);
+    const b = await r.json();
+    assert.equal(b.text, "Wishes are resting for a little while");
+    assert.ok(b.retry_after >= 3600 && r.headers.get("retry-after"));
+  }
+  assert.equal(app.calls.length, 0, "Claude is never called");
+  const keys = [...app.ledger.s.m.keys()].filter((k) => k.startsWith("q:") || k.startsWith("s:"));
+  assert.deepEqual(keys, [], "no quota or spend counter is touched");
+  const logged = app.logs.map((l) => JSON.parse(l)).filter((l) => l.route === "/v1/wish" || l.route === "/v1/ask");
+  assert.equal(logged.length, 4);
+  for (const l of logged) {
+    assert.equal(l.reason, "off");
+    assert.ok(!("in" in l) && !("out" in l) && !("usd" in l) && !("est" in l), "no tokens, no cost: " + JSON.stringify(l));
+  }
+  assert.equal((await app.call("/v1/wish", wishBody("x"))).status, 401, "a stranger still gets 401");
+  assert.deepEqual(await (await app.call("/v1/health", null, { method: "GET" })).json(), { ok: true, wishes: "resting" });
+  assert.equal((await app.call("/v1/forget", {}, { token })).status, 204, "forget works while resting");
+});
+
+test("kill switch: one variable turns it back on", async () => {
+  const app = makeApp({ respond: () => wishOut(POTATO), env: { DAILY_BUDGET_USD: "5" } });
+  const { token } = await register(app);
+  assert.equal((await app.call("/v1/wish", wishBody("potato"), { token })).status, 200);
+  assert.deepEqual(await (await app.call("/v1/health", null, { method: "GET" })).json(), { ok: true, wishes: "on" });
+  for (const bad of ["", "abc", "-1"]) { // an unreadable value must not switch it on by accident
+    const a = makeApp({ respond: () => wishOut(POTATO), env: { DAILY_BUDGET_USD: bad } });
+    const t = (await register(a)).token;
+    const expected = bad === "" ? 200 : 503;
+    assert.equal((await a.call("/v1/wish", wishBody("potato"), { token: t })).status, expected, `"${bad}"`);
+  }
+});
+
+test("country gate: US, GB (UK), CA, AU by default; register, wish and ask only; forget and health open", async () => {
+  const app = makeApp({ respond: () => wishOut(POTATO), env: { ledger: { registerPerNet: 1000, quotaNew: 1000 } } });
+  const { token } = await register(app);
+  const ok = (c) => app.call("/v1/wish", wishBody("potato"), { token, country: c });
+  for (const c of ["US", "GB", "CA", "AU", "us", "gb"]) assert.equal((await ok(c)).status, 200, c);
+  for (const c of ["DE", "FR", "IN", "XX", "T1", "", null]) {
+    const r = await ok(c);
+    assert.equal(r.status, 403, String(c));
+    assert.deepEqual(await r.json(), { error: "region", text: "Wishes is not available in your country yet." });
+  }
+  assert.equal((await app.call("/v1/ask", { question: "how do I print?" }, { token, country: "DE" })).status, 403);
+  const reg = await app.call("/v1/register", { install_id: newInstallId(), consent_version: "1", pow: { day: dayOf(app.time.t), nonce: "1" } }, { country: "DE", ip: "192.0.2.50" });
+  assert.equal(reg.status, 403, "a blocked country cannot even register");
+  assert.equal((await app.call("/v1/health", null, { method: "GET", country: "DE" })).status, 200);
+  assert.equal((await app.call("/v1/forget", {}, { token, country: "DE" })).status, 204, "anyone may delete her data");
+  const logs = app.logs.join("\n");
+  assert.ok(!/"DE"|"FR"|"IN"|country/.test(logs), "the country itself is not logged");
+});
+
+test("country gate: ALLOW_COUNTRIES configures it; * opens everywhere; Cloudflare's own value wins", async () => {
+  const us = makeApp({ respond: () => wishOut(POTATO), env: { ALLOW_COUNTRIES: "US" } });
+  const { token } = await register(us);
+  assert.equal((await us.call("/v1/wish", wishBody("potato"), { token, country: "US" })).status, 200);
+  assert.equal((await us.call("/v1/wish", wishBody("potato"), { token, country: "GB" })).status, 403);
+  const uk = makeApp({ respond: () => wishOut(POTATO), env: { ALLOW_COUNTRIES: "UK, ca" } });
+  const t2 = (await register(uk, { country: "GB" })).token;
+  assert.equal((await uk.call("/v1/wish", wishBody("potato"), { token: t2, country: "GB" })).status, 200, "UK is read as GB");
+  assert.equal((await uk.call("/v1/wish", wishBody("potato"), { token: t2, country: "US" })).status, 403);
+  const all = makeApp({ respond: () => wishOut(POTATO), env: { ALLOW_COUNTRIES: "*" } });
+  const t3 = (await register(all, { country: null })).token;
+  assert.equal((await all.call("/v1/wish", wishBody("potato"), { token: t3, country: "KP" })).status, 200);
+  // On Workers the edge's request.cf.country is used, not a header a client could send.
+  const req = new Request("https://wishes.test/v1/wish", { method: "POST", headers: { "cf-ipcountry": "US" }, body: "{}" });
+  Object.defineProperty(req, "cf", { value: { country: "DE" } });
+  assert.equal((await us.handler(req)).status, 403);
+});
+
+test("a refusal from Claude is a cannot, with no retry", async () => {
+  const app = makeApp({ respond: () => message(undefined, { stop: "refusal" }) });
+  const { token } = await register(app);
+  const r = await app.call("/v1/wish", wishBody("anything"), { token });
+  assert.deepEqual(await r.json(), { kind: "cannot", missing: "other" });
+  assert.equal(app.calls.length, 1);
+});

@@ -8,6 +8,14 @@
 # the real model on the adversarial set. Without the secrets the deploy is
 # skipped with a notice and the run stays green.
 #
+# The kill switch: while cloud/wrangler.toml has DAILY_BUDGET_USD = "0" (Wishes
+# is not on for anyone yet, decision D14) the deployed Worker answers every wish
+# and ask with the plain 503 and never calls Anthropic. This workflow then
+# proves exactly that live (a registered token's wish -> 503; the Worker's own
+# logs show no token counts or cost) and skips the real-model eval, which would
+# otherwise spend the owner's key on every push. Dispatch with eval=true to run
+# it anyway. To turn Wishes on: set DAILY_BUDGET_USD to the day's dollars and push.
+#
 # Secret values are never printed: they reach wrangler on stdin only.
 name: cloud
 
@@ -21,6 +29,10 @@ on:
       - '.github/workflows/cloud.yml'
   workflow_dispatch:
     inputs:
+      eval:
+        description: 'Run the real-model eval even while the kill switch is on (DAILY_BUDGET_USD = 0)'
+        type: boolean
+        default: false
       probe:
         description: 'Only ask the API which output schemas it compiles (test/schema-probe.mjs)'
         type: boolean
@@ -130,10 +142,19 @@ jobs:
           printf '%s' "$ANTHROPIC_API_KEY" | timeout 120 npx --yes "$WRANGLER" secret put ANTHROPIC_API_KEY
           if [ -n "$ALERT_URL" ]; then printf '%s' "$ALERT_URL" | timeout 120 npx --yes "$WRANGLER" secret put ALERT_URL; fi
 
+      - name: Mode (kill switch on or off)
+        id: mode
+        if: steps.have.outputs.ok == 'true'
+        run: |
+          if grep -Eq '^DAILY_BUDGET_USD[[:space:]]*=[[:space:]]*"0(\.0*)?"' wrangler.toml; then m=off; else m=on; fi
+          echo "expect=$m" >> "$GITHUB_OUTPUT"
+          echo "### Wishes is $m (DAILY_BUDGET_USD in cloud/wrangler.toml)" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Live end to end, with its logs captured
         if: steps.have.outputs.ok == 'true'
         env:
           URL: ${{ steps.deploy.outputs.url }}
+          EXPECT: ${{ steps.mode.outputs.expect }}
           SMOKE_SECRETS_FILE: ${{ runner.temp }}/never-logged.txt
         run: |
           # The new version and its secrets take a few seconds to reach every location.
@@ -161,12 +182,15 @@ jobs:
           else
             echo "log check: none of the token, install id or wish words appear in the service's logs" | tee -a "$GITHUB_STEP_SUMMARY"
             echo "The service's log lines (checked above; counts only):"; cat "$RUNNER_TEMP/service-logs.txt"; echo
+            node test/log-assert.mjs "$RUNNER_TEMP/service-logs.txt" "$EXPECT" > "$RUNNER_TEMP/assert.txt" || assert_failed=1
+            tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/assert.txt"
+            if [ -n "${assert_failed:-}" ]; then echo "::error::The service's logs do not match its mode ($EXPECT)"; exit 1; fi
           fi
           if [ "$smoke" = 3 ]; then echo "::warning::This runner's network had used its 3 registrations today; end-to-end part skipped"; exit 0; fi
           exit "$smoke"
 
       - name: Real model on the acceptance and adversarial sets
-        if: always() && steps.have.outputs.ok == 'true'
+        if: always() && steps.have.outputs.ok == 'true' && (steps.mode.outputs.expect == 'on' || inputs.eval)
         run: timeout 600 npm run live-eval
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.have.outputs.ok == 'true'

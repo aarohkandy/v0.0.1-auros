@@ -9,7 +9,7 @@ import { powString } from "../src/app.js";
 import { ALL } from "./helpers.js";
 
 const base = (process.argv[2] || "").replace(/\/$/, "");
-if (!/^https:\/\//.test(base)) { console.error("usage: node test/smoke.mjs https://<service>"); process.exit(2); }
+if (!/^https:\/\/|^http:\/\/127\.0\.0\.1:/.test(base)) { console.error("usage: node test/smoke.mjs https://<service>"); process.exit(2); }
 
 let failed = 0;
 const check = (ok, what, detail = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${what}${detail ? " — " + detail : ""}`); if (!ok) failed++; };
@@ -25,7 +25,10 @@ const POTATO = "every time I type potato, fill my screen with potatoes";
 const NORTH = "when my laptop points north, make the screen brighter";
 const PRINT = "How do I print a letter?";
 
-check((await fetch(base + "/v1/health")).status === 200, "health");
+const health = await (await fetch(base + "/v1/health")).json().catch(() => ({}));
+const expect = process.env.EXPECT || health.wishes; // "off" = resting (the kill switch), "on" = answering
+const resting = expect === "off" || expect === "resting";
+check(health.ok === true && health.wishes === (resting ? "resting" : "on"), "health", `wishes: ${health.wishes}, expected ${resting ? "resting" : "on"}`);
 check((await post("/v1/wish", wish(POTATO, true))).status === 401, "a wish without a token is refused (401)");
 check((await post("/v1/ask", { question: PRINT }, "A".repeat(22) + "." + "B".repeat(43))).status === 401, "a forged token is refused (401)");
 
@@ -50,24 +53,34 @@ check(reg.status === 200 && /^[\w-]{22}\.[\w-]{43}$/.test(reg.body.token), "regi
 const token = reg.body.token;
 if (process.env.SMOKE_SECRETS_FILE) writeFileSync(process.env.SMOKE_SECRETS_FILE, [token, token.split(".")[0], token.split(".")[1], installId, "potatoes", "points north", "print a letter"].join("\n") + "\n");
 
-let r = await post("/v1/wish", wish(POTATO, true), token);
-const p = r.body?.wish;
-check(r.status === 200 && r.body.kind === "wish" && p.when.type === "typed_word" && /^potato$/i.test(p.when.word) && p.do.some((a) => a.type === "fill_screen" && a.emoji === "🥔"),
-  "potato: typed_word potato -> fill_screen 🥔", `${r.ms} ms ${JSON.stringify(r.body)}`);
-r = await post("/v1/wish", wish(NORTH, true), token);
-const n = r.body?.wish;
-check(r.status === 200 && r.body.kind === "wish" && n.when.type === "sensor" && n.when.sensor === "compass" && n.when.heading === "north" && n.do.some((a) => a.type === "brightness"),
-  "compass: sensor compass north -> brightness", `${r.ms} ms ${JSON.stringify(r.body)}`);
-r = await post("/v1/wish", wish(NORTH, false), token);
-check(r.status === 200 && r.body.kind === "cannot" && r.body.missing === "compass", "no compass: cannot/compass", `${r.ms} ms ${JSON.stringify(r.body)}`);
-r = await post("/v1/wish", wish(POTATO, true), token);
-check(r.status === 429 && r.body.text === "You've made lots of wishes today — more tomorrow", "a new token's 4th wish today: 429", JSON.stringify(r.body));
-r = await post("/v1/ask", { question: PRINT, lang: "en" }, token);
-check(r.status === 200 && r.body.help_page_id === "printing", "ask: printing help page", `${r.ms} ms ${JSON.stringify(r.body)}`);
+let r;
+if (resting) {
+  // The kill switch: a registered token's wish and question get the plain 503, no Claude behind it.
+  r = await post("/v1/wish", wish(POTATO, true), token);
+  check(r.status === 503 && r.body?.text === "Wishes are resting for a little while" && r.body.retry_after > 0, "resting: a registered token's wish -> 503", `${r.ms} ms ${JSON.stringify(r.body)}`);
+  r = await post("/v1/ask", { question: PRINT, lang: "en" }, token);
+  check(r.status === 503 && r.body?.text === "Wishes are resting for a little while", "resting: a registered token's question -> 503", `${r.ms} ms ${JSON.stringify(r.body)}`);
+} else {
+  r = await post("/v1/wish", wish(POTATO, true), token);
+  const p = r.body?.wish;
+  check(r.status === 200 && r.body.kind === "wish" && p.when.type === "typed_word" && /^potato$/i.test(p.when.word) && p.do.some((a) => a.type === "fill_screen" && a.emoji === "🥔"),
+    "potato: typed_word potato -> fill_screen 🥔", `${r.ms} ms ${JSON.stringify(r.body)}`);
+  r = await post("/v1/wish", wish(NORTH, true), token);
+  const n = r.body?.wish;
+  check(r.status === 200 && r.body.kind === "wish" && n.when.type === "sensor" && n.when.sensor === "compass" && n.when.heading === "north" && n.do.some((a) => a.type === "brightness"),
+    "compass: sensor compass north -> brightness", `${r.ms} ms ${JSON.stringify(r.body)}`);
+  r = await post("/v1/wish", wish(NORTH, false), token);
+  check(r.status === 200 && r.body.kind === "cannot" && r.body.missing === "compass", "no compass: cannot/compass", `${r.ms} ms ${JSON.stringify(r.body)}`);
+  r = await post("/v1/wish", wish(POTATO, true), token);
+  check(r.status === 429 && r.body.text === "You've made lots of wishes today — more tomorrow", "a new token's 4th wish today: 429", JSON.stringify(r.body));
+  r = await post("/v1/ask", { question: PRINT, lang: "en" }, token);
+  check(r.status === 200 && r.body.help_page_id === "printing", "ask: printing help page", `${r.ms} ms ${JSON.stringify(r.body)}`);
+}
 r = await post("/v1/forget", {}, token);
 check(r.status === 204, "forget");
 r = await post("/v1/wish", wish(POTATO, true), token);
-check(r.status === 401, "after forget the token is gone (401)");
+// While resting, liveness is not looked up (nothing is touched), so a forgotten token gets the same 503.
+check(r.status === (resting ? 503 : 401), resting ? "after forget, still the plain 503 (nothing is looked up while resting)" : "after forget the token is gone (401)");
 
 console.log(failed ? `${failed} check(s) failed` : "all checks passed");
 process.exit(failed ? 1 : 0);

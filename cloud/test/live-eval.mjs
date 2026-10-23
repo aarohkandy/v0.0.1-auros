@@ -24,7 +24,7 @@ const handler = createApp({
 const app = {
   time,
   call: (path, body, { token } = {}) => handler(new Request("https://eval.test" + path, {
-    method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": "192.0.2.1", ...(token ? { authorization: "Bearer " + token } : {}) }, body: JSON.stringify(body),
+    method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": "192.0.2.1", "cf-ipcountry": "US", ...(token ? { authorization: "Bearer " + token } : {}) }, body: JSON.stringify(body),
   })),
 };
 const { token } = await register(app);
@@ -49,7 +49,7 @@ const rows = [];
 for (const c of CASES) {
   const n = logs.length;
   const r = await handler(new Request("https://eval.test/v1/wish", {
-    method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + token },
+    method: "POST", headers: { "content-type": "application/json", "cf-ipcountry": "US", authorization: "Bearer " + token },
     body: JSON.stringify({ text: c.text, lang: "en", schema: { v: 1, ...ALL }, sensors: c.sensors }),
   }));
   const body = await r.json();

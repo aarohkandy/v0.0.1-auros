@@ -64,7 +64,7 @@ async function service({ maxInflight, mockPort }) {
     res.end(Buffer.from(await r.arrayBuffer()));
   });
   const tokens = [];
-  const app = { time, call: (path, body) => handler(new Request("http://x" + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })) };
+  const app = { time, call: (path, body) => handler(new Request("http://x" + path, { method: "POST", headers: { "content-type": "application/json", "cf-ipcountry": "US" }, body: JSON.stringify(body) })) };
   for (let i = 0; i < 1000; i++) tokens.push((await register(app, { bits: 4 })).token);
   return { server, tokens };
 }
@@ -84,7 +84,7 @@ async function scenario(name, { users, rate, maxInflight, rpm }) {
     amount: users,
     overallRate: rate || undefined,
     timeout: 30,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "cf-ipcountry": "US" },
     requests: [{ setupRequest: (req) => ({ ...req, body, headers: { ...req.headers, authorization: "Bearer " + tokens[i++ % tokens.length] } }) }],
   });
   const errs = {};

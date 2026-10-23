@@ -46,9 +46,9 @@ export function makeApp({ respond = () => message({ kind: "cannot", missing: "ot
   const ledger = new Ledger(new MapStorage(), { budgetUsd: 5, quotaEstablished: 20, quotaNew: 3, establishDays: 7, registerPerNet: 3, maxInflight: 40, ...(env.ledger || {}) });
   const anthropic = new Anthropic({ apiKey: e.ANTHROPIC_API_KEY, fetch: mockFetch(respond, calls), maxRetries: 2, timeout: 8000 });
   const handler = createApp({ env: e, ledger, anthropic, log: (o) => logs.push(JSON.stringify(o)), now: () => time.t });
-  const call = (path, body, { token, ip = "203.0.113.7", method = "POST", raw } = {}) => handler(new Request("https://wishes.test" + path, {
+  const call = (path, body, { token, ip = "203.0.113.7", method = "POST", raw, country = "US" } = {}) => handler(new Request("https://wishes.test" + path, {
     method,
-    headers: { "content-type": "application/json", "cf-connecting-ip": ip, ...(token ? { authorization: "Bearer " + token } : {}) },
+    headers: { "content-type": "application/json", "cf-connecting-ip": ip, ...(country ? { "cf-ipcountry": country } : {}), ...(token ? { authorization: "Bearer " + token } : {}) },
     body: method === "GET" ? undefined : raw ?? JSON.stringify(body),
   }));
   return { handler, call, calls, logs, ledger, time };
@@ -65,9 +65,9 @@ export function solvePow(day, installId, bits) {
 
 export const newInstallId = () => randomBytes(16).toString("base64url");
 
-export async function register(app, { ip, installId = newInstallId(), bits = 8 } = {}) {
+export async function register(app, { ip, installId = newInstallId(), bits = 8, country } = {}) {
   const day = dayOf(app.time.t);
-  const res = await app.call("/v1/register", { install_id: installId, version: "0.1", consent_version: "1", pow: { day, nonce: solvePow(day, installId, bits) } }, { ip });
+  const res = await app.call("/v1/register", { install_id: installId, version: "0.1", consent_version: "1", pow: { day, nonce: solvePow(day, installId, bits) } }, { ip, ...(country !== undefined ? { country } : {}) });
   const body = await res.json();
   return { res, body, token: body.token, installId };
 }
