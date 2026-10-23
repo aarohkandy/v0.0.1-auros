@@ -292,7 +292,10 @@ page() { # start Firefox full screen on the trap page, as her
         PATH=/usr/bin:/bin XDG_RUNTIME_DIR="$xrd" WAYLAND_DISPLAY="$wd" MOZ_ENABLE_WAYLAND=1 \
         firefox --kiosk file:///usr/lib/auros-harden/trap.html >> "$OUT/firefox.txt" 2>&1 &
     i=0; while ! pgrep -u "$u" -x firefox-bin >/dev/null && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done
-    sleep 25
+    # A new profile, software drawing, a busy host: the page is not there
+    # for a good while (a first version looked after 25 s and saw the
+    # window's logo).
+    sleep 70
 }
 gone() { # firefox ended within 15 s?
     i=0; while pgrep -u "$u" -x firefox-bin >/dev/null && [ $i -lt 15 ]; do sleep 1; i=$((i+1)); done
@@ -574,9 +577,11 @@ import sys
 d = open(sys.argv[1], 'rb').read().split(b'\n', 3)
 w, h = map(int, d[1].split()); px = d[3]
 def at(x, y): i = (y * w + x) * 3; return px[i], px[i + 1], px[i + 2]
-pts = [at(x, y) for x, y in ((250, 300), (640, 300), (1000, 300), (640, 500))]
-red = sum(1 for r, g, b in pts if r > 60 and g < 40 and b < 40)
-cream = sum(1 for r, g, b in pts if r > 200 and g > 200 and b > 190)
+# The margins, not the middle: a first-run dialog may sit over the page.
+pts = [at(x, y) for x, y in ((60, 100), (1220, 100), (60, 650), (1220, 650))]
+red = sum(1 for r, g, b in pts if r > 30 and g < 20 and b < 20)
+# cream paper, not the white of a window still starting
+cream = sum(1 for r, g, b in pts if r > 200 and g > 200 and b > 190 and r - b >= 6)
 print('page' if red >= 3 else 'card' if cream >= 3 else 'other')
 EOPY
 shotkinds() { # label
