@@ -73,8 +73,10 @@ C6 (notifications that stay) by a helper: `1c430eb`, `cb52b2c`, `tools/notifytes
 - **P**: `profiles/office.profile` says `allow_tty="yes"`: console prompts nobody can answer.
 - **BT**: `grub.cfg.in:91` still has `single init=/bin/bash` (keyboard-to-root now that
   console login is off).
-- Staging helper's commits (`wt-c-stage`, 9c08822 + 0b67a82) were NOT pushed (its push was
-  denied by the permission system); they need the lead.
+- Staging screens (DESIGN-DIRECTION §5 C item 3) are DONE on main by `c801ca3` (rewrote the same
+  `src/aurscreen/screen.c`: Light tokens, the drawn mark, ui.ttf, no log lines, helper code only
+  on failure, step/minutes). The staging helper's branch `wt-c-stage` (9c08822 + 0b67a82, never
+  pushed) conflicts in 21 places with that rewrite and is superseded: delete it.
 - "Like Windows": the footer is a second bar under the taskbar, not folded into it (ten controls
   and the window buttons do not fit one 56 px bar at 1024). Window drag slop (8 px) not done.
 - F-03 (the X in three looks): the footer's "Close this" is the answer, and the X on Like Windows
