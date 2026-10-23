@@ -108,19 +108,59 @@ which only a **full** (non-pre) release moves. **Only the lead pushes `[latest]`
   SHA) and a timeout on `gate`. Its env comment that "promote reads INSTALLER_SHA256 from this
   file" is stale.
 
+## Session B, later (14:10 UTC): what changed since the first prerelease
+
+- **First prerelease** `v0.1.0-618726b` (above) is old: it has the staging `cannot-measure` bug
+  (fixed in 6917bde) and no fast-path asset. A run was cancelled (ae672fd) and a run (fb82014)
+  cancelled for the same reason. **The release to use is the one built from `6af816a` or later**
+  (run 39966214944); it is published by `[publish 39966214944]` at the commit that carries the
+  allow-list (see "The release gate"). Its tag will be `v0.1.0-6af816a`, assets
+  `AurOS-Setup.exe` (fast path off) and `AurOS-Setup-fastpath.exe`; the lead/F get the URLs and
+  hashes in SESSION-2026-10-23-B.md the moment it exists.
+- **The two installers.** build.yml builds the release installer twice: normal (fast path off,
+  what the website serves) and with `AUROS_FASTPATH=1`; the second is published as the separate
+  asset `AurOS-Setup-fastpath.exe` in the same prerelease, listed in `SHA256SUMS`, hash-checked and
+  `--navtest`ed by the Windows job, and run through the real-Windows e2e by release.yml's
+  `e2e-fastpath` job (informative, not in promote's needs; unsigned). By hand:
+  `gh workflow run e2e.yml -f installer_url=<.../AurOS-Setup-fastpath.exe> -f installer_sha256=<hash> -f variants=base`.
+  Do not put `[fastpath]` in a subject: A2's a5a3786 uses it to turn the fast path ON in the
+  normal exe too.
+- **The release gate (S-11, security review).** `build.yml`: `release` needs `[gate, build, tests,
+  powercut]`; `powercut` is tests.yml's suite `nostick` (four KVM jobs of `tools/powercut-nostick.sh`
+  by instants). release.yml's `which` job runs `tools/releasegate.py` (selftest 14 cases) on the
+  run's jobs for BOTH `[release]` and `[publish]`: build, unit, every gating test green; every
+  `powercut / e2e (...)` job green or named in `.github/ci-allow.txt` (name | expiry date | reason;
+  only power-cut jobs; a past date is no entry; **never for `[latest]`**). Today's only entry:
+  `powercut-nostick-restore`, 3 of 57 checks, S-01/S-02 (A2), until 2026-10-26. Numbers (run
+  39962229132): early/write/commit slices green; restore slice 265 s of test plus ~640 s of
+  setup under load. The suite adds ~10 min to the tests' critical path when runners are busy.
+- **Security review items done on the workflow side.** SEC-004: aptrepo.yml's publish job has
+  `environment: apt-signing` (owner's clicks: OWNER-SETUP 4a-lock). SEC-005: `contents: write`
+  only on jobs that make or fill a release (profiles, othersys, e2e, drill, fleet moved off
+  workflow level); all 90 `actions/*` uses pinned to commit SHAs (SignPath already was);
+  `tools/workflowlint.py` fails a tag-pinned action, workflow-level `contents: write`, a job
+  that names `AUROS_APT_SIGNING_KEY` outside `apt-signing`, an unbounded apt-get, a missing
+  timeout, an unparsable file. Not done: release immutability (needs F/P/H to upload evidence to
+  a draft and publish at the end; OWNER-SETUP 4d says so), moving the apt channel off Releases,
+  the hourly external hash watchdog of `releases/latest/download/AurOS-Setup.exe` (OPS).
+- **Other root-cause fixes this stretch.** tools/apt.sh drops a slow Azure mirror from the
+  second try and CI installs only the 64-bit mingw compiler (278 MB -> ~60 MB): a [release] had
+  died in "room and tools" at 40-200 KB/s. e2e.yml's harness checks install numpy first (F's
+  selftest imported vm.py before the runner step installed it: every e2e died). Ferry's helpers are
+  built with `-fstack-protector-all` (ffhash imported no `__stack_chk_fail`, and the hardening
+  gate failed the build). forge's hardening gate checks only Ferry's ELF files.
+
 ## Open / next
 
 1. The first full chain has not run end to end: `[release] [latest]` has never been pushed
-   (lead only). Exercised so far: build, tests, publish, windows (green), e2e (running),
-   site (red for the BIOS wording above), promote (gate logic checked on fixtures only).
-2. The build of the tip with D14 + wishesoff + signing wiring (run 39927700494) tests that
-   the shell edits did not break storetest/looktest/choicesboottest.
-3. Not yet run for real: the `sign` job (needs the owner's SignPath account), `secrets: inherit`.
-4. Pipeline cuts not done: split nosticktest (16.4 min, the critical path of the tests, into
-   two); overlap the tests with publish/windows/e2e (publish a prerelease after build+unit,
-   KVM suite concurrent; needs a decision, see numbers below).
-5. **homebase's disk was 100% full (122 MB free of 247 GB) at 08:30 UTC.** Not from E
-   (my scratch was 50 MB, removed). Others' services may break; tell the lead/owner.
+   (lead only). `promote` is checked on fixtures and `which`'s gate on fixtures and a fake `gh`.
+2. Exercised for real so far: build, tests, publish, windows, site; e2e runs but the journey has
+   not passed (F). `sign` (needs the owner's SignPath account) and `secrets: inherit` have not run.
+3. Cuts not done: split nosticktest (16.4 min, the critical path of the gating tests); overlap
+   the tests with publish/windows/e2e (publish a prerelease after build+unit; needs a decision).
+4. **homebase's disk was 100% full at 08:30 UTC (94% at 13:15).** Tell the owner if it recurs.
+5. The wrong-SHA e2e proof is not yet on CI: every e2e since 08:30 dies earlier (numpy; M1
+   Windows install). e2e.py raises `Failure` on a mismatch (line ~440), unexercised.
 
 ## Wall clock (measured, run 39905858387, the [release] of 618726b)
 
