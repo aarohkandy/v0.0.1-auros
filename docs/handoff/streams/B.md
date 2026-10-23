@@ -50,11 +50,20 @@ teal one) and `tools/e2e/selftest.py` ("Close AurOS Setup"),
 
 ## Done and pushed (newest first)
 
-- (next commit) B-3: Atkinson Hyperlegible Next 400/700/800 embedded; chevrons
-  drawn, not typed; navtest 14 asks the face for every letter it draws.
-- `29c29da` B-14/B-15: the close question is drawn in the window ("Keep
-  going" / "Stop and undo"; "Keep it and restart later" / "Close and undo"; Esc
-  cancels it), and **Stop** is offered only while nothing has been changed.
+- `bd9505a` the plain zero (the website's fonts; `tools/wizard/fonts.py`).
+- `27a8701` Ready says Windows programs don't run in AurOS; GB figures gone.
+- `0b8b395` **Restart later starts nothing** (engine: `ab_arm`/`ab_disarm`,
+  `ab_choice.arm_later`, `tools/armtest.sh`); **Fix asks her to save first**;
+  the time is "25 to 60 minutes" (hours on an HDD), "Part 3 of 4", plain
+  BitLocker words, "Picked for you".
+- `1750e34` the welcome page's picture (B-16).
+- `f4390d7` Ready with Wi-Fi + drive lock fits; padlock glyph.
+- `aa9f2b3` windows.yml: HW's report step did not parse (`"$w:"`); it had
+  stopped every later windows-source step.
+- `7f4e150` Atkinson Hyperlegible Next 400/700/800 embedded; chevrons drawn;
+  navtest 14 (every letter is in the face).
+- `29c29da` B-14/B-15: the close question drawn in the window; **Stop** only
+  while nothing has been changed.
 - `7a2194f` Narrator reads the new pages (each problem and its fix line).
 - `619d439` preflight: BitLocker read from the DISK (`raw_bitlocker`);
   `raid-volume` and `storage-controller-unknown` stop; ESP needs carried +
@@ -74,6 +83,7 @@ teal one) and `tools/e2e/selftest.py` ("Close AurOS Setup"),
   Files (hash-checked), not the file in Downloads; the copy goes with the task.
 - `30dd557` the space fix: only old temp files; says the size first.
 - `1bd6f6e` an encrypted drive is a stop; nothing decrypts it (D11).
+- `875fd9f` windows-known-bad reads its file from the old repository (pinned by hash).
 - earlier: `ed5381f`..`b4ab898` (three screens, MSAA, honest sizes, ...).
 
 ### Real Windows (proof)
