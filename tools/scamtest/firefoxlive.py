@@ -154,12 +154,20 @@ class Firefox:
         self.home = os.path.join(self.dir, "home")
         os.makedirs(self.home)
         os.makedirs(os.path.join(self.dir, "p"))
+        # Every place Firefox may keep its crash folder is inside this run's own
+        # directory: with XDG_CONFIG_HOME set (GitHub's runners set it) Firefox
+        # writes there instead of under HOME, and a check that looks only under
+        # HOME sees nothing from a crash that did happen.
         e = dict(os.environ, MOZ_HEADLESS="1", HOME=self.home,
+                 XDG_CONFIG_HOME=os.path.join(self.home, ".config"),
+                 XDG_DATA_HOME=os.path.join(self.home, ".local", "share"),
+                 XDG_CACHE_HOME=os.path.join(self.home, ".cache"),
                  # containers and CI runners often forbid the user namespaces
                  # the content sandbox wants; nothing here loads a web page.
                  MOZ_DISABLE_CONTENT_SANDBOX="1")
-        for k in ("MOZ_CRASHREPORTER_DISABLE", "MOZ_CRASHREPORTER", "DISPLAY"):
-            e.pop(k, None)
+        for k in list(e):
+            if k.startswith("MOZ_CRASHREPORTER") or k in ("DISPLAY", "WAYLAND_DISPLAY"):
+                del e[k]
         e.update(env or {})
         self.log = open(os.path.join(self.dir, "out"), "w")
         self.p = subprocess.Popen(
