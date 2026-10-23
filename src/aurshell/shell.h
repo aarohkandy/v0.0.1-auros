@@ -127,6 +127,17 @@ typedef struct {
 enum { WREQ_MOVE = 1, WREQ_MAXIMIZE = 2, WREQ_RESTORE = 4, WREQ_MINIMIZE = 8,
        WREQ_FULLSCREEN = 16, WREQ_UNFULLSCREEN = 32 };
 
+/* A small wobble between press and release is a press, not a drag (DESIGN-DIRECTION,
+ * Input). A window of ours moves by its own title bar only once the pointer is
+ * DRAG_SLOP px from where it went down. A program's own bar asks for the move after
+ * its toolkit's threshold, so that one starts at once. */
+#define DRAG_SLOP 8
+static inline int drag_wobble(int x0, int y0, int x, int y)
+{
+    int dx = x - x0, dy = y - y0;
+    return dx * dx + dy * dy < DRAG_SLOP * DRAG_SLOP;
+}
+
 /* Two faces, not one, at two real weights.
  *
  * The old version of this struct was four SIZES of one file, which is

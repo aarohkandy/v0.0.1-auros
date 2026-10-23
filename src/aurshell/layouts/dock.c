@@ -54,7 +54,7 @@ typedef struct {
     tween mag;              /* 0..1 magnification under the pointer   */
     tween veil;             /* 0..1 the finder's scrim                */
     int   hover;            /* dock slot under the pointer, -1 none   */
-    int   drag, grab_x, grab_y;
+    int   drag, grab_x, grab_y, drag_x0, drag_y0, drag_live;
     uint32_t moved;         /* windows the user has dragged           */
     int   maxed[SHELL_MAX_WINS];    /* a program asked for the whole area  */
     rect  saved[SHELL_MAX_WINS];    /* where it was before                 */
@@ -764,6 +764,7 @@ static void l_request(shell_ctx *c, int i, unsigned rq)
         rect a = win_rect(c, c->screen_w, c->screen_h, i);
         c->focus = i;
         p->drag = i; p->grab_x = c->mouse_x - a.x; p->grab_y = c->mouse_y - a.y;
+        p->drag_live = 1;               /* the program already waited out its own threshold */
     }
 }
 
@@ -834,6 +835,7 @@ static int l_click(shell_ctx *c, int x, int y)
                 if (x > bx - 14.f) { ask_close(c, i); return 1; }   /* close   */
                 if (x > bx - 44.f) { c->wins[i].minimised = 1; return 1; }
                 p->drag = i; p->grab_x = x - a.x; p->grab_y = y - a.y;
+                p->drag_x0 = x; p->drag_y0 = y; p->drag_live = 0;
             }
             return 1;
         }
@@ -850,6 +852,10 @@ static void l_motion(shell_ctx *c, int x, int y)
     if (p->drag >= 0) {
         if (!c->mouse_down) { p->drag = -1; }
         else {
+            if (!p->drag_live) {
+                if (drag_wobble(p->drag_x0, p->drag_y0, x, y)) return;
+                p->drag_live = 1;
+            }
             rect g = win_rect(c, sw, sh, p->drag);
             rect strip = dock_rect(c, sw, sh, -1);
             g.x = clampi(x - p->grab_x, -(g.w - 140), sw - 140);

@@ -153,6 +153,26 @@ static int dragged(rig *r, int dy)
     return slot_of(r, &b) && (b.x != a.x || b.y != a.y);
 }
 
+/* Press on our own title bar, shake the hand a little (nothing past DRAG_SLOP),
+ * let go. 1 if the window stayed exactly where it was. */
+static int held_still(rig *r, int dy)
+{
+    rect a, b;
+    if (!slot_of(r, &a)) return 0;
+    int x = a.x + a.w / 2, y = a.y + dy;
+    r->c.mouse_x = x; r->c.mouse_y = y; r->c.mouse_down = 1;
+    if (r->L->click) r->L->click(&r->c, x, y);
+    static const int sh[][2] = { {3, 3}, {5, -4}, {-4, 5}, {2, -2} };
+    for (unsigned i = 0; i < sizeof sh / sizeof sh[0]; i++) {
+        r->c.mouse_x = x + sh[i][0]; r->c.mouse_y = y + sh[i][1];
+        if (r->L->motion) r->L->motion(&r->c, r->c.mouse_x, r->c.mouse_y);
+    }
+    r->c.mouse_down = 0;
+    if (r->L->motion) r->L->motion(&r->c, r->c.mouse_x, r->c.mouse_y);
+    settle(r); paint(r);
+    return slot_of(r, &b) && b.x == a.x && b.y == a.y;
+}
+
 static int window_buttons_of_ours(const char *look)
 {
     return !strcmp(look, "taskbar") || !strcmp(look, "dock");
@@ -188,6 +208,9 @@ int main(void)
         if (window_buttons_of_ours(look)) {
             make(&r, look, 0, 7);
             ok(look, "a window of ours is dragged by its title bar (the control)", dragged(&r, -18));
+            make(&r, look, 0, 7);
+            ok(look, "a wobble of the hand between press and release is a press, not a drag (8 px)",
+               held_still(&r, -18));
             make(&r, look, 1, 7);
             ok(look, "a program's own bar is not ours to drag: the program asks (below)",
                !dragged(&r, 12));
@@ -215,6 +238,16 @@ int main(void)
         if (!(b.x == a.x + 70 && b.y == a.y + 50))
             printf("      (from %d,%d to %d,%d; wanted %d,%d)\n", a.x, a.y, b.x, b.y, a.x + 70, a.y + 50);
         ok("taskbar", "its title bar's drag moves the window", b.x == a.x + 70 && b.y == a.y + 50);
+        make(&r, "taskbar", 1, 7);
+        slot_of(&r, &a);
+        r.c.mouse_x = a.x + 30; r.c.mouse_y = a.y + 12; r.c.mouse_down = 1;
+        r.L->request(&r.c, 0, WREQ_MOVE);
+        r.L->motion(&r.c, a.x + 30 + 3, a.y + 12 + 2);
+        r.c.mouse_down = 0;
+        r.L->motion(&r.c, a.x + 33, a.y + 14);
+        settle(&r); paint(&r); slot_of(&r, &b);
+        ok("taskbar", "...from the first pixel: the program already waited out its own threshold",
+           b.x == a.x + 3 && b.y == a.y + 2);
 
         ok("taskbar", "it is not maximised to begin with", r.L->maxed(&r.c, 0) == 0);
         r.L->request(&r.c, 0, WREQ_MAXIMIZE);
@@ -248,6 +281,16 @@ int main(void)
         r.L->motion(&r.c, a.x + 100, a.y + 62);
         settle(&r); paint(&r); slot_of(&r, &b);
         ok("dock", "its title bar's drag moves the window", b.x == a.x + 70 && b.y == a.y + 50);
+        make(&r, "dock", 1, 7);
+        slot_of(&r, &a);
+        r.c.mouse_x = a.x + 30; r.c.mouse_y = a.y + 12; r.c.mouse_down = 1;
+        r.L->request(&r.c, 0, WREQ_MOVE);
+        r.L->motion(&r.c, a.x + 30 + 3, a.y + 12 + 2);
+        r.c.mouse_down = 0;
+        r.L->motion(&r.c, a.x + 33, a.y + 14);
+        settle(&r); paint(&r); slot_of(&r, &b);
+        ok("dock", "...from the first pixel: the program already waited out its own threshold",
+           b.x == a.x + 3 && b.y == a.y + 2);
         r.L->request(&r.c, 0, WREQ_MINIMIZE);
         ok("dock", "its minimise button puts it in the dock", r.c.wins[0].minimised == 1);
 

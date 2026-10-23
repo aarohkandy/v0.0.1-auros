@@ -36,6 +36,9 @@ helper of C (C6 below), staging screens (`src/aurscreen`) by another.
 | `5a6cfea` | Flathub programs use Wayland (global flatpak override) | everydaytest |
 | `fa11087` | "Bigger" also sets GTK's `cursor-size` | textsystest 27 |
 | `03ce09a` | **Ferry in the shell**: Whose files?, No files to bring, the USB stick (plug in / which / saving / done), and why Put Windows back could not save her files (`why=`) with "Save my files to a USB stick first". `stick:/dev/NAME` word in `src/aurfirst/request.c` + `answer.sh`. Shots: `docs/shots/ferry/` | welcometest 67 (9 mutants), windowspagetest 16, aurfirsttest +22 (4 mutants), journeytest 308 |
+| `5a58466` `70f436b` | **Wishes hooks (W2)**: the two Wishes buttons in Help (only under `wishes="on"`), every Help sentence fits at 1024x600 and at Bigger; forge builds `aurvoice` only when the profile says `wishes="on"` | welcometest/journeytest, `tools/wishesoff.sh` |
+| `14d8e93` | Settings words row says the real size (100%, 150%), not where the handle sits (17%) | `windowspagetest` 19 |
+| (this one) | **A shaky hand is not a drag**: our own title bar moves a window only once the pointer is 8 px from where it went down (`DRAG_SLOP`, `drag_wobble()` in shell.h); a program's own bar asks after its toolkit's threshold, so that one starts at once | `csdtest` 48 (3 mutants) |
 
 Lead item "Help button never opens the pages" was already fixed by K (`f3c42b0`).
 C6 (notifications that stay) by a helper: `1c430eb`, `cb52b2c`, `tools/notifytest.c` 81.
@@ -65,8 +68,6 @@ C6 (notifications that stay) by a helper: `1c430eb`, `cb52b2c`, `tools/notifytes
 - **S1/PARITY: printers.** ipp-usb registers its printers with avahi-daemon over DNS-SD;
   `build/harden`'s `disable-publishing=yes` refuses that. If a plugged-in IPP-USB printer is
   not in Printers on a booted image, that is why (publish for loopback only).
-- **Wishes hooks (W2), low priority, not started**: Help-panel wish buttons, forge `voice.c` /
-  `-DAUROS_WISHES=1` only under `wishes="on"`; shipped profiles stay `wishes="off"`.
 - **Idle inhibit over D-Bus** (`org.freedesktop.ScreenSaver`): WL did the Wayland protocol; the
   shell owns the bus and does not answer it yet (a film in a program that only uses D-Bus still
   lets the screen go dark after 10 minutes).
@@ -78,11 +79,18 @@ C6 (notifications that stay) by a helper: `1c430eb`, `cb52b2c`, `tools/notifytes
   on failure, step/minutes). The staging helper's branch `wt-c-stage` (9c08822 + 0b67a82, never
   pushed) conflicts in 21 places with that rewrite and is superseded: delete it.
 - "Like Windows": the footer is a second bar under the taskbar, not folded into it (ten controls
-  and the window buttons do not fit one 56 px bar at 1024). Window drag slop (8 px) not done.
+  and the window buttons do not fit one 56 px bar at 1024). Window drag slop (8 px): done (`DRAG_SLOP`).
 - F-03 (the X in three looks): the footer's "Close this" is the answer, and the X on Like Windows
   and Like a Mac windows now really asks the program. Not decided: whether Big and simple / One
   thing at a time should grow an X.
 - G-01 the store itself (GNOME Software) is not ours: text size follows Bigger through GTK.
+- **"Install does nothing" in the store (F's e2e) was not the image**: in the built rootfs
+  (run 40016248247) the Flatpak plugin loads (Flatpak 1.14.5), Flathub is enabled for the system
+  installation it uses (`https://dl.flathub.org/repo/`), the polkit rule has every Flatpak action,
+  and the catalogue lists Flathub apps. The cause was WL's `7381d67` (pointer mapped over the GTK4
+  window's shadow-sized viewport: a small Install button was never hit). I stopped there; I did
+  not watch a transaction reach polkit. `gnome-software --install=` wants a full unique-id
+  (`system/flatpak/flathub/desktop/ID.desktop/stable`), a bare id is refused.
 - Workbench draws a title bar over a program's own (not one of the four looks; `csd` unused there).
 
 ## Performance on a 4 GB 2013 laptop (measured in a VM on homebase EPYC, so ratios, not seconds)
@@ -111,4 +119,4 @@ was found worth cutting. The new office suite is 344 MB installed and does not r
    container and against fake roots, not against a built image.
 2. The two boot checks nobody can run in a container: two VMs, different machine ids (BT);
    `flatpak run` of solitaire and VLC on the capability fix (PARITY did it on 40003821764).
-3. The remaining items above (HWE, W2 hooks, D-Bus idle inhibit, F-03).
+3. The remaining items above (HWE, D-Bus idle inhibit, F-03).

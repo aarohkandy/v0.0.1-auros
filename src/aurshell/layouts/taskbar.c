@@ -51,7 +51,7 @@ typedef struct {
     rect  saved[SHELL_MAX_WINS];    /* geometry from before maximising  */
     tween shade[SHELL_MAX_WINS];    /* 1 on screen, 0 folded into a bar button */
 
-    int   drag_win, drag_dx, drag_dy;
+    int   drag_win, drag_dx, drag_dy, drag_x0, drag_y0, drag_live;
 } tb_priv;
 
 static tb_priv *P(shell_ctx *c) { return (tb_priv *)c->priv; }
@@ -500,6 +500,7 @@ static void l_request(shell_ctx *c, int i, unsigned rq)
         raise_win(c, i);
         c->focus = i;
         p->drag_win = i; p->drag_dx = c->mouse_x - a.x; p->drag_dy = c->mouse_y - a.y;
+        p->drag_live = 1;               /* the program already waited out its own threshold */
     }
 }
 static int l_maxed(const shell_ctx *c, int i)
@@ -1102,6 +1103,7 @@ static int l_click(shell_ctx *c, int x, int y)
         if (pt_in(win_part(c, W, H, i, WP_TITLE), x, y) && !p->maxed[i]) {
             rect a = win_part(c, W, H, i, WP_FRAME);
             p->drag_win = i; p->drag_dx = x - a.x; p->drag_dy = y - a.y;
+            p->drag_x0 = x; p->drag_y0 = y; p->drag_live = 0;
         }
         return 1;
     }
@@ -1119,6 +1121,10 @@ static void l_motion(shell_ctx *c, int x, int y)
     if (p->drag_win >= 0) {
         if (!c->mouse_down || p->drag_win >= c->n_wins) { p->drag_win = -1; }
         else {
+            if (!p->drag_live) {
+                if (drag_wobble(p->drag_x0, p->drag_y0, x, y)) return;
+                p->drag_live = 1;
+            }
             rect g = c->wins[p->drag_win].geom;
             /* A window still placed by the cascade has no rectangle of
              * its own yet: start from where it is, or the first move of
