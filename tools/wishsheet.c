@@ -116,6 +116,7 @@ static void s_mine(shell_ctx *c) { (void)c; rows(4); go(WP_MINE); }
 static void s_mine_many(shell_ctx *c) { (void)c; rows(7); go(WP_MINE); }
 static void s_mine_remove(shell_ctx *c) { (void)c; rows(4); go(WP_MINE); W.removing = 1; }
 static void s_mine_empty(shell_ctx *c) { (void)c; rows(0); go(WP_MINE); }
+static void s_mine_alloff(shell_ctx *c) { (void)c; rows(1); W.all_off = 1; go(WP_MINE); }
 static void s_today(shell_ctx *c) { (void)c;
     W.n_today = 3;
     snprintf(W.today[0].title, sizeof W.today[0].title, "Potatoes"); W.today[0].times = 3;
@@ -135,7 +136,7 @@ static const state STATES[] = {
     { "13-done-now", s_done_now }, { "14-offline", s_offline }, { "15-limit", s_limit },
     { "16-broken", s_broken }, { "17-nomic", s_nomic }, { "18-mine", s_mine },
     { "19-mine-many", s_mine_many }, { "20-mine-remove", s_mine_remove },
-    { "21-mine-empty", s_mine_empty }, { "22-pick-list", s_pick_list },
+    { "21-mine-empty", s_mine_empty }, { "27-mine-alloff", s_mine_alloff }, { "22-pick-list", s_pick_list },
     { "23-pick-picture", s_pick_pic }, { "24-pick-word", s_pick_word },
     { "25-pick-time", s_pick_time }, { "26-today", s_today },
 };

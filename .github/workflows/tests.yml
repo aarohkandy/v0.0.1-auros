@@ -13,6 +13,9 @@
 #          manifesttest, signtest, Ferry's, the console installer's
 #          selftest under Wine, and the data-safety suites that need no
 #          VM: gpttest, committest, bootchaintest
+#   wishes Wishes (W1/W2): wishuitest, wishgallerytest, wishpainttest, wishe2e,
+#          voicetest, each with its deliberate breakages. Apart from `unit`
+#          so that their 15 minutes cannot use up its 30 (build 39976151893).
 #   e2e    one job per end-to-end test, in QEMU with KVM: nosticktest,
 #          powercut-nostick (the power cut in the mode that ships, no
 #          memory stick: four jobs, S-11), powercuttest (the older mode,
@@ -295,21 +298,6 @@ jobs:
              src/aurshell/layouts/[a-z]*.c src/common/theme.c src/common/font.c \
              -I src/aurshell -I src/common -lm
           "$RUNNER_TEMP/looktest" 2>&1 | tee transcripts/looktest.txt
-      - name: wishuitest (Wishes, what she sees and says; then 34 deliberate breakages)
-        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: sh tools/wishuitest.sh 2>&1 | tee transcripts/wishuitest.txt
-      - name: voicetest (aurvoice, her voice stays in memory; 17 deliberate breakages)
-        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: sh tools/voicetest.sh 2>&1 | tee transcripts/voicetest.txt
-      - name: wishgallerytest (every wish she can press is one the engine accepts)
-        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: sh tools/wishgallerytest.sh 2>&1 | tee transcripts/wishgallerytest.txt
-      - name: wishpainttest (no word she has to read is ever cut off; then 8 deliberate breakages)
-        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: sh tools/wishpainttest.sh 2>&1 | tee transcripts/wishpainttest.txt
-      - name: wishe2e (the potato, end to end through W1's real engine)
-        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: sh tools/wishe2e.sh 2>&1 | tee transcripts/wishe2e.txt
       - name: nvramtest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sudo sh tools/nvramtest.sh 2>&1 | tee transcripts/nvramtest.txt
@@ -398,6 +386,55 @@ jobs:
       # The end of each transcript, at the end of the log, which is the
       # part the GitHub tools show (artifacts cannot be fetched from the
       # development container).
+      - name: summary
+        if: ${{ !cancelled() }}
+        run: |
+          for f in transcripts/*.txt; do
+            echo "=== $(basename "$f" .txt)"; tail -n 3 "$f"
+          done
+
+  # Wishes (streams W1 and W2). These tests build and break whole copies of
+  # the tree (every mutant is a sanitized build), about 15 minutes of work; in
+  # the unit job they used up its 30 minutes and cancelled the steps after
+  # them (build 39976151893). Apart, with a limit of their own, they cannot
+  # take the unit gate down. The release gate does not read this job: Wishes
+  # are not in the v0.1 image (D14).
+  wishes:
+    needs: which
+    if: needs.which.outputs.go == 'true' && needs.which.outputs.suite == 'gating'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [ui, voice]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: tools
+        run: |
+          sh tools/apt.sh gcc libc6-dev make python3 pkg-config libdbus-1-dev curl fonts-dejavu-core
+          mkdir -p transcripts
+      - name: wishuitest (Wishes, what she sees and says; then 36 deliberate breakages)
+        if: ${{ !cancelled() && matrix.suite == 'ui' }}
+        run: sh tools/wishuitest.sh 2>&1 | tee transcripts/wishuitest.txt
+      - name: wishgallerytest (every wish she can press is one the engine accepts)
+        if: ${{ !cancelled() && matrix.suite == 'ui' }}
+        run: sh tools/wishgallerytest.sh 2>&1 | tee transcripts/wishgallerytest.txt
+      - name: wishpainttest (no word she has to read is ever cut off; then 8 deliberate breakages)
+        if: ${{ !cancelled() && matrix.suite == 'ui' }}
+        run: sh tools/wishpainttest.sh 2>&1 | tee transcripts/wishpainttest.txt
+      - name: wishe2e (the potato, end to end through W1's real engine)
+        if: ${{ !cancelled() && matrix.suite == 'ui' }}
+        run: sh tools/wishe2e.sh 2>&1 | tee transcripts/wishe2e.txt
+      - name: voicetest (aurvoice, her voice stays in memory; 17 deliberate breakages)
+        if: ${{ !cancelled() && matrix.suite == 'voice' }}
+        run: sh tools/voicetest.sh 2>&1 | tee transcripts/voicetest.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: transcripts-wishes-${{ matrix.suite }}
+          path: transcripts/
+          retention-days: 30
       - name: summary
         if: ${{ !cancelled() }}
         run: |

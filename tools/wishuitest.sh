@@ -88,10 +88,13 @@ wishover.c^a card is taller than half the screen^if (h <= full_h / 2 || lines ==
 wishover.c^the PNG decoder reads past its input^if (s->ip >= s->inn) return -1;^if (0) return -1;
 EOF
 
-n=0; bad=0
-while IFS='^' read -r file what edits; do
-    [ -n "$file" ] || continue
-    n=$((n + 1))
+# The mutants run side by side (MUTANT_JOBS at a time, the processor count by
+# default): each builds a whole sanitized copy, which is most of the time.
+J=${MUTANT_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}
+[ "$J" -gt 6 ] && J=6
+
+mutant() {   # $1 = number, $2 = file, $3 = what it breaks, $4 = the edits; prints its verdict
+    n=$1; file=$2; what=$3; edits=$4
     M="$T/m$n"
     mkdir -p "$M"
     cp -R "$ROOT/src" "$ROOT/tools" "$M/" 2>/dev/null || true
@@ -112,22 +115,36 @@ open(p, "w").write(s)
 PY
     then
         echo "  BAD MUTANT $n ($what): it does not apply"
-        bad=$((bad + 1)); rm -rf "$M"; continue
+        rm -rf "$M"; return
     fi
     if ! build "$M" "$M/bin" 2>"$M/cc.err"; then
         echo "  BAD MUTANT $n ($what): it does not compile"
         head -3 "$M/cc.err"
-        bad=$((bad + 1)); rm -rf "$M"; continue
+        rm -rf "$M"; return
     fi
     # A mutant may crash instead of failing a check; that is red too.
     if (cd "$ROOT" && timeout 120 sh -c '"$1" && "$1-inert"' sh "$M/bin" >"$M/out.log" 2>&1); then
         echo "  SURVIVED  $n: $what"
-        bad=$((bad + 1))
     else
         echo "  killed    $n: $what"
     fi
     rm -rf "$M"
+}
+
+n=0
+while IFS='^' read -r file what edits; do
+    [ -n "$file" ] || continue
+    n=$((n + 1))
+    mutant "$n" "$file" "$what" "$edits" > "$T/res.$n" 2>&1 < /dev/null &
+    [ $((n % J)) -eq 0 ] && wait
 done < "$T/mutants.txt"
+wait
+i=1; bad=0
+while [ "$i" -le "$n" ]; do
+    cat "$T/res.$i"
+    grep -q '^  \(SURVIVED\|BAD MUTANT\)' "$T/res.$i" && bad=$((bad + 1))
+    i=$((i + 1))
+done
 
 echo
 if [ "$bad" -eq 0 ]; then echo "all $n mutants killed"; else echo "$bad of $n mutants SURVIVED or were bad"; exit 1; fi

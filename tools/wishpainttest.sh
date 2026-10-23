@@ -41,14 +41,15 @@ sed -e "s#^font_display .*#font_display = $F/atkinsonnext-800.ttf#" \
 grep -q "atkinsonnext-400" "$T/shell.conf" || { echo "could not point the theme at the repository's fonts"; exit 2; }
 for f in atkinsonnext-400 atkinsonnext-700 atkinsonnext-800; do [ -s "$F/$f.ttf" ] || { echo "no $F/$f.ttf"; exit 2; }; done
 
-run() {   # $1 = binary; prints the CLIPPED lines; nonzero if any
+run() {   # $1 = binary, $2 = a directory of its own for the pictures; prints the CLIPPED lines; nonzero if any
     rc=0
+    mkdir -p "$2"
     for look in rail taskbar dock tiles; do
         for sz in "1366 768 1.0" "1366 768 2.0" "1024 600 1.0" "1024 600 1.5" "1024 600 2.0"; do
-            set -- "$1" $sz
-            WISHSHEET_STRICT=1 HOME="$T" "$1" "$T/shell.conf" "$ROOT/shells/$look.shell" "$PNG" "$2" "$3" "$4" \
-                > "$T/out.txt" 2>&1 || rc=1
-            grep CLIPPED "$T/out.txt" | sed "s/^/  [$4] /" || true
+            set -- "$1" "$2" $sz
+            WISHSHEET_STRICT=1 HOME="$T" "$1" "$T/shell.conf" "$ROOT/shells/$look.shell" "$2" "$3" "$4" "$5" \
+                > "$2/out.txt" 2>&1 || rc=1
+            grep CLIPPED "$2/out.txt" | sed "s/^/  [$5] /" || true
         done
     done
     return $rc
@@ -56,7 +57,7 @@ run() {   # $1 = binary; prints the CLIPPED lines; nonzero if any
 
 echo "== the real tree"
 build "$ROOT" "$T/real"
-if run "$T/real" > "$T/real.log"; then
+if run "$T/real" "$PNG" > "$T/real.log"; then
     echo "  no word is cut off on any page or card, in any look, at any size       ok"
 else
     cat "$T/real.log"; echo "  words are cut off                                                    FAIL"; exit 1
@@ -74,10 +75,12 @@ wish.c^the question's buttons are too narrow for their names^        int yes_w =
 wish.c^every wish gets two lines whatever it says^        int text_h = (need < 2 ? 2 : need > 4 ? 4 : need) * lh_body;^        int text_h = 2 * lh_body;
 wish.c^the offered sentence is not given room^            least = sl + g->group + lh_label + 3 * (int)(18.f * 1.5f);^            least = sl;
 MUT
-n=0; bad=0
-while IFS='^' read -r file what find repl; do
-    [ -n "$file" ] || continue
-    n=$((n + 1))
+# The mutants run side by side (MUTANT_JOBS at a time, the processor count by default).
+J=${MUTANT_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}
+[ "$J" -gt 6 ] && J=6
+
+mutant() {   # $1 = number, $2 = file, $3 = what it breaks, $4 = text to find, $5 = its replacement
+    n=$1; file=$2; what=$3; find=$4; repl=$5
     M="$T/m$n"; mkdir -p "$M"
     cp -R "$ROOT/src" "$ROOT/tools" "$ROOT/shells" "$M/" 2>/dev/null || true
     if ! FILE="$M/src/aurshell/$file" FIND="$find" REPL="$repl" python3 - <<'PY'
@@ -89,16 +92,31 @@ if s.count(a) != 1:
     sys.stderr.write("   find text occurs %d times: %s\n" % (s.count(a), a[:60])); sys.exit(3)
 open(p, "w").write(s.replace(a, b))
 PY
-    then echo "  BAD MUTANT $n ($what): it does not apply"; bad=$((bad + 1)); rm -rf "$M"; continue; fi
+    then echo "  BAD MUTANT $n ($what): it does not apply"; rm -rf "$M"; return; fi
     if ! build "$M" "$M/bin" 2>"$M/cc.err"; then
-        echo "  BAD MUTANT $n ($what): it does not compile"; head -3 "$M/cc.err"; bad=$((bad + 1)); rm -rf "$M"; continue
+        echo "  BAD MUTANT $n ($what): it does not compile"; head -3 "$M/cc.err"; rm -rf "$M"; return
     fi
-    if run "$M/bin" > "$M/out.log" 2>&1; then
-        echo "  SURVIVED  $n: $what"; bad=$((bad + 1))
+    if run "$M/bin" "$M/png" > "$M/out.log" 2>&1; then
+        echo "  SURVIVED  $n: $what"
     else
         echo "  killed    $n: $what"
     fi
     rm -rf "$M"
+}
+
+n=0
+while IFS='^' read -r file what find repl; do
+    [ -n "$file" ] || continue
+    n=$((n + 1))
+    mutant "$n" "$file" "$what" "$find" "$repl" > "$T/res.$n" 2>&1 < /dev/null &
+    [ $((n % J)) -eq 0 ] && wait
 done < "$T/mutants.txt"
+wait
+i=1; bad=0
+while [ "$i" -le "$n" ]; do
+    cat "$T/res.$i"
+    grep -q '^  \(SURVIVED\|BAD MUTANT\)' "$T/res.$i" && bad=$((bad + 1))
+    i=$((i + 1))
+done
 echo
 if [ "$bad" -eq 0 ]; then echo "all $n mutants killed"; else echo "$bad of $n mutants SURVIVED or were bad"; exit 1; fi

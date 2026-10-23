@@ -547,7 +547,8 @@ static void shell_actions(void)
     printf("\nwhat only the shell does\n");
     shell_ctx c;
     fresh(&c);
-    char home[] = "/tmp/wishuitest.home";
+    char home[64];                       /* per process: the mutants run side by side */
+    snprintf(home, sizeof home, "/tmp/wishuitest.%d.home", (int)getpid());
     setenv("HOME", home, 1);
     mkdir(home, 0700);
     drain();
@@ -586,11 +587,14 @@ static void shell_actions(void)
     ok("an action the shell does not do is refused, not faked", strstr(wrote, "\"n\":45,\"ok\":false") != NULL);
     /* A shells directory with a file that is NOT one of the four looks:
      * only the name check stands between it and being applied. */
-    char sdir[] = "/tmp/wishtest.shells";
+    char sdir[64], sfile[96];
+    snprintf(sdir, sizeof sdir, "/tmp/wishtest.%d.shells", (int)getpid());
     mkdir(sdir, 0700);
-    FILE *sf = fopen("/tmp/wishtest.shells/evil.shell", "w");
+    snprintf(sfile, sizeof sfile, "%s/evil.shell", sdir);
+    FILE *sf = fopen(sfile, "w");
     if (sf) { fputs("shell_name=\"evil\"\n", sf); fclose(sf); }
-    sf = fopen("/tmp/wishtest.shells/rail.shell", "w");
+    snprintf(sfile, sizeof sfile, "%s/rail.shell", sdir);
+    sf = fopen(sfile, "w");
     if (sf) { fputs("shell_name=\"rail\"\n", sf); fclose(sf); }
     setenv("AUROS_SHELLS", sdir, 1);
     snprintf(c.layout_id, sizeof c.layout_id, "%s", "taskbar");
@@ -956,7 +960,8 @@ static void emoji(void)
      * same picture out. */
     uint32_t px[37 * 23];
     for (int i = 0; i < 37 * 23; i++) px[i] = (uint32_t)(i * 2654435761u) & 0xFFFFFFu;
-    const char *p = "/tmp/wishuitest.png";
+    char p[64];
+    snprintf(p, sizeof p, "/tmp/wishuitest.%d.png", (int)getpid());
     png_write_rgb(p, px, 37, 23);
     FILE *f = fopen(p, "rb");
     static uint8_t buf[65536];
