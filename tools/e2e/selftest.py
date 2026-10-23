@@ -220,6 +220,25 @@ def test_aur_dry():
         (e2e.Machine, e2e.run, e2e.OVMF_VARS, e2e.AurFlow.wait_text) = saved
 
 
+def test_store_button_colours():
+    """The store's main button is found by its accent colour (OCR on the whole
+    screen missed the word on a gold button, run 40005591638)."""
+    try:
+        import e2e, vision, numpy as np
+    except ImportError:
+        return
+    for rgb in e2e.STORE_ACCENTS:
+        img = np.zeros((800, 1280, 3), np.uint8)
+        img[:] = (24, 28, 34)
+        img[214:252, 887:1004] = rgb                      # the button
+        img[140:160, 300:400] = (200, 200, 200)           # some text-ish clutter
+        got = [b for r in e2e.STORE_ACCENTS for b in vision.find_buttons(img, (240, 100, 800, 330), r)]
+        check(got == [(887, 214, 117, 38)], f"store: a button of accent {rgb} is found, and nothing else")
+    img[214:252, 887:1004] = (24, 28, 34)
+    check(not [b for r in e2e.STORE_ACCENTS for b in vision.find_buttons(img, (240, 100, 800, 330), r)],
+          "store: no button, nothing found")
+
+
 def test_flow_helpers():
     try:
         import e2e
@@ -330,6 +349,7 @@ test_bitlocker_verdict()
 test_timings_summary()
 test_windows_dry()
 test_aur_dry()
+test_store_button_colours()
 test_flow_helpers()
 test_measure()
 test_edge_item()

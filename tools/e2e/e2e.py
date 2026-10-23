@@ -71,6 +71,9 @@ STORE_QUERY = E("STORE_QUERY", "VLC")                 # typed into its search
 STORE_RESULT = E("STORE_RESULT", "VLC")               # the result to open
 STORE_INSTALL = E("STORE_INSTALL", "Install")         # the button that installs
 STORE_OPEN = E("STORE_OPEN", "Open|Launch|Press here to open")  # appears when installed
+# the accents the store's main button can be: AurOS's gold (legacy theme), its
+# green (#0B5D4F light, #5DBB9E dark), the old teal
+STORE_ACCENTS = ((200, 155, 74), (0x0B, 0x5D, 0x4F), (0x5D, 0xBB, 0x9E), (0x7D, 0xD3, 0xC0))
 APP_FILES = E("APP_FILES", "usr/bin/vlc var/lib/flatpak/app/org.videolan.VLC")
 
 # ── which PC (tools/e2e/README.md, "Variants") ──────────────────────
@@ -981,12 +984,20 @@ class Flow:
             if not found:
                 raise Failure(f"no '{STORE_RESULT}' in the search results after three searches")
             self.m.click(*vision.centre(found), label="open result " + STORE_RESULT)
-            # "Install" exactly: OCR would happily match the "Installed" tab
+            # The page's one big button: "Install", then (when done) "Open". Read by
+            # its colour and the word on it, not by hunting the word on the whole
+            # screen: full-screen OCR missed "Install" on a gold button (run
+            # 40005591638) and would also match the "Installed" tab.
             deadline = time.time() + 300
             btn = None
             while time.time() < deadline and not btn:
                 time.sleep(8)
-                btn = vision.find_lone_word(vision.ocr(self.m.screendump()), STORE_INSTALL)
+                img = self.m.screendump()
+                b = self.store_button(img)
+                if b and re.match(r"(?i)\W*" + STORE_INSTALL + r"\W*$", b[1]):
+                    btn = b[0]
+                else:
+                    btn = vision.find_lone_word(vision.ocr(img), STORE_INSTALL)
             if not btn:
                 self.m.shot("store-no-install")
                 raise Failure(f"no '{STORE_INSTALL}' button")
@@ -1001,6 +1012,10 @@ class Flow:
                     if vision.find_text(words, bad):
                         self.m.save(img, "store-" + bad)
                         raise Failure(f"the store says '{bad}': {vision.text_of(words)[:500]}")
+                b = self.store_button(img)
+                if b and re.match(r"(?i)\W*(" + STORE_OPEN + r")\W*$", b[1]):
+                    done = (b[1], b[0])
+                    break
                 for o in STORE_OPEN.split("|"):
                     box = (vision.find_lone_word(words, o) if " " not in o
                            else vision.find_text(words, o))
@@ -1015,6 +1030,18 @@ class Flow:
             time.sleep(25)
             img = self.m.shot("program-open")
             self.log("on screen: " + vision.text_of(vision.ocr(img))[:500])
+
+    def store_button(self, img):
+        """The store's main button on an app's page: (box, what it says), or
+        None. It is a solid block of the theme's accent in the page's header
+        (AurOS's gold, its green, the old teal), read by OCR on its own: a
+        button's few letters are read far better alone than among a screen."""
+        for rgb in STORE_ACCENTS:
+            for b in vision.find_buttons(img, (240, 100, 800, 330), rgb)[:2]:
+                label = vision.text_of(vision.ocr(img, b, psm=7)).strip()
+                if label:
+                    return b, label
+        return None
 
     def shutdown(self):
         with self.rec.phase("aurOS: shut down"):
