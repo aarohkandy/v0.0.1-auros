@@ -1,0 +1,141 @@
+# The hardening, on the real image, booted (tools/hardenboottest.sh).
+#
+# Runs when:
+#   - a build finishes whose image changed something the hardening
+#     depends on (the files in HARDENING_INPUTS below, compared with
+#     the image the previous build made), or whose subject says [harden];
+#   - a push changes the test itself (or this file), or its subject
+#     says [harden]: then the newest build whose artifacts are still
+#     there is tested, without building anything.
+#
+# Evidence: the report is the job summary; the transcripts, serial logs
+# and what each boot recorded are the `hardenboot` artifact.
+# docs/security/HARDENING.md says what each line means.
+name: harden
+
+on:
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: [build]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  HARDENING_INPUTS: '^(build/harden|build/forge|profiles/desktop\.profile|rootfs/etc/(sysctl\.d|modprobe\.d|nftables\.conf|systemd/journald\.conf\.d|avahi|cups)|rootfs/etc/systemd/system/(aurshell\.service|auros-dpkg-repair\.service)|rootfs/usr/lib/auros/(grub\.cfg\.in|bootchain|shell-guard|dpkg-repair)|tools/hardenboottest\.sh|tools/hardentest|\.github/workflows/harden\.yml)'
+
+jobs:
+  which:
+    # Not "the build succeeded": build.yml's conclusion includes its
+    # tests, and an image whose e2e flaked is still an image to check.
+    # Whether the run made an image at all is asked below.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.w.outputs.go }}
+      run-id: ${{ steps.w.outputs.run_id }}
+    steps:
+      - id: w
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          MSG: ${{ github.event.head_commit.message || github.event.workflow_run.head_commit.message }}
+          BEFORE: ${{ github.event.before }}
+          BUILD_RUN: ${{ github.event.workflow_run.id }}
+          BUILD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          R=$GITHUB_REPOSITORY; go=false; rid=""; files=""
+          # Image builds of main, newest first: "run-id sha".
+          gh api "repos/$R/actions/artifacts?name=auros-pieces&per_page=100" \
+            --jq '.artifacts[] | select(.expired == false and .workflow_run.head_branch == "main") | "\(.workflow_run.id) \(.workflow_run.head_sha)"' \
+            > /tmp/builds.txt || true
+          head -5 /tmp/builds.txt
+          SUBJ=${MSG%%$'\n'*}
+          case "$SUBJ" in *'[harden]'*) word=true ;; *) word=false ;; esac
+          if [ "$EVENT" = workflow_run ]; then
+            # Only a build that made an image; compared with the image before it.
+            if grep -q "^$BUILD_RUN " /tmp/builds.txt; then
+              rid=$BUILD_RUN
+              prev=$(awk -v r="$BUILD_RUN" 'f { print $2; exit } $1 == r { f = 1 }' /tmp/builds.txt)
+              [ -n "$prev" ] && files=$(gh api "repos/$R/compare/$prev...$BUILD_SHA" --jq '.files[].filename' || true)
+              [ -z "$prev" ] && word=true   # the first image there is: test it
+            fi
+          else
+            rid=$(head -1 /tmp/builds.txt | cut -d' ' -f1)
+            case "$BEFORE" in
+              ''|0000000000000000000000000000000000000000) files=$(gh api "repos/$R/commits/$GITHUB_SHA" --jq '.files[].filename' || true) ;;
+              *) files=$(gh api "repos/$R/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename' || true) ;;
+            esac
+            # A push that changes the image itself waits for its build
+            # (the workflow_run above); this one only tests the test.
+            files=$(printf '%s\n' "$files" | grep -E '^(tools/hardenboottest\.sh|tools/hardentest|\.github/workflows/harden\.yml)' || true)
+          fi
+          printf '%s\n' "$files" | sed -n '1,40p'
+          if [ -n "$rid" ] && { [ "$word" = true ] || printf '%s\n' "$files" | grep -qE "$HARDENING_INPUTS"; }; then go=true; fi
+          if [ "$word" = true ] && [ -z "$rid" ]; then echo "::error::no build of main has its image left; push with [build]"; exit 1; fi
+          echo "go=$go" | tee -a "$GITHUB_OUTPUT"
+          echo "run_id=$rid" | tee -a "$GITHUB_OUTPUT"
+          [ "$go" = true ] && echo "testing the image of $GITHUB_SERVER_URL/$R/actions/runs/$rid" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+  boot:
+    needs: which
+    if: needs.which.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    # One at a time, queued; the newest waiting one wins, a running one
+    # is never cancelled.
+    concurrency:
+      group: harden-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: KVM, QEMU, OVMF
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+              sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sh tools/apt.sh qemu-system-x86 qemu-utils ovmf gdisk e2fsprogs python3 zstd
+          [ -w /dev/kvm ] || { echo "no usable /dev/kvm"; exit 1; }
+          ls -l /usr/share/OVMF/
+      - uses: actions/download-artifact@v4
+        with:
+          name: auros-pieces
+          path: dl/pieces
+          run-id: ${{ needs.which.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: the image, from its pieces, checked against its hash
+        run: |
+          mkdir -p out
+          ( cd dl/pieces && sha256sum -c --quiet <(grep '^piece ' pieces.txt | awk '{print $4"  "$2}') )
+          cat dl/pieces/auros-desktop.img.gz.* | gzip -dc | cp --sparse=always /dev/stdin out/auros-desktop.img
+          echo "$(cat dl/pieces/image.sha256)  out/auros-desktop.img" | sha256sum -c
+          head -1 dl/pieces/pieces.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          rm -rf dl/pieces
+          df -h /
+      - name: hardenboottest under KVM
+        run: |
+          set +e
+          sudo env PATH="$PATH" HARDEN_REPORT=out/hardenboot.md sh tools/hardenboottest.sh out/auros-desktop.img 2>&1 | tee out/hardenboottest.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          cat out/hardenboot.md >> "$GITHUB_STEP_SUMMARY" || true
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: hardenboot
+          path: |
+            out/hardenboot.md
+            out/hardenboot-evidence.tar.gz
+            out/hardenboottest.txt
+          retention-days: 30

@@ -79,15 +79,20 @@ fi
 #   panic=10       a panic restarts the computer instead of freezing it
 #   fsck.repair=yes  a damaged disk is repaired at start without asking,
 #                  instead of stopping at "requires a manual fsck"
+#   lockdown=integrity  nothing running as root can change the running
+#                  kernel (unsigned modules, /dev/mem, kexec, MSR writes,
+#                  hibernation images). Secure Boot already turns this
+#                  on; the option keeps it on for a PC that has Secure
+#                  Boot switched off. Costs nothing.
 # NOT init_on_free=1: it costs several per cent on every free, for a
 # protection init_on_alloc already mostly gives.
 menuentry 'AurOS' --class auros --id auros {
-    linux  /boot/vmlinuz-@KVER@ root=UUID=@ROOT_UUID@ ro quiet splash console=tty0 console=ttyS0,115200n8 init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes
+    linux  /boot/vmlinuz-@KVER@ root=UUID=@ROOT_UUID@ ro quiet splash console=tty0 console=ttyS0,115200n8 init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes lockdown=integrity
     initrd /boot/initrd.img-@KVER@
 }
 
 menuentry 'AurOS (verbose boot)' --class auros --id auros-verbose {
-    linux  /boot/vmlinuz-@KVER@ root=UUID=@ROOT_UUID@ ro console=tty0 console=ttyS0,115200n8 systemd.show_status=1 init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes
+    linux  /boot/vmlinuz-@KVER@ root=UUID=@ROOT_UUID@ ro console=tty0 console=ttyS0,115200n8 systemd.show_status=1 init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes lockdown=integrity
     initrd /boot/initrd.img-@KVER@
 }
 
@@ -95,12 +100,12 @@ menuentry 'AurOS (verbose boot)' --class auros --id auros-verbose {
 # Ubuntu userland in this image still expects systemd, so this entry is
 # for appliance and kiosk builds where the service set is entirely ours.
 menuentry 'AurOS (aurinit, experimental)' --class auros --id auros-aurinit {
-    linux  /boot/vmlinuz-@KVER@ root=UUID=@ROOT_UUID@ ro init=/usr/sbin/aurinit console=tty0 console=ttyS0,115200n8 init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes
+    linux  /boot/vmlinuz-@KVER@ root=UUID=@ROOT_UUID@ ro init=/usr/sbin/aurinit console=tty0 console=ttyS0,115200n8 init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes lockdown=integrity
     initrd /boot/initrd.img-@KVER@
 }
 
 menuentry 'AurOS (recovery shell)' --class recovery --id auros-recovery {
-    linux  /boot/vmlinuz-@KVER@ root=UUID=@ROOT_UUID@ ro single init=/bin/bash console=tty0 console=ttyS0,115200n8 init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes
+    linux  /boot/vmlinuz-@KVER@ root=UUID=@ROOT_UUID@ ro single init=/bin/bash console=tty0 console=ttyS0,115200n8 init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes lockdown=integrity
     initrd /boot/initrd.img-@KVER@
 }
 @PREVIOUS@

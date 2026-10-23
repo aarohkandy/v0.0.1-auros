@@ -129,7 +129,7 @@ fi
 # ── 2. the kernel command line, on every way AurOS can start ─────────
 say ""
 say "Kernel command line"
-KOPTS="init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes"
+KOPTS="init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes lockdown=integrity"
 check_lines() { # label file pattern
     lines=$(grep -E "$3" "$2" 2>/dev/null)
     if [ -z "$lines" ]; then bad "$1" "no kernel line in ${2#"$RFS"/}"; return; fi
