@@ -360,6 +360,24 @@ cmd_encrypt_pass() {
 
 # ── the boot set on the EFI partition (THEFT.md section 2) ─────────
 
+# AurOS's menu (/boot/grub/grub.cfg) as the EFI partition's own copy: it
+# is read from the EFI partition, starts the kernels kept there, and
+# carries the lock on every kernel line. Refused (exit 1, nothing
+# written) unless every kernel line was converted and nothing outside a
+# comment still reads /boot.
+convert_menu() { # IN OUT ESPUUID ROOTUUID PARTUUID
+    local in=$1 out=$2 espuuid=$3 rootuuid=$4 partuuid=$5 n
+    sed -e "s#^search --no-floppy --fs-uuid --set=root $rootuuid\$#search --no-floppy --fs-uuid --set=root $espuuid#" \
+        -e 's#/boot/vmlinuz-#/auros/vmlinuz-#g; s#/boot/initrd.img-#/auros/initrd.img-#g' \
+        -e 's#(\$root)/boot/grub/grubenv#($root)/auros/grubenv#g' \
+        -e 's#configfile /boot/grub/grub.cfg#configfile /auros/grub.cfg#g' \
+        -e "s#\\(root=UUID=[^ ]*\\)#\\1 auros.lock=PARTUUID=$partuuid#" \
+        -e 's#^source /etc/auros/grub-theme.cfg#source /auros/grub-theme.cfg#' \
+        "$in" > "$out" || return 1
+    n=$(grep -cE '^[[:space:]]*linux[[:space:]]+/auros/vmlinuz-.* auros\.lock=PARTUUID=' "$out")
+    [ "$n" -ge 1 ] && ! grep -v '^[[:space:]]*#' "$out" | grep -q '/boot/'
+}
+
 cmd_boot_sync() {
     local cfg=/boot/grub/grub.cfg out espuuid rootuuid partuuid k n
     [ "$(conf armed)" = 1 ] || exit 0
@@ -378,17 +396,7 @@ cmd_boot_sync() {
         done
     done
     out="$ESP/auros/grub.cfg.new"
-    sed -e "s#^search --no-floppy --fs-uuid --set=root $rootuuid\$#search --no-floppy --fs-uuid --set=root $espuuid#" \
-        -e 's#/boot/vmlinuz-#/auros/vmlinuz-#g; s#/boot/initrd.img-#/auros/initrd.img-#g' \
-        -e 's#(\$root)/boot/grub/grubenv#($root)/auros/grubenv#g' \
-        -e 's#configfile /boot/grub/grub.cfg#configfile /auros/grub.cfg#' \
-        -e "s#\\(root=UUID=[^ ]*\\)#\\1 auros.lock=PARTUUID=$partuuid#" \
-        -e 's#^source /etc/auros/grub-theme.cfg#source /auros/grub-theme.cfg#' \
-        "$cfg" > "$out" || die "boot-sync: could not write the menu"
-    # Every kernel line must start from the EFI partition and carry the
-    # lock, and nothing outside a comment may still read /boot.
-    n=$(grep -cE '^[[:space:]]*linux[[:space:]]+/auros/vmlinuz-.* auros\.lock=PARTUUID=' "$out")
-    [ "$n" -ge 1 ] && ! grep -v '^[[:space:]]*#' "$out" | grep -q '/boot/' \
+    convert_menu "$cfg" "$out" "$espuuid" "$rootuuid" "$partuuid" \
         || { rm -f "$out"; die "boot-sync: the menu did not convert cleanly; the old one stays"; }
     for k in $(sed -n 's#^[[:space:]]*linux[[:space:]]\{1,\}/auros/\(vmlinuz-[^ ]*\) .*#\1#p' "$out"); do
         [ -f "$ESP/auros/$k" ] || { rm -f "$out"; die "boot-sync: $k is not on the EFI partition"; }
@@ -411,20 +419,39 @@ cmd_boot_sync() {
 # The three stubs grub reads first. Each tries the menu on the EFI
 # partition, and falls back to the one on AurOS's own partition, so a
 # missing or half-written /auros still starts a plain AurOS.
-stubs_write() { # ESPUUID ROOTUUID
-    local d
-    for d in AurOS BOOT ubuntu; do
-        [ -f "$ESP/EFI/$d/grub.cfg" ] || continue
-        cat > "$ESP/EFI/$d/grub.cfg.new" <<EOF
+# What the firmware's grub reads first, in each of the three directories
+# (build/mkimage writes the plain version; this is the same with the boot
+# set kept on this partition first). IF NOTHING OF AUROS IS THERE, THE
+# FIRMWARE GETS THE MACHINE BACK, as in build/mkimage's stub: a bare
+# "grub>" prompt is a screen she cannot do anything with, and `exit`
+# hands the machine to the firmware, which starts the next entry in its
+# list: Windows. A menu that ends hands it back the same way.
+stub_text() { # ESPUUID ROOTUUID
+    cat <<EOF
 search --no-floppy --fs-uuid --set=root $1
 if [ -f (\$root)/auros/grub.cfg ]; then
   set prefix=(\$root)/auros
   configfile (\$root)/auros/grub.cfg
+  exit
 fi
-search --no-floppy --fs-uuid --set=root $2
-set prefix=(\$root)/boot/grub
-configfile (\$root)/boot/grub/grub.cfg
+if search --no-floppy --fs-uuid --set=root $2 ; then
+  set prefix=(\$root)/boot/grub
+  configfile (\$root)/boot/grub/grub.cfg
+else
+  echo
+  echo "  AurOS is not on this computer any more."
+  echo "  This computer will start what comes next."
+  sleep 6
+fi
+exit
 EOF
+}
+
+stubs_write() { # ESPUUID ROOTUUID
+    local d
+    for d in AurOS BOOT ubuntu; do
+        [ -f "$ESP/EFI/$d/grub.cfg" ] || continue
+        stub_text "$1" "$2" > "$ESP/EFI/$d/grub.cfg.new"
         sync; mv -f "$ESP/EFI/$d/grub.cfg.new" "$ESP/EFI/$d/grub.cfg"
     done
 }
@@ -482,5 +509,7 @@ case "${1:-}" in
     new-rescue-code) cmd_new_rescue_code ;;
     repin)           cmd_repin ;;
     boot-sync)       cmd_boot_sync ;;
+    stub-text)       stub_text "${2:?ESPUUID}" "${3:?ROOTUUID}" ;;                       # for tools/theftunit.sh
+    convert-menu)    convert_menu "${2:?IN}" "${3:?OUT}" "${4:?ESPUUID}" "${5:?ROOTUUID}" "${6:?PARTUUID}" ;;
     *) sed -n '2,30s/^#  \{0,1\}//p' "$0" >&2; exit 2 ;;
 esac

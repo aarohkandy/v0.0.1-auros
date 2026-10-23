@@ -83,6 +83,10 @@ if [ "${1:-}" = --mutants ]; then
     vmmutant harness-no-poweroff  '/\[poweroff\]/s/grep -q "THEFT poweroff"/true/'
     vmmutant harness-no-done      '/\[done\]/s/grep -q "THEFT pass done" &&/true \&\&/'
     vmmutant harness-no-timeout   '/\[timeout\]/s/! printf .*grep -q "THEFT pass TIMEOUT" &&/true \&\&/'
+    mutant stub-no-exit       rootfs/usr/lib/auros/lock/lockctl '/^exit$/s/exit/:/'
+    mutant stub-no-else       rootfs/usr/lib/auros/lock/lockctl 's/AurOS is not on this computer any more/AurOS is here/'
+    mutant stub-menu-no-exit  rootfs/usr/lib/auros/lock/lockctl '/configfile (\\$root)\/auros\/grub.cfg$/{n;d;}'
+    mutant convert-no-lock    rootfs/usr/lib/auros/lock/lockctl 's/ auros\.lock=PARTUUID=\$partuuid#/#/'
     mutant small-keys         src/aurshell/lockpin.c 's/int kw = (int)(84 \* k)/int kw = (int)(40 * k)/'
     mutant repin-ignored      rootfs/usr/lib/auros/lock/lockctl 's/^    \[ -s "\$REPIN" \] || exit 0/    exit 0/'
     echo
@@ -214,7 +218,7 @@ for t in sh cat sed grep printf mkdir sleep cryptsetup blkid blockdev dumpe2fs e
     p=$(command -v "$t") && ln -sf "$p" "$T/rb/$t"
 done
 ln -sf "$(command -v bash)" "$T/rb/bash"
-enc_init() { env -i PATH="$T/rb" bash "$ENCINIT" "$@" 2>&1; }
+enc_init() { env -i PATH="$T/rb" AUROS_LOCK_NOAES="${AUROS_LOCK_NOAES:-0}" bash "$ENCINIT" "$@" 2>&1; }
 out=$(enc_init "$D"); rc=$?
 [ "$rc" = 0 ] && ! echo "$out" | grep -q 'not found' && echo "$out" | grep -q 'as asked' \
     && ok "encrypt-init runs with only the tools an initramfs has, and its header check passes" \
@@ -448,6 +452,47 @@ JARGON=$(sed -n "/^JARGON='/,/'\$/p" "$SRC/tools/plainwords.sh" | tr -d "\n'" | 
 words=$(sed -n '/^static const char \*title_of/,/^static int wrap/p' "$SRC/src/aurshell/lockpin.c" \
         | grep -o '"[^"]*"' | grep -iwE "${JARGON:-partition}" || true)
 [ -z "$words" ] && ok "no word from EASY.md's list on the page" || bad "no jargon on the page" "$words"
+
+echo
+echo "  the EFI partition's start files"
+ESPU=ABCD-1234; ROOTU=0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0; PARTU=80632cff-c8ae-4036-ab78-6e608aa8da9c
+stub=$(bash "$LOCKCTL" stub-text "$ESPU" "$ROOTU")
+printf '%s\n' "$stub" > "$T/stub.cfg"
+# IF NOTHING OF AUROS IS THERE the firmware gets the machine back (as
+# build/mkimage's stub does): an else branch that says so and ends in
+# `exit`, instead of a bare grub> prompt she cannot use.
+printf '%s\n' "$stub" | awk '/^else$/{e=1} e&&/^  sleep 6$/{s=1} e&&s&&/^fi$/{f=1} f&&/^exit$/{x=1} END{exit !x}' \
+    && printf '%s\n' "$stub" | grep -q 'AurOS is not on this computer any more' \
+    && ok "the stub, when no AurOS is found, says so and exits to the firmware" \
+    || bad "the stub exits to the firmware when no AurOS is found" "$stub"
+printf '%s\n' "$stub" | grep -A1 'configfile (\$root)/auros/grub.cfg' | grep -q '^  exit$' \
+    && ok "a menu that ends hands the machine back to the firmware" || bad "a menu that ends exits" "$stub"
+[ "$(printf '%s\n' "$stub" | sed -n '1p')" = "search --no-floppy --fs-uuid --set=root $ESPU" ] \
+    && ok "the stub starts from the EFI partition's own menu" || bad "the stub starts from the EFI partition"
+if command -v grub-script-check >/dev/null 2>&1; then
+    grub-script-check "$T/stub.cfg" >/dev/null 2>&1 && ok "grub accepts the stub's syntax (grub-script-check)" || bad "grub accepts the stub's syntax" "$(grub-script-check "$T/stub.cfg" 2>&1 | head -3)"
+else ok "(grub-script-check is not installed here: the stub's syntax is checked on Actions)"; fi
+
+# The real, current menu template, converted for the EFI partition.
+M="$T/menu"
+mkdir -p "$M/boot/grub" "$M/etc" "$M/usr/lib/auros"
+cp "$SRC/rootfs/usr/lib/auros/grub.cfg.in" "$M/usr/lib/auros/"
+printf 'UUID=%s  /  ext4  defaults  0 1\nUUID=%s  /boot/efi  vfat  umask=0077  0 2\n' "$ROOTU" "$ESPU" > "$M/etc/fstab"
+for v in 6.8.0-9-generic 6.8.0-10-generic; do : > "$M/boot/vmlinuz-$v"; : > "$M/boot/initrd.img-$v"; done
+python3 -I "$SRC/rootfs/usr/lib/auros/bootchain" menu --root "$M" --running none >/dev/null 2>&1
+CFG="$M/boot/grub/grub.cfg"
+if [ -s "$CFG" ] && bash "$LOCKCTL" convert-menu "$CFG" "$T/esp.cfg" "$ESPU" "$ROOTU" "$PARTU"; then
+    nl=$(grep -cE '^[[:space:]]*linux[[:space:]]' "$CFG")
+    nc=$(grep -cE "^[[:space:]]*linux[[:space:]]+/auros/vmlinuz-.* auros\.lock=PARTUUID=$PARTU( |\$)" "$T/esp.cfg")
+    [ "$nl" -ge 4 ] && [ "$nl" = "$nc" ] && ok "the current menu converts: all $nl kernel lines start from the EFI partition and carry the lock" \
+        || bad "every kernel line converts" "$nl lines, $nc converted"
+    ! grep -v '^[[:space:]]*#' "$T/esp.cfg" | grep -q '/boot/' && grep -q "^search --no-floppy --fs-uuid --set=root $ESPU\$" "$T/esp.cfg" \
+        && grep -q 'save_env --file (\$root)/auros/grubenv' "$T/esp.cfg" && ! grep -q '(\$root)/boot/grub/grubenv' "$T/esp.cfg" \
+        && ok "its own copy: nothing reads /boot, the environment block is the EFI partition's" || bad "the converted menu reads only the EFI partition" "$(grep -n '/boot/' "$T/esp.cfg" | head -3)"
+    if command -v grub-script-check >/dev/null 2>&1; then
+        grub-script-check "$T/esp.cfg" >/dev/null 2>&1 && ok "grub accepts the converted menu's syntax (grub-script-check)" || bad "grub accepts the converted menu" "$(grub-script-check "$T/esp.cfg" 2>&1 | head -3)"
+    fi
+else bad "the current menu converts for the EFI partition" "bootchain or convert-menu refused: $(python3 -I "$SRC/rootfs/usr/lib/auros/bootchain" menu --root "$M" --running none 2>&1 | head -2)"; fi
 
 echo
 if [ "$fail" -eq 0 ]; then echo "  $checked checks, all ok"; exit 0; fi
