@@ -205,7 +205,7 @@ jobs:
       - name: wishuitest (Wishes, what she sees and says; then 23 deliberate breakages)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/wishuitest.sh 2>&1 | tee transcripts/wishuitest.txt
-      - name: voicetest (aurvoice: her voice stays in memory; 12 deliberate breakages)
+      - name: voicetest (aurvoice, her voice stays in memory; 12 deliberate breakages)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/voicetest.sh 2>&1 | tee transcripts/voicetest.txt
       - name: wishgallerytest (every wish she can press is one the engine accepts)
