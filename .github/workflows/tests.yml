@@ -145,7 +145,10 @@ jobs:
     needs: which
     if: needs.which.outputs.go == 'true' && needs.which.outputs.suite == 'gating'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 45, not 30: a timeout shows as "cancelled" and the release gate reads it
+    # as a failure; run 40001908921's unit spent 5 minutes on one artifact
+    # download under load before it began and was cut at exactly 30.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: tools
