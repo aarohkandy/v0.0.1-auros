@@ -347,7 +347,10 @@ cmd_encrypt_pass() {
     # until it is over (set-pin), so the two never meet.
     opens_with "$dev" "$TEMP_KEY" 0 || die "the pass is not finished and the temporary key is gone"
     say "encrypting the rest of the drive, at idle priority"
-    ionice -c3 nice -n 19 cryptsetup reencrypt --resume-only --batch-mode \
+    # --disable-udev: libdevmapper otherwise waits, at 0% CPU for ever, for
+    # a udev answer that only dmsetup's rules give, and this image has
+    # none (measured in the VM: the pass sat in a semaphore wait).
+    ionice -c3 nice -n 19 cryptsetup --disable-udev reencrypt --resume-only --batch-mode \
         --key-file <(printf '%s' "$TEMP_KEY") "$dev" >/dev/null 2>&1 \
         || die "the pass stopped; it carries on at the next start"
     say "the whole drive is encrypted"
