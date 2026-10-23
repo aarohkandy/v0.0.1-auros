@@ -26,8 +26,8 @@ say who holds the rest. The hand-offs with the exact strings are in `docs/handof
 
 | Item | Status | Where / commit |
 |---|---|---|
-| LIC-1 source and offer | **Done for `v0.1.0-618726b`**: `sources-v0.1.0-618726b` published and verified from its public copy (539 source packages, 2.7 GB); tool, workflow, tests (`build/sources`, `sources.yml`, `tools/legal/sourcestest.py`: 34 cases, 7 mutants). Open: stream E wires `sources.yml` into `release.yml` and `promote`; the owner's mailbox replaces `CONTACT_EMAIL` | 4225a73, run 39975787998 |
-| LIC-2 licenses page and footers | **Done**: `website/licenses.html`, footers on all five pages, link under both Get buttons, `check.py` fails without them; in-OS help page. Open: installer Licenses button (B), Settings > About link (C) | b1766ec, 1fc9cac |
+| LIC-1 source and offer | **Done for `v0.1.0-618726b`**: `sources-v0.1.0-618726b` published and verified from its public copy (539 source packages, 2.7 GB); tool, workflow, tests (`build/sources`, `sources.yml`, `tools/legal/sourcestest.py`: 43 cases, 10 mutants; the sources workflow also sweeps every three hours, so no release stays without sources). Open: stream E wires `sources.yml` into `release.yml` and `promote`; the owner's mailbox replaces `CONTACT_EMAIL` | 4225a73, run 39975787998 |
+| LIC-2 licenses page and footers | **Done** (v2 after the skeptic review, `REVIEWS.md`): `website/licenses.html`, footers on all five pages, link under both Get buttons, `check.py` fails without them; in-OS help page. Open: installer Licenses button (B), Settings > About link (C) | b1766ec, 1fc9cac |
 | LIC-3 installer notices | **Done in the repo**: `docs/legal/notices/NOTICES.txt`, `docs/RELINK.md`. Open: B embeds resources 200 and 202; A2's `STAGING-CONTENTS.txt` (the sources job already adds the build host's glibc) | b1766ec |
 | LIC-4 TERMS vs GPL | **Done** (rewritten: licenses win, firmware, no use restriction) | 5aec982 |
 | LIC-5 / TM-2 Canonical | Mark hygiene **done** (`check.py`, `marks` job); letter drafted (`CANONICAL-LETTER.md`, owner optional) | b1766ec, 68273c8 |
