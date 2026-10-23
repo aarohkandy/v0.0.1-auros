@@ -78,15 +78,15 @@ while IFS='|' read -r _label _val _xdg _def; do
         ok) : ;;
         off-volume)
             note files skipped "$_label" \
-                "Windows kept this folder on another drive ('$_raw'), which is not part of this computer's disk; copy it across by hand"
+                "Windows kept this folder on another drive ('$_raw'), which is not part of this computer's disk. Copy it across by hand."
             continue ;;
         unc)
             note files skipped "$_label" \
-                "Windows kept this folder on a network drive ('$_raw'); copy it across by hand"
+                "Windows kept this folder on a network drive ('$_raw'). Copy it across by hand."
             continue ;;
         unresolved)
             note files skipped "$_label" \
-                "the registry points it at '$_raw', which Ferry could not turn into a real path -- reported rather than guessed"
+                "Windows says this folder is at '$_raw', which AurOS could not find on this computer. Copy it across by hand if you need it."
             continue ;;
         missing)
             note files info "$_label" \

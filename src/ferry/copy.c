@@ -274,11 +274,11 @@ static void placed_note(const struct job *j, const char *rel, const char *cand,
 {
     char msg[NAME_LIMIT + 200];
     if (n > 0)
-        snprintf(msg, sizeof msg, "a different file with this name was already "
+        snprintf(msg, sizeof msg, "A different file with this name was already "
                  "here, so this one is beside it as \"%s\"%s.", cand,
                  shortened ? " (a shorter name: the full one was too long for AurOS)" : "");
     else if (shortened)
-        snprintf(msg, sizeof msg, "came across with a shorter name, \"%s\": "
+        snprintf(msg, sizeof msg, "It came across with a shorter name, \"%s\": "
                  "its name was too long for AurOS.", cand);
     else
         return;
@@ -321,7 +321,7 @@ static void commit(void)
         }
         if (placed < 0) {
             unlinkat(p->dfd, p->tmp, 0);
-            note("blocked", p->j, p->rel, "could not be saved on this computer.");
+            note("blocked", p->j, p->rel, "It could not be saved on this computer.");
             p->j->failed++;
             missing_any = 1;
         } else {
@@ -433,8 +433,8 @@ static void copy_one(struct job *j, int sfd, int dfd, const char *name,
         unlinkat(dfd, tmp, 0);
         close(df);
         close(sf);
-        note("skipped", j, rel, "is kept online by OneDrive, not on this computer, "
-             "so it could not come across. It is still in your OneDrive.");
+        note("skipped", j, rel, "Windows lists it, but what is in it is not on this "
+             "computer (OneDrive may keep it online), so it could not come across.");
         j->online++;
         missing_any = 1;
         goto done;
@@ -452,14 +452,14 @@ unwritable:
     if (df >= 0) close(df);
     unlinkat(dfd, tmp, 0);
     if (sf >= 0) close(sf);
-    if (!out_of_room) note("blocked", j, rel, "could not be saved on this computer.");
+    if (!out_of_room) note("blocked", j, rel, "It could not be saved on this computer.");
     j->failed++;
     missing_any = 1;
     goto done;
 unreadable:
     if (df >= 0) { close(df); unlinkat(dfd, tmp, 0); }
     if (sf >= 0) close(sf);
-    note("blocked", j, rel, "could not be read from the Windows drive.");
+    note("blocked", j, rel, "It could not be read from the Windows drive.");
     j->unreadable++;
     missing_any = 1;
 done:
@@ -520,7 +520,7 @@ static void walk(struct job *j, int sfd, int dfd, char *rel, size_t rlen,
 
     if (!d) {
         if (c >= 0) close(c);
-        if (!copy) { note("blocked", j, rel, "this folder could not be read from the Windows drive."); missing_any = 1; }
+        if (!copy) { note("blocked", j, rel, "This folder could not be read from the Windows drive."); missing_any = 1; }
         return;
     }
     rewinddir(d);           /* the dup shares sfd's offset: the plan pass left it at the end */
@@ -546,18 +546,18 @@ static void walk(struct job *j, int sfd, int dfd, char *rel, size_t rlen,
         size_t sub = rlen + (rlen ? 1 : 0) + nl;
 
         if (fstatat(sfd, name, &st, AT_SYMLINK_NOFOLLOW) != 0) {
-            if (!copy) { note("blocked", j, rel, "could not be read from the Windows drive."); missing_any = 1; j->unreadable++; }
+            if (!copy) { note("blocked", j, rel, "It could not be read from the Windows drive."); missing_any = 1; j->unreadable++; }
             goto next;
         }
         if (S_ISDIR(st.st_mode)) {
             if (in_list(name, skip_dirs, nskipd)) goto next;
             if (depth >= MAX_DEPTH) {
-                if (!copy) { note("blocked", j, rel, "is inside too many folders to bring across."); missing_any = 1; }
+                if (!copy) { note("blocked", j, rel, "It is inside too many folders to bring across."); missing_any = 1; }
                 goto next;
             }
             int cs = openat(sfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
             if (cs < 0) {
-                if (!copy) { note("blocked", j, rel, "this folder could not be read from the Windows drive."); missing_any = 1; }
+                if (!copy) { note("blocked", j, rel, "This folder could not be read from the Windows drive."); missing_any = 1; }
                 goto next;
             }
             int cd = -1;
@@ -565,7 +565,7 @@ static void walk(struct job *j, int sfd, int dfd, char *rel, size_t rlen,
                 char used[NAME_LIMIT + 1];
                 cd = dest_dir(dfd, name, used);
                 if (cd < 0) {
-                    note("blocked", j, rel, "this folder could not be made on this computer.");
+                    note("blocked", j, rel, "This folder could not be made on this computer.");
                     missing_any = 1;
                     if (errno == ENOSPC || errno == EDQUOT) out_of_room = 1;
                     close(cs);
@@ -595,17 +595,17 @@ static void walk(struct job *j, int sfd, int dfd, char *rel, size_t rlen,
                     disp_total++;
                     work_total += st.st_size + FILE_COST;
                 } else if (!strcmp(cls, "placeholder")) {
-                    note("skipped", j, rel, "is kept online by OneDrive, not on this "
+                    note("skipped", j, rel, "It is kept online by OneDrive, not on this "
                          "computer, so it could not come across. It is still in your OneDrive.");
                     j->online++;
                     missing_any = 1;
                 } else if (!strcmp(cls, "encrypted")) {
-                    note("blocked", j, rel, "is locked with Windows' own encryption, "
+                    note("blocked", j, rel, "It is locked with Windows' own encryption, "
                          "so only Windows can open it.");
                     j->locked++;
                     missing_any = 1;
                 } else if (!strcmp(cls, "unreadable")) {
-                    note("blocked", j, rel, "could not be read from the Windows drive.");
+                    note("blocked", j, rel, "It could not be read from the Windows drive.");
                     j->unreadable++;
                     missing_any = 1;
                 }
@@ -734,7 +734,7 @@ int main(int argc, char **argv)
         if (jobs[i].srcfd < 0) {
             /* A link where a folder should be, or a folder we cannot
              * open: this one is reported, the others still come. */
-            note("blocked", &jobs[i], "", "this folder could not be read from the Windows drive.");
+            note("blocked", &jobs[i], "", "This folder could not be read from the Windows drive.");
             missing_any = 1;
             continue;
         }
@@ -749,7 +749,7 @@ int main(int argc, char **argv)
         if (!dry_run) {
             if (mkdir_p(j->dst) != 0 ||
                 (dfd = open(j->dst, O_RDONLY | O_DIRECTORY | O_CLOEXEC)) < 0) {
-                note("blocked", j, "", "the folder for these could not be made on this computer.");
+                note("blocked", j, "", "The folder for these could not be made on this computer.");
                 missing_any = 1;
                 continue;
             }

@@ -384,6 +384,27 @@ runit 1 "$WIN" "$TMP/run-home"
 eq "some files online-only: exit 2 (\"some things could not be brought across\")" "$?" 2
 runit 2 "$TMP/hib" "$TMP/run-home"
 eq "a hibernated Windows: exit 3 (refused, nothing read)" "$?" 3
+# What she reads while it runs, and afterwards.
+mkdir -p "$TMP/plain-home"; hers "$TMP/plain-home"
+FERRY_CHOICES="$TMP/run-choices" FERRY_STATE="$TMP/state-plain" FERRY_ROOT="$WIN" \
+    FERRY_HOME="$TMP/plain-home" FERRY_OWNER="$OWNER" ferry run --auto --plain > "$TMP/plain.out" 2>&1
+eq "--plain starts with a plain sentence" "$(head -1 "$TMP/plain.out")" \
+   "Looking at the Windows part of this computer."
+eq "--plain prints nothing but plain sentences (no paths, no arrows, no file names)" \
+   "$(grep -cvE '^(Looking at the Windows part of this computer\.|Copying your [A-Za-z]+: [0-9,]+ of [0-9,]+ files\.( (Less than a minute|About (a|[0-9]+) minutes?|About (an|[0-9]+) hours?) left\.)?|Bringing your bookmarks across\.)$' "$TMP/plain.out")" 0
+assert "...and Ferry's own chatter is in its log" grep -q '── files ──' "$TMP/state-plain/ferry.log"
+R="$TMP/plain-home/What came from Windows.txt"
+assert "her report is in her Home" test -s "$R"
+assert "...and it is hers" sh -c "[ \"\$(stat -c %U '$R')\" = '$OWNER' ]"
+assert "...it says how many files each folder brought" grep -qE '^  Desktop +[0-9]+ files?$' "$R"
+assert "...it names each file that did not come, and why, in her words" \
+    sh -c "grep -q 'Documents/Taxes/2022.pdf' '$R' && grep -q 'It is kept online by OneDrive' '$R'"
+assert "...it names the folder Windows kept on another drive" grep -q '^  Videos$' "$R"
+assert "...it lists her Wi-Fi networks, and no password" \
+    sh -c "grep -q 'HomeNet' '$R' && ! grep -q 'hunter2' '$R'"
+refute "...and has no jargon in it" \
+    grep -qiE 'reparse|placeholder|hydrat|ntfs|manifest|registry|stage|->|exit [0-9]' "$R"
+
 mkdir -p "$TMP/run-ro"; chmod 0555 "$TMP/run-ro"
 runit 3 "$WIN" "$TMP/run-ro/home"
 eq "her files could not be copied at all: exit 1, never 'partial'" "$?" 1

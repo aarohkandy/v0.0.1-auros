@@ -92,6 +92,12 @@ mutant ferry 'if [ "$_name" = files ]; then RUN_RC=1;' 'if false; then RUN_RC=1;
 mutant copy.c '    if (disp_total > 0 && came == 0 && !dry_run) return 1;' '    (void)came;' \
     "her files could not be copied at all: exit 1, never 'partial'" root
 
+# Plain words (commit 3).
+mutant ferry '        exec 3>&1 >>"$FERRY_STATE/ferry.log" 2>&1' '        exec 3>&1' \
+    "--plain prints nothing but plain sentences"
+mutant ferry-files '"Windows kept this folder on another drive' '"the registry redirects this folder to another drive' \
+    "...and has no jargon in it"
+
 # Root: the escalation the lead's review named.
 mutant copy.c 'if (setgroups(1, &gg) || setresgid(g, g, g) || setresuid(u, u, u))' \
     'if (0)' "nothing was written through her symlinks into a root-owned folder" root

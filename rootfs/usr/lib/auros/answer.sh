@@ -145,7 +145,10 @@ case "$word" in
     else
         : > "$OUT/import.log"
         chmod 0644 "$OUT/import.log" 2>/dev/null
-        /usr/bin/ferry run --auto >>"$OUT/import.log" 2>&1
+        # --plain: import.log, whose newest line is what she reads while
+        # it runs, gets only plain sentences; Ferry's own chatter goes to
+        # /var/lib/ferry/ferry.log.
+        /usr/bin/ferry run --auto --plain >>"$OUT/import.log" 2>&1
         # CAPTURED BEFORE ANYTHING ELSE RUNS. `$?` inside an else
         # branch is the status of the last command executed, which
         # after one line of reporting is the reporting.

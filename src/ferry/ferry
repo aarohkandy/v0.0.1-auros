@@ -22,7 +22,9 @@
 #  refused before any stage starts, with the reason and the fix.
 #
 #    ferry detect [...]        find Windows (read-only), print JSON
-#    ferry run [--auto]        mount, run the automatic stages, report;
+#    ferry run [--auto] [--plain]
+#                              mount, run the automatic stages, report
+#                              (--plain: only her plain lines on stdout);
 #                              exit 0 all came, 2 something did not (it is
 #                              in the report), 3 refused (hibernated or
 #                              dirty volume), 1 could not import at all
@@ -115,10 +117,23 @@ stage_if_needed() {
     esac
 }
 
+# What she reads, one short line at a time: the welcome panel shows the
+# newest line of whatever `ferry run --plain` prints. Everything else
+# Ferry says goes to STATE/ferry.log, for whoever helps her.
+plain() { [ "${FERRY_PLAIN_FD:-}" = 3 ] && printf '%s\n' "$*" >&3; return 0; }
+
 cmd_run() {
-    _auto=1
-    for _a in "$@"; do case "$_a" in --auto) _auto=1 ;; --all) _auto=0 ;; esac; done
+    _auto=1 _plain=0
+    for _a in "$@"; do
+        case "$_a" in --auto) _auto=1 ;; --all) _auto=0 ;; --plain) _plain=1 ;; esac
+    done
     ferry_state_init
+    if [ "$_plain" = 1 ]; then
+        exec 3>&1 >>"$FERRY_STATE/ferry.log" 2>&1
+        FERRY_PLAIN_FD=3; export FERRY_PLAIN_FD
+        echo "=== ferry run $(now) ==="
+    fi
+    plain "Looking at the Windows part of this computer."
     ensure_mounted
     # The gate: refuse the whole run on a bad volume, once, up front, so
     # the user gets one clear message instead of five stage failures.
@@ -128,11 +143,17 @@ cmd_run() {
     stage_if_needed wifi     ferry-wifi
     stage_if_needed settings ferry-settings
     stage_if_needed files    ferry-files
+    plain "Bringing your bookmarks across."
     stage_if_needed firefox  ferry-firefox
 
     maybe_unmount
     printf '\n'
     "$SELF/ferry-report" ${FERRY_STATE:+--state "$FERRY_STATE"}
+    # Her own copy of what happened, in her Home, written as her.
+    resolve_target
+    "$SELF/ferry-report" ${FERRY_STATE:+--state "$FERRY_STATE"} --plain |
+        as_her sh -c 'cat > "$1/What came from Windows.txt"' sh "$FERRY_HOME" ||
+        warn "could not write the report into $FERRY_HOME"
     say "migration run complete (exit $RUN_RC)"
     exit "$RUN_RC"
 }

@@ -19,6 +19,8 @@
 #    ferry-report              human-readable
 #    ferry-report --json       machine-readable, for the welcome UI
 #    ferry-report --brief      just the headline counts
+#    ferry-report --plain      the page she reads ("What came from
+#                              Windows.txt" in her Home): no jargon
 # ═══════════════════════════════════════════════════════════════════
 set -eu
 . "$(dirname "$0")/ferry-common.sh"
@@ -29,6 +31,7 @@ while [ $# -gt 0 ]; do
     if [ "${_consumed:-0}" -gt 0 ]; then shift "$_consumed"; continue; fi
     case $1 in
         --brief) MODE=brief; shift ;;
+        --plain) MODE=plain; shift ;;
         -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) die "unknown option '$1'" ;;
     esac
@@ -172,7 +175,53 @@ emit_json() {
     printf '}\n'
 }
 
+# The page she reads. Written for her, in her words: what came, folder
+# by folder; what did not, file by file, each with the reason and what
+# she can do; what came under another name; and the passwords, said
+# plainly. Read from the same ledger as everything else.
+emit_plain() {
+    printf 'What came from Windows\n\n'
+    _rows=$(all_notes)
+
+    printf 'Your folders\n'
+    _folders=$(printf '%s\n' "$_rows" | awk -F'\t' '$1=="files" && $2=="info" && $4 ~ /^[0-9]+ copied, [0-9]+ already here/ {
+            split($4, w, " "); n = w[1] + w[3]
+            printf "  %-12s %d file%s\n", $3, n, n == 1 ? "" : "s" }')
+    printf '%s\n' "${_folders:-  No folders came across.}"
+
+    if printf '%s\n' "$_rows" | grep -q '^firefox/profile	'; then
+        printf '\nYour web browser\n  Your Firefox bookmarks, history and settings came across.\n'
+    fi
+
+    _miss=$(printf '%s\n' "$_rows" | awk -F'\t' '($1=="files"||$1=="firefox") && ($2=="skipped"||$2=="blocked") && $3 != "Room"')
+    if [ -n "$_miss" ]; then
+        printf '\nWhat did not come across\n'
+        printf '%s\n' "$_miss" | while IFS='	' read -r _c _s _i _d; do
+            printf '  %s\n      %s\n' "$_i" "$_d"
+        done
+    fi
+    _room=$(printf '%s\n' "$_rows" | awk -F'\t' '$3=="Room"' | cut -f4)
+    [ -z "$_room" ] || printf '\n%s\n' "$_room"
+
+    _moved=$(printf '%s\n' "$_rows" | awk -F'\t' '($1=="files"||$1=="firefox") && $2=="partial" && $3 ~ /\//')
+    if [ -n "$_moved" ]; then
+        printf '\nFiles that came across under another name\n'
+        printf '%s\n' "$_moved" | while IFS='	' read -r _c _s _i _d; do
+            printf '  %s\n      %s\n' "$_i" "$_d"
+        done
+    fi
+
+    printf '\nPasswords\n'
+    printf '  Saved passwords never come across from Windows, on purpose.\n'
+    printf '  Websites will ask for each one once.\n'
+    _nets=$(printf '%s\n' "$_rows" | awk -F'\t' '$1 ~ /^wifi\// { printf "%s%s", sep, $3; sep = ", " }')
+    [ -z "$_nets" ] || printf '  Wi-Fi networks Windows knew: %s.\n  Each will ask for its password once.\n' "$_nets"
+
+    printf '\nWindows is still on this computer, unchanged.\n'
+}
+
 case "$MODE" in
+    plain) emit_plain ;;
     human) emit_human ;;
     brief) emit_brief ;;
     json)  emit_json ;;

@@ -88,11 +88,16 @@ gate checks every ELF in /usr/lib/ferry).
    (a tree, and a real NTFS loop volume Ferry mounts itself, OneDrive
    attributes and cloud tags written by ntfs-3g, volume byte-identical
    after); 3/11 with the shipped unit.
-2. Commit 3 plain words: `ferry run --plain` (chatter → STATE/ferry.log,
-   her lines on stdout), `ferry-report --plain` → "What came from
-   Windows.txt" in her Home (as her), answer.sh uses --plain. Parked
-   versions of `ferry`/`ferry-report` were in the scratchpad
-   (`r-park/c3/`); if gone, re-derive from this description.
+2. DONE commit 3 plain words: `ferry run --plain` (answer.sh uses it):
+   import.log gets only plain sentences ("Looking at the Windows part
+   of this computer.", "Copying your Pictures: 1,200 of 5,000 files.
+   About 4 minutes left.", "Bringing your bookmarks across."); Ferry's
+   chatter → /var/lib/ferry/ferry.log. `ferry-report --plain` →
+   "What came from Windows.txt" in her Home, written as her: files per
+   folder, every file that did not come with the reason in a whole
+   sentence, renamed ones, Wi-Fi network names, the passwords sentence.
+   Suggest to the welcome panel's owner: its line "written down in the
+   report" could say "in “What came from Windows” in your Home folder".
 3. Commit 4 bookmarks: `chromemarks.c` (written, untested) → Edge/Chrome
    `Bookmarks` JSON → bookmarks.html. Plan: one Firefox profile "from
    Windows" made the default (profiles.ini/installs.ini rewritten as her,
