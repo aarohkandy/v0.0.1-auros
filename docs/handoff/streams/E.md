@@ -150,6 +150,21 @@ which only a **full** (non-pre) release moves. **Only the lead pushes `[latest]`
   built with `-fstack-protector-all` (ffhash imported no `__stack_chk_fail`, and the hardening
   gate failed the build). forge's hardening gate checks only Ferry's ELF files.
 
+- **What a release now has to be (release.yml `which`, for `[release]` and `[publish]`, prerelease or
+  full).** (1) `tools/releasegate.py`: build, unit and every gating test green; every power-cut job
+  green or on `.github/ci-allow.txt`, which excuses a PRERELEASE only. (2) `.github/release-requires.txt`:
+  the built commit has each listed hash as an ancestor (956af4a TM-1, 6917bde cannot-measure,
+  54b783b blank Firefox, e1c8015 lockdown); add a line when a fix lands that nothing may ship
+  without. (3) the gating matrix is built in tests.yml's `which` (suite `gating`: 12 jobs incl.
+  updateboottest, windowsboottest, rollbacktest, bootlocktest; six lanes) and stops on a duplicate
+  label (two jobs of one name upload one artifact name and the second fails).
+- **Candidate run 40001908921 (445de27) -> tag `v0.1.0-445de27`**, built after the first gated try
+  (39975129610, ea34dc4: AurOS-Setup.exe fb60c603...13de, AurOS-Setup-fastpath.exe 39469c1f...51c1)
+  found four reds, each with a cause and a fix: windowsboottest case C (test-only: the control's
+  GRUB entry needed `--unrestricted` once the menu was locked; 6fb53d9), updatepolicytest (test-only:
+  matched a comment; S5's 61fbe40), putbacktest (R's e55c41f), the power-cut restore slice (green
+  there; A2's 50d623c). Do not use ea34dc4's build.
+
 ## Open / next
 
 1. The first full chain has not run end to end: `[release] [latest]` has never been pushed
