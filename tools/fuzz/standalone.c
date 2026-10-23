@@ -76,6 +76,7 @@ int main(int argc, char **argv)
             if (run_file(argv[i]) == 0) ran++; else bad++;
         }
     }
-    printf("%s: ran %d input(s)%s\n", argv[0], ran, bad ? ", some unreadable" : "");
+    /* stderr: fuzz_hive points stdout at /dev/null */
+    fprintf(stderr, "%s: ran %d input(s)%s\n", argv[0], ran, bad ? ", some unreadable" : "");
     return bad ? 1 : 0;
 }
