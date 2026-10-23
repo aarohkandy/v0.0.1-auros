@@ -39,7 +39,7 @@ def owners(info_dir):
     for fn in os.listdir(info_dir):
         if not fn.endswith(".list"):
             continue
-        pkg = fn[:-5].split(":")[0]
+        pkg = re.split(r"[:@]", fn[:-5])[0]     # libc6:amd64.list, or libc6@amd64.list as the sources workflow stores it
         with open(os.path.join(info_dir, fn), encoding="utf-8", errors="replace") as fh:
             for l in fh:
                 p = l.strip().lstrip("/")
@@ -100,7 +100,7 @@ def selftest():
     bad = 0
     try:
         info = os.path.join(d, "info"); os.makedirs(info)
-        open(os.path.join(info, "libc6:amd64.list"), "w").write("/usr/lib/x86_64-linux-gnu/libc.so.6\n/usr/lib\n")
+        open(os.path.join(info, "libc6@amd64.list"), "w").write("/usr/lib/x86_64-linux-gnu/libc.so.6\n/usr/lib\n")
         open(os.path.join(info, "ntfs-3g.list"), "w").write("/usr/bin/ntfsinfo\n")
         open(os.path.join(info, "init.list"), "w").write("/usr/sbin/init\n")   # Ubuntu's own package called init must not claim ours
         open(os.path.join(info, "libnew1.list"), "w").write("/usr/lib/x86_64-linux-gnu/libnew.so.1\n")

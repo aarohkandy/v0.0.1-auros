@@ -226,6 +226,9 @@ jobs:
               'rootfs/var/lib/dpkg/status' 'rootfs/etc/auros/build-warnings' 'rootfs/opt/firefox/application.ini' \
               'rootfs/usr/lib/os-release' 'rootfs/etc/issue' 'rootfs/etc/lsb-release' 'rootfs/var/lib/dpkg/info/*.list' || true
           test -s meta/var/lib/dpkg/status || { echo "::error::the rootfs artifact has no dpkg database"; exit 1; }
+          # dpkg names some file lists <package>:<architecture>.list; an artifact may not hold a colon in a name
+          # (the first real run failed on binutils-common:amd64.list), so the colon becomes @ (stagingcheck.py reads both)
+          for f in meta/var/lib/dpkg/info/*:*; do [ -e "$f" ] && mv "$f" "$(dirname "$f")/$(basename "$f" | tr ':' '@')"; done
           rm -f dist/rootfs.tar.zst
           grep -c '^Package: ' meta/var/lib/dpkg/status | sed 's/$/ packages in the image/'
           cat meta/etc/auros/build-warnings 2>/dev/null || true
