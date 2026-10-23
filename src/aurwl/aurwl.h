@@ -171,6 +171,14 @@ int         aurwl_key_utf8(const aurwl *c, uint32_t evdev_code, char *out, size_
  * a cursor blinking in a text field. */
 uint32_t    aurwl_damage_seq(const aurwl *c);
 
+/* While something is being dragged and its program gave it a picture: that
+ * picture, and where its top-left corner goes relative to the pointer. NULL
+ * otherwise. The shell paints it above everything, under the cursor. Pointer
+ * and button events go on being given to aurwl_pointer_*; while a drag runs
+ * they steer it instead of reaching any program, and a button RELEASE must
+ * be passed on even when it happens off every window, or the drag never ends. */
+surface    *aurwl_drag_icon(aurwl *c, int *dx, int *dy);
+
 /* 1 while a program that is playing something has asked the screen to stay
  * on (zwp_idle_inhibitor_v1) AND the window it asked it for is on screen.
  * The shell asks this where it decides the person has gone away: a film is

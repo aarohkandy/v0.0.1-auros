@@ -178,6 +178,7 @@ struct aurwl_win {
     int                 mapped;
     int                 dead;
     int                 opaque_fmt;   /* the last buffer was XRGB: every pixel opaque */
+    int                 off_x, off_y; /* sum of wl_surface.attach offsets: a drag icon's hotspot */
 
     /* xdg */
     struct wl_resource *xdg_surface;
@@ -303,7 +304,27 @@ struct aurwl {
      * wl_pointer.enter and the one that gets motion and buttons. */
     aurwl_win          *ptr_surf;
     int                 btns_down;    /* for the implicit grab           */
+    uint32_t            btn_serial;   /* serial of the last button press sent: start_drag needs it */
+
+    /* DRAG AND DROP (wl_data_device.start_drag). While one is running the
+     * pointer belongs to it: no wl_pointer event reaches any client, and
+     * the surface under the pointer is told enter/motion/leave/drop
+     * instead. */
+    struct {
+        int                 active;
+        struct wl_resource *source;      /* the wl_data_source being dragged  */
+        aurwl_win          *origin;      /* where it started                  */
+        aurwl_win          *icon;        /* the picture that follows the pointer, or NULL */
+        aurwl_win          *target;      /* the surface that last got `enter` */
+        struct wl_resource *dev;         /* the target client's data device   */
+        struct wl_resource *offer;       /* the offer it was handed           */
+        uint32_t            serial;      /* of that enter                     */
+        char                mime[64];    /* what the target accepted, "" none */
+        uint32_t            dst_actions, dst_pref, chosen;
+        int                 dropped;     /* `drop` sent; waiting for `finish` */
+    } drag;
     int                 ptr_x, ptr_y; /* surface-local, last sent        */
+    int                 ptr_rx, ptr_ry; /* the window's surface coordinates, last given */
 
     /* clipboard: the one data source currently offered as the selection */
     struct wl_resource *selection;
@@ -431,6 +452,7 @@ static void offer_retire(struct wl_resource *offer)
 static struct wl_client *win_client(aurwl_win *w);
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+static int64_t clamp64(int64_t v, int64_t lo, int64_t hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 /* ── wl_region ──────────────────────────────────────────────────── */
 /* Regions describe where a surface is opaque and where it accepts
@@ -1029,6 +1051,8 @@ static aurwl_win *pick(aurwl_win *s, int x, int y, int *lx, int *ly, int depth)
 static void surface_map(aurwl_win *w);
 static void surface_unmap(aurwl_win *w);
 static void ptr_leave(aurwl *c);
+static void drag_cancel(aurwl *c);
+static void drag_leave(aurwl *c);
 
 static void buffer_gone(struct wl_listener *l, void *data)
 {
@@ -1197,6 +1221,9 @@ static void cache_pending(aurwl_win *w)
     k->in_kind = p->in_kind;
     k->in_x0 = p->in_x0; k->in_y0 = p->in_y0; k->in_x1 = p->in_x1; k->in_y1 = p->in_y1;
 
+    k->dx = (int)clamp64((int64_t)k->dx + p->dx, -(1 << 20), 1 << 20);   /* attach offsets add up until applied */
+    k->dy = (int)clamp64((int64_t)k->dy + p->dy, -(1 << 20), 1 << 20);
+    p->dx = p->dy = 0;
     p->attached = 0; p->buffer = NULL; p->has_damage = 0;
     watch_buffer(w, NULL);
 }
@@ -1277,6 +1304,8 @@ static void apply_state(aurwl_win *w, surf_state *st, int depth)
     cur->in_kind = st->in_kind;
     cur->in_x0 = st->in_x0; cur->in_y0 = st->in_y0; cur->in_x1 = st->in_x1; cur->in_y1 = st->in_y1;
 
+    w->off_x = (int)clamp64((int64_t)w->off_x + st->dx, -(1 << 20), 1 << 20);
+    w->off_y = (int)clamp64((int64_t)w->off_y + st->dy, -(1 << 20), 1 << 20);
     if (st->attached) {
         if (st->buffer) {
             irect cp; int resized;
@@ -1420,6 +1449,11 @@ static void surface_free_res(struct wl_resource *r)
     aurwl_win *w = wl_resource_get_user_data(r);
     if (!w) return;
     aurwl *c = w->c;
+    if (c->drag.active) {
+        if (c->drag.origin == w) drag_cancel(c);     /* nothing to drag from */
+        else if (c->drag.target == w) drag_leave(c);
+        if (c->drag.icon == w) c->drag.icon = NULL;
+    }
     if (c->focus == w)     c->focus = NULL;
     if (c->ptr_surf == w)  c->ptr_surf = NULL;
     if (c->ptr_focus == w) { c->ptr_focus = NULL; c->ptr_surf = NULL; }
@@ -1964,6 +1998,8 @@ typedef struct {
     struct wl_resource *res;
     char                mimes[16][64];
     int                 n_mimes;
+    uint32_t            actions;      /* wl_data_device_manager dnd actions it allows */
+    int                 has_actions;
     struct wl_list      link;
 } data_source;
 
@@ -1975,7 +2011,18 @@ static void dsrc_offer(struct wl_client *cl, struct wl_resource *r, const char *
     s->n_mimes++;
 }
 static void dsrc_set_actions(struct wl_client *cl, struct wl_resource *r, uint32_t a)
-{ (void)cl; (void)r; (void)a; }
+{
+    (void)cl; data_source *s = wl_resource_get_user_data(r);
+    if (!s) return;
+    if (a & ~7u) {
+        wl_resource_post_error(r, WL_DATA_SOURCE_ERROR_INVALID_ACTION_MASK,
+                               "action mask %u has bits that are not actions", a);
+        return;
+    }
+    s->actions = a; s->has_actions = 1;
+}
+
+static void drag_source_gone(aurwl *c, struct wl_resource *src);
 static const struct wl_data_source_interface data_source_impl = {
     .offer = dsrc_offer, .destroy = noop_destroy, .set_actions = dsrc_set_actions,
 };
@@ -1985,6 +2032,7 @@ static void dsrc_gone(struct wl_resource *r)
     if (!s) return;
     int was_selection = (s->c->selection == r);
     if (was_selection) s->c->selection = NULL;
+    drag_source_gone(s->c, r);
     /* Any offer still pointing at this source now points at freed
      * memory. A paste from a menu that was open when the copying
      * application quit would have written through it -- which is a
@@ -2012,8 +2060,31 @@ static void dsrc_gone(struct wl_resource *r)
     free(s);
 }
 
+static void drag_actions_changed(aurwl *c);
+
+/* Only the offer handed to the drag's current target means anything here;
+ * a clipboard offer, or an old one, is ignored as it always was. */
+static int is_drag_offer(aurwl *c, struct wl_resource *r)
+{ return c->drag.active && c->drag.offer == r; }
+
 static void doffer_accept(struct wl_client *cl, struct wl_resource *r, uint32_t serial, const char *m)
-{ (void)cl; (void)r; (void)serial; (void)m; }
+{
+    (void)cl;
+    /* The compositor is reached through the offer's source: offers keep no
+     * back-pointer, and the drag state lives in the compositor. */
+    struct wl_resource *src = wl_resource_get_user_data(r);
+    data_source *ds = src ? wl_resource_get_user_data(src) : NULL;
+    aurwl *c = ds ? ds->c : NULL;
+    if (!c || !is_drag_offer(c, r) || serial != c->drag.serial) return;
+    if (m && *m) {
+        /* Only what the source offered can be accepted. */
+        int ok = 0;
+        for (int i = 0; i < ds->n_mimes; i++) if (!strcmp(ds->mimes[i], m)) ok = 1;
+        if (!ok) m = NULL;
+    }
+    snprintf(c->drag.mime, sizeof c->drag.mime, "%s", m ? m : "");
+    wl_data_source_send_target(c->drag.source, m && *m ? c->drag.mime : NULL);
+}
 static void doffer_receive(struct wl_client *cl, struct wl_resource *r, const char *mime, int32_t fd)
 {
     (void)cl;
@@ -2025,9 +2096,40 @@ static void doffer_receive(struct wl_client *cl, struct wl_resource *r, const ch
      * paste hangs forever on a mime type the owner declines to write. */
     close(fd);
 }
-static void doffer_finish(struct wl_client *cl, struct wl_resource *r) { (void)cl; (void)r; }
+static void drag_finish(aurwl *c);
+static void doffer_finish(struct wl_client *cl, struct wl_resource *r)
+{
+    (void)cl;
+    struct wl_resource *src = wl_resource_get_user_data(r);
+    data_source *ds = src ? wl_resource_get_user_data(src) : NULL;
+    if (!ds || !is_drag_offer(ds->c, r)) return;
+    if (!ds->c->drag.dropped) {
+        wl_resource_post_error(r, WL_DATA_OFFER_ERROR_INVALID_FINISH,
+                               "finish before the drop");
+        return;
+    }
+    drag_finish(ds->c);
+}
 static void doffer_set_actions(struct wl_client *cl, struct wl_resource *r, uint32_t a, uint32_t b)
-{ (void)cl; (void)r; (void)a; (void)b; }
+{
+    (void)cl;
+    if (a & ~7u) {
+        wl_resource_post_error(r, WL_DATA_OFFER_ERROR_INVALID_ACTION_MASK,
+                               "action mask %u has bits that are not actions", a);
+        return;
+    }
+    if (b != 0 && b != 1 && b != 2 && b != 4) {
+        wl_resource_post_error(r, WL_DATA_OFFER_ERROR_INVALID_ACTION,
+                               "%u is not one action", b);
+        return;
+    }
+    struct wl_resource *src = wl_resource_get_user_data(r);
+    data_source *ds = src ? wl_resource_get_user_data(src) : NULL;
+    if (!ds || !is_drag_offer(ds->c, r)) return;
+    ds->c->drag.dst_actions = a;
+    ds->c->drag.dst_pref = b;
+    drag_actions_changed(ds->c);
+}
 static const struct wl_data_offer_interface data_offer_impl = {
     .accept = doffer_accept, .receive = doffer_receive, .destroy = noop_destroy,
     .finish = doffer_finish, .set_actions = doffer_set_actions,
@@ -2060,19 +2162,212 @@ static void send_selection_to(aurwl *c, struct wl_resource *dev)
     wl_data_device_send_selection(dev, offer);
 }
 
+/* ── drag and drop ──────────────────────────────────────────────── */
+/* Moving a file from one folder to another, a photo into a message, a
+ * link onto a tab: she does these with her hand, and every program that
+ * lets her uses this protocol for it -- Thunar even inside one window.
+ * start_drag used to answer "cancelled" to all of them.
+ *
+ * The compositor's part is a go-between. The pointer belongs to the drag
+ * for as long as it lasts; whatever surface is under it is told enter,
+ * motion and leave and handed an offer of what the source can provide; the
+ * two ends agree between themselves (accept, set_actions, action, target)
+ * on what would happen; on release the target is told to drop and the
+ * source that it happened. Nothing is copied by us: the data goes through
+ * the pipe the target gives the source, as for the clipboard. */
+
+static int res_in_list(struct wl_list *list, struct wl_resource *res)
+{
+    struct wl_resource *o;
+    if (!res) return 0;
+    wl_resource_for_each(o, list) if (o == res) return 1;
+    return 0;
+}
+
+/* The target stops being the target: it is told so, and the offer it was
+ * holding is disarmed (it is the client's object, to destroy). */
+static void drag_leave(aurwl *c)
+{
+    if (c->drag.target) {
+        if (res_in_list(&c->devices, c->drag.dev)) wl_data_device_send_leave(c->drag.dev);
+        if (c->drag.source) wl_data_source_send_target(c->drag.source, NULL);
+        if (res_in_list(&c->offers, c->drag.offer)) offer_retire(c->drag.offer);
+    }
+    c->drag.target = NULL; c->drag.dev = NULL; c->drag.offer = NULL;
+    c->drag.mime[0] = 0;
+    c->drag.dst_actions = c->drag.dst_pref = c->drag.chosen = 0;
+}
+
+static void drag_end(aurwl *c)
+{
+    c->drag.active = 0;
+    c->drag.source = NULL;
+    c->drag.origin = c->drag.icon = NULL;
+    c->drag.dropped = 0;
+    drag_leave(c);
+    /* The pointer is nobody's until the next motion says where it is; that
+     * is what gives it back to whatever it is over. */
+    c->ptr_surf = NULL;
+}
+
+static void drag_cancel(aurwl *c)
+{
+    if (!c->drag.active) return;
+    struct wl_resource *src = c->drag.source;
+    drag_leave(c);
+    drag_end(c);
+    if (src) wl_data_source_send_cancelled(src);
+}
+
+static void drag_finish(aurwl *c)
+{
+    struct wl_resource *src = c->drag.source;
+    int ok = c->drag.chosen != 0;
+    c->drag.target = NULL;           /* it was dropped on: leave is NOT sent after a drop */
+    drag_end(c);
+    if (src && ok && wl_resource_get_version(src) >= WL_DATA_SOURCE_DND_FINISHED_SINCE_VERSION)
+        wl_data_source_send_dnd_finished(src);
+}
+
+/* The source went away mid-drag (its program quit): there is nothing left
+ * to drop. No event to it -- it is gone. */
+static void drag_source_gone(aurwl *c, struct wl_resource *src)
+{
+    if (c->drag.active && c->drag.source == src) {
+        c->drag.source = NULL;
+        drag_leave(c);
+        drag_end(c);
+    }
+}
+
+/* What would happen, from what each end allows (wayland.xml,
+ * wl_data_offer.set_actions): the actions both allow, the receiver's
+ * preference first, else copy, move, ask in that order. */
+static void drag_actions_changed(aurwl *c)
+{
+    if (!c->drag.active || !c->drag.source) return;
+    data_source *ds = wl_resource_get_user_data(c->drag.source);
+    if (!ds) return;
+    uint32_t src_a = ds->has_actions ? ds->actions : WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
+    uint32_t common = src_a & c->drag.dst_actions, chosen = 0;
+    if (c->drag.dst_pref && (common & c->drag.dst_pref)) chosen = c->drag.dst_pref;
+    else if (common & WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY) chosen = WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
+    else if (common & WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE) chosen = WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
+    else if (common & WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK)  chosen = WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK;
+    if (chosen == c->drag.chosen) return;
+    c->drag.chosen = chosen;
+    if (wl_resource_get_version(c->drag.source) >= WL_DATA_SOURCE_ACTION_SINCE_VERSION)
+        wl_data_source_send_action(c->drag.source, chosen);
+    if (c->drag.offer && wl_resource_get_version(c->drag.offer) >= WL_DATA_OFFER_ACTION_SINCE_VERSION)
+        wl_data_offer_send_action(c->drag.offer, chosen);
+}
+
+/* The pointer moved while dragging: `w` is the window under it (NULL: the
+ * shell's own furniture) and (sx,sy) the point in its surface coordinates. */
+static void drag_motion(aurwl *c, aurwl_win *w, int sx, int sy, uint32_t t)
+{
+    aurwl_win *hit = NULL;
+    int lx = sx, ly = sy;
+    if (w) {
+        hit = pick(w, sx, sy, &lx, &ly, 0);
+        if (!hit) { hit = w; lx = sx; ly = sy; }
+    }
+    struct wl_resource *dev = NULL;
+    if (hit) {
+        struct wl_client *cl = win_client(hit);
+        struct wl_resource *d;
+        wl_resource_for_each(d, &c->devices)
+            if (wl_resource_get_client(d) == cl) { dev = d; break; }
+    }
+    aurwl_win *want = dev ? hit : NULL;
+    if (want != c->drag.target) {
+        drag_leave(c);
+        data_source *ds = c->drag.source ? wl_resource_get_user_data(c->drag.source) : NULL;
+        if (want && ds) {
+            struct wl_client *cl = wl_resource_get_client(dev);
+            int ver = wl_resource_get_version(dev);
+            struct wl_resource *offer = wl_resource_create(cl, &wl_data_offer_interface, ver, 0);
+            if (offer) {
+                wl_resource_set_implementation(offer, &data_offer_impl, c->drag.source, res_unlink);
+                wl_list_insert(&c->offers, wl_resource_get_link(offer));
+                wl_data_device_send_data_offer(dev, offer);
+                for (int i = 0; i < ds->n_mimes; i++) wl_data_offer_send_offer(offer, ds->mimes[i]);
+                if (ver >= WL_DATA_OFFER_SOURCE_ACTIONS_SINCE_VERSION)
+                    wl_data_offer_send_source_actions(offer,
+                        ds->has_actions ? ds->actions : WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY);
+                uint32_t ser = serial_of(c);
+                c->drag.target = want; c->drag.dev = dev; c->drag.offer = offer; c->drag.serial = ser;
+                wl_data_device_send_enter(dev, ser, want->res,
+                                          wl_fixed_from_int(lx), wl_fixed_from_int(ly), offer);
+            }
+        }
+    }
+    c->ptr_x = lx; c->ptr_y = ly;
+    if (c->drag.target && res_in_list(&c->devices, c->drag.dev))
+        wl_data_device_send_motion(c->drag.dev, t, wl_fixed_from_int(lx), wl_fixed_from_int(ly));
+}
+
+/* After a drop the target has the data and the pointer is free again; the
+ * drag only lasts until the target says finish. If it never does -- it
+ * destroyed the offer, or quit -- that is the end of it too. */
+static void drag_validate(aurwl *c)
+{
+    if (c->drag.active && c->drag.dropped &&
+        (!res_in_list(&c->offers, c->drag.offer) || !res_in_list(&c->devices, c->drag.dev))) {
+        c->drag.target = NULL;
+        drag_end(c);
+    }
+}
+
+/* A button came up: the drag ends, one way or the other. */
+static void drag_release(aurwl *c)
+{
+    if (!c->drag.active) return;
+    int took = c->drag.target && c->drag.mime[0] && c->drag.chosen &&
+               res_in_list(&c->devices, c->drag.dev) && res_in_list(&c->offers, c->drag.offer);
+    if (!took) { drag_cancel(c); return; }
+    struct wl_resource *src = c->drag.source, *offer = c->drag.offer;
+    wl_data_device_send_drop(c->drag.dev);
+    if (src && wl_resource_get_version(src) >= WL_DATA_SOURCE_DND_DROP_PERFORMED_SINCE_VERSION)
+        wl_data_source_send_dnd_drop_performed(src);
+    c->drag.dropped = 1;
+    /* From version 3 the target says it has finished with the data (finish)
+     * and only then does the source hear dnd_finished; before that the
+     * drop is the end of it. */
+    if (wl_resource_get_version(offer) < WL_DATA_OFFER_FINISH_SINCE_VERSION) {
+        c->drag.target = NULL;           /* leave is NOT sent after a drop */
+        drag_end(c);
+    }
+}
+
 static void ddev_start_drag(struct wl_client *cl, struct wl_resource *r,
                             struct wl_resource *src, struct wl_resource *origin,
                             struct wl_resource *icon, uint32_t serial)
 {
-    (void)cl; (void)r; (void)origin; (void)serial;
-    /* Drag and drop between applications is not wired up; a client that
-     * starts one is told immediately that it ended, rather than being
-     * left holding a drag that never resolves. */
-    if (icon) {
-        aurwl_win *w = wl_resource_get_user_data(icon);
-        if (w) take_role(w, ROLE_CURSOR, r, WL_DATA_DEVICE_ERROR_ROLE);
-    }
-    if (src) wl_data_source_send_cancelled(src);
+    (void)cl;
+    aurwl *c = wl_resource_get_user_data(r);
+    aurwl_win *ow = origin ? wl_resource_get_user_data(origin) : NULL;
+    aurwl_win *iw = icon ? wl_resource_get_user_data(icon) : NULL;
+    if (iw && !take_role(iw, ROLE_CURSOR, r, WL_DATA_DEVICE_ERROR_ROLE)) return;
+
+    /* A drag begins with a button held down on a surface of the program
+     * that asks, and the serial it quotes is that button's. Anything else
+     * -- a program that was not clicked, a stale serial, a second drag
+     * while one runs -- is refused the way it always was: cancelled. */
+    int ok = src && ow && !c->drag.active && c->btns_down > 0 && serial == c->btn_serial &&
+             c->ptr_surf && c->ptr_focus && root_of(ow) == c->ptr_focus &&
+             wl_resource_get_client(c->ptr_focus->res) == cl;
+    if (!ok) { if (src) wl_data_source_send_cancelled(src); return; }
+
+    ptr_leave(c);                          /* the origin no longer has the pointer */
+    memset(&c->drag, 0, sizeof c->drag);
+    c->drag.active = 1;
+    c->drag.source = src;
+    c->drag.origin = ow;
+    c->drag.icon = iw;
+    /* Say where it is straight away, so the first thing the target hears is
+     * enter at the pointer, not at wherever the next motion lands. */
+    drag_motion(c, c->ptr_focus, c->ptr_rx, c->ptr_ry, 0);
 }
 static void ddev_set_selection(struct wl_client *cl, struct wl_resource *r,
                                struct wl_resource *src, uint32_t serial)
@@ -2961,6 +3256,16 @@ void aurwl_resize_output(aurwl *c, int w, int h)
 static int win_visible(const aurwl_win *w)
 { return w->mapped && !w->dead && (w->role == ROLE_TOPLEVEL || w->role == ROLE_POPUP); }
 
+surface *aurwl_drag_icon(aurwl *c, int *dx, int *dy)
+{
+    if (!c || !c->drag.active || c->drag.dropped) return NULL;
+    aurwl_win *i = c->drag.icon;
+    if (!i || !i->store) return NULL;
+    if (dx) *dx = i->off_x;
+    if (dy) *dy = i->off_y;
+    return aurwl_win_content(i);
+}
+
 int aurwl_idle_inhibited(const aurwl *c)
 {
     if (!c) return 0;
@@ -3248,6 +3553,13 @@ void aurwl_pointer_motion(aurwl *c, aurwl_win *w, int sx, int sy, uint32_t t)
 {
     if (!c) return;
     if (w && !win_visible(w)) w = NULL;
+    c->ptr_rx = sx; c->ptr_ry = sy;
+    drag_validate(c);
+    if (c->drag.active && !c->drag.dropped) {       /* the pointer belongs to the drag */
+        c->ptr_focus = w;
+        drag_motion(c, w, sx, sy, t);
+        return;
+    }
     /* The shell does not pass on a release that happens off every window,
      * so a grab must not outlive the pointer leaving them all. */
     if (!w) c->btns_down = 0;
@@ -3307,9 +3619,15 @@ void aurwl_pointer_button(aurwl *c, uint32_t button, int pressed, uint32_t t)
      * leave the count negative and the next real press unbalanced. */
     if (pressed) { if (c->btns_down < 64) c->btns_down++; }
     else if (c->btns_down > 0) c->btns_down--;
+    drag_validate(c);
+    if (c->drag.active && !c->drag.dropped) {
+        if (!pressed) drag_release(c);
+        return;
+    }
     if (!c->ptr_surf) return;
     struct wl_client *cl = win_client(c->ptr_surf);
     uint32_t ser = serial_of(c);
+    if (pressed) c->btn_serial = ser;       /* the one a drag must quote */
     FOR_EACH_RES(p, &c->pointers)
         if (wl_resource_get_client(p) == cl) {
             wl_pointer_send_button(p, ser, t, button,
@@ -3322,6 +3640,7 @@ void aurwl_pointer_button(aurwl *c, uint32_t button, int pressed, uint32_t t)
 void aurwl_pointer_axis(aurwl *c, int horizontal, double step, uint32_t t)
 {
     if (!c || !c->ptr_surf) return;
+    if (c->drag.active && !c->drag.dropped) return;
     struct wl_client *cl = win_client(c->ptr_surf);
     uint32_t axis = horizontal ? WL_POINTER_AXIS_HORIZONTAL_SCROLL
                                : WL_POINTER_AXIS_VERTICAL_SCROLL;
@@ -3344,6 +3663,8 @@ int aurwl_key(aurwl *c, uint32_t code, int pressed, uint32_t t)
 {
     if (!c) return 0;
     if (c->focus && wishhook_key) wishhook_key(c, code, pressed);   /* before the keymap state moves */
+    /* Escape ends a drag without dropping (and is still delivered). */
+    if (pressed && code == 1 && c->drag.active && !c->drag.dropped) drag_cancel(c);
     /* Modifier state is tracked whether or not anyone is listening: the
      * shell swallows some chords itself, and if those did not update
      * xkb the client's idea of Shift would drift from the user's hand. */

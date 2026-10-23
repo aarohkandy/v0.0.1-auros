@@ -297,7 +297,13 @@ int session_button(shell_ctx *c, int x, int y, uint32_t button, int pressed)
     if (!c->wl) return 0;
     int sx = 0, sy = 0;
     aurwl_win *w = window_under(c, x, y, &sx, &sy);
-    if (!w) return 0;
+    if (!w) {
+        /* A button coming UP off every window still has to reach aurwl: a
+         * drag that was let go over the taskbar must end, and a program
+         * that was told "pressed" must be told "released". (stream WL) */
+        if (!pressed) aurwl_pointer_button(c->wl, button, 0, now_ms());
+        return 0;
+    }
     /* Clicking a window's content focuses it, the way every desktop
      * does; otherwise typing would go to whatever was focused before. */
     if (pressed) {
@@ -363,6 +369,15 @@ void session_paint_popups(shell_ctx *c, surface *fb)
                      (int)(s->w * kx), (int)(s->h * ky) };
         if (dst.w <= 0 || dst.h <= 0) continue;
         draw_scaled(fb, s, dst, 1.f);
+    }
+
+    /* What is being dragged follows the pointer, above everything but the
+     * cursor itself. (stream WL) */
+    int hx = 0, hy = 0;
+    surface *icon = aurwl_drag_icon(c->wl, &hx, &hy);
+    if (icon && icon->w > 0 && icon->h > 0) {
+        rect at = { c->mouse_x + hx, c->mouse_y + hy, icon->w, icon->h };
+        draw_scaled(fb, icon, at, 0.9f);
     }
 }
 

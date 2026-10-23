@@ -121,7 +121,7 @@ static void img_rect(img *m, int x, int y, int w, int h, uint32_t argb)
 
 /* ── the line between the two processes ───────────────────────────── */
 
-enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_TI, M_IDLE, M_TIME, M_END };
+enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_TI, M_IDLE, M_TIME, M_KEY, M_END };
 typedef struct { int kind, a, b, c, d; } msg;
 
 static int xfer(int fd, void *buf, size_t n, int wr)
@@ -221,6 +221,7 @@ static int serve(aurwl *c, int chan, pid_t kid, int *child_result)
         case M_MOVE:   aurwl_pointer_motion(c, w, m.a, m.b, now_ms()); break;
         case M_BUTTON: aurwl_pointer_button(c, (uint32_t)m.a, m.b, now_ms()); break;
         case M_FOCUS:  aurwl_set_focus(c, w); break;
+        case M_KEY:    aurwl_key(c, (uint32_t)m.a, m.b, now_ms()); break;
         case M_FRAME:  aurwl_frame_done(c, now_ms()); break;
         case M_RESIZE: if (w) aurwl_win_configure(w, m.a, m.b, 1, 0, 0); break;
         case M_ASK: {     /* "what size does the window think it is?" */
@@ -276,6 +277,23 @@ struct cl {
     struct wl_pointer *ptr;
     struct zwp_text_input_manager_v3 *timgr;
     struct zwp_idle_inhibit_manager_v1 *inhmgr;
+    struct wl_data_device_manager *ddm;
+    struct wl_data_device *ddev;
+    struct {                      /* what the drag target side was told */
+        struct wl_data_offer *offer;
+        struct wl_surface *in;
+        int enters, leaves, motions, drops;
+        int ex, ey, mx, my;
+        uint32_t serial;
+        uint32_t offer_action;
+        char mime[64];
+    } dnd;
+    struct {                      /* what the drag source side was told */
+        char target[64];
+        uint32_t action;
+        int dropped, finished, cancelled;
+    } dsrc;
+    uint32_t btn_serial;
     struct wl_surface *ti_in;     /* where text input was last entered */
     int ti_enters;
     int chan;
@@ -294,6 +312,7 @@ static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char
     else if (!strcmp(iface, "xdg_wm_base"))      c->wm   = wl_registry_bind(r, name, &xdg_wm_base_interface, 2);
     else if (!strcmp(iface, "wp_viewporter"))    c->vper = wl_registry_bind(r, name, &wp_viewporter_interface, 1);
     else if (!strcmp(iface, "wl_seat"))          c->seat = wl_registry_bind(r, name, &wl_seat_interface, 5);
+    else if (!strcmp(iface, "wl_data_device_manager")) c->ddm = wl_registry_bind(r, name, &wl_data_device_manager_interface, 3);
     else if (!strcmp(iface, "zwp_idle_inhibit_manager_v1")) c->inhmgr = wl_registry_bind(r, name, &zwp_idle_inhibit_manager_v1_interface, 1);
     else if (!strcmp(iface, "zwp_text_input_manager_v3")) c->timgr = wl_registry_bind(r, name, &zwp_text_input_manager_v3_interface, 1);
 }
@@ -307,7 +326,7 @@ static void p_leave(void *d, struct wl_pointer *p, uint32_t ser, struct wl_surfa
 static void p_motion(void *d, struct wl_pointer *p, uint32_t t, wl_fixed_t x, wl_fixed_t y)
 { (void)p; (void)t; struct cl *c = d; c->pe.motions++; c->pe.mx = wl_fixed_to_int(x); c->pe.my = wl_fixed_to_int(y); }
 static void p_button(void *d, struct wl_pointer *p, uint32_t ser, uint32_t t, uint32_t b, uint32_t st)
-{ (void)p; (void)ser; (void)t; (void)b; (void)st; struct cl *c = d; c->pe.buttons++; }
+{ (void)p; (void)t; (void)b; struct cl *c = d; c->pe.buttons++; if (st) c->btn_serial = ser; }
 static void p_axis(void *d, struct wl_pointer *p, uint32_t t, uint32_t a, wl_fixed_t v)
 { (void)d; (void)p; (void)t; (void)a; (void)v; }
 static void p_frame(void *d, struct wl_pointer *p) { (void)d; (void)p; }
@@ -1007,6 +1026,161 @@ static void sc_budget(struct cl *c)
     ask(c, M_TIME, 1500, 0);
 }
 
+/* 24. Drag and drop. The pointer belongs to the drag; the surface under
+ * it -- a subsurface, in coordinates of its own -- is told enter, motion,
+ * leave and drop; the two ends settle the action between them; the data
+ * goes through the pipe; the source hears dropped and finished. A drag
+ * nobody accepts, one that is refused, and one that is escaped from all
+ * end in `cancelled`. */
+static void dd_offer_mime(void *d, struct wl_data_offer *o, const char *m)
+{ struct cl *c = d; (void)o; if (!c->dnd.mime[0]) snprintf(c->dnd.mime, sizeof c->dnd.mime, "%s", m); }
+static void dd_offer_srcact(void *d, struct wl_data_offer *o, uint32_t a) { (void)d; (void)o; (void)a; }
+static void dd_offer_action(void *d, struct wl_data_offer *o, uint32_t a)
+{ (void)o; ((struct cl *)d)->dnd.offer_action = a; }
+static const struct wl_data_offer_listener dd_offer_l = { dd_offer_mime, dd_offer_srcact, dd_offer_action };
+
+static void dd_data_offer(void *d, struct wl_data_device *dev, struct wl_data_offer *o)
+{ struct cl *c = d; (void)dev; c->dnd.mime[0] = 0; wl_data_offer_add_listener(o, &dd_offer_l, c); }
+static void dd_enter(void *d, struct wl_data_device *dev, uint32_t ser, struct wl_surface *s,
+                     wl_fixed_t x, wl_fixed_t y, struct wl_data_offer *o)
+{
+    struct cl *c = d; (void)dev;
+    c->dnd.enters++; c->dnd.in = s; c->dnd.serial = ser; c->dnd.offer = o;
+    c->dnd.ex = wl_fixed_to_int(x); c->dnd.ey = wl_fixed_to_int(y);
+    c->dnd.offer_action = 0;
+}
+static void dd_leave(void *d, struct wl_data_device *dev)
+{
+    struct cl *c = d; (void)dev;
+    c->dnd.leaves++; c->dnd.in = NULL;
+    if (c->dnd.offer) { wl_data_offer_destroy(c->dnd.offer); c->dnd.offer = NULL; }
+}
+static void dd_motion(void *d, struct wl_data_device *dev, uint32_t t, wl_fixed_t x, wl_fixed_t y)
+{ struct cl *c = d; (void)dev; (void)t; c->dnd.motions++; c->dnd.mx = wl_fixed_to_int(x); c->dnd.my = wl_fixed_to_int(y); }
+static void dd_drop(void *d, struct wl_data_device *dev) { (void)dev; ((struct cl *)d)->dnd.drops++; }
+static void dd_selection(void *d, struct wl_data_device *dev, struct wl_data_offer *o)
+{ (void)d; (void)dev; if (o) wl_data_offer_destroy(o); }
+static const struct wl_data_device_listener dd_l = { dd_data_offer, dd_enter, dd_leave, dd_motion, dd_drop, dd_selection };
+
+static void ds_target(void *d, struct wl_data_source *s, const char *m)
+{ struct cl *c = d; (void)s; snprintf(c->dsrc.target, sizeof c->dsrc.target, "%s", m ? m : ""); }
+static void ds_send(void *d, struct wl_data_source *s, const char *m, int32_t fd)
+{ (void)d; (void)s; (void)m; if (write(fd, "hello", 5) < 0) {} close(fd); }
+static void ds_cancelled(void *d, struct wl_data_source *s) { (void)s; ((struct cl *)d)->dsrc.cancelled++; }
+static void ds_dropped(void *d, struct wl_data_source *s) { (void)s; ((struct cl *)d)->dsrc.dropped++; }
+static void ds_finished(void *d, struct wl_data_source *s) { (void)s; ((struct cl *)d)->dsrc.finished++; }
+static void ds_action(void *d, struct wl_data_source *s, uint32_t a) { (void)s; ((struct cl *)d)->dsrc.action = a; }
+static const struct wl_data_source_listener ds_l = { ds_target, ds_send, ds_cancelled, ds_dropped, ds_finished, ds_action };
+
+#define ACT_COPY WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
+#define ACT_MOVE WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE
+
+/* Press on the page and start dragging from it. */
+static struct wl_data_source *dd_begin(struct cl *c, struct wl_surface *origin, int x, int y, uint32_t serial_delta)
+{
+    ask(c, M_MOVE, x, y);
+    ask(c, M_BUTTON, 0x110, 1);
+    struct wl_data_source *src = wl_data_device_manager_create_data_source(c->ddm);
+    wl_data_source_add_listener(src, &ds_l, c);
+    wl_data_source_offer(src, "text/plain");
+    wl_data_source_set_actions(src, ACT_COPY | ACT_MOVE);
+    memset(&c->dsrc, 0, sizeof c->dsrc);
+    c->dnd.enters = c->dnd.leaves = c->dnd.motions = c->dnd.drops = 0;
+    wl_data_device_start_drag(c->ddev, src, origin, NULL, c->btn_serial + serial_delta);
+    wl_display_roundtrip(c->dpy);
+    return src;
+}
+
+static void sc_dnd(struct cl *c)
+{
+    if (!c->ddm || !c->seat) { printf("      no data device manager\n"); c->failed = 1; return; }
+    c->ddev = wl_data_device_manager_get_data_device(c->ddm, c->seat);
+    wl_data_device_add_listener(c->ddev, &dd_l, c);
+    img root = img_solid(100, 80, GREY), page = img_solid(60, 40, GREEN);
+    top *t = mktop(c, &root, XRGB);
+    sub P = mksub(c, t->s, 10, 10, &page, XRGB, 1);
+    wl_surface_commit(t->s);
+    ask(c, M_FOCUS, 0, 0);
+
+    /* a drag that quotes the wrong serial is refused */
+    wl_display_roundtrip(c->dpy);
+    struct wl_data_source *bad = dd_begin(c, P.s, 15, 15, 1);
+    check(c, c->dsrc.cancelled == 1 && c->dnd.enters == 0, "a drag with a serial nobody sent was not refused");
+    (void)bad;
+    ask(c, M_BUTTON, 0x110, 0);
+
+    /* a real one, started from the page */
+    struct wl_data_source *src = dd_begin(c, P.s, 15, 15, 0);
+    check(c, c->dsrc.cancelled == 0, "a drag that should run was cancelled");
+    check(c, c->pe.in == NULL, "the origin was not told the pointer left when the drag began");
+    check(c, c->dnd.enters == 1 && c->dnd.in == P.s && c->dnd.ex == 5 && c->dnd.ey == 5,
+          "the surface under the pointer was not entered at once, in its own coordinates");
+    check(c, !strcmp(c->dnd.mime, "text/plain"), "the offer did not list the source's type");
+    wl_data_offer_accept(c->dnd.offer, c->dnd.serial, "text/plain");
+    wl_data_offer_set_actions(c->dnd.offer, ACT_COPY | ACT_MOVE, ACT_MOVE);
+    wl_display_roundtrip(c->dpy);
+    check(c, !strcmp(c->dsrc.target, "text/plain"), "the source was not told what the target accepts");
+    check(c, c->dsrc.action == ACT_MOVE && c->dnd.offer_action == ACT_MOVE, "the action was not settled as move");
+
+    ask(c, M_MOVE, 20, 20);
+    check(c, c->dnd.motions >= 1 && c->dnd.mx == 10 && c->dnd.my == 10, "drag motion was not (10,10) in the page");
+    int moved_enters = c->dnd.enters;
+    ask(c, M_MOVE, 5, 5);                            /* the frame around the page */
+    check(c, c->dnd.leaves == 1 && c->dnd.enters == moved_enters + 1 && c->dnd.in == t->s,
+          "leaving the page for the frame was not leave + enter on the toplevel");
+    check(c, c->dsrc.target[0] == 0, "the source was still told something was accepted after the target changed");
+    ask(c, M_MOVE, 30, 30);                          /* and back on the page */
+    check(c, c->dnd.in == P.s && c->dnd.ex == 20 && c->dnd.ey == 20, "back on the page: not entered at (20,20)");
+    wl_data_offer_accept(c->dnd.offer, c->dnd.serial, "text/plain");
+    wl_data_offer_set_actions(c->dnd.offer, ACT_COPY, ACT_COPY);
+    wl_display_roundtrip(c->dpy);
+    check(c, c->dsrc.action == ACT_COPY, "the action was not re-settled as copy");
+
+    int pm = c->pe.motions, pb = c->pe.buttons;
+    ask(c, M_MOVE, 31, 31);
+    check(c, c->pe.motions == pm, "the pointer reached a program while a drag was running");
+    ask(c, M_BUTTON, 0x110, 0);                      /* let go: drop */
+    check(c, c->pe.buttons == pb, "the release reached the program instead of ending the drag");
+    check(c, c->dnd.drops == 1 && c->dsrc.dropped == 1, "the drop was not delivered to both ends");
+    int fds[2];
+    if (pipe(fds) == 0) {
+        wl_data_offer_receive(c->dnd.offer, "text/plain", fds[1]);
+        close(fds[1]);
+        wl_display_roundtrip(c->dpy);
+        char buf[16] = {0};
+        ssize_t n = read(fds[0], buf, sizeof buf - 1);
+        close(fds[0]);
+        check(c, n == 5 && !strcmp(buf, "hello"), "the data did not come through the pipe");
+    }
+    check(c, c->dsrc.finished == 0, "the source was told finished before the target said so");
+    wl_data_offer_finish(c->dnd.offer);
+    wl_display_roundtrip(c->dpy);
+    check(c, c->dsrc.finished == 1, "the source was not told the drag finished");
+    wl_data_offer_destroy(c->dnd.offer); c->dnd.offer = NULL;
+    ask(c, M_MOVE, 32, 32);
+    check(c, c->pe.in == P.s, "the pointer was not handed back to the page after the drop");
+    wl_data_source_destroy(src);
+
+    /* nobody accepts: cancelled, and the target is told it left */
+    src = dd_begin(c, P.s, 33, 33, 0);
+    ask(c, M_MOVE, 34, 34);
+    ask(c, M_BUTTON, 0x110, 0);
+    check(c, c->dsrc.cancelled == 1 && c->dnd.drops == 0, "a drag nobody accepted was dropped instead of cancelled");
+    check(c, c->dnd.leaves >= 1, "the target was not told the drag left");
+    wl_data_source_destroy(src);
+
+    /* Escape */
+    ask(c, M_MOVE, 35, 35);
+    src = dd_begin(c, P.s, 35, 35, 0);
+    ask(c, M_KEY, 1, 1);
+    check(c, c->dsrc.cancelled == 1, "Escape did not cancel the drag");
+    ask(c, M_KEY, 1, 0);
+    ask(c, M_BUTTON, 0x110, 0);
+    ask(c, M_MOVE, 36, 36);
+    check(c, c->pe.in == P.s, "after Escape the pointer was not given back");
+    wl_data_source_destroy(src);
+}
+
 static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "plain",            sc_plain },
     { "page",             sc_page },
@@ -1031,11 +1205,15 @@ static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "textinput",        sc_textinput },
     { "idle",             sc_idle },
     { "budget",           sc_budget },
+    { "dnd",              sc_dnd },
 };
 #define NSC ((int)(sizeof SC / sizeof SC[0]))
 
 static int be_client(int which, int chan)
 {
+    /* The child leaves with _exit(), which does not flush stdio: what a
+     * failing check says would be lost whenever stdout is a pipe. */
+    setvbuf(stdout, NULL, _IONBF, 0);
     struct cl c = { .chan = chan };
     c.dpy = wl_display_connect(NULL);
     if (!c.dpy) { printf("      cannot connect\n"); return 95; }

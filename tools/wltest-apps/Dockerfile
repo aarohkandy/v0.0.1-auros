@@ -15,3 +15,7 @@ RUN for i in 1 2 3; do timeout 300 apt-get update -q && \
 RUN for i in 1 2 3; do timeout 300 apt-get update -q && \
       timeout 600 apt-get install -y -q --no-install-recommends qtwayland5 featherpad && break; sleep 10; done; \
     rm -rf /var/lib/apt/lists/*
+# The file manager the image ships (profiles/desktop.profile): drag and drop.
+RUN for i in 1 2 3; do timeout 300 apt-get update -q && \
+      timeout 600 apt-get install -y -q --no-install-recommends thunar && break; sleep 10; done; \
+    rm -rf /var/lib/apt/lists/*

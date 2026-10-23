@@ -73,6 +73,14 @@ JS
         aurwl/gen/xdg-output-protocol.c aurwl/gen/text-input-protocol.c -Iaurwl/gen \
         $(pkg-config --cflags --libs wayland-server xkbcommon) -lm || exit 1
     exec /out/ti-probe "$SECS" 14 24 -- firefox --no-remote --new-instance --profile /tmp/ffprofile file:///tmp/pw.html ;;
+  thunar-dnd)       # drag a file onto a folder with the real file manager; DND_FROM / DND_TO are window points
+    rm -rf /tmp/dnd && mkdir -p /tmp/dnd/box && echo hello > /tmp/dnd/a.txt && echo more > /tmp/dnd/b.txt
+    gcc -O1 -g -std=gnu11 -o /out/dnd-probe /w/tools/wltest-apps/dnd-probe.c aurwl/aurwl.c aurshell/draw.c common/png.c \
+        aurwl/gen/xdg-shell-protocol.c aurwl/gen/xdg-decoration-protocol.c aurwl/gen/viewporter-protocol.c \
+        aurwl/gen/xdg-output-protocol.c -Iaurwl/gen $(pkg-config --cflags --libs wayland-server xkbcommon) -lm || exit 1
+    /out/dnd-probe "$SECS" /out/thunar.png "${DND_FROM:-0,0}" "${DND_TO:-0,0}" -- thunar /tmp/dnd
+    echo "-- after:"; ls -R /tmp/dnd
+    exit 0 ;;
   gtk4) CMD="GSK_RENDERER=cairo gtk4-widget-factory" ;;
   gtk4gl) CMD="gtk4-widget-factory" ;;
   qt)   CMD="qterminal" ;;

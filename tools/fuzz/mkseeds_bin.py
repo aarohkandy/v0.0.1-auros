@@ -220,6 +220,22 @@ def aurwl_seeds():
           b"\x00\x02\x01" +                                  # create_region -> [18]
           b"\x00\x0f\x05\x00")                              # set_input_region(region)
     out("aurwl", "subsurface-viewport", win + sub + vp + child_pos + child_paint + parent_commit + shell(7) + pointer)
+    # Drag and drop: [13] an icon surface, [14] wl_data_device_manager (v3),
+    # [15] a data source offering text/plain with actions copy|move, [16] the
+    # data device. A button goes down over the window, start_drag quotes the
+    # serial just sent, the pointer moves, the button comes up.
+    drag = (b"\x00\x02\x00" +                              # create_surface -> [13] (the icon)
+            b"\x00\x01\x00\x05\x02" +                       # bind data_device_manager v3 -> [14]
+            b"\x00\x0e\x00" +                               # create_data_source -> [15]
+            b"\x00\x0f\x00" + s("text/plain") +             # source.offer
+            b"\x00\x0f\x02" + num(3) +                      # source.set_actions(copy|move)
+            b"\x00\x0e\x01\x00" +                           # get_data_device(seat) -> [16]
+            shell(1) + shell(2, b"\x80\x80") + shell(3, b"\x00\x01") +   # focus, move, press
+            b"\x00\x10\x00\x00\x00\x01" + SERIAL +         # start_drag(source, window, icon, serial)
+            shell(2, b"\x90\x90") + shell(2, b"\x20\x20") + shell(3, b"\x00\x00") + shell(7))
+    out("aurwl", "drag", win + drag + shell(2, b"\x40\x40") + shell(7))
+    # ... and the same, escaped from
+    out("aurwl", "drag-escape", win + drag[:-len(shell(3, b"\x00\x00") + shell(7))] + shell(5, b"\x01\x01") + shell(7))
 
 
 # ── fuzz_textinput: fuzz_aurwl's encoding with the text-input manager (global

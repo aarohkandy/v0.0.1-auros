@@ -432,7 +432,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     aurwl_dispatch(C);
 
     /* Both programs are gone; so must be everything they had. */
-    if (aurwl_window_count(C) || C->focus || C->ptr_focus || C->ptr_surf || C->selection ||
+    if (aurwl_window_count(C) || C->focus || C->ptr_focus || C->ptr_surf || C->selection || C->drag.active ||
         !wl_list_empty(&C->surfaces) || !wl_list_empty(&C->seats) ||
         !wl_list_empty(&C->pointers) || !wl_list_empty(&C->keyboards) ||
         !wl_list_empty(&C->touches) || !wl_list_empty(&C->outputs) ||
