@@ -364,8 +364,8 @@ else
 fi
 [ "$(val letter-after-pass)" = "$LSUM" ] && ok "her letter is intact" || bad "her letter is intact" "$(val letter-after-pass) != $LSUM"
 serial | grep -q "THEFT up .*state=encrypting.*cipher=" || true
-CODE=$(val RESCUE | tr -d ' ')
-[ ${#CODE} = 24 ] && ok "set-pin gave a 24-number rescue code" || bad "set-pin gave a rescue code" "$(serial | grep -E 'setpin|RESCUE')"
+RESCUE=$(val RESCUE | tr -d ' ')
+[ ${#RESCUE} = 24 ] && ok "set-pin gave a 24-number rescue code" || bad "set-pin gave a rescue code" "$(serial | grep -E 'setpin|RESCUE')"
 val after-setpin | grep -q "state=pin" && val after-setpin | grep -q "pin=tpm" \
     && ok "the PIN is sealed in the VM's TPM" || bad "the PIN is sealed in the TPM" "$(val after-setpin)"
 if [ "$NOAES" = 1 ]; then
@@ -439,7 +439,7 @@ if wait_for "aurlock-pin: asking for the PIN" 300; then
         shot dbx-changed
         serial | grep -q 'aurlock-pin: PIN changed' && ok "PCR 7 changed: the page says the computer changed (not \"wrong PIN\")" \
             || bad "a dbx update -> changed" "$(serial | grep aurlock-pin | tail -3)"
-        keys "$CODE"; sleep 5
+        keys "$RESCUE"; sleep 5
         serial | grep -q 'aurlock-pin: rescue code open' && ok "the rescue code opened the drive" || bad "the rescue code after a dbx update" "$(serial | grep aurlock-pin | tail -3)"
         keys "$PIN1"; keys ret; sleep 1; keys "$PIN1"; keys ret
         wait_for "THEFT poweroff" && ok "she chose her PIN again and AurOS started" || bad "AurOS started after the rescue code" "$(serial | tail -5)"
@@ -484,7 +484,7 @@ if wait_for "aurlock-pin: asking for the PIN" 300; then
         serial | grep -q 'aurlock-pin: PIN changed' && ok "the page knows the computer changed (not \"wrong PIN\")" \
             || bad "a new chip -> changed" "$(serial | grep aurlock-pin)"
     fi
-    keys "$CODE"; sleep 5
+    keys "$RESCUE"; sleep 5
     shot choose
     serial | grep -q 'aurlock-pin: rescue code open' && ok "the rescue code opened the drive" || bad "the rescue code" "$(serial | grep aurlock-pin)"
     keys "$PIN2"; keys ret; sleep 1; keys "$PIN2"; keys ret
