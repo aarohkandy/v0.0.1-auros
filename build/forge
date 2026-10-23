@@ -1344,7 +1344,12 @@ EOL
     # one of them is a thing that is refused without it, and refused
     # silently -- which is the shape of bug this product keeps finding.
     #
-    #   sudo       a person who set the machine up can repair it
+    #   (NOT sudo. It used to be here, "so a person who set the machine
+    #   up can repair it", beside the same password on every machine --
+    #   which made every program she runs, and anyone at her keyboard,
+    #   root. What she needs that is privileged goes through the narrow
+    #   polkit grants below or the root-side answer path; repair is the
+    #   recovery start-up, not her account.)
     #   audio      the sound card
     #   video      /dev/dri, and the backlight, via the udev rule in
     #              rootfs/usr/lib/udev/rules.d/60-auros-backlight.rules
@@ -1382,7 +1387,7 @@ EOL
     # exists -- useradd below is guarded by `id -u`).
     #
     # So: ask which ones exist, add those, and say what was missing.
-    AUROS_GROUPS_WANT="sudo audio video input netdev bluetooth lpadmin"
+    AUROS_GROUPS_WANT="audio video input netdev bluetooth lpadmin"
     AUROS_GROUPS=""
     AUROS_GROUPS_MISSING=""
     for _g in $AUROS_GROUPS_WANT; do
@@ -1407,10 +1412,16 @@ EOL
     # screen brightness and no keyboard.
     inchroot "usermod -aG '$AUROS_GROUPS' '$default_user'" \
         || die "could not put $default_user in: $AUROS_GROUPS"
-    # Placeholder credential. First boot forces a change; a shipped
-    # image must never carry a usable password.
-    inchroot "echo '$default_user:auros' | chpasswd; passwd -e $default_user" || true
-    inchroot "passwd -l root" || true
+    # NO PASSWORD AT ALL, not a placeholder one. This was `auros` on
+    # every machine, "expired" -- which nothing ever asked her to
+    # change, because nothing in this product asks for a password. The
+    # desktop starts without one (aurshell.service, pam_permit), so a
+    # locked account loses her nothing and leaves nobody a password to
+    # know. A build that may not lock it does not ship.
+    inchroot "usermod -p '!' '$default_user' && passwd -l root >/dev/null" \
+        || die "could not lock the passwords of $default_user and root"
+    # Nor in sudo from an earlier build of this rootfs.
+    inchroot "gpasswd -d '$default_user' sudo >/dev/null 2>&1" || true
 
     # NO `splash`. A DATED TRAP, DEFUSED WHERE THE ROOTFS IS BUILT.
     #
@@ -1828,18 +1839,21 @@ EOL
         note "a kiosk: nothing on this machine may be changed by its user"
     fi
 
+    # No login prompt on any console. A login prompt is a question with
+    # no answer here (no account has a password), on a black screen she
+    # reaches by an accidental Ctrl-Alt-F2. tty1 is the desktop's.
     if [ "$allow_tty" = "no" ]; then
-        inchroot "systemctl mask getty@tty2.service getty@tty3.service getty@tty4.service \
-                  getty@tty5.service getty@tty6.service >/dev/null 2>&1" || true
-        note "virtual consoles disabled (kiosk policy)"
+        inchroot "systemctl mask getty@tty1.service getty@tty2.service getty@tty3.service \
+                  getty@tty4.service getty@tty5.service getty@tty6.service >/dev/null 2>&1" \
+            || die "could not switch the console login prompts off"
+        install -d "$RFS/etc/systemd/logind.conf.d"
+        printf '[Login]\nNAutoVTs=0\nReserveVT=0\n' > "$RFS/etc/systemd/logind.conf.d/50-auros-no-console.conf"
+        note "no console login prompts"
     fi
-    if [ "$allow_user_install" = "no" ]; then
-        cat > "$RFS/etc/sudoers.d/90-auros-lockdown" <<'EOL'
-# Kiosk policy: users may not install or remove software.
-%users ALL=(ALL) !/usr/bin/apt, !/usr/bin/apt-get, !/usr/bin/dpkg, !/usr/bin/aur
-EOL
-        chmod 440 "$RFS/etc/sudoers.d/90-auros-lockdown"
-    fi
+    # (A sudoers "lockdown" for allow_user_install=no lived here. It was
+    # negations only, which grant nothing and forbid nothing; nobody is
+    # in sudo now, and installing is refused by polkit granting nothing.)
+    rm -f "$RFS/etc/sudoers.d/90-auros-lockdown"
 
     # ── memory, on a machine that has very little of it ────────────
     #

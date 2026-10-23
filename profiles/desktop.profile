@@ -354,7 +354,7 @@ allow_theme_change="yes"
 # a machine on a counter it is the owner's decision and not the user's.
 # Kiosk builds never get the button regardless.
 allow_network_change="yes"
-allow_tty="yes"           # Ctrl-Alt-F2 to a console
+allow_tty="no"            # no console login: nobody here has a password to type
 
 # After this many minutes with nobody touching it, the screen goes
 # dark. 0 means never; anything above 120 is clamped to it.

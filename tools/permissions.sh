@@ -87,7 +87,6 @@ Safely remove a USB stick|org.freedesktop.udisks2.power-off-drive
 Internet: look for wifi|org.freedesktop.NetworkManager.wifi.scan
 Internet: join a network|org.freedesktop.NetworkManager.settings.modify.system
 Internet: connect|org.freedesktop.NetworkManager.network-control
-Install a downloaded program|com.ubuntu.pkexec.gdebi.gtk
 Get more programs (the store)|org.freedesktop.packagekit.package-install
 Remove a program|org.freedesktop.packagekit.package-remove
 Update this computer|org.freedesktop.packagekit.system-update
@@ -354,6 +353,78 @@ else
     printf '  %-58s ok\n' "no splash-without-plymouth vt.handoff trap"
 fi
 [ "$sess" = 1 ] || true
+
+# ── 6. and what it must NOT do ─────────────────────────────────────
+#
+# Every check above asks "is she allowed?". These ask the opposite, and
+# each one was true of every image built before it was written: the
+# account was in sudo with the password `auros` on every machine, a
+# console login waited on Ctrl-Alt-F2, a downloaded .deb installed as
+# root with no password, and any program running as her could mount
+# the Windows disk read-write.
+echo
+echo "and does it refuse what nobody sitting at it should be able to do?"
+for g in sudo admin wheel root; do
+    if in_group "$g"; then
+        printf '  %-58s NO
+' "$USER_NAME is in $g"
+        hit "$USER_NAME is in $g: any program she runs can become root"
+    else
+        printf '  %-58s ok
+' "$USER_NAME is not in $g"
+    fi
+done
+for u in "$USER_NAME" root; do
+    pw=$(awk -F: -v u="$u" '$1==u{print $2}' "$RFS/etc/shadow" 2>/dev/null)
+    case "$pw" in
+        '!'*|'*'*) printf '  %-58s ok
+' "$u has no password anyone could know" ;;
+        *) printf '  %-58s NO
+' "$u has a usable password"
+           hit "$u has a password: the same one on every machine" ;;
+    esac
+done
+for f in "$RFS"/etc/sudoers.d/*; do
+    [ -f "$f" ] || continue
+    case "$(basename "$f")" in README) continue ;; esac
+    if grep -qE "^[[:space:]]*(%users|%$USER_NAME|$USER_NAME)[[:space:]]" "$f"; then
+        printf '  %-58s NO
+' "sudoers.d/$(basename "$f") names her"
+        hit "a sudo rule names $USER_NAME or users"
+    fi
+done
+for n in 1 2 3 4 5 6; do
+    t=$(readlink "$RFS/etc/systemd/system/getty@tty$n.service" 2>/dev/null)
+    if [ "$t" = /dev/null ]; then
+        printf '  %-58s ok
+' "no login prompt on console $n"
+    else
+        printf '  %-58s NO
+' "getty@tty$n is not masked"
+        hit "a console login waits on tty$n"
+    fi
+done
+if grep -qsE '^NAutoVTs=0' "$RFS"/etc/systemd/logind.conf.d/*.conf; then
+    printf '  %-58s ok
+' "logind starts no login prompts on other consoles"
+else
+    printf '  %-58s NO
+' "logind may start a login prompt (NAutoVTs)"
+    hit "logind may start a console login"
+fi
+for act in com.ubuntu.pkexec.gdebi.gtk \
+           org.freedesktop.udisks2.filesystem-mount-system \
+           org.freedesktop.packagekit.package-install-untrusted \
+           org.freedesktop.Flatpak.configure-remote; do
+    if [ -f "$RULE" ] && grep -q "\"$act\"" "$RULE"; then
+        printf '  %-58s NO
+' "granted: $act"
+        hit "granted without a password: $act"
+    else
+        printf '  %-58s ok
+' "not granted: $act"
+    fi
+done
 
 echo
 echo "  This section reads files. It cannot see a running system --"

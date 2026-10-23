@@ -144,6 +144,9 @@ jobs:
           AURSHELL="$RUNNER_TEMP/aurshell" sh tools/choicestest.sh 2>&1 | tee transcripts/choicestest.txt
           grep -q 'the desktop starts as' transcripts/choicestest.txt \
             || { echo "choicestest did not start the image's aurshell"; exit 1; }
+      - name: permissions (what she may do, and what nobody at the keyboard may)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo env RFS=work/forge/desktop/rootfs sh tools/permissions.sh 2>&1 | tee transcripts/permissions.txt
       - name: lookboottest (the look she picked survives a restart)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
