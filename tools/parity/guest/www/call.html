@@ -10,14 +10,17 @@ const $ = id => document.getElementById(id);
 const log = m => { $('log').textContent += m + '\n'; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const report = o => fetch('/call', {method: 'POST', body: JSON.stringify(o)});
+const stage = m => fetch('/call-stage', {method: 'POST', body: m});
 (async () => {
   const r = {ok: false};
   try {
+    stage('asking for camera and microphone');
     const s = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}, audio: true});
     r.video_label = s.getVideoTracks()[0] ? s.getVideoTracks()[0].label : '';
     r.audio_label = s.getAudioTracks()[0] ? s.getAudioTracks()[0].label : '';
     $('local').srcObject = s;
     log('camera: ' + r.video_label + ' / microphone: ' + r.audio_label);
+    stage('got them: ' + r.video_label + ' / ' + r.audio_label);
     const pc1 = new RTCPeerConnection(), pc2 = new RTCPeerConnection();
     pc1.onicecandidate = e => e.candidate && pc2.addIceCandidate(e.candidate);
     pc2.onicecandidate = e => e.candidate && pc1.addIceCandidate(e.candidate);
@@ -28,6 +31,7 @@ const report = o => fetch('/call', {method: 'POST', body: JSON.stringify(o)});
     await pc1.setLocalDescription(offer); await pc2.setRemoteDescription(offer);
     const answer = await pc2.createAnswer();
     await pc2.setLocalDescription(answer); await pc1.setRemoteDescription(answer);
+    stage('connected, waiting for frames');
     let v = {}, a = {};
     for (let i = 0; i < 40; i++) {                       // up to 20 s
       await sleep(500);
@@ -35,6 +39,7 @@ const report = o => fetch('/call', {method: 'POST', body: JSON.stringify(o)});
         if (x.type === 'inbound-rtp' && x.kind === 'video') v = x;
         if (x.type === 'inbound-rtp' && x.kind === 'audio') a = x;
       });
+      stage('loop ' + i + ' frames=' + (v.framesDecoded || 0) + ' audio=' + (a.packetsReceived || 0) + ' energy=' + (a.totalAudioEnergy || 0) + ' t=' + Math.round(performance.now()));
       if ((v.framesDecoded || 0) >= 40 && (a.packetsReceived || 0) >= 60 && (a.totalAudioEnergy || 0) > 0) break;
     }
     r.frames_decoded = v.framesDecoded || 0;
@@ -50,6 +55,7 @@ const report = o => fetch('/call', {method: 'POST', body: JSON.stringify(o)});
     r.colours = seen.size;
     r.ok = r.frames_decoded >= 40 && r.audio_packets >= 60 && r.colours >= 4;
   } catch (e) { r.error = String(e); }
+  stage('finished: ' + JSON.stringify(r));
   log(JSON.stringify(r));
   report(r);
 })();

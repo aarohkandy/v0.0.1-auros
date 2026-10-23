@@ -243,6 +243,52 @@ def ppm_to_png(src, dst):
                           + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
 
 
+def png_pixels(path):
+    """-> (w, h, bytes-per-pixel, rows of bytearray) of an 8-bit RGB/RGBA PNG."""
+    d = open(path, "rb").read()
+    i, idat, w = 8, b"", 0
+    while i < len(d):
+        n, t = struct.unpack(">I4s", d[i:i + 8])
+        b = d[i + 8:i + 8 + n]
+        if t == b"IHDR":
+            w, h = struct.unpack(">II", b[:8])
+            bpp = {2: 3, 6: 4}[b[9]]
+        elif t == b"IDAT":
+            idat += b
+        i += 12 + n
+    raw, stride, rows, prev = zlib.decompress(idat), w * bpp + 1, [], bytearray(w * bpp)
+    for y in range(h):
+        f, line = raw[y * stride], bytearray(raw[y * stride + 1:(y + 1) * stride])
+        for x in range(len(line)):
+            a = line[x - bpp] if x >= bpp else 0
+            b_ = prev[x]
+            c = prev[x - bpp] if x >= bpp else 0
+            if f == 1:
+                line[x] = (line[x] + a) & 255
+            elif f == 2:
+                line[x] = (line[x] + b_) & 255
+            elif f == 3:
+                line[x] = (line[x] + (a + b_) // 2) & 255
+            elif f == 4:
+                p = a + b_ - c
+                pa, pb, pc = abs(p - a), abs(p - b_), abs(p - c)
+                line[x] = (line[x] + (a if pa <= pb and pa <= pc else b_ if pb <= pc else c)) & 255
+        rows.append(line)
+        prev = line
+    return w, h, bpp, rows
+
+
+def colours_in(path, x0, y0, x1, y1):
+    """How many distinct (5-bit-per-channel) colours a rectangle of a screenshot has."""
+    w, h, bpp, rows = png_pixels(path)
+    seen = set()
+    for y in range(max(0, y0), min(h, y1), 2):
+        r = rows[y]
+        for x in range(max(0, x0), min(w, x1), 2):
+            seen.add((r[x * bpp] >> 3, r[x * bpp + 1] >> 3, r[x * bpp + 2] >> 3))
+    return len(seen)
+
+
 # ── the run ─────────────────────────────────────────────────────────
 
 def read_known_gaps():
@@ -293,6 +339,17 @@ def drive(q, out, timeout, checks):
                 if act == "snap":
                     q.screendump(os.path.join(shots, arg + ".png"))
                     say("screenshot", arg)
+                elif act == "pixels":        # NAME x0 y0 x1 y1 MIN -> NAME.visible
+                    nm, x0, y0, x1, y1, mn = arg.split()
+                    try:
+                        n = colours_in(os.path.join(shots, nm + ".png"), int(x0), int(y0), int(x1), int(y1))
+                    except Exception as e:               # no screenshot: a failure, said plainly
+                        n = -1
+                    ok = n >= int(mn)
+                    results[nm + ".visible"] = {"status": "pass" if ok else "fail", "detail":
+                        ("the window shows a picture (%d colours)" % n) if ok else
+                        ("the window is blank on screen: %d colour(s) where a page has at least %s" % (n, mn))}
+                    say("%-28s %-5s %s" % (nm + ".visible", results[nm + ".visible"]["status"], results[nm + ".visible"]["detail"]))
                 elif act == "key":
                     q.keys(*arg.split("+") if arg != "+" else ["equal"])
                 elif act == "type":
@@ -358,9 +415,15 @@ def main():
     gaps = read_known_gaps()
     rows, bad = [], 0
     for c in a.checks:
-        r = results.get(c) or {"status": "fail", "detail": "the guest never reported"}
-        for k in [k for k in results if k.startswith(c + ".")]:
-            pass
+        sub = sorted(k for k in results if k.startswith(c + "."))
+        parts = ([c] if c in results else []) + sub
+        if not parts:
+            r = {"status": "fail", "detail": "the guest never reported"}
+        else:
+            worst = next((k for k in parts if results[k]["status"] != "pass"), None)
+            r = results[worst] if worst else {"status": "pass", "detail": results[parts[0]]["detail"]}
+            if worst and worst != c:
+                r = {"status": "fail", "detail": "%s: %s" % (worst, r["detail"])}
         st = r["status"]
         shown = st
         if c in expect_fail:
@@ -374,9 +437,8 @@ def main():
         elif st != "pass":
             bad += 1
         rows.append((c, shown, r["detail"], gaps.get(c, "")))
-    for name, r in results.items():            # sub-results (e.g. film.h264)
-        if name not in a.checks and not any(name == row[0] for row in rows):
-            rows.append((name, r["status"], r["detail"], ""))
+        for k in sub:
+            rows.append(("  " + k, results[k]["status"], results[k]["detail"], ""))
     json.dump({"checks": {n: {"status": s, "detail": d, "gap": g} for n, s, d, g in rows},
                "notes": notes, "guest_done": done, "seconds": int(secs),
                "without": a.without, "opt": a.opt, "failures": bad},

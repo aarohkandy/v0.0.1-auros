@@ -28,6 +28,8 @@ fx_start() {   # URL -- a fresh profile, so no check inherits another's state
     FX=$!
 }
 fx_stop() { pkill -f parity-profile 2>/dev/null; sleep 1; pkill -9 -f parity-profile 2>/dev/null; return 0; }
-wait_report() { rm -f "$OUT/$1.json"; wait_for "$2" test -s "$OUT/$1.json"; }
+# clear_report NAME BEFORE the browser starts (a page may report before anyone waits), then wait_report NAME SECONDS
+clear_report() { rm -f "$OUT/$1.json" "$OUT/$1-stage.json"; }
+wait_report() { wait_for "$2" test -s "$OUT/$1.json"; }
 # jget FILE KEY  -> the value of a key in a small JSON report
 jget() { python3 -c "import json,sys; print(json.load(open('$1')).get('$2',''))" 2>/dev/null; }

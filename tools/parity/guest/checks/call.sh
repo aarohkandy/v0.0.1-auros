@@ -23,20 +23,22 @@ sleep 1
 wpctl set-default "$(wpctl status | sed -n 's/.*[^0-9]\([0-9][0-9]*\)\. Parity-Microphone .*/\1/p' | head -1)" 2>/dev/null
 note "audio sources: $(wpctl status | sed -n '/Sources:/,/Filters:/p' | tr '\n' '|' | cut -c1-300)"
 
+clear_report call
 fx_start http://127.0.0.1:8123/call.html
 sleep 25
 snap call-1
 sleep 2
 if wait_report call 120; then
     sleep 3; snap call
+    say "do pixels call 260 130 1020 690 12"; sleep 2
     ok=$(jget "$OUT/call.json" ok)
     note "call report: $(cat "$OUT/call.json" | cut -c1-400)"
     if [ "$ok" = True ]; then
-        result call pass "the other side got $(jget "$OUT/call.json" remote_size) video ($(jget "$OUT/call.json" frames_decoded) frames, $(jget "$OUT/call.json" colours) colours) and sound; camera: $(jget "$OUT/call.json" video_label)"
+        result call.webrtc pass "the other side got $(jget "$OUT/call.json" remote_size) video ($(jget "$OUT/call.json" frames_decoded) frames, $(jget "$OUT/call.json" colours) colours) and sound; camera: $(jget "$OUT/call.json" video_label)"
     else
-        result call fail "$(cat "$OUT/call.json" | cut -c1-300)"
+        result call.webrtc fail "$(cat "$OUT/call.json" | cut -c1-300)"
     fi
 else
-    result call fail "the page never reported (Firefox did not run the call page): $(tail -c 300 /var/lib/auros-parity/firefox.log | tr '\n' ' ')"
+    result call.webrtc fail "the page never reported; last stage: $(cat "$OUT/call-stage.json" 2>/dev/null || echo none); $(tail -c 300 /var/lib/auros-parity/firefox.log | tr '\n' ' ')"
 fi
 fx_stop; kill "$TONE" "$LB" 2>/dev/null; pkill pw-play; unserve

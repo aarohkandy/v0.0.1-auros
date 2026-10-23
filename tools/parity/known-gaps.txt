@@ -1,0 +1,1 @@
+call  Firefox draws its page into a Wayland subsurface and src/aurwl never composites subsurfaces: the window is blank on screen (WebRTC itself works). Fix is in aurwl (S3/C).
