@@ -42,7 +42,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 - No install has passed end to end on real Windows yet (the e2e run is the gate); it now reaches the restart.
 - Data-safety fixes in flight: staging clock bug for US time zones, BitLocker never decrypted,
   Recycle Bin never emptied, double-click skipping the Ready page, shared password removed.
-- Safety review, security audit and legal review: results arriving.
+- **Safety review done** (docs/safety/FINDINGS.md): 26 confirmed ways her disk or Windows could be hurt
+  (12 high, 0 blockers after 3 skeptics each); 9 already fixed, the rest assigned with tests required.
+  Security audit and legal review: writing their final documents.
 
 ## Waiting for you (each with my recommendation)
 

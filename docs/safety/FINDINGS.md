@@ -338,4 +338,3 @@ These did not survive (at least 2 of 3 skeptics refuted them). Do not re-raise t
 - **R-21** "Bring my files across" always fails because the installer's shrink left C: dirty: `ntfs-3g.probe --readonly` exits 0 on a dirty-bit-only volume and the `ntfsinfo` grep can never match, so the gate does not fire. The reverse is worth a ticket for R: Ferry's dirty gate is dead code for dirty volumes, so it would import from a volume Windows left unclean (read-only mount, no data loss).
 - **R-22** The only everyday route to Windows chainloads `bootmgfw.efi` from shim and GRUB and shows a BitLocker recovery screen: same as R-10.
 
-=== END CONTENT ===
