@@ -23,12 +23,20 @@ include paths), `.github/workflows/windows.yml` (one step + the gate regex),
 | Tests | `sh tools/hw/hwtest.sh` (about 50 s): ~34 checks, ~20 of them mutants shown red, a sanitized fuzz of random PCs, wordlint on every sentence, the sample report and results table kept in sync; run by `tests.yml` (unit job; that workflow runs on `[test]` or a release); mingw `-Werror` build of the Windows part | a4d17a4 |
 | `tools/hw/regen.sh` remakes `hw/compat.json` (byte-identical on re-run) | | fd92118 |
 
-Proven where: the pure code and the matcher on the host and under mingw on
-homebase; the `.exe` starts and writes both files under Wine
-(`wine aurbridge-wizard.exe --report Z:/tmp/x`). **On real Windows: only by
-windows.yml**, step "the PC report, from the console tool and from the
-installer" (look at its job summary for the real-VM report). **Never yet on a
-physical PC**: that is WP-33 (`CAMPAIGN.md`).
+Proven where: the pure code and the matcher on the host (ASan/UBSan clean) and
+under mingw `-Werror` on homebase; the `.exe` starts and writes both files under
+Wine. **On real Windows: windows.yml run 39959512211 (workflow_dispatch, all jobs
+green)**: `aurbridge.exe report` and `AurOS-Setup.exe --report` both wrote the two
+files on a Windows Server 2025 VM (UEFI, Secure Boot off, 1 PCI device kept, 60
+skipped as plumbing, the Mellanox ConnectX-4 Lx VF read as "Network cable", driver
+`mlx5_core`, "Your network cable will work."), the JSON parsed in PowerShell, the
+installer's own check was in the report, `aurbridge selftest` ran all 40-odd
+inventory and matcher cases. The report is in that run's job summary. (Push-triggered
+windows runs were mostly cancelled or stalled in `apt` on the runners; a
+`gh workflow run windows.yml --ref main` is the reliable way to get one.)
+**Never yet on a physical PC**: that is WP-33 (`CAMPAIGN.md`). A VM has no Wi-Fi, no
+printer, no camera: those paths (the "Windows uses this adapter now" flag, USB
+printer pairing, class codes of real USB devices) are logic-tested only.
 
 ## Hooks for the other streams (exact)
 
@@ -131,8 +139,8 @@ in already tells which kind it is.
 
 ## Next steps, in order
 
-1. Read the windows.yml job summary of the newest run on `main` (the real-VM
-   report) and fix whatever real Windows shows that Wine did not.
+1. (done once: run 39959512211, see above.) After any change to `src/aurbridge/hwinv*`,
+   `hw/`, `build/aurbridge`: `gh workflow run windows.yml --ref main`, read the job.
 2. When B/A2 have wired the hooks: add a plat_sim-style fixture test for the
    whole path (BCM4352 → screen / staging refusal; AX201 → fine).
 3. First physical PC: `CAMPAIGN.md` step 1 only, then diff the report against
