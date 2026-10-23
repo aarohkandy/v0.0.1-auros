@@ -1,6 +1,6 @@
 # Stream F: install AurOS from a real Windows, end to end (handoff)
 
-Updated 2026-10-23 05:00 UTC (session B). Repository
+Updated 2026-10-23 05:40 UTC (session B). Repository
 https://github.com/aarohkandy/v0.0.1-auros, branch `main`.
 Files: `.github/workflows/e2e.yml`, `tools/e2e/**` (nothing else).
 Full user guide: `tools/e2e/README.md`. This page is the state of the work.
@@ -13,6 +13,9 @@ Full user guide: `tools/e2e/README.md`. This page is the state of the work.
 | Edge download stall (run 39896941765, old repo) | fixed in `dac418d`: only the warned item's own "More actions" (selftest has the rectangles) |
 | `workflow_call` / `workflow_dispatch` inputs | DONE in `dac418d`: `installer_url`, `installer_sha256`, `variants` (default base). Stream E: call with `uses: ./.github/workflows/e2e.yml` + `with:`; the caller job must grant `contents: write`. The pinned `INSTALLER_URL`/`INSTALLER_SHA256` env lines stay plain (promote greps them). |
 | Point at this repo's first prerelease | waiting for stream E (`gh release list -R aarohkandy/v0.0.1-auros`) |
+| Smoke run 39902908530 (v4 installer) | M1 green (13 min Setup), cache saved; M2 stopped at Edge's new trust dialog (below, finding 1); fixed in the next push |
+| Restyle-proof driver (lead, 25d2da5) | pushed: the installer's buttons by **name** (MSAA via UI Automation; primary = the button whose key is Enter, selftest checks wizard.c keeps that), colour only as fallback (old teal, new green #0B5D4F/#5DBB9E), a button must stand still >1 s before a press (B's 700 ms debounce). The helper now runs **elevated** (logon task, highest run level; guest/firstlogon.ps1) because a normal process cannot read an elevated window's controls: the golden is rebuilt (cache key changed). |
+| Actions cache | the golden is **18.7 GB**; this repo's cache limit is 10 GB in all (the limit API answers 402: no payment method). It was saved and still listed at 05:31, but GitHub evicts down to 10 GB, least recently used first, so expect misses (M1 then adds ~17 min). More room is an owner click (a payment method / larger cache limit), not code. |
 
 **For stream E (release.yml promote gate, line ~333):** it selects
 `.jobs[] | select(.name == "e2e")`, but the matrix job is named
@@ -23,7 +26,20 @@ jobs belong to the caller's run), so that path needs its own check.
 
 ## What she sees (findings for the design owners; screenshot paths)
 
-(filled from every M2/M3 screenshot as runs land)
+Evidence zips: `https://github.com/aarohkandy/v0.0.1-auros/releases/download/e2e-<RUN>/e2e-evidence-base.zip`
+(paths below are inside it).
+
+1. **Edge hides "Keep anyway" behind a 20-px arrow on a black "Delete"
+   button (worst so far; route to D, website).** Edge 2026: hover the
+   download to see "...", press it, Keep, then a dialog "Make sure you
+   trust AurOS-Setup.exe before you open it" whose only buttons are
+   Cancel and a solid black **Delete**; Keep anyway is in the menu of the
+   small arrow on Delete. The website still says "Press Show more, then
+   Keep anyway": she will press Delete or Cancel. Run 39902908530:
+   `flow/shots/0016-auto-edge-download-and-keep-it.png` (the dialog),
+   `0013-click-edge-keep.png` (the item menu), `0012-...more-actions.png`
+   (the "..." appears only under the pointer). The website's picture and
+   words need to show the arrow on Delete.
 
 ## Goal
 

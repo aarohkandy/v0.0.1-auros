@@ -90,6 +90,10 @@ VARIANT_EXPECT = {
 
 HUB = "http://10.0.2.2:8000"
 DEADLINE = time.time() + 60 * float(E("E2E_MINUTES", "300"))
+# The installer's primary button by colour, when its names cannot be read:
+# the old teal, then the 2026 restyle's green (docs/DESIGN-DIRECTION.md,
+# light and dark).
+PRIMARY_RGB = ((0x7D, 0xD3, 0xC0), (0x0B, 0x5D, 0x4F), (0x5D, 0xBB, 0x9E))
 # Edge's words for a download it holds back until the person says keep
 WARN_RX = (r"(isn.t commonly downloaded|can.t be downloaded securely|might be dangerous|"
            r"download blocked|was blocked|unsafe|couldn.t verify)")
@@ -430,9 +434,15 @@ class Flow:
                 if names != seen:
                     self.log("edge shows: " + names[:900])
                     seen = names
+                # Edge 2026: "Keep" opens "Make sure you trust ...", whose
+                # Keep anyway sits in the menu of its Delete button
+                # ("Open menu", the arrow); older Edge had "Show more".
                 for want, types in (("^Keep anyway$", ("Button", "MenuItem")),
                                     ("^Show more", ("Button", "SplitButton")),
+                                    ("^Open menu$", ("Button", "SplitButton", "MenuItem")),
                                     ("^Keep$", ("Button", "MenuItem"))):
+                    if want == "^Open menu$" and not re.search(r"Make sure you trust", names):
+                        continue
                     e = self.pick(els, want, types)
                     if e and pressed.count(want) < 4:
                         self.click_el(e, "edge " + want.strip("^$"))
@@ -560,7 +570,7 @@ class Flow:
             raise Failure("the installer's window never opened")
 
     # -- 4. the wizard --
-    def wizard_rect(self, ws=None):
+    def wizard_win(self, ws=None):
         """The installer's window: its process is the downloaded file, or
         its title names AurOS outside Edge and Explorer."""
         for w in (self.windows() if ws is None else ws):
@@ -570,13 +580,31 @@ class Flow:
             if proc.lower().startswith(INSTALLER_STEM.lower()[:10]) or (
                     re.search(r"AurOS", name) and proc.lower() not in
                     ("msedge", "explorer", "searchhost", "shellexperiencehost")):
-                return w["rect"]
+                return w
         return None
 
+    def wizard_rect(self, ws=None):
+        w = self.wizard_win(ws)
+        return w["rect"] if w else None
+
+    def wizard_named(self, win):
+        """The installer's own controls, by name: its screen-reader object
+        (MSAA), read through UI Automation by the elevated helper. Its
+        primary button is the one whose key is Enter (B keeps the names
+        stable, docs/handoff/streams/B.md "Changed for e2e"). [] for an
+        installer without one, or a helper that cannot see inside it."""
+        if not win or not win.get("proc"):
+            return []
+        return [e for e in self.elements("^" + re.escape(win["proc"]) + "$",
+                                         ["Button", "RadioButton", "CheckBox", "Pane"],
+                                         max=80, quiet=True)
+                if e.get("proc") == win["proc"]]
+
     def drive_wizard(self):
-        """Press the teal primary button whenever it is enabled; when it
-        is not, do what the page asks (tick its boxes, type the word it
-        names) or wait. Each press starts a new timed phase named after
+        """Press the primary button whenever it is enabled (found by name:
+        the installer's button whose key is Enter; by colour when names
+        cannot be read); when it is not, do what the page asks (tick its
+        boxes, type the word it names) or wait. Each press starts a new timed phase named after
         it. Returns right after pressing "Restart now"."""
         clicks = {}
         type_tries = 0
@@ -585,6 +613,7 @@ class Flow:
         installing = False          # pressed the button that starts the install
         seen_events = len(self.m.qmp.events)
         last_text, text_since = "", time.time()
+        last_sig, cand = None, [None, 0.0]     # the button about to be pressed, since when
         rect = self.wizard_rect()
         stage = [self.rec.phase("wizard: first page")]
         stage[0].__enter__()
@@ -626,17 +655,43 @@ class Flow:
                     self.log("the installer's window is back")
                     continue
                 img = self.m.screendump()
-                btns = vision.find_buttons(img, rect)
+                win = self.wizard_win()
+                rect = win["rect"] if win else rect
+                named = self.wizard_named(win)
+                sig = " | ".join(f"{e.get('type')}:{e.get('name')}{'' if e.get('enabled', True) else '(off)'}"
+                                 f"{'[' + e['key'] + ']' if e.get('key') else ''}" for e in named)
+                if sig != last_sig:
+                    self.log("installer controls: " + (sig or "(none readable: colour is the fallback)"))
+                    last_sig = sig
+                enter = [e for e in named if e.get("type") == "Button" and (e.get("key") or "").lower() == "enter"]
+                on = [e for e in enter if e.get("enabled", True)]
+                if enter:
+                    btns = [tuple(on[0]["rect"])] if on else []
+                    label = on[0]["name"] if on else None
+                else:
+                    btns = [b for rgb in PRIMARY_RGB for b in vision.find_buttons(img, rect, rgb)]
+                    label = None
                 if btns:
                     b = max(btns, key=lambda b: (b[1] + b[3], b[0] + b[2]))
-                    label = vision.text_of(vision.ocr(img, b, psm=7)).strip() or "?"
+                    label = label or vision.text_of(vision.ocr(img, b, psm=7)).strip() or "?"
+                    # The installer ignores a press in the first 700 ms of a
+                    # page (a double click must not skip one): press a button
+                    # only once it has stood still for over a second.
+                    if (label, b) != cand[0]:
+                        cand[0], cand[1] = (label, b), time.time()
+                        time.sleep(1.2)
+                        continue
+                    if time.time() - cand[1] < 1.0:
+                        time.sleep(0.5)
+                        continue
                     if re.search(r"close", label, re.I) and not re.search(r"restart", label, re.I):
                         self.m.save(img, "wizard-ended-with-close")
                         raise Failure("the installer stopped without offering a restart: " +
                                       vision.text_of(vision.ocr(img, rect))[:900])
                     n = clicks.get(label, 0)
                     if not self.wizard_pages or n == 0 or label != last_label:
-                        page = vision.text_of(vision.ocr(img, rect))
+                        page = " ".join(e.get("name") or "" for e in named if e.get("type") == "Pane")
+                        page = (page + " || " if page else "") + vision.text_of(vision.ocr(img, rect))
                         self.wizard_pages.append(page)
                         self.log(f"wizard page before '{label}': {page[:400]}")
                     if re.search(r"fix these", label, re.I):
@@ -646,6 +701,7 @@ class Flow:
                         raise Failure(f"pressed '{label}' six times and the page did not move on: " +
                                       vision.text_of(vision.ocr(img, rect))[:900])
                     self.m.click(*vision.centre(b), label="wizard " + label)
+                    cand[0] = None
                     if re.search(r"install|erase", label, re.I):
                         installing = True
                     if re.search(r"restart", label, re.I):
@@ -658,7 +714,16 @@ class Flow:
                     next_stage(f"wizard: after '{label}'")
                     time.sleep(3)
                     continue
-                boxes = vision.find_unchecked_boxes(img, rect)
+                # its own tick boxes, by name (a box she must tick to go on)
+                tick = next((e for e in named if e.get("type") == "CheckBox" and e.get("toggle") == "Off"
+                             and e.get("enabled", True) and clicks.get("#tick " + (e.get("name") or ""), 0) < 2), None)
+                if enter and not on and tick:
+                    clicks["#tick " + (tick.get("name") or "")] = clicks.get("#tick " + (tick.get("name") or ""), 0) + 1
+                    self.click_el(tick, "wizard tick: " + (tick.get("name") or "")[:40])
+                    idle_since = time.time()
+                    time.sleep(1.5)
+                    continue
+                boxes = [] if enter else vision.find_unchecked_boxes(img, rect)
                 if boxes:
                     self.m.click(*vision.centre(boxes[0]), label="wizard tick box")
                     time.sleep(1.5)
@@ -694,6 +759,7 @@ class Flow:
                         text_since = time.time()     # only numbers moved
                     last_text = text
                 busy = (re.search(r"Setting up AurOS|Checking this PC|We only read", text)
+                        or (enter and not on)       # "Checking…", "Fixing…": it is working
                         or time.time() - text_since < 45)
                 if not busy and time.time() - idle_since > 60:
                     # Nothing to press, tick or type that can be seen: the

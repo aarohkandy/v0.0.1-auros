@@ -29,7 +29,23 @@ Set-ItemProperty $con DelegationTerminal '{B23D10C0-E52E-411E-9D5B-C09FDF709C7D}
 $eng = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement'
 New-Item -Force $eng | Out-Null
 Set-ItemProperty $eng ScoobeSystemSettingEnabled 0 -Type DWord
-Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' AurE2E 'wscript.exe "C:\e2e\boot.vbs"'
+# The helper starts at every logon, elevated without a prompt (a logon
+# task with the highest run level, as this admin account), because the
+# installer it reads is elevated and a normal process cannot see inside
+# an elevated window. It only reads; it never presses anything.
+$act = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument '"C:\e2e\boot.vbs"'
+$trg = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+$pri = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
+$set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+try {
+  Register-ScheduledTask -TaskName 'E2E helper' -Action $act -Trigger $trg -Principal $pri -Settings $set -Force -ErrorAction Stop | Out-Null
+  $helperHow = 'logon task, highest run level'
+} catch {
+  # not elevated here after all: the helper then sees Microsoft's
+  # dialogs but not the installer's buttons (the host falls back to colour)
+  Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' AurE2E 'wscript.exe "C:\e2e\boot.vbs"'
+  $helperHow = "Run key, not elevated ($_)"
+}
 
 function Fact($f) { try { & $f 2>&1 | Out-String -Width 200 } catch { "error: $_" } }
 $facts = [ordered]@{
@@ -102,6 +118,7 @@ Invoke-WebRequest -UseBasicParsing -Method Post -Uri 'http://10.0.2.2:8000/e2e/e
   }
 }
 $facts.variant_name = $variant
+$facts.helper = $helperHow
 
 # Free space is given back to the host's disk image (the drive is an SSD
 # to Windows, and QEMU passes TRIM through), which keeps the cached copy

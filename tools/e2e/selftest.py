@@ -10,7 +10,11 @@
 2. Edge's download flyout: the warned item's own "More actions" is
    found, never the flyout header's "More options" (run 39896941765
    pressed that four times and stalled; rectangles from its log).
-3. publish.sh's four ways out (the run's release; at the default branch;
+3. The installer's contract with the driver (src/aurbridge/wizard.c):
+   its screen-reader object names the primary button's key "Enter",
+   and the primary labels still say what the driver acts on (Install,
+   Restart now, Fix these for me, Close).
+4. publish.sh's four ways out (the run's release; at the default branch;
    the newest e2e-* release as r<run>-*; none at all), with a fake gh.
 
 Run from anywhere: python3 tools/e2e/selftest.py
@@ -63,6 +67,17 @@ def test_expect():
                 if other != v and t:
                     check(re.search(want["page"], t, re.I) is None,
                           f"{v}: /{want['page']}/ does not match {other}'s {where} title")
+
+
+def test_wizard_contract():
+    wz = open(os.path.join(SRC, "wizard.c")).read()
+    check(re.search(r'ID_PRIMARY\)\s*\?\s*acc_str\(L"Enter"\)', wz) is not None,
+          "wizard: the primary button's screen-reader key is Enter (the driver finds it by that)")
+    m = re.search(r"primary_label\(void\)\s*\{(.*?)\n\}", wz, re.S)
+    body = m.group(1) if m else ""
+    for word, why in (("Install AurOS", "starts the install"), ("Restart now", "ends the wizard"),
+                      ("Fix these for me", "counts a fix"), ("Close", "means it cannot go on")):
+        check('L"%s"' % word in body, f"wizard: a primary button says '{word}' ({why})")
 
 
 def test_edge_item():
@@ -118,6 +133,7 @@ def test_publish():
 
 
 test_expect()
+test_wizard_contract()
 test_edge_item()
 test_publish()
 print(f"\n{len(fails)} failed" if fails else "\nall passed")

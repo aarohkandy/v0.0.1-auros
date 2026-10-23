@@ -11,8 +11,11 @@
 #
 # It never clicks, types or invokes anything: every press in this test is
 # made by the host through QEMU's keyboard and tablet, after the host has
-# taken a screenshot. UI Automation only says where Microsoft's own
-# buttons are; the AurOS installer draws its own window and has none.
+# taken a screenshot. UI Automation says where Microsoft's own buttons
+# are, and the AurOS installer's (its screen-reader object, MSAA). The
+# installer runs elevated, so this runs elevated too (a logon task with
+# the highest run level, guest/firstlogon.ps1): a normal process cannot
+# read an elevated window's controls.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'    # Invoke-WebRequest's bar costs seconds
 $hub = 'http://10.0.2.2:8000'
@@ -104,6 +107,9 @@ function Elements($match, $types, $max) {
             rect = $r; enabled = $ec.IsEnabled; toggle = $tog
             doc = [int64]$docIds[($e.GetRuntimeId() -join '.')]
             window = $c.Name; proc = $p; aid = $ec.AutomationId
+            # the key that presses it (the AurOS installer marks its primary
+            # button "Enter" in its screen-reader object)
+            key = "$($ec.AccessKey)$($ec.AcceleratorKey)"
           }
           if ($out.Count -ge $max) { return $out }
         } catch { }

@@ -1,4 +1,4 @@
-# Started hidden at every logon (boot.vbs, from the Run key). Fetches the
+# Started hidden at every logon (boot.vbs, from the 'E2E helper' logon task). Fetches the
 # UI helper from the test's host and runs it, so the helper can change
 # without reinstalling Windows; outside the test nothing answers, and
 # this waits quietly.
