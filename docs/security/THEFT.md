@@ -1,8 +1,13 @@
 # Theft: an encrypted disk and a short PIN (owner decision D9)
 
-Status: **design, 2026-10-23**. Owner of this file and of the code it
-names: stream S4 (`docs/handoff/STREAMS.md`). Implementation status and
-next steps: `docs/handoff/streams/S4.md`.
+Status: **built and proven on a file against a software TPM
+(`tools/theftunit.sh`); VM proof on the real image in progress
+(`tools/theftvm.sh`); SWITCHED OFF in the default install** until the VM
+proof is green and the lead says yes. Owner of this file and of the code
+it names: stream S4 (`docs/handoff/STREAMS.md`). Implementation status,
+measurements and next steps: `docs/handoff/streams/S4.md`. Where the
+build differs from the first design, the text below was changed to match
+and the change is marked "(measured)".
 
 ## What it is for, in one sentence
 
@@ -60,12 +65,22 @@ Where it starts:
    encryption has begun before AurOS's first start. Until then the
    first start is plain and encryption begins at the second.
 
-**Her files wait for it.** Ferry (her Windows files) and the PIN only
-come after encryption has begun, so her data is never written to the
-disk in plaintext (on an SSD, overwriting in place does not erase the
-old cells). The order after "Yes, keep AurOS" is: choose PIN -> rescue
-code -> (restart once if encryption has not begun: "AurOS will restart
-once to lock the drive") -> Ferry.
+**Her files wait for it.** Ferry (her Windows files) only comes after
+encryption has begun, so her data is never written to the disk in
+plaintext (on an SSD, overwriting in place does not erase the old
+cells); writes made while the pass runs go through the encryption.
+
+**The PIN comes after the pass, not before (measured).** LUKS2 refuses
+every keyslot and token change while an online encryption pass runs
+("Operation incompatible with device marked for LUKS2 reencryption";
+cryptsetup 2.7.0), so the PIN cannot be added until the whole partition
+is ciphertext: about 5 minutes (SSD) to 30 (HDD) for 40 GB. `lockctl
+set-pin` exits 3 until then. The order after "Yes, keep AurOS" is:
+(restart once if encryption has not begun: "AurOS will restart once to
+lock the drive") -> Ferry may run -> a plain "Locking your drive: 40%"
+page she can ignore while she works -> when it is done: Choose a PIN ->
+rescue code. The honest cost is a longer window with the temporary key
+(next paragraph).
 
 The temporary keyslot is an **empty passphrase** (pbkdf2, minimum
 cost): the disk opens with no input until she chooses a PIN, exactly
@@ -104,7 +119,16 @@ That is the evil-maid gap; see "What it does not protect against".
 ### 3. Unlock: TPM 2.0 + PIN, sealed to PCR 7
 
 `systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=7
---tpm2-with-pin=yes` (noble's systemd 255). The key is sealed inside the
+--tpm2-with-pin=yes` (noble's systemd 255). `lockctl prepare` writes
+`pcrs=7` to `/etc/auros/lock`; an empty `pcrs=` seals to no PCR.
+**Recommendation to the lead (measured, not yet decided):** consider
+the empty value. PCR 7 changes whenever the firmware's db/dbx changes or
+the shim's signing certificate does, and each time she needs the rescue
+code ("this computer has changed"); since a signed stick produces the
+same PCR 7 anyway (below), the PIN, counted by the chip, is what
+protects her, and PCR 7 adds only "Secure Boot must still be on with
+Microsoft's keys". Both settings are proven in the VM
+(`THEFT_PCRS=7|none`). The key is sealed inside the
 TPM; the PIN is the TPM object's authorisation value, so **every wrong
 PIN is counted by the TPM itself** (dictionary-attack lockout), not by
 our software. systemd 255 talks to the TPM over an encrypted session,
@@ -128,12 +152,23 @@ TPM.) The disk taken out and put in another PC is useless without the
 rescue code: the sealed key only exists inside this TPM.
 
 The initramfs prompt is ours: `aurlock-pin` (`src/aurshell/lockpin.c`),
-a full-screen KMS painter built like `aurscreen`, reading digit keys
-from evdev (layout-independent) and unlocking through libcryptsetup's
-token API (`crypt_activate_by_token_pin`, dlopened), so it can tell
-*wrong PIN* from *TPM locked out* from *this computer changed* and say
-the right sentence for each. Without a display it falls back to the
-console prompt.
+a full-screen KMS painter built like `aurscreen` in her theme's colours
+and faces, reading digit keys from evdev (physical keys: any layout)
+and unlocking through libcryptsetup's token API
+(`crypt_activate_by_token_pin`, dlopened). It has an on-screen number
+pad (keys 84 px at 720 lines, 71 px at 1024x600, all over EASY.md's 44)
+that works with a pointer or a touch screen, fills the dots from the PIN
+length recorded in the drive's `auros-hint` token and submits by itself
+at that length, and says the right sentence for each case.
+**(measured)** systemd 255's token answers -131 to a wrong PIN, to a
+chip that is locked out, and to a chip that is not the one the key was
+sealed in, so the page cannot tell them apart from the answer: it reads
+the chip's own `TPM2_PT_LOCKOUT_COUNTER` and lockout state before and
+after each try (the count rose: wrong PIN; locked out: "Too many tries",
+with the chip's own wait; neither: this computer has changed). A PCR
+mismatch (PCR 7 bound) is -ENOENT and falls into the same "changed"
+case. Without a display it falls back to a console prompt in the same
+words.
 
 ### 4. PCs without TPM 2.0
 
@@ -161,16 +196,27 @@ level, when Secure Boot is switched, or after some firmware updates.
   PCR 7 and wipes the unbound slot. Cost: for one start, a signed live
   stick plus her PIN could also unlock -- which PCR 7 never stopped.
 - **Unplanned** (Windows Update applied a dbx on the Windows side, a
-  firmware update): the TPM refuses, `aurlock-pin` shows the rescue
-  code page, then asks her PIN once more; `lockctl` re-enrols to the
-  new PCR 7 from the running system. One rescue-code entry, then normal.
+  firmware update; only when the key is bound to PCR 7): the TPM
+  refuses, `aurlock-pin` shows "This computer has changed" with the
+  rescue-code pad, then asks her to choose her PIN (it may be the same
+  one) and hands it to `/run/auros-lock/repin`; `auros-lock-repin.service`
+  (`lockctl repin`) seals it to the new PCR 7 before her desktop
+  starts. One rescue-code entry, then normal. The same path serves a
+  forgotten PIN and a cleared or replaced chip. **Built and proven
+  (theftunit, theftvm).** The planned two-phase `reseal-begin` /
+  `reseal-finish` (above) is NOT built: it is only needed if the lead
+  wants PCR 7 and zero rescue codes on AurOS's own updates.
 
 ### 6. The rescue code
 
-`systemd-cryptenroll --recovery-key`: 64 letters from a set chosen so
-that every keyboard layout types them the same (modhex), in 8 groups.
-Shown once, in the "Choose a PIN" flow, with *Print it* (when a printer
-is set up) and *I have written it down*. **Stored nowhere on the
+**(measured, changed from the first design)** 24 numbers in 6 groups of
+4 (about 79 bits, every number equally likely: `lockctl` draws bytes
+from `/dev/urandom` and discards 250-255 so `% 10` has no bias), in an
+argon2id keyslot. Numbers, not modhex letters, because she types it on
+the same number pad as her PIN, and because a number is the one thing
+every keyboard and every paper sheet agrees on. Shown once, in the
+"Choose a PIN" flow, with *Print it* (when a printer is set up) and *I
+have written it down*. **Stored nowhere on the
 computer** -- a code kept on the laptop is a code the thief has -- and
 nowhere online (no accounts, no Microsoft: D7). A paper sheet at home is
 the design; a memory stick is offered as a second copy with the warning
@@ -187,8 +233,8 @@ byte sectors. Chosen at encryption time and recorded in the header.
 
 ### 8. The same PIN on wake
 
-Her account's password becomes the PIN (set by `lockctl` as root when
-she chooses it). aurshell's lock screen (`src/aurshell/lockscreen.c`)
+**Not built yet.** Her account's password becomes the PIN (set by
+`lockctl` as root when she chooses it). aurshell's lock screen (`src/aurshell/lockscreen.c`)
 covers the screen on resume and when the screen goes dark after idle,
 and checks the PIN through PAM (`/etc/pam.d/aurlock`: `pam_faillock`
 deny=5 unlock_time=60, then `pam_unix` via `unix_chkpwd`). The PIN is
