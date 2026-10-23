@@ -128,7 +128,9 @@ for f in "$R"/etc/apt/sources.list.d/*; do
     case "$f" in */auros.sources) ;; *) [ -e "$f" ] && mv "$f" "$E2E/aside/" ;; esac
 done
 [ -e "$R/etc/apt/sources.list" ] && mv "$R/etc/apt/sources.list" "$E2E/aside/"
-sed -i 's#^URIs: .*#URIs: file:/var/cache/auros-e2e/repo/#' "$R/etc/apt/sources.list.d/auros.sources"
+# Over HTTP on the loopback, so apt downloads into its cache as it does
+# from the real address (a file: source installs from where it is).
+sed -i 's#^URIs: .*#URIs: http://127.0.0.1:8081/#' "$R/etc/apt/sources.list.d/auros.sources"
 printf 'APT::Periodic::RandomSleep "0";\n' > "$R/etc/apt/apt.conf.d/99updateboottest"
 printf 'confirmed by updateboottest\n' > "$R/var/lib/auros/converted.confirmed"
 
@@ -138,6 +140,7 @@ cat > "$R/usr/lib/auros-e2e/run.sh" <<'EOS'
 # NOT PART OF AUROS. tools/updateboottest.sh puts this into a scratch
 # copy of the image: one day of updates, by AurOS's own units.
 OUT=/var/lib/auros-e2e; mkdir -p "$OUT"
+python3 -m http.server 8081 --bind 127.0.0.1 --directory /var/cache/auros-e2e/repo >/dev/null 2>&1 &
 mode=$(cat /etc/auros-e2e/mode); n=$(cat /etc/auros-e2e/boot)
 log() { printf '%s %s\n' "$n" "$*" >> "$OUT/log"; sync; }
 ver() { dpkg-query -W -f='${Version}' auros-desktop 2>/dev/null; }

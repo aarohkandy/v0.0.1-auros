@@ -328,9 +328,30 @@ expect "a setting edited on the computer does not stop the update" good "$V2"
 [ "$(cat /etc/auros/updatetest.conf)" = 'setting=hers' ] &&
     ok "  ... and her setting is kept" || bad "  ... and her setting is kept" "$(cat /etc/auros/updatetest.conf)"
 
+kept() { ls "$1"/auros_*_amd64.deb 2>/dev/null | sed 's#.*/auros_\(.*\)_amd64\.deb$#\1#'; }
+echo
+echo "== keep-previous needs nothing from apt's cache for the set it keeps"
+# A file: repository, or a cache cleaned a moment after the install: the
+# new .debs are not in /var/cache/apt/archives. The set that was
+# installed until now is on this disk and is what rollback needs.
+dpkg --purge auros auros-desktop auros-config >/dev/null 2>&1
+dpkg -i "$T"/debs-v1/*.deb >/dev/null 2>&1
+rm -rf /var/lib/auros/debs /var/lib/auros/debs-previous; mkdir -p /var/lib/auros/debs
+cp "$T"/debs-v1/*.deb /var/lib/auros/debs/; (cd /var/lib/auros/debs && sha256sum ./*.deb > SHA256SUMS)
+dpkg -i "$T"/debs-v2/*.deb >/dev/null 2>&1
+AUROS_APT_CACHE=/nonexistent sh /usr/lib/auros/keep-previous
+( cd /var/lib/auros/debs-previous && sha256sum -c --quiet SHA256SUMS ) >/dev/null 2>&1 && [ "$(kept /var/lib/auros/debs-previous)" = "$V1" ] &&
+    ok "the set before the update is kept, intact, with none of the new files in the cache" ||
+    bad "the set before the update is kept, intact, with none of the new files in the cache" "previous: $(kept /var/lib/auros/debs-previous)"
+[ -z "$(kept /var/lib/auros/debs)" ] && ok "  ... and the new set is not claimed to be there" || bad "  ... and the new set is not claimed to be there" "debs: $(kept /var/lib/auros/debs)"
+mkdir -p "$T/cache3"; cp "$T"/debs-v3/*.deb "$T/cache3/"
+dpkg -i "$T"/debs-v3/*.deb >/dev/null 2>&1
+AUROS_APT_CACHE="$T/cache3" sh /usr/lib/auros/keep-previous
+[ "$(kept /var/lib/auros/debs)" = "$V3" ] && ok "  ... and the next update, with its files in the cache, is kept as the new set" ||
+    bad "  ... and the next update, with its files in the cache, is kept as the new set" "debs: $(kept /var/lib/auros/debs)"
+
 echo
 echo "== a broken AurOS update is undone"
-kept() { ls "$1"/auros_*_amd64.deb 2>/dev/null | sed 's#.*/auros_\(.*\)_amd64\.deb$#\1#'; }
 computer good "$T/A.asc"
 [ "$(kept /var/lib/auros/debs)" = "$V2" ] && [ "$(kept /var/lib/auros/debs-previous)" = "$V1" ] &&
     ok "the update keeps the version before it" ||

@@ -44,3 +44,7 @@ Unattended-Upgrade::Automatic-Reboot "false";
 // before, so an update that breaks the desktop can be undone
 // (/usr/lib/auros/rollback, called by shell-guard).
 DPkg::Post-Invoke { "[ ! -x /usr/lib/auros/keep-previous ] || /usr/lib/auros/keep-previous"; };
+
+// apt may delete a package file as soon as it is installed. The copy in
+// apt's cache is where keep-previous takes the new set from.
+APT::Keep-Downloaded-Packages "true";
