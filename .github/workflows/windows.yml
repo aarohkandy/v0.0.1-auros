@@ -236,21 +236,24 @@ jobs:
           # report (iphlpapi, winspool, cfgmgr32), preflight (wlanapi,
           # cfgmgr32), the window and the screen reader (oleacc, wtsapi32),
           # a download (winhttp).
+          # (the exit codes are kept and judged AFTER the markers: a planted DLL that was
+          # loaded makes a program fail to start, and which one ran is the useful message)
+          $codes = @()
           .\aurbridge.exe version
-          if ($LASTEXITCODE -ne 0) { throw "version exited $LASTEXITCODE" }
+          $codes += "version $LASTEXITCODE"
           .\aurbridge.exe selftest
-          if ($LASTEXITCODE -ne 0) { throw "selftest exited $LASTEXITCODE" }
+          $codes += "selftest $LASTEXITCODE"
           .\aurbridge.exe preflight
-          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) { throw "preflight exited $LASTEXITCODE" }
+          $codes += "preflight $(if ($LASTEXITCODE -le 1) { 0 } else { $LASTEXITCODE })"
           .\aurbridge.exe report "$d\r1"
-          if ($LASTEXITCODE -ne 0) { throw "report exited $LASTEXITCODE" }
+          $codes += "report $LASTEXITCODE"
           $p = Start-Process -FilePath "$d\aurbridge-wizard.exe" -ArgumentList '--report', "$d\r1" -WorkingDirectory $d -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "--report exited $($p.ExitCode)" }
+          $codes += "wizard --report $($p.ExitCode)"
           $p = Start-Process -FilePath "$d\aurbridge-wizard.exe" -ArgumentList '--navtest', "$d\r2" -WorkingDirectory $d -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "--navtest exited $($p.ExitCode)" }
+          $codes += "wizard --navtest $($p.ExitCode)"
           $p = Start-Process -FilePath "$d\aurbridge-wizard.exe" -ArgumentList '--selftest', "$d\r3" -WorkingDirectory $d -PassThru
-          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw "--selftest did not finish in 3 minutes" }
-          if (-not (Select-String -Path "$d\r3\selftest.log" -Pattern 'screen reader    : "[^"]{10,}"' -Quiet)) { throw "the window test did not reach the screen reader (oleacc never ran)" }
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); $codes += "wizard --selftest never finished" }
+          else { $codes += "wizard --selftest $($p.ExitCode)" }
           # a download to a port nobody listens on: it must get as far as
           # the network, which a WinHTTP that failed to load cannot
           $z = '0' * 64
@@ -259,11 +262,16 @@ jobs:
           # folder is made private, and one the installer did not make is moved aside)
           cmd /c "aurbridge.exe getimage pieces.txt dl\x.img $z 1000 > fetch.log 2>&1"
           Get-Content "$d\fetch.log" | Select-Object -Last 3
-          if (-not (Select-String -Path "$d\fetch.log" -Pattern 'could not reach' -Quiet)) { throw "the download did not get as far as the network (WinHTTP did not load)" }
+          $reached = Select-String -Path "$d\fetch.log" -Pattern 'could not reach' -Quiet
           Pop-Location
-          # 3. NOT ONE PLANTED DLL WAS LOADED.
+          # 3. NOT ONE PLANTED DLL WAS LOADED, and every program ran to its end.
+          "exit codes: $($codes -join '; ')"
           $hit = @(Get-ChildItem $d -Filter *.loaded)
-          if ($hit) { throw "the installer loaded a DLL planted beside it: $($hit.Name -join ', ')" }
+          if ($hit) { throw "the installer loaded a DLL planted beside it: $($hit.Name -join ', ')   ($($codes -join '; '))" }
+          $failed = @($codes | Where-Object { $_ -notmatch ' 0$' })
+          if ($failed) { throw "a program did not run to its end with the planted DLLs beside it: $($failed -join '; ')" }
+          if (-not $reached) { throw "the download did not get as far as the network (WinHTTP did not load)" }
+          if (-not (Select-String -Path "$d\r3\selftest.log" -Pattern 'screen reader    : "[^"]{10,}"' -Quiet)) { throw "the window test did not reach the screen reader (oleacc never ran)" }
           "none of the $($names.Count) planted DLLs was loaded"
           "### A DLL planted beside the installer (SEC-003)`nnone of $($names.Count) planted DLLs ($($names -join ', ')) was loaded by the console tool or the window, while a program that looks in its own folder loaded $($speak.Count) of them." | Out-File $env:GITHUB_STEP_SUMMARY -Append
           exit 0
