@@ -148,12 +148,37 @@ int main(void)
     ok("opening it writes no request at all",
        stat(WELCOME_RUN "/answer", &st) != 0);
 
+    /* YES AND NO EACH ASK TWICE. The question page used to write the
+     * answer on the first press -- and her habit is to double-click
+     * (docs/EASY.md), which pressed it before she had read it. */
+    printf("\n  the question page decides nothing by itself\n");
+    {
+        welcome_set_page(W_ASK);
+        welcome_view v = { W_ASK, 0 };
+        rect b[16];
+        int n = welcome_targets(&c, c.screen_w, c.screen_h, &v, b, 16);
+        int wrote = 0, to_yes = 0, to_no = 0;
+        for (int i = 0; i < n; i++) {
+            unlink(WELCOME_RUN "/answer");
+            welcome_set_page(W_ASK);
+            c.welcome_open = 1;
+            welcome_click(&c, b[i].x + b[i].w / 2, b[i].y + b[i].h / 2);
+            if (stat(WELCOME_RUN "/answer", &st) == 0) wrote = 1;
+            if (welcome_page() == W_SURE_YES) to_yes = 1;
+            if (welcome_page() == W_SURE_NO) to_no = 1;
+        }
+        ok("no button on the question writes an answer", n >= 3 && !wrote);
+        ok("\"Yes, it all works\" asks again, on its own page", to_yes);
+        ok("\"No, go back to Windows\" asks again, on its own page", to_no);
+        c.want_launch = 0; c.welcome_open = 1;
+    }
+
     printf("\n  the three answers\n");
     ok("\"Yes, it all works\" asks for confirm",
-       press(&c, W_ASK, 0, "confirm"));
+       press(&c, W_SURE_YES, 0, "confirm"));
     ok("...and then says so on screen", welcome_page() == W_WORKING);
     ok("\"No, go back to Windows\" asks for decline",
-       press(&c, W_ASK, 0, "decline"));
+       press(&c, W_SURE_NO, 0, "decline"));
     /* The import is offered only when firstboot.sh found a Windows to
      * read, so the fixture has to have found one. This is what
      * ferry-detect writes. */
@@ -214,14 +239,14 @@ int main(void)
      * the same check with something to catch. */
     printf("\n  and one request at a time\n");
     unlink(WELCOME_RUN "/answer");
-    press(&c, W_ASK, 0, "confirm");
-    welcome_set_page(W_ASK);
+    press(&c, W_SURE_YES, 0, "confirm");
+    welcome_set_page(W_SURE_NO);
     c.welcome_open = 1;
     {
-        welcome_view v = { W_ASK, 0 };
+        welcome_view v = { W_SURE_NO, 0 };
         rect b[16];
         int n = welcome_targets(&c, c.screen_w, c.screen_h, &v, b, 16);
-        int last = n > 0 ? n - 1 : 0;      /* A_NO, the last of the three */
+        int last = 0;                      /* "Go back to Windows" */
         welcome_click(&c, b[last].x + b[last].w / 2,
                       b[last].y + b[last].h / 2);
         char got[64];
@@ -232,7 +257,7 @@ int main(void)
 
     printf("\n  reading the answer back\n");
     unlink(WELCOME_RUN "/answer");
-    press(&c, W_ASK, 0, "confirm");
+    press(&c, W_SURE_YES, 0, "confirm");
     c.welcome_open = 1;
     ok("nothing moves while there is no answer yet",
        welcome_step(&c) == 0 && welcome_page() == W_WORKING);
@@ -242,7 +267,7 @@ int main(void)
        welcome_page() == W_CONFIRMED);
 
     unlink(WELCOME_RUN "/answer");
-    press(&c, W_ASK, 0, "decline");
+    press(&c, W_SURE_NO, 0, "decline");
     c.welcome_open = 1;
     put(WELCOME_ANSWER "/result", "request=decline\nresult=ok\n");
     welcome_step(&c);
@@ -250,7 +275,7 @@ int main(void)
        welcome_page() == W_DECLINED);
 
     unlink(WELCOME_RUN "/answer");
-    press(&c, W_ASK, 0, "confirm");
+    press(&c, W_SURE_YES, 0, "confirm");
     c.welcome_open = 1;
     put(WELCOME_ANSWER "/result",
         "request=confirm\nresult=failed\nnote=this computer would not take it\n");
@@ -263,7 +288,7 @@ int main(void)
      * the belt to that braces -- and the failure it prevents is the
      * panel saying "done" because it read an empty file. */
     unlink(WELCOME_RUN "/answer");
-    press(&c, W_ASK, 0, "confirm");
+    press(&c, W_SURE_YES, 0, "confirm");
     c.welcome_open = 1;
     put(WELCOME_ANSWER "/result", "request=confirm\n");
     ok("a half-written answer is not an answer",
@@ -282,7 +307,7 @@ int main(void)
         while (d && (e = readdir(d)))
             if (e->d_name[0] != '.' && !is_answer_dir(e->d_name)) before++;
         if (d) closedir(d);
-        press(&c, W_ASK, 0, "confirm");
+        press(&c, W_SURE_YES, 0, "confirm");
         welcome_step(&c);
         d = opendir(WELCOME_RUN);
         int after = 0, only_answer = 1;
@@ -305,7 +330,7 @@ int main(void)
      * are here. Open Files to see them." */
     printf("\n  and an answer to something it did not ask\n");
     unlink(WELCOME_RUN "/answer");
-    press(&c, W_ASK, 0, "confirm");
+    press(&c, W_SURE_YES, 0, "confirm");
     c.welcome_open = 1;
     put(WELCOME_ANSWER "/result", "request=import\nresult=ok\n");
     ok("a result for another request is left alone",

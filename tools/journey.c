@@ -19,7 +19,8 @@
  *   AUROS_APP_DIRS=<dir> AURSHELL_CLOCK=1761206400 \
  *      /tmp/journey <shell.conf> <look> <w> <h> <outdir> [vlc-dir]
  *
- * Writes <outdir>/<look>-<w>x<h>-<n>-<step>.png. tools/journeytest.sh
+ * Writes <outdir>/<look>-<w>x<h>-<n>-<step>.png (asks, sure, yes, desktop,
+ * online, ready, opens). tools/journeytest.sh
  * builds it and checks the words each screen must (and must not) say.
  */
 #define _GNU_SOURCE
@@ -127,7 +128,11 @@ int main(int argc, char **argv)
     welcome_init(&c);
     shot("asks");
 
-    /* 2. She pressed "Yes, it all works". */
+    /* 2. She pressed "Yes, it all works": it asks once more. */
+    welcome_set_page(W_SURE_YES);
+    shot("sure");
+
+    /* 3. And "Start AurOS from now on". */
     welcome_set_page(W_CONFIRMED);
     shot("yes");
 

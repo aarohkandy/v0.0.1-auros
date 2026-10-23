@@ -56,12 +56,13 @@ said() { awk -v s="$2" '/^== /{on = index($0, s) > 0; next} on' "$1"; }
 for look in taskbar dock rail tiles; do
     for sz in "1366 768" "1024 600"; do
         set -- $sz
-        log="$T/$look-$1x$2.txt"
+        log="$OUT/$look-$1x$2.txt"
         HOME="$T/home" AUROS_APP_DIRS="$T/apps" AURSHELL_CLOCK=1761206400 \
             "$T/journey" "$T/look.conf" "$look" "$1" "$2" "$OUT" "$T/vlc" > "$log" 2>&1 \
             || { ok "$look $1x$2: the journey ran" 1; continue; }
         at="$look $1x$2"
-        said "$log" "-asks.png"    | grep -qx '   Yes, it all works';         ok "$at: the first start asks" $?
+        said "$log" "-asks.png"    | grep -qx '   Does everything work?';     ok "$at: the first start asks" $?
+        said "$log" "-sure.png"    | grep -qx '   Start AurOS from now on';   ok "$at: Yes asks once more before it decides" $?
         said "$log" "-desktop.png" | grep -qx '   Get more programs';         ok "$at: Get more programs is on her desktop" $?
         said "$log" "-desktop.png" | grep -qx '   Wi-Fi';                     ok "$at: the band says Wi-Fi (one name per thing)" $?
         # (The dock draws its favourites without names until C P1-12.)

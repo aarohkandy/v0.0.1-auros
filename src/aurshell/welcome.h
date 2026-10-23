@@ -78,7 +78,7 @@
 
 /* Which screen. */
 enum { W_ASK, W_WORKING, W_CONFIRMED, W_IMPORTING, W_IMPORTED,
-       W_DECLINED, W_TROUBLE, W_PAGE_N };
+       W_DECLINED, W_TROUBLE, W_SURE_YES, W_SURE_NO, W_PAGE_N };
 
 /* Called once, when the shell starts. Reads the state and decides
  * whether the question needs asking; sets c->welcome_open if it does.
