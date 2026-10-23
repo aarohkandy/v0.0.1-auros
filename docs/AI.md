@@ -23,7 +23,7 @@ all three read.
    the cloud but re-rendered locally from the validated fields (the device
    writes its own sentence; it never shows unvalidated model text as the
    description of what will happen).
-3. **Nothing a wish does can hurt her**: no files deleted or moved, no
+3. **Design goal: a wish is built so that it cannot do harm** (nothing here is a promise to her; a reminder can still fail, see TERMS section 5): no files deleted or moved, no
    messages or e-mails sent, no purchases, no passwords, no network or
    security settings, no turning off updates/firewall/scam guards, no
    keystrokes leaving the computer. Hard caps in the engine (§3.3) bound

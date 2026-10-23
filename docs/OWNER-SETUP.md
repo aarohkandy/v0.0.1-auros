@@ -307,13 +307,13 @@ workspace's id, `wrkspc_…`, and add it as a repository **variable** — Settin
 
 The contract (`docs/AI.md` §7.12) needs two things only you can ask for:
 
-1. Anthropic's **Data Processing Addendum** (DPA) for your organization.
-   Look for it in the Console's legal or privacy settings; if it is not there
-   as a click-through, ask Anthropic through https://support.claude.com.
-2. **Zero data retention** for the organization (same place: ask support;
-   say it is for an operating system's assistant used by elderly people).
-   Their answer decides the retention sentence in the consent text
-   (`docs/CLOUD.md` §4).
+1. Anthropic's **Data Processing Addendum** (DPA): it is part of the Commercial Terms
+   and applies automatically; there is nothing to sign. Keep a dated copy of the accepted
+   version (`docs/legal/ANTHROPIC-CHECKLIST.md`), and save Cloudflare's DPA too.
+2. **Zero data retention** is optional and may be declined. If you ask (ask support; say it
+   is for an operating system's assistant used by elderly people), the answer decides the
+   retention sentence in the consent text (`docs/CLOUD.md` §4); the drafts already assume
+   you did not get it.
 
 Tell an agent the outcome of each; the consent text is updated from it.
 
