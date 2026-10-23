@@ -12,7 +12,7 @@
  *
  *   cc -O2 -std=gnu11 -o /tmp/journey tools/journey.c \
  *      -DWELCOME_STATE='"/tmp/journey.state"' src/aurshell/welcome.c \
- *      src/aurshell/notify.c src/aurshell/foot.c src/aurshell/draw.c \
+ *      src/aurshell/notify.c src/aurshell/osd.c src/aurshell/foot.c src/aurshell/draw.c \
  *      src/aurshell/shellcommon.c src/aurshell/anim.c src/aurshell/apps.c \
  *      src/aurshell/layouts/[*].c src/common/theme.c src/common/wall.c \
  *      src/common/font.c src/common/png.c $(pkg-config --cflags --libs dbus-1) -lm
@@ -27,11 +27,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/wait.h>
 
 #include "../src/aurshell/net.c"
 #include "../src/aurshell/foot.h"
 #include "../src/aurshell/welcome.h"
 #include "../src/aurshell/notify.h"
+#include "../src/aurshell/osd.h"
 #include "../src/common/wall.h"
 #include "../src/common/png.h"
 
@@ -64,6 +67,7 @@ static void shot(const char *name)
     net_paint(&c, S, &F);
     welcome_paint(&c, S, &F);
     foot_paint(&c, S, &F);
+    osd_paint(&c, S, &F);
     shell_text_log_on = 0;
 
     char p[512];
@@ -77,6 +81,63 @@ static void shot(const char *name)
     printf("== %s\n", p);
     for (int i = 0; i < shell_text_log_n; i++)
         if (shell_text_log[i].w > 0) printf("   %s\n", shell_text_log[i].s);
+}
+
+/* NEVER COVERS A BUTTON (docs/DESIGN-DIRECTION.md §5 C6).
+ *
+ * What counts as a button is decided by the pointer: the archetype is
+ * painted with the pointer nowhere, then with it at each point of a
+ * grid over `r` (and along every edge of `r`, where a button that is
+ * only just under the card would otherwise be missed), and a point
+ * where the picture changes is a point on something she can press --
+ * hover is the one thing every button in every look answers (§3
+ * Input). A heading nobody can press never changes the picture; a
+ * program row, a tile or a window button does. `r` must also stay off
+ * the clock, which is how Messages opens, and off the band. */
+static uint64_t desk_hash(int x, int y)
+{
+    static surface *T;
+    if (!T) T = surface_new(S->w, S->h);
+    c.mouse_x = x; c.mouse_y = y;
+    if (L->motion) L->motion(&c, x, y);
+    settle();
+    draw_track_reset();
+    surface body = *T;
+    body.h = c.screen_h;
+    L->paint(&c, &body, &F, WALL);
+    uint64_t h = 1469598103934665603ull;
+    for (int yy = 0; yy < c.screen_h; yy++)
+        for (int xx = 0; xx < T->w; xx++)
+            h = (h ^ T->px[(size_t)yy * T->stride + xx]) * 1099511628211ull;
+    return h;
+}
+
+static void probe(rect r, const char *what)
+{
+    if (r.w <= 0) return;
+    printf("   [%s at %d,%d %dx%d]\n", what, r.x, r.y, r.w, r.h);
+    rect k = c.clock_r;
+    if (k.w > 0 && r.x < k.x + k.w && k.x < r.x + r.w && r.y < k.y + k.h && k.y < r.y + r.h)
+        printf("   OVER THE CLOCK: %s\n", what);
+    if (r.y + r.h > c.screen_h) printf("   OVER THE BAND: %s\n", what);
+    int mx = c.mouse_x, my = c.mouse_y;
+    uint64_t none = desk_hash(-1, -1);
+    int hits = 0, tried = 0;
+    for (int iy = 0, lasty = 0; !lasty; iy++) {
+        int y = r.y + 1 + iy * 12;
+        if (y >= r.y + r.h - 2) { y = r.y + r.h - 2; lasty = 1; }
+        for (int ix = 0, lastx = 0; !lastx; ix++) {
+            int x = r.x + 1 + ix * 12;
+            if (x >= r.x + r.w - 2) { x = r.x + r.w - 2; lastx = 1; }
+            tried++;
+            if (desk_hash(x, y) != none && hits++ < 3)
+                printf("   PRESSABLE under %s at %d,%d\n", what, x, y);
+            desk_hash(-1, -1);
+        }
+    }
+    printf("   [%s: %d places tried, %d on a button]\n", what, tried, hits);
+    c.mouse_x = mx; c.mouse_y = my;
+    desk_hash(mx, my);
 }
 
 static int app_index(const char *id)
@@ -172,9 +233,39 @@ int main(int argc, char **argv)
             snprintf(sum, sizeof sum, "%s is ready", c.apps[added[i]].name);
             notify_local_open(sum, "Press here to open it.", c.apps[added[i]].id);
         }
-        notify_fit(&c);
         settle();
         shot("ready");
+
+        /* 5b. Two more arrive: still ONE card, which says so. */
+        notify_local("The battery is getting low", "Plug this computer in soon.");
+        notify_local("The USB stick can be taken out", "Everything has been written to it.");
+        shot("messages");
+        {
+            notify_view v; notify_view_now(&c, &v);
+            notify_geom g; notify_layout(c.screen_w, c.screen_h + v.foot_h, &v, &g);
+            probe(g.card, "the card");        /* the tallest it gets: 3 messages */
+        }
+
+        /* 5c. She presses the clock: Messages, newest first. */
+        rect ck = c.clock_r;
+        notify_click(&c, ck.x + ck.w / 2, ck.y + ck.h / 2);
+        shot("list");
+
+        /* 5d. She closes it, and turns the sound up: a line in the
+         * strip, which stays until her next press. */
+        {
+            notify_view v; notify_view_now(&c, &v);
+            notify_geom g; notify_layout(c.screen_w, c.screen_h + v.foot_h, &v, &g);
+            notify_click(&c, g.close.x + 2, g.close.y + 2);
+        }
+        osd_show(OSD_VOLUME, 45);
+        shot("sound");
+        osd_press();
+        osd_say("Picture saved in your Pictures folder: Screen 2025-10-23 08.00.00");
+        shot("said");
+        probe(osd_box(), "the line");
+        osd_press();
+
 
         /* 6. She pressed the card: VLC opens. */
         int a = k > 0 ? added[0] : app_index("org.videolan.VLC");

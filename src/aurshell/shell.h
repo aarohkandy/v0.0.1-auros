@@ -301,6 +301,11 @@ typedef struct shell_ctx_s {
      * screen: where a picture was saved, what could not be done. Empty
      * when there is nothing to say. */
     char  say[128];
+    /* Where the archetype drew its clock this frame, screen pixels, the
+     * full height of the strip it sits in; w 0 for none. Pressing it
+     * opens Messages (notify.h), and the card hangs from it. Written by
+     * the archetype's paint, read by notify.c and osd.c. */
+    rect  clock_r;
 
     /* ── the running system ─────────────────────────────────────── */
     /* The Wayland server applications connect to, or NULL. It is NULL

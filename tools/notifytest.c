@@ -32,6 +32,7 @@
 #include <dbus/dbus.h>
 
 #include "../src/aurshell/notify.h"
+#include "../src/aurshell/osd.h"
 #include "../src/aurshell/foot.h"
 
 /* The harness reads the cards the way the screen does: through the
@@ -169,18 +170,42 @@ static int pump_until(shell_ctx *c, int want, int ms)
 static const char *note_summary(int i) { return notify_card_summary(i); }
 static const char *note_body(int i)    { return notify_card_body(i); }
 
-/* Press every card away, the way she would. */
+static notify_geom geom_now(shell_ctx *c)
+{
+    notify_view v; notify_view_now(c, &v);
+    notify_geom g; notify_layout(c->screen_w, c->screen_h + v.foot_h, &v, &g);
+    return g;
+}
+static int press(shell_ctx *c, rect r)
+{
+    return r.w > 0 && notify_click(c, r.x + r.w / 2, r.y + r.h / 2);
+}
+
+/* Put the card away the way she would: OK. */
 static void clear_all(shell_ctx *c)
 {
-    for (int guard = 0; guard < NOTIFY_MAX + 4 && notify_showing(); guard++) {
-        notify_view v; notify_view_now(c, &v);
-        notify_geom g; notify_layout(c->screen_w, c->screen_h + v.foot_h, &v, &g);
-        if (!g.n) break;
-        notify_click(c, g.card[0].x + g.card[0].w / 2,
-                        g.card[0].y + g.card[0].h / 2);
-    }
+    if (notify_list_open()) press(c, geom_now(c).close);
+    if (notify_showing()) press(c, geom_now(c).ok);
     notify_pump(c);
 }
+
+static void wait_ms(int ms)
+{
+    struct timespec t = { ms / 1000, (ms % 1000) * 1000000L };
+    nanosleep(&t, NULL);
+}
+
+static int overlaps(rect a, rect b)
+{
+    return a.w > 0 && b.w > 0 && a.x < b.x + b.w && b.x < a.x + a.w &&
+           a.y < b.y + b.h && b.y < a.y + a.h;
+}
+static int within(rect in, rect out)
+{
+    return in.x >= out.x && in.y >= out.y &&
+           in.x + in.w <= out.x + out.w && in.y + in.h <= out.y + out.h;
+}
+static int shorter(rect r) { return r.w < r.h ? r.w : r.h; }
 
 /* Joining the bus is a HANDSHAKE now, driven by the frame loop, so
  * that a socket which accepts and then says nothing cannot stop the
@@ -207,6 +232,8 @@ static void fresh(shell_ctx *c)
     c->foot_hover = -1;
     c->screen_w = 1024;
     c->screen_h = 600 - foot_height(c);
+    /* Where "Big and simple" puts its clock: the strip's right end. */
+    c->clock_r = (rect){ 1024 - 220, 0, 220, 46 };
 }
 
 int main(void)
@@ -214,45 +241,86 @@ int main(void)
     printf("\nWhen a program has something to tell her, does she see it?\n\n");
 
     /* ── the geometry, which needs no bus at all ────────────────── */
-    printf("  where the cards go, on every screen and every text size\n");
+    printf("  where the card and the list go, on every screen and text size\n");
     {
         static const struct { int w, h; } RES[] = {
             { 1024, 600 }, { 1366, 768 }, { 1920, 1080 },
         };
         static const float K[] = { 1.0f, 1.25f, 1.6f, 2.0f };
-        int measured = 0, small = 0, overlap = 0, offscreen = 0;
+        int cards = 0, lists = 0, small = 0, off = 0, clock = 0, band = 0,
+            loose = 0, osd = 0, piles = 0;
         for (size_t r = 0; r < sizeof RES / sizeof RES[0]; r++)
             for (size_t k = 0; k < sizeof K / sizeof K[0]; k++)
-                for (int n = 1; n <= NOTIFY_MAX; n++) {
-                    shell_ctx c; fresh(&c);
-                    c.text_scale = K[k];
-                    notify_view v;
-                    notify_view_now(&c, &v);
-                    v.n = n; v.text_scale = K[k];
-                    notify_geom g;
-                    notify_layout(RES[r].w, RES[r].h, &v, &g);
-                    for (int i = 0; i < g.n; i++) {
-                        rect a = g.card[i];
-                        measured++;
-                        int shorter = a.w < a.h ? a.w : a.h;
-                        if (shorter < NOTIFY_TARGET) small++;
-                        if (a.x < 0 || a.y < v.bar_h ||
-                            a.x + a.w > RES[r].w ||
-                            a.y + a.h > RES[r].h - v.foot_h) offscreen++;
-                        for (int j = 0; j < i; j++) {
-                            rect b = g.card[j];
-                            if (a.x < b.x + b.w && b.x < a.x + a.w &&
-                                a.y < b.y + b.h && b.y < a.y + a.h) overlap++;
-                        }
-                    }
+                for (int where = 0; where < 4; where++)
+                    for (int unseen = 1; unseen <= 3; unseen += 2)
+                        for (int lines = 2; lines <= 4; lines += 2) {
+            shell_ctx c; fresh(&c);
+            c.text_scale = K[k];
+            int sw = RES[r].w, sh = RES[r].h, fh = foot_height(&c);
+            int body = sh - fh, bar = (int)(44 * K[k]);
+            notify_view v; notify_view_now(&c, &v);
+            v.text_scale = K[k];
+            /* two lines of words, or four: the most a card ever has */
+            v.unseen = unseen; v.kept = unseen;
+            v.text_h = (int)(lines * 28.f * K[k]);
+            /* 0: clock in the top strip (rail, dock); 1: the same,
+             * card at the bottom (tiles); 2: clock in the bar at the
+             * bottom (taskbar); 3: no clock at all. */
+            v.clock = where == 2 ? (rect){ sw - 160, body - bar, 160, bar }
+                    : where == 3 ? (rect){ 0, 0, 0, 0 }
+                                 : (rect){ sw - 220, 0, 220, 46 };
+            v.bottom = where == 1 || where == 2;
+            rect screen = { 0, 0, sw, body };
+            notify_geom g;
+            notify_layout(sw, sh, &v, &g);
+            cards++;
+            if (shorter(g.ok) < NOTIFY_TARGET) small++;
+            if (unseen > 1 && shorter(g.more) < NOTIFY_TARGET) small++;
+            if (unseen == 1 && g.more.w) piles++;
+            if (!within(g.card, screen)) off++;
+            if (g.card.y + g.card.h > body) band++;
+            if (overlaps(g.card, v.clock)) clock++;
+            if (where != 3 && where != 2 && g.card.y < v.clock.y + v.clock.h) clock++;
+            if (!within(g.ok, g.card) || (g.more.w && !within(g.more, g.card)) ||
+                overlaps(g.ok, g.more)) loose++;
+            /* With the clock in the bar, the strip above the bar is the
+             * line's; the card must not be sitting in it. */
+            if (where == 2 && g.card.y + g.card.h > v.clock.y - v.clock.h) osd++;
+
+            for (int kept = 0; kept <= NOTIFY_KEEP; kept += 4)
+              for (int first = 0; first <= kept; first += (kept / 2 > 0 ? kept / 2 : 1)) {
+                v.list_open = 1; v.unseen = 0; v.kept = kept; v.first = first;
+                notify_layout(sw, sh, &v, &g);
+                lists++;
+                /* Every message is reachable: pages cover [0, kept). */
+                if (kept > 0 && g.first + g.rows < kept && !g.older.w) piles++;
+                if (g.first > 0 && !g.newer.w) piles++;
+                if (g.older.w && (shorter(g.older) < NOTIFY_TARGET || !within(g.older, g.list) ||
+                    overlaps(g.older, g.close) || overlaps(g.older, g.newer))) loose++;
+                if (g.newer.w && (shorter(g.newer) < NOTIFY_TARGET || !within(g.newer, g.list) ||
+                    overlaps(g.newer, g.close))) loose++;
+                if (g.card.w) piles++;               /* no card over the list */
+                if (!within(g.list, screen) || g.list.y + g.list.h > body) off++;
+                if (overlaps(g.list, v.clock)) clock++;
+                if (shorter(g.close) < NOTIFY_TARGET) small++;
+                if (!within(g.close, g.list)) loose++;
+                if (kept > 0 && g.rows < 1) loose++;
+                for (int i = 0; i < g.rows; i++) {
+                    if (g.row[i].h < NOTIFY_TARGET) small++;
+                    if (!within(g.row[i], g.list) || overlaps(g.row[i], g.close)) loose++;
                 }
-        char w[80];
-        snprintf(w, sizeof w, "%d cards measured, none under %dpx",
-                 measured, NOTIFY_TARGET);
-        ok(w, measured > 0 && small == 0);
-        ok("no card is drawn over another", overlap == 0);
-        ok("no card is off the screen, over the band, or over the clock",
-           offscreen == 0);
+                v.list_open = 0;
+            }
+        }
+        char w[96];
+        snprintf(w, sizeof w, "%d cards and %d lists measured: every button %dpx+",
+                 cards, lists, NOTIFY_TARGET);
+        ok(w, cards > 0 && small == 0);
+        ok("one card, never a pile: no second card, no list behind it", piles == 0);
+        ok("on the screen, and never over the band", off == 0 && band == 0);
+        ok("never over the clock or the strip it is in", clock == 0);
+        ok("every button is inside what it belongs to", loose == 0);
+        ok("with the clock in the bar, the line's strip is kept clear", osd == 0);
     }
 
     /* ── the real thing, over a real bus ────────────────────────── */
@@ -273,47 +341,147 @@ int main(void)
     ok("...and appears on her screen", pump_until(&c, 1, 3000));
 
     /* Replacing: a download's percentage must not stack up four deep. */
-    send_notify(&c, "Firefox", 1, "Downloading  50%", "report.pdf", 8000);
+    send_notify(&c, "Firefox", notify_card_id(0), "Downloading  50%", "report.pdf", 8000);
     pump_until(&c, 1, 1000);
     ok("the same message saying something new replaces itself",
-       notify_showing() == 1);
+       notify_showing() == 1 && notify_kept() == 1 &&
+       !strcmp(notify_card_summary(0), "Downloading 50%"));
 
-    for (int i = 0; i < 6; i++) {
+    /* ── NOTHING PILES UP ───────────────────────────────────────── */
+    for (int i = 0; i < 5; i++) {
         char sm[64]; snprintf(sm, sizeof sm, "Message %d", i);
         send_notify(&c, "A program", 0, sm, "", 8000);
     }
-    for (int i = 0; i < 60 && notify_showing() < NOTIFY_MAX; i++) {
-        notify_pump(&c);
-        struct timespec t = { 0, 10 * 1000 * 1000 }; nanosleep(&t, NULL);
-    }
-    ok("six at once do not become six cards", notify_showing() == NOTIFY_MAX);
-
-    /* Pressing one takes it away. It is the only control a card has,
-     * so if this does not work the card cannot be got rid of. */
+    pump_until(&c, 6, 600);
     {
-        notify_view v; notify_view_now(&c, &v);
-        notify_geom g;
-        notify_layout(c.screen_w, c.screen_h + v.foot_h, &v, &g);
-        int before = notify_showing();
-        ok("there is something to press", g.n > 0);
-        if (g.n > 0) {
-            ok("pressing a card takes it away",
-               notify_click(&c, g.card[0].x + g.card[0].w / 2,
-                                g.card[0].y + g.card[0].h / 2) == 1 &&
-               notify_showing() == before - 1);
-        }
+        notify_geom g = geom_now(&c);
+        ok("six at once are ONE card", notify_showing() == 6 && g.card.w > 0);
+        ok("...showing the newest", !strcmp(notify_card_summary(0), "Message 4"));
+        ok("...with a \"6 messages\" button", g.more.w > 0);
+        int before = notify_kept();
+        ok("pressing OK puts the card away", press(&c, g.ok) && notify_showing() == 0 &&
+                                             geom_now(&c).card.w == 0);
+        ok("...and keeps every word for Messages", notify_kept() == before &&
+                                                   !strcmp(notify_card_summary(0), "Message 4"));
         ok("pressing where there is no card does nothing",
            notify_click(&c, 2, c.screen_h - 2) == 0);
     }
 
+    /* ── NOTHING VANISHES ───────────────────────────────────────────
+     * It used to go after eight seconds, four at the least, and a
+     * program could ask for one millisecond. */
+    printf("\n  nothing goes away by itself\n");
+    {
+        hints = "{'urgency': <byte 2>}";
+        send_notify(&c, "A program", 0, "Read me slowly", "", 1);
+        hints = "{}";
+        send_notify(&c, "A program", 0, "And me", "", 1);
+        for (int i = 0; i < 450; i++) { notify_pump(&c); wait_ms(10); }
+        notify_geom g = geom_now(&c);
+        ok("a card asked to last 1 ms is still there 4.5 s later",
+           notify_showing() == 2 && g.card.w > 0 && g.more.w > 0);
+
+        osd_say("Picture saved in your Pictures folder.");
+        wait_ms(3500);
+        ok("an on-screen message is still there 3.5 s later", osd_visible());
+        osd_press();
+        ok("...and goes at her next press", !osd_visible());
+        osd_show(OSD_VOLUME, 45);
+        wait_ms(1600);
+        ok("the sound line is still there 1.6 s later", osd_visible());
+        osd_press();
+        clear_all(&c);
+    }
+
+    /* ── THE CLOCK OPENS MESSAGES ─────────────────────────────────── */
+    printf("\n  Messages, from the clock\n");
+    {
+        send_notify(&c, "Firefox", 0, "Download finished", "report.pdf", 8000);
+        pump_until(&c, 1, 2000);
+        int kept = notify_kept();
+        rect k = c.clock_r;
+        ok("pressing the clock is taken", press(&c, k));
+        ok("...and opens Messages", notify_list_open());
+        ok("...which is seeing them: the card goes", notify_showing() == 0 &&
+                                                     geom_now(&c).card.w == 0);
+        notify_geom g = geom_now(&c);
+        ok("...newest first", g.rows > 0 && g.first == 0 &&
+           !strcmp(notify_card_summary(0), "Download finished"));
+        /* Nothing vanishes: what does not fit on a page is one press
+         * (Older) away, and the page it was on is one press back. */
+        int seen_rows = 0, pages = 0;
+        while (pages < NOTIFY_KEEP + 2) {
+            notify_geom p = geom_now(&c);
+            seen_rows += p.rows;
+            pages++;
+            if (!p.older.w) break;
+            press(&c, p.older);
+        }
+        ok("every message is reachable by Older, over more than one page",
+           seen_rows == kept && pages > 1);
+        while (geom_now(&c).newer.w && pages-- > 0) press(&c, geom_now(&c).newer);
+        ok("...and Newer comes back to the newest", notify_list_first() == 0 &&
+           !geom_now(&c).newer.w);
+        g = geom_now(&c);
+        ok("a row that is not a program does nothing but stay",
+           press(&c, g.row[0]) && notify_list_open());
+        ok("Close Messages closes it", press(&c, g.close) && !notify_list_open());
+        press(&c, k);
+        ok("a press anywhere else closes it too, and is not passed on",
+           notify_click(&c, 2, c.screen_h - 2) == 1 && !notify_list_open());
+        ok("a second press on the clock closes it",
+           press(&c, k) && notify_list_open() && press(&c, k) && !notify_list_open());
+    }
+
+    /* ── REPLACE IN PLACE ─────────────────────────────────────────── */
+    printf("\n  the volume and a download change the card they have\n");
+    {
+        clear_all(&c);
+        hints = "{'x-canonical-private-synchronous': <'volume'>}";
+        send_notify(&c, "Volume", 0, "Volume 40%", "", 8000);
+        pump_until(&c, 1, 2000);
+        int kept = notify_kept();
+        send_notify(&c, "Volume", 0, "Volume 45%", "", 8000);
+        pump_until(&c, 1, 500);
+        ok("a tagged notice replaces its own card", notify_showing() == 1 &&
+           notify_kept() == kept && !strcmp(notify_card_summary(0), "Volume 45%"));
+        hints = "{'x-dunst-stack-tag': <'volume'>}";
+        send_notify(&c, "Another program", 0, "Volume 10%", "", 8000);
+        pump_until(&c, 2, 1000);
+        ok("...but not another program's with the same tag", notify_kept() == kept + 1);
+        hints = "{}";
+
+        clear_all(&c);
+        unsigned id = 0;
+        for (int i = 0; i < notify_kept(); i++)
+            if (!strcmp(notify_card_summary(i), "Volume 45%")) id = notify_card_id(i);
+        send_notify(&c, "Volume", id, "Volume 50%", "", 8000);
+        pump_until(&c, 1, 2000);
+        ok("one she has put away comes back, changed, by its id",
+           notify_showing() == 1 && !strcmp(notify_card_summary(0), "Volume 50%") &&
+           notify_card_id(0) == id);
+        clear_all(&c);
+    }
+
+    /* ── "VLC IS READY" STILL OPENS VLC ───────────────────────────── */
+    {
+        notify_local_open("VLC media player is ready", "Press here to open it.",
+                          "org.videolan.VLC");
+        notify_geom g = geom_now(&c);
+        char id[32] = "";
+        rect body = { g.card.x + 4, g.card.y + 4, 40, 20 };
+        ok("pressing the ready card opens the program",
+           press(&c, body) && notify_take_open(id, sizeof id) &&
+           !strcmp(id, "org.videolan.VLC") && notify_showing() == 0);
+        notify_local_open("VLC media player is ready", "Press here to open it.",
+                          "org.videolan.VLC");
+        ok("...and OK only puts it away",
+           press(&c, geom_now(&c).ok) && !notify_take_open(id, sizeof id));
+    }
+
     /* ── what a program is not allowed to do to her screen ──────── */
     printf("\n  and what a program is NOT allowed to do to her screen\n");
-    while (notify_showing()) {
-        notify_view v; notify_view_now(&c, &v);
-        notify_geom g; notify_layout(c.screen_w, c.screen_h + v.foot_h, &v, &g);
-        if (!g.n) break;
-        notify_click(&c, g.card[0].x + 1, g.card[0].y + 1);
-    }
+    clear_all(&c);
 
     {
         char huge[2000];
@@ -500,39 +668,26 @@ int main(void)
         send_notify(&c, "A program", 0, "I am very important", "", 1);
         pump_until(&c, 1, 2000);
         ok("a program may say its message is urgent", notify_showing() == 1);
-        ok("...but may NOT make it stay for ever", !notify_card_sticky(0));
-        /* Its life is clamped up to the floor, so it is still on
-         * screen -- then it goes, on its own, which is the point. */
-        int went = 0;
-        for (int i = 0; i < 700 && !went; i++) {   /* > LIFE_MIN, 4s */
-            notify_step(&c);
-            if (!notify_showing()) went = 1;
-            struct timespec t = { 0, 10 * 1000 * 1000 }; nanosleep(&t, NULL);
-        }
-        ok("...and it does go, by itself", went);
+        ok("...but it is not the computer's own warning", !notify_card_sticky(0));
         hints = "{}";
     }
     {
-        /* The shell's own. This one does stay. */
         clear_all(&c);
         notify_local("The battery is very low", "Please plug this computer in.");
-        ok("the shell can say something that stays", notify_showing() == 1 &&
-                                                     notify_card_sticky(0));
-        for (int i = 0; i < 60; i++) notify_step(&c);
-        ok("...and retiring does not retire it", notify_showing() == 1);
-
-        /* And four programs talking at once must not push it off. */
-        for (int i = 0; i < 6; i++) {
+        ok("the shell can say something that is its own", notify_showing() == 1 &&
+                                                          notify_card_sticky(0));
+        /* And a flood of programs talking must not push it out. */
+        for (int i = 0; i < NOTIFY_KEEP + 3; i++) {
             char sm[48]; snprintf(sm, sizeof sm, "Download %d finished", i);
             send_notify(&c, "Firefox", 0, sm, "", 8000);
         }
         int survived = 0;
-        for (int i = 0; i < notify_showing(); i++)
+        for (int i = 0; i < notify_kept(); i++)
             if (notify_card_sticky(i)) survived = 1;
-        ok("six downloads finishing do not remove the battery warning",
+        ok("downloads by the dozen do not push out the battery warning",
            survived);
-        ok("...and the screen still holds no more than it can draw",
-           notify_showing() <= NOTIFY_MAX);
+        ok("...and Messages keeps no more than it holds",
+           notify_kept() <= NOTIFY_KEEP);
         clear_all(&c);
     }
     {
@@ -559,33 +714,12 @@ int main(void)
          * the real owner can never replace or close its own -- one
          * program quietly taking over another's notification. */
         int twins = 0;
-        for (int i = 0; i < notify_showing(); i++)
+        for (int i = 0; i < notify_kept(); i++)
             for (int j = 0; j < i; j++)
                 if (notify_card_id(i) == notify_card_id(j)) twins++;
         ok("...with an id that is not already somebody else's", twins == 0);
         clear_all(&c);
     }
-    {
-        /* Never accept more cards than the screen can draw. A card
-         * that is not drawn cannot be pressed away either. */
-        shell_ctx small; fresh(&small);
-        small.text_scale = 2.0f;
-        small.screen_w = 1024;
-        small.screen_h = 600 - foot_height(&small);
-        notify_fit(&small);
-        for (int i = 0; i < NOTIFY_MAX + 3; i++) {
-            char sm[32]; snprintf(sm, sizeof sm, "Message %d", i);
-            send_notify(&small, "A program", 0, sm, "", 8000);
-        }
-        notify_view v; notify_view_now(&small, &v);
-        notify_geom g;
-        notify_layout(small.screen_w, small.screen_h + v.foot_h, &v, &g);
-        ok("on a small screen at her largest text, every card is drawn",
-           g.n == notify_showing() && g.n > 0);
-        clear_all(&small);
-        notify_fit(&c);
-    }
-
     printf("\n  the rest of what a program may ask\n");
     {
         clear_all(&c);
@@ -616,6 +750,7 @@ int main(void)
             if (!notify_showing()) closed = 1;
         }
         ok("a program can take its own message back off the screen", closed);
+        ok("...and out of Messages", strcmp(notify_card_summary(0), "Close me") != 0);
     }
     {
         /* GetCapabilities must claim only what is true: "actions"
@@ -643,6 +778,33 @@ int main(void)
     stop_bus();
 
 done:
+    /* ── THE HOST'S HALF ──────────────────────────────────────────
+     * The press that puts the on-screen line away must still reach
+     * what she pressed, so main.c calls osd_press() on the way in and
+     * never lets it decide `taken`. The touchpad's tap goes through
+     * the card like a click does (it used to skip it, and a tap on OK
+     * would have pressed whatever was under the card). Read from the
+     * source, because main.c needs a screen to run. */
+    printf("\n  the desktop's own wiring (src/aurshell/main.c)\n");
+    {
+        FILE *f = fopen("src/aurshell/main.c", "r");
+        char line[512];
+        int presses = 0, taking = 0, cards = 0, timer = 0;
+        while (f && fgets(line, sizeof line, f)) {
+            if (strstr(line, "osd_press()")) {
+                presses++;
+                if (strstr(line, "taken")) taking++;
+            }
+            if (strstr(line, "notify_click(&c")) cards++;
+            if (strstr(line, "notify_step") || strstr(line, "osd_visible() ||")) timer++;
+        }
+        if (f) fclose(f);
+        ok("every press puts the line away: click, tap and key", presses >= 3);
+        ok("...and none of them is taken by it", presses && !taking);
+        ok("a tap on the card is the card's, like a click", cards >= 2);
+        ok("nothing is retired or repainted on a clock", f && !timer);
+    }
+
     printf("\n");
     if (fail) {
         printf("%d of %d wrong. A program tried to tell her something and\n",

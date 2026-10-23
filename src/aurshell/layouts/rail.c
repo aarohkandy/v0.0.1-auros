@@ -533,6 +533,8 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
         rx -= 13.f;
         shell_text(s, f->small, rx - shell_text_w(f->small, dt),
                    shell_baseline(f->small, 0.f, (float)bh), dt, c->subtle, 0.9f);
+        int cx = (int)(rx - shell_text_w(f->small, dt)) - 8;   /* opens Messages */
+        c->clock_r = (rect){ cx, 0, s->w - cx, bh };
     }
 
     /* Where you are in the row, as a ruler rather than as dots, and

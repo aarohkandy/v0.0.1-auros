@@ -817,6 +817,7 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
         float y2 = y1 + (f->tiny ? font_line_height(f->tiny) : 16.f) + 1.f;
         shell_text(s, f->mid, rx - shell_text_w(f->mid, hm), y1, hm, c->fg_hi, 1.f);
         shell_text(s, f->tiny, rx - shell_text_w(f->tiny, dt), y2, dt, c->subtle, 0.9f);
+        c->clock_r = (rect){ cr.x - 10, H - bar_height(c), W - cr.x + 10, bar_height(c) };
     }
 }
 
@@ -930,6 +931,8 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
             rx -= 13.f;
             shell_text(s, f->small, rx - shell_text_w(f->small, dt),
                        shell_baseline(f->small, 0.f, (float)sh), dt, c->subtle, 0.9f);
+            int cx = (int)(rx - shell_text_w(f->small, dt)) - 8;   /* opens Messages */
+            c->clock_r = (rect){ cx, 0, s->w - cx, sh };
         }
     }
 

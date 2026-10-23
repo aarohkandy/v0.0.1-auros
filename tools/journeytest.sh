@@ -22,7 +22,7 @@ mkdir -p "$OUT" "$T/apps" "$T/vlc" "$T/st/c"
 
 cc -O2 -std=gnu11 -o "$T/journey" tools/journey.c \
     -DWELCOME_STATE="\"$T/state\"" \
-    src/aurshell/welcome.c src/aurshell/notify.c src/aurshell/foot.c \
+    src/aurshell/welcome.c src/aurshell/notify.c src/aurshell/osd.c src/aurshell/foot.c \
     src/aurshell/draw.c src/aurshell/shellcommon.c src/aurshell/anim.c \
     src/aurshell/apps.c src/aurshell/layouts/*.c src/common/theme.c \
     src/common/wall.c src/common/font.c src/common/png.c \
@@ -71,6 +71,18 @@ for look in taskbar dock rail tiles; do
                               ok "$at: the browser is called Internet" $?; }
         said "$log" "-ready.png"   | grep -qx '   VLC media player is ready'; ok "$at: VLC is ready, and it says so" $?
         said "$log" "-opens.png"   | grep -q 'VLC media player';              ok "$at: VLC opens" $?
+        # Nothing vanishes, nothing piles up (DESIGN-DIRECTION §5 C6).
+        said "$log" "-ready.png"   | grep -qx '   OK';                        ok "$at: the card stays until she presses OK" $?
+        said "$log" "-messages.png" | grep -qx '   3 messages';               ok "$at: three become one card that says 3 messages" $?
+        [ "$(said "$log" "-messages.png" | grep -c 'is ready\|taken out\|getting low')" = 1 ]
+                                                                               ok "$at: ...showing only the newest" $?
+        said "$log" "-list.png"    | grep -qx '   Messages';                  ok "$at: the clock opens Messages" $?
+        said "$log" "-list.png"    | grep -qx '   VLC media player is ready'; ok "$at: ...with what was said before in it" $?
+        said "$log" "-sound.png"   | grep -qx '   Sound 45%';                 ok "$at: the sound line is on screen" $?
+        ! grep -q 'PRESSABLE under\|OVER THE CLOCK\|OVER THE BAND' "$log"
+                                                                               ok "$at: the card and the line cover no button, the clock or the band" $?
+        grep -q '\[the card at' "$log" && grep -q '\[the line at' "$log"
+                                                                               ok "$at: (both were measured)" $?
         case $look in
             taskbar) ! said "$log" "-opens.png" | grep -qx '   Everything on this computer'
                      ok "$at: the program list gets out of its way" $?

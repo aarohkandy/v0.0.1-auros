@@ -26,18 +26,20 @@ typedef struct {
      * worst a program makes its own card look important, which is
      * rude and not dangerous.
      *
-     * `sticky` is whether it ever goes away by itself, and a sender
-     * may NOT ask for that. It was the same flag, read straight out
-     * of the hints dictionary, so any program could put a card on her
-     * screen that never expired -- four of them and the queue was
-     * wedged, and re-sendable the instant she pressed them away. That
-     * is precisely "no program gets to decide how much of her screen
-     * it takes", broken by the field that enforces it. Only the shell
-     * sets sticky, and the shell only ever says things she must act
-     * on. */
+     * `sticky` is the shell's own warning -- the battery -- and a
+     * sender may NOT ask for that. It was the same flag, read straight
+     * out of the hints dictionary, so any program could make a card
+     * that nothing else could push aside. Only the shell sets sticky,
+     * and the shell only ever says things she must act on: a sticky
+     * one she has not seen is never dropped to make room. */
     int      urgent;
     int      sticky;
-    int32_t  due_ms;          /* monotonic ms; ignored when sticky    */
+    /* She has seen it: she pressed OK, or opened Messages. A seen one
+     * is no longer on the card, and is still in the list. */
+    int      seen;
+    /* The tag replace-in-place notices carry instead of an id: the
+     * volume, a download. The same app and tag is the same card. */
+    char     tag[48];
     /* Pressing this card opens a program, by its id in the app table,
      * rather than only putting the card away. Only the shell sets it:
      * "VLC is ready -- press to open". Empty for every other card. */
@@ -50,11 +52,6 @@ static char take_open[32];
 #define BUS_NAME  "org.freedesktop.Notifications"
 #define BUS_PATH  "/org/freedesktop/Notifications"
 
-/* Eight seconds, not two. Long enough to look up, read it and look
- * back down, for a person who does not read quickly. */
-#define LIFE_MS      8000
-#define LIFE_MIN_MS  4000
-#define LIFE_MAX_MS  30000
 /* Trying again costs a connection attempt, so not every frame. */
 #define RETRY_MS     1000
 
@@ -73,10 +70,13 @@ static struct {
     int      state;                /* NS_* */
     DBusPendingCall *pending;
     int32_t  deadline;
-    note     n[NOTIFY_MAX];
+    /* Oldest first; the newest is n[count - 1]. */
+    note     n[NOTIFY_KEEP];
     int      count;
     uint32_t next_id;
-} N = { NULL, 0, {0}, 0, 0, NULL, 0, {{0}}, 0, 1 };
+    int      list_open;           /* the Messages list is on screen     */
+    int      first;               /* ...starting at this message        */
+} N = { NULL, 0, {0}, 0, 0, NULL, 0, {{0}}, 0, 1, 0, 0 };
 
 static int32_t now_ms(void)
 {
@@ -207,19 +207,9 @@ static void closed_signal(uint32_t id, uint32_t reason)
     dbus_message_unref(sig);
 }
 
-/* How many the screen can actually hold, which is not always
- * NOTIFY_MAX: at 1024x600 with her largest text only three cards fit.
- * A fourth used to be accepted, counted, and never drawn -- so it
- * could not be pressed away either, and if it was one that never
- * expires it sat in a slot for the life of the session, invisible.
- *
- * Set from the real screen once per pass of the main loop. The
- * fallback is NOTIFY_MAX, which is right before the first frame. */
-static int vis_cap = NOTIFY_MAX;
-
 static uint32_t mint_id(void)
 {
-    for (int tries = 0; tries < NOTIFY_MAX + 2; tries++) {
+    for (int tries = 0; tries < NOTIFY_KEEP + 2; tries++) {
         uint32_t id = N.next_id++;
         if (N.next_id == 0) N.next_id = 1;      /* 0 means "new" */
         if (id && find_id(id) < 0) return id;
@@ -227,18 +217,48 @@ static uint32_t mint_id(void)
     return N.next_id++;                         /* cannot happen */
 }
 
-static uint32_t put(const char *app, uint32_t replaces, const char *summary,
-                    const char *body, int urgent, int sticky, int32_t life_ms)
+/* She has seen everything waiting: OK, or the Messages list. The
+ * sending program is told (2 = dismissed by her), so one that is
+ * waiting to know can stop waiting. The words stay in the list. */
+static void see_all(void)
 {
-    int slot;
-    uint32_t id;
+    for (int i = 0; i < N.count; i++)
+        if (!N.n[i].seen) { N.n[i].seen = 1; closed_signal(N.n[i].id, 2); }
+}
 
-    if (replaces && (slot = find_id(replaces)) >= 0) {
-        /* The same notification saying something new -- a download's
-         * percentage. It keeps its place in the stack rather than
-         * jumping to the front, or a progress bar would make the
-         * others dance. */
-        id = replaces;
+/* The newest one she has not seen: what the card shows. -1 for none. */
+static int card_note(void)
+{
+    for (int i = N.count - 1; i >= 0; i--) if (!N.n[i].seen) return i;
+    return -1;
+}
+
+static uint32_t put(const char *app, uint32_t replaces, const char *tag,
+                    const char *summary, const char *body, int urgent, int sticky)
+{
+    int slot = -1;
+    uint32_t id;
+    char a[NOTIFY_APP], t[sizeof N.n[0].tag];
+    sane(a, sizeof a, app);
+    sane(t, sizeof t, tag);
+
+    if (replaces) slot = find_id(replaces);
+    /* REPLACE IN PLACE. The volume and a download say the same thing
+     * again and again; some programs keep the id they were given, the
+     * rest send a tag. Either way it is the card they already have,
+     * changed -- not one more card. */
+    if (slot < 0 && t[0])
+        for (int i = 0; i < N.count; i++)
+            if (!strcmp(N.n[i].tag, t) && !strcmp(N.n[i].app, a)) { slot = i; break; }
+
+    if (slot >= 0) {
+        /* It moves to the front, because it is the newest thing said,
+         * and it is unseen again, because it says something new. */
+        note keep = N.n[slot];
+        drop_at(slot);
+        slot = N.count++;
+        N.n[slot] = keep;
+        id = keep.id;
     } else {
         /* A replaces_id naming nothing is a NEW notification, and it
          * gets a new id. It used to be given the id it asked for,
@@ -248,65 +268,64 @@ static uint32_t put(const char *app, uint32_t replaces, const char *summary,
          * CloseNotification closed somebody else's. One program taking
          * over another's notification, reachable by accident. */
         id = mint_id();
-        int cap = vis_cap > 0 && vis_cap < NOTIFY_MAX ? vis_cap : NOTIFY_MAX;
-        if (N.count >= cap) {
-            /* Full. The oldest goes -- but the oldest one SHE STILL
-             * HAS TO ACT ON does not. The battery warning was being
-             * evicted by four downloads finishing, on the commit that
-             * said it "stays until she presses it". */
+        if (N.count >= NOTIFY_KEEP) {
+            /* Full. The oldest she has seen goes; then the oldest a
+             * program sent; never a warning of the shell's own that
+             * she has not seen -- the battery warning was once pushed
+             * off by four downloads finishing. */
             int victim = -1;
-            for (int i = 0; i < N.count; i++)
-                if (!N.n[i].sticky) { victim = i; break; }
+            for (int i = 0; i < N.count && victim < 0; i++)
+                if (N.n[i].seen) victim = i;
+            for (int i = 0; i < N.count && victim < 0; i++)
+                if (!N.n[i].sticky) victim = i;
             if (victim < 0 && sticky) victim = 0;   /* shell over shell */
             if (victim < 0) {
                 /* Every slot is something she must act on, and this is
                  * not. Tell the sender at once rather than silently
-                 * dropping it or pushing a warning off the screen. */
+                 * dropping it or pushing a warning out. */
                 closed_signal(id, 4);
                 return id;
             }
-            closed_signal(N.n[victim].id, 4);
+            if (!N.n[victim].seen) closed_signal(N.n[victim].id, 4);
             drop_at(victim);
         }
         slot = N.count++;
         memset(&N.n[slot], 0, sizeof N.n[slot]);
+        N.n[slot].id = id;
+        memcpy(N.n[slot].app, a, sizeof a);
+        memcpy(N.n[slot].tag, t, sizeof t);
     }
 
-    note *t = &N.n[slot];
-    t->id = id;
-    sane(t->app,     sizeof t->app,     app);
-    sane(t->summary, sizeof t->summary, summary);
-    sane(t->body,    sizeof t->body,    body);
-    t->urgent = urgent;
-    t->sticky = sticky;
-    if (life_ms < LIFE_MIN_MS) life_ms = LIFE_MIN_MS;
-    if (life_ms > LIFE_MAX_MS) life_ms = LIFE_MAX_MS;
-    t->due_ms = now_ms() + life_ms;
+    note *n = &N.n[slot];
+    sane(n->summary, sizeof n->summary, summary);
+    sane(n->body,    sizeof n->body,    body);
+    n->urgent = urgent;
+    n->sticky = sticky;
+    /* Said while she is looking at the list: she has seen it there. */
+    n->seen = N.list_open;
 
     /* Something with no words at all is not a notification; it is a
      * card she cannot read and cannot tell apart from the next one. */
-    if (!t->summary[0] && !t->body[0])
-        snprintf(t->summary, sizeof t->summary, "%s",
-                 t->app[0] ? t->app : "A program has a message");
+    if (!n->summary[0] && !n->body[0])
+        snprintf(n->summary, sizeof n->summary, "%s",
+                 n->app[0] ? n->app : "A program has a message");
     return id;
 }
 
 void notify_local(const char *summary, const char *body)
 {
-    /* Sticky: it stays until she presses it. Only the shell may do
-     * this, and the shell only says things she has to act on -- a
+    /* Sticky: never pushed out of the list unseen. Only the shell may
+     * do this, and the shell only says things she has to act on -- a
      * battery that is about to run out. */
-    put("This computer", 0, summary, body, 1, 1, LIFE_MAX_MS);
+    put("This computer", 0, NULL, summary, body, 1, 1);
 }
 
 void notify_local_open(const char *summary, const char *body, const char *app_id)
 {
     /* Not sticky: a program being ready is good news, not something she
-     * must act on, so it goes by itself like any other -- after the
-     * longest time a card is allowed, because she may be looking at the
-     * store when it arrives. The program is on her home screen either
-     * way; this is the shortcut, not the only door. */
-    uint32_t id = put("This computer", 0, summary, body, 0, 0, LIFE_MAX_MS);
+     * must act on. The program is on her home screen either way; this
+     * is the shortcut, not the only door. */
+    uint32_t id = put("This computer", 0, NULL, summary, body, 0, 0);
     int i = find_id(id);
     if (i >= 0 && app_id)
         snprintf(N.n[i].open_id, sizeof N.n[i].open_id, "%s", app_id);
@@ -318,17 +337,6 @@ int notify_take_open(char *out, size_t n)
     if (out && n) snprintf(out, n, "%s", take_open);
     take_open[0] = 0;
     return 1;
-}
-
-void notify_fit(const shell_ctx *c)
-{
-    if (!c || c->screen_w <= 0) return;
-    notify_view v;
-    notify_view_now(c, &v);
-    v.n = NOTIFY_MAX;
-    notify_geom g;
-    notify_layout(c->screen_w, c->screen_h + v.foot_h, &v, &g);
-    vis_cap = g.n > 0 ? g.n : 1;
 }
 
 /* ── the bus ────────────────────────────────────────────────────── */
@@ -382,32 +390,45 @@ static void reply_str(DBusConnection *c, DBusMessage *m, const char *s)
     dbus_message_unref(r);
 }
 
-/* The urgency hint, out of a{sv}. Anything that is not a byte or is
- * not there at all is "normal", which is what the specification says
- * and also the only safe reading of a program we do not control. */
-static int read_urgency(DBusMessageIter *hints)
+/* The two hints this server reads, out of a{sv}.
+ *
+ * "urgency": anything that is not a byte, or is not there at all, is
+ * "normal", which is what the specification says and also the only
+ * safe reading of a program we do not control.
+ *
+ * The replace-in-place tag: notify-send's volume and brightness
+ * helpers, and most of what sends progress, name the card they mean
+ * with one of these instead of keeping the id they were given. */
+static int read_hints(DBusMessageIter *hints, char *tag, size_t tagn)
 {
+    static const char *TAGS[] = { "x-canonical-private-synchronous",
+                                  "x-dunst-stack-tag", "synchronous" };
     int urgency = 1;
+    if (tagn) tag[0] = 0;
     if (dbus_message_iter_get_arg_type(hints) != DBUS_TYPE_ARRAY) return urgency;
     DBusMessageIter arr;
     dbus_message_iter_recurse(hints, &arr);
     while (dbus_message_iter_get_arg_type(&arr) == DBUS_TYPE_DICT_ENTRY) {
-        DBusMessageIter e;
+        DBusMessageIter e, v;
         dbus_message_iter_recurse(&arr, &e);
         const char *key = NULL;
         if (dbus_message_iter_get_arg_type(&e) == DBUS_TYPE_STRING)
             dbus_message_iter_get_basic(&e, &key);
-        if (key && !strcmp(key, "urgency")) {
-            dbus_message_iter_next(&e);
-            if (dbus_message_iter_get_arg_type(&e) == DBUS_TYPE_VARIANT) {
-                DBusMessageIter v;
-                dbus_message_iter_recurse(&e, &v);
-                if (dbus_message_iter_get_arg_type(&v) == DBUS_TYPE_BYTE) {
-                    unsigned char u = 1;
-                    dbus_message_iter_get_basic(&v, &u);
-                    urgency = (int)u;
-                }
+        dbus_message_iter_next(&e);
+        if (key && dbus_message_iter_get_arg_type(&e) == DBUS_TYPE_VARIANT) {
+            dbus_message_iter_recurse(&e, &v);
+            int t = dbus_message_iter_get_arg_type(&v);
+            if (!strcmp(key, "urgency") && t == DBUS_TYPE_BYTE) {
+                unsigned char u = 1;
+                dbus_message_iter_get_basic(&v, &u);
+                urgency = (int)u;
             }
+            for (size_t i = 0; i < sizeof TAGS / sizeof TAGS[0]; i++)
+                if (!strcmp(key, TAGS[i]) && t == DBUS_TYPE_STRING && tagn) {
+                    const char *val = NULL;
+                    dbus_message_iter_get_basic(&v, &val);
+                    snprintf(tag, tagn, "%s", val ? val : "");
+                }
         }
         dbus_message_iter_next(&arr);
     }
@@ -428,7 +449,6 @@ static DBusHandlerResult on_notify(DBusConnection *c, DBusMessage *m)
 
     const char *app = "", *icon = "", *summary = "", *body = "";
     dbus_uint32_t replaces = 0;
-    dbus_int32_t  expire = -1;
 
     /* EVERY argument is checked before it is read. A message whose
      * signature does not match is a message from a program that got it
@@ -447,21 +467,14 @@ static DBusHandlerResult on_notify(DBusConnection *c, DBusMessage *m)
     #undef TAKE
     if (dbus_message_iter_get_arg_type(&it) != DBUS_TYPE_ARRAY) goto bad;
     dbus_message_iter_next(&it);                  /* actions: not shown */
-    int urgency = read_urgency(&it);
-    dbus_message_iter_next(&it);
-    if (dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_INT32)
-        dbus_message_iter_get_basic(&it, &expire);
+    char tag[48];
+    int urgency = read_hints(&it, tag, sizeof tag);
+    /* expire_timeout is not read. The specification lets the server
+     * decide, and here nothing goes away until she has seen it. */
 
-    /* -1 is "you decide". 0 is "never" -- which is granted only to the
-     * urgent ones, because a program that says "never" about a message
-     * she does not need is a card that stays on her screen forever. */
-    int32_t life = (expire > 0) ? (int32_t)expire : LIFE_MS;
-    if (expire == 0) life = (urgency >= 2) ? LIFE_MAX_MS : LIFE_MS;
-
-    /* urgency decides how it LOOKS. It does not decide whether it
-     * ever goes away; see the note on the two flags above. */
-    dbus_uint32_t id = put(app, replaces, summary, body,
-                           urgency >= 2, 0, life);
+    /* urgency decides how it LOOKS. It does not decide whether it can
+     * be pushed out of the list; see the note on the two flags above. */
+    dbus_uint32_t id = put(app, replaces, tag, summary, body, urgency >= 2, 0);
 
     /* A fire-and-forget caller is not answered. The specification says
      * so, and every reply we send it is a message it will throw away. */
@@ -798,6 +811,8 @@ void notify_fini(void)
 {
     notify_close();
     N.count = 0;
+    N.list_open = 0;
+    N.first = 0;
 }
 
 int notify_fd(void)
@@ -842,7 +857,7 @@ int notify_pump(shell_ctx *c)
     }
     int before = N.count;
     uint32_t sig = 0;
-    for (int i = 0; i < N.count; i++) sig = sig * 31u + N.n[i].id + (uint32_t)N.n[i].due_ms;
+    for (int i = 0; i < N.count; i++) sig = sig * 31u + N.n[i].id + (uint32_t)N.n[i].seen;
 
     /* read_write(0) writes what is queued without waiting, which is
      * what dbus_connection_flush() was doing -- except that flush
@@ -854,159 +869,335 @@ int notify_pump(shell_ctx *c)
     if (!dbus_connection_get_is_connected(N.conn)) { notify_close(); return 1; }
 
     uint32_t after = 0;
-    for (int i = 0; i < N.count; i++) after = after * 31u + N.n[i].id + (uint32_t)N.n[i].due_ms;
+    for (int i = 0; i < N.count; i++) after = after * 31u + N.n[i].id + (uint32_t)N.n[i].seen;
     return before != N.count || sig != after;
 }
 
-int notify_step(shell_ctx *c)
+int notify_showing(void)
 {
-    (void)c;
-    int changed = 0;
-    int32_t t = now_ms();
-    for (int i = N.count - 1; i >= 0; i--) {
-        if (N.n[i].sticky) continue;            /* stays until pressed */
-        if ((int32_t)(t - N.n[i].due_ms) < 0) continue;
-        closed_signal(N.n[i].id, 1);            /* 1 = it expired */
-        drop_at(i);
-        changed = 1;
-    }
-    return changed;
+    int n = 0;
+    for (int i = 0; i < N.count; i++) n += !N.n[i].seen;
+    return n;
 }
+int notify_kept(void)      { return N.count; }
+int notify_list_open(void) { return N.list_open; }
+int notify_list_first(void) { return N.first; }
 
-int notify_showing(void) { return N.count; }
-
-static const char *card_field(int i, size_t off)
+/* Message i, 0 the newest. */
+static const note *nth(int i)
 {
-    if (i < 0 || i >= N.count) return "";
-    return (const char *)&N.n[i] + off;
+    return (i >= 0 && i < N.count) ? &N.n[N.count - 1 - i] : NULL;
 }
-const char *notify_card_app(int i)
-{ return card_field(i, offsetof(note, app)); }
-const char *notify_card_summary(int i)
-{ return card_field(i, offsetof(note, summary)); }
-const char *notify_card_body(int i)
-{ return card_field(i, offsetof(note, body)); }
-unsigned notify_card_id(int i)
-{ return (i >= 0 && i < N.count) ? (unsigned)N.n[i].id : 0u; }
-int notify_card_sticky(int i)
-{ return (i >= 0 && i < N.count) ? N.n[i].sticky : 0; }
+const char *notify_card_app(int i)     { return nth(i) ? nth(i)->app : ""; }
+const char *notify_card_summary(int i) { return nth(i) ? nth(i)->summary : ""; }
+const char *notify_card_body(int i)    { return nth(i) ? nth(i)->body : ""; }
+unsigned notify_card_id(int i)         { return nth(i) ? (unsigned)nth(i)->id : 0u; }
+int notify_card_sticky(int i)          { return nth(i) ? nth(i)->sticky : 0; }
 
 /* ── where they go ──────────────────────────────────────────────── */
 
+/* How tall the card's words were when it was last painted, so a press
+ * lands on the card she is looking at. Fonts are a paint-time thing;
+ * the geometry is not allowed to need them. */
+static int card_text_h = 0;
+
 void notify_view_now(const shell_ctx *c, notify_view *v)
 {
-    v->n = N.count;
+    memset(v, 0, sizeof *v);
+    v->unseen = notify_showing();
+    v->kept = N.count;
+    v->list_open = N.list_open;
+    v->first = N.first;
     v->text_scale = (c && c->text_scale > 0.1f) ? c->text_scale : 1.f;
     v->foot_h = c ? foot_height(c) : 0;
-    v->bar_h  = c ? c->bar_h + 8 : 0;
+    v->bar_h  = c ? c->bar_h : 0;
+    v->text_h = card_text_h;
+    if (!c) return;
+    v->clock = c->clock_r;
+    /* THE CORNER WITH NO BUTTON IN IT, per look. Under the clock at the
+     * top right, where the strip looks have empty paper; above the bar
+     * at the bottom right where the clock is down there ("Like
+     * Windows"); and at the bottom right in "One thing at a time",
+     * whose top right is a tile and whose bottom right is the empty
+     * end of the Home strip. tools/journeytest.sh presses every word
+     * under the card in each look to prove it. */
+    v->bottom = (v->clock.w > 0 && v->clock.y > c->screen_h / 2) ||
+                !strcmp(c->layout_id, "tiles");
 }
+
+static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 void notify_layout(int sw, int sh, const notify_view *v, notify_geom *g)
 {
-    g->n = 0;
-    if (!v || v->n <= 0) return;
+    memset(g, 0, sizeof *g);
+    if (!v) return;
     float k = (v->text_scale > 0.1f) ? v->text_scale : 1.f;
+    int m   = (int)(16.f * k); if (m < 14) m = 14;
+    int pad = (int)(12.f * k); if (pad < 12) pad = 12;
+    int bh  = (int)(48.f * k); if (bh < NOTIFY_TARGET) bh = NOTIFY_TARGET;
+    int gap = (int)(12.f * k);
+    int body = sh - v->foot_h;                 /* the band is below this  */
 
-    int margin = (int)(18.f * k); if (margin < 14) margin = 14;
-    int w = (int)(420.f * k);
-    if (w > sw - 2 * margin) w = sw - 2 * margin;
-    if (w < 200) w = 200;
+    /* Everything hangs from the clock, and stays off it. */
+    rect ck = v->clock;
+    int has_clock = ck.w > 0 && ck.h > 0;
+    int clock_low = has_clock && ck.y > body / 2;
+    int top = (has_clock && !clock_low) ? ck.y + ck.h : v->bar_h;
+    /* With the clock down in the bar, the strip just above the bar is
+     * where the on-screen message goes (osd.c), so the card keeps
+     * clear of it rather than jumping when one appears. */
+    int low = clock_low ? ck.y - ck.h : body;
+    int right = sw - m;
+    int w = clampi((int)(600.f * k), 280, sw - 2 * m);
 
-    /* Title line, then two body lines, then padding. A fixed shape:
-     * a program that sends ten lines of text must not get to decide
-     * how much of her screen it takes. */
-    int h = (int)(34.f + 52.f * k);
-    if (h < NOTIFY_TARGET) h = NOTIFY_TARGET;
-    int gap = (int)(10.f * k); if (gap < 8) gap = 8;
+    if (v->unseen > 0 && !v->list_open) {
+        /* Words on the left, the buttons stacked on the right, and a
+         * card no wider than the free end of any look at 1024 across:
+         * the words wrap to two lines and two, no more -- a program
+         * does not get to decide how much of her screen it takes. */
+        int cw = clampi((int)(440.f * k), 280, sw - 2 * m);
+        int bw = (int)(150.f * k); if (bw < 130) bw = 130;
+        int nb = v->unseen > 1 ? 2 : 1;
+        int btns = nb * bh + (nb - 1) * (gap > 8 ? 8 : gap);
+        int words = v->text_h > 0 ? v->text_h : (int)(58.f * k);
+        int h = pad + (words > btns ? words : btns) + pad;
+        /* Close to the bar when it sits above one: the free end of
+         * "One thing at a time" is only 139 px tall at 1024x600. */
+        int y = v->bottom ? low - m / 2 - h : top + m;
+        if (y < top) y = top;
+        g->card = (rect){ right - cw, y, cw, h };
+        int bx = right - pad - bw;
+        int by = y + (h - btns) / 2;
+        if (nb > 1) { g->more = (rect){ bx, by, bw, bh }; by += bh + (gap > 8 ? 8 : gap); }
+        g->ok = (rect){ bx, by, bw, bh };
+    }
 
-    /* Top right, and DOWN from the top: the band is at the bottom and
-     * the way out must never be under a card. */
-    int x = sw - w - margin;
-    if (x < margin) x = margin;
-    int y = margin + (v->bar_h > 0 ? v->bar_h : 0);
-
-    int body = sh - v->foot_h;
-    int n = v->n > NOTIFY_MAX ? NOTIFY_MAX : v->n;
-    for (int i = 0; i < n; i++) {
-        int cy = y + i * (h + gap);
-        if (cy + h > body) break;        /* a short screen holds fewer */
-        g->card[g->n++] = (rect){ x, cy, w, h };
+    if (v->list_open) {
+        int head = pad + (int)(40.f * k);
+        int foot = gap + bh + pad;
+        int rh = (int)(74.f * k); if (rh < NOTIFY_TARGET) rh = NOTIFY_TARGET;
+        int avail = low - top - 2 * m;
+        int fit = (avail - head - foot) / rh;
+        if (fit < 1) fit = 1;
+        if (fit > NOTIFY_KEEP) fit = NOTIFY_KEEP;
+        int first = clampi(v->first, 0, v->kept > 0 ? v->kept - 1 : 0);
+        int rows = v->kept - first < fit ? v->kept - first : fit;
+        int h = head + (rows > 0 ? rows : 1) * rh + foot;
+        int y = clock_low ? low - m - h : top + m;
+        if (y < top) y = top;
+        g->list = (rect){ right - w, y, w, h };
+        g->rows = rows;
+        g->per = fit;
+        g->first = first;
+        for (int i = 0; i < rows; i++)
+            g->row[i] = (rect){ right - w + pad, y + head + i * rh, w - 2 * pad, rh };
+        /* Newer and Older on the left, Close Messages on the right;
+         * each only when there is something that way. */
+        int by = y + h - pad - bh;
+        int pw = (int)(130.f * k);
+        int inner = w - 2 * pad;
+        int cw = inner - 2 * (pw + gap);
+        if (cw < (int)(150.f * k)) cw = (int)(150.f * k);
+        if (cw > inner) cw = inner;
+        g->close = (rect){ right - pad - cw, by, cw, bh };
+        int px = right - w + pad;
+        if (first > 0) { g->newer = (rect){ px, by, pw, bh }; px += pw + gap; }
+        if (first + rows < v->kept) g->older = (rect){ px, by, pw, bh };
     }
 }
 
-int notify_targets(const shell_ctx *c, int sw, int sh,
-                   const notify_view *v, rect *out, int max)
+/* Words wrapped at spaces into lines of width w, `lh` apart, from the
+ * baseline y. Draws at most max_lines; when there is more than that,
+ * the last one drawn ends in "…" (only ever a program's own text, too
+ * long for any card). Returns how many lines the whole text needs. s
+ * NULL measures and draws nothing. */
+int notify_wrap(surface *s, font *f, float x, float y, float w, float lh,
+                int max_lines, const char *t, uint32_t col, float a)
 {
-    (void)c;
-    notify_geom g;
-    notify_layout(sw, sh, v, &g);
+    char ln[NOTIFY_BODY + 1];
     int n = 0;
-    for (int i = 0; i < g.n && n < max; i++) out[n++] = g.card[i];
+    if (!f) return 0;
+    while (t && *t) {
+        while (*t == ' ') t++;
+        if (!*t) break;
+        size_t fit = 0, end = 0;
+        for (;;) {                                /* whole words that fit */
+            while (t[end] && t[end] != ' ') end++;
+            if (end >= sizeof ln) break;
+            memcpy(ln, t, end); ln[end] = 0;
+            float lw = shell_text_w(f, ln);
+            if (fit && lw > w) break;
+            fit = end;
+            if (!t[end] || lw > w) break;
+            end++;
+        }
+        if (!fit) break;
+        memcpy(ln, t, fit); ln[fit] = 0;
+        /* One word wider than the line: as many whole letters as fit. */
+        while (fit > 1 && shell_text_w(f, ln) > w) {
+            do fit--; while (fit > 1 && ((unsigned char)t[fit] & 0xC0) == 0x80);
+            ln[fit] = 0;
+        }
+        n++;
+        if (s && n <= max_lines) {
+            const char *r = t + fit;
+            while (*r == ' ') r++;
+            if (n == max_lines && *r) shell_text_elided(s, f, x, y, w, t, col, a);
+            else                      shell_text(s, f, x, y, ln, col, a);
+            y += lh;
+        }
+        t += fit;
+    }
     return n;
+}
+
+/* A button: what can be pressed looks pressable (§3). */
+static void button(surface *s, font *ft, rect r, const char *label,
+                   uint32_t fill, uint32_t edge, uint32_t ink)
+{
+    draw_round_rect(s, r, corners_all(8.f), fill, 1.f);
+    if (edge != fill) draw_round_rect_border(s, r, corners_all(8.f), 2.f, edge, 1.f);
+    if (ft) shell_text_centred(s, ft, (float)r.x + r.w * 0.5f,
+                               shell_baseline(ft, (float)r.y, (float)r.h), label, ink, 1.f);
 }
 
 void notify_paint(shell_ctx *c, surface *s, shell_fonts *f)
 {
-    if (!N.count) return;
     notify_view v; notify_view_now(c, &v);
-    notify_geom g; notify_layout(s->w, s->h, &v, &g);
-    if (!g.n) return;
+    if (!v.unseen && !v.list_open) return;
+    float k = v.text_scale;
+    font *big = f->big   ? f->big   : f->mid;
+    font *nm  = f->mid   ? f->mid   : f->small;
+    font *sm  = f->small ? f->small : f->mid;
+    font *tn  = f->tiny  ? f->tiny  : sm;
+    int pad = (int)(12.f * k); if (pad < 12) pad = 12;
+    uint32_t warn = theme_color(&c->theme, "warn", 0x8A5A12u);
 
-    float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
-    int pad = (int)(14.f * k); if (pad < 12) pad = 12;
-    font *nm = f->mid   ? f->mid   : f->small;
-    font *sm = f->small ? f->small : f->mid;
+    int ci = card_note();
+    if (ci >= 0 && !v.list_open) {
+        note *n = &N.n[ci];
+        /* Measure first: the card is as tall as its words, one line or
+         * two, and the press has to land on the card that is drawn. */
+        notify_geom g; notify_layout(s->w, s->h, &v, &g);
+        float tw = (float)(g.ok.x - g.card.x - 2 * pad);
+        int hl = nm ? notify_wrap(NULL, nm, 0, 0, tw, 0, 2, n->summary, 0, 0) : 1;
+        int bl = (sm && n->body[0]) ? notify_wrap(NULL, sm, 0, 0, tw, 0, 2, n->body, 0, 0) : 0;
+        float hp = nm ? font_line_height(nm) : 30.f, bp = sm ? font_line_height(sm) : 28.f;
+        int th = (int)((hl > 2 ? 2 : hl < 1 ? 1 : hl) * hp + (bl > 2 ? 2 : bl) * bp + 0.5f);
+        if (th != card_text_h) { card_text_h = th; v.text_h = th; notify_layout(s->w, s->h, &v, &g); }
 
-    for (int i = 0; i < g.n; i++) {
-        rect r = g.card[i];
-        /* Urgent ones carry the one signal colour on their edge. The
-         * rest are the same surface as every other card in the system:
-         * a notification is not more important than what she is doing,
-         * it is only newer. */
-        draw_rect(s, r, c->bg_alt, 0.97f);
-        draw_frame(s, r, N.n[i].urgent ? 2 : 1,
-                   N.n[i].urgent ? c->accent : c->overlay,
-                   N.n[i].urgent ? 1.f : 0.75f);
-
-        float tx = (float)(r.x + pad);
-        float tw = (float)(r.w - 2 * pad);
-        if (nm) {
-            shell_text_elided(s, nm, tx,
-                              (float)r.y + pad + font_ascent(nm),
-                              tw, N.n[i].summary, c->fg_hi, 1.f);
-        }
-        if (sm && N.n[i].body[0]) {
-            shell_text_elided(s, sm, tx,
-                              (float)r.y + r.h - pad - font_descent(sm),
-                              tw, N.n[i].body, c->fg, 0.88f);
-        }
-        /* Who it is from, quietly, at the top right. She needs to know
-         * whether the browser or the computer is talking to her. */
-        if (sm && N.n[i].app[0]) {
-            float aw = shell_text_w(sm, N.n[i].app);
-            if (aw < tw * 0.45f)
-                shell_text(s, sm, (float)(r.x + r.w - pad) - aw,
-                           (float)r.y + pad + font_ascent(sm),
-                           N.n[i].app, c->subtle, 0.7f);
+        rect r = g.card;
+        draw_round_rect(s, r, corners_all(12.f), c->surface_c, 1.f);
+        /* Pressable all over ("Press here to open it") gets the 2 px
+         * rule of a thing she can press; the rest is a card. */
+        draw_round_rect_border(s, r, corners_all(12.f), n->open_id[0] ? 2.f : 1.f,
+                               c->overlay, 1.f);
+        if (n->urgent) draw_rect(s, (rect){ r.x, r.y + 6, 4, r.h - 12 }, warn, 1.f);
+        float tx = (float)(r.x + pad + (n->urgent ? 6 : 0));
+        float by = (float)r.y + (float)(r.h - card_text_h) * 0.5f + (nm ? font_ascent(nm) : 0.f);
+        if (n->urgent) tw -= 6.f;
+        int hn = notify_wrap(s, nm, tx, by, tw, hp, 2, n->summary, c->fg_hi, 1.f);
+        if (hn > 2) hn = 2;
+        if (sm && n->body[0])
+            notify_wrap(s, sm, tx, by + hn * hp - (nm ? font_ascent(nm) : 0.f) +
+                               font_ascent(sm), tw, bp, 2, n->body, c->fg, 1.f);
+        button(s, nm, g.ok, "OK", c->accent, c->accent, c->surface_c);
+        if (g.more.w) {
+            char lab[32];
+            snprintf(lab, sizeof lab, "%d messages", v.unseen);
+            button(s, nm, g.more, lab, c->surface_c, c->overlay, c->fg_hi);
         }
     }
+
+    if (v.list_open) {
+        notify_geom g; notify_layout(s->w, s->h, &v, &g);
+        rect r = g.list;
+        draw_round_rect(s, r, corners_all(12.f), c->surface_c, 1.f);
+        draw_round_rect_border(s, r, corners_all(12.f), 1.f, c->overlay, 1.f);
+        if (big) shell_text(s, big, (float)(r.x + pad),
+                            (float)(r.y + pad) + font_ascent(big), "Messages", c->fg_hi, 1.f);
+        if (!g.rows && sm)
+            shell_text(s, sm, (float)(r.x + pad),
+                       (float)(r.y + pad) + 40.f * k + font_ascent(sm),
+                       "No messages.", c->subtle, 1.f);
+        for (int i = 0; i < g.rows; i++) {
+            const note *n = nth(g.first + i);
+            rect rr = g.row[i];
+            if (n->open_id[0])
+                draw_round_rect_border(s, rr, corners_all(8.f), 2.f, c->overlay, 1.f);
+            else if (i)
+                draw_hrule(s, rr.x, rr.y, rr.w, 1, c->overlay, 1.f);
+            float tx = (float)(rr.x + 8), tw = (float)(rr.w - 16);
+            float y1 = (float)rr.y + 8.f + (nm ? font_ascent(nm) : 0.f);
+            /* Who it is from, at the right of the first line, when it
+             * fits: she needs to know whether the browser or the
+             * computer is talking to her. */
+            float aw = (tn && n->app[0]) ? shell_text_w(tn, n->app) : 0.f;
+            if (aw > tw * 0.4f) aw = 0.f;
+            if (aw > 0.f)
+                shell_text(s, tn, tx + tw - aw, y1, n->app, c->subtle, 1.f);
+            if (nm) shell_text_elided(s, nm, tx, y1, tw - (aw > 0.f ? aw + 12.f : 0.f),
+                                      n->summary, c->fg_hi, 1.f);
+            if (sm && n->body[0])
+                shell_text_elided(s, sm, tx, y1 + 30.f * k, tw, n->body, c->fg, 1.f);
+        }
+        if (g.newer.w) button(s, nm, g.newer, "Newer", c->surface_c, c->overlay, c->fg_hi);
+        if (g.older.w) button(s, nm, g.older, "Older", c->surface_c, c->overlay, c->fg_hi);
+        button(s, nm, g.close, "Close Messages", c->surface_c, c->overlay, c->fg_hi);
+    }
+}
+
+static int inside(rect r, int x, int y)
+{
+    return r.w > 0 && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
 }
 
 int notify_click(shell_ctx *c, int x, int y)
 {
-    if (!N.count) return 0;
     notify_view v; notify_view_now(c, &v);
     notify_geom g; notify_layout(c->screen_w, c->screen_h + v.foot_h, &v, &g);
-    for (int i = 0; i < g.n; i++) {
-        rect r = g.card[i];
-        if (x < r.x || x >= r.x + r.w || y < r.y || y >= r.y + r.h) continue;
-        if (N.n[i].open_id[0])
-            snprintf(take_open, sizeof take_open, "%s", N.n[i].open_id);
-        /* 2 = she dismissed it. The program that sent it is told, so
-         * one that is waiting to know can stop waiting. */
-        closed_signal(N.n[i].id, 2);
-        drop_at(i);
+
+    if (v.list_open) {
+        /* A row that is a program opens it; Close Messages and a press
+         * anywhere else put the list away. Every press is the list's
+         * while it is up: one that fell through would act on something
+         * under it she could not see. */
+        if (inside(g.older, x, y)) { N.first = g.first + g.per; return 1; }
+        if (inside(g.newer, x, y)) {
+            N.first = g.first - g.per; if (N.first < 0) N.first = 0;
+            return 1;
+        }
+        for (int i = 0; i < g.rows; i++)
+            if (inside(g.row[i], x, y)) {
+                const note *n = nth(g.first + i);
+                if (!n->open_id[0]) return 1;
+                snprintf(take_open, sizeof take_open, "%s", n->open_id);
+                break;
+            }
+        if (inside(g.list, x, y) && !inside(g.close, x, y) && !take_open[0]) return 1;
+        N.list_open = 0;
         return 1;
     }
-    return 0;
+
+    /* The clock opens Messages, which is also "she has seen them". */
+    if (inside(v.clock, x, y)) {
+        see_all();
+        N.list_open = 1;
+        N.first = 0;
+        return 1;
+    }
+
+    int ci = card_note();
+    if (ci < 0 || !inside(g.card, x, y)) return 0;
+    if (inside(g.ok, x, y)) { see_all(); return 1; }
+    if (inside(g.more, x, y)) { see_all(); N.list_open = 1; N.first = 0; return 1; }
+    /* The card itself. A program's "is ready" card opens it, and that
+     * one is seen; any other card takes the press and does nothing, so
+     * a press on it never reaches what is underneath. */
+    if (N.n[ci].open_id[0]) {
+        snprintf(take_open, sizeof take_open, "%s", N.n[ci].open_id);
+        N.n[ci].seen = 1;
+        closed_signal(N.n[ci].id, 2);
+    }
+    return 1;
 }

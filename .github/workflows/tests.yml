@@ -165,6 +165,16 @@ jobs:
       - name: journeytest (her first ten minutes, every look, both sizes)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/journeytest.sh 2>&1 | tee transcripts/journeytest.txt
+      - name: notifytest (programs can tell her things; nothing vanishes, nothing piles up)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/notifytest" tools/notifytest.c src/aurshell/notify.c \
+             src/aurshell/osd.c src/aurshell/foot.c src/aurshell/draw.c src/aurshell/shellcommon.c \
+             src/aurshell/anim.c src/aurshell/layouts/*.c src/common/theme.c src/common/font.c \
+             $(pkg-config --cflags --libs dbus-1) -I src/aurshell -I src/common -lm
+          "$RUNNER_TEMP/notifytest" 2>&1 | tee transcripts/notifytest.txt
+          # Without a bus the half that matters is skipped: not a pass.
+          grep -q 'the shell claims org.freedesktop.Notifications *ok' transcripts/notifytest.txt
       - name: fonttest (every word in the weight the theme asked for)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/fonttest.sh 2>&1 | tee transcripts/fonttest.txt

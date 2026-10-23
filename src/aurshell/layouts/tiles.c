@@ -597,6 +597,8 @@ static void paint_strip(shell_ctx *c, surface *s, shell_fonts *f, int w, float t
         rx -= 13.f;
         shell_text(s, f->small, rx - shell_text_w(f->small, dt),
                    shell_baseline(f->small, 0.f, (float)bh), dt, c->subtle, 0.9f);
+        int cx = (int)(rx - shell_text_w(f->small, dt)) - 8;   /* opens Messages */
+        c->clock_r = (rect){ cx, 0, w - cx, bh };
     }
 
     /* One slot that says where you are, and it crossfades in place.

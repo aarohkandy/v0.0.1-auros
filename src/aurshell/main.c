@@ -1406,7 +1406,6 @@ int main(int argc, char **argv)
         /* Idempotent, rate-limited inside, and it notices for itself
          * when the address has changed -- which the line above is not
          * the only thing that can do, since a spawn adopts too. */
-        notify_fit(&c);         /* never accept more than can be drawn */
         notify_open();
         /* Read the bus HERE, every pass, rather than only when its fd
          * is readable. libdbus buffers: a message can be complete in
@@ -1416,7 +1415,6 @@ int main(int argc, char **argv)
          * so an idle desktop still wakes promptly; this is what makes
          * sure it is never the only way. */
         if (notify_pump(&c))  dirty = 1;
-        if (notify_step(&c)) dirty = 1;
         /* A remote-control program being installed: polkit stopped it,
          * and the card asks her (guard.h). */
         if (guard_pump(&c)) dirty = 1;
@@ -1522,8 +1520,6 @@ int main(int argc, char **argv)
          * on the screen -- whether or not the panel is open. */
         if (wish_step(&c)) dirty = 1;
         run_reap();
-        /* The indicator fades on a clock rather than on an event, so
-         * the loop has to keep coming round while one is up. */
         /* The indicator needs one more frame AFTER it goes, to paint
          * the screen without it. Without the falling edge it stayed on
          * screen until something else happened to cause a repaint --
@@ -1531,7 +1527,7 @@ int main(int argc, char **argv)
         {
             static int osd_was = 0;
             int osd_now = osd_visible() ? 1 : 0;
-            if (osd_now || osd_was) dirty = 1;
+            if (osd_now != osd_was) dirty = 1;   /* it has no clock now */
             osd_was = osd_now;
         }
         if (c.wl) {
@@ -1878,7 +1874,7 @@ int main(int argc, char **argv)
         /* With a client on screen the wait is short: it is drawing, and
          * the next thing to happen is its next buffer, not a keystroke. */
         int wait_ms = screen_dark ? 1000
-                    : (animating || osd_visible() || settings_dragging()) ? 8
+                    : (animating || settings_dragging()) ? 8
                     : (c.n_wins > 0 ? 16 : 1000);
         /* Something in the middle of joining the session bus would be
          * slept straight through otherwise: see notify.h. */
@@ -2038,11 +2034,14 @@ int main(int argc, char **argv)
                          * the wifi panel started whatever icon happened
                          * to be underneath it. */
                         c.mouse_down = 1;
+                        osd_press();    /* goes; the tap still lands (osd.h) */
                         /* A wish's fill is over everything, so it is
                          * asked first; the press that ends it is used up. */
                         int pad_taken = wishover_click(&c, c.mouse_x, c.mouse_y);
                         if (!pad_taken)
                             pad_taken = foot_click(&c, c.mouse_x, c.mouse_y);
+                        if (!pad_taken && !SHELL_PANEL_OPEN(&c))
+                            pad_taken = notify_click(&c, c.mouse_x, c.mouse_y);
                         /* THE WELCOME QUESTION IS ASKED FIRST, because
                          * it is painted last. Click order and paint
                          * order have to be each other's mirror or a
@@ -2098,6 +2097,7 @@ int main(int argc, char **argv)
                          * is the way out, and a way out that can be
                          * covered by whatever is on screen is not one. */
                         int taken = 0;
+                        if (ev.value) osd_press();  /* goes; the press still lands */
                         /* A wish's fill or card is drawn over everything
                          * else, so it answers first. */
                         if (ev.value) taken = wishover_click(&c, c.mouse_x, c.mouse_y);
@@ -2166,6 +2166,7 @@ int main(int argc, char **argv)
                         session_button(&c, c.mouse_x, c.mouse_y, ev.code, ev.value != 0);
                         dirty = 1;
                     } else if (in.kind[i] & DEV_KBD) {
+                        if (ev.value == 1) osd_press();   /* the key still goes on */
                         if (ev.code == KEY_LEFTMETA || ev.code == KEY_RIGHTMETA)
                             super_down = (ev.value != 0);
 
