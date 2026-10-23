@@ -23,5 +23,9 @@ HARDEN_STATIC="-O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
 -fstack-clash-protection -fcf-protection=full -fPIE -static-pie -Wl,-z,relro,-z,now"
 
 # The Windows installer (mingw-w64): ASLR with a 64-bit base, DEP, and
-# the stack protector (mingw-w64 >= 11 carries its own __stack_chk_fail).
-HARDEN_PE="-fstack-protector-strong -Wl,--dynamicbase,--nxcompat,--high-entropy-va"
+# the stack protector. -static: Ubuntu's mingw-w64 (gcc 13-win32) takes
+# __stack_chk_fail from libssp-0.dll, which no Windows PC has, so without
+# it the installer would not start at all; with it the stack protector is
+# linked in and the .exe imports only Windows' own DLLs (build/aurbridge
+# checks that).
+HARDEN_PE="-static -fstack-protector-strong -Wl,--dynamicbase,--nxcompat,--high-entropy-va"

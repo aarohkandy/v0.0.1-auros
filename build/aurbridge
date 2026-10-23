@@ -311,6 +311,22 @@ CS=$(sh "$ROOT/tools/checksec.sh" "$OUT/aurbridge.exe" "$OUT/aurbridge-wizard.ex
     || { printf '%s\n' "$CS" >&2; die "the installer was built without ASLR or DEP (above)"; }
 note "ASLR + DEP checked on both .exe files"
 
+# ONLY WINDOWS' OWN DLLs. A .exe that imports a DLL no PC has does not
+# start ("libssp-0.dll was not found"): a hardening flag once did that
+# to both. Every import must be one of these.
+OBJDUMP="${OBJDUMP:-x86_64-w64-mingw32-objdump}"
+WINDLLS='advapi32|bcrypt|cfgmgr32|comctl32|crypt32|dwmapi|gdi32|kernel32|msvcrt|ole32|oleacc|oleaut32|psapi|setupapi|shell32|shlwapi|user32|uxtheme|version|winhttp|ws2_32'
+if command -v "$OBJDUMP" >/dev/null 2>&1; then
+    for exe in "$OUT/aurbridge.exe" "$OUT/aurbridge-wizard.exe"; do
+        BAD=$("$OBJDUMP" -p "$exe" | sed -n 's/^[[:space:]]*DLL Name: //p' | tr 'A-Z' 'a-z' |
+              sed 's/[.]dll$//' | grep -vxE "$WINDLLS" | tr '\n' ' ')
+        [ -z "$BAD" ] || die "$(basename "$exe") needs DLLs no Windows PC has: $BAD"
+    done
+    note "both .exe files use only Windows' own DLLs"
+elif [ "${AUROS_RELEASE:-0}" = 1 ]; then
+    die "no $OBJDUMP to check which DLLs the installer needs"
+fi
+
 # ── the host-side simulation ───────────────────────────────────────
 #
 # out/aurbridge-sim runs the SAME phase engine against a computer made
