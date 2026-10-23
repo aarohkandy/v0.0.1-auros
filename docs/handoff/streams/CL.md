@@ -20,10 +20,13 @@
   potato and compass examples exact; cost **$0.000089 per wish**, $0.000082 per
   question; 1.2 s per wish, 2.3 s per question (service-side); no body, token,
   id or Authorization header in the 12 captured live log lines.
-- Open: Worker CPU. The tail shows max 22 ms on one request in a run of 23
-  (p50 1 ms) with every outcome "ok"; the Free plan's limit is 10 ms. The next
-  run prints CPU per route (`test/tail-logs.mjs`); if wish/ask exceed ~8 ms
-  regularly, recommend the $5 Paid plan to the owner.
+- **Open: Worker CPU vs the Free plan.** Right after a deploy (cold isolates)
+  the tail shows /v1/wish p50 11 ms (max 13), /v1/ask max 33 ms, /v1/forget 2,
+  other routes ~1 ms; every outcome "ok" (no error 1102). The Free plan allows
+  10 ms per request, so either the account is on the Paid plan or cold-start
+  numbers overstate steady state. Owner question: is the Cloudflare account on
+  Workers Paid ($5/month)? If not, expect 1102 errors for Ask under load and
+  recommend Paid (CLOUD.md §3). Warm numbers: read a later run's summary.
 
 ## Done (commits on main)
 
