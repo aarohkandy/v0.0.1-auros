@@ -191,7 +191,7 @@ jobs:
         run: |
           [ -d parity-out ] || exit 0
           TAG="parity-$GITHUB_RUN_ID"
-          { echo "Everyday tasks on the newest image ($SRC), run $GITHUB_RUN_ID."; for d in everyday apps; do echo; echo "### $d"; cat "parity-out/$d/results.md" 2>/dev/null; done; } > parity-out/notes.md
+          { echo "Everyday tasks on the newest image ($SRC), run $GITHUB_RUN_ID."; for d in everyday apps; do echo; echo "### $d"; cat "parity-out/$d/results.md" 2>/dev/null || true; done; } > parity-out/notes.md
           mkdir -p parity-out/assets
           cp parity-out/image.txt parity-out/assets/ 2>/dev/null || true
           for d in everyday apps; do

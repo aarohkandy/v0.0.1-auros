@@ -11,12 +11,6 @@ chown -R "${u:-auros}" /var/lib/auros-parity
 # too, but needs ffmpeg or gstreamer to feed it, and the image has neither.)
 { modprobe -v --ignore-install vivid n_devs=1 node_types=0x1; echo rc=$?; ls -l /dev/video*; dmesg | tail -15; } > /var/lib/auros-parity/modprobe.log 2>&1
 chmod 644 /var/lib/auros-parity/modprobe.log
-# The red proof: remove a package BEFORE the desktop starts, so the check that
-# depends on it has to fail (the overlay is thrown away afterwards).
-. /usr/lib/auros-parity/config
-for p in $WITHOUT; do
-    dpkg --remove --force-depends --force-remove-essential "$p" >> /var/lib/auros-parity/without.log 2>&1
-done
 # What the image SHOULD have carried (--apt PKG): installed from Ubuntu's main, so a check that fails
 # today can be shown green once the package ships (the overlay is thrown away afterwards).
 if [ -n "$APT" ]; then
@@ -27,6 +21,12 @@ if [ -n "$APT" ]; then
     chmod 644 /var/lib/auros-parity/apt.log
 fi
 
+# The red proof: remove a package BEFORE the desktop starts, so the check that
+# depends on it has to fail (the overlay is thrown away afterwards).
+. /usr/lib/auros-parity/config
+for p in $WITHOUT; do
+    dpkg --remove --force-depends --force-remove-essential "$p" >> /var/lib/auros-parity/without.log 2>&1
+done
 # (c) printing: another machine on the home network with an IPP Everywhere printer. The image's
 # avahi never publishes, so the printer cannot live on the computer itself: a network namespace
 # joined by a veth pair plays the other machine (mdns_printer.py + ippeveprinter inside it).

@@ -14,15 +14,16 @@ click 742 352; sleep 2
 typing "London"
 snap pdfform-filled
 # 1. Save straight away, the way she would
-key ctrl+s 6
+key ctrl+s 12
 snap pdfform-save
 typing "filled-a"
-key ret 5
+snap pdfform-name
+key ret 8
 # 2. Leave the last box first (Tab, as a form is normally filled in), then save
-key tab 2
-key ctrl+s 6
+key tab 3
+key ctrl+s 12
 typing "filled-b"
-key ret 5
+key ret 8
 snap pdfform-saved
 pkill -u "$(id -un)" evince
 
