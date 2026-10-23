@@ -91,9 +91,12 @@ cleanup() {
     [ -n "$WP" ] && kill "$WP" 2>/dev/null
     mountpoint -q "$T/m" 2>/dev/null && umount "$T/m"
     [ -n "$LP" ] && losetup -d "$LP" 2>/dev/null
-    [ "${HARDEN_KEEP:-0}" = 1 ] && echo "kept $T" || rm -rf "$T"
+    [ "${HARDEN_KEEP:-0}" = 1 ] && { rm -f "$T/disk.img"; echo "kept $T (without the disk)"; } || rm -rf "$T"
 }
+# EXIT, INT and TERM: a killed run (a timeout, a cancelled job) must not
+# leave a multi-GB disk copy behind on a shared machine.
 trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 fail=0; checked=0
 say() { printf '%s\n' "$*" | tee -a "$T/report"; }
@@ -180,6 +183,8 @@ awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {print "used_kb=" t-a; prin
 put analyze "$(systemd-analyze 2>/dev/null | head -1)"
 systemd-analyze blame 2>/dev/null | head -15 > "$OUT/blame.txt"
 systemd-analyze critical-chain 2>/dev/null > "$OUT/chain.txt"
+cp /proc/meminfo "$OUT/meminfo.txt"; ps -eo rss,comm --sort=-rss | head -25 > "$OUT/ps.txt"
+systemctl list-units --plain --no-legend --state=active --type=service | awk '{print $1}' > "$OUT/services.txt"
 if [ "$mode" = measure ]; then sync; systemctl poweroff; exit 0; fi
 
 # ── kernel ──
@@ -255,8 +260,9 @@ else put remote_deb_signal no; fi
 kill "$mp" 2>/dev/null
 
 # ── S2: the way out of a page that will not let her go ──
-wd=$(journalctl -b -u aurshell.service -o cat | sed -n 's/.*WAYLAND_DISPLAY=\([A-Za-z0-9_.-]*\).*/\1/p' | tail -1)
+# aurshell's own runtime directory has its Wayland socket (wayland-0).
 xrd=$(tr '\0' '\n' < /proc/"$sp"/environ | sed -n 's/^XDG_RUNTIME_DIR=//p')
+wd=$(ls "$xrd" 2>/dev/null | grep -m1 '^wayland-[0-9][0-9]*$')
 put wayland "$wd $xrd"
 page() { # start Firefox full screen on the trap page, as her
     setpriv --reuid="$u" --regid="$g" --init-groups env -i HOME="/home/$u" USER="$u" \
@@ -271,6 +277,7 @@ gone() { # firefox ended within 15 s?
 }
 page
 put page_up "$(pgrep -u "$u" -x firefox >/dev/null && echo yes || echo no)"
+ls -l /usr/bin/firefox /usr/lib/firefox/firefox >> "$OUT/firefox.txt" 2>&1
 host shot page
 host keys esc tab ret          # ONE Escape: no card, so the page keeps her keys
 put out_one_esc "$(gone)"
@@ -279,6 +286,7 @@ host shot card-esc
 host keys tab ret              # "Close this page"
 put out_three_esc "$(gone)"
 page
+put page_up2 "$(pgrep -u "$u" -x firefox >/dev/null && echo yes || echo no)"
 host keys ctrl-alt-delete
 host shot card-cad
 host keys tab ret
@@ -533,24 +541,35 @@ awk "/^done <<'EOF'\$/ {f=1; next} f && /^EOF\$/ {exit} f {print \$1, \$2}" tool
 echo
 say "## Hardening, booted ($(basename "$IMG"), ${MEM} MB, 2 cores, Secure Boot, $(echo "$ACCEL" | cut -d' ' -f1))"
 say ""
-for d in hard base; do
-    cp --sparse=always "$IMG" "$T/$d.img" || exit 2
-    mount_root "$T/$d.img" || exit 2
+# ONE working copy of the disk at a time (the image is 2.6 GB of real
+# data; two copies at once are 5 GB on a machine other people share). It
+# is made from the original, the harness put in, the controls taken out
+# for "base", and deleted when its boots are done.
+make_disk() { # hard|base  [static]
+    rm -f "$T/disk.img"
+    cp --sparse=always "$IMG" "$T/disk.img" || exit 2
+    mount_root "$T/disk.img" || exit 2
     inject
-    [ $d = base ] && strip_controls
-    RFS="$T/m" HARDEN_QUIET=1 sh tools/hardentest.sh > "$T/static.$d" 2>&1; echo $? > "$T/static.$d.rc"
+    [ "$1" = base ] && strip_controls
+    if [ "${2:-}" = static ]; then
+        RFS="$T/m" HARDEN_QUIET=1 sh tools/hardentest.sh > "$T/static.$1" 2>&1; echo $? > "$T/static.$1.rc"
+    fi
     umount_root
-done
+}
+free_gb=$(df -Pk "$T" | awk 'NR == 2 { printf "%d", $4 / 1048576 }')
+need=$(( $(du -k "$IMG" | cut -f1) / 1048576 + ${HARDEN_MINFREE_GB:-8} ))
+[ "$free_gb" -ge "$need" ] || { echo "only ${free_gb} GB free where the disk copy goes; need $need (HARDEN_MINFREE_GB)"; exit 2; }
 
-echo "  the boot menu: edit, command line, recovery shell"
 for d in hard base; do
-    mount_root "$T/$d.img" || exit 2
+    make_disk $d static
+    echo "  $d: the boot menu (edit, command line, recovery shell)"
+    mount_root "$T/disk.img" || exit 2
     se=$(shell_entry "$T/m"); [ $d = hard ] && SHELL_ID=$se
     umount_root
-    { echo "grub_edit=$(menu_probe "$T/$d.img" "$d.edit" edit)"
-      echo "grub_console=$(menu_probe "$T/$d.img" "$d.console" console)"
+    { echo "grub_edit=$(menu_probe "$T/disk.img" "$d.edit" edit)"
+      echo "grub_console=$(menu_probe "$T/disk.img" "$d.console" console)"
       if [ -n "$se" ]; then
-          mount_root "$T/$d.img" || exit 2
+          mount_root "$T/disk.img" || exit 2
           G="$T/m/boot/grub/grubenv"; [ -f "$G" ] && cp "$G" "$T/grubenv.$d"
           python3 - "$G" "$se" <<'EOPY'
 import sys
@@ -558,18 +577,16 @@ b = ('# GRUB Environment Block\nnext_entry=%s\n' % sys.argv[2]).encode()
 open(sys.argv[1], 'wb').write(b + b'#' * (1024 - len(b)))
 EOPY
           umount_root
-          echo "grub_shell=$(menu_probe "$T/$d.img" "$d.shell" shell)"
-          mount_root "$T/$d.img" || exit 2
+          echo "grub_shell=$(menu_probe "$T/disk.img" "$d.shell" shell)"
+          mount_root "$T/disk.img" || exit 2
           if [ -f "$T/grubenv.$d" ]; then cp "$T/grubenv.$d" "$G"; else rm -f "$G"; fi
           umount_root
       else echo "grub_shell=none"; fi
     } > "$T/menu.$d"
+    echo "  $d: a full boot with every check (about 8 minutes under KVM)"
+    power_on "$T/disk.img" $d full "$FULL_TIMEOUT"
+    rm -f "$T/disk.img"
 done
-
-echo "  booting the hardened image (about 6 minutes under KVM)"
-power_on "$T/hard.img" hard full "$FULL_TIMEOUT"
-echo "  booting the same image with its controls taken out"
-power_on "$T/base.img" base full "$FULL_TIMEOUT"
 RH="$T/rec.hard/result"; RB="$T/rec.base/result"
 cat "$T/menu.hard" >> "$RH"; cat "$T/menu.base" >> "$RB"
 
@@ -628,6 +645,9 @@ dccp_refused() { not_is "$1" dccp_socket 0 && is "$1" dccp_loaded no; }
 hog_by_earlyoom() { is "$1" hog_killer earlyoom && [ "$(val hog_secs "$1")" != never ]; }
 zram_used() { is "$1" zram yes && [ "$(val swap_peak_kb "$1")" -gt 102400 ]; }
 safe_mode() { case "$(val safe_cmdline "$1")" in *"--shell /usr/share/auros/shells/rail.shell --conf /etc/auros/shell.conf"*) is "$1" safe_level 1 ;; *) return 1 ;; esac; }
+esc_one_stays() { is "$1" page_up yes && is "$1" out_one_esc still-open; }
+esc3_closes()   { esc_one_stays "$1" && is "$1" out_three_esc closed; }
+cad_closes()    { is "$1" page_up2 yes && is "$1" out_cad closed; }
 remote_gate() { not_is "$1" remote_first 0 && is "$1" remote_signal yes; }
 remote_yes() { is "$1" remote_consent "$(val desktop_user "$1")" && is "$1" remote_after_yes 0; }
 deb_gate() { not_is "$1" remote_deb 0 && is "$1" remote_deb_signal yes; }
@@ -669,10 +689,10 @@ row control "three desktop crashes: the 4th start is safe mode" safe_mode
 row control "S2: AnyDesk from the store, first time: refused, card asked for" remote_gate
 row keep    "S2: ...she answers on the card with the keyboard; the next try works" remote_yes
 row control "S2: a TeamViewer .deb: refused, card asked for" deb_gate
-row keep    "S2: Firefox full screen on a trap page" is page_up yes
-row keep    "S2: one Escape does not take the page away (the check can tell)" is out_one_esc still-open
-row keep    "S2: Escape x3 over the page: the card closes it" is out_three_esc closed
-row keep    "S2: Ctrl+Alt+Delete over the page: the card, not a restart" is out_cad closed
+row both    "S2: Firefox full screen on a trap page" is page_up yes
+row both    "S2: one Escape does not take the page away (the check can tell)" esc_one_stays
+row both    "S2: Escape x3 over the page: the card closes it" esc3_closes
+row both    "S2: Ctrl+Alt+Delete over the page: the card, not a restart" cad_closes
 
 say ""
 say "Details: hog stopped after $(val hog_secs "$RH") s (exit $(val hog_rc "$RH")), zram took $(( $(num swap_peak_kb "$RH") / 1024 )) MB;" \
@@ -686,7 +706,7 @@ say "Details: hog stopped after $(val hog_secs "$RH") s (exit $(val hog_rc "$RH"
 echo "  and $RUNS more starts of each, in turn, for the cost"
 r=1
 while [ $r -le "$RUNS" ]; do
-    for d in hard base; do power_on "$T/$d.img" "$d.m$r" measure 600; done
+    for d in hard base; do make_disk $d; power_on "$T/disk.img" "$d.m$r" measure 600; rm -f "$T/disk.img"; done
     r=$((r+1))
 done
 median() { sort -n | awk '{ v[NR] = $1 } END { if (NR) print v[int((NR + 1) / 2)]; else print "?" }'; }
