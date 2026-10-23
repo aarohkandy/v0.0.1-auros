@@ -7,7 +7,8 @@ play() {   # NAME LABEL URL
     n=$1; label=$2; url=$3
     clear_report "$n"
     fx_start "http://127.0.0.1:8123/film.html?name=$n&$url"
-    sleep 12
+    sleep 8
+    fx_ready
     rm -f "$OUT/$n.cpu"
     ( cpu_busy 6 > "$OUT/$n.cpu" ) &
     if wait_report "$n" 150; then

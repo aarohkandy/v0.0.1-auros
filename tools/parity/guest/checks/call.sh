@@ -26,6 +26,7 @@ note "audio sources: $(wpctl status | sed -n '/Sources:/,/Filters:/p' | tr '\n' 
 clear_report call
 fx_start http://127.0.0.1:8123/call.html
 sleep 25
+fx_ready
 snap call-1
 sleep 2
 if wait_report call 120; then

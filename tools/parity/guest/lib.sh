@@ -37,6 +37,7 @@ fx_start() {   # URL -- a fresh profile, so no check inherits another's state
     firefox --no-remote --new-instance --profile "$HOME/parity-profile" "$1" > /var/lib/auros-parity/firefox.log 2>&1 &
     FX=$!
 }
+fx_ready() { act firstrun; sleep 2; }   # press Firefox's first-run Continue if it is up (and note that it was)
 fx_stop() { pkill -f parity-profile 2>/dev/null; sleep 1; pkill -9 -f parity-profile 2>/dev/null; return 0; }
 # clear_report NAME BEFORE the browser starts (a page may report before anyone waits), then wait_report NAME SECONDS
 clear_report() { rm -f "$OUT/$1.json" "$OUT/$1-stage.json"; }

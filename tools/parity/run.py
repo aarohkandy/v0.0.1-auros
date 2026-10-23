@@ -438,6 +438,29 @@ def drive(q, out, timeout, checks):
                 if act == "snap":
                     q.screendump(os.path.join(shots, arg + ".png"))
                     say("screenshot", arg)
+                elif act == "firstrun":
+                    # Firefox 158's first window asks her to accept Terms of Use (purple Continue button) before her
+                    # page; the test presses it (a person has to) and records that it was there.
+                    tmp = os.path.join(shots, "firstrun-probe.png")
+                    shown = False
+                    for _ in range(12):                    # up to 36 s: Firefox is slow to draw its first window
+                        q.screendump(tmp)
+                        w_, h_, bpp_, rows_ = png_pixels(tmp)
+                        shown = all(abs(rows_[454][600 * bpp_ + i] - (118, 78, 221)[i]) <= 12 for i in range(3))
+                        if shown:
+                            break
+                        time.sleep(3)
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                    if shown:
+                        q.click(639, 454)
+                        time.sleep(3)
+                    old = results.get("firefox.firstrun")
+                    if shown or not old:
+                        results["firefox.firstrun"] = {"status": "fail" if shown else "pass", "detail":
+                            "Firefox's first window asks her to accept its Terms of Use and says it sends diagnostic data to Mozilla (telemetry is off by policy) before her page: she must press Continue" if shown
+                            else "Firefox shows her page straight away"}
+                        say("%-28s %-5s %s" % ("firefox.firstrun", results["firefox.firstrun"]["status"], results["firefox.firstrun"]["detail"][:100]))
                 elif act in ("hue", "near", "changed", "welcome"):
                     try:
                         if act == "welcome":
@@ -534,7 +557,7 @@ def main():
 
     gaps = read_known_gaps()
     rows, bad = [], 0
-    agg = a.checks + (["desktop"] if "desktop" not in a.checks and any(k.startswith("desktop.") for k in results) else [])
+    agg = a.checks + [x for x in ("desktop", "firefox") if x not in a.checks and any(k.startswith(x + ".") for k in results)]
     for c in agg:
         sub = sorted(k for k in results if k.startswith(c + "."))
         parts = ([c] if c in results else []) + sub
