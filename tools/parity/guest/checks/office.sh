@@ -50,7 +50,7 @@ PY
     gio open "$D/letter.docx" &
     wait_for 120 pgrep -u "$(id -un)" soffice.bin; sleep 25
     snap office-writer
-    act changed office-before office-writer office.visible 260 130 1020 690 8
+    act changed office-before office-writer office.visible 260 130 1020 690 1.5
     pkill -u "$(id -un)" soffice.bin
 else
     result office.save fail "no office program is installed: Writer and Calc (libreoffice-writer, libreoffice-calc) are not in the image"

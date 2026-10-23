@@ -503,7 +503,7 @@ def drive(q, out, timeout, checks):
                         elif act == "hue":                # SHOT RESULT x0 y0 x1 y1 MINFAMILIES
                             shot, nm, x0, y0, x1, y1, mn = arg.split()
                             n, fam = hue_buckets(os.path.join(shots, shot + ".png"), int(x0), int(y0), int(x1), int(y1))
-                            ok = fam >= int(mn) and n >= 300
+                            ok = fam >= int(mn) and n >= 4000
                             det = ("the window shows its picture (%d saturated pixels in %d hues)" % (n, fam)) if ok else \
                                   ("nothing like the page is on screen: %d saturated pixels in %d hue(s); a picture has at least %s hues" % (n, fam, mn))
                         elif act == "near":               # SHOT RESULT x0 y0 x1 y1 R G B TOL MINPIXELS
@@ -595,10 +595,24 @@ def main():
     for c in agg:
         sub = sorted(k for k in results if k.startswith(c + "."))
         parts = ([c] if c in results else []) + sub
+        # a sub-result listed in known-gaps.txt (e.g. apps.zoom) is a gap of its own: it fails without failing the check,
+        # and passing without being removed from the list fails the run
+        sub_rows, sub_bad = [], 0
+        live = []
+        for k in parts:
+            if k != c and k in gaps:
+                if results[k]["status"] == "pass":
+                    sub_rows.append(("  " + k, "PASS-REMOVE-GAP", results[k]["detail"], gaps[k]))
+                    sub_bad += 1
+                else:
+                    sub_rows.append(("  " + k, "GAP", results[k]["detail"], gaps[k]))
+            else:
+                live.append(k)
+                sub_rows.append(("  " + k, results[k]["status"], results[k]["detail"], ""))
         if not parts:
             r = {"status": "fail", "detail": "the guest never reported"}
         else:
-            worst = next((k for k in parts if results[k]["status"] != "pass"), None)
+            worst = next((k for k in live if results[k]["status"] != "pass"), None)
             r = results[worst] if worst else {"status": "pass", "detail": results[parts[0]]["detail"]}
             if worst and worst != c:
                 r = {"status": "fail", "detail": "%s: %s" % (worst, r["detail"])}
@@ -614,9 +628,9 @@ def main():
                 shown = "GAP"
         elif st != "pass":
             bad += 1
+        bad += sub_bad
         rows.append((c, shown, r["detail"], gaps.get(c, "")))
-        for k in sub:
-            rows.append(("  " + k, results[k]["status"], results[k]["detail"], ""))
+        rows.extend(sub_rows)
     json.dump({"checks": {n: {"status": s, "detail": d, "gap": g} for n, s, d, g in rows},
                "notes": notes, "guest_done": done, "seconds": int(secs),
                "without": a.without, "opt": a.opt, "apt": a.apt, "failures": bad},

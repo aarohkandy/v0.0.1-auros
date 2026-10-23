@@ -24,14 +24,24 @@ wpctl set-default "$(wpctl status | sed -n 's/.*[^0-9]\([0-9][0-9]*\)\. Parity-M
 note "audio sources: $(wpctl status | sed -n '/Sources:/,/Filters:/p' | tr '\n' '|' | cut -c1-300)"
 
 clear_report call
-fx_start http://127.0.0.1:8123/call.html
-sleep 25
-fx_ready
-snap call-1
-sleep 2
-if wait_report call 120; then
+got=no
+for attempt in 1 2; do
+    fx_start http://127.0.0.1:8123/call.html
+    sleep 25
+    fx_ready
+    snap call-1
+    sleep 2
+    if wait_report call 100; then got=yes; break; fi
+    # no report: did Firefox crash? (seen once in four runs on the same image; its crash window has "tell Mozilla" ticked)
+    if pgrep -u "$(id -un)" -f crashreporter >/dev/null; then
+        snap call-crash
+        result firefox.crash fail "Firefox CRASHED during the call on attempt $attempt (its crash reporter window came up with 'Tell Mozilla about this crash' ticked by default)"
+    fi
+    fx_stop; clear_report call
+done
+if [ "$got" = yes ]; then
     sleep 3; snap call
-    act hue call call.visible 260 130 1020 690 3
+    act hue call call.visible 260 130 1020 690 5
     ok=$(jget "$OUT/call.json" ok)
     note "call report: $(cat "$OUT/call.json" | cut -c1-400)"
     if [ "$ok" = True ]; then
