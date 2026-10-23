@@ -11,6 +11,9 @@
   when she presses where the real button is. Every press, hit or miss, is
   logged with the time; the observer downloads the log with L.
 
+  The window's X, and Stop, open the in-window question the real Setup
+  draws (docs/shots/wizard/5f and 5g), not a stock Windows box.
+
   Observer keys (she never needs them):  1 happy path  2 PC needs fixing
   3 locked drive (cannot go on)  4 install stops  |  H show the hot
   spots  L download the log  R start again  N skip to the next screen.
@@ -34,18 +37,13 @@
   #dark{position:absolute;inset:0;background:#000;color:#9aa;display:none;align-items:center;justify-content:center;font-size:20px;text-align:center}
   #full{position:fixed;inset:0;background:#000;display:none}
   #full img{width:100%;height:100%;object-fit:contain}
-  #dlg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#f0f0f0;border:1px solid #666;box-shadow:0 8px 30px #0006;width:420px;font-size:12px;color:#000;display:none}
-  #dlg h4{margin:0;padding:8px 10px;font-weight:400;background:#fff;font-size:12px}
-  #dlg p{margin:0;padding:18px 16px;background:#fff;white-space:pre-line;line-height:1.35}
-  #dlg div{padding:12px;text-align:right}
-  #dlg button{width:75px;height:23px;font-size:12px;margin-left:8px}
   #hud{position:fixed;left:8px;bottom:6px;color:#9ab;font:11px/1.2 system-ui;opacity:.6}
 </style>
 </head>
 <body>
 <div id="stage"><div id="win">
   <div id="bar"><span>AurOS Setup</span><b id="x" title="">&#10005;</b></div>
-  <div id="shot"><img id="img" alt=""><div id="dark"></div><div id="dlg"><h4>AurOS Setup</h4><p id="dlgt"></p><div><button id="yes">Yes</button><button id="no">No</button></div></div></div>
+  <div id="shot"><img id="img" alt=""><div id="dark"></div></div>
 </div></div>
 <div id="full"><img id="fimg" alt=""></div>
 <div id="hud"></div>
@@ -57,17 +55,19 @@ var STAGING = "../../shots/staging-installing.png";
 var HOT = {
   checking:  { img:"1a-welcome-checking.png", auto:[5000,"ready"], hot:[[888,602,200,56,"Next (still checking)","early"]] },
   ready:     { img:"1c-welcome-ready.png", hot:[[888,602,200,56,"Next","look"]] },
-  fix:       { img:"2a-blocked-fixable.png", hot:[[872,602,216,56,"Fix these for me","fixing"],[701,602,138,56,"Not now","closed"]] },
+  fix:       { img:"2a-blocked-fixable.png", hot:[[871,602,217,56,"Fix these for me","fixing"],[700,602,138,56,"Not now","closed"]] },
   fixing:    { img:"1a-welcome-checking.png", auto:[6000,"ready"], hot:[] },
-  locked:    { img:"2g-blocked-encrypted-hard-disk.png", hot:[[847,602,241,56,"Close AurOS Setup","closed"]] },
+  locked:    { img:"2g-blocked-encrypted-hard-disk.png", hot:[[846,602,242,56,"Close AurOS Setup","closed"]] },
   look:      { img:"3a-style.png", hot:[
       [312,103,380,198,"look: Like Windows","pick0"],[708,103,380,198,"look: Like a Mac","pick1"],
       [312,317,380,198,"look: Big and simple","pick2"],[708,317,380,198,"look: One thing at a time","pick3"],
       [733,602,138,56,"Back","ready"],[888,602,200,56,"Next","ready2"]] },
   ready2:    { img:"4a-ready.png", hot:[[653,602,138,56,"Back","look"],[808,602,280,56,"Install AurOS","progress"]] },
-  progress:  { img:"5a-progress.png", auto:[25000,"restart"], x:"Stop setting up AurOS?\n\nIt stops when the step it is on is done, then takes everything back, so this computer starts Windows as usual. This window closes by itself when it has.", hot:[] },
+  progress:  { img:"5a-progress.png", auto:[25000,"restart"], x:"stopq", hot:[[949,602,139,56,"Stop","stopq"]] },
+  stopq:     { img:"5f-stop-question.png", hot:[[665,602,191,56,"Stop and undo","undone"],[888,602,200,56,"Keep going","progress"]] },
+  closeq:    { img:"5g-close-question-ready.png", hot:[[566,602,199,56,"Close and undo","undone"],[797,602,291,56,"Keep it and restart later","later"]] },
   stopped:   { img:"5e-stopped.png", hot:[[717,602,138,56,"Not now","closed"],[888,602,200,56,"Try again","progress"]] },
-  restart:   { img:"5c-ready-to-restart.png", x:"Close AurOS Setup and take AurOS back?\n\nAurOS is ready. Closing now takes it back, and this computer starts Windows as usual.\n\nTo keep it for your next restart, choose No, then press Restart later.", hot:[[683,602,172,56,"Restart later","later"],[888,602,200,56,"Restart now","black"]] }
+  restart:   { img:"5c-ready-to-restart.png", x:"closeq", hot:[[682,602,173,56,"Restart later","later"],[888,602,200,56,"Restart now","black"]] }
 };
 var SCEN = { "1":["checking","happy"], "2":["fix","fix"], "3":["locked","locked"], "4":["checking","stops"] };
 var $ = function(i){ return document.getElementById(i); };
@@ -83,7 +83,7 @@ function fit(){
 }
 function show(id){
   clearTimeout(timer); page = id; var p = HOT[id];
-  $("img").src = S + p.img; $("dlg").style.display = "none";
+  $("img").src = S + p.img;
   var shot = $("shot"); Array.prototype.slice.call(shot.querySelectorAll(".hot")).forEach(function(n){ n.remove(); });
   p.hot.forEach(function(b){ var d = document.createElement("div"); d.className = "hot";
     d.style.cssText = "left:"+b[0]+"px;top:"+b[1]+"px;width:"+b[2]+"px;height:"+b[3]+"px"; d.title = b[4]; shot.appendChild(d); });
@@ -113,6 +113,7 @@ function staging(){
 }
 function act(go, label){
   if (go === "early") return;                              // pressed Next while it is still looking
+  if (go === "undone") { endAt("AurOS Setup closed. Everything was put back."); return; }
   if (go === "closed") { endAt("AurOS Setup closed. Nothing on the computer was changed."); return; }
   if (go === "later")  { endAt("AurOS Setup closed. AurOS goes on next time the computer restarts."); return; }
   if (go === "black")  { goBlack(); return; }
@@ -127,7 +128,6 @@ $("shot").addEventListener("pointerdown", function(e){
   if (phase !== "wizard") { rec("press-during-"+phase, e.clientX, e.clientY, ""); return; }
   var r = $("img").getBoundingClientRect(), k = r.width/1120;
   var x = Math.round((e.clientX-r.left)/k), y = Math.round((e.clientY-r.top)/k);
-  if ($("dlg").style.display === "block") return;
   var hit = null; HOT[page].hot.forEach(function(b){ if (x>=b[0]&&x<b[0]+b[2]&&y>=b[1]&&y<b[1]+b[3]) hit = b; });
   if (hit) { rec("hit", x, y, hit[4]); act(hit[5], hit[4]); } else rec("miss", x, y, "");
 });
@@ -135,11 +135,9 @@ $("x").addEventListener("pointerdown", function(e){
   e.stopPropagation(); var p = HOT[page];
   if (phase !== "wizard") return;
   rec("x", "", "", "window X");
-  if (p.x) { $("dlgt").textContent = p.x; $("dlg").style.display = "block"; rec("dialog", "", "", "stock Yes/No"); }
+  if (p.x) show(p.x);                       // the in-window question, as the real Setup draws it
   else endAt("AurOS Setup closed. Nothing on the computer was changed.");
 });
-$("yes").addEventListener("pointerdown", function(e){ e.stopPropagation(); rec("dialog-yes"); $("dlg").style.display="none"; endAt("AurOS Setup closed. Everything was put back."); });
-$("no").addEventListener("pointerdown", function(e){ e.stopPropagation(); rec("dialog-no"); $("dlg").style.display="none"; });
 function start(s){
   scen = s; picks = 0; phase = "wizard"; log = []; t0 = performance.now(); clearTimeout(darkTimer);
   $("full").style.display = "none"; $("dark").style.display = "none"; show(SCEN[s][0]);

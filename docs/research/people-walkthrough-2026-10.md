@@ -1,7 +1,7 @@
 # People walkthrough, October 2026: a cognitive walkthrough of the whole journey
 
-Stream USABILITY, first pass. Written against `main` at `5006a1d` and checked again at `7f971f9`; the desktop and
-first-run renders were made on the tree at `7f971f9`.
+Stream USABILITY, first pass. Written against `main` at `5006a1d` and checked again at `7f4e150` (wizard shots re-taken at 01:39); the
+desktop and first-run renders were made on the tree at `7f971f9`.
 Source citations name the file and the function or a quoted string, not a
 line number: the tree changes every few minutes, so `git grep` the string.
 Method: three concrete people, walked screen by screen through the current
@@ -347,17 +347,14 @@ next to a highlighted 4.
 Fix: "Part 3 of 4" or drop the sidebar's count while installing.
 Owner: B.
 
-**C-07 · S2 · R, E · The X is a stock Windows dialog**
-Where: `close_asked()` in `wizard.c` (`MessageBoxW`, Yes/No, small stock buttons);
-DD B-15 asks for an in-window page and it is not done.
-What: closing during the install asks "Stop setting up AurOS? ... Yes / No".
-Closing on "Ready to restart" asks "Close AurOS Setup and take AurOS back? ... To
-keep it for your next restart, choose **No**, then press Restart later." A
-question whose safe answer is No, with buttons she cannot hit, in the one place
-Ray will click when he gets impatient.
-Fix: the in-window page DD B-15 specifies: "Keep it and restart later" /
-"Close and undo".
-Owner: B.
+**C-07 · closed · The X was a stock Windows dialog**
+Closed by `29c29da` (B-14, B-15): the window's X and a new **Stop** button (on the
+progress page only while nothing has been changed) open a question drawn in the
+window, with the answer that keeps what she has as the big green button
+("Keep going", "Keep it and restart later") and the undo beside it
+(`docs/shots/wizard/5f-stop-question.png`, `5g-close-question-ready.png`). The
+inverted "choose No to keep it" is gone. Left to watch: Ray's first reaction to
+the X in the session.
 
 **C-08 · S1 (data) · all · "Restart later" hands the dangerous part to an unsupervised moment**
 Where: `wizard/5c-ready-to-restart.png`: "Restart later: AurOS Setup closes.
@@ -366,6 +363,9 @@ What: it does not say that the next start will run the install (which shrinks
 Windows, 5 to 45 minutes) and must not be switched off. She shuts down for the
 night. Tomorrow the computer starts "by itself" into a screen she has not
 been warned about, and she does what anyone does to a screen that looks stuck.
+The new close question makes it worse, not better: its big green button is
+"Keep it and restart later" (`5g-close-question-ready.png`), so the safe-looking
+answer is the one that hands the install to an unsupervised start.
 Fix: "Next time you switch on, AurOS Setup finishes first. That takes about N
 minutes. Don't switch off." And the same sentence on the staging screen.
 Owner: B (wizard), A2 (staging).
@@ -789,7 +789,7 @@ recruit sits down.
 | 15 | F-07 | 2 | E, M, R | On "Does everything work?" the lines that say what each answer does are 12 px type (measured); DD's floor is 18 | C |
 
 Also close behind: B-03 (three alarms), B-05 (standard account password),
-C-07 (stock Yes/No dialogs with inverted logic), A-08 (stale installer
+A-08 (stale installer
 pictures), D-02 (GRUB menu names), F-04 (no Photos on Home), F-08 (Documents and
 Photos share an icon), F-09 ("All my progra…" and "Close t…" are cut off).
 
@@ -838,6 +838,9 @@ now gone or smaller (checked against the tree, not the commit message):
   at once after install (`12d5201`).
 - No shared password (`77adbfe`); her look survives a restart (`482dab2`).
 - The Help button opens the help pages (`f3c42b0`).
+- The window's X no longer opens a stock Windows Yes/No box with inverted logic; the
+  question is drawn in the window and a Stop button exists while stopping is safe
+  (`29c29da`).
 - The Wi-Fi firmware probe is fixed in staging (`probe.c`, "POINT THE KERNEL'S FIRMWARE LOADER"), so a Wi-Fi-only
   laptop is no longer refused after the shrink.
 - The staging shrink takes only what AurOS needs (`7e874e7`).

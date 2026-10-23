@@ -36,9 +36,9 @@ open http://127.0.0.1:8765/docs/usability/wizard-sim/index.html   # full screen
   that needs fixing, `3` a locked drive (cannot go on), `4` the install stops,
   `H` shows the hot spots, `L` saves the log (CSV: `ms, event, page, x, y,
   label`), `R` starts again, `N` skips a wait.
-- What it simulates: the Setup window, its pages in order, the stock
-  Windows Yes/No box when she presses the window's **X** (so that we can see her
-  hit the small buttons), Restart now, **25 seconds of black** (the real dark
+- What it simulates: the Setup window, its pages in order, Stop and the window's
+  **X** (the in-window "Stop setting up AurOS?" and "Close AurOS Setup?" questions
+  the real Setup now draws), Restart now, **25 seconds of black** (the real dark
   gap is longer: say so afterwards, do not shorten it for her), then the staging
   picture for 40 seconds. Any press or key during the black or the staging is
   logged as `press-during-dark`: that is the power button standing in.
