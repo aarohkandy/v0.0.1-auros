@@ -1,5 +1,12 @@
 # START HERE (for an agent who has only this repository)
 
+> **MOVED (2026-10-23 ~04:45 UTC): the project now lives at
+> https://github.com/aarohkandy/v0.0.1-auros, branch `main` (the only branch;
+> push there). The old repository (ComputerDude771/auros-from-scratch) is
+> read-only for us. Workflows run on `main`; `workflow_dispatch` works now.
+> Current session log: `docs/handoff/SESSION-2026-10-23-B.md`.**
+
+
 You are taking over AurOS from a session that ran out of usage on
 2026-10-23. Everything you need is in this repository; nothing else
 carries over (no transcripts, no scratch files, no running agents). Read
