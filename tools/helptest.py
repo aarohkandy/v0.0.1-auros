@@ -16,8 +16,14 @@ one of them. Fails if:
     close it ("Close this", the band's button);
   - visible text uses a word docs/EASY.md rule 2 forbids (the list is
     read from EASY.md itself, so the rule and the check cannot drift);
-  - the stylesheet sets any text under 18px, or body text under 22px;
-  - any text colour pair, light or dark, is under 4.5:1;
+  - the stylesheet sets any text under 18px, or body text under 20px
+    (docs/DESIGN-DIRECTION.md section 3, Body);
+  - any text colour pair, light or dark, is under 4.5:1, or a border
+    under 4.5:1 on light (3:1 on dark);
+  - a button the pages tell her to press (<span class="press">) is not a
+    word the desktop's source says (src/aurshell, forge's program names)
+    or one of the few other programs' buttons listed here: the name on the
+    page is the name on the button;
   - a picture has no words for someone who cannot see it, sets its own
     style, or shows a button the bar at the bottom of the screen does not
     have (the labels are read from src/aurshell/foot.c), or does not mark
@@ -66,6 +72,7 @@ class Page(html.parser.HTMLParser):
         self.skip = 0          # inside <script>/<style>/<title>
         self.svgs = []         # one dict per picture
         self.in_svg = self.in_text = 0
+        self.presses, self.in_press = [], None
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
@@ -81,6 +88,8 @@ class Page(html.parser.HTMLParser):
         for k, v in attrs:
             if k.startswith("on"):
                 self.scripts += 1          # an onclick= is a script too
+        if tag == "span" and "press" in (a.get("class") or "").split():
+            self.in_press = []
         if a.get("xlink:href") is not None:
             self.refs.append(a["xlink:href"])
         if tag == "svg":
@@ -101,6 +110,9 @@ class Page(html.parser.HTMLParser):
     def handle_endtag(self, tag):
         if tag in ("script", "style", "title") and self.skip:
             self.skip -= 1
+        if tag == "span" and self.in_press is not None:
+            self.presses.append(" ".join("".join(self.in_press).split()))
+            self.in_press = None
         if tag == "svg" and self.in_svg:
             self.in_svg -= 1
         if tag == "text" and self.in_text:
@@ -109,6 +121,8 @@ class Page(html.parser.HTMLParser):
     def handle_data(self, data):
         if not self.skip:
             self.text.append(data)
+        if self.in_press is not None:
+            self.in_press.append(data)
         if self.in_text and data.strip():
             self.svgs[-1]["texts"].append(data.strip())
 
@@ -125,6 +139,31 @@ def band_labels():
     labels = set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
     b = re.search(r'"(Show me how[^"]*)"', foot)
     return labels, (b.group(1) if b else "")
+
+
+# Buttons in other people's programs that the pages name: Firefox's camera
+# question, the print window, and Get more programs (GNOME Software).
+OTHER_BUTTONS = {"Allow", "Block", "Print", "Install", "Open", "Installed", "Uninstall"}
+
+
+def desktop_words():
+    """Every string the desktop can show (src/aurshell), and the names
+    build/forge gives programs: where a button's words can come from."""
+    words = set()
+    for root, _, files in os.walk(os.path.join(REPO, "src", "aurshell")):
+        for f in files:
+            if f.endswith(".c"):
+                with open(os.path.join(root, f), encoding="utf-8", errors="replace") as fh:
+                    # Comments quote button words too ("Let me look first"
+                    # used to say...), so they are taken out first.
+                    code = re.sub(r"/\*.*?\*/", " ", fh.read(), flags=re.S)
+                    words |= set(re.findall(r'"((?:[^"\\\n]|\\.)*)"', code))
+    try:
+        with open(os.path.join(REPO, "build", "forge"), encoding="utf-8") as fh:
+            words |= set(re.findall(r"^[\w.-]+\|([^|\n]+)\|", fh.read(), re.M))
+    except OSError:
+        pass
+    return words
 
 
 def forbidden_words():
@@ -249,6 +288,15 @@ def main():
     check(bool(show_me) and show_me in idx_text,
           f'the index names the Help panel\'s button as the bar paints it ("{show_me}")')
 
+    # 5b. the name on the page is the name on the button
+    known = desktop_words() | OTHER_BUTTONS
+    check(len(known) > 200, f"read the desktop's words ({len(known)})")
+    unknown = sorted({f'"{w}" on {p}' for p, pg in parsed.items() for w in pg.presses
+                      if html.unescape(w) not in known})
+    n_press = sum(len(pg.presses) for pg in parsed.values())
+    check(not unknown, f"every button the pages name is a button that exists ({n_press} checked)",
+          "; ".join(unknown[:8]))
+
     # 6. no web address on any page
     addr = []
     for p, pg in parsed.items():
@@ -274,7 +322,7 @@ def main():
     small = [f"{v}{u}" for v, u in sizes if (u == "px" and v < 18) or (u != "px" and v < 0.75)]
     check(not small, "no text under 18px in the stylesheet", ", ".join(small))
     body = re.search(r"body\s*\{[^}]*font-size\s*:\s*([\d.]+)px", css)
-    check(bool(body) and float(body.group(1)) >= 22, "body text 22px or larger",
+    check(bool(body) and float(body.group(1)) >= 20, "body text 20px or larger",
           body.group(1) + "px" if body else "no body font-size")
     inline = [p for p, pg in parsed.items()
               if re.search(r"style\s*=", open(os.path.join(d, p), encoding="utf-8").read())]
@@ -288,20 +336,22 @@ def main():
         schemes.append(("dark", {**light, **tokens(dark_m.group(1))}))
     check(len(schemes) == 2, "a dark variant exists")
     # (text, background) pairs actually used by help.css
-    pairs = [("ink", "bg"), ("ink-2", "bg"), ("link", "bg"), ("ink", "soft"),
-             ("link", "soft"), ("ink", "card"), ("link", "card"),
-             ("bg", "go"), ("ink", "warn-bg"), ("link", "warn-bg"),
-             ("bar-dim", "bar"), ("bar-ink", "bar-hot"), ("ring", "bar")]
+    pairs = [("ink", "bg"), ("ink-2", "bg"), ("ink", "soft"), ("ink-2", "soft"),
+             ("ink", "card"), ("ink", "warn-bg"),
+             ("bar-dim", "bar"), ("bar-ink", "bar-hot"), ("marker", "bar")]
+    rules = [("rule", "bg"), ("rule", "card")]   # no frame is drawn on --soft
     for name, t in schemes:
         low = []
-        for fg, bg in pairs:
+        for fg, bg in pairs + rules:
             if fg not in t or bg not in t:
                 low.append(f"--{fg}/--{bg} undefined")
                 continue
             r = ratio(t[fg], t[bg])
-            if r < 4.5:
+            floor = 4.5 if (fg, bg) in pairs or name == "light" else 3.0
+            if r < floor:
                 low.append(f"--{fg} on --{bg} {r:.2f}:1")
-        check(not low, f"{name}: every text colour 4.5:1 or better", "; ".join(low))
+        check(not low, f"{name}: every text colour 4.5:1 or better, every border too"
+              + ("" if name == "light" else " (3:1)"), "; ".join(low))
 
     print(f"\n{passes} passed, {len(fails)} failed")
     return 1 if fails else 0
