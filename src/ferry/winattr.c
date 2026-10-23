@@ -6,12 +6,19 @@
  *
  *  OneDrive Files-On-Demand leaves files that look completely normal
  *  from Linux: right name, right size in `ls`, right modification time.
- *  They contain nothing. The bytes are on a server; the directory entry
- *  is an NTFS reparse point with tag IO_REPARSE_TAG_CLOUD (0x9000001A)
- *  and the OFFLINE / RECALL_ON_DATA_ACCESS attributes set. `cp` on such
- *  a file yields a stub or an I/O error — and on a migration that is
- *  silent, invisible data loss: the user sees the filename in their new
- *  Documents folder and believes the photo is there.
+ *  An online-only one contains nothing: the bytes are on a server, and
+ *  the NTFS attributes say so (RECALL_ON_DATA_ACCESS, or the older
+ *  OFFLINE / RECALL_ON_OPEN). Reading it gives zeros or an I/O error --
+ *  and on a migration that is silent, invisible data loss: she sees the
+ *  filename in her new Documents folder and believes the photo is there.
+ *
+ *  THE REPARSE TAG IS NOT THE ANSWER. OneDrive keeps its cloud tag
+ *  (0x9000001A and family) on files that ARE on this computer too --
+ *  "available on this device" is a full placeholder, bytes and all.
+ *  Treating the tag as "not here" (as this file once did) skips every
+ *  file in a OneDrive-backed Documents folder, which on Windows 11 is
+ *  the common case. Only the attributes say whether the bytes are here,
+ *  and the copier double-checks them physically (see `suspect`).
  *
  *  So Ferry never copies a file it has not classified, and this program
  *  is the only thing allowed to say "hydrated". When it cannot tell, it
@@ -95,8 +102,10 @@ static const char *REPARSE_XATTRS[] = {
     "user.ntfs_reparse_data",
 };
 
+#ifndef WINATTR_NO_MAIN
 static int   opt_json = 0, opt_nul = 0;
 static int   exit_code = 0;
+#endif
 static char *map_path;                  /* FERRY_WINATTR_MAP, test seam */
 
 static int read_u32_xattr(const char *path, const char *name, int be, uint32_t *out)
@@ -141,12 +150,7 @@ static int map_lookup(const char *path, uint32_t *attrib, uint32_t *tag)
     return hit;
 }
 
-static int is_cloud_tag(uint32_t tag)
-{
-    return tag && ((tag & TAG_CLOUD_MASK) == TAG_CLOUD_BASE ||
-                   tag == TAG_ONEDRIVE || tag == TAG_PROJFS);
-}
-
+#ifndef WINATTR_NO_MAIN
 static const char *tag_name(uint32_t tag)
 {
     if (!tag) return "";
@@ -183,6 +187,17 @@ static void flag_names(uint32_t a, char *out, size_t n)
                                   o ? "," : "", t[i].nm);
     if (!out[0]) snprintf(out, n, "-");
 }
+#endif
+
+/* A reparse tag with the name-surrogate bit (0x20000000) is an alias
+ * for another file or folder -- a junction, a symlink, a WSL link --
+ * and holds no data of hers. Any other tag (cloud, dedup, WOF
+ * compression) marks a file whose bytes ARE in it. App execution
+ * aliases are not surrogates but are not data either. */
+static int tag_is_alias(uint32_t tag)
+{
+    return (tag & 0x20000000u) || tag == TAG_APPEXECLINK;
+}
 
 /* The decision. Ordered so that every path that might not hold data is
  * caught before the one line that says "hydrated". */
@@ -190,40 +205,67 @@ static const char *classify(const struct stat *st, uint32_t attrib, uint32_t tag
                             int have_attrib)
 {
     if (S_ISDIR(st->st_mode))  return "dir";
-    if (S_ISLNK(st->st_mode))  return "link";      /* junction or symlink */
+    /* A driver that cannot interpret a data-bearing reparse point (an
+     * ntfs-3g without the plugin) shows it as a symlink. That is a
+     * file of hers we cannot read, not a junction to skip quietly. */
+    if (S_ISLNK(st->st_mode))
+        return tag && !tag_is_alias(tag) ? "unreadable" : "link";
     if (!S_ISREG(st->st_mode)) return "special";
 
     if (have_attrib) {
         if (attrib & FA_ENCRYPTED) return "encrypted";       /* EFS */
-        if (is_cloud_tag(tag))     return "placeholder";
-        if (attrib & (FA_OFFLINE | FA_RECALL_ON_DATA_ACCESS |
-                      FA_RECALL_ON_OPEN | FA_UNPINNED))
+        if (attrib & (FA_OFFLINE | FA_RECALL_ON_DATA_ACCESS | FA_RECALL_ON_OPEN))
             return "placeholder";
-        if (attrib & FA_REPARSE_POINT)
-            return tag ? "reparse" : "reparse";   /* not ours to copy */
     }
+    if (tag && tag_is_alias(tag)) return "reparse";
 
-    /* No attribute source (an exotic driver, or a test tree on ext4),
-     * or a clean one. Fall back to one physical fact that cannot lie: a
-     * file that claims bytes but owns zero disk blocks is holding none.
-     * That is exactly the shape of a cloud placeholder, so we say
-     * `suspect` and let the caller report it rather than copy a hole and
-     * call it a photo. NTFS-compressed and genuinely sparse files also
-     * take zero-or-few blocks, so when the attribute flags say so we
-     * trust them over the heuristic.
+    /* Everything left claims to hold its bytes. One physical fact
+     * checks that: a file that claims bytes but owns zero disk blocks
+     * may be holding none -- the shape of a placeholder whose attribute
+     * we could not read. It may also be real: NTFS keeps small files
+     * inside the MFT record, where a driver can report zero blocks.
+     * So it is `suspect`, and ferry-copy reads it: any non-zero byte
+     * and it is real data, all zeros and it was never on this disk.
      *
-     * An empty file is legitimately empty — copy it. A file with blocks
-     * allocated has its bytes physically present on this disk and cannot
-     * be an online-only placeholder, so it is real data even when no
-     * attribute was readable. This is the one place the optimistic
-     * answer is defensible: blocks are ground truth, not a guess. */
+     * An empty file is legitimately empty. A file with blocks allocated
+     * has its bytes physically present on this disk. */
     if (st->st_size == 0)     return "hydrated";
-    if (st->st_blocks == 0)
-        return have_attrib && (attrib & (FA_COMPRESSED | FA_SPARSE_FILE))
-               ? "hydrated" : "suspect";
+    if (st->st_blocks == 0)   return "suspect";
     return "hydrated";
 }
 
+/* What the driver says about one file: the attribute word, and the
+ * reparse tag when the driver publishes it (ntfs-3g does, ntfs3 does
+ * not). Returns 1 when an attribute word was found. `xpath` is what the
+ * xattr calls are given (ferry-copy passes /proc/self/fd/N/name, so it
+ * needs no search permission on the folders above); `key` is the path
+ * the test map is keyed by. */
+static int winattr_read(const char *xpath, const char *key,
+                        uint32_t *attrib, uint32_t *tag)
+{
+    size_t i;
+    int have = 0;
+    *attrib = 0; *tag = 0;
+    if (map_lookup(key, attrib, tag)) return 1;
+    for (i = 0; i < sizeof ATTR_XATTRS / sizeof ATTR_XATTRS[0]; i++)
+        if (read_u32_xattr(xpath, ATTR_XATTRS[i].name,
+                           ATTR_XATTRS[i].big_endian, attrib)) {
+            have = 1;
+            break;
+        }
+    for (i = 0; i < sizeof REPARSE_XATTRS / sizeof REPARSE_XATTRS[0]; i++) {
+        unsigned char b[16];
+        ssize_t n = lgetxattr(xpath, REPARSE_XATTRS[i], b, sizeof b);
+        if (n >= 4) {
+            *tag = (uint32_t)b[0] | ((uint32_t)b[1] << 8) |
+                   ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
+            break;
+        }
+    }
+    return have;
+}
+
+#ifndef WINATTR_NO_MAIN
 static void esc(const char *s)
 {
     for (; *s; s++) {
@@ -251,7 +293,6 @@ static void report(const char *path)
     struct stat st;
     uint32_t attrib = 0, tag = 0;
     int have_attrib = 0;
-    size_t i;
     char flags[256];
     const char *class;
 
@@ -261,25 +302,7 @@ static void report(const char *path)
         class = "missing";
         flags[0] = '-'; flags[1] = '\0';
     } else {
-        if (map_lookup(path, &attrib, &tag)) {
-            have_attrib = 1;
-        } else {
-            for (i = 0; i < sizeof ATTR_XATTRS / sizeof ATTR_XATTRS[0]; i++)
-                if (read_u32_xattr(path, ATTR_XATTRS[i].name,
-                                   ATTR_XATTRS[i].big_endian, &attrib)) {
-                    have_attrib = 1;
-                    break;
-                }
-            for (i = 0; i < sizeof REPARSE_XATTRS / sizeof REPARSE_XATTRS[0]; i++) {
-                unsigned char b[16];
-                ssize_t n = lgetxattr(path, REPARSE_XATTRS[i], b, sizeof b);
-                if (n >= 4) {
-                    tag = (uint32_t)b[0] | ((uint32_t)b[1] << 8) |
-                          ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
-                    break;
-                }
-            }
-        }
+        have_attrib = winattr_read(path, path, &attrib, &tag);
         class = classify(&st, attrib, tag, have_attrib);
         flag_names(attrib, flags, sizeof flags);
     }
@@ -362,3 +385,4 @@ int main(int argc, char **argv)
     if (opt_json) printf("\n]\n");
     return exit_code;
 }
+#endif /* WINATTR_NO_MAIN */

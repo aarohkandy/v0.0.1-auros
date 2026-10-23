@@ -43,14 +43,14 @@ MANIFEST="$FERRY_STATE/manifest.tsv"
 
 # All ledger rows, oldest stage first in the order the user experienced.
 all_notes() {
-    for _s in wifi settings files firefox chromium mail apps; do
+    for _s in wifi settings files files-copy firefox firefox-copy chromium mail apps; do
         [ -f "$LEDGER/$_s.tsv" ] && cat "$LEDGER/$_s.tsv"
     done
     # Any stage we did not name explicitly, so nothing is ever dropped.
     for _f in "$LEDGER"/*.tsv; do
         [ -f "$_f" ] || continue
         case "$(basename "$_f" .tsv)" in
-            wifi|settings|files|firefox|chromium|mail|apps) ;;
+            wifi|settings|files|files-copy|firefox|firefox-copy|chromium|mail|apps) ;;
             *) cat "$_f" ;;
         esac
     done

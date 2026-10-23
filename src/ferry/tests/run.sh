@@ -24,6 +24,15 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/ferrytest.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 WIN="$TMP/win"
 export FERRY_STATE="$TMP/state"
+# As root (tests/asroot.sh), ferry-copy must be told whom to become.
+ASME="" OWNER=$(id -un)
+if [ "$(id -u)" = 0 ]; then
+    id ferryher >/dev/null 2>&1 || useradd -m -u 4242 ferryher
+    ASME="--as 4242:4242" OWNER=ferryher
+    chmod 0755 "$TMP"
+fi
+# A home the test made is hers, as a real one is.
+hers() { [ -z "$ASME" ] || chown -R 4242:4242 "$@"; }
 
 pass=0; fail=0
 ok()  { pass=$((pass+1)); printf '  ok   %s\n' "$1"; }
@@ -102,9 +111,16 @@ eq "Videos on drive D: reported off-volume" "$VIDSTATUS" off-volume
 
 echo "files:"
 HOME1="$TMP/home"
-mkdir -p "$HOME1/Desktop"
+mkdir -p "$HOME1/Desktop/dir.v2" "$HOME1/Downloads" "$HOME1/Music"
 echo "my own newer notes" > "$HOME1/Desktop/notes.txt"   # collision seed
-ferry-files --root "$WIN" --home "$HOME1" --owner "$(id -un)" >/dev/null 2>&1
+echo "mine" > "$HOME1/Desktop/dir.v2/readme"              # dot in a folder name
+echo "mine" > "$HOME1/Downloads/setup.exe"                # two collisions deep
+echo "mine too" > "$HOME1/Downloads/setup (from Windows).exe"
+LONG=$(printf '%0246d' 0 | tr 0 a)
+echo "my song" > "$HOME1/Music/$LONG.mp3"                 # no room for the suffix
+echo "half a file" > "$HOME1/Desktop/.ferrypart-999-0"    # a run cut off earlier
+hers "$HOME1"
+ferry-files --root "$WIN" --home "$HOME1" --owner "$OWNER" >/dev/null 2>&1
 assert "real Desktop file imported" test -f "$HOME1/Desktop/report.docx"
 assert "collision kept BOTH files (no overwrite)" \
     test -f "$HOME1/Desktop/notes (from Windows).txt"
@@ -115,18 +131,149 @@ assert "Documents imported from the OneDrive redirect" \
 refute "a OneDrive placeholder was NOT silently copied" \
     test -f "$HOME1/Documents/Taxes/2022.pdf"
 assert "each placeholder is reported by name" \
-    grep -q 'Taxes/2022.pdf' "$FERRY_STATE/report.d/files.tsv"
+    grep -q 'Taxes/2022.pdf' "$FERRY_STATE/report.d/files-copy.tsv"
 assert "junk (desktop.ini/Thumbs.db) filtered out" \
     sh -c "! find '$HOME1' -iname 'thumbs.db' -o -iname 'desktop.ini' | grep -q ."
 assert "user-dirs.dirs written" test -f "$HOME1/.config/user-dirs.dirs"
 # idempotency: re-run copies nothing new
 BEFORE=$(find "$HOME1" -type f | wc -l)
-ferry-files --root "$WIN" --home "$HOME1" --owner "$(id -un)" >/dev/null 2>&1
+ferry-files --root "$WIN" --home "$HOME1" --owner "$OWNER" >/dev/null 2>&1
 AFTER=$(find "$HOME1" -type f | wc -l)
 eq "re-run is idempotent (no new files)" "$AFTER" "$BEFORE"
 
+echo "copier:"
+assert "a OneDrive file that IS on this computer comes across (cloud tag and all)" \
+    grep -qx 'BUDGET-real-bytes' "$HOME1/Documents/budget.xlsx"
+refute "a file of nothing but zeros and no blocks is not copied as a picture" \
+    test -e "$HOME1/Pictures/cloud-only.jpg"
+assert "...and it is listed by name" \
+    grep -q 'Pictures/cloud-only.jpg' "$FERRY_STATE/report.d/files-copy.tsv"
+eq "a dot in a folder name: the copy lands in that folder" \
+   "$(cat "$HOME1/Desktop/dir.v2/readme (from Windows)" 2>/dev/null)" "from windows"
+eq "a second collision gets '(from Windows 2)'" \
+   "$(cat "$HOME1/Downloads/setup (from Windows 2).exe" 2>/dev/null)" "installer"
+eq "...and neither earlier file was touched" \
+   "$(cat "$HOME1/Downloads/setup.exe")|$(cat "$HOME1/Downloads/setup (from Windows).exe")" "mine|mine too"
+_lw=$(find "$HOME1/Music" -name '*(from Windows).mp3' 2>/dev/null)
+eq "a name with no room for '(from Windows)' is shortened, not lost" \
+   "$(cat "$_lw" 2>/dev/null)" "long-named song"
+assert "...and the shorter name is in the report" \
+    grep -q 'shorter name' "$FERRY_STATE/report.d/files-copy.tsv"
+eq "...and her own file is untouched" "$(cat "$HOME1/Music/$LONG.mp3")" "my song"
+_odd=0
+for n in "-leading dash.txt" 'quote"d.txt' 'back\slash.txt' "$(printf 'tab\tin.txt')" \
+         "trailing space .txt" "café ünïcødé 日本.txt" "$(printf 'new\nline.txt')"; do
+    [ "$(cat "$HOME1/Downloads/$n" 2>/dev/null)" = "odd name" ] || _odd=$((_odd+1))
+done
+eq "every odd Windows file name comes across exactly" "$_odd" 0
+eq "no ledger row is split by a tab or newline in a name" \
+   "$(cat "$FERRY_STATE/manifest.tsv" | awk -F'\t' 'NF != 6' | wc -l | tr -d ' ')$(cat "$FERRY_STATE"/report.d/*.tsv | awk -F'\t' 'NF != 4' | wc -l | tr -d ' ')" "00"
+eq "the date a file was last changed comes with it" \
+   "$(stat -c %Y "$HOME1/Desktop/report.docx")" "$(stat -c %Y "$WIN/users/Bob/Desktop/report.docx")"
+refute "a temporary from a run that was cut off is gone" test -e "$HOME1/Desktop/.ferrypart-999-0"
+refute "no temporary is left anywhere" sh -c "find '$HOME1' -name '.ferrypart-*' | grep -q ."
+
+# Honest progress: one 64 MB file sorted first, then 100 tiny ones. By
+# bytes, the bar is nearly full after the first file; by count it would
+# say 1 %.
+P="$TMP/prog"; mkdir -p "$P/src"; [ -z "$ASME" ] || chown 4242 "$P"
+python3 -c 'import sys; open(sys.argv[1], "wb").write(b"x" * (64 << 20))' "$P/src/a-big.bin"
+for i in $(seq 1 100); do echo small > "$P/src/s$i.txt"; done
+FERRY_TICK_MS=0 FERRY_PROGRESS="$P/log" FERRY_PLAIN_FD=3 \
+    ferry-copy $ASME --state "$P/state" --stage prog --job Pictures "$P/src" "$P/dst" 3>"$P/plain" 2>/dev/null
+_pct1=$(grep '"done":1,' "$P/log" | tail -1 | sed 's/.*"pct":\([0-9]*\).*/\1/')
+assert "progress is by bytes: one big file in, the bar is past 80 % (${_pct1:-?} %)" \
+    test "${_pct1:-0}" -ge 80
+python3 - "$P/log" > "$TMP/prog.verdict" <<'PY2'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+pct = [r["pct"] for r in rows]
+print("monotonic" if all(b >= a for a, b in zip(pct, pct[1:])) else "backwards")
+last = rows[-1]
+print("complete" if last["pct"] == 100 and last["work_done"] == last["work_total"] else "short")
+PY2
+assert "the bar never goes backwards" grep -qx monotonic "$TMP/prog.verdict"
+assert "it ends at 100 % with every byte counted" grep -qx complete "$TMP/prog.verdict"
+eq "what she reads is plain and counts files" \
+   "$(tail -1 "$P/plain")" "Copying your Pictures: 101 of 101 files."
+refute "no file name ever reaches the screen" grep -q 'a-big\|s1.txt' "$P/plain"
+ferry-copy $ASME --dry-run --job Pictures "$P/src" "$P/dry" 2>/dev/null
+refute "a dry run writes nothing" test -e "$P/dry"
+ln -s "$P/src" "$P/linked-src"
+ferry-copy $ASME --job Pictures "$P/linked-src" "$P/via-link" >/dev/null 2>&1
+eq "a source folder that is a link is refused (exit 2, reported)" "$?" 2
+refute "...and nothing came through it" test -e "$P/via-link/a-big.bin"
+
+echo "hostile Windows volume and hostile home:"
+# Every path below comes from data on her disk or in her home, and each
+# one tries to make Ferry read or write outside where it should.
+H="$TMP/hostile"; sh "$HERE/mkfakewin.sh" "$H" >/dev/null
+OUT="$TMP/outside"; mkdir -p "$OUT"; echo "secret outside the volume" > "$OUT/secret.txt"
+rm -rf "$H/users/Bob/Pictures"; ln -s "$OUT" "$H/users/Bob/Pictures"     # a junction
+mkdir -p "$OUT/Videos"; echo "secret outside the volume" > "$OUT/Videos/clip.txt"
+ln -s "$OUT" "$H/users/Bob/Linked"                    # a junction mid-path
+FFP="$H/users/Bob/AppData/Roaming/Mozilla/Firefox/Profiles"
+ln -s "$OUT" "$FFP/evil.default"                                         # a junction
+python3 "$HERE/mkhive.py" "$H/users/Bob/NTUSER.DAT" '{
+  "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders": {
+    "Personal": ["exp", "%USERPROFILE%\\..\\..\\..\\outside"],
+    "My Music": ["exp", "%USERPROFILE%\\Music"],
+    "My Video": ["exp", "%USERPROFILE%\\Linked\\Videos"]
+  },
+  "Control Panel\\Desktop": {"Wallpaper": ["sz", "C:\\..\\outside\\secret.txt"]}
+}'
+HH="$TMP/hhome"; mkdir -p "$HH/.config"
+printf 'XDG_MUSIC_DIR="$HOME/../outside-music"\nXDG_DOWNLOAD_DIR="%s"\n' "$TMP/outside-dl" \
+    > "$HH/.config/user-dirs.dirs"
+hers "$HH"
+SH="$TMP/state-hostile"
+FERRY_STATE="$SH" ferry-files --root "$H" --home "$HH" --owner "$OWNER" >/dev/null 2>&1
+FERRY_STATE="$SH" ferry-firefox --root "$H" --home "$HH" --owner "$OWNER" >/dev/null 2>&1
+FERRY_STATE="$SH" ferry-settings --root "$H" --home "$HH" --owner "$OWNER" --only wallpaper >/dev/null 2>&1
+refute "a '..' in a registry folder does not reach outside the volume" \
+    grep -rqs 'secret outside the volume' "$HH/Documents"
+refute "a junction where Pictures should be is not followed" \
+    grep -rqs 'secret outside the volume' "$HH/Pictures"
+refute "a junction inside a folder's path is not followed" \
+    grep -rqs 'secret outside the volume' "$HH/Videos"
+refute "a junction among the Firefox profiles is not followed" \
+    grep -rqs 'secret outside the volume' "$HH/.mozilla"
+refute "a '..' in the wallpaper value is not followed" \
+    grep -rqs 'secret outside the volume' "$HH/.local"
+refute "a user-dirs.dirs pointing out of her home is not obeyed (..)" test -e "$TMP/outside-music"
+refute "a user-dirs.dirs pointing out of her home is not obeyed (absolute)" test -e "$TMP/outside-dl"
+assert "...and those folders land in her home instead" test -f "$HH/Music/track.mp3"
+
+if [ "$(id -u)" = 0 ]; then
+    echo "as root, which is how it really runs:"
+    # A user to bring things to, and a root-owned folder she wants root
+    # to write into: a symlink planted where Pictures and .local go.
+    HR=$(getent passwd ferryher | cut -d: -f6)
+    rm -rf "$HR/Pictures" "$HR/.local" /var/tmp/ferry-victim
+    mkdir -p /var/tmp/ferry-victim && chmod 0755 /var/tmp/ferry-victim
+    ln -s /var/tmp/ferry-victim "$HR/Pictures"
+    ln -s /var/tmp/ferry-victim "$HR/.local"
+    chown -h ferryher: "$HR/Pictures" "$HR/.local"
+    SR="$TMP/state-root"
+    FERRY_STATE="$SR" ferry-files --root "$WIN" --home "$HR" --owner ferryher >/dev/null 2>&1
+    FERRY_STATE="$SR" ferry-firefox --root "$WIN" --home "$HR" --owner ferryher >/dev/null 2>&1
+    FERRY_STATE="$SR" ferry-settings --root "$WIN" --home "$HR" --owner ferryher --only wallpaper >/dev/null 2>&1
+    eq "nothing was written through her symlinks into a root-owned folder" \
+       "$(ls -A /var/tmp/ferry-victim | wc -l | tr -d ' ')" 0
+    assert "...and the attempt is in the report" \
+        grep -q 'could not be saved' "$SR/report.d/files-copy.tsv"
+    assert "her files did come, and every one of them is hers" \
+        sh -c "test -f '$HR/Desktop/report.docx' && ! find '$HR' ! -user ferryher | grep -q ."
+    assert "Ferry's own records stay root's" test "$(stat -c %U "$SR/manifest.tsv")" = root
+    ferry-copy --job X "$P/src" "$TMP/as-root" >/dev/null 2>&1
+    eq "ferry-copy refuses to write as root without --as (exit 1)" "$?" 1
+    refute "...and wrote nothing" test -e "$TMP/as-root"
+else
+    echo "as root: skipped (run tests/asroot.sh, or this suite as root, for these)"
+fi
+
 echo "firefox:"
-ferry-firefox --root "$WIN" --home "$HOME1" --owner "$(id -un)" >/dev/null 2>&1
+ferry-firefox --root "$WIN" --home "$HOME1" --owner "$OWNER" >/dev/null 2>&1
 FP="$HOME1/.mozilla/firefox/Profiles/a1b2c3d4.default-release"
 assert "places.sqlite (bookmarks/history) copied" test -f "$FP/places.sqlite"
 assert "prefs.js (settings) copied" test -f "$FP/prefs.js"
@@ -173,7 +320,7 @@ assert "a hex-only SSID is decoded with the image's awk" \
 echo "settings (timezone mapping is the point):"
 rm -rf "$TMP/state3"
 TZ=$(FERRY_STATE="$TMP/state3" ferry-settings --root "$WIN" --home "$TMP/h3" \
-       --owner "$(id -un)" --only timezone --dry-run 2>/dev/null; \
+       --owner "$OWNER" --only timezone --dry-run 2>/dev/null; \
      grep -h timezone "$TMP/state3/report.d/settings.tsv" 2>/dev/null)
 case "$TZ" in
     *Europe/London*) ok "GMT Standard Time -> Europe/London (CLDR mapping)" ;;
@@ -186,7 +333,7 @@ esac
 rm -rf "$TMP/state3b"
 printf 'timezone=America/New_York\n' > "$TMP/choices.conf"
 OUT=$(FERRY_CHOICES="$TMP/choices.conf" FERRY_STATE="$TMP/state3b" \
-      ferry-settings --root "$WIN" --home "$TMP/h3b" --owner "$(id -un)" \
+      ferry-settings --root "$WIN" --home "$TMP/h3b" --owner "$OWNER" \
       --only timezone --dry-run 2>&1)
 case "$OUT" in
     *"kept as chosen in the installer"*) ok "a time zone chosen in the installer is not overwritten" ;;
@@ -197,7 +344,7 @@ echo "safety gate:"
 sh "$HERE/mkfakewin.sh" "$TMP/hib" --hibernated >/dev/null
 rm -rf "$TMP/state4"
 FERRY_STATE="$TMP/state4" ferry-files --root "$TMP/hib" --home "$TMP/h4" \
-    --owner "$(id -un)" >/dev/null 2>&1
+    --owner "$OWNER" >/dev/null 2>&1
 eq "hibernated volume is refused (exit 3)" "$?" 3
 FERRY_STATE="$TMP/state4b" ferry-detect --root "$TMP/hib" --quick >/dev/null 2>&1
 eq "detect still succeeds on a hibernated volume" "$?" 0

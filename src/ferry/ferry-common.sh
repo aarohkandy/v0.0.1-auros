@@ -190,22 +190,33 @@ common_opt() {
 # path Ferry gets comes out of the registry with whatever capitalisation
 # the program that wrote it happened to use. Resolve component by
 # component or half the imports silently find nothing.
+#
+# AND NEVER OUT OF THE WINDOWS VOLUME. Every path through here is read
+# as root, and the registry it came from is data on a disk we did not
+# build: a Wallpaper value of `C:\..\..\etc\shadow`, or a junction
+# where Documents should be, would otherwise have root read whatever it
+# names and copy it into her home. So a `.` or `..` component is
+# refused, and so is any component that is a symbolic link (which is
+# how both NTFS drivers show a junction). One guard here covers every
+# caller.
 path_ci() {
     _base=$1 _rel=$2
     [ -n "$_base" ] || return 1
-    if [ -e "$_base/$_rel" ]; then printf '%s\n' "$_base/$_rel"; return 0; fi
     _cur=$_base
     _oifs=$IFS; IFS='/'
     # shellcheck disable=SC2086
     set -- $_rel
     IFS=$_oifs
     for _c in "$@"; do
-        [ -n "$_c" ] || continue
-        if [ -e "$_cur/$_c" ]; then _cur="$_cur/$_c"; continue; fi
-        _hit=$(ls -a "$_cur" 2>/dev/null | awk -v w="$_c" '
-            BEGIN { lw = tolower(w) } tolower($0) == lw { print; exit }')
-        [ -n "$_hit" ] || return 1
-        _cur="$_cur/$_hit"
+        case "$_c" in ''|.) continue ;; ..) return 1 ;; esac
+        if [ ! -e "$_cur/$_c" ] && [ ! -L "$_cur/$_c" ]; then
+            _hit=$(ls -a "$_cur" 2>/dev/null | awk -v w="$_c" '
+                BEGIN { lw = tolower(w) } tolower($0) == lw { print; exit }')
+            [ -n "$_hit" ] || return 1
+            _c=$_hit
+        fi
+        [ -L "$_cur/$_c" ] && return 1
+        _cur="$_cur/$_c"
     done
     printf '%s\n' "$_cur"
 }
@@ -421,82 +432,57 @@ resolve_target() {
 # XDG user dirs, honouring a localized user-dirs.dirs if the desktop has
 # already written one (a French install wants Documents in Documents,
 # a German one in Dokumente).
+#
+# Read as her (the file is hers, and may be a link to anything), and
+# only ever a folder inside her home: a value that points elsewhere, or
+# climbs out with `..`, gets the default instead.
 xdg_dir() {
     _key=$1 _default=$2
-    _f="$FERRY_HOME/.config/user-dirs.dirs"
-    if [ -f "$_f" ]; then
-        _v=$(sed -n "s/^[[:space:]]*$_key=\"\{0,1\}\(.*\)\"\{0,1\}[[:space:]]*\$/\1/p" \
-             "$_f" | head -1 | sed 's/"$//')
-        if [ -n "$_v" ]; then
-            _v=$(printf '%s' "$_v" | sed "s|^\$HOME|$FERRY_HOME|")
-            printf '%s\n' "$_v"
-            return 0
-        fi
-    fi
-    printf '%s\n' "$FERRY_HOME/$_default"
-}
-
-own() {
-    [ -n "$FERRY_OWNER" ] || return 0
-    [ "$FERRY_DRYRUN" = 1 ] && return 0
-    chown -R "$FERRY_OWNER" "$1" 2>/dev/null || true
-}
-
-# ═══ Copying ════════════════════════════════════════════════════════
-
-file_size()  { stat -c %s "$1" 2>/dev/null || wc -c < "$1" 2>/dev/null || echo 0; }
-file_mtime() { stat -c %Y "$1" 2>/dev/null || echo 0; }
-
-# Same file, for the purpose of "have I already imported this?". Size
-# plus mtime, not a hash: hashing a 40 GB Pictures folder on a 2013
-# laptop to re-confirm what we copied ten minutes ago is not a feature.
-same_file() {
-    [ -f "$1" ] && [ -f "$2" ] || return 1
-    [ "$(file_size "$1")" = "$(file_size "$2")" ] || return 1
-    _d=$(( $(file_mtime "$1") - $(file_mtime "$2") ))
-    [ "$_d" -lt 0 ] && _d=$(( -_d ))
-    [ "$_d" -le 2 ]
-}
-
-# The name a file gets when something is already sitting in its place.
-# Keeping both copies is the only defensible answer: the existing file
-# might be the user's, and Windows' copy might be newer. We never pick.
-collision_name() {
-    case "$1" in
-        */*.*) printf '%s (from Windows).%s\n' "${1%.*}" "${1##*.}" ;;
-        *)     printf '%s (from Windows)\n' "$1" ;;
+    _v=$(as_her cat "$FERRY_HOME/.config/user-dirs.dirs" 2>/dev/null |
+         sed -n "s/^[[:space:]]*$_key=\"\{0,1\}\(.*\)\"\{0,1\}[[:space:]]*\$/\1/p" |
+         head -1 | sed 's/"$//')
+    case "$_v" in '$HOME/'*) _v="$FERRY_HOME/${_v#\$HOME/}" ;; esac
+    case "$_v" in
+        "$FERRY_HOME"/?*) case "$_v/" in */../*|*/./*) _v="" ;; esac ;;
+        *) _v="" ;;
     esac
+    printf '%s\n' "${_v:-$FERRY_HOME/$_default}"
 }
 
-# The only function in Ferry allowed to create a file in the user's home.
-#   - writes through a .ferrypart temp so a half-copy never exists at
-#     the destination, which is what makes resume safe;
-#   - never overwrites: an occupied destination gets a second file and a
-#     recorded collision;
-#   - records what it did, always.
-# Prints the action taken: copied | already | collision | failed
-safe_copy() {
-    _s=$1 _d=$2
-    if [ -e "$_d" ]; then
-        if same_file "$_s" "$_d"; then echo already; return 0; fi
-        _d2=$(collision_name "$_d")
-        if [ -e "$_d2" ] && same_file "$_s" "$_d2"; then echo already; return 0; fi
-        note files partial "${_s#"$FERRY_ROOT"/}" \
-            "a different file already existed at $_d; imported alongside it as $(basename "$_d2")"
-        record collision "$(file_size "$_s")" "$_s" "$_d2"
-        _d=$_d2
+# ── Acting as her. Ferry runs as root (it mounts a disk), but nothing
+#    it writes into her home is written as root: a home is a tree of
+#    names she controls, and root following one of her symlinks is a
+#    root escalation. as_her runs a command as the AurOS user; when
+#    Ferry is root and does not know who she is, it refuses rather
+#    than run the command as root.
+owner_ids() {
+    printf '%s:%s' "$(id -u "$FERRY_OWNER")" "$(id -g "$FERRY_OWNER")"
+}
+as_her() {
+    if [ "$(id -u)" != 0 ]; then "$@"; return; fi
+    [ -n "$FERRY_OWNER" ] || { warn "refusing to write into a home as root"; return 1; }
+    setpriv --reuid="$(id -u "$FERRY_OWNER")" --regid="$(id -g "$FERRY_OWNER")" \
+        --clear-groups -- "$@"
+}
+# ferry-copy's --as, or nothing when Ferry is not root.
+copy_as() {
+    if [ "$(id -u)" = 0 ]; then
+        [ -n "$FERRY_OWNER" ] || die "no AurOS user to bring things to (pass --owner NAME)"
+        printf -- '--as %s' "$(owner_ids)"
     fi
-    if [ "$FERRY_DRYRUN" = 1 ]; then echo copied; return 0; fi
-    mkdir -p "$(dirname "$_d")" 2>/dev/null || { echo failed; return 1; }
-    if cp -p "$_s" "$_d.ferrypart" 2>/dev/null && mv -f "$_d.ferrypart" "$_d" 2>/dev/null; then
-        record copy "$(file_size "$_d")" "$_s" "$_d"
-        echo copied
-        return 0
-    fi
-    rm -f "$_d.ferrypart" 2>/dev/null || true
-    record failed 0 "$_s" "$_d"
-    echo failed
-    return 1
+}
+
+# One file into her home, as her, never over anything. Prints
+# copied | already | exists | failed. Folders go through ferry-copy.
+her_copy() {
+    [ "$FERRY_DRYRUN" = 1 ] && { echo copied; return 0; }
+    as_her sh -c '
+        if [ -e "$2" ] || [ -L "$2" ]; then
+            if cmp -s "$1" "$2"; then echo already; else echo exists; fi; exit 0
+        fi
+        mkdir -p "$(dirname "$2")" && cp "$1" "$2.ferrypart" && mv -f "$2.ferrypart" "$2" \
+            && echo copied || { rm -f "$2.ferrypart"; echo failed; }' sh "$1" "$2" \
+        || echo failed
 }
 
 # ── Deterministic UUIDs. NetworkManager wants a UUID per connection;

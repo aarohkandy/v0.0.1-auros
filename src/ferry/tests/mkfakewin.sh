@@ -100,6 +100,10 @@ python3 "$HERE/mkhive.py" "$ROOT/users/Bob/NTUSER.DAT" '{
 # ── User data. Sizes are small; what matters is the classification.
 echo "shopping list"            > "$ROOT/users/Bob/Desktop/notes.txt"
 echo "report"                   > "$ROOT/users/Bob/Desktop/report.docx"
+touch -d '2019-06-01 12:00:00' "$ROOT/users/Bob/Desktop/report.docx"   # an old date, kept
+# A name that fits on NTFS and leaves no room for "(from Windows)".
+LONG=$(printf '%0246d' 0 | tr 0 a)
+echo "long-named song"          > "$ROOT/users/Bob/Music/$LONG.mp3"
 echo "installer"                > "$ROOT/users/Bob/Downloads/setup.exe"
 echo "JPEGDATA-wallpaper"       > "$ROOT/users/Bob/Pictures/wall.jpg"
 echo "JPEGDATA-holiday"         > "$ROOT/users/Bob/Pictures/2019/holiday.jpg"
@@ -110,6 +114,21 @@ echo "TAXRETURN-2023-real"      > "$ROOT/users/Bob/OneDrive/Documents/Taxes/2023
 echo "letter"                   > "$ROOT/users/Bob/OneDrive/Documents/letter.docx"
 echo "NOT the redirected one"   > "$ROOT/users/Bob/Documents/stale-local.txt"
 echo "PSTDATA"                  > "$ROOT/users/Bob/Documents/Outlook Files/archive.pst"
+# A OneDrive file that IS on this computer ("always keep on this
+# device"): it keeps the cloud reparse tag, and must still come across.
+echo "BUDGET-real-bytes"        > "$ROOT/users/Bob/OneDrive/Documents/budget.xlsx"
+# Size but no blocks and no attribute to say why: a placeholder the
+# attribute read missed. Nothing but zeros, so nothing to bring.
+python3 -c 'import sys; open(sys.argv[1], "wb").truncate(300000)' "$ROOT/users/Bob/Pictures/cloud-only.jpg"
+# A dot in a FOLDER name, for the "(from Windows)" naming.
+mkdir -p "$ROOT/users/Bob/Desktop/dir.v2"
+echo "from windows"             > "$ROOT/users/Bob/Desktop/dir.v2/readme"
+# Names Windows allows and a careless copier does not survive.
+for n in "-leading dash.txt" "quote\"d.txt" "back\\slash.txt" "tab	in.txt" \
+         "trailing space .txt" "café ünïcødé 日本.txt" "new
+line.txt"; do
+    printf 'odd name\n' > "$ROOT/users/Bob/Downloads/$n"
+done
 echo "JPEGDATA-transcoded"      > "$ROOT/users/Bob/AppData/Roaming/Microsoft/Windows/Themes/TranscodedWallpaper"
 
 # Firefox profile: the clean win. Cache dirs exist to prove they are
@@ -178,6 +197,13 @@ for rel in ["letter.docx", "Taxes/2023.pdf"]:
         os.setxattr(p, "user.ntfs_attrib", ARCH.to_bytes(4, "little"))
     except OSError:
         pass
+# Hydrated and pinned: reparse point + cloud tag, but no RECALL/OFFLINE.
+p = os.path.join(base, "budget.xlsx")
+try:
+    os.setxattr(p, "user.ntfs_attrib", (0x400 | 0x80000 | ARCH).to_bytes(4, "little"))
+    os.setxattr(p, "user.ntfs_reparse_data", (0x9000101A).to_bytes(4, "little") + b"\0" * 12)
+except OSError:
+    pass
 PY
 
 # ── WiFi profiles, one of each kind that exists in the wild.
