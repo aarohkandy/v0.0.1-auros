@@ -88,16 +88,24 @@ teal one) and `tools/e2e/selftest.py` ("Close AurOS Setup"),
 
 ### Real Windows (proof)
 
-windows.yml run **39923570845** (commit `42541c5`, which includes the
-restyle): every job green on a real Windows Server VM, including
-`windows-source`: `--navtest` ALL PASS, `--selftest` ("window created: yes",
-"preflight done: 1", a screen-reader line with the page name and a
-button), VERSIONINFO + icon, the wizard still running after 8 s, the Fix
-step (old temp files gone; today's file, the Recycle Bin, the junction and
-the file behind it untouched), the resume task (admin-only copy, hash
-equal, no write access for Users, removed again). Not yet seen on real
-Windows: the pictures themselves (Wine renders the shots), `raw_bitlocker`
-on a real BitLocker drive, `raid-volume` names, Narrator speaking.
+windows.yml run **39959577778** (commit `8dddd31`, which contains everything
+listed above): `windows-source` green on a real Windows Server VM, all 14
+steps: `--navtest` ALL PASS (every section, incl. 4b sizes, 8 restart, 8b
+save-first, 13 close question, 14 every letter in the face and the face loaded
+from the .exe), `--selftest` (window created, preflight done, the screen-reader
+line is the new page's words and a button), the BitLocker-from-the-disk step
+(`AURBRIDGE_TEST_FVE`), the Fix step (old temp files gone; today's file, the
+Recycle Bin, the junction, the file behind it, and a month-old file in the
+folder TEMP points at all untouched), the resume task (admin-only Program Files
+copy, hash equal, no write access for Users, removed again), the ESP step with
+the 21 MiB margin, VERSIONINFO + icon, the wizard still running after 8 s.
+Earlier green: run 39923570845 (`42541c5`).
+Not yet seen on real hardware: the pictures (Wine renders the shots),
+`raw_bitlocker` on a real BitLocker drive (the runner has none; the hook makes
+the same code run), `raid-volume` model names, Narrator speaking.
+`build` had timed out on the runner's apt mirror (the 277 MB `mingw-w64`
+metapackage at 40 KB/s); `8dddd31` installs only the 64-bit compiler (60 MB).
+build.yml and tests.yml (E) install the same metapackage through `tools/apt.sh`.
 
 ## Changed for e2e (stream F: read this)
 
