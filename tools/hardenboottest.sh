@@ -172,6 +172,9 @@ put state "$s"
 i=0; while [ -z "$(shellpid)" ] && [ $i -lt 120 ]; do sleep 1; i=$((i+1)); done
 p=$(shellpid); put desktop "${p:-none}"
 u=$(ps -o user= -p "${p:-1}" | tr -d ' '); put desktop_user "$u"
+# The desktop and what it starts hold NO capability: bubblewrap (Flatpak) refuses to run
+# with any (PARITY found CAP_WAKE_ALARM in all four sets). Inh, Prm, Eff, Amb.
+put desktop_caps "$(grep -E '^Cap(Inh|Prm|Eff|Amb):' /proc/"${p:-1}"/status | awk '{print $2}' | tr '\n' ' ')"
 put failed_units "$(systemctl --failed --plain --no-legend | awk '{print $1}' | tr '\n' ' ')"
 
 # ── the cost, before anything below disturbs it ──
@@ -700,6 +703,7 @@ remote_gate() { not_is "$1" remote_first 0 && is "$1" remote_signal yes; }
 remote_yes() { is "$1" remote_consent "$(val desktop_user "$1")" && is "$1" remote_after_yes 0; }
 deb_gate() { not_is "$1" remote_deb 0 && is "$1" remote_deb_signal yes; }
 dpkg_fixed() { is "$1" dpkg_less "install ok installed"; }
+no_caps() { [ "$(val desktop_caps "$1")" = "0000000000000000 0000000000000000 0000000000000000 0000000000000000 " ]; }
 
 say "| check | hardened | controls removed | verdict |"
 say "|---|---|---|---|"
@@ -722,6 +726,7 @@ while read -r key want; do
 done < "$T/keys"
 row control "an ordinary program cannot load dccp (socket refused)" dccp_refused
 row both    "Flatpak's sandbox (bubblewrap, userns) still starts" is bwrap 0
+row both    "the desktop holds no capability (bubblewrap refuses any: no Flatpak program would open)" no_caps
 row both    "her own traffic works (DHCP address, a page from outside)" outbound
 row both    "nothing listens on the network (cups-browsed is gone)" no_listeners
 row both    "...and that check sees a listener when there is one" sees_listener

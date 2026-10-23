@@ -226,6 +226,31 @@ else
     done
 fi
 
+# ── 3b. the session must carry no capability ───────────────────────
+#
+#    aurshell and everything it starts (the session bus, every program)
+#    carried CAP_WAKE_ALARM, and bubblewrap -- not setuid on noble --
+#    refuses to run with any capability at all, so no Flatpak program
+#    could start although every one installed (PARITY, 39972421083).
+#    The bounding set is the line that holds wherever the capability
+#    came from. A rootfs cannot show a running process's CapAmb; the
+#    boot test (tools/hardenboottest.sh) reads it from /proc.
+echo
+echo "and does the desktop's session carry no capability (bubblewrap refuses any)?"
+UCAPS=$( { [ -f "$UNIT" ] && cat "$UNIT"; for d in "$RFS"/etc/systemd/system/aurshell.service.d/*.conf; do [ -f "$d" ] && cat "$d"; done; } 2>/dev/null | grep -v '^[[:space:]]*#' )
+if printf '%s\n' "$UCAPS" | grep -qx 'CapabilityBoundingSet=~CAP_WAKE_ALARM'; then
+    printf '  %-58s ok\n' "CAP_WAKE_ALARM is out of the bounding set"
+else
+    printf '  %-58s MISSING\n' "CapabilityBoundingSet=~CAP_WAKE_ALARM"
+    hit "aurshell.service lets its session hold CAP_WAKE_ALARM: no Flatpak program can start"
+fi
+if printf '%s\n' "$UCAPS" | grep -q '^AmbientCapabilities=[^[:space:]]'; then
+    printf '  %-58s GRANTED\n' "AmbientCapabilities"
+    hit "the desktop's unit hands a capability to the whole session: $(printf '%s\n' "$UCAPS" | grep '^AmbientCapabilities=[^[:space:]]' | head -1)"
+else
+    printf '  %-58s ok\n' "no capability is handed to the session"
+fi
+
 # ── 4. nothing granted may be a name for nothing ───────────────────
 echo
 echo "and does every permission this build grants actually exist?"

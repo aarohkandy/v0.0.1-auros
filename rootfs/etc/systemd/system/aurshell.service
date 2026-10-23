@@ -144,6 +144,26 @@ RuntimeDirectoryMode=0700
 # the same drop-in that carries User=, filtered by which of them the
 # image actually has.
 SupplementaryGroups=video input audio
+# NO CAPABILITIES FOR THE SESSION: THE PROGRAMS CANNOT START WITH ANY.
+#
+# Measured in the booted image (PARITY, build 39972421083): aurshell, and
+# with it the session bus and every program it starts, carried
+# CAP_WAKE_ALARM in the inheritable, permitted, effective and ambient sets.
+# noble's bubblewrap (0.9.0, not setuid) refuses to run with ANY capability
+# ("bwrap: Unexpected capabilities but not setuid"), and bubblewrap is what
+# every Flatpak program starts through -- so all ten of the most used
+# programs installed fine from "Get more programs" and not one could open.
+#
+# Nothing in this tree grants it. Taking it out of the bounding set means
+# nothing below this line can have it, wherever it comes from (PAM, the
+# user manager, a default of the distribution), and the empty
+# AmbientCapabilities= says that no capability is handed to the session on
+# purpose. If a program of ours ever needs to wake the machine (a reminder
+# that wakes it from sleep), give THAT unit the capability; never the
+# session. tools/permissions.sh checks both lines and that nothing in the
+# unit or its drop-ins grants one back.
+CapabilityBoundingSet=~CAP_WAKE_ALARM
+AmbientCapabilities=
 TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
