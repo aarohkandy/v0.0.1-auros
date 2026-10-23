@@ -149,3 +149,110 @@ for tests). Holds the Anthropic key; she never needs an account.
 4. End to end in a VM: say "potato" wish → Yes → type potato → potatoes.
 5. Adversarial review of the whole chain (prompt injection, abuse, cost,
    privacy, overlay that traps her) before it ships switched on.
+
+
+## 7. Contract v1 amendments (red team, 2026-10-23) — BINDING
+
+A five-angle red team (injection, harm to her, privacy, abuse/cost,
+product) attacked §1-§6. Everything below overrides the sections it names.
+Lead's adjustments on top of the red team:
+
+- **The owner's two examples are acceptance tests and must work**:
+  "every time I type potato, fill my screen with potatoes" (typed_word
+  `potato` → fill_screen 🥔; the emoji allowlist includes food, animals,
+  hearts, flowers, stars, weather, celebrations) and "when my laptop points
+  north, make the screen brighter" (sensor compass north → brightness
+  set_percent 100; refused with `missing: compass` where there is none).
+- **Quiet hours (21:00-08:00) apply to sound and speech, and to overlays from
+  automatic triggers** (time, every, idle, sensor, startup, battery/charger,
+  USB). An overlay from `typed_word` or `app_opened` is something she just did
+  and is NOT held by quiet hours (still held during password entry, calls,
+  screen sharing and fullscreen video per §3.5).
+- Model choice is stream CL's, made with the `claude-api` skill and measured
+  on the adversarial set; "Haiku-class" below is the default, not a rule.
+
+### **1. §1.7 (new) — the cloud is untrusted.** Streams: W1, CL.
+> "7. **The engine treats every cloud response as if an attacker wrote it.** A stolen key or a misbehaving model must not produce a harmful wish. Every rule in §2–§3 is enforced on the device, under a test named after the attack it stops (`test_scam_install`, `test_fake_support_text`, …). The service's own validation saves cost and does not count as a safety layer."
+
+### **2. §2.2 — outward actions.** Merges inj1, inj2, inj12, her12, privacy2 and product13. Streams: W1 (rules), W2 (Yes screen), CL (prompt).
+- Remove the `install_program` row. Add to §2: "Installing programs is not a wish in v1. The answer is `cannot` with `missing: install`."
+- `open_website`: replace `url` with `site`, which must be one of her browser bookmarks or the shipped `sites.json`. Anything else is refused.
+- New rule under the table: "`open_website` is allowed only with `when: now`. `open_app` is allowed only with `now` or `time`. A wish has at most one outward action, and it gets its own Yes screen that shows the destination in large text."
+
+### **3. §2 and §2.2 — no model text reaches her unchecked.** Merges inj3, inj4, inj8, inj9, her7, her8, product8 and product12. Streams: W1 (filter), CL (response shape).
+- Delete `title` and `summary` from the wish document. The device writes both from the trigger and actions, as §1.2 already does for the sentence.
+- `/v1/wish` `cannot` becomes `{kind:"cannot", missing:<enum>, alt_wish?}`. `/v1/ask` returns `{help_page_id, wish?}`. The device writes every sentence and shows its own help page. The cloud counts `missing` values only.
+- New §2.3 "Free text" (`fill_screen.text`, `show_message`, `remind`, `speak`):
+> "NFC-normalise. Reject bidi and zero-width characters, any run of 5 or more digits, URLs and domain names, money amounts, and the words virus, infected, hacked, police, bank, Microsoft, Apple, AurOS, support, password. After normalising, every word must appear in her own wish text, apart from a shipped list of filler words. Lengths are counted in grapheme clusters, with a byte cap as well. Cards are labelled 'Your note:'. The confirmation shows the text word for word."
+- `emoji` must come from a shipped allowlist of about 60 friendly emoji.
+- §2.2 note: `speak` never claims to be the computer or a company.
+
+### **4. §2.4 (new) — which triggers may use which actions.** Merges inj6, inj10, inj13, inj14, her4, her9, her10, her14 and product5. Stream: W1.
+> "Recurring triggers (`every`, `idle`, `startup`, `sensor`, `typed_word`, `app_opened`, battery/charger/USB) may use only `fill_screen`, `play_sound`, `brightness`, `night_light` and `show_message`. On recurring triggers, `brightness` and `volume` accept `set_percent` only. `set_look`, `set_text_size`, `set_wallpaper` and `volume` are allowed only with `now`. `remind` is allowed only with `time`, at most 4 a day. `speak` is allowed only with `time` or `now`, at most 3 a day per wish. `every` is at least 30 minutes when the wish makes a sound. Triggers fire on the edge, when the condition starts, with hysteresis. Sensor and `idle` triggers wait at least 10 minutes before firing again, and any wish waits at least 60 s between overlays. No overlay flashes more than 3 times a second. Quiet hours run 21:00–08:00 for sound, speech and overlays; only a `time`+`remind` set for that time is exempt. A `typed_word` is at least 4 letters, not in the shipped stop-word list, and not in the shipped list of money, bank and login words."
+- Floors for wishes: volume at least 20 %, brightness at least 30 %. Wallpaper must pass a contrast check against the theme.
+
+### **5. §3.3 — limits.** Merges product4 and inj6. Stream: W1.
+> "At most 6 actions an hour per wish and 20 overall. `time`+`remind` does not count toward the overall limit. Only the wish that broke a limit is paused. It resumes by itself after 1 hour, and she is told once."
+
+### **6. §3.5 (new) "Never interrupt".** Merges her1, privacy3, privacy11 and her10. Stream: W1, with the compositor.
+> "`typed_word` matching skips fields the compositor marks as sensitive (text-input-v3 `password` or `sensitive_data`). It keeps at most 32 characters in RAM, clears them when focus changes and never writes them anywhere. At most 10 trigger words. Visual and sound actions are held while the camera or microphone is on, during fullscreen video, while the screen is shared, on the lock or login screen, and while a password or permission dialog is open. Actions run after 3 s with no typing. The key or click that dismisses an overlay is used up and never reaches the app underneath. Cards never take focus, are never larger than half the screen, and there is at most one per wish; a new firing replaces the old card. A reminder can be set to 'show privately': the card says 'You have a reminder' until she presses it."
+
+### **7. §3.6 (new) — Undo and Stop.** Merges inj10, her3, her13 and product11. Streams: W1, W2.
+> "Before any change, the engine saves the previous value. For 10 minutes after a `now` wish, an **Undo my last wish** button sits next to Wish. My wishes has **Put everything back how it was**. After `set_look` or `set_text_size`, she is asked 'Keep this?', and it goes back after 15 s with no answer. Every overlay, card and wish-caused change shows 'Your wish "X" — [Stop this wish]' with a 44 px button that needs one click. The Help button lists today's wish activity ('What my wishes did today') and offers 'Stop all wishes'. `show_message` stays until she dismisses it."
+
+### **8. §3.1 — the stored wish and missed reminders.** Merges product1, product2, product3, her2 and product15. Stream: W1.
+- Each stored wish adds `id`, `v`, `status` (`on`, `off` or `paused:<enum>`), `created_at`, `created_by` (`text` or `voice`), `last_ran`, `notify` (`tell_me` for the first 3 runs, then `quiet`) and `if_missed` (`when_back` for `remind` with a 12-hour window, otherwise `skip`).
+- Times are local wall-clock time and follow daylight saving. A missed reminder survives reboots and says "This was for 9:00". Reminder cards offer "Remind me in 10 minutes".
+- The engine keeps every schema version it shipped and migrates on load. A wish it can't parse shows as "paused: needs a newer AurOS" and is never dropped.
+- At login and after every update, the engine checks that each wish's app, theme and sensor still exist. If not, the wish is paused with a plain reason.
+- The day after a recurring wish is created, a card asks "Keep it?". After 30 days, an unanswered card switches the wish off, except a `remind`.
+
+### **9. §4 — confirmation and accessibility.** Merges her5, her6, her15, abuse9, abuse15 and product14. Stream: W2.
+> "The confirmation shows 'You said: …' in large, editable text. The device's sentence always states when, what, how long and how to stop, with times, numbers and words in bold. She confirms by pressing the button; a spoken 'yes' does not count. Yes and No are the same size, neither has default focus, and there are 'Show me' and 'Read it to me' buttons. There are sentence templates for every shipped language; with no template, the sentence uses her setup language; with neither, the wish is refused. The microphone button is tap to start and tap to stop, stays open at most 30 s, and has no wake word. Audio stays in RAM and is dropped after transcription. If speech recognition is unsure, she is asked to repeat or type. One request at a time. The same text sent again within 30 s, or a text under 3 characters, is not sent. No automatic retries; `retry_after` is honoured, and Cancel stops the request upstream. Waiting gives up after 20 s. `speak` waits for the screen reader to finish. Overlays have an accessible name that includes the wish. Touch targets are at least 44 px, with a test at 1024×600. 'Stop', 'turn off wishes' and 'what can you do?' are handled on the device. On first open she sees 6 example wishes."
+- §1.6: "Wishes she has already made run with no network at all." Ship a local gallery of about 20 templates whose blanks she fills by tapping. Making wishes from it survives outages and the spend cap.
+
+### **10. §5 — cost and abuse.** Merges inj11, abuse1–13, product7 and privacy15. Stream: CL.
+> "No secret in the image authenticates a client. A Bearer token is required on every endpoint except `/register`. `/register` is limited to 3 per IP per day (per /64 on IPv6) and needs a hashcash proof-of-work of about 2 s on a 2013 laptop. Daily quotas: 20 `/wish` and 20 `/ask` for a token at least 7 days old with one confirmed wish, 3 for a younger token. Input is at most 300 characters and the body at most 8 KB. The model is Haiku-class, with a prompt-cached system prompt and fixed `max_tokens` (400 for `/wish`, 300 for `/ask`). A request whose estimated cost is over $0.01 is refused. The budget has fixed pools: 70 % for established tokens, 20 % for new ones, 10 % for `/ask`, and no pool borrows from another. The owner is alerted at 50 %. Wishes has its own Anthropic workspace with a Console spend limit. A single Durable Object holds the counters and the limit on concurrent requests. Tokens expire after 90 days and re-register silently, and there is a ban list. Per-IP limits apply only to `/register`. A 429 says 'You've made lots of wishes today — more tomorrow'. A 503 says 'Wishes are resting for a little while'. The two are counted separately."
+- The identical-request cache is deleted.
+- The worked cost line in the contract: quota × cost per call × expected installs stays under the cap.
+
+### **11. §5 — request shape.** Merges inj7, privacy4, privacy7, abuse14 and product2. Streams: CL, W1.
+- New request: `{text, lang, schema:{v, triggers[], actions[]}, sensors:{compass, tilt, light}}`.
+- Remove `apps[]`, `themes[]` and `existing`. The model returns `app_name` or `theme_name` as free text. The device matches it to what is installed, and no match means refused. Duplicates are found on the device.
+- The cloud passes everything except her text to the model as quoted data.
+- The cloud address moves to a signed package config.
+
+### **12. §1.4 and §1.8 (new) — privacy.** Merges privacy1, 5, 8, 9, 10, 12, 13 and 14. Streams: CL, W2, W1.
+- The consent text is written into the contract. It names the controller, a contact, the purpose, the processors (Cloudflare, Anthropic), the transfer to the US, retention (Anthropic deletes after 30 days, or keeps up to 2 years if its systems flag the request), her rights and a privacy-policy link.
+- The owner signs Anthropic's data processing agreement and asks for zero data retention.
+- Before sending, the device replaces digit runs of 5 or more and e-mail addresses with placeholders.
+- `/v1/register` carries `consent_version`. A new version means she is asked again.
+- `POST /v1/forget` deletes the token and its counters. Turning Wishes off, or pressing "Forget everything" (which also deletes `wishes.json`), calls it and makes a new `install_id`. The contract states plainly that Anthropic's copy expires on its own schedule and the service cannot delete it.
+- `install_id` is a random 128-bit value made when she agrees.
+- Counters are keyed by `HMAC(daily_key, token)` and `HMAC(daily_key, /24)`, and the daily key is deleted after 48 hours. A CI test fails if the service logs a request body or the Authorization header.
+- Engine events go over a private socket that only `aurwish` can connect to. `aurwish` logs counts only. `wishes.json` is left out of any backup that leaves the machine.
+- Wishes is off at build time in school-kiosk and in guest accounts, and there is a policy flag `wishes="off"` an administrator can enforce.
+
+### **13. §2.2 — new actions, all local.** From product13. Stream: W1.
+- Add `speak_time`, `pointer_size` and `do_not_disturb{on, until}`.
+
+### **14. §6 — the demo.** From product5. Stream: W2.
+- The end-to-end test must not rely on a compass. When a sensor is missing, the answer is `cannot` with `missing: compass`.
+
+### Rejected or narrowed (red team)
+- **inj1, keep install with a curated list:** narrowed; install is dropped for v1 entirely (change 2), which is smaller and safer.
+- **inj2, `open_app` only with `now`:** narrowed to `now` or `time`, because "open the video call on Sunday at 4" is a top wish.
+- **inj3 blocklist words "call" and "tax":** rejected. They block "remind me to call my daughter", and the digit rule already catches phone numbers.
+- **inj7, regex on `caps.apps`:** superseded, since `apps` is removed (change 11).
+- **inj10, text size from a wish only goes up:** rejected. Undo plus "Keep this?" covers it, and she may want smaller text.
+- **her14, refuse the 5,000 most common words:** narrowed to a stop-word list. A 5,000-word list would block real trigger words such as "pills".
+- **her2, unanswered re-check switches the wish off:** narrowed. Never for `remind`, because silently losing a pill reminder is the worst outcome.
+- **product10, the dismissing key passes through:** rejected. It conflicts with her1, where a passed-through click could land on something she can't see.
+- **product9, `kind:"change"` from the cloud:** deferred. It needs her wish list sent to the cloud; editing happens in My wishes on the device instead.
+- **product13, `slideshow` and `countdown`:** deferred to v1.1. They are not safety-relevant and add work.
+- **product11, volume floor 10 %:** superseded by the 20 % floor in change 4.
+- **abuse7, HMAC-keyed cache:** moot, since the cache is deleted.
+- **abuse10, automatic throttling on answer ratio or length:** deferred. Pools, quotas and `max_tokens` already bound the cost.
+- **abuse11, suspend a token seen on more than 3 networks an hour:** rejected. It punishes laptops that move between home, a library and a phone hotspot; expiry and the ban list cover it.
+- **inj5:** kept as change 1.
+- **privacy6:** merged into change 10 (cache deleted).
