@@ -35,8 +35,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 - **The one blocker that matters most:** on a real Windows 11 (in the test VM) everything works up to the restart
   (Get AurOS → Restart now in 4 min 19 s), then the install step refuses: the Linux tool that shrinks Windows
-  could not read a fresh Windows 11 drive (`cannot-measure`). Being diagnosed now. If it is general, the
-  fast path (Windows shrinks itself) becomes the way AurOS installs. Also seen: Windows 11 switched
+  could not read a fresh Windows 11 drive (`cannot-measure`). **Solved:** a bug in our own code (it threw away
+  the tool's answer when the output was long, which it always is on a real drive); fixed in 6917bde with a test.
+  A new prerelease and a new real-Windows run are next. Also seen: Windows 11 switched
   BitLocker on by itself at first login, so encrypted PCs will be the norm (your D13 was right).
 
 - **Honest install time today (the installer's own measured estimate): 25-60 minutes on a solid-state
