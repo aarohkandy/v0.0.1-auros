@@ -980,8 +980,9 @@ stage_overlay() {
                 wayland-scanner server-header \$p gen/\$n-server.h || exit 1; \
                 wayland-scanner private-code  \$p gen/\$n-protocol.c || exit 1; \
             done; \
-            for p in /usr/share/wayland-protocols/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml; do \
-                n=\$(basename \$p .xml | sed -e 's/-unstable-v[13]//'); \
+            for p in /usr/share/wayland-protocols/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml \
+                     /usr/share/wayland-protocols/staging/cursor-shape/cursor-shape-v1.xml; do \
+                n=\$(basename \$p .xml | sed -e 's/-unstable-v[13]//' -e 's/-v1\$//'); \
                 wayland-scanner server-header \$p gen/\$n-server.h || exit 1; \
                 wayland-scanner private-code  \$p gen/\$n-protocol.inc || exit 1; \
             done" \

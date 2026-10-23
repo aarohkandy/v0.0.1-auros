@@ -16,7 +16,7 @@ chmod 700 "$OUT/run"
 trap 'rm -rf "$OUT"' EXIT INT TERM
 cc -O1 -g -std=gnu11 -Wall -Wextra -Wno-unused-parameter -o "$OUT/wltest-deco" \
    "$HERE/wltest-deco.c" "$W/aurwl.c" "$W/textinput.c" \
-   "$ROOT/src/aurshell/draw.c" "$ROOT/src/aurshell/session.c" "$ROOT/src/aurshell/run.c" \
+   "$ROOT/src/aurshell/draw.c" "$ROOT/src/aurshell/session.c" "$ROOT/src/aurshell/cursor.c" "$ROOT/src/aurshell/run.c" \
    "$ROOT/src/aurshell/shellcommon.c" "$ROOT/src/aurshell/anim.c" "$ROOT/src/common/theme.c" \
    "$ROOT/src/common/font.c" "$ROOT"/src/aurshell/layouts/*.c "$ROOT/src/aurshell/foot.c" \
    "$W/gen/text-input-protocol.c" "$W/gen/xdg-shell-protocol.c" "$W/gen/xdg-decoration-protocol.c" \

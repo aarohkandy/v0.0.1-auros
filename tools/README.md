@@ -169,8 +169,9 @@ for x in /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml \
   wayland-scanner private-code  "$x" "build/gen/$n-protocol.c"
 done
 # protocols compiled into aurwl.c (included, not linked: .inc)
-for x in /usr/share/wayland-protocols/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml; do
-  n=$(basename "$x" .xml | sed s/-unstable-v1//)
+for x in /usr/share/wayland-protocols/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml \
+         /usr/share/wayland-protocols/staging/cursor-shape/cursor-shape-v1.xml; do
+  n=$(basename "$x" .xml | sed -e 's/-unstable-v1//' -e 's/-v1$//')
   wayland-scanner server-header "$x" "build/gen/$n-server.h"
   wayland-scanner private-code  "$x" "build/gen/$n-protocol.inc"
 done

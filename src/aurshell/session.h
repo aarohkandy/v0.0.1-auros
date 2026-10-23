@@ -34,6 +34,11 @@ aurwl_win *session_win(shell_ctx *c, uint32_t wid);
  * drew (and nothing else: the band stays). */
 void session_paint_full(shell_ctx *c, surface *fb);
 
+/* The pointer, last of all: the program under it may have asked for a hand,
+ * a text cursor or a picture of its own (aurwl_cursor), and otherwise it is
+ * the shell's arrow. Large, and sized by the text-size setting. */
+void session_paint_cursor(shell_ctx *c, surface *fb);
+
 /* Menus and dropdowns, painted above everything the archetype drew. */
 void session_paint_popups(shell_ctx *c, surface *fb);
 

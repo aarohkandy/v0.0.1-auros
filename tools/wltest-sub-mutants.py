@@ -16,8 +16,10 @@ import os, subprocess, sys, tempfile, shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src", "aurwl", "aurwl.c")
+CURSOR = os.path.join(ROOT, "src", "aurshell", "cursor.c")
 
 # (what is broken, scenario that must notice, old, new)
+# A scenario written "cursortest" means tools/cursortest.sh against src/aurshell/cursor.c.
 MUTANTS = [
     ("a desync child under a sync parent is not held", "effective-sync",
      "        if (w->sub_sync) return 1;\n        if (++i > PARENT_MAX) return 1;",
@@ -55,6 +57,27 @@ MUTANTS = [
     ("a viewport destination is ignored", "viewport",
      "            *left -= blit_over(flat, clip, ox, oy, lw * k, lh * k, s->store, sr, s->opaque_fmt);",
      "            *left -= blit_over(flat, clip, ox, oy, sr.x1 - sr.x0, sr.y1 - sr.y0, s->store, sr, s->opaque_fmt);"),
+    ("scale is not capped at four", "cursortest",
+     "    if (sc > 4) sc = 4;\n    return sc;", "    return sc;", CURSOR),
+    ("pointer is not the hand", "cursortest",
+     "    case 4:  case 16: case 17:                      return CUR_HAND;", "    case 16: case 17:                               return CUR_HAND;", CURSOR),
+    ("text is not the I-beam", "cursortest",
+     "    case 9:  case 10:                               return CUR_IBEAM;", "    case 10:                                        return CUR_IBEAM;", CURSOR),
+    ("resizing left-right is up-down", "cursortest",
+     "    case 18: case 25: case 26: case 30:             return CUR_EW;", "    case 18: case 25: case 30:                      return CUR_EW;", CURSOR),
+    ("a picture a little off size is resampled", "cursortest",
+     "    if (m > 940 && m < 1060) return 1000;", "", CURSOR),
+    ("pictures are scaled to the wrong canvas", "cursortest",
+     "    int m = (int)((24L * sc * 1000L) / d);", "    int m = (int)((20L * sc * 1000L) / d);", CURSOR),
+    ("a picture's hotspot is not put on the point", "cursortest",
+     "    int ox = x - (int)(((long)hot_x * m) / 1000), oy = y - (int)(((long)hot_y * m) / 1000);",
+     "    int ox = x, oy = y;", CURSOR),
+    ("a picture's transparency is ignored", "cursortest",
+     "    if (a == 255) return s;\n    if (a == 0) return d;", "    if (a) return s;\n    return d;", CURSOR),
+    ("a glyph has no outline", "cursortest",
+     "    if (!outline) return;", "    return;", CURSOR),
+    ("a glyph is drawn off its hotspot", "cursortest",
+     "    int ox = x - g->hx * sc, oy = y - g->hy * sc;", "    int ox = x, oy = y;", CURSOR),
     ("a viewport source rectangle is ignored", "viewport",
      "            if (s->current.vp_src_set) {\n                irect q",
      "            if (0) {\n                irect q"),
@@ -124,6 +147,33 @@ MUTANTS = [
     ("the target is told the wrong coordinates", "dnd",
      "        wl_data_device_send_motion(c->drag.dev, t, wl_fixed_from_int(lx), wl_fixed_from_int(ly));",
      "        wl_data_device_send_motion(c->drag.dev, t, wl_fixed_from_int(sx), wl_fixed_from_int(sy));"),
+    ("any serial may change the pointer", "cursor",
+     "    return c->ptr_surf && win_client(c->ptr_surf) == cl && serial == c->ptr_enter_serial;",
+     "    return c->ptr_surf && win_client(c->ptr_surf) == cl;"),
+    ("any program may change the pointer", "cursor-shape",
+     "    return c->ptr_surf && win_client(c->ptr_surf) == cl && serial == c->ptr_enter_serial;",
+     "    return c->ptr_surf && serial == c->ptr_enter_serial;"),
+    ("the picture outlives the pointer entering something else", "cursor",
+     "    cursor_reset(c);              /* whatever it asked for was for that surface */",
+     ""),
+    ("the hotspot ignores attach offsets", "cursor",
+     "        if (hot_x) *hot_x = (c->cursor.hx - (w->off_x - c->cursor.ox)) * sc;",
+     "        if (hot_x) *hot_x = c->cursor.hx * sc;"),
+    ("a hidden pointer is the arrow", "cursor",
+     "    case AURWL_CURSOR_HIDDEN: return AURWL_CURSOR_HIDDEN;",
+     "    case AURWL_CURSOR_HIDDEN: return AURWL_CURSOR_DEFAULT;"),
+    ("a cursor surface with no picture hides the pointer", "cursor",
+     "        if (!w || !w->store) return AURWL_CURSOR_DEFAULT;",
+     "        if (!w || !w->store) return AURWL_CURSOR_HIDDEN;"),
+    ("a shape that does not exist is accepted", "cursor-shape",
+     "        shape > WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ZOOM_OUT) {",
+     "        shape > 9999) {"),
+    ("the shape is never recorded", "cursor-shape",
+     "    c->cursor.shape = (int)shape;\n    c->damage_seq++;",
+     "    c->damage_seq++;"),
+    ("a cursor surface's pixels are not the program's", "cursor",
+     "        if (image) *image = w->store;",
+     "        if (image) *image = w->store; if (image && w->store) w->store->px[0] ^= 1;"),
     ("text input is not entered on the toplevel", "textinput",
      "    if (textinput_focus) textinput_focus(nw, w->res);",
      "    if (textinput_focus) textinput_focus(nw, NULL);"),
@@ -135,12 +185,15 @@ def main():
     tmp = tempfile.mkdtemp(prefix="wltest-sub-mutants.")
     bad = ran = 0
     try:
-        for what, scenario, old, new in MUTANTS:
+        for m in MUTANTS:
+            what, scenario, old, new = m[:4]
+            target = m[4] if len(m) > 4 else SRC
+            tsrc = open(target).read() if target != SRC else src
             if only and only not in what and only not in scenario:
                 continue
             ran += 1
-            if src.count(old) != 1:
-                print("STALE  %-62s (pattern matches %d times)" % (what, src.count(old)))
+            if tsrc.count(old) != 1:
+                print("STALE  %-62s (pattern matches %d times)" % (what, tsrc.count(old)))
                 bad += 1
                 continue
             if old == new:
@@ -148,10 +201,14 @@ def main():
                 bad += 1
                 continue
             path = os.path.join(tmp, "mutant.c")
-            open(path, "w").write(src.replace(old, new))
-            env = dict(os.environ, AURWL_C=path, OUT=os.path.join(tmp, "out"))
-            r = subprocess.run(["sh", os.path.join(ROOT, "tools", "wltest-sub.sh"), scenario],
-                               env=env, capture_output=True, text=True)
+            open(path, "w").write(tsrc.replace(old, new))
+            if scenario == "cursortest":
+                env = dict(os.environ, CURSOR_C=path, OUT=os.path.join(tmp, "out"))
+                cmd = ["sh", os.path.join(ROOT, "tools", "cursortest.sh")]
+            else:
+                env = dict(os.environ, AURWL_C=path, OUT=os.path.join(tmp, "out"))
+                cmd = ["sh", os.path.join(ROOT, "tools", "wltest-sub.sh"), scenario]
+            r = subprocess.run(cmd, env=env, capture_output=True, text=True)
             out = r.stdout + r.stderr
             if "error:" in r.stderr and "wltest-sub" not in out.split("error:")[0][-40:]:
                 print("BUILD  %-62s\n%s" % (what, r.stderr[-600:]))

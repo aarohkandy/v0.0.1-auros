@@ -47,6 +47,7 @@
 #include "viewporter-client.h"
 #include "text-input-client.h"
 #include "idle-inhibit-client.h"
+#include "cursor-shape-client.h"
 
 #include "../src/aurwl/aurwl.h"
 #include "../src/aurwl/textinput.h"
@@ -121,7 +122,7 @@ static void img_rect(img *m, int x, int y, int w, int h, uint32_t argb)
 
 /* ── the line between the two processes ───────────────────────────── */
 
-enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_TI, M_IDLE, M_TIME, M_KEY, M_END };
+enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_TI, M_IDLE, M_TIME, M_KEY, M_CURSOR, M_LEAVE, M_END };
 typedef struct { int kind, a, b, c, d; } msg;
 
 static int xfer(int fd, void *buf, size_t n, int wr)
@@ -222,6 +223,33 @@ static int serve(aurwl *c, int chan, pid_t kid, int *child_result)
         case M_BUTTON: aurwl_pointer_button(c, (uint32_t)m.a, m.b, now_ms()); break;
         case M_FOCUS:  aurwl_set_focus(c, w); break;
         case M_KEY:    aurwl_key(c, (uint32_t)m.a, m.b, now_ms()); break;
+        case M_LEAVE:  aurwl_pointer_motion(c, NULL, 0, 0, now_ms()); break;   /* off every window */
+        case M_CURSOR: {  /* "what is the pointer asked to look like?" a=kind b,c=hotspot d=shape; IMAGE: w,h, pixels follow */
+            int dim[2] = { 0, 0 };
+            uint32_t *px = NULL;
+            if (m.a == AURWL_CURSOR_IMAGE) {
+                if (xfer(chan, dim, sizeof dim, 0) < 0) return 1;
+                px = malloc((size_t)dim[0] * dim[1] * 4);
+                if (!px || xfer(chan, px, (size_t)dim[0] * dim[1] * 4, 0) < 0) return 1;
+            }
+            surface *im = NULL; int hx = 0, hy = 0, sh = 0;
+            int kind = aurwl_cursor(c, &im, &hx, &hy, &sh);
+            int ok = kind == m.a;
+            if (ok && kind == AURWL_CURSOR_SHAPE) ok = sh == m.d;
+            if (ok && kind == AURWL_CURSOR_IMAGE) {
+                ok = im && im->w == dim[0] && im->h == dim[1] && hx == m.b && hy == m.c;
+                for (int y = 0; ok && y < dim[1]; y++)
+                    for (int x = 0; x < dim[0]; x++)
+                        if (im->px[(size_t)y * im->stride + x] != px[y * dim[0] + x]) { ok = 0; break; }
+            }
+            if (!ok) {
+                printf("      pointer picture: kind %d (hot %d,%d shape %d%s), expected kind %d (hot %d,%d shape %d)\n",
+                       kind, hx, hy, sh, im ? "" : ", no image", m.a, m.b, m.c, m.d);
+                fails_here++; reply = 1;
+            }
+            free(px);
+            break;
+        }
         case M_FRAME:  aurwl_frame_done(c, now_ms()); break;
         case M_RESIZE: if (w) aurwl_win_configure(w, m.a, m.b, 1, 0, 0); break;
         case M_ASK: {     /* "what size does the window think it is?" */
@@ -277,6 +305,8 @@ struct cl {
     struct wl_pointer *ptr;
     struct zwp_text_input_manager_v3 *timgr;
     struct zwp_idle_inhibit_manager_v1 *inhmgr;
+    struct wp_cursor_shape_manager_v1 *csmgr;
+    uint32_t enter_serial;        /* of the last wl_pointer.enter */
     struct wl_data_device_manager *ddm;
     struct wl_data_device *ddev;
     struct {                      /* what the drag target side was told */
@@ -312,6 +342,7 @@ static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char
     else if (!strcmp(iface, "xdg_wm_base"))      c->wm   = wl_registry_bind(r, name, &xdg_wm_base_interface, 2);
     else if (!strcmp(iface, "wp_viewporter"))    c->vper = wl_registry_bind(r, name, &wp_viewporter_interface, 1);
     else if (!strcmp(iface, "wl_seat"))          c->seat = wl_registry_bind(r, name, &wl_seat_interface, 5);
+    else if (!strcmp(iface, "wp_cursor_shape_manager_v1")) c->csmgr = wl_registry_bind(r, name, &wp_cursor_shape_manager_v1_interface, 1);
     else if (!strcmp(iface, "wl_data_device_manager")) c->ddm = wl_registry_bind(r, name, &wl_data_device_manager_interface, 3);
     else if (!strcmp(iface, "zwp_idle_inhibit_manager_v1")) c->inhmgr = wl_registry_bind(r, name, &zwp_idle_inhibit_manager_v1_interface, 1);
     else if (!strcmp(iface, "zwp_text_input_manager_v3")) c->timgr = wl_registry_bind(r, name, &zwp_text_input_manager_v3_interface, 1);
@@ -320,7 +351,7 @@ static void reg_remove(void *d, struct wl_registry *r, uint32_t n) { (void)d; (v
 static const struct wl_registry_listener reg_l = { reg_global, reg_remove };
 
 static void p_enter(void *d, struct wl_pointer *p, uint32_t ser, struct wl_surface *s, wl_fixed_t x, wl_fixed_t y)
-{ (void)p; (void)ser; struct cl *c = d; c->pe.in = s; c->pe.enters++; c->pe.ex = wl_fixed_to_int(x); c->pe.ey = wl_fixed_to_int(y); }
+{ (void)p; struct cl *c = d; c->enter_serial = ser; c->pe.in = s; c->pe.enters++; c->pe.ex = wl_fixed_to_int(x); c->pe.ey = wl_fixed_to_int(y); }
 static void p_leave(void *d, struct wl_pointer *p, uint32_t ser, struct wl_surface *s)
 { (void)p; (void)ser; (void)s; struct cl *c = d; c->pe.in = NULL; c->pe.leaves++; }
 static void p_motion(void *d, struct wl_pointer *p, uint32_t t, wl_fixed_t x, wl_fixed_t y)
@@ -1181,6 +1212,145 @@ static void sc_dnd(struct cl *c)
     wl_data_source_destroy(src);
 }
 
+/* 25. The pointer's picture. A program under the pointer may set a picture
+ * of its own (wl_pointer.set_cursor: pixels, a hotspot, attach offsets move
+ * it), hide the pointer (null surface), or name a shape
+ * (wp_cursor_shape_v1) for the shell to draw. Only the program the pointer
+ * is on, quoting its latest enter, may; and the picture is gone as soon as
+ * the pointer enters or leaves anything. What the shell is handed is the
+ * program's own pixels, byte for byte. */
+static void ask_cursor(struct cl *c, int kind, int hx, int hy, int shape, const img *im)
+{
+    wl_display_roundtrip(c->dpy);
+    msg m = { M_CURSOR, kind, hx, hy, shape };
+    uint8_t reply = 1;
+    int ok = xfer(c->chan, &m, sizeof m, 1) == 0;
+    if (ok && kind == AURWL_CURSOR_IMAGE) {
+        int dim[2] = { im->w, im->h };
+        ok = xfer(c->chan, dim, sizeof dim, 1) == 0 &&
+             xfer(c->chan, im->px, (size_t)im->w * im->h * 4, 1) == 0;
+    }
+    if (!ok || xfer(c->chan, &reply, 1, 0) < 0) exit(97);
+    if (reply) c->failed = 1;
+}
+
+static img pointer_img(int w, int h, uint32_t seed)
+{
+    img m = img_new(w, h);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            uint32_t a = (seed + (uint32_t)(x * 40 + y * 17)) & 255;       /* premultiplied: colour <= alpha */
+            m.px[y * w + x] = (a << 24) | ((a * (uint32_t)((x * 70) & 255) / 255) << 16) |
+                              ((a * (uint32_t)((y * 90) & 255) / 255) << 8) | (a / 3);
+        }
+    return m;
+}
+
+static void sc_cursor(struct cl *c)
+{
+    if (!c->ptr) { printf("      no pointer\n"); c->failed = 1; return; }
+    img root = img_solid(100, 80, GREY), page = img_solid(60, 40, GREEN);
+    top *t = mktop(c, &root, XRGB);
+    sub P = mksub(c, t->s, 10, 10, &page, XRGB, 1);
+    wl_surface_commit(t->s);
+    ask(c, M_FOCUS, 0, 0);
+    ask_cursor(c, AURWL_CURSOR_DEFAULT, 0, 0, 0, NULL);          /* nobody is under the pointer */
+    ask(c, M_MOVE, 15, 15);                                      /* on the page */
+    ask_cursor(c, AURWL_CURSOR_DEFAULT, 0, 0, 0, NULL);          /* entered, nothing asked: the shell's arrow */
+
+    img a = pointer_img(6, 5, 90), b = pointer_img(6, 5, 200);
+    struct wl_surface *cs = wl_compositor_create_surface(c->comp);
+    wl_pointer_set_cursor(c->ptr, c->enter_serial, cs, 2, 1);    /* a surface with no picture yet */
+    wl_surface_commit(cs);
+    ask_cursor(c, AURWL_CURSOR_DEFAULT, 0, 0, 0, NULL);          /* ... is not a hidden pointer */
+    shmbuf ba = mkbuf(c, &a, ARGB);
+    wl_surface_attach(cs, ba.buf, 0, 0);
+    wl_surface_damage(cs, 0, 0, 6, 5);
+    wl_surface_commit(cs);
+    ask_cursor(c, AURWL_CURSOR_IMAGE, 2, 1, 0, &a);              /* the program's own pixels, hotspot (2,1) */
+
+    shmbuf bb = mkbuf(c, &b, ARGB);                              /* the next frame of an animated cursor */
+    wl_surface_attach(cs, bb.buf, 0, 0);
+    wl_surface_damage(cs, 0, 0, 6, 5);
+    wl_surface_commit(cs);
+    ask_cursor(c, AURWL_CURSOR_IMAGE, 2, 1, 0, &b);
+
+    shmbuf bc = mkbuf(c, &a, ARGB);                              /* attached 1 left and 2 up: the hotspot moves the other way */
+    wl_surface_attach(cs, bc.buf, -1, -2);
+    wl_surface_damage(cs, 0, 0, 6, 5);
+    wl_surface_commit(cs);
+    ask_cursor(c, AURWL_CURSOR_IMAGE, 3, 3, 0, &a);
+
+    wl_pointer_set_cursor(c->ptr, c->enter_serial - 1, NULL, 0, 0);    /* a serial that is not the enter's: ignored */
+    ask_cursor(c, AURWL_CURSOR_IMAGE, 3, 3, 0, &a);
+    wl_pointer_set_cursor(c->ptr, c->enter_serial, NULL, 0, 0);        /* hide it */
+    ask_cursor(c, AURWL_CURSOR_HIDDEN, 0, 0, 0, NULL);
+    wl_pointer_set_cursor(c->ptr, c->enter_serial, cs, 1, 1);
+    ask_cursor(c, AURWL_CURSOR_IMAGE, 1, 1, 0, &a);
+
+    ask(c, M_MOVE, 5, 5);                                        /* onto the frame: a new enter, the picture is gone */
+    ask_cursor(c, AURWL_CURSOR_DEFAULT, 0, 0, 0, NULL);
+    wl_pointer_set_cursor(c->ptr, c->enter_serial - 1, cs, 0, 0);      /* the OLD enter's serial: ignored */
+    ask_cursor(c, AURWL_CURSOR_DEFAULT, 0, 0, 0, NULL);
+    wl_pointer_set_cursor(c->ptr, c->enter_serial, cs, 0, 0);
+    ask_cursor(c, AURWL_CURSOR_IMAGE, 0, 0, 0, &a);
+
+    ask(c, M_LEAVE, 0, 0);                                       /* off every window (the shell passes none) */
+    ask_cursor(c, AURWL_CURSOR_DEFAULT, 0, 0, 0, NULL);
+    (void)P;
+}
+
+static void sc_cursor_shape(struct cl *c)
+{
+    if (!c->csmgr || !c->ptr) { printf("      no cursor shape global\n"); c->failed = 1; return; }
+    img root = img_solid(100, 80, GREY), page = img_solid(60, 40, GREEN);
+    top *t = mktop(c, &root, XRGB);
+    sub P = mksub(c, t->s, 10, 10, &page, XRGB, 1);
+    wl_surface_commit(t->s);
+    ask(c, M_FOCUS, 0, 0);
+    struct wp_cursor_shape_device_v1 *dev = wp_cursor_shape_manager_v1_get_pointer(c->csmgr, c->ptr);
+    ask(c, M_MOVE, 15, 15);
+    ask_cursor(c, AURWL_CURSOR_DEFAULT, 0, 0, 0, NULL);
+    wp_cursor_shape_device_v1_set_shape(dev, c->enter_serial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER);
+    ask_cursor(c, AURWL_CURSOR_SHAPE, 0, 0, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER, NULL);
+    wp_cursor_shape_device_v1_set_shape(dev, c->enter_serial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT);
+    ask_cursor(c, AURWL_CURSOR_SHAPE, 0, 0, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT, NULL);
+    wp_cursor_shape_device_v1_set_shape(dev, c->enter_serial + 1, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_WAIT);  /* wrong serial */
+    ask_cursor(c, AURWL_CURSOR_SHAPE, 0, 0, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT, NULL);
+    ask(c, M_MOVE, 5, 5);                                        /* another enter: gone */
+    ask_cursor(c, AURWL_CURSOR_DEFAULT, 0, 0, 0, NULL);
+    wp_cursor_shape_device_v1_set_shape(dev, c->enter_serial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_E_RESIZE);
+    ask_cursor(c, AURWL_CURSOR_SHAPE, 0, 0, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_E_RESIZE, NULL);
+
+    /* ANOTHER program cannot change it, even knowing the serial */
+    struct wl_display *d2 = wl_display_connect(NULL);
+    if (d2) {
+        struct cl o = { .dpy = d2, .chan = -1 };
+        struct wl_registry *r2 = wl_display_get_registry(d2);
+        wl_registry_add_listener(r2, &reg_l, &o);
+        wl_display_roundtrip(d2);
+        if (o.seat && o.csmgr && o.comp) {
+            struct wl_pointer *p2 = wl_seat_get_pointer(o.seat);
+            struct wp_cursor_shape_device_v1 *dev2 = wp_cursor_shape_manager_v1_get_pointer(o.csmgr, p2);
+            wp_cursor_shape_device_v1_set_shape(dev2, c->enter_serial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_WAIT);
+            wl_pointer_set_cursor(p2, c->enter_serial, NULL, 0, 0);
+            wl_display_roundtrip(d2);
+            wl_display_roundtrip(c->dpy);
+            ask_cursor(c, AURWL_CURSOR_SHAPE, 0, 0, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_E_RESIZE, NULL);
+        } else { printf("      the second program found no globals\n"); c->failed = 1; }
+    }
+
+    /* a shape that is not one is a protocol error, and ends that program only */
+    wp_cursor_shape_device_v1_set_shape(dev, c->enter_serial, 99);
+    wl_display_roundtrip(c->dpy);
+    uint32_t code = 0; const struct wl_interface *iface = NULL; uint32_t id = 0;
+    int err = wl_display_get_protocol_error(c->dpy, &iface, &id);
+    code = (uint32_t)err;
+    check(c, err == WP_CURSOR_SHAPE_DEVICE_V1_ERROR_INVALID_SHAPE && iface == &wp_cursor_shape_device_v1_interface,
+          "a shape that does not exist was not refused with invalid_shape");
+    (void)code; (void)P;
+}
+
 static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "plain",            sc_plain },
     { "page",             sc_page },
@@ -1206,6 +1376,8 @@ static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "idle",             sc_idle },
     { "budget",           sc_budget },
     { "dnd",              sc_dnd },
+    { "cursor",           sc_cursor },
+    { "cursor-shape",     sc_cursor_shape },
 };
 #define NSC ((int)(sizeof SC / sizeof SC[0]))
 

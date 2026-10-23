@@ -171,6 +171,20 @@ int         aurwl_key_utf8(const aurwl *c, uint32_t evdev_code, char *out, size_
  * a cursor blinking in a text field. */
 uint32_t    aurwl_damage_seq(const aurwl *c);
 
+/* THE POINTER'S PICTURE, for the shell to draw at the pointer. What the
+ * program under the pointer asked for, or AURWL_CURSOR_DEFAULT (the shell's
+ * own arrow) when it asked for nothing or the pointer is not on a program:
+ *   AURWL_CURSOR_HIDDEN  draw nothing;
+ *   AURWL_CURSOR_IMAGE   *image (premultiplied ARGB, the program's own
+ *                        pixels, valid until the next dispatch) with its
+ *                        hotspot *hot_x,*hot_y in those pixels;
+ *   AURWL_CURSOR_SHAPE   *shape is a wp_cursor_shape_device_v1 shape number
+ *                        (1 default, 4 pointer/hand, 9 text, 13 move, ...);
+ *                        the shell draws its own picture for it.
+ * Any of the out pointers may be NULL. */
+enum { AURWL_CURSOR_DEFAULT = 0, AURWL_CURSOR_HIDDEN, AURWL_CURSOR_IMAGE, AURWL_CURSOR_SHAPE };
+int         aurwl_cursor(aurwl *c, surface **image, int *hot_x, int *hot_y, int *shape);
+
 /* While something is being dragged and its program gave it a picture: that
  * picture, and where its top-left corner goes relative to the pointer. NULL
  * otherwise. The shell paints it above everything, under the cursor. Pointer

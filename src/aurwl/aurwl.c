@@ -40,6 +40,12 @@
  * .inc, not .c, so a glob over *-protocol.c cannot link them twice.) */
 #include "idle-inhibit-server.h"
 #include "idle-inhibit-protocol.inc"
+/* wp_cursor_shape_manager_v1's get_tablet_tool_v2 names zwp_tablet_tool_v2.
+ * This machine serves no tablet protocol and nobody can hold a tablet tool
+ * object, so the type only has to exist for the request table to resolve. */
+const struct wl_interface zwp_tablet_tool_v2_interface = { "zwp_tablet_tool_v2", 1, 0, NULL, 0, NULL };
+#include "cursor-shape-server.h"
+#include "cursor-shape-protocol.inc"
 
 #include "aurwl.h"
 
@@ -269,7 +275,7 @@ struct aurwl {
 
     struct wl_global   *g_compositor, *g_subcompositor, *g_seat, *g_output;
     struct wl_global   *g_xdg, *g_ddm, *g_deco, *g_viewporter, *g_xdg_output;
-    struct wl_global   *g_idle_inhibit;
+    struct wl_global   *g_idle_inhibit, *g_cursor_shape;
 
     struct wl_list      surfaces;
     struct wl_list      seats;        /* wl_seat resources              */
@@ -286,6 +292,22 @@ struct aurwl {
     /* zwp_idle_inhibitor_v1 objects: while one of them is on a visible
      * window the desktop must not turn the screen off. */
     struct wl_list      inhibitors;
+
+    /* THE POINTER'S PICTURE. What the program under the pointer asked the
+     * pointer to look like, for the shell to draw: nothing (the shell's own
+     * arrow), a picture (wl_pointer.set_cursor), a named shape
+     * (wp_cursor_shape_v1), or "hide it". It is valid only while the
+     * pointer stays on that program's surface: any enter or leave clears it,
+     * and the program sets it again, as the protocol requires. */
+    struct {
+        int                 kind;        /* AURWL_CURSOR_*                   */
+        aurwl_win          *surf;        /* the cursor surface, for IMAGE    */
+        int                 hx, hy;      /* hotspot in that surface          */
+        int                 ox, oy;      /* its attach offsets at that moment */
+        int                 shape;       /* wp_cursor_shape_device_v1 shape  */
+    } cursor;
+    uint32_t            ptr_enter_serial;  /* the enter a set_cursor must quote */
+    struct wl_list      cursor_devs;       /* wp_cursor_shape_device_v1        */
 
     int                 ow, oh, refresh_mhz;
     uint32_t            next_id;
@@ -1053,6 +1075,7 @@ static void surface_unmap(aurwl_win *w);
 static void ptr_leave(aurwl *c);
 static void drag_cancel(aurwl *c);
 static void drag_leave(aurwl *c);
+static void cursor_reset(aurwl *c);
 
 static void buffer_gone(struct wl_listener *l, void *data)
 {
@@ -1455,6 +1478,7 @@ static void surface_free_res(struct wl_resource *r)
         if (c->drag.icon == w) c->drag.icon = NULL;
     }
     if (c->focus == w)     c->focus = NULL;
+    if (c->cursor.surf == w) cursor_reset(c);
     if (c->ptr_surf == w)  c->ptr_surf = NULL;
     if (c->ptr_focus == w) { c->ptr_focus = NULL; c->ptr_surf = NULL; }
 
@@ -1901,23 +1925,47 @@ static void bind_xdg_output(struct wl_client *cl, void *data, uint32_t ver, uint
 /* ── wl_seat ────────────────────────────────────────────────────── */
 
 static const struct wl_pointer_interface pointer_impl_s;
+
+/* WHO MAY CHANGE THE POINTER. Only the program the pointer is on, and only
+ * quoting the serial of the enter that put it there -- otherwise a program
+ * in the background could turn the pointer into anything, or hide it,
+ * whenever it liked, and she would be left with a pointer that lies. */
+static int cursor_allowed(aurwl *c, struct wl_client *cl, uint32_t serial)
+{
+    return c->ptr_surf && win_client(c->ptr_surf) == cl && serial == c->ptr_enter_serial;
+}
+
+static void cursor_reset(aurwl *c)
+{
+    if (c->cursor.kind != AURWL_CURSOR_DEFAULT) c->damage_seq++;     /* the shell repaints it */
+    memset(&c->cursor, 0, sizeof c->cursor);
+}
+
 static void ptr_set_cursor(struct wl_client *cl, struct wl_resource *r, uint32_t serial,
                            struct wl_resource *surf, int32_t hx, int32_t hy)
 {
-    (void)cl; (void)r; (void)serial; (void)hx; (void)hy;
-    /* The shell draws one cursor for the whole system, from the theme,
-     * so a client's cursor surface is accepted and not shown. Marking
-     * it as a cursor keeps it out of the window list. */
+    aurwl *c = wl_resource_get_user_data(r);
+    aurwl_win *w = surf ? wl_resource_get_user_data(surf) : NULL;
     /* wayland.xml, wl_pointer.set_cursor: giving a surface the cursor
      * role when it already has another is wl_pointer.role. This used
      * to overwrite it unconditionally, so a mapped focused toplevel
      * could be turned into a cursor -- dropping it out of the window
      * list with no unmap, no leave event, and the shell's slot for it
      * still standing. */
-    if (surf) {
-        aurwl_win *w = wl_resource_get_user_data(surf);
-        if (w) take_role(w, ROLE_CURSOR, r, WL_POINTER_ERROR_ROLE);
+    if (w && !take_role(w, ROLE_CURSOR, r, WL_POINTER_ERROR_ROLE)) return;
+    if (!cursor_allowed(c, cl, serial)) return;
+    if (!w) {                                   /* a null surface: hide the pointer */
+        memset(&c->cursor, 0, sizeof c->cursor);
+        c->cursor.kind = AURWL_CURSOR_HIDDEN;
+    } else {
+        memset(&c->cursor, 0, sizeof c->cursor);
+        c->cursor.kind = AURWL_CURSOR_IMAGE;
+        c->cursor.surf = w;
+        c->cursor.hx = clampi(hx, -MAX_DIM, MAX_DIM);
+        c->cursor.hy = clampi(hy, -MAX_DIM, MAX_DIM);
+        c->cursor.ox = w->off_x; c->cursor.oy = w->off_y;
     }
+    c->damage_seq++;
 }
 static const struct wl_pointer_interface pointer_impl_s = {
     .set_cursor = ptr_set_cursor, .release = noop_destroy,
@@ -3012,6 +3060,57 @@ static void bind_idle_inhibit(struct wl_client *cl, void *data, uint32_t ver, ui
     wl_resource_set_implementation(r, &inhmgr_impl, data, NULL);
 }
 
+/* ── wp_cursor_shape_v1 ─────────────────────────────────────────── */
+/* A program that only wants "the hand" or "the text cursor" says so by name
+ * and the SHELL decides what that looks like -- large, high contrast, the
+ * size she chose for her text. (GTK4 and Qt6 do this; programs that load a
+ * cursor theme themselves send a picture instead, see wl_pointer.set_cursor.) */
+static void csdev_set_shape(struct wl_client *cl, struct wl_resource *r, uint32_t serial, uint32_t shape)
+{
+    aurwl *c = wl_resource_get_user_data(r);
+    if (shape < WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT ||
+        shape > WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_ZOOM_OUT) {
+        wl_resource_post_error(r, WP_CURSOR_SHAPE_DEVICE_V1_ERROR_INVALID_SHAPE,
+                               "there is no cursor shape %u", shape);
+        return;
+    }
+    if (!cursor_allowed(c, cl, serial)) return;
+    memset(&c->cursor, 0, sizeof c->cursor);
+    c->cursor.kind = AURWL_CURSOR_SHAPE;
+    c->cursor.shape = (int)shape;
+    c->damage_seq++;
+}
+static const struct wp_cursor_shape_device_v1_interface csdev_impl = {
+    .destroy = noop_destroy, .set_shape = csdev_set_shape,
+};
+static void csmgr_get_pointer(struct wl_client *cl, struct wl_resource *r, uint32_t id,
+                              struct wl_resource *pointer)
+{
+    (void)pointer;
+    aurwl *c = wl_resource_get_user_data(r);
+    if (too_many(cl, r, &c->cursor_devs, MAX_SEAT_OBJ, "cursor shape devices")) return;
+    struct wl_resource *d = wl_resource_create(cl, &wp_cursor_shape_device_v1_interface,
+                                               wl_resource_get_version(r), id);
+    if (!d) { wl_client_post_no_memory(cl); return; }
+    wl_resource_set_implementation(d, &csdev_impl, c, res_unlink);
+    wl_list_insert(&c->cursor_devs, wl_resource_get_link(d));
+}
+static void csmgr_get_tablet(struct wl_client *cl, struct wl_resource *r, uint32_t id,
+                             struct wl_resource *tool)
+{
+    (void)cl; (void)id; (void)tool;
+    wl_resource_post_error(r, 0, "this computer has no drawing tablet");
+}
+static const struct wp_cursor_shape_manager_v1_interface csmgr_impl = {
+    .destroy = noop_destroy, .get_pointer = csmgr_get_pointer, .get_tablet_tool_v2 = csmgr_get_tablet,
+};
+static void bind_cursor_shape(struct wl_client *cl, void *data, uint32_t ver, uint32_t id)
+{
+    struct wl_resource *r = wl_resource_create(cl, &wp_cursor_shape_manager_v1_interface, (int)ver, id);
+    if (!r) { wl_client_post_no_memory(cl); return; }
+    wl_resource_set_implementation(r, &csmgr_impl, data, NULL);
+}
+
 /* ── keymap ─────────────────────────────────────────────────────── */
 
 /* The client does its own key translation from a keymap we hand it.
@@ -3157,6 +3256,7 @@ aurwl *aurwl_create(int w, int h, int refresh_mhz)
     wl_list_init(&c->offers);
     wl_list_init(&c->xdg_outputs);
     wl_list_init(&c->inhibitors);
+    wl_list_init(&c->cursor_devs);
 
     c->display = wl_display_create();
     if (!c->display) { free(c); return NULL; }
@@ -3177,10 +3277,11 @@ aurwl *aurwl_create(int w, int h, int refresh_mhz)
     c->g_viewporter    = wl_global_create(c->display, &wp_viewporter_interface, 1, c, bind_viewporter);
     c->g_xdg_output    = wl_global_create(c->display, &zxdg_output_manager_v1_interface, 3, c, bind_xdg_output);
     c->g_idle_inhibit  = wl_global_create(c->display, &zwp_idle_inhibit_manager_v1_interface, 1, c, bind_idle_inhibit);
+    c->g_cursor_shape  = wl_global_create(c->display, &wp_cursor_shape_manager_v1_interface, 1, c, bind_cursor_shape);
 
     if (!c->g_compositor || !c->g_subcompositor || !c->g_seat || !c->g_output ||
         !c->g_xdg || !c->g_ddm || !c->g_deco || !c->g_viewporter || !c->g_xdg_output ||
-        !c->g_idle_inhibit) {
+        !c->g_idle_inhibit || !c->g_cursor_shape) {
         fprintf(stderr, "aurwl: could not create globals\n");
         aurwl_destroy(c); return NULL;
     }
@@ -3264,6 +3365,37 @@ surface *aurwl_drag_icon(aurwl *c, int *dx, int *dy)
     if (dx) *dx = i->off_x;
     if (dy) *dy = i->off_y;
     return aurwl_win_content(i);
+}
+
+int aurwl_cursor(aurwl *c, surface **image, int *hot_x, int *hot_y, int *shape)
+{
+    if (image) *image = NULL;
+    if (hot_x) *hot_x = 0;
+    if (hot_y) *hot_y = 0;
+    if (shape) *shape = 0;
+    /* Over a program's window, and only then: anywhere else the pointer is
+     * the shell's own. */
+    if (!c || !c->ptr_surf) return AURWL_CURSOR_DEFAULT;
+    switch (c->cursor.kind) {
+    case AURWL_CURSOR_HIDDEN: return AURWL_CURSOR_HIDDEN;
+    case AURWL_CURSOR_SHAPE:
+        if (shape) *shape = c->cursor.shape;
+        return AURWL_CURSOR_SHAPE;
+    case AURWL_CURSOR_IMAGE: {
+        aurwl_win *w = c->cursor.surf;
+        /* A cursor surface that has no picture yet is not a hidden
+         * pointer: until it has one, the shell's arrow. */
+        if (!w || !w->store) return AURWL_CURSOR_DEFAULT;
+        int sc = w->current.scale < 1 ? 1 : w->current.scale;
+        if (image) *image = w->store;
+        /* The hotspot is in the surface's coordinates and moves the
+         * opposite way to any attach offset made since it was set. */
+        if (hot_x) *hot_x = (c->cursor.hx - (w->off_x - c->cursor.ox)) * sc;
+        if (hot_y) *hot_y = (c->cursor.hy - (w->off_y - c->cursor.oy)) * sc;
+        return AURWL_CURSOR_IMAGE;
+    }
+    default: return AURWL_CURSOR_DEFAULT;
+    }
 }
 
 int aurwl_idle_inhibited(const aurwl *c)
@@ -3524,6 +3656,7 @@ static void ptr_leave(aurwl *c)
 {
     aurwl_win *s = c->ptr_surf;
     c->ptr_surf = NULL;
+    cursor_reset(c);              /* whatever it asked for was for that surface */
     if (!s) return;
     struct wl_client *cl = win_client(s);
     uint32_t ser = serial_of(c);
@@ -3589,6 +3722,7 @@ void aurwl_pointer_motion(aurwl *c, aurwl_win *w, int sx, int sy, uint32_t t)
         if (hit) {
             struct wl_client *nw = win_client(hit);
             uint32_t ser = serial_of(c);
+            c->ptr_enter_serial = ser;
             FOR_EACH_RES(p, &c->pointers)
                 if (wl_resource_get_client(p) == nw) {
                     wl_pointer_send_enter(p, ser, hit->res,
@@ -3738,6 +3872,10 @@ pid_t aurwl_spawn(aurwl *c, const char *const argv[])
         setenv("MOZ_ENABLE_WAYLAND", "1", 1);
         setenv("XDG_SESSION_TYPE", "wayland", 1);
         setenv("XDG_CURRENT_DESKTOP", "AurOS", 1);
+        /* The pointer is drawn large (cursor.c); a program that loads a
+         * cursor theme itself picks its size from this, and 48 is the
+         * size the shell draws without scaling at normal text size. */
+        setenv("XCURSOR_SIZE", "48", 1);
         execvp(argv[0], (char *const *)argv);
         _exit(127);
     }

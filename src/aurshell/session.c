@@ -24,6 +24,7 @@
 
 #include "session.h"
 #include "run.h"
+#include "cursor.h"
 #include "../aurwl/aurwl.h"
 
 /* An application that has not shown a window in this long has failed to
@@ -423,4 +424,27 @@ int session_spawn(shell_ctx *c, const char *argv_blob, int n_args)
     argv[i] = NULL;
     if (!i) return -1;
     return aurwl_spawn(c->wl, argv) > 0 ? 0 : -1;
+}
+
+/* ── the pointer ────────────────────────────────────────────────── */
+
+void session_paint_cursor(shell_ctx *c, surface *fb)
+{
+    if (c->mouse_x < 0 || c->mouse_y < 0) return;
+    int sc = cursor_scale(c->text_scale);
+    surface *img = NULL;
+    int hx = 0, hy = 0, shape = 0;
+    int kind = c->wl ? aurwl_cursor(c->wl, &img, &hx, &hy, &shape) : AURWL_CURSOR_DEFAULT;
+    switch (kind) {
+    case AURWL_CURSOR_HIDDEN:           /* a film hides it; moving it shows it again */
+        return;
+    case AURWL_CURSOR_IMAGE:
+        cursor_paint_image(fb, img, hx, hy, c->mouse_x, c->mouse_y, sc);
+        return;
+    case AURWL_CURSOR_SHAPE:
+        cursor_paint_glyph(fb, cursor_class_of_shape(shape), c->mouse_x, c->mouse_y, sc);
+        return;
+    default:
+        cursor_paint_glyph(fb, CUR_ARROW, c->mouse_x, c->mouse_y, sc);
+    }
 }

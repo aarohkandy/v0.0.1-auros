@@ -163,6 +163,7 @@ static uint32_t global_name(prog *p, int k, const struct wl_interface **iface, i
         { &textinput_g, &zwp_text_input_manager_v3_interface, 1 },
 #endif
         { &C->g_idle_inhibit, &zwp_idle_inhibit_manager_v1_interface, 1 },   /* stream WL: after the above */
+        { &C->g_cursor_shape, &wp_cursor_shape_manager_v1_interface, 1 },
     };
     const glob *g = &G[k % (int)(sizeof G / sizeof *G)];
     *iface = g->iface; *ver = g->ver;
@@ -437,7 +438,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         !wl_list_empty(&C->pointers) || !wl_list_empty(&C->keyboards) ||
         !wl_list_empty(&C->touches) || !wl_list_empty(&C->outputs) ||
         !wl_list_empty(&C->devices) || !wl_list_empty(&C->offers) ||
-        !wl_list_empty(&C->xdg_outputs) || !wl_list_empty(&C->inhibitors)) {
+        !wl_list_empty(&C->xdg_outputs) || !wl_list_empty(&C->inhibitors) || !wl_list_empty(&C->cursor_devs) ||
+        C->cursor.kind != AURWL_CURSOR_DEFAULT) {
         fprintf(stderr, "aurwl kept state for a program that has gone\n");
         abort();
     }
