@@ -35,6 +35,12 @@ permissions:
   contents: read
   actions: read
 
+# The owner's domain (docs/ops/DOMAIN.md): every address baked into the
+# image, the staging environment and the exe follows it (tools/repo.sh).
+# Empty until he sets the repository variable: GitHub's addresses.
+env:
+  AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
+
 # `bash` named explicitly is `bash -eo pipefail`; left to the default it
 # is `bash -e`, and `sh tools/x.sh | tee log` then passes whatever x
 # says.
@@ -122,7 +128,7 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "TAG=$tag" >> "$GITHUB_ENV"
-          echo "BASE_URL=https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/" >> "$GITHUB_ENV"
+          echo "BASE_URL=$(sh tools/repo.sh download)/$tag/" >> "$GITHUB_ENV"
           mkdir -p dist/installer dist/pieces
           echo "tag $tag (os_version $v, commit $GITHUB_SHA, run $GITHUB_RUN_ID)" | tee dist/installer/build-info.txt
           : > dist/installer/timings.txt
@@ -192,7 +198,7 @@ jobs:
           T=$(date +%s)
           # NOT ALLOW_BROWSER_FALLBACK: this network reaches Mozilla, so
           # the profile's Firefox must arrive, or the build stops.
-          sudo env -u ALLOW_BROWSER_FALLBACK ./build/all desktop --keep=raw 2>&1 | tee /tmp/forge.log
+          sudo env -u ALLOW_BROWSER_FALLBACK AUROS_DOMAIN="$AUROS_DOMAIN" ./build/all desktop --keep=raw 2>&1 | tee /tmp/forge.log
           echo "forge+mkimage $(( $(date +%s) - T )) s" >> dist/installer/timings.txt
           ls -la out out/manifests
           df -h /

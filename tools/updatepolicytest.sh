@@ -91,7 +91,7 @@ static() {
                     ok "Mozilla (site=packages.mozilla.org, firefox* only): $u" ;;
                 https://ppa.launchpadcontent.net/mozillateam/*)
                     ok "mozillateam PPA (origin=LP-PPA-mozillateam): $u" ;;
-                https://github.com/*/releases/download/apt/)
+                https://github.com/*/releases/download/apt/|https://updates.*/apt/)
                     ok "AurOS's channel: $u" ;;
                 *)  bad "nothing updates what comes from $u" "(${f#$R})" ;;
             esac

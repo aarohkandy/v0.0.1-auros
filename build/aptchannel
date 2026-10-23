@@ -73,15 +73,16 @@ warn() { printf 'aptchannel: WARNING: %s\n' "$*" >&2; }
 #
 # Derived, so that a fork or a move to another repository publishes and
 # points at itself without anybody editing a file: tools/repo.sh (AUROS_REPO,
-# else GITHUB_REPOSITORY on Actions, else the checkout's own origin).
+# else GITHUB_REPOSITORY on Actions, else the checkout's own origin); with
+# AUROS_DOMAIN set, updates.<domain>, which passes it on to GitHub (infra/edge).
 # AUROS_APT_URL overrides it (a mirror, or a test's local server).
 channel_url() {
     if [ -n "${AUROS_APT_URL:-}" ]; then
         printf '%s\n' "$AUROS_APT_URL"; return 0
     fi
-    local rel
-    rel=$(sh "$ROOT/tools/repo.sh" releases 2>/dev/null) || return 1
-    printf '%s/download/%s/\n' "$rel" "$APT_TAG"
+    local url
+    url=$(sh "$ROOT/tools/repo.sh" apt 2>/dev/null) || return 1
+    printf '%s%s/\n' "${url%apt/}" "$APT_TAG"
 }
 
 source_entry() { # URL

@@ -162,6 +162,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       IN_TAG: ${{ needs.gate.outputs.tag }}
       KR: rootfs/usr/share/keyrings/auros-archive-keyring.asc
+      # The owned address (docs/ops/DOMAIN.md); empty = GitHub's.
+      AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -237,7 +239,8 @@ jobs:
           [ -s image-key.asc ] && cmp -s image-key.asc "$KR" ||
             { echo "::error::$TAG's image does not carry the committed key $KR (built before the key was committed?)"; exit 1; }
           want=$(build/aptchannel url)
-          grep -qx "URIs: $want" image.sources ||
+          # An image built before AUROS_DOMAIN asks GitHub directly: the same tag.
+          grep -qx -e "URIs: $want" -e "URIs: $(env -u AUROS_DOMAIN build/aptchannel url)" image.sources ||
             { echo "::error::$TAG's image asks $(sed -n 's/^URIs: //p' image.sources) for updates, not $want"; exit 1; }
           ls -la debs
 
@@ -309,7 +312,7 @@ jobs:
             cp rootfs/etc/apt/preferences.d/auros /etc/apt/preferences.d/
             bash build/aptchannel source "$URL" > /etc/apt/sources.list.d/auros.sources
             timeout 300 apt-get update 2>&1 | tee /tmp/u.log
-            if grep -E "^(W|E):" /tmp/u.log | grep -qF "releases/download/apt"; then exit 1; fi
+            if grep -E "^(W|E):" /tmp/u.log | grep -qF "$URL"; then exit 1; fi
             apt-cache policy auros | tee /tmp/p.log
             grep -q "Candidate: $NEW" /tmp/p.log
             cd /tmp && apt-get download $(apt-cache pkgnames auros)

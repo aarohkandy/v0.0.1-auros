@@ -171,7 +171,7 @@ jobs:
         run: |
           cat dist/installer/build-info.txt
           # The tag is the one baked into this build's installer.
-          TAG=$(sed -n 's|^base https://github.com/[^/]*/[^/]*/releases/download/\([^/]*\)/$|\1|p' dist/pieces/pieces.txt)
+          TAG=$(sed -n 's|^base https://[^ ]*/\([^/]*\)/$|\1|p' dist/pieces/pieces.txt | head -1)
           COMMIT=$(grep -o 'commit [0-9a-f]\{40\}' dist/installer/build-info.txt | head -1 | cut -d' ' -f2)
           [ -n "$TAG" ] && [ -n "$COMMIT" ] || { echo "cannot tell which tag or commit this build is"; exit 1; }
           echo "TAG=$TAG" >> "$GITHUB_ENV"

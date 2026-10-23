@@ -57,6 +57,19 @@ want Some-One/their-copy releases https://github.com/Some-One/their-copy/release
 for r in a/b/c 'a/b"c' 'a/b c' a/.. /b a; do
     AUROS_REPO=$r sh tools/repo.sh > /dev/null 2>&1 && bad "repo.sh accepted \"$r\""
 done
+# ... and told the owner's domain (AUROS_DOMAIN, docs/ops/DOMAIN.md).
+wantd() { got=$(AUROS_REPO=Some-One/their-copy AUROS_DOMAIN=$1 sh tools/repo.sh "$2" 2>/dev/null) || got="(refused)"
+          [ "$got" = "$3" ] || bad "AUROS_DOMAIN=$1 repo.sh $2 gave $got, not $3"; }
+wantd Example.ORG apt https://updates.example.org/apt/
+wantd example.org download https://get.example.org/download
+wantd example.org get https://get.example.org/
+wantd example.org host example.org/
+wantd example.org releases https://github.com/Some-One/their-copy/releases
+wantd '' apt https://github.com/Some-One/their-copy/releases/download/apt/
+wantd '' get https://github.com/Some-One/their-copy/releases/latest/download/AurOS-Setup.exe
+for d in x .a.b a..b 'a b.c' a/b.c -a.b a.b- 'a"b.c'; do
+    AUROS_REPO=Some-One/their-copy AUROS_DOMAIN=$d sh tools/repo.sh > /dev/null 2>&1 && bad "repo.sh accepted AUROS_DOMAIN=\"$d\""
+done
 
 [ "$fail" = 0 ] && echo "repotest: ok (no old name outside docs/; a move to Some-One/their-copy names only it)"
 exit "$fail"
