@@ -164,6 +164,21 @@ EOL
     verify
     survives
     echo
+    echo "== the update rollback still has its set (rootfs/usr/lib/auros/keep-previous, the real script)"
+    # Two parts of the update channel at one version, installed beside the stand-in. keep-previous
+    # keeps the set only if every installed auros / auros-* is at the version of `auros`.
+    mkdir -p "$T/cache" "$T/debs"
+    for pk in auros auros-config; do
+        mkdir -p "$T/p/$pk/DEBIAN"
+        printf 'Package: %s\nVersion: 5\nArchitecture: all\nMaintainer: AurOS <noreply@auros.invalid>\nDescription: a part\n' "$pk" > "$T/p/$pk/DEBIAN/control"
+        dpkg-deb --root-owner-group -b "$T/p/$pk" "$T/cache/${pk}_5_amd64.deb" >/dev/null && dpkg -i "$T/cache/${pk}_5_amd64.deb" >/dev/null 2>&1
+    done
+    AUROS_DEBS="$T/debs" AUROS_APT_CACHE="$T/cache" sh "$ROOT/rootfs/usr/lib/auros/keep-previous"
+    if [ -f "$T/debs/auros_5_amd64.deb" ] && [ -f "$T/debs/auros-config_5_amd64.deb" ]; then ok "an update keeps the set to roll back to, with the stand-in installed"
+    else bad "an update keeps the set to roll back to, with the stand-in installed" "keep-previous kept: $(ls "$T/debs" | tr '\n' ' ')" \
+            "(it keeps nothing when an installed auros-* package is at another version)"; fi
+
+    echo
     echo "== a second run changes nothing"
     s1=$(md5sum /etc/lsb-release /usr/lib/os-release; dpkg-query -W -f='${Package}\n' | md5sum)
     ( eval "$STEP" ) >"$T/run2.log" 2>&1; rc=$?
