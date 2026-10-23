@@ -104,6 +104,88 @@ all three read.
 4. "My wishes" (Settings): each wish's sentence, an on/off switch, Remove;
    "Turn off all wishes". Removing the last wish leaves nothing running.
 
+### 3.7 The socket between the shell and the engine (W1 owns it; W2 follows it)
+
+Numbered 3.7 because §7 below adds a §3.5 and §3.6. Adopted from W2's
+proposal (`docs/handoff/streams/W2.md`) with the additions §7 needs.
+
+- `$XDG_RUNTIME_DIR/aurwish.sock`, AF_UNIX `SOCK_STREAM`, made by the engine,
+  mode 0600; the engine refuses any peer whose `SO_PEERCRED` uid is not its
+  own. One JSON object per line, UTF-8, at most 4096 bytes a line, both
+  directions. A line that is too long or not a JSON object closes that
+  connection. At most 4 connections.
+- **The shell never talks to the cloud and never validates a wish.** The engine
+  is the only cloud client and the only author of every sentence she reads
+  (`sentence`, `title`, `text` of a `notice`/`cannot`). The shell shows them
+  as given. In a `sentence`, `*` toggles bold (free text can never contain
+  `*`, §7.3).
+- Requests carry an integer `id`; the reply echoes it. Unknown `op` →
+  `{"id":N,"kind":"error","error":"refused"}`.
+
+Shell → engine:
+
+| line | reply |
+|---|---|
+| `{"op":"hello","id":1}` | `{"id":1,"kind":"hello","v":1,"consent":bool,"all_off":bool,"sensors":{"compass":bool,"tilt":bool,"light":bool}}` then a `triggers` event |
+| `{"op":"consent","id":2,"version":1,"yes":true}` | `done` (no → Wishes stay off, nothing is ever sent) |
+| `{"op":"wish","id":3,"text":"…","lang":"en","voice":false}` | `wish` · `cannot` · `help` · `error` (the engine calls the cloud) |
+| `{"op":"ask","id":4,"text":"…","lang":"en"}` | `help` · `error` |
+| `{"op":"check","id":5,"wish":{v1 doc},"said":"…","voice":false}` | `wish` · `cannot` — a wish built on the device (the gallery), never sent anywhere |
+| `{"op":"cancel","id":3}` | none; the cloud request for id 3 is stopped |
+| `{"op":"confirm","id":6,"pending":"p7"}` | `{"id":6,"kind":"done","wid":"w3"}` (a `now` wish runs at once and has no `wid`) |
+| `{"op":"discard","id":7,"pending":"p7"}` | `done` |
+| `{"op":"list","id":8}` | `{"id":8,"kind":"list","all_off":false,"undo":bool,"wishes":[{"wid","title","sentence","status","last_ran"}]}` |
+| `{"op":"enable","id":9,"wid":"w3","on":false}` | `done` — this is also **Stop this wish** |
+| `{"op":"remove","id":10,"wid":"w3"}` | `done` |
+| `{"op":"test","id":11,"wid":"w3"}` | `done` — runs it once now; limits still apply |
+| `{"op":"all_off","id":12}` / `{"op":"all_on","id":13}` | `done` |
+| `{"op":"undo","id":14}` | `done` — Undo my last wish (10 minutes) |
+| `{"op":"restore","id":15}` | `done` — Put everything back how it was |
+| `{"op":"keep","id":16,"wid":"w3","yes":true}` | `done` — answer to a `keep_it` card |
+| `{"op":"snooze","id":17,"wid":"w3"}` | `done` — Remind me in 10 minutes |
+| `{"op":"today","id":18}` | `{"id":18,"kind":"today","items":[{"wid","title","times"}]}` |
+| `{"op":"forget","id":19}` | `done` — Forget everything (wishes.json, token, install id) |
+
+Shell → engine, no reply (the compositor's half; §1.5, §7.6):
+
+| line | when |
+|---|---|
+| `{"op":"typed","word":"potato"}` | the compositor matched a word from the latest `triggers` list (never any other word) |
+| `{"op":"app","app":"firefox"}` | a window whose app id is in the latest `triggers` list was opened |
+| `{"op":"input"}` | she pressed a key or moved/clicked, at most once a second (idle and "3 s with no typing") |
+| `{"op":"hold","reasons":["call"]}` | the full current set of §7.6 reasons: `password` `call` `camera` `microphone` `share` `fullscreen` `lock`; `[]` clears |
+| `{"op":"did","n":42,"ok":true,"prev":{v1 action}}` | the shell carried out `shell` event 42; `prev` is the action that would put it back (for Undo) |
+
+Engine → shell replies (`kind`): `wish` `{"id","kind":"wish","pending":"p7","sentence","title","outward"?:{"name","host"}}`;
+`cannot` `{"id","kind":"cannot","missing":"compass|tilt|light|app|theme|site|install|other","text"}`;
+`help` `{"id","kind":"help","page":"<help page id>","pending"?,"sentence"?}`;
+`error` `{"id","kind":"error","error":"offline|busy|resting|limit|refused|consent|broken","text"}`;
+`done` `{"id","kind":"done"}`.
+
+Engine → shell events (no `id`; `n` numbers them; `wid`/`title` say whose wish it is
+so every card can show "Your wish "X" — [Stop this wish]"; `tell` is true for a
+wish's first 3 runs):
+
+```
+{"ev":"triggers","words":["potato"],"apps":["firefox"]}   on hello and on every change; ≤10 words
+{"ev":"changed"}                                          My wishes should re-list
+{"ev":"fill","n":1,"wid":"w3","title":"…","emoji":"🥔","seconds":3,"tell":true}   or "text":"HELLO"
+{"ev":"message","n":2,"wid","title","text","tell"}         stays until she closes it
+{"ev":"remind","n":3,"wid","title","text","for":"9:00 am"?,"private":false}
+{"ev":"shell","n":4,"wid","title","do":{v1 action}}        set_look set_text_size set_wallpaper
+                                                          night_light pointer_size open_app open_website
+                                                          do_not_disturb; answered with "did"
+{"ev":"notice","text":"…"}                                 one plain sentence the engine wrote
+{"ev":"keep_it","wid","title","sentence"}                  the day-after "Keep it?" card
+```
+
+In a `shell` event the action is already resolved: `open_app` carries
+`app` (a desktop id that exists), `open_website` carries `url` (from the
+shipped site list, never from the model), `set_wallpaper` carries `color` or
+`theme` (an installed theme id). The engine itself does `brightness`,
+`volume` (through `src/aurshell/power.c`, the shell's own control path),
+`play_sound`, `speak` and `speak_time` (`aurvoice say`, W2's).
+
 ## 4. What she sees and says (W2)
 
 - A **Wish** button on every look's home and in Settings (the name and icon
