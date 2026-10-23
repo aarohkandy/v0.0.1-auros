@@ -107,8 +107,11 @@ jobs:
     timeout-minutes: 120
     # One at a time, queued; the newest waiting one wins, a running one
     # is never cancelled.
+    # A run started by hand has a queue of its own: the automatic ones
+    # (one per new image) replace each other while waiting for a runner,
+    # and must not replace somebody's deliberate request.
     concurrency:
-      group: harden-main
+      group: harden-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'main' }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
