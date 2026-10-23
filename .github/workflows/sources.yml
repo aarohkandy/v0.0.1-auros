@@ -13,10 +13,13 @@
 #   - release.yml calls it (`uses: ./.github/workflows/sources.yml`, with
 #     run-id and tag) after `publish`; `promote` needs it. That wiring is
 #     stream E's: docs/handoff/streams/LEGAL.md has the lines.
-#   - a commit whose SUBJECT says `[sources TAG RUN-ID]` makes (or
-#     re-checks) the sources of a release that already exists, for example
+#   - a commit whose SUBJECT says `[sources TAG RUN-ID]` makes (or re-checks)
+#     the sources of a release that already exists, for example
 #     `[sources v0.1.0-618726b 39923676690]`. RUN-ID is the build run
 #     whose rootfs artifact made that release (14 days of retention).
+#     With the word `again` after the run id, a PUBLISHED sources release is
+#     made again with a fixed tool and its assets are replaced by the complete
+#     set (never fewer: sources-* releases are not deleted).
 #   - every Monday: the published `sources-*` releases are re-checked
 #     against GitHub's own digests (no 4 GB download), and the run fails
 #     if any asset has gone or changed, or any binary package has lost
@@ -65,6 +68,7 @@ jobs:
       mode: ${{ steps.w.outputs.mode }}
       tag: ${{ steps.w.outputs.tag }}
       run-id: ${{ steps.w.outputs.run_id }}
+      again: ${{ steps.w.outputs.again }}
     steps:
       - id: w
         env:
@@ -73,20 +77,20 @@ jobs:
           EVENT: ${{ github.event_name }}
           MSG: ${{ github.event.head_commit.message }}
         run: |
-          mode=make; tag=""; rid=""
+          mode=make; tag=""; rid=""; again=false
           if [ "$EVENT" = schedule ]; then
             mode=reverify
           elif [ -n "$IN_RUN" ]; then
             tag=$IN_TAG; rid=$IN_RUN
           else
             subj=${MSG%%$'\n'*}
-            re='\[sources[[:space:]]+(v[0-9][0-9A-Za-z.+-]*)[[:space:]]+([0-9]+)\]'
-            if [[ $subj =~ $re ]]; then tag=${BASH_REMATCH[1]}; rid=${BASH_REMATCH[2]}
+            re='\[sources[[:space:]]+(v[0-9][0-9A-Za-z.+-]*)[[:space:]]+([0-9]+)([[:space:]]+again)?\]'
+            if [[ $subj =~ $re ]]; then tag=${BASH_REMATCH[1]}; rid=${BASH_REMATCH[2]}; [ -n "${BASH_REMATCH[3]}" ] && again=true
             elif [[ $subj == *'[sources reverify]'* ]]; then mode=reverify
             else echo "::error::the subject must say [sources TAG RUN-ID] or [sources reverify]"; exit 1; fi
           fi
           case "$tag" in *[!0-9A-Za-z.+-]*) echo "::error::odd tag"; exit 1 ;; esac
-          { echo "mode=$mode"; echo "tag=$tag"; echo "run_id=$rid"; } | tee -a "$GITHUB_OUTPUT"
+          { echo "mode=$mode"; echo "tag=$tag"; echo "run_id=$rid"; echo "again=$again"; } | tee -a "$GITHUB_OUTPUT"
 
   make:
     needs: which
@@ -104,6 +108,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ needs.which.outputs.tag }}
       RID: ${{ needs.which.outputs.run-id }}
+      AGAIN: ${{ needs.which.outputs.again }}
     outputs:
       published: ${{ steps.pub.outputs.published }}
     steps:
@@ -122,7 +127,12 @@ jobs:
           # A release that was never published (a draft left by a failed
           # upload) is finished, not trusted: only a published one is left alone.
           draft=$(gh release view "sources-$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
-          if [ "$draft" = false ]; then
+          if [ "$draft" = false ] && [ "$AGAIN" = true ]; then
+            # `[sources TAG RUN-ID again]`: the published release is made again and its
+            # assets replaced by the complete set (a tool fix that adds sources; never fewer).
+            echo "EXISTS=false" >> "$GITHUB_ENV"
+            echo "sources-$TAG is published and is made again, replacing its assets"
+          elif [ "$draft" = false ]; then
             echo "EXISTS=true" >> "$GITHUB_ENV"
             echo "sources-$TAG is published: it is verified below and not touched"
           else
@@ -192,8 +202,9 @@ jobs:
             gh release create "sources-$TAG" --repo "$GITHUB_REPOSITORY" --target "$def" --draft --prerelease \
                 --title "AurOS $TAG: source code" --notes-file notes.md
           fi
-          for f in out/*; do
-            for i in 1 2 3 4; do gh release upload "sources-$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$f" && break || sleep $((i * 15)); done
+          # SHA256SUMS last: while it is the old one, a download still verifies against the old files.
+          for f in $(ls out | grep -v '^SHA256SUMS$') SHA256SUMS; do
+            for i in 1 2 3 4; do gh release upload "sources-$TAG" --repo "$GITHUB_REPOSITORY" --clobber "out/$f" && break || sleep $((i * 15)); done
           done
           gh release edit "sources-$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
           echo "published=true" >> "$GITHUB_OUTPUT"

@@ -56,7 +56,7 @@ notes of the AurOS release itself).
    `sources-*` release against GitHub's digests and fails if anything is gone.
 
 `python3 -I tools/legal/sourcestest.py` is the test (a pretend Launchpad on
-127.0.0.1, 34 cases, each of which breaks something and requires the tool to
+127.0.0.1, 36 cases, each of which breaks something and requires the tool to
 say so; `--mutants` breaks the tool itself and requires the suite to go red).
 
 ## Rules

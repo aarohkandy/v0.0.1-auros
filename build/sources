@@ -58,7 +58,10 @@ def parse_status(text):
     """Installed binary packages of a dpkg status file, with the source
     name and version dpkg itself would report (${source:Package},
     ${source:Version}: the Source header's own version when it has one,
-    else the binary version)."""
+    else the binary version). Built-Using (Debian policy: the sources a
+    binary was built from and carries parts of, for example a static link
+    or a signed copy of another package's binary) is kept too: those are
+    owed as well."""
     out = []
     for stanza in re.split(r"\n\n+", text.strip("\n")):
         f = {}
@@ -82,9 +85,16 @@ def parse_status(text):
             src = m.group(1)
             if m.group(2):
                 sv = m.group(2)
+        bu = []
+        for item in f.get("Built-Using", "").split(","):
+            m = re.match(r"\s*(\S+)\s*\(=\s*([^)\s]+)\s*\)\s*$", item)
+            if item.strip() and not m:
+                raise Fail("cannot read the Built-Using header of %s: %r" % (f["Package"], f["Built-Using"]))
+            if m:
+                bu.append((m.group(1), m.group(2)))
         out.append({"bin": f["Package"], "ver": f["Version"], "arch": f.get("Architecture", ""),
                     "src": src, "srcver": sv, "maint": f.get("Maintainer", ""),
-                    "has_source": bool(f.get("Source"))})
+                    "has_source": bool(f.get("Source")), "built_using": bu})
     if not out:
         raise Fail("no installed package in the dpkg status file")
     return out
@@ -134,9 +144,11 @@ def read_extra(path):
     return out
 
 
-def build_plan(packages, firefox_tarball, extras, tag_hint=""):
-    """-> (sources, pointers, own, rows)
-    sources: {(src, ver): sorted binaries}; pointers: {upstream ver: [bins]}."""
+def build_plan(packages, firefox_tarball, extras):
+    """-> (sources, pointers, own, rows, extras)
+    sources: {(src, ver): sorted binaries}; pointers: {upstream ver: [bins]};
+    extras: the (source, version) pairs owed that no installed binary names:
+    the build host's, and every Built-Using of an installed package."""
     sources, pointers, own, rows = {}, {}, [], []
     for p in packages:
         k = classify(p)
@@ -150,9 +162,15 @@ def build_plan(packages, firefox_tarball, extras, tag_hint=""):
     if firefox_tarball and not any(r[0] == "firefox" for r in rows):
         pointers.setdefault(moz_version(firefox_tarball), []).append("firefox (tarball in /opt/firefox)")
         rows.append(("firefox", firefox_tarball, "amd64", "firefox", firefox_tarball, "mozilla-tarball"))
+    owed = {}
     for s, v in extras:
-        sources.setdefault((s, v), []).append("(host build tool)")
-    return sources, pointers, own, sorted(set(rows))
+        owed.setdefault((s, v), []).append("(host build tool)")
+    for p in packages:
+        for s, v in p.get("built_using", []):
+            owed.setdefault((s, v), []).append("(Built-Using of %s)" % p["bin"])
+    for key, why in owed.items():
+        sources.setdefault(key, []).extend(why)
+    return sources, pointers, own, sorted(set(rows)), sorted(owed)
 
 
 # ── fetching ───────────────────────────────────────────────────────
@@ -505,7 +523,7 @@ def verify_dir(d, status=None, online=True, assets=None):
 def cmd_plan(a):
     pk, ff = read_root(a.root)
     extras = read_extra(a.extra) + read_extra(a.host_list)
-    sources, pointers, own, rows = build_plan(pk, ff, extras)
+    sources, pointers, own, rows, extras = build_plan(pk, ff, extras)
     print("%d binary packages: %d Ubuntu source packages, %d pointer(s), %d AurOS-own"
           % (len(rows), len(sources), len(pointers), len(own)))
     for (s, v), bins in sorted(sources.items()):
@@ -539,7 +557,7 @@ def cmd_make(a):
     t0 = time.time()
     pk, ff = read_root(a.root)
     extras = read_extra(a.extra) + read_extra(a.host_list)
-    sources, pointers, own, rows = build_plan(pk, ff, extras)
+    sources, pointers, own, rows, extras = build_plan(pk, ff, extras)
     out = os.path.abspath(a.out)
     work = os.path.abspath(a.work or os.path.join(out, ".work"))
     os.makedirs(out, exist_ok=True)

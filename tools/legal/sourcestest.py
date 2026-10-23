@@ -70,10 +70,12 @@ class Archive:
 def status(pkgs):
     """pkgs: (name, version, source-header-or-None, maintainer, state)"""
     out = []
-    for name, ver, src, maint, state in pkgs:
+    for name, ver, src, maint, state, *bu in pkgs:
         s = "Package: %s\nStatus: %s\nVersion: %s\nArchitecture: amd64\nMaintainer: %s\n" % (name, state, ver, maint)
         if src:
             s += "Source: %s\n" % src
+        if bu:
+            s += "Built-Using: %s\n" % bu[0]
         s += "Description: x\n long\n continuation\n"
         out.append(s)
     return "\n".join(out)
@@ -124,6 +126,7 @@ MUTANTS = [
     ("PACKAGES.txt need not be the image's list", 'if want != have:', 'if False:'),
     ("a removed package is shipped as if installed", 'if not f.get("Status", "").endswith(" installed"):', 'if False:'),
     ("a source package may be split between parts", 'if p["bytes"] > part_bytes:', 'if False:'),
+    ("Built-Using is ignored", 'for s, v in p.get("built_using", []):', 'for s, v in []:'),
 ]
 
 
@@ -178,13 +181,16 @@ def main():
         arch.add("bar", "2.0-1")
         arch.add("heldsrc", "3-1", extra=1000)
         arch.add("hostglibc", "2.39-0ubuntu8.9")
+        arch.add("bu1", "1.0-1"); arch.add("bu2", "2:3.4-5")
         maint = "Ubuntu Developers <x@y>"
         pkgs = [("libfoo1", "1.2-3build1", "foo (1:1.2-3)", maint, "install ok installed"),
                 ("foo-tools", "1.2-3", "foo (1:1.2-3)", maint, "install ok installed"),
                 ("bar", "2.0-1", None, maint, "install ok installed"),
                 ("held", "3-1", "heldsrc", maint, "hold ok installed"),
                 ("auros-desktop", "0.1.0.2026", None, "AurOS <noreply@auros.invalid>", "install ok installed"),
-                ("firefox", "158.0~build2", None, "Mozilla <release@mozilla.com>", "install ok installed")]
+                ("firefox", "158.0~build2", None, "Mozilla <release@mozilla.com>", "install ok installed"),
+                ("bar-signed", "2.0-1+sig", "bar-signed", maint, "install ok installed", "bu1 (= 1.0-1), bu2 (= 2:3.4-5)")]
+        arch.add("bar-signed", "2.0-1+sig")
         root = root_dir(tmp, pkgs)
         extra = os.path.join(tmp, "host.txt")
         open(extra, "w").write("# the runner's libc6-dev\nhostglibc 2.39-0ubuntu8.9\n")
@@ -192,11 +198,13 @@ def main():
         base = ["--base", "lp:" + arch.url, "--no-online"]
 
         rc, o = run("plan", "--root", root, "--extra", extra)
-        check(rc == 0 and "4 Ubuntu source packages" in o and "foo\t1:1.2-3\tfoo-tools,libfoo1" in o,
+        check(rc == 0 and "7 Ubuntu source packages" in o and "foo\t1:1.2-3\tfoo-tools,libfoo1" in o,
               "plan lists one source per (name, version), with its binaries")
+        check("bu1\t1.0-1\t(Built-Using of bar-signed)" in o and "bu2\t2:3.4-5" in o,
+              "plan adds every Built-Using source of an installed package (a signed copy, a static link)")
 
         rc, o = run("plan", "--root", root, "--extra", extra, "--resolve", "--base", "lp:" + arch.url)
-        check(rc == 0 and "4 of 4 source packages resolve" in o,
+        check(rc == 0 and "7 of 7 source packages resolve" in o,
               "plan --resolve finds every .dsc on a complete archive")
         a0 = Archive(); a0.add("foo", "1:1.2-3"); a0.add("bar", "2.0-1"); a0.add("hostglibc", "2.39-0ubuntu8.9")
         rc, o = run("plan", "--root", root, "--extra", extra, "--resolve", "--base", "lp:" + a0.url)
@@ -236,16 +244,20 @@ def main():
                  "--base", "lp:" + a4.url, "--no-online"], "heldsrc 3-1")
         refuses("AurOS's own package and no archive of AurOS's source",
                 ["make", "--root", root, "--out", os.path.join(tmp, "r5"), "--tag", "v9"] + base, "--own-archive")
-        a5 = Archive(); a5.add("foo", "1:1.2-3", extra=900); a5.add("bar", "2.0-1"); a5.add("heldsrc", "3-1")
+        a5 = Archive(); a5.add("foo", "1:1.2-3", extra=900); a5.add("bar", "2.0-1"); a5.add("heldsrc", "3-1"); a5.add("bar-signed", "2.0-1+sig"); a5.add("bu1", "1.0-1"); a5.add("bu2", "2:3.4-5")
         refuses("one source package larger than a part",
                 ["make", "--root", root, "--out", os.path.join(tmp, "r6"), "--tag", "v9", "--own-archive", own,
                  "--part-bytes", "1000", "--base", "lp:" + a5.url, "--no-online"], "more than one part")
-        a6 = Archive(); a6.add("foo", "1:1.2-3"); a6.add("bar", "2.0-1"); a6.add("heldsrc", "3-1")
+        a6 = Archive(); a6.add("foo", "1:1.2-3"); a6.add("bar", "2.0-1"); a6.add("heldsrc", "3-1"); a6.add("bar-signed", "2.0-1+sig"); a6.add("bu1", "1.0-1"); a6.add("bu2", "2:3.4-5")
         d = "/lp/bar/2.0-1/bar_2.0-1.dsc"
         a6.files[d] = a6.files[d].replace(b"Version: 2.0-1", b"Version: 2.0-2")
         refuses("a .dsc that is another version than the one asked for",
                 ["make", "--root", root, "--out", os.path.join(tmp, "r7"), "--tag", "v9", "--own-archive", own,
                  "--base", "lp:" + a6.url, "--no-online"], "not bar 2.0-1")
+        a7 = Archive(); [a7.add(*x) for x in (("foo", "1:1.2-3"), ("bar", "2.0-1"), ("heldsrc", "3-1"), ("bar-signed", "2.0-1+sig"), ("bu2", "2:3.4-5"))]
+        refuses("a Built-Using source that is nowhere (a signed copy's origin)",
+                ["make", "--root", root, "--out", os.path.join(tmp, "r9"), "--tag", "v9", "--own-archive", own,
+                 "--base", "lp:" + a7.url, "--no-online"], "bu1 1.0-1")
         os.makedirs(os.path.join(tmp, "r8")); open(os.path.join(tmp, "r8", "x"), "w").write("x")
         refuses("a release directory that is not empty", ["make", "--root", root, "--out", os.path.join(tmp, "r8"),
                 "--tag", "v9", "--own-archive", own] + base, "not empty")
