@@ -258,7 +258,18 @@ else put remote_signal no; fi
 pkcheck --action-id org.freedesktop.packagekit.package-install --process "$sp" --detail package_ids \
     "teamviewer;15.58.4;amd64;local" > "$OUT/pk3.txt" 2>&1
 put remote_deb "$?"
-journalctl -u polkit.service -b --no-pager -o cat 2>&1 | tail -20 > "$OUT/polkit.txt"
+# Why a PackageKit install of a remote-control program might be let
+# through: every rule polkit reads, what the action's own defaults are,
+# and the same question asked three more ways.
+{
+    echo "== rules"; ls -l /etc/polkit-1/rules.d /usr/share/polkit-1/rules.d 2>&1
+    echo "== pkaction"; pkaction --action-id org.freedesktop.packagekit.package-install --verbose 2>&1 | head -20
+    for v in "anydesk;6.3.2;amd64;local" "teamviewer;15.58.4;amd64;local" "teamviewer-host;15.58.4;amd64;local"; do
+        pkcheck --action-id org.freedesktop.packagekit.package-install --process "$sp" --detail package_ids "$v" > /dev/null 2>&1
+        echo "package_ids=$v -> pkcheck exit $?"
+    done
+    echo "== polkitd"; journalctl -b --no-pager -o cat _COMM=polkitd 2>&1 | tail -30
+} > "$OUT/polkit.txt" 2>&1
 sleep 2
 if grep -q '"teamviewer"' "$OUT/guard-signal.txt"; then
     put remote_deb_signal yes; host keys esc   # "Don't install it"
@@ -552,24 +563,26 @@ power_on() { # disk label mode timeout
     umount_root
 }
 
-# What a screenshot shows: the trap page is red, the desktop's cards are
-# cream. Appended to that boot's record as shot_<name>=page|card|other.
-shotkinds() { # label
-    for f in "$T"/shot.$1.*.ppm; do
-        [ -f "$f" ] || continue
-        n=${f#"$T"/shot.$1.}; n=${n%.ppm}
-        k=$(python3 - "$f" <<'EOPY'
+# What a screenshot shows: the trap page is dark red, the desktop's
+# cards are cream. Appended to that boot's record as
+# shot_<name>=page|card|other.
+cat > "$T/shotkind.py" <<'EOPY'
 import sys
 d = open(sys.argv[1], 'rb').read().split(b'\n', 3)
 w, h = map(int, d[1].split()); px = d[3]
 def at(x, y): i = (y * w + x) * 3; return px[i], px[i + 1], px[i + 2]
 pts = [at(x, y) for x, y in ((250, 300), (640, 300), (1000, 300), (640, 500))]
-red = sum(1 for r, g, b in pts if r > 150 and g < 60 and b < 60)
+red = sum(1 for r, g, b in pts if r > 60 and g < 40 and b < 40)
 cream = sum(1 for r, g, b in pts if r > 200 and g > 200 and b > 190)
 print('page' if red >= 3 else 'card' if cream >= 3 else 'other')
 EOPY
-)
+shotkinds() { # label
+    for f in "$T"/shot."$1".*.ppm; do
+        [ -f "$f" ] || continue
+        n=${f#"$T"/shot."$1".}; n=${n%.ppm}
+        k=$(python3 "$T/shotkind.py" "$f" 2>&1 | tail -1)
         echo "shot_$n=$k" >> "$T/rec.$1/result"
+        echo "    $1 screenshot $n: $k"
     done
 }
 

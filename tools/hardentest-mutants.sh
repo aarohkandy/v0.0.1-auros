@@ -73,7 +73,7 @@ fi
 mutate "every AurOS entry in grub.cfg.in"    "sed -i '0,/^ *linux .* slab_nomerge/s/ slab_nomerge//' usr/lib/auros/grub.cfg.in"
 mutate "every AurOS entry in grub.cfg.in"    "sed -i 's/ panic=10 / panic=10 init_on_free=1 /' usr/lib/auros/grub.cfg.in"
 mutate "every AurOS entry in grub.cfg.in"    "sed -i '/start-windows/s/ lockdown=integrity//' usr/lib/auros/grub.cfg.in"
-mutate "every AurOS entry in grub.cfg.in"    "sed -i '/ single init=/s/ vsyscall=none//' usr/lib/auros/grub.cfg.in"
+mutate "every AurOS entry in grub.cfg.in"    "sed -i '/systemd.show_status=1/s/ vsyscall=none//' usr/lib/auros/grub.cfg.in"
 mutate "the previous-kernel entry auros-bootchain writes" "sed -i 's/ debugfs=off//' usr/lib/auros/bootchain"
 mutate "every AurOS entry in grub.cfg.in"    "sed -i 's/ lockdown=integrity//' usr/lib/auros/grub.cfg.in"
 mutate "nftables.service starts at boot"     "rm etc/systemd/system/sysinit.target.wants/nftables.service"
