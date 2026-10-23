@@ -762,6 +762,10 @@ class Flow:
                 if btns:
                     b = max(btns, key=lambda b: (b[1] + b[3], b[0] + b[2]))
                     label = label or vision.text_of(vision.ocr(img, b, psm=7)).strip() or "?"
+                    # OCR reads the same button a little differently each time
+                    # ("Check again", "Checkiagain"): count presses by its first letters
+                    # (run 39964877711 pressed 60 of them and never called it stuck)
+                    key = re.sub(r"[^a-z]", "", label.lower())[:4] or "?"
                     # The installer ignores a press in the first 700 ms of a
                     # page (a double click must not skip one): press a button
                     # only once it has stood still for over a second.
@@ -775,20 +779,20 @@ class Flow:
                     if re.search(r"close", label, re.I) and not re.search(r"restart", label, re.I):
                         self.m.save(img, "wizard-ended-with-close")
                         raise Failure(close_verdict(VARIANT, vision.text_of(vision.ocr(img, rect))))
-                    n = clicks.get(label, 0)
-                    if not self.wizard_pages or n == 0 or label != last_label:
+                    n = clicks.get(key, 0)
+                    if not self.wizard_pages or n == 0 or key != last_label:
                         page = " ".join(e.get("name") or "" for e in named if e.get("type") == "Pane")
                         page = (page + " || " if page else "") + vision.text_of(vision.ocr(img, rect))
                         self.wizard_pages.append(page)
                         self.log(f"wizard page before '{label}': {page[:400]}")
                     if re.search(r"fix these", label, re.I):
                         self.fix_presses += 1
-                    if label != last_label:
+                    if key != last_label:
                         run_start = time.time()
                     # (B: the primary button is always there and pressing it early is
                     # harmless, so a page that is still working gets pressed again and
                     # again: stuck is many presses over minutes, not six in a row)
-                    if label == last_label and n >= 6 and time.time() - run_start > 300:
+                    if key == last_label and n >= 6 and time.time() - run_start > 300:
                         self.m.save(img, "wizard-stuck")
                         raise Failure(f"pressed '{label}' {n} times over {int(time.time() - run_start)} s "
                                       "and the page did not move on: " +
@@ -803,8 +807,8 @@ class Flow:
                         self.restart_clicked = time.time()
                         stage[0].__exit__(None, None, None)
                         return
-                    clicks[label] = n + 1
-                    last_label = label
+                    clicks[key] = n + 1
+                    last_label = key
                     idle_since = time.time()
                     next_stage(f"wizard: after '{label}'")
                     time.sleep(3)

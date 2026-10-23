@@ -107,7 +107,15 @@ switch ($variant) {
       $free = (Get-Volume -DriveLetter C).SizeRemaining
       $junk = $free - 30GB
       if ($junk -lt 10GB) { "TOO SMALL: only $([math]::Round($free / 1GB, 1)) GB free, the variant needs 40" }
-      else { fsutil file createnew C:\Windows\Temp\e2e-old-leftovers.tmp $junk }
+      else {
+        fsutil file createnew C:\Windows\Temp\e2e-old-leftovers.tmp $junk
+        # Old, like a PC's real leftovers: the installer's space fix deletes only
+        # temporary files nothing has touched for a week (fix_win.c TEMP_AGE_DAYS),
+        # so a file made a minute ago is never cleaned (run 39964877711).
+        $f = Get-Item C:\Windows\Temp\e2e-old-leftovers.tmp
+        $old = (Get-Date).AddDays(-45)
+        $f.CreationTime = $old; $f.LastWriteTime = $old; $f.LastAccessTime = $old
+      }
       Get-Volume -DriveLetter C | Select-Object Size, SizeRemaining | Format-List
     }
   }
