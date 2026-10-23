@@ -78,6 +78,10 @@ def test_wizard_contract():
     for word, why in (("Install AurOS", "starts the install"), ("Restart now", "ends the wizard"),
                       ("Fix these for me", "counts a fix"), ("Close AurOS Setup", "means it cannot go on")):
         check('L"%s"' % word in body, f"wizard: a primary button says '{word}' ({why})")
+    # The driver treats a green button whose label has "restart" in it as the
+    # final Restart now and returns. No other primary label may say it.
+    others = [t for t in re.findall(r'L"([^"]*)"', body) if re.search("restart", t, re.I) and t != "Restart now"]
+    check(not others, f"wizard: no other primary button says 'restart' (the driver would stop there): {others}")
 
 
 def test_stops():

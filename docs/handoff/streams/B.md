@@ -143,9 +143,10 @@ Written before the code landed; each is now in `main`.
    else happens until it presses "Restart now" again (un-minimise first).
 11. **"Fix these for me" with a restart among the fixes** (a waiting update,
     the unmeasurable checks) first shows "Save your work first" with the
-    big button **Restart Windows now** and **Not yet**. The e2e "pending"
-    variant must press that second button too (the driver presses the green
-    one it finds, so it works unchanged; the page text differs).
+    big button **I have saved my work** and **Not yet**. The e2e "pending"
+    variant's driver presses the green button it finds, so it goes through
+    unchanged. (The label deliberately does not contain "restart": the driver
+    treats any green button with that word as the final Restart now.)
 12. **The time**: Ready says "It takes about 25 to 60 minutes. The screen goes
     dark for a minute or two of that." (hours on a hard disk). The progress
     sentence says "Part 3 of 4", not "Step 3 of 4". The last page says what the

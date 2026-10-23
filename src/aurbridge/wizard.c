@@ -3108,7 +3108,7 @@ static int primary_enabled(void)
 static const wchar_t *primary_label(void)
 {
     if (g_confirm) return g_confirm == 1 ? L"Keep going"
-                        : g_confirm == 3 ? L"Restart Windows now" : L"Keep this window open";
+                        : g_confirm == 3 ? L"I have saved my work" : L"Keep this window open";
     switch (g_page) {
     case PAGE_WELCOME:  return L"Next";
     /* WHEN IT CANNOT GO ON, THE ONE BUTTON CLOSES IT. "Check again" on an
@@ -5143,7 +5143,7 @@ static int nav_test(const char *dir)
         render();
         int not_yet = 0;
         for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_LEAVE) not_yet = 1;
-        nt_check(g_confirm == 3 && !wcscmp(primary_label(), L"Restart Windows now") && not_yet &&
+        nt_check(g_confirm == 3 && !wcscmp(primary_label(), L"I have saved my work") && not_yet &&
                  !g_fix_busy,
                  "Fix these for me asks first: Save your work first, Restart Windows now / Not yet");
         widget_activate(ID_LEAVE);
