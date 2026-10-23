@@ -1,3 +1,5 @@
+> **Current direction (session B): [DESIGN-DIRECTION.md](DESIGN-DIRECTION.md). Where they differ, the direction wins.**
+
 # Design law
 
 This document exists because the first version of AurOS looked like
