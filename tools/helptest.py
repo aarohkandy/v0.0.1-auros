@@ -17,7 +17,15 @@ one of them. Fails if:
   - visible text uses a word docs/EASY.md rule 2 forbids (the list is
     read from EASY.md itself, so the rule and the check cannot drift);
   - the stylesheet sets any text under 18px, or body text under 22px;
-  - any text colour pair, light or dark, is under 4.5:1.
+  - any text colour pair, light or dark, is under 4.5:1;
+  - a picture has no words for someone who cannot see it, sets its own
+    style, or shows a button the bar at the bottom of the screen does not
+    have (the labels are read from src/aurshell/foot.c), or does not mark
+    exactly one of them;
+  - the Help panel's button is not called what the index says it is
+    (read from src/aurshell/foot.c), so "press Help, then ..." is true;
+  - a page spells out a web address: the pages work offline and are not
+    rebuilt when the project moves, so they name no address at all.
 
 Standard library only; no browser needed.
 """
@@ -31,7 +39,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 
 TOPICS = ["getting-online.html", "programs.html", "printing.html",
-          "video-calls.html", "windows.html", "never-call.html"]
+          "video-calls.html", "something-wrong.html", "windows.html",
+          "never-call.html"]
 
 fails = []
 passes = 0
@@ -55,6 +64,8 @@ class Page(html.parser.HTMLParser):
         self.refs, self.ids, self.text = [], set(), []
         self.scripts = 0
         self.skip = 0          # inside <script>/<style>/<title>
+        self.svgs = []         # one dict per picture
+        self.in_svg = self.in_text = 0
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
@@ -70,14 +81,50 @@ class Page(html.parser.HTMLParser):
         for k, v in attrs:
             if k.startswith("on"):
                 self.scripts += 1          # an onclick= is a script too
+        if a.get("xlink:href") is not None:
+            self.refs.append(a["xlink:href"])
+        if tag == "svg":
+            self.in_svg += 1
+            self.svgs.append({"role": a.get("role"), "label": a.get("aria-label") or "",
+                              "texts": [], "on": 0, "ring": 0, "styled": []})
+        if self.in_svg:
+            pic = self.svgs[-1]
+            cls = (a.get("class") or "").split()
+            pic["styled"] += [k for k in a if k in ("style", "font-size", "fill", "stroke")]
+            if tag == "g" and "on" in cls:
+                pic["on"] += 1
+            if tag == "rect" and "ring" in cls:
+                pic["ring"] += 1
+            if tag == "text":
+                self.in_text += 1
 
     def handle_endtag(self, tag):
         if tag in ("script", "style", "title") and self.skip:
             self.skip -= 1
+        if tag == "svg" and self.in_svg:
+            self.in_svg -= 1
+        if tag == "text" and self.in_text:
+            self.in_text -= 1
 
     def handle_data(self, data):
         if not self.skip:
             self.text.append(data)
+        if self.in_text and data.strip():
+            self.svgs[-1]["texts"].append(data.strip())
+
+
+def band_labels():
+    """The words on the bar's buttons, and the Help panel's one button,
+    as src/aurshell/foot.c paints them."""
+    try:
+        with open(os.path.join(REPO, "src", "aurshell", "foot.c"), encoding="utf-8") as f:
+            foot = f.read()
+    except OSError:
+        return set(), ""
+    m = re.search(r"LABEL\[B_N\]\s*=\s*\{(.+?)\};", foot, re.S)
+    labels = set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
+    b = re.search(r'"(Show me how[^"]*)"', foot)
+    return labels, (b.group(1) if b else "")
 
 
 def forbidden_words():
@@ -178,18 +225,50 @@ def main():
         words = " ".join(pg.text)
         check("Close this" in words, f"{t}: says how to close it (Close this)")
 
-    # 5. her words (docs/EASY.md rule 2)
+    # 5. pictures: words for whoever cannot see them, the bar as it is
+    labels, show_me = band_labels()
+    check(len(labels) >= 6, f"read the bar's buttons from src/aurshell/foot.c ({len(labels)})")
+    n_pics, bad = 0, []
+    for p, pg in parsed.items():
+        for i, pic in enumerate(pg.svgs, 1):
+            n_pics += 1
+            where = f"picture {i} on {p}"
+            if pic["role"] != "img" or len(pic["label"].split()) < 4:
+                bad.append(f"{where}: no role=img and aria-label")
+            if pic["styled"]:
+                bad.append(f"{where}: sets its own {', '.join(sorted(set(pic['styled'])))}")
+            odd = [t for t in pic["texts"] if t not in labels]
+            if odd:
+                bad.append(f"{where}: the bar has no {', '.join(odd)}")
+            if pic["on"] != 1 or pic["ring"] != 1:
+                bad.append(f"{where}: marks {pic['on']} buttons and draws {pic['ring']} rings, not 1")
+    check(n_pics >= 4, f"the pages have pictures of the bar ({n_pics})")
+    check(not bad, "every picture is described in words, styled by help.css, and shows the real bar",
+          "; ".join(bad[:8]))
+    idx_text = html.unescape(" ".join(idx.text)) if idx else ""
+    check(bool(show_me) and show_me in idx_text,
+          f'the index names the Help panel\'s button as the bar paints it ("{show_me}")')
+
+    # 6. no web address on any page
+    addr = []
+    for p, pg in parsed.items():
+        text = html.unescape(" ".join(pg.text))
+        for m in re.finditer(r"(https?://|www\.|github\.(com|io)|\b[\w-]+\.(com|org|net|io)\b)", text, re.I):
+            addr.append(f"{m.group(0)} on {p}")
+    check(not addr, "no page spells out a web address", "; ".join(addr[:8]))
+
+    # 7. her words (docs/EASY.md rule 2)
     banned = forbidden_words()
     check(len(banned) >= 20, f"read docs/EASY.md's list of words she does not use ({len(banned)})")
     hits = []
     for p, pg in parsed.items():
-        text = html.unescape(" ".join(pg.text))
+        text = html.unescape(" ".join(pg.text + [x["label"] for x in pg.svgs]))
         for w in banned:
             if re.search(r"(?<![\w-])" + re.escape(w) + r"(?![\w-])", text, re.I):
                 hits.append(f'"{w}" on {p}')
     check(not hits, "no word from docs/EASY.md rule 2 on any page", "; ".join(hits[:10]))
 
-    # 6. sizes
+    # 8. sizes
     sizes = [(float(v), u) for v, u in re.findall(r"font-size\s*:\s*([\d.]+)(px|em|rem)", css)]
     sizes += [(float(v), "px") for v in re.findall(r"font\s*:[^;]*?\b([\d.]+)px", css)]
     small = [f"{v}{u}" for v, u in sizes if (u == "px" and v < 18) or (u != "px" and v < 0.75)]
@@ -201,7 +280,7 @@ def main():
               if re.search(r"style\s*=", open(os.path.join(d, p), encoding="utf-8").read())]
     check(not inline, "no page overrides the stylesheet inline", ", ".join(inline))
 
-    # 7. colour, light and dark
+    # 9. colour, light and dark
     light = tokens(css.split("@media")[0])
     dark_m = re.search(r"prefers-color-scheme:\s*dark\)\s*\{(.+?)\}\s*\}", css, re.S)
     schemes = [("light", light)]
@@ -211,7 +290,8 @@ def main():
     # (text, background) pairs actually used by help.css
     pairs = [("ink", "bg"), ("ink-2", "bg"), ("link", "bg"), ("ink", "soft"),
              ("link", "soft"), ("ink", "card"), ("link", "card"),
-             ("bg", "go"), ("ink", "warn-bg"), ("link", "warn-bg")]
+             ("bg", "go"), ("ink", "warn-bg"), ("link", "warn-bg"),
+             ("bar-dim", "bar"), ("bar-ink", "bar-hot"), ("ring", "bar")]
     for name, t in schemes:
         low = []
         for fg, bg in pairs:

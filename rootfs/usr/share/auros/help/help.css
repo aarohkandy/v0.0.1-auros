@@ -5,7 +5,7 @@
  * better, link targets at least 48px tall, nothing that moves, no
  * script, nothing loaded from anywhere but this folder (they must work
  * with no internet -- "getting online" is one of them).
- * tools/helptest.sh checks the sizes, the links and the words. */
+ * tools/helptest.py checks the sizes, the links, the words and the colours. */
 :root {
   --bg: #FFFDF8;      /* warm paper, as Sandstone */
   --soft: #F4EFE5;
@@ -17,6 +17,11 @@
   --link: #1846A8;    /* 8:1 on --bg */
   --warn-bg: #FFF4D6;
   --warn-edge: #B07A00;
+  /* The bar at the bottom of the screen, in pictures: its own fixed
+   * colours (src/aurshell/foot.c), the same in light and dark, with the
+   * button to press ringed in the one warm colour. */
+  --bar: #14171B; --bar-rule: #6E7680; --bar-dim: #9BA3AB;
+  --bar-hot: #23272D; --bar-ink: #ECEFF2; --ring: #F2C46B;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -70,3 +75,14 @@ ul { padding-left: 1.2em; } ul li { margin-bottom: 10px; }
 .topics a:hover { border-color: var(--go); }
 .topics b { display: block; font-size: 28px; color: var(--link); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.18em; }
 .done { margin-top: 40px; padding-top: 20px; border-top: 2px solid var(--line); }
+/* A picture of one end of the bar, the corner of the screen rounded,
+ * drawn no smaller than its own size (640 wide) when there is room. */
+.pic { display: block; width: 100%; max-width: 640px; height: auto; margin: 4px 0 28px; }
+.pic .scr { fill: var(--soft); }
+.pic .band { fill: var(--bar); stroke: var(--bar-rule); stroke-width: 2; }  /* outlined: in dark it sits on a page of the same colour */
+.pic .rule { stroke: var(--bar-rule); stroke-width: 2; }
+.pic rect { fill: var(--bar); }
+.pic text { fill: var(--bar-dim); font-size: 22px; }
+.pic .on rect { fill: var(--bar-hot); }
+.pic .on text { fill: var(--bar-ink); font-weight: 700; }
+.pic .ring { fill: none; stroke: var(--ring); stroke-width: 4; }

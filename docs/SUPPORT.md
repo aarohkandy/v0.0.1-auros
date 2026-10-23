@@ -9,15 +9,22 @@ not from AurOS: hang up or close the page. (The in-computer help page
 ## 1. On the computer itself
 
 Press **Help** at the bottom-left of the screen. It is always there, in
-every look. It explains the bar at the bottom, and opens the step-by-step
-help pages, which are on the computer and work without the internet:
+every look. It explains the bar at the bottom, and its button **Show me
+how to do things** opens the step-by-step help pages, which are on the
+computer and work without the internet:
 
 - Getting online
 - Getting a new program
 - Printing
 - Video calls
+- If something looks wrong (a stuck program, tiny words, no sound, a
+  frozen screen, AurOS not starting)
 - Going back to Windows
 - AurOS will never call you
+
+The pages name no web address on purpose: they are copied into the
+image as they are, and an address written into them would go stale the
+day the project moves.
 
 ## 2. On the website
 
