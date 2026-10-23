@@ -42,7 +42,7 @@ BASES = [("lp", "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles"),
          ("lp", "https://launchpad.net/~mozillateam/+archive/ubuntu/ppa/+sourcefiles")] + \
         [("pool", "https://archive.ubuntu.com/ubuntu/pool/" + c)
          for c in ("main", "universe", "restricted", "multiverse")]
-MOZ = "https://archive.mozilla.org/pub/firefox/releases"
+MOZ = "https://archive.mozilla.org/pub/firefox/releases"   # --moz-base overrides it (tests)
 # GitHub refuses release assets of 2 GiB and over (one report: an exact
 # 2 GiB file failed). Parts stay under 1.9 GiB, whole source packages
 # never split, so each part unpacks on its own.
@@ -76,8 +76,13 @@ def parse_status(text):
                 f[key] = m.group(2).strip()
         if not f.get("Package"):
             continue
-        if not f.get("Status", "").endswith(" installed"):
-            continue   # removed, config-files only: no binary of it ships
+        st = f.get("Status", "").split()
+        # dpkg's states: not-installed and config-files leave no binary; every other state
+        # (installed, unpacked, half-installed, half-configured, triggers-*) has files on disk
+        if len(st) != 3 or st[2] in ("not-installed", "config-files"):
+            continue
+        if st[2] != "installed":
+            print("build/sources: warning: %s is %s, not installed: its files are in the image, so its source is owed" % (f["Package"], st[2]), file=sys.stderr)
         src, sv = f["Package"], f["Version"]
         if f.get("Source"):
             m = re.match(r"(\S+)(?:\s+\(([^)]+)\))?\s*$", f["Source"])
@@ -324,12 +329,12 @@ def sha256_file(p):
     return h.hexdigest()
 
 
-def moz_pointer(ver, online):
-    base = "%s/%s" % (MOZ, ver)
+def moz_pointer(ver, online, base_url=None, mirror_to=None):
+    base = "%s/%s" % ((base_url or MOZ).rstrip("/"), ver)
     name = "firefox-%s.source.tar.xz" % ver
     url = "%s/source/%s" % (base, name)
     if not online:
-        return {"ver": ver, "url": url, "sha256": "-", "bytes": 0}
+        return {"ver": ver, "url": url, "sha256": "-", "bytes": 0, "mirror": "-"}
     def sums():
         with http(base + "/SHA256SUMS") as r:
             return r.read().decode("utf-8", "replace")
@@ -340,7 +345,23 @@ def moz_pointer(ver, online):
     def head():
         with http(url, method="HEAD") as r:
             return int(r.headers.get("Content-Length", "0") or 0)
-    return {"ver": ver, "url": url, "sha256": sha[0], "bytes": retrying(head, url)}
+    size = retrying(head, url)
+    mirror = "-"
+    if mirror_to:
+        # insurance for the mail-order route: a copy of Mozilla's tarball in the release, hash-checked
+        dest = os.path.join(mirror_to, name)
+        def once():
+            h, n = hashlib.sha256(), 0
+            part = "%s.part%d" % (dest, threading.get_ident())
+            with http(url, timeout=120) as r, open(part, "wb") as o:
+                for b in iter(lambda: r.read(1 << 20), b""):
+                    h.update(b); n += len(b); o.write(b)
+            if h.hexdigest() != sha[0]:
+                raise Fail("%s is sha256 %s, Mozilla's SHA256SUMS says %s" % (url, h.hexdigest(), sha[0]))
+            os.replace(part, dest)
+        retrying(once, url)
+        mirror = name
+    return {"ver": ver, "url": url, "sha256": sha[0], "bytes": size, "mirror": mirror}
 
 
 # ── parts ──────────────────────────────────────────────────────────
@@ -509,6 +530,8 @@ def verify_dir(d, status=None, online=True, assets=None):
             ptr = [x for x in srows if x[0] == "P" and x[1] == "firefox"]
             if not ptr:
                 no("%s %s: no pointer to Firefox's source in SOURCES.txt" % (b, v)); continue
+            if len(ptr[0]) > 6 and ptr[0][6] != "-" and ptr[0][6] not in listed:
+                no("the Firefox source mirror %s is named in SOURCES.txt and is not in SHA256SUMS" % ptr[0][6])
             if online:
                 try:
                     h = http(ptr[0][3], method="HEAD"); h.close()
@@ -588,7 +611,7 @@ def cmd_make(a):
     ptrs = {}
     for v in sorted(pointers):
         try:
-            ptrs[v] = moz_pointer(v, not a.no_online)
+            ptrs[v] = moz_pointer(v, not a.no_online, a.moz_base, out if a.mirror_firefox else None)
             print("ok   firefox %s (pointer %s)" % (v, ptrs[v]["url"]), flush=True)
         except Exception as e:
             errors.append("firefox %s: %s" % (v, e))
@@ -605,6 +628,8 @@ def cmd_make(a):
     if a.own_archive:
         ownname = os.path.basename(a.own_archive)
         shutil.copyfile(a.own_archive, os.path.join(out, ownname))
+    for inc in (a.include or []):
+        shutil.copyfile(inc, os.path.join(out, os.path.basename(inc)))
     when = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     with open(os.path.join(out, "PACKAGES.txt"), "w") as fh:
         fh.write("# binary packages in AurOS %s, from the image's dpkg status\n" % a.tag)
@@ -616,14 +641,16 @@ def cmd_make(a):
     with open(os.path.join(out, "SOURCES.txt"), "w") as fh:
         fh.write("# AurOS %s: the corresponding source\n" % a.tag)
         fh.write("# commit %s, prepared %s by build/sources\n" % (a.commit or "unknown", when))
+        if a.host_note:
+            fh.write("# %s\n" % a.host_note.replace("\n", " "))
         fh.write("# S source version part dsc-sha256 files bytes binaries (a part is sources-%s-<part>of%d.tar)\n" % (a.tag, nparts))
-        fh.write("# P pointer: program version URL sha256 bytes (an unchanged upstream binary; source kept by its maker)\n")
+        fh.write("# P pointer: program version URL sha256 bytes mirror (an unchanged upstream binary; source kept by its maker; mirror: a copy in this release, or -)\n")
         fh.write("# O AurOS's own code: name tag archive sha256 (MIT)\n")
         for (s, v), r in sorted(results.items()):
             fh.write("S\t%s\t%s\t%d\t%s\t%d\t%d\t%s\n" % (s, v, where[(s, v)], r["dsc_sha"], len(r["files"]), r["bytes"],
                                                          ",".join(sorted(sources[(s, v)]))))
         for v, p in sorted(ptrs.items()):
-            fh.write("P\tfirefox\t%s\t%s\t%s\t%d\n" % (v, p["url"], p["sha256"], p["bytes"]))
+            fh.write("P\tfirefox\t%s\t%s\t%s\t%d\t%s\n" % (v, p["url"], p["sha256"], p["bytes"], p["mirror"]))
         if ownname:
             fh.write("O\tauros\t%s\t%s\t%s\n" % (a.tag, ownname, sha256_file(os.path.join(out, ownname))))
     write_sums(out)
@@ -685,6 +712,10 @@ def main(argv):
             p.add_argument("--tag", required=True)
             p.add_argument("--commit", default="")
             p.add_argument("--own-archive")
+            p.add_argument("--include", action="append", help="a file to put in the release as it is (NOTICES.txt)")
+            p.add_argument("--host-note", help="one line for SOURCES.txt's header (where the build host's glibc came from)")
+            p.add_argument("--mirror-firefox", action="store_true", help="put a hash-checked copy of Mozilla's source tarball in the release")
+            p.add_argument("--moz-base", help="Mozilla's releases address (tests)")
             p.add_argument("--work")
             p.add_argument("--base", action="append", help="kind:URL, kind lp or pool (tests)")
             p.add_argument("--jobs", type=int, default=6)

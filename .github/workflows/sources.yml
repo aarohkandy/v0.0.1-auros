@@ -1,47 +1,56 @@
-# The source code of one AurOS release, published as its sibling release
-# `sources-<tag>` and checked after it is published (stream LEGAL; the
-# rule is docs/legal/COMPLIANCE.md LIC-1, the how is docs/legal/SOURCES.md).
+# The source code of every AurOS release, published as its sibling release
+# `sources-<tag>` and checked after it is published (stream LEGAL; the rule
+# is docs/legal/COMPLIANCE.md LIC-1, the how is docs/legal/SOURCES.md).
 #
 # AurOS carries hundreds of programs under the GPL, LGPL and similar
 # licenses. A person who has a copy is entitled to their source, from us,
 # not from a mirror that forgets old versions. Every AurOS release
 # therefore gets, beside it, a release holding the exact Ubuntu source
-# packages of the exact versions in its image (build/sources).
+# packages of the exact versions in its image (build/sources), the license
+# texts (NOTICES.txt) and a hash-checked copy of Mozilla's Firefox source.
 #
-# Three ways in:
+# THIS WORKFLOW DOES NOT WAIT FOR ANYBODY TO WIRE IT. Every three hours it
+# looks at the AurOS releases (tags that start with v) and makes the sources
+# of every published one that has none, from the build run named in the
+# release's own notes (its rootfs artifact lives 14 days). So a release
+# cannot stay without sources for more than a few hours, and the weekly
+# failure below says so if one ever does. release.yml may also call it
+# (`uses: ./.github/workflows/sources.yml`, with run-id and tag: stream E's
+# hand-off in docs/handoff/streams/LEGAL.md) to make `promote` wait.
 #
-#   - release.yml calls it (`uses: ./.github/workflows/sources.yml`, with
-#     run-id and tag) after `publish`; `promote` needs it. That wiring is
-#     stream E's: docs/handoff/streams/LEGAL.md has the lines.
-#   - a commit whose SUBJECT says `[sources TAG RUN-ID]` makes (or re-checks)
-#     the sources of a release that already exists, for example
-#     `[sources v0.1.0-618726b 39923676690]`. RUN-ID is the build run
-#     whose rootfs artifact made that release (14 days of retention).
-#     With the word `again` after the run id, a PUBLISHED sources release is
-#     made again with a fixed tool and its assets are replaced by the complete
-#     set (never fewer: sources-* releases are not deleted).
-#   - every Monday: the published `sources-*` releases are re-checked
-#     against GitHub's own digests (no 4 GB download), and the run fails
-#     if any asset has gone or changed, or any binary package has lost
-#     its source.
+# Ways in:
+#   - the schedule (every 3 hours) and a commit whose subject says
+#     `[sources sweep]`: the catch-up above, then re-checking every
+#     published `sources-*` release against GitHub's own digests (no
+#     multi-GB download); red if an asset has gone or changed, a binary
+#     package has lost its source, or a release older than a day has none;
+#   - a commit whose SUBJECT says `[sources TAG RUN-ID]`, for example
+#     `[sources v0.1.0-618726b 39905858387]`: that one release. With the word
+#     `again` after the run id a PUBLISHED sources release is made again
+#     with a fixed tool and its assets are replaced by the complete set;
+#     assets of the old set that are not in the new one are removed;
+#   - release.yml calling it.
 #
-#   which     decides without a runner whether this run has work.
-#   make      downloads the build's rootfs, reads its dpkg database, fetches
-#             every source package (Launchpad, then archive.ubuntu.com),
-#             checks every file against its .dsc, packs parts under 1.9 GiB,
-#             and publishes the release `sources-<tag>` (a prerelease,
-#             NEVER deleted: docs/OWNER-SETUP.md). An existing release is
-#             left alone and only verified.
-#   verify    downloads the published release again and runs build/sources
-#             verify against the image's own package list.
-#   reverify  the weekly check.
+#   which     decides without a runner whether this run has work and which
+#             releases are to be made (the matrix).
+#   make      per release: downloads the build's rootfs, reads its dpkg
+#             database, fetches every source package (Launchpad, then
+#             archive.ubuntu.com), checks every file against its .dsc,
+#             packs parts under 1.9 GiB, adds NOTICES.txt and Mozilla's
+#             Firefox source, and publishes the release `sources-<tag>` (a
+#             prerelease, NEVER deleted: docs/OWNER-SETUP.md). An existing
+#             published release is left alone and only verified.
+#   verify    per release: downloads the published release again and runs
+#             build/sources verify against the image's own package list.
+#   marks     per release: no Ubuntu branding in the image (check.py image).
+#   reverify  the sweep's check of everything published.
 name: sources
 
 on:
   push:
     branches: [main]
   schedule:
-    - cron: '17 4 * * 1'
+    - cron: '23 */3 * * *'
   workflow_call:
     inputs:
       run-id:
@@ -63,12 +72,15 @@ jobs:
   which:
     if: inputs.run-id != '' || github.event_name == 'schedule' || contains(github.event.head_commit.message, '[sources')
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     outputs:
       mode: ${{ steps.w.outputs.mode }}
-      tag: ${{ steps.w.outputs.tag }}
-      run-id: ${{ steps.w.outputs.run_id }}
-      again: ${{ steps.w.outputs.again }}
+      todo: ${{ steps.w.outputs.todo }}
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - id: w
         env:
@@ -77,40 +89,63 @@ jobs:
           EVENT: ${{ github.event_name }}
           MSG: ${{ github.event.head_commit.message }}
         run: |
-          mode=make; tag=""; rid=""; again=false
+          mode=make; todo='[]'
+          sweep() {
+            mode=sweep
+            # every published AurOS release without a published sources release; the build run is
+            # named in the release's notes ("tested by [Actions run N]")
+            todo=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | [.tag_name, .draft, (.body // "")] | @json' | python3 -c '
+          import json, re, sys
+          rel = [json.loads(l) for l in sys.stdin]
+          have = {t for t, d, b in rel if t.startswith("sources-") and not d}
+          todo = []
+          for t, d, b in rel:
+              if d or not re.match(r"v[0-9]", t) or "sources-" + t in have:
+                  continue
+              m = re.search(r"Actions run ([0-9]+)", b)
+              if m and re.fullmatch(r"v[0-9][0-9A-Za-z.+-]*", t):
+                  todo.append({"tag": t, "run": m.group(1), "again": "false"})
+          print(json.dumps(todo))')
+          }
           if [ "$EVENT" = schedule ]; then
-            mode=reverify
+            sweep
           elif [ -n "$IN_RUN" ]; then
-            tag=$IN_TAG; rid=$IN_RUN
+            case "$IN_TAG" in v[0-9]*) ;; *) echo "::error::odd tag"; exit 1 ;; esac
+            todo=$(printf '[{"tag":"%s","run":"%s","again":"false"}]' "$IN_TAG" "$IN_RUN")
           else
             subj=${MSG%%$'\n'*}
             re='\[sources[[:space:]]+(v[0-9][0-9A-Za-z.+-]*)[[:space:]]+([0-9]+)([[:space:]]+again)?\]'
-            if [[ $subj =~ $re ]]; then tag=${BASH_REMATCH[1]}; rid=${BASH_REMATCH[2]}; [ -n "${BASH_REMATCH[3]}" ] && again=true
-            elif [[ $subj == *'[sources reverify]'* ]]; then mode=reverify
-            else echo "::error::the subject must say [sources TAG RUN-ID] or [sources reverify]"; exit 1; fi
+            if [[ $subj =~ $re ]]; then
+              again=false; [ -n "${BASH_REMATCH[3]}" ] && again=true
+              todo=$(printf '[{"tag":"%s","run":"%s","again":"%s"}]' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$again")
+            elif [[ $subj == *'[sources sweep]'* || $subj == *'[sources reverify]'* ]]; then sweep
+            else echo "::error::the subject must say [sources TAG RUN-ID], [sources TAG RUN-ID again] or [sources sweep]"; exit 1; fi
           fi
-          case "$tag" in *[!0-9A-Za-z.+-]*) echo "::error::odd tag"; exit 1 ;; esac
-          { echo "mode=$mode"; echo "tag=$tag"; echo "run_id=$rid"; echo "again=$again"; } | tee -a "$GITHUB_OUTPUT"
+          echo "mode=$mode"; echo "todo=$todo"
+          { echo "mode=$mode"; echo "todo=$todo"; } >> "$GITHUB_OUTPUT"
 
   make:
     needs: which
-    if: needs.which.outputs.mode == 'make'
+    if: needs.which.outputs.todo != '[]' && needs.which.outputs.todo != ''
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    # One sources release at a time: two would race on the same tag.
+    timeout-minutes: 150
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        item: ${{ fromJSON(needs.which.outputs.todo) }}
+    # One sources release at a time per tag: two would race on the same release.
     concurrency:
-      group: sources-${{ needs.which.outputs.tag }}
+      group: sources-${{ matrix.item.tag }}
       cancel-in-progress: false
     permissions:
       contents: write
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: ${{ needs.which.outputs.tag }}
-      RID: ${{ needs.which.outputs.run-id }}
-      AGAIN: ${{ needs.which.outputs.again }}
-    outputs:
-      published: ${{ steps.pub.outputs.published }}
+      TAG: ${{ matrix.item.tag }}
+      RID: ${{ matrix.item.run }}
+      AGAIN: ${{ matrix.item.again }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -118,18 +153,22 @@ jobs:
 
       - name: which commit the release was built from, and that the tag is its tag
         run: |
+          case "$TAG" in v[0-9]*) ;; *) echo "::error::odd tag"; exit 1 ;; esac
+          case "$TAG$RID" in *[!0-9A-Za-z.+-]*) echo "::error::odd tag or run id"; exit 1 ;; esac
           COMMIT=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RID" --jq .head_sha)
           [ -n "$COMMIT" ] || { echo "::error::run $RID not found"; exit 1; }
           case "$TAG" in *"-${COMMIT:0:7}") ;; *) echo "::error::tag $TAG does not end in the built commit ${COMMIT:0:7} of run $RID"; exit 1 ;; esac
           git cat-file -e "$COMMIT^{commit}" || { echo "::error::commit $COMMIT is not in this repository"; exit 1; }
           echo "COMMIT=$COMMIT" >> "$GITHUB_ENV"
           echo "built from $COMMIT (run $RID)"
-          # A release that was never published (a draft left by a failed
-          # upload) is finished, not trusted: only a published one is left alone.
-          draft=$(gh release view "sources-$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          # Is it published? Only "release not found" means no; any other error stops here, because
+          # rebuilding into a release that exists but could not be read would overwrite it.
+          if err=$(gh release view "sources-$TAG" --json isDraft --jq .isDraft 2>&1); then draft=$err
+          elif printf '%s' "$err" | grep -qi 'release not found'; then draft=none
+          else echo "::error::cannot tell whether sources-$TAG exists: $err"; exit 1; fi
           if [ "$draft" = false ] && [ "$AGAIN" = true ]; then
-            # `[sources TAG RUN-ID again]`: the published release is made again and its
-            # assets replaced by the complete set (a tool fix that adds sources; never fewer).
+            # `[sources TAG RUN-ID again]`: the published release is made again and its assets
+            # replaced by the complete set (a tool fix that adds sources; never fewer)
             echo "EXISTS=false" >> "$GITHUB_ENV"
             echo "sources-$TAG is published and is made again, replacing its assets"
           elif [ "$draft" = false ]; then
@@ -145,16 +184,15 @@ jobs:
         with:
           name: auros-rootfs
           path: dist
-          run-id: ${{ needs.which.outputs.run-id }}
+          run-id: ${{ matrix.item.run }}
           github-token: ${{ github.token }}
 
       - name: what the image says it holds (its dpkg database), nothing else
         if: env.EXISTS == 'false'
         run: |
           mkdir -p meta
-          # The files of the rootfs this build made its image from. The
-          # archive is a tar of rootfs/ (root-owned): nothing is run, nothing
-          # is trusted, three paths are read.
+          # The files of the rootfs this build made its image from. The archive is a tar of rootfs/
+          # (root-owned): nothing is run, nothing is trusted, a few paths are read.
           zstd -dc dist/rootfs.tar.zst | tar -x -C meta --strip-components=1 --no-same-owner --wildcards \
               'rootfs/var/lib/dpkg/status' 'rootfs/etc/auros/build-warnings' 'rootfs/opt/firefox/application.ini' \
               'rootfs/usr/lib/os-release' 'rootfs/etc/issue' 'rootfs/etc/lsb-release' || true
@@ -163,56 +201,73 @@ jobs:
           grep -c '^Package: ' meta/var/lib/dpkg/status | sed 's/$/ packages in the image/'
           cat meta/etc/auros/build-warnings 2>/dev/null || true
 
-      - name: the build host's glibc (the staging system links it statically) and AurOS's own source
+      - name: the build host's glibc (the staging system links it statically), the license texts, AurOS's own source
         if: env.EXISTS == 'false'
         run: |
-          # init and aurscreen in the staging initramfs are linked with the
-          # BUILD RUNNER's libc.a (build/staging), so its source is owed too.
-          # The runner that built may have had another glibc than this one;
-          # the image's own libc6 source is in the list either way, and
-          # docs/handoff/streams/LEGAL.md asks stream E to record the build
-          # host's version in build-info.txt, which then replaces this line.
-          dpkg-query -W -f='${source:Package} ${source:Version}\n' libc6-dev | sort -u > host.txt
+          # init and aurscreen in the staging initramfs are linked with the BUILD RUNNER's libc.a
+          # (build/staging), so its source is owed too. Where the build recorded it
+          # (host-sources.txt in the installer artifact: stream E's hand-off) that is used; where it
+          # did not, this runner's is, and SOURCES.txt says so.
+          mkdir -p hostinfo
+          if gh run download "$RID" -R "$GITHUB_REPOSITORY" -n auros-installer -D hostinfo 2>/dev/null && [ -s hostinfo/host-sources.txt ]; then
+            cp hostinfo/host-sources.txt host.txt
+            echo "HOST_NOTE=The build host's glibc source is the one the build recorded (host-sources.txt)." >> "$GITHUB_ENV"
+          else
+            dpkg-query -W -f='${source:Package} ${source:Version}\n' libc6-dev | sort -u > host.txt
+            echo "HOST_NOTE=The build did not record its host's glibc: the glibc source of the machine that made this release was used, and the image's own glibc is in the list as well." >> "$GITHUB_ENV"
+          fi
           cat host.txt
-          mkdir -p out-own
+          mkdir -p out-own out-inc
           git archive --format=tar.gz --prefix="auros-${COMMIT:0:12}/" -o "out-own/auros-source-${COMMIT:0:12}.tar.gz" "$COMMIT"
-          ls -la out-own
+          # the license texts, stamped with this repository's releases page (build/forge does the same for the image)
+          rel=$(sh tools/repo.sh releases)
+          sed "s|@AUROS_RELEASES@|$rel|g" docs/legal/notices/NOTICES.txt > out-inc/NOTICES.txt
+          ls -la out-own out-inc
 
       - name: fetch, check and pack every source package
         if: env.EXISTS == 'false'
         run: |
           python3 -I build/sources make --root meta --out out --tag "$TAG" --commit "$COMMIT" \
-              --own-archive "out-own/auros-source-${COMMIT:0:12}.tar.gz" --extra host.txt --work "$RUNNER_TEMP/src" \
+              --own-archive "out-own/auros-source-${COMMIT:0:12}.tar.gz" --extra host.txt --host-note "$HOST_NOTE" \
+              --include out-inc/NOTICES.txt --mirror-firefox --work "$RUNNER_TEMP/src" \
               2>&1 | tee make.log
           ls -la out
           { echo "### sources-$TAG"; echo '```'; tail -3 make.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: publish the release sources-<tag>
-        id: pub
         if: env.EXISTS == 'false'
         run: |
           sh tools/legal/notes.sh sources "$TAG" "$COMMIT" "$RID" > notes.md
           def=$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)
-          # A DRAFT first: 2.7 GB of uploads can fail half way, and a
-          # half-filled release must never be the one people are pointed at.
-          # It is published (as a prerelease, like every release until
-          # [latest]) only when every asset is on it. The token can tag only
-          # a branch head (release.yml says why).
+          # A DRAFT first: GBs of uploads can fail half way, and a half-filled release must never be
+          # the one people are pointed at. It is published (as a prerelease, like every release until
+          # [latest]) only when every asset is on it. The token can tag only a branch head
+          # (release.yml says why). A release that exists is only added to (the `again` path).
           if ! gh release view "sources-$TAG" --json isDraft >/dev/null 2>&1; then
             gh release create "sources-$TAG" --repo "$GITHUB_REPOSITORY" --target "$def" --draft --prerelease \
                 --title "AurOS $TAG: source code" --notes-file notes.md
           fi
           # SHA256SUMS last: while it is the old one, a download still verifies against the old files.
+          fail=0
           for f in $(ls out | grep -v '^SHA256SUMS$') SHA256SUMS; do
-            for i in 1 2 3 4; do gh release upload "sources-$TAG" --repo "$GITHUB_REPOSITORY" --clobber "out/$f" && break || sleep $((i * 15)); done
+            ok=0
+            for i in 1 2 3 4; do
+              if gh release upload "sources-$TAG" --repo "$GITHUB_REPOSITORY" --clobber "out/$f"; then ok=1; break; fi
+              sleep $((i * 15))
+            done
+            [ "$ok" = 1 ] || { echo "::error::could not upload $f after four tries"; fail=1; }
+          done
+          [ "$fail" = 0 ] || exit 1
+          # the old set's files that are not in the new one (a part count that changed) go
+          for old in $(gh release view "sources-$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'); do
+            awk '{print $2}' out/SHA256SUMS | grep -qxF "$old" || [ "$old" = SHA256SUMS ] || { echo "removing $old, which the new set does not have"; gh release delete-asset "sources-$TAG" "$old" --repo "$GITHUB_REPOSITORY" -y; }
           done
           gh release edit "sources-$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
-          echo "published=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: env.EXISTS == 'false'
         with:
-          name: sources-meta
+          name: sources-meta-${{ matrix.item.tag }}
           path: meta
           retention-days: 14
           if-no-files-found: error
@@ -222,17 +277,22 @@ jobs:
     if: ${{ !cancelled() && needs.make.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        item: ${{ fromJSON(needs.which.outputs.todo) }}
     permissions:
       contents: read
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: ${{ needs.which.outputs.tag }}
+      TAG: ${{ matrix.item.tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:
-          name: sources-meta
+          name: sources-meta-${{ matrix.item.tag }}
           path: meta
       - name: every file of the published release, downloaded again from its public address
         run: |
@@ -244,37 +304,43 @@ jobs:
           done
           ls -la
           cd ..
-          # With the image's own package list when this run made the release
-          # (the artifact); without it (the release existed) the release is
-          # still checked against itself and against GitHub's digests.
+          # With the image's own package list when this run made the release (the artifact); without
+          # it (the release existed) the release is still checked against itself and GitHub's digests.
           args=()
           [ -s meta/var/lib/dpkg/status ] && args=(--root meta)
           python3 -I build/sources verify --dir dl "${args[@]}"
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/sources-$TAG" --jq '.assets' > assets.json
           python3 -I build/sources verify --dir dl --api-json assets.json
 
-  # What the image calls itself and what artwork it carries (COMPLIANCE LIC-5, TM-1).
-  # Its own job: a finding here never holds back the source release, and E may add
-  # it to `promote`'s needs when stream C has finished TM-1 (lsb-release).
+  # What the image calls itself and what artwork it carries (COMPLIANCE LIC-5, TM-1). Its
+  # own job: a finding here never holds back the source release, and E may add it to
+  # `promote`'s needs when stream C has finished TM-1 (lsb-release, ubuntu-mono).
   marks:
     needs: [which, make]
     if: ${{ !cancelled() && needs.make.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        item: ${{ fromJSON(needs.which.outputs.todo) }}
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
         with:
-          name: sources-meta
+          name: sources-meta-${{ matrix.item.tag }}
           path: meta
       - name: no Ubuntu branding in the image, and it does not name itself Ubuntu
-        run: python3 -I tools/legal/check.py image --status meta/var/lib/dpkg/status --root meta
+        run: |
+          [ -s meta/var/lib/dpkg/status ] || { echo "no image sample for this release (it already existed); nothing to check"; exit 0; }
+          python3 -I tools/legal/check.py image --status meta/var/lib/dpkg/status --root meta
 
   reverify:
-    needs: which
-    if: needs.which.outputs.mode == 'reverify'
+    needs: [which, make, verify]
+    if: ${{ !cancelled() && needs.which.outputs.mode == 'sweep' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -283,10 +349,14 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: every published sources release still has every file, and every program its source
+      - name: every AurOS release has its sources, every sources release still has every file, and every program its source
         run: |
           n=0; bad=0
-          for tag in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName | select(startswith("sources-"))'); do
+          rels=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName,isDraft,createdAt)
+          for tag in $(printf '%s' "$rels" | python3 -c '
+          import json, sys
+          for r in json.load(sys.stdin):
+              if r["tagName"].startswith("sources-") and not r["isDraft"]: print(r["tagName"])'); do
             n=$((n+1)); d="re/$tag"; mkdir -p "$d"
             for f in SHA256SUMS SOURCES.txt PACKAGES.txt; do
               curl -fsSL --retry 5 -o "$d/$f" "https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/$f" || { echo "::error::$tag: $f is gone"; bad=1; }
@@ -295,4 +365,17 @@ jobs:
             python3 -I build/sources verify --dir "$d" --api-json "$d/assets.json" || { echo "::error::$tag does not verify"; bad=1; }
           done
           echo "$n sources release(s) checked"
+          # an AurOS release more than a day old with no published sources release is a failure
+          for t in $(printf '%s' "$rels" | python3 -c '
+          import json, sys, datetime
+          rel = json.load(sys.stdin)
+          have = {r["tagName"] for r in rel if r["tagName"].startswith("sources-") and not r["isDraft"]}
+          now = datetime.datetime.now(datetime.timezone.utc)
+          for r in rel:
+              t = r["tagName"]
+              if r["isDraft"] or not (t.startswith("v") and t[1:2].isdigit()) or "sources-" + t in have: continue
+              age = now - datetime.datetime.fromisoformat(r["createdAt"].replace("Z", "+00:00"))
+              if age.days >= 1: print(t)'); do
+            echo "::error::the release $t has no sources release (its build artifacts expire after 14 days; make it: a commit whose subject says [sources $t RUN-ID])"; bad=1
+          done
           [ "$bad" = 0 ]

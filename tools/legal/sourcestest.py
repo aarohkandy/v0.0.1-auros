@@ -130,6 +130,8 @@ MUTANTS = [
     ("a removed package is shipped as if installed", 'if not f.get("Status", "").endswith(" installed"):', 'if False:'),
     ("a source package may be split between parts", 'if p["bytes"] > part_bytes:', 'if False:'),
     ("Built-Using is ignored", 'for s, v in p.get("built_using", []):', 'for s, v in []:'),
+    ("a package that is unpacked but not configured is dropped", 'if len(st) != 3 or st[2] in ("not-installed", "config-files"):', 'if st[2:] != ["installed"]:'),
+    ("a missing Firefox mirror is not noticed", 'if len(ptr[0]) > 6 and ptr[0][6] != "-" and ptr[0][6] not in listed:', 'if False:'),
 ]
 
 
@@ -164,10 +166,13 @@ def main():
     st = status([("libfoo1", "1.2-3build1", "foo (1:1.2-3)", "Ubuntu Developers <x@y>", "install ok installed"),
                  ("bar", "2.0-1", None, "Ubuntu Developers <x@y>", "install ok installed"),
                  ("gone", "1-1", None, "x", "deinstall ok config-files"),
-                 ("held", "3-1", "heldsrc", "x", "hold ok installed")])
+                 ("held", "3-1", "heldsrc", "x", "hold ok installed"),
+                 ("half", "4-1", None, "x", "install ok half-configured"), ("unp", "5-1", None, "x", "install ok unpacked"),
+                 ("trig", "6-1", None, "x", "install ok triggers-pending"), ("never", "7-1", None, "x", "purge ok not-installed")])
     pk = S.parse_status(st)
     by = {p["bin"]: p for p in pk}
-    check(set(by) == {"libfoo1", "bar", "held"}, "a removed package (config files only) is not shipped, a held one is")
+    check(set(by) == {"libfoo1", "bar", "held", "half", "unp", "trig"},
+          "a removed package (config files only, not-installed) is not shipped; held, unpacked, half-configured and triggers-pending ones are (their files are on disk)")
     check((by["libfoo1"]["src"], by["libfoo1"]["srcver"]) == ("foo", "1:1.2-3"),
           "Source: foo (1:1.2-3) gives dpkg's ${source:Package} and ${source:Version}")
     check((by["bar"]["src"], by["bar"]["srcver"]) == ("bar", "2.0-1"), "no Source header: the binary is its own source")
@@ -229,6 +234,32 @@ def main():
         check("S\tfoo\t1:1.2-3\t" in so and "P\tfirefox\t158.0\t" in so and "O\tauros\tv9\t" in so, "SOURCES.txt names source, pointer and own archive")
         rc, o = run("verify", "--dir", out, "--root", root, "--no-online")
         check(rc == 0, "verify accepts it, against the image's own package list")
+
+        # ── include, host note, Firefox mirror (online, against a pretend Mozilla) ──
+        tarball = os.urandom(4000)
+        arch.files["/moz/158.0/SHA256SUMS"] = ("%s  source/firefox-158.0.source.tar.xz\n" % sha(tarball)).encode()
+        arch.files["/moz/158.0/source/firefox-158.0.source.tar.xz"] = tarball
+        notices = os.path.join(tmp, "NOTICES.txt"); open(notices, "w").write("the license texts")
+        out2 = os.path.join(tmp, "rel2")
+        rc, o = run("make", "--root", root, "--out", out2, "--tag", "v9", "--own-archive", own, "--extra", extra,
+                    "--include", notices, "--host-note", "the build host's glibc was read on the publishing machine",
+                    "--mirror-firefox", "--moz-base", arch.url.replace("/lp", "/moz"), "--base", "lp:" + arch.url, "--jobs", "2")
+        check(rc == 0, "make with --include, --host-note and a Firefox mirror succeeds (%s)" % o.strip().splitlines()[-1][:80])
+        so2 = open(os.path.join(out2, "SOURCES.txt")).read() if os.path.isfile(os.path.join(out2, "SOURCES.txt")) else ""
+        check(os.path.isfile(os.path.join(out2, "NOTICES.txt")) and "NOTICES.txt" in open(os.path.join(out2, "SHA256SUMS")).read(),
+              "--include puts the file in the release and in SHA256SUMS")
+        check("# the build host's glibc was read on the publishing machine" in so2, "--host-note is in SOURCES.txt's header")
+        check(os.path.isfile(os.path.join(out2, "firefox-158.0.source.tar.xz")) and "\tfirefox-158.0.source.tar.xz\n" in so2,
+              "--mirror-firefox puts Mozilla's tarball in the release and names it in the pointer row")
+        rc, o = run("verify", "--dir", out2, "--root", root)
+        check(rc == 0, "verify accepts the release with the mirror (online pointer check against the pretend Mozilla: %s)" % o.strip()[-60:])
+        w = os.path.join(tmp, "m2"); shutil.copytree(out2, w); os.remove(os.path.join(w, "firefox-158.0.source.tar.xz")); resum(w)
+        rc, o = run("verify", "--dir", w, "--root", root, "--no-online")
+        check(rc != 0 and "Firefox source mirror" in o, "verify refuses a release whose Firefox mirror has gone")
+        arch.files["/moz/158.0/SHA256SUMS"] = ("%s  source/firefox-158.0.source.tar.xz\n" % ("0" * 64)).encode()
+        rc, o = run("make", "--root", root, "--out", os.path.join(tmp, "rel3"), "--tag", "v9", "--own-archive", own, "--extra", extra,
+                    "--mirror-firefox", "--moz-base", arch.url.replace("/lp", "/moz"), "--base", "lp:" + arch.url)
+        check(rc != 0 and "Mozilla's SHA256SUMS says" in o, "a Firefox tarball that does not hash to Mozilla's sum is refused")
 
         # ── make refuses ──────────────────────────────────────────
         def refuses(label, args, needle, mutate=None):
