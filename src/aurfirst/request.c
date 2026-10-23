@@ -86,6 +86,38 @@ static int is_one_of_ours(const char *w)
            !strcmp(w, "windows");
 }
 
+/* "import:NAME" -- the answer to "whose files?" when Ferry found several
+ * Windows people (docs/FERRY.md, exit 6, `users=Bob,Harold`). NAME is
+ * only ever an argument to `ferry run --user`, which accepts nothing but
+ * a real account; this is the first of two doors, and it keeps out
+ * everything that could be read as something else:
+ *
+ *   - a path (`/`, `\\`, a name made of dots, `..`);
+ *   - an option (a leading `-`);
+ *   - anything Windows itself does not allow in an account name
+ *     (`" / \\ [ ] : ; | = , + * ? < >`), and control characters
+ *     (so no newline can start a second line of the request);
+ *   - leading or trailing space or dot, and an empty or long (> 64
+ *     bytes) name.
+ * Spaces, `$`, `(`, quotes and non-ASCII letters are allowed -- real
+ * people have them -- and are safe because the caller only ever hands
+ * the name over as one quoted argument, never to a shell to read. */
+#define IMPORT_PREFIX "import:"
+#define NAME_MAX_BYTES 64
+
+static int name_ok(const unsigned char *s, size_t n)
+{
+    if (n == 0 || n > NAME_MAX_BYTES) return 0;
+    if (s[0] == '-' || s[0] == '.' || s[0] == ' ') return 0;
+    if (s[n - 1] == ' ' || s[n - 1] == '.') return 0;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = s[i];
+        if (c < 0x20 || c == 0x7f) return 0;
+        if (strchr("\"/\\[]:;|=,+*?<>", c)) return 0;
+    }
+    return 1;
+}
+
 /* Remove it, whatever it turned out to be. unlinkat on the directory
  * descriptor, so nothing here ever resolves the name a second time --
  * and AT_REMOVEDIR as well, because a DIRECTORY called `answer` used
@@ -136,7 +168,7 @@ int af_request_take(char *out, size_t n)
         snprintf(out, n, "%s", "unknown");
         return 1;
     }
-    char raw[64];
+    char raw[128];
     ssize_t k = read(fd, raw, sizeof raw - 1);
     close(fd);
     drop(dir);
@@ -151,6 +183,19 @@ int af_request_take(char *out, size_t n)
      * the input has been rewritten is not a fixed list. Anything else
      * in the file makes it unknown. */
     if (k > 0 && raw[k - 1] == '\n') raw[--k] = 0;
+    /* "import:NAME": checked as a whole, or not at all. */
+    if (k > (ssize_t)strlen(IMPORT_PREFIX) &&
+        strncmp(raw, IMPORT_PREFIX, strlen(IMPORT_PREFIX)) == 0) {
+        size_t pl = strlen(IMPORT_PREFIX), nl = (size_t)k - pl;
+        if (name_ok((const unsigned char *)raw + pl, nl) &&
+            pl + nl + 1 <= n) {
+            memcpy(out, raw, pl + nl);
+            out[pl + nl] = 0;
+            return 0;
+        }
+        snprintf(out, n, "%s", "unknown");
+        return 1;
+    }
     size_t o = 0;
     int stray = 0;
     for (ssize_t i = 0; i < k; i++) {

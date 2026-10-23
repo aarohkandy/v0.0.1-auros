@@ -164,7 +164,9 @@ int  af_windows(char *why, size_t n);
 /* ── the one word the desktop is allowed to ask for ───────────────── */
 
 /* Take the request out of the desktop's runtime directory and remove
- * it. `out` gets one of "confirm", "decline", "import", "putback", "windows", or the literal
+ * it. `out` (at least 96 bytes) gets one of "confirm", "decline",
+ * "import", "import:NAME" (NAME a clean Windows account name; request.c
+ * says what clean is), "putback", "windows", or the literal
  * "unknown". Returns 0 for one of ours, 1 for unknown, -1 for nothing
  * there. See request.c for why this is not three lines of shell. */
 int af_request_take(char *out, size_t n);

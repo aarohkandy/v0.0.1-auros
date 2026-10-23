@@ -607,6 +607,82 @@ esac
 [ ! -f "$AO/import.log" ] && ok "...and nothing was mounted or read" \
                           || bad "...and nothing was mounted or read"
 
+# ── "whose files?": import:NAME ─────────────────────────────────────
+echo
+echo "  and importing one person's files, when Windows has several"
+# Ferry stops with `choose` and the names when it cannot tell whose files
+# are hers (docs/FERRY.md); the desktop answers import:NAME. NAME goes
+# only to `ferry run --user`, as one argument. Two doors: aurfirst keeps
+# out everything that is not a plausible account name, and Ferry refuses
+# a name that is not a real account. A stand-in for Ferry here: it knows
+# two people, writes down exactly what it was given, and refuses others.
+cat > "$TMP/ferry" <<EOF
+#!/bin/sh
+[ "\$1" = report ] && exit 0
+printf '%s|' "\$@" >> "$TMP/ferry.args"; echo >> "$TMP/ferry.args"
+u=
+while [ \$# -gt 0 ]; do [ "\$1" = --user ] && u=\$2; shift; done
+case "\$u" in Harold|"Mary Ann") exit 0 ;; *) echo "no such account" >&2; exit 1 ;; esac
+EOF
+chmod 755 "$TMP/ferry"
+askf() { # word -> result; runs from an empty directory, so a name that was executed would leave a file
+    rm -f "$AO/result" "$AR/answer"; printf '%s' "$1" > "$AR/answer"
+    mkdir -p "$TMP/cwd"
+    ( cd "$TMP/cwd" && AUROS_ANSWER_OUT="$AO" AUROS_STATE="$TMP/state2" AUROS_BIN="$TMP/bin" \
+        AUROS_LOG="$TMP/answer.log" AF_RUN_USER="$AR" AUROS_FERRY="$TMP/ferry" \
+        sh "$OLDPWD/rootfs/usr/lib/auros/answer.sh" >/dev/null 2>&1 )
+    cat "$AO/result" 2>/dev/null
+}
+fresh; plant 0000 "Windows Boot Manager"; plant 0003 "AurOS"; order 0000
+"$AF" confirm >/dev/null 2>&1
+: > "$TMP/ferry.args"
+R=$(askf "import:Harold")
+case "$R" in *"request=import"*"result=ok"*) ok "import:Harold is carried out" ;;
+    *) bad "import:Harold is carried out" "$(echo "$R" | tr '\n' ' ')" ;; esac
+grep -q -- '--user|Harold|' "$TMP/ferry.args" \
+  && ok "...and Ferry is given --user Harold as one argument" \
+  || bad "...and Ferry is given --user Harold as one argument" "$(cat "$TMP/ferry.args")"
+: > "$TMP/ferry.args"
+R=$(askf "import:Mary Ann")
+grep -q -- '--user|Mary Ann|' "$TMP/ferry.args" \
+  && ok "a name with a space reaches Ferry whole" \
+  || bad "a name with a space reaches Ferry whole" "$(cat "$TMP/ferry.args")"
+: > "$TMP/ferry.args"
+R=$(askf "import:Nobody")
+case "$R" in *"result=ok"*) bad "a person Windows does not have is not 'ok'" "$(echo "$R" | tr '\n' ' ')" ;;
+    *"result=failed"*) ok "a person Windows does not have: Ferry refuses, and it is a failure, not 'ok'" ;;
+    *) bad "a person Windows does not have: Ferry refuses" "$(echo "$R" | tr '\n' ' ')" ;; esac
+# Shell syntax is just letters: nothing is run (the stand-in is called
+# from an empty directory; a file there would mean something was).
+: > "$TMP/ferry.args"; rm -f "$TMP/cwd/pwned"
+R=$(askf 'import:Bob$(touch pwned)`touch pwned`')
+[ ! -e "$TMP/cwd/pwned" ] && grep -qF -- '--user|Bob$(touch pwned)`touch pwned`|' "$TMP/ferry.args" \
+  && ok "shell syntax in a name is a name: it reaches Ferry as text and nothing runs" \
+  || bad "shell syntax in a name is a name: it reaches Ferry as text and nothing runs" "$(cat "$TMP/ferry.args")" "$(ls "$TMP/cwd")"
+# What never gets as far as Ferry.
+refused_name() { # label name
+    : > "$TMP/ferry.args"
+    R=$(askf "$2")
+    case "$R" in *"note=unknown request"*) : ;; *) bad "$1 is refused" "$(echo "$R" | tr '\n' ' ')"; return ;; esac
+    [ ! -s "$TMP/ferry.args" ] && ok "$1 is refused, and Ferry is not asked" \
+        || bad "$1 is refused, and Ferry is not asked" "Ferry got: $(cat "$TMP/ferry.args")"
+}
+refused_name "a name with a slash"          'import:../etc/passwd'
+refused_name "a name that is a path"        'import:Users/Harold'
+refused_name "a name with a backslash"      'import:C:\Users\Harold'
+refused_name "a name that is only dots"     'import:..'
+refused_name "a name that starts with a dot" 'import:.hidden'
+refused_name "a name that starts like an option" 'import:--version'
+refused_name "an empty name"                'import:'
+refused_name "a name with a colon"          'import:a:b'
+refused_name "a name with a pipe"           'import:Bob|Harold'
+refused_name "a name with a leading space"  'import: Harold'
+refused_name "a name with a trailing dot"   'import:Harold.'
+refused_name "a name with a second line"    "$(printf 'import:Harold\nimport:Mary')"
+refused_name "a name with a control character" "$(printf 'import:Har\001old')"
+refused_name "a name of 65 bytes"           "import:$(printf 'a%.0s' $(seq 1 65))"
+refused_name "the word with a capital"      'Import:Harold'
+
 # ── Windows Update moves itself first ───────────────────────────────
 echo
 echo "  and Windows Update, or a BIOS update, puts Windows first after she said it works"

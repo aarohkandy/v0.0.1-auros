@@ -142,7 +142,7 @@ int main(int argc, char **argv)
      * stdout for the shell that orchestrates ferry; everything about
      * WHY this is here rather than in that shell is in request.c. */
     if (!strcmp(cmd, "request")) {
-        char word[32];
+        char word[96];                  /* "import:" and a 64-byte name */
         int rc = af_request_take(word, sizeof word);
         if (rc < 0) return 1;
         printf("%s\n", word);

@@ -86,6 +86,15 @@ before and passes after:
   fix, and the journal/outcome-ping side (WP-73) reads these. `bootchaintest` 88/89, red with the recording
   removed (OVMF 2011-only and 2023-only fixtures, an SBAT level above the grub).
 
+- **import:NAME** (R's request, docs/FERRY.md exit 6 `choose`): `aurfirst request` accepts `import:NAME` for a
+  clean Windows account name (no `/ \\ : ; | = , + * ? < > [ ] "`, no control character or second line, not
+  empty, <= 64 bytes, no leading `-`/`.`/space, no trailing `.`/space) and prints it whole; answer.sh (R's
+  edit) passes it to `ferry run --user` as one quoted argument, and Ferry is the second door (real accounts
+  only). `aurfirsttest` 100 checks: Harold and "Mary Ann" reach Ferry as one argument, an unknown person is a
+  failure (stand-in Ferry refuses), shell syntax in a name runs nothing (run from an empty directory), 14
+  refused shapes never reach Ferry; with name_ok weakened 13 of them go red. Not run in a booted image
+  (the sandbox lesson in TRAPS): `firstboottest` has no Windows disk to import from.
+
 ## Next steps, in order
 
 1. Watch the first CI run of `tests` with `windowsboottest` and `rollbacktest` (both gating now) and
