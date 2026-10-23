@@ -69,7 +69,11 @@ jobs:
             > /tmp/builds.txt || true
           head -5 /tmp/builds.txt
           SUBJ=${MSG%%$'\n'*}
-          case "$SUBJ" in *'[harden]'*) word=true ;; *) word=false ;; esac
+          # A [release] candidate's image is always tested: "no hardening input
+          # changed since the last image" is not "the last result was green" (the
+          # only boot runs since 22:20 UTC 2026-10-23 were red or cancelled, and
+          # every later run skipped, which looked like a pass).
+          case "$SUBJ" in *'[harden]'*|*'[release]'*) word=true ;; *) word=false ;; esac
           if [ "$EVENT" = workflow_dispatch ]; then
             rid=${RUN_ID_INPUT:-$(head -1 /tmp/builds.txt | cut -d' ' -f1)}
             [ -n "$rid" ] || { echo "::error::no build of main has its image left; push with [build]"; exit 1; }
