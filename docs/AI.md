@@ -260,7 +260,7 @@ The wish schema both sides compile: `docs/wish-v1.schema.json`.
 
 Errors (JSON, plus a `Retry-After` header where there is a `retry_after`):
 `400 {error:"request"|"too_long"}`; `400 {error:"pow", day, bits}`;
-`401 {error:"token"}`; `403 {error:"region", text}` (register, wish and ask from a country outside `ALLOW_COUNTRIES`, default US, GB, CA, AU; forget and health are never refused; `aurwish` maps it to its "not available" state); `429 {retry_after, text:"You've made lots of wishes today — more tomorrow"}`;
+`401 {error:"token"}`; `403 {error:"region", text}` (register, wish and ask from a country outside `ALLOW_COUNTRIES`, default US, CA, AU (GB waits for the UK representative, PRI-6); forget and health are never refused; `aurwish` maps it to its "not available" state); `429 {retry_after, text:"You've made lots of wishes today — more tomorrow"}`;
 `503 {retry_after, text:"Wishes are resting for a little while"}`. The device
 writes its own sentences (§7.3); `text` is only a fallback.
 

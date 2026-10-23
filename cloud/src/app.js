@@ -50,7 +50,7 @@ export function config(env) {
 // comma-separated; "UK" is read as GB; "*" means everywhere; unset means the
 // default below. The country is request.cf.country, set by Cloudflare's edge (a
 // client cannot forge it); an unknown country ("XX", Tor "T1") or none is refused.
-export const DEFAULT_COUNTRIES = "US,GB,CA,AU";
+export const DEFAULT_COUNTRIES = "US,CA,AU"; // GB is added back (one variable) once PRI-6, a UK representative, is settled
 function countries(v) {
   const list = String(v === undefined || String(v).trim() === "" ? DEFAULT_COUNTRIES : v)
     .toUpperCase().split(/[\s,]+/).filter(Boolean).map((c) => (c === "UK" ? "GB" : c));

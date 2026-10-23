@@ -18,7 +18,7 @@ command = "node build-help.mjs"
 DAILY_BUDGET_USD = "0"
 # Where Wishes is offered (AI-6): ISO country codes; "*" = everywhere. Register,
 # wish and ask are refused elsewhere with 403; forget and health stay open.
-ALLOW_COUNTRIES = "US,GB,CA,AU"
+ALLOW_COUNTRIES = "US,CA,AU"
 QUOTA_ESTABLISHED = "20"
 QUOTA_NEW = "3"
 ESTABLISH_DAYS = "7"

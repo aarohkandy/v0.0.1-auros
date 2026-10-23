@@ -37,7 +37,7 @@ not a switch. To take the address off the internet entirely as well: Cloudflare
 dashboard → `auros-wishes` → Settings → Domains & Routes → disable workers.dev.)
 
 **Where Wishes is offered** (AI-6): `ALLOW_COUNTRIES` in `cloud/wrangler.toml`,
-default `US,GB,CA,AU` (`UK` is read as `GB`; `*` means everywhere). Register,
+default `US,CA,AU` (`UK` is read as `GB`; `*` means everywhere). **GB is left out until PRI-6 (a UK representative) is settled** (`docs/legal/COMPLIANCE.md`); then it is added back with one variable: `ALLOW_COUNTRIES = "US,GB,CA,AU"` in `cloud/wrangler.toml`, and a push. Register,
 wish and ask answer `403 {"error":"region","text":"Wishes is not available in
 your country yet."}` from anywhere else, including from a token made at home
 while travelling; `/v1/forget` and `/v1/health` are never refused. The country
@@ -267,7 +267,7 @@ image. Proposal (owners: stream S5 for the channel, W1 for the reader):
 | Name | Deployed | Meaning |
 |---|---|---|
 | `DAILY_BUDGET_USD` | **0 (resting, §0)** | the day's Anthropic budget in dollars, split 70 % established / 20 % new / 10 % Ask. **`0` is the kill switch.** |
-| `ALLOW_COUNTRIES` | US,GB,CA,AU | countries where Wishes is offered (§0) |
+| `ALLOW_COUNTRIES` | US,CA,AU | countries where Wishes is offered (§0) |
 | `QUOTA_ESTABLISHED`, `QUOTA_NEW` | 20, 3 | wishes (and, separately, questions) per token per day |
 | `ESTABLISH_DAYS` | 7 | how old a token must be (plus one wish received) to be established |
 | `REGISTER_PER_NET` | 3 | registrations per /24 or /64 per day |

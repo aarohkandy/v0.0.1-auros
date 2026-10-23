@@ -298,12 +298,12 @@ test("kill switch: one variable turns it back on", async () => {
   }
 });
 
-test("country gate: US, GB (UK), CA, AU by default; register, wish and ask only; forget and health open", async () => {
+test("country gate: US, CA, AU by default (GB waits for PRI-6); register, wish and ask only; forget and health open", async () => {
   const app = makeApp({ respond: () => wishOut(POTATO), env: { ledger: { registerPerNet: 1000, quotaNew: 1000 } } });
   const { token } = await register(app);
   const ok = (c) => app.call("/v1/wish", wishBody("potato"), { token, country: c });
-  for (const c of ["US", "GB", "CA", "AU", "us", "gb"]) assert.equal((await ok(c)).status, 200, c);
-  for (const c of ["DE", "FR", "IN", "XX", "T1", "", null]) {
+  for (const c of ["US", "CA", "AU", "us", "au"]) assert.equal((await ok(c)).status, 200, c);
+  for (const c of ["GB", "UK", "DE", "FR", "IN", "XX", "T1", "", null]) {
     const r = await ok(c);
     assert.equal(r.status, 403, String(c));
     assert.deepEqual(await r.json(), { error: "region", text: "Wishes is not available in your country yet." });
