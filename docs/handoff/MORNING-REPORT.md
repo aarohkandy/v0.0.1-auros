@@ -39,7 +39,7 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 ## Still red / in progress
 
 - **Caught before anyone used it: Ubuntu security updates would never have installed** (renaming the system to
-  AurOS broke the updater's source names). Proven on the real image, fix in progress, and becomes a release gate.
+  AurOS broke the updater's source names). **Fixed and proven on the real image** (956af4a); now a release gate.
 
 - **Fixed overnight: Firefox opened as a blank window** (the compositor never drew the inner surfaces browsers
   and video players paint into). Now Firefox, GTK4, Qt and video all draw; 21 pixel-exact tests guard it.

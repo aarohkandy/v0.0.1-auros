@@ -110,6 +110,9 @@ fixed with a test → design P0s applied → then promote.
   findings; the update keyring is in the image (it is: afa7755); and the owner
   has either bought the domain (decision 1, WP-15) or said in chat to promote
   without it. Until then, prereleases only.
+- **Never promote (or hand anyone) an image built before `956af4a`**: those images never install Ubuntu security
+  updates (TM-1). The promoted build must also contain `6917bde` (cannot-measure), WL's subsurface fix
+  (`54b783b`..`7799b6d`) and pass `tools/updatepolicytest.sh dryrun` in its own unit job.
 - Wishes are not in the v0.1 image (D14). Code signing via SignPath (D12)
   needs the owner to submit the application; prepare, don't block on it.
 - Never ship an unproven destructive path. Prove every check fails when broken.
