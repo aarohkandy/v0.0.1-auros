@@ -1,0 +1,21 @@
+# A quick run of the handover test for one scenario at a time (no build needed), while
+# the put-back script is being worked on. The full run is the `handover` job in fastpath.yml.
+name: handover-dev
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "scenarios (happy cutcopy hostile links forged tampered nodone noroom bitlocker), empty for all"
+        default: happy
+jobs:
+  handover:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: the handover test
+        shell: pwsh
+        env: { ONLY: "${{ inputs.only }}" }
+        run: |
+          ./tools/handovertest.ps1 -Script "$PWD\src\aurbridge\putback.ps1" -Only $env:ONLY 2>&1 | Tee-Object -FilePath handover.log
+          if (Select-String -Path handover.log -Pattern ' FAIL$' -Quiet) { throw "a check failed" }

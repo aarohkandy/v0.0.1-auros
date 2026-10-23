@@ -31,7 +31,7 @@
 #   pwsh tools/handovertest.ps1 -Exe path\to\aurbridge.exe
 # With -Script, tests that file (a quick run needs no build); without it, the script
 # the installer carries, written out by the exe.
-param([string]$Exe = '', [string]$Script = '')
+param([string]$Exe = '', [string]$Script = '', [string]$Only = '')
 $ErrorActionPreference = 'Stop'
 $work = Join-Path $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }) 'handover'
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
@@ -44,6 +44,7 @@ function Ok([string]$what, [bool]$cond, [string]$detail = '') {
 function Sha([string]$p) { (Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash.ToLowerInvariant() }
 function ShaBytes([byte[]]$b) { ([System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($b)) -replace '-', '').ToLowerInvariant() }
 $me = "$env:USERDOMAIN\$env:USERNAME"
+function Want([string]$n) { $Only -eq '' -or ($Only -split '[ ,]+') -contains $n }
 
 $PS1 = Join-Path $work 'putback.ps1'
 if ($Script) { Copy-Item $Script $PS1 }
@@ -178,6 +179,7 @@ function Nothing-Outside($s, [string]$label) {
     Ok "$label nothing was written outside her folder" ($stray.Count -eq 0) (($stray | ForEach-Object { $_.FullName }) -join ', ')
 }
 
+if (Want 'happy') {
 # ---- happy ---------------------------------------------------------------------------------------
 '  happy'
 $s = New-Scenario happy
@@ -197,7 +199,8 @@ $rc = Run-System $s
 Ok 'a third pass changes nothing (exit 0)' ($rc -eq 0) "exit $rc; $(Why $s)"
 Check-Finished $s 'after a third pass:'
 Remove-Scenario $s
-
+}
+if (Want 'cutcopy') {
 # ---- cut during her copy ----------------------------------------------------------------------
 '  cut during her copy'
 $s = New-Scenario cutcopy
@@ -212,7 +215,8 @@ $rc = Run-System $s
 Ok 'run again: SYSTEM finishes' ($rc -eq 0) "exit $rc; $(Why $s)"
 Check-Arrived $s 'after the cut:'; Check-Finished $s 'after the cut:'
 Remove-Scenario $s
-
+}
+if (Want 'hostile') {
 # ---- hostile lists ------------------------------------------------------------------------------
 '  a list that AurOS did not write'
 $good = @('Documents', 'ok.txt', 5, [byte[]](1, 2, 3, 4, 5))
@@ -240,7 +244,8 @@ Hostile 'emptyseg'     @('Documents', 'a//b.txt', 3, $evil)
 Hostile 'dotseg'       @('Documents', 'a/./b.txt', 3, $evil)
 Hostile 'username'     $good '..\..\Windows'
 Hostile 'username2'    $good 'Bob\..\..'
-
+}
+if (Want 'links') {
 # ---- links --------------------------------------------------------------------------------------------
 '  links planted in her profile'
 $s = New-Scenario links
@@ -268,7 +273,8 @@ $rc = Run-User $s
 Ok 'a job file that names another destination is not obeyed (exit 1)' ($rc -eq 1) "exit $rc; $(Why $s)"
 Ok '...nothing was written there' (@(Get-ChildItem "$($s.Letter):\elsewhere" -Force).Count -eq 0)
 Remove-Scenario $s
-
+}
+if (Want 'forged') {
 # ---- the user's report is not believed ---------------------------------------------------------------
 '  a report of "all saved" that is not true'
 $s = New-Scenario forged
@@ -288,7 +294,8 @@ foreach ($k in $keys) {
 $rc = Run-System $s
 Ok 'files with the wrong bytes: the partition stays (exit 0)' ($rc -eq 0 -and (Handover-Present $s)) "exit $rc; $(Why $s)"
 Remove-Scenario $s
-
+}
+if (Want 'tampered') {
 # ---- a changed file ---------------------------------------------------------------------------------
 '  a file changed after AurOS wrote DONE'
 $s = New-Scenario tampered
@@ -305,7 +312,8 @@ Ok 'the bad copy was not left in Windows' (-not (Test-Path -LiteralPath "$($s.Le
 $null = Run-System $s
 Ok 'the partition is NOT removed' (Handover-Present $s)
 Remove-Scenario $s
-
+}
+if (Want 'nodone') {
 # ---- no DONE ------------------------------------------------------------------------------------------
 '  no DONE'
 $s = New-Scenario nodone $false
@@ -314,7 +322,8 @@ Ok 'the script leaves it alone (exit 0)' ($rc -eq 0) "exit $rc; $(Why $s)"
 Ok 'the partition is NOT removed' (Handover-Present $s)
 Ok 'no job for her' (-not (Test-Path (Join-Path $s.Udir 'job.json')))
 Remove-Scenario $s
-
+}
+if (Want 'noroom') {
 # ---- no room --------------------------------------------------------------------------------------------
 '  not enough room in Windows'
 $s = New-Scenario noroom
@@ -325,7 +334,8 @@ Ok 'the script waits (exit 0)' ($rc -eq 0) "exit $rc; $(Why $s)"
 Ok 'the partition is NOT removed' (Handover-Present $s)
 Ok 'it says it needs room' ((Get-Content -Raw (Join-Path $s.Udir 'status.json')) -match 'GB more free space')
 Remove-Scenario $s
-
+}
+if (Want 'bitlocker') {
 # ---- BitLocker ------------------------------------------------------------------------------------------
 '  with the stand-in for C: BitLocker-encrypted'
 if (Get-Command Enable-BitLocker -ErrorAction SilentlyContinue) {
@@ -345,6 +355,7 @@ if (Get-Command Enable-BitLocker -ErrorAction SilentlyContinue) {
     Remove-Scenario $s
 } else {
     'SKIPPED: this runner has no BitLocker (the feature is not installed)'
+}
 }
 
 ''

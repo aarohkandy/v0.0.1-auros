@@ -90,6 +90,30 @@ uint64_t stage_mem_available(void)
 
 static int log_fd = -1;
 
+/* Everything said, kept (the newest are lost if it ever fills: the first words are the
+ * reason), and written to the EFI partition when a verdict is given. See stagelog.c. */
+static char   g_ring[48 * 1024];
+static size_t g_ringn;
+int stagelog_write(const char *esp, const char *text, size_t n);
+
+static void stage_log_save(void)
+{
+    static int busy;
+    static stage_machine mm;
+    if (busy || g_ringn == 0 || stage_cmdline_has("aurstage.nolog")) return;
+    busy = 1;
+    if (stage_survey(&mm) > 0) {
+        for (int d = 0; d < mm.n_disks; d++)
+            for (int p = 0; p < mm.disk[d].n_parts; p++) {
+                if (!mm.disk[d].part[p].is_esp) continue;
+                char dev[64];
+                snprintf(dev, sizeof dev, "/dev/%s", mm.disk[d].part[p].name);
+                if (stagelog_write(dev, g_ring, g_ringn)) { busy = 0; return; }
+            }
+    }
+    busy = 0;
+}
+
 /* ── the screen ──────────────────────────────────────────────────
  *
  * src/aurscreen paints what this says as a progress screen instead of
@@ -229,7 +253,10 @@ static void say_v(const char *tag, const char *fmt, va_list ap)
      * the machine dies before it is, the screen is what is left. */
     ssize_t ignored = write(2, line, (size_t)n); (void)ignored;
     if (log_fd >= 0) { ignored = write(log_fd, line, (size_t)n); (void)ignored; }
+    if (g_ringn + (size_t)n < sizeof g_ring) { memcpy(g_ring + g_ringn, line, (size_t)n); g_ringn += (size_t)n; }
     screen_line(line, (size_t)n);
+    /* A verdict is the end of the story: write it down while the machine is still up. */
+    if (strstr(line, "aurstage-report v1")) stage_log_save();
 }
 
 void stage_say(const char *fmt, ...)

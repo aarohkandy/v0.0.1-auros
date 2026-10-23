@@ -119,11 +119,11 @@ function Read-Manifest([string]$man) {
             if ($f[0] -eq '#windows-user' -and $f.Count -ge 2) { $winuser = $f[1] }
             continue
         }
-        if ($f.Count -ne 5) { Log 'bad list: a line with the wrong number of fields'; return $null }
+        if ($f.Count -ne 5) { Log ('bad list: a line with the wrong number of fields: ' + $line); return $null }
         if ($FOLDERS -cnotcontains $f[0]) { Log "bad list: folder '$($f[0])'"; return $null }
         if (-not (Rel-Ok $f[1])) { Log "bad list: name '$($f[1])'"; return $null }
         if ($f[2] -notmatch '^[0-9]{1,15}$' -or $f[3] -notmatch '^[0-9a-fA-F]{64}$' -or $f[4] -notmatch '^[0-9]{1,12}$') {
-            Log 'bad list: a size, hash or time that is not one'; return $null
+            Log ('bad list: a size, hash or time that is not one: ' + $line); return $null
         }
         $rows.Add([pscustomobject]@{ Folder = $f[0]; Rel = $f[1]; Size = [uint64]$f[2]; Sha = $f[3].ToLowerInvariant(); Mtime = [int64]$f[4] })
     }

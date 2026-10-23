@@ -110,9 +110,10 @@ step "the staging init"
 # everything else alone, without expanding a single #include.
 WRITER="wr.c"
 NVWRITER="nvram.c"
+LOGWRITER="stagelog.c"
 BAD=""
 for f in "$ROOT"/src/aurstage/*.c; do
-    case "$(basename "$f")" in "$WRITER"|"$NVWRITER") continue ;; esac
+    case "$(basename "$f")" in "$WRITER"|"$NVWRITER"|"$LOGWRITER") continue ;; esac
     # NOT A PIPELINE INTO grep -q. Under `set -o pipefail`, grep -q
     # closes its input as soon as it matches, gcc takes a SIGPIPE, and
     # the pipeline "fails" on success -- which made this gate report
@@ -250,6 +251,39 @@ case "$nvcode" in
   *) die "$NVWRITER does not name the efivarfs mount point; it may write
      nothing else, so it must say where it writes" ;;
 esac
+
+# ── the third gate: the log on the EFI partition ───────────────────
+#
+# stagelog.c is allowed one writable open, of \EFI\AurOS\stage.log on a FAT file
+# system the kernel has mounted, so that a refusal leaves its reason somewhere other
+# than a screen that restarts. Checks tighter than the first gate's, on the preprocessed
+# source, for the same reasons as the second:
+[ -f "$ROOT/src/aurstage/$LOGWRITER" ] \
+    || die "$LOGWRITER is missing; the log gate would be guarding nothing"
+if ! lgcode=$(gcc -fpreprocessed -dD -E "$ROOT/src/aurstage/$LOGWRITER" 2>/dev/null); then
+    die "$LOGWRITER could not be read as C, so the log gate could not look at it."
+fi
+# 1. nothing read-write (the flag a block device is opened with everywhere in this tree)
+case "$lgcode" in
+  *O_RDWR*) die "$LOGWRITER opens something read-write; only $WRITER may" ;;
+esac
+# 2. it never names a device node: the partition is handed to it, and it can open nothing
+#    under /dev
+case "$lgcode" in
+  */dev/*) die "$LOGWRITER names a device. Only $WRITER may touch one." ;;
+esac
+# 3. it still writes something, or the gate guards nothing
+case "$lgcode" in
+  *O_WRONLY*) ;;
+  *) die "$LOGWRITER no longer writes anything; where did the log go?" ;;
+esac
+# 4. what it writes is the one file, under the one mount point
+case "$lgcode" in
+  *"/EFI/AurOS/stage.log"*) ;;
+  *) die "$LOGWRITER does not name \\EFI\\AurOS\\stage.log; it may write nothing else" ;;
+esac
+# 5. and the other two writers never write it
+case "$wcode" in *stage.log*) die "$WRITER writes the log; that belongs in $LOGWRITER" ;; esac
 
 # Every .c in the directory, not a list that has to be remembered: a
 # stage B file left out of a hand-written list links and runs, and the
