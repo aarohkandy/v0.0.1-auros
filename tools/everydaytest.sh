@@ -22,6 +22,7 @@
 #               a .pdf .jpg .heic .docx .odt .xlsx .ods .csv .mp3 .mp4 file
 #               is given to the right program by the image's own GLib,
 #               database and mimeapps.list -- the chain xdg-open now uses
+#               (asked from inside the image: needs root or passwordless sudo)
 #
 #    sh tools/everydaytest.sh
 # ═══════════════════════════════════════════════════════════════════
@@ -152,8 +153,6 @@ if [ ! -d "$RFS/etc" ] || [ ! -x "$LDSO" ]; then
     exit 0
 fi
 echo "the built image ($RFS)"
-LIBS="$RFS/usr/lib/x86_64-linux-gnu:$RFS/lib/x86_64-linux-gnu"
-inrfs() { "$LDSO" --library-path "$LIBS" "$@"; }
 
 ns=$(sed -n 's/^hosts:[[:space:]]*//p' "$RFS/etc/nsswitch.conf")
 case "$ns" in
@@ -183,37 +182,50 @@ else
 fi
 
 # Her files, as the image's own GLib sees them. Extension first, as a
-# double-click does; then who is given that kind of file.
-mkdir -p "$T/home/cfg" "$T/home/data" "$T/files"
-GENV="HOME=$T/home XDG_CONFIG_HOME=$T/home/cfg XDG_DATA_HOME=$T/home/data XDG_DATA_DIRS=$RFS/usr/local/share:$RFS/usr/share XDG_CONFIG_DIRS=$RFS/etc/xdg GIO_USE_VFS=local GIO_USE_VOLUME_MONITOR=unix"
-gio_do() { env $GENV "$LDSO" --library-path "$LIBS" "$RFS/usr/bin/gio" "$@"; }
-if ! gio_do version >/dev/null 2>&1; then
-    bad "the image's gio does not run here" "$(gio_do version 2>&1 | head -2)"
+# double-click does; then who is given that kind of file. GLib hides a program
+# whose Exec is not on THIS machine's disk, so the question is asked from
+# inside the image (chroot: as root, or through sudo), not through its loader.
+CH=""
+if [ "$(id -u)" = 0 ]; then CH="chroot"
+elif sudo -n true 2>/dev/null; then CH="sudo -n chroot"; fi
+if [ -z "$CH" ]; then
+    echo "  (the file-type checks need root to chroot into the image; not run here)"
+elif [ ! -w "$RFS/tmp" ]; then
+    echo "  (the file-type checks write a few files into the image's /tmp; it is not writable here)"
 else
-    expect() { # file  desktop-file   label
-        f="$T/files/$1"; printf 'x' > "$f"
-        ct=$(gio_do info -a standard::content-type "$f" 2>/dev/null | sed -n 's/^ *standard::content-type: //p')
-        who=$(gio_do mime "$ct" 2>/dev/null | sed -n 's/^Default application for .*: //p')
-        if [ "$who" = "$2" ]; then ok "$3 ($1: $ct) opens $who"
-        else bad "$3 ($1: $ct)" "wanted $2, the image gives: ${who:-nobody}"; fi
-    }
-    expect a.pdf   org.gnome.Evince.desktop            "a PDF"
-    expect a.jpg   org.xfce.ristretto.desktop          "a photo"
-    expect a.heic  org.xfce.ristretto.desktop          "a photo from an iPhone"
-    expect a.docx  libreoffice-writer.desktop          "a Word letter"
-    expect a.doc   libreoffice-writer.desktop          "an older Word letter"
-    expect a.odt   libreoffice-writer.desktop          "a LibreOffice letter"
-    expect a.xlsx  libreoffice-calc.desktop            "an Excel sheet"
-    expect a.ods   libreoffice-calc.desktop            "a LibreOffice sheet"
-    expect a.csv   libreoffice-calc.desktop            "a CSV from the bank"
-    expect a.mp3   mpv.desktop                         "a song"
-    expect a.mp4   mpv.desktop                         "a film"
-    expect a.txt   org.xfce.mousepad.desktop           "a text file"
-    expect a.zip   xarchiver.desktop                   "a zip file"
-    # A presentation has no program here (Impress is out, decision 14): it
-    # says so and opens the store; it never shows the inside of the file.
-    expect a.pptx  auros-program-file.desktop          "a presentation"
-    expect a.odp   auros-program-file.desktop          "a LibreOffice presentation"
+    FD="/tmp/everyday.$$"
+    mkdir -p "$RFS$FD" "$RFS$FD/home"
+    trap 'rm -rf "$T" "$RFS$FD"' EXIT INT TERM
+    gio_do() { $CH "$RFS" /usr/bin/env HOME="$FD/home" XDG_CONFIG_HOME="$FD/home/cfg" XDG_DATA_HOME="$FD/home/data" \
+                   GIO_USE_VFS=local GIO_USE_VOLUME_MONITOR=unix /usr/bin/gio "$@"; }
+    if ! gio_do version >/dev/null 2>&1; then
+        bad "the image's gio does not run" "$(gio_do version 2>&1 | head -2)"
+    else
+        expect() { # file  desktop-file   label
+            printf 'x' > "$RFS$FD/$1"
+            ct=$(gio_do info -a standard::content-type "$FD/$1" 2>/dev/null | sed -n 's/^ *standard::content-type: //p')
+            who=$(gio_do mime "$ct" 2>/dev/null | sed -n 's/^Default application for .*: //p')
+            if [ "$who" = "$2" ]; then ok "$3 ($1: $ct) opens $who"
+            else bad "$3 ($1: $ct)" "wanted $2, the image gives: ${who:-nobody}"; fi
+        }
+        expect a.pdf   org.gnome.Evince.desktop            "a PDF"
+        expect a.jpg   org.xfce.ristretto.desktop          "a photo"
+        expect a.heic  org.xfce.ristretto.desktop          "a photo from an iPhone"
+        expect a.docx  libreoffice-writer.desktop          "a Word letter"
+        expect a.doc   libreoffice-writer.desktop          "an older Word letter"
+        expect a.odt   libreoffice-writer.desktop          "a LibreOffice letter"
+        expect a.xlsx  libreoffice-calc.desktop            "an Excel sheet"
+        expect a.ods   libreoffice-calc.desktop            "a LibreOffice sheet"
+        expect a.csv   libreoffice-calc.desktop            "a CSV from the bank"
+        expect a.mp3   mpv.desktop                         "a song"
+        expect a.mp4   mpv.desktop                         "a film"
+        expect a.txt   org.xfce.mousepad.desktop           "a text file"
+        expect a.zip   xarchiver.desktop                   "a zip file"
+        # A presentation has no program here (Impress is out, decision 14): it
+        # says so and opens the store; it never shows the inside of the file.
+        expect a.pptx  auros-program-file.desktop          "a presentation"
+        expect a.odp   auros-program-file.desktop          "a LibreOffice presentation"
+    fi
 fi
 
 echo
