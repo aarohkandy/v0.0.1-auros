@@ -165,6 +165,24 @@ which only a **full** (non-pre) release moves. **Only the lead pushes `[latest]`
   matched a comment; S5's 61fbe40), putbacktest (R's e55c41f), the power-cut restore slice (green
   there; A2's 50d623c). Do not use ea34dc4's build.
 
+## RC status (23:40 UTC)
+
+- **Every `[release]` prerelease is journeyed by release.yml on its own**: jobs `e2e` (AurOS-Setup.exe)
+  and `e2e-fastpath` run as soon as `publish` succeeds, `[latest]` or not; only `promote` waits for
+  `e2e` (not for `e2e-fastpath`). RC1's first run showed none because a skipped `sign` skipped
+  everything after `publish` (fixed 17:00 with explicit `if:`); proof: re-publish run 40025177049
+  has `e2e / e2e (base)` and `e2e-fastpath / e2e (base)` running with `promote` skipped.
+  `tools/workflowlint.py` rule 8 now refuses an e2e job that waits for latest/promote.
+- RC1 `v0.1.0-fc52718` journeys (run 40025177049, jobs 120660111685 legacy and 120660151527 fast
+  path) both failed at "M2/M3": the base PC had BitLocker `EncryptionInProgress` (the runner
+  turned device encryption on by itself; F's eeb7570 now turns it on in the flow), then
+  "this computer would not let AurOS change what it starts" and "the store did not open".
+- RC3 candidate 9dde7e6 (run 40026374421, mine) was green end to end except `publish`: the
+  checkout added for LEGAL's notes line ran after the artifact download and deleted
+  `dist/installer`. Fixed in afc82b8 (checkout first); lint rule 7. The lead's RC3 (e480808,
+  build run 40038558072) carries the old release.yml, so its `release / publish` will fail the
+  same way after its tests: publish it with `[publish 40038558072]` from a tip with afc82b8.
+
 ## Open / next
 
 1. The first full chain has not run end to end: `[release] [latest]` has never been pushed
@@ -208,6 +226,9 @@ now 7 tests (adding powercut and bootupdate) end at 26.5 on 4 lanes. Push -> pre
   calls the file. `python3 tools/workflowlint.py` before pushing a workflow edit.
 - `[publish` anywhere in a commit message starts release.yml's `which` (seconds; subject only after).
 - The workflow token tags only a branch head (see above).
+- `actions/checkout` cleans untracked files: it goes FIRST in a job, never after `download-artifact`
+  (lint rule 7). A workflow file is the one at the run's commit, so a fix to release.yml does not
+  reach a run already started: `[publish RUN-ID]` after it.
 
 ## How to verify
 

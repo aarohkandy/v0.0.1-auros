@@ -52,6 +52,9 @@ def lint(path, text):
             if u.startswith("actions/download-artifact"): seen = u
             if u.startswith("actions/checkout") and seen:
                 out.append("%s: job %s checks out after a download-artifact: checkout deletes the downloaded files" % (path, name))
+        if job.get("uses") == "./.github/workflows/e2e.yml" \
+                and re.search(r"latest|promote", str(job.get("if", "")) + str(job.get("needs", ""))):
+            out.append("%s: job %s waits for [latest]/promote: every prerelease is journeyed" % (path, name))
         if "AUROS_APT_SIGNING_KEY" in yaml.dump(job):
             env = job.get("environment")
             env = env.get("name") if isinstance(env, dict) else env
@@ -85,6 +88,8 @@ def selftest():
          good + "      - uses: actions/download-artifact@" + "a" * 40 + "\n      - uses: actions/checkout@" + "a" * 40 + "\n", 1),
         ("a checkout before a download passes",
          good + "      - uses: actions/checkout@" + "a" * 40 + "\n      - uses: actions/download-artifact@" + "a" * 40 + "\n", 0),
+        ("release.yml's e2e waiting for latest is refused", "jobs:\n  e2e:\n    needs: promote\n    uses: ./.github/workflows/e2e.yml\n", 1),
+        ("an e2e that needs only the publish passes", "jobs:\n  e2e:\n    needs: publish\n    uses: ./.github/workflows/e2e.yml\n", 0),
         ("workflow-level contents: write is refused",
          "permissions:\n  contents: write\n" + good, 1),
         ("job-level contents: write passes",
