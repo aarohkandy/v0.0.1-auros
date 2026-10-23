@@ -18,17 +18,51 @@ The staging screen
     ...and what to do is what it shows                             ok
     a refusal: stopped                                             ok
     a restore: its own mode, its own bar                           ok
-    a restore with nothing saved: stopped, and says why            ok
+    a restore with nothing saved: what to do on her page, why on the helper's ok
     a restore with no usable copy: stopped                         ok
     a restore that worked: finished, not stopped                   ok
     start-up: her sentence, not the technician's lines             ok
-    a restore under way: says what it is doing                     ok
+    a restore under way: its third step, says what it is doing     ok
+    a restore checking its copy: its second step                   ok
     garbage and out-of-range numbers: no crash, clamped            ok
+
+  what she reads
+    a sentence with a size never reaches her; the one before stays ok
+    the latest sentence, not the one before it                     ok
+    a new sentence on the next line replaces the last              ok
+    one sentence over two console lines is one paragraph           ok
+    a failure: what happens next on her page, why on the helper's  ok
+
+  the helper code
+    none while nothing has failed                                  ok
+    a failure shows the code of its verdict (634 335 468)          ok
+    nine digits, 2 to 9, in groups of three                        ok
+    77 verdicts aurstage can say, 77 different codes               ok
+
+  About N minutes left
+    copying, measured: its rest plus the short steps (6)           ok
+    copying, not measured yet: no number                           ok
+    before the copy: no number, the longest step is still to come  ok
+    after the copy: a minute for this step and each after it (3)   ok
+
+  Show details for a helper
+    pressing it shows the helper's page                            ok
+    Hide details is where she pressed                              ok
+    a double-click is one press                                    ok
+    a press just as the page changed is not taken                  ok
+    ...nor the second half of that double-click                    ok
+    a press beside it does nothing                                 ok
+    Enter presses it                                               ok
+    while installing there is nothing to press                     ok
 
   pictures
     paints at 1024x768                                             ok
     paints at 1366x768                                             ok
     paints at 1920x1080                                            ok
     paints at 800x600                                              ok
+    paints at 1024x600                                             ok
+    Light: the page is paper                                       ok
+    no text below 18 px (smallest 18)                              ok
+    titles use ui-bold.ttf when it is there                        ok
 
-screentest: 24/24
+screentest: 50/50
