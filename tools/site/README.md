@@ -53,3 +53,16 @@ says so in its output.
 share sheet), then Copy the link and Email me the link; the check mocks the
 share sheet, cancels it, fails it, and removes it. There is no phone number
 anywhere on the site (AurOS never phones), and the check fails if one appears.
+
+**The served build, and the fast-path switch.** The "Get AurOS" button serves
+the DEFAULT build of `AurOS-Setup.exe`. Whether that build has the fast path
+(BitLocker paused for one restart and never decrypted; her Wi-Fi carried
+across) is `${AUROS_FASTPATH:-0}` in `build/aurbridge`; `src/aurbridge/phases.h`
+defines the choices only under `#ifdef AUROS_FASTPATH`. `check.mjs` reads
+that default and checks every promise against the behaviour of that build.
+Where the answer differs, `index.html` carries both wordings
+(`data-build-for="default"` / `"fastpath"`), each checked against the code with
+the fast path off / on, and ONE attribute chooses what is shown:
+`<html data-build="default">`. When the lead flips the default in
+build/aurbridge, the check goes red with that one message; change that one
+attribute to `"fastpath"` and it is green (both directions were shown).

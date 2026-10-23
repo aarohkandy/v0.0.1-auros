@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-build="default">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -262,18 +262,17 @@
 
           </div>
           <figure class="ask-fig">
-            <div class="ask" id="shot-ask" role="img" aria-label="Picture of AurOS after the restart, asking: Does everything work? Check two things first. Can you see your photos? A button, Open Your files. Does the internet work? A button, Open Internet. Then three answers, each with what happens next: Yes, it all works; Let me look first; No, go back to Windows. Press Let me look first.">
+            <div class="ask" id="shot-ask" role="img" aria-label="Picture of AurOS after the restart, asking: Does everything work? Check one thing first. Does the internet work? A button, Open Internet. Then three answers, each with what happens next beside it: Yes, it all works; Let me look first; No, go back to Windows. Press Let me look first.">
               <p class="ask-title" data-ui="desktop">Does everything work?</p>
-              <p data-ui="desktop">Check two things first.</p>
-              <div class="ask-q"><span data-ui="desktop">Can you see your photos?</span><span class="a-btn" data-ui="desktop">Open Your files</span></div>
+              <p data-ui="desktop">Check one thing first.</p>
               <div class="ask-q"><span data-ui="desktop">Does the internet work?</span><span class="a-btn" data-ui="desktop">Open Internet</span></div>
-              <div class="ask-row">
-                <div><span class="a-btn primary" data-ui="desktop">Yes, it all works</span><p class="a-line" data-ui="desktop">AurOS starts every time from now on. Windows and its files stay on this computer.</p></div>
-                <div><span class="a-btn hit" data-n="5" data-ui="desktop">Let me look first</span><p class="a-line" data-ui="desktop">Nothing changes. AurOS asks again the next time it starts.</p></div>
-                <div><span class="a-btn" data-ui="desktop">No, go back to Windows</span><p class="a-line" data-ui="desktop">Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted.</p></div>
+              <div class="ask-rows">
+                <div class="ask-r"><span class="a-btn primary" data-ui="desktop">Yes, it all works</span><p class="a-line" data-ui="desktop">AurOS starts every time from now on. Windows and its files stay on this computer.</p></div>
+                <div class="ask-r"><span class="a-btn hit" data-n="5" data-ui="desktop">Let me look first</span><p class="a-line" data-ui="desktop">Nothing changes. AurOS asks again the next time it starts.</p></div>
+                <div class="ask-r"><span class="a-btn" data-ui="desktop">No, go back to Windows</span><p class="a-line" data-ui="desktop">Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted.</p></div>
               </div>
             </div>
-            <figcaption class="fig-note">After the restart, AurOS asks. Check your files and the internet first. When you&rsquo;re sure, press <b data-ui="desktop">Yes, it all works</b>.</figcaption>
+            <figcaption class="fig-note">After the restart, AurOS asks. Check the internet first. When you&rsquo;re sure, press <b data-ui="desktop">Yes, it all works</b>.</figcaption>
           </figure>
         </li>
       </ol>
@@ -328,7 +327,14 @@
         <div><dt>Which computers</dt><dd>A Windows&nbsp;10 or Windows&nbsp;11 computer made since about 2013. Not Macs, Chromebooks, phones or tablets.</dd></div>
         <div><dt>Room it needs</dt><dd>AurOS needs some empty room on your computer. AurOS Setup checks, and tells you if there isn&rsquo;t enough.</dd></div>
         <div><dt>Keep it plugged in</dt><dd data-claim="charger:required">Plug in the charger before you start, and leave it in until AurOS has started. AurOS Setup waits for it.</dd></div>
-        <div><dt>Locked drives</dt><dd data-claim="bitlocker:refuses">If Windows has locked this computer&rsquo;s drive, AurOS can&rsquo;t go on it yet. Many newer laptops do this by themselves. AurOS Setup checks, and tells you before it changes anything.</dd></div>
+        <div><dt>Locked drives</dt><dd>
+          <span data-build-for="default" data-claim="bitlocker:refuses">If Windows has locked this computer&rsquo;s drive, AurOS can&rsquo;t go on it yet. Many newer laptops do this by themselves. AurOS Setup checks, and tells you before it changes anything.</span>
+          <span data-build-for="fastpath" data-claim="bitlocker:pauses">If Windows has locked this computer&rsquo;s drive (many newer laptops do this by themselves), AurOS Setup pauses the lock for one restart, and it comes back on by itself. Nothing is unlocked or removed.</span>
+        </dd></div>
+        <div><dt>Your Wi-Fi</dt><dd>
+          <span data-build-for="default" data-claim="wifi:stays-behind">AurOS doesn&rsquo;t bring your Wi-Fi across yet. After the restart, press <b data-ui="desktop">Wi-Fi</b> at the bottom left and choose your network. You will need its password, so have it to hand.</span>
+          <span data-build-for="fastpath" data-claim="wifi:comes-across">AurOS Setup offers to <b data-ui="wizard">Bring my Wi-Fi across</b>, ticked for you, so AurOS is online the moment it starts. Untick it if you would rather not.</span>
+        </dd></div>
         <div><dt>If AurOS can&rsquo;t go on your computer</dt><dd>AurOS Setup says so in plain words <b>before it changes anything</b>, and your computer stays exactly as it was.</dd></div>
         <div><dt>What AurOS can&rsquo;t do yet</dt><dd>AurOS can&rsquo;t read the screen aloud yet. Programs made for Windows don&rsquo;t run in AurOS.</dd></div>
         <div><dt>AurOS is new</dt><dd data-claim="release:tested">Every version is installed on a test computer before it reaches you. As with any big change, keep a copy of the photos you treasure somewhere else too, such as a memory stick.</dd></div>

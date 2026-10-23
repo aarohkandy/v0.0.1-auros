@@ -77,6 +77,18 @@ phones/Macs get "open this on your Windows PC" + send-yourself-the-link.
   advanced.html's BIOS title and welcome.c's answer sentences (6845420), B's
   new time (79a3641), the room figures moving to src/aurstage/plan.c (187a25e).
 
+- Fast path switch (lead's order after A2's 33c51fa): pages.yml was red
+  "bitlocker refuses, the code pauses" because check.mjs saw the define in
+  phases.h without noticing it sits under `#ifdef AUROS_FASTPATH`, which the
+  default build does not set. The check now reads the default from
+  build/aurbridge and checks the page against the default build; "Locked
+  drives" and a new "Your Wi-Fi" item carry both wordings, and
+  `<html data-build="default">` in index.html is the one line to flip to
+  "fastpath" when the lead flips the default (the check says so). Also: C's
+  first question is now ONE check ("Check one thing first. Does the internet
+  work?") with each answer's sentence beside it; the drawing follows. HW's
+  #wifi-sticks section in advanced.html is untouched.
+
 ## Waiting on others
 - Real content in the desktop pictures (a news page in Internet, 12 family
   photos; DESIGN-DIRECTION P0-3) needs C's screenshot set; today they are

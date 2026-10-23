@@ -193,7 +193,7 @@ button.get { border: 0; cursor: pointer; }
 .e-dots.hit[data-n]::before, .e-arrow.hit[data-n]::before { right: auto; left: 50%; transform: translateX(-50%); bottom: calc(100% + 14px); }
 .ring { position: absolute; display: block; }
 .win-row:has(.hit) { column-gap: 64px; }
-.ask .hit[data-n]::before, .ring.above[data-n]::before { right: auto; left: -14px; bottom: calc(100% + 16px); }
+.ring.above[data-n]::before { right: auto; left: -14px; bottom: calc(100% + 16px); }
 
 /* the pictures of Windows: drawn to look like Windows 11, so they are
  * sharp at any size and say every word. Not screenshots. */
@@ -256,6 +256,9 @@ button.get { border: 0; cursor: pointer; }
 .not-sure { margin-top: -2px; }
 .here:empty { margin: 0; padding: 0; height: 0; overflow: hidden; }
 .here:not(:empty) { background: var(--selected); border-left: 6px solid var(--go); border-radius: 8px; padding: 12px 16px; margin: 0 0 20px; font-weight: 700; color: var(--ink) !important; }
+/* The one switch for what the page says about the fast path: <html data-build="default">
+ * or "fastpath" (check.mjs makes it match what build/aurbridge builds by default). */
+html[data-build="default"] [data-build-for="fastpath"], html[data-build="fastpath"] [data-build-for="default"] { display: none; }
 .sheet-tip { margin-top: 22px; }
 .fig-lead { margin: 0; font-weight: 700; color: var(--ink); }
 .asof { font-weight: 400; color: var(--ink-2); }
@@ -268,13 +271,15 @@ button.get { border: 0; cursor: pointer; }
 .fig-note { color: var(--ink-2); margin-top: 14px; }
 
 /* "Does everything work?", drawn in AurOS's own words (welcome.c) */
-.ask { max-width: 760px; background: var(--paper); border: 1px solid #D9D2C5; border-radius: 12px; padding: 24px; }
+.ask { max-width: 760px; background: var(--paper); border: 1px solid #D9D2C5; border-radius: 12px; padding: 24px 24px 28px 64px; }
 .ask-title { font: 800 28px/1.2 var(--face); margin-bottom: 10px; }
 .ask-q { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--soft); font-weight: 700; }
 .ask-q .a-btn { flex: none; }
-.ask-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 56px 16px; margin-top: 56px; }
-.ask-row .a-btn { width: 100%; }
-.a-line { color: var(--ink-2); font-size: 18px; line-height: 26px; margin: 10px 0 0; }
+.ask-rows { display: grid; gap: 22px; margin-top: 28px; }
+.ask-r { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 8px 24px; align-items: start; }
+.ask-r .a-btn { width: 100%; }
+.a-line { color: var(--ink-2); font-size: 18px; line-height: 26px; margin: 0; }
+@media (max-width: 700px) { .ask-r { grid-template-columns: minmax(0, 1fr); } }
 .a-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 16px; border: 2px solid var(--rule); border-radius: 8px; background: var(--card); font-weight: 700; }
 .a-btn.primary { background: var(--go); border-color: var(--go); color: #fff; }
 

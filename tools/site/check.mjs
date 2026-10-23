@@ -493,18 +493,35 @@ for (const [at, want] of [
     "time-hdd": eta(true),
   };
   // What the code does, in the words the pages use for it.
-  const CLAIMS = {
-    bitlocker: /^\s*#\s*define\s+AB_CHOICE_BITLOCKER_PAUSE\b/m.test(phases) ? "pauses"
+  // THE SERVED BUILD. The "Get AurOS" button serves the default build of
+  // AurOS-Setup.exe, and build/aurbridge says whether that has the fast path
+  // (${AUROS_FASTPATH:-0}): src/aurbridge/phases.h defines the BitLocker pause and
+  // the Wi-Fi carry-over only under #ifdef AUROS_FASTPATH. When the lead promotes the
+  // fast path (flips that default), this check follows, and goes red until the page's
+  // one switch, <html data-build="...">, is flipped to match.
+  const DEFAULT_FAST = (read("build/aurbridge").match(/\$\{AUROS_FASTPATH:-(\d)\}/) || [])[1] === "1";
+  const defineGuarded = (name) => {          // is `#define name` inside #ifdef AUROS_FASTPATH?
+    const m = phases.match(new RegExp(`^\\s*#\\s*define\\s+${name}\\b`, "m"));
+    if (!m) return null;                     // not defined at all
+    const before = phases.slice(0, m.index).split("\n");
+    let depth = 0, guarded = false;
+    for (const l of before) { const t = l.trim(); if (/^#\s*ifdef\s+AUROS_FASTPATH\b/.test(t)) { depth++; guarded = true; } else if (/^#\s*if(n?def)?\b/.test(t)) depth++; else if (/^#\s*endif\b/.test(t)) { depth--; if (depth === 0) guarded = false; } }
+    return guarded;
+  };
+  const has = (name, fast) => { const g = defineGuarded(name); return g === null ? false : (g ? fast : true); };
+  // What the code does, in the words the pages use for it, for a build with the fast path on or off.
+  const claimsFor = (fast) => ({
+    bitlocker: has("AB_CHOICE_BITLOCKER_PAUSE", fast) ? "pauses"
              : /\{\s*"bitlocker-system",\s*FIX_AUTO/.test(fixWin) ? "decrypts" : "refuses",
+    wifi: has("AB_CHOICE_BRING_WIFI", fast) ? "comes-across" : "stays-behind",
     hold: fs.existsSync(path.join(REPO, "rootfs/etc/systemd/system/auros-hold.service")) && /int af_hold\(/.test(read("src/aurfirst/state.c")) ? "rearms" : "windows-first",
     charger: /\{\s*"not-on-ac",\s*FIX_WAIT/.test(fixWin) ? "required" : "not-required",
-    // promote (the job that makes a release the one the button gets)
-    // needs the real-Windows e2e of that very file, and pages needs promote
-    stop: /AurOS stops here\. Nothing was changed\./.test(wizard) && /Nothing on this computer has been changed\./.test(wizard) ? "nothing-changed" : "other",
     dark: /Restart now: the screen goes black for a minute or two/.test(wizard) ? "minute-or-two" : "other",
+    stop: /AurOS stops here\. Nothing was changed\./.test(wizard) && /Nothing on this computer has been changed\./.test(wizard) ? "nothing-changed" : "other",
     release: (() => { const y = read(".github/workflows/release.yml"); const p = (y.match(/\n  promote:\n[\s\S]*?(?=\n  [a-z][\w-]*:\n)/) || [""])[0];
       return /needs: \[[^\]]*\be2e\b/.test(p) && /\|success\$/.test(p) && /\n  pages:\n\s+needs: promote/.test(y) ? "tested" : "untested"; })(),
-  };
+  });
+  const CLAIMS = claimsFor(DEFAULT_FAST);
   const UI = {
     wizard: (t) => wizard.includes(`L"${t}"`),
     look: (t) => /static const style_info STYLES\[\][\s\S]*?\};/.exec(wizard)?.[0].includes(`L"${t}"`),
@@ -536,10 +553,18 @@ for (const [at, want] of [
   for (const p of real) {
     const { ctx, page } = await visit({ name: "promises " + p, url: HOME + p, ua: UA.winEdge, uad: UAD.winX64 });
     const marks = await page.evaluate(() => [...document.querySelectorAll("[data-fact],[data-claim],[data-ui]")].map((e) => ({
-      fact: e.dataset.fact, claim: e.dataset.claim, ui: e.dataset.ui, text: e.textContent.replace(/\s+/g, " ").trim() })));
+      fact: e.dataset.fact, claim: e.dataset.claim, ui: e.dataset.ui, text: e.textContent.replace(/\s+/g, " ").trim(),
+      buildFor: (e.closest("[data-build-for]") || {}).dataset ? e.closest("[data-build-for]").dataset.buildFor : null })));
+    const builds = await page.evaluate(() => ({ attr: document.documentElement.dataset.build || null,
+      variants: [...document.querySelectorAll("[data-build-for]")].map((e) => ({ for: e.dataset.buildFor, shown: e.getClientRects().length > 0 })) }));
+    if (builds.variants.length) {
+      check(builds.attr === (DEFAULT_FAST ? "fastpath" : "default"), `promises ${p}: <html data-build="${builds.attr}"> is the build the button serves (build/aurbridge's default has the fast path ${DEFAULT_FAST ? "ON" : "off"}: "${DEFAULT_FAST ? "fastpath" : "default"}")`, "flip data-build on <html>, or the default in build/aurbridge");
+      check(builds.variants.every((v) => v.shown === (v.for === builds.attr)), `promises ${p}: only the wording for the served build is shown (${builds.variants.length} variants)`, JSON.stringify(builds.variants));
+    }
     for (const m of marks) {
       if (m.fact) { facts++; check(FACTS[m.fact] !== undefined && m.text === FACTS[m.fact], `promises ${p}: "${m.text}" is what the code says for ${m.fact}`, `the code says "${FACTS[m.fact]}"`); }
-      if (m.claim) { claims++; const [k, v] = m.claim.split(":"); check(CLAIMS[k] === v, `promises ${p}: the page says ${k} ${v}, the code ${CLAIMS[k]}`, `rewrite "${m.text.slice(0, 70)}..." for "${CLAIMS[k]}", or change the code`); }
+      if (m.claim) { claims++; const [k, v] = m.claim.split(":"); const fast = m.buildFor ? m.buildFor === "fastpath" : DEFAULT_FAST; const want = claimsFor(fast)[k];
+        check(want === v, `promises ${p}: the page says ${k} ${v}${m.buildFor ? ` (for the ${m.buildFor} build)` : ""}, the code ${want}`, `rewrite "${m.text.slice(0, 70)}..." for "${want}", or change the code`); }
       if (m.ui) { words++; check(UI[m.ui] && UI[m.ui](m.text), `promises ${p}: "${m.text}" is a word on the ${m.ui} screen`, `not found in its source`); }
     }
     const text = await page.evaluate(() => document.body.innerText);
@@ -566,9 +591,10 @@ for (const [at, want] of [
     check(gets.every((l) => l.href === RELEASE_URL), `promises ${p}: every "Get AurOS" link is the download itself (${gets.length})`, gets.map((l) => l.href).join(" "));
     await ctx.close();
   }
-  check(facts >= 2 && claims >= 4 && words >= 10, `promises: the pages mark what they promise (${facts} facts, ${claims} claims, ${words} words)`);
+  check(facts >= 2 && claims >= 6 && words >= 10, `promises: the pages mark what they promise (${facts} facts, ${claims} claims, ${words} words)`);
   for (const k of Object.keys(FACTS)) console.log(`     the code says ${k} = ${FACTS[k]}`);
-  for (const k of Object.keys(CLAIMS)) console.log(`     the code does ${k}: ${CLAIMS[k]}`);
+  for (const k of Object.keys(CLAIMS)) console.log(`     the code does ${k}: ${CLAIMS[k]}` + (claimsFor(!DEFAULT_FAST)[k] !== CLAIMS[k] ? ` (with the fast path ${DEFAULT_FAST ? "off" : "ON"}: ${claimsFor(!DEFAULT_FAST)[k]})` : ""));
+  console.log(`     the button serves the default build: fast path ${DEFAULT_FAST ? "ON" : "off"} (build/aurbridge)`);
   // The time she is promised may not be below what the real-Windows journey clock measured.
   {
     let J = null; try { J = JSON.parse(read("tools/site/journey.json")); } catch {}
