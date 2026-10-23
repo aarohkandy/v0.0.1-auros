@@ -14,7 +14,9 @@
 #          selftest under Wine, and the data-safety suites that need no
 #          VM: gpttest, committest, bootchaintest
 #   e2e    one job per end-to-end test, in QEMU with KVM: nosticktest,
-#          powercuttest, firstboottest, installtest, bootupdatetest,
+#          powercut-nostick (the power cut in the mode that ships, no
+#          memory stick: four jobs, S-11), powercuttest (the older mode,
+#          with a stick), firstboottest, installtest, bootupdatetest,
 #          choicesboottest, putbacktest
 #
 # The scripts were written for a container without KVM, so each has
@@ -329,17 +331,27 @@ jobs:
       # so the suite takes as long as its longest test. Two lanes made
       # it ~7 minutes longer than that with five tests, and would make
       # it ~20 longer with seven.
-      max-parallel: 4
+      max-parallel: 6
       matrix:
         include:
-          - { test: nosticktest,     args: '',        image: false }
-          - { test: powercuttest,    args: '',        image: false }
-          - { test: firstboottest,   args: 'desktop', image: true }
-          - { test: installtest,     args: '',        image: false }
-          - { test: bootupdatetest,  args: '',        image: true }
-          - { test: choicesboottest, args: '',        image: true }
-          - { test: putbacktest,     args: '',        image: true }
-    name: e2e (${{ matrix.test }})
+          - { test: nosticktest,     label: nosticktest,     args: '',        only: '', image: false }
+          # THE POWER CUT, in the mode people get: no memory stick (S-11).
+          # tools/powercut-nostick.sh takes instants as arguments, and with
+          # none it also runs "what the screen says" and the restore half;
+          # one job per slice of its ~60 minutes. Each boots a reference
+          # install first (~3 min), which is why there are four, not eight.
+          - { test: powercut-nostick, label: powercut-nostick-a, args: 'gate shrink-begin shrink-end mirror-end',                          only: '', image: false }
+          - { test: powercut-nostick, label: powercut-nostick-b, args: 'write-mid write-end boot-mid boot-end',                              only: '', image: false }
+          - { test: powercut-nostick, label: powercut-nostick-c, args: 'commit-array commit-sector commit-backup boot-entry settle-end',     only: '', image: false }
+          - { test: powercut-nostick, label: powercut-nostick-d, args: '',                                                                 only: restore, image: false }
+          # (with a memory stick: the older mode, kept as it was)
+          - { test: powercuttest,    label: powercuttest,    args: '',        only: '', image: false }
+          - { test: firstboottest,   label: firstboottest,   args: 'desktop', only: '', image: true }
+          - { test: installtest,     label: installtest,     args: '',        only: '', image: false }
+          - { test: bootupdatetest,  label: bootupdatetest,  args: '',        only: '', image: true }
+          - { test: choicesboottest, label: choicesboottest, args: '',        only: '', image: true }
+          - { test: putbacktest,     label: putbacktest,     args: '',        only: '', image: true }
+    name: e2e (${{ matrix.label }})
     steps:
       - uses: actions/checkout@v4
       - name: KVM, QEMU, OVMF
@@ -409,7 +421,7 @@ jobs:
             sudo AUROS_STAGING_OUT="$RUNNER_TEMP/staging-out" ./build/staging desktop > /dev/null
           fi
           sudo test -d work/staging/lib/modules
-          if [ "${{ matrix.test }}" = powercuttest ]; then
+          if [ "${{ matrix.test }}" = powercuttest ] || [ "${{ matrix.test }}" = powercut-nostick ]; then
             # Its own staging build, with fault injection compiled in
             # (out/auros-staging-fault*; seconds). Never published.
             sudo AURSTAGE_FAULT=1 ./build/staging desktop > /dev/null
@@ -425,21 +437,21 @@ jobs:
           fi
           ls -la out
           df -h /
-          echo "setup $(( $(date +%s) - T0 )) s" | tee transcripts/timing-${{ matrix.test }}.txt
-      - name: ${{ matrix.test }} under KVM
+          echo "setup $(( $(date +%s) - T0 )) s" | tee transcripts/timing-${{ matrix.label }}.txt
+      - name: ${{ matrix.label }} under KVM
         run: |
           T=$(date +%s)
           set +e
-          sudo env PATH="$PATH" sh tools/${{ matrix.test }}.sh ${{ matrix.args }} > transcripts/${{ matrix.test }}.txt 2>&1
+          sudo env PATH="$PATH" ONLY="${{ matrix.only }}" sh tools/${{ matrix.test }}.sh ${{ matrix.args }} > transcripts/${{ matrix.label }}.txt 2>&1
           rc=$?
           set -e
-          cat transcripts/${{ matrix.test }}.txt
-          echo "${{ matrix.test }} exit=$rc $(( $(date +%s) - T )) s" | tee -a transcripts/timing-${{ matrix.test }}.txt
-          tail -3 transcripts/${{ matrix.test }}.txt >> "$GITHUB_STEP_SUMMARY"
+          cat transcripts/${{ matrix.label }}.txt
+          echo "${{ matrix.label }} exit=$rc $(( $(date +%s) - T )) s" | tee -a transcripts/timing-${{ matrix.label }}.txt
+          tail -3 transcripts/${{ matrix.label }}.txt >> "$GITHUB_STEP_SUMMARY"
           exit $rc
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
-          name: transcripts-${{ matrix.test }}
+          name: transcripts-${{ matrix.label }}
           path: transcripts/
           retention-days: 30

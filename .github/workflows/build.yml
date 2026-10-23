@@ -111,6 +111,7 @@ jobs:
       image_sha256: ${{ steps.pieces.outputs.image_sha256 }}
       image_bytes: ${{ steps.pieces.outputs.image_bytes }}
       setup_sha256: ${{ steps.installer.outputs.setup_sha256 }}
+      fastpath_sha256: ${{ steps.fastpath.outputs.fastpath_sha256 }}
     env:
       # 90 MiB: under any 100 MB limit, and a dropped connection costs
       # one piece, not the image.
@@ -324,6 +325,49 @@ jobs:
           rm -f "$RUNNER_TEMP/back.img"
           kill %1 2>/dev/null || true
           echo "getimage-local $(( $(date +%s) - T )) s" >> dist/installer/timings.txt
+
+      # THE FAST-PATH INSTALLER, beside the normal one and never instead
+      # of it (docs/AURBRIDGE.md "Fast path"; lead's order 2026-10-23).
+      # The same release build with AUROS_FASTPATH=1: A2's engine that
+      # shrinks Windows with Windows' own online shrink instead of
+      # ntfsresize in the staging environment. It is published as the
+      # separate asset AurOS-Setup-fastpath.exe, listed in SHA256SUMS,
+      # and the website's link (AurOS-Setup.exe) never points at it. If
+      # the tree does not read AUROS_FASTPATH yet, the two builds are
+      # byte-identical and there is nothing to publish: said, not faked.
+      # Last of the steps that use out/, because build/aurbridge writes
+      # there: the normal executables are put back afterwards.
+      - name: the same installer, built with AUROS_FASTPATH=1
+        id: fastpath
+        run: |
+          T=$(date +%s)
+          export AUROS_IMAGE_PIECES="$PWD/dist/pieces/pieces.txt"
+          export AUROS_IMAGE_SHA256=$(cat dist/pieces/image.sha256)
+          export AUROS_IMAGE_BYTES=$(cat dist/pieces/image.bytes)
+          AUROS_FASTPATH=1 AUROS_RELEASE=1 sh build/aurbridge
+          if cmp -s out/aurbridge-wizard.exe dist/installer/AurOS-Setup.exe; then
+            echo "::notice title=No fast-path installer::AUROS_FASTPATH=1 changed nothing in this tree (build/aurbridge does not read it yet), so there is nothing to publish beside AurOS-Setup.exe"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "fastpath: identical to the normal installer (AUROS_FASTPATH not wired in this tree): not published" | tee -a dist/installer/build-info.txt
+          else
+            cp out/aurbridge-wizard.exe dist/installer/AurOS-Setup-fastpath.exe
+            # the same gates the normal installer passed
+            python3 tools/pe_payload.py list dist/installer/AurOS-Setup-fastpath.exe > /tmp/res-fp.txt
+            for id in 1 2 3 4 5; do
+              grep -q "^$id " /tmp/res-fp.txt || { echo "fast-path installer: resource $id is missing"; exit 1; }
+            done
+            strings dist/installer/AurOS-Setup-fastpath.exe > /tmp/strings-fp.txt
+            grep -q "releases/download/$TAG/" /tmp/strings-fp.txt \
+              || { echo "the release's address is not baked into the fast-path installer"; exit 1; }
+            sh tools/manifesttest.sh dist/installer/AurOS-Setup-fastpath.exe
+            fs=$(sha256sum dist/installer/AurOS-Setup-fastpath.exe | cut -d' ' -f1)
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "fastpath_sha256=$fs" >> "$GITHUB_OUTPUT"
+            echo "AurOS-Setup-fastpath.exe $(stat -c %s dist/installer/AurOS-Setup-fastpath.exe) bytes, sha256 $fs" | tee -a dist/installer/build-info.txt
+          fi
+          # the normal build's executables, back where the tests look
+          cp dist/installer/aurbridge.exe dist/installer/aurbridge-wizard.exe dist/installer/aurbridge-sim out/
+          echo "fastpath-installer $(( $(date +%s) - T )) s" >> dist/installer/timings.txt
 
       - name: the forged rootfs, for the tests that take tools out of it
         run: |

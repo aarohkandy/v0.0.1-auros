@@ -291,7 +291,7 @@ What proves it, and the numbers are the current transcripts in
 | `installtest.sh` | 37 — install, start, put Windows back twice, refuse a damaged copy, refuse a stick for another AurOS |
 | `nosticktest.sh` | 45 — the same with no stick at all: image read from inside Windows, the way back kept on the disk, the restart through shim and grub from firmware with Secure Boot on and the kernel locked down, and two firmwares that do not trust shim's key, each refused by AurBridge before anything changes |
 | `loadertest.sh` | 18 — and does it come back up in AurOS with the stick out, including under Secure Boot |
-| `powercuttest.sh` | 138 — the power goes at each of seventeen named instants |
+| `powercuttest.sh` | 138 — with a memory stick, the power goes at each of eighteen named instants (CI: `tests / e2e (powercuttest)`); the shipped no-stick mode is `powercut-nostick.sh`, four CI jobs |
 | `matrixtest.sh` | 10 — shapes of computer that cannot be bought |
 | `imagetest.sh` | 23 — the image is found by what is on it, including on a stick holding two |
 | `bridgetest.sh` | 13 — the two halves agree about the bytes |

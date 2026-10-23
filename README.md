@@ -72,8 +72,12 @@ The goal, stated as a testable contract:
   The numbers are in `docs/PLAN.md` §6 and the transcripts in
   `docs/results/`.
 - **Power cuts on purpose** — the installer names its own dangerous
-  instants and a fault build stops dead at each one; Windows comes back
-  with every file byte-identical every time (`tools/powercuttest.sh`).
+  instants and a fault build stops dead at each one. With a memory stick,
+  Windows comes back with every file byte-identical every time
+  (`tools/powercuttest.sh`, on every build). The installer people
+  download has no stick; that mode has its own power-cut test
+  (`tools/powercut-nostick.sh`, four CI jobs on every build), and it is
+  still finding failures: `docs/safety/FINDINGS.md`.
 - **A no-stick mode**, for test machines: the image is downloaded in
   pieces onto the Windows drive and read after the restart through a
   read-only mount; the way back is kept on the disk. What that gives up
