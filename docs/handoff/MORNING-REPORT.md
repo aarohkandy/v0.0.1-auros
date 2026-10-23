@@ -4,9 +4,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Done overnight (proof)
 
-- **CORRECTION: "video calls and films work on the real image" was NOT proven** — the check that said so was
-  fooled by a card left on screen; a corrected run is queued. The compositor fix itself is proven by its own
-  tests (Firefox, GTK4, Qt, video draw on the real desktop). Being fixed: printing, Word/Excel (LibreOffice).
+- **Video calls and films now proven on the real image, with the picture checked** (corrected runs
+  40015793857/40021364066 after an earlier false pass was retracted): camera + microphone, H.264 and streaming
+  video with sound, printing to a network printer, LibreOffice Writer/Calc open and save, PDF forms.
 
 - **Your potato wish works on AurOS** (rendered from the real code): docs/shots/wishes/rail-1366x768-08-confirm.png
   ("Is this what you want?" in plain words, equal Yes/No) and docs/shots/wishes/rail-1366x768-30-fill-potato.png.
@@ -41,6 +41,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
   (docs/DESIGN-DIRECTION.md), AI contract v1 after a red team (docs/AI.md §7).
 
 ## Still red / in progress
+
+- **Found and fixed tonight: every click in modern (GTK4) programs landed ~25% off target** — why the store's
+  small Install button did nothing. Fixed (7381d67); in the next release candidate.
 
 - **8 of the 10 top programs install from "Get more programs" (no password) and open in 1-2 s**: WhatsApp,
   Teams, Spotify, Solitaire, Thunderbird, gThumb, LibreOffice, Chromium. Zoom and VLC wait for Xwayland.
