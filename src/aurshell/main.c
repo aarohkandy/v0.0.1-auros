@@ -740,12 +740,14 @@ int main(int argc, char **argv)
     signal(VT_RELSIG, on_rel);
     signal(VT_ACQSIG, on_acq);
 
-    theme_t t = {0};
-    if (theme_load(&t, conf) < 0)
-        fprintf(stderr, "aurshell: no %s — using built-in defaults\n", conf);
-
     /* HER copy wins whenever it exists, asked fresh each time. A
-     * command line that named a file is never second-guessed. */
+     * command line that named a file is never second-guessed.
+     *
+     * BEFORE the theme is read, not after. It used to be picked three
+     * lines below theme_load(), so the first frame of every session was
+     * drawn from the machine's copy: the look she chose in Settings
+     * lasted until the next restart, while Settings went on saying she
+     * had chosen it (tools/lookboottest.sh). */
     #define PICK_HERS(dst, user, forced, fallback) do {                       \
         if (!(forced))                                                        \
             (dst) = ((user)[0] && access((user), R_OK) == 0) ? (user)          \
@@ -753,6 +755,10 @@ int main(int argc, char **argv)
     } while (0)
     PICK_HERS(conf,   user_conf,  conf_forced,  "/etc/auros/shell.conf");
     PICK_HERS(shellf, user_shell, shell_forced, "/etc/auros/shell/active.shell");
+
+    theme_t t = {0};
+    if (theme_load(&t, conf) < 0)
+        fprintf(stderr, "aurshell: no %s — using built-in defaults\n", conf);
 
     shell_ctx c;
     memset(&c, 0, sizeof c);

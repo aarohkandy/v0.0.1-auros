@@ -142,6 +142,14 @@ jobs:
           AURSHELL="$RUNNER_TEMP/aurshell" sh tools/choicestest.sh 2>&1 | tee transcripts/choicestest.txt
           grep -q 'the desktop starts as' transcripts/choicestest.txt \
             || { echo "choicestest did not start the image's aurshell"; exit 1; }
+      - name: lookboottest (the look she picked survives a restart)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          R="$PWD/work/forge/desktop/rootfs"
+          printf '#!/bin/sh\nexec "%s/lib64/ld-linux-x86-64.so.2" --library-path "%s/usr/lib/x86_64-linux-gnu:%s/lib/x86_64-linux-gnu" "%s/usr/bin/aurshell" "$@"\n' \
+              "$R" "$R" "$R" "$R" > "$RUNNER_TEMP/aurshell-look"
+          chmod +x "$RUNNER_TEMP/aurshell-look"
+          AURSHELL="$RUNNER_TEMP/aurshell-look" sh tools/lookboottest.sh 2>&1 | tee transcripts/lookboottest.txt
       - name: nmtest (the image's NetworkManager - the cable is managed, names resolve)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: RFS=work/forge/desktop/rootfs sh tools/nmtest.sh 2>&1 | tee transcripts/nmtest.txt
