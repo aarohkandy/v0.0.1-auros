@@ -199,6 +199,15 @@ cryptsetup luksDump "$D" | grep -q 'aes-xts-plain64' && ok "AES-XTS on a CPU wit
 
 echo
 echo "  the first PIN (sealed in the chip, bound to no PCR)"
+# A PIN that does not prove it opens the drive is rolled back whole:
+# no rescue code, no sealed PIN, the temporary key still the only key.
+printf '#!/bin/sh\n[ "$1" = --check ] && { cat >/dev/null; echo wrong; exit 1; }\nexec %s "$@"\n' "$PIN" > "$T/pinfail"
+chmod 755 "$T/pinfail"
+out=$(printf '1234\n' | AUROS_LOCK_DEV="$D" AUROS_LOCK_PIN_BIN="$T/pinfail" AUROS_LOCK_CONF="$T/lock.conf" bash "$LOCKCTL" set-pin 2>&1); rc=$?
+slots=$(cryptsetup luksDump "$D" | sed -n 's/^  \([0-9]*\): luks2$/\1/p' | tr '\n' ' ')
+[ "$rc" != 0 ] && ! echo "$out" | grep -qE '^[0-9]{4} ' && [ "$slots" = "0 " ] && L "$D" status | grep -qx state=open-no-pin \
+    && ok "a PIN that does not prove itself is rolled back: no code, only the temporary key" \
+    || bad "a PIN that does not prove itself is rolled back" "rc=$rc slots='$slots' out='$out'"
 code=$(printf '1234\n' | L "$D" set-pin 2>"$T/err")
 echo "$code" | grep -qE '^[0-9]{4}( [0-9]{4}){5}$' && ok "set-pin prints a rescue code of 6 groups of 4 numbers" \
     || bad "set-pin prints a rescue code" "got '$code' $(cat "$T/err")"
@@ -218,8 +227,15 @@ code2=$(printf '1234\n' | L "$D" set-pin 2>/dev/null)
 
 echo
 echo "  too many tries"
-v=""; for _ in 1 2 3 4 5 6; do open_try "$D" 1111; v=$V; [ "$v" = locked ] && break; done
-[ "$v" = locked ] && ok "the chip locks out, and the page says so" || bad "the chip locks out" "last: $v"
+# The try that makes the chip lock out must itself say "locked", not "wrong".
+v=""; lk=""
+for _ in 1 2 3 4 5 6; do
+    open_try "$D" 1111; v=$V
+    lk=$("$PIN" --tpm-status | sed -n 's/^in_lockout=//p')
+    [ "$lk" = 1 ] && break
+done
+[ "$lk" = 1 ] && [ "$v" = locked ] && ok "the try that locks the chip out already says so" \
+    || bad "the try that locks the chip out already says so" "locked=$lk, that try said: $v"
 open_try "$D" 1234; v=$V; [ "$v" = locked ] && ok "the right PIN is not let through while locked" || bad "locked even for the right PIN" "got $v"
 close_last
 sleep 9

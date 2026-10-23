@@ -31,7 +31,8 @@ for lib in cryptsetup/libcryptsetup-token-systemd-tpm2.so libcryptsetup.so.12 \
     done
 done
 manual_add_modules dm_crypt xts adiantum nhpoly1305 nhpoly1305_avx2 nhpoly1305_sse2 \
-    chacha_generic chacha_x86_64 aesni_intel aes_generic tpm_crb tpm_tis
+    chacha_generic chacha_x86_64 aesni_intel aes_generic tpm_crb tpm_tis \
+    evdev atkbd i8042 hid_generic usbhid xhci_pci ehci_pci
 
 # Her look: the colours and the three faces she chose, and DejaVu for
 # when a face is missing.

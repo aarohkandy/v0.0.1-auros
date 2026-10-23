@@ -131,6 +131,14 @@ static int cs_load(void)
            cs.token_status && cs.token_json ? 0 : -1;
 }
 
+/* The tests' chip, or NULL (and "" is NULL: lockctl passes the variable
+ * through, empty, on her computer). */
+static const char *test_tpm(void)
+{
+    const char *v = getenv("AURLOCK_TPM2_DEVICE");
+    return v && *v ? v : NULL;
+}
+
 /* ── the chip's own count of wrong PINs (tss2-esys, by dlopen) ────── */
 
 typedef struct {
@@ -164,8 +172,8 @@ static int tpm_da_read(tpm_da *t)
     }
     if (!ldr_init || !ldr_fin || !esys_init || !esys_fin || !getcap || !esys_free) return -1;
 
-    const char *dev = getenv("AURLOCK_TPM2_DEVICE");
-    if (!dev || !*dev) {
+    const char *dev = test_tpm();
+    if (!dev) {
         /* Only the kernel's resource manager: never the raw /dev/tpm0,
          * which a second user of the chip would trip over. */
         if (access("/dev/tpmrm0", R_OK | W_OK) != 0) return -1;
@@ -253,6 +261,7 @@ static int try_temp(drive *d)
  * AURLOCK_TPM2_DEVICE is set, which nothing on her computer sets. */
 typedef struct { uint32_t search_pcr_mask; const char *device, *sig, *pcrlock; } tpm2_params;
 
+
 static long ms_now(void)
 {
     struct timespec t;
@@ -286,7 +295,7 @@ static verdict try_pin_(drive *d, const char *pin)
     tpm_da before, after;
     if (tpm_da_read(&before) < 0) return V_CHANGED;      /* no chip answering */
     if (before.in_lockout) return V_LOCKED;
-    tpm2_params p = { UINT32_MAX, getenv("AURLOCK_TPM2_DEVICE"), NULL, NULL };
+    tpm2_params p = { UINT32_MAX, test_tpm(), NULL, NULL };
     int r = cs.by_token_pin(d->cd, d->name, "systemd-tpm2", CRYPT_ANY_TOKEN, pin, n,
                             p.device ? &p : NULL, act_flags());
     if (r >= 0) return V_OPEN;
@@ -1052,7 +1061,7 @@ static int run_add_key(drive *d)
     pin[strcspn(pin, "\r\n")] = 0; key[strcspn(key, "\r\n")] = 0;
     if (!cs.kc_pass || !cs.kc_token || !cs.kc_add || !cs.kc_free || !*key) return 2;
     void *old = NULL, *new_ = NULL;
-    tpm2_params p = { UINT32_MAX, getenv("AURLOCK_TPM2_DEVICE"), NULL, NULL };
+    tpm2_params p = { UINT32_MAX, test_tpm(), NULL, NULL };
     int r = d->has_tpm_token
         ? cs.kc_token(d->cd, CRYPT_ANY_TOKEN, "systemd-tpm2", pin, strlen(pin), p.device ? &p : NULL, &old)
         : cs.kc_pass(d->cd, pin, strlen(pin), &old);
