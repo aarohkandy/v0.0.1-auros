@@ -458,6 +458,20 @@ bytes, file system; exFAT, FAT or NTFS only) and `ferry stick DEVICE
 folder she can open anywhere: `From AurOS/<Folder>/...`, `MANIFEST.tsv` and
 `Read me.txt`. No DONE (nothing consumes it), kind=stick in the signal.
 
+**How the desktop asks** (`src/aurshell/welcome.c`, `rootfs/usr/lib/auros/answer.sh`):
+`import:NAME` answers "whose files?" (`result=choose`, `users=...`); the answer to it
+is `request=import`, and the desktop reads only an answer newer than its own request
+(the old `choose` is still on disk until the new one is written). `stick:/dev/NAME` asks
+to save her files on that stick: aurfirst lets through only letters and digits after
+`/dev/`, answer.sh checks the name is on `ferry stick list` as it is then, and runs
+`ferry stick DEVICE --plain` as root with its plain lines in `/run/auros-answer/stick.log`.
+The answer is `request=stick`, `result=ok|partial|empty|failed`, `files=N`, and for a
+failure `why=noroom|unopened|nostick`. The desktop lists the sticks itself with
+`ferry stick list` (it only reads). Put Windows back answers a refusal with `why=`
+(`toomany`, `locked`, `noroom`, `dirty`, `nodrive`, `some`), and the desktop opens the
+screen that says why and offers the stick. Saving to a stick does not unlock Put Windows
+back: it asks again, and checks again, whenever she presses it.
+
 Exit codes and the signal are those of `ferry back`: 0 saved and checked, 2
 some not (or a folder that is a shortcut), 4 not enough room, 5 the volume
 would not open, 1 failed or what was read back did not match. Proven under

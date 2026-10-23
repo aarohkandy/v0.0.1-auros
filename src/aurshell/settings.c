@@ -364,6 +364,10 @@ static void fill_page(shell_ctx *c)
     if (S.page == SET_PAGE_WINDOWS) {
         S.armed = 0;
         add_choice("keep", "Keep AurOS", "Nothing changes");
+        /* BEFORE the two that change something: her files first. Saves them
+         * on a USB stick she plugs in, and removes nothing (welcome.c). */
+        add_choice("stick", "Save my files to a USB stick first",
+                   "Your documents, pictures, music and videos are copied onto a stick. Nothing is removed.");
         /* START WINDOWS, THIS ONCE: one press, and nothing is removed.
          * The firmware starts Windows itself (BootNext), so a PC with
          * BitLocker does not ask for its recovery key, and AurOS starts
@@ -1043,6 +1047,16 @@ static void choose(shell_ctx *c, int idx)
     if (S.page == SET_PAGE_WINDOWS) {
         if (S.asked) return;
         int pb = row_of("putback");
+        if (!strcmp(id, "stick")) {
+            /* Her files, on a stick: the welcome panel's pages do it. Nothing
+             * here is armed, and anything armed is put down. */
+            S.armed = 0;
+            if (pb >= 0)
+                snprintf(S.ch[pb].label, CHOICE_LEN, "%s",
+                         "Remove AurOS and put Windows back");
+            welcome_open_stick(c);
+            return;
+        }
         if (!strcmp(id, "windows")) {
             /* ONE PRESS: it removes nothing. */
             S.armed = 0;
@@ -1084,7 +1098,7 @@ static void choose(shell_ctx *c, int idx)
             snprintf(S.ch[idx].label, CHOICE_LEN, "%s",
                      "Press again to restart and remove AurOS");
             snprintf(S.said, sizeof S.said, "%s",
-                     "First copy anything you want to keep onto a memory stick.");
+                     "First save anything you want to keep: press Save my files to a USB stick first.");
             return;
         }
         /* NOT A DOUBLE-CLICK. Two presses inside a second and a half
@@ -1402,9 +1416,9 @@ int settings_key(shell_ctx *c, int k)
 /* The root side's answer to "putback" or "windows", if it has one: a refusal is
  * something she has to be told, because otherwise the screen says
  * "Restarting" for ever on a computer that is not going to. */
-static int putback_answered(void)
+static int putback_answered(shell_ctx *c)
 {
-    char path[512], line[160], note[CHOICE_LEN * 2] = "";
+    char path[512], line[160], note[CHOICE_LEN * 2] = "", why[16] = "";
     snprintf(path, sizeof path, "%s/result", WELCOME_ANSWER);
     struct stat st;
     if (stat(path, &st) != 0 || st.st_mtime < S.asked_at) return 0;
@@ -1417,6 +1431,7 @@ static int putback_answered(void)
             !strcmp(line + 8, S.asked_word)) ours = 1;
         else if (!strncmp(line, "result=", 7) && strcmp(line + 7, "ok")) failed = 1;
         else if (!strncmp(line, "note=", 5)) snprintf(note, sizeof note, "%.140s", line + 5);
+        else if (!strncmp(line, "why=", 4)) snprintf(why, sizeof why, "%.15s", line + 4);
     }
     fclose(f);
     if (!ours || !failed) return 0;
@@ -1428,12 +1443,17 @@ static int putback_answered(void)
         snprintf(S.ch[pb].label, CHOICE_LEN, "%s", "Remove AurOS and put Windows back");
     snprintf(S.said, sizeof S.said, "Nothing has changed: %s.",
              note[0] ? note : "this computer said no");
+    /* Her files could not be saved in Windows first: say why, in her words,
+     * and offer the way that works (the welcome panel's page). */
+    if (!strcmp(why, "toomany") || !strcmp(why, "locked") || !strcmp(why, "noroom") ||
+        !strcmp(why, "dirty") || !strcmp(why, "nodrive") || !strcmp(why, "some"))
+        welcome_open_blocked(c, why);
     return 1;
 }
 
 int settings_step(shell_ctx *c)
 {
-    if (S.asked && S.page == SET_PAGE_WINDOWS && putback_answered()) return 1;
+    if (S.asked && S.page == SET_PAGE_WINDOWS && putback_answered(c)) return 1;
     if (!S.reload_at) return 0;
     if ((int32_t)(now_ms() - S.reload_at) < 0) return 0;
     S.reload_at = 0;

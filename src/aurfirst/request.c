@@ -72,7 +72,7 @@ static const char *run_dir(void)
     return AF_RUN_USER;
 }
 
-/* The five, and nothing else. Spelled here so that the shell around
+/* The five (and "import:NAME", "stick:/dev/NAME" below), and nothing else. Spelled here so that the shell around
  * this cannot widen the list by accident. `putback` restarts the
  * computer into the restore that removes AurOS: the bound is still
  * "nothing she could not have asked for by pressing the button in
@@ -114,6 +114,25 @@ static int name_ok(const unsigned char *s, size_t n)
         unsigned char c = s[i];
         if (c < 0x20 || c == 0x7f) return 0;
         if (strchr("\"/\\[]:;|=,+*?<>", c)) return 0;
+    }
+    return 1;
+}
+
+/* "stick:/dev/sdb1" -- "save my files on THIS USB stick" (docs/FERRY.md,
+ * `ferry stick DEVICE`). The device is one of the stick's own names from
+ * `ferry stick list`, and that is checked again by answer.sh against the
+ * list as it is then; this door only keeps out everything that is not the
+ * plain name of a block device: letters and digits after /dev/, nothing
+ * else (no further slash, no dot, no option, no space, no second line). */
+#define STICK_PREFIX "stick:/dev/"
+#define STICK_NAME_MAX 24
+
+static int stick_name_ok(const unsigned char *s, size_t n)
+{
+    if (n == 0 || n > STICK_NAME_MAX) return 0;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = s[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))) return 0;
     }
     return 1;
 }
@@ -189,6 +208,18 @@ int af_request_take(char *out, size_t n)
         size_t pl = strlen(IMPORT_PREFIX), nl = (size_t)k - pl;
         if (name_ok((const unsigned char *)raw + pl, nl) &&
             pl + nl + 1 <= n) {
+            memcpy(out, raw, pl + nl);
+            out[pl + nl] = 0;
+            return 0;
+        }
+        snprintf(out, n, "%s", "unknown");
+        return 1;
+    }
+    /* "stick:/dev/NAME": checked as a whole, or not at all. */
+    if (k > (ssize_t)strlen(STICK_PREFIX) &&
+        strncmp(raw, STICK_PREFIX, strlen(STICK_PREFIX)) == 0) {
+        size_t pl = strlen(STICK_PREFIX), nl = (size_t)k - pl;
+        if (stick_name_ok((const unsigned char *)raw + pl, nl) && pl + nl + 1 <= n) {
             memcpy(out, raw, pl + nl);
             out[pl + nl] = 0;
             return 0;

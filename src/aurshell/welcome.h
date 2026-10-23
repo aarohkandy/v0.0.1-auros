@@ -76,9 +76,34 @@
 #define WELCOME_FOUND "/var/lib/auros/windows-found.json"
 #endif
 
-/* Which screen. */
+/* `ferry`, which this panel runs only to LIST the USB sticks (it reads, it
+ * writes nothing, and it needs no privilege); saving onto one is the root
+ * side's (answer.sh "stick:"). Overridable for tools/welcometest.c. */
+#ifndef WELCOME_FERRY
+#define WELCOME_FERRY "/usr/bin/ferry"
+#endif
+
+/* Which screen.
+ *
+ * The first nine are the question and what follows it. The rest are the
+ * things Ferry has to ask or say (docs/FERRY.md): whose files, when there
+ * are several Windows people; that there was nothing to bring; saving her
+ * files on a USB stick (plug in, choose, saving, done); and why Put
+ * Windows back could not save them in Windows first. */
 enum { W_ASK, W_WORKING, W_CONFIRMED, W_IMPORTING, W_IMPORTED,
-       W_DECLINED, W_TROUBLE, W_SURE_YES, W_SURE_NO, W_PAGE_N };
+       W_DECLINED, W_TROUBLE, W_SURE_YES, W_SURE_NO,
+       W_WHOSE, W_EMPTY, W_STICK_PLUG, W_STICK_PICK, W_STICK_SAVING,
+       W_STICK_DONE, W_BLOCKED, W_PAGE_N };
+
+/* "Save my files to a USB stick first", from Settings (Put Windows back).
+ * Opens at "plug in a stick" or, when one is already there, at the choice. */
+void welcome_open_stick(shell_ctx *c);
+
+/* Put Windows back could not save her files in Windows first, and says why
+ * (answer.sh's why=): toomany, locked, noroom, dirty, nodrive, some -- or
+ * anything else for the plain sentence. Offers the USB stick, and says what
+ * is and is not changed. */
+void welcome_open_blocked(shell_ctx *c, const char *why);
 
 /* Called once, when the shell starts. Reads the state and decides
  * whether the question needs asking; sets c->welcome_open if it does.
@@ -117,5 +142,16 @@ int  welcome_targets(const shell_ctx *c, int sw, int sh,
 /* For the test: drive the panel without a screen. */
 void welcome_set_page(int page);
 int  welcome_page(void);
+/* ...and give it the people ("Bob,Harold") and the sticks (the lines
+ * `ferry stick list` prints: device, name (size), bytes, file system, tab
+ * separated) a real run would have read. */
+void welcome_test_people(const char *csv);
+void welcome_test_sticks(const char *lines);
+void welcome_test_blocked(const char *why);
+/* The rest of what a page reads: opened from Settings (ctx), because Windows
+ * could not hold her files, how many were saved, whether some were not, and
+ * the line a running copy would show. */
+void welcome_test_state(int ctx, int from_blocked, int files, int partial,
+                        const char *progress);
 
 #endif

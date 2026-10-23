@@ -422,6 +422,15 @@ int main(void)
     {
         int before = checked;
         quiet = 1;
+        /* The screens whose buttons are somebody's name: the most of each
+         * the page can hold, with the longest names a Windows account and a
+         * stick can have. */
+        welcome_test_people("Bob,Harold the Second,Mary Ann Wilhelmina Featherstonehaugh,Zoe");
+        welcome_test_sticks("/dev/sdb1\tSanDisk Ultra Fit Extra Long Name (16 GB)\t16000000000\texfat\n"
+                            "/dev/sdc1\tBACKUP (500 GB)\t500000000000\tntfs\n"
+                            "/dev/sdd1\tUSB stick (8 GB)\t8000000000\tvfat\n"
+                            "/dev/sde1\tPHOTOS (64 GB)\t64000000000\texfat\n");
+        welcome_test_blocked("toomany");
         static const struct { int w, h; } RES[] = {
             { 1024, 600 }, { 1366, 768 }, { 1920, 1080 },
         };

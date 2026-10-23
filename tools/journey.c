@@ -11,7 +11,7 @@
  * tools/netsheet.c does: no door is cut into shipping code for a picture.
  *
  *   cc -O2 -std=gnu11 -o /tmp/journey tools/journey.c \
- *      -DWELCOME_STATE='"/tmp/journey.state"' src/aurshell/welcome.c \
+ *      -DWELCOME_STATE='"/tmp/journey.state"' src/aurshell/welcome.c src/aurshell/run.c \
  *      src/aurshell/notify.c src/aurshell/osd.c src/aurshell/foot.c src/aurshell/draw.c \
  *      src/aurshell/shellcommon.c src/aurshell/anim.c src/aurshell/apps.c \
  *      src/aurshell/layouts/[*].c src/common/theme.c src/common/wall.c \
@@ -204,6 +204,39 @@ int main(int argc, char **argv)
     /* 3. And "Start AurOS from now on". */
     welcome_set_page(W_CONFIRMED);
     shot("yes");
+
+    /* 3b. Her files (docs/FERRY.md): whose, while they come, and none. */
+    c.welcome_open = 1;
+    welcome_test_people("Bob,Harold");
+    welcome_test_state(0, 0, 0, 0, "");
+    welcome_set_page(W_WHOSE);
+    shot("whose");
+    welcome_test_state(0, 0, 0, 0, "Copying your Pictures: 1,200 of 5,000 files. About 4 minutes left.");
+    welcome_set_page(W_IMPORTING);
+    shot("bringing");
+    welcome_test_state(0, 0, 0, 0, "");
+    welcome_set_page(W_EMPTY);
+    shot("empty");
+
+    /* 3c. "Save my files to a USB stick first", from Settings: plug it in,
+     * choose, saving, done -- and why Windows could not hold her files. */
+    welcome_test_state(1, 0, 0, 0, "");
+    welcome_test_sticks("");
+    welcome_set_page(W_STICK_PLUG);
+    shot("stick-plug");
+    welcome_test_sticks("/dev/sdb1\tSanDisk (16 GB)\t16000000000\texfat\n/dev/sdc1\tBACKUP (500 GB)\t500000000000\tntfs\n");
+    welcome_set_page(W_STICK_PICK);
+    shot("stick-pick");
+    welcome_test_state(1, 0, 0, 0, "Saving your Pictures: 1,200 of 5,000 files. About 4 minutes left.");
+    welcome_set_page(W_STICK_SAVING);
+    shot("stick-saving");
+    welcome_test_state(1, 1, 5000, 0, "");
+    welcome_set_page(W_STICK_DONE);
+    shot("stick-done");
+    welcome_test_blocked("toomany");
+    welcome_set_page(W_BLOCKED);
+    shot("blocked");
+    welcome_test_state(0, 0, 0, 0, "");
 
     /* 3. Her desktop, in the look she picked. */
     c.welcome_open = 0;

@@ -1,6 +1,7 @@
 #!/bin/sh
 # ═══════════════════════════════════════════════════════════════════
-#  answer.sh — the five things the desktop may ask for as root
+#  answer.sh — the things the desktop may ask for as root (the five words,
+#  and import:NAME, and stick:/dev/NAME)
 #
 #  Started by auros-answer.path when a file appears in /run/auros,
 #  which is aurshell.service's own RuntimeDirectory: mode 0700, owned
@@ -70,6 +71,16 @@ case "$word" in
     case "$iuser" in ''|-*) iuser=- ;; esac
     [ "${#iuser}" -le 64 ] || iuser=-
     ;;
+esac
+
+# "stick:/dev/NAME" is "save her files on this USB stick" (the answer to
+# "Save my files to a USB stick first"). aurfirst has already kept out
+# everything but the plain name of a block device; below, the name must also
+# be one `ferry stick list` offers right now, so root never writes to a disk
+# the list would not have shown her.
+sdev=
+case "$word" in
+  stick:*) sdev=${word#stick:}; word=stick ;;
 esac
 
 say() { printf '%s\n' "$*" >> "$RES.new"; }
@@ -163,8 +174,8 @@ back_files() {
                 say "result=failed"
                 say "code=$hrc"
                 case "$hrc" in
-                  3|4) say "note=your files are more than AurOS can set aside to hand to Windows, so Windows was not put back. Nothing of yours was deleted. Save them to a USB stick first, then try again" ;;
-                  5)   say "note=AurOS cannot hand your files to Windows on this computer (its drive is encrypted), so Windows was not put back. Nothing of yours was deleted. Save them to a USB stick first, then try again" ;;
+                  3|4) say "why=toomany"; say "note=your files are more than AurOS can set aside to hand to Windows, so Windows was not put back. Nothing of yours was deleted. Save them to a USB stick first, then try again" ;;
+                  5)   say "why=locked"; say "note=AurOS cannot hand your files to Windows on this computer (its drive is encrypted), so Windows was not put back. Nothing of yours was deleted. Save them to a USB stick first, then try again" ;;
                   *)   say "note=AurOS could not set aside room for your files, so Windows was not put back. Nothing of yours was deleted" ;;
                 esac
                 return 1
@@ -199,11 +210,11 @@ back_files() {
     say "result=failed"
     say "code=$brc"
     case "$brc" in
-      2) say "note=some of your files could not be saved in Windows first, so Windows was not put back. The ones that could be saved are in Windows, in the folder From AurOS; nothing of yours was deleted" ;;
-      3) say "note=Windows was not shut down properly, so your files could not be saved in it first; start Windows, shut it down fully, then try again. Nothing of yours was deleted" ;;
-      4) say "note=there is not enough room in Windows to save your files first, so Windows was not put back. Nothing of yours was deleted" ;;
-      5) say "note=your files could not be saved in Windows first (its drive could not be opened, for example because it is locked), so Windows was not put back. Nothing of yours was deleted" ;;
-      7) say "note=your files could not be saved in Windows first, because no Windows drive was found on this computer, so Windows was not put back. Nothing of yours was deleted" ;;
+      2) say "why=some"; say "note=some of your files could not be saved in Windows first, so Windows was not put back. The ones that could be saved are in Windows, in the folder From AurOS; nothing of yours was deleted" ;;
+      3) say "why=dirty"; say "note=Windows was not shut down properly, so your files could not be saved in it first; start Windows, shut it down fully, then try again. Nothing of yours was deleted" ;;
+      4) say "why=noroom"; say "note=there is not enough room in Windows to save your files first, so Windows was not put back. Nothing of yours was deleted" ;;
+      5) say "why=locked"; say "note=your files could not be saved in Windows first (its drive could not be opened, for example because it is locked), so Windows was not put back. Nothing of yours was deleted" ;;
+      7) say "why=nodrive"; say "note=your files could not be saved in Windows first, because no Windows drive was found on this computer, so Windows was not put back. Nothing of yours was deleted" ;;
       *) say "note=your files could not be saved in Windows first, so Windows was not put back. Nothing of yours was deleted" ;;
     esac
     return 1
@@ -326,6 +337,46 @@ case "$word" in
             say "code=$frc"
             say "note=your files could not be brought across from Windows"
         fi
+    fi
+    ;;
+  stick)
+    # SAVE HER FILES ON A USB STICK, her choice of stick. The same copier and
+    # read-back as the way back (ferry stick), into a folder she can open on
+    # any computer; nothing on the stick is deleted, nothing here is armed,
+    # and Put Windows back is not asked. Its plain progress lines are in
+    # $OUT/stick.log, the newest is what the screen shows, and $OUT/ferry.done
+    # says how it ended (kind=stick).
+    FERRY=${AUROS_FERRY:-/usr/bin/ferry}
+    if [ ! -x "$FERRY" ]; then
+        say "result=failed"
+        say "note=this image has no way to save your files on a USB stick"
+    elif [ -z "$sdev" ] || ! "$FERRY" stick list 2>/dev/null | cut -f1 | grep -qxF "$sdev"; then
+        say "result=failed"
+        say "why=nostick"
+        say "note=that USB stick is not there any more"
+    else
+        : > "$OUT/stick.log"
+        chmod 0644 "$OUT/stick.log" 2>/dev/null
+        timeout "${AUROS_IMPORT_LIMIT:-43200}" "$FERRY" stick "$sdev" --plain >>"$OUT/stick.log" 2>&1
+        src=$?
+        nfiles=$(sed -n 's/^files=//p' "$OUT/ferry.done" 2>/dev/null | head -1)
+        case "$src" in
+          0) if [ "${nfiles:-x}" = 0 ]; then
+                 say "result=empty"; say "files=0"
+                 say "note=there were no files of yours in AurOS to save"
+             else
+                 say "result=ok"; [ -z "$nfiles" ] || say "files=$nfiles"
+             fi ;;
+          2) say "result=partial"; say "code=2"; [ -z "$nfiles" ] || say "files=$nfiles" ;;
+          4) say "result=failed"; say "code=4"; say "why=noroom"
+             say "note=there is not enough room on the USB stick for your files; nothing was copied" ;;
+          5) say "result=failed"; say "code=5"; say "why=unopened"
+             say "note=AurOS could not open the USB stick to save your files" ;;
+          124|137) say "result=failed"; say "code=$src"
+             say "note=saving your files took far too long and was stopped; press it again and it carries on where it stopped" ;;
+          *) say "result=failed"; say "code=$src"
+             say "note=your files could not be saved on the USB stick" ;;
+        esac
     fi
     ;;
   putback)

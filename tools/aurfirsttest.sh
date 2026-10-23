@@ -683,6 +683,83 @@ refused_name "a name with a control character" "$(printf 'import:Har\001old')"
 refused_name "a name of 65 bytes"           "import:$(printf 'a%.0s' $(seq 1 65))"
 refused_name "the word with a capital"      'Import:Harold'
 
+# ── "Save my files to a USB stick first": stick:/dev/NAME ────────────
+echo
+echo "  and saving her files on a USB stick she chose"
+# The desktop lists sticks itself (`ferry stick list`, which only reads) and
+# asks for one by its device name. aurfirst keeps out everything that is not
+# the plain name of a block device; answer.sh checks the name is on the list
+# as it is then, and only then runs `ferry stick DEVICE --plain` as root.
+cat > "$TMP/ferry" <<EOF
+#!/bin/sh
+printf '%s|' "\$@" >> "$TMP/ferry.args"; echo >> "$TMP/ferry.args"
+[ "\$1" = report ] && exit 0
+if [ "\$1" = stick ] && [ "\$2" = list ]; then
+    printf '/dev/sdb1\tSanDisk (16 GB)\t16000000000\texfat\n/dev/sdc1\tBACKUP (500 GB)\t500000000000\tntfs\n'
+    exit 0
+fi
+if [ "\$1" = stick ]; then
+    rc=\$(cat "$TMP/ferry.rc" 2>/dev/null); rc=\${rc:-0}
+    printf 'kind=stick\nresult=ok\nfiles=%s\nat=now\n' "\$(cat "$TMP/ferry.files" 2>/dev/null || echo 12)" > "$AO/ferry.done"
+    echo "Saving your Pictures: 3 of 5 files."
+    exit \$rc
+fi
+exit 0
+EOF
+chmod 755 "$TMP/ferry"
+rm -f "$TMP/ferry.rc" "$TMP/ferry.files"
+: > "$TMP/ferry.args"
+R=$(askf "stick:/dev/sdb1")
+case "$R" in *"request=stick"*"result=ok"*"files=12"*) ok "stick:/dev/sdb1 is carried out, and says how many files" ;;
+    *) bad "stick:/dev/sdb1 is carried out" "$(echo "$R" | tr '\n' ' ')" ;; esac
+grep -q -- '^stick|/dev/sdb1|--plain|' "$TMP/ferry.args" \
+  && ok "...and Ferry is given the stick and --plain, as separate arguments" \
+  || bad "...and Ferry is given the stick and --plain" "$(cat "$TMP/ferry.args")"
+[ -f "$AO/stick.log" ] && grep -q 'Saving your Pictures' "$AO/stick.log" \
+  && ok "...its plain progress is in stick.log, where the screen reads it" \
+  || bad "...its plain progress is in stick.log"
+: > "$TMP/ferry.args"
+R=$(askf "stick:/dev/sdd1")
+case "$R" in *"result=failed"*"why=nostick"*) ok "a name that is not on the list now is refused (the stick was taken out)" ;;
+    *) bad "a name that is not on the list now is refused" "$(echo "$R" | tr '\n' ' ')" ;; esac
+grep -q -- '^stick|/dev/sdd1' "$TMP/ferry.args" \
+  && bad "...and Ferry is not asked to write to it" "$(cat "$TMP/ferry.args")" \
+  || ok "...and Ferry is not asked to write to it"
+refused_stick() { # label word
+    : > "$TMP/ferry.args"
+    R=$(askf "$2")
+    case "$R" in *"note=unknown request"*) : ;; *) bad "$1 is refused" "$(echo "$R" | tr '\n' ' ')"; return ;; esac
+    grep -q -- '^stick|' "$TMP/ferry.args" && bad "$1 is refused, and Ferry is not asked" "$(cat "$TMP/ferry.args")" \
+        || ok "$1 is refused, and Ferry is not asked"
+}
+refused_stick "a path out of /dev"            'stick:/dev/../etc/passwd'
+refused_stick "a file that is not a device"   'stick:/etc/shadow'
+refused_stick "a name with a slash"           'stick:/dev/disk/by-id/x'
+refused_stick "a name with a semicolon"       'stick:/dev/sdb1;reboot'
+refused_stick "no device at all"              'stick:/dev/'
+refused_stick "a bare name"                   'stick:sdb1'
+refused_stick "a name with a space"           'stick:/dev/sd b'
+refused_stick "a capital"                     'stick:/dev/SDB1'
+refused_stick "an option"                     'stick:/dev/-rf'
+refused_stick "a name with a second line"     "$(printf 'stick:/dev/sdb1\nstick:/dev/sdc1')"
+refused_stick "a name of 25 characters"       "stick:/dev/$(printf 'a%.0s' $(seq 1 25))"
+refused_stick "the word with a capital"       'Stick:/dev/sdb1'
+for rc in 4 5 2 1; do
+    printf '%s\n' "$rc" > "$TMP/ferry.rc"
+    R=$(askf "stick:/dev/sdc1")
+    case "$rc" in
+      4) case "$R" in *"result=failed"*"code=4"*"why=noroom"*) ok "Ferry's 4 is \"no room on the stick\"" ;; *) bad "Ferry's 4 is no room" "$(echo "$R" | tr '\n' ' ')" ;; esac ;;
+      5) case "$R" in *"result=failed"*"code=5"*"why=unopened"*) ok "Ferry's 5 is \"could not open the stick\"" ;; *) bad "Ferry's 5 is could not open" "$(echo "$R" | tr '\n' ' ')" ;; esac ;;
+      2) case "$R" in *"result=partial"*"code=2"*) ok "Ferry's 2 is \"some not saved\", not a success" ;; *) bad "Ferry's 2 is partial" "$(echo "$R" | tr '\n' ' ')" ;; esac ;;
+      1) case "$R" in *"result=failed"*"code=1"*) ok "any other end is a failure" ;; *) bad "any other end is a failure" "$(echo "$R" | tr '\n' ' ')" ;; esac ;;
+    esac
+done
+rm -f "$TMP/ferry.rc"; printf '0\n' > "$TMP/ferry.files"
+R=$(askf "stick:/dev/sdb1")
+case "$R" in *"result=empty"*"files=0"*) ok "nothing of hers to save: it says so (result=empty), not \"saved\"" ;;
+    *) bad "nothing to save is result=empty" "$(echo "$R" | tr '\n' ' ')" ;; esac
+rm -f "$TMP/ferry.files"
+
 # ── Windows Update moves itself first ───────────────────────────────
 echo
 echo "  and Windows Update, or a BIOS update, puts Windows first after she said it works"

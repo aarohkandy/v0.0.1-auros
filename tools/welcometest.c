@@ -37,6 +37,9 @@ static void wipe(void)
     unlink(WELCOME_RUN "/answer");
     unlink(WELCOME_ANSWER "/result");
     unlink(WELCOME_ANSWER "/import.log");
+    unlink(WELCOME_ANSWER "/stick.log");
+    unlink(WELCOME_RUN "/sticks.txt");
+    unlink(WELCOME_RUN "/ferry");
     unlink(WELCOME_STATE);
     unlink(WELCOME_FOUND);
 }
@@ -106,6 +109,37 @@ static int press(shell_ctx *c, int page, int can_import, const char *want)
         if (!want[0] && !c->welcome_open) return 1;   /* a close button */
     }
     return 0;
+}
+
+/* A stand-in for `ferry stick list`: prints whatever is in sticks.txt. */
+static void fake_ferry(const char *list)
+{
+    put(WELCOME_RUN "/sticks.txt", list);
+    put(WELCOME_RUN "/ferry", "#!/bin/sh\ncat " WELCOME_RUN "/sticks.txt 2>/dev/null\n");
+    chmod(WELCOME_RUN "/ferry", 0755);
+}
+
+/* What was asked: the request file's text, or "" if nothing was. */
+static const char *asked_now(void)
+{
+    static char got[96];
+    got[0] = 0;
+    slurp(WELCOME_RUN "/answer", got, sizeof got);
+    return got;
+}
+
+/* Press the button at index `i` of this page's targets. */
+static int press_nth(shell_ctx *c, int page, int i)
+{
+    welcome_set_page(page);
+    welcome_view v = { page, 0 };
+    rect b[16];
+    int n = welcome_targets(c, c->screen_w, c->screen_h, &v, b, 16);
+    if (i >= n) return -1;
+    c->welcome_open = 1;
+    unlink(WELCOME_RUN "/answer");
+    welcome_click(c, b[i].x + b[i].w / 2, b[i].y + b[i].h / 2);
+    return n;
 }
 
 int main(void)
@@ -364,6 +398,161 @@ int main(void)
     welcome_step(&c);
     ok("and a result nothing recognises is trouble, not silence",
        welcome_page() == W_TROUBLE);
+
+    /* ── whose files? (docs/FERRY.md: result=choose, users=Bob,Harold) ── */
+    printf("\n  whose files, when Windows has more than one person\n");
+    {
+        unlink(WELCOME_RUN "/answer");
+        put(WELCOME_FOUND, "{\"device\":\"/dev/sda2\",\"windows\":\"10\",\"clean\":true}\n");
+        put(WELCOME_STATE, "phase=asking\n");
+        welcome_init(&c);
+        press(&c, W_CONFIRMED, 1, "import");           /* she pressed Bring my files across */
+        c.welcome_open = 1;
+        put(WELCOME_ANSWER "/result",
+            "request=import\nresult=choose\ncode=6\nusers=Bob,Harold\nnote=more than one person uses Windows\n");
+        ok("several people and no way to tell: the answer is a question",
+           welcome_step(&c) == 1 && welcome_page() == W_WHOSE);
+        welcome_view v = { W_WHOSE, 0 };
+        rect b[16];
+        int n = welcome_targets(&c, c.screen_w, c.screen_h, &v, b, 16);
+        ok("...one button for each person, and \"Not now\"", n == 3);
+        usleep(30000);       /* a person takes longer than the file system's clock ticks (4 ms) */
+        press_nth(&c, W_WHOSE, 1);
+        ok("pressing the second person asks for import:Harold, by name",
+           !strcmp(asked_now(), "import:Harold"));
+        ok("...and goes to the screen that says it is being brought", welcome_page() == W_IMPORTING);
+        /* The question's own answer is still on disk (request=import, choose): it
+         * is not the answer to the name she just pressed. */
+        ok("...and the old answer, still on disk, is not mistaken for the new one",
+           welcome_step(&c) == 0 && welcome_page() == W_IMPORTING);
+        usleep(30000);
+        unlink(WELCOME_RUN "/answer");
+        put(WELCOME_ANSWER "/import.log", "Looking at the Windows part of this computer.\nCopying your Pictures: 1,200 of 5,000 files. About 4 minutes left.\n");
+        welcome_step(&c);
+        put(WELCOME_ANSWER "/result", "request=import\nresult=ok\nfiles=5000\n");
+        ok("the answer to import:Harold is read as the answer to import",
+           welcome_step(&c) == 1 && welcome_page() == W_IMPORTED);
+
+        /* Her name first, and no name the root side's door would refuse. */
+        welcome_test_people("Bob,Harold,Mary Ann");
+        setenv("USER", "Harold", 1);
+        welcome_test_people("Bob,Harold,Mary Ann");
+        welcome_view v2 = { W_WHOSE, 0 };
+        n = welcome_targets(&c, c.screen_w, c.screen_h, &v2, b, 16);
+        ok("three people and \"Not now\"", n == 4);
+        press_nth(&c, W_WHOSE, 0);
+        ok("the account's own name is first", !strcmp(asked_now(), "import:Harold"));
+        welcome_test_people("Bob,../etc,a:b,-x,Mary Ann,.hidden,Harold.");
+        n = welcome_targets(&c, c.screen_w, c.screen_h, &v2, b, 16);
+        ok("a name that could be read as a path or an option is never offered (Bob, Mary Ann)", n == 3);
+        unlink(WELCOME_RUN "/answer");
+    }
+
+    /* ── nothing to bring ─────────────────────────────────────────── */
+    printf("\n  and when there was nothing to bring\n");
+    {
+        unlink(WELCOME_RUN "/answer");
+        press(&c, W_CONFIRMED, 1, "import");
+        c.welcome_open = 1;
+        put(WELCOME_ANSWER "/result", "request=import\nresult=empty\nfiles=0\nnote=there were no files\n");
+        ok("an empty Windows is its own screen, not an error",
+           welcome_step(&c) == 1 && welcome_page() == W_EMPTY);
+        welcome_view v = { W_EMPTY, 0 };
+        rect b[16];
+        int n = welcome_targets(&c, c.screen_w, c.screen_h, &v, b, 16);
+        ok("...with one way on", n == 1);
+        c.welcome_open = 1;
+        unlink(WELCOME_RUN "/answer");
+        welcome_click(&c, b[0].x + b[0].w / 2, b[0].y + b[0].h / 2);
+        ok("...which closes it (nothing is asked for)", c.welcome_open == 0 && !asked_now()[0]);
+    }
+
+    /* ── Save my files to a USB stick ─────────────────────────────── */
+    printf("\n  saving her files on a USB stick\n");
+    {
+        fake_ferry("");
+        c.welcome_open = 0;
+        welcome_open_stick(&c);
+        ok("with no stick in, it says to plug one in", c.welcome_open == 1 && welcome_page() == W_STICK_PLUG);
+        fake_ferry("/dev/sdb1\tSanDisk (16 GB)\t16000000000\texfat\n/dev/sdc1\tBACKUP (500 GB)\t500000000000\tntfs\n");
+        welcome_view v = { W_STICK_PLUG, 0 };
+        rect b[16];
+        welcome_targets(&c, c.screen_w, c.screen_h, &v, b, 16);
+        c.welcome_open = 1;
+        welcome_click(&c, b[0].x + b[0].w / 2, b[0].y + b[0].h / 2);       /* "Look again" */
+        ok("\"Look again\" finds the stick that was plugged in", welcome_page() == W_STICK_PICK);
+        welcome_view v2 = { W_STICK_PICK, 0 };
+        int n = welcome_targets(&c, c.screen_w, c.screen_h, &v2, b, 16);
+        ok("...one button for each stick, and \"Not now\"", n == 3);
+        press_nth(&c, W_STICK_PICK, 1);
+        ok("pressing the second stick asks to save on that one", !strcmp(asked_now(), "stick:/dev/sdc1"));
+        ok("...and goes to the screen that says it is being saved", welcome_page() == W_STICK_SAVING);
+        unlink(WELCOME_RUN "/answer");
+        put(WELCOME_ANSWER "/stick.log", "Getting ready to save your files on the USB stick.\nSaving your Pictures: 200 of 5,000 files. About 3 minutes left.\n");
+        ok("the screen follows what the copy says", welcome_step(&c) == 1);
+        put(WELCOME_ANSWER "/result", "request=stick\nresult=ok\nfiles=5000\n");
+        ok("saved: the screen that says it is safe to take the stick out",
+           welcome_step(&c) == 1 && welcome_page() == W_STICK_DONE);
+
+        press_nth(&c, W_STICK_PICK, 0);
+        put(WELCOME_ANSWER "/result", "request=stick\nresult=partial\ncode=2\nfiles=40\n");
+        welcome_step(&c);
+        ok("some not saved: still the done screen (and it says so)", welcome_page() == W_STICK_DONE);
+        press_nth(&c, W_STICK_PICK, 0);
+        put(WELCOME_ANSWER "/result", "request=stick\nresult=failed\ncode=4\nwhy=noroom\nnote=there is not enough room on the USB stick\n");
+        welcome_step(&c);
+        ok("no room on the stick: the screen that says so", welcome_page() == W_TROUBLE);
+        unlink(WELCOME_RUN "/answer");
+        welcome_view vt = { W_TROUBLE, 0 };
+        n = welcome_targets(&c, c.screen_w, c.screen_h, &vt, b, 16);
+        c.welcome_open = 1;
+        welcome_click(&c, b[0].x + b[0].w / 2, b[0].y + b[0].h / 2);         /* Try again */
+        ok("\"Try again\" starts the stick screens over, not the first question", welcome_page() == W_STICK_PICK);
+        press_nth(&c, W_STICK_PICK, 0);
+        put(WELCOME_ANSWER "/result", "request=stick\nresult=empty\nfiles=0\n");
+        welcome_step(&c);
+        ok("nothing of hers to save: its own calm screen", welcome_page() == W_EMPTY);
+        unlink(WELCOME_RUN "/answer");
+
+        /* Letting go. */
+        welcome_open_stick(&c);
+        welcome_key(&c, 1);
+        ok("escape lets go of it, and nothing was asked for", c.welcome_open == 0 && !asked_now()[0]);
+    }
+
+    /* ── Put Windows back could not save her files first ───────────── */
+    printf("\n  when Put Windows back cannot save her files in Windows\n");
+    {
+        fake_ferry("");
+        static const char *WHY[] = { "toomany", "locked", "noroom", "dirty", "nodrive", "some" };
+        for (int i = 0; i < 6; i++) {
+            c.welcome_open = 0;
+            welcome_open_blocked(&c, WHY[i]);
+            welcome_view v = { W_BLOCKED, 0 };
+            rect b[16];
+            int n = welcome_targets(&c, c.screen_w, c.screen_h, &v, b, 16);
+            char what[80];
+            snprintf(what, sizeof what, "why=%s: a screen with two ways on", WHY[i]);
+            ok(what, c.welcome_open == 1 && welcome_page() == W_BLOCKED && n == 2);
+        }
+        c.welcome_open = 0;
+        welcome_open_blocked(&c, "toomany");
+        welcome_view v = { W_BLOCKED, 0 };
+        rect b[16];
+        welcome_targets(&c, c.screen_w, c.screen_h, &v, b, 16);
+        welcome_click(&c, b[0].x + b[0].w / 2, b[0].y + b[0].h / 2);
+        ok("\"Save my files to a USB stick first\" goes to the stick screens, and removes nothing",
+           welcome_page() == W_STICK_PLUG && !asked_now()[0]);
+        c.welcome_open = 0;
+        welcome_open_blocked(&c, "locked");
+        welcome_targets(&c, c.screen_w, c.screen_h, &v, b, 16);
+        welcome_click(&c, b[1].x + b[1].w / 2, b[1].y + b[1].h / 2);
+        ok("\"Keep AurOS\" closes it and changes nothing", c.welcome_open == 0 && !asked_now()[0]);
+        c.welcome_open = 0;
+        welcome_open_blocked(&c, "noroom");
+        welcome_key(&c, 1);
+        ok("escape is \"Keep AurOS\", never an answer", c.welcome_open == 0 && !asked_now()[0]);
+    }
 
     wipe();
     printf("\n");

@@ -5,13 +5,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "welcome.h"
 #include "draw.h"
+#include "run.h"
 
 #define NOTE_MAX  200
+#define WEL_PEOPLE 4          /* Windows people the question can name       */
+#define WEL_STICKS 3          /* USB sticks the choice can show             */
 
 static struct {
     int  page;
@@ -26,7 +31,26 @@ static struct {
     int  check_panel;       /* ...a panel (Wi-Fi), not a program      */
     int  check_wins;        /* how many windows were open before      */
     int  keyed;             /* she has moved the selection by keyboard */
+
+    /* Ferry's questions (docs/FERRY.md). */
+    int  n_people;          /* "whose files?": the names, hers first    */
+    char person[WEL_PEOPLE][48];
+    int  n_sticks;          /* the USB sticks `ferry stick list` showed */
+    struct { char dev[32]; char name[72]; } stick[WEL_STICKS];
+    uint32_t looked_at;     /* when the sticks were last looked for      */
+    struct timespec asked_at; /* when the request went in: an answer older than this is not its answer */
+    int  ctx;               /* 1: opened from Settings, not the first start */
+    int  from_blocked;      /* the stick was offered because Windows could not hold her files */
+    char why[16];           /* why Put Windows back could not save them  */
+    char progress[160];     /* the newest plain line of the running copy */
+    int  files;             /* how many files the copy says it saved     */
 } W = { .hover_act = -1, .sel = 0 };
+
+static uint32_t now_ms_(void)
+{
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint32_t)(ts.tv_sec * 1000u + ts.tv_nsec / 1000000u);
+}
 
 /* Is this computer on a network? net.c answers from the kernel's routing
  * table; a harness that does not link net.c has no opinion, which here
@@ -91,11 +115,18 @@ static int windows_worth_importing(void)
 
 /* ── asking for something ────────────────────────────────────────── */
 
-static int ask_for(const char *word)
+/* `expect` is the request name the answer will carry: "import:Harold" is
+ * answered as request=import, "stick:/dev/sdb1" as request=stick. */
+static int ask_word(const char *word, const char *expect)
 {
-    snprintf(W.wanted, sizeof W.wanted, "%s", word);
+    snprintf(W.wanted, sizeof W.wanted, "%s", expect);
     W.asked = 1;
     W.note[0] = 0;
+    W.progress[0] = 0;
+    W.files = 0;
+    /* The file system's own clock (coarse), so a result written just after
+     * this carries a time that is not before it. */
+    clock_gettime(CLOCK_REALTIME_COARSE, &W.asked_at);
     char path[512];
     snprintf(path, sizeof path, "%s/answer", WELCOME_RUN);
     /* O_EXCL: two presses in the same second must not make two
@@ -116,6 +147,174 @@ static int ask_for(const char *word)
     if (k != (ssize_t)strlen(word)) { W.asked = 0; return -1; }
     return 0;
 }
+static int ask_for(const char *word) { return ask_word(word, word); }
+
+/* ── what Ferry told us ──────────────────────────────────────────── */
+
+/* The name in "import:NAME" goes through src/aurfirst/request.c's door, which
+ * refuses what Windows does not allow in an account name and anything that
+ * could be read as something else. A name that door would refuse is not
+ * offered: a button whose answer never comes is the one thing worse than none. */
+static int person_ok(const char *n)
+{
+    size_t l = strlen(n);
+    if (l == 0 || l > 64) return 0;
+    if (n[0] == '-' || n[0] == '.' || n[0] == ' ') return 0;
+    if (n[l - 1] == ' ' || n[l - 1] == '.') return 0;
+    for (size_t i = 0; i < l; i++) {
+        unsigned char ch = (unsigned char)n[i];
+        if (ch < 0x20 || ch == 0x7f || strchr("\"/\\[]:;|=,+*?<>", ch)) return 0;
+    }
+    return 1;
+}
+
+/* "Bob,Harold" -> the names, hers first (the one that is this account's own
+ * name, if one is). More than the page can show are left out; a house with
+ * five Windows accounts is not a house this version asks well. */
+static void people_from(const char *csv)
+{
+    char all[WEL_PEOPLE * 3][48];
+    int n = 0;
+    W.n_people = 0;
+    for (const char *p = csv; p && *p && n < (int)(sizeof all / sizeof all[0]); ) {
+        const char *e = strchr(p, ',');
+        size_t l = e ? (size_t)(e - p) : strlen(p);
+        if (l > 0 && l < sizeof all[0]) {
+            memcpy(all[n], p, l); all[n][l] = 0;
+            if (person_ok(all[n])) n++;
+        }
+        p = e ? e + 1 : p + l;
+    }
+    const char *me = getenv("USER");
+    int first = -1;
+    for (int i = 0; i < n && me && *me; i++) if (!strcasecmp(all[i], me)) { first = i; break; }
+    if (first >= 0 && W.n_people < WEL_PEOPLE) snprintf(W.person[W.n_people++], sizeof W.person[0], "%.47s", all[first]);
+    for (int i = 0; i < n && W.n_people < WEL_PEOPLE; i++)
+        if (i != first) snprintf(W.person[W.n_people++], sizeof W.person[0], "%.47s", all[i]);
+}
+
+/* The lines `ferry stick list` prints: device, "name (N GB)", bytes, file
+ * system, tab separated. Anything else on its output (an error, a warning) is
+ * not a line about a stick and is skipped. */
+static void sticks_from(const char *text)
+{
+    W.n_sticks = 0;
+    for (const char *p = text; p && *p && W.n_sticks < WEL_STICKS; ) {
+        const char *e = strchr(p, '\n');
+        size_t l = e ? (size_t)(e - p) : strlen(p);
+        char line[256];
+        if (l > 0 && l < sizeof line && !strncmp(p, "/dev/", 5)) {
+            memcpy(line, p, l); line[l] = 0;
+            char *t1 = strchr(line, '\t');
+            if (t1) {
+                *t1++ = 0;
+                char *t2 = strchr(t1, '\t');
+                if (t2) *t2 = 0;
+                /* the device must be the plain name request.c lets through */
+                int good = strlen(line) > 5 && strlen(line) <= 5 + 24;
+                for (const char *q = line + 5; *q && good; q++)
+                    if (!((*q >= 'a' && *q <= 'z') || (*q >= '0' && *q <= '9'))) good = 0;
+                if (good && *t1) {
+                    snprintf(W.stick[W.n_sticks].dev, sizeof W.stick[0].dev, "%.31s", line);
+                    /* "Name (16 GB)": a long name gives up its own end, never the size. */
+                    char nm[72];
+                    snprintf(nm, sizeof nm, "%.71s", t1);
+                    char *sz = strrchr(nm, '(');
+                    if (sz && sz > nm && (size_t)(sz - nm) > 22) {
+                        char tail[24];
+                        snprintf(tail, sizeof tail, "%.23s", sz);
+                        size_t keep = 20;
+                        while (keep > 0 && ((unsigned char)nm[keep] & 0xC0) == 0x80) keep--;
+                        nm[keep] = 0;
+                        snprintf(W.stick[W.n_sticks].name, sizeof W.stick[0].name, "%.40s\xE2\x80\xA6 %.23s", nm, tail);
+                    } else {
+                        snprintf(W.stick[W.n_sticks].name, sizeof W.stick[0].name, "%s", nm);
+                    }
+                    W.n_sticks++;
+                }
+            }
+        }
+        p = e ? e + 1 : p + l;
+    }
+}
+
+/* Look for sticks now. Quick (lsblk) and bounded; only while the page that
+ * wants them is up, every couple of seconds, never in the paint. */
+static int sticks_look(void)
+{
+    char out[2048];
+    char before[sizeof W.stick];
+    int nb = W.n_sticks;
+    memcpy(before, W.stick, sizeof before);
+    const char *argv[] = { WELCOME_FERRY, "stick", "list", NULL };
+    int n = run_capture(argv, out, sizeof out, 1500);
+    W.looked_at = now_ms_();
+    sticks_from(n > 0 ? out : "");
+    return nb != W.n_sticks || memcmp(before, W.stick, sizeof before) != 0;
+}
+
+/* The newest plain line of a running copy (import.log / stick.log in the
+ * root side's directory). Ferry never puts a file's name on it. Returns 1
+ * if it is a different line from the last. */
+static int progress_look(const char *log)
+{
+    char path[512];
+    snprintf(path, sizeof path, "%s/%s", WELCOME_ANSWER, log);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char buf[2048];
+    off_t sz = lseek(fd, 0, SEEK_END);
+    off_t from = sz > (off_t)sizeof buf - 1 ? sz - (off_t)(sizeof buf - 1) : 0;
+    ssize_t k = pread(fd, buf, sizeof buf - 1, from);
+    close(fd);
+    if (k <= 0) return 0;
+    buf[k] = 0;
+    char *end = buf + k;
+    while (end > buf && (end[-1] == '\n' || end[-1] == ' ')) *--end = 0;
+    char *start = strrchr(buf, '\n');
+    start = start ? start + 1 : buf;
+    if (!*start) return 0;
+    char line[sizeof W.progress];
+    snprintf(line, sizeof line, "%.159s", start);
+    if (!strcmp(line, W.progress)) return 0;
+    memcpy(W.progress, line, sizeof W.progress);
+    return 1;
+}
+
+static void open_stick_page(shell_ctx *c)
+{
+    W.ctx = 1;
+    sticks_look();
+    W.page = W.n_sticks ? W_STICK_PICK : W_STICK_PLUG;
+    W.sel = 0; W.keyed = 0; W.note[0] = 0; W.progress[0] = 0;
+    c->welcome_open = 1;
+}
+
+void welcome_open_stick(shell_ctx *c)
+{
+    W.from_blocked = 0;
+    open_stick_page(c);
+}
+
+void welcome_open_blocked(shell_ctx *c, const char *why)
+{
+    W.ctx = 1;
+    W.from_blocked = 1;
+    snprintf(W.why, sizeof W.why, "%s", why ? why : "");
+    W.page = W_BLOCKED;
+    W.sel = 0; W.keyed = 0; W.note[0] = 0;
+    c->welcome_open = 1;
+}
+
+void welcome_test_people(const char *csv) { people_from(csv); }
+void welcome_test_sticks(const char *lines) { sticks_from(lines); }
+void welcome_test_state(int ctx, int from_blocked, int files, int partial, const char *progress)
+{
+    W.ctx = ctx; W.from_blocked = from_blocked; W.files = files; W.partial = partial;
+    snprintf(W.progress, sizeof W.progress, "%.159s", progress ? progress : "");
+}
+void welcome_test_blocked(const char *why) { snprintf(W.why, sizeof W.why, "%s", why ? why : ""); W.from_blocked = 1; W.ctx = 1; }
+
 
 /* ── the state machine ───────────────────────────────────────────── */
 
@@ -134,7 +333,13 @@ int welcome_init(shell_ctx *c)
     return c->welcome_open;
 }
 
-int welcome_wait_ms(void) { return W.asked ? 200 : -1; }
+int welcome_wait_ms(void)
+{
+    if (W.asked) return 200;
+    /* Looking for a stick she is about to plug in: twice a second is plenty. */
+    if (W.page == W_STICK_PLUG || W.page == W_STICK_PICK) return 500;
+    return -1;
+}
 
 int welcome_step(shell_ctx *c)
 {
@@ -149,17 +354,39 @@ int welcome_step(shell_ctx *c)
     }
     if (!c->welcome_open) return 0;
     int dirty = 0;
+    /* Plugging a stick in moves the page on by itself. */
+    if ((W.page == W_STICK_PLUG || W.page == W_STICK_PICK) && !W.asked &&
+        (uint32_t)(now_ms_() - W.looked_at) >= 2000) {
+        if (sticks_look()) dirty = 1;
+        int want = W.n_sticks ? W_STICK_PICK : W_STICK_PLUG;
+        if (want != W.page) { W.page = want; W.sel = 0; W.keyed = 0; dirty = 1; }
+    }
     if (!W.asked) return dirty;
+    /* What the copy says it is doing, while it runs. */
+    if (W.page == W_IMPORTING && progress_look("import.log")) dirty = 1;
+    if (W.page == W_STICK_SAVING && progress_look("stick.log")) dirty = 1;
 
     char path[512];
     snprintf(path, sizeof path, "%s/result", WELCOME_ANSWER);
-    char blob[1024];
+    char blob[2048];
+    /* THE ANSWER TO THIS ASK, not the last one with the same name. "Whose
+     * files?" is asked as import and answered as request=import
+     * result=choose; the person she presses is asked as import again, and until
+     * the new answer is written the old one is still there. Read as the
+     * answer, it sent her straight back to the question. */
+    struct stat rst;
+    if (stat(path, &rst) != 0) return dirty;
+    if (rst.st_mtim.tv_sec < W.asked_at.tv_sec ||
+        (rst.st_mtim.tv_sec == W.asked_at.tv_sec && rst.st_mtim.tv_nsec < W.asked_at.tv_nsec))
+        return dirty;
     if (slurp(path, blob, sizeof blob) < 0) return dirty;
 
-    char req[32], res[32], note[NOTE_MAX];
+    char req[32], res[32], note[NOTE_MAX], users[256], files[16];
     field(blob, "request", req, sizeof req);
     field(blob, "result",  res, sizeof res);
     field(blob, "note",    note, sizeof note);
+    field(blob, "users",   users, sizeof users);
+    field(blob, "files",   files, sizeof files);
     /* A result file with no result line is one that was being written
      * while we read it. answer.sh writes it whole and renames, so this
      * should not happen -- and "should not happen" is why it is
@@ -178,12 +405,22 @@ int welcome_step(shell_ctx *c)
     W.asked = 0;
     W.partial = 0;
     snprintf(W.note, sizeof W.note, "%s", note);
+    W.files = atoi(files);
 
-    if (!strcmp(res, "ok") || !strcmp(res, "partial")) {
+    if (!strcmp(req, "import") && !strcmp(res, "choose")) {
+        /* Several Windows people and no way to tell whose: ask, by name. */
+        people_from(users);
+        if (W.n_people > 0) W.page = W_WHOSE;
+        else { W.page = W_TROUBLE;
+               snprintf(W.note, sizeof W.note, "AurOS could not read the names of the people who use Windows here."); }
+    } else if (!strcmp(res, "empty") && (!strcmp(req, "import") || !strcmp(req, "stick"))) {
+        W.page = W_EMPTY;
+    } else if (!strcmp(res, "ok") || !strcmp(res, "partial")) {
         W.partial = !strcmp(res, "partial");
         if (!strcmp(req, "confirm"))      W.page = W_CONFIRMED;
         else if (!strcmp(req, "decline")) W.page = W_DECLINED;
         else if (!strcmp(req, "import"))  W.page = W_IMPORTED;
+        else if (!strcmp(req, "stick"))   W.page = W_STICK_DONE;
         else                              W.page = W_TROUBLE;
     } else {
         /* refused, failed, or a word this panel does not know. All of
@@ -200,7 +437,11 @@ int welcome_step(shell_ctx *c)
 
 enum { A_YES, A_LATER, A_NO, A_SURE_YES, A_SURE_NO, A_NOT_YET,
        A_IMPORT, A_SKIP, A_START, A_FILES, A_NET, A_RESTART, A_RESTART_LATER,
-       A_AGAIN, A_WIFI, A_BACKQ, A_N };
+       A_AGAIN, A_WIFI, A_BACKQ, A_LOOK, A_DONE, A_BLOCK_STICK, A_KEEP, A_N };
+/* One button for each Windows person and each USB stick: their names are
+ * data, so they are numbered from here (label_of / line_of). */
+#define A_PERSON0 100
+#define A_STICK0  110
 /* Every button is a verb that names what happens (DESIGN-DIRECTION §4),
  * and the answers each carry one line saying where she lands. */
 static const char *ACT_LABEL[A_N] = {
@@ -209,6 +450,7 @@ static const char *ACT_LABEL[A_N] = {
     "Bring my files across", "Not now", "Start using AurOS",
     "Open Your files", "Open Internet", "Restart now", "Restart later",
     "Try again", "Open Wi-Fi", "Back to the question",
+    "Look again", "Done", "Save my files to a USB stick first", "Keep AurOS",
 };
 /* The one sentence for each moment (docs/handoff/streams/K.md, "One
  * truth about going back"), checked against what aurfirst does. */
@@ -221,10 +463,35 @@ static const char *ACT_LINE[A_N] = {
     NULL, NULL, "Back to the question. Nothing changes.",
     NULL, "You can do this later from Settings.", NULL,
     NULL, NULL, NULL, "AurOS stays open until you switch off.",
-    NULL,
+    NULL,                      /* A_AGAIN       */
+    NULL, NULL,                /* A_WIFI, A_BACKQ */
+    "AurOS also looks by itself, every few seconds.",          /* A_LOOK        */
+    NULL,                                                       /* A_DONE        */
+    "Your documents, pictures, music and videos are copied onto a stick you plug in. Nothing is removed from this computer.",
+    "Nothing changes. Your files stay here.",                   /* A_KEEP        */
 };
 
-#define WEL_MAX_ACT 4
+/* The buttons whose words are somebody's name. */
+static char person_line_[WEL_PEOPLE][112];
+
+static const char *label_of(int id)
+{
+    if (id >= A_PERSON0 && id < A_PERSON0 + WEL_PEOPLE) return W.person[id - A_PERSON0];
+    if (id >= A_STICK0 && id < A_STICK0 + WEL_STICKS) return W.stick[id - A_STICK0].name;
+    return (id >= 0 && id < A_N) ? ACT_LABEL[id] : "";
+}
+static const char *line_of(int id)
+{
+    if (id >= A_PERSON0 && id < A_PERSON0 + WEL_PEOPLE) {
+        snprintf(person_line_[id - A_PERSON0], sizeof person_line_[0],
+                 "Bring %s's documents, pictures, music and videos across.", W.person[id - A_PERSON0]);
+        return person_line_[id - A_PERSON0];
+    }
+    if (id >= A_STICK0 && id < A_STICK0 + WEL_STICKS) return NULL;   /* the heading says it once */
+    return (id >= 0 && id < A_N) ? ACT_LINE[id] : NULL;
+}
+
+#define WEL_MAX_ACT 6
 typedef struct {
     int  gx, cw;
     int  head_y, sub_y, body_y;
@@ -260,7 +527,20 @@ static int actions_for(const welcome_view *v, int *which)
     case W_IMPORTING: break;
     case W_IMPORTED: which[n++] = A_FILES; which[n++] = A_START; break;
     case W_DECLINED: which[n++] = A_RESTART; which[n++] = A_RESTART_LATER; break;
-    case W_TROUBLE:  which[n++] = A_AGAIN; which[n++] = A_LATER; break;
+    case W_TROUBLE:  which[n++] = A_AGAIN; which[n++] = W.ctx ? A_SKIP : A_LATER; break;
+    case W_WHOSE:
+        for (int i = 0; i < W.n_people; i++) which[n++] = A_PERSON0 + i;
+        which[n++] = A_SKIP;
+        break;
+    case W_EMPTY:       which[n++] = W.ctx ? A_DONE : A_START; break;
+    case W_STICK_PLUG:  which[n++] = A_LOOK; which[n++] = A_SKIP; break;
+    case W_STICK_PICK:
+        for (int i = 0; i < W.n_sticks; i++) which[n++] = A_STICK0 + i;
+        which[n++] = A_SKIP;
+        break;
+    case W_STICK_SAVING: break;
+    case W_STICK_DONE:  which[n++] = A_DONE; break;
+    case W_BLOCKED:     which[n++] = A_BLOCK_STICK; which[n++] = A_KEEP; break;
     }
     return n;
 }
@@ -333,10 +613,10 @@ static void welcome_layout(const shell_ctx *c, int sw, int sh,
     /* Each answer: its button, and what it does beside it. */
     int bw = 0, has_lines = 0;
     for (int i = 0; i < na; i++) {
-        int w = (int)(48.f + 11.5f * k * (float)strlen(ACT_LABEL[which[i]]));
+        int w = (int)(48.f + 11.5f * k * (float)strlen(label_of(which[i])));
         if (w < 160) w = 160;
         if (w > bw) bw = w;
-        if (ACT_LINE[which[i]]) has_lines = 1;
+        if (line_of(which[i])) has_lines = 1;
     }
     if (bw > g->cw / 2 && has_lines) bw = g->cw / 2;
     int line_w = g->cw - bw - 24;
@@ -347,8 +627,8 @@ static void welcome_layout(const shell_ctx *c, int sw, int sh,
         int total = 0;
         for (int i = 0; i < na; i++) {
             int rh = act_h;
-            if (g->rows && ACT_LINE[which[i]]) {
-                int ln = lines_for(ACT_LINE[which[i]], line_w, k);
+            if (g->rows && line_of(which[i])) {
+                int ln = lines_for(line_of(which[i]), line_w, k);
                 if (ln > 4) ln = 4;
                 int lh = ln * g->line_px + 6;
                 if (lh > rh) rh = lh;
@@ -358,7 +638,7 @@ static void welcome_layout(const shell_ctx *c, int sw, int sh,
         if (!g->rows) {            /* plain buttons, wrapping onto more rows if they must */
             int xx = 0, nrow = 1;
             for (int i = 0; i < na; i++) {
-                int w = (int)(48.f + 11.5f * k * (float)strlen(ACT_LABEL[which[i]]));
+                int w = (int)(48.f + 11.5f * k * (float)strlen(label_of(which[i])));
                 if (w < 160) w = 160;
                 if (xx + w > g->cw && xx) { xx = 0; nrow++; }
                 xx += w + gap;
@@ -382,8 +662,8 @@ static void welcome_layout(const shell_ctx *c, int sw, int sh,
         int total = 0;
         for (int i = 0; i < na; i++) {
             int rh = act_h;
-            if (g->rows && ACT_LINE[which[i]]) {
-                int ln = lines_for(ACT_LINE[which[i]], line_w, k);
+            if (g->rows && line_of(which[i])) {
+                int ln = lines_for(line_of(which[i]), line_w, k);
                 if (ln > 4) ln = 4;
                 if (ln * g->line_px + 6 > rh) rh = ln * g->line_px + 6;
             }
@@ -392,7 +672,7 @@ static void welcome_layout(const shell_ctx *c, int sw, int sh,
         if (!g->rows) {
             int xx = 0, nrow = 1;
             for (int i = 0; i < na; i++) {
-                int w = (int)(48.f + 11.5f * k * (float)strlen(ACT_LABEL[which[i]]));
+                int w = (int)(48.f + 11.5f * k * (float)strlen(label_of(which[i])));
                 if (w < 160) w = 160;
                 if (xx + w > g->cw && xx) { xx = 0; nrow++; }
                 xx += w + gap;
@@ -414,8 +694,8 @@ static void welcome_layout(const shell_ctx *c, int sw, int sh,
         rect r;
         int rh = act_h;
         if (g->rows) {
-            if (ACT_LINE[which[i]]) {
-                int ln = lines_for(ACT_LINE[which[i]], line_w, k);
+            if (line_of(which[i])) {
+                int ln = lines_for(line_of(which[i]), line_w, k);
                 if (ln > 4) ln = 4;
                 int lh = ln * g->line_px + 6;
                 if (lh > rh) rh = lh;
@@ -424,7 +704,7 @@ static void welcome_layout(const shell_ctx *c, int sw, int sh,
             r = (rect){ g->gx, yy, bw, act_h };
             yy += rh;
         } else {
-            int w = (int)(48.f + 11.5f * k * (float)strlen(ACT_LABEL[which[i]]));
+            int w = (int)(48.f + 11.5f * k * (float)strlen(label_of(which[i])));
             if (w < 160) w = 160;
             if (x + w > g->gx + g->cw) { x = g->gx; yy += act_h + gap; }
             r = (rect){ x, yy, w, act_h };
@@ -472,6 +752,13 @@ static const char *head_of(int page)
     case W_IMPORTING: return "Bringing your files across";
     case W_IMPORTED:  return "Your files are here";
     case W_DECLINED:  return "Windows starts next time";
+    case W_WHOSE:     return "Whose files?";
+    case W_EMPTY:     return W.ctx ? "No files to save" : "No files to bring across";
+    case W_STICK_PLUG:   return "Plug in a USB stick";
+    case W_STICK_PICK:   return "Which USB stick?";
+    case W_STICK_SAVING: return "Saving your files";
+    case W_STICK_DONE:   return "Your files are on the USB stick";
+    case W_BLOCKED:      return "Windows was not put back";
     default:          return "That did not work";
     }
 }
@@ -490,6 +777,24 @@ static const char *sub_of(int page, int can_import)
     case W_IMPORTING: return "Your files are copied. Nothing in Windows changes.";
     case W_IMPORTED:  return "Open Your files to see them.";
     case W_DECLINED:  return "Press Restart now to go back to Windows.";
+    case W_WHOSE:     return "More than one person uses Windows on this computer.";
+    case W_EMPTY:     return W.ctx
+                          ? "There were no documents, pictures, music or videos of yours in AurOS to save."
+                          : "AurOS looked in Windows and found no documents, pictures, music or videos.";
+    case W_STICK_PLUG:   return "AurOS will save your documents, pictures, music and videos on it.";
+    case W_STICK_PICK:   return "Your files are saved on the one you press.";
+    case W_STICK_SAVING: return "Leave the USB stick in and the computer on.";
+    case W_STICK_DONE:   return "They are in the folder \"From AurOS\". It is safe to take the stick out now.";
+    case W_BLOCKED:
+        /* Why, in her words. AurOS saves her files into Windows before it
+         * puts Windows back; these are the ways that cannot be done. */
+        if (!strcmp(W.why, "toomany")) return "Your files are too many to carry across to Windows this way.";
+        if (!strcmp(W.why, "locked"))  return "Windows' drive is locked, so AurOS cannot save your files in it first.";
+        if (!strcmp(W.why, "noroom"))  return "There is not enough room in Windows to save your files first.";
+        if (!strcmp(W.why, "dirty"))   return "Windows was not shut down properly, so AurOS cannot save your files in it first.";
+        if (!strcmp(W.why, "nodrive")) return "AurOS could not find the Windows drive to save your files in.";
+        if (!strcmp(W.why, "some"))    return "Some of your files could not be saved in Windows first.";
+        return "AurOS could not save your files in Windows first.";
     default:
         /* IT USED TO SAY "Nothing has been changed." It cannot know
          * that: confirm can write BootOrder and then fail its own
@@ -502,9 +807,43 @@ static const char *sub_of(int page, int can_import)
 static int body_of(int page, int partial, const char *lines[3])
 {
     int n = 0;
+    static char count[96];
     switch (page) {
     case W_IMPORTING:
+        /* What Ferry says it is doing: "Copying your Pictures: 1,200 of
+         * 5,000 files. About 4 minutes left." (never a file's name). */
+        if (W.progress[0]) lines[n++] = W.progress;
         lines[n++] = "Leave the computer on until this finishes.";
+        break;
+    case W_WHOSE:
+        lines[n++] = "Press the name of the person whose files you want here. Nothing in Windows changes.";
+        break;
+    case W_EMPTY:
+        lines[n++] = "Nothing is wrong, and nothing in Windows was changed.";
+        break;
+    case W_STICK_PLUG:
+        lines[n++] = "It needs room for them. Anything already on the stick stays there.";
+        break;
+    case W_STICK_PICK:
+        lines[n++] = "Nothing on the stick is deleted.";
+        break;
+    case W_STICK_SAVING:
+        if (W.progress[0]) lines[n++] = W.progress;
+        lines[n++] = "Your files stay here too. Nothing is removed from this computer.";
+        break;
+    case W_STICK_DONE:
+        if (W.files == 1) snprintf(count, sizeof count, "1 file is saved.");
+        else if (W.files >= 1000) snprintf(count, sizeof count, "%d,%03d files are saved.", W.files / 1000, W.files % 1000);
+        else if (W.files > 1) snprintf(count, sizeof count, "%d files are saved.", W.files);
+        else count[0] = 0;
+        if (count[0]) lines[n++] = count;
+        if (partial) lines[n++] = "Some files could not be saved. The note on the stick, \"Read me\", says which.";
+        if (W.from_blocked)
+            lines[n++] = "Windows is still not put back. AurOS checks again, before it removes anything, whenever you press it in Settings.";
+        break;
+    case W_BLOCKED:
+        lines[n++] = "Nothing was removed, and nothing of yours was deleted.";
+        lines[n++] = "AurOS puts Windows back only once your files have been saved. That is on purpose.";
         break;
     case W_IMPORTED:
         if (partial) lines[n++] = "Some things could not be brought across.";
@@ -612,17 +951,19 @@ void welcome_paint(shell_ctx *c, surface *s, shell_fonts *f)
         int id = g.act[i];
         int primary = id == A_YES || id == A_SURE_YES || id == A_SURE_NO ||
                       id == A_IMPORT || id == A_START || id == A_RESTART ||
-                      id == A_AGAIN || (id == A_FILES && W.page == W_IMPORTED);
-        const char *label = (id == A_NET && offline) ? ACT_LABEL[A_WIFI] : ACT_LABEL[id];
+                      id == A_AGAIN || (id == A_FILES && W.page == W_IMPORTED) ||
+                      id == A_PERSON0 || id == A_STICK0 || id == A_LOOK ||
+                      id == A_DONE || id == A_BLOCK_STICK;
+        const char *label = (id == A_NET && offline) ? ACT_LABEL[A_WIFI] : label_of(id);
         paint_action(s, f, c, g.acts[i], label,
                      W.hover_act == id || (W.keyed && W.sel == i), primary);
         /* What pressing it does, beside it, in 18 px ink-2 and never cut. */
-        if (g.rows && ACT_LINE[id] && lf) {
+        if (g.rows && line_of(id) && lf) {
             rect r = g.acts[i];
             float lx = (float)(r.x + r.w) + 24.f;
             shell_text_wrap(s, lf, lx, (float)r.y + font_ascent(lf) + 4.f,
                             (float)(g.gx + g.cw) - lx, (float)g.line_px,
-                            ACT_LINE[id], c->subtle, 1.f, g.line_max);
+                            line_of(id), c->subtle, 1.f, g.line_max);
         }
     }
 }
@@ -670,7 +1011,19 @@ static int do_action(shell_ctx *c, int id)
                         "AurOS could not start bringing your files across."); }
         return 1;
     case A_AGAIN:
+        if (W.ctx) { open_stick_page(c); return 1; }      /* the stick flow starts over */
         W.page = W_ASK; W.sel = 0; W.note[0] = 0;
+        return 1;
+    case A_LOOK:
+        sticks_look();
+        W.page = W.n_sticks ? W_STICK_PICK : W_STICK_PLUG; W.sel = 0; W.keyed = 0;
+        return 1;
+    case A_BLOCK_STICK:
+        W.from_blocked = 1;
+        open_stick_page(c);
+        return 1;
+    case A_KEEP: case A_DONE:
+        c->welcome_open = 0;
         return 1;
     case A_FILES:
         check_with(c, ICON_FILES);
@@ -692,6 +1045,24 @@ static int do_action(shell_ctx *c, int id)
         return 1;
     case A_LATER: case A_SKIP: case A_START: case A_RESTART_LATER:
         c->welcome_open = 0;
+        return 1;
+    }
+    if (id >= A_PERSON0 && id < A_PERSON0 + WEL_PEOPLE && id - A_PERSON0 < W.n_people) {
+        /* "Whose files?": import, and the files are theirs. The word carries
+         * the name; the answer comes back as request=import. */
+        char word[96];
+        snprintf(word, sizeof word, "import:%s", W.person[id - A_PERSON0]);
+        if (ask_word(word, "import") == 0) { W.page = W_IMPORTING; W.sel = 0; }
+        else { W.page = W_TROUBLE;
+               snprintf(W.note, sizeof W.note, "AurOS could not start bringing your files across."); }
+        return 1;
+    }
+    if (id >= A_STICK0 && id < A_STICK0 + WEL_STICKS && id - A_STICK0 < W.n_sticks) {
+        char word[48];
+        snprintf(word, sizeof word, "stick:%s", W.stick[id - A_STICK0].dev);
+        if (ask_word(word, "stick") == 0) { W.page = W_STICK_SAVING; W.sel = 0; }
+        else { W.page = W_TROUBLE;
+               snprintf(W.note, sizeof W.note, "AurOS could not start saving your files on the USB stick."); }
         return 1;
     }
     return 0;
