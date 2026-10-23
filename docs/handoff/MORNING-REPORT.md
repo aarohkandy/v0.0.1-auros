@@ -42,6 +42,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Still red / in progress
 
+- **8 of the 10 top programs install from "Get more programs" (no password) and open in 1-2 s**: WhatsApp,
+  Teams, Spotify, Solitaire, Thunderbird, gThumb, LibreOffice, Chromium. Zoom and VLC wait for Xwayland.
+  LibreOffice Writer+Calc are in the image; printing works. (run 40012157679)
 - **Programs from "Get more programs" would not start** (an extra permission the app sandbox refuses): **fixed and
   proven** (6b6c438). Next gap: older programs that only speak X11 (VLC, likely Zoom, Spotify, WhatsApp/Teams
   wrappers) need Xwayland, which AurOS's compositor doesn't have yet — being built.
