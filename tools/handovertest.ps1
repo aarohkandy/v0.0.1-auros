@@ -72,13 +72,13 @@ function New-Scenario([string]$name, [bool]$Done = $true, $Rows = $null, [string
     $d = Get-Disk -Number $n
     if ($d.IsSystem -or $d.IsBoot -or $d.PartitionStyle -ne 'RAW') { throw "disk $n is not the new empty disk" }
     Initialize-Disk -Number $n -PartitionStyle GPT
-    $p1 = New-Partition -DiskNumber $n -Size 700MB -AssignDriveLetter
+    $p1 = @(New-Partition -DiskNumber $n -Size 700MB -AssignDriveLetter)[-1]     # (a reserved partition may come first)
     Format-Volume -Partition $p1 -FileSystem NTFS -NewFileSystemLabel WINSTAND -Confirm:$false | Out-Null
-    $p2 = New-Partition -DiskNumber $n -Size 200MB
+    $p2 = @(New-Partition -DiskNumber $n -Size 200MB)[-1]
     Set-Partition -DiskNumber $n -PartitionNumber $p2.PartitionNumber -NoDefaultDriveLetter $true
     Format-Volume -Partition (Get-Partition -DiskNumber $n -PartitionNumber $p2.PartitionNumber) `
         -FileSystem exFAT -NewFileSystemLabel AUROSHANDOV -Confirm:$false | Out-Null
-    $p3 = New-Partition -DiskNumber $n -Offset 1664MB -Size 256MB -GptType '{de94bba4-06d1-4d40-a16a-bfd50179d6ac}'
+    $p3 = @(New-Partition -DiskNumber $n -Offset 1664MB -Size 256MB -GptType '{de94bba4-06d1-4d40-a16a-bfd50179d6ac}')[-1]
     $p1 = Get-Partition -DiskNumber $n -PartitionNumber $p1.PartitionNumber
     $p3 = Get-Partition -DiskNumber $n -PartitionNumber $p3.PartitionNumber
     $L = $p1.DriveLetter
@@ -113,6 +113,7 @@ function New-Scenario([string]$name, [bool]$Done = $true, $Rows = $null, [string
     $orig = $p3.Offset - $p1.Offset - 2MB     # a little slack for alignment
     $sd = Join-Path $work $name
     New-Item -ItemType Directory $sd | Out-Null
+    "      layout: " + ((Get-Partition -DiskNumber $n | ForEach-Object { "#$($_.PartitionNumber) $($_.Type) off=$($_.Offset) size=$($_.Size)" }) -join '; ')
     $cfg = @{ disk_guid = $d.Guid; win_offset = $p1.Offset; shrunk = $p1.Size; orig = $orig;
               hib_file_on = 0; hiberboot = -1; task = 'AurOS put-back-test' } | ConvertTo-Json
     $params = Join-Path $sd 'putback.json'
