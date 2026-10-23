@@ -262,7 +262,8 @@ jobs:
           for old in $(gh release view "sources-$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'); do
             awk '{print $2}' out/SHA256SUMS | grep -qxF "$old" || [ "$old" = SHA256SUMS ] || { echo "removing $old, which the new set does not have"; gh release delete-asset "sources-$TAG" "$old" --repo "$GITHUB_REPOSITORY" -y; }
           done
-          gh release edit "sources-$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          # the notes are made from the tree each time (the offer, the file table): an `again` refreshes them too
+          gh release edit "sources-$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md --draft=false --prerelease
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: env.EXISTS == 'false'
