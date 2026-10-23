@@ -571,6 +571,7 @@ int plat_dir_private(const char *path, char *why, size_t wn)
 }
 
 void plat_harden_dll_search(void) {}
+const unsigned char *plat_putback_script(unsigned *len) { *len = 0; return NULL; }
 void *plat_load_system_dll(const char *name) { (void)name; return NULL; }
 
 int plat_sid_is_trusted_owner(const char *sid_text)

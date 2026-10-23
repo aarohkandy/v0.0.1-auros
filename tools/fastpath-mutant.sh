@@ -23,6 +23,14 @@
 #                      -> red: "it ran on a disk it was not named"
 #    no-sysdisk-check  the disk Windows runs from is accepted
 #                      -> red: "refused, but not for being the system disk"
+#    putback-no-hash   the copy is not checked against AurOS's hash (handover job)
+#                      -> red: "a file changed after AurOS wrote DONE"
+#    putback-no-done   a handover volume without DONE is consumed
+#                      -> red: "no DONE": nothing copied / NOT removed
+#    putback-removes-first  the partition goes before the files are saved
+#                      -> red: "every file arrived"
+#    putback-overwrites  a name already in Windows is not kept apart
+#                      -> red: "the script finished" / "a name already taken"
 #    dir-follows-links the download folder may be a junction (SEC-010)
 #                      -> red: "the folder was followed" (dircheck job)
 #    dir-any-owner     a stranger's owner is trusted
@@ -75,6 +83,14 @@ no-dll-harden)
     sub src/aurbridge/plat_win.c 'if (!f || !f(0x800)) SetDllDirectoryW(L"");' '(void)f;' ;;
 file-keeps-acl)
     sub src/aurbridge/plat_win.c '            SetNamedSecurityInfoW(wt, SE_FILE_OBJECT,' '            if (0) SetNamedSecurityInfoW(wt, SE_FILE_OBJECT,' ;;
+putback-no-hash)
+    sub src/aurbridge/putback.ps1 'if ($got -ne $r.Sha) {' 'if ($false) {' ;;
+putback-no-done)
+    sub src/aurbridge/putback.ps1 "if (-not (Test-Path (Join-Path \$hroot 'DONE')) -or -not (Test-Path \$man) -or" 'if ($false -or -not (Test-Path $man) -or' ;;
+putback-removes-first)
+    sub src/aurbridge/putback.ps1 "    \$rows = @(); \$winuser = ''" "    Remove-Partition -DiskNumber \$disk.Number -PartitionNumber \$hp.PartitionNumber -Confirm:\$false; \$rows = @(); \$winuser = ''" ;;
+putback-overwrites)
+    sub src/aurbridge/putback.ps1 'while ([System.IO.File]::Exists((LP $cand)) -and (Sha256File $cand) -ne $r.Sha) {' 'while ($false) {' ;;
 no-guid-check)
     sub src/aurbridge/main.c 'if (_stricmp(g, want_guid) != 0) {' 'if (0) {' ;;
 no-sysdisk-check)

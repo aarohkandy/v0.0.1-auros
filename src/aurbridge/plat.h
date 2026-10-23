@@ -196,6 +196,10 @@ int plat_putback_task(const char *disk_guid, uint64_t win_offset,
 void plat_fast_startup_was(int *hibfile, int *hiberboot);
 /* And take it away again (an abort that grew C: back itself). */
 int plat_putback_task_remove(char *why, size_t wn);
+/* The put-back script exactly as the task runs it (src/aurbridge/putback.ps1), for
+ * `aurbridge putback-script PATH`, which CI uses to test the shipped bytes. NULL in the
+ * simulated machine. */
+const unsigned char *plat_putback_script(unsigned *len);
 
 /* ── ordinary files ──────────────────────────────────────────────── */
 

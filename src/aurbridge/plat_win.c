@@ -943,32 +943,24 @@ out:
 }
 
 /* ── "Put Windows back": the startup task ───────────────────────────
- * See plat.h. The script is passed to the task as -EncodedCommand
- * (UTF-16LE, base64), so it is part of the task definition and there is
- * no file anywhere that a non-administrator could edit to have SYSTEM
- * run something else. */
+ * See plat.h. */
 #define PUTBACK_TASK "AurOS put-back"
 
-static size_t b64_utf16(const char *in, char *out, size_t cap)
+/* THE TASK RUNS A SCRIPT, NOT A COMMAND LINE. It grows C: back when the room
+ * is free again and, if AurOS left her files in a handover partition, saves
+ * them in Windows first (src/aurbridge/putback.ps1, docs/AURBRIDGE.md "Put
+ * Windows back with her files"). A script of that size does not fit in a
+ * command line, so it is written beside a small parameter file into
+ * %ProgramData%\AurOS -- a folder only SYSTEM and the Administrators can
+ * write (plat_dir_private), because SYSTEM runs what is in it at every start. */
+#include "aurbridge-putback.h"      /* PUTBACK_PS1, PUTBACK_PS1_LEN: from build/aurbridge */
+
+static void putback_paths(char *dir, size_t dn, char *ps1, char *json, size_t pn)
 {
-    static const char T[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    size_t n = strlen(in) * 2, o = 0;
-    for (size_t i = 0; i < n; i += 3) {
-        unsigned char b[3] = { 0, 0, 0 };
-        size_t k = 0;
-        for (; k < 3 && i + k < n; k++) {
-            size_t j = i + k;               /* byte j of the UTF-16LE text */
-            b[k] = (j & 1) ? 0 : (unsigned char)in[j / 2];
-        }
-        if (o + 5 > cap) return 0;
-        out[o++] = T[b[0] >> 2];
-        out[o++] = T[((b[0] & 3) << 4) | (b[1] >> 4)];
-        out[o++] = k > 1 ? T[((b[1] & 15) << 2) | (b[2] >> 6)] : '=';
-        out[o++] = k > 2 ? T[b[2] & 63] : '=';
-    }
-    out[o] = 0;
-    return o;
+    const char *pd = getenv("ProgramData");
+    snprintf(dir, dn, "%s\\AurOS", pd && *pd ? pd : "C:\\ProgramData");
+    snprintf(ps1, pn, "%s\\putback.ps1", dir);
+    snprintf(json, pn, "%s\\putback.json", dir);
 }
 
 int plat_putback_task(const char *disk_guid, uint64_t win_offset,
@@ -983,51 +975,41 @@ int plat_putback_task(const char *disk_guid, uint64_t win_offset,
     /* HIBERNATION AS SHE HAD IT, put back when C: has its room: the install
      * switched it off (a hibernated volume cannot be shrunk or read), and
      * Put Windows back runs under Linux, which cannot run powercfg. */
-    char restore_hib[400] = "";
-    {
-        int hf = -1, hb = -1;
-        plat_fast_startup_was(&hf, &hb);
-        char *q = restore_hib;
-        if (hf == 1) q += snprintf(q, sizeof restore_hib, "& powercfg.exe /hibernate on;");
-        if (hb > 0)
-            snprintf(q, sizeof restore_hib - (size_t)(q - restore_hib),
-                     "Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\"
-                     "Session Manager\\Power' -Name HiberbootEnabled -Value %d;", hb);
-    }
-    char inner[2200];
-    snprintf(inner, sizeof inner,
-        "$ErrorActionPreference='Stop';"
-        "$g='%s';$o=%llu;$s=%llu;$w=%llu;$n='" PUTBACK_TASK "';"
-        "$d=Get-Disk|Where-Object{$_.Guid -eq $g}|Select-Object -First 1;"
-        "if(-not $d){exit 0};"
-        "$p=Get-Partition -DiskNumber $d.Number|Where-Object{$_.Offset -eq $o}|Select-Object -First 1;"
-        "if(-not $p){exit 0};"
-        "if($p.Size -ge $w){%s Unregister-ScheduledTask -TaskName $n -Confirm:$false;exit 0};"
-        "if($p.Size -lt $s){exit 0};"
-        "$m=(Get-PartitionSupportedSize -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber).SizeMax;"
-        "$t=[Math]::Min($w,$m);"
-        "if($t -gt $p.Size){Resize-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber -Size $t};"
-        "if((Get-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber).Size -ge $w)"
-        "{%s Unregister-ScheduledTask -TaskName $n -Confirm:$false}",
+    int hf = -1, hb = -1;
+    plat_fast_startup_was(&hf, &hb);
+
+    char dir[300], ps1[340], json[340];
+    putback_paths(dir, sizeof dir, ps1, json, sizeof ps1);
+    if (plat_dir_private(dir, why, wn) != 0) return -1;
+    char cfg[700];
+    int cl = snprintf(cfg, sizeof cfg,
+        "{\"disk_guid\":\"%s\",\"win_offset\":%llu,\"shrunk\":%llu,\"orig\":%llu,"
+        "\"hib_file_on\":%d,\"hiberboot\":%d,\"task\":\"" PUTBACK_TASK "\"}\n",
         disk_guid, (unsigned long long)win_offset,
         (unsigned long long)shrunk_bytes, (unsigned long long)orig_bytes,
-        restore_hib, restore_hib);
-    static char b64[4000];
-    if (!b64_utf16(inner, b64, sizeof b64)) {
+        hf == 1 ? 1 : 0, hb > 0 ? hb : -1);
+    if (cl <= 0 || (size_t)cl >= sizeof cfg) {
         snprintf(why, wn, "the task's instructions did not fit.");
         return -1;
     }
-    static char script[7000];
+    if (plat_file_put(ps1, PUTBACK_PS1, PUTBACK_PS1_LEN, why, wn) != 0 ||
+        plat_file_put(json, cfg, (size_t)cl, why, wn) != 0)
+        return -1;
+
+    /* No double quotes anywhere in this: ps_run puts the whole of it inside
+     * one pair. The paths have no spaces (a ProgramData folder never does). */
+    static char script[1500];
     char tail[1024];
     int sl = snprintf(script, sizeof script,
-        "$a=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "
-        "'-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand %s';"
+        "$ps=Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe';"
+        "$a=New-ScheduledTaskAction -Execute $ps -Argument "
+        "'-NoProfile -NonInteractive -ExecutionPolicy Bypass -File %s -Params %s';"
         "$t=New-ScheduledTaskTrigger -AtStartup;"
         "$p=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest;"
         "Register-ScheduledTask -TaskName '" PUTBACK_TASK "' -Action $a -Trigger $t "
-        "-Principal $p -Force -Description 'Gives drive C: back the room AurOS "
-        "used, once AurOS is removed.' | Out-Null;"
-        "'AURTASK='+(Get-ScheduledTask -TaskName '" PUTBACK_TASK "').State", b64);
+        "-Principal $p -Force -Description 'Saves the files you kept in AurOS in Windows, "
+        "and gives drive C: back the room AurOS used, once AurOS is removed.' | Out-Null;"
+        "'AURTASK='+(Get-ScheduledTask -TaskName '" PUTBACK_TASK "').State", ps1, json);
     if (sl <= 0 || (size_t)sl >= sizeof script) {
         snprintf(why, wn, "the task's instructions did not fit.");
         return -1;
@@ -1038,6 +1020,12 @@ int plat_putback_task(const char *disk_guid, uint64_t win_offset,
         return -1;
     }
     return 0;
+}
+
+const unsigned char *plat_putback_script(unsigned *len)
+{
+    *len = PUTBACK_PS1_LEN;
+    return PUTBACK_PS1;
 }
 
 int plat_putback_task_remove(char *why, size_t wn)
@@ -1052,6 +1040,10 @@ int plat_putback_task_remove(char *why, size_t wn)
         snprintf(why, wn, "the put-back task could not be removed (%s).", tail);
         return -1;
     }
+    char dir[300], ps1[340], json[340], w[PLAT_WHY];
+    putback_paths(dir, sizeof dir, ps1, json, sizeof ps1);
+    plat_file_delete(ps1, w, sizeof w);
+    plat_file_delete(json, w, sizeof w);
     return 0;
 }
 

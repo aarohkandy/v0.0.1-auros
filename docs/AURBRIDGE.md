@@ -1063,91 +1063,193 @@ anyone's disk is at risk.
 Nothing destructive ships until the fault matrix is green on every named
 instant and the dry run has been through a fleet.
 
-## Fast path: status (2026-10-23)
+## Fast path: status (2026-10-23, end of session B)
 
-The fast path (decision D1/D2 in `docs/handoff/SESSION-2026-10-23.md`)
-moves the slow work into Windows while the image downloads: shrink C:
-with Windows' own online shrink, write AurOS's partitions raw into the
-freed gap as the pieces inflate, and after the restart only verify,
-commit the GPT and start AurOS -- about a minute, and BitLocker PCs
-install without decryption. It is being built in increments, and **the
-destructive half is NOT wired into the wizard or the engine yet** -- the
-shipped install is still the legacy staging-shrink path. Nothing selects
-`plat_gap_*` or `plat_shrink_system`.
+The fast path (decisions D1/D2/D10/D11 in `docs/handoff/SESSION-2026-10-23.md`)
+moves the slow work into Windows while the image downloads: Windows' own
+online shrink of C:, AurOS's two partitions written raw into the room it
+frees as the pieces inflate, and after the restart only a check, the GPT
+commit and the handover to AurOS -- about a minute -- with BitLocker PCs
+installed without decryption. **It is built and sits behind
+`AUROS_FASTPATH=1`** (`build/aurbridge`; or `[fastpath]` in a commit subject
+for `build.yml`; `fastpath.yml` uploads the installer as artifact `exe-fast`).
+The default build is the legacy staging-shrink path and is unchanged. The
+`AB_CHOICE_*` macros in `phases.h` are defined only under that switch; flip
+them (and the site's wording, one constant) only when the real-Windows e2e
+journey passes with the fast build, base and BitLocker.
 
-**Done and proven**
+### What exists, where
 
-- *Legacy-path fixes that make tonight's build shippable* (these ARE in
-  the shipped path):
-  - Phase 7 records the network instead of requiring it, and points the
-    firmware loader at the new root (`probe.c`, `/lib/firmware` symlink).
-    Fixes the Wi-Fi-only stall. Proven: `tools/probetest.sh`.
-  - The shrink takes only what AurOS needs -- `shrink_pick_target()` in
-    `shrink.c`: min(40 GiB, leaving Windows max(20 GiB,15%) free), floor
-    16 GiB, never below the install's need, never more than reclaimable;
-    the surface test covers only that region, with a progress callback
-    (`install.c`). Proven: `tools/shrinktargettest.sh`; a no-op on the
-    synthetic test disk, so `installtest`/`nosticktest` are unaffected.
-  - The PC is kept awake for the whole run (`plat_keep_awake`), and the
-    image download starts the moment the check passes, in the background
-    while she reads (`wizard.c` `download_begin`). Proven: build + Wine
-    `--navtest`.
-- *Fast-path foundation* (NOT wired in): the raw gap-write fence
-  (`fmt_gpt_parts` in `format.c`; `plat_gap_allow/gap_write/gap_forbid/
-  gap_flush` in `plat.h`/`plat_win.c`/`plat_sim.c`) and Windows' online
-  shrink (`plat_shrink_system`/`plat_grow_system` in `plat_win.c`, via
-  Resize-Partition; the simulation refuses these, as it refuses
-  manage-bde). A gap write may land only inside the armed window and
-  only where the LIVE table says no partition is -- refused, never
-  clamped -- with Windows' own refusal of raw writes inside a mounted
-  volume as the live second fence (no lock, no dismount). Proven:
-  `tools/gapfencetest.sh` against a real GPT through the simulation
-  (goes red when the window check is removed).
+| piece | where |
+|---|---|
+| Windows' online shrink, the fenced raw gap write, grow-back | `plat_win.c` (`plat_shrink_system`, `plat_gap_*`, `plat_grow_system`), proven by `aurbridge gapselftest` |
+| the shared planner (Windows and staging compute the same gap) | `src/aurstage/{gpt,plan}.c`, compiled into both |
+| the engine's prepared mode: inspect, shrink, fetch pieces, stream them into the gap, read back, hash, hand off | `phases.c` (`fast_inspect`, `phase_prepare_gap`) |
+| the journal `image_on=gap` | `format.c` / `journal.c` |
+| staging's gap mode: verify, mirror the way back, commit, register, hand over -- never mounts C: | `install.c` (`install_gap`) |
+| BitLocker paused for two restarts (`manage-bde -protectors -disable -RebootCount 2`), resumed on every abort path | `ab_arm` / `ab_disarm` / `ab_abort` |
+| the Wi-Fi network she is on, carried as a 0600 NetworkManager keyfile; the ESP copy deleted | `write_wifi`, `rootfs/usr/lib/auros/wifi-across.sh` |
+| the SYSTEM startup task that grows C: back and restores hibernation, registered right after the shrink | `plat_putback_task` |
+| closing the installer undoes everything | `ab_abort` |
 
-**Why the old "nothing writes before the restart" rule changed.** It
-could not fit ten minutes, and it could not install on a BitLocker PC
-without hours of decryption. The fast path writes into the gap a
-reversible online shrink makes, referenced by nothing until the GPT
-commit after the restart; a power cut before that commit leaves Windows
-starting with every file intact (Windows' own shrink is power-safe, and
-the written bytes are in unallocated space). That is why `plat.h`'s
-fence is "only inside the computed gap, re-checked against the live
-table, never overlapping a partition" rather than "only the stick".
+### What is proven, and how
 
-**Proven on real Windows (2026-10-23):** `aurbridge gapselftest`
-(`main.c`) in `.github/workflows/fastpath.yml` on a GitHub Windows Server
-runner, against a diskpart VHDX (GPT, 2 GB NTFS with 300 known files, a
-recovery partition after it): Windows' online shrink (~6 s), the shared
-planner, 256 MB + 8 MB written into the gap and read back, fence one
-refusing six writes (each fence-one check shown alone) and an arm over
-NTFS, fence two (Windows refuses a raw write inside the mounted NTFS
-with error 5 and accepts one in the gap), the files and `Repair-Volume
--Scan` checked independently, the gap read raw by .NET, the undo
-growing it back exactly -- and all of it again with the volume
-BitLocker-encrypted (FullyEncrypted, protection on), nothing decrypted.
-`tools/fastpath-mutant.sh` breaks each check on purpose; each mutant
-must turn the run red (results: `docs/handoff/streams/A2.md`).
+Simulation (`tools/*`, the machine is files plus a KVM guest; red when the
+check is removed unless noted):
 
-**Left to do, next steps** (`docs/handoff/streams/A2.md` has the detail)
+- `fasttest.sh` -- happy path, BitLocker (C: byte for byte untouched, never
+  mounted, lock paused for two restarts, resumed on abort), abort, damaged
+  piece / wrong image, noroom (falls back, refuses BitLocker), and `cuts`
+  (power cut at gate, mirror-end, commit-array, commit-sector,
+  commit-backup, boot-entry, settle-end; then trying again, or Put Windows
+  back plus the put-back task).
+- `powercut-nostick.sh` (57 checks) -- the legacy path's cuts and restores,
+  including: a partition added or shrunk after the install makes Put Windows
+  back refuse before a byte is written (only the partition the install shrank
+  may be shorter than captured: `foreign_partition`).
+- `committest` (new backup table first, so there is never an instant without a
+  whole table), `gpttest`, `nvramtest` (a full NVRAM refuses before the shrink),
+  `ntfstest`, `esptest`, `armtest`, `aborttest`, `wifitest`, `screentest`,
+  `bridgetest` (journal writer, reader and `image_bind` agree),
+  `measuretest` (a real volume's ntfsresize output is measured).
 
-1. (done: gapselftest, above; the journal's `image_on=gap`, f01f753)
-2. The shared planner: compile `src/aurstage/plan.c` into aurbridge
-   (with a buffer GPT parse) so the Windows side lays out the gap
-   exactly as `commit.c` will, and the new journal mode
-   (`image_on=gap`, gap offsets, written extents + SHA-256, planned GPT
-   entries, original/new Windows size) in `format.c`/`journal.c`. Then
-   the engine's prepared-mode phases in `phases.c` (plan, shrink,
-   gap-write streamed from the download, journal, Wi-Fi via
-   `WlanGetProfile`, BitLocker suspend `-RebootCount 2`, undo), behind
-   the journal mode.
-3. Staging prepared mode in `src/aurstage/install.c`: verify the
-   written extents' SHA-256, never mount NTFS, capture the way back,
-   commit the GPT, boot, probe with the firmware path, write the Wi-Fi
-   keyfile; and `rescue.c`/putback's SYSTEM scheduled task that extends
-   C: back when AurOS's partitions are gone. Extend `plat_sim.c` to
-   emulate the online shrink (ntfsresize + GPT rewrite) for a KVM-free
-   end-to-end sim test, and add the BitLocker-shaped (`-FVE-FS-`)
-   Windows partition that staging must never mount.
+Real Windows (`.github/workflows/fastpath.yml`, GitHub Windows runner):
 
-Until step 1 is green on real Windows and steps 2-3 are proven end to
-end, the fast path stays unwired and the legacy path ships.
+- `gapselftest`: Windows' shrink, the fence refusing everything outside the
+  gap (and Windows itself refusing a raw write inside NTFS), 300 files and
+  `Repair-Volume -Scan` checked independently, the undo growing C: back exactly,
+  and all of it again BitLocker-encrypted.
+- `runcheck` (SEC-002, SEC-003): programs planted beside the exe never run; only
+  Windows' own tools start, by the path the installer resolves itself; a
+  `wlanapi.dll` and a `winspool.drv` planted beside the exe are never loaded (DLLs
+  named at run time come from System32 only; `WINHTTP.dll` and `OLEACC.dll` are
+  linked statically and are not covered until the static-import gate lands).
+- `dircheck` (SEC-001/010): the download folder is private, a planted junction /
+  file / stranger-owned folder is moved aside and never followed, a file moved in
+  takes the folder's permissions.
+- `handover` (the handover below, Windows half): the shipped put-back script
+  against a throwaway disk, and the startup task registered as SYSTEM running a
+  script only SYSTEM and Administrators can write.
+- `tools/fastpath-mutant.sh` breaks each Windows-side check on purpose; every
+  mutant must turn the run red.
+
+### Security properties of the no-stick (legacy) path, SEC-001
+
+The image lives in a folder on C: and its manifest beside it. The journal --
+on the EFI partition, where only an administrator writes -- carries the root
+and EFI extents' lengths and SHA-256, computed by the engine from a file it has
+already matched against the hash baked into the installer. Staging holds the
+manifest to the journal (`image_bind`) before it verifies or touches anything,
+so an image swapped together with a rewritten manifest is refused with the disk
+byte for byte unchanged. The folder is created private (SYSTEM and
+Administrators), and anything else at that name is moved aside, never followed.
+Still open (SEC-009): the staging payload is unpacked to `%TEMP%` before it is
+copied to the ESP.
+
+### Left, in order
+
+1. The real-Windows e2e journey with the fast build (stream F), base and
+   BitLocker, then the flip described above.
+2. Put Windows back with her files on a BitLocker PC: the handover below.
+3. Findings that touch files other streams own: S-18 (kernel panic loop,
+   `grub.cfg.in`), S-24 (BootOrder re-assert), S-25 (grub stub exit).
+
+## Put Windows back with her files: the handover (Windows half built; AurOS and staging halves planned)
+
+**Why.** `ferry back` mounts the Windows drive read-write from Linux (ntfs-3g)
+to copy what she saved in AurOS into her Windows profile before AurOS is
+removed. On a BitLocker PC AurOS cannot open that drive at all, so the restore
+is refused for anybody who has files; and writing into her Windows volume from
+Linux is the riskiest thing the way back does even where it works. Decision
+(lead, 2026-10-23): no "lose my files anyway" button. Windows' own driver puts
+her files into Windows, after the restart.
+
+**Rule.** AurOS never writes into the Windows volume, and no partition of
+Windows' is ever shrunk, resized or reused to make room. The room for her files
+is AurOS's own.
+
+**Until it is built:** where `ferry back` cannot open the Windows drive and she
+has files to save, the restore stays refused, in words that say her files are
+untouched, with a second path: "Save my files to a USB stick first" (R's copier
+can target a stick). With nothing to save, the restore must not need the Windows
+drive at all (that is Ferry's `_cmd_back`, R's).
+
+**The design, in the order it happens.**
+
+1. *Decide (AurOS, at the button).* Only for an install made by the fast path
+   (the put-back task exists). S = bytes in her six folders (the same list and
+   skips as `ferry back`). Needed: N = max(256 MiB, 1.03 * S + 64 MiB) free in
+   AUROS-ROOT beyond a 2 GiB reserve. Otherwise: the plain refusal and the USB
+   path.
+2. *Make the handover image (AurOS, as root; the copier as her).*
+   `/var/lib/auros/handover.img`, N bytes, **written, not sparse** (`dd` from
+   zero: a preallocated-but-unwritten extent reads as zeros through the file and
+   as stale bytes from the disk, and staging reads the disk). It must be ONE
+   extent (`filefrag`/FIEMAP; one `e4defrag` retry; else the refusal above).
+   `mkfs.exfat -L AurOS-Handover`, loop-mounted; R's copier copies her folders
+   into it (`ferry back --into DIR`: names made safe for Windows, nothing
+   overwritten, nothing followed); the engine writes `MANIFEST.tsv` (relative
+   path, bytes, SHA-256), `state.json` (the Windows user it came from, her AurOS
+   user, the install's run id) and a plain `Read me.txt`; unmount; `sync`. Then
+   the SHA-256 of the whole image file and its physical place on the disk
+   (partition start + extent start, in the disk's logical blocks, aligned to
+   4096) are written -- LAST, with the restore request -- to the boot menu's
+   environment: `auros_handover=<first_lba>,<blocks>,<sha256>`.
+3. *Restore (staging, `aurstage.restore aurstage.handover=...`).* Refuses unless
+   the range lies wholly inside the live AUROS-ROOT partition, the SHA-256 of
+   the raw disk bytes there equals the recorded one (progress on screen), the
+   exFAT boot region and its checksum are intact, and the capture says fast
+   path. Then the restore it already does -- ESP first (only differing
+   megabytes), then the table, new backup first -- with one change: the table
+   written is the captured one (C: stays as small as it is) **plus one entry,
+   AUROS-HANDOVER, exactly over that range** (basic data, no default drive
+   letter). `foreign_partition()` knows the name. The old AurOS partitions are
+   not in the new table; their bytes are simply unallocated. One commit point,
+   as today: before it, AurOS is intact and the request can be retried; after
+   it, the files are in the handover partition and Windows starts.
+4. *Windows, at startup (the put-back task, version 2; SYSTEM).* Finds the
+   volume labelled AurOS-Handover on an exFAT partition of the disk it was
+   registered for. None: version 1's work (grow C:, restore hibernation,
+   unregister). Present: (a) grow C: into the room before the handover partition
+   if it needs it for her files; (b) read `state.json` and `MANIFEST.tsv`; copy
+   file by file into `<her profile>\From AurOS\<folder>\...` as `name.part`,
+   renamed when whole, never overwriting (a taken name becomes
+   `name (from AurOS)`), each one's SHA-256 checked against the manifest and
+   appended to `C:\ProgramData\AurOS\handover.done` -- so a power cut resumes
+   where it stopped; (c) write her `Read me.txt` (what is there, anything that
+   could not be copied); (d) only when every manifest line is verified **in
+   C:**, remove the handover partition, grow C: to its original size, restore
+   hibernation, unregister the task. A second task at logon shows plain progress
+   ("AurOS is putting your files in Windows: 3 of 12 GB") and the final message.
+   Not enough room even after growing C: leaves everything where it is, says so
+   in plain words, and tries again at the next start.
+5. *Never worse than where she started.* At every instant her files are in at
+   least one verified place: AurOS's root (until the table commit), the handover
+   partition (after it, until verified in C:), C: (after). The handover
+   partition is removed only after verification; if Windows never starts, the
+   partition stays, named, readable by any Windows.
+
+**Tests (each shown red when its check is broken).**
+
+- AurOS side, in a privileged container with loop devices: the image is one
+  extent, mounts as exFAT, holds her files byte for byte under safe names with
+  a correct manifest, and nothing outside her folders; no room, two extents, a
+  symlinked folder: the refusals, with the root unchanged.
+- Staging, in the KVM guest (`fasttest` machine, installed): restore with the
+  handover leaves the captured table plus AUROS-HANDOVER over exactly the
+  range, the exFAT bytes intact (hash), the ESP restored, C: untouched; a wrong
+  hash, a range outside the root, a damaged exFAT header: refused with the disk
+  byte for byte unchanged; power cut at every restore instant (ESP mid, array,
+  sector, backup): trying the restore again ends in the same disk.
+- Windows, on a real runner (a VHDX with an NTFS C:, a shrunk gap, an exFAT
+  handover partition made and filled by Windows with the same manifest format,
+  and the same again with C: BitLocker-encrypted): the task's own script run
+  against it copies, verifies, removes the partition, grows C:; killed mid-copy
+  and again after the last verify and before the removal, it resumes and ends
+  identical; a file whose manifest hash is wrong stops the removal.
+- Oracle for all of them: the set of her files' hashes, found in one verified
+  place at every checkpoint.
+
+**Depends on R.** `ferry back --into DIR` (the copier with a plain directory
+as its destination, no Windows volume), `ferry back --to-usb`, and "nothing to
+save never needs the Windows drive".

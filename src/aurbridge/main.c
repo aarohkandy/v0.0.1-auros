@@ -392,6 +392,26 @@ int main(int argc, char **argv)
      * says whether the installer would trust an owner with that SID. CI on
      * a Windows runner plants a junction, a permissive folder and a stranger's
      * SID and reads the ACLs back with icacls (docs/security SEC-001/010). */
+    /* `putback-task add DISK-GUID OFFSET SHRUNK ORIG` / `putback-task remove`: the
+     * startup task registered, or taken away, exactly as the install does it. */
+    if (!strcmp(cmd, "putback-task") && argc >= 3) {
+        char why[400] = "";
+        int rc = !strcmp(argv[2], "remove") ? plat_putback_task_remove(why, sizeof why)
+               : argc >= 7 ? plat_putback_task(argv[3], strtoull(argv[4], NULL, 10),
+                                               strtoull(argv[5], NULL, 10),
+                                               strtoull(argv[6], NULL, 10), why, sizeof why)
+               : -1;
+        printf("putback-task rc=%d %s\n", rc, why);
+        return rc == 0 ? 0 : 1;
+    }
+    if (!strcmp(cmd, "putback-script") && argc >= 3) {
+        unsigned n = 0;
+        const unsigned char *b = plat_putback_script(&n);
+        FILE *f = b ? fopen(argv[2], "wb") : NULL;
+        if (!f || fwrite(b, 1, n, f) != n) { fputs("aurbridge: could not write the script\n", stderr); return 1; }
+        fclose(f);
+        return 0;
+    }
     if (!strcmp(cmd, "dircheck") && argc >= 3) {
         if (!strcmp(argv[2], "sid") && argc >= 4) {
             printf("dircheck sid=%s trusted=%d\n", argv[3],

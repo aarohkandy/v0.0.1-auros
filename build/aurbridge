@@ -215,6 +215,15 @@ SITE_HOST=$(sh "$ROOT/tools/repo.sh" host) \
 printf '#define AUROS_SITE_W L"%s"\n' "$SITE_HOST" >> "$BAKED"
 note "the website it names: $SITE_HOST"
 
+# ── the put-back script, into a header (src/aurbridge/putback.ps1) ──
+# The startup task runs it from %ProgramData%\AurOS; the installer carries it
+# as bytes. od, not xxd: it is in every POSIX userland.
+{
+    printf 'static const unsigned char PUTBACK_PS1[] = {\n'
+    od -An -v -tu1 "$SRC/putback.ps1" | sed 's/^ *//; s/  */,/g; s/$/,/'
+    printf '0};\nstatic const unsigned PUTBACK_PS1_LEN = sizeof PUTBACK_PS1 - 1;\n'
+} > "$OUT/aurbridge-putback.h"
+
 PAYLOAD_OBJ=""
 if [ -f "$KERNEL" ] && [ -f "$INITRD" ]; then
     step "the staging environment, into the executable"
