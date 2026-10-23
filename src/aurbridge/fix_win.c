@@ -18,16 +18,16 @@ static const fix_info FIXES[] = {
       L"We empty the Recycle Bin and clear out Windows’ leftover files.",
       L"We cleared what we safely could, and it still needs more room. Move "
       L"big files (videos, games) off C: and we carry on by ourselves." },
-    { "bitlocker-system", FIX_AUTO,
+    /* D11: BitLocker is PAUSED for one restart, never decrypted. Until
+     * the engine can pause it (AB_CHOICE_BITLOCKER_PAUSE, which makes
+     * these a note instead of a stop), an encrypted drive is a plain
+     * stop. This used to switch encryption off on every fixed drive. */
+    { "bitlocker-system", FIX_CANNOT,
       L"Drive C: is encrypted",
-      L"We switch encryption off. It takes a while; leave the PC on.",
-      L"Encryption is being switched off. That can take an hour or more; "
-      L"leave the PC on and we carry on by ourselves." },
-    { "bitlocker-other", FIX_AUTO,
-      L"Another drive in this PC is encrypted",
-      L"We switch encryption off. It takes a while; leave the PC on.",
-      L"Encryption is being switched off. That can take an hour or more; "
-      L"leave the PC on and we carry on by ourselves." },
+      L"AurOS can\u2019t go beside an encrypted drive yet.", NULL },
+    { "bitlocker-other", FIX_CANNOT,
+      L"Another drive in this computer is encrypted",
+      L"AurOS can\u2019t go beside an encrypted drive yet.", NULL },
     { "pending-reboot", FIX_RESTART,
       L"Windows is waiting to restart to finish an update",
       L"We restart it. This installer opens again by itself afterwards.", NULL },
@@ -183,6 +183,12 @@ static const struct { const char *id; const wchar_t *line; } INSTEAD[] = {
     { "smart-predict-failure",
       L"Copy your photos and documents somewhere else today, while the drive "
       L"still works. Then have the drive replaced." },
+    { "bitlocker-system",
+      L"Keep using Windows for now, and leave its drive lock as it is: AurOS "
+      L"will never ask you to switch it off." },
+    { "bitlocker-other",
+      L"Keep using Windows for now, and leave its drive lock as it is: AurOS "
+      L"will never ask you to switch it off." },
     { "not-elevated",
       L"Close this, open AurOS Setup again from your Downloads, and press Yes "
       L"when Windows asks whether it may make changes." },
@@ -324,40 +330,9 @@ static int free_space(char *why, size_t n)
     return 0;
 }
 
-/* ── encryption off ────────────────────────────────────────────────── */
-
-/* manage-bde -off on every fixed drive. On a drive that is not encrypted it
- * says so and changes nothing; on one that is, Windows starts decrypting
- * in the background and the check keeps saying "encrypted" until it has
- * finished, which is what the page waits for. */
-static int encryption_off(char *why, size_t n)
-{
-    char sys[MAX_PATH], exe[MAX_PATH + 32];
-    if (!GetSystemDirectoryA(sys, sizeof sys)) { snprintf(why, n, "Windows would not say where it is"); return -1; }
-    snprintf(exe, sizeof exe, "%s\\manage-bde.exe", sys);
-    if (GetFileAttributesA(exe) == INVALID_FILE_ATTRIBUTES) {
-        snprintf(why, n, "this edition of Windows cannot switch encryption off from a "
-                         "program. Open Settings, Privacy & security, Device encryption, "
-                         "and switch it off there.");
-        return -1;
-    }
-    DWORD drives = GetLogicalDrives();
-    for (int d = 2; d < 26; d++) {                 /* C: onwards */
-        if (!(drives & (1u << d))) continue;
-        char root[4] = { (char)('A' + d), ':', '\\', 0 };
-        if (GetDriveTypeA(root) != DRIVE_FIXED) continue;
-        char cmd[MAX_PATH + 64], tail[256];
-        snprintf(cmd, sizeof cmd, "\"%s\" -off %c:", exe, 'A' + d);
-        plat_run(cmd, tail, sizeof tail);
-    }
-    return 0;
-}
-
 int fix_run(const char *id, char *why, size_t n)
 {
     if (!strcmp(id, "insufficient-space")) return free_space(why, n);
-    if (!strcmp(id, "bitlocker-system") || !strcmp(id, "bitlocker-other"))
-        return encryption_off(why, n);
     snprintf(why, n, "there is no fix for this that a program can do");
     return -1;
 }

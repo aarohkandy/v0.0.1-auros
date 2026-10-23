@@ -1124,17 +1124,14 @@ static int volume_is_bitlocker(const char *drive)
  * cryptsetup's BITLK support has no resize, ntfsresize sees -FVE-FS-
  * rather than NTFS, Windows' own shrink is unavailable on an encrypted
  * volume, and Suspend-BitLocker does not decrypt a single sector. Only
- * a full decryption clears it, and a refusal a user cannot clear by
- * following its own instructions is a user who re-runs forever. */
+ * a full decryption clears it -- and AurOS never asks for one (owner
+ * decision D11: paused for one restart, never decrypted). So until the
+ * engine can pause it, this is a stop she cannot clear, said as one:
+ * the wizard's only button is Close. */
 #ifndef AB_CHOICE_BITLOCKER_PAUSE
 static const char *BITLOCKER_REMEDY =
-    "BitLocker has to be turned off completely -- not suspended, and not just "
-    "written down. In Windows, search for 'Manage BitLocker', open it, and choose "
-    "'Turn off BitLocker' for this drive. Windows then decrypts the whole drive, "
-    "which can take several hours; leave the PC plugged in and let it finish. Run "
-    "AurBridge again when it says the drive is decrypted. Save your 48-digit "
-    "recovery key somewhere safe first, from aka.ms/myrecoverykey -- you will need "
-    "it if anything interrupts the decryption.";
+    "AurOS cannot be installed beside a BitLocker-encrypted drive yet. Keep "
+    "using Windows; nothing was changed, and do not turn BitLocker off for AurOS.";
 #endif
 
 static void check_volumes(pf_report *r)

@@ -2024,40 +2024,6 @@ static int block_card(const pf_result *r, int x, int y, int w)
     return h;
 }
 
-static const pf_volume *sys_volume(void);
-static int disk_is_slow(void);
-
-/* HOW LONG SWITCHING ENCRYPTION OFF TAKES HERE. Windows decrypts the
- * whole drive in the background: on an SSD about a quarter of an hour to
- * an hour per 256 GB, on a hard disk two to six hours per terabyte
- * (docs/research/journey-audit-2026-10-23.md, section 2). Said in her
- * units, before she presses the button, so "it takes a while" is a
- * number. (The fast path replaces this with a suspend; until then.) */
-static void decrypt_time(wchar_t *out, int cch)
-{
-    const pf_volume *v = sys_volume();
-    double gb = v && v->size_bytes ? (double)v->size_bytes / 1e9 : 256.0;
-    int slow = disk_is_slow();
-    double lo = gb * (slow == 1 ? 0.12 : 0.06), hi = gb * (slow == 0 ? 0.25 : 0.36);
-    if (hi < 60.0) {
-        int l = (int)(lo / 5.0) * 5, h = ((int)hi + 9) / 10 * 10;
-        if (l < 10) l = 10;
-        if (h <= l) h = l + 10;
-        _snwprintf(out, (size_t)cch, L"%d to %d minutes", l, h);
-    } else {
-        int l = (int)(lo / 60.0 + 0.5), h = (int)(hi / 60.0 + 0.99);
-        if (l < 1) l = 1;
-        if (h <= l) h = l + 1;
-        if (l == 1 && h == 2) wcscpy(out, L"one to two hours");
-        else _snwprintf(out, (size_t)cch, L"%d to %d hours", l, h);
-    }
-    out[cch - 1] = 0;
-}
-
-static int is_bitlocker(const char *id)
-{
-    return !strcmp(id, "bitlocker-system") || !strcmp(id, "bitlocker-other");
-}
 
 static int page_blocked(int x, int y, int w)
 {
@@ -2110,13 +2076,6 @@ static int page_blocked(int x, int y, int w)
                          : L"We\u2019ll fix this one once the red ones are sorted.", 599);
             fix[599] = 0;
         }
-        if (is_bitlocker(r->id) && k == FIX_AUTO && !cannot) {
-            wchar_t t[64];
-            decrypt_time(t, 64);
-            _snwprintf(fix, 599, L"We switch encryption off. On this computer that takes "
-                                 L"about %ls; leave it on and plugged in.", t);
-            fix[599] = 0;
-        }
         if (k == FIX_AUTO || k == FIX_RESTART) dot = C_WARM;
         if (k == FIX_WAIT) dot = C_ACCENT_ALT;
         if (f && f->kind == FIX_RESTART && k == FIX_CANNOT)
@@ -2128,13 +2087,6 @@ static int page_blocked(int x, int y, int w)
             dot = C_ACCENT;
         } else if (j >= 0 && g_fx[j].state == FS_DONE && g_fx[j].after && f && f->after) {
             wcsncpy(fix, f->after, 599); fix[599] = 0;
-            if (is_bitlocker(r->id)) {
-                wchar_t t[64];
-                decrypt_time(t, 64);
-                _snwprintf(fix, 599, L"Encryption is being switched off. That takes about "
-                                     L"%ls here. Leave it on; we carry on by ourselves.", t);
-                fix[599] = 0;
-            }
             dot = C_ACCENT;
         } else if (j >= 0 && g_fx[j].state == FS_DONE) {
             wcscpy(fix, L"Done. Checking again\u2026");
@@ -4546,6 +4498,18 @@ static int nav_test(const char *dir)
             if (!l || !l[0] || wcslen(l) > 110) wok = 0;
         }
         nt_check(wok, "every warning the check can give has one short line");
+        /* D11: BitLocker is paused for one restart, NEVER decrypted. Until
+         * the engine can pause it, an encrypted drive is a plain stop: no
+         * button may switch encryption off (it once ran manage-bde -off on
+         * every fixed drive). Asked of the table, never by running a fix. */
+        const fix_info *b1 = fix_lookup("bitlocker-system"), *b2 = fix_lookup("bitlocker-other");
+        nt_check(b1 && b1->kind == FIX_CANNOT && b2 && b2->kind == FIX_CANNOT,
+                 "an encrypted drive is a stop: nothing here decrypts it (D11)");
+        fx_machine(0);
+        fx_add("bitlocker-system", PF_BLOCK, "This drive is encrypted with BitLocker");
+        g_page = PAGE_BLOCKED;
+        nt_check(fixable_now() == 0 && !wcscmp(primary_label(), L"Close"),
+                 "on an encrypted drive the one button is Close");
     }
     {
         static const char *ids[] = { "not-on-ac", "insufficient-space", "removable-no-serial",
