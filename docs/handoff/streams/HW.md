@@ -17,10 +17,11 @@ include paths), `.github/workflows/windows.yml` (one step + the gate regex),
 |---|---|---|
 | `AurOS-Setup.exe --report [DIR]` and `aurbridge.exe report [DIR]`: devices (PCI/USB/HDA ids, class codes), printers + their USB ids, maker/model, CPU, RAM, Windows build, UEFI/Secure Boot/BitLocker/drive type from the installer's own preflight; writes `AurOS-report.txt` + `.json` | `src/aurbridge/hwinv.{c,h}` (pure), `hwinv_win.c` | 7bb2e8b |
 | `hw/compat.json` from the image (modules.alias, firmware via the dependency closure, CUPS model lists) + `hw/seeds.json` (hand-written rules + every sentence she reads) | `tools/hw/gen-compat.py`, `gen-header.py` | 94f64d9 |
-| Matcher `hw/lib/hwcompat.{c,h}`: inventory → verdicts with her sentences | 36 cases | 94f64d9 |
+| Matcher `hw/lib/hwcompat.{c,h}`: inventory → verdicts with her sentences | cases for BCM4352 (blocks with no cable socket, warns with one), AX201/BE200/MT7922/QCA6174 fine, RTL8852BE/8723BE unsteady, RTL8922AE not yet, IPU6 camera not yet, Nvidia-only slow, USB sticks, printers | 94f64d9, 283c860 |
 | `hwinv_scan`, `hwinv_blocks`, `hwinv_journal` (the hooks below) | `hwinv_win.h` | 8959584 |
-| Real-PC results table + campaign sheet | `tools/hw/results.py`, `docs/results/hardware/{CAMPAIGN.md,TEMPLATE.txt,README.md}` | (this push) |
-| Tests | `sh tools/hw/hwtest.sh`: 28 checks incl. 17 mutants each shown red; run by `tests.yml` (unit job); the Windows build is checked with mingw `-Werror` | |
+| Real-PC results table + campaign sheet | `tools/hw/results.py`, `docs/results/hardware/{CAMPAIGN.md,TEMPLATE.txt,README.md}` | 9c30771 |
+| Tests | `sh tools/hw/hwtest.sh` (about 50 s): ~34 checks, ~20 of them mutants shown red, a sanitized fuzz of random PCs, wordlint on every sentence, the sample report and results table kept in sync; run by `tests.yml` (unit job; that workflow runs on `[test]` or a release); mingw `-Werror` build of the Windows part | a4d17a4 |
+| `tools/hw/regen.sh` remakes `hw/compat.json` (byte-identical on re-run) | | fd92118 |
 
 Proven where: the pure code and the matcher on the host and under mingw on
 homebase; the `.exe` starts and writes both files under Wine
