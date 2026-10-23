@@ -38,8 +38,23 @@
  *     are measured in).
  *
  *    ferry-copy [--as UID:GID] [--state DIR] [--stage NAME] [--dry-run]
- *               [--to-windows] [--skip NAME]... [--skip-dir NAME]...
+ *               [--to-windows] [--manifest FILE] [--cluster N] [--print-need]
+ *               [--skip NAME]... [--skip-dir NAME]...
  *               --job LABEL SRC DEST [--job LABEL SRC DEST]...
+ *
+ *  --manifest FILE (with --to-windows) writes one row per file that is in
+ *  place when the run ends, copied now or already there:
+ *      FOLDER <tab> PATH-IN-FOLDER <tab> SIZE <tab> SHA-256 <tab> MTIME
+ *  with the name the file really has at the destination, and the hash of
+ *  what was READ from her disk (so a later read of the copy proves the
+ *  copy). It is how a handover volume or a USB stick is verified.
+ *  --cluster N sizes the room check for a destination that stores files
+ *  in whole N-byte clusters (exFAT: 128 KiB, not 4 KiB); without it the
+ *  destination's own block size is used. --print-need prints the bytes
+ *  the files need there and exits, copying nothing. --reserve N is the
+ *  room kept free beyond the files (64 MiB into Windows, 1 MiB onto a
+ *  volume made to size); --where TEXT is how her progress line names the
+ *  place ("in Windows", "for Windows", "on the USB stick").
  *
  *  --to-windows is the way back ("Put Windows back"): her AurOS files
  *  go onto the Windows volume. Windows is stricter than Linux about
@@ -102,7 +117,13 @@ static int njobs;
 static const char *skip_names[MAX_SKIPS], *skip_dirs[MAX_SKIPS];
 static int nskip, nskipd;
 static const char *stage = "files";
-static int dry_run, to_win, no_room_check;
+static int dry_run, to_win, no_room_check, print_need;
+static const char *manifest_path;
+static int fd_rows = -1;                      /* --manifest */
+static const char *where = "in Windows";     /* --where: said in her words */
+static int where_default = 1;
+static long long reserve_bytes = 64ll << 20;  /* --reserve: kept free beyond the files */
+static long long cluster_bytes;               /* 0: ask the destination */
 static long long need_bytes;                 /* --to-windows: space the plan needs */
 static int fd_manifest = -1, fd_report = -1, fd_progress = -1, fd_plain = -1;
 static int fd_proglog = -1;                 /* FERRY_PROGRESS: every line, appended */
@@ -192,7 +213,85 @@ static int make_name(const char *orig, int n, char out[NAME_LIMIT + 1])
     return shortened;
 }
 
-/* ── Windows names ─────────────────────────────────────────────────
+/* ── SHA-256 ──────────────────────────────────────────────────────
+ * The hash of what is read from her disk, for the manifest. FIPS 180-4;
+ * checked against sha256sum by the suite. */
+struct sha { uint32_t h[8]; unsigned long long len; unsigned char b[64]; size_t n; };
+static const uint32_t K256[64] = {
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2 };
+#define ROR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
+static void sha_block(struct sha *c, const unsigned char *p)
+{
+    uint32_t w[64], a, b, cc, d, e, f, g, h, t1, t2;
+    for (int i = 0; i < 16; i++)
+        w[i] = (uint32_t)p[4*i] << 24 | (uint32_t)p[4*i+1] << 16 | (uint32_t)p[4*i+2] << 8 | p[4*i+3];
+    for (int i = 16; i < 64; i++) {
+        uint32_t s0 = ROR(w[i-15], 7) ^ ROR(w[i-15], 18) ^ (w[i-15] >> 3);
+        uint32_t s1 = ROR(w[i-2], 17) ^ ROR(w[i-2], 19) ^ (w[i-2] >> 10);
+        w[i] = w[i-16] + s0 + w[i-7] + s1;
+    }
+    a = c->h[0]; b = c->h[1]; cc = c->h[2]; d = c->h[3]; e = c->h[4]; f = c->h[5]; g = c->h[6]; h = c->h[7];
+    for (int i = 0; i < 64; i++) {
+        t1 = h + (ROR(e, 6) ^ ROR(e, 11) ^ ROR(e, 25)) + ((e & f) ^ (~e & g)) + K256[i] + w[i];
+        t2 = (ROR(a, 2) ^ ROR(a, 13) ^ ROR(a, 22)) + ((a & b) ^ (a & cc) ^ (b & cc));
+        h = g; g = f; f = e; e = d + t1; d = cc; cc = b; b = a; a = t1 + t2;
+    }
+    c->h[0] += a; c->h[1] += b; c->h[2] += cc; c->h[3] += d; c->h[4] += e; c->h[5] += f; c->h[6] += g; c->h[7] += h;
+}
+static void sha_init(struct sha *c)
+{
+    static const uint32_t iv[8] = { 0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19 };
+    memcpy(c->h, iv, sizeof iv); c->len = 0; c->n = 0;
+}
+static void sha_update(struct sha *c, const unsigned char *p, size_t n)
+{
+    c->len += n;
+    while (n) {
+        size_t k = 64 - c->n < n ? 64 - c->n : n;
+        memcpy(c->b + c->n, p, k); c->n += k; p += k; n -= k;
+        if (c->n == 64) { sha_block(c, c->b); c->n = 0; }
+    }
+}
+static void sha_hex(struct sha *c, char out[65])
+{
+    unsigned long long bits = c->len * 8;
+    unsigned char pad = 0x80, z = 0, lenb[8];
+    sha_update(c, &pad, 1);
+    while (c->n != 56) sha_update(c, &z, 1);
+    for (int i = 0; i < 8; i++) lenb[i] = (unsigned char)(bits >> (56 - 8 * i));
+    sha_update(c, lenb, 8);
+    for (int i = 0; i < 8; i++) snprintf(out + 8 * i, 9, "%08x", c->h[i]);
+}
+static void tick(int force);
+
+/* The hash of a file already on her disk (a resumed run: it is in place,
+ * but the manifest needs what it holds). */
+static int hash_file(int sfd, const char *name, char hex[65])
+{
+    struct sha c;
+    int f = openat(sfd, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
+    ssize_t k;
+    if (f < 0) return -1;
+    sha_init(&c);
+    while ((k = read(f, buf, BUFSZ)) != 0) {
+        if (k < 0) { if (errno == EINTR) continue; close(f); return -1; }
+        sha_update(&c, buf, (size_t)k);
+        work_done += k;
+        tick(0);
+    }
+    close(f);
+    sha_hex(&c, hex);
+    return 0;
+}
+
+/* ── Windows names ─────────────────────────────────────────────────------
  * What Linux allows in a name and Windows does not. Returns 1 when the
  * name had to change. Bytes that are not UTF-8 (Linux allows any) would
  * make the NTFS driver refuse the file, so each becomes "_" too. */
@@ -333,8 +432,8 @@ static void note(const char *sev, const struct job *j, const char *rel,
      * two places swap. */
     snprintf(msg, sizeof msg, "%s", detail);
     if (to_win) {
-        static const char *pair[][2] = { { "from the Windows drive", "from this computer" },
-                                         { "on this computer", "in Windows" } };
+        const char *pair[2][2] = { { "from the Windows drive", "from this computer" },
+                                   { "on this computer", where } };
         for (int i = 0; i < 2; i++) {
             char *at = strstr(msg, pair[i][0]);
             if (at) {
@@ -366,6 +465,19 @@ static void record(const char *action, long long size, const struct job *j,
     flat(d, sizeof d, dstrel);
     dprintf(fd_manifest, "%s\t%s\t%s\t%lld\t%s/%s\t%s/%s\n", at, stage, action,
             size, j->src, s, j->dst, d);
+}
+
+/* One manifest row. Written as soon as a file is in place; flat() keeps
+ * a stray tab or newline in a name from forging a column or a row (the
+ * Windows-safe names have none, but the manifest is what is trusted). */
+static void manifest_row(const struct job *j, const char *drel, const char *name,
+                         long long size, const char *hex, long long mtime)
+{
+    char path[PATH_MAX + NAME_LIMIT + 2], flatp[PATH_MAX + NAME_LIMIT + 2];
+    if (fd_rows < 0) return;
+    snprintf(path, sizeof path, "%s%s%s", drel, *drel ? "/" : "", name);
+    flat(flatp, sizeof flatp, path);
+    dprintf(fd_rows, "%s\t%s\t%lld\t%s\t%lld\n", j->label, flatp, size, hex, mtime);
 }
 
 /* ── what she sees ───────────────────────────────────────────────── */
@@ -405,8 +517,8 @@ static void tick(int force)
     count_words(disp_total, b, sizeof b);
     time_left(now, eta, sizeof eta);
     if (to_win)
-        snprintf(line, sizeof line, "Saving your %s in Windows: %s of %s files.%s",
-                 cur_label, a, b, eta);
+        snprintf(line, sizeof line, "Saving your %s %s: %s of %s files.%s",
+                 cur_label, where, a, b, eta);
     else
         snprintf(line, sizeof line, "Copying your %s: %s of %s files.%s",
                  cur_label, a, b, eta);
@@ -449,7 +561,7 @@ static void placed_note(const struct job *j, const char *rel, const char *cand,
 
 /* ── putting files in place ─────────────────────────────────────── */
 
-struct pend { int dfd; dev_t dev; char tmp[48]; char *name, *rel, *want; long long size; struct job *j; };
+struct pend { int dfd; dev_t dev; char tmp[48]; char *name, *rel, *want, *drel; long long size, mtime; char hex[65]; struct job *j; };
 static struct pend pend[BATCH_FILES];
 static int npend;
 static long long pend_bytes, last_commit;
@@ -497,17 +609,17 @@ static void commit(void)
             missing_any = 1;
         } else {
             placed_note(p->j, p->rel, cand, placed, shortened);
-            char *slash = strrchr(p->rel, '/');
             char dstrel[PATH_MAX];
-            snprintf(dstrel, sizeof dstrel, "%.*s%s", slash ? (int)(slash - p->rel + 1) : 0,
-                     p->rel, cand);
+            snprintf(dstrel, sizeof dstrel, "%s%s%s", p->drel, *p->drel ? "/" : "", cand);
             record(placed > 0 ? "collision" : "copy", p->size, p->j, p->rel, dstrel);
+            if (p->hex[0]) manifest_row(p->j, p->drel, cand, p->size, p->hex, p->mtime);
             p->j->copied++;
         }
         close(p->dfd);
         free(p->name);
         free(p->rel);
         free(p->want);
+        free(p->drel);
     }
     npend = 0;
     pend_bytes = 0;
@@ -515,7 +627,8 @@ static void commit(void)
 }
 
 static void pend_add(int dfd, const char *tmp, const char *name, const char *want,
-                     const char *rel, long long size, struct job *j)
+                     const char *rel, const char *drel, long long size, long long mtime,
+                     const char *hex, struct job *j)
 {
     struct pend *p = &pend[npend];
     struct stat st;
@@ -525,9 +638,12 @@ static void pend_add(int dfd, const char *tmp, const char *name, const char *wan
     p->name = strdup(name);
     p->rel = strdup(rel);
     p->want = want ? strdup(want) : NULL;
+    p->drel = strdup(drel);
+    p->mtime = mtime;
+    snprintf(p->hex, sizeof p->hex, "%s", hex ? hex : "");
     p->size = size;
     p->j = j;
-    if (p->dfd < 0 || !p->name || !p->rel) die("out of memory or descriptors");
+    if (p->dfd < 0 || !p->name || !p->rel || !p->drel) die("out of memory or descriptors");
     npend++;
     pend_bytes += size;
     if (npend >= batch_files || pend_bytes >= BATCH_BYTES ||
@@ -600,17 +716,27 @@ static int pick_windows_name(struct nreg *R, int dfd, const char *name, const st
 }
 
 static void copy_one(struct job *j, int sfd, int dfd, const char *name,
-                     const struct stat *st, int suspect, const char *rel, struct nreg *R)
+                     const struct stat *st, int suspect, const char *rel, const char *drel,
+                     struct nreg *R)
 {
-    char cand[NAME_LIMIT + 1], tmp[48], want[NAME_LIMIT + 1];
+    char cand[NAME_LIMIT + 1], tmp[48], want[NAME_LIMIT + 1], hex[65] = "";
     struct stat dst;
+    struct sha sh;
     int have_want = 0;
 
     if (to_win) {
         if (pick_windows_name(R, dfd, name, st, j, rel, want)) {
+            /* Already in place (a resumed run). The manifest still needs
+             * what it holds, so it is read from her disk once more. */
+            if (fd_rows >= 0) {
+                if (hash_file(sfd, name, hex) == 0)
+                    manifest_row(j, drel, want, st->st_size, hex, (long long)st->st_mtime);
+                else { note("blocked", j, rel, "It could not be read from this computer."); j->unreadable++; missing_any = 1; }
+                work_done += FILE_COST;
+            } else
+                work_total -= st->st_size + FILE_COST;
             j->already++;
             disp_done++;
-            work_total -= st->st_size + FILE_COST;
             tick(0);
             return;
         }
@@ -636,6 +762,7 @@ static void copy_one(struct job *j, int sfd, int dfd, const char *name,
     sf = openat(sfd, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
     if (sf < 0) goto unreadable;
     posix_fadvise(sf, 0, 0, POSIX_FADV_SEQUENTIAL);
+    sha_init(&sh);
     snprintf(tmp, sizeof tmp, ".ferrypart-%ld-%lu", (long)getpid(), seq++);
     df = openat(dfd, tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
     if (df < 0) goto unwritable;
@@ -645,6 +772,7 @@ static void copy_one(struct job *j, int sfd, int dfd, const char *name,
         if (k < 0) { if (errno == EINTR) continue; goto unreadable; }
         if (k == 0) break;
         if (suspect && !nonzero) nonzero = !all_zero(buf, (size_t)k);
+        if (fd_rows >= 0) sha_update(&sh, buf, (size_t)k);
         if (write_all(df, buf, (size_t)k) < 0) goto unwritable;
         got += k;
         work_done += k;
@@ -669,7 +797,9 @@ static void copy_one(struct job *j, int sfd, int dfd, const char *name,
     if (close(df) != 0) { df = -1; goto unwritable; }
     close(sf);
     work_done += FILE_COST;
-    pend_add(dfd, tmp, name, have_want ? want : NULL, rel, st->st_size, j);
+    if (fd_rows >= 0) sha_hex(&sh, hex);
+    pend_add(dfd, tmp, name, have_want ? want : NULL, rel, drel, st->st_size,
+             (long long)st->st_mtime, fd_rows >= 0 ? hex : "", j);
     goto done;
 
 unwritable:
@@ -746,7 +876,7 @@ static int by_name(const void *a, const void *b)
  * what cannot come), 1 copies. Both passes see the same tree in the same
  * order: the volume is read-only. */
 static void walk(struct job *j, int sfd, int dfd, char *rel, size_t rlen,
-                 int depth, int copy)
+                 const char *drel, int depth, int copy)
 {
     int c = fcntl(sfd, F_DUPFD_CLOEXEC, 0);
     DIR *d = c >= 0 ? fdopendir(c) : NULL;
@@ -799,9 +929,11 @@ static void walk(struct job *j, int sfd, int dfd, char *rel, size_t rlen,
                 goto next;
             }
             int cd = -1;
+            char dest_used[NAME_LIMIT + 1] = "";
             if (copy && !dry_run) {
                 char used[NAME_LIMIT + 1];
                 cd = dest_dir(dfd, name, used, &R);
+                snprintf(dest_used, sizeof dest_used, "%s", used);
                 if (cd < 0) {
                     note("blocked", j, rel, "This folder could not be made on this computer.");
                     missing_any = 1;
@@ -810,7 +942,18 @@ static void walk(struct job *j, int sfd, int dfd, char *rel, size_t rlen,
                     goto next;
                 }
             }
-            walk(j, cs, cd, rel, sub, depth + 1, copy);
+            {
+                char ndrel[PATH_MAX];
+                snprintf(ndrel, sizeof ndrel, "%s", drel);
+                if (copy && !dry_run && cd >= 0) {
+                    /* the folder's real name at the destination (it may
+                     * have been made Windows-safe or kept apart) */
+                    char shown[NAME_LIMIT + 1];
+                    snprintf(shown, sizeof shown, "%s", dest_used);
+                    snprintf(ndrel, sizeof ndrel, "%s%s%s", drel, *drel ? "/" : "", shown);
+                }
+                walk(j, cs, cd, rel, sub, ndrel, depth + 1, copy);
+            }
             close(cs);
             if (cd >= 0) close(cd);
             if (out_of_room) break;
@@ -843,7 +986,7 @@ static void walk(struct job *j, int sfd, int dfd, char *rel, size_t rlen,
                     work_total += st.st_size + FILE_COST;
                     /* NTFS keeps a file in whole clusters (4 KiB) plus a
                      * record of its own; this is what the room check weighs. */
-                    need_bytes += ((long long)st.st_size + 4095) / 4096 * 4096 + 1024;
+                    need_bytes += ((long long)st.st_size + cluster_bytes - 1) / cluster_bytes * cluster_bytes + 1024;
                 } else if (to_win && !strcmp(cls, "link")) {
                     note("skipped", j, rel, "It is a shortcut to another place, which Windows "
                          "cannot hold. Nothing of yours is in it.");
@@ -870,7 +1013,7 @@ static void walk(struct job *j, int sfd, int dfd, char *rel, size_t rlen,
                     work_done += st.st_size + FILE_COST;
                     tick(0);
                 } else {
-                    copy_one(j, sfd, dfd, name, &st, !strcmp(cls, "suspect"), rel, &R);
+                    copy_one(j, sfd, dfd, name, &st, !strcmp(cls, "suspect"), rel, drel, &R);
                     if (out_of_room) { rel[rlen] = '\0'; break; }
                 }
             }
@@ -926,8 +1069,14 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[a], "--dry-run")) dry_run = 1;
         else if (!strcmp(argv[a], "--to-windows")) { to_win = 1; from_word = "AurOS"; }
         else if (!strcmp(argv[a], "--no-room-check")) no_room_check = 1;
+        else if (!strcmp(argv[a], "--print-need")) print_need = 1;
+        else if (!strcmp(argv[a], "--where") && a + 1 < argc) { where = argv[++a]; where_default = 0; }
+        else if (!strcmp(argv[a], "--reserve") && a + 1 < argc) reserve_bytes = atoll(argv[++a]);
+        else if (!strcmp(argv[a], "--manifest") && a + 1 < argc) manifest_path = argv[++a];
+        else if (!strcmp(argv[a], "--cluster") && a + 1 < argc) cluster_bytes = atoll(argv[++a]);
         else die("usage: ferry-copy [--as UID:GID] [--state DIR] [--stage NAME] "
-                 "[--dry-run] [--to-windows] [--skip NAME]... [--skip-dir NAME]... "
+                 "[--dry-run] [--to-windows] [--manifest FILE] [--cluster N] [--print-need] [--where TEXT] [--reserve N] "
+                 "[--skip NAME]... [--skip-dir NAME]... "
                  "--job LABEL SRC DEST...");
     }
     if (!njobs) die("nothing to do (no --job)");
@@ -988,6 +1137,27 @@ int main(int argc, char **argv)
     if (getrlimit(RLIMIT_NOFILE, &rl) == 0) { rl.rlim_cur = rl.rlim_max; setrlimit(RLIMIT_NOFILE, &rl); }
     if (!(buf = malloc(BUFSZ))) die("out of memory");
 
+    /* Files are stored in whole clusters: the destination's own, unless
+     * told (a volume that does not exist yet: --cluster). */
+    if (cluster_bytes <= 0) {
+        char probe[PATH_MAX];
+        struct statvfs sv;
+        cluster_bytes = 4096;
+        snprintf(probe, sizeof probe, "%s", jobs[0].dst);
+        for (;;) {
+            if (statvfs(probe, &sv) == 0) {
+                if ((long long)sv.f_frsize > cluster_bytes) cluster_bytes = (long long)sv.f_frsize;
+                break;
+            }
+            char *sl = strrchr(probe, '/');
+            if (!sl || sl == probe) break;
+            *sl = '\0';
+        }
+    }
+    if (manifest_path && !print_need) {
+        fd_rows = open(manifest_path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+        if (fd_rows < 0) die("cannot write the manifest %s: %s", manifest_path, strerror(errno));
+    }
     char rel[PATH_MAX];
     t_start = t_last = last_commit = now_ns();
     for (int i = 0; i < njobs; i++) {               /* plan: totals first */
@@ -999,9 +1169,10 @@ int main(int argc, char **argv)
             missing_any = 1;
             continue;
         }
-        walk(&jobs[i], jobs[i].srcfd, -1, rel, 0, 0, 0);
+        walk(&jobs[i], jobs[i].srcfd, -1, rel, 0, "", 0, 0);
     }
     t_start = now_ns();
+    if (print_need) { printf("%lld %lld\n", need_bytes, disp_total); return 0; }
     if (!dry_run && !no_room_check && need_bytes > 0) {
         /* Is there room for all of it? Asked before a byte moves. On the
          * way back so a full C: never leaves half her photos in Windows
@@ -1029,7 +1200,7 @@ int main(int argc, char **argv)
                 *sl = '\0';
             }
         }
-        if (to_win) want = need_bytes + need_bytes / 50 + (64ll << 20);
+        if (to_win) want = need_bytes + need_bytes / 50 + reserve_bytes;
         else {
             long long reserve = total_b / 20 > (1ll << 30) ? total_b / 20 : (1ll << 30);
             want = need_bytes + reserve;
@@ -1040,7 +1211,10 @@ int main(int argc, char **argv)
             snprintf(b, sizeof b, "%lld", free_b >> 20);
             snprintf(c, sizeof c, "%lld", (want + (1 << 20) - 1) >> 20);
             if (fd_report >= 0) {
-                if (to_win)
+                if (to_win && !where_default)
+                    dprintf(fd_report, "%s\tblocked\tRoom\tThere is not enough room to save your files: they "
+                            "need about %s MB and there is only %s MB free.\n", stage, c, b);
+                else if (to_win)
                     dprintf(fd_report, "%s\tblocked\tRoom\tThere is not enough room in Windows for your files: "
                             "they need about %s MB and Windows has %s MB free. Free some space in Windows, "
                             "then try again.\n", stage, c, b);
@@ -1050,7 +1224,8 @@ int main(int argc, char **argv)
                             "together), but only %s MB is free. Nothing was copied.\n", stage, a, c, b);
             }
             if (fd_plain >= 0)
-                dprintf(fd_plain, to_win ? "There is not enough room in Windows for your files.\n"
+                dprintf(fd_plain, to_win ? (where_default ? "There is not enough room in Windows for your files.\n"
+                                                         : "There is not enough room to save your files.\n")
                                          : "There is not enough room on this computer for your files.\n");
             fprintf(stderr, "  -> not enough room: need %s MB, have %s MB\n", c, b);
             return 4;
@@ -1071,7 +1246,7 @@ int main(int argc, char **argv)
             clean_temps(dfd);
         }
         rel[0] = '\0';
-        walk(j, j->srcfd, dfd, rel, 0, 0, 1);
+        walk(j, j->srcfd, dfd, rel, 0, "", 0, 1);
         commit();
         if (dfd >= 0) close(dfd);
     }

@@ -6,11 +6,11 @@
 #   sh tests/insystemd.sh       (from src/ferry; needs docker)
 set -eu
 REPO=$(cd "$(dirname "$0")/../../.." && pwd)
-IMG=ferry-systemd:3
+IMG=ferry-systemd:4
 docker image inspect "$IMG" >/dev/null 2>&1 || docker build -q -t "$IMG" - <<'DOCKER'
 FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv \
-    dbus ntfs-3g dosfstools gcc make libc6-dev python3 && rm -rf /var/lib/apt/lists/*
+    dbus ntfs-3g dosfstools exfatprogs gcc make libc6-dev python3 && rm -rf /var/lib/apt/lists/*
 DOCKER
 C=$(docker run -d --privileged --cgroupns=private --tmpfs /run --tmpfs /run/lock \
     --memory 2g -v "$REPO":/repo:ro "$IMG" /sbin/init)

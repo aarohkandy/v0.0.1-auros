@@ -175,6 +175,32 @@ gate checks every ELF in /usr/lib/ferry).
 7. DONE `docs/FERRY.md` rewritten to match the code (passwords, copier,
    browser, way back, signal, tests).
 
+## Handover volume and USB stick (lead's product decision, 2026-10-23)
+
+For BitLocker PCs (and later all PCs) the copy-back is a handover: Ferry
+writes her AurOS folders onto an exFAT volume A2 makes from AurOS's own
+space; A2's Windows-side task copies from it into her profile with Windows'
+own driver and checks every hash before AurOS is removed. DONE:
+`ferry back` picks the volume (label `AUROSHANDOV`, `FERRY_HANDOVER_DEV`, or
+`--to`), `ferry-handover` + `ferry-copy --manifest/--where/--reserve/
+--cluster/--print-need` (SHA-256 per file, real destination paths, cluster-
+aware sizing), read-back from a fresh read-only mount before DONE,
+`ferry handover --need`, `ferry stick list|DEV`, `tests/verify-handover.sh`
+(the Windows side's checks) and `tests/mkhandover.sh` (a fixture). The
+contract is in docs/FERRY.md. Proof: run.sh (tamper, read-back, resume,
+room, shortcut, stick, `--need`) and sandbox.sh scenario 5 (a real exFAT
+loop volume through answer.sh's putback, unmounted afterwards; a too-small
+one stops; a real FAT stick). Agreed with A2 by message: the label is
+AUROSHANDOV; Windows identifies the volume by exFAT + label +
+`AurOS-handover/version`; A2 attaches the loop device and detaches it after
+`ferry back` returns; `--need` counts manifest, DONE, received.tsv and
+1 MiB; names in PATH are already Windows-legal; DONE is the only "complete".
+Open for A2/C: the put-back step must create the volume before `ferry back`
+returns anything (answer.sh's `back_files` runs `ferry back`; A2 wraps it);
+C needs a "Save my files to a USB stick first" screen calling
+`ferry stick list` and `ferry stick DEV --plain` (result in
+`/run/auros-answer/ferry.done`, kind=stick).
+
 ## Disk hygiene (rules this stream learned the hard way)
 
 `tests/run.sh` once left a 340 MB `/tmp/ferrytest.*` per mutant on homebase

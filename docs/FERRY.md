@@ -411,6 +411,59 @@ opened · `1` failed. `answer.sh` arms the restart only on `0`; any other
 answers `result=failed` with a plain `note=` and `code=N`, and Windows is
 not put back.
 
+**The handover volume (BitLocker PCs, and later every PC).** Windows' own
+drive cannot be written from AurOS when it is locked, so the way back can
+instead be a handover: `ferry back` (unchanged entry point) looks for a
+volume labelled `AUROSHANDOV` (an exFAT label holds 11 characters), or one
+named by `FERRY_HANDOVER_DEV` / `ferry back --to DEV`, and when there is one
+it writes her files there instead of into Windows. The put-back step makes
+the volume (`ferry handover --need` says how many bytes it must hold: the
+files in whole 128 KiB clusters, the manifest, DONE and its neighbours, the
+`received.tsv` Windows adds, and 1 MiB), attaches it, and afterwards
+detaches it; `ferry back` leaves it **unmounted**. The copier runs as the
+AurOS user (it is mounted with that user's uid/gid by root; nothing about the
+loop device needs to be readable by her). The layout is a contract between
+Ferry and the Windows consumer:
+
+```
+  AurOS-handover/version            1
+  AurOS-handover/manifest.tsv       #ferry-handover<TAB>1, #aur-user, #created,
+                                    optional #windows-user; then one row per file:
+                                    FOLDER  PATH  SIZE  SHA256  MTIME   (tab-separated)
+  AurOS-handover/manifest.sha256    sha256 of manifest.tsv
+  AurOS-handover/files/<FOLDER>/<PATH>
+  AurOS-handover/DONE               written LAST: ok, files=N, bytes=B, at=...
+  AurOS-handover/received.tsv       written by WINDOWS (PATH, sha256, ok), never by Ferry
+```
+
+`PATH` is already a legal Windows name (illegal characters replaced, no
+trailing dot or space, `CON`/`NUL`/`COM1`… prefixed, names that differ only
+in capitals made distinct), so the consumer renames nothing. **DONE is the
+only word for complete**, and it is written only after: every file was copied
+through a hidden temporary, the volume was flushed and UNMOUNTED, mounted
+again READ-ONLY (so nothing is served from memory), and every file read back
+from it matched the SHA-256 taken from her disk while it was copied. A file
+damaged on its way to the disk is found while AurOS is still there. Resumable:
+run it again and what is in place is recognised (and re-hashed from her disk
+for the manifest); a half-written file is never visible; DONE is removed at
+the start of every run. `tests/verify-handover.sh VOLUME` is the Windows side's
+checks in shell (the reference for the PowerShell: DONE, manifest hash,
+sizes and hashes, no stray files, legal names), and `tests/mkhandover.sh DIR`
+builds a fixture full of awkward names.
+
+**A USB stick** ("Save my files to a USB stick first"): `ferry stick list`
+names the sticks she could use (one per line: device, a plain name and size,
+bytes, file system; exFAT, FAT or NTFS only) and `ferry stick DEVICE
+[--plain]` saves onto one with the same copier and the same read-back, in a
+folder she can open anywhere: `From AurOS/<Folder>/...`, `MANIFEST.tsv` and
+`Read me.txt`. No DONE (nothing consumes it), kind=stick in the signal.
+
+Exit codes and the signal are those of `ferry back`: 0 saved and checked, 2
+some not (or a folder that is a shortcut), 4 not enough room, 5 the volume
+would not open, 1 failed or what was read back did not match. Proven under
+the unit's real sandbox on real exFAT and FAT loop volumes (tests/sandbox.sh,
+scenario 5).
+
 **The completion signal** (for the desktop, which asks "Can you see your
 photos?" only after a copy has finished): `ferry run` and `ferry back`
 remove `/run/auros-answer/ferry.done` when they start and write it, whole,

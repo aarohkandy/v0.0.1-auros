@@ -424,6 +424,31 @@ mount_rw() {
     return 0
 }
 
+# A volume Ferry saves her files onto instead of into Windows' own: the
+# handover volume (exFAT, label AUROSHANDOV) or a USB stick. The kernel's
+# exfat/vfat drivers and ntfs-3g give every file to one user (uid=/gid=)
+# so she can write without root; anything else is refused.
+mount_vol() { # DEV MNT rw|ro UID GID
+    _dev=$1 _mnt=$2 _mode=$3 _u=$4 _g=$5
+    mkdir -p "$_mnt" || return 1
+    case "$(blkid -o value -s TYPE "$_dev" 2>/dev/null)" in
+        exfat) _t=exfat ;;
+        vfat)  _t=vfat ;;
+        ntfs)  _t=ntfs-3g ;;
+        *)     return 1 ;;
+    esac
+    mount -t "$_t" -o "$_mode,noatime,nosuid,nodev,noexec,uid=$_u,gid=$_g,umask=022" "$_dev" "$_mnt" 2>/dev/null || return 1
+    if [ "$_mode" = rw ] && is_ro_mount "$_mnt"; then umount "$_mnt" 2>/dev/null || true; return 1; fi
+    return 0
+}
+
+# Where the handover volume is: named (FERRY_HANDOVER_DEV, or --to), else
+# the volume labelled AUROSHANDOV (an exFAT label holds 11 characters).
+find_handover() {
+    if [ -n "${FERRY_HANDOVER_DEV:-}" ]; then printf '%s\n' "$FERRY_HANDOVER_DEV"; return 0; fi
+    blkid -L AUROSHANDOV 2>/dev/null
+}
+
 # ── The completion signal. The desktop asks "Can you see your photos?"
 #    only after the copy has finished, and needs a way to know that
 #    which is not "the log stopped changing". Written when a run is over

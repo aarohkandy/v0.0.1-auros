@@ -650,6 +650,112 @@ eq "only ferry (for ferry back) and the common file call mount_rw" \
 eq "...and the writable mount is asked for in exactly one place" \
    "$(cd "$FERRY" && grep -c 'FERRY_RW=1' ferry)" 1
 
+echo "the handover volume and the USB stick (her files, read back, before AurOS goes):"
+HV="$TMP/hv"; mkdir -p "$HV"; hers "$HV"
+HVE() { _n=$1; shift; env FERRY_CHOICES="$TMP/run-choices" FERRY_STATE="$TMP/state-hv$_n" FERRY_HOME="$AH" FERRY_OWNER="$OWNER" \
+              FERRY_SIGNAL="$TMP/hv$_n.done" "$@"; }
+HVE 1 ferry back --plain --to "$HV" > "$TMP/hv1.out" 2>&1
+eq "ferry back onto a handover volume: exit 0" "$?" 0
+H1="$HV/AurOS-handover"
+assert "...the layout Windows expects (version, manifest, its hash, files/, DONE)" \
+    sh -c "[ \"\$(cat '$H1/version')\" = 1 ] && [ -f '$H1/manifest.tsv' ] && [ -f '$H1/manifest.sha256' ] && [ -d '$H1/files/Pictures' ] && head -1 '$H1/DONE' | grep -qx ok"
+assert "...and the Windows side's reference checks pass (tests/verify-handover.sh)" sh "$HERE/verify-handover.sh" "$HV"
+eq "...the photo's hash in the manifest is the hash of the file on HER disk" \
+   "$(awk -F'\t' '$2 == "2024/holiday.jpg" {print $4}' "$H1/manifest.tsv")" "$(sha256sum "$AH/Pictures/2024/holiday.jpg" | cut -d' ' -f1)"
+eq "...DONE counts what the manifest lists" \
+   "$(sed -n 's/^files=//p' "$H1/DONE")" "$(grep -vc '^#' "$H1/manifest.tsv")"
+assert "...Windows-illegal names are already legal in the manifest (nothing for Windows to rename)" \
+    sh -c "! awk -F'\t' '!/^#/ {print \$2}' '$H1/manifest.tsv' | grep -q '[:?*<>|\"]' && grep -q '_CON.txt' '$H1/manifest.tsv'"
+assert "...the screen is told it is checked and ready for Windows (not 'in Windows')" \
+    sh -c "tail -1 '$TMP/hv1.out' | grep -qE '^Your [0-9]+ files are saved and checked, ready for Windows\.\$'"
+assert "...the signal says back, ok" sh -c "grep -qx kind=back '$TMP/hv1.done' && grep -qx result=ok '$TMP/hv1.done'"
+# Windows opens the volume with a partly-damaged manifest: not complete.
+cp -r "$HV" "$TMP/hv-bad"; echo "tampered" >> "$TMP/hv-bad/AurOS-handover/manifest.tsv"
+refute "a manifest that was changed after it was made is not accepted" sh "$HERE/verify-handover.sh" "$TMP/hv-bad"
+cp -r "$HV" "$TMP/hv-bad2"; f=$(find "$TMP/hv-bad2/AurOS-handover/files" -name 'letter.txt' | head -1); echo x >> "$f"
+refute "a file changed after it was written is not accepted" sh "$HERE/verify-handover.sh" "$TMP/hv-bad2"
+cp -r "$HV" "$TMP/hv-bad3"; rm -f "$TMP/hv-bad3/AurOS-handover/DONE"
+refute "no DONE: not complete, not accepted" sh "$HERE/verify-handover.sh" "$TMP/hv-bad3"
+rm -rf "$TMP/hv-bad" "$TMP/hv-bad2" "$TMP/hv-bad3"
+
+# The read-back catches what the copy cannot see: a file damaged on its way to the disk.
+HV2="$TMP/hv2"; mkdir -p "$HV2"; hers "$HV2"
+HVE 2 env FERRY_TEST_CORRUPT=1 ferry-handover --dir "$HV2" --home "$AH" --owner "$OWNER" >/dev/null 2>&1
+eq "a file damaged after it was written: found by the read-back (exit 1)" "$?" 1
+refute "...and the volume is NOT marked complete (no DONE)" test -e "$HV2/AurOS-handover/DONE"
+# A shortcut where a folder should be is never silently left out.
+AHL2="$TMP/aurhome-link2"; mkdir -p "$AHL2/Pictures"; echo p > "$AHL2/Pictures/p.jpg"; ln -s /etc "$AHL2/Documents"; hers "$AHL2"
+HV3="$TMP/hv3"; mkdir -p "$HV3"; hers "$HV3"
+env FERRY_STATE="$TMP/state-hv3" FERRY_HOME="$AHL2" FERRY_OWNER="$OWNER" ferry-handover --dir "$HV3" >/dev/null 2>&1
+eq "a shortcut where Documents should be: some could not be saved (exit 2)" "$?" 2
+refute "...and not marked complete" test -e "$HV3/AurOS-handover/DONE"
+# No room on the volume: nothing, and not complete.
+HV4="$TMP/hv4"; mkdir -p "$HV4"; hers "$HV4"
+env FERRY_ROOM_BYTES=500000 FERRY_STATE="$TMP/state-hv4" FERRY_HOME="$AH" FERRY_OWNER="$OWNER" \
+    ferry-handover --dir "$HV4" >/dev/null 2>&1
+eq "not enough room on the volume: exit 4" "$?" 4
+refute "...and not marked complete" test -e "$HV4/AurOS-handover/DONE"
+# How big the volume must be.
+_need=$(env FERRY_STATE="$TMP/state-need" FERRY_HOME="$AH" FERRY_OWNER="$OWNER" FERRY_CLUSTER=4096 ferry handover --need)
+_used=$(du -s --block-size=1 "$H1/files" | cut -f1)
+assert "ferry handover --need is a number at least as big as the volume turned out to be ($_need >= $_used)" \
+    test "$_need" -ge "$_used"
+eq "...and it is 0 when there is nothing to save" \
+   "$(env FERRY_STATE="$TMP/state-need2" FERRY_HOME="$AHE" FERRY_OWNER="$OWNER" ferry handover --need)" 0
+# Resumable: the copier killed in the middle, run again.
+HV5="$TMP/hv5"; mkdir -p "$HV5"; hers "$HV5"
+AHB="$TMP/aurhome-big"; mkdir -p "$AHB/Pictures" "$AHB/Documents"
+python3 - "$AHB" <<'PY'
+import os, sys
+r = sys.argv[1]
+blob = os.urandom(1 << 19)
+for i in range(300):
+    with open(os.path.join(r, "Pictures", "p%03d.jpg" % i), "wb") as f:
+        f.write(blob[: 20000 + i * 5])
+PY
+hers "$AHB"
+env FERRY_BATCH_FILES=10 FERRY_STATE="$TMP/state-hv5" FERRY_HOME="$AHB" FERRY_OWNER="$OWNER" \
+    ferry-handover --dir "$HV5" >/dev/null 2>&1 &
+_hp=$!
+_i=0; while [ "$_i" -lt 2000 ]; do
+    _got=$(find "$HV5" -type f -name 'p*.jpg' -not -name '.ferrypart-*' 2>/dev/null | wc -l | tr -d ' ')
+    [ "$_got" -ge 40 ] && break; _i=$((_i+1)); sleep 0.002
+done
+pkill -KILL -P "$_hp" 2>/dev/null; kill -KILL "$_hp" 2>/dev/null; wait "$_hp" 2>/dev/null
+refute "(the first go was stopped before it finished: no DONE)" test -e "$HV5/AurOS-handover/DONE"
+env FERRY_STATE="$TMP/state-hv5" FERRY_HOME="$AHB" FERRY_OWNER="$OWNER" ferry-handover --dir "$HV5" >/dev/null 2>&1
+eq "run again after being stopped: finishes (exit 0)" "$?" 0
+assert "...complete and every hash right, as the Windows side checks" sh "$HERE/verify-handover.sh" "$HV5"
+eq "...300 files once each" "$(find "$HV5/AurOS-handover/files" -type f | wc -l | tr -d ' ')" 300
+eq "...none a second copy under another name" "$(find "$HV5/AurOS-handover/files" -name '*(from AurOS*' | wc -l | tr -d ' ')" 0
+rm -rf "$AHB" "$HV5"
+
+# The USB stick: a folder she can open on any computer.
+ST="$TMP/stick"; mkdir -p "$ST"; hers "$ST"
+HVE 6 ferry stick "$ST" --plain > "$TMP/stick.out" 2>&1
+eq "ferry stick: exit 0" "$?" 0
+assert "...her folders are on it, in a folder called From AurOS" test -f "$ST/From AurOS/Pictures/2024/holiday.jpg"
+assert "...with a note and a manifest" sh -c "[ -f '$ST/From AurOS/Read me.txt' ] && [ -f '$ST/From AurOS/MANIFEST.tsv' ]"
+refute "...and no DONE (it is not a handover for Windows to consume)" test -e "$ST/From AurOS/DONE"
+assert "...every file on it matches its hash" \
+    sh -c "cd '$ST/From AurOS' && awk -F'\t' '!/^#/ {printf \"%s  %s/%s\n\", \$4, \$1, \$2}' MANIFEST.tsv | sha256sum -c --quiet"
+assert "...she is told it is on the USB stick" sh -c "tail -1 '$TMP/stick.out' | grep -qE '^Your [0-9]+ files are saved on the USB stick'"
+mkdir -p "$TMP/fakebin"
+cat > "$TMP/fakebin/lsblk" <<'LS'
+#!/bin/sh
+cat <<'OUT'
+NAME="sda" SIZE="256060514304" RM="0" TRAN="sata" FSTYPE="" LABEL="" MODEL="SAMSUNG\x20SSD" TYPE="disk"
+NAME="sda2" SIZE="255000000000" RM="0" TRAN="" FSTYPE="ntfs" LABEL="Windows" MODEL="" TYPE="part"
+NAME="sdb" SIZE="15518924800" RM="1" TRAN="usb" FSTYPE="" LABEL="" MODEL="DataTraveler\x203.0" TYPE="disk"
+NAME="sdb1" SIZE="15500000000" RM="1" TRAN="usb" FSTYPE="exfat" LABEL="HOLIDAY" MODEL="" TYPE="part"
+NAME="sdc1" SIZE="7800000000" RM="1" TRAN="usb" FSTYPE="ext4" LABEL="linuxstick" MODEL="" TYPE="part"
+OUT
+LS
+chmod +x "$TMP/fakebin/lsblk"
+eq "ferry stick list names only the sticks she could use, in plain words" \
+   "$(PATH="$TMP/fakebin:$PATH" ferry stick list | tr '\t' '|' | tr '\n' ';')" "/dev/sdb1|HOLIDAY (16 GB)|15500000000|exfat;"
+rm -rf "$HV" "$HV2" "$HV3" "$HV4" "$ST"
+
 echo "ferry run says what happened (answer.sh turns it into her screen):"
 # The installer's choices stand, so no stage tries to change this
 # machine's clock, language or keyboard while the tests run.

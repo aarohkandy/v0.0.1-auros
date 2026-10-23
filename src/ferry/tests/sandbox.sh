@@ -331,6 +331,79 @@ EOB
 fi
 rm -f "$IMG"
 
+# ── 5. the handover volume and a USB stick, for real ─────────────────
+#  A2's put-back step makes an exFAT volume (label AUROSHANDOV), attaches
+#  it as a loop device and exports FERRY_HANDOVER_DEV; `ferry back` then
+#  writes her files onto it, reads them back from a fresh read-only mount,
+#  and only then writes DONE. It must leave the volume UNMOUNTED (the
+#  caller detaches it). Checked with the same reference verifier the
+#  Windows side's checks are tested against.
+echo "5. the handover volume (exFAT) and a USB stick:"
+refill_home() {
+    for _f in Desktop Documents Downloads Music Pictures Videos; do rm -rf "$HR/$_f"; mkdir -p "$HR/$_f"; done
+    mkdir -p "$HR/Pictures/2024"
+    head -c 2500000 /dev/urandom > "$HR/Pictures/2024/holiday.jpg"
+    echo "my new letter" > "$HR/Documents/letter.txt"; echo "colon" > "$HR/Documents/a:b.txt"
+    chown -R ferryher: "$HR"
+}
+refill_home
+PHOTO=$(sha256sum "$HR/Pictures/2024/holiday.jpg" | cut -d' ' -f1)
+IMG=/srv/handover.img
+rm -f "$IMG"; truncate -s 64M "$IMG"
+LOOP=$(losetup -f --show "$IMG") || { bad "no loop device"; LOOP=""; }
+[ -n "$LOOP" ] && trap 'umount "$MP" 2>/dev/null; losetup -d "$LOOP" 2>/dev/null' EXIT INT TERM
+if [ -n "$LOOP" ] && mkfs.exfat -L AUROSHANDOV "$LOOP" >/dev/null 2>&1; then
+    R=$(run_answer "probe:/dev/null" FERRY_HANDOVER_DEV="$LOOP")
+    if printf '%s\n' "$R" | grep -qx 'result=ok'; then ok "Put Windows back with a handover volume: answers ok"
+    else bad "Put Windows back with a handover volume: answers ok"; printf '%s\n' "$R" | sed 's/^/  | /'
+         tail -6 /run/auros-answer/putback.log | sed 's/^/  | /'; tail -12 /var/lib/ferry/ferry.log | sed 's/^/  | ferry.log: /'; fi
+    if [ -e /var/lib/auros/rebooted ]; then ok "...and the restart was armed"; else bad "...and the restart was armed"; fi
+    if grep -q "$LOOP" /proc/mounts; then bad "...and the volume is left UNMOUNTED (A2 detaches it next)"; else ok "...and the volume is left UNMOUNTED (A2 detaches it next)"; fi
+    mkdir -p "$MP"; mount -t exfat -o ro "$LOOP" "$MP" 2>/dev/null || bad "could not mount the volume to look"
+    V=$(sh "$REPO/src/ferry/tests/verify-handover.sh" "$MP" 2>&1); case "$V" in "ok "*) ok "...the Windows side's reference checks pass: $V" ;; *) bad "...the Windows side's reference checks pass"; printf '%s\n' "$V" | sed 's/^/  | /' ;; esac
+    eq "...THE PHOTO IS ON THE VOLUME, byte for byte" \
+       "$(sha256sum "$MP/AurOS-handover/files/Pictures/2024/holiday.jpg" 2>/dev/null | cut -d' ' -f1)" "$PHOTO"
+    eq "...with the hash the manifest promised" \
+       "$(awk -F'\t' '$2 == "2024/holiday.jpg" {print $4}' "$MP/AurOS-handover/manifest.tsv")" "$PHOTO"
+    eq "...a name Windows cannot hold arrived already legal" "$(cat "$MP/AurOS-handover/files/Documents/a_b.txt" 2>/dev/null)" colon
+    umount "$MP"
+    tail -1 /run/auros-answer/putback.log | grep -qE 'saved and checked, ready for Windows' &&
+        ok "...and the screen's last line says her files are saved and checked, ready for Windows" ||
+        bad "...and the screen's last line says her files are saved and checked, ready for Windows"
+    grep -qx 'saved=2' /run/auros-answer/result 2>/dev/null || printf '%s\n' "$R" | grep -q '^saved=[1-9]' &&
+        ok "...and the answer says how many were saved" || bad "...and the answer says how many were saved"
+
+    # A volume that is too small: stops, nothing armed, not complete.
+    losetup -d "$LOOP"; truncate -s 12M "$IMG"; LOOP=$(losetup -f --show "$IMG")
+    mkfs.exfat -L AUROSHANDOV "$LOOP" >/dev/null 2>&1
+    head -c 30000000 /dev/urandom > "$HR/Pictures/2024/big.mp4"; chown ferryher: "$HR/Pictures/2024/big.mp4"
+    R=$(run_answer "probe:/dev/null" FERRY_HANDOVER_DEV="$LOOP")
+    if printf '%s\n' "$R" | grep -qx 'code=4'; then ok "a handover volume that is too small: stops (failed, code 4)"
+    else bad "a handover volume that is too small: stops (failed, code 4)"; printf '%s\n' "$R" | sed 's/^/  | /'; fi
+    if armed; then bad "...and Windows was NOT put back"; else ok "...and Windows was NOT put back"; fi
+    mount -t exfat -o ro "$LOOP" "$MP" 2>/dev/null
+    if [ -e "$MP/AurOS-handover/DONE" ]; then bad "...and the volume is not marked complete"; else ok "...and the volume is not marked complete"; fi
+    umount "$MP"
+    if grep -q "$LOOP" /proc/mounts; then bad "...and the volume is left unmounted"; else ok "...and the volume is left unmounted"; fi
+
+    # The USB stick: a FAT stick, as she would buy one.
+    losetup -d "$LOOP"; rm -f "$HR/Pictures/2024/big.mp4"; truncate -s 64M "$IMG"; LOOP=$(losetup -f --show "$IMG")
+    mkfs.vfat -F 32 -n HOLIDAY "$LOOP" >/dev/null 2>&1
+    FERRY_STATE=/var/lib/ferry-stick FERRY_OWNER=ferryher FERRY_HOME="$HR" FERRY_SIGNAL=/tmp/stick.done \
+        PATH="$REPO/src/ferry:$REPO/src/ferry/build:$PATH" ferry stick "$LOOP" --plain > /tmp/stick.out 2>&1
+    eq "ferry stick onto a real FAT stick: exit 0" "$?" 0
+    mount -t vfat -o ro "$LOOP" "$MP" 2>/dev/null
+    eq "...the photo is on the stick, byte for byte" \
+       "$(sha256sum "$MP/From AurOS/Pictures/2024/holiday.jpg" 2>/dev/null | cut -d' ' -f1)" "$PHOTO"
+    [ -f "$MP/From AurOS/Read me.txt" ] && [ -f "$MP/From AurOS/MANIFEST.tsv" ] && ok "...with a note and a manifest" || bad "...with a note and a manifest"
+    umount "$MP"
+    tail -1 /tmp/stick.out | grep -q 'saved on the USB stick' && ok "...and she is told it is on the USB stick" || bad "...and she is told it is on the USB stick"
+    losetup -d "$LOOP"; LOOP=""
+else
+    bad "could not make the exFAT volume (is exfatprogs here, and the kernel's exfat?)"
+fi
+rm -f "$IMG"
+
 echo
 printf 'sandbox tests: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
