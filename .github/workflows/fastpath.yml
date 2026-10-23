@@ -470,7 +470,10 @@ jobs:
         shell: pwsh
         run: |
           .\exe\aurbridge.exe putback-script "$env:RUNNER_TEMP\shipped.ps1"
-          if ((Get-FileHash "$env:RUNNER_TEMP\shipped.ps1").Hash -ne (Get-FileHash src\aurbridge\putback.ps1).Hash) { throw "the installer carries a different script" }
+          # (the checkout on Windows has CRLF line ends; the installer was built from LF)
+          $a = (Get-Content -Raw "$env:RUNNER_TEMP\shipped.ps1") -replace "`r`n", "`n"
+          $b = (Get-Content -Raw src\aurbridge\putback.ps1) -replace "`r`n", "`n"
+          if ($a -ne $b) { throw "the installer carries a different script" }
           "ok: the shipped script is the one in the source"
       - name: the startup task is registered the way the install registers it, and taken away again
         shell: pwsh

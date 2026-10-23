@@ -97,7 +97,8 @@ EOF
 chmod +x "$T/ferry"
 export FAKE_HOME="$T/home"
 H="rootfs/usr/lib/auros/handover.sh"
-run() { AUROS_STATE="$STATE" AUROS_FERRY="$T/ferry" "$@"; }
+# (the real reserve is 2 GiB; this disk is 1 GiB)
+run() { AUROS_HANDOVER_RESERVE=${AUROS_HANDOVER_RESERVE:-67108864} AUROS_STATE="$STATE" AUROS_FERRY="$T/ferry" "$@"; }
 
 # ── the path that has to work ───────────────────────────────────────
 DEV=$(run sh "$H" prepare 2>"$T/err"); rc=$?
@@ -106,13 +107,14 @@ DEV=$(run sh "$H" prepare 2>"$T/err"); rc=$?
 [ "$(blkid -o value -s LABEL "$DEV")" = AUROSHANDOV ] && [ "$(blkid -o value -s TYPE "$DEV")" = exfat ] \
     && ok "...it is exFAT, labelled AUROSHANDOV" || bad "...it is exFAT, labelled AUROSHANDOV" "$(blkid "$DEV")"
 SZ=$(stat -c %s "$STATE/handover.img")
-[ "$SZ" -ge $((256*1048576)) ] && ok "...at least 256 MiB, and a whole number of MiB ($SZ)" || bad "...at least 256 MiB" "$SZ"
+[ "$SZ" -ge $((32*1048576)) ] && [ $((SZ % 1048576)) = 0 ] && ok "...a whole number of MiB, at least 32 ($SZ)" || bad "...a whole number of MiB, at least 32" "$SZ"
 FERRY_HANDOVER_DEV="$DEV" "$T/ferry" back
 REC=$(run sh "$H" finish 2>"$T/err"); rc=$?
 [ "$rc" = 0 ] && ok "finish: gives a record ($REC)" || { bad "finish: gives a record" "exit $rc: $(cat "$T/err")"; exit 1; }
 [ -z "$(losetup -j "$STATE/handover.img" | cut -d: -f1)" ] && ok "...and the loop device is gone" || bad "...and the loop device is gone"
 FIRST=${REC%%,*}; REST=${REC#*,}; COUNT=${REST%%,*}; SHA=${REST#*,}
 umount "$T/root"          # AurOS is "off": nothing but the disk image is read from here on
+losetup -d "$LOOP"; LOOP=""
 # The script's own proof is not the test. This reads the DISK IMAGE FILE.
 GOT=$(dd if="$T/disk.img" bs=512 skip="$FIRST" count="$COUNT" status=none | sha256sum | cut -d' ' -f1)
 [ "$GOT" = "$SHA" ] && ok "the disk image, read at that address, hashes to the record" || bad "the disk image, read at that address, hashes to the record" "$GOT vs $SHA"
@@ -136,18 +138,43 @@ RE=$(sgdisk -i 2 "$T/disk.img" | sed -n 's/^Last sector: \([0-9]*\).*/\1/p')
 [ $((FIRST % 8)) = 0 ] && ok "...and is aligned to 4096 bytes" || bad "...and is aligned to 4096 bytes" "$FIRST"
 
 # ── refusals ────────────────────────────────────────────────────────
+LOOP=$(losetup -fP --show "$T/disk.img"); lb=$(basename "$LOOP")
+for n in 1 2; do [ -e "/dev/${lb}p$n" ] || mknod "/dev/${lb}p$n" b $(sed 's/:/ /' "/sys/class/block/${lb}p$n/dev") 2>/dev/null; done
+PART="/dev/${lb}p2"
 mount "$PART" "$T/root"
 rm -f "$STATE/handover.img" "$STATE/handover.dev"
-run env AUROS_HANDOVER_RESERVE=999999999999 sh "$H" prepare >/dev/null 2>&1; rc=$?
+
+# ── a file that was never written is caught by reading the disk ───────
+# Stale bytes on the disk first, so that "allocated but never written" differs from zeros.
+head -c 100000000 /dev/urandom > "$STATE/junk" 2>/dev/null; sync; rm -f "$STATE/junk"; sync
+sed 's#^    dd if=/dev/zero of="\$IMG" bs=1M count=\$((size / MIB)) conv=fsync status=none#    fallocate -l $size "$IMG"#' "$H" > "$T/h-sparse.sh"
+cmp -s "$H" "$T/h-sparse.sh" && bad "setup: the sparse variant differs from the script" "the dd line was not found"
+DEV=$(run sh "$T/h-sparse.sh" prepare 2>"$T/err") || true
+if [ -n "${DEV:-}" ]; then
+    FERRY_HANDOVER_DEV="$DEV" "$T/ferry" back
+    # What a never-written block holds on the disk is whatever was there before. Put
+    # something there, at the very end of the file's blocks, behind the filesystem's back.
+    set -- $(filefrag -v "$STATE/handover.img" | awk '/^ *[0-9]+:/ { gsub(/[.:]+/, " "); s = $4; e = $5; n++ } END { print s, e, n }')
+    ENDBLK=$2
+    head -c 1048576 /dev/urandom | dd of="$LOOP" bs=4096 seek=$(( $(cat /sys/class/block/${lb}p2/start) / 8 + ENDBLK - 255 )) conv=notrunc status=none
+    run sh "$T/h-sparse.sh" finish >/dev/null 2>"$T/err"; rc=$?
+    [ "$rc" != 0 ] && ok "a sparse handover file: finish refuses (exit $rc), the disk does not hold it" \
+        || bad "a sparse handover file: finish refuses" "it printed a record"
+else
+    bad "a sparse handover file: the variant could not even start" "$(cat "$T/err" 2>/dev/null)"
+fi
+run sh "$H" cancel
+
+AUROS_HANDOVER_RESERVE=999999999999 run sh "$H" prepare >/dev/null 2>&1; rc=$?
 [ "$rc" = 3 ] && ok "no room beyond AurOS's reserve: exit 3" || bad "no room beyond AurOS's reserve: exit 3" "exit $rc"
 [ ! -e "$STATE/handover.img" ] && ok "...and nothing is left behind" || bad "...and nothing is left behind"
 
 # A root in pieces: fill the free space with small files and free every other one.
 # (Reserve 0 so the room is judged only by the pieces.)
-i=0; while [ "$i" -lt 120000 ] && head -c 4096 /dev/zero > "$STATE/f$i" 2>/dev/null; do i=$((i+1)); done
+i=0; while [ "$i" -lt 120000 ] && head -c 4096 /dev/zero > "$STATE/f$i" 2>/dev/null; do i=$((i+1)); done 2>/dev/null
 n=0; while [ "$n" -lt "$i" ]; do rm -f "$STATE/f$n"; n=$((n+2)); done
 sync
-run env AUROS_HANDOVER_RESERVE=0 FAKE_NEED=300000000 sh "$H" prepare >/dev/null 2>&1; rc=$?
+AUROS_HANDOVER_RESERVE=0 FAKE_NEED=300000000 run sh "$H" prepare >/dev/null 2>&1; rc=$?
 [ "$rc" = 4 ] || [ "$rc" = 3 ] && ok "a root whose free space is in pieces: refused (exit $rc)" || bad "a root whose free space is in pieces: refused" "exit $rc"
 [ ! -e "$STATE/handover.img" ] && ok "...and nothing is left behind" || bad "...and nothing is left behind"
 rm -f "$STATE"/f*
@@ -159,18 +186,6 @@ PATH="$T/shim:$PATH" run sh "$H" prepare >/dev/null 2>&1; rc=$?
 [ "$rc" = 5 ] && ok "a root on an encrypted volume: exit 5 (the USB path)" || bad "a root on an encrypted volume: exit 5" "exit $rc"
 [ ! -e "$STATE/handover.img" ] && ok "...and nothing was made" || bad "...and nothing was made"
 
-# ── a file that was never written is caught by reading the disk ───────
-sed 's#^    dd if=/dev/zero of="\$IMG" bs=1M count=\$((size / MIB)) conv=fsync status=none#    truncate -s $size "$IMG"#' "$H" > "$T/h-sparse.sh"
-cmp -s "$H" "$T/h-sparse.sh" && bad "setup: the sparse variant differs from the script" "the dd line was not found"
-DEV=$(run sh "$T/h-sparse.sh" prepare 2>/dev/null) || true
-if [ -n "${DEV:-}" ]; then
-    FERRY_HANDOVER_DEV="$DEV" "$T/ferry" back
-    run sh "$T/h-sparse.sh" finish >/dev/null 2>"$T/err"; rc=$?
-    [ "$rc" != 0 ] && ok "a sparse handover file: finish refuses (exit $rc), the disk does not hold it" \
-        || bad "a sparse handover file: finish refuses" "it printed a record"
-else
-    ok "a sparse handover file: not even a single extent, refused up front"
-fi
 run sh "$H" cancel
 
 echo

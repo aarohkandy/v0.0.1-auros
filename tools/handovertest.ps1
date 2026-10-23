@@ -113,7 +113,8 @@ function New-Scenario([string]$name, [bool]$Done = $true, $Rows = $null, [string
     $orig = $p3.Offset - $p1.Offset - 2MB     # a little slack for alignment
     $sd = Join-Path $work $name
     New-Item -ItemType Directory $sd | Out-Null
-    "      layout: " + ((Get-Partition -DiskNumber $n | ForEach-Object { "#$($_.PartitionNumber) $($_.Type) off=$($_.Offset) size=$($_.Size)" }) -join '; ')
+    $d = Get-Disk -Number $n         # (a RAW disk had no GUID when it was first read)
+    Write-Host ("      layout: " + ((Get-Partition -DiskNumber $n | ForEach-Object { "#$($_.PartitionNumber) $($_.Type) off=$($_.Offset) size=$($_.Size)" }) -join '; ') + " guid=$($d.Guid)")
     $cfg = @{ disk_guid = $d.Guid; win_offset = $p1.Offset; shrunk = $p1.Size; orig = $orig;
               hib_file_on = 0; hiberboot = -1; task = 'AurOS put-back-test' } | ConvertTo-Json
     $params = Join-Path $sd 'putback.json'
