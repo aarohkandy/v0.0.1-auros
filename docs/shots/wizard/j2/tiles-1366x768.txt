@@ -1,0 +1,366 @@
+== /out/j2/tiles-1366x768-1-asks.png
+   Internet
+   Websites, news and shopping
+   Your files
+   Everything you have saved, in folders
+   Documents
+   Read PDFs and other documents
+   Notes
+   Write and read plain notes
+   Photos
+   Look at your pictures
+   Music and video
+   Play a song or a film
+   Get more programs
+   Find and add programs to this computer
+   Page 1 of 2
+   AurOS
+   08:00
+   Thu 23 Oct
+   What would you like to do?
+   Home
+   Does everything work?
+   Check two things first.
+   Can you see your photos?
+   Does the internet work?
+   Open Your files
+   Open Internet
+   Yes, it all works
+   Switching on starts AurOS from now on.
+   Let me look first
+   Nothing changes. This comes back next time.
+   No, go back to Windows
+   Switching on starts Windows again.
+   Help
+   Wi-Fi
+   Settings
+   Turn off
+   Bigger
+   Smaller
+== /out/j2/tiles-1366x768-2-sure.png
+   Internet
+   Websites, news and shopping
+   Your files
+   Everything you have saved, in folders
+   Documents
+   Read PDFs and other documents
+   Notes
+   Write and read plain notes
+   Photos
+   Look at your pictures
+   Music and video
+   Play a song or a film
+   Get more programs
+   Find and add programs to this computer
+   Page 1 of 2
+   AurOS
+   08:00
+   Thu 23 Oct
+   What would you like to do?
+   Home
+   Start AurOS from now on?
+   Switching this computer on will start AurOS. Windows stays on the disk.
+   Start AurOS from now on
+   Not yet
+   Back to the question. Nothing changes.
+   Help
+   Wi-Fi
+   Settings
+   Turn off
+   Bigger
+   Smaller
+== /out/j2/tiles-1366x768-3-yes.png
+   Internet
+   Websites, news and shopping
+   Your files
+   Everything you have saved, in folders
+   Documents
+   Read PDFs and other documents
+   Notes
+   Write and read plain notes
+   Photos
+   Look at your pictures
+   Music and video
+   Play a song or a film
+   Get more programs
+   Find and add programs to this computer
+   Page 1 of 2
+   AurOS
+   08:00
+   Thu 23 Oct
+   What would you like to do?
+   Home
+   AurOS starts from now on
+   Windows is still on this disk.
+   Start using AurOS
+   Help
+   Wi-Fi
+   Settings
+   Turn off
+   Bigger
+   Smaller
+== /out/j2/tiles-1366x768-4-desktop.png
+   Internet
+   Websites, news and shopping
+   Your files
+   Everything you have saved, in folders
+   Documents
+   Read PDFs and other documents
+   Notes
+   Write and read plain notes
+   Photos
+   Look at your pictures
+   Music and video
+   Play a song or a film
+   Get more programs
+   Find and add programs to this computer
+   Page 1 of 2
+   AurOS
+   08:00
+   Thu 23 Oct
+   What would you like to do?
+   Home
+   Help
+   Wi-Fi
+   Settings
+   Turn off
+   Bigger
+   Smaller
+== /out/j2/tiles-1366x768-5-online.png
+   Internet
+   Websites, news and shopping
+   Your files
+   Everything you have saved, in folders
+   Documents
+   Read PDFs and other documents
+   Notes
+   Write and read plain notes
+   Photos
+   Look at your pictures
+   Music and video
+   Play a song or a film
+   Get more programs
+   Find and add programs to this computer
+   Page 1 of 2
+   AurOS
+   08:00
+   Thu 23 Oct
+   What would you like to do?
+   Home
+   Wi-Fi
+   Press the name of your wifi.
+   Connected
+   Sky-8F2A
+   BT-HomeHub-2200
+   Ann's iPhone
+   Try again
+   Close
+   Help
+   Wi-Fi
+   Settings
+   Turn off
+   Bigger
+   Smaller
+== /out/j2/tiles-1366x768-6-ready.png
+   Internet
+   Websites, news and shopping
+   Your files
+   Everything you have saved, in folders
+   Documents
+   Read PDFs and other documents
+   Notes
+   Write and read plain notes
+   Photos
+   Look at your pictures
+   VLC media player
+   Read, capture, broadcast your multimedi…
+   Get more programs
+   Find and add programs to this computer
+   Page 1 of 2
+   AurOS
+   08:00
+   Thu 23 Oct
+   What would you like to do?
+   Home
+   VLC media player is ready
+   Press here to open it.
+   OK
+   Help
+   Wi-Fi
+   Settings
+   Turn off
+   Bigger
+   Smaller
+== /out/j2/tiles-1366x768-7-messages.png
+   Internet
+   Websites, news and shopping
+   Your files
+   Everything you have saved, in folders
+   Documents
+   Read PDFs and other documents
+   Notes
+   Write and read plain notes
+   Photos
+   Look at your pictures
+   VLC media player
+   Read, capture, broadcast your multimedi…
+   Get more programs
+   Find and add programs to this computer
+   Page 1 of 2
+   AurOS
+   08:00
+   Thu 23 Oct
+   What would you like to do?
+   Home
+   The USB stick can be taken out
+   Everything has been written to it.
+   OK
+   3 messages
+   Help
+   Wi-Fi
+   Settings
+   Turn off
+   Bigger
+   Smaller
+== /out/j2/tiles-1366x768-8-list.png
+   Internet
+   Websites, news and shopping
+   Your files
+   Everything you have saved, in folders
+   Documents
+   Read PDFs and other documents
+   Notes
+   Write and read plain notes
+   Photos
+   Look at your pictures
+   VLC media player
+   Read, capture, broadcast your multimedi…
+   Get more programs
+   Find and add programs to this computer
+   Page 1 of 2
+   AurOS
+   08:00
+   Thu 23 Oct
+   What would you like to do?
+   Home
+   Messages
+   This computer
+   The USB stick can be taken out
+   Everything has been written to it.
+   This computer
+   The battery is getting low
+   Plug this computer in soon.
+   This computer
+   VLC media player is ready
+   Press here to open it.
+   Close Messages
+   Help
+   Wi-Fi
+   Settings
+   Turn off
+   Bigger
+   Smaller
+== /out/j2/tiles-1366x768-9-sound.png
+   Internet
+   Websites, news and shopping
+   Your files
+   Everything you have saved, in folders
+   Documents
+   Read PDFs and other documents
+   Notes
+   Write and read plain notes
+   Photos
+   Look at your pictures
+   VLC media player
+   Read, capture, broadcast your multimedi…
+   Get more programs
+   Find and add programs to this computer
+   Page 1 of 2
+   AurOS
+   08:00
+   Thu 23 Oct
+   What would you like to do?
+   Home
+   Help
+   Wi-Fi
+   Settings
+   Turn off
+   Bigger
+   Smaller
+   Sound 45%
+== /out/j2/tiles-1366x768-10-said.png
+   Internet
+   Websites, news and shopping
+   Your files
+   Everything you have saved, in folders
+   Documents
+   Read PDFs and other documents
+   Notes
+   Write and read plain notes
+   Photos
+   Look at your pictures
+   VLC media player
+   Read, capture, broadcast your multimedi…
+   Get more programs
+   Find and add programs to this computer
+   Page 1 of 2
+   AurOS
+   08:00
+   Thu 23 Oct
+   What would you like to do?
+   Home
+   Help
+   Wi-Fi
+   Settings
+   Turn off
+   Bigger
+   Smaller
+   Picture saved in your Pictures folder: Screen 2025-10-23 08.00.00
+   [the line at 671,4 519x38]
+== /out/j2/tiles-1366x768-11-card.png
+   Internet
+   Websites, news and shopping
+   Your files
+   Everything you have saved, in folders
+   Documents
+   Read PDFs and other documents
+   Notes
+   Write and read plain notes
+   Photos
+   Look at your pictures
+   VLC media player
+   Read, capture, broadcast your multimedi…
+   Get more programs
+   Find and add programs to this computer
+   Page 1 of 2
+   AurOS
+   08:00
+   Thu 23 Oct
+   What would you like to do?
+   Home
+   The battery is getting low
+   Plug this computer in soon.
+   OK
+   Help
+   Wi-Fi
+   Settings
+   Turn off
+   Bigger
+   Smaller
+   [the card at 910,624 440x72]
+== /out/j2/tiles-1366x768-12-opens.png
+   VLC media player
+   Starting…
+   Press Home below to come back.
+   AurOS
+   08:00
+   Thu 23 Oct
+   VLC media player
+   Home
+   Help
+   Wi-Fi
+   Settings
+   Close t…
+   Turn off
+   Bigger
+   Smaller

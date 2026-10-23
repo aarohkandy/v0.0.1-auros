@@ -1,204 +1,216 @@
 # Stream B: the Windows installer wizard and preflight
 
-Written for an engineer who has only this repository. Branch:
-`claude/brave-hypatia-x72g1m` (common rules: `docs/handoff/STREAMS.md`;
-owner decisions D1-D11: `docs/handoff/SESSION-2026-10-23.md`).
+Written for an engineer who has only this repository. Repository
+`aarohkandy/v0.0.1-auros`, branch `main` (push there; no PRs). Rules:
+`docs/handoff/FIELD-MANUAL.md`. Design law for everything below:
+`docs/DESIGN-DIRECTION.md` (binding; section 5 "B - Installer" is this
+stream's list) and `docs/EASY.md`. Owner decisions D1-D13:
+`docs/handoff/SESSION-2026-10-23*.md`.
 
 ## Goal
 
 `AurOS-Setup.exe` (built as `out/aurbridge-wizard.exe`) puts AurOS beside
-Windows for someone who is not technical. The rules it keeps:
+Windows for someone who is not technical, and she never gets confused:
 
-- Three screens and no typing: **Welcome** (the read-only check runs here),
-  **Pick the look you want** (4 picture cards), **Ready** (what stays, the
-  sizes, the time, one restart), then **Install AurOS** → a progress bar →
-  **Restart now**.
-- It stops only for real dangers (owner decision D4) and fixes what it can by
-  itself. When nothing on the PC can fix it, the page gives the reason in one
-  line, then *What you can do*, and has a single button: **Close**.
-- Plain words for everything she sees (`docs/EASY.md`). Esc never closes
-  anything. Every target is at least 44 px. Every page fits 1366x768 and
-  1024x600 without scrolling. Narrator can read every page and press its
-  buttons.
-- D10 (a pre-ticked *Bring my Wi-Fi across*) and D11 (*Windows' drive lock is
-  paused for one restart*) are built in, but switched off until the engine can
-  keep them (see "Half-done").
-
-## Changed for e2e (stream F: read this before every e2e change)
-
-The design pass (`docs/DESIGN-DIRECTION.md` §5 B) changes things
-`tools/e2e/` relies on. Each line is written here BEFORE the code that
-does it is pushed; the commit hash is added when it lands.
-
-1. **Primary button colour**: teal `#7DD3C0` -> go green `#0B5D4F` with a
-   white label (pressed `#07463B`). `tools/e2e/vision.py` ACCENT must
-   follow, or find buttons by accessible name.
-2. **The primary button is always there**, in the same place. When it
-   cannot act yet (Next while the check runs) it is still green; a press
-   says why beside it and does nothing (its MSAA description says why;
-   its state is normal, not UNAVAILABLE, so a screen reader can press it).
-   Pressing it early is harmless.
-3. **No restart countdown.** "Not yet" is gone. The finish page ("Ready
-   to restart", title unchanged) has **Restart now** (primary) and
-   **Restart later** (secondary: closes Setup, AurOS goes on at her next
-   restart). It never restarts by itself: the e2e must press Restart now.
-4. **Titles**: "Almost there. A few things first" -> "A few things to
-   sort out first"; the Secure Boot stop -> "One setting needs changing
-   first". "Setting up AurOS", "Ready to restart", "Ready to install",
-   "Pick the look you want" and "Let’s put AurOS on this computer" stay.
-5. **Buttons**: Next, Back, Install AurOS, Fix these for me, Check again,
-   Try again, Restart now stay. On a page where it cannot go on, the one
-   button "Close" -> **Close AurOS Setup** (still matches /close/). The
-   stop page's secondary "Close" -> **Not now**. New secondary buttons:
-   **Restart later**, **Show a helper how**, **Copy for a helper**.
-6. **Fix line titles**: BitLocker "Drive C: is encrypted" -> "Windows has
-   locked this computer’s drive" (VARIANT_EXPECT "bitlocker" needs
-   /locked/). Since `1bd6f6e` that page ends with Close AurOS Setup, not
-   a Fix button, until A2 lands the D11 pause.
-7. **Window title**: "Install AurOS" -> "AurOS Setup".
-8. **Light ground** (paper `#F6F2E9`): `vision.find_unchecked_boxes`
-   assumes a dark ground; the Wi-Fi box (when the engine turns it on) is a
-   2 px ink square on light.
+- Three screens and no typing: **Welcome** (the read-only check runs
+  here), **Pick the look you want** (four real miniature home screens),
+  **Ready to install** (what stays, what it takes, the download, the one
+  restart, the time), then **Install AurOS**, a progress page, **Ready to
+  restart** with **Restart now** / **Restart later**. Nothing restarts
+  the computer but her press: there is no countdown.
+- It stops only for real dangers (D4) and fixes only what is provably
+  safe by itself. A stop she cannot clear says so, says what she can do
+  instead, and its button is **Close AurOS Setup**. It never decrypts a
+  drive (D11/D13: BitLocker is paused for one restart once the engine can,
+  and until then it is a plain stop).
+- One press is one press (a double-click never skips Ready). Esc never
+  closes anything. Closing mid-step finishes the step, then takes
+  everything back. Every target is at least 44 px. Every page fits
+  1024x600, 1366x768 and 150% without scrolling (navtest proves it).
+  Narrator reads every page and can press its buttons.
 
 ## Files (stream B owns these)
 
 | File | What it is |
 |---|---|
-| `src/aurbridge/wizard.c` | The whole UI. Everything is drawn by hand into a GDI back buffer (`render()`). Widgets: `W_BUTTON`, `W_CARD` and `W_TOGGLE` (only the Wi-Fi box). Pages: `page_welcome/blocked/style/ready/progress`. Test modes: `--navtest DIR`, `--selftest DIR`, `--shot DIR`. The screen-reader object (MSAA `IAccessible` written in C, the `acc_*` functions) sits just above the "Window" section. `choices_from_page()` fills `ab_choice` for the engine. |
-| `src/aurbridge/preflight.{c,h}` | Read-only checks that produce a `pf_report`. `check_wifi()` sets `wifi_connected` and `wifi_name`, loads the WLAN API at run time and reads no key. The BitLocker policy depends on `AB_CHOICE_BITLOCKER_PAUSE`. |
-| `src/aurbridge/fix.h`, `fix_win.c` | A short line for each preflight id, the automatic fixes, and `fix_instead()` (the *What you can do* sentences). `ADVANCED` is the helper page's address, built from `AUROS_SITE_W`, which `build/aurbridge` gets from `tools/repo.sh` (since `a2e7661`). |
-| `src/aurbridge/sbdb.*` | Secure Boot trust database. |
-| `src/aurbridge/aurbridge-info.rc`, `auros.ico` | VERSIONINFO ("AurOS Setup", OriginalFilename `AurOS-Setup.exe`, version from `AUROS_VERSION`) and the teal diamond icon. |
-| `docs/shots/wizard/*.png` | Every page as it is rendered now: 24 pictures, including the 150% and 1024x600 variants. |
-| `tools/wizard/check.sh`, `bmp2png.py` | The full local check (see "How to verify"). |
+| `src/aurbridge/wizard.c` | The whole UI, hand-drawn into a GDI back buffer (`render()`). Light palette at the top (`C_*`). One typeface in `TYPE[]` (`fonts_make`). Pages: `page_welcome/blocked/style/ready/progress`; furniture: `draw_steps` (sidebar, folds under 1100 px), `status_row`, `note_box`, `draw_button`, `draw_footer`. Widgets: `W_BUTTON`, `W_CARD`, `W_TOGGLE` (Wi-Fi only). Test modes: `--navtest DIR`, `--selftest DIR`, `--shot DIR`. MSAA object (`acc_*`) above "Window". `press_allowed()` is the one-press rule. `close_asked()`/`stop_tick()` are the close-mid-step rule. |
+| `src/aurbridge/preflight.{c,h}` | Read-only checks -> `pf_report`. Added this session: `raw_bitlocker` (disk, not the volume's view), `storage_verdict` / `model_is_raid_volume` (`raid-volume`, `storage-controller-unknown`), `esp_need` (carried + 21 MiB). |
+| `src/aurbridge/fix.h`, `fix_win.c` | One short line per preflight id (build gate: every `add(r, "<id>", ..., PF_BLOCK` needs a `{ "<id>",` line). The fixes: only `insufficient-space` runs (old temp files in two named folders), `fix_temp_roots`; the resume task copies the exe to Program Files (`fix_resume_arm`). `fix_helper_url` = the helper page "Show a helper how" opens. |
+| `src/aurbridge/sbdb.*` | Secure Boot trust database (wording only edited). |
+| `src/aurbridge/aurbridge-info.rc`, `auros.ico`, `fonts/` | VERSIONINFO, icon, and the typeface (`fonts/aurossans-{400,700}.ttf` = the website's Atkinson Hyperlegible, renamed AurOS Sans; `fonts/OFL.txt`) as `AURFONT` resources 100/101, loaded by `fonts_load()`. |
+| `docs/shots/wizard/*.png` | 37 pictures, regenerated by `tools/wizard/check.sh` (Wine's rendering, not real Windows). |
+| `tools/wizard/check.sh`, `bmp2png.py` | The full local check. |
 
-Edited outside B's files, as the smallest change each time: `build/aurbridge`
-(added `-loleacc -loleaut32 -lole32 -luuid` to the wizard link) and
-`.github/workflows/windows.yml` (the `screen reader    :` check in the
-selftest step, and the bounded, retried `toolchain` step in `e6a888b`).
+Edited outside B's files (smallest edit each): `build/aurbridge` (link
+libs; the DLL gate: only Windows' own DLLs), `build/cflags` (`-static` on
+`HARDEN_PE`: `efc5183`, S3's file), `.github/workflows/windows.yml` (the
+steps named below), `tools/e2e/vision.py` (finds the green button or the old
+teal one) and `tools/e2e/selftest.py` ("Close AurOS Setup"),
+`tools/e2e/e2e.py` (the bitlocker variant's regex also matches "has locked").
 
-## Done and pushed
+## Done and pushed (newest first)
 
-Commits `ed5381f` to `b4ab898` (`git log --oneline -- src/aurbridge/wizard.c`):
+- `7a2194f` Narrator reads the new pages (each problem and its fix line).
+- `619d439` preflight: BitLocker read from the DISK (`raw_bitlocker`);
+  `raid-volume` and `storage-controller-unknown` stop; ESP needs carried +
+  21 MiB (`esp_need`).
+- `42541c5` the space fix sweeps `LocalAppData\Temp` and `Windows\Temp` BY
+  NAME (`fix_temp_roots`), never the folder TEMP points at.
+- `7fb9b2d` the light restyle, the website's letters, no countdown, 2x2
+  look picker, two-list stop page, Secure Boot helper page, plain error
+  sentences, 37 re-shot pictures (B-1 to B-8, parts of 9, 11-14, 16).
+- `938ea78` one press is one press (700 ms after a page change / 500 ms
+  repeat; held Enter ignored).
+- `a3c4ed9` closing mid-step: the step finishes, then everything is taken
+  back and the window closes by itself ("Stopping.").
+- `efc5183` the .exe imported `libssp-0.dll` (no PC has it): `-static`, and
+  `build/aurbridge` refuses any import outside Windows' own DLLs.
+- `b4f351a` the resume-at-logon task starts an admin-only copy in Program
+  Files (hash-checked), not the file in Downloads; the copy goes with the task.
+- `30dd557` the space fix: only old temp files; says the size first.
+- `1bd6f6e` an encrypted drive is a stop; nothing decrypts it (D11).
+- earlier: `ed5381f`..`b4ab898` (three screens, MSAA, honest sizes, ...).
 
-- `ed5381f`: three screens, no typing, and she picks the look. `525c4dd`: D4
-  policy, and the stop page says why before it does anything.
-- `c47eac1`, `075b022`: the image starts downloading while she reads, the PC
-  stays awake, and the progress page.
-- `ea9c296`: Ready gives the time from her own connection speed and the disk
-  type (SSD or HDD).
-- `9a6dc54`: Ready's sizes follow `shrink_pick_target` (`src/aurstage/shrink.c`):
-  "AurOS takes 40 GB beside Windows … Windows keeps N GB free". It gives an
-  honest decryption time, and the "can't install" page shows *What you can do*
-  with one **Close** button.
-- `a9c285e`: MSAA. The page name, the buttons, the look cards (radio buttons,
-  the chosen one checked) and the Wi-Fi box (a check button) can all be read
-  and pressed.
-- `993ecf3`: D10/D11 UI and the preflight Wi-Fi probe, both behind the engine's
-  defines.
-- `b4ab898`: the BIOS and Intel-NVMe *What you can do* lines name
-  `computerdude771.github.io/auros-from-scratch/advanced.html` (the page
-  itself is stream K's).
+### Real Windows (proof)
 
-Tests: `--navtest` has 12 sections and about 75 checks, all passing under Wine.
-`--selftest` asks the real window through `AccessibleObjectFromWindow`. The
-console `aurbridge.exe selftest` passes. `aurbridge-sim gzselftest` and
-`sbselftest` pass.
+windows.yml run **39923570845** (commit `42541c5`, which includes the
+restyle): every job green on a real Windows Server VM, including
+`windows-source`: `--navtest` ALL PASS, `--selftest` ("window created: yes",
+"preflight done: 1", a screen-reader line with the page name and a
+button), VERSIONINFO + icon, the wizard still running after 8 s, the Fix
+step (old temp files gone; today's file, the Recycle Bin, the junction and
+the file behind it untouched), the resume task (admin-only copy, hash
+equal, no write access for Users, removed again). Not yet seen on real
+Windows: the pictures themselves (Wine renders the shots), `raw_bitlocker`
+on a real BitLocker drive, `raid-volume` names, Narrator speaking.
 
-**Not yet seen on real Windows.** Every windows.yml run since `ed5381f` was
-superseded or cancelled. Two runs in a row hung in the `build` job's
-`toolchain` step (`apt-get update`): 39894915049 for about 35 minutes and
-39897928905 for 20 minutes. Both were cancelled by hand. `e6a888b` bounds that
-step: each apt call has a time limit, it tries three times, and the step stops
-at 12 minutes. Run 39899942038 (`df92af8`) then got through the toolchain step in 25 s but
-stopped at the manifest gate (see Traps). The gate was fixed in `1e31149`;
-the first windows.yml run at or after that commit is the one to watch.
+## Changed for e2e (stream F: read this)
 
-## Half-done
+Written before the code landed; each is now in `main`.
 
-- **D10/D11 are off.** They switch on when the engine (stream A2) adds these
-  to `src/aurbridge/phases.h`: `int bring_wifi; int bitlocker_pause;` in
-  `ab_choice`, plus `#define AB_CHOICE_BRING_WIFI 1` and
-  `#define AB_CHOICE_BITLOCKER_PAUSE 1`. With them:
-  - Ready shows the box, but only when `pf_report.wifi_connected` is set.
-  - `choices_from_page()` sets `c->bring_wifi = shown && ticked` and
-    `c->bitlocker_pause` (any volume with `bitlocker == 1`).
-  - Preflight turns `bitlocker-system/-other` from a stop into an info note
-    and measures the locked C: through the volume.
+1. **Primary button colour**: teal `#7DD3C0` -> go green `#0B5D4F`, white
+   label (pressed `#07463B`). `tools/e2e/vision.py` `find_buttons` now finds
+   either (green first). Better: find buttons by accessible name.
+2. **The primary button is always there**, same place. When it cannot act
+   yet it is still green; a press says why beside it and does nothing (its
+   MSAA description says why; its state is normal so a screen reader can
+   press it). Harmless to press early.
+3. **No restart countdown.** "Not yet" is gone. "Ready to restart" has
+   **Restart now** (primary) and **Restart later** (secondary: closes Setup,
+   AurOS stays armed for her next restart). Nothing restarts by itself: the
+   e2e must press Restart now.
+4. **Titles**: "Almost there. A few things first" -> "A few things to sort
+   out first"; the Secure Boot stop -> "One setting needs changing first";
+   BIOS line "This computer starts up an older way". Unchanged: "Setting up
+   AurOS", "Ready to restart", "Ready to install", "Pick the look you want",
+   "Let's put AurOS on this computer".
+5. **Buttons**: Next, Back, Install AurOS (now with a check mark), Fix these
+   for me, Check again, Try again, Restart now stay. A page that cannot go
+   on: the primary is **Close AurOS Setup** (matches /close/). The stop
+   page's second button: **Not now** (leaves; says so beside it). New:
+   **Restart later**, **Show a helper how**, **Copy for a helper**. The
+   Secure Boot page's primary is **Show a helper how**, then **Check again**.
+6. **Fix titles**: BitLocker "Drive C: is encrypted" -> "Windows has locked
+   this computer's drive" (VARIANT_EXPECT "bitlocker" matches /has locked/).
+   Since `1bd6f6e` that page ends with Close AurOS Setup, not a Fix button,
+   until A2 lands the D11 pause: the e2e bitlocker variant cannot go on.
+7. **Window title** "Install AurOS" -> "AurOS Setup".
+8. **Light ground** (paper `#F6F2E9`): `vision.find_unchecked_boxes` assumes
+   a dark ground; the Wi-Fi box (when the engine turns it on) is a 2 px ink
+   square on light.
+9. Text moved off the screen entirely: the footer hints, the printed web
+   address, "Nothing on this computer has been changed" kept. OCR patterns
+   that matched "We only read"/"Checking this PC" were already stale.
 
-  Both paths were compiled and passed navtest against a local stub that was
-  never committed. Reading the Wi-Fi key and writing the NetworkManager
-  keyfile belong to the engine, not the wizard.
-- Nothing is left unpushed.
+## For A2 (engine) and E (release)
 
-## Next steps
+- **A2, phases.c `esp_room`**: ask the same question as preflight's
+  `esp_need()`: `want` = carried (kernel + initramfs + shim + grub + mokmgr)
+  + **21 MiB** (was +1 MiB), and a build that carries nothing is measured as
+  33 MiB. The 21 MiB is the review's number (journal appended to the staging
+  image + the saved copy of Windows' start-up files); measure it and tighten.
+- **A2, D11/D13**: when `AB_CHOICE_BITLOCKER_PAUSE` is defined, preflight turns
+  `bitlocker-system` into an INFO note (both the volume path and the new
+  disk path) and the Ready page's D11 line goes live (`bitlocker_paused_here`).
+  Until then it is a stop that says "AurOS can't go on this computer yet".
+- **Test hook** `AURBRIDGE_TEST_FVE=1` makes preflight treat the system
+  disk's sector as BitLocker (windows.yml uses it). It can only refuse. If you
+  strip test hooks from the shipped exe (atlas gap 7), remove it and its
+  windows.yml step together.
+- **E, D12 (SignPath)**: when the certificate subject is known, set
+  `CompanyName`/`LegalCopyright` in `aurbridge-info.rc` to match it. The
+  unsigned path works today.
 
-1. **Get one green windows.yml run.** Run
-   `gh run list --branch claude/brave-hypatia-x72g1m --workflow windows --limit 5`,
-   then `gh run view <id> --json jobs`.
-   - If `toolchain` fails after its three tries, the runner's apt mirror is
-     the cause. Use `gh run rerun <id> --failed`.
-   - Then read the `windows-source` job log: the selftest step must show
-     `screen reader    : "…", N parts, button "…"` and `preflight done   : 1`.
-   - If the WLAN probe or MSAA misbehaves on Server, fix `check_wifi()` in
-     `preflight.c` or `acc_*` in `wizard.c`.
-2. **When A2 lands the defines:** run `sh tools/wizard/check.sh`. Navtest
-   section 12 must print the six "on Wi-Fi" checks, not "the engine cannot
-   carry it yet". Add a permanent shot of Ready with Wi-Fi and BitLocker:
-   in `--shot` mode after `shot_save(dir, "4a-ready")`, set
-   `g_report.wifi_connected`, `wifi_name` and `volumes[0].bitlocker = 1`,
-   call `shot_save(dir, "4b-ready-wifi-lock")`, then reset them. Re-shoot
-   `docs/shots/wizard/`.
-3. **End to end with the engine:** make sure the engine skips decryption when
-   `bitlocker_pause` is set, and that unticking the Wi-Fi box means no keyfile.
-   That is A2's code; B's part is that `ab_choice` carries her answer
-   (navtest checks this).
-4. **Check that stream K published `website/advanced.html`.** The address is
-   `sh tools/repo.sh host` plus `advanced.html`, written into the wizard at
-   build time (`ADVANCED` in `fix_win.c`). Re-shoot if the wording changes.
-5. **Narrator on a real PC** (manual): Win+Ctrl+Enter, then Tab and Enter
-   through all three screens. Each page should be read once when it appears,
-   not every second.
+## Open, in order (each one a small commit; keep navtest green)
+
+1. **B-3, the face**: the direction says Atkinson Hyperlegible **Next**
+   (400/700/800, upstream static TTFs, subset); the installer uses the
+   website's v1 (400/700) renamed "AurOS Sans". When stream D ships the Next
+   woff2/TTFs, regenerate `src/aurbridge/fonts/*.ttf` (script idea:
+   `fontTools` -> `flavor=None`, rename nameID 1/4/6 to AurOS Sans, keep OFL),
+   add the 800 as a second family for the title, rerun check.sh.
+2. **B-14**: a secondary **Stop** on the progress page only while stopping is
+   safe, with "Nothing has been changed yet." (`g_ab_gate==0` and no engine
+   step: the early-download phase). `close_asked()` already does the work.
+3. **B-15**: replace the two `MessageBoxW` questions in `close_asked()` with an
+   in-window page: **Keep it and restart later** / **Close and undo**.
+4. **B-10**: Bigger text. Read `TextScaleFactor`; an **A+ Bigger text**
+   button (>= 48x48) top right rescales `TYPE[]`; pass the factor on
+   through `choices.conf` (C's `choices.sh` writes the shell's scale file).
+5. **B-16**: the welcome page's 360 px preview of Like Windows (reuse
+   `style_picture(PIC_WINDOWS, ...)`).
+6. **B-17/18**: P2 copy cleanup; delete the unused `PHASES[].desc` strings;
+   retake the shots on real Windows (a windows.yml job could run `--shot` and
+   upload the PNGs).
+7. When D lands real E2E shots, compare with the Wine ones.
 
 ## Traps
 
-- **Disk fills.** The shots are 32-bpp BMPs. `check.sh` renders them in
-  `/dev/shm` and keeps only PNGs.
-- **`tools/manifesttest.sh` builds a copy of only part of the tree:**
-  `build/`, `src/aurbridge/`, `tools/pe_payload.py` and `tools/repo.sh`. When
-  `build/aurbridge` starts needing another file, add it to that copy, or
-  windows.yml stops at the manifest gate, before anything runs on Windows.
-  This happened in run 39899942038 and was fixed in `1e31149`.
-- **build/aurbridge has a gate:** every `add(r, "<id>", …, PF_BLOCK` in
-  `preflight.c` needs a line in `fix_win.c`, or the build stops.
-- **`BITLOCKER_REMEDY` is `#ifndef AB_CHOICE_BITLOCKER_PAUSE`**, to avoid an
-  unused-variable warning on the pause path. Keep the two in step.
-- **Never link `-lwlanapi`.** Windows Server (the CI runner) has no
-  wlanapi.dll; it is loaded with `LoadLibraryA`.
-- **`CINTERFACE` and `COBJMACROS` come before `<windows.h>`** in `wizard.c`;
-  the C `IAccessible` needs them.
-- **Page names for the screen reader must not contain numbers that tick**
-  (seconds or minutes left), or Narrator re-reads the page on every change.
-  See `acc_page_name()`.
-- **Navtest's "plain page" rule:** pages may hold only buttons, cards and the
-  one `ID_WIFI` toggle, and the toggle never holds the way on. A new kind of
-  widget fails navtest on purpose.
-- **windows.yml uses `concurrency: cancel-in-progress: false`.** One hung run
-  blocks every later one, and a newer push replaces the pending run, so most
-  runs show "cancelled". A pending run is not a failure.
-- **Every stream appends to the session log at once.** On a rebase conflict,
-  keep both lines (delete only the conflict markers).
-- Correction to an earlier message to the lead: the hung run 39894915049 ran
-  about 35 minutes, not 90.
+- **`AUROS_REPO=owner/name` must be set** to run `sh tools/wizard/check.sh`
+  (or `build/aurbridge`) in a worktree with no usable git remote: `export
+  AUROS_REPO=aarohkandy/v0.0.1-auros`.
+- **check.sh can show "WIZARD CHECK: FAIL" once with no FAIL line** (seen
+  twice, passes on rerun): the Wine `--selftest` is timing-sensitive. Rerun;
+  if it repeats, read `selftest wrote no log` / the screen-reader line.
+- **The shots are Wine's rendering.** Fonts load from the .exe's resource; a
+  Wine without them falls back to Segoe UI (looks different).
+- **`tools/manifesttest.sh` builds a copy of only part of the tree**
+  (`build/`, `src/aurbridge/`, `tools/pe_payload.py`, `tools/repo.sh`): a new
+  file `build/aurbridge` needs must be added to that copy (fonts are under
+  `src/aurbridge/`, so they travel).
+- **A new BLOCK id needs a `fix_win.c` line** or the build stops. A new
+  *kind of widget* fails navtest on purpose (buttons, cards, the Wi-Fi toggle).
+- **Never link `-lwlanapi`** (Server has none); `wtsapi32` is loaded by name too.
+- **`CINTERFACE` and `COBJMACROS` before `<windows.h>`** in `wizard.c`.
+- **Page names for the screen reader must not contain ticking numbers**
+  (`acc_page_name`).
+- **Never sweep a folder TEMP names** (`fix_temp_roots`), never empty the
+  Recycle Bin, never decrypt (windows.yml fails each).
+- **The primary button's label changes mean a new page** for the one-press
+  rule (`render()` stamps `page_changed()`); do not label two different
+  actions the same.
+- **Every stream appends to the session log at once**; on a rebase conflict
+  keep both lines.
+- **`windows.yml` is path-filtered** (E): a docs-only push runs nothing; a
+  `src/aurbridge` push runs the real-Windows jobs (~10 min).
 
 ## How to verify
 
 ```sh
-# Linux with mingw-w64, wine, xvfb, python3; from the repository root
-sh tools/wizard/check.sh      # build + navtest + selftest + console selftest + shots
-# ends "WIZARD CHECK: PASS"; look at out/wizard-shots/*.png
-cp out/wizard-shots/*.png docs/shots/wizard/   # only when the pages changed
+M="/Users/aaroh/Desktop/auros v0.0.1/v0.0.1-auros"   # lead's checkout: never edit
+S=/private/tmp/claude-501/-Users-aaroh-Desktop-auros-v0-0-1/914a7092-8dd8-4369-bb66-bf5c4e2ea1f2/scratchpad
+cd $S/wt-b      # worktree on branch wt-b; push loop in FIELD-MANUAL §1
+rsync -az --delete --exclude .git --exclude out --exclude work \
+  -e "ssh -i $HOME/.ssh/homebase_ed25519" ./ azureuser@100.108.213.121:work/auros/b/
+ssh -i $HOME/.ssh/homebase_ed25519 azureuser@100.108.213.121 \
+  'cd ~/work/auros/b && export AUROS_REPO=aarohkandy/v0.0.1-auros && nice -n 10 sh tools/wizard/check.sh'
+# ends "WIZARD CHECK: PASS"; pictures in out/wizard-shots/ (rsync them back, then
+# rsync -a --delete <them>/ docs/shots/wizard/)
+python3 tools/e2e/selftest.py      # the e2e driver's own checks
+sh tools/wordlint.sh               # the one vocabulary (stream K); B's files are clean
 ```
-
-On real Windows, windows.yml's `windows-source` job runs the same `--selftest`
-and fails if the screen-reader line is empty.
+Real Windows: push anything under `src/aurbridge/`, then
+`gh run list -R aarohkandy/v0.0.1-auros --workflow windows` and read the
+`windows-source` job.
+Prove a check can fail: mutate (e.g. `PRESS_SETTLE_MS` to 0, `ESP_SLACK_BYTES`
+to 1, `fix_temp_roots` to `GetTempPathW`), watch it go red, restore.
