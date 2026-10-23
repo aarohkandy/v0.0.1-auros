@@ -17,6 +17,11 @@
  *   2  store_load() of the input as wishes.json, store_recheck(), then
  *      store_save() and store_load() again: what it saved it must load,
  *      with the same number of wishes.
+ *   4  answer_reply(): what the cloud said (any HTTP status, any body, either
+ *      endpoint) turned into what the shell is told. The reply must always be
+ *      one JSON object that starts {"id":7, and names a kind we know.
+ *   5  cloud_clean_text(): her words before they leave the computer. What
+ *      comes out is valid UTF-8 with no run of five digits and no address.
  *   3  engine_request(): the input is request lines, fed one by one to an
  *      engine over an empty store, a second apart, with a tick between.
  *
@@ -32,6 +37,9 @@
 #include <sys/stat.h>
 
 #include "../../src/aurwish/engine.h"
+#include "../../src/aurwish/answer.h"
+#include "../../src/aurwish/cloud.h"
+#include "../../src/aurwish/text.h"
 
 static char dir[256], apps[300], themes[300], wpath[320], spath[320];
 static wish_env ENV;
@@ -112,7 +120,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
     if (!dir[0]) LLVMFuzzerInitialize(NULL, NULL);
     if (size < 1 || size > 256 * 1024) return 0;
-    int mode = data[0] & 3;
+    int mode = data[0] & 7;   /* 0-3 as before; 4 and 5 are the cloud's half */
     const char *in = (const char *)data + 1;
     size_t n = size - 1;
 
@@ -153,6 +161,67 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
             fprintf(stderr, "a saved wish reads back as a different sentence:\n%s\n%s\n", s1, s2);
             abort();
         }
+        return 0;
+    }
+
+    if (mode == 5) {
+        static char tmp[4096], out[1400];
+        if (n >= sizeof tmp) return 0;
+        memcpy(tmp, in, n); tmp[n] = 0;
+        int cps = cloud_clean_text(tmp, out, sizeof out);
+        char lg[16];
+        (void)cloud_lang(tmp, lg, sizeof lg);
+        if (strlen(lg) < 2 || strlen(lg) > 12) { fprintf(stderr, "a language tag of the wrong length\n"); abort(); }
+        if (cps < 0) return 0;
+        if (!text_valid(out)) { fprintf(stderr, "cleaned text is not valid text\n"); abort(); }
+        int run = 0;
+        for (const char *q = out; *q; q++) {
+            run = (*q >= '0' && *q <= '9') ? run + 1 : 0;
+            if (run >= 5) { fprintf(stderr, "five digits survived cleaning: %s\n", out); abort(); }
+        }
+        return 0;
+    }
+
+    if (mode == 4) {
+        if (n < 3) return 0;
+        static store st4;
+        memset(&st4, 0, sizeof st4);
+        st4.next = 1;
+        wish_env env4 = ENV;
+        engine_io io4 = { emit, get50, set_ok, get50, set_ok, set_ok, say_ok, NULL };
+        engine *e = engine_new(&st4, NULL, &env4, &io4);
+        if (!e) abort();
+        static const int CODES[] = { 0, 200, 200, 200, 200, 400, 401, 429, 503, 500, 302, -1 };
+        static char body[256 * 1024], reply[16384];
+        size_t bl = n - 3;
+        memcpy(body, in + 3, bl); body[bl] = 0;
+        cloud_result r;
+        memset(&r, 0, sizeof r);
+        r.id = 7;
+        r.kind = (unsigned char)in[0] & 1 ? CLOUD_ASK : CLOUD_WISH;
+        r.http = CODES[(unsigned char)in[1] % (sizeof CODES / sizeof CODES[0])];
+        r.err = "offline";
+        r.body = body;
+        r.len = bl;
+        r.retry_after = (signed char)in[2];
+        for (int round = 0; round < 3; round++) {          /* offers pile up and rotate */
+            answer_reply(e, &r, "please show a kind note when I type potato", round & 1, dir, reply, sizeof reply, 1761200000 + round);
+            if (strncmp(reply, "{\"id\":7,", 8) || strstr(reply, "\"kind\":") == NULL) {
+                fprintf(stderr, "a malformed reply to the shell: %.200s\n", reply);
+                abort();
+            }
+            static char mem[1 << 18];
+            jarena a = { mem, sizeof mem, 0, NULL };
+            static const jlimits L = { 65536, 8, 2000, 4096 };
+            const jv *o = json_parse(&a, &L, reply, strlen(reply));
+            if (!o || o->type != J_OBJ) { fprintf(stderr, "a reply that is not one JSON object: %.200s\n", reply); abort(); }
+            const jv *k = jget(o, "kind");
+            static const char *const KINDS[] = { "wish", "cannot", "help", "error", NULL };
+            int known = 0;
+            for (int i = 0; k && k->type == J_STR && KINDS[i]; i++) known |= !strcmp(k->s, KINDS[i]);
+            if (!known) { fprintf(stderr, "an unknown kind of reply: %.200s\n", reply); abort(); }
+        }
+        engine_free(e);
         return 0;
     }
 
