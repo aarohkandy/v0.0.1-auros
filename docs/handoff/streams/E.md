@@ -96,10 +96,14 @@ which only a **full** (non-pre) release moves. **Only the lead pushes `[latest]`
   Foundation", the roles, the privacy statement. When a signed release exists, rewrite the
   "no signature" sentences (advanced.html, the front door's click strip) and teach
   check.mjs the claim. Today the page says "applying" because the owner has not applied.
-- **B / D**: the `site` job (and pages.yml) was red at c604d41 on `advanced.html`: it quotes
-  Setup saying "This computer starts up the older way (BIOS)" but wizard.c (7fb9b2d, B's
-  restyle) now says "This computer uses legacy BIOS boot" (and fix_win.c something else).
-  Reconcile one side; until then `promote` is blocked by design.
+- **B / C / D**: the `site` job and pages.yml are red (run 39927312707, 09:00) on four
+  promises the code no longer keeps: advanced.html quotes Setup saying "This computer starts
+  up the older way (BIOS)" but wizard.c (7fb9b2d, B's restyle) says "This computer uses legacy
+  BIOS boot" and preflight.c "This PC starts Windows the older way (BIOS)"; index.html quotes
+  desktop-screen words "Switching on starts AurOS from now on.", "Nothing changes. This comes
+  back next time.", "Switching on starts Windows again." that are not in src/aurshell any
+  more. Reconcile one side each; until then `promote` is blocked by design (and the site
+  does not deploy). My own page's one failure (a power-cut phrase) is fixed.
 - **F**: e2e.yml has one line of mine (the e2e job's concurrency group gains the installer
   SHA) and a timeout on `gate`. Its env comment that "promote reads INSTALLER_SHA256 from this
   file" is stale.

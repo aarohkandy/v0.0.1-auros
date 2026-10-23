@@ -77,7 +77,7 @@
     <div class="narrow">
       <h2 id="how-title">How a release gets its signature</h2>
       <ol class="doing">
-        <li><p>A new version is built from the public source on GitHub, and tested: the installer and the system it installs are started in virtual computers, including the ways a power cut could go wrong.</p></li>
+        <li><p>A new version is built from the public source on GitHub, and tested: the installer and the system it installs are started in virtual computers.</p></li>
         <li><p>The build sends the finished AurOS Setup to SignPath. SignPath checks that it really came from this project&rsquo;s build on GitHub, not from someone holding a password.</p></li>
         <li><p>The approver looks at the release and approves it, or doesn&rsquo;t. Nothing is signed until a person says yes.</p></li>
         <li><p>The signed file comes back. The build checks the signature, and checks that the file inside is exactly the one it sent, byte for byte apart from the signature itself. If either check fails, nothing is published.</p></li>
