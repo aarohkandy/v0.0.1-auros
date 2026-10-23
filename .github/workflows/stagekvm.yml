@@ -95,7 +95,8 @@ jobs:
           github-token: ${{ github.token }}
       - name: the rootfs, and this commit's engine and staging environments
         run: |
-          sudo mkdir -p work/forge/desktop out transcripts
+          mkdir -p out transcripts
+          sudo mkdir -p work/forge/desktop
           zstd -dc dl/rootfs/rootfs.tar.zst | sudo tar -C work/forge/desktop --numeric-owner -xf -
           rm -rf dl/rootfs
           zstd -dc dl/installer/staging-work.tar.zst | sudo tar -C work --numeric-owner -xf -
