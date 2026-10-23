@@ -207,10 +207,32 @@ if installed cups-daemon; then
         || bad "cups can still print to USB" "no usr/lib/cups/backend/usb"
 fi
 if [ -f "$RFS/etc/avahi/avahi-daemon.conf" ]; then
-    v=$(awk '/^\[/ { s = $0 } s == "[publish]" && /^disable-publishing[[:space:]]*=/ { sub(/.*=[[:space:]]*/, ""); print }' \
-        "$RFS/etc/avahi/avahi-daemon.conf")
-    [ "$v" = yes ] && ok "avahi announces nothing about this computer" \
-        || bad "avahi announces nothing about this computer" "[publish] disable-publishing is '${v:-unset}'"
+    pub() { awk -v k="$1" '/^\[/ { s = $0 } s == "[publish]" && $0 ~ "^" k "[[:space:]]*=" { sub(/.*=[[:space:]]*/, ""); v = $0 } END { print v }' \
+        "$RFS/etc/avahi/avahi-daemon.conf"; }
+    if installed ipp-usb; then
+        # A printer on a USB cable: ipp-usb registers it with avahi, and
+        # avahi must accept that; but this computer says nothing about
+        # itself, and ipp-usb registers on loopback only.
+        [ "$(pub disable-publishing)" != yes ] \
+            && ok "avahi lets ipp-usb register a USB printer (publishing is not off)" \
+            || bad "avahi lets ipp-usb register a USB printer (publishing is not off)" "disable-publishing=yes: a printer on a USB cable would never be found"
+        miss=""
+        for k in publish-addresses publish-hinfo publish-workstation publish-domain; do
+            [ "$(pub $k)" = no ] || miss="$miss $k"
+        done
+        [ -z "$miss" ] && ok "avahi announces nothing about this computer (no address, hardware, workstation or domain records)" \
+            || bad "avahi announces nothing about this computer (no address, hardware, workstation or domain records)" "not 'no' in [publish]:$miss"
+        IU="$RFS/etc/ipp-usb/ipp-usb.conf"
+        if sed -e 's/[#;].*//' "$IU" 2>/dev/null | grep -Eq '^[[:space:]]*interface[[:space:]]*=[[:space:]]*loopback[[:space:]]*$'; then
+            ok "ipp-usb serves and registers its printer on loopback only (interface = loopback)"
+        else bad "ipp-usb serves and registers its printer on loopback only (interface = loopback)" "etc/ipp-usb/ipp-usb.conf has no 'interface = loopback'"; fi
+        if grep -qE '^[[:space:]]*oifname != "lo" udp dport 5353 @th,80,1 1 drop' "$NFT" 2>/dev/null; then
+            ok "an mDNS announcement never leaves on a real interface (firewall output rule)"
+        else bad "an mDNS announcement never leaves on a real interface (firewall output rule)" "no 'oifname != \"lo\" udp dport 5353 @th,80,1 1 drop' in etc/nftables.conf"; fi
+    else
+        [ "$(pub disable-publishing)" = yes ] && ok "avahi announces nothing about this computer" \
+            || bad "avahi announces nothing about this computer" "[publish] disable-publishing is '$(pub disable-publishing)'"
+    fi
 fi
 
 # ── 5. kernel modules an ordinary program could load ─────────────────

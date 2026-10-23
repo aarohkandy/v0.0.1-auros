@@ -231,6 +231,33 @@ case "$r" in *"$(hostname).local"*[0-9]*) put avahi_self answered ;; *) put avah
 put avahi_said "$r"
 put journal_max "$(journalctl -b -u systemd-journald -o cat | grep -E '^System Journal .* max ' | tail -1 | sed 's/.* max \([0-9.]*[KMGT]\).*/\1/')"
 
+# ── a printer on a USB cable, as far as a VM can show it ──
+# ipp-usb serves the printer as IPP on a loopback port and registers it
+# with avahi; CUPS finds it through that record. Here an IPP printer
+# (ippeveprinter) stands in, registered with avahi the same way -- on
+# EVERY interface, which is the worst case (ipp-usb itself says
+# `interface = loopback`): it must be found and printed to, and must not
+# be announced on the network (the host counts what leaves the NIC).
+if command -v ippeveprinter >/dev/null 2>&1 && command -v ippfind >/dev/null 2>&1; then
+    mkdir -p /var/tmp/usbspool
+    ippeveprinter -k -d /var/tmp/usbspool -p 60000 "AurOS USB test" > "$OUT/ippeveprinter.txt" 2>&1 &
+    PRN=$!
+    sleep 8
+    ippfind -T 10 --name 'AurOS USB test' _ipp._tcp > "$OUT/ippfind.txt" 2>&1
+    [ -s "$OUT/ippfind.txt" ] && grep -q '^ipp://' "$OUT/ippfind.txt" && put usb_dnssd found || put usb_dnssd missing
+    lpadmin -p usbtest -E -v ipp://localhost:60000/ipp/print -m everywhere > "$OUT/lpadmin.txt" 2>&1
+    put usb_queue_rc "$?"
+    printf 'AurOS USB printer test\n' > /var/tmp/usbtest.txt
+    lp -d usbtest /var/tmp/usbtest.txt > "$OUT/lp.txt" 2>&1
+    i=0; while [ "$(ls /var/tmp/usbspool 2>/dev/null | wc -l)" -lt 1 ] && [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done
+    put usb_job_files "$(ls /var/tmp/usbspool 2>/dev/null | wc -l)"
+    lpstat -t > "$OUT/lpstat.txt" 2>&1
+    avahi-browse -t -p _ipp._tcp > "$OUT/avahi-browse.txt" 2>&1
+    lpadmin -x usbtest > /dev/null 2>&1; kill "$PRN" 2>/dev/null
+else
+    put usb_dnssd none
+fi
+
 # ── an interrupted update ──
 put dpkg_less "$(dpkg-query -W -f='${Status}' less)"
 put dpkg_repair "$(journalctl -b -u auros-dpkg-repair -o cat | tr '\n' ' ' | cut -c1-200)"
@@ -406,7 +433,7 @@ strip_controls() {
           "$M/etc/systemd/journald.conf.d/50-auros.conf" \
           "$M/etc/polkit-1/rules.d/40-auros-remote-access.rules" \
           "$M/etc/systemd/system/serial-getty@.service" "$M/etc/systemd/system/console-getty.service"
-    sed -i 's/^disable-publishing=yes/disable-publishing=no/' "$M/etc/avahi/avahi-daemon.conf"
+    sed -i -e 's/^disable-publishing=yes/disable-publishing=no/' -e 's/^\(publish-[a-z]*\)=no/\1=yes/' "$M/etc/avahi/avahi-daemon.conf"
     for o in $KOPTS; do sed -i "s/ $o\( \|\$\)/\1/" "$M/boot/grub/grub.cfg"; done
     # The boot menu's lock (stream BT): no superusers, no password.
     sed -i '/^[[:space:]]*set[[:space:]]\{1,\}superusers=/d; /^[[:space:]]*password\(_pbkdf2\)\{0,1\}[[:space:]]/d' \
@@ -544,7 +571,8 @@ power_on() { # disk label mode timeout
         -drive file="$1",format=raw,if=none,id=d0 -device virtio-blk-pci,drive=d0 \
         -device virtio-vga -display none -serial file:"$SER" \
         -netdev "user,id=n0,restrict=on,hostfwd=tcp:127.0.0.1:$TP-:7777,hostfwd=udp:127.0.0.1:$UP-:631,guestfwd=tcp:10.0.2.100:8080-tcp:127.0.0.1:$HP" \
-        -device virtio-net-pci,netdev=n0 -monitor "unix:$T/mon.$2,server=on,wait=off" > "$T/qemu.$2" 2>&1 &
+        -object "filter-dump,id=f0,netdev=n0,file=$T/net.$2.pcap" \
+        -device virtio-net-pci,netdev=n0,mac=52:54:00:12:34:56 -monitor "unix:$T/mon.$2,server=on,wait=off" > "$T/qemu.$2" 2>&1 &
     QP=$!; i=0; probed=0; hog=""; FROZE=no
     while kill -0 "$QP" 2>/dev/null && [ $i -lt "$4" ]; do
         if [ $probed = 0 ] && grep -aq 'AUROS-HARDEN probe-ready' "$SER"; then
@@ -567,6 +595,27 @@ power_on() { # disk label mode timeout
     k=$(tr -d '\r' < "$SER" | grep -ao 'Out of memory: Killed process [0-9]* ([a-z]*)' | head -1)
     [ -n "$k" ] && printf 'kernel_oom=%s\n' "$k" >> "$T/rec.$2/result"
     [ -f "$T/probe.$2" ] && cat "$T/probe.$2" >> "$T/rec.$2/result"
+    # What left the NIC on port 5353: questions (looking for printers) and
+    # responses (announcements). The guest's MAC is fixed above.
+    python3 - "$T/net.$2.pcap" >> "$T/rec.$2/result" <<'EOPY'
+import struct, sys
+q = r = 0
+try: d = open(sys.argv[1], 'rb').read()
+except OSError: d = b''
+off = 24
+while off + 16 <= len(d):
+    incl = struct.unpack('<I', d[off + 8:off + 12])[0]
+    fr = d[off + 16:off + 16 + incl]; off += 16 + incl
+    if len(fr) < 54 or fr[6:12] != bytes.fromhex('525400123456'): continue
+    et = struct.unpack('>H', fr[12:14])[0]
+    if et == 0x0800 and fr[23] == 17: u = 14 + (fr[14] & 15) * 4
+    elif et == 0x86dd and fr[20] == 17: u = 14 + 40
+    else: continue
+    if struct.unpack('>H', fr[u + 2:u + 4])[0] != 5353: continue
+    if fr[u + 10] & 0x80: r += 1
+    else: q += 1
+print('mdns_questions=%d\nmdns_responses=%d' % (q, r))
+EOPY
     # A login prompt on the serial console ("auros login:")?
     if tr -d '\r' < "$SER" | grep -aqE '^[A-Za-z0-9_.-]+ login: ?'; then echo serial_login=yes; else echo serial_login=no; fi >> "$T/rec.$2/result"
     umount_root
@@ -705,6 +754,8 @@ dccp_refused() { not_is "$1" dccp_socket 0 && is "$1" dccp_loaded no; }
 hog_by_earlyoom() { is "$1" hog_killer earlyoom && [ "$(val hog_secs "$1")" != never ]; }
 zram_used() { is "$1" zram yes && [ "$(val swap_peak_kb "$1")" -gt 102400 ]; }
 safe_mode() { case "$(val safe_cmdline "$1")" in *"--shell /usr/share/auros/shells/rail.shell --conf /etc/auros/shell.conf"*) is "$1" safe_level 1 ;; *) return 1 ;; esac; }
+usb_prints()    { [ "$(val usb_job_files "$1")" -ge 1 ] 2>/dev/null; }
+no_announce()   { is "$1" mdns_responses 0 && [ "$(val mdns_questions "$1")" -ge 1 ] 2>/dev/null; }
 no_login()      { [ -z "$(val gettys "$1" | tr -d ' ')" ] && is "$1" serial_login no; }
 page_shown()    { is "$1" page_up yes && is "$1" shot_page page; }
 esc_one_stays() { page_shown "$1" && is "$1" alive_after_esc yes && is "$1" shot_after-esc page; }
@@ -745,6 +796,9 @@ row both    "...and that check sees a listener when there is one" sees_listener
 row control "a stranger's TCP connection reaches nothing (firewall)" tcp_refused
 row control "a stranger's UDP 631 packet reaches nothing (firewall)" udp_refused
 row control "the computer does not announce itself (avahi)" is avahi_self silent
+row both    "USB printing: a printer registered with avahi is found by DNS-SD" is usb_dnssd found
+row both    "...and CUPS prints a page to it" usb_prints
+row control "nothing is announced on the real network (mDNS responses leaving the NIC: 0)" no_announce
 row control "no login prompt on any console (no getty unit running, no \"login:\" on the serial port)" no_login
 row control "the system journal is capped at 200 MB" journal_capped
 row control "an update cut off half-way is finished at the next start" dpkg_fixed

@@ -13,7 +13,7 @@ the control is removed**; that is proven, not assumed (below).
 |---|---|---|---|
 | N1 | **Firewall: nothing on the network can start a conversation.** nftables, inbound policy drop; let in only answers to her own traffic, DHCP/DHCPv6, IPv6 neighbour basics, and mDNS *answers* (printer search). Forwarding dropped. | `rootfs/etc/nftables.conf`, enabled in `sysinit.target` by `build/harden` | Café Wi-Fi and hostile routers. Whatever a future package starts listening on, nobody outside can reach it. |
 | N2 | **cups-browsed is not in the image.** cups (USB and network printing, localhost only) and avahi printer search stay. | `profiles/desktop.profile`; `build/harden` purges it whichever profile asks | It was the UDP 631 listener of the CVE-2024-47176 chain (a stranger's packet adds a printer whose driver runs a command). Printing does not need it. |
-| N3 | **avahi announces nothing** (`disable-publishing=yes`); it still finds printers. | `build/harden` edits `/etc/avahi/avahi-daemon.conf` | The computer does not tell the café who it is. |
+| N3 | **The computer announces nothing, and a USB printer still works.** avahi looks for printers but publishes no address, hardware, workstation or domain record about this computer (`publish-addresses=no`, `publish-hinfo=no`, `publish-workstation=no`, `publish-domain=no`). Publishing itself stays allowed, because `ipp-usb` (a printer on its USB cable, stream C) registers the printer with avahi so that CUPS finds it; `ipp-usb` says `interface = loopback`, so that record exists on loopback only. With no `ipp-usb` in the image: `disable-publishing=yes`. And a firewall rule that does not depend on any of that: an mDNS **response** leaving on any interface but loopback is dropped (`oifname != "lo" udp dport 5353 @th,80,1 1 drop`), so even a program that registers a service on every interface cannot announce it to the café. | `build/harden` edits `/etc/avahi/avahi-daemon.conf` by what is installed; `rootfs/etc/nftables.conf` (output chain) | The computer does not tell the café who it is or what it offers. |
 | K1 | **Kernel settings** (sysctl): `kptr_restrict=2`, `dmesg_restrict=1`, `unprivileged_bpf_disabled=1`, `bpf_jit_harden=2`, `ptrace_scope=1`, `kexec_load_disabled=1`, `protected_symlinks/hardlinks=1`, `protected_fifos/regular=2`, `suid_dumpable=0`, `sysrq=176`, `ldisc_autoload=0`, `unprivileged_userfaultfd=0`, `io_uring_disabled=2`, no ICMP redirects / source routing, SYN cookies. | `rootfs/etc/sysctl.d/60-auros-hardening.conf`, `99-protect-links.conf` (that name, to win over systemd's own file of the same name) | Each closes a door local root exploits have used (BPF, io_uring, userfaultfd, kernel address leaks, /tmp link tricks). |
 | K2 | **Rare, often-exploited kernel modules cannot load** (dccp, sctp, rds, tipc, n_hdlc, ax25 family, can family, atm, ksmbd, vivid, cramfs, freevxfs, jffs2, hfs, firewire): `install X /bin/false`. | `rootfs/etc/modprobe.d/auros-hardening.conf` | An ordinary program's `socket()` would otherwise load them (CVE-2017-6074 dccp class). |
 | K3 | **Kernel command line**: `init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes lockdown=integrity`. Not `init_on_free=1` (several per cent on every free, for little over init_on_alloc). | every AurOS line in `rootfs/usr/lib/auros/grub.cfg.in` and the previous-kernel line in `bootchain` (files of stream BT; S1 owns the options) | Memory handed out is zeroed; kernel objects of different kinds never share a slab; no fixed-address page; no debug filesystem. `lockdown=integrity`: nothing running as root can change the running kernel (unsigned modules, `/dev/mem`, kexec, MSR writes, hibernation images). Secure Boot already turns lockdown on; the option keeps it on for a PC with Secure Boot switched off. |
@@ -118,6 +118,8 @@ the hardened image and **fails** with the control removed:
 | firewall: a stranger's TCP connection / UDP 631 packet | reach nothing, though a listener is waiting | reach it (a banner comes back) |
 | no listening socket but avahi's and DHCP's | yes | (nothing to compare) |
 | avahi announces nothing | `auros.local` does not answer | answers |
+| a USB printer, as far as a VM shows it: an IPP printer registered with avahi on **every** interface (ipp-usb's worst case) | found over DNS-SD, CUPS prints a page to it | same (publishing is on) |
+| ...and what leaves the VM's NIC on port 5353 (counted from a capture of the virtual NIC) | questions only; 0 responses | responses (announcements of the computer and the printer) |
 | journal cap 200 MB | 62 MB used | 377 MB and growing |
 | a half-configured package after a power cut | finished at the next start | stays broken |
 | a memory hog (`tail /dev/zero`) | zram takes 1.7 GB, **earlyoom stops it in 8 s**, the desktop is the same process | the kernel's OOM killer fires after ~2 minutes and the machine does not answer for over 5 |
@@ -175,6 +177,14 @@ Over other runs the idle RAM difference ranged +7 to +20 MB, the CPU +1% to
   kernel line); the virtual consoles are off in this image.
 
 ### What is not proven
+- A real printer over a real USB cable. A VM has no IPP-over-USB device, so
+  `ipp-usb` itself is never run: its registration is stood in for by an IPP
+  printer on port 60000 registered with avahi on every interface, which
+  exercises the same avahi, DNS-SD and CUPS path and the firewall; what is
+  taken from `ipp-usb`'s own file (`interface = loopback`) is only checked
+  statically. Unproven: that the daemon starts on a udev event for a given
+  model and that CUPS then adds its queue (stream C's first check on a
+  real PC).
 
 - A real PC. The VM has virtio disks and QEMU's network; the timings are
   on a fast host CPU, so read them as *before vs after*, not as what a

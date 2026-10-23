@@ -16,16 +16,38 @@
 #  docs/security/HARDENING.md has the why and the measured cost.
 # ═══════════════════════════════════════════════════════════════════
 
-# avahi-daemon.conf is a conffile with no .d directory, so its one line
-# is set in place: in [publish], disable-publishing=yes, whatever was
-# there before (commented or not).
-harden_avahi_conf() { # file
-    awk '
-        /^\[/ { if (inpub && !done) { print "disable-publishing=yes"; done = 1 }
-                inpub = ($0 == "[publish]") }
-        { if (inpub && $0 ~ /^[#[:space:]]*disable-publishing[[:space:]]*=/) next; print }
-        inpub && $0 == "[publish]" && !done { print "disable-publishing=yes"; done = 1 }
-        END { if (!done) { print ""; print "[publish]"; print "disable-publishing=yes" } }
+# avahi-daemon.conf is a conffile with no .d directory, so its [publish]
+# keys are set in place: each one replaced, commented or not, or added.
+#
+#   no ipp-usb:   disable-publishing=yes. Nothing on this computer may
+#                 announce anything.
+#   with ipp-usb: a printer on a USB cable is found by CUPS through the
+#                 DNS-SD record ipp-usb registers with avahi (on the
+#                 loopback interface only: /etc/ipp-usb/ipp-usb.conf
+#                 says interface = loopback), which disable-publishing
+#                 would refuse. So publishing is allowed, but this computer
+#                 publishes nothing about itself (no address, hardware,
+#                 workstation or domain records), and the firewall never
+#                 lets an mDNS announcement leave on a real interface
+#                 (rootfs/etc/nftables.conf, output chain).
+harden_avahi_conf() { # file  mode (none|loopback)
+    case "$2" in
+        loopback) keys="disable-publishing=no publish-addresses=no publish-hinfo=no publish-workstation=no publish-domain=no" ;;
+        *)        keys="disable-publishing=yes" ;;
+    esac
+    awk -v keys="$keys" '
+        BEGIN { n = split(keys, K, " "); for (i = 1; i <= n; i++) { split(K[i], kv, "="); want[kv[1]] = kv[2]; order[i] = kv[1] } }
+        function flush(   i) { for (i = 1; i <= n; i++) if (!(order[i] in seen)) print order[i] "=" want[order[i]]; done = 1 }
+        /^\[/ { if (inpub && !done) flush(); inpub = ($0 == "[publish]") }
+        {
+            if (inpub) {
+                k = $0; sub(/^[#[:space:]]*/, "", k); sub(/[[:space:]]*=.*/, "", k)
+                if (k in want && $0 ~ /^[#[:space:]]*[A-Za-z-]+[[:space:]]*=/) { if (!(k in seen)) { print k "=" want[k]; seen[k] = 1 } ; next }
+            }
+            print
+        }
+        END { if (!done) { if (!insect) { print ""; print "[publish]" } flush() } }
+        /^\[publish\]$/ { insect = 1 }
     ' "$1" > "$1.auros" && cat "$1.auros" > "$1" && rm -f "$1.auros"
 }
 
@@ -54,8 +76,13 @@ stage_harden() {
         note "printing: cups-browsed removed (CVE-2024-47176); cups and USB printing stay"
     fi
     if [ -f "$RFS/etc/avahi/avahi-daemon.conf" ]; then
-        harden_avahi_conf "$RFS/etc/avahi/avahi-daemon.conf"
-        note "avahi: looks for printers, announces nothing"
+        if pkg_installed ipp-usb; then
+            harden_avahi_conf "$RFS/etc/avahi/avahi-daemon.conf" loopback
+            note "avahi: looks for printers; ipp-usb may register on this computer, which publishes nothing about itself"
+        else
+            harden_avahi_conf "$RFS/etc/avahi/avahi-daemon.conf" none
+            note "avahi: looks for printers, announces nothing"
+        fi
     fi
 
     # ── the clock ─────────────────────────────────────────────────

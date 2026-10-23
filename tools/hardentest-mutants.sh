@@ -26,7 +26,7 @@ PATHS="etc/sysctl.d usr/lib/sysctl.d etc/sysctl.conf
        usr/share/auros/shells/rail.shell etc/apparmor.d/flatpak usr/bin/flatpak
        etc/chrony etc/NetworkManager/dispatcher.d usr/lib/auros/choices.sh
        etc/machine-id var/lib/dbus/machine-id etc/systemd/system-preset
-       etc/auros/policy.conf etc/systemd/logind.conf.d"
+       etc/auros/policy.conf etc/systemd/logind.conf.d etc/ipp-usb"
 mkdir -p "$T/good"
 for p in $PATHS; do
     [ -e "$RFS/$p" ] || [ -L "$RFS/$p" ] || continue
@@ -87,7 +87,10 @@ mutate "the ruleset replaces whatever was there" "sed -i '/^flush ruleset/d' etc
 mutate "cups-browsed is not installed"       "printf '\\nPackage: cups-browsed\\nStatus: install ok installed\\n' >> var/lib/dpkg/status"
 mutate "cups-browsed is not started"         "mkdir -p etc/systemd/system/multi-user.target.wants && ln -s /usr/lib/systemd/system/cups-browsed.service etc/systemd/system/multi-user.target.wants/cups-browsed.service"
 mutate "cups listens on this computer only"  "sed -i 's/^Listen localhost:631/Listen 0.0.0.0:631/' etc/cups/cupsd.conf"
-mutate "avahi announces nothing"             "sed -i 's/^disable-publishing=yes/disable-publishing=no/' etc/avahi/avahi-daemon.conf"
+mutate "avahi announces nothing"             "sed -i 's/^publish-addresses=no/publish-addresses=yes/' etc/avahi/avahi-daemon.conf"
+mutate "avahi lets ipp-usb register a USB printer" "sed -i 's/^disable-publishing=no/disable-publishing=yes/' etc/avahi/avahi-daemon.conf"
+mutate "ipp-usb serves and registers its printer on loopback only" "sed -i 's/interface *= *loopback/interface = all/' etc/ipp-usb/ipp-usb.conf"
+mutate "an mDNS announcement never leaves on a real interface" "sed -i '/oifname != \"lo\" udp dport 5353/d' etc/nftables.conf"
 mutate "32 rarely used, often exploited modules" "sed -i '/^install dccp /d' etc/modprobe.d/auros-hardening.conf"
 mutate "the system log is capped"            "rm etc/systemd/journald.conf.d/50-auros.conf"
 mutate "compressed swap in RAM"              "rm etc/systemd/system/multi-user.target.wants/zramswap.service"
