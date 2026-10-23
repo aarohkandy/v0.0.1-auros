@@ -927,10 +927,19 @@ class Flow:
             if not b:
                 raise Failure("the Yes button went away")
             self.m.click(*vision.centre(b), label="AurOS: Yes, it all works")
-            time.sleep(15)
+            time.sleep(10)
             self.m.shot("after-yes")
-            words = vision.ocr(self.m.screendump())
+            img = self.m.screendump()
+            words = vision.ocr(img)
             self.log("after yes: " + vision.text_of(words)[:600])
+            # The newer first start asks once more: "Start AurOS from now on?" with
+            # a button of that name (the lowest match: its heading says it too).
+            sure = vision.find_text(words, "Start AurOS from now on", last=True)
+            if sure and vision.find_text(words, "Not yet"):
+                self.m.click(*vision.centre(sure), label="AurOS: Start AurOS from now on")
+                time.sleep(12)
+                self.m.shot("after-start")
+                self.log("after start: " + vision.text_of(vision.ocr(self.m.screendump()))[:600])
 
     # -- 6. M3: a program from the store --
     def store(self):
