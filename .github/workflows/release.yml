@@ -440,8 +440,15 @@ jobs:
           grep -i '^location:' hdr.txt | sed 's/?.*//'
           echo "redirect followed, Range honoured"
 
+  # EXPLICIT `if` ON EVERY JOB AFTER publish. A skipped job upstream (here
+  # `sign`, when signing is off) makes the default `success()` skip every
+  # job below it, even though publish itself ran on its own `if`: RC1
+  # (run 40017741766) published its prerelease and then skipped windows,
+  # both e2e jobs, promote and pages. Each of these now asks for exactly
+  # what it needs from its direct needs.
   windows:
     needs: [which, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -514,6 +521,7 @@ jobs:
 
   e2e:
     needs: publish
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     uses: ./.github/workflows/e2e.yml
     permissions:
       contents: write
@@ -526,7 +534,7 @@ jobs:
   # AurOS-Setup.exe, and the lead decides when the fast path replaces it.
   e2e-fastpath:
     needs: publish
-    if: ${{ needs.publish.outputs.fastpath_sha256 != '' }}
+    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.publish.outputs.fastpath_sha256 != '' }}
     uses: ./.github/workflows/e2e.yml
     permissions:
       contents: write
@@ -573,7 +581,7 @@ jobs:
 
   promote:
     needs: [which, publish, windows, e2e, site]
-    if: needs.which.outputs.latest == 'true'
+    if: ${{ !cancelled() && needs.which.outputs.latest == 'true' && needs.publish.result == 'success' && needs.windows.result == 'success' && needs.e2e.result == 'success' && needs.site.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -617,6 +625,7 @@ jobs:
   # repository without Pages switched on fails here and not in promote.
   pages:
     needs: promote
+    if: ${{ !cancelled() && needs.promote.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
