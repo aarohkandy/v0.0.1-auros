@@ -1,0 +1,179 @@
+name: theft
+
+# The encrypted drive and its PIN (docs/security/THEFT.md, owner decision
+# D9), proven twice:
+#
+#   unit   tools/theftunit.sh, in a throwaway privileged container, with
+#          a software TPM: in-place encryption, PIN, wrong PIN, lockout,
+#          rescue code, PCR 7, a different chip, no chip, 44 px targets;
+#          then its --mutants run (every mutant must be caught).
+#   vm     tools/theftvm.sh on the build's REAL image, under KVM with
+#          Secure Boot and a TPM 2.0: the PIN typed as key presses into
+#          the VM, a power cut mid-pass, a dbx update, a different chip.
+#          Twice: a CPU with AES instructions, and one without (Adiantum).
+#
+# NOTHING HERE SWITCHES THE FEATURE ON in the default install. This is
+# the evidence the lead asks for first (docs/handoff/streams/S4.md).
+#
+# Runs when the SUBJECT says [theft], or when a push touches the files
+# below. Evidence: the job summary, an artifact, and the prerelease
+# theft-<run_id> (releases/download/theft-<run_id>/...).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.g.outputs.go }}
+      build: ${{ steps.g.outputs.build }}
+    steps:
+      - id: g
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+          BEFORE: ${{ github.event.before }}
+          EVENT: ${{ github.event_name }}
+          BRANCH: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          go=false
+          SUBJ=${MSG%%$'\n'*}
+          case "$SUBJ" in *'[theft]'*) go=true ;; esac
+          [ "$EVENT" = workflow_dispatch ] && go=true
+          if [ "$go" = false ]; then
+            case "$BEFORE" in
+              ''|0000000000000000000000000000000000000000)
+                files=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.files[].filename' || true) ;;
+              *)
+                files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename' || true) ;;
+            esac
+            printf '%s\n' "$files" | grep -qE '^(tools/theft[^/]*|rootfs/usr/lib/auros/lock/.*|src/aurshell/lockpin\.c|docs/security/THEFT\.md|\.github/workflows/theft\.yml)$' && go=true
+          fi
+          # the newest build of this branch that still has its image
+          rid=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=auros-pieces&per_page=100" \
+                  --jq "[.artifacts[] | select(.expired == false and .workflow_run.head_branch == \"$BRANCH\") | .workflow_run.id] | first // empty")
+          echo "go=$go" | tee -a "$GITHUB_OUTPUT"
+          echo "build=$rid" | tee -a "$GITHUB_OUTPUT"
+
+  unit:
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: the unit suite, then its mutants, in a throwaway container
+        run: |
+          mkdir -p ev
+          # A container, not the runner: the runner may have a TPM of its
+          # own, and the suite deletes the container's /dev/tpm* nodes
+          # and points every call at the software TPM.
+          docker run --rm --init --privileged -v "$PWD":/w -w /w ubuntu:24.04 bash -c '
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            for i in 1 2 3; do
+              timeout 300 apt-get update -q && timeout 600 apt-get install -y -q --no-install-recommends \
+                cryptsetup-bin libcryptsetup-dev systemd swtpm swtpm-tools tpm2-tools \
+                libtss2-tcti-swtpm0t64 libtss2-esys-3.0.2-0t64 libtss2-tctildr0t64 \
+                gcc libc6-dev e2fsprogs util-linux fonts-dejavu-core kmod procps && break
+              [ "$i" = 3 ] && exit 1; sleep 10
+            done
+            set +e
+            bash tools/theftunit.sh > ev/theftunit.txt 2>&1; a=$?
+            bash tools/theftunit.sh --mutants > ev/theftunit-mutants.txt 2>&1; b=$?
+            cat ev/theftunit.txt ev/theftunit-mutants.txt
+            [ $a = 0 ] && [ $b = 0 ]'
+          rc=$?
+          { echo '### theftunit'; echo '```'; tail -4 ev/theftunit.txt; tail -12 ev/theftunit-mutants.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: theft-unit
+          path: ev/
+
+  vm:
+    needs: gate
+    if: needs.gate.outputs.go == 'true' && needs.gate.outputs.build != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        cpu: [aes, noaes]
+    name: vm (${{ matrix.cpu }})
+    env:
+      TAG: theft-${{ github.run_id }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: room, tools, KVM
+        run: |
+          ( sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+              /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift 2>/dev/null; echo removed > /tmp/freed ) &
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+              sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          for i in 1 2 3; do
+            sudo timeout 300 apt-get update -q &&
+            sudo DEBIAN_FRONTEND=noninteractive timeout 600 apt-get install -y -q --no-install-recommends \
+                qemu-system-x86 ovmf swtpm swtpm-tools gdisk mtools dosfstools e2fsprogs \
+                python3 gcc libc6-dev fonts-dejavu-core file binutils && break
+            [ "$i" = 3 ] && exit 1; sleep 15
+          done
+          while [ ! -f /tmp/freed ]; do sleep 2; done
+          ls -l /dev/kvm; [ -w /dev/kvm ] || { echo "no usable /dev/kvm"; exit 1; }
+          df -h /
+      - uses: actions/download-artifact@v4
+        with:
+          name: auros-pieces
+          path: dl/pieces
+          run-id: ${{ needs.gate.outputs.build }}
+          github-token: ${{ github.token }}
+      - name: the build's image, joined and checked
+        run: |
+          ( cd dl/pieces && sha256sum -c --quiet <(grep '^piece ' pieces.txt | awk '{print $4"  "$2}') )
+          mkdir -p out
+          cat dl/pieces/auros-desktop.img.gz.* | gzip -dc | cp --sparse=always /dev/stdin out/auros-desktop.img
+          echo "$(cat dl/pieces/image.sha256)  out/auros-desktop.img" | sha256sum -c
+          rm -rf dl/pieces
+          echo "image from https://github.com/$GITHUB_REPOSITORY/actions/runs/${{ needs.gate.outputs.build }}" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: theftvm (${{ matrix.cpu }})
+        run: |
+          flag=""; [ "${{ matrix.cpu }}" = noaes ] && flag=--noaes
+          set +e
+          sudo env PATH="$PATH" THEFT_EVIDENCE="$PWD/out/theft-evidence-${{ matrix.cpu }}" bash tools/theftvm.sh $flag
+          rc=$?
+          { echo '### theftvm (${{ matrix.cpu }})'; echo '```'; cat "out/theft-evidence-${{ matrix.cpu }}/summary.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: theft-vm-${{ matrix.cpu }}
+          path: out/theft-evidence-${{ matrix.cpu }}/
+      - name: evidence as a prerelease
+        if: ${{ !cancelled() }}
+        run: |
+          mk() { gh release create "$TAG" --prerelease --target "$1" \
+                   --title "theft: encrypted drive and PIN, run $GITHUB_RUN_ID" \
+                   --notes "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"; }
+          gh release view "$TAG" >/dev/null 2>&1 || mk "$GITHUB_SHA" || mk main || true
+          d=out/theft-evidence-${{ matrix.cpu }}
+          cp "$d/summary.txt" "$d/theft-evidence-${{ matrix.cpu }}.txt" 2>/dev/null || true
+          ( cd "$d" && for f in theft-evidence-*.txt screen-*.png serial-*.txt; do
+              [ -f "$f" ] && gh release upload "$TAG" "$f" --clobber || true; done )

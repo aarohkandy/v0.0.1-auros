@@ -307,6 +307,13 @@ CODE=$(val RESCUE | tr -d ' ')
 [ ${#CODE} = 24 ] && ok "set-pin gave a 24-number rescue code" || bad "set-pin gave a rescue code" "$(serial | grep -E 'setpin|RESCUE')"
 val after-setpin | grep -q "state=pin" && val after-setpin | grep -q "pin=tpm" \
     && ok "the PIN is sealed in the VM's TPM" || bad "the PIN is sealed in the TPM" "$(val after-setpin)"
+if [ "$NOAES" = 1 ]; then
+    val after-setpin | grep -q 'cipher=xchacha12,aes-adiantum-plain64' \
+        && ok "no AES instructions: the drive uses Adiantum" || bad "no AES instructions: Adiantum" "$(val after-setpin)"
+else
+    val after-setpin | grep -q 'cipher=aes-xts-plain64' \
+        && ok "AES instructions: the drive uses AES-XTS" || bad "AES instructions: AES-XTS" "$(val after-setpin)"
+fi
 note "pass:      $(val 'pass done in' | head -1)"
 note "aes-xts:   $(val bench-xts)"
 note "adiantum:  $(val bench-adiantum)"
