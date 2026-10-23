@@ -1,6 +1,8 @@
 # People walkthrough, October 2026: a cognitive walkthrough of the whole journey
 
-Stream USABILITY, first pass. Written against `main` at `5006a1d`.
+Stream USABILITY, first pass. Written against `main` at `5006a1d` and checked again at `1fd307a`.
+Source citations name the file and the function or a quoted string, not a
+line number: the tree changes every few minutes, so `git grep` the string.
 Method: three concrete people, walked screen by screen through the current
 screenshots (`docs/shots/`) and the strings in the source, asking at each
 screen the four walkthrough questions and four extra ones (below).
@@ -31,7 +33,7 @@ running, it says so.
 | Browser and Windows warnings | Edge on real Windows 11 seen once, in the e2e evidence of run 39902908530 (`0011` to `0017`). Chrome, Firefox, antivirus: not seen anywhere. |
 | Wizard | Seen. Light, post restyle (`7fb9b2d`), 1120x690, 1024x530, 150%. |
 | Restart, GRUB, black screens | Not seen. Read from `grub.cfg.in` and `aurscreen`. |
-| Staging screens | Seen, but **still the dark, pre-restyle** screens (`docs/shots/staging-*.png`, `screen.c:60-66` still `0B0E14` and teal). |
+| Staging screens | Seen, but **still the dark, pre-restyle** screens (`docs/shots/staging-*.png`, `screen.c`'s `PAPER` is still `0B0E14` and its `ACCENT` teal). |
 | First-run "Does everything work?" | Not seen rendered. Read from `welcome.c`. The website draws a replica. |
 | Desktop, four looks | Seen, but **dark, pre-restyle** (`docs/shots/shells/*`, taken before Light became the default). |
 | "Get more programs" | The shell row is seen. The store itself (GNOME Software) is not seen anywhere. |
@@ -332,7 +334,7 @@ Owner: B.
 
 **C-05 · S3 · all · "Press No"**
 Where: `wizard/4a-ready.png` ("Press No, and the computer goes back to
-Windows") against the real button "No, go back to Windows" (`welcome.c:200`).
+Windows") against the real button "No, go back to Windows" (`ACT_LABEL` in `welcome.c`).
 Fix: use the button's exact words.
 Owner: B.
 
@@ -345,7 +347,7 @@ Fix: "Part 3 of 4" or drop the sidebar's count while installing.
 Owner: B.
 
 **C-07 · S2 · R, E · The X is a stock Windows dialog**
-Where: `wizard.c:4005,4021` (`MessageBoxW`, Yes/No, small stock buttons);
+Where: `close_asked()` in `wizard.c` (`MessageBoxW`, Yes/No, small stock buttons);
 DD B-15 asks for an in-window page and it is not done.
 What: closing during the install asks "Stop setting up AurOS? ... Yes / No".
 Closing on "Ready to restart" asks "Close AurOS Setup and take AurOS back? ... To
@@ -424,8 +426,8 @@ what she will see (K).
 Owner: B, A2, K.
 
 **D-02 · S2 · R · The GRUB menu**
-Where: `rootfs/usr/lib/auros/grub.cfg.in:4-5` (3-second menu on every start) and
-`:84-118` (entries "AurOS (verbose boot)", "AurOS (aurinit, experimental)",
+Where: `rootfs/usr/lib/auros/grub.cfg.in` (`set timeout=3`, a menu on every start;
+and the `menuentry` lines: entries "AurOS (verbose boot)", "AurOS (aurinit, experimental)",
 "AurOS (recovery shell)").
 What: a text menu with those names flashes on every start. A key press stops
 the timer, and Ray presses keys. "Recovery shell" is exactly what EASY rule 1
@@ -438,7 +440,7 @@ Owner: BT.
 Where: `docs/shots/staging-installing.png` (a test VM, so the size is tiny; a
 real PC prints its own): "windows  the Windows drive is now 8 MB" and "Copying AurOS onto this computer.", ~12 px, grey; `staging-restore.png`:
 "vda6 48 MiB vfat", "checking the saved copy on /dev/vdb";
-`src/aurscreen/screen.c` `NTAIL` (the raw tail lines); `install.c:578`.
+`src/aurscreen/screen.c` `NTAIL` (the raw tail lines); `install.c` (the `stage_say("windows  %s", ...)` line).
 What: the one line in the log about Windows's size reads like a disaster to a
 person who is not supposed to be reading it. DD section 6 rule 10 forbids it
 and C's P0-3 is pending.
@@ -457,7 +459,7 @@ wrong." (DD C P0-3).
 Owner: A2.
 
 **D-05 · S1 · E, M · The red failure screen**
-Where: `docs/shots/staging-refused.png`; `src/aurstage/install.c:109-110`.
+Where: `docs/shots/staging-refused.png`; `say_what_happens_next()` in `src/aurstage/install.c`.
 What: "AurOS was not installed. Turn this computer off and on again. Windows
 will start as usual -- nothing on it has been changed. To try again, open
 AurBridge in Windows and press Start installing." Four problems: "AurBridge"
@@ -479,7 +481,7 @@ started that was saved before AurOS went on"; device paths).
 Owner: A2.
 
 **D-07 · S3 · all · Staging is still dark and teal, the wizard is light and green**
-Where: `screen.c:60-66`.
+Where: `screen.c` (`PAPER`, `ACCENT`).
 What: after Restart now the program changes character completely. A person
 who has just trusted a light green screen meets a black one with teal text. It
 reads as "something else has taken over".
@@ -488,7 +490,8 @@ Owner: A2 (C's drawing code).
 ### E. The first start
 
 **E-01 · S1 · E, M · "Can you see your photos?" before the photos have come across**
-Where: `src/aurshell/welcome.c:488` (the question), `:562` (`A_FILES` opens the
+Where: `src/aurshell/welcome.c` (the `Q[]` table: the question; `A_FILES` in
+`welcome_click` opens the
 files program), `:196-204` (`Bring my files across` is offered only after Yes,
 `W_CONFIRMED`); commit `e9d1ba0` hides internal NTFS drives from the file
 manager. **Inferred from code; check on a booted image.**
@@ -502,7 +505,7 @@ after the copy. The session task "find a photo" tests this directly.
 Owner: C, R.
 
 **E-02 · S1 · E, M · "Does the internet work?" on a laptop with no cable**
-Where: `welcome.c:489` (the check), `src/aurbridge/wizard.c:1302` (`wifi_offered()`
+Where: `welcome.c` (the `Q[]` table: the check), `src/aurbridge/wizard.c` (`wifi_offered()`
 is 0 until `AB_CHOICE_BRING_WIFI` is defined, and it is not defined anywhere),
 `src/aurshell/net.c` (the Wi-Fi panel types a key).
 What: Her Wi-Fi did not come across (D10 is built but switched off). She presses
@@ -514,7 +517,7 @@ Press Wi-Fi" and open the Wi-Fi panel.
 Owner: A2 (the engine), C (the check).
 
 **E-03 · S2 · R, E · After "Open Your files" the question comes back only when she closes the window**
-Where: `welcome.c:130-141` (`welcome_step`); `foot.c:78-86`.
+Where: `welcome_step()` in `welcome.c`; the comment in `foot.c` that starts "It is here because five of the six".
 What: Ray looks for an X; in five of six looks only the footer's **Close this**
 closes a window. Until it is closed the question is gone.
 Edith never finds the way back.
@@ -523,7 +526,7 @@ check window is open.
 Owner: C.
 
 **E-04 · S3 · all · The question is abstract**
-Where: `welcome.c:372` "Does everything work?" / "Check two things first."
+Where: `welcome.c` (the `W_ASK` title) "Does everything work?" / "Check two things first."
 What: well designed, with separate confirm pages and "Let me look first" in the
 safe middle. The risk is the word "everything". Counted as a hypothesis: ask
 each person what she thinks Yes does.
@@ -532,8 +535,8 @@ Owner: C.
 ### F. The desktop
 
 **F-01 · S1 · E, [R, M] · "Bigger" does not make her programs bigger**
-Where: `src/aurshell/foot.c:389` ("Smaller and Bigger change the size of the
-words everywhere"), `foot.c:633-646` (it writes `~/.config/auros/text-scale`);
+Where: `src/aurshell/foot.c` (the Help text: "Smaller and Bigger change the size of the
+words everywhere"), `foot_click()`, case `B_BIGGER` (it writes `~/.config/auros/text-scale`);
 `git grep` finds no reader of that file outside the shell, no GTK text scaling,
 no `Xft.dpi`, no Firefox `layout.css.devPixelsPerPx` anywhere in `src`, `rootfs`
 or `build`. The help index tells her instead to "hold down Ctrl and press +".
@@ -560,8 +563,8 @@ and Get more programs on the desktop as big tiles.
 Owner: C (D redraws the picture to match).
 
 **F-03 · S2 · R · Windows habits that do nothing**
-Where: `src/aurshell/foot.c:78-86` (a window's close lives in the footer in
-five of six looks), `taskbar.c:1067` (the Windows key opens the menu: only in
+Where: `src/aurshell/foot.c` (a window's close lives in the footer in
+five of six looks), `taskbar.c` (`case 125`, `KEY_LEFTMETA`: the Windows key opens the menu: only in
 that look).
 What: no X at the top right in five looks; right-click, Alt+Tab and a Recycle
 Bin are unverified (not found in the source). Each is a missed expectation, not a fault. Ray will press them
@@ -573,7 +576,7 @@ Owner: C.
 **F-04 · S2 · M · "Photos" is not on the Home of "Big and simple"**
 Where: `docs/shots/shells/rail.png` (Internet, Your files, Documents, Notes,
 All my programs, Get more programs), `rail-all-programs.png`;
-`shellcommon.c:823-854` (the Home keeps places for the store and, since
+`shell_home_pick()` in `shellcommon.c` (the Home keeps places for the store and, since
 `d23f421`, for Make a wish, so four are left for everything else).
 What: Margaret's first thought is "photos". It is under "All my programs", and
 "Your files" is a word she has not used. Make a wish now takes a place Photos
@@ -582,7 +585,7 @@ Fix: Photos on every Home; fold Documents and Notes into one row.
 Owner: C.
 
 **F-05 · S3 · E · Footer text is 15 px and grey**
-Where: `foot.c:35` (`FOOT_MIN_PX 15.f`), `FOOT_TARGET 44`; DD says 18 px and 48.
+Where: `foot.c` (`FOOT_MIN_PX 15.f`), `FOOT_TARGET 44`; DD says 18 px and 48.
 What: "Help Wi-Fi Settings ... Smaller Bigger Turn off" is the one band that must
 be readable on a screen she can no longer read.
 Owner: C.
@@ -591,7 +594,7 @@ Owner: C.
 Where: DD input rule (700 ms after a page change, 500 ms on the same control)
 exists in the wizard (`938ea78`), not in `src/aurshell/main.c`.
 What: a tremor second press can land on whatever the first one opened. The
-power question appears away from its button (`foot.c:177-186`), so the obvious
+power question appears away from its button (`foot_power_buttons()`), so the obvious
 case is safe; others are not tested.
 Owner: C.
 
@@ -630,7 +633,7 @@ install (`12d5201`) and Flathub is on the image (`build/forge:395-420`).
 ### H. Wishes (read from `wish.c`; not rendered; not in the v0.1 image, D14)
 
 **H-01 · S2 · all · The consent screen is a legal text**
-Where: `src/aurshell/wish.c:83-94` (five sentences naming Cloudflare,
+Where: `src/aurshell/wish.c` (`CONSENT[]`: five sentences naming Cloudflare,
 Anthropic, Claude, "the United States", "up to 30 days, or up to 2 years if its
 safety checks flag them").
 What: Edith's real question is "is someone listening to me?" The text answers a
@@ -641,14 +644,14 @@ Fix: three sentences in her words with the choice first, the names behind
 Owner: W2, K.
 
 **H-02 · S2 · E, M · "Make a wish" sits among the programs**
-Where: `apps.c:722-735` (hint "Tell this computer what to do"), `shellcommon.c`.
+Where: `apps.c` ("Make a wish is the shell's own": hint "Tell this computer what to do"), `shellcommon.c`.
 What: she reads a wish as a prize, a lottery, a gift. Ask in the session what
 she thinks it does before she presses it.
 Fix: the hint is right; make it the label's second line on every Home.
 Owner: W2.
 
 **H-03 · S3 · all · Six examples, one of them nonsense**
-Where: `wish.c:49-54` ("Fill my screen with potatoes when I type potato").
+Where: `wish.c` (the six examples: "Fill my screen with potatoes when I type potato").
 What: it is the owner's own example and funny to him. To Edith it is a computer
 that fills a screen with potatoes.
 Owner: W2.
@@ -674,9 +677,9 @@ person to save nothing in AurOS before the task.
 Owner: R.
 
 **I-02 · S2 · E · Two things called "go back"**
-Where: "No, go back to Windows" (keeps AurOS, `welcome.c:200`), "Put Windows
-back" and "Remove AurOS and put Windows back" (removes it, `settings.c:588`,
-`:362`), "Going back to Windows" (help).
+Where: "No, go back to Windows" (keeps AurOS, `ACT_LABEL`), "Put Windows
+back" and "Remove AurOS and put Windows back" (removes it, `settings.c`: `R_WINDOWS` and
+the `putback` choice), "Going back to Windows" (help).
 What: after "No" she is in Windows with AurOS still on the disk and no way to
 reach it again except "ask someone who knows computers" (`windows.html`).
 Three names for two different things breaks the one-name-per-thing rule.
@@ -757,7 +760,7 @@ now gone or smaller (checked against the tree, not the commit message):
   at once after install (`12d5201`).
 - No shared password (`77adbfe`); her look survives a restart (`482dab2`).
 - The Help button opens the help pages (`f3c42b0`).
-- The Wi-Fi firmware probe is fixed in staging (`probe.c:327`), so a Wi-Fi-only
+- The Wi-Fi firmware probe is fixed in staging (`probe.c`, "POINT THE KERNEL'S FIRMWARE LOADER"), so a Wi-Fi-only
   laptop is no longer refused after the shrink.
 - The staging shrink takes only what AurOS needs (`7e874e7`).
 
