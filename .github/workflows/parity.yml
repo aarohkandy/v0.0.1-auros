@@ -44,6 +44,10 @@ on:
         description: restrict the apps check to these Flathub ids or short names (comma list)
         required: false
         default: ''
+      opt:
+        description: guest options, comma list (perf = the 720p film; capfix = a candidate fix for flatpak, see PARITY.md)
+        required: false
+        default: ''
       apt:
         description: Ubuntu packages to install into the VM first (shows a check green once the image carries them)
         required: false
@@ -67,6 +71,7 @@ jobs:
       checks: ${{ steps.g.outputs.checks }}
       apps: ${{ steps.g.outputs.apps }}
       apt: ${{ steps.g.outputs.apt }}
+      opt: ${{ steps.g.outputs.opt }}
     steps:
       - id: g
         env:
@@ -76,11 +81,12 @@ jobs:
           IN_CHECKS: ${{ inputs.checks }}
           IN_APPS: ${{ inputs.apps }}
           IN_APT: ${{ inputs.apt }}
+          IN_OPT: ${{ inputs.opt }}
         run: |
-          go=false; rid=""; checks=""; apps=""; apt=""
+          go=false; rid=""; checks=""; apps=""; apt=""; opt=""
           case "$EVENT" in
             schedule) go=true ;;
-            workflow_dispatch) go=true; rid=$IN_RUN; checks=$IN_CHECKS; apps=$IN_APPS; apt=$IN_APT ;;
+            workflow_dispatch) go=true; rid=$IN_RUN; checks=$IN_CHECKS; apps=$IN_APPS; apt=$IN_APT; opt=$IN_OPT ;;
             push)
               # In the subject line only, as in build.yml.
               subj=${MSG%%$'\n'*}
@@ -97,6 +103,7 @@ jobs:
           echo "checks=$checks" | tee -a "$GITHUB_OUTPUT"
           echo "apps=$apps" | tee -a "$GITHUB_OUTPUT"
           echo "apt=$apt" | tee -a "$GITHUB_OUTPUT"
+          echo "opt=$opt" | tee -a "$GITHUB_OUTPUT"
 
   everyday:
     needs: gate
@@ -158,6 +165,7 @@ jobs:
           CHECKS: ${{ needs.gate.outputs.checks }}
           APPS: ${{ needs.gate.outputs.apps }}
           APT: ${{ needs.gate.outputs.apt }}
+          OPT: ${{ needs.gate.outputs.opt }}
           SRC: ${{ steps.img.outputs.src }}
         run: |
           mkdir -p parity-out
@@ -168,7 +176,7 @@ jobs:
           if [ -z "$CHECKS" ] || [ -n "$EV" ]; then
             set +e
             sudo python3 tools/parity/run.py --image /mnt/parity/auros-desktop.img --out "$PWD/parity-out/everyday" \
-                --work /mnt/parity/work --timeout 2700 --opt perf ${EV:+--checks "$EV"} ${APT:+--apt "$APT"} 2>&1 | tee parity-out/everyday.log
+                --work /mnt/parity/work --timeout 2700 --opt "perf${OPT:+,$OPT}" ${EV:+--checks "$EV"} ${APT:+--apt "$APT"} 2>&1 | tee parity-out/everyday.log
             rc1=${PIPESTATUS[0]}
             set -e
           fi
@@ -176,7 +184,7 @@ jobs:
             sudo rm -rf /mnt/parity/work
             set +e
             sudo python3 tools/parity/run.py --image /mnt/parity/auros-desktop.img --out "$PWD/parity-out/apps" \
-                --work /mnt/parity/work --checks apps --disk-gb 28 --timeout 5700 ${APPS:+--apps "$APPS"} 2>&1 | tee parity-out/apps.log
+                --work /mnt/parity/work --checks apps --disk-gb 28 --timeout 5700 ${OPT:+--opt "$OPT"} ${APPS:+--apps "$APPS"} 2>&1 | tee parity-out/apps.log
             rc2=${PIPESTATUS[0]}
             set -e
           fi

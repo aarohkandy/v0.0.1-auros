@@ -133,6 +133,8 @@ def inject(mnt, opts):
                 "ExecStartPre=+/usr/lib/auros-parity/root.sh\n"
                 "ExecStart=\n"
                 "ExecStart=/usr/bin/dbus-run-session -- /usr/lib/auros-parity/session.sh $AURSHELL_SAFE\n")
+        if "capfix" in opts.opt:     # a candidate fix, to prove it before anybody ships it
+            f.write("CapabilityBoundingSet=~CAP_WAKE_ALARM\n")
     # the shell itself is untouched; the test only wraps it (see guest/session.sh)
 
 
