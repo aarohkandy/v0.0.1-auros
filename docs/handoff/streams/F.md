@@ -1,45 +1,51 @@
 # Stream F: install AurOS from a real Windows, end to end (handoff)
 
-Updated 2026-10-23 05:40 UTC (session B). Repository
+Updated 2026-10-23 08:25 UTC (session B). Repository
 https://github.com/aarohkandy/v0.0.1-auros, branch `main`.
 Files: `.github/workflows/e2e.yml`, `tools/e2e/**` (nothing else).
 Full user guide: `tools/e2e/README.md`. This page is the state of the work.
 
-## Session B: now
+## Session B: now (updated 2026-10-23 08:25 UTC)
 
 | What | State |
 |---|---|
-| Golden Windows in this repo's (empty) Actions cache | run **39902908530** (`dac418d`) doing M1 + save, then an M2 smoke on the old v4 installer |
-| Edge download stall (run 39896941765, old repo) | fixed in `dac418d`: only the warned item's own "More actions" (selftest has the rectangles) |
-| `workflow_call` / `workflow_dispatch` inputs | DONE in `dac418d`: `installer_url`, `installer_sha256`, `variants` (default base). Stream E: call with `uses: ./.github/workflows/e2e.yml` + `with:`; the caller job must grant `contents: write`. The pinned `INSTALLER_URL`/`INSTALLER_SHA256` env lines stay plain (promote greps them). |
-| Point at this repo's first prerelease | waiting for stream E (`gh release list -R aarohkandy/v0.0.1-auros`) |
-| Smoke run 39902908530 (v4 installer) | M1 green (13 min Setup), cache saved; M2 stopped at Edge's new trust dialog (below, finding 1); fixed in the next push |
-| Restyle-proof driver (lead, 25d2da5) | pushed: the installer's buttons by **name** (MSAA via UI Automation; primary = the button whose key is Enter, selftest checks wizard.c keeps that), colour only as fallback (old teal, new green #0B5D4F/#5DBB9E), a button must stand still >1 s before a press (B's 700 ms debounce). The helper now runs **elevated** (logon task, highest run level; guest/firstlogon.ps1) because a normal process cannot read an elevated window's controls: the golden is rebuilt (cache key changed). |
-| Actions cache | the golden is **18.7 GB**; this repo's cache limit is 10 GB in all (the limit API answers 402: no payment method). It was saved and still listed at 05:31, but GitHub evicts down to 10 GB, least recently used first, so expect misses (M1 then adds ~17 min). More room is an owner click (a payment method / larger cache limit), not code. |
-
-**For stream E (release.yml promote gate, line ~333):** it selects
-`.jobs[] | select(.name == "e2e")`, but the matrix job is named
-`e2e (base)`, so no run can ever count. Use
-`select(.name == "e2e (base)")` (or `startswith("e2e (")` with every one
-green). A run made by `workflow_call` is not an e2e.yml run at all (its
-jobs belong to the caller's run), so that path needs its own check.
+| This repo's first prerelease | `v0.1.0-618726b` (stream E). e2e.yml pins its `AurOS-Setup.exe` (SHA-256 `5b875c0b...0b52`, checked against SHA256SUMS and a fresh download). Run **39923720924** (`[e2e]`-less: the pin edit starts it) is the base run on it. |
+| Past the website | run 39906470700 (v4 installer): Windows to desktop 1:26, website, Get AurOS, **Edge's whole Keep dance, the file downloaded and hash-checked, Open file**, then UAC appeared and the driver did not answer it (it looked for the signed wording; fixed in `71abd5e`). First time past the download. Evidence: `releases/download/e2e-39906470700/e2e-evidence-base.zip`. |
+| M2 (wizard, restart, AurOS) | **not yet seen**. Next: run 39923720924. |
+| M3 (store, program on disk) | not reached |
+| bitlocker variant (D13) | `[e2e:bitlocker]`: today it must be red at the plain stop, with the message `variant bitlocker: STOPPED AT ITS STOP, no way on ... D13 ...` (`close_verdict`, selftest-tied to the installer's two titles). When A2's pause lands the install goes on and the driver reads `Get-BitLockerVolume` before Restart now (must be FullyEncrypted: paused, never decrypted). **Still to write once the pause is in a prerelease (needs the real thing to test)**: after M3, boot Windows directly (OVMF boot menu, or AurOS's own menu) and via "Put Windows back"; each time: no BitLocker recovery screen (OCR "recovery key" / "BitLocker recovery"), the desktop is reached (`helper-up`), and `Get-BitLockerVolume` says ProtectionStatus On. |
+| Restyle-proof driver | pushed (`4583e18`): the installer's buttons by **name** (screen-reader object read by the elevated helper; primary = the button whose key is Enter; selftest fails if wizard.c stops saying so), colour only as fallback (old teal, new green #0B5D4F, dark #5DBB9E), a button must stand still over 1 s before a press (B's 700 ms debounce). The helper runs **elevated** (a logon task at the highest run level, `guest/firstlogon.ps1`), because a normal process cannot read an elevated window's controls; the golden changed with it. |
+| Cache | the golden is **18.7 GB**, this repo's whole cache limit is 10 GB (the limit API says 402, no payment method): every save is evicted at once, so every run installs Windows afresh (+17 min). Owner click if wanted: more cache room. Not code. |
+| `workflow_call`/`workflow_dispatch` inputs | DONE (`dac418d`): `installer_url`, `installer_sha256`, `variants`. E wired release.yml to them (`29ea18c`). |
 
 ## What she sees (findings for the design owners; screenshot paths)
 
-Evidence zips: `https://github.com/aarohkandy/v0.0.1-auros/releases/download/e2e-<RUN>/e2e-evidence-base.zip`
-(paths below are inside it).
+Evidence zips: `https://github.com/aarohkandy/v0.0.1-auros/releases/download/e2e-<RUN>/e2e-evidence-base.zip`.
+Paths below are inside it (`flow/shots/...`), run 39906470700.
 
-1. **Edge hides "Keep anyway" behind a 20-px arrow on a black "Delete"
-   button (worst so far; route to D, website).** Edge 2026: hover the
-   download to see "...", press it, Keep, then a dialog "Make sure you
-   trust AurOS-Setup.exe before you open it" whose only buttons are
-   Cancel and a solid black **Delete**; Keep anyway is in the menu of the
-   small arrow on Delete. The website still says "Press Show more, then
-   Keep anyway": she will press Delete or Cancel. Run 39902908530:
-   `flow/shots/0016-auto-edge-download-and-keep-it.png` (the dialog),
-   `0013-click-edge-keep.png` (the item menu), `0012-...more-actions.png`
-   (the "..." appears only under the pointer). The website's picture and
-   words need to show the arrow on Delete.
+1. **Edge: "Keep anyway" is behind a small arrow on a black "Delete"
+   button (worst so far; route to D, website; the page's own words
+   `website/guide.html:44` and the index "Show more -> Keep anyway" are
+   out of date).** Edge on Windows 11 26H2: the download's "..." shows only
+   under the pointer (`0011-click-edge-download-item-more-actions.png`),
+   its menu has Keep (`0013-click-edge-keep.png`), then a dialog "Make sure
+   you trust ... before you open it" with Cancel and a solid black
+   **Delete**; "Keep anyway" is in the menu of the 20-px arrow on Delete
+   (`0014-click-edge-open-menu.png`, `0015-click-edge-keep-anyway.png`). She
+   will press the black button, which deletes it. Three presses she cannot
+   guess, the last one on a destructive-looking button.
+2. **UAC says "from an unknown publisher" and focuses No**
+   (`0018-auto-windows-open-the-installer-smartscreen-uac.png`). Normal for
+   an unsigned file (D1), but the website's step ("Yes when it asks to make
+   changes") should show this exact box and say the highlighted button is
+   the wrong one: Yes is the white one on the left.
+3. **The blue "Windows protected your PC" box never appeared** after
+   Edge's Keep anyway: UAC came straight away. The site's step 3 ("Press
+   More info, then Run anyway") then tells her about a screen she does not
+   get. It may still appear on a PC where the file came from another
+   browser or an older Windows; keep it, but say "if you see".
+4. Website top (`0008-website.png`): clear, calm, one green button, two of
+   them (header and hero) both work. No finding.
 
 ## Goal
 
