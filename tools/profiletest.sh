@@ -298,6 +298,13 @@ judge_report() { # profile report-file
         [ "$(rv earlyoom)" = active ] && ok "earlyoom is watching memory" \
             || bad "earlyoom is watching memory" "earlyoom: $(rv earlyoom)"
     fi
+    # A kiosk is its one program: the locked desktop starts the first
+    # allowed app at boot, and a kiosk with nothing open is an empty
+    # screen she cannot leave.
+    if [ "$(pval "$p" kiosk_mode)" = yes ]; then
+        [ -n "$(rv running)" ] && ok "the kiosk's browser is open ($(rv running))" \
+            || bad "the kiosk's browser is open" "no browser process running"
+    fi
     if [ "$(pval "$p" allow_tty)" = no ]; then
         [ "$(rv tty2)" = masked ] && ok "there is no console on Ctrl-Alt-F2" \
             || bad "there is no console on Ctrl-Alt-F2" "getty@tty2: $(rv tty2)"
@@ -423,6 +430,7 @@ PROFILETEST user=student
 PROFILETEST lang=LANG=en_US.UTF-8
 PROFILETEST locales=C.utf8 en_US.utf8 POSIX
 PROFILETEST browser=/usr/bin/firefox
+PROFILETEST running=firefox
 PROFILETEST failed=
 PROFILETEST swap=/dev/zram0 partition 1.9G;
 PROFILETEST earlyoom=active
@@ -452,6 +460,7 @@ EOR
     rep "...in another theme"                 's/theme=sandstone/theme=nocturne/'
     rep "...with a unit that failed"          's/failed=$/failed=auros-firstboot.service/'
     rep "...with no browser"                  's/browser=.*/browser=/'
+    rep "...with its browser never opened"    's/running=.*/running=/'
     rep "...with a console on Ctrl-Alt-F2"    's/tty2=masked/tty2=enabled/'
     rep "...with aurshell crashed"            's/aurshell=active/aurshell=failed/'
     rep "...with no swap at all"              's/swap=.*/swap=/'
@@ -584,6 +593,7 @@ say "user=$(stat -c %U /run/auros)"
 say "lang=$(grep '^LANG=' /etc/default/locale)"
 say "locales=$(locale -a 2>/dev/null | tr '\n' ' ')"
 say "browser=$(command -v firefox || command -v epiphany-browser || true)"
+say "running=$(ps -eo comm= | grep -xE 'firefox|firefox-bin|firefox-esr|epiphany|epiphany-browse|falkon' | sort -u | tr '\n' ' ' | sed 's/ $//')"
 say "failed=$(systemctl --failed --plain --no-legend 2>/dev/null | awk '{print $1}' | tr '\n' ' ' | sed 's/ $//')"
 say "swap=$(swapon --show=NAME,TYPE,SIZE --noheadings 2>/dev/null | tr '\n' ';')"
 say "earlyoom=$(systemctl is-active earlyoom.service 2>/dev/null)"
@@ -653,6 +663,13 @@ shot() { # name -> sets SHOT_STAT
 if kill -0 "$QP" 2>/dev/null; then
     shot "$P"
     S1=$SHOT_STAT
+    # The first start asks "does it work?" over the desktop (aurshell's
+    # welcome.c). Escape there is "Let me look first", never an answer;
+    # press it and photograph the profile's own desktop underneath.
+    # Evidence for a person to look at, not judged.
+    qmp "$Q" '{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"esc"}]}}' >/dev/null 2>&1
+    sleep 5
+    shot "$P-desktop"
 else
     S1="the machine had stopped"
 fi
@@ -672,7 +689,7 @@ drawn_enough "$S1" && ok "the screen shows a desktop ($S1)" \
 } >> "$EV/$P-image.txt"
 sed -n 's/^PROFILETEST \(boot\|mem\)=/    \1: /p' "$EV/$P-report.txt"
 echo "    desktop up after ${up:-never} s (host clock, from power-on)"
-echo "    evidence: $EV/$P.png, $P-report.txt, $P-serial.txt, $P-image.txt"
+echo "    evidence: $EV/$P.png, $P-desktop.png, $P-report.txt, $P-serial.txt, $P-image.txt"
 echo
 [ "$fail" -eq 0 ] && { echo "$checked checks: $P builds what it says and starts to its desktop."; exit 0; }
 echo "$fail of $checked wrong."
