@@ -44,7 +44,7 @@ $state = if ($Mode -eq 'system') { Split-Path -Parent $Params } else { Split-Pat
 $LOG = Join-Path $state ($(if ($Mode -eq 'system') { 'putback.log' } else { 'savefiles.log' }))
 $udir = if ($Mode -eq 'system') { Join-Path $state 'user' } else { $state }
 function Log([string]$m) {
-    try { ('{0:u} {1}' -f (Get-Date), $m) | Add-Content -Path $LOG -Encoding ASCII } catch {}
+    try { ('{0:u} {1}' -f (Get-Date), ($m -replace '\s*[\r\n]+\s*', ' / ')) | Add-Content -Path $LOG -Encoding ASCII } catch {}
 }
 function Status([string]$phase, [string]$text) {
     try {
