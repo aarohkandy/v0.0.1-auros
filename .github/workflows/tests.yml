@@ -190,6 +190,11 @@ jobs:
           fi
           sudo test -d work/staging/lib/modules
           cat dl/installer/build-info.txt
+      - name: legal sources test and pack check (stream LEGAL; seconds)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          python3 -I tools/legal/sourcestest.py 2>&1 | tee transcripts/legal-sourcestest.txt
+          python3 -I tools/legal/check.py 2>&1 | tee transcripts/legal-check.txt
       - name: repotest (no repository named by hand)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/repotest.sh 2>&1 | tee transcripts/repotest.txt

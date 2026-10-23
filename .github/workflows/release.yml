@@ -46,7 +46,9 @@
 #   e2e-fastpath  the same, for AurOS-Setup-fastpath.exe (the release built
 #             with AUROS_FASTPATH=1, published beside the normal installer
 #             when the tree has one); informative, not a gate of promote.
-#   promote   [latest] only, and only after windows, e2e and site passed
+#   sources   the release's source code, as the release `sources-<tag>`
+#             (sources.yml, stream LEGAL), made and verified in this run.
+#   promote   [latest] only, and only after windows, e2e, site and sources passed
 #             in THIS run: makes the release the full, latest one.
 #             Nothing is pinned by hand.
 #   pages     after promote: deploys the site that was checked to GitHub
@@ -287,6 +289,8 @@ jobs:
         with:
           name: auros-setup-signed
           path: dist/signed
+      # tools/legal/notes.sh (the written offer of source) lives in the tree
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: auros-pieces
@@ -371,6 +375,10 @@ jobs:
             if [ -s dist/installer/build-warnings ]; then cat dist/installer/build-warnings; else echo "(nothing)"; fi
             echo '```'
           } > notes.md
+          # The written offer of source: where this release's sources are and how
+          # to ask (stream LEGAL; the words come from one file, and the
+          # `sources` job below makes the release they point to).
+          { echo; sh tools/legal/notes.sh line "$TAG"; } >> notes.md
           cat notes.md
           # ALWAYS a prerelease here, [latest] or not: nothing becomes
           # what the website's link serves until it has been read back
@@ -542,6 +550,24 @@ jobs:
       installer_url: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}/AurOS-Setup-fastpath.exe
       installer_sha256: ${{ needs.publish.outputs.fastpath_sha256 }}
 
+  # THE SOURCE CODE of what was just published, as its sibling release
+  # `sources-<tag>` (stream LEGAL, docs/legal/SOURCES.md): the Ubuntu source
+  # packages in the exact versions in the image, NOTICES.txt, Firefox's
+  # source, AurOS's own; published as a draft, completed, checked against
+  # GitHub's digests, downloaded again and verified. A published release is
+  # only verified, never rewritten. promote waits for it.
+  sources:
+    needs: [which, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    uses: ./.github/workflows/sources.yml
+    secrets: inherit
+    permissions:
+      contents: write
+      actions: read
+    with:
+      run-id: ${{ needs.which.outputs.run-id }}
+      tag: ${{ needs.publish.outputs.tag }}
+
   # Before anything is promoted, not after: a site that fails its check
   # stops the promote, instead of leaving a new release behind an old
   # website. What is checked is what pages deploys (this run's
@@ -580,8 +606,8 @@ jobs:
           path: ${{ runner.temp }}/site
 
   promote:
-    needs: [which, publish, windows, e2e, site]
-    if: ${{ !cancelled() && needs.which.outputs.latest == 'true' && needs.publish.result == 'success' && needs.windows.result == 'success' && needs.e2e.result == 'success' && needs.site.result == 'success' }}
+    needs: [which, publish, windows, e2e, site, sources]
+    if: ${{ !cancelled() && needs.which.outputs.latest == 'true' && needs.publish.result == 'success' && needs.windows.result == 'success' && needs.e2e.result == 'success' && needs.site.result == 'success' && needs.sources.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

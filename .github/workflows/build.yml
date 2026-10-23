@@ -132,6 +132,10 @@ jobs:
           echo "BASE_URL=$(sh tools/repo.sh download)/$tag/" >> "$GITHUB_ENV"
           mkdir -p dist/installer dist/pieces
           echo "tag $tag (os_version $v, commit $GITHUB_SHA, run $GITHUB_RUN_ID)" | tee dist/installer/build-info.txt
+          # The build HOST's C library is linked into the Windows installer's
+          # tools; its source is owed too (stream LEGAL, build/sources reads
+          # this file instead of guessing from the publishing runner).
+          dpkg-query -W -f='${source:Package} ${source:Version}\n' libc6-dev >> dist/installer/host-sources.txt
           : > dist/installer/timings.txt
 
       - name: room and tools
@@ -199,7 +203,7 @@ jobs:
           T=$(date +%s)
           # NOT ALLOW_BROWSER_FALLBACK: this network reaches Mozilla, so
           # the profile's Firefox must arrive, or the build stops.
-          sudo env -u ALLOW_BROWSER_FALLBACK AUROS_DOMAIN="$AUROS_DOMAIN" ./build/all desktop --keep=raw 2>&1 | tee /tmp/forge.log
+          sudo env -u ALLOW_BROWSER_FALLBACK AUROS_DOMAIN="$AUROS_DOMAIN" AUROS_BUILD_TAG="$TAG" ./build/all desktop --keep=raw 2>&1 | tee /tmp/forge.log
           echo "forge+mkimage $(( $(date +%s) - T )) s" >> dist/installer/timings.txt
           ls -la out out/manifests
           df -h /
