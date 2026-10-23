@@ -46,7 +46,7 @@ jobs:
         run: |
           for i in 1 2 3; do
             sudo timeout 150 apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
-              && sudo timeout 300 apt-get install -y -q mingw-w64 libxml2-utils gdisk cpio && exit 0
+              && sudo timeout 300 apt-get install -y -q gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 libxml2-utils gdisk cpio && exit 0
             echo "::warning::apt try $i did not finish; trying again"
             sleep 10
           done

@@ -146,12 +146,15 @@ jobs:
       - name: toolchain
         # Twice on 2026-10-23 this step sat in apt-get update until the
         # run was cancelled by hand. Each try is bounded and retried, so
-        # a stuck mirror costs minutes, not the run.
+        # a stuck mirror costs minutes, not the run. Only the 64-bit C
+        # compiler and its binutils (windres, objdump): the "mingw-w64"
+        # package is 277 MB with the 32-bit and C++ halves, and the
+        # runners' mirror gave 40 KB/s on 2026-10-23 -- every try timed out.
         timeout-minutes: 12
         run: |
           for i in 1 2 3; do
             sudo timeout 150 apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
-              && sudo timeout 300 apt-get install -y -q mingw-w64 libxml2-utils && exit 0
+              && sudo timeout 300 apt-get install -y -q gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 libxml2-utils && exit 0
             echo "::warning::apt try $i did not finish; trying again"
             sleep 10
           done
