@@ -763,10 +763,24 @@ static int draw_button(int id, const wchar_t *label, int x, int y, int w, int h,
  *  that is half written -- which it used to, for the second check
  *  behind "Start installing".
  * ═══════════════════════════════════════════════════════════════════ */
+/* WHAT THE SPACE FIX WOULD FREE, measured by the worker that ran the
+ * check (fix_temp_bytes reads, never deletes), so the stop page says the
+ * size before she presses. Less than TEMP_WORTH is not a fix at all. */
+static uint64_t g_temp_new, g_temp_bytes, g_bg_temp;
+#define TEMP_WORTH (100ULL * 1000 * 1000)
+
+static int pf_blocks(const pf_report *r, const char *id)
+{
+    for (int i = 0; i < r->n; i++)
+        if (r->results[i].sev == PF_BLOCK && !strcmp(r->results[i].id, id)) return 1;
+    return 0;
+}
+
 static DWORD WINAPI pf_worker(LPVOID p)
 {
     (void)p;
     pf_run(&g_pf_new);                 /* read-only, by contract */
+    g_temp_new = pf_blocks(&g_pf_new, "insufficient-space") ? fix_temp_bytes() : 0;
     InterlockedExchange(&g_pf_state, 2);
     return 0;
 }
@@ -786,6 +800,7 @@ static int pf_poll(void)
 {
     if (InterlockedCompareExchange(&g_pf_state, 0, 2) != 2) return 0;
     memcpy(&g_report, &g_pf_new, sizeof g_report);
+    g_temp_bytes = g_temp_new;
     g_pf_valid = 1;
     g_checking = 0;
     return 1;
@@ -826,6 +841,8 @@ static fix_kind kind_of(const pf_result *r)
 {
     const fix_info *f = fix_lookup(r->id);
     if (!f) return FIX_UNKNOWN;
+    /* Next to nothing to delete: there is no fix, only what she can move. */
+    if (!strcmp(r->id, "insufficient-space") && g_temp_bytes < TEMP_WORTH) return FIX_WAIT;
     /* A restart is offered once. Still there after it: nothing we can do. */
     if (f->kind == FIX_RESTART && g_resumed) return FIX_CANNOT;
     return f->kind;
@@ -921,6 +938,7 @@ static DWORD WINAPI bg_worker(LPVOID p)
 {
     (void)p;
     pf_run(&g_bg_report);              /* read-only, by contract */
+    g_bg_temp = pf_blocks(&g_bg_report, "insufficient-space") ? fix_temp_bytes() : 0;
     InterlockedExchange(&g_bg_state, 2);
     return 0;
 }
@@ -932,6 +950,7 @@ static int bg_recheck_tick(void)
 {
     if (InterlockedCompareExchange(&g_bg_state, 0, 2) == 2) {
         memcpy(&g_report, &g_bg_report, sizeof g_report);
+        g_temp_bytes = g_bg_temp;
         g_pf_valid = 1;
         g_bg_ticks = 0;
         /* a fix that has run, and been checked since */
@@ -2025,6 +2044,26 @@ static int block_card(const pf_result *r, int x, int y, int w)
 }
 
 
+/* THE SPACE FIX, SAID WITH ITS SIZE before she presses: what it deletes
+ * and how much, or, when that is next to nothing, what she can do. */
+static void space_fix_line(wchar_t *out, int n)
+{
+    if (g_temp_bytes >= TEMP_WORTH) {
+        wchar_t sz[32];
+        if (g_temp_bytes >= 1000000000ULL)
+            _snwprintf(sz, 31, L"%.1f GB", (double)g_temp_bytes / 1e9);
+        else
+            _snwprintf(sz, 31, L"%d MB", (int)((g_temp_bytes + 5000000ULL) / 10000000ULL) * 10);
+        sz[31] = 0;
+        _snwprintf(out, (size_t)n, L"We delete %ls of Windows\u2019 old temporary files. "
+                                   L"Nothing of yours.", sz);
+    } else {
+        _snwprintf(out, (size_t)n, L"Move big files (videos, games) off drive C:, or empty "
+                                   L"the Recycle Bin. We carry on by ourselves.");
+    }
+    out[n - 1] = 0;
+}
+
 static int page_blocked(int x, int y, int w)
 {
     int y0 = y;
@@ -2061,6 +2100,7 @@ static int page_blocked(int x, int y, int w)
         if (f) {
             wcsncpy(prob, f->problem, 159); prob[159] = 0;
             wcsncpy(fix, f->fix, 599);      fix[599] = 0;
+            if (!strcmp(r->id, "insufficient-space")) space_fix_line(fix, 600);
         } else {
             /* A check this table has never heard of still gets one
              * short line, never the check's own paragraph. */
@@ -4197,7 +4237,9 @@ static int shot_run(const char *dir)
     fx_add("not-on-ac", PF_BLOCK, "This PC is running on battery");
     fx_add("insufficient-space", PF_BLOCK, "Not enough free space");
     fx_add("pending-reboot", PF_BLOCK, "Windows has updates waiting for a restart");
+    g_temp_bytes = 2300000000ULL;
     g_page = PAGE_BLOCKED; shot_save(dir, "2a-blocked-fixable");
+    g_temp_bytes = 0;
 
     fx_machine(0);
     fx_add("firmware-bios", PF_BLOCK, "This PC uses legacy BIOS boot");
@@ -4510,11 +4552,28 @@ static int nav_test(const char *dir)
         g_page = PAGE_BLOCKED;
         nt_check(fixable_now() == 0 && !wcscmp(primary_label(), L"Close"),
                  "on an encrypted drive the one button is Close");
+        /* The space fix deletes only old temporary files, and says how
+         * much before she presses; with next to nothing to delete there
+         * is no Fix button, only what she can move. */
+        fx_machine(0);
+        fx_add("insufficient-space", PF_BLOCK, "Not enough free space");
+        g_temp_bytes = 2300000000ULL;
+        wchar_t line[200];
+        space_fix_line(line, 200);
+        nt_check(wcsstr(line, L"2.3 GB") && fixable_now() == 1 &&
+                 !wcscmp(primary_label(), L"Fix these for me"),
+                 "the space fix says what it deletes, 2.3 GB, before she presses");
+        g_temp_bytes = 20000000ULL;
+        space_fix_line(line, 200);
+        nt_check(fixable_now() == 0 && wcsstr(line, L"Move big files"),
+                 "with next to nothing to delete there is no Fix button, only what she can move");
+        g_temp_bytes = 0;
     }
     {
         static const char *ids[] = { "not-on-ac", "insufficient-space", "removable-no-serial",
                                      "test-block", "firmware-bios" };
         fx_machine(0);
+        g_temp_bytes = 2300000000ULL;      /* old temporary files to delete */
         for (int i = 0; i < 5; i++) fx_add(ids[i], PF_BLOCK, "a synthetic problem");
         g_report.n = 2 + 4; g_report.n_block = 4;
         g_page = PAGE_BLOCKED;
@@ -4538,6 +4597,7 @@ static int nav_test(const char *dir)
         scroll_by(10000);
         nt_check(g_scroll[PAGE_BLOCKED] == 600, "a long page scrolls to its end, and no further");
         g_scroll[PAGE_BLOCKED] = 0;
+        g_temp_bytes = 0;
     }
 
     if (g_nt) fprintf(g_nt, "\n8. the restart: by itself after a minute, or now, or later\n");

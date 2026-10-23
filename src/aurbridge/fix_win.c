@@ -2,7 +2,6 @@
  * files and never in the simulation). */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <shellapi.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -13,10 +12,12 @@
 /* ── the table ─────────────────────────────────────────────────────── */
 
 static const fix_info FIXES[] = {
+    /* The fix line the page shows names the size it frees (wizard.c,
+     * space_fix_line); this one is for a check that has not measured. */
     { "insufficient-space", FIX_AUTO,
       L"Not enough free space on drive C:",
-      L"We empty the Recycle Bin and clear out Windows’ leftover files.",
-      L"We cleared what we safely could, and it still needs more room. Move "
+      L"We delete Windows’ old temporary files. Nothing of yours.",
+      L"We deleted what we safely could, and it still needs more room. Move "
       L"big files (videos, games) off C: and we carry on by ourselves." },
     /* D11: BitLocker is PAUSED for one restart, never decrypted. Until
      * the engine can pause it (AB_CHOICE_BITLOCKER_PAUSE, which makes
@@ -223,110 +224,79 @@ const fix_info *fix_at(int i)
 
 /* ── freeing space ─────────────────────────────────────────────────── */
 
-/* Everything inside `dir`, not `dir` itself, best effort: a file in use is
- * skipped, not an error. NEVER THROUGH A LINK. A junction or symbolic link
- * inside a temp folder can point anywhere -- at somebody's documents --
- * and a recursive delete that follows it deletes them. Links are removed
- * as links (RemoveDirectory on a junction removes the junction only). */
-static void empty_dir(const wchar_t *dir, int depth)
+/* ONLY WINDOWS' OWN TEMPORARY FILES, AND ONLY OLD ONES. It used to empty
+ * her Recycle Bin (that is deleting her files) and run Disk Cleanup's
+ * "Update Cleanup" and driver packages (the way back from an update);
+ * both are gone (atlas review, finding 9). What is left is what Windows'
+ * own Disk Cleanup calls "Temporary files": files in the two temp
+ * folders that nothing has written for a week. And the page says how
+ * much that is before she presses (fix_temp_bytes, the same walk).
+ *
+ * NEVER THROUGH A LINK, AND NEVER A LINK. A junction or symbolic link in
+ * a temp folder can point anywhere -- at somebody's documents -- and a
+ * recursive delete that follows it deletes them. Links are left as they
+ * are, and so are folders: an empty folder frees nothing. A file in use
+ * is skipped, not an error. */
+#define TEMP_AGE_DAYS 7
+
+static uint64_t temp_walk(const wchar_t *dir, int depth, ULONGLONG cutoff, int del)
 {
-    if (depth > 32) return;
+    if (depth > 32) return 0;
     wchar_t pat[MAX_PATH * 2];
     _snwprintf(pat, MAX_PATH * 2 - 1, L"%ls\\*", dir);
     pat[MAX_PATH * 2 - 1] = 0;
     WIN32_FIND_DATAW fd;
     HANDLE h = FindFirstFileW(pat, &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    uint64_t bytes = 0;
     do {
         if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
+        DWORD a = fd.dwFileAttributes;
+        if (a & FILE_ATTRIBUTE_REPARSE_POINT) continue;
         wchar_t p[MAX_PATH * 2];
         _snwprintf(p, MAX_PATH * 2 - 1, L"%ls\\%ls", dir, fd.cFileName);
         p[MAX_PATH * 2 - 1] = 0;
-        DWORD a = fd.dwFileAttributes;
-        if (a & FILE_ATTRIBUTE_REPARSE_POINT) {
-            if (a & FILE_ATTRIBUTE_DIRECTORY) RemoveDirectoryW(p);
-            else DeleteFileW(p);
-            continue;
-        }
-        if (a & FILE_ATTRIBUTE_DIRECTORY) {
-            empty_dir(p, depth + 1);
-            RemoveDirectoryW(p);
-        } else {
-            if (a & FILE_ATTRIBUTE_READONLY)
-                SetFileAttributesW(p, a & ~FILE_ATTRIBUTE_READONLY);
-            DeleteFileW(p);
-        }
+        if (a & FILE_ATTRIBUTE_DIRECTORY) { bytes += temp_walk(p, depth + 1, cutoff, del); continue; }
+        ULARGE_INTEGER w, c;
+        w.LowPart = fd.ftLastWriteTime.dwLowDateTime;  w.HighPart = fd.ftLastWriteTime.dwHighDateTime;
+        c.LowPart = fd.ftCreationTime.dwLowDateTime;   c.HighPart = fd.ftCreationTime.dwHighDateTime;
+        if (w.QuadPart >= cutoff || c.QuadPart >= cutoff) continue;   /* written this week */
+        uint64_t n = ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+        if (!del) { bytes += n; continue; }
+        if (a & FILE_ATTRIBUTE_READONLY) SetFileAttributesW(p, a & ~FILE_ATTRIBUTE_READONLY);
+        if (DeleteFileW(p)) bytes += n;
     } while (FindNextFileW(h, &fd));
     FindClose(h);
+    return bytes;
 }
 
-/* Windows' own Disk Cleanup, told which kinds of files to remove and run
- * without asking. Only kinds that are Windows' leftovers: NOT "Downloads"
- * (somebody's files) and NOT "Previous Windows installation(s)" (the way
- * back from the last big Windows update). */
-static void disk_cleanup(void)
+static uint64_t temp_folders(int del)
 {
-    static const char *SAFE[] = {
-        "Active Setup Temp Folders", "D3D Shader Cache", "Delivery Optimization Files",
-        "Device Driver Packages", "Downloaded Program Files", "Internet Cache Files",
-        "Old ChkDsk Files", "Recycle Bin", "Setup Log Files",
-        "System error memory dump files", "System error minidump files",
-        "Temporary Files", "Temporary Setup Files", "Thumbnail Cache",
-        "Update Cleanup", "Windows Error Reporting Files",
-        "Windows Upgrade Log Files", NULL };
-    const char *ROOT =
-        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VolumeCaches\\";
-    DWORD two = 2;
-    for (int i = 0; SAFE[i]; i++) {
-        char key[256];
-        snprintf(key, sizeof key, "%s%s", ROOT, SAFE[i]);
-        HKEY k;
-        if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, key, 0, KEY_SET_VALUE, &k) == ERROR_SUCCESS) {
-            RegSetValueExA(k, "StateFlags0421", 0, REG_DWORD, (const BYTE *)&two, sizeof two);
-            RegCloseKey(k);
-        }
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    ULARGE_INTEGER t;
+    t.LowPart = now.dwLowDateTime; t.HighPart = now.dwHighDateTime;
+    ULONGLONG cutoff = t.QuadPart - (ULONGLONG)TEMP_AGE_DAYS * 24 * 3600 * 10000000ULL;
+    uint64_t bytes = 0;
+    wchar_t d[MAX_PATH];
+    DWORD k = GetTempPathW(MAX_PATH, d);
+    if (k > 3 && k < MAX_PATH) {
+        if (d[k - 1] == L'\\') d[k - 1] = 0;
+        bytes += temp_walk(d, 0, cutoff, del);
     }
-    char sys[MAX_PATH], cmd[MAX_PATH + 64];
-    if (!GetSystemDirectoryA(sys, sizeof sys)) return;
-    snprintf(cmd, sizeof cmd, "%s\\cleanmgr.exe", sys);
-    if (GetFileAttributesA(cmd) == INVALID_FILE_ATTRIBUTES) return;   /* not on this edition */
-    /* Not plat_run, which waits for ever: "Update Cleanup" can take a long
-     * time on a PC that has had years of updates. Fifteen minutes, then the
-     * check decides whether what it has freed so far is enough; Disk
-     * Cleanup carries on by itself either way. */
-    snprintf(cmd, sizeof cmd, "\"%s\\cleanmgr.exe\" /sagerun:421", sys);
-    wchar_t w[MAX_PATH + 64];
-    if (!MultiByteToWideChar(CP_UTF8, 0, cmd, -1, w, MAX_PATH + 64)) return;
-    STARTUPINFOW si;
-    memset(&si, 0, sizeof si);
-    si.cb = sizeof si;
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi;
-    if (!CreateProcessW(NULL, w, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi))
-        return;
-    WaitForSingleObject(pi.hProcess, 15 * 60 * 1000);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
+    if (GetWindowsDirectoryW(d, MAX_PATH)) {
+        wcsncat(d, L"\\Temp", MAX_PATH - wcslen(d) - 1);
+        bytes += temp_walk(d, 0, cutoff, del);
+    }
+    return bytes;
 }
+
+uint64_t fix_temp_bytes(void) { return temp_folders(0); }
 
 static int free_space(char *why, size_t n)
 {
     (void)why; (void)n;
-    SHEmptyRecycleBinW(NULL, NULL,
-                       SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND);
-    wchar_t t[MAX_PATH];
-    DWORD k = GetTempPathW(MAX_PATH, t);
-    if (k > 3 && k < MAX_PATH) {
-        if (t[k - 1] == L'\\') t[k - 1] = 0;
-        empty_dir(t, 0);
-    }
-    wchar_t w[MAX_PATH];
-    if (GetWindowsDirectoryW(w, MAX_PATH)) {
-        wcsncat(w, L"\\Temp", MAX_PATH - wcslen(w) - 1);
-        empty_dir(w, 0);
-    }
-    disk_cleanup();
+    temp_folders(1);
     return 0;
 }
 

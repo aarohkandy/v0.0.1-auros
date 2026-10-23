@@ -244,32 +244,49 @@ jobs:
           if ($f) { throw "after switching it off, preflight still mentions Fast Startup" }
           "Fast Startup was on, and the installer switched it off"
           exit 0
-      - name: the Fix button frees space, and never follows a link out of Temp
+      - name: the Fix button deletes only old temporary files, never hers
         shell: pwsh
-        timeout-minutes: 25
+        timeout-minutes: 10
         run: |
-          # Leftovers in both temp folders must go. A junction in %TEMP%
-          # pointing at somebody's folder must go as a link, and the file
-          # behind it must still be there afterwards: a recursive delete
-          # that follows it would delete their files.
+          # What Windows' own Disk Cleanup calls "Temporary files": files in
+          # the two temp folders that nothing has written for a week. Those
+          # must go. A file written today, a file in her Recycle Bin, a
+          # junction in %TEMP% and somebody's file behind it must all stay:
+          # a recursive delete that follows the link would delete theirs.
           $keep = "$env:SystemDrive\keep-me"
           New-Item -ItemType Directory -Force $keep | Out-Null
           Set-Content "$keep\photo.txt" 'somebody''s file'
           New-Item -ItemType Directory -Force "$env:TEMP\aurtest\deeper" | Out-Null
-          Set-Content "$env:TEMP\aurtest\deeper\junk.tmp" 'junk'
-          Set-Content "$env:WINDIR\Temp\aurtest-junk.tmp" 'junk'
+          $old = (Get-Date).AddDays(-10)
+          foreach ($f in "$env:TEMP\aurtest\deeper\junk.tmp", "$env:WINDIR\Temp\aurtest-junk.tmp") {
+            Set-Content $f 'junk'
+            $i = Get-Item $f; $i.CreationTime = $old; $i.LastWriteTime = $old
+          }
+          Set-Content "$env:TEMP\aurtest-today.tmp" 'written today'
           cmd /c mklink /J "$env:TEMP\aurtest-link" $keep | Out-Null
           if (-not (Test-Path "$env:TEMP\aurtest-link\photo.txt")) { throw "the junction was not made" }
+          # Something of hers in the Recycle Bin.
+          Set-Content "$keep\binned.txt" 'hers, deleted to the Recycle Bin'
+          Add-Type -AssemblyName Microsoft.VisualBasic
+          [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile("$keep\binned.txt", 'OnlyErrorDialogs', 'SendToRecycleBin')
+          $before = @((New-Object -ComObject Shell.Application).NameSpace(10).Items()).Count
+          if ($before -lt 1) { "::warning::this runner has no Recycle Bin to test with" }
           .\exe\aurbridge.exe fix insufficient-space
           if ($LASTEXITCODE -ne 0) { throw "fix insufficient-space exited $LASTEXITCODE" }
-          if (Test-Path "$env:TEMP\aurtest\deeper\junk.tmp") { throw "a file in %TEMP% is still there" }
-          if (Test-Path "$env:WINDIR\Temp\aurtest-junk.tmp") { throw "a file in Windows\Temp is still there" }
-          if (Test-Path "$env:TEMP\aurtest-link") { throw "the junction is still there" }
+          if (Test-Path "$env:TEMP\aurtest\deeper\junk.tmp") { throw "an old file in %TEMP% is still there" }
+          if (Test-Path "$env:WINDIR\Temp\aurtest-junk.tmp") { throw "an old file in Windows\Temp is still there" }
+          if (-not (Test-Path "$env:TEMP\aurtest-today.tmp")) { throw "A FILE WRITTEN TODAY WAS DELETED" }
+          if (-not (Test-Path "$env:TEMP\aurtest-link")) { throw "the junction was removed: links are left alone" }
           if (-not (Test-Path "$keep\photo.txt")) { throw "THE FILE BEHIND THE JUNCTION WAS DELETED" }
-          # Nothing a program cannot fix is attempted.
+          $after = @((New-Object -ComObject Shell.Application).NameSpace(10).Items()).Count
+          if ($after -lt $before) { throw "THE RECYCLE BIN WAS EMPTIED: $before items before, $after after" }
+          # Nothing a program cannot fix is attempted, and an encrypted
+          # drive is never decrypted (owner decision D11).
           .\exe\aurbridge.exe fix firmware-bios
           if ($LASTEXITCODE -ne 2) { throw "fix firmware-bios exited $LASTEXITCODE, not 2" }
-          "temp folders emptied; the file behind the link is untouched"
+          .\exe\aurbridge.exe fix bitlocker-system
+          if ($LASTEXITCODE -ne 2) { throw "fix bitlocker-system exited $LASTEXITCODE, not 2" }
+          "old temp files deleted; today's file, the Recycle Bin and the file behind the link untouched"
           exit 0
       - name: after a restart it asks for, the installer opens again by itself
         shell: pwsh

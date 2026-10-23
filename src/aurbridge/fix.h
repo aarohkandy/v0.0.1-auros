@@ -19,6 +19,7 @@
 #define AURBRIDGE_FIX_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <wchar.h>
 
 typedef enum { FIX_UNKNOWN = 0, FIX_AUTO, FIX_RESTART, FIX_WAIT, FIX_CANNOT } fix_kind;
@@ -52,6 +53,11 @@ const fix_info *fix_at(int i);
  * whether it was enough), -1 with a sentence in `why`. Blocking; the
  * wizard calls it from a worker thread. */
 int fix_run(const char *id, char *why, size_t n);
+
+/* What the space fix would delete, in bytes, measured the way it deletes:
+ * files in the two temp folders that nothing has written for a week.
+ * Read-only. Slow on a big folder: call it from a worker thread. */
+uint64_t fix_temp_bytes(void);
 
 /* For FIX_RESTART: arrange for this installer to open again, elevated,
  * the next time this person signs in, then restart Windows. The task it
