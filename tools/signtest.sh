@@ -232,7 +232,7 @@ if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     # reaching further (tools/repo.sh, src/aurstage), and a copy missing
     # one fails these checks for that reason instead of the one asked.
     mkdir -p "$TMP/tree"
-    cp -r build src tools "$TMP/tree/"
+    cp -r build src tools hw "$TMP/tree/"
     # The copy has no git remote: tell it which repository, as asked of
     # this checkout (build/aurbridge bakes in the website it names).
     AUROS_REPO=$(sh tools/repo.sh) || AUROS_REPO=""
