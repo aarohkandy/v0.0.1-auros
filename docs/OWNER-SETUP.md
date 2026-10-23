@@ -147,12 +147,83 @@ Rules for every secret:
   install anything on every AurOS computer that has not yet moved to a new key. The way
   out is a new key, rotated in as `docs/security/UPDATES.md` "Key rotation" describes.
 
+### 4a-lock. Lock the update key to `main` and to your click (SEC-004; 10 minutes, do it before the first public release)
+
+**Why.** The key in 4a is root on every AurOS computer. Today it is a
+repository-level secret, which any workflow on any branch can read, and
+`main` can be force-pushed; so anyone who can push a branch could add a
+workflow that prints the key. The publish job now runs in an *environment*
+called `apt-signing` (the workflow side is done: `aptrepo.yml`, and
+`tools/workflowlint.py` fails the build if any other job names the key). You
+make the environment strict, move the key into it, and delete the old copy.
+
+1. `https://github.com/aarohkandy/v0.0.1-auros/settings/environments` →
+   **New environment** → name exactly `apt-signing` → **Configure environment**.
+   (If a run has already used the name, it exists: open it.)
+2. **Required reviewers**: tick it and add yourself (`aarohkandy`). Leave
+   *Prevent self-review* **unticked**, you are the only reviewer. If you see
+   *Allow administrators to bypass*, untick it.
+3. **Deployment branches and tags** → *Selected branches and tags* → **Add
+   deployment branch or tag rule** → `main` → **Add rule**. Nothing else.
+4. Put the key in the environment, then remove the old copy. In Terminal
+   (your backup is `~/AurOS-update-key`; if it is on the USB stick, use that
+   path instead):
+
+   ```sh
+   gh secret set AUROS_APT_SIGNING_KEY --env apt-signing -R aarohkandy/v0.0.1-auros < ~/AurOS-update-key/auros-apt-signing-key.PRIVATE.asc &&
+   gh secret delete AUROS_APT_SIGNING_KEY -R aarohkandy/v0.0.1-auros &&
+   gh secret list -R aarohkandy/v0.0.1-auros && gh secret list --env apt-signing -R aarohkandy/v0.0.1-auros
+   ```
+
+   The first list must **not** show `AUROS_APT_SIGNING_KEY`; the second must.
+5. **Stop force-pushes and deletion on `main`**:
+   `https://github.com/aarohkandy/v0.0.1-auros/settings/rules` → **New
+   ruleset** → **New branch ruleset** → name `main` → Enforcement status
+   **Active** → *Target branches* → **Add target** → **Include default
+   branch** → tick **Restrict deletions** and **Block force pushes** → **Create**.
+   Do **not** tick *Restrict updates* or *Require a pull request*: the agents
+   push straight to `main`, and either would stop them. (When you want pull
+   requests, that is the day to add them.)
+6. From now on every update publish (`[apt]`) stops and waits for your
+   click: GitHub emails you, **Review deployments** → tick `apt-signing` →
+   **Approve and deploy**. That is the point: nothing can sign an update
+   without you.
+
+To check it worked, ask an agent to run a throwaway-branch canary that prints
+whether the key is visible (it must say it is not).
+
 ### 4b. Private security reports (1 minute, before launch)
 
 `SECURITY.md` tells people to report problems privately through GitHub. That
 is off until you switch it on: `https://github.com/OWNER/REPO/settings/security_analysis`
 → **Private vulnerability reporting** → **Enable**. (Checked 2026-10-23: off.)
 Also put a security contact address in `SECURITY.md` where it says `[OWNER: ...]`.
+
+### 4d. Release immutability (SEC-005; do it only after the evidence jobs change)
+
+GitHub can make a published release's files and tag unchangeable, so that
+code in a CI job cannot swap `AurOS-Setup.exe` in the release the website
+button serves. The setting: `https://github.com/aarohkandy/v0.0.1-auros/settings`
+→ scroll to **Releases** → tick **Enable release immutability** (it applies
+to releases published after you tick it).
+
+**Do not tick it yet.** The real-Windows e2e, profiles and other-systems
+workflows (`tools/e2e/publish.sh`, `profiles.yml`, `othersys.yml`) attach
+screenshots to their evidence releases while the run goes on; under
+immutability the first upload after publishing fails (HTTP 422), and so
+would their tests. Streams F, P and H change those to "upload to a draft,
+publish at the end"; an agent will tell you when it is safe. After you tick
+it, check: `gh api repos/aarohkandy/v0.0.1-auros/immutable-releases --jq .enabled`
+must say `true`, and `gh release upload <a tag> x --clobber` must fail.
+
+What the workflows already do for this finding: `contents: write` is held
+only by the jobs that make or fill a release (not by whole workflows,
+checked by `tools/workflowlint.py`), and every action is pinned to a full
+commit SHA (same lint). Still open: the apt channel lives in a Release tag
+named `apt` and the evidence in their own prerelease tags; neither can
+replace the release the website serves, but they share the permission. Moving
+the apt channel off Releases needs a second repository or the website's
+Pages and is a decision for you and stream S5.
 
 ## 5. Code signing through SignPath (decision D12; 20 minutes, in two sittings)
 
