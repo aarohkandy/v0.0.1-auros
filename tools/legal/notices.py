@@ -104,14 +104,45 @@ def offer_text():
     return t.rstrip("\n") + "\n"
 
 
+# The full license texts NOTICES carries. Every /usr/share/common-licenses/X that a copyright file in
+# docs/legal/licenses names must be here (a Windows computer has no such folder): LICENSE_FOR maps Debian's
+# name to our file, and the build of the notices fails on a name it does not know.
+TEXTS = [("GPL-2.0.txt", "GNU General Public License, version 2"),
+         ("GPL-3.0.txt", "GNU General Public License, version 3"),
+         ("GPL-1.txt", "GNU General Public License, version 1"),
+         ("LGPL-2.0.txt", "GNU Library General Public License, version 2"),
+         ("LGPL-2.1.txt", "GNU Lesser General Public License, version 2.1"),
+         ("LGPL-3.0.txt", "GNU Lesser General Public License, version 3"),
+         ("GFDL-1.3.txt", "GNU Free Documentation License, version 1.3"),
+         ("Artistic.txt", "Artistic License (Perl)"),
+         ("MPL-2.0.txt", "Mozilla Public License, version 2.0"),
+         ("Apache-2.0.txt", "Apache License, version 2.0")]
+LICENSE_FOR = {"GPL": "GPL-3.0.txt", "GPL-1": "GPL-1.txt", "GPL-2": "GPL-2.0.txt", "GPL-3": "GPL-3.0.txt",
+               "LGPL": "LGPL-3.0.txt", "LGPL-2": "LGPL-2.0.txt", "LGPL-2.1": "LGPL-2.1.txt", "LGPL-3": "LGPL-3.0.txt",
+               "GFDL": "GFDL-1.3.txt", "GFDL-1.3": "GFDL-1.3.txt", "Artistic": "Artistic.txt", "Apache-2.0": "Apache-2.0.txt",
+               "MPL-2.0": "MPL-2.0.txt"}
+
+
+def referenced_texts():
+    """The full texts the copyright files point at must be in section 4."""
+    have = {n for n, _ in TEXTS}
+    for fn in ("component-copyrights.txt", "mingw-w64-copyright.txt"):
+        for m in sorted(set(re.findall(r"common-licenses/([A-Za-z0-9.+-]+)", rd(LIC + "/" + fn)))):
+            if m not in LICENSE_FOR:
+                raise SystemExit("notices: %s names /usr/share/common-licenses/%s: add its text to docs/legal/licenses and to TEXTS/LICENSE_FOR in tools/legal/notices.py" % (fn, m))
+            if LICENSE_FOR[m] not in have:
+                raise SystemExit("notices: %s is not in TEXTS" % LICENSE_FOR[m])
+
+
 def notices_txt():
+    referenced_texts()
     s = ["AUROS: LICENSES AND NOTICES\n\n" + NOTE + "\n\n"
          "This file is inside AurOS-Setup.exe so that you can read it with no internet. It has, in order:\n"
          "  1. our written offer of the source code\n"
          "  2. the notices of the programs AurOS carries (third-party notices)\n"
          "  3. the copyright files of the programs inside the installer's small system and boot files\n"
-         "  4. the full texts of the GNU GPL 2 and 3, the GNU LGPL 2.1, the Mozilla Public License 2.0,\n"
-         "     the Apache License 2.0 and the Unicode license\n"]
+         "  4. the full texts of the licenses the copyright files point at (GNU GPL 1, 2 and 3, LGPL 2, 2.1 and 3,\n"
+         "     GFDL 1.3, Artistic, the Mozilla Public License 2.0, the Apache License 2.0) and the Unicode license\n"]
     s.append(rule("1. THE SOURCE CODE"))
     s.append(offer_text())
     s.append(rule("2. NOTICES OF THE PROGRAMS AUROS CARRIES"))
@@ -119,11 +150,7 @@ def notices_txt():
     s.append(rule("3. COPYRIGHT FILES OF THE PROGRAMS INSIDE AUROS-SETUP.EXE"))
     s.append(rd(LIC + "/component-copyrights.txt").rstrip("\n") + "\n")
     s.append(rule("4. THE FULL TEXTS"))
-    for name, title in (("GPL-2.0.txt", "GNU General Public License, version 2"),
-                        ("GPL-3.0.txt", "GNU General Public License, version 3"),
-                        ("LGPL-2.1.txt", "GNU Lesser General Public License, version 2.1"),
-                        ("MPL-2.0.txt", "Mozilla Public License, version 2.0"),
-                        ("Apache-2.0.txt", "Apache License, version 2.0")):
+    for name, title in TEXTS:
         s.append("\n----- %s -----\n\n" % title)
         s.append(rd(LIC + "/" + name).rstrip("\n") + "\n")
     return "".join(s)

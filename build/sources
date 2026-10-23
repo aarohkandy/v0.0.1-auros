@@ -53,6 +53,18 @@ class Fail(Exception):
     pass
 
 
+# A source name and version end up in file names and addresses: plain characters only (Debian policy's
+# own alphabets), so a hostile Source header or list line cannot walk out of the work directory.
+NAME_RE = re.compile(r"[a-z0-9][a-z0-9+.-]*")
+VER_RE = re.compile(r"[0-9A-Za-z.+~:-]+")
+
+
+def plain(src, ver, where):
+    if not NAME_RE.fullmatch(src) or not VER_RE.fullmatch(ver):
+        raise Fail("%s: %r %r is not a source package name and version" % (where, src, ver))
+    return src, ver
+
+
 # ── the package list ───────────────────────────────────────────────
 
 def parse_status(text):
@@ -69,6 +81,8 @@ def parse_status(text):
         key = None
         for line in stanza.split("\n"):
             if line[:1] in " \t":
+                if key == "Built-Using":
+                    f[key] += " " + line.strip()   # a folded Built-Using keeps its tail
                 continue
             m = re.match(r"([A-Za-z0-9-]+):[ \t]*(.*)$", line)
             if m:
@@ -91,13 +105,14 @@ def parse_status(text):
             src = m.group(1)
             if m.group(2):
                 sv = m.group(2)
+        plain(src, sv, "the Source header of " + f["Package"])
         bu = []
         for item in f.get("Built-Using", "").split(","):
             m = re.match(r"\s*(\S+)\s*\(=\s*([^)\s]+)\s*\)\s*$", item)
             if item.strip() and not m:
                 raise Fail("cannot read the Built-Using header of %s: %r" % (f["Package"], f["Built-Using"]))
             if m:
-                bu.append((m.group(1), m.group(2)))
+                bu.append(plain(m.group(1), m.group(2), "the Built-Using header of " + f["Package"]))
         out.append({"bin": f["Package"], "ver": f["Version"], "arch": f.get("Architecture", ""),
                     "src": src, "srcver": sv, "maint": f.get("Maintainer", ""),
                     "has_source": bool(f.get("Source")), "built_using": bu})
@@ -146,7 +161,7 @@ def read_extra(path):
             w = line.split()
             if len(w) != 2:
                 raise Fail("%s line %d: want 'source version'" % (path, n))
-            out.append(tuple(w))
+            out.append(plain(w[0], w[1], "%s line %d" % (path, n)))
     return out
 
 
@@ -294,6 +309,8 @@ def get_file(bases, src, ver, name, dest, want=None):
             return retrying(once, url)
         except urllib.error.HTTPError as e:
             miss.append("%s -> %s" % (url, e.code))
+        except Fail as e:
+            miss.append("%s -> %s" % (url, str(e)[:400]))   # a base that keeps failing: the next one may have it
     raise Fail("not found (%s)" % "; ".join(miss))
 
 
@@ -530,8 +547,13 @@ def verify_dir(d, status=None, online=True, assets=None):
             ptr = [x for x in srows if x[0] == "P" and x[1] == "firefox"]
             if not ptr:
                 no("%s %s: no pointer to Firefox's source in SOURCES.txt" % (b, v)); continue
-            if len(ptr[0]) > 6 and ptr[0][6] != "-" and ptr[0][6] not in listed:
-                no("the Firefox source mirror %s is named in SOURCES.txt and is not in SHA256SUMS" % ptr[0][6])
+            if moz_version(v) != ptr[0][2]:
+                no("the Firefox pointer is for %s and the image has Firefox %s" % (ptr[0][2], v))
+            if len(ptr[0]) > 6 and ptr[0][6] != "-":
+                if ptr[0][6] not in listed:
+                    no("the Firefox source mirror %s is named in SOURCES.txt and is not in SHA256SUMS" % ptr[0][6])
+                elif ptr[0][4] != "-" and listed[ptr[0][6]] != ptr[0][4]:
+                    no("the Firefox source mirror %s is not the file Mozilla's sum in the pointer names" % ptr[0][6])
             if online:
                 try:
                     h = http(ptr[0][3], method="HEAD"); h.close()

@@ -131,7 +131,8 @@ MUTANTS = [
     ("a source package may be split between parts", 'if p["bytes"] > part_bytes:', 'if False:'),
     ("Built-Using is ignored", 'for s, v in p.get("built_using", []):', 'for s, v in []:'),
     ("a package that is unpacked but not configured is dropped", 'if len(st) != 3 or st[2] in ("not-installed", "config-files"):', 'if st[2:] != ["installed"]:'),
-    ("a missing Firefox mirror is not noticed", 'if len(ptr[0]) > 6 and ptr[0][6] != "-" and ptr[0][6] not in listed:', 'if False:'),
+    ("a missing Firefox mirror is not noticed", 'if ptr[0][6] not in listed:', 'if False:'),
+    ("a name that walks out of the work directory is accepted", 'if not NAME_RE.fullmatch(src) or not VER_RE.fullmatch(ver):', 'if False:'),
 ]
 
 
@@ -178,6 +179,16 @@ def main():
     check((by["bar"]["src"], by["bar"]["srcver"]) == ("bar", "2.0-1"), "no Source header: the binary is its own source")
     check(S.moz_version("1:158.0~build2") == "158.0" and S.moz_version("156.0.1~build1") == "156.0.1",
           "Mozilla's 158.0~build2 is upstream 158.0")
+    folded = S.parse_status("Package: x\nStatus: install ok installed\nVersion: 1\nBuilt-Using: aa (= 1-1),\n bb (= 2-2)\n\n")
+    check(folded[0]["built_using"] == [("aa", "1-1"), ("bb", "2-2")], "a folded Built-Using keeps its tail")
+    for label, bad in (("a Source header that walks out of the work directory", "Package: x\nStatus: install ok installed\nVersion: 1\nSource: ../../tmp/evil (1.0)\n\n"),
+                       ("a Built-Using that names a path", "Package: x\nStatus: install ok installed\nVersion: 1\nBuilt-Using: /etc/passwd (= 1)\n\n"),
+                       ("a version with a slash", "Package: x\nStatus: install ok installed\nVersion: 1\nSource: ok (1/../2)\n\n")):
+        try:
+            S.parse_status(bad); ok = False
+        except S.Fail:
+            ok = True
+        check(ok, "%s is refused" % label)
     d = S.parse_dsc("-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA512\n\nSource: a\nVersion: 1\nChecksums-Sha256:\n"
                     " aa 1 a_1.tar.xz\n- -----not armour\n-----BEGIN PGP SIGNATURE-----\n\nzz\n-----END PGP SIGNATURE-----\n")
     check(d["Source"] == "a" and d["Version"] == "1" and "a_1.tar.xz" in d["Checksums-Sha256"], "a clearsigned .dsc is read")
