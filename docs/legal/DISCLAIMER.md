@@ -16,7 +16,7 @@ Before a version of AurOS goes on this website, the whole install is run on a vi
 
 ## You decide
 
-AurOS Setup looks at your computer and tells you in plain words what it will do, before it makes any change to Windows, except that it starts downloading AurOS as soon as it finds that AurOS can go on the computer. Going ahead is your choice. To the extent the law allows, we are not responsible for lost data or other loss that comes from installing, using or removing AurOS. This does not take away any right you have by law where you live. The Terms say more.
+AurOS Setup looks at your computer, and says so in plain words if AurOS can't go on. As soon as it finds that AurOS can go on, it starts downloading AurOS (the Terms, section 4, say how much). What pressing **Install AurOS** changes is listed in section 4 of the Terms; Setup's own pages may not list all of it yet. Going ahead is your choice. To the extent the law allows, we are not responsible for lost data or other loss that comes from installing, using or removing AurOS. This does not take away any right you have by law where you live. The Terms say more.
 
 ## The help here is general
 

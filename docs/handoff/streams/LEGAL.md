@@ -121,7 +121,15 @@ after that date, and green-without-allowance once these land. The skeptic review
    off while AurOS is there, that AurOS's start-up files go on the start-up partition, and that Setup leaves a Windows task "AurOS put-back"
    (SYSTEM, at every start, files in `C:\ProgramData\AurOS`) that does nothing until AurOS is removed. The Terms (section 4) say all of it.
    If Setup is closed by the person who pressed Install for someone else, nothing special is needed; the Terms (section 2) cover it.
-11. `docs/AURBRIDGE.md`-level facts the Terms now state and the installer should too: Fast Startup and hibernation are
+11. Round 3 (skeptic E), `page_ready` does not list what Install changes: Fast Startup and hibernation off, AurOS's start-up files and entry, and
+   (on the default build) that Windows is made smaller just after the restart. It also still says "Windows and all your files stay". And
+   `Restart later: this window waits. Nothing changes until you come back and ...` (wizard.c, ~3261) is false: Fast Startup is already off and the
+   files and entry are already in place. Say what has been done and what waits.
+12. The install-failed page: `lands = L"Not now: AurOS Setup closes. Nothing has been changed."` (wizard.c, ~3465, `install_failed()`) cannot promise that
+   after the phases ran. Say what Setup undid, or "Setup stopped. If Windows does not start, ask someone to help you."
+13. The early download on the default build also unpacks the image (about 5 GB) onto the Windows drive; the Welcome page line should say "about 2 GB
+   to download and about 5 GB more once unpacked", and the room check should count it (it does: `phases.c`, ~534).
+14. `docs/AURBRIDGE.md`-level facts the Terms now state and the installer should too: Fast Startup and hibernation are
    turned off first (`phase_prepare`); after "No, go back to Windows" AurOS (about 28 GB) stays until Put Windows back.
 
 ### D (website)
@@ -135,6 +143,7 @@ after that date, and green-without-allowance once these land. The skeptic review
 - A later `[latest]` publishes these pages: do it only after the two skeptic reviews in `docs/legal/REVIEWS.md` are marked done.
 
 ### K (help) and C (aurshell)
+- Round 3 for C: `src/aurshell/welcome.c` "AurOS starts every time from now on. Windows and its files stay on this computer." (the "Yes, it all works" line) should say "are meant to stay"; the website mirrors it with `data-ui="desktop"` in `index.html` (`#shot-ask`), so change both in one commit (`check.mjs` reads the string from the source).
 - Done by LEGAL: `rootfs/usr/share/auros/help/licenses.html` (+ the index entry, + `licenses.html` in `tools/helptest.py` TOPICS; 46 checks green).
 - For C: `check.py image` (sources.yml `marks`) fails on `ubuntu-mono` in the published image: find what pulls it in and purge it (`packages_exclude`); `ubuntu-advantage-desktop-daemon` and `ubuntu-pro-client` are S5's (masked), the Canonical IP policy is about artwork and names, not these. aurshell Settings > About should link/open that help page (file `src/aurshell/*`, not touched);
   `build/forge` is to `dpkg-divert` /etc/lsb-release to say DISTRIB_ID=AurOS (TM-1 item 1; `check.py image` warns until then).

@@ -10,7 +10,7 @@ those are marked **OTHER** or **OWNER** with who.
 Documents reviewed: `TERMS.md`, `DISCLAIMER.md`, `PRIVACY.md`, `LICENSES.md`, the website footer and front-page
 claims, `SOURCES.md`, `build/sources`, `sources.yml`, the written offer, the notices, the trademark use. Round 1 is
 below; the rewritten texts (Terms v2, Disclaimer v2, Privacy v2, Licenses v2) are the answer to it. Round 2 (two more skeptics, C and D, on
-the rewrites and the tooling) is at the end of this file.
+the rewrites and the tooling) and round 3 (skeptic E, on the v3 changes) are at the end of this file.
 
 ## Skeptic A: honesty and consumer protection (21 findings)
 
@@ -92,7 +92,7 @@ sources tooling, notices and trademark use (D). Their findings and the answers; 
 | C11 | Terms 8 understates updates; Privacy 1 "your choice" cannot hold | Terms 8 lists what is installed on its own (Ubuntu, Mozilla, Flathub programs, AurOS's own packages including start-up files) and that it does not restart; "it will be your choice" removed | Done |
 | C12 | "put together and changed by its maker" reads as Canonical; "we" is unnamed | "AurOS is built from Ubuntu 24.04 LTS software that we have put together and changed"; "we" is the owner of the project on GitHub, named on the project page. Naming the person is the owner's call | Done; **OWNER: name or handle in the Terms** |
 | C13 | Absolutes elsewhere: "Your computer is safe/fine"; Wishes listed live on status | Reworded in `status.html`, `something-wrong.html`, `never-call.html`; the Wishes line is removed from status; BANNED `computer is (safe\|fine)` | Done |
-| C14 | "25 to 60 minutes" assumes 24 Mbit/s and an SSD; the hero omits the speed dependency | The hero already says older computers take longer; the internet-speed dependency is D's data-fact and B's estimate | **OTHER: D** |
+| C14 | "25 to 60 minutes" assumes 24 Mbit/s and an SSD; the hero omits the speed dependency | The hero now says "(a guess)"; Good to know has the older-computer and hard-drive times; the internet-speed dependency is D's data-fact and B's estimate | **OTHER: D** |
 | nits | Terms 1 "extras may cost money" vs "no subscription"; dates one day ahead; GiB vs GB; "no advert" wording; use restrictions rest on the "licenses win" clause; CONTACT_EMAIL | Reworded; documents dated 23 October 2026 and now Version 3; GiB/GB left (Windows shows GiB as GB); Privacy: "AurOS shows no adverts of its own"; the rest as before | Done / **OWNER: mailbox** |
 
 ### Skeptic D: sources, notices, tooling, trademarks (17 findings)
@@ -116,3 +116,21 @@ sources tooling, notices and trademark use (D). Their findings and the answers; 
 | D15 | Mozilla pointer checks are thin | `verify` compares the pointer with the firefox row and the mirror hash with the pointer, every `P` row | Done |
 | D16 | A persistent 5xx from Launchpad skips the archive fallback | Falls through to the next base on server errors too, retries, and fails closed if all fail | Done |
 | D17 | GitHub's automatic "Source code" link is the wrong commit | Every sources release's notes say so; SOURCES.md says so | Done |
+
+## Round 3
+
+One more skeptic (E) read only what v3 changed, against the code. Version 3 stays version 3 (nothing is public yet); the texts were corrected in place.
+
+| # | Finding | Answer | Status |
+|---|---|---|---|
+| E1 | Terms 4 describes a build we do not ship: the "AurOS put-back" task and the restore of hibernation exist only on the fast path (`plat_putback_task` is called only in `phase_prepare_gap`; `AUROS_FASTPATH` defaults to 0) | Terms 4 is rebuilt around what every build does (Fast Startup off, start-up files and entry, Restart now) and a separate "Making room" paragraph that says the website's version shrinks just after the restart and that a later version, which shrinks while Setup runs, also leaves the task; hibernation "may stay off" otherwise; CLAIMS 27 | Done; **re-check** when `AUROS_FASTPATH` flips |
+| E2 | `check.py`: the `stays,? with all your files` rule never matched (two C literals in a row); `--launch` passes while the absolutes are still in the screens; `welcome.c` "Windows and its files stay" not banned | `_strip` joins adjacent C literals; `--launch` now fails on every phrase that only has a dated allowance (14 today); selftest covers both. `welcome.c`'s sentence is mirrored by the website (`data-ui`), so it is a C change made in one commit with the page (LEGAL.md C list), not a ban | Done; **OTHER: C** |
+| E3 | Disclaimer says Setup tells you what it will do before it changes anything; `page_ready` does not list the shrink, Fast Startup or the entry; "Restart later: Nothing changes until you come back" is false | Disclaimer: Setup says if AurOS can't go on, starts downloading, and what Install changes is in Terms 4 ("Setup's own pages may not list all of it yet"). The Ready and Restart-later strings are B's (LEGAL.md B 11-12) | Done (text); **OTHER: B** |
+| E4 | The download disclosure is late and small; on the default build Setup also unpacks about 5 GB before Install; the 30 s exception to deletion | Terms 4, Privacy 3, Step 3 and "The download" now say about 2 GB plus about 5 GB, "close Setup now" on a data limit or hotspot, "stops the download and normally deletes"; CLAIMS 26 | Done |
+| E5 | Privacy mis-describes the report (two files; maker, model, parts, printers; no Wi-Fi name; OneDrive) | Rewritten; CLAIMS 36 | Done |
+| E6 | Hero: "tried" reads as "worked"; "older computers take longer" was dropped and C14's answer was then false; 25-60 is not measured | Hero: "About 25 to 60 minutes (a guess). Not yet tested on a real computer." (the first screen on a phone has room for no more: `check.mjs` A-02) | Done |
+| E7 | Hedging inconsistent (FAQ, printed sheet, Terms "stay") | "are meant to stay" / "should be able to go back" in the FAQ, the sheet and Terms 4. The desktop's own strings in the page's mock (`data-ui`) are C's | Done; **OTHER: C** |
+| E8 | Step 3 and the sheet say it "restarts once, by itself"; Setup waits for Restart now | Step 3 and the sheet say to press Restart now | Done |
+| E9 | The Stuck page starts with "Close any window" and says nothing for after Install; "Not now ... Nothing has been changed" also appears on the install-failed page | Lede: before Install closing changes nothing; after Install do not switch off or close anything, wait or ask the helper; the "Not now" quote is gone; the failed-page string is B's (LEGAL.md B 12) | Done; **OTHER: B** |
+| E10 | A helper pressing Install for someone: Setup shows no Terms, the sheet never says to show them | Terms 2 adds "Please read them together first"; Setup's agreement line and Read the Terms are B's and `--launch` needs them. The sheet is D's | Done (Terms); **OTHER: B, D** |
+| nits | "28 GB" omits Windows' 8 GB and the download; LICENSES says NOTICES.txt is on every AurOS release (only the sweep attaches it, within hours); "cannot see inside your computer"; "the updates part"; jargon | Terms 4 says Setup keeps room for Windows so more is needed; the help lines say "A web page cannot tell whether your computer has a virus"; status reworded; "drive C: (Windows' main drive)"; the NOTICES attachment is E's to make part of `release.yml` (LEGAL.md E 1) | Done / **OTHER: E** |

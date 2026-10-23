@@ -221,6 +221,7 @@ def _strip(path, text):
     # C: only the sentences a person reads (string literals with a space in them), not
     # comments and not tokens like "untouched" that the programs pass between themselves
     code = "\n".join(l for l in text.split("\n") if not re.match(r"\s*(/\*|\*|//)", l))
+    code = re.sub(r'"\s*L?"', "", code)   # "a " L"b" is one string in C: join neighbours before reading sentences
     return "\n".join(m.group(1) for m in re.finditer(r'L?"((?:[^"\\\n]|\\.)*\s(?:[^"\\\n]|\\.)*)"', code))
 
 
@@ -238,7 +239,7 @@ def _files(root, globs):
     return sorted(set(out))
 
 
-def check_claims(root, today=None):
+def check_claims(root, today=None, launch=False):
     import datetime
     today = today or datetime.date.today().isoformat()
     out = []
@@ -257,6 +258,8 @@ def check_claims(root, today=None):
                     used.add((rel, rx))
                     if today > allowed[0][3]:
                         out.append("%s says %r, past its date (%s): %s" % (rel, m.group(0), allowed[0][3], allowed[0][2]))
+                    elif launch:
+                        out.append("%s still says %r (allowed until %s, but not for the public link): %s" % (rel, m.group(0), allowed[0][3], allowed[0][2]))
                 else:
                     out.append("%s says %r: %s" % (rel, m.group(0), why))
     return out
@@ -378,7 +381,7 @@ def run(launch=False, root=None):
     if launch:
         problems += check_launch_needs(root or ROOT)
     for fn in CHECKS:
-        problems += fn(root or ROOT)
+        problems += fn(root or ROOT, launch=launch) if fn is check_claims else fn(root or ROOT)
     return problems, seen
 
 
@@ -455,6 +458,13 @@ def selftest():
         put("website/a.html", "<html><body><!-- untouched --><p>fine</p></body></html>")
         ok = not check_claims(d); print("%s  a comment is not a claim" % ("ok  " if ok else "FAIL")); bad += 0 if ok else 1
         want("a pending phrase is refused once its date has passed", check_claims(ROOT, "2027-06-01"), "past its date")
+        # a phrase with a dated allowance passes today, but not for the public link, and C's adjacent literals are read as one
+        put("src/aurscreen/screen.c", 'static const char *a = "Your files are not touched.";\n')
+        put("src/aurbridge/wizard.c", 'x = L"Windows stays, " L"with all your files. Fine.";\n')
+        ok = not check_claims(d, "2026-10-23"); print("%s  a dated allowance passes the ordinary check" % ("ok  " if ok else "FAIL")); bad += 0 if ok else 1
+        want("--launch refuses a phrase that only has a dated allowance", check_claims(d, "2026-10-23", launch=True), "not for the public link")
+        want("... also when the sentence is two C literals in a row", check_claims(d, "2026-10-23", launch=True), "with all your files")
+        os.remove(os.path.join(d, "src/aurscreen/screen.c")); os.remove(os.path.join(d, "src/aurbridge/wizard.c"))
         # marks
         put("website/a.html", "<html><head><title>Ubuntu Remix</title></head><body><h1>Firefox</h1><p>built from Ubuntu</p><a class='get' href='x'>Get Firefox</a></body></html>")
         m = check_marks_site(d)
