@@ -62,6 +62,7 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       run: ${{ steps.g.outputs.run }}
       variants: ${{ steps.g.outputs.variants }}
