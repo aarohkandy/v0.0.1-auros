@@ -1,0 +1,77 @@
+#!/bin/sh
+# journeytest.sh — her first ten minutes, in every look, at both sizes.
+#
+# Builds tools/journey.c and walks it through the first start ("does
+# everything work?"), her desktop, the Internet panel, a program
+# installed from "Get more programs" ("VLC media player is ready") and
+# that program opening -- then reads back what each screen SAID.
+#
+# The checks are the failures it was written for: in "One thing at a
+# time" a program opened by the store or the ready card stayed behind
+# the page of buttons, and in "Like Windows" the program list stayed
+# open on top of it (neither archetype had a present()).
+#
+#   sh tools/journeytest.sh [shots-dir]     (repository root; needs cc,
+#                                            pkg-config and libdbus-1-dev)
+set -u
+cd "$(dirname "$0")/.." || exit 2
+T=$(mktemp -d "${TMPDIR:-/tmp}/journey.XXXXXX") || exit 2
+trap 'rm -rf "$T"' EXIT
+OUT=${1:-$T/shots}
+mkdir -p "$OUT" "$T/apps" "$T/vlc" "$T/st/c"
+
+cc -O2 -std=gnu11 -o "$T/journey" tools/journey.c \
+    -DWELCOME_STATE="\"$T/state\"" \
+    src/aurshell/welcome.c src/aurshell/notify.c src/aurshell/foot.c \
+    src/aurshell/draw.c src/aurshell/shellcommon.c src/aurshell/anim.c \
+    src/aurshell/apps.c src/aurshell/layouts/*.c src/common/theme.c \
+    src/common/wall.c src/common/font.c src/common/png.c \
+    $(pkg-config --cflags --libs dbus-1) -lm || { echo "journey did not build"; exit 2; }
+
+# What build/forge ships, by the names it gives them (tools/storetest.c).
+e() { printf '[Desktop Entry]\nType=Application\nName=%s\nComment=%s\nCategories=%s\nExec=true %s\n' \
+          "$2" "$3" "$4" "$1" > "$5/$1.desktop"; }
+e firefox "Firefox" "Browse the World Wide Web" "Network;WebBrowser;" "$T/apps"
+e thunar "Your files" "Everything you have saved, in folders" "System;FileTools;FileManager;" "$T/apps"
+e org.gnome.Evince "Documents" "Read PDFs and other documents" "GNOME;GTK;Office;Viewer;Graphics;" "$T/apps"
+e org.xfce.mousepad "Notes" "Write and read plain notes" "Utility;TextEditor;" "$T/apps"
+e org.xfce.ristretto "Photos" "Look at your pictures" "Graphics;Viewer;Photography;" "$T/apps"
+e mpv "Music and video" "Play a song or a film" "AudioVideo;Audio;Video;Player;" "$T/apps"
+e mate-calc "Calculator" "Add up, and work things out" "Utility;Calculator;" "$T/apps"
+e system-config-printer "Printers" "Set up a printer, or check one you have" "System;Settings;Printing;" "$T/apps"
+e xarchiver "Zip files" "Open a zip file, or make one" "Archiving;Utility;" "$T/apps"
+e org.gnome.Software "Software" "Add, remove or update software" "GNOME;GTK;System;PackageManager;" "$T/apps"
+e org.videolan.VLC "VLC media player" "Read, capture, broadcast your multimedia streams" "AudioVideo;Player;" "$T/vlc"
+
+printf 'sandstone\n' > "$T/st/theme"
+tail -n +2 themes/templates/shell.conf.tpl | \
+    AURORA_THEMES=themes AURORA_TEMPLATES=themes/templates \
+    AURORA_STATE="$T/st" AURORA_CACHE="$T/st/c" ./src/aurora/aurora render \
+    > "$T/look.conf" 2>/dev/null
+
+fail=0 n=0
+ok() { n=$((n + 1)); if [ "$2" = 0 ]; then echo "    ok    $1"; else echo "    FAIL  $1"; fail=1; fi; }
+said() { awk -v s="$2" '/^== /{on = index($0, s) > 0; next} on' "$1"; }
+
+for look in taskbar dock rail tiles; do
+    for sz in "1366 768" "1024 600"; do
+        set -- $sz
+        log="$T/$look-$1x$2.txt"
+        HOME="$T/home" AUROS_APP_DIRS="$T/apps" AURSHELL_CLOCK=1761206400 \
+            "$T/journey" "$T/look.conf" "$look" "$1" "$2" "$OUT" "$T/vlc" > "$log" 2>&1 \
+            || { ok "$look $1x$2: the journey ran" 1; continue; }
+        at="$look $1x$2"
+        said "$log" "-asks.png"    | grep -qx '   Yes, it all works';         ok "$at: the first start asks" $?
+        said "$log" "-desktop.png" | grep -qx '   Get more programs';         ok "$at: Get more programs is on her desktop" $?
+        said "$log" "-ready.png"   | grep -qx '   VLC media player is ready'; ok "$at: VLC is ready, and it says so" $?
+        said "$log" "-opens.png"   | grep -q 'VLC media player';              ok "$at: VLC opens" $?
+        case $look in
+            taskbar) ! said "$log" "-opens.png" | grep -qx '   Everything on this computer'
+                     ok "$at: the program list gets out of its way" $? ;;
+            tiles)   ! said "$log" "-opens.png" | grep -qx '   Find and add programs to this computer'
+                     ok "$at: it fills the screen, not hidden behind the buttons" $? ;;
+        esac
+    done
+done
+[ $fail = 0 ] && echo "journeytest: $n checks, all good" || echo "journeytest: FAILED"
+exit $fail

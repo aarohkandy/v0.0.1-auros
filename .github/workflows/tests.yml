@@ -92,7 +92,7 @@ jobs:
           sh tools/apt.sh \
               mingw-w64 wine wine64 osslsigncode openssl python3 gcc libc6-dev make \
               grub-common gdisk mtools dosfstools cpio sbsigntool libxml2-utils file \
-              binutils zstd e2fsprogs fonts-dejavu-core ovmf
+              binutils zstd e2fsprogs fonts-dejavu-core ovmf pkg-config libdbus-1-dev
       - uses: actions/download-artifact@v4
         with:
           name: auros-installer
@@ -147,6 +147,9 @@ jobs:
       - name: permissions (what she may do, and what nobody at the keyboard may)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sudo env RFS=work/forge/desktop/rootfs sh tools/permissions.sh 2>&1 | tee transcripts/permissions.txt
+      - name: journeytest (her first ten minutes, every look, both sizes)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/journeytest.sh 2>&1 | tee transcripts/journeytest.txt
       - name: lookboottest (the look she picked survives a restart)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |

@@ -1107,6 +1107,19 @@ static int l_step(shell_ctx *c, float dt)
 
 static void l_fini(shell_ctx *c) { c->priv = NULL; }
 
+/* A window that arrived by itself -- the store's "Open" button, the
+ * "is ready" card -- comes to the front, and the program list, which
+ * opens by itself on an empty desktop, gets out of its way. Without
+ * this the list stayed open on top of the program she had just asked
+ * for. */
+static void l_present(shell_ctx *c, int win)
+{
+    tb_priv *p = P(c);
+    if (win < 0 || win >= c->n_wins) return;
+    if (p->menu_open) set_menu(c, 0);
+    restore_win(c, win);
+}
+
 const shell_layout layout_taskbar = {
     .id = "taskbar",
     .init = l_init,
@@ -1115,6 +1128,7 @@ const shell_layout layout_taskbar = {
     .motion = l_motion,
     .key = l_key,
     .step = l_step,
+    .present = l_present,
     .fini = l_fini,
     .removed = l_removed,
 };

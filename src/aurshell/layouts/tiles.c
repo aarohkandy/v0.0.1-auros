@@ -919,6 +919,26 @@ static void l_init(shell_ctx *c)
     }
 }
 
+/* A window that arrived by itself -- the store's "Open" button, the
+ * "is ready" card, a link from another program -- is the thing she is
+ * waiting for, and one thing at a time means it fills the screen.
+ * Without this the page went on showing whatever it showed (the store,
+ * or the buttons) and the program she asked for opened out of sight. */
+static void l_present(shell_ctx *c, int win)
+{
+    tiles_priv *p = P(c);
+    if (win < 0 || win >= c->n_wins) return;
+    c->focus = win;
+    if (p->win == win) { tween_to(&p->open, 1.f, OPEN_SECS, EASE_OUT_CUBIC); return; }
+    int replacing = p->win >= 0 && p->open.value > 0.5f;
+    p->win = win;
+    if (c->wins[win].app >= 0)
+        p->page = page_of_app(c, c->wins[win].app, c->screen_w, c->screen_h);
+    /* One full-screen thing replacing another has nothing to grow from. */
+    if (replacing) tween_set(&p->open, 1.f);
+    else tween_to(&p->open, 1.f, OPEN_SECS, EASE_OUT_CUBIC);
+}
+
 static void l_fini(shell_ctx *c) { c->priv = NULL; }
 
 const shell_layout layout_tiles = {
@@ -929,5 +949,6 @@ const shell_layout layout_tiles = {
     .motion = l_motion,
     .key = l_key,
     .step = l_step,
+    .present = l_present,
     .fini = l_fini,
 };
