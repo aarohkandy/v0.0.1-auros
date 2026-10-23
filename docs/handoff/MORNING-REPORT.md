@@ -15,7 +15,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
   all in. Update-signing key built into AurOS (afa7755, fingerprint checked by the lead).
 - **Website redesigned** (light, one green, real AurOS pictures, every promise checked against
   the code: 203/203 checks). Screens: docs/shots/website/.
-- **Installer restyled** to match (docs/shots/wizard/).
+- **Installer restyled and proven on a real Windows runner** (all 14 checks green, run 39959577778): light,
+  one green, real look previews; BitLocker never decrypted, Recycle Bin never emptied, double-click safe,
+  no auto-restart (docs/shots/wizard/).
 - **Scam protection**: remote-control apps (AnyDesk, TeamViewer…) blocked on first install
   with a plain warning; "Get me out of this page" always works (Esc×3, Ctrl+Alt+Delete, Help).
 - **Help** button works in every look; help pages rewritten; helper page for experts.
