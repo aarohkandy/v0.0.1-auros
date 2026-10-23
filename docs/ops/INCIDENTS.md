@@ -288,6 +288,27 @@ that fails first (`docs/issues/`), and the wave stays paused until that test is 
 **5. Resume only the owner, only after** the cause is understood and a test proves it
 cannot repeat: `OPS_TOKEN=... python3 -I tools/ops/waves.py resume`.
 
+**6. Keep the record, and mind what is said (LIA-5; written without a lawyer, D15).** If she
+lost something real, what we write now may be read later by a stranger:
+
+- **Preserve everything the day it is reported:** her message or issue thread (never delete or
+  edit it, or any email in the thread), the release tag and its `SHA256SUMS`, the build commit,
+  the Actions run of that build and its logs (artifacts expire after 14 days, installer artifacts
+  after 30, logs after 90: download the run's evidence, `gh run download <id>`, into a private
+  place the same day).
+- **The first message says what is known and what to do** (step 2) and nothing about whose fault
+  it is, in either direction ("it was your computer", "it was our bug"). It does not ask her
+  to sign, agree to, or release anything.
+- **Never make help depend on a release or a promise.** If the owner later decides to pay or
+  refund anything, that is the owner's decision alone: a short, plain optional "no admission"
+  release, time to think about it, no gag on her speaking, and the insurer's written consent
+  first if there is insurance (`docs/legal/COMPLIANCE.md` LIA-7). An unconditional payment is
+  not a way to end a claim; do not offer one on the spot.
+- **The stop rules are the ones in `docs/ops/LAUNCH.md`.** Do not argue with them to resume.
+- What she sends us (a log, a photo of her screen) is covered by the privacy page: kept only as
+  long as needed, normally no more than 12 months; keep the thread in the private issue, not a
+  public one.
+
 ---
 
 ## After any incident
