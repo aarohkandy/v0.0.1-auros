@@ -492,11 +492,11 @@ void shell_theme_load(shell_ctx *c, const theme_t *t)
     c->subtle     = theme_color(t, "col_subtle",      theme_color(t, "subtle", 0x8793A4));
     c->fg         = theme_color(t, "col_fg",          theme_color(t, "fg", 0xD4DCEA));
     c->fg_hi      = theme_color(t, "col_fg_hi",       theme_color(t, "fg_hi", 0xF3F7FD));
-    c->accent     = theme_color(t, "col_accent",      theme_color(t, "accent", 0x7DD3C0));
+    c->accent     = theme_color(t, "col_accent",      theme_color(t, "accent", 0x0B5D4F));
     c->accent_alt = theme_color(t, "col_accent_alt",  theme_color(t, "accent_alt", 0xA78BFA));
     c->accent_warm= theme_color(t, "col_accent_warm", theme_color(t, "accent_warm", 0xF2B880));
     c->err        = theme_color(t, "col_err",         theme_color(t, "err", 0xF2788D));
-    c->ok         = theme_color(t, "col_ok",          theme_color(t, "ok", 0x7DD3C0));
+    c->ok         = theme_color(t, "col_ok",          theme_color(t, "ok", 0x0B5D4F));
     c->info       = theme_color(t, "col_info",        theme_color(t, "info", 0x82AAFF));
     snprintf(c->brand, sizeof c->brand, "%s", theme_str(t, "brand_text", "AurOS"));
 

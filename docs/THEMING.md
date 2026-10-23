@@ -15,7 +15,7 @@ theme.
 
 ```sh
 aurora list                       # what is installed
-aurora show synthwave             # preview a palette in the terminal
+aurora show nocturne                 # preview a palette in the terminal
 aurora new midnight --from nocturne
 $EDITOR /usr/share/auros/themes/midnight.theme
 aurora validate midnight          # refuses to ship a half-written theme

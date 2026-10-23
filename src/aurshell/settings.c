@@ -359,8 +359,9 @@ static void fill_page(shell_ctx *c)
     }
 
     if (S.page == SET_PAGE_LOOK) {
-        static const char *IDS[] = { "nocturne", "sandstone", "moss",
-                                     "synthwave", NULL };
+        /* Two, each a whole look she can read. The other themes ship
+         * for profiles; they are not hers to stumble into. */
+        static const char *IDS[] = { "sandstone", "nocturne", NULL };
         char cur[CHOICE_LEN] = {0};
         current_theme_id(cur, sizeof cur);
         for (int i = 0; IDS[i]; i++) {
@@ -576,7 +577,7 @@ static const char *row_name(int which)
     case R_BT:      return "Headphones and mice";
     case R_TIME:    return "The time and date";
     case R_SHELL:   return "How this computer works";
-    case R_LOOK:    return "How it looks";
+    case R_LOOK:    return "Colors";
     case R_WINDOWS: return "Put Windows back";
     }
     return "";
@@ -695,7 +696,7 @@ void settings_paint(shell_ctx *c, surface *s, shell_fonts *f)
 
     const char *title = S.page == SET_PAGE_TIME  ? "Where you are"
                       : S.page == SET_PAGE_SHELL ? "How this works"
-                      : S.page == SET_PAGE_LOOK  ? "How it looks"
+                      : S.page == SET_PAGE_LOOK  ? "Colors"
                       : S.page == SET_PAGE_WINDOWS ? "Put Windows back"
                                                  : "Settings";
     if (head)

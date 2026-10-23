@@ -6,7 +6,7 @@
  * the next program she opened was in the old colours and dark on a
  * light desktop.
  *
- * This drives Settings by its words, the way she does -- "How it looks",
+ * This drives Settings by its words, the way she does -- "Colors",
  * then the name of a look -- with the real aurora rendering into a
  * pretend home, and checks what a GTK program starting afterwards would
  * read: its gtk.css import, the rendered colours, and
@@ -106,8 +106,8 @@ int main(void)
     printf("when she picks a look in Settings, do her programs follow?\n");
     C.settings_open = 1;
     settings_opened(&C);
-    ok(press("How it looks"), "\"How it looks\" opens");
-    ok(press("Sandstone"), "she presses \"Sandstone\"");
+    ok(press("Colors"), "\"Colors\" opens");
+    ok(press("Light"), "she presses \"Light\"");
     char g3[600], g4[600], ini3[600], ini4[600], mine[600], want[700];
     snprintf(g3, sizeof g3, "%s/.config/gtk-3.0/gtk.css", home);
     snprintf(g4, sizeof g4, "%s/.config/gtk-4.0/gtk.css", home);
@@ -122,13 +122,13 @@ int main(void)
        file_has(ini4, "gtk-application-prefer-dark-theme=0\n"), "and are light, as Sandstone is");
     ok(file_has(ini3, "gtk-font-name=Inter 11\n"), "the rest of settings.ini is kept");
 
-    ok(press("Nocturne"), "she presses \"Nocturne\"");
+    ok(press("Light writing on a dark background"), "she presses the dark one");
     ok(file_has(ini3, "gtk-application-prefer-dark-theme=1\n") &&
        file_has(ini4, "gtk-application-prefer-dark-theme=1\n"), "and her programs are dark again");
 
     /* Something she wrote herself is hers. */
     put(g3, "@import url(\"file:///etc/auros/gtk/gtk.css\");\nwindow { font-size: 20px; }\n");
-    ok(press("Sandstone"), "with a gtk.css of her own, she presses \"Sandstone\"");
+    ok(press("Light"), "with a gtk.css of her own, she presses \"Light\"");
     ok(file_has(g3, "font-size: 20px"), "her own gtk.css is left exactly as she wrote it");
 
     char rm[200]; snprintf(rm, sizeof rm, "rm -rf '%s'", home);

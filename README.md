@@ -169,7 +169,7 @@ src/
   recovery/  capture and restore a machine's boot state
   common/    theme parser · wallpaper renderer · font · PNG
 profiles/  desktop · school-kiosk · multilingual · office · revive
-themes/    nocturne · synthwave · sandstone · moss · ember · slate + templates
+themes/    sandstone (Light, the default) · nocturne (dark) · moss · ember · slate + templates
 docs/      PLAN · RELEASE · AURBRIDGE · STAGEC · SIGNING · THEMING · FERRY · results/ · research/
 tools/     the tests; each one exits non-zero when it fails
 website/   the download site

@@ -31,7 +31,7 @@ os_version="0.1.0"
 os_codename="Nocturne"
 
 # ── Look ───────────────────────────────────────────────────────────
-theme="nocturne"
+theme="sandstone"        # Light: the default on every surface (DESIGN-DIRECTION)
 wallpaper_style=""        # empty = whatever the theme says
 
 # ── How the computer works (docs/SHELLS.md) ────────────────────────

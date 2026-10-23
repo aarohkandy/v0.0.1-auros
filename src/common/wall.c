@@ -469,32 +469,9 @@ static void style_letterpress(rgb *fb, int w, int h, const wallcfg *c)
     lp_hrule(fb, w, h, 0, bx, y_short, 2.f, c->c4, 0.45f);
     lp_vrule(fb, w, h, (float)bx + 0.5f, 0, h, 1.f, c->c4, 0.42f);
 
-    /* 5. The one saturated mark on the sheet: a solid square sitting on
-     *    the right end of the long rule, the way a colour bar sits in
-     *    the trim of a press proof. It is the only place c3 appears,
-     *    and it is never mixed with anything. */
-    int side = (int)((float)h * 0.026f); if (side < 12) side = 12;
-    int mx = x_right - side, my = (int)y_long - side - 7;
-    for (int y = my; y < my + side; y++) {
-        if (y < 0 || y >= h) continue;
-        for (int x = mx; x < mx + side; x++) {
-            if (x < 0 || x >= w) continue;
-            fb[(size_t)y * w + x] = c->c3;
-        }
-    }
-    /* A second, much smaller one further along the rule: two marks make
-     * a sequence, which is how a proof sheet is read; one is an
-     * accident. The second is in the rule colour, not in c3 — the
-     * saturated ink is spent once. */
-    int s2 = side / 3; if (s2 < 4) s2 = 4;
-    int m2x = mx - side - 10, m2y = (int)y_long - s2 - 7;
-    for (int y = m2y; y < m2y + s2; y++) {
-        if (y < 0 || y >= h) continue;
-        for (int x = m2x; x < m2x + s2; x++) {
-            if (x < 0 || x >= w) continue;
-            fb[(size_t)y * w + x] = c->c4;
-        }
-    }
+    /* (The accent used to be printed here as a "register mark". The
+     * accent means one thing -- the way forward -- and a wallpaper is
+     * not a way anywhere.) */
 }
 
 static void style_solid(rgb *fb, int w, int h, const wallcfg *c)
@@ -533,9 +510,9 @@ void wall_render(uint32_t *px, int w, int h, const theme_t *t)
 {
     wallcfg c;
     c.c1 = unpack(theme_color(t, "wall_c1", 0x0B0E14));
-    c.c2 = unpack(theme_color(t, "wall_c2", 0x14303A));
-    c.c3 = unpack(theme_color(t, "wall_c3", 0x7DD3C0));
-    c.c4 = unpack(theme_color(t, "wall_c4", 0xA78BFA));
+    c.c2 = unpack(theme_color(t, "wall_c2", 0x0B0E14));
+    c.c3 = unpack(theme_color(t, "wall_c3", 0x0B0E14));
+    c.c4 = unpack(theme_color(t, "wall_c4", 0x0B0E14));
     /* The theme can say anything; the styles are tuned for 0..1. A
      * value far outside that is a hostile or broken file, and 1e30 is
      * finite but turns every mix into an infinity. Shipped themes use

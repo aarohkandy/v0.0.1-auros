@@ -52,7 +52,7 @@ mkroot() {
     cp src/ferry/data/klid.tab src/ferry/data/windowsZones.tab "$R/usr/share/ferry/"
     # The real themes' light-or-dark line, so the GTK switch below has
     # something true to follow.
-    for t in nocturne moss sandstone synthwave ember slate; do
+    for t in nocturne moss sandstone ember slate; do
         grep '^theme_variant=' "themes/$t.theme" > "$R/usr/share/auros/themes/$t.theme" \
             2>/dev/null || : > "$R/usr/share/auros/themes/$t.theme"; done
     # What build/forge's stage 5 leaves in her account and in /etc/skel:
