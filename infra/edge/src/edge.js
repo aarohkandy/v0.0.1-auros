@@ -90,7 +90,10 @@ async function pages(request, url, env, fetchImpl, path, gate, now) {
     const s = await gate.getStatus();
     if (s && s.checked_at && now - Date.parse(s.checked_at) < 24 * 3600e3) return json(200, s);
   }
-  const r = await fetchImpl(env.PAGES_ORIGIN.replace(/\/$/, "") + path, { method: request.method === "HEAD" ? "HEAD" : "GET", redirect: "manual" });
+  // Cloudflare keeps the answer for 5 minutes, so GitHub Pages serves each file a few times an hour,
+  // not once per visitor (docs/ops/COSTS.md: Pages has a soft 100 GB a month).
+  const r = await fetchImpl(env.PAGES_ORIGIN.replace(/\/$/, "") + path,
+    { method: request.method === "HEAD" ? "HEAD" : "GET", redirect: "manual", cf: { cacheEverything: true, cacheTtl: 300 } });
   const h = new Headers();
   for (const k of ["content-type", "last-modified", "etag"]) if (r.headers.get(k)) h.set(k, r.headers.get(k));
   h.set("cache-control", "public, max-age=300");

@@ -234,3 +234,15 @@ What the workflow does with these: it sets the Anthropic key on the Worker
 through stdin (never printed), makes the token-signing secret once by itself
 (nobody, including you, ever needs to see it), deploys, and checks the live
 service. Rotation and outages: `docs/CLOUD.md` §5.
+
+## 8. Your own address, and being told when something breaks (stream OPS)
+
+The steps, in order, with the exact commands, are in `docs/ops/DOMAIN.md` ("What the owner does"): buy the
+domain at Cloudflare, let the Cloudflare token touch it, set the secret `AUROS_OPS_TOKEN` and the variable
+`AUROS_DOMAIN`, run the `edge` workflow, rebuild. **Nothing is installed from a build made before that.**
+
+Until then the monitor already runs every 15 minutes against today's addresses and opens a GitHub issue
+assigned to you if the Wishes service stops answering (`docs/ops/MONITOR.md`). Install the GitHub app on your
+phone and turn on notifications for this repository so that issue reaches you; no other pager is set up until
+you choose one. The playbooks for what to do are in `docs/ops/INCIDENTS.md`. What it will cost as it grows:
+`docs/ops/COSTS.md`.
