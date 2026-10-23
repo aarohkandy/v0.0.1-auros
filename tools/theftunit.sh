@@ -70,7 +70,7 @@ if [ "${1:-}" = --mutants ]; then
     mutant pin-unchecked      rootfs/usr/lib/auros/lock/lockctl 's/if ! pin_checks "\$dev" "\$pin"; then/if false; then/'
     mutant header-unchecked rootfs/usr/lib/auros/lock/encrypt-init 's/if \[ "\$got" = "\$ss" \]; then/if true; then/'
     mutant needs-head rootfs/usr/lib/auros/lock/encrypt-init 's/got=\${1:-}/got=$(echo "${1:-}" | head -1)/'
-    mutant sector-always-4096 rootfs/usr/lib/auros/lock/encrypt-init 's/else ss=512; fi/else ss=4096; fi/'
+    mutant sector-always-4096 rootfs/usr/lib/auros/lock/encrypt-init 's/else ss=\$lss; fi/else ss=4096; fi/'
     # the VM harness's own verdict (run alone: THEFT_ONLY=vmself)
     vmmutant() { # NAME SED
         rm -rf "$M/t"; mkdir -p "$M/t"; cp -a src rootfs tools "$M/t/"
