@@ -49,8 +49,38 @@ accessible by integration", this page is where to look.
 
 This is the key that seals AurOS's own updates (stream S5,
 `docs/security/UPDATES.md`). Make it on **your own computer**, never on a
-shared or cloud machine. You need GnuPG: on Linux it is already there
-(`gpg --version`); on a Mac, `brew install gnupg` (or GPG Suite).
+shared or cloud machine. Do it **before the first public release**.
+
+**Option A (recommended): one paste on your Mac.** Open Terminal and
+paste this whole block. It installs GnuPG if it is missing (through
+Homebrew, which it also installs if needed; it may ask for your Mac
+password), makes the key in a throwaway folder, stores the private half
+straight into the repository secret with `gh` (already logged in on your
+Mac; the key never passes through a web page or the clipboard), saves
+both halves in `~/Desktop/AurOS-update-key/` for the USB stick, and
+prints the fingerprint.
+
+```sh
+command -v gpg >/dev/null || {
+  command -v brew >/dev/null || /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  eval "$( (/opt/homebrew/bin/brew shellenv || /usr/local/bin/brew shellenv) 2>/dev/null)"
+  brew install gnupg; }
+D=~/Desktop/AurOS-update-key; mkdir -p "$D" && cd "$D" && export GNUPGHOME="$(mktemp -d)" &&
+gpg --batch --passphrase '' --quick-gen-key 'AurOS updates' ed25519 sign 3y &&
+gpg --armor --export-secret-keys > auros-apt-signing-key.PRIVATE.asc &&
+gpg --armor --export > auros-archive-keyring.asc &&
+gh secret set AUROS_APT_SIGNING_KEY -R aarohkandy/v0.0.1-auros < auros-apt-signing-key.PRIVATE.asc &&
+gpg --list-keys --with-colons | awk -F: '/^fpr:/{print "FINGERPRINT: " $10; exit}'; rm -rf "$GNUPGHOME"
+```
+
+Then: write down the **FINGERPRINT** line (40 letters and digits), copy
+the folder `AurOS-update-key` from your Desktop to a USB stick, put the
+stick somewhere safe, and delete the folder from the Desktop (Move to
+Trash, then Empty Trash). Go to step 5 below.
+
+**Option B: by hand, with the web page.** You need GnuPG: on Linux it is
+already there (`gpg --version`); on a Mac, `brew install gnupg` (or GPG
+Suite).
 
 1. Open Terminal and paste these lines (they make the key in a fresh,
    temporary folder, so nothing mixes with any key you already have, and
@@ -77,11 +107,14 @@ shared or cloud machine. You need GnuPG: on Linux it is already there
 3. Copy both `.asc` files to a USB stick and put it somewhere safe. Anyone
    holding the PRIVATE file can send updates to every AurOS computer: treat
    it like the master key of a house. You need it again only to move to a
-   new repository (paste the same file into the new repository's secret)
+   new repository (put the same file into the new repository's secret)
    or to renew the key before it expires in 3 years.
 4. Delete the copies from the computer: `rm -rf "$GNUPGHOME"
    auros-apt-signing-key.PRIVATE.asc` (keep `auros-archive-keyring.asc` if
    you like; it is the public half and is safe to share).
+
+**Both options:**
+
 5. Tell an agent: "the update key is in, fingerprint XXXX". The agent
    pushes an `[apt]` commit; that run (`.github/workflows/aptrepo.yml`)
    prints the key's public half and fingerprint and publishes nothing. The
