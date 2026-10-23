@@ -1942,6 +1942,8 @@ static int note_box(const wchar_t *head, const wchar_t *const *lines, int n,
     return y - y0;
 }
 
+static void style_picture(int kind, float x, float y, float w, float h);
+
 static int page_welcome(int x, int y, int w)
 {
     int y0 = y;
@@ -1979,6 +1981,25 @@ static int page_welcome(int x, int y, int w)
         }
         y += S(g_short ? 20 : 32);
         y += note_box(L"Good to know", lines, n, x, y, narrow);
+    }
+
+    /* WHAT SHE IS GETTING, a picture of it (B-16): the look like Windows, up
+     * to 360 px wide, where there is room under the rest; on a short window
+     * it is left out rather than scrolled to. The page is her first sight of
+     * the product and a picture says what a sentence cannot. */
+    {
+        int room = (g_body.bottom - g_body.top) - (y - y0) - S(16) - S(28) - S(30);
+        int ph = S(225);
+        if (ph > room) ph = room;
+        if (ph >= S(150)) {
+            int pw = ph * 16 / 10;
+            y += S(28);
+            style_picture(PIC_WINDOWS, (float)x, (float)y, (float)pw, (float)ph);
+            stroke_rr((float)x, (float)y, (float)pw, (float)ph, (float)S(4), 1.f, C_RULE, 1.f);
+            y += ph + S(8);
+            y += text_draw(L"AurOS, as it will look beside Windows. You pick the look next.",
+                           g_f_small, C_INK2, x, y, narrow, DT_SINGLELINE);
+        }
     }
     return y - y0;
 }
