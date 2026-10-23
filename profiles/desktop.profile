@@ -106,6 +106,15 @@ keyboard_variant=""
 # alsa-topology-conf are the other half: the per-machine descriptions
 # that tell the sound stack which SOF output is the speakers and which
 # input is the microphone. Under 1 MB together.
+# ipp-usb: a printer bought since about 2015 speaks IPP over its USB
+# cable (the same "driverless" printing a network printer does), and
+# without this daemon the kernel sees a printer and CUPS has nothing to
+# print through. It listens on the loopback address only and starts when
+# such a printer is plugged in (a udev rule). CUPS finds the printer it
+# serves through the local DNS-SD record ipp-usb registers with
+# avahi-daemon -- which build/harden's disable-publishing=yes blocks
+# (the first check on a booted image: plug an IPP-USB printer in and see
+# it in Printers; docs/handoff/streams/C.md).
 packages_hardware="linux-firmware-minimal linux-image-generic
                    linux-firmware-amd-graphics linux-firmware-amd-misc
                    linux-firmware-intel-graphics linux-firmware-intel-misc
@@ -121,6 +130,7 @@ packages_hardware="linux-firmware-minimal linux-image-generic
                    polkitd
                    bluez
                    cups cups-filters avahi-daemon avahi-utils
+                   ipp-usb
                    printer-driver-gutenprint printer-driver-hpcups
                    cups-pk-helper system-config-printer
                    pciutils usbutils"
