@@ -974,6 +974,10 @@ static int run_page(drive *d)
                                 clock_gettime(CLOCK_MONOTONIC, &pressed_at);
                             }
                         if (in_rect(disp_geo.link, u.cx, u.cy)) { link_pressed(&a); dirty = 1; }
+                    } else if (e->code == KEY_ESC) {
+                        /* the keyboard's way to "I forgot my PIN" / "Back",
+                         * so no page needs a pointer */
+                        link_pressed(&a); dirty = 1;
                     } else {
                         int k = key_of(e->code);
                         if (k >= 0) { u.pressed = k; press(&a, k, show); dirty = 1; }

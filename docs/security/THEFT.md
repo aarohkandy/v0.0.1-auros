@@ -252,6 +252,47 @@ no TPM) -- and deletes the request after reading it. The PIN never goes
 on a command line (systemd-cryptenroll reads `$NEWPIN`), never to the
 journal, never to the EFI partition.
 
+### 10. How the install writes into it (legacy and fast path)
+
+It does not, and that is the design: **neither install path ever
+writes into a LUKS device.** The legacy path (aurstage copies the image
+onto AUROS-ROOT from the staging environment) and the fast path
+(Windows streams the image raw into the gap, D1) both leave a plain
+ext4 on a GPT partition named AUROS-ROOT, exactly as today. Encryption
+happens afterwards, in place, by AurOS's own initramfs (or, later, by a
+staging hook that runs the same `encrypt-init` after `commit_settle`),
+so the engine, the planner, the journal and the power-cut tests do not
+change, and "Put Windows back" still needs no key: it deletes the
+partition, it never reads it.
+
+What A2 (who owns `src/aurstage`, `build/staging`, the planner) keeps
+true, none of it new work today:
+
+- **AUROS-ROOT and AUROS-BOOT are 4 KiB-aligned** (start and size). Then
+  the LUKS sector size is 4096 and the 512 branch of `encrypt-init` is
+  unreachable on AurOS installs. (Measured: an image partition ending
+  off a 4096 boundary made cryptsetup refuse 4096-byte sectors; the
+  start-up code now falls back to the disk's logical block size, but the
+  fast cipher path wants the aligned layout.)
+- **The filesystem stops 32 MiB short of the partition's end** when the
+  lock is enabled. `firstboot.sh` grows it to fill the partition today
+  (`resize2fs "$root_src"`); with the lock enabled the one-line change is
+  `resize2fs "$root_src" "$((partition_kib - 32768))K"`. Then
+  `encrypt-init` never has to shrink a filesystem, which is the one step
+  of the whole design that a power cut could hurt.
+- **The boot set is on AUROS-BOOT** (kernel, initramfs, menu under
+  `/auros/`), written by `lockctl prepare` / `boot-sync`; `build/mkimage`
+  and `bootchain` keep writing `/boot/grub/grub.cfg` as today and the
+  copy follows (`auros-lock-boot.path`).
+- **aurfirst's `root_disk()`** looks for the root's partition through
+  `/sys/dev/block`; on a device-mapper root it falls back to "the first
+  entry called AurOS" (it says so in its state file). It should follow
+  the mapper's `slaves/` to the partition.
+- **`answer.sh`** (Put Windows back, from inside AurOS) writes
+  `next_entry` to `/boot/grub/grubenv`; once the menu is read from the
+  EFI partition the file that matters is `/boot/efi/auros/grubenv`
+  (`AUROS_GRUBENV` already exists for this).
+
 ## What it does not protect against (said plainly, here and in Help)
 
 - **Her Windows.** Until Windows is removed, the Windows drive is as

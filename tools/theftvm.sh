@@ -35,7 +35,8 @@ set -u
 cd "$(dirname "$0")/.."
 TOP=$PWD
 export PYTHONDONTWRITEBYTECODE=1    # as root in a container this would leave root-owned files in the checkout
-NOAES=0; [ "${1:-}" = --noaes ] && NOAES=1
+NOAES=0; NOTPM=0
+for a in "$@"; do case "$a" in --noaes) NOAES=1 ;; --notpm) NOTPM=1 ;; esac; done
 CODE=/usr/share/OVMF/OVMF_CODE_4M.ms.fd
 VARS=/usr/share/OVMF/OVMF_VARS_4M.ms.fd
 IMG=${THEFT_IMAGE:-out/auros-desktop.img}
@@ -46,6 +47,9 @@ PASSLIM=${THEFT_PASS_LIMIT:-900}     # seconds the in-place pass may take in the
 # 7: the key is sealed to PCR 7 (the design). "none": to no PCR.
 PCRS=${THEFT_PCRS:-7}; [ "$PCRS" = none ] && PCRS=''
 CUR=$PIN1
+WRONG=9999
+# no security chip: the PIN is a passphrase, and has to be 6 numbers
+if [ "$NOTPM" = 1 ]; then PIN1=135790; PIN2=246801; CUR=$PIN1; WRONG=999999; PCRS=''; fi
 
 fail=0; checked=0
 ok()  { checked=$((checked+1)); printf '    %-66s %s\n' "$1" "ok" | tee -a "$EV/summary.txt"; }
@@ -92,7 +96,9 @@ export MTOOLS_SKIP_CHECK=1
 esp_ls() { mdir -b -i "$DISK@@$ESPOFF" "::$1" 2>/dev/null; }
 
 echo
-echo "AurOS's encrypted drive and PIN, in a VM with Secure Boot and a TPM 2.0$([ $NOAES = 1 ] && echo ', on a CPU without AES instructions'), key sealed to ${PCRS:+PCR $PCRS}${PCRS:-no PCR}" | tee -a "$EV/summary.txt"
+if [ "$NOTPM" = 1 ]; then CHIP="Secure Boot and NO security chip"; SEAL="the PIN is a 6-number passphrase"
+else CHIP="Secure Boot and a TPM 2.0"; SEAL="key sealed to ${PCRS:+PCR $PCRS}${PCRS:-no PCR}"; fi
+echo "AurOS's encrypted drive and PIN, in a VM with $CHIP$([ $NOAES = 1 ] && echo ', on a CPU without AES instructions'), $SEAL" | tee -a "$EV/summary.txt"
 echo
 
 # ── what the image is given (what the forge would install once this is switched on)
@@ -221,15 +227,18 @@ TPMD="$T/tpm-a"; mkdir -p "$TPMD"
 N=0
 power_on() { # NAME
     N=$((N + 1)); SER="$EV/serial-$N-$1.txt"; : > "$SER"
-    swtpm socket --tpm2 --tpmstate dir="$TPMD" --ctrl type=unixio,path="$TPMD/sock" \
-        --pid file="$TPMD/pid" --daemon || return 1
-    SWP=$(cat "$TPMD/pid")
+    TPMARGS=""
+    if [ "$NOTPM" = 0 ]; then
+        swtpm socket --tpm2 --tpmstate dir="$TPMD" --ctrl type=unixio,path="$TPMD/sock" \
+            --pid file="$TPMD/pid" --daemon || return 1
+        SWP=$(cat "$TPMD/pid")
+        TPMARGS="-chardev socket,id=chrtpm,path=$TPMD/sock -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-crb,tpmdev=tpm0"
+    fi
     qemu-system-x86_64 -machine q35,smm=on,accel=kvm -cpu "$CPU" -m 2048 -smp 2 -no-reboot \
         -global driver=cfi.pflash01,property=secure,value=on \
         -drive if=pflash,format=raw,unit=0,readonly=on,file="$CODE" \
         -drive if=pflash,format=raw,unit=1,file="$T/vars.fd" \
-        -chardev socket,id=chrtpm,path="$TPMD/sock" -tpmdev emulator,id=tpm0,chardev=chrtpm \
-        -device tpm-crb,tpmdev=tpm0 \
+        $TPMARGS \
         -drive file="$DISK",format=raw,if=none,id=d0 -device virtio-blk-pci,drive=d0 \
         -device virtio-vga -display none -serial file:"$SER" -net none \
         -monitor unix:"$T/mon.sock",server,nowait >/dev/null 2>&1 &
@@ -256,7 +265,7 @@ s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); time.sleep(0.1); s.recv
 s.sendall((sys.argv[2]+"\n").encode()); time.sleep(0.2); s.close()' "$T/mon.sock" "$1"; }
 keys() { # DIGITS-AND-WORDS: "1234" or "ret"
     local w=$1 i
-    if [ "$w" = ret ]; then mon "sendkey ret"; sleep 0.3; return; fi
+    if [ "$w" = ret ] || [ "$w" = esc ]; then mon "sendkey $w"; sleep 0.3; return; fi
     for i in $(echo "$w" | fold -w1); do mon "sendkey $i"; sleep 0.25; done
 }
 # A picture of the screen, as PNG, and how much of it is her page's
@@ -372,21 +381,27 @@ if wait_for "aurlock-pin: asking for the PIN" 300; then
     [ "${1:-0}" -ge 50 ] && ok "a full-screen AurOS page, not a console ($1% her background, $3x$4)" \
         || bad "the PIN page is on screen" "$SHOT"
     note "power on to PIN page: ${T1} s"
-    keys 9999; sleep 4
+    keys "$WRONG"; sleep 4
     shot wrong; set -- $SHOT
     serial | grep -q 'aurlock-pin: PIN wrong' && ok "a wrong PIN: the page says it did not work" || bad "a wrong PIN is wrong" "$(serial | grep aurlock-pin)"
     [ "${2:-0}" -gt 100 ] && ok "...in her warning colour, on the page" || bad "the wrong-PIN sentence is on screen" "$SHOT"
     keys "$PIN1"
     wait_for "THEFT poweroff" && ok "the right PIN started AurOS" || bad "the right PIN started AurOS" "$(serial | tail -5)"
     note "$(serial | grep -o 'aurlock-pin: PIN open in [0-9]* ms' | head -1) (the TPM's unseal, KVM)"
-    val tpm | grep -q 'counter=[1-9]' && ok "the chip counted the wrong PIN ($(val tpm | grep -o 'counter=[0-9]*'))" \
-        || bad "the chip counted the wrong PIN" "$(val tpm)"
+    if [ "$NOTPM" = 0 ]; then
+        val tpm | grep -q 'counter=[1-9]' && ok "the chip counted the wrong PIN ($(val tpm | grep -o 'counter=[0-9]*'))" \
+            || bad "the chip counted the wrong PIN" "$(val tpm)"
+    else
+        val tpm | grep -q 'tpm=no' && ok "no security chip: the PIN is checked as a passphrase" || bad "no chip" "$(val tpm)"
+        note "the wrong PIN took: $(serial | grep -o 'aurlock-pin: PIN wrong in [0-9]* ms' | head -1) (argon2id, by design)"
+    fi
 else
     bad "the PIN page appeared" "$(serial | tail -8)"
 fi
 power_off
 
 # ── 4: a dbx update (PCR 7 changes) ───────────────────────────────
+if [ "$NOTPM" = 0 ]; then
 echo "  4  a dbx update in the firmware" | tee -a "$EV/summary.txt"
 python3 -I - "$T/vars.fd" "$TOP/tools" <<'EOP'
 import sys, os, uuid
@@ -435,21 +450,33 @@ if [ -n "$PCRS" ]; then
     power_off
 fi
 
+fi   # a dbx update has nothing to do with a drive that has no chip
+
 # ── 5: a different chip ───────────────────────────────────────────
+if [ "$NOTPM" = 1 ]; then
+echo "  5  forgot the PIN (no chip: the same path, by Esc on the keyboard)" | tee -a "$EV/summary.txt"
+else
 echo "  5  a different security chip" | tee -a "$EV/summary.txt"
 TPMD="$T/tpm-b"; mkdir -p "$TPMD"
+fi
 power_on newchip
 if wait_for "aurlock-pin: asking for the PIN" 300; then
-    sleep 2; keys "$CUR"; sleep 4
-    shot changed
-    serial | grep -q 'aurlock-pin: PIN changed' && ok "the page knows the computer changed (not \"wrong PIN\")" \
-        || bad "a new chip -> changed" "$(serial | grep aurlock-pin)"
+    sleep 2
+    if [ "$NOTPM" = 1 ]; then
+        keys esc; sleep 2; shot forgot
+        ok "Esc on the keyboard is \"I forgot my PIN\" (screen taken)"
+    else
+        keys "$CUR"; sleep 4
+        shot changed
+        serial | grep -q 'aurlock-pin: PIN changed' && ok "the page knows the computer changed (not \"wrong PIN\")" \
+            || bad "a new chip -> changed" "$(serial | grep aurlock-pin)"
+    fi
     keys "$CODE"; sleep 5
     shot choose
     serial | grep -q 'aurlock-pin: rescue code open' && ok "the rescue code opened the drive" || bad "the rescue code" "$(serial | grep aurlock-pin)"
     keys "$PIN2"; keys ret; sleep 1; keys "$PIN2"; keys ret
     wait_for "THEFT poweroff" && ok "she chose her PIN again and AurOS started" || bad "AurOS started after the rescue code" "$(serial | tail -5)"
-    val repin | grep -q 'sealed again' && ok "the new PIN was sealed in the new chip" || bad "repin" "$(val repin)"
+    val repin | grep -q 'sealed again' && ok "the new PIN was sealed again ($([ "$NOTPM" = 1 ] && echo 'as a passphrase, no chip' || echo 'in the new chip'))" || bad "repin" "$(val repin)"
 else
     bad "the PIN page with a new chip" "$(serial | tail -6)"
 fi
