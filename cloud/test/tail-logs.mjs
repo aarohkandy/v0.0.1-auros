@@ -15,4 +15,8 @@ for (let i = 0; i < raw.length; i++) {
 }
 const lines = events.flatMap((e) => (e.logs || []).map((l) => JSON.stringify(l.message)));
 writeFileSync(process.argv[3], lines.join("\n"));
-console.log(`${events.length} events, ${lines.length} service log lines`);
+const outcomes = {};
+for (const e of events) outcomes[e.outcome] = (outcomes[e.outcome] || 0) + 1;
+const cpu = events.map((e) => e.cpuTime).filter((x) => typeof x === "number").sort((a, b) => a - b);
+console.log(`${events.length} events, ${lines.length} service log lines; outcomes ${JSON.stringify(outcomes)}` +
+  (cpu.length ? `; CPU ms p50 ${cpu[cpu.length >> 1]}, max ${cpu.at(-1)} (Free plan limit 10)` : "; no CPU times in the tail events"));
