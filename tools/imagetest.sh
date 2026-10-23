@@ -245,7 +245,7 @@ EOC
 gcc -O1 -g -std=gnu11 -Wall -Wextra -fsanitize=address,undefined \
     -fno-sanitize-recover=all -I src/aurstage -o "$TMP/i" "$TMP/i.c" \
     src/aurstage/image.c src/aurstage/gpt.c src/aurstage/wr.c \
-    src/aurstage/sha256.c src/aurstage/boot.c src/aurstage/disks.c \
+    src/aurstage/sha256.c src/aurstage/boot.c src/aurstage/stagelog.c src/aurstage/disks.c \
     src/aurstage/ntfs.c src/aurstage/fde.c \
     || { echo "  did not build"; exit 2; }
 

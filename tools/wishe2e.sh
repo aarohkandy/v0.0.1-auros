@@ -8,7 +8,12 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 T=${TMPDIR:-/tmp}/wishe2e.$$
 mkdir -p "$T/run" "$T/home/.local/share/auros" "$T/shells"
-cleanup() { kill $(jobs -p) 2>/dev/null || true; rm -rf "$T"; }
+# The two servers are killed by their own pids, and neither holds this script's
+# stdout: `jobs -p` is empty inside a dash trap, and a server left holding the
+# pipe to `| tee` makes the step wait for ever after the test is over (CI,
+# 2026-10-23: 19 checks passed and the runner then sat until it was cancelled).
+CLOUD=""; ENGINE=""
+cleanup() { kill $CLOUD $ENGINE 2>/dev/null || true; rm -rf "$T"; }
 trap cleanup EXIT
 for need in cc python3 curl pkg-config; do
     command -v $need >/dev/null 2>&1 || { echo "needs $need"; exit 2; }
@@ -25,7 +30,8 @@ cc -O1 -g -std=gnu11 -w -DAUROS_WISHES=1 -o "$T/wishe2e" "$ROOT/tools/wishe2e.c"
 
 PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
 : > "$T/service.log"
-python3 "$ROOT/tools/wishe2e-cloud.py" "$PORT" "$T/service.log" &
+python3 "$ROOT/tools/wishe2e-cloud.py" "$PORT" "$T/service.log" > "$T/cloud.out" 2>&1 < /dev/null &
+CLOUD=$!
 printf 'url=http://127.0.0.1:%s\n' "$PORT" > "$T/wishes.conf"
 printf 'wishes = on\n' > "$T/policy.conf"
 printf 'wishes=on\n' > "$T/features"
@@ -33,7 +39,8 @@ printf 'wishes=on\n' > "$T/features"
 export XDG_RUNTIME_DIR="$T/run" HOME="$T/home" XDG_DATA_HOME="$T/home/.local/share"
 export AURWISH_FEATURES="$T/features" AURWISH_POLICY="$T/policy.conf" AURWISH_CONF="$T/wishes.conf" AURWISH_STORE="$T/home/.local/share/auros/wishes.json"
 export AURWISH_SOUNDS="$T/none" AURWISH_HELP="$T/none"
-"$T/aurwish" >"$T/engine.log" 2>&1 &
+"$T/aurwish" >"$T/engine.log" 2>&1 < /dev/null &
+ENGINE=$!
 i=0; while [ ! -S "$T/run/aurwish.sock" ] && [ $i -lt 50 ]; do sleep 0.2; i=$((i + 1)); done
 [ -S "$T/run/aurwish.sock" ] || { echo "the engine did not start"; cat "$T/engine.log"; exit 1; }
 echo "== running"

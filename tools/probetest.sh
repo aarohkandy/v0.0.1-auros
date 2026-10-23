@@ -72,7 +72,7 @@ int main(int argc, char **argv)
 EOC
 gcc -O1 -g -std=gnu11 -Wall -Wextra -fsanitize=address,undefined \
     -fno-sanitize-recover=all -I src/aurstage -o "$TMP/p" \
-    "$TMP/p.c" src/aurstage/probe.c src/aurstage/boot.c \
+    "$TMP/p.c" src/aurstage/probe.c src/aurstage/boot.c src/aurstage/stagelog.c \
     src/aurstage/disks.c src/aurstage/sha256.c src/aurstage/ntfs.c \
     src/aurstage/fde.c || { echo "  did not build"; exit 2; }
 
