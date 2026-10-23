@@ -361,6 +361,10 @@ static int find_cb(unsigned num, const char *fname, const uint8_t *opt,
     return 1;
 }
 
+static int boot_write_at(unsigned num, const char *desc, const nvram_hd *on,
+                         const char *loader, const char *cmdline,
+                         char *why, size_t n);
+
 int nvram_boot_set(const char *desc, const nvram_hd *on, const char *loader,
                    const char *cmdline, uint16_t *num_out,
                    char *why, size_t n)
@@ -400,6 +404,18 @@ int nvram_boot_set(const char *desc, const nvram_hd *on, const char *loader,
         }
     }
 
+    if (boot_write_at(num, desc, on, loader, cmdline, why, n) != 0) return -1;
+    if (num_out) *num_out = (uint16_t)num;
+    return 0;
+}
+
+/* THE WRITE ITSELF, and the read back. Everything else this installer
+ * writes is read back and compared; a boot entry is the one write whose
+ * failure is silent and total, so it gets the same treatment. */
+static int boot_write_at(unsigned num, const char *desc, const nvram_hd *on,
+                         const char *loader, const char *cmdline,
+                         char *why, size_t n)
+{
     static uint8_t opt[2048];
     size_t k = nvram_load_option(opt, sizeof opt, desc, on, loader, cmdline);
     if (!k) {
@@ -409,10 +425,6 @@ int nvram_boot_set(const char *desc, const nvram_hd *on, const char *loader,
     char name[16];
     snprintf(name, sizeof name, "Boot%04X", num);
     if (put_var(name, opt, k, why, n) != 0) return -1;
-
-    /* READ IT BACK. Everything else this installer writes is read back
-     * and compared; a boot entry is the one write whose failure is
-     * silent and total, so it gets the same treatment. */
     char fname[64];
     snprintf(fname, sizeof fname, "%s-%s", name, GLOBAL_GUID);
     uint8_t back[4096];
@@ -422,7 +434,73 @@ int nvram_boot_set(const char *desc, const nvram_hd *on, const char *loader,
                          "entry AurOS gave it.");
         return -1;
     }
-    if (num_out) *num_out = (uint16_t)num;
+    return 0;
+}
+
+/* ── can the entry be written AT ALL? ─────────────────────────────────
+ *
+ * An old Lenovo or HP can have a nearly full NVRAM store, and the install
+ * used to find out AFTER the table was committed: no entry, a console line
+ * that scrolled away, the next restart going to Windows for good with
+ * Windows already smaller (docs/safety S-04). So this asks BEFORE: it writes
+ * an entry of the real size under its own name, reads it back, and takes it
+ * away again. A computer that cannot hold it is refused while it is still
+ * only a Windows computer. */
+#define PROBE_DESC "AurOS probe"
+int nvram_probe(char *why, size_t n)
+{
+    if (!nvram_present()) {
+        snprintf(why, n, "this computer does not let AurOS see its start-up "
+                         "settings, so AurOS cannot add itself to the menu.");
+        return -1;
+    }
+    char ignored[200];
+    nvram_boot_forget(PROBE_DESC, ignored, sizeof ignored);   /* an old one */
+    nvram_hd hd;
+    memset(&hd, 0, sizeof hd);
+    hd.number = 1; hd.first_lba = 2048; hd.blocks = 2048;
+    for (int i = 0; i < 16; i++) hd.guid[i] = (uint8_t)(0xA0 + i);
+    uint16_t num = 0;
+    if (nvram_boot_set(PROBE_DESC, &hd, "\\EFI\\AurOS\\shimx64.efi", NULL,
+                       &num, why, n) != 0) {
+        nvram_boot_forget(PROBE_DESC, ignored, sizeof ignored);
+        return -1;
+    }
+    if (nvram_boot_forget(PROBE_DESC, why, n) < 0) return -1;
+    return 0;
+}
+
+/* Overwrite the entry called `old_desc` (the one the Windows half made, which
+ * is already in the store) with this one, in the same slot: a replace needs
+ * only the difference in size, so it works on a store with no room for a new
+ * entry. */
+typedef struct { const char *want; int found; unsigned num; } rep_ctx;
+static int rep_cb(unsigned num, const char *fname, const uint8_t *opt, int len, void *ud)
+{
+    (void)fname;
+    rep_ctx *c = ud;
+    char desc[256];
+    desc_of(opt, len, desc, sizeof desc);
+    if (strcmp(desc, c->want) != 0) return 0;
+    c->found = 1; c->num = num;
+    return 1;
+}
+
+int nvram_boot_repurpose(const char *old_desc, const char *desc, const nvram_hd *on,
+                         const char *loader, const char *cmdline,
+                         uint16_t *num_out, char *why, size_t n)
+{
+    if (!nvram_present() || !on || !on->number || !on->blocks) {
+        snprintf(why, n, "this computer's start-up settings are not usable.");
+        return -1;
+    }
+    rep_ctx rc = { old_desc, 0, 0 };
+    if (walk_boots(rep_cb, &rc, NULL, 0) != 0 || !rc.found) {
+        snprintf(why, n, "there is no earlier AurOS entry to reuse.");
+        return -1;
+    }
+    if (boot_write_at(rc.num, desc, on, loader, cmdline, why, n) != 0) return -1;
+    if (num_out) *num_out = (uint16_t)rc.num;
     return 0;
 }
 

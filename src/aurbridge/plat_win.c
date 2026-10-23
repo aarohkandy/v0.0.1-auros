@@ -978,7 +978,21 @@ int plat_putback_task(const char *disk_guid, uint64_t win_offset,
             snprintf(why, wn, "the disk could not be named for the task.");
             return -1;
         }
-    char inner[1400];
+    /* HIBERNATION AS SHE HAD IT, put back when C: has its room: the install
+     * switched it off (a hibernated volume cannot be shrunk or read), and
+     * Put Windows back runs under Linux, which cannot run powercfg. */
+    char restore_hib[400] = "";
+    {
+        int hf = -1, hb = -1;
+        plat_fast_startup_was(&hf, &hb);
+        char *q = restore_hib;
+        if (hf == 1) q += snprintf(q, sizeof restore_hib, "& powercfg.exe /hibernate on;");
+        if (hb > 0)
+            snprintf(q, sizeof restore_hib - (size_t)(q - restore_hib),
+                     "Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\"
+                     "Session Manager\\Power' -Name HiberbootEnabled -Value %d;", hb);
+    }
+    char inner[2200];
     snprintf(inner, sizeof inner,
         "$ErrorActionPreference='Stop';"
         "$g='%s';$o=%llu;$s=%llu;$w=%llu;$n='" PUTBACK_TASK "';"
@@ -986,15 +1000,16 @@ int plat_putback_task(const char *disk_guid, uint64_t win_offset,
         "if(-not $d){exit 0};"
         "$p=Get-Partition -DiskNumber $d.Number|Where-Object{$_.Offset -eq $o}|Select-Object -First 1;"
         "if(-not $p){exit 0};"
-        "if($p.Size -ge $w){Unregister-ScheduledTask -TaskName $n -Confirm:$false;exit 0};"
+        "if($p.Size -ge $w){%s Unregister-ScheduledTask -TaskName $n -Confirm:$false;exit 0};"
         "if($p.Size -lt $s){exit 0};"
         "$m=(Get-PartitionSupportedSize -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber).SizeMax;"
         "$t=[Math]::Min($w,$m);"
         "if($t -gt $p.Size){Resize-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber -Size $t};"
         "if((Get-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber).Size -ge $w)"
-        "{Unregister-ScheduledTask -TaskName $n -Confirm:$false}",
+        "{%s Unregister-ScheduledTask -TaskName $n -Confirm:$false}",
         disk_guid, (unsigned long long)win_offset,
-        (unsigned long long)shrunk_bytes, (unsigned long long)orig_bytes);
+        (unsigned long long)shrunk_bytes, (unsigned long long)orig_bytes,
+        restore_hib, restore_hib);
     static char b64[4000];
     if (!b64_utf16(inner, b64, sizeof b64)) {
         snprintf(why, wn, "the task's instructions did not fit.");
@@ -1651,6 +1666,12 @@ static void powercfg_hibernate(const char *onoff, char *tail, size_t tn)
     if (!GetSystemDirectoryA(sys, sizeof sys)) snprintf(sys, sizeof sys, "C:\\Windows\\System32");
     snprintf(cmd, sizeof cmd, "\"%s\\powercfg.exe\" /hibernate %s", sys, onoff);
     plat_run(cmd, tail, tn);
+}
+
+void plat_fast_startup_was(int *hibfile, int *hiberboot)
+{
+    if (hibfile) *hibfile = g_fs_saved ? g_fs_hibfile : -1;
+    if (hiberboot) *hiberboot = g_fs_saved ? g_fs_hiberboot : -1;
 }
 
 void plat_fast_startup_restore(void)

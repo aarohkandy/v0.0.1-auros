@@ -269,6 +269,7 @@ typedef struct {
     /* ── the fast path (set by phase 0 when this run takes it) ──────── */
     int      fast;
     int      bitlocker;          /* C: is BitLocker-protected          */
+    char     sysdrive[8];        /* "C:", as Windows names it          */
     int      win_part_number;    /* Windows' PartitionNumber of C:     */
     uint64_t win_orig_bytes;     /* C: before this run shrank it       */
     uint64_t shrink_target;      /* what phase 2 asks Windows for      */

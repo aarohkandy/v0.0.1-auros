@@ -189,6 +189,11 @@ int plat_wifi_profile(char *ssid, size_t sn, char *security, size_t secn,
 int plat_putback_task(const char *disk_guid, uint64_t win_offset,
                       uint64_t shrunk_bytes, uint64_t orig_bytes,
                       char *why, size_t wn);
+/* What plat_fast_startup_off found: whether hiberfil.sys was there (1/0) and
+ * HiberbootEnabled's value (-1: none), or -1 -1 when it never ran. The
+ * put-back task puts both back when it has given C: its room, so "Put
+ * Windows back" leaves hibernation as she had it (docs/safety S-23). */
+void plat_fast_startup_was(int *hibfile, int *hiberboot);
 /* And take it away again (an abort that grew C: back itself). */
 int plat_putback_task_remove(char *why, size_t wn);
 

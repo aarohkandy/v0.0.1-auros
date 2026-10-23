@@ -68,7 +68,11 @@ get() { printf '%s\n' "$TEXT" | sed -n "s/^$1=//p" | tail -n 1; }
 matches() { printf '%s' "$1" | grep -Eq "^($2)\$"; }
 bad=0
 [ "$n" -le 3 ] || bad=1
-printf '%s\n' "$TEXT" | grep -Evq '^(ssid|security|psk)=' && printf '%s\n' "$TEXT" | grep -Ev '^$' | grep -Evq '^(ssid|security|psk)=' && bad=1
+# Nothing but the three keys, each at most once.
+if printf '%s\n' "$TEXT" | grep -v '^$' | grep -Evq '^(ssid|security|psk)='; then bad=1; fi
+for k in ssid security psk; do
+    [ "$(printf '%s\n' "$TEXT" | grep -c "^$k=")" -le 1 ] || bad=1
+done
 SSID=$(get ssid); SEC=$(get security); PSK=$(get psk)
 [ -n "$SSID" ] && [ "${#SSID}" -le 32 ] || bad=1
 matches "$SEC" 'wpa-psk|sae|open' || bad=1

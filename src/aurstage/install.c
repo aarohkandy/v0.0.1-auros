@@ -24,6 +24,7 @@
 #include "record.h"
 #include "rescue.h"
 #include "loader.h"
+#include "nvram.h"
 #include "fault.h"
 #include "winvol.h"
 #include "sha256.h"
@@ -372,6 +373,15 @@ static void install_gap(const stage_machine *m, journal *j)
                "said it would be.", "Run the installer in Windows again.",
                "plan-mismatch");
     plan_say(&L);
+
+    /* CAN AUROS BE ADDED TO THIS COMPUTER'S START-UP LIST AT ALL? Asked now,
+     * with nothing changed: a store with no room for the entry used to be found
+     * out after the table was committed (docs/safety S-04). */
+    if (nvram_probe(why, sizeof why) != 0)
+        refuse("This computer's start-up list is full, so AurOS could not be "
+               "added to it.", "Nothing has been changed. Ask someone who "
+               "knows computers to clear old entries from it.",
+               "no-startup-room");
 
     /* THE WAY BACK must fit where the plan put it. */
     rescue_area rsc;
@@ -897,6 +907,15 @@ void install_run(const stage_machine *m)
                      why, sizeof why) != 0)
         refuse(why, NULL, "no-room");
     plan_say(&L);
+
+    /* CAN AUROS BE ADDED TO THIS COMPUTER'S START-UP LIST AT ALL? Asked now,
+     * with nothing changed: a store with no room for the entry used to be found
+     * out after the table was committed (docs/safety S-04). */
+    if (nvram_probe(why, sizeof why) != 0)
+        refuse("This computer's start-up list is full, so AurOS could not be "
+               "added to it.", "Nothing has been changed. Ask someone who "
+               "knows computers to clear old entries from it.",
+               "no-startup-room");
 
     /* ── THE WAY BACK, AND IT IS NOT OPTIONAL ──────────────────────
      *

@@ -865,6 +865,20 @@ static int is_auros_own(const gpt_entry *e)
     return 0;
 }
 
+/* MAY THIS VOLUME BE GROWN BACK? Decided from the volume's own state and the
+ * capture, never from "ntfsresize would refuse": the volume this program shrank
+ * is dirty BY CONSTRUCTION (ntfsresize leaves the bit set so Windows checks it),
+ * so the one thing allowed to be wrong is the dirty bit -- with the log clean,
+ * no hibernated session, none of the three UNSURE, and the volume the captured
+ * one (same serial). Everything else is a refusal. */
+static int growable(const ntfs_state *ns, uint64_t cap_serial)
+{
+    if (ns->verdict == NTFS_OK) return 1;
+    return ns->verdict == NTFS_DIRTY && ns->dirty == NTFS_YES &&
+           ns->log_dirty == NTFS_NO && ns->hibernated == NTFS_NO &&
+           ns->serial == cap_serial;
+}
+
 static int foreign_partition(const gpt_table *live, const uint8_t *cap_arr,
                              uint32_t n_ent, uint32_t ent_sz)
 {
@@ -1299,6 +1313,42 @@ int rescue_restore(const char *disk_dev, const rescue_area *area,
                      p.sec[i].index);
             return -1;
         }
+        /* CAN IT BE GROWN BACK -- ASKED NOW, BEFORE THE FIRST WRITE. This
+         * used to be asked after the table and the startup files were
+         * already rewritten, and the answer "no" then left C: tens of
+         * gigabytes smaller than its partition with nothing able to start
+         * the restore again (docs/safety S-14, S-15). A volume the
+         * restore would have to grow that Windows has not closed down
+         * properly is refused here, in words she can act on, with the
+         * disk untouched. */
+        {
+            uint8_t cb[8192];
+            uint64_t pbytes = p.sec[i].aux2 >= p.sec[i].disk_lba
+                ? (p.sec[i].aux2 - p.sec[i].disk_lba + 1) * (uint64_t)sec : 0;
+            if (p.sec[i].len <= sizeof cb &&
+                read_at(stick, cb, (size_t)p.sec[i].len,
+                        area->part_off + p.sec[i].off) == 0) {
+                uint32_t cbps = rd16(cb + 0x0B);
+                uint64_t want = (p.sec[i].aux + 1) * (uint64_t)(cbps ? cbps : bps);
+                if (pbytes > want) want = pbytes;
+                if ((now + 1) * (uint64_t)bps < want) {
+                    char dev0[80];
+                    part_node(disk_dev, (int)p.sec[i].index, dev0, sizeof dev0);
+                    ntfs_state ns0;
+                    ntfs_read_state(dev0, &ns0);
+                    if (!growable(&ns0, rd64(cb + 0x48))) {
+                        free(cap_arr); free(cap_aarr); close(stick); close(disk_fd);
+                        snprintf(why, n,
+                                 "Windows has not been closed down properly, so "
+                                 "its drive cannot be given back its full size "
+                                 "yet. Start Windows, choose Restart (not Shut "
+                                 "down), then try again. Nothing has been "
+                                 "changed.");
+                        return -1;
+                    }
+                }
+            }
+        }
     }
 
     /* Does the protective record at the very front need putting back?
@@ -1590,11 +1640,7 @@ int rescue_restore(const char *disk_dev, const rescue_area *area,
         ntfs_state ns;
         ntfs_read_state(dev, &ns);
         uint64_t cap_serial = rd64(cap_boot + 0x48);
-        int only_dirty = ns.verdict == NTFS_DIRTY &&
-                         ns.dirty == NTFS_YES &&
-                         ns.log_dirty == NTFS_NO &&
-                         ns.hibernated == NTFS_NO &&
-                         ns.serial == cap_serial;
+        int only_dirty = ns.verdict != NTFS_OK && growable(&ns, cap_serial);
         if (ns.verdict != NTFS_OK && !only_dirty) {
             talk(say, ud, "drive %u cannot be made its full size again yet: "
                           "%s", idx, ns.why);

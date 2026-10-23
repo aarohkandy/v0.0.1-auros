@@ -1497,6 +1497,7 @@ static int fast_inspect(const ab_choice *c, pf_report *r, ab_machine *m,
 {
     const pf_volume *v = &r->volumes[r->system_volume];
     m->bitlocker = v->bitlocker == 1;
+    snprintf(m->sysdrive, sizeof m->sysdrive, "%s", v->mount[0] ? v->mount : "C:");
     m->min_root_bytes = c->min_root_bytes ? c->min_root_bytes : AB_MIN_ROOT;
     m->rsc_bytes = ab_saved_bytes(m->esp_length, m->logical_sector,
                                   r->n_volumes);
@@ -2347,19 +2348,38 @@ int ab_arm(ab_machine *m, ab_say say, void *ud, char *why, size_t n)
      * that nothing after it can fail and leave it paused; ab_abort
      * turns it back on. Shown to her on the Ready page, and agreed. */
     if (m->fast && m->bitlocker) {
-        char tail[512];
-        m->bitlocker_suspended = 1;
-        if (plat_run("manage-bde -protectors -disable C: -RebootCount 2",
-                     tail, sizeof tail) != 0) {
-            snprintf(why, n,
-                     "Windows would not pause its drive lock for the restart "
-                     "(%s). Nothing will be installed, and everything has "
-                     "been put back.", tail);
-            ab_disarm(m, say, ud);
-            return -1;
+        char tail[512], cmd[200];
+        /* WHAT THIS PAUSED, AND ONLY THAT. If something else has already
+         * paused protection on this drive (a Windows update does, for its
+         * own restart), it is not ours to resume: we neither touch it nor
+         * put it back, and ab_disarm resumes only what this recorded. The
+         * simulation cannot ask, and is taken to be "on". */
+        int was_on = 1;
+        snprintf(cmd, sizeof cmd,
+                 "powershell.exe -NoProfile -NonInteractive -Command "
+                 "\"'AURBL='+(Get-BitLockerVolume -MountPoint %s).ProtectionStatus\"",
+                 m->sysdrive);
+        if (plat_run(cmd, tail, sizeof tail) == 0 && strstr(tail, "AURBL=Off")) was_on = 0;
+        if (!was_on) {
+            talk(say, ud, "Windows' drive lock was already paused by something "
+                          "else; it is left as it is");
+        } else {
+            /* Recorded BEFORE the command: a pause that half happened is
+             * resumed too. */
+            m->bitlocker_suspended = 1;
+            snprintf(cmd, sizeof cmd, "manage-bde -protectors -disable %s -RebootCount 2",
+                     m->sysdrive);
+            if (plat_run(cmd, tail, sizeof tail) != 0) {
+                snprintf(why, n,
+                         "Windows would not pause its drive lock for the restart "
+                         "(%s). Nothing will be installed, and everything has "
+                         "been put back.", tail);
+                ab_disarm(m, say, ud);
+                return -1;
+            }
+            talk(say, ud, "Windows' drive lock is paused for the restart; it "
+                          "turns itself back on");
         }
-        talk(say, ud, "Windows' drive lock is paused for one restart; it "
-                      "turns itself back on");
     }
 
     /* BOOTNEXT AND NOT BOOTORDER. It is one-shot: the firmware clears
@@ -2428,8 +2448,10 @@ void ab_disarm(ab_machine *m, ab_say say, void *ud)
      * the computer's own disk, which phases.h says these phases never
      * make. */
     if (m->bitlocker_suspended) {
-        char tail[512];
-        if (plat_run("manage-bde -protectors -enable C:", tail, sizeof tail) == 0) {
+        char tail[512], cmd[100];
+        snprintf(cmd, sizeof cmd, "manage-bde -protectors -enable %s",
+                 m->sysdrive[0] ? m->sysdrive : "C:");
+        if (plat_run(cmd, tail, sizeof tail) == 0) {
             m->bitlocker_suspended = 0;
             talk(say, ud, "BitLocker is switched back on");
         } else {

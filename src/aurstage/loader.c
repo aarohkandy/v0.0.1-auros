@@ -185,8 +185,21 @@ int loader_register(const gpt_table *nw, const stage_layout *L,
 
     uint16_t num = 0;
     if (nvram_boot_set(LOADER_ENTRY_DESC, &hd, LOADER_PATH, NULL, &num,
-                       why, n) != 0)
-        return -1;
+                       why, n) != 0) {
+        /* NO ROOM FOR A NEW ENTRY: the one the Windows half made is already in
+         * the store, and replacing it in its own slot needs only the
+         * difference in size (docs/safety S-04). */
+        char first[200];
+        snprintf(first, sizeof first, "%s", why);
+        if (nvram_boot_repurpose(LOADER_INSTALLER_DESC, LOADER_ENTRY_DESC, &hd,
+                                 LOADER_PATH, NULL, &num, why, n) != 0) {
+            snprintf(why, n, "%s", first);
+            return -1;
+        }
+        if (entry_out) *entry_out = num;
+        if (nvram_boot_next(num, why, n) != 0) return 1;
+        return 0;
+    }
     if (entry_out) *entry_out = num;
     /* THE ENTRY IS DOWN. A one-shot that will not arm after that is
      * worth a different sentence: the machine can be started into

@@ -287,10 +287,12 @@ out = zlib.decompress(d[i:], 16 + zlib.MAX_WBITS)
 sys.exit(0 if b"\"image_on\":\"gap\"" in out and b"\"root_sha256\":\"" in out else 1)'; then
     ok "the journal says image_on=gap, with the plan and the hashes"
 else bad "the journal says image_on=gap, with the plan and the hashes"; fi
-read -r PBG PBO PBS PBF < "$S/sim/putback-task.txt" 2>/dev/null
+read -r PBG PBO PBS PBF PBH PBB < "$S/sim/putback-task.txt" 2>/dev/null
 [ -n "${PBG:-}" ] && [ "$PBO" = $((P2S*512)) ] && [ "$PBF" = $(((P2E-P2S+1)*512)) ] && [ "$PBS" = "$NOW" ] \
     && ok "the put-back task is registered: this disk, C: at its start, shrunk size, original size" \
     || bad "the put-back task is registered with the right numbers" "$(cat "$S/sim/putback-task.txt" 2>/dev/null) want $((P2S*512)) $NOW $(((P2E-P2S+1)*512))"
+[ "${PBH:-}" = 1 ] && [ "${PBB:-}" = 1 ] && ok "...and told to put hibernation back as she had it (S-23)" \
+    || bad "...and told to put hibernation back as she had it" "hibfile=${PBH:-} hiberboot=${PBB:-}"
 [ ! -f "$S/win/auros-desktop.img" ] && [ -z "$(ls "$S/win" | grep -v '^auros-desktop.img.gz.')" ] \
     && ok "no unpacked image was ever put on the Windows drive (only the pieces)" \
     || bad "no unpacked image was ever put on the Windows drive" "$(ls "$S/win")"
@@ -424,18 +426,83 @@ echo
 echo "  when Windows cannot make enough room, nothing is changed"
 new_machine noroom
 BEFORE=$(whole_sha "$S/disk.img")
-run_engine AURBRIDGE_MIN_ROOT_MB=950
+run_engine AURBRIDGE_MIN_ROOT_MB=2900
 if grep -q 'verdict=armed' "$S/out" && ! grep -q 'aurbridge-report v1 fast=1' "$S/out"; then
     ok "no BitLocker: it falls back to the no-stick way, saying so"
     grep -q "the fast way is not possible" "$S/err" && ok "...in words" || bad "...in words" "$(grep -i fast "$S/err" | head -2)"
 else bad "no BitLocker: it falls back" "$(cat "$S/out") $(tail -2 "$S/err")"; fi
 new_machine noroomfve fve
 BEFORE=$(whole_sha "$S/disk.img")
-if run_engine AURBRIDGE_MIN_ROOT_MB=950 AURBRIDGE_BITLOCKER_PAUSE=1; then bad "BitLocker: refused (the old way cannot install beside a locked drive)" "it armed"
+if run_engine AURBRIDGE_MIN_ROOT_MB=2900 AURBRIDGE_BITLOCKER_PAUSE=1; then bad "BitLocker: refused (the old way cannot install beside a locked drive)" "it armed"
 else
     grep -q 'verdict=refused' "$S/out" && ok "BitLocker: refused (the old way cannot install beside a locked drive)" || bad "BitLocker: refused" "$(cat "$S/out")"
 fi
 [ "$(whole_sha "$S/disk.img")" = "$BEFORE" ] && ok "...with the disk byte for byte untouched" || bad "...with the disk byte for byte untouched"
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+if want cuts; then
+echo
+echo "  the power goes during staging's part of the fast path"
+new_machine cuts
+if ! run_engine || ! grep -q 'aurbridge-report v1 fast=1 ' "$S/out"; then
+    bad "the engine arms the machine for the cuts" "$(tail -3 "$S/err")"
+else
+ARMED="$S/disk.img"; ORIGB=$(( (P2E-P2S+1) * 512 ))
+SHRUNK_LAST=$(sgdisk -i 2 "$ARMED" | sed -n 's/^Last sector: \([0-9]*\).*/\1/p')
+nparts() { sgdisk -p "$1" 2>/dev/null | sed -n '/^Number/,$p' | tail -n +2 | grep -c .; }
+# What Windows' put-back task does when the room is free again: grow C: back.
+# (Emulated here with the same helper the simulation uses for the shrink; the
+# task's own script runs on real Windows in the e2e.)
+putback_task() { sh "$S/sim/shrink.sh" resize "$1" 2 "$ORIGB" >/dev/null 2>&1; }
+full_again() { # image label
+    [ "$(sgdisk -i 2 "$1" | sed -n 's/^Last sector: \([0-9]*\).*/\1/p')" = "$P2E" ] \
+        && ok "$2: drive C: is its original size again" || bad "$2: drive C: is its original size again" "$(sgdisk -i 2 "$1" | grep Last)"
+    _t=$(ntfs_total "$1" "$P2S" | cut -d' ' -f1)
+    [ $((NTFSTOT - _t)) -ge 0 ] && [ $((NTFSTOT - _t)) -le "$NTFSSPC" ] \
+        && ok "$2: ...and so is its filesystem" || bad "$2: ...and so is its filesystem" "claims $_t, had $NTFSTOT"
+    [ "$(nparts "$1")" = 3 ] && ok "$2: ...with the machine's own three partitions" || bad "$2: ...with the machine's own three partitions" "$(nparts "$1")"
+    [ "$(extent_sha "$1" $((P1S*512)) $(((P1E-P1S+1)*512)))" = "$ESPSHA" ] \
+        && ok "$2: ...and the EFI partition byte for byte what it was" || bad "$2: ...and the EFI partition byte for byte what it was"
+    win_files_now "$1" "$2"
+}
+for pt in gate mirror-end commit-array commit-sector commit-backup boot-entry settle-end; do
+    printf '\n  ── %s\n' "$pt"
+    if boot_staging "$ARMED" "aurstage.install aurstage.min_gb=1 aurstage.die_at=$pt" "AURSTAGE-FAULT $pt" 600; then
+        ok "the machine stops dead at $pt"
+    else
+        bad "the machine stops dead at $pt" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -3)"; continue
+    fi
+    cp --sparse=always "$MTMP/run.img" "$MTMP/cut.img"
+    win_files_now "$MTMP/cut.img" "after the cut"
+    case "$pt" in
+      gate|mirror-end|commit-array)
+        # The old table is in force; Windows is as Windows left it, C: smaller.
+        [ "$(nparts "$MTMP/cut.img")" = 3 ] && ok "the old table is still the one in force (3 partitions)" \
+            || bad "the old table is still the one in force (3 partitions)" "$(nparts "$MTMP/cut.img")"
+        # (a) trying again installs.
+        if boot_staging "$MTMP/cut.img" "aurstage.install aurstage.min_gb=1" "INSTALLTEST-AUROS-STARTED"; then
+            ok "trying again installs AurOS"
+            win_files_now "$MTMP/run.img" "after trying again"
+        else bad "trying again installs AurOS" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -4)"; fi
+        # (b) and if she never tries again, Windows takes the room back.
+        cp --sparse=always "$MTMP/cut.img" "$MTMP/pb.img"; putback_task "$MTMP/pb.img"
+        full_again "$MTMP/pb.img" "and if she never does, Windows takes the room back"
+        ;;
+      *)
+        # The new table is in force: Put Windows back from the copy on this
+        # disk, then Windows' put-back task grows C: back.
+        if boot_staging "$MTMP/cut.img" "aurstage.restore" "verdict=restored" 900; then
+            ok "Put Windows back, from the copy on this disk, works"
+            cp --sparse=always "$MTMP/run.img" "$MTMP/pb.img"
+            [ "$(nparts "$MTMP/pb.img")" = 3 ] && ok "...the machine's own three partitions are back" || bad "...the machine's own three partitions are back" "$(nparts "$MTMP/pb.img")"
+            putback_task "$MTMP/pb.img"
+            full_again "$MTMP/pb.img" "then Windows' own task gives C: its room"
+        else bad "Put Windows back, from the copy on this disk, works" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -5)"; fi
+        ;;
+    esac
+done
+fi
 fi
 
 echo

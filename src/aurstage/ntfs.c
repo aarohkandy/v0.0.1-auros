@@ -659,6 +659,12 @@ const char *ntfs_verdict_name(ntfs_verdict v)
 void ntfs_read_state(const char *dev, ntfs_state *st)
 {
     memset(st, 0, sizeof *st);
+    /* NOT "NO" UNTIL IT HAS BEEN LOOKED AT. NTFS_NO is zero, so a state that
+     * returned early (a refusal, an unreadable volume, the dirty bit) used to
+     * leave the two it had not got to saying "no", and the restore's
+     * only-the-dirty-bit rule (rescue.c) then force-grew a volume that was
+     * also hibernated or log-unclean (docs/safety S-14). */
+    st->dirty = st->hibernated = st->log_dirty = NTFS_UNSURE;
 
     int fd = open(dev, O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
@@ -791,14 +797,13 @@ void ntfs_read_state(const char *dev, ntfs_state *st)
             st->dirty = (st->volume_flags & 0x0001) ? NTFS_YES : NTFS_NO;
         }
     }
-    if (st->dirty == NTFS_YES) {
-        close(fd);
-        refuse(st, NTFS_DIRTY,
-               "Windows has marked this drive as needing a check.",
-               "Start Windows, let it check the drive, and shut "
-               "down properly. Then run this again.");
-        return;
-    }
+    /* THE DIRTY BIT DOES NOT END THE LOOKING. The restore of a volume this
+     * program shrank has exactly one thing wrong with it -- ntfsresize leaves
+     * the dirty bit set, on purpose -- and it must be able to tell that from a
+     * volume that is dirty AND hibernated or log-unclean, so the other two are
+     * read whatever the bit says, and the verdict below takes them in the same
+     * order as before: dirty, then hibernated, then the log. */
+    int was_dirty = st->dirty == NTFS_YES;
 
     /* ── hiberfil.sys: is a Windows session still in there? ────────
      *
@@ -813,7 +818,7 @@ void ntfs_read_state(const char *dev, ntfs_state *st)
      * somebody tells her which ten seconds. */
     st->hibernated = check_hiberfile(fd, mft_off, mft_rec, bps,
                                      st->bytes_per_cluster);
-    if (st->hibernated == NTFS_YES) {
+    if (!was_dirty && st->hibernated == NTFS_YES) {
         close(fd);
         refuse(st, NTFS_HIBERNATED,
                "Windows is not closed down -- it is only asleep, and "
@@ -833,6 +838,14 @@ void ntfs_read_state(const char *dev, ntfs_state *st)
      * person had not saved. R2 records why that is never ours to do. */
     st->log_dirty = check_logfile(fd, mft_off, mft_rec, bps,
                                   st->bytes_per_cluster);
+    if (was_dirty) {
+        close(fd);
+        refuse(st, NTFS_DIRTY,
+               "Windows has marked this drive as needing a check.",
+               "Start Windows, let it check the drive, and shut "
+               "down properly. Then run this again.");
+        return;
+    }
     if (st->log_dirty == NTFS_YES) {
         close(fd);
         refuse(st, NTFS_LOG_UNCLEAN,

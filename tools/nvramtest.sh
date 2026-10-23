@@ -111,6 +111,26 @@ int main(int argc, char **argv)
         printf("%d %s\n", rc, why);
         return 0;
     }
+    if (!strcmp(argv[1], "set-desc")) {
+        uint16_t num = 0xFFFF;
+        int rc = nvram_boot_set(argv[2], &hd, "\\EFI\\AurOS\\shimx64.efi",
+                                NULL, &num, why, sizeof why);
+        printf("%d %04X %s\n", rc, num, why);
+        return 0;
+    }
+    if (!strcmp(argv[1], "probe")) {
+        int rc = nvram_probe(why, sizeof why);
+        printf("%d %s\n", rc, why);
+        return 0;
+    }
+    if (!strcmp(argv[1], "repurpose")) {
+        uint16_t num = 0xFFFF;
+        int rc = nvram_boot_repurpose(argv[2], argv[3], &hd,
+                                      "\\EFI\\AurOS\\shimx64.efi", NULL, &num,
+                                      why, sizeof why);
+        printf("%d %04X %s\n", rc, num, why);
+        return 0;
+    }
     if (!strcmp(argv[1], "present")) { printf("%d\n", nvram_present()); return 0; }
     return 2;
 }
@@ -315,6 +335,44 @@ R=$("$TMP/n" forget "AurOS")
 [ "${R%% *}" = "1" ] && [ ! -f "$VD/Boot0002-$G" ] && [ -f "$VD/Boot0000-$G" ] \
   && ok "a description is matched whole, never as a prefix" \
   || bad "a description is matched whole, never as a prefix" "$R $(ls "$VD")"
+
+# ── a full menu ─────────────────────────────────────────────────────
+# docs/safety S-04. An old Lenovo or HP can have no room for a NEW entry.
+# The install used to find that out after the partition table was committed:
+# no entry, and the next restart went to Windows for good with Windows
+# already smaller. Now the write is probed first, and where a new entry will
+# not fit the installer's own entry is replaced in its own slot.
+echo
+echo "  a start-up menu with no room for a new entry"
+rm -f "$VD"/*
+"$TMP/n" set-desc "AurOS Installer" > /dev/null
+# Every other number taken: 8191 variables (nvram.c numbers Boot0000-Boot1FFF).
+i=1
+while [ $i -lt 8192 ]; do : > "$VD/Boot$(printf '%04X' $i)-$G"; i=$((i+1)); done
+R=$("$TMP/n" set)
+[ "${R%% *}" = "-1" ] && ok "a new entry has no room (the premise)" || bad "a new entry has no room (the premise)" "$R"
+R=$("$TMP/n" probe)
+[ "${R%% *}" = "-1" ] && ok "...and the probe says so, before anything is committed" \
+    || bad "...and the probe says so, before anything is committed" "$R"
+before=$(ls "$VD" | sort | md5sum)
+R=$("$TMP/n" repurpose "AurOS Installer" AurOS)
+[ "${R%% *}" = "0" ] && [ "$(echo "$R" | cut -d' ' -f2)" = "0000" ] \
+    && ok "the installer's own entry is replaced in its own slot (Boot0000)" \
+    || bad "the installer's own entry is replaced in its own slot" "$R"
+[ "$(ls "$VD" | sort | md5sum)" = "$before" ] \
+    && ok "...without needing a new variable" || bad "...without needing a new variable"
+python3 - "$VD/Boot0000-$G" <<'EOPY' && ok "...and it now says AurOS, not AurOS Installer" || bad "...and it now says AurOS, not AurOS Installer"
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('ev', 'tools/efivarstore.py')
+ev = importlib.util.module_from_spec(spec); spec.loader.exec_module(ev)
+raw = open(sys.argv[1], 'rb').read()[4:]          # efivarfs: 4 bytes of attributes first
+lo = ev.load_option(raw)
+sys.exit(0 if lo and lo['description'] == 'AurOS' else 1)
+EOPY
+rm -f "$VD"/*
+R=$("$TMP/n" probe)
+[ "${R%% *}" = "0" ] && ok "with room, the probe passes" || bad "with room, the probe passes" "$R"
+[ -z "$(ls "$VD")" ] && ok "...and leaves nothing behind" || bad "...and leaves nothing behind" "$(ls "$VD" | head -3)"
 
 # ── the gate ────────────────────────────────────────────────────────
 echo

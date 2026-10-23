@@ -455,8 +455,10 @@ int plat_putback_task(const char *disk_guid, uint64_t win_offset,
     simpath(p, sizeof p, "putback-task.txt");
     FILE *f = fopen(p, "w");
     if (!f) { snprintf(why, wn, "the put-back task could not be made"); return -1; }
-    fprintf(f, "%s %llu %llu %llu\n", disk_guid, (unsigned long long)win_offset,
-            (unsigned long long)shrunk_bytes, (unsigned long long)orig_bytes);
+    int hf = -1, hb = -1;
+    plat_fast_startup_was(&hf, &hb);
+    fprintf(f, "%s %llu %llu %llu %d %d\n", disk_guid, (unsigned long long)win_offset,
+            (unsigned long long)shrunk_bytes, (unsigned long long)orig_bytes, hf, hb);
     fclose(f);
     return 0;
 }
@@ -809,6 +811,17 @@ int plat_fast_startup_off(char *why, size_t wn)
 }
 
 /* The mark a test reads to see the abort put Fast Startup back. */
+void plat_fast_startup_was(int *hibfile, int *hiberboot)
+{
+    /* The simulated machine "had" hibernation on, with Fast Startup on, so a
+     * test can see the task is told to put both back. */
+    char p[600];
+    simpath(p, sizeof p, "fast-startup-off");
+    int off = access(p, F_OK) == 0;
+    if (hibfile) *hibfile = off ? 1 : -1;
+    if (hiberboot) *hiberboot = off ? 1 : -1;
+}
+
 void plat_fast_startup_restore(void)
 {
     char p[600];

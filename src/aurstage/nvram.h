@@ -87,6 +87,17 @@ int nvram_boot_set(const char *desc, const nvram_hd *on, const char *loader,
  * many went, or -1 -- NEVER a partial count, because a caller testing
  * `rc < 0` would read one as success. */
 
+/* Can a boot entry of the real size be written, read back and removed? Asked
+ * BEFORE the install changes anything, so a full store is a refusal and not a
+ * computer that goes to Windows for good. */
+int nvram_probe(char *why, size_t n);
+
+/* Overwrite, in its own slot, the entry whose description is `old_desc` with
+ * this one: works where a NEW entry has no room. */
+int nvram_boot_repurpose(const char *old_desc, const char *desc, const nvram_hd *on,
+                         const char *loader, const char *cmdline,
+                         uint16_t *num_out, char *why, size_t n);
+
 /* Arm the one-shot. */
 int nvram_boot_next(uint16_t num, char *why, size_t n);
 
