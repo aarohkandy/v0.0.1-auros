@@ -9,6 +9,7 @@ set -u
 APP=${1:-firefox}; SECS=${2:-30}; SHELLF=${SHELLF:-taskbar}
 cd /w/src
 mkdir -p /out /tmp/run && chmod 700 /tmp/run
+[ -n "${AUROS_XWM_DEBUG:-}" ] && touch /tmp/auros-xwm-debug
 export XDG_RUNTIME_DIR=/tmp/run HOME=/tmp/home
 mkdir -p "$HOME" "$HOME/.config/gtk-3.0" "$HOME/.config/gtk-4.0"
 # Her text-size setting ("Bigger text"), if the run is to show it: 1.5 is 150%.
@@ -110,6 +111,22 @@ JS
         aurwl/gen/xdg-shell-protocol.c aurwl/gen/xdg-decoration-protocol.c aurwl/gen/viewporter-protocol.c \
         aurwl/gen/xdg-output-protocol.c -Iaurwl/gen $(pkg-config --cflags --libs wayland-server xkbcommon) -lm || exit 1
     exec /out/stall-probe "$SECS" firefox-bin -- firefox --no-remote --new-instance --profile /tmp/ffprofile file:///tmp/test.html ;;
+  xterm)  CMD="xterm -fa Monospace -fs 14 -e sh -c 'echo X11 via Xwayland; sleep 600'" ;;
+  xeyes)  CMD="xeyes" ;;
+  x11-firefox)                                  # a big GTK3 program, forced onto X11
+    mkdir -p /tmp/ffprofile; cp /dev/null /tmp/ffprofile/user.js
+    for kv in 'browser.aboutwelcome.enabled false' 'browser.preonboarding.enabled false' 'termsofuse.bypassNotification true' 'browser.shell.checkDefaultBrowser false'; do
+        set -- $kv; echo "user_pref(\"$1\", $2);" >> /tmp/ffprofile/user.js; done
+    CMD="GDK_BACKEND=x11 MOZ_ENABLE_WAYLAND=0 MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_DISABLE_SOCKET_PROCESS_SANDBOX=1 firefox --no-remote --new-instance --profile /tmp/ffprofile file:///tmp/test.html" ;;
+  qt-xcb) CMD="QT_QPA_PLATFORM=xcb qterminal" ;;
+  xinput)           # type into a real X program through the real compositor; the program writes what it got to /out/xinput.txt
+    rm -f /out/xinput.txt
+    gcc -O1 -g -std=gnu11 -o /out/input-probe /w/tools/wltest-apps/input-probe.c aurwl/aurwl.c aurshell/draw.c \
+        aurwl/gen/xdg-shell-protocol.c aurwl/gen/xdg-decoration-protocol.c aurwl/gen/viewporter-protocol.c \
+        aurwl/gen/xdg-output-protocol.c -Iaurwl/gen $(pkg-config --cflags --libs wayland-server xkbcommon) -lm || exit 1
+    printf 'read line\necho "got: $line" > /out/xinput.txt\nsleep 600\n' > /tmp/xi.sh
+    if [ -n "${XCMD:-}" ]; then exec /out/input-probe "$SECS" "${KEYS:-hello 42\n}" -- $XCMD; fi
+    exec /out/input-probe "$SECS" "${KEYS:-hello 42\n}" -- xterm -fa Monospace -fs 14 -T xinput-test -e sh /tmp/xi.sh ;;
   gtk4) CMD="GSK_RENDERER=cairo gtk4-widget-factory" ;;
   gtk4gl) CMD="gtk4-widget-factory" ;;
   qt)   CMD="qterminal" ;;
@@ -119,4 +136,4 @@ JS
 esac
 echo "== $APP: $CMD"
 /out/aurshell --shell "/w/shells/$SHELLF.shell" --png "/out/$(echo "$APP" | tr -c 'a-z0-9\n' _).png" \
-    --size 1280 800 ${MOUSE:+--mouse $MOUSE} --app-wait "$SECS" --with-app "$CMD" 2>&1 | tail -15
+    --size 1280 800 ${MOUSE:+--mouse $MOUSE} --app-wait "$SECS" --with-app "$CMD" 2>&1 | grep -a -v "Could not resolve keysym" | tail -${TAIL:-15}

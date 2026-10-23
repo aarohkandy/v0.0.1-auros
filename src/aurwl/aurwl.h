@@ -193,6 +193,12 @@ int         aurwl_cursor(aurwl *c, surface **image, int *hot_x, int *hot_y, int 
  * be passed on even when it happens off every window, or the drag never ends. */
 surface    *aurwl_drag_icon(aurwl *c, int *dx, int *dy);
 
+/* The X display programs started by aurwl_spawn() find (":0"), or NULL when
+ * this machine has no Xwayland. The shell publishes it beside WAYLAND_DISPLAY
+ * so programs started some other way (a store's "Open") run too. Xwayland is
+ * started when the first X program connects, not before. */
+const char *aurwl_x_display(aurwl *c);
+
 /* 1 while a program that is playing something has asked the screen to stay
  * on (zwp_idle_inhibitor_v1) AND the window it asked it for is on screen.
  * The shell asks this where it decides the person has gone away: a film is

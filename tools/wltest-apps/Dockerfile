@@ -19,3 +19,7 @@ RUN for i in 1 2 3; do timeout 300 apt-get update -q && \
 RUN for i in 1 2 3; do timeout 300 apt-get update -q && \
       timeout 600 apt-get install -y -q --no-install-recommends thunar && break; sleep 10; done; \
     rm -rf /var/lib/apt/lists/*
+# X11-only programs: Xwayland, a few small X clients, and xprop/xwininfo to look at what the window manager did.
+RUN for i in 1 2 3; do timeout 300 apt-get update -q && \
+      timeout 600 apt-get install -y -q --no-install-recommends xwayland xterm x11-apps x11-utils x11-xserver-utils && break; sleep 10; done; \
+    rm -rf /var/lib/apt/lists/*

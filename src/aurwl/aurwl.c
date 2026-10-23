@@ -112,7 +112,7 @@ void textinput_focus(struct wl_client *client, struct wl_resource *surface) __at
  * of exactly this was a 127-byte write into freed memory. That hole
  * was closed for xdg-against-xdg and left open for
  * subsurface-against-xdg and cursor-against-anything. */
-enum role { ROLE_NONE = 0, ROLE_TOPLEVEL, ROLE_POPUP, ROLE_SUBSURFACE, ROLE_CURSOR };
+enum role { ROLE_NONE = 0, ROLE_TOPLEVEL, ROLE_POPUP, ROLE_SUBSURFACE, ROLE_CURSOR, ROLE_X11 };
 
 static const char *role_name(int r)
 {
@@ -121,6 +121,7 @@ static const char *role_name(int r)
     case ROLE_POPUP:      return "a menu";
     case ROLE_SUBSURFACE: return "part of another window";
     case ROLE_CURSOR:     return "a pointer or a drag icon";
+    case ROLE_X11:        return "an X11 window";
     default:              return "nothing";
     }
 }
@@ -186,6 +187,7 @@ struct aurwl_win {
     int                 dead;
     int                 opaque_fmt;   /* the last buffer was XRGB: every pixel opaque */
     int                 off_x, off_y; /* sum of wl_surface.attach offsets: a drag icon's hotspot */
+    struct xwin        *xw;           /* ROLE_X11: the X window this surface is (xwm.inc) */
 
     /* xdg */
     struct wl_resource *xdg_surface;
@@ -311,6 +313,20 @@ struct aurwl {
         int                 ox, oy;      /* its attach offsets at that moment */
         int                 shape;       /* wp_cursor_shape_device_v1 shape  */
     } cursor;
+    /* XWAYLAND (xwm.inc): X programs run through it, started on demand. */
+    struct {
+        int                 enabled;
+        int                 display;        /* the N of DISPLAY=:N                     */
+        int                 lfd;            /* the listening socket, kept for good     */
+        char                lock_path[64], sock_path[64];
+        struct wl_event_source *lsrc;       /* watching it while Xwayland is not running */
+        pid_t               pid;            /* Xwayland, 0 when not running            */
+        struct xwm         *wm;
+        struct wl_client   *client;         /* its Wayland connection                  */
+        struct wl_listener  gone;
+        struct timespec     started;
+        int                 failures;
+    } x;
     uint32_t            ptr_enter_serial;  /* the enter a set_cursor must quote */
     struct wl_list      cursor_devs;       /* wp_cursor_shape_device_v1        */
 
@@ -362,6 +378,22 @@ struct aurwl {
     pid_t               kids[64];
     int                 n_kids;
 };
+
+/* ── X11 windows (xwm.inc, included below) ─────────────────────── */
+struct xwin;
+static void        xw_surface_gone(aurwl_win *w);
+static void        xw_surface_created(aurwl_win *w);
+static int         xw_listed(const aurwl_win *w);          /* an X window the shell may show */
+static int         xw_is_popup(const aurwl_win *w);        /* override-redirect: a menu      */
+static aurwl_win  *xw_popup_parent(const aurwl_win *w);
+static void        xw_popup_offset(const aurwl_win *w, int *x, int *y);
+static int         xw_configure(aurwl_win *w, int width, int height, int act, int max, int full);
+static void        xw_focus(aurwl *c, aurwl_win *w);
+static int         xw_close(aurwl_win *w);
+static int         xw_kill(aurwl_win *w);
+static void        xw_init(aurwl *c);
+static void        xw_shutdown(aurwl *c);
+static void        xw_reaped(aurwl *c, pid_t pid);
 
 /* ── small helpers ──────────────────────────────────────────────── */
 
@@ -1486,6 +1518,7 @@ static void surface_free_res(struct wl_resource *r)
     aurwl_win *w = wl_resource_get_user_data(r);
     if (!w) return;
     aurwl *c = w->c;
+    xw_surface_gone(w);
     if (c->drag.active) {
         if (c->drag.origin == w) drag_cancel(c);     /* nothing to drag from */
         else if (c->drag.target == w) drag_leave(c);
@@ -1618,6 +1651,7 @@ static void comp_create_surface(struct wl_client *cl, struct wl_resource *r, uin
     if (!w->res) { free(w); wl_client_post_no_memory(cl); return; }
     wl_resource_set_implementation(w->res, &surface_impl, w, surface_free_res);
     wl_list_insert(c->surfaces.prev, &w->link);
+    xw_surface_created(w);        /* an X window may have been waiting for exactly this */
 }
 
 static void comp_create_region(struct wl_client *cl, struct wl_resource *r, uint32_t id)
@@ -3129,6 +3163,9 @@ static void bind_cursor_shape(struct wl_client *cl, void *data, uint32_t ver, ui
     wl_resource_set_implementation(r, &csmgr_impl, data, NULL);
 }
 
+/* ── Xwayland and its window manager ────────────────────────────── */
+#include "xwm.inc"
+
 /* ── keymap ─────────────────────────────────────────────────────── */
 
 /* The client does its own key translation from a keymap we hand it.
@@ -3304,6 +3341,7 @@ aurwl *aurwl_create(int w, int h, int refresh_mhz)
         aurwl_destroy(c); return NULL;
     }
     if (textinput_init) textinput_init(c->display);
+    xw_init(c);
 
     if (build_keymap(c) < 0)
         fprintf(stderr, "aurwl: no xkb keymap; clients will get no key translation\n");
@@ -3344,6 +3382,7 @@ void aurwl_destroy(aurwl *c)
          * means the shutdown path never exercises the destructors, and
          * a destructor that is never run on a normal exit is one nobody
          * notices is broken. */
+        xw_shutdown(c);
         wl_display_destroy_clients(c->display);
         wl_display_destroy(c->display);
         if (textinput_shutdown) textinput_shutdown();
@@ -3373,7 +3412,10 @@ void aurwl_resize_output(aurwl *c, int w, int h)
 /* ── the window list ────────────────────────────────────────────── */
 
 static int win_visible(const aurwl_win *w)
-{ return w->mapped && !w->dead && (w->role == ROLE_TOPLEVEL || w->role == ROLE_POPUP); }
+{
+    return w->mapped && !w->dead &&
+           (w->role == ROLE_TOPLEVEL || w->role == ROLE_POPUP || (w->role == ROLE_X11 && xw_listed(w)));
+}
 
 surface *aurwl_drag_icon(aurwl *c, int *dx, int *dy)
 {
@@ -3538,11 +3580,20 @@ void aurwl_win_content_offset(const aurwl_win *w, int *x, int *y)
     if (x) *x = gx;
     if (y) *y = gy;
 }
-int         aurwl_win_is_popup(const aurwl_win *w) { return w && w->role == ROLE_POPUP; }
-aurwl_win  *aurwl_win_parent(const aurwl_win *w) { return w ? w->parent : NULL; }
+int         aurwl_win_is_popup(const aurwl_win *w) { return w && (w->role == ROLE_POPUP || xw_is_popup(w)); }
+aurwl_win  *aurwl_win_parent(const aurwl_win *w)
+{
+    if (!w) return NULL;
+    if (w->role == ROLE_X11) return xw_popup_parent(w);
+    return w->parent;
+}
 
 void aurwl_win_popup_offset(const aurwl_win *w, int *x, int *y)
-{ if (x) *x = w ? w->px : 0; if (y) *y = w ? w->py : 0; }
+{
+    if (w && w->role == ROLE_X11) { xw_popup_offset(w, x, y); return; }
+    if (x) *x = w ? w->px : 0;
+    if (y) *y = w ? w->py : 0;
+}
 
 void aurwl_win_pref_size(const aurwl_win *w, int *w_out, int *h_out)
 {
@@ -3562,6 +3613,7 @@ void aurwl_win_logical_size(const aurwl_win *w, int *lw, int *lh)
 void aurwl_win_configure(aurwl_win *w, int width, int height,
                          int activated, int maximized, int fullscreen)
 {
+    if (w && w->role == ROLE_X11) { xw_configure(w, width, height, activated, maximized, fullscreen); return; }
     if (!w || !w->xdg_toplevel) return;
     if (width  < 0) width  = 0;
     if (height < 0) height = 0;
@@ -3580,12 +3632,14 @@ void aurwl_win_configure(aurwl_win *w, int width, int height,
 void aurwl_win_close(aurwl_win *w)
 {
     if (!w) return;
+    if (xw_close(w)) return;
     if (w->xdg_toplevel) xdg_toplevel_send_close(w->xdg_toplevel);
     else if (w->xdg_popup) xdg_popup_send_popup_done(w->xdg_popup);
 }
 void aurwl_win_kill(aurwl_win *w)
 {
     if (!w || !w->res) return;
+    if (xw_kill(w)) return;           /* an X window: its own program, not Xwayland and every other */
     /* Last resort, and it takes the whole client: a browser is one
      * process for many windows, so this is the "it is wedged and the
      * user is stuck" button, not the close button. */
@@ -3648,6 +3702,7 @@ void aurwl_set_focus(aurwl *c, aurwl_win *w)
                 wl_keyboard_send_leave(k, ser, c->focus->res);
     }
     c->focus = w;
+    xw_focus(c, w);                                  /* X input focus follows, or is taken away */
     if (!w) { if (textinput_focus) textinput_focus(NULL, NULL); return; }
 
     struct wl_client *nw = win_client(w);
@@ -3827,6 +3882,7 @@ int aurwl_key(aurwl *c, uint32_t code, int pressed, uint32_t t)
     struct wl_client *cl = win_client(c->focus);
     uint32_t ser = serial_of(c);
     int sent = 0;
+    if (c->focus->role == ROLE_X11) XDBG("key %u %s to an X window", code, pressed ? "down" : "up");
     FOR_EACH_RES(k, &c->keyboards)
         if (wl_resource_get_client(k) == cl) {
             wl_keyboard_send_key(k, ser, t, code,
@@ -3879,7 +3935,10 @@ pid_t aurwl_spawn(aurwl *c, const char *const argv[])
         setsid();
         signal(SIGPIPE, SIG_DFL);
         setenv("WAYLAND_DISPLAY", c->socket, 1);
-        unsetenv("DISPLAY");
+        if (c->x.enabled) {        /* X programs find Xwayland (started when they connect) */
+            char d[16]; snprintf(d, sizeof d, ":%d", c->x.display);
+            setenv("DISPLAY", d, 1);
+        } else unsetenv("DISPLAY");
         /* Toolkits pick a backend from the environment before they look
          * at what is actually available, and the guesses they make on a
          * machine with no X server are all wrong in different ways. */
@@ -3920,6 +3979,18 @@ void aurwl_reap(aurwl *c)
         pid_t p = waitpid(c->kids[i], NULL, WNOHANG);
         /* >0 exited; <0 means it is not ours any more (already
          * collected, or never was), and either way the slot is stale. */
-        if (p != 0) c->kids[i] = c->kids[--c->n_kids];
+        if (p != 0) {
+            pid_t done = c->kids[i];
+            c->kids[i] = c->kids[--c->n_kids];
+            xw_reaped(c, done);        /* Xwayland has gone: the next X program starts a new one */
+        }
     }
+}
+
+const char *aurwl_x_display(aurwl *c)
+{
+    static char buf[16];
+    if (!c || !c->x.enabled) return NULL;
+    snprintf(buf, sizeof buf, ":%d", c->x.display);
+    return buf;
 }

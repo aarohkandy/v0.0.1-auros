@@ -1545,6 +1545,7 @@ int main(int argc, char **argv)
         if (only < 0 || only >= NSC) { fprintf(stderr, "no such scenario: %s\n", argv[1]); return 2; }
     }
     signal(SIGPIPE, SIG_IGN);
+    setenv("AUROS_NO_XWAYLAND", "1", 1);        /* these scenarios are about Wayland; no X sockets in /tmp */
     int failed = 0, ran = 0;
     for (int i = 0; i < NSC; i++) {
         if (only >= 0 && i != only) continue;

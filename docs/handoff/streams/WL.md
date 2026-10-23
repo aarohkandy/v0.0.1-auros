@@ -21,8 +21,9 @@ its commit body).
 | keyboard focus (and with it W1's text-input-v3 focus) stays on the toplevel, as in every compositor; W1's weak hooks untouched | proven: `wltest-sub textinput`, and REAL Firefox (page in a subsurface): `sh tools/wltest-apps.sh firefox-pw` shows textinput_state 1 (plain) in a text field, **2 (sensitive; purpose 8, hint 0xc0)** in a password field, 0 outside any field |
 | **zwp_idle_inhibit_v1** (a film must not go dark: the shell blanks after 10 idle minutes; mpv/Firefox/VLC ask for an inhibitor; `aurwl_idle_inhibited()` + 5 lines in main.c) | done; real mpv binds it and creates one (WAYLAND_DEBUG); `wltest-sub idle`. NOT covered: apps that inhibit through D-Bus org.freedesktop.ScreenSaver (the shell owns the bus: stream C) |
 | **drag and drop** (wl_data_device.start_drag was `cancelled` for everyone: Thunar, the image's file manager, could not move a file by dragging): pointer belongs to the drag, enter/motion/leave/drop to the surface under it (subsurfaces in their own coordinates), accept/set_actions/action/target negotiation, finish/dnd_finished, Esc cancels, drag icon (`aurwl_drag_icon`, painted by session.c), release off every window still ends it (session.c edit) | done; `wltest-sub dnd` + 8 mutants; **real Thunar moved a.txt into a folder** (`DND_FROM=285,175 DND_TO=210,180 sh tools/wltest-apps.sh thunar-dnd 24`) |
-| **pointer pictures** (the lead's "she never sees the hand / I-beam"): wl_pointer.set_cursor (surface, hotspot, attach offsets, animation, null = hide) and wp_cursor_shape_v1, honoured only from the program under the pointer quoting its latest enter, forgotten on enter/leave/quit; `aurwl_cursor()`; shell: `src/aurshell/cursor.{c,h}` (11 glyphs black+white outline, 34 shapes mapped, a program's own picture scaled so its canvas is 24 px x text step) + `session_paint_cursor` | done; `tools/cursortest.sh` (byte-exact vs a reference), wltest-sub `cursor`/`cursor-shape`, 20 mutants; **real Firefox on the real aurshell shows the hand over a link, the I-beam in a field, the arrow on the page, and larger at 200% text** (`MOUSE="300 261" SHELLF=workbench TEXT_SCALE=2.0 sh tools/wltest-apps.sh firefox 30`). Firefox gives 32x32 images (GTK3 ignores XCURSOR_SIZE and settings.ini's gtk-cursor-theme-size; it reads GSettings org.gnome.desktop.interface cursor-size): scaling 1.5x is soft; stream C could set that key beside text-scaling-factor in textsys.c for crisp 48 |
+| **pointer pictures, LANDED on main in `2bbba9e` (shapes, shell glyphs, tests) and `8c16947` (real-Firefox fixes: a program that quits no longer leaves its shape behind)** (the lead's "she never sees the hand / I-beam"): wl_pointer.set_cursor (surface, hotspot, attach offsets, animation, null = hide) and wp_cursor_shape_v1, honoured only from the program under the pointer quoting its latest enter, forgotten on enter/leave/quit; `aurwl_cursor()`; shell: `src/aurshell/cursor.{c,h}` (11 glyphs black+white outline, 34 shapes mapped, a program's own picture scaled so its canvas is 24 px x text step) + `session_paint_cursor` | done; `tools/cursortest.sh` (byte-exact vs a reference), wltest-sub `cursor`/`cursor-shape`, 20 mutants; **real Firefox on the real aurshell shows the hand over a link, the I-beam in a field, the arrow on the page, and larger at 200% text** (`MOUSE="300 261" SHELLF=workbench TEXT_SCALE=2.0 sh tools/wltest-apps.sh firefox 30`). Firefox gives 32x32 images (GTK3 ignores XCURSOR_SIZE and settings.ini's gtk-cursor-theme-size; it reads GSettings org.gnome.desktop.interface cursor-size): scaling 1.5x is soft; stream C did (`fa11087`: Bigger also sets GTK's pointer size, so Firefox asks its theme for a crisp one; I have not re-run that on the image) |
 | **a second Firefox window died of a protocol error** (S1's booted-image test: `xdg_surface: no configure with serial N was sent`): aurwl remembered the last 4 configure serials per window, Firefox answers every configure in order, and a window busy for a second while the shell moved windows about had a dozen waiting; the oldest answer was refused as never sent. Now 32 are remembered, and beyond that any serial between the last answer and the oldest remembered is accepted (serials only grow); a serial from another window, an invented one, one from before the last answer, or one not yet sent is still refused | fixed; **reproduced on real Firefox 158** with `sh tools/wltest-apps.sh firefox-stall 40` (SIGSTOPs Firefox, reconfigures its window 12 times, lets it go: `[GFX1-]: (auros) Wayland protocol error: xdg_surface@35: error 4: no configure with serial 3 was sent`, window gone; after the fix it survives and ends at the last size). `wltest-sub slow-client` / `slow-future` (two toplevels with subsurfaces from one client, 12 then 150 configures unread, answered in order, pages still on both) / `serial-foreign` / `serial-invented`; 5 mutants |
+| **Xwayland, rootless, with our own X window manager** (PARITY: VLC's Flatpak, Zoom, Spotify, Electron wrappers are X11-only and opened no window): aurwl owns the X socket `/tmp/.X11-unix/X<n>` and starts `Xwayland -rootless -wm` when the first X program connects; `src/aurwl/xwm.inc` is the window manager (hand-written X11 wire protocol, no libxcb): map, configure, size hints, close (WM_DELETE_WINDOW, else KillClient), focus (SetInputFocus / WM_TAKE_FOCUS), ICCCM/EWMH basics, fullscreen/maximize/minimise through C's `AURWL_REQ_*`, menus and tooltips (override-redirect) as popups of the active window. X windows are role `ROLE_X11`, listed to the shell like any window (no shell edits), kept at (0,0) without frames (the shell draws the title) | stage 1 done: `tools/wltest-x.sh` (16 scenarios against a fake X server and a fake Xwayland, byte-exact on the wire, ASan); **real xterm on the real aurshell**: window titled by the shell, resized to its pane, and typed text reaches it (`KEYS="hello 42\n" sh tools/wltest-apps.sh xinput 20` -> `got: hello 42`). NOT yet: selection (clipboard) bridging, mutants, fuzz harness, Flatpak VLC / Electron (needs C to publish `DISPLAY`, see "Not done") |
 | other protocols (see "Protocol review") | in progress |
 | real programs through the real shell (`sh tools/wltest-apps.sh firefox|gtk4|qt|mpv`, headless `aurshell --png --with-app`): Firefox 158 draws toolbar + page (+ its welcome dialog), GTK4 widget-factory, Qt5 terminal, mpv video (wlshm subsurface) | all draw; PNGs in the Progress log of SESSION-2026-10-23-B.md |
 | PARITY `call.visible` flips to PASS on a booted image | **done**: PARITY confirmed on the real image (call.visible, webrtc, films PASS) |
@@ -54,6 +55,35 @@ its commit body).
 - **Touch**: the shell turns a touchscreen into pointer clicks (main.c DEV_DIRECT), so it goes
   through the same path. aurwl has no `wl_touch` event path at all (advertised, never sent).
 
+## X11 programs (`src/aurwl/xwm.inc`, read before touching it)
+
+- aurwl creates the listening socket and the lock file itself (`x_try_display`: first free `:N` from 0,
+  mode 0700, file socket only, no TCP, no abstract socket) and starts Xwayland only when somebody connects
+  (`x_listen_ready`), so a machine with no X program has no X server running. It stops when the last X client
+  leaves (`-terminate`; reaped in `xw_reaped`); three quick failures switch X off for the session.
+  `AUROS_NO_XWAYLAND=1` switches it off (every test that has nothing to do with X sets it).
+- Xwayland gets its Wayland connection as an fd (`WAYLAND_SOCKET`, `wl_client_create`), and `-wm <fd>` is our
+  end of a socketpair: the X11 connection of the window manager. Everything on it is async: `xreq` builds a
+  request, `xexpect` queues what the reply will be used for (`XK_*`), `xwm_input` parses events, replies and
+  errors out of one buffer. It is a pure parse/state machine, so a fuzz harness can feed it bytes.
+- Traps found in Xwayland 23.2's source and a strace, each costing hours:
+  1. With `-wm`, Xwayland does not listen on `-listenfd` sockets until the window manager owns the `WM_S0`
+     selection (`x_set_selection_owner`). Without it X programs hang in connect.
+  2. Rootless Xwayland makes a wl_surface per X window only after the window manager calls Composite
+     `RedirectSubwindows(root, Manual)` (`QueryExtension("Composite")`, then major opcode, minor 2).
+  3. The X window is tied to its wl_surface by a `WL_SURFACE_ID` ClientMessage (aurwl does not offer
+     `xwayland_shell_v1`), and it can arrive BEFORE the surface exists: pairing is retried when the surface is
+     created (`xw_surface_created`, hooked in `comp_create_surface`; test `surface-late`).
+  4. A window that never draws (`xev`) never gets a buffer and is never listed. Not a bug.
+- Windows are not reparented and have no frames; the shell draws the title bar. Override-redirect windows
+  (menus, tooltips, combo lists) are popups of the active window (`xw_is_popup`, `xw_popup_parent`).
+  Titles are made safe by `x_text` (Latin-1/UTF-8, control characters, invalid UTF-8). At most
+  `XW_MAX_WINS` windows; a reply is capped at 256 KiB.
+- X is not Wayland: X clients on one X server can read each other's keystrokes and windows. The socket is
+  0700, so only this user's programs reach it; one X server serves all of them.
+- `AUROS_XWM_DEBUG=1` or the file `/tmp/auros-xwm-debug` prints the window manager's traffic (aurshell scrubs
+  its environment, hence the file).
+
 ## Protocol review (what the real programs bind, WAYLAND_DEBUG on Firefox 158, GTK4, mpv)
 
 Bound and served: wl_shm, wl_compositor (v3-5), wl_subcompositor, wl_seat (v5-7), wl_output (v2-3), xdg_wm_base,
@@ -79,7 +109,12 @@ Add the XML to that loop + the README loop, `#include` the .inc in aurwl.c, add 
 4. **Idle inhibit over D-Bus** (org.freedesktop.ScreenSaver): the shell owns the bus (stream C, on their list).
 5. `wl_touch` events are never sent (the shell turns a touchscreen into pointer clicks, which goes through the same path).
 6. Popups: `xdg_popup.grab` is accepted and ignored (no `popup_done` on an outside click, Esc is the client's own).
-7. Qt6 was not run (no Qt6 GUI app in the container; Qt5 qterminal and the same QtWayland client draw).
+7. **X11, still to do**: the clipboard between X and Wayland programs (`SelectionRequest/Notify`, text first),
+   drag and drop across the two, XRandR (a program asks for the screen size), window icons, system tray.
+   Programs started by the shell find X through `DISPLAY` (`aurwl_spawn` sets it); programs started any other
+   way (a store's Open, a Flatpak started by D-Bus) need stream C to publish `aurwl_x_display()` beside
+   `WAYLAND_DISPLAY` in `run_publish_env`.
+8. Qt6 was not run (no Qt6 GUI app in the container; Qt5 qterminal and the same QtWayland client draw).
 
 ## Tests
 
@@ -100,6 +135,8 @@ Add the XML to that loop + the README loop, `#include` the .inc in aurwl.c, add 
 - A client is entitled to be behind: it may answer (ack_configure) every configure it was sent, in
   order, long after newer ones went out. Never reject an answer for being old; reject one for being
   a serial this window was never sent. `wltest-apps.sh firefox-stall` is the real-program check.
+- `tools/wltest-x.sh [-asan] [scenario]` (the X window manager against a fake X server and a fake Xwayland
+  client in `tools/wltest-x.c`; it includes aurwl.c whole).
 - `wl_list_remove()` NULLs the node; always `unlink_init()` a node you may remove twice.
 - The stack lists contain a sentinel for the surface itself: never `wl_container_of` a node
   without first comparing it with `&s->self_cur` / `&s->self_pend`.

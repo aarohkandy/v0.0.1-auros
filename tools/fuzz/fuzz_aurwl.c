@@ -394,6 +394,7 @@ int LLVMFuzzerInitialize(int *argc, char ***argv)
     snprintf(dir, sizeof dir, "%s/fuzz-aurwl-XXXXXX", base);
     if (!mkdtemp(dir)) abort();
     setenv("XDG_RUNTIME_DIR", dir, 1);
+    setenv("AUROS_NO_XWAYLAND", "1", 1);      /* no X sockets in /tmp from a fuzzer */
     debug = getenv("FUZZ_AURWL_DEBUG") != NULL;
     if (!debug) wl_log_set_handler_server(quiet);
     C = aurwl_create(1280, 720, 60000);
