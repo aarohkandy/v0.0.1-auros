@@ -111,6 +111,7 @@ jobs:
               t("putbacktest", "putbacktest", image=True),
               t("windowsboottest", "windowsboottest", image=True),
               t("rollbacktest", "rollbacktest", image=True),
+              t("bootlocktest", "bootlocktest", image=True),
           ]
           # tools/powercut-nostick.sh takes instants as arguments; with none it
           # also runs "what the screen says" and the restore half. About 60
