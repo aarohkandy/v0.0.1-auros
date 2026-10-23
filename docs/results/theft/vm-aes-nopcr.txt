@@ -1,0 +1,45 @@
+AurOS's encrypted drive and PIN, in a VM with Secure Boot and a TPM 2.0, key sealed to no PCR
+    the image is given cryptsetup-bin and the TPM libraries            ok
+    the plain disk holds her letter in the clear (the check below can see it) ok
+  1  plain AurOS: lockctl prepare
+    AurOS started plain and reported                                   ok
+    her look, read from the running system: background #none, the page default, warnings #none
+    -rwxr-xr-x 1 root root 72624 Oct 12 07:36 /usr/bin/systemd-cryptenroll
+    lockctl prepare armed it                                           ok
+    the kernel, initramfs and menu are on the EFI partition            ok
+  2  encrypting in place, a power cut, the pass, the first PIN
+    the start encrypted in place and AurOS came up on it               ok
+    auros-lock: the drive is being encrypted (aes-xts-plain64, header sector size 512: as asked)
+    the power was pulled while the pass ran                            ok
+    the next start resumed the pass and finished it (0 s (this start)) ok
+    her letter is intact                                               ok
+    set-pin gave a 24-number rescue code                               ok
+    the PIN is sealed in the VM's TPM                                  ok
+    AES instructions: the drive uses AES-XTS                           ok
+    pass:      0 s (this start)
+    aes-xts:       aes-xts        512b      2615.4 MiB/s      3376.9 MiB/s
+    adiantum:  xchacha12,aes-adiantum        256b       428.5 MiB/s       458.1 MiB/s
+    read, through the encryption: 1073741824 bytes (1.1 GB, 1.0 GiB) copied, 0.920808 s, 1.2 GB/s
+    read, the raw disk:           1073741824 bytes (1.1 GB, 1.0 GiB) copied, 0.268867 s, 4.0 GB/s
+    write, through the encryption: 
+    the raw disk holds no line of her letter any more                  ok
+  3  the PIN page
+    a full-screen AurOS page, not a console (89% her background, 1280x800) ok
+    power on to PIN page: 13 s
+    a wrong PIN: the page says it did not work                         ok
+    ...in her warning colour, on the page                              ok
+    the right PIN started AurOS                                        ok
+    aurlock-pin: PIN open in 137 ms (the TPM's unseal, KVM)
+    the chip counted the wrong PIN (counter=1)                         ok
+  4  a dbx update in the firmware
+    bound to no PCR: after the dbx update the PIN still starts AurOS   ok
+  5  a different security chip
+    the page knows the computer changed (not "wrong PIN")              ok
+    the rescue code opened the drive                                   ok
+    she chose her PIN again and AurOS started                          ok
+    the new PIN was sealed again (in the new chip)                     ok
+  6  the new PIN, in the new chip
+    the new PIN starts AurOS                                           ok
+    her letter is still intact                                         ok
+
+  25 checks, all ok

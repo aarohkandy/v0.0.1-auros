@@ -309,29 +309,69 @@ true, none of it new work today:
   the RAM.
 - **Before she chooses a PIN** (section 1).
 
-## Performance budget (2013 laptop, 4 GB)
+## Performance (measured; read the caveat)
 
-| Cost | Expected | Measured (KVM, Actions) |
+Measured in the KVM VM on homebase (2 vCPU, 2 GB, the disk a file in
+RAM, a busy shared host), `docs/results/theft/`. **The VM's disk is RAM,
+so disk numbers here are upper bounds that mostly measure the CPU cost
+of the cipher; a 2013 laptop's SATA SSD or hard disk, and a real
+Celeron's no-AES speed, are real-PC measurements still to be made.**
+
+| Cost | Expected | Measured (VM) |
 |---|---|---|
-| Disk throughput, AES-NI | under 5 % on a SATA SSD | see S4.md |
-| Disk throughput, Adiantum, no AES-NI | 300-600 MB/s, above a 2013 SSD | see S4.md |
-| Start-up | TPM unseal 0.3-1.5 s plus her typing | see S4.md |
-| The one-time background pass | about 5 min (SSD) to 30 min (HDD) for 40 GB, idle priority | see S4.md |
-| RAM | argon2 only for the no-TPM path, once at start (freed) | -- |
+| Cipher speed, AES-XTS (CPU with AES instructions), `cryptsetup benchmark` | thousands of MB/s | 2.3-4.3 GiB/s |
+| Cipher speed, Adiantum (CPU without AES instructions) | 300-600 MB/s, above a 2013 SSD | 240-560 MiB/s on a host kept busy by others |
+| Reading through the encryption vs the raw disk (1 GiB, direct) | under 5 % on a SATA SSD | 0.5-2.8 GB/s vs 3.4-9 GB/s raw: **the VM is CPU-bound here, not disk-bound; not a 2013 number** |
+| Writing through the encryption (512 MiB) | | 0.4-2.7 GB/s |
+| The unlock itself, TPM + PIN | 0.3-1.5 s | **137-203 ms** (KVM, swtpm) |
+| The unlock, no TPM (argon2id, 6 numbers) | about 2 s | **3.8-4.4 s** with 2 GB of RAM (it takes the memory it can) |
+| Power on to the PIN page | | 13-17 s |
+| The one-time in-place pass | about 5 min (SSD) to 30 min (HDD) for 40 GB, idle priority | 4 GB in 4-5 s on a RAM disk: **only a real disk can say** |
+| Start with no PIN yet | silent | no page, no delay |
 
-## How it is proven (`.github/workflows/theft.yml`)
+## How it is proven
 
-KVM VM on Actions, OVMF Secure Boot with Microsoft keys, swtpm as a
-TPM 2.0. Each case fails when the thing it checks is removed:
+Two layers, both repeatable:
 
-1. plain root -> first start encrypts in place, data survives, the
-   partition becomes LUKS2, background pass completes, second start
-   boots from LUKS2;
-2. PIN enrolled -> the right PIN unlocks (driven through the PIN
-   screen with QEMU key presses), a wrong PIN does not, the TPM's
-   failure counter rises;
-3. PCR 7 changed (Secure Boot keys changed in the VM's variable store)
-   -> the TPM refuses, the rescue code unlocks;
-4. the raw partition contains no plaintext marker after the pass;
-5. timings: start-up, throughput with and without encryption, AES-XTS
-   and Adiantum (`cryptsetup benchmark` plus `fio`/`dd`).
+**`tools/theftunit.sh`** (50+ checks, runs anywhere with Docker and
+privileges: swtpm, loop devices, dm-crypt) and its **8+ mutants**, each
+of which must make it fail: in-place encryption with her files intact
+and no plaintext left; a pass stopped half-way resumes; PIN, wrong PIN
+(counted by the chip itself), lockout recognised, rescue code, the
+forgot-PIN flow through the page's own logic, repin, change-pin, PCR 7
+change, a different chip, no chip, 44 px targets, no jargon,
+`encrypt-init` with only an initramfs's tools, 512 / 4096 / 4Kn sector
+sizes and the header check, Adiantum.
+
+**`tools/theftvm.sh`** on the real image: OVMF Secure Boot with
+Microsoft's keys, swtpm as a TPM 2.0, her PIN typed as key presses into
+the VM, screens taken. Five runs, all green (summaries and pictures in
+`docs/results/theft/`):
+
+| Run | Checks | What it adds |
+|---|---|---|
+| AES-NI, key sealed to PCR 7 | 29 | in-place encryption on the booted image, power pulled mid-pass and resumed, no plaintext on the raw disk, set-pin, the PIN page on screen, wrong PIN counted by the TPM, **a dbx update -> "this computer has changed" -> rescue code -> PIN again -> re-sealed -> same PIN next start**, a different chip -> same path |
+| no AES (Adiantum), PCR 7 | 29 | the same, on the Adiantum drive |
+| AES-NI, no PCR | 25 | a dbx update changes nothing: the PIN just works |
+| no TPM (6-number passphrase) | see S4.md | the passphrase path, Esc on the keyboard for "I forgot my PIN" |
+
+What this found in the real image that the unit tests could not (all
+fixed, all in the history): the initramfs script was installed as a
+link that dangled; `cryptsetup` needs `/run/cryptsetup` and, without
+udev's dm rules, `DM_DISABLE_UDEV` (the pass waited for ever in a
+semaphore); real partitions are not 4096-aligned (cryptsetup refuses
+4096-byte sectors); the initramfs has no `head`; Adiantum needs
+`af_alg`/`algif_skcipher` in the initramfs; `prepare` tested a command
+name as a path.
+
+### The "Put Windows back" handover (from A2)
+
+Putting Windows back may copy her AurOS files into an exFAT volume
+inside AurOS's own space so Windows can read them. With an encrypted
+root that volume would be ciphertext, so `handover.sh` refuses (exit 5)
+and she gets the USB-stick path. When this is switched on, the handover
+volume has to live **outside** the LUKS container: a small plaintext
+exFAT made only at put-back time, after she consents (she is giving the
+files away on purpose), or another way Windows can read them. Until
+then the USB-stick path is the answer, and "Put Windows back" itself
+never needs a key (it deletes partitions, it never reads them).
