@@ -27,5 +27,14 @@ class_name = "Ledger"
 tag = "v1"
 new_sqlite_classes = ["Ledger"]
 
+# Only the service's own log lines (counts, latency, tokens, cost) are kept:
+# Cloudflare's per-request invocation logs (which carry addresses) are off.
 [observability]
 enabled = true
+
+[observability.logs]
+enabled = true
+invocation_logs = false
+
+[observability.traces]
+enabled = false
