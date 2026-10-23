@@ -18,9 +18,10 @@
 #    rootfs/usr/lib/auros/lock/lockctl     the encrypted layout's stubs and menu
 #    src/aurbridge/phases.c                the installer's one-shot menu
 #    the menu bootchain actually renders (two kernels, as a machine has)
-#    a built rootfs, if there is one: boot/grub/grub.cfg, the EFI
-#    partition's cfgs, and /etc/default/grub (GRUB_DISABLE_RECOVERY, so
-#    Ubuntu's grub-mkconfig, if anything ever ran it, writes none)
+#    build/mkimage's /etc/default/grub (GRUB_DISABLE_RECOVERY, so Ubuntu's
+#    grub-mkconfig, if anything ever ran it, writes none)
+#    forge's rootfs, if there is one: update-grub is AurOS's; and any
+#    grub.cfg or EFI stub it has (an image's rootfs has them)
 #
 #  And the scanner itself is shown to see what it is for: lines that do
 #  give a shell, in each of the usual spellings, are fed to it first.
@@ -120,31 +121,49 @@ else
     bad "the menu bootchain renders (two kernels): no shell" "bootchain would not render the fixture"
 fi
 
+# What mkimage puts in /etc/default/grub is what ships (it overwrites
+# Ubuntu's): read it where it is written. With GRUB_DISABLE_RECOVERY true,
+# Ubuntu's own grub-mkconfig -- which nothing on AurOS runs, update-grub
+# being ours -- would still write no recovery entry.
+dg=$(sed -n "/cat > \"\$MNT\/etc\/default\/grub\"/,/^EOF/p" build/mkimage)
+echo "$dg" | grep -q '^GRUB_DISABLE_RECOVERY="true"$' \
+  && ok "build/mkimage: /etc/default/grub says GRUB_DISABLE_RECOVERY=true" \
+  || bad "build/mkimage: /etc/default/grub says GRUB_DISABLE_RECOVERY=true" "$(echo "$dg" | head -4)"
+
 # ── a built rootfs ──────────────────────────────────────────────────
+#
+# THIS IS forge's ROOTFS in CI (work/forge/desktop/rootfs), NOT the disk
+# image: it has no /boot/grub/grub.cfg yet (build/mkimage renders it when
+# it builds the disk, from the template above) and Ubuntu's own
+# /etc/default/grub (mkimage replaces it). A first version of this test
+# demanded both and failed a correct build (RC2). What forge's rootfs can
+# say: update-grub is AurOS's, so the only thing that writes a menu is
+# the template; and a grub.cfg or EFI stub, if there is one (a rootfs
+# taken out of a built image has them), has no shell either.
 if [ -d "$RFS/etc" ]; then
     echo
     echo "  the built rootfs ($RFS)"
+    if [ -f "$RFS/usr/sbin/update-grub" ]; then
+        grep -q '/usr/lib/auros/bootchain' "$RFS/usr/sbin/update-grub" \
+          && ok "usr/sbin/update-grub is AurOS's (the menu is only ever the template's)" \
+          || bad "usr/sbin/update-grub is AurOS's (the menu is only ever the template's)" \
+                 "it is Ubuntu's: a kernel update would write a menu with recovery entries" "$(head -3 "$RFS/usr/sbin/update-grub")"
+    else
+        bad "usr/sbin/update-grub is AurOS's" "no usr/sbin/update-grub in $RFS"
+    fi
     n=0
     for f in "$RFS/boot/grub/grub.cfg" "$RFS"/boot/efi/EFI/*/grub.cfg "$RFS"/boot/efi/auros/grub.cfg; do
         [ -f "$f" ] || continue
         n=$((n+1))
         out=$(python3 -I "$T/scan.py" "$f") && ok "${f#$RFS/}: no shell" || bad "${f#$RFS/}: no shell" "$out"
     done
-    # The forge rootfs is NOT the image: build/mkimage writes the image's
-    # /etc/default/grub and runs update-grub inside the disk it makes, so a
-    # grub.cfg is not in work/forge/desktop/rootfs/boot and the forge rootfs's
-    # own /etc/default/grub (GRUB_DEFAULT=0, GRUB_TIMEOUT_STYLE=hidden) is
-    # replaced. Run 40023221919 (RC2) failed both checks for that reason. What
-    # is read instead is the file mkimage writes into the image:
-    if [ "$n" -eq 0 ]; then
-        echo "    (no grub.cfg in the forge rootfs: build/mkimage generates it in the image)"
-    fi
-    sed -n '/cat > "\$MNT\/etc\/default\/grub"/,/^EOF/p' build/mkimage > "$T/mkimage-default-grub"
-    if [ -s "$T/mkimage-default-grub" ] &&
-       grep -q '^GRUB_DISABLE_RECOVERY=["]\{0,1\}true' "$T/mkimage-default-grub"; then
-        ok "the /etc/default/grub build/mkimage writes into the image: GRUB_DISABLE_RECOVERY=true (Ubuntu's own generator writes no recovery entry)"
-    else
-        bad "the /etc/default/grub build/mkimage writes into the image: GRUB_DISABLE_RECOVERY=true" "$(head -4 "$T/mkimage-default-grub" 2>/dev/null)"
+    [ "$n" -gt 0 ] || echo "    (no grub.cfg in it yet: build/mkimage writes the menu when it builds the disk)"
+    # A rootfs that has a menu (taken out of a built image) has the
+    # image's /etc/default/grub too.
+    if [ -f "$RFS/boot/grub/grub.cfg" ] && [ -f "$RFS/etc/default/grub" ]; then
+        grep -q '^GRUB_DISABLE_RECOVERY=["]\{0,1\}true' "$RFS/etc/default/grub" \
+          && ok "/etc/default/grub (the image's): GRUB_DISABLE_RECOVERY=true" \
+          || bad "/etc/default/grub (the image's): GRUB_DISABLE_RECOVERY=true" "$(grep '^GRUB_' "$RFS/etc/default/grub" | head -3)"
     fi
 else
     echo
