@@ -539,11 +539,16 @@ for (const [at, want] of [
     [/no firefox/i, "the image has Firefox (build/forge)"],
     [/\bunplug|\b(\d+|any|every|no) power cuts?\b|power cuts? (are|is|can|won.t|cannot|can.t)\b/i, "no promise about surviving a power cut is proven for this build"],
     [/(bring|brings|bringing) (copies of )?(your|her) (documents|files|pictures)|files across/i, "bringing her files across does not work yet (docs/ATLAS.md, section 8, gap 1)"],
-    [/updates? (itself|by itself)|security updates by itself/i, "Firefox, Flathub and base packages do not update yet (session log, 05:40)"],
+    // (There was a regex here for "updates itself": since the update channel was proven (S5,
+    // aptrepo.yml) that is true while the computer is online, and the Terms say it in their words.
+    // What the site must not do is promise an update that cannot be restarted-into or is instant:)
+    [/(updates?|fixes) (instantly|immediately|the moment)/i, "updates arrive while the computer is online, not at once, and AurOS does not restart for them (docs/legal/TERMS.md section 8)"],
     [/about 10 minutes/i, "Setup says its own range (wizard.c eta_range)"],
+    [/\bnew again\b|\b(like|feel(s|ing)?) new\b|\bas good as new\b|\bbrand.new\b/i, "the headline may not promise an outcome as an adjective (DESIGN-DIRECTION section 4, rule 4; docs/legal/REVIEWS.md C3): say what AurOS is"],
     [/that.s normal|that is normal|normal too/i, "reassure with facts, never adjectives (docs/DESIGN-DIRECTION.md section 4, rule 4)"],
     [/Show more(?! details)/, "Edge no longer has Show more: Keep anyway is behind the small arrow beside Delete (docs/handoff/streams/F.md, finding 1)"],
     [/Stuck\? Show a helper/, "she has no helper there: the button says Stuck? Ask someone to help (walkthrough A-06)"],
+    [/shows both numbers/i, "the Ready page shows what Windows keeps free, not both numbers (docs/legal/LEGAL.md, D hand-off); say that Setup checks and tells her"],
     [/double-click/i, "she presses Open file (docs/DESIGN-DIRECTION.md section 5, K P1-4)"],
     [/switch(ing)? (that|it|Smart App Control) off/i, "she is never walked through switching off a Windows protection (DESIGN-DIRECTION section 6, rule 2); the helper's page may", /^(?!advanced\.html$)/],
   ];
@@ -725,6 +730,14 @@ for (const [at, want] of [
       if (v.name === "1366x768") check(/press tab until/i.test(g.all) && /enter/i.test(g.all) && /small button/i.test(g.all), "B-04: the helper's page gives the keyboard way for the small buttons (Tab until it is outlined, then Enter)");
       await ctx.close();
     }
+  }
+
+  // The headline says what AurOS is (as the installer's first page does), not what it will do to her computer.
+  {
+    const { ctx, page } = await visit({ name: "headline", ua: UA.winEdge, uad: UAD.winX64 });
+    const h = await page.evaluate(() => ({ h1: document.getElementById("hero-title").innerText, title: document.title }));
+    check(/new way to use/i.test(h.h1) && !/new again/i.test(h.h1 + h.title), "headline: the h1 says what AurOS is ('a simple new way to use...'), and neither it nor the tab title promises 'new again'", JSON.stringify(h));
+    await ctx.close();
   }
 
   // The letters: the zero is a plain oval in every weight the site loads

@@ -89,6 +89,21 @@ phones/Macs get "open this on your Windows PC" + send-yourself-the-link.
   work?") with each answer's sentence beside it; the drawing follows. HW's
   #wifi-sticks section in advanced.html is untouched.
 
+- LEGAL's hand-off (this pass): the h1 is "A simple new way to use your computer." (the installer's own
+  sentence for what AurOS is; no promise as an adjective) and the tab title says the same; the promise line
+  leads with "AurOS is free, and goes on the Windows computer you already have"; the check refuses "new again",
+  "feel new", "like new", "as good as new" and requires "new way to use". The stale "updates itself" regex is
+  gone (S5's update channel is proven; the Terms say it in their words); a "updates instantly" one replaces
+  it. advanced.html #room no longer says Setup "shows both numbers". Footers (Licenses and source code, Terms,
+  Disclaimer, Privacy) are LEGAL's generated block on every page; tools/legal/check.py and wordlint are green.
+  A phone's h1 is 34px so the button still fits the first screen.
+- Waiting on B's Ready/Welcome strings (docs/handoff/streams/LEGAL.md "B"): none have landed yet
+  (no "By pressing Install AurOS you agree"). When they do: run `python3 tools/site/pictures.py`
+  (it re-crops docs/shots/wizard/hidpi-*.png and prints the ring boxes) and re-shoot. When C changes
+  welcome.c's "Windows and its files stay on this computer" to "are meant to stay", the same commit
+  must change `index.html`'s `#shot-ask` (data-ui reads the source).
+- NAME: the product name may change (LEGAL's TM-4 found a conflict). Nothing here is renamed; the owner decides.
+
 ## Waiting on others
 - Real content in the desktop pictures (a news page in Internet, 12 family
   photos; DESIGN-DIRECTION P0-3) needs C's screenshot set; today they are
