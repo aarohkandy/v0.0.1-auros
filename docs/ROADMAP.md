@@ -1,5 +1,7 @@
 # AurOS roadmap
 
+> Detailed plan with every work package: [PLAN-END-TO-END.md](PLAN-END-TO-END.md).
+
 The bet: the next computer for a billion people who are not "computer
 people" is the one they already own, made calm, safe and simple. Windows
 fights them (ads, nagging updates, scareware, blue screens); macOS asks
