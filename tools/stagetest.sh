@@ -348,6 +348,23 @@ JS="$TMP/js.cpio"; journal "$JS" "$SERIAL" $P2S $((P2E-P2S+1)) 345600 "$GPT"
 run_case "armed four days ago: refused as stale" "aurstage.dry aurstage.min_gb=1" \
          "more than three days ago" "" "$JS"
 
+# WINDOWS KEEPS THE HARDWARE CLOCK IN LOCAL TIME and this kernel reads
+# it as UTC, while the journal is UTC. A journal "written" N hours after
+# this VM's (UTC) clock is exactly an honest restart at UTC-N. These
+# used to be refused as clock-behind: every install in the Americas.
+JL="$TMP/jl.cpio"; journal "$JL" "$SERIAL" $P2S $((P2E-P2S+1)) -28740 "$GPT"
+run_case "a clock in US Pacific local time (8 h behind): recognised" \
+         "aurstage.dry aurstage.min_gb=1" \
+         "the computer the installer was prepared for" "" "$JL"
+JE="$TMP/je.cpio"; journal "$JE" "$SERIAL" $P2S $((P2E-P2S+1)) 46860 "$GPT"
+run_case "a clock in Auckland local time (13 h ahead): recognised" \
+         "aurstage.dry aurstage.min_gb=1" \
+         "the computer the installer was prepared for" "" "$JE"
+JB="$TMP/jb.cpio"; journal "$JB" "$SERIAL" $P2S $((P2E-P2S+1)) -61200 "$GPT"
+run_case "a clock 17 h behind, which no time zone explains: refused" \
+         "aurstage.dry aurstage.min_gb=1" \
+         "clock is set earlier" "" "$JB"
+
 # The narrow checks above all pass on this one: right disk, right
 # start, right length, written a minute ago. Only the hash of the
 # whole table disagrees -- which is what a partition added after
