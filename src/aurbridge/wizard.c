@@ -73,6 +73,8 @@
 #include "phases.h"
 #include "fix.h"
 #include "hwinv.h"
+#include "hwinv_win.h"
+#include "hwcompat.h"
 
 /* Baked in by build/aurbridge. A build that has not been told where
  * the image lives produces an installer that expects it to be sitting
@@ -665,7 +667,7 @@ static int    g_nw;
 
 enum {
     ID_NONE = 0,
-    ID_PRIMARY, ID_BACK, ID_QUIT, ID_LATER, ID_WIFI, ID_HELPER, ID_COPY, ID_STOP, ID_LEAVE,
+    ID_PRIMARY, ID_BACK, ID_QUIT, ID_LATER, ID_WIFI, ID_HELPER, ID_COPY, ID_STOP, ID_LEAVE, ID_REPORT,
     ID_STYLE = 500
 };
 
@@ -751,6 +753,147 @@ static int draw_button(int id, const wchar_t *label, int x, int y, int w, int h,
  *  that is half written -- which it used to, for the second check
  *  behind "Start installing".
  * ═══════════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════
+ *  WILL HER HARDWARE WORK? (stream HW: src/aurbridge/hwinv_win.h)
+ *
+ *  The inventory is read on the worker beside the check, and only what the
+ *  pages need is kept: each verdict (a finished sentence of hers, from
+ *  hw/seeds.json) and the printers' names. One thing stops her, because
+ *  it ends in a computer with no way to the internet: a Wi-Fi card AurOS
+ *  cannot drive and no network cable socket (`blocks`). It is a stop
+ *  like any other (the id "no-internet", fix_win.c), so the gate, the
+ *  stop page and the re-check every few seconds all treat it the same.
+ *  With a cable socket the same card is only a line under "Good to know"
+ *  on the first page. A camera, a printer, a scanner that will not work
+ *  yet are ONE honest line on Ready, never a stop.
+ * ═══════════════════════════════════════════════════════════════════ */
+typedef struct {
+    int        n;
+    int        blocks;
+    hw_verdict v[HW_MAX_VERDICTS];
+    char       printer[HW_MAX_PRINTERS][96];
+    int        n_printers;
+} hw_view;
+static hw_view g_hw, g_hw_new, g_hw_bg;
+
+/* The finished inventory, kept small; and the stop it makes, put in the
+ * check's own report so that nothing downstream has to know about it. */
+static void hw_view_from(hw_view *out, const hw_inv *inv)
+{
+    memset(out, 0, sizeof *out);
+    out->n = inv->n_verdicts < HW_MAX_VERDICTS ? inv->n_verdicts : HW_MAX_VERDICTS;
+    memcpy(out->v, inv->verdicts, (size_t)out->n * sizeof out->v[0]);
+    out->n_printers = inv->n_printers < HW_MAX_PRINTERS ? inv->n_printers : HW_MAX_PRINTERS;
+    for (int i = 0; i < out->n_printers; i++)
+        snprintf(out->printer[i], sizeof out->printer[i], "%s", inv->printers[i].name);
+    out->blocks = hwinv_blocks(inv);
+}
+
+static void hw_add_stop(pf_report *r, const hw_view *v)
+{
+    if (!v->blocks || r->n >= PF_MAX_RESULTS) return;
+    for (int i = 0; i < r->n; i++) if (!strcmp(r->results[i].id, "no-internet")) return;
+    pf_result *x = &r->results[r->n++];
+    memset(x, 0, sizeof *x);
+    snprintf(x->id, sizeof x->id, "no-internet");
+    snprintf(x->risk, sizeof x->risk, "R13");
+    snprintf(x->title, sizeof x->title, "AurOS would have no internet on this computer");
+    for (int i = 0; i < v->n; i++)
+        if (v->v[i].blocks) { snprintf(x->detail, sizeof x->detail, "%s", v->v[i].says); break; }
+    x->sev = PF_BLOCK;
+    r->n_block++;
+}
+
+/* Read this computer's hardware and judge it (one to three seconds). */
+static void hw_collect(hw_view *out, pf_report *pf)
+{
+    memset(out, 0, sizeof *out);
+    hw_inv *inv = hwinv_new();
+    if (!inv) return;
+    hwinv_scan(inv, pf);
+    hw_view_from(out, inv);
+    hwinv_free(inv);
+    hw_add_stop(pf, out);
+}
+
+/* The sentence of the verdict that blocks, as hers */
+static const char *hw_block_says(void)
+{
+    for (int i = 0; i < g_hw.n; i++) if (g_hw.v[i].blocks) return g_hw.v[i].says;
+    return "";
+}
+
+/* WHAT WON'T WORK YET, in one line, for Ready: the names of the things, and
+ * only what is not a stop. 0 when there is nothing to say. */
+static int hw_ready_line(wchar_t *out, int cch)
+{
+    wchar_t wont[320] = L"", slow[96] = L"", unk[200] = L"";
+    int nw = 0, nu = 0;
+    for (int i = 0; i < g_hw.n; i++) {
+        const hw_verdict *v = &g_hw.v[i];
+        if (v->kind == HW_K_WIFI || v->kind == HW_K_ETHERNET || v->blocks) continue;   /* the first page's */
+        const wchar_t *name = NULL;
+        wchar_t pn[130];
+        switch (v->kind) {
+        case HW_K_CAMERA:      name = L"your camera"; break;
+        case HW_K_BLUETOOTH:   name = L"your Bluetooth"; break;
+        case HW_K_AUDIO:       name = L"your sound"; break;
+        case HW_K_SCANNER:     name = L"your scanner"; break;
+        case HW_K_FINGERPRINT: name = L"your fingerprint reader"; break;
+        case HW_K_GPU:         name = NULL; break;
+        default:
+            name = L"your printer";
+            if (v->printer >= 0 && g_hw.n_printers > 1) {
+                wchar_t w[96];
+                MultiByteToWideChar(CP_UTF8, 0, g_hw.printer[v->printer], -1, w, 96);
+                w[95] = 0;
+                _snwprintf(pn, 129, v->state == HW_V_PARTIAL ? L"the scanner of %ls" : L"%ls", w);
+                pn[129] = 0;
+                name = pn;
+            } else if (v->state == HW_V_PARTIAL) name = L"your printer\u2019s scanner";
+            break;
+        }
+        if (v->kind == HW_K_GPU) {
+            if (v->state == HW_V_PARTIAL) wcscpy(slow, L" Games and 3D programs will be slow.");
+            continue;
+        }
+        if (!name) continue;
+        wchar_t *list = NULL; int *cnt = NULL;
+        if (v->state == HW_V_WONT || v->state == HW_V_PARTIAL) { list = wont; cnt = &nw; }
+        else if (v->state == HW_V_UNKNOWN) { list = unk; cnt = &nu; }
+        if (!list) continue;
+        if (*cnt) wcsncat(list, L", ", 300 - wcslen(list) - 1);
+        wcsncat(list, name, 300 - wcslen(list) - 1);
+        (*cnt)++;
+    }
+    out[0] = 0;
+    if (nw) _snwprintf(out, (size_t)cch, L"Won\u2019t work yet: %ls.%ls", wont, slow);
+    else if (slow[0]) _snwprintf(out, (size_t)cch, L"%ls", slow + 1);
+    if (nu) {
+        size_t k = wcslen(out);
+        _snwprintf(out + k, (size_t)cch - k, L"%ls We can\u2019t tell about: %ls.", k ? L"" : L"", unk);
+    }
+    out[cch - 1] = 0;
+    return out[0] != 0;
+}
+
+/* The Wi-Fi and cable verdicts that are not a stop, for "Good to know" on
+ * the first page. Returns how many were put in `lines`. */
+static int hw_internet_notes(const wchar_t **lines, int max, wchar_t bufs[][330])
+{
+    int n = 0;
+    for (int i = 0; i < g_hw.n && n < max; i++) {
+        const hw_verdict *v = &g_hw.v[i];
+        if ((v->kind != HW_K_WIFI && v->kind != HW_K_ETHERNET) || v->blocks) continue;
+        if (v->state == HW_V_WORKS) continue;
+        MultiByteToWideChar(CP_UTF8, 0, v->says, -1, bufs[n], 329);
+        bufs[n][329] = 0;
+        lines[n] = bufs[n];
+        n++;
+    }
+    return n;
+}
+
 /* WHAT THE SPACE FIX WOULD FREE, measured by the worker that ran the
  * check (fix_temp_bytes reads, never deletes), so the stop page says the
  * size before she presses. Less than TEMP_WORTH is not a fix at all. */
@@ -769,6 +912,7 @@ static DWORD WINAPI pf_worker(LPVOID p)
     (void)p;
     pf_run(&g_pf_new);                 /* read-only, by contract */
     g_temp_new = pf_blocks(&g_pf_new, "insufficient-space") ? fix_temp_bytes() : 0;
+    hw_collect(&g_hw_new, &g_pf_new);  /* and her hardware, read-only too */
     InterlockedExchange(&g_pf_state, 2);
     return 0;
 }
@@ -788,6 +932,7 @@ static int pf_poll(void)
 {
     if (InterlockedCompareExchange(&g_pf_state, 0, 2) != 2) return 0;
     memcpy(&g_report, &g_pf_new, sizeof g_report);
+    memcpy(&g_hw, &g_hw_new, sizeof g_hw);
     g_temp_bytes = g_temp_new;
     g_pf_valid = 1;
     g_checking = 0;
@@ -810,6 +955,7 @@ static struct { char id[48]; int state; int after; wchar_t why[200]; } g_fx[FIX_
 static int           g_fx_n;
 static volatile LONG g_fix_busy;       /* the fix worker is running        */
 static pf_report     g_bg_report;      /* the quiet re-check's own copy    */
+static int           g_bg_hw;          /* ... and it reads her hardware again */
 static volatile LONG g_bg_state;       /* 0 idle, 1 running, 2 has a result */
 static int           g_bg_ticks;
 static int           g_resumed;        /* opened again after our restart  */
@@ -927,6 +1073,9 @@ static DWORD WINAPI bg_worker(LPVOID p)
     (void)p;
     pf_run(&g_bg_report);              /* read-only, by contract */
     g_bg_temp = pf_blocks(&g_bg_report, "insufficient-space") ? fix_temp_bytes() : 0;
+    /* her hardware again only while it is what stops her: she may have
+     * plugged in the USB Wi-Fi stick */
+    if (g_bg_hw) hw_collect(&g_hw_bg, &g_bg_report); else g_hw_bg = g_hw;
     InterlockedExchange(&g_bg_state, 2);
     return 0;
 }
@@ -938,6 +1087,7 @@ static int bg_recheck_tick(void)
 {
     if (InterlockedCompareExchange(&g_bg_state, 0, 2) == 2) {
         memcpy(&g_report, &g_bg_report, sizeof g_report);
+        memcpy(&g_hw, &g_hw_bg, sizeof g_hw);
         g_temp_bytes = g_bg_temp;
         g_pf_valid = 1;
         g_bg_ticks = 0;
@@ -950,6 +1100,7 @@ static int bg_recheck_tick(void)
     g_bg_ticks = 0;
     if (InterlockedCompareExchange(&g_bg_state, 1, 0) != 0) return 0;
     memset(&g_bg_report, 0, sizeof g_bg_report);
+    g_bg_hw = g_hw.blocks;
     HANDLE h = CreateThread(NULL, 0, bg_worker, NULL, 0, NULL);
     if (h) CloseHandle(h);
     else InterlockedExchange(&g_bg_state, 0);
@@ -1997,9 +2148,10 @@ static int page_welcome(int x, int y, int w)
     /* Anything worth knowing that does not stop it: said here, one line
      * each, on the page she is looking at, before she agrees to anything
      * (docs/EASY.md, rule 9). */
-    if (done && pf_is_go(&g_report) && g_report.n_warn > 0) {
-        const wchar_t *lines[8];
+    if (done && pf_is_go(&g_report)) {
+        const wchar_t *lines[10];
         static wchar_t bufs[8][128];
+        static wchar_t hwb[2][330];
         int n = 0;
         for (int i = 0; i < g_report.n && n < 8; i++) {
             const pf_result *r = &g_report.results[i];
@@ -2009,8 +2161,13 @@ static int page_welcome(int x, int y, int w)
             for (int k = 0; k < n; k++) if (!wcscmp(lines[k], l)) dup = 1;
             if (!dup) lines[n++] = l;
         }
-        y += S(g_short ? 20 : 32);
-        y += note_box(L"Good to know", lines, n, x, y, narrow);
+        /* Wi-Fi that will not work, with a cable socket that will: a note,
+         * not a stop (HW) */
+        n += hw_internet_notes(lines + n, 2, hwb);
+        if (n) {
+            y += S(g_short ? 20 : 32);
+            y += note_box(L"Good to know", lines, n, x, y, narrow);
+        }
     }
 
     /* WHAT SHE IS GETTING, a picture of it (B-16): the look like Windows, up
@@ -2233,6 +2390,34 @@ static void copy_for_helper(void)
     g_copied = 1;
 }
 
+/* "Save a report for a helper": what is inside this computer (HW's
+ * AurOS-report.txt and .json) on her Desktop, written on a worker (the read
+ * takes a couple of seconds). Read-only toward the computer. */
+static volatile LONG g_rep_state;      /* 0 idle, 1 saving, 2 saved, 3 could not */
+static int           g_nt_reports;
+
+static DWORD WINAPI report_worker(LPVOID p)
+{
+    (void)p;
+    WCHAR d[MAX_PATH];
+    char dir[MAX_PATH * 3] = "";
+    if (SHGetFolderPathW(NULL, CSIDL_DESKTOPDIRECTORY, NULL, 0, d) == S_OK)
+        WideCharToMultiByte(CP_UTF8, 0, d, -1, dir, sizeof dir, NULL, NULL);
+    int rc = dir[0] ? hwinv_report_main(dir, 0, NULL) : 1;
+    InterlockedExchange(&g_rep_state, rc == 0 ? 2 : 3);
+    return 0;
+}
+
+static void start_report(void)
+{
+    if (g_nav_mode || g_shot_mode) { g_nt_reports++; return; }
+    if (g_rep_state == 1) return;
+    InterlockedExchange(&g_rep_state, 1);
+    HANDLE h = CreateThread(NULL, 0, report_worker, NULL, 0, NULL);
+    if (h) CloseHandle(h);
+    else InterlockedExchange(&g_rep_state, 3);
+}
+
 /* The helper's page in her browser, opened as her and not as the
  * administrator this program runs as: through Explorer. */
 static const wchar_t *helper_url(void)
@@ -2286,6 +2471,9 @@ static int stop_line(const pf_result *r, int cannot, wchar_t *prob, wchar_t *fix
         a2w(r->title, prob, 160);
         wcscpy(fix, L"AurOS stops here. Nothing was changed.");
     }
+    /* HW's sentence for this PC, as hers: which card, and what fixes it */
+    if (!strcmp(r->id, "no-internet") && hw_block_says()[0])
+        MultiByteToWideChar(CP_UTF8, 0, hw_block_says(), -1, fix, 599);
     int st = kind_of(r) == FIX_WAIT || kind_of(r) == FIX_CANNOT || !f ? ST_TODO : ST_PENDING;
     int j = -1;
     for (int k = 0; k < g_fx_n; k++) if (!strcmp(g_fx[k].id, r->id)) j = k;
@@ -2854,7 +3042,8 @@ static int page_ready(int x, int y, int w)
     int narrow = w > S(760) ? S(760) : w;
     /* tighter when the page carries the two optional lines (her Wi-Fi, the
      * drive lock): all eight still fit 1366x768 without scrolling */
-    int extra = wifi_offered() + bitlocker_paused_here();
+    wchar_t hwprobe[8];
+    int extra = wifi_offered() + bitlocker_paused_here() + (hw_ready_line(hwprobe, 8) ? 1 : 0);
     int gap = S(g_dense ? 6 : g_short ? 10 : extra > 1 ? 6 : extra ? 9 : 16);
     wchar_t buf[300];
 
@@ -2865,6 +3054,11 @@ static int page_ready(int x, int y, int w)
     /* and the one thing that does not come with her (A-07, EASY rule 9: say
      * it before, not after) */
     y += glyph_row(G_INFO, L"Programs made for Windows don\u2019t run in AurOS.", x, y, narrow) + gap;
+    /* and what of hers will not work yet, in one line (never a stop) */
+    {
+        wchar_t hwl[420];
+        if (hw_ready_line(hwl, 420)) y += glyph_row(G_INFO, hwl, x, y, narrow) + gap;
+    }
 
     y += glyph_row(G_LOOK, STYLES[g_sel_style].ready, x, y, narrow) + gap;
 
@@ -3211,46 +3405,56 @@ static void draw_footer(void)
         }
     }
 
-    const wchar_t *second = NULL, *lands = NULL;
-    int sid = 0, leaves = 0;
+    /* the buttons that are not the big one, nearest to it first */
+    struct { const wchar_t *label; int id, leaves; } sec[3];
+    int ns = 0;
+    const wchar_t *lands = NULL;
+#define SEC(l, i, lv) do { sec[ns].label = (l); sec[ns].id = (i); sec[ns].leaves = (lv); ns++; } while (0)
     if (g_confirm == 3) {
-        second = L"Not yet"; sid = ID_LEAVE; leaves = 1;
+        SEC(L"Not yet", ID_LEAVE, 1);
         lands = L"Not yet: nothing is changed, and the page stays as it is.";
     } else if (g_confirm) {
-        second = g_confirm == 1 ? L"Stop and undo" : L"Close and undo";
-        sid = ID_LEAVE; leaves = 1;
+        SEC(g_confirm == 1 ? L"Stop and undo" : L"Close and undo", ID_LEAVE, 1);
         lands = L"Undo: this computer starts Windows as usual.";
     } else if (g_page == PAGE_PROGRESS && g_install_running && g_ab_gate == 0 && !g_stop_wanted) {
         /* Stop is offered only while stopping is safe: AurOS has only been
          * downloading, and nothing on the computer has been changed */
-        second = L"Stop"; sid = ID_STOP; leaves = 1;
+        SEC(L"Stop", ID_STOP, 1);
         lands = L"Nothing has been changed yet.";
     } else if (g_page == PAGE_BLOCKED && (sb_page() || !any_cannot())) {
-        second = L"Not now"; sid = ID_QUIT; leaves = 1;
+        SEC(L"Not now", ID_QUIT, 1);
+        if (!sb_page() && helper_url()) SEC(L"Show a helper how", ID_HELPER, 0);   /* the USB stick list */
         lands = L"Not now: AurOS Setup closes. Nothing has been changed.";
-    } else if (g_page == PAGE_BLOCKED && helper_url()) {
-        second = L"Show a helper how"; sid = ID_HELPER;
+    } else if (g_page == PAGE_BLOCKED) {
+        /* it cannot go on: what a helper needs, and where to read it */
+        if (helper_url()) SEC(L"Show a helper how", ID_HELPER, 0);
+        SEC(L"Save a report for a helper", ID_REPORT, 0);
     } else if (back_visible()) {
-        second = L"Back"; sid = ID_BACK;
+        SEC(L"Back", ID_BACK, 0);
     } else if (g_page == PAGE_PROGRESS && install_ok()) {
-        second = L"Restart later"; sid = ID_LATER; leaves = 1;
+        SEC(L"Restart later", ID_LATER, 1);
     } else if (g_page == PAGE_PROGRESS && install_failed()) {
-        second = L"Not now"; sid = ID_QUIT; leaves = 1;
+        SEC(L"Not now", ID_QUIT, 1);
         lands = L"Not now: AurOS Setup closes. Nothing has been changed.";
     }
-    if (second) {
-        int sw = text_w(second, g_f_btn) + S(56);
+    if (g_page == PAGE_BLOCKED && g_rep_state == 1) lands = L"Saving the report\u2026";
+    else if (g_page == PAGE_BLOCKED && g_rep_state == 2)
+        lands = L"Saved on your Desktop: AurOS-report.txt. Give it to your helper.";
+    else if (g_page == PAGE_BLOCKED && g_rep_state == 3) lands = L"The report could not be saved.";
+    for (int i = 0; i < ns; i++) {
+        int sw = text_w(sec[i].label, g_f_btn) + S(56);
         if (sw < S(140)) sw = S(140);
         /* flush right when the big button is not there; a gap of 32 px
          * before a button that leaves or undoes, 16 before one that does not */
-        bx -= sw + (primary_visible() ? S(leaves ? 32 : 16) : 0);
-        draw_button(sid, second, bx, by, sw, bh, 0, 0);
+        bx -= sw + ((i == 0 && !primary_visible()) ? 0 : S(i == 0 && sec[i].leaves ? 32 : 16));
+        draw_button(sec[i].id, sec[i].label, bx, by, sw, bh, 0, 0);
     }
+#undef SEC
 
     if (!lands && g_page == PAGE_READY && !g_checking && g_short) lands = L"Install AurOS starts the install.";
     const wchar_t *say = g_early ? g_early : lands;
     int sw = bx - S(24) - g_foot.left;
-    if (say && sw > S(120)) {
+    if (say && sw > S(220)) {          /* too narrow to read: the page says it */
         int th = text_h(say, g_f_small, sw, DT_WORDBREAK);
         text_draw(say, g_f_small, C_INK2, g_foot.left, by + (bh - th) / 2, sw, DT_WORDBREAK);
     }
@@ -3514,6 +3718,7 @@ static void widget_do(int id)
     case ID_LATER:   g_nt_waits++; if (g_hwnd) ShowWindow(g_hwnd, SW_MINIMIZE); return;
     case ID_WIFI:    g_bring_wifi = !g_bring_wifi; return;
     case ID_HELPER:  open_helper(); return;
+    case ID_REPORT:  start_report(); return;
     case ID_STOP:    PostMessageW(g_hwnd, WM_CLOSE, 0, 0); return;
     case ID_LEAVE:   if (leave_confirmed()) DestroyWindow(g_hwnd); return;
     case ID_COPY:    copy_for_helper(); return;
@@ -3565,7 +3770,7 @@ static void focus_visible(void)
     if (g_focus < 0 || g_focus >= g_nw) return;
     int id = g_w[g_focus].id;
     if (id == ID_PRIMARY || id == ID_BACK || id == ID_QUIT || id == ID_LATER ||
-        id == ID_HELPER || id == ID_STOP || id == ID_LEAVE) return;
+        id == ID_HELPER || id == ID_STOP || id == ID_LEAVE || id == ID_REPORT) return;
     RECT r = g_w[g_focus].r;
     if (r.top < g_body.top)        scroll_by(r.top - g_body.top - S(12));
     else if (r.bottom > g_body.bottom) scroll_by(r.bottom - g_body.bottom + S(12));
@@ -4564,6 +4769,7 @@ static void fx_add(const char *id, pf_severity sev, const char *title)
 /* A 2017 laptop: one 256 GB drive, SSD or hard disk. */
 static void fx_machine(int hdd)
 {
+    memset(&g_hw, 0, sizeof g_hw);
     memset(&g_report, 0, sizeof g_report);
     g_report.system_disk = 0;
     g_report.n_disks = 1;
@@ -4589,6 +4795,37 @@ static void fx_machine(int hdd)
 }
 
 static void fx_ready(void) { fx_add("ready", PF_PASS, "This computer is ready"); }
+
+/* A computer's hardware, judged by the real matcher (stream HW), and its
+ * stop put into the check's report as the worker does:
+ *   FXH_BCM     a Broadcom BCM4352 Wi-Fi card, no cable socket (stops her)
+ *   FXH_BCM_ETH the same card with a network cable socket (a note)
+ *   FXH_AX      an Intel AX201: fine
+ *   FXH_CAMERA  the AX201 and a laptop camera that will not work yet */
+enum { FXH_BCM = 1, FXH_BCM_ETH, FXH_AX, FXH_CAMERA };
+static void fx_hw(int what)
+{
+    hw_inv *inv = hwinv_new();
+    if (what == FXH_BCM || what == FXH_BCM_ETH) {
+        hwinv_add_dev(inv, "Net", "PCI\\VEN_14E4&DEV_43B1&SUBSYS_0608105B&REV_03",
+                      "PCI\\VEN_14E4&DEV_43B1&CC_028000;PCI\\VEN_14E4&DEV_43B1&CC_0280",
+                      "Broadcom 802.11ac wireless", "Broadcom", "bcmwl63a", 0, 71);
+        inv->devs[0].in_use = 1;
+    } else {
+        hwinv_add_dev(inv, "Net", "PCI\\VEN_8086&DEV_06F0&SUBSYS_00748086&REV_00", "PCI\\VEN_8086&DEV_06F0&CC_028000",
+                      "Intel(R) Wi-Fi 6 AX201 160MHz", "Intel", "Netwtw10", 0, 71);
+    }
+    if (what == FXH_BCM_ETH)
+        hwinv_add_dev(inv, "Net", "PCI\\VEN_10EC&DEV_8168&SUBSYS_8AD01043&REV_15", "PCI\\VEN_10EC&DEV_8168&CC_020000",
+                      "Realtek PCIe GbE Family Controller", "Realtek", "rt640x64", 0, 6);
+    if (what == FXH_CAMERA)
+        hwinv_add_dev(inv, "System", "PCI\\VEN_8086&DEV_9A19&SUBSYS_22128086", "PCI\\VEN_8086&DEV_9A19&CC_048000",
+                      "Intel(R) Image Signal Processor", "", "", 0, 0);
+    hwcompat_judge(inv);
+    hw_view_from(&g_hw, inv);
+    hw_add_stop(&g_report, &g_hw);
+    hwinv_free(inv);
+}
 
 static void shot_save(const char *dir, const char *name)
 {
@@ -4681,6 +4918,13 @@ static int shot_run(const char *dir)
     g_focus = -1; g_focus_ring = 0; g_sel_style = STYLE_DEFAULT;
 
     g_page = PAGE_READY; shot_save(dir, "4a-ready");
+    fx_machine(0); fx_ready(); fx_hw(FXH_CAMERA);
+    g_page = PAGE_READY; shot_save(dir, "4d-ready-hardware-line");
+    fx_machine(0); fx_ready(); fx_hw(FXH_BCM_ETH);
+    g_page = PAGE_WELCOME; g_pf_valid = 1; g_checking = 0; shot_save(dir, "1e-welcome-wifi-note");
+    fx_machine(0); fx_ready(); fx_hw(FXH_BCM);
+    g_page = PAGE_BLOCKED; shot_save(dir, "2h-blocked-no-internet");
+    fx_machine(0); fx_ready();
 #if defined(AB_CHOICE_BRING_WIFI) && defined(AB_CHOICE_BITLOCKER_PAUSE)
     /* only when the engine can carry them (A2): her Wi-Fi, and the drive
      * lock paused for one restart (D10, D11, D13) */
@@ -5359,6 +5603,84 @@ static int nav_test(const char *dir)
         g_sel_style = STYLE_DEFAULT;
         g_install_finished = 0;
         InterlockedExchange(&g_ab_state, 0);
+    }
+
+    if (g_nt) fprintf(g_nt, "\n15. her hardware: no internet stops her; a cable makes it a note; a camera is one line\n");
+    {
+        /* a Broadcom BCM4352 (14e4:43b1) laptop with no cable socket: the case
+         * the hardware check exists for */
+        fx_machine(0); fx_ready();
+        fx_hw(FXH_BCM);
+        nt_check(g_report.n_block == 1 && !pf_is_go(&g_report) && !nav_allowed(PAGE_STYLE),
+                 "a Wi-Fi card AurOS cannot drive and no cable socket: it stops before anything changes");
+        g_page = PAGE_WELCOME; g_check_next = PAGE_STYLE;
+        check_advance();
+        nt_check(g_page == PAGE_BLOCKED, "... and the first page lands on the stop page");
+        g_scroll[PAGE_BLOCKED] = 0;
+        render();
+        wchar_t nm[900];
+        acc_page_name(nm, 900);
+        nt_check(wcsstr(nm, L"AurOS would have no internet") && wcsstr(nm, L"no place for a network cable"),
+                 "... which says it in HW's own words, the card's, and that nothing was changed");
+        int has_help = 0, has_now = 0, has_rep = 0;
+        for (int i = 0; i < g_nw; i++) { has_help |= g_w[i].id == ID_HELPER; has_now |= g_w[i].id == ID_QUIT; has_rep |= g_w[i].id == ID_REPORT; }
+        nt_check(has_help && has_now && !has_rep && fixable_now() == 0 && !wcscmp(primary_label(), L"Check again"),
+                 "... with Show a helper how (the stick list), Not now, and it checks again by itself");
+        nt_check(fix_lookup("no-internet") && fix_lookup("no-internet")->kind == FIX_WAIT,
+                 "... it is a stop she can clear herself (a stick), so the page waits and checks again");
+        nt_check(fix_helper_url("no-internet") != NULL, "... and it has a helper page to open");
+
+        /* the same card with a network cable socket: a note, not a stop */
+        fx_machine(0); fx_ready();
+        fx_hw(FXH_BCM_ETH);
+        const wchar_t *ln[2]; static wchar_t bf[2][330];
+        int notes = hw_internet_notes(ln, 2, bf);
+        nt_check(g_report.n_block == 0 && pf_is_go(&g_report) && nav_allowed(PAGE_STYLE),
+                 "the same card with a cable socket does not stop her");
+        nt_check(notes == 1 && wcsstr(ln[0], L"network cable will"),
+                 "... it is one line under Good to know on the first page");
+        g_page = PAGE_WELCOME; g_pf_valid = 1; g_checking = 0; g_scroll[PAGE_WELCOME] = 0;
+        render();
+        nt_check(g_content_h <= g_view_h, "... and the first page still fits");
+
+        /* an Intel AX201: nothing to say at all */
+        fx_machine(0); fx_ready();
+        fx_hw(FXH_AX);
+        wchar_t hl[420];
+        nt_check(g_report.n_block == 0 && hw_internet_notes(ln, 2, bf) == 0 && !hw_ready_line(hl, 420),
+                 "an Intel AX201: nothing stops her and nothing is said");
+
+        /* a camera that will not work yet: one line on Ready, never a stop */
+        fx_machine(0); fx_ready();
+        fx_hw(FXH_CAMERA);
+        nt_check(g_report.n_block == 0 && nav_allowed(PAGE_READY) && nav_allowed(PAGE_PROGRESS),
+                 "a camera that will not work yet never stops her");
+        nt_check(hw_ready_line(hl, 420) && wcsstr(hl, L"your camera"), "... it is one line, naming it");
+        g_page = PAGE_READY; g_scroll[PAGE_READY] = 0;
+        render();
+        nt_check(g_content_h <= g_view_h, "... and Ready still fits 1366x768 without scrolling");
+        wchar_t rn[900];
+        acc_page_name(rn, 900);
+        nt_check(wcsstr(rn, L"Ready to install") != NULL, "... and Ready is still Ready");
+
+        /* the can't-install page offers the report for a helper */
+        fx_machine(0);
+        fx_add("firmware-bios", PF_BLOCK, "This computer uses legacy BIOS boot");
+        g_page = PAGE_BLOCKED; g_scroll[PAGE_BLOCKED] = 0;
+        render();
+        has_rep = 0;
+        for (int i = 0; i < g_nw; i++) has_rep |= g_w[i].id == ID_REPORT;
+        nt_check(has_rep && any_cannot(), "the can't-install page has Save a report for a helper");
+        g_nt_reports = 0;
+        widget_activate(ID_REPORT);
+        nt_check(g_nt_reports == 1, "... and pressing it saves the report (the harness only counts)");
+        fx_machine(0);
+        fx_add("not-on-ac", PF_BLOCK, "This computer is running on battery");
+        g_page = PAGE_BLOCKED; render();
+        has_rep = 0;
+        for (int i = 0; i < g_nw; i++) has_rep |= g_w[i].id == ID_REPORT;
+        nt_check(!has_rep, "... but a page that fixes itself does not");
+        g_hw_new = g_hw; memset(&g_hw, 0, sizeof g_hw);
     }
 
     if (g_nt) fprintf(g_nt, "\n14. every letter on every page is in the face\n");

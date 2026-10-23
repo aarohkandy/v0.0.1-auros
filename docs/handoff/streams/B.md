@@ -107,6 +107,23 @@ the same code run), `raid-volume` model names, Narrator speaking.
 metapackage at 40 KB/s); `8dddd31` installs only the 64-bit compiler (60 MB).
 build.yml and tests.yml (E) install the same metapackage through `tools/apt.sh`.
 
+### Her hardware (stream HW's inventory), wired
+
+`hw_collect()` runs `hwinv_scan` on the check's worker (and again on the
+stop page's re-check only while the Wi-Fi stop is what stops her). A Wi-Fi card AurOS cannot drive
+with no cable socket (HW's `blocks`) becomes the stop `no-internet` (a
+FIX_WAIT line in `fix_win.c`; the page shows HW's own sentence; **Show a
+helper how** opens `website/advanced.html#wifi-stick`, the stick list I added
+there from HW.md, "not yet tried stick by stick"). With a cable socket the same
+card is a line under Good to know on the first page. A camera/printer/scanner/
+Bluetooth/sound that will not work yet is ONE line on Ready ("Won't work yet:
+your camera."), never a stop. The can't-install page has **Save a report for a
+helper** (HW's `hwinv_report_main` to the Desktop, on a worker). navtest 15
+covers each (red first with the bridge stubbed); pictures `1e`, `2h`, `4d`.
+Open: the journal field `hw` and `windows-hw.json` are A2's (HW.md "Hooks");
+the stick list needs the lab (CAMPAIGN.md); HW's sentence says "start again"
+though the page checks again by itself.
+
 ## Changed for e2e (stream F: read this)
 
 Written before the code landed; each is now in `main`.

@@ -143,6 +143,14 @@ static const fix_info FIXES[] = {
     { "esp-low-space", FIX_CANNOT,
       L"There is no room for AurOS’s start-up files",
       L"AurOS can’t fit beside Windows’ start-up files here yet.", NULL },
+    /* From the hardware check (stream HW, hwinv_win.h) through the wizard,
+     * not preflight.c's add(): a Wi-Fi card AurOS cannot drive and no
+     * cable socket. She can fix it herself with a USB stick, and the page
+     * checks again by itself, so it waits (the page shows HW's own
+     * sentence, which says which stick and why). */
+    { "no-internet", FIX_WAIT,
+      L"AurOS would have no internet on this computer",
+      L"Plug in a small USB Wi-Fi stick. We carry on by ourselves.", NULL },
     /* From sbdb.c, not preflight.c's add(): the wizard gives the first its
      * own page with the sketch (DESIGN-DIRECTION.md B-5). */
     { "secure-boot-ca", FIX_CANNOT,
@@ -229,6 +237,7 @@ const wchar_t *fix_helper_url(const char *id)
 {
     if (!strcmp(id, "firmware-bios")) return ADVANCED L"#bios";
     if (!strcmp(id, "intel-rst"))     return ADVANCED L"#rst";
+    if (!strcmp(id, "no-internet"))   return ADVANCED L"#wifi-stick";
     return NULL;
 }
 

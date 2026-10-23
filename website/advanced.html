@@ -33,6 +33,7 @@
         <li><a href="#secure-boot">This computer is set to start only Windows</a></li>
         <li><a href="#bios">This computer starts up the older way (BIOS)</a></li>
         <li><a href="#rst">AurOS can&rsquo;t see this computer&rsquo;s drive (Intel RST or VMD)</a></li>
+        <li><a href="#wifi-stick">AurOS would have no internet here (a Wi-Fi card it can&rsquo;t use)</a></li>
         <li><a href="#room">How much room AurOS needs</a></li>
         <li><a href="#wifi-sticks">Which USB Wi-Fi stick to buy</a></li>
         <li><a href="#else">Other systems, and anything else</a></li>
@@ -188,6 +189,26 @@
   </section>
 
   <!-- ── room ───────────────────────────────────────────────────── -->
+  <!-- ── no internet: a Wi-Fi card AurOS can't use ──────────────── -->
+  <section class="doc sand" id="wifi-stick" aria-labelledby="wifi-title">
+    <div class="narrow">
+      <h2 id="wifi-title">AurOS would have no internet here</h2>
+      <p>Setup stops, before it changes anything, on a computer whose only way online is a Wi-Fi card AurOS can&rsquo;t use yet, and which has no socket for a network cable. Most often it is a Broadcom card (BCM4352, BCM4360 and the like) that only works with a program from Broadcom, which can&rsquo;t be installed on a computer that has no internet yet. Without a way online AurOS couldn&rsquo;t even fetch its own updates, so Setup says so first.</p>
+      <p><b>What fixes it:</b> a small USB Wi-Fi stick (about $15), plugged in before Setup starts, or while its page is open: Setup checks again by itself every few seconds. A network cable does too, on a computer that has the socket.</p>
+      <p><b>Which sticks.</b> The chip is named on the box or in the shop&rsquo;s description. AurOS carries what these need:</p>
+      <ul class="doing">
+        <li><p>MediaTek: <span class="words">MT7610U</span>, <span class="words">MT7612U</span>, <span class="words">MT7601U</span></p></li>
+        <li><p>Atheros: <span class="words">AR9271</span></p></li>
+        <li><p>Realtek: <span class="words">RTL8188EUS</span>, <span class="words">RTL8192CU</span>, <span class="words">RTL8192EU</span>, <span class="words">RTL8811CU</span>, <span class="words">RTL8821CU</span>, <span class="words">RTL8822BU</span>, <span class="words">RTL8822CU</span></p></li>
+        <li><p>Ralink: <span class="words">RT5370</span> and the <span class="words">RT3070</span> family</p></li>
+      </ul>
+      <p class="note"><b>Not these yet:</b> sticks with a Realtek <span class="words">RTL8812AU</span>, <span class="words">RTL8821AU</span> or <span class="words">RTL8814AU</span> chip, which many cheap &ldquo;AC600&rdquo; and &ldquo;AC1200&rdquo; sticks have (for example the TP-Link Archer T2U Nano). They need a newer AurOS.</p>
+      <p>That list is what the AurOS system can drive, read from the system itself. It has <b>not</b> yet been tried stick by stick on a real computer (that is part of the lab&rsquo;s hardware campaign), so keep the receipt.</p>
+      <p>Setup&rsquo;s <span class="words">Save a report for a helper</span> button (on the page where it can&rsquo;t go on) writes <span class="words">AurOS-report.txt</span> to the Desktop: the Wi-Fi card, the sound, the camera, the printers, as Windows names them.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
   <section class="doc" id="room" aria-labelledby="room-title">
     <div class="narrow">
       <h2 id="room-title">How much room AurOS needs</h2>
