@@ -382,7 +382,9 @@ EOPY
         label="a recovery partition resized after the install"
     fi
     BEFORE=$(md5sum "$MTMP/foreign.img" | cut -d' ' -f1)
-    boot "$MTMP/foreign.img" "aurstage.restore" "aurstage-report v1 verdict=restore" 600 || true
+    # aurstage.nolog: e85deba made staging write a log to the EFI partition with its
+    # verdict; this asserts the refusal changed nothing at all.
+    boot "$MTMP/foreign.img" "aurstage.restore aurstage.nolog" "aurstage-report v1 verdict=restore" 600 || true
     grep -aq "verdict=restored" "$MTMP/out.txt" \
         && bad "$label: Put Windows back refuses" "it ran" \
         || ok "$label: Put Windows back refuses"

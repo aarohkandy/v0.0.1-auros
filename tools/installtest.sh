@@ -97,11 +97,16 @@ run() { # name  kargs  expect  stick-file  want-unchanged
     cp /usr/share/OVMF/OVMF_VARS_4M.fd "$TMP/vars.fd"
     before=$(md5sum "$TMP/run.img" | cut -d' ' -f1)
     : > "$TMP/out.txt"
+    # e85deba: staging writes a log to the EFI partition when it gives a verdict
+    # (aurstage.nolog turns that off). A test that asserts a refusal leaves the
+    # disk byte for byte as it was must turn it off; the log is proved by
+    # tools/fasttest.sh's stagelog scenario.
+    NOLOG=""; [ "${5:-}" = unchanged ] && NOLOG=" aurstage.nolog"
     qemu-system-x86_64 -machine q35,accel=tcg -m 1536 -smp 2 \
         -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
         -drive if=pflash,format=raw,unit=1,file="$TMP/vars.fd" \
         -no-reboot -kernel out/auros-staging-vmlinuz \
-        -initrd "$TMP/initrd.img" -append "console=ttyS0 $2" \
+        -initrd "$TMP/initrd.img" -append "console=ttyS0 $2$NOLOG" \
         -drive file="$TMP/run.img",format=raw,if=none,id=d0 \
         -device virtio-blk-pci,drive=d0,serial=AUROSTEST \
         -drive file="$TMP/stk.img",format=raw,if=none,id=d1 \
