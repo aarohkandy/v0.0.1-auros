@@ -632,12 +632,15 @@ for d in hard base; do
     } > "$T/menu.$d"
     echo "  $d: a full boot with every check (about 8 minutes under KVM)"
     power_on "$T/disk.img" $d full "$FULL_TIMEOUT"
-    shotkinds $d
     rm -f "$T/disk.img"
 done
 RH="$T/rec.hard/result"; RB="$T/rec.base/result"
 cat "$T/menu.hard" >> "$RH"; cat "$T/menu.base" >> "$RB"
 { echo "mutants_rc=$(cat "$T/mutants.rc" 2>/dev/null)"; echo "mutants=$(tail -1 "$T/mutants.out" 2>/dev/null)"; } >> "$RH"
+# (not inside the loop above: a first version classified there and its
+# lines never reached the record; here the files are known to be there)
+ls "$T"/shot.*.ppm 2>&1 | sed 's/^/    screenshot file: /'
+shotkinds hard; shotkinds base
 
 # ── the verdicts ────────────────────────────────────────────────────
 val() { awk -v k="$1" 'index($0, k "=") == 1 { v = substr($0, length(k) + 2) } END { print v }' "$2"; }
