@@ -153,6 +153,11 @@ Over other runs the idle RAM difference ranged +7 to +20 MB, the CPU +1% to
   returns **0 (authorized)** on the booted image although the gate's signal is
   sent; the same question about a Flatpak is refused. Evidence: `polkit.txt` in
   the `hardenboot` artifact (every rule polkit read; the action's defaults).
+  **Fixed in 85ebcae (S2):** PackageKit's `package-remove`, which forge grants,
+  *implies* `package-install`, so it overruled the gate's NO; the rule now gates
+  every `package-*` action unless all ids are already installed. Reproduced and
+  fixed under a real polkitd 124 (`tools/scamtest/polkit.sh`); the booted-image
+  row is "S2: TeamViewer through PackageKit".
 - **aurwl: a second Firefox window can die of a Wayland protocol error**
   ("xdg_surface: no configure with serial N was sent") after the first was
   closed by "Close this page"; seen once on Actions, not on the next run.
@@ -160,6 +165,12 @@ Over other runs the idle RAM difference ranged +7 to +20 MB, the CPU +1% to
   Terms of Use ... sends diagnostic and interaction data to Mozilla") over the
   first page although telemetry is off by policy; and its crash reporter tries
   to reach `incoming.telemetry.mozilla.org` when Firefox is killed.
+  **Fixed in 1bbe51e (S2):** `SkipTermsOfUse` and a locked
+  `dataSubmissionPolicyBypassNotification` hide the dialog; the crash window
+  (pre-ticked "Tell Mozilla", page address) has no policy, so
+  `MOZ_CRASHREPORTER_DISABLE=1` comes from
+  `aurshell.service.d/60-auros-no-crash-reports.conf`. Shown on the real
+  Firefox 158 (`tools/scamtest/firefoxlive.py`, pictures in `docs/shots/firefox/`).
 - **Login prompts**: `serial-getty@ttyS0` runs (`console=ttyS0` is on every
   kernel line); the virtual consoles are off in this image.
 
