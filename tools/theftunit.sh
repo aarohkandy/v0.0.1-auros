@@ -104,6 +104,12 @@ ID=s4t$$$(od -An -tx1 -N3 /dev/urandom | tr -d ' ')
 LOOPS=""; NAMES=""; SWPID=""
 cleanup() {
     set +e
+    # An in-flight pass is stopped the clean way (SIGTERM, at the end of
+    # its hot zone) and waited for: a pass torn down mid-hot-zone leaves a
+    # suspended device-mapper device, and every sync on the host then
+    # hangs (this froze a shared server twice).
+    pkill -TERM -f "cryptsetup reencrypt" 2>/dev/null
+    for _ in $(seq 1 120); do pgrep -f "cryptsetup reencrypt" >/dev/null 2>&1 || break; sleep 1; done
     umount "$T/m" 2>/dev/null
     for n in $NAMES; do cryptsetup close "$n" 2>/dev/null; done
     for l in $LOOPS; do losetup -d "$l" 2>/dev/null; done
