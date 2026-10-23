@@ -4,6 +4,11 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Done overnight (proof)
 
+- **First AurOS prerelease in your repository**: v0.1.0-618726b (AurOS-Setup.exe 35 MB + image pieces),
+  https://github.com/aarohkandy/v0.0.1-auros/releases/tag/v0.1.0-618726b. The real-Windows test has
+  now gone website → download → wizard → restart into the install screens for the first time
+  (e2e run 39923720924); it still fails later in that step and is being iterated.
+
 - **All four extra editions build and boot** (office, revive, school kiosk, multilingual): desktop in 14-18 s; revive idles at 313 MB RAM.
 
 - **Moved to your repository** (aarohkandy/v0.0.1-auros, branch main). CI, Pages (on), secrets
@@ -22,7 +27,7 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Still red / in progress
 
-- No install has passed on real Windows yet (the e2e run is the gate).
+- No install has passed end to end on real Windows yet (the e2e run is the gate); it now reaches the restart.
 - Data-safety fixes in flight: staging clock bug for US time zones, BitLocker never decrypted,
   Recycle Bin never emptied, double-click skipping the Ready page, shared password removed.
 - Safety review, security audit and legal review: results arriving.
