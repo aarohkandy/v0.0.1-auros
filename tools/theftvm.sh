@@ -156,6 +156,13 @@ mv -f "$R/etc/resolv.conf.orig" "$R/etc/resolv.conf" 2>/dev/null; rm -f "$R/etc/
 for m in dev/pts dev sys proc; do umount "$R/$m"; done
 mkdir -p "$R/usr/lib/auros/lock"
 cp -a rootfs/usr/lib/auros/lock/. "$R/usr/lib/auros/lock/"
+# The menu the lock has to convert is the CURRENT one (locked menu, Windows
+# start line, boot counting...), not whatever the image was built with:
+# the current auros-bootchain and template go in, and the guest writes its
+# menu from them before `lockctl prepare`.
+install -m755 rootfs/usr/lib/auros/bootchain "$R/usr/lib/auros/bootchain"
+install -m644 rootfs/usr/lib/auros/grub.cfg.in "$R/usr/lib/auros/grub.cfg.in"
+ln -sf /usr/lib/auros/bootchain "$R/usr/sbin/auros-bootchain"
 install -m755 "$T/aurlock-pin" "$R/usr/lib/auros/lock/aurlock-pin"
 
 # Her letter. The words are made here, so nothing on the disk but the
@@ -185,6 +192,8 @@ grep -q 'aurlock-pin\|auros-lock' /proc/cmdline 2>/dev/null
 journalctl -b -o cat 2>/dev/null | grep -E 'aurlock-pin|auros-lock|lockctl' | while read -r l; do say "log $l"; done
 case "$st" in
 *state=plain*)
+    /usr/sbin/auros-bootchain menu 2>&1 | while read -r l; do say "menu $l"; done
+    say "menu-lines $(grep -c '^menuentry' /boot/grub/grub.cfg) entries, $(grep -c 'superusers' /boot/grub/grub.cfg) superusers line(s), $(grep -c 'lockdown=integrity' /boot/grub/grub.cfg) lockdown lines"
     AUROS_LOCK_PCRS="@PCRS@" $L prepare 2>&1 | while read -r l; do say "prepare $l"; done
     say "esp $(ls /boot/efi/auros 2>&1 | tr '\n' ' ')"
     lsinitramfs "/boot/initrd.img-$(uname -r)" 2>&1 | grep -E 'auros|cryptsetup|tss2|libsystemd-shared|dejavu|dm-crypt|dm-mod|dm-zero|tpm|evdev|e2fsck|resize2fs|dumpe2fs|blkid|aes|xts|adiantum|ORDER' | while read -r l; do say "initrd $l"; done
@@ -370,6 +379,9 @@ BG=$(echo "$LOOK" | sed -n 's/.*bg="#\{0,1\}\([0-9A-Fa-f]\{6\}\).*/\1/p')
 ERR=$(echo "$LOOK" | sed -n 's/.*err="#\{0,1\}\([0-9A-Fa-f]\{6\}\).*/\1/p')
 note "her look, read from the running system: background #${BG:-none, the page default}, warnings #${ERR:-none}"
 note "$(val cryptenroll)"
+note "the current menu: $(val menu-lines)"
+serial | grep -q "THEFT menu bootchain: grub.cfg" && ok "the guest wrote the CURRENT menu (locked, with the Windows line) before the lock was armed" \
+    || bad "the guest wrote the current menu" "$(serial | grep 'THEFT menu' | head -3)"
 serial | grep -q "THEFT prepare lockctl: armed" && ok "lockctl prepare armed it" || bad "lockctl prepare" "$(serial | grep 'THEFT prepare' | tail -4)"
 esp_ls /auros | grep -q '^.*grub\.cfg' && esp_ls /auros | grep -q 'initrd.img-' \
     && ok "the kernel, initramfs and menu are on the EFI partition" || bad "boot set on the EFI partition" "$(esp_ls /auros)"
