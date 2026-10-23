@@ -56,7 +56,7 @@ $rng = [System.Random]::new(4242)
 $Fixture = @(
     @('Documents', 'letter.txt', 3000), @('Documents', 'clash.txt', 100),
     @('Documents', 'Taxes/2024/return.pdf', 400000), @('Documents', 'empty.txt', 0),
-    @('Pictures', 'Fotos de verano/caf' + [char]0xe9 + '.jpg', 2500000),
+    @('Pictures', ('Fotos de verano/caf' + [char]0xe9 + '.jpg'), 2500000),     # (the comma binds tighter than +)
     @('Pictures', 'a.png', 70000), @('Music', 'song.mp3', 1800000),
     @('Videos', 'clip.mp4', 20000000), @('Desktop', 'notes.txt', 900), @('Downloads', 'setup.exe', 5000000)
 )
