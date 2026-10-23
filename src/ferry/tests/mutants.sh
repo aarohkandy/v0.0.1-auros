@@ -238,7 +238,17 @@ mutant ferry-files '    4) stage_fail files "not enough room"; exit 4 ;;' '    4
 mutant ferry '        4) RUN_RC=4 ;;                       # not enough room on this computer' '        4) : ;;' \
     "ferry run with no room says so: exit 4"
 mutant rootfs/usr/lib/auros/answer.sh 'elif [ "$frc" = 4 ]; then' 'elif [ "$frc" = 44 ]; then' \
-    "not enough room on this computer: failed, nothing copied"
+    "...and it says there is not enough room"
+
+mutant ferry '    if ! aurhome_has_files; then
+        say "no files of hers in AurOS to save"
+        exit 0
+    fi' '    :' \
+    "nothing to save: a hibernated Windows is not even looked at (exit 0, not 3)"
+mutant ferry-common.sh "            if [ -L \"\$_src\" ]; then _any=1; break; fi" "            :" \
+    "a shortcut where Documents should be counts as something to save (stops: exit 2)"
+mutant ferry-common.sh "-name '.Trash-*' -o -name '.thumbnails' \\) -prune" "-name '.Trash-x' -o -name '.thumbnails' \\) -prune" \
+    "a trash folder and an editor's lock file are not files to save (exit 0, drive not looked at)"
 
 # Root: the escalation the lead's review named.
 # Without the switch to her, the self-check refuses to copy at all...

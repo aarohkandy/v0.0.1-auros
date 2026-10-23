@@ -429,7 +429,7 @@ mount_rw() {
 #    which is not "the log stopped changing". Written when a run is over
 #    (and removed when one starts, so its presence means "finished"):
 #      kind=import|back
-#      result=ok|partial|refused|noroom|unopened|chooseuser|failed
+#      result=ok|partial|refused|noroom|unopened|chooseuser|nowindows|failed
 #      files=N (brought across so far, from the manifest)  at=UTC time
 #    in a directory the desktop can read (the answer unit's
 #    /run/auros-answer), mode 0644, replaced whole.
@@ -439,7 +439,7 @@ signal_done() { # KIND EXIT-CODE [STAGES...]
     _k=$1 _c=$2; shift 2
     case "$_c" in
         0) _res=ok ;; 2) _res=partial ;; 3) _res=refused ;; 4) _res=noroom ;;
-        5) _res=unopened ;; 6) _res=chooseuser ;; *) _res=failed ;;
+        5) _res=unopened ;; 6) _res=chooseuser ;; 7) _res=nowindows ;; *) _res=failed ;;
     esac
     _n=0
     for _st in "$@"; do
@@ -448,7 +448,7 @@ signal_done() { # KIND EXIT-CODE [STAGES...]
         _n=$((_n + _m))
     done
     mkdir -p "$(dirname "$FERRY_SIGNAL")" 2>/dev/null || return 0
-    printf 'kind=%s\nresult=%s\nfiles=%s\nat=%s\n' "$_k" "$_res" "$_n" "$(now)" \
+    printf 'kind=%s\nresult=%s\nfiles=%s\nat=%s\n' "$_k" "$_res" "${FERRY_SIGNAL_FILES:-$_n}" "$(now)" \
         > "$FERRY_SIGNAL.new" 2>/dev/null &&
         chmod 0644 "$FERRY_SIGNAL.new" 2>/dev/null &&
         mv -f "$FERRY_SIGNAL.new" "$FERRY_SIGNAL" 2>/dev/null || true
@@ -556,6 +556,27 @@ stable_uuid() {
         "$(printf '%s' "$_h" | cut -c1-8)"  "$(printf '%s' "$_h" | cut -c9-12)" \
         "$(printf '%s' "$_h" | cut -c14-16)" "$(printf '%s' "$_h" | cut -c18-20)" \
         "$(printf '%s' "$_h" | cut -c21-32)"
+}
+
+# Has she anything in AurOS worth saving in Windows? Asked BEFORE the
+# Windows drive is touched: with nothing to save there is nothing to
+# open, mount or fail on (a BitLocker drive, a missing one), and "Put
+# Windows back" must not be held up by a drive it has no use for. Counts
+# what ferry-back would copy, and also a shortcut or a plain file where a
+# folder should be (those get a "blocked" note there): anything but the
+# files an editor or the desktop leave about.
+aurhome_has_files() {
+    printf '%s\n' "$FERRY_FOLDERS" | { _any=0
+        while IFS='|' read -r _label _val _xdg _def; do
+            [ -n "$_label" ] || continue
+            _src=$(xdg_dir "$_xdg" "$_def")
+            if [ -L "$_src" ]; then _any=1; break; fi
+            if [ -e "$_src" ] && [ ! -d "$_src" ]; then _any=1; break; fi
+            [ -d "$_src" ] || continue
+            if [ -n "$(as_her find "$_src" -mindepth 1 \( -name '.Trash-*' -o -name '.thumbnails' \) -prune \
+                    -o ! -name '.~lock.*#' ! -name .directory -print -quit 2>/dev/null)" ]; then _any=1; break; fi
+        done
+        [ "$_any" = 1 ]; }
 }
 
 # ═══ Profiles and known folders ═════════════════════════════════════

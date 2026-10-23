@@ -60,7 +60,7 @@ R=$(ask import 6 0);  eq "several accounts: choose" "$(line "$R" result)" choose
                       eq "...with the names to ask with" "$(line "$R" users)" "Bob,Harold"
 R=$(ask import 1 0);  eq "nothing could be brought: failed" "$(line "$R" result)" failed
 R=$(ask import 4 0);  eq "not enough room on this computer: failed, nothing copied" "$(line "$R" result)" failed
-case "$(line "$R" note)" in *"not enough room on this computer"*) ok "...and it says so" ;; *) bad "...and it says so" ;; esac
+case "$(line "$R" note)" in *"not enough room on this computer"*) ok "...and it says there is not enough room" ;; *) bad "...and it says there is not enough room" ;; esac
 R=$(ask import 124 0); eq "stopped for taking too long: failed, in her words" "$(line "$R" result)" failed
 case "$(line "$R" note)" in *"carries on where it stopped"*) ok "...and it says pressing it again carries on" ;; *) bad "...it says pressing it again carries on" ;; esac
 R=$(ask import 0 5)

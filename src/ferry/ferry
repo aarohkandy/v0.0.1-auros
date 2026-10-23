@@ -36,7 +36,8 @@
 #                              Windows (before "Put Windows back");
 #                              exit 0 all saved, 2 some not, 3 drive not
 #                              shut down properly, 4 not enough room,
-#                              5 drive could not be opened, 1 failed
+#                              5 drive could not be opened, 7 no Windows
+#                              drive on this computer at all, 1 failed
 #    ferry report [--json]     the what-could-not-migrate report
 #    ferry status              where a resumed run would pick up
 #    ferry unmount             release the read-only mount
@@ -61,16 +62,36 @@ ensure_mounted() {
     fi
     if [ -z "$FERRY_DEV" ]; then
         # Auto-pick the one Windows volume. Refuse to guess between two.
-        _cands=""
-        for _n in $(awk 'NR>2{print $4}' /proc/partitions 2>/dev/null); do
-            case "$_n" in *[0-9]) : ;; *) continue ;; esac
-            _d="/dev/$_n"; [ -b "$_d" ] || continue
+        # (FERRY_PROBE_DEVS: the devices to look at, for tests; otherwise
+        # every partition the kernel lists.)
+        _cands="" _unopened=0
+        _devs=${FERRY_PROBE_DEVS:-$(awk 'NR>2 && $4 ~ /[0-9]$/ {print "/dev/" $4}' /proc/partitions 2>/dev/null)}
+        for _d in $_devs; do
+            [ -b "$_d" ] || continue
+            _n=$(basename "$_d")
             _m="$FERRY_MNT/probe.$_n"
-            mount_ro "$_d" "$_m" 2>/dev/null || continue
-            if is_windows_root "$_m"; then _cands="$_cands $_d"; fi
-            unmount_ro "$_m"; rmdir "$_m" 2>/dev/null || true
+            if mount_ro "$_d" "$_m" 2>/dev/null; then
+                if is_windows_root "$_m"; then _cands="$_cands $_d"; fi
+                unmount_ro "$_m"; rmdir "$_m" 2>/dev/null || true
+            else
+                # Not mountable. Most partitions are not Windows and should
+                # not be: an NTFS or BitLocker one that will not open might
+                # BE Windows (locked, or not shut down properly), which is
+                # a different answer from "there is no Windows here".
+                case "$(blkid -o value -s TYPE "$_d" 2>/dev/null)" in
+                    ntfs|BitLocker) _unopened=1 ;;
+                esac
+            fi
         done
         set -- $_cands
+        if [ $# -eq 0 ] && [ "$_unopened" = 0 ] && [ "${FERRY_RW:-0}" = 1 ]; then
+            # The way back, she HAS files, and there is no Windows drive of any
+            # kind on this computer: nowhere to save them. Exit 7 -- a stop,
+            # with its own word, because it is not "could not be opened"
+            # (answer.sh does not put Windows back; her files are untouched).
+            warn "no Windows drive on this computer to save files in"
+            exit 7
+        fi
         [ $# -ge 1 ] || mdie "no Windows partition found on any disk"
         [ $# -eq 1 ] || mdie "found more than one Windows partition ($*); choose one with --device"
         FERRY_DEV=$1
@@ -227,6 +248,11 @@ _cmd_back() {
     # Who the files are, and are for, before anything is opened.
     resolve_target
     [ -n "$FERRY_OWNER" ] || die "no AurOS user whose files to save"
+    # NOTHING TO SAVE: say so and leave the Windows drive alone.
+    if ! aurhome_has_files; then
+        say "no files of hers in AurOS to save"
+        exit 8                               # (cmd_back: "nothing to save", counted as ok)
+    fi
     plain "Getting ready to save your files in Windows."
     ensure_mounted
     run_stage ferry-back
@@ -238,15 +264,23 @@ cmd_back() {
     ferry_state_init
     signal_clear
     ( _cmd_back "$@" ) && _rc=0 || _rc=$?
+    _nothing=0
+    if [ "$_rc" = 8 ]; then _rc=0; _nothing=1; fi
+    _bn=$(awk -F'\t' '$2 == "back" && ($3 == "copy" || $3 == "collision")' "$FERRY_STATE/manifest.tsv" 2>/dev/null | wc -l | tr -d ' ')
     case "$_rc" in
-        0) last_line "Your files are saved in Windows, in the folder \"From AurOS\"." ;;
+        0) if [ "$_nothing" = 1 ] || [ "${_bn:-0}" = 0 ]; then last_line "You had no files to save in Windows."
+           elif [ "$_bn" = 1 ]; then last_line "Your file is saved in Windows, in the folder \"From AurOS\"."
+           else last_line "Your $_bn files are saved in Windows, in the folder \"From AurOS\"."; fi ;;
         2) last_line "Some of your files could not be saved in Windows." ;;
         3) last_line "Windows was not shut down properly. Start Windows, shut it down fully, then try again." ;;
+        7) last_line "AurOS found no Windows drive on this computer, so your files could not be saved in Windows. Nothing of yours was deleted." ;;
         4) : ;;                                  # ferry-copy has said how much room is missing
         5) last_line "AurOS could not open the Windows drive to save your files." ;;
         *) last_line "AurOS could not save your files in Windows." ;;
     esac
-    signal_done back "$_rc" back
+    # With nothing to save the count is 0 whatever earlier runs saved.
+    if [ "$_nothing" = 1 ]; then FERRY_SIGNAL_FILES=0 signal_done back "$_rc" back
+    else signal_done back "$_rc" back; fi
     exit "$_rc"
 }
 

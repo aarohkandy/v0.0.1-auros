@@ -141,15 +141,19 @@ back_files() {
     # the unit's any more); a copy that is stopped is picked up again.
     timeout "${AUROS_IMPORT_LIMIT:-43200}" "${AUROS_FERRY:-/usr/bin/ferry}" back --plain >>"$OUT/putback.log" 2>&1
     brc=$?
+    # Saved: say how many, so the screen can tell her what was and was not
+    # saved rather than "your files are safe".
+    bfiles=$(sed -n 's/^files=//p' "$OUT/ferry.done" 2>/dev/null | head -1)
     [ "$brc" = 0 ] && return 0
     say "result=failed"
     say "code=$brc"
     case "$brc" in
-      2) say "note=some of your files could not be saved in Windows first, so Windows was not put back" ;;
-      3) say "note=Windows was not shut down properly, so your files could not be saved in it first; start Windows, shut it down fully, then try again" ;;
-      4) say "note=there is not enough room in Windows to save your files first, so Windows was not put back" ;;
-      5) say "note=your files could not be saved in Windows first (its drive could not be opened), so Windows was not put back" ;;
-      *) say "note=your files could not be saved in Windows first, so Windows was not put back" ;;
+      2) say "note=some of your files could not be saved in Windows first, so Windows was not put back. The ones that could be saved are in Windows, in the folder From AurOS; nothing of yours was deleted" ;;
+      3) say "note=Windows was not shut down properly, so your files could not be saved in it first; start Windows, shut it down fully, then try again. Nothing of yours was deleted" ;;
+      4) say "note=there is not enough room in Windows to save your files first, so Windows was not put back. Nothing of yours was deleted" ;;
+      5) say "note=your files could not be saved in Windows first (its drive could not be opened, for example because it is locked), so Windows was not put back. Nothing of yours was deleted" ;;
+      7) say "note=your files could not be saved in Windows first, because no Windows drive was found on this computer, so Windows was not put back. Nothing of yours was deleted" ;;
+      *) say "note=your files could not be saved in Windows first, so Windows was not put back. Nothing of yours was deleted" ;;
     esac
     return 1
 }
@@ -319,6 +323,8 @@ case "$word" in
         fi
     else
         say "result=ok"
+        # How many files are in Windows now (0: she had none to save).
+        say "saved=${bfiles:-0}"
         say "note=restarting to put Windows back"
         putback_restart=1
     fi

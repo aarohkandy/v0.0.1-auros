@@ -591,10 +591,36 @@ assert "the names that had to change are in the note, in her words" \
 assert "a note for her is in the folder, with Windows line endings" sh -c "grep -q 'files you saved while you used AurOS' '$FA/Read me.txt' && grep -q \"$(printf '\r')\" '$FA/Read me.txt'"
 ( cd "$BK" && find . -type f -not -path './users/Bob/From AurOS/*' -exec stat -c '%n %s %Y' {} + | sort ) > "$TMP/bk.after"
 assert "nothing else on the Windows drive changed" cmp -s "$TMP/bk.before" "$TMP/bk.after"
-eq "what she reads is plain" "$(grep -cvE '^(Getting ready to save your files in Windows\.|Saving your [A-Za-z]+ in Windows: [0-9,]+ of [0-9,]+ files\.( (Less than a minute|About (a|[0-9]+) minutes?|About (an|[0-9]+) hours?) left\.)?|Your files are saved in Windows, in the folder "From AurOS"\.)$' "$TMP/back1.out")" 0
-assert "...ending with the sentence that says it is done" sh -c "tail -1 '$TMP/back1.out' | grep -q 'Your files are saved in Windows'"
+eq "what she reads is plain" "$(grep -cvE '^(Getting ready to save your files in Windows\.|Saving your [A-Za-z]+ in Windows: [0-9,]+ of [0-9,]+ files\.( (Less than a minute|About (a|[0-9]+) minutes?|About (an|[0-9]+) hours?) left\.)?|Your [0-9,]+ files are saved in Windows, in the folder "From AurOS"\.)$' "$TMP/back1.out")" 0
+assert "...ending with the sentence that says how many are saved" sh -c "tail -1 '$TMP/back1.out' | grep -qE '^Your [0-9]+ files are saved in Windows'"
 assert "the completion signal says: back, ok, and how many files" \
     sh -c "grep -qx 'kind=back' '$TMP/back1.done' && grep -qx 'result=ok' '$TMP/back1.done' && grep -qE '^files=[0-9]+\$' '$TMP/back1.done' && ! grep -qx 'files=0' '$TMP/back1.done'"
+
+# She has no files in AurOS yet: it is said, not "saved".
+BKE="$TMP/win-back-empty"; cp -r "$WIN" "$BKE"; hers "$BKE"
+AHE="$TMP/aurhome-empty"; mkdir -p "$AHE"; hers "$AHE"
+env FERRY_CHOICES="$TMP/run-choices" FERRY_STATE="$TMP/state-backE" FERRY_ROOT="$BKE" FERRY_HOME="$AHE" \
+    FERRY_OWNER="$OWNER" FERRY_SIGNAL="$TMP/backE.done" ferry back --plain > "$TMP/backE.out" 2>&1
+eq "no files in AurOS to save: exit 0" "$?" 0
+eq "...and she is told that, not that her files are saved" "$(tail -1 "$TMP/backE.out")" "You had no files to save in Windows."
+
+# With nothing to save, the Windows drive is not looked at: a Windows that
+# was not shut down properly (or is locked, or absent) does not hold up
+# Put Windows back for someone with an empty AurOS home.
+BKH="$TMP/win-back-hib"; sh "$HERE/mkfakewin.sh" "$BKH" --hibernated >/dev/null; hers "$BKH"
+env FERRY_CHOICES="$TMP/run-choices" FERRY_STATE="$TMP/state-backH" FERRY_ROOT="$BKH" FERRY_HOME="$AHE" \
+    FERRY_OWNER="$OWNER" FERRY_SIGNAL="$TMP/backH.done" ferry back --plain > "$TMP/backH.out" 2>&1
+eq "nothing to save: a hibernated Windows is not even looked at (exit 0, not 3)" "$?" 0
+# A shortcut where a folder should be is something to save (and is stopped on).
+AHL="$TMP/aurhome-link"; mkdir -p "$AHL"; ln -s /etc "$AHL/Documents"; hers "$AHL"
+env FERRY_CHOICES="$TMP/run-choices" FERRY_STATE="$TMP/state-backL" FERRY_ROOT="$BKE" FERRY_HOME="$AHL" \
+    FERRY_OWNER="$OWNER" FERRY_SIGNAL="$TMP/backL.done" ferry back --plain > "$TMP/backL.out" 2>&1
+eq "a shortcut where Documents should be counts as something to save (stops: exit 2)" "$?" 2
+# Only the files an editor leaves about: nothing to save.
+AHT="$TMP/aurhome-trash"; mkdir -p "$AHT/Documents/.Trash-1000"; echo x > "$AHT/Documents/.Trash-1000/a"; echo l > "$AHT/Documents/.~lock.a#"; hers "$AHT"
+env FERRY_CHOICES="$TMP/run-choices" FERRY_STATE="$TMP/state-backT" FERRY_ROOT="$BKH" FERRY_HOME="$AHT" \
+    FERRY_OWNER="$OWNER" FERRY_SIGNAL="$TMP/backT.done" ferry back --plain > "$TMP/backT.out" 2>&1
+eq "a trash folder and an editor's lock file are not files to save (exit 0, drive not looked at)" "$?" 0
 
 # Run again: nothing is saved twice.
 BKENV 1 "$BK" ferry back --plain > /dev/null 2>&1
@@ -733,7 +759,7 @@ eq "room for the files but not for AurOS's own reserve (500 MB free): refused to
 FERRY_STATE="$TMP/state-room3" ferry-files --root "$WIN" --home "$H6" --owner "$OWNER" >/dev/null 2>&1
 FERRY_ROOM_BYTES=1000 FERRY_STATE="$TMP/state-room3" ferry-files --root "$WIN" --home "$H6" --owner "$OWNER" >/dev/null 2>&1
 case "$?" in 0|2) ok "a resumed import is not refused for room (what is there would be counted twice)" ;;
-             *) bad "a resumed import is not refused for room" ;; esac
+             *) bad "a resumed import is not refused for room (what is there would be counted twice)" ;; esac
 FERRY_ROOM_BYTES=5000000 FERRY_STATE="$TMP/state-w9" FERRY_ROOT="$WIN" FERRY_HOME="$TMP/home-room-run2" FERRY_OWNER="$OWNER" \
     FERRY_SIGNAL="$TMP/w9.done" ferry run --auto >/dev/null 2>&1
 eq "ferry run with no room says so: exit 4" "$?" 4
