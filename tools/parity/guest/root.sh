@@ -6,6 +6,8 @@ chmod 666 /dev/ttyS0 2>/dev/null
 mkdir -p /var/lib/auros-parity /var/lib/auros-parity/out
 u=$(sed -n 's/^default_user *= *//p' /etc/auros/policy.conf | tr -d ' ')
 chown -R "${u:-auros}" /var/lib/auros-parity
+# the test user may read the system journal and kernel log (AppArmor denials), for its diagnostics
+usermod -aG systemd-journal,adm "${u:-auros}" 2>/dev/null
 # vivid is the kernel's own virtual webcam (the image blacklists it: auros-hardening.conf, so --ignore-install): a V4L2 capture device that shows
 # a test picture, no feeder program needed. (v4l2loopback is in the kernel
 # too, but needs ffmpeg or gstreamer to feed it, and the image has neither.)

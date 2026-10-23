@@ -199,9 +199,12 @@ jobs:
             for f in parity-out/$d/screenshots/*.png; do [ -f "$f" ] && cp "$f" "parity-out/assets/$d-$(basename "$f")"; done
           done
           existing=(parity-out/assets/*)
-          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
-              --title "parity: everyday tasks, run $GITHUB_RUN_ID" --notes-file parity-out/notes.md "${existing[@]}" \
-            || gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber "${existing[@]}"
+          # At this commit if GitHub allows it, else at main: the token may not make a tag on a commit
+          # that changes a workflow file (HTTP 403 "Resource not accessible by integration").
+          mk() { gh release create "$TAG" -R "$GITHUB_REPOSITORY" --prerelease --target "$1" \
+                   --title "parity: everyday tasks, run $GITHUB_RUN_ID" --notes-file parity-out/notes.md; }
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || mk "$GITHUB_SHA" || mk main
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber "${existing[@]}"
           { echo; echo "Screenshots: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"; } >> "$GITHUB_STEP_SUMMARY"
           # only the newest six parity-* prereleases (our own evidence, not anybody's data)
           gh release list -R "$GITHUB_REPOSITORY" --limit 100 --json tagName,createdAt \

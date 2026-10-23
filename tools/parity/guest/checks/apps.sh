@@ -23,6 +23,7 @@ grep -v '^#' "$P/apps.tsv" | while IFS="$(printf '\t')" read -r id name what; do
     t0=$(date +%s)
     out=$(timeout 1500 flatpak install --system --noninteractive -y flathub "$id" 2>&1); rc=$?
     inst=$(( $(date +%s) - t0 ))
+    note "install $name rc=$rc: $(printf '%s' "$out" | tail -n 4 | tr '\n' '|' | cut -c1-300)"
     if [ "$rc" -ne 0 ]; then
         result "apps.$name" fail "did not install ($rc) after $inst s: $(printf '%s' "$out" | tail -n 2 | tr '\n' ' ' | cut -c1-240)"
         continue
@@ -47,6 +48,14 @@ grep -v '^#' "$P/apps.tsv" | while IFS="$(printf '\t')" read -r id name what; do
         say "do pixels apps-$name apps.$name.visible 260 130 1020 690 8"; sleep 2
         result "apps.$name" pass "installed in $inst s ($size), window \"$title\" opened $win s after the press"
     else
+        note "$name log: $(head -c 600 "$log" | tr '\n' '|')"
+        if [ -z "$DIAG" ]; then
+            DIAG=1
+            note "diag: userns restrict=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>&1) max_userns=$(cat /proc/sys/user/max_user_namespaces 2>&1) unshare=$(unshare -Ur true 2>&1 && echo ok) bwrap=$(bwrap --ro-bind / / true 2>&1 && echo ok) bwrap_mode=$(stat -c %a /usr/bin/bwrap)"
+            note "diag: flatpak run: $(flatpak run --command=true "$id" 2>&1 | head -c 400 | tr '\n' '|')"
+            note "diag: kernel: $(journalctl -k --no-pager -n 400 2>&1 | grep -ai 'apparmor\|denied' | tail -n 6 | cut -c1-250 | tr '\n' '|')"
+            note "diag: system: $(journalctl --no-pager -n 60 2>&1 | grep -ai 'flatpak\|bwrap\|ldconfig' | tail -n 6 | cut -c1-250 | tr '\n' '|')"
+        fi
         why=$(grep -ai 'cannot open display\|unable to open display\|could not connect\|Gtk-WARNING\|error' "$log" | head -2 | tr '\n' ' ' | cut -c1-200)
         x11=""; grep -aqi 'display' "$log" && x11=" (it wants an X11 display: this desktop has no Xwayland)"
         result "apps.$name" fail "installed in $inst s ($size) but no window in 90 s$x11: ${why:-$(tail -n 2 "$log" | tr '\n' ' ' | cut -c1-200)}"

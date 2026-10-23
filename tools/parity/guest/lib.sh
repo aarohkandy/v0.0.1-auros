@@ -1,5 +1,6 @@
 # sourced by run.sh and the checks. NOT PART OF AUROS.
 P=/usr/lib/auros-parity
+. "$P/config"      # CHECKS OPTS WITHOUT APT APPS (checks run as separate processes: the environment is not inherited)
 LOG=/var/lib/auros-parity/log
 say()    { printf '\nPARITY %s\n' "$*" > /dev/ttyS0 2>/dev/null; printf 'PARITY %s\n' "$*" >> "$LOG"; }
 result() { say "result $1 $2 $3"; }          # name pass|fail detail words
