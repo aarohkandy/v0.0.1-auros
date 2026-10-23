@@ -17,7 +17,7 @@ const time = { t: Date.now() };
 const handler = createApp({
   env: { TOKEN_SECRET: randomBytes(32).toString("hex"), ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY, POW_BITS: "8" },
   ledger: new Ledger(new MapStorage(), { budgetUsd: 1, quotaEstablished: 1000, quotaNew: 1000, establishDays: 7, registerPerNet: 10, maxInflight: 4 }),
-  anthropic: new Anthropic({ maxRetries: 2, timeout: 8000 }),
+  anthropic: new Anthropic({ maxRetries: 2, timeout: 8000, defaultHeaders: process.env.ANTHROPIC_WORKSPACE_ID ? { "anthropic-workspace-id": process.env.ANTHROPIC_WORKSPACE_ID } : undefined }),
   log: (o) => logs.push(o),
   now: () => (time.t = Date.now()),
 });

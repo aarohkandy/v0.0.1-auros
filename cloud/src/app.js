@@ -150,9 +150,7 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
 
   // Token, cost estimate, quota, pool and slot; then Claude. Returns {res}
   // (a ready error) or {out, settle}: settle(gotWish) must be called once.
-  async function guarded(request, route, system, user, schema, m) {
-    const tid = await tokenOf(request);
-    if (!tid || (cfg.banned.size && cfg.banned.has(await tagOf(tid)))) return { res: json(401, { error: "token" }) };
+  async function guarded(tid, route, system, user, schema, m) {
     if (!env.ANTHROPIC_API_KEY) { m.reason = "no_key"; return { res: busy(m) }; }
     const estUsd = ((system.length / 3 + user.length) * PRICE.in + MAX_TOKENS[route] * PRICE.out) / 1e6;
     if (estUsd > MAX_COST_USD) { m.reason = "cost"; return { res: busy(m) }; }
@@ -194,10 +192,19 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
     return json(503, { retry_after: retry, text: TEXT.resting }, { "retry-after": String(retry) });
   }
 
+  // The token is checked before the body is read: a stranger learns nothing
+  // and costs nothing.
+  async function authed(request) {
+    const tid = await tokenOf(request);
+    return tid && !(cfg.banned.size && cfg.banned.has(await tagOf(tid))) ? tid : null;
+  }
+
   async function wish(request, m) {
+    const tid = await authed(request);
+    if (!tid) return json(401, { error: "token" });
     const body = await readJson(request);
     if (!checkRequest("wish", body)) return json(400, { error: body && typeof body.text === "string" && [...body.text].length > MAX_TEXT ? "too_long" : "request" });
-    const g = await guarded(request, "wish", WISH_SYSTEM, wishMessage(body), WISH_OUTPUT, m);
+    const g = await guarded(tid, "wish", WISH_SYSTEM, wishMessage(body), WISH_OUTPUT, m);
     if (g.res) return g.res;
     const allowed = { triggers: body.schema.triggers, actions: body.schema.actions, sensors: body.sensors };
     const o = g.out;
@@ -221,9 +228,11 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
   }
 
   async function ask(request, m) {
+    const tid = await authed(request);
+    if (!tid) return json(401, { error: "token" });
     const body = await readJson(request);
     if (!checkRequest("ask", body)) return json(400, { error: body && typeof body.question === "string" && [...body.question].length > MAX_TEXT ? "too_long" : "request" });
-    const g = await guarded(request, "ask", ASK_SYSTEM, askMessage(body), ASK_OUTPUT, m);
+    const g = await guarded(tid, "ask", ASK_SYSTEM, askMessage(body), ASK_OUTPUT, m);
     if (g.res) return g.res;
     const o = g.out;
     const res = { help_page_id: o && typeof o.help_page_id === "string" && o.help_page_id !== "none" && ASK_OUTPUT.properties.help_page_id.enum.includes(o.help_page_id) ? o.help_page_id : null };
@@ -237,7 +246,7 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
   }
 
   async function forget(request) {
-    const tid = await tokenOf(request);
+    const tid = await authed(request);
     if (!tid) return json(401, { error: "token" });
     await ledger.forget({ tid, now: now() });
     return json(204, null);

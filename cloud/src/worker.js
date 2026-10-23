@@ -33,7 +33,14 @@ export default {
     return createApp({
       env,
       ledger: env.LEDGER.get(env.LEDGER.idFromName("ledger")),
-      anthropic: new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, baseURL: env.ANTHROPIC_BASE_URL || undefined, maxRetries: 2, timeout: 8_000 }),
+      anthropic: new Anthropic({
+        apiKey: env.ANTHROPIC_API_KEY,
+        baseURL: env.ANTHROPIC_BASE_URL || undefined,
+        // Only for a key that is not scoped to a workspace (docs/OWNER-SETUP.md 7).
+        defaultHeaders: env.ANTHROPIC_WORKSPACE_ID ? { "anthropic-workspace-id": env.ANTHROPIC_WORKSPACE_ID } : undefined,
+        maxRetries: 2,
+        timeout: 8_000,
+      }),
     })(request);
   },
 };

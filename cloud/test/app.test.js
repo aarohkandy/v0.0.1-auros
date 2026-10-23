@@ -33,6 +33,9 @@ test("every endpoint but register needs a valid token", async () => {
     }
   }
   assert.equal(app.calls.length, 0, "Claude is never called without a token");
+  for (const raw of ["", "{", "x".repeat(20_000), JSON.stringify({ text: "x".repeat(400) })]) {
+    assert.equal((await app.call("/v1/wish", null, { raw })).status, 401, "the token is checked before the body");
+  }
 });
 
 test("register needs the proof of work, for today", async () => {

@@ -60,6 +60,8 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || secrets.ANTHROPIC_API }}
       ALERT_URL: ${{ secrets.WISHES_ALERT_URL }}
+      # Only needed when the key is not scoped to a workspace (OWNER-SETUP 7); not secret.
+      ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID || secrets.ANTHROPIC_WORKSPACE_ID }}
     steps:
       - name: Secrets present?
         id: have
@@ -84,7 +86,9 @@ jobs:
         id: deploy
         if: steps.have.outputs.ok == 'true'
         run: |
-          timeout 300 npx --yes "$WRANGLER" deploy 2>&1 | tee deploy.log
+          extra=()
+          if [ -n "$ANTHROPIC_WORKSPACE_ID" ]; then extra=(--var "ANTHROPIC_WORKSPACE_ID:$ANTHROPIC_WORKSPACE_ID"); fi
+          timeout 300 npx --yes "$WRANGLER" deploy "${extra[@]}" 2>&1 | tee deploy.log
           url=$(grep -oE 'https://auros-wishes\.[a-z0-9-]+\.workers\.dev' deploy.log | head -1)
           if [ -z "$url" ]; then
             echo "::error::No workers.dev address in the deploy output. If it says to register a workers.dev subdomain: Cloudflare dashboard -> Workers & Pages -> pick a subdomain once (docs/OWNER-SETUP.md 7)."
