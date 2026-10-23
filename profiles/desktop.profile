@@ -115,6 +115,12 @@ keyboard_variant=""
 # avahi-daemon -- which build/harden's disable-publishing=yes blocks
 # (the first check on a booted image: plug an IPP-USB printer in and see
 # it in Printers; docs/handoff/streams/C.md).
+# libnss-mdns: a network printer is found by a name like printer.local, and
+# only this package lets anything on the computer turn such a name into an
+# address (the "mdns4_minimal [NOTFOUND=return]" word in the hosts line of
+# /etc/nsswitch.conf, which build/forge checks). Without it the printer is
+# listed and "Print" says nothing and prints nothing (PARITY, 17:50:
+# printer.local unresolvable). 0.1 MB; avahi-daemon, above, answers for it.
 packages_hardware="linux-firmware-minimal linux-image-generic
                    linux-firmware-amd-graphics linux-firmware-amd-misc
                    linux-firmware-intel-graphics linux-firmware-intel-misc
@@ -129,7 +135,7 @@ packages_hardware="linux-firmware-minimal linux-image-generic
                    network-manager wireless-tools wpasupplicant
                    polkitd
                    bluez
-                   cups cups-filters avahi-daemon avahi-utils
+                   cups cups-filters avahi-daemon avahi-utils libnss-mdns
                    ipp-usb
                    printer-driver-gutenprint printer-driver-hpcups
                    cups-pk-helper system-config-printer
@@ -317,8 +323,28 @@ browser_fallback="epiphany-browser"
 # The viewers are the light ones (XFCE and MATE) rather than the GNOME
 # ones: ristretto is 8 packages where eog is 14, and this is a machine
 # from 2013.
+#
+#   libreoffice-writer, -calc   Word and Excel files, and her own letters
+#              and tables (decision 14: Writer and Calc only; no Impress,
+#              Draw or Base, no Java). Debs from Ubuntu's main archive, so
+#              they get its security fixes. -gtk3 is the plug-in that makes
+#              them draw like every other program here (without it they
+#              fall back to a bare toolkit); carlito and caladea are the
+#              fonts a Word document says it was written in (metric
+#              copies of Calibri and Cambria), so a letter from a Windows
+#              friend keeps its line breaks. The cost on top of what is
+#              already here: about 75 packages, 344 MB installed, 103 MB
+#              to download (apt simulation on noble, Installed-Size).
+#   heif-gdk-pixbuf, libheif-plugin-libde265   a photo from an iPhone
+#              (.heic) opens in Photos instead of being a blank file.
+#   libglib2.0-bin   `gio`, which our xdg-open hands every "open this" to (so
+#              a program's request goes where a double-click would; named
+#              here so that it is installed on purpose, not by luck).
 packages_files="thunar thunar-volman gvfs gvfs-backends udisks2
                 ristretto evince mousepad xarchiver mpv mate-calc
+                libreoffice-writer libreoffice-calc libreoffice-gtk3
+                fonts-crosextra-carlito fonts-crosextra-caladea
+                heif-gdk-pixbuf libheif-plugin-libde265 libglib2.0-bin
                 shared-mime-info desktop-file-utils xdg-user-dirs"
 
 # The browse-and-install store. Heavier than everything above put

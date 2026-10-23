@@ -1,0 +1,20 @@
+#!/bin/sh
+# xdg-open, the AurOS way: open what a program asked for exactly as the file
+# manager would. See stage_xdg_open in build/forge for why.
+#
+#   xdg-open FILE | URL
+#
+# Exit codes are xdg-open's: 0 it was opened, 1 bad usage, 4 it could not be.
+REAL=${XDG_OPEN_REAL:-/usr/bin/xdg-open.distrib}     # (the test points this elsewhere)
+if [ $# -ne 1 ] || [ "${1#-}" != "$1" ]; then          # --help, --version, several arguments
+    [ -x "$REAL" ] && exec "$REAL" "$@"
+    echo "usage: xdg-open { file | URL }" >&2
+    exit 1
+fi
+if command -v gio >/dev/null 2>&1; then
+    gio open "$1" && exit 0
+    exit 4
+fi
+[ -x "$REAL" ] && exec "$REAL" "$@"
+echo "xdg-open: nothing to open $1 with" >&2
+exit 3

@@ -84,7 +84,7 @@ _Static_assert((int)WREQ_MOVE == (int)AURWL_REQ_MOVE && (int)WREQ_MAXIMIZE == (i
                (int)WREQ_RESTORE == (int)AURWL_REQ_RESTORE && (int)WREQ_MINIMIZE == (int)AURWL_REQ_MINIMIZE &&
                (int)WREQ_FULLSCREEN == (int)AURWL_REQ_FULLSCREEN &&
                (int)WREQ_UNFULLSCREEN == (int)AURWL_REQ_UNFULLSCREEN,
-               "the shell's request bits are the compositor's");
+               "the two sets of request bits agree");
 
 void session_sync(shell_ctx *c, const shell_layout *L)
 {

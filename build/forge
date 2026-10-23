@@ -473,6 +473,49 @@ stage_flathub() {
     warn_note "flathub=first-online"
 }
 
+# A network printer is found by a name such as printer.local, and only the
+# mdns4_minimal module turns that into an address. libnss-mdns's own
+# postinst is meant to add it to the hosts line; whether it does is not
+# something a printer that prints nothing can tell her, so it is made
+# certain here, and checked by tools/everydaytest.sh.
+stage_mdns() {
+    local _ns="$RFS/etc/nsswitch.conf"
+    if [ ! -f "$RFS/usr/lib/x86_64-linux-gnu/libnss_mdns4_minimal.so.2" ]; then
+        warn "libnss-mdns is not installed: printer.local cannot be found"
+        return 0
+    fi
+    [ -f "$_ns" ] || { warn "no /etc/nsswitch.conf to add mDNS to"; return 0; }
+    if grep -q '^hosts:.*mdns4_minimal' "$_ns"; then
+        note "mDNS names resolve (hosts: already says so)"
+        return 0
+    fi
+    # Before dns, and answered for a .local name only: [NOTFOUND=return]
+    # stops the search there, so an ordinary name still goes to dns.
+    sed -i -E 's/^(hosts:[[:space:]]+)(.*)\<dns\>/\1\2mdns4_minimal [NOTFOUND=return] dns/' "$_ns"
+    grep -q '^hosts:.*mdns4_minimal' "$_ns" \
+        || sed -i -E 's/^(hosts:[[:space:]]+.*)$/\1 mdns4_minimal [NOTFOUND=return] dns/' "$_ns"
+    grep -q '^hosts:.*mdns4_minimal' "$_ns" || die "could not add mDNS to /etc/nsswitch.conf"
+    note "mDNS names resolve: $(grep '^hosts:' "$_ns")"
+}
+
+# xdg-open, the program every other program calls to open a file or a link.
+# xdg-utils' own cannot tell what a local file IS unless the `file` program
+# is installed (xdg-mime query filetype fails, exit 4): a PDF, a photo or a
+# Word document a program asked to open went to the browser instead (PARITY).
+# GLib's `gio open` reads the same database and the same mimeapps.list the
+# file manager uses, so a double-click and a program's request end up in the
+# same place. The original is kept beside it (dpkg-divert, so a new xdg-utils
+# from Ubuntu does not take ours away) and is the fallback when gio is absent.
+stage_xdg_open() {
+    [ -x "$RFS/usr/bin/xdg-open" ] || { note "no xdg-open to replace"; return 0; }
+    if ! inchroot "dpkg-divert --local --rename --divert /usr/bin/xdg-open.distrib --add /usr/bin/xdg-open" >/dev/null 2>&1; then
+        warn "could not divert xdg-open; programs will open her files in the browser"
+        return 0
+    fi
+    install -m 0755 "$ROOT/rootfs/usr/bin/xdg-open" "$RFS/usr/bin/xdg-open"
+    note "xdg-open opens her files like the file manager does"
+}
+
 # ── what opens what ───────────────────────────────────────────────
 #
 # Installing a viewer is not the same as a file opening. Every one of
@@ -507,12 +550,47 @@ image/gif=org.xfce.ristretto.desktop
 image/bmp=org.xfce.ristretto.desktop
 image/tiff=org.xfce.ristretto.desktop
 image/webp=org.xfce.ristretto.desktop
+image/heic=org.xfce.ristretto.desktop
+image/heif=org.xfce.ristretto.desktop
 
 # Documents she is most likely to have brought with her
 application/pdf=org.gnome.Evince.desktop
 text/plain=org.xfce.mousepad.desktop
 text/markdown=org.xfce.mousepad.desktop
-text/csv=org.xfce.mousepad.desktop
+
+# Word and Excel files, and their open-format twins. A .docx IS a zip file,
+# so without these lines it opened the archive manager (PARITY): a person
+# who double-clicked a letter saw a list of XML files.
+application/vnd.openxmlformats-officedocument.wordprocessingml.document=libreoffice-writer.desktop
+application/vnd.openxmlformats-officedocument.wordprocessingml.template=libreoffice-writer.desktop
+application/msword=libreoffice-writer.desktop
+application/vnd.oasis.opendocument.text=libreoffice-writer.desktop
+application/rtf=libreoffice-writer.desktop
+application/vnd.openxmlformats-officedocument.spreadsheetml.sheet=libreoffice-calc.desktop
+application/vnd.ms-excel=libreoffice-calc.desktop
+application/vnd.oasis.opendocument.spreadsheet=libreoffice-calc.desktop
+text/csv=libreoffice-calc.desktop
+
+# A presentation: Impress is not on this image (decision 14). Opening one says
+# so in her words and opens the store, instead of showing the inside of the
+# file (rootfs/usr/lib/auros/program-file).
+application/vnd.openxmlformats-officedocument.presentationml.presentation=auros-program-file.desktop
+application/vnd.openxmlformats-officedocument.presentationml.slideshow=auros-program-file.desktop
+application/vnd.ms-powerpoint=auros-program-file.desktop
+application/vnd.oasis.opendocument.presentation=auros-program-file.desktop
+
+# Films and music
+video/mp4=mpv.desktop
+video/x-matroska=mpv.desktop
+video/webm=mpv.desktop
+video/mpeg=mpv.desktop
+video/quicktime=mpv.desktop
+video/x-msvideo=mpv.desktop
+audio/mpeg=mpv.desktop
+audio/mp4=mpv.desktop
+audio/x-wav=mpv.desktop
+audio/flac=mpv.desktop
+audio/ogg=mpv.desktop
 
 # Zip files and the rest
 application/zip=xarchiver.desktop
@@ -543,6 +621,24 @@ EOL
     else
         warn "no browser .desktop found; links have no default program"
     fi
+
+    # LAST in the file: anything appended after this line would be read as a
+    # removed association.
+    #
+    # The archive manager must never be what a document opens in. Office files
+    # are zip files underneath, so it claims them by inheritance; Impress is
+    # not on this image (decision 14), so a presentation opens nothing rather
+    # than the inside of itself.
+    cat >> "$RFS/etc/xdg/mimeapps.list" <<'EOL'
+
+[Removed Associations]
+application/vnd.openxmlformats-officedocument.wordprocessingml.document=xarchiver.desktop;
+application/vnd.openxmlformats-officedocument.spreadsheetml.sheet=xarchiver.desktop;
+application/vnd.openxmlformats-officedocument.presentationml.presentation=xarchiver.desktop;
+application/vnd.oasis.opendocument.text=xarchiver.desktop;
+application/vnd.oasis.opendocument.spreadsheet=xarchiver.desktop;
+application/vnd.oasis.opendocument.presentation=xarchiver.desktop;
+EOL
 
     # ── what these programs are CALLED ─────────────────────────────
     #
@@ -619,7 +715,13 @@ org.xfce.ristretto|Photos|Look at your pictures
 org.xfce.mousepad|Notes|Write and read plain notes
 xarchiver|Zip files|Open or make a zip file
 org.gnome.Software|Get more programs|Find and add programs
+libreoffice-writer|Letters|Write a letter, or open a Word file
+libreoffice-calc|Spreadsheets|Numbers in tables, or open an Excel file
 EOL
+
+    # ── a network printer's name, and opening her files ────────────
+    stage_mdns
+    stage_xdg_open
 
     # The database the desktop actually reads. Without this the file
     # above is a text file nobody consults.

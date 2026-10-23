@@ -97,6 +97,37 @@ else
     fail=$((fail + 1))
 fi
 
+# ── and is every everyday kind of file spoken for? ─────────────────
+#
+# A kind of file nobody is named for opens with whatever the database ranks
+# first. For a Word or Excel file that was the archive manager (a .docx is
+# a zip file underneath), and for a photo from a phone, nothing at all.
+# These are the kinds she brings with her.
+echo
+echo "and is every everyday kind of file spoken for?"
+for mime in application/pdf image/jpeg image/png image/gif image/heic \
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document \
+            application/msword application/vnd.oasis.opendocument.text \
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet \
+            application/vnd.ms-excel application/vnd.oasis.opendocument.spreadsheet \
+            text/csv text/plain audio/mpeg video/mp4 application/zip; do
+    checked=$((checked + 1))
+    who=$(printf '%s\n' "$LIST" | sed -n "s|^$mime=||p" | head -1)
+    if [ -z "$who" ]; then
+        printf '  %-72s NOBODY\n' "$mime"
+        fail=$((fail + 1))
+    else
+        printf '  %-72s %s\n' "$mime" "$who"
+    fi
+done
+# ...and none of the office kinds is the archive manager's.
+for mime in $(printf '%s\n' "$LIST" | sed -n 's|^\(application/vnd\.[^=]*\)=xarchiver\.desktop$|\1|p'); do
+    case "$mime" in application/vnd.openxmlformats*|application/vnd.oasis*|application/vnd.ms-*)
+        printf '  %-72s xarchiver.desktop   (a document opens the inside of itself)\n' "$mime"
+        fail=$((fail + 1)) ;;
+    esac
+done
+
 # ── and is each one CALLED something she would recognise ───────────
 #
 # forge also ships a plain-language rename for the handful of programs

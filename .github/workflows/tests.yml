@@ -277,6 +277,9 @@ jobs:
       - name: nmtest (the image's NetworkManager - the cable is managed, names resolve)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: RFS=work/forge/desktop/rootfs sh tools/nmtest.sh 2>&1 | tee transcripts/nmtest.txt
+      - name: everydaytest (printer.local resolves; Word and Excel open in Writer and Calc; every program's open goes where a double-click would)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: RFS=work/forge/desktop/rootfs sh tools/everydaytest.sh 2>&1 | tee transcripts/everydaytest.txt
       - name: updatepolicytest (everything updates by itself; nothing interrupts her; the image's key)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sudo bash tools/updatepolicytest.sh static work/forge/desktop/rootfs 2>&1 | tee transcripts/updatepolicytest.txt

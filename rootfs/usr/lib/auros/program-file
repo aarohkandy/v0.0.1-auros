@@ -1,5 +1,6 @@
 #!/bin/sh
-# program-file — what happens when she opens a program's installer file.
+# program-file — what happens when she opens a program's installer file, or a
+# kind of file whose program is not on this computer (a presentation).
 #
 # A .deb used to open gdebi, which installed it as root with no password
 # (a polkit grant made for it). That grant is gone: programs come from
@@ -8,6 +9,11 @@
 # across -- says that in her words and opens the store, rather than
 # showing an Install button that can no longer work.
 case "$1" in
+    *.[pP][pP][tT]|*.[pP][pP][tT][xX]|*.[pP][pP][sS]|*.[pP][pP][sS][xX]|*.[oO][dD][pP])
+        # A presentation: no program for it is on this computer (the letters
+        # and tables program is; the slides one is not).
+        s="This needs a program that is not here yet"
+        b="Get more programs has programs that open presentations." ;;
     *.[eE][xX][eE]|*.[mM][sS][iI])
         s="This program is for Windows"
         b="It cannot run on AurOS. Get more programs has programs for this computer, and many do the same job." ;;
