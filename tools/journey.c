@@ -243,6 +243,27 @@ int main(int argc, char **argv)
     settle();
     shot("desktop");
 
+    /* 3d. Help, on a computer that has Wishes: the two buttons under "Show me how". */
+    {
+        int had = shell_wish_app(&c) >= 0, added = 0;
+        if (!had && c.n_apps < SHELL_MAX_APPS) {
+            memset(&c.apps[c.n_apps], 0, sizeof c.apps[0]);
+            c.apps[c.n_apps].role = APP_ROLE_WISH;
+            snprintf(c.apps[c.n_apps].id, sizeof c.apps[0].id, "wish");
+            c.n_apps++; added = 1;
+        }
+        c.help_open = 1;
+        shot("help");
+        /* Every sentence on the panel is ON the panel (not under the band). */
+        for (int i = 0; i < shell_text_log_n; i++)
+            if (shell_text_log[i].w > 0 && shell_text_log[i].y + shell_text_log[i].h > c.screen_h + 2 &&
+                shell_text_log[i].y < c.screen_h + 200 &&
+                strstr(shell_text_log[i].s, "Press Help again") != NULL)
+                printf("   HELP TEXT OFF THE PANEL: %s\n", shell_text_log[i].s);
+        c.help_open = 0;
+        if (added) c.n_apps--;
+    }
+
     /* 4. Online: her own wifi came across from Windows and is in use. */
     {
         static char list[] = "*:Sky-8F2A:76:WPA2\n :BT-HomeHub-2200:52:WPA2\n :Ann's iPhone:38:WPA2\n";

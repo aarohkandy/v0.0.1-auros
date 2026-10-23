@@ -108,6 +108,11 @@ int  foot_help_open(const shell_ctx *c);
  * computer. */
 #define FOOT_HELP_PAGES "/usr/share/auros/help/index.html"
 int  foot_help_button(const shell_ctx *c, int sw, int sh, rect *out);
+/* The two Wishes buttons under it ("What my wishes did today", "Stop all
+ * wishes"), idx 0 and 1, only when Wishes are on this computer
+ * (shell_wish_app >= 0). They set c->want_wish (WISH_CMD_*, wish.h) and the
+ * host loop carries it out: this file never calls into wish.c. */
+int  foot_help_wish(const shell_ctx *c, int sw, int sh, int idx, rect *out);
 /* Above it, whenever a program is open: "Get me out of this page",
  * which opens src/aurshell/guard.c's card. 0 when there is none. */
 int  foot_help_out(const shell_ctx *c, int sw, int sh, rect *out);

@@ -194,6 +194,36 @@ static void band(const char *label, int kiosk, int allow_settings,
                        RES[r].w, RES[r].h);
                 fail++;
             }
+            /* And the two Wishes buttons under it, on a computer that has Wishes. */
+            if (!kiosk) {
+                shell_ctx cw = c;
+                cw.n_apps = 1;
+                memset(&cw.apps[0], 0, sizeof cw.apps[0]);
+                cw.apps[0].role = APP_ROLE_WISH;
+                for (int wi = 0; wi < 2; wi++) {
+                    rect wr;
+                    if (!foot_help_wish(&cw, RES[r].w, RES[r].h, wi, &wr)) {
+                        printf("    FAIL no Wishes button %d at %dx%d\n", wi + 1, RES[r].w, RES[r].h);
+                        fail++;
+                        continue;
+                    }
+                    char nm[64];
+                    snprintf(nm, sizeof nm, "help wish button %d (text %.0f%%)", wi + 1,
+                             (double)(SCALES[k] * 100.f));
+                    measure(nm, wr, RES[r].w, RES[r].h);
+                    if (wr.x < 0 || wr.y < 0 || wr.x + wr.w > RES[r].w || wr.y + wr.h > cw.screen_h) {
+                        printf("    FAIL help wish button %d is outside the screen at %dx%d text %.0f%%\n",
+                               wi + 1, RES[r].w, RES[r].h, (double)(SCALES[k] * 100.f));
+                        fail++;
+                    }
+                }
+                /* Without Wishes there are none. */
+                rect nw;
+                if (foot_help_wish(&c, RES[r].w, RES[r].h, 0, &nw)) {
+                    printf("    FAIL Wishes buttons shown on a computer without Wishes\n");
+                    fail++;
+                }
+            }
         }
 }
 

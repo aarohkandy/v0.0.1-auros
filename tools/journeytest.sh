@@ -65,6 +65,10 @@ for look in taskbar dock rail tiles; do
             || { ok "$look $1x$2: the journey ran" 1; continue; }
         at="$look $1x$2"
         said "$log" "-asks.png"    | grep -qx '   Does everything work?';     ok "$at: the first start asks" $?
+        said "$log" "-help.png"    | grep -qx '   What my wishes did today' && said "$log" "-help.png" | grep -qx '   Stop all wishes'
+        ok "$at: Help, on a computer with Wishes, has its two buttons" $?
+        said "$log" "-help.png"    | grep -qx '   Press Help again to close this.' && ! grep -q 'HELP TEXT OFF THE PANEL' "$log"
+        ok "$at: ...and every sentence of Help is on the panel" $?
         # Her files (docs/FERRY.md): whose, while they come, none; the USB stick; why Windows
         # could not hold them. Every sentence on them is read at 18 px or more.
         said "$log" "-whose.png"   | grep -qx '   Whose files?';              ok "$at: several Windows people: Whose files?" $?

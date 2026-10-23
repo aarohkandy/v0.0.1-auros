@@ -437,7 +437,7 @@ static void wired(const char *main_c)
     ok("every key meets guard_watch_key before any program or the volume keys",
        watch && media && sess && watch < media && watch < sess);
     ok("the card answers the keyboard first when it is up",
-       strstr(s, "if      (c.guard_open)    guard_key(&c, ev.code);") != NULL);
+       strstr(s, "(c.guard_open)    guard_key(&c, ev.code);") != NULL);   /* "if" or "else if": Wishes' fill is asked first */
     char *gp = strstr(s, "guard_paint(&c, fb, &f);");
     char *wp = strstr(s, "welcome_paint(&c, fb, &f);");
     char *fp = strstr(s, "foot_paint(&c, fb, &f);");

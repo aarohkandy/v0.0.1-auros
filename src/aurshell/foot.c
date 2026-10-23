@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include "foot.h"
+#include "wish.h"
 #include "draw.h"
 #include "anim.h"
 
@@ -251,6 +252,7 @@ int foot_help_open(const shell_ctx *c) { return c && c->help_open; }
  * step. First on the panel, because it is the thing she came for. */
 #define HOVER_PAGES (-200)       /* foot_hover; the power choices use -10x */
 #define HOVER_OUT   (-201)
+#define HOVER_WISH0 (-202)       /* and -203 */
 
 /* "Get me out of this page" (src/aurshell/guard.c), above it whenever a
  * program is open: a frightened person presses Help (docs/EASY.md rule
@@ -281,6 +283,32 @@ int foot_help_button(const shell_ctx *c, int sw, int sh, rect *out)
     if (foot_help_out(c, sw, sh, &o)) y = o.y + o.h + (int)(12.f * k);
     *out = (rect){ gx, y, w, h };
     return 1;
+}
+
+int foot_help_wish(const shell_ctx *c, int sw, int sh, int idx, rect *out)
+{
+    if (!c || c->kiosk || idx < 0 || idx > 1 || shell_wish_app(c) < 0) return 0;
+    float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
+    int gx = sw / 12; if (gx < 20) gx = 20;
+    int gap = (int)(12.f * k);
+    /* Side by side: one row, so the sentences below still fit at 1024 x 600. */
+    int w = (int)(440.f * k); if (w > (sw - 2 * gx - gap) / 2) w = (sw - 2 * gx - gap) / 2;
+    int h = (int)(56.f * k);  if (h < FOOT_TARGET) h = FOOT_TARGET;
+    rect prev;
+    int y;
+    if (foot_help_button(c, sw, sh, &prev)) y = prev.y + prev.h + gap;
+    else { y = sh / 12; if (foot_help_out(c, sw, sh, &prev)) y = prev.y + prev.h + gap; }
+    *out = (rect){ gx + idx * (w + gap), y, w, h };
+    return 1;
+}
+
+static int wish_button_at(const shell_ctx *c, int x, int y)
+{
+    rect r;
+    for (int i = 0; i < 2; i++)
+        if (foot_help_wish(c, c->screen_w, c->screen_h + foot_height(c), i, &r) &&
+            x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return i + 1;
+    return 0;
 }
 
 static int out_button_at(const shell_ctx *c, int x, int y)
@@ -428,6 +456,25 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
             x = hb.x;
             y = hb.y + hb.h + (int)(28.f * k);
         }
+        /* Wishes, when they are on this computer: outlined, so "Show me how" stays
+         * the one lit thing. */
+        for (int wi = 0; wi < 2; wi++) {
+            if (!foot_help_wish(c, s->w, s->h, wi, &hb)) continue;
+            float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
+            draw_rect(s, hb, FOOT_BG, 1.f);
+            draw_frame(s, hb, 2, FOOT_INK, 1.f);
+            if (c->foot_hover == HOVER_WISH0 - wi)
+                draw_frame(s, (rect){ hb.x - 4, hb.y - 4, hb.w + 8, hb.h + 8 }, 2, FOOT_INK, 1.f);
+            font *nm = f->mid ? f->mid : f->small;
+            if (nm)
+                shell_text_elided(s, nm, (float)hb.x + 18.f,
+                                  shell_baseline(nm, (float)hb.y, (float)hb.h),
+                                  (float)hb.w - 36.f,
+                                  wi == 0 ? "What my wishes did today" : "Stop all wishes",
+                                  FOOT_INK, 1.f);
+            x = (int)((float)(s->w / 12) < 20.f ? 20 : s->w / 12);
+            y = hb.y + hb.h + (int)(28.f * k);
+        }
         if (big) {
             shell_text(s, big, (float)x, (float)y + font_ascent(big),
                        "Where you are", FOOT_INK, 1.f);
@@ -452,11 +499,32 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
                 "Press Help again to close this.",
                 NULL
             };
+            /* ALL OF IT ON THE PANEL. At 1024 x 600 the last two lines (Turn off, and how
+             * to close this) went under the band, and with the buttons above it more
+             * did. When it does not fit, the blank lines between the thoughts give up
+             * room first, then the space between lines; the sentences never do. */
+            int n = 0, blanks = 0;
+            for (; LINES[n]; n++) if (!LINES[n][0]) blanks++;
+            int real = n - blanks;                            /* sentences */
+            float flh = font_line_height(body);
+            float room = (float)(top - y) - 4.f;
+            /* the last sentence needs its own height, not a whole line step */
+            #define HELP_NEED(L, G) ((float)(real - 1) * (L) + (float)blanks * (G) + flh)
+            float gap = lh;                                   /* a blank line */
+            if (HELP_NEED(lh, gap) > room) gap = lh * 0.4f;
+            if (HELP_NEED(lh, gap) > room) {
+                gap = flh * 0.45f;
+                lh = (room - (float)blanks * gap - flh) / (float)(real - 1);
+                if (lh < flh * 1.05f) lh = flh * 1.05f;
+            }
+            #undef HELP_NEED
+            float fy = (float)y;
             for (int i = 0; LINES[i]; i++) {
-                if (LINES[i][0])
-                    shell_text(s, body, (float)x, (float)y + font_ascent(body),
+                if (LINES[i][0]) {
+                    shell_text(s, body, (float)x, fy + font_ascent(body),
                                LINES[i], FOOT_INK, 0.92f);
-                y += (int)lh;
+                    fy += lh;
+                } else fy += gap;
             }
         }
     }
@@ -535,6 +603,7 @@ void foot_motion(shell_ctx *c, int x, int y)
     }
     if (c->help_open && out_button_at(c, x, y)) { c->foot_hover = HOVER_OUT; return; }
     if (c->help_open && help_button_at(c, x, y)) { c->foot_hover = HOVER_PAGES; return; }
+    if (c->help_open) { int wb = wish_button_at(c, x, y); if (wb) { c->foot_hover = HOVER_WISH0 - (wb - 1); return; } }
     rect r[B_N]; int which[B_N];
     int n = foot_buttons(c, c->screen_w, c->screen_h + foot_height(c), r, which);
     for (int i = 0; i < n; i++)
@@ -701,6 +770,8 @@ int foot_click(shell_ctx *c, int x, int y)
     if (c->help_open && y < c->screen_h) {
         if (out_button_at(c, x, y)) { foot_open_only(c, &c->guard_open); return 1; }
         if (help_button_at(c, x, y)) open_help_pages(c);
+        int wb = wish_button_at(c, x, y);
+        if (wb) c->want_wish = (wb == 1) ? WISH_CMD_TODAY : WISH_CMD_STOP_ALL;
         c->help_open = 0;
         return 1;
     }
