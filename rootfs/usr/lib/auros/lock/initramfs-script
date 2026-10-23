@@ -21,6 +21,11 @@ done
 [ -n "$LOCK" ] || exit 0
 
 L=/usr/lib/auros/lock
+# What this script and its children say on stderr goes to the console
+# (the serial line in the VM test): a failure in here must not be
+# invisible, and the PIN page reports what it is doing the same way.
+exec 2>/dev/console
+mkdir -p /run/cryptsetup
 # Without device-mapper's udev rules in this initramfs, libdevmapper
 # would wait for a udev answer that never comes: it makes the node itself.
 export DM_DISABLE_UDEV=1

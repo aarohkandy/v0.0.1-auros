@@ -30,6 +30,10 @@ SHIFT=$((32 * 1024 * 1024))
 log()    { echo "auros-lock: $*" >&2; }
 refuse() { log "not encrypting: $*"; exit 1; }
 
+# cryptsetup refuses to run without its lock directory ("Locking aborted"),
+# and a bare initramfs does not have one.
+mkdir -p /run/cryptsetup 2>/dev/null
+ERR=${TMPDIR:-/tmp}/auros-lock.err
 cryptsetup isLuks "$DEV" 2>/dev/null && exit 0
 [ "$(blkid -o value -s TYPE "$DEV" 2>/dev/null)" = ext4 ] || refuse "$DEV is not ext4"
 
@@ -44,7 +48,7 @@ blocks=$(dumpe2fs -h "$DEV" 2>/dev/null | sed -n 's/^Block count: *//p')
 room=$(( (size - SHIFT) / 4096 * 4096 ))
 [ "$room" -gt $((1024 * 1024 * 1024)) ] || refuse "the partition is too small"
 if [ $((bs * blocks)) -gt "$room" ]; then
-    resize2fs "$DEV" "$((room / 1024))K" >/dev/null 2>&1 || refuse "the filesystem could not give up 32 MiB"
+    resize2fs "$DEV" "$((room / 1024))K" >"$ERR" 2>&1 || refuse "the filesystem could not give up 32 MiB: $(tail -2 "$ERR")"
 fi
 
 # A CPU with AES instructions: AES-XTS. Without (Atom, Celeron N, old
@@ -58,7 +62,7 @@ fi
 printf '%s' "$TEMP_KEY" | cryptsetup reencrypt --encrypt --init-only --batch-mode \
     --type luks2 --reduce-device-size 32M --sector-size 4096 \
     --cipher "$cipher" --key-size "$bits" --pbkdf pbkdf2 --pbkdf-force-iterations 1000 \
-    --key-slot 0 --key-file - "$DEV" >/dev/null 2>&1
+    --key-slot 0 --key-file - "$DEV" >"$ERR" 2>&1
 rc=$?
 # Even a failure can leave a header behind (a power cut between the
 # move and the end): then it is LUKS2, and opening it finishes the move.
@@ -66,4 +70,4 @@ if cryptsetup isLuks "$DEV" 2>/dev/null; then
     log "the drive is being encrypted ($cipher)"
     exit 0
 fi
-refuse "cryptsetup said $rc"
+refuse "cryptsetup said $rc: $(tail -3 "$ERR" | tr '\n' ' ')"
