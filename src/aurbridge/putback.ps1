@@ -55,6 +55,7 @@ function Status([string]$phase, [string]$text) {
 }
 function LP([string]$p) { if ($p.StartsWith('\\?\')) { $p } else { '\\?\' + $p } }
 function Sha256File([string]$path) {
+    if (-not $path) { throw 'Sha256File was given no path' }
     $h = [System.Security.Cryptography.SHA256]::Create()
     $s = [System.IO.File]::Open((LP $path), 'Open', 'Read', 'Read')
     try { $b = $h.ComputeHash($s) } finally { $s.Dispose(); $h.Dispose() }
@@ -256,7 +257,7 @@ if ($Mode -eq 'user') {
         if ($win) { $win.Form.Close() }
         exit $(if ($blocked -gt 0) { 1 } else { 0 })
     } catch {
-        Log ('stopped: ' + $_.Exception.Message)
+        Log ('stopped: ' + $_.Exception.Message + ' @ ' + (($_.ScriptStackTrace -split "`n") -join ' < '))
         exit 1
     }
 }
@@ -436,7 +437,7 @@ try {
     if ($t2 -gt $win.Size) { Resize-Partition -DiskNumber $disk.Number -PartitionNumber $win.PartitionNumber -Size $t2 }
     if ((Get-Partition -DiskNumber $disk.Number -PartitionNumber $win.PartitionNumber).Size -ge $w) { Finish }
 } catch {
-    Log ('stopped: ' + $_.Exception.Message)
+    Log ('stopped: ' + $_.Exception.Message + ' @ ' + (($_.ScriptStackTrace -split "`n") -join ' < '))
     Status 'error' 'AurOS could not finish putting your files in Windows. They are safe in the partition named AurOS-Handover, and this will try again the next time Windows starts.'
     exit 1
 }

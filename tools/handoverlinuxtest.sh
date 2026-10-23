@@ -72,28 +72,7 @@ mkdir -p "$T/home/Documents" "$T/home/Pictures"
 head -c 3000000 /dev/urandom > "$T/home/Documents/book.pdf"
 head -c 9000000 /dev/urandom > "$T/home/Pictures/photo one.jpg"
 printf 'hello\n' > "$T/home/Documents/note.txt"
-cat > "$T/ferry" <<'EOF'
-#!/bin/sh
-# Stand-in for Ferry: `handover --need`, and `back` writing docs/FERRY.md's layout
-# into the volume named by FERRY_HANDOVER_DEV.
-case "$1" in
-handover) echo "${FAKE_NEED:-$(( $(du -sb "$FAKE_HOME" | cut -f1) + 1048576 ))}" ;;
-back)
-    m=$(mktemp -d); mount -t exfat "$FERRY_HANDOVER_DEV" "$m" || exit 5
-    r="$m/AurOS-handover"; mkdir -p "$r/files"
-    printf '1\n' > "$r/version"
-    { printf '#ferry-handover\t1\n#windows-user\tBob\n'
-      (cd "$FAKE_HOME" && find . -type f | sed 's#^\./##' | sort | while IFS= read -r f; do
-          d=${f%%/*}; p=${f#*/}
-          mkdir -p "$r/files/$d/$(dirname "$p")"; cp "$FAKE_HOME/$f" "$r/files/$d/$p"
-          printf '%s\t%s\t%s\t%s\t1700000000\n' "$d" "$p" "$(stat -c %s "$FAKE_HOME/$f")" "$(sha256sum "$FAKE_HOME/$f" | cut -d' ' -f1)"
-      done)
-    } > "$r/manifest.tsv"
-    ( cd "$r" && sha256sum manifest.tsv ) > "$r/manifest.sha256"
-    printf 'ok\nfiles=3\nbytes=0\nat=now\n' > "$r/DONE"
-    sync; umount "$m"; rmdir "$m" ;;
-esac
-EOF
+cp tools/fakeferry.sh "$T/ferry"
 chmod +x "$T/ferry"
 export FAKE_HOME="$T/home"
 H="rootfs/usr/lib/auros/handover.sh"
@@ -171,8 +150,20 @@ AUROS_HANDOVER_RESERVE=999999999999 run sh "$H" prepare >/dev/null 2>&1; rc=$?
 
 # A root in pieces: fill the free space with small files and free every other one.
 # (Reserve 0 so the room is judged only by the pieces.)
-i=0; while [ "$i" -lt 120000 ] && head -c 4096 /dev/zero > "$STATE/f$i" 2>/dev/null; do i=$((i+1)); done 2>/dev/null
-n=0; while [ "$n" -lt "$i" ]; do rm -f "$STATE/f$n"; n=$((n+2)); done
+python3 - "$STATE" <<'EOPY'
+import os, sys
+d = sys.argv[1]; names = []
+try:
+    i = 0
+    while True:
+        p = "%s/f%d" % (d, i)
+        with open(p, "wb") as f: f.write(b"\0" * 4096)
+        names.append(p); i += 1
+except OSError:
+    pass
+for p in names[::2]:
+    os.unlink(p)
+EOPY
 sync
 AUROS_HANDOVER_RESERVE=0 FAKE_NEED=300000000 run sh "$H" prepare >/dev/null 2>&1; rc=$?
 [ "$rc" = 4 ] || [ "$rc" = 3 ] && ok "a root whose free space is in pieces: refused (exit $rc)" || bad "a root whose free space is in pieces: refused" "exit $rc"

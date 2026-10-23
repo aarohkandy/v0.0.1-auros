@@ -28,7 +28,8 @@
 #  QEMU, and the fault staging image: the powercut-nostick prerequisites.
 #
 #    sudo AURSTAGE_FAULT=1 ./build/staging && sudo sh tools/fasttest.sh [scenario ...]
-#    scenarios: happy bitlocker abort failures noroom cuts   (default: all)
+#    scenarios: happy bitlocker abort failures noroom cuts handover   (default: all)
+#    handover also needs exfatprogs and the exfat kernel driver (a2-kvm image).
 # ═══════════════════════════════════════════════════════════════════
 set -u
 cd "$(dirname "$0")/.."
@@ -59,7 +60,7 @@ trap _a2_clean EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-WANT="${*:-happy bitlocker abort failures noroom cuts}"
+WANT="${*:-happy bitlocker abort failures noroom cuts handover}"
 want() { case " $WANT " in *" $1 "*) return 0 ;; esac; return 1; }
 
 echo
@@ -502,6 +503,141 @@ for pt in gate mirror-end commit-array commit-sector commit-backup boot-entry se
         ;;
     esac
 done
+fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+#  Put Windows back WITH HER FILES (docs/AURBRIDGE.md, "the handover").
+#
+#  AurOS has run: her files are in an exFAT volume that lives in a file in AurOS's root
+#  (rootfs/usr/lib/auros/handover.sh, the REAL script; Ferry is a stand-in). The restore is
+#  then booted with the record it was given, and must leave the machine's own three
+#  partitions plus ONE more, AUROS-HANDOVER, over exactly those blocks -- and refuse, with
+#  the disk byte for byte unchanged, anything that is not that.
+# ═══════════════════════════════════════════════════════════════════
+if want handover; then
+echo
+echo "  Put Windows back with her files: the handover volume becomes a partition"
+command -v mkfs.exfat >/dev/null 2>&1 || { bad "mkfs.exfat is needed for this scenario (exfatprogs)"; WANT=""; }
+new_machine handover
+if [ -n "$WANT" ] && { ! run_engine || ! grep -q 'aurbridge-report v1 fast=1 ' "$S/out"; }; then
+    bad "the engine arms the machine for the handover" "$(tail -3 "$S/err")"
+elif [ -n "$WANT" ] && ! boot_staging "$S/disk.img" "aurstage.install aurstage.min_gb=1" "INSTALLTEST-AUROS-STARTED"; then
+    bad "AurOS is installed for the handover test" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -4)"
+elif [ -n "$WANT" ]; then
+cp --sparse=always "$MTMP/run.img" "$MTMP/inst.img"
+# AurOS "running": its root mounted from a loop device with partitions, her files made, the
+# real handover.sh run around a stand-in Ferry.
+LD0=$(losetup -fP --show "$MTMP/inst.img"); lb=$(basename "$LD0")
+for n in 1 2 3 4 5 6 7; do
+    [ -e "/dev/${lb}p$n" ] || { [ -e "/sys/class/block/${lb}p$n/dev" ] && mknod "/dev/${lb}p$n" b $(sed 's/:/ /' "/sys/class/block/${lb}p$n/dev"); }
+done
+set -- $(mach_part "$MTMP/inst.img" AUROS-ROOT); RN=$1
+mkdir -p "$MTMP/aroot" "$MTMP/her/Documents" "$MTMP/her/Pictures"
+head -c 4000000 /dev/urandom > "$MTMP/her/Documents/book.pdf"
+head -c 7000000 /dev/urandom > "$MTMP/her/Pictures/photo one.jpg"
+printf 'hello\n' > "$MTMP/her/Documents/note.txt"
+cp tools/fakeferry.sh "$MTMP/ferry"; chmod +x "$MTMP/ferry"
+export FAKE_HOME="$MTMP/her"
+if mount "/dev/${lb}p$RN" "$MTMP/aroot"; then
+    mkdir -p "$MTMP/aroot/var/lib/auros"
+    HENV="AUROS_STATE=$MTMP/aroot/var/lib/auros AUROS_FERRY=$MTMP/ferry AUROS_HANDOVER_RESERVE=1048576"
+    HDEV=$(env $HENV sh rootfs/usr/lib/auros/handover.sh prepare 2>"$MTMP/h.err")
+    if [ -n "$HDEV" ] && FERRY_HANDOVER_DEV="$HDEV" "$MTMP/ferry" back &&
+       REC=$(env $HENV sh rootfs/usr/lib/auros/handover.sh finish 2>>"$MTMP/h.err"); then
+        ok "AurOS made the handover volume and gave its address ($REC)"
+    else
+        bad "AurOS made the handover volume and gave its address" "$(cat "$MTMP/h.err")"; REC=""
+    fi
+    umount "$MTMP/aroot"
+else bad "AurOS's root mounts for the handover test"; REC=""; fi
+losetup -d "$LD0"
+if [ -n "${REC:-}" ]; then
+HFIRST=${REC%%,*}; _r=${REC#*,}; HCOUNT=${_r%%,*}; HSHA=${_r#*,}
+INST_SHA=$(whole_sha "$MTMP/inst.img")
+restore_end() { boot_staging "$1" "aurstage.restore $2" "aurstage-report v1 verdict=restore" 900; }
+
+# (1) the way it is meant to go
+if restore_end "$MTMP/inst.img" "aurstage.handover=$REC"; then
+    grep -aq 'verdict=restored' "$MTMP/out.txt" && grep -aq 'handover=1' "$MTMP/out.txt" \
+        && ok "Put Windows back keeps her files for Windows (verdict=restored, handover=1)" \
+        || bad "Put Windows back keeps her files for Windows" "$(grep -a 'aurstage-report' "$MTMP/out.txt" | tail -2)"
+else bad "the restore ends" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -4)"; fi
+R="$MTMP/run.img"
+set -- $(mach_part "$R" AUROS-HANDOVER)
+if [ -n "${1:-}" ]; then
+    [ "$2" = "$HFIRST" ] && [ $(( $3 - $2 + 1 )) = "$HCOUNT" ] \
+        && ok "AUROS-HANDOVER is exactly the blocks AurOS named ($2..$3)" \
+        || bad "AUROS-HANDOVER is exactly the blocks AurOS named" "table $2..$3, record $HFIRST+$HCOUNT"
+else bad "AUROS-HANDOVER is in the table"; fi
+[ "$(sgdisk -p "$R" 2>/dev/null | sed -n '/^Number/,$p' | tail -n +2 | grep -c .)" = 4 ] \
+    && ok "...the machine's three partitions and that one, nothing of AurOS's else" \
+    || bad "...the machine's three partitions and that one" "$(sgdisk -p "$R" 2>/dev/null | sed -n '/^Number/,$p')"
+sgdisk -v "$R" 2>&1 | grep -q "No problems found" && ok "...the table is valid" || bad "...the table is valid" "$(sgdisk -v "$R" 2>&1 | head -3)"
+[ "$(extent_sha "$R" $((HFIRST*512)) $((HCOUNT*512)))" = "$HSHA" ] \
+    && ok "...and the blocks still hold exactly what AurOS hashed" || bad "...and the blocks still hold exactly what AurOS hashed"
+if mount -o ro,loop,offset=$((HFIRST*512)),sizelimit=$((HCOUNT*512)) -t exfat "$R" "$MTMP/chk" 2>"$MTMP/h.err"; then
+    d=0; ( cd "$MTMP/her" && find . -type f | while read -r f; do p=${f#./}
+        cmp -s "$MTMP/her/$p" "$MTMP/chk/AurOS-handover/files/${p%%/*}/${p#*/}" || echo "DIFF $p"; done ) > "$MTMP/diff"
+    [ -f "$MTMP/chk/AurOS-handover/DONE" ] && [ ! -s "$MTMP/diff" ] \
+        && ok "...mounted as exFAT: DONE is there and her files are byte for byte" \
+        || bad "...mounted as exFAT: DONE and her files" "$(cat "$MTMP/diff")"
+    umount "$MTMP/chk"
+else bad "...mounts as exFAT" "$(cat "$MTMP/h.err")"; fi
+[ "$(extent_sha "$R" $((P1S*512)) $(((P1E-P1S+1)*512)))" = "$ESPSHA" ] \
+    && ok "the machine's own EFI partition is byte for byte what it was" || bad "the machine's own EFI partition is byte for byte what it was"
+win_files_now "$R" "after Put Windows back with her files"
+
+# (2) refusals, each with the disk byte for byte unchanged
+refuse() { # label  record-or-garbage  expect-text
+    if restore_end "$MTMP/inst.img" "aurstage.handover=$2"; then
+        grep -aq 'verdict=restore-failed' "$MTMP/out.txt" && ok "$1: refused" \
+            || bad "$1: refused" "$(grep -a 'aurstage-report' "$MTMP/out.txt" | tail -2)"
+        grep -aq "$3" "$MTMP/out.txt" && ok "...saying why, in words" || bad "...saying why, in words" "$(grep -a 'aurstage:' "$MTMP/out.txt" | tail -3)"
+    else bad "$1: the restore ends" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -3)"; fi
+    [ "$(whole_sha "$MTMP/run.img")" = "$INST_SHA" ] && ok "...and the disk is byte for byte untouched" || bad "...and the disk is byte for byte untouched"
+}
+flip=$(printf '%s' "$HSHA" | sed 's/^./0/'); [ "$flip" = "$HSHA" ] && flip=$(printf '%s' "$HSHA" | sed 's/^./1/')
+refuse "a record whose hash is not what is on the disk" "$HFIRST,$HCOUNT,$flip" "not what AurOS checked"
+set -- $(mach_part "$MTMP/inst.img" AUROS-ROOT)
+refuse "blocks that begin before AurOS's own space" "$(( $2 - 8 )),$HCOUNT,$HSHA" "not inside AurOS's own space"
+refuse "blocks inside Windows' own partition" "$(( P2S + 8 )),$HCOUNT,$HSHA" "not inside AurOS's own space"
+refuse "a record that cannot be read" "nonsense" "cannot be read"
+set -- $(mach_part "$MTMP/inst.img" AUROS-ROOT)
+refuse "blocks that end after AurOS's own space" "$(( $3 - HCOUNT / 2 )),$HCOUNT,$HSHA" "not inside AurOS's own space"
+
+# (3) the power goes at each instant; what is left is whole, and the restore can be run again
+for pt in handover-checked restore-esp-mid restore-array restore-sector restore-backup; do
+    printf '\n  ── %s\n' "$pt"
+    if boot_staging "$MTMP/inst.img" "aurstage.restore aurstage.handover=$REC aurstage.die_at=$pt" "AURSTAGE-FAULT $pt" 900; then
+        ok "the machine stops dead at $pt"
+    else bad "the machine stops dead at $pt" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -3)"; continue; fi
+    cp --sparse=always "$MTMP/run.img" "$MTMP/cut.img"
+    case "$pt" in
+      handover-checked|restore-esp-mid|restore-array)
+        # AurOS is still in the table: the restore can simply be run again, and ends as it should.
+        set -- $(mach_part "$MTMP/cut.img" AUROS-ROOT)
+        [ -n "${1:-}" ] && ok "AurOS is still in the table (and so are her files)" || bad "AurOS is still in the table"
+        if restore_end "$MTMP/cut.img" "aurstage.handover=$REC" && grep -aq 'verdict=restored' "$MTMP/out.txt"; then
+            ok "run again: it ends restored"
+        else bad "run again: it ends restored" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -3)"; fi
+        ;;
+      *)
+        # The new table is in force already: Windows starts, her files are in their partition.
+        set -- $(mach_part "$MTMP/cut.img" AUROS-HANDOVER)
+        [ -n "${1:-}" ] && [ "$2" = "$HFIRST" ] && ok "the new table is in force, with AUROS-HANDOVER over her files" \
+            || bad "the new table is in force, with AUROS-HANDOVER over her files" "${1:-none}"
+        ;;
+    esac
+    R="$MTMP/run.img"; [ "$pt" = restore-sector ] || [ "$pt" = restore-backup ] && R="$MTMP/cut.img"
+    set -- $(mach_part "$R" AUROS-HANDOVER)
+    [ -n "${1:-}" ] && [ "$2" = "$HFIRST" ] && [ "$(extent_sha "$R" $((HFIRST*512)) $((HCOUNT*512)))" = "$HSHA" ] \
+        && ok "at the end of $pt: her files' partition is there, and intact" \
+        || bad "at the end of $pt: her files' partition is there, and intact" "${1:-none}"
+    win_files_now "$R" "at the end of $pt"
+done
+fi
+losetup -a | grep -q "$MTMP" && losetup -a | grep "$MTMP" | cut -d: -f1 | while read -r l; do losetup -d "$l" 2>/dev/null; done
 fi
 fi
 

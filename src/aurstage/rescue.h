@@ -237,12 +237,25 @@ int rescue_mirror(wr_target *t, const rescue_area *area,
  * person watches every line of. */
 typedef void (*rescue_say)(const char *line, void *ud);
 
+/* HER FILES, LEFT FOR WINDOWS (docs/AURBRIDGE.md, "Put Windows back with her files").
+ * AurOS made an exFAT volume in a file in its own root and says where on the disk that file
+ * lies (`aurstage.handover=FIRST,COUNT,SHA256`, in 512-byte units, from the boot menu's
+ * environment). The restore turns exactly those blocks into a partition, AUROS-HANDOVER,
+ * in the table it writes -- after proving, by reading the disk, that they hold the volume
+ * AurOS hashed. active == 0: no handover, the restore is what it always was. */
+typedef struct {
+    int      active;
+    uint64_t first512, count512;
+    char     sha[65];
+} rescue_handover;
+
 typedef struct {
     int table_restored;
     int esp_restored;
     int volumes_grown;
     int volumes_left_small;   /* grew back short, or would not grow    */
     int mbr_restored;
+    int handover_kept;        /* the AUROS-HANDOVER partition is in the table */
 } rescue_outcome;
 
 /* Put the captured boot state back on `disk_dev`.
@@ -267,6 +280,7 @@ typedef struct {
  *
  * Returns 0 if Windows should now start. */
 int rescue_restore(const char *disk_dev, const rescue_area *area,
+                   const rescue_handover *ho,
                    rescue_say say, void *ud, rescue_outcome *out,
                    char *why, size_t n);
 

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
@@ -862,6 +863,9 @@ static int is_auros_own(const gpt_entry *e)
     if (memcmp(e->type, GPT_TYPE_LINUX_ROOT, 16) == 0 && ascii_name_is(e, "AUROS-ROOT")) return 1;
     if (memcmp(e->type, RESCUE_TYPE_GUID, 16) == 0 && ascii_name_is(e, "AUROS-SAVED")) return 1;
     if (memcmp(e->type, GPT_TYPE_ESP, 16) == 0 && ascii_name_is(e, "AUROS-BOOT")) return 1;
+    /* The handover partition this restore makes: a restore stopped after its table
+     * and run again finds it there, and it must not read as somebody else's. */
+    if (memcmp(e->type, GPT_TYPE_MSDATA, 16) == 0 && ascii_name_is(e, "AUROS-HANDOVER")) return 1;
     return 0;
 }
 
@@ -1150,6 +1154,7 @@ static int restore_boot_sectors(const char *disk_dev, const rescue_area *area,
 }
 
 int rescue_restore(const char *disk_dev, const rescue_area *area,
+                   const rescue_handover *ho,
                    rescue_say say, void *ud, rescue_outcome *out,
                    char *why, size_t n)
 {
@@ -1288,6 +1293,142 @@ int rescue_restore(const char *disk_dev, const rescue_area *area,
         free(cap_arr); free(cap_aarr); close(stick); close(disk_fd);
         return -1;
     }
+
+    /* ── HER FILES: the table to write is the saved one plus AUROS-HANDOVER ──
+     *
+     * Everything is decided and proved HERE, with the disk untouched; a refusal leaves
+     * AurOS, and her files in it, exactly as they are.
+     *   - the blocks lie wholly inside AurOS's own root partition (or, on a restore run
+     *     again after its table went down, are exactly the handover partition already
+     *     there), so nothing of Windows' is ever the room;
+     *   - they overlap nothing in the saved table (a legacy install, whose saved C: still
+     *     spans the room, has no place for a handover: refused);
+     *   - the SHA-256 of the DISK BYTES there is the one AurOS recorded after it unmounted
+     *     the volume, and they begin as an exFAT volume;
+     *   - the table has a free entry. */
+    uint8_t *ho_arr = NULL;
+    uint8_t  ho_hdr[4096];
+    if (ho && ho->active) {
+        uint64_t hf = 0, hl = 0;
+        uint8_t uniq[16];
+        int again = 0, in_root = 0;
+        if (!live_ok) {
+            snprintf(why, n, "this disk has no readable layout, so the place where your "
+                             "files were left cannot be checked. Nothing has been changed.");
+            goto ho_refused;
+        }
+        if (!ho->count512 || (ho->first512 * 512) % sec || (ho->count512 * 512) % sec ||
+            sec > sizeof ho_hdr) {
+            snprintf(why, n, "the place where your files were left does not fit this "
+                             "disk's blocks. Nothing has been changed.");
+            goto ho_refused;
+        }
+        hf = ho->first512 * 512 / sec;
+        hl = hf + ho->count512 * 512 / sec - 1;
+        for (uint32_t k = 0; k < live.n_entries; k++) {
+            const gpt_entry *e = &live.ent[k];
+            if (!gpt_used(e)) continue;
+            if (memcmp(e->type, GPT_TYPE_MSDATA, 16) == 0 && ascii_name_is(e, "AUROS-HANDOVER") &&
+                e->first == hf && e->last == hl) { again = 1; memcpy(uniq, e->uuid, 16); }
+            if (memcmp(e->type, GPT_TYPE_LINUX_ROOT, 16) == 0 && ascii_name_is(e, "AUROS-ROOT") &&
+                e->first <= hf && hl <= e->last) in_root = 1;
+        }
+        if (!again && !in_root) {
+            snprintf(why, n, "the place where your files were left is not inside AurOS's "
+                             "own space. Nothing has been changed.");
+            goto ho_refused;
+        }
+        for (uint32_t j = 0; j < n_ent; j++) {
+            const uint8_t *c = cap_arr + (uint64_t)j * ent_sz;
+            int used = 0;
+            for (int q = 0; q < 16; q++) if (c[q]) { used = 1; break; }
+            if (used && rd64(c + 32) <= hl && hf <= rd64(c + 40)) {
+                snprintf(why, n, "the place where your files were left overlaps a part of "
+                                 "this computer that is not AurOS's. Nothing has been changed.");
+                goto ho_refused;
+            }
+        }
+        {   /* the disk's own bytes, hashed in megabytes, against what AurOS recorded */
+            static uint8_t hb[1u << 20];
+            sha256 h; sha256_start(&h);
+            uint64_t total = ho->count512 * 512, at = 0;
+            int last_pct = -1;
+            talk(say, ud, "checking that your files are where AurOS left them");
+            while (at < total) {
+                size_t t2 = total - at > sizeof hb ? sizeof hb : (size_t)(total - at);
+                if (read_at(disk_fd, hb, t2, ho->first512 * 512 + at) != 0) {
+                    snprintf(why, n, "the place where your files were left would not read. "
+                                     "Nothing has been changed.");
+                    goto ho_refused;
+                }
+                if (at == 0 && memcmp(hb + 3, "EXFAT   ", 8) != 0) {
+                    snprintf(why, n, "what is at the place where your files were left is not "
+                                     "the volume AurOS made. Nothing has been changed.");
+                    goto ho_refused;
+                }
+                sha256_feed(&h, hb, t2);
+                at += t2;
+                int pct = (int)(at * 100 / total);
+                if (pct / 10 != last_pct / 10) { talk(say, ud, "  %d%%", pct); last_pct = pct; }
+            }
+            unsigned char dg[32]; char hex[65];
+            sha256_done(&h, dg);
+            sha256_hex(dg, hex, sizeof hex);
+            if (strcasecmp(hex, ho->sha) != 0) {
+                snprintf(why, n, "what is at the place where your files were left is not what "
+                                 "AurOS checked. Nothing has been changed.");
+                goto ho_refused;
+            }
+        }
+        fault_maybe("handover-checked");
+        ho_arr = malloc((size_t)s_arr->len);
+        if (!ho_arr) { snprintf(why, n, "out of memory"); goto ho_refused; }
+        memcpy(ho_arr, cap_arr, (size_t)s_arr->len);
+        {
+            uint32_t slot = n_ent;
+            for (uint32_t j = 0; j < n_ent && slot == n_ent; j++) {
+                int used = 0;
+                for (int q = 0; q < 16; q++) if (ho_arr[(uint64_t)j * ent_sz + q]) { used = 1; break; }
+                if (!used) slot = j;
+            }
+            if (slot == n_ent || ent_sz < 128) {
+                snprintf(why, n, "the partition table has no room for a part to keep your "
+                                 "files in. Nothing has been changed.");
+                goto ho_refused;
+            }
+            uint8_t *e = ho_arr + (uint64_t)slot * ent_sz;
+            memset(e, 0, ent_sz);
+            memcpy(e, GPT_TYPE_MSDATA, 16);
+            if (again) memcpy(e + 16, uniq, 16);
+            else {
+                int rf = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+                if (rf < 0 || read(rf, e + 16, 16) != 16) {
+                    if (rf >= 0) close(rf);
+                    snprintf(why, n, "no randomness for the new part's name. Nothing has been changed.");
+                    goto ho_refused;
+                }
+                close(rf);
+            }
+            wr64(e + 32, hf);
+            wr64(e + 40, hl);
+            wr64(e + 48, 0x8000000000000000ull);      /* no drive letter of its own: Windows' task assigns one */
+            static const char NAME[] = "AUROS-HANDOVER";
+            for (size_t q = 0; NAME[q]; q++) { e[56 + 2 * q] = (uint8_t)NAME[q]; e[57 + 2 * q] = 0; }
+        }
+        memcpy(ho_hdr, cap_hdr, sec);
+        wr32(ho_hdr + 88, gpt_crc32(ho_arr, (size_t)n_ent * ent_sz));
+        wr32(ho_hdr + 16, 0);
+        wr32(ho_hdr + 16, gpt_crc32(ho_hdr, rd32(cap_hdr + 12)));
+        out->handover_kept = 1;
+        talk(say, ud, "your files are where AurOS left them; they will stay for Windows");
+        goto ho_ok;
+ho_refused:
+        free(cap_arr); free(cap_aarr); free(ho_arr); close(stick); close(disk_fd);
+        return -1;
+    }
+ho_ok:;
+    const uint8_t *w_arr = ho_arr ? ho_arr : cap_arr;      /* what is WRITTEN as the table */
+    const uint8_t *w_hdr = ho_arr ? ho_hdr : cap_hdr;
 
     /* ── EVERY VOLUME, MEASURED BEFORE THE FIRST DESTRUCTIVE BYTE ──
      *
@@ -1473,18 +1614,18 @@ int rescue_restore(const char *disk_dev, const rescue_area *area,
      * the primary header's checksum no longer matches, so every reader
      * on earth falls back to the spare copy -- which still describes
      * the disk exactly as it is this second. Nothing changes yet. */
-    if (wr_bytes(&t, WR_GPT_PRIMARY, arr_lba * sec, cap_arr,
+    if (wr_bytes(&t, WR_GPT_PRIMARY, arr_lba * sec, w_arr,
                  (size_t)s_arr->len, why, n) != 0 ||
         wr_flush(&t) != 0 ||
-        checked(&t, arr_lba * sec, cap_arr, (size_t)s_arr->len,
+        checked(&t, arr_lba * sec, w_arr, (size_t)s_arr->len,
                 "the partition table", why, n) != 0) goto table_failed;
     fault_maybe("restore-array");
     /* Step 2: LBA 1. One sector. This is the instant the machine's
      * layout becomes the one it had before AurOS. */
-    if (wr_bytes(&t, WR_GPT_PRIMARY, hdr_lba * sec, cap_hdr, sec,
+    if (wr_bytes(&t, WR_GPT_PRIMARY, hdr_lba * sec, w_hdr, sec,
                  why, n) != 0 ||
         wr_flush(&t) != 0 ||
-        checked(&t, hdr_lba * sec, cap_hdr, sec,
+        checked(&t, hdr_lba * sec, w_hdr, sec,
                 "the partition table", why, n) != 0) goto table_failed;
     fault_maybe("restore-sector");
     /* Step 3: the spare copy catches up.
@@ -1504,18 +1645,18 @@ int rescue_restore(const char *disk_dev, const rescue_area *area,
     }
     uint8_t derived[4096];
     if (sec > sizeof derived) { snprintf(why, n, "this disk's blocks are too large"); goto table_failed; }
-    memcpy(derived, cap_hdr, sec);
+    memcpy(derived, w_hdr, sec);
     wr64(derived + 24, alt_lba);          /* MyLBA: the last block        */
     wr64(derived + 32, hdr_lba);          /* AlternateLBA: the main one   */
     wr64(derived + 72, aarr_lba);         /* where this copy's array is   */
     wr32(derived + 16, 0);
-    wr32(derived + 16, gpt_crc32(derived, rd32(cap_hdr + 12)));
-    if (wr_bytes(&t, WR_GPT_BACKUP, aarr_lba * sec, cap_arr,
+    wr32(derived + 16, gpt_crc32(derived, rd32(w_hdr + 12)));
+    if (wr_bytes(&t, WR_GPT_BACKUP, aarr_lba * sec, w_arr,
                  (size_t)s_arr->len, why, n) != 0 ||
         wr_bytes(&t, WR_GPT_BACKUP, alt_lba * sec, derived, sec,
                  why, n) != 0 ||
         wr_flush(&t) != 0 ||
-        checked(&t, aarr_lba * sec, cap_arr, (size_t)s_arr->len,
+        checked(&t, aarr_lba * sec, w_arr, (size_t)s_arr->len,
                 "the spare partition table", why, n) != 0 ||
         checked(&t, alt_lba * sec, derived, sec,
                 "the spare partition table", why, n) != 0) goto table_failed;

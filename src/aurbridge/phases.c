@@ -1916,7 +1916,7 @@ static int choice_value_ok(const char *v)
  * sides of the restart can reach that the install leaves exactly as it
  * found it, and it is written in both modes, stick or not. A failure
  * here is a note, not a refusal: AurOS installs with its defaults. */
-static void write_choices(const ab_choice *c, const char *esp,
+static void write_choices(const ab_choice *c, int via_gap, const char *esp,
                           ab_say say, void *ud)
 {
     char buf[1024], path[512], w[PLAT_WHY];
@@ -1932,6 +1932,11 @@ static void write_choices(const ab_choice *c, const char *esp,
         if (choice_value_ok(kv[i].val) && k > 0 && (size_t)k < sizeof buf)
             k += snprintf(buf + k, sizeof buf - (size_t)k, "%s=%s\n",
                           kv[i].key, kv[i].val);
+    /* HOW IT WAS INSTALLED, for "Put Windows back": only an install made by the fast
+     * path registers the Windows task that can take her files out of a handover
+     * partition (src/aurbridge/putback.ps1), so only then may AurOS leave them there. */
+    if (via_gap && k > 0 && (size_t)k < sizeof buf)
+        k += snprintf(buf + k, sizeof buf - (size_t)k, "via=gap\n");
     if (k <= 0 || (size_t)k >= sizeof buf) return;
     snprintf(path, sizeof path, "%s/EFI/AurOS/choices.conf", esp);
     if (plat_file_put(path, buf, (size_t)k, w, sizeof w) != 0)
@@ -2318,7 +2323,7 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
         talk(say, ud, "NOTE: this build starts the installer directly, which "
                       "only works with Secure Boot off");
     }
-    write_choices(c, esp, say, ud);
+    write_choices(c, m->fast, esp, say, ud);
     write_wifi(c, esp, say, ud);
     plat_esp_close();
     /* Anything that was unpacked to get here is gone again. The bytes

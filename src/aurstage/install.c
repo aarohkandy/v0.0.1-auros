@@ -1367,8 +1367,37 @@ void restore_run(const stage_machine *m)
                              : " (the memory stick)");
     stage_say("restoring %s", diskdev);
 
+    /* Her AurOS files, left for Windows: aurstage.handover=FIRST,COUNT,SHA256 on the kernel
+     * line, put there by the boot menu from what AurOS wrote when it finished the volume. */
+    rescue_handover ho;
+    memset(&ho, 0, sizeof ho);
+    {
+        char v[200];
+        if (stage_cmdline_value("aurstage.handover=", v, sizeof v) == 0 && v[0]) {
+            char *c1 = strchr(v, ','), *c2 = c1 ? strchr(c1 + 1, ',') : NULL;
+            char *e1 = NULL, *e2 = NULL;
+            if (c1 && c2) {
+                *c1 = 0; *c2 = 0;
+                ho.first512 = strtoull(v, &e1, 10);
+                ho.count512 = strtoull(c1 + 1, &e2, 10);
+                if (e1 && *e1 == 0 && e2 && *e2 == 0 && ho.count512 && strlen(c2 + 1) == 64) {
+                    snprintf(ho.sha, sizeof ho.sha, "%s", c2 + 1);
+                    ho.active = 1;
+                }
+            }
+            if (!ho.active) {
+                /* A request for it that cannot be read is not a request for none: her files
+                 * would be gone with AurOS. */
+                stage_warn("the note about where your files were left cannot be read");
+                stage_say("         Nothing has been changed.");
+                stage_say("aurstage-report v1 verdict=restore-failed record=none table=0 esp=0");
+                stop_restore();
+            }
+        }
+    }
+
     rescue_outcome oc;
-    if (rescue_restore(diskdev, &areas[best], restore_say, NULL, &oc,
+    if (rescue_restore(diskdev, &areas[best], &ho, restore_say, NULL, &oc,
                        why, sizeof why) != 0) {
         stage_warn("%s", why);
         stage_say("aurstage-report v1 verdict=restore-failed record=none "
@@ -1377,9 +1406,10 @@ void restore_run(const stage_machine *m)
     }
     stage_say("%s", "");
     stage_say("aurstage-report v1 verdict=restored record=done "
-              "disk=%s table=%d esp=%d grown=%d small=%d mbr=%d",
+              "disk=%s table=%d esp=%d grown=%d small=%d mbr=%d handover=%d",
               m->disk[best_disk].name, oc.table_restored, oc.esp_restored,
-              oc.volumes_grown, oc.volumes_left_small, oc.mbr_restored);
+              oc.volumes_grown, oc.volumes_left_small, oc.mbr_restored,
+              oc.handover_kept);
     stage_say("%s", "");
     /* AUROS IS GONE, SO ITS START-UP ENTRIES GO TOO. The partition they
      * name no longer exists. Left behind -- and after "it works" the
