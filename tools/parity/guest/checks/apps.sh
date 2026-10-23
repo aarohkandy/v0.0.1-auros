@@ -44,11 +44,11 @@ grep -v '^#' "$P/apps.tsv" | while IFS="$(printf '\t')" read -r id name what; do
     snap "apps-$name-before"
     t1=$(date +%s)
     setsid sh -c "$cmd" > "$log" 2>&1 &
-    wait_for 90 grep -q 'xdg_surface@[0-9]*.get_toplevel' "$log"
+    wait_for 90 grep -q 'xdg_surface[@#][0-9]*.get_toplevel' "$log"
     win=$(( $(date +%s) - t1 ))
-    if grep -q 'xdg_surface@[0-9]*.get_toplevel' "$log"; then
+    if grep -q 'xdg_surface[@#][0-9]*.get_toplevel' "$log"; then
         sleep 12
-        title=$(grep -ao 'xdg_toplevel@[0-9]*.set_title("[^"]*")' "$log" | tail -1 | sed 's/.*set_title("//; s/")$//')
+        title=$(grep -aoE 'xdg_toplevel[@#][0-9]*.set_title\("[^"]*"\)' "$log" | tail -1 | sed 's/.*set_title("//; s/")$//')
         snap "apps-$name"
         act changed apps-$name-before apps-$name apps.$name.visible 260 130 1020 690 8
         result "apps.$name" pass "installed in $inst s ($size), window \"$title\" opened $win s after the press"
@@ -62,7 +62,7 @@ grep -v '^#' "$P/apps.tsv" | while IFS="$(printf '\t')" read -r id name what; do
             note "diag: system: $(journalctl --no-pager -n 60 2>&1 | grep -ai 'flatpak\|bwrap\|ldconfig' | tail -n 6 | cut -c1-250 | tr '\n' '|')"
         fi
         why=$(grep -ai 'cannot open display\|unable to open display\|could not connect\|Gtk-WARNING\|error' "$log" | head -2 | tr '\n' ' ' | cut -c1-200)
-        x11=""; grep -aqi 'display' "$log" && x11=" (it wants an X11 display: this desktop has no Xwayland)"
+        x11=""; grep -aqiE 'cannot open display|unable to open display|could not connect to display|qt platform plugin|no suitable interface module|xcb' "$log" && x11=" (it looks for an X11 display, and this desktop has no Xwayland)"
         result "apps.$name" fail "installed in $inst s ($size) but no window in 90 s$x11: ${why:-$(tail -n 2 "$log" | tr '\n' ' ' | cut -c1-200)}"
     fi
     flatpak kill "$id" 2>/dev/null; pkill -u "$me" -f "$id" 2>/dev/null; sleep 3
