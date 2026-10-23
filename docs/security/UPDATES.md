@@ -289,6 +289,34 @@ Revisit when S4's TPM re-seal exists, and possibly then fwupd for dbx only.
 | `tools/bootchaintest.sh` | the boot chain's refusals (dbx, SBAT, the Microsoft CA change) | by hand |
 | `tools/bootupdatetest.sh` | kernel/grub/shim updates under Secure Boot; previous-kernel fallback | `tests.yml` e2e matrix, every build |
 
+### Evidence log
+
+- **2026-10-23, the channel is live.** First publish of release
+  `v0.1.0-618726b` (a prerelease): aptrepo run 39928994508 packed the
+  `.deb`s out of the released image, signed with key
+  `706641325C24F885D351885290B0EA8D0A4C1F3B`, verified against the
+  committed keyring, and created the prerelease `apt` (12 assets, `auros
+  0.1.0.20261023052728`). Its read-back got one 404 (GitHub's download
+  address is not live for a few seconds after a release is created); fixed
+  with retries, then re-run as run 39930388181, green end to end (the
+  read-back, the signature check, and a real apt on a fresh Ubuntu).
+  `tools/channelcheck.sh` against the live channel from a clean
+  ubuntu:24.04: apt with the COMMITTED keyring takes the index cleanly,
+  `auros` has a candidate, 7 packages download verified at one version, the
+  keyring package carries the committed key; the same index re-signed with
+  another key is refused (NO_PUBKEY, no list taken); one changed byte of
+  `Packages` is refused. 8 of 8; 6 of 8 fail with another keyring in place
+  of the committed one.
+- **2026-10-23, the first VM run** (aptrepo run 39923713530, job `boot`, the
+  image of build 39907966817): an update installed by itself while the
+  desktop ran (same pid, 0 restarts); the next start ran it with nothing
+  newly failed; a broken update arrived the same way without touching the
+  running desktop; the fix installed by itself. It also found a real bug:
+  the set before the update was not kept (keep-previous depended on apt's
+  cache, and a `file:` repository does not fill it), so the rollback had
+  nothing to go back to. Fixed in 9865f88, which also makes the VM test
+  serve its repository over HTTP; the re-run is recorded below when green.
+
 Not proven yet, said plainly:
 
 - a real Flathub update (the commands are proven against a local
