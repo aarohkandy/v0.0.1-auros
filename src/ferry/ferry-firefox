@@ -3,27 +3,39 @@
 #  ferry-firefox — her browser comes across: her Firefox, and her Edge,
 #  Chrome or Brave bookmarks. Never a saved password.
 #
-#  1. HER WINDOWS FIREFOX. Firefox keeps everything in one profile
-#     folder that Firefox on Linux reads unchanged, so the profile is
-#     copied (by ferry-copy, as her). Bookmarks, history, open tabs and
-#     settings come with it. It is then made the profile Linux Firefox
-#     opens: Windows' own profiles.ini is NOT copied, because its
-#     [Install...] section claims the profile for the Windows Firefox,
-#     and Linux Firefox would quietly make a new, empty one instead.
+#  WHERE FIREFOX LOOKS. Firefox 147+ keeps its profiles in
+#  ~/.config/mozilla/firefox; older ones, and any Firefox when only that
+#  folder exists, use ~/.mozilla/firefox. Ferry uses the XDG one if it is
+#  there, else the old one (tested against Firefox 158: with only the old
+#  folder present it is the one used).
+#
+#  WHICH PROFILE FIREFOX OPENS. Since Firefox 67 each install has its own
+#  default profile, remembered as [Install<hash>] Default=... in
+#  profiles.ini. A profile merely marked Default=1 is IGNORED by an
+#  install with no section of its own: Firefox makes a new empty one
+#  (that is what a copied Windows profiles.ini does, and "my bookmarks
+#  are gone"). The hash names the install (ferry-ffhash computes it, and
+#  was checked against a real Firefox), so Ferry writes the section.
+#
+#  1. HER WINDOWS FIREFOX. The profile is copied (by ferry-copy, as her);
+#     Windows' own profiles.ini is NOT copied. If Firefox has not been
+#     used on AurOS yet, the profile of the Windows install's default is
+#     made the one this Firefox opens.
 #
 #  2. HER EDGE / CHROME / BRAVE BOOKMARKS. Chromium browsers keep them
 #     in a plain JSON file (their passwords are sealed to her Windows
 #     sign-in and never come). ferry-chromemarks turns them into the
 #     bookmarks.html Firefox imports. Her main browser (the one Windows
 #     opened links with) comes first; another's becomes a folder.
-#       - no Windows Firefox: a new Firefox profile with that file in it
-#         is made the one Firefox opens; Firefox imports it the first
-#         time it starts;
-#       - a Windows Firefox too: her Firefox keeps its own bookmarks and
-#         the others are saved in her Home, with plain steps.
+#       - no Windows Firefox, Firefox never used here: a new profile
+#         holding that file becomes the one Firefox opens, and Firefox
+#         imports it the first time it starts (tested);
+#       - otherwise the file is saved in her Home with plain steps. A
+#         Firefox she has already used here is never switched away from
+#         what she has been doing in it, and one that is open would
+#         write its own profiles.ini back over ours.
 #
-#  profiles.ini is only ever rewritten as her (a backup is kept), and
-#  not at all while Firefox is open: it would write its own back.
+#  profiles.ini is only ever rewritten as her (a backup is kept).
 #
 #  SAVED PASSWORDS DO NOT COME. Firefox's logins.json/key4.db (and the
 #  older key3.db, signons.sqlite, logins-backup.json) and saved cards
@@ -52,7 +64,9 @@ resolve_target
 select_profile || die "could not identify which Windows profile to import (pass --user NAME)"
 
 RC=0
-FF="$FERRY_HOME/.mozilla/firefox"
+# Where this Firefox keeps its profiles (see the header).
+if [ -d "$FERRY_HOME/.config/mozilla/firefox" ]; then FF="$FERRY_HOME/.config/mozilla/firefox"
+else FF="$FERRY_HOME/.mozilla/firefox"; fi
 
 # The names we refuse to copy, matched case-insensitively (NTFS is, and
 # a profile copied about by hand can come back as LOGINS.JSON).
@@ -61,9 +75,18 @@ SKIP_FILES=".parentlock parent.lock lock compatibility.ini"
 SECRET_FILES="logins.json logins-backup.json key4.db key3.db signons.sqlite \
 signons.txt signons2.txt signons3.txt autofill-profiles.json"
 
-# Which of her Windows Firefox profiles Firefox opened: the install's
-# default (Firefox 67+), else the one marked Default=1. Relative path,
-# as profiles.ini writes it ("Profiles/xxxx.default-release").
+# The name of this Firefox install in profiles.ini: ferry-ffhash of the
+# folder holding its binary. Empty when Firefox is not here (then no
+# section is written and nothing pretends to be switched).
+FF_BIN=$(command -v "${FERRY_FIREFOX:-firefox}" 2>/dev/null || true)
+FF_HASH=${FERRY_FFHASH:-}      # (tests name the install; a real run computes it)
+if [ -z "$FF_HASH" ] && [ -n "$FF_BIN" ]; then
+    FF_HASH=$(ferry-ffhash "$(dirname "$(readlink -f "$FF_BIN")")" 2>/dev/null || true)
+fi
+
+# Which of her Windows Firefox profiles Firefox opened there: the
+# install's default (Firefox 67+), else the one marked Default=1. Prints
+# the folder name only.
 win_default_profile() {
     awk '
     function flush() { if (prof && dflt) d = path; path = ""; dflt = 0 }
@@ -72,13 +95,13 @@ win_default_profile() {
     prof && /^Path=/ { path = substr($0, 6) }
     prof && /^Default=1$/ { dflt = 1 }
     inst && /^Default=/ { idef = substr($0, 9) }
-    END { flush(); print (idef != "" ? idef : d) }' "$1" 2>/dev/null
+    END { flush(); r = (idef != "" ? idef : d); sub(/.*\//, "", r); print r }' "$1" 2>/dev/null
 }
 
 # Is Firefox open on this side? Its profile lock is a symlink naming
-# "address:+PID".
+# "address:+PID" (or ".parentlock" held by a live process).
 ff_running() {
-    for _l in "$FF"/*/lock "$FF"/Profiles/*/lock; do
+    for _l in "$FF"/*/lock; do
         [ -L "$_l" ] || continue
         _pid=$(readlink "$_l" | sed -n 's/.*+\([0-9][0-9]*\)$/\1/p')
         [ -n "$_pid" ] && [ -d "/proc/$_pid" ] && return 0
@@ -86,41 +109,59 @@ ff_running() {
     return 1
 }
 
-# Make REL (relative to $FF) the profile Firefox opens. Read and written
-# as her; the old file is kept beside it once, as profiles.ini.before-windows.
+# Has she used this Firefox on AurOS? profiles.ini names this install's
+# profile (Firefox wrote [Install<hash>] when it first started) and it is
+# not one Ferry made on an earlier go at this same import: a second run
+# must finish the job, not mistake its own work for hers.
+ff_used_here() {
+    [ -n "$FF_HASH" ] || return 1
+    _cur=$(as_her cat "$FF/profiles.ini" 2>/dev/null | awk -v inst="Install$FF_HASH" '
+        { sub(/\r$/, "") }
+        /^\[/ { sec = substr($0, 2, length($0) - 2) }
+        sec == inst && /^Default=/ { print substr($0, 9); exit }')
+    [ -n "$_cur" ] || return 1
+    case " $_ours fromwindows.default-release " in *" ${_cur##*/} "*) return 1 ;; esac
+    return 0
+}
+
+# Make REL (a folder under $FF) the profile this Firefox opens. Done as
+# her; the old profiles.ini is kept once, as profiles.ini.before-windows.
 ff_make_default() {
     _rel=$1
+    [ -n "$FF_HASH" ] || return 1
     _ini=$(as_her cat "$FF/profiles.ini" 2>/dev/null || true)
-    if [ -z "$_ini" ]; then
-        # No Firefox has run here yet. With no [Install...] section, the
-        # first Firefox to start takes the Default=1 profile as its own.
-        printf '[Profile0]\nName=from-windows\nIsRelative=1\nPath=%s\nDefault=1\n\n[General]\nStartWithLastProfile=1\nVersion=2\n' "$_rel"
-    else
-        as_her sh -c '[ -e "$1.before-windows" ] || cp "$1" "$1.before-windows"' sh "$FF/profiles.ini"
-        printf '%s\n' "$_ini" | awk -v rel="$_rel" '
+    [ -z "$_ini" ] || as_her sh -c '[ -e "$1.before-windows" ] || cp "$1" "$1.before-windows"' sh "$FF/profiles.ini"
+    # Sections are rewritten in place; what is missing is appended.
+    # [ProfileN] numbering must stay contiguous or Firefox stops reading
+    # at the gap, so ours takes the next free number.
+    printf '%s\n' "$_ini" | awk -v rel="$_rel" -v inst="Install$FF_HASH" '
         { sub(/\r$/, "") }
-        /^\[/ { sec = $0
-                if (sec ~ /^\[Profile[0-9]+\]$/) { k = substr(sec, 9, length(sec) - 9) + 0
-                                                  if (k + 1 > nxt) nxt = k + 1 } }
-        sec ~ /^\[Profile/ && /^Default=/ { next }
-        sec ~ /^\[Install/ && /^Default=/ { $0 = "Default=" rel }
+        /^\[/ { sec = substr($0, 2, length($0) - 2)
+                if (sec ~ /^Profile[0-9]+$/) { k = substr(sec, 8) + 0; if (k + 1 > nxt) nxt = k + 1 }
+                if (sec == inst) hasinst = 1
+                if (sec == "General") hasgen = 1 }
+        sec ~ /^Profile[0-9]+$/ && $0 == "Path=" rel { hasprof = 1 }
         { line[++n] = $0; s[n] = sec }
-        sec ~ /^\[Profile/ && $0 == "Path=" rel { mine = sec }
         END {
             for (i = 1; i <= n; i++) {
-                print line[i]
-                if (mine != "" && s[i] == mine && line[i] ~ /^Path=/) print "Default=1"
+                if (s[i] == inst && line[i] ~ /^Default=/) line[i] = "Default=" rel
+                if (!(i == n && line[i] == "")) print line[i]
             }
-            if (mine == "")
-                printf "\n[Profile%d]\nName=from-windows\nIsRelative=1\nPath=%s\nDefault=1\n", nxt, rel
-        }'
-    fi | as_her sh -c 'mkdir -p "$(dirname "$1")" && cat > "$1.ferrypart" && mv -f "$1.ferrypart" "$1"' \
-             sh "$FF/profiles.ini"
-    if as_her test -f "$FF/installs.ini"; then
-        as_her cat "$FF/installs.ini" |
-            awk -v rel="$_rel" '{ sub(/\r$/, "") } /^Default=/ { $0 = "Default=" rel } { print }' |
-            as_her sh -c 'cat > "$1.ferrypart" && mv -f "$1.ferrypart" "$1"' sh "$FF/installs.ini"
-    fi
+            if (!hasprof) printf "\n[Profile%d]\nName=from-windows\nIsRelative=1\nPath=%s\n%s", nxt + 0, rel, (nxt + 0 == 0 ? "Default=1\n" : "")
+            if (!hasinst) printf "\n[%s]\nDefault=%s\nLocked=1\n", inst, rel
+            if (!hasgen) printf "\n[General]\nStartWithLastProfile=1\nVersion=2\n"
+        }' | as_her sh -c 'mkdir -p "$(dirname "$1")" && cat > "$1.ferrypart" && mv -f "$1.ferrypart" "$1"' \
+             sh "$FF/profiles.ini" || return 1
+    # installs.ini: Firefox reads the same answer from here.
+    as_her cat "$FF/installs.ini" 2>/dev/null |
+        awk -v h="$FF_HASH" -v rel="$_rel" '
+            { sub(/\r$/, "") }
+            /^\[/ { sec = substr($0, 2, length($0) - 2); if (sec == h) has = 1 }
+            sec == h && /^Default=/ { $0 = "Default=" rel }
+            { print }
+            END { if (!has) printf "\n[%s]\nDefault=%s\nLocked=1\n", h, rel }' |
+        as_her sh -c 'mkdir -p "$(dirname "$1")" && cat > "$1.ferrypart" && mv -f "$1.ferrypart" "$1"' \
+             sh "$FF/installs.ini"
 }
 
 # ── 1. Her Windows Firefox.
@@ -130,7 +171,7 @@ _profdir=""
 _windef=""
 [ -z "$_ffsrc" ] || { _wini=$(path_ci "$_ffsrc" profiles.ini 2>/dev/null || true)
                       [ -z "$_wini" ] || _windef=$(win_default_profile "$_wini"); }
-_main="" _first=""
+_main="" _first="" _ours=""
 set --
 if [ -n "$_profdir" ]; then
     for _p in "$_profdir"/*; do
@@ -138,9 +179,10 @@ if [ -n "$_profdir" ]; then
         [ -d "$_p" ] && [ ! -L "$_p" ] || continue
         _pname=$(basename "$_p")
         say "Firefox profile: $_pname"
-        set -- "$@" --job Firefox "$_p" "$FF/Profiles/$_pname"
-        [ -n "$_first" ] || _first="Profiles/$_pname"
-        [ "Profiles/$_pname" != "$_windef" ] || _main="Profiles/$_pname"
+        set -- "$@" --job Firefox "$_p" "$FF/$_pname"
+        [ -n "$_first" ] || _first=$_pname
+        _ours="$_ours $_pname"
+        [ "$_pname" != "$_windef" ] || _main=$_pname
         if [ -n "$(path_ci "$_p" logins.json 2>/dev/null)" ] ||
            [ -n "$(path_ci "$_p" key4.db 2>/dev/null)" ]; then
             note firefox/passwords manual "Firefox saved passwords" \
@@ -157,7 +199,6 @@ if [ $# -gt 0 ]; then
     ferry-copy $(copy_as) --state "$FERRY_STATE" --stage firefox $_skips \
         $([ "$FERRY_DRYRUN" = 1 ] && echo --dry-run) "$@" || RC=$?
     case "$RC" in 0|2) : ;; *) stage_fail firefox "ferry-copy exit $RC"; die "copying Firefox failed" ;; esac
-    note firefox/profile info "Firefox" "Your Firefox bookmarks, history and settings came across."
 fi
 
 # ── 2. Her Edge / Chrome / Brave bookmarks, her main browser first.
@@ -188,11 +229,17 @@ for _b in $_order; do
     done
 done
 
-_running=0
-ff_running && _running=1
+# May Firefox be switched to what we brought? Not while it is open, and
+# not away from a profile she has already used here.
+_switch=1 _why=""
+if ff_running; then _switch=0; _why="Firefox was open"
+elif ff_used_here; then _switch=0; _why="Firefox had already been used here"
+elif [ -z "$FF_HASH" ]; then _switch=0; _why="Firefox is not installed here"
+fi
+
 if [ $# -gt 0 ] && [ "$FERRY_DRYRUN" = 0 ]; then
     _lead=$1
-    if [ -z "$_main" ] && [ "$_running" = 0 ]; then
+    if [ -z "$_main" ] && [ "$_switch" = 1 ]; then
         _main="fromwindows.default-release"
         _bmdest="$FF/$_main/bookmarks.html"
     else
@@ -222,16 +269,24 @@ fi
 
 # ── Firefox opens the profile from Windows.
 if [ -n "$_main" ] && [ "$FERRY_DRYRUN" = 0 ]; then
-    if [ "$_running" = 1 ]; then
-        note firefox/bookmarks manual "Firefox" \
-            "Firefox was open, so it will keep opening the profile it had. Close it and bring your files across again to switch."
+    if [ "$_switch" = 1 ]; then
+        if ff_make_default "$_main"; then
+            [ -z "${_pname:-}" ] || note firefox/profile info "Firefox" \
+                "Your Firefox bookmarks, history and settings came across. Firefox will open them."
+        else
+            warn "could not set Firefox's profile"
+            note firefox/profile manual "Firefox" \
+                "Your Firefox profile came across but could not be made the one Firefox opens."
+            [ "$RC" != 0 ] || RC=2
+        fi
+    elif [ -n "$_profdir" ]; then
+        note firefox/profile manual "Firefox" \
+            "$_why, so it was left as it is. Your Windows Firefox bookmarks and history are saved on this computer but Firefox is not showing them."
         [ "$RC" != 0 ] || RC=2
-    else
-        ff_make_default "$_main" || { warn "could not set Firefox's profile"; [ "$RC" != 0 ] || RC=2; }
     fi
 fi
 
-if [ -z "$_ffsrc" ] && [ "$_main" = "" ] && [ -z "${_lead:-}" ]; then
+if [ -z "$_ffsrc" ] && [ -z "${_lead:-}" ]; then
     note firefox info "Firefox" "no Firefox, Edge, Chrome or Brave was found in this profile"
 fi
 

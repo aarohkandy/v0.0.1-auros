@@ -272,9 +272,25 @@ else
     echo "as root: skipped (run tests/asroot.sh, or this suite as root, for these)"
 fi
 
+echo "firefox install name (the name Firefox gives an install in profiles.ini):"
+# Both values come from real Firefoxes: the first from Mozilla's .deb
+# (read out of its own profiles.ini), the second the well-known name of
+# a default 64-bit Windows install.
+eq "/usr/lib/firefox is 4F96D1932A9F858E, as the real Firefox calls it" \
+   "$(ferry-ffhash /usr/lib/firefox)" 4F96D1932A9F858E
+eq "...a path of the longer kind (33-64 bytes) agrees too" \
+   "$(ferry-ffhash 'C:\Program Files\Mozilla Firefox')" 308046B0AF4A39CB
+ferry-ffhash /a/path/to/an/install/folder/that/is/long/firefox >/dev/null 2>&1
+eq "...a path it cannot vouch for is refused (exit 2)" "$?" 2
+_bad=$(printf '/usr/lib/\377firefox'); ferry-ffhash "$_bad" >/dev/null 2>&1
+eq "...and so is one that is not text (exit 2)" "$?" 2
+
 echo "firefox:"
+# The install name a real Firefox on the image would have.
+export FERRY_FFHASH=4F96D1932A9F858E
 ferry-firefox --root "$WIN" --home "$HOME1" --owner "$OWNER" >/dev/null 2>&1
-FP="$HOME1/.mozilla/firefox/Profiles/a1b2c3d4.default-release"
+FFD="$HOME1/.mozilla/firefox"
+FP="$FFD/a1b2c3d4.default-release"
 assert "places.sqlite (bookmarks/history) copied" test -f "$FP/places.sqlite"
 assert "prefs.js (settings) copied" test -f "$FP/prefs.js"
 refute "key4.db (the password key) NOT copied" test -e "$FP/key4.db"
@@ -282,11 +298,15 @@ refute "logins.json (saved passwords) NOT copied" test -e "$FP/logins.json"
 refute "a password file in odd case NOT copied" test -e "$FP/LOGINS-BACKUP.JSON"
 assert "the report says passwords were left on Windows" \
     grep -q 'firefox/passwords' "$FERRY_STATE/report.d/firefox.tsv"
-PI="$HOME1/.mozilla/firefox/profiles.ini"
-assert "Firefox will open her Windows profile (profiles.ini names it, Default=1)" \
-    sh -c "awk '/^Path=Profiles\/a1b2c3d4.default-release\$/ {p=1; next} p && /^Default=1\$/ {f=1} /^\[/ {p=0} END {exit !f}' '$PI'"
-refute "...and Windows' [Install] claim on it did not come (Linux Firefox would make an empty profile)" \
-    grep -q 'Install308046B0AF4A39CB' "$PI"
+PI="$FFD/profiles.ini"
+assert "Firefox is told to open her Windows profile ([Install<name>] Default=)" \
+    sh -c "awk '/^\[Install4F96D1932A9F858E\]\$/ {i=1; next} /^\[/ {i=0} i && /^Default=a1b2c3d4.default-release\$/ {f=1} END {exit !f}' '$PI'"
+assert "...and the profile is listed, with the next free number" \
+    sh -c "grep -q '^\[Profile0\]\$' '$PI' && grep -q '^Path=a1b2c3d4.default-release\$' '$PI'"
+assert "...installs.ini says the same" \
+    sh -c "grep -q '^\[4F96D1932A9F858E\]\$' '$FFD/installs.ini' && grep -q '^Default=a1b2c3d4.default-release\$' '$FFD/installs.ini'"
+refute "...and Windows' own claim on the profile did not come (it names the Windows install)" \
+    sh -c "grep -q 'Install308046B0AF4A39CB\|308046B0AF4A39CB' '$PI' '$FFD/installs.ini'"
 EB="$HOME1/Bookmarks from Edge.html"
 assert "with a Windows Firefox too, her Edge bookmarks are saved in her Home" \
     grep -q 'https://photos.example.org/family?a=1&amp;b=2' "$EB"
@@ -296,6 +316,9 @@ refute "...a javascript: bookmark (a program) does not come" grep -q 'javascript
 refute "...nor a file: link to a Windows path" grep -q 'file:///' "$EB"
 assert "...folders and accents survive" sh -c "grep -q '>Money</H3>' '$EB' && grep -q 'Recipes été' '$EB'"
 assert "...her Chrome bookmarks are a folder of their own" grep -q 'Bookmarks from Chrome' "$EB"
+refute "cache NOT copied" test -e "$FP/cache2"
+refute "stale lock NOT copied" test -e "$FP/.parentlock"
+refute "compatibility.ini NOT copied" test -e "$FP/compatibility.ini"
 
 echo "Edge, and no Firefox, on Windows (most of the people AurOS is for):"
 E="$TMP/edgeonly"; cp -r "$WIN" "$E"; rm -rf "$E/users/Bob/AppData/Roaming/Mozilla"
@@ -305,20 +328,38 @@ eq "the browser stage succeeds (exit 0)" "$?" 0
 FE="$HE/.mozilla/firefox"
 assert "her Edge bar becomes Firefox's toolbar, in a new profile" \
     grep -q 'PERSONAL_TOOLBAR_FOLDER="true"' "$FE/fromwindows.default-release/bookmarks.html"
-assert "...which Firefox will open (Default=1, nothing claiming another)" \
-    sh -c "grep -q '^Path=fromwindows.default-release\$' '$FE/profiles.ini' && grep -q '^Default=1\$' '$FE/profiles.ini' && ! grep -q '^\[Install' '$FE/profiles.ini'"
+assert "...which this Firefox is told to open" \
+    sh -c "awk '/^\[Install4F96D1932A9F858E\]\$/ {i=1; next} /^\[/ {i=0} i && /^Default=fromwindows.default-release\$/ {f=1} END {exit !f}' '$FE/profiles.ini'"
 assert "...and her report says so" grep -q 'will be in Firefox the first time you open it' "$TMP/state-edge/report.d/firefox.tsv"
+ferry-firefox --root "$E" --home "$HE" --owner "$OWNER" --force >/dev/null 2>&1
+eq "bringing it across again changes nothing in profiles.ini (idempotent)" \
+   "$(grep -c '^\[Profile' "$FE/profiles.ini")|$(grep -c '^\[Install' "$FE/profiles.ini")" "1|1"
 
-# She opened Firefox on AurOS before bringing her files across.
+# Firefox 147+ keeps its profiles under ~/.config/mozilla/firefox.
+HX="$TMP/home-xdg"; mkdir -p "$HX/.config/mozilla/firefox"; hers "$HX"
+FERRY_STATE="$TMP/state-xdg" ferry-firefox --root "$E" --home "$HX" --owner "$OWNER" >/dev/null 2>&1
+assert "where Firefox keeps its profiles in ~/.config/mozilla/firefox, that is where it goes" \
+    test -f "$HX/.config/mozilla/firefox/fromwindows.default-release/bookmarks.html"
+refute "...and nothing is put in the old place Firefox would now ignore" test -e "$HX/.mozilla"
+
+# A profiles.ini already holding two profiles: ours takes the next number.
+HN="$TMP/home-num"; FN="$HN/.mozilla/firefox"; mkdir -p "$FN"
+printf '[Install1111111111111111]\nDefault=aaa.default\nLocked=1\n\n[Profile0]\nName=default\nIsRelative=1\nPath=aaa.default\nDefault=1\n\n[Profile1]\nName=other\nIsRelative=1\nPath=bbb.other\n\n[General]\nStartWithLastProfile=1\nVersion=2\n' > "$FN/profiles.ini"; hers "$HN"
+FERRY_STATE="$TMP/state-num" ferry-firefox --root "$E" --home "$HN" --owner "$OWNER" >/dev/null 2>&1
+assert "an existing profiles.ini: ours is [Profile2], numbering stays unbroken (Firefox stops at a gap)" \
+    sh -c "grep -A3 '^\[Profile2\]' '$FN/profiles.ini' | grep -q '^Path=fromwindows.default-release\$'"
+assert "...another install's section is left as it was" \
+    grep -A1 '^\[Install1111111111111111\]' "$FN/profiles.ini" | grep -q '^Default=aaa.default$'
+
+# She opened Firefox on AurOS before bringing her files across: what she
+# has been doing in it must not vanish from under her.
 HF="$TMP/home-ffran"; FR="$HF/.mozilla/firefox"; mkdir -p "$FR/abc.default-release"
 printf '[Install4F96D1932A9F858E]\nDefault=abc.default-release\nLocked=1\n\n[Profile0]\nName=default-release\nIsRelative=1\nPath=abc.default-release\nDefault=1\n\n[General]\nStartWithLastProfile=1\nVersion=2\n' > "$FR/profiles.ini"
 printf '[4F96D1932A9F858E]\nDefault=abc.default-release\nLocked=1\n' > "$FR/installs.ini"
 cp "$FR/profiles.ini" "$TMP/profiles.before"; hers "$HF"
 FERRY_STATE="$TMP/state-ffran" ferry-firefox --root "$E" --home "$HF" --owner "$OWNER" >/dev/null 2>&1
-assert "after Firefox ran once here, it is switched to the profile from Windows" \
-    sh -c "grep -A1 '^\[Install4F96D1932A9F858E\]' '$FR/profiles.ini' | grep -q '^Default=fromwindows.default-release\$' && grep -q '^Default=fromwindows.default-release\$' '$FR/installs.ini'"
-eq "...only one profile is the default" "$(grep -c '^Default=1$' "$FR/profiles.ini")" 1
-assert "...and the old profiles.ini is kept beside it" cmp -s "$TMP/profiles.before" "$FR/profiles.ini.before-windows"
+assert "after she used Firefox here, it is NOT switched away from her profile" cmp -s "$TMP/profiles.before" "$FR/profiles.ini"
+assert "...her Edge bookmarks wait in her Home with steps" test -s "$HF/Bookmarks from Edge.html"
 
 # Firefox is open while she brings her files across.
 HO="$TMP/home-ffopen"; FO="$HO/.mozilla/firefox"; mkdir -p "$FO/abc.default-release"
@@ -326,6 +367,13 @@ cp "$TMP/profiles.before" "$FO/profiles.ini"; ln -s "127.0.0.1:+$$" "$FO/abc.def
 FERRY_STATE="$TMP/state-ffopen" ferry-firefox --root "$E" --home "$HO" --owner "$OWNER" >/dev/null 2>&1
 assert "while Firefox is open, its profiles.ini is left alone" cmp -s "$TMP/profiles.before" "$FO/profiles.ini"
 assert "...and her Edge bookmarks wait in her Home instead" test -s "$HO/Bookmarks from Edge.html"
+
+# No Firefox on this computer to name.
+HZ="$TMP/home-nofx"; mkdir -p "$HZ"; hers "$HZ"
+FERRY_FFHASH="" FERRY_FIREFOX=/nonexistent/firefox FERRY_STATE="$TMP/state-nofx" \
+    ferry-firefox --root "$E" --home "$HZ" --owner "$OWNER" >/dev/null 2>&1
+refute "with no Firefox installed, no profiles.ini is invented" test -e "$HZ/.mozilla/firefox/profiles.ini"
+assert "...her bookmarks still wait in her Home" test -s "$HZ/Bookmarks from Edge.html"
 
 echo "bookmarks reader on hostile files:"
 python3 -c 'print("[" * 200000)' > "$TMP/deep.json"
@@ -337,11 +385,7 @@ eq "random bytes: refused (exit 2)" "$?" 2
 printf '{"roots":{"bookmark_bar":{"children":[{"type":"url","name":"x","url":"https://a.example/"}],"name":"B","type":"folder"}}' > "$TMP/cut.json"
 ferry-chromemarks Edge "$TMP/cut.json" >/dev/null 2>&1
 eq "a file cut off mid-way: refused (exit 2)" "$?" 2
-refute "installs.ini (claims the profile for Windows) NOT copied" \
-    test -e "$HOME1/.mozilla/firefox/installs.ini"
-refute "cache NOT copied" test -e "$FP/cache2"
-refute "stale lock NOT copied" test -e "$FP/.parentlock"
-refute "compatibility.ini NOT copied" test -e "$FP/compatibility.ini"
+unset FERRY_FFHASH
 
 echo "wifi (never a password):"
 NMDIR="$TMP/nm"

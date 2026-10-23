@@ -98,30 +98,31 @@ gate checks every ELF in /usr/lib/ferry).
    sentence, renamed ones, Wi-Fi network names, the passwords sentence.
    Suggest to the welcome panel's owner: its line "written down in the
    report" could say "in “What came from Windows” in your Home folder".
-3. DONE (suite) commit 4 bookmarks: `chromemarks.c` → `ferry-chromemarks`
-   (Edge/Chrome/Brave `Bookmarks` JSON → bookmarks.html; http/https/ftp
-   only, HTML-escaped, depth and size capped). `ferry-firefox` rewritten:
-   copies her Windows Firefox profile(s) via ferry-copy; Windows'
-   profiles.ini is NOT copied (its [Install…] section claims the profile
-   for Windows Firefox — finding 6); Linux profiles.ini/installs.ini are
-   rewritten as her to make the Windows profile the default (backup
-   `profiles.ini.before-windows`); with no Windows Firefox, a new profile
-   `fromwindows.default-release` holding bookmarks.html is made the
-   default (Firefox imports bookmarks.html into a new places.sqlite on
-   first start); with a Windows Firefox AND Edge, Edge's file lands in her
-   Home with plain steps; if Firefox is running here nothing is switched
-   (it would write its own profiles.ini back). Suite 115 user / 121 root,
-   mutants for each.
-   **NOT YET PROVEN WITH A REAL FIREFOX**: `tests/realfirefox.sh` +
-   `tests/infirefox.sh` (docker, Mozilla apt Firefox 158) exist and the
-   first run FAILED for a test-harness reason, not (yet) a product one:
-   Firefox printed "Exiting due to channel error" and never wrote
-   places.sqlite — headless Firefox as a setpriv'd user in a container
-   needs a working HOME/XDG_RUNTIME_DIR/dbus (try `MOZ_DISABLE_CONTENT_SANDBOX=1`,
-   `--profile` for the case-0 control, or run Firefox as the container's
-   non-root user with `HOME` set and `/tmp` writable; first prove a
-   control: a fresh Firefox start creates places.sqlite). Until that
-   passes, "her Edge bookmarks appear in Firefox" is unverified.
+3. DONE and PROVEN WITH A REAL FIREFOX (Mozilla's 158 in docker:
+   `tests/infirefox.sh` → `tests/realfirefox.sh`, 14/14) — bookmarks.
+   `chromemarks.c` → `ferry-chromemarks` (Edge/Chrome/Brave `Bookmarks`
+   JSON → bookmarks.html; http/https/ftp only, HTML-escaped, caps).
+   Things Firefox 158 does that the first design got wrong, all found by
+   running it: (a) it keeps profiles in `~/.config/mozilla/firefox`
+   (Firefox 147+), but uses `~/.mozilla/firefox` if only that exists —
+   Ferry uses the XDG folder when it exists, else the old one; (b) a
+   profile merely marked `Default=1` is IGNORED (Firefox makes a new empty
+   one and writes its own `[Install<hash>]`): to have it open ours, Ferry
+   writes `[Install<hash>] Default=<profile>` in profiles.ini and
+   `[<hash>]` in installs.ini; (c) `<hash>` = CityHash64 of the UTF-16
+   folder holding the firefox binary (`ferry-ffhash`, `ffhash.c`; checked
+   against a real Firefox: /usr/lib/firefox → 4F96D1932A9F858E, and the
+   Windows 308046B0AF4A39CB; paths over 32 characters are refused because
+   that branch is unconfirmed); (d) `bookmarks.html` in a never-run
+   profile is imported on first start with NO extra preference (a
+   `user.js` pref would re-import every start); (e) `[ProfileN]` numbers
+   must be contiguous or Firefox stops reading at the gap; (f) a second
+   start does not duplicate. Policy: Firefox is switched to the profile
+   from Windows only if she has not used Firefox here (no
+   `[Install<hash>]` for this install, or it is one Ferry made earlier);
+   if she has, or it is open, nothing is switched and Edge's file goes
+   to her Home with plain steps. Windows profiles.ini/installs.ini are
+   never copied. Suite 125 user / 131 root.
 4. Commit 5 fuzz: `fuzz/{hive,names,marks}.c` + `fuzz/run.sh` are written
    but NEVER RUN (no crash claims). Run `sh fuzz/run.sh 120` on homebase
    with the `auros-s3-fuzz` image (clang 18; mount the repo, `docker run

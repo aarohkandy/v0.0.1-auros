@@ -101,6 +101,43 @@ mutant ferry-files '"Windows kept this folder on another drive' '"the registry r
     "...and has no jargon in it"
 
 # Her browser (commit 4).
+mutant ffhash.c '#define K0 0xc3a5c85c97cb3127ULL' '#define K0 0xc3a5c85c97cb3128ULL' \
+    "/usr/lib/firefox is 4F96D1932A9F858E, as the real Firefox calls it"
+mutant ffhash.c '    uint64_t a = f64(s) * K1, b = f64(s + 8);' '    uint64_t a = f64(s) * K1 + 1, b = f64(s + 8);' \
+    "/usr/lib/firefox is 4F96D1932A9F858E, as the real Firefox calls it"
+mutant ffhash.c '    uint64_t a = f64(s) + (n + f64(s + n - 16)) * K0;' '    uint64_t a = f64(s) + (n + f64(s + n - 15)) * K0;' \
+    "...a path of the longer kind (33-64 bytes) agrees too"
+mutant ffhash.c '    if (n > 64) {' '    if (n > 640) {' \
+    "...a path it cannot vouch for is refused (exit 2)"
+mutant ferry-firefox "if (!hasinst) printf " "if (0) printf " \
+    "Firefox is told to open her Windows profile ([Install<name>] Default=)"
+mutant ferry-firefox 'if (sec ~ /^Profile[0-9]+$/) { k = substr(sec, 8) + 0; if (k + 1 > nxt) nxt = k + 1 }' \
+    'if (sec ~ /^Profile[0-9]+$/) { k = substr(sec, 8) + 0; if (k + 2 > nxt) nxt = k + 2 }' \
+    "an existing profiles.ini: ours is [Profile2], numbering stays unbroken (Firefox stops at a gap)"
+mutant ferry-firefox 'if [ -d "$FERRY_HOME/.config/mozilla/firefox" ]; then' 'if false; then' \
+    "where Firefox keeps its profiles in ~/.config/mozilla/firefox, that is where it goes"
+mutant ferry-firefox 'elif ff_used_here; then _switch=0;' 'elif false; then _switch=0;' \
+    "after she used Firefox here, it is NOT switched away from her profile"
+mutant ferry-firefox 'if ff_running; then _switch=0;' 'if false; then _switch=0;' \
+    "while Firefox is open, its profiles.ini is left alone"
+mutant ferry-firefox '    case " $_ours fromwindows.default-release " in *" ${_cur##*/} "*) return 1 ;; esac' '    :' \
+    "bringing it across again changes nothing in profiles.ini (idempotent)"
+mutant ferry-firefox 'elif [ -z "$FF_HASH" ]; then _switch=0;' 'elif false; then _switch=0;' \
+    "with no Firefox installed, no profiles.ini is invented"
+mutant chromemarks.c '        if (!strncasecmp(url, ok[i], strlen(ok[i]))) return 1;' '        return 1;' \
+    "...a javascript: bookmark (a program) does not come"
+mutant chromemarks.c "        case '<': fputs(\"&lt;\", stdout); break;" '' \
+    "...a title that is markup is escaped"
+mutant chromemarks.c '        if (++depth > MAX_DEPTH) goto bad;' '        ++depth;' \
+    "200,000 nested brackets: refused, not a crash (exit 2)"
+
+# Plain words (commit 3).
+mutant ferry '        exec 3>&1 >>"$FERRY_STATE/ferry.log" 2>&1' '        exec 3>&1' \
+    "--plain prints nothing but plain sentences"
+mutant ferry-files '"Windows kept this folder on another drive' '"the registry redirects this folder to another drive' \
+    "...and has no jargon in it"
+
+# Her browser (commit 4).
 mutant ferry-firefox '        sec ~ /^\[Install/ && /^Default=/ { $0 = "Default=" rel }' '' \
     "after Firefox ran once here, it is switched to the profile from Windows"
 mutant ferry-firefox '_running=0

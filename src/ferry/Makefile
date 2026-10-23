@@ -11,7 +11,7 @@ CC      ?= cc
 CFLAGS  ?= -O2 -std=gnu11 -Wall -Wextra
 BUILD   := build
 HELPERS := $(BUILD)/ferry-hivepeek $(BUILD)/ferry-winattr $(BUILD)/ferry-copy \
-           $(BUILD)/ferry-chromemarks
+           $(BUILD)/ferry-chromemarks $(BUILD)/ferry-ffhash
 
 SCRIPTS := ferry ferry-detect ferry-wifi ferry-files ferry-firefox \
            ferry-settings ferry-report ferry-hive ferry-common.sh install.sh
@@ -34,6 +34,9 @@ $(BUILD)/ferry-winattr: winattr.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<
 
 $(BUILD)/ferry-chromemarks: chromemarks.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $<
+
+$(BUILD)/ferry-ffhash: ffhash.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<
 
 # copy.c includes winattr.c: one classifier, two programs.

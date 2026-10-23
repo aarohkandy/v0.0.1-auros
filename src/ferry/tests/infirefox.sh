@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && apt-get update && apt-get install -y --no-install-recommends firefox \
  && rm -rf /var/lib/apt/lists/*
 DOCKER
-exec docker run --rm --memory 3g --shm-size 1g -v "$REPO":/repo:ro "$IMG" sh -c '
+exec docker run --rm --memory 3g --shm-size 1g --security-opt seccomp=unconfined -v "$REPO":/repo:ro "$IMG" sh -c '
     mkdir -p /etc/firefox/policies &&
     cp /repo/rootfs/etc/firefox/policies/policies.json /etc/firefox/policies/ &&
     cp -r /repo/src/ferry /tmp/f && cd /tmp/f && rm -rf build && make -s >/dev/null &&
