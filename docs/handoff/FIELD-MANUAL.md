@@ -112,6 +112,7 @@ Trigger words are read from the commit **SUBJECT** only:
   3 tries). Add both to anything new.
 - Concurrency: one run per workflow per branch, queued, newest pending wins,
   `cancel-in-progress: false`. A "cancelled" run is usually just superseded.
+- **Mutant branches** (deliberately weakened code pushed only to prove a check goes red on a real runner) are named `*mut-*`, carry no trigger words, are never merged, and are deleted right after their run. Releases are built only from `main`.
 - **Never cancel a CI run you did not start** (another stream's gating results die with it). If a run looks stuck, tell the lead with its id.
 - Evidence a person must see goes into a (pre)release asset or the job summary.
 
