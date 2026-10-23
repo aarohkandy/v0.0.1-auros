@@ -316,14 +316,21 @@ val() { serial | sed -n "s/^THEFT $1 //p" | tail -1; }
 # ── 0: shim's first start on a firmware that has no entry for AurOS yet
 # creates one and resets; QEMU is run with -no-reboot, so it exits. The
 # entry stays in the variable store for every start after this.
+# Without a TPM the firmware does not reset (measured): the prime start is
+# then already the full plain start, and is used as step 1.
 power_on prime
-power_off 180
+wait_for "THEFT poweroff" 240
+power_off 60
+FULLPRIME=0; serial | grep -q "THEFT poweroff" && FULLPRIME=1
 
 # ── 1: plain AurOS, armed ─────────────────────────────────────────
 echo "  1  plain AurOS: lockctl prepare" | tee -a "$EV/summary.txt"
-power_on plain
-wait_for "THEFT poweroff" && ok "AurOS started plain and reported" || bad "AurOS started plain" "$(serial | tail -5)"
-power_off
+if [ "$FULLPRIME" = 0 ]; then
+    power_on plain
+    wait_for "THEFT poweroff"
+    power_off
+fi
+serial | grep -q "THEFT poweroff" && ok "AurOS started plain and reported" || bad "AurOS started plain" "$(serial | tail -5)"
 LOOK=$(val look)
 BG=$(echo "$LOOK" | sed -n 's/.*bg="#\{0,1\}\([0-9A-Fa-f]\{6\}\).*/\1/p')
 ERR=$(echo "$LOOK" | sed -n 's/.*err="#\{0,1\}\([0-9A-Fa-f]\{6\}\).*/\1/p')
