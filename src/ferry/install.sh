@@ -27,7 +27,12 @@ ferry-settings ferry-report ferry-hive ferry-common.sh"
 HELPERS="ferry-hivepeek:hivepeek.c ferry-winattr:winattr.c ferry-copy:copy.c \
 ferry-chromemarks:chromemarks.c ferry-ffhash:ffhash.c"
 
-HARDEN="-O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
+# -fstack-protector-all, not -strong: -strong puts a canary only in functions
+# with a local array or address-taken buffer, and a helper such as ffhash
+# (heap buffers only) then imports no __stack_chk_fail, which is what
+# tools/checksec.sh reads to see the protection. These programs read hostile
+# files as root, so every function gets one.
+HARDEN="-O2 -D_FORTIFY_SOURCE=3 -fstack-protector-all \
 -fstack-clash-protection -fcf-protection=full -fPIE -pie \
 -Wl,-z,relro,-z,now"
 
