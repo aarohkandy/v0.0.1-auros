@@ -16,6 +16,12 @@
  *   ssd2      asks for server-side                     -> ours
  *   own       asks for client-side                     -> its own, and is told so
  *   asks      no decoration; moves, minimises, maximises, un-maximises
+ *   film      no decoration; asks for the whole screen, as a video's button does
+ *
+ * The sixth is what the shell does with it: session_sync() is run for real, frame
+ * after frame, and the film must STAY full screen (it was told "not full screen"
+ * by the very next configure, so a film's own button lasted one frame), until
+ * something else comes to the front.
  *
  *   sh tools/wltest-deco.sh        (Linux: libwayland-dev, libxkbcommon-dev)
  *
@@ -32,6 +38,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <signal.h>
 #include <time.h>
 
 #include <wayland-client.h>
@@ -39,9 +46,11 @@
 #include "xdg-decoration-client.h"
 
 #include "../src/aurwl/aurwl.h"
+#include "../src/aurshell/shell.h"
+#include "../src/aurshell/session.h"
 
-enum { NW = 5 };
-static const char *NAME[NW] = { "plain", "ssd", "ssd2", "own", "asks" };
+enum { NW = 6, FILM = 5 };
+static const char *NAME[NW] = { "plain", "ssd", "ssd2", "own", "asks", "film" };
 
 struct cl {
     struct wl_compositor *comp;
@@ -55,6 +64,7 @@ struct cl {
     struct zxdg_toplevel_decoration_v1 *dec[NW];
     int mode[NW];                 /* what the compositor told it: 1 client, 2 server, 0 nothing */
     int configured[NW];
+    int film_full, film_w, film_h, film_n;   /* the last configure the film got */
 };
 
 static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char *iface, uint32_t ver)
@@ -81,7 +91,15 @@ static void xs_configure(void *d, struct xdg_surface *xs, uint32_t serial)
 }
 static const struct xdg_surface_listener xs_l = { xs_configure };
 static void tl_configure(void *d, struct xdg_toplevel *t, int32_t w, int32_t h, struct wl_array *s)
-{ (void)d; (void)t; (void)w; (void)h; (void)s; }
+{
+    (void)t;
+    struct tag *g = d;
+    if (g->i != FILM) return;
+    int full = 0;
+    uint32_t *st;
+    wl_array_for_each(st, s) if (*st == XDG_TOPLEVEL_STATE_FULLSCREEN) full = 1;
+    g->c->film_full = full; g->c->film_w = w; g->c->film_h = h; g->c->film_n++;
+}
 static void tl_close(void *d, struct xdg_toplevel *t) { (void)d; (void)t; }
 static void tl_bounds(void *d, struct xdg_toplevel *t, int32_t w, int32_t h) { (void)d; (void)t; (void)w; (void)h; }
 static void tl_caps(void *d, struct xdg_toplevel *t, struct wl_array *a) { (void)d; (void)t; (void)a; }
@@ -110,8 +128,20 @@ static void give_buffer(struct cl *c, int i)
     wl_surface_commit(c->surf[i]);
 }
 
-/* What the client saw, handed to the compositor side with the READY byte. */
-typedef struct { int mode[NW]; } report;
+/* What the client saw, handed to the compositor side at each step; the
+ * compositor answers with one byte when it has done what that step needs. */
+typedef struct { int label; int mode[NW]; int film_full, film_w, film_h; } report;
+
+static void step(struct wl_display *dpy, struct cl *c, int chan, int label)
+{
+    wl_display_roundtrip(dpy);
+    wl_display_roundtrip(dpy);
+    report rp = { .label = label, .film_full = c->film_full, .film_w = c->film_w, .film_h = c->film_h };
+    for (int i = 0; i < NW; i++) rp.mode[i] = c->mode[i];
+    if (write(chan, &rp, sizeof rp) != (ssize_t)sizeof rp) _exit(93);
+    char go;
+    if (read(chan, &go, 1) != 1) _exit(94);
+}
 
 static int client(const char *sock, int chan)
 {
@@ -160,11 +190,12 @@ static int client(const char *sock, int chan)
     wl_display_roundtrip(dpy);
     wl_display_roundtrip(dpy);
 
-    report rp;
-    for (int i = 0; i < NW; i++) rp.mode[i] = c.mode[i];
-    if (write(chan, &rp, sizeof rp) != (ssize_t)sizeof rp) return 93;
-    char go;
-    if (read(chan, &go, 1) != 1) return 94;       /* hold the windows until the compositor has looked */
+    step(dpy, &c, chan, 1);                    /* the compositor looks at the windows */
+    xdg_toplevel_set_fullscreen(c.tl[FILM], NULL);
+    step(dpy, &c, chan, 2);                    /* ...and the shell syncs: the film is asked to fill the screen */
+    step(dpy, &c, chan, 3);                    /* many frames later, it must still be */
+    step(dpy, &c, chan, 4);                    /* ...and the shell moves something else to the front */
+    step(dpy, &c, chan, 5);                    /* the film has been told */
     wl_display_disconnect(dpy);
     return 0;
 }
@@ -193,8 +224,29 @@ static uint32_t now_ms(void)
     return (uint32_t)(ts.tv_sec * 1000u + ts.tv_nsec / 1000000u);
 }
 
+static int get_report(aurwl *c, int chan, report *rp)
+{
+    size_t got = 0;
+    uint32_t t0 = now_ms();
+    while (got < sizeof *rp && now_ms() - t0 < 15000) {
+        struct pollfd p[2] = { { aurwl_fd(c), POLLIN, 0 }, { chan, POLLIN, 0 } };
+        poll(p, 2, 20);
+        aurwl_dispatch(c);
+        aurwl_reap(c);
+        if (p[1].revents & POLLIN) {
+            ssize_t k = read(chan, (char *)rp + got, sizeof *rp - got);
+            if (k <= 0) return 0;
+            got += (size_t)k;
+        }
+    }
+    aurwl_dispatch(c);
+    return got == sizeof *rp;
+}
+static void ack(int chan) { char go = 1; if (write(chan, &go, 1) < 0) perror("write"); }
+
 int main(void)
 {
+    signal(SIGPIPE, SIG_IGN);          /* the client may be gone when the last answer is sent */
     if (!getenv("XDG_RUNTIME_DIR")) { fprintf(stderr, "wltest-deco: XDG_RUNTIME_DIR must be set\n"); return 2; }
     aurwl *c = aurwl_create(1280, 720, 60000);
     if (!c) { fprintf(stderr, "wltest-deco: compositor did not start\n"); return 1; }
@@ -205,31 +257,21 @@ int main(void)
     if (kid == 0) { close(sp[0]); _exit(client(aurwl_socket(c), sp[1])); }
     close(sp[1]);
 
-    report rp; size_t got = 0;
-    uint32_t t0 = now_ms();
-    while (got < sizeof rp && now_ms() - t0 < 15000) {
-        struct pollfd p[2] = { { aurwl_fd(c), POLLIN, 0 }, { sp[0], POLLIN, 0 } };
-        poll(p, 2, 20);
-        aurwl_dispatch(c);
-        aurwl_reap(c);
-        if (p[1].revents & POLLIN) {
-            ssize_t k = read(sp[0], (char *)&rp + got, sizeof rp - got);
-            if (k <= 0) break;
-            got += (size_t)k;
-        }
-    }
-    if (got < sizeof rp) {
-        printf("wltest-deco: the client never finished\n");
-        kill(kid, 9); waitpid(kid, NULL, 0);
-        return 1;
-    }
-    aurwl_dispatch(c);
-
-    printf("\nwhich windows draw their own title bar\n");
+    static shell_ctx sc;
+    memset(&sc, 0, sizeof sc);
+    sc.wl = c;
+    sc.screen_w = 1280; sc.screen_h = 680;
+    sc.focus = -1;
+    /* One step of the client's script: wait for its report, look, answer. */
+    report rp;
     aurwl_win *w[NW];
+#define NEXT(L) do { if (!get_report(c, sp[0], &rp) || rp.label != (L)) { printf("wltest-deco: step %d never came\n", (L)); fails++; goto done; } } while (0)
+
+    NEXT(1);
+    printf("\nwhich windows draw their own title bar\n");
     for (int i = 0; i < NW; i++) w[i] = by_title(c, NAME[i]);
     for (int i = 0; i < NW; i++) ok(NAME[i], w[i] != NULL);
-    if (!w[0] || !w[1] || !w[2] || !w[3] || !w[4]) { fails++; goto done; }
+    for (int i = 0; i < NW; i++) if (!w[i]) { fails++; goto done; }
 
     ok("no xdg-decoration object: it draws its own (Firefox, GTK)", aurwl_win_csd(w[0]) == 1);
     ok("an xdg-decoration object, no preference: the shell's bar", aurwl_win_csd(w[1]) == 0);
@@ -252,9 +294,39 @@ int main(void)
        (aurwl_win_take_requests(w[0]) & AURWL_REQ_RESTORE) != 0);
     ok("a window that asked nothing has nothing to take", aurwl_win_take_requests(w[1]) == 0);
 
+    /* Now the shell adopts the windows (after the requests above were read: the
+     * shell takes them too), and the film is the one she is looking at. */
+    for (int i = 0; i < 4; i++) { aurwl_dispatch(c); session_sync(&sc, NULL); }
+    for (int i = 0; i < sc.n_wins; i++) if (!strcmp(sc.wins[i].title, "film")) sc.focus = i;
+    ok("the film has a slot and is in front", sc.focus >= 0);
+    int fi = sc.focus;
+    ack(sp[0]);
+
+    printf("\nfull screen, as the shell keeps it\n");
+    NEXT(2);
+    for (int i = 0; i < 6; i++) { aurwl_dispatch(c); session_sync(&sc, NULL); }
+    ok("the shell put the film on the whole screen", fi >= 0 && sc.wins[fi].full == 1);
+    ack(sp[0]);
+
+    NEXT(3);
+    ok("the film was told it is full screen", rp.film_full == 1);
+    ok("...at the size of the screen above the band", rp.film_w == sc.screen_w && rp.film_h == sc.screen_h);
+    for (int i = 0; i < 12; i++) { aurwl_dispatch(c); session_sync(&sc, NULL); aurwl_frame_done(c, now_ms()); }
+    ack(sp[0]);
+
+    NEXT(4);
+    ok("twelve frames later it is STILL full screen (it lasted one frame before)", rp.film_full == 1 && sc.wins[fi].full == 1);
+    /* A window comes to the front: the film stops being what she looks at. */
+    sc.focus = (fi == 0) ? 1 : 0;
+    for (int i = 0; i < 6; i++) { aurwl_dispatch(c); session_sync(&sc, NULL); }
+    ok("something else in front ends it", sc.wins[fi].full == 0);
+    ack(sp[0]);
+    NEXT(5);
+    ok("...and the film is told it is not full screen any more", rp.film_full == 0);
+    ack(sp[0]);
+
 done:;
-    char go = 1;
-    if (write(sp[0], &go, 1) < 0) perror("write");
+    ack(sp[0]);                         /* releases the client if a step above gave up */
     waitpid(kid, NULL, 0);
     aurwl_destroy(c);
     printf("\n%d checks, %d failed\n", checked, fails);

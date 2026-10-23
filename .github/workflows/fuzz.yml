@@ -44,7 +44,7 @@ jobs:
           for i in 1 2 3; do
             sudo timeout 300 apt-get update -q &&
             sudo DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y -q --no-install-recommends \
-                clang libwayland-dev libxkbcommon-dev xkb-data pkg-config gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev && break
+                clang libwayland-dev libxkbcommon-dev libdbus-1-dev xkb-data pkg-config gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev && break
             [ "$i" = 3 ] && exit 1; sleep 15
           done
       - name: fuzz regressions (ASan + UBSan)

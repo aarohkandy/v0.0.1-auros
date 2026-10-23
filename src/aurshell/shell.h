@@ -115,11 +115,17 @@ typedef struct {
      * buttons, one above the other, is the thing nobody can work out.
      * The footer's "Close this" is still the one place to close. */
     int       csd;
+    /* The program asked to fill the screen (a film's full-screen button,
+     * a page's video): it covers the whole desktop above the band, which
+     * stays, so "Close this" is always there. Cleared when it stops being
+     * the thing she is looking at. */
+    int       full;
 } win_entry;
 
 /* What a program's own title bar can ask of the archetype (the same bits
  * as AURWL_REQ_*; session.c checks that they agree). */
-enum { WREQ_MOVE = 1, WREQ_MAXIMIZE = 2, WREQ_RESTORE = 4, WREQ_MINIMIZE = 8 };
+enum { WREQ_MOVE = 1, WREQ_MAXIMIZE = 2, WREQ_RESTORE = 4, WREQ_MINIMIZE = 8,
+       WREQ_FULLSCREEN = 16, WREQ_UNFULLSCREEN = 32 };
 
 /* Two faces, not one, at two real weights.
  *

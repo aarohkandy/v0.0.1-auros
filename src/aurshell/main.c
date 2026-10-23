@@ -958,6 +958,7 @@ int main(int argc, char **argv)
             surface body = *s;
             body.h = c.screen_h;
             L->paint(&c, &body, &f, wall);
+            session_paint_full(&c, &body);
             session_paint_popups(&c, &body);
             foot_paint(&c, s, &f);
             clock_gettime(CLOCK_MONOTONIC, &b);
@@ -1748,6 +1749,7 @@ int main(int argc, char **argv)
             surface body = *fb;
             body.h = c.screen_h;
             L->paint(&c, &body, &f, wall);
+            session_paint_full(&c, &body);
             session_paint_popups(&c, &body);
             /* Above the archetype and below the panels: a card must
              * not cover a screen she opened deliberately. */

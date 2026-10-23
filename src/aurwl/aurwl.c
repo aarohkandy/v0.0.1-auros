@@ -2349,9 +2349,11 @@ static void tl_unmaximize(struct wl_client *cl, struct wl_resource *r)
 { (void)cl; aurwl_win *w = wl_resource_get_user_data(r); if (!w) return;
   w->req |= AURWL_REQ_RESTORE; w->want_max = 0; configure_toplevel(w); }
 static void tl_fullscreen(struct wl_client *cl, struct wl_resource *r, struct wl_resource *o)
-{ (void)cl; (void)o; aurwl_win *w = wl_resource_get_user_data(r); if (!w) return; w->want_full = 1; configure_toplevel(w); }
+{ (void)cl; (void)o; aurwl_win *w = wl_resource_get_user_data(r); if (!w) return;
+  w->req |= AURWL_REQ_FULLSCREEN; w->want_full = 1; configure_toplevel(w); }
 static void tl_unfullscreen(struct wl_client *cl, struct wl_resource *r)
-{ (void)cl; aurwl_win *w = wl_resource_get_user_data(r); if (!w) return; w->want_full = 0; configure_toplevel(w); }
+{ (void)cl; aurwl_win *w = wl_resource_get_user_data(r); if (!w) return;
+  w->req |= AURWL_REQ_UNFULLSCREEN; w->want_full = 0; configure_toplevel(w); }
 static void tl_minimize(struct wl_client *cl, struct wl_resource *r)
 { (void)cl; win_ask(r, AURWL_REQ_MINIMIZE); }
 

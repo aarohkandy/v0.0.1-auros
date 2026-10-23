@@ -30,6 +30,10 @@ int  session_key(shell_ctx *c, int code, int pressed);
  * a use-after-free reachable by waiting. */
 aurwl_win *session_win(shell_ctx *c, uint32_t wid);
 
+/* A program that asked for the whole screen, over everything the archetype
+ * drew (and nothing else: the band stays). */
+void session_paint_full(shell_ctx *c, surface *fb);
+
 /* Menus and dropdowns, painted above everything the archetype drew. */
 void session_paint_popups(shell_ctx *c, surface *fb);
 

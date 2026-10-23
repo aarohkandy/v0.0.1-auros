@@ -83,7 +83,7 @@ int         aurwl_win_csd(const aurwl_win *w);
  * mask of AURWL_REQ_* -- and forget it. The shell decides what each means
  * in its layout; a request it cannot honour is simply dropped. */
 enum { AURWL_REQ_MOVE = 1, AURWL_REQ_MAXIMIZE = 2, AURWL_REQ_RESTORE = 4,
-       AURWL_REQ_MINIMIZE = 8 };
+       AURWL_REQ_MINIMIZE = 8, AURWL_REQ_FULLSCREEN = 16, AURWL_REQ_UNFULLSCREEN = 32 };
 unsigned    aurwl_win_take_requests(aurwl_win *w);
 
 /* The window's current content: our own copy of the client's last

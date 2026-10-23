@@ -42,6 +42,19 @@ static char *slurp(const char *p)
     return strdup(b);          /* a copy: two files are read at once */
 }
 
+static int source_count(const char *needle)
+{
+    static char buf[600000];
+    FILE *f = fopen("src/aurshell/main.c", "r");
+    if (!f) { perror("src/aurshell/main.c"); exit(2); }
+    size_t n = fread(buf, 1, sizeof buf - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    int k = 0;
+    for (const char *p = buf; (p = strstr(p, needle)); p += strlen(needle)) k++;
+    return k;
+}
+
 static int source_has(const char *needle)
 {
     static char buf[600000];
@@ -103,6 +116,31 @@ int main(void)
        source_has("textsys_apply(c.text_scale);      /* and her programs' */"));
     ok("...and again when the desktop starts at a size she chose",
        source_has("textsys_apply(c.text_scale);\n"));
+
+    printf("\n  the buttons on her programs' own title bars are her look's\n");
+    ok("Like Windows: minimise, maximise, close",
+       !strcmp(textsys_buttons_for("taskbar"), ":minimize,maximize,close"));
+    ok("Like a Mac: minimise and close (its windows have no maximise)",
+       !strcmp(textsys_buttons_for("dock"), ":minimize,close"));
+    ok("Big and simple and One thing at a time: none (Close this is in the footer)",
+       !strcmp(textsys_buttons_for("rail"), ":") && !strcmp(textsys_buttons_for("tiles"), ":"));
+    ok("a look it does not know has none", !strcmp(textsys_buttons_for("nope"), ":") &&
+                                            !strcmp(textsys_buttons_for(NULL), ":"));
+    ok("it writes both GTK settings files", textsys_write_buttons(home, "taskbar") == 0);
+    t3 = slurp(f3); t4 = slurp(f4);
+    ok("GTK 3 gets the layout, beside the size she chose",
+       t3 && strstr(t3, "gtk-decoration-layout=:minimize,maximize,close\n") &&
+       strstr(t3, "gtk-xft-dpi=98304\n"));
+    ok("GTK 4 gets it too", t4 && strstr(t4, "gtk-decoration-layout=:minimize,maximize,close\n"));
+    textsys_write_buttons(home, "tiles");
+    t3 = slurp(f3);
+    ok("changing her look replaces it, once (and keeps the rest)",
+       t3 && strstr(t3, "gtk-decoration-layout=:\n") &&
+       strstr(t3, "gtk-decoration-layout=:minimize") == NULL &&
+       strstr(t3, "gtk-font-name=Inter 11\n") && strstr(t3, "gtk-xft-dpi=98304\n"));
+    ok("a home that is not a path is refused", textsys_write_buttons("", "taskbar") < 0);
+    ok("main.c sets them when the desktop starts and when her look changes",
+       source_count("textsys_buttons(L->id);") == 2);
 
     char cmd[400];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", home);
