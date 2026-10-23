@@ -57,7 +57,7 @@ for (const c of CASES) {
   const ok = r.status === 200 && c.pass(body);
   const note = c.want && body.missing !== c.want ? `missing ${body.missing}, hoped ${c.want}` : "";
   rows.push({ name: c.name, ok, status: r.status, body, ms: log.ms, usd: log.usd, in: log.in, out: log.out, cr: log.cr, cw: log.cw, rejected: log.rejected, note });
-  console.log(`${ok ? "ok  " : "FAIL"} ${c.name}: ${JSON.stringify(body)} ${log.ms} ms $${log.usd}${log.rejected ? " rejected:" + log.rejected : ""}${note ? " (" + note + ")" : ""}`);
+  console.log(`${ok ? "ok  " : "FAIL"} ${c.name}: ${JSON.stringify(body)} ${log.ms} ms $${log.usd}${log.rejected ? " rejected:" + log.rejected : ""}${log.reason ? " reason:" + log.reason : ""}${log.detail ? " detail:" + log.detail : ""}${note ? " (" + note + ")" : ""}`);
 }
 for (const q of [["How do I print a letter?", "printing"], ["How do I get on the wifi?", "getting-online"], ["Someone phoned saying they are from AurOS and need to fix my computer", "never-call"]]) {
   const n = logs.length;
@@ -66,7 +66,7 @@ for (const q of [["How do I print a letter?", "printing"], ["How do I get on the
   const log = logs.slice(n).find((l) => l.ev === "req") || {};
   const ok = r.status === 200 && body.help_page_id === q[1];
   rows.push({ name: "ask: " + q[0], ok, status: r.status, body, ms: log.ms, usd: log.usd, in: log.in, out: log.out, cr: log.cr, cw: log.cw });
-  console.log(`${ok ? "ok  " : "FAIL"} ask "${q[0]}": ${JSON.stringify(body)} ${log.ms} ms $${log.usd}`);
+  console.log(`${ok ? "ok  " : "FAIL"} ask "${q[0]}": ${JSON.stringify(body)} ${log.ms} ms $${log.usd}${log.reason ? " reason:" + log.reason : ""}${log.detail ? " detail:" + log.detail : ""}`);
 }
 
 const wishes = rows.filter((r) => !r.name.startsWith("ask:") && typeof r.usd === "number");

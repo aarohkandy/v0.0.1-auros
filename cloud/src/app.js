@@ -180,6 +180,9 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
       r = await callClaude(route, system, user, schema, m);
     } catch (e) {
       m.reason = upstreamReason(e);
+      // What the owner must fix (a refused key, a bad request): Anthropic's own
+      // message, which describes the request's shape, never its content.
+      if (["auth", "bad_request", "not_found", "error"].includes(m.reason)) m.detail = `${e?.status ?? ""} ${e?.error?.error?.type ?? e?.name ?? ""} ${String(e?.error?.error?.message ?? e?.message ?? "").slice(0, 200)}`.trim();
       await settle(false, 0, false); // Claude never answered: the slot, the estimate and her request come back
       return { res: busy(m, m.reason === "spend_limit" ? secondsToMidnight(t) : undefined) };
     }
@@ -277,6 +280,7 @@ function upstreamReason(e) {
     return /usage limits/i.test(e.message) ? "spend_limit" : "bad_request";
   }
   if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) return "auth";
+  if (e instanceof Anthropic.NotFoundError) return "not_found";
   if (e instanceof Anthropic.APIError && e.status === 529) return "overloaded";
   if (e instanceof Anthropic.InternalServerError) return "upstream_5xx";
   return "error";

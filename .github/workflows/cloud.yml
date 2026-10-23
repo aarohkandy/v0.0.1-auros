@@ -117,7 +117,8 @@ jobs:
           done
           timeout 300 npx --yes "$WRANGLER" tail auros-wishes --format json > "$RUNNER_TEMP/tail.json" 2>"$RUNNER_TEMP/tail.err" &
           tail_pid=$!
-          sleep 10
+          sleep 15
+          echo "tail: $(wc -c < "$RUNNER_TEMP/tail.json") bytes so far; stderr: $(head -c 300 "$RUNNER_TEMP/tail.err")"
           set +e
           timeout 240 node test/smoke.mjs "$URL" | tee -a "$GITHUB_STEP_SUMMARY"
           smoke=${PIPESTATUS[0]}
@@ -127,26 +128,20 @@ jobs:
           wait "$tail_pid" 2>/dev/null || true
           # Only the service's own log lines: the tail stream also carries
           # Cloudflare's request metadata, which the service does not log.
-          node -e '
-            const fs = require("fs");
-            const lines = fs.readFileSync(process.argv[1], "utf8").split("\n").filter(Boolean);
-            const msgs = [];
-            for (const l of lines) { try { for (const g of JSON.parse(l).logs || []) msgs.push(JSON.stringify(g.message)); } catch {} }
-            fs.writeFileSync(process.argv[2], msgs.join("\n"));
-            console.log(`${msgs.length} service log lines captured`);
-          ' "$RUNNER_TEMP/tail.json" "$RUNNER_TEMP/service-logs.txt"
+          node test/tail-logs.mjs "$RUNNER_TEMP/tail.json" "$RUNNER_TEMP/service-logs.txt"
           if [ ! -s "$RUNNER_TEMP/service-logs.txt" ]; then
-            echo "::warning::wrangler tail captured no log lines; the log check could not run ($(head -c 300 "$RUNNER_TEMP/tail.err"))"
+            echo "::warning::wrangler tail captured no log lines; the log check could not run (tail stdout $(wc -c < "$RUNNER_TEMP/tail.json") bytes; stderr: $(head -c 300 "$RUNNER_TEMP/tail.err"))"
           elif [ -s "$SMOKE_SECRETS_FILE" ] && grep -F -f "$SMOKE_SECRETS_FILE" -q "$RUNNER_TEMP/service-logs.txt"; then
             echo "::error::The service logged a token, an install id or the words of a wish"; exit 1
           else
             echo "log check: none of the token, install id or wish words appear in the service's logs" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "The service's log lines (checked above; counts only):"; cat "$RUNNER_TEMP/service-logs.txt"; echo
           fi
           if [ "$smoke" = 3 ]; then echo "::warning::This runner's network had used its 3 registrations today; end-to-end part skipped"; exit 0; fi
           exit "$smoke"
 
       - name: Real model on the acceptance and adversarial sets
-        if: steps.have.outputs.ok == 'true'
+        if: always() && steps.have.outputs.ok == 'true'
         run: timeout 600 npm run live-eval
       - uses: actions/upload-artifact@v4
         if: always() && steps.have.outputs.ok == 'true'
