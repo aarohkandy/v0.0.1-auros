@@ -84,7 +84,7 @@ DISK_THROTTLE = E("E2E_DISK_THROTTLE", "")     # e.g. bps=104857600,iops=120
 #   restarts: Windows restarted for the fix, before the install
 VARIANT_EXPECT = {
     "smalldisk": {"page": r"enough free space|free space on drive", "fix": True, "restarts": 0},
-    "bitlocker": {"page": r"is encrypted|encryption off", "fix": True, "restarts": 0},
+    "bitlocker": {"page": r"is encrypted|encryption off|has locked", "fix": True, "restarts": 0},
     "pending":   {"page": r"waiting (to|for a) restart|finish an update", "fix": True, "restarts": 1},
 }
 

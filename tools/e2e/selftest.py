@@ -76,7 +76,7 @@ def test_wizard_contract():
     m = re.search(r"primary_label\(void\)\s*\{(.*?)\n\}", wz, re.S)
     body = m.group(1) if m else ""
     for word, why in (("Install AurOS", "starts the install"), ("Restart now", "ends the wizard"),
-                      ("Fix these for me", "counts a fix"), ("Close", "means it cannot go on")):
+                      ("Fix these for me", "counts a fix"), ("Close AurOS Setup", "means it cannot go on")):
         check('L"%s"' % word in body, f"wizard: a primary button says '{word}' ({why})")
 
 

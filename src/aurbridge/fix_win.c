@@ -28,17 +28,17 @@ static const fix_info FIXES[] = {
      * these a note instead of a stop), an encrypted drive is a plain
      * stop. This used to switch encryption off on every fixed drive. */
     { "bitlocker-system", FIX_CANNOT,
-      L"Drive C: is encrypted",
-      L"AurOS can\u2019t go beside an encrypted drive yet.", NULL },
+      L"Windows has locked this computer\u2019s drive",
+      L"AurOS can\u2019t go beside a locked drive yet. Nothing was changed.", NULL },
     { "bitlocker-other", FIX_CANNOT,
-      L"Another drive in this computer is encrypted",
-      L"AurOS can\u2019t go beside an encrypted drive yet.", NULL },
+      L"Windows has locked another drive in this computer",
+      L"AurOS can\u2019t go beside a locked drive yet. Nothing was changed.", NULL },
     { "pending-reboot", FIX_RESTART,
       L"Windows is waiting to restart to finish an update",
-      L"We restart it. This installer opens again by itself afterwards.", NULL },
+      L"We restart Windows. AurOS Setup opens again by itself afterwards.", NULL },
     { "volume-dirty", FIX_RESTART,
       L"Windows wants to check drive C: for errors",
-      L"We restart so Windows can check it. This installer opens again after.", NULL },
+      L"We restart so Windows can check it. AurOS Setup opens again after.", NULL },
     { "not-on-ac", FIX_WAIT,
       L"The charger isn’t plugged in",
       L"Plug it in. We carry on by ourselves.", NULL },
@@ -55,33 +55,33 @@ static const fix_info FIXES[] = {
      * wizard stops offering it after the installer has reopened). */
     { "bitlocker-unknown", FIX_RESTART,
       L"We couldn’t check whether drive C: is encrypted",
-      L"We restart Windows and check again. This installer opens again by itself.", NULL },
+      L"We restart Windows and check again. AurOS Setup opens again by itself.", NULL },
     { "fde-unreadable", FIX_RESTART,
       L"We couldn’t check whether drive C: is encrypted",
-      L"We restart Windows and check again. This installer opens again by itself.", NULL },
+      L"We restart Windows and check again. AurOS Setup opens again by itself.", NULL },
     { "fde-not-checked", FIX_RESTART,
       L"We couldn’t check whether drive C: is encrypted",
-      L"We restart Windows and check again. This installer opens again by itself.", NULL },
+      L"We restart Windows and check again. AurOS Setup opens again by itself.", NULL },
     { "fde-check-failed", FIX_RESTART,
-      L"We couldn’t check this PC for encryption programs",
-      L"We restart Windows and check again. This installer opens again by itself.", NULL },
+      L"We couldn’t check this computer for drive locks",
+      L"We restart Windows and check again. AurOS Setup opens again by itself.", NULL },
     { "space-unmeasurable", FIX_RESTART,
       L"We couldn’t measure the free space on drive C:",
-      L"We restart Windows and check again. This installer opens again by itself.", NULL },
+      L"We restart Windows and check again. AurOS Setup opens again by itself.", NULL },
     { "not-elevated", FIX_CANNOT,
-      L"The installer wasn’t given permission to make changes",
+      L"AurOS Setup wasn’t given permission to make changes",
       L"Close it, open it again, and choose Yes when Windows asks.", NULL },
     { "arm-pc", FIX_CANNOT,
       L"AurOS doesn’t run on this kind of computer yet",
-      L"This computer has a newer kind of chip (ARM) that AurOS isn’t made for.", NULL },
+      L"This computer has a kind of chip that AurOS isn’t made for yet.", NULL },
     { "firmware-bios", FIX_CANNOT,
-      L"This computer starts up the older way (BIOS)",
-      L"AurOS can’t go on it yet. The AurOS website says what can be done.", NULL },
+      L"This computer starts up an older way",
+      L"AurOS can’t go on it yet. A helper may be able to change that.", NULL },
     { "intel-rst", FIX_CANNOT,
       L"AurOS can’t see this computer’s drive",
-      L"The drive is set up in a way AurOS can’t use yet. Nothing was changed.", NULL },
+      L"Its drive is set up in a way AurOS can’t use yet. A helper can change it.", NULL },
     { "mbr-four-primaries", FIX_CANNOT,
-      L"This drive has no room for another section",
+      L"This drive can’t be divided any further",
       L"AurOS can’t install on this drive’s layout yet.", NULL },
     { "smart-bad-sectors", FIX_CANNOT,
       L"This drive is wearing out",
@@ -90,19 +90,19 @@ static const fix_info FIXES[] = {
       L"This drive says it is about to fail",
       L"Installing could lose your files. The drive needs replacing first.", NULL },
     { "dynamic-disk", FIX_CANNOT,
-      L"Windows is on a multi-drive setup",
+      L"Windows is spread over several drives",
       L"AurOS can’t install on this kind of setup.", NULL },
     { "storage-spaces", FIX_CANNOT,
-      L"Windows is on a Storage Spaces pool",
+      L"Windows is spread over several drives",
       L"AurOS can’t install on this kind of setup.", NULL },
     { "spanned-system-volume", FIX_CANNOT,
-      L"Drive C: is spread over more than one disk",
+      L"Drive C: is spread over more than one drive",
       L"AurOS can’t install on this kind of setup.", NULL },
     { "fde-third-party", FIX_CANNOT,
-      L"Another encryption program protects this drive",
-      L"Switch it off in that program, then open this installer again.", NULL },
+      L"Another program locks this drive",
+      L"AurOS can’t go beside it. Nothing was changed.", NULL },
     { "fde-managed", FIX_CANNOT,
-      L"This PC’s encryption is managed by an organisation",
+      L"This computer’s drive lock is managed by an organization",
       L"Ask whoever manages it; AurOS can’t change it.", NULL },
     { "system-disk-unknown", FIX_CANNOT,
       L"We couldn’t tell which drive Windows is on",
@@ -114,29 +114,37 @@ static const fix_info FIXES[] = {
       L"We couldn’t read how the Windows drive is laid out",
       L"AurOS won’t write to a drive it can’t read.", NULL },
     { "disk-unidentified", FIX_CANNOT,
-      L"We couldn’t identify one of this PC’s drives",
+      L"We couldn’t identify one of this computer’s drives",
       L"AurOS won’t write anywhere it can’t be sure of.", NULL },
     { "no-disks", FIX_CANNOT,
-      L"We couldn’t read any drive in this PC",
+      L"We couldn’t read any drive in this computer",
       L"AurOS won’t write to a drive it can’t read.", NULL },
     { "sector-size-unknown", FIX_CANNOT,
       L"We couldn’t read how the Windows drive stores data",
       L"AurOS won’t write to a drive it can’t read.", NULL },
     { "system-disk-removable", FIX_CANNOT,
       L"Windows is running from a USB drive",
-      L"AurOS installs only onto the PC’s own drive.", NULL },
+      L"AurOS installs only onto the computer’s own drive.", NULL },
     { "system-not-ntfs", FIX_CANNOT,
       L"Drive C: isn’t formatted the usual way",
-      L"AurOS can only make room on an NTFS drive.", NULL },
+      L"AurOS can only make room on a drive set up the usual Windows way.", NULL },
     { "esp-missing", FIX_CANNOT,
-      L"This PC’s start-up area isn’t on the Windows drive",
+      L"This computer starts Windows from another drive",
       L"AurOS can’t install on this layout yet.", NULL },
     { "esp-unreadable", FIX_CANNOT,
-      L"We couldn’t read this PC’s start-up area",
+      L"We couldn’t read how this computer starts up",
       L"AurOS won’t write where it can’t read.", NULL },
     { "esp-low-space", FIX_CANNOT,
-      L"This PC’s start-up area is too full",
-      L"AurOS can’t fit its start-up files on this PC yet.", NULL },
+      L"There is no room for AurOS’s start-up files",
+      L"AurOS can’t fit beside Windows’ start-up files here yet.", NULL },
+    /* From sbdb.c, not preflight.c's add(): the wizard gives the first its
+     * own page with the sketch (DESIGN-DIRECTION.md B-5). */
+    { "secure-boot-ca", FIX_CANNOT,
+      L"This computer is set to start only Windows",
+      L"Someone who knows computers can change one setting in about five minutes.", NULL },
+    { "secure-boot-ca-newer", FIX_CANNOT,
+      L"This computer needs a newer AurOS Setup",
+      L"Nothing here needs changing. Get AurOS Setup again later.", NULL },
 };
 
 /* ── warnings: one line each ─────────────────────────────────────── */
@@ -178,10 +186,13 @@ static const struct { const char *id; const wchar_t *line; } INSTEAD[] = {
       L"computers, so a different one will probably be fine." },
     { "firmware-bios",
       L"Keep using Windows for now. Someone who knows computers may be able to "
-      L"switch it to the newer way; how is on " ADVANCED },
+      L"switch it to the newer way: press Show a helper how." },
     { "intel-rst",
       L"Keep using Windows for now. Someone who knows computers can change one "
-      L"setting so AurOS can see the drive; how is on " ADVANCED },
+      L"setting so AurOS can see the drive: press Show a helper how." },
+    { "secure-boot-ca-newer",
+      L"Keep using Windows for now. A newer AurOS Setup will go on this computer "
+      L"without changing anything here." },
     { "smart-bad-sectors",
       L"Copy your photos and documents somewhere else today, while the drive "
       L"still works. Then have the drive replaced." },
@@ -198,6 +209,15 @@ static const struct { const char *id; const wchar_t *line; } INSTEAD[] = {
       L"Close this, open AurOS Setup again from your Downloads, and press Yes "
       L"when Windows asks whether it may make changes." },
 };
+
+/* THE PAGE A HELPER READS, opened in her browser by "Show a helper how"
+ * (no address is printed on her screen: DESIGN-DIRECTION.md B-8). */
+const wchar_t *fix_helper_url(const char *id)
+{
+    if (!strcmp(id, "firmware-bios")) return ADVANCED L"#bios";
+    if (!strcmp(id, "intel-rst"))     return ADVANCED L"#rst";
+    return NULL;
+}
 
 const wchar_t *fix_instead(const char *id)
 {
@@ -354,7 +374,7 @@ static int resume_copy(wchar_t *dst, size_t n, char *why, size_t wn)
 {
     wchar_t self[MAX_PATH], dev[MAX_PATH], src[MAX_PATH + 32], dir[MAX_PATH];
     DWORD k = GetModuleFileNameW(NULL, self, MAX_PATH);
-    if (!k || k >= MAX_PATH) { snprintf(why, wn, "the installer could not find itself on this PC"); return -1; }
+    if (!k || k >= MAX_PATH) { snprintf(why, wn, "AurOS Setup could not find itself on this computer"); return -1; }
     const wchar_t *leaf = wcsrchr(self, L'\\');
     leaf = leaf ? leaf + 1 : self;
     if (resume_copy_path(dir, dst, n, leaf) != 0) {
@@ -370,7 +390,7 @@ static int resume_copy(wchar_t *dst, size_t n, char *why, size_t wn)
     HANDLE in = CreateFileW(src, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
     if (in == INVALID_HANDLE_VALUE)
         in = CreateFileW(self, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
-    if (in == INVALID_HANDLE_VALUE) { snprintf(why, wn, "the installer could not read itself"); return -1; }
+    if (in == INVALID_HANDLE_VALUE) { snprintf(why, wn, "AurOS Setup could not read itself"); return -1; }
     CreateDirectoryW(dir, NULL);                   /* Program Files' own permissions */
     HANDLE out = CreateFileW(dst, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
                              FILE_ATTRIBUTE_NORMAL, NULL);
@@ -386,7 +406,7 @@ static int resume_copy(wchar_t *dst, size_t n, char *why, size_t wn)
     if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
     if (!ok) {
         DeleteFileW(dst);
-        snprintf(why, wn, "the installer could not put a copy of itself where Windows "
+        snprintf(why, wn, "AurOS Setup could not put a copy of itself where Windows "
                           "keeps programs");
         return -1;
     }
@@ -404,7 +424,7 @@ int fix_resume_arm(char *why, size_t n)
     char copya[MAX_PATH * 3], user[256] = "", dom[256] = "", cmd[2048], tail[256];
     if (resume_copy(copy, MAX_PATH, why, n) != 0) return -1;
     if (!WideCharToMultiByte(CP_UTF8, 0, copy, -1, copya, sizeof copya, NULL, NULL)) {
-        snprintf(why, n, "the installer could not find itself on this PC");
+        snprintf(why, n, "AurOS Setup could not find itself on this computer");
         return -1;
     }
     GetEnvironmentVariableA("USERNAME", user, sizeof user);
@@ -414,7 +434,7 @@ int fix_resume_arm(char *why, size_t n)
              "/ru \"%s\\%s\" /tr \"\\\"%s\\\" --resume\"", dom, user, copya);
     if (plat_run(cmd, tail, sizeof tail) != 0) {
         fix_resume_done();             /* takes the copy away again */
-        snprintf(why, n, "Windows would not let the installer open itself again after "
+        snprintf(why, n, "Windows would not let AurOS Setup open itself again after "
                          "the restart");
         return -1;
     }

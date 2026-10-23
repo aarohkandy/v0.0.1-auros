@@ -3,8 +3,8 @@
  *  destroy a stranger's data.
  *
  *  Everything here is owner-drawn: there is not a single Win32 control
- *  in this program. A grey system button in the middle of the Nocturne
- *  palette reads as "unfinished software", and a user who does not trust
+ *  in this program. A grey system button in the middle of a designed
+ *  page reads as "unfinished software", and a user who does not trust
  *  the installer is a user who clicks through the disclosure without
  *  reading it. The look is load-bearing.
  *
@@ -50,13 +50,22 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <oleacc.h>
+#include <shellapi.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
 #include <wchar.h>
+#include <wctype.h>
 #include <math.h>
+
+#ifndef WM_WTSSESSION_CHANGE
+#define WM_WTSSESSION_CHANGE 0x02B1
+#endif
+#ifndef WTS_SESSION_UNLOCK
+#define WTS_SESSION_UNLOCK 0x8
+#endif
 
 #include "preflight.h"
 #include "sbdb.h"
@@ -88,37 +97,31 @@
 #endif
 
 /* ── Palette ──────────────────────────────────────────────────────────
- * The installer's own dark ground, with the teal it has always had for
- * the one button that matters (tools/e2e/vision.py finds that button by
- * this exact colour; change both or neither).
+ * docs/DESIGN-DIRECTION.md §3, "Light": the website's and AurOS's own
+ * paper and ink, so the window that opens is plainly the thing she just
+ * downloaded and the thing she will get.
  *
- * EVERY COLOUR TEXT IS DRAWN IN IS AT LEAST 4.5:1 against every surface
- * it sits on (docs/EASY.md). C_MUTED used to be #55606E, 2.7:1 on the
- * card, and it carried the footer hints, the "test version" line and
- * the steps still to come -- the lines a person with presbyopia could
- * not read at all. It is now 5:1 on the lightest surface. */
-#define C_BG          0x0B0E14u   /* bg          */
-#define C_BG_ALT      0x10151Fu   /* bg_alt      */
-#define C_SURFACE     0x161C28u   /* surface     */
-#define C_SURFACE_HI  0x1F2735u   /* surface_hi  */
-#define C_OVERLAY     0x3A4556u   /* hairlines and outlines, not text   */
-#define C_MUTED       0x8E9AABu   /* quiet text: >= 5:1 on surface_hi   */
-#define C_SUBTLE      0xAEB8C6u   /* secondary text: >= 7:1             */
-#define C_FG          0xD9E0EBu   /* primary text                       */
-#define C_FG_HI       0xF3F7FDu   /* headings                           */
-#define C_ACCENT      0x7DD3C0u   /* THE primary button. Do not change. */
-#define C_ACCENT_ALT  0xA78BFAu   /* accent_alt  */
-#define C_WARM        0xF2B880u   /* accent_warm */
-#define C_OK          0x7DD3C0u   /* ok          */
-#define C_WARN        0xF2B880u   /* warn        */
-#define C_ERR         0xF2788Du   /* err         */
-#define C_INFO        0x82AAFFu   /* info        */
-
-/* Channel extraction, so the backdrop can be DERIVED from the palette
- * above instead of restating it. */
-#define CH_R(c) ((float)(((c) >> 16) & 0xFFu))
-#define CH_G(c) ((float)(((c) >>  8) & 0xFFu))
-#define CH_B(c) ((float)( (c)        & 0xFFu))
+ * ONE ACCENT, GREEN, meaning one thing: the way forward, and what she
+ * chose -- the primary button, the current step, the chosen look, the
+ * mark. Nothing else is green. Warn is only "you need to do this", and
+ * its text is ink. There is no disabled grey and no red.
+ *
+ * Text is at least 4.5:1 on every surface it sits on, and so is every
+ * rule: a 2 px rule is what makes a thing look pressable. */
+#define C_BG          0xF6F2E9u   /* paper: the page                    */
+#define C_SOFT        0xECE6DAu   /* soft: the sidebar, a quiet panel   */
+#define C_SURFACE     0xFCFAF5u   /* card: a button, a look's card      */
+#define C_SELECTED    0xE1ECE7u   /* the chosen card only, never hover  */
+#define C_RULE        0x6E675Cu   /* every border and outline: 5.0:1    */
+#define C_INK         0x17181Au   /* all text she must read: 15.9:1     */
+#define C_INK2        0x3A3D42u   /* secondary text, icons: 9.8:1       */
+#define C_QUIET       0x5C6066u   /* legal lines only: 5.7:1            */
+#define C_ACCENT      0x0B5D4Fu   /* go: THE primary button; the e2e driver
+                                     finds it by this (tools/e2e/vision.py) */
+#define C_ACCENT_DOWN 0x07463Bu   /* go, pressed                        */
+#define C_ON_ACCENT   0xFFFFFFu   /* its label: 7.8:1                   */
+#define C_WARN        0x8A5A12u   /* the icon and bar of "do this": 5.0 */
+#define C_WARN_TINT   0xF7EBD2u   /* behind it                          */
 
 #define CR(c) RGB(((c)>>16)&0xFF, ((c)>>8)&0xFF, (c)&0xFF)
 
@@ -166,35 +169,32 @@ typedef struct {
 static const style_info STYLES[] = {
   { "taskbar", "sandstone", L"Like Windows",
     L"A bar along the bottom, just like now.",
-    L"It will look like Windows.", PIC_WINDOWS },
+    L"It will look like Windows: a bar along the bottom.", PIC_WINDOWS },
   { "dock",    "sandstone", L"Like a Mac",
     L"Your programs in a row along the bottom.",
-    L"It will look like a Mac.", PIC_MAC },
+    L"It will look like a Mac: your programs in a row along the bottom.", PIC_MAC },
   { "rail",    "sandstone", L"Big and simple",
     L"Big buttons. Nothing ever gets hidden.",
-    L"It will be big and simple.", PIC_SIMPLE },
+    L"It will be big and simple: big buttons, and nothing ever gets hidden.", PIC_SIMPLE },
   { "tiles",   "sandstone", L"One thing at a time",
     L"Each program fills the whole screen.",
-    L"It will show one thing at a time.", PIC_ONE },
+    L"It will show one thing at a time: each program fills the whole screen.", PIC_ONE },
 };
 #define N_STYLES ((int)(sizeof STYLES / sizeof STYLES[0]))
 /* What she knows: Windows. */
 #define STYLE_DEFAULT 0
 
-/* themes/sandstone.theme, for drawing the pictures. */
-#define SS_BG       0xF4F0E8u
-#define SS_WALL     0xE3D8C6u
-#define SS_SURFACE  0xFFFFFFu
-#define SS_SURF_HI  0xF0E9DCu
-#define SS_LINE     0x877D6Du
-#define SS_MUTED    0xC9BFAFu
-#define SS_FG       0x38332Bu
-#define SS_ACCENT   0xC2683Du
-#define SS_ALT      0x4E7A6Bu
-#define SS_WARMC    0xD9A441u
-#define SS_INFO     0x3F6E9Eu
-#define SS_ERR      0xB4453Cu
-#define SS_PLUM     0x8A5C8Fu
+/* themes/sandstone.theme ("Light", the theme every card installs) and
+ * the footer's fixed colours (src/aurshell/foot.c), for the pictures. */
+#define LT_PAPER    0xF6F2E9u
+#define LT_SOFT     0xECE6DAu
+#define LT_CARD     0xFCFAF5u
+#define LT_RULE     0x6E675Cu
+#define LT_TEXT     0xBDB6AAu   /* a line of text, drawn as a stub     */
+#define LT_INK      0x17181Au
+#define LT_GO       0x0B5D4Fu
+#define FOOT_BG     0x14171Bu
+#define FOOT_INK    0x9BA3ABu
 
 /* ── Pages ────────────────────────────────────────────────────────── */
 /* Three screens before the progress screen, and nothing to type on any
@@ -238,8 +238,7 @@ static HBITMAP  g_mbmp, g_moldbmp;
 static uint32_t *g_px;
 static int      g_mw, g_mh;
 
-static HFONT g_f_title, g_f_h2, g_f_h3, g_f_body, g_f_bodyb, g_f_small,
-             g_f_smallb, g_f_tiny, g_f_btn;
+static HFONT g_f_title, g_f_h3, g_f_body, g_f_bodyb, g_f_small, g_f_smallb, g_f_btn;
 
 static RECT  g_clip;                   /* clip for hand-rasterised pixels */
 
@@ -260,7 +259,6 @@ static pf_report    g_pf_new;          /* the one being run (worker only)       
 static volatile LONG g_pf_state;       /* 0 idle · 1 running · 2 has a result      */
 static int          g_pf_valid;        /* g_report holds a real result     */
 static int          g_checking;        /* a check is running right now    */
-static int          g_reveal;          /* check items revealed            */
 static int          g_ticks;           /* animation clock (60 ms)          */
 static page_id      g_check_next = PAGE_STYLE;   /* where a clean check goes */
 
@@ -286,19 +284,14 @@ static int   g_shot_mode = 0;
 static int   g_nav_mode  = 0;
 static int   g_selftest  = 0;
 
-/* SET ONLY BY "Restart now" (or its countdown), and by Windows itself
- * ending the session. Closing the window before the restart takes
- * everything back (install_cancel); restarting is the one way of leaving
- * it that keeps the one-shot start-up setting. */
+/* SET ONLY BY "Restart now", and by Windows itself ending the session.
+ * Closing the window before the restart takes everything back
+ * (install_cancel), unless she pressed "Restart later" (g_keep_armed):
+ * then AurOS goes on at the next restart, whenever she makes it. There
+ * is no countdown: nothing restarts this computer but her press
+ * (DESIGN-DIRECTION.md B-4). */
 static int   g_restarting = 0;
-
-/* The restart at the end: by itself after a minute she can see counting
- * down, or now, or later ("Not yet" stops the count). */
-#define COUNTDOWN_SECONDS 60
-static int       g_cd_on;              /* counting                        */
-static int       g_cd_offered;         /* the count has been started once */
-static ULONGLONG g_cd_start;
-static int       g_cd_left = COUNTDOWN_SECONDS;
+static int   g_keep_armed = 0;
 
 /* ═══════════════════════════════════════════════════════════════════
  *  Small helpers
@@ -510,7 +503,7 @@ static void aa_line(float ax, float ay, float bx, float by,
         }
 }
 
-/* a checkmark and a cross, drawn rather than typed: no font dependency */
+/* a check mark, drawn rather than typed: no font dependency */
 static void glyph_check(float cx, float cy, float s, uint32_t col, float a)
 {
     aa_line(cx - s * 0.46f, cy + s * 0.02f, cx - s * 0.10f, cy + s * 0.38f,
@@ -518,99 +511,77 @@ static void glyph_check(float cx, float cy, float s, uint32_t col, float a)
     aa_line(cx - s * 0.12f, cy + s * 0.38f, cx + s * 0.48f, cy - s * 0.36f,
             s * 0.20f, col, a);
 }
-static void glyph_cross(float cx, float cy, float s, uint32_t col, float a)
-{
-    aa_line(cx - s * 0.32f, cy - s * 0.32f, cx + s * 0.32f, cy + s * 0.32f,
-            s * 0.19f, col, a);
-    aa_line(cx + s * 0.32f, cy - s * 0.32f, cx - s * 0.32f, cy + s * 0.32f,
-            s * 0.19f, col, a);
-}
 static void glyph_bang(float cx, float cy, float s, uint32_t col, float a)
 {
     aa_line(cx, cy - s * 0.40f, cx, cy + s * 0.10f, s * 0.19f, col, a);
     fill_circle(cx, cy + s * 0.38f, s * 0.11f, col, a);
 }
 
-/* ═══════════════════════════════════════════════════════════════════
- *  Backdrop. Cached, because it is the only per-pixel cost that scales
- *  with window area.
- *
- *  Every value it uses is named here rather than buried in the loop, so
- *  a reskin is this block plus the palette above. Setting both
- *  intensities to 0 gives a flat ground, which is what a design without
- *  a gradient in it wants.
- * ═══════════════════════════════════════════════════════════════════ */
-#define C_BG_FOOT      0x081118u   /* the wash at the foot of the window */
-#define C_BACKDROP_1   C_ACCENT    /* the lower ribbon                   */
-#define C_BACKDROP_2   C_ACCENT_ALT/* the upper ribbon                   */
-#define BACKDROP_A1    0.16f
-#define BACKDROP_A2    0.10f
-static uint32_t *g_bgcache;
-static int       g_bgw, g_bgh;
-
-static void backdrop_build(int w, int h)
-{
-    free(g_bgcache);
-    g_bgcache = (uint32_t *)malloc((size_t)w * (size_t)h * sizeof(uint32_t));
-    g_bgw = w; g_bgh = h;
-    if (!g_bgcache) return;
-
-    /* two soft ribbons: teal (wall_c3) low, violet (wall_c4) higher */
-    float *c1 = (float *)malloc((size_t)w * sizeof(float));
-    float *c2 = (float *)malloc((size_t)w * sizeof(float));
-    if (!c1 || !c2) { free(c1); free(c2); return; }
-    for (int x = 0; x < w; x++) {
-        float t = (float)x / (float)(w > 1 ? w - 1 : 1);
-        c1[x] = 0.30f * (float)h + 0.10f * (float)h * sinf(t * 3.1f + 0.6f);
-        c2[x] = 0.16f * (float)h + 0.07f * (float)h * sinf(t * 2.2f + 2.4f);
-    }
-    for (int y = 0; y < h; y++) {
-        float vy = (float)y / (float)(h > 1 ? h - 1 : 1);
-        for (int x = 0; x < w; x++) {
-            /* base vertical wash: bg at the top, a touch deeper at the foot */
-            float r = CH_R(C_BG) + (CH_R(C_BG_FOOT) - CH_R(C_BG)) * vy;
-            float g = CH_G(C_BG) + (CH_G(C_BG_FOOT) - CH_G(C_BG)) * vy;
-            float b = CH_B(C_BG) + (CH_B(C_BG_FOOT) - CH_B(C_BG)) * vy;
-
-            float s1 = ((float)y - c1[x]) / (0.13f * (float)h);
-            float a1 = expf(-s1 * s1) * BACKDROP_A1;
-            float s2 = ((float)y - c2[x]) / (0.10f * (float)h);
-            float a2 = expf(-s2 * s2) * BACKDROP_A2;
-
-            r += a1 * CH_R(C_BACKDROP_1) * 0.35f + a2 * CH_R(C_BACKDROP_2) * 0.55f;
-            g += a1 * CH_G(C_BACKDROP_1) * 0.55f + a2 * CH_G(C_BACKDROP_2) * 0.35f;
-            b += a1 * CH_B(C_BACKDROP_1) * 0.50f + a2 * CH_B(C_BACKDROP_2) * 0.55f;
-
-            /* ordered dither: kills the banding a 20-step gradient shows
-             * on a cheap panel, which is most of our market */
-            int d = (int)(((x * 7 + y * 13) & 3) - 1);
-            int ri = (int)r + d, gi = (int)g + d, bi = (int)b + d;
-            if (ri < 0) ri = 0;
-            if (gi < 0) gi = 0;
-            if (bi < 0) bi = 0;
-            if (ri > 255) ri = 255;
-            if (gi > 255) gi = 255;
-            if (bi > 255) bi = 255;
-            g_bgcache[(size_t)y * (size_t)w + (size_t)x] =
-                ((uint32_t)ri << 16) | ((uint32_t)gi << 8) | (uint32_t)bi;
-        }
-    }
-    free(c1); free(c2);
-}
-
-static void backdrop_blit(void)
+/* The ground: flat paper. It was two glowing ribbons of teal and violet
+ * (docs/DESIGN.md: no gradient as decoration). */
+static void ground(void)
 {
     GdiFlush();
-    if (!g_bgcache || g_bgw != g_mw || g_bgh != g_mh) backdrop_build(g_mw, g_mh);
-    if (!g_bgcache) { for (int i = 0; i < g_mw * g_mh; i++) g_px[i] = C_BG; return; }
-    memcpy(g_px, g_bgcache, (size_t)g_mw * (size_t)g_mh * sizeof(uint32_t));
+    for (int i = 0; i < g_mw * g_mh; i++) g_px[i] = C_BG;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
  *  Text
  * ═══════════════════════════════════════════════════════════════════ */
+/* ONE TYPEFACE, TWO WEIGHTS, FIVE SIZES (fonts_make). Each size has its
+ * own line height: a paragraph at one and a half times its size, which
+ * older eyes read far more easily than the font's own spacing (about
+ * 1.2, all DrawText offers; WCAG 1.4.12), and a title held tighter. So
+ * paragraphs are broken into lines here, a whole word at a time. */
+static struct { HFONT *f; int px, weight; float lh; int line, tm; } TYPE[] = {
+    { &g_f_title,  32, FW_BOLD,   1.25f, 0, 0 },   /* the page's one title: 32/40 */
+    { &g_f_h3,     22, FW_BOLD,   1.36f, 0, 0 },   /* a look's name, a status: 22/30 */
+    { &g_f_body,   20, FW_NORMAL, 1.50f, 0, 0 },   /* what she reads: 20/30 */
+    { &g_f_bodyb,  20, FW_BOLD,   1.50f, 0, 0 },
+    { &g_f_small,  18, FW_NORMAL, 1.45f, 0, 0 },   /* the floor: 18/26      */
+    { &g_f_smallb, 18, FW_BOLD,   1.45f, 0, 0 },
+    { &g_f_btn,    20, FW_BOLD,   1.20f, 0, 0 },   /* a button's label      */
+};
+#define N_TYPE ((int)(sizeof TYPE / sizeof TYPE[0]))
+
+static int type_of(HFONT f)
+{
+    for (int i = 0; i < N_TYPE; i++) if (*TYPE[i].f == f) return i;
+    return 2;
+}
+
+/* Lays out (draw=0) or draws a paragraph; returns its height. Explicit
+ * newlines are kept; a word longer than the line stands alone. */
+static int para(const wchar_t *s, HFONT f, uint32_t col, int x, int y, int w, int draw)
+{
+    int t = type_of(f), lh = TYPE[t].line, off = (lh - TYPE[t].tm) / 2;
+    SelectObject(g_mdc, f);
+    if (draw) { SetTextColor(g_mdc, CR(col)); SetBkMode(g_mdc, TRANSPARENT); }
+    int n = 0;
+    const wchar_t *p = s;
+    while (*p) {
+        const wchar_t *end = p, *fit = NULL;
+        for (;;) {
+            const wchar_t *q = end;
+            while (*q && *q != L' ' && *q != L'\n') q++;
+            SIZE sz = { 0, 0 };
+            GetTextExtentPoint32W(g_mdc, p, (int)(q - p), &sz);
+            if (fit && sz.cx > w) break;
+            fit = q;
+            if (!*q || *q == L'\n') break;
+            end = q + 1;
+        }
+        if (draw) TextOutW(g_mdc, x, y + n * lh + off, p, (int)(fit - p));
+        n++;
+        p = fit;
+        if (*p == L' ' || *p == L'\n') p++;
+    }
+    return n * lh;
+}
+
 static int text_h(const wchar_t *s, HFONT f, int w, UINT flags)
 {
+    if (flags & DT_WORDBREAK) return para(s, f, 0, 0, 0, w, 0);
     RECT r = { 0, 0, w, 1 << 20 };
     SelectObject(g_mdc, f);
     DrawTextW(g_mdc, s, -1, &r, flags | DT_CALCRECT | DT_NOPREFIX);
@@ -629,12 +600,13 @@ static int text_w(const wchar_t *s, HFONT f)
 static int text_draw(const wchar_t *s, HFONT f, uint32_t col,
                      int x, int y, int w, UINT flags)
 {
+    if (flags & DT_WORDBREAK) return para(s, f, col, x, y, w, 1);
     RECT r = { x, y, x + w, y + (1 << 20) };
     SelectObject(g_mdc, f);
     SetTextColor(g_mdc, CR(col));
     SetBkMode(g_mdc, TRANSPARENT);
     DrawTextW(g_mdc, s, -1, &r, flags | DT_NOPREFIX);
-    return text_h(s, f, w, flags);
+    return TYPE[type_of(f)].line;
 }
 
 static void text_in(const wchar_t *s, HFONT f, uint32_t col, RECT box, UINT flags)
@@ -672,7 +644,7 @@ static int    g_nw;
 
 enum {
     ID_NONE = 0,
-    ID_PRIMARY, ID_BACK, ID_QUIT, ID_NOT_YET, ID_WIFI,
+    ID_PRIMARY, ID_BACK, ID_QUIT, ID_LATER, ID_WIFI, ID_HELPER, ID_COPY,
     ID_STYLE = 500
 };
 
@@ -707,51 +679,46 @@ static int w_find_at(int x, int y)
 /* ═══════════════════════════════════════════════════════════════════
  *  Components
  * ═══════════════════════════════════════════════════════════════════ */
+/* The keyboard's ring: 3 px of ink, 4 px out, its element's radius + 3. */
 static void focus_ring(RECT r, int pad, int radius)
 {
     if (!g_focus_ring) return;
     stroke_rr((float)(r.left - pad), (float)(r.top - pad),
               (float)(r.right - r.left + pad * 2), (float)(r.bottom - r.top + pad * 2),
-              (float)radius, (float)S(3), C_FG_HI, 0.95f);
+              (float)radius, (float)S(3), C_INK, 1.f);
 }
 
-/* returns the widget index */
+/* WHAT CAN BE PRESSED LOOKS PRESSABLE: the green fill, or a 2 px rule,
+ * a verb on it, radius 8. Under the pointer only the border changes,
+ * to 2 px of ink. `icon` 1 puts a check mark before the label (Install
+ * AurOS, so it never looks like the Next that stood in its place). */
 static int draw_button(int id, const wchar_t *label, int x, int y, int w, int h,
-                       int primary, int enabled, uint32_t tone)
+                       int primary, int icon)
 {
-    int idx = w_add(id, W_BUTTON, x, y, w, h, enabled);
+    int idx = w_add(id, W_BUTTON, x, y, w, h, 1);
     if (idx >= 0) g_w[idx].name = label;
     int hot = w_hot(idx);
     int down = hot && g_mouse_down && g_press_idx == idx;
-    if (down) { y += S(1); h -= S(1); }
-    float r = (float)S(12);
-    RECT box = { x, y, x + w, y + h };
-
-    if (!enabled) {
-        fill_rr((float)x, (float)y, (float)w, (float)h, r, C_SURFACE_HI, 0.9f);
-        stroke_rr((float)x, (float)y, (float)w, (float)h, r, 1.2f, C_OVERLAY, 1.f);
-        text_in(label, g_f_btn, C_MUTED, box,
-                DT_SINGLELINE | DT_CENTER | DT_VCENTER);
-    } else if (primary) {
-        /* The primary action is the only solid block of the accent on
-         * the page, which is what makes the eye (and the end-to-end
-         * test) land on it. Solid, not translucent: 0.92 over the card
-         * made it a slightly different teal on every surface. */
-        fill_rr((float)x, (float)y, (float)w, (float)h, r, tone,
-                down ? 0.82f : 1.0f);
-        if (hot && !down)
-            stroke_rr((float)x, (float)y, (float)w, (float)h, r, (float)S(2),
-                      C_FG_HI, 0.9f);
-        text_in(label, g_f_btn, C_BG, box, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+    float r = (float)S(8);
+    uint32_t ink = primary ? C_ON_ACCENT : C_INK;
+    if (primary) {
+        fill_rr((float)x, (float)y, (float)w, (float)h, r, down ? C_ACCENT_DOWN : C_ACCENT, 1.f);
+        if (hot) stroke_rr((float)x, (float)y, (float)w, (float)h, r, (float)S(2), C_INK, 1.f);
     } else {
-        fill_rr((float)x, (float)y, (float)w, (float)h, r, C_SURFACE_HI,
-                down ? 1.0f : (hot ? 1.0f : 0.85f));
-        stroke_rr((float)x, (float)y, (float)w, (float)h, r, hot ? 2.f : 1.4f,
-                  hot ? C_SUBTLE : C_MUTED, 1.f);
-        text_in(label, g_f_btn, C_FG_HI, box,
-                DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+        fill_rr((float)x, (float)y, (float)w, (float)h, r, down ? C_SOFT : C_SURFACE, 1.f);
+        stroke_rr((float)x, (float)y, (float)w, (float)h, r, (float)S(2), hot ? C_INK : C_RULE, 1.f);
     }
-    if (w_focused(idx)) focus_ring(box, S(4), S(16));
+    RECT box = { x, y, x + w, y + h };
+    if (icon) {
+        int iw = S(30), tw = text_w(label, g_f_btn);
+        int sx = x + (w - iw - tw) / 2;
+        glyph_check((float)(sx + S(10)), (float)(y + h / 2), (float)S(20), ink, 1.f);
+        box.left = sx + iw;
+        text_in(label, g_f_btn, ink, box, DT_SINGLELINE | DT_LEFT | DT_VCENTER);
+    } else {
+        text_in(label, g_f_btn, ink, box, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+    }
+    if (w_focused(idx)) focus_ring((RECT){ x, y, x + w, y + h }, S(4), S(11));
     return idx;
 }
 
@@ -968,62 +935,6 @@ static int bg_recheck_tick(void)
     return 0;
 }
 
-/* What the first page shows while the check runs: five things she can
- * recognise, each ticked as its answer comes in. Every id preflight
- * can emit belongs to one of them; anything unrecognised lands in the
- * last, so a new check can never be silently invisible here. */
-static const struct { const wchar_t *label; const char *ids[24]; } CHK[] = {
-  { L"Power",
-    { "not-on-ac", "battery-low", "power-state-unknown", "no-battery", NULL } },
-  { L"Space",
-    { "insufficient-space", "space-unmeasurable", "space-measured",
-      "shrink-online-limited", "esp-low-space", "esp-space", NULL } },
-  { L"Drive",
-    { "dynamic-disk", "dynamic-disk-other", "storage-spaces", "storage-spaces-other",
-      "spanned-system-volume", "system-disk-unknown", "smart-bad-sectors",
-      "smart-predict-failure", "smart-reallocated", "mbr-four-primaries",
-      "layout-unreadable", "sector-size-unknown", "sector-size",
-      "system-disk-removable", "system-disk-unreadable", "removable-attached",
-      "removable-no-serial", "disk-unidentified", "no-disks", "intel-rst",
-      "bitlocker-system", "bitlocker-other", "bitlocker-unknown", NULL } },
-  { L"Start-up",
-    { "firmware-uefi", "firmware-bios", "secure-boot-on", "secure-boot-off",
-      SBDB_BLOCK_ID, SBDB_NEWER_ID, "secure-boot-unsigned-build",
-      "esp-missing", "esp-unreadable", "arm-pc", NULL } },
-  { L"Windows",
-    { NULL } },                                /* and everything else */
-};
-#define N_CHK ((int)(sizeof CHK / sizeof CHK[0]))
-
-static int chk_group_of(const char *id)
-{
-    for (int k = 0; k < N_CHK; k++)
-        for (int j = 0; CHK[k].ids[j]; j++)
-            if (!strcmp(CHK[k].ids[j], id)) return k;
-    return N_CHK - 1;
-}
-
-/* The worst severity in a group, PF_PASS when it had nothing to say. */
-static int chk_group_sev(int g)
-{
-    int sev = PF_PASS;
-    for (int i = 0; i < g_report.n; i++)
-        if (chk_group_of(g_report.results[i].id) == g &&
-            (int)g_report.results[i].sev > sev)
-            sev = (int)g_report.results[i].sev;
-    return sev;
-}
-
-static uint32_t sev_color(int sev)
-{
-    switch (sev) {
-        case PF_BLOCK: return C_ERR;
-        case PF_WARN:  return C_WARN;
-        case PF_INFO:  return C_INFO;
-        default:       return C_OK;
-    }
-}
-
 /* ═══════════════════════════════════════════════════════════════════
  *  Navigation — the safety gate.
  *
@@ -1077,7 +988,8 @@ static ULONGLONG g_nt_clock = 100000;  /* --navtest's clock               */
 static int       g_nt_auto = 1;        /* it moves on 1 s before each press */
 
 static ULONGLONG now_ms(void) { return g_nav_mode ? g_nt_clock : GetTickCount64(); }
-static void page_changed(void) { g_changed_at = now_ms(); }
+static const wchar_t *g_early;
+static void page_changed(void) { g_changed_at = now_ms(); g_early = NULL; }
 
 static int press_allowed(int id)
 {
@@ -1674,39 +1586,52 @@ static void detect_defaults(void)
 /* ═══════════════════════════════════════════════════════════════════
  *  Layout
  *
+ *  docs/DESIGN-DIRECTION.md §5 B-1: the steps in a flat soft sidebar,
+ *  280 px, on the left; the page on flat paper to the window's edge; the
+ *  buttons at the bottom right, their right edge the page's right edge.
+ *  Below 1100 px of width the sidebar folds into one line at the top:
+ *  "AurOS Setup · Step 2 of 4". No card floating on a backdrop.
+ *
  *  Sized for the screens she has: a 1366x768 laptop gives this window
  *  a client area of about 1120x690, and so does a 1920x1080 one at
- *  150%. Every page fits in that without scrolling; a smaller screen
- *  scrolls, and the buttons stay put.
+ *  150%; a 1024x600 netbook about 1024x530, and a 1366x768 laptop at
+ *  150% about 910x465. Every page fits each without scrolling
+ *  (--navtest checks); only the Secure Boot sketch is allowed to scroll,
+ *  and the buttons never do.
  * ═══════════════════════════════════════════════════════════════════ */
+/* A window under 500 px tall (150% on a 1366x768 laptop): the title is
+ * 28 and the text 18, the floor, so a page still fits without scrolling. */
+static int g_dense;
+static void fonts_make(void);
+
 static RECT g_card, g_body, g_foot;
-static int  g_rail_w;
+static int  g_side;                    /* the sidebar's width; 0 folded  */
+static int  g_short;                   /* a netbook-height window       */
+static int  g_inset;
 
 static void layout(void)
 {
-    int m = S(18);
-    g_rail_w = S(262);
-    g_card.left   = g_rail_w;
-    g_card.top    = m;
-    g_card.right  = g_cw - m;
-    g_card.bottom = g_ch - m;
+    int lw = MulDiv(g_cw, 96, g_dpi), lh = MulDiv(g_ch, 96, g_dpi);
+    g_short = lh < 600;
+    if ((lh < 500) != g_dense) { g_dense = lh < 500; fonts_make(); }
+    g_side  = lw >= 1100 ? S(280) : 0;
+    g_inset = g_short || lw < 1100 ? S(24) : S(32);
+    SetRect(&g_card, g_side, 0, g_cw, g_ch);
 
-    /* WM_GETMINMAXINFO keeps the window above this, but a DPI change can
-     * land in between: never hand DrawText an inverted rectangle. */
-    if (g_card.right  < g_card.left + S(360)) g_card.right  = g_card.left + S(360);
-    if (g_card.bottom < g_card.top  + S(280)) g_card.bottom = g_card.top  + S(280);
+    g_foot.left   = g_side + g_inset;
+    g_foot.right  = g_cw - g_inset;
+    g_foot.bottom = g_ch - g_inset;
+    g_foot.top    = g_foot.bottom - S(56);
 
-    int pad = S(40);
-    g_foot.left   = g_card.left;
-    g_foot.right  = g_card.right;
-    g_foot.top    = g_card.bottom - S(96);
-    g_foot.bottom = g_card.bottom;
-
-    g_body.left   = g_card.left + pad;
-    g_body.right  = g_card.right - pad;
+    g_body.left   = g_side + g_inset;
+    g_body.right  = g_cw - g_inset;
     if (g_body.right < g_body.left + S(200)) g_body.right = g_body.left + S(200);
-    g_body.top    = g_card.top + S(32);
-    g_body.bottom = g_foot.top;
+    g_body.top    = g_inset + (g_side ? S(8) : S(26) + S(g_short ? 12 : 16));
+    g_body.bottom = g_foot.top - S(g_short ? 16 : 24);
+    /* "This starts the install." stands above that button (B-2); on a
+     * short window, beside it */
+    if (g_page == PAGE_READY && !g_short) g_body.bottom -= S(26) + S(8);
+    if (g_body.bottom < g_body.top + S(120)) g_body.bottom = g_body.top + S(120);
 }
 
 static void set_clip(int l, int t, int r, int b)
@@ -1725,81 +1650,125 @@ static void clip_reset(void) { set_clip(0, 0, g_mw, g_mh); }
 /* ═══════════════════════════════════════════════════════════════════
  *  Shared page furniture
  * ═══════════════════════════════════════════════════════════════════ */
-static void status_icon(float cx, float cy, float r, int state, int sev)
+
+/* The wordmark: the mark, then "AurOS" bold and "Setup" regular. The
+ * mark is drawn (fill_diamond), never typed, its height the capitals'. */
+static int draw_wordmark(int x, int y, int h)
 {
-    if (state == 0) {                       /* waiting */
-        stroke_circle(cx, cy, r, 1.6f, C_MUTED, 1.f);
-        return;
-    }
-    if (state == 1) {                       /* working */
-        for (int i = 0; i < 8; i++) {
-            float a  = (float)i * 0.7853982f;
-            float ph = (float)((g_ticks / 2 - i) & 7) / 7.f;
-            fill_circle(cx + cosf(a) * r * 0.78f, cy + sinf(a) * r * 0.78f,
-                        r * 0.18f, C_ACCENT, 0.15f + 0.8f * ph);
+    int cap = TYPE[type_of(g_f_h3)].px * 70 / 100;
+    fill_diamond((float)x + (float)S(cap) * 0.5f, (float)y + (float)h * 0.5f,
+                 (float)S(cap) * 0.5f, C_ACCENT, 1.f);
+    int tx = x + S(cap) + S(8);
+    RECT b = { tx, y, tx + S(400), y + h };
+    text_in(L"AurOS", g_f_h3, C_INK, b, DT_SINGLELINE | DT_VCENTER);
+    tx += text_w(L"AurOS ", g_f_h3);
+    RECT c = { tx, y, tx + S(400), y + h };
+    text_in(L"Setup", g_f_body, C_INK, c, DT_SINGLELINE | DT_VCENTER);
+    return tx + text_w(L"Setup", g_f_body);
+}
+
+/* The steps: done ones with a check mark, this one in green and bold,
+ * the rest as rings. On the stop page "Check this computer" is this one. */
+static void draw_steps(void)
+{
+    int cur = rail_index_for(g_page);
+    if (!g_side) {
+        int y = g_inset, h = S(26);
+        int ex = draw_wordmark(g_body.left, y, h);
+        /* not on the install page: it counts the install's own steps */
+        if (g_page != PAGE_PROGRESS) {
+            wchar_t st[48];
+            _snwprintf(st, 47, L"Step %d of %d", cur + 1, N_RAIL);
+            st[47] = 0;
+            RECT b = { ex + S(24), y, g_body.right, y + h };
+            text_in(st, g_f_small, C_INK2, b, DT_SINGLELINE | DT_VCENTER);
         }
         return;
     }
-    uint32_t c = sev_color(sev);
-    if (sev == PF_BLOCK) {
-        fill_circle(cx, cy, r, c, 0.18f);
-        stroke_circle(cx, cy, r, 1.6f, c, 0.95f);
-        glyph_cross(cx, cy, r * 1.35f, c, 1.f);
-    } else if (sev == PF_WARN) {
-        fill_circle(cx, cy, r, c, 0.16f);
-        stroke_circle(cx, cy, r, 1.6f, c, 0.9f);
-        glyph_bang(cx, cy, r * 1.3f, c, 1.f);
-    } else {
-        fill_circle(cx, cy, r, C_OK, 1.f);
-        glyph_check(cx, cy, r * 1.25f, C_BG, 1.f);
+    fill_rr(0.f, 0.f, (float)g_side, (float)g_ch, 0.f, C_SOFT, 1.f);
+    int x = S(32);
+    draw_wordmark(x, S(32), S(30));
+    int sy = S(120), step = S(60);
+    for (int i = 0; i < N_RAIL; i++) {
+        float cx = (float)(x + S(12)), cy = (float)(sy + i * step + S(15));
+        if (i < N_RAIL - 1)
+            aa_line(cx, cy + (float)S(14), cx, cy + (float)step - (float)S(14), (float)S(2),
+                    C_RULE, 1.f);
+        RECT b = { x + S(40), sy + i * step, g_side - S(16), sy + i * step + S(30) };
+        if (i < cur) {
+            stroke_circle(cx, cy, (float)S(11), (float)S(2), C_RULE, 1.f);
+            glyph_check(cx, cy, (float)S(13), C_INK2, 1.f);
+            text_in(RAIL[i].label, g_f_body, C_INK2, b, DT_SINGLELINE | DT_VCENTER);
+        } else if (i == cur) {
+            fill_circle(cx, cy, (float)S(12), C_ACCENT, 1.f);
+            fill_circle(cx, cy, (float)S(4), C_ON_ACCENT, 1.f);
+            text_in(RAIL[i].label, g_f_bodyb, C_INK, b, DT_SINGLELINE | DT_VCENTER);
+        } else {
+            stroke_circle(cx, cy, (float)S(11), (float)S(2), C_RULE, 1.f);
+            text_in(RAIL[i].label, g_f_body, C_INK2, b, DT_SINGLELINE | DT_VCENTER);
+        }
     }
 }
 
-static void draw_rail(void)
+/* WORKING, WITHOUT ANYTHING SPINNING: three segments, one lit at a time,
+ * stepping every 600 ms (DESIGN-DIRECTION.md, motion: colour only). */
+static void stepper(int x, int y, int w, int h)
 {
-    int x = S(32);
-    int y = S(36);
+    int seg = (w - S(8)) / 3;
+    int lit = (int)((g_ticks * 60 / 600) % 3);
+    for (int i = 0; i < 3; i++)
+        fill_rr((float)(x + i * (seg + S(4))), (float)y, (float)seg, (float)h, (float)h * 0.5f,
+                i == lit ? C_ACCENT : C_SOFT, 1.f);
+}
 
-    fill_diamond((float)(x + S(9)), (float)(y + S(15)), (float)S(10), C_ACCENT, 1.f);
-    text_draw(L"AurOS", g_f_h2, C_FG_HI, x + S(30), y, S(170), DT_LEFT);
-    text_draw(L"Setup", g_f_small, C_SUBTLE, x + S(30), y + S(32), S(170), DT_LEFT);
-
-    int cur = rail_index_for(g_page);
-    int sy  = S(140);
-    int step = S(58);
-    int lw = g_rail_w - x - S(34);
-    for (int i = 0; i < N_RAIL; i++) {
-        float cx = (float)(x + S(9));
-        float cy = (float)(sy + i * step + S(12));
-        if (i < N_RAIL - 1)
-            aa_line(cx, cy + S(12), cx, cy + (float)step - S(12), 1.4f, C_OVERLAY, 1.f);
-
-        int blocked = (g_page == PAGE_BLOCKED && i == cur);
-        uint32_t c  = blocked ? C_WARM : C_ACCENT;
-        int ty = sy + i * step;
-
-        if (i < cur) {
-            fill_circle(cx, cy, (float)S(9), C_ACCENT, 1.f);
-            glyph_check(cx, cy, (float)S(11), C_BG, 1.f);
-            text_draw(RAIL[i].label, g_f_body, C_SUBTLE, x + S(32), ty, lw, DT_WORDBREAK);
-        } else if (i == cur) {
-            fill_circle(cx, cy, (float)S(14), c, 0.20f);
-            fill_circle(cx, cy, (float)S(9), c, 1.f);
-            text_draw(RAIL[i].label, g_f_bodyb, blocked ? C_WARM : C_FG_HI,
-                      x + S(32), ty, lw, DT_WORDBREAK);
-        } else {
-            stroke_circle(cx, cy, (float)S(8), 1.6f, C_MUTED, 1.f);
-            text_draw(RAIL[i].label, g_f_body, C_MUTED, x + S(32), ty, lw, DT_WORDBREAK);
-        }
+/* Working, done, something she needs to do, or something we will do. */
+enum { ST_WORKING = 0, ST_DONE, ST_TODO, ST_PENDING };
+static void status_icon(float cx, float cy, float r, int st)
+{
+    if (st == ST_PENDING) {
+        stroke_circle(cx, cy, r - (float)S(1), (float)S(2), C_RULE, 1.f);
+    } else if (st == ST_WORKING) {
+        stepper((int)(cx - r), (int)(cy - (float)S(3)), (int)(r * 2.f), S(6));
+    } else if (st == ST_DONE) {
+        fill_circle(cx, cy, r, C_ACCENT, 1.f);
+        glyph_check(cx, cy, r * 1.15f, C_ON_ACCENT, 1.f);
+    } else {
+        fill_circle(cx, cy, r, C_WARN, 1.f);
+        glyph_bang(cx, cy, r * 1.15f, C_ON_ACCENT, 1.f);
     }
+}
+
+/* WHAT WENT WRONG, IN ONE OF FOUR SENTENCES (DESIGN-DIRECTION.md B-6).
+ * The engine's own words name files, drives and error numbers; they go
+ * to the log, and she reads which of four things happened to her. */
+static const wchar_t *plain_failure(const wchar_t *why)
+{
+    wchar_t lo[400];
+    int i = 0;
+    for (; why && why[i] && i < 399; i++) lo[i] = (wchar_t)towlower(why[i]);
+    lo[i] = 0;
+    OutputDebugStringW(why ? why : L"");
+    static const wchar_t *const net[] = { L"download", L"internet", L"connect", L"network",
+                                          L"server", L"piece", L"online", NULL };
+    static const wchar_t *const room[] = { L"space", L"room", L"full", NULL };
+    static const wchar_t *const win[] = { L"windows would not", L"windows wouldn", L"denied",
+                                          L"permission", L"shrink", L"in use", NULL };
+    for (int k = 0; net[k]; k++) if (wcsstr(lo, net[k]))
+        return L"The internet stopped partway. Check you’re online, then press Try again.";
+    for (int k = 0; win[k]; k++) if (wcsstr(lo, win[k]))
+        return L"Windows wouldn’t let us make room. Restart Windows, then try again.";
+    for (int k = 0; room[k]; k++) if (wcsstr(lo, room[k]))
+        return L"This computer ran out of room. Press Try again.";
+    return L"Something went wrong on our side. Nothing was changed.";
 }
 
 static void glyph_arc(float cx, float cy, float r, float a0, float a1,
                       float t, uint32_t c, float al)
 {
     float px = 0.f, py = 0.f;
-    for (int i = 0; i <= 16; i++) {
-        float a = a0 + (a1 - a0) * (float)i / 16.f;
+    int n = (int)(fabsf(a1 - a0) * 6.f) + 4;
+    for (int i = 0; i <= n; i++) {
+        float a = a0 + (a1 - a0) * (float)i / (float)n;
         float x = cx + cosf(a) * r, y = cy + sinf(a) * r;
         if (i) aa_line(px, py, x, y, t, c, al);
         px = x; py = y;
@@ -1807,49 +1776,83 @@ static void glyph_arc(float cx, float cy, float r, float a0, float a1,
 }
 static void glyph_undo(float cx, float cy, float s, uint32_t c, float a)
 {
-    glyph_arc(cx, cy, s * 0.52f, 2.6f, 2.6f + 5.0f, s * 0.15f, c, a);
-    float ex = cx + cosf(2.6f) * s * 0.52f, ey = cy + sinf(2.6f) * s * 0.52f;
-    aa_line(ex, ey, ex + s * 0.26f, ey - s * 0.16f, s * 0.15f, c, a);
-    aa_line(ex, ey, ex + s * 0.10f, ey + s * 0.28f, s * 0.15f, c, a);
+    glyph_arc(cx, cy, s * 0.42f, 2.6f, 2.6f + 5.0f, s * 0.09f, c, a);
+    float ex = cx + cosf(2.6f) * s * 0.42f, ey = cy + sinf(2.6f) * s * 0.42f;
+    aa_line(ex, ey, ex + s * 0.22f, ey - s * 0.14f, s * 0.09f, c, a);
+    aa_line(ex, ey, ex + s * 0.08f, ey + s * 0.24f, s * 0.09f, c, a);
 }
 static void glyph_clock(float cx, float cy, float s, uint32_t c, float a)
 {
-    stroke_circle(cx, cy, s * 0.48f, s * 0.13f, c, a);
-    aa_line(cx, cy, cx, cy - s * 0.30f, s * 0.12f, c, a);
-    aa_line(cx, cy, cx + s * 0.22f, cy + s * 0.08f, s * 0.12f, c, a);
+    stroke_circle(cx, cy, s * 0.44f, s * 0.09f, c, a);
+    aa_line(cx, cy, cx, cy - s * 0.26f, s * 0.09f, c, a);
+    aa_line(cx, cy, cx + s * 0.19f, cy + s * 0.07f, s * 0.09f, c, a);
 }
 static void glyph_drive(float cx, float cy, float s, uint32_t c, float a)
 {
-    stroke_rr(cx - s * 0.50f, cy - s * 0.30f, s, s * 0.60f, s * 0.12f, s * 0.12f, c, a);
-    fill_circle(cx + s * 0.28f, cy + s * 0.05f, s * 0.08f, c, a);
-    aa_line(cx - s * 0.32f, cy + s * 0.05f, cx + s * 0.05f, cy + s * 0.05f, s * 0.09f, c, a);
+    stroke_rr(cx - s * 0.46f, cy - s * 0.27f, s * 0.92f, s * 0.54f, s * 0.10f, s * 0.09f, c, a);
+    fill_circle(cx + s * 0.26f, cy, s * 0.07f, c, a);
 }
 static void glyph_look(float cx, float cy, float s, uint32_t c, float a)
 {
-    stroke_rr(cx - s * 0.50f, cy - s * 0.38f, s, s * 0.70f, s * 0.08f, s * 0.11f, c, a);
-    fill_rr(cx - s * 0.42f, cy + s * 0.14f, s * 0.84f, s * 0.12f, s * 0.04f, c, a);
-    aa_line(cx - s * 0.18f, cy + s * 0.48f, cx + s * 0.18f, cy + s * 0.48f, s * 0.11f, c, a);
+    stroke_rr(cx - s * 0.46f, cy - s * 0.36f, s * 0.92f, s * 0.62f, s * 0.07f, s * 0.09f, c, a);
+    aa_line(cx - s * 0.16f, cy + s * 0.42f, cx + s * 0.16f, cy + s * 0.42f, s * 0.09f, c, a);
+}
+static void glyph_home(float cx, float cy, float s, uint32_t c, float a)
+{
+    /* Windows and her files: a house; they stay where they live */
+    aa_line(cx - s * 0.44f, cy - s * 0.02f, cx, cy - s * 0.42f, s * 0.09f, c, a);
+    aa_line(cx, cy - s * 0.42f, cx + s * 0.44f, cy - s * 0.02f, s * 0.09f, c, a);
+    stroke_rr(cx - s * 0.30f, cy - s * 0.12f, s * 0.60f, s * 0.52f, s * 0.04f, s * 0.09f, c, a);
+}
+static void glyph_down(float cx, float cy, float s, uint32_t c, float a)
+{
+    /* the download: an arrow into a tray */
+    aa_line(cx, cy - s * 0.42f, cx, cy + s * 0.12f, s * 0.09f, c, a);
+    aa_line(cx - s * 0.20f, cy - s * 0.08f, cx, cy + s * 0.12f, s * 0.09f, c, a);
+    aa_line(cx + s * 0.20f, cy - s * 0.08f, cx, cy + s * 0.12f, s * 0.09f, c, a);
+    aa_line(cx - s * 0.40f, cy + s * 0.40f, cx + s * 0.40f, cy + s * 0.40f, s * 0.09f, c, a);
+}
+static void glyph_info(float cx, float cy, float s, uint32_t c, float a)
+{
+    stroke_circle(cx, cy, s * 0.44f, s * 0.08f, c, a);
+    aa_line(cx, cy - s * 0.02f, cx, cy + s * 0.22f, s * 0.09f, c, a);
+    fill_circle(cx, cy - s * 0.20f, s * 0.06f, c, a);
 }
 
-/* A glyph, and a sentence beside it. The shape the Ready page is made of. */
-enum { G_CHECK = 0, G_UNDO, G_CLOCK, G_DRIVE, G_LOOK };
-static int glyph_row(int glyph, const wchar_t *text, uint32_t tint,
-                     int x, int y, int w)
+/* A glyph, and a sentence beside it. The shape the Ready page is made of.
+ * The glyphs are ink-2: they help her find a line again, and should not
+ * be what she looks at first. */
+enum { G_HOME = 0, G_UNDO, G_CLOCK, G_DRIVE, G_LOOK, G_DOWN, G_INFO };
+static void glyph_at(int glyph, float cx, float cy, float gs, uint32_t c)
 {
-    int d  = S(34);
-    int tx = x + d + S(18);
-    int tw = w - (tx - x);
-    float cx = (float)x + (float)d * 0.5f, cy = (float)y + S(13);
     switch (glyph) {
-    case G_CHECK: glyph_check(cx, cy, (float)S(24), tint, 1.f); break;
-    case G_UNDO:  glyph_undo (cx, cy, (float)S(26), tint, 1.f); break;
-    case G_CLOCK: glyph_clock(cx, cy, (float)S(26), tint, 1.f); break;
-    case G_DRIVE: glyph_drive(cx, cy, (float)S(28), tint, 1.f); break;
-    case G_LOOK:  glyph_look (cx, cy, (float)S(26), tint, 1.f); break;
+    case G_HOME:  glyph_home (cx, cy, gs, c, 1.f); break;
+    case G_UNDO:  glyph_undo (cx, cy, gs, c, 1.f); break;
+    case G_CLOCK: glyph_clock(cx, cy, gs, c, 1.f); break;
+    case G_DRIVE: glyph_drive(cx, cy, gs, c, 1.f); break;
+    case G_LOOK:  glyph_look (cx, cy, gs, c, 1.f); break;
+    case G_DOWN:  glyph_down (cx, cy, gs, c, 1.f); break;
+    case G_INFO:  glyph_info (cx, cy, gs, c, 1.f); break;
     default: break;
     }
-    int th = text_draw(text, g_f_body, C_FG, tx, y, tw, DT_WORDBREAK);
-    return (th > S(28) ? th : S(28)) + S(18);
+}
+static int glyph_row(int glyph, const wchar_t *text, int x, int y, int w)
+{
+    int d  = S(30);
+    int tx = x + d + S(16);
+    glyph_at(glyph, (float)x + (float)d * 0.5f, (float)y + (float)TYPE[type_of(g_f_body)].line * 0.5f,
+             (float)S(28), C_INK2);
+    return text_draw(text, g_f_body, C_INK, tx, y, w - (tx - x), DT_WORDBREAK);
+}
+
+/* A page's title, and the one sentence under it, if it has one. */
+static int page_head(const wchar_t *title, const wchar_t *sub, int x, int y, int w)
+{
+    int y0 = y;
+    y += text_draw(title, g_f_title, C_INK, x, y, w, DT_WORDBREAK);
+    if (sub) y += S(8) + text_draw(sub, g_f_body, C_INK2, x, y + S(8), w > S(720) ? S(720) : w,
+                                   DT_WORDBREAK);
+    return y - y0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1859,6 +1862,9 @@ static int glyph_row(int glyph, const wchar_t *text, uint32_t tint,
  *  itself, on the same screen, from the moment the window opens. She
  *  used to read a page, press Get started, and watch a second page
  *  check; now the check is done while she reads the two sentences.
+ *  It used to show five little labels ticking (Power, Space, Drive,
+ *  Start-up, Windows); they were words she would have to understand and
+ *  could do nothing with, so it says one thing: looking, or ready.
  * ═══════════════════════════════════════════════════════════════════ */
 
 /* What a check result means to her, for warnings: one line each. */
@@ -1870,94 +1876,74 @@ static const wchar_t *warn_line(const pf_result *r, wchar_t *buf, int cch)
     return buf;
 }
 
-static int check_panel(int x, int y, int w)
+/* An icon, a bold line and a quieter one under it: the check's answer,
+ * and each line of the stop page. Returns the height. */
+static int status_row(int st, const wchar_t *head, const wchar_t *sub,
+                      int x, int y, int w)
 {
-    int pad = S(22);
-    int first_done = g_pf_valid;
-    int revealed = first_done ? g_reveal : 0;
-    int all = first_done && !g_checking && g_reveal >= N_CHK;
-    int go = all && pf_is_go(&g_report);
-
-    /* measure: heading, chips, and while running one quiet line */
-    int head_h = S(36);
-    int chip_h = S(40);
-    const wchar_t *note = L"This only looks. Nothing on this computer is changed.";
-    int note_h = all ? 0 : text_h(note, g_f_body, w - pad * 2, DT_WORDBREAK) + S(12);
-    int h = pad + head_h + S(16) + chip_h + S(6) + note_h + pad - S(6);
-
-    fill_rr((float)x, (float)y, (float)w, (float)h, (float)S(16), C_SURFACE_HI, 1.f);
-    stroke_rr((float)x, (float)y, (float)w, (float)h, (float)S(16), 1.4f,
-              go ? C_ACCENT : C_OVERLAY, go ? 0.9f : 1.f);
-
-    float icx = (float)(x + pad + S(17)), icy = (float)(y + pad + head_h / 2);
-    const wchar_t *head;
-    uint32_t hc = C_FG_HI;
-    if (!all) {
-        status_icon(icx, icy, (float)S(16), 1, PF_PASS);
-        head = L"Looking at this computer…";
-    } else if (go) {
-        status_icon(icx, icy, (float)S(17), 2, PF_PASS);
-        head = L"This computer can take AurOS.";
-    } else {
-        status_icon(icx, icy, (float)S(17), 2, PF_WARN);
-        head = L"Something needs sorting out first.";
-        hc = C_WARM;
-    }
-    RECT hb = { x + pad + S(48), y + pad, x + w - pad, y + pad + head_h };
-    text_in(head, g_f_h3, hc, hb, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-
-    int cx = x + pad, cy = y + pad + head_h + S(16);
-    for (int i = 0; i < N_CHK; i++) {
-        int cw = text_w(CHK[i].label, g_f_body) + S(56);
-        if (cx > x + pad && cx + cw > x + w - pad) break;     /* never wraps at 18 px */
-        int state = i < revealed ? 2 : 1;
-        int sev = state == 2 ? chk_group_sev(i) : PF_PASS;
-        fill_rr((float)cx, (float)cy, (float)cw, (float)chip_h, (float)chip_h * 0.5f,
-                C_SURFACE, 1.f);
-        status_icon((float)(cx + S(21)), (float)(cy + chip_h / 2), (float)S(10), state,
-                    sev == PF_INFO ? PF_PASS : sev);
-        RECT b = { cx + S(40), cy, cx + cw, cy + chip_h };
-        text_in(CHK[i].label, g_f_body, state == 2 ? C_FG_HI : C_SUBTLE, b,
-                DT_SINGLELINE | DT_VCENTER);
-        cx += cw + S(10);
-    }
-    if (!all)
-        text_draw(note, g_f_body, C_SUBTLE, x + pad, cy + chip_h + S(16),
-                  w - pad * 2, DT_WORDBREAK);
+    int d = S(30), tx = x + d + S(16), tw = w - (tx - x);
+    int hl = TYPE[type_of(g_f_bodyb)].line;
+    status_icon((float)x + (float)d * 0.5f, (float)y + (float)hl * 0.5f, (float)S(13), st);
+    int h = text_draw(head, g_f_bodyb, C_INK, tx, y, tw, DT_WORDBREAK);
+    if (sub && sub[0]) h += S(2) + text_draw(sub, g_f_body, C_INK2, tx, y + h + S(2), tw,
+                                             DT_WORDBREAK);
     return h;
+}
+
+/* SOMETHING SHE CAN'T PRESS looks like it: no border, a 4 px bar at its
+ * left, an "i", and ink-2 words (DESIGN-DIRECTION.md §3). */
+static int note_box(const wchar_t *head, const wchar_t *const *lines, int n,
+                    int x, int y, int w)
+{
+    int y0 = y, tx = x + S(16) + S(30), tw = w - (tx - x);
+    int lh = TYPE[type_of(g_f_body)].line;
+    int h = head ? TYPE[type_of(g_f_bodyb)].line + S(4) : 0;
+    for (int i = 0; i < n; i++) h += text_h(lines[i], g_f_body, tw, DT_WORDBREAK) + S(4);
+    fill_rr((float)x, (float)y, (float)S(4), (float)h, (float)S(2), C_RULE, 1.f);
+    glyph_info((float)(x + S(16) + S(12)), (float)y + (float)lh * 0.5f, (float)S(24), C_INK2, 1.f);
+    if (head) y += text_draw(head, g_f_bodyb, C_INK, tx, y, tw, DT_SINGLELINE) + S(4);
+    for (int i = 0; i < n; i++)
+        y += text_draw(lines[i], g_f_body, C_INK2, tx, y, tw, DT_WORDBREAK) + S(4);
+    return y - y0;
 }
 
 static int page_welcome(int x, int y, int w)
 {
     int y0 = y;
     int narrow = w > S(720) ? S(720) : w;
+    y += page_head(L"Let’s put AurOS on this computer",
+                   L"AurOS is a free, simple new way to use this computer. Windows stays, "
+                   L"with all your files. If AurOS isn’t for you, you can go back to "
+                   L"Windows.", x, y, w);
+    y += S(g_short ? 24 : 40);
 
-    y += text_draw(L"Let’s put AurOS on this computer", g_f_title, C_FG_HI,
-                   x, y, w, DT_WORDBREAK) + S(14);
-    y += text_draw(L"AurOS is a free and simple new way to use this computer.",
-                   g_f_body, C_FG, x, y, narrow, DT_WORDBREAK) + S(8);
-    y += text_draw(L"Windows stays, with all your files. If AurOS isn’t for you, "
-                   L"you can go back to Windows.",
-                   g_f_body, C_FG, x, y, narrow, DT_WORDBREAK) + S(24);
-
-    y += check_panel(x, y, narrow) + S(18);
+    int done = g_pf_valid && !g_checking;
+    if (!done)
+        y += status_row(ST_WORKING, L"Looking at this computer…",
+                        L"This only looks. Nothing on this computer is changed.", x, y, narrow);
+    else if (pf_is_go(&g_report))
+        y += status_row(ST_DONE, L"This computer can take AurOS.",
+                        L"Next, you pick how it looks.", x, y, narrow);
+    else
+        y += status_row(ST_TODO, L"Something needs sorting out first.", NULL, x, y, narrow);
 
     /* Anything worth knowing that does not stop it: said here, one line
-     * each, on the page she is looking at. ("Coming up next" used to
-     * promise a page that did not exist.) */
-    if (g_pf_valid && !g_checking && g_reveal >= N_CHK && pf_is_go(&g_report) &&
-        g_report.n_warn > 0) {
-        y += text_draw(L"Good to know", g_f_bodyb, C_WARM, x, y, narrow,
-                       DT_SINGLELINE) + S(8);
-        for (int i = 0; i < g_report.n; i++) {
+     * each, on the page she is looking at, before she agrees to anything
+     * (docs/EASY.md, rule 9). */
+    if (done && pf_is_go(&g_report) && g_report.n_warn > 0) {
+        const wchar_t *lines[8];
+        static wchar_t bufs[8][128];
+        int n = 0;
+        for (int i = 0; i < g_report.n && n < 8; i++) {
             const pf_result *r = &g_report.results[i];
             if (r->sev != PF_WARN) continue;
-            wchar_t buf[128];
-            const wchar_t *line = warn_line(r, buf, 128);
-            fill_circle((float)(x + S(6)), (float)(y + S(12)), (float)S(4), C_WARM, 1.f);
-            y += text_draw(line, g_f_body, C_FG, x + S(22), y, narrow - S(22),
-                           DT_WORDBREAK) + S(8);
+            const wchar_t *l = warn_line(r, bufs[n], 128);
+            int dup = 0;
+            for (int k = 0; k < n; k++) if (!wcscmp(lines[k], l)) dup = 1;
+            if (!dup) lines[n++] = l;
         }
+        y += S(g_short ? 20 : 32);
+        y += note_box(L"Good to know", lines, n, x, y, narrow);
     }
     return y - y0;
 }
@@ -1984,131 +1970,170 @@ static int sb_figure(int x, int y, int w, int draw)
     };
     const int nway = (int)(sizeof way / sizeof way[0]);
     int y0 = y;
-    int chip_h = S(26), pad = S(10), gap = S(8);
-    int sep_w = text_w(L"\u203A", g_f_small) + S(10);
+    int line = TYPE[type_of(g_f_small)].line;
+    int chip_h = S(34), pad = S(12), gap = S(8);
+    int sep_w = text_w(L"›", g_f_small) + S(12);
 
-    if (draw) text_draw(L"THE WAY THERE, FROM WINDOWS", g_f_tiny, C_WARM,
-                        x, y, w, DT_SINGLELINE);
-    y += S(16) + S(6);
+    if (draw) text_draw(L"The way there, from Windows", g_f_smallb, C_INK, x, y, w, DT_SINGLELINE);
+    y += line + S(6);
     int cx = x;
     for (int i = 0; i < nway; i++) {
         int cw = text_w(way[i], g_f_small) + pad * 2;
         if (cx > x && cx + cw > x + w) { cx = x; y += chip_h + gap; }
         if (draw) {
             int last = i == nway - 1;
-            fill_rr((float)cx, (float)y, (float)cw, (float)chip_h, (float)S(8),
-                    C_SURFACE, 0.95f);
+            fill_rr((float)cx, (float)y, (float)cw, (float)chip_h, (float)S(8), C_SOFT, 1.f);
             if (last)
-                stroke_rr((float)cx, (float)y, (float)cw, (float)chip_h,
-                          (float)S(8), 1.2f, C_WARM, 0.85f);
+                stroke_rr((float)cx, (float)y, (float)cw, (float)chip_h, (float)S(8),
+                          (float)S(2), C_WARN, 1.f);
             RECT b = { cx, y, cx + cw, y + chip_h };
-            text_in(way[i], g_f_small, last ? C_WARM : C_FG_HI, b,
+            text_in(way[i], last ? g_f_smallb : g_f_small, C_INK, b,
                     DT_SINGLELINE | DT_CENTER | DT_VCENTER);
             if (i < nway - 1) {
                 RECT sb = { cx + cw, y, cx + cw + sep_w, y + chip_h };
-                text_in(L"\u203A", g_f_small, C_SUBTLE, sb,
-                        DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+                text_in(L"›", g_f_small, C_INK2, sb, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
             }
         }
         cx += cw + sep_w;
     }
-    y += chip_h + S(18);
+    y += chip_h + S(22);
 
-    if (draw) text_draw(L"THEN, ON THE COMPUTER'S OWN SETTINGS SCREEN", g_f_tiny, C_WARM,
+    if (draw) text_draw(L"Then, on the computer’s own settings screen", g_f_smallb, C_INK,
                         x, y, w, DT_SINGLELINE);
-    y += S(16) + S(6);
-    int row = S(30), sw = w > S(560) ? S(560) : w;
+    y += line + S(6);
+    int row = S(36), sw = w > S(600) ? S(600) : w;
     int sh = row * 4 + S(10);
     if (draw) {
-        fill_rr((float)x, (float)y, (float)sw, (float)sh, (float)S(6), C_BG, 1.f);
-        stroke_rr((float)x, (float)y, (float)sw, (float)sh, (float)S(6), 1.f,
-                  C_OVERLAY, 1.f);
-        fill_rr((float)x + 1.f, (float)y + 1.f, (float)sw - 2.f, (float)row,
-                (float)S(5), C_INFO, 0.16f);
-        RECT hb = { x + S(12), y, x + sw - S(12), y + row };
-        text_in(L"Security  \u203A  Secure Boot", g_f_smallb, C_INFO, hb,
+        fill_rr((float)x, (float)y, (float)sw, (float)sh, (float)S(8), C_SURFACE, 1.f);
+        stroke_rr((float)x, (float)y, (float)sw, (float)sh, (float)S(8), 1.f, C_RULE, 1.f);
+        fill_rr((float)x + 1.f, (float)y + 1.f, (float)sw - 2.f, (float)row, (float)S(7),
+                C_SOFT, 1.f);
+        RECT hb = { x + S(14), y, x + sw - S(14), y + row };
+        text_in(L"Security  ›  Secure Boot", g_f_smallb, C_INK, hb,
                 DT_SINGLELINE | DT_VCENTER);
         static const struct { const wchar_t *k, *v; int mark; } R[] = {
-            { L"Secure Boot",                        L"[Enabled]   leave it on", 0 },
-            { L"Allow Microsoft 3rd Party UEFI CA",  L"[Disabled]  \u2192  [Enabled]", 1 },
+            { L"Secure Boot",                        L"[Enabled]  leave it on", 0 },
+            { L"Allow Microsoft 3rd Party UEFI CA",  L"[Disabled] › [Enabled]", 1 },
             { L"Secure Boot Mode",                   L"[Standard]", 0 },
         };
         for (int i = 0; i < 3; i++) {
             int ry = y + row * (i + 1) + S(4);
             if (R[i].mark) {
-                fill_rr((float)(x + S(6)), (float)ry, (float)(sw - S(12)),
-                        (float)(row - S(2)), (float)S(4), C_WARM, 0.14f);
-                stroke_rr((float)(x + S(6)), (float)ry, (float)(sw - S(12)),
-                          (float)(row - S(2)), (float)S(4), 1.2f, C_WARM, 0.85f);
+                fill_rr((float)(x + S(6)), (float)ry, (float)(sw - S(12)), (float)(row - S(2)),
+                        (float)S(5), C_WARN, 0.10f);
+                stroke_rr((float)(x + S(6)), (float)ry, (float)(sw - S(12)), (float)(row - S(2)),
+                          (float)S(5), (float)S(2), C_WARN, 1.f);
             }
-            RECT kb = { x + S(16), ry, x + sw / 2 + S(40), ry + row - S(2) };
-            RECT vb = { x + sw / 2 + S(48), ry, x + sw - S(14), ry + row - S(2) };
-            text_in(R[i].k, R[i].mark ? g_f_smallb : g_f_small,
-                    R[i].mark ? C_FG_HI : C_SUBTLE, kb,
+            RECT kb = { x + S(16), ry, x + sw * 58 / 100, ry + row - S(2) };
+            RECT vb = { x + sw * 60 / 100, ry, x + sw - S(14), ry + row - S(2) };
+            text_in(R[i].k, R[i].mark ? g_f_smallb : g_f_small, C_INK, kb,
                     DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-            text_in(R[i].v, R[i].mark ? g_f_smallb : g_f_small,
-                    R[i].mark ? C_WARM : C_SUBTLE, vb, DT_SINGLELINE | DT_VCENTER);
+            text_in(R[i].v, R[i].mark ? g_f_smallb : g_f_small, R[i].mark ? C_WARN : C_INK2,
+                    vb, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
         }
     }
-    y += sh + S(10);
+    y += sh + S(12);
     const wchar_t *cap =
-        L"A sketch: every maker's screen looks a little different. Then choose "
+        L"A sketch: every maker’s screen looks a little different. Then choose "
         L"Save and Exit (often F10), and run this installer again. Secure Boot "
         L"stays on.";
-    y += draw ? text_draw(cap, g_f_small, C_SUBTLE, x, y, w, DT_WORDBREAK)
+    y += draw ? text_draw(cap, g_f_small, C_INK2, x, y, w, DT_WORDBREAK)
               : text_h(cap, g_f_small, w, DT_WORDBREAK);
     return y - y0;
 }
 
-static int block_card(const pf_result *r, int x, int y, int w)
+/* "One setting needs changing first" (DESIGN-DIRECTION.md B-5). What
+ * she reads is two sentences; "Show a helper how" opens, on the same
+ * page, the sketch of the way there and the technical paragraph, with
+ * "Copy for a helper" so it can go in a message. */
+static int g_sb_helper;                /* the helper's part is open        */
+static int g_copied;                   /* "Copy for a helper" was pressed  */
+
+static const pf_result *sb_result(void)
 {
-    wchar_t title[128], detail[600], remedy[600];
-    a2w(r->title, title, 128);
-    a2w(r->detail, detail, 600);
-    a2w(r->remedy, remedy, 600);
-
-    int pad = S(22);
-    int tx  = x + pad + S(12);
-    int tw  = w - (tx - x) - pad;
-    int bw  = w - (tx - x) - pad;
-
-    int th = text_h(title, g_f_h3, tw, DT_WORDBREAK);
-    int dh = detail[0] ? text_h(detail, g_f_body, bw, DT_WORDBREAK) : 0;
-
-    int rpad = S(16);
-    int rlab = S(20);
-    int rh   = remedy[0]
-        ? text_h(remedy, g_f_body, bw - rpad * 2, DT_WORDBREAK) + rlab + rpad * 2 + S(4)
-        : 0;
-    int fig = !strcmp(r->id, SBDB_BLOCK_ID);
-    int fh  = fig ? sb_figure(tx, 0, bw, 0) : 0;
-    int h = pad + th + (dh ? dh + S(8) : 0) + (rh ? rh + S(18) : 0)
-          + (fh ? fh + S(18) : 0) + pad;
-
-    fill_rr((float)x, (float)y, (float)w, (float)h, (float)S(14), C_SURFACE_HI, 0.75f);
-    stroke_rr((float)x, (float)y, (float)w, (float)h, (float)S(14), 1.2f, C_ERR, 0.30f);
-    fill_rr((float)x + 1.f, (float)(y + S(14)), (float)S(4), (float)(h - S(28)),
-            (float)S(2), C_ERR, 0.95f);
-
-    int cy = y + pad;
-    cy += text_draw(title, g_f_h3, C_ERR, tx, cy, tw, DT_WORDBREAK);
-    if (detail[0]) {
-        cy += S(8);
-        cy += text_draw(detail, g_f_body, C_FG, tx, cy, bw, DT_WORDBREAK);
-    }
-    if (remedy[0]) {
-        cy += S(18);
-        fill_rr((float)tx, (float)cy, (float)bw, (float)rh, (float)S(10),
-                C_SURFACE, 0.92f);
-        text_draw(L"WHAT TO DO", g_f_tiny, C_WARM, tx + rpad, cy + rpad, bw, DT_SINGLELINE);
-        text_draw(remedy, g_f_body, C_FG_HI, tx + rpad, cy + rpad + rlab,
-                  bw - rpad * 2, DT_WORDBREAK);
-        cy += rh;
-    }
-    if (fh) sb_figure(tx, cy + S(18), bw, 1);
-    return h;
+    for (int i = 0; i < g_report.n; i++)
+        if (g_report.results[i].sev == PF_BLOCK && !strcmp(g_report.results[i].id, SBDB_BLOCK_ID))
+            return &g_report.results[i];
+    return NULL;
 }
 
+/* The page is the Secure Boot page when that is the only stop that
+ * nothing on this computer can fix. */
+static int sb_page(void)
+{
+    if (!sb_result()) return 0;
+    for (int i = 0; i < g_report.n; i++) {
+        const pf_result *r = &g_report.results[i];
+        if (r->sev == PF_BLOCK && strcmp(r->id, SBDB_BLOCK_ID) && kind_of(r) == FIX_CANNOT) return 0;
+    }
+    return 1;
+}
+
+static void sb_helper_text(wchar_t *out, int n)
+{
+    const pf_result *r = sb_result();
+    wchar_t d[600] = L"", m[600] = L"";
+    if (r) { a2w(r->detail, d, 600); a2w(r->remedy, m, 600); }
+    _snwprintf(out, (size_t)n, L"%ls %ls", d, m);
+    out[n - 1] = 0;
+}
+
+static int sb_helper(int x, int y, int w)
+{
+    int y0 = y;
+    y += text_draw(L"For a helper", g_f_h3, C_INK, x, y, w, DT_SINGLELINE) + S(12);
+    y += sb_figure(x, y, w, 1) + S(24);
+    static wchar_t t[1300];
+    sb_helper_text(t, 1300);
+    y += text_draw(t, g_f_small, C_INK2, x, y, w, DT_WORDBREAK) + S(16);
+    int bw = text_w(L"Copy for a helper", g_f_btn) + S(48);
+    draw_button(ID_COPY, L"Copy for a helper", x, y, bw, S(48), 0, 0);
+    if (g_copied) {
+        RECT b = { x + bw + S(16), y, x + w, y + S(48) };
+        text_in(L"Copied. Paste it into a message to your helper.", g_f_small, C_INK2, b,
+                DT_SINGLELINE | DT_VCENTER);
+    }
+    y += S(48);
+    return y - y0;
+}
+
+static void copy_for_helper(void)
+{
+    static wchar_t t[1300];
+    sb_helper_text(t, 1300);
+    size_t n = (wcslen(t) + 1) * sizeof(wchar_t);
+    if (!OpenClipboard(g_hwnd)) return;
+    EmptyClipboard();
+    HGLOBAL g = GlobalAlloc(GMEM_MOVEABLE, n);
+    void *p = g ? GlobalLock(g) : NULL;
+    if (p) {
+        memcpy(p, t, n);
+        GlobalUnlock(g);
+        if (SetClipboardData(CF_UNICODETEXT, g)) g = NULL;
+    }
+    if (g) GlobalFree(g);
+    CloseClipboard();
+    g_copied = 1;
+}
+
+/* The helper's page in her browser, opened as her and not as the
+ * administrator this program runs as: through Explorer. */
+static const wchar_t *helper_url(void)
+{
+    for (int i = 0; i < g_report.n; i++)
+        if (g_report.results[i].sev == PF_BLOCK) {
+            const wchar_t *u = fix_helper_url(g_report.results[i].id);
+            if (u) return u;
+        }
+    return NULL;
+}
+
+static void open_helper(void)
+{
+    const wchar_t *u = helper_url();
+    if (!u || g_nav_mode || g_shot_mode || g_selftest) return;
+    ShellExecuteW(g_hwnd, L"open", L"explorer.exe", u, NULL, SW_SHOWNORMAL);
+}
 
 /* THE SPACE FIX, SAID WITH ITS SIZE before she presses: what it deletes
  * and how much, or, when that is next to nothing, what she can do. */
@@ -2130,178 +2155,180 @@ static void space_fix_line(wchar_t *out, int n)
     out[n - 1] = 0;
 }
 
+/* What one stop says, and what happens about it, right now. */
+static int stop_line(const pf_result *r, int cannot, wchar_t *prob, wchar_t *fix)
+{
+    const fix_info *f = fix_lookup(r->id);
+    if (f) {
+        wcsncpy(prob, f->problem, 159); prob[159] = 0;
+        wcsncpy(fix, f->fix, 599);      fix[599] = 0;
+        if (!strcmp(r->id, "insufficient-space")) space_fix_line(fix, 600);
+    } else {
+        /* A check this table has never heard of still gets one short
+         * line, never the check's own paragraph. */
+        a2w(r->title, prob, 160);
+        wcscpy(fix, L"AurOS stops here. Nothing was changed.");
+    }
+    int st = kind_of(r) == FIX_WAIT || kind_of(r) == FIX_CANNOT || !f ? ST_TODO : ST_PENDING;
+    int j = -1;
+    for (int k = 0; k < g_fx_n; k++) if (!strcmp(g_fx[k].id, r->id)) j = k;
+    fix_kind k = kind_of(r);
+    if (cannot && k != FIX_CANNOT && f && f->kind != FIX_WAIT)
+        wcscpy(fix, L"We’ll fix this one after the ones above.");
+    if (f && f->kind == FIX_RESTART && k == FIX_CANNOT)
+        wcscpy(fix, L"Restarting didn’t clear it, so AurOS can’t go on yet.");
+    if (j >= 0 && g_fx[j].state == FS_RUNNING) {
+        wcscpy(fix, f && f->kind == FIX_RESTART
+                    ? L"Restarting Windows now. AurOS Setup opens again by itself."
+                    : L"Fixing it now. This can take a few minutes.");
+        st = ST_WORKING;
+    } else if (j >= 0 && g_fx[j].state == FS_DONE && g_fx[j].after && f && f->after) {
+        wcsncpy(fix, f->after, 599); fix[599] = 0;
+        st = ST_TODO;
+    } else if (j >= 0 && g_fx[j].state == FS_DONE) {
+        wcscpy(fix, L"Done. Checking again.");
+        st = ST_DONE;
+    } else if (j >= 0 && g_fx[j].state == FS_FAILED) {
+        wcscpy(fix, plain_failure(g_fx[j].why));
+        st = ST_TODO;
+    }
+    return st;
+}
+
 static int page_blocked(int x, int y, int w)
 {
     int y0 = y;
     int narrow = w > S(760) ? S(760) : w;
-    int cannot = 0, other = 0;
-    for (int i = 0; i < g_report.n; i++) {
-        if (g_report.results[i].sev != PF_BLOCK) continue;
-        fix_kind k = kind_of(&g_report.results[i]);
-        if (k == FIX_CANNOT) cannot++; else other++;
-    }
-    (void)other;
-    y += text_draw(!cannot ? L"Almost there. A few things first"
-                           : L"AurOS can\u2019t go on this computer yet",
-                   g_f_title, C_FG_HI, x, y, w, DT_WORDBREAK) + S(10);
-    y += text_draw(L"Nothing on this computer has been changed.",
-                   g_f_body, C_SUBTLE, x, y, narrow, DT_WORDBREAK) + S(22);
+    int cannot = 0;
+    for (int i = 0; i < g_report.n; i++)
+        if (g_report.results[i].sev == PF_BLOCK && kind_of(&g_report.results[i]) == FIX_CANNOT)
+            cannot++;
 
-    /* What cannot be fixed, and only that, when there is any: it is the
-     * answer, and a charger or a full drive beside it is beside the point
-     * (and made the page too long to read). */
-    for (int pass = 0; pass < (cannot ? 1 : 2); pass++)
-    for (int i = 0; i < g_report.n; i++) {
-        const pf_result *r = &g_report.results[i];
-        if (r->sev != PF_BLOCK) continue;
-        if ((kind_of(r) == FIX_CANNOT) != (pass == 0)) continue;
-        /* The Secure Boot setting keeps its card: it has a picture of the
-         * one switch to find, and a picture is the fix. */
-        if (!strcmp(r->id, SBDB_BLOCK_ID)) {
-            y += block_card(r, x, y, narrow) + S(12);
-            continue;
-        }
-        const fix_info *f = fix_lookup(r->id);
-        wchar_t prob[160], fix[600];
-        if (f) {
-            wcsncpy(prob, f->problem, 159); prob[159] = 0;
-            wcsncpy(fix, f->fix, 599);      fix[599] = 0;
-            if (!strcmp(r->id, "insufficient-space")) space_fix_line(fix, 600);
-        } else {
-            /* A check this table has never heard of still gets one
-             * short line, never the check's own paragraph. */
-            a2w(r->title, prob, 160);
-            wcscpy(fix, L"AurOS stops here. Nothing was changed.");
-        }
-        uint32_t dot = C_ERR;
-        int j = -1;
-        for (int k = 0; k < g_fx_n; k++) if (!strcmp(g_fx[k].id, r->id)) j = k;
-        fix_kind k = kind_of(r);
-        if (cannot && k != FIX_CANNOT && f) {
-            wcsncpy(fix, f->kind == FIX_WAIT ? f->fix
-                         : L"We\u2019ll fix this one once the red ones are sorted.", 599);
-            fix[599] = 0;
-        }
-        if (k == FIX_AUTO || k == FIX_RESTART) dot = C_WARM;
-        if (k == FIX_WAIT) dot = C_ACCENT_ALT;
-        if (f && f->kind == FIX_RESTART && k == FIX_CANNOT)
-            wcscpy(fix, L"Restarting didn\u2019t clear it, so AurOS can\u2019t go on yet.");
-        if (j >= 0 && g_fx[j].state == FS_RUNNING) {
-            wcscpy(fix, f && f->kind == FIX_RESTART
-                        ? L"Restarting Windows now. This installer opens again by itself."
-                        : L"Fixing it now\u2026");
-            dot = C_ACCENT;
-        } else if (j >= 0 && g_fx[j].state == FS_DONE && g_fx[j].after && f && f->after) {
-            wcsncpy(fix, f->after, 599); fix[599] = 0;
-            dot = C_ACCENT;
-        } else if (j >= 0 && g_fx[j].state == FS_DONE) {
-            wcscpy(fix, L"Done. Checking again\u2026");
-            dot = C_ACCENT;
-        } else if (j >= 0 && g_fx[j].state == FS_FAILED) {
-            _snwprintf(fix, 599, L"We couldn\u2019t fix this: %ls", g_fx[j].why);
-            fix[599] = 0;
-        }
-        int ph = text_h(prob, g_f_bodyb, narrow - S(58), DT_WORDBREAK);
-        int fh = text_h(fix, g_f_body, narrow - S(58), DT_WORDBREAK);
-        int h = S(14) + ph + S(4) + fh + S(14);
-        fill_rr((float)x, (float)y, (float)narrow, (float)h, (float)S(12),
-                C_SURFACE_HI, 1.f);
-        fill_rr((float)(x + S(16)), (float)(y + S(20)), (float)S(12), (float)S(12),
-                (float)S(6), dot, 1.f);
-        text_draw(prob, g_f_bodyb, C_FG_HI, x + S(40), y + S(14), narrow - S(58),
-                  DT_WORDBREAK);
-        text_draw(fix, g_f_body, C_SUBTLE, x + S(40), y + S(14) + ph + S(4),
-                  narrow - S(58), DT_WORDBREAK);
-        y += h + S(10);
+    if (sb_page()) {
+        y += page_head(L"One setting needs changing first",
+                       L"This computer is set to start only Windows. Someone who knows "
+                       L"computers can change it in about five minutes. Nothing on this "
+                       L"computer has been changed.", x, y, w);
+        if (g_sb_helper) { y += S(32); y += sb_helper(x, y, narrow); }
+        return y - y0;
     }
 
-    /* AND WHAT SHE CAN DO INSTEAD. "AurOS can't go on this computer"
-     * and a Close button is the end of the road unless the page says
-     * where the road goes: one plain sentence for each reason, and the
-     * same one only once. */
+    y += page_head(cannot ? L"AurOS can’t go on this computer yet"
+                          : L"A few things to sort out first",
+                   L"Nothing on this computer has been changed.", x, y, w);
+
+    /* Two lists, so it is plain who does what: what she does, and what
+     * the button does for her. When something cannot be fixed, only that,
+     * and what she can do instead. */
+    static const wchar_t *const heads[3] = { L"You:", L"We do these for you:", NULL };
+    for (int list = 0; list < 3; list++) {
+        int rows = 0;
+        for (int i = 0; i < g_report.n; i++) {
+            const pf_result *r = &g_report.results[i];
+            if (r->sev != PF_BLOCK) continue;
+            fix_kind k = kind_of(r);
+            int mine = (k == FIX_WAIT || k == FIX_UNKNOWN);
+            if (cannot ? (list != 2 || k != FIX_CANNOT)
+                       : (list == 2 || (list == 0) != mine)) continue;
+            if (!rows++) {
+                y += S(g_short ? 20 : 28);
+                if (heads[list])
+                    y += text_draw(heads[list], g_f_bodyb, C_INK, x, y, narrow,
+                                   DT_SINGLELINE) + S(8);
+            } else {
+                y += S(12);
+            }
+            wchar_t prob[160], fix[600];
+            int st = stop_line(r, cannot, prob, fix);
+            y += status_row(st, prob, fix, x, y, narrow);
+        }
+    }
+
     if (cannot) {
         const wchar_t *said[8];
         int n_said = 0;
-        y += S(8);
-        y += text_draw(L"What you can do", g_f_bodyb, C_FG_HI, x, y, narrow,
-                       DT_SINGLELINE) + S(8);
         for (int i = 0; i < g_report.n && n_said < 8; i++) {
             const pf_result *r = &g_report.results[i];
             if (r->sev != PF_BLOCK || kind_of(r) != FIX_CANNOT) continue;
-            if (!strcmp(r->id, SBDB_BLOCK_ID)) continue;       /* its card says it */
-            const wchar_t *s = fix_instead(r->id);
-            if (!s) s = L"Keep using Windows as it is. Nothing on this computer was changed.";
+            const wchar_t *t = fix_instead(r->id);
+            if (!t) t = L"Keep using Windows as it is. Nothing on this computer was changed.";
             int dup = 0;
-            for (int k = 0; k < n_said; k++) if (said[k] == s || !wcscmp(said[k], s)) dup = 1;
-            if (dup) continue;
-            said[n_said++] = s;
-            fill_circle((float)(x + S(6)), (float)(y + S(12)), (float)S(4), C_ACCENT, 1.f);
-            y += text_draw(s, g_f_body, C_FG, x + S(22), y, narrow - S(22),
-                           DT_WORDBREAK) + S(10);
+            for (int k = 0; k < n_said; k++) if (said[k] == t || !wcscmp(said[k], t)) dup = 1;
+            if (!dup) said[n_said++] = t;
         }
+        y += S(g_short ? 20 : 32);
+        y += note_box(L"What you can do", said, n_said, x, y, narrow);
     }
     return y - y0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
- *  2 · HOW WOULD YOU LIKE IT TO LOOK?
+ *  2 · PICK THE LOOK YOU WANT
  *
- *  Three pictures of a screen, each drawn in the colours of the AurOS
- *  it gives her, at whatever size the window is -- they are shapes, not
- *  bitmaps, so a 150% laptop gets them as crisp as a 100% one. One is
- *  chosen before she arrives (the one like what she knows), so "Next"
- *  is always a right answer.
+ *  Four pictures, each the look's own home screen drawn small: the
+ *  layout aurshell gives that look (docs/shots/shells/<shell>.png) in
+ *  Sandstone's colours, the theme each card installs, so what she picks
+ *  is what she gets. They are shapes, not bitmaps, so a 150% laptop gets
+ *  them as crisp as a 100% one. One is chosen before she arrives (the
+ *  one like what she knows), so "Next" is always a right answer.
  * ═══════════════════════════════════════════════════════════════════ */
 
-/* the wallpaper and frame every picture shares */
-static void pic_screen(float x, float y, float w, float h)
+/* A word, drawn as a stub of text: the pictures have no letters. */
+static void pv_text(float x, float y, float w, float h, uint32_t c, float a)
 {
-    fill_rr(x, y, w, h, (float)S(8), SS_BG, 1.f);
-    /* themes/sandstone.theme's mesh: two soft washes of its own colours */
-    GdiFlush();
-    RECT keep = g_clip;
-    int cl = (int)x > g_clip.left ? (int)x : g_clip.left;
-    int ct = (int)y > g_clip.top ? (int)y : g_clip.top;
-    int cr = (int)(x + w) < g_clip.right ? (int)(x + w) : g_clip.right;
-    int cb = (int)(y + h) < g_clip.bottom ? (int)(y + h) : g_clip.bottom;
-    g_clip.left = cl; g_clip.top = ct; g_clip.right = cr; g_clip.bottom = cb;
-    fill_circle(x + w * 0.85f, y + h * 0.15f, h * 0.75f, SS_WALL, 0.75f);
-    fill_circle(x + w * 0.05f, y + h * 1.05f, h * 0.60f, SS_ALT, 0.10f);
-    g_clip = keep;
+    fill_rr(x, y, w, h, h * 0.5f, c, a);
 }
 
-static void pic_frame(float x, float y, float w, float h)
+/* The thin bar along the top (every look but the one like Windows):
+ * the name at the left, the date and time at the right. */
+static void pv_top(float x, float y, float w, float h)
 {
-    stroke_rr(x, y, w, h, (float)S(8), (float)S(2), C_BG, 1.f);
+    float bh = h * 0.06f;
+    fill_rr(x, y, w, bh, 0.f, LT_SOFT, 1.f);
+    aa_line(x, y + bh, x + w, y + bh, 1.f, LT_RULE, 0.7f);
+    fill_diamond(x + w * 0.022f, y + bh * 0.5f, bh * 0.22f, LT_GO, 1.f);
+    pv_text(x + w * 0.04f, y + bh * 0.40f, w * 0.05f, bh * 0.22f, LT_INK, 0.6f);
+    pv_text(x + w * 0.88f, y + bh * 0.38f, w * 0.09f, bh * 0.26f, LT_INK, 0.7f);
 }
 
-/* a window: white, a title strip, and a few lines of "text" */
-static void pic_window(float x, float y, float w, float h, int traffic, int front)
+/* The strip along the bottom of every look, in its fixed dark colours:
+ * Help, Wi-Fi and Settings at the left; Turn off, Bigger and Smaller
+ * text at the right (src/aurshell/foot.c). */
+static void pv_help(float x, float y, float w, float h)
 {
-    float r = (float)S(4);
-    fill_rr(x, y, w, h, r, SS_SURFACE, 1.f);
-    stroke_rr(x, y, w, h, r, 1.f, SS_LINE, front ? 0.9f : 0.5f);
-    float th = h * 0.16f;
-    fill_rr(x + 1.f, y + 1.f, w - 2.f, th, r, SS_SURF_HI, 1.f);
-    if (traffic) {
-        float d = th * 0.24f;
-        fill_circle(x + th * 0.55f, y + th * 0.55f, d, SS_ERR, 1.f);
-        fill_circle(x + th * 1.15f, y + th * 0.55f, d, SS_WARMC, 1.f);
-        fill_circle(x + th * 1.75f, y + th * 0.55f, d, SS_ALT, 1.f);
-    } else {
-        float d = th * 0.30f;
-        for (int i = 0; i < 3; i++)
-            fill_rr(x + w - th * (0.9f + 0.8f * (float)i), y + th * 0.35f,
-                    d, d, 1.f, SS_LINE, 0.6f);
-    }
+    float bh = h * 0.075f, by = y + h - bh;
+    fill_rr(x, by, w, bh, 0.f, FOOT_BG, 1.f);
+    float th = bh * 0.22f, ty = by + (bh - th) * 0.5f;
+    static const float L[][2] = { { 0.014f, 0.035f }, { 0.094f, 0.035f }, { 0.173f, 0.052f },
+                                  { 0.770f, 0.050f }, { 0.849f, 0.045f }, { 0.929f, 0.050f } };
+    for (int i = 0; i < 6; i++) pv_text(x + w * L[i][0], ty, w * L[i][1], th, FOOT_INK, 0.9f);
+}
+
+/* a window: a card, a title strip, a few lines of text */
+static void pv_window(float x, float y, float w, float h, int front)
+{
+    float r = (float)S(2);
+    fill_rr(x, y, w, h, r, LT_CARD, 1.f);
+    stroke_rr(x, y, w, h, r, 1.f, LT_RULE, front ? 1.f : 0.6f);
+    float th = h * 0.15f;
+    fill_rr(x + 1.f, y + 1.f, w - 2.f, th, r, LT_SOFT, 1.f);
+    pv_text(x + w * 0.05f, y + th * 0.38f, w * 0.22f, th * 0.26f, LT_INK, 0.55f);
+    fill_rr(x + w - th * 0.85f, y + th * 0.30f, th * 0.40f, th * 0.40f, 1.f, LT_RULE, 0.8f);
     if (!front) return;
     for (int i = 0; i < 3; i++)
-        fill_rr(x + w * 0.08f, y + th + h * (0.14f + 0.15f * (float)i),
-                w * (i == 2 ? 0.45f : 0.75f), h * 0.06f, 1.f, SS_MUTED, 1.f);
+        pv_text(x + w * 0.07f, y + th + h * (0.14f + 0.14f * (float)i),
+                w * (i == 2 ? 0.42f : 0.74f), h * 0.05f, LT_TEXT, 1.f);
 }
 
-/* a little coloured app symbol */
-static const uint32_t PIC_APPS[] = { SS_ACCENT, SS_INFO, SS_ALT, SS_WARMC, SS_PLUM, SS_ERR };
+/* a program's symbol, as the looks draw them: a plain shape in ink */
+static void pv_icon(float cx, float cy, float s, int kind, uint32_t c)
+{
+    switch (kind % 3) {
+    case 0:  fill_circle(cx, cy, s * 0.5f, c, 1.f); break;                    /* the web */
+    case 1:  fill_rr(cx - s * 0.5f, cy - s * 0.38f, s, s * 0.76f, s * 0.08f, c, 1.f); break;
+    default: fill_rr(cx - s * 0.36f, cy - s * 0.5f, s * 0.72f, s, s * 0.06f, c, 1.f); break;
+    }
+}
 
 static void style_picture(int kind, float x, float y, float w, float h)
 {
@@ -2311,158 +2338,223 @@ static void style_picture(int kind, float x, float y, float w, float h)
     if ((int)y > g_clip.top) g_clip.top = (int)y;
     if ((int)(x + w) < g_clip.right) g_clip.right = (int)(x + w);
     if ((int)(y + h) < g_clip.bottom) g_clip.bottom = (int)(y + h);
-    pic_screen(x, y, w, h);
+    fill_rr(x, y, w, h, 0.f, LT_PAPER, 1.f);
+    float ink = 0.85f;
     switch (kind) {
     case PIC_WINDOWS: {
-        /* two windows, and the bar along the bottom with its button at
-         * the left: the shape of every Windows screen she has used */
-        pic_window(x + w * 0.07f, y + h * 0.08f, w * 0.50f, h * 0.52f, 0, 0);
-        pic_window(x + w * 0.30f, y + h * 0.20f, w * 0.60f, h * 0.56f, 0, 1);
-        float bh = h * 0.15f, by = y + h - bh;
-        fill_rr(x + 1.f, by, w - 2.f, bh - 1.f, 0.f, SS_SURFACE, 1.f);
-        aa_line(x + 1.f, by, x + w - 1.f, by, 1.f, SS_LINE, 0.7f);
-        fill_rr(x + w * 0.02f, by + bh * 0.18f, w * 0.17f, bh * 0.64f, (float)S(3),
-                SS_ACCENT, 1.f);
-        for (int i = 0; i < 3; i++) {
-            float bx = x + w * (0.22f + 0.14f * (float)i);
-            fill_rr(bx, by + bh * 0.18f, w * 0.12f, bh * 0.64f, (float)S(3),
-                    i == 1 ? SS_SURF_HI : SS_BG, 1.f);
-            fill_circle(bx + w * 0.03f, by + bh * 0.5f, bh * 0.16f, PIC_APPS[i + 1], 1.f);
-        }
-        fill_rr(x + w * 0.86f, by + bh * 0.30f, w * 0.10f, bh * 0.16f, 1.f, SS_LINE, 0.8f);
-        fill_rr(x + w * 0.88f, by + bh * 0.56f, w * 0.06f, bh * 0.12f, 1.f, SS_LINE, 0.5f);
+        /* Like Windows: windows on the desktop, and the bar along the
+         * bottom with All my programs at its left and the clock at its right */
+        pv_window(x + w * 0.05f, y + h * 0.06f, w * 0.44f, h * 0.44f, 0);
+        pv_window(x + w * 0.24f, y + h * 0.15f, w * 0.58f, h * 0.54f, 1);
+        float bh = h * 0.10f, by = y + h * 0.925f - bh;
+        fill_rr(x, by, w, bh, 0.f, LT_SOFT, 1.f);
+        aa_line(x, by, x + w, by, 1.f, LT_RULE, 0.8f);
+        float bb = by + bh * 0.18f, bt = bh * 0.64f;
+        stroke_rr(x + w * 0.012f, bb, w * 0.15f, bt, 1.f, 1.f, LT_INK, 0.9f);
+        fill_diamond(x + w * 0.030f, bb + bt * 0.5f, bt * 0.20f, LT_GO, 1.f);
+        pv_text(x + w * 0.048f, bb + bt * 0.40f, w * 0.10f, bt * 0.20f, LT_INK, 0.7f);
+        fill_rr(x + w * 0.18f, bb, w * 0.15f, bt, 1.f, LT_CARD, 1.f);
+        stroke_rr(x + w * 0.18f, bb, w * 0.15f, bt, 1.f, 1.f, LT_RULE, 0.6f);
+        pv_text(x + w * 0.195f, bb + bt * 0.40f, w * 0.10f, bt * 0.20f, LT_INK, 0.55f);
+        pv_text(x + w * 0.90f, by + bh * 0.30f, w * 0.07f, bh * 0.18f, LT_INK, 0.8f);
+        pv_text(x + w * 0.91f, by + bh * 0.58f, w * 0.06f, bh * 0.12f, LT_INK, 0.5f);
         break;
     }
     case PIC_MAC: {
-        /* a thin bar at the top, one window, and the row of pictures */
-        fill_rr(x + 1.f, y + 1.f, w - 2.f, h * 0.07f, 0.f, SS_SURFACE, 0.9f);
-        fill_rr(x + w * 0.03f, y + h * 0.022f, w * 0.10f, h * 0.03f, 1.f, SS_LINE, 0.7f);
-        pic_window(x + w * 0.12f, y + h * 0.14f, w * 0.76f, h * 0.56f, 1, 1);
-        float dw = w * 0.66f, dh = h * 0.17f;
-        float dx = x + (w - dw) * 0.5f, dy = y + h - dh - h * 0.05f;
-        fill_rr(dx, dy, dw, dh, dh * 0.35f, SS_SURFACE, 0.92f);
-        stroke_rr(dx, dy, dw, dh, dh * 0.35f, 1.f, SS_LINE, 0.6f);
-        int n = 6;
-        float s = dh * 0.66f, gap = (dw - s * (float)n) / (float)(n + 1);
-        for (int i = 0; i < n; i++)
-            fill_rr(dx + gap + (s + gap) * (float)i, dy + (dh - s) * 0.5f, s, s,
-                    s * 0.25f, PIC_APPS[i], 1.f);
+        /* Like a Mac: a thin bar at the top, and the row of programs
+         * along the bottom */
+        pv_top(x, y, w, h);
+        pv_window(x + w * 0.16f, y + h * 0.13f, w * 0.68f, h * 0.53f, 1);
+        float dw = w * 0.62f, dh = h * 0.13f;
+        float dx = x + (w - dw) * 0.5f, dy = y + h * 0.765f;
+        fill_rr(dx, dy, dw, dh, 1.f, LT_CARD, 1.f);
+        stroke_rr(dx, dy, dw, dh, 1.f, 1.f, LT_RULE, 0.8f);
+        for (int i = 0; i < 6; i++)
+            pv_icon(dx + dw * (0.10f + 0.16f * (float)i), dy + dh * 0.5f, dh * 0.50f, i,
+                    i == 5 ? LT_GO : LT_INK);
         break;
     }
     case PIC_SIMPLE: {
-        /* one big page of big buttons, with the next one peeking in at
-         * the edge: Rail's Home */
-        fill_rr(x + w * 0.94f, y + h * 0.16f, w * 0.10f, h * 0.66f, (float)S(4),
-                SS_SURFACE, 0.8f);
-        fill_rr(x - w * 0.04f, y + h * 0.16f, w * 0.10f, h * 0.66f, (float)S(4),
-                SS_SURFACE, 0.8f);
-        float cx = x + w * 0.10f, cy = y + h * 0.07f, cw = w * 0.80f, ch = h * 0.80f;
-        fill_rr(cx, cy, cw, ch, (float)S(5), SS_SURFACE, 1.f);
-        stroke_rr(cx, cy, cw, ch, (float)S(5), (float)S(1) + 0.5f, SS_ACCENT, 0.9f);
-        fill_rr(cx + cw * 0.06f, cy + ch * 0.07f, cw * 0.46f, ch * 0.07f, 1.f, SS_FG, 0.85f);
-        float gx = cx + cw * 0.06f, gy = cy + ch * 0.22f;
-        float tw = cw * 0.88f / 3.f, tg = cw * 0.025f, tht = ch * 0.34f;
+        /* Big and simple: one page in the middle that asks "What would
+         * you like to do?", and a short list of big rows, all the same */
+        pv_top(x, y, w, h);
+        float px = x + w * 0.19f, py = y + h * 0.10f, pw = w * 0.62f, ph = h * 0.77f;
+        fill_rr(px, py, pw, ph, 1.f, LT_CARD, 1.f);
+        stroke_rr(px, py, pw, ph, 1.f, 1.f, LT_RULE, 0.8f);
+        pv_text(px + pw * 0.05f, py + ph * 0.07f, pw * 0.62f, ph * 0.07f, LT_INK, 0.9f);
+        float ry = py + ph * 0.22f, rh = ph * 0.125f;
         for (int i = 0; i < 6; i++) {
-            float tx = gx + (float)(i % 3) * tw, ty = gy + (float)(i / 3) * (tht + ch * 0.04f);
-            fill_rr(tx, ty, tw - tg, tht, (float)S(3), SS_BG, 1.f);
-            stroke_rr(tx, ty, tw - tg, tht, (float)S(3), 1.f, SS_LINE, 0.35f);
-            fill_circle(tx + (tw - tg) * 0.5f, ty + tht * 0.42f, tht * 0.22f, PIC_APPS[i], 1.f);
-            fill_rr(tx + (tw - tg) * 0.28f, ty + tht * 0.74f, (tw - tg) * 0.44f, tht * 0.08f,
-                    1.f, SS_MUTED, 1.f);
+            float cy = ry + rh * ((float)i + 0.5f);
+            pv_icon(px + pw * 0.10f, cy, rh * 0.50f, i, i == 5 ? LT_GO : LT_INK);
+            pv_text(px + pw * 0.18f, cy - rh * 0.09f, pw * 0.22f, rh * 0.18f, LT_INK, ink);
+            pv_text(px + pw * 0.50f, cy - rh * 0.06f, pw * 0.34f, rh * 0.12f, LT_TEXT, 1.f);
+            if (i < 5) aa_line(px + pw * 0.05f, ry + rh * (float)(i + 1), px + pw * 0.95f,
+                               ry + rh * (float)(i + 1), 1.f, LT_RULE, 0.5f);
         }
-        for (int i = 0; i < 3; i++)
-            fill_circle(x + w * (0.46f + 0.04f * (float)i), y + h * 0.94f, h * 0.018f,
-                        i == 0 ? SS_ACCENT : SS_LINE, 1.f);
         break;
     }
     case PIC_ONE: {
-        /* one program filling the screen, and the one big Home button */
-        float bh = h * 0.20f;
-        fill_rr(x + 1.f, y + 1.f, w - 2.f, h * 0.08f, 0.f, SS_SURFACE, 0.9f);
-        fill_rr(x + w * 0.05f, y + h * 0.12f, w * 0.90f, h - bh - h * 0.15f, (float)S(4),
-                SS_SURFACE, 1.f);
-        stroke_rr(x + w * 0.05f, y + h * 0.12f, w * 0.90f, h - bh - h * 0.15f, (float)S(4),
-                  1.f, SS_LINE, 0.5f);
-        fill_circle(x + w * 0.50f, y + h * 0.36f, h * 0.12f, SS_INFO, 1.f);
-        fill_rr(x + w * 0.32f, y + h * 0.54f, w * 0.36f, h * 0.05f, 1.f, SS_MUTED, 1.f);
-        fill_rr(x + w * 0.38f, y + h * 0.62f, w * 0.24f, h * 0.04f, 1.f, SS_MUTED, 0.7f);
-        float pw = w * 0.36f, ph = bh * 0.62f;
-        fill_rr(x + (w - pw) * 0.5f, y + h - bh + (bh - ph) * 0.5f, pw, ph, ph * 0.5f,
-                SS_ACCENT, 1.f);
-        fill_rr(x + w * 0.44f, y + h - bh * 0.5f - 1.f, w * 0.12f, 2.f, 1.f, SS_SURFACE, 1.f);
+        /* One thing at a time: the programs as big tiles, a page of them
+         * at a time, and Home at the bottom to come back to */
+        pv_top(x, y, w, h);
+        static const float T[][4] = {   /* x, y, w, h as parts of the picture */
+            { 0.022f, 0.09f, 0.468f, 0.34f }, { 0.508f, 0.09f, 0.225f, 0.34f },
+            { 0.751f, 0.09f, 0.225f, 0.34f },
+            { 0.022f, 0.45f, 0.225f, 0.26f }, { 0.265f, 0.45f, 0.225f, 0.26f },
+            { 0.508f, 0.45f, 0.225f, 0.26f }, { 0.751f, 0.45f, 0.225f, 0.26f },
+        };
+        for (int i = 0; i < 7; i++) {
+            float tx = x + w * T[i][0], ty = y + h * T[i][1], tw = w * T[i][2], th = h * T[i][3];
+            fill_rr(tx, ty, tw, th, 1.f, LT_CARD, 1.f);
+            stroke_rr(tx, ty, tw, th, 1.f, 1.f, LT_RULE, 0.8f);
+            if (i == 0) {
+                fill_circle(tx + tw * 0.18f, ty + th * 0.48f, th * 0.20f, LT_INK, ink);
+                pv_text(tx + tw * 0.38f, ty + th * 0.40f, tw * 0.32f, th * 0.09f, LT_INK, 0.85f);
+            } else {
+                pv_icon(tx + tw * 0.22f, ty + th * 0.26f, th * 0.22f, i, i == 6 ? LT_GO : LT_INK);
+                pv_text(tx + tw * 0.10f, ty + th * 0.70f, tw * 0.55f, th * 0.09f, LT_INK, ink);
+            }
+        }
+        float hb = y + h * 0.74f;
+        stroke_rr(x + w * 0.022f, hb, w * 0.24f, h * 0.10f, 1.f, 1.f, LT_INK, 0.9f);
+        pv_text(x + w * 0.045f, hb + h * 0.04f, w * 0.08f, h * 0.025f, LT_INK, 0.8f);
         break;
     }
     default: break;
     }
+    pv_help(x, y, w, h);
     g_clip = keep;
-    pic_frame(x, y, w, h);
 }
 
-static int style_card_h(int i, int w)
-{
-    int pad = S(12);
-    int pw = w - pad * 2, ph = pw * 10 / 16;
-    return pad + ph + S(14) + text_h(STYLES[i].name, g_f_h3, pw, DT_WORDBREAK) + S(6)
-         + text_h(STYLES[i].line, g_f_body, pw, DT_WORDBREAK) + S(16);
-}
+/* THE LOOK CARDS (DESIGN-DIRECTION.md B-7): a 2x2 grid, all four always
+ * on the screen, never a scroll bar. Each card is the picture and the
+ * name; the chosen one has a green 3 px border, the selected fill, a
+ * check mark and the word Chosen; one line under the grid says what the
+ * chosen look is. The window decides how big the pictures can be:
+ *   PICK_TALL   name under the picture (a 1366x768 laptop)
+ *   PICK_WIDE   name beside a 150 px picture (a 1024x600 netbook)
+ *   PICK_NAMES  names only, and one picture of the chosen look beside
+ *               them (150% on a 1366x768 laptop, or bigger text) */
+enum { PICK_TALL, PICK_WIDE, PICK_NAMES };
+#define PICK_GAP 16
 
-static void style_card(int i, int x, int y, int w, int h)
+static void card_frame(int i, int x, int y, int w, int h)
 {
-    const style_info *s = &STYLES[i];
     int sel = (g_sel_style == i);
     int idx = w_add(ID_STYLE + i, W_CARD, x, y, w, h, 1);
-    if (idx >= 0) g_w[idx].name = s->name;
+    if (idx >= 0) g_w[idx].name = STYLES[i].name;
     int hot = w_hot(idx);
-    int pad = S(12);
-    int pw = w - pad * 2, ph = pw * 10 / 16;
+    float r = (float)S(12);
+    fill_rr((float)x, (float)y, (float)w, (float)h, r, sel ? C_SELECTED : C_SURFACE, 1.f);
+    stroke_rr((float)x, (float)y, (float)w, (float)h, r,
+              (float)S(sel ? 3 : 2), sel ? C_ACCENT : (hot ? C_INK : C_RULE), 1.f);
+    if (w_focused(idx)) { RECT b = { x, y, x + w, y + h }; focus_ring(b, S(4), S(15)); }
+}
 
-    fill_rr((float)x, (float)y, (float)w, (float)h, (float)S(16), C_SURFACE_HI,
-            sel ? 1.f : (hot ? 0.95f : 0.7f));
-    stroke_rr((float)x, (float)y, (float)w, (float)h, (float)S(16),
-              sel ? (float)S(3) : (hot ? 2.f : 1.4f),
-              sel ? C_ACCENT : (hot ? C_SUBTLE : C_OVERLAY), 1.f);
-
-    style_picture(s->picture, (float)(x + pad), (float)(y + pad), (float)pw, (float)ph);
-
-    if (sel) {
-        float r = (float)S(15);
-        float bx = (float)(x + w - pad) - r - (float)S(6), by = (float)(y + pad) + r + (float)S(6);
-        fill_circle(bx, by, r + (float)S(2), C_BG, 1.f);
-        fill_circle(bx, by, r, C_ACCENT, 1.f);
-        glyph_check(bx, by, r * 1.2f, C_BG, 1.f);
+/* the name, and under it "Chosen" with its check mark when it is */
+static void card_name(int i, int x, int y, int w, int center_h)
+{
+    int nh = text_h(STYLES[i].name, g_f_h3, w, DT_WORDBREAK);
+    int ch = g_sel_style == i ? TYPE[type_of(g_f_smallb)].line + S(2) : 0;
+    if (center_h) y += (center_h - nh - ch) / 2;
+    y += text_draw(STYLES[i].name, g_f_h3, C_INK, x, y, w, DT_WORDBREAK);
+    if (g_sel_style == i) {
+        int lh = TYPE[type_of(g_f_smallb)].line;
+        float r = (float)S(10);
+        fill_circle((float)x + r, (float)(y + S(2)) + (float)lh * 0.5f, r, C_ACCENT, 1.f);
+        glyph_check((float)x + r, (float)(y + S(2)) + (float)lh * 0.5f, r * 1.15f, C_ON_ACCENT, 1.f);
+        text_draw(L"Chosen", g_f_smallb, C_ACCENT, x + S(28), y + S(2), w - S(28), DT_SINGLELINE);
     }
-    int ty = y + pad + ph + S(14);
-    ty += text_draw(s->name, g_f_h3, sel ? C_FG_HI : C_FG, x + pad, ty, pw, DT_WORDBREAK) + S(6);
-    text_draw(s->line, g_f_body, C_SUBTLE, x + pad, ty, pw, DT_WORDBREAK);
-    if (w_focused(idx)) { RECT b = { x, y, x + w, y + h }; focus_ring(b, S(5), S(20)); }
+}
+
+/* "Chosen", with its check mark, on the picture's top right corner */
+static void chosen_pill(int px, int py, int pw)
+{
+    int tw = text_w(L"Chosen", g_f_smallb), h = S(30), w = tw + S(44);
+    int x = px + pw - w - S(8), y = py + S(8);
+    /* outlined, not filled: the only solid green is the button to press */
+    fill_rr((float)x, (float)y, (float)w, (float)h, (float)h * 0.5f, C_SURFACE, 1.f);
+    stroke_rr((float)x, (float)y, (float)w, (float)h, (float)h * 0.5f, (float)S(2), C_ACCENT, 1.f);
+    glyph_check((float)(x + S(16)), (float)y + (float)h * 0.5f, (float)S(16), C_ACCENT, 1.f);
+    RECT b = { x + S(30), y, x + w, y + h };
+    text_in(L"Chosen", g_f_smallb, C_ACCENT, b, DT_SINGLELINE | DT_VCENTER);
+}
+
+static int pick_mode(int w, int avail, int *pw)
+{
+    int col = (w - S(PICK_GAP)) / 2;
+    int name = TYPE[type_of(g_f_h3)].line;
+    int line = S(16) + TYPE[type_of(g_f_body)].line;
+    /* tall: up to 16:10 pictures of 260 x 162, as tall as fits */
+    int ph = (avail - line - S(PICK_GAP)) / 2 - S(12) * 2 - S(8) - name;
+    if (ph > S(162)) ph = S(162);
+    if (ph >= S(118) && ph * 16 / 10 <= col - S(24)) { *pw = ph * 16 / 10; return PICK_TALL; }
+    /* wide: a 150 px picture, the name beside it */
+    if ((S(94) + S(24)) * 2 + S(PICK_GAP) + line <= avail) { *pw = S(150); return PICK_WIDE; }
+    *pw = 0;
+    return PICK_NAMES;
 }
 
 static int page_style(int x, int y, int w)
 {
     int y0 = y;
-    y += text_draw(L"Pick the look you want", g_f_title, C_FG_HI,
-                   x, y, w, DT_WORDBREAK) + S(10);
-    y += text_draw(L"Pick the one that feels most like home. You can change it "
-                   L"later, in Settings.",
-                   g_f_body, C_SUBTLE, x, y, w, DT_WORDBREAK) + S(24);
-
-    int gap = S(14);
-    int n = N_STYLES;
-    /* All in a row while each picture is still big enough to read; two
-     * by two on a narrower window, and one under the other below that. */
-    int across = n;
-    while (across > 1 && (w - gap * (across - 1)) / across < S(170)) across = across > 2 ? 2 : 1;
-    int cw = (w - gap * (across - 1)) / across;
-    if (across == 1 && cw > S(420)) cw = S(420);
-    int h = 0;
-    for (int i = 0; i < n; i++) { int t = style_card_h(i, cw); if (t > h) h = t; }
-    for (int i = 0; i < n; i++) {
-        int cx = x + (i % across) * (cw + gap);
-        int cy = y + (i / across) * (h + gap);
-        style_card(i, cx, cy, cw, h);
+    y += page_head(L"Pick the look you want", NULL, x, y, w);
+    y += S(g_short ? 18 : 24);
+    int avail = g_body.bottom - g_body.top - (y - y0) - S(16);   /* render()'s own margin */
+    int pw, mode = pick_mode(w, avail, &pw);
+    int gap = S(PICK_GAP), pad = S(12);
+    int gw = w, gx = x;
+    int col, cardh, side_h = 0;
+    if (mode == PICK_NAMES) {
+        /* the names in a 2x2 at the left, the chosen look's picture beside */
+        int ph = avail - S(16) - TYPE[type_of(g_f_body)].line * 2;
+        int pw2 = ph * 16 / 10;
+        if (pw2 > w / 2) { pw2 = w / 2; ph = pw2 * 10 / 16; }
+        gw = w - pw2 - S(24);
+        style_picture(STYLES[g_sel_style].picture, (float)(x + gw + S(24)), (float)y,
+                      (float)pw2, (float)ph);
+        stroke_rr((float)(x + gw + S(24)), (float)y, (float)pw2, (float)ph, (float)S(4), 1.f,
+                  C_RULE, 1.f);
+        col = (gw - gap) / 2;
+        cardh = (ph - gap) / 2;
+        if (cardh > S(96)) cardh = S(96);
+        side_h = ph;
+    } else if (mode == PICK_WIDE) {
+        col = (gw - gap) / 2;
+        cardh = pad * 2 + pw * 10 / 16;
+    } else {
+        col = (gw - gap) / 2;
+        cardh = pad * 2 + pw * 10 / 16 + S(8) + TYPE[type_of(g_f_h3)].line;
     }
-    int rows = (n + across - 1) / across;
-    y += rows * h + (rows - 1) * gap;
+    for (int i = 0; i < N_STYLES; i++) {
+        int cx = gx + (i % 2) * (col + gap), cy = y + (i / 2) * (cardh + gap);
+        card_frame(i, cx, cy, col, cardh);
+        if (mode == PICK_TALL) {
+            int px = cx + (col - pw) / 2, ph = pw * 10 / 16;
+            style_picture(STYLES[i].picture, (float)px, (float)(cy + pad), (float)pw, (float)ph);
+            stroke_rr((float)px, (float)(cy + pad), (float)pw, (float)ph, (float)S(4), 1.f,
+                      C_RULE, 1.f);
+            if (g_sel_style == i) chosen_pill(px, cy + pad, pw);
+            text_draw(STYLES[i].name, g_f_h3, C_INK, px, cy + pad + ph + S(8), pw, DT_SINGLELINE);
+        } else if (mode == PICK_WIDE) {
+            int ph = pw * 10 / 16;
+            style_picture(STYLES[i].picture, (float)(cx + pad), (float)(cy + pad), (float)pw,
+                          (float)ph);
+            stroke_rr((float)(cx + pad), (float)(cy + pad), (float)pw, (float)ph, (float)S(4), 1.f,
+                      C_RULE, 1.f);
+            int tx = cx + pad + pw + S(16);
+            card_name(i, tx, cy + pad, col - (tx - cx) - pad, ph);
+        } else {
+            card_name(i, cx + S(16), cy, col - S(32), cardh);
+        }
+    }
+    y += cardh * 2 + gap > side_h ? cardh * 2 + gap : side_h;
+    /* what the chosen one is, in a sentence */
+    y += S(16);
+    wchar_t line[160];
+    _snwprintf(line, 159, L"You chose %ls. %ls", STYLES[g_sel_style].name, STYLES[g_sel_style].line);
+    line[159] = 0;
+    y += text_draw(line, g_f_body, C_INK, x, y, w, DT_WORDBREAK);
     return y - y0;
 }
 
@@ -2480,21 +2572,6 @@ static const pf_disk *sys_disk(void)
     for (int i = 0; i < g_report.n_disks; i++)
         if (g_report.disks[i].index == g_report.system_disk) return &g_report.disks[i];
     return NULL;
-}
-
-/* The size on the box it came in: a "256 GB" drive is 238 GB to
- * Windows' arithmetic, and 256 is the number she has seen written. */
-static void size_words(uint64_t b, wchar_t *out, int cch)
-{
-    double gb = (double)b / 1e9;
-    if (gb >= 999.5) {
-        double tb = gb / 1000.0;
-        if (tb - floor(tb) < 0.05 || tb >= 10) _snwprintf(out, (size_t)cch, L"%.0f TB", tb);
-        else _snwprintf(out, (size_t)cch, L"%.1f TB", tb);
-    } else {
-        _snwprintf(out, (size_t)cch, L"%.0f GB", gb);
-    }
-    out[cch - 1] = 0;
 }
 
 /* ── How long, honestly ────────────────────────────────────────────
@@ -2624,76 +2701,76 @@ static void space_split(uint64_t *auros, uint64_t *windows_free)
 static int toggle_row(int id, int on, const wchar_t *title, const wchar_t *sub,
                       int x, int y, int w)
 {
-    int pad = S(12), box = S(26);
+    int pad = S(14), box = S(26);
     int tx = x + pad + box + S(16), tw = w - (tx - x) - pad;
     int th = text_h(title, g_f_bodyb, tw, DT_WORDBREAK);
     int sh = sub ? text_h(sub, g_f_body, tw, DT_WORDBREAK) : 0;
     int h = pad * 2 + th + (sub ? sh + S(2) : 0);
-    if (h < S(52)) h = S(52);
+    if (h < S(56)) h = S(56);
     int idx = w_add(id, W_TOGGLE, x, y, w, h, 1);
     if (idx >= 0) g_w[idx].name = title;
     int hot = w_hot(idx);
-    fill_rr((float)x, (float)y, (float)w, (float)h, (float)S(12), C_SURFACE_HI,
-            hot ? 1.f : 0.75f);
-    stroke_rr((float)x, (float)y, (float)w, (float)h, (float)S(12), 1.2f,
-              hot ? C_SUBTLE : C_OVERLAY, 1.f);
+    fill_rr((float)x, (float)y, (float)w, (float)h, (float)S(12), C_SURFACE, 1.f);
+    stroke_rr((float)x, (float)y, (float)w, (float)h, (float)S(12), (float)S(2),
+              hot ? C_INK : C_RULE, 1.f);
     float bx = (float)(x + pad), by = (float)(y + (h - box) / 2);
     if (on) {
-        fill_rr(bx, by, (float)box, (float)box, (float)S(6), C_ACCENT, 1.f);
-        glyph_check(bx + box * 0.5f, by + box * 0.5f, (float)box * 0.62f, C_BG, 1.f);
+        fill_rr(bx, by, (float)box, (float)box, (float)S(5), C_ACCENT, 1.f);
+        glyph_check(bx + box * 0.5f, by + box * 0.5f, (float)box * 0.62f, C_ON_ACCENT, 1.f);
     } else {
-        stroke_rr(bx, by, (float)box, (float)box, (float)S(6), 2.f, C_SUBTLE, 1.f);
+        stroke_rr(bx, by, (float)box, (float)box, (float)S(5), (float)S(2), C_INK, 1.f);
     }
     int ty = y + (h - th - (sub ? sh + S(2) : 0)) / 2;
-    text_draw(title, g_f_bodyb, C_FG_HI, tx, ty, tw, DT_WORDBREAK);
-    if (sub) text_draw(sub, g_f_body, C_SUBTLE, tx, ty + th + S(2), tw, DT_WORDBREAK);
-    if (w_focused(idx)) { RECT b = { x, y, x + w, y + h }; focus_ring(b, S(4), S(16)); }
+    text_draw(title, g_f_bodyb, C_INK, tx, ty, tw, DT_WORDBREAK);
+    if (sub) text_draw(sub, g_f_body, C_INK2, tx, ty + th + S(2), tw, DT_WORDBREAK);
+    if (w_focused(idx)) { RECT b = { x, y, x + w, y + h }; focus_ring(b, S(4), S(15)); }
     return h;
 }
 
+/* READY: what stays, what it takes, what it looks like, what it
+ * downloads, the one restart and the way back, and how long -- each one
+ * line, before she presses anything (docs/EASY.md, rule 9). */
 static int page_ready(int x, int y, int w)
 {
     int y0 = y;
-    int narrow = w > S(720) ? S(720) : w;
-    wchar_t buf[300], sz[32];
+    int narrow = w > S(760) ? S(760) : w;
+    int gap = S(g_dense ? 6 : g_short ? 10 : 16);
+    wchar_t buf[300];
 
-    y += text_draw(L"Ready to install", g_f_title, C_FG_HI, x, y, w,
-                   DT_WORDBREAK) + S(26);
+    y += page_head(L"Ready to install", NULL, x, y, w) + S(g_dense ? 12 : g_short ? 18 : 28);
 
-    y += glyph_row(G_CHECK, L"Windows and all your files stay on this computer.",
-                   C_ACCENT, x, y, narrow);
+    y += glyph_row(G_HOME, L"Windows and all your files stay on this computer.", x, y, narrow) + gap;
 
-    const pf_disk *d = sys_disk();
-    wchar_t drive[64] = L"";
-    if (d && d->size_bytes) {
-        size_words(d->size_bytes, sz, 32);
-        _snwprintf(drive, 63, L" (%ls)", sz);
-        drive[63] = 0;
-    }
     uint64_t take, keep;
     space_split(&take, &keep);
     if (take)
-        _snwprintf(buf, 299, L"AurOS takes %d GB beside Windows on this computer\u2019s "
-                             L"own drive%ls. Windows keeps %d GB free.",
-                   (int)((take + GIB / 2) / GIB), drive, (int)(keep / GIB));
+        _snwprintf(buf, 299, L"AurOS uses %d GB. Windows keeps %d GB free.",
+                   (int)((take + GIB / 2) / GIB), (int)(keep / GIB));
     else
-        _snwprintf(buf, 299, L"AurOS takes up to 40 GB beside Windows on this "
-                             L"computer\u2019s own drive%ls. Windows keeps at least "
-                             L"20 GB free.", drive);
+        _snwprintf(buf, 299, L"AurOS uses up to 40 GB. Windows keeps at least 20 GB free.");
     buf[299] = 0;
-    y += glyph_row(G_DRIVE, buf, C_ACCENT, x, y, narrow);
+    y += glyph_row(G_DRIVE, buf, x, y, narrow) + gap;
 
-    y += glyph_row(G_LOOK, STYLES[g_sel_style].ready, C_ACCENT, x, y, narrow);
+    y += glyph_row(G_LOOK, STYLES[g_sel_style].ready, x, y, narrow) + gap;
 
-    /* D11, in her words, on a PC whose drive is locked. */
+    if (g_dl_state == 2) {
+        wcscpy(buf, L"AurOS has already downloaded.");
+    } else {
+        double gb = (double)download_bytes() / 1e9;
+        _snwprintf(buf, 299, L"It downloads about %.1f GB, so stay connected to the internet.",
+                   gb);
+        buf[299] = 0;
+    }
+    y += glyph_row(G_DOWN, buf, x, y, narrow) + gap;
+
+    /* D11, in her words, on a computer whose drive is locked. */
     if (bitlocker_paused_here())
-        y += glyph_row(G_CHECK, L"Windows’ drive lock is paused for one restart and "
-                                L"turns itself back on. Nothing is unlocked or removed.",
-                       C_ACCENT, x, y, narrow);
+        y += glyph_row(G_HOME, L"Windows’ drive lock is paused for one restart and "
+                               L"comes back on by itself.", x, y, narrow) + gap;
 
     y += glyph_row(G_UNDO, L"The computer restarts once. Then AurOS asks if everything "
-                           L"works. Say No, and you are back in Windows.",
-                   C_ACCENT, x, y, narrow);
+                           L"works. Press No, and the computer goes back to Windows.",
+                   x, y, narrow) + gap;
 
     int lo, hi;
     eta_range(&lo, &hi);
@@ -2701,7 +2778,7 @@ static int page_ready(int x, int y, int w)
                disk_is_slow() == 1
                  ? L" This computer has an older, slower kind of drive." : L"");
     buf[299] = 0;
-    y += glyph_row(G_CLOCK, buf, C_ACCENT, x, y, narrow);
+    y += glyph_row(G_CLOCK, buf, x, y, narrow);
 
     /* D10: her Wi-Fi, ticked for her, said by its own name. */
     if (wifi_offered()) {
@@ -2712,7 +2789,7 @@ static int page_ready(int x, int y, int w)
         if (net[0]) _snwprintf(title, 199, L"Bring my Wi-Fi across (%ls)", net);
         else        wcscpy(title, L"Bring my Wi-Fi across");
         title[199] = 0;
-        y += S(4);
+        y += gap + S(4);
         y += toggle_row(ID_WIFI, g_bring_wifi, title,
                         L"So AurOS is online the moment it starts.", x, y, narrow);
     }
@@ -2821,57 +2898,43 @@ static void read_engine(int *phase, int *pct)
     LeaveCriticalSection(&g_ab_lock);
 }
 
+/* The step the engine is on, as she counts them: 1 to 4 before the
+ * restart. */
+#define N_STEPS 4
+static int step_of(int phase)
+{
+    if (phase < AB_INSPECT) phase = AB_INSPECT;
+    if (phase > AB_HANDOFF) phase = AB_HANDOFF;
+    return phase - AB_INSPECT + 1;
+}
+
 static int page_progress(int x, int y, int w)
 {
     int y0 = y;
-    int narrow = w > S(720) ? S(720) : w;
+    int narrow = w > S(760) ? S(760) : w;
     wchar_t buf[520];
 
     if (install_ok()) {
-        y += text_draw(L"Ready to restart", g_f_title, C_FG_HI, x, y, w,
-                       DT_WORDBREAK) + S(18);
-        y += text_draw(L"Everything is ready. The computer restarts once to finish "
-                       L"setting up AurOS.", g_f_body, C_FG, x, y, narrow,
-                       DT_WORDBREAK) + S(10);
-        y += text_draw(L"Save anything you’re working on first.", g_f_bodyb,
-                       C_FG_HI, x, y, narrow, DT_WORDBREAK) + S(22);
-        int h = S(74);
-        fill_rr((float)x, (float)y, (float)narrow, (float)h, (float)S(14),
-                C_SURFACE_HI, 1.f);
-        stroke_rr((float)x, (float)y, (float)narrow, (float)h, (float)S(14), 1.4f,
-                  g_cd_on ? C_WARM : C_OVERLAY, 1.f);
-        glyph_clock((float)(x + S(38)), (float)(y + h / 2), (float)S(28),
-                    g_cd_on ? C_WARM : C_SUBTLE, 1.f);
-        if (g_cd_on)
-            _snwprintf(buf, 519, L"It restarts by itself in %d second%ls.", g_cd_left,
-                       g_cd_left == 1 ? L"" : L"s");
-        else
-            wcscpy(buf, L"It will wait for you. Press Restart now when you’re ready.");
-        buf[519] = 0;
-        RECT b = { x + S(72), y, x + narrow - S(18), y + h };
-        text_in(buf, g_cd_on ? g_f_h3 : g_f_body, g_cd_on ? C_WARM : C_FG, b,
-                DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-        y += h + S(22);
-        y += text_draw(L"When it comes back, AurOS asks if everything works. "
-                       L"Say No, and you are back in Windows.",
-                       g_f_body, C_SUBTLE, x, y, narrow, DT_WORDBREAK);
+        y += page_head(L"Ready to restart",
+                       L"Save anything you’re working on, then press Restart now.",
+                       x, y, w) + S(g_short ? 20 : 32);
+        static const wchar_t *const what[] = {
+            L"Restart now: the screen goes black, then AurOS finishes setting up and "
+            L"asks if everything works.",
+            L"Restart later: AurOS Setup closes. AurOS goes on next time you restart.",
+        };
+        y += note_box(NULL, what, 2, x, y, narrow);
         return y - y0;
     }
 
     if (install_failed()) {
-        y += text_draw(L"The install stopped", g_f_title, C_FG_HI, x, y, w,
-                       DT_WORDBREAK) + S(18);
-        y += text_draw(L"It stopped before the restart. Your files are safe.",
-                       g_f_body, C_FG, x, y, narrow, DT_WORDBREAK) + S(16);
         wchar_t why[400];
-        MultiByteToWideChar(CP_UTF8, 0, g_ab_why[0] ? g_ab_why : "it stopped", -1,
-                            why, 399);
+        MultiByteToWideChar(CP_UTF8, 0, g_ab_why[0] ? g_ab_why : "it stopped", -1, why, 399);
         why[399] = 0;
-        _snwprintf(buf, 519, L"What happened: %ls", why);
+        _snwprintf(buf, 519, L"It stopped before the restart. Your files are safe. %ls",
+                   plain_failure(why));
         buf[519] = 0;
-        y += text_draw(buf, g_f_body, C_SUBTLE, x, y, narrow, DT_WORDBREAK) + S(16);
-        y += text_draw(L"Press Try again. If it stops again, close this and try "
-                       L"another day.", g_f_body, C_FG, x, y, narrow, DT_WORDBREAK);
+        y += page_head(L"The install stopped", buf, x, y, w);
         return y - y0;
     }
 
@@ -2883,36 +2946,42 @@ static int page_progress(int x, int y, int w)
     if (f > g_bar_f) g_bar_f = f;
     f = g_bar_f;
 
-    y += text_draw(L"Setting up AurOS", g_f_title, C_FG_HI, x, y, w,
-                   DT_WORDBREAK) + S(22);
+    y += page_head(L"Setting up AurOS", NULL, x, y, w) + S(g_short ? 18 : 28);
     if (g_stop_wanted) {
-        y += text_draw(L"Stopping.", g_f_bodyb, C_FG_HI, x, y, narrow, DT_WORDBREAK) + S(8);
+        y += text_draw(L"Stopping.", g_f_bodyb, C_INK, x, y, narrow, DT_WORDBREAK) + S(4);
         y += text_draw(L"When the step it is on is done, everything is put back and this "
                        L"window closes by itself. Windows and your files stay as they were.",
-                       g_f_body, C_FG, x, y, narrow, DT_WORDBREAK);
+                       g_f_body, C_INK, x, y, narrow, DT_WORDBREAK);
         return y - y0;
     }
-    y += text_draw(stage_sentence(phase), g_f_bodyb, C_FG_HI, x, y,
-                   narrow, DT_WORDBREAK) + S(16);
+    _snwprintf(buf, 519, L"Step %d of %d: %ls", step_of(phase), N_STEPS, stage_sentence(phase));
+    buf[519] = 0;
+    y += text_draw(buf, g_f_bodyb, C_INK, x, y, narrow, DT_WORDBREAK) + S(14);
 
-    /* The bar. Under 30 px tall at any scale the e2e driver runs at,
-     * so its teal is never taken for the button. */
-    int bh = S(14);
-    fill_rr((float)x, (float)y, (float)narrow, (float)bh, (float)bh * 0.5f,
-            C_OVERLAY, 1.f);
-    float fw = (float)narrow * clampf(f, 0.f, 1.f);
-    if (fw > (float)bh) fill_rr((float)x, (float)y, fw, (float)bh, (float)bh * 0.5f,
-                                C_ACCENT, 1.f);
-    y += bh + S(14);
+    /* THE BAR: determinate once there is anything to show, the stepping
+     * bar before. Under 30 px tall at any scale the e2e driver runs at,
+     * so it is never taken for a button. */
+    int bh = S(12);
+    if (f > 0.f) {
+        fill_rr((float)x, (float)y, (float)narrow, (float)bh, (float)bh * 0.5f, C_SOFT, 1.f);
+        stroke_rr((float)x, (float)y, (float)narrow, (float)bh, (float)bh * 0.5f, 1.f, C_RULE, 1.f);
+        float fw = (float)narrow * clampf(f, 0.f, 1.f);
+        if (fw > (float)bh) fill_rr((float)x, (float)y, fw, (float)bh, (float)bh * 0.5f,
+                                    C_ACCENT, 1.f);
+    } else {
+        stepper(x, y, narrow, bh);
+    }
+    y += bh + S(12);
 
     if (g_eta_min >= 0) eta_words(g_eta_min, buf, 520);
-    else wcscpy(buf, L"Working out how long this takes…");
-    y += text_draw(buf, g_f_body, C_SUBTLE, x, y, narrow, DT_SINGLELINE) + S(28);
+    else wcscpy(buf, L"Working out how long this takes.");
+    y += text_draw(buf, g_f_body, C_INK2, x, y, narrow, DT_SINGLELINE) + S(g_short ? 20 : 32);
 
-    y += text_draw(L"You can leave it — it carries on by itself.", g_f_body, C_FG,
-                   x, y, narrow, DT_WORDBREAK) + S(8);
-    y += text_draw(L"When it is ready, the computer restarts once. AurOS starts "
-                   L"after that.", g_f_body, C_SUBTLE, x, y, narrow, DT_WORDBREAK);
+    static const wchar_t *const away[] = {
+        L"You can walk away. When you come back, press Restart now.",
+        L"If the screen has gone dark, move the mouse.",
+    };
+    y += note_box(NULL, away, 2, x, y, narrow);
     return y - y0;
 }
 
@@ -2921,7 +2990,7 @@ static int page_progress(int x, int y, int w)
  * ═══════════════════════════════════════════════════════════════════ */
 static int welcome_passed(void)
 {
-    return g_pf_valid && !g_checking && g_reveal >= N_CHK && pf_is_go(&g_report);
+    return g_pf_valid && !g_checking && pf_is_go(&g_report);
 }
 
 static int primary_visible(void)
@@ -2934,7 +3003,8 @@ static int primary_enabled(void)
 {
     switch (g_page) {
     case PAGE_WELCOME:  return welcome_passed();
-    case PAGE_BLOCKED:  return any_cannot() || (!g_fix_busy && !g_checking);
+    case PAGE_BLOCKED:  return sb_page() ? !g_checking
+                             : any_cannot() || (!g_fix_busy && !g_checking);
     case PAGE_STYLE:    return nav_allowed(PAGE_READY);
     case PAGE_READY:    return !g_checking && nav_allowed(PAGE_PROGRESS);
     case PAGE_PROGRESS: return g_install_finished && !g_checking;
@@ -2946,10 +3016,12 @@ static const wchar_t *primary_label(void)
 {
     switch (g_page) {
     case PAGE_WELCOME:  return L"Next";
-    /* WHEN IT CANNOT GO ON, THE ONE BUTTON IS CLOSE. "Check again" on an
-     * ARM laptop or a BIOS PC is a loop with a teal button on it. The
-     * page still checks by itself, in case it was wrong. */
-    case PAGE_BLOCKED:  return any_cannot() ? L"Close"
+    /* WHEN IT CANNOT GO ON, THE ONE BUTTON CLOSES IT. "Check again" on an
+     * ARM laptop or a BIOS computer is a loop with a green button on it.
+     * The page still checks by itself, in case it was wrong. The one
+     * setting a helper can change has its own page (sb_page). */
+    case PAGE_BLOCKED:  return sb_page() ? (g_sb_helper ? L"Check again" : L"Show a helper how")
+                             : any_cannot() ? L"Close AurOS Setup"
                              : g_checking ? L"Checking…"
                              : g_fix_busy ? L"Fixing…"
                              : fixable_now() ? L"Fix these for me" : L"Check again";
@@ -2999,43 +3071,77 @@ static page_id back_target(void)
     }
 }
 
+/* WHY THE BIG BUTTON DID NOTHING, said beside it when she presses it
+ * too early (DESIGN-DIRECTION.md §3: the primary button is always there,
+ * and explains itself). g_early is cleared when the page changes. */
+
+static const wchar_t *early_words(void)
+{
+    switch (g_page) {
+    case PAGE_WELCOME:  return L"Still looking at this computer.";
+    case PAGE_BLOCKED:  return g_fix_busy ? L"Still fixing." : L"Still checking.";
+    case PAGE_STYLE:    return L"Pick a look first.";
+    case PAGE_READY:    return L"Checking this computer once more.";
+    default:            return L"Not yet.";
+    }
+}
+
+/* THE BUTTONS, bottom right: the primary at the page's right edge, the
+ * second one left of it -- 32 px away when it leaves or undoes something.
+ * At the left, why the big button is waiting, or where "Not now" leaves
+ * her. Install AurOS is wider than Next, carries a check mark, and says
+ * above itself what it does, so it never passes for the Next that stood
+ * there a page ago (B-2). */
 static void draw_footer(void)
 {
-    int pad = S(40);
-    aa_line((float)(g_card.left + pad), (float)g_foot.top,
-            (float)(g_card.right - pad), (float)g_foot.top, 1.f, C_OVERLAY, 1.f);
-
     int bh = S(56);
-    int by = g_foot.top + (g_foot.bottom - g_foot.top - bh) / 2;
-    int bx = g_card.right - pad;
+    int by = g_foot.top;
+    int bx = g_foot.right;
 
     if (primary_visible()) {
         const wchar_t *plab = primary_label();
-        int pw = text_w(plab, g_f_btn) + S(64);
-        if (pw < S(190)) pw = S(190);
+        int install = g_page == PAGE_READY && !g_checking;
+        int pw = text_w(plab, g_f_btn) + S(64) + (install ? S(30) : 0);
+        int min = install ? S(280) : S(200);
+        if (pw < min) pw = min;
         bx -= pw;
-        draw_button(ID_PRIMARY, plab, bx, by, pw, bh, 1, primary_enabled(), C_ACCENT);
+        draw_button(ID_PRIMARY, plab, bx, by, pw, bh, 1, install);
+        if (install && !g_short) {
+            RECT a = { bx - S(200), by - S(8) - TYPE[type_of(g_f_small)].line, g_foot.right, by - S(8) };
+            text_in(L"This starts the install.", g_f_small, C_INK2, a,
+                    DT_SINGLELINE | DT_RIGHT | DT_BOTTOM);
+        }
     }
 
-    const wchar_t *second = NULL;
-    int sid = 0;
-    if (g_page == PAGE_BLOCKED && !any_cannot())      { second = L"Close";   sid = ID_QUIT; }
-    else if (back_visible())                          { second = L"Back";    sid = ID_BACK; }
-    else if (g_page == PAGE_PROGRESS && install_ok() && g_cd_on)
-                                                      { second = L"Not yet"; sid = ID_NOT_YET; }
-    else if (g_page == PAGE_PROGRESS && install_failed())
-                                                      { second = L"Close";   sid = ID_QUIT; }
+    const wchar_t *second = NULL, *lands = NULL;
+    int sid = 0, leaves = 0;
+    if (g_page == PAGE_BLOCKED && (sb_page() || !any_cannot())) {
+        second = L"Not now"; sid = ID_QUIT; leaves = 1;
+        lands = L"Not now: AurOS Setup closes. Nothing has been changed.";
+    } else if (g_page == PAGE_BLOCKED && helper_url()) {
+        second = L"Show a helper how"; sid = ID_HELPER;
+    } else if (back_visible()) {
+        second = L"Back"; sid = ID_BACK;
+    } else if (g_page == PAGE_PROGRESS && install_ok()) {
+        second = L"Restart later"; sid = ID_LATER; leaves = 1;
+    } else if (g_page == PAGE_PROGRESS && install_failed()) {
+        second = L"Not now"; sid = ID_QUIT; leaves = 1;
+        lands = L"Not now: AurOS Setup closes. Nothing has been changed.";
+    }
     if (second) {
         int sw = text_w(second, g_f_btn) + S(56);
-        if (sw < S(130)) sw = S(130);
-        bx -= sw + S(14);
-        draw_button(sid, second, bx, by, sw, bh, 0, 1, C_ACCENT);
+        if (sw < S(140)) sw = S(140);
+        bx -= sw + S(leaves ? 32 : 16);
+        draw_button(sid, second, bx, by, sw, bh, 0, 0);
     }
 
-    RECT h = { g_card.left + pad, g_foot.top, bx - S(20), g_foot.bottom };
-    if (h.right > h.left + S(80))
-        text_in(footer_hint(), g_f_small, C_SUBTLE, h,
-                DT_WORDBREAK | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (!lands && g_page == PAGE_READY && !g_checking && g_short) lands = L"Install AurOS starts the install.";
+    const wchar_t *say = g_early ? g_early : lands;
+    int sw = bx - S(24) - g_foot.left;
+    if (say && sw > S(120)) {
+        int th = text_h(say, g_f_small, sw, DT_WORDBREAK);
+        text_draw(say, g_f_small, C_INK2, g_foot.left, by + (bh - th) / 2, sw, DT_WORDBREAK);
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -3070,38 +3176,28 @@ static void render(void)
     if (!g_px) return;
     layout();
     clip_reset();
-    backdrop_blit();
-    draw_rail();
-
-    fill_rr((float)g_card.left, (float)g_card.top,
-            (float)(g_card.right - g_card.left), (float)(g_card.bottom - g_card.top),
-            (float)S(18), C_SURFACE, 1.f);
-    stroke_rr((float)g_card.left, (float)g_card.top,
-              (float)(g_card.right - g_card.left), (float)(g_card.bottom - g_card.top),
-              (float)S(18), 1.2f, C_OVERLAY, 0.9f);
+    ground();
+    draw_steps();
 
     g_nw = 0;
     if (g_scroll[g_page] > scroll_max()) g_scroll[g_page] = scroll_max();
-    set_clip(g_card.left + S(2), g_card.top + S(2), g_card.right - S(2), g_foot.top - S(2));
+    set_clip(g_card.left, g_body.top - S(4), g_card.right, g_body.bottom + S(4));
     g_view_h    = g_body.bottom - g_body.top;
     g_content_h = page_dispatch(g_body.left, g_body.top - g_scroll[g_page],
                                 g_body.right - g_body.left) + S(16);
     clip_reset();
 
     if (g_content_h > g_view_h) {
-        /* fade into the card edge rather than shearing text at it */
-        int fx = g_card.left + S(3), fw = g_card.right - g_card.left - S(6);
-        int fh = S(22);
+        /* a rule where the page goes on past the edge, instead of text
+         * sheared off at it */
         if (g_scroll[g_page] > 0)
-            for (int i = 0; i < fh; i++)
-                fill_rr((float)fx, (float)(g_card.top + S(2) + i), (float)fw, 1.f,
-                        0.f, C_SURFACE, 0.97f * (1.f - (float)i / (float)fh));
+            aa_line((float)g_body.left, (float)(g_body.top - S(4)), (float)g_body.right,
+                    (float)(g_body.top - S(4)), (float)S(2), C_RULE, 1.f);
         if (g_scroll[g_page] < scroll_max())
-            for (int i = 0; i < fh; i++)
-                fill_rr((float)fx, (float)(g_foot.top - S(3) - i), (float)fw, 1.f,
-                        0.f, C_SURFACE, 0.97f * (1.f - (float)i / (float)fh));
+            aa_line((float)g_body.left, (float)(g_body.bottom + S(4)), (float)g_body.right,
+                    (float)(g_body.bottom + S(4)), (float)S(2), C_RULE, 1.f);
 
-        int tx = g_card.right - S(16);
+        int tx = g_card.right - S(14);
         int th = S(10);
         float frac = (float)g_view_h / (float)g_content_h;
         int hh = (int)((float)(g_body.bottom - g_body.top) * frac);
@@ -3111,9 +3207,9 @@ static void render(void)
                                         / (float)scroll_max()) : 0;
         fill_rr((float)tx, (float)g_body.top, (float)th,
                 (float)(g_body.bottom - g_body.top), (float)th * 0.5f,
-                C_OVERLAY, 0.6f);
+                C_RULE, 0.6f);
         fill_rr((float)tx, (float)(g_body.top + off), (float)th, (float)hh,
-                (float)th * 0.5f, C_SUBTLE, 0.9f);
+                (float)th * 0.5f, C_INK2, 0.9f);
     }
 
     draw_footer();
@@ -3184,7 +3280,6 @@ static void check_advance(void)
     }
     /* Clean: the first screen says so, with Next. From the stop page
      * too, when what stopped it has been sorted out. */
-    g_reveal = N_CHK;
     if (g_page != PAGE_WELCOME) goto_page(PAGE_WELCOME);
     check_passed();
     /* THE CHECK PASSED. Start fetching the image now, in the background,
@@ -3201,7 +3296,6 @@ static void check_advance(void)
 
 static void do_restart(void)
 {
-    g_cd_on = 0;
     if (g_nav_mode || g_shot_mode) return;
     char why[PLAT_WHY];
     g_restarting = 1;
@@ -3214,23 +3308,6 @@ static void do_restart(void)
     }
 }
 
-/* Seconds left on the restart count, from when it started. */
-static int countdown_left(ULONGLONG start, ULONGLONG now)
-{
-    long long left = COUNTDOWN_SECONDS - (long long)((now - start) / 1000ULL);
-    return left < 0 ? 0 : (int)left;
-}
-
-static void countdown_start(ULONGLONG now)
-{
-    g_cd_on = 1;
-    g_cd_offered = 1;
-    g_cd_start = now;
-    g_cd_left = COUNTDOWN_SECONDS;
-}
-
-static void countdown_cancel(void) { g_cd_on = 0; }
-
 static void select_style(int i)
 {
     if (i < 0) i = 0;
@@ -3240,10 +3317,15 @@ static void select_style(int i)
 
 static void do_primary(void)
 {
-    if (!primary_visible() || !primary_enabled()) { MessageBeep(MB_ICONASTERISK); return; }
+    if (!primary_visible()) return;
+    if (!primary_enabled()) { g_early = early_words(); return; }
     switch (g_page) {
     case PAGE_WELCOME:  goto_page(PAGE_STYLE); g_want_focus_id = ID_PRIMARY; break;
-    case PAGE_BLOCKED:  if (any_cannot()) PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
+    case PAGE_BLOCKED:  if (sb_page()) {
+                            if (!g_sb_helper) { g_sb_helper = 1; page_changed(); }
+                            else start_check(PAGE_STYLE);
+                        }
+                        else if (any_cannot()) PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
                         else if (fixable_now()) fix_start();
                         else start_check(PAGE_STYLE);
                         break;
@@ -3270,8 +3352,12 @@ static void widget_do(int id)
     case ID_PRIMARY: do_primary(); return;
     case ID_BACK:    goto_page(back_target()); return;
     case ID_QUIT:    PostMessageW(g_hwnd, WM_CLOSE, 0, 0); return;
-    case ID_NOT_YET: countdown_cancel(); return;
+    /* AurOS stays armed for the next restart she makes: the window goes,
+     * and nothing is taken back (WM_DESTROY). */
+    case ID_LATER:   g_keep_armed = 1; PostMessageW(g_hwnd, WM_CLOSE, 0, 0); return;
     case ID_WIFI:    g_bring_wifi = !g_bring_wifi; return;
+    case ID_HELPER:  open_helper(); return;
+    case ID_COPY:    copy_for_helper(); return;
     default: break;
     }
     if (id >= ID_STYLE && id < ID_STYLE + N_STYLES) { select_style(id - ID_STYLE); return; }
@@ -3319,7 +3405,8 @@ static void focus_visible(void)
 {
     if (g_focus < 0 || g_focus >= g_nw) return;
     int id = g_w[g_focus].id;
-    if (id == ID_PRIMARY || id == ID_BACK || id == ID_QUIT || id == ID_NOT_YET) return;
+    if (id == ID_PRIMARY || id == ID_BACK || id == ID_QUIT || id == ID_LATER ||
+        id == ID_HELPER) return;
     RECT r = g_w[g_focus].r;
     if (r.top < g_body.top)        scroll_by(r.top - g_body.top - S(12));
     else if (r.bottom > g_body.bottom) scroll_by(r.bottom - g_body.bottom + S(12));
@@ -3374,77 +3461,63 @@ static int dpi_for(HWND h)
     return d >= 72 ? d : 96;
 }
 
-static void dark_titlebar(HWND h)
+/* THE WEBSITE'S LETTERS. AurOS Sans is Atkinson Hyperlegible, drawn for
+ * readers with low vision, and the face the website is set in
+ * (src/aurbridge/fonts/OFL.txt). It travels inside this file
+ * (aurbridge-info.rc) and is lent to this process only, so nothing is
+ * installed. A build without it, or a Windows that will not take it,
+ * gets Segoe UI, which every Windows since Vista has. */
+#define FACE_TEXT     L"AurOS Sans"
+#define FACE_FALLBACK L"Segoe UI"
+static int g_face_ok;
+
+static void fonts_load(void)
 {
-    HMODULE m = LoadLibraryW(L"dwmapi.dll");
-    if (!m) return;
-    PFN_DWMSWA f = (PFN_DWMSWA)(void *)GetProcAddress(m, "DwmSetWindowAttribute");
-    BOOL on = TRUE;
-    if (f) { f(h, 20, &on, sizeof on); f(h, 19, &on, sizeof on); }
-    FreeLibrary(m);
+    static const int ids[] = { 100, 101 };
+    for (int i = 0; i < 2; i++) {
+        HRSRC r = FindResourceW(NULL, MAKEINTRESOURCEW(ids[i]), L"AURFONT");
+        HGLOBAL g = r ? LoadResource(NULL, r) : NULL;
+        void *b = g ? LockResource(g) : NULL;
+        DWORD n = 0;
+        if (b && AddFontMemResourceEx(b, SizeofResource(NULL, r), NULL, &n) && n) g_face_ok++;
+    }
+    g_face_ok = g_face_ok == 2;
 }
 
-/* Two faces, which IS the hierarchy.
- *
- * This had one face at essentially one weight: title, h2 and h3 were
- * all Segoe UI SemiBold at 30/20/17, so the only thing separating a
- * page title from a subheading was three points of size. That is not a
- * hierarchy, it is a size ramp.
- *
- * The display face is Georgia. It is on every Windows since 2000 and
- * every Mac, so nothing is downloaded and nothing falls back; Matthew
- * Carter drew it to hold up on bad screens, which is exactly the
- * hardware this installer runs on; and it is the same face the website
- * uses, so the thing a person downloads looks like the page they
- * downloaded it from. Segoe UI stays for text, where its job is to
- * disappear.
- *
- * The weights are deliberately uneven: the serif carries its emphasis
- * through SIZE at weight 400, and the sans carries its through WEIGHT
- * at a small size. Big-and-quiet against small-and-loud is contrast
- * that one face at 600/620/650 cannot produce. */
-#define FACE_DISPLAY L"Georgia"
-#define FACE_TEXT    L"Segoe UI"
-
-static HFONT mkfont_face(int px, int weight, const wchar_t *face, int family)
-{
-    return CreateFontW(-S(px), 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET,
-                       OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                       (BYTE)(VARIABLE_PITCH | family), face);
-}
-static HFONT mkfont(int px, int weight)
-{
-    return mkfont_face(px, weight, FACE_TEXT, FF_SWISS);
-}
-static HFONT mkdisplay(int px, int weight)
-{
-    return mkfont_face(px, weight, FACE_DISPLAY, FF_ROMAN);
-}
 static void fonts_free(void)
 {
-    HFONT *all[] = { &g_f_title, &g_f_h2, &g_f_h3, &g_f_body, &g_f_bodyb,
-                     &g_f_small, &g_f_smallb, &g_f_tiny, &g_f_btn };
-    for (int i = 0; i < (int)(sizeof all / sizeof all[0]); i++)
-        if (*all[i]) { DeleteObject(*all[i]); *all[i] = NULL; }
+    for (int i = 0; i < N_TYPE; i++)
+        if (*TYPE[i].f) { DeleteObject(*TYPE[i].f); *TYPE[i].f = NULL; }
 }
+
+/* SIZES ARE FOR HER EYES (docs/EASY.md, rule 3): nothing she reads is
+ * under 18 px at 96 dpi. Hierarchy is size and weight in one face: a
+ * bold title, regular text, bold where a line must be found first. */
 static void fonts_make(void)
 {
     fonts_free();
-    /* SIZES ARE FOR HER EYES (docs/EASY.md, rule 3). Every sentence she
-     * reads is 18 px at 96 dpi or more -- it was 15, with 13 and 11 for
-     * the hints -- and the only smaller type is the footer hint (16) and
-     * the labels on the firmware sketch a helper reads (15). */
-    /* Display, large and quiet. */
-    g_f_title  = mkdisplay(36, FW_NORMAL);
-    g_f_h2     = mkdisplay(25, FW_NORMAL);
-    /* Text. */
-    g_f_h3     = mkfont(21, FW_BOLD);
-    g_f_body   = mkfont(18, FW_NORMAL);
-    g_f_bodyb  = mkfont(18, FW_SEMIBOLD);
-    g_f_small  = mkfont(16, FW_NORMAL);
-    g_f_smallb = mkfont(16, FW_BOLD);
-    g_f_tiny   = mkfont(15, FW_BOLD);
-    g_f_btn    = mkfont(20, FW_SEMIBOLD);
+    HDC dc = g_mdc ? g_mdc : GetDC(NULL);
+    if (dc) SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
+    for (int i = 0; i < N_TYPE; i++) {
+        int px = TYPE[i].px;
+        if (g_dense && px == 20 && TYPE[i].f != &g_f_btn) px = 18;
+        if (g_dense && px == 32) px = 28;
+        *TYPE[i].f = CreateFontW(-S(px), 0, 0, 0, TYPE[i].weight, 0, 0, 0,
+                                 DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                 CLEARTYPE_QUALITY, (BYTE)(VARIABLE_PITCH | FF_SWISS),
+                                 g_face_ok ? FACE_TEXT : FACE_FALLBACK);
+        TEXTMETRICW tm;
+        int th = S(px);
+        if (dc) {
+            SelectObject(dc, *TYPE[i].f);
+            if (GetTextMetricsW(dc, &tm)) th = tm.tmHeight;
+        }
+        int lh = (int)((float)S(px) * (g_dense && TYPE[i].lh > 1.4f ? 1.40f : TYPE[i].lh) + 0.5f);
+        TYPE[i].tm = th;
+        TYPE[i].line = lh > th ? lh : th;
+    }
+    if (dc) SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
+    if (dc && dc != g_mdc) ReleaseDC(NULL, dc);
 }
 
 static void backbuffer(int w, int h)
@@ -3704,7 +3777,7 @@ static HRESULT STDMETHODCALLTYPE acc_get_accKeyboardShortcut(IAccessible *t, VAR
     int c = acc_child(v);
     if (c == -2) return E_INVALIDARG;
     *s = (c >= 0 && g_w[c].id == ID_PRIMARY) ? acc_str(L"Enter")
-       : (c >= 0 && (g_w[c].id == ID_BACK || g_w[c].id == ID_NOT_YET)) ? acc_str(L"Escape")
+       : (c >= 0 && g_w[c].id == ID_BACK) ? acc_str(L"Escape")
        : NULL;
     return *s ? S_OK : S_FALSE;
 }
@@ -3908,6 +3981,14 @@ static void selftest_log(void)
     fclose(f);
 }
 
+static void bring_forward(void)
+{
+    if (!g_hwnd || g_nav_mode || g_shot_mode) return;
+    if (IsIconic(g_hwnd)) ShowWindow(g_hwnd, SW_RESTORE);
+    SetForegroundWindow(g_hwnd);
+    FlashWindow(g_hwnd, TRUE);
+}
+
 static int ask(HWND h, const wchar_t *text, UINT icon)
 {
     if (g_nav_mode) return 1;          /* --navtest: as if she said Yes */
@@ -3936,10 +4017,10 @@ static int close_asked(HWND h)
     /* READY, AND ABOUT TO BE THROWN AWAY. After the last step the
      * window's X used to close it and take back the restart without
      * a word. */
-    if (g_install_armed && !g_restarting &&
-        !ask(h, L"Close without restarting?\n\nAurOS is ready, but closing now takes it "
-                L"back, and this computer starts Windows as usual.\n\nTo finish, choose "
-                L"No, then press Restart now.", MB_ICONWARNING))
+    if (g_install_armed && !g_restarting && !g_keep_armed &&
+        !ask(h, L"Close AurOS Setup and take AurOS back?\n\nAurOS is ready. Closing now "
+                L"takes it back, and this computer starts Windows as usual.\n\nTo keep it "
+                L"for your next restart, choose No, then press Restart later.", MB_ICONWARNING))
         return 0;
     return 1;
 }
@@ -3963,11 +4044,10 @@ static void tick(void)
     if (pf_poll()) {
         g_settle = 0;
         if (g_page == PAGE_WELCOME && g_check_next != PAGE_PROGRESS) {
-            g_reveal = 0;                      /* the ticks come in one by one */
+            /* the answer shows for a moment first (the settle, below) */
         } else if (g_page == PAGE_BLOCKED && g_report.n_block == 0) {
             blocked_cleared();
         } else {
-            g_reveal = N_CHK;
             check_advance();
         }
         need = 1;
@@ -3975,10 +4055,9 @@ static void tick(void)
     if (g_checking) need = 1;
 
     if (g_page == PAGE_WELCOME && g_pf_valid && !g_checking) {
-        /* The stagger is presentation only: every tick shows the result
-         * preflight actually returned, revealed in order. */
-        if (g_reveal < N_CHK) { if ((g_ticks & 1) == 0) g_reveal++; need = 1; }
-        else if (g_settle >= 0 && ++g_settle == 8) { check_advance(); need = 1; }
+        /* The answer stands for half a second before Next takes the
+         * keyboard, so it is seen as an answer and not a flicker. */
+        if (g_settle >= 0 && ++g_settle == 8) { check_advance(); need = 1; }
     } else if (g_page == PAGE_PROGRESS) {
         install_tick();
         if (stop_tick()) { DestroyWindow(g_hwnd); return; }
@@ -3991,13 +4070,11 @@ static void tick(void)
             if (f > g_bar_f) g_bar_f = f;
             eta_sample(g_bar_f, GetTickCount64());
         }
-        if (install_ok() && !g_cd_offered && !g_selftest) {
-            countdown_start(GetTickCount64());
-            FlashWindow(g_hwnd, TRUE);
-        }
-        if (g_cd_on) {
-            g_cd_left = countdown_left(g_cd_start, GetTickCount64());
-            if (g_cd_left == 0) do_restart();
+        /* Ready: it says so, and comes to the front, and waits for her. */
+        static int told;
+        if (install_ok() && !told && !g_selftest) {
+            told = 1;
+            bring_forward();
         }
         need = 1;
     } else if (g_page == PAGE_BLOCKED && !g_selftest) {
@@ -4011,7 +4088,7 @@ static void tick(void)
         static int step = 0, at = 0;
         int settled = g_pf_valid && !g_checking &&
                       (g_page == PAGE_BLOCKED ||
-                       (g_page == PAGE_WELCOME && g_reveal >= N_CHK && g_settle > 8));
+                       (g_page == PAGE_WELCOME && g_settle > 8));
         /* and the page has stood still long enough for a press to count */
         if (step == 0 && settled && now_ms() - g_changed_at > PRESS_SETTLE_MS + 100) {
             step = 1; at = g_ticks;
@@ -4058,8 +4135,7 @@ static void on_key(WPARAM k)
     /* ESC NEVER DESTROYS ANYTHING: it stops the restart count, or goes
      * back a page, and that is all. It used to close the window. */
     case VK_ESCAPE:
-        if (g_cd_on) countdown_cancel();
-        else if (back_visible()) goto_page(back_target());
+        if (back_visible()) goto_page(back_target());
         break;
     case VK_LEFT:
     case VK_RIGHT:
@@ -4086,7 +4162,6 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         g_hwnd = h;
         g_dpi  = dpi_for(h);
         fonts_make();
-        dark_titlebar(h);
         /* The self-test drives its own clock so a slow emulated desktop
          * cannot stretch a short script into minutes. */
         if (!g_selftest) SetTimer(h, 1, 60, NULL);
@@ -4250,9 +4325,25 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         KillTimer(h, 1);
         /* Take back the one-shot start-up setting, if it was set. Not
-         * when the window is going BECAUSE of the restart. */
-        if (!g_restarting) { install_cancel(); install_forget(); }
+         * when the window is going BECAUSE of the restart, and not when
+         * she pressed Restart later: then AurOS, and its download, wait
+         * for her next restart. */
+        if (!g_restarting && !(g_keep_armed && g_install_armed)) {
+            install_cancel();
+            install_forget();
+        } else {
+            plat_let_sleep();
+        }
         PostQuitMessage(0);
+        return 0;
+
+    /* BACK FROM SLEEP, OR UNLOCKED: the window comes to the front, so the
+     * page that waits for her is the first thing she sees (B-4). */
+    case WM_POWERBROADCAST:
+        if (wp == PBT_APMRESUMEAUTOMATIC || wp == PBT_APMRESUMESUSPEND) bring_forward();
+        return TRUE;
+    case WM_WTSSESSION_CHANGE:
+        if (wp == WTS_SESSION_UNLOCK) bring_forward();
         return 0;
 
     default: break;
@@ -4305,10 +4396,9 @@ static void fx_machine(int hdd)
     fx_add("space-measured", PF_INFO, "Free space measured");
     g_pf_valid = 1;
     g_checking = 0;
-    g_reveal   = N_CHK;
 }
 
-static void fx_ready(void) { fx_add("ready", PF_PASS, "This PC is ready"); }
+static void fx_ready(void) { fx_add("ready", PF_PASS, "This computer is ready"); }
 
 static void shot_save(const char *dir, const char *name)
 {
@@ -4344,9 +4434,6 @@ static int shot_run(const char *dir)
     shot_save(dir, "1a-welcome-checking");
 
     fx_machine(0); fx_ready();
-    g_checking = 0; g_reveal = 2;
-    shot_save(dir, "1b-welcome-checking-half");
-    g_reveal = N_CHK;
     g_focus = -1; g_want_focus_id = 0;
     shot_save(dir, "1c-welcome-ready");
 
@@ -4356,7 +4443,7 @@ static int shot_run(const char *dir)
     shot_save(dir, "1d-welcome-good-to-know");
 
     fx_machine(0);
-    fx_add("not-on-ac", PF_BLOCK, "This PC is running on battery");
+    fx_add("not-on-ac", PF_BLOCK, "This computer is running on battery");
     fx_add("insufficient-space", PF_BLOCK, "Not enough free space");
     fx_add("pending-reboot", PF_BLOCK, "Windows has updates waiting for a restart");
     g_temp_bytes = 2300000000ULL;
@@ -4364,16 +4451,16 @@ static int shot_run(const char *dir)
     g_temp_bytes = 0;
 
     fx_machine(0);
-    fx_add("firmware-bios", PF_BLOCK, "This PC uses legacy BIOS boot");
-    fx_add("not-on-ac", PF_BLOCK, "This PC is running on battery");
+    fx_add("firmware-bios", PF_BLOCK, "This computer uses legacy BIOS boot");
+    fx_add("not-on-ac", PF_BLOCK, "This computer is running on battery");
     g_page = PAGE_BLOCKED; shot_save(dir, "2b-blocked-bios");
 
     fx_machine(0);
-    fx_add("arm-pc", PF_BLOCK, "This PC has an ARM processor");
+    fx_add("arm-pc", PF_BLOCK, "This computer has an ARM processor");
     g_page = PAGE_BLOCKED; shot_save(dir, "2e-blocked-arm");
 
     fx_machine(0);
-    fx_add("intel-rst", PF_BLOCK, "AurOS can't see this PC's drive");
+    fx_add("intel-rst", PF_BLOCK, "AurOS can't see this computer's drive");
     g_page = PAGE_BLOCKED; shot_save(dir, "2f-blocked-intel-nvme");
 
     fx_machine(1);
@@ -4388,9 +4475,12 @@ static int shot_run(const char *dir)
     sbdb_judge(&g_report, 1, 0, (const unsigned char *)"", 0, -1, NULL, 0,
                "Microsoft Corporation UEFI CA 2011\n");
     g_page = PAGE_BLOCKED; shot_save(dir, "2c-blocked-secure-boot");
+    g_sb_helper = 1;
+    shot_save(dir, "2d-blocked-secure-boot-helper");
     g_scroll[PAGE_BLOCKED] = 10000;
-    shot_save(dir, "2d-blocked-secure-boot-picture");
+    shot_save(dir, "2d-blocked-secure-boot-helper-end");
     g_scroll[PAGE_BLOCKED] = 0;
+    g_sb_helper = 0;
 
     fx_machine(0); fx_ready();
     g_page = PAGE_STYLE; g_sel_style = STYLE_DEFAULT;
@@ -4415,10 +4505,7 @@ static int shot_run(const char *dir)
 
     g_install_running = 0; g_install_finished = 1;
     InterlockedExchange(&g_ab_state, 2);
-    g_cd_on = 1; g_cd_offered = 1; g_cd_left = 52;
-    shot_save(dir, "5c-restart-countdown");
-    g_cd_on = 0;
-    shot_save(dir, "5d-restart-not-yet");
+    shot_save(dir, "5c-ready-to-restart");
 
     InterlockedExchange(&g_ab_state, 3);
     snprintf(g_ab_why, sizeof g_ab_why,
@@ -4428,17 +4515,37 @@ static int shot_run(const char *dir)
     InterlockedExchange(&g_ab_state, 0);
     g_install_finished = 0;
 
-    /* The same pages on a 1920x1080 laptop at 150%, where every shape
-     * is drawn at its real size rather than scaled. */
-    shot_size(1680, 1035, 144);
-    g_page = PAGE_WELCOME; shot_save(dir, "hidpi-1c-welcome-ready");
-    g_page = PAGE_STYLE;   shot_save(dir, "hidpi-3a-style");
-    g_page = PAGE_READY;   shot_save(dir, "hidpi-4a-ready");
-
-    /* A 1024x600 netbook, the smallest screen AurOS supports: the page
-     * scrolls, the buttons stay. */
-    shot_size(1024, 530, 96);
-    g_page = PAGE_STYLE;   shot_save(dir, "small-3a-style");
+    /* The main pages again on the other screens she may have: a
+     * 1920x1080 laptop at 150% (every shape drawn at its real size), a
+     * 1024x600 netbook, and a 1366x768 laptop at 150% -- the tightest. */
+    static const struct { const char *pre; int w, h, dpi; } SZ[] = {
+        { "hidpi", 1680, 1035, 144 }, { "small", 1024, 530, 96 },
+        { "tight", 1366, 663, 144 },
+    };
+    for (int k = 0; k < 3; k++) {
+        char n[64];
+        shot_size(SZ[k].w, SZ[k].h, SZ[k].dpi);
+        fx_machine(0); fx_ready(); g_sel_style = STYLE_DEFAULT;
+        g_page = PAGE_WELCOME; snprintf(n, sizeof n, "%s-1c-welcome-ready", SZ[k].pre); shot_save(dir, n);
+        g_page = PAGE_STYLE;   snprintf(n, sizeof n, "%s-3a-style", SZ[k].pre);         shot_save(dir, n);
+        g_page = PAGE_READY;   snprintf(n, sizeof n, "%s-4a-ready", SZ[k].pre);         shot_save(dir, n);
+        g_page = PAGE_PROGRESS;
+        g_install_running = 1; g_install_finished = 0;
+        g_ab_phase = AB_PREPARE; g_ab_pct = 41; g_eta_min = 12;
+        snprintf(n, sizeof n, "%s-5a-progress", SZ[k].pre); shot_save(dir, n);
+        g_install_running = 0; g_install_finished = 1;
+        InterlockedExchange(&g_ab_state, 2);
+        snprintf(n, sizeof n, "%s-5c-ready-to-restart", SZ[k].pre); shot_save(dir, n);
+        InterlockedExchange(&g_ab_state, 0);
+        g_install_finished = 0; g_eta_min = -1; g_bar_f = 0.f;
+        fx_machine(0);
+        fx_add("not-on-ac", PF_BLOCK, "This computer is running on battery");
+        fx_add("insufficient-space", PF_BLOCK, "Not enough free space");
+        fx_add("pending-reboot", PF_BLOCK, "Windows has updates waiting for a restart");
+        g_temp_bytes = 2300000000ULL;
+        g_page = PAGE_BLOCKED; snprintf(n, sizeof n, "%s-2a-blocked-fixable", SZ[k].pre); shot_save(dir, n);
+        g_temp_bytes = 0;
+    }
     return 0;
 }
 
@@ -4602,12 +4709,58 @@ static int nav_test(const char *dir)
         g_page = PAGE_PROGRESS;
         g_install_finished = 1;
         InterlockedExchange(&g_ab_state, 2);
-        g_cd_on = 1; g_cd_left = 60;
         nt_check(nt_page_is_plain(), "the restart page has only buttons");
         nt_check(g_content_h <= g_view_h, "the restart page fits without scrolling");
         nt_check(!wcscmp(primary_label(), L"Restart now"), "its big button is Restart now");
-        g_cd_on = 0; g_install_finished = 0;
+        g_install_finished = 0;
         InterlockedExchange(&g_ab_state, 0);
+    }
+
+    if (g_nt) fprintf(g_nt, "\n4b. every page fits the small screens too, and all four looks show\n");
+    {
+        /* A 1024x600 netbook, and a 1366x768 laptop at 150%: the window's
+         * client area, in pixels and dots per inch. */
+        static const struct { int w, h, dpi; const char *name; } SZ[] = {
+            { 1024, 530, 96, "a 1024x600 netbook" }, { 1366, 663, 144, "a 1366x768 laptop at 150%" },
+            { 1680, 1035, 144, "a 1920x1080 laptop at 150%" },
+        };
+        static const struct { page_id p; int done; const char *name; } P[] = {
+            { PAGE_WELCOME, 0, "welcome" }, { PAGE_STYLE, 0, "look" },
+            { PAGE_READY, 0, "ready" }, { PAGE_PROGRESS, 0, "progress" },
+            { PAGE_PROGRESS, 1, "restart" },
+        };
+        for (size_t k = 0; k < sizeof SZ / sizeof SZ[0]; k++) {
+            g_dpi = SZ[k].dpi; g_cw = SZ[k].w; g_ch = SZ[k].h;
+            backbuffer(g_cw, g_ch);
+            fonts_make();
+            for (size_t i = 0; i < sizeof P / sizeof P[0]; i++) {
+                char what[160];
+                nt_fake_report(0);
+                g_page = P[i].p;
+                g_install_finished = P[i].done;
+                InterlockedExchange(&g_ab_state, P[i].done ? 2 : 0);
+                g_scroll[g_page] = 0;
+                render();
+                snprintf(what, sizeof what, "the %s page fits %s without scrolling",
+                         P[i].name, SZ[k].name);
+                nt_check(g_content_h <= g_view_h, what);
+                if (P[i].p == PAGE_STYLE) {
+                    int cards = 0;
+                    for (int j = 0; j < g_nw; j++)
+                        if (g_w[j].kind == W_CARD && g_w[j].r.bottom <= g_body.bottom &&
+                            g_w[j].r.top >= g_body.top) cards++;
+                    snprintf(what, sizeof what, "all four looks are on the screen on %s",
+                             SZ[k].name);
+                    nt_check(cards == N_STYLES, what);
+                }
+            }
+            g_install_finished = 0;
+            InterlockedExchange(&g_ab_state, 0);
+        }
+        g_dpi = 96; g_cw = 1120; g_ch = 690;
+        backbuffer(g_cw, g_ch);
+        fonts_make();
+        render();
     }
 
     if (g_nt) fprintf(g_nt, "\n5. the look she picks reaches the installed system\n");
@@ -4705,7 +4858,7 @@ static int nav_test(const char *dir)
         fx_machine(0);
         fx_add("bitlocker-system", PF_BLOCK, "This drive is encrypted with BitLocker");
         g_page = PAGE_BLOCKED;
-        nt_check(fixable_now() == 0 && !wcscmp(primary_label(), L"Close"),
+        nt_check(fixable_now() == 0 && !wcscmp(primary_label(), L"Close AurOS Setup"),
                  "on an encrypted drive the one button is Close");
         /* The space fix deletes only old temporary files, and says how
          * much before she presses; with next to nothing to delete there
@@ -4741,7 +4894,7 @@ static int nav_test(const char *dir)
         nt_check(g_content_h > 0 && g_content_h <= g_view_h,
                  "four problems a program or she can fix fit on the page without scrolling");
         g_report.n = 2 + 5; g_report.n_block = 5;
-        nt_check(fixable_now() == 0 && !wcscmp(primary_label(), L"Close"),
+        nt_check(fixable_now() == 0 && !wcscmp(primary_label(), L"Close AurOS Setup"),
                  "next to something unfixable, nothing is fixed, nothing restarts, "
                  "and the one button is Close");
         g_scroll[PAGE_BLOCKED] = 0;
@@ -4755,24 +4908,26 @@ static int nav_test(const char *dir)
         g_temp_bytes = 0;
     }
 
-    if (g_nt) fprintf(g_nt, "\n8. the restart: by itself after a minute, or now, or later\n");
+    if (g_nt) fprintf(g_nt, "\n8. the restart: only when she presses for it, now or later\n");
     {
-        countdown_start(1000);
-        nt_check(countdown_left(1000, 1000) == 60 && countdown_left(1000, 31000) == 30 &&
-                 countdown_left(1000, 61000) == 0 && countdown_left(1000, 999999) == 0,
-                 "it counts sixty seconds, and stops at nought");
         nt_fake_report(0);
         g_page = PAGE_PROGRESS; g_install_finished = 1;
         InterlockedExchange(&g_ab_state, 2);
         render();
-        int has_not_yet = 0;
-        for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_NOT_YET) has_not_yet = 1;
-        nt_check(has_not_yet, "while it counts there is a Not yet button");
-        widget_activate(ID_NOT_YET);
-        nt_check(!g_cd_on, "Not yet stops the count");
-        countdown_start(1000);
+        int later = 0;
+        for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_LATER) later = 1;
+        nt_check(later && !wcscmp(primary_label(), L"Restart now"),
+                 "ready, it offers Restart now and Restart later");
+        for (int i = 0; i < 2000; i++) tick();   /* two minutes of the clock */
+        nt_check(!g_restarting && g_page == PAGE_PROGRESS,
+                 "nothing restarts by itself, however long it waits");
         on_key(VK_ESCAPE);
-        nt_check(!g_cd_on && g_page == PAGE_PROGRESS, "Esc stops the count, and nothing else");
+        nt_check(g_page == PAGE_PROGRESS && !g_restarting, "Esc does nothing here");
+        widget_activate(ID_LATER);
+        nt_check(g_keep_armed, "Restart later keeps AurOS for her next restart");
+        MSG msg;
+        while (PeekMessageW(&msg, NULL, WM_CLOSE, WM_CLOSE, PM_REMOVE)) { }
+        g_keep_armed = 0;
         g_install_finished = 0;
         InterlockedExchange(&g_ab_state, 0);
     }
@@ -4946,6 +5101,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     }
 
     dpi_opt_in();
+    fonts_load();
     if (shot) return shot_run(shot);
     if (navtest) return nav_test(navtest);
 
@@ -4997,11 +5153,20 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     int sx = wa.left + ((wa.right - wa.left) - ww) / 2;
     int sy = wa.top + ((wa.bottom - wa.top) - wh) / 2;
 
-    HWND h = CreateWindowExW(0, wc.lpszClassName, L"Install AurOS",
+    HWND h = CreateWindowExW(0, wc.lpszClassName, L"AurOS Setup",
                              WS_OVERLAPPEDWINDOW, sx, sy, ww, wh,
                              NULL, NULL, inst, NULL);
     if (!h) return 1;
 
+    /* told when she unlocks the computer (WM_WTSSESSION_CHANGE); loaded
+     * by name, as Windows Server's runners may lack the session service */
+    {
+        HMODULE wts = LoadLibraryW(L"wtsapi32.dll");
+        typedef BOOL (WINAPI *PFN_WRSN)(HWND, DWORD);
+        PFN_WRSN reg = wts ? (PFN_WRSN)(void *)GetProcAddress(wts, "WTSRegisterSessionNotification")
+                           : NULL;
+        if (reg) reg(h, 0 /* NOTIFY_FOR_THIS_SESSION */);
+    }
     ShowWindow(h, g_selftest ? SW_SHOWNOACTIVATE : show);
     UpdateWindow(h);
     /* THE CHECK STARTS BY ITSELF, on the first page, while she reads.

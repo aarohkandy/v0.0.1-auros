@@ -46,6 +46,8 @@ const wchar_t *fix_note(const char *id);
  * sentence (keep using Windows; who could change it; what to save first).
  * NULL when there is nothing more specific than "keep using Windows". */
 const wchar_t *fix_instead(const char *id);
+/* The helper's page for this stop (website/advanced.html#...), or NULL. */
+const wchar_t *fix_helper_url(const char *id);
 /* The i-th entry, or NULL past the end (for the wizard's own test). */
 const fix_info *fix_at(int i);
 

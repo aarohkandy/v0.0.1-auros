@@ -19,7 +19,8 @@ import tempfile
 import numpy as np
 from PIL import Image
 
-ACCENT = (0x7D, 0xD3, 0xC0)      # wizard.c C_ACCENT, also aurshell's accent
+ACCENT = (0x7D, 0xD3, 0xC0)      # aurshell's accent (the old wizard's too)
+GO = (0x0B, 0x5D, 0x4F)          # wizard.c C_ACCENT since the light restyle
 
 
 def load(path):
@@ -99,7 +100,15 @@ def accent_mask(img, rgb=ACCENT):
     return (lo >= 0.70) & (hi <= 1.12) & (hi - lo <= 0.14)
 
 
-def find_buttons(img, region=None, rgb=ACCENT):
+def find_buttons(img, region=None, rgb=None):
+    """The wizard's primary button: solid go-green (the light restyle),
+    or solid teal (a build from before it). `rgb` names one colour."""
+    if rgb is not None:
+        return _find_buttons(img, region, rgb)
+    return _find_buttons(img, region, GO) or _find_buttons(img, region, ACCENT)
+
+
+def _find_buttons(img, region=None, rgb=ACCENT):
     """Solid blocks of the accent the size of a button, largest first.
 
     [(x, y, w, h)] in screen coordinates. A checked box (22 px), a step

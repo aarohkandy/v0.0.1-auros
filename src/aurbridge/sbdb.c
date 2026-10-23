@@ -268,8 +268,7 @@ void sbdb_judge(pf_report *r, int secure_boot,
                  "start-up files are signed with. Some Secured-core PCs come "
                  "this way. After the restart it would refuse to start AurOS's "
                  "installer, and nothing would install.%s%.120s%s",
-                 ca, seen[0] ? " It trusts: " : " It trusts no signing keys at all.",
-                 seen, seen[0] ? "." : "");
+                 ca, seen[0] ? " It trusts: " : "", seen, seen[0] ? "." : "");
         put(r, SBDB_BLOCK_ID, PF_BLOCK, "This PC is set to start only Windows",
             detail,
             "Switch on one setting, then run this again. In Windows: Settings > "
