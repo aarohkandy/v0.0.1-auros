@@ -148,10 +148,14 @@ jobs:
 
       - name: release for this run's evidence
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 ||
-            gh release create "$TAG" --prerelease --target "$GITHUB_SHA" \
-              --title "profiles: every version builds and boots, run $GITHUB_RUN_ID" \
-              --notes "Running: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" || true
+          # At this commit if GitHub allows it, else at main: the token
+          # may not make a tag on a commit that changes a workflow file
+          # (HTTP 403 "Resource not accessible by integration"; run
+          # 39902765034). The files are this run's either way.
+          mk() { gh release create "$TAG" --prerelease --target "$1" \
+                   --title "profiles: every version builds and boots, run $GITHUB_RUN_ID" \
+                   --notes "Running: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"; }
+          gh release view "$TAG" >/dev/null 2>&1 || mk "$GITHUB_SHA" || mk main || true
 
       # build.yml's cache, by build.yml's exact key: debootstrap reads
       # only the release pocket, so the base is the same bytes for every
@@ -234,6 +238,14 @@ jobs:
             echo '```'
             echo "screenshot: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG/$P.png"
           } >> "$GITHUB_STEP_SUMMARY"
+      # The same files as an Actions artifact, so a release that could
+      # not be made never loses the evidence (gh run download fetches it).
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: profile-${{ matrix.profile }}
+          path: ev/
+          if-no-files-found: ignore
 
   summary:
     needs: [gate, profile]
