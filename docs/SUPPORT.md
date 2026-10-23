@@ -1,8 +1,8 @@
 # Getting help with AurOS
 
-AurOS is free and made by a small team. There is **no phone line**, and
+AurOS is free and made by one person with the help of AI software. There is **no phone line**, and
 nobody from AurOS will ever phone you, ask to connect to your computer,
-or ask you for money, card numbers or gift cards. Anyone who does is
+or ask you for card numbers, passwords or gift cards. Anyone who does is
 not from AurOS: hang up or close the page. (The in-computer help page
 "AurOS will never call you" says the same thing, in more detail.)
 

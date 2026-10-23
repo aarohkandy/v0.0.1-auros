@@ -341,12 +341,16 @@ LAUNCH_NEEDS = [
     ("src/aurbridge/wizard.c", r'L"Licenses"', "the Licenses button in AurOS Setup (LIC-3)"),
     ("src/aurbridge/aurbridge-info.rc", r"\b200\s+RCDATA", "the NOTICES resource in AurOS-Setup.exe (LIC-3)"),
     ("src/aurbridge/aurbridge-info.rc", r"\b202\s+RCDATA", "the Terms resource in AurOS-Setup.exe (LIA-1)"),
-    ("docs/legal/REVIEWS.md", r"(?s)^(?!.*NOT DONE)", "the two skeptic reviews, all findings answered (REVIEWS.md has no 'NOT DONE')"),
 ]
 
 
 def check_launch_needs(root):
     out = []
+    rv = os.path.join(root, "docs/legal/REVIEWS.md")
+    if not os.path.isfile(rv):
+        out.append("not yet: the skeptic reviews (docs/legal/REVIEWS.md)")
+    elif re.search(r"\|\s*\*{0,2}NOT DONE\b", open(rv, encoding="utf-8").read()):
+        out.append("not yet: a skeptic finding is marked NOT DONE in docs/legal/REVIEWS.md")
     for rel, rx, what in LAUNCH_NEEDS:
         p = os.path.join(root, rel)
         t = open(p, encoding="utf-8", errors="replace").read() if os.path.isfile(p) else ""
