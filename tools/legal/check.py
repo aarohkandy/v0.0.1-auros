@@ -79,7 +79,7 @@ def set_contact(addr, root=None):
 
 OFFER_MUST = [  # (what, regex) every written offer must contain
     ("the three-year promise", r"at least three years"),
-    ("the offer to anyone who has a copy", r"anyone who has a copy of AurOS"),
+    ("the offer to anyone", r"open to anyone, whether or not they have a copy of AurOS"),
     ("the physical-medium route at cost", r"cost of the\s+medium and the postage"),
     ("the sources release naming rule", r'"sources-" followed by the name of the AurOS\s+release'),
     ("the contact address", PLACEHOLDER + r"|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+"),
@@ -150,6 +150,16 @@ def check_pages(root):
                            capture_output=True, text=True)
         if r.returncode != 0:
             out.append("%s are not what tools/legal/%s writes: %s" % (label, tool, (r.stdout + r.stderr).strip().replace("\n", "; ")[:240]))
+    tmf = os.path.join(root, "docs/legal/TRADEMARKS.txt")
+    if os.path.isfile(tmf):
+        paras = [l for l in open(tmf, encoding="utf-8").read().strip().split("\n") if l]
+        for md in ("TERMS.md", "DISCLAIMER.md", "LICENSES.md"):
+            mp = os.path.join(root, "docs/legal", md)
+            if os.path.isfile(mp):
+                t = open(mp, encoding="utf-8").read()
+                for para in paras:
+                    if para not in t:
+                        out.append("docs/legal/%s does not carry docs/legal/TRADEMARKS.txt verbatim (%s...)" % (md, para[:40]))
     for f, t in real_pages(root):
         if "releases/latest/download/AurOS-Setup.exe" in t and 'href="licenses.html"' not in t:
             out.append("website/%s has a download link and no link to licenses.html (GPLv3 6(d), COMPLIANCE LIC-2)" % f)
@@ -177,6 +187,8 @@ BANNED = [
     (r"\bwe collect nothing\b", "unqualified; GitHub logs visitors (PRI-1)"),
     (r"nothing to pay,? now or later", "paid extras are planned (WEB-3)"),
     (r"completely safe|100% safe|risk-free|\bno risk\b|zero risk", "no change to a drive is free of risk (LIA-2)"),
+    (r"go back whenever you like", "Put Windows back refuses in some cases (rescue.c) and a locked drive needs a handover (LIA-2)"),
+    (r"your (windows )?files are safe", "an absolute at the point of risk (LIA-2): say what is kept and what the risk is"),
 ]
 # Texts a person reads. C files: only lines that are not comments.
 TEXT_GLOBS = ["website", "rootfs/usr/share/auros/help", "README.md", "docs/legal/TERMS.md", "docs/legal/PRIVACY.md",
@@ -189,6 +201,8 @@ PENDING = [
     ("src/aurbridge/wizard.c", r"all (your|her) files stay", "stream B: Ready and Welcome strings", "2026-11-30"),
     ("src/aurbridge/wizard.c", r"windows and all your files", "stream B: Ready and Welcome strings", "2026-11-30"),
     ("src/aurscreen/screen.c", r"exactly as (it|they) (was|were)", "stream A2: the put-back screen", "2026-11-30"),
+    ("src/aurbridge/wizard.c", r"your (windows )?files are safe", "stream B: the install-stopped page", "2026-11-30"),
+    ("src/aurscreen/screen.c", r"your (windows )?files are safe", "stream A2: the stopped screens", "2026-11-30"),
 ]
 
 
@@ -324,6 +338,7 @@ def check_image(status_path, rootdir=None):
 LAUNCH_NEEDS = [
     ("src/aurbridge/wizard.c", r"By pressing Install AurOS you agree to the AurOS Terms", "the Ready page's agreement line (TERMS 4)"),
     ("src/aurbridge/wizard.c", r"Any change to a drive carries some risk", "the Ready page's risk sentence (LIA-2)"),
+    ("src/aurbridge/wizard.c", r'L"Licenses"', "the Licenses button in AurOS Setup (LIC-3)"),
     ("src/aurbridge/aurbridge-info.rc", r"\b200\s+RCDATA", "the NOTICES resource in AurOS-Setup.exe (LIC-3)"),
     ("src/aurbridge/aurbridge-info.rc", r"\b202\s+RCDATA", "the Terms resource in AurOS-Setup.exe (LIA-1)"),
     ("docs/legal/REVIEWS.md", r"(?s)^(?!.*NOT DONE)", "the two skeptic reviews, all findings answered (REVIEWS.md has no 'NOT DONE')"),

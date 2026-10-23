@@ -25,8 +25,9 @@
   <section class="page-head" aria-labelledby="page-title">
     <div class="narrow">
       <h1 id="page-title">AurOS Terms</h1>
-      <p class="note">Version 1, 23 October 2026. Written by the AurOS team without a lawyer. These Terms are not legal advice. If anything here is unclear, write to us before you use AurOS: CONTACT_EMAIL.</p>
-      <p class="lede">These Terms are about the AurOS website, the Windows program <b>AurOS Setup</b> (the file AurOS-Setup.exe), and the AurOS system it puts on your computer, with its updates. We call all of that “AurOS”. “We” are the people who make AurOS, on the AurOS project page on GitHub.</p>
+      <p class="note">Version 2, 24 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. These Terms are not legal advice. If anything here is unclear, write to us before you use AurOS: CONTACT_EMAIL.</p>
+      <p class="lede"><b>Plain version:</b> AurOS is free and has no guarantee. Changing a drive can go wrong, so copy what you can’t replace to a memory stick first. We will never phone you or ask for card numbers, passwords or gift cards. The rest is detail.</p>
+      <p>These Terms are about the AurOS website, the Windows program <b>AurOS Setup</b> (the file AurOS-Setup.exe), and the AurOS system it puts on your computer, with its updates. We call all of that “AurOS”. “We” is the person who makes AurOS, on the AurOS project page on GitHub. There is no company yet.</p>
       <p><b>The programs inside AurOS are not covered by these Terms.</b> Each one has its own license (section 3), and those licenses always win over these Terms.</p>
       <ul class="toc" aria-label="On this page">
         <li><a href="#1-in-short">1. In short</a></li>
@@ -72,11 +73,11 @@
   <section class="doc sand" id="3-the-programs-inside-auros" aria-labelledby="3-the-programs-inside-auros-title">
     <div class="narrow">
       <h2 id="3-the-programs-inside-auros-title">3. The programs inside AurOS</h2>
-      <p>AurOS’s own programs are free software under the MIT license. AurOS also includes many programs made by other people, for example Firefox and the Linux system underneath, most of them from Ubuntu. Each one has its own license. You are free to use and share them, and most can be changed too. The page <b>Licenses and source code</b> says where to find each license and how to get the source code.</p>
+      <p>AurOS’s own programs are free software under the MIT license. AurOS also includes many programs made by other people, for example Firefox and the Linux system underneath, most of them from Ubuntu. Each one has its own license. You are free to use and share almost all of them, and most can be changed too. The page <b>Licenses and source code</b> says where to find each license and how to get the source code.</p>
       <p>Nothing in these Terms limits the rights those licenses give you. If anything in these Terms disagrees with the license of a program, the license wins.</p>
-      <p>Some computer parts need firmware from the company that made them. Firmware has its maker’s own license, and a copy is on your computer in the folder /usr/share/doc, under the name of the program that carries it. Those licenses are between you and the maker.</p>
-      <p>AurOS includes programs that play video, music and photos. Some ways of doing that are covered by patents in some countries. The MIT license gives no patent license, and these programs come without a guarantee.</p>
-      <p>AurOS includes standard security software. You are responsible for following the export laws of your country.</p>
+      <p>Some computer parts need small programs from the company that made them (firmware). Those have their maker’s own license, and a copy is on your computer in the folder /usr/share/doc, under the name of the program that carries it. Those licenses are between you and the maker.</p>
+      <p>Some ways of playing video, music and photos are covered by patents in some countries (a patent is a company’s claim on a way of doing something). AurOS includes programs that do this. The MIT license gives no patent license, and these programs come without a guarantee.</p>
+      <p>AurOS includes security software that some countries control when it is sent abroad. You are responsible for following the rules of your country.</p>
       <p class="totop"><a href="#main">Back to the top</a></p>
     </div>
   </section>
@@ -84,14 +85,18 @@
   <section class="doc" id="4-what-auros-does-to-your-computer" aria-labelledby="4-what-auros-does-to-your-computer-title">
     <div class="narrow">
       <h2 id="4-what-auros-does-to-your-computer-title">4. What AurOS does to your computer</h2>
-      <p>Before it changes anything, AurOS Setup looks at your computer and tells you on screen if AurOS can’t go on it. When you press <b>Install AurOS</b>, it:</p>
+      <p><b>While you read.</b> AurOS Setup looks at your computer. If it finds that AurOS can go on it, Setup starts downloading AurOS (several gigabytes) onto your computer’s drive straight away, from the AurOS releases page on GitHub, and checks that it was not changed on the way. The download goes into a folder called AurOS on your Windows drive. If you close Setup before you press <b>Install AurOS</b>, what was downloaded stays there, so that a later try can carry on; you may delete that folder if you don’t go ahead. If Setup finds AurOS can’t go on, it says so and does not download anything.</p>
+      <p><b>When you press Install AurOS,</b> Setup:</p>
       <ul>
-        <li><p>makes room for AurOS in the empty space on your Windows drive. The screen shows how much before you press;</p></li>
-        <li><p>downloads AurOS from the AurOS releases page on GitHub, and checks that it was not changed on the way;</p></li>
-        <li><p>restarts your computer once, to set AurOS up.</p></li>
+        <li><p>makes Windows smaller to free room for AurOS, and moves Windows’ files to do it. AurOS needs at least 28 GB of empty room and takes up to 40 GB. Setup tells you if there is not enough;</p></li>
+        <li><p>turns off Windows’ Fast Startup and hibernation (the settings Windows uses to start faster), and puts them back if the install is taken back;</p></li>
+        <li><p>adds a start-up entry, so that your computer starts AurOS first;</p></li>
+        <li><p>restarts your computer once.</p></li>
       </ul>
-      <p>Some versions of AurOS Setup can also, but only if you say yes on the screen, copy your Wi-Fi password across to AurOS on the same computer, and pause Windows’ drive lock while the install restarts the computer. The lock comes back on by itself, and is never switched off or removed.</p>
-      <p>Until you answer <b>Yes, it all works</b> on AurOS’s first screen, Windows and your files stay on your computer, and <b>No, go back to Windows</b> takes you back to Windows. Later, <b>Put Windows back</b> in AurOS’s Settings removes AurOS and gives its space back to Windows. Anything you saved inside AurOS goes with it.</p>
+      <p><b>The risk, plainly.</b> Making Windows smaller is the one step that cannot be undone half way. If the power fails or the computer crashes during it, Windows or your files could be damaged and might not come back. Plug the computer in, and copy anything you can’t replace to a memory stick first. If your computer will not start afterwards, ask someone who knows computers to help you. They may need a second computer.</p>
+      <p><b>After the restart.</b> Until you answer <b>Yes, it all works</b> on AurOS’s first screen, Windows and your files stay on your computer. <b>No, go back to Windows</b> makes Windows start the next time. AurOS stays on the computer, about 28 GB of it, with anything you saved in it, until you remove it with <b>Put Windows back</b> in AurOS’s Settings or have someone who knows computers do it. Put Windows back checks first, and says so if it can’t. After <b>Yes</b>, AurOS starts every time.</p>
+      <p><b>Things AurOS has not been tested with:</b> your computer maker’s recovery tools, Windows’ own “reset” option, and your computer’s warranty. Ask the maker if that matters to you.</p>
+      <p><b>Updates.</b> AurOS installs its updates without asking you, while your computer is online (section 8).</p>
       <p>Pressing <b>Install AurOS</b> means you agree to these Terms. If you don’t agree, don’t press it.</p>
       <p class="totop"><a href="#main">Back to the top</a></p>
     </div>
@@ -105,7 +110,6 @@
         <li><p>Keep the computer plugged in while AurOS is being installed.</p></li>
         <li><p>Please use AurOS lawfully, and don’t use it to get into other people’s computers or accounts.</p></li>
         <li><p>Programs you add through <b>Get more programs</b> are made by other people, mostly from the Flathub catalog. Their own terms apply to them. We don’t make them or check them.</p></li>
-        <li><p><b>Wishes</b> (an AI helper) is switched off in this version. If it is ever switched on, it uses an AI, which can misunderstand you. It is built to do only a short list of things, each shown to you first, and it cannot delete files, send messages, buy anything or change security settings. It is not a safe way to remember medicine, appointments or anything where missing it could hurt you. A reminder can fail, for example when the computer is off, asleep or has no battery. Use a phone alarm or a person as well. Wishes is free for now and may be limited or unavailable at times.</p></li>
       </ul>
       <p class="totop"><a href="#main">Back to the top</a></p>
     </div>
@@ -124,7 +128,7 @@
     <div class="narrow">
       <h2 id="7-limits-on-our-responsibility-title">7. Limits on our responsibility</h2>
       <p>TO THE EXTENT THE LAW ALLOWS, WE ARE NOT RESPONSIBLE FOR LOSS OF DATA, LOSS OF USE OF YOUR COMPUTER, OR ANY OTHER LOSS OR DAMAGE THAT COMES FROM INSTALLING, USING OR REMOVING AUROS, INCLUDING IF SOMETHING GOES WRONG WHILE YOUR DRIVE IS BEING CHANGED.</p>
-      <p>Nothing in these Terms limits our responsibility where the law does not let it be limited. That includes death or personal injury caused by negligence, gross negligence, wilful misconduct and fraud.</p>
+      <p>Nothing in these Terms limits our responsibility where the law does not let it be limited. That includes death or personal injury caused by negligence, fraud, gross negligence and willful misconduct.</p>
       <p class="totop"><a href="#main">Back to the top</a></p>
     </div>
   </section>
@@ -132,8 +136,8 @@
   <section class="doc" id="8-changes-and-stopping" aria-labelledby="8-changes-and-stopping-title">
     <div class="narrow">
       <h2 id="8-changes-and-stopping-title">8. Changes and stopping</h2>
-      <p>While your computer is online, AurOS gets security fixes from Ubuntu, Mozilla and our own update channel, as long as we keep AurOS going. We may change or stop AurOS, or these Terms. We will try to give at least 90 days’ notice before we stop, and if we can’t, we will say so as soon as we can. Changing or stopping AurOS does not end the offer of source code (see the page Licenses and source code), and it does not take away any right that the licenses of its programs give you.</p>
-      <p>If we change these Terms, we will say so on the website. Changes apply to later installs. We do not change the Terms of an install you have already done.</p>
+      <p>While your computer is online, AurOS gets the security fixes that Ubuntu, Mozilla and our own update channel publish, as long as we keep AurOS going. Fixes for some programs outside Ubuntu’s main collection come more slowly, or not at all. We may change or stop AurOS, or these Terms. We will try to give at least 90 days’ notice before we stop, and if we can’t, we will say so as soon as we can. Changing or stopping AurOS does not end the offer of source code (see the page Licenses and source code), and it does not take away any right that the licenses of its programs give you.</p>
+      <p>If we change these Terms, we will say so on the website. Changes apply to later installs. We do not change the Terms of an install you have already done. A copy of these Terms is on your computer, in the folder /usr/share/doc/auros.</p>
       <p class="totop"><a href="#main">Back to the top</a></p>
     </div>
   </section>
@@ -141,7 +145,7 @@
   <section class="doc sand" id="9-auros-will-never-call-you" aria-labelledby="9-auros-will-never-call-you-title">
     <div class="narrow">
       <h2 id="9-auros-will-never-call-you-title">9. AurOS will never call you</h2>
-      <p>We do not phone people. Nobody from AurOS will ever ask to connect to your computer, or ask you to call a number. We will never ask you for money, passwords, bank details, card numbers or gift cards. Anyone who does is <b>not</b> from AurOS. Please tell us about it.</p>
+      <p>We do not phone people. Nobody from AurOS will ever ask to connect to your computer, or ask you to call a number. We will never ask you for passwords, bank details, card numbers or gift cards, by phone, email or text. Anyone who does is <b>not</b> from AurOS. Please tell us about it.</p>
       <p class="totop"><a href="#main">Back to the top</a></p>
     </div>
   </section>
@@ -149,8 +153,9 @@
   <section class="doc" id="10-names" aria-labelledby="10-names-title">
     <div class="narrow">
       <h2 id="10-names-title">10. Names</h2>
-      <p>“AurOS” is the name of this project. Windows, Microsoft, Edge and BitLocker are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome is a trademark of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. AurOS is not made, approved or supported by any of them. We use their names only to say what something resembles or works with.</p>
-      <p>AurOS is built from Ubuntu 24.04 LTS software. It is not made, endorsed or supported by Canonical.</p>
+      <p>“AurOS” is the name of this project.</p>
+      <p>AurOS includes software from Ubuntu 24.04 LTS, put together and changed by its maker. It is not made, endorsed or supported by Canonical.</p>
+      <p>Windows, Microsoft, Edge, BitLocker, Defender and SmartScreen are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome and Safe Browsing are trademarks of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. Linux is the registered trademark of Linus Torvalds. Intel is a trademark of Intel Corporation. Other names are trademarks of their owners. AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, or otherwise approved by Apple Inc. The names are used only to say what something is made from, resembles or works with.</p>
       <p class="totop"><a href="#main">Back to the top</a></p>
     </div>
   </section>
@@ -195,9 +200,9 @@
       <li><a href="disclaimer.html">Disclaimer</a></li>
       <li><a href="privacy.html">Privacy</a></li>
     </ul>
-    <p>No cookies and no ads. AurOS collects nothing about you. GitHub, which hosts this site, keeps its own records of the internet addresses that visit.</p>
+    <p>No cookies and no ads. This site collects nothing about you. GitHub, which hosts it, keeps its own records of the internet addresses that visit. Write to us: CONTACT_EMAIL.</p>
     <p>AurOS&rsquo;s own code is free software (MIT license). It includes programs by others, each under its own license: <a href="licenses.html">licenses and source code</a>. Set in Atkinson Hyperlegible Next (<a href="assets/fonts/OFL.txt">license</a>).</p>
-    <p>AurOS is built from Ubuntu 24.04 LTS software. It is not made, endorsed or supported by Canonical. Windows, Microsoft, Edge and BitLocker are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome is a trademark of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, or otherwise approved by Apple Inc. The names are used only to say what something resembles or works with.</p>
+    <p>AurOS includes software from Ubuntu 24.04 LTS, put together and changed by its maker. It is not made, endorsed or supported by Canonical. Windows, Microsoft, Edge, BitLocker, Defender and SmartScreen are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome and Safe Browsing are trademarks of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. Linux is the registered trademark of Linus Torvalds. Intel is a trademark of Intel Corporation. Other names are trademarks of their owners. AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, or otherwise approved by Apple Inc. The names are used only to say what something is made from, resembles or works with.</p>
     <!-- /legal-footer -->
   </div>
 </footer>

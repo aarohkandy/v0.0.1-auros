@@ -14,6 +14,7 @@ Writes (all committed, so a reviewer reads them and a build embeds them):
         similar licenses ask for the notice to travel with the program); the licenses of Ubuntu's
         programs are in /usr/share/doc/<program>/copyright on every AurOS computer
   rootfs/usr/share/doc/auros/LICENSE             AurOS's own license, beside the others
+  rootfs/usr/share/doc/auros/{TERMS,PRIVACY}     the Terms and the privacy page as text, on every AurOS computer (TERMS section 8)
 
 Nothing here is typed twice: the Wayland notices are cut out of the generated protocol files
 the compositor is built from, the font license is the one the website serves, the license
@@ -134,6 +135,11 @@ def md_to_text(md):
             out.append(""); out.append(line[3:]); out.append("-" * len(line[3:]))
         elif line.startswith("- "):
             out.append("  * " + line[2:])
+        elif line.startswith("|"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if all(re.fullmatch(r"-+", c) for c in cells):
+                continue
+            out.append("  * " + cells[0] + (": " + " -- ".join(c for c in cells[1:] if c) if len(cells) > 1 else ""))
         else:
             out.append(line)
     t = "\n".join(out)
@@ -146,6 +152,8 @@ def files():
         "docs/legal/notices/TERMS.txt": md_to_text(rd("docs/legal/TERMS.md")),
         "rootfs/usr/share/doc/auros/THIRD-PARTY-NOTICES": "AUROS: NOTICES OF THE PROGRAMS IT CARRIES\n\n" + NOTE + "\n\n" + third_party(False),
         "rootfs/usr/share/doc/auros/LICENSE": rd("LICENSE"),
+        "rootfs/usr/share/doc/auros/TERMS": md_to_text(rd("docs/legal/TERMS.md")),
+        "rootfs/usr/share/doc/auros/PRIVACY": md_to_text(rd("docs/legal/PRIVACY.md")),
     }
 
 

@@ -72,22 +72,26 @@ help pages (K), `build/aurbridge` resources and the Ready page (B/A2), `.github/
    the Ready-page lines and resources 200/202 in the installer, and the review log.
 
 ### B (installer: `src/aurbridge/wizard.c`, `build/aurbridge`), via the lead -- the exact strings
-`tools/legal/check.py` has dated allowances (until 2026-11-30) for the old absolute words in `wizard.c`;
-it goes red after that date, and green-without-allowance once these land.
+`tools/legal/check.py` has dated allowances (until 2026-11-30) for the old absolute words in `wizard.c`/`screen.c`; it goes red
+after that date, and green-without-allowance once these land. The skeptic review (`docs/legal/REVIEWS.md`) rewrote item 1.
 
-1. `page_ready` first row (now "Windows and all your files stay, and there is enough room for AurOS."):
-   `Windows and your files are kept, and there is enough room for AurOS.`
-2. One more G_INFO line on the same page, not blocking (it may replace another row to keep the page near
-   80 words and on 1366x768 without scrolling): `Any change to a drive carries some risk, so copy photos you can’t replace to a memory stick first.`
-3. DIRECTLY above the Install AurOS button, normal body size and contrast (NOT `C_QUIET`):
+1. `page_ready` first row (now "Windows and all your files stay, and there is enough room for AurOS.") becomes a row that
+   names the one real hazard, in her words (the text may be two rows; the page must still fit 1366x768 without scrolling):
+   `Windows and your files are kept. Setup makes Windows smaller to fit AurOS. If the power fails or the computer crashes during that step, Windows or your files could be damaged and might not come back. Copy anything you can’t replace to a memory stick first.`
+2. DIRECTLY above the Install AurOS button, normal body size and contrast (NOT `C_QUIET`):
    `By pressing Install AurOS you agree to the AurOS Terms.` and, beside or under it, a text button
    `Read the Terms` that opens an in-wizard read-only pane with resource 202 (works offline; no browser).
-   Write `terms accepted: v1, <timestamp>` to the install journal (local only). "v1" is the Terms' version
+   Write `terms accepted: v2, <timestamp>` to the install journal (local only). "v2" is the Terms' version
    (`docs/legal/TERMS.md` line 3). Keep Ready's one primary button `Install AurOS`; update the navtest strings.
-4. `page_welcome` subtitle (now "... Windows stays, with all your files. ..."): `AurOS is a free, simple new way to use this computer. Windows and your files are kept. If AurOS isn’t for you, you can go back to Windows.`
-5. `SAY(...)` for PAGE_READY (now "Ready to install. Windows and all your files stay on this computer. ..."): say
-   `Windows and your files are kept.` and then the risk sentence of item 2, then the rest.
-6. A `Licenses` button in the wizard footer that opens a read-only pane with resource 200.
+3. `page_welcome` subtitle (now "... Windows stays, with all your files. ..."): `AurOS is a free, simple new way to use this computer. AurOS is made to keep Windows and your files. If AurOS isn’t for you, you can go back to Windows.`
+   and the line "This only looks. Nothing on this computer is changed." is true only until the check passes: from then on the
+   five-gigabyte download is running into `C:\AurOS\` (`check_passed`/`download_begin`) and a close leaves the part that was
+   fetched there (`install_cancel`). Say so on the page the check ends on ("AurOS is downloading while you read; it uses several
+   gigabytes of data and room") -- the Terms and privacy page now say it, and S-22 (the room check ignores this download) is B/A2's.
+4. `SAY(...)` for PAGE_READY: say the new first row, then the rest.
+5. The install-stopped page (now "It stopped before the restart. Your files are safe. ..."): `Setup stopped. If Windows does not start, ask someone to help you.` plus the specific plain reason; never "safe".
+6. A `Licenses` button in the wizard footer (the exact word `Licenses`; `check.py --launch` looks for `L"Licenses"`) that
+   opens a read-only pane with resource 200.
 7. Resources (`src/aurbridge/aurbridge-info.rc` / `build/aurbridge`): RCDATA 200 = `docs/legal/notices/NOTICES.txt`
    (UTF-8), RCDATA 202 = `docs/legal/notices/TERMS.txt`. NOTICES.txt contains `@AUROS_RELEASES@`: stamp it with
    `sh tools/repo.sh releases` before embedding, as `build/forge` does for SOURCE-OFFER, and refuse a build
@@ -97,14 +101,16 @@ it goes red after that date, and green-without-allowance once these land.
    re-shot by D after 1-6 land; their alt text no longer repeats the old sentence.
 9. Not B's, for A2: `src/aurscreen/screen.c` "Putting Windows back exactly as it was." -> "Putting Windows back." and
    "Windows is back, with every file in it." is only true after the engine's own verification: keep it only if
-   it is shown after that check (it is a statement of what was just verified).
+   it is shown after that check. "Your Windows files are safe." (stopped screens) -> say what was verified.
+10. `docs/AURBRIDGE.md`-level facts the Terms now state and the installer should too: Fast Startup and hibernation are
+   turned off first (`phase_prepare`); after "No, go back to Windows" AurOS (about 28 GB) stays until Put Windows back.
 
 ### D (website)
 - Done by LEGAL (smallest edits, commit b1766ec): the legal footer block on index/guide/advanced/status/code-signing
   (generated: `python3 -I tools/legal/mkpages.py`; do not hand-edit between the `legal-footer` markers), the
   "Licenses and source code" link under both Get AurOS buttons (one `.under-get` rule in site.css), the softened claims,
   `code-signing.html` "plans to apply". `node tools/site/check.mjs`: 404 passed, 0 failed (homebase).
-- For D: `check.mjs` STALE list still says "updates itself" is false; since S5 it is true (update channel proven):
+- For D: `advanced.html` #room says "Setup shows both numbers before it changes anything" but `page_ready` shows no size (the 28 GB appears only when it blocks): either B adds the size to Ready or the sentence goes. `check.mjs` STALE list still says "updates itself" is false; since S5 it is true (update channel proven):
   the Terms say "AurOS gets security fixes ... while your computer is online" to stay clear of that regex until you update it.
 - A later `[latest]` publishes these pages: do it only after the two skeptic reviews in `docs/legal/REVIEWS.md` are marked done.
 

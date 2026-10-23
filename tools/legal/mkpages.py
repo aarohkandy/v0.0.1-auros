@@ -32,12 +32,8 @@ PAGES = [  # (markdown, page, title, description, show contents)
      "The licenses of the programs inside AurOS, and how to get their source code.", False),
 ]
 
-TM = ("Windows, Microsoft, Edge and BitLocker are trademarks of the Microsoft group of companies. "
-      "Mac and macOS are trademarks of Apple Inc. Google Chrome is a trademark of Google LLC. "
-      "Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. "
-      "AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, "
-      "or otherwise approved by Apple Inc. The names are used only to say what something resembles or works with.")
-UBUNTU = "AurOS is built from Ubuntu 24.04 LTS software. It is not made, endorsed or supported by Canonical."
+_TM = open(os.path.join(ROOT, "docs/legal/TRADEMARKS.txt"), encoding="utf-8").read().strip().split("\n")
+UBUNTU, TM = _TM[0], _TM[1]    # docs/legal/TRADEMARKS.txt is the one place these are written
 
 
 def smart(t):
@@ -115,7 +111,7 @@ FOOTER = """    <!-- legal-footer: written by tools/legal/mkpages.py, the same o
       <li><a href="disclaimer.html">Disclaimer</a></li>
       <li><a href="privacy.html">Privacy</a></li>
     </ul>
-    <p>No cookies and no ads. AurOS collects nothing about you. GitHub, which hosts this site, keeps its own records of the internet addresses that visit.</p>
+    <p>No cookies and no ads. This site collects nothing about you. GitHub, which hosts it, keeps its own records of the internet addresses that visit. Write to us: CONTACT_EMAIL.</p>
     <p>AurOS&rsquo;s own code is free software (MIT license). It includes programs by others, each under its own license: <a href="licenses.html">licenses and source code</a>. Set in Atkinson Hyperlegible Next (<a href="assets/fonts/OFL.txt">license</a>).</p>
     <p>%s %s</p>
     <!-- /legal-footer -->""" % (html.escape(UBUNTU, quote=False), html.escape(TM, quote=False))
