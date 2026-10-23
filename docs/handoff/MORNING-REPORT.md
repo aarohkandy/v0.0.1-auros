@@ -86,9 +86,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 - **THE NAME (decide before anything goes public): "AurOS" collides with registered marks** — Emergent Systems
   holds US reg. 4512239 AUROS in class 9 (software), and UserTesting rebranded as "Auros" (29 Sep 2026, filed in
-  4 countries). Recommendation: rename now (a find-and-replace today, a crisis after launch). A naming workflow is
-  vetting candidates (trademark + product + domain searches, then a skeptic tries to kill each); the shortlist will
-  be in docs/legal/NAMES.md. Evidence: docs/legal/NAME-SEARCH.md.
+  4 countries). Recommendation: rename now (a find-and-replace today, a crisis after launch). A first naming pass
+  (docs/legal/NAMES.md) was inconclusive (search budget ran out; weak candidates). If you have a name you like,
+  say it and the agents vet it properly; otherwise a second round of coined names runs next. Evidence: docs/legal/NAME-SEARCH.md.
 
 - **Legal, in order (docs/legal/COMPLIANCE.md §3):** (a) don't share the current prerelease link yet;
   (b) create one contact email someone reads (a free address is fine for now) and tell me it;
