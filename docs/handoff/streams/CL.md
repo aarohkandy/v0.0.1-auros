@@ -15,14 +15,15 @@
   (22 bits, 4.3 M hashes, 6.8 s in Node on a runner); forget → token gone
   (401); the service's captured log lines (11) hold no token, install id or
   wish words.
-- **Blocked on the owner**: every Claude call is refused, "This API key is
-  not scoped to a workspace". Fix = OWNER-SETUP §7a (a workspace "AurOS
-  Wishes" with a spend limit and a key in it → secret `ANTHROPIC_API`), or a
-  repository variable `ANTHROPIC_WORKSPACE_ID` (supported since a587cda).
-  Lead has asked him (2026-10-23). Then: Actions → cloud → Run workflow.
-- **Not yet measured** (needs the key fix): the potato/compass/adversarial
-  results on the real model, cost per wish (estimate ≈ $0.0001), Worker CPU
-  time on the wish path (Free plan allows 10 ms).
+- **Real model proven live** (run 39923358865, 2026-10-23 08:16Z, after the
+  owner's workspace-scoped key): 26/26 acceptance + adversarial cases right;
+  potato and compass examples exact; cost **$0.000089 per wish**, $0.000082 per
+  question; 1.2 s per wish, 2.3 s per question (service-side); no body, token,
+  id or Authorization header in the 12 captured live log lines.
+- Open: Worker CPU. The tail shows max 22 ms on one request in a run of 23
+  (p50 1 ms) with every outcome "ok"; the Free plan's limit is 10 ms. The next
+  run prints CPU per route (`test/tail-logs.mjs`); if wish/ask exceed ~8 ms
+  regularly, recommend the $5 Paid plan to the owner.
 
 ## Done (commits on main)
 
@@ -42,7 +43,14 @@
 - 3499c27 AI.md §5 rewritten as built.
 - a587cda token checked before the body (lead's finding); optional
   workspace id.
-- (this commit) docs/CLOUD.md, OWNER-SETUP §7, this file.
+- f58f672 docs/CLOUD.md, OWNER-SETUP §7, this file.
+- 0d31261 / e8e568f 21-bit proof of work (measured: ~2 s on a 2013 laptop),
+  outcome + CPU reporting in the log check.
+- 7eaf9b0 / 88ca38c / 330af0a the schema probe and the fix: the API refuses a
+  grammar for the whole wish schema ("compiled grammar is too large" from about
+  22 alternatives; vocabulary = 26 shapes; one generic action object is "too
+  complex"), so the wish is JSON text in `{kind, missing, wish_json}` and is
+  validated by `checkWish`. 31 tests.
 
 ## Decisions and interpretations (tell the lead if you change them)
 
@@ -62,18 +70,14 @@
 
 ## Next steps, in order
 
-1. When the owner's workspace key is in: run the cloud workflow; read the run
-   summary (live eval table, smoke, log check). Put the measured cost per wish
-   into `docs/CLOUD.md` §3 and here. If a case fails, tune `prompts.js`
-   (never loosen validation) and re-run.
-2. If the live eval shows `bad_request` about the output schema ("too
-   complex", unsupported keyword): `test/contract.test.js` encodes the known
-   limits; adjust `forApi` in `validate.js`.
-3. Check Worker CPU (Cloudflare dashboard → auros-wishes → Metrics → CPU
+1. Quality, not safety: Spanish "pon la pantalla más brillante" came back as
+   cannot/unclear (with an alt wish). Add a few non-English examples to
+   `prompts.js` if more cases like it show up; re-run `npm run live-eval`.
+2. Check Worker CPU (Cloudflare dashboard → auros-wishes → Metrics → CPU
    time). Over ~8 ms on the wish path → recommend the $5 Paid plan.
-4. With W1: the device client (`src/aurwish`) per AI.md §5 "Tokens and the
+3. With W1: the device client (`src/aurwish`) per AI.md §5 "Tokens and the
    device flow"; with S5: the `auros-wishes-config` package (CLOUD.md §6).
-5. With the lead/W2: the consent text (draft in CLOUD.md §4) into AI.md §1.4.
+4. With the lead/W2: the consent text (draft in CLOUD.md §4) into AI.md §1.4.
 
 ## Traps
 

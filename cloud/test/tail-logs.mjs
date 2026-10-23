@@ -18,5 +18,12 @@ writeFileSync(process.argv[3], lines.join("\n"));
 const outcomes = {};
 for (const e of events) outcomes[e.outcome] = (outcomes[e.outcome] || 0) + 1;
 const cpu = events.map((e) => e.cpuTime).filter((x) => typeof x === "number").sort((a, b) => a - b);
+const byPath = {};
+for (const e of events) {
+  if (typeof e.cpuTime !== "number") continue;
+  const path = (() => { try { return new URL(e.event?.request?.url).pathname; } catch { return "?"; } })();
+  (byPath[path] ??= []).push(e.cpuTime);
+}
+for (const [path, a] of Object.entries(byPath)) console.log(`  CPU ms ${path}: n ${a.length}, p50 ${a.sort((x, y) => x - y)[a.length >> 1]}, max ${a.at(-1)}`);
 console.log(`${events.length} events, ${lines.length} service log lines; outcomes ${JSON.stringify(outcomes)}` +
   (cpu.length ? `; CPU ms p50 ${cpu[cpu.length >> 1]}, max ${cpu.at(-1)} (Free plan limit 10)` : "; no CPU times in the tail events"));

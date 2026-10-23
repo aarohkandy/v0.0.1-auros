@@ -270,11 +270,17 @@ if set). A request whose estimated cost is over $0.01 is refused. Tokens on
 the `BANNED` list get 401. No cache of answers.
 
 **The model.** `claude-haiku-5-5`, thinking off, `max_tokens` 400 (`/wish`)
-and 300 (`/ask`), a fixed system prompt (prompt-cached) and structured
-output constrained to the wish schema (vocabulary enums kept; numeric,
-length and pattern limits checked after). Her words go in the user message,
-escaped, as data; everything else as quoted JSON. Anthropic 429/529 and
-timeouts: two retries with backoff inside a 15 s deadline, then 503.
+and 300 (`/ask`), a fixed system prompt (prompt-cached; the vocabulary, the
+emoji allowlist and four example answers) and structured output constrained
+to a small envelope `{kind, missing, wish_json}` (`{help_page_id, wish_json}`
+for Ask). The wish is JSON text inside the envelope, because the API refuses a
+grammar for the whole vocabulary (probed: it compiles about 20 alternatives,
+the vocabulary has 26 shapes); the service parses it and holds it to
+`docs/wish-v1.schema.json` plus the computer's lists, and answers `cannot` for
+anything that does not pass. Her words go in the user message, escaped, as
+data; everything else as quoted JSON. Anthropic 429/529 and timeouts: two
+retries with backoff inside a 15 s deadline, then 503. Measured: $0.000089 a
+wish, 1.2 s (docs/CLOUD.md §3a).
 
 **Privacy.** Logs: one line per request with route, status, latency,
 tokens, cost, `kind`/`missing`/`help_page_id` and a failure reason; never a

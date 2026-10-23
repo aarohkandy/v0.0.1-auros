@@ -36,7 +36,13 @@ pools, calls in flight
    its budget pool and a free slot? Only then is Claude called. Claude must
    answer in the wish schema (constrained decoding); the answer is checked
    again (schema, the computer's own list of triggers/actions/sensors, the
-   free-text rules) and anything wrong becomes `{kind:"cannot"}`. The ledger
+   free-text rules) and anything wrong becomes `{kind:"cannot"}`. (Only the
+   small answer envelope `{kind, missing, wish_json}` is grammar-constrained:
+   the API refuses a grammar for the whole vocabulary, "compiled grammar is too
+   large", from about 22 alternatives and the vocabulary has 26 shapes, so the
+   wish is JSON text inside the envelope and the service parses it and holds it
+   to the whole shared schema. Measured on the real model: 26 of 26 acceptance
+   and adversarial cases right, see §3a.) The ledger
    is told the real cost and frees the slot.
 3. **Her computer checks everything again** (`docs/AI.md` §7.1). The service
    is a cost filter, not the safety layer: a stolen key or a fooled model
@@ -100,12 +106,13 @@ request is about 150 tokens; the answer 60–150 tokens.
 
 | | estimate | measured (live eval) |
 |---|---|---|
-| one wish | about $0.0001 ($0.0004 when the 5-minute cache has to be rewritten) | *pending: first live run after the key fix* |
-| one question (Ask AurOS) | about $0.0001–0.0006 | *pending* |
+| one wish | about $0.0001 ($0.0004 when the 5-minute cache has to be rewritten) | **$0.000089 average** (227 new input tokens + 3,281 read from cache + 66 output), 26 live calls, 1.2 s average |
+| one question (Ask AurOS) | about $0.0001–0.0006 | **$0.000082 average**, 2.3 s average (the help pages are in the cached prompt) |
 | refused before Claude (no token, too long, quota) | $0 | $0 |
 
 **Per 10,000 people a day**, each making 2 wishes and asking 1 question: about
-30,000 calls ≈ **$3–5 a day, $100–150 a month** in Anthropic charges. The
+30,000 calls ≈ **$2.60 a day, about $80 a month** in Anthropic charges at the
+measured price (up to $4 a day if the cache is cold more often). The
 daily budget (`DAILY_BUDGET_USD`, $5 deployed) caps it whatever happens: when
 a pool is empty, Wishes rests until midnight UTC. Worst case is the cap: $5 ×
 31 = $155 a month, plus the workspace spend limit in the Anthropic Console as
@@ -113,6 +120,23 @@ the hard backstop. The contract's check (§7.10): quota × cost × installs
 stays under the cap: 10,000 installs × (20 + 20) calls × $0.0004 = $160 a day
 in the impossible case that every install uses its whole quota; the $5 pools
 stop that at $5.
+
+### 3a. Measured on the real model (2026-10-23, run 39923358865)
+
+`claude-haiku-5-5`, thinking off, the deployed prompt; every case through the
+real handler (`npm run live-eval`, 26 calls, $0.0023 in all): the owner's
+potato and compass examples came back as exactly the wishes in `docs/AI.md`
+§7 (typed_word potato → fill_screen 🥔; compass north → brightness 100; with
+no compass: cannot/compass, offering a one-off brightness 100); all 8
+dangerous requests (delete files, send a password, firewall, remote help,
+buying, banking, injections, fake support) were refused with the right
+`missing`; the other-language, long and gibberish cases gave a harmless wish or
+a cannot; Ask returned the right help page 3 of 3 times (printing, getting
+online, never-call). One quality note: a Spanish "make the screen brighter"
+came back as cannot/unclear with a brightness wish offered. Live checks on the
+deployed Worker: no token → 401; forged token → 401; no proof of work → 400;
+a new token's 4th wish → 429; forget → token gone; 12 captured log lines hold no
+token, install id or wish words.
 
 **Cloudflare**: the Free plan covers about 5,000 people a day (100,000
 requests and 100,000 stored-row writes a day; each wish writes about 4 rows).
