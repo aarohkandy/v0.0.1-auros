@@ -9,7 +9,7 @@ import autocannon from "autocannon";
 import Anthropic from "@anthropic-ai/sdk";
 import { createApp } from "../src/app.js";
 import { Ledger, MapStorage } from "../src/ledger.js";
-import { ALL, POTATO, message, register } from "./helpers.js";
+import { ALL, POTATO, message, register, withCountry } from "./helpers.js";
 
 const quick = process.argv.includes("--quick");
 
@@ -59,12 +59,12 @@ async function service({ maxInflight, mockPort }) {
   const server = await listen(async (req, res) => {
     const chunks = [];
     for await (const c of req) chunks.push(c);
-    const r = await handler(new Request(`http://127.0.0.1${req.url}`, { method: req.method, headers: req.headers, body: req.method === "GET" ? undefined : Buffer.concat(chunks) }));
+    const r = await handler(withCountry(new Request(`http://127.0.0.1${req.url}`, { method: req.method, headers: req.headers, body: req.method === "GET" ? undefined : Buffer.concat(chunks) })));
     res.writeHead(r.status, Object.fromEntries(r.headers));
     res.end(Buffer.from(await r.arrayBuffer()));
   });
   const tokens = [];
-  const app = { time, call: (path, body) => handler(new Request("http://x" + path, { method: "POST", headers: { "content-type": "application/json", "cf-ipcountry": "US" }, body: JSON.stringify(body) })) };
+  const app = { time, call: (path, body) => handler(withCountry(new Request("http://x" + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }))) };
   for (let i = 0; i < 1000; i++) tokens.push((await register(app, { bits: 4 })).token);
   return { server, tokens };
 }
@@ -84,7 +84,7 @@ async function scenario(name, { users, rate, maxInflight, rpm }) {
     amount: users,
     overallRate: rate || undefined,
     timeout: 30,
-    headers: { "content-type": "application/json", "cf-ipcountry": "US" },
+    headers: { "content-type": "application/json" },
     requests: [{ setupRequest: (req) => ({ ...req, body, headers: { ...req.headers, authorization: "Bearer " + tokens[i++ % tokens.length] } }) }],
   });
   const errs = {};

@@ -329,10 +329,20 @@ test("country gate: ALLOW_COUNTRIES configures it; * opens everywhere; Cloudflar
   const all = makeApp({ respond: () => wishOut(POTATO), env: { ALLOW_COUNTRIES: "*" } });
   const t3 = (await register(all, { country: null })).token;
   assert.equal((await all.call("/v1/wish", wishBody("potato"), { token: t3, country: "KP" })).status, 200);
-  // On Workers the edge's request.cf.country is used, not a header a client could send.
-  const req = new Request("https://wishes.test/v1/wish", { method: "POST", headers: { "cf-ipcountry": "US" }, body: "{}" });
-  Object.defineProperty(req, "cf", { value: { country: "DE" } });
-  assert.equal((await us.handler(req)).status, 403);
+  // Only the edge's request.cf.country counts. A client-sent cf-ipcountry header
+  // never does, and no cf object at all (not on Cloudflare) fails closed.
+  const sent = (cf, header) => {
+    const req = new Request("https://wishes.test/v1/wish", { method: "POST", headers: { "cf-ipcountry": header, authorization: "Bearer " + token }, body: JSON.stringify(wishBody("potato")) });
+    if (cf !== undefined) Object.defineProperty(req, "cf", { value: cf });
+    return us.handler(req);
+  };
+  assert.equal((await sent({ country: "DE" }, "US")).status, 403, "the edge says DE, the header says US: DE wins");
+  assert.equal((await sent(undefined, "US")).status, 403, "a header alone, no cf object: refused");
+  assert.equal((await sent({}, "US")).status, 403, "cf without a country: refused");
+  assert.equal((await sent({ country: 840 }, "US")).status, 403, "a non-string country: refused");
+  assert.equal((await sent({ country: "US" }, "DE")).status, 200, "the edge says US, the header says DE: US wins");
+  const reg = await us.call("/v1/register", { install_id: newInstallId(), consent_version: "1", pow: { day: dayOf(us.time.t), nonce: "1" } }, { country: null });
+  assert.equal(reg.status, 403, "register too");
 });
 
 test("a refusal from Claude is a cannot, with no retry", async () => {

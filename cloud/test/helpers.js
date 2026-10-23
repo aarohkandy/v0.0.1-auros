@@ -38,6 +38,13 @@ export function mockFetch(respond, calls = []) {
   };
 }
 
+// On Workers the edge puts request.cf.country on the request; here a test does.
+// No country (null, "") means no cf object at all, as outside Cloudflare.
+export function withCountry(req, country = "US") {
+  if (country) Object.defineProperty(req, "cf", { value: { country } });
+  return req;
+}
+
 export function makeApp({ respond = () => message({ kind: "cannot", missing: "other", wish: null }), env = {}, clock } = {}) {
   const calls = [];
   const logs = [];
@@ -46,11 +53,11 @@ export function makeApp({ respond = () => message({ kind: "cannot", missing: "ot
   const ledger = new Ledger(new MapStorage(), { budgetUsd: 5, quotaEstablished: 20, quotaNew: 3, establishDays: 7, registerPerNet: 3, maxInflight: 40, ...(env.ledger || {}) });
   const anthropic = new Anthropic({ apiKey: e.ANTHROPIC_API_KEY, fetch: mockFetch(respond, calls), maxRetries: 2, timeout: 8000 });
   const handler = createApp({ env: e, ledger, anthropic, log: (o) => logs.push(JSON.stringify(o)), now: () => time.t });
-  const call = (path, body, { token, ip = "203.0.113.7", method = "POST", raw, country = "US" } = {}) => handler(new Request("https://wishes.test" + path, {
+  const call = (path, body, { token, ip = "203.0.113.7", method = "POST", raw, country = "US" } = {}) => handler(withCountry(new Request("https://wishes.test" + path, {
     method,
-    headers: { "content-type": "application/json", "cf-connecting-ip": ip, ...(country ? { "cf-ipcountry": country } : {}), ...(token ? { authorization: "Bearer " + token } : {}) },
+    headers: { "content-type": "application/json", "cf-connecting-ip": ip, ...(token ? { authorization: "Bearer " + token } : {}) },
     body: method === "GET" ? undefined : raw ?? JSON.stringify(body),
-  }));
+  }), country));
   return { handler, call, calls, logs, ledger, time };
 }
 

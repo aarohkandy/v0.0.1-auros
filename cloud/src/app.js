@@ -48,8 +48,8 @@ export function config(env) {
 
 // Where Wishes is offered (docs/legal/COMPLIANCE.md AI-6). ISO 3166 codes,
 // comma-separated; "UK" is read as GB; "*" means everywhere; unset means the
-// default below. Cloudflare sets the country itself (a client cannot forge it);
-// an unknown country ("XX", Tor "T1") or none at all is refused.
+// default below. The country is request.cf.country, set by Cloudflare's edge (a
+// client cannot forge it); an unknown country ("XX", Tor "T1") or none is refused.
 export const DEFAULT_COUNTRIES = "US,GB,CA,AU";
 function countries(v) {
   const list = String(v === undefined || String(v).trim() === "" ? DEFAULT_COUNTRIES : v)
@@ -123,8 +123,10 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
   // refused elsewhere; forget and health are not (anyone may delete her data).
   function inRegion(request) {
     if (cfg.countries === null) return true;
-    const c = String(request.cf?.country ?? request.headers.get("cf-ipcountry") ?? "").toUpperCase();
-    return cfg.countries.has(c);
+    // Only the edge's own value: a header a client could send is never read.
+    // No value (not running on Cloudflare) fails closed.
+    const c = typeof request.cf?.country === "string" ? request.cf.country.toUpperCase() : "";
+    return c !== "" && cfg.countries.has(c);
   }
 
   // The kill switch (docs/CLOUD.md section 0): a daily budget of 0 answers every

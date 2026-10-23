@@ -41,7 +41,7 @@ default `US,GB,CA,AU` (`UK` is read as `GB`; `*` means everywhere). Register,
 wish and ask answer `403 {"error":"region","text":"Wishes is not available in
 your country yet."}` from anywhere else, including from a token made at home
 while travelling; `/v1/forget` and `/v1/health` are never refused. The country
-is Cloudflare's own `request.cf.country` (a client cannot set it); an unknown
+is Cloudflare's own `request.cf.country` (a client cannot set it, and a `cf-ipcountry` header is never read); an unknown
 country or Tor is refused; the country itself is never logged. Narrowing it to
 `US` for the first cohort is the same kind of edit.
 
