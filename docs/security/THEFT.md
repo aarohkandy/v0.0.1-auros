@@ -365,11 +365,13 @@ sizes and the header check, Adiantum.
 
 **`tools/theftvm.sh`** on the real image: OVMF Secure Boot with
 Microsoft's keys, swtpm as a TPM 2.0, her PIN typed as key presses into
-the VM, screens taken. Five runs, all green (summaries and pictures in
-`docs/results/theft/`):
+the VM, screens taken. Runs, all green (summaries and pictures in
+`docs/results/theft/`; the first two rows are the decided configuration):
 
 | Run | Checks | What it adds |
 |---|---|---|
+| **decided default: no PCR**, AES-NI, TPM | 26 | everything below except the PCR 7 re-seal: after a dbx update the PIN just works (`vm-decided-aes-none.txt`) |
+| **decided default: no PCR**, no AES (Adiantum), TPM | 26 | the same on the Adiantum drive (`vm-decided-noaes-none.txt`) |
 | AES-NI, key sealed to PCR 7 | 29 | in-place encryption on the booted image, power pulled mid-pass and resumed, no plaintext on the raw disk, set-pin, the PIN page on screen, wrong PIN counted by the TPM, **a dbx update -> "this computer has changed" -> rescue code -> PIN again -> re-sealed -> same PIN next start**, a different chip -> same path |
 | no AES (Adiantum), PCR 7 | 29 | the same, on the Adiantum drive |
 | AES-NI, no PCR | 25 | a dbx update changes nothing: the PIN just works |

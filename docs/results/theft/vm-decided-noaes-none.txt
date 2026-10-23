@@ -1,0 +1,47 @@
+AurOS's encrypted drive and PIN, in a VM with Secure Boot and a TPM 2.0, on a CPU without AES instructions, key sealed to no PCR
+    the image is given cryptsetup-bin and the TPM libraries            ok
+    the plain disk holds her letter in the clear (the check below can see it) ok
+  1  plain AurOS: lockctl prepare
+    AurOS started plain and reported                                   ok
+    her look, read from the running system: background #none, the page default, warnings #none
+    -rwxr-xr-x 1 root root 72624 Oct 12 07:36 /usr/bin/systemd-cryptenroll
+    the current menu: 4 entries, 2 superusers line(s), 5 lockdown lines
+    the guest wrote the CURRENT menu (locked, with the Windows line) before the lock was armed ok
+    lockctl prepare armed it                                           ok
+    the kernel, initramfs and menu are on the EFI partition            ok
+  2  encrypting in place, a power cut, the pass, the first PIN
+    the start encrypted in place and AurOS came up on it               ok
+    auros-lock: the drive is being encrypted (xchacha12,aes-adiantum-plain64, header sector size 512: as asked)
+    the power was pulled while the pass ran                            ok
+    the next start resumed the pass and finished it (2 s (this start)) ok
+    her letter is intact                                               ok
+    set-pin gave a 24-number rescue code                               ok
+    the PIN is sealed in the VM's TPM                                  ok
+    no AES instructions: the drive uses Adiantum                       ok
+    pass:      [   32.990065] auros lockctl[467]: lockctl: encrypting the r|[   35.002694] auros lockctl[467]: lockctl: the whole drive |
+    aes-xts:       aes-xts        512b       240.9 MiB/s       231.9 MiB/s
+    adiantum:  
+    read, through the encryption: 1073741824 bytes (1.1 GB, 1.0 GiB) copied, 1.84389 s, 582 MB/s
+    read, the raw disk:           1073741824 bytes (1.1 GB, 1.0 GiB) copied, 0.101291 s, 10.6 GB/s
+    write, through the encryption: 536870912 bytes (537 MB, 512 MiB) copied, 1.06708 s, 503 MB/s
+    the raw disk holds no line of her letter any more                  ok
+  3  the PIN page
+    a full-screen AurOS page, not a console (89% her background, 1280x800) ok
+    power on to PIN page: 14 s
+    a wrong PIN: the page says it did not work                         ok
+    ...in her warning colour, on the page                              ok
+    the right PIN started AurOS                                        ok
+    aurlock-pin: PIN open in 143 ms (the TPM's unseal, KVM)
+    the chip counted the wrong PIN (counter=1)                         ok
+  4  a dbx update in the firmware
+    bound to no PCR: after the dbx update the PIN still starts AurOS   ok
+  5  a different security chip
+    the page knows the computer changed (not "wrong PIN")              ok
+    the rescue code opened the drive                                   ok
+    she chose her PIN again and AurOS started                          ok
+    the new PIN was sealed again (in the new chip)                     ok
+  6  the new PIN, in the new chip
+    the new PIN starts AurOS                                           ok
+    her letter is still intact                                         ok
+
+  26 checks, all ok
