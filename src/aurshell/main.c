@@ -438,9 +438,18 @@ static void input_open_all(input_set *s, int grab)
  * is not decoration: without it the pointer vanishes over a pale
  * wallpaper on a light theme, and a pointer you cannot find is the
  * fastest way to make someone believe the machine has frozen. */
-static void paint_cursor(surface *s, int x, int y, uint32_t fill, uint32_t edge)
+/* About 32 px, and 48 at 150% text (DESIGN-DIRECTION §3, Input): the glyph
+ * below is 15 rows, drawn at a whole-number scale so its edges stay sharp.
+ * Black with a white outline, on every theme: the pointer is the one thing
+ * on screen that must be found on any wallpaper. */
+static void paint_cursor(surface *s, int x, int y, float text_scale)
 {
     if (x < 0 || y < 0) return;
+    const uint32_t fill = 0x101214u, edge = 0xFFFFFFu;
+    float ts = (text_scale > 0.1f) ? text_scale : 1.f;
+    int sc = (int)(2.f * (ts < 1.f ? 1.f : ts) + 0.5f);
+    if (sc < 2) sc = 2;
+    if (sc > 4) sc = 4;
     static const char *glyph[] = {
         "X.........",
         "XX........",
@@ -462,7 +471,10 @@ static void paint_cursor(surface *s, int x, int y, uint32_t fill, uint32_t edge)
         for (int c = 0; glyph[r][c]; c++) {
             char g = glyph[r][c];
             if (g == '.') continue;
-            draw_blend_px(s, x + c, y + r, g == '#' ? fill : edge, 1.f);
+            for (int dy = 0; dy < sc; dy++)
+                for (int dx = 0; dx < sc; dx++)
+                    draw_blend_px(s, x + c * sc + dx, y + r * sc + dy,
+                                  g == '#' ? fill : edge, 1.f);
         }
 }
 
@@ -965,9 +977,7 @@ int main(int argc, char **argv)
          * frame the user sees, and leaving it out once cost an hour of
          * chasing a pointer bug that a screenshot would have shown. */
         if (c.mouse_x >= 0 && c.mouse_y >= 0)
-            paint_cursor(s, c.mouse_x, c.mouse_y,
-                         theme_color(&t, "col_fg_hi", 0xF3F7FD),
-                         theme_color(&t, "col_bg",    0x0B0E14));
+            paint_cursor(s, c.mouse_x, c.mouse_y, c.text_scale);
 
         uint32_t *o = malloc((size_t)png_w * png_h * sizeof *o);
         if (!o) { fprintf(stderr, "aurshell: out of memory\n");
@@ -1147,8 +1157,6 @@ int main(int argc, char **argv)
     c.mouse_x = disp->width / 2;
     c.mouse_y = disp->height / 2;
 
-    uint32_t cur_fill = theme_color(&t, "col_fg_hi", 0xF3F7FD);
-    uint32_t cur_edge = theme_color(&t, "col_bg",    0x0B0E14);
 
     struct timespec last;
     clock_gettime(CLOCK_MONOTONIC, &last);
@@ -1235,8 +1243,6 @@ int main(int argc, char **argv)
                 free_fonts(&f);
                 load_fonts(&f, &c);
                 build_wallpaper(&wall, disp->width, disp->height, &t);
-                cur_fill = theme_color(&t, "col_fg_hi", 0xF3F7FD);
-                cur_edge = theme_color(&t, "col_bg",    0x0B0E14);
                 fprintf(stderr, "aurshell: theme reloaded\n");
                 dirty = 1;
             }
@@ -1798,7 +1804,7 @@ int main(int argc, char **argv)
                 dirty = 1;
             }
 
-            paint_cursor(fb, c.mouse_x, c.mouse_y, cur_fill, cur_edge);
+            paint_cursor(fb, c.mouse_x, c.mouse_y, c.text_scale);
             /* A failed flip is not cosmetic: it means we no longer own
              * the display. Say so once rather than painting into the
              * void for the rest of the session. */

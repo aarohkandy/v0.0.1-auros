@@ -252,6 +252,9 @@ jobs:
               "$R" "$R" "$R" "$R" > "$RUNNER_TEMP/aurshell-look"
           chmod +x "$RUNNER_TEMP/aurshell-look"
           AURSHELL="$RUNNER_TEMP/aurshell-look" sh tools/lookboottest.sh 2>&1 | tee transcripts/lookboottest.txt
+      - name: cursortest (the pointer can be found: about 32 px, black and white)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: AURSHELL="$RUNNER_TEMP/aurshell-look" sh tools/cursortest.sh 2>&1 | tee transcripts/cursortest.txt
       - name: nmtest (the image's NetworkManager - the cable is managed, names resolve)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: RFS=work/forge/desktop/rootfs sh tools/nmtest.sh 2>&1 | tee transcripts/nmtest.txt

@@ -720,7 +720,7 @@ void settings_paint(shell_ctx *c, surface *s, shell_fonts *f)
     font *bodyf = f->small ? f->small : f->mid;
     font *tiny = f->tiny ? f->tiny : bodyf;
 
-    const char *title = S.page == SET_PAGE_TIME  ? "Where you are"
+    const char *title = S.page == SET_PAGE_TIME  ? "Your time zone"
                       : S.page == SET_PAGE_SHELL ? "How this works"
                       : S.page == SET_PAGE_LOOK  ? "Colors"
                       : S.page == SET_PAGE_WINDOWS ? "Put Windows back"
