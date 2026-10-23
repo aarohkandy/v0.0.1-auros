@@ -165,6 +165,59 @@ sh build/sign --check "$TMP/tampered.exe" >/dev/null 2>&1 \
   || ok "a byte changed afterwards breaks the signature"
 
 echo
+echo "  and what a signing service sends back (tools/signed-check.sh)"
+# release.yml sends the unsigned installer to SignPath and publishes what
+# comes back only if signed-check.sh passes it. Played here with the
+# throwaway CA standing in for SignPath's: the good file passes, and each
+# way the returned file could be wrong is refused.
+export AUROS_SIGN_NO_TS=1
+SC="sh tools/signed-check.sh"
+AUROS_SIGN_SUBJECT="AurOS Test Signer" $SC "$TMP/pristine.exe" "$EXE" >"$TMP/sc.txt" 2>&1 \
+  && ok "the built file, signed, is accepted" \
+  || bad "the built file, signed, is accepted" "$(tail -4 "$TMP/sc.txt")"
+AUROS_SIGN_SUBJECT="SignPath Foundation" $SC "$TMP/pristine.exe" "$EXE" >"$TMP/sc.txt" 2>&1 \
+  && bad "a signer with the wrong name is refused" "it was accepted" \
+  || ok "a signer with the wrong name is refused"
+if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+    AUROS_SIGN_CAFILE=/etc/ssl/certs/ca-certificates.crt AUROS_SIGN_SUBJECT="AurOS Test Signer" \
+        $SC "$TMP/pristine.exe" "$EXE" >"$TMP/sc.txt" 2>&1 \
+      && bad "a signer no public authority vouches for is refused" "it was accepted" \
+      || ok "a signer no public authority vouches for is refused"
+fi
+AUROS_SIGN_SUBJECT="AurOS Test Signer" $SC "$TMP/pristine.exe" "$TMP/tampered.exe" >"$TMP/sc.txt" 2>&1 \
+  && bad "a signed file changed afterwards is refused" "it was accepted" \
+  || ok "a signed file changed afterwards is refused"
+# A VALID signature on a file that is not the one we built: the thing a
+# signature check alone would wave through.
+cp "$TMP/pristine.exe" "$TMP/other.exe"
+python3 - "$TMP/other.exe" <<'EOPY'
+import sys
+f = open(sys.argv[1], 'r+b'); f.seek(4096); b = f.read(1)
+f.seek(4096); f.write(bytes([b[0] ^ 0xFF])); f.close()
+EOPY
+sh build/sign "$TMP/other.exe" >/dev/null 2>&1
+AUROS_SIGN_SUBJECT="AurOS Test Signer" $SC "$TMP/pristine.exe" "$TMP/other.exe" >"$TMP/sc.txt" 2>&1 \
+  && bad "a validly signed different file is refused" "it was accepted" \
+  || { grep -q 'not the built file' "$TMP/sc.txt" \
+         && ok "a validly signed different file is refused" \
+         || bad "a validly signed different file is refused" "refused, but not for that: $(tail -2 "$TMP/sc.txt")"; }
+AUROS_SIGN_SUBJECT="AurOS Test Signer" $SC "$TMP/pristine.exe" "$TMP/pristine.exe" >"$TMP/sc.txt" 2>&1 \
+  && bad "an unsigned file sent back as signed is refused" "it was accepted" \
+  || ok "an unsigned file sent back as signed is refused"
+AUROS_SIGN_SUBJECT="AurOS Test Signer" $SC "$EXE" "$EXE" >"$TMP/sc.txt" 2>&1 \
+  && bad "a build that was already signed is refused" "it was accepted" \
+  || ok "a build that was already signed is refused"
+# Odd length: signing pads the file to a multiple of 8 first, and the
+# padding is inside what is hashed.
+cp "$TMP/pristine.exe" "$TMP/odd.exe"; printf 'abc' >> "$TMP/odd.exe"
+cp "$TMP/odd.exe" "$TMP/odd-unsigned.exe"
+sh build/sign "$TMP/odd.exe" >/dev/null 2>&1
+AUROS_SIGN_SUBJECT="AurOS Test Signer" $SC "$TMP/odd-unsigned.exe" "$TMP/odd.exe" >"$TMP/sc.txt" 2>&1 \
+  && ok "a file whose length is not a multiple of 8 is accepted" \
+  || bad "a file whose length is not a multiple of 8 is accepted" "$(tail -3 "$TMP/sc.txt")"
+unset AUROS_SIGN_NO_TS 2>/dev/null; export AUROS_SIGN_NO_TS=1
+
+echo
 echo "  and the build's own signing step"
 # UNSIGNED BY DESIGN (the owner's decision, 2026-10-23): a release no
 # longer refuses to be built without a key, because there will not be

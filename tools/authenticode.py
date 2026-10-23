@@ -61,7 +61,11 @@ def digest(path):
         h.update(b[pos:cert_off])
         h.update(b[cert_off + cert_len:])
     else:
+        # A signing tool pads the file to a multiple of 8 before it
+        # appends the certificate table, and that padding is inside what
+        # it hashes: so the unsigned file is hashed as it will be padded.
         h.update(b[pos:])
+        h.update(b'\0' * (-len(b) % 8))
     return h.hexdigest()
 
 

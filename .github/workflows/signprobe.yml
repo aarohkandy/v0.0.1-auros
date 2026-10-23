@@ -12,20 +12,6 @@ jobs:
       - uses: actions/checkout@v4
       - run: sh tools/apt.sh osslsigncode openssl python3
       - run: |
-          set -u
-          osslsigncode --version | head -1
-          cd "$RUNNER_TEMP"
-          curl -fsSL -o u.exe https://github.com/aarohkandy/v0.0.1-auros/releases/download/v0.1.0-618726b/AurOS-Setup.exe
-          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=Test CA" -keyout ca.key -out ca.pem >/dev/null 2>&1
-          openssl req -newkey rsa:2048 -nodes -subj "/CN=SignPath Foundation/O=Test" -keyout c.key -out c.csr >/dev/null 2>&1
-          printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=codeSigning\n' > ext
-          openssl x509 -req -in c.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 2 -extfile ext -out c.pem >/dev/null 2>&1
-          osslsigncode sign -h sha256 -certs c.pem -key c.key -in u.exe -out s.exe >/dev/null 2>&1
-          ls -l u.exe s.exe
-          python3 -I "$GITHUB_WORKSPACE/tools/authenticode.py" digest u.exe
-          python3 -I "$GITHUB_WORKSPACE/tools/authenticode.py" digest s.exe
-          echo "--- osslsigncode on the signed file"
-          osslsigncode verify -CAfile ca.pem -ignore-timestamp -in s.exe 2>&1 | head -40 || true
-          echo "--- osslsigncode remove-signature, then compare"
-          osslsigncode remove-signature -in s.exe -out r.exe >/dev/null 2>&1; ls -l r.exe; cmp u.exe r.exe && echo "removed == original"
-          python3 -I "$GITHUB_WORKSPACE/tools/authenticode.py" digest r.exe
+          mkdir -p out
+          curl -fsSL -o out/aurbridge-wizard.exe https://github.com/aarohkandy/v0.0.1-auros/releases/download/v0.1.0-618726b/AurOS-Setup.exe
+          sh tools/signtest.sh 2>&1 | tail -60
