@@ -35,11 +35,21 @@
 /* ── small readers ───────────────────────────────────────────────── */
 static void utf8(const WCHAR *w, char *out, size_t n)
 {
+    char big[1024];
+    if (!n) return;
     out[0] = 0;
-    if (!w || !n) return;
-    if (!WideCharToMultiByte(CP_UTF8, 0, w, -1, out, (int)n, NULL, NULL))
-        out[n - 1] = 0;           /* truncated: still terminated */
-    out[n - 1] = 0;
+    if (!w) return;
+    /* all of it first, then cut: converting straight into a buffer that is
+     * too small returns nothing at all, and a long device name would
+     * become an empty one */
+    if (!WideCharToMultiByte(CP_UTF8, 0, w, -1, big, sizeof big, NULL, NULL)) big[sizeof big - 1] = 0;
+    size_t l = strlen(big);
+    if (l > n - 1) {
+        l = n - 1;
+        while (l > 0 && ((unsigned char)big[l] & 0xC0) == 0x80) l--;      /* not in the middle of a letter */
+    }
+    memcpy(out, big, l);
+    out[l] = 0;
 }
 
 static int reg_str(HKEY root, const char *sub, const char *val, char *out, size_t n)
