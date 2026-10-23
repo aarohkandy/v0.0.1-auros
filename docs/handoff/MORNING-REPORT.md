@@ -1,6 +1,6 @@
 # Morning report (for Aaroh) — kept current by the lead
 
-_Last updated: 07:55 UTC 2026-10-23 (00:55 your time). Newest at the top of each list._
+_Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead restarts itself at 01:18 your time._
 
 ## Done overnight (proof)
 
