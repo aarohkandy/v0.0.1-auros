@@ -55,7 +55,7 @@ e system-config-printer "Printers" "Set up a printer, or check one you have" "Sy
 e xarchiver "Zip files" "Open a zip file, or make one" "Archiving;Utility;" "true xarchiver %f"
 e org.gnome.Software "Software" "Add, remove or update software on this computer" "GNOME;GTK;System;PackageManager;" "true org.gnome.Software %U"
 
-export AUROS_APP_DIRS=$A HOME=/tmp/home AURSHELL_CLOCK=$(date -u -d '2025-10-23 10:30' +%s)
+export AUROS_APP_DIRS=$A HOME=/tmp/home AURSHELL_CLOCK=$(date -u -d '2025-10-23 09:41' +%s)
 mkdir -p $HOME
 cd /w
 r() { /tmp/aurshell --shell shells/$2.shell --conf /tmp/conf/shell.conf --policy /nonexistent --png $OUT/$1.png --size ${SIZE:-1280 800} ${3:+--open $3}; }

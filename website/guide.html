@@ -6,8 +6,8 @@
 <title>A page to print: AurOS</title>
 <meta name="description" content="A one-page guide to putting AurOS on a Windows computer, to print and leave next to it.">
 <meta name="color-scheme" content="light">
-<meta name="theme-color" content="#FBFAF7">
-<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='8'%20fill='%231C1916'/%3E%3Crect%20x='10'%20y='10'%20width='12'%20height='12'%20rx='2'%20fill='%23FBFAF7'%20transform='rotate(45%2016%2016)'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#F6F2E9">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Cpath%20d='M16%202L30%2016L16%2030L2%2016Z'%20fill='%230B5D4F'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
@@ -15,7 +15,7 @@
 
 <header class="bar">
   <div class="wrap bar-in">
-    <a class="brand" href="index.html"><span class="mark" aria-hidden="true"></span>AurOS</a>
+    <a class="brand" href="index.html"><svg class="mark" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M5 0L10 5L5 10L0 5Z"/></svg>AurOS</a>
     <a class="bar-link" href="index.html">Back to the simple page</a>
   </div>
 </header>
@@ -29,10 +29,10 @@
     </div>
   </section>
 
-  <section class="section sand" style="padding-top:clamp(40px,6vw,72px)">
+  <section class="section soft" style="padding-top:clamp(40px,6vw,72px)">
     <div class="wrap">
       <article class="sheet" aria-label="The page to print">
-        <p class="sheet-brand"><span class="mark" aria-hidden="true"></span>AurOS</p>
+        <p class="sheet-brand"><svg class="mark" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M5 0L10 5L5 10L0 5Z"/></svg>AurOS</p>
         <h2>Putting AurOS on this computer</h2>
         <p class="blanks"><span>Helping you: <i></i></span><span>Their phone: <i></i></span></p>
 
@@ -41,23 +41,23 @@
         <ol class="sheet-steps">
           <li><h3>Get it</h3>
             <p>On this computer, open <b>@AUROS_ADDRESS@</b> and press <b>Get AurOS</b>.</p>
-            <p>If the browser says the file <b>isn&rsquo;t commonly downloaded</b>, that is normal. Edge: <b>&hellip;</b> &rarr; <b>Keep</b> &rarr; <b>Show more</b> &rarr; <b>Keep anyway</b>. Chrome: <b>Download suspicious file</b>.</p></li>
+            <p>The browser asks if you trust it, because it doesn&rsquo;t know AurOS yet. Edge: <b>&hellip;</b> &rarr; <b>Keep</b> &rarr; <b>Show more</b> &rarr; <b>Keep anyway</b>. Chrome: <b>Download suspicious file</b>.</p></li>
           <li><h3>Open the file</h3>
-            <p>Windows says <b>Windows protected your PC</b>. That is normal too. Press <b>More info</b>, then <b>Run anyway</b>. Then <b>Yes</b> when it asks to make changes.</p>
-            <p>&ldquo;Smart App Control blocked an app&rdquo; instead? The website, step&nbsp;2, shows how to switch that off.</p></li>
-          <li><h3>Pick a look, press <span data-ui="wizard">Install AurOS</span></h3>
+            <p>Windows shows a blue box, <b>Windows protected your PC</b>, because it doesn&rsquo;t know AurOS yet. Press <b>More info</b>, then <b>Run anyway</b>. Then <b>Yes</b> when it asks to make changes.</p>
+            <p>&ldquo;Smart App Control blocked an app&rdquo; instead? Then AurOS can&rsquo;t go on this computer yet. Nothing was changed.</p></li>
+          <li><h3>Pick a look, then press <span data-ui="wizard">Install AurOS</span></h3>
             <p>AurOS checks the computer first, and says so before changing anything if it can&rsquo;t go on it.</p></li>
           <li><h3>It restarts once, by itself</h3>
             <p class="stopline">Leave it switched on until AurOS has started.</p></li>
-          <li><h3>&ldquo;Yes, it all works&rdquo;</h3>
-            <p><b data-ui="desktop">Yes, it all works</b> keeps AurOS. <b data-ui="desktop">No, go back to Windows</b> brings Windows back. Until you press Yes, Windows and your files are kept just as they were.</p></li>
+          <li><h3>&ldquo;<span data-ui="desktop">Does everything work?</span>&rdquo;</h3>
+            <p>Check your files and the internet first. <b data-ui="desktop">Yes, it all works</b>: AurOS starts every time from now on. <b data-ui="desktop">No, go back to Windows</b>: Windows starts the next time this computer starts, and AurOS stays on it, with anything saved in it. Until you answer, Windows and your files are kept just as they were.</p></li>
         </ol>
 
         <div class="sheet-cols">
           <div><h3>To start Windows</h3>
             <p>As the computer switches on, press the menu key (often <b>F12</b>, <b>F9</b> or <b>Esc</b>; the maker&rsquo;s logo often says which) and choose <b>Windows Boot Manager</b>.</p></div>
           <div><h3>To remove AurOS</h3>
-            <p>In AurOS: <b>Settings</b> &rarr; <b data-ui="desktop">Put Windows back</b>, then press <b data-ui="desktop">Remove AurOS and put Windows back</b> twice. Anything saved in AurOS goes with it.</p></div>
+            <p>In AurOS: <b>Settings</b>, then <b data-ui="desktop">Put Windows back</b>, then press <b data-ui="desktop">Remove AurOS and put Windows back</b> twice. Anything saved in AurOS goes with it, so copy what you want to keep onto a memory stick first.</p></div>
         </div>
         <p class="sheet-foot">AurOS will never phone you or ask for money. Every step, with pictures: @AUROS_ADDRESS@</p>
       </article>
@@ -73,7 +73,7 @@
       <li><a href="https://github.com/@AUROS_REPO@/issues">Ask a question</a></li>
       <li><a href="https://github.com/@AUROS_REPO@">The source code</a></li>
     </ul>
-    <p>No cookies, no tracking, no adverts. AurOS is free software (MIT licence).</p>
+    <p>No cookies, no tracking, no ads. AurOS is free software (MIT license). Set in Atkinson Hyperlegible Next (<a href="assets/fonts/OFL.txt">license</a>).</p>
   </div>
 </footer>
 <script>document.getElementById("print").addEventListener("click", function () { window.print(); });</script>

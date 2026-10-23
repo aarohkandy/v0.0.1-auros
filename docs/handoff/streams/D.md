@@ -30,15 +30,38 @@ phones/Macs get "open this on your Windows PC" + send-yourself-the-link.
   (Ferry import, self-updates, "switching on starts Windows", SAC can't be
   re-enabled, power cuts) refused. Mutation-tested (site and source).
 
-## Known red
-- `check.mjs`: "the page says bitlocker refuses, the code decrypts". The
-  site says what the lead ordered (a BitLocker PC is told it can't install
-  yet; D11: never decrypt). It goes green when stream B lands the refusal
-  (`fix_win.c` bitlocker-system no longer FIX_AUTO) or the pause
-  (`AB_CHOICE_BITLOCKER_PAUSE`, then the site must say "pauses").
+- docs/DESIGN-DIRECTION.md section 5 (D), applied: tokens (paper/soft/card,
+  ink links, one go-green #0B5D4F, marker yellow with ink edge, radii 8/12,
+  no shadows, light only); Atkinson Hyperlegible Next 400/700/800 subset woff2
+  self-hosted (`website/assets/fonts/`, OFL); the mark drawn as an SVG diamond;
+  Get AurOS 72px/30px/radius 12; Smart App Control walkthrough removed (one
+  sentence + "Show a helper how" to advanced.html#smart-app-control, K's);
+  browser/Windows steps reworded (rule 4, string 9); SIGNED branch deleted;
+  step 3 = AurOS Setup's three real screens with numbered circles + the
+  "Does everything work?" drawing in C's exact words (ring on Let me look
+  first); "Stuck? Show a helper" 48px button in each step card; time word
+  for word ("About 10 to 25 minutes. Older computers take longer."); no GB,
+  SSD or hard disk on the front page; "can't read the screen aloud yet";
+  K's one-truth sentences for No / Put Windows back; Mac gets Copy first;
+  no written address on the elsewhere box.
+- `check.mjs`: 203 checks green; claims now: BitLocker refuses (B, 1bd6f6e),
+  hold rearms, charger required, release tested (promote needs the e2e of that
+  exe). `tools/wordlint.sh`: no website lines.
+
+## Waiting on others
+- Pictures: AurOS Setup's are B's dark Wine renders (`setup-*.jpg` from
+  docs/shots/wizard/); swap for B's Light restyle when it lands (same names,
+  ring positions in index.html are percentages; recheck them). The desktop
+  pictures say "Firefox" and "All Programs" until C renames them (Internet,
+  All my programs); re-render with `tools/site/aurshell-shots/` then.
+  DESIGN-DIRECTION P0-3 asks for real content (a news page in Internet, 12
+  family photos) captured at 2x: needs C's screenshot set (C P2-16).
+- P2-13 (no printed address anywhere) conflicts with guide.html, which is
+  printed and must say where to go: owner decision on a short address.
+- The slashed zero in "10" is the font's (P2: AurOS Sans, C/B/D together).
 
 ## Half-done / next
-- docs/DESIGN-DIRECTION.md section 5 (D): in progress.
+- P2-12 phones: a 16:10 crop of the home screen above "Send yourself the link".
 
 ## How to verify
 ```sh

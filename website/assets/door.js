@@ -10,13 +10,6 @@
 (function () {
   "use strict";
 
-  /* The installer is not code-signed. If that ever changes, true hides
-   * the steps for Windows' unknown-file warnings (.unsigned-only) and
-   * shows the signed wording (.signed-only). */
-  var SIGNED = false;
-  /* What Windows would then show as "Verified publisher". */
-  var PUBLISHER = "AurOS";
-
   var root = document.documentElement;
   var $ = function (id) { return document.getElementById(id); };
   var get = $("get");
@@ -37,8 +30,6 @@
     }
   }
 
-  if (SIGNED) root.classList.add("signed");
-  Array.prototype.forEach.call(document.querySelectorAll(".publisher"), function (el) { el.textContent = PUBLISHER; });
   Array.prototype.forEach.call(document.querySelectorAll("[data-download]"), function (a) { a.href = DOWNLOAD_URL; });
 
   var ua = navigator.userAgent || "";
@@ -78,7 +69,6 @@
     $("getbox").hidden = true;
     $("elsewhere").hidden = false;
     var url = pageAddress();
-    $("page-address").textContent = url.replace(/^https?:\/\//, "").replace(/\/index\.html$/, "/");
     $("mail-link").href = "mailto:?subject=" + encodeURIComponent("AurOS, for my Windows computer") +
       "&body=" + encodeURIComponent("Open this on the Windows computer you want to change:\n\n" + url + "\n");
   }
