@@ -1524,6 +1524,24 @@ static void install_cancel(void)
     plat_let_sleep();
 }
 
+/* SHE IS LEAVING WITHOUT INSTALLING: the download stops, and what it put
+ * on the Windows drive (gigabytes, in \AurOS\) goes again. Only when the
+ * window goes -- a retry in the same window keeps it. A download that
+ * will not stop within half a minute keeps its files rather than having
+ * them deleted under it. */
+static void install_forget(void)
+{
+    ab_cancel_downloads();
+    if (g_dl_thread) {
+        if (WaitForSingleObject(g_dl_thread, 30000) != WAIT_OBJECT_0) return;
+        CloseHandle(g_dl_thread);
+        g_dl_thread = NULL;
+    }
+    if (g_ab_state == 1) return;          /* the engine is mid-step */
+    ab_forget_image(g_ab_choice.image_path[0] ? &g_ab_choice : &g_dl_choice,
+                    NULL, NULL);
+}
+
 /* ═══════════════════════════════════════════════════════════════════
  *  What Windows already knows about this user
  * ═══════════════════════════════════════════════════════════════════ */
@@ -4233,7 +4251,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         KillTimer(h, 1);
         /* Take back the one-shot start-up setting, if it was set. Not
          * when the window is going BECAUSE of the restart. */
-        if (!g_restarting) install_cancel();
+        if (!g_restarting) { install_cancel(); install_forget(); }
         PostQuitMessage(0);
         return 0;
 

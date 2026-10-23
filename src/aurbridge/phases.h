@@ -217,6 +217,12 @@ typedef struct {
      * on. ab_abort() is what turns it back on, and this is how it
      * knows it has to. */
     int      bitlocker_suspended;
+    /* WHAT ELSE ab_abort() PUTS BACK, each set the moment the thing is
+     * done: Fast Startup and hibernation (phase 2), the files under
+     * \EFI\AurOS (phase 3), and the "AurOS Installer" Boot####. */
+    int      fast_startup_off;
+    int      esp_written;
+    int      boot_made;
 } ab_machine;
 
 /* Every phase says what it is doing, because a person is watching a
@@ -236,6 +242,16 @@ int ab_run(ab_phase upto, const ab_choice *c, pf_report *r, ab_machine *m,
 /* Undo everything that can be undone, which before the restart is all
  * of it. Safe to call at any point, including twice. */
 void ab_abort(ab_machine *m, ab_say say, void *ud);
+
+/* WHEN SHE LEAVES WITHOUT INSTALLING. ab_cancel_downloads() makes any
+ * download in progress, on any thread, stop at its next progress report
+ * (and every later one, until the program exits); ab_forget_image()
+ * then deletes what the download put on the Windows drive -- the image,
+ * its .part and .manifest, and the pieces -- so closing the installer
+ * does not leave gigabytes behind. A retry in the same window does not
+ * call these: what has arrived is kept for it. */
+void ab_cancel_downloads(void);
+void ab_forget_image(const ab_choice *c, ab_say say, void *ud);
 
 /* Pure enough to test: what size the three partitions on the stick
  * should be for this machine and this image. Exposed because the

@@ -1161,6 +1161,23 @@ int plat_boot_next_clear(char *why, size_t wn)
     return 0;
 }
 
+int plat_boot_delete(uint16_t num, char *why, size_t wn)
+{
+    if (enable_env_privilege() != 0) {
+        snprintf(why, wn, "this computer would not let AurBridge tidy its "
+                          "start-up menu.");
+        return -1;
+    }
+    wchar_t name[16];
+    _snwprintf(name, 15, L"Boot%04X", num); name[15] = 0;
+    /* A zero-length write deletes it, as for BootNext. */
+    if (set_var(name, NULL, 0) != 0) {
+        why_of(why, wn, "the start-up entry could not be removed", GetLastError());
+        return -1;
+    }
+    return 0;
+}
+
 /* ── Secure Boot ─────────────────────────────────────────────────── */
 
 int plat_secure_boot(void)
@@ -1375,30 +1392,76 @@ int plat_file_append(const char *to, const void *buf, size_t n,
     return 0;
 }
 
+/* What plat_fast_startup_off found, so plat_fast_startup_restore can
+ * put it back: HiberbootEnabled's old value (-1: there was none) and
+ * whether hibernation was on (hiberfil.sys there). Recorded once, the
+ * first time, so a second call does not record its own work. */
+static int g_fs_saved, g_fs_hiberboot = -1, g_fs_hibfile;
+static const char *FS_KEY =
+    "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power";
+
+static void hiberfil_path(char *out, size_t n)
+{
+    char sd[8] = "C:";
+    DWORD k = GetEnvironmentVariableA("SystemDrive", sd, sizeof sd);
+    if (k == 0 || k >= sizeof sd) snprintf(sd, sizeof sd, "C:");
+    snprintf(out, n, "%s\\hiberfil.sys", sd);
+}
+
+static void powercfg_hibernate(const char *onoff, char *tail, size_t tn)
+{
+    char sys[MAX_PATH], cmd[MAX_PATH + 64];
+    if (!GetSystemDirectoryA(sys, sizeof sys)) snprintf(sys, sizeof sys, "C:\\Windows\\System32");
+    snprintf(cmd, sizeof cmd, "\"%s\\powercfg.exe\" /hibernate %s", sys, onoff);
+    plat_run(cmd, tail, tn);
+}
+
+void plat_fast_startup_restore(void)
+{
+    if (!g_fs_saved) return;
+    char tail[256];
+    if (g_fs_hibfile) powercfg_hibernate("on", tail, sizeof tail);
+    if (g_fs_hiberboot > 0) {
+        HKEY k;
+        DWORD v = (DWORD)g_fs_hiberboot;
+        if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, FS_KEY, 0, KEY_SET_VALUE, &k) == ERROR_SUCCESS) {
+            RegSetValueExA(k, "HiberbootEnabled", 0, REG_DWORD, (const BYTE *)&v, sizeof v);
+            RegCloseKey(k);
+        }
+    }
+    g_fs_saved = 0;
+}
+
 int plat_fast_startup_off(char *why, size_t wn)
 {
-    static const char *KEY =
-        "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power";
+    const char *KEY = FS_KEY;
     HKEY k;
     DWORD zero = 0;
+    if (!g_fs_saved) {
+        DWORD v = 0, sz = sizeof v, type = 0;
+        g_fs_hiberboot = RegGetValueA(HKEY_LOCAL_MACHINE, KEY, "HiberbootEnabled",
+                                      RRF_RT_REG_DWORD, &type, &v, &sz) == ERROR_SUCCESS
+                         ? (int)v : -1;
+        char hf[MAX_PATH];
+        hiberfil_path(hf, sizeof hf);
+        g_fs_hibfile = GetFileAttributesA(hf) != INVALID_FILE_ATTRIBUTES;
+        g_fs_saved = 1;
+    }
     if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, KEY, 0, KEY_SET_VALUE, &k) == ERROR_SUCCESS) {
         RegSetValueExA(k, "HiberbootEnabled", 0, REG_DWORD, (const BYTE *)&zero,
                        sizeof zero);
         RegCloseKey(k);
     }
-    char sys[MAX_PATH], cmd[MAX_PATH + 64], tail[256];
-    if (!GetSystemDirectoryA(sys, sizeof sys)) snprintf(sys, sizeof sys, "C:\\Windows\\System32");
-    snprintf(cmd, sizeof cmd, "\"%s\\powercfg.exe\" /hibernate off", sys);
-    plat_run(cmd, tail, sizeof tail);
+    char tail[256];
+    powercfg_hibernate("off", tail, sizeof tail);
 
     /* READ BACK, not assumed: a policy can forbid either change, and
      * the install must not go on believing it made one it did not. */
     DWORD v = 1, sz = sizeof v, type = 0;
     int reg_off = RegGetValueA(HKEY_LOCAL_MACHINE, KEY, "HiberbootEnabled",
                                RRF_RT_REG_DWORD, &type, &v, &sz) != ERROR_SUCCESS || v == 0;
-    char sd[8] = "C:", hib[MAX_PATH];
-    GetEnvironmentVariableA("SystemDrive", sd, sizeof sd);
-    snprintf(hib, sizeof hib, "%s\\hiberfil.sys", sd);
+    char hib[MAX_PATH];
+    hiberfil_path(hib, sizeof hib);
     int file_gone = GetFileAttributesA(hib) == INVALID_FILE_ATTRIBUTES;
     if (reg_off && file_gone) return 0;
     snprintf(why, wn,

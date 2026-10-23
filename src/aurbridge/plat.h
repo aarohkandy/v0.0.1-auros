@@ -313,6 +313,10 @@ void plat_release(void);
 int plat_boot_next(uint16_t num, char *why, size_t wn);
 /* And take it away again, for an abort before the restart. */
 int plat_boot_next_clear(char *why, size_t wn);
+/* Remove Boot#### `num`, which this program made (plat_boot_make), for
+ * an abort before the restart. BootOrder never named it, so nothing
+ * else changes. */
+int plat_boot_delete(uint16_t num, char *why, size_t wn);
 
 /* Secure Boot: -1 not known, 0 off, 1 on. On Windows, what Windows
  * itself records; in the simulation, the file secureboot ("1"). */
@@ -343,6 +347,11 @@ int plat_run(const char *cmdline, char *tail, size_t n);
  * `powercfg /hibernate off` (which also removes hiberfil.sys), then
  * both are read back. 0 when both are off, -1 with a sentence. */
 int plat_fast_startup_off(char *why, size_t wn);
+/* And back the way plat_fast_startup_off found them -- Fast Startup and
+ * hibernation each on again only if it was on before -- for an install
+ * that did not happen. Safe to call any number of times, and a no-op
+ * when nothing was switched off. */
+void plat_fast_startup_restore(void);
 
 /* ── keeping the computer awake ──────────────────────────────────────
  *

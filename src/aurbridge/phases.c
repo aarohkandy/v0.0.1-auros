@@ -653,12 +653,15 @@ static int image_hash(const char *path, unsigned char out[32],
 
 typedef struct { ab_progress prog; void *ud; } fetch_ctx;
 
+static volatile int g_ab_cancel;
+void ab_cancel_downloads(void) { g_ab_cancel = 1; }
+
 static int fetch_progress(uint64_t got, uint64_t total, void *ud)
 {
     fetch_ctx *f = ud;
     if (f && f->prog && total)
         f->prog((int)(got * 100 / total), f->ud);
-    return 0;
+    return g_ab_cancel;
 }
 
 /* ── the image, in pieces ──────────────────────────────────────────── */
@@ -769,7 +772,7 @@ static int piece_progress(uint64_t got, uint64_t total, void *ud)
         sp->prog(sp->lo + (int)((uint64_t)(sp->hi - sp->lo) * at / sp->total),
                  sp->ud);
     }
-    return 0;
+    return g_ab_cancel;
 }
 
 /* The reader gz_inflate pulls from: the pieces, in order, as one
@@ -832,7 +835,10 @@ static int image_write(void *ud, const uint8_t *buf, size_t n)
     }
     fmt_sha_feed(&w->sha, buf, n);
     w->written += n;
-    piece_progress(w->written, w->expect, &w->sp);
+    if (piece_progress(w->written, w->expect, &w->sp)) {
+        snprintf(w->why, w->wn, "stopped.");
+        return -1;
+    }
     return 0;
 }
 
@@ -889,6 +895,7 @@ static int ensure_image_pieces(const ab_choice *c, int present,
         int ok = 0;
         char last[PLAT_WHY] = "";
         for (int attempt = 0; attempt < 8 && !ok; attempt++) {
+            if (g_ab_cancel) { snprintf(why, n, "stopped."); return -1; }
             uint64_t have = 0;
             plat_file_size(path, &have);
             /* Longer than it should be, or whole and wrong (piece_ok has
@@ -1054,6 +1061,7 @@ static int ensure_image(const ab_choice *c, ab_say say, ab_progress prog,
 
     fetch_ctx fc = { prog, ud };
     for (int attempt = 0; attempt < 2; attempt++) {
+        if (g_ab_cancel) { snprintf(why, n, "stopped."); return -1; }
         if (attempt == 1) {
             /* Second time, from nothing: a resume onto a file that was
              * already wrong resumes being wrong.
@@ -1116,6 +1124,8 @@ static int phase_prepare(const ab_choice *c, pf_report *r, ab_machine *m,
      * stops here with nothing changed. The consent page says this
      * happens. */
     talk(say, ud, "switching off Windows' Fast Startup");
+    /* Marked before the call: a half-done switch-off is put back too. */
+    m->fast_startup_off = 1;
     if (plat_fast_startup_off(why, n) != 0) return -1;
     if (c->no_stick)
         return phase_prepare_nostick(c, m, say, prog, ud, why, n);
@@ -1535,6 +1545,7 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
 
     char dst[512];
     snprintf(dst, sizeof dst, "%s/EFI/AurOS/staging.efi", esp);
+    m->esp_written = 1;
     if (plat_file_copy(kern, dst, why, n) != 0) {
         plat_esp_close();
         plat_payload_free();
@@ -1730,6 +1741,7 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
                              : "\\EFI\\AurOS\\staging.efi",
                        chain ? "" : cmdline, &m->boot_entry, why, n) != 0)
         return -1;
+    m->boot_made = 1;
 
     /* BOOTNEXT AND NOT BOOTORDER. It is one-shot: the firmware clears
      * it as it uses it, so a machine that fails to start AurOS comes
@@ -1827,9 +1839,62 @@ void ab_abort(ab_machine *m, ab_say say, void *ud)
                           "straight back to Windows.", why);
         }
     }
-    /* Nothing else is undone because nothing else was done. The files
-     * on the EFI partition are in a directory AurOS made and are
-     * harmless; the memory stick is a memory stick. */
+    /* AND THE REST OF WHAT WAS DONE, in reverse. Each is ours and is
+     * taken back only if this run did it: the start-up entry (never in
+     * BootOrder, so only the entry goes), the files under \EFI\AurOS,
+     * and Fast Startup and hibernation as they were. The memory stick
+     * is a memory stick. */
+    if (m->boot_made && !m->bootnext_set) {
+        char why[PLAT_WHY];
+        if (plat_boot_delete(m->boot_entry, why, sizeof why) == 0)
+            m->boot_made = 0;
+        else
+            talk(say, ud, "the AurOS Installer entry is still in this "
+                          "computer's start-up menu (%s); it does nothing "
+                          "by itself", why);
+    }
+    if (m->esp_written) {
+        char esp[256], why[PLAT_WHY];
+        if (plat_esp_open(esp, sizeof esp, why, sizeof why) == 0) {
+            static const char *ours[] = { "staging.efi", "staging.img",
+                "shimx64.efi", "grubx64.efi", "mmx64.efi", "grub.cfg",
+                "choices.conf" };
+            for (size_t i = 0; i < sizeof ours / sizeof ours[0]; i++) {
+                char p[512];
+                snprintf(p, sizeof p, "%s/EFI/AurOS/%s", esp, ours[i]);
+                plat_file_delete(p, why, sizeof why);
+            }
+            plat_esp_close();
+            m->esp_written = 0;
+        }
+    }
+    if (m->fast_startup_off) {
+        plat_fast_startup_restore();
+        m->fast_startup_off = 0;
+        talk(say, ud, "Windows' Fast Startup is as it was");
+    }
+}
+
+void ab_forget_image(const ab_choice *c, ab_say say, void *ud)
+{
+    if (!c || !c->image_path[0]) return;
+    char p[700], w[PLAT_WHY];
+    static const char *ext[] = { "", ".part", ".manifest" };
+    for (size_t i = 0; i < sizeof ext / sizeof ext[0]; i++) {
+        snprintf(p, sizeof p, "%s%s", c->image_path, ext[i]);
+        plat_file_delete(p, w, sizeof w);
+    }
+    if (c->pieces_text && c->pieces_text[0]) {
+        static ab_pieces pc;
+        char dir[600];
+        dir_of(c->image_path, dir, sizeof dir);
+        if (ab_pieces_parse(c->pieces_text, &pc, w, sizeof w) == 0)
+            for (int i = 0; i < pc.n; i++) {
+                snprintf(p, sizeof p, "%s%s", dir, pc.p[i].name);
+                plat_file_delete(p, w, sizeof w);
+            }
+    }
+    talk(say, ud, "the downloaded copy of AurOS has been removed");
 }
 
 /* ── the selftest ────────────────────────────────────────────────── */

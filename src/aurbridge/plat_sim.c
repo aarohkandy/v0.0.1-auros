@@ -468,7 +468,8 @@ static int var_get(const char *name, char *val, size_t n)
         size_t l = strlen(v);
         while (l && (v[l-1] == '\n' || v[l-1] == '\r')) v[--l] = 0;
         snprintf(val, n, "%s", v);
-        found = 0;               /* the LAST one wins, like a rewrite */
+        /* The LAST one wins, like a rewrite; an empty one is a delete. */
+        found = v[0] ? 0 : -1;
     }
     fclose(f);
     return found;
@@ -569,6 +570,17 @@ int plat_boot_next_clear(char *why, size_t wn)
     return 0;
 }
 
+int plat_boot_delete(uint16_t num, char *why, size_t wn)
+{
+    char name[16];
+    snprintf(name, sizeof name, "Boot%04X", num);
+    if (var_set(name, "") != 0) {
+        snprintf(why, wn, "the start-up entry could not be removed");
+        return -1;
+    }
+    return 0;
+}
+
 /* ── Secure Boot, as a file or two ───────────────────────────────── */
 /* $AURBRIDGE_SIM/secureboot holds "1" or "0"; no file is "not known",
  * which is what every simulated machine was before this existed.
@@ -660,6 +672,18 @@ int plat_fast_startup_off(char *why, size_t wn)
     if (f) fclose(f);
     (void)why; (void)wn;
     return 0;
+}
+
+/* The mark a test reads to see the abort put Fast Startup back. */
+void plat_fast_startup_restore(void)
+{
+    char p[600];
+    simpath(p, sizeof p, "fast-startup-off");
+    if (access(p, F_OK) != 0) return;
+    unlink(p);
+    simpath(p, sizeof p, "fast-startup-restored");
+    FILE *f = fopen(p, "w");
+    if (f) fclose(f);
 }
 
 int plat_restart(char *why, size_t wn)

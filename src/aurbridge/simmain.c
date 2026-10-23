@@ -196,5 +196,13 @@ int main(int argc, char **argv)
            (unsigned long long)m.record_part_off,
            (unsigned long long)m.saved_part_off,
            m.boot_entry, (unsigned long long)m.run_id);
+    /* And taken back, the way closing the window takes it back
+     * (tools/aborttest.sh): AURBRIDGE_ABORT runs ab_abort on the armed
+     * machine, AURBRIDGE_FORGET then deletes the download. */
+    if (getenv("AURBRIDGE_ABORT")) {
+        ab_abort(&m, say, NULL);
+        if (getenv("AURBRIDGE_FORGET")) ab_forget_image(&c, say, NULL);
+        printf("aurbridge-report v1 verdict=aborted\n");
+    }
     return 0;
 }
