@@ -350,3 +350,17 @@ assigned to you if the Wishes service stops answering (`docs/ops/MONITOR.md`). I
 phone and turn on notifications for this repository so that issue reaches you; no other pager is set up until
 you choose one. The playbooks for what to do are in `docs/ops/INCIDENTS.md`. What it will cost as it grows:
 `docs/ops/COSTS.md`.
+
+## 9. The legal basics (stream LEGAL; the whole list is `docs/legal/COMPLIANCE.md` section 3)
+
+- **Never delete a release whose name starts with `sources-`.** Each one is the
+  source code that the licences of Linux, Firefox and the rest entitle people to,
+  and our written offer promises it for at least three years after the matching
+  AurOS release was last offered (`docs/legal/SOURCES.md`). Not from the
+  releases page, not with `gh release delete`, not to tidy up. A weekly check
+  (the `sources` workflow) fails if one has lost a file. Optional: also upload
+  a copy of each to the Internet Archive (free).
+- **A mailbox people can write to.** The written offer, the terms and the
+  privacy policy say `CONTACT_EMAIL` until you have one. A free address is
+  enough. When it exists: `python3 -I tools/legal/check.py set-contact you@example.org`
+  puts it in every document at once; commit and push.

@@ -1,0 +1,679 @@
+#!/usr/bin/env python3
+"""build/sources -- the corresponding source of what one AurOS release ships.
+
+Why this exists (docs/legal/COMPLIANCE.md LIC-1, LIC-3): the image holds
+hundreds of programs under the GNU GPL, LGPL and similar licences, and a
+person who has a copy of AurOS is entitled to the matching source. The
+duty is ours, not Ubuntu's: pointing at archive.ubuntu.com is not enough
+(old versions leave the pool; GPLv2 s3 wants the source "from the same
+place"). So every release gets a sibling release `sources-<tag>` that
+holds the exact source packages of the exact versions in the image.
+
+    build/sources plan   --root DIR [--extra F] [--host-list F]
+        what a release would need (no network).
+    build/sources make   --root DIR --out DIR --tag TAG [--commit SHA]
+                         [--own-archive FILE] [--extra F] [--host-list F]
+        fetch every source package, check every file against the sha256
+        its .dsc names, pack parts of at most --part-bytes, write
+        SOURCES.txt, PACKAGES.txt and SHA256SUMS, then verify the result.
+    build/sources verify --dir DIR [--root DIR | --status F]
+        re-check a published release as downloaded: hashes, that every
+        binary package in PACKAGES.txt has its source in a part (or its
+        pointer), and, given the image's own package list, that
+        PACKAGES.txt is that list.
+
+--root is a directory laid out like the image's root of which at least
+var/lib/dpkg/status exists (etc/auros/build-warnings and
+opt/firefox/application.ini are used when present). Exit status is not
+zero, with every failure named, if any package lacks its source.
+
+Sources come from Launchpad's permanent per-file URLs (they keep
+superseded versions), then archive.ubuntu.com's pool. Python 3 standard
+library only. tools/legal/sourcestest.py is the test, mutation-checked.
+"""
+import argparse, concurrent.futures, datetime, hashlib, json, os, re, shutil
+import sys, tarfile, tempfile, time, urllib.error, urllib.parse, urllib.request
+
+UA = "auros-build-sources (https://github.com/aarohkandy/v0.0.1-auros)"
+# (kind, url): "lp" is <url>/<source>/<version>/<file>; "pool" is Debian's
+# <url>/<a>/<source>/<file> (lib* sources use four letters).
+BASES = [("lp", "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles"),
+         ("lp", "https://launchpad.net/~mozillateam/+archive/ubuntu/ppa/+sourcefiles")] + \
+        [("pool", "https://archive.ubuntu.com/ubuntu/pool/" + c)
+         for c in ("main", "universe", "restricted", "multiverse")]
+MOZ = "https://archive.mozilla.org/pub/firefox/releases"
+# GitHub refuses release assets of 2 GiB and over (one report: an exact
+# 2 GiB file failed). Parts stay under 1.9 GiB, whole source packages
+# never split, so each part unpacks on its own.
+PART_BYTES = 1900 * 1024 * 1024
+
+
+class Fail(Exception):
+    pass
+
+
+# ── the package list ───────────────────────────────────────────────
+
+def parse_status(text):
+    """Installed binary packages of a dpkg status file, with the source
+    name and version dpkg itself would report (${source:Package},
+    ${source:Version}: the Source header's own version when it has one,
+    else the binary version)."""
+    out = []
+    for stanza in re.split(r"\n\n+", text.strip("\n")):
+        f = {}
+        key = None
+        for line in stanza.split("\n"):
+            if line[:1] in " \t":
+                continue
+            m = re.match(r"([A-Za-z0-9-]+):[ \t]*(.*)$", line)
+            if m:
+                key = m.group(1)
+                f[key] = m.group(2).strip()
+        if not f.get("Package"):
+            continue
+        if not f.get("Status", "").endswith(" installed"):
+            continue   # removed, config-files only: no binary of it ships
+        src, sv = f["Package"], f["Version"]
+        if f.get("Source"):
+            m = re.match(r"(\S+)(?:\s+\(([^)]+)\))?\s*$", f["Source"])
+            if not m:
+                raise Fail("cannot read the Source header of %s: %r" % (f["Package"], f["Source"]))
+            src = m.group(1)
+            if m.group(2):
+                sv = m.group(2)
+        out.append({"bin": f["Package"], "ver": f["Version"], "arch": f.get("Architecture", ""),
+                    "src": src, "srcver": sv, "maint": f.get("Maintainer", ""),
+                    "has_source": bool(f.get("Source"))})
+    if not out:
+        raise Fail("no installed package in the dpkg status file")
+    return out
+
+
+def classify(p):
+    if (p["bin"] == "auros" or p["bin"].startswith("auros-")) and p["maint"].startswith("AurOS "):
+        return "own"
+    if p["bin"] == "firefox" and not p["has_source"] and "Mozilla" in p["maint"]:
+        return "mozilla"
+    return "ubuntu"
+
+
+def moz_version(v):
+    return re.sub(r"~build\d+$", "", re.sub(r"^\d+:", "", v))
+
+
+def read_root(root):
+    st = os.path.join(root, "var/lib/dpkg/status")
+    if not os.path.isfile(st):
+        raise Fail("%s has no var/lib/dpkg/status" % root)
+    with open(st, encoding="utf-8", errors="replace") as fh:
+        pk = parse_status(fh.read())
+    ff = None
+    ini = os.path.join(root, "opt/firefox/application.ini")
+    if os.path.isfile(ini):
+        with open(ini, encoding="utf-8", errors="replace") as fh:
+            m = re.search(r"^Version=(\S+)", fh.read(), re.M)
+        if m:
+            ff = m.group(1)
+    return pk, ff
+
+
+def read_extra(path):
+    out = []
+    if not path:
+        return out
+    with open(path, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            w = line.split()
+            if len(w) != 2:
+                raise Fail("%s line %d: want 'source version'" % (path, n))
+            out.append(tuple(w))
+    return out
+
+
+def build_plan(packages, firefox_tarball, extras, tag_hint=""):
+    """-> (sources, pointers, own, rows)
+    sources: {(src, ver): sorted binaries}; pointers: {upstream ver: [bins]}."""
+    sources, pointers, own, rows = {}, {}, [], []
+    for p in packages:
+        k = classify(p)
+        rows.append((p["bin"], p["ver"], p["arch"], p["src"], p["srcver"], k))
+        if k == "own":
+            own.append(p["bin"])
+        elif k == "mozilla":
+            pointers.setdefault(moz_version(p["ver"]), []).append(p["bin"])
+        else:
+            sources.setdefault((p["src"], p["srcver"]), []).append(p["bin"])
+    if firefox_tarball and not any(r[0] == "firefox" for r in rows):
+        pointers.setdefault(moz_version(firefox_tarball), []).append("firefox (tarball in /opt/firefox)")
+        rows.append(("firefox", firefox_tarball, "amd64", "firefox", firefox_tarball, "mozilla-tarball"))
+    for s, v in extras:
+        sources.setdefault((s, v), []).append("(host build tool)")
+    return sources, pointers, own, sorted(set(rows))
+
+
+# ── fetching ───────────────────────────────────────────────────────
+
+def http(url, method="GET", timeout=60):
+    req = urllib.request.Request(url, method=method, headers={"User-Agent": UA})
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def retrying(fn, what, tries=4):
+    last = None
+    for i in range(tries):
+        try:
+            return fn()
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 404, 410):
+                raise
+            last = e
+        except (urllib.error.URLError, OSError, TimeoutError, Fail) as e:
+            last = e
+        if i + 1 < tries:
+            time.sleep(min(2 ** (i + 1), 16) * float(os.environ.get("SOURCES_SLEEP", "1")))
+    raise Fail("%s: %s" % (what, last))
+
+
+def parse_dsc(text):
+    """Fields of a .dsc, with the clearsign armour removed."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    if lines and lines[0].startswith("-----BEGIN PGP SIGNED MESSAGE-----"):
+        i = 1
+        while i < len(lines) and lines[i].strip() != "":
+            i += 1
+        lines = lines[i + 1:]
+        for j, l in enumerate(lines):
+            if l.startswith("-----BEGIN PGP SIGNATURE-----"):
+                lines = lines[:j]
+                break
+        lines = [l[2:] if l.startswith("- ") else l for l in lines]
+    f, key = {}, None
+    for l in lines:
+        if l[:1] in " \t" and key:
+            f[key] += "\n" + l.strip()
+            continue
+        m = re.match(r"([A-Za-z0-9-]+):[ \t]*(.*)$", l)
+        if m:
+            key = m.group(1)
+            f[key] = m.group(2).strip()
+        elif not l.strip():
+            key = None
+    return f
+
+
+def dsc_files(fields):
+    """[(name, size, sha256)] from Checksums-Sha256, checked against Files."""
+    sha = {}
+    for l in fields.get("Checksums-Sha256", "").split("\n"):
+        w = l.split()
+        if len(w) == 3:
+            sha[w[2]] = (int(w[1]), w[0])
+    names = set()
+    for l in fields.get("Files", "").split("\n"):
+        w = l.split()
+        if len(w) == 3:
+            names.add(w[2])
+    if not sha:
+        raise Fail("the .dsc has no Checksums-Sha256")
+    if names and names != set(sha):
+        raise Fail("the .dsc's Files and Checksums-Sha256 name different files")
+    for n in sha:
+        if "/" in n or n.startswith("."):
+            raise Fail("the .dsc names a file with a path: %r" % n)
+    return sorted((n, s, h) for n, (s, h) in sha.items())
+
+
+def noepoch(v):
+    return re.sub(r"^\d+:", "", v)
+
+
+def candidate_urls(bases, src, ver, name):
+    out = []
+    for kind, b in bases:
+        b = b.rstrip("/")
+        if kind == "pool":
+            pre = src[:4] if src.startswith("lib") else src[:1]
+            out.append("%s/%s/%s/%s" % (b, pre, src, name))
+        else:
+            out.append("%s/%s/%s/%s" % (b, urllib.parse.quote(src), ver, name))
+    return out
+
+
+def get_file(bases, src, ver, name, dest, want=None):
+    """First base that has it; streams to dest, returns (size, sha256).
+    A file that does not hash to `want` is an error, not a miss."""
+    miss = []
+    for url in candidate_urls(bases, src, ver, name):
+        def once(url=url):
+            h, n = hashlib.sha256(), 0
+            with http(url) as r, open(dest + ".part", "wb") as o:
+                while True:
+                    b = r.read(1 << 20)
+                    if not b:
+                        break
+                    h.update(b)
+                    n += len(b)
+                    o.write(b)
+            if want and (n, h.hexdigest()) != want:
+                raise Fail("%s is %d bytes sha256 %s, its .dsc says %d bytes %s"
+                           % (url, n, h.hexdigest(), want[0], want[1]))
+            os.replace(dest + ".part", dest)
+            return n, h.hexdigest()
+        try:
+            return retrying(once, url)
+        except urllib.error.HTTPError as e:
+            miss.append("%s -> %s" % (url, e.code))
+    raise Fail("not found (%s)" % "; ".join(miss))
+
+
+def fetch_source(bases, src, ver, outdir, dsc_only=False):
+    d = os.path.join(outdir, src)
+    os.makedirs(d, exist_ok=True)
+    dsc = "%s_%s.dsc" % (src, noepoch(ver))
+    dpath = os.path.join(d, dsc)
+    n, dsha = get_file(bases, src, ver, dsc, dpath)
+    with open(dpath, encoding="utf-8", errors="replace") as fh:
+        fields = parse_dsc(fh.read())
+    if fields.get("Source") != src or fields.get("Version") != ver:
+        raise Fail("%s says it is %s %s, not %s %s" % (dsc, fields.get("Source"), fields.get("Version"), src, ver))
+    total, files = n, [(dsc, n, dsha)]
+    for name, size, sha in dsc_files(fields):
+        p = os.path.join(d, name)
+        if dsc_only:
+            pass
+        elif os.path.isfile(p) and sha256_file(p) == sha:
+            pass
+        else:
+            get_file(bases, src, ver, name, p, (size, sha))
+        total += size
+        files.append((name, size, sha))
+    return {"src": src, "ver": ver, "dsc_sha": dsha, "files": files, "bytes": total}
+
+
+def sha256_file(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as fh:
+        for b in iter(lambda: fh.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def moz_pointer(ver, online):
+    base = "%s/%s" % (MOZ, ver)
+    name = "firefox-%s.source.tar.xz" % ver
+    url = "%s/source/%s" % (base, name)
+    if not online:
+        return {"ver": ver, "url": url, "sha256": "-", "bytes": 0}
+    def sums():
+        with http(base + "/SHA256SUMS") as r:
+            return r.read().decode("utf-8", "replace")
+    text = retrying(sums, base + "/SHA256SUMS")
+    sha = [l.split()[0] for l in text.split("\n") if l.split()[-1:] == ["source/" + name]]
+    if len(sha) != 1:
+        raise Fail("Mozilla's SHA256SUMS for %s does not list source/%s" % (ver, name))
+    def head():
+        with http(url, method="HEAD") as r:
+            return int(r.headers.get("Content-Length", "0") or 0)
+    return {"ver": ver, "url": url, "sha256": sha[0], "bytes": retrying(head, url)}
+
+
+# ── parts ──────────────────────────────────────────────────────────
+
+def pack_parts(pkgs, srcdir, outdir, tag, part_bytes, mtime):
+    """First-fit-decreasing, whole source packages. -> {(src, ver): part number}, count"""
+    order = sorted(pkgs, key=lambda p: (-p["bytes"], p["src"]))
+    bins = []   # [used, [pkgs]]
+    for p in order:
+        if p["bytes"] > part_bytes:
+            raise Fail("%s %s is %d bytes, more than one part (%d)" % (p["src"], p["ver"], p["bytes"], part_bytes))
+        for b in bins:
+            if b[0] + p["bytes"] <= part_bytes:
+                b[0] += p["bytes"]; b[1].append(p); break
+        else:
+            bins.append([p["bytes"], [p]])
+    where, n = {}, len(bins)
+    for i, (used, members) in enumerate(bins, 1):
+        name = os.path.join(outdir, "sources-%s-%dof%d.tar" % (tag, i, n))
+        with tarfile.open(name + ".tmp", "w", format=tarfile.GNU_FORMAT) as tf:
+            seen = set()
+            for p in sorted(members, key=lambda p: (p["src"], p["ver"])):
+                where[(p["src"], p["ver"])] = i
+                for fn, size, sha in p["files"]:
+                    arc = "sources/%s/%s" % (p["src"], fn)
+                    if arc in seen:
+                        continue   # the same orig tarball for two versions
+                    seen.add(arc)
+                    ti = tarfile.TarInfo(arc)
+                    ti.size, ti.mtime, ti.mode = size, mtime, 0o644
+                    with open(os.path.join(srcdir, p["src"], fn), "rb") as fh:
+                        tf.addfile(ti, fh)
+        os.replace(name + ".tmp", name)
+    return where, n
+
+
+def write_sums(outdir):
+    names = sorted(f for f in os.listdir(outdir) if f != "SHA256SUMS" and os.path.isfile(os.path.join(outdir, f)))
+    with open(os.path.join(outdir, "SHA256SUMS"), "w") as fh:
+        for n in names:
+            fh.write("%s  %s\n" % (sha256_file(os.path.join(outdir, n)), n))
+
+
+# ── verify ─────────────────────────────────────────────────────────
+
+def parse_tsv(path):
+    rows = []
+    with open(path, encoding="utf-8") as fh:
+        for l in fh:
+            if l.startswith("#") or not l.strip():
+                continue
+            rows.append(l.rstrip("\n").split("\t"))
+    return rows
+
+
+def index_parts(d):
+    """{archive path: (size, sha256)} over every part; and the dsc texts."""
+    idx, dscs = {}, {}
+    for n in sorted(os.listdir(d)):
+        if not re.match(r"sources-.*-\d+of\d+\.tar$", n):
+            continue
+        with tarfile.open(os.path.join(d, n)) as tf:
+            for m in tf:
+                if not m.isfile():
+                    continue
+                h = hashlib.sha256()
+                data = tf.extractfile(m)
+                keep = m.name.endswith(".dsc")
+                buf = []
+                for b in iter(lambda: data.read(1 << 20), b""):
+                    h.update(b)
+                    if keep:
+                        buf.append(b)
+                idx[m.name] = (m.size, h.hexdigest())
+                if keep:
+                    dscs[m.name] = b"".join(buf).decode("utf-8", "replace")
+    return idx, dscs
+
+
+def verify_dir(d, status=None, online=True, assets=None):
+    """Problems with a release as downloaded into d. With `assets` (the
+    release's asset list from the GitHub API: name, digest) the big parts
+    need not be on disk: their digests are compared instead, and the
+    listing is checked for consistency only (the weekly re-check)."""
+    bad = []
+    def no(msg):
+        bad.append(msg)
+    light = assets is not None
+    sums = os.path.join(d, "SHA256SUMS")
+    if not os.path.isfile(sums):
+        raise Fail("%s has no SHA256SUMS" % d)
+    listed = {}
+    with open(sums) as fh:
+        for l in fh:
+            if not l.strip():
+                continue
+            h, _, n = l.rstrip("\n").partition("  ")
+            listed[n] = h
+    if light:
+        digest = {x["name"]: x.get("digest") for x in assets}
+        for n, h in listed.items():
+            if n not in digest:
+                no("SHA256SUMS names %s, which is not a file of the release" % n)
+            elif digest[n] != "sha256:" + h:
+                no("%s on the release does not match its SHA256SUMS line" % n)
+        for n in digest:
+            if n != "SHA256SUMS" and n not in listed:
+                no("%s is on the release and not in SHA256SUMS" % n)
+    for n, h in listed.items():
+        p = os.path.join(d, n)
+        if light and n not in ("SOURCES.txt", "PACKAGES.txt"):
+            continue
+        if not os.path.isfile(p):
+            no("SHA256SUMS names %s, which is missing" % n)
+        elif sha256_file(p) != h:
+            no("%s does not match its SHA256SUMS line" % n)
+    for need in ("SOURCES.txt", "PACKAGES.txt"):
+        if need not in listed:
+            no("%s is not in SHA256SUMS" % need)
+    if bad:
+        return bad
+    pk = [r for r in parse_tsv(os.path.join(d, "PACKAGES.txt"))]
+    if status:
+        want = sorted((p["bin"], p["ver"]) for p in status)
+        have = sorted((r[0], r[1]) for r in pk if r[5] not in ("extra", "mozilla-tarball"))
+        if want != have:
+            gone = sorted(set(want) - set(have))[:5]
+            extra = sorted(set(have) - set(want))[:5]
+            no("PACKAGES.txt is not the image's package list (missing %s; not in the image %s)" % (gone, extra))
+    srows = parse_tsv(os.path.join(d, "SOURCES.txt"))
+    if light:
+        idx, dscs = {}, {}
+        parts = {int(m.group(1)) for m in (re.match(r"sources-.*-(\d+)of\d+\.tar$", n) for n in listed) if m}
+    else:
+        idx, dscs = index_parts(d)
+    have_src = {}
+    for r in srows:
+        if r[0] == "S":
+            have_src[(r[1], r[2])] = r
+    for r in pk:
+        b, v, a, s, sv, k = r[:6]
+        if k in ("ubuntu", "extra"):
+            row = have_src.get((s, sv))
+            if not row:
+                no("%s %s has no source: %s %s is not in SOURCES.txt" % (b, v, s, sv)); continue
+            if light:
+                if int(row[3]) not in parts:
+                    no("%s %s: its part %s is not a file of the release" % (b, v, row[3]))
+                continue
+            dscname = "sources/%s/%s_%s.dsc" % (s, s, noepoch(sv))
+            if dscname not in idx:
+                no("%s %s: %s is in no part" % (b, v, dscname)); continue
+            if idx[dscname][1] != row[4]:
+                no("%s: the .dsc in the parts is not the one SOURCES.txt recorded" % dscname); continue
+            try:
+                files = dsc_files(parse_dsc(dscs[dscname]))
+            except Fail as e:
+                no("%s: %s" % (dscname, e)); continue
+            for fn, size, sha in files:
+                got = idx.get("sources/%s/%s" % (s, fn))
+                if got is None:
+                    no("%s %s: %s is in no part" % (s, sv, fn))
+                elif got != (size, sha):
+                    no("%s %s: %s in the parts is not the file its .dsc names" % (s, sv, fn))
+        elif k in ("mozilla", "mozilla-tarball"):
+            ptr = [x for x in srows if x[0] == "P" and x[1] == "firefox"]
+            if not ptr:
+                no("%s %s: no pointer to Firefox's source in SOURCES.txt" % (b, v)); continue
+            if online:
+                try:
+                    h = http(ptr[0][3], method="HEAD"); h.close()
+                except Exception as e:
+                    no("Firefox source pointer %s does not answer: %s" % (ptr[0][3], e))
+        elif k == "own":
+            if not any(x[0] == "O" and x[3] in listed for x in srows):
+                no("%s: no archive of AurOS's own source is in this release" % b)
+        else:
+            no("%s: unknown kind %r" % (b, k))
+    return bad
+
+
+# ── commands ───────────────────────────────────────────────────────
+
+def cmd_plan(a):
+    pk, ff = read_root(a.root)
+    extras = read_extra(a.extra) + read_extra(a.host_list)
+    sources, pointers, own, rows = build_plan(pk, ff, extras)
+    print("%d binary packages: %d Ubuntu source packages, %d pointer(s), %d AurOS-own"
+          % (len(rows), len(sources), len(pointers), len(own)))
+    for (s, v), bins in sorted(sources.items()):
+        print("%s\t%s\t%s" % (s, v, ",".join(sorted(bins))))
+    for v, bins in sorted(pointers.items()):
+        print("firefox\t%s\t(pointer) %s" % (v, ",".join(bins)))
+    if a.resolve:
+        # Only the small .dsc files: does every source package exist where
+        # we fetch from, and how big will the release be?
+        bases = [tuple(b.split(":", 1)) for b in a.base] if a.base else BASES
+        work = tempfile.mkdtemp(prefix="sources-resolve.")
+        bad, total = [], 0
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
+                futs = {ex.submit(fetch_source, bases, k[0], k[1], work, True): k for k in sorted(sources)}
+                for fu in concurrent.futures.as_completed(futs):
+                    try:
+                        total += fu.result()["bytes"]
+                    except Exception as e:
+                        bad.append("%s %s: %s" % (futs[fu][0], futs[fu][1], e))
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        print("\n%d of %d source packages resolve; %.2f GB to fetch" % (len(sources) - len(bad), len(sources), total / 1e9))
+        for b in sorted(bad):
+            print("  MISSING " + b, file=sys.stderr)
+        return 1 if bad else 0
+    return 0
+
+
+def cmd_make(a):
+    t0 = time.time()
+    pk, ff = read_root(a.root)
+    extras = read_extra(a.extra) + read_extra(a.host_list)
+    sources, pointers, own, rows = build_plan(pk, ff, extras)
+    out = os.path.abspath(a.out)
+    work = os.path.abspath(a.work or os.path.join(out, ".work"))
+    os.makedirs(out, exist_ok=True)
+    for f in os.listdir(out):
+        if f != ".work":
+            raise Fail("%s is not empty (%s); a release is made in a clean directory" % (out, f))
+    bases = [tuple(b.split(":", 1)) for b in a.base] if a.base else BASES
+    print("%d binary packages -> %d source packages, %d pointer(s), %d AurOS-own"
+          % (len(rows), len(sources), len(pointers), len(own)), flush=True)
+    results, errors = {}, []
+    def one(key):
+        return key, fetch_source(bases, key[0], key[1], work)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as ex:
+        futs = {ex.submit(one, k): k for k in sorted(sources)}
+        for fu in concurrent.futures.as_completed(futs):
+            k = futs[fu]
+            try:
+                _, r = fu.result()
+                results[k] = r
+                print("ok   %s %s (%d files, %.1f MB)" % (k[0], k[1], len(r["files"]), r["bytes"] / 1e6), flush=True)
+            except Exception as e:
+                errors.append("%s %s: %s" % (k[0], k[1], e))
+                print("FAIL %s %s: %s" % (k[0], k[1], e), flush=True)
+    ptrs = {}
+    for v in sorted(pointers):
+        try:
+            ptrs[v] = moz_pointer(v, not a.no_online)
+            print("ok   firefox %s (pointer %s)" % (v, ptrs[v]["url"]), flush=True)
+        except Exception as e:
+            errors.append("firefox %s: %s" % (v, e))
+    if own and not a.own_archive:
+        errors.append("the image has AurOS's own packages (%s) and no --own-archive was given" % ", ".join(sorted(own)[:3]))
+    if errors:
+        print("\n%d package(s) without their source:" % len(errors), file=sys.stderr)
+        for e in errors:
+            print("  " + e, file=sys.stderr)
+        return 1
+    mtime = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
+    where, nparts = pack_parts(list(results.values()), work, out, a.tag, a.part_bytes, mtime)
+    ownname = ""
+    if a.own_archive:
+        ownname = os.path.basename(a.own_archive)
+        shutil.copyfile(a.own_archive, os.path.join(out, ownname))
+    when = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    with open(os.path.join(out, "PACKAGES.txt"), "w") as fh:
+        fh.write("# binary packages in AurOS %s, from the image's dpkg status\n" % a.tag)
+        fh.write("# binary\tversion\tarch\tsource\tsource-version\tkind\n")
+        for r in rows:
+            fh.write("\t".join(r) + "\n")
+        for s, v in extras:
+            fh.write("\t".join((s, v, "-", s, v, "extra")) + "\n")
+    with open(os.path.join(out, "SOURCES.txt"), "w") as fh:
+        fh.write("# AurOS %s: the corresponding source\n" % a.tag)
+        fh.write("# commit %s, prepared %s by build/sources\n" % (a.commit or "unknown", when))
+        fh.write("# S source version part dsc-sha256 files bytes binaries (a part is sources-%s-<part>of%d.tar)\n" % (a.tag, nparts))
+        fh.write("# P pointer: program version URL sha256 bytes (an unchanged upstream binary; source kept by its maker)\n")
+        fh.write("# O AurOS's own code: name tag archive sha256 (MIT)\n")
+        for (s, v), r in sorted(results.items()):
+            fh.write("S\t%s\t%s\t%d\t%s\t%d\t%d\t%s\n" % (s, v, where[(s, v)], r["dsc_sha"], len(r["files"]), r["bytes"],
+                                                         ",".join(sorted(sources[(s, v)]))))
+        for v, p in sorted(ptrs.items()):
+            fh.write("P\tfirefox\t%s\t%s\t%s\t%d\n" % (v, p["url"], p["sha256"], p["bytes"]))
+        if ownname:
+            fh.write("O\tauros\t%s\t%s\t%s\n" % (a.tag, ownname, sha256_file(os.path.join(out, ownname))))
+    write_sums(out)
+    shutil.rmtree(work, ignore_errors=True)
+    bad = verify_dir(out, pk, online=not a.no_online)
+    if bad:
+        print("\nthe release just made does not verify:", file=sys.stderr)
+        for b in bad:
+            print("  " + b, file=sys.stderr)
+        return 1
+    tot = sum(os.path.getsize(os.path.join(out, f)) for f in os.listdir(out))
+    print("\nmade %s: %d source packages in %d part(s), %.1f MB, %d s" % (out, len(results), nparts, tot / 1e6, time.time() - t0))
+    return 0
+
+
+def cmd_verify(a):
+    status = None
+    if a.root:
+        status, _ = read_root(a.root)
+    elif a.status:
+        with open(a.status, encoding="utf-8", errors="replace") as fh:
+            status = parse_status(fh.read())
+    assets = None
+    if a.api_json:
+        with open(a.api_json) as fh:
+            assets = json.load(fh)
+    bad = verify_dir(a.dir, status, online=not a.no_online, assets=assets)
+    if bad:
+        print("%d problem(s):" % len(bad), file=sys.stderr)
+        for b in bad:
+            print("  " + b, file=sys.stderr)
+        return 1
+    print("verified: every binary package in %s has its source" % a.dir)
+    return 0
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sp = ap.add_subparsers(dest="cmd", required=True)
+    for name in ("plan", "make", "verify"):
+        p = sp.add_parser(name)
+        if name != "verify":
+            p.add_argument("--root", required=True)
+            p.add_argument("--extra")
+            p.add_argument("--host-list")
+        else:
+            p.add_argument("--dir", required=True)
+            p.add_argument("--root")
+            p.add_argument("--status")
+            p.add_argument("--api-json", help="the release's assets from the GitHub API; the parts need not be on disk")
+        if name == "plan":
+            p.add_argument("--resolve", action="store_true", help="fetch the small .dsc files and say what is missing")
+            p.add_argument("--base", action="append")
+            p.add_argument("--jobs", type=int, default=6)
+        else:
+            p.add_argument("--no-online", action="store_true", help="do not ask Mozilla's servers (tests)")
+        if name == "make":
+            p.add_argument("--out", required=True)
+            p.add_argument("--tag", required=True)
+            p.add_argument("--commit", default="")
+            p.add_argument("--own-archive")
+            p.add_argument("--work")
+            p.add_argument("--base", action="append", help="kind:URL, kind lp or pool (tests)")
+            p.add_argument("--jobs", type=int, default=6)
+            p.add_argument("--part-bytes", type=int, default=PART_BYTES)
+    a = ap.parse_args(argv)
+    try:
+        return {"plan": cmd_plan, "make": cmd_make, "verify": cmd_verify}[a.cmd](a)
+    except Fail as e:
+        print("build/sources: %s" % e, file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

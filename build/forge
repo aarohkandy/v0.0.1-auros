@@ -1175,6 +1175,20 @@ stage_overlay() {
         fi
     done
     note "rootfs overlay: $(cd "$ROOT/rootfs" && find . -type f | wc -l) files"
+    # The written offer of source (docs/legal/SOURCES.md, stream LEGAL)
+    # names the releases page this build was published from: asked of
+    # tools/repo.sh like every other address, never typed into the tree.
+    if [ -f "$RFS/usr/share/doc/auros/SOURCE-OFFER" ]; then
+        _rel=$(sh "$ROOT/tools/repo.sh" releases) \
+            || die "tools/repo.sh has no releases address for the written offer of source"
+        sed "s|@AUROS_RELEASES@|$_rel|g" "$RFS/usr/share/doc/auros/SOURCE-OFFER" \
+            > "$RFS/usr/share/doc/auros/SOURCE-OFFER.stamped" \
+            && mv "$RFS/usr/share/doc/auros/SOURCE-OFFER.stamped" "$RFS/usr/share/doc/auros/SOURCE-OFFER" \
+            || die "could not write the releases address into the written offer of source"
+        if grep -q '@AUROS_[A-Z_]*@' "$RFS/usr/share/doc/auros/SOURCE-OFFER"; then
+            die "the written offer of source still has a placeholder nobody filled"
+        fi
+    fi
     chmod 755 "$RFS/usr/lib/auros/firstboot.sh" 2>/dev/null || true
     chmod 755 "$RFS/usr/lib/auros/choices.sh" 2>/dev/null || true
     chmod 755 "$RFS/usr/lib/auros/software-ready.sh" "$RFS/usr/lib/auros/not-first-hour" \
