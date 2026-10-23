@@ -518,6 +518,12 @@ jobs:
             echo '### canonical, with the repository rootfs/ laid over it'; echo '```'; cat canon-fixed.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           echo "canonical as built: ${{ steps.canon_built.outcome }}; with the repository rootfs/: ${{ steps.canon_fixed.outcome }}"
           [ "${{ steps.canon_fixed.outcome }}" = success ]
+      # A fresh build of main must pass `static` WHOLE (the policy, every apt
+      # source, Firefox, the base, the store, nothing phones Canonical, the
+      # channel and the image's key against the live published channel).
+      - name: static, as built
+        id: static_built
+        run: sudo bash tools/updatepolicytest.sh static work/rootfs 2>&1 | tee static-built.txt
       - name: summary (update origins)
         run: |
           { echo '### as built'; echo '```'; cat asbuilt.txt; echo '```'
