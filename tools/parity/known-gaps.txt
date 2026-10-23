@@ -1,3 +1,4 @@
 print  libnss-mdns is not in the image (WP-25 lists it): CUPS cannot resolve the found printer's .local name, so adding any network printer fails. Fix costs about 0.1 MB (see docs/results/apps.md).
 office  Writer and Calc are not in the image (WP-25 adds libreoffice-writer/calc/gtk3 + fonts: size in docs/results/apps.md); a .docx/.xlsx double-click opens the ARCHIVE MANAGER; xdg-open cannot type any file (opens the web browser).
 pdfform  Evince keeps a form box only once she leaves it: saving straight after typing loses the last box (decision on the default PDF viewer is WP-56).
+firefox  Firefox 158 asks her to accept its Terms of Use on first run (and says it sends diagnostic data to Mozilla) although the policy sets DisableTelemetry and SkipOnboarding. S2 owns the policy.

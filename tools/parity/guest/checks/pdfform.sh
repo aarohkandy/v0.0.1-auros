@@ -8,9 +8,9 @@ gio open "$HOME/Documents/form.pdf" &
 sleep 15
 snap pdfform-open
 act near pdfform-open pdfform.visible 390 170 1020 690 242 242 255 6 400
-click 742 299; sleep 2
+act clickbox pdfform-open 242 242 255 6 0 390 170 1020 690; sleep 2
 typing "Ada Lovelace"
-click 742 352; sleep 2
+act clickbox pdfform-open 242 242 255 6 1 390 170 1020 690; sleep 2
 typing "London"
 snap pdfform-filled
 # 1. Save straight away, the way she would

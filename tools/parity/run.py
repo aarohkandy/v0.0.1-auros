@@ -322,6 +322,30 @@ def near_count(path, x0, y0, x1, y1, rgb, tol):
     return n
 
 
+def find_boxes(path, x0, y0, x1, y1, rgb, tol, min_px=300):
+    """Centres (x, y) of the horizontal bands of a colour in a rectangle, top to bottom: where the fill-in boxes of a
+    form really are, whatever the shell's bar and the window frame do to the layout from one build to the next."""
+    w, h, bpp, rows = png_pixels(path)
+    bands, cur = [], []
+    for y in range(max(0, y0), min(h, y1)):
+        xs = [x for x in range(max(0, x0), min(w, x1), 2)
+              if all(abs(rows[y][x * bpp + i] - rgb[i]) <= tol for i in range(3))]
+        if len(xs) * 2 >= 40:
+            cur.append((y, xs))
+        elif cur:
+            bands.append(cur)
+            cur = []
+    if cur:
+        bands.append(cur)
+    out = []
+    for b in bands:
+        n = sum(len(xs) for _, xs in b)
+        if n * 2 >= min_px:
+            allx = [x for _, xs in b for x in xs]
+            out.append((sum(allx) // len(allx), (b[0][0] + b[-1][0]) // 2))
+    return out
+
+
 def changed_pct(a, b, x0, y0, x1, y1):
     """Percent of sampled pixels of a rectangle that differ clearly between two screenshots."""
     wa, ha, ba, ra = png_pixels(a)
@@ -438,6 +462,15 @@ def drive(q, out, timeout, checks):
                 if act == "snap":
                     q.screendump(os.path.join(shots, arg + ".png"))
                     say("screenshot", arg)
+                elif act == "clickbox":              # SHOT R G B TOL INDEX x0 y0 x1 y1
+                    shot, R, G, B, tol, idx, x0, y0, x1, y1 = arg.split()
+                    boxes = find_boxes(os.path.join(shots, shot + ".png"), int(x0), int(y0), int(x1), int(y1), (int(R), int(G), int(B)), int(tol))
+                    if int(idx) < len(boxes):
+                        q.click(*boxes[int(idx)])
+                        say("clicked box %s at %s" % (idx, boxes[int(idx)]))
+                    else:
+                        say("no box %s in %s: boxes found %s" % (idx, shot, boxes))
+                        notes.append("no box %s in %s: %s" % (idx, shot, boxes))
                 elif act == "firstrun":
                     # Firefox 158's first window asks her to accept Terms of Use (purple Continue button) before her
                     # page; the test presses it (a person has to) and records that it was there.
