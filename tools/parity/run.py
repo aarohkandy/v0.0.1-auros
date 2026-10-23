@@ -338,8 +338,8 @@ def changed_pct(a, b, x0, y0, x1, y1):
 # The first-run card ("Does everything work?") covers the whole desktop until she answers. Its layout has
 # changed between builds, so: if a button's green is where a design puts "Yes, it all works", press the
 # "Let me look first" that design has under it. (pixel of the green button, where to press)
-WELCOME = [((256, 307), (256, 377)),      # builds from 2026-10-23 noon: buttons on the left
-           ((264, 703), (620, 703))]      # the first design: buttons in a row at the bottom
+WELCOME = [((125, 300), (256, 377)),      # builds from 2026-10-23 noon: buttons on the left (a green pixel beside the label)
+           ((110, 690), (620, 703))]      # the first design: buttons in a row at the bottom
 GREEN = (11, 93, 79)
 
 
