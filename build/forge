@@ -1538,6 +1538,94 @@ stage_overlay() {
     note "aurinit, aurctl, aurwall, aurora, aurfirst, ferry installed"
 }
 
+# ── names that are not ours to wear ────────────────────────────────
+#
+# docs/legal/COMPLIANCE.md TM-1 and LIC-5; `tools/legal/check.py image`
+# reads the result, tools/hardentest.sh checks it at the seal.
+#
+# WHO THE IMAGE SAYS IT IS. base-files owns /usr/lib/os-release (not a
+# conffile: every update of base-files unpacks Ubuntu's over ours) and
+# /etc/lsb-release (a conffile, kept only when the update is told to
+# keep it). A local diversion sends the package's copies to *.distrib at
+# its next unpack and leaves the real names to us, so no update can put
+# "Ubuntu" back. (--no-rename: base-files is Essential, and dpkg-divert
+# warns that moving its files aside by hand is dangerous. Ours is written
+# over the old file at the real name instead.)
+# lsb_release -c still says noble and -r still 24.04: the tools that
+# read them (software-properties, a PPA) mean Ubuntu's series. Only the
+# name changes, and ${distro_id} with it, which is why the update policy
+# (53auros-updates) names Ubuntu's origins literally and why
+# tools/updatepolicytest.sh dryrun is the proof that fixes still install.
+divert_identity() {
+    local f
+    for f in /usr/lib/os-release /etc/lsb-release; do
+        [ -n "$(inchroot "dpkg-divert --list $f")" ] && continue
+        inchroot "dpkg-divert --local --no-rename --divert $f.distrib --add $f" >/dev/null \
+            || die "could not divert $f"
+    done
+}
+
+write_lsb_release() {
+    local rel cn
+    # Release and codename are Ubuntu's: read from the file as it is (Ubuntu's on
+    # the first run, our own copy of them on a re-run).
+    rel=$(sed -n 's/^DISTRIB_RELEASE=//p' "$RFS/etc/lsb-release")
+    cn=$(sed -n 's/^DISTRIB_CODENAME=//p' "$RFS/etc/lsb-release")
+    [ -n "$rel" ] && [ -n "$cn" ] \
+        || die "/etc/lsb-release names no release or codename; lsb_release -c would be empty."
+    printf 'DISTRIB_ID=%s\nDISTRIB_RELEASE=%s\nDISTRIB_CODENAME=%s\nDISTRIB_DESCRIPTION="%s %s"\n' \
+        "${brand_name// /}" "$rel" "$cn" "$brand_name" "$os_version" > "$RFS/etc/lsb-release"
+}
+
+# UBUNTU'S ICON THEME. adwaita-icon-theme, which GTK itself depends on,
+# depends on ubuntu-mono, and that on humanity-icon-theme: Ubuntu's own
+# artwork, which this image may not carry. They cannot just be purged --
+# apt would take adwaita and with it every GTK program's icons. So a
+# package with no files, auros-icon-theme, Provides ubuntu-mono (the
+# dependency stays met, dpkg and apt stay consistent), the two go, and a
+# pin keeps apt from fetching them back. The plan is checked first: if
+# apt would remove anything else, the build stops.
+unbrand_icons() {
+    pkg_installed ubuntu-mono || pkg_installed humanity-icon-theme || return 0
+    local d="$RFS/tmp/auros-icon-theme" plan p
+    rm -rf "$d"; mkdir -p "$d/DEBIAN"
+    cat > "$d/DEBIAN/control" <<EOL
+Package: auros-icon-theme
+Version: 1
+Architecture: all
+Maintainer: AurOS <noreply@auros.invalid>
+Section: misc
+Priority: optional
+Provides: ubuntu-mono
+Description: answers adwaita-icon-theme's need for ubuntu-mono
+ GTK depends on adwaita-icon-theme, which depends on ubuntu-mono, Ubuntu's own
+ artwork. This package has no files; it only answers that dependency, so the
+ artwork can be left out of AurOS.
+EOL
+    inchroot "dpkg-deb --root-owner-group --build /tmp/auros-icon-theme /tmp/auros-icon-theme.deb >/dev/null \
+              && dpkg -i /tmp/auros-icon-theme.deb >/dev/null" \
+        || die "could not install auros-icon-theme"
+    rm -rf "$d" "$RFS/tmp/auros-icon-theme.deb"
+    plan=$(inchroot "apt-get -s purge ubuntu-mono humanity-icon-theme" | awk '/^(Remv|Purg) /{print $2}')
+    for p in $plan; do
+        case $p in ubuntu-mono|humanity-icon-theme) ;;
+            *) die "purging Ubuntu's icon theme would also remove $p; build/forge unbrand_icons
+     must be taught what now depends on it." ;;
+        esac
+    done
+    inchroot "apt-get purge -y ubuntu-mono humanity-icon-theme" >/dev/null \
+        || die "could not purge ubuntu-mono"
+    install -d "$RFS/etc/apt/preferences.d"
+    {
+        echo "# Written by build/forge. Ubuntu's icon artwork is not in AurOS; auros-icon-theme"
+        echo "# answers the dependency on it."
+        for p in ubuntu-mono humanity-icon-theme; do
+            printf '\nPackage: %s\nPin: release a=*\nPin-Priority: -1\n' "$p"
+        done
+    } > "$RFS/etc/apt/preferences.d/auros-no-ubuntu-icons"
+    note "ubuntu-mono and humanity-icon-theme gone; auros-icon-theme answers adwaita's dependency"
+}
+
 # ── stage 4: identity, locale, users, policy ───────────────────────
 stage_configure() {
     step "stage 4/7  configure"
@@ -1549,6 +1637,7 @@ stage_configure() {
     # dangling /etc/os-release and a system that cannot name itself.
     rm -f "$RFS/etc/os-release"
     mkdir -p "$RFS/usr/lib"
+    divert_identity
     cat > "$RFS/usr/lib/os-release" <<EOL
 NAME="$brand_name"
 PRETTY_NAME="$brand_name $os_version"
@@ -1562,6 +1651,8 @@ HOME_URL="$brand_url"
 LOGO=auros
 EOL
     ln -sf ../usr/lib/os-release "$RFS/etc/os-release"
+    write_lsb_release
+    unbrand_icons
     # The release this image belongs to (build.yml hands over its tag): the written offer of source
     # tells her to look here to find the matching sources-<release> (docs/legal/SOURCES.md).
     if [ -n "${AUROS_BUILD_TAG:-}" ]; then

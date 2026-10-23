@@ -26,13 +26,18 @@ PATHS="etc/sysctl.d usr/lib/sysctl.d etc/sysctl.conf
        usr/share/auros/shells/rail.shell etc/apparmor.d/flatpak usr/bin/flatpak
        etc/chrony etc/NetworkManager/dispatcher.d usr/lib/auros/choices.sh
        etc/machine-id var/lib/dbus/machine-id etc/systemd/system-preset
-       etc/auros/policy.conf etc/systemd/logind.conf.d etc/ipp-usb"
+       etc/auros/policy.conf etc/systemd/logind.conf.d etc/ipp-usb
+       usr/lib/os-release etc/os-release etc/lsb-release var/lib/dpkg/diversions
+       etc/apt/preferences.d"
 mkdir -p "$T/good"
 for p in $PATHS; do
     [ -e "$RFS/$p" ] || [ -L "$RFS/$p" ] || continue
     mkdir -p "$T/good/$(dirname "$p")"
     cp -a "$RFS/$p" "$T/good/$p"
 done
+
+# (only the names in usr/share/icons are read, not the icons)
+[ -d "$RFS/usr/share/icons/Adwaita" ] && mkdir -p "$T/good/usr/share/icons/Adwaita"
 
 fail=0; n=0
 run() { RFS="$1" sh tools/hardentest.sh 2>&1; }
@@ -125,6 +130,16 @@ mutate "/var/lib/dbus/machine-id is the same file" "rm var/lib/dbus/machine-id; 
 mutate "the first start asks nothing on the console" "rm etc/systemd/system/systemd-firstboot.service"
 mutate "the first start changes no unit"     "sed -i '/^disable \*/d' etc/systemd/system-preset/00-auros.preset"
 mutate "is still enabled by it"              "sed -i '/^enable aurshell.service/d' etc/systemd/system-preset/00-auros.preset"
+
+# Names that are not ours (Ubuntu's)
+mutate "os-release does not name the image Ubuntu"  "sed -i 's/^NAME=.*/NAME=\"Ubuntu\"/' usr/lib/os-release"
+mutate "lsb-release does not name the image Ubuntu" "echo DISTRIB_ID=Ubuntu > etc/lsb-release"
+mutate "/usr/lib/os-release is diverted"    "sed -i '/^\/usr\/lib\/os-release\$/d' var/lib/dpkg/diversions"
+mutate "/etc/lsb-release is diverted"       "sed -i '/^\/etc\/lsb-release\$/d' var/lib/dpkg/diversions"
+mutate "ubuntu-mono (Ubuntu's icon artwork) is not in the image" "printf 'Package: ubuntu-mono\nStatus: install ok installed\nVersion: 1\n\n' >> var/lib/dpkg/status"
+mutate "humanity-icon-theme (Ubuntu's icon artwork) is not in the image" "mkdir -p usr/share/icons/Humanity"
+mutate "adwaita's dependency on ubuntu-mono is answered" "sed -i '/^Provides:.*ubuntu-mono/d' var/lib/dpkg/status"
+mutate "apt is told never to fetch Ubuntu's icon theme back" "rm etc/apt/preferences.d/auros-no-ubuntu-icons"
 
 # Console logins
 mutate "serial-getty@.service is masked"   "rm etc/systemd/system/serial-getty@.service"

@@ -424,6 +424,42 @@ if [ -f "$PRE" ]; then
     done
 fi
 
+# ── names that are not ours to wear ───────────────────────────────────
+#
+# The image does not say it is Ubuntu, and does not carry Ubuntu's icon
+# artwork (docs/legal/COMPLIANCE.md TM-1, LIC-5; tools/legal/check.py image
+# reads the same). base-files writes Ubuntu's os-release and lsb-release over
+# ours on every update unless both are diverted; ubuntu-mono cannot simply be
+# purged because GTK's adwaita-icon-theme depends on it, so a package with
+# no files answers that dependency instead. tools/unbrandtest.sh proves the
+# build's code; this reads the image it made.
+say ""
+say "Names that are not ours (Ubuntu's)"
+OSR=$(inroot /usr/lib/os-release); LSB=$(inroot /etc/lsb-release)
+if [ ! -f "$OSR" ]; then bad "os-release does not name the image Ubuntu" "no usr/lib/os-release"
+elif grep -E '^(NAME|PRETTY_NAME|ID)=' "$OSR" | grep -qi ubuntu; then bad "os-release does not name the image Ubuntu" "NAME, PRETTY_NAME or ID says Ubuntu"
+else ok "os-release does not name the image Ubuntu"; fi
+if grep -q '^DISTRIB_ID=' "$LSB" 2>/dev/null && ! grep -qi '^DISTRIB_ID=.*ubuntu' "$LSB"; then ok "lsb-release does not name the image Ubuntu (DISTRIB_ID)"
+else bad "lsb-release does not name the image Ubuntu (DISTRIB_ID)" "etc/lsb-release is Ubuntu's (or missing)"; fi
+for f in /usr/lib/os-release /etc/lsb-release; do
+    if grep -qx "$f" "$RFS/var/lib/dpkg/diversions" 2>/dev/null; then ok "$f is diverted: no update of base-files writes Ubuntu's over ours"
+    else bad "$f is diverted: no update of base-files writes Ubuntu's over ours" "var/lib/dpkg/diversions does not list it"; fi
+done
+for p in ubuntu-mono humanity-icon-theme; do
+    if installed $p || ls "$RFS"/usr/share/icons 2>/dev/null | grep -qi "${p%-icon-theme}"; then
+        bad "$p (Ubuntu's icon artwork) is not in the image" "dpkg lists it, or its icons are on the disk"
+    else ok "$p (Ubuntu's icon artwork) is not in the image"; fi
+done
+if installed adwaita-icon-theme; then
+    if awk 'BEGIN { RS = ""; FS = "\n" } /Status: install ok installed/ { for (i = 1; i <= NF; i++) if ($i ~ /^Provides:.*[ ,]ubuntu-mono([ ,(]|$)/) f = 1 } END { exit !f }' "$RFS/var/lib/dpkg/status"; then
+        ok "adwaita's dependency on ubuntu-mono is answered by a package of ours (apt stays consistent)"
+    else bad "adwaita's dependency on ubuntu-mono is answered by a package of ours (apt stays consistent)" \
+            "no installed package Provides ubuntu-mono: apt would call the image broken, or take GTK's icons out"; fi
+    if grep -qs 'Package: ubuntu-mono' "$RFS/etc/apt/preferences.d/auros-no-ubuntu-icons" && grep -qs 'Pin-Priority: -1' "$RFS/etc/apt/preferences.d/auros-no-ubuntu-icons"; then
+        ok "apt is told never to fetch Ubuntu's icon theme back"
+    else bad "apt is told never to fetch Ubuntu's icon theme back" "no etc/apt/preferences.d/auros-no-ubuntu-icons pinning ubuntu-mono to -1"; fi
+else bad "GTK's icons: adwaita-icon-theme is installed" "it is not: every GTK program would have no icons"; fi
+
 # ── 8. no login on any console ───────────────────────────────────────
 #
 # A login prompt is a question with no answer here (nobody has a password
