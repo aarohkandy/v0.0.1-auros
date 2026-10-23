@@ -458,9 +458,11 @@ def selftest():
             want("the claims check refuses %r" % phrase, check_claims(d), why)
         put("website/a.html", "<html><body><!-- untouched --><p>fine</p></body></html>")
         ok = not check_claims(d); print("%s  a comment is not a claim" % ("ok  " if ok else "FAIL")); bad += 0 if ok else 1
-        want("a pending phrase is refused once its date has passed", check_claims(ROOT, "2027-06-01"), "past its date")
-        # a phrase with a dated allowance passes today, but not for the public link, and C's adjacent literals are read as one
+        # a phrase with a dated allowance passes today, but not for the public link, and C's adjacent literals are read as one.
+        # (Written into the throwaway tree: the real repository has no pending phrase left to test with once every stream has
+        # reworded its screens, and a self-test that needs one in the real tree goes red the day the last one is fixed.)
         put("src/aurscreen/screen.c", 'static const char *a = "Your files are not touched.";\n')
+        want("a pending phrase is refused once its date has passed", check_claims(d, "2027-06-01"), "past its date")
         put("src/aurbridge/wizard.c", 'x = L"Windows stays, " L"with all your files. Fine.";\n')
         ok = not check_claims(d, "2026-10-23"); print("%s  a dated allowance passes the ordinary check" % ("ok  " if ok else "FAIL")); bad += 0 if ok else 1
         want("--launch refuses a phrase that only has a dated allowance", check_claims(d, "2026-10-23", launch=True), "not for the public link")
