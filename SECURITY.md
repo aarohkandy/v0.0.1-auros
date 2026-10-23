@@ -19,8 +19,8 @@ a security problem.
 > Maintainer note: GitHub's private vulnerability reporting must be
 > switched on once, in **Settings → Code security → Private
 > vulnerability reporting → Enable**. Until it is, the link above says
-> the feature is off; in that case write to the security contact listed
-> here: **[OWNER: add a security contact address before launch]**.
+> the feature is off; in that case write to the security contact:
+> **CONTACT_EMAIL**.
 
 Helpful things to include, as far as you can:
 
@@ -76,9 +76,11 @@ avoid harming anyone's data or privacy, and give us a reasonable chance
 to fix the problem before you publish, we will not pursue or support
 legal action against you for your research.
 
-> **[OWNER: this safe-harbour paragraph is a promise with legal weight.
-> Have it reviewed together with the drafts in `docs/legal/` before
-> launch.]**
+This promise is ours only. We cannot authorize testing of systems that
+belong to others (GitHub, Cloudflare, Anthropic, Ubuntu's and Mozilla's
+servers, your own internet provider): their rules apply to those. It is not
+legal advice, and it was written without a lawyer (decision D15,
+`docs/legal/README.md`).
 
 ## Supported versions
 

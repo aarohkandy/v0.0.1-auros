@@ -318,6 +318,27 @@ def check_image(status_path, rootdir=None):
     return out, warn
 
 
+
+# What must be in place before the public link (--launch). Each line is a promise the published
+# Terms make, or the review gate of docs/legal/README.md.
+LAUNCH_NEEDS = [
+    ("src/aurbridge/wizard.c", r"By pressing Install AurOS you agree to the AurOS Terms", "the Ready page's agreement line (TERMS 4)"),
+    ("src/aurbridge/wizard.c", r"Any change to a drive carries some risk", "the Ready page's risk sentence (LIA-2)"),
+    ("src/aurbridge/aurbridge-info.rc", r"\b200\s+RCDATA", "the NOTICES resource in AurOS-Setup.exe (LIC-3)"),
+    ("src/aurbridge/aurbridge-info.rc", r"\b202\s+RCDATA", "the Terms resource in AurOS-Setup.exe (LIA-1)"),
+    ("docs/legal/REVIEWS.md", r"(?s)^(?!.*NOT DONE)", "the two skeptic reviews, all findings answered (REVIEWS.md has no 'NOT DONE')"),
+]
+
+
+def check_launch_needs(root):
+    out = []
+    for rel, rx, what in LAUNCH_NEEDS:
+        p = os.path.join(root, rel)
+        t = open(p, encoding="utf-8", errors="replace").read() if os.path.isfile(p) else ""
+        if not os.path.isfile(p) or not re.search(rx, t):
+            out.append("not yet: %s (%s)" % (what, rel))
+    return out
+
 CHECKS = [check_pages, check_claims, check_marks_site]
 
 
@@ -326,6 +347,8 @@ def run(launch=False, root=None):
     problems += check_offer(root)
     p, seen = check_placeholders(launch, root)
     problems += p
+    if launch:
+        problems += check_launch_needs(root or ROOT)
     for fn in CHECKS:
         problems += fn(root or ROOT)
     return problems, seen
@@ -368,6 +391,7 @@ def selftest():
         open(os.path.join(d, "website/licenses.html"), "w").write("<p>write to CONTACT_EMAIL [OWNER: x]</p>")
         pr, seen = run(True, d)
         want("--launch refuses the placeholder", pr, "still has CONTACT_EMAIL")
+        want("--launch refuses while the installer lacks the agreement line", pr, "the Ready page's agreement line")
         want("--launch refuses a draft marker", pr, "draft marker")
         pr, seen = run(False, d)
         ok = seen >= 2 and not [x for x in pr if "still has" in x]
