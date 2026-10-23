@@ -7,6 +7,8 @@
 > Current session log: `docs/handoff/SESSION-2026-10-23-B.md`.**
 > **Expert map: [docs/ATLAS.md](docs/ATLAS.md). State right now: [docs/handoff/CURRENT-STATE.md](docs/handoff/CURRENT-STATE.md).**
 
+> **If the lead stopped (usage limit, crash): [docs/handoff/LEAD-RESUME.md](docs/handoff/LEAD-RESUME.md) is the exact procedure to take over mid-flight.**
+
 > **The plan: [docs/ROADMAP.md](docs/ROADMAP.md) (v0.1 it works → v0.2 every PC under an hour → v0.3 safe for years → v1.0 people pay).**
 
 
