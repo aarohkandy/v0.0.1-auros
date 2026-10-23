@@ -40,7 +40,7 @@ export function config(env) {
     establishDays: n("ESTABLISH_DAYS", 7),
     registerPerNet: n("REGISTER_PER_NET", 3),
     maxInflight: n("MAX_INFLIGHT", 40),
-    powBits: n("POW_BITS", 22),
+    powBits: n("POW_BITS", 21),
     banned: new Set(String(env.BANNED || "").split(/[\s,]+/).filter(Boolean)),
   };
 }

@@ -16,7 +16,7 @@ QUOTA_NEW = "3"
 ESTABLISH_DAYS = "7"
 REGISTER_PER_NET = "3"
 MAX_INFLIGHT = "40"
-POW_BITS = "22"
+POW_BITS = "21"
 BANNED = ""
 
 [[durable_objects.bindings]]

@@ -28,7 +28,7 @@ pools, calls in flight
 ```
 
 1. **Register** (once per computer, again every 90 days, silently): the
-   computer proves about 2 s of work (hashcash) and gets an opaque token.
+   computer proves about 2 s of work (hashcash, 21 bits) and gets an opaque token.
    Only 3 registrations a day per home network (IPv4 /24, IPv6 /64).
 2. **A wish**: the Worker checks the token first (strangers get 401 before
    anything is read), then the body (≤ 8 KB, wish ≤ 300 characters), then
@@ -174,7 +174,7 @@ Where to look: Cloudflare dashboard → Workers & Pages → `auros-wishes` →
 | "resting" for minutes, now and then | `reason:"rate_limit"` or `"busy"` | Anthropic's per-minute limit or the slot limit. If daily: request the next tier, then raise `MAX_INFLIGHT` (§2). |
 | Anthropic is down | `reason:"overloaded"`, `"upstream_5xx"`, `"timeout"`, `"network"` | Nothing to do; status.anthropic.com. Wishes she already made keep working (they run on her computer). |
 | Every request "resting" since a change | `reason:"auth"`, `"bad_request"`, `"not_found"` with `detail` | The key or request is refused; `detail` is Anthropic's message. A key not scoped to a workspace: `docs/OWNER-SETUP.md` §7. |
-| Abuse spike: registrations or quota hits pile up, the "new" pool drains | `limited:"register"`, `limited:"quota"` with a `tag` | Ban the noisiest tags: add them to `BANNED` in `wrangler.toml`, push. Make registering harder: `POW_BITS = "24"` (4× the work). Lower `QUOTA_NEW`. The pools already stop new tokens from spending established tokens' money. |
+| Abuse spike: registrations or quota hits pile up, the "new" pool drains | `limited:"register"`, `limited:"quota"` with a `tag` | Ban the noisiest tags: add them to `BANNED` in `wrangler.toml`, push. Make registering harder: `POW_BITS = "23"` (4× the work). Lower `QUOTA_NEW`. The pools already stop new tokens from spending established tokens' money. |
 | Rotate the Anthropic key | – | Console: new key in the AurOS Wishes workspace → GitHub secret `ANTHROPIC_API` → Actions → cloud → Run workflow → delete the old key. No downtime. |
 | Rotate the token-signing secret (a leak, or start everyone fresh) | – | `cd cloud && npx wrangler secret delete TOKEN_SECRET`, then run the cloud workflow: it makes a new one. Every computer gets 401 once and registers again silently (a home with more than 3 computers finishes over two days). |
 | Rotate the Cloudflare token | – | Cloudflare: new token (§7 of OWNER-SETUP) → GitHub secret → revoke the old one. |
@@ -211,7 +211,7 @@ image. Proposal (owners: stream S5 for the channel, W1 for the reader):
 | `ESTABLISH_DAYS` | 7 | how old a token must be (plus one wish received) to be established |
 | `REGISTER_PER_NET` | 3 | registrations per /24 or /64 per day |
 | `MAX_INFLIGHT` | 40 | Claude calls at once (§2 table) |
-| `POW_BITS` | 22 | registration work: +1 doubles it |
+| `POW_BITS` | 21 | registration work: about 2 s on a 2013 laptop (SHA-256 without SHA extensions measured at 2.9 million hashes a second on a 2025 server core; a 2013 laptop core is roughly 3× slower); +1 doubles it |
 | `BANNED` | "" | token tags (from `limited:"quota"` log lines), comma-separated |
 
 Secrets (never in the repository): `ANTHROPIC_API_KEY` (from the GitHub

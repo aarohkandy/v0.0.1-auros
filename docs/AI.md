@@ -241,8 +241,9 @@ firewall, updates, protections, accounts, remote access) · `other`.
 
 **Proof of work for `/register`.** Find a `nonce` (1–32 letters/digits) such
 that `SHA-256("auros-register-v1:" + day + ":" + install_id + ":" + nonce)`
-starts with `bits` zero bits (22 today: about 4 million hashes, roughly 2 s
-in C on a 2013 laptop). `day` is the UTC date `YYYY-MM-DD`; yesterday, today
+starts with `bits` zero bits (21 today: about 2 million hashes on average,
+roughly 2 s in C on a 2013 laptop; it is luck, so one time in twenty it takes
+three times longer). `day` is the UTC date `YYYY-MM-DD`; yesterday, today
 and tomorrow are accepted. If her clock is wrong the 400 carries the
 server's `day` and `bits`: compute again with those.
 
