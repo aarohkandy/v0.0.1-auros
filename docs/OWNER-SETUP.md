@@ -154,10 +154,37 @@ is off until you switch it on: `https://github.com/OWNER/REPO/settings/security_
 → **Private vulnerability reporting** → **Enable**. (Checked 2026-10-23: off.)
 Also put a security contact address in `SECURITY.md` where it says `[OWNER: ...]`.
 
-## 5. Not required, by the owner's decision
+## 5. Code signing through SignPath (decision D12; 20 minutes, in two sittings)
 
-- **No code-signing certificate, no Azure, no Microsoft account.** The installer
-  is unsigned by design; the website shows people the two extra clicks.
+The pipeline is written and **off**; it turns on when you add one variable and
+one secret. Full detail and the reasons: `docs/SIGNING.md` section 4. The
+order:
+
+1. **Two-factor sign-in on GitHub** (`aarohkandy`): GitHub → Settings →
+   Password and authentication → Two-factor authentication. SignPath requires
+   it of everyone on the team.
+2. **Apply** at `https://signpath.org/apply`, pasting from
+   `docs/legal/signpath-application.md` (fill the `[OWNER: ...]` spots: your
+   contact email and the name you want shown). Check that
+   `https://aarohkandy.github.io/v0.0.1-auros/code-signing.html` opens first.
+   Then tell an agent "applied", so the policy page can say so.
+3. **When they say yes**, in SignPath: create the project **AurOS** (slug
+   `auros`), add the **GitHub.com** trusted build system and link it, paste
+   the artifact configuration from `docs/SIGNING.md`, create the signing
+   policy `release-signing` with **manual approval required** and you as the
+   approver, and make an API token for a CI user with the *submitter* role.
+4. **In GitHub**: Settings → Secrets and variables → Actions →
+   *Secrets*: `SIGNPATH_API_TOKEN` (the token); *Variables*:
+   `SIGNPATH_ORGANIZATION_ID` (SignPath → your organization's ID). Adding
+   the variable is the switch; add the secret first.
+5. Tell the lead. The next `[release]` waits for your approval in SignPath
+   (they email you), up to 4 hours, then signs.
+
+### 5b. Not required, by the owner's decision
+
+- **No Azure and no Microsoft account**, and no paid code-signing certificate
+  (D7 stands for these; D12 added free signing through SignPath Foundation,
+  above).
 
 ## 6. When you move to a new repository
 
