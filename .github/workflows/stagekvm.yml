@@ -116,7 +116,8 @@ jobs:
             name=${t%%:*}; args=$(printf '%s' "$t" | cut -s -d: -f2- | tr ':' ' ')
             echo "::group::$name $args"
             T=$(date +%s)
-            sudo env PATH="$PATH" sh "tools/$name.sh" $args > "transcripts/$name.txt" 2>&1; r=$?
+            # (bash -e: a failing test must not end the step; the others still run)
+            r=0; sudo env PATH="$PATH" sh "tools/$name.sh" $args > "transcripts/$name.txt" 2>&1 || r=$?
             cat "transcripts/$name.txt"
             echo "::endgroup::"
             echo "$name $args: exit=$r in $(( $(date +%s) - T )) s" | tee -a "$GITHUB_STEP_SUMMARY"

@@ -544,11 +544,12 @@ if mount "/dev/${lb}p$RN" "$MTMP/aroot"; then
     mkdir -p "$MTMP/aroot/var/lib/auros"
     HENV="AUROS_STATE=$MTMP/aroot/var/lib/auros AUROS_FERRY=$MTMP/ferry AUROS_HANDOVER_RESERVE=1048576"
     HDEV=$(env $HENV sh rootfs/usr/lib/auros/handover.sh prepare 2>"$MTMP/h.err")
-    if [ -n "$HDEV" ] && FERRY_HANDOVER_DEV="$HDEV" "$MTMP/ferry" back &&
+    if [ -n "$HDEV" ] && FERRY_HANDOVER_DEV="$HDEV" "$MTMP/ferry" back 2>>"$MTMP/h.err" &&
        REC=$(env $HENV sh rootfs/usr/lib/auros/handover.sh finish 2>>"$MTMP/h.err"); then
         ok "AurOS made the handover volume and gave its address ($REC)"
     else
-        bad "AurOS made the handover volume and gave its address" "$(cat "$MTMP/h.err")"; REC=""
+        bad "AurOS made the handover volume and gave its address" "$(cat "$MTMP/h.err")" "device: ${HDEV:-none}; exfat: $(grep -c exfat /proc/filesystems) $(uname -r)"
+        env $HENV sh rootfs/usr/lib/auros/handover.sh cancel 2>/dev/null; REC=""
     fi
     umount "$MTMP/aroot"
 else bad "AurOS's root mounts for the handover test"; REC=""; fi
