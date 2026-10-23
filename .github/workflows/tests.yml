@@ -10,10 +10,12 @@
 #   unit   the fast suites: aurfirsttest, choicestest (with the image's
 #          aurshell), nmtest, sessionenvtest, looktest, storetest,
 #          shrinktargettest, probetest, nvramtest, bridgetest,
-#          manifesttest, signtest, Ferry's, and the console installer's
-#          selftest under Wine
-#   e2e    one job per end-to-end test, in QEMU with KVM: installtest,
-#          nosticktest, firstboottest, choicesboottest, putbacktest
+#          manifesttest, signtest, Ferry's, the console installer's
+#          selftest under Wine, and the data-safety suites that need no
+#          VM: gpttest, committest, bootchaintest
+#   e2e    one job per end-to-end test, in QEMU with KVM: nosticktest,
+#          powercuttest, firstboottest, installtest, bootupdatetest,
+#          choicesboottest, putbacktest
 #
 # The scripts were written for a container without KVM, so each has
 # `-machine ...,accel=tcg` written into it. They are not edited for
@@ -90,7 +92,7 @@ jobs:
           sh tools/apt.sh \
               mingw-w64 wine wine64 osslsigncode openssl python3 gcc libc6-dev make \
               grub-common gdisk mtools dosfstools cpio sbsigntool libxml2-utils file \
-              binutils zstd e2fsprogs fonts-dejavu-core
+              binutils zstd e2fsprogs fonts-dejavu-core ovmf
       - uses: actions/download-artifact@v4
         with:
           name: auros-installer
@@ -194,6 +196,17 @@ jobs:
       - name: gapfencetest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/gapfencetest.sh 2>&1 | tee transcripts/gapfencetest.txt
+      # The partition table and the commit point: the one-sector writes
+      # that decide whether her disk still has Windows on it.
+      - name: gpttest (the partition table, read and written back)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/gpttest.sh 2>&1 | tee transcripts/gpttest.txt
+      - name: committest (until LBA 1 lands, the old layout)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/committest.sh 2>&1 | tee transcripts/committest.txt
+      - name: bootchaintest (auros-bootchain refuses what would not start)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo sh tools/bootchaintest.sh work/forge/desktop/rootfs 2>&1 | tee transcripts/bootchaintest.txt
       - name: manifesttest (the published wizard)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/manifesttest.sh dl/installer/AurOS-Setup.exe 2>&1 | tee transcripts/manifesttest.txt
@@ -242,13 +255,20 @@ jobs:
     strategy:
       fail-fast: false
       # The free plan runs 20 jobs at a time for the whole repository,
-      # and a dozen workflows share them (docs/handoff/STREAMS.md).
-      max-parallel: 2
+      # and a dozen workflows share them (docs/handoff/STREAMS.md). Four
+      # lanes, longest first (GitHub starts them in this order): the
+      # two ~25-minute tests each get a lane and the rest share two,
+      # so the suite takes as long as its longest test. Two lanes made
+      # it ~7 minutes longer than that with five tests, and would make
+      # it ~20 longer with seven.
+      max-parallel: 4
       matrix:
         include:
-          - { test: installtest,     args: '',        image: false }
           - { test: nosticktest,     args: '',        image: false }
+          - { test: powercuttest,    args: '',        image: false }
           - { test: firstboottest,   args: 'desktop', image: true }
+          - { test: installtest,     args: '',        image: false }
+          - { test: bootupdatetest,  args: '',        image: true }
           - { test: choicesboottest, args: '',        image: true }
           - { test: putbacktest,     args: '',        image: true }
     name: e2e (${{ matrix.test }})
@@ -321,6 +341,12 @@ jobs:
             sudo AUROS_STAGING_OUT="$RUNNER_TEMP/staging-out" ./build/staging desktop > /dev/null
           fi
           sudo test -d work/staging/lib/modules
+          if [ "${{ matrix.test }}" = powercuttest ]; then
+            # Its own staging build, with fault injection compiled in
+            # (out/auros-staging-fault*; seconds). Never published.
+            sudo AURSTAGE_FAULT=1 ./build/staging desktop > /dev/null
+            sudo chown -R "$(id -u):$(id -g)" out
+          fi
           if [ -d dl/pieces ]; then
             # The pieces, joined and unpacked: the same bytes the
             # installer would write, checked against the same hash.
