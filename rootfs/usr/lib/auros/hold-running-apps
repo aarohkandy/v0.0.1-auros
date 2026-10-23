@@ -1,0 +1,21 @@
+#!/bin/sh
+# ExecStartPre of apt-daily-upgrade.service (60-auros-quiet.conf): a
+# program she has open is not updated under her.
+#
+# Firefox from a package cannot be replaced while it runs: the moment
+# its files change, every new tab shows "Restart Firefox to keep
+# going". So while it is open its update is held, and the next daily
+# run with Firefox closed -- usually the one just after she switches
+# the computer on -- installs it. A hold is set or cleared on every run,
+# so it never outlives the reason for it. docs/security/UPDATES.md
+#
+# Never fails: a problem here must not stop the security updates.
+for p in firefox; do
+    dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'ok installed' || continue
+    if pgrep -x "$p" >/dev/null 2>&1 || pgrep -x "$p-bin" >/dev/null 2>&1; then
+        apt-mark hold "$p"
+    else
+        apt-mark unhold "$p"
+    fi
+done >/dev/null 2>&1
+exit 0

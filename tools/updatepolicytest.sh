@@ -67,6 +67,9 @@ static() {
     if printf '%s\n' "$cfg" | grep -qE '^Unattended-Upgrade::Automatic-Reboot "(true|1|yes)";'; then
         bad "never an automatic restart"
     else ok "never an automatic restart"; fi
+    grep -qx 'ExecStartPre=/usr/lib/auros/hold-running-apps' "$R/etc/systemd/system/apt-daily-upgrade.service.d/60-auros-quiet.conf" 2>/dev/null &&
+        [ -x "$R/usr/lib/auros/hold-running-apps" ] &&
+        ok "a program she has open is not updated under her" || bad "a program she has open is not updated under her"
     for t in apt-daily.timer apt-daily-upgrade.timer; do
         [ -e "$R/etc/systemd/system/timers.target.wants/$t" ] && ok "$t is enabled" || bad "$t is enabled"
     done
@@ -142,7 +145,9 @@ static() {
             [ "$v" = false ] && ok "the store: $k is off" || bad "the store: $k is off" "gsettings says: $v"
         done
     fi
-    for pkg in update-notifier update-manager fwupd; do
+    # needrestart restarts services (the network among them) after an
+    # update, under her; update-notifier/-manager ask her things.
+    for pkg in update-notifier update-manager needrestart fwupd; do
         inr dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'ok installed' &&
             bad "$pkg is not installed" || ok "$pkg is not installed"
     done
@@ -235,7 +240,16 @@ firefox() {
     dpkg-deb --root-owner-group --build "$T/ff" "$T/ff.deb" >/dev/null && dpkg -i "$T/ff.deb" >/dev/null || need "could not install the stand-in"
     timeout 300 apt-get update -q > "$T/u.log" 2>&1 || { cat "$T/u.log"; need "apt-get update failed"; }
     apt-cache policy firefox > "$T/p.log" 2>&1
-    # The real thing, not a dry run: what it installs is the answer.
+    # Firefox open: hold-running-apps (apt-daily-upgrade's ExecStartPre)
+    # holds it, and the real unattended-upgrade leaves it alone.
+    cp /bin/sleep "$T/firefox"; "$T/firefox" 300 & local ffpid=$!
+    sh "$ROOT/rootfs/usr/lib/auros/hold-running-apps"
+    unattended-upgrade -v > "$T/uu-open.log" 2>&1
+    local open_ver; open_ver=$(dpkg-query -W -f='${Version}' firefox)
+    kill "$ffpid" 2>/dev/null; wait "$ffpid" 2>/dev/null
+    # Closed: the next run takes it. The real thing, not a dry run: what
+    # it installs is the answer.
+    sh "$ROOT/rootfs/usr/lib/auros/hold-running-apps"
     unattended-upgrade -v > "$T/uu.log" 2>&1
 
     echo
@@ -244,6 +258,8 @@ firefox() {
     cand=$(sed -n 's/^ *Candidate: //p' "$T/p.log")
     case "$cand" in *~build*) ok "apt's candidate is Mozilla's Firefox ($cand)" ;;
         *) bad "apt's candidate is Mozilla's Firefox" "$(sed 's/^/  | /' "$T/p.log")" ;; esac
+    [ "$open_ver" = 100.0 ] && ok "while Firefox is open, it is not updated under her" ||
+        bad "while Firefox is open, it is not updated under her" "it went to $open_ver"
     now=$(dpkg-query -W -f='${Version}' firefox)
     [ "$now" = "$cand" ] && [ -x /usr/lib/firefox/firefox ] &&
         ok "unattended-upgrades updated it by itself, to $now" ||

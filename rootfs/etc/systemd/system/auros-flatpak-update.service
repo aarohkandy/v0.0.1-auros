@@ -17,8 +17,9 @@ ExecCondition=/usr/lib/auros/not-first-hour
 ExecStart=/usr/bin/flatpak update --system --noninteractive --assumeyes
 # Runtimes nothing uses any more, so the disk does not fill with them.
 ExecStart=/usr/bin/flatpak uninstall --system --unused --noninteractive --assumeyes
-# Felt by nobody: the lowest CPU and disk priority there is.
-Nice=19
-CPUSchedulingPolicy=idle
-IOSchedulingClass=idle
+# Felt by nobody: low CPU and disk priority (not "idle", which a busy
+# computer could starve for hours while the store waits on its lock).
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
 TimeoutStartSec=2h
