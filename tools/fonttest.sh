@@ -27,6 +27,10 @@ for w in Black BlackItalic Bold ExtraBold Light Medium Regular SemiBold Thin; do
     printf 'OTTO\0\0CFF \0\0head' > "$F/Inter-$w.otf"
     printf 'OTTO\0\0CFF \0\0head' > "$F/InterDisplay-$w.otf"
 done
+for w in Regular Bold Italic BoldItalic; do          # fonts-atkinson-hyperlegible's four files
+    mkdir -p "$T/usr/share/fonts/opentype/atkinson-hyperlegible"
+    printf 'OTTO\0\0CFF \0\0head' > "$T/usr/share/fonts/opentype/atkinson-hyperlegible/AtkinsonHyperlegible-$w.otf"
+done
 printf '\0\1\0\0glyf\0fvar' > "$T/usr/share/fonts/truetype/dejavu/InterVariable.ttf"
 printf '\0\1\0\0glyf\0head' > "$T/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 printf '\0\1\0\0glyf\0head' > "$T/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"

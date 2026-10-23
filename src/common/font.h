@@ -40,6 +40,12 @@ typedef struct font font;
 font *font_load(const char *path, float px);
 void  font_free(font *f);
 
+/* A second face, at this font's own size, for the codepoints this one has
+ * no glyph for (Cyrillic, Greek, arrows next to a face that lacks them).
+ * It is read the first time it is needed. ASCII never goes there. A
+ * font can carry one; asking twice changes nothing. */
+void  font_set_fallback_path(font *f, const char *path);
+
 /* Vertical metrics in pixels, from `hhea`. Both ascent and descent are
  * returned as positive distances from the baseline (up and down), which
  * is the sign convention layout code actually wants; the raw table

@@ -272,7 +272,7 @@ static void menu_metrics(const shell_ctx *c, int *row_h, int *col_w, int *head)
     if (k < 1.f) k = 1.f;
     /* A name at 22 px and, under it, a line at 18: 60 px a row, 380 a
      * column (DESIGN-DIRECTION C P1-11). */
-    *row_h = (int)((float)(c->target_large ? 66 : 60) * k);
+    *row_h = (int)((float)(c->target_large ? 60 : 52) * k);
     *col_w = (int)((float)(c->target_large ? 400 : 372) * k);
     *head  = (int)((float)(c->target_large ? 72 : 66) * k);
 }
@@ -772,7 +772,7 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
         float hx = (float)((wr.w > 0 ? wr.x + wr.w : l.x + l.w) + 18);
         char hb[80];
         const char *hint = fit_text(f->small,
-                                    "Nothing open yet — pick something from All my programs",
+                                    "Nothing open yet.",
                                     hb, sizeof hb, (float)tray0.x - hx - 16.f);
         shell_text(s, f->small, hx, shell_baseline(f->small, (float)l.y, (float)l.h),
                    hint, c->muted, 0.85f);

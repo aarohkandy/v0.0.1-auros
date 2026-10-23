@@ -53,8 +53,10 @@ C6 (notifications that stay) by a helper: `1c430eb`, `cb52b2c`, `tools/notifytes
   console login is off).
 - Staging helper's commits (`wt-c-stage`, 9c08822 + 0b67a82) were NOT pushed (its push
   was denied by the permission system); they need the lead.
-- Atkinson Hyperlegible Next is not installed (needs a font file; Inter is the face today);
-  the per-glyph DejaVu fallback in `font.c`; `cursor_size` 32; the plain-zero script (P2).
+- The UI face is Atkinson Hyperlegible 1.0 from noble's `fonts-atkinson-hyperlegible`
+  (Regular and Bold; headings in Bold), not "Next" (no 800; needs a file the archive does
+  not have). Its zero is slashed (visible in the clock): the plain-zero script is P2.
+  The per-glyph DejaVu fallback (`font.c`) is done; `cursor_size` 32 is not.
 - "Like Windows": the footer is a second bar under the taskbar, not folded into it
   (ten controls and the window buttons do not fit one 56 px bar at 1024).
 - Window drag slop (8 px) not done (`taskbar.c`/`dock.c` drag code).

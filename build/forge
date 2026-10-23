@@ -1328,9 +1328,9 @@ stage_overlay() {
     _disp=$(_key font_display)
     _text=$(_key font_text)
     _tbold=$(_key font_text_bold)
-    resolve_font "${_sans:-Inter}" "${_sans:-Inter}" || {
-        note "WARNING: '${_sans:-Inter}' has no TrueType outlines here; using DejaVu Sans"
-        resolve_font DejaVuSans "${_sans:-Inter}" || true
+    resolve_font "${_sans:-AtkinsonHyperlegible}" "${_sans:-AtkinsonHyperlegible}" || {
+        note "WARNING: '${_sans:-AtkinsonHyperlegible}' has no TrueType outlines here; using DejaVu Sans"
+        resolve_font DejaVuSans "${_sans:-AtkinsonHyperlegible}" || true
     }
     resolve_font "${_mono:-JetBrainsMono}" "${_mono:-JetBrainsMono}" || {
         note "WARNING: '${_mono:-JetBrainsMono}' unavailable; using DejaVu Sans Mono"
@@ -2031,8 +2031,9 @@ EOL
 [Settings]
 gtk-application-prefer-dark-theme=$prefer_dark
 gtk-font-name=$(sed -n 's/^font_sans="\(.*\)"/\1/p' \
-                "$RFS/usr/share/auros/themes/$theme.theme" 2>/dev/null | head -1) 11
-gtk-cursor-theme-size=24
+                "$RFS/usr/share/auros/themes/$theme.theme" 2>/dev/null | head -1 \
+                | sed 's/\([a-z]\)\([A-Z]\)/\1 \2/g') 14
+gtk-cursor-theme-size=32
 gtk-enable-animations=1
 EOL
         done

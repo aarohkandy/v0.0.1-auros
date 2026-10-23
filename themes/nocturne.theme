@@ -91,15 +91,16 @@ bar_height="50"        # top bar height
 padding="14"           # internal padding of panels
 
 # ── Typography ─────────────────────────────────────────────────────
-# Three shell faces, three weights of the one family the image ships:
-# headings in Inter Display SemiBold, names and labels in Inter SemiBold,
-# everything she reads in Inter Regular. Each is an exact file name
+# Three shell faces, two weights of the one family the image ships:
+# Atkinson Hyperlegible (Braille Institute, SIL OFL), made for low vision
+# -- its I, l and 1 are different shapes. Headings and names in Bold,
+# everything she reads in Regular. Each is an exact file name
 # (build/forge links /usr/share/auros/fonts/<name>.ttf to it), because
 # the plain family name means its Regular cut and nothing heavier.
-font_display="InterDisplay-SemiBold"
-font_text="Inter-Regular"
-font_text_bold="Inter-SemiBold"
-font_sans="Inter"
+font_display="AtkinsonHyperlegible-Bold"
+font_text="AtkinsonHyperlegible-Regular"
+font_text_bold="AtkinsonHyperlegible-Bold"
+font_sans="AtkinsonHyperlegible"
 font_mono="JetBrainsMono"
 font_size="20"         # base UI size (px)
 font_size_sm="18"

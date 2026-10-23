@@ -168,7 +168,7 @@ packages_base="systemd-sysv dbus udev sudo less nano apparmor
                    cloud-guest-utils util-linux
                zstd xz-utils bzip2
                iputils-ping openssh-client
-               fonts-inter fonts-jetbrains-mono
+               fonts-atkinson-hyperlegible fonts-jetbrains-mono
                fonts-paratype
                unattended-upgrades"
 

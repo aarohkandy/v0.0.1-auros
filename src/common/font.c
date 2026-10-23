@@ -137,6 +137,14 @@ struct font {
     uint8_t *data;
     size_t   size;
 
+    /* The face to ask for a codepoint this one lacks. Loaded the first
+     * time it is wanted, at this font's own size, so a machine that
+     * never meets a Cyrillic file name never reads the second file. */
+    char    *fb_path;
+    struct font *fb;
+    int      fb_tried;
+    float    px;
+
     size_t   glyf, glyf_len;
     size_t   loca, loca_len;
     size_t   hmtx, hmtx_len;
@@ -2122,6 +2130,7 @@ font *font_load(const char *path, float px)
         f->loca_long = (loca_fmt == 1);
     }
     f->scale = px / (float)upem;
+    f->px = px;
 
     if (!find_table(f->data, f->size, dir, tag4("hhea"), &off, &len) || len < 36) goto fail;
     {
@@ -2221,6 +2230,8 @@ void font_free(font *f)
         while (g) { glyph *n = g->next; free(g->cov); free(g); g = n; }
     }
     free(f->fdsubrs);
+    if (f->fb) font_free(f->fb);
+    free(f->fb_path);
     free(f->data);
     free(f);
 }
@@ -2228,6 +2239,42 @@ void font_free(font *f)
 float font_ascent(const font *f)      { return f ? f->ascent : 0.0f; }
 float font_descent(const font *f)     { return f ? f->descent : 0.0f; }
 float font_line_height(const font *f) { return f ? f->ascent + f->descent + f->line_gap : 0.0f; }
+
+/* ── a second face for what the first lacks ─────────────────────────
+ *
+ * The UI face has no Cyrillic, Greek or arrows, and a file called
+ * "Отчёт.pdf" or a Wi-Fi called "Café Ελλάδα" would draw as boxes. One
+ * fallback handle (DESIGN-DIRECTION §3): a codepoint the primary has no
+ * glyph for is measured and drawn by the fallback instead, at the same
+ * size. ASCII and the controls never go there. */
+void font_set_fallback_path(font *f, const char *path)
+{
+    if (!f || !path || f->fb_path) return;
+    size_t n = strlen(path);
+    if (n == 0 || n > 400) return;
+    f->fb_path = malloc(n + 1);
+    if (f->fb_path) memcpy(f->fb_path, path, n + 1);
+}
+
+static font *fallback_for(font *f, uint32_t cp)
+{
+    if (!f->fb_path || cp < 0x80 || map_gid(f, cp)) return NULL;
+    if (!f->fb && !f->fb_tried) {
+        f->fb_tried = 1;
+        f->fb = font_load(f->fb_path, f->px);
+    }
+    return (f->fb && map_gid(f->fb, cp)) ? f->fb : NULL;
+}
+
+static int utf8_put(uint32_t cp, char *o)
+{
+    if (cp < 0x800)   { o[0] = (char)(0xC0 | (cp >> 6)); o[1] = (char)(0x80 | (cp & 0x3F)); o[2] = 0; return 2; }
+    if (cp < 0x10000) { o[0] = (char)(0xE0 | (cp >> 12)); o[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                        o[2] = (char)(0x80 | (cp & 0x3F)); o[3] = 0; return 3; }
+    o[0] = (char)(0xF0 | (cp >> 18)); o[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    o[2] = (char)(0x80 | ((cp >> 6) & 0x3F)); o[3] = (char)(0x80 | (cp & 0x3F)); o[4] = 0;
+    return 4;
+}
 
 /* ── layout ──────────────────────────────────────────────────────── */
 /* Measuring is pure metric work -- cmap, hmtx and kern -- and never
@@ -2239,7 +2286,15 @@ float font_text_width(font *f, const char *utf8)
     float pen = 0.0f;
     int prev = -1;
     while (*utf8) {
-        int gid = map_gid(f, utf8_next(&utf8));
+        uint32_t cp = utf8_next(&utf8);
+        font *fb = fallback_for(f, cp);
+        if (fb) {
+            char one[5]; utf8_put(cp, one);
+            pen += font_text_width(fb, one);
+            prev = -1;
+            continue;
+        }
+        int gid = map_gid(f, cp);
         if (prev >= 0) pen += kern_pair(f, prev, gid);
         pen += advance_of(f, gid);
         prev = gid;
@@ -2270,6 +2325,18 @@ void font_draw(font *f, uint32_t *px, int w, int h, int stride,
         /* A long enough string can walk the pen out of float-to-int
          * range; stop rather than let the cast go undefined. */
         if (!(pen > -1e6f && pen < 1e6f)) break;
+
+        /* A codepoint this face lacks is the fallback's to draw. */
+        {
+            font *fb = fallback_for(f, cp);
+            if (fb) {
+                char one[5]; utf8_put(cp, one);
+                font_draw(fb, px, w, h, stride, pen, y, one, color, alpha);
+                pen += font_text_width(fb, one);
+                prev = -1;
+                continue;
+            }
+        }
 
         /* The glyph id has to be known before the phase, because kerning
          * moves the pen and so decides which phase is wanted. Looking it

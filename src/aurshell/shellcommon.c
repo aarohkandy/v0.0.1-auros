@@ -755,13 +755,24 @@ const shell_layout *shell_layout_by_id(const char *id)
 }
 
 /* ── fonts ───────────────────────────────────────────────────────── */
+static font *open_font_primary(const char *named, float px);
 /* Where build/forge links each face a theme names, as <name>.ttf.
  * Overridable at compile time for tools/fonttest.sh and nothing else. */
 #ifndef AUROS_FONT_DIR
 #define AUROS_FONT_DIR "/usr/share/auros/fonts"
 #endif
 
+/* The face for what the UI face lacks (Cyrillic, arrows). */
+#define FALLBACK_FACE "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
 static font *open_font(const char *named, float px)
+{
+    font *f = open_font_primary(named, px);
+    if (f) font_set_fallback_path(f, FALLBACK_FACE);
+    return f;
+}
+
+static font *open_font_primary(const char *named, float px)
 {
     if (named && named[0] == '/') {
         font *f = font_load(named, px);
@@ -780,6 +791,7 @@ static font *open_font(const char *named, float px)
     /* A desktop with the wrong font is recoverable; one with no text is
      * not, so fall through every plausible location before giving up. */
     static const char *fb[] = {
+        "/usr/share/auros/fonts/AtkinsonHyperlegible.ttf",
         "/usr/share/fonts/truetype/paratype/PTC55F.ttf",   /* PT Sans Caption */
         "/usr/share/fonts/truetype/paratype/PTS55F.ttf",
         "/usr/share/fonts/truetype/clear-sans/ClearSans-Regular.ttf",
