@@ -27,6 +27,10 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Still red / in progress
 
+- **Honest install time today (the installer's own measured estimate): 25-60 minutes on a solid-state
+  drive, 1-3 hours on a hard disk.** Under an hour holds on SSD PCs only. The fast path (stream A2:
+  Windows shrinks itself and AurOS is written during the download) is the fix; it is being built.
+
 - No install has passed end to end on real Windows yet (the e2e run is the gate); it now reaches the restart.
 - Data-safety fixes in flight: staging clock bug for US time zones, BitLocker never decrypted,
   Recycle Bin never emptied, double-click skipping the Ready page, shared password removed.
