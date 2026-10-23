@@ -44,7 +44,7 @@ EOF
 line)
     tag=${2:?TAG}
     cat <<EOF
-Licences and the complete source code for this release: $rel/tag/sources-$tag . Our written offer of source is on the website's Licences page and, on an installed computer, in /usr/share/doc/auros/SOURCE-OFFER.
+Licences and the complete source code for this release: $rel/tag/sources-$tag . Our written offer of source is in the notes of that release, on the website's Licences page and, on an installed computer, in /usr/share/doc/auros/SOURCE-OFFER.
 EOF
     ;;
 *) echo "usage: sh tools/legal/notes.sh sources TAG COMMIT RUN_ID | line TAG" >&2; exit 2 ;;
