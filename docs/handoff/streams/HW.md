@@ -132,6 +132,7 @@ B turns it into a button/address with the site host it already bakes in).
 - A stick Windows has no program for is an "unknown device" to Windows; the matcher now still
   sees its chip (`wifi-stick-unknown-to-windows`), so "plug one in and start again" works even
   when Windows cannot use the stick.
+- The check found two more places that said "a small USB Wi-Fi stick (about $15)" and they are fixed: stream B's new section `#wifi-stick` in `website/advanced.html` ("What fixes it", with its own chip list that included Realtek RTL8188EUS/8821CU...; now it names the three MediaTek chips and links `#wifi-sticks`, which is the one list) and `fix_win.c`'s `no-internet` line ("Plug in a USB Wi-Fi stick (MT7612U, MT7921 or MT7601U chip).", 86 characters: navtest limits a fix to 90). B's pictures `2h-blocked-no-internet` show the old words until B re-shoots them.
 - Verified from: morrownr's "Plug and Play" list (MT7612U, MT7610U, MT7921AU products and the
   MT7601U ones from hardware databases), NETGEAR A6210 (0846:9053, mt76x2u). NOT verified on
   hardware: that these products still carry these chips in their current revisions, and that the

@@ -194,16 +194,8 @@
     <div class="narrow">
       <h2 id="wifi-title">AurOS would have no internet here</h2>
       <p>Setup stops, before it changes anything, on a computer whose only way online is a Wi-Fi card AurOS can&rsquo;t use yet, and which has no socket for a network cable. Most often it is a Broadcom card (BCM4352, BCM4360 and the like) that only works with a program from Broadcom, which can&rsquo;t be installed on a computer that has no internet yet. Without a way online AurOS couldn&rsquo;t even fetch its own updates, so Setup says so first.</p>
-      <p><b>What fixes it:</b> a small USB Wi-Fi stick (about $15), plugged in before Setup starts, or while its page is open: Setup checks again by itself every few seconds. A network cable does too, on a computer that has the socket.</p>
-      <p><b>Which sticks.</b> The chip is named on the box or in the shop&rsquo;s description. AurOS carries what these need:</p>
-      <ul class="doing">
-        <li><p>MediaTek: <span class="words">MT7610U</span>, <span class="words">MT7612U</span>, <span class="words">MT7601U</span></p></li>
-        <li><p>Atheros: <span class="words">AR9271</span></p></li>
-        <li><p>Realtek: <span class="words">RTL8188EUS</span>, <span class="words">RTL8192CU</span>, <span class="words">RTL8192EU</span>, <span class="words">RTL8811CU</span>, <span class="words">RTL8821CU</span>, <span class="words">RTL8822BU</span>, <span class="words">RTL8822CU</span></p></li>
-        <li><p>Ralink: <span class="words">RT5370</span> and the <span class="words">RT3070</span> family</p></li>
-      </ul>
-      <p class="note"><b>Not these yet:</b> sticks with a Realtek <span class="words">RTL8812AU</span>, <span class="words">RTL8821AU</span> or <span class="words">RTL8814AU</span> chip, which many cheap &ldquo;AC600&rdquo; and &ldquo;AC1200&rdquo; sticks have (for example the TP-Link Archer T2U Nano). They need a newer AurOS.</p>
-      <p>That list is what the AurOS system can drive, read from the system itself. It has <b>not</b> yet been tried stick by stick on a real computer (that is part of the lab&rsquo;s hardware campaign), so keep the receipt.</p>
+      <p><b>What fixes it:</b> a USB Wi-Fi stick with a MediaTek MT7612U, MT7921 or MT7601U chip (<a href="#wifi-sticks">which sticks have them</a>), plugged in before Setup starts, or while its page is open: Setup checks again by itself every few seconds. A network cable does too, on a computer that has the socket. Buy by the chip, not by the name: makers change the chip inside a model between versions.</p>
+      <p>The list has been checked against the system AurOS carries, but it has <b>not</b> yet been tried stick by stick on a real computer (that is part of the lab&rsquo;s hardware campaign), so keep the receipt.</p>
       <p>Setup&rsquo;s <span class="words">Save a report for a helper</span> button (on the page where it can&rsquo;t go on) writes <span class="words">AurOS-report.txt</span> to the Desktop: the Wi-Fi card, the sound, the camera, the printers, as Windows names them.</p>
       <p class="totop"><a href="#main">Back to the top</a></p>
     </div>
@@ -223,6 +215,7 @@
     <h2 id="wifi-sticks-title">Which USB Wi-Fi stick to buy</h2>
     <p>If this computer&rsquo;s own Wi-Fi does not work with AurOS, a USB Wi-Fi stick can take its place. It has to be a stick whose chip AurOS already has a driver for. Each chip below was checked against the list of chips in AurOS&rsquo;s own kernel (Linux 6.8 and 7.0), including the firmware that driver needs.</p>
     <p><b>Buy by the chip, not by the name.</b> Makers change the chip inside a model between versions without changing its name. If a product page does not say which chip is inside, do not buy it. Where a version is shown below, only that version.</p>
+    <p>None of these has been tried on a real computer with AurOS yet; that is part of the lab&rsquo;s hardware campaign. Keep the receipt.</p>
     <p>Plug the stick in, then open AurOS Setup again: it reads the chip itself, so it does not matter that Windows may say it has no driver for it.</p>
     <h3>MediaTek MT7612U (fast: 2.4 and 5 GHz, USB 3, &ldquo;AC1200&rdquo;)</h3>
     <p>Driver <code>mt76x2u</code>.</p>

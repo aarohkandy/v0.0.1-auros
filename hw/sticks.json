@@ -1,10 +1,11 @@
 {
-  "_about": "The USB Wi-Fi sticks AurOS tells people to buy. A stick is listed only if its CHIP has a driver in the kernel of the AurOS image AND in the newer (HWE) kernel, with the firmware that driver needs in the image: tools/hw/sticks.py checks every id below against hw/compat.json and hw/compat-hwe-wifi.json, writes the list into website/advanced.html (#wifi-sticks) and fails if any page, sentence or help text recommends a stick without naming a chip from this file. Products are examples from public lists of Linux-friendly sticks (morrownr's 'Plug and Play' list on GitHub, and hardware databases for the MT7601U ones); makers change the chip inside a model between versions, so the page tells the reader to buy by the chip and to check the version. NEVER list the Realtek RTL8811AU/8812AU/8821AU/8814AU sticks (see 'avoid').",
+  "_about": "The USB Wi-Fi sticks AurOS tells people to buy. A stick is listed only if its CHIP has a driver in the kernel of the AurOS image AND in the newer (HWE) kernel, with the firmware that driver needs in the image: tools/hw/sticks.py checks every id below against hw/compat.json and hw/compat-hwe-wifi.json, writes the list into website/advanced.html (#wifi-sticks) and fails if any page, sentence or help text recommends a stick without naming a chip from this file. Products are examples from public lists of Linux-friendly sticks (morrownr's 'Plug and Play' list on GitHub, and hardware databases for the MT7601U ones); makers change the chip inside a model between versions, so the page tells the reader to buy by the chip and to check the version. NEVER list the Realtek RTL8811AU/8812AU/8821AU/8814AU sticks (see 'avoid'). 'tried' is false until the lab (docs/results/hardware/CAMPAIGN.md, the three sticks) has run each chip in AurOS; the page says so while it is false.",
   "page": "advanced.html#wifi-sticks",
   "data": {
     "image": "hw/compat.json",
     "hwe": "hw/compat-hwe-wifi.json"
   },
+  "tried": false,
   "chips": [
     {
       "id": "mt7612u",

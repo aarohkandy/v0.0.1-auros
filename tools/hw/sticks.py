@@ -110,6 +110,8 @@ def render(S, kernels):
          '    <h2 id="wifi-sticks-title">Which USB Wi-Fi stick to buy</h2>',
          '    <p>If this computer&rsquo;s own Wi-Fi does not work with AurOS, a USB Wi-Fi stick can take its place. It has to be a stick whose chip AurOS already has a driver for. Each chip below was checked against the list of chips in AurOS&rsquo;s own kernel (Linux %s), including the firmware that driver needs.</p>' % html.escape(kernels_txt),
          '    <p><b>Buy by the chip, not by the name.</b> Makers change the chip inside a model between versions without changing its name. If a product page does not say which chip is inside, do not buy it. Where a version is shown below, only that version.</p>',
+         ] + ([] if S.get("tried") else [
+         '    <p>None of these has been tried on a real computer with AurOS yet; that is part of the lab&rsquo;s hardware campaign. Keep the receipt.</p>']) + [
          '    <p>Plug the stick in, then open AurOS Setup again: it reads the chip itself, so it does not matter that Windows may say it has no driver for it.</p>']
     for c in S["chips"]:
         o.append('    <h3>%s (%s)</h3>' % (esc(c["name"]), esc(c["what"])))
