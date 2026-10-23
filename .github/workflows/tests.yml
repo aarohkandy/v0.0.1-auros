@@ -16,7 +16,7 @@
 #   e2e    one job per end-to-end test, in QEMU with KVM: nosticktest,
 #          powercut-nostick (the power cut in the mode that ships, no
 #          memory stick: four jobs, S-11), powercuttest (the older mode,
-#          with a stick), firstboottest, installtest, bootupdatetest,
+#          with a stick), firstboottest, installtest, bootupdatetest, updateboottest,
 #          choicesboottest, putbacktest
 #
 # The scripts were written for a container without KVM, so each has
@@ -106,6 +106,7 @@ jobs:
               t("firstboottest", "firstboottest", "desktop", image=True),
               t("installtest", "installtest"),
               t("bootupdatetest", "bootupdatetest", image=True),
+              t("updateboottest", "updateboottest", image=True),
               t("choicesboottest", "choicesboottest", image=True),
               t("putbacktest", "putbacktest", image=True),
           ]

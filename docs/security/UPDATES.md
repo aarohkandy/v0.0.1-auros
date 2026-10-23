@@ -288,7 +288,7 @@ Revisit when S4's TPM re-seal exists, and possibly then fwupd for dbx only.
 | `tools/updatepolicytest.sh static` | the built image's policy, sources, timers, store, base up to date, the image's key | `tests.yml` unit job, every build |
 | `aptrepo.yml` publish | the real repository, signed, read back, fetched by a real apt | every publish |
 | `tools/flatpakupdatetest.sh` (+mutant) | the Flathub timer's own commands update the system installation without a question and clean up (a local ostree repository stands in for Flathub) | `aptrepo.yml` test job |
-| `tools/updateboottest.sh` | on the real image in KVM with Secure Boot: an update arrives while the desktop runs and does not restart it; the next start runs it; a broken update is rolled back by itself; the daily update does not bring it back; the fix installs | `[updateboot]` / `[updateboot RUN-ID]` in a commit subject (aptrepo.yml job `boot`) |
+| `tools/updateboottest.sh` | on the real image in KVM with Secure Boot: an update arrives while the desktop runs and does not restart it; the next start runs it; a broken update is rolled back by itself; the daily update does not bring it back; the fix installs | `tests.yml` gating e2e job, every build; also `[updateboot]` / `[updateboot RUN-ID]` in a commit subject (aptrepo.yml job `boot`) |
 | `tools/bootchaintest.sh` | the boot chain's refusals (dbx, SBAT, the Microsoft CA change) | by hand |
 | `tools/bootupdatetest.sh` | kernel/grub/shim updates under Secure Boot; previous-kernel fallback | `tests.yml` e2e matrix, every build |
 
@@ -339,8 +339,10 @@ Not proven yet, said plainly:
 
 - a real Flathub update (the commands are proven against a local
   repository; Flathub's reachability is `software-ready.sh`'s job);
-- the VM test has passed once in full (16 of 16) and is not yet part of
-  every build: it runs on `[updateboot]` only;
+- the VM test passed twice in full (16 of 16: runs 39965081792 and
+  39967482502, on builds 39961608618 and 39964191009) and is now one of
+  `tests.yml`'s gating e2e jobs, so every build runs it; its first run
+  there is the next build after this change;
 - phased `-updates` behaviour over days on a real computer;
 - that Firefox's "restart" page never shows (the hold is tested; the
   Firefox UI is not).
