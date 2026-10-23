@@ -31,6 +31,15 @@
 #      whatever the image's lsb_release says AurOS is (TM-1,
 #      docs/legal/COMPLIANCE.md). --repo-config lays the repository's
 #      53auros-updates over the image's, to see a fix before a build has it.
+#    canonical ROOTFS [--repo-overlay]
+#      nothing in the built image phones Canonical: Ubuntu Pro's timers and
+#      services and the motd-news timer are masked or absent, no apt hook
+#      calls Ubuntu Pro / ESM / Canonical, and no enabled unit runs a
+#      command naming a Canonical host (the archive excepted). ubuntu-pro-
+#      client cannot simply be removed: gnome-software needs
+#      software-properties-gtk, which needs it. --repo-overlay lays the
+#      repository's rootfs/ over the image first, as build/forge does.
+#      Also part of `static`.
 #    firefox         in a throwaway ubuntu:24.04 with network: Mozilla's
 #      repository set up exactly as build/forge does it, AurOS's apt
 #      policy, an old firefox installed -> unattended-upgrades would
@@ -159,6 +168,8 @@ static() {
         note "no flatpak in this image"
     fi
 
+    canonical_check "$R"
+
     echo
     echo "== what she sees"
     if [ -x "$R/usr/bin/gnome-software" ]; then
@@ -238,6 +249,64 @@ keycheck() { # ROOTFS SOURCE KEY
         note "the live channel at $url is not asked here (UPDATEPOLICY_LIVE=1 does): acceptance is proven by aptrepo.yml's publish"
     fi
     rm -rf "$T"
+}
+
+# Used by `static` and by `canonical`. R is absolute; inr is the chroot runner.
+canonical_check() {
+    local R=$1 u f off hooks n l name unit ex cmd
+    echo
+    echo "== nothing in the image phones Canonical"
+    off=""
+    for u in ua-timer.timer ua-timer.service apt-news.service esm-cache.service ubuntu-advantage.service \
+             ua-reboot-cmds.service ubuntu-advantage-desktop-daemon.service motd-news.timer motd-news.service; do
+        f="$R/etc/systemd/system/$u"
+        if [ -L "$f" ] && [ "$(readlink "$f")" = /dev/null ]; then continue; fi
+        if [ ! -e "$R/usr/lib/systemd/system/$u" ] && [ ! -e "$R/lib/systemd/system/$u" ]; then continue; fi
+        off="$off $u"
+    done
+    [ -z "$off" ] && ok "Ubuntu Pro's and the motd news timers and services are masked or absent" ||
+        bad "Ubuntu Pro's and the motd news timers and services are masked or absent" "live:$off"
+    hooks=$(inr apt-config dump 2>/dev/null | grep -iE '(Pre|Post)-Invoke.*(ubuntu-advantage|esm|ubuntu-pro|motd|update-notifier|canonical|ubuntu\.com)' || true)
+    [ -z "$hooks" ] && ok "no apt hook calls Ubuntu Pro, ESM or Canonical" || bad "no apt hook calls Ubuntu Pro, ESM or Canonical" "$hooks"
+    # Every enabled unit, whatever package it came from: what it runs
+    # must not name a Canonical host (the archive is apt's business).
+    off=""
+    while IFS= read -r l; do
+        name=${l##*/}; unit=""
+        [ -L "$R/etc/systemd/system/$name" ] && [ "$(readlink "$R/etc/systemd/system/$name")" = /dev/null ] && continue
+        for f in "$R/etc/systemd/system/$name" "$R/usr/lib/systemd/system/$name" "$R/lib/systemd/system/$name"; do
+            [ -f "$f" ] && { unit=$f; break; }
+        done
+        [ -n "$unit" ] || continue
+        for ex in $(sed -n 's/^Exec[A-Za-z]*=[-@+!:]*\([^ ]*\).*/\1/p' "$unit"); do
+            cmd="$R$ex"; [ -f "$cmd" ] || continue
+            if grep -IqiE 'https?://[^"'"'"' ]*(ubuntu|canonical)\.com' "$cmd" 2>/dev/null &&
+               grep -IiE 'https?://[^"'"'"' ]*(ubuntu|canonical)\.com' "$cmd" | grep -qviE 'archive\.ubuntu|security\.ubuntu|ports\.ubuntu|launchpad|^[[:space:]]*#'; then
+                off="$off $name($ex)"
+            fi
+        done
+    done < <(find "$R"/etc/systemd/system \( -path '*.wants/*' -o -path '*.requires/*' \) -type l 2>/dev/null)
+    [ -z "$off" ] && ok "no enabled unit runs a command that names a Canonical host" ||
+        bad "no enabled unit runs a command that names a Canonical host" "$off"
+}
+
+canonical() {
+    local R; R=$(cd "${1:?ROOTFS}" 2>/dev/null && pwd) || need "no rootfs at $1"
+    local T M="$R"
+    if [ "${2:-}" = --repo-overlay ]; then
+        [ "$(id -u)" = 0 ] || need "--repo-overlay needs root (overlay mount)"
+        T=$(mktemp -d); mkdir -p "$T/up" "$T/work" "$T/m"
+        trap 'umount "$T/m/dev" 2>/dev/null; umount "$T/m/proc" 2>/dev/null; umount "$T/m" 2>/dev/null; rm -rf "$T"' EXIT INT TERM
+        if ! mount -t overlay overlay -o "lowerdir=$R,upperdir=$T/up,workdir=$T/work" "$T/m" 2>/dev/null; then
+            echo "    (no overlay here: working on a copy of $R)"; cp -a "$R/." "$T/m/" || need "could not copy $R"
+        fi
+        cp -a --no-preserve=ownership "$ROOT/rootfs/." "$T/m/" || need "could not lay rootfs/ over the image"
+        M="$T/m"; echo "    [the repository's rootfs/ laid over the image, as build/forge does]"
+    fi
+    mkdir -p "$M/dev" "$M/proc"
+    inr() { chroot "$M" /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C HOME=/root "$@"; }
+    canonical_check "$M"
+    done_
 }
 
 dryrun() {
@@ -383,6 +452,7 @@ firefox() {
 case "${1:-}" in
     static)  shift; static "$@" ;;
     dryrun) shift; dryrun "$@" ;;
+    canonical) shift; canonical "$@" ;;
     keycheck) shift  # ROOTFS: only the key part (a rootfs with just the source and key will do)
               R=$(cd "${1:?ROOTFS}" && pwd) || need "no rootfs"
               keycheck "$R" "$R/etc/apt/sources.list.d/auros.sources" "$R/usr/share/keyrings/auros-archive-keyring.asc"; done_ ;;

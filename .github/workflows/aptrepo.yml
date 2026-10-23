@@ -504,7 +504,21 @@ jobs:
             sudo ls "$R"/usr/lib/systemd/system 2>/dev/null | grep -iE 'ua-|apt-news|esm|ubuntu-advantage' | sed 's/^/  /'
           } 2>&1 | tee canonical.txt
           { echo '### what else talks to Canonical'; echo '```'; cat canonical.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: nothing phones Canonical, as built
+        id: canon_built
+        continue-on-error: true
+        run: sudo bash tools/updatepolicytest.sh canonical work/rootfs 2>&1 | tee canon-built.txt
+      - name: nothing phones Canonical, with this repository's rootfs/ laid over the image (as build/forge does)
+        id: canon_fixed
+        continue-on-error: true
+        run: sudo bash tools/updatepolicytest.sh canonical work/rootfs --repo-overlay 2>&1 | tee canon-fixed.txt
       - name: summary
+        run: |
+          { echo '### canonical, as built'; echo '```'; cat canon-built.txt; echo '```'
+            echo '### canonical, with the repository rootfs/ laid over it'; echo '```'; cat canon-fixed.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "canonical as built: ${{ steps.canon_built.outcome }}; with the repository rootfs/: ${{ steps.canon_fixed.outcome }}"
+          [ "${{ steps.canon_fixed.outcome }}" = success ]
+      - name: summary (update origins)
         run: |
           { echo '### as built'; echo '```'; cat asbuilt.txt; echo '```'
             echo '### with the repository config laid over it'; echo '```'; cat fixed.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
