@@ -177,6 +177,11 @@ mutant ferry 'signal_done import "$_rc" files firefox' ':' \
 mutant ferry-common.sh '        5) _res=unopened ;; *) _res=failed ;;' '        5) _res=unopened ;; *) _res=ok ;;' \
     "the completion signal says: back, ok, and how many files"
 
+mutant ffhash.c '        char hex[24];
+        snprintf(hex, sizeof hex, "%016llX", (unsigned long long)cityhash64(w, n));
+        puts(hex);' '        printf("%016llX\n", (unsigned long long)cityhash64(w, n));' \
+    "every compiled helper carries the hardening the image build demands (PIE, RELRO, stack protector...)"
+
 # Root: the escalation the lead's review named.
 # Without the switch to her, the self-check refuses to copy at all...
 mutant copy.c 'if (setgroups(1, &gg) || setresgid(g, g, g) || setresuid(u, u, u))' \

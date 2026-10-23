@@ -458,6 +458,17 @@ refute "no Wi-Fi key, no Firefox login, anywhere under the new home or state" \
 refute "no password file anywhere under the new home" \
     sh -c "find '$HOME1' -iname 'logins*.json' -o -iname 'key[34].db' -o -iname 'signons*' | grep -q ."
 
+echo "hardening (the image build refuses a program without it):"
+CS="$FERRY/../../tools/checksec.sh"
+if [ -f "$CS" ] && command -v gcc >/dev/null 2>&1; then
+    HD="$TMP/hard"; mkdir -p "$HD"
+    sh "$FERRY/install.sh" helpers "$HD" >/dev/null 2>&1
+    assert "every compiled helper carries the hardening the image build demands (PIE, RELRO, stack protector...)" \
+        sh "$CS" "$HD"/usr/lib/ferry/ferry-*
+else
+    echo "  (skipped: tools/checksec.sh or gcc not here)"
+fi
+
 echo "install list:"
 for _f in $(sh "$FERRY/install.sh" list); do
     [ -f "$FERRY/$_f" ] || bad "install.sh names $_f, which does not exist"
