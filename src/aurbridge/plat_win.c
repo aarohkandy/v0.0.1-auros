@@ -805,6 +805,141 @@ int plat_grow_system(int index, int part_number, uint64_t to_bytes,
     return 0;
 }
 
+/* ── her Wi-Fi (D10) ─────────────────────────────────────────────────
+ * See plat.h. wlanapi.dll is loaded when it is there: Windows Server, and
+ * so the CI runner, has none, and "no Wi-Fi service" is "not on Wi-Fi". */
+#include <wlanapi.h>
+#ifndef WLAN_PROFILE_GET_PLAINTEXT_KEY
+#define WLAN_PROFILE_GET_PLAINTEXT_KEY 0x4
+#endif
+typedef DWORD (WINAPI *PFN_WlanOpenHandle)(DWORD, PVOID, PDWORD, PHANDLE);
+typedef DWORD (WINAPI *PFN_WlanCloseHandle)(HANDLE, PVOID);
+typedef DWORD (WINAPI *PFN_WlanEnumInterfaces)(HANDLE, PVOID, PWLAN_INTERFACE_INFO_LIST *);
+typedef DWORD (WINAPI *PFN_WlanQueryInterface)(HANDLE, const GUID *, WLAN_INTF_OPCODE,
+                                               PVOID, PDWORD, PVOID *, PWLAN_OPCODE_VALUE_TYPE);
+typedef DWORD (WINAPI *PFN_WlanGetProfile)(HANDLE, const GUID *, LPCWSTR, PVOID, LPWSTR *,
+                                           DWORD *, DWORD *);
+typedef VOID  (WINAPI *PFN_WlanFreeMemory)(PVOID);
+
+/* The text between <open> and </close> after `from`, or NULL. */
+static const wchar_t *xml_after(const wchar_t *x, const wchar_t *from, const wchar_t *open,
+                                const wchar_t *close, wchar_t *out, size_t n)
+{
+    const wchar_t *a = x;
+    if (from) { a = wcsstr(x, from); if (!a) return NULL; }
+    a = wcsstr(a, open);
+    if (!a) return NULL;
+    a += wcslen(open);
+    const wchar_t *b = wcsstr(a, close);
+    if (!b || (size_t)(b - a) >= n) return NULL;
+    memcpy(out, a, (size_t)(b - a) * sizeof(wchar_t));
+    out[b - a] = 0;
+    return b + wcslen(close);
+}
+
+static int ascii_printable(const char *s, size_t lo, size_t hi)
+{
+    size_t k = strlen(s);
+    if (k < lo || k > hi) return 0;
+    for (size_t i = 0; i < k; i++)
+        if ((unsigned char)s[i] < 0x20 || (unsigned char)s[i] > 0x7E) return 0;
+    return 1;
+}
+
+int plat_wifi_profile(char *ssid, size_t sn, char *security, size_t secn,
+                      char *psk, size_t pn, char *why, size_t wn)
+{
+    ssid[0] = security[0] = psk[0] = 0;
+    HMODULE m = LoadLibraryA("wlanapi.dll");
+    if (!m) { snprintf(why, wn, "this computer is not on Wi-Fi"); return -1; }
+    PFN_WlanOpenHandle     op = (PFN_WlanOpenHandle)(void *)GetProcAddress(m, "WlanOpenHandle");
+    PFN_WlanCloseHandle    cl = (PFN_WlanCloseHandle)(void *)GetProcAddress(m, "WlanCloseHandle");
+    PFN_WlanEnumInterfaces en = (PFN_WlanEnumInterfaces)(void *)GetProcAddress(m, "WlanEnumInterfaces");
+    PFN_WlanQueryInterface qi = (PFN_WlanQueryInterface)(void *)GetProcAddress(m, "WlanQueryInterface");
+    PFN_WlanGetProfile     gp = (PFN_WlanGetProfile)(void *)GetProcAddress(m, "WlanGetProfile");
+    PFN_WlanFreeMemory     fr = (PFN_WlanFreeMemory)(void *)GetProcAddress(m, "WlanFreeMemory");
+    int rc = -1;
+    HANDLE h = NULL;
+    DWORD ver = 0;
+    snprintf(why, wn, "this computer is not on Wi-Fi");
+    if (!(op && cl && en && qi && gp && fr) || op(2, NULL, &ver, &h) != ERROR_SUCCESS) goto out;
+    PWLAN_INTERFACE_INFO_LIST list = NULL;
+    if (en(h, NULL, &list) != ERROR_SUCCESS || !list) { cl(h, NULL); goto out; }
+    for (DWORD i = 0; i < list->dwNumberOfItems && rc != 0; i++) {
+        if (list->InterfaceInfo[i].isState != wlan_interface_state_connected) continue;
+        PWLAN_CONNECTION_ATTRIBUTES ca = NULL;
+        DWORD sz = 0;
+        if (qi(h, &list->InterfaceInfo[i].InterfaceGuid, wlan_intf_opcode_current_connection,
+               NULL, &sz, (PVOID *)&ca, NULL) != ERROR_SUCCESS || !ca) continue;
+        wchar_t profile[256];
+        wcsncpy(profile, ca->strProfileName, 255); profile[255] = 0;
+        fr(ca);
+        LPWSTR xml = NULL;
+        DWORD flags = WLAN_PROFILE_GET_PLAINTEXT_KEY, granted = 0;
+        if (gp(h, &list->InterfaceInfo[i].InterfaceGuid, profile, NULL, &xml, &flags, &granted)
+                != ERROR_SUCCESS || !xml) {
+            snprintf(why, wn, "Windows would not give AurOS the key for this Wi-Fi");
+            continue;
+        }
+        wchar_t wname[256], wauth[64], wkind[32], wprot[16], wkey[256];
+        const wchar_t *nm = xml_after(xml, L"<SSID>", L"<name>", L"</name>", wname, 256);
+        if (!nm) xml_after(xml, NULL, L"<name>", L"</name>", wname, 256);
+        if (!xml_after(xml, L"<authEncryption>", L"<authentication>", L"</authentication>", wauth, 64)) {
+            snprintf(why, wn, "this Wi-Fi's kind of sign-in is not one AurOS can carry across");
+            fr(xml); continue;
+        }
+        char name[300], auth[64];
+        WideCharToMultiByte(CP_UTF8, 0, wname, -1, name, sizeof name, NULL, NULL);
+        WideCharToMultiByte(CP_UTF8, 0, wauth, -1, auth, sizeof auth, NULL, NULL);
+        const char *sec = NULL;
+        if (!_stricmp(auth, "open")) sec = "open";
+        else if (!_stricmp(auth, "WPA2PSK") || !_stricmp(auth, "WPAPSK")) sec = "wpa-psk";
+        else if (!_stricmp(auth, "WPA3SAE")) sec = "sae";
+        if (!sec) {
+            snprintf(why, wn, "this Wi-Fi is a work or school sign-in, which AurOS cannot carry across");
+            fr(xml); continue;
+        }
+        char key[300] = "";
+        if (strcmp(sec, "open") != 0) {
+            const wchar_t *e = xml_after(xml, L"<sharedKey>", L"<keyType>", L"</keyType>", wkind, 32);
+            int ok = e && !wcscmp(wkind, L"passPhrase") &&
+                     xml_after(xml, L"<sharedKey>", L"<protected>", L"</protected>", wprot, 16) &&
+                     !wcscmp(wprot, L"false") &&
+                     xml_after(xml, L"<sharedKey>", L"<keyMaterial>", L"</keyMaterial>", wkey, 256);
+            if (!ok) {
+                snprintf(why, wn, "Windows would not give AurOS the key for this Wi-Fi");
+                SecureZeroMemory(wkey, sizeof wkey); fr(xml); continue;
+            }
+            WideCharToMultiByte(CP_UTF8, 0, wkey, -1, key, sizeof key, NULL, NULL);
+            SecureZeroMemory(wkey, sizeof wkey);
+        }
+        SecureZeroMemory(xml, wcslen(xml) * sizeof(wchar_t));
+        fr(xml);
+        /* WHAT AN INSTALLED SYSTEM CAN WRITE DOWN WITHOUT DOUBT: a name and
+         * a key of printable ASCII, the key the length WPA allows. Anything
+         * else is not carried, and she is asked on AurOS's own screen. */
+        int hex64 = strlen(key) == 64;
+        for (size_t q = 0; hex64 && key[q]; q++)
+            if (!strchr("0123456789abcdefABCDEF", key[q])) hex64 = 0;
+        if (!ascii_printable(name, 1, 32)) {
+            snprintf(why, wn, "this Wi-Fi's name has letters AurOS cannot carry across");
+        } else if (strcmp(sec, "open") != 0 && !ascii_printable(key, 8, 63) && !hex64) {
+            snprintf(why, wn, "this Wi-Fi's key is not one AurOS can carry across");
+        } else {
+            snprintf(ssid, sn, "%s", name);
+            snprintf(security, secn, "%s", sec);
+            snprintf(psk, pn, "%s", key);
+            rc = 0;
+        }
+        SecureZeroMemory(key, sizeof key);
+    }
+    fr(list);
+    cl(h, NULL);
+out:
+    FreeLibrary(m);
+    return rc;
+}
+
 /* ── "Put Windows back": the startup task ───────────────────────────
  * See plat.h. The script is passed to the task as -EncodedCommand
  * (UTF-16LE, base64), so it is part of the task definition and there is

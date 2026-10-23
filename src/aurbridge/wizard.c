@@ -1202,6 +1202,19 @@ static void beside_me(char *out, size_t n, const char *leaf)
 
 static HANDLE g_dl_thread;             /* defined with download_begin() */
 
+/* Wait for the early download to end. The legacy path does it before the
+ * engine starts; the fast path from inside phase 2, after Windows has made
+ * the room -- the shrink hides behind the download. */
+static void wait_early_download(void *ud)
+{
+    (void)ud;
+    if (g_dl_thread) {
+        WaitForSingleObject(g_dl_thread, INFINITE);
+        CloseHandle(g_dl_thread);
+        g_dl_thread = NULL;
+    }
+}
+
 static DWORD WINAPI ab_worker(LPVOID p)
 {
     (void)p;
@@ -1210,11 +1223,16 @@ static DWORD WINAPI ab_worker(LPVOID p)
      * worker thread, not the UI thread, so the window keeps painting;
      * and because the download ran while she read the pages, it is
      * usually already finished and this returns at once. A failed early
-     * fetch is not fatal -- ab_run's own ensure_image() retries it. */
-    if (g_dl_thread) {
-        WaitForSingleObject(g_dl_thread, INFINITE);
-        CloseHandle(g_dl_thread);
-        g_dl_thread = NULL;
+     * fetch is not fatal -- ab_run's own ensure_image() retries it.
+     *
+     * THE FAST PATH DOES NOT WAIT HERE: it checks the machine and has
+     * Windows shrink C: while the download is still running, and waits
+     * only when it needs the pieces (ab_choice.pieces_wait). */
+    if (g_ab_choice.fast_path) {
+        g_ab_choice.pieces_wait = wait_early_download;
+        g_ab_choice.pieces_wait_ud = NULL;
+    } else {
+        wait_early_download(NULL);
     }
     if (InterlockedCompareExchange(&g_ab_gate, 1, 0) != 0) {
         _snprintf(g_ab_why, sizeof g_ab_why - 1, "it was stopped.");
@@ -1285,6 +1303,14 @@ static void choice_image_source(ab_choice *c)
      * "Installing without a memory stick". */
     c->no_stick = 1;
     c->stick_serial[0] = 0;
+#ifdef AB_CHOICE_FAST_PATH
+    /* WINDOWS MAKES THE ROOM, AurOS is written into it while it downloads,
+     * and the restart only checks and commits (decision D1). The engine
+     * falls back to the old way by itself where Windows cannot make
+     * enough room, and a BitLocker PC that cannot have the fast way is
+     * refused before anything is changed. */
+    c->fast_path = 1;
+#endif
     /* WHERE THE IMAGE GOES: \AurOS\ on the drive Windows started from,
      * because that is the volume the staging environment will mount
      * after the restart -- the journal names that partition and no

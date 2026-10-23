@@ -1454,7 +1454,7 @@ static void check_esp(pf_report *r)
      * same way (esp_room in phases.c). */
     static const char *ours[] = { "staging.efi", "staging.img", "shimx64.efi",
                                   "grubx64.efi", "mmx64.efi", "grub.cfg",
-                                  "choices.conf" };
+                                  "choices.conf", "wifi.conf" };
     uint64_t left = 0;
     for (size_t i = 0; i < sizeof ours / sizeof ours[0]; i++) {
         char fp[MAX_PATH + 64];

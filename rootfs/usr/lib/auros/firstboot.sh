@@ -44,6 +44,13 @@ if [ -x /usr/lib/auros/choices.sh ]; then
     /usr/lib/auros/choices.sh 2>&1 || echo "choices: did not finish; defaults kept"
 fi
 
+# ── 1c. Her Wi-Fi from Windows, if she let the installer bring it (D10):
+# a NetworkManager keyfile for the one network she was on, and the copy on
+# the EFI partition deleted. See wifi-across.sh.
+if [ -x /usr/lib/auros/wifi-across.sh ]; then
+    /usr/lib/auros/wifi-across.sh 2>&1 || echo "wifi: did not finish"
+fi
+
 # ── 2. Re-apply the theme.
 # The image was themed at build time, but the display resolution is only
 # known now, so the wallpaper is regenerated at the real size.

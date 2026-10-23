@@ -81,6 +81,21 @@ typedef struct {
 int ab_pieces_parse(const char *text, ab_pieces *out, char *why, size_t n);
 
 /* What the person chose, in the wizard. */
+/* THE SWITCH FOR THE FAST PATH AND THE TWO THINGS THAT GO WITH IT (decisions
+ * D1, D10, D11). The wizard shows the "Bring my Wi-Fi across" tick and the
+ * drive-lock line only when AB_CHOICE_BRING_WIFI and AB_CHOICE_BITLOCKER_PAUSE
+ * exist, preflight stops treating BitLocker as a refusal when the second
+ * does, and the wizard asks the engine for the fast path when the third
+ * does -- so all three are defined together, and only once every step is
+ * proven: simulation (tools/fasttest.sh), real Windows (fastpath.yml's
+ * gapselftest with its mutants) and the end-to-end journey. Built in with
+ * AUROS_FASTPATH=1 (build/aurbridge) until then. */
+#ifdef AUROS_FASTPATH
+#define AB_CHOICE_BRING_WIFI       1
+#define AB_CHOICE_BITLOCKER_PAUSE  1
+#define AB_CHOICE_FAST_PATH        1
+#endif
+
 typedef struct {
     char profile[64];          /* "desktop", "school-kiosk"           */
     char shell_archetype[32];  /* shells/<id>.shell                   */
@@ -258,6 +273,8 @@ typedef struct {
     uint64_t win_orig_bytes;     /* C: before this run shrank it       */
     uint64_t shrink_target;      /* what phase 2 asks Windows for      */
     int      shrunk;             /* ab_abort grows C: back             */
+    uint8_t  disk_guid[16];      /* the disk's GPT GUID (for the task) */
+    int      putback_task;       /* the startup task is registered     */
     stage_layout plan;           /* the gap, as plan_compute_prepared  */
     uint64_t root_len, boot_len, rsc_bytes, min_root_bytes;
     char     root_sha256[65], boot_sha256[65];

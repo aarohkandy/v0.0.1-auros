@@ -1763,6 +1763,7 @@ static int phase_prepare_gap(const ab_choice *c, ab_machine *m,
                          "after Windows made room.");
         return -1;
     }
+    memcpy(m->disk_guid, t.disk_guid, 16);
     int wi = gpt_find_start(&t, m->win_start_lba * 512 / ss);
     if (wi < 0 || (t.ent[wi].last - t.ent[wi].first + 1) * ss != achieved) {
         snprintf(why, n, "Windows and the partition table disagree about drive "
@@ -1779,6 +1780,32 @@ static int phase_prepare_gap(const ab_choice *c, ab_machine *m,
                        sizeof m->gpt_sha256) != 0) {
         snprintf(why, n, "the way this drive is divided up could not be read.");
         return -1;
+    }
+
+    /* "PUT WINDOWS BACK", THE WINDOWS HALF (the owner-approved startup
+     * task), registered THE MOMENT C: IS SMALLER, not when she presses
+     * Restart now. C: is smaller by what AurOS will use, and the staging
+     * environment never touches C: (it may be BitLocker's), so when AurOS
+     * is removed -- or this install never commits, a restart she did not
+     * press for, the installer closed -- Windows itself gives C: its room
+     * back at its next start. An install that could not leave this behind
+     * would leave C: smaller for good on a drive nothing else can grow, so
+     * that is a refusal and ab_abort grows C: back. After AurOS is
+     * installed its partitions follow C: directly, so the task finds
+     * nothing to grow and does nothing until they are gone. */
+    {
+        char gs[48];
+        const uint8_t *g = m->disk_guid;
+        snprintf(gs, sizeof gs, "{%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-"
+                                "%02X%02X%02X%02X%02X%02X}",
+                 g[3], g[2], g[1], g[0], g[5], g[4], g[7], g[6], g[8], g[9],
+                 g[10], g[11], g[12], g[13], g[14], g[15]);
+        m->putback_task = 1;
+        if (plat_putback_task(gs, m->win_start_lba * 512, m->win_sectors * 512,
+                              m->win_orig_bytes, why, n) != 0)
+            return -1;
+        talk(say, ud, "Windows will give drive C: its room back by itself if "
+                      "AurOS is ever removed");
     }
 
     /* 5. WRITE, into the gap and nowhere else. */
@@ -1894,6 +1921,75 @@ static void write_choices(const ab_choice *c, const char *esp,
                       "down (%s); AurOS will start with its own", w);
 }
 
+/* ── her Wi-Fi, across (decision D10) ─────────────────────────────────
+ *
+ * Only when she left the box ticked (ab_choice.bring_wifi), and only the one
+ * network she is connected to, read with the documented WLAN API
+ * (plat_wifi_profile). Three lines on the EFI partition, \EFI\AurOS\wifi.conf,
+ * which AurOS's first start turns into a NetworkManager keyfile (0600) and
+ * then deletes (rootfs/usr/lib/auros/wifi-across.sh). The key is never
+ * logged, never put in a message, and the buffers it passed through are
+ * wiped. Anything that cannot be written down without doubt is not carried;
+ * she is asked on AurOS's own screen. A failure here is a note, not a
+ * refusal: AurOS installs and starts offline. */
+static void wipe(void *p, size_t n)
+{
+    volatile unsigned char *q = p;
+    while (n--) *q++ = 0;
+}
+
+static int wifi_text_ok(const char *ssid, const char *sec, const char *psk)
+{
+    size_t ls = strlen(ssid), lp = strlen(psk);
+    if (ls < 1 || ls > 32) return 0;
+    for (size_t i = 0; i < ls; i++)
+        if ((unsigned char)ssid[i] < 0x20 || (unsigned char)ssid[i] > 0x7E) return 0;
+    if (strcmp(sec, "open") == 0) return lp == 0;
+    if (strcmp(sec, "wpa-psk") != 0 && strcmp(sec, "sae") != 0) return 0;
+    int hex = lp == 64;
+    for (size_t i = 0; i < lp; i++) {
+        if ((unsigned char)psk[i] < 0x20 || (unsigned char)psk[i] > 0x7E) return 0;
+        if (!strchr("0123456789abcdefABCDEF", psk[i])) hex = 0;
+    }
+    return (lp >= 8 && lp <= 63) || hex;
+}
+
+static void write_wifi(const ab_choice *c, const char *esp, ab_say say, void *ud)
+{
+    char path[512], w[PLAT_WHY];
+    snprintf(path, sizeof path, "%s/EFI/AurOS/wifi.conf", esp);
+    /* One an earlier attempt left is taken away first, whatever happens. */
+    plat_file_delete(path, w, sizeof w);
+    if (!c->bring_wifi) return;
+    char ssid[64], sec[16], psk[128], why[PLAT_WHY];
+    if (plat_wifi_profile(ssid, sizeof ssid, sec, sizeof sec, psk, sizeof psk,
+                          why, sizeof why) != 0) {
+        talk(say, ud, "your Wi-Fi was not carried across (%s); AurOS will ask "
+                      "for it when it starts", why);
+        wipe(psk, sizeof psk);
+        return;
+    }
+    if (!wifi_text_ok(ssid, sec, psk)) {
+        talk(say, ud, "your Wi-Fi was not carried across (its name or key is "
+                      "not one AurOS can write down without doubt); AurOS will "
+                      "ask for it when it starts");
+        wipe(psk, sizeof psk);
+        return;
+    }
+    char buf[256];
+    int k = strcmp(sec, "open") == 0
+          ? snprintf(buf, sizeof buf, "ssid=%s\nsecurity=open\n", ssid)
+          : snprintf(buf, sizeof buf, "ssid=%s\nsecurity=%s\npsk=%s\n", ssid, sec, psk);
+    wipe(psk, sizeof psk);
+    if (k <= 0 || (size_t)k >= sizeof buf) { wipe(buf, sizeof buf); return; }
+    if (plat_file_put(path, buf, (size_t)k, w, sizeof w) != 0)
+        talk(say, ud, "your Wi-Fi could not be written down (%s); AurOS will "
+                      "ask for it when it starts", w);
+    else
+        talk(say, ud, "your Wi-Fi goes across with you");
+    wipe(buf, sizeof buf);
+}
+
 /* ── phase 3: the last thing before the restart ──────────────────── */
 
 /* ROOM ON THE EFI PARTITION, ASKED BEFORE THE FIRST BYTE GOES THERE.
@@ -1911,7 +2007,7 @@ static int esp_room(const char *esp, const char *kern, const char *init,
 {
     static const char *mine[] = { "staging.efi", "staging.img", "shimx64.efi",
                                   "grubx64.efi", "mmx64.efi", "grub.cfg",
-                                  "choices.conf" };
+                                  "choices.conf", "wifi.conf" };
     static const char *extra[] = { PAYLOAD_SHIM, PAYLOAD_GRUB, PAYLOAD_MOKMGR };
     uint64_t want = 0, sz = 0, old = 0;
     char p[512], w2[PLAT_WHY];
@@ -1932,7 +2028,14 @@ static int esp_room(const char *esp, const char *kern, const char *init,
             want += sz;
         }
     }
-    want += 1ULL << 20;                 /* grub.cfg, choices, FAT clusters */
+    /* THE SAME QUESTION PREFLIGHT ASKED (esp_need in preflight.c): what is
+     * carried -- kernel, initramfs, shim, grub, mokmgr -- plus 21 MiB for the
+     * journal appended to the staging image, FAT clusters, grub.cfg, the
+     * choices and the Wi-Fi file; and a build that carries nothing is
+     * measured as the release's 33 MiB. The 21 MiB is the review's number:
+     * measure it and tighten. */
+    if (want == 0) want = 33ULL << 20;
+    want += 21ULL << 20;
     for (size_t i = 0; i < sizeof mine / sizeof mine[0]; i++) {
         snprintf(p, sizeof p, "%s/EFI/AurOS/%s", esp, mine[i]);
         sz = 0;
@@ -2147,8 +2250,20 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
             "    search --no-floppy --file --set=root /EFI/AurOS/staging.efi\n"
             "fi\n"
             "menuentry 'AurOS installer' {\n"
+            /* `gpt` ON THE KERNEL LINE: Linux ignores a disk's spare
+             * partition table when the main one is torn unless told to
+             * use it -- and the staging environment runs on exactly the
+             * disks where a power cut has torn the main one. Without it
+             * the kernel shows no partitions, staging says it cannot see
+             * the drive, and "Put Windows back" cannot be run again. */
+            /* THE FIRST WORDS ON THE SCREEN after Windows has gone: the
+             * maker's logo, this, and then AurOS's own screen (D-01 in
+             * docs/research/people-walkthrough-2026-10.md). Without it
+             * there were one to two minutes of black with no word about
+             * how long, and people held the power button down. */
+            "    echo 'AurOS is starting. About one minute. Please do not press anything.'\n"
             "    linux /EFI/AurOS/staging.efi aurstage.install "
-            "aurstage.profile=%s console=tty0%s%s\n"
+            "aurstage.profile=%s console=tty0 gpt quiet loglevel=3 vt.global_cursor_default=0%s%s\n"
             "    initrd /EFI/AurOS/staging.img\n"
             "}\n",
             c->profile, extra ? " " : "", extra ? extra : "");
@@ -2181,6 +2296,7 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
                       "only works with Secure Boot off");
     }
     write_choices(c, esp, say, ud);
+    write_wifi(c, esp, say, ud);
     plat_esp_close();
     /* Anything that was unpacked to get here is gone again. The bytes
      * that matter are on the EFI partition now. */
@@ -2195,7 +2311,8 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
     char cmdline[512];
     snprintf(cmdline, sizeof cmdline,
              "initrd=\\EFI\\AurOS\\staging.img aurstage.install "
-             "aurstage.profile=%s console=tty0%s%s", c->profile,
+             "aurstage.profile=%s console=tty0 gpt quiet loglevel=3 "
+             "vt.global_cursor_default=0%s%s", c->profile,
              extra ? " " : "", extra ? extra : "");
     if (plat_boot_make("AurOS Installer", &m->esp,
                        chain ? "\\EFI\\AurOS\\shimx64.efi"
@@ -2373,7 +2490,7 @@ void ab_abort(ab_machine *m, ab_say say, void *ud)
         if (plat_esp_open(esp, sizeof esp, why, sizeof why) == 0) {
             static const char *ours[] = { "staging.efi", "staging.img",
                 "shimx64.efi", "grubx64.efi", "mmx64.efi", "grub.cfg",
-                "choices.conf" };
+                "choices.conf", "wifi.conf" };
             for (size_t i = 0; i < sizeof ours / sizeof ours[0]; i++) {
                 char p[512];
                 snprintf(p, sizeof p, "%s/EFI/AurOS/%s", esp, ours[i]);
@@ -2388,6 +2505,13 @@ void ab_abort(ab_machine *m, ab_say say, void *ud)
      * in unallocated space that C: now takes back; nothing pointed at
      * them. */
     plat_gap_forbid();
+    if (m->putback_task) {
+        char w[PLAT_WHY];
+        if (plat_putback_task_remove(w, sizeof w) == 0) m->putback_task = 0;
+        else talk(say, ud, "the note that gives drive C: its room back could "
+                           "not be removed (%s); it does nothing while AurOS "
+                           "is on this computer", w);
+    }
     if (m->shrunk) {
         char w[PLAT_WHY];
         uint64_t got = 0;

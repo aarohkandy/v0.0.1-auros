@@ -427,6 +427,25 @@ int plat_grow_system(int index, int part_number, uint64_t to_bytes,
     return 0;
 }
 
+int plat_wifi_profile(char *ssid, size_t sn, char *security, size_t secn,
+                      char *psk, size_t pn, char *why, size_t wn)
+{
+    char p[600], l1[256] = "", l2[64] = "", l3[256] = "";
+    simpath(p, sizeof p, "wifi.txt");
+    FILE *f = fopen(p, "r");
+    if (!f) { snprintf(why, wn, "this computer is not on Wi-Fi"); return -1; }
+    if (fgets(l1, sizeof l1, f) && fgets(l2, sizeof l2, f)) { if (!fgets(l3, sizeof l3, f)) l3[0] = 0; }
+    fclose(f);
+    for (char *q = l1; *q; q++) if (*q == '\n' || *q == '\r') *q = 0;
+    for (char *q = l2; *q; q++) if (*q == '\n' || *q == '\r') *q = 0;
+    for (char *q = l3; *q; q++) if (*q == '\n' || *q == '\r') *q = 0;
+    snprintf(ssid, sn, "%s", l1);
+    snprintf(security, secn, "%s", l2);
+    snprintf(psk, pn, "%s", l3);
+    if (!ssid[0]) { snprintf(why, wn, "this computer is not on Wi-Fi"); return -1; }
+    return 0;
+}
+
 /* The put-back task, as a file a test can read: guid offset shrunk orig. */
 int plat_putback_task(const char *disk_guid, uint64_t win_offset,
                       uint64_t shrunk_bytes, uint64_t orig_bytes,

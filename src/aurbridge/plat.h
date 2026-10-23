@@ -158,6 +158,23 @@ int  plat_shrink_system(int disk_index, int part_number,
 int  plat_grow_system(int disk_index, int part_number, uint64_t to_bytes,
                       uint64_t *achieved_bytes, char *why, size_t wn);
 
+/* ── her Wi-Fi, the one network she is on (decision D10) ──────────────
+ * The documented WLAN API, the same call `netsh wlan show profile
+ * key=clear` makes: the CONNECTED network's profile, asked for with its
+ * key (WLAN_PROFILE_GET_PLAINTEXT_KEY, which an administrator may ask
+ * for). Only that one network. Nothing here stores or logs the key; the
+ * caller writes it where the installer says and wipes its buffer.
+ *   ssid      the network's name, printable ASCII only
+ *   security  "wpa-psk", "sae" or "open"
+ *   psk       the passphrase (8..63 characters) or 64 hex digits; empty
+ *             for "open"
+ * 0 when there is one to carry; -1 with a sentence in `why` when there is
+ * not (not on Wi-Fi, a work or school sign-in, a name or key AurOS cannot
+ * write down safely). The simulation reads $AURBRIDGE_SIM/wifi.txt:
+ * ssid, security, key, one per line. */
+int plat_wifi_profile(char *ssid, size_t sn, char *security, size_t secn,
+                      char *psk, size_t pn, char *why, size_t wn);
+
 /* "PUT WINDOWS BACK", THE WINDOWS HALF (the fast path). After the fast
  * path, C: is smaller than it was, and the staging environment cannot
  * grow it back (it never touches C:, which may be BitLocker-encrypted),

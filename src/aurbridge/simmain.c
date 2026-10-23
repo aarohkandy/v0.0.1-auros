@@ -182,6 +182,7 @@ int main(int argc, char **argv)
         c.min_root_bytes = strtoull(getenv("AURBRIDGE_MIN_ROOT_MB"), NULL, 10)
                            * 1000ull * 1000;
     if (getenv("AURBRIDGE_BITLOCKER_PAUSE")) c.bitlocker_pause = 1;
+    if (getenv("AURBRIDGE_BRING_WIFI")) c.bring_wifi = 1;
     /* What the wizard does: nothing is armed until she presses Restart now
      * (tools/armtest.sh). */
     if (getenv("AURBRIDGE_ARM_LATER")) c.arm_later = 1;
