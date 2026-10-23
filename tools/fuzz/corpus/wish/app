@@ -1,0 +1,2 @@
+when I open firefox turn it down and open vlc
+{"v":1,"when":{"type":"app_opened","app_name":"Firefox"},"do":[{"type":"volume","set_percent":30},{"type":"open_app","app_name":"VLC media player"}]}

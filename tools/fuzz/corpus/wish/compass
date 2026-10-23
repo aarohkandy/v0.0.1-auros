@@ -1,0 +1,2 @@
+north
+{"v":1,"when":{"type":"sensor","sensor":"compass","heading":"north","tolerance_deg":20},"do":[{"type":"brightness","set_percent":100}]}

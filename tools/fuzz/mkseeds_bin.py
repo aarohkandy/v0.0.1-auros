@@ -216,9 +216,39 @@ def hive_seeds():
     out("hive", "default", b"\x03" + b"Policy\\Secrets\n@\n" + hive)
 
 
+# ── wish: [door byte] then that door's input (see fuzz_wish.c) ────
+def wish_seeds():
+    potato = ('{"v":1,"when":{"type":"typed_word","word":"potato"},'
+              '"do":[{"type":"fill_screen","emoji":"\U0001F954","seconds":3}]}')
+    compass = ('{"v":1,"when":{"type":"sensor","sensor":"compass","heading":"north",'
+               '"tolerance_deg":20},"do":[{"type":"brightness","set_percent":100}]}')
+    remind = ('{"v":1,"when":{"type":"time","at":"09:00"},'
+              '"do":[{"type":"remind","text":"Call mum"},{"type":"play_sound","sound":"chime"}]}')
+    app = ('{"v":1,"when":{"type":"app_opened","app_name":"Firefox"},'
+           '"do":[{"type":"volume","set_percent":30},{"type":"open_app","app_name":"VLC media player"}]}')
+    out("wish", "json", b"\x00" + potato.encode())
+    out("wish", "potato", b"\x01potato\n" + potato.encode())
+    out("wish", "compass", b"\x01north\n" + compass.encode())
+    out("wish", "remind", b"\x01remind me to call mum at nine\n" + remind.encode())
+    out("wish", "app", b"\x01when I open firefox turn it down and open vlc\n" + app.encode())
+    store = ('{"v":1,"next":5,"consent":1,"wishes":['
+             '{"id":"w1","status":"on","said":"potato","wish":' + potato + '},'
+             '{"id":"w2","status":"on","said":"x","wish":{"v":2,"when":{"type":"teleport"}}},'
+             '{"id":"w3","status":"off","said":"remind me to call mum at nine","wish":' + remind + '},'
+             '{"id":"w1","status":"on","said":"x","wish":{"v":1,"when":{"type":"now"},"do":[{"type":"speak_time"}]}}'
+             ']}')
+    out("wish", "store", b"\x02" + store.encode())
+    lines = ['{"id":1,"op":"hello"}', '{"id":2,"op":"consent","version":1}',
+             '{"id":3,"op":"list"}', '{"op":"typed","word":"potato"}', '{"id":4,"op":"today"}',
+             '{"op":"app","app":"firefox"}', '{"op":"hold","reasons":["password","call"]}',
+             '{"id":5,"op":"all_off"}', '{"id":6,"op":"undo"}', '{"id":7,"op":"wish","said":"x"}']
+    out("wish", "requests", b"\x03" + "\n".join(lines).encode())
+
+
 if __name__ == "__main__":
     inflate_seeds()
     gpt_seeds()
     journal_seeds()
     aurwl_seeds()
     hive_seeds()
+    wish_seeds()

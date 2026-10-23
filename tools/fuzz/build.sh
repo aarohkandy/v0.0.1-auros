@@ -58,6 +58,9 @@ build desktop "$HERE/fuzz_desktop.c" -- -lm
 build inflate "$HERE/fuzz_inflate.c" "$ROOT/src/aurbridge/inflate.c"
 build gpt     "$HERE/fuzz_gpt.c" "$ROOT/src/aurstage/gpt.c"
 build journal "$HERE/fuzz_journal.c" "$ROOT/src/aurstage/journal.c"
+# Stream W1's Wishes engine: cloud documents, socket lines, wishes.json.
+A="$ROOT/src/aurwish"
+build wish    "$HERE/fuzz_wish.c" "$A/json.c" "$A/wish.c" "$A/text.c" "$A/store.c" "$A/engine.c" -- -lm
 # Stream R's registry reader (runs as root on her Windows disk's hives).
 build hive    "$HERE/fuzz_hive.c"
 # fuzz_aurwl.c includes aurwl.c itself (its end-of-input check reads the
