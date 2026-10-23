@@ -52,8 +52,10 @@ struct engine {
     const char *path;
     wish_env *env;
     engine_io io;
-    long long overall[OVERALL_HOUR];
-    int ov_next;
+    /* §7.5's overall hour, remembering whose actions they were: a paused
+     * wish's share is given back, so pausing the one that broke the
+     * limit is enough and the others carry on. */
+    struct { long long t; char wid[12]; } overall[OVERALL_HOUR];
     unsigned holds;
     long long last_input;
     int dnd;
@@ -218,8 +220,8 @@ static void run_one(engine *e, stored *s, const wish_do *d, const char *missed_f
         break;
     case A_BRIGHT: {
         int cur = e->io.bright_get ? e->io.bright_get(e->io.ctx) : -1;
-        int want = d->is_set ? d->pct : (cur < 0 ? -1 : cur + d->pct);
-        if (want < 0) break;
+        if (!d->is_set && cur < 0) break;          /* a change of an unknown */
+        int want = d->is_set ? d->pct : cur + d->pct;
         /* The floor is a wish's (30 %); an undo puts back hers. */
         if (s) want = clampi(want, 30, 100);
         if (cur >= 0 && s) {
@@ -231,8 +233,8 @@ static void run_one(engine *e, stored *s, const wish_do *d, const char *missed_f
     }
     case A_VOLUME: {
         int cur = e->io.vol_get ? e->io.vol_get(e->io.ctx) : -1;
-        int want = d->is_set ? d->pct : (cur < 0 ? -1 : cur + d->pct);
-        if (want < 0) break;
+        if (!d->is_set && cur < 0) break;
+        int want = d->is_set ? d->pct : cur + d->pct;
         if (s) want = clampi(want, 20, 80);
         if (cur >= 0 && s) {
             prev.type = A_VOLUME; prev.is_set = 1; prev.pct = clampi(cur, 0, 100);
@@ -303,17 +305,18 @@ static void run_mask(engine *e, stored *s, unsigned mask, int flags, const char 
 
 static void pause_for_limit(engine *e, stored *s, long long now)
 {
+    for (int i = 0; i < OVERALL_HOUR; i++)
+        if (!strcmp(e->overall[i].wid, s->id)) { e->overall[i].t = 0; e->overall[i].wid[0] = 0; }
     s->status = ST_LIMIT;
     s->paused_until = now + PAUSE_FOR;
     save(e);
-    if (!s->rt.told) {
-        char t[96], line[300];
-        title_of(s, t, sizeof t);
-        snprintf(line, sizeof line,
-                 "A wish was happening very often, so it is resting for an hour: \xE2\x80\x9C%s\xE2\x80\x9D.", t);
-        notice(e, line);
-        s->rt.told = 1;
-    }
+    /* Told once: a paused wish does not fire, so cannot pause again
+     * until it is back. */
+    char t[96], line[300];
+    title_of(s, t, sizeof t);
+    snprintf(line, sizeof line,
+             "A wish was happening very often, so it is resting for an hour: \xE2\x80\x9C%s\xE2\x80\x9D.", t);
+    notice(e, line);
     changed(e);
 }
 
@@ -345,7 +348,7 @@ static void fire(engine *e, stored *s, int flags, const char *missed_for, long l
     int k = w->n, mine = 0, all = 0;
     for (int i = 0; i < PER_WISH_HOUR; i++) if (s->rt.hist[i] && now - s->rt.hist[i] < HOUR) mine++;
     int exempt = w->when.type == W_TIME && w->d[0].type == A_REMIND && w->n == 1;
-    for (int i = 0; i < OVERALL_HOUR; i++) if (e->overall[i] && now - e->overall[i] < HOUR) all++;
+    for (int i = 0; i < OVERALL_HOUR; i++) if (e->overall[i].t && now - e->overall[i].t < HOUR) all++;
     if (mine + k > PER_WISH_HOUR || (!exempt && all + k > OVERALL_HOUR)) {
         pause_for_limit(e, s, now);
         return;
@@ -355,7 +358,13 @@ static void fire(engine *e, stored *s, int flags, const char *missed_for, long l
         int o = 0;
         for (int i = 1; i < PER_WISH_HOUR; i++) if (s->rt.hist[i] < s->rt.hist[o]) o = i;
         s->rt.hist[o] = now;
-        if (!exempt) { e->overall[e->ov_next] = now; e->ov_next = (e->ov_next + 1) % OVERALL_HOUR; }
+        if (!exempt) {
+            /* the oldest slot, not the next one: a released slot is reused */
+            int o = 0;
+            for (int i = 1; i < OVERALL_HOUR; i++) if (e->overall[i].t < e->overall[o].t) o = i;
+            e->overall[o].t = now;
+            snprintf(e->overall[o].wid, sizeof e->overall[o].wid, "%s", s->id);
+        }
     }
     if (speaks) s->rt.speak_n++;
     if (has_overlay) s->rt.last_overlay = now;
@@ -415,7 +424,7 @@ void engine_tick(engine *e, long long now)
         stored *s = st->s[i];
         /* §7.5: a paused wish comes back by itself after an hour. */
         if (s->status == ST_LIMIT && now >= s->paused_until) {
-            s->status = ST_ON; s->paused_until = 0; s->rt.told = 0;
+            s->status = ST_ON; s->paused_until = 0;
             memset(s->rt.hist, 0, sizeof s->rt.hist);
             ch = 1;
         }
@@ -494,6 +503,10 @@ void engine_typed(engine *e, const char *word, long long now)
 {
     char w[33];
     if (!word || word_rule(word, w)) return;
+    /* §7.6: a word typed while a password is being asked for is not
+     * held for later, it is dropped -- a potato appearing after the
+     * dialog closes would say what she typed into it. */
+    if (e->holds & H_PASSWORD) return;
     for (int i = 0; i < e->st->n; i++) {
         stored *s = e->st->s[i];
         if (s->ok && s->w.when.type == W_TYPED && !strcmp(s->w.when.word, w))
@@ -959,7 +972,6 @@ int engine_request(engine *e, const char *line, size_t len, char *r, size_t n, l
             if (on->i && !s->ok) { reply_error(r, n, id, "refused"); return 0; }
             s->status = on->i ? ST_ON : ST_OFF;
             s->paused_until = 0;
-            s->rt.told = 0;
             memset(s->rt.hist, 0, sizeof s->rt.hist);
             /* Stopping a wish stops what it was about to do. */
             for (int i = 0; i < e->nq; ) if (!strcmp(e->q[i].wid, s->id)) e->q[i] = e->q[--e->nq]; else i++;

@@ -39,7 +39,6 @@ typedef struct {
         long long last_fire, last_overlay, every_base, seen_due;
         int armed, known;      /* edge triggers (§7.4) */
         int speak_day, speak_n, today_day, today_n;
-        int told;              /* the limit notice was given */
         long long snooze_at;   /* Remind me in 10 minutes */
     } rt;
 } stored;
