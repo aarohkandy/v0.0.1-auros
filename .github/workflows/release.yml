@@ -233,20 +233,36 @@ jobs:
           else
             # The tag goes on the built commit when this run is that
             # commit's (a [release] build). From a later commit (a
-            # [publish]) GitHub answers 403 "Resource not accessible by
-            # integration" to a GITHUB_TOKEN tagging another commit, so
+            # [publish]) GitHub has answered 403 "Resource not accessible
+            # by integration" to a GITHUB_TOKEN tagging another commit, so
             # the tag goes on this run's commit, a descendant, and the
-            # notes say which commit the files were built from.
+            # notes say which commit the files were built from. If even
+            # that is refused (run 39905858387: a [release] build, tag on
+            # its own commit, still 403), the tag goes on the tip of the
+            # default branch, as tools/e2e/publish.sh does for its
+            # evidence; the release's files and address do not depend on
+            # where the tag points, and the notes say where it is.
             target=$COMMIT
             if [ "$COMMIT" != "$GITHUB_SHA" ]; then
               target=$GITHUB_SHA
               printf '\n(The tag is on `%s`, the commit that published this build; the files were built from `%s`.)\n' \
                   "$GITHUB_SHA" "$COMMIT" >> notes.md
             fi
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$target" --prerelease \
+            echo "event=$GITHUB_EVENT_NAME run_sha=$GITHUB_SHA built_commit=$COMMIT tag_target=$target"
+            mk() { gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$1" --prerelease \
                 --title "AurOS $TAG" --notes-file notes.md \
                 rel/AurOS-Setup.exe rel/pieces.txt rel/SHA256SUMS rel/image.sha256 rel/image.bytes \
-                rel/auros-desktop.img.gz.*
+                rel/auros-desktop.img.gz.*; }
+            if ! mk "$target"; then
+              if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName >/dev/null 2>&1; then
+                echo "::error::release $TAG was created but a step after creating it failed"; exit 1
+              fi
+              def=$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)
+              echo "::warning::GitHub refused to tag $target; tagging the tip of $def instead"
+              printf '\n(The tag is on the tip of `%s` when this was published; GitHub refused to tag `%s` for the workflow token. The files were built from `%s` and are the ones tested.)\n' \
+                  "$def" "$target" "$COMMIT" >> notes.md
+              mk "$def"
+            fi
           fi
 
       - name: what a person downloads is what was built
