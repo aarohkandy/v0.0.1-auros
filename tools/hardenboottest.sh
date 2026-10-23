@@ -181,37 +181,14 @@ put userspace_us "$(mono UserspaceTimestampMonotonic)"
 put desktop_us "$(mono ExecMainStartTimestampMonotonic aurshell.service)"
 awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {print "used_kb=" t-a; print "memtotal_kb=" t}' /proc/meminfo >> "$R"
 put analyze "$(systemd-analyze 2>/dev/null | head -1)"
+# CPU time the guest spent (not wall time: a busy host stretches that
+# tenfold). user+nice+system+irq+softirq, in ms, summed over both cores.
+awk '/^cpu / { print "cpu_busy_ms=" ($2 + $3 + $4 + $7 + $8) * 10; print "cpu_steal_ms=" $9 * 10 }' /proc/stat >> "$R"
 systemd-analyze blame 2>/dev/null | head -15 > "$OUT/blame.txt"
 systemd-analyze critical-chain 2>/dev/null > "$OUT/chain.txt"
 cp /proc/meminfo "$OUT/meminfo.txt"; ps -eo rss,comm --sort=-rss | head -25 > "$OUT/ps.txt"
 systemctl list-units --plain --no-legend --state=active --type=service | awk '{print $1}' > "$OUT/services.txt"
 if [ "$mode" = measure ]; then sync; systemctl poweroff; exit 0; fi
-
-# ── (HARDEN_ONLY=ffdebug) why does Firefox not stay up? ──
-if [ "$mode" = ffdebug ]; then
-    sp=$(shellpid); g=$(id -g "$u")
-    xrd=$(tr '\0' '\n' < /proc/"$sp"/environ | sed -n 's/^XDG_RUNTIME_DIR=//p')
-    wd=$(ls "$xrd" 2>/dev/null | grep -m1 '^wayland-[0-9][0-9]*$')
-    put wayland "$wd $xrd"
-    put aurshell_env "$(tr '\0' '\n' < /proc/"$sp"/environ | grep -E '^(XDG|WAYLAND|DBUS|HOME|LANG|MOZ|GDK|GTK)' | tr '\n' ' ')"
-    try() { # label VAR=value...
-        l=$1; shift
-        pkill -u "$u" -x firefox 2>/dev/null; sleep 3
-        ( setpriv --reuid="$u" --regid="$g" --init-groups env -i HOME="/home/$u" USER="$u" PATH=/usr/bin:/bin \
-              XDG_RUNTIME_DIR="$xrd" WAYLAND_DISPLAY="$wd" MOZ_ENABLE_WAYLAND=1 MOZ_CRASHREPORTER_DISABLE=1 "$@" \
-              firefox --kiosk file:///usr/lib/auros-harden/trap.html > "$OUT/ff.$l.txt" 2>&1
-          echo "exit=$?" >> "$OUT/ff.$l.txt" ) &
-        sleep 45
-        pgrep -u "$u" -x firefox >/dev/null && put "ff_$l" alive || put "ff_$l" dead
-        host shot "ff-$l"
-        journalctl -k -b --no-pager -o cat | grep -aiE 'segfault|apparmor.*firefox|firefox.*(denied|trap)|audit.*firefox' | tail -5 > "$OUT/ff.$l.kernel.txt"
-    }
-    try plain
-    try nosandbox MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_DISABLE_SOCKET_PROCESS_SANDBOX=1 MOZ_DISABLE_GMP_SANDBOX=1 MOZ_DISABLE_GPU_SANDBOX=1
-    try software LIBGL_ALWAYS_SOFTWARE=1 MOZ_ACCELERATED=0 MOZ_WEBRENDER=0 MOZ_X11_EGL=0 GDK_BACKEND=wayland
-    try nogpu MOZ_DISABLE_GPU_PROCESS=1 MOZ_LAYERS_FORCE_SOFTWARE=1 MOZ_DISABLE_WAYLAND_PROXY=1
-    sync; con "done"; systemctl poweroff; exit 0
-fi
 
 # ── kernel ──
 put cmdline "$(cat /proc/cmdline)"
@@ -292,19 +269,22 @@ kill "$mp" 2>/dev/null
 xrd=$(tr '\0' '\n' < /proc/"$sp"/environ | sed -n 's/^XDG_RUNTIME_DIR=//p')
 wd=$(ls "$xrd" 2>/dev/null | grep -m1 '^wayland-[0-9][0-9]*$')
 put wayland "$wd $xrd"
+# /usr/lib/firefox/firefox is a launcher that execs firefox-bin: the
+# process to look for is called firefox-bin (a first version looked for
+# "firefox", found nothing, and called every page "closed").
 page() { # start Firefox full screen on the trap page, as her
     setpriv --reuid="$u" --regid="$g" --init-groups env -i HOME="/home/$u" USER="$u" \
         PATH=/usr/bin:/bin XDG_RUNTIME_DIR="$xrd" WAYLAND_DISPLAY="$wd" MOZ_ENABLE_WAYLAND=1 \
         firefox --kiosk file:///usr/lib/auros-harden/trap.html >> "$OUT/firefox.txt" 2>&1 &
-    i=0; while ! pgrep -u "$u" -x firefox >/dev/null && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done
+    i=0; while ! pgrep -u "$u" -x firefox-bin >/dev/null && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done
     sleep 25
 }
 gone() { # firefox ended within 15 s?
-    i=0; while pgrep -u "$u" -x firefox >/dev/null && [ $i -lt 15 ]; do sleep 1; i=$((i+1)); done
-    pgrep -u "$u" -x firefox >/dev/null && echo still-open || echo closed
+    i=0; while pgrep -u "$u" -x firefox-bin >/dev/null && [ $i -lt 15 ]; do sleep 1; i=$((i+1)); done
+    pgrep -u "$u" -x firefox-bin >/dev/null && echo still-open || echo closed
 }
 page
-put page_up "$(pgrep -u "$u" -x firefox >/dev/null && echo yes || echo no)"
+put page_up "$(pgrep -u "$u" -x firefox-bin >/dev/null && echo yes || echo no)"
 ls -l /usr/bin/firefox /usr/lib/firefox/firefox >> "$OUT/firefox.txt" 2>&1
 host shot page
 host keys esc tab ret          # ONE Escape: no card, so the page keeps her keys
@@ -314,12 +294,12 @@ host shot card-esc
 host keys tab ret              # "Close this page"
 put out_three_esc "$(gone)"
 page
-put page_up2 "$(pgrep -u "$u" -x firefox >/dev/null && echo yes || echo no)"
+put page_up2 "$(pgrep -u "$u" -x firefox-bin >/dev/null && echo yes || echo no)"
 host keys ctrl-alt-delete
 host shot card-cad
 host keys tab ret
 put out_cad "$(gone)"
-pkill -u "$u" -x firefox 2>/dev/null
+pkill -u "$u" -x firefox-bin 2>/dev/null
 
 # ── the desktop crashing, three times ──
 for c in 1 2 3; do
@@ -596,14 +576,6 @@ free_gb=$(df -Pk "$T" | awk 'NR == 2 { printf "%d", $4 / 1048576 }')
 need=$(( $(du -k "$IMG" | cut -f1) / 1048576 + ${HARDEN_MINFREE_GB:-8} ))
 [ "$free_gb" -ge "$need" ] || { echo "only ${free_gb} GB free where the disk copy goes; need $need (HARDEN_MINFREE_GB)"; exit 2; }
 
-if [ "${HARDEN_ONLY:-}" = ffdebug ]; then
-    make_disk hard
-    power_on "$T/disk.img" ffdebug ffdebug 900
-    cat "$T/rec.ffdebug/result"
-    tar -C "$T" -czf "${REPORT%.*}-ffdebug.tar.gz" rec.ffdebug serial.ffdebug $(cd "$T" && ls shot.ffdebug.* 2>/dev/null)
-    exit 0
-fi
-
 for d in hard base; do
     make_disk $d static
     echo "  $d: the boot menu (edit, command line, recovery shell)"
@@ -745,21 +717,24 @@ while [ $r -le "$RUNS" ]; do
     r=$((r+1))
 done
 median() { sort -n | awk '{ v[NR] = $1 } END { if (NR) print v[int((NR + 1) / 2)]; else print "?" }'; }
-stat_of() { # disk key divisor
+best()   { sort -n | head -1; }
+vals_of() { # disk key divisor -> one number per start, one per line
     r=1; while [ $r -le "$RUNS" ]; do
         v=$(val "$2" "$T/rec.$1.m$r/result"); [ -n "$v" ] && echo $(( v / $3 ))
-        r=$((r+1)); done | median
+        r=$((r+1)); done
 }
-all_of() { r=1; while [ $r -le "$RUNS" ]; do printf '%s ' "$(( $(val "$2" "$T/rec.$1.m$r/result" | sed 's/^$/0/') / $3 ))"; r=$((r+1)); done; }
 say ""
-say "| median of $RUNS starts | before (controls off) | after (AurOS) | runs before / after |"
+say "| of $RUNS starts each | before (controls off): median / best | after (AurOS): median / best | every start, before / after |"
 say "|---|---|---|---|"
 for m in "boot finished (ms since the kernel started):finish_us:1000" \
          "desktop started (ms):desktop_us:1000" \
+         "CPU the guest used until then, 2 cores (ms):cpu_busy_ms:1" \
          "RAM in use 60 s after the boot (MB):used_kb:1024"; do
     l=${m%%:*}; k=${m#*:}; dv=${k#*:}; k=${k%%:*}
-    say "| $l | $(stat_of base "$k" "$dv") | $(stat_of hard "$k" "$dv") | $(all_of base "$k" "$dv")/ $(all_of hard "$k" "$dv")|"
+    b=$(vals_of base "$k" "$dv"); h=$(vals_of hard "$k" "$dv")
+    say "| $l | $(echo "$b" | median) / $(echo "$b" | best) | $(echo "$h" | median) / $(echo "$h" | best) | $(echo $b) / $(echo $h) |"
 done
+say "(Wall times are stretched by whatever else the host is doing: read the best of N, and the CPU row, which is not.)"
 
 say ""
 if [ "$fail" -eq 0 ]; then
