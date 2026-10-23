@@ -1221,8 +1221,13 @@ def diagnose_partition(rec, p, fs, mnt):
                                   f"ls -la {mnt}/var/lib/flatpak/app {mnt}/var/lib/flatpak/repo 2>&1 | head -20; echo; "
                                   f"ls {mnt}/etc/polkit-1/rules.d {mnt}/usr/share/polkit-1/rules.d 2>&1; echo; "
                                   f"cat {mnt}/etc/polkit-1/rules.d/49-auros.rules 2>&1 | head -60; echo; "
-                                  f"journalctl --directory={mnt}/var/log/journal --no-pager -n 500 -o short-monotonic 2>&1 | "
-                                  "grep -iE 'software|flatpak|packagekit|polkit|install|denied|error|fail|auth' | tail -150"],
+                                  # (packagekitd prints one assertion line per package, hundreds: left out)
+                                  f"journalctl --directory={mnt}/var/log/journal --no-pager -o short-monotonic 2>&1 | "
+                                  "grep -v 'set_update_severity' > /tmp/e2e-journal.txt; wc -l /tmp/e2e-journal.txt; "
+                                  "echo '--- the last 120 lines'; tail -120 /tmp/e2e-journal.txt | cut -c1-300; "
+                                  "echo '--- about the store and its install'; "
+                                  "grep -iE 'gnome-software|software|flatpak|polkit|denied|critical|warning|error|failed' /tmp/e2e-journal.txt | "
+                                  "tail -150 | cut -c1-300"],
                                  rec, check=False).stdout)
             finally:
                 run(["sudo", "umount", mnt], rec, check=False)
