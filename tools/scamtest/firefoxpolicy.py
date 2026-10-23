@@ -276,6 +276,26 @@ def check_no_telemetry(doc, ctx):
                 "DisableTelemetry and DisableFirefoxStudies must both be true")
 
 
+def check_terms_of_use(doc, ctx):
+    return need(pol(doc).get("SkipTermsOfUse") is True,
+                "SkipTermsOfUse must be true: Firefox 138+ puts a 'By continuing, you agree to the Terms of Use ... "
+                "sends diagnostic and interaction data to Mozilla' window over her first page, whatever "
+                "SkipOnboarding says (shown on Firefox 158, tools/scamtest/firefoxlive.py)")
+
+
+def check_crash_reports(doc, ctx):
+    errs = []
+    for n in ("browser.crashReports.unsubmittedCheck.enabled",
+              "browser.crashReports.unsubmittedCheck.autoSubmit2",
+              "browser.tabs.crashReporting.sendReport"):
+        if not locked(doc, n, False):
+            errs.append("%s must be locked false: no crash report goes to Mozilla" % n)
+    if not locked(doc, "datareporting.policy.dataSubmissionPolicyBypassNotification", True):
+        errs.append("datareporting.policy.dataSubmissionPolicyBypassNotification must be locked true: "
+                    "no 'data choices' bar")
+    return errs
+
+
 def check_ublock(doc, ctx):
     e = pol(doc).get("ExtensionSettings", {}).get(UBLOCK, {})
     errs = []
@@ -360,6 +380,10 @@ CHECKS = [
      .update({"Value": False})),
     ("no telemetry, no studies", check_no_telemetry,
      lambda d: d["policies"].pop("DisableTelemetry")),
+    ("no Terms-of-Use / diagnostic-data window on her first page", check_terms_of_use,
+     lambda d: d["policies"].pop("SkipTermsOfUse")),
+    ("no crash report is offered or sent from inside Firefox", check_crash_reports,
+     lambda d: d["policies"]["Preferences"]["browser.tabs.crashReporting.sendReport"].update({"Value": True})),
     ("uBlock Origin installed from addons.mozilla.org, always on", check_ublock,
      lambda d: d["policies"]["ExtensionSettings"][UBLOCK].update({"installation_mode": "normal_installed"})),
     ("other add-ons only from addons.mozilla.org", check_others_amo_only,

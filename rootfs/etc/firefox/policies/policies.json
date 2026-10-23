@@ -7,6 +7,7 @@
     "DontCheckDefaultBrowser": true,
     "OverrideFirstRunPage": "",
     "OverridePostUpdatePage": "",
+    "SkipTermsOfUse": true,
 
     "HttpsOnlyMode": "force_enabled",
     "SSLVersionMin": "tls1.2",
@@ -76,6 +77,10 @@
       "browser.safebrowsing.downloads.remote.block_potentially_unwanted":  { "Value": true,  "Status": "locked" },
       "browser.safebrowsing.downloads.remote.block_uncommon":              { "Value": true,  "Status": "locked" },
       "browser.sessionstore.resume_from_crash":                            { "Value": false, "Status": "locked" },
+      "browser.crashReports.unsubmittedCheck.enabled":                     { "Value": false, "Status": "locked" },
+      "browser.crashReports.unsubmittedCheck.autoSubmit2":                 { "Value": false, "Status": "locked" },
+      "browser.tabs.crashReporting.sendReport":                            { "Value": false, "Status": "locked" },
+      "datareporting.policy.dataSubmissionPolicyBypassNotification":       { "Value": true,  "Status": "locked" },
       "dom.disable_beforeunload":                                          { "Value": true,  "Status": "locked" },
       "dom.disable_window_move_resize":                                    { "Value": true,  "Status": "locked" },
       "pdfjs.enableScripting":                                             { "Value": false, "Status": "locked" }
