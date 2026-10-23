@@ -16,8 +16,29 @@ phones/Macs get "open this on your Windows PC" + send-yourself-the-link.
 - `tools/site/stamp.sh` works on a Mac (BSD sed has no bare `-i`).
   `node tools/site/check.mjs` green for aarohkandy/v0.0.1-auros.
 
+- Redesign, first pass: one stylesheet (`website/assets/site.css`), system
+  type, paper and ink, one teal accent; hero + real AurOS picture in a drawn
+  laptop; three steps (Edge/Chrome/Firefox, SmartScreen, UAC, Smart App
+  Control folded away; real installer screens with numbered circles); the
+  four looks as one picture with four buttons (real Sandstone renders,
+  `tools/site/aurshell-shots/`); small print; questions; footer.
+  how-it-works/desktop/wallpaper pages and their 250 KB of scripts removed
+  (old addresses redirect). advanced.html and guide.html on the same sheet.
+- Promises checked against the code (`check.mjs` section 7, see
+  `tools/site/README.md`): sizes and times from preflight.h/wizard.c,
+  BitLocker/hold/charger/release claims, every button word, stale claims
+  (Ferry import, self-updates, "switching on starts Windows", SAC can't be
+  re-enabled, power cuts) refused. Mutation-tested (site and source).
+
+## Known red
+- `check.mjs`: "the page says bitlocker refuses, the code decrypts". The
+  site says what the lead ordered (a BitLocker PC is told it can't install
+  yet; D11: never decrypt). It goes green when stream B lands the refusal
+  (`fix_win.c` bitlocker-system no longer FIX_AUTO) or the pause
+  (`AB_CHOICE_BITLOCKER_PAUSE`, then the site must say "pauses").
+
 ## Half-done / next
-- Redesign (in progress).
+- docs/DESIGN-DIRECTION.md section 5 (D): in progress.
 
 ## How to verify
 ```sh

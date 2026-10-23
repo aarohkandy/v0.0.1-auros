@@ -24,7 +24,17 @@
 //   - advanced.html (the page the installer names when it cannot go on)
 //     is missing, unlinked from the footer, or fails the same text floors;
 //   - published unstamped on another repository's GitHub Pages, the
-//     button does not find that repository's release (assets/door.js).
+//     button does not find that repository's release (assets/door.js);
+//   - a promise on any page is not what the code does: sizes and times
+//     (data-fact, from preflight.h and wizard.c), behaviour (data-claim:
+//     BitLocker, the start-up hold, the charger, the release gate),
+//     screen words (data-ui, in the installer's or desktop's source), or
+//     an old claim that is false for this build comes back (STALE);
+//   - a GitHub address is not this repository's, or a "Get AurOS" link
+//     is not the download itself (the e2e run presses the first one);
+//   - any real page misses the text floors; the four looks don't switch
+//     with a press and the arrow keys, or don't all show without script;
+//   - the first screen costs more than 300 KB.
 //
 // Playwright: uses the one Node can find (a local install, the global
 // one, or the folder named by PLAYWRIGHT_DIR).
@@ -239,17 +249,17 @@ async function shot(page, file, full = false) {
   if (!SHOTS) return;
   fs.mkdirSync(SHOTS, { recursive: true });
   if (full) { // let lazy pictures load, as they do for someone scrolling
-    await page.evaluate(async () => { for (let y = 0; y < document.body.scrollHeight; y += 500) { scrollTo(0, y); await new Promise((r) => setTimeout(r, 60)); } scrollTo(0, 0); });
+    await page.evaluate(async () => { document.documentElement.style.scrollBehavior = "auto"; for (let y = 0; y < document.body.scrollHeight; y += 500) { scrollTo(0, y); await new Promise((r) => setTimeout(r, 60)); } scrollTo(0, 0); });
     await page.waitForTimeout(500);
   }
-  await page.screenshot({ path: path.join(SHOTS, file), fullPage: full });
+  await page.screenshot({ path: path.join(SHOTS, file), fullPage: full, ...(file.endsWith(".jpg") ? { type: "jpeg", quality: 80 } : {}) });
   console.log(`     saved ${path.relative(REPO, path.join(SHOTS, file))}`);
 }
 
 // 1. Windows, at the two sizes, with and without script
 for (const v of [
-  { name: "Windows Edge 1366x768", ua: UA.winEdge, uad: UAD.winX64, viewport: { width: 1366, height: 768 }, shots: ["index-desktop-fold.png", "index-desktop-full.png"] },
-  { name: "Windows Chrome 390x844", ua: UA.winChrome, uad: UAD.winX64, viewport: { width: 390, height: 844 }, shots: ["index-narrow-windows-fold.png"] },
+  { name: "Windows Edge 1366x768", ua: UA.winEdge, uad: UAD.winX64, viewport: { width: 1366, height: 768 } },
+  { name: "Windows Chrome 390x844", ua: UA.winChrome, uad: UAD.winX64, viewport: { width: 390, height: 844 } },
   { name: "Windows Firefox 1366x768 (can't tell the chip)", ua: UA.winFirefox, uad: null, viewport: { width: 1366, height: 768 } },
   { name: "32-bit Firefox on 64-bit Windows", ua: UA.winFirefoxWow64, uad: null, viewport: { width: 1366, height: 768 } },
   { name: "no script 1366x768", ua: UA.linux, js: false, viewport: { width: 1366, height: 768 } },
@@ -438,6 +448,142 @@ for (const [at, want] of [
   const links = await page.evaluate(() => [document.getElementById("get"), ...document.querySelectorAll("[data-download]")].map((a) => a && a.href));
   check(links.length > 0 && links.every((h) => h === want), `unstamped at ${at}: every download link is that repository's release`, links.join(" "));
   await ctx.close();
+}
+
+// 7. Every promise the site makes, against the code that keeps it.
+//    The pages mark what they promise:
+//      data-fact="NAME"   its text must be what the source says (sizes, times)
+//      data-claim="K:V"   V must be what the source does (BitLocker, the hold...)
+//      data-ui="WHERE"    its text must be a word on that screen, as the source spells it
+//    and some old claims are false for this build and must not come back.
+{
+  const read = (f) => { try { return fs.readFileSync(path.join(REPO, f), "utf8"); } catch { return ""; } };
+  const wizard = read("src/aurbridge/wizard.c"), preflightH = read("src/aurbridge/preflight.h");
+  const fixWin = read("src/aurbridge/fix_win.c"), phases = read("src/aurbridge/phases.h");
+  const shellSrc = ["src/aurshell"].concat(fs.readdirSync(path.join(REPO, "src/aurshell/layouts")).map((f) => "src/aurshell/layouts/" + f))
+    .flatMap((d) => d.endsWith(".c") ? [d] : fs.readdirSync(path.join(REPO, d)).filter((f) => f.endsWith(".c")).map((f) => d + "/" + f))
+    .map(read).join("\n");
+  const num = (src, re, what) => { const m = src.match(re); if (!m) fail(`promises: cannot read ${what} from the source (${re})`); return m ? Number(m[1]) : NaN; };
+
+  // How long: wizard.c eta_range() with nothing measured yet, as Ready says it.
+  function eta(slow) {
+    const d = (n) => num(wizard, new RegExp(`#define ${n}\\s+([\\d.]+)`), n);
+    const [lo1, hi1] = (wizard.match(/double dl_lo = ([\d.]+), dl_hi = ([\d.]+);/) || []).slice(1).map(Number);
+    const sw = num(wizard, /ETA_SSD_WORK_MIN \* ([\d.]+)/, "the SSD margin"), hw = num(wizard, /ETA_HDD_WORK_MIN \* ([\d.]+)/, "the hard disk margin");
+    const dl = d("DL_BYTES_FALLBACK") / d("ETA_LINK_BPS") / 60;
+    const lo_m = dl * lo1 + (slow ? d("ETA_HDD_WORK_MIN") + d("ETA_HDD_AFTER_MIN") : d("ETA_SSD_WORK_MIN") + d("ETA_SSD_AFTER_MIN"));
+    const hi_m = dl * hi1 + (slow ? d("ETA_HDD_WORK_MIN") * hw + d("ETA_HDD_AFTER_MIN") : d("ETA_SSD_WORK_MIN") * sw + d("ETA_SSD_AFTER_MIN"));
+    let l = Math.max(5, Math.floor(lo_m / 5) * 5), h = Math.ceil(hi_m / 5) * 5;
+    if (h > 30) h = Math.ceil(hi_m / 15) * 15;
+    if (h <= l) h = l + 5;
+    return `${l} to ${h}`;
+  }
+  const FACTS = {
+    "auros-need-gb": String(num(preflightH, /PF_AUROS_NEED_BYTES\s+\(\s*(\d+)ULL \* 1024 \* 1024 \* 1024\)/, "what AurOS needs")),
+    "windows-floor-gb": String(num(preflightH, /PF_WINDOWS_KEEP_BYTES\s+\(\s*(\d+)ULL \* 1024 \* 1024 \* 1024\)/, "what Windows keeps at least")),
+    "auros-max-gb": String(num(wizard, /headroom < (\d+) \* GIB \? headroom : \1 \* GIB/, "the most AurOS takes")),
+    "windows-room-gb": String(num(wizard, /if \(reserve < (\d+) \* GIB\)/, "what Windows keeps when there is room")),
+    "time-ssd": eta(false),
+    "time-hdd": eta(true),
+  };
+  // What the code does, in the words the pages use for it.
+  const CLAIMS = {
+    bitlocker: /^\s*#\s*define\s+AB_CHOICE_BITLOCKER_PAUSE\b/m.test(phases) ? "pauses"
+             : /\{\s*"bitlocker-system",\s*FIX_AUTO/.test(fixWin) ? "decrypts" : "refuses",
+    hold: fs.existsSync(path.join(REPO, "rootfs/etc/systemd/system/auros-hold.service")) && /int af_hold\(/.test(read("src/aurfirst/state.c")) ? "rearms" : "windows-first",
+    charger: /\{\s*"not-on-ac",\s*FIX_WAIT/.test(fixWin) ? "required" : "not-required",
+    release: /INSTALLER_SHA256/.test(read(".github/workflows/release.yml")) && /needs: promote/.test(read(".github/workflows/release.yml")) ? "tested" : "untested",
+  };
+  const UI = {
+    wizard: (t) => wizard.includes(`L"${t}"`),
+    look: (t) => /static const style_info STYLES\[\][\s\S]*?\};/.exec(wizard)?.[0].includes(`L"${t}"`),
+    "look-says": (t) => /static const style_info STYLES\[\][\s\S]*?\};/.exec(wizard)?.[0].includes(`L"${t}"`),
+    desktop: (t) => shellSrc.includes(`"${t}"`),
+  };
+  // Said once, false for this build. Each with where the truth is.
+  const STALE = [
+    [/switching (this computer|it) on,? (still )?starts Windows/i, "until she answers, AurOS re-arms itself on every start (auros-hold.service, src/aurfirst/state.c af_hold)"],
+    [/can.t be switched back on/i, "Smart App Control can be switched back on since April 2026 (docs/research/every-machine-2026-10.md, section 5)"],
+    [/no firefox/i, "the image has Firefox (build/forge)"],
+    [/power cuts?\b/i, "no power-cut promise is proven for this build"],
+    [/(bring|brings|bringing) (copies of )?(your|her) (documents|files|pictures)|files across/i, "bringing her files across does not work yet (docs/ATLAS.md, section 8, gap 1)"],
+    [/updates? (itself|by itself)|security updates by itself/i, "Firefox, Flathub and base packages do not update yet (session log, 05:40)"],
+    [/about 10 minutes/i, "Setup says its own range (wizard.c eta_range)"],
+  ];
+
+  const real = fs.readdirSync(SITE).filter((f) => f.endsWith(".html") && !/http-equiv="refresh"/i.test(fs.readFileSync(path.join(SITE, f), "utf8"))).sort();
+  let facts = 0, claims = 0, words = 0;
+  for (const p of real) {
+    const { ctx, page } = await visit({ name: "promises " + p, url: HOME + p, ua: UA.winEdge, uad: UAD.winX64 });
+    const marks = await page.evaluate(() => [...document.querySelectorAll("[data-fact],[data-claim],[data-ui]")].map((e) => ({
+      fact: e.dataset.fact, claim: e.dataset.claim, ui: e.dataset.ui, text: e.textContent.replace(/\s+/g, " ").trim() })));
+    for (const m of marks) {
+      if (m.fact) { facts++; check(FACTS[m.fact] !== undefined && m.text === FACTS[m.fact], `promises ${p}: "${m.text}" is what the code says for ${m.fact}`, `the code says "${FACTS[m.fact]}"`); }
+      if (m.claim) { claims++; const [k, v] = m.claim.split(":"); check(CLAIMS[k] === v, `promises ${p}: the page says ${k} ${v}, the code ${CLAIMS[k]}`, `rewrite "${m.text.slice(0, 70)}..." for "${CLAIMS[k]}", or change the code`); }
+      if (m.ui) { words++; check(UI[m.ui] && UI[m.ui](m.text), `promises ${p}: "${m.text}" is a word on the ${m.ui} screen`, `not found in its source`); }
+    }
+    const text = await page.evaluate(() => document.body.innerText);
+    for (const [re, why] of STALE) { const m = text.match(re); check(!m, `promises ${p}: never says ${re}`, m && `says "${m[0]}": ${why}`); }
+    // Every address on GitHub is this repository's; every "Get AurOS" is the download.
+    const links = await page.evaluate(() => [...document.querySelectorAll("a[href]")].map((a) => ({ href: a.href, text: a.textContent.trim() })));
+    const gh = links.filter((l) => /^https:\/\/(github\.com|[^/]*\.github\.io)\//.test(l.href) && !l.href.startsWith(`https://github.com/${AUROS_REPO}`) && !l.href.startsWith(`https://${PAGES_HOST}`));
+    check(gh.length === 0, `promises ${p}: every GitHub address is ${AUROS_REPO}'s`, gh.map((l) => l.href).join(" "));
+    const gets = links.filter((l) => /^get aurOS\b/i.test(l.text));
+    check(gets.every((l) => l.href === RELEASE_URL), `promises ${p}: every "Get AurOS" link is the download itself (${gets.length})`, gets.map((l) => l.href).join(" "));
+    await ctx.close();
+  }
+  check(facts >= 6 && claims >= 4 && words >= 10, `promises: the pages mark what they promise (${facts} facts, ${claims} claims, ${words} words)`);
+  for (const k of Object.keys(FACTS)) console.log(`     the code says ${k} = ${FACTS[k]}`);
+  for (const k of Object.keys(CLAIMS)) console.log(`     the code does ${k}: ${CLAIMS[k]}`);
+
+  // Floors on every real page, not only the front door.
+  for (const p of real.filter((f) => f !== "index.html" && f !== "advanced.html")) {
+    for (const viewport of [{ width: 1366, height: 768 }, { width: 390, height: 844 }]) {
+      const { ctx, page } = await visit({ name: p, url: HOME + p, ua: UA.winEdge, uad: UAD.winX64, viewport });
+      textFindings(`${p} ${viewport.width}x${viewport.height}`, await page.evaluate(measureText));
+      await ctx.close();
+    }
+  }
+
+  // The four looks: four buttons, one picture each; without script, all four.
+  {
+    const { ctx, page } = await visit({ name: "looks", ua: UA.winEdge, uad: UAD.winX64 });
+    const shown = () => page.evaluate(() => [...document.querySelectorAll(".look")].filter((f) => f.getClientRects().length).map((f) => f.id));
+    check(JSON.stringify(await shown()) === '["look-taskbar"]', "looks: one picture at a time, Like Windows first", JSON.stringify(await shown()));
+    const tabs = await page.evaluate(() => [...document.querySelectorAll(".looks-tabs [role=tab]")].filter((b) => b.getClientRects().length).map((b) => b.textContent));
+    check(tabs.length === 4, "looks: four buttons to choose with", JSON.stringify(tabs));
+    await page.click("#tab-dock", { timeout: 3000 }).catch(() => {});
+    check(JSON.stringify(await shown()) === '["look-dock"]', "looks: pressing Like a Mac shows Like a Mac", JSON.stringify(await shown()));
+    await page.focus("#tab-dock"); await page.keyboard.press("ArrowRight");
+    check(JSON.stringify(await shown()) === '["look-rail"]' && await page.evaluate(() => document.activeElement.id) === "tab-rail", "looks: the arrow keys move between them");
+    await ctx.close();
+    const nojs = await visit({ name: "looks no script", ua: UA.linux, js: false });
+    const all = await nojs.page.evaluate(() => [...document.querySelectorAll(".look")].filter((f) => f.getClientRects().length).length);
+    check(all === 4, "looks: without script all four pictures show", `${all}`);
+    await nojs.ctx.close();
+  }
+
+  // Small: what the first screen costs to load (pictures further down wait).
+  {
+    const { ctx, page } = await visit({ name: "weight", ua: UA.winEdge, uad: UAD.winX64 });
+    const kb = await page.evaluate(() => Math.round(performance.getEntriesByType("navigation").concat(performance.getEntriesByType("resource"))
+      .reduce((s, e) => s + (e.encodedBodySize || 0), 0) / 1024));
+    check(kb > 0 && kb <= 300, `weight: the first screen loads ${kb} KB (300 at most)`);
+    await ctx.close();
+  }
+}
+
+// 8. --shots: every real page at the three sizes the site is made for,
+//    the first screen and the whole page (docs/shots/website/).
+if (SHOTS) {
+  const real = fs.readdirSync(SITE).filter((f) => f.endsWith(".html") && !/http-equiv="refresh"/i.test(fs.readFileSync(path.join(SITE, f), "utf8"))).sort();
+  for (const p of real) for (const [w, h] of [[1366, 768], [1920, 1080], [390, 844]]) {
+    const { ctx, page } = await visit({ name: "shot " + p, url: HOME + p, ua: UA.winEdge, uad: UAD.winX64, viewport: { width: w, height: h } });
+    const base = `${p.replace(/\.html$/, "")}-${w}x${h}`;
+    await shot(page, base + "-fold.png");
+    await shot(page, base + "-full.jpg", true);
+    await ctx.close();
+  }
 }
 
 await browser.close();

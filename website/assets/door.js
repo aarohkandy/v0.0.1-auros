@@ -2,9 +2,10 @@
  * script the page shows the Windows path, the button and every browser's
  * steps, which is the right default. Nothing here sends anything.
  *
- * The download address lives in ONE place: the href of #get in
- * index.html (on GitHub Pages, worked out from the page's own address,
- * below). This file copies it to the other download links.
+ * Every download link carries the release address in the page itself
+ * (so it works without script, and the e2e run can point them all at
+ * its own file). On GitHub Pages this works the address out again from
+ * the page's own, below, and gives it to every download link.
  */
 (function () {
   "use strict";
@@ -98,6 +99,31 @@
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, fallback);
     else fallback();
   });
+
+  /* ── the four looks: one big picture, four buttons ───────────────
+   * Without script all four pictures stand one under the other. */
+  var tabs = document.querySelector(".looks-tabs");
+  if (tabs) {
+    var btns = [].slice.call(tabs.querySelectorAll("[role=tab]"));
+    var pick = function (b, focus) {
+      btns.forEach(function (x) {
+        var on = x === b;
+        x.setAttribute("aria-selected", on ? "true" : "false");
+        x.tabIndex = on ? 0 : -1;
+        $(x.getAttribute("aria-controls")).classList.toggle("on", on);
+      });
+      if (focus) b.focus();
+    };
+    btns.forEach(function (b, i) {
+      b.addEventListener("click", function () { pick(b); });
+      b.addEventListener("keydown", function (e) {
+        var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+        if (d) { e.preventDefault(); pick(btns[(i + d + btns.length) % btns.length], true); }
+      });
+    });
+    tabs.hidden = false;
+    tabs.parentNode.parentNode.classList.add("looks-tabs-on");
+  }
 
   var kind = osKind();
   if (kind && kind !== "windows") {

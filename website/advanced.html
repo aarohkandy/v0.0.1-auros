@@ -6,64 +6,27 @@
 <title>For someone who knows computers: AurOS</title>
 <meta name="description" content="AurOS Setup stopped because this PC starts Windows the older way (BIOS), or because Intel's storage setting hides its drive. How someone comfortable with Windows can change either one safely.">
 <meta name="color-scheme" content="light">
-<meta name="theme-color" content="#FFFDF8">
-<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%230B5D4F'/%3E%3Cpath%20d='M16%206L26%2016L16%2026L6%2016Z'%20fill='%23F2C46B'/%3E%3C/svg%3E">
-<link rel="preload" href="assets/fonts/atkinson-700.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="assets/fonts/atkinson-400.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="assets/door.css">
-<style>
-  /* This page only. The front door's tokens (assets/door.css), plus the
-     few things a page of instructions for a helper needs: a box for a
-     command to type, a "stop here" box, and a contents list. Every pair
-     here is 7:1 or better; tools/site/check.mjs measures this page too. */
-  .adv-head { padding-block: clamp(24px, 4vw, 48px) 8px; }
-  .adv-head h1 { font-size: clamp(34px, 4.2vw, 52px); line-height: 1.1; margin-bottom: 0.4em; }
-  .adv-lede { font-size: clamp(21px, 1.9vw, 24px); max-width: 40em; }
-  .adv-who { max-width: 44em; background: var(--soft); border: 2px solid var(--line); border-radius: 14px; padding: 16px 20px; }
-  .toc { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 10px; max-width: 44em; }
-  .toc a { display: inline-block; padding: 8px 0; font-weight: 700; }
-  .adv { padding-block: clamp(28px, 4vw, 48px); border-top: 1px solid var(--line); }
-  .adv:nth-of-type(even) { background: var(--soft); }
-  .adv > .wrap > * { max-width: 46em; }
-  .adv h2 { margin-bottom: 0.4em; }
-  .adv p, .adv li { overflow-wrap: break-word; }
-  .adv h3 { margin-top: 1.2em; }
-  .said { background: var(--card); border: 2px solid var(--line); border-left: 8px solid var(--go); border-radius: 10px; padding: 12px 18px; }
-  .said b { display: block; }
-  .doing { margin: 0 0 16px; padding-left: 1.4em; }
-  .doing > li { margin-bottom: 14px; padding-left: 6px; }
-  .doing > li > p { margin: 6px 0; }
-  .cmd { display: block; margin: 8px 0; padding: 12px 16px; background: #17181A; color: #F4F1EA; border-radius: 8px;
-         font: 700 20px/1.4 ui-monospace, "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace; overflow-wrap: anywhere; white-space: pre-wrap; user-select: all; }
-  .out { display: block; margin: 8px 0; padding: 10px 16px; background: var(--card); border: 2px dashed var(--line); border-radius: 8px;
-         font: 400 19px/1.4 ui-monospace, "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace; color: var(--ink); overflow-wrap: anywhere; }
-  .stop { background: #FFF4D6; border-left: 6px solid #B07A00; padding: 14px 18px; border-radius: 8px; margin: 16px 0; }
-  .stop h3, .stop h4 { margin-top: 0; }
-  .stop ul { margin: 6px 0 0; padding-left: 1.2em; }
-  .back { background: var(--card); border: 2px solid var(--go); border-radius: 12px; padding: 14px 18px; margin: 16px 0; }
-  .back h3 { margin-top: 0; }
-  kbd { font: 700 19px/1 ui-monospace, Consolas, monospace; padding: 2px 6px; border: 2px solid var(--ink-2); border-radius: 6px; background: var(--card); color: var(--ink); white-space: nowrap; }
-  .words { font-weight: 700; }
-  .totop { margin-top: 18px; }
-</style>
+<meta name="theme-color" content="#FBFAF7">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='8'%20fill='%231C1916'/%3E%3Crect%20x='10'%20y='10'%20width='12'%20height='12'%20rx='2'%20fill='%23FBFAF7'%20transform='rotate(45%2016%2016)'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to the instructions</a>
 
-<header class="top">
-  <div class="wrap top-in">
+<header class="bar">
+  <div class="wrap bar-in">
     <a class="brand" href="index.html"><span class="mark" aria-hidden="true"></span>AurOS</a>
-    <a class="top-link" href="index.html">Back to the simple page</a>
+    <a class="bar-link" href="index.html">Back to the simple page</a>
   </div>
 </header>
 
 <main id="main">
 
-  <section class="adv-head" aria-labelledby="adv-title">
-    <div class="wrap">
+  <section class="page-head" aria-labelledby="adv-title">
+    <div class="narrow">
       <h1 id="adv-title">For someone who knows computers</h1>
-      <p class="adv-lede">AurOS Setup stopped on this computer for a reason that someone comfortable with Windows&rsquo; settings can usually fix in under an hour. <b>Setup has not changed anything.</b> This page is for that person.</p>
-      <p class="adv-who">If that isn&rsquo;t you, it is fine to stop here. Keep using Windows as it is. You can show this page to someone you trust who knows computers, or just leave it.</p>
+      <p class="lede">AurOS Setup stopped on this computer for a reason that someone comfortable with Windows&rsquo; settings can usually fix in under an hour. <b>Setup has not changed anything.</b> This page is for that person.</p>
+      <p class="who">If that isn&rsquo;t you, it is fine to stop here. Keep using Windows as it is. You can show this page to someone you trust who knows computers, or just leave it.</p>
       <ul class="toc" aria-label="On this page">
         <li><a href="#before">First, for either fix: copy the files, pause BitLocker</a></li>
         <li><a href="#bios">&ldquo;This PC starts Windows the older way (BIOS)&rdquo;</a></li>
@@ -74,8 +37,8 @@
   </section>
 
   <!-- ── shared preparation ─────────────────────────────────────── -->
-  <section class="adv" id="before" aria-labelledby="before-title">
-    <div class="wrap">
+  <section class="doc sand" id="before" aria-labelledby="before-title">
+    <div class="narrow">
       <h2 id="before-title">First, for either fix</h2>
       <p>Both fixes are ordinary Windows and firmware changes, made with Windows&rsquo; and the computer maker&rsquo;s own tools, not with AurOS. They are routine, but no change to how a computer starts is free of risk. So:</p>
       <ol class="doing">
@@ -91,8 +54,8 @@
   </section>
 
   <!-- ── BIOS → UEFI ────────────────────────────────────────────── -->
-  <section class="adv" id="bios" aria-labelledby="bios-title">
-    <div class="wrap">
+  <section class="doc" id="bios" aria-labelledby="bios-title">
+    <div class="narrow">
       <h2 id="bios-title">The PC starts Windows the older way (BIOS)</h2>
       <p class="said"><b>Setup said: &ldquo;This PC starts Windows the older way (BIOS)&rdquo;</b>The firmware is starting Windows in legacy BIOS mode (also called &ldquo;Legacy&rdquo; or &ldquo;CSM&rdquo;), from a disk with an MBR partition table.</p>
       <p><b>Why AurOS needs the newer way (UEFI):</b> the first time AurOS starts, it starts through a one-time start entry, so that if anything goes wrong the computer goes straight back to Windows by itself. BIOS mode has no such entry, so AurOS refuses rather than risk a computer that starts nothing.</p>
@@ -132,8 +95,8 @@
   </section>
 
   <!-- ── Intel RST RAID On / VMD → AHCI ─────────────────────────── -->
-  <section class="adv" id="rst" aria-labelledby="rst-title">
-    <div class="wrap">
+  <section class="doc sand" id="rst" aria-labelledby="rst-title">
+    <div class="narrow">
       <h2 id="rst-title">AurOS can&rsquo;t see this PC&rsquo;s drive (Intel RST or VMD)</h2>
       <p class="said"><b>Setup said: &ldquo;AurOS can&rsquo;t see this PC&rsquo;s drive&rdquo;</b>The drive Windows is on is an NVMe drive behind Intel&rsquo;s storage driver, in a mode that hides it from other systems: <span class="words">RAID On</span> (Intel Rapid Storage Technology, &ldquo;RST&rdquo;), or Intel&rsquo;s <span class="words">VMD</span> controller on newer laptops.</p>
       <p><b>Why AurOS needs it changed:</b> in that mode, Linux, and so AurOS, cannot see the drive at all. One firmware setting presents the drive the standard way (&ldquo;AHCI&rdquo;, or plain NVMe). Windows works the same afterwards, with Microsoft&rsquo;s standard driver instead of Intel&rsquo;s. The setting does not change anything stored on the drive.</p>
@@ -178,8 +141,8 @@
   </section>
 
   <!-- ── anything else ──────────────────────────────────────────── -->
-  <section class="adv" id="else" aria-labelledby="else-title">
-    <div class="wrap">
+  <section class="doc" id="else" aria-labelledby="else-title">
+    <div class="narrow">
       <h2 id="else-title">Anything else</h2>
       <p>If Setup stopped for a different reason, its own page says what can be done. Most of the other reasons (a drive that is failing, a Windows on an ARM chip, full-disk encryption from another company) are ones AurOS deliberately won&rsquo;t work around, because getting them wrong could cost the files on the computer.</p>
       <p>To ask a question, or to tell us Setup stopped when it shouldn&rsquo;t have, open an issue on <a href="https://github.com/@AUROS_REPO@/issues">the AurOS project page</a>. Please don&rsquo;t include passwords, recovery keys or anything else private.</p>
@@ -193,12 +156,11 @@
   <div class="wrap">
     <ul class="foot-links">
       <li><a href="index.html">The simple page</a></li>
-      <li><a href="how-it-works.html">How it works (for the curious)</a></li>
       <li><a href="guide.html">A page to print for whoever helps you</a></li>
+      <li><a href="https://github.com/@AUROS_REPO@/issues">Ask a question</a></li>
       <li><a href="https://github.com/@AUROS_REPO@">The source code</a></li>
     </ul>
-    <p>No cookies, no tracking, no adverts, and nothing loaded from anywhere else.</p>
-    <p>AurOS is free software (MIT licence). Set in Atkinson Hyperlegible (<a href="assets/fonts/LICENSE.md">licence</a>).</p>
+    <p>No cookies, no tracking, no adverts. AurOS is free software (MIT licence).</p>
   </div>
 </footer>
 </body>
