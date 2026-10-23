@@ -118,6 +118,24 @@ else
     [ "$(cat "$GIOLOG")" = "real /x/y.pdf" ] && ok "with no gio it falls back to the original" || bad "no gio falls back to the original" "log: $(cat "$GIOLOG")"
 fi
 
+# ── Flathub programs draw on this desktop ───────────────────────────
+echo
+echo "Flathub programs use this desktop's Wayland (build/forge stage_flatpak_overrides)"
+sed -n "/^stage_flatpak_overrides() {/,/^}/p" build/forge \
+  | awk '/<<.EOL.$/{f=1; next} /^EOL$/{f=0} f' > "$T/global"
+flat_ok() { # file label
+    g=$1
+    grep -qx '\[Context\]' "$g" && grep -qx 'sockets=wayland;' "$g" \
+      && grep -qx '\[Environment\]' "$g" && grep -qx 'ELECTRON_OZONE_PLATFORM_HINT=auto' "$g" \
+      && grep -qx 'XDG_SESSION_TYPE=wayland' "$g"
+}
+if flat_ok "$T/global"; then ok "the override gives every program the Wayland socket and tells Electron to use it"
+else bad "the override gives every program the Wayland socket and tells Electron to use it" "$(cat "$T/global" 2>/dev/null | head -8)"; fi
+# keyfile sanity: every non-comment line is a [group] or key=value
+if awk 'NF && !/^#/ && !/^\[[A-Za-z]+\]$/ && !/^[A-Za-z_]+=.*$/ { bad=1 } END { exit bad }' "$T/global"; then
+    ok "...and it is a keyfile flatpak can read"
+else bad "the override is not a keyfile"; fi
+
 # ── forge installs it, the profile's table maps it ──────────────────
 grep -q 'dpkg-divert --local --rename --divert /usr/bin/xdg-open.distrib' build/forge \
     && ok "build/forge diverts the package's xdg-open (an update does not take ours away)" \
@@ -150,6 +168,12 @@ done
 for d in libreoffice-impress libreoffice-draw libreoffice-base; do
     [ -f "$RFS/usr/share/applications/$d.desktop" ] && bad "$d is in the image (decision 14)" || ok "$d is not in the image"
 done
+if [ -f "$RFS/var/lib/flatpak/overrides/global" ]; then
+    if flat_ok "$RFS/var/lib/flatpak/overrides/global"; then ok "the image carries the Flathub Wayland override"
+    else bad "the image's /var/lib/flatpak/overrides/global is not what forge writes"; fi
+elif [ -x "$RFS/usr/bin/flatpak" ]; then bad "flatpak is installed but there is no global override (Electron programs would use X11)"
+fi
+[ -x "$RFS/usr/bin/Xwayland" ] && ok "Xwayland is in the image (for programs that have only X11)" || bad "Xwayland is not in the image"
 ls "$RFS"/usr/share/fonts/truetype/crosextra/Carlito* >/dev/null 2>&1 && ls "$RFS"/usr/share/fonts/truetype/crosextra/Caladea* >/dev/null 2>&1 \
     && ok "the fonts a Word file asks for are there (Carlito, Caladea)" || bad "Carlito / Caladea are not in the image"
 if grep -q 'gio open' "$RFS/usr/bin/xdg-open" 2>/dev/null && [ -x "$RFS/usr/bin/xdg-open.distrib" ]; then

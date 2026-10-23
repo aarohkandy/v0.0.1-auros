@@ -422,7 +422,37 @@ stage_store() {
         warn_note "flatpak=MISSING"
         return 0
     fi
+    stage_flatpak_overrides
     stage_flathub
+}
+
+# PROGRAMS FROM FLATHUB DRAW ON THIS DESKTOP'S OWN SCREEN, NOT ON AN X11 ONE.
+#
+# Electron and Chromium programs (WhatsApp, Teams, Spotify, Slack ...) start
+# with an X11 window unless told otherwise, and this desktop's X11 support
+# (Xwayland) is new. A system-wide override, in the file `flatpak override
+# --system` writes (/var/lib/flatpak/overrides/global), gives every program the
+# Wayland socket and tells Electron to use it when there is one; a program
+# that has no Wayland support in it is not harmed by either.
+#   sockets=wayland        the way to this desktop, for every program
+#   ELECTRON_OZONE_PLATFORM_HINT=auto   Electron 28 and later: Wayland if
+#                          it is there (older ones ignore it)
+#   XDG_SESSION_TYPE=wayland   what Chromium reads to choose its Ozone
+#                          platform when it is not told
+#   MOZ_ENABLE_WAYLAND=1   Firefox from Flathub
+# tools/everydaytest.sh reads the file back.
+stage_flatpak_overrides() {
+    install -d "$RFS/var/lib/flatpak/overrides"
+    cat > "$RFS/var/lib/flatpak/overrides/global" <<'EOL'
+[Context]
+sockets=wayland;
+
+[Environment]
+ELECTRON_OZONE_PLATFORM_HINT=auto
+XDG_SESSION_TYPE=wayland
+MOZ_ENABLE_WAYLAND=1
+EOL
+    note "Flathub programs are told to use this desktop's Wayland (global override)"
 }
 
 # ── Flathub: added now if this builder can reach it, else at first online ──
