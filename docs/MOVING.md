@@ -7,7 +7,7 @@ Paste into Terminal on a Mac (or Linux). It puts the whole project in
 same command again any time to update it.
 
 ```sh
-D=~/Desktop/auros; R=https://github.com/ComputerDude771/auros-from-scratch.git; B=claude/brave-hypatia-x72g1m; if [ -d "$D/.git" ]; then git -C "$D" pull --ff-only; else git clone --single-branch --branch "$B" "$R" "$D"; fi; cd "$D"
+D=~/Desktop/auros; R=https://github.com/aarohkandy/v0.0.1-auros.git; B=main; if [ -d "$D/.git" ]; then git -C "$D" pull --ff-only "$R" "$B"; else git clone --single-branch --branch "$B" "$R" "$D"; fi; cd "$D"
 ```
 
 - `D` is the folder (change it if you like, e.g. `D=~/Desktop/"auros v0.0.1"`).

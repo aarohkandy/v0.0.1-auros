@@ -11,7 +11,7 @@ static font *openf(const char *p, float px)
     font *f = (p && *p) ? font_load(p, px) : NULL;
     if (f) return f;
     const char *fb[] = {
-      "/home/user/auros-from-scratch/work/forge/desktop/rootfs/usr/share/fonts/opentype/inter/Inter-Regular.otf",
+      "work/forge/desktop/rootfs/usr/share/fonts/opentype/inter/Inter-Regular.otf", /* from the checkout */
       "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", NULL };
     for (int i = 0; fb[i]; i++) { f = font_load(fb[i], px); if (f) return f; }
     return NULL;
