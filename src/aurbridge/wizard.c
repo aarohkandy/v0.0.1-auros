@@ -5590,7 +5590,10 @@ static int nav_test(const char *dir)
                 g_install_finished = P[i].done;
                 InterlockedExchange(&g_ab_state, P[i].done ? 2 : 0);
                 g_scroll[scr_i()] = 0;
+                /* the first page as she sees it: the download is running, and says so */
+                InterlockedExchange(&g_dl_state, P[i].p == PAGE_WELCOME ? 1 : 0);
                 render();
+                InterlockedExchange(&g_dl_state, 0);
                 if (P[i].p == PAGE_READY && g_short) {
                     /* the Terms' risk and agreement (stream LEGAL) are more words than a
                      * small screen holds: Ready may scroll there, but the risk is its first
