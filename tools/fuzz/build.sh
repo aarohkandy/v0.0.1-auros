@@ -2,7 +2,7 @@
 # build.sh -- build the fuzz harnesses in tools/fuzz.
 #
 #   sh tools/fuzz/build.sh [OUT]           libFuzzer + ASan + UBSan (clang)
-#   MODE=regress sh tools/fuzz/build.sh    ASan + UBSan, standalone.c main (gcc ok)
+#   MODE=regress sh tools/fuzz/build.sh    ASan + UBSan, standalone.c main (clang, else cc)
 #
 # OUT defaults to /tmp/auros-fuzz. Each harness becomes OUT/fuzz_<name>
 # (or OUT/fuzz_<name>-regress). Undefined behaviour aborts rather than
@@ -26,7 +26,10 @@ if [ "$MODE" = fuzz ]; then
     SFX=""
     MAIN=""
 else
-    CC="${CC:-cc}"
+    # clang when there is one: gcc's UBSan misses some of what the
+    # fuzzer (clang) found -- regress/aurwl/shm-misaligned is a
+    # misaligned load gcc does not report. Plain cc still runs the rest.
+    if [ -z "${CC:-}" ]; then CC=cc; command -v clang >/dev/null 2>&1 && CC=clang; fi
     LINK=""
     SFX="-regress"
     MAIN="$HERE/standalone.c"

@@ -531,11 +531,15 @@ static int take_buffer(aurwl_win *w, struct wl_resource *buf)
     const uint8_t *src = wl_shm_buffer_get_data(shm);
     if (src) {
         int opaque = (fmt == WL_SHM_FORMAT_XRGB8888);
+        /* memcpy, then the alpha in OUR (aligned) copy: the offset and
+         * stride are the client's, and nothing makes them multiples of
+         * four, so reading its pixels as uint32_t was a misaligned load
+         * (undefined behaviour; found by tools/fuzz/fuzz_aurwl.c). */
         for (int y = y0; y < y1; y++) {
-            const uint32_t *s = (const uint32_t *)(src + (size_t)y * stride) + x0;
+            const uint8_t *s = src + (size_t)y * stride + (size_t)x0 * 4;
             uint32_t *d = w->store->px + (size_t)y * w->store->stride + x0;
-            if (opaque) for (int x = 0; x < x1 - x0; x++) d[x] = s[x] | 0xFF000000u;
-            else        memcpy(d, s, (size_t)(x1 - x0) * 4);
+            memcpy(d, s, (size_t)(x1 - x0) * 4);
+            if (opaque) for (int x = 0; x < x1 - x0; x++) d[x] |= 0xFF000000u;
         }
     }
     wl_shm_buffer_end_access(shm);
