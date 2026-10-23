@@ -478,10 +478,11 @@ jobs:
           ( cd "$R" && sudo grep -rIlE 'lsb_release|distro_codename|distro_id|VERSION_CODENAME|os-release' \
               etc usr/bin usr/sbin usr/lib/apt usr/lib/python3 usr/share/unattended-upgrades usr/lib/auros usr/lib/systemd lib 2>/dev/null ) |
             { grep -vE '/__pycache__/|\.pyc$|/usr/share/doc/|\.md5sums$' || true; } | sort > "$O/readers.txt"
-          wc -l "$O/readers.txt"
+          echo "readers: $(wc -l < "$O/readers.txt") files"
           # With the package that owns each, from the image's own dpkg.
           while read -r f; do
-            o=$(sudo chroot "$R" dpkg -S "/$f" 2>/dev/null | head -1 | cut -d: -f1)
+            # (|| true: a file no package owns makes dpkg -S fail, and pipefail would end the loop)
+            o=$(sudo chroot "$R" dpkg -S "/$f" 2>/dev/null | head -1 | cut -d: -f1 || true)
             printf '%-72s %s\n' "$f" "${o:-(not a package)}"
           done < "$O/readers.txt" > "$O/owned.txt"
           head -400 "$O/owned.txt"
