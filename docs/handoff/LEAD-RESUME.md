@@ -117,6 +117,14 @@ fixed with a test → design P0s applied → then promote.
   and **pushes to GitHub constantly**. Report to him in plain words: what
   works (proven where), what doesn't, what he must click.
 
+### Switching the shipped install route to the fast path (one decision, two lines)
+
+When the fast-path installer passes the real-Windows e2e (base AND bitlocker) and the
+safety/security highs on it are closed: set the default in `build/aurbridge`
+(`${AUROS_FASTPATH:-0}` → 1) AND `<html data-build="fastpath">` in `website/index.html`
+in the SAME commit; `tools/site/check.mjs` is red if only one changes. Then a normal
+`[release]` → e2e → promote.
+
 ## 6. When he wakes up
 
 Write `docs/handoff/MORNING-REPORT.md` (one page: what landed overnight with
