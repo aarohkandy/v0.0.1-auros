@@ -360,6 +360,16 @@ Revisit when S4's TPM re-seal exists, and possibly then fwupd for dbx only.
   `origin=Ubuntu,archive=noble-security` and `noble-updates` (3 of 3 ok).
   **Every image built before 956af4a has this defect** and would have
   installed no Ubuntu security update.
+- **2026-10-23, a fresh build of main passes everything** (build run
+  39976151893, the first with every fix; its rootfs checked by aptrepo run
+  40001664880): `updatepolicytest static` 36 of 36, the dry run (a leaf
+  package one version behind WOULD be upgraded), "nothing phones Canonical"
+  as built. In that build's own pipeline: the `dryrun` gating step passed,
+  and `updateboottest` passed as a gating e2e job. (Its `tests / unit` was
+  cancelled by another stream's step timing out, after both of mine ran.)
+  The red of release run 39966214944 (`static`: "the image's key accepts the
+  published channel") was my check calling `apt-get policy`, which is not a
+  command; the index itself was fetched and accepted. Fixed in 771867e.
 - **2026-10-23, Canonical contact** (aptrepo run 39975861450, same rootfs):
   as built, the nine Ubuntu Pro / motd-news units are live and the apt hook
   names Ubuntu Pro (2 of 3 FAIL); with the repository's `rootfs/` laid over
