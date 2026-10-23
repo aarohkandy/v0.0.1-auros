@@ -500,6 +500,7 @@ for (const [at, want] of [
     charger: /\{\s*"not-on-ac",\s*FIX_WAIT/.test(fixWin) ? "required" : "not-required",
     // promote (the job that makes a release the one the button gets)
     // needs the real-Windows e2e of that very file, and pages needs promote
+    stop: /AurOS stops here\. Nothing was changed\./.test(wizard) && /Nothing on this computer has been changed\./.test(wizard) ? "nothing-changed" : "other",
     dark: /Restart now: the screen goes black for a minute or two/.test(wizard) ? "minute-or-two" : "other",
     release: (() => { const y = read(".github/workflows/release.yml"); const p = (y.match(/\n  promote:\n[\s\S]*?(?=\n  [a-z][\w-]*:\n)/) || [""])[0];
       return /needs: \[[^\]]*\be2e\b/.test(p) && /\|success\$/.test(p) && /\n  pages:\n\s+needs: promote/.test(y) ? "tested" : "untested"; })(),
@@ -525,6 +526,7 @@ for (const [at, want] of [
     [/about 10 minutes/i, "Setup says its own range (wizard.c eta_range)"],
     [/that.s normal|that is normal|normal too/i, "reassure with facts, never adjectives (docs/DESIGN-DIRECTION.md section 4, rule 4)"],
     [/Show more(?! details)/, "Edge no longer has Show more: Keep anyway is behind the small arrow beside Delete (docs/handoff/streams/F.md, finding 1)"],
+    [/Stuck\? Show a helper/, "she has no helper there: the button says Stuck? Ask someone to help (walkthrough A-06)"],
     [/double-click/i, "she presses Open file (docs/DESIGN-DIRECTION.md section 5, K P1-4)"],
     [/switch(ing)? (that|it|Smart App Control) off/i, "she is never walked through switching off a Windows protection (DESIGN-DIRECTION section 6, rule 2); the helper's page may", /^(?!advanced\.html$)/],
   ];
@@ -556,7 +558,7 @@ for (const [at, want] of [
       }));
       for (const g of groups.filter((g) => g.n.length)) check(g.n.every((v, i) => v === i + 1), `promises ${p}: the numbered circles in ${g.at} count 1 to ${g.n.length}`, g.n.join(","));
       const av = await page.evaluate(() => { const e = document.getElementById("antivirus"); return e ? { text: e.innerText, shown: e.getClientRects().length > 0 } : null; });
-      check(av && av.shown && /antivirus/i.test(av.text) && /nothing has been installed/i.test(av.text) && /Stuck\? Show a helper/.test(av.text), `promises ${p}: a calm step for an antivirus program that takes the file`, av ? av.text.slice(0, 80) : "no #antivirus");
+      check(av && av.shown && /antivirus/i.test(av.text) && /nothing has been installed/i.test(av.text) && /Stuck\? Ask someone to help/.test(av.text), `promises ${p}: a calm step for an antivirus program that takes the file`, av ? av.text.slice(0, 80) : "no #antivirus");
       const edge = await page.evaluate(() => { const e = document.querySelector('[data-browser="edge"]'); return e ? e.innerText : ""; });
       check(/Keep anyway/.test(edge) && /Open file/.test(edge) && /three dots/.test(edge) && /Don.t press Delete/.test(edge), `promises ${p}: the Edge pictures follow real Edge (Keep, then Keep anyway behind the arrow, then Open file), with the words for when they look different`);
     }
@@ -647,6 +649,56 @@ for (const [at, want] of [
     textFindings(`${v.name} after copying`, await page.evaluate(measureText));
     if (v.name === "iPhone") { await page.evaluate(() => { document.documentElement.style.scrollBehavior = "auto"; document.getElementById("copied").scrollIntoView({ block: "center" }); }); await page.waitForTimeout(100); await shot(page, "index-phone-copied.png"); }
     await ctx.close();
+  }
+
+  // The usability walkthrough's remaining fixes (docs/research/people-walkthrough-2026-10.md):
+  // A-02, A-05, A-06, A-09, B-03, B-04, B-06.
+  {
+    // A-02: she does not know which Windows she has, and decides here whether this is for her.
+    for (const v of [{ name: "1366x768", viewport: { width: 1366, height: 768 } }, { name: "390x844", viewport: { width: 390, height: 844 } }]) {
+      const { ctx, page } = await visit({ name: "A-02 " + v.name, ua: UA.winEdge, uad: UAD.winX64, viewport: v.viewport });
+      const r = await page.evaluate(() => { const p = [...document.querySelectorAll("#getbox p")].find((e) => /not sure which windows/i.test(e.innerText)); if (!p) return null; const b = p.getBoundingClientRect(); return { text: p.innerText, bottom: b.bottom, vh: innerHeight, shown: b.width > 0 }; });
+      check(r && r.shown && /press get aurOS/i.test(r.text) && /changes nothing if it can.t go on/i.test(r.text) && r.bottom <= r.vh, `A-02 ${v.name}: under the button, "Not sure which Windows you have?" says to press it, and that Setup changes nothing if it can't go on, on the first screen`, r ? `${JSON.stringify(r.text)} ends at ${Math.round(r.bottom)} of ${r.vh}` : "no such line under the button");
+      await ctx.close();
+    }
+    // A-05: after the press she is shown where she is: step 1, "your browser is asking"; the download still goes ahead.
+    for (const sel of ["#get", ".bar .pill"]) {
+      const { ctx, page } = await visit({ name: "A-05 " + sel, ua: UA.winEdge, uad: UAD.winX64, viewport: { width: 1366, height: 768 } });
+      await page.evaluate(() => { window.__prevented = null; window.addEventListener("click", (e) => { window.__prevented = e.defaultPrevented; e.preventDefault(); }); });
+      const before = await page.evaluate(() => { const e = document.getElementById("here"); return e ? e.innerText.trim() : "missing"; });
+      await page.click(sel);
+      await page.waitForTimeout(1500);
+      const after = await page.evaluate(() => { const h = document.getElementById("here"); const st = document.getElementById("step-download").getBoundingClientRect(); return { shown: !!h && h.getClientRects().length > 0, text: h ? h.innerText : "", live: h ? (h.getAttribute("role") || h.getAttribute("aria-live")) : null, top: st.top, y: scrollY, prevented: window.__prevented }; });
+      check(before === "", `A-05 ${sel}: before the press nothing says "you are here"`, JSON.stringify(before));
+      check(after.shown && /you are here/i.test(after.text) && /asking if you trust the file/i.test(after.text) && after.live, `A-05 ${sel}: after the press, "You are here: your browser is asking if you trust the file", announced`, JSON.stringify(after));
+      check(after.y > 300 && after.top >= 0 && after.top < 300, `A-05 ${sel}: and step 1 is brought into view`, `step 1 at ${Math.round(after.top)}, scrolled ${Math.round(after.y)}`);
+      check(after.prevented === false, `A-05 ${sel}: the page does not stop the download`, String(after.prevented));
+      if (sel === "#get") await shot(page, "index-after-press.png");
+      await ctx.close();
+    }
+    // A-06 and B-03 and B-06 and A-09, on the front page
+    {
+      const { ctx, page } = await visit({ name: "walkthrough index", ua: UA.winEdge, uad: UAD.winX64 });
+      const t = await page.evaluate(() => ({
+        helpers: [...document.querySelectorAll(".step .helper a")].map((a) => ({ text: a.innerText, h: a.getBoundingClientRect().height, href: a.getAttribute("href") })),
+        three: (document.querySelector("#steps .head p:last-child") || {}).innerText || "",
+        sac: (() => { const e = document.getElementById("smart-app-control"); return e ? { text: e.innerText, link: !!e.querySelector('a[href="advanced.html#smart-app-control"]') } : null; })(),
+        files: (() => { const h = [...document.querySelectorAll(".qa h3")].find((x) => /lose my files/i.test(x.innerText)); return h ? h.parentElement.innerText : ""; })(),
+      }));
+      check(t.helpers.length === 3 && t.helpers.every((a) => a.text === "Stuck? Ask someone to help" && a.h >= 48 && a.href === "guide.html"), "A-06: each step has a 48px button that says Stuck? Ask someone to help, to the page that tells her what to do", JSON.stringify(t.helpers));
+      check(/keep\b[^.]*run anyway[^.]*\byes\b/i.test(t.three) && /never[^.]*delete[^.]*don.t run[^.]*\bno\b/i.test(t.three) && /numbered circles/i.test(t.three), "B-03: before step 1, the three answers once (Keep, Run anyway, Yes) and the three never to press (Delete, Don't run, No)", JSON.stringify(t.three));
+      check(t.sac && t.sac.link && /windows setting/i.test(t.sac.text) && /nothing was changed/i.test(t.sac.text) && !/can.t go on this computer/i.test(t.sac.text), "B-06: Smart App Control is a Windows setting a helper can change, not \"AurOS can't go on\"; nothing was changed; with the way to the helper's page", t.sac ? JSON.stringify(t.sac.text) : "no #smart-app-control");
+      check(!/^No\./.test(t.files) && /made to keep/i.test(t.files) && /memory stick/i.test(t.files), "A-09: \"Will I lose my files?\" does not say an absolute No beside advice to copy photos: it says made to keep, and copy what you treasure first", JSON.stringify(t.files));
+      await ctx.close();
+    }
+    // A-06 (what she does when stuck, first), B-04 (the keyboard for the small buttons): the page the button opens
+    for (const v of [{ name: "1366x768", viewport: { width: 1366, height: 768 } }, { name: "390x844", viewport: { width: 390, height: 844 } }]) {
+      const { ctx, page } = await visit({ name: "guide " + v.name, url: HOME + "guide.html", ua: UA.winEdge, uad: UAD.winX64, viewport: v.viewport });
+      const g = await page.evaluate(() => { const h = document.querySelector(".page-head"); const pr = document.getElementById("print").getBoundingClientRect(); return { head: h.innerText, printBottom: pr.bottom, vh: innerHeight, all: document.body.innerText }; });
+      check(/close/i.test(g.head) && /nothing has been changed/i.test(g.head) && /show this page to someone you trust/i.test(g.head) && g.printBottom <= g.vh, `A-06 guide ${v.name}: the first screen is what she does (close it, Not now changes nothing, show this to someone she trusts), then Print`, JSON.stringify(g.head.slice(0, 160)));
+      if (v.name === "1366x768") check(/press tab until/i.test(g.all) && /enter/i.test(g.all) && /small button/i.test(g.all), "B-04: the helper's page gives the keyboard way for the small buttons (Tab until it is outlined, then Enter)");
+      await ctx.close();
+    }
   }
 
   // The letters: the zero is a plain oval in every weight the site loads

@@ -86,10 +86,36 @@ phones/Macs get "open this on your Windows PC" + send-yourself-the-link.
 - P2-13 (no printed address): the guide prints it; a short address of our own
   is the owner's WP-15 domain. `AUROS_DOMAIN` moves the Get AurOS link only
   (stamp.sh); the printed address is still the github.io one.
-- Not done from the walkthrough (not asked): A-02 (a line under the button
-  about not knowing which Windows), A-05 (scroll to step 1 after the press),
-  A-06 (rename "Stuck? Show a helper": DESIGN-DIRECTION fixes that string),
-  A-09, B-03, B-04, B-06.
+- Third pass (walkthrough A-02, A-05, A-06, A-09, B-03, B-04, B-06; every
+  check was written first and seen to fail, 17 red, then green; 323 checks):
+  A-02 a line under the button ("Not sure which Windows you have? Press Get
+  AurOS. Setup checks, and changes nothing if it can't go on", the last half
+  tied to wizard.c's "Nothing was changed"); A-05 after the press, step 1 is
+  scrolled up and says "You are here: your browser is asking if you trust the
+  file" (a status; the download is not stopped; not on a phone/Mac); A-06 the
+  buttons say "Stuck? Ask someone to help" and the page they open starts with
+  what she does (close, press Not now, nothing is changed, show this to
+  someone you trust), then Print; B-03 "The answers are always Keep, Run
+  anyway and Yes. Never press Delete, Don't run or No" before step 1; B-04 the
+  Tab-then-Enter way on the printed sheet; B-06 Smart App Control is "a
+  Windows setting ... someone who knows computers can change it" (not "AurOS
+  can't go on"), nothing was changed, and a button to K's page; A-09 "AurOS is
+  made to keep your files ... copy the photos you treasure first" (no bare No).
+- Still not done: A-02's Windows-version detection (the line says to press the
+  button instead), the Chrome/Firefox pictures from real screenshots, real
+  content in the desktop pictures (needs C's renders), the measured journey
+  time in `tools/site/journey.json` (F's runs have not got past the staging
+  refusal; watch docs/handoff/streams/F.md "M2").
+
+## Waiting on others
+- Real content in the desktop pictures (a news page in Internet, 12 family
+  photos; DESIGN-DIRECTION P0-3) needs C's screenshot set; today they are
+  honest renders of an empty desktop with the programs list.
+- The measured time: stream F's journey clock.
+- P2-13: the guide prints the github.io address; a short address of our own is
+  the owner's WP-15 domain.
+- The guide's hand-written "Their phone" blank stays (the helper's number, by
+  hand: lead's decision); AurOS prints no phone number.
 
 ## How to verify
 ```sh

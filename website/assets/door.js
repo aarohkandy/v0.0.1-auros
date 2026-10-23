@@ -139,6 +139,23 @@
     tabs.parentNode.parentNode.classList.add("looks-tabs-on");
   }
 
+  /* After the press on a Windows computer: the browser's warning appears at the
+   * top right while this page still shows the button, and step 1 (with the
+   * picture of that warning) is two screens down. Say where she is, and bring
+   * step 1 up. Nothing here stops the download. */
+  var here = $("here");
+  var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  [].forEach.call(document.querySelectorAll("#get, [data-download]"), function (a) {
+    a.addEventListener("click", function () {
+      if (!here || root.classList.contains("is-elsewhere")) return;
+      setTimeout(function () {
+        here.textContent = "You are here: your browser is asking if you trust the file. Follow the numbered circles.";
+        var step = $("step-download");
+        if (step) step.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+      }, 600);
+    });
+  });
+
   var kind = osKind();
   if (kind && kind !== "windows") {
     showElsewhere(kind);

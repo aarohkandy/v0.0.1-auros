@@ -43,6 +43,7 @@
           <span>Get AurOS</span>
         </a>
         <p class="facts-line">Free. For Windows&nbsp;10 and&nbsp;11. About <span data-fact="time-ssd">25 to 60</span>&nbsp;minutes. Older computers take longer.</p>
+        <p class="facts-line not-sure">Not sure which Windows you have? Press <b>Get AurOS</b>. Setup checks, and <span data-claim="stop:nothing-changed">changes nothing if it can&rsquo;t go on</span>.</p>
         <p class="old-win" id="old-win" hidden>AurOS needs Windows&nbsp;10 or&nbsp;11, and this computer may have an older Windows. AurOS Setup checks first and tells you.</p>
       </div>
 
@@ -93,13 +94,14 @@
       <div class="head">
         <p class="eyebrow">How to install</p>
         <h2 id="steps-title">Three steps. Every one shown.</h2>
-        <p>Your internet browser and Windows will each ask if you trust AurOS. The pictures show exactly what to press: follow the numbered circles.</p>
+        <p>Your internet browser and Windows will each ask if you trust AurOS, more than once. The answers are always <b>Keep</b> (then <b>Keep anyway</b>), <b>Run anyway</b> and <b>Yes</b>. Never press <b>Delete</b>, <b>Don&rsquo;t run</b> or <b>No</b>. The pictures show exactly where: follow the numbered circles.</p>
       </div>
 
       <ol class="steplist">
         <!-- 1: the download -->
         <li class="step" id="step-download">
           <div class="step-text">
+            <p class="here" id="here" role="status"></p>
             <span class="num" aria-hidden="true">1</span>
             <h3><span class="vh">Step 1: </span>Download it</h3>
             <p>Press <b>Get AurOS</b>. Your computer saves a file called <span class="file">AurOS-Setup.exe</span>.</p>
@@ -107,9 +109,9 @@
             <p>Then open it: press <b>Open file</b> under its name, or find <span class="file">AurOS-Setup.exe</span> in your <b>Downloads</b> folder and open it.</p>
             <div class="note" id="antivirus">
               <h4>If your antivirus program takes the file</h4>
-              <p>Some antivirus programs don&rsquo;t know AurOS yet either, and may put the file away. Nothing has been installed, and nothing on your computer has changed. Open your antivirus program, look for its list of blocked files, and put <span class="file">AurOS-Setup.exe</span> back, only if you got it from this page a moment ago. If you can&rsquo;t find it, press <b>Stuck? Show a helper</b>.</p>
+              <p>Some antivirus programs don&rsquo;t know AurOS yet either, and may put the file away. Nothing has been installed, and nothing on your computer has changed. Open your antivirus program, look for its list of blocked files, and put <span class="file">AurOS-Setup.exe</span> back, only if you got it from this page a moment ago. If you can&rsquo;t find it, press <b>Stuck? Ask someone to help</b>.</p>
             </div>
-            <p class="helper"><a class="btn2" href="guide.html">Stuck? Show a helper</a></p>
+            <p class="helper"><a class="btn2" href="guide.html">Stuck? Ask someone to help</a></p>
           </div>
 
           <div>
@@ -183,7 +185,7 @@
             <p>Windows may show a blue box, <b>Windows protected your PC</b>, because it doesn&rsquo;t know AurOS yet. If you see it, press <b>More info</b>, then <b>Run anyway</b>, only if you got this file from this page a moment ago.</p>
             <p>Then Windows asks whether AurOS may make changes. Press <b>Yes</b>, the white button on the left. The blue button is <b>No</b>.</p>
             <p>If Windows asks for a password, stop. It needs the person who set up this computer.</p>
-            <p class="helper"><a class="btn2" href="guide.html">Stuck? Show a helper</a></p>
+            <p class="helper"><a class="btn2" href="guide.html">Stuck? Ask someone to help</a></p>
           </div>
 
           <div class="pics">
@@ -216,7 +218,7 @@
                  change she is not walked through here
                  (docs/DESIGN-DIRECTION.md section 5, D P0-1). -->
             <div class="sac" id="smart-app-control">
-              <p>If Windows says <b>Smart App Control blocked an app</b>, AurOS can&rsquo;t go on this computer yet. Nothing was changed.</p>
+              <p>If Windows says <b>Smart App Control blocked an app</b>, that is a Windows setting on some newer computers. Someone who knows computers can change it. Nothing was changed.</p>
               <p><a class="btn2" href="advanced.html#smart-app-control">Show a helper how</a></p>
             </div>
           </div>
@@ -231,7 +233,7 @@
             <p>Press <b data-ui="wizard">Next</b>, pick the look you like, press <b data-ui="wizard">Next</b> again, then <b data-ui="wizard">Install AurOS</b>. The computer <b>restarts once, by itself</b>. <span data-claim="dark:minute-or-two">The screen goes dark for a minute or two.</span> Leave the computer switched on.</p>
             <p data-claim="hold:rearms">When AurOS starts, it asks whether everything works. Until you answer, AurOS starts each time you switch on, and <b>Windows and your files are kept just as they were.</b> If AurOS fails to start, the computer starts Windows instead.</p>
             <p><b data-ui="desktop">No, go back to Windows</b>: Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted.</p>
-            <p class="helper"><a class="btn2" href="guide.html">Stuck? Show a helper</a></p>
+            <p class="helper"><a class="btn2" href="guide.html">Stuck? Ask someone to help</a></p>
           </div>
 
           <div class="pics">
@@ -340,7 +342,7 @@
     <div class="wrap">
       <div class="head"><h2 id="faq-title">Questions.</h2></div>
       <div class="qa"><h3>Is it free?</h3><div><p>Yes. No ads and no subscription. AurOS is made in the open, so anyone can check how it works.</p></div></div>
-      <div class="qa"><h3>Will I lose my files?</h3><div><p>No. AurOS goes into empty room on your computer, and your files stay in Windows, untouched.</p></div></div>
+      <div class="qa"><h3>Will I lose my files?</h3><div><p>AurOS is made to keep your files. It goes into empty room on your computer, and your files stay in Windows, untouched. As before any big change, copy the photos you treasure onto a memory stick first.</p></div></div>
       <div class="qa"><h3>Can I go back to Windows?</h3><div><p>Yes. Until you tell AurOS that everything works, Windows and your files are kept just as they were. After <b data-ui="desktop">No, go back to Windows</b>, Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted.</p><p>Later, <b data-ui="desktop">Put Windows back</b> in AurOS&rsquo;s Settings removes AurOS, and anything you saved in AurOS goes with it, so copy what you want to keep onto a memory stick first.</p></div></div>
       <div class="qa"><h3>What about my programs, like Microsoft Office?</h3><div><p>Programs made for Windows don&rsquo;t run in AurOS. AurOS comes with its own programs for the internet, notes, photos, music and video, and <b data-ui="desktop">Get more programs</b> has many more, free. You can use Microsoft Office on the internet, at office.com.</p></div></div>
       <div class="qa"><h3>Is it safe?</h3><div><p>Your files and Windows are kept until you say everything works. AurOS Setup checks your computer before it changes anything. Windows and your internet browser ask if you trust AurOS because they don&rsquo;t know it yet.</p></div></div>
