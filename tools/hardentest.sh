@@ -375,6 +375,33 @@ if [ -f "$CS" ]; then
     rm -rf "$cr"
 else bad "choices.sh is in the image" "no usr/lib/auros/choices.sh"; fi
 
+# ── every computer is its own computer ─────────────────────────────
+#
+# One machine id for every AurOS PC is visible to networks (the DHCP client
+# id) and seeds other per-machine names. systemd makes a new one at a first
+# start when the file is empty -- and a first start also asks questions on
+# the console and applies preset policy, so those are held still.
+say ""
+say "Machine identity"
+if [ -e "$RFS/etc/machine-id" ] && [ ! -s "$RFS/etc/machine-id" ]; then ok "/etc/machine-id is empty: each computer makes its own at its first start"
+else bad "/etc/machine-id is empty: each computer makes its own at its first start" \
+        "etc/machine-id has the build's id in it (or is missing): every PC would share one"; fi
+if [ "$(readlink "$RFS/var/lib/dbus/machine-id" 2>/dev/null)" = /etc/machine-id ]; then ok "/var/lib/dbus/machine-id is the same file"
+else bad "/var/lib/dbus/machine-id is the same file" "var/lib/dbus/machine-id is not a link to /etc/machine-id: D-Bus would keep another id"; fi
+if [ "$(readlink "$RFS/etc/systemd/system/systemd-firstboot.service" 2>/dev/null)" = /dev/null ]; then ok "the first start asks nothing on the console (systemd-firstboot masked)"
+else bad "the first start asks nothing on the console (systemd-firstboot masked)" "systemd-firstboot.service is not masked: an empty machine-id makes it prompt"; fi
+PRE="$RFS/etc/systemd/system-preset/00-auros.preset"
+if [ -f "$PRE" ] && [ "$(grep -v '^[[:space:]]*#' "$PRE" | grep -v '^[[:space:]]*$' | tail -1)" = "disable *" ]; then
+    ok "the first start changes no unit (the preset is what the build enabled, then disable *)"
+else bad "the first start changes no unit (the preset is what the build enabled, then disable *)" \
+        "no etc/systemd/system-preset/00-auros.preset ending in 'disable *': Ubuntu's preset would enable systemd-networkd and more"; fi
+if [ -f "$PRE" ]; then
+    for u in aurshell.service auros-firstboot.service; do
+        if grep -qx "enable $u" "$PRE"; then ok "...and $u is still enabled by it"
+        else bad "...and $u is still enabled by it" "$PRE has no 'enable $u'"; fi
+    done
+fi
+
 say ""
 if [ "$fail" -eq 0 ]; then
     echo "hardentest: $checked checks, all ok"

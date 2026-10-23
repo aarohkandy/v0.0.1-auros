@@ -24,7 +24,8 @@ PATHS="etc/sysctl.d usr/lib/sysctl.d etc/sysctl.conf
        usr/lib/cups/backend/usb etc/avahi/avahi-daemon.conf etc/modprobe.d
        etc/systemd/journald.conf.d etc/default/zramswap etc/default/earlyoom
        usr/share/auros/shells/rail.shell etc/apparmor.d/flatpak usr/bin/flatpak
-       etc/chrony etc/NetworkManager/dispatcher.d usr/lib/auros/choices.sh"
+       etc/chrony etc/NetworkManager/dispatcher.d usr/lib/auros/choices.sh
+       etc/machine-id var/lib/dbus/machine-id etc/systemd/system-preset"
 mkdir -p "$T/good"
 for p in $PATHS; do
     [ -e "$RFS/$p" ] || [ -L "$RFS/$p" ] || continue
@@ -114,6 +115,12 @@ mutate "a network coming up makes chrony look"       "rm etc/NetworkManager/disp
 mutate "reads the PC's clock as local time"          "sed -i '/etc\/adjtime/d' usr/lib/auros/choices.sh"
 mutate "unless Windows keeps its clock in UTC"       "sed -i 's/ = utc \]/ = never ]/' usr/lib/auros/choices.sh"
 mutate "no time zone chosen, no change to the clock" "sed -i 's/^TEXT=\$(find_choices)\$/&\nmkdir -p \"\$ROOT\/etc\"; : > \"\$ROOT\/etc\/adjtime\"/' usr/lib/auros/choices.sh"
+# Machine identity
+mutate "/etc/machine-id is empty"            "echo 3c3a2b1f9d7e4f6a8b0c1d2e3f405162 > etc/machine-id"
+mutate "/var/lib/dbus/machine-id is the same file" "rm var/lib/dbus/machine-id; echo 3c3a2b1f9d7e4f6a8b0c1d2e3f405162 > var/lib/dbus/machine-id"
+mutate "the first start asks nothing on the console" "rm etc/systemd/system/systemd-firstboot.service"
+mutate "the first start changes no unit"     "sed -i '/^disable \*/d' etc/systemd/system-preset/00-auros.preset"
+mutate "is still enabled by it"              "sed -i '/^enable aurshell.service/d' etc/systemd/system-preset/00-auros.preset"
 
 echo
 if [ $fail -eq 0 ]; then echo "hardentest-mutants: $n mutations, all caught"; exit 0; fi

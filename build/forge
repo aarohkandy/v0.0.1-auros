@@ -2311,6 +2311,42 @@ seal_rootfs() {
     after=$(du -sxm "$RFS" | cut -f1)
     note "sealed: apt's lists and caches removed, ${before} MB -> ${after} MB of rootfs"
     warn_note "rootfs_mb=$after"
+    seal_identity
+}
+
+# EVERY COMPUTER IS ITS OWN COMPUTER.
+#
+# systemd's postinst made a machine id while the image was being built, so
+# every AurOS PC shared one: a network sees it as the DHCP client id, and it
+# seeds other per-machine names (BT, 2026-10-23). Empty is what systemd reads
+# as "first start": it makes a new one then, and keeps it.
+#
+# What a first start also means has to be held still, because it is not
+# only the id. systemd runs its first-boot work then: (1) systemd-firstboot
+# asks questions on the console -- masked, her answers were made in the
+# installer; (2) it applies its preset policy, which on Ubuntu ENABLES
+# systemd-networkd, -resolved and -timesyncd beside NetworkManager and chrony
+# and would enable every other unit that has an [Install] and is not named.
+# So the preset is frozen to what this image has enabled right now, and
+# "disable *" for the rest: the first start changes nothing but the id.
+# tools/hardentest.sh checks all of it.
+seal_identity() {
+    : > "$RFS/etc/machine-id"
+    mkdir -p "$RFS/var/lib/dbus"
+    ln -sfn /etc/machine-id "$RFS/var/lib/dbus/machine-id"
+    # The random seed is per computer too (it is only ever read, but a copy
+    # shared by every PC is the same mistake in a smaller place).
+    rm -f "$RFS/var/lib/systemd/random-seed"
+    ln -sfn /dev/null "$RFS/etc/systemd/system/systemd-firstboot.service"
+    install -d "$RFS/etc/systemd/system-preset"
+    {
+        echo "# Written by build/forge (seal_identity): what this image has enabled, and nothing else."
+        echo "# A first start applies the preset policy; this file puts it where the build left it."
+        find "$RFS/etc/systemd/system" -mindepth 2 -maxdepth 2 \( -path '*.wants/*' -o -path '*.requires/*' \) \
+             \( -type l -o -type f \) -printf '%f\n' 2>/dev/null | sort -u | sed 's/^/enable /'
+        echo "disable *"
+    } > "$RFS/etc/systemd/system-preset/00-auros.preset"
+    note "its own machine id at first start (empty /etc/machine-id); the first start changes no unit"
 }
 
 stage_squash() {
