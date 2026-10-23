@@ -83,6 +83,12 @@ $H 'cd ~/work/auros/<id> && nice -n 10 sh tools/bridgetest.sh'
   (forge, mkimage, loop devices) or KVM run in a container instead:
   `docker run --rm --privileged --device /dev/kvm -v "$PWD":/w -w /w ubuntu:24.04 ...`
   with `--memory 12g`.
+- **Disk budget (homebase filled to 100% once, 2026-10-23 08:20 UTC, and nearly took down
+  other people's databases):** run `df -h /` before anything that writes more than 1 GB and
+  stop if less than 30 GB would be left; keep your `~/work/auros/<id>/` under 3 GB (delete
+  images and rootfs copies you are not using right now; re-download artifacts with `gh`);
+  every test that makes temp files must clean them on EXIT, INT and TERM (`trap 'rm -rf "$T"'
+  EXIT INT TERM`), and a killed `timeout` run must not leave multi-GB images in /tmp.
 - Never touch other containers/services, never `box down`, never open ports.
 - RAM is the constraint (shared). Check `hb status` before anything big.
 
