@@ -646,7 +646,7 @@ static int    g_nw;
 
 enum {
     ID_NONE = 0,
-    ID_PRIMARY, ID_BACK, ID_QUIT, ID_LATER, ID_WIFI, ID_HELPER, ID_COPY,
+    ID_PRIMARY, ID_BACK, ID_QUIT, ID_LATER, ID_WIFI, ID_HELPER, ID_COPY, ID_STOP, ID_LEAVE,
     ID_STYLE = 500
 };
 
@@ -1111,6 +1111,11 @@ static volatile LONG g_ab_state;   /* 0 idle, 1 running, 2 done, 3 failed */
 static volatile LONG g_stop_wanted;
 static volatile LONG g_ab_gate;
 static int    g_aborts;            /* ab_abort calls, for --navtest       */
+/* THE QUESTION WHEN SHE CLOSES THE WINDOW, drawn in the window (the stock
+ * message box was a different program's words, in a different look):
+ * 0 none, 1 stop setting up?, 2 close with AurOS ready? Esc cancels it. */
+static int    g_confirm;
+static int    leave_confirmed(void);
 static int    g_ab_phase;          /* which ab_phase is running           */
 static int    g_ab_pct;
 
@@ -2997,12 +3002,14 @@ static int welcome_passed(void)
 
 static int primary_visible(void)
 {
+    if (g_confirm) return 1;
     if (g_page == PAGE_PROGRESS) return g_install_finished;
     return 1;
 }
 
 static int primary_enabled(void)
 {
+    if (g_confirm) return 1;
     switch (g_page) {
     case PAGE_WELCOME:  return welcome_passed();
     case PAGE_BLOCKED:  return sb_page() ? !g_checking
@@ -3016,6 +3023,7 @@ static int primary_enabled(void)
 
 static const wchar_t *primary_label(void)
 {
+    if (g_confirm) return g_confirm == 1 ? L"Keep going" : L"Keep it and restart later";
     switch (g_page) {
     case PAGE_WELCOME:  return L"Next";
     /* WHEN IT CANNOT GO ON, THE ONE BUTTON CLOSES IT. "Check again" on an
@@ -3094,7 +3102,16 @@ static void draw_footer(void)
 
     const wchar_t *second = NULL, *lands = NULL;
     int sid = 0, leaves = 0;
-    if (g_page == PAGE_BLOCKED && (sb_page() || !any_cannot())) {
+    if (g_confirm) {
+        second = g_confirm == 1 ? L"Stop and undo" : L"Close and undo";
+        sid = ID_LEAVE; leaves = 1;
+        lands = L"Undo: this computer starts Windows as usual.";
+    } else if (g_page == PAGE_PROGRESS && g_install_running && g_ab_gate == 0 && !g_stop_wanted) {
+        /* Stop is offered only while stopping is safe: AurOS has only been
+         * downloading, and nothing on the computer has been changed */
+        second = L"Stop"; sid = ID_STOP; leaves = 1;
+        lands = L"Nothing has been changed yet.";
+    } else if (g_page == PAGE_BLOCKED && (sb_page() || !any_cannot())) {
         second = L"Not now"; sid = ID_QUIT; leaves = 1;
         lands = L"Not now: AurOS Setup closes. Nothing has been changed.";
     } else if (g_page == PAGE_BLOCKED && helper_url()) {
@@ -3110,7 +3127,9 @@ static void draw_footer(void)
     if (second) {
         int sw = text_w(second, g_f_btn) + S(56);
         if (sw < S(140)) sw = S(140);
-        bx -= sw + S(leaves ? 32 : 16);
+        /* flush right when the big button is not there; a gap of 32 px
+         * before a button that leaves or undoes, 16 before one that does not */
+        bx -= sw + (primary_visible() ? S(leaves ? 32 : 16) : 0);
         draw_button(sid, second, bx, by, sw, bh, 0, 0);
     }
 
@@ -3130,8 +3149,33 @@ static int g_want_focus_id;
 static int g_hot_idx = -1;
 static int g_settle;
 
+/* The question, in her words, with where each answer lands. The big
+ * button keeps what she has; the other one undoes it. */
+static int page_confirm(int x, int y, int w)
+{
+    int y0 = y;
+    int narrow = w > S(720) ? S(720) : w;
+    if (g_confirm == 1) {
+        y += page_head(L"Stop setting up AurOS?",
+                       L"It stops when the step it is on is done, then takes everything "
+                       L"back, so this computer starts Windows as usual. Windows and your "
+                       L"files are not affected.", x, y, w);
+    } else {
+        y += page_head(L"Close AurOS Setup?",
+                       L"AurOS is ready. If you close this now, AurOS is taken back and "
+                       L"this computer starts Windows as usual.", x, y, w);
+        y += S(24);
+        static const wchar_t *const keep[] = {
+            L"Keep it and restart later: AurOS Setup closes. AurOS goes on next time you restart.",
+        };
+        y += note_box(NULL, keep, 1, x, y, narrow);
+    }
+    return y - y0;
+}
+
 static int page_dispatch(int x, int y, int w)
 {
+    if (g_confirm) return page_confirm(x, y, w);
     switch (g_page) {
     case PAGE_WELCOME:  return page_welcome(x, y, w);
     case PAGE_BLOCKED:  return page_blocked(x, y, w);
@@ -3298,6 +3342,15 @@ static void do_primary(void)
 {
     if (!primary_visible()) return;
     if (!primary_enabled()) { g_early = early_words(); return; }
+    if (g_confirm) {
+        /* the answer that keeps what she has: keep going, or keep AurOS for
+         * her next restart and let the window go */
+        int c = g_confirm;
+        g_confirm = 0;
+        page_changed();
+        if (c == 2) { g_keep_armed = 1; DestroyWindow(g_hwnd); }
+        return;
+    }
     switch (g_page) {
     case PAGE_WELCOME:  goto_page(PAGE_STYLE); g_want_focus_id = ID_PRIMARY; break;
     case PAGE_BLOCKED:  if (sb_page()) {
@@ -3336,6 +3389,8 @@ static void widget_do(int id)
     case ID_LATER:   g_keep_armed = 1; PostMessageW(g_hwnd, WM_CLOSE, 0, 0); return;
     case ID_WIFI:    g_bring_wifi = !g_bring_wifi; return;
     case ID_HELPER:  open_helper(); return;
+    case ID_STOP:    PostMessageW(g_hwnd, WM_CLOSE, 0, 0); return;
+    case ID_LEAVE:   if (leave_confirmed()) DestroyWindow(g_hwnd); return;
     case ID_COPY:    copy_for_helper(); return;
     default: break;
     }
@@ -3385,7 +3440,7 @@ static void focus_visible(void)
     if (g_focus < 0 || g_focus >= g_nw) return;
     int id = g_w[g_focus].id;
     if (id == ID_PRIMARY || id == ID_BACK || id == ID_QUIT || id == ID_LATER ||
-        id == ID_HELPER) return;
+        id == ID_HELPER || id == ID_STOP || id == ID_LEAVE) return;
     RECT r = g_w[g_focus].r;
     if (r.top < g_body.top)        scroll_by(r.top - g_body.top - S(12));
     else if (r.bottom > g_body.bottom) scroll_by(r.bottom - g_body.bottom + S(12));
@@ -3992,39 +4047,35 @@ static void bring_forward(void)
     FlashWindow(g_hwnd, TRUE);
 }
 
-static int ask(HWND h, const wchar_t *text, UINT icon)
-{
-    if (g_nav_mode) return 1;          /* --navtest: as if she said Yes */
-    return MessageBoxW(h, text, L"AurOS Setup", MB_YESNO | icon | MB_DEFBUTTON2) == IDYES;
-}
-
-/* The window's X. 1: it may close now. 0: not now -- she said No, or a
- * step is running, and the window closes by itself when it has ended and
- * everything is taken back (stop_tick). */
+/* The window's X, and the Stop and Close buttons. 1: it may close now. 0:
+ * not yet -- the question is on the screen (g_confirm), or it is already
+ * stopping. Closing with nothing to lose, or nothing armed, is at once. */
 static int close_asked(HWND h)
 {
-    if (g_install_running) {
-        if (g_stop_wanted) return 0;           /* already stopping */
-        if (!ask(h, L"Stop setting up AurOS?\n\nIt stops when the step it is on is "
-                    L"done, then takes everything back, so this computer starts "
-                    L"Windows as usual. This window closes by itself when it has.",
-                 MB_ICONQUESTION))
-            return 0;
-        /* Before the engine has started (it waits for the download that
-         * ran behind the pages, which only ever writes \AurOS\ ), there
-         * is nothing to finish: it never starts, and the window goes. */
-        if (InterlockedCompareExchange(&g_ab_gate, 2, 0) != 1) return 1;
-        if (g_ab_state == 1) { InterlockedExchange(&g_stop_wanted, 1); return 0; }
-        return 1;
-    }
+    (void)h;
+    if (g_confirm || g_stop_wanted) return 0;
+    if (g_install_running) { g_confirm = 1; page_changed(); return 0; }
     /* READY, AND ABOUT TO BE THROWN AWAY. After the last step the
      * window's X used to close it and take back the restart without
      * a word. */
-    if (g_install_armed && !g_restarting && !g_keep_armed &&
-        !ask(h, L"Close AurOS Setup and take AurOS back?\n\nAurOS is ready. Closing now "
-                L"takes it back, and this computer starts Windows as usual.\n\nTo keep it "
-                L"for your next restart, choose No, then press Restart later.", MB_ICONWARNING))
-        return 0;
+    if (g_install_armed && !g_restarting && !g_keep_armed) { g_confirm = 2; page_changed(); return 0; }
+    return 1;
+}
+
+/* She answered "undo" to the question. 1: the window can go now. 0: a step
+ * is mid-way, it finishes first and then everything is taken back
+ * (stop_tick), and the page says "Stopping." */
+static int leave_confirmed(void)
+{
+    int what = g_confirm;
+    g_confirm = 0;
+    page_changed();
+    if (what != 1) return 1;
+    /* Before the engine has started (it waits for the download that ran
+     * behind the pages, which only ever writes \AurOS\ ), there is
+     * nothing to finish: it never starts, and the window goes. */
+    if (InterlockedCompareExchange(&g_ab_gate, 2, 0) != 1) return 1;
+    if (g_ab_state == 1) { InterlockedExchange(&g_stop_wanted, 1); return 0; }
     return 1;
 }
 
@@ -4138,7 +4189,8 @@ static void on_key(WPARAM k)
     /* ESC NEVER DESTROYS ANYTHING: it stops the restart count, or goes
      * back a page, and that is all. It used to close the window. */
     case VK_ESCAPE:
-        if (back_visible()) goto_page(back_target());
+        if (g_confirm) { g_confirm = 0; page_changed(); }
+        else if (back_visible()) goto_page(back_target());
         break;
     case VK_LEFT:
     case VK_RIGHT:
@@ -4505,10 +4557,16 @@ static int shot_run(const char *dir)
     shot_save(dir, "5a-progress");
     g_ab_phase = AB_INSPECT; g_ab_pct = 0; g_eta_min = -1; g_bar_f = 0.f;
     shot_save(dir, "5b-progress-starting");
+    g_confirm = 1;
+    shot_save(dir, "5f-stop-question");
+    g_confirm = 0;
 
     g_install_running = 0; g_install_finished = 1;
     InterlockedExchange(&g_ab_state, 2);
     shot_save(dir, "5c-ready-to-restart");
+    g_install_armed = 1; g_confirm = 2;
+    shot_save(dir, "5g-close-question-ready");
+    g_confirm = 0; g_install_armed = 0;
 
     InterlockedExchange(&g_ab_state, 3);
     snprintf(g_ab_why, sizeof g_ab_why,
@@ -5024,26 +5082,55 @@ static int nav_test(const char *dir)
         g_bring_wifi = 1;
     }
 
-    if (g_nt) fprintf(g_nt, "\n13. closing in the middle of a step never cuts it off\n");
+    if (g_nt) fprintf(g_nt, "\n13. closing in the middle of a step never cuts it off, and asks in the window\n");
     {
         nt_fake_report(0);
         g_page = PAGE_PROGRESS;
         g_install_running = 1; g_install_finished = 0;
         InterlockedExchange(&g_ab_state, 1);
         InterlockedExchange(&g_ab_gate, 1);    /* the engine is in a step */
-        g_stop_wanted = 0; g_aborts = 0;
+        g_stop_wanted = 0; g_aborts = 0; g_confirm = 0;
         int may = close_asked(NULL);
-        nt_check(!may && g_stop_wanted && g_aborts == 0 && !stop_tick(),
-                 "closing in the middle of a step does not end it: the window waits");
+        render();
+        int has_leave = 0, has_keep = 0;
+        for (int i = 0; i < g_nw; i++) { if (g_w[i].id == ID_LEAVE) has_leave = 1; if (g_w[i].id == ID_PRIMARY) has_keep = 1; }
+        nt_check(!may && g_confirm == 1 && has_leave && has_keep && !wcscmp(primary_label(), L"Keep going"),
+                 "closing mid-step asks in the window: Keep going, or Stop and undo");
+        on_key(VK_ESCAPE);
+        nt_check(g_confirm == 0 && g_page == PAGE_PROGRESS, "Esc cancels the question, and nothing else");
+        close_asked(NULL);
+        widget_activate(ID_LEAVE);             /* Stop and undo, mid-step */
+        nt_check(g_stop_wanted && g_aborts == 0 && !stop_tick(),
+                 "Stop and undo in the middle of a step does not end it: the window waits");
         InterlockedExchange(&g_ab_state, 2);    /* the step has ended */
         nt_check(stop_tick() && g_aborts == 1,
                  "when the step ends, everything is taken back, then the window goes");
         g_install_running = 1; g_stop_wanted = 0; g_aborts = 0;
         InterlockedExchange(&g_ab_state, 1);
         InterlockedExchange(&g_ab_gate, 0);    /* only the download, behind the pages */
-        nt_check(close_asked(NULL) && g_ab_gate == 2,
-                 "before the engine has started it closes at once, and the engine never starts");
-        g_install_running = 0; g_stop_wanted = 0; g_aborts = 0;
+        nt_check(!close_asked(NULL) && g_confirm == 1, "before the engine starts it asks too");
+        nt_check(leave_confirmed() && g_ab_gate == 2,
+                 "... and Stop and undo then closes at once, and the engine never starts");
+        g_install_running = 1; g_stop_wanted = 0; g_confirm = 0;
+        InterlockedExchange(&g_ab_gate, 0);
+        render();
+        int stop = 0;
+        for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_STOP) stop = 1;
+        nt_check(stop, "while only downloading there is a Stop button");
+        InterlockedExchange(&g_ab_gate, 1);
+        render();
+        stop = 0;
+        for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_STOP) stop = 1;
+        nt_check(!stop, "once a step is running there is none: stopping is no longer free");
+        /* Ready, and about to be thrown away */
+        g_install_running = 0; g_install_finished = 1; g_install_armed = 1;
+        InterlockedExchange(&g_ab_state, 2); InterlockedExchange(&g_ab_gate, 1);
+        nt_check(!close_asked(NULL) && g_confirm == 2 && !wcscmp(primary_label(), L"Keep it and restart later"),
+                 "closing a ready install asks: Keep it and restart later, or Close and undo");
+        widget_activate(ID_PRIMARY);
+        nt_check(g_keep_armed && g_confirm == 0, "Keep it and restart later keeps AurOS armed");
+        g_keep_armed = 0; g_install_armed = 0; g_install_finished = 0;
+        g_install_running = 0; g_stop_wanted = 0; g_aborts = 0; g_confirm = 0;
         InterlockedExchange(&g_ab_state, 0);
         InterlockedExchange(&g_ab_gate, 0);
     }

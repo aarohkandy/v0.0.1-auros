@@ -50,6 +50,9 @@ teal one) and `tools/e2e/selftest.py` ("Close AurOS Setup"),
 
 ## Done and pushed (newest first)
 
+- (next commit) B-14/B-15: the close question is drawn in the window ("Keep
+  going" / "Stop and undo"; "Keep it and restart later" / "Close and undo"; Esc
+  cancels it), and **Stop** is offered only while nothing has been changed.
 - `7a2194f` Narrator reads the new pages (each problem and its fix line).
 - `619d439` preflight: BitLocker read from the DISK (`raw_bitlocker`);
   `raid-volume` and `storage-controller-unknown` stop; ESP needs carried +
@@ -149,11 +152,9 @@ Written before the code landed; each is now in `main`.
    woff2/TTFs, regenerate `src/aurbridge/fonts/*.ttf` (script idea:
    `fontTools` -> `flavor=None`, rename nameID 1/4/6 to AurOS Sans, keep OFL),
    add the 800 as a second family for the title, rerun check.sh.
-2. **B-14**: a secondary **Stop** on the progress page only while stopping is
-   safe, with "Nothing has been changed yet." (`g_ab_gate==0` and no engine
-   step: the early-download phase). `close_asked()` already does the work.
-3. **B-15**: replace the two `MessageBoxW` questions in `close_asked()` with an
-   in-window page: **Keep it and restart later** / **Close and undo**.
+2. ~~B-14~~ and ~~B-15~~ are done (`close_asked`/`leave_confirmed`, `page_confirm`,
+   a **Stop** button only while AurOS has only been downloading).
+3. (kept for numbering)
 4. **B-10**: Bigger text. Read `TextScaleFactor`; an **A+ Bigger text**
    button (>= 48x48) top right rescales `TYPE[]`; pass the factor on
    through `choices.conf` (C's `choices.sh` writes the shell's scale file).
