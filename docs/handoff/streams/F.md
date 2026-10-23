@@ -11,7 +11,7 @@ Full user guide: `tools/e2e/README.md`. This page is the state of the work.
 |---|---|
 | This repo's first prerelease | `v0.1.0-618726b` (stream E). e2e.yml pins its `AurOS-Setup.exe` (SHA-256 `5b875c0b...0b52`, checked against SHA256SUMS and a fresh download). Run **39923720924** (`[e2e]`-less: the pin edit starts it) is the base run on it. |
 | Past the website | run 39906470700 (v4 installer): Windows to desktop 1:26, website, Get AurOS, **Edge's whole Keep dance, the file downloaded and hash-checked, Open file**, then UAC appeared and the driver did not answer it (it looked for the signed wording; fixed in `71abd5e`). First time past the download. Evidence: `releases/download/e2e-39906470700/e2e-evidence-base.zip`. |
-| M2 (wizard, restart, AurOS) | **not yet seen**. Next: run 39923720924. |
+| M2 (wizard, restart, AurOS) | run 39923720924 (first prerelease, evidence `e2e-39923720924`): website, Edge, UAC (answered), the **wizard to "Restart now"** (Next, Next, Install AurOS, 4:57 after the click on Get AurOS, the image download and check took 2:19 on a runner), Windows restarted, **firmware started the staging installer under Secure Boot** (shim, grub, staging kernel: `serial.log`), and the staging screen **refused: `verdict=bitlocker`**. Cause: Windows 11 (26H2) turned device encryption on by itself (`EncryptionInProgress 93%` at first logon, TPM + Secure Boot) while this installer's Windows-side check saw plain NTFS (that prerelease predates `619d439`, "BitLocker is read from the disk"). Safe outcome (nothing changed), wrong PC for "base". Fix `[this push]`: the plain PC now has `PreventDeviceEncryption` (specialize.cmd), the flow refuses a plain PC with BitLocker (`bitlocker_verdict`), the bitlocker variant enables it by hand. Next: run 39927613385. |
 | M3 (store, program on disk) | not reached |
 | bitlocker variant (D13) | `[e2e:bitlocker]`: today it must be red at the plain stop, with the message `variant bitlocker: STOPPED AT ITS STOP, no way on ... D13 ...` (`close_verdict`, selftest-tied to the installer's two titles). When A2's pause lands the install goes on and the driver reads `Get-BitLockerVolume` before Restart now (must be FullyEncrypted: paused, never decrypted). **Still to write once the pause is in a prerelease (needs the real thing to test)**: after M3, boot Windows directly (OVMF boot menu, or AurOS's own menu) and via "Put Windows back"; each time: no BitLocker recovery screen (OCR "recovery key" / "BitLocker recovery"), the desktop is reached (`helper-up`), and `Get-BitLockerVolume` says ProtectionStatus On. |
 | Restyle-proof driver | pushed (`4583e18`): the installer's buttons by **name** (screen-reader object read by the elevated helper; primary = the button whose key is Enter; selftest fails if wizard.c stops saying so), colour only as fallback (old teal, new green #0B5D4F, dark #5DBB9E), a button must stand still over 1 s before a press (B's 700 ms debounce). The helper runs **elevated** (a logon task at the highest run level, `guest/firstlogon.ps1`), because a normal process cannot read an elevated window's controls; the golden changed with it. |
@@ -44,7 +44,24 @@ Paths below are inside it (`flow/shots/...`), run 39906470700.
    More info, then Run anyway") then tells her about a screen she does not
    get. It may still appear on a PC where the file came from another
    browser or an older Windows; keep it, but say "if you see".
-4. Website top (`0008-website.png`): clear, calm, one green button, two of
+4. **The staging installer's "stopped" screen is full of words she has
+   never seen (route to B/A2; `src/aurscreen/screen.c`)**
+   (`0029-failure-auros-was-not-installed.png`, run 39923720924): a big pink
+   "AurOS was not installed", then "To try again, open AurBridge in Windows
+   and press Start installing" (there is no "AurBridge" and no "Start
+   installing" anywhere she has been: the installer is "AurOS Setup", the
+   button "Install AurOS"), no word on WHY (BitLocker), a footer line
+   `aurstage-report v1 verdict=bitlocker record=refused`, and "Turn this
+   computer off and on again": she must hold the power button; there is no
+   Restart button and no automatic return to Windows. The calm sentence
+   "nothing on it has been changed" is right but is the third line.
+5. **A modern PC is a BitLocker PC (route to lead: D13 is the common case,
+   not an edge).** A fresh Windows 11 with a TPM and Secure Boot starts
+   device encryption by itself, before anyone logs in; the real
+   Windows-side check in the first prerelease did not see it (fixed later in
+   `619d439`). Until the pause lands, the PCs bought in the last two years
+   hit the "can't go on yet" stop.
+6. Website top (`0008-website.png`): clear, calm, one green button, two of
    them (header and hero) both work. No finding.
 
 ## Goal
