@@ -356,6 +356,64 @@ static void sizes(void)
     ok(w, bad == 0 && n_all > 0);
 }
 
+/* ── 4b. every word on the card is on the screen, in full ───────── */
+static int drawn_whole(const char *want, int sw)
+{
+    for (int i = 0; i < shell_text_log_n; i++)
+        if (!strcmp(shell_text_log[i].s, want))
+            return shell_text_log[i].w > 0 && shell_text_log[i].x >= 0 &&
+                   shell_text_log[i].x + shell_text_log[i].w <= sw;
+    return 0;
+}
+
+static void words_fit(void)
+{
+    printf("\n  the words that matter are shown whole, at every size\n");
+    static const int RES[][2] = { {1024, 600}, {1366, 768} };
+    static const float SC[] = { 0.8f, 1.f, 1.45f, 2.f };
+    static const char *MUST[3][3] = {
+        { "It's all right", "The sound is off while you read this.", "Close this page" },
+        { "Before you install this", "Scammers ask people to install this.",
+          "Only continue if YOU called someone you know." },
+        { "Don't install it", "I called someone I know", NULL },
+    };
+    int bad = 0, seen = 0;
+    for (int r = 0; r < 2; r++)
+        for (int k = 0; k < 4; k++)
+            for (int m = 0; m < 2; m++) {
+                shell_ctx c; memset(&c, 0, sizeof c);
+                fresh(&c, 1);
+                c.text_scale = SC[k];
+                c.screen_w = RES[r][0];
+                c.screen_h = RES[r][1] - foot_height(&c);
+                shell_fonts f; shell_fonts_load(&f, &c);
+                if (m == 0) { guard_watch_key(&c, LCTRL, 1, T); guard_watch_key(&c, LALT, 1, T);
+                              guard_watch_key(&c, DEL, 1, T); guard_watch_key(&c, DEL, 0, T);
+                              guard_watch_key(&c, LALT, 0, T); guard_watch_key(&c, LCTRL, 0, T); }
+                else guard_remote(&c, "anydesk");
+                surface *sf = surface_new(RES[r][0], RES[r][1]);
+                shell_text_log_n = 0; shell_text_log_on = 1;
+                guard_paint(&c, sf, &f);
+                shell_text_log_on = 0;
+                for (int j = 0; j < 3; j++) {
+                    const char *w = (m == 0) ? MUST[0][j] : MUST[1][j];
+                    if (w && !drawn_whole(w, RES[r][0])) {
+                        printf("      not whole at %dx%d text %.0f%%: %s\n", RES[r][0],
+                               RES[r][1], (double)(SC[k] * 100.f), w);
+                        bad++;
+                    }
+                    seen++;
+                }
+                for (int j = 0; m == 1 && j < 2; j++, seen++)
+                    if (!drawn_whole(MUST[2][j], RES[r][0])) bad++;
+                surface_free(sf);
+                shell_fonts_free(&f);
+            }
+    char w[96];
+    snprintf(w, sizeof w, "%d sentences and answers checked (needs a font)", seen);
+    ok(w, bad == 0);
+}
+
 /* ── 5. main.c really calls it, in the right places ─────────────── */
 static char *slurp(const char *p)
 {
@@ -424,8 +482,55 @@ static int listen_and_answer(int seconds)
     return 1;
 }
 
+/* --shots DIR: the cards as she sees them, at her smallest screen
+ * (1024x600), through the real paint path, for review. Needs
+ * src/common/png.c linked and a font on the machine (DejaVu will do). */
+#ifdef GUARD_SHOTS
+#include "../src/common/png.h"
+static int shot(shell_ctx *c, shell_fonts *f, const char *dir, const char *name)
+{
+    surface *s = surface_new(1024, 600);
+    draw_rect(s, (rect){ 0, 0, 1024, 600 }, 0x5A1010u, 1.f);   /* a page shouting */
+    foot_paint(c, s, f);                  /* Help panel, when it is open */
+    guard_paint(c, s, f);
+    if (c->help_open) { } else foot_paint(c, s, f);   /* the band over the card */
+    char p[512];
+    snprintf(p, sizeof p, "%s/%s", dir, name);
+    uint32_t *o = malloc(sizeof *o * 1024 * 600);
+    for (int i = 0; i < 1024 * 600; i++) o[i] = s->px[i] & 0xFFFFFFu;
+    int rc = png_write_rgb(p, o, 1024, 600);
+    free(o); surface_free(s);
+    printf("guardtest: %s\n", p);
+    return rc;
+}
+
+static int shots(const char *dir)
+{
+    theme_t t = {0};
+    if (theme_load(&t, "themes/sandstone.theme") < 0 && theme_load(&t, "themes/nocturne.theme") < 0)
+        return 1;
+    shell_ctx c; memset(&c, 0, sizeof c);
+    fresh(&c, 1);
+    shell_theme_load(&c, &t);
+    shell_fonts f; shell_fonts_load(&f, &c);
+    int rc = 0;
+    foot_open_only(&c, &c.help_open);
+    rc |= shot(&c, &f, dir, "guard-help.png");
+    c.help_open = 0;
+    tap(&c, ESC, NULL); tap(&c, ESC, NULL); tap(&c, ESC, NULL);
+    rc |= shot(&c, &f, dir, "guard-out.png");
+    guard_remote(&c, "anydesk");
+    rc |= shot(&c, &f, dir, "guard-remote.png");
+    c.guard_open = 0; guard_step(&c);
+    return rc;
+}
+#endif
+
 int main(int argc, char **argv)
 {
+#ifdef GUARD_SHOTS
+    if (argc > 2 && !strcmp(argv[1], "--shots")) return shots(argv[2]);
+#endif
     if (argc > 2 && !strcmp(argv[1], "--listen"))
         return listen_and_answer(atoi(argv[2]));
     printf("\nCan a page trap her, and is a stranger's program stopped?\n\n");
@@ -433,6 +538,7 @@ int main(int argc, char **argv)
     way_out();
     remote();
     sizes();
+    words_fit();
     wired(argc > 1 ? argv[1] : "src/aurshell/main.c");
     printf("\n");
     if (fail) { printf("guardtest: %d of %d FAIL\n", fail, checked); return 1; }

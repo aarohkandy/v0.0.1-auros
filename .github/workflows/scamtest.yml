@@ -47,7 +47,7 @@ jobs:
           for i in 1 2 3; do timeout 300 sudo apt-get update -qq && break; sleep 10; done
           for i in 1 2 3; do
             timeout 300 sudo apt-get install -y -qq --no-install-recommends \
-              python3-jsonschema libdbus-1-dev pkg-config && break
+              python3-jsonschema libdbus-1-dev pkg-config fonts-dejavu-core && break
             sleep 10
           done
       - name: scamtest (Firefox policy, remote-control gate, the way out of a page)

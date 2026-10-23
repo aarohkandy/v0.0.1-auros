@@ -7,7 +7,7 @@
 #   sh tools/scamtest.sh            from anywhere in the repository
 #
 # Needs python3 with jsonschema (apt install python3-jsonschema), node,
-# and cc with libdbus-1-dev. The real-polkitd half is
+# cc with libdbus-1-dev, and a font (fonts-dejavu-core). The real-polkitd half is
 # tools/scamtest/polkit.sh (root, in a container; see that file).
 # Exit 0 only if every part passes.
 set -u

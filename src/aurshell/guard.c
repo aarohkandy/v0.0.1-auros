@@ -220,33 +220,32 @@ static const char *label_of(int id)
     return "";
 }
 
-static int words(const shell_ctx *c, const char **head, const char **sub,
-                 const char *lines[3])
+/* Short lines, never wrapped and never cut: each fits a 1024-wide
+ * screen at her largest text (tools/guardtest.c measures them). */
+#define GUARD_LINES 4
+static int words(const char **head, const char *lines[GUARD_LINES])
 {
     int n = 0;
     switch (G.mode) {
     case GUARD_REMOTE:
         *head = "Before you install this";
-        *sub  = "This program lets someone far away use your computer.";
         lines[n++] = "Scammers ask people to install this.";
         lines[n++] = "Only continue if YOU called someone you know.";
+        lines[n++] = "It lets someone far away use your computer.";
         break;
     case GUARD_REMOTE_OK:
         *head = "All right";
-        *sub  = "Now try installing it again.";
-        lines[n++] = "If anyone asks you for money, gift cards or your bank "
-                     "details, hang up.";
+        lines[n++] = "Now try installing it again.";
+        lines[n++] = "If anyone asks you for money, hang up.";
         break;
     default:
         *head = "It's all right";
-        *sub  = "The sound is off while you read this.";
-        lines[n++] = "A page that says your computer is in danger, or tells "
-                     "you to call a number, is a trick.";
-        lines[n++] = "Don't call the number, and don't let anyone into your "
-                     "computer.";
+        lines[n++] = "The sound is off while you read this.";
+        lines[n++] = "A page that says your computer is in danger,";
+        lines[n++] = "or tells you to call a number, is a trick.";
+        lines[n++] = "Don't call the number.";
         break;
     }
-    (void)c;
     return n;
 }
 
@@ -270,18 +269,39 @@ static int actions(const shell_ctx *c, int *which)
 
 static float scale(const shell_ctx *c) { return c->text_scale > 0.1f ? c->text_scale : 1.f; }
 
+typedef struct { int gx, cw, head_y, rule_y, line_y, line_h; } guard_geom;
+
+static guard_geom geom(const shell_ctx *c, int sw)
+{
+    float k = scale(c);
+    guard_geom g;
+    g.gx = sw / 14; if (g.gx < 20) g.gx = 20; if (g.gx > 110) g.gx = 110;
+    g.cw = sw - 2 * g.gx;
+    g.head_y = (int)(52.f * k);
+    g.rule_y = g.head_y + (int)(14.f * k);
+    g.line_y = g.rule_y + (int)(36.f * k);
+    g.line_h = (int)(32.f * k);
+    return g;
+}
+
 int guard_buttons(const shell_ctx *c, int sw, int sh, rect *out, int *which)
 {
     float k = scale(c);
+    guard_geom g = geom(c, sw);
+    const char *head, *lines[GUARD_LINES];
+    int nl = words(&head, lines);
     int n = actions(c, which);
-    int gx = sw / 14; if (gx < 20) gx = 20; if (gx > 110) gx = 110;
-    int w = sw - 2 * gx; if (w > (int)(560.f * k)) w = (int)(560.f * k);
+    int w = g.cw; if (w > (int)(560.f * k)) w = (int)(560.f * k);
     int h = (int)(34.f + 16.f * k); if (h < 44) h = 44;
     int gap = (int)(10.f * k); if (gap < 8) gap = 8;
-    int y = sh - (int)(16.f * k) - n * h - (n - 1) * gap;
-    int floor_y = (int)(130.f * k);        /* below the headline, always */
+    /* Right under the words, so the answer is next to the question;
+     * pushed up from the bottom only if the screen is too short. */
+    int y = g.line_y + (nl - 1) * g.line_h + (int)(36.f * k);
+    int last = sh - (int)(16.f * k) - n * h - (n - 1) * gap;
+    if (y > last) y = last;
+    int floor_y = g.rule_y + (int)(8.f * k);   /* below the headline, always */
     if (y < floor_y) y = floor_y;
-    for (int i = 0; i < n; i++) out[i] = (rect){ gx, y + i * (h + gap), w, h };
+    for (int i = 0; i < n; i++) out[i] = (rect){ g.gx, y + i * (h + gap), w, h };
     return n;
 }
 
@@ -290,43 +310,37 @@ void guard_paint(shell_ctx *c, surface *s, shell_fonts *f)
     if (!c->guard_open) return;
     int sw = s->w, sh = c->screen_h;
     if (sh <= 0 || sh > s->h) sh = s->h;
-    float k = scale(c);
-    int gx = sw / 14; if (gx < 20) gx = 20; if (gx > 110) gx = 110;
-    int cw = sw - 2 * gx;
+    guard_geom g = geom(c, sw);
 
     draw_rect(s, (rect){ 0, 0, sw, sh }, c->bg, 0.98f);
 
-    const char *head = "", *sub = "", *lines[3];
-    int nl = words(c, &head, &sub, lines);
+    const char *head = "", *lines[GUARD_LINES];
+    int nl = words(&head, lines);
     font *hf = f->huge ? f->huge : (f->big ? f->big : f->mid);
-    font *sf = f->mid ? f->mid : f->small;
-    font *bf = f->small ? f->small : sf;
+    font *lf = f->mid ? f->mid : f->small;
+    /* At her largest text the headline steps down a size rather than
+     * running off the edge. */
+    if (hf && f->big && shell_text_w(hf, head) > (float)g.cw) hf = f->big;
 
     rect b[GUARD_MAX_BUTTONS]; int id[GUARD_MAX_BUTTONS];
     int nb = guard_buttons(c, sw, sh, b, id);
-    int stop = nb ? b[0].y - (int)(8.f * k) : sh;
+    int stop = nb ? b[0].y - (int)(8.f * scale(c)) : sh;
 
-    int y = (int)(52.f * k);
-    if (hf) shell_text(s, hf, (float)gx, (float)y, head, c->fg, 1.f);
-    y += (int)(14.f * k);
-    draw_hrule(s, gx, y, cw, 1, c->fg, 0.28f);
-    y += (int)(30.f * k);
-    if (sf) shell_text_elided(s, sf, (float)gx, (float)y, (float)cw, sub, c->fg, 0.95f);
-    y += (int)(36.f * k);
-    for (int i = 0; i < nl && bf && y < stop; i++) {
-        shell_text_elided(s, bf, (float)gx, (float)y, (float)cw, lines[i], c->fg, 0.8f);
-        y += (int)(28.f * k);
-    }
+    if (hf) shell_text(s, hf, (float)g.gx, (float)g.head_y, head, c->fg, 1.f);
+    draw_hrule(s, g.gx, g.rule_y, g.cw, 1, c->fg, 0.28f);
+    int y = g.line_y;
+    for (int i = 0; i < nl && lf && y < stop; i++, y += g.line_h)
+        shell_text_elided(s, lf, (float)g.gx, (float)y, (float)g.cw, lines[i],
+                          c->fg, 1.f);
 
     for (int i = 0; i < nb; i++) {
         int hot = G.hover == id[i] || G.sel == i;
         int primary = (i == 0);              /* the safe choice is first */
         draw_rect(s, b[i], primary ? c->accent : (hot ? c->surface_hi : c->surface_c), 1.f);
         if (!primary || hot) draw_frame(s, b[i], hot ? 3 : 1, c->fg, hot ? 0.9f : 0.5f);
-        font *ft = f->mid ? f->mid : f->small;
-        if (ft)
-            shell_text_centred(s, ft, (float)b[i].x + b[i].w / 2.f,
-                               shell_baseline(ft, (float)b[i].y, (float)b[i].h),
+        if (lf)
+            shell_text_centred(s, lf, (float)b[i].x + b[i].w / 2.f,
+                               shell_baseline(lf, (float)b[i].y, (float)b[i].h),
                                label_of(id[i]), primary ? c->bg : c->fg, 1.f);
     }
 }
