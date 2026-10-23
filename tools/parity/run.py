@@ -362,17 +362,18 @@ def changed_pct(a, b, x0, y0, x1, y1):
 # The first-run card ("Does everything work?") covers the whole desktop until she answers. Its layout has
 # changed between builds, so: if a button's green is where a design puts "Yes, it all works", press the
 # "Let me look first" that design has under it. (pixel of the green button, where to press)
-WELCOME = [((125, 300), (256, 377)),      # builds from 2026-10-23 noon: buttons on the left (a green pixel beside the label)
-           ((110, 690), (620, 703))]      # the first design: buttons in a row at the bottom
 GREEN = (11, 93, 79)
 
 
-def card_button(rows, bpp):
-    """Where to press to get past the first-run card, or None when no card is on screen."""
-    for (px, py), press in WELCOME:
-        if all(abs(rows[py][px * bpp + i] - GREEN[i]) <= 10 for i in range(3)):
-            return press
-    return None
+def card_button(path):
+    """Where to press to get past the first-run card, or None when no card is on screen. The card's green 'Yes, it all
+    works' button is found by colour (its position moves with the shell's bar from build to build); 'Let me look first'
+    is 70 px under it in the design with the buttons stacked on the left, 356 px to its right in the first design."""
+    bands = find_boxes(path, 90, 150, 450, 740, GREEN, 10, min_px=3000)
+    if not bands:
+        return None
+    cx, cy = bands[0]
+    return (cx + 356, cy) if cy > 600 else (cx, cy + 70)
 
 
 def desktop_up(rows, bpp):
@@ -389,7 +390,7 @@ def welcome(q, shots):
     while time.time() - t0 < 90:
         q.screendump(tmp)
         w, h, bpp, rows = png_pixels(tmp)
-        press = card_button(rows, bpp)
+        press = card_button(tmp)
         if press:
             q.click(*press)
             presses += 1
@@ -475,18 +476,18 @@ def drive(q, out, timeout, checks):
                     # Firefox 158's first window asks her to accept Terms of Use (purple Continue button) before her
                     # page; the test presses it (a person has to) and records that it was there.
                     tmp = os.path.join(shots, "firstrun-probe.png")
-                    shown = False
+                    shown = None
                     for _ in range(12):                    # up to 36 s: Firefox is slow to draw its first window
                         q.screendump(tmp)
-                        w_, h_, bpp_, rows_ = png_pixels(tmp)
-                        shown = all(abs(rows_[454][600 * bpp_ + i] - (118, 78, 221)[i]) <= 12 for i in range(3))
-                        if shown:
+                        found = find_boxes(tmp, 200, 100, 1100, 700, (118, 78, 221), 12, min_px=1200)   # the purple Continue button
+                        if found:
+                            shown = found[0]
                             break
                         time.sleep(3)
                     if os.path.exists(tmp):
                         os.remove(tmp)
                     if shown:
-                        q.click(639, 454)
+                        q.click(*shown)
                         time.sleep(3)
                     old = results.get("firefox.firstrun")
                     if shown or not old:
