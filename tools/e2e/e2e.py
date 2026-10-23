@@ -84,7 +84,12 @@ DISK_THROTTLE = E("E2E_DISK_THROTTLE", "")     # e.g. bps=104857600,iops=120
 #   restarts: Windows restarted for the fix, before the install
 VARIANT_EXPECT = {
     "smalldisk": {"page": r"enough free space|free space on drive", "fix": True, "restarts": 0},
-    "bitlocker": {"page": r"is encrypted|encryption off|has locked", "fix": True, "restarts": 0},
+    # D13: BitLocker PCs are in v0.1. Until the installer can pause BitLocker
+    # (A2's fast path, AB_CHOICE_BITLOCKER_PAUSE) it stops at a plain page
+    # with only Close, and this variant is red for that reason. Once it can:
+    # the install must go on, and check_bitlocker() holds the proofs.
+    "bitlocker": {"page": r"is encrypted|encryption off|has locked", "fix": False, "restarts": 0,
+                  "why_red": "D13 needs BitLocker paused for one restart, never decrypted: A2's fast path"},
     "pending":   {"page": r"waiting (to|for a) restart|finish an update", "fix": True, "restarts": 1},
 }
 
@@ -101,6 +106,18 @@ WARN_RX = (r"(isn.t commonly downloaded|can.t be downloaded securely|might be da
 
 def left():
     return DEADLINE - time.time()
+
+
+def close_verdict(variant, page):
+    """Why the installer ended on Close. On the stop this variant's PC was
+    made for, no way on is the right red (D13: BitLocker PCs must get
+    through; until the installer can pause BitLocker it stops there,
+    plainly): the message says so, and what is missing."""
+    want = VARIANT_EXPECT.get(variant)
+    if want and re.search(want["page"], page, re.I):
+        return (f"variant {variant}: STOPPED AT ITS STOP, no way on: the installer offers only Close, "
+                f"not a fix ({want.get('why_red', 'its fix is missing')}). The page says: {page[:700]}")
+    return "the installer stopped without offering a restart: " + page[:900]
 
 
 def inside(e, box, slack=4):
@@ -225,6 +242,27 @@ class Flow:
             raise Failure(f"variant {VARIANT}: the installer went on without its fix being pressed")
         if self.fix_restarts < want["restarts"]:
             raise Failure(f"variant {VARIANT}: the fix should have restarted Windows, and it did not")
+
+    def bitlocker_state(self, when):
+        """What Windows itself says about BitLocker on C: (read with the
+        elevated helper). Returns (volume status, protection, percent)."""
+        out = self.guest("$v = Get-BitLockerVolume -MountPoint C:; "
+                         "\"STATE $($v.VolumeStatus)|$($v.ProtectionStatus)|$($v.EncryptionPercentage)\"; "
+                         "manage-bde -status C:")
+        m = re.search(r"STATE (\w+)\|(\w+)\|([\d.]+)", out)
+        self.log(f"bitlocker {when}: {m.group(0) if m else 'unreadable'}\n{out.strip()[:900]}")
+        if not m:
+            raise Failure(f"variant bitlocker: cannot read BitLocker's state {when}: {out.strip()[:300]}")
+        return m.group(1), m.group(2), float(m.group(3))
+
+    def check_bitlocker_before_restart(self):
+        """D11/D13: the installer PAUSES BitLocker, it never decrypts. At the
+        page before the restart the drive must still be fully encrypted
+        (suspended, protection off, or still on), never decrypting."""
+        vol, prot, pct = self.bitlocker_state("before the restart")
+        if vol != "FullyEncrypted" or pct < 99:
+            raise Failure(f"variant bitlocker: the drive is {vol} ({pct}%) when the installer asks to "
+                          "restart: it decrypted instead of pausing BitLocker (D11)")
 
     # -- the website a person starts from --
     def prepare_website(self):
@@ -690,8 +728,7 @@ class Flow:
                         continue
                     if re.search(r"close", label, re.I) and not re.search(r"restart", label, re.I):
                         self.m.save(img, "wizard-ended-with-close")
-                        raise Failure("the installer stopped without offering a restart: " +
-                                      vision.text_of(vision.ocr(img, rect))[:900])
+                        raise Failure(close_verdict(VARIANT, vision.text_of(vision.ocr(img, rect))))
                     n = clicks.get(label, 0)
                     if not self.wizard_pages or n == 0 or label != last_label:
                         page = " ".join(e.get("name") or "" for e in named if e.get("type") == "Pane")
@@ -704,6 +741,8 @@ class Flow:
                         self.m.save(img, "wizard-stuck")
                         raise Failure(f"pressed '{label}' six times and the page did not move on: " +
                                       vision.text_of(vision.ocr(img, rect))[:900])
+                    if VARIANT == "bitlocker" and re.search(r"restart", label, re.I):
+                        self.check_bitlocker_before_restart()      # while Windows is still up
                     self.m.click(*vision.centre(b), label="wizard " + label)
                     cand[0] = None
                     if re.search(r"install|erase", label, re.I):

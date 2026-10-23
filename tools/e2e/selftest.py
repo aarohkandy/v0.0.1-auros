@@ -80,6 +80,24 @@ def test_wizard_contract():
         check('L"%s"' % word in body, f"wizard: a primary button says '{word}' ({why})")
 
 
+def test_stops():
+    ns = {}
+    tree = ast.parse(open(os.path.join(HERE, "e2e.py")).read())
+    keep = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name == "close_verdict") or
+            (isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "VARIANT_EXPECT")]
+    mod = ast.fix_missing_locations(ast.Module(body=[ast.Import(names=[ast.alias(name="re")])] + keep,
+                                               type_ignores=[]))
+    exec(compile(mod, "e2e.py", "exec"), ns)
+    for stop, variant in (("bitlocker-system", "bitlocker"),):
+        for where, t in titles(stop):
+            v = ns["close_verdict"](variant, f"Close {t} Nothing was changed")
+            check("STOPPED AT ITS STOP" in v and "D13" in v, f"{variant}: Close on '{t}' ({where}) is the right red, naming D13")
+    check("STOPPED AT ITS STOP" not in ns["close_verdict"]("bitlocker", "Your computer is too old"),
+          "bitlocker: Close on some other page is not the right red")
+    check("STOPPED AT ITS STOP" not in ns["close_verdict"]("base", "This drive is encrypted with BitLocker"),
+          "base: a BitLocker page on the plain PC is not the right red")
+
+
 def test_edge_item():
     tree = ast.parse(open(os.path.join(HERE, "e2e.py")).read())
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "inside")
@@ -134,6 +152,7 @@ def test_publish():
 
 test_expect()
 test_wizard_contract()
+test_stops()
 test_edge_item()
 test_publish()
 print(f"\n{len(fails)} failed" if fails else "\nall passed")
