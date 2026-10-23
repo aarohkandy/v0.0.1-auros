@@ -262,6 +262,27 @@ static int try_temp(drive *d)
 typedef struct { uint32_t search_pcr_mask; const char *device, *sig, *pcrlock; } tpm2_params;
 
 
+#include <stdarg.h>
+/* Diagnostics: stderr, and with AURLOCK_CONSOLE=1 (the initramfs sets
+ * it) /dev/console too, because there stderr goes to a log file and the
+ * console is where a person, or the VM test's serial line, looks. */
+static void diag(const char *fmt, ...)
+{
+    char b[300];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(b, sizeof b, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (n >= (int)sizeof b) n = (int)sizeof b - 1;
+    if (write(2, b, (size_t)n) < 0) { /* nothing to be done */ }
+    const char *c = getenv("AURLOCK_CONSOLE");
+    if (c && *c == '1') {
+        int fd = open("/dev/console", O_WRONLY | O_NOCTTY | O_CLOEXEC);
+        if (fd >= 0) { if (write(fd, b, (size_t)n) < 0) { /* ignored */ } close(fd); }
+    }
+}
+
 static long ms_now(void)
 {
     struct timespec t;
@@ -273,7 +294,7 @@ static long ms_now(void)
  * the verdict and how long the chip (or argon2) took. Never the PIN. */
 static verdict said(verdict v, const char *what, long t0)
 {
-    fprintf(stderr, "aurlock-pin: %s %s in %ld ms\n", what, v == 0 ? "open" : v == 1 ? "wrong" :
+    diag("aurlock-pin: %s %s in %ld ms\n", what, v == 0 ? "open" : v == 1 ? "wrong" :
             v == 2 ? "locked" : v == 3 ? "changed" : "error", ms_now() - t0);
     return v;
 }
@@ -904,7 +925,7 @@ static int run_page(drive *d)
     u.cx = disp->width / 2; u.cy = disp->height / 2;
     rescan_input();
     show(&a);
-    fprintf(stderr, "aurlock-pin: asking for the PIN on a %dx%d screen, %d input devices\n",
+    diag("aurlock-pin: asking for the PIN on a %dx%d screen, %d input devices\n",
             disp->width, disp->height, ndev);
     time_t last_scan = time(NULL), last_poll = last_scan;
     struct timespec pressed_at = { 0, 0 };

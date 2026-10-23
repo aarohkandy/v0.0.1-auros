@@ -139,6 +139,7 @@ say "analyze $(systemd-analyze 2>/dev/null | head -1)"
 say "cmdline $(cat /proc/cmdline)"
 say "look $(grep -oE '(^|[[:space:]])(bg|err)="[^"]*"' /etc/auros/shell.conf 2>/dev/null | tr -d ' \t' | tr '\n' ' ')"
 say "cryptenroll $(ls -l /usr/bin/systemd-cryptenroll 2>&1)"
+[ -f /run/auros-lock.log ] && while IFS= read -r l; do say "lockinit $l"; done < /run/auros-lock.log
 grep -q 'aurlock-pin\|auros-lock' /proc/cmdline 2>/dev/null
 journalctl -b -o cat 2>/dev/null | grep -E 'aurlock-pin|auros-lock|lockctl' | while read -r l; do say "log $l"; done
 case "$st" in
