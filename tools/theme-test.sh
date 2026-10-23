@@ -142,6 +142,18 @@ for th in themes/*.theme; do
             fail=1
         fi
     done
+    # The shell's own C code does not use on(): the words on a primary button (welcome.c, lockpin.c)
+    # are the theme's bg, on the accent. Same floor.
+    fill=$(printf '@accent|hex@' | $AURORA render 2>/dev/null)
+    paper=$(printf '@bg|hex@' | $AURORA render 2>/dev/null)
+    checked=$((checked + 1))
+    r=$(ratio "$paper" "$fill")
+    if awk -v r="$r" 'BEGIN { exit !(r >= 4.5) }'; then
+        printf '  ok    %-12s the shell'"'"'s primary button (bg on accent)  %s on %s  %s:1\n' "$n" "$paper" "$fill" "$r"
+    else
+        printf '  FAIL  %-12s the shell'"'"'s primary button (bg on accent)  %s on %s  %s:1 (4.5 needed)\n' "$n" "$paper" "$fill" "$r"
+        fail=1
+    fi
 done
 printf 'nocturne\n' > "$STATE/theme"
 
