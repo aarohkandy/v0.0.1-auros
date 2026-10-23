@@ -28,6 +28,10 @@ brand_name="AurOS"
 brand_short="auros"
 brand_url="https://auros.example"
 os_version="0.1.0"
+# D14: Wishes (src/aurwish, the shell's "Make a wish") are NOT in the v0.1
+# image. "on" puts them in; build/forge treats anything else as off, and
+# tools/wishesoff.sh fails CI if an image that should not have them does.
+wishes="off"
 os_codename="Nocturne"
 
 # ── Look ───────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 /* settings.c — see settings.h. */
 #define _GNU_SOURCE
+#include "features.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,6 +48,7 @@ static int row_applies(int row, const set_view *v)
     if (row == R_SOUND)   return v->sound;
     if (row == R_BATTERY) return v->battery;
     if (row == R_WINDOWS) return v->windows;
+    if (row == R_WISHES)  return AUROS_WISHES;   /* D14: not in the v0.1 image */
     return 1;
 }
 

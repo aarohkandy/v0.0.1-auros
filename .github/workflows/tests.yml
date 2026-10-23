@@ -140,6 +140,10 @@ jobs:
           python3 -I tools/ops/addrtest.py --selftest 2>&1 | tee transcripts/addrtest.txt
           sudo env AUROS_DOMAIN="$AUROS_DOMAIN" python3 -I tools/ops/addrtest.py --rootfs work/forge/desktop/rootfs \
               --initramfs out/auros-staging.img --exe dl/installer/AurOS-Setup.exe 2>&1 | tee -a transcripts/addrtest.txt
+      - name: wishesoff (Wishes are not in the v0.1 image, D14)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          { sh tools/wishesoff.sh selftest && sh tools/wishesoff.sh work/forge/desktop/rootfs; } 2>&1 | tee transcripts/wishesoff.txt
       - name: aurfirsttest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/aurfirsttest.sh 2>&1 | tee transcripts/aurfirsttest.txt

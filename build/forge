@@ -54,6 +54,11 @@ warn_note() {
 . "$ROOT/build/cflags"
 
 # ── profile loading, with single-parent inheritance ────────────────
+# D14: true when this profile puts Wishes in the image (wishes="on").
+# Stream W1's lines that build, install and enable aurwish are
+# `if wishes_on; then ... fi`.
+wishes_on() { [ "${wishes:-off}" = on ]; }
+
 load_profile() {
     local name=$1 chain="" cur=$1 depth=0 f
     while [ -n "$cur" ]; do
@@ -1018,7 +1023,18 @@ stage_overlay() {
         esac
     done
 
-    if inchroot "cd /usr/src/auros && gcc $HARDEN_CFLAGS -std=gnu11 -o /usr/bin/aurshell \
+    # D14: Wishes are NOT in the v0.1 image. A profile says wishes="on"
+    # to put them in; anything else, or nothing, is off. It decides three
+    # things: the shell's Wishes doors (-DAUROS_WISHES, src/aurshell/
+    # features.h), whether stream W1's forge lines build and start aurwish
+    # (`wishes_on`, defined at the top, for them to ask), and /etc/auros/features, which
+    # tools/wishesoff.sh checks on the finished image in CI.
+    local _wishes=0
+    [ "${wishes:-off}" = on ] && _wishes=1
+    install -d "$RFS/etc/auros"
+    printf 'wishes=%s\n' "$([ "$_wishes" = 1 ] && echo on || echo off)" > "$RFS/etc/auros/features"
+    note "wishes: $([ "$_wishes" = 1 ] && echo ON || echo off) (D14; profile variable wishes=)"
+    if inchroot "cd /usr/src/auros && gcc $HARDEN_CFLAGS -DAUROS_WISHES=$_wishes -std=gnu11 -o /usr/bin/aurshell \
             $SHELL_SRC \
             aurwl/aurwl.c aurwl/gen/xdg-shell-protocol.c \
             aurwl/gen/xdg-decoration-protocol.c aurwl/gen/viewporter-protocol.c \

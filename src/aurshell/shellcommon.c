@@ -3,6 +3,7 @@
  * These live here rather than in each layout so that six independently
  * written renderers cannot drift into six slightly different icon sets,
  * six clock formats and six ideas of where a text baseline sits. */
+#include "features.h"
 #include "shell.h"
 #include <stdlib.h>
 #include <string.h>
@@ -360,7 +361,9 @@ void shell_seed_apps(shell_ctx *c)
       { "calc",  "Calculator", "Do sums",               ICON_CALC,     0 },
       { "set",   "Settings",   "Change how this works", ICON_SETTINGS, 1 },
       { "help",  "Help",       "Show me how",           ICON_HELP,     0 },
+#if AUROS_WISHES
       { "wish",  "Make a wish", "Tell this computer what to do", ICON_WISH, 0 },
+#endif
     };
     c->n_apps = (int)(sizeof A / sizeof A[0]);
     if (c->n_apps > SHELL_MAX_APPS) c->n_apps = SHELL_MAX_APPS;
