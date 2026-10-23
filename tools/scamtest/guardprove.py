@@ -51,6 +51,8 @@ MUTANTS = [
      "if (!c || c->kiosk || c->n_wins <= 0) return 0;\n    float k", "return 0;\n    float k"),
     ("main.c never shows keys to the guard", "src/aurshell/main.c",
      "if (guard_watch_key(&c, ev.code, ev.value, now_ms())) {", "if (0) {"),
+    ("main.c gives the card no keys", "src/aurshell/main.c",
+     "guard_key(&c, ev.code);", "(void)0;"),
     ("main.c asks politely after all", "src/aurshell/main.c",
      "if (force) {\n", "if (0 && force) {\n"),
     ("main.c forgets the touchpad", "src/aurshell/main.c",

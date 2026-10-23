@@ -436,8 +436,25 @@ static void wired(const char *main_c)
     char *sess  = strstr(s, "consumed = session_key(&c, ev.code");
     ok("every key meets guard_watch_key before any program or the volume keys",
        watch && media && sess && watch < media && watch < sess);
-    ok("the card answers the keyboard first when it is up",
-       strstr(s, "(c.guard_open)    guard_key(&c, ev.code);") != NULL);   /* "if" or "else if": Wishes' fill is asked first */
+    /* The card takes keys ahead of the panels it can be opened over. Other
+     * overlays may sit before it in the chain (a wish's fill, which the first
+     * key ends); the order that matters is guard before net/settings/bt/
+     * welcome/help, so only the line itself and its place are checked, not
+     * how the chain is spaced. */
+    char *gk = strstr(s, "guard_key(&c, ev.code)");
+    char *nk = strstr(s, "net_key(&c, ev.code)");
+    int on_guard_line = 0;
+    if (gk) {
+        char *ls = gk;
+        while (ls > s && ls[-1] != '\n') ls--;
+        char line[256];
+        size_t n = (size_t)(gk - ls);
+        if (n >= sizeof line) n = sizeof line - 1;
+        memcpy(line, ls, n); line[n] = 0;
+        on_guard_line = strstr(line, "c.guard_open") != NULL;
+    }
+    ok("the card answers the keyboard before the panels it opens over",
+       gk && nk && on_guard_line && gk < nk);
     char *gp = strstr(s, "guard_paint(&c, fb, &f);");
     char *wp = strstr(s, "welcome_paint(&c, fb, &f);");
     char *fp = strstr(s, "foot_paint(&c, fb, &f);");
