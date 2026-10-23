@@ -162,6 +162,21 @@ else
     echo "    (no $MW here: the Windows build is checked on Actions)"
 fi
 
+# ── names come from drivers and people: random PCs through everything ──
+SAN="-fsanitize=address,undefined"
+echo 'int main(void){return 0;}' > "$T/san.c"
+$CC $SAN -o "$T/san" "$T/san.c" 2>/dev/null && "$T/san" 2>/dev/null || SAN=""
+if $CC $WARN -g $SAN $CMP_INC -o "$T/fz" tools/hw/fuzz.c hw/lib/hwcompat.c $SRC/hwinv.c 2>"$T/cc.log" && "$T/fz" >"$T/fz.log" 2>&1; then
+    ok "fuzz: random PCs, names and printers through parser, matcher and reports ${SAN:+(sanitized)}"
+else bad "fuzz: random PCs through everything" "$(tail -8 "$T/fz.log" "$T/cc.log" 2>/dev/null)"; fi
+if [ -n "$SAN" ]; then
+    sed 's/if (v->n_devs >= HW_MAX_DEVS) { v->n_dropped++; return -1; }//' $SRC/hwinv.c > "$T/fm.c"
+    if cmp -s "$T/fm.c" $SRC/hwinv.c; then bad "mutant: more devices than the table holds" "the mutation changed nothing (stale sed)"
+    elif $CC $WARN -g $SAN $CMP_INC -o "$T/fzm" tools/hw/fuzz.c hw/lib/hwcompat.c "$T/fm.c" 2>/dev/null && ! "$T/fzm" >/dev/null 2>&1; then
+        ok "mutant: more devices than the table holds  -> red"
+    else bad "mutant: more devices than the table holds" "the fuzz did not notice"; fi
+fi
+
 # ── the table of real PCs ────────────────────────────────────────────
 if python3 -I tools/hw/results.py --dir tools/hw/fixtures/results --out "$T/res.md" 2>"$T/res.err" &&
    grep -q '^3 machines. Installed and kept working: 2. Refused by the installer: 1 (Lenovo IdeaPad 3 15ABA7: the Windows drive is encrypted' "$T/res.md" &&
