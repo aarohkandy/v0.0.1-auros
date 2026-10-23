@@ -45,6 +45,7 @@ What each job is, and what to read when it fails:
 | `build / build` | the desktop image builds from Ubuntu's archive and Mozilla's Firefox, the staging environment builds, the installer carries both and the release address, and the pieces unpack to the image through the installer's own code | the job log; artifact `auros-installer` has `build-warnings`, `timings.txt`, `build-info.txt` |
 | `build / tests / unit` | the fast suites, Ferry, `aurbridge.exe selftest` under Wine | `transcripts-unit` |
 | `build / tests / e2e (NAME)` | that end-to-end test, under KVM | `transcripts-NAME` |
+| `release / sign` | (only when the repository variable `SIGNPATH_ORGANIZATION_ID` exists; docs/SIGNING.md) the unsigned AurOS-Setup.exe goes to SignPath from this run, the owner approves there, and what comes back is signed by "SignPath Foundation", verifies, and is the built file plus a signature (`tools/signed-check.sh`). Failing it publishes nothing. | the job log; the request's page in SignPath |
 | `release / publish` | the prerelease exists and reads back byte for byte through GitHub's 302, with `Range` | the job log |
 | `release / windows` | the published AurOS-Setup.exe starts on real Windows; WinHTTP fetches the image from the release | the job log |
 | `release / e2e / e2e (base)` | `e2e.yml`, called with this release's AurOS-Setup.exe and its SHA-256: the website, the download (refused if the hash differs), the wizard, the restart, AurOS, a program from the store, on a Windows 11 VM | the job log; prerelease `e2e-<run id>` |
