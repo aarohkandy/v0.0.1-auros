@@ -423,6 +423,16 @@ jobs:
     with:
       run-id: ${{ github.run_id }}
 
+  # The power cut in the mode that ships (S-11): the same test suite file,
+  # the nostick slice, beside the release and not in front of it (see the
+  # comment in tests.yml). Its result is on this run, red until A2's fixes.
+  powercut:
+    needs: build
+    uses: ./.github/workflows/tests.yml
+    with:
+      run-id: ${{ github.run_id }}
+      suite: nostick
+
   release:
     needs: [gate, build, tests]
     if: needs.gate.outputs.release == 'true'
