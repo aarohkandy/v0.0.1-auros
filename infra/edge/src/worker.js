@@ -15,6 +15,7 @@ export class Ops extends DurableObject {
   pause(reason, now) { return this.gate.pause(reason, now); }
   resume(now) { return this.gate.resume(now); }
   setWave(n, now) { return this.gate.setWave(n, now); }
+  history() { return this.gate.history(); }
   async putStatus(s) { await this.ctx.storage.put("status", s); }
   async getStatus() { return (await this.ctx.storage.get("status")) ?? null; }
 }

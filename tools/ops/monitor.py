@@ -267,6 +267,7 @@ def issues(results):
 
 def selftest():
     import threading, http.server, shutil
+    os.environ["MON_FAST"] = "1"  # no waiting between retries: a test, not a night watch
     ok = True
     exe = os.urandom(1_200_000)
     good_sum = hashlib.sha256(exe).hexdigest()
@@ -453,7 +454,7 @@ def selftest():
     gl, gq = os.path.join(tmp, "gh.log"), os.path.join(tmp, "gh.list")
     open(os.path.join(fakebin, "gh"), "w").write('#!/bin/sh\necho "$@" >> "$GH_LOG"\n[ "$1 $2" = "issue list" ] && cat "$GH_LIST"\nexit 0\n')
     os.chmod(os.path.join(fakebin, "gh"), 0o755)
-    genv = dict(os.environ, PATH=fakebin + os.pathsep + os.environ["PATH"], GH_LOG=gl, GH_LIST=gq, GITHUB_REPOSITORY="own/rep",
+    genv = dict(os.environ, PATH=fakebin + os.pathsep + os.environ["PATH"], GH_LOG=gl, GH_LIST=gq, GITHUB_REPOSITORY="own/rep", GITHUB_REPOSITORY_OWNER="own",
                 AUROS_SECOND_RESPONDER="helper")
     saved = dict(os.environ); os.environ.update(genv)
     bad = [dict(check="site", state="fail", detail="x answered 503", ms=1), dict(check="wishes", state="ok", detail="", ms=1),

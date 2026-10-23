@@ -63,6 +63,9 @@ async function ops(request, url, env, gate, now) {
   if (p === "/_ops/state" && request.method === "GET") {
     return json(200, await gate.state(now), { "access-control-allow-origin": "*" });
   }
+  if (p === "/_ops/history" && request.method === "GET") { // the day-by-day counts (no one's identity), for fleet.csv
+    return json(200, await gate.history(), { "access-control-allow-origin": "*" });
+  }
   if (request.method !== "POST") return plain(405, "method");
   const who = await role(request, env);
   if (!who) return plain(401, "token");

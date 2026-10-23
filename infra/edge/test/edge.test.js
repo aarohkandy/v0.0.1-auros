@@ -77,6 +77,14 @@ test("the second responder can pause, never resume, open a wave or post a status
   assert.equal((await call("/")).status, 302);
 });
 
+test("the day-by-day counts are public and hold only counts", async () => {
+  const { call, as } = world();
+  await as("owner-secret", "/_ops/wave", { wave: 1 });
+  for (let i = 0; i < 3; i++) await call("/");
+  await call("/", { now: T0 + 86400e3 });
+  assert.deepEqual(await (await call("/_ops/history")).json(), { "2026-11-01": 3, "2026-11-02": 1 });
+});
+
 test("no token or a wrong one is refused, and nothing changes", async () => {
   const { call, as } = world();
   assert.equal((await call("/_ops/pause", { method: "POST", body: "{}" })).status, 401);
