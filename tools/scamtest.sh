@@ -6,13 +6,14 @@
 #
 #   sh tools/scamtest.sh            from anywhere in the repository
 #
-# Needs python3 with jsonschema (apt install python3-jsonschema).
+# Needs python3 with jsonschema (apt install python3-jsonschema) and node.
 # Exit 0 only if every part passes.
 set -u
 cd "$(dirname "$0")/.."
 fail=0
 
 python3 -I tools/scamtest/firefoxpolicy.py --prove || fail=$((fail + 1))
+node tools/scamtest/remoteaccess.js --prove || fail=$((fail + 1))
 
 # The image must carry the file where Firefox looks first. build/forge
 # lays rootfs/ down whole (stage_overlay); a build step that later wrote

@@ -1,0 +1,63 @@
+// 40-auros-remote-access.rules -- ask her before a remote-control
+// program goes onto this computer.
+//
+// The commonest way an older person loses money to a computer is a
+// phone call: "I'm from Microsoft / your bank, install AnyDesk so I can
+// fix it." So installing one of these programs is stopped ONCE, and the
+// desktop shows her (src/aurshell/guard.c):
+//
+//   "Scammers ask people to install this.
+//    Only continue if YOU called someone you know."
+//
+// If she presses "I called someone I know", the desktop writes
+// /run/auros-remote-access/<name> as her, and pressing Install again
+// works for the next 15 minutes. Nothing else changes.
+//
+// WHY HERE. Every install from "Get more programs" (Flathub) and every
+// downloaded .deb opened with gdebi goes through one of these three
+// permission checks, and nothing can install system-wide without them.
+// This file sorts before 49-auros.rules (the grant that lets her install
+// without a password), so it is asked first. It only ever says NO or
+// "no opinion"; it never grants anything.
+//
+// NEVER GATED: removing or updating a program (she must always be able
+// to get rid of one), runtimes, and every other program.
+//
+// Written for polkit 124's JavaScript engine (duktape): ES5 only.
+// Tested by tools/scamtest/remoteaccess.js (every branch, each shown to
+// fail when broken) and against a real polkitd by tools/scamtest/polkit.sh.
+
+// Lower-case, with everything that is not a letter or digit removed
+// before matching, so "Chrome-Remote-Desktop" and "chrome_remote_desktop"
+// are both "chromeremotedesktop". Programs that let someone ELSE control
+// this computer; not ones she uses to reach another (Remmina, KRDC).
+var AUROS_REMOTE_ACCESS = /anydesk|teamviewer|rustdesk|hoptodesk|screenconnect|connectwise|splashtop|logmein|gotoassist|gotoresolve|zohoassist|assistzoho|dwservice|dwagent|getscreen|remoteutilities|supremo|aeroadmin|ultraviewer|nomachine|chromeremotedesktop|remotepc|islonline|beyondtrust|bomgar|dameware|showmypc|litemanager/;
+
+polkit.addRule(function (action, subject) {
+    var what = "";
+    if (action.id === "org.freedesktop.Flatpak.app-install") {
+        what = action.lookup("ref");            // app/com.anydesk.Anydesk/x86_64/stable
+    } else if (action.id === "com.ubuntu.pkexec.gdebi.gtk") {
+        // pkexec gdebi-gtk --non-interactive /home/her/Downloads/anydesk_6.3.2-1_amd64.deb
+        // The same action removes, with --remove: never in the way of that.
+        what = action.lookup("command_line");
+        if (/(^|\s)--remove(\s|$)/.test(String(what || ""))) { return undefined; }
+    } else if (action.id === "org.freedesktop.packagekit.package-install") {
+        what = action.lookup("package_ids");    // anydesk;6.3.2;amd64;...
+    } else {
+        return undefined;
+    }
+    var m = String(what || "").toLowerCase().replace(/[^a-z0-9]/g, "").match(AUROS_REMOTE_ACCESS);
+    if (!m) { return undefined; }
+    try {
+        // Exit 0: she said yes in the last 15 minutes; the usual rules
+        // decide. Anything else (no yes yet, or the helper could not
+        // run at all) throws, and the answer is NO -- refuse first.
+        polkit.spawn(["/usr/lib/auros/remote-access-gate", m[0], subject.user]);
+        return undefined;
+    } catch (e) {
+        polkit.log("auros: install of a remote-control program (" + m[0] +
+                   ") by " + subject.user + " waits for her answer");
+        return polkit.Result.NO;
+    }
+});
