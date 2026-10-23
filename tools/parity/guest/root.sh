@@ -23,7 +23,7 @@ if [ -n "$APT" ]; then
     printf 'deb http://archive.ubuntu.com/ubuntu noble main\ndeb http://archive.ubuntu.com/ubuntu noble-updates main\ndeb http://security.ubuntu.com/ubuntu noble-security main\n' > /usr/lib/auros-parity/parity.list
     AO="-o Dir::Etc::sourcelist=/usr/lib/auros-parity/parity.list -o Dir::Etc::sourceparts=/nonexistent -o Acquire::Languages=none -o Acquire::Retries=3"
     i=0; until nm-online -q -t 5 || [ "$i" -ge 12 ]; do i=$((i+1)); done
-    { timeout 300 apt-get $AO update -q && DEBIAN_FRONTEND=noninteractive timeout 1500 apt-get $AO install -y -q --no-install-recommends $APT; echo "apt rc=$?"; } > /var/lib/auros-parity/apt.log 2>&1
+    { timeout 300 apt-get $AO update -q && apt-get $AO -s install -y -q --no-install-recommends $APT | grep -E 'Need to get|After this operation|newly installed' > /var/lib/auros-parity/apt-size.log; chmod 644 /var/lib/auros-parity/apt-size.log; DEBIAN_FRONTEND=noninteractive timeout 1500 apt-get $AO install -y -q --no-install-recommends $APT; echo "apt rc=$?"; } > /var/lib/auros-parity/apt.log 2>&1
     chmod 644 /var/lib/auros-parity/apt.log
 fi
 

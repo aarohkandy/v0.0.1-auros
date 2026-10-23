@@ -1,3 +1,5 @@
 call  Firefox draws its page into a Wayland subsurface and src/aurwl never composites subsurfaces: the window is blank on screen (WebRTC itself works). Fix is in aurwl (S3/C).
 film  The film plays and is heard, but Firefox is a blank window on screen: the same aurwl subsurface bug as call (stream WL fixing it).
 print  libnss-mdns is not in the image (WP-25 lists it): CUPS cannot resolve the found printer's .local name, so adding any network printer fails. Fix costs about 0.1 MB (see docs/results/apps.md).
+office  Writer and Calc are not in the image (WP-25 adds libreoffice-writer/calc/gtk3 + fonts: size in docs/results/apps.md); a .docx/.xlsx double-click opens the ARCHIVE MANAGER; xdg-open cannot type any file (opens the web browser).
+pdfform  Evince keeps a form box only once she leaves it: saving straight after typing loses the last box (decision on the default PDF viewer is WP-56).
