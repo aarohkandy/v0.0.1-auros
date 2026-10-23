@@ -44,8 +44,45 @@ Brief: `docs/handoff/STREAMS.md` (row K) and the session-B orders in
   seconds"; advanced.html footer no longer says the page "doesn't send anything anywhere"
   (GitHub logs visitors' IPs); OWNER-SETUP 4b: switch on private vulnerability reporting
   (checked: off) and add a security contact.
+- d94dcf0 **Design direction on the help pages** (docs/DESIGN-DIRECTION.md, binding): help.css
+  on the paper/ink tokens (links ink + underline, ink focus, radius 8/12, 2px rule only on
+  pressable things, info = left bar, warning = tint + bar, step numbers in ink, the UI face by
+  name, body 21/32, h1 40, h2 26); voice (no "don't worry"/"just", short sentences, Wi-Fi,
+  this computer, no GitHub in her pages); windows.html = one truth per answer (below); the
+  timed start-up-menu route removed. helptest: buttons she is told to press must be strings
+  in src/aurshell (comments excluded), forge's program names or a short list of other
+  programs' buttons; borders 4.5:1 on light.
+- 88b72eb **advanced.html = the helper pages** (K P0-1): #smart-app-control (warning first),
+  #secure-boot (steps, firmware sketch with a numbered circle, recovery-key way out), #bios,
+  #rst (Safe Mode through System Configuration, no bcdedit), #room (data-fact sizes), other
+  systems "not ready yet". BitLocker through Control Panel (Home: have the key). MBR2GPT is
+  the one typed command left (it has no window). check.mjs: quoted Setup titles carry
+  `data-ui="setup"` (must exist in wizard.c/fix_win.c/preflight.c/sbdb.c); all five ids exist.
+- b2ab39e **tools/wordlint.sh + .github/workflows/words.yml** (K P1-6; runs helptest too).
+  Red on purpose today: 31 problems, none in K's files: wizard.c 11 and fix_win.c 11 (B: PC,
+  bare "Close"), install.c 5 (C/A2 staging: AurBridge, Start installing, "--", partition),
+  welcome.c 1 (C: bare "Close"), index.html 3 (D: "That's normal"). Help pages followed C's
+  renames (429fd33: Wi-Fi, Internet, All my programs) the moment helptest went red.
 - Addresses in SECURITY.md, SUPPORT.md, legal: moved to the new repository by stream M
   (2a0ac90, 45dbc93). SUPPORT.md lists the new page and why the pages carry no address.
+
+## One truth about going back (K P0-2; for C's welcome/declined screens and D's FAQ)
+
+Checked in code: `aurfirst decline` sets the next start to Windows and deletes nothing;
+`answer.sh putback` arranges the restore entry and restarts; the restore removes AurOS.
+
+| Moment | The one sentence |
+|---|---|
+| Yes, it all works | AurOS starts every time from now on. Windows and its files stay on this computer. |
+| Let me look first | Nothing changes. AurOS asks again the next time it starts. |
+| No, go back to Windows | Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted. |
+| Declined screen | AurOS is still on this computer, but Windows starts. To use AurOS again, or to remove it, ask someone who knows computers. |
+| Put Windows back (Settings) | This computer restarts and removes AurOS. Anything you saved in AurOS goes with it. Windows gets all its space back. |
+| D's FAQ "Can I go back?" (add) | Put Windows back removes AurOS, and anything you saved in AurOS goes with it, so copy what you want to keep onto a memory stick first. |
+
+C's declined screen today says "You can start it again from the menu when you switch on":
+after a decline Windows is the firmware default, so that menu is the firmware's (timed, and
+not hers). Raised with the lead.
 
 ## Why the help pages name no web address
 
@@ -57,6 +94,10 @@ checkout ("dubious ownership"), so repo.sh would fail and break the image build.
 through `sudo env` in build.yml first, then stamp with `tools/site/stamp.sh`.
 
 ## Next steps
+
+0. Watch `words` go green as B, C and D fix their lines (job summary lists them). When B renames
+   "This PC is set to start only Windows" / "This PC needs a newer AurOS installer" (sbdb.c) or
+   the fix_win.c titles, check.mjs fails on advanced.html: update the quotes there.
 
 1. Watch the first image built with f3c42b0 in a real run (F's e2e or a KVM test): press Help,
    then "Show me how to do things"; a Firefox window with the help index should come forward.
@@ -73,13 +114,14 @@ through `sudo env` in build.yml first, then stamp with `tools/site/stamp.sh`.
 
 ## Facts the pages quote (re-check when C/BT change them)
 
-- Band (`foot.c` `LABEL[]`): Help, Internet (= wifi), Settings, Close this (only with a window
-  open); right: Smaller, Bigger, Turn off. Turn off asks: Turn it off / Start it again / Let it
+- Band (`foot.c` `LABEL[]`, 429fd33): Help, Wi-Fi, Settings, Close this (only with a window
+  open); right: Smaller, Bigger, Turn off (direction: "Bigger text"/"Smaller text", pending C). Turn off asks: Turn it off / Start it again / Let it
   sleep / Never mind. Close this twice within a few seconds stops a program that doesn't answer.
   Bigger/Smaller change the shell only, not Firefox.
-- Wifi (`net.c`): "Looking for wifi near you", Connect, "You are connected", "That password did
-  not work", "has no wifi". Browser on home is **Firefox** (Name=Firefox); printers app "Printers".
-- Store "Get more programs" (taskbar: All Programs, last; dock: beside Find; rail: home; tiles:
+- Wi-Fi panel (`net.c`): Connect, "You are connected", "That password did not work", "has no
+  wifi" (pages paraphrase these, never quote "wifi"). Browser on home is **Internet** (forge
+  renames firefox.desktop); printers app "Printers".
+- Store "Get more programs" (taskbar: All my programs, last; dock: beside Find; rail: home; tiles:
   last big button). Downloaded installer files are not a way to add programs.
 - Welcome: "Yes, it all works" / "Let me look first" / "No, go back to Windows" / "Bring my
   files across". Settings: "How loud the sound is", "Headphones and mice", "Put Windows back"
@@ -88,6 +130,11 @@ through `sudo env` in build.yml first, then stamp with `tools/site/stamp.sh`.
   shell), Windows, "Put Windows back (remove AurOS)" with "No, keep AurOS" first.
 
 ## Traps
+
+- The UI face is named in help.css as "Atkinson Hyperlegible Next" and found through fontconfig;
+  until C installs it under /usr/share/fonts the pages fall back to DejaVu Sans.
+- helptest reads the desktop's words: a rename in src/aurshell or forge's table turns it red
+  until these pages say the new word. That is the point; run it after any rename.
 
 - A program-list entry whose Exec is `xdg-open` leaves a "Starting..." slot that becomes "This
   did not start" (no app_id match). The Help hook spawns directly, without a slot.
