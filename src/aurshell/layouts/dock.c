@@ -56,6 +56,8 @@ typedef struct {
     int   hover;            /* dock slot under the pointer, -1 none   */
     int   drag, grab_x, grab_y;
     uint32_t moved;         /* windows the user has dragged           */
+    int   maxed[SHELL_MAX_WINS];    /* a program asked for the whole area  */
+    rect  saved[SHELL_MAX_WINS];    /* where it was before                 */
     int   find_open, find_sel;
     char  q[48];
     int   qn;
@@ -216,6 +218,12 @@ static rect win_rect(shell_ctx *c, int sw, int sh, int i)
 {
     dock_priv *p = P(c);
     win_entry *w = &c->wins[i];
+    if (p && p->maxed[i]) {
+        /* All of the space between the top strip and the dock. */
+        rect strip = dock_rect(c, sw, sh, -1);
+        int top = c->bar_h + 8;
+        return (rect){ 0, top, sw, strip.y - c->margin - top };
+    }
     if (p && (p->moved & (1u << i))) return w->geom;
     if (w->geom.w > 0 && w->geom.h > 0) return w->geom;   /* supplied by the compositor */
 
@@ -725,12 +733,24 @@ static void ask_close(shell_ctx *c, int i)
 }
 
 /* A program's own title bar asks for what the dock's own does: to be
- * moved, and to be put away. Maximise is dropped (the dock has no such
- * thing, so textsys_buttons does not show the button). */
+ * moved, and to be put away. A program that asks to fill the space (Firefox
+ * does, on a small screen, the moment it opens) is given all of it, between
+ * the top strip and the dock; the dock draws no maximise button of its own,
+ * so textsys_buttons does not show one either. */
 static void l_request(shell_ctx *c, int i, unsigned rq)
 {
     dock_priv *p = P(c);
     if (!p || i < 0 || i >= c->n_wins) return;
+    if ((rq & WREQ_MAXIMIZE) && !p->maxed[i]) {
+        p->saved[i] = win_rect(c, c->screen_w, c->screen_h, i);
+        p->maxed[i] = 1;
+        c->focus = i;
+    }
+    if ((rq & WREQ_RESTORE) && p->maxed[i]) {
+        p->maxed[i] = 0;
+        c->wins[i].geom = p->saved[i];
+        p->moved |= 1u << i;
+    }
     if (rq & WREQ_MINIMIZE) {
         c->wins[i].minimised = 1;
         if (c->focus == i) {
@@ -740,7 +760,7 @@ static void l_request(shell_ctx *c, int i, unsigned rq)
         }
         return;
     }
-    if ((rq & WREQ_MOVE) && c->mouse_down) {
+    if ((rq & WREQ_MOVE) && c->mouse_down && !p->maxed[i]) {
         rect a = win_rect(c, c->screen_w, c->screen_h, i);
         c->focus = i;
         p->drag = i; p->grab_x = c->mouse_x - a.x; p->grab_y = c->mouse_y - a.y;
@@ -959,9 +979,31 @@ static int l_step(shell_ctx *c, float dt)
 
 static void l_fini(shell_ctx *c) { c->priv = NULL; }
 
+static int l_maxed(const shell_ctx *c, int i)
+{
+    const dock_priv *p = (const dock_priv *)c->priv;
+    return p && i >= 0 && i < c->n_wins && p->maxed[i];
+}
+
+/* The compositor is about to drop slot i and shift the rest down: the
+ * bit for "she dragged this one" and the two maximise arrays are indexed by
+ * it, and left alone they named the window after. */
+static void l_removed(shell_ctx *c, int i)
+{
+    dock_priv *p = P(c);
+    if (!p || i < 0 || i >= c->n_wins) return;
+    uint32_t low = (i > 0) ? (p->moved & ((1u << i) - 1u)) : 0u;
+    p->moved = low | ((i + 1 < 32) ? ((p->moved >> (i + 1)) << i) : 0u);
+    for (int k = i; k + 1 < SHELL_MAX_WINS; k++) { p->maxed[k] = p->maxed[k + 1]; p->saved[k] = p->saved[k + 1]; }
+    p->maxed[SHELL_MAX_WINS - 1] = 0;
+    if (p->drag == i) p->drag = -1; else if (p->drag > i) p->drag--;
+}
+
 const shell_layout layout_dock = {
     .id = "dock",
     .request = l_request,
+    .maxed = l_maxed,
+    .removed = l_removed,
     .init = l_init,
     .paint = l_paint,
     .click = l_click,

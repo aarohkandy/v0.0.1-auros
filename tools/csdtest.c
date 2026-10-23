@@ -250,6 +250,26 @@ int main(void)
         ok("dock", "its title bar's drag moves the window", b.x == a.x + 70 && b.y == a.y + 50);
         r.L->request(&r.c, 0, WREQ_MINIMIZE);
         ok("dock", "its minimise button puts it in the dock", r.c.wins[0].minimised == 1);
+
+        /* A program that asks to fill the space (Firefox, on a small screen) gets it. */
+        make(&r, "dock", 1, 7);
+        slot_of(&r, &a);
+        r.L->request(&r.c, 0, WREQ_MAXIMIZE);
+        settle(&r); paint(&r); slot_of(&r, &b);
+        ok("dock", "a program that asks to fill the space is given all of it",
+           r.L->maxed(&r.c, 0) == 1 && b.w == r.c.screen_w && b.h > a.h);
+        r.L->request(&r.c, 0, WREQ_RESTORE);
+        settle(&r); paint(&r); slot_of(&r, &b);
+        ok("dock", "...and gives it back where it was",
+           r.L->maxed(&r.c, 0) == 0 && b.x == a.x && b.y == a.y && b.w == a.w && b.h == a.h);
+        /* Two windows; the first goes away: the second keeps ITS state, not the first's. */
+        make(&r, "dock", 1, 7);
+        r.c.wins[1] = r.c.wins[0]; r.c.wins[1].wid = 8; r.c.n_wins = 2;
+        r.L->request(&r.c, 1, WREQ_MAXIMIZE);
+        r.L->removed(&r.c, 0);
+        r.c.wins[0] = r.c.wins[1]; r.c.n_wins = 1;
+        ok("dock", "when a window goes, the next one keeps its own maximised state",
+           r.L->maxed(&r.c, 0) == 1);
     }
     for (int k = 2; k < 4; k++) {   /* the two looks with no window buttons: minimise is Home */
         make(&r, LOOKS[k], 1, 7);
