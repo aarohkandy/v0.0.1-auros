@@ -69,6 +69,17 @@ which only a **full** (non-pre) release moves.
   powercuttest (own fault-injection staging build) and bootupdatetest
   (e2e matrix); e2e lanes 2 -> 4, longest first.
 
+## FIRST PRERELEASE (08:16 UTC) -- stream F, point e2e here
+
+- Tag **`v0.1.0-618726b`** (prerelease, 21 assets: AurOS-Setup.exe, pieces.txt, SHA256SUMS,
+  image.sha256, image.bytes, 16 pieces). Built and fully tested by run 39905858387 (build 9.7 min;
+  unit + 7 KVM suites green); published by release run 39923341886.
+- `AurOS-Setup.exe` 35,460,072 bytes, **SHA-256 `5b875c0bd3b007ad9caab67732fe13a4fab828e6ee550c5b881863a6f2480b52`**
+  (re-downloaded and re-hashed on the Mac: equal to SHA256SUMS).
+- URL: `https://github.com/aarohkandy/v0.0.1-auros/releases/download/v0.1.0-618726b/AurOS-Setup.exe`
+- Image: 4,655,677,440 bytes, SHA-256 `7656a98de7fb9d0aa4f2980b59c888f52526a050d92a94e45b4d268bcc31c1c2`; pieces.txt base is this repository.
+- release run 39923341886 also runs windows + e2e (this exe, hash handed over) + site; no promote.
+
 ## In flight (check first)
 
 - Build run 39903639529 (`[release]` of 4506100): build 9 min green;
