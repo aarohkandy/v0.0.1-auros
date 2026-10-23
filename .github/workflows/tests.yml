@@ -129,6 +129,17 @@ jobs:
       - name: repotest (no repository named by hand)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/repotest.sh 2>&1 | tee transcripts/repotest.txt
+      # WP-15 (stream OPS): once the owner sets the repository variable
+      # AUROS_DOMAIN, no GitHub or workers.dev address may be left in what
+      # an installed PC keeps. Until then it prints them and passes.
+      - name: addrtest (no GitHub address in the image, the staging environment, the exe)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        env:
+          AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
+        run: |
+          python3 -I tools/ops/addrtest.py --selftest 2>&1 | tee transcripts/addrtest.txt
+          sudo env AUROS_DOMAIN="$AUROS_DOMAIN" python3 -I tools/ops/addrtest.py --rootfs work/forge/desktop/rootfs \
+              --initramfs out/auros-staging.img --exe dl/installer/AurOS-Setup.exe 2>&1 | tee -a transcripts/addrtest.txt
       - name: aurfirsttest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/aurfirsttest.sh 2>&1 | tee transcripts/aurfirsttest.txt

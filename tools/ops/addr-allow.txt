@@ -1,0 +1,6 @@
+# Addresses that may stay in what an installed PC keeps although they are
+# GitHub's: each line is a substring of the address, then why. Every line is
+# somebody else's text inside a binary we ship, never an address AurOS asks.
+# (tools/ops/addrtest.py; docs/ops/DOMAIN.md.) Add a line only with a reason.
+github.com/tuxera/ntfs-3g   # ntfs-3g's own help text in the staging environment
+github.com/rhboot/shim      # SBAT metadata inside Ubuntu's signed shim and grub, embedded in the exe
