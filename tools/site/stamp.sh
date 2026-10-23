@@ -28,7 +28,9 @@ cp -R "$src"/. "$dst"/
 # tools/repo.sh lets through only [A-Za-z0-9._/-], none of which sed's
 # replacement text treats specially with | as the separator.
 grep -rlI -e '@AUROS_' "$dst" | while IFS= read -r f; do
-    sed -i -e "s|@AUROS_REPO@|$repo|g" -e "s|@AUROS_ADDRESS@|$address|g" "$f"
+    # not sed -i: GNU and BSD (a Mac) spell it differently
+    sed -e "s|@AUROS_REPO@|$repo|g" -e "s|@AUROS_ADDRESS@|$address|g" "$f" > "$f.stamp"
+    mv "$f.stamp" "$f"
 done
 if left=$(grep -rnI -e '@AUROS_[A-Z_]*@' "$dst"); then
     echo "stamp: placeholders nobody fills:" >&2; echo "$left" >&2; exit 1
