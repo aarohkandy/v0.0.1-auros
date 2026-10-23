@@ -1063,6 +1063,8 @@ stage_overlay() {
         install -D -m 0644 "$ROOT/src/aurwish/aurwish.service" "$RFS/etc/systemd/user/aurwish.service"
         install -d "$RFS/etc/systemd/user/default.target.wants"
         ln -sf ../aurwish.service "$RFS/etc/systemd/user/default.target.wants/aurwish.service"
+        python3 "$ROOT/src/aurwish/mksounds.py" "$RFS/usr/share/auros/sounds" \
+            || die "the Wishes sounds could not be made"
         _wishbin="$RFS/usr/bin/aurwish"
         note "aurwish built ($(du -h "$RFS/usr/bin/aurwish" | cut -f1)) and enabled for the user (wishes=on)"
     fi

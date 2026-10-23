@@ -49,6 +49,12 @@ if [ -f "$ROOT/tools/wishtest-hook.c" ]; then
     fi
 fi
 
+# The five sounds a wish may play are made from nothing but sines and noise.
+if command -v python3 >/dev/null 2>&1 && [ -f "$ROOT/tools/wishtest-sounds.py" ]; then
+    if python3 "$ROOT/tools/wishtest-sounds.py" >"$OUT/snd" 2>&1; then echo "ok   sounds: $(tail -1 "$OUT/snd")"
+    else echo "FAIL sounds"; cat "$OUT/snd"; fail=1; fi
+fi
+
 # The engine and the cloud must agree on the document (docs/wish-v1.schema.json).
 if [ -f "$ROOT/docs/wish-v1.schema.json" ] && command -v python3 >/dev/null 2>&1; then
     if python3 "$ROOT/tools/wishtest-schema.py" >"$OUT/schema" 2>&1; then
