@@ -1,0 +1,36 @@
+# TEMPORARY (stream E): which way of creating a release does the
+# workflow token get refused? Deleted right after one run.
+name: relprobe-inner
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  try:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: variants
+        run: |
+          echo "event=$GITHUB_EVENT_NAME sha=$GITHUB_SHA ref=$GITHUB_REF"
+          t=$(date +%s)
+          one() { # name, then the args after the tag
+            n=$1; shift
+            if gh release create "probe-$t-$n" --repo "$GITHUB_REPOSITORY" --prerelease --title probe --notes probe "$@" 2>/tmp/e; then
+              echo "RESULT $n: created"; gh release delete "probe-$t-$n" --repo "$GITHUB_REPOSITORY" --cleanup-tag -y || true
+            else echo "RESULT $n: REFUSED: $(head -c 200 /tmp/e)"; fi
+          }
+          one sha --target "$GITHUB_SHA"
+          one main --target main
+          one none
+          # the tag first, through the refs API, then the release on it
+          if gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/probe-$t-ref" -f sha="$GITHUB_SHA" >/dev/null 2>/tmp/e; then
+            echo "RESULT refs-api: tag created"
+            gh release create "probe-$t-ref" --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --title probe --notes probe 2>/tmp/e \
+              && echo "RESULT release-on-tag: created" || echo "RESULT release-on-tag: REFUSED: $(head -c 200 /tmp/e)"
+            gh release delete "probe-$t-ref" --repo "$GITHUB_REPOSITORY" --cleanup-tag -y 2>/dev/null || gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/probe-$t-ref" || true
+          else echo "RESULT refs-api: REFUSED: $(head -c 200 /tmp/e)"; fi

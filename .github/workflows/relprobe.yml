@@ -1,0 +1,28 @@
+# TEMPORARY (stream E): see relprobe-inner.yml.
+name: relprobe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  direct:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: |
+          echo "event=$GITHUB_EVENT_NAME sha=$GITHUB_SHA"
+          t=$(date +%s)
+          if gh release create "probe-$t-direct" --repo "$GITHUB_REPOSITORY" --prerelease --title probe --notes probe --target "$GITHUB_SHA" 2>/tmp/e; then
+            echo "RESULT direct: created"; gh release delete "probe-$t-direct" --repo "$GITHUB_REPOSITORY" --cleanup-tag -y || true
+          else echo "RESULT direct: REFUSED: $(head -c 200 /tmp/e)"; fi
+  called:
+    uses: ./.github/workflows/relprobe-inner.yml
+    permissions:
+      contents: write
+      actions: read
+      pages: write
+      id-token: write
