@@ -41,6 +41,7 @@
 #define MAX_PATH   200000       /* flattened points per glyph */
 #define MAX_DIM    4096         /* glyph bitmap edge, px */
 #define MAX_DEPTH  6            /* composite nesting */
+#define MAX_COMPONENTS 1024     /* composite components per glyph, all levels */
 #define MAX_FD     256          /* CID-keyed CFF font dicts */
 
 /* ── bounds-checked big-endian reader ─────────────────────────────
@@ -206,6 +207,7 @@ typedef struct {
     int  *end; int ne, ecap;   /* one-past-last index of each contour */
     int   start;               /* first point of the contour in progress */
     int   oom;
+    int   ncomp;               /* composite components placed so far */
 } outline;
 
 static int ol_add(outline *P, float x, float y)
@@ -914,6 +916,12 @@ static void composite_glyph(font *f, rd *r, outline *P, xform t, int depth)
     int guard = 0;
     do {
         if (++guard > 64) return;              /* runaway component list */
+        /* ONE BUDGET FOR THE WHOLE GLYPH. The per-level guard alone let
+         * a glyph made of 64 copies of itself cost 64^MAX_DEPTH (~7e10)
+         * component visits: no crash, just a shell that never finishes
+         * drawing its first word. Real composites (accents, Hangul,
+         * CJK radicals) use a handful. */
+        if (++P->ncomp > MAX_COMPONENTS) return;
         flags = ru16(r);
         uint32_t idx = ru16(r);
         int32_t  a1, a2;

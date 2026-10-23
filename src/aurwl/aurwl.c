@@ -358,16 +358,26 @@ static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v
  * carve a hole. */
 typedef struct { int x0, y0, x1, y1; int set; } aurwl_region;
 
+/* x + w in 64 bits, saturated: both are the client's, and an int32 sum
+ * past INT32_MAX is undefined behaviour in the process that owns the
+ * display (found by tools/fuzz/fuzz_aurwl.c). */
+static int end_of(int32_t at, int32_t len)
+{
+    int64_t e = (int64_t)at + len;
+    return e > INT32_MAX ? INT32_MAX : (int)e;
+}
+
 static void region_add(struct wl_client *cl, struct wl_resource *r,
                        int32_t x, int32_t y, int32_t w, int32_t h)
 {
     (void)cl; aurwl_region *g = wl_resource_get_user_data(r);
     if (w <= 0 || h <= 0) return;
-    if (!g->set) { g->x0 = x; g->y0 = y; g->x1 = x + w; g->y1 = y + h; g->set = 1; return; }
+    int x1 = end_of(x, w), y1 = end_of(y, h);
+    if (!g->set) { g->x0 = x; g->y0 = y; g->x1 = x1; g->y1 = y1; g->set = 1; return; }
     if (x < g->x0) g->x0 = x;
     if (y < g->y0) g->y0 = y;
-    if (x + w > g->x1) g->x1 = x + w;
-    if (y + h > g->y1) g->y1 = y + h;
+    if (x1 > g->x1) g->x1 = x1;
+    if (y1 > g->y1) g->y1 = y1;
 }
 static void region_subtract(struct wl_client *cl, struct wl_resource *r,
                             int32_t x, int32_t y, int32_t w, int32_t h)

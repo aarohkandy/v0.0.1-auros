@@ -35,6 +35,7 @@ for bin in "$OUT"/fuzz_*-regress; do
     else
         printf 'FAIL  %-8s\n' "$t"
         printf '%s\n' "$out" | grep -E 'ERROR|runtime error|SUMMARY|#[0-9] ' | head -12 | sed 's/^/      /'
+        printf '%s\n' "$out" | grep '^input ' | tail -1 | sed 's/^/      last /'
         fail=$((fail + 1))
     fi
 done

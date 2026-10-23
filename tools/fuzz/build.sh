@@ -51,8 +51,14 @@ build() {   # name, sources..., then -- extra link flags
 build font    "$HERE/fuzz_font.c" "$C/font.c" -- -lm
 build theme   "$HERE/fuzz_theme.c" "$C/theme.c" "$C/wall.c" "$S/draw.c" -- -lm
 build desktop "$HERE/fuzz_desktop.c" -- -lm
-if [ -f "$HERE/fuzz_aurwl.c" ] && pkg-config --exists wayland-server xkbcommon 2>/dev/null; then
-    build aurwl "$HERE/fuzz_aurwl.c" "$W/aurwl.c" "$S/draw.c" \
+# Stream A2's parsers: fuzzed here, fixed there (reproducers go to A2).
+build inflate "$HERE/fuzz_inflate.c" "$ROOT/src/aurbridge/inflate.c"
+build gpt     "$HERE/fuzz_gpt.c"
+build journal "$HERE/fuzz_journal.c" "$ROOT/src/aurstage/journal.c"
+# fuzz_aurwl.c includes aurwl.c itself (its end-of-input check reads the
+# compositor's lists).
+if pkg-config --exists wayland-server xkbcommon 2>/dev/null; then
+    build aurwl "$HERE/fuzz_aurwl.c" "$S/draw.c" \
         "$W/gen/xdg-shell-protocol.c" "$W/gen/xdg-decoration-protocol.c" \
         "$W/gen/viewporter-protocol.c" "$W/gen/xdg-output-protocol.c" \
         -I"$W/gen" -I"$W" -- $(pkg-config --libs wayland-server xkbcommon) -lm

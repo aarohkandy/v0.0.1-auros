@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 int LLVMFuzzerInitialize(int *argc, char ***argv) __attribute__((weak));
@@ -40,7 +41,14 @@ static int run_file(const char *path)
     size_t got = fread(buf, 1, (size_t)n, f);
     fclose(f);
     if (got != (size_t)n) { free(buf); return -1; }
+    /* A hang is a finding too (a font that costs 64^6 composite
+     * components never crashes; it just never finishes the first
+     * frame). SIGALRM's default action ends the run with a failure,
+     * the way libFuzzer's -timeout does. */
+    fprintf(stderr, "input %s\n", path);  /* so a failure names its file */
+    alarm(30);
     LLVMFuzzerTestOneInput(buf, (size_t)n);
+    alarm(0);
     free(buf);
     return 0;
 }
