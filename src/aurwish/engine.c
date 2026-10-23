@@ -56,7 +56,7 @@ struct engine {
      * wish's share is given back, so pausing the one that broke the
      * limit is enough and the others carry on. */
     struct { long long t; char wid[12]; } overall[OVERALL_HOUR];
-    unsigned holds;
+    unsigned holds, lholds;
     long long last_input;
     int dnd;
     long long dnd_until;       /* 0 = until turned off */
@@ -267,7 +267,7 @@ static int held_kind(int t) { return wish_do_overlay(t) || wish_do_sound(t) || w
 
 static int may_interrupt(engine *e, long long now)
 {
-    if (e->holds || e->dnd) return 0;
+    if (e->holds || e->lholds || e->dnd) return 0;
     if (e->last_input && now - e->last_input < TYPING_QUIET) return 0;
     return 1;
 }
@@ -360,10 +360,10 @@ static void fire(engine *e, stored *s, int flags, const char *missed_for, long l
         s->rt.hist[o] = now;
         if (!exempt) {
             /* the oldest slot, not the next one: a released slot is reused */
-            int o = 0;
-            for (int i = 1; i < OVERALL_HOUR; i++) if (e->overall[i].t < e->overall[o].t) o = i;
-            e->overall[o].t = now;
-            snprintf(e->overall[o].wid, sizeof e->overall[o].wid, "%s", s->id);
+            int old = 0;
+            for (int i = 1; i < OVERALL_HOUR; i++) if (e->overall[i].t < e->overall[old].t) old = i;
+            e->overall[old].t = now;
+            snprintf(e->overall[old].wid, sizeof e->overall[old].wid, "%s", s->id);
         }
     }
     if (speaks) s->rt.speak_n++;
@@ -506,7 +506,7 @@ void engine_typed(engine *e, const char *word, long long now)
     /* §7.6: a word typed while a password is being asked for is not
      * held for later, it is dropped -- a potato appearing after the
      * dialog closes would say what she typed into it. */
-    if (e->holds & H_PASSWORD) return;
+    if ((e->holds | e->lholds) & H_PASSWORD) return;
     for (int i = 0; i < e->st->n; i++) {
         stored *s = e->st->s[i];
         if (s->ok && s->w.when.type == W_TYPED && !strcmp(s->w.when.word, w))
@@ -535,6 +535,7 @@ void engine_app(engine *e, const char *app, long long now)
 void engine_input(engine *e, long long now) { e->last_input = now; }
 
 void engine_hold(engine *e, unsigned reasons, long long now) { (void)now; e->holds = reasons; }
+void engine_hold_local(engine *e, unsigned reasons) { e->lholds = reasons; }
 
 void engine_battery(engine *e, int present, int pct, int plugged, long long now)
 {
@@ -628,6 +629,9 @@ void engine_sensors(engine *e, unsigned have)
 
 const char *engine_cannot_text(const char *m)
 {
+    /* Every sentence she can be shown about a refusal is here, written
+     * for her (docs/EASY.md rule 8): what happened, never why in
+     * technical words, and what she can do next. */
     static const struct { const char *m, *t; } T[] = {
         { "compass", "This computer has no compass, so it cannot tell which way it is pointing." },
         { "tilt", "This computer cannot tell which way up it is being held." },
@@ -635,9 +639,16 @@ const char *engine_cannot_text(const char *m)
         { "app", "I could not find that program on this computer." },
         { "theme", "I could not find that look on this computer." },
         { "site", "For now I can only open well-known websites from a short list." },
-        { "install", "A wish cannot install programs. You can use Get more programs for that." },
+        { "install", "A wish cannot add programs. You can use Get more programs for that." },
         { "duplicate", "You already have that wish." },
         { "limit", "You have as many wishes of that kind as you can have. You can remove one in My wishes." },
+        { "unclear", "I did not quite understand. Could you say it another way?" },
+        { "question", "That sounds like a question rather than a wish. You can ask it with Ask AurOS." },
+        { "files", "A wish cannot change or look at your files." },
+        { "messages", "A wish cannot send messages, e-mails or make calls." },
+        { "money", "A wish cannot spend or move money." },
+        { "private", "A wish cannot use your passwords or personal details." },
+        { "security", "A wish cannot change the settings that keep this computer safe." },
         { NULL, "I can't do that wish yet." } };
     int i = 0;
     while (T[i].m && (!m || strcmp(T[i].m, m))) i++;
@@ -711,11 +722,14 @@ static const char *fits(engine *e, const wish *w)
     return NULL;
 }
 
-static void offer(engine *e, long long id, const wish *w, const char *said, int voice,
-                  char *r, size_t n, long long now)
+/* Registers `w` as waiting for her Yes and writes its fields (pending,
+ * sentence, title, outward) into `o`. Returns 0, or -1 with a reason
+ * in *why. */
+static int offer_fields(engine *e, const wish *w, const char *said, int voice,
+                        long long now, jout *o, const char **why)
 {
-    const char *why = fits(e, w);
-    if (why) { reply_cannot(r, n, id, why); return; }
+    *why = fits(e, w);
+    if (*why) return -1;
     pending *p = &e->pend[e->pnext++ % 4];
     memset(p, 0, sizeof *p);
     snprintf(p->id, sizeof p->id, "p%d", e->pnext);
@@ -726,42 +740,94 @@ static void offer(engine *e, long long id, const wish *w, const char *said, int 
     char sen[1024], t[96];
     wish_sentence(w, sen, sizeof sen);
     wish_title(w, t, sizeof t);
-    jout o = { r, n, 0, 0 };
-    r[0] = 0;
-    jw_raw(&o, "{"); jw_key(&o, "id"); jw_int(&o, id);
-    jw_key(&o, "kind"); jw_str(&o, "wish");
-    jw_key(&o, "pending"); jw_str(&o, p->id);
-    jw_key(&o, "sentence"); jw_str(&o, sen);
-    jw_key(&o, "title"); jw_str(&o, t);
+    jw_key(o, "pending"); jw_str(o, p->id);
+    jw_key(o, "sentence"); jw_str(o, sen);
+    jw_key(o, "title"); jw_str(o, t);
     for (int i = 0; i < w->n; i++) {
         const wish_do *d = &w->d[i];
         if (!wish_do_outward(d->type)) continue;
         /* §7.2: the destination, large, on its own Yes screen. */
-        jw_key(&o, "outward"); jw_raw(&o, "{");
-        jw_key(&o, "name"); jw_str(&o, d->type == A_OPEN_APP ? d->app.label : d->site_name);
+        jw_key(o, "outward"); jw_raw(o, "{");
+        jw_key(o, "name"); jw_str(o, d->type == A_OPEN_APP ? d->app.label : d->site_name);
         if (d->type == A_OPEN_SITE) {
             char host[128];
             const char *h = strstr(d->url, "://");
             h = h ? h + 3 : d->url;
             snprintf(host, sizeof host, "%.*s", (int)strcspn(h, "/?#"), h);
-            jw_key(&o, "host"); jw_str(&o, host);
+            jw_key(o, "host"); jw_str(o, host);
         }
-        jw_raw(&o, "}");
+        jw_raw(o, "}");
     }
-    jw_raw(&o, "}");
-    if (o.bad) reply_error(r, n, id, "broken");
+    return 0;
 }
 
-void engine_offer(engine *e, long long id, const jv *doc, const char *said, int voice,
-                  const char *kind, char *r, size_t n, long long now)
+static const char *const MISSING[] = { "unclear", "question", "compass", "tilt", "light", "install",
+                                       "files", "messages", "money", "private", "security", "app",
+                                       "theme", "site", "duplicate", "limit", "other", NULL };
+
+/* The cloud's `missing` is data like everything else: only a word we
+ * know becomes a sentence. */
+static const char *known_missing(const char *m)
 {
-    (void)kind;
+    for (int i = 0; m && MISSING[i]; i++) if (!strcmp(m, MISSING[i])) return MISSING[i];
+    return "other";
+}
+
+static void cannot_head(jout *o, long long id, const char *missing)
+{
+    jw_raw(o, "{"); jw_key(o, "id"); jw_int(o, id);
+    jw_key(o, "kind"); jw_str(o, "cannot");
+    jw_key(o, "missing"); jw_str(o, missing);
+    jw_key(o, "text"); jw_str(o, engine_cannot_text(missing));
+}
+
+void engine_offer(engine *e, long long id, int how, const char *tag, const jv *doc,
+                  const char *said, int voice, char *r, size_t n, long long now)
+{
     wish w;
     wish_err err;
     wish_env env = *e->env;
     env.said = said;
-    if (wish_parse(doc, &env, &w, &err) < 0) { reply_cannot(r, n, id, err.missing); return; }
-    offer(e, id, &w, said, voice, r, n, now);
+    memset(&err, 0, sizeof err);
+    int have = doc && wish_parse(doc, &env, &w, &err) == 0;
+    jout o = { r, n, 0, 0 };
+    r[0] = 0;
+    const char *why = NULL;
+
+    if (how == OFFER_WISH) {
+        if (!have) {
+            cannot_head(&o, id, known_missing(err.missing));
+            jw_raw(&o, "}");
+        } else {
+            jw_raw(&o, "{"); jw_key(&o, "id"); jw_int(&o, id);
+            jw_key(&o, "kind"); jw_str(&o, "wish");
+            if (offer_fields(e, &w, said, voice, now, &o, &why) < 0) {
+                o.len = 0; o.bad = 0; r[0] = 0;
+                cannot_head(&o, id, why);
+            }
+            jw_raw(&o, "}");
+        }
+    } else if (how == OFFER_CANNOT) {
+        cannot_head(&o, id, known_missing(tag));
+        if (have) {
+            size_t keep = o.len;
+            jw_key(&o, "alt"); jw_raw(&o, "{");
+            if (offer_fields(e, &w, said, voice, now, &o, &why) == 0) jw_raw(&o, "}");
+            else { o.len = keep; r[keep] = 0; }
+        }
+        jw_raw(&o, "}");
+    } else {
+        jw_raw(&o, "{"); jw_key(&o, "id"); jw_int(&o, id);
+        jw_key(&o, "kind"); jw_str(&o, "help");
+        jw_key(&o, "page");
+        if (tag) jw_str(&o, tag); else jw_raw(&o, "null");
+        if (have) {
+            size_t keep = o.len;
+            if (offer_fields(e, &w, said, voice, now, &o, &why) < 0) { o.len = keep; r[keep] = 0; }
+        }
+        jw_raw(&o, "}");
+    }
+    if (o.bad) reply_error(r, n, id, "broken");
 }
 
 static pending *find_pending(engine *e, const char *pid, long long now)
@@ -910,15 +976,18 @@ int engine_request(engine *e, const char *line, size_t len, char *r, size_t n, l
     if (!strcmp(op, "consent")) {
         const jv *yes = jget(m, "yes"), *ver = jget(m, "version");
         int v = ver && ver->type == J_INT && ver->i > 0 && ver->i < 1000 ? (int)ver->i : 0;
+        int was = e->st->consent;
         e->st->consent = yes && yes->type == J_BOOL && yes->i ? v : 0;
+        /* §7.12: turning Wishes off tells the service to forget her. */
+        if (was && !e->st->consent && e->io.forget) e->io.forget(e->io.ctx);
         save(e);
         reply_kind(r, n, id, "done");
         return 0;
     }
     if (!strcmp(op, "check")) {
         const jv *said = jget(m, "said"), *voice = jget(m, "voice");
-        engine_offer(e, id, jget(m, "wish"), said && said->type == J_STR ? said->s : NULL,
-                     voice && voice->type == J_BOOL && voice->i, "wish", r, n, now);
+        engine_offer(e, id, OFFER_WISH, NULL, jget(m, "wish"), said && said->type == J_STR ? said->s : NULL,
+                     voice && voice->type == J_BOOL && voice->i, r, n, now);
         return 0;
     }
     if (!strcmp(op, "confirm") || !strcmp(op, "discard")) {
@@ -1020,6 +1089,7 @@ int engine_request(engine *e, const char *line, size_t len, char *r, size_t n, l
         return 0;
     }
     if (!strcmp(op, "forget")) {
+        if (e->io.forget) e->io.forget(e->io.ctx);
         store_free(e->st);
         e->st->next = 1;
         e->nq = 0;
@@ -1031,6 +1101,33 @@ int engine_request(engine *e, const char *line, size_t len, char *r, size_t n, l
         return 0;
     }
     reply_error(r, n, id, "refused");
+    return 0;
+}
+
+unsigned engine_wants(const engine *e)
+{
+    unsigned w = 0;
+    if (e->st->all_off) return 0;
+    for (int i = 0; i < e->st->n; i++) {
+        const stored *s = e->st->s[i];
+        if (!s->ok || s->status != ST_ON) continue;
+        const wish_when *x = &s->w.when;
+        if (x->type == W_SENSOR) w |= 1u << x->sensor;
+        else if (x->type == W_BATTERY || x->type == W_PLUGGED || x->type == W_UNPLUGGED) w |= WANT_BATTERY;
+        else if (x->type == W_USB) w |= WANT_USB;
+    }
+    return w;
+}
+
+int engine_wants_fast(const engine *e, long long now)
+{
+    if (e->nq || (e->last_input && now - e->last_input < 2 * TYPING_QUIET)) return 1;
+    if (engine_wants(e) & (WANT_COMPASS | WANT_TILT | WANT_LIGHT)) return 1;
+    for (int i = 0; i < e->st->n; i++) {
+        const stored *s = e->st->s[i];
+        if (s->rt.snooze_at) return 1;
+        if (s->ok && s->status == ST_ON && s->w.when.type == W_IDLE) return 1;
+    }
     return 0;
 }
 

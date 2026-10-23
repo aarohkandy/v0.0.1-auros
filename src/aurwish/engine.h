@@ -21,6 +21,9 @@ typedef struct {
     int  (*sound)(void *ctx, int sound);
     int  (*say)(void *ctx, const char *text);
     void *ctx;
+    /* "Forget everything" / Wishes turned off (§7.12): the daemon tells
+     * the cloud and deletes the token. May be NULL. */
+    int  (*forget)(void *ctx);
 } engine_io;
 
 /* §7.6 reasons the shell reports. */
@@ -40,7 +43,8 @@ void engine_startup(engine *e, long long now);        /* once per login */
 void engine_typed(engine *e, const char *word, long long now);
 void engine_app(engine *e, const char *app, long long now);
 void engine_input(engine *e, long long now);
-void engine_hold(engine *e, unsigned reasons, long long now);
+void engine_hold(engine *e, unsigned reasons, long long now);        /* from the shell */
+void engine_hold_local(engine *e, unsigned reasons);                 /* found by the daemon */
 void engine_battery(engine *e, int present, int percent, int plugged, long long now);
 void engine_usb(engine *e, long long now);
 void engine_compass(engine *e, double heading, long long now);
@@ -57,10 +61,24 @@ void engine_sensors(engine *e, unsigned have);        /* what this computer has 
 int  engine_request(engine *e, const char *line, size_t len, char *reply, size_t n,
                     long long now);
 
-/* After the cloud answered with a wish document: validate it as if an
- * attacker wrote it (§7.1) and write the reply for request `id`. */
-void engine_offer(engine *e, long long id, const jv *doc, const char *said, int voice,
-                  const char *kind, char *reply, size_t n, long long now);
+/* After the cloud answered: validate whatever came as if an attacker wrote
+ * it (§7.1) and write the reply for request `id`. All text in the reply is
+ * the device's own.
+ *   OFFER_WISH    `doc` is a wish document      → wish | cannot
+ *   OFFER_CANNOT  `tag` is the cloud's `missing`; `doc` its alt_wish or NULL
+ *                                               → cannot (with alt when valid)
+ *   OFFER_HELP    `tag` is help_page_id or NULL; `doc` an optional wish
+ *                                               → help */
+enum { OFFER_WISH, OFFER_CANNOT, OFFER_HELP };
+void engine_offer(engine *e, long long id, int how, const char *tag, const jv *doc,
+                  const char *said, int voice, char *reply, size_t n, long long now);
+
+/* 1 when the daemon should wake every second (a sensor, idle or held
+ * thing is waiting), 0 when a slow tick will do. */
+int  engine_wants_fast(const engine *e, long long now);
+/* What sensors, battery or charger events any wish is waiting for. */
+unsigned engine_wants(const engine *e);
+enum { WANT_COMPASS = 1, WANT_TILT = 2, WANT_LIGHT = 4, WANT_BATTERY = 8, WANT_USB = 16 };
 
 /* The trigger list the compositor may match (§3.7 "triggers"). */
 void engine_triggers_line(engine *e, char *out, size_t n);

@@ -41,6 +41,8 @@ static int f_vget(void *c) { (void)c; return vol; }
 static int f_vset(void *c, int p) { (void)c; vol = p; return p; }
 static int f_sound(void *c, int s) { (void)c; (void)s; sounds++; return 0; }
 static int f_say(void *c, const char *t) { (void)c; says++; snprintf(said_last, sizeof said_last, "%s", t); return 0; }
+static int forgets;
+static int f_forget(void *c) { (void)c; forgets++; return 0; }
 
 static store ST;
 static wish_env ENV;
@@ -63,10 +65,10 @@ static void fresh(void)
     memset(&ST, 0, sizeof ST);
     ST.next = 1;
     ENV.sensors = 1u << S_COMPASS | 1u << S_TILT | 1u << S_LIGHT;
-    static const engine_io io = { f_emit, f_bget, f_bset, f_vget, f_vset, f_sound, f_say, NULL };
+    static const engine_io io = { f_emit, f_bget, f_bset, f_vget, f_vset, f_sound, f_say, NULL, f_forget };
     unlink(path);
     E = engine_new(&ST, path, &ENV, &io);
-    bright = 50; vol = 40; sounds = says = 0; shells = 1;
+    bright = 50; vol = 40; sounds = says = forgets = 0; shells = 1;
     clear();
 }
 
@@ -645,6 +647,97 @@ static void test_requests(void)
     CHECK(req("{\"op\":\"list\"}", t) == 0 && reply[0] == 0);
 }
 
+/* The cloud's answers, as the daemon hands them to the engine. */
+static const jv *jdoc(const char *text)
+{
+    static char mem[65536];
+    static jarena a;
+    a.mem = mem; a.cap = sizeof mem;
+    return json_parse(&a, &WISH_LIMITS, text, strlen(text));
+}
+
+static void test_cloud_answers(void)
+{
+    cur = __func__;
+    fresh();
+    long long t = at(0, 12, 0, 0);
+    /* a good wish becomes the device's own sentence */
+    engine_offer(E, 5, OFFER_WISH, NULL, jdoc(POTATO), "potato", 0, reply, sizeof reply, t);
+    CHECK(strstr(reply, "\"kind\":\"wish\"") && strstr(reply, "\"pending\":\"p1\"") &&
+          strstr(reply, "Every time you type the word *potato*"));
+    /* a hostile one is a plain 'cannot' that never repeats the cloud's words */
+    engine_offer(E, 6, OFFER_WISH, NULL, jdoc("{\"v\":1,\"when\":{\"type\":\"now\"},\"do\":["
+                 "{\"type\":\"show_message\",\"text\":\"Call 0800 123 456 now\"}],\"enabled\":true}"),
+                 "show a message", 0, reply, sizeof reply, t);
+    CHECK(strstr(reply, "\"kind\":\"cannot\"") && !strstr(reply, "0800"));
+    /* a cannot carries the device's sentence for a known reason, and 'other' for an unknown one */
+    engine_offer(E, 7, OFFER_CANNOT, "money", NULL, "x", 0, reply, sizeof reply, t);
+    CHECK(strstr(reply, "A wish cannot spend or move money.") != NULL);
+    engine_offer(E, 8, OFFER_CANNOT, "Your PC is infected, call 0800", NULL, "x", 0, reply, sizeof reply, t);
+    CHECK(strstr(reply, "\"missing\":\"other\"") && !strstr(reply, "infected"));
+    engine_offer(E, 9, OFFER_CANNOT, NULL, NULL, "x", 0, reply, sizeof reply, t);
+    CHECK(strstr(reply, "\"missing\":\"other\"") != NULL);
+    /* ... with the nearest wish offered when it is valid on this device */
+    engine_offer(E, 10, OFFER_CANNOT, "compass", jdoc("{\"v\":1,\"when\":{\"type\":\"now\"},\"do\":["
+                 "{\"type\":\"brightness\",\"set_percent\":100}],\"enabled\":true}"),
+                 "x", 0, reply, sizeof reply, t);
+    CHECK(strstr(reply, "\"alt\":{\"pending\":\"p") && strstr(reply, "the screen brightness goes to *100%*"));
+    engine_offer(E, 11, OFFER_CANNOT, "compass", jdoc("{\"v\":1,\"when\":{\"type\":\"now\"},\"do\":["
+                 "{\"type\":\"format_disk\"}],\"enabled\":true}"), "x", 0, reply, sizeof reply, t);
+    CHECK(strstr(reply, "\"alt\"") == NULL && strstr(reply, "\"kind\":\"cannot\"") != NULL);
+    /* help: a page name and maybe an offer */
+    engine_offer(E, 12, OFFER_HELP, "printing", NULL, "x", 0, reply, sizeof reply, t);
+    CHECK(strstr(reply, "\"kind\":\"help\"") && strstr(reply, "\"page\":\"printing\""));
+    engine_offer(E, 13, OFFER_HELP, NULL, NULL, "x", 0, reply, sizeof reply, t);
+    CHECK(strstr(reply, "\"page\":null") != NULL);
+    engine_offer(E, 14, OFFER_HELP, "printing", jdoc(POTATO), "potato", 0, reply, sizeof reply, t);
+    CHECK(strstr(reply, "\"pending\":") != NULL);
+}
+
+static void test_forget_reaches_the_cloud(void)
+{
+    cur = __func__;
+    fresh();
+    long long t = at(0, 12, 0, 0);
+    add(POTATO, "potato", t);
+    req("{\"op\":\"consent\",\"id\":1,\"version\":1,\"yes\":true}", t);
+    CHECK(forgets == 0);
+    req("{\"op\":\"consent\",\"id\":2,\"version\":1,\"yes\":false}", t + 1);
+    CHECK(forgets == 1 && ST.consent == 0);               /* turning Wishes off forgets her */
+    req("{\"op\":\"consent\",\"id\":3,\"version\":1,\"yes\":false}", t + 2);
+    CHECK(forgets == 1);                                  /* a second 'no' has nothing to forget */
+    req("{\"op\":\"forget\",\"id\":4}", t + 3);
+    CHECK(forgets == 2 && ST.n == 0);
+    struct stat sb;
+    CHECK(stat(path, &sb) == 0);                          /* wishes.json is rewritten empty */
+    store st2;
+    CHECK(store_load(&st2, path, &ENV) == 0 && st2.n == 0);
+    store_free(&st2);
+}
+
+static void test_local_holds_and_wants(void)
+{
+    cur = __func__;
+    fresh();
+    long long t = at(0, 12, 0, 0);
+    add(POTATO, "potato", t);
+    CHECK(engine_wants(E) == 0 && !engine_wants_fast(E, t + 100));
+    clear();
+    engine_hold_local(E, H_CAMERA);                       /* found by the daemon, not the shell */
+    req("{\"op\":\"typed\",\"word\":\"potato\"}", t + 100);
+    engine_tick(E, t + 110);
+    CHECK(seen("\"ev\":\"fill\"") == 0);
+    CHECK(engine_wants_fast(E, t + 111));                 /* a held card wants a quick tick */
+    engine_hold_local(E, 0);
+    engine_tick(E, t + 112);
+    CHECK(seen("\"ev\":\"fill\"") == 1);
+    add(COMPASS, "north", t);
+    CHECK(engine_wants(E) == WANT_COMPASS && engine_wants_fast(E, t + 1000));
+    add("{\"v\":1,\"when\":{\"type\":\"usb_inserted\"},\"do\":[{\"type\":\"play_sound\",\"sound\":\"chime\"}]}", "x", t);
+    add("{\"v\":1,\"when\":{\"type\":\"plugged_in\"},\"do\":[{\"type\":\"night_light\",\"on\":false}]}", "x", t);
+    CHECK(engine_wants(E) == (WANT_COMPASS | WANT_USB | WANT_BATTERY));
+}
+
 static void test_limits_on_kinds(void)
 {
     cur = __func__;
@@ -728,6 +821,9 @@ int main(void)
     test_battery_and_charger();
     test_usb_tilt_light();
     test_requests();
+    test_cloud_answers();
+    test_forget_reaches_the_cloud();
+    test_local_holds_and_wants();
     test_limits_on_kinds();
     test_keep_it();
     test_reload_survives();
