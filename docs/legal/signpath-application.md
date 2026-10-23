@@ -17,7 +17,10 @@
       (the code signing policy page, linked from every page's footer). If you
       have moved to your own domain, use that address everywhere below.
 - [ ] A release exists to point at: `https://github.com/aarohkandy/v0.0.1-auros/releases`
-      (first prerelease `v0.1.0-618726b`; use the newest).
+      (the newest prerelease; each has its source code beside it as `sources-<tag>`).
+- [ ] The policy page says "We plan to apply" today. After you submit, tell an
+      agent to change it to "We have applied" in the same commit as nothing
+      else; do not let it say more than is true (`tools/legal/check.py` reads it).
 
 ## Project
 
@@ -54,17 +57,24 @@ AurOS Setup is a Windows program a person runs once. In order:
    entry). After that restart a small installation environment shrinks the
    Windows filesystem into its unused space, writes AurOS into the freed
    space, reads it back and checks it, and only then changes the partition
-   table, in a single-sector write. **Windows and every file stay**; until
+   table, in a single-sector write. **Windows and your files are kept** (the installer's own pages say it may damage them if the power fails during the shrink, and tell her to copy what she cannot replace first); until
    the person says "it works" Windows is what starts by default, they can
    say "no, go back" at AurOS's first start, and "Put Windows back" later
    in AurOS's Settings removes AurOS and returns the disk to its previous
    layout.
-4. BitLocker: today Setup stops on a computer with BitLocker or device
+4. Optional, and on the version being proven (the fast path, switched on by a
+   build flag and not yet the default): if the person ticks a box that is
+   unticked until they do, Setup reads the Wi-Fi profile of the network the
+   computer is connected to and carries it to AurOS on the same computer, so it
+   can get online at first start; it pauses BitLocker protection for one
+   restart (Windows' own call; it never decrypts). Neither sends anything
+   anywhere. [OWNER: say "today" or "being proven" as true on the day you apply.]
+5. BitLocker, in the default version: today Setup stops on a computer with BitLocker or device
    encryption on, and says so before changing anything. [OWNER: delete this
    sentence's "today" version and use the next one once the BitLocker work
    ships (decision D13).] The finished design pauses BitLocker protection
    for one restart with Windows' own interface and never decrypts the drive.
-5. Secure Boot stays on: AurOS starts through Canonical's signed `shim` and
+6. Secure Boot stays on: AurOS starts through Canonical's signed `shim` and
    `grub`, the same files Ubuntu uses.
 
 What it is not, said plainly because it touches disks and boot entries:
@@ -116,12 +126,31 @@ applying, list them above and on `website/code-signing.html`.]
 
 ## Privacy
 
-AurOS Setup does not send any information about the person or their
-computer to anyone. The only network request it makes is the download of
-AurOS itself from GitHub, which the person asked for by pressing the install
-button; GitHub sees the usual connection information. The website uses no
-cookies and no tracking and loads nothing from other servers. This is stated
-on the code signing policy page.
+Nothing is sent to the AurOS project. The only network request AurOS Setup
+makes is the download of AurOS itself from GitHub, which the person asked for
+by pressing the install button; GitHub sees the usual connection information
+(its own privacy statement applies). The Wi-Fi profile above, if the person
+ticks the box, stays on the computer. The website uses no cookies and no
+tracking and loads nothing from other servers. This is stated on the code
+signing policy page and on `privacy.html`, which Setup's Ready page links. If
+a later version adds an optional report, it will be off until the person ticks
+a box, and the policy page will say so before it ships.
+
+## Reputation (read this before you send it)
+
+SignPath Foundation may refuse a brand-new project with one maintainer. What
+exists that a reviewer can check: a public repository with an MIT licence
+(`LICENSE`), a security policy (`SECURITY.md`), every release built and tested
+on GitHub's runners in the open (the build and release workflows are in the
+repository, and the tests include a power cut at each dangerous instant of an
+install and of the way back), source code for each release published beside it
+(`sources-<tag>`) with a written offer, a code signing policy page with named
+roles, and an installer that refuses at the first doubt. What does not exist:
+a history. The first public prerelease is dated 2026-10-23; there are no
+outside contributors, no users yet, and the author's name carries no
+reputation. Say so plainly if the form asks. A refusal is not the end:
+the installer works unsigned (the website shows the extra clicks); the
+decision to apply again later costs nothing.
 
 ## Questions their review is likely to ask, with the true answers
 
