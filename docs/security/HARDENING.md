@@ -105,15 +105,63 @@ Three tests, all in the repository.
 
 ### What the booted machine showed
 
-Run on homebase (KVM, `-cpu host`) against the image of build
-39901973428 (`v0.1.0-4c8874b`), 2026-10-23. "Removed" = the same image
-with every S1 control switched off.
+`tools/hardenboottest.sh` on Actions (`harden.yml`, KVM, Secure Boot on, 4 GB
+and 2 cores), image of build `4c16e98` with BT's menu lock. "Removed" = the
+same image with every control switched off. Every control-tied row passes on
+the hardened image and **fails** with the control removed:
 
-(The full table is being measured; until it lands here, the newest `harden` run's job summary has it.)
+| control | hardened | controls removed |
+|---|---|---|
+| 24 sysctl settings (kptr_restrict, BPF, io_uring, ...) | in force | 15 fail; 9 are Ubuntu's own default (the static test alone sees those go) |
+| 8 kernel options (init_on_alloc, slab_nomerge, ..., lockdown=integrity) | all on `/proc/cmdline` | all missing |
+| 32 kernel modules cannot load: `socket(AF_INET, SOCK_DCCP)` | refused, module not loaded | allowed |
+| firewall: a stranger's TCP connection / UDP 631 packet | reach nothing, though a listener is waiting | reach it (a banner comes back) |
+| no listening socket but avahi's and DHCP's | yes | (nothing to compare) |
+| avahi announces nothing | `auros.local` does not answer | answers |
+| journal cap 200 MB | 62 MB used | 377 MB and growing |
+| a half-configured package after a power cut | finished at the next start | stays broken |
+| a memory hog (`tail /dev/zero`) | zram takes 1.7 GB, **earlyoom stops it in 8 s**, the desktop is the same process | the kernel's OOM killer fires after ~2 minutes and the machine does not answer for over 5 |
+| 3 crashes of the desktop | the 4th start is the safe mode (plain home, machine's settings) | a start like any other |
+| Flatpak's sandbox (bubblewrap, userns) | still starts | (same) |
+| her own traffic (DHCP, a page from outside) | works | works |
+| GRUB: `e`, `c` | ask for a username and password | open (before BT's lock) |
+| tools/hardentest.sh on the booted disk; its 51 mutations | passes; every mutation caught | fails |
+| S2: AnyDesk from the store | refused under the booted polkitd; the card appears; her keyboard "yes" lets the next try through | goes straight through |
+
+Not yet green, and not S1's: see the last section.
 
 ### The cost (measured)
 
-(Being measured: boot time, time to desktop and idle RAM, medians of three starts each.)
+Same runs, 3 starts of each disk in turn, on a shared runner:
+
+| | controls off | AurOS | |
+|---|---|---|---|
+| boot finished (best of 3) | 5050 ms | 4926 ms | no difference (host noise is larger) |
+| desktop started (best of 3) | 4778 ms | 4893 ms | +0.1 s |
+| CPU the guest used until then (best of 3, 2 cores) | 7180 ms | 7260 ms | +1% |
+| RAM in use 60 s after the boot (median of 3) | 384 MB | 391 MB | +7 MB |
+
+The services the controls add: `nftables` and `zramswap` (one-shot, about
+100 ms of service time each, off the critical path) and `earlyoom` (about 1 MB).
+Over other runs the idle RAM difference ranged +7 to +20 MB, the CPU +1% to
++3%. `blame.txt` and `meminfo.txt` per start are in the evidence artifact.
+
+### Open findings from the booted image (for the owners named)
+
+- **S2: PackageKit installs are not gated.** `pkcheck --action-id
+  org.freedesktop.packagekit.package-install ... package_ids teamviewer;...`
+  returns **0 (authorized)** on the booted image although the gate's signal is
+  sent; the same question about a Flatpak is refused. Evidence: `polkit.txt` in
+  the `hardenboot` artifact (every rule polkit read; the action's defaults).
+- **aurwl: a second Firefox window can die of a Wayland protocol error**
+  ("xdg_surface: no configure with serial N was sent") after the first was
+  closed by "Close this page"; seen once on Actions, not on the next run.
+- **Firefox shows its first-run dialog** ("By continuing you agree to the
+  Terms of Use ... sends diagnostic and interaction data to Mozilla") over the
+  first page although telemetry is off by policy; and its crash reporter tries
+  to reach `incoming.telemetry.mozilla.org` when Firefox is killed.
+- **Login prompts**: `serial-getty@ttyS0` runs (`console=ttyS0` is on every
+  kernel line); the virtual consoles are off in this image.
 
 ### What is not proven
 
