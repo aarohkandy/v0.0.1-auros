@@ -1154,7 +1154,7 @@ copied to the ESP.
 3. Findings that touch files other streams own: S-18 (kernel panic loop,
    `grub.cfg.in`), S-24 (BootOrder re-assert), S-25 (grub stub exit).
 
-## Put Windows back with her files: the handover (Windows half built; AurOS and staging halves planned)
+## Put Windows back with her files: the handover (built; v1)
 
 **Why.** `ferry back` mounts the Windows drive read-write from Linux (ntfs-3g)
 to copy what she saved in AurOS into her Windows profile before AurOS is
@@ -1168,88 +1168,101 @@ her files into Windows, after the restart.
 Windows' is ever shrunk, resized or reused to make room. The room for her files
 is AurOS's own.
 
-**Until it is built:** where `ferry back` cannot open the Windows drive and she
-has files to save, the restore stays refused, in words that say her files are
-untouched, with a second path: "Save my files to a USB stick first" (R's copier
-can target a stick). With nothing to save, the restore must not need the Windows
-drive at all (that is Ferry's `_cmd_back`, R's).
+**Status (2026-10-23, end of session B):** built end to end and proven in pieces -- `handover.sh` (AurOS),
+`answer.sh`, `grub.cfg.in`, `rescue_restore` (staging) and `putback.ps1` (Windows) -- but not yet by a
+real-Windows e2e journey with a real AurOS image and Settings on top. Where the handover does not
+apply (an install made by the legacy path; an encrypted root; a collection too big for the filesystem's
+layout, see the limit below) `ferry back` behaves as before, and where it cannot (a locked drive) the
+restore stays refused in plain words with a second path: "Save my files to a USB stick first"
+(R's `ferry stick`). With nothing to save, the restore never needs the Windows drive.
 
-**The design, in the order it happens.**
+**v1 limit, and v0.2.** The handover file must lie in ONE run of blocks on the disk, because a
+partition is one run of blocks. ext4 puts group descriptors and bitmaps between its block groups, so
+about 1-2 GiB is the ceiling; anything bigger is refused with the USB path. **v0.2 (after the first
+real-Windows e2e passes):** the staging environment shrinks AUROS-ROOT offline, makes the exFAT
+partition in the freed tail and copies from a hard-link tree AurOS prepared (zero extra space in AurOS;
+needs `mkfs.exfat` and the `exfat` module in the staging initramfs). It lifts the ceiling to what the
+root's free space allows, and the same Windows half consumes it unchanged. An encrypted AurOS root (S4)
+cannot be handed over by either version without the key: the file would be ciphertext on the disk.
 
-1. *Decide (AurOS, at the button).* Only for an install made by the fast path
-   (the put-back task exists). S = bytes in her six folders (the same list and
-   skips as `ferry back`). Needed: N = max(256 MiB, 1.03 * S + 64 MiB) free in
-   AUROS-ROOT beyond a 2 GiB reserve. Otherwise: the plain refusal and the USB
-   path.
-2. *Make the handover image (AurOS, as root; the copier as her).*
-   `/var/lib/auros/handover.img`, N bytes, **written, not sparse** (`dd` from
-   zero: a preallocated-but-unwritten extent reads as zeros through the file and
-   as stale bytes from the disk, and staging reads the disk). It must be ONE
-   extent (`filefrag`/FIEMAP; one `e4defrag` retry; else the refusal above).
-   `mkfs.exfat -L AurOS-Handover`, loop-mounted; R's copier copies her folders
-   into it (`ferry back --into DIR`: names made safe for Windows, nothing
-   overwritten, nothing followed); the engine writes `MANIFEST.tsv` (relative
-   path, bytes, SHA-256), `state.json` (the Windows user it came from, her AurOS
-   user, the install's run id) and a plain `Read me.txt`; unmount; `sync`. Then
-   the SHA-256 of the whole image file and its physical place on the disk
-   (partition start + extent start, in the disk's logical blocks, aligned to
-   4096) are written -- LAST, with the restore request -- to the boot menu's
-   environment: `auros_handover=<first_lba>,<blocks>,<sha256>`.
-3. *Restore (staging, `aurstage.restore aurstage.handover=...`).* Refuses unless
-   the range lies wholly inside the live AUROS-ROOT partition, the SHA-256 of
-   the raw disk bytes there equals the recorded one (progress on screen), the
-   exFAT boot region and its checksum are intact, and the capture says fast
-   path. Then the restore it already does -- ESP first (only differing
-   megabytes), then the table, new backup first -- with one change: the table
-   written is the captured one (C: stays as small as it is) **plus one entry,
-   AUROS-HANDOVER, exactly over that range** (basic data, no default drive
-   letter). `foreign_partition()` knows the name. The old AurOS partitions are
-   not in the new table; their bytes are simply unallocated. One commit point,
-   as today: before it, AurOS is intact and the request can be retried; after
-   it, the files are in the handover partition and Windows starts.
-4. *Windows, at startup (the put-back task, version 2; SYSTEM).* Finds the
-   volume labelled AurOS-Handover on an exFAT partition of the disk it was
-   registered for. None: version 1's work (grow C:, restore hibernation,
-   unregister). Present: (a) grow C: into the room before the handover partition
-   if it needs it for her files; (b) read `state.json` and `MANIFEST.tsv`; copy
-   file by file into `<her profile>\From AurOS\<folder>\...` as `name.part`,
-   renamed when whole, never overwriting (a taken name becomes
-   `name (from AurOS)`), each one's SHA-256 checked against the manifest and
-   appended to `C:\ProgramData\AurOS\handover.done` -- so a power cut resumes
-   where it stopped; (c) write her `Read me.txt` (what is there, anything that
-   could not be copied); (d) only when every manifest line is verified **in
-   C:**, remove the handover partition, grow C: to its original size, restore
-   hibernation, unregister the task. A second task at logon shows plain progress
-   ("AurOS is putting your files in Windows: 3 of 12 GB") and the final message.
-   Not enough room even after growing C: leaves everything where it is, says so
-   in plain words, and tries again at the next start.
-5. *Never worse than where she started.* At every instant her files are in at
-   least one verified place: AurOS's root (until the table commit), the handover
-   partition (after it, until verified in C:), C: (after). The handover
-   partition is removed only after verification; if Windows never starts, the
-   partition stays, named, readable by any Windows.
+**The design, in the order it happens (as built).**
+
+1. *Decide (AurOS, at the button; `answer.sh back_files`).* Only for an install made by the fast
+   path (`choices.sh` records `via=gap` from `choices.conf`, which is the only install that
+   registered the Windows task that can take the files out). `ferry handover --need` is the bytes
+   her six folders need (R's number: whole clusters, manifest, DONE, slack). 0 means nothing to
+   save: no volume at all.
+2. *Make the volume (AurOS, as root; Ferry's copier as her; `handover.sh`).* `prepare`:
+   `/var/lib/auros/handover.img`, `need` + 3% + 16 MiB (at least 32 MiB), **written, not sparse**
+   (`dd` from zero: an allocated-but-unwritten extent reads as zeros through the file and as stale
+   bytes from the disk, and staging reads the disk), in one run of blocks on the disk (`filefrag`,
+   an `e4defrag` retry, else exit 4), `mkfs.exfat -L AUROSHANDOV`, a loop device. `ferry back
+   --plain` runs unchanged with `FERRY_HANDOVER_DEV` set: names made Windows-safe, nothing followed,
+   `manifest.tsv`, `manifest.sha256`, `files/<Folder>/...`, **DONE last**, after a read-back
+   from the volume itself; it leaves the volume unmounted. `finish`: detach, `sync`, SHA-256 of the
+   file, its address on the disk (the partition's start plus the first block, in 512-byte units,
+   aligned to 4096) and **proof by reading the disk there with O_DIRECT**. `answer.sh` arms the
+   restore with `auros_handover=FIRST,COUNT,SHA256` beside `next_entry`; grub gives it to that
+   restore only (`aurstage.handover=`) and uses it up with the request.
+3. *Restore (staging, `rescue_restore`).* Before any write: the blocks lie wholly inside
+   AUROS-ROOT (or are exactly the AUROS-HANDOVER entry already there, so a restore stopped after its
+   table can be run again), overlap nothing in the saved table, begin as an exFAT volume, and the
+   SHA-256 of the DISK BYTES there equals the record. Then the restore it already does -- ESP first,
+   then the table, new backup first -- with the table written being the saved one (C: stays as small
+   as it is) **plus AUROS-HANDOVER over exactly those blocks** (basic data, no drive letter).
+   `foreign_partition()` knows the name. A record that cannot be read refuses the whole restore: her
+   files would be gone with AurOS. One commit point, as today.
+4. *Windows, at startup (`putback.ps1 -Mode system`, SYSTEM; what AurOS left is untrusted).*
+   Finds the exFAT volume labelled AUROSHANDOV on the disk it was registered for. None: grow C:,
+   hibernation as she had it, unregister. Present: DONE there and `manifest.sha256` matching;
+   EVERY manifest row validated (one of the six folders; each path segment non-empty, not `.`/`..`,
+   none of `\ / : * ? " < > |` or control characters -- which also shuts out alternate data streams --
+   no trailing dot or space, no CON/NUL/COM0-9/LPT0-9; numeric size and time, 64 hex digits; the Windows
+   user a plain name that is an existing real profile folder); room made (C: grown into the room in front
+   of the handover partition if it needs it; otherwise a plain message and try again at the next start);
+   then **the copy is handed to a task that runs AS THE USER at her logon** (`-Mode user`, the same file
+   in a folder she can read), because SYSTEM never writes into a profile: it copies into her own
+   `From AurOS`, walking every component and refusing a link, as `name.aurpart` with CreateNew,
+   renamed when whole, never overwriting (`name (from AurOS)`; her `Read me.txt` too), each copy
+   re-hashed where it now lives, with a plain progress window. SYSTEM waits, then **only reads her
+   copies** and checks each against the hash AurOS wrote -- her report is a pointer, not proof. Only when every row is
+   verified does it remove the handover partition, grow C: to its original size, restore hibernation and
+   unregister.
+5. *Never worse than where she started.* At every instant her files are in at least one verified place:
+   AurOS's root (until the table commit), the handover partition (after it, until verified in C:), C:
+   (after). The partition is removed only after verification; if Windows never starts it stays, named,
+   readable by any Windows.
 
 **Tests (each shown red when its check is broken).**
 
-- AurOS side, in a privileged container with loop devices: the image is one
-  extent, mounts as exFAT, holds her files byte for byte under safe names with
-  a correct manifest, and nothing outside her folders; no room, two extents, a
-  symlinked folder: the refusals, with the root unchanged.
-- Staging, in the KVM guest (`fasttest` machine, installed): restore with the
-  handover leaves the captured table plus AUROS-HANDOVER over exactly the
-  range, the exFAT bytes intact (hash), the ESP restored, C: untouched; a wrong
-  hash, a range outside the root, a damaged exFAT header: refused with the disk
-  byte for byte unchanged; power cut at every restore instant (ESP mid, array,
-  sector, backup): trying the restore again ends in the same disk.
-- Windows, on a real runner (a VHDX with an NTFS C:, a shrunk gap, an exFAT
-  handover partition made and filled by Windows with the same manifest format,
-  and the same again with C: BitLocker-encrypted): the task's own script run
-  against it copies, verifies, removes the partition, grows C:; killed mid-copy
-  and again after the last verify and before the removal, it resumes and ends
-  identical; a file whose manifest hash is wrong stops the removal.
-- Oracle for all of them: the set of her files' hashes, found in one verified
-  place at every checkpoint.
+- AurOS side: `tools/handoverlinuxtest.sh` (19 checks, a2-kvm container): the file is written, in one run
+  of blocks, exFAT, at an address that is TRUE -- read back from the disk image rather than from the
+  loop device the script used; sparse file, no room, a root whose free space is in pieces, and an
+  encrypted root each refused with their own status and nothing left behind.
+- Staging: `tools/fasttest.sh handover` (47 checks): the real `handover.sh` around a stand-in Ferry on a
+  fast-path-installed disk, then the restore with the record -- the table is the saved one plus
+  AUROS-HANDOVER over exactly those blocks, the blocks still hash to the record and mount as exFAT
+  holding her files byte for byte, the EFI partition and Windows are what they were; five refusals
+  (wrong hash, before AurOS's space, inside Windows', unreadable record, after AurOS's space) leave
+  the disk byte for byte untouched; power cut at handover-checked / esp-mid / array / sector / backup.
+  Red when the hash check is removed.
+- Windows: `tools/handovertest.ps1` on a real runner (fastpath.yml job `handover`; `handover-dev.yml`
+  for one scenario at a time or a mutant): happy path, cut during her copy, thirteen hostile lists,
+  links planted in her profile, a forged job file, a user report that lies, a changed file, no DONE, no
+  room, BitLocker. Mutants putback-no-hash / -no-done / -removes-first / -overwrites / -no-validate /
+  -follows-links / -trusts-job / -trusts-report all turn it red.
+- Oracle for all of them: her files' hashes, found in one verified place at every checkpoint.
 
-**Depends on R.** `ferry back --into DIR` (the copier with a plain directory
-as its destination, no Windows volume), `ferry back --to-usb`, and "nothing to
-save never needs the Windows drive".
+**The stage log.** A refusal used to leave a verdict word and, once the computer had restarted itself,
+no reason. When a verdict is given, `src/aurstage/stagelog.c` -- a third write gate in `build/staging`,
+beside `wr.c` and `nvram.c`, allowed one writable open of `\EFI\AurOS\stage.log` and nothing else --
+writes everything staging said to the machine's EFI partition, only if `\EFI\AurOS` is already there
+(AurOS's own start-up partition is skipped). Not `C:\AurOS`: staging mounts Windows' drive read-only
+(and cannot open a BitLocker one), and "a refusal leaves Windows' disk byte for byte as it was" is
+worth more than a log in that folder. `aurstage.nolog` turns it off. Tested by `fasttest.sh stagelog`.
+
+**Ferry's side (R, 1a8c819 and after).** `ferry handover --need`; `ferry back --plain` writing the volume named
+by `FERRY_HANDOVER_DEV` (or `--to DEV`, or the label), DONE last, unmounted on every exit path, exit 0
+with no DONE when there is nothing to save; `ferry stick` for the USB path; `tests/verify-handover.sh`
+(the reference verifier -- it carries the same name rules as `putback.ps1`). The layout is in
+docs/FERRY.md.
