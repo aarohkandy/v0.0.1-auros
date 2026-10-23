@@ -736,6 +736,11 @@ void install_run(const stage_machine *m)
         snprintf(mp, sizeof mp, "%s.manifest", ip);
         if (image_find_file(ip, mp, j.profile, &img, why, sizeof why) != 0)
             refuse(why, "Run the installer in Windows again.", "no-image");
+        /* SEC-001: the file's own note of what it should hash to is not a
+         * trust root; the journal's is. */
+        if (image_bind(&img, j.root_len, j.root_sha256, j.boot_len,
+                       j.boot_sha256, why, sizeof why) != 0)
+            refuse(why, "Run the installer in Windows again.", "image-not-ours");
     } else if (image_find(m, j.profile, &img, why, sizeof why) != 0) {
         refuse(why, NULL, "no-image");
     }

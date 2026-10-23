@@ -170,6 +170,19 @@ int journal_read(const char *path, journal *j)
               j->gap_rec_first <= j->gap_rec_last))
             return 0;
     }
+    /* THE NO-STICK JOURNAL CARRIES THE IMAGE'S TRUST ROOT (SEC-001). The
+     * image is a file in a folder on C: that other programs on that
+     * computer may have been able to write, and the manifest beside it is
+     * only as good as the folder. A journal that does not say what the
+     * image must hash to is a journal that would let the file say so
+     * itself, and is refused like any other that cannot do its job. */
+    if (!strcmp(j->image_on, "windows")) {
+        int hx = strlen(j->root_sha256) == 64 && strlen(j->boot_sha256) == 64;
+        for (int i = 0; hx && i < 64; i++)
+            if (!isxdigit((unsigned char)j->root_sha256[i]) ||
+                !isxdigit((unsigned char)j->boot_sha256[i])) hx = 0;
+        if (!hx || !j->root_len || !j->boot_len) return 0;
+    }
     j->present = 1;
     j->corrupt = 0;
     return 1;

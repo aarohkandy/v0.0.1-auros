@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <sys/stat.h>
 
@@ -422,6 +423,34 @@ int image_find_file(const char *img_path, const char *man_path,
     }
     if (cross_check(&c, why, n) != 0) return -1;
     *out = c;
+    return 0;
+}
+
+/* SEC-001: THE FILE DOES NOT GET TO SAY WHAT IT SHOULD HASH TO.
+ *
+ * The manifest beside the image is a file in a folder on C: -- written by
+ * the installer, but a folder other programs on that computer may have been
+ * able to write. An image swapped there with a manifest recomputed to match
+ * would pass every check image_verify makes, because image_verify compares
+ * the image with the manifest. So the manifest is held to the JOURNAL, which
+ * travelled on the EFI partition where only an administrator writes: the
+ * lengths and the two hashes must be exactly the ones the installer noted
+ * down after it had checked the whole image against the hash baked into the
+ * installer. Any difference is a refusal, before anything is touched. */
+int image_bind(const image_src *s, uint64_t root_len, const char *root_hex,
+               uint64_t boot_len, const char *boot_hex, char *why, size_t n)
+{
+    char rh[65], eh[65];
+    sha256_hex(s->root_sha, rh, sizeof rh);
+    sha256_hex(s->esp_sha, eh, sizeof eh);
+    if (!s->have_sha || !s->have_esp_sha ||
+        s->root_len != root_len || s->esp_len != boot_len ||
+        strcasecmp(rh, root_hex) != 0 || strcasecmp(eh, boot_hex) != 0) {
+        snprintf(why, n,
+                 "the copy of AurOS on the Windows drive is not the one the "
+                 "installer put there. Nothing has been changed.");
+        return -1;
+    }
     return 0;
 }
 

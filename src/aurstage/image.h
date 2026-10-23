@@ -121,6 +121,12 @@ int image_find_file(const char *img_path, const char *man_path,
                     const char *want_profile, image_src *out,
                     char *why, size_t n);
 
+/* Hold an image found by image_find_file to the journal's trust root: its
+ * lengths and its two hashes must equal the ones the installer recorded on
+ * the EFI partition (SEC-001). Call before image_verify. */
+int image_bind(const image_src *s, uint64_t root_len, const char *root_hex,
+               uint64_t boot_len, const char *boot_hex, char *why, size_t n);
+
 /* Hash the root extent where it lies and compare against the build's.
  * Done BEFORE the shrink, always: every question this answers is
  * answerable with the disk untouched, and discovering the stick is

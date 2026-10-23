@@ -352,6 +352,7 @@ static void usage(void)
 
 int main(int argc, char **argv)
 {
+    plat_harden_dll_search();                       /* SEC-003: before anything is loaded */
     const char *cmd = argc > 1 ? argv[1] : "preflight";
     int json = 0;
     for (int i = 2; i < argc; i++)
@@ -384,6 +385,27 @@ int main(int argc, char **argv)
         char tail[512] = "";
         int rc = plat_run(argv[2], tail, sizeof tail);
         printf("runcheck rc=%d tail=%s\n", rc, tail);
+        return 0;
+    }
+    /* `dircheck DIR` makes DIR the way the installer makes its download
+     * folder (plat_dir_private) and says what it did; `dircheck sid SID`
+     * says whether the installer would trust an owner with that SID. CI on
+     * a Windows runner plants a junction, a permissive folder and a stranger's
+     * SID and reads the ACLs back with icacls (docs/security SEC-001/010). */
+    if (!strcmp(cmd, "dircheck") && argc >= 3) {
+        if (!strcmp(argv[2], "sid") && argc >= 4) {
+            printf("dircheck sid=%s trusted=%d\n", argv[3],
+                   plat_sid_is_trusted_owner(argv[3]));
+            return 0;
+        }
+        char why[400] = "";
+        if (!strcmp(argv[2], "rename") && argc >= 5) {
+            int rr = plat_file_rename(argv[3], argv[4], why, sizeof why);
+            printf("dircheck rc=%d %s\n", rr, why);
+            return 0;
+        }
+        int rc = plat_dir_private(argv[2], why, sizeof why);
+        printf("dircheck rc=%d %s\n", rc, why);
         return 0;
     }
     /* The install's first step, alone, so that a real Windows machine

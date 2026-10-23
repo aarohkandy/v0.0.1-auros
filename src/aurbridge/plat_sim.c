@@ -42,6 +42,7 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "plat.h"
@@ -537,6 +538,44 @@ int plat_file_put(const char *to, const void *buf, size_t n,
 #endif
     close(fd);
     return 0;
+}
+
+/* The simulated machine's version of plat_dir_private: a link where the folder
+ * should be (the junction an attacker would make) or a plain file is moved
+ * aside, never followed and never deleted; the folder is then made. There are
+ * no owners or ACLs in a directory of files -- the real Windows check for
+ * those is `aurbridge.exe dircheck`, run by CI on a Windows runner. */
+int plat_dir_private(const char *path, char *why, size_t wn)
+{
+    char tmp[600];
+    snprintf(tmp, sizeof tmp, "%s", path);
+    size_t L = strlen(tmp);
+    while (L > 1 && (tmp[L - 1] == '/' || tmp[L - 1] == '\\')) tmp[--L] = 0;
+#ifndef _WIN32
+    struct stat st;
+    if (lstat(tmp, &st) == 0 && !S_ISDIR(st.st_mode)) {
+        char aside[700];
+        snprintf(aside, sizeof aside, "%s.moved-aside-%lu", tmp,
+                 (unsigned long)time(NULL));
+        if (rename(tmp, aside) != 0) {
+            snprintf(why, wn, "the AurOS folder on this computer is not one "
+                              "the installer made, and could not be moved out "
+                              "of the way.");
+            return -1;
+        }
+    }
+#endif
+    mkparents(tmp);
+    MKDIR(tmp);
+    return 0;
+}
+
+void plat_harden_dll_search(void) {}
+void *plat_load_system_dll(const char *name) { (void)name; return NULL; }
+
+int plat_sid_is_trusted_owner(const char *sid_text)
+{
+    return !strcmp(sid_text, "S-1-5-18") || !strcmp(sid_text, "S-1-5-32-544");
 }
 
 int plat_file_copy(const char *from, const char *to, char *why, size_t wn)

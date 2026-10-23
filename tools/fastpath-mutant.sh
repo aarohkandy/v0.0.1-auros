@@ -23,6 +23,16 @@
 #                      -> red: "it ran on a disk it was not named"
 #    no-sysdisk-check  the disk Windows runs from is accepted
 #                      -> red: "refused, but not for being the system disk"
+#    dir-follows-links the download folder may be a junction (SEC-010)
+#                      -> red: "the folder was followed" (dircheck job)
+#    dir-any-owner     a stranger's owner is trusted
+#                      -> red: "owner S-1-5-32-545 should be trusted=0"
+#    dir-open-acl      the folder lets Users in (SEC-001)
+#                      -> red: "inherits permissions" / "somebody else can use it"
+#    file-keeps-acl    a file moved in keeps the permissions it came with (SEC-010)
+#                      -> red: "the moved-in file is still owned by" / "open to somebody else"
+#    no-dll-harden     the installer searches its own folder for DLLs (SEC-003)
+#                      -> red: "A PLANTED DLL WAS LOADED"
 #    file-changed      (in the workflow, not here) one of her files changes
 #                      -> red: "A FILE CHANGED"
 # ═══════════════════════════════════════════════════════════════════
@@ -55,6 +65,16 @@ gap-corrupt)
 undo-short)
     sub src/aurbridge/plat_win.c 'uint64_t want = to_bytes && to_bytes < smax ? to_bytes : smax;' \
                                  'uint64_t want = (to_bytes && to_bytes < smax ? to_bytes : smax) - (1u << 20);' ;;
+dir-follows-links)
+    sub src/aurbridge/plat_win.c '(at & FILE_ATTRIBUTE_REPARSE_POINT);' '0;' ;;
+dir-any-owner)
+    sub src/aurbridge/plat_win.c 'if (!owner || !IsValidSid(owner)) return 0;' 'if (1) return 1;' ;;
+dir-open-acl)
+    sub src/aurbridge/plat_win.c 'L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"' 'L"D:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;BU)"' ;;
+no-dll-harden)
+    sub src/aurbridge/plat_win.c 'if (!f || !f(0x800)) SetDllDirectoryW(L"");' '(void)f;' ;;
+file-keeps-acl)
+    sub src/aurbridge/plat_win.c '            SetNamedSecurityInfoW(wt, SE_FILE_OBJECT,' '            if (0) SetNamedSecurityInfoW(wt, SE_FILE_OBJECT,' ;;
 no-guid-check)
     sub src/aurbridge/main.c 'if (_stricmp(g, want_guid) != 0) {' 'if (0) {' ;;
 no-sysdisk-check)

@@ -488,9 +488,10 @@ size_t fmt_journal_json(const fmt_journal *j, char *out, size_t n)
         (unsigned long long)j->run_id,
         (unsigned long long)j->written_unix);
     if (k < 0 || (size_t)k >= n) return 0;
-    if (strcmp(j->image_on, "gap") != 0) return (size_t)k;
+    int gap = strcmp(j->image_on, "gap") == 0;
+    if (!gap && strcmp(j->image_on, "windows") != 0) return (size_t)k;
 
-    /* THE FAST PATH'S FIELDS, after the closing brace is taken back off.
+    /* THE IMAGE'S TRUST ROOT, after the closing brace is taken back off.
      * The two hashes are checked to be exactly 64 hex characters rather
      * than escaped: anything else is a journal this writer must not
      * produce. */
@@ -502,6 +503,20 @@ size_t fmt_journal_json(const fmt_journal *j, char *out, size_t n)
                 return 0;
     }
     k -= 2;                                   /* "}\n" */
+    if (!gap) {
+        /* image_on = "windows" (SEC-001): the image sits in a folder on
+         * C:, where the manifest beside it is only as trustworthy as the
+         * folder. The journal travels on the EFI partition, which only an
+         * administrator can write, so the extents' hashes live HERE and
+         * the staging environment checks the image against these. */
+        int w = snprintf(out + k, n - (size_t)k,
+            ",\"root_len\":%llu,\"root_sha256\":\"%s\","
+            "\"boot_len\":%llu,\"boot_sha256\":\"%s\"}\n",
+            (unsigned long long)j->root_len, j->root_sha256,
+            (unsigned long long)j->boot_len, j->boot_sha256);
+        if (w < 0 || (size_t)w >= n - (size_t)k) return 0;
+        return (size_t)k + (size_t)w;
+    }
     int m = snprintf(out + k, n - (size_t)k,
         ",\"gap_root_first\":%llu,\"gap_root_last\":%llu,"
         "\"gap_rsc_first\":%llu,\"gap_rsc_last\":%llu,"

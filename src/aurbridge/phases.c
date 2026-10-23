@@ -889,6 +889,8 @@ static int image_write(void *ud, const uint8_t *buf, size_t n)
 static int fetch_pieces(const ab_pieces *pc, const char *dir, ab_say say,
                         ab_progress prog, void *ud, char *why, size_t n)
 {
+    /* Nothing is downloaded into a folder that was not looked at (SEC-001). */
+    if (dir[0] && plat_dir_private(dir, why, n) != 0) return -1;
     uint64_t done = 0;
     for (int i = 0; i < pc->n; i++) {
         const ab_piece *q = &pc->p[i];
@@ -1044,6 +1046,13 @@ static int ensure_image_pieces(const ab_choice *c, int present,
 static int ensure_image(const ab_choice *c, ab_say say, ab_progress prog,
                         void *ud, char *why, size_t n)
 {
+    /* THE FOLDER FIRST (SEC-001, SEC-010): made private, or a stranger's
+     * moved aside, before this reads, moves or writes anything in it. */
+    {
+        char dir[600];
+        dir_of(c->image_path, dir, sizeof dir);
+        if (dir[0] && plat_dir_private(dir, why, n) != 0) return -1;
+    }
     if (c->image_sha256[0] && !hex_ok(c->image_sha256)) {
         snprintf(why, n,
                  "this copy of the installer was not built correctly -- it "
@@ -1403,7 +1412,6 @@ static int phase_prepare_nostick(const ab_choice *c, ab_machine *m,
                                  ab_say say, ab_progress prog, void *ud,
                                  char *why, size_t n)
 {
-    (void)m;
     if (ensure_image(c, say, prog, ud, why, n) != 0) return -1;
     uint64_t image_bytes = 0;
     if (plat_file_size(c->image_path, &image_bytes) != 0 || !image_bytes) {
@@ -1452,6 +1460,15 @@ static int phase_prepare_nostick(const ab_choice *c, ab_machine *m,
         }
         fmt_sha_done(&h, X[k].out);
     }
+
+    /* THE TRUST ROOT, FOR THE JOURNAL (SEC-001). The manifest below is a
+     * file in a folder on C:; these go on the EFI partition, in the journal,
+     * and the staging environment holds the manifest and the image to them.
+     * They were just computed from a file ensure_image() has already matched
+     * against the hash baked into this program. */
+    m->root_len = root_len; m->boot_len = esp_len;
+    fmt_sha_hex(root_sha, m->root_sha256, sizeof m->root_sha256);
+    fmt_sha_hex(esp_sha,  m->boot_sha256, sizeof m->boot_sha256);
 
     uint8_t man[FMT_MANIFEST_BYTES], back[FMT_MANIFEST_BYTES];
     fmt_manifest(man, image_bytes, root_off, root_len, 512, root_sha,
@@ -2128,6 +2145,11 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
     snprintf(j.profile, sizeof j.profile, "%s", c->profile);
     snprintf(j.image_on, sizeof j.image_on, "%s",
              m->fast ? "gap" : c->no_stick ? "windows" : "stick");
+    if (!m->fast && c->no_stick) {
+        j.root_len = m->root_len; j.boot_len = m->boot_len;
+        snprintf(j.root_sha256, sizeof j.root_sha256, "%s", m->root_sha256);
+        snprintf(j.boot_sha256, sizeof j.boot_sha256, "%s", m->boot_sha256);
+    }
     if (m->fast) {
         j.gap_root_first = m->plan.root_first; j.gap_root_last = m->plan.root_last;
         j.gap_rsc_first  = m->plan.rsc_first;  j.gap_rsc_last  = m->plan.rsc_last;

@@ -214,6 +214,28 @@ int plat_file_put(const char *to, const void *buf, size_t n,
  * what this replaced. */
 int plat_file_append(const char *to, const void *buf, size_t n,
                      char *why, size_t wn);
+/* THE FOLDER THE DOWNLOAD LIVES IN (SEC-001, SEC-010). Makes `path` if it is
+ * not there, with an ACL that admits only SYSTEM and the Administrators; lays
+ * the same ACL over a folder this installer made earlier; and MOVES ASIDE,
+ * never deletes, anything already at that name that is not a plain folder
+ * (a junction, a link, a file) or is owned by anyone else. -1 with the reason
+ * if it cannot be done: nothing is downloaded into a folder that was not
+ * checked. Call before the first file is written there. */
+int plat_dir_private(const char *path, char *why, size_t wn);
+/* Is the account with this SID ("S-1-5-32-544") one a folder may be owned by
+ * and still be trusted? SYSTEM and the Administrators only. Exposed for the
+ * installer's own check on real Windows (main.c dircheck). */
+int plat_sid_is_trusted_owner(const char *sid_text);
+/* FIRST STATEMENT OF main AND WinMain (SEC-003). Every DLL this program loads
+ * by name from here on (wlanapi, iphlpapi, winspool, dwmapi, ...) is looked
+ * for in System32 only -- not in the folder the installer was downloaded to,
+ * which anything can write to and which Windows searches first by default.
+ * A no-op in the simulated machine. */
+void plat_harden_dll_search(void);
+/* Load one of Windows' own DLLs BY NAME FROM SYSTEM32 ONLY (SEC-003): the same
+ * guarantee as the call above, held per call. NULL if it is not there. Returns
+ * a Windows module handle as a void *, so this header stays free of windows.h. */
+void *plat_load_system_dll(const char *name);
 /* Remove a file this program made. 0 if it is gone afterwards,
  * including when it was never there. */
 int plat_file_delete(const char *path, char *why, size_t wn);

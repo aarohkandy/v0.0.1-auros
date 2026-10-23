@@ -51,6 +51,7 @@ I="$T/win/AurOS/auros-desktop.img"
 mkdir -p "$T/win/AurOS"
 truncate -s 64M "$I"
 sgdisk -n 1:2048:+16M -t 1:ef00 -n 2:0:0 -t 2:8304 "$I" >/dev/null
+cp "$I" "$T/image.keep"          # the first run below deletes $I, as closing the window does
 head -c 4096 /dev/urandom > "$T/kern"; head -c 4096 /dev/urandom > "$T/initrd"
 S="$T/sim"; mkdir -p "$S/esp"
 : > "$S/efivars.txt"
@@ -89,6 +90,38 @@ left=$(find "$S/esp/EFI/AurOS" -type f 2>/dev/null)
 # And the machine's own disk was never written.
 [ "$(cksum < "$D")" = "$DISKSUM" ] && ok "the machine's disk was not touched" \
                                    || bad "the machine's disk was not touched"
+
+# ── a folder somebody planted is moved aside, never followed (SEC-010) ──
+#
+# Everything the installer does to \AurOS\ it does as an administrator:
+# truncate, rename, delete, write gigabytes. If the name is a link to
+# somewhere else, that is wherever the link says. The engine looks at the
+# folder before it touches anything in it.
+echo
+echo "  and a link planted where the AurOS folder goes"
+mkdir -p "$T/w2" "$T/elsewhere"
+cp "$T/image.keep" "$T/elsewhere/auros-desktop.img"
+echo "somebody's file" > "$T/elsewhere/canary.txt"
+( cd "$T/elsewhere" && find . -type f -exec cksum {} \; | sort ) > "$T/elsewhere.before"
+ln -s "$T/elsewhere" "$T/w2/AurOS"
+S2="$T/sim2"; mkdir -p "$S2/esp"; : > "$S2/efivars.txt"; cp "$S/disks.txt" "$S2/disks.txt"
+out/aurbridge-sim "$S2" desktop none "$T/w2/AurOS/auros-desktop.img" \
+    "$T/kern" "$T/initrd" > "$T/out2" 2> "$T/err2"
+[ -d "$T/w2/AurOS" ] && [ ! -L "$T/w2/AurOS" ] \
+    && ok "the name is a real folder now, not the link" \
+    || bad "the name is a real folder now, not the link" "$(ls -l "$T/w2")"
+ls -d "$T"/w2/AurOS.moved-aside-* >/dev/null 2>&1 \
+    && ok "the link was moved aside, not deleted" \
+    || bad "the link was moved aside, not deleted" "$(ls "$T/w2")"
+( cd "$T/elsewhere" && find . -type f -exec cksum {} \; | sort ) > "$T/elsewhere.after"
+cmp -s "$T/elsewhere.before" "$T/elsewhere.after" \
+    && ok "nothing was read, moved, written or deleted through it" \
+    || bad "nothing was read, moved, written or deleted through it" "$(diff "$T/elsewhere.before" "$T/elsewhere.after")"
+grep -q 'verdict=armed' "$T/out2" \
+    && bad "it did not arm on an image it had not looked at" "armed" \
+    || ok "it did not arm on an image it had not looked at"
+[ "$(cksum < "$D")" = "$DISKSUM" ] && ok "the machine's disk was not touched, either" \
+                                   || bad "the machine's disk was not touched, either"
 
 echo
 if [ "$fail" -gt 0 ]; then echo "$fail of $checked wrong."; exit 1; fi

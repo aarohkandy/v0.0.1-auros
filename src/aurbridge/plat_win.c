@@ -33,6 +33,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winioctl.h>
+#include <aclapi.h>
+#include <sddl.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -850,7 +852,7 @@ int plat_wifi_profile(char *ssid, size_t sn, char *security, size_t secn,
                       char *psk, size_t pn, char *why, size_t wn)
 {
     ssid[0] = security[0] = psk[0] = 0;
-    HMODULE m = LoadLibraryA("wlanapi.dll");
+    HMODULE m = (HMODULE)plat_load_system_dll("wlanapi.dll");   /* SEC-003 */
     if (!m) { snprintf(why, wn, "this computer is not on Wi-Fi"); return -1; }
     PFN_WlanOpenHandle     op = (PFN_WlanOpenHandle)(void *)GetProcAddress(m, "WlanOpenHandle");
     PFN_WlanCloseHandle    cl = (PFN_WlanCloseHandle)(void *)GetProcAddress(m, "WlanCloseHandle");
@@ -1068,6 +1070,20 @@ static int to_wide(const char *in, wchar_t *out, int cap)
     return 0;
 }
 
+void *plat_load_system_dll(const char *name)
+{
+    wchar_t w[64];
+    if (to_wide(name, w, 64) != 0) return NULL;
+    HMODULE m = LoadLibraryExW(w, NULL, 0x800 /* LOAD_LIBRARY_SEARCH_SYSTEM32 */);
+    if (m || GetLastError() != ERROR_INVALID_PARAMETER) return (void *)m;
+    /* The flag is not known here (Windows 7 without KB2533623): the full path. */
+    wchar_t full[MAX_PATH + 64];
+    UINT n = GetSystemDirectoryW(full, MAX_PATH);
+    if (!n || n >= MAX_PATH) return NULL;
+    _snwprintf(full + n, 63, L"\\%ls", w);
+    return (void *)LoadLibraryW(full);
+}
+
 static HANDLE open_file(const char *path, int writing)
 {
     wchar_t w[1024];
@@ -1128,6 +1144,137 @@ static void make_dirs(const char *path)
         CreateDirectoryW(w, NULL);
         *p = c;
     }
+}
+
+void plat_harden_dll_search(void)
+{
+    /* LOAD_LIBRARY_SEARCH_SYSTEM32 is 0x800. Found at run time because the
+     * function is in kernel32 only on Windows 8 and later (and on 7 with
+     * KB2533623); where it is missing, the current-directory part of the
+     * search is at least dropped. DLLs this program is LINKED against are
+     * already resolved by the time this runs; those are the ones it names
+     * with the KnownDLLs-or-System32 rule at link time. */
+    typedef BOOL (WINAPI *PFN_SDDD)(DWORD);
+    HMODULE k = GetModuleHandleA("kernel32.dll");
+    PFN_SDDD f = k ? (PFN_SDDD)(void *)GetProcAddress(k, "SetDefaultDllDirectories") : NULL;
+    if (!f || !f(0x800)) SetDllDirectoryW(L"");
+}
+
+/* ── THE FOLDER AUROS KEEPS ITS DOWNLOAD IN (SEC-001, SEC-010) ────────
+ *
+ * C:\AurOS is made in a place any program on the computer can write unless
+ * it is made otherwise, and everything this installer then does as an
+ * administrator -- truncating, renaming, deleting, writing five gigabytes --
+ * would follow whatever somebody put there first: a folder they own, or a
+ * junction pointing somewhere else. So:
+ *
+ *   - a folder that is not a plain folder (a junction or symbolic link) or
+ *     is owned by anyone but SYSTEM or the Administrators is moved aside, not
+ *     used and not deleted, and a fresh one is made;
+ *   - the fresh folder is made with a protected ACL, SYSTEM and Administrators
+ *     only, which everything inside it inherits;
+ *   - a folder this installer made earlier gets the same ACL laid over it.
+ *
+ * Moved aside rather than removed: it is not ours to delete, and it may be the
+ * person's own. Anything that cannot be done is a refusal, because the next
+ * step is five gigabytes of downloading into it. */
+static int owner_is_trusted(PSID owner)
+{
+    BYTE sys[SECURITY_MAX_SID_SIZE], adm[SECURITY_MAX_SID_SIZE];
+    DWORD a = sizeof sys, b = sizeof adm;
+    if (!owner || !IsValidSid(owner)) return 0;
+    if (CreateWellKnownSid(WinLocalSystemSid, NULL, sys, &a) && EqualSid(owner, sys))
+        return 1;
+    if (CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL, adm, &b) &&
+        EqualSid(owner, adm))
+        return 1;
+    return 0;
+}
+
+int plat_sid_is_trusted_owner(const char *sid_text)
+{
+    wchar_t w[128];
+    PSID sid = NULL;
+    if (to_wide(sid_text, w, 128) != 0 ||
+        !ConvertStringSidToSidW(w, &sid))
+        return 0;
+    int r = owner_is_trusted(sid);
+    LocalFree(sid);
+    return r;
+}
+
+int plat_dir_private(const char *path, char *why, size_t wn)
+{
+    static const wchar_t *SDDL = L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
+    wchar_t w[1024];
+    if (to_wide(path, w, 1024) != 0) {
+        snprintf(why, wn, "the AurOS folder's name could not be read.");
+        return -1;
+    }
+    size_t L = wcslen(w);
+    while (L > 3 && (w[L - 1] == L'\\' || w[L - 1] == L'/')) w[--L] = 0;
+
+    PSECURITY_DESCRIPTOR want = NULL;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            SDDL, SDDL_REVISION_1, &want, NULL)) {
+        why_of(why, wn, "the AurOS folder's permissions could not be prepared",
+               GetLastError());
+        return -1;
+    }
+    int rc = -1;
+    DWORD at = GetFileAttributesW(w);          /* a link's own, not its target's */
+    int exists = at != INVALID_FILE_ATTRIBUTES;
+    if (exists) {
+        int stale = !(at & FILE_ATTRIBUTE_DIRECTORY) ||
+                    (at & FILE_ATTRIBUTE_REPARSE_POINT);
+        if (!stale) {
+            PSID owner = NULL;
+            PSECURITY_DESCRIPTOR sd = NULL;
+            if (GetNamedSecurityInfoW(w, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
+                                      &owner, NULL, NULL, NULL, &sd) != ERROR_SUCCESS ||
+                !owner_is_trusted(owner))
+                stale = 1;
+            if (sd) LocalFree(sd);
+        }
+        if (stale) {
+            wchar_t aside[1100];
+            _snwprintf(aside, 1099, L"%ls.moved-aside-%lu", w,
+                       (unsigned long)GetTickCount());
+            aside[1099] = 0;
+            if (!MoveFileExW(w, aside, 0)) {
+                why_of(why, wn, "the AurOS folder on this computer is not one "
+                                "the installer made, and could not be moved "
+                                "out of the way", GetLastError());
+                goto out;
+            }
+            exists = 0;
+        }
+    }
+    if (!exists) {
+        SECURITY_ATTRIBUTES sa = { sizeof sa, want, FALSE };
+        if (!CreateDirectoryW(w, &sa)) {
+            why_of(why, wn, "the AurOS folder could not be made",
+                   GetLastError());
+            goto out;
+        }
+    } else {
+        BOOL present = FALSE, defaulted = FALSE;
+        PACL dacl = NULL;
+        if (!GetSecurityDescriptorDacl(want, &present, &dacl, &defaulted) ||
+            !present || !dacl ||
+            SetNamedSecurityInfoW(w, SE_FILE_OBJECT,
+                                  DACL_SECURITY_INFORMATION |
+                                  PROTECTED_DACL_SECURITY_INFORMATION,
+                                  NULL, NULL, dacl, NULL) != ERROR_SUCCESS) {
+            why_of(why, wn, "the AurOS folder's permissions could not be "
+                            "locked", GetLastError());
+            goto out;
+        }
+    }
+    rc = 0;
+out:
+    LocalFree(want);
+    return rc;
 }
 
 int plat_file_put(const char *to, const void *buf, size_t n,
@@ -1894,6 +2041,27 @@ int plat_file_rename(const char *from, const char *to, char *why, size_t wn)
                              MOVEFILE_WRITE_THROUGH)) {
         why_of(why, wn, "a file could not be moved into place", GetLastError());
         return -1;
+    }
+    /* A FILE MOVED IN FROM ANOTHER FOLDER BRINGS ITS OLD PERMISSIONS (SEC-010).
+     * Inside the private AurOS folder it would still be writable by whoever
+     * could write it in Downloads -- the folder's lock does not stop a program
+     * that opens the file by its full path -- and, owned by the person's own
+     * account, a program running as her without the administrator part of her
+     * token could even rewrite its permissions. So the file takes the folder's
+     * permissions and belongs to the Administrators. Best effort: a volume
+     * with no permissions (FAT) says so, and the staging environment does not
+     * rely on this -- it holds the image to the hashes in the journal. */
+    {
+        BYTE adm[SECURITY_MAX_SID_SIZE];
+        DWORD a = sizeof adm;
+        ACL none;
+        if (CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL, adm, &a) &&
+            InitializeAcl(&none, sizeof none, ACL_REVISION))
+            SetNamedSecurityInfoW(wt, SE_FILE_OBJECT,
+                                  OWNER_SECURITY_INFORMATION |
+                                  DACL_SECURITY_INFORMATION |
+                                  UNPROTECTED_DACL_SECURITY_INFORMATION,
+                                  adm, NULL, &none, NULL);
     }
     return 0;
 }

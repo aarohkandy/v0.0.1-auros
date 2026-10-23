@@ -81,6 +81,9 @@ jobs:
           for n in schtasks mountvol manage-bde powercfg bcdedit icacls netsh reg; do
               x86_64-w64-mingw32-gcc -O1 -o "planted/$n.exe" tools/planted.c
           done
+          # And DLLs the installer loads by bare name at run time (SEC-003).
+          x86_64-w64-mingw32-gcc -O1 -shared -o planted/wlanapi.dll tools/planted_dll.c
+          x86_64-w64-mingw32-gcc -O1 -shared -o planted/winspool.drv tools/planted_dll.c
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: planted
@@ -248,8 +251,11 @@ jobs:
           foreach ($c in 'schtasks /?', 'schtasks.exe /?', 'powercfg /?', 'manage-bde -?', 'bcdedit /?', 'netsh /?', 'mountvol /?') {
               $o = .\aurbridge.exe runcheck $c
               "$c -> $o"
-              if ($o -notmatch 'runcheck rc=\d+ tail=') { $fail = $true; "no answer for $c" }
+              # Windows' own program ran (its exit code may be -1, as manage-bde's
+              # usage page is) and the resolver did not refuse it.
+              if ($o -notmatch 'runcheck rc=-?\d+ tail=' -or $o -match 'belong to Windows') { $fail = $true; "no answer for $c" }
           }
+          if ($fail) { throw "one of Windows' own programs did not start" }
           if (Test-Path PLANTED-RAN.txt) { throw "A PLANTED PROGRAM RAN (beside the exe)" }
           if (Test-Path C:\PLANTED-RAN-ELEVATED.txt) { throw "A PLANTED PROGRAM RAN (elevated marker)" }
           # The real one answered: schtasks prints its own usage.
@@ -265,3 +271,122 @@ jobs:
           }
           if (Test-Path PLANTED-RAN.txt) { throw "A PLANTED PROGRAM RAN (after the refusals)" }
           "ok: only Windows' own programs start, and a planted one never does"
+
+      # SEC-003: the same folder holds a wlanapi.dll and a winspool.drv that
+      # write a marker when loaded. The installer loads both by name (the Wi-Fi
+      # check and the printer inventory), and used to find these first.
+      - name: a DLL planted beside the installer is never loaded
+        shell: pwsh
+        run: |
+          Set-Location exe
+          Remove-Item C:\PLANTED-DLL-RAN.txt -ErrorAction SilentlyContinue
+          if (-not ((Test-Path wlanapi.dll) -and (Test-Path winspool.drv))) { throw "setup: the planted DLLs are not here" }
+          $null = .\aurbridge.exe preflight 2>&1 | Out-String
+          $null = .\aurbridge.exe report "$env:RUNNER_TEMP\rep" 2>&1 | Out-String
+          if (Test-Path C:\PLANTED-DLL-RAN.txt) { throw "A PLANTED DLL WAS LOADED by the installer" }
+          "ok: DLLs the installer names are looked for in System32 only"
+
+  # SEC-001 / SEC-010: the folder the download lives in. Made with an ACL that
+  # admits SYSTEM and Administrators only; a folder somebody else made (a
+  # junction, a file, a stranger's) is moved aside, never followed.
+  dircheck:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: exe, path: exe }
+      - name: the download folder is private, and a planted one is never used
+        shell: pwsh
+        run: |
+          $exe = "$PWD\exe\aurbridge.exe"
+          $root = 'C:\AurOS-dircheck'
+          Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory $root | Out-Null
+          function Who($d) { (Get-Acl $d).Access | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique }
+          function Private($d, $label) {
+            $a = Get-Acl $d
+            $who = Who $d
+            "$label : protected=$($a.AreAccessRulesProtected) owner=$($a.Owner) who=$($who -join ', ')"
+            if (-not $a.AreAccessRulesProtected) { throw "$label : inherits permissions from its parent" }
+            $bad = $who | Where-Object { $_ -ne 'NT AUTHORITY\SYSTEM' -and $_ -ne 'BUILTIN\Administrators' }
+            if ($bad) { throw "$label : somebody else can use it: $($bad -join ', ')" }
+            if ($who.Count -ne 2) { throw "$label : expected exactly SYSTEM and Administrators, got $($who -join ', ')" }
+          }
+
+          # 1. a folder that is not there: made, private, and what is put in it is private too
+          $o = & $exe dircheck "$root\fresh"; $o
+          if ($o -notmatch 'rc=0') { throw "fresh folder: $o" }
+          Private "$root\fresh" 'fresh'
+          Set-Content "$root\fresh\x.txt" 'x'
+          $inner = Who "$root\fresh\x.txt"
+          if (($inner | Where-Object { $_ -ne 'NT AUTHORITY\SYSTEM' -and $_ -ne 'BUILTIN\Administrators' })) { throw "a file made inside it is open to: $($inner -join ', ')" }
+
+          # 2. a folder an older installer made, open to Users: kept, locked, its file still there
+          New-Item -ItemType Directory "$root\older" | Out-Null
+          Set-Content "$root\older\piece-1" 'kept'
+          if (-not ((Who "$root\older") -contains 'BUILTIN\Users')) { throw "setup: the older folder is not open to Users, so this proves nothing" }
+          $o = & $exe dircheck "$root\older"; $o
+          if ($o -notmatch 'rc=0') { throw "older folder: $o" }
+          Private "$root\older" 'older'
+          if ((Get-Content "$root\older\piece-1") -ne 'kept') { throw "the older folder's file was lost" }
+          if ((Who "$root\older\piece-1") -contains 'BUILTIN\Users') { throw "the file already in it still lets Users in" }
+
+          # 3. a junction where the folder should be: moved aside, NEVER followed
+          New-Item -ItemType Directory "$root\elsewhere" | Out-Null
+          $before = (Get-Acl "$root\elsewhere").AccessToString
+          New-Item -ItemType Junction -Path "$root\jn" -Target "$root\elsewhere" | Out-Null
+          $o = & $exe dircheck "$root\jn"; $o
+          if ($o -notmatch 'rc=0') { throw "junction: $o" }
+          if ((Get-Item "$root\jn").Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "the junction is still there: the folder was followed" }
+          Private "$root\jn" 'junction replaced'
+          if (-not (Get-ChildItem $root -Directory -Filter 'jn.moved-aside-*')) { throw "the junction was not moved aside" }
+          if (@(Get-ChildItem "$root\elsewhere" -Force).Count -ne 0) { throw "something was written through the junction" }
+          if ((Get-Acl "$root\elsewhere").AccessToString -ne $before) { throw "the junction's target had its permissions changed" }
+
+          # 4. a plain file where the folder should be
+          Set-Content "$root\afile" 'not a folder'
+          $o = & $exe dircheck "$root\afile"; $o
+          if ($o -notmatch 'rc=0') { throw "a file in the way: $o" }
+          if (-not (Test-Path "$root\afile" -PathType Container)) { throw "no folder where the file was" }
+          Private "$root\afile" 'file replaced'
+          if (-not (Get-ChildItem $root -File -Filter 'afile.moved-aside-*')) { throw "the file was not moved aside" }
+
+          # 5a. a file moved in from somewhere users can write takes the folder's
+          #     permissions and an Administrators owner (SEC-010)
+          New-Item -ItemType Directory "$root\downloads" | Out-Null
+          $src = "$root\downloads\from-downloads.img"
+          Set-Content $src 'an image'
+          if (-not ((Who $src) -contains 'BUILTIN\Users')) { throw "setup: the source file is not open to Users, so this proves nothing" }
+          $o = & $exe dircheck rename $src "$root\fresh\moved-in.img"; $o
+          if ($o -notmatch 'rc=0') { throw "moving a file in: $o" }
+          $a = Get-Acl "$root\fresh\moved-in.img"
+          "moved-in file: owner=$($a.Owner) who=$((Who "$root\fresh\moved-in.img") -join ', ')"
+          if (($a.Owner -ne 'BUILTIN\Administrators') -and ($a.Owner -ne 'NT AUTHORITY\SYSTEM')) { throw "the moved-in file is still owned by $($a.Owner)" }
+          if (((Who "$root\fresh\moved-in.img") | Where-Object { $_ -ne 'NT AUTHORITY\SYSTEM' -and $_ -ne 'BUILTIN\Administrators' })) { throw "the moved-in file is still open to somebody else" }
+
+          # 5. who a folder may be owned by
+          $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          foreach ($t in @(@('S-1-5-18',1), @('S-1-5-32-544',1), @('S-1-5-32-545',0), @('S-1-1-0',0), @('S-1-5-11',0), @($me,0), @('not-a-sid',0))) {
+            $o = & $exe dircheck sid $t[0]; $o
+            if ($o -notmatch "trusted=$($t[1])") { throw "owner $($t[0]) should be trusted=$($t[1]): $o" }
+          }
+
+          # 6. a folder somebody else owns: moved aside. Making one needs the
+          #    privilege to give files away; if this runner will not, say so
+          #    rather than pass for it.
+          New-Item -ItemType Directory "$root\strangers" | Out-Null
+          Set-Content "$root\strangers\theirs" 'theirs'
+          icacls "$root\strangers" /setowner 'BUILTIN\Users' | Out-Null
+          $owner = (Get-Acl "$root\strangers").Owner
+          if ($owner -eq 'BUILTIN\Users') {
+            $o = & $exe dircheck "$root\strangers"; $o
+            if ($o -notmatch 'rc=0') { throw "stranger's folder: $o" }
+            Private "$root\strangers" "stranger's folder replaced"
+            if (@(Get-ChildItem "$root\strangers" -Force).Count -ne 0) { throw "the stranger's folder was used, with their file in it" }
+            if (-not (Get-ChildItem $root -Directory -Filter 'strangers.moved-aside-*')) { throw "the stranger's folder was not moved aside" }
+          } else {
+            "SKIPPED the stranger-owned folder: this runner would not give a folder to Users (owner stayed $owner)"
+          }
+          Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+          "ok: a private folder, a junction never followed, a file moved aside, a stranger's owner refused"

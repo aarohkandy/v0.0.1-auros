@@ -5722,6 +5722,7 @@ static int nav_test(const char *dir)
 /* ═══════════════════════════════════════════════════════════════════ */
 int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 {
+    plat_harden_dll_search();                       /* SEC-003: before anything is loaded */
     (void)prev; (void)cmd;
 
     /* Dev harness switches. They only render and report; none of them can
@@ -5807,7 +5808,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     /* told when she unlocks the computer (WM_WTSSESSION_CHANGE); loaded
      * by name, as Windows Server's runners may lack the session service */
     {
-        HMODULE wts = LoadLibraryW(L"wtsapi32.dll");
+        HMODULE wts = (HMODULE)plat_load_system_dll("wtsapi32.dll");   /* SEC-003 */
         typedef BOOL (WINAPI *PFN_WRSN)(HWND, DWORD);
         PFN_WRSN reg = wts ? (PFN_WRSN)(void *)GetProcAddress(wts, "WTSRegisterSessionNotification")
                            : NULL;

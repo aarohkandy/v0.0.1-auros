@@ -1919,7 +1919,7 @@ static void check_wifi(pf_report *r)
 {
     r->wifi_connected = 0;
     r->wifi_name[0] = 0;
-    HMODULE m = LoadLibraryA("wlanapi.dll");
+    HMODULE m = (HMODULE)plat_load_system_dll("wlanapi.dll");   /* SEC-003 */
     if (!m) return;
     PFN_WlanOpenHandle     op = (PFN_WlanOpenHandle)(void *)GetProcAddress(m, "WlanOpenHandle");
     PFN_WlanCloseHandle    cl = (PFN_WlanCloseHandle)(void *)GetProcAddress(m, "WlanCloseHandle");

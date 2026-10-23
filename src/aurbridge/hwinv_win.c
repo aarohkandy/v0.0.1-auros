@@ -18,6 +18,7 @@
 #include "hwinv.h"
 #include "hwinv_win.h"
 #include "hwcompat.h"
+#include "plat.h"
 #include "preflight.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,7 +80,7 @@ typedef ULONG (WINAPI *PFN_GetAdaptersAddresses)(ULONG, ULONG, PVOID, PIP_ADAPTE
 static void read_adapters(void)
 {
     g_nad = 0;
-    HMODULE m = LoadLibraryA("iphlpapi.dll");
+    HMODULE m = (HMODULE)plat_load_system_dll("iphlpapi.dll");   /* SEC-003 */
     if (!m) return;
     PFN_GetAdaptersAddresses fn = (PFN_GetAdaptersAddresses)(void *)GetProcAddress(m, "GetAdaptersAddresses");
     if (fn) {
@@ -210,7 +211,7 @@ static void collect_usb_printers(hw_inv *inv)
 
 static void collect_printers(hw_inv *inv)
 {
-    HMODULE m = LoadLibraryA("winspool.drv");
+    HMODULE m = (HMODULE)plat_load_system_dll("winspool.drv");   /* SEC-003 */
     if (m) {
         PFN_EnumPrintersW en = (PFN_EnumPrintersW)(void *)GetProcAddress(m, "EnumPrintersW");
         PFN_GetDefaultPrinterW gd = (PFN_GetDefaultPrinterW)(void *)GetProcAddress(m, "GetDefaultPrinterW");

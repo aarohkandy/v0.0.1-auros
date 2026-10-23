@@ -128,11 +128,31 @@ put_in_windows() { # extra-step: "" | corrupt | missing
         mkdir -p "$TMP/m/AurOS"
         cp "$TMP/win/AurOS/auros-desktop.img" "$TMP/win/AurOS/auros-desktop.img.manifest" \
            "$TMP/m/AurOS/"
-        if [ "$2" = corrupt ]; then
+        if [ "$2" = corrupt ] || [ "$2" = swapped ]; then
             python3 - "$TMP/m/AurOS/auros-desktop.img" "$ROFF" "$RLEN" <<'EOPY'
 import sys
 f = open(sys.argv[1], 'r+b'); f.seek(int(sys.argv[2]) + int(sys.argv[3]) // 2)
 b = f.read(1); f.seek(-1, 1); f.write(bytes([b[0] ^ 0xFF])); f.close()
+EOPY
+        fi
+        if [ "$2" = swapped ]; then
+            # SEC-001: the attacker's version of "corrupt". Somebody who can
+            # write the AurOS folder changes the image AND recomputes the
+            # manifest so that the two agree. Everything the file says about
+            # itself is consistent; only the journal, on the EFI partition,
+            # still remembers what the installer saw.
+            python3 - "$TMP/m/AurOS/auros-desktop.img" "$TMP/m/AurOS/auros-desktop.img.manifest" "$ROFF" "$RLEN" <<'EOPY'
+import sys, hashlib, struct
+img, man, off, ln = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+h = hashlib.sha256()
+with open(img, 'rb') as f:
+    f.seek(off); left = ln
+    while left:
+        b = f.read(min(left, 1 << 20)); h.update(b); left -= len(b)
+m = bytearray(open(man, 'rb').read())
+assert struct.unpack_from('<Q', m, 16)[0] == off and struct.unpack_from('<Q', m, 24)[0] == ln
+m[36:68] = h.digest()
+open(man, 'wb').write(m)
 EOPY
         fi
     fi
@@ -146,6 +166,8 @@ cp --sparse=always "$DISK" "$TMP/corrupt.img"
 put_in_windows "$TMP/corrupt.img" corrupt "$TMP/x.before"
 cp --sparse=always "$DISK" "$TMP/missing.img"
 put_in_windows "$TMP/missing.img" missing "$TMP/y.before"
+cp --sparse=always "$DISK" "$TMP/swapped.img"
+put_in_windows "$TMP/swapped.img" swapped "$TMP/z.before"
 WINFILES=$(wc -l < "$TMP/win.before")
 grep -q 'AurOS/auros-desktop.img$' "$TMP/win.before" \
     && ok "the image is inside Windows ($WINFILES files there now)" \
@@ -195,6 +217,17 @@ run "no image in the AurOS folder: refused" \
 SRCDISK="$TMP/corrupt.img"
 run "a damaged image in the AurOS folder: refused" \
     "aurstage.install aurstage.min_gb=1" "on the Windows drive is damaged" unchanged
+SRCDISK="$TMP/swapped.img"
+run "an image swapped for another, its manifest rewritten to agree: refused" \
+    "aurstage.install aurstage.min_gb=1" "is not the one the installer put there" unchanged
+
+# NOSTICK_ONLY_REFUSALS=1: stop here (the refusals take a minute; the rest, with
+# Secure Boot and the restore, take most of an hour).
+if [ "${NOSTICK_ONLY_REFUSALS:-}" = 1 ]; then
+    echo
+    if [ "$fail" -gt 0 ]; then echo "$fail of $checked wrong."; exit 1; fi
+    echo "$checked checks (refusals only)."; exit 0
+fi
 
 echo
 echo "  and then installing, for real, with no stick"

@@ -374,6 +374,110 @@ else
 fi
 rm -f "$T/fast.img"
 
+# ── the no-stick journal carries the image's trust root (SEC-001) ────
+#
+# The image sits in a folder on C:, and the manifest beside it is only as
+# good as that folder; the journal travels on the EFI partition. So the
+# journal says what the image's two extents must hash to, the staging
+# environment holds the manifest to it (image_bind), and a journal that does
+# not say is refused. This links the real writer, the real reader and the
+# real image_bind; the shell below cuts and changes things.
+cat > "$T/w.c" <<'EOC'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "format.h"
+#include "journal.h"
+#include "image.h"
+#include "sha256.h"
+int stage_gpt_sha256(const stage_disk *d, char *hex, size_t n)
+{ (void)d; if (n) hex[0] = 0; return -1; }
+
+static const char RH[] = "b36100653b1b3dd339c6209cdd60ab169706717f512f2bb5dee0273dd404da41";
+static const char BH[] = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+static void unhex(const char *h, unsigned char *o)
+{ for (int i = 0; i < 32; i++) { unsigned v; sscanf(h + 2 * i, "%2x", &v); o[i] = (unsigned char)v; } }
+
+int main(int argc, char **argv)
+{
+    (void)argc;
+    fmt_journal j;
+    memset(&j, 0, sizeof j);
+    snprintf(j.disk_serial, sizeof j.disk_serial, "S4EWNX0N123456");
+    j.disk_bytes = 64ull << 30; j.logical_sector = 512;
+    snprintf(j.win_part, sizeof j.win_part, "3");
+    j.win_start_lba = 2048; j.win_sectors = 40ull << 21;
+    snprintf(j.gpt_sha256, sizeof j.gpt_sha256, "%064d", 0);
+    snprintf(j.stage, sizeof j.stage, "armed");
+    snprintf(j.boot_from, sizeof j.boot_from, "esp");
+    snprintf(j.profile, sizeof j.profile, "desktop");
+    snprintf(j.image_on, sizeof j.image_on, "windows");
+    j.run_id = 7; j.written_unix = 1760000000ull;
+    char buf[4096];
+    /* The writer will not produce a no-stick journal without its trust root. */
+    if (fmt_journal_json(&j, buf, sizeof buf)) { puts("WROTE-WITHOUT-HASHES"); return 1; }
+    j.root_len = 5333057536ull; j.boot_len = 512ull << 20;
+    snprintf(j.root_sha256, sizeof j.root_sha256, "%s", RH);
+    snprintf(j.boot_sha256, sizeof j.boot_sha256, "%s", BH);
+    size_t n = fmt_journal_json(&j, buf, sizeof buf);
+    if (!n) { puts("WRITE-FAILED"); return 1; }
+    FILE *f = fopen(argv[1], "wb"); fwrite(buf, 1, n, f); fclose(f);
+    journal r;
+    if (!journal_read(argv[1], &r)) { puts("PARSE-FAILED"); return 1; }
+    if (r.root_len != j.root_len || r.boot_len != j.boot_len ||
+        strcmp(r.root_sha256, RH) || strcmp(r.boot_sha256, BH) ||
+        strcmp(r.image_on, "windows") || r.gap_root_first) { puts("DIFF"); return 1; }
+
+    /* image_bind: the manifest's numbers against the journal's. */
+    image_src s;
+    memset(&s, 0, sizeof s);
+    s.root_len = j.root_len; s.esp_len = j.boot_len;
+    unhex(RH, s.root_sha); unhex(BH, s.esp_sha);
+    s.have_sha = 1; s.have_esp_sha = 1;
+    char why[300];
+    int bad = 0;
+#define EXPECT(what, cond) do { if (!(cond)) { printf("DIFF %s\n", what); bad++; } } while (0)
+    EXPECT("the matching manifest is bound", image_bind(&s, r.root_len, r.root_sha256, r.boot_len, r.boot_sha256, why, sizeof why) == 0);
+    { image_src t = s; t.root_sha[5] ^= 1;
+      EXPECT("a root hash changed", image_bind(&t, r.root_len, r.root_sha256, r.boot_len, r.boot_sha256, why, sizeof why) != 0); }
+    { image_src t = s; t.esp_sha[31] ^= 0x80;
+      EXPECT("a boot hash changed", image_bind(&t, r.root_len, r.root_sha256, r.boot_len, r.boot_sha256, why, sizeof why) != 0); }
+    { image_src t = s; t.root_len++;
+      EXPECT("a root length changed", image_bind(&t, r.root_len, r.root_sha256, r.boot_len, r.boot_sha256, why, sizeof why) != 0); }
+    { image_src t = s; t.esp_len--;
+      EXPECT("a boot length changed", image_bind(&t, r.root_len, r.root_sha256, r.boot_len, r.boot_sha256, why, sizeof why) != 0); }
+    { image_src t = s; t.have_esp_sha = 0;
+      EXPECT("a manifest with no boot hash at all", image_bind(&t, r.root_len, r.root_sha256, r.boot_len, r.boot_sha256, why, sizeof why) != 0); }
+    { image_src t = s; t.have_sha = 0;
+      EXPECT("a manifest with no root hash at all", image_bind(&t, r.root_len, r.root_sha256, r.boot_len, r.boot_sha256, why, sizeof why) != 0); }
+    puts(bad ? "MISMATCH" : "AGREE");
+    return bad ? 1 : 0;
+}
+EOC
+if cc -std=gnu11 -O2 -Wall -Isrc/aurbridge -Isrc/aurstage -o "$T/w" "$T/w.c" \
+     src/aurbridge/format.c src/aurstage/journal.c src/aurstage/image.c \
+     src/aurstage/sha256.c src/aurstage/gpt.c src/aurstage/wr.c 2>"$T/wc.log" \
+   && "$T/w" "$T/win.json" > "$T/w.out" 2>&1 && grep -q AGREE "$T/w.out"; then
+    ok "no-stick: the journal carries the image's hashes, and a changed one is refused"
+else
+    bad "no-stick: the journal carries the image's hashes, and a changed one is refused" \
+        "$(head -8 "$T/w.out" 2>/dev/null)" "$(head -6 "$T/wc.log")"
+fi
+if [ -f "$T/win.json" ] && [ -x "$T/r" ]; then
+    miss=0
+    for k in root_len root_sha256 boot_len boot_sha256; do
+        sed "s/\"$k\":\"[0-9a-f]*\",//; s/\"$k\":[0-9]*,//; s/,\"$k\":\"[0-9a-f]*\"//; s/,\"$k\":[0-9]*//" "$T/win.json" > "$T/wcut.json"
+        if grep -q "\"$k\"" "$T/wcut.json"; then miss=$((miss+1)); echo "    (could not cut $k)"; continue; fi
+        [ "$("$T/r" "$T/wcut.json")" = REFUSED ] || { miss=$((miss+1)); echo "    (without $k it was not refused)"; }
+    done
+    [ "$("$T/r" "$T/win.json")" = READ ] || { miss=$((miss+1)); echo "    (the whole one was not read)"; }
+    [ "$miss" = 0 ] && ok "no-stick: a journal missing any of those four is refused" \
+                    || bad "no-stick: a journal missing any of those four is refused"
+else
+    bad "no-stick: a journal missing any of those four is refused" "no journal or no reader"
+fi
+
 # ── the hash of a partition table, against a third opinion ──────────
 #
 # aurstage.h defines this precisely because two implementations have to
