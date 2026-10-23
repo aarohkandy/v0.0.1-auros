@@ -41,6 +41,10 @@ case " $CHECKS " in *" print "*)
     echo "printer namespace rc=$?" >> /var/lib/auros-parity/without.log ;;
 esac
 
+# The disk of this test is bigger than the image's root (so Flathub's runtimes fit). Image first boot grows the root;
+# if it has not (or not yet), make sure it is, once first boot is over. Idempotent. NOT PART OF AUROS.
+systemd-run -q -u parity-grow sh -c 'i=0; while [ ! -f /var/lib/auros/firstboot.done ] && [ $i -lt 180 ]; do sleep 1; i=$((i+1)); done; sleep 8; growpart /dev/vda 2 >> /var/lib/auros-parity/grow.log 2>&1; resize2fs /dev/vda2 >> /var/lib/auros-parity/grow.log 2>&1; chmod 644 /var/lib/auros-parity/grow.log' 2>/dev/null
+
 # Evidence for the report: what first boot did to the disk (it runs before the desktop).
 cp /var/log/auros-firstboot.log /var/lib/auros-parity/firstboot.log 2>/dev/null
 chmod 644 /var/lib/auros-parity/firstboot.log 2>/dev/null

@@ -5,6 +5,10 @@
 me=$(id -un)
 tick() { cut -d. -f1 /proc/uptime; }
 
+# room for the runtimes: wait for the disk to have grown (first boot / root.sh)
+wait_for 240 sh -c '[ "$(df -BG --output=size / | tail -1 | tr -dc 0-9)" -ge 15 ]'
+note "root: $(df -h / | tail -1 | tr -s ' '); grow: $(tail -n 3 /var/lib/auros-parity/grow.log 2>/dev/null | tr '\n' '|')"
+
 # "the store catalogue is ready within 30 seconds": from the network coming up to a search finding Zoom
 n0=$(tick)
 if wait_for 300 sh -c 'flatpak search --system zoom 2>/dev/null | grep -qi "zoom"'; then
