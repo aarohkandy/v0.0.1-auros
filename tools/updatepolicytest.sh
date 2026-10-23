@@ -247,7 +247,13 @@ dryrun() {
     local T; T=$(mktemp -d); mkdir -p "$T/up" "$T/work" "$T/m"
     cleanup() { for m in dev proc; do umount "$T/m/$m" 2>/dev/null; done; umount "$T/m" 2>/dev/null; rm -rf "$T"; }
     trap cleanup EXIT INT TERM
-    mount -t overlay overlay -o "lowerdir=$R,upperdir=$T/up,workdir=$T/work" "$T/m" || need "overlay mount failed"
+    if ! mount -t overlay overlay -o "lowerdir=$R,upperdir=$T/up,workdir=$T/work" "$T/m" 2>/dev/null; then
+        # No overlay (inside a container): work on a copy, as the caller's
+        # rootfs must not be modified either way.
+        echo "    (no overlay here: working on a copy of $R)"
+        cp -a "$R/." "$T/m/" || need "could not copy $R"
+    fi
+    mkdir -p "$T/m/dev" "$T/m/proc" "$T/m/tmp"
     mount --bind /dev "$T/m/dev" && mount -t proc proc "$T/m/proc" || need "could not mount /dev and /proc"
     # Not /sys: the image's boot chain writes EFI variables.
     rm -f "$T/m/etc/resolv.conf"; cat /etc/resolv.conf > "$T/m/etc/resolv.conf"
@@ -268,34 +274,49 @@ dryrun() {
     grep -q 'noble-security' "$T/update.log" || { tail -15 "$T/update.log"; need "apt-get update did not reach noble-security"; }
     # An installed package whose candidate is in Ubuntu's security pocket.
     local pkg
+    # A LEAF package: nothing installed depends on it, so recording it as
+    # old does not break the dependencies of anything else (a broken cache
+    # makes unattended-upgrade stop with "Cache has broken packages").
+    # Preferably one whose newer version is in Ubuntu's -security pocket.
     cat > "$T/m/tmp/pick.py" <<'PY'
 import apt
 c = apt.Cache()
-best = [p for p in ("libssl3t64", "libc6", "libgnutls30t64", "zlib1g", "libexpat1", "libsystemd0", "tzdata", "libpam0g") if p in c]
-names = best + [p.name for p in c]
-for n in names:
-    p = c[n]
-    if p.is_installed and p.candidate and any(o.origin == "Ubuntu" and o.archive.endswith("-security") for o in p.candidate.origins):
-        print(n)
-        break
+needed = set()
+for p in c:
+    if p.is_installed:
+        for dep in p.installed.dependencies:
+            for bd in dep.or_dependencies:
+                needed.add(bd.name)
+def pockets(p):
+    return {o.archive for o in p.candidate.origins if o.origin == "Ubuntu"}
+leaves = [p for p in c if p.is_installed and p.candidate and p.name not in needed
+          and not p.is_auto_removable and not p.name.startswith(("auros", "linux-", "firefox"))
+          and not (p.installed.priority in ("required", "important"))]
+for want in ("noble-security", "noble-updates"):
+    for p in leaves:
+        if want in pockets(p):
+            print(p.name, want)
+            raise SystemExit
 PY
-    pkg=$(inr python3 /tmp/pick.py 2>/dev/null | head -1)
+    local pick pocket
+    pick=$(inr python3 /tmp/pick.py 2>/dev/null | head -1); pkg=${pick%% *}; pocket=${pick#* }
     [ -n "$pkg" ] || need "no installed package has a candidate in Ubuntu's security pocket (nothing to test with)"
     # The dpkg record says it is old; the files are untouched.
     awk -v p="$pkg" 'BEGIN{RS="";ORS="\n\n"} $0 ~ "^Package: " p "\n" {sub(/\nVersion: [^\n]*/, "\nVersion: 0~aurostest")} {print}' \
         "$T/m/var/lib/dpkg/status" > "$T/status.new" && cat "$T/status.new" > "$T/m/var/lib/dpkg/status"
-    printf '    package: %s, recorded as 0~aurostest; apt-cache policy:\n' "$pkg"
+    printf '    package: %s (newer version in %s), recorded as 0~aurostest; apt-cache policy:\n' "$pkg" "$pocket"
     inr apt-cache policy "$pkg" | sed -n '1,6p;/^ *\*\*\*/,+1p' | sed 's/^/      /' | head -9
     inr unattended-upgrade --dry-run --debug > "$T/uu.log" 2>&1
     sed -n '/Allowed origins are/p;/Packages that will be upgraded/p;/No packages found/p' "$T/uu.log" | sed 's/^/    | /'
-    grep -q 'Allowed origins are:.*o=Ubuntu,a=noble-security' "$T/uu.log" &&
+    grep -qE 'Allowed origins are:.*(o=Ubuntu,a=|origin=Ubuntu,archive=)noble-security' "$T/uu.log" &&
         ok "Ubuntu's noble-security is among the allowed origins" ||
         bad "Ubuntu's noble-security is among the allowed origins" "$(grep 'Allowed origins are' "$T/uu.log")" "(distro_id='$lid', distro_codename='$lcn')"
-    grep -q 'Allowed origins are:.*o=Ubuntu,a=noble-updates' "$T/uu.log" &&
+    grep -qE 'Allowed origins are:.*(o=Ubuntu,a=|origin=Ubuntu,archive=)noble-updates' "$T/uu.log" &&
         ok "Ubuntu's noble-updates is among the allowed origins" || bad "Ubuntu's noble-updates is among the allowed origins"
     grep -E 'Packages that will be upgraded:' "$T/uu.log" | grep -qE "(:| )$pkg( |$)" &&
         ok "it WOULD install the security update of $pkg" ||
-        bad "it WOULD install the security update of $pkg" "$(sed -n '/Checking:/p;/not upgraded/p;/No packages found/p' "$T/uu.log" | grep -a "$pkg\|No packages" | head -4)"
+        bad "it WOULD install the security update of $pkg" \
+            "$(grep -aE "$pkg|No packages|broken|Traceback|rror" "$T/uu.log" | grep -av 'Marking not allowed\|Applying pin' | cut -c1-200 | head -8)"
     done_
 }
 
