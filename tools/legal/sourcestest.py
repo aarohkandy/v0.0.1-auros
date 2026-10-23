@@ -127,7 +127,7 @@ MUTANTS = [
     ("a binary with no source row passes", 'no("%s %s has no source: %s %s is not in SOURCES.txt" % (b, v, s, sv)); continue', 'continue'),
     ("SHA256SUMS is not compared", 'elif sha256_file(p) != h:', 'elif False:'),
     ("PACKAGES.txt need not be the image's list", 'if want != have:', 'if False:'),
-    ("a removed package is shipped as if installed", 'if not f.get("Status", "").endswith(" installed"):', 'if False:'),
+    ("a removed package is shipped as if installed", 'if len(st) != 3 or st[2] in ("not-installed", "config-files"):', 'if len(st) != 3:'),
     ("a source package may be split between parts", 'if p["bytes"] > part_bytes:', 'if False:'),
     ("Built-Using is ignored", 'for s, v in p.get("built_using", []):', 'for s, v in []:'),
     ("a package that is unpacked but not configured is dropped", 'if len(st) != 3 or st[2] in ("not-installed", "config-files"):', 'if st[2:] != ["installed"]:'),
