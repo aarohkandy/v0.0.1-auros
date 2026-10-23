@@ -1017,10 +1017,18 @@ stage_overlay() {
     # command lines above: tools/checksec.sh (PIE, full RELRO, NX, CET,
     # stack protector, FORTIFY), the same gate whose --selftest proves
     # each check fails on a binary built without its flag.
-    local _cs
+    # Ferry's programs are its compiled helpers; the rest of
+    # /usr/lib/ferry is shell scripts, which checksec rightly calls "not
+    # an ELF file". So: every ELF there, whatever its name.
+    local _cs _f _ferry=""
+    for _f in "$RFS"/usr/lib/ferry/*; do
+        [ "$(head -c 4 "$_f" 2>/dev/null)" = "$(printf '\177ELF')" ] && _ferry="$_ferry $_f"
+    done
+    [ -n "$_ferry" ] || die "no compiled Ferry helper in /usr/lib/ferry"
+    # shellcheck disable=SC2086
     if ! _cs=$(sh "$ROOT/tools/checksec.sh" "$RFS/usr/sbin/aurinit" "$RFS/usr/bin/aurctl" \
             "$RFS/usr/bin/aurwall" "$RFS/usr/bin/aursorry" "$RFS/usr/sbin/aurfirst" \
-            "$RFS/usr/bin/aurshell" "$RFS"/usr/lib/ferry/ferry-* 2>&1); then
+            "$RFS/usr/bin/aurshell" $_ferry 2>&1); then
         printf '%s\n' "$_cs" >&2
         die "a program in this image was built without its hardening (above); build/cflags"
     fi
