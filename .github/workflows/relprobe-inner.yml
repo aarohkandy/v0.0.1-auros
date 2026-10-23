@@ -25,6 +25,9 @@ jobs:
             else echo "RESULT $n: REFUSED: $(head -c 200 /tmp/e)"; fi
           }
           one sha --target "$GITHUB_SHA"
+          one old-618726b --target 618726bd8436889b3a3093d2c72addd5bbed3495
+          one old-4c8874b --target 4c8874b5e12baf29044ca465963a9fae600c5618
+          one old-7b3-nowf --target c604d410a6c5ec8fd417a5fe7e7e4b6943548ca0
           one main --target main
           one none
           # the tag first, through the refs API, then the release on it
