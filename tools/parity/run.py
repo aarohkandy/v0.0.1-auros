@@ -620,7 +620,7 @@ def main():
             r = {"status": "fail", "detail": "the guest never reported"}
         else:
             worst = next((k for k in live if results[k]["status"] != "pass"), None)
-            r = results[worst] if worst else {"status": "pass", "detail": results[parts[0]]["detail"]}
+            r = results[worst] if worst else {"status": "pass", "detail": results[(live or parts)[0]]["detail"]}
             if worst and worst != c:
                 r = {"status": "fail", "detail": "%s: %s" % (worst, r["detail"])}
         st = r["status"]

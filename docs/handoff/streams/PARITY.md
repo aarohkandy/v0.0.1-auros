@@ -34,8 +34,9 @@ Results pages: `docs/results/{apps,sites,media-perf,pdf-forms}.md`. `sites.md` i
 | Firefox | `firefox.firstrun` (gap): Firefox 158's first window asks her to accept Terms of Use and says it sends diagnostic data to Mozilla although the policy has SkipOnboarding+DisableTelemetry (S2 owns the policy). Seen once: a Firefox crash during the call page whose crash reporter has "Tell Mozilla about this crash" ticked by default (retried once, recorded as `firefox.crash`) |
 
 Trust: the first picture checks were fooled twice (a colour count passed while the first-run card, then Firefox's Terms-of-Use modal, covered the
-page). Both are now dismissed by colour, and `call.visible`/`film.*-visible` need >= 5 hues and >= 4000 saturated pixels. The last full run
-(40015793857) is the first with both fixes; read its table in the job summary before believing a picture check.
+page). Both are now dismissed by colour, and `call.visible`/`film.*-visible` need >= 5 hues and >= 4000 saturated pixels. Runs 40015793857 (full)
+and 40021364066 (desktop, call, pdfform, office) on build 2e04025 are the first with both fixes: `call.visible` PASS with 28,823 saturated pixels in
+6 hues, `film.*-visible` 56,000 in 6 hues, apps 8/10; the job exits 0 with the known gaps listed in `tools/parity/known-gaps.txt`.
 
 ### Findings already fixed (the harness found them)
 1. Firefox was a blank window: aurwl never composited `wl_subsurface`s. Fixed by WL (54b783b, 990fdae, 7799b6d); `call.visible` is the regression check.
@@ -52,7 +53,8 @@ page). Both are now dismissed by colour, and `call.visible`/`film.*-visible` nee
 1. Read the last full run's table (40015793857); if a picture check is wrong again, fix the detector (region, thresholds) against its screenshots (`gh release download parity-<run>`).
 2. Nightly: let `parity.yml` run (03:17 UTC) and read `parity-<run>`; a gap that starts passing fails the run until it is removed from `known-gaps.txt`.
 3. v0.2 (WP-56): Widevine demo with the EME policy; the 10-form PDF test; scanning (simple-scan, sane-airscan); Flathub-down plain sentence; a 40-app table; media-perf on a CPU-limited VM (`--smp 2`); sites campaign by the owner (sites.md); USB printers (ipp-usb) once C adds it.
-4. Red proofs (done): `--without firefox` (call, film), `--without evince` (pdfform), `--without avahi-daemon --apt libnss-mdns` (print). Add one for office (`--without libreoffice-writer`) and apps (`--without flatpak`).
+4. Red proofs (done, homebase or CI): `--without firefox` (call, film), `--without evince` (pdfform), `--without avahi-daemon --apt libnss-mdns` (print), `--without libreoffice-writer,libreoffice-calc` (office.save). Not yet: apps (`--without flatpak`; needs ~25 GB, run it in Actions).
+5. homebase: `~/work/auros/parity/auros-desktop.img` is the image of build 2e04025 (3.0 GB: keep the directory under 3 GB, delete the image when you are done; `tools/parity/dev.sh` rsyncs and runs).
 
 ## Environment traps
 
