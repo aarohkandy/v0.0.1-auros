@@ -284,11 +284,15 @@ Revisit when S4's TPM re-seal exists, and possibly then fwupd for dbx only.
 | `tools/updatepolicytest.sh firefox` (+mutant) | Firefox updates by itself, not while open | `aptrepo.yml` test job |
 | `tools/updatepolicytest.sh static` | the built image's policy, sources, timers, store, base up to date, the image's key | `tests.yml` unit job, every build |
 | `aptrepo.yml` publish | the real repository, signed, read back, fetched by a real apt | every publish |
-| `tools/bootchaintest.sh`, `tools/bootupdatetest.sh` | kernel/grub/shim updates under Secure Boot; previous-kernel fallback | **not in CI yet** (by hand, KVM) |
+| `tools/flatpakupdatetest.sh` (+mutant) | the Flathub timer's own commands update the system installation without a question and clean up (a local ostree repository stands in for Flathub) | `aptrepo.yml` test job |
+| `tools/updateboottest.sh` | on the real image in KVM with Secure Boot: an update arrives while the desktop runs and does not restart it; the next start runs it; a broken update is rolled back by itself; the daily update does not bring it back; the fix installs | `[updateboot]` / `[updateboot RUN-ID]` in a commit subject (aptrepo.yml job `boot`) |
+| `tools/bootchaintest.sh` | the boot chain's refusals (dbx, SBAT, the Microsoft CA change) | by hand |
+| `tools/bootupdatetest.sh` | kernel/grub/shim updates under Secure Boot; previous-kernel fallback | `tests.yml` e2e matrix, every build |
 
 Not proven yet, said plainly:
 
-- a real Flathub update (only the timer and the command are checked);
+- a real Flathub update (the commands are proven against a local
+  repository; Flathub's reachability is `software-ready.sh`'s job);
 - an update arriving **while she uses the desktop** in a VM, the next start
   updated and healthy, and a broken AurOS update rolled back on a real boot
   (the KVM test; the mechanisms are proven in a container);

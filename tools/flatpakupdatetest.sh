@@ -30,8 +30,10 @@ need() { echo "flatpakupdatetest: $*" >&2; exit 2; }
 [ -f /.dockerenv ] || [ -f /run/.containerenv ] || need "refusing to run outside a container"
 command -v flatpak >/dev/null || need "needs flatpak"
 
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-mkdir -p "$T/rt/usr/share"
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT INT TERM
+# By hand: build-init wants the SDK installed, and this runtime is a
+# stand-in. build-export wants metadata, files/ and (for a runtime) usr/.
+mkdir -p "$T/rt/files" "$T/rt/usr/share"
 cat > "$T/rt/metadata" <<'EOM'
 [Runtime]
 name=org.auros.UpdateTest
@@ -59,6 +61,11 @@ mapfile -t LINES < <(sed -n 's/^ExecStart=//p' "$UNIT")
 timeout 300 ${LINES[0]} </dev/null >"$T/u1" 2>&1; rc=$?
 [ "$rc" = 0 ] && ok "the update line exits 0 with nothing to answer" || bad "the update line exits 0 with nothing to answer" "exit $rc" "$(tail -5 "$T/u1")"
 [ "$(cat $F 2>/dev/null)" = two ] && ok "the runtime moved to the new commit by itself" || bad "the runtime moved to the new commit by itself" "version file says: $(cat $F 2>&1)" "$(tail -5 "$T/u1")"
+# A runtime installed by hand is pinned, and --unused rightly keeps it.
+# What the timer cleans up is a runtime that came with an app which has
+# since been removed: not pinned, used by nothing. Same state, so unpin.
+flatpak pin --system | grep -q org.auros.UpdateTest && ok "a runtime installed by hand is pinned (kept)" || bad "a runtime installed by hand is pinned (kept)"
+flatpak pin --system --remove runtime/org.auros.UpdateTest/x86_64/1 >/dev/null 2>&1
 timeout 300 ${LINES[1]} </dev/null >"$T/u2" 2>&1; rc=$?
 [ "$rc" = 0 ] && ok "the clean-up line exits 0" || bad "the clean-up line exits 0" "exit $rc" "$(tail -5 "$T/u2")"
 [ ! -e "$F" ] && ok "and removed the runtime nothing uses" || bad "and removed the runtime nothing uses"
