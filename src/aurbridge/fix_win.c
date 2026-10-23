@@ -80,6 +80,12 @@ static const fix_info FIXES[] = {
     { "intel-rst", FIX_CANNOT,
       L"AurOS can’t see this computer’s drive",
       L"Its drive is set up in a way AurOS can’t use yet. A helper can change it.", NULL },
+    { "raid-volume", FIX_CANNOT,
+      L"This computer\u2019s drive is made of several drives",
+      L"AurOS can\u2019t see a drive set up that way yet. Nothing was changed.", NULL },
+    { "storage-controller-unknown", FIX_CANNOT,
+      L"AurOS could not tell how this computer\u2019s drive is connected",
+      L"AurOS won\u2019t go on without being sure it can see the drive.", NULL },
     { "mbr-four-primaries", FIX_CANNOT,
       L"This drive can’t be divided any further",
       L"AurOS can’t install on this drive’s layout yet.", NULL },
@@ -190,6 +196,11 @@ static const struct { const char *id; const wchar_t *line; } INSTEAD[] = {
     { "intel-rst",
       L"Keep using Windows for now. Someone who knows computers can change one "
       L"setting so AurOS can see the drive: press Show a helper how." },
+    /* NOT the Intel-RST page: switching a RAID volume to AHCI breaks the
+     * volume, and with it Windows and everything on it. */
+    { "raid-volume",
+      L"Keep using Windows. AurOS can\u2019t go on a drive set up this way, and "
+      L"changing the setup would erase what is on it." },
     { "secure-boot-ca-newer",
       L"Keep using Windows for now. A newer AurOS Setup will go on this computer "
       L"without changing anything here." },

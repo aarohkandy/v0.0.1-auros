@@ -201,6 +201,30 @@ jobs:
           # Microsoft virtual disk.
           if (Select-String -Path preflight.json -Pattern '"intel-rst"' -Quiet) { throw "intel-rst on a VM without Intel storage" }
           exit 0
+      - name: BitLocker is read from the disk, not from the volume's own view
+        shell: pwsh
+        run: |
+          # Windows shows a BitLocker drive that is on, suspended, "used space
+          # only", waiting for activation or decrypting as plain NTFS through
+          # the volume; only the disk under it says -FVE-FS-. The check used
+          # to read the volume, so every one of those passed. This runner
+          # has no BitLocker, so the disk is told to say it
+          # (AURBRIDGE_TEST_FVE, which can only refuse): the same code runs.
+          $plain = ((.\exe\aurbridge.exe preflight --json | Out-String | ConvertFrom-Json).findings |
+                      Where-Object id -eq 'bitlocker-system')
+          if ($plain) { throw "a runner without BitLocker was said to have it: $($plain.detail)" }
+          $env:AURBRIDGE_TEST_FVE = '1'
+          $j = .\exe\aurbridge.exe preflight --json | Out-String | ConvertFrom-Json
+          $code = $LASTEXITCODE
+          Remove-Item Env:AURBRIDGE_TEST_FVE
+          $f = $j.findings | Where-Object id -eq 'bitlocker-system'
+          if (-not $f) { throw "the disk said BitLocker and preflight did not: the volume's view still decides" }
+          if ($f.severity -ne 'block') { throw "BitLocker is a $($f.severity), not a stop" }
+          if ($code -ne 1) { throw "preflight exited $code with BitLocker on the disk, not 1 (blocked)" }
+          $v = $j.volumes | Where-Object { $_.mount -eq $env:SystemDrive } | Select-Object -First 1
+          if ($v.bitlocker -ne 1) { throw "the system volume is not marked BitLocker: $($v.bitlocker)" }
+          "the disk said BitLocker: preflight stops, and the volume is marked"
+          exit 0
       - name: the storage check finds the real controller's driver
         shell: pwsh
         run: |

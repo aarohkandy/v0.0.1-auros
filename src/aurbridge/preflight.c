@@ -1134,6 +1134,54 @@ static const char *BITLOCKER_REMEDY =
     "using Windows; nothing was changed, and do not turn BitLocker off for AurOS.";
 #endif
 
+/* THE FINDING FOR A BITLOCKER DRIVE, said once whichever way it was found:
+ * the volume's own first sector (a locked drive), or the disk's raw
+ * sector under it (an unlocked one: see raw_bitlocker). */
+static void add_bitlocker(pf_report *r, const char *drive, int is_sys)
+{
+    char det[512];
+    snprintf(det, sizeof det,
+        "Drive %s is encrypted with BitLocker.%s", drive,
+        is_sys ? " This is the drive Windows is installed on. There is no way "
+                 "to resize an encrypted drive safely: the tools that could do "
+                 "it cannot read it, and the ones that can read it will not "
+                 "resize it." : "");
+#ifdef AB_CHOICE_BITLOCKER_PAUSE
+    /* D11: THE ENGINE PAUSES IT FOR ONE RESTART, it does not decrypt, and
+     * Windows shrinks its own volume with the lock on (D1). Not a stop: a
+     * fact the Ready page says in her words. */
+    add(r, is_sys ? "bitlocker-system" : "bitlocker-other", "R1", PF_INFO,
+        "This drive is encrypted with BitLocker",
+        det, "Nothing to do: it is paused for one restart and turns itself back on.");
+#else
+    /* R1: the highest-consequence item in the product. */
+    add(r, is_sys ? "bitlocker-system" : "bitlocker-other", "R1", PF_BLOCK,
+        "This drive is encrypted with BitLocker", det, BITLOCKER_REMEDY);
+#endif
+}
+
+/* THE DISK IS THE AUTHORITY, NOT THE VOLUME'S VIEW OF ITSELF. Windows
+ * hands a volume it has unlocked, which is every BitLocker drive that is
+ * on, suspended, "used space only", waiting for activation or in the
+ * middle of decrypting, out to a program as plain NTFS: opening \\.\C:
+ * and reading it gives "NTFS", so volume_is_bitlocker said "not
+ * BitLocker" for every one of them. What the disk itself holds under the
+ * volume is "-FVE-FS-" for all of them. check_encryption reads it (it has
+ * always read it, to find other encryption); when it is BitLocker this
+ * puts the finding in, whatever the volume said. Returns 1 when it did
+ * (it was not already there). `kind` is boot_sector_kind of that sector. */
+static int raw_bitlocker(pf_report *r, int kind)
+{
+    if (kind != PF_BS_FVE) return 0;
+    if (r->system_volume < 0 || r->system_volume >= r->n_volumes) return 0;
+    pf_volume *v = &r->volumes[r->system_volume];
+    v->bitlocker = 1;
+    for (int i = 0; i < r->n; i++)
+        if (!strcmp(r->results[i].id, "bitlocker-system")) return 0;
+    add_bitlocker(r, v->mount, 1);
+    return 1;
+}
+
 static void check_volumes(pf_report *r)
 {
     char sysdrive[8] = "C:";
@@ -1165,26 +1213,7 @@ static void check_volumes(pf_report *r)
         if (is_sys) r->system_volume = r->n_volumes - 1;
 
         if (v->bitlocker == 1) {
-            char det[512];
-            snprintf(det, sizeof det,
-                "Drive %s is encrypted with BitLocker.%s", drive,
-                is_sys ? " This is the drive Windows is installed on. There is no way "
-                         "to resize an encrypted drive safely: the tools that could do "
-                         "it cannot read it, and the ones that can read it will not "
-                         "resize it." : "");
-#ifdef AB_CHOICE_BITLOCKER_PAUSE
-            /* D11: THE ENGINE PAUSES IT FOR ONE RESTART, it does not
-             * decrypt, and Windows shrinks its own volume with the lock
-             * on (D1). Not a stop: a fact the Ready page says in her
-             * words. */
-            add(r, is_sys ? "bitlocker-system" : "bitlocker-other", "R1", PF_INFO,
-                "This drive is encrypted with BitLocker",
-                det, "Nothing to do: it is paused for one restart and turns itself back on.");
-#else
-            /* R1: the highest-consequence item in the product. */
-            add(r, is_sys ? "bitlocker-system" : "bitlocker-other", "R1", PF_BLOCK,
-                "This drive is encrypted with BitLocker", det, BITLOCKER_REMEDY);
-#endif
+            add_bitlocker(r, drive, is_sys);
         } else if (v->bitlocker < 0 && is_sys) {
             /* Unknown is never OK, and this one used to pass silently. */
             add(r, "bitlocker-unknown", "R1", PF_BLOCK,
@@ -1306,6 +1335,24 @@ static void check_volumes(pf_report *r)
  * no drive letter -- so it is found by matching the volume list against
  * the partition's offset on disk. Assigning a letter with `mountvol`
  * would be a change to the machine, which preflight may not make. */
+/* HOW MUCH THE START-UP PARTITION MUST HAVE FREE: what this installer
+ * carries, plus the room the rest needs there. The margin was 1 MiB (the
+ * grub.cfg, choices and FAT clusters) and it was not enough: the journal
+ * is appended to the staging image, and the staging environment saves a
+ * copy of Windows' own start-up files beside them (src/aurstage/rescue.c),
+ * about 20 MiB more. A partition that fitted the files and not that was
+ * refused AFTER the restart, which is the wrong time. A build that
+ * carries nothing (a developer build, the CI runner's) is measured as
+ * though it carried what a release does, 33 MiB.
+ * phases.c's esp_room asks the same question and must ask it the same way
+ * (stream A2: docs/handoff/streams/B.md, "For A2"). */
+#define ESP_SLACK_BYTES    (21ULL * 1024 * 1024)
+#define ESP_RELEASE_BYTES  (33ULL * 1024 * 1024)
+static uint64_t esp_need(uint64_t carried)
+{
+    return (carried ? carried : ESP_RELEASE_BYTES) + ESP_SLACK_BYTES;
+}
+
 static void check_esp(pf_report *r)
 {
     r->esp_found = -1;
@@ -1398,9 +1445,7 @@ static void check_esp(pf_report *r)
      * The wizard installs without a stick, so a partition without room
      * is a refusal, made here before anything is written, and phase 3
      * asks the same question again of the partition itself. */
-    uint64_t carried = plat_payload_bytes();
-    const uint64_t SLACK = 1ULL * 1024 * 1024;     /* grub.cfg, choices, FAT */
-    uint64_t need = (carried ? carried : 40ULL * 1024 * 1024) + SLACK;
+    uint64_t need = esp_need(plat_payload_bytes());
     /* AND WHAT AN EARLIER ATTEMPT LEFT IS ROOM. A stopped or closed
      * attempt leaves its files under \EFI\AurOS on purpose (they are
      * harmless, and replaced by the next), so on a 95 MB partition with
@@ -1570,6 +1615,10 @@ static void check_encryption(pf_report *r)
             BYTE sec[4096];
             if (read_at(h, r->system_offset, sec, sizeof sec))
                 kind = boot_sector_kind(sec);
+            /* FOR windows.yml ONLY: act as though the disk said BitLocker.
+             * The runner has no BitLocker to read; this makes the same code
+             * run on real Windows. It can only ever REFUSE, never allow. */
+            { const char *t = getenv("AURBRIDGE_TEST_FVE"); if (t && *t == '1') kind = PF_BS_FVE; }
             /* The BIOS-mode VeraCrypt/TrueCrypt loader lives in the
              * first track, ahead of every partition. */
             BYTE track[65536];
@@ -1596,8 +1645,10 @@ static void check_encryption(pf_report *r)
         return;
     }
     if (kind == PF_BS_FVE) {
-        /* BitLocker, already refused by check_volumes with the remedy
-         * that actually clears it. Nothing to add. */
+        /* BitLocker. check_volumes only sees it on a drive that is
+         * locked: an unlocked one reads as plain NTFS through the volume.
+         * This is the read that sees them all (raw_bitlocker). */
+        raw_bitlocker(r, kind);
         r->fde_third_party = 0;
         return;
     }
@@ -1761,16 +1812,71 @@ static int rst_hides_disk(const char *svc, int bus, const char *model)
     return 0;
 }
 
+/* A RAID VOLUME, as Windows names the one disk a controller builds out of
+ * several: Intel's "Intel Raid 1 Volume" and older "Intel Matrix Volume",
+ * AMD's "AMD-RAID Array". Linux sees the member drives, not this: the
+ * staging environment cannot find the Windows volume on them. A single
+ * SATA SSD on a controller set to "RAID On" is not one (its model is the
+ * drive's own), and AurOS can see that. NOT PROVEN ON REAL HARDWARE:
+ * the names are what Intel's and AMD's drivers report. */
+static int model_is_raid_volume(const char *model)
+{
+    int raid = 0, vol = 0;
+    for (const char *p = model; *p; p++) {
+        if (!_strnicmp(p, "raid", 4)) raid = 1;
+        if (!_strnicmp(p, "volume", 6) || !_strnicmp(p, "array", 5) || !_strnicmp(p, "matrix", 6))
+            vol = 1;
+    }
+    return (raid && vol) || !_strnicmp(model, "Intel Matrix", 12);
+}
+
+/* What the storage check says, from what was found: 0 nothing to say,
+ * SV_HIDDEN an NVMe drive Linux cannot see behind Intel's driver,
+ * SV_RAID a RAID volume, SV_RST a controller that is Intel's but shows
+ * AurOS the drive, SV_UNKNOWN it could not be established (a refusal:
+ * the machines this exists for are the ones we cannot try). `rst` is
+ * system_disk_rst's answer: 1 Intel's driver is in the way, 0 not, -1
+ * could not tell. */
+enum { SV_NONE = 0, SV_HIDDEN, SV_RAID, SV_RST, SV_UNKNOWN };
+static int storage_verdict(int rst, const char *svc, int have_disk, int bus, const char *model)
+{
+    if (rst < 0) return SV_UNKNOWN;
+    if (have_disk && model_is_raid_volume(model)) return SV_RAID;
+    if (rst != 1) return SV_NONE;
+    if (have_disk && rst_hides_disk(svc, bus, model)) return SV_HIDDEN;
+    return SV_RST;
+}
+
 static void check_storage_controller(pf_report *r)
 {
     if (r->system_disk < 0) return;
     char svc[128] = "";
-    if (system_disk_rst(r->system_disk, svc, sizeof svc) != 1) return;
+    int rst = system_disk_rst(r->system_disk, svc, sizeof svc);
     const pf_disk *sd = NULL;
     for (int i = 0; i < r->n_disks; i++)
         if (r->disks[i].index == r->system_disk) sd = &r->disks[i];
+    int v = storage_verdict(rst, svc, sd != NULL, sd ? sd->bus_type : 0, sd ? sd->model : "");
     char det[512];
-    if (sd && rst_hides_disk(svc, sd->bus_type, sd->model)) {
+    switch (v) {
+    case SV_UNKNOWN:
+        add(r, "storage-controller-unknown", "R10", PF_BLOCK,
+            "AurOS could not tell how this PC's drive is connected",
+            "Windows would not say which storage driver runs the drive it is on, and "
+            "some of them (RAID, Intel's remapping) hide the drive from AurOS after the "
+            "restart.",
+            "AurOS can't go on this PC yet. Nothing has been changed.");
+        return;
+    case SV_RAID:
+        snprintf(det, sizeof det,
+            "The drive Windows is on (%s) is a RAID volume: one drive built from several "
+            "by the storage controller. After the restart AurOS sees the separate "
+            "drives, not the volume, so it cannot find Windows on them.",
+            sd->model[0] ? sd->model : "unnamed");
+        add(r, "raid-volume", "R10", PF_BLOCK,
+            "AurOS can't see this PC's drive", det,
+            "AurOS can't go on this PC yet. Nothing has been changed.");
+        return;
+    case SV_HIDDEN:
         /* REFUSED HERE, NOT AFTER THE RESTART (D4, audit item 11). The
          * staging environment cannot see this drive, so every install on
          * such a PC used to download, shrink and restart, and then stop. */
@@ -1782,13 +1888,17 @@ static void check_storage_controller(pf_report *r)
             "AurOS can't see this PC's drive", det,
             "AurOS can't go on this PC yet. Nothing has been changed.");
         return;
+    case SV_RST:
+        snprintf(det, sizeof det,
+            "The storage controller is managed by Intel Rapid Storage Technology "
+            "(%s). The drive Windows is on is not one it remaps, so AurOS can see "
+            "it.", svc);
+        add(r, "intel-rst", "R10", PF_INFO,
+            "This PC uses Intel Rapid Storage Technology", det, "");
+        return;
+    default:
+        return;
     }
-    snprintf(det, sizeof det,
-        "The storage controller is managed by Intel Rapid Storage Technology "
-        "(%s). The drive Windows is on is not one it remaps, so AurOS can see "
-        "it.", svc);
-    add(r, "intel-rst", "R10", PF_INFO,
-        "This PC uses Intel Rapid Storage Technology", det, "");
 }
 
 /* ── D10: is Windows on Wi-Fi? ───────────────────────────────────── */
@@ -1918,6 +2028,29 @@ int pf_selftest(void)
     memset(sec, 0, 512);
     t("boot sector: zeroed MSR -> OTHER", boot_sector_kind(sec) == PF_BS_OTHER);
 
+    /* BitLocker is read from the DISK under C:, because the volume shows an
+     * unlocked drive as plain NTFS (on, suspended, used-space-only,
+     * waiting for activation, decrypting: every state but "locked"). */
+    {
+        pf_report *r = (pf_report *)calloc(1, sizeof *r);
+        r->system_disk = 0; r->system_volume = 0; r->n_volumes = 1;
+        snprintf(r->volumes[0].mount, sizeof r->volumes[0].mount, "C:");
+        snprintf(r->volumes[0].fs, sizeof r->volumes[0].fs, "NTFS");
+        r->volumes[0].bitlocker = 0;                       /* what the volume said */
+        t("BitLocker: a plain NTFS disk adds nothing", raw_bitlocker(r, PF_BS_NTFS) == 0 && r->n == 0);
+        t("BitLocker: an encrypted disk of unknown kind adds nothing here", raw_bitlocker(r, PF_BS_OTHER) == 0 && r->n == 0);
+        t("BitLocker: -FVE-FS- on the disk under an NTFS-looking C: is found", raw_bitlocker(r, PF_BS_FVE) == 1);
+        t("... it is in the report as bitlocker-system", r->n == 1 && !strcmp(r->results[0].id, "bitlocker-system"));
+        t("... and the volume is marked BitLocker", r->volumes[0].bitlocker == 1);
+#ifdef AB_CHOICE_BITLOCKER_PAUSE
+        t("... noted, not refused, now that the engine pauses it", r->n_block == 0);
+#else
+        t("... and it stops the install: nothing may be written under it", r->n_block == 1);
+#endif
+        t("... said once, not once per look", raw_bitlocker(r, PF_BS_FVE) == 0 && r->n == 1);
+        free(r);
+    }
+
     t("bus: USB is removable",      bus_is_removable(BusTypeUsb));
     t("bus: FireWire is removable", bus_is_removable(BusType1394));
     t("bus: SD is removable",       bus_is_removable(BusTypeSd));
@@ -1944,6 +2077,30 @@ int pf_selftest(void)
       !rst_hides_disk("iaStorA", BusTypeSata, "ST1000LM035-1RK172"));
     t("bus: NVMe is not",          !bus_is_removable(BusTypeNvme));
     t("bus: RAID is not",          !bus_is_removable(BusTypeRAID));
+    t("ESP: a release's 33 MiB needs 54 MiB free, not 34",
+      esp_need(33ULL << 20) == (54ULL << 20));
+    t("ESP: a build that carries nothing is measured as a release",
+      esp_need(0) == esp_need(33ULL << 20));
+    t("ESP: the runner's 61 MB (58 MiB) partition still fits", (58ULL << 20) >= esp_need(0));
+    t("ESP: 40 MiB free does not fit what the restart then needs", (40ULL << 20) < esp_need(0));
+    t("RAID: Intel's RAID 1 volume is one",     model_is_raid_volume("Intel Raid 1 Volume"));
+    t("RAID: Intel's RAID 0 volume is one",     model_is_raid_volume("Intel Raid 0 Volume"));
+    t("RAID: the older Intel Matrix Volume is one", model_is_raid_volume("Intel Matrix Volume"));
+    t("RAID: AMD's array is one",               model_is_raid_volume("AMD-RAID Array"));
+    t("RAID: a SATA SSD on a RAID-On controller is not", !model_is_raid_volume("SAMSUNG MZ7LN256HAJQ-000H1"));
+    t("RAID: an NVMe drive is not",             !model_is_raid_volume("NVMe SAMSUNG MZVLW256HEHP"));
+    t("storage: a RAID volume stops it, on Intel's driver",
+      storage_verdict(1, "iaStorAC", 1, BusTypeRAID, "Intel Raid 1 Volume") == SV_RAID);
+    t("storage: a RAID volume stops it, on any other",
+      storage_verdict(0, "", 1, BusTypeRAID, "Intel Raid 0 Volume") == SV_RAID);
+    t("storage: not being able to tell stops it",
+      storage_verdict(-1, "", 1, BusTypeSata, "SAMSUNG MZ7LN256HAJQ-000H1") == SV_UNKNOWN);
+    t("storage: Intel remapping an NVMe drive stops it",
+      storage_verdict(1, "iaStorAC", 1, BusTypeRAID, "NVMe SAMSUNG MZVLW256HEHP") == SV_HIDDEN);
+    t("storage: a SATA SSD on Intel's driver is only a note",
+      storage_verdict(1, "iaStorAC", 1, BusTypeRAID, "SAMSUNG MZ7LN256HAJQ-000H1") == SV_RST);
+    t("storage: an ordinary drive says nothing",
+      storage_verdict(0, "", 1, BusTypeSata, "SAMSUNG MZ7LN256HAJQ-000H1") == SV_NONE);
 
     {   /* the USB hard drive the old flag missed */
         pf_disk d; memset(&d, 0, sizeof d);
