@@ -1,13 +1,16 @@
 # Morning report (for Aaroh) — kept current by the lead
 
-_Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead restarts itself at 01:18 your time._
+_Last updated: 07:40 UTC 2026-10-24 (00:40 your time)._
 
 ## Done overnight (proof)
 
 - **AurOS installs on real Windows 11 and reaches its first screen in about 8 minutes** (fast path, machine time:
   website +1:29, download clicks +2:19, three installer screens, Restart now +6:36, install step 18 s, "Does
   everything work?" +8:06). One step still fails right after: "Start AurOS from now on" (making AurOS the
-  default) — being fixed now. Evidence: e2e runs 40025060913 / 40025046920.
+  default). **Root cause found and fixed (76d89b9)**: the install step opens the PC's start-up settings
+  read-only on purpose, and that carried over into AurOS's first start, so AurOS could not make itself the
+  default. Proven in a VM (red before, green after); not yet re-proven on real Windows. **Release candidate 5
+  (9dc73fe) is building with it** and journeys on real Windows by itself. Evidence: e2e runs 40025060913 / 40025046920.
 
 - **Release candidate 1 is green and published as a prerelease**: v0.1.0-fc52718 (every gating test passed;
   both installers: normal and fast path). The real-Windows journeys on it are running now. Not public.
@@ -49,6 +52,10 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
   (docs/DESIGN-DIRECTION.md), AI contract v1 after a red team (docs/AI.md §7).
 
 ## Still red / in progress
+
+- **The store's Install button is unreadable** (near-black text on the green; real-Windows run 40038619603), and
+  its star icons show "missing picture". Cause found: the theme picked the text colour for a dark theme only.
+  Stream C is fixing both, with a contrast test over every theme.
 
 - **Found and fixed tonight: every click in modern (GTK4) programs landed ~25% off target** — why the store's
   small Install button did nothing. Fixed (7381d67); in the next release candidate.
