@@ -73,6 +73,15 @@ Windows 11 VM; hours), and the website stamped and checked with
 `tools/site/check.mjs`. `promote` ([latest]) needs all three; `pages`
 deploys the site that was checked.
 
+**Signing (docs/SIGNING.md, decision D12).** When the repository variable
+`SIGNPATH_ORGANIZATION_ID` exists, a `sign` job sits between the tests and
+`publish`: it sends the unsigned `AurOS-Setup.exe` to SignPath from the same
+run, waits for the owner's approval there, checks what comes back
+(`tools/signed-check.sh`) and hands the signed file to `publish`. Nothing is
+published if that fails; with the variable absent the job is skipped and the
+release is unsigned as before. Only a `[release]` run can be signed (the
+build and the signature must be one run).
+
 Reading results: `actions_list` / `get_job_logs` with the GitHub tools,
 or `https://api.github.com/repos/$(sh tools/repo.sh)/actions/runs`
 without a token. Artifact downloads are blocked from the development

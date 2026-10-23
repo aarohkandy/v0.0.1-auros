@@ -374,6 +374,9 @@ jobs:
     needs: [gate, build, tests]
     if: needs.gate.outputs.release == 'true'
     uses: ./.github/workflows/release.yml
+    # SIGNPATH_API_TOKEN, if the owner has added it (docs/SIGNING.md):
+    # a called workflow sees no secret that is not passed down.
+    secrets: inherit
     # What release.yml's jobs ask for; a called workflow cannot be
     # given more than its caller has.
     permissions:
