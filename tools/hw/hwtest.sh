@@ -121,6 +121,27 @@ else
     echo "    (no $MW here: the Windows build is checked on Actions)"
 fi
 
+# ── the table of real PCs ────────────────────────────────────────────
+if python3 -I tools/hw/results.py --dir tools/hw/fixtures/results --out "$T/res.md" 2>"$T/res.err" &&
+   grep -q '^3 machines. Installed and kept working: 2. Refused by the installer: 1 (Lenovo IdeaPad 3 15ABA7: the Windows drive is encrypted' "$T/res.md" &&
+   grep -q 'Dell XPS 13 9343 .*wont / no |' "$T/res.md" &&
+   grep -q '4 hit, 1 wrong' "$T/res.md" &&
+   grep -q 'HP 15-ef.*camera: the report said .works., the real result was .no.' "$T/res.md"; then
+    ok "results.py: the table counts refusals, hits and the one promise that failed"
+else bad "results.py: the table counts refusals, hits and the one promise that failed" "$(cat "$T/res.err" 2>/dev/null)"; fi
+mkdir -p "$T/badres"; printf 'machine: X\ndate: 2026-11-01\ninstall: maybe\nput_windows_back: ok\ndata_loss: no\n' > "$T/badres/x.txt"
+if python3 -I tools/hw/results.py --dir "$T/badres" --check >/dev/null 2>&1; then bad "results.py refuses a file with install: maybe"
+else ok "results.py refuses a file with install: maybe"; fi
+if python3 -I tools/hw/results.py --dir docs/results/hardware --check; then ok "every real-PC result file in docs/results/hardware is valid"
+else bad "every real-PC result file in docs/results/hardware is valid"; fi
+if python3 -I tools/hw/results.py --dir docs/results/hardware --out "$T/readme.md" && cmp -s "$T/readme.md" docs/results/hardware/README.md; then
+    ok "docs/results/hardware/README.md is what the result files give"
+else bad "docs/results/hardware/README.md is what the result files give" "run: python3 -I tools/hw/results.py"; fi
+sed 's/return "hit" if obs == "yes" else "PROMISED, FAILED"/return "hit"/' tools/hw/results.py > "$T/results_m.py"
+if python3 -I "$T/results_m.py" --dir tools/hw/fixtures/results --out "$T/res2.md" 2>/dev/null && grep -q '4 hit, 1 wrong' "$T/res2.md"; then
+    bad "mutant: a promise that failed counts as a hit" "the table still says 4 hit, 1 wrong"
+else ok "mutant: a promise that failed counts as a hit  -> red"; fi
+
 # ── each check must be able to fail ──────────────────────────────────
 # mutant "label" 'sed expression' file
 mutant() {

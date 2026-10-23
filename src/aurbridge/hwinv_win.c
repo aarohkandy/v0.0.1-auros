@@ -57,6 +57,8 @@ static int reg_str(HKEY root, const char *sub, const char *val, char *out, size_
 }
 
 /* ── the adapters Windows is using ───────────────────────────────── */
+/* GAA_FLAG_SKIP_UNICAST | ANYCAST | MULTICAST | DNS_SERVER | FRIENDLY_NAME: only the name, type and state */
+#define GAA_SKIP 0x2F
 typedef struct { char guid[64]; int if_type; int up; } adapter;
 #define MAX_ADAPTERS 64
 static adapter g_ad[MAX_ADAPTERS];
@@ -72,9 +74,9 @@ static void read_adapters(void)
     PFN_GetAdaptersAddresses fn = (PFN_GetAdaptersAddresses)(void *)GetProcAddress(m, "GetAdaptersAddresses");
     if (fn) {
         ULONG sz = 0;
-        fn(AF_UNSPEC, 0x0001 | 0x0002 | 0x0004 | 0x0010 /* skip anycast, multicast, dns, friendly */, NULL, NULL, &sz);
+        fn(AF_UNSPEC, GAA_SKIP, NULL, NULL, &sz);
         PIP_ADAPTER_ADDRESSES buf = sz ? malloc(sz) : NULL;
-        if (buf && fn(AF_UNSPEC, 0x0001 | 0x0002 | 0x0004 | 0x0010, NULL, buf, &sz) == NO_ERROR) {
+        if (buf && fn(AF_UNSPEC, GAA_SKIP, NULL, buf, &sz) == NO_ERROR) {
             for (PIP_ADAPTER_ADDRESSES a = buf; a && g_nad < MAX_ADAPTERS; a = a->Next) {
                 adapter *x = &g_ad[g_nad++];
                 snprintf(x->guid, sizeof x->guid, "%s", a->AdapterName ? a->AdapterName : "");
