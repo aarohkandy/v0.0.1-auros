@@ -3,7 +3,7 @@
  * These live here rather than in each layout so that six independently
  * written renderers cannot drift into six slightly different icon sets,
  * six clock formats and six ideas of where a text baseline sits. */
-#include "features.h"
+#include "aurfeatures.h"
 #include "shell.h"
 #include <stdlib.h>
 #include <string.h>

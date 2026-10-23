@@ -1,4 +1,4 @@
-/* features.h -- what this build of the shell has compiled in.
+/* aurfeatures.h -- what this build of the shell has compiled in.
  *
  * AUROS_WISHES (decision D14: Wishes are NOT in the v0.1 image). 0 here
  * unless build/forge is given a profile that says wishes="on" and passes

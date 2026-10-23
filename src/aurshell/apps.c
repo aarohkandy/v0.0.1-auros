@@ -16,7 +16,7 @@
  * what it is.
  */
 #define _GNU_SOURCE
-#include "features.h"
+#include "aurfeatures.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <stdio.h>
@@ -731,7 +731,7 @@ int shell_scan_apps(shell_ctx *c)
     }
     /* Make a wish is the shell's own as well (src/aurshell/wish.c):
      * never on a kiosk, which has nobody to ask, and not at all in a
-     * build without Wishes (features.h, D14). */
+     * build without Wishes (aurfeatures.h, D14). */
     if (AUROS_WISHES && !c->kiosk && keep < SHELL_MAX_APPS) {
         app_entry *a = &c->apps[keep];
         memset(a, 0, sizeof *a);

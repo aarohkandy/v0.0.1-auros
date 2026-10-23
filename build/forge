@@ -1026,7 +1026,7 @@ stage_overlay() {
     # D14: Wishes are NOT in the v0.1 image. A profile says wishes="on"
     # to put them in; anything else, or nothing, is off. It decides three
     # things: the shell's Wishes doors (-DAUROS_WISHES, src/aurshell/
-    # features.h), whether stream W1's forge lines build and start aurwish
+    # aurfeatures.h), whether stream W1's forge lines build and start aurwish
     # (`wishes_on`, defined at the top, for them to ask), and /etc/auros/features, which
     # tools/wishesoff.sh checks on the finished image in CI.
     local _wishes=0

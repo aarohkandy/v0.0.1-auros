@@ -1,6 +1,6 @@
 /* settings.c — see settings.h. */
 #define _GNU_SOURCE
-#include "features.h"
+#include "aurfeatures.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

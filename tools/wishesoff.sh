@@ -4,7 +4,7 @@
 #
 # D14: Wishes are NOT in the v0.1 image. build/forge reads `wishes=` from
 # the profile (anything but "on" is off), compiles the shell with
-# -DAUROS_WISHES=0|1 (src/aurshell/features.h) and writes
+# -DAUROS_WISHES=0|1 (src/aurshell/aurfeatures.h) and writes
 # /etc/auros/features. A release image must come out with, and this
 # asks the finished rootfs rather than the script that made it:
 #   - /etc/auros/features says wishes=off;
