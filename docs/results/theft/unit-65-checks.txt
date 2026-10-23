@@ -1,0 +1,91 @@
+
+The encrypted drive and its PIN
+
+    the VM test refuses a pass that timed out, was killed at the cap, or never powered off ok
+  in place
+    encrypt-init runs with only the tools an initramfs has, and its header check passes ok
+    encrypt-init made the partition LUKS2                              ok
+    it opens with the temporary key, no PIN asked                      ok
+    her files are intact, mid-encryption                               ok
+    set-pin waits while the pass runs (exit 3, nothing changed)        ok
+    a pass stopped half-way leaves it encrypting                       ok
+    the pass resumes and finishes; state open-no-pin                   ok
+    her files are intact after the pass                                ok
+    no plaintext of hers is left on the raw drive                      ok
+    AES-XTS on a CPU with AES instructions                             ok
+    a partition not a multiple of 4096 bytes encrypts, with 512-byte sectors ok
+    a 4096-aligned one gets 4096-byte sectors                          ok
+    without AES instructions the drive is Adiantum                     ok
+    encrypt-init says which sector size it chose, and why, and checks the header ok
+    a 4096-byte-block disk is encrypted with 4096-byte sectors         ok
+    a header that disagrees with the request is exit 2, loud, and still a LUKS drive ok
+
+  the first PIN (sealed in the chip, bound to no PCR)
+    a PIN that does not prove itself is rolled back: no code, only the temporary key ok
+    set-pin prints a rescue code of 6 groups of 4 numbers              ok
+    state pin                                                          ok
+    the PIN is sealed in the chip                                      ok
+    the temporary key no longer opens the drive                        ok
+    the right PIN opens it (the start page's code)                     ok
+    a wrong PIN says wrong                                             ok
+    the chip itself counted it (0 -> 1)                                ok
+    set-pin refuses when a PIN exists                                  ok
+
+  too many tries
+    the try that locks the chip out already says so                    ok
+    the right PIN is not let through while locked                      ok
+    after the wait the right PIN opens it                              ok
+
+  the rescue code
+    the rescue code opens it                                           ok
+    a wrong rescue code says wrong                                     ok
+    new-rescue-code makes a different code                             ok
+    the old rescue code stops working                                  ok
+    the new rescue code works                                          ok
+
+  forgot the PIN: the page's own flow, then repin
+    link -> rescue code -> choose PIN -> once more -> open             ok
+    the new PIN is handed over in /run, readable by root only          ok
+    repin deletes the hand-over at once                                ok
+    the new PIN opens it                                               ok
+    the old PIN does not                                               ok
+
+  change-pin
+    the changed PIN opens it                                           ok
+    the one before does not                                            ok
+    one sealed PIN, not two (each costs a counted try)                 ok
+
+  PCR 7 changes (a dbx or firmware update)
+    bound to no PCR: the PIN still opens it, no rescue code            ok
+    bound to PCR 7 when asked                                          ok
+    PCR 7 changed: the page says the computer changed                  ok
+    after repin the PIN opens it under the new PCR 7                   ok
+
+  a different chip (cleared, or another board)
+    the page says the computer changed                                 ok
+    the rescue code still opens it                                     ok
+    repin seals the PIN in the new chip                                ok
+
+  no chip
+    a 4-number PIN is refused without a chip                           ok
+    6 numbers become a passphrase                                      ok
+    made slow to guess (argon2id)                                      ok
+    a wrong PIN says wrong                                             ok
+    the right PIN opens it                                             ok
+    change-pin without a chip                                          ok
+    the rescue code opens it                                           ok
+
+  the page (EASY.md)
+    every key and button is at least 44 px at 1024x600                 ok
+    no word from EASY.md's list on the page                            ok
+
+  the EFI partition's start files
+    the stub, when no AurOS is found, says so and exits to the firmware ok
+    a menu that ends hands the machine back to the firmware            ok
+    the stub starts from the EFI partition's own menu                  ok
+    grub accepts the stub's syntax (grub-script-check)                 ok
+    the current menu converts: all 5 kernel lines start from the EFI partition and carry the lock ok
+    its own copy: nothing reads /boot, the environment block is the EFI partition's ok
+    grub accepts the converted menu's syntax (grub-script-check)       ok
+
+  65 checks, all ok

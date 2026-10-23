@@ -1,0 +1,21 @@
+===MUTANTS
+  mutant wrong-is-changed: killed (5 checks failed)
+  mutant lockout-unseen: killed (2 checks failed)
+  mutant temp-kept: killed (22 checks failed)
+  mutant no-reencrypt: killed (45 checks failed)
+  mutant fixed-rescue: killed (29 checks failed)
+  mutant pin-unchecked: killed (4 checks failed)
+  mutant header-unchecked: killed (2 checks failed)
+  mutant needs-head: killed (2 checks failed)
+  mutant sector-always-4096: killed (2 checks failed)
+  mutant harness-no-poweroff: killed (2 checks failed)
+  mutant harness-no-done: killed (2 checks failed)
+  mutant harness-no-timeout: killed (2 checks failed)
+  mutant stub-no-exit: killed (2 checks failed)
+  mutant stub-no-else: killed (2 checks failed)
+  mutant stub-menu-no-exit: killed (2 checks failed)
+  mutant convert-no-lock: killed (2 checks failed)
+  mutant small-keys: killed (2 checks failed)
+  mutant repin-ignored: killed (7 checks failed)
+
+every mutant was caught
