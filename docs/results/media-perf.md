@@ -13,12 +13,14 @@ in software). `getVideoPlaybackQuality()` gives frames shown and dropped; the so
 
 | film | frames | dropped | machine CPU | sound |
 |---|---|---|---|---|
-| 640x360 H.264/AAC MP4 | 243 | 93 | 37 % | out of the decoder |
-| 640x360 DASH (Media Source) | 240 | 92 | 42 % | out of the decoder |
-| 1280x720 H.264/AAC MP4 | 288 | 110 | 21 % | out of the decoder |
+| 640x360 H.264/AAC MP4 | 234 | 28 | 10 % | out of the decoder |
+| 640x360 DASH (Media Source) | 233 | 26 | 7 % | out of the decoder |
+| 1280x720 H.264/AAC MP4 | 280 | 46 | 6 % | out of the decoder |
 
-(CI run 40005389067, image of build 956af4a. Earlier runs on homebase: 3 to 25 dropped of ~250. The numbers move a lot
-from run to run because the runner shares its CPU.)
+(CI run 40015793857, build 2e04025, with the first-run card and Firefox's Terms-of-Use window dismissed so the film really is
+on screen: `film.*-visible` pass with 56,000 saturated pixels in 6 hues. Earlier numbers, taken while a card covered the
+desktop or the compositor still dropped subsurfaces, were 90-150 dropped of ~250 and are not comparable. Run to run the
+dropped count moves by tens: the runner shares its CPU.)
 
 ## Reading them honestly
 
@@ -26,8 +28,8 @@ from run to run because the runner shares its CPU.)
   in software mode, so they say the decode works and costs about a third of four cores; they do not say a 2013 laptop passes.
   The 2013-laptop number needs the owner's lab PC (WP-33) or a CPU-throttled VM; the harness is ready for it (`--smp 2`, a
   `cpulimit`ed qemu).
-- 90 to 110 dropped frames out of ~250 in the VM is far above the bar. Part of it is software drawing of a window the compositor
-  scales; the shell and Firefox take turns on the same cores. Check again after the compositor work (stream WL) and with
-  `--smp 2`.
+- 26 to 46 dropped frames out of 233 to 280 (11 to 16 %) is above the 5 % bar even on a fast core; the machine is 90 % idle,
+  so frames are lost to scheduling and to software drawing, not to decoding. Check with `--smp 2` and a CPU limit, and
+  against the compositor's frame callbacks (stream WL).
 - Widevine/Netflix is not tested: it needs the Widevine CDM (a download from Google, `media.gmp-widevinecdm`) and an
   `EncryptedMediaExtensions` policy decision; v0.2 (WP-56).

@@ -465,7 +465,14 @@ def drive(q, out, timeout, checks):
                     say("screenshot", arg)
                 elif act == "clickbox":              # SHOT R G B TOL INDEX x0 y0 x1 y1
                     shot, R, G, B, tol, idx, x0, y0, x1, y1 = arg.split()
-                    boxes = find_boxes(os.path.join(shots, shot + ".png"), int(x0), int(y0), int(x1), int(y1), (int(R), int(G), int(B)), int(tol))
+                    if shot == "now":                  # a fresh picture: the window may have re-fitted since the last one
+                        shot_path = os.path.join(shots, "clickbox-probe.png")
+                        q.screendump(shot_path)
+                    else:
+                        shot_path = os.path.join(shots, shot + ".png")
+                    boxes = find_boxes(shot_path, int(x0), int(y0), int(x1), int(y1), (int(R), int(G), int(B)), int(tol))
+                    if shot == "now" and os.path.exists(shot_path):
+                        os.remove(shot_path)
                     if int(idx) < len(boxes):
                         q.click(*boxes[int(idx)])
                         say("clicked box %s at %s" % (idx, boxes[int(idx)]))
