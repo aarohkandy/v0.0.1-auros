@@ -250,6 +250,17 @@ static int gapselftest(int argc, char **argv)
            (unsigned long long)L.rec_first, (unsigned long long)L.rec_last);
 
     uint64_t lo = L.root_first * ss, hi = (L.rec_last + 1) * ss;
+    /* FENCE ONE, WHEN IT IS ARMED: a window reaching into NTFS by one
+     * block is refused against the live table, before any write. */
+    {
+        char w[PLAT_WHY] = "";
+        if (plat_gap_allow(disk, (L.win_last_new + 1) * ss - 4096, hi,
+                           w, sizeof w) == 0) {
+            plat_gap_forbid();
+            return st_fail("a gap reaching into NTFS was armed", NULL);
+        }
+        printf("gapselftest fence1 arm-refused why=\"%s\"\n", w);
+    }
     if (plat_gap_allow(disk, lo, hi, why, sizeof why) != 0)
         return st_fail("plat_gap_allow", why);
     char w1[65], r1[65], w2[65], r2[65];
@@ -269,11 +280,20 @@ static int gapselftest(int argc, char **argv)
     /* FENCE ONE: the engine's own. Each of these must be refused. */
     static uint8_t z[8192];
     uint64_t ntfs_end = (L.win_last_new + 1) * ss;
+    /* AND ONE THAT ONLY THE WINDOW CAN REFUSE: unallocated space that is
+     * not the gap (after the last partition, where the throwaway disk
+     * has room), so no partition is there to refuse it instead. */
+    uint64_t past = 0;
+    for (uint32_t k = 0; k < t.n_entries; k++)
+        if (gpt_used(&t.ent[k]) && t.ent[k].last + 1 > past) past = t.ent[k].last + 1;
+    if (past + 16 > t.last_usable)
+        return st_fail("the throwaway disk has no room after its last partition", NULL);
     const struct { const char *what; uint64_t off; size_t n; } F[] = {
         { "straddling the end of the NTFS partition", ntfs_end - 4096, 8192 },
         { "inside the NTFS partition", L.win_first * ss, 4096 },
         { "just before the gap", lo - 4096, 4096 },
         { "running past the gap", hi - 4096, 8192 },
+        { "free space that is not the gap", past * ss, 4096 },
     };
     for (size_t i = 0; i < sizeof F / sizeof F[0]; i++) {
         char w[PLAT_WHY] = "";
