@@ -133,7 +133,7 @@ EOC
 gcc -O1 -g -std=gnu11 -Wall -Wextra -fsanitize=address,undefined \
     -fno-sanitize-recover=all -I src/aurstage -o "$TMP/c" "$TMP/c.c" \
     src/aurstage/commit.c src/aurstage/gpt.c src/aurstage/plan.c \
-    src/aurstage/wr.c src/aurstage/boot.c src/aurstage/stagelog.c src/aurstage/disks.c \
+    src/aurstage/wr.c src/aurstage/boot.c src/aurstage/disks.c \
     src/aurstage/sha256.c src/aurstage/ntfs.c src/aurstage/fde.c \
     src/aurstage/rescue.c src/aurstage/shrink.c src/aurstage/fault.c \
     || { echo "  did not build"; exit 2; }
