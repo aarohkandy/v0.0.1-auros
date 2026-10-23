@@ -21,19 +21,26 @@ help pages (K), `build/aurbridge` resources and the Ready page (B/A2), `.github/
 4. TM-4  free knockout search for "AurOS" (`docs/legal/NAME-SEARCH.md`).
 5. Keep `docs/legal/COMPLIANCE.md` status current; two skeptics review each public document.
 
-## Status
+## Status (2026-10-24; commits on `main`)
 
-(updated as each step lands; commit hashes below)
-
-- Step 1 LIC-1 **DONE for the first prerelease** (4225a73, run 39975787998): `sources-v0.1.0-618726b` is
-  published (prerelease; 539 source packages, 2 parts, 2.7 GB, `build/sources verify` run on the public
-  copy; assets: 2 tar parts, SOURCES.txt, PACKAGES.txt, SHA256SUMS, auros-source-618726bd8436.tar.gz) and the
-  notes of `v0.1.0-618726b` carry the line that points at it. `build/sources` + `tools/legal/sourcestest.py`
-  (34 cases + 7 mutants), `.github/workflows/sources.yml`, `legal.yml`, `tools/legal/{check,notes}.py/sh`,
-  `rootfs/usr/share/doc/auros/SOURCE-OFFER` (forge stamps the releases page into it).
-  Still to do for LIC-1: E wires `sources.yml` into release.yml (below); CONTACT_EMAIL stays until the owner has a mailbox.
-- Step 2 (licenses page, notices, marks check): in progress. Texts written in `docs/legal/{TERMS,DISCLAIMER,PRIVACY,LICENCES}.md`
-  (v1, not linked from anywhere until two skeptic reviews have passed).
+- **LIC-1 done and self-running.** `sources-v0.1.0-618726b` is published and verified from its public copy (first made 4225a73,
+  run 39975787998; remade complete with Built-Using, NOTICES.txt and Firefox's source by `[sources v0.1.0-618726b 39905858387 again]`,
+  run 40007739483: see the end of this file for its result). `.github/workflows/sources.yml` now **sweeps every three hours**:
+  every published AurOS release without a sources release gets one from the build run named in its notes, so no one has to
+  wire anything; it also re-checks every `sources-*` release against GitHub's digests and fails if an AurOS release older than
+  a day has none. `build/sources` + `tools/legal/sourcestest.py` (43 cases, 10 mutants), `legal.yml` (also
+  `stagingcheck.py`: the real staging cpio's 12 Ubuntu packages are all in NOTICES).
+- **LIC-2/3/5, TM-1/2/3 done in the repo:** `website/{licenses,terms,disclaimer,privacy}.html` (generated from `docs/legal/*.md`
+  by `tools/legal/mkpages.py`), one legal footer on every page, the one trademark paragraph (`docs/legal/TRADEMARKS.txt`), notices
+  (`tools/legal/notices.py`), `docs/RELINK.md`, the in-OS help page, `tools/legal/check.py` (pages, claims, marks, image,
+  `--launch`). Terms/Disclaimer/Privacy/Licenses are **v2** after the skeptic review.
+- **LIA-1/2, WEB-1/3, PRI-1/2/7, LIA-5 done in the texts;** the installer half is stream B's (strings below).
+- **TM-4 done, and it found a real problem** (`docs/legal/NAME-SEARCH.md`): UserTesting rebranded as Auros on 29 Sep 2026 and
+  filed AUROS in four countries; Emergent Systems holds US reg. 4512239 AUROS in class 9. Owner decision before the public link.
+- **Two skeptic reviews** (`docs/legal/REVIEWS.md`, 38 findings, each answered; open ones belong to B, A2, D, C, E or the owner).
+- **Not linked publicly until:** `python3 -I tools/legal/check.py --launch` is clean (the owner's mailbox, the installer's agreement
+  line / risk sentence / Licenses button / resources 200 and 202, no finding marked NOT DONE). E: run it in `promote`.
+- **Owner:** a mailbox (`check.py set-contact`), the name decision, Mozilla (`MOZILLA.md`), optional mirror of each sources release.
 
 ## Hand-offs to other streams (via the lead)
 
