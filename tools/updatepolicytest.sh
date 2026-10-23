@@ -19,6 +19,18 @@
 #        updated from AurOS)
 #      - AurOS's own channel: on, or said plainly that it is off
 #        (a FAIL with AUROS_RELEASE=1)
+#    dryrun ROOTFS [--repo-config]
+#      on the BUILT image, with network and root: would the image's own
+#      unattended-upgrade install an Ubuntu security update? A package of
+#      the image is made one version old (the dpkg record, in an overlay:
+#      the rootfs is not modified), apt-get update runs with the image's
+#      own sources, and `unattended-upgrade --dry-run --debug` must list
+#      the package among those it would upgrade, with Ubuntu's
+#      noble-security among the allowed origins. This is the check that
+#      does not read config: ${distro_id} and ${distro_codename} are
+#      whatever the image's lsb_release says AurOS is (TM-1,
+#      docs/legal/COMPLIANCE.md). --repo-config lays the repository's
+#      53auros-updates over the image's, to see a fix before a build has it.
 #    firefox         in a throwaway ubuntu:24.04 with network: Mozilla's
 #      repository set up exactly as build/forge does it, AurOS's apt
 #      policy, an old firefox installed -> unattended-upgrades would
@@ -216,6 +228,65 @@ keycheck() { # ROOTFS SOURCE KEY
     rm -rf "$T"
 }
 
+dryrun() {
+    local R; R=$(cd "${1:?ROOTFS}" 2>/dev/null && pwd) || need "no rootfs at $1"
+    local REPO=""; [ "${2:-}" = --repo-config ] && REPO=1
+    [ "$(id -u)" = 0 ] || need "dryrun needs root (overlay mount, chroot)"
+    local T; T=$(mktemp -d); mkdir -p "$T/up" "$T/work" "$T/m"
+    cleanup() { for m in dev proc; do umount "$T/m/$m" 2>/dev/null; done; umount "$T/m" 2>/dev/null; rm -rf "$T"; }
+    trap cleanup EXIT INT TERM
+    mount -t overlay overlay -o "lowerdir=$R,upperdir=$T/up,workdir=$T/work" "$T/m" || need "overlay mount failed"
+    mount --bind /dev "$T/m/dev" && mount -t proc proc "$T/m/proc" || need "could not mount /dev and /proc"
+    # Not /sys: the image's boot chain writes EFI variables.
+    rm -f "$T/m/etc/resolv.conf"; cat /etc/resolv.conf > "$T/m/etc/resolv.conf"
+    [ -n "$REPO" ] && cp "$ROOT/rootfs/etc/apt/apt.conf.d/53auros-updates" "$T/m/etc/apt/apt.conf.d/53auros-updates"
+    inr() { chroot "$T/m" /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C HOME=/root DEBIAN_FRONTEND=noninteractive "$@"; }
+
+    echo
+    echo "== what the image says it is${REPO:+   [53auros-updates from the repository laid over it]}"
+    local lid lcn
+    lid=$(inr lsb_release -i -s 2>&1); lcn=$(inr lsb_release -c -s 2>&1)
+    printf '    lsb_release -i -s: %s\n    lsb_release -c -s: %s\n    os-release: %s\n' "$lid" "$lcn" \
+        "$(grep -E '^(NAME|ID|VERSION_CODENAME|UBUNTU_CODENAME)=' "$T/m/etc/os-release" | tr '\n' ' ')"
+    [ -f "$T/m/etc/lsb-release" ] && printf '    /etc/lsb-release: %s\n' "$(tr '\n' ' ' < "$T/m/etc/lsb-release")"
+
+    echo
+    echo "== a package one version behind, and what unattended-upgrade would do"
+    inr apt-get update -q > "$T/update.log" 2>&1
+    grep -q 'noble-security' "$T/update.log" || { tail -15 "$T/update.log"; need "apt-get update did not reach noble-security"; }
+    # An installed package whose candidate is in Ubuntu's security pocket.
+    local pkg
+    cat > "$T/m/tmp/pick.py" <<'PY'
+import apt
+c = apt.Cache()
+best = [p for p in ("libssl3t64", "libc6", "libgnutls30t64", "zlib1g", "libexpat1", "libsystemd0", "tzdata", "libpam0g") if p in c]
+names = best + [p.name for p in c]
+for n in names:
+    p = c[n]
+    if p.is_installed and p.candidate and any(o.origin == "Ubuntu" and o.archive.endswith("-security") for o in p.candidate.origins):
+        print(n)
+        break
+PY
+    pkg=$(inr python3 /tmp/pick.py 2>/dev/null | head -1)
+    [ -n "$pkg" ] || need "no installed package has a candidate in Ubuntu's security pocket (nothing to test with)"
+    # The dpkg record says it is old; the files are untouched.
+    awk -v p="$pkg" 'BEGIN{RS="";ORS="\n\n"} $0 ~ "^Package: " p "\n" {sub(/\nVersion: [^\n]*/, "\nVersion: 0~aurostest")} {print}' \
+        "$T/m/var/lib/dpkg/status" > "$T/status.new" && cat "$T/status.new" > "$T/m/var/lib/dpkg/status"
+    printf '    package: %s, recorded as 0~aurostest; apt-cache policy:\n' "$pkg"
+    inr apt-cache policy "$pkg" | sed -n '1,6p;/^ *\*\*\*/,+1p' | sed 's/^/      /' | head -9
+    inr unattended-upgrade --dry-run --debug > "$T/uu.log" 2>&1
+    sed -n '/Allowed origins are/p;/Packages that will be upgraded/p;/No packages found/p' "$T/uu.log" | sed 's/^/    | /'
+    grep -q 'Allowed origins are:.*o=Ubuntu,a=noble-security' "$T/uu.log" &&
+        ok "Ubuntu's noble-security is among the allowed origins" ||
+        bad "Ubuntu's noble-security is among the allowed origins" "$(grep 'Allowed origins are' "$T/uu.log")" "(distro_id='$lid', distro_codename='$lcn')"
+    grep -q 'Allowed origins are:.*o=Ubuntu,a=noble-updates' "$T/uu.log" &&
+        ok "Ubuntu's noble-updates is among the allowed origins" || bad "Ubuntu's noble-updates is among the allowed origins"
+    grep -E 'Packages that will be upgraded:' "$T/uu.log" | grep -qE "(:| )$pkg( |$)" &&
+        ok "it WOULD install the security update of $pkg" ||
+        bad "it WOULD install the security update of $pkg" "$(sed -n '/Checking:/p;/not upgraded/p;/No packages found/p' "$T/uu.log" | grep -a "$pkg\|No packages" | head -4)"
+    done_
+}
+
 firefox() {
     local BREAK=${1:-}
     [ "$(id -u)" = 0 ] || need "run as root, in a throwaway container"
@@ -278,6 +349,7 @@ firefox() {
 
 case "${1:-}" in
     static)  shift; static "$@" ;;
+    dryrun) shift; dryrun "$@" ;;
     keycheck) shift  # ROOTFS: only the key part (a rootfs with just the source and key will do)
               R=$(cd "${1:?ROOTFS}" && pwd) || need "no rootfs"
               keycheck "$R" "$R/etc/apt/sources.list.d/auros.sources" "$R/usr/share/keyrings/auros-archive-keyring.asc"; done_ ;;

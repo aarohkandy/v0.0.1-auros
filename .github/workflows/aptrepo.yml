@@ -64,6 +64,8 @@ jobs:
       tag: ${{ steps.g.outputs.tag }}
       boot: ${{ steps.g.outputs.boot }}
       bootrun: ${{ steps.g.outputs.bootrun }}
+      ident: ${{ steps.g.outputs.ident }}
+      identrun: ${{ steps.g.outputs.identrun }}
     steps:
       - id: g
         env:
@@ -73,7 +75,7 @@ jobs:
           IN_TAG: ${{ inputs.tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          test=false; publish=false; tag=""; boot=false; bootrun=""
+          test=false; publish=false; tag=""; boot=false; bootrun=""; ident=false; identrun=""
           case "$EVENT" in
             workflow_run) test=true; publish=true ;;
             workflow_dispatch) test=true; publish=true; tag=$IN_TAG ;;
@@ -87,6 +89,10 @@ jobs:
                 boot=true
                 bootrun=$(printf '%s' "$SUBJ" | sed -n 's/.*\[updateboot \([0-9][0-9]*\)\].*/\1/p' | head -1) ;;
               esac
+              case "$SUBJ" in *'[identity'*)
+                ident=true
+                identrun=$(printf '%s' "$SUBJ" | sed -n 's/.*\[identity \([0-9][0-9]*\)\].*/\1/p' | head -1) ;;
+              esac
               case "$BEFORE" in
                 ''|0000000000000000000000000000000000000000)
                   files=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.files[].filename' || true) ;;
@@ -97,7 +103,7 @@ jobs:
                 test=true
               fi ;;
           esac
-          { echo "test=$test"; echo "publish=$publish"; echo "tag=$tag"; echo "boot=$boot"; echo "bootrun=$bootrun"; } | tee -a "$GITHUB_OUTPUT"
+          { echo "test=$test"; echo "publish=$publish"; echo "tag=$tag"; echo "boot=$boot"; echo "bootrun=$bootrun"; echo "ident=$ident"; echo "identrun=$identrun"; } | tee -a "$GITHUB_OUTPUT"
 
   test:
     needs: gate
@@ -410,3 +416,62 @@ jobs:
         with:
           name: updateboottest
           path: updateboottest.txt
+
+  # [identity] / [identity RUN-ID] in the subject: would the BUILT image's own
+  # unattended-upgrade install an Ubuntu security update? (TM-1: AurOS
+  # rewrites os-release; ${distro_id}/${distro_codename} come from lsb_release.)
+  # Runs tools/updatepolicytest.sh dryrun on that build's rootfs artifact, as
+  # built and with this repository's 53auros-updates laid over it.
+  identity:
+    needs: gate
+    if: needs.gate.outputs.ident == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      IN_RUN: ${{ needs.gate.outputs.identrun }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: which build
+        id: run
+        run: |
+          rid=$IN_RUN
+          if [ -z "$rid" ]; then
+            for r in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?branch=main&per_page=30" --jq '.workflow_runs[].id'); do
+              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$r/jobs?per_page=100" --jq '.jobs[] | select(.name == "build") | .conclusion' | grep -qx success; then
+                rid=$r; break
+              fi
+            done
+          fi
+          [ -n "$rid" ] || { echo "::error::no build run with a rootfs"; exit 1; }
+          echo "build run $rid: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$rid"
+          echo "rid=$rid" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: auros-rootfs
+          path: dl
+          run-id: ${{ steps.run.outputs.rid }}
+          github-token: ${{ github.token }}
+      - name: the built rootfs
+        run: |
+          sudo mkdir -p work
+          zstd -dc dl/rootfs.tar.zst | sudo tar -C work --numeric-owner -xf -
+          rm -rf dl
+          sudo test -f work/rootfs/etc/os-release
+      - name: as built
+        id: asbuilt
+        continue-on-error: true
+        run: sudo bash tools/updatepolicytest.sh dryrun work/rootfs 2>&1 | tee asbuilt.txt
+      - name: with this repository's 53auros-updates laid over it
+        id: fixed
+        continue-on-error: true
+        run: sudo bash tools/updatepolicytest.sh dryrun work/rootfs --repo-config 2>&1 | tee fixed.txt
+      - name: summary
+        run: |
+          { echo '### as built'; echo '```'; cat asbuilt.txt; echo '```'
+            echo '### with the repository config laid over it'; echo '```'; cat fixed.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "as built: ${{ steps.asbuilt.outcome }}; with the repository config: ${{ steps.fixed.outcome }}"
+          [ "${{ steps.fixed.outcome }}" = success ]
