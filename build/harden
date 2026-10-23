@@ -25,14 +25,19 @@
 #                 DNS-SD record ipp-usb registers with avahi (on the
 #                 loopback interface only: /etc/ipp-usb/ipp-usb.conf
 #                 says interface = loopback), which disable-publishing
-#                 would refuse. So publishing is allowed, but this computer
-#                 publishes nothing about itself (no address, hardware,
-#                 workstation or domain records), and the firewall never
-#                 lets an mDNS announcement leave on a real interface
-#                 (rootfs/etc/nftables.conf, output chain).
+#                 would refuse. So publishing is allowed, with no hardware,
+#                 workstation or domain record. The host's own address
+#                 record (publish-addresses) is NOT turned off: the
+#                 printer's DNS-SD record names this computer as its host,
+#                 and a client (CUPS, ippfind) that cannot resolve that name
+#                 finds no printer -- measured. What keeps all of it off the
+#                 network is the firewall: an mDNS response leaving on a
+#                 real interface is dropped (rootfs/etc/nftables.conf,
+#                 output chain) and a question from the network is never
+#                 let in.
 harden_avahi_conf() { # file  mode (none|loopback)
     case "$2" in
-        loopback) keys="disable-publishing=no publish-addresses=no publish-hinfo=no publish-workstation=no publish-domain=no" ;;
+        loopback) keys="disable-publishing=no publish-hinfo=no publish-workstation=no publish-domain=no" ;;
         *)        keys="disable-publishing=yes" ;;
     esac
     awk -v keys="$keys" '

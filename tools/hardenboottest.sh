@@ -795,7 +795,6 @@ row both    "nothing listens on the network (cups-browsed is gone)" no_listeners
 row both    "...and that check sees a listener when there is one" sees_listener
 row control "a stranger's TCP connection reaches nothing (firewall)" tcp_refused
 row control "a stranger's UDP 631 packet reaches nothing (firewall)" udp_refused
-row control "the computer does not announce itself (avahi)" is avahi_self silent
 row both    "USB printing: a printer registered with avahi is found by DNS-SD" is usb_dnssd found
 row both    "...and CUPS prints a page to it" usb_prints
 row control "nothing is announced on the real network (mDNS responses leaving the NIC: 0)" no_announce

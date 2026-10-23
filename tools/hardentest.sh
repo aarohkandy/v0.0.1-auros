@@ -217,11 +217,17 @@ if [ -f "$RFS/etc/avahi/avahi-daemon.conf" ]; then
             && ok "avahi lets ipp-usb register a USB printer (publishing is not off)" \
             || bad "avahi lets ipp-usb register a USB printer (publishing is not off)" "disable-publishing=yes: a printer on a USB cable would never be found"
         miss=""
-        for k in publish-addresses publish-hinfo publish-workstation publish-domain; do
+        for k in publish-hinfo publish-workstation publish-domain; do
             [ "$(pub $k)" = no ] || miss="$miss $k"
         done
-        [ -z "$miss" ] && ok "avahi announces nothing about this computer (no address, hardware, workstation or domain records)" \
-            || bad "avahi announces nothing about this computer (no address, hardware, workstation or domain records)" "not 'no' in [publish]:$miss"
+        [ -z "$miss" ] && ok "avahi publishes no hardware, workstation or domain record" \
+            || bad "avahi publishes no hardware, workstation or domain record" "not 'no' in [publish]:$miss"
+        # (publish-addresses stays on: the printer's record names this
+        # computer, and a client that cannot resolve the name finds no
+        # printer. The firewall rule below is what keeps it off the network.)
+        [ "$(pub publish-addresses)" != no ] \
+            && ok "...and the computer's own address record stays (a USB printer's DNS-SD record has to resolve)" \
+            || bad "...and the computer's own address record stays (a USB printer's DNS-SD record has to resolve)" "publish-addresses=no: CUPS and ippfind could not resolve the printer's host name"
         IU="$RFS/etc/ipp-usb/ipp-usb.conf"
         if sed -e 's/[#;].*//' "$IU" 2>/dev/null | grep -Eq '^[[:space:]]*interface[[:space:]]*=[[:space:]]*loopback[[:space:]]*$'; then
             ok "ipp-usb serves and registers its printer on loopback only (interface = loopback)"
