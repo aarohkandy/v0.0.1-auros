@@ -115,6 +115,24 @@ def test_bitlocker_verdict():
     check("PreventDeviceEncryption" in sp, "the plain PC: Windows' automatic device encryption is switched off in specialize.cmd")
 
 
+def test_timings_summary():
+    sys.path.insert(0, HERE)
+    import tempfile as tf, vm
+    with tf.TemporaryDirectory() as t:
+        r = vm.Recorder(t)
+        r.phases = [{"name": n, "start": a, "end": b, "result": "ok"} for n, a, b in (
+            ("edge: press the website's download button", 100, 110), ("wizard: first page", 150, 160),
+            ("wizard: after 'Next'", 160, 400), ("restart: Windows shuts down", 400, 460),
+            ("staging: make room", 460, 1060), ("aurOS: open VLC", 1100, 1130))]
+        out = r.summary()
+        check("| Get AurOS pressed -> Restart pressed (download, Windows' warnings, the wizard) | 5:00 |" in out,
+              "timings: Get AurOS to Restart is 300 s")
+        check("(the install itself) | 11:00 |" in out, "timings: the restart to 'does it work?' leg is 660 s")
+        check("(the whole journey) | 17:10 |" in out, "timings: the whole journey is 1030 s")
+        r.phases[-1]["result"] = "FAILED: x"
+        check("whole journey" not in r.summary(), "timings: a journey that failed has no total")
+
+
 def test_edge_item():
     tree = ast.parse(open(os.path.join(HERE, "e2e.py")).read())
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "inside")
@@ -171,6 +189,7 @@ test_expect()
 test_wizard_contract()
 test_stops()
 test_bitlocker_verdict()
+test_timings_summary()
 test_edge_item()
 test_publish()
 print(f"\n{len(fails)} failed" if fails else "\nall passed")

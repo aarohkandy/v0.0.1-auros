@@ -104,6 +104,30 @@ class Recorder:
         with open(self.timings_path, "w") as f:
             f.write("Wall-clock time of each phase (this run's record).\n\n")
             f.write("\n".join(rows) + "\n")
+            f.write(self.summary())
+
+    def span(self, first, last):
+        """Time from the start of the first phase named `first...` to the end
+        of the last one named `last...`, when both are done and ok."""
+        a = next((p for p in self.phases if p["name"].startswith(first)), None)
+        b = next((p for p in reversed(self.phases) if p["name"].startswith(last)), None)
+        if not a or not b or not b["end"] or b["result"] != "ok":
+            return None
+        return fmt_dur(b["end"] - a["start"])
+
+    def summary(self):
+        """The owner's bar is website to using it in under an hour. The
+        machine presses at once, so a person adds the time she spends
+        reading; the waits here are the computer's."""
+        legs = (("Get AurOS pressed -> Restart pressed (download, Windows' warnings, the wizard)",
+                 "edge: press the website", "wizard:"),
+                ("Restart pressed -> AurOS asks 'does it work?' (the install itself)",
+                 "restart:", "staging:"),
+                ("Get AurOS pressed -> a program installed and open (the whole journey)",
+                 "edge: press the website", "aurOS: open "))
+        rows = [(n, self.span(a, b)) for n, a, b in legs]
+        rows = [f"| {n} | {t} |" for n, t in rows if t]
+        return ("\n| the journey | machine time |\n|---|---|\n" + "\n".join(rows) + "\n") if rows else ""
 
 
 # ── the host's web server, and the channel to the guest's helper ─────
