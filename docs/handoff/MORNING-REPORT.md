@@ -48,7 +48,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
   Recycle Bin never emptied, double-click skipping the Ready page, shared password removed.
 - **Safety review done** (docs/safety/FINDINGS.md): 26 confirmed ways her disk or Windows could be hurt
   (12 high, 0 blockers after 3 skeptics each); 9 already fixed, the rest assigned with tests required.
-  Security audit and legal review: writing their final documents.
+- **Security audit done** (docs/security/FINDINGS.md): 0 critical, 8 high, all assigned: installer trust and
+  DLL hijacking, the update-signing key's exposure, mutable release files, no boot fallback, no network time
+  (updates silently stop in the US), no disk encryption yet. Legal review: writing its final document.
 
 ## Waiting for you (each with my recommendation)
 
@@ -64,4 +66,7 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
    plan's 10 ms CPU limit is tighter than the service's 11-33 ms cold starts.
 7. **Anthropic paperwork** (console.anthropic.com): accept the Data Processing Addendum, request zero
    data retention, and confirm the AurOS Wishes workspace has a monthly spend limit (docs/OWNER-SETUP.md §7b).
-8. Set the watchdog task to Auto mode (Scheduled → "AurOS: restart the swarm if it stopped").
+8. **Protect the update key** (docs/OWNER-SETUP.md, written by the pipeline agent): create the environment
+   `apt-signing` (main only, you as required reviewer), move the secret into it, turn on branch protection
+   for main and GitHub's release immutability. Today any pushed workflow could read the key.
+9. Set the watchdog task to Auto mode (Scheduled → "AurOS: restart the swarm if it stopped").
