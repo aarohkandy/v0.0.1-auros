@@ -24,7 +24,7 @@ questions] ("we", "us").
 
 ## 2. The website
 
-The website (computerdude771.github.io/auros-from-scratch) uses no
+The website (aarohkandy.github.io/v0.0.1-auros) uses no
 cookies, no analytics and no tracking, and loads nothing from any other
 server: its fonts and pictures come from the same place as its pages.
 If you press the light/dark switch on some pages, your browser remembers

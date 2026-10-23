@@ -10,9 +10,8 @@
 ## How a release is made
 
 Three workflows, all on `ubuntu-24.04` runners (pinned: `ubuntu-latest`
-moves to 26.04 in November 2026), all triggered by a push to a
-`claude/**` branch. `workflow_dispatch` cannot be used: it only works
-for workflows on the repository's default branch. **The trigger words
+moves to 26.04 in November 2026), all triggered by a push to
+`main`. **The trigger words
 count only in the commit's subject line.**
 
 | To get | Push a commit that | What runs |
@@ -37,7 +36,7 @@ build tools, `build/all desktop --keep=raw` **without**
 `ALLOW_BROWSER_FALLBACK` (the runner reaches Mozilla, so Firefox must
 arrive or the build stops), `build/staging`, `gzip -9` and `split` into
 90 MiB pieces with `pieces.txt` whose `base` is
-`https://github.com/ComputerDude771/auros-from-scratch/releases/download/v<os_version>-<sha7>/`,
+`https://github.com/$GITHUB_REPOSITORY/releases/download/v<os_version>-<sha7>/`,
 then `AUROS_RELEASE=1 build/aurbridge` with that list baked in. It then
 asks the `.exe` itself what it carries (resources 1-5, the release
 address, the shim's Microsoft key, the manifest) and has
@@ -69,7 +68,7 @@ installer's own download code -- fetch the image from the release and
 check it.
 
 Reading results: `actions_list` / `get_job_logs` with the GitHub tools,
-or `https://api.github.com/repos/ComputerDude771/auros-from-scratch/actions/runs`
+or `https://api.github.com/repos/$(sh tools/repo.sh)/actions/runs`
 without a token. Artifact downloads are blocked from the development
 container; release assets are not.
 
@@ -137,7 +136,7 @@ so in one neutral line.
 The image is published as release assets, in 90 MiB gzip pieces listed
 in `pieces.txt` (each asset must be under 2 GiB; pieces keep a dropped
 connection cheap). The address the installer has baked in is
-`https://github.com/ComputerDude771/auros-from-scratch/releases/download/<tag>/<piece>`;
+`https://github.com/$GITHUB_REPOSITORY/releases/download/<tag>/<piece>`;
 GitHub answers it with a 302 to a short-lived signed storage URL, which
 answers `Range` with 206. WinHTTP follows the redirect on every request,
 and every request is a fresh one to the original address, so a resume

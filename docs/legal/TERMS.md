@@ -10,7 +10,7 @@ These terms are an agreement between you and [OWNER: legal name of the
 person or organisation publishing AurOS, and its address] ("we", "us").
 They cover:
 
-- the AurOS website at computerdude771.github.io/auros-from-scratch;
+- the AurOS website at aarohkandy.github.io/v0.0.1-auros;
 - the AurOS installer for Windows (**AurOS-Setup.exe**); and
 - the AurOS system it puts on your computer, and its updates
 

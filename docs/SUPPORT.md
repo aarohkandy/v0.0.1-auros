@@ -22,17 +22,17 @@ help pages, which are on the computer and work without the internet:
 ## 2. On the website
 
 - The front page, with pictures of every step of putting AurOS on a
-  computer: <https://computerdude771.github.io/auros-from-scratch/>
+  computer: <https://aarohkandy.github.io/v0.0.1-auros/>
 - A page to print for whoever helps you:
-  <https://computerdude771.github.io/auros-from-scratch/guide.html>
+  <https://aarohkandy.github.io/v0.0.1-auros/guide.html>
 - For someone who knows computers (when the installer says AurOS can't
   go on a computer because of how it starts, or Intel's storage setting):
-  <https://computerdude771.github.io/auros-from-scratch/advanced.html>
+  <https://aarohkandy.github.io/v0.0.1-auros/advanced.html>
 
 ## 3. Asking us
 
 Open an issue on the project page:
-<https://github.com/ComputerDude771/auros-from-scratch/issues>
+<https://github.com/aarohkandy/v0.0.1-auros/issues>
 (it needs a free GitHub account; a family member or friend can do it
 for you).
 

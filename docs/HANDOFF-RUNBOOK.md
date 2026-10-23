@@ -133,8 +133,8 @@ and `mv` it over; the running shell keeps the old file open.
 | `sh tools/screentest.sh [SERIAL-LOG]` | 24 (+1 with a log) | seconds | gcc |
 | `AUROS_SHOTS=DIR sh tools/installtest.sh` | 37 | as installtest | also keeps a screenshot every 15 s and each run's serial log in DIR |
 
-**Real Windows: `.github/workflows/windows.yml`, on every push to a
-`claude/**` branch.** Wine is not Windows (docs/handoff/TRAPS.md): the
+**Real Windows: `.github/workflows/windows.yml`, on every push to
+`main`.** Wine is not Windows (docs/handoff/TRAPS.md): the
 first real PC refused an installer every test here had passed. The
 workflow builds the `.exe` files, starts them on a GitHub Actions
 Windows VM, downloads the published installer and starts that, and
@@ -142,7 +142,7 @@ downloads the published image with the installer's own WinHTTP code.
 Its `PUBLISHED_SHA256` and `IMAGE_*` variables are changed in the same
 commit that publishes a new installer or image. Read results with the
 GitHub tools (`actions_list`, `get_job_logs`); the repository is public,
-so `curl https://api.github.com/repos/ComputerDude771/auros-from-scratch/actions/runs`
+so `curl https://api.github.com/repos/$(sh tools/repo.sh)/actions/runs`
 also works without a token.
 
 `tools/README.md` lists every other test. Saved transcripts live in
