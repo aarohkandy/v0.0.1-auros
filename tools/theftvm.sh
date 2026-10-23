@@ -357,7 +357,12 @@ if wait_for "THEFT pass waiting"; then
 else
     bad "the start encrypted in place" "$(serial | tail -8)"; CUT=0
 fi
-power_off 5
+if [ "$CUT" = 1 ]; then power_off 5
+else
+    # no power cut: let the guest finish (set-pin with argon2id takes seconds) and switch itself off
+    wait_for "THEFT poweroff" 300
+    power_off 60
+fi
 if [ "$CUT" = 1 ]; then
     power_on resume
     wait_for "THEFT pass done" $((PASSLIM + 300))
