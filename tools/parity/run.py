@@ -117,7 +117,7 @@ def inject(mnt, opts):
     shutil.copytree(os.path.join(HERE, "guest"), dst)
     assets = os.path.join(HERE, "assets")
     if os.path.isdir(assets):
-        shutil.copytree(assets, os.path.join(dst, "assets"))
+        shutil.copytree(assets, os.path.join(dst, "www", "media"))
     if opts.script:
         shutil.copy(opts.script, os.path.join(dst, "checks", "adhoc.sh"))
     for f in ("session.sh", "root.sh", "run.sh"):
@@ -339,17 +339,17 @@ def drive(q, out, timeout, checks):
                 if act == "snap":
                     q.screendump(os.path.join(shots, arg + ".png"))
                     say("screenshot", arg)
-                elif act == "pixels":        # NAME x0 y0 x1 y1 MIN -> NAME.visible
-                    nm, x0, y0, x1, y1, mn = arg.split()
+                elif act == "pixels":        # SHOT RESULT x0 y0 x1 y1 MIN
+                    shot, nm, x0, y0, x1, y1, mn = arg.split()
                     try:
-                        n = colours_in(os.path.join(shots, nm + ".png"), int(x0), int(y0), int(x1), int(y1))
+                        n = colours_in(os.path.join(shots, shot + ".png"), int(x0), int(y0), int(x1), int(y1))
                     except Exception as e:               # no screenshot: a failure, said plainly
                         n = -1
                     ok = n >= int(mn)
-                    results[nm + ".visible"] = {"status": "pass" if ok else "fail", "detail":
+                    results[nm] = {"status": "pass" if ok else "fail", "detail":
                         ("the window shows a picture (%d colours)" % n) if ok else
                         ("the window is blank on screen: %d colour(s) where a page has at least %s" % (n, mn))}
-                    say("%-28s %-5s %s" % (nm + ".visible", results[nm + ".visible"]["status"], results[nm + ".visible"]["detail"]))
+                    say("%-28s %-5s %s" % (nm, results[nm]["status"], results[nm]["detail"]))
                 elif act == "key":
                     q.keys(*arg.split("+") if arg != "+" else ["equal"])
                 elif act == "type":

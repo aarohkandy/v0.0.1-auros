@@ -10,7 +10,7 @@ typing() { say "do type $1"; sleep 1; }
 click()  { say "do click $1 $2"; sleep 1; }
 opt()    { case " $OPTS " in *" $1 "*) return 0 ;; esac; return 1; }
 # wait_for SECONDS CMD...  -> 0 as soon as CMD succeeds
-wait_for() { n=$1; shift; i=0; while [ "$i" -lt "$n" ]; do "$@" >/dev/null 2>&1 && return 0; sleep 1; i=$((i+1)); done; return 1; }
+wait_for() { _n=$1; shift; _i=0; while [ "$_i" -lt "$_n" ]; do "$@" >/dev/null 2>&1 && return 0; sleep 1; _i=$((_i+1)); done; return 1; }
 
 # ── a web page the tests serve, and a Firefox to show it ───────────────
 OUT=/var/lib/auros-parity/out
@@ -33,3 +33,10 @@ clear_report() { rm -f "$OUT/$1.json" "$OUT/$1-stage.json"; }
 wait_report() { wait_for "$2" test -s "$OUT/$1.json"; }
 # jget FILE KEY  -> the value of a key in a small JSON report
 jget() { python3 -c "import json,sys; print(json.load(open('$1')).get('$2',''))" 2>/dev/null; }
+
+# cpu_busy SECONDS -> whole-machine CPU use (percent) over that time, from /proc/stat
+cpu_busy() {
+    set -- "$1" $(awk '/^cpu /{print $2+$3+$4+$7+$8, $2+$3+$4+$5+$6+$7+$8}' /proc/stat)
+    sleep "$1"
+    awk -v b0="$2" -v t0="$3" '/^cpu /{b=$2+$3+$4+$7+$8; t=$2+$3+$4+$5+$6+$7+$8; printf "%d", 100*(b-b0)/(t-t0)}' /proc/stat
+}

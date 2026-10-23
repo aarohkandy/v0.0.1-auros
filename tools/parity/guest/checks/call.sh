@@ -30,7 +30,7 @@ snap call-1
 sleep 2
 if wait_report call 120; then
     sleep 3; snap call
-    say "do pixels call 260 130 1020 690 12"; sleep 2
+    say "do pixels call call.visible 260 130 1020 690 12"; sleep 2
     ok=$(jget "$OUT/call.json" ok)
     note "call report: $(cat "$OUT/call.json" | cut -c1-400)"
     if [ "$ok" = True ]; then

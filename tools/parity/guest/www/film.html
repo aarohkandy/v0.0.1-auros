@@ -1,0 +1,79 @@
+<!doctype html><meta charset="utf-8"><title>AurOS parity: a film</title>
+<body style="font:20px sans-serif;margin:16px;background:#f4efe6">
+<h1 id="h">A film</h1>
+<video id="v" controls autoplay playsinline width="640" style="background:#222"></video>
+<pre id="log"></pre>
+<script>
+// ?mode=file&src=/media/film-360.mp4   a plain H.264/AAC MP4, as a download or a simple site serves it
+// ?mode=dash&src=/media/dash/manifest.mpd   adaptive streaming, as YouTube/Netflix do: separate audio and
+//                                           video, fragmented MP4 segments, appended through Media Source
+const q = new URLSearchParams(location.search);
+const mode = q.get('mode') || 'file', src = q.get('src'), name = q.get('name') || 'film';
+const v = document.getElementById('v');
+const stage = m => fetch('/' + name + '-stage', {method: 'POST', body: m});
+const report = o => fetch('/' + name, {method: 'POST', body: JSON.stringify(o)});
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const r = {ok: false, mode};
+
+async function dash(url) {
+  const base = url.replace(/[^/]*$/, '');
+  const mpd = new DOMParser().parseFromString(await (await fetch(url)).text(), 'application/xml');
+  const total = parseFloat(mpd.documentElement.getAttribute('mediaPresentationDuration').replace(/[PTS]/g, ''));
+  const ms = new MediaSource();
+  v.src = URL.createObjectURL(ms);
+  await new Promise(res => ms.addEventListener('sourceopen', res, {once: true}));
+  const jobs = [];
+  for (const as of mpd.querySelectorAll('AdaptationSet')) {
+    const reps = [...as.querySelectorAll('Representation')].sort((a, b) => b.getAttribute('bandwidth') - a.getAttribute('bandwidth'));
+    const rep = reps[0], t = rep.querySelector('SegmentTemplate');
+    const mime = rep.getAttribute('mimeType') + '; codecs="' + rep.getAttribute('codecs') + '"';
+    if (!MediaSource.isTypeSupported(mime)) throw new Error('this browser cannot play ' + mime);
+    const sb = ms.addSourceBuffer(mime);
+    const fill = x => x.replace('$RepresentationID$', rep.getAttribute('id'));
+    const dur = t.getAttribute('duration') / t.getAttribute('timescale');
+    const n = Math.ceil(total / dur);
+    const num = i => fill(t.getAttribute('media')).replace(/\$Number%(\d+)d\$/, (_, w) => String(i).padStart(+w, '0')).replace('$Number$', i);
+    jobs.push((async () => {
+      const put = async u => {
+        const buf = await (await fetch(base + u)).arrayBuffer();
+        sb.appendBuffer(buf);
+        await new Promise(res => sb.addEventListener('updateend', res, {once: true}));
+      };
+      await put(fill(t.getAttribute('initialization')));
+      for (let i = +t.getAttribute('startNumber'); i < +t.getAttribute('startNumber') + n; i++) await put(num(i));
+    })());
+    (r.tracks = r.tracks || []).push(mime + ' ' + rep.getAttribute('bandwidth') + ' bps');
+  }
+  await Promise.all(jobs);
+  ms.endOfStream();
+}
+
+(async () => {
+  try {
+    r.can = ['video/mp4; codecs="avc1.64001e, mp4a.40.2"', 'video/mp4; codecs="avc1.4d401e"', 'audio/mp4; codecs="mp4a.40.2"']
+      .map(t => t + ' => ' + (v.canPlayType(t) || 'no'));
+    // sound: what actually comes out of the decoder, not what the file claims
+    const ac = new AudioContext(), an = ac.createAnalyser(), buf = new Float32Array(2048);
+    ac.createMediaElementSource(v).connect(an); an.connect(ac.destination);
+    let peak = 0;
+    setInterval(() => { an.getFloatTimeDomainData(buf); for (const x of buf) peak = Math.max(peak, Math.abs(x)); }, 100);
+    stage('loading ' + src);
+    if (mode === 'dash') await dash(src); else v.src = src;
+    v.play().catch(e => r.play_error = String(e));
+    for (let i = 0; i < 160 && v.currentTime < 9 && !v.error; i++) {   // up to 80 s to get 9 s of film
+      await sleep(500);
+      stage('t=' + v.currentTime.toFixed(1) + ' state=' + v.readyState + ' paused=' + v.paused + ' ac=' + ac.state);
+      if (ac.state === 'suspended') ac.resume();
+    }
+    const q = v.getVideoPlaybackQuality();
+    r.current_time = v.currentTime; r.size = v.videoWidth + 'x' + v.videoHeight;
+    r.frames = q.totalVideoFrames; r.dropped = q.droppedVideoFrames; r.corrupted = q.corruptedVideoFrames;
+    r.has_audio = v.mozHasAudio; r.audio_peak = peak; r.error = v.error ? v.error.message : '';
+    r.ok = v.currentTime >= 8 && r.frames >= 100 && !v.error && peak > 0.05;
+    stage('measured; holding the picture for the screenshot');
+    await sleep(6000);
+  } catch (e) { r.error = String(e); }
+  stage('finished');
+  report(r);
+})();
+</script>
