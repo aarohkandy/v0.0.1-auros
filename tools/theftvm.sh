@@ -145,6 +145,9 @@ case "$st" in
 *state=plain*)
     AUROS_LOCK_PCRS="@PCRS@" $L prepare 2>&1 | while read -r l; do say "prepare $l"; done
     say "esp $(ls /boot/efi/auros 2>&1 | tr '\n' ' ')"
+    lsinitramfs "/boot/initrd.img-$(uname -r)" 2>&1 | grep -E 'auros|cryptsetup|tss2|libsystemd-shared|dejavu|dm-crypt|dm-mod|dm-zero|tpm|evdev|e2fsck|resize2fs|dumpe2fs|blkid|aes|xts|adiantum|ORDER' | while read -r l; do say "initrd $l"; done
+    say "ORDER $(lsinitramfs "/boot/initrd.img-$(uname -r)" 2>&1 | grep -c 'scripts/local-top/auros-lock') $(unmkinitramfs "/boot/initrd.img-$(uname -r)" /tmp/ir >/dev/null 2>&1; cat /tmp/ir/main/scripts/local-top/ORDER 2>/dev/null | tr '\n' ' ')"
+    ls -l /tmp/ir/main/scripts/local-top/ 2>&1 | while read -r l; do say "localtop $l"; done
     say "stub $(tr '\n' ' ' < /boot/efi/EFI/AurOS/grub.cfg)"
     ;;
 *state=encrypting*|*state=open-no-pin*)
@@ -367,6 +370,7 @@ power_off
 echo "  4  a dbx update in the firmware" | tee -a "$EV/summary.txt"
 python3 -I - "$T/vars.fd" "$TOP/tools" <<'EOP'
 import sys, os, uuid
+sys.dont_write_bytecode = True   # -I ignores PYTHONDONTWRITEBYTECODE; as root this would leave root-owned files
 sys.path.insert(0, sys.argv[2]); import efivarstore as e
 path = sys.argv[1]
 live = [d for n, _g, _a, d in e.read_store(path) if n == 'dbx']

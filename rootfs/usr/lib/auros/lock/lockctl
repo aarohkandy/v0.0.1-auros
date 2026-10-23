@@ -450,8 +450,11 @@ cmd_prepare() {
     # PCR 7 is the design (THEFT.md section 3). pcrs= (empty) binds the key
 # to no PCR: a dbx or shim change then never asks for the rescue code.
     printf 'armed=1\npartuuid=%s\npcrs=%s\n' "$partuuid" "${AUROS_LOCK_PCRS-7}" > "$CONF"
-    ln -sf "$HERE/initramfs-hook"   /etc/initramfs-tools/hooks/auros-lock
-    ln -sf "$HERE/initramfs-script" /etc/initramfs-tools/scripts/local-top/auros-lock
+    # COPIES, not links: update-initramfs copies scripts/ into the image
+    # as it finds them, and a link to /usr/lib/... would dangle there
+    # (measured: tools/theftvm.sh, the script never ran).
+    install -m755 "$HERE/initramfs-hook"   /etc/initramfs-tools/hooks/auros-lock
+    install -m755 "$HERE/initramfs-script" /etc/initramfs-tools/scripts/local-top/auros-lock
     mkdir -p /etc/kernel/postinst.d /etc/initramfs/post-update.d
     ln -sf "$HERE/boot-sync-hook" /etc/kernel/postinst.d/zzz-auros-lock
     ln -sf "$HERE/boot-sync-hook" /etc/initramfs/post-update.d/zzz-auros-lock
