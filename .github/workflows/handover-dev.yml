@@ -7,12 +7,20 @@ on:
       only:
         description: "scenarios (happy cutcopy hostile links forged tampered nodone noroom bitlocker), empty for all"
         default: happy
+      mutant:
+        description: "none, or a putback-* mutant from tools/fastpath-mutant.sh (the run must then go red)"
+        default: none
 jobs:
   handover:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: a deliberately broken script, when one was asked for
+        if: inputs.mutant != 'none'
+        shell: bash
+        env: { MUTANT: "${{ inputs.mutant }}" }
+        run: bash tools/fastpath-mutant.sh "$MUTANT"
       - name: the handover test
         shell: pwsh
         env: { ONLY: "${{ inputs.only }}" }
