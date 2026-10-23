@@ -159,6 +159,10 @@ up() {
     log "up NEVER"; return 1
 }
 daily() { # the repository it would find today
+    # A new publication has a new modification time (apt asks the server
+    # "newer than what I have?"); all three repositories were made in the
+    # same second at the start of the test, so say it is today's.
+    find "/var/cache/auros-e2e/repo-$1" -exec touch {} +
     ln -sfn "/var/cache/auros-e2e/repo-$1" /var/cache/auros-e2e/repo
     # Not this computer's first hour, and nothing done yet today.
     touch -d '2 days ago' /var/lib/auros/firstboot.done 2>/dev/null
@@ -167,6 +171,8 @@ daily() { # the repository it would find today
     systemctl start apt-daily-upgrade.service
     log "day($1) apt-daily=$(systemctl show -p Result --value apt-daily.service) apt-daily-upgrade=$(systemctl show -p Result --value apt-daily-upgrade.service) auros-desktop=$(ver)"
     cat /var/log/unattended-upgrades/unattended-upgrades.log >> "$OUT/uu.log" 2>/dev/null
+    { echo "== day($1), $(date -u +%T)"; apt-cache policy auros-desktop 2>&1
+      tail -n 25 /var/log/unattended-upgrades/unattended-upgrades.log 2>&1; } >> "$OUT/diag"
 }
 failed() { systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | sort | tr '\n' ' '; }
 log "start mode=$mode auros-desktop=$(ver)"
@@ -283,7 +289,8 @@ case "$PR" in *00auros-broken-*) ok "  ... and the broken version is pinned out"
 case "$(line 3 'day(v3)')" in *"auros-desktop=$V2") ok "the next day's update does not bring $V3 back" ;;
     *) bad "the next day's update does not bring $V3 back" "$(line 3 'day(v3)')" ;; esac
 case "$(line 3 'day(v4)')" in *"auros-desktop=$V4") ok "the fixed $V4 installs by itself" ;;
-    *) bad "the fixed $V4 installs by itself" "$(line 3 'day(v4)')" ;; esac
+    *) bad "the fixed $V4 installs by itself" "$(line 3 'day(v4)')"
+       mount_root; tail -n 45 "$T/m/var/lib/auros-e2e/diag" 2>/dev/null | sed 's/^/      | /'; umount_root ;; esac
 
 echo
 echo "  $(printf '%s\n' "$LOG" | wc -l) log lines; the log:"
