@@ -25,7 +25,7 @@ import os, re, subprocess, sys, tempfile, shutil
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PLACEHOLDER = "CONTACT_EMAIL"
 # every text a person can read that may carry the placeholder or a draft marker
-PUBLIC = ["rootfs/usr/share/doc/auros", "website", "docs/legal/TERMS.md", "docs/legal/PRIVACY.md",
+PUBLIC = ["rootfs/usr/share/doc/auros", "rootfs/usr/share/auros/help", "website", "docs/legal/TERMS.md", "docs/legal/PRIVACY.md",
           "docs/legal/DISCLAIMER.md", "docs/legal/SOURCES.md", "SECURITY.md", "docs/SUPPORT.md"]
 DRAFT_MARKERS = ["[OWNER", "[LAWYER", "[CHECK", "must be reviewed by a lawyer"]
 # files that talk ABOUT the placeholder and must keep it

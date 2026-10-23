@@ -58,6 +58,48 @@ help pages (K), `build/aurbridge` resources and the Ready page (B/A2), `.github/
    (the installer artifact then carries it; `sources.yml` reads the publishing runner's until it does).
 5. `profiles.yml` prune must skip `sources-*` (it prunes only `profiles-*`; keep it so).
 
+### B (installer: `src/aurbridge/wizard.c`, `build/aurbridge`), via the lead -- the exact strings
+`tools/legal/check.py` has dated allowances (until 2026-11-30) for the old absolute words in `wizard.c`;
+it goes red after that date, and green-without-allowance once these land.
+
+1. `page_ready` first row (now "Windows and all your files stay, and there is enough room for AurOS."):
+   `Windows and your files are kept, and there is enough room for AurOS.`
+2. One more G_INFO line on the same page, not blocking (it may replace another row to keep the page near
+   80 words and on 1366x768 without scrolling): `Any change to a drive carries some risk, so copy photos you can’t replace to a memory stick first.`
+3. DIRECTLY above the Install AurOS button, normal body size and contrast (NOT `C_QUIET`):
+   `By pressing Install AurOS you agree to the AurOS Terms.` and, beside or under it, a text button
+   `Read the Terms` that opens an in-wizard read-only pane with resource 202 (works offline; no browser).
+   Write `terms accepted: v1, <timestamp>` to the install journal (local only). "v1" is the Terms' version
+   (`docs/legal/TERMS.md` line 3). Keep Ready's one primary button `Install AurOS`; update the navtest strings.
+4. `page_welcome` subtitle (now "... Windows stays, with all your files. ..."): `AurOS is a free, simple new way to use this computer. Windows and your files are kept. If AurOS isn’t for you, you can go back to Windows.`
+5. `SAY(...)` for PAGE_READY (now "Ready to install. Windows and all your files stay on this computer. ..."): say
+   `Windows and your files are kept.` and then the risk sentence of item 2, then the rest.
+6. A `Licenses` button in the wizard footer that opens a read-only pane with resource 200.
+7. Resources (`src/aurbridge/aurbridge-info.rc` / `build/aurbridge`): RCDATA 200 = `docs/legal/notices/NOTICES.txt`
+   (UTF-8), RCDATA 202 = `docs/legal/notices/TERMS.txt`. NOTICES.txt contains `@AUROS_RELEASES@`: stamp it with
+   `sh tools/repo.sh releases` before embedding, as `build/forge` does for SOURCE-OFFER, and refuse a build
+   if `@AUROS_` is left. `tools/manifesttest.sh` should require 200 and 202 present and non-empty.
+   `python3 -I tools/legal/notices.py` regenerates both files; `tools/legal/check.py` fails if they are stale.
+8. The pictures on the website that show these screens (`website/assets/shots/setup-*.jpg`) must be
+   re-shot by D after 1-6 land; their alt text no longer repeats the old sentence.
+9. Not B's, for A2: `src/aurscreen/screen.c` "Putting Windows back exactly as it was." -> "Putting Windows back." and
+   "Windows is back, with every file in it." is only true after the engine's own verification: keep it only if
+   it is shown after that check (it is a statement of what was just verified).
+
+### D (website)
+- Done by LEGAL (smallest edits, commit b1766ec): the legal footer block on index/guide/advanced/status/code-signing
+  (generated: `python3 -I tools/legal/mkpages.py`; do not hand-edit between the `legal-footer` markers), the
+  "Licenses and source code" link under both Get AurOS buttons (one `.under-get` rule in site.css), the softened claims,
+  `code-signing.html` "plans to apply". `node tools/site/check.mjs`: 404 passed, 0 failed (homebase).
+- For D: `check.mjs` STALE list still says "updates itself" is false; since S5 it is true (update channel proven):
+  the Terms say "AurOS gets security fixes ... while your computer is online" to stay clear of that regex until you update it.
+- A later `[latest]` publishes these pages: do it only after the two skeptic reviews in `docs/legal/REVIEWS.md` are marked done.
+
+### K (help) and C (aurshell)
+- Done by LEGAL: `rootfs/usr/share/auros/help/licenses.html` (+ the index entry, + `licenses.html` in `tools/helptest.py` TOPICS; 46 checks green).
+- For C: aurshell Settings > About should link/open that help page (file `src/aurshell/*`, not touched);
+  `build/forge` is to `dpkg-divert` /etc/lsb-release to say DISTRIB_ID=AurOS (TM-1 item 1; `check.py image` warns until then).
+
 ## Traps
 
 - The contact address is the literal placeholder `CONTACT_EMAIL` everywhere until the owner

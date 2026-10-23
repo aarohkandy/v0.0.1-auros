@@ -46,7 +46,7 @@ REPO = os.path.dirname(HERE)
 
 TOPICS = ["getting-online.html", "programs.html", "printing.html",
           "video-calls.html", "something-wrong.html", "windows.html",
-          "never-call.html"]
+          "never-call.html", "licenses.html"]
 
 fails = []
 passes = 0
