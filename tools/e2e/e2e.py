@@ -719,8 +719,8 @@ class Flow:
                     # The installer ignores a press in the first 700 ms of a
                     # page (a double click must not skip one): press a button
                     # only once it has stood still for over a second.
-                    if (label, b) != cand[0]:
-                        cand[0], cand[1] = (label, b), time.time()
+                    if tuple(b) != cand[0]:      # (by place: OCR'd labels flicker)
+                        cand[0], cand[1] = tuple(b), time.time()
                         time.sleep(1.2)
                         continue
                     if time.time() - cand[1] < 1.0:
