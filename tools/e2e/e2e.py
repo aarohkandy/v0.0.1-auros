@@ -1004,10 +1004,23 @@ class Flow:
             self.m.click(*vision.centre(btn), label="install")
             done = None
             deadline = time.time() + 45 * 60
+            clicked, presses = time.time(), 1
             while time.time() < deadline and not done:
                 time.sleep(15)
                 img = self.m.screendump()
                 words = vision.ocr(img)
+                # A press that changed nothing (run 40008357634: five minutes
+                # later the page still said Install, the pointer on it): a person
+                # presses again, and says so if it never takes.
+                b = self.store_button(img)
+                if b and re.match(r"(?i)\W*" + STORE_INSTALL + r"\W*$", b[1]) and time.time() - clicked > 75:
+                    if presses >= 3:
+                        self.m.shot("store-install-did-nothing")
+                        raise Failure(f"pressed '{STORE_INSTALL}' {presses} times over {int(time.time() - clicked)} s "
+                                      "and the store showed no sign of installing: " + vision.text_of(words)[:400])
+                    self.m.click(*vision.centre(b[0]), label="install (again)")
+                    clicked, presses = time.time(), presses + 1
+                    continue
                 for bad in ("Authentication", "Failed to install", "Unable to install"):
                     if vision.find_text(words, bad):
                         self.m.save(img, "store-" + bad)
@@ -1175,6 +1188,22 @@ def diagnose_partition(rec, p, fs, mnt):
                 lines.append(run(["sudo", "sh", "-c", f"ls -la {mnt} | head -40; echo; ls -laR {mnt}/AurOS 2>&1 | head -60; "
                                   f"echo; for f in {mnt}/AurOS/*.txt {mnt}/AurOS/*.log {mnt}/AurOS/*.json; do "
                                   "[ -f \"$f\" ] && { echo \"== $f\"; head -c 8000 \"$f\"; echo; }; done 2>&1"],
+                                 rec, check=False).stdout)
+            finally:
+                run(["sudo", "umount", mnt], rec, check=False)
+    elif fs in ("ext4", "btrfs", "xfs"):
+        # AurOS's own disk: why did something inside it do nothing? (run
+        # 40008357634: the store's Install button pressed, nothing happened)
+        r = run(["sudo", "mount", "-o", "ro,noload" if fs == "ext4" else "ro", dev, mnt], rec, check=False)
+        if r.returncode == 0:
+            try:
+                lines.append(run(["sudo", "sh", "-c",
+                                  f"ls -la {mnt}/var/log {mnt}/var/log/journal 2>&1 | head -40; echo; "
+                                  f"ls -la {mnt}/var/lib/flatpak/app {mnt}/var/lib/flatpak/repo 2>&1 | head -20; echo; "
+                                  f"ls {mnt}/etc/polkit-1/rules.d {mnt}/usr/share/polkit-1/rules.d 2>&1; echo; "
+                                  f"cat {mnt}/etc/polkit-1/rules.d/49-auros.rules 2>&1 | head -60; echo; "
+                                  f"journalctl --directory={mnt}/var/log/journal --no-pager -n 500 -o short-monotonic 2>&1 | "
+                                  "grep -iE 'software|flatpak|packagekit|polkit|install|denied|error|fail|auth' | tail -150"],
                                  rec, check=False).stdout)
             finally:
                 run(["sudo", "umount", mnt], rec, check=False)

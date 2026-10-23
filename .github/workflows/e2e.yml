@@ -329,6 +329,10 @@ jobs:
       - name: the program is on AurOS's disk (machine off)
         if: steps.flow.outcome == 'success'
         run: /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/inspect" "$E2E_DIR/work"
+      - name: what the disk says (the flow failed; machine off)
+        if: always() && steps.flow.outcome == 'failure'
+        continue-on-error: true
+        run: /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/diag" "$E2E_DIR/work" --diag
       - name: publish the evidence (prerelease e2e-${{ github.run_id }})
         if: always()
         env:
