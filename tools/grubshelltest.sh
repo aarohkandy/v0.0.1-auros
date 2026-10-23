@@ -130,11 +130,21 @@ if [ -d "$RFS/etc" ]; then
         n=$((n+1))
         out=$(python3 -I "$T/scan.py" "$f") && ok "${f#$RFS/}: no shell" || bad "${f#$RFS/}: no shell" "$out"
     done
-    [ "$n" -gt 0 ] || bad "a grub.cfg is in the built rootfs" "none found under $RFS/boot"
-    if [ -f "$RFS/etc/default/grub" ]; then
-        grep -q '^GRUB_DISABLE_RECOVERY=["]\{0,1\}true' "$RFS/etc/default/grub" \
-          && ok "/etc/default/grub: GRUB_DISABLE_RECOVERY=true (Ubuntu's own generator writes no recovery entry)" \
-          || bad "/etc/default/grub: GRUB_DISABLE_RECOVERY=true" "$(grep '^GRUB_' "$RFS/etc/default/grub" | head -3)"
+    # The forge rootfs is NOT the image: build/mkimage writes the image's
+    # /etc/default/grub and runs update-grub inside the disk it makes, so a
+    # grub.cfg is not in work/forge/desktop/rootfs/boot and the forge rootfs's
+    # own /etc/default/grub (GRUB_DEFAULT=0, GRUB_TIMEOUT_STYLE=hidden) is
+    # replaced. Run 40023221919 (RC2) failed both checks for that reason. What
+    # is read instead is the file mkimage writes into the image:
+    if [ "$n" -eq 0 ]; then
+        echo "    (no grub.cfg in the forge rootfs: build/mkimage generates it in the image)"
+    fi
+    sed -n '/cat > "\$MNT\/etc\/default\/grub"/,/^EOF/p' build/mkimage > "$T/mkimage-default-grub"
+    if [ -s "$T/mkimage-default-grub" ] &&
+       grep -q '^GRUB_DISABLE_RECOVERY=["]\{0,1\}true' "$T/mkimage-default-grub"; then
+        ok "the /etc/default/grub build/mkimage writes into the image: GRUB_DISABLE_RECOVERY=true (Ubuntu's own generator writes no recovery entry)"
+    else
+        bad "the /etc/default/grub build/mkimage writes into the image: GRUB_DISABLE_RECOVERY=true" "$(head -4 "$T/mkimage-default-grub" 2>/dev/null)"
     fi
 else
     echo
