@@ -30,13 +30,14 @@ fi
 
 cat > /tmp/test.html <<'HTML'
 <!doctype html><meta charset=utf-8><title>wltest page</title>
-<body style="margin:0;font:28px sans-serif;background:#fff">
-<div style="background:#c0392b;color:#fff;padding:12px">RED BAR: if you can read this, the page subsurface is on screen</div>
-<div style="display:flex"><div style="width:200px;height:200px;background:#27ae60"></div>
-<div style="width:200px;height:200px;background:#2980b9"></div>
-<div style="width:200px;height:200px;background:#f1c40f"></div></div>
-<p>AurOS compositor test page. 0123456789 The quick brown fox jumps over the lazy dog.</p>
+<body style="margin:0;font:22px sans-serif;background:#fff">
+<div style="background:#c0392b;color:#fff;padding:8px">RED BAR: if you can read this, the page subsurface is on screen</div>
+<div style="display:flex;align-items:flex-start">
+<div style="width:120px;height:180px;background:#27ae60"></div>
+<div style="width:120px;height:180px;background:#2980b9"></div>
 <video src="file:///out/test.webm" width=320 height=180 autoplay muted loop style="background:#8e44ad"></video>
+</div>
+<p>AurOS compositor test page. 0123456789 The quick brown fox.</p>
 </body>
 HTML
 

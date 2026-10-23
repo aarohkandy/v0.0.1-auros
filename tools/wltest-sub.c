@@ -121,7 +121,7 @@ static void img_rect(img *m, int x, int y, int w, int h, uint32_t argb)
 
 /* ── the line between the two processes ───────────────────────────── */
 
-enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_TI, M_IDLE, M_END };
+enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_TI, M_IDLE, M_TIME, M_END };
 typedef struct { int kind, a, b, c, d; } msg;
 
 static int xfer(int fd, void *buf, size_t n, int wr)
@@ -240,6 +240,14 @@ static int serve(aurwl *c, int chan, pid_t kid, int *child_result)
             int got = aurwl_idle_inhibited(c);
             reply = (uint8_t)(got == m.a ? 0 : 1);
             if (reply) { printf("      idle inhibited is %d, expected %d\n", got, m.a); fails_here++; }
+            break;
+        }
+        case M_TIME: {    /* "how long does painting this window take?" (limit m.a ms) */
+            uint32_t t0 = now_ms();
+            if (w) (void)aurwl_win_content(w);
+            uint32_t took = now_ms() - t0;
+            reply = (uint8_t)(took <= (uint32_t)m.a ? 0 : 1);
+            if (reply) { printf("      painting the window took %u ms (limit %d)\n", took, m.a); fails_here++; }
             break;
         }
         case M_END: *child_result = m.a; (void)xfer(chan, &reply, 1, 1);
@@ -980,6 +988,25 @@ static void sc_idle(struct cl *c)
     (void)on_video;
 }
 
+/* 23. A program cannot make painting its window cost what it likes. Three
+ * thousand subsurfaces, each one pixel stretched by a viewport over the
+ * whole window, is three thousand full-window passes. */
+static void sc_budget(struct cl *c)
+{
+    img root = img_solid(1000, 900, GREY), px = img_solid(1, 1, RED);
+    top *t = mktop(c, &root, XRGB);
+    for (int i = 0; i < 3000; i++) {
+        sub s = mksub(c, t->s, 0, 0, &px, XRGB, 1);
+        struct wp_viewport *vp = wp_viewporter_get_viewport(c->vper, s.s);
+        wp_viewport_set_destination(vp, 1000, 900);
+        wl_surface_commit(s.s);
+        if (i % 500 == 499) wl_display_roundtrip(c->dpy);
+    }
+    wl_surface_commit(t->s);
+    wl_display_roundtrip(c->dpy);
+    ask(c, M_TIME, 1500, 0);
+}
+
 static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "plain",            sc_plain },
     { "page",             sc_page },
@@ -1003,6 +1030,7 @@ static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "wreck",            sc_wreck },
     { "textinput",        sc_textinput },
     { "idle",             sc_idle },
+    { "budget",           sc_budget },
 };
 #define NSC ((int)(sizeof SC / sizeof SC[0]))
 

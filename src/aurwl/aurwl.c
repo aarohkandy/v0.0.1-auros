@@ -873,9 +873,9 @@ static inline uint32_t over_px(uint32_t d, uint32_t s)
  * centres. Nearest, because this runs on the CPU of a 2013 laptop for
  * every damaged pixel of a video, and the shell's own bilinear pass
  * still runs once over the result. */
-static void blit_over(surface *dst, const irect *clip,
-                      int64_t dx, int64_t dy, int64_t dw, int64_t dh,
-                      const surface *src, irect sr, int opaque)
+static int64_t blit_over(surface *dst, const irect *clip,
+                         int64_t dx, int64_t dy, int64_t dw, int64_t dh,
+                         const surface *src, irect sr, int opaque)
 {
     int64_t x0 = dx > clip->x0 ? dx : clip->x0;
     int64_t y0 = dy > clip->y0 ? dy : clip->y0;
@@ -886,7 +886,7 @@ static void blit_over(surface *dst, const irect *clip,
     if (x1 > dst->w) x1 = dst->w;
     if (y1 > dst->h) y1 = dst->h;
     int64_t srw = sr.x1 - sr.x0, srh = sr.y1 - sr.y0;
-    if (x0 >= x1 || y0 >= y1 || srw <= 0 || srh <= 0 || dw <= 0 || dh <= 0) return;
+    if (x0 >= x1 || y0 >= y1 || srw <= 0 || srh <= 0 || dw <= 0 || dh <= 0) return 0;
 
     int same = (dw == srw && dh == srh);
     for (int64_t y = y0; y < y1; y++) {
@@ -904,17 +904,23 @@ static void blit_over(surface *dst, const irect *clip,
             }
         }
     }
+    return (x1 - x0) * (y1 - y0);
 }
 
 /* Paint `s` and everything stacked with it, bottom to top. The surface
  * itself is one entry in its own stack, so a child placed below it is
  * painted first and shows through wherever the surface is transparent. */
 static void compose_node(aurwl_win *s, int64_t ox, int64_t oy, int64_t k,
-                         surface *flat, const irect *clip, int depth)
+                         surface *flat, const irect *clip, int depth, int64_t *left)
 {
     /* No buffer means not mapped, and a surface that is not mapped takes
-     * everything stacked on it out of sight with it. */
-    if (depth > PARENT_MAX || !s->store) return;
+     * everything stacked on it out of sight with it. `left` is the work
+     * this repaint may still do, in pixels: a program can stack four
+     * thousand subsurfaces, each stretched over the whole window by a
+     * viewport, and nothing else limits what painting them costs. A real
+     * window overdraws a few times; past the budget the rest is skipped
+     * (the top of a hostile stack is lost, and it is the only one hurt). */
+    if (depth > PARENT_MAX || !s->store || *left <= 0) return;
     for (struct wl_list *n = s->sub_cur.next; n != &s->sub_cur; n = n->next) {
         if (n == &s->self_cur) {
             int lw, lh; surf_lsize(s, &lw, &lh);
@@ -927,11 +933,11 @@ static void compose_node(aurwl_win *s, int64_t ox, int64_t oy, int64_t k,
                 if (q.y1 > sr.y1) q.y1 = sr.y1;
                 if (q.x0 < q.x1 && q.y0 < q.y1) sr = q;
             }
-            blit_over(flat, clip, ox, oy, lw * k, lh * k, s->store, sr, s->opaque_fmt);
+            *left -= blit_over(flat, clip, ox, oy, lw * k, lh * k, s->store, sr, s->opaque_fmt);
         } else {
             aurwl_win *ch = wl_container_of(n, ch, cur_link);
             compose_node(ch, ox + (int64_t)ch->sub_x * k, oy + (int64_t)ch->sub_y * k,
-                         k, flat, clip, depth + 1);
+                         k, flat, clip, depth + 1, left);
         }
     }
 }
@@ -975,7 +981,8 @@ static surface *flat_get(aurwl_win *r)
         for (int y = clip.y0; y < clip.y1; y++)
             memset(r->flat->px + (size_t)y * r->flat->stride + clip.x0, 0,
                    (size_t)(clip.x1 - clip.x0) * 4);
-        compose_node(r, 0, 0, root_k(r), r->flat, &clip, 0);
+        int64_t left = 8 * (int64_t)fw * fh + (1 << 20);
+        compose_node(r, 0, 0, root_k(r), r->flat, &clip, 0, &left);
     }
     r->fdirty_all = r->has_fdirty = 0;
     return r->flat;
