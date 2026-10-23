@@ -34,6 +34,14 @@ env:
   # hash, so where it is read from does not matter.
   KNOWN_BAD_URL: https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/d2735b6b775b1952c724aabdfdf2567246ab6c74/AurOS-Installer-test.exe
   KNOWN_BAD_SHA256: 3e32e929f57c5c2673f4547a09b44c827743d191120d22a57dfc6f28a4f3e875
+  # ONLY UNTIL THIS REPOSITORY HAS A FULL RELEASE: the installer and image
+  # the old repository published (v4), pinned by hash. The pins job
+  # replaces all five with this repository's newest full release.
+  PUBLISHED_URL: https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/image-desktop/AurOS-Installer-test.exe
+  PUBLISHED_SHA256: ef903efd9cdeb10e15e52b3ce9e4eac83788f3396ac9f029ed04f2cfca1c5891
+  IMAGE_PIECES_URL: https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/image-desktop/v4/pieces.txt
+  IMAGE_SHA256: b36100653b1b3dd339c6209cdd60ab169706717f512f2bb5dee0273dd404da41
+  IMAGE_BYTES: 5333057536
 
 # ONE OF EACH JOB AT A TIME PER BRANCH, NEVER CANCELLED, AND ONLY FOR
 # PUSHES THAT NEED IT. The group used to be on the workflow: every push
@@ -116,12 +124,9 @@ jobs:
               image_bytes=$(tr -d ' \r\n' < image.bytes)
               from="release $tag of $GITHUB_REPOSITORY" ;;
             404)
-              published_url=https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/image-desktop/AurOS-Installer-test.exe
-              published_sha256=ef903efd9cdeb10e15e52b3ce9e4eac83788f3396ac9f029ed04f2cfca1c5891
-              pieces_url=https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/image-desktop/v4/pieces.txt
-              image_sha256=b36100653b1b3dd339c6209cdd60ab169706717f512f2bb5dee0273dd404da41
-              image_bytes=5333057536
-              from="the old repository's v4 files: $GITHUB_REPOSITORY has no full release yet" ;;
+              published_url=$PUBLISHED_URL published_sha256=$PUBLISHED_SHA256
+              pieces_url=$IMAGE_PIECES_URL image_sha256=$IMAGE_SHA256 image_bytes=$IMAGE_BYTES
+              from="the old repository's v4 files (env above): $GITHUB_REPOSITORY has no full release yet" ;;
             *) echo "::error::the releases API answered $code"; cat latest.json; exit 1 ;;
           esac
           [[ $published_sha256 =~ ^[0-9a-f]{64}$ && $image_sha256 =~ ^[0-9a-f]{64}$ && $image_bytes =~ ^[0-9]+$ ]] \
