@@ -622,9 +622,14 @@ static void submit(shell_ctx *c)
     send_text(c, W.text, W.voice);
 }
 
-static void send_text(shell_ctx *c, const char *text, int voice)
+static void send_text(shell_ctx *c, const char *text_in, int voice)
 {
     (void)c;
+    /* A copy first: the caller may be handing us W.said itself (consent
+     * arrived, now send what she had asked), and copying a string onto
+     * itself leaves it empty. */
+    char text[TEXT_MAX + 1];
+    snprintf(text, sizeof text, "%s", text_in);
     /* One at a time (§7.9): a second press while one is out is nothing. */
     if (W.req_id) return;
     /* The same words again within 30 s are not sent again. */
