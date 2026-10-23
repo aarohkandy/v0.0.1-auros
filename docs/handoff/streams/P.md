@@ -12,12 +12,31 @@ with a screenshot, an image size and a boot result for each.
 
 ## Status (update this table after every step)
 
-| profile | lint | built on Actions | boots to desktop | image size | screenshot |
-|---|---|---|---|---|---|
-| office | pass (was FAIL: thunderbird snap stub) | not yet | not yet | - | - |
-| revive | pass (was FAIL: 3 unknown excludes) | not yet | not yet | - | - |
-| school-kiosk | pass | not yet | not yet | - | - |
-| multilingual | pass | not yet | not yet | - | - |
+Run 39903833034 (commit 3a5610f), Actions, KVM, 1280x800, no browser fallback (Firefox from
+mozilla-apt). Every profile: build/all 4.5-6.5 min with the cached debootstrap base, then
+`tools/profiletest.sh boot`: all checks green, no failed unit, zram swap + earlyoom active.
+
+| profile | lint | built | boots to desktop | image (raw / gzip -9 download) | desktop up | RAM used | screenshot |
+|---|---|---|---|---|---|---|---|
+| office | pass | yes (308 s) | yes, 21/21 | 4.78 GiB / 1.53 GiB | 18 s | 415 MiB of 3.9 GiB | `docs/shots/profiles/office-first-start.png` |
+| revive | pass | yes (267 s) | yes, 21/21 (2 GiB VM) | 4.24 GiB / 1.31 GiB | 14 s | 313 MiB of 1.96 GiB | `revive-first-start.png` |
+| school-kiosk | pass | yes (328 s) | yes, 22/22 | 4.33 GiB / 1.37 GiB | 14 s | 1255 MiB of 3.9 GiB | `school-kiosk-first-start.png` |
+| multilingual | pass | yes (384 s) | yes, 21/21 | 4.62 GiB / 1.39 GiB | 16 s | 432 MiB of 3.9 GiB | `multilingual-first-start.png` |
+
+What I saw in every screenshot (read myself): the first thing on every profile is the full-screen
+"AurOS is on this computer / Yes, it all works / Let me look first / No, go back to Windows" panel
+(aurshell `welcome.c`), which hides the profile's own desktop. Right colours for each (slate
+office, ember revive with the taskbar behind it, sandstone kiosk, nocturne multilingual), so the
+shell really is the profile's. The kiosk shows ONLY the panel and a "Help" strip; whether its
+Firefox is open behind it was not visible, so the boot test now checks it (below).
+
+Open observations (not decided by me):
+- multilingual: the system language is fr_FR (probe: `LANG=fr_FR.UTF-8`, all five locales
+  generated) but aurshell's own text is English in the screenshot. aurshell has no translation
+  yet; the profile promises "native French", so this is an aurshell gap, not a profile bug.
+  Its theme is nocturne (inherited), not a French-specific one.
+- revive: "Get more programs" is absent by design (`software_store=""`); owner may want it back.
+- kiosk uses 1255 MiB (Firefox running) vs ~430 MiB for the others.
 
 ## Done and pushed
 
@@ -44,7 +63,13 @@ with a screenshot, an image size and a boot result for each.
 
 ## Half-done / not pushed
 
-- Run 39902765034 (commit 07ee591): first full build+boot of all four, one at a time.
+- `93f5c8a` COMMITTED LOCALLY IN wt-p, NOT PUSHED (the agent permission system refused the push
+  at that moment): boot test presses Escape over QMP and takes `<profile>-desktop.png` (the
+  profile's own desktop under the welcome panel), and a kiosk must have a browser process running
+  (probe `running=`; selftest mutant). profiles.yml uploads `-desktop.png`. Selftest 25/25.
+  Push it (`git push origin HEAD:main` from wt-p after `git fetch -q origin +main:refs/remotes/origin/main
+  && git rebase origin/main`), then the next `profiles` run (any push touching tools/profiletest*
+  triggers all four, ~1 h one at a time) gives the desktop shots; commit them to docs/shots/profiles/.
 
 ## Next 5 steps
 
