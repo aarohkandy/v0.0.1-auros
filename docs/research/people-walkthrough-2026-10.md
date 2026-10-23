@@ -1,6 +1,7 @@
 # People walkthrough, October 2026: a cognitive walkthrough of the whole journey
 
-Stream USABILITY, first pass. Written against `main` at `5006a1d` and checked again at `1fd307a`.
+Stream USABILITY, first pass. Written against `main` at `5006a1d` and checked again at `7f971f9`; the desktop and
+first-run renders were made on the tree at `7f971f9`.
 Source citations name the file and the function or a quoted string, not a
 line number: the tree changes every few minutes, so `git grep` the string.
 Method: three concrete people, walked screen by screen through the current
@@ -34,14 +35,14 @@ running, it says so.
 | Wizard | Seen. Light, post restyle (`7fb9b2d`), 1120x690, 1024x530, 150%. |
 | Restart, GRUB, black screens | Not seen. Read from `grub.cfg.in` and `aurscreen`. |
 | Staging screens | Seen, but **still the dark, pre-restyle** screens (`docs/shots/staging-*.png`, `screen.c`'s `PAPER` is still `0B0E14` and its `ACCENT` teal). |
-| First-run "Does everything work?" | Not seen rendered. Read from `welcome.c`. The website draws a replica. |
-| Desktop, four looks | Seen, but **dark, pre-restyle** (`docs/shots/shells/*`, taken before Light became the default). |
+| First-run "Does everything work?" | **Seen as a real render** (`tools/journeytest.sh`, the shipping paint code, Light, 1366x768 and 1024x600): `docs/usability/renders/2026-10-23/`. Not seen on a booted machine. The harness uses the container's fonts, not the image's UI face, so widths are approximate. |
+| Desktop, four looks | The same renders, in Light. `docs/shots/shells/*` are older and dark: ignore them. |
 | "Get more programs" | The shell row is seen. The store itself (GNOME Software) is not seen anywhere. |
 | Wishes | Not seen. `docs/shots/wishes/` does not exist. Read from `wish.c`. D14: not in the v0.1 image. |
 
-Part 3 of my brief is to repeat this after the restyle lands. The wizard and
-website have landed; staging, first run and desktop have not. That re-run is
-planned at the end of this file.
+Part 3 of my brief is to repeat this after the restyle lands. The wizard,
+website, first-run panel and desktop are now walked in their Light form; staging
+(still dark) is the one surface left for the re-run at the end of this file.
 
 ## 1. The three people
 
@@ -490,11 +491,13 @@ Owner: A2 (C's drawing code).
 ### E. The first start
 
 **E-01 · S1 · E, M · "Can you see your photos?" before the photos have come across**
-Where: `src/aurshell/welcome.c` (the `Q[]` table: the question; `A_FILES` in
-`welcome_click` opens the
-files program), `:196-204` (`Bring my files across` is offered only after Yes,
-`W_CONFIRMED`); commit `e9d1ba0` hides internal NTFS drives from the file
-manager. **Inferred from code; check on a booted image.**
+Where: the render `docs/usability/renders/2026-10-23/taskbar-1366x768-1-asks.png`
+(the question as she sees it); `src/aurshell/welcome.c` (`A_FILES` in
+`welcome_click` opens the files program; `actions_for()` offers "Bring my files
+across" only on the page after Yes, `W_CONFIRMED`); commit `e9d1ba0` removed the
+grant that let her account mount the Windows disk ("Her files come across
+read-only through Ferry, which mounts as root"). **Inferred from code; the
+sessions settle it on a booted image.**
 What: the first of two checks sends her to "Your files", which shows her AurOS
 home folder, which is empty. The Windows drive is hidden, and the copy runs
 only after she has pressed Yes. She sees no photos, answers "No, go back to
@@ -550,17 +553,20 @@ and Firefox (a policy preference), plus the shell; or change the sentence until
 it is true and put "Make this page bigger" where she reads.
 Owner: C, S2 (Firefox policy), P (GTK).
 
-**F-02 · S2 · E, R, M · The first screen of "Like Windows" is an empty wallpaper**
-Where: `docs/shots/shells/taskbar.png`, `docs/shots/website/index-1366x768-fold.png`
-(the website's picture keeps the menu open).
-What: the look she is most likely to keep, because it is pre-picked, greets her
-with a blank desktop, one small "All my programs" button and a small grey hint
-("Nothing open yet — pick something from All my programs"). The website's
-picture has the menu open. Windows users have icons. Edith waits; Margaret
-touches the glass.
-Fix: open "All my programs" on first run, or put Internet, Your files, Photos
-and Get more programs on the desktop as big tiles.
-Owner: C (D redraws the picture to match).
+**F-02 · S2 · M, E · "Like a Mac" opens on an empty wallpaper with four icons that have no names**
+Where: `docs/usability/renders/2026-10-23/dock-1366x768-4-desktop.png`;
+`tools/journeytest.sh` says why ("The dock draws its favourites without names
+until C P1-12").
+What: nothing on the screen but a small box at the bottom left: "+ Find", "Get
+more programs", and four unnamed pictures (a striped ball, a folder, a picture,
+a page). Margaret reads pictures, and the first is not obviously a browser. DD
+requires every icon to carry a label of at least 18 px.
+(I first predicted an empty wallpaper for "Like Windows" as well, from the old
+dark shot. The render shows the opposite: `taskbar.c` opens the program list by
+itself while nothing is open, with "Get more programs" last. That is right.)
+Fix: C P1-12 (labels under the dock icons; "All my programs" in place of
+"+ Find").
+Owner: C.
 
 **F-03 · S2 · R · Windows habits that do nothing**
 Where: `src/aurshell/foot.c` (a window's close lives in the footer in
@@ -596,6 +602,43 @@ exists in the wizard (`938ea78`), not in `src/aurshell/main.c`.
 What: a tremor second press can land on whatever the first one opened. The
 power question appears away from its button (`foot_power_buttons()`), so the obvious
 case is safe; others are not tested.
+Owner: C.
+
+**F-07 · S2 · E, M, R · The line that says what each answer does is 12 px type**
+Where: `docs/usability/renders/2026-10-23/taskbar-1366x768-1-asks.png` (and
+`1024x600`). I measured the cap height in the picture: 8 px under "Yes, it all
+works", "Let me look first" and "No, go back to Windows" (about 12 px type); 11
+px (about 15 px) for "Can you see your photos?" and "Does the internet
+work?"; the heading is 31 px. DD section 3 sets 18 px as the floor "for anything
+she needs".
+What: this is the one screen that decides for good, and the sentences that say
+which button keeps AurOS and which goes back are the smallest, greyest text on
+it. Her eye goes to the green button. The explanation she cannot read.
+Related: the two "Open" buttons sit about 490 px from the question they belong to,
+with a hairline between, which is a long way for a tracking eye.
+Fix: 18 px ink-2 for the three lines; or the sentence inside the button; the Open
+button beside its question.
+Owner: C.
+
+**F-08 · S2 · M, E · Two pairs of different things wear one icon**
+Where: `taskbar-1366x768-4-desktop.png` and `tiles-1366x768-4-desktop.png`:
+**Documents and Photos** both draw the picture-with-a-mountain; **Printers and
+Settings** both draw the sliders. Internet is a striped ball, not a globe.
+What: Margaret chooses by picture. DD section 3: "no two things share a
+silhouette" (C P0-8 is open).
+Owner: C.
+
+**F-09 · S2 · E · The words she must read are cut off with "..."**
+Where: the taskbar's own button reads "All my progra…" (render `4-desktop`,
+`7-opens`); menu lines "Everything you have saved, i…", "Change how this
+computer l…"; the footer's **Close this** reads "Close t…" (render `7-opens`, and
+`docs/shots/guard/guard-help.png`). DD: "nothing she reads is ever cut off with
+'…'". Caveat: the harness's font is wider than the image's UI face; check on the
+image.
+What: the button she must find first, and the button that is her way out of a
+screen she cannot read, are truncated.
+Fix: widen the footer item to its label (a label wraps to two lines, DD
+section 3), and "All my programs" fits or wraps.
 Owner: C.
 
 ### G. Get more programs
@@ -709,11 +752,12 @@ recruit sits down.
 | 12 | B-02 | 1 | E, M | Antivirus quarantine is on 25 to 40% of PCs and the site says nothing | D, K |
 | 13 | A-04 / C-03 | 1 cond. | R, E | "About 10 to 25 minutes" is not measured; a longer run makes the impatient switch off | D, B, F |
 | 14 | C-01 | 2 data | all | "Fix these for me" restarts Windows with no "save your work first" | B |
-| 15 | F-02 | 2 | all | "Like Windows", the pre-picked look, opens on an empty wallpaper | C |
+| 15 | F-07 | 2 | E, M, R | On "Does everything work?" the lines that say what each answer does are 12 px type (measured); DD's floor is 18 | C |
 
 Also close behind: B-03 (three alarms), B-05 (standard account password),
 C-07 (stock Yes/No dialogs with inverted logic), A-08 (stale installer
-pictures), D-02 (GRUB menu names), F-04 (no Photos on Home).
+pictures), D-02 (GRUB menu names), F-04 (no Photos on Home), F-08 (Documents and
+Photos share an icon), F-09 ("All my progra…" and "Close t…" are cut off).
 
 ## 5. What the sessions must settle
 
