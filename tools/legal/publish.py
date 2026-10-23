@@ -57,7 +57,15 @@ def state(tag):
 def release_json(tag):
     """The release's REST object (assets with id, name, digest); drafts are found in the list."""
     p = gh("api", "repos/%s/releases?per_page=100" % REPO, "--paginate")
-    rels = json.loads(p.stdout) if p.stdout.strip().startswith("[") else sum((json.loads(x) for x in re.split(r"(?<=\])\s*(?=\[)", p.stdout.strip())), [])
+    # --paginate prints one JSON array per page, one after the other: read them one at a time
+    rels, dec, i, t = [], json.JSONDecoder(), 0, p.stdout
+    while True:
+        while i < len(t) and t[i].isspace():
+            i += 1
+        if i >= len(t):
+            break
+        obj, i = dec.raw_decode(t, i)
+        rels += obj if isinstance(obj, list) else [obj]
     for r in rels:
         if r.get("tag_name") == tag:
             return gh_json("repos/%s/releases/%d" % (REPO, r["id"]))
@@ -146,7 +154,11 @@ def publish_again(tag, outdir, notes):
             raise SystemExit("publish: could not upload %s: the published release is as it was" % ", ".join(failed))
         # 3. GitHub's own digests against ours
         want = dict(sums); want["SHA256SUMS"] = sha256_file(os.path.join(outdir, "SHA256SUMS"))
-        by = {a["name"]: a for a in release_json(tag)["assets"]}
+        for attempt in range(6):          # GitHub may take a moment to show a digest it has just computed
+            by = {a["name"]: a for a in release_json(tag)["assets"]}
+            if all((by.get("new-" + n) or {}).get("digest") for n in names):
+                break
+            time.sleep(SLEEP)
         wrong = [n for n in names if (by.get("new-" + n) or {}).get("digest") != "sha256:" + want[n]]
         if wrong:
             cleanup()

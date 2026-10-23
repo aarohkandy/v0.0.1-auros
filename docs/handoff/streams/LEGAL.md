@@ -29,7 +29,7 @@ help pages (K), `build/aurbridge` resources and the Ready page (B/A2), `.github/
   `sources-*` release against GitHub's digests and fails if an AurOS release older than a day has none. Publishing goes
   through `tools/legal/publish.py` (draft first; a published release is only replaced by a complete, digest-checked
   set, never emptied first). Tests: `build/sources` + `tools/legal/sourcestest.py` (11 mutants), `publishtest.py` (a pretend
-  GitHub, 5 mutants), `stagingcheck.py` (the real staging cpio's 12 Ubuntu packages are all in NOTICES), all in `legal.yml`.
+  GitHub, 7 mutants), `stagingcheck.py` (the real staging cpio's 12 Ubuntu packages are all in NOTICES), all in `legal.yml`.
   **The published `sources-v0.1.0-618726b` was damaged on 2026-10-23 by cancelling a run that had already started replacing
   it with the old unsafe tool (a part was gone): it is being remade with the safe one** (`[sources v0.1.0-618726b
   39905858387 again]`); see the end of this file for what it ended as.

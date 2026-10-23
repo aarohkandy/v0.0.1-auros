@@ -81,6 +81,7 @@ jobs:
       todo: ${{ steps.w.outputs.todo }}
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}   # this job has no checkout, so gh cannot find the repository from git
     steps:
       - id: w
         env:
@@ -152,6 +153,7 @@ jobs:
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       TAG: ${{ matrix.item.tag }}
       RID: ${{ matrix.item.run }}
       AGAIN: ${{ matrix.item.again }}

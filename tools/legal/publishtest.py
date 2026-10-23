@@ -75,10 +75,16 @@ elif a[0] == "api" and a[1] == "-X" and a[2] == "PATCH":
             if x["id"] == aid: x["name"] = new
     jsave(s)
 elif a[0] == "api" and "/releases?per_page" in a[1]:
-    out([{"id": r["id"], "tag_name": r["tag_name"]} for r in s["releases"]])
+    rl = [{"id": r["id"], "tag_name": r["tag_name"]} for r in s["releases"]]
+    if os.environ.get("FAKE_PAGES"):          # gh api --paginate prints one JSON array per page, back to back
+        for r in rl: print(json.dumps([r]))
+    else:
+        out(rl)
 elif a[0] == "api" and "/releases/" in a[1]:
     rid = int(a[1].rsplit("/", 1)[1]); r = next(r for r in s["releases"] if r["id"] == rid)
-    out({"id": r["id"], "tag_name": r["tag_name"], "assets": [{"id": x["id"], "name": x["name"], "digest": x["digest"]} for x in r["assets"]]})
+    late = os.environ.get("FAKE_LATE_DIGEST") and not os.path.exists(db + "/late")   # the first look shows no digest yet
+    if late and any(x["name"].startswith("new-") for x in r["assets"]): open(db + "/late", "w").write("1")
+    out({"id": r["id"], "tag_name": r["tag_name"], "assets": [{"id": x["id"], "name": x["name"], "digest": (None if late and x["name"].startswith("new-") else x["digest"])} for x in r["assets"]]})
 else:
     sys.stderr.write("fake gh: unknown %r\n" % a); sys.exit(2)
 '''
@@ -183,6 +189,23 @@ def main():
         rc, o = run(db, out4, notes, "--again")
         check(rc == 0 and assets(db)["sources-v1-1of3.tar"] == "sha256:" + sha(b"p1b"), "again: and the next try, with nothing wrong, succeeds")
 
+        # gh api --paginate prints one JSON array per page: a list of many releases is several documents
+        st = json.load(open(db + "/state.json")); st["releases"].append({"id": 99, "tag_name": "v9", "draft": False, "body": "", "assets": []})
+        json.dump(st, open(db + "/state.json", "w"))
+        out5 = os.path.join(tmp, "out5")
+        make_out(out5, files={"sources-v1-1of3.tar": b"p1c", "sources-v1-2of3.tar": b"p2c", "sources-v1-3of3.tar": b"p3c", "PACKAGES.txt": b"p4\n",
+                              "SOURCES.txt": b"S\tfoo\t1.0\t1\tx\t1\t1\tfoo\nS\tbar\t2.0\t2\ty\t1\t1\tbar\nS\tshim\t15\t3\tz\t1\t1\tshim\nS\tmore\t1\t3\tz\t1\t1\tmore\n",
+                              "NOTICES.txt": b"licenses v4", "firefox-1.source.tar.xz": b"ff"})
+        rc, o = run(db, out5, notes, "--again", env={"FAKE_PAGES": "1"})
+        check(rc == 0 and assets(db)["sources-v1-1of3.tar"] == "sha256:" + sha(b"p1c"), "again: a release list that comes in several pages is read whole (%s)" % o.strip()[-60:])
+
+        out6 = os.path.join(tmp, "out6")
+        make_out(out6, files={"sources-v1-1of3.tar": b"p1d", "sources-v1-2of3.tar": b"p2d", "sources-v1-3of3.tar": b"p3d", "PACKAGES.txt": b"p5\n",
+                              "SOURCES.txt": b"S\tfoo\t1.0\t1\tx\t1\t1\tfoo\nS\tbar\t2.0\t2\ty\t1\t1\tbar\nS\tshim\t15\t3\tz\t1\t1\tshim\nS\tmore\t1\t3\tz\t1\t1\tmore\n",
+                              "NOTICES.txt": b"licenses v5", "firefox-1.source.tar.xz": b"ff"})
+        rc, o = run(db, out6, notes, "--again", env={"FAKE_LATE_DIGEST": "1"})
+        check(rc == 0 and assets(db)["sources-v1-1of3.tar"] == "sha256:" + sha(b"p1d"), "again: a digest GitHub has not shown yet is waited for (%s)" % o.strip()[-60:])
+
         # again on something that is not published
         db5 = os.path.join(tmp, "db5"); os.makedirs(db5); shutil.copy(os.path.join(db, "gh"), db5); os.chmod(os.path.join(db5, "gh"), 0o755)
         run(db5, out1, notes, env={"FAKE_FAIL_UPLOAD": "2of2"})
@@ -203,6 +226,8 @@ MUTANTS = [
     ("a set with fewer sources is accepted", "if lost:", "if False:"),
     ("a lookup error means 'not there'", 'raise SystemExit("publish: cannot tell whether %s exists: %s" % (tag, (p.stderr or p.stdout).strip()[:200]))', 'return "none"'),
     ("a failed upload still publishes the draft", "if bad:", "if False:"),
+    ("a digest GitHub has not shown yet is taken as wrong", "for attempt in range(6):", "for attempt in range(1):"),
+    ("the release list is read as one JSON document", "obj, i = dec.raw_decode(t, i)", "obj, i = json.loads(t), len(t)"),
 ]
 
 
