@@ -24,10 +24,17 @@
 #           again: it starts. The first start of it is cut short
 #           (powered off at once): that is not a verdict.
 #    run 4  an ordinary start: still the new kernel, and confirmed.
+#    run 5  a still newer kernel (1001) starts, and its desktop never
+#           appears (a graphics driver that hangs the desktop, as far as
+#           anybody can tell from outside). Nobody touches anything:
+#           auros-boot-guard restarts the computer when the start is not
+#           confirmed in time, twice; the third start is the kernel
+#           before, with a desktop.
 #
-#  ROLLBACKTEST_MUTANT=nocount removes the counting from the menu and
-#  =noclear stops auros-boot-ok clearing it; each makes this test fail,
-#  which is how it is shown to test something.
+#  ROLLBACKTEST_MUTANT=nocount removes the counting from the menu,
+#  =noclear stops auros-boot-ok clearing it and =noguard stops
+#  auros-boot-guard restarting; each makes this test fail, which is how
+#  it is shown to test something.
 #
 #  NOT REAL: the "bad kernel" (a good one with a dead initramfs), and
 #  the two-minute wait, which the test shortens to ten seconds
@@ -121,11 +128,16 @@ case "$MUTANT" in
          sed -i 's|^function auros_count {|function auros_count {\n  echo "BT: count sees try=[${auros_try}]"|; s|^  save_env --file (\$root)/boot/grub/grubenv auros_try|  echo "BT: count sets try=[${auros_try}]"\n&|; s|^if \[ -z "\${auros_req}" \]; then|echo "BT: menu sees try=[${auros_try}] bad=[${auros_bad}] prev=[${auros_prev}]"\n&|' "$R/boot/grub/grub.cfg" ;;
   nocount) sed -i '/^ *auros_count$/d' "$R/boot/grub/grub.cfg" ;;
   noclear) printf '#!/bin/sh\nexit 0\n' > "$R/usr/lib/auros/boot-ok" ;;
+  noguard) printf '#!/bin/sh\nexit 0\n' > "$R/usr/lib/auros/boot-guard" ;;
 esac
 
 # the stand-in for "the desktop came up" and for nobody doing anything
 mkdir -p "$R/usr/lib/auros-e2e" "$R/etc/auros-e2e" "$R/etc/systemd/system/auros-boot-ok.service.d"
 printf '[Service]\nEnvironment=AUROS_BOOT_OK_SECS=10\n' > "$R/etc/systemd/system/auros-boot-ok.service.d/test.conf"
+mkdir -p "$R/etc/systemd/system/auros-boot-guard.service.d"
+printf '[Service]\nEnvironment=AUROS_GUARD_SECS=25\n' > "$R/etc/systemd/system/auros-boot-guard.service.d/test.conf"
+[ -L "$R/etc/systemd/system/multi-user.target.wants/auros-boot-guard.service" ] \
+  && ok "the image carries auros-boot-guard, switched on" || bad "the image carries auros-boot-guard, switched on"
 cat > "$R/usr/lib/auros-e2e/run.sh" <<'EOS'
 #!/bin/sh
 # NOT PART OF AUROS. tools/rollbacktest.sh puts this into a scratch copy
@@ -139,9 +151,15 @@ n=$(( $(cat "$OUT/n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$OUT/n"
 log() { printf 'run%s start%s %s\n' "$run" "$n" "$*" >> "$OUT/log"; sync; }
 img=$(tr ' ' '\n' < /proc/cmdline | sed -n 's/^BOOT_IMAGE=//p')
 log "up mode=$mode kernel=${img##*/boot/vmlinuz-} running=$(uname -r)"
+# /run/auros exists as soon as aurshell.service is TRIED (its
+# RuntimeDirectory); a desktop that keeps failing needs "is it active".
+up() { if [ "$mode" = guard ]; then systemctl is-active --quiet aurshell.service; else [ -d /run/auros ]; fi; }
+lim=300; [ "$mode" = guard ] && lim=40
 i=0
-while [ ! -d /run/auros ] && [ "$i" -lt 300 ]; do sleep 1; i=$((i+1)); done
-[ -d /run/auros ] && log "desktop after ${i}s" || log "desktop NEVER"
+while ! up && [ "$i" -lt "$lim" ]; do sleep 1; i=$((i+1)); done
+up && log "desktop after ${i}s" || log "desktop NEVER"
+# No desktop, and nobody to restart it: leave it to auros-boot-guard.
+if [ "$mode" = guard ] && ! up; then log "waiting to be restarted"; exit 0; fi
 if [ "$mode" = quick ]; then log "cut short"; sync; systemctl poweroff; exit 0; fi
 i=0
 while grep -aq '^auros_try=' /boot/grub/grubenv && [ "$i" -lt 240 ]; do sleep 2; i=$((i+2)); done
@@ -155,7 +173,9 @@ chmod 755 "$R/usr/lib/auros-e2e/run.sh"
 cat > "$R/etc/systemd/system/auros-e2e.service" <<'EOU'
 [Unit]
 Description=NOT PART OF AUROS: rollbacktest's record of each start
-After=auros-hold.service aurshell.service
+# Not After=aurshell.service: a desktop that keeps failing is "activating"
+# for ever, and a unit ordered after it would never start to say so.
+After=auros-hold.service
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/auros-e2e/run.sh
@@ -257,6 +277,33 @@ echo "$L" | grep -q "^run4 start[0-9]* up .*kernel=$NEW" && ok "one cut-short st
   || bad "one cut-short start does not send it back: still the new kernel" "$(echo "$L" | grep '^run4')"
 echo "$L" | grep -q "^run4 .*confirmed after" && ok "...and it is confirmed" \
   || bad "...and it is confirmed" "$(echo "$L" | grep '^run4')"
+
+# ── run 5: the desktop never appears ────────────────────────────────
+echo
+echo "  run 5: a newer kernel starts but its desktop never appears; nobody touches anything"
+NEW2=6.8.0-1001-generic
+mount_root
+cp "$T/m/boot/vmlinuz-$GOOD" "$T/m/boot/vmlinuz-$NEW2"
+cp "$T/m/boot/initrd.img-$GOOD" "$T/m/boot/initrd.img-$NEW2"
+menu
+# On that kernel only, the desktop refuses to start (so the computer is up,
+# the kernel is fine, and she sees no desktop).
+mkdir -p "$T/m/etc/systemd/system/aurshell.service.d"
+printf "[Service]\nExecStartPre=/bin/sh -c '! grep -q vmlinuz-%s /proc/cmdline'\n" "$NEW2" \
+    > "$T/m/etc/systemd/system/aurshell.service.d/zz-test-nodesktop.conf"
+case "$MUTANT" in nocount) sed -i '/^ *auros_count$/d' "$T/m/boot/grub/grub.cfg" ;; esac
+umount_root
+power_on guard
+L=$(e2e_log)
+n5=$(echo "$L" | grep -c "^run5 start[0-9]* up .*kernel=$NEW2")
+[ "$n5" = 2 ] && ok "the new kernel started twice, and twice showed no desktop" \
+  || bad "the new kernel started twice, and twice showed no desktop" "starts on it: $n5" "$(echo "$L" | grep '^run5')"
+[ "$(grep -ac 'boot-guard: this start was not confirmed' "$SER.txt")" = 2 ] && ok "...each restarted by auros-boot-guard, not by anybody" \
+  || bad "...each restarted by auros-boot-guard, not by anybody" "guard said it $(grep -ac 'boot-guard: this start was not confirmed' "$SER.txt") times" "$(echo "$L" | grep '^run5')"
+echo "$L" | grep -q "^run5 start[0-9]* up .*kernel=$GOOD" && echo "$L" | grep -q "^run5 .*confirmed after" \
+  && ok "the third start was the kernel before it: a desktop, confirmed" \
+  || bad "the third start was the kernel before it: a desktop, confirmed" "$(echo "$L" | grep '^run5')"
+[ "$TIMED_OUT" = 0 ] && ok "...with no input, no more than ${BOOT_TIMEOUT}s" || bad "...with no input, no more than ${BOOT_TIMEOUT}s"
 
 # For whoever is working out why it failed: the serial lines, kept.
 if [ -n "${ROLLBACK_KEEP:-}" ]; then mkdir -p "$ROLLBACK_KEEP"; cp "$T"/serial.*.txt "$ROLLBACK_KEEP"/ 2>/dev/null; fi

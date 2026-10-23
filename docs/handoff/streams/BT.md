@@ -95,6 +95,18 @@ before and passes after:
   refused shapes never reach Ferry; with name_ok weakened 13 of them go red. Not run in a booted image
   (the sandbox lesson in TRAPS): `firstboottest` has no Windows disk to import from.
 
+- **WP-30, the desktop that never appears**: `auros-boot-guard.service` -> `boot-guard`: a start the menu counted
+  and nothing confirmed within 15 minutes restarts the computer (its one sentence reaches the console); the
+  second such start lands on the kernel before. `rollbacktest` run 5: kernel 1001 starts, aurshell refuses on it
+  only, the guard (25 s in the test) restarts twice, the third start is 147 with a desktop. 21/21, mutant
+  `noguard` 17/21. NOT covered: a kernel that hangs with no panic and no userspace (needs a hardware
+  watchdog; `softlockup_panic`/`hung_task_panic` on the command line is S1's call and risks false panics on
+  a slow disk), safe graphics (nomodeset: unproven that aurshell works on simpledrm), boot-4 menu.
+- **putbacktest 24/24 again** (8fbd56e): the restore line is `quiet loglevel=3` now, so the kernel's own
+  "Command line:" is not on the serial line; the checks read the staging environment's banner and the
+  `SecureBoot` variable inside AurOS instead, Ferry is a stub on the stand-in Windows. The old "it does not
+  restore again" checks on the kernel line could no longer fail; they read the banner now.
+
 ## Next steps, in order
 
 1. Watch the first CI run of `tests` with `windowsboottest` and `rollbacktest` (both gating now) and
