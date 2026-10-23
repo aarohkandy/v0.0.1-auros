@@ -135,7 +135,7 @@ ENGINE_MUTANTS = [
 HOOK_MUTANTS = [
     ("hook: prefix matches (potatoes)", 'if (!strcmp(buf, words[i])) {', 'if (!strncmp(buf, words[i], strlen(words[i]))) {'),
     ("hook: digits end a word (potato1)", '    bad = 1;\n}\n\nvoid wishhook_app', '    end_of_word();\n}\n\nvoid wishhook_app'),
-    ("hook: the word is kept after it ends", '    wipe();\n    bad = 0;\n}\n\nvoid wishhook_key', '    bad = 0;\n}\n\nvoid wishhook_key'),
+    ("hook: the word is kept after it ends", '    wipe();\n    bad = 0;\n}\n\n/* WHAT A FIELD TELLS US', '    bad = 0;\n}\n\n/* WHAT A FIELD TELLS US'),
     ("hook: looks when nothing is registered", 'if (!nwords || !pressed) return;', 'if (!pressed) return;'),
     ("hook: a moved cursor is trusted", '        wipe();\n        bad = 1;                                   /* the next letters may be mid-word */', '        wipe();'),
     ("hook: every program is reported", 'if (!strcasecmp(app_id, apps[i])) {', 'if (1) {'),
@@ -143,6 +143,13 @@ HOOK_MUTANTS = [
     ("hook: three-letter words", 'int ok = l >= 4 && l <= WORD_MAX;', 'int ok = l >= 1 && l <= WORD_MAX;'),
     ("hook: deleting unseen text is trusted", '        else bad = 1;                              /* deleting something we did not see */', ''),
     ("hook: a new list keeps the old finds", '    qw_n = qw_head = 0;\n    qa_n = qa_head = 0;\n}', '}'),
+    ("hook: a window title asking for a password is ignored", 'if (has_any(app, NEVER_APPS) || has_any(aurwl_win_title(w), SECRET_TITLES)) return 1;', 'if (has_any(app, NEVER_APPS)) return 1;'),
+    ("hook: password programs are trusted when their field says ordinary", 'if (has_any(app, NEVER_APPS) || has_any(aurwl_win_title(w), SECRET_TITLES)) return 1;', 'if (has_any(aurwl_win_title(w), SECRET_TITLES)) return 1;'),
+    ("hook: a secret field is not a reason", '    if (st == TI_SENSITIVE) return 1;\n', ''),
+    ("hook: an ordinary field is not trusted", '    if (st == TI_PLAIN) return 0;\n', ''),
+    ("hook: a browser with no field is trusted", '    return has_any(app, BROWSER_APPS);', '    return 0;'),
+    ("hook: a program that will not say who it is is trusted", '    if (!app || !*app) return 1;                  /* a program that will not say who it is */\n', ''),
+    ("hook: the half word survives a secret field", '        wipe();\n        bad = 1;\n        was_sensitive = 1;\n        return;', '        was_sensitive = 1;\n        return;'),
     ("hook: Enter does not end a word", '        end_of_word();\n        return;\n    case K_BACKSPACE:', '        return;\n    case K_BACKSPACE:'),
 ]
 
@@ -202,6 +209,74 @@ def daemon_mutants(only):
     return bad
 
 
+# The compositor side of text-input-v3 (src/aurwl/textinput.c), against tools/wishtest-textinput.c.
+TI_MUTANTS = [
+    ("textinput: password is not a secret", 's->purpose == ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PASSWORD ||\n', ''),
+    ("textinput: a PIN is not a secret", 's->purpose == ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PIN ||\n', ''),
+    ("textinput: a terminal is not a secret", 's->purpose == ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_TERMINAL ||\n', ''),
+    ("textinput: an unknown purpose is safe", 's->purpose > ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_TERMINAL) return 1;', '0) return 1;'),
+    ("textinput: hidden_text means nothing",
+     '(s->hint & (ZWP_TEXT_INPUT_V3_CONTENT_HINT_HIDDEN_TEXT |\n                       ZWP_TEXT_INPUT_V3_CONTENT_HINT_SENSITIVE_DATA)) != 0',
+     '(s->hint & ZWP_TEXT_INPUT_V3_CONTENT_HINT_SENSITIVE_DATA) != 0'),
+    ("textinput: sensitive_data means nothing",
+     '(s->hint & (ZWP_TEXT_INPUT_V3_CONTENT_HINT_HIDDEN_TEXT |\n                       ZWP_TEXT_INPUT_V3_CONTENT_HINT_SENSITIVE_DATA)) != 0',
+     '(s->hint & ZWP_TEXT_INPUT_V3_CONTENT_HINT_HIDDEN_TEXT) != 0'),
+    ("textinput: a second input can enable too",
+     '    if (t->cur.enabled) {\n        struct ti *o;\n        wl_list_for_each(o, &tis, link)\n            if (o != t && o->client == t->client && o->entered && o->cur.enabled) {\n                t->cur.enabled = t->pend.enabled = 0;\n                break;\n            }\n    }', ''),
+    ("textinput: a destroyed surface is remembered", '    (void)l; (void)data;\n    leave_current(0);', '    (void)l; (void)data;'),
+    ("textinput: any number of text inputs", 'if (mine >= MAX_PER_CLIENT || n_total >= MAX_TOTAL) {', 'if (0) {'),
+    # not here: "state is reported with nothing focused" is a second guard on a fact leave_current() already makes true
+]
+
+
+def ti_mutants(only):
+    bad = 0
+    cc = os.environ.get("CC", "cc")
+    for name, old, new in TI_MUTANTS:
+        if only and only not in name:
+            continue
+        d = tempfile.mkdtemp(prefix="wishmut-")
+        try:
+            for sub in ("src/aurwl", "src/aurshell"):
+                shutil.copytree(os.path.join(ROOT, sub), os.path.join(d, sub))
+            os.makedirs(os.path.join(d, "tools"))
+            shutil.copy(os.path.join(ROOT, "tools/wishtest-textinput.c"), os.path.join(d, "tools"))
+            path = os.path.join(d, "src/aurwl/textinput.c")
+            text = open(path, encoding="utf-8").read()
+            if text.count(old) != 1:
+                print(f"STALE {name}: pattern found {text.count(old)} times")
+                bad += 1
+                continue
+            open(path, "w", encoding="utf-8").write(text.replace(old, new))
+            g = os.path.join(d, "src/aurwl/gen")
+            exe = os.path.join(d, "t")
+            libs = subprocess.run(["pkg-config", "--cflags", "--libs", "wayland-server", "wayland-client", "xkbcommon"],
+                                  capture_output=True, text=True).stdout.split()
+            b = subprocess.run([cc, "-std=gnu11", "-O1", "-g", "-w", "-fsanitize=address,undefined", "-fno-sanitize-recover=all",
+                                "-I", g, "-I", os.path.join(d, "src/aurwl"), "-o", exe,
+                                os.path.join(d, "tools/wishtest-textinput.c"), os.path.join(d, "src/aurwl/aurwl.c"), path,
+                                os.path.join(d, "src/aurwl/wishhook.c"), os.path.join(d, "src/aurshell/draw.c")] +
+                               [os.path.join(g, f) for f in ("xdg-shell-protocol.c", "xdg-decoration-protocol.c",
+                                                              "viewporter-protocol.c", "xdg-output-protocol.c",
+                                                              "text-input-protocol.c")] + libs + ["-lm"],
+                               capture_output=True)
+            if b.returncode:
+                print(f"BUILD  {name}: the mutant does not compile")
+                bad += 1
+                continue
+            r = subprocess.run([exe], capture_output=True, timeout=120, env=dict(os.environ, ASAN_OPTIONS="detect_leaks=0"))
+            if r.returncode != 0:
+                print(f"caught {name}")
+            else:
+                print(f"MISSED {name}: the tests pass without this check")
+                bad += 1
+        except subprocess.TimeoutExpired:
+            print(f"caught {name} (it hangs)")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    return bad
+
+
 def hook_mutants(only):
     bad = 0
     for name, old, new in HOOK_MUTANTS:
@@ -210,7 +285,7 @@ def hook_mutants(only):
         d = tempfile.mkdtemp(prefix="wishmut-")
         try:
             os.makedirs(os.path.join(d, "src/aurwl")); os.makedirs(os.path.join(d, "src/aurshell")); os.makedirs(os.path.join(d, "tools"))
-            for f in ("wishhook.c", "wishhook.h", "aurwl.h"):
+            for f in ("wishhook.c", "wishhook.h", "aurwl.h", "textinput.h"):
                 shutil.copy(os.path.join(ROOT, "src/aurwl", f), os.path.join(d, "src/aurwl", f))
             shutil.copy(os.path.join(ROOT, "src/aurshell/draw.h"), os.path.join(d, "src/aurshell/draw.h"))
             shutil.copy(os.path.join(ROOT, "tools/wishtest-hook.c"), os.path.join(d, "tools/wishtest-hook.c"))
@@ -293,6 +368,8 @@ def main():
             shutil.rmtree(d, ignore_errors=True)
     if not only or "hook" in only:
         bad += hook_mutants(only)
+    if "--textinput" in sys.argv or (only and "textinput:" in only):
+        bad += ti_mutants(only)
     if "--daemon" in sys.argv or (only and any(k in only for k in ("daemon", "cloud:", "answer:", "sensors:"))):
         bad += daemon_mutants(only)
     print(f"mutants: {bad} problem(s)")

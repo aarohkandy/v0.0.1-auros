@@ -163,6 +163,7 @@ static int client_main(const char *sock, const char *app, int up, int down)
         switch (ch) {
         case 'e': say(down, c.entered ? 'y' : 'n'); continue;           /* has text-input focus? */
         case 'P': zwp_text_input_v3_enable(t); zwp_text_input_v3_set_content_type(t, H, ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PASSWORD); zwp_text_input_v3_commit(t); break;
+        case 'W': zwp_text_input_v3_enable(t); zwp_text_input_v3_set_content_type(t, 0, ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PASSWORD); zwp_text_input_v3_commit(t); break;   /* the purpose alone */
         case 'I': zwp_text_input_v3_enable(t); zwp_text_input_v3_set_content_type(t, 0, ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PIN); zwp_text_input_v3_commit(t); break;
         case 'T': zwp_text_input_v3_enable(t); zwp_text_input_v3_set_content_type(t, 0, ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_TERMINAL); zwp_text_input_v3_commit(t); break;
         case 'X': zwp_text_input_v3_enable(t); zwp_text_input_v3_set_content_type(t, 0, 99); zwp_text_input_v3_commit(t); break;
@@ -312,7 +313,7 @@ static void test_the_fields(const char *app, int browser)
     CHECK(textinput_state() == TI_PLAIN);
     CHECK(potato_heard() == 1);
     /* every way a field can say "secret" */
-    static const char SECRET[] = { 'P', 'I', 'T', 'X', 'S', 'H', 0 };
+    static const char SECRET[] = { 'P', 'W', 'I', 'T', 'X', 'S', 'H', 0 };
     for (int i = 0; SECRET[i]; i++) {
         CHECK(cmd(SECRET[i]));
         CHECK(textinput_state() == TI_SENSITIVE);
@@ -402,6 +403,15 @@ static void test_misbehaviour(void)
     for (int i = 0; i < 30; i++) aurwl_dispatch(C);
     CHECK(textinput_state() == TI_UNKNOWN);
     close(up_w); close(down_r);
+    /* ... and the focus it left behind does not poison the next program (the
+     * killed one's surface is gone without ever having been unmapped) */
+    STAGE("after the kill");
+    CHECK(start("wishtest"));
+    CHECK(has_text_focus());
+    CHECK(cmd('P'));
+    CHECK(textinput_state() == TI_SENSITIVE);
+    CHECK(finish());
+    CHECK(textinput_leftovers() == 0);
 }
 
 int main(int argc, char **argv)

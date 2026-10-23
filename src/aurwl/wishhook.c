@@ -114,33 +114,58 @@ static void end_of_word(void)
     bad = 0;
 }
 
-/* Programs that are asked for secrets, or likely to be, and that say nothing
- * about what their text fields hold. For these "unknown" means "do not
- * look". Matched as a case-insensitive substring of the application id. */
-static const char *const SECRETIVE[] = {
+/* WHAT A FIELD TELLS US, AND WHAT IT DOES NOT. A program that sets the
+ * purpose of a field (GTK: GtkEntry.input-purpose; Firefox: the HTML input
+ * type) tells the compositor through text-input-v3, and tools/wishtest-gtk
+ * proves GTK3 does: password and PIN arrive as purpose 8/9 with the hidden
+ * and sensitive hints. But a plain GtkEntry with visibility turned off -- how
+ * most GTK3 password boxes are made -- says NOTHING: purpose normal, no hint.
+ * So the field's own word is not enough, and two more rules apply:
+ *
+ *   - programs whose job is secrets, or that ask for one in a dialog, never
+ *     get matched, whatever their fields say;
+ *   - a window whose title says it is asking for a password, a passphrase or
+ *     a sign-in is not matched either (this also covers a browser tab on a
+ *     login page).
+ *
+ * And a program that has announced no field at all is trusted only if it is
+ * an ordinary one; a browser, or a program that will not say who it is,
+ * is not. All matched as case-insensitive substrings. */
+static const char *const NEVER_APPS[] = {
+    "keepass", "bitwarden", "1password", "pinentry", "polkit", "seahorse", "gcr", "keyring",
+    "password", "wallet", "login", "auth", "askpass", "ssh-ask", "gnome-initial", "unlock", NULL };
+static const char *const BROWSER_APPS[] = {
     "firefox", "chrom", "brave", "vivaldi", "opera", "edge", "epiphany", "falkon", "midori",
-    "librewolf", "browser", "keepass", "bitwarden", "1password", "pinentry", "polkit",
-    "seahorse", "gcr", "keyring", "password", "wallet", "login", "auth", NULL };
+    "librewolf", "browser", NULL };
+static const char *const SECRET_TITLES[] = {
+    "password", "passphrase", "passcode", "authenticat", "log in", "login", "sign in", "signin",
+    "sign-in", "unlock", "credential", "verification code", "security code", "one-time",
+    "two-factor", "2-factor", "recovery key", "secret", NULL };
 
-static int secretive_app(const char *app)
+static int has_any(const char *text, const char *const *list)
 {
-    if (!app || !*app) return 1;                   /* a program that will not say who it is */
-    char low[128];
+    char low[160];
     size_t i = 0;
-    for (; app[i] && i + 1 < sizeof low; i++) low[i] = (char)tolower((unsigned char)app[i]);
+    if (!text) return 0;
+    for (; text[i] && i + 1 < sizeof low; i++) low[i] = (char)tolower((unsigned char)text[i]);
     low[i] = 0;
-    for (int k = 0; SECRETIVE[k]; k++)
-        if (strstr(low, SECRETIVE[k])) return 1;
+    for (int k = 0; list[k]; k++)
+        if (strstr(low, list[k])) return 1;
     return 0;
 }
 
-/* docs/AI.md §3.5: no matching in a field that says it holds a secret. */
+/* docs/AI.md §3.5: no matching in a field that says it holds a secret, nor
+ * in a program or window that is asking for one. */
 static int sensitive_now(aurwl *c)
 {
+    aurwl_win *w = aurwl_focus(c);
+    const char *app = aurwl_win_app_id(w);
+    if (has_any(app, NEVER_APPS) || has_any(aurwl_win_title(w), SECRET_TITLES)) return 1;
     int st = textinput_state ? textinput_state() : TI_UNKNOWN;
     if (st == TI_SENSITIVE) return 1;
     if (st == TI_PLAIN) return 0;
-    return secretive_app(aurwl_win_app_id(aurwl_focus(c)));
+    if (!app || !*app) return 1;                  /* a program that will not say who it is */
+    return has_any(app, BROWSER_APPS);
 }
 
 void wishhook_key(aurwl *c, uint32_t code, int pressed)

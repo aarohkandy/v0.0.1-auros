@@ -24,6 +24,8 @@ static const char *app_now = "org.gnome.gedit";
 int textinput_state(void) { return ti_now; }
 aurwl_win *aurwl_focus(const aurwl *c) { (void)c; return (aurwl_win *)&ti_now; }
 const char *aurwl_win_app_id(const aurwl_win *w) { (void)w; return app_now; }
+static const char *title_now = "Untitled";
+const char *aurwl_win_title(const aurwl_win *w) { (void)w; return title_now; }
 
 /* char -> (evdev code, shift) for the keys these tests press */
 static const struct { char ch; int code, shift; } MAP[] = {
@@ -81,6 +83,7 @@ static void setup(void)
 {
     ti_now = TI_PLAIN;
     app_now = "org.gnome.gedit";
+    title_now = "Untitled";
     const char *w[] = { "potato", "carrot" };
     const char *a[] = { "firefox", "org.videolan.VLC" };
     wishhook_set(w, 2, a, 2);
@@ -264,6 +267,49 @@ static void test_unknown_means_hold_for_browsers(void)
     CHECK(any_word() == 0);
 }
 
+/* GTK3 says nothing for a plain entry with visibility off: it arrives as an
+ * ordinary field. The window and the program have to say it instead. */
+static void test_dialogs_that_ask_for_secrets(void)
+{
+    cur = __func__;
+    setup();
+    ti_now = TI_PLAIN;                                  /* what GTK3 reports for an invisible entry */
+    static const char *const TITLES[] = { "Authentication Required", "Enter password for \"work\"",
+                                          "Unlock Keyring", "Sign in to Google", "Log in - Example",
+                                          "PASSPHRASE needed", "Enter your verification code",
+                                          "Two-Factor Setup", "Wi-Fi network authentication", NULL };
+    for (int i = 0; TITLES[i]; i++) {
+        title_now = TITLES[i];
+        type("potato ");
+        CHECK(any_word() == 0);
+    }
+    title_now = "Untitled";
+    wishhook_reset();
+    type("potato ");
+    CHECK(got("potato") == 1);                          /* an ordinary title: fine */
+    title_now = "Shopping list - Notes";
+    wishhook_reset();
+    type("potato ");
+    CHECK(got("potato") == 1);
+    static const char *const APPS[] = { "polkit-gnome-authentication-agent-1", "org.keepassxc.KeePassXC",
+                                        "pinentry-gtk-2", "org.gnome.seahorse.Application", "ssh-askpass",
+                                        "gcr-prompter", "org.gnome.Keyring", NULL };
+    for (int i = 0; APPS[i]; i++) {
+        app_now = APPS[i];
+        ti_now = TI_PLAIN;                              /* even a field that says "ordinary" */
+        type("potato ");
+        CHECK(any_word() == 0);
+    }
+    app_now = "firefox";                                /* a browser's announced ordinary field is trusted ... */
+    title_now = "My notes - Mozilla Firefox";
+    wishhook_reset();
+    type("potato ");
+    CHECK(got("potato") == 1);
+    title_now = "Sign in - Example Bank - Mozilla Firefox";   /* ... unless the page says it is a sign-in */
+    type("potato ");
+    CHECK(any_word() == 0);
+}
+
 static void test_apps(void)
 {
     cur = __func__;
@@ -300,6 +346,7 @@ int main(void)
     test_registered_list_rules();
     test_password_fields();
     test_unknown_means_hold_for_browsers();
+    test_dialogs_that_ask_for_secrets();
     test_apps();
     test_queue_is_bounded();
     printf("wishtest-hook: %d checks, %d failed\n", passes + fails, fails);

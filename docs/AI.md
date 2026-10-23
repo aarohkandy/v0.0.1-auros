@@ -190,15 +190,27 @@ Turning Wishes off (`consent` with `yes:false` after a yes) or `forget` tells th
 service to forget her and deletes the token. `all_off` makes the engine send no
 overlay and withdraws every trigger word.
 
-**The compositor's half** is `src/aurwl/wishhook.{c,h}` (linked only when the
-profile says `wishes="on"`): the shell calls `wishhook_set(words, apps)` with the
-latest `triggers` line, and each frame drains `wishhook_take_word()` /
-`wishhook_take_app()` into `typed` / `app` lines. The matcher sees only keys
-delivered to a client window, keeps at most the 32 letters of the word being
-typed, reports a registered word only when typed whole, and does nothing at all
-while no word is registered. aurwl has no text-input-v3 yet, so it cannot tell
-a password field: the shell must send `hold: password` for its own prompts, and
-this is why Wishes ship off (D14).
+**The compositor's half** is `src/aurwl/wishhook.{c,h}` and
+`src/aurwl/textinput.{c,h}` (linked only when the profile says `wishes="on"`,
+through weak one-line hooks in aurwl.c): the shell calls
+`wishhook_set(words, apps)` with the latest `triggers` line, and each frame
+drains `wishhook_take_word()` / `wishhook_take_app()` into `typed` / `app`
+lines. The matcher sees only keys delivered to a client window, keeps at most
+the 32 letters of the word being typed, reports a registered word only when
+typed whole, and does nothing at all while no word is registered.
+
+**Password fields (§7.6).** aurwl speaks `zwp_text_input_v3` so programs can say
+what a field is. GTK3 does (proven by `tools/wishtest-gtk`: password and PIN
+arrive as purpose 8/9 with the hidden and sensitive hints; Firefox sets the
+GTK purpose from the HTML input type). The matcher holds, and drops its buffer,
+when: the field says password, PIN, terminal, an unknown purpose, or carries the
+`hidden_text` / `sensitive_data` hint; or the program is one that asks for
+secrets (polkit, pinentry, a keyring or password manager, ...); or the window's
+title says it is asking for a password, passphrase, code or sign-in. **A GTK3
+entry with visibility turned off announces nothing** (purpose normal, no hint),
+which is why the program and title rules exist. A program that has announced
+no field is trusted only if it is not a browser and says who it is. The shell
+still sends `hold: password` for its own prompts.
 
 **Off unless the machine says on (D14).** `aurwish` runs only when
 `/etc/auros/features` says `wishes=on` (written by `build/forge` from the

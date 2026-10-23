@@ -70,6 +70,26 @@ else
     echo "skip wishtest-textinput (needs Linux with libwayland-dev and libxkbcommon-dev)"
 fi
 
+# What a REAL GTK3 program says about its fields (needs python3-gi with GTK 3).
+if [ "$(uname)" = Linux ] && pkg-config --exists wayland-server xkbcommon 2>/dev/null &&
+   python3 -c 'import gi; gi.require_version("Gtk","3.0"); from gi.repository import Gtk' >/dev/null 2>&1; then
+    G="$ROOT/src/aurwl/gen"
+    # shellcheck disable=SC2046,SC2086
+    if ${CC:-cc} -std=gnu11 -g -O1 -Wall -Wextra $SAN -I "$G" -I "$ROOT/src/aurwl" -o "$OUT/gtk" \
+            "$ROOT/tools/wishtest-gtk.c" "$ROOT/src/aurwl/aurwl.c" "$ROOT/src/aurwl/textinput.c" \
+            "$ROOT/src/aurwl/wishhook.c" "$ROOT/src/aurshell/draw.c" "$G/xdg-shell-protocol.c" \
+            "$G/xdg-decoration-protocol.c" "$G/viewporter-protocol.c" "$G/xdg-output-protocol.c" \
+            "$G/text-input-protocol.c" $(pkg-config --cflags --libs wayland-server xkbcommon) -lm \
+            2>"$OUT/err" &&
+       WISHTEST_GTK_PY="$ROOT/tools/wishtest-gtk.py" ASAN_OPTIONS=detect_leaks=0 timeout 120 "$OUT/gtk" -t 60 >"$OUT/log" 2>&1; then
+        echo "ok   wishtest-gtk: $(tail -1 "$OUT/log")"
+    else
+        echo "FAIL wishtest-gtk"; grep -E 'error' "$OUT/err" | head; grep -E 'FAIL' "$OUT/log" | head; fail=1
+    fi
+else
+    echo "skip wishtest-gtk (needs Linux with GTK3 for Python)"
+fi
+
 # The five sounds a wish may play are made from nothing but sines and noise.
 if command -v python3 >/dev/null 2>&1 && [ -f "$ROOT/tools/wishtest-sounds.py" ]; then
     if python3 "$ROOT/tools/wishtest-sounds.py" >"$OUT/snd" 2>&1; then echo "ok   sounds: $(tail -1 "$OUT/snd")"

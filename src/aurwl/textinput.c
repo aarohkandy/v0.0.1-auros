@@ -216,6 +216,21 @@ void textinput_init(struct wl_display *d)
     inited = textinput_g != NULL;
 }
 
+int textinput_peek(unsigned *hint, unsigned *purpose)
+{
+    struct ti *t;
+    if (hint) *hint = 0;
+    if (purpose) *purpose = 0;
+    if (!inited || !f_surf) return 0;
+    wl_list_for_each(t, &tis, link)
+        if (t->entered && t->cur.enabled) {
+            if (hint) *hint = t->cur.hint;
+            if (purpose) *purpose = t->cur.purpose;
+            return 1;
+        }
+    return 0;
+}
+
 int textinput_leftovers(void)
 {
     return n_total != 0 || !wl_list_empty(&tis) || f_surf != NULL || f_client != NULL;

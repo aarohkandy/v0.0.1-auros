@@ -48,5 +48,7 @@ int  textinput_state(void);
  * inputs, a remembered focus). */
 extern struct wl_global *textinput_g;
 int  textinput_leftovers(void);
+/* The enabled text input's raw content type (0 if none): diagnostics only. */
+int  textinput_peek(unsigned *hint, unsigned *purpose);
 
 #endif
