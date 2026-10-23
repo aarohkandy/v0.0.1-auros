@@ -300,6 +300,13 @@ jobs:
       - name: shrinktargettest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/shrinktargettest.sh 2>&1 | tee transcripts/shrinktargettest.txt
+      # A real Windows volume makes ntfsresize print ~1,660 progress lines before
+      # its answer; the staging environment once dropped the answer and refused
+      # every real PC ("could be read but not measured"). This links the real
+      # shrink.c against a fake ntfsresize that prints 0 to 5000 of them.
+      - name: measuretest (the staging measures a real volume's ntfsresize output)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/e2e/measuretest.sh 2>&1 | tee transcripts/measuretest.txt
       - name: probetest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sudo sh tools/probetest.sh 2>&1 | tee transcripts/probetest.txt

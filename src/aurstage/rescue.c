@@ -893,9 +893,20 @@ static int foreign_partition(const gpt_table *live, const uint8_t *cap_arr,
             if (!used || memcmp(c + 16, e->uuid, 16) != 0) continue;
             uint64_t cf = rd64(c + 32), cl = rd64(c + 40);
             if (e->first == cf && e->last == cl) ok = 1;
-            /* Windows' own, made smaller by the install: same start, the
-             * end no further than it was. */
-            else if (e->first == cf && e->last < cl) ok = 1;
+            /* Windows' own, made smaller BY THE INSTALL: same start, the
+             * end no further than it was, AND the room it gave up is now
+             * where one of AurOS's own partitions starts. A partition that
+             * got smaller for any other reason (Windows Update resizing the
+             * recovery partition) left its room unallocated or to somebody
+             * else; putting the saved table back would grow it over
+             * whatever is there now, so it is foreign. */
+            else if (e->first == cf && e->last < cl) {
+                for (uint32_t q = 0; q < live->n_entries && !ok; q++) {
+                    const gpt_entry *a = &live->ent[q];
+                    if (gpt_used(a) && is_auros_own(a) &&
+                        a->first > e->last && a->first <= cl) ok = 1;
+                }
+            }
         }
         if (!ok) return (int)i;
     }

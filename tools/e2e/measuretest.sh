@@ -27,6 +27,10 @@ echo "ntfsresize v2022.10.3 (libntfs-3g)"
 echo "Current volume size: 136180658688 bytes (136181 MB)"
 echo "Checking filesystem consistency ..."
 i=0; while [ "$i" -lt "${PROGRESS_LINES:-0}" ]; do echo "  $i.06 percent completed"; i=$((i+1)); done
+if [ -n "${FAIL:-}" ]; then
+    echo "ERROR(5): NTFS is inconsistent. Run chkdsk /f on Windows then try again."
+    exit 1
+fi
 echo "Accounting clusters ..."
 echo "Space in use       : 17912 MB (13.2%)"
 echo "Collecting resizing constraints ..."
@@ -43,6 +47,7 @@ int main(void)
     shrink_ask("/dev/null", &sp);
     printf("%d %llu %llu\n", sp.ok, (unsigned long long)sp.current_bytes,
            (unsigned long long)sp.smallest_bytes);
+    if (!sp.ok) printf("%s\n", sp.why);
     return 0;
 }
 EOC
@@ -60,6 +65,19 @@ for n in 0 20 200 700 1660 5000; do
         printf '    %-62s FAIL (%s)\n' "ntfsresize prints $n progress lines: measured" "$got"
         fail=$((fail+1))
     fi
+done
+# AND THE REFUSAL KEEPS ITS WORDS. A volume ntfsresize will not touch says why
+# AFTER the progress, so the reason is in the tail; had it been lost the
+# person would be told "The Windows drive cannot be resized." and nothing a
+# support engineer could act on.
+for n in 0 700 5000; do
+    got=$(FAIL=1 PROGRESS_LINES=$n "$TMP/t" | tr '\n' '|')
+    case "$got" in
+        "0 136180658688 0|ERROR(5): NTFS is inconsistent. Run chkdsk /f on Windows then try again.|")
+            printf '    %-62s ok\n' "ntfsresize refuses after $n progress lines: its words survive" ;;
+        *)  printf '    %-62s FAIL (%s)\n' "ntfsresize refuses after $n progress lines: its words survive" "$got"
+            fail=$((fail+1)) ;;
+    esac
 done
 [ "$fail" -eq 0 ] || { echo "$fail wrong."; exit 1; }
 echo "measuretest: a real volume's output is measured."
