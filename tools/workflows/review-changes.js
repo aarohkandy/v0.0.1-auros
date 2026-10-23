@@ -9,10 +9,13 @@ export const meta = {
 }
 
 const BASE = args.base
-const REPO = '/home/user/auros-from-scratch'
-const BR = 'origin/claude/brave-hypatia-x72g1m'
+// Where this runs: the owner's Mac (session B). To run it anywhere else,
+// change these lines and nothing below them.
+const REPO = '/Users/aaroh/Desktop/auros v0.0.1/v0.0.1-auros' // a checkout; read-only for the agents
+const BR = 'origin/main'
+const GIT = `git -C "${REPO}"` // quoted: the path has a space
 
-const COMMON = `Repository ${REPO} (read-only for you: do not edit, commit, push, or check out anything there; use \`git -C ${REPO} fetch -q origin claude/brave-hypatia-x72g1m\` then \`git -C ${REPO} diff ${BASE} ${BR} -- <paths>\` and \`git -C ${REPO} show ${BR}:<path>\` to read). Context: AurOS turns a Windows PC into a Linux desktop from one downloaded .exe, for a great-grandmother, in under 10 minutes; tonight's build must work. Read ${'`'}git -C ${REPO} show ${BR}:docs/handoff/RESUME-NOW.md${'`'} first (2 min) for the design and owner's orders (no code signing ever; Secure Boot stays on via Ubuntu's shim; never ship an unproven destructive path). Report only REAL defects with a concrete failure path from a real input/state to a wrong result: build breaks, data loss or a disk written outside its region, a grandma-blocking failure, a test that would pass while the thing it tests is broken, a security hole (e.g. passwordless root via polkit beyond intended actions), or pieces that don't fit together. No style nits. Each finding: exact file and line on the branch head, the scenario, and the smallest correct fix.`
+const COMMON = `Repository ${REPO} (read-only for you: do not edit, commit, push, or check out anything there; use \`${GIT} fetch -q origin main\` then \`${GIT} diff ${BASE} ${BR} -- <paths>\` and \`${GIT} show ${BR}:<path>\` to read). Context: AurOS turns a Windows PC into a Linux desktop from one downloaded .exe, for a great-grandmother, in under 10 minutes; tonight's build must work. Read ${'`'}${GIT} show ${BR}:docs/handoff/RESUME-NOW.md${'`'} first (2 min) for the design and owner's orders (no code signing ever; Secure Boot stays on via Ubuntu's shim; never ship an unproven destructive path). Report only REAL defects with a concrete failure path from a real input/state to a wrong result: build breaks, data loss or a disk written outside its region, a grandma-blocking failure, a test that would pass while the thing it tests is broken, a security hole (e.g. passwordless root via polkit beyond intended actions), or pieces that don't fit together. No style nits. Each finding: exact file and line on the branch head, the scenario, and the smallest correct fix.`
 
 const AREAS = [
   { key: 'forge-shell', owner: args.owners.shell,
@@ -26,7 +29,7 @@ const AREAS = [
     focus: 'build.yml/release.yml/tests.yml: will they actually build the image with Firefox, bake the RIGHT piece list/base URL into AurOS-Setup.exe for the release tag they create, publish asset names that the baked list and the website (releases/latest/download/AurOS-Setup.exe) expect, and refuse to publish on a failed test? Trigger conditions (subject words, paths) do what the docs say? Disk space on the runner enough? Any secret/token misuse? Can a release be published from a build whose tests failed?' },
   { key: 'website', owner: args.owners.website,
     paths: 'website .github/workflows/pages.yml tools/site',
-    focus: 'Does the front page work for her: download link exact (releases/latest/download/AurOS-Setup.exe), the platform detection never blocks a real Windows x64 visitor (UA-CH missing on Firefox; Edge/Chrome report architecture "arm" for x64-on-ARM emulation etc.), steps accurate for an UNSIGNED exe in Edge and Chrome as of 2026, works without JS, relative links work under /auros-from-scratch/ on Pages, no external requests, pages.yml deploys from this non-default branch (environment protection) and what the owner must click.' },
+    focus: 'Does the front page work for her: download link exact (releases/latest/download/AurOS-Setup.exe), the platform detection never blocks a real Windows x64 visitor (UA-CH missing on Firefox; Edge/Chrome report architecture "arm" for x64-on-ARM emulation etc.), steps accurate for an UNSIGNED exe in Edge and Chrome as of 2026, works without JS, relative links work under the project path on Pages (sh tools/repo.sh host), no external requests, pages.yml deploys from main and what the owner must click.' },
   { key: 'e2e', owner: args.owners.e2e,
     paths: 'tools/e2e .github/workflows/e2e.yml',
     focus: 'Can this harness report success while the journey actually failed (e.g. a step judged by a screenshot that would look the same on failure, a timeout treated as pass, a cached Windows image that hides a first-install problem, the website download replaced by a direct fetch, the wizard driven by a hidden test mode instead of real input)? Does it really verify the program installed in AurOS? Anything that will make it hang for 6 hours instead of failing fast.' },
