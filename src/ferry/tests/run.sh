@@ -366,6 +366,38 @@ for _f in "$FERRY"/ferry*; do
 done
 eq "every ferry tool in the tree is installed by install.sh" "$_missing" ""
 
+echo "started the way the image starts it:"
+# /usr/bin/ferry is a symlink to /usr/lib/ferry/ferry. Ferry finds its
+# tools beside the real file, or answer.sh's `ferry run` dies at once.
+mkdir -p "$TMP/usrbin"; ln -s "$FERRY/ferry" "$TMP/usrbin/ferry"
+assert "ferry started through a link finds its own tools" \
+    sh -c "env -u FERRY_HIVE_BACKEND PATH=/usr/bin:/bin '$TMP/usrbin/ferry' backend | grep -q ."
+
+echo "ferry run says what happened (answer.sh turns it into her screen):"
+# The installer's choices stand, so no stage tries to change this
+# machine's clock, language or keyboard while the tests run.
+printf 'timezone=Etc/UTC\nlanguage=en_US.UTF-8\nkeyboard=us\n' > "$TMP/run-choices"
+runit() { FERRY_CHOICES="$TMP/run-choices" FERRY_STATE="$TMP/state-run$1" FERRY_ROOT="$2" \
+          FERRY_HOME="$3" FERRY_OWNER="$OWNER" ferry run --auto >/dev/null 2>&1; }
+mkdir -p "$TMP/run-home"; hers "$TMP/run-home"
+runit 1 "$WIN" "$TMP/run-home"
+eq "some files online-only: exit 2 (\"some things could not be brought across\")" "$?" 2
+runit 2 "$TMP/hib" "$TMP/run-home"
+eq "a hibernated Windows: exit 3 (refused, nothing read)" "$?" 3
+mkdir -p "$TMP/run-ro"; chmod 0555 "$TMP/run-ro"
+runit 3 "$WIN" "$TMP/run-ro/home"
+eq "her files could not be copied at all: exit 1, never 'partial'" "$?" 1
+chmod 0755 "$TMP/run-ro"
+
+echo "read-only mount check:"
+# mount_ro undoes any mount the kernel does not report as read-only; it
+# must recognise a read-only one, or no import from a disk can start.
+printf '/dev/sda3 /run/ferry/windows ntfs3 ro,nosuid,nodev,noexec,noatime 0 0\n/dev/sdb1 /run/ferry/rw ntfs3 rw,relatime 0 0\n' > "$TMP/mounts"
+assert "a read-only mount is recognised as read-only" \
+    sh -c ". '$FERRY/ferry-common.sh'; FERRY_MOUNTS='$TMP/mounts' is_ro_mount /run/ferry/windows"
+refute "a writable mount is not" \
+    sh -c ". '$FERRY/ferry-common.sh'; FERRY_MOUNTS='$TMP/mounts' is_ro_mount /run/ferry/rw"
+
 echo "read-only guarantee:"
 # Every import stage above ran against $WIN. Not one byte, size or mtime
 # on it may have changed: Ferry mounts read-only and must never write.

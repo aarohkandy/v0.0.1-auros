@@ -39,7 +39,7 @@ FERRY_VERSION="0.1.0"
 
 # Tools and data ship together. Running straight out of the source tree
 # has to work, because that is how this gets debugged.
-FERRY_BIN=$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo /usr/lib/ferry)
+FERRY_BIN=$(dirname "$(readlink -f "$0")" 2>/dev/null || echo /usr/lib/ferry)
 if [ -d "$FERRY_BIN/data" ]; then FERRY_SHARE="$FERRY_BIN/data"
 else FERRY_SHARE="${FERRY_SHARE:-/usr/share/ferry}"; fi
 PATH="$FERRY_BIN:$FERRY_BIN/build:$PATH"
@@ -380,19 +380,28 @@ require_clean_volume() {
 mount_ro() {
     _dev=$1 _mnt=$2
     mkdir -p "$_mnt" || return 1
-    if mountpoint -q "$_mnt" 2>/dev/null; then return 0; fi
+    # Something already there is only acceptable if it is read-only.
+    if mountpoint -q "$_mnt" 2>/dev/null; then is_ro_mount "$_mnt"; return; fi
     for _fs in ntfs3 ntfs ntfs-3g; do
-        if mount -t "$_fs" -o ro,noatime,nosuid,nodev,noexec \
+        if mount -r -t "$_fs" -o ro,noatime,nosuid,nodev,noexec \
                  "$_dev" "$_mnt" 2>/dev/null; then
             # Belt and braces: verify the kernel agrees it is read-only.
-            if grep -q " $_mnt .*[(,]ro[,)]" /proc/mounts 2>/dev/null; then
-                return 0
-            fi
+            is_ro_mount "$_mnt" && return 0
             umount "$_mnt" 2>/dev/null || true
             return 1
         fi
     done
     return 1
+}
+# Whether the kernel says MNT is mounted read-only: the options column
+# of its line in /proc/mounts holds the word `ro`. (The check this
+# replaces looked for "(ro," -- the shape of `mount`'s output, never of
+# /proc/mounts -- so every mount Ferry made was judged writable and
+# undone, and no import from a disk could ever start.)
+is_ro_mount() {
+    awk -v m="$1" '$2 == m { n = split($4, o, ","); r = 0
+                    for (i = 1; i <= n; i++) if (o[i] == "ro") r = 1 }
+                   END { exit !r }' "${FERRY_MOUNTS:-/proc/mounts}" 2>/dev/null
 }
 unmount_ro() { umount "$1" 2>/dev/null || true; }
 

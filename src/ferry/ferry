@@ -22,14 +22,19 @@
 #  refused before any stage starts, with the reason and the fix.
 #
 #    ferry detect [...]        find Windows (read-only), print JSON
-#    ferry run [--auto]        mount, run the automatic stages, report
+#    ferry run [--auto]        mount, run the automatic stages, report;
+#                              exit 0 all came, 2 something did not (it is
+#                              in the report), 3 refused (hibernated or
+#                              dirty volume), 1 could not import at all
 #    ferry <stage> [...]       one stage (wifi|files|firefox|settings|…)
 #    ferry report [--json]     the what-could-not-migrate report
 #    ferry status              where a resumed run would pick up
 #    ferry unmount             release the read-only mount
 # ═══════════════════════════════════════════════════════════════════
 set -eu
-SELF=$(cd "$(dirname "$0")" && pwd)
+# /usr/bin/ferry is a link to /usr/lib/ferry/ferry; the tools are beside
+# the real file, not beside the link (which is where answer.sh calls it).
+SELF=$(dirname "$(readlink -f "$0")")
 . "$SELF/ferry-common.sh"
 
 MOUNTED_HERE=0
@@ -60,7 +65,7 @@ ensure_mounted() {
         die "could not mount $FERRY_DEV read-only (is ntfs3 or ntfs-3g available?)"
     FERRY_ROOT=$FERRY_MNT
     MOUNTED_HERE=1
-    say "mounted $FERRY_DEV read-only at $FERRY_MNT"
+    say "mounted $FERRY_DEV read-only at $FERRY_MNT ($(awk -v m="$FERRY_MNT" '$2 == m { t = $3 } END { print t }' /proc/mounts))"
 }
 
 maybe_unmount() {
@@ -87,6 +92,11 @@ run_stage() {
 }
 
 # A stage runs unless it already finished — that is the whole of resume.
+# Its exit says what the run as a whole will say: 2 "something of hers
+# did not come" (a stage that broke counts as that), 1 only when the
+# files stage itself broke -- her files are the point, and "Your files
+# are here" must never follow a run that copied none.
+RUN_RC=0
 stage_if_needed() {
     _name=$1 _tool=$2; shift 2
     if [ "$(stage_status "$_name")" = done ] && [ "${FERRY_FORCE:-0}" != 1 ]; then
@@ -94,7 +104,15 @@ stage_if_needed() {
         return 0
     fi
     say "── $_name ──"
-    run_stage "$_tool" "$@" || warn "$_name did not complete cleanly (see report)"
+    _rc=0
+    run_stage "$_tool" "$@" || _rc=$?
+    case "$_rc" in
+        0) : ;;
+        2) [ "$RUN_RC" = 1 ] || RUN_RC=2 ;;
+        3) exit 3 ;;
+        *) warn "$_name did not complete (exit $_rc; see report)"
+           if [ "$_name" = files ]; then RUN_RC=1; elif [ "$RUN_RC" = 0 ]; then RUN_RC=2; fi ;;
+    esac
 }
 
 cmd_run() {
@@ -115,7 +133,8 @@ cmd_run() {
     maybe_unmount
     printf '\n'
     "$SELF/ferry-report" ${FERRY_STATE:+--state "$FERRY_STATE"}
-    say "migration run complete"
+    say "migration run complete (exit $RUN_RC)"
+    exit "$RUN_RC"
 }
 
 cmd_status() {

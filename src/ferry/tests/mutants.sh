@@ -74,6 +74,24 @@ mutant ferry-common.sh '        *) _v="" ;;
     "a user-dirs.dirs pointing out of her home is not obeyed (absolute)"
 mutant ferry-firefox 'for _n in $SKIP_FILES $SECRET_FILES; do' 'for _n in $SKIP_FILES; do' \
     "logins.json (saved passwords) NOT copied"
+# The import in its real context (commit 2).
+# (the check that never matched /proc/mounts' format, put back)
+mutant ferry-common.sh 'is_ro_mount() {' \
+    'is_ro_mount() { grep -q " $1 .*[(,]ro[,)]" "${FERRY_MOUNTS:-/proc/mounts}"; return; }
+is_ro_mount_unused() {' \
+    "a read-only mount is recognised as read-only"
+mutant ferry 'SELF=$(dirname "$(readlink -f "$0")")' 'SELF=$(cd "$(dirname "$0")" && pwd)' \
+    "ferry started through a link finds its own tools"
+mutant ferry-common.sh 'FERRY_BIN=$(dirname "$(readlink -f "$0")" 2>/dev/null || echo /usr/lib/ferry)' \
+    'FERRY_BIN=$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo /usr/lib/ferry)' \
+    "ferry started through a link finds its own tools"
+mutant ferry '        2) [ "$RUN_RC" = 1 ] || RUN_RC=2 ;;' '        2) : ;;' \
+    "some files online-only: exit 2"
+mutant ferry 'if [ "$_name" = files ]; then RUN_RC=1;' 'if false; then RUN_RC=1;' \
+    "her files could not be copied at all: exit 1, never 'partial'" root
+mutant copy.c '    if (disp_total > 0 && came == 0 && !dry_run) return 1;' '    (void)came;' \
+    "her files could not be copied at all: exit 1, never 'partial'" root
+
 # Root: the escalation the lead's review named.
 mutant copy.c 'if (setgroups(1, &gg) || setresgid(g, g, g) || setresuid(u, u, u))' \
     'if (0)' "nothing was written through her symlinks into a root-owned folder" root

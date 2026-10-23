@@ -12,15 +12,27 @@ ExecStart=/usr/lib/auros/answer.sh
 # root process that opens a path inside it is a root process opening
 # whatever she has decided that name is -- which is a local root
 # escalation and was one. See src/aurfirst/request.c.
-RuntimeDirectory=auros-answer
+# ferry: where "Bring my files across" mounts the Windows volume,
+# read-only, inside this unit's own mount namespace (nobody else sees it).
+RuntimeDirectory=auros-answer ferry
 RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
 TimeoutStartSec=3600
 # Defence in depth, not the fix -- the fix is the directory above.
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=yes
+# Her files are copied into her home, so /home cannot be hidden: =yes
+# made every import fail. Not =read-only either: for the same path
+# systemd keeps the stricter of ProtectHome= and ReadWritePaths=, so
+# /home stayed read-only (src/ferry/tests/sandbox.sh found both).
+# ProtectSystem=strict still keeps /root and /run/user read-only, and
+# Ferry never writes in /home as root -- its copier becomes her first
+# (src/ferry/copy.c) -- so a link she planted there gains nothing.
+ProtectHome=no
 PrivateTmp=yes
+# Ferry's own records: what it copied and what it could not.
+StateDirectory=ferry
+StateDirectoryMode=0700
 # /boot/grub for "Put Windows back": it chooses the restore entry for
 # the next start in grub's environment block, /boot/grub/grubenv. That
 # directory, and nothing else under /boot. tools/putbacktest.sh is what
@@ -28,7 +40,7 @@ PrivateTmp=yes
 # The "-" makes it optional: without it, a root with no /boot/grub
 # would fail the whole unit with 226/NAMESPACE -- confirm, decline and
 # import with it, not only putback.
-ReadWritePaths=/var/lib/auros /var/log /run/auros-answer /run/auros -/boot/grub
+ReadWritePaths=/var/lib/auros /var/log /run/auros-answer /run/auros -/boot/grub -/home
 # Importing somebody's files can take a long time on a ten-year-old
 # disk and must never become a failed boot or a failed desktop.
 SuccessExitStatus=0 1 2 3

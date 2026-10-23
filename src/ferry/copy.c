@@ -46,7 +46,7 @@
  *  tells the current truth; copies are appended to STATE/manifest.tsv.
  *
  *  exit 0 everything that could come came · 2 something of hers did
- *  not (it is in the report) · 1 could not run at all
+ *  not (it is in the report) · 1 could not run, or not one file came
  * ═══════════════════════════════════════════════════════════════════ */
 #define _GNU_SOURCE
 #define WINATTR_NO_MAIN
@@ -771,14 +771,19 @@ int main(int argc, char **argv)
     }
     tick(1);
 
+    long long came = 0;
     for (int i = 0; i < njobs; i++) {
         struct job *j = &jobs[i];
         char msg[256];
+        came += j->copied + j->already;
         snprintf(msg, sizeof msg, "%lld copied, %lld already here, %lld kept online by "
                  "OneDrive, %lld locked by Windows, %lld could not be read, %lld could not be saved",
                  j->copied, j->already, j->online, j->locked, j->unreadable, j->failed);
         note("info", j, "", msg);
         fprintf(stderr, "  -> %s: %s\n", j->label, msg);
     }
+    /* There were files to bring and not one came: that is not "some
+     * things could not be brought", it is "nothing could". */
+    if (disp_total > 0 && came == 0 && !dry_run) return 1;
     return missing_any ? 2 : 0;
 }

@@ -55,7 +55,7 @@ gate checks every ELF in /usr/lib/ferry).
 - `fb90bcd` never a password (Firefox secrets skipped, Wi-Fi only listed,
   ferry-dpapi deleted). Broke `tools/nmtest.sh`'s Wi-Fi section (it evals
   the removed `emit_nmconnection`): **still to fix, see Next**.
-- commit 1 (this session) "copy as her": everything in Architecture.
+- `a75e9a7` "copy as her": everything in Architecture.
   Tests: `tests/run.sh` 79 non-root / 85 as root (`tests/asroot.sh`,
   throwaway container). New fixtures: hydrated OneDrive file with cloud
   tag, all-zero sparse file, odd names (newline, tab, quote, backslash,
@@ -70,16 +70,24 @@ gate checks every ELF in /usr/lib/ferry).
 
 ## In progress / next, in order
 
-1. Commit 2 "the import works in its real sandbox": unit
-   (`auros-answer.service`, stream BT's: ProtectHome=read-only,
-   `-/home`, StateDirectory=ferry, RuntimeDirectory=… ferry);
-   `mount_ro`'s read-only check (it grepped /proc/mounts for "(ro," —
-   never matches, so every device mount was undone); `ferry run` exit
-   codes (0 all, 2 something missing, 3 refused, 1 nothing) and
-   answer.sh mapping 1 → failed (was "partial" = "Your files are
-   here"). Proof: `tests/insystemd.sh` (systemd PID 1 container) runs
-   `tests/sandbox.sh` under every [Service] property of the unit, on a
-   tree and on a real NTFS loop volume Ferry mounts itself.
+1. DONE commit 2 "the import works in its real sandbox". Three blockers,
+   each of which alone made "Bring my files across" fail on every
+   machine: (a) the unit's sandbox (state dir read-only, /home hidden;
+   `ProtectHome=read-only` + `ReadWritePaths=/home` is NOT enough —
+   systemd keeps the stricter entry for the same path — so
+   `ProtectHome=no`, `-/home`, StateDirectory=ferry,
+   RuntimeDirectory=… ferry); (b) `/usr/bin/ferry` is a symlink and
+   Ferry looked for its tools beside the link (`readlink -f`); (c)
+   `mount_ro`'s read-only check grepped /proc/mounts for "(ro," and
+   undid every mount (`is_ro_mount`). Plus exit codes: `ferry run` 0
+   all, 2 something missing, 3 refused, 1 nothing came (ferry-copy
+   exits 1 when not one file came); answer.sh maps 1 → failed (was
+   "partial" = "Your files are here"). Proof: `tests/insystemd.sh`
+   (systemd PID 1 container on homebase) runs `tests/sandbox.sh` under
+   every [Service] property of the unit: 11/11 with the fixed unit
+   (a tree, and a real NTFS loop volume Ferry mounts itself, OneDrive
+   attributes and cloud tags written by ntfs-3g, volume byte-identical
+   after); 3/11 with the shipped unit.
 2. Commit 3 plain words: `ferry run --plain` (chatter → STATE/ferry.log,
    her lines on stdout), `ferry-report --plain` → "What came from
    Windows.txt" in her Home (as her), answer.sh uses --plain. Parked

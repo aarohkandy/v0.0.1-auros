@@ -163,9 +163,17 @@ case "$word" in
             say "result=refused"
             say "code=3"
             say "note=the Windows drive was not shut down properly"
-        else
+        elif [ "$frc" = 2 ]; then
+            # Ferry's 2: it ran, and something of hers did not come (an
+            # online-only OneDrive file, a file Windows locked). Its 1
+            # is "nothing could be brought", which "Your files are
+            # here" must never answer.
             say "result=partial"
+            say "code=2"
+        else
+            say "result=failed"
             say "code=$frc"
+            say "note=your files could not be brought across from Windows"
         fi
     fi
     ;;
