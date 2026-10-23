@@ -249,7 +249,7 @@ auros_asked="[0-9]*) ok "the menu will take the restore entry next, and knows wh
 echo
 echo "  boot 2: the next start, with nobody touching anything"
 mount_root && grub-editenv "$T/m/boot/grub/grubenv" set \
-    "aurstage_extra=console=ttyS0,115200n8"; umount_root
+    "aurstage_extra=console=ttyS0,115200n8 aurstage.nolog"; umount_root
 power_on none
 S2=$(tr -d '\r' < "$T/serial.2")
 echo "$S2" | grep -aq 'starting Boot0002 "AurOS"' \
@@ -306,7 +306,7 @@ case "$GL" in *"next_entry=put-windows-back>put-windows-back-yes"*"auros_asked="
     *) bad "...and the request says when it was made" "$GL" ;; esac
 echo "  (boot 4b: Windows starts instead -- nothing of AurOS's runs)"
 mount_root && grub-editenv "$T/m/boot/grub/grubenv" set \
-    "aurstage_extra=console=ttyS0,115200n8"; umount_root
+    "aurstage_extra=console=ttyS0,115200n8 aurstage.nolog"; umount_root
 echo
 echo "  boot 5: three weeks later, AurOS is started again"
 QEXTRA="-rtc base=$(date -u -d '+21 days' '+%Y-%m-%dT%H:%M:%S')"

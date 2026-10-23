@@ -28,7 +28,7 @@
 #  QEMU, and the fault staging image: the powercut-nostick prerequisites.
 #
 #    sudo AURSTAGE_FAULT=1 ./build/staging && sudo sh tools/fasttest.sh [scenario ...]
-#    scenarios: happy bitlocker abort failures noroom cuts handover   (default: all)
+#    scenarios: happy bitlocker abort failures noroom cuts handover stagelog   (default: all)
 #    handover also needs exfatprogs and the exfat kernel driver (a2-kvm image).
 # ═══════════════════════════════════════════════════════════════════
 set -u
@@ -60,7 +60,7 @@ trap _a2_clean EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-WANT="${*:-happy bitlocker abort failures noroom cuts handover}"
+WANT="${*:-happy bitlocker abort failures noroom cuts handover stagelog}"
 want() { case " $WANT " in *" $1 "*) return 0 ;; esac; return 1; }
 
 echo
@@ -640,6 +640,67 @@ for pt in handover-checked restore-esp-mid restore-array restore-sector restore-
 done
 fi
 losetup -a | grep -q "$MTMP" && losetup -a | grep "$MTMP" | cut -d: -f1 | while read -r l; do losetup -d "$l" 2>/dev/null; done
+fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+#  The reason a refusal gives is left on the machine (src/aurstage/stagelog.c).
+#
+#  The staging environment says its reason to a screen and then restarts the computer by
+#  itself, so a verdict word was all that survived. With \EFI\AurOS on the EFI partition (AurBridge
+#  put it there) the words are written to \EFI\AurOS\stage.log -- and that is ALL that changes:
+#  every other partition is byte for byte what it was, and the EFI partition holds the same files
+#  plus that one. (aurstage.nolog, which the other scenarios do not need because their EFI
+#  partition has no \EFI\AurOS, turns it off.)
+# ═══════════════════════════════════════════════════════════════════
+if want stagelog; then
+echo
+echo "  a refusal leaves its reason on the EFI partition"
+command -v mmd >/dev/null 2>&1 || { bad "mtools are needed for this scenario"; WANT=""; }
+new_machine stagelog
+if [ -n "$WANT" ] && { ! run_engine || ! grep -q 'aurbridge-report v1 fast=1 ' "$S/out"; }; then
+    bad "the engine arms the machine for the log test" "$(tail -3 "$S/err")"
+elif [ -n "$WANT" ]; then
+    # AurBridge's directory on the EFI partition, as the real engine leaves it
+    ESPOFF=$((P1S*512))
+    mmd -i "$S/disk.img@@$ESPOFF" ::/EFI ::/EFI/AurOS 2>/dev/null
+    echo "AurOS was here" > "$MTMP/marker.txt"
+    mcopy -i "$S/disk.img@@$ESPOFF" "$MTMP/marker.txt" ::/EFI/AurOS/marker.txt
+    # a root partition that is not what Windows wrote: staging must refuse it
+    REP=$(grep 'aurbridge-report v1 fast=1' "$S/out")
+    RFIRST=$(printf '%s' "$REP" | sed -n 's/.* root=\([0-9]*\)\.\..*/\1/p')
+    printf '\xff' | dd of="$S/disk.img" bs=1 seek=$((RFIRST*512 + 4096*50)) conv=notrunc status=none
+    ESP_BEFORE=$(mdir -i "$S/disk.img@@$ESPOFF" -/ ::/ 2>/dev/null | grep -v "^ Volume\|bytes free\|^$" | sort)
+    OTHERS_BEFORE=$(for part in 2 3; do f=$(sgdisk -i $part "$S/disk.img" | sed -n 's/^First sector: \([0-9]*\).*/\1/p'); l=$(sgdisk -i $part "$S/disk.img" | sed -n 's/^Last sector: \([0-9]*\).*/\1/p'); extent_sha "$S/disk.img" $((f*512)) $(((l-f+1)*512)); done)
+    TABLE_BEFORE=$(sgdisk -p "$S/disk.img" 2>/dev/null)
+    boot_staging "$S/disk.img" "aurstage.install aurstage.min_gb=1" "aurstage-report v1 verdict=" 900 || true
+    grep -aq "aurstage-report v1 verdict=" "$MTMP/out.txt" && ! grep -aq "INSTALLTEST-AUROS-STARTED" "$MTMP/out.txt" \
+        && ok "staging refuses the damaged root" || bad "staging refuses the damaged root" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -3)"
+    R="$MTMP/run.img"
+    LOGTXT=$(mtype -i "$R@@$ESPOFF" ::/EFI/AurOS/stage.log 2>/dev/null)
+    if [ -n "$LOGTXT" ]; then
+        ok "...and \\EFI\\AurOS\\stage.log is there"
+        echo "$LOGTXT" | grep -q "aurstage-report v1 verdict=" && ok "...with the verdict" || bad "...with the verdict"
+        echo "$LOGTXT" | grep -q "WARNING: " && ok "...and the reason it was given in words" || bad "...and the reason it was given in words" "$(echo "$LOGTXT" | tail -4)"
+        echo "$LOGTXT" | grep -q "AurOS staging environment" && ok "...and everything said before it" || bad "...and everything said before it"
+    else
+        bad "\\EFI\\AurOS\\stage.log is there"
+    fi
+    ESP_AFTER=$(mdir -i "$R@@$ESPOFF" -/ ::/ 2>/dev/null | grep -v "^ Volume\|bytes free\|^$" | sort)
+    echo "$ESP_BEFORE" > "$MTMP/espb"; echo "$ESP_AFTER" > "$MTMP/espa"
+    DIFF=$(diff "$MTMP/espb" "$MTMP/espa" | grep '^[<>]' | grep -vi 'stage.log' || true)
+    [ -z "$DIFF" ] && ok "the EFI partition holds the same files, plus that one" || bad "the EFI partition holds the same files, plus that one" "$DIFF"
+    mtype -i "$R@@$ESPOFF" ::/EFI/AurOS/marker.txt 2>/dev/null | grep -q "AurOS was here" \
+        && ok "...and AurBridge's own file is untouched" || bad "...and AurBridge's own file is untouched"
+    OTHERS_AFTER=$(for part in 2 3; do f=$(sgdisk -i $part "$R" | sed -n 's/^First sector: \([0-9]*\).*/\1/p'); l=$(sgdisk -i $part "$R" | sed -n 's/^Last sector: \([0-9]*\).*/\1/p'); extent_sha "$R" $((f*512)) $(((l-f+1)*512)); done)
+    [ "$OTHERS_BEFORE" = "$OTHERS_AFTER" ] && ok "Windows' partition and the recovery partition are byte for byte what they were" \
+        || bad "Windows' partition and the recovery partition are byte for byte what they were"
+    [ "$(sgdisk -p "$R" 2>/dev/null)" = "$TABLE_BEFORE" ] && ok "...and so is the partition table" || bad "...and so is the partition table"
+    # and with aurstage.nolog nothing at all is written
+    cp --sparse=always "$S/disk.img" "$MTMP/nolog.img"
+    boot_staging "$MTMP/nolog.img" "aurstage.install aurstage.min_gb=1 aurstage.nolog" "aurstage-report v1 verdict=" 900 || true
+    [ "$(whole_sha "$MTMP/run.img")" = "$(whole_sha "$MTMP/nolog.img")" ] \
+        && ok "with aurstage.nolog the disk is byte for byte untouched" || bad "with aurstage.nolog the disk is byte for byte untouched"
 fi
 fi
 

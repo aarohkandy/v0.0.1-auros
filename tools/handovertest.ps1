@@ -98,11 +98,15 @@ function New-Scenario([string]$name, [bool]$Done = $true, $Rows = $null, [string
     [System.IO.File]::WriteAllText("$root\version", "1`n", $utf8)
     $lines = New-Object System.Collections.Generic.List[string]
     $lines.Add("#ferry-handover`t1"); if ($User) { $lines.Add("#windows-user`t$User") }; $lines.Add("#aur-user`tuser")
-    if (-not $Rows) { $Rows = $Fixture | ForEach-Object { , @($_[0], $_[1], $_[2], $bytes[$_[0] + '/' + $_[1]]) } }
+    $legit = -not $Rows
+    if ($legit) { $Rows = $Fixture | ForEach-Object { , @($_[0], $_[1], $_[2], $bytes[$_[0] + '/' + $_[1]]) } }
+    $ri = 0
     foreach ($f in $Rows) {
-        $rel = $f[1]
-        # The file goes in under a SAFE name on the volume; the list is what lies.
-        $safe = "$root\files\" + $f[0] + '\' + (($rel -replace '[\\/:*?"<>|]', '_') -replace '\.\.', '__')
+        $rel = $f[1]; $ri++
+        # A real row is written where the list says. A hostile row's file goes in under a SAFE
+        # name on the volume (a file called CON, or with a stream, is not something to create
+        # on a test runner); the list is what lies.
+        $safe = if ($legit) { "$root\files\" + $f[0] + '\' + ($rel -replace '/', '\') } else { "$root\files\" + ($f[0] -replace '[^A-Za-z]', '_') + "\row$ri.bin" }
         New-Item -ItemType Directory (Split-Path -Parent $safe) -Force | Out-Null
         [System.IO.File]::WriteAllBytes($safe, $f[3])
         $lines.Add(($f[0], $rel, $f[2], (ShaBytes $f[3]), 1700000000) -join "`t")
