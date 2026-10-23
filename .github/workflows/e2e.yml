@@ -230,6 +230,14 @@ jobs:
         if: steps.flow.outcome == 'success'
         run: /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/inspect" "$E2E_DIR/work"
 
+      # A failed flow: the staging screen gives only a verdict word, so read
+      # the disk with the machine off and say its reason again (ntfsresize's
+      # own words, the staging's journal and report). Evidence, not a verdict.
+      - name: what the disk says (the flow failed; machine off)
+        if: always() && steps.flow.outcome == 'failure'
+        continue-on-error: true
+        run: /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/diag" "$E2E_DIR/work" --diag
+
       - name: publish the evidence (prerelease e2e-${{ github.run_id }})
         if: always()
         env:

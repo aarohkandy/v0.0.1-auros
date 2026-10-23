@@ -45,7 +45,7 @@ apt() {
 apt update -q
 apt install -y -q --no-install-recommends \
     qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools xorriso \
-    tesseract-ocr tesseract-ocr-eng python3-numpy python3-pil zstd unzip gdisk
+    tesseract-ocr tesseract-ocr-eng python3-numpy python3-pil zstd unzip gdisk ntfs-3g dosfstools
 qemu-system-x86_64 --version >&2
 # Ubuntu confines swtpm to libvirt's directories; this TPM's state lives
 # beside the disk image.

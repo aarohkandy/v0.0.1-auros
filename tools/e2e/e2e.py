@@ -91,6 +91,9 @@ VARIANT_EXPECT = {
     "bitlocker": {"page": r"is encrypted|encryption off|has locked", "fix": False, "restarts": 0,
                   "why_red": "D13 needs BitLocker paused for one restart, never decrypted: A2's fast path"},
     "pending":   {"page": r"waiting (to|for a) restart|finish an update", "fix": True, "restarts": 1},
+    # not a stop: the Ready page says the drive is the slow kind (the installer
+    # asks the drive, seek_penalty), and the time it gives is the hard disk's
+    "hdd":       {"page": r"older, slower kind of drive", "fix": False, "restarts": 0},
 }
 
 HUB = "http://10.0.2.2:8000"
@@ -1035,6 +1038,46 @@ def cmd_flow(a):
 #  After the run: what is on the disk
 # ════════════════════════════════════════════════════════════════════
 
+def diagnose_partition(rec, p, fs, mnt):
+    """After a flow that failed with the machine off: what the staging
+    installer saw, said again by the same tools, read-only. The staging
+    screen gives only a verdict word (run 39931612628: 'cannot-measure');
+    its reason is ntfsresize's own words, and the staging's journal and
+    report are small files on the ESP and in C:\\AurOS."""
+    lines = [f"--- {p} ({fs or 'no filesystem'})"]
+    dev = "/dev/" + p
+    if fs == "ntfs":
+        for argv in (["ntfsresize", "--info", "--no-action", dev], ["ntfsfix", "--no-action", dev]):
+            r = run(["sudo"] + argv, rec, check=False)
+            lines.append("$ " + " ".join(argv) + f"   (exit {r.returncode})\n" + (r.stdout or "") + (r.stderr or ""))
+        # NTFS read-only; an unclean or hibernated volume may refuse: say so
+        r = run(["sudo", "mount", "-t", "ntfs3", "-o", "ro", dev, mnt], rec, check=False)
+        if r.returncode != 0:
+            lines.append("mount (ntfs3, ro) failed: " + (r.stderr or "").strip())
+            r = run(["sudo", "ntfs-3g", "-o", "ro,norecover", dev, mnt], rec, check=False)
+            if r.returncode != 0:
+                lines.append("ntfs-3g (ro, norecover) failed: " + (r.stderr or "").strip())
+        if r.returncode == 0:
+            try:
+                lines.append(run(["sudo", "sh", "-c", f"ls -la {mnt} | head -40; echo; ls -laR {mnt}/AurOS 2>&1 | head -60; "
+                                  f"echo; for f in {mnt}/AurOS/*.txt {mnt}/AurOS/*.log {mnt}/AurOS/*.json; do "
+                                  "[ -f \"$f\" ] && { echo \"== $f\"; head -c 8000 \"$f\"; echo; }; done 2>&1"],
+                                 rec, check=False).stdout)
+            finally:
+                run(["sudo", "umount", mnt], rec, check=False)
+    elif fs == "vfat":
+        r = run(["sudo", "mount", "-o", "ro", dev, mnt], rec, check=False)
+        if r.returncode == 0:
+            try:
+                lines.append(run(["sudo", "sh", "-c", f"cd {mnt} && find . -maxdepth 4 | head -80; echo; "
+                                  "for f in $(find EFI/AurOS aurbridge* -type f -size -64k 2>/dev/null | head -30); do "
+                                  "case $f in *.efi|*.EFI|*.bin|*.img|*.gz) continue;; esac; "
+                                  "echo \"== $f\"; head -c 8000 \"$f\"; echo; done"], rec, check=False).stdout)
+            finally:
+                run(["sudo", "umount", mnt], rec, check=False)
+    return "\n".join(lines)
+
+
 def cmd_inspect(a):
     """Read AurOS's root file system with the machine off, read-only.
     Proves the program is on the disk, not just on the screen."""
@@ -1066,6 +1109,8 @@ def cmd_inspect(a):
             for p in parts:
                 fs = run(["sudo", "blkid", "-o", "value", "-s", "TYPE", "/dev/" + p], rec,
                          check=False).stdout.strip()
+                if a.diag:
+                    out.append(diagnose_partition(rec, p, fs, mnt))
                 if fs not in ("ext4", "btrfs", "xfs"):
                     continue
                 if run(["sudo", "mount", "-o", "ro,noload" if fs == "ext4" else "ro", "/dev/" + p, mnt],
@@ -1087,6 +1132,8 @@ def cmd_inspect(a):
             out.append("found: " + json.dumps(found, indent=1))
             with open(os.path.join(a.out, "disk-inspection.txt"), "w") as fh:
                 fh.write("\n".join(out))
+            if a.diag:         # after a failed flow: what the disk says, not a verdict
+                return 0
             if not found:
                 raise Failure(f"none of {APP_FILES} is on any Linux partition")
         finally:
@@ -1109,6 +1156,7 @@ def main():
     fl.add_argument("out"); fl.add_argument("golden"); fl.add_argument("work")
     i = sub.add_parser("inspect")
     i.add_argument("out"); i.add_argument("work")
+    i.add_argument("--diag", action="store_true", help="after a failed flow: say what the disk holds, no verdict")
     a = p.parse_args()
     os.makedirs(a.out, exist_ok=True)
     return {"windows": cmd_windows, "flow": cmd_flow, "inspect": cmd_inspect}[a.cmd](a)

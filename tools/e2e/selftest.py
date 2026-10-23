@@ -54,9 +54,14 @@ def titles(stop):
 
 def test_expect():
     exp = variant_expect()
-    check(set(exp) == set(STOP), f"VARIANT_EXPECT covers {sorted(STOP)}")
+    check(set(exp) == set(STOP) | {"hdd"}, f"VARIANT_EXPECT covers {sorted(STOP)} and hdd")
+    wz = open(os.path.join(SRC, "wizard.c")).read()
+    check(re.search(exp["hdd"]["page"], wz.replace("\\u2019", "'"), re.I) is not None,
+          "hdd: /%s/ is still what the Ready page says of a slow drive (wizard.c)" % exp["hdd"]["page"])
     all_titles = {v: titles(STOP[v]) for v in STOP}
     for v, want in exp.items():
+        if v not in STOP:
+            continue
         for where, t in all_titles[v]:
             check(t is not None, f"{v}: the {where} title of '{STOP[v]}' is in the source")
             if t:

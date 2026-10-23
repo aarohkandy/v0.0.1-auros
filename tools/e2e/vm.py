@@ -363,8 +363,11 @@ class Machine:
             # q35's own AHCI controller; the disk says it is an SSD
             "-drive", f"id=disk0,if=none,file={self.disk},format=qcow2,cache=unsafe,"
                       f"discard=unmap,detect-zeroes=unmap{self.throttle}",
-            "-device", "ide-hd,drive=disk0,bus=ide.0,rotation_rate=1,bootindex=1,"
-                       "serial=E2ESSD0001,model=E2E SATA SSD",
+            # rotation_rate 1 is how a SATA SSD says "no moving parts"; a throttled
+            # disk (the hdd variant) says 7200 rpm, which is what the installer's
+            # "seek penalty" question (and Windows' own Optimize Drives) asks
+            "-device", f"ide-hd,drive=disk0,bus=ide.0,rotation_rate={7200 if self.throttle else 1},bootindex=1,"
+                       f"serial=E2ESSD0001,model=E2E SATA {'HDD' if self.throttle else 'SSD'}",
             "-netdev", "user,id=n0",
             "-device", "e1000e,netdev=n0,mac=52:54:00:e2:e0:01,romfile=",
             "-device", f"VGA,edid=on,xres={self.xres},yres={self.yres}",
