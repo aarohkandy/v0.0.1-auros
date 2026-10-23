@@ -128,7 +128,7 @@ ENVS = []
 
 
 class Env:
-    def __init__(self, bins, wishes="on", with_dbus=False, sensors="compass,tilt,light", cloud=None):
+    def __init__(self, bins, wishes="on", with_dbus=False, sensors="compass,tilt,light", cloud=None, features="on"):
         ENVS.append(self)
         self.bins = bins
         self.d = tempfile.mkdtemp(prefix="wishd-")
@@ -144,7 +144,10 @@ class Env:
         os.makedirs(os.path.dirname(self.store), exist_ok=True)
         self.token_file = os.path.join(os.path.dirname(self.store), "wishes-token.json")
         self.policy = os.path.join(d, "etc/policy.conf")
-        open(self.policy, "w").write(f"profile = test\nwishes = {wishes}\n")
+        open(self.policy, "w").write(f"profile = test\n" + (f"wishes = {wishes}\n" if wishes is not None else ""))
+        self.features = os.path.join(d, "etc/features")
+        if features is not None:
+            open(self.features, "w").write(f"wishes={features}\n")
         self.conf = os.path.join(d, "etc/wishes.conf")
         self.cloud = cloud
         open(self.conf, "w").write(f"url={cloud.url()}\n" if cloud else "")
@@ -227,7 +230,7 @@ class Env:
             "PATH": os.path.join(self.d, "bin") + ":" + e.get("PATH", "/usr/bin:/bin"),
             "LOGDIR": os.path.join(self.d, "log"),
             "AURWISH_SOCK": self.sock, "AURWISH_STORE": self.store, "AURWISH_CONF": self.conf,
-            "AURWISH_POLICY": self.policy, "AURWISH_HELP": os.path.join(self.d, "help"),
+            "AURWISH_POLICY": self.policy, "AURWISH_FEATURES": self.features, "AURWISH_HELP": os.path.join(self.d, "help"),
             "AURWISH_SOUNDS": os.path.join(self.d, "sounds"),
             "AUROS_BACKLIGHT": os.path.join(self.d, "sys/backlight"), "AUROS_POWER_SUPPLY": os.path.join(self.d, "sys/power"),
             "AUROS_THEME_DIR": os.path.join(self.d, "themes"),
@@ -359,25 +362,38 @@ def accept(c, pending):
 # ── the scenarios ─────────────────────────────────────────────────────────
 
 def s_policy_off(bins):
-    """D14: nothing runs unless the machine says wishes = on."""
-    for text in ("off", "ON", "yes", ""):
-        e = Env(bins, wishes=text)
+    """D14: nothing runs unless the machine says wishes=on (and policy does not forbid it)."""
+    def starts(**kw):
+        e = Env(bins, **kw)
         p = e.start(force=False)
         try:
-            p.wait(5)
+            p.wait(3)
+            ran = False
         except subprocess.TimeoutExpired:
-            pass
-        check(p.returncode == 0 and not os.path.exists(e.sock), f"wishes = '{text}' must not start (rc={p.returncode})")
+            ran = True
+        rc = p.returncode
+        sock = os.path.exists(e.sock)
+        if ran:
+            p.send_signal(signal.SIGTERM)
+            p.wait(5)
         e.close()
-    e = Env(bins, wishes="on")
+        return ran and sock, rc
+
+    check(starts(features="off")[0] is False, "features wishes=off: does not start")
+    ok, rc = starts(features="off")
+    check(rc == 0, "... and exits 0, so systemd does not restart it")
+    check(starts(features=None)[0] is False, "no features file: does not start")
+    check(starts(features="ON")[0] is False, "wishes=ON (wrong case) is not on")
+    check(starts(features="yes")[0] is False, "wishes=yes is not on")
+    check(starts(features="on", wishes="off")[0] is False, "policy wishes = off beats features")
+    check(starts(features="on", wishes="no")[0] is False, "policy wishes = no is not on")
+    check(starts(features="on", wishes="")[0] is False, "policy wishes = (empty) is not on")
+    check(starts(features="on", wishes="on")[0] is True, "features on + policy on: starts")
+    check(starts(features="on", wishes=None)[0] is True, "features on, policy silent: starts")
+    e = Env(bins, features="on", wishes="on")
     os.remove(e.policy)
     p = e.start(force=False)
-    p.wait(5)
-    check(p.returncode == 0 and not os.path.exists(e.sock), "no policy file must not start")
-    e.close()
-    e = Env(bins, wishes="on")
-    p = e.start(force=False)
-    check(p.poll() is None and os.path.exists(e.sock), "wishes = on starts")
+    check(p.poll() is None and os.path.exists(e.sock), "features on, no policy file: starts")
     check(stat.S_IMODE(os.stat(e.sock).st_mode) == 0o600, "the socket is mode 0600")
     p.send_signal(signal.SIGTERM)
     p.wait(5)
@@ -618,6 +634,7 @@ def s_hostile_cloud(bins):
         check("infected" not in json.dumps(r) and "Free money" not in json.dumps(r), "the cloud's words are not repeated")
     # help pages: only a plain name of a page that exists
     for page, want in (("printing", "printing"), ("nothere", None), ("../../etc/passwd", None),
+                       ("../help/printing", None), ("./printing", None),
                        ("Printing", None), ("printing/../printing", None), ("", None), (7, None)):
         cloud.ask = lambda req, p=page: (200, {}, {"help_page_id": p})
         r = c.call({"op": "ask", "text": f"how do I print number {len(str(page))}{page}", "lang": "en"})
@@ -822,7 +839,9 @@ SCENARIOS = [s_policy_off, s_potato, s_compass, s_compass_missing, s_errors, s_h
 def build():
     out = tempfile.mkdtemp(prefix="wishbin-")
     env = dict(os.environ, TEST="1")
-    r = subprocess.run(["sh", os.path.join(ROOT, "src/aurwish/build.sh"), os.path.join(out, "aurwish")],
+    # WISH_ROOT: a copy of the tree with one check removed (tools/wishtest-mutants.py)
+    src = os.environ.get("WISH_ROOT", ROOT)
+    r = subprocess.run(["sh", os.path.join(src, "src/aurwish/build.sh"), os.path.join(out, "aurwish")],
                        env=env, capture_output=True, text=True)
     if r.returncode:
         print(r.stderr)

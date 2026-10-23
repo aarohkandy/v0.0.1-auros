@@ -9,7 +9,8 @@
  *
  * OFF UNLESS THE MACHINE SAYS ON (owner decision D14). The program is not
  * in an image unless the profile asks for it, and when present it exits at
- * once unless /etc/auros/policy.conf says `wishes = on`. A crash or a bad
+ * once unless /etc/auros/features says `wishes=on` (and policy.conf does not
+ * say `wishes = off`). A crash or a bad
  * file never blocks login: this is a separate process and the shell does
  * not wait for it.
  *
@@ -52,13 +53,34 @@ static void on_term(int s) { (void)s; want_quit = 1; }
 
 /* ── what the machine says ───────────────────────────────────────── */
 
-/* `wishes = on` in the machine's policy; anything else, or no file, is off. */
-static int policy_on(const char *path)
+/* Is Wishes on for this computer? Two files, both root's:
+ *   /etc/auros/features   written by build/forge: `wishes=on` only when the
+ *                         profile said so (owner decision D14). No file, or
+ *                         anything else, is off.
+ *   /etc/auros/policy.conf  an administrator's `wishes = off` (docs/AI.md
+ *                         §7.12) turns it off even where the image has it.
+ * Both must agree for the engine to run. */
+static int features_on(const char *path)
 {
     FILE *f = fopen(path, "r");
     if (!f) return 0;
-    char line[256];
+    char line[128];
     int on = 0;
+    while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        if (!strcmp(line, "wishes=on")) on = 1;
+        else if (!strncmp(line, "wishes=", 7)) on = 0;
+    }
+    fclose(f);
+    return on;
+}
+
+static int policy_forbids(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;                       /* an unmanaged machine: no restriction */
+    char line[256];
+    int forbids = 0;
     while (fgets(line, sizeof line, f)) {
         char *eq = strchr(line, '=');
         if (!eq || line[0] == '#') continue;
@@ -68,10 +90,10 @@ static int policy_on(const char *path)
         for (char *e = k + strlen(k); e > k && isspace((unsigned char)e[-1]); ) *--e = 0;
         while (isspace((unsigned char)*v) || *v == '"') v++;
         for (char *e = v + strlen(v); e > v && (isspace((unsigned char)e[-1]) || e[-1] == '"'); ) *--e = 0;
-        if (!strcmp(k, "wishes")) on = !strcmp(v, "on");
+        if (!strcmp(k, "wishes")) forbids = strcmp(v, "on") != 0;
     }
     fclose(f);
-    return on;
+    return forbids;
 }
 
 /* `url=https://…` from the signed package config (docs/CLOUD.md §6). */
@@ -326,8 +348,9 @@ int main(int argc, char **argv)
     signal(SIGINT, on_term);
     umask(077);
 
-    if (!force && !policy_on(OVERRIDE("AURWISH_POLICY", "/etc/auros/policy.conf"))) {
-        fprintf(stderr, "aurwish: Wishes is off on this computer (policy)\n");
+    if (!force && (!features_on(OVERRIDE("AURWISH_FEATURES", "/etc/auros/features")) ||
+                   policy_forbids(OVERRIDE("AURWISH_POLICY", "/etc/auros/policy.conf")))) {
+        fprintf(stderr, "aurwish: Wishes is off on this computer\n");
         return 0;                               /* 0: systemd does not restart it */
     }
 

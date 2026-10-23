@@ -1,0 +1,165 @@
+/* wishhook.c — see wishhook.h. */
+#define _GNU_SOURCE
+#include <ctype.h>
+#include <stdio.h>
+#include <string.h>
+#include "wishhook.h"
+
+#define MAX_WORDS 10
+#define MAX_APPS  20
+#define WORD_MAX  32
+#define QUEUE     8
+
+/* evdev key codes (linux/input-event-codes.h), spelled out so this file
+ * needs no kernel header. */
+enum { K_ESC = 1, K_BACKSPACE = 14, K_TAB = 15, K_ENTER = 28, K_LCTRL = 29, K_LSHIFT = 42,
+       K_RSHIFT = 54, K_LALT = 56, K_SPACE = 57, K_CAPS = 58, K_RCTRL = 97, K_KPENTER = 96,
+       K_RALT = 100, K_LMETA = 125, K_RMETA = 126, K_COMPOSE = 127 };
+
+static char  words[MAX_WORDS][WORD_MAX + 1];
+static int   nwords;
+static char  apps[MAX_APPS][128];
+static int   napps;
+
+/* The word being typed. `bad` means it is not a plain run of letters we
+ * could match (a digit, an apostrophe, an accented letter, a cursor
+ * movement happened): it cannot be reported, whatever it spells. */
+static char  buf[WORD_MAX + 1];
+static int   len, bad;
+
+static char  qwords[QUEUE][WORD_MAX + 1];
+static int   qw_head, qw_n;
+static char  qapps[QUEUE][128];
+static int   qa_head, qa_n;
+
+static void wipe(void)
+{
+    /* Not memset: a compiler may drop a memset of a buffer it thinks is
+     * dead. */
+    volatile char *p = buf;
+    for (size_t i = 0; i < sizeof buf; i++) p[i] = 0;
+    len = 0;
+}
+
+void wishhook_set(const char *const *w, int nw, const char *const *a, int na)
+{
+    nwords = napps = 0;
+    for (int i = 0; w && i < nw && nwords < MAX_WORDS; i++) {
+        const char *s = w[i];
+        size_t l = s ? strlen(s) : 0;
+        int ok = l >= 4 && l <= WORD_MAX;
+        for (size_t j = 0; ok && j < l; j++) ok = s[j] >= 'a' && s[j] <= 'z';
+        if (ok) { memcpy(words[nwords], s, l + 1); nwords++; }
+    }
+    for (int i = 0; a && i < na && napps < MAX_APPS; i++) {
+        const char *s = a[i];
+        size_t l = s ? strlen(s) : 0;
+        if (l > 0 && l < sizeof apps[0]) { memcpy(apps[napps], s, l + 1); napps++; }
+    }
+    wipe();
+    bad = 0;
+    /* A new list is a new question: nothing found under the old one is
+     * reported under it. */
+    qw_n = qw_head = 0;
+    qa_n = qa_head = 0;
+}
+
+int wishhook_take_word(char out[33])
+{
+    if (!qw_n) return 0;
+    memcpy(out, qwords[qw_head], WORD_MAX + 1);
+    qw_head = (qw_head + 1) % QUEUE;
+    qw_n--;
+    return 1;
+}
+
+int wishhook_take_app(char out[128])
+{
+    if (!qa_n) return 0;
+    memcpy(out, qapps[qa_head], 128);
+    qa_head = (qa_head + 1) % QUEUE;
+    qa_n--;
+    return 1;
+}
+
+int wishhook_buffered(void) { return len; }
+
+void wishhook_reset(void)
+{
+    wipe();
+    bad = 0;
+}
+
+static void end_of_word(void)
+{
+    if (!bad && len) {              /* registered words are all 4+ letters (wishhook_set) */
+        buf[len] = 0;
+        for (int i = 0; i < nwords; i++)
+            if (!strcmp(buf, words[i])) {
+                if (qw_n < QUEUE) {
+                    memcpy(qwords[(qw_head + qw_n) % QUEUE], buf, WORD_MAX + 1);
+                    qw_n++;
+                }
+                break;
+            }
+    }
+    wipe();
+    bad = 0;
+}
+
+void wishhook_key(aurwl *c, uint32_t code, int pressed)
+{
+    if (!nwords || !pressed) return;              /* nothing registered: do not even look */
+    switch (code) {
+    case K_LSHIFT: case K_RSHIFT: case K_LCTRL: case K_RCTRL: case K_LALT: case K_RALT:
+    case K_LMETA: case K_RMETA: case K_CAPS: case K_COMPOSE:
+        return;                                    /* modifiers type nothing */
+    case K_ENTER: case K_KPENTER: case K_TAB:
+        end_of_word();
+        return;
+    case K_BACKSPACE:
+        if (len > 0) { buf[--len] = 0; }
+        else bad = 1;                              /* deleting something we did not see */
+        return;
+    case K_ESC:
+        wipe();
+        bad = 0;
+        return;
+    default:
+        break;
+    }
+    char t[16];
+    int n = aurwl_key_utf8(c, code, t, sizeof t);
+    if (n <= 0) {                                  /* arrows, Home, a Ctrl chord, ... */
+        wipe();
+        bad = 1;                                   /* the next letters may be mid-word */
+        return;
+    }
+    if (n == 1 && isalpha((unsigned char)t[0])) {
+        if (len >= WORD_MAX) { bad = 1; return; }
+        buf[len++] = (char)tolower((unsigned char)t[0]);
+        buf[len] = 0;
+        return;
+    }
+    /* A delimiter ends the word; anything else is part of one we will
+     * not match ("potato1", "potato's", "potatoé"). */
+    if (n == 1 && (isspace((unsigned char)t[0]) ||
+                   (ispunct((unsigned char)t[0]) && t[0] != '\'' && t[0] != '-' && t[0] != '_'))) {
+        end_of_word();
+        return;
+    }
+    bad = 1;
+}
+
+void wishhook_app(const char *app_id)
+{
+    if (!napps || !app_id || !*app_id) return;
+    for (int i = 0; i < napps; i++)
+        if (!strcasecmp(app_id, apps[i])) {
+            if (qa_n < QUEUE) {
+                snprintf(qapps[(qa_head + qa_n) % QUEUE], 128, "%s", app_id);
+                qa_n++;
+            }
+            return;
+        }
+}

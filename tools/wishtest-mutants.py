@@ -131,6 +131,111 @@ ENGINE_MUTANTS = [
 ]
 
 
+# The compositor's matcher (src/aurwl/wishhook.c) is tested by tools/wishtest-hook.c.
+HOOK_MUTANTS = [
+    ("hook: prefix matches (potatoes)", 'if (!strcmp(buf, words[i])) {', 'if (!strncmp(buf, words[i], strlen(words[i]))) {'),
+    ("hook: digits end a word (potato1)", '    bad = 1;\n}\n\nvoid wishhook_app', '    end_of_word();\n}\n\nvoid wishhook_app'),
+    ("hook: the word is kept after it ends", '    wipe();\n    bad = 0;\n}\n\nvoid wishhook_key', '    bad = 0;\n}\n\nvoid wishhook_key'),
+    ("hook: looks when nothing is registered", 'if (!nwords || !pressed) return;', 'if (!pressed) return;'),
+    ("hook: a moved cursor is trusted", '        wipe();\n        bad = 1;                                   /* the next letters may be mid-word */', '        wipe();'),
+    ("hook: every program is reported", 'if (!strcasecmp(app_id, apps[i])) {', 'if (1) {'),
+    ("hook: the queue grows without bound", 'if (qw_n < QUEUE) {', 'if (1) {'),
+    ("hook: three-letter words", 'int ok = l >= 4 && l <= WORD_MAX;', 'int ok = l >= 1 && l <= WORD_MAX;'),
+    ("hook: deleting unseen text is trusted", '        else bad = 1;                              /* deleting something we did not see */', ''),
+    ("hook: a new list keeps the old finds", '    qw_n = qw_head = 0;\n    qa_n = qa_head = 0;\n}', '}'),
+    ("hook: Enter does not end a word", '        end_of_word();\n        return;\n    case K_BACKSPACE:', '        return;\n    case K_BACKSPACE:'),
+]
+
+
+# The daemon as a whole: (name, file in src/aurwish, old, new, scenarios that must go red).
+DAEMON_MUTANTS = [
+    ("daemon: features file ignored", "main.c", '!features_on(OVERRIDE("AURWISH_FEATURES", "/etc/auros/features")) ||', '0 ||', ["policy_off"]),
+    ("daemon: admin's wishes = off ignored", "main.c", 'policy_forbids(OVERRIDE("AURWISH_POLICY", "/etc/auros/policy.conf"))))', '0))', ["policy_off"]),
+    ("daemon: any odd policy value counts as on", "main.c", 'forbids = strcmp(v, "on") != 0;', 'forbids = strcmp(v, "off") == 0;', ["policy_off"]),
+    ("daemon: wishes sent without consent", "main.c", 'if (!ST->consent) {', 'if (0) {', ["potato"]),
+    ("daemon: the same words sent twice", "main.c", '(last_text.at && now - last_text.at < 30 && last_text.hash == hs)', '0', ["errors"]),
+    ("daemon: lines never end", "main.c", 'if (c->len > LINE_IN) conn_close(c);', ';', ["socket"]),
+    ("daemon: Forget does not tell the service", "main.c", 'static int io_forget(void *c) { (void)c; if (CL) cloud_forget(CL); return 0; }', 'static int io_forget(void *c) { (void)c; return 0; }', ["forget"]),
+    ("cloud: numbers sent as they are", "cloud.c", 'if (digits >= 5) {', 'if (digits >= 500) {', ["errors"]),
+    ("cloud: no silent re-registration", "cloud.c", 'if (r.http == 401 && !c->retried_auth) {', 'if (0) {', ["errors"]),
+    ("cloud: the token on the command line", "cloud.c", '"--user-agent", "AurOS-Wishes/" VERSION,', '"--user-agent", c->token[0] ? c->token : "AurOS-Wishes/" VERSION,', ["token_not_in_ps"]),
+    ("cloud: token file world-readable", "cloud.c", 'O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);', 'O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0644);', ["potato"]),
+    ("cloud: the token survives Forget", "cloud.c", '    if (c->token[0]) spawn_curl(c, "/v1/forget", "{}", 2, 1, 1);\n    unlink(c->cfg.token_path);', '    if (c->token[0]) spawn_curl(c, "/v1/forget", "{}", 2, 1, 1);', ["forget"]),
+    ("cloud: a wrong clock is not corrected", "cloud.c", 'if (r.http == 400 && !c->retried_pow) {', 'if (0) {', ["errors"]),
+    ("answer: help pages are any path", "answer.c", 'if (p && p->type == J_STR && page_name_ok(p->s)) {', 'if (p && p->type == J_STR) {', ["hostile_cloud"]),
+    ("answer: 429 is an answer", "answer.c", 'if (r->http == 429) { answer_error(r->id, "limit", r->retry_after, reply, n); return; }', '', ["errors"]),
+    ("sensors: claimed whether needed or not", "sensors.c", 'mask &= s->have;', 'mask = s->have;', ["compass"]),
+    ("wish: a title from the cloud is shown", "wish.c", 'if (!jonly(doc, TOP)) NO("other", "unknown field", "");', '', ["hostile_cloud"]),
+]
+
+
+def daemon_mutants(only):
+    bad = 0
+    for name, fname, old, new, scenarios in DAEMON_MUTANTS:
+        if only and only not in name:
+            continue
+        d = tempfile.mkdtemp(prefix="wishmut-")
+        try:
+            for sub in ("src/aurwish", "src/aurshell", "src/common", "build"):
+                shutil.copytree(os.path.join(ROOT, sub), os.path.join(d, sub))
+            path = os.path.join(d, "src/aurwish", fname)
+            text = open(path, encoding="utf-8").read()
+            if text.count(old) != 1:
+                print(f"STALE {name}: pattern found {text.count(old)} times in {fname}")
+                bad += 1
+                continue
+            open(path, "w", encoding="utf-8").write(text.replace(old, new))
+            r = subprocess.run([sys.executable, os.path.join(ROOT, "tools/wishtest-daemon.py")] + scenarios,
+                               env=dict(os.environ, WISH_ROOT=d), capture_output=True, text=True, timeout=600)
+            if "does not compile" in r.stderr or "error:" in r.stderr[:2000]:
+                print(f"BUILD  {name}: the mutant does not compile")
+                bad += 1
+            elif r.returncode != 0:
+                print(f"caught {name}")
+            else:
+                print(f"MISSED {name}: the {'/'.join(scenarios)} test passes without this check")
+                bad += 1
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    return bad
+
+
+def hook_mutants(only):
+    bad = 0
+    for name, old, new in HOOK_MUTANTS:
+        if only and only not in name:
+            continue
+        d = tempfile.mkdtemp(prefix="wishmut-")
+        try:
+            os.makedirs(os.path.join(d, "src/aurwl")); os.makedirs(os.path.join(d, "src/aurshell")); os.makedirs(os.path.join(d, "tools"))
+            for f in ("wishhook.c", "wishhook.h", "aurwl.h"):
+                shutil.copy(os.path.join(ROOT, "src/aurwl", f), os.path.join(d, "src/aurwl", f))
+            shutil.copy(os.path.join(ROOT, "src/aurshell/draw.h"), os.path.join(d, "src/aurshell/draw.h"))
+            shutil.copy(os.path.join(ROOT, "tools/wishtest-hook.c"), os.path.join(d, "tools/wishtest-hook.c"))
+            path = os.path.join(d, "src/aurwl/wishhook.c")
+            text = open(path, encoding="utf-8").read()
+            if text.count(old) != 1:
+                print(f"STALE {name}: pattern found {text.count(old)} times")
+                bad += 1
+                continue
+            open(path, "w", encoding="utf-8").write(text.replace(old, new))
+            exe = os.path.join(d, "t")
+            b = subprocess.run([CC, "-std=gnu11", "-O1", "-g", "-w", "-fsanitize=address,undefined", "-fno-sanitize-recover=all",
+                                "-I", os.path.join(d, "src/aurwl"), os.path.join(d, "tools/wishtest-hook.c"), path, "-o", exe],
+                               capture_output=True)
+            if b.returncode:
+                print(f"BUILD  {name}: the mutant does not compile")
+                bad += 1
+            elif subprocess.run([exe], capture_output=True, timeout=60).returncode != 0:
+                print(f"caught {name}")
+            else:
+                print(f"MISSED {name}: the tests pass without this check")
+                bad += 1
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    return bad
+
+
 def build_and_run(srcdir, test, extra):
     out = os.path.join(srcdir, "t")
     # Sanitizers on: a mutant that reads past a table must be caught
@@ -147,6 +252,8 @@ def build_and_run(srcdir, test, extra):
 
 def main():
     only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
+    if "--daemon" in sys.argv and not only:
+        pass
     src = os.path.join(ROOT, "src", "aurwish")
     tests = [("wishtest.c", ["json.c", "text.c", "wish.c", "store.c"])]
     if os.path.exists(os.path.join(ROOT, "tools", "wishtest-engine.c")):
@@ -182,6 +289,10 @@ def main():
                     bad += 1
         finally:
             shutil.rmtree(d, ignore_errors=True)
+    if not only or "hook" in only:
+        bad += hook_mutants(only)
+    if "--daemon" in sys.argv or (only and any(k in only for k in ("daemon", "cloud:", "answer:", "sensors:"))):
+        bad += daemon_mutants(only)
     print(f"mutants: {bad} problem(s)")
     return 1 if bad else 0
 

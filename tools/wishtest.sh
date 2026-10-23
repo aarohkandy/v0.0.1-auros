@@ -37,6 +37,18 @@ for cc in gcc clang cc; do
     done
 done
 
+# The compositor's typed-word matcher (the only code that sees what she types).
+if [ -f "$ROOT/tools/wishtest-hook.c" ]; then
+    # shellcheck disable=SC2086
+    if ${CC:-cc} -std=gnu11 -g -O1 -Wall -Wextra -Werror $SAN -I "$ROOT/src/aurwl" \
+            "$ROOT/tools/wishtest-hook.c" "$ROOT/src/aurwl/wishhook.c" -o "$OUT/hook" 2>"$OUT/err" &&
+       "$OUT/hook" >"$OUT/log" 2>&1; then
+        echo "ok   wishtest-hook: $(tail -1 "$OUT/log")"
+    else
+        echo "FAIL wishtest-hook"; cat "$OUT/err"; grep -E 'FAIL|ERROR' "$OUT/log" | head; fail=1
+    fi
+fi
+
 # The engine and the cloud must agree on the document (docs/wish-v1.schema.json).
 if [ -f "$ROOT/docs/wish-v1.schema.json" ] && command -v python3 >/dev/null 2>&1; then
     if python3 "$ROOT/tools/wishtest-schema.py" >"$OUT/schema" 2>&1; then
@@ -65,7 +77,11 @@ else
 fi
 
 if [ "${1:-}" = --mutants ]; then
-    if python3 "$ROOT/tools/wishtest-mutants.py" >"$OUT/mut" 2>&1; then
+    # the daemon-level mutants need what the daemon test needs
+    DM=""
+    if [ "$(uname)" = Linux ] && pkg-config --exists dbus-1 2>/dev/null && command -v dbus-daemon >/dev/null 2>&1 &&
+       command -v curl >/dev/null 2>&1; then DM=--daemon; fi
+    if python3 "$ROOT/tools/wishtest-mutants.py" $DM >"$OUT/mut" 2>&1; then
         echo "ok   mutants: $(grep -c '^caught' "$OUT/mut") checks each shown to fail when removed"
     else
         echo "FAIL mutants"; grep -vE '^caught' "$OUT/mut"; fail=1

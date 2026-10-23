@@ -111,9 +111,10 @@ proposal (`docs/handoff/streams/W2.md`) with the additions §7 needs.
 
 - `$XDG_RUNTIME_DIR/aurwish.sock`, AF_UNIX `SOCK_STREAM`, made by the engine,
   mode 0600; the engine refuses any peer whose `SO_PEERCRED` uid is not its
-  own. One JSON object per line, UTF-8, at most 4096 bytes a line, both
-  directions. A line that is too long or not a JSON object closes that
-  connection. At most 4 connections.
+  own. One JSON object per line, UTF-8, at most **4096 bytes a line from the
+  shell** and **65536 from the engine** (a `list` of 50 wishes is long). A
+  line that is too long or not a JSON object closes that connection. At most 4
+  connections. Events go only to connections that have said `hello`.
 - **The shell never talks to the cloud and never validates a wish.** The engine
   is the only cloud client and the only author of every sentence she reads
   (`sentence`, `title`, `text` of a `notice`/`cannot`). The shell shows them
@@ -128,8 +129,8 @@ Shell → engine:
 |---|---|
 | `{"op":"hello","id":1}` | `{"id":1,"kind":"hello","v":1,"consent":bool,"all_off":bool,"sensors":{"compass":bool,"tilt":bool,"light":bool}}` then a `triggers` event |
 | `{"op":"consent","id":2,"version":1,"yes":true}` | `done` (no → Wishes stay off, nothing is ever sent) |
-| `{"op":"wish","id":3,"text":"…","lang":"en","voice":false}` | `wish` · `cannot` · `help` · `error` (the engine calls the cloud) |
-| `{"op":"ask","id":4,"text":"…","lang":"en"}` | `help` · `error` |
+| `{"op":"wish","id":3,"text":"…","lang":"en","voice":false}` | `wish` · `cannot` · `error` (the engine calls the cloud). `error`/`consent` until she has agreed; `error`/`busy` while another is in flight; `error`/`refused` for text under 3 or over 300 characters or the same text within 30 s |
+| `{"op":"ask","id":4,"text":"…","lang":"en","look":"rail"}` | `help` · `error` (`look` is optional) |
 | `{"op":"check","id":5,"wish":{v1 doc},"said":"…","voice":false}` | `wish` · `cannot` — a wish built on the device (the gallery), never sent anywhere |
 | `{"op":"cancel","id":3}` | none; the cloud request for id 3 is stopped |
 | `{"op":"confirm","id":6,"pending":"p7"}` | `{"id":6,"kind":"done","wid":"w3"}` (a `now` wish runs at once and has no `wid`) |
@@ -156,10 +157,15 @@ Shell → engine, no reply (the compositor's half; §1.5, §7.6):
 | `{"op":"hold","reasons":["call"]}` | the full current set of §7.6 reasons: `password` `call` `camera` `microphone` `share` `fullscreen` `lock`; `[]` clears |
 | `{"op":"did","n":42,"ok":true,"prev":{v1 action}}` | the shell carried out `shell` event 42; `prev` is the action that would put it back (for Undo) |
 
-Engine → shell replies (`kind`): `wish` `{"id","kind":"wish","pending":"p7","sentence","title","outward"?:{"name","host"}}`;
-`cannot` `{"id","kind":"cannot","missing":"compass|tilt|light|app|theme|site|install|other","text"}`;
-`help` `{"id","kind":"help","page":"<help page id>","pending"?,"sentence"?}`;
-`error` `{"id","kind":"error","error":"offline|busy|resting|limit|refused|consent|broken","text"}`;
+Engine → shell replies (`kind`): `wish` `{"id","kind":"wish","pending":"p7","sentence","title","outward"?:{"name","host"?}}`;
+`cannot` `{"id","kind":"cannot","missing":"<reason>","text","alt"?:{"pending","sentence","title","outward"?}}`
+where `<reason>` is `unclear question compass tilt light install files messages money private security app theme site duplicate limit other`,
+`text` is the device's sentence for it, and `alt` (when present) is the nearest wish the engine
+can do, already checked and waiting for her Yes ("I can't do that, but I can …");
+`help` `{"id","kind":"help","page":"<help page id>"|null,"pending"?,"sentence"?,"title"?}`
+(`page` is a plain name of a file in `/usr/share/auros/help/` that exists; `pending` etc. when the answer comes with an offer);
+`error` `{"id","kind":"error","error":"offline|busy|resting|limit|refused|consent|broken","text","retry_after"?}`
+(`retry_after` in seconds, at most 3600; `limit` and `resting` carry the service's);
 `done` `{"id","kind":"done"}`.
 
 Engine → shell events (no `id`; `n` numbers them; `wid`/`title` say whose wish it is
@@ -178,6 +184,27 @@ wish's first 3 runs):
 {"ev":"notice","text":"…"}                                 one plain sentence the engine wrote
 {"ev":"keep_it","wid","title","sentence"}                  the day-after "Keep it?" card
 ```
+
+`startup` wishes fire when the first shell says `hello` after the engine starts.
+Turning Wishes off (`consent` with `yes:false` after a yes) or `forget` tells the
+service to forget her and deletes the token. `all_off` makes the engine send no
+overlay and withdraws every trigger word.
+
+**The compositor's half** is `src/aurwl/wishhook.{c,h}` (linked only when the
+profile says `wishes="on"`): the shell calls `wishhook_set(words, apps)` with the
+latest `triggers` line, and each frame drains `wishhook_take_word()` /
+`wishhook_take_app()` into `typed` / `app` lines. The matcher sees only keys
+delivered to a client window, keeps at most the 32 letters of the word being
+typed, reports a registered word only when typed whole, and does nothing at all
+while no word is registered. aurwl has no text-input-v3 yet, so it cannot tell
+a password field: the shell must send `hold: password` for its own prompts, and
+this is why Wishes ship off (D14).
+
+**Off unless the machine says on (D14).** `aurwish` runs only when
+`/etc/auros/features` says `wishes=on` (written by `build/forge` from the
+profile) and `/etc/auros/policy.conf` does not say `wishes` is anything but
+`on`. Otherwise it exits 0 at once; an image built without `wishes="on"` does
+not contain it (`tools/wishesoff.sh`).
 
 In a `shell` event the action is already resolved: `open_app` carries
 `app` (a desktop id that exists), `open_website` carries `url` (from the

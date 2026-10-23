@@ -34,6 +34,13 @@
 
 #include "aurwl.h"
 
+/* Wishes (docs/AI.md §3.5): the typed-word matcher lives in wishhook.c and is
+ * linked only into an image built with wishes="on". These are weak, so a
+ * build without it has no matcher and these lines do nothing. */
+void wishhook_key(aurwl *c, uint32_t code, int pressed) __attribute__((weak));
+void wishhook_reset(void) __attribute__((weak));
+void wishhook_app(const char *app_id) __attribute__((weak));
+
 /* ── limits ─────────────────────────────────────────────────────── */
 /* Bounds, not capacity planning: a client that asks for a 40000x40000
  * buffer is either broken or hostile, and either way the answer is to
@@ -1647,7 +1654,9 @@ static void tl_set_title(struct wl_client *cl, struct wl_resource *r, const char
   snprintf(w->title, sizeof w->title, "%s", t ? t : ""); }
 static void tl_set_app_id(struct wl_client *cl, struct wl_resource *r, const char *a)
 { (void)cl; aurwl_win *w = wl_resource_get_user_data(r); if (!w) return;
-  snprintf(w->app_id, sizeof w->app_id, "%s", a ? a : ""); }
+  int first = w->app_id[0] == 0;
+  snprintf(w->app_id, sizeof w->app_id, "%s", a ? a : "");
+  if (first && wishhook_app) wishhook_app(w->app_id); }
 static void tl_show_menu(struct wl_client *cl, struct wl_resource *r, struct wl_resource *s,
                          uint32_t ser, int32_t x, int32_t y)
 { (void)cl; (void)r; (void)s; (void)ser; (void)x; (void)y; }
@@ -2365,6 +2374,7 @@ int aurwl_key_utf8(const aurwl *c, uint32_t code, char *out, size_t n)
 void aurwl_set_focus(aurwl *c, aurwl_win *w)
 {
     if (!c || c->focus == w) return;
+    if (wishhook_reset) wishhook_reset();            /* a new field: the word so far is not hers */
     uint32_t ser = serial_of(c);
 
     if (c->focus) {
@@ -2434,6 +2444,7 @@ void aurwl_pointer_motion(aurwl *c, aurwl_win *w, int sx, int sy, uint32_t t)
 
 void aurwl_pointer_button(aurwl *c, uint32_t button, int pressed, uint32_t t)
 {
+    if (pressed && wishhook_reset) wishhook_reset();
     if (!c || !c->ptr_focus) return;
     struct wl_client *cl = win_client(c->ptr_focus);
     uint32_t ser = serial_of(c);
@@ -2470,6 +2481,7 @@ void aurwl_pointer_axis(aurwl *c, int horizontal, double step, uint32_t t)
 int aurwl_key(aurwl *c, uint32_t code, int pressed, uint32_t t)
 {
     if (!c) return 0;
+    if (c->focus && wishhook_key) wishhook_key(c, code, pressed);   /* before the keymap state moves */
     /* Modifier state is tracked whether or not anyone is listening: the
      * shell swallows some chords itself, and if those did not update
      * xkb the client's idea of Shift would drift from the user's hand. */
