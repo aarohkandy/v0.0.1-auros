@@ -97,10 +97,13 @@ all three read.
    (battery, AC), udev (USB), iio-sensor-proxy (compass, tilt, light),
    timers. Actions via the shell's existing control paths (brightness,
    volume, look, text size, theme) and an overlay surface drawn by the shell.
-3. **Caps** (in code, tested): the table limits above; a global limit of
-   60 actions/hour across all wishes; a wish that hits a cap is paused and
-   she is told once, plainly; a crash or bad file never blocks login
-   (wishes are skipped, the shell starts).
+3. **Caps** (in code, tested): the table limits above; **6 actions an hour per
+   wish and 20 overall (§7.5, which replaced the first draft's 60)**; only the
+   wish that broke a limit is paused, it resumes by itself after an hour, and
+   she is told once, plainly; a crash or bad file never blocks login (wishes
+   are skipped, the shell starts). *As built:* `src/aurwish/engine.c`
+   (`PER_WISH_HOUR`, `OVERALL_HOUR`, `fire()`), proven by
+   `tools/wishtest-engine.c` and its mutants.
 4. "My wishes" (Settings): each wish's sentence, an on/off switch, Remove;
    "Turn off all wishes". Removing the last wish leaves nothing running.
 
