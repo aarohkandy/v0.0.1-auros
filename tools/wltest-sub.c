@@ -122,7 +122,7 @@ static void img_rect(img *m, int x, int y, int w, int h, uint32_t argb)
 
 /* ── the line between the two processes ───────────────────────────── */
 
-enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_TI, M_IDLE, M_TIME, M_KEY, M_CURSOR, M_LEAVE, M_END };
+enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_TI, M_IDLE, M_TIME, M_KEY, M_CURSOR, M_LEAVE, M_CONF, M_END };
 typedef struct { int kind, a, b, c, d; } msg;
 
 static int xfer(int fd, void *buf, size_t n, int wr)
@@ -252,6 +252,14 @@ static int serve(aurwl *c, int chan, pid_t kid, int *child_result)
         }
         case M_FRAME:  aurwl_frame_done(c, now_ms()); break;
         case M_RESIZE: if (w) aurwl_win_configure(w, m.a, m.b, 1, 0, 0); break;
+        case M_CONF: {    /* "configure the a-th window, as the shell does every frame": size b x c, activated d */
+            int idx = 0;
+            for (int i = 0, n = aurwl_window_count(c); i < n; i++) {
+                aurwl_win *x = aurwl_window_at(c, i);
+                if (x && !aurwl_win_is_popup(x) && idx++ == m.a) { aurwl_win_configure(x, m.b, m.c, m.d, 0, 0); break; }
+            }
+            break;
+        }
         case M_ASK: {     /* "what size does the window think it is?" */
             int lw = 0, lh = 0;
             if (w) aurwl_win_logical_size(w, &lw, &lh);
@@ -420,6 +428,14 @@ static void ask(struct cl *c, int kind, int a, int b)
     if (reply && kind == M_ASK) c->failed = 1;
     wl_display_roundtrip(c->dpy);       /* and take what the compositor answered */
 }
+/* Tell the compositor something and hear that it is done -- WITHOUT
+ * reading what it has sent to this client. A program that is busy. */
+static void poke(struct cl *c, int kind, int a, int b, int cc, int d)
+{
+    msg m = { kind, a, b, cc, d };
+    uint8_t reply = 1;
+    if (xfer(c->chan, &m, sizeof m, 1) < 0 || xfer(c->chan, &reply, 1, 0) < 0) exit(97);
+}
 static void check(struct cl *c, int ok, const char *what)
 {
     if (ok) return;
@@ -434,11 +450,12 @@ typedef struct {
     struct xdg_surface *xs;
     struct xdg_toplevel *tl;
     int configured;
+    int count;              /* configures received */
     uint32_t serial;
 } top;
 
 static void xs_configure(void *d, struct xdg_surface *xs, uint32_t serial)
-{ top *t = d; xdg_surface_ack_configure(xs, serial); t->serial = serial; t->configured = 1; }
+{ top *t = d; xdg_surface_ack_configure(xs, serial); t->serial = serial; t->configured = 1; t->count++; }
 static const struct xdg_surface_listener xs_l = { xs_configure };
 static void tl_configure(void *d, struct xdg_toplevel *t, int32_t w, int32_t h, struct wl_array *s)
 { (void)d; (void)t; (void)w; (void)h; (void)s; }
@@ -1300,6 +1317,82 @@ static void sc_cursor(struct cl *c)
     (void)P;
 }
 
+/* 26. A program that is a moment behind while windows are moved about.
+ * Two toplevels from one client, each with a page in a subsurface, and the
+ * compositor reconfigures them over and over (the shell does, every frame
+ * a window's size or focus differs) before the client has read any of it.
+ * It then answers every one, in order, as Firefox and GTK do. Every
+ * serial was sent, so none may be refused: this disconnected Firefox with
+ * "no configure with serial N was sent" when a second window opened.
+ * An answer that names a serial never sent is refused all the same --
+ * long after the oldest ones have been forgotten. */
+static void slow_storm(struct cl *c, top **pa)
+{
+    img root = img_solid(80, 60, GREY), page = img_solid(40, 30, GREEN);
+    top *a = mktop(c, &root, XRGB), *b = mktop(c, &root, XRGB);
+    sub pa_ = mksub(c, a->s, 12, 9, &page, XRGB, 1), pb = mksub(c, b->s, 12, 9, &page, XRGB, 1);
+    wl_surface_commit(a->s); wl_surface_commit(b->s);
+    int a0 = a->count, b0 = b->count;
+    for (int k = 0; k < 12; k++) {                  /* a dozen each, interleaved: a second of Firefox loading a page */
+        poke(c, M_CONF, 0, 300 + k, 200, 1);
+        poke(c, M_CONF, 1, 310 + k, 210, 1);
+    }
+    wl_display_roundtrip(c->dpy);                    /* now it reads, and answers each one in turn */
+    check(c, a->count - a0 >= 12 && b->count - b0 >= 12, "the client was not sent a configure for every size");
+    check(c, wl_display_get_error(c->dpy) == 0, "a configure the client answered in order was refused (12 waiting)");
+    for (int k = 0; k < 150; k++) {                  /* and far more than the compositor remembers */
+        poke(c, M_CONF, 0, 400 + k, 200, 1);
+        poke(c, M_CONF, 1, 420 + k, 210, 1);
+    }
+    wl_display_roundtrip(c->dpy);
+    check(c, a->count - a0 >= 150 && b->count - b0 >= 150, "the client was not sent 150 configures");
+    check(c, wl_display_get_error(c->dpy) == 0, "a configure the client answered in order was refused (150 waiting)");
+    img want = img_solid(80, 60, GREY);
+    img_over(&want, 12, 9, &page);
+    expect(c, &want);                               /* and the pages are still on both windows */
+    (void)pa_; (void)pb;
+    *pa = a;
+}
+static void wrong_serial(struct cl *c, top *a, uint32_t serial, const char *what)
+{
+    xdg_surface_ack_configure(a->xs, serial);
+    wl_display_roundtrip(c->dpy);
+    const struct wl_interface *iface = NULL; uint32_t id = 0;
+    uint32_t code = wl_display_get_protocol_error(c->dpy, &iface, &id);
+    check(c, iface == &xdg_surface_interface && code == XDG_SURFACE_ERROR_INVALID_SERIAL, what);
+}
+static void sc_slow_client(struct cl *c)
+{
+    top *a; slow_storm(c, &a);
+    wrong_serial(c, a, 0, "an answer from before anything was sent was accepted (after the oldest were forgotten)");
+}
+static void sc_slow_future(struct cl *c)
+{
+    top *a; slow_storm(c, &a);
+    wrong_serial(c, a, a->serial + 1, "an answer to a configure not yet sent was accepted (after the oldest were forgotten)");
+}
+
+/* 27. The serial must be this window's own, and one that was sent. */
+static void sc_serial_foreign(struct cl *c)
+{
+    img root = img_solid(80, 60, GREY);
+    top *a = mktop(c, &root, XRGB), *b = mktop(c, &root, XRGB);
+    poke(c, M_CONF, 0, 321, 200, 1); poke(c, M_CONF, 1, 322, 200, 1);
+    wl_display_roundtrip(c->dpy);
+    check(c, a->serial != b->serial && wl_display_get_error(c->dpy) == 0, "setup: two windows, two serials");
+    top *older = a->serial < b->serial ? a : b, *newer = older == a ? b : a;
+    wrong_serial(c, newer, older->serial, "one window's serial was accepted for another");   /* a real serial, someone else's */
+}
+static void sc_serial_invented(struct cl *c)
+{
+    img root = img_solid(80, 60, GREY);
+    top *a = mktop(c, &root, XRGB);
+    poke(c, M_CONF, 0, 321, 200, 1);
+    wl_display_roundtrip(c->dpy);
+    check(c, wl_display_get_error(c->dpy) == 0, "setup: the window was configured");
+    wrong_serial(c, a, a->serial + 1, "an answer to a configure that was never sent was accepted");   /* just past the newest */
+}
+
 static void sc_cursor_shape(struct cl *c)
 {
     if (!c->csmgr || !c->ptr) { printf("      no cursor shape global\n"); c->failed = 1; return; }
@@ -1378,6 +1471,10 @@ static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "dnd",              sc_dnd },
     { "cursor",           sc_cursor },
     { "cursor-shape",     sc_cursor_shape },
+    { "slow-client",      sc_slow_client },
+    { "slow-future",      sc_slow_future },
+    { "serial-foreign",   sc_serial_foreign },
+    { "serial-invented",  sc_serial_invented },
 };
 #define NSC ((int)(sizeof SC / sizeof SC[0]))
 

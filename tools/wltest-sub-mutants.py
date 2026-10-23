@@ -177,6 +177,20 @@ MUTANTS = [
     ("text input is not entered on the toplevel", "textinput",
      "    if (textinput_focus) textinput_focus(nw, w->res);",
      "    if (textinput_focus) textinput_focus(nw, NULL);"),
+    ("a client behind by more configures than are remembered is disconnected", "slow-client",
+     "    if (w->n_sent > CFG_REMEMBER) {",
+     "    if (0) {"),
+    ("any serial is an answer", "serial-invented",
+     "    uint32_t n = w->n_sent < CFG_REMEMBER ? w->n_sent : CFG_REMEMBER;",
+     "    uint32_t n = w->n_sent < CFG_REMEMBER ? w->n_sent : CFG_REMEMBER; return 1;"),
+    ("one window's serial answers another's", "serial-foreign",
+     "    for (uint32_t i = 0; i < n; i++) if (w->sent[i] == ser) return 1;",
+     "    for (uint32_t i = 0; i < n; i++) if (w->sent[i] == ser || (int32_t)(ser - w->sent[i]) < 0) return 1;"),   # any serial up to the newest
+    ("the serials of a long-answered configure are accepted again", "slow-client",
+     "    w->ack_floor = serial + 1;\n", "\n"),
+    ("a serial not yet sent is taken for a forgotten one", "slow-future",
+     "        return (int32_t)(ser - w->ack_floor) >= 0 && (int32_t)(oldest - ser) > 0;",
+     "        (void)oldest; return (int32_t)(ser - w->ack_floor) >= 0;"),
 ]
 
 def main():

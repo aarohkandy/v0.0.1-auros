@@ -65,6 +65,7 @@ void textinput_focus(struct wl_client *client, struct wl_resource *surface) __at
 /* Bounds, not capacity planning: a client that asks for a 40000x40000
  * buffer is either broken or hostile, and either way the answer is to
  * refuse rather than to try the allocation. */
+#define CFG_REMEMBER 32     /* configure serials kept per window; see aurwl_win.sent */
 #define MAX_DIM     16384
 /* How deep a chain of parents or subsurfaces may be before we stop
  * walking it. Any real window tree is a handful deep; a client can make
@@ -200,16 +201,20 @@ struct aurwl_win {
     int                 want_act, want_max, want_full;
     int                 acked;
     int                 geo_x, geo_y, geo_w, geo_h;   /* window geometry */
-    /* The last few configure serials sent to this surface.
+    /* The configure serials sent to this surface, newest CFG_REMEMBER of
+     * them, and the serial just past the last one the client answered.
      *
-     * NOT just the newest. A client is entitled to be a frame or two
-     * behind -- we send configure A, then B, and it acks A, having
-     * only just processed it. Rejecting that would post invalid_serial
-     * at a perfectly correct application and disconnect it, which is a
-     * far worse bug than the one the check is here to catch. What is
-     * refused is a serial that was NEVER sent. */
-    uint32_t            sent[4];
-    int                 n_sent;
+     * NOT just the newest. A client is entitled to be behind -- we send
+     * configure A, then B, and it acks A, having only just processed it.
+     * Firefox answers every one of them, in order, and a window that was
+     * busy for a second while the shell moved windows about had a dozen
+     * waiting; the answer to the oldest was refused as "never sent" and
+     * the browser was disconnected (found on the booted image, when a
+     * second window opened). What is refused is a serial that was NEVER
+     * sent: see serial_was_sent. */
+    uint32_t            sent[CFG_REMEMBER];
+    uint32_t            n_sent;
+    uint32_t            ack_floor;
     int                 has_geo;
 
     /* popup placement, relative to the parent surface's origin */
@@ -371,15 +376,24 @@ static void send_configure(aurwl_win *w)
 {
     if (!w || !w->xdg_surface) return;
     uint32_t ser = serial_of(w->c);
-    w->sent[w->n_sent % 4] = ser;
+    w->sent[w->n_sent % CFG_REMEMBER] = ser;
     w->n_sent++;
     xdg_surface_send_configure(w->xdg_surface, ser);
 }
 
 static int serial_was_sent(const aurwl_win *w, uint32_t ser)
 {
-    int n = w->n_sent < 4 ? w->n_sent : 4;
-    for (int i = 0; i < n; i++) if (w->sent[i] == ser) return 1;
+    uint32_t n = w->n_sent < CFG_REMEMBER ? w->n_sent : CFG_REMEMBER;
+    for (uint32_t i = 0; i < n; i++) if (w->sent[i] == ser) return 1;
+    /* More than CFG_REMEMBER went unanswered and the oldest are forgotten.
+     * Serials only grow, so one between the last answer and the oldest we
+     * still know is one we sent or one nobody could tell from it; refusing
+     * it would disconnect a correct client for being slow. Only a hostile
+     * one gains, and all it gains is that the window counts as answered. */
+    if (w->n_sent > CFG_REMEMBER) {
+        uint32_t oldest = w->sent[w->n_sent % CFG_REMEMBER];
+        return (int32_t)(ser - w->ack_floor) >= 0 && (int32_t)(oldest - ser) > 0;
+    }
     return 0;
 }
 
@@ -2877,6 +2891,7 @@ static void xs_ack(struct wl_client *cl, struct wl_resource *r, uint32_t serial)
         return;
     }
     w->acked = 1;
+    w->ack_floor = serial + 1;
 }
 
 static const struct xdg_surface_interface xdg_surface_impl = {

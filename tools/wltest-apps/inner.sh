@@ -49,7 +49,7 @@ cat > /tmp/test.html <<'HTML'
 HTML
 
 case "$APP" in
-  firefox)
+  firefox|firefox2)         # firefox2: a second window opened a third of the way in, through Firefox's own remote command
     export MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_DISABLE_SOCKET_PROCESS_SANDBOX=1 MOZ_DISABLE_GMP_SANDBOX=1 MOZ_DISABLE_GPU_SANDBOX=1
     mkdir -p /tmp/ffprofile
     # A fresh profile opens a welcome overlay that hides the page under test.
@@ -66,7 +66,10 @@ user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);
 user_pref("app.update.auto", false);
 user_pref("media.autoplay.default", 0);
 JS
-    CMD="firefox --no-remote --new-instance --profile /tmp/ffprofile file:///tmp/test.html" ;;
+    CMD="firefox --no-remote --new-instance --profile /tmp/ffprofile file:///tmp/test.html"
+    if [ "$APP" = firefox2 ]; then
+        CMD="dbus-run-session -- sh -c 'firefox --profile /tmp/ffprofile file:///tmp/test.html & sleep $((SECS / 3)); firefox --profile /tmp/ffprofile --new-window file:///tmp/test.html; wait'"
+    fi ;;
   firefox-pw)       # does a password field in Firefox read as a password to the compositor?
     export MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_DISABLE_SOCKET_PROCESS_SANDBOX=1 MOZ_DISABLE_GMP_SANDBOX=1 MOZ_DISABLE_GPU_SANDBOX=1
     mkdir -p /tmp/ffprofile
@@ -98,6 +101,15 @@ JS
         aurwl/gen/xdg-shell-protocol.c aurwl/gen/xdg-decoration-protocol.c aurwl/gen/viewporter-protocol.c \
         aurwl/gen/xdg-output-protocol.c -Iaurwl/gen $(pkg-config --cflags --libs wayland-server xkbcommon) -lm || exit 1
     exec /out/cursor-probe "$SECS" ${PROBE_POINTS:-300,320 400,380 900,500} -- firefox --no-remote --new-instance --profile /tmp/ffprofile file:///tmp/test.html ;;
+  firefox-stall)    # Firefox a second behind while the compositor reconfigures its window a dozen times; it answers every configure in order
+    export MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_DISABLE_SOCKET_PROCESS_SANDBOX=1 MOZ_DISABLE_GMP_SANDBOX=1 MOZ_DISABLE_GPU_SANDBOX=1
+    mkdir -p /tmp/ffprofile; cp /dev/null /tmp/ffprofile/user.js
+    for kv in 'browser.aboutwelcome.enabled false' 'browser.preonboarding.enabled false' 'termsofuse.bypassNotification true' 'browser.shell.checkDefaultBrowser false'; do
+        set -- $kv; echo "user_pref(\"$1\", $2);" >> /tmp/ffprofile/user.js; done
+    gcc -O1 -g -std=gnu11 -o /out/stall-probe /w/tools/wltest-apps/stall-probe.c aurwl/aurwl.c aurshell/draw.c \
+        aurwl/gen/xdg-shell-protocol.c aurwl/gen/xdg-decoration-protocol.c aurwl/gen/viewporter-protocol.c \
+        aurwl/gen/xdg-output-protocol.c -Iaurwl/gen $(pkg-config --cflags --libs wayland-server xkbcommon) -lm || exit 1
+    exec /out/stall-probe "$SECS" firefox-bin -- firefox --no-remote --new-instance --profile /tmp/ffprofile file:///tmp/test.html ;;
   gtk4) CMD="GSK_RENDERER=cairo gtk4-widget-factory" ;;
   gtk4gl) CMD="gtk4-widget-factory" ;;
   qt)   CMD="qterminal" ;;

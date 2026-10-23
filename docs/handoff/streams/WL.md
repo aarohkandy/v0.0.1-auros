@@ -14,7 +14,7 @@ its commit body).
 
 | piece | state |
 |---|---|
-| wl_subsurface tree: sync/desync with a cached snapshot, effective sync through parents, nested, position + z-order applied with the parent's commit, "the parent is in the stack" (below-parent), destroy/unmap at once | done, `tools/wltest-sub.c` (20 scenarios, byte-for-byte) |
+| wl_subsurface tree: sync/desync with a cached snapshot, effective sync through parents, nested, position + z-order applied with the parent's commit, "the parent is in the stack" (below-parent), destroy/unmap at once | done, `tools/wltest-sub.c` (30 scenarios, byte-for-byte) |
 | flattened window (`aurwl_win_content()` returns the tree composited, clipped to the toplevel's buffer / viewport size; damage-based; nothing changes for a window with no visible subsurface) | done |
 | wp_viewport on subsurfaces and roots: destination scaling (nearest, pixel centres), source crop (`set_source`) | done |
 | pointer hit-testing through the tree, input regions (`set_input_region`), implicit grab, per-surface enter/leave in the surface's own coordinates | done |
@@ -22,6 +22,7 @@ its commit body).
 | **zwp_idle_inhibit_v1** (a film must not go dark: the shell blanks after 10 idle minutes; mpv/Firefox/VLC ask for an inhibitor; `aurwl_idle_inhibited()` + 5 lines in main.c) | done; real mpv binds it and creates one (WAYLAND_DEBUG); `wltest-sub idle`. NOT covered: apps that inhibit through D-Bus org.freedesktop.ScreenSaver (the shell owns the bus: stream C) |
 | **drag and drop** (wl_data_device.start_drag was `cancelled` for everyone: Thunar, the image's file manager, could not move a file by dragging): pointer belongs to the drag, enter/motion/leave/drop to the surface under it (subsurfaces in their own coordinates), accept/set_actions/action/target negotiation, finish/dnd_finished, Esc cancels, drag icon (`aurwl_drag_icon`, painted by session.c), release off every window still ends it (session.c edit) | done; `wltest-sub dnd` + 8 mutants; **real Thunar moved a.txt into a folder** (`DND_FROM=285,175 DND_TO=210,180 sh tools/wltest-apps.sh thunar-dnd 24`) |
 | **pointer pictures** (the lead's "she never sees the hand / I-beam"): wl_pointer.set_cursor (surface, hotspot, attach offsets, animation, null = hide) and wp_cursor_shape_v1, honoured only from the program under the pointer quoting its latest enter, forgotten on enter/leave/quit; `aurwl_cursor()`; shell: `src/aurshell/cursor.{c,h}` (11 glyphs black+white outline, 34 shapes mapped, a program's own picture scaled so its canvas is 24 px x text step) + `session_paint_cursor` | done; `tools/cursortest.sh` (byte-exact vs a reference), wltest-sub `cursor`/`cursor-shape`, 20 mutants; **real Firefox on the real aurshell shows the hand over a link, the I-beam in a field, the arrow on the page, and larger at 200% text** (`MOUSE="300 261" SHELLF=workbench TEXT_SCALE=2.0 sh tools/wltest-apps.sh firefox 30`). Firefox gives 32x32 images (GTK3 ignores XCURSOR_SIZE and settings.ini's gtk-cursor-theme-size; it reads GSettings org.gnome.desktop.interface cursor-size): scaling 1.5x is soft; stream C could set that key beside text-scaling-factor in textsys.c for crisp 48 |
+| **a second Firefox window died of a protocol error** (S1's booted-image test: `xdg_surface: no configure with serial N was sent`): aurwl remembered the last 4 configure serials per window, Firefox answers every configure in order, and a window busy for a second while the shell moved windows about had a dozen waiting; the oldest answer was refused as never sent. Now 32 are remembered, and beyond that any serial between the last answer and the oldest remembered is accepted (serials only grow); a serial from another window, an invented one, one from before the last answer, or one not yet sent is still refused | fixed; **reproduced on real Firefox 158** with `sh tools/wltest-apps.sh firefox-stall 40` (SIGSTOPs Firefox, reconfigures its window 12 times, lets it go: `[GFX1-]: (auros) Wayland protocol error: xdg_surface@35: error 4: no configure with serial 3 was sent`, window gone; after the fix it survives and ends at the last size). `wltest-sub slow-client` / `slow-future` (two toplevels with subsurfaces from one client, 12 then 150 configures unread, answered in order, pages still on both) / `serial-foreign` / `serial-invented`; 5 mutants |
 | other protocols (see "Protocol review") | in progress |
 | real programs through the real shell (`sh tools/wltest-apps.sh firefox|gtk4|qt|mpv`, headless `aurshell --png --with-app`): Firefox 158 draws toolbar + page (+ its welcome dialog), GTK4 widget-factory, Qt5 terminal, mpv video (wlshm subsurface) | all draw; PNGs in the Progress log of SESSION-2026-10-23-B.md |
 | PARITY `call.visible` flips to PASS on a booted image | **done**: PARITY confirmed on the real image (call.visible, webrtc, films PASS) |
@@ -82,7 +83,7 @@ Add the XML to that loop + the README loop, `#include` the .inc in aurwl.c, add 
 
 ## Tests
 
-- `sh tools/wltest-sub.sh [-asan] [scenario]` (Linux: libwayland-dev, libxkbcommon-dev). 20
+- `sh tools/wltest-sub.sh [-asan] [scenario]` (Linux: libwayland-dev, libxkbcommon-dev). 30
   scenarios; each is a client that builds a tree with known pixels and asserts
   `aurwl_win_content()` against a reference model written separately in the test.
   Shown RED on the pre-fix compositor: `git show 3a6d0cd:src/aurwl/aurwl.c > /tmp/old.c;
@@ -96,6 +97,9 @@ Add the XML to that loop + the README loop, `#include` the .inc in aurwl.c, add 
 
 ## Traps
 
+- A client is entitled to be behind: it may answer (ack_configure) every configure it was sent, in
+  order, long after newer ones went out. Never reject an answer for being old; reject one for being
+  a serial this window was never sent. `wltest-apps.sh firefox-stall` is the real-program check.
 - `wl_list_remove()` NULLs the node; always `unlink_init()` a node you may remove twice.
 - The stack lists contain a sentinel for the surface itself: never `wl_container_of` a node
   without first comparing it with `&s->self_cur` / `&s->self_pend`.
