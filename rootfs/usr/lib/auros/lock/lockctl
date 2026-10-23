@@ -479,9 +479,10 @@ cmd_prepare() {
     [ "$free" -ge "$need" ] || die "the EFI partition has ${free} MB free and needs ${need} MB: refusing"
 
     mkdir -p "$(dirname "$CONF")"
-    # PCR 7 is the design (THEFT.md section 3). pcrs= (empty) binds the key
-# to no PCR: a dbx or shim change then never asks for the rescue code.
-    printf 'armed=1\npartuuid=%s\npcrs=%s\n' "$partuuid" "${AUROS_LOCK_PCRS-7}" > "$CONF"
+    # NO PCR (decided by the lead, THEFT.md "Decisions"): the PIN is counted
+    # by the chip's own lockout, and a dbx / shim / firmware change never
+    # asks her for the rescue code. AUROS_LOCK_PCRS=7 seals to PCR 7.
+    printf 'armed=1\npartuuid=%s\npcrs=%s\n' "$partuuid" "${AUROS_LOCK_PCRS-}" > "$CONF"
     # COPIES, not links: update-initramfs copies scripts/ into the image
     # as it finds them, and a link to /usr/lib/... would dangle there
     # (measured: tools/theftvm.sh, the script never ran).

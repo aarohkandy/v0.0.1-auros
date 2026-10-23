@@ -78,8 +78,8 @@ EV=${THEFT_EVIDENCE:-out/theft-evidence}
 TIMEOUT=${THEFT_TIMEOUT:-900}
 PIN1=1234 PIN2=2580
 PASSLIM=${THEFT_PASS_LIMIT:-900}     # seconds the in-place pass may take in the guest
-# 7: the key is sealed to PCR 7 (the design). "none": to no PCR.
-PCRS=${THEFT_PCRS:-7}; [ "$PCRS" = none ] && PCRS=''
+# none (the default, decided): the key is sealed to no PCR. 7: to PCR 7.
+PCRS=${THEFT_PCRS:-none}; [ "$PCRS" = none ] && PCRS=''
 CUR=$PIN1
 WRONG=9999
 # no security chip: the PIN is a passphrase, and has to be 6 numbers

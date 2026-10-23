@@ -71,16 +71,17 @@ That is the product working, and the page says so at the start.
   the drive is encrypted but opens without a PIN. Her files are not
   copied over until locking has started.
 
-## Decisions the lead should make
+## Decided (lead, 2026-10-23) and still open
 
-1. **PCR 7 or not.** With it, a Windows or firmware update that changes
-   the computer's security settings asks her for the paper once. Without
-   it that never happens and the protection is the same against a thief
-   (the PIN, counted by the chip, is what protects). Recommendation:
-   without. Both are built and proven (`THEFT_PCRS=7|none`).
-2. **The wait before "Choose your PIN"** (locking must finish first).
-   Alternative: ask for the PIN first and lock after, which needs the
-   PIN kept in memory across a restart (worse).
-3. **Print it.** Needs a printer set up; otherwise she writes it by hand.
+1. **No PCR binding (decided).** A Windows or firmware update never asks
+   her for the paper; the protection against a thief is the PIN, counted by
+   the chip's own lockout. (A key sealed to PCR 7 is built and proven too,
+   `THEFT_PCRS=7`, and is not the default.) The "This computer has changed"
+   page still exists, for a cleared or replaced chip.
+2. **She chooses her PIN after the locking finishes (decided).** Locking
+   must finish first (LUKS refuses a new key during it): about half an
+   hour in which the drive opens without a PIN and none of her files are
+   on it.
+3. **Print it (open).** Needs a printer set up; otherwise she writes it by hand.
    A memory stick is offered as a second copy, with the "away from the
    computer" warning.

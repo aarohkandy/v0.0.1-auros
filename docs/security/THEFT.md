@@ -1,13 +1,29 @@
 # Theft: an encrypted disk and a short PIN (owner decision D9)
 
-Status: **built and proven on a file against a software TPM
-(`tools/theftunit.sh`); VM proof on the real image in progress
-(`tools/theftvm.sh`); SWITCHED OFF in the default install** until the VM
-proof is green and the lead says yes. Owner of this file and of the code
-it names: stream S4 (`docs/handoff/STREAMS.md`). Implementation status,
-measurements and next steps: `docs/handoff/streams/S4.md`. Where the
-build differs from the first design, the text below was changed to match
-and the change is marked "(measured)".
+Status: **built; proven on a file against a software TPM
+(`tools/theftunit.sh`) and on the real image in KVM with Secure Boot and a
+TPM 2.0 (`tools/theftvm.sh`, `docs/results/theft/`); SWITCHED OFF in the
+default install** until the owner says yes (the commits are held by the
+permission system; it is on his morning list). Owner of this file and of
+the code it names: stream S4 (`docs/handoff/STREAMS.md`). Implementation
+status, measurements and next steps: `docs/handoff/streams/S4.md`. Where
+the build differs from the first design, the text below was changed to
+match and the change is marked "(measured)".
+
+## Decisions (lead, 2026-10-23)
+
+1. **No PCR binding.** The key is sealed in the TPM with her PIN as the
+   TPM object's authorisation value and **no PCR policy**: the TPM's own
+   dictionary-attack lockout is the protection. A firmware or dbx update,
+   a new shim, a Secure Boot change therefore never asks her for the
+   rescue code (D9: she is never locked out, never confused). Section 3
+   says why this costs nothing against a thief. `lockctl prepare` writes
+   `pcrs=` (empty); `THEFT_PCRS=7` / `AUROS_LOCK_PCRS=7` still seal to PCR 7
+   and that path stays built and tested, for a reader who wants it.
+2. **She chooses her PIN only after the encryption pass completes**
+   (5 to 30 minutes), not before: LUKS2 refuses keyslot changes while the
+   pass runs (section 1). Until then the drive opens without a PIN and
+   nothing of hers is copied onto it (section 1).
 
 ## What it is for, in one sentence
 
@@ -116,19 +132,18 @@ systemd-boot's `$BOOT=ESP`. Concretely:
 The initramfs on the ESP is **not signed** (no keys of our own: D7).
 That is the evil-maid gap; see "What it does not protect against".
 
-### 3. Unlock: TPM 2.0 + PIN, sealed to PCR 7
+### 3. Unlock: TPM 2.0 + PIN, no PCR (decision 1)
 
-`systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=7
---tpm2-with-pin=yes` (noble's systemd 255). `lockctl prepare` writes
-`pcrs=7` to `/etc/auros/lock`; an empty `pcrs=` seals to no PCR.
-**Recommendation to the lead (measured, not yet decided):** consider
-the empty value. PCR 7 changes whenever the firmware's db/dbx changes or
-the shim's signing certificate does, and each time she needs the rescue
-code ("this computer has changed"); since a signed stick produces the
-same PCR 7 anyway (below), the PIN, counted by the chip, is what
-protects her, and PCR 7 adds only "Secure Boot must still be on with
-Microsoft's keys". Both settings are proven in the VM
-(`THEFT_PCRS=7|none`). The key is sealed inside the
+`systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs= --tpm2-with-pin=yes`
+(noble's systemd 255). `lockctl prepare` writes `pcrs=` (empty) to
+`/etc/auros/lock`; `pcrs=7` would seal to PCR 7 instead. **Decided: no
+PCR.** PCR 7 changes whenever the firmware's db/dbx changes or the
+shim's signing certificate does, and each time she would need the
+rescue code ("this computer has changed"); a signed stick produces the
+same PCR 7 anyway (below), so the PIN, counted by the chip, is what
+protects her, and PCR 7 would add only "Secure Boot must still be on
+with Microsoft's keys". Both settings are proven in the VM
+(`THEFT_PCRS=7|none`: 29 and 25 checks, `docs/results/theft/`). The key is sealed inside the
 TPM; the PIN is the TPM object's authorisation value, so **every wrong
 PIN is counted by the TPM itself** (dictionary-attack lockout), not by
 our software. systemd 255 talks to the TPM over an encrypted session,
@@ -183,6 +198,11 @@ turning on a firmware TPM that is present but off (many 2014-2017 Intel
 PCs have PTT in the firmware menu; Settings could explain it).
 
 ### 5. When PCR 7 changes (dbx updates, SBAT, firmware, Secure Boot)
+
+**With the decided default (no PCR) none of this ever happens to her:**
+the PIN simply works after any of these (proven: the dbx-update case of
+`THEFT_PCRS=none`). This section is the path for a key sealed to PCR 7
+(`THEFT_PCRS=7`) and for a cleared or replaced chip, which still needs it.
 
 PCR 7 changes when the firmware's `db`/`dbx` changes (a dbx update via
 fwupd or Windows Update on a dual-boot PC), when shim raises the SBAT
