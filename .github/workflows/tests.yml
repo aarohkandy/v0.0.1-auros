@@ -111,7 +111,6 @@ jobs:
               # installs (S5; green 16/16 on aptrepo runs 39965081792 and
               # 39967482502). ~12 minutes.
               t("updateboottest", "updateboottest", image=True),
-              t("updateboottest", "updateboottest", image=True),
               t("choicesboottest", "choicesboottest", image=True),
               t("putbacktest", "putbacktest", image=True),
               t("windowsboottest", "windowsboottest", image=True),
@@ -127,7 +126,15 @@ jobs:
               t("powercut-nostick", "powercut-nostick-write", "write-mid write-end boot-mid boot-end"),
               t("powercut-nostick", "powercut-nostick-early", "gate shrink-begin shrink-end mirror-end"),
           ]
-          print("matrix=" + json.dumps({"include": nostick if sys.argv[1] == "nostick" else gating}))
+          chosen = nostick if sys.argv[1] == "nostick" else gating
+          # two jobs with one label upload one artifact name twice (HTTP 409
+          # fails the second) and read as one job to tools/releasegate.py;
+          # run 39973122644 had updateboottest twice after two merges
+          labels = [e["label"] for e in chosen]
+          dup = sorted({l for l in labels if labels.count(l) > 1})
+          if dup:
+              sys.exit("duplicate matrix label(s): %s" % ", ".join(dup))
+          print("matrix=" + json.dumps({"include": chosen}))
           PY
           [ -z "$rid" ] || echo "testing the artifacts of $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$rid" | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -401,7 +408,9 @@ jobs:
       # and a dozen workflows share them (docs/handoff/STREAMS.md). Four
       # lanes: the two ~25-minute tests each get a lane and the rest share
       # two, so the suite takes as long as its longest test.
-      max-parallel: 4
+      # (six: the gating suite has grown to twelve jobs; a lane limit of four
+      # put the slowest test behind others and added ~15 minutes to every release)
+      max-parallel: 6
       matrix: ${{ fromJSON(needs.which.outputs.matrix) }}
     name: e2e (${{ matrix.label }})
     steps:
