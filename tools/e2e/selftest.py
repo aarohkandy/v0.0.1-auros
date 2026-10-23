@@ -19,7 +19,7 @@
 
 Run from anywhere: python3 tools/e2e/selftest.py
 """
-import ast, os, re, subprocess, sys, tempfile
+import ast, json, os, re, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "..", "..", "src", "aurbridge")
@@ -137,6 +137,85 @@ def test_timings_summary():
         check("whole journey" not in r.summary(), "timings: a journey that failed has no total")
 
 
+def test_windows_dry():
+    """cmd_windows end to end against a fake machine: a slip in it once
+    cost a 13-minute Windows install (a variable shadowed the machine)."""
+    try:
+        import e2e, types
+    except ImportError as e:
+        print(f"skip  cmd_windows dry run (needs numpy and PIL: {e})")
+        return
+    facts = lambda vol: json.dumps({"bitlocker": f"\r\nVolumeStatus         : {vol}\r\nProtectionStatus     : Off\r\n",
+                                    "variant_name": "base"})
+
+    class FakeMachine:
+        def __init__(self, *a, **k): self.up = True
+        def start(self): pass
+        def auto_shots(self, n): pass
+        def shot(self, l): pass
+        def alive(self): return self.up
+        def stop(self, how="powerdown", t=0): self.up = False
+
+    class FakeHub:
+        text = ""
+        def __init__(self, rec, www=None): pass
+        def wait_event(self, name, timeout, since=0.0, alive=None): return FakeHub.text if name == "firstlogon" else "{}"
+        def ask(self, op, **kw): return {"windows": []}
+
+    saved = (e2e.Machine, e2e.Hub, e2e.pass_cd_prompt, e2e.run, e2e.time.sleep, e2e.OVMF_VARS)
+    try:
+        with tempfile.TemporaryDirectory() as t:
+            open(f"{t}/vars", "w").close()
+            e2e.Machine, e2e.Hub, e2e.pass_cd_prompt = FakeMachine, FakeHub, lambda m: True
+            e2e.run, e2e.time.sleep, e2e.OVMF_VARS = (lambda *a, **k: None), (lambda s: None), f"{t}/vars"
+            for vol, rc in (("FullyDecrypted", 0), ("EncryptionInProgress", 1)):
+                FakeHub.text = facts(vol)
+                a = types.SimpleNamespace(out=f"{t}/out-{vol}", vm=f"{t}/vm-{vol}", iso="i", answer="a")
+                os.makedirs(a.out)
+                check(e2e.cmd_windows(a) == rc, f"cmd_windows: a Windows that says {vol} gives exit {rc}")
+    finally:
+        (e2e.Machine, e2e.Hub, e2e.pass_cd_prompt, e2e.run, e2e.time.sleep, e2e.OVMF_VARS) = saved
+
+
+def test_flow_helpers():
+    try:
+        import e2e
+    except ImportError:
+        return
+    f = object.__new__(e2e.Flow)
+    f._named_diag = False
+    logs, asked = [], []
+    f.log = logs.append
+    win = {"proc": "AurOS-Setup", "rect": [80, 0, 1100, 740], "name": "Install AurOS"}
+    els = [{"type": "Button", "name": "Install AurOS", "proc": "AurOS-Setup", "rect": [950, 650, 190, 56],
+            "key": "Enter", "enabled": True},
+           {"type": "Button", "name": "Close", "proc": "msedge", "rect": [1, 1, 2, 2]}]
+    f.elements = lambda match, types, max=400, quiet=False: (asked.append(match), els)[1]
+    got = f.wizard_named(win)
+    check([e["name"] for e in got] == ["Install AurOS"], "flow: the installer's controls are the installer process's only")
+    check(asked[0] == "^AurOS\\-Setup$", "flow: they are asked of that process by name")
+    f.elements = lambda match, types, max=400, quiet=False: (asked.append(match), [])[1]
+    asked.clear(); f.wizard_named(win); f.wizard_named(win)
+    check(len(asked) == 3 and sum("UI Automation sees" in l for l in logs) == 1,
+          "flow: unreadable names are diagnosed once (a broad look, logged), not every second")
+    out = ["STATE FullyEncrypted|Off|100\nProtection Status: Protection Off"]
+    f.guest = lambda script, timeout=120: out[0]
+    check(f.bitlocker_state("t") == ("FullyEncrypted", "Off", 100.0), "flow: BitLocker's state is read from Windows' own words")
+    out[0] = "Access is denied"
+    saved = e2e.VARIANT
+    try:
+        e2e.VARIANT = "base"
+        check(f.bitlocker_state("t")[0] == "unknown", "flow: the plain PC goes on when BitLocker cannot be read")
+        e2e.VARIANT = "bitlocker"
+        try:
+            f.bitlocker_state("t"); ok = False
+        except e2e.Failure:
+            ok = True
+        check(ok, "flow: the bitlocker PC fails when BitLocker cannot be read")
+    finally:
+        e2e.VARIANT = saved
+
+
 def test_edge_item():
     tree = ast.parse(open(os.path.join(HERE, "e2e.py")).read())
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "inside")
@@ -194,6 +273,8 @@ test_wizard_contract()
 test_stops()
 test_bitlocker_verdict()
 test_timings_summary()
+test_windows_dry()
+test_flow_helpers()
 test_edge_item()
 test_publish()
 print(f"\n{len(fails)} failed" if fails else "\nall passed")
