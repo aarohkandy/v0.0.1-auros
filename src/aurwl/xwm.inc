@@ -36,8 +36,11 @@
  * trusted, and what they write into a property is parsed in the process
  * that owns the keyboard. Little-endian only (it is a local server).
  *
- * WHAT IS NOT HERE (yet): selection (clipboard) bridging between X and
- * Wayland, drag and drop across the two, XRandR, icons, the system tray. */
+ * The clipboard between X and Wayland programs, text and pictures, is xclip.inc
+ * (included at the end of this file).
+ *
+ * WHAT IS NOT HERE (yet): PRIMARY (middle-click paste), drag and drop across
+ * the two kinds of program, XRandR, icons, the system tray. */
 
 #if __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error "xwm.inc speaks X11 in little-endian only"
@@ -49,9 +52,10 @@
 #include <sys/stat.h>
 
 #define XW_MAX_WINS    256          /* X windows tracked per server           */
-#define XW_IN_MAX      (1 << 20)    /* the most we hold of what it sent       */
-#define XW_OUT_MAX     (1 << 20)    /* ...and of what we have yet to send     */
-#define XW_REPLY_MAX   (1 << 18)    /* one reply larger than this is a lie    */
+#define XC_MAX         (16u << 20)  /* the most clipboard data either way (a screenshot) */
+#define XW_IN_MAX      (XC_MAX + (1u << 20))   /* the most we hold of what it sent       */
+#define XW_OUT_MAX     (XC_MAX + (1u << 20))   /* ...and of what we have yet to send     */
+#define XW_REPLY_MAX   (XC_MAX + 4096)         /* one reply larger than this is a lie    */
 #define XW_PEND_MAX    512          /* requests awaiting a reply              */
 #define XW_PROP_WORDS  4096         /* property words we ask for (16 KiB)     */
 #define XW_SIZE_MAX    16384
@@ -66,6 +70,7 @@ enum {
     XA_TYPE_COMBO, XA_TYPE_DND,
     XA_NET_WM_STATE, XA_STATE_FULLSCREEN, XA_STATE_MAX_VERT, XA_STATE_MAX_HORZ, XA_STATE_FOCUSED,
     XA_WM_S0, XA_MOTIF_WM_HINTS,
+    XA_CLIPBOARD, XA_TARGETS, XA_TEXT, XA_AUR_SEL, XA_AUR_TGT, XA_INCR,
     XA_COUNT
 };
 static const char *const XA_NAMES[XA_COUNT] = {
@@ -80,6 +85,7 @@ static const char *const XA_NAMES[XA_COUNT] = {
     "_NET_WM_STATE", "_NET_WM_STATE_FULLSCREEN", "_NET_WM_STATE_MAXIMIZED_VERT",
     "_NET_WM_STATE_MAXIMIZED_HORZ", "_NET_WM_STATE_FOCUSED",
     "WM_S0", "_MOTIF_WM_HINTS",
+    "CLIPBOARD", "TARGETS", "TEXT", "_AUR_SELECTION", "_AUR_TARGETS", "INCR",
 };
 /* the atoms X predefines (X11 protocol appendix) */
 enum { XP_PRIMARY = 1, XP_ATOM = 4, XP_CARDINAL = 6, XP_STRING = 31, XP_WINDOW = 33,
@@ -120,7 +126,7 @@ typedef struct xwin {
 } xwin;
 
 typedef struct { uint16_t seq; uint8_t kind; uint32_t a, b; } xpend;
-enum { XK_ATOM = 1, XK_PROP, XK_TREE, XK_ATTR, XK_EXT };
+enum { XK_ATOM = 1, XK_PROP, XK_TREE, XK_ATTR, XK_EXT, XK_BIGREQ, XK_XFVER, XK_CLIPATOM, XK_CLIPTGT, XK_ATOMNAME, XK_CLIPDATA };
 
 struct xwm {
     aurwl              *c;
@@ -142,6 +148,21 @@ struct xwm {
     struct wl_list      wins;
     int                 n_wins;
     xwin               *active;
+    /* the clipboard (xclip.inc) */
+    uint32_t            maxreq;           /* the most one request may carry, in 4-byte units   */
+    int                 bigreq;           /* BIG-REQUESTS is on: a request may exceed 256 KiB  */
+    uint32_t            xfixes_major, xfixes_event;
+    int                 clip_wl;          /* we own CLIPBOARD for a Wayland program            */
+    uint32_t            clip_gen;         /* which Wayland selection the interned names are for */
+    int                 clip_atoms_left;
+    struct { uint32_t atom; char name[64]; } names[48];   /* mime name <-> X atom, both ways    */
+    int                 n_names, names_next;
+    uint32_t            clip_x;           /* the X window that owns CLIPBOARD, 0 none          */
+    uint32_t            xq_gen;           /* which owner change the target list is for         */
+    int                 xq_left;          /* names still to learn                              */
+    struct wl_list      xfers;            /* Wayland -> X: reads from a program's pipe         */
+    struct wl_list      pastes;           /* X -> Wayland: pastes in progress or waiting       */
+    uint32_t            next_job;
 };
 
 /* ── bytes ───────────────────────────────────────────────────────── */
@@ -152,6 +173,12 @@ static inline void     xw32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); }
 static inline size_t   xpad4(size_t n) { return (n + 3) & ~(size_t)3; }
 
 static void xwm_kill(xwm *m);
+/* the clipboard, below (xclip.inc) */
+static void xc_reply(xwm *m, const xpend *e, const uint8_t *r, size_t total);
+static void xc_failed(xwm *m, const xpend *e);
+static int  xc_event(xwm *m, const uint8_t *e);
+static void xc_start(xwm *m);
+static void xc_cleanup(xwm *m);
 
 /* AUROS_XWM_DEBUG=1, or a file /tmp/auros-xwm-debug (the shell cleans its environment): narrate (stderr). */
 #define XDBG(...) do { if (getenv("AUROS_XWM_DEBUG") || access("/tmp/auros-xwm-debug", F_OK) == 0) { fprintf(stderr, "aurwl xwm: " __VA_ARGS__); fputc('\n', stderr); } } while (0)
@@ -176,16 +203,19 @@ static int xbuf_grow(uint8_t **buf, size_t *cap, size_t need, size_t limit)
 static uint8_t *xreq(xwm *m, uint8_t op, uint8_t d1, size_t body)
 {
     if (m->dead) return NULL;
-    size_t total = 4 + xpad4(body);
-    if (total > 0x3FFFF * 4 ||
-        xbuf_grow(&m->out, &m->out_cap, m->out_n + total, XW_OUT_MAX) < 0) { xwm_kill(m); return NULL; }
+    size_t hdr = 4, total = 4 + xpad4(body);
+    if (total / 4 > 0xFFFF) {               /* BIG-REQUESTS: a zero length, then the real one, counting that extra word */
+        hdr = 8; total += 4;
+        if (!m->bigreq || total / 4 > m->maxreq) { xwm_kill(m); return NULL; }
+    }
+    if (xbuf_grow(&m->out, &m->out_cap, m->out_n + total, XW_OUT_MAX) < 0) { xwm_kill(m); return NULL; }
     uint8_t *p = m->out + m->out_n;
     memset(p, 0, total);
     p[0] = op; p[1] = d1;
-    xw16(p + 2, (uint16_t)(total / 4));
+    if (hdr == 4) xw16(p + 2, (uint16_t)(total / 4)); else xw32(p + 4, (uint32_t)(total / 4));
     m->out_n += total;
     m->seq++;
-    return p + 4;
+    return p + hdr;
 }
 
 static void xexpect(xwm *m, int kind, uint32_t a, uint32_t b)
@@ -218,6 +248,7 @@ static void xflush(xwm *m)
     }
     if (m->src && !m->dead)
         wl_event_source_fd_update(m->src, m->out_n ? (WL_EVENT_READABLE | WL_EVENT_WRITABLE) : WL_EVENT_READABLE);
+    if (!m->out_n && m->out_cap > (1u << 20)) { free(m->out); m->out = NULL; m->out_cap = 0; }
 }
 
 /* ── requests ────────────────────────────────────────────────────── */
@@ -276,17 +307,18 @@ static void x_configure(xwm *m, uint32_t win, unsigned mask, int32_t x, int32_t 
     if (mask & XC_W) xw32(p + 8 + 4 * i++, (uint32_t)w);
     if (mask & XC_H) xw32(p + 8 + 4 * i++, (uint32_t)h);
 }
-static void x_change_prop(xwm *m, uint32_t win, uint32_t prop, uint32_t type, int format,
-                          const void *data, size_t n_units)
+static int x_change_prop(xwm *m, uint32_t win, uint32_t prop, uint32_t type, int format,
+                         const void *data, size_t n_units)
 {
     size_t bytes = n_units * (size_t)(format / 8);
-    if (bytes > 65536) return;
+    if (bytes > XC_MAX || (28 + xpad4(bytes)) / 4 + 1 > (m->maxreq ? m->maxreq : 65535)) return 0;
     uint8_t *p = xreq(m, 18, 0 /* Replace */, 20 + bytes);
-    if (!p) return;
+    if (!p) return 0;
     xw32(p, win); xw32(p + 4, prop); xw32(p + 8, type);
     p[12] = (uint8_t)format;
     xw32(p + 16, (uint32_t)n_units);
     if (bytes) memcpy(p + 20, data, bytes);
+    return 1;
 }
 /* SendEvent of a 32-byte event to `win`. */
 static void x_send_event(xwm *m, uint32_t win, uint32_t mask, const uint8_t ev[32])
@@ -724,6 +756,7 @@ static void xwm_event(xwm *m, const uint8_t *e)
         break;
     }
     case 28: {                                          /* PropertyNotify */
+        if (xr32(e + 4) == m->check) { xc_event(m, e); break; }
         xwin *w = xwin_find(m, xr32(e + 4));
         uint32_t a = xr32(e + 8);
         if (!w || e[16] != 0) break;
@@ -743,7 +776,7 @@ static void xwm_event(xwm *m, const uint8_t *e)
         else if (t == m->atom[XA_WM_CHANGE_STATE] && xr32(e + 12) == 3) win_request(w, AURWL_REQ_MINIMIZE);
         break;
     }
-    default: break;                                      /* everything else is not ours to answer */
+    default: xc_event(m, e); break;                      /* the clipboard's, or not ours to answer */
     }
 }
 
@@ -794,6 +827,10 @@ static void xwm_reply(xwm *m, const uint8_t *r, size_t total)
             uint8_t *p = xreq(m, major, 2, 8);
             if (p) { xw32(p, m->root); p[4] = 1; }
         } else if (e.a == 0) XDBG("this X server has no COMPOSITE: windows will not be drawn");
+        else xc_reply(m, &e, r, total);
+        break;
+    case XK_BIGREQ: case XK_XFVER: case XK_CLIPATOM: case XK_CLIPTGT: case XK_ATOMNAME: case XK_CLIPDATA:
+        xc_reply(m, &e, r, total);
         break;
     case XK_ATTR: {                                      /* a window already there when we arrived */
         xwin *w = xwin_find(m, e.a);
@@ -830,6 +867,7 @@ static void xwm_setup_done(xwm *m)
      * nobody would place. Without this line every X program waits forever
      * at a socket that is never read. */
     x_query_extension(m, "Composite", 0);
+    xc_start(m);
     x_set_selection_owner(m, m->check, m->atom[XA_WM_S0]);
     x_change_prop(m, m->root, m->atom[XA_NET_SUPPORTING_WM_CHECK], XP_WINDOW, 32, &m->check, 1);
     x_change_prop(m, m->check, m->atom[XA_NET_SUPPORTING_WM_CHECK], XP_WINDOW, 32, &m->check, 1);
@@ -847,6 +885,7 @@ static int xwm_setup_reply(xwm *m, const uint8_t *r, size_t total)
 {
     if (total < 40 || r[0] != 1) { XDBG("setup refused or short (status %d, %zu bytes)", total ? r[0] : -1, total); return -1; }
     m->id_base = xr32(r + 12); m->id_mask = xr32(r + 16);
+    m->maxreq = xr16(r + 26);                 /* maximum-request-length, 4-byte units */
     size_t vendor = xpad4(xr16(r + 24)), formats = r[29], off = 40 + vendor + 8 * formats;
     if (!m->id_mask || off + 40 > total) return -1;
     m->root = xr32(r + off);
@@ -892,6 +931,7 @@ static void xwm_input(xwm *m)
                     xwin *w = xwin_find(m, dead.a);
                     if (w && w->props_left > 0 && --w->props_left == 0) xwm_finish_manage(w);
                 }
+                else if (dead.kind >= XK_BIGREQ) xc_failed(m, &dead);
             }
         }
         else if (t != 35) xwm_event(m, e);
@@ -902,6 +942,10 @@ static void xwm_input(xwm *m)
         m->in_n -= off;
     }
     xflush(m);
+    if (m->in_cap > (1u << 20) && m->in_n < 4096) {          /* a screenshot has passed: give the memory back */
+        uint8_t *nb = realloc(m->in, 4096);
+        if (nb) { m->in = nb; m->in_cap = 4096; }
+    }
 }
 
 static int xwm_io(int fd, uint32_t mask, void *data)
@@ -940,7 +984,9 @@ static xwm *xwm_create(aurwl *c, int fd, struct wl_client *xclient)
     xwm *m = calloc(1, sizeof *m);
     if (!m) return NULL;
     m->c = c; m->fd = fd; m->xclient = xclient;
+    m->maxreq = 65535;
     wl_list_init(&m->wins);
+    wl_list_init(&m->xfers); wl_list_init(&m->pastes);
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
     m->src = wl_event_loop_add_fd(c->loop, fd, WL_EVENT_READABLE, xwm_io, m);
     if (!m->src) { close(fd); free(m); return NULL; }
@@ -957,6 +1003,7 @@ static void xwm_destroy(xwm *m)
 {
     if (!m) return;
     xwm_kill(m);
+    xc_cleanup(m);
     xwin *w, *t;
     wl_list_for_each_safe(w, t, &m->wins, link) xwin_free(w);
     free(m->in); free(m->out);
@@ -1194,3 +1241,5 @@ static void xw_surface_created(aurwl_win *s)
     wl_list_for_each(w, &c->x.wm->wins, link)
         if (w->surf_id == id && !w->win) { xwm_associate(w, id); break; }
 }
+
+#include "xclip.inc"

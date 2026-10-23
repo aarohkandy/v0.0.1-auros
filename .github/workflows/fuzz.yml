@@ -23,7 +23,7 @@ on:
       - 'src/aurstage/journal.*'
       - 'tools/fuzz/**'
       - 'tools/wltest-sub.*'
-      - 'tools/wltest-x.*'
+      - 'tools/wltest-x*'
       - 'tools/wltest-deco.*'
       - 'tools/checksec.sh'
       - 'build/cflags'

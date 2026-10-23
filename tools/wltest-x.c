@@ -53,12 +53,12 @@
 #define FX_BASE   0x00400000u
 #define FX_MASK   0x001fffffu
 
-typedef struct { uint8_t op, d1; uint16_t seq; size_t len; uint8_t body[512]; } req;
+typedef struct { uint8_t op, d1; uint16_t seq; size_t len; uint8_t body[512]; uint32_t dlen, hash; } req;   /* dlen/hash: a ChangeProperty's data, all of it */
 typedef struct { uint32_t win, atom, type; int format; size_t n_bytes; uint8_t data[512]; } prop;
 
 static struct {
     int      fd;
-    uint8_t  in[1 << 18]; size_t in_n;
+    uint8_t  in[(17u << 20) + 4096]; size_t in_n;      /* a 16 MiB clipboard request fits */
     int      setup_done;
     uint16_t seq;
     req      reqs[8192]; int n_reqs;
@@ -67,6 +67,16 @@ static struct {
     int      garble;                         /* answer replies wrongly: 1 length, 2 sequence */
     int      mute;                           /* answer nothing */
 } X;
+
+static char dyn_names[16][64]; static int n_dyn;
+static uint32_t dyn_atom(const char *name)
+{
+    for (int i = 0; i < n_dyn; i++) if (!strcmp(dyn_names[i], name)) return 3000u + (uint32_t)i;
+    if (n_dyn >= 16) { fprintf(stderr, "wltest-x: too many dynamic atoms\n"); abort(); }
+    snprintf(dyn_names[n_dyn], sizeof dyn_names[0], "%s", name);
+    return 3000u + (uint32_t)n_dyn++;
+}
+static const char *dyn_name(uint32_t a) { return a >= 3000 && a - 3000 < (uint32_t)n_dyn ? dyn_names[a - 3000] : NULL; }
 
 static uint32_t atom_id(const char *name)
 {
@@ -79,8 +89,7 @@ static uint32_t atom_id(const char *name)
     if (!strcmp(name, "WM_HINTS")) return XP_WM_HINTS;
     if (!strcmp(name, "WM_NORMAL_HINTS")) return XP_WM_NORMAL_HINTS;
     if (!strcmp(name, "WM_TRANSIENT_FOR")) return XP_WM_TRANSIENT_FOR;
-    fprintf(stderr, "wltest-x: no atom %s\n", name);
-    abort();
+    return dyn_atom(name);                                   /* a mime type, say: made up on first use */
 }
 
 static void pump(int ms);
@@ -103,14 +112,15 @@ static void fx_send(const void *b, size_t n)
 static void fx_reply(uint8_t byte1, uint16_t seq, const void *extra, size_t extra_len, const uint8_t head[24])
 {
     /* head: 24 bytes from offset 8 */
-    uint8_t buf[32 + 4096] = {0};
     size_t padded = (extra_len + 3) & ~(size_t)3;
+    uint8_t *buf = calloc(1, 32 + padded);
     buf[0] = 1; buf[1] = byte1;
     xw16(buf + 2, X.garble == 2 ? (uint16_t)(seq + 7) : seq);
     xw32(buf + 4, X.garble == 1 ? 0x7fffff00u : (uint32_t)(padded / 4));
     if (head) memcpy(buf + 8, head, 24);
     if (extra_len) memcpy(buf + 32, extra, extra_len);
     fx_send(buf, 32 + padded);
+    free(buf);
 }
 
 static prop *fx_find_prop(uint32_t win, uint32_t atom)
@@ -145,6 +155,73 @@ static void fx_setup_reply(void)
     fx_send(b, 8 + o);
 }
 
+/* Properties the window manager's own window carries for the clipboard, and an X program that owns CLIPBOARD. */
+static struct { uint32_t win, atom, type; int format; uint8_t *data; size_t n; int used; } SP[4];
+static struct {
+    uint32_t targets[16]; int n_targets;
+    uint8_t *text; size_t text_n;                    /* UTF8_STRING / STRING answer */
+    uint8_t *img; size_t img_n; uint32_t img_atom;   /* an image, by its mime name */
+    int incr;                                        /* send the image in chunks */
+    int incr_active, incr_done; size_t incr_off; uint32_t incr_win, incr_prop;
+} XO;
+static void ev32(uint8_t type, const void *fields);
+static void sp_set(uint32_t win, uint32_t atom, uint32_t type, int format, const void *data, size_t n)
+{
+    int i = 0;
+    for (; i < 4; i++) if (SP[i].used && SP[i].win == win && SP[i].atom == atom) break;
+    if (i == 4) for (i = 0; i < 4 && SP[i].used; i++) ;
+    if (i == 4) abort();
+    free(SP[i].data);
+    SP[i].used = 1; SP[i].win = win; SP[i].atom = atom; SP[i].type = type; SP[i].format = format;
+    SP[i].data = malloc(n + 1); if (n) memcpy(SP[i].data, data, n); SP[i].n = n;
+}
+static void fx_sel_notify(uint32_t requestor, uint32_t selection, uint32_t target, uint32_t prop)
+{
+    uint8_t f[28] = {0};
+    xw32(f + 4, requestor); xw32(f + 8, selection); xw32(f + 12, target); xw32(f + 16, prop);
+    ev32(31, f);
+}
+static void fx_prop_notify(uint32_t win, uint32_t atom, int state)
+{
+    uint8_t f[28] = {0};
+    xw32(f, win); xw32(f + 4, atom); f[12] = (uint8_t)state;
+    ev32(28, f);
+}
+/* The window manager asked the owner for `target`. */
+static void fx_convert(uint32_t requestor, uint32_t selection, uint32_t target, uint32_t prop)
+{
+    if (target == atom_id("TARGETS")) {
+        if (XO.n_targets < 0) { fx_sel_notify(requestor, selection, target, 0); return; }    /* an owner that will not say */
+        sp_set(requestor, prop, XP_ATOM, 32, XO.targets, 4 * (size_t)XO.n_targets);
+        fx_sel_notify(requestor, selection, target, prop);
+    } else if ((target == atom_id("UTF8_STRING") || target == XP_STRING) && XO.text) {
+        sp_set(requestor, prop, target, 8, XO.text, XO.text_n);
+        fx_sel_notify(requestor, selection, target, prop);
+    } else if (target == XO.img_atom && XO.img) {
+        if (XO.incr) {
+            uint32_t sz = (uint32_t)XO.img_n;
+            sp_set(requestor, prop, atom_id("INCR"), 32, &sz, 4);
+            XO.incr_active = 1; XO.incr_done = 0; XO.incr_off = 0; XO.incr_win = requestor; XO.incr_prop = prop;
+        } else sp_set(requestor, prop, target, 8, XO.img, XO.img_n);
+        fx_sel_notify(requestor, selection, target, prop);
+    } else fx_sel_notify(requestor, selection, target, 0);
+}
+/* The window manager read (and so deleted) a property of its window: the owner's INCR goes on. */
+static void fx_after_delete(uint32_t win, uint32_t atom)
+{
+    if (!XO.incr_active || win != XO.incr_win || atom != XO.incr_prop) return;
+    if (XO.incr_off < XO.img_n) {
+        size_t n = XO.img_n - XO.incr_off < 100000 ? XO.img_n - XO.incr_off : 100000;
+        sp_set(win, atom, XO.img_atom, 8, XO.img + XO.incr_off, n);
+        XO.incr_off += n;
+        fx_prop_notify(win, atom, 0);
+    } else if (!XO.incr_done) {
+        sp_set(win, atom, XO.img_atom, 8, "", 0);              /* the empty chunk: that was all of it */
+        XO.incr_done = 1;
+        fx_prop_notify(win, atom, 0);
+    } else XO.incr_active = 0;
+}
+
 /* One request arrived: remember it, and answer it if it asks a question. */
 static void fx_request(const uint8_t *r, size_t len)
 {
@@ -152,6 +229,14 @@ static void fx_request(const uint8_t *r, size_t len)
     req *q = &X.reqs[X.n_reqs++];
     q->op = r[0]; q->d1 = r[1]; q->seq = ++X.seq; q->len = len - 4;
     memcpy(q->body, r + 4, q->len < sizeof q->body ? q->len : sizeof q->body);
+    if (r[0] == 18 && q->len >= 20) {                     /* ChangeProperty: the whole of the data, summed */
+        size_t dl = (size_t)xr32(r + 4 + 16) * (size_t)(r[4 + 12] / 8);
+        if (dl > q->len - 20) dl = q->len - 20;
+        q->dlen = (uint32_t)dl;
+        uint32_t h = 2166136261u;
+        for (size_t i = 0; i < dl; i++) h = (h ^ r[4 + 20 + i]) * 16777619u;
+        q->hash = h;
+    }
     if (X.mute) return;
     const uint8_t *b = r + 4;
     uint8_t head[24] = {0};
@@ -164,8 +249,38 @@ static void fx_request(const uint8_t *r, size_t len)
         fx_reply(0, q->seq, NULL, 0, head);
         break;
     }
+    case 22:                                              /* SetSelectionOwner: XFixes tells every listener who owns it now */
+        if (xr32(b + 4) == atom_id("CLIPBOARD")) {
+            uint8_t f[28] = {0};
+            xw32(f, FX_ROOT); xw32(f + 4, xr32(b)); xw32(f + 8, xr32(b + 4));
+            ev32(87, f);
+        }
+        break;
+    case 17: {                                            /* GetAtomName */
+        const char *nm = dyn_name(xr32(b));
+        if (!nm) { fx_reply(0, q->seq, NULL, 0, head); break; }
+        xw16(head, (uint16_t)strlen(nm));
+        fx_reply(0, q->seq, nm, strlen(nm), head);
+        break;
+    }
+    case 24:                                              /* ConvertSelection: we are the owner */
+        fx_convert(xr32(b), xr32(b + 4), xr32(b + 8), xr32(b + 12));
+        break;
     case 20: {                                            /* GetProperty */
         uint32_t win = xr32(b), atom = xr32(b + 4);
+        for (int i = 0; i < 4; i++) if (SP[i].used && SP[i].win == win && SP[i].atom == atom) {
+            size_t unit = (size_t)(SP[i].format / 8);
+            size_t off = (size_t)xr32(b + 12) * 4, lim = (size_t)xr32(b + 16) * 4;       /* as the protocol says: from here, at most this much */
+            if (off > SP[i].n) off = SP[i].n;
+            size_t send = SP[i].n - off < lim ? SP[i].n - off : lim;
+            send -= send % unit;
+            xw32(head, SP[i].type);
+            xw32(head + 4, (uint32_t)(SP[i].n - off - send));                           /* bytes after */
+            xw32(head + 8, (uint32_t)(send / unit));
+            fx_reply((uint8_t)SP[i].format, q->seq, SP[i].data + off, send, head);
+            if (r[1] && SP[i].n - off - send == 0) { SP[i].used = 0; fx_after_delete(win, atom); }   /* deleted only when all of it was read */
+            return;
+        }
         prop *p = fx_find_prop(win, atom);
         if (!p) { fx_reply(0, q->seq, NULL, 0, head); break; }
         xw32(head, p->type);
@@ -174,11 +289,23 @@ static void fx_request(const uint8_t *r, size_t len)
         fx_reply((uint8_t)p->format, q->seq, p->data, p->n_bytes, head);
         break;
     }
-    case 98: {                                            /* QueryExtension: Composite is major opcode 140 */
-        head[0] = 1; head[1] = 140;
+    case 98: {                                            /* QueryExtension: Composite 140, BIG-REQUESTS 141, XFIXES 142 (events from 87) */
+        uint16_t n = xr16(b);
+        char name[32] = {0};
+        memcpy(name, b + 4, n < 31 ? n : 31);
+        head[0] = 1;
+        head[1] = !strcmp(name, "BIG-REQUESTS") ? 141 : !strcmp(name, "XFIXES") ? 142 : 140;
+        head[2] = !strcmp(name, "XFIXES") ? 87 : 0;
         fx_reply(0, q->seq, NULL, 0, head);
         break;
     }
+    case 141:                                             /* BIG-REQUESTS Enable: the most a request may carry */
+        xw32(head, 4u * 1024 * 1024);
+        fx_reply(0, q->seq, NULL, 0, head);
+        break;
+    case 142:                                             /* XFIXES: QueryVersion answers; SelectSelectionInput is noted */
+        if (r[1] == 0) { xw32(head, 5); xw32(head + 4, 0); fx_reply(0, q->seq, NULL, 0, head); }
+        break;
     case 15: {                                            /* QueryTree: no children */
         xw32(head, FX_ROOT); xw32(head + 4, 0);
         fx_reply(0, q->seq, NULL, 0, head);
@@ -195,7 +322,15 @@ static void fx_request(const uint8_t *r, size_t len)
     }
 }
 
+static void fx_read_inner(void);
+/* Not re-entrant: answering a request can have to wait for the window manager to read (pump), which must not start reading requests again. */
 static void fx_read(void)
+{
+    static int busy;
+    if (busy) return;
+    busy = 1; fx_read_inner(); busy = 0;
+}
+static void fx_read_inner(void)
 {
     ssize_t n = read(X.fd, X.in + X.in_n, sizeof X.in - X.in_n);
     if (n <= 0) return;
@@ -210,6 +345,16 @@ static void fx_read(void)
         }
         if (X.in_n - off < 4) break;
         size_t len = 4 * (size_t)xr16(X.in + off + 2);
+        if (len == 0) {                                   /* BIG-REQUESTS: the real length follows, counting itself */
+            if (X.in_n - off < 8) break;
+            len = 4 * (size_t)xr32(X.in + off + 4);
+            if (len < 8 || X.in_n - off < len) break;
+            uint8_t *rr = X.in + off + 4;                  /* rebuild a plain header just before the body */
+            rr[0] = X.in[off]; rr[1] = X.in[off + 1];
+            fx_request(rr, len - 4);
+            off += len;
+            continue;
+        }
         if (len < 4 || X.in_n - off < len) break;
         fx_request(X.in + off, len);
         off += len;
@@ -1021,6 +1166,8 @@ static void sc_x_goes_away(void)
     finish();
 }
 
+#include "wltest-x-clip.inc"
+
 static const struct { const char *name; void (*fn)(void); } SC[] = {
     { "takeover",         sc_takeover },
     { "map",              sc_map },
@@ -1040,6 +1187,16 @@ static const struct { const char *name; void (*fn)(void); } SC[] = {
     { "frameless",        sc_frameless },
     { "unsolicited",      sc_unsolicited },
     { "role-kept",        sc_role_kept },
+    { "clip-text-wl-to-x", sc_clip_text_wl_to_x },
+    { "clip-latin1",      sc_clip_latin1 },
+    { "clip-image-wl-to-x", sc_clip_image_wl_to_x },
+    { "clip-wl-hangs",    sc_clip_wl_hangs },
+    { "clip-text-x-to-wl", sc_clip_text_x_to_wl },
+    { "clip-image-x-to-wl", sc_clip_image_x_to_wl },
+    { "clip-incr",        sc_clip_incr },
+    { "clip-refused",     sc_clip_refused },
+    { "clip-newest-wins", sc_clip_newest_wins },
+    { "clip-too-big",     sc_clip_too_big },
     { "x-goes-away",      sc_x_goes_away },
 };
 #define NSC ((int)(sizeof SC / sizeof SC[0]))

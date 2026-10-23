@@ -23,4 +23,4 @@ if [ "${1#flatpak}" != "${1:-}" ] || [ -n "${FPIMAGE:-}" ]; then
 fi
 # shellcheck disable=SC2086
 exec docker run --rm --memory 6g --shm-size 1g --security-opt seccomp=unconfined $EXTRA \
-    -v "$ROOT":/w:ro -v "$OUT":/out -e APPID -e FPREF -e FPARGS -e FPAPPARGS -e CLICKS -e SCLICKS -e WAYLAND_DEBUG -e SHELLF -e REBUILD -e AUROS_XWM_DEBUG -e MOUSE -e XCMD -e KEYS -e TAIL -e TEXT_SCALE -e PROBE_POINTS -e DND_FROM -e DND_TO "$IMAGE" sh /w/tools/wltest-apps/inner.sh "$@"
+    -v "$ROOT":/w:ro -v "$OUT":/out -e APPID -e FPREF -e FPARGS -e FPAPPARGS -e CLICKS -e SCLICKS -e STYPE -e WAYLAND_DEBUG -e SHELLF -e REBUILD -e AUROS_XWM_DEBUG -e MOUSE -e XCMD -e KEYS -e TAIL -e TEXT_SCALE -e PROBE_POINTS -e DND_FROM -e DND_TO "$IMAGE" sh /w/tools/wltest-apps/inner.sh "$@"

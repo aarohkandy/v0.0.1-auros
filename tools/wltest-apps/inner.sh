@@ -121,6 +121,21 @@ JS
                       printf '[qt]\nqt-privacy-ask=0\n[core]\nmetadata-network-access=0\n' > "$d/vlcrc" ;;
     esac
     CMD="dbus-run-session -- flatpak run ${FPARGS:-} ${FPREF:?set FPREF} ${FPAPPARGS:-}" ;;
+  clip)             # the clipboard between an X program and a Wayland one (clip-probe.c): FPIMAGE=1, files in /out
+    rm -f /out/x-reads.txt /out/wl-reads.txt
+    mkdir -p /run/dbus && rm -f /run/dbus/pid && dbus-daemon --system --fork
+    gcc -O1 -g -std=gnu11 -o /out/clip-probe /w/tools/wltest-apps/clip-probe.c aurwl/aurwl.c aurshell/draw.c \
+        aurwl/gen/xdg-shell-protocol.c aurwl/gen/xdg-decoration-protocol.c aurwl/gen/viewporter-protocol.c \
+        aurwl/gen/xdg-output-protocol.c -Iaurwl/gen $(pkg-config --cflags --libs wayland-server xkbcommon) -lm || exit 1
+    rm -f /out/x-image.png /out/wl-image.png /out/*-image.err
+    IMG=$(find /out -name '*.png' -size +600k | head -1)
+    /out/clip-probe /out $IMG
+    for f in x-reads wl-reads; do printf '%s: ' "$f"; cat "/out/$f.txt" 2>/dev/null; echo; done
+    if [ -n "$IMG" ]; then
+        ls -l "$IMG" /out/x-image.png /out/wl-image.png 2>&1 | sed 's/^/  /'
+        for f in x wl; do cmp -s "$IMG" "/out/$f-image.png" && echo "$f-image: identical" || { echo "$f-image: DIFFERENT"; cat "/out/$f-image.err" 2>/dev/null; }; done
+    fi
+    exit 0 ;;
   click)            # click points in a program's window and show what it was sent (run with WAYLAND_DEBUG=client);
                     # CLICKS="x,y x,y" (window points), XCMD="the program"; for the store: flatpak image, see GS.md notes in WL.md
     gcc -O1 -g -std=gnu11 -o /out/click-probe /w/tools/wltest-apps/click-probe.c aurwl/aurwl.c aurshell/draw.c common/png.c \
@@ -151,8 +166,9 @@ JS
   *) echo "unknown app $APP"; exit 2 ;;
 esac
 echo "== $APP: $CMD"
-# SCLICKS="x,y x,y": screen points the shell's own pointer path clicks (aurshell --click)
+# SCLICKS="x,y x,y": screen points the shell's own pointer path clicks (aurshell --click);
+# STYPE="text": typed through the shell's own key path after the clicks (aurshell --type)
 CK=""; for pt in ${SCLICKS:-}; do CK="$CK --click ${pt%,*} ${pt#*,}"; done
 # shellcheck disable=SC2086
-/out/aurshell --shell "/w/shells/$SHELLF.shell" $CK --png "/out/$(echo "$APP" | tr -c 'a-z0-9\n' _).png" \
+/out/aurshell --shell "/w/shells/$SHELLF.shell" $CK ${STYPE:+--type "$STYPE"} --png "/out/$(echo "$APP" | tr -c 'a-z0-9\n' _).png" \
     --size 1280 800 ${MOUSE:+--mouse $MOUSE} --app-wait "$SECS" --with-app "$CMD" 2>&1 | grep -a -v "Could not resolve keysym" | tail -${TAIL:-15}

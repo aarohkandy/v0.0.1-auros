@@ -313,6 +313,10 @@ struct aurwl {
         int                 ox, oy;      /* its attach offsets at that moment */
         int                 shape;       /* wp_cursor_shape_device_v1 shape  */
     } cursor;
+    /* The clipboard, when an X program owns it (xclip.inc): offered to Wayland programs as the mime types below. */
+    int                 xsel_active;
+    char                xsel_mimes[16][64];
+    int                 xsel_n;
     /* XWAYLAND (xwm.inc): X programs run through it, started on demand. */
     struct {
         int                 enabled;
@@ -385,6 +389,9 @@ static void        xw_surface_gone(aurwl_win *w);
 static void        xw_surface_created(aurwl_win *w);
 static int         xw_listed(const aurwl_win *w);          /* an X window the shell may show */
 static int         xw_csd(const aurwl_win *w);             /* it draws its own title bar (_MOTIF_WM_HINTS) */
+static void        xw_selection_changed(aurwl *c);          /* the Wayland clipboard changed hands */
+static void        xw_paste(aurwl *c, const char *mime, int fd);   /* a Wayland program pastes what an X program copied */
+static void        selection_broadcast(aurwl *c);
 static int         xw_is_popup(const aurwl_win *w);        /* override-redirect: a menu      */
 static aurwl_win  *xw_popup_parent(const aurwl_win *w);
 static void        xw_popup_offset(const aurwl_win *w, int *x, int *y);
@@ -2110,6 +2117,13 @@ typedef struct {
     struct wl_list      link;
 } data_source;
 
+/* The "source" of a clipboard offer whose data is in an X program (xclip.inc): not a
+ * program's wl_data_source, so nothing may treat the pointer as a resource.
+ * ponytail: xsel_c is one compositor per process, which is what this is. */
+static char xsel_marker;
+static aurwl *xsel_c;
+#define XSEL ((struct wl_resource *)&xsel_marker)
+
 static void dsrc_offer(struct wl_client *cl, struct wl_resource *r, const char *mime)
 {
     (void)cl; data_source *s = wl_resource_get_user_data(r);
@@ -2164,7 +2178,9 @@ static void dsrc_gone(struct wl_resource *r)
             if (!t || wl_resource_get_client(dev) == t)
                 wl_data_device_send_selection(dev, NULL);
     }
+    aurwl *cc = s->c;
     free(s);
+    if (was_selection) xw_selection_changed(cc);               /* X programs lose it too */
 }
 
 static void drag_actions_changed(aurwl *c);
@@ -2180,6 +2196,7 @@ static void doffer_accept(struct wl_client *cl, struct wl_resource *r, uint32_t 
     /* The compositor is reached through the offer's source: offers keep no
      * back-pointer, and the drag state lives in the compositor. */
     struct wl_resource *src = wl_resource_get_user_data(r);
+    if (src == XSEL) return;                                   /* an X program's clipboard: no drag */
     data_source *ds = src ? wl_resource_get_user_data(src) : NULL;
     aurwl *c = ds ? ds->c : NULL;
     if (!c || !is_drag_offer(c, r) || serial != c->drag.serial) return;
@@ -2198,6 +2215,7 @@ static void doffer_receive(struct wl_client *cl, struct wl_resource *r, const ch
     /* NULL means the application that copied has since quit. The read
      * end still has to be closed or the paste hangs forever. */
     struct wl_resource *src = wl_resource_get_user_data(r);
+    if (src == XSEL) { xw_paste(xsel_c, mime, fd); return; }   /* the data is in an X program; xw_paste closes fd */
     if (src) wl_data_source_send_send(src, mime, fd);
     /* Our end of the pipe must go, or the reader never sees EOF and a
      * paste hangs forever on a mime type the owner declines to write. */
@@ -2208,6 +2226,7 @@ static void doffer_finish(struct wl_client *cl, struct wl_resource *r)
 {
     (void)cl;
     struct wl_resource *src = wl_resource_get_user_data(r);
+    if (src == XSEL) return;
     data_source *ds = src ? wl_resource_get_user_data(src) : NULL;
     if (!ds || !is_drag_offer(ds->c, r)) return;
     if (!ds->c->drag.dropped) {
@@ -2231,6 +2250,7 @@ static void doffer_set_actions(struct wl_client *cl, struct wl_resource *r, uint
         return;
     }
     struct wl_resource *src = wl_resource_get_user_data(r);
+    if (src == XSEL) return;
     data_source *ds = src ? wl_resource_get_user_data(src) : NULL;
     if (!ds || !is_drag_offer(ds->c, r)) return;
     ds->c->drag.dst_actions = a;
@@ -2245,6 +2265,21 @@ static const struct wl_data_offer_interface data_offer_impl = {
 /* Offer the current selection to one data_device. */
 static void send_selection_to(aurwl *c, struct wl_resource *dev)
 {
+    if (!c->selection && c->xsel_active) {                      /* an X program has it: offered as if we were the source */
+        struct wl_client *xcl = wl_resource_get_client(dev);
+        struct wl_resource *xo, *xot;
+        wl_resource_for_each_safe(xo, xot, &c->offers)
+            if (wl_resource_get_client(xo) == xcl) offer_retire(xo);
+        struct wl_resource *xoffer = wl_resource_create(xcl, &wl_data_offer_interface, wl_resource_get_version(dev), 0);
+        if (!xoffer) return;
+        xsel_c = c;
+        wl_resource_set_implementation(xoffer, &data_offer_impl, XSEL, res_unlink);
+        wl_list_insert(&c->offers, wl_resource_get_link(xoffer));
+        wl_data_device_send_data_offer(dev, xoffer);
+        for (int i = 0; i < c->xsel_n; i++) wl_data_offer_send_offer(xoffer, c->xsel_mimes[i]);
+        wl_data_device_send_selection(dev, xoffer);
+        return;
+    }
     if (!c->selection) { wl_data_device_send_selection(dev, NULL); return; }
     data_source *s = wl_resource_get_user_data(c->selection);
     if (!s) { wl_data_device_send_selection(dev, NULL); return; }
@@ -2503,6 +2538,7 @@ static void ddev_set_selection(struct wl_client *cl, struct wl_resource *r,
     if (c->selection && c->selection != src) wl_data_source_send_cancelled(c->selection);
     c->selection = src;
     c->selection_serial = serial;
+    xw_selection_changed(c);                       /* X programs are offered it (or lose it) */
     /* Retire the offers for the previous selection. Leaving them alive
      * leaked one wl_data_offer per device per focus change, and -- worse
      * than the leak -- a client that kept an old offer could go on
@@ -2518,6 +2554,18 @@ static void ddev_set_selection(struct wl_client *cl, struct wl_resource *r,
      * copied, readable at any moment with nothing on screen to show it.
      * Copy a password out of a password manager and every running
      * program could read it. */
+    struct wl_client *t = win_client(c->focus);
+    if (!t) return;
+    struct wl_resource *dev;
+    wl_resource_for_each(dev, &c->devices)
+        if (wl_resource_get_client(dev) == t) send_selection_to(c, dev);
+}
+/* The clipboard changed hands without a Wayland program setting it (an X program did): the
+ * offers are redone, and only the program with the keyboard hears of it. */
+static void selection_broadcast(aurwl *c)
+{
+    struct wl_resource *old, *oldt;
+    wl_resource_for_each_safe(old, oldt, &c->offers) offer_retire(old);
     struct wl_client *t = win_client(c->focus);
     if (!t) return;
     struct wl_resource *dev;

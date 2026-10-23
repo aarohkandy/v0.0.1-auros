@@ -698,6 +698,7 @@ int main(int argc, char **argv)
     int mouse_x0 = -1, mouse_y0 = -1, input_test = 0;
     const char *with_app = NULL; int app_wait = 12;
     int click_x[8], click_y[8], n_click = 0;       /* --click X Y: harness only, see the --with-app loop */
+    const char *type_text = NULL;                   /* --type TEXT: harness only, typed after the last click */
 
     for (int i = 1; i < argc; i++) {
         if      (!strcmp(argv[i], "--conf")   && i+1 < argc) { conf   = argv[++i]; conf_forced  = 1; }
@@ -709,6 +710,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--open")   && i+1 < argc) nopen = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--mouse")  && i+2 < argc) { mouse_x0 = atoi(argv[++i]); mouse_y0 = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--click")  && i+2 < argc && n_click < 8) { click_x[n_click] = atoi(argv[++i]); click_y[n_click++] = atoi(argv[++i]); }
+        else if (!strcmp(argv[i], "--type")   && i+1 < argc) type_text = argv[++i];
         else if (!strcmp(argv[i], "--frames") && i+1 < argc) frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--with-app") && i+1 < argc) with_app = argv[++i];
         else if (!strcmp(argv[i], "--app-wait") && i+1 < argc) app_wait = atoi(argv[++i]);
@@ -718,7 +720,7 @@ int main(int argc, char **argv)
             fputs("aurshell [--shell FILE] [--conf FILE] [--policy FILE]\n"
                   "         [--card /dev/dri/cardN] [--png OUT --size W H]\n"
                   "         [--frames N] [--open N] [--once] [--input-test]\n"
-                  "         [--with-app CMD [--app-wait SECONDS] [--mouse X Y] [--click X Y]...]\n"
+                  "         [--with-app CMD [--app-wait SECONDS] [--mouse X Y] [--click X Y]... [--type TEXT]]\n"
                   "  --with-app  start the compositor, launch CMD, wait for its\n"
                   "              window and render the desktop with the real\n"
                   "              application in it. This is how the shell is\n"
@@ -874,6 +876,7 @@ int main(int argc, char **argv)
             }
             struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
             int click_done = 0, click_stage = 0; uint32_t click_next = 0;
+            size_t type_i = 0; uint32_t type_next = 0;
             for (;;) {
                 struct timespec tn; clock_gettime(CLOCK_MONOTONIC, &tn);
                 uint32_t el = (uint32_t)((tn.tv_sec - t0.tv_sec) * 1000
@@ -917,6 +920,21 @@ int main(int argc, char **argv)
                                                  click_stage = 2; click_next = el + 100; }
                     else                       { session_button(&c, cx, cy, 0x110, 0);
                                                  click_stage = 0; click_done++; click_next = el + 2500; }
+                }
+                /* --type: letters, digits and spaces, one key every 80 ms, through the shell's
+                 * own key path, once the clicks are done and a second has passed. */
+                if (type_text && type_text[type_i] && click_done >= n_click && el > (uint32_t)app_wait * 333u &&
+                    el >= click_next + 1000 && el >= type_next) {
+                    static const char *rows[3] = { "qwertyuiop", "asdfghjkl", "zxcvbnm" };
+                    static const int base[3] = { 16, 30, 44 };
+                    char ch = type_text[type_i++];
+                    int code = -1;
+                    for (int r = 0; r < 3; r++) { const char *q = strchr(rows[r], ch); if (ch && q) code = base[r] + (int)(q - rows[r]); }
+                    if (ch >= '1' && ch <= '9') code = 2 + (ch - '1');
+                    if (ch == '0') code = 11;
+                    if (ch == ' ') code = 57;
+                    if (code > 0) { session_key(&c, code, 1); session_key(&c, code, 0); }
+                    type_next = el + 80;
                 }
                 if (c.n_wins > 0 && !aurwl_focus(c.wl)) {
                     int n = aurwl_window_count(c.wl);

@@ -18,6 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src", "aurwl", "aurwl.c")
 CURSOR = os.path.join(ROOT, "src", "aurshell", "cursor.c")
 XWM = os.path.join(ROOT, "src", "aurwl", "xwm.inc")
+XCLIP = os.path.join(ROOT, "src", "aurwl", "xclip.inc")
 
 # (what is broken, scenario that must notice, old, new)
 # A scenario written "cursortest" means tools/cursortest.sh against src/aurshell/cursor.c.
@@ -255,6 +256,41 @@ MUTANTS = [
      "        int csd = (xr32(data) & 2) && xr32(data + 8) == 0;", "        int csd = 0;", XWM),
     ("hints that do not mention decorations take them away", "x:frameless",
      "        int csd = (xr32(data) & 2) && xr32(data + 8) == 0;", "        int csd = xr32(data + 8) == 0;", XWM),
+    # ── the clipboard (src/aurwl/xclip.inc), the same scenarios ──
+    ("the window manager never claims CLIPBOARD for a Wayland program's copy", "x:clip-text-wl-to-x",
+     "    m->clip_wl = 1;\n    xflush(m);", "    xflush(m);", XCLIP),
+    ("TARGETS leaves out the text names", "x:clip-text-wl-to-x",
+     "            list[n++] = m->atom[XA_UTF8_STRING]; list[n++] = m->atom[XA_TEXT]; list[n++] = XP_STRING;", "", XCLIP),
+    ("a target the program does not offer is served", "x:clip-text-wl-to-x",
+     "    return n && xc_offers(ds, n) ? n : NULL;", "    return n;", XCLIP),
+    ("an X program's own question is answered with a stranger's copy (the window manager's claim taken for an X program's)", "x:clip-text-wl-to-x",
+     "    if (owner == m->check) return;                            /* that is us, taking it for a Wayland program */", "", XCLIP),
+    ("STRING is not turned into Latin-1", "x:clip-latin1",
+     "            if (x->latin1) n = xc_to_latin1(x->buf, n);", "", XCLIP),
+    ("a two-byte character past Latin-1 is passed as a wrong byte", "x:clip-latin1",
+     "            d[o++] = cp <= 0xFF ? (uint8_t)cp : '?'; i += 2;", "            d[o++] = (uint8_t)cp; i += 2;", XCLIP),
+    ("a paste over the limit is cut short instead of refused", "x:clip-too-big",
+     "|| (p->state == XS_DATA && after)) {", ") {", XCLIP),
+    ("big requests are never switched on", "x:clip-image-wl-to-x",
+     "        if (n > m->maxreq) { m->maxreq = n; m->bigreq = 1; }", "", XCLIP),
+    ("a program that never writes holds the X program for ever", "x:clip-wl-hangs",
+     "    if (x->timer) wl_event_source_timer_update(x->timer, xc_timeout_ms);", "", XCLIP),
+    ("INCR is not recognised", "x:clip-incr",
+     "        if (type == m->atom[XA_INCR] && p->state == XS_DATA) { p->state = XS_INCR; break; }   /* chunks follow */", "", XCLIP),
+    ("the empty chunk does not end INCR", "x:clip-incr",
+     "        if (p->state == XS_DATA || units == 0) xpaste_deliver(p);", "        if (p->state == XS_DATA) xpaste_deliver(p);", XCLIP),
+    ("an X program's copy is not offered", "x:clip-text-x-to-wl",
+     "        c->xsel_active = 1;\n        if (c->selection)", "        c->xsel_active = 0;\n        if (c->selection)", XCLIP),
+    ("an X program that quit is still offered", "x:clip-text-x-to-wl",
+     "        if (c->xsel_active) { c->xsel_active = 0; c->xsel_n = 0; selection_broadcast(c); }", "", XCLIP),
+    ("an image type of an X program is not offered", "x:clip-image-x-to-wl",
+     "        else if (strchr(name, '/') && strcmp(name, XC_UTF8) && strcmp(name, XC_PLAIN)) xc_add_mime(c, name);", "", XCLIP),
+    ("an owner that refuses TARGETS is offered anyway", "x:clip-refused",
+     "            if (!prop) { xq_n = 0; xc_targets_ready(m); return 1; }", "            if (!prop) { xq_atoms[0] = m->atom[XA_UTF8_STRING]; xq_n = 1; xc_targets_ready(m); return 1; }", XCLIP),
+    ("a newer X copy does not cancel the older Wayland one", "x:clip-newest-wins",
+     "        if (c->selection) { wl_data_source_send_cancelled(c->selection); c->selection = NULL; }   /* the newer copy wins */", "", XCLIP),
+    ("a newer Wayland copy leaves the X copy offered", "x:clip-newest-wins",
+     "    if (c->selection) c->xsel_active = 0;                    /* a Wayland program owns it now */", "", XCLIP),
 ]
 
 def main():
@@ -285,6 +321,7 @@ def main():
                 d = os.path.join(tmp, "xtree"); shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
                 shutil.copy(SRC if target != SRC else path, os.path.join(d, "aurwl.c"))
                 shutil.copy(XWM if target != XWM else path, os.path.join(d, "xwm.inc"))
+                shutil.copy(XCLIP if target != XCLIP else path, os.path.join(d, "xclip.inc"))
                 env = dict(os.environ, AURWL_C=os.path.join(d, "aurwl.c"), OUT=os.path.join(tmp, "out"))
                 cmd = ["sh", os.path.join(ROOT, "tools", "wltest-x.sh"), scenario[2:]]
             elif scenario == "cursortest":
