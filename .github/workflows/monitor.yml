@@ -49,8 +49,8 @@ jobs:
           python3 -I tools/ops/monitor.py --selftest
           python3 -I tools/ops/addrtest.py --selftest
           sh tools/repotest.sh
-          if [ -f tools/ops/waves_test.py ]; then python3 -I tools/ops/waves_test.py; fi
-          if [ -f infra/edge/package.json ]; then cd infra/edge && node --test test/; fi
+          python3 -I tools/ops/waves_test.py
+          (cd infra/edge && node --test test/*.test.js)
 
   monitor:
     if: github.event_name != 'push'
@@ -61,6 +61,8 @@ jobs:
       AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
       WISHES_URL: ${{ vars.AUROS_WISHES_URL || format('https://auros-wishes.{0}.workers.dev', github.repository_owner) }}
       AUROS_SECOND_RESPONDER: ${{ vars.AUROS_SECOND_RESPONDER }}
+      OPS_TOKEN: ${{ secrets.AUROS_OPS_TOKEN }}
+      OUTCOMES_URL: ${{ vars.AUROS_OUTCOMES_URL }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,6 +80,14 @@ jobs:
           rc=${PIPESTATUS[0]}
           { echo '### AurOS monitor'; echo '```'; cat monitor.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
+      # Once the owner's domain and token exist: the status page gets this result,
+      # and the stop rules (docs/ops/LAUNCH.md) read the field numbers and pause
+      # downloads by themselves. Not before: there is no gate to talk to.
+      - name: the status page, and the stop rules
+        if: always() && env.AUROS_DOMAIN != '' && env.OPS_TOKEN != ''
+        run: |
+          python3 -I tools/ops/waves.py post-status status.json > /dev/null
+          python3 -I tools/ops/waves.py stop-rules | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

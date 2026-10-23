@@ -29,7 +29,7 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 TIMEOUT = float(os.environ.get("MON_TIMEOUT", "25"))
 KEYRING = os.path.join(ROOT, "rootfs/usr/share/keyrings/auros-archive-keyring.asc")
 MIN_EXE = 1_000_000  # bytes: anything smaller is not AurOS-Setup.exe
-ALL = ["site", "download", "pieces", "channel", "wishes", "flathub"]
+ALL = ["site", "download", "pieces", "channel", "wishes", "flathub", "gate"]
 
 
 def repo(what):
@@ -50,6 +50,8 @@ def addresses(env=os.environ):
         "wishes": wishes,
         "flathub": env.get("MON_FLATHUB", "https://dl.flathub.org/repo/config"),
         "keyring": env.get("MON_KEYRING", KEYRING),
+        # The edge Worker's public state (infra/edge): only once the owner has a domain
+        "gate": env.get("MON_GATE") or (f"https://get.{dom}" if dom else ""),
     }
 
 
@@ -100,6 +102,8 @@ def sha_of(url):
 
 def check_download(a, deep):
     s, h, _ = fetch(a["get"], rng="bytes=0-0", body=False)
+    if "x-auros-gate" in h:
+        return  # shut on purpose (not open yet, full today, or paused): the gate check says which, and pages if it is a pause
     if s not in (200, 206):
         return f"{a['get']} answered {said(s)}"
     # An empty or truncated file also answers 200: the installer is tens of MB.
@@ -188,7 +192,19 @@ def check_flathub(a, deep):
         return f"{a['flathub']} answered {said(s)}"
 
 
-FUNCS = dict(site=check_site, download=check_download, pieces=check_pieces, channel=check_channel,
+def check_gate(a, deep):
+    s, _, b = fetch(a["gate"].rstrip("/") + "/_ops/state")
+    try:
+        st = json.loads(b) if s == 200 else None
+    except ValueError:
+        st = None
+    if not isinstance(st, dict):
+        return f"{a['gate']}/_ops/state answered {said(s)}, not the gate's state"
+    if st.get("paused"):
+        return f"downloads are PAUSED: {st.get('reason') or 'no reason given'}. Look into it, then: python3 tools/ops/waves.py resume (docs/ops/INCIDENTS.md)"
+
+
+FUNCS = dict(gate=check_gate, site=check_site, download=check_download, pieces=check_pieces, channel=check_channel,
              wishes=check_wishes, flathub=check_flathub)
 
 
@@ -202,7 +218,7 @@ def live_names(env=os.environ):
 
 def run(deep=False, env=os.environ):
     a, live, out = addresses(env), live_names(env), []
-    for name in ALL:
+    for name in (n for n in ALL if n != "gate" or a["gate"]):
         t = time.time()
         try:
             why = FUNCS[name](a, deep)
@@ -320,6 +336,10 @@ def selftest():
                 return self.send(200, state.get("health", b'{"ok":true}'))
             if p == "/flathub/config":
                 return self.send(200, b"[core]")
+            if p == "/gate/_ops/state":
+                return self.send(200, json.dumps(state.get("gate", {"paused": False, "wave": 1})).encode())
+            if p == "/shut/AurOS-Setup.exe":
+                return self.send(503, b"full", [("x-auros-gate", state.get("shut", "full"))])
             self.send(404)
 
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
@@ -327,7 +347,7 @@ def selftest():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     u = f"http://127.0.0.1:{srv.server_port}"
     env = dict(os.environ, MON_SITE=u + "/site/", MON_GET=u + "/get/AurOS-Setup.exe", MON_APT=u + "/apt/", MON_WISHES=u + "/wishes",
-               MON_FLATHUB=u + "/flathub/config", MON_FAST="1", AUROS_DOMAIN="")
+               MON_FLATHUB=u + "/flathub/config", MON_FAST="1", AUROS_DOMAIN="", MON_GATE=u + "/gate")
     tmp = tempfile.mkdtemp()
     env["MON_LIVE_FILE"] = os.path.join(tmp, "live.txt")
     open(env["MON_LIVE_FILE"], "w").write("site download pieces channel wishes\n")
@@ -383,6 +403,23 @@ def selftest():
     env["MON_FLATHUB"] = u + "/nowhere"
     open(env["MON_LIVE_FILE"], "w").write("flathub wishes\n")
     expect("flathub down is information only -> warn, never fail", states(), {"flathub": "warn"})
+    # The gate: shut on purpose is not an outage; a pause pages.
+    open(env["MON_LIVE_FILE"], "w").write("site download pieces channel wishes gate\n")
+    expect("the gate is open: gate ok", states(), {"gate": "ok"})
+    env["MON_GET"] = u + "/shut/AurOS-Setup.exe"
+    expect("the installer is full for today (503 with the gate's header): download is still ok", states(), {"download": "ok"})
+    env["MON_GET"] = u + "/get/AurOS-Setup.exe"
+    state["gate"] = {"paused": True, "reason": "stop rule: suspected data loss reported (1)", "wave": 1}
+    expect("downloads are paused -> gate fails, and says the reason", states(), {"gate": "fail"})
+    ok = ok and "data loss" in next(r["detail"] for r in last if r["check"] == "gate")
+    state["modes"] = {"/gate/_ops/state": "404"}; state.pop("gate")
+    expect("the gate's state is unreadable -> gate fails", states(), {"gate": "fail"})
+    state.clear()
+    env["MON_GET"] = u + "/shut/AurOS-Setup.exe"; env["MON_GATE"] = ""
+    got = states()
+    expect("no domain, no gate: the check is left out", {"n": str(sum(r["check"] == "gate" for r in last))}, {"n": "0"})
+    env["MON_GET"] = u + "/get/AurOS-Setup.exe"; env["MON_GATE"] = u + "/gate"
+    open(env["MON_LIVE_FILE"], "w").write("site download pieces channel wishes\n")
     # Every endpoint, broken four ways: the run must finish, say DOWN with a reason, and never "the check itself broke".
     globals()["TIMEOUT"] = 0.4
     open(env["MON_LIVE_FILE"], "w").write("site download pieces channel wishes\n")

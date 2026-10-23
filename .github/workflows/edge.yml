@@ -1,0 +1,107 @@
+# AurOS's own addresses on Cloudflare (WP-15, stream OPS): get., updates., status.,
+# www. and the site itself, each passing on to GitHub for now, plus the daily
+# download cap (WP-74). Always: the tests. Deploys ONLY when the owner has set the
+# repository variable AUROS_DOMAIN and the secret AUROS_OPS_TOKEN (and the
+# Cloudflare token may edit zones: docs/ops/DOMAIN.md, "What the owner does").
+# Until then this workflow tests and says why it did not deploy. Starts closed
+# (wave 0): nobody can download until the owner opens wave 1 (docs/ops/LAUNCH.md).
+name: edge
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/**'
+      - 'tools/repo.sh'
+      - '.github/workflows/edge.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edge
+  cancel-in-progress: false
+
+env:
+  WRANGLER: wrangler@4.148.0
+  WRANGLER_SEND_METRICS: 'false'
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test test/*.test.js
+        working-directory: infra/edge
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      OPS_TOKEN: ${{ secrets.AUROS_OPS_TOKEN }}
+      HALT_TOKEN: ${{ secrets.AUROS_HALT_TOKEN }}
+    steps:
+      - name: Ready to deploy?
+        id: have
+        run: |
+          if [ -n "$AUROS_DOMAIN" ] && [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$OPS_TOKEN" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Edge not deployed::Waiting for the owner: the repository variable AUROS_DOMAIN (his domain) and the secret AUROS_OPS_TOKEN. Tests passed. See docs/ops/DOMAIN.md."
+          fi
+      - uses: actions/checkout@v4
+        if: steps.have.outputs.ok == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.have.outputs.ok == 'true'
+        with:
+          node-version: 22
+      - name: Render the Cloudflare config for this domain
+        if: steps.have.outputs.ok == 'true'
+        run: |
+          # the website's GitHub address is what the edge passes the site on to, so ask repo.sh without the domain
+          pages=$(env -u AUROS_DOMAIN sh tools/repo.sh site)
+          gh_repo=$(sh tools/repo.sh repo)
+          sed -e "s|@DOMAIN@|$AUROS_DOMAIN|g" -e "s|@GH_REPO@|$gh_repo|g" -e "s|@PAGES_ORIGIN@|$pages|g" \
+              infra/edge/wrangler.toml.in > infra/edge/wrangler.toml
+          if grep -q '@[A-Z_]*@' infra/edge/wrangler.toml; then echo "::error::a blank was left in wrangler.toml"; exit 1; fi
+          grep -E '^(DOMAIN|GH_REPO|PAGES_ORIGIN)|pattern' infra/edge/wrangler.toml
+      - name: Deploy
+        if: steps.have.outputs.ok == 'true'
+        working-directory: infra/edge
+        run: |
+          set -o pipefail
+          timeout 300 npx --yes "$WRANGLER" deploy 2>&1 | tee deploy.log || {
+            echo "::error::Deploy failed. If it mentions zones, routes, DNS or permissions: the Cloudflare token needs Zone > Workers Routes: Edit and Zone > DNS: Edit for this domain (docs/ops/DOMAIN.md, step 3)."
+            exit 1; }
+      - name: Tokens (stdin only, never echoed)
+        if: steps.have.outputs.ok == 'true'
+        working-directory: infra/edge
+        run: |
+          set +x
+          printf '%s' "$OPS_TOKEN" | timeout 120 npx --yes "$WRANGLER" secret put OPS_TOKEN
+          if [ -n "$HALT_TOKEN" ]; then printf '%s' "$HALT_TOKEN" | timeout 120 npx --yes "$WRANGLER" secret put HALT_TOKEN; fi
+      - name: Live
+        if: steps.have.outputs.ok == 'true'
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            curl -fsS --max-time 10 "https://get.$AUROS_DOMAIN/_ops/state" > state.json && break; sleep 10
+          done
+          cat state.json; echo
+          python3 -c 'import json; s=json.load(open("state.json")); assert "wave" in s and "open" in s'
+          loc=$(curl -sS -o /dev/null -w '%{redirect_url}' "https://updates.$AUROS_DOMAIN/apt/InRelease")
+          echo "updates.$AUROS_DOMAIN/apt/InRelease -> $loc"
+          case "$loc" in https://github.com/*/releases/download/apt/InRelease) ;; *) echo "::error::the update channel address does not pass on to GitHub"; exit 1;; esac
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "https://$AUROS_DOMAIN/")
+          echo "https://$AUROS_DOMAIN/ -> $code (the website; 404 until the first [latest] release deploys it)"
+          { echo "### AurOS addresses"; echo "get / updates / status / www and \`$AUROS_DOMAIN\` pass on to GitHub; downloads: \`$(python3 -c 'import json;s=json.load(open("state.json"));print("wave",s["wave"],"cap",s["cap"],"paused" if s["paused"] else "not paused")')\`"; } >> "$GITHUB_STEP_SUMMARY"
