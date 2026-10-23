@@ -187,6 +187,32 @@ cp /proc/meminfo "$OUT/meminfo.txt"; ps -eo rss,comm --sort=-rss | head -25 > "$
 systemctl list-units --plain --no-legend --state=active --type=service | awk '{print $1}' > "$OUT/services.txt"
 if [ "$mode" = measure ]; then sync; systemctl poweroff; exit 0; fi
 
+# ── (HARDEN_ONLY=ffdebug) why does Firefox not stay up? ──
+if [ "$mode" = ffdebug ]; then
+    sp=$(shellpid); g=$(id -g "$u")
+    xrd=$(tr '\0' '\n' < /proc/"$sp"/environ | sed -n 's/^XDG_RUNTIME_DIR=//p')
+    wd=$(ls "$xrd" 2>/dev/null | grep -m1 '^wayland-[0-9][0-9]*$')
+    put wayland "$wd $xrd"
+    put aurshell_env "$(tr '\0' '\n' < /proc/"$sp"/environ | grep -E '^(XDG|WAYLAND|DBUS|HOME|LANG|MOZ|GDK|GTK)' | tr '\n' ' ')"
+    try() { # label VAR=value...
+        l=$1; shift
+        pkill -u "$u" -x firefox 2>/dev/null; sleep 3
+        ( setpriv --reuid="$u" --regid="$g" --init-groups env -i HOME="/home/$u" USER="$u" PATH=/usr/bin:/bin \
+              XDG_RUNTIME_DIR="$xrd" WAYLAND_DISPLAY="$wd" MOZ_ENABLE_WAYLAND=1 MOZ_CRASHREPORTER_DISABLE=1 "$@" \
+              firefox --kiosk file:///usr/lib/auros-harden/trap.html > "$OUT/ff.$l.txt" 2>&1
+          echo "exit=$?" >> "$OUT/ff.$l.txt" ) &
+        sleep 45
+        pgrep -u "$u" -x firefox >/dev/null && put "ff_$l" alive || put "ff_$l" dead
+        host shot "ff-$l"
+        journalctl -k -b --no-pager -o cat | grep -aiE 'segfault|apparmor.*firefox|firefox.*(denied|trap)|audit.*firefox' | tail -5 > "$OUT/ff.$l.kernel.txt"
+    }
+    try plain
+    try nosandbox MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_RDD_SANDBOX=1 MOZ_DISABLE_SOCKET_PROCESS_SANDBOX=1 MOZ_DISABLE_GMP_SANDBOX=1 MOZ_DISABLE_GPU_SANDBOX=1
+    try software LIBGL_ALWAYS_SOFTWARE=1 MOZ_ACCELERATED=0 MOZ_WEBRENDER=0 MOZ_X11_EGL=0 GDK_BACKEND=wayland
+    try nogpu MOZ_DISABLE_GPU_PROCESS=1 MOZ_LAYERS_FORCE_SOFTWARE=1 MOZ_DISABLE_WAYLAND_PROXY=1
+    sync; con "done"; systemctl poweroff; exit 0
+fi
+
 # ── kernel ──
 put cmdline "$(cat /proc/cmdline)"
 put secureboot "$(mokutil --sb-state 2>&1 | head -1)"
@@ -250,8 +276,10 @@ if grep -q '"anydesk"' "$OUT/guard-signal.txt"; then
     put remote_after_yes "$?"
     host keys esc              # "Now try installing it again" -> OK
 else put remote_signal no; fi
-pkcheck --action-id com.ubuntu.pkexec.gdebi.gtk --process "$sp" --detail command_line \
-    "/usr/bin/pkexec gdebi-gtk --non-interactive /home/$u/Downloads/teamviewer_15.58.4_amd64.deb" > "$OUT/pk3.txt" 2>&1
+# (gdebi is not in the image; PackageKit's install is what a .deb or the
+# store's system packages go through.)
+pkcheck --action-id org.freedesktop.packagekit.package-install --process "$sp" --detail package_ids \
+    "teamviewer;15.58.4;amd64;local" > "$OUT/pk3.txt" 2>&1
 put remote_deb "$?"
 sleep 2
 if grep -q '"teamviewer"' "$OUT/guard-signal.txt"; then
@@ -389,12 +417,12 @@ strip_controls() {
 # entry that starts a root shell, without a password, then everything
 # else in this file is decoration. grub.cfg.in puts the menu on the
 # serial line too, so the keys a person would press are pressed here.
-shell_entry() { # rootfs -> --id of the first menu entry whose kernel starts a shell
-    awk '/^[[:space:]]*menuentry[[:space:]]/ { id = ""; if (match($0, /--id[ =][^ {]+/)) id = substr($0, RSTART + 5, RLENGTH - 5) }
-         /^[[:space:]]*linux[[:space:]]/ && / init=\/(usr\/)?bin\/(ba|da)?sh( |$)/ && id != "" { print id; exit }' \
+shell_entry() { # rootfs -> "ID INDEX" of the first menu entry whose kernel starts a shell
+    awk '/^[[:space:]]*menuentry[[:space:]]/ { n++; id = ""; if (match($0, /--id[ =][^ {]+/)) id = substr($0, RSTART + 5, RLENGTH - 5) }
+         /^[[:space:]]*linux[[:space:]]/ && / init=\/(usr\/)?bin\/(ba|da)?sh( |$)/ && id != "" { print id, n - 1; exit }' \
         "$1/boot/grub/grub.cfg"
 }
-menu_probe() { # disk label edit|console|shell -> asks | opens | nomenu
+menu_probe() { # disk label edit|console|shell [index] -> asks | opens | nomenu | nothing
     NV="$T/vars.$2"; cp "$VARS" "$NV"; S="$T/sock.$2"; rm -f "$S"
     # shellcheck disable=SC2086
     qemu-system-x86_64 -machine q35,smm=on -accel $ACCEL -m "$MEM" -smp 2 \
@@ -405,9 +433,9 @@ menu_probe() { # disk label edit|console|shell -> asks | opens | nomenu
         -device virtio-vga -display none -nic none \
         -chardev "socket,id=s0,path=$S,server=on,wait=on" -serial chardev:s0 > "$T/qemu.$2" 2>&1 &
     QP=$!
-    python3 - "$S" "$3" "$T/serial.$2" <<'EOPY'
+    python3 - "$S" "$3" "$T/serial.$2" "${4:-0}" <<'EOPY'
 import socket, sys, time
-path, action, logf = sys.argv[1:4]
+path, action, logf, idx = sys.argv[1:5]
 s = socket.socket(socket.AF_UNIX)
 for _ in range(200):
     try: s.connect(path); break
@@ -424,9 +452,14 @@ def wait(marks, secs):
             if m in buf: return i
     return -1
 if action == 'shell':
-    # next_entry names the shell entry: nothing is pressed at all.
-    # Not "Run /init as init process": that is the initramfs, which
-    # every start passes through. bash says these on the console.
+    # Down to the entry that starts a shell, Return. Not "Run /init as
+    # init process": that is the initramfs, which every start passes
+    # through. bash says the others on the console.
+    if wait([b'automatically in'], 120) < 0: print('nomenu'); sys.exit()
+    buf = b''; time.sleep(0.3)
+    for _ in range(int(idx)):
+        s.send(b'\x1b[B'); time.sleep(0.3)
+    s.send(b'\r')
     r = wait([b'Enter username', b'no job control', b'bash-5', b'root@'], 150)
 else:
     if wait([b'automatically in'], 120) < 0: print('nomenu'); sys.exit()
@@ -563,27 +596,24 @@ free_gb=$(df -Pk "$T" | awk 'NR == 2 { printf "%d", $4 / 1048576 }')
 need=$(( $(du -k "$IMG" | cut -f1) / 1048576 + ${HARDEN_MINFREE_GB:-8} ))
 [ "$free_gb" -ge "$need" ] || { echo "only ${free_gb} GB free where the disk copy goes; need $need (HARDEN_MINFREE_GB)"; exit 2; }
 
+if [ "${HARDEN_ONLY:-}" = ffdebug ]; then
+    make_disk hard
+    power_on "$T/disk.img" ffdebug ffdebug 900
+    cat "$T/rec.ffdebug/result"
+    tar -C "$T" -czf "${REPORT%.*}-ffdebug.tar.gz" rec.ffdebug serial.ffdebug $(cd "$T" && ls shot.ffdebug.* 2>/dev/null)
+    exit 0
+fi
+
 for d in hard base; do
     make_disk $d static
     echo "  $d: the boot menu (edit, command line, recovery shell)"
     mount_root "$T/disk.img" || exit 2
-    se=$(shell_entry "$T/m"); [ $d = hard ] && SHELL_ID=$se
+    se=$(shell_entry "$T/m"); [ $d = hard ] && SHELL_ID=${se% *}
     umount_root
     { echo "grub_edit=$(menu_probe "$T/disk.img" "$d.edit" edit)"
       echo "grub_console=$(menu_probe "$T/disk.img" "$d.console" console)"
       if [ -n "$se" ]; then
-          mount_root "$T/disk.img" || exit 2
-          G="$T/m/boot/grub/grubenv"; [ -f "$G" ] && cp "$G" "$T/grubenv.$d"
-          python3 - "$G" "$se" <<'EOPY'
-import sys
-b = ('# GRUB Environment Block\nnext_entry=%s\n' % sys.argv[2]).encode()
-open(sys.argv[1], 'wb').write(b + b'#' * (1024 - len(b)))
-EOPY
-          umount_root
-          echo "grub_shell=$(menu_probe "$T/disk.img" "$d.shell" shell)"
-          mount_root "$T/disk.img" || exit 2
-          if [ -f "$T/grubenv.$d" ]; then cp "$T/grubenv.$d" "$G"; else rm -f "$G"; fi
-          umount_root
+          echo "grub_shell=$(menu_probe "$T/disk.img" "$d.shell" shell "${se#* }")"
       else echo "grub_shell=none"; fi
     } > "$T/menu.$d"
     echo "  $d: a full boot with every check (about 8 minutes under KVM)"
@@ -693,7 +723,7 @@ row control "...and the machine keeps answering (hog-end within 300 s)" is hog_f
 row control "three desktop crashes: the 4th start is safe mode" safe_mode
 row control "S2: AnyDesk from the store, first time: refused, card asked for" remote_gate
 row keep    "S2: ...she answers on the card with the keyboard; the next try works" remote_yes
-row control "S2: a TeamViewer .deb: refused, card asked for" deb_gate
+row control "S2: TeamViewer through PackageKit: refused, card asked for" deb_gate
 row both    "S2: Firefox full screen on a trap page" is page_up yes
 row both    "S2: one Escape does not take the page away (the check can tell)" esc_one_stays
 row both    "S2: Escape x3 over the page: the card closes it" esc3_closes
