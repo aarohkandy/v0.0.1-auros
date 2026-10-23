@@ -24,6 +24,41 @@ Windows for someone who is not technical. The rules it keeps:
   paused for one restart*) are built in, but switched off until the engine can
   keep them (see "Half-done").
 
+## Changed for e2e (stream F: read this before every e2e change)
+
+The design pass (`docs/DESIGN-DIRECTION.md` §5 B) changes things
+`tools/e2e/` relies on. Each line is written here BEFORE the code that
+does it is pushed; the commit hash is added when it lands.
+
+1. **Primary button colour**: teal `#7DD3C0` -> go green `#0B5D4F` with a
+   white label (pressed `#07463B`). `tools/e2e/vision.py` ACCENT must
+   follow, or find buttons by accessible name.
+2. **The primary button is always there**, in the same place. When it
+   cannot act yet (Next while the check runs) it is still green; a press
+   says why beside it and does nothing. Its MSAA state is then
+   `STATE_SYSTEM_UNAVAILABLE`. Pressing it early is harmless.
+3. **No restart countdown.** "Not yet" is gone. The finish page ("Ready
+   to restart", title unchanged) has **Restart now** (primary) and
+   **Restart later** (secondary: closes Setup, AurOS goes on at her next
+   restart). It never restarts by itself: the e2e must press Restart now.
+4. **Titles**: "Almost there. A few things first" -> "A few things to
+   sort out first"; the Secure Boot stop -> "One setting needs changing
+   first". "Setting up AurOS", "Ready to restart", "Ready to install",
+   "Pick the look you want" and "Let’s put AurOS on this computer" stay.
+5. **Buttons**: Next, Back, Install AurOS, Fix these for me, Check again,
+   Try again, Restart now stay. On a page where it cannot go on, the one
+   button "Close" -> **Close AurOS Setup** (still matches /close/). The
+   stop page's secondary "Close" -> **Not now**. New secondary buttons:
+   **Restart later**, **Show a helper how**, **Copy for a helper**.
+6. **Fix line titles**: BitLocker "Drive C: is encrypted" -> "Windows has
+   locked this computer’s drive" (VARIANT_EXPECT "bitlocker" needs
+   /locked/). Since `1bd6f6e` that page ends with Close AurOS Setup, not
+   a Fix button, until A2 lands the D11 pause.
+7. **Window title**: "Install AurOS" -> "AurOS Setup".
+8. **Light ground** (paper `#F6F2E9`): `vision.find_unchecked_boxes`
+   assumes a dark ground; the Wi-Fi box (when the engine turns it on) is a
+   2 px ink square on light.
+
 ## Files (stream B owns these)
 
 | File | What it is |
