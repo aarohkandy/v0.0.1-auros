@@ -125,6 +125,9 @@ jobs:
           fi
           sudo test -d work/staging/lib/modules
           cat dl/installer/build-info.txt
+      - name: repotest (no repository named by hand)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/repotest.sh 2>&1 | tee transcripts/repotest.txt
       - name: aurfirsttest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/aurfirsttest.sh 2>&1 | tee transcripts/aurfirsttest.txt
