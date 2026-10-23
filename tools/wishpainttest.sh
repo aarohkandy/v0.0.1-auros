@@ -20,7 +20,7 @@ PNG=${WISHPAINT_PNG:-$T/png}     # set WISHPAINT_PNG=dir to keep the pictures an
 mkdir -p "$T/st" "$PNG"
 
 build() {   # $1 = tree, $2 = output
-    cc -O2 -std=gnu11 -w -DAUROS_WISHES=1 -o "$2" "$1/tools/wishsheet.c" \
+    ${CC:-cc} -O2 -std=gnu11 -w -DAUROS_WISHES=1 ${CFLAGS:-} -o "$2" "$1/tools/wishsheet.c" \
        "$1/src/aurshell/wishover.c" "$1/src/aurshell/foot.c" "$1/src/aurshell/run.c" \
        "$1/src/aurshell/apps.c" "$1/src/aurshell/draw.c" "$1/src/aurshell/shellcommon.c" \
        "$1/src/aurshell/anim.c" "$1"/src/aurshell/layouts/[a-z]*.c "$1/src/common/theme.c" \

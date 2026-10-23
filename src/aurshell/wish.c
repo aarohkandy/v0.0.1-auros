@@ -1635,7 +1635,10 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
         if (said_h < g->btn_h) said_h = g->btn_h;
         int dest_h = v->has_dest ? lh_label + (int)((float)g->px_head * 1.25f) +
                                    (v->has_dest > 1 ? lh_label : 0) : 0;
-        int sl = (int)((float)g->px_sent * 1.3f);
+        /* A line of the device's sentence is 1.15 x the face's own 1.3 em: the
+         * painter's pitch (draw_rich, and draw_wrapped at 1.1), not the bare
+         * 1.3 em the geometry used to assume. */
+        int sl = (int)((float)g->px_sent * 1.5f);
         int sent_min = (int)(18.f * 1.3f) * 3;       /* three lines at the floor */
         if (strict) {
             int cwid = g->cw > 1 ? g->cw : 1;
@@ -1697,7 +1700,10 @@ static void layout_page(const shell_ctx *c, int sw, int sh, const wish_view *v,
         int eq = (page == WP_CONSENT) || (page == WP_CANNOT && v->has_offer);
         int h = row_height(g, page, kinds, nk, eq);
         int room = floor_y - h - g->group - y;
-        int sl = (int)((float)g->px_sent * 1.3f);
+        /* A line of the device's sentence is 1.15 x the face's own 1.3 em: the
+         * painter's pitch (draw_rich, and draw_wrapped at 1.1), not the bare
+         * 1.3 em the geometry used to assume. */
+        int sl = (int)((float)g->px_sent * 1.5f);
         int want = page == WP_CONSENT ? lh_body * 16
                  : (page == WP_ANSWER || page == WP_CANNOT) && v->has_offer ? sl * 2 + lh_label + sl * 3
                  : sl * 3 + g->gap + lh_body * 2;
