@@ -7,8 +7,9 @@
 # docs/DESIGN-DIRECTION.md section 5 K P1-6 and section 4, docs/EASY.md
 # rule 2. Fails when anything she can read says:
 #   - a word EASY.md rule 2 forbids (the list is read from EASY.md, so the
-#     rule and the check cannot drift). Not on website/advanced.html, the
-#     one page written for someone who knows computers;
+#     rule and the check cannot drift). Not on website/advanced.html and
+#     website/licenses.html, the pages written for someone who knows computers
+#     (the license page names kernels and protocols, which the law asks it to);
 #   - AurBridge, PC or PCs, wifi (it is "Wi-Fi"), World Wide Web,
 #     "That's normal", "Start installing", "Darker screen", yellow, "--"
 #     between words (it is "—"), or a button that says only "Close".
@@ -136,7 +137,7 @@ for f in surfaces():
         if re.search(r'http-equiv="refresh"', src, re.I):
             continue                               # a redirect stub, nothing to read
         v = Visible(); v.feed(src)
-        easy = not rel.endswith("website/advanced.html")
+        easy = not rel.endswith(("website/advanced.html", "website/licenses.html"))   # pages for someone who knows computers
         items = v.bits
     else:
         easy, items = True, c_strings(src)

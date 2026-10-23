@@ -5,6 +5,8 @@
     python3 -I tools/legal/check.py --launch     also fail while CONTACT_EMAIL or a
                                                  draft marker is still in a public text
     python3 -I tools/legal/check.py selftest     each check refuses what it exists to refuse
+    python3 -I tools/legal/check.py image --status DPKG_STATUS [--root DIR]
+                                                 the built image carries no Ubuntu branding (sources.yml runs this)
     python3 -I tools/legal/check.py set-contact ADDRESS
                                                  put the owner's mailbox in every public text
 
@@ -81,7 +83,7 @@ OFFER_MUST = [  # (what, regex) every written offer must contain
     ("the physical-medium route at cost", r"cost of the\s+medium and the postage"),
     ("the sources release naming rule", r'"sources-" followed by the name of the AurOS\s+release'),
     ("the contact address", PLACEHOLDER + r"|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+"),
-    ("licences prevail", r"the licence wins"),
+    ("licenses prevail", r"the license wins"),
 ]
 
 
@@ -123,7 +125,201 @@ def check_placeholders(launch, root=None):
     return out, seen
 
 
-CHECKS = []   # filled by the sections below
+
+# ── the pages ──────────────────────────────────────────────────────
+
+def real_pages(root):
+    out = []
+    d = os.path.join(root, "website")
+    if not os.path.isdir(d):
+        return out
+    for f in sorted(os.listdir(d)):
+        if f.endswith(".html"):
+            t = open(os.path.join(d, f), encoding="utf-8").read()
+            if not re.search(r'http-equiv="refresh"', t, re.I):
+                out.append((f, t))
+    return out
+
+
+def check_pages(root):
+    """The four legal pages exist and are the Markdown's; every page with a footer or a
+    download link points to them; the notice files are the ones their generators write."""
+    out = []
+    for tool, label in (("mkpages.py", "the legal pages and footers"), ("notices.py", "the notice files")):
+        r = subprocess.run([sys.executable, "-I", os.path.join(root, "tools/legal", tool), "--check"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            out.append("%s are not what tools/legal/%s writes: %s" % (label, tool, (r.stdout + r.stderr).strip().replace("\n", "; ")[:240]))
+    for f, t in real_pages(root):
+        if "releases/latest/download/AurOS-Setup.exe" in t and 'href="licenses.html"' not in t:
+            out.append("website/%s has a download link and no link to licenses.html (GPLv3 6(d), COMPLIANCE LIC-2)" % f)
+        if '<footer class="foot">' in t:
+            for need in ("licenses.html", "terms.html", "disclaimer.html", "privacy.html"):
+                if 'href="%s"' % need not in t.split('<footer class="foot">')[1]:
+                    out.append("website/%s: the footer does not link %s" % (f, need))
+            if "is not made, endorsed or supported by Canonical" not in t or "has not been authorized, sponsored, or otherwise approved by Apple Inc." not in t:
+                out.append("website/%s: the footer lacks the non-affiliation paragraph (TM-3)" % f)
+    return out
+
+
+# ── honest words ───────────────────────────────────────────────────
+
+# (regex, why). Absolute claims about data, privacy, money and tests that the legal review
+# (COMPLIANCE LIA-2, PRI-1, WEB-3) took out, and that must not come back. Search is case-insensitive.
+BANNED = [
+    (r"all (your|her) files stay", "an absolute: 'Windows and your files are kept' (LIA-2)"),
+    (r"windows and all your files", "an absolute: 'Windows and your files are kept' (LIA-2)"),
+    (r"\buntouched\b", "an absolute: 'kept' or 'stay on this computer' (LIA-2)"),
+    (r"(kept|keeps|keep) (windows and your files )?(just )?(exactly )?as (it|they) (was|were)", "an absolute: nothing on a drive stays exactly as it was (LIA-2)"),
+    (r"exactly as (it|they) (was|were)", "an absolute (LIA-2)"),
+    (r"byte-identical every time", "an absolute: say what the tests show (LIA-2)"),
+    (r"nothing about you is collected", "GitHub logs every visitor (PRI-1)"),
+    (r"\bwe collect nothing\b", "unqualified; GitHub logs visitors (PRI-1)"),
+    (r"nothing to pay,? now or later", "paid extras are planned (WEB-3)"),
+    (r"completely safe|100% safe|risk-free|\bno risk\b|zero risk", "no change to a drive is free of risk (LIA-2)"),
+]
+# Texts a person reads. C files: only lines that are not comments.
+TEXT_GLOBS = ["website", "rootfs/usr/share/auros/help", "README.md", "docs/legal/TERMS.md", "docs/legal/PRIVACY.md",
+              "docs/legal/DISCLAIMER.md", "docs/legal/LICENSES.md", "rootfs/usr/share/doc/auros"]
+CODE_TEXTS = ["src/aurbridge/wizard.c", "src/aurbridge/fix_win.c", "src/aurstage/install.c", "src/aurscreen/screen.c",
+              "src/aurshell/welcome.c"]
+# Phrases that are still in someone else's file, handed over in docs/handoff/streams/LEGAL.md.
+# Each ends on its date: after it, the phrase is a failure like any other. (file, regex index, owner, until)
+PENDING = [
+    ("src/aurbridge/wizard.c", r"all (your|her) files stay", "stream B: Ready and Welcome strings", "2026-11-30"),
+    ("src/aurbridge/wizard.c", r"windows and all your files", "stream B: Ready and Welcome strings", "2026-11-30"),
+    ("src/aurscreen/screen.c", r"exactly as (it|they) (was|were)", "stream A2: the put-back screen", "2026-11-30"),
+    ("README.md", r"byte-identical every time", "stream D/lead: README", "2026-11-30"),
+]
+
+
+def _strip(path, text):
+    if path.endswith((".html", ".md", ".txt")) or "/SOURCE-OFFER" in path:
+        return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    # C: only the sentences a person reads (string literals with a space in them), not
+    # comments and not tokens like "untouched" that the programs pass between themselves
+    code = "\n".join(l for l in text.split("\n") if not re.match(r"\s*(/\*|\*|//)", l))
+    return "\n".join(m.group(1) for m in re.finditer(r'L?"((?:[^"\\\n]|\\.)*\s(?:[^"\\\n]|\\.)*)"', code))
+
+
+def _files(root, globs):
+    out = []
+    for g in globs:
+        full = os.path.join(root, g)
+        if os.path.isfile(full):
+            out.append(g)
+        elif os.path.isdir(full):
+            for d, _, fs in os.walk(full):
+                for f in sorted(fs):
+                    if f.endswith((".html", ".md", ".txt", "")) and not f.endswith((".woff2", ".png", ".jpg", ".ttf", ".js", ".json", ".svg", ".webp", ".css")):
+                        out.append(os.path.relpath(os.path.join(d, f), root))
+    return sorted(set(out))
+
+
+def check_claims(root, today=None):
+    import datetime
+    today = today or datetime.date.today().isoformat()
+    out = []
+    used = set()
+    for rel in _files(root, TEXT_GLOBS) + CODE_TEXTS:
+        p = os.path.join(root, rel)
+        if not os.path.isfile(p):
+            continue
+        t = open(p, encoding="utf-8", errors="replace").read()
+        if rel.startswith("website/") and re.search(r'http-equiv="refresh"', t, re.I):
+            continue
+        for rx, why in BANNED:
+            for m in re.finditer(rx, _strip(rel, t), re.I):
+                allowed = [x for x in PENDING if x[0] == rel and x[1] == rx]
+                if allowed:
+                    used.add((rel, rx))
+                    if today > allowed[0][3]:
+                        out.append("%s says %r, past its date (%s): %s" % (rel, m.group(0), allowed[0][3], allowed[0][2]))
+                else:
+                    out.append("%s says %r: %s" % (rel, m.group(0), why))
+    return out
+
+
+# ── marks ──────────────────────────────────────────────────────────
+
+MARK_WORDS = r"ubuntu|canonical|kubuntu|mozilla|firefox"
+LOGO_NAMES = r"(ubuntu|canonical|kubuntu|mozilla|firefox|microsoft|windows[-_]?logo|apple|google|chrome|edge)[-_.a-z0-9]*\.(png|jpe?g|svg|webp|ico|woff2?)$"
+
+
+def check_marks_site(root):
+    """Third-party names appear in running text and nowhere that would pass them off as AurOS's
+    own: not in a page title, a heading of level 1, a button or a link's address, and no logo file."""
+    import html.parser
+    out = []
+    ad = os.path.join(root, "website/assets")
+    if os.path.isdir(ad):
+        for d, _, fs in os.walk(ad):
+            for f in fs:
+                if re.search(LOGO_NAMES, f, re.I):
+                    out.append("website/assets: %s looks like another company's logo (text only, never logos: TM-3)" % os.path.relpath(os.path.join(d, f), root))
+    class P(html.parser.HTMLParser):
+        def __init__(s):
+            super().__init__(convert_charrefs=True); s.stack = []; s.hits = []
+        def handle_starttag(s, tag, attrs):
+            a = dict(attrs)
+            s.stack.append((tag, a.get("class", "")))
+            for k in ("href", "src"):
+                v = a.get(k, "")
+                if v and re.search(MARK_WORDS, v, re.I) and not v.startswith(("https://github.com/@AUROS_REPO@",)):
+                    s.hits.append("%s=%s" % (k, v))
+        def handle_endtag(s, tag):
+            while s.stack:
+                if s.stack.pop()[0] == tag:
+                    break
+        def handle_data(s, d):
+            if re.search(MARK_WORDS, d, re.I):
+                for tag, cls in s.stack:
+                    if tag in ("title", "h1", "button") or (tag == "a" and re.search(r"\b(get|pill|btn2)\b", cls)):
+                        s.hits.append("<%s> %s" % (tag, d.strip()[:40])); break
+    for f, t in real_pages(root):
+        p = P(); p.feed(t)
+        for h in p.hits:
+            out.append("website/%s: a third-party name where it would read as ours: %s (COMPLIANCE LIC-5)" % (f, h))
+    return out
+
+
+IMAGE_DENY = (r"^(ubuntu-(wallpapers|artwork|desktop|session|settings|docs|sounds|mono|minimal|standard|server|restricted-addons)|"
+              r"yaru-theme-|plymouth-theme-ubuntu|ubuntu-.*logo|kubuntu-|xubuntu-|lubuntu-|ubuntu-release-upgrader)")
+
+
+def check_image(status_path, rootdir=None):
+    """The built image carries no Ubuntu artwork or branding packages, and does not name itself Ubuntu."""
+    sys.path.insert(0, os.path.join(ROOT, "build"))
+    import importlib.machinery, importlib.util
+    spec = importlib.util.spec_from_loader("srcs", importlib.machinery.SourceFileLoader("srcs", os.path.join(ROOT, "build/sources")))
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    out = []
+    for p in m.parse_status(open(status_path, encoding="utf-8", errors="replace").read()):
+        if re.search(IMAGE_DENY, p["bin"]):
+            out.append("the image carries %s, an Ubuntu branding package (LIC-5)" % p["bin"])
+    warn = []
+    if rootdir:
+        def rd(rel):
+            q = os.path.join(rootdir, rel)
+            return open(q, encoding="utf-8", errors="replace").read() if os.path.isfile(q) else None
+        osr = rd("usr/lib/os-release")
+        if osr is None:
+            out.append("no usr/lib/os-release in the image sample")
+        else:
+            for k in ("NAME", "PRETTY_NAME", "ID"):
+                v = re.search(r'^%s="?([^"\n]*)' % k, osr, re.M)
+                if v and re.search(r"ubuntu", v.group(1), re.I):
+                    out.append("os-release %s=%s: the image names itself Ubuntu (TM-1)" % (k, v.group(1)))
+        iss = rd("etc/issue")
+        if iss is not None and re.search(r"ubuntu", iss, re.I):
+            out.append("/etc/issue names Ubuntu (TM-1)")
+        lsb = rd("etc/lsb-release")
+        if lsb is not None and re.search(r"^DISTRIB_ID=Ubuntu", lsb, re.M):
+            warn.append("/etc/lsb-release still says DISTRIB_ID=Ubuntu (TM-1 item 1: dpkg-divert it; build/forge, stream C)")
+    return out, warn
+
+
+CHECKS = [check_pages, check_claims, check_marks_site]
 
 
 def run(launch=False, root=None):
@@ -163,14 +359,14 @@ def selftest():
             ("an offer without the medium route is refused", "cost of the\nmedium and the postage", "price", "physical-medium"),
             ("an offer that dropped the sources- rule is refused", '"sources-" followed by', '"x-" followed by', "naming rule"),
             ("an offer with no releases page placeholder is refused", "@AUROS_RELEASES@", "https://example.org", "@AUROS_RELEASES@"),
-            ("an offer that lets the licence lose is refused", "the licence wins", "these words win", "licences prevail"),
+            ("an offer that lets the license lose is refused", "the license wins", "these words win", "licenses prevail"),
         ]:
             assert old in good, old
             open(offer, "w").write(good.replace(old, new))
             want(label, run(False, d)[0], needle)
         open(offer, "w").write(good)
         # placeholders
-        open(os.path.join(d, "website/licences.html"), "w").write("<p>write to CONTACT_EMAIL [OWNER: x]</p>")
+        open(os.path.join(d, "website/licenses.html"), "w").write("<p>write to CONTACT_EMAIL [OWNER: x]</p>")
         pr, seen = run(True, d)
         want("--launch refuses the placeholder", pr, "still has CONTACT_EMAIL")
         want("--launch refuses a draft marker", pr, "draft marker")
@@ -181,7 +377,7 @@ def selftest():
         subprocess.run(["git", "init", "-q", d], check=True)
         subprocess.run(["git", "-C", d, "add", "-A"], check=True)
         set_contact("help@example.org", d)
-        t = open(os.path.join(d, "website/licences.html")).read()
+        t = open(os.path.join(d, "website/licenses.html")).read()
         ok = "help@example.org" in t and PLACEHOLDER not in t
         print("%s  set-contact puts the address in the page" % ("ok  " if ok else "FAIL")); bad += 0 if ok else 1
         try:
@@ -191,6 +387,63 @@ def selftest():
         print("%s  set-contact refuses a non-address" % ("ok  " if ok else "FAIL")); bad += 0 if ok else 1
     finally:
         shutil.rmtree(d, ignore_errors=True)
+    # ── words, marks, image, pages ─────────────────────────────────
+    d = tempfile.mkdtemp(prefix="legalcheck2.")
+    try:
+        def put(rel, text):
+            q = os.path.join(d, rel); os.makedirs(os.path.dirname(q), exist_ok=True); open(q, "w").write(text)
+        put("website/a.html", "<html><body><p>Windows and your files are kept.</p></body></html>")
+        want("a clean page has no banned claim", [] if not check_claims(d) else ["x"], "x") if False else None
+        ok = not check_claims(d); print("%s  a clean page passes the claims check" % ("ok  " if ok else "FAIL")); bad += 0 if ok else 1
+        for phrase, why in (("Windows and all your files stay.", "all your files"), ("Your files stay untouched.", "untouched"),
+                            ("Nothing about you is collected.", "Nothing about you"), ("Kept just as they were.", "just as they were"),
+                            ("There is nothing to pay, now or later.", "nothing to pay"), ("It is completely safe.", "completely safe"),
+                            ("A change with no risk at all.", "no risk")):
+            put("website/a.html", "<html><body><p>%s</p></body></html>" % phrase)
+            want("the claims check refuses %r" % phrase, check_claims(d), why)
+        put("website/a.html", "<html><body><!-- untouched --><p>fine</p></body></html>")
+        ok = not check_claims(d); print("%s  a comment is not a claim" % ("ok  " if ok else "FAIL")); bad += 0 if ok else 1
+        want("a pending phrase is refused once its date has passed", check_claims(ROOT, "2027-06-01"), "past its date")
+        # marks
+        put("website/a.html", "<html><head><title>Ubuntu Remix</title></head><body><h1>Firefox</h1><p>built from Ubuntu</p><a class='get' href='x'>Get Firefox</a></body></html>")
+        m = check_marks_site(d)
+        want("a third-party name in a title is refused", m, "<title>"); want("... in a heading", m, "<h1>"); want("... on a Get button", m, "<a>")
+        put("website/a.html", "<html><head><title>AurOS</title></head><body><p>Built from Ubuntu 24.04 LTS software; Firefox is a trademark of the Mozilla Foundation.</p></body></html>")
+        ok = not check_marks_site(d); print("%s  running text may name them (nominative use)" % ("ok  " if ok else "FAIL")); bad += 0 if ok else 1
+        put("website/assets/ubuntu-logo.svg", "<svg/>")
+        want("a logo file named for another company is refused", check_marks_site(d), "logo")
+        # the image
+        put("st", "Package: ubuntu-wallpapers\nStatus: install ok installed\nVersion: 1\n\nPackage: bash\nStatus: install ok installed\nVersion: 1\n")
+        want("the image check refuses an Ubuntu branding package", check_image(os.path.join(d, "st"))[0], "ubuntu-wallpapers")
+        put("st2", "Package: bash\nStatus: install ok installed\nVersion: 1\n\nPackage: ubuntu-keyring\nStatus: install ok installed\nVersion: 1\n")
+        ok = not check_image(os.path.join(d, "st2"))[0]; print("%s  ubuntu-keyring and bash are fine" % ("ok  " if ok else "FAIL")); bad += 0 if ok else 1
+        put("r/usr/lib/os-release", 'NAME="Ubuntu"\nPRETTY_NAME="Ubuntu 24.04"\nID=ubuntu\n'); put("r/etc/lsb-release", "DISTRIB_ID=Ubuntu\n")
+        b, w = check_image(os.path.join(d, "st2"), os.path.join(d, "r"))
+        want("the image check refuses an os-release that says Ubuntu", b, "os-release NAME"); want("... and warns about lsb-release", w, "lsb-release")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    # the pages and notices, on a copy of the real ones
+    d = tempfile.mkdtemp(prefix="legalcheck3.")
+    try:
+        for rel in ("website", "docs/legal", "tools/legal", "rootfs/usr/share/doc/auros", "src/aurwl/gen", "LICENSE"):
+            src = os.path.join(ROOT, rel); dst = os.path.join(d, rel)
+            if os.path.isdir(src):
+                shutil.copytree(src, dst, ignore=shutil.ignore_patterns("shots", "*.woff2", "__pycache__"))
+            else:
+                shutil.copy(src, dst)
+        ok = not check_pages(d); print("%s  the real pages and notices are what their generators write" % ("ok  " if ok else "FAIL")); bad += 0 if ok else 1
+        idx = os.path.join(d, "website/index.html"); good = open(idx).read()
+        open(idx, "w").write(good.replace('href="licenses.html"', 'href="x.html"'))
+        want("a page without the license link is refused", check_pages(d), "licenses.html")
+        open(idx, "w").write(good)
+        t = os.path.join(d, "docs/legal/TERMS.md"); gt = open(t).read()
+        open(t, "w").write(gt.replace("AurOS itself is free.", "AurOS is free.", 1))
+        want("a Terms page that is not the Markdown is refused", check_pages(d), "legal pages and footers")
+        open(t, "w").write(gt)
+        n = os.path.join(d, "rootfs/usr/share/doc/auros/THIRD-PARTY-NOTICES"); open(n, "a").write("x")
+        want("a notice file that is not what is generated is refused", check_pages(d), "notice files")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
     print("\n%s" % ("all passed" if not bad else "%d FAILED" % bad))
     return 1 if bad else 0
 
@@ -198,6 +451,16 @@ def selftest():
 def main(argv):
     if argv[:1] == ["selftest"]:
         return selftest()
+    if argv[:1] == ["image"]:
+        a = argv[1:]
+        st = a[a.index("--status") + 1] if "--status" in a else None
+        rd = a[a.index("--root") + 1] if "--root" in a else None
+        if not st:
+            print(__doc__); return 2
+        bad, warn = check_image(st, rd)
+        for w in warn: print("legal: warning: " + w)
+        for b in bad: print("legal: " + b)
+        print("legal: image: %d problem(s)" % len(bad)); return 1 if bad else 0
     if argv[:1] == ["set-contact"]:
         if len(argv) != 2:
             print(__doc__); return 2

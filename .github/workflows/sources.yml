@@ -3,7 +3,7 @@
 # rule is docs/legal/COMPLIANCE.md LIC-1, the how is docs/legal/SOURCES.md).
 #
 # AurOS carries hundreds of programs under the GPL, LGPL and similar
-# licences. A person who has a copy is entitled to their source, from us,
+# licenses. A person who has a copy is entitled to their source, from us,
 # not from a mirror that forgets old versions. Every AurOS release
 # therefore gets, beside it, a release holding the exact Ubuntu source
 # packages of the exact versions in its image (build/sources).
@@ -146,7 +146,8 @@ jobs:
           # archive is a tar of rootfs/ (root-owned): nothing is run, nothing
           # is trusted, three paths are read.
           zstd -dc dist/rootfs.tar.zst | tar -x -C meta --strip-components=1 --no-same-owner --wildcards \
-              'rootfs/var/lib/dpkg/status' 'rootfs/etc/auros/build-warnings' 'rootfs/opt/firefox/application.ini' || true
+              'rootfs/var/lib/dpkg/status' 'rootfs/etc/auros/build-warnings' 'rootfs/opt/firefox/application.ini' \
+              'rootfs/usr/lib/os-release' 'rootfs/etc/issue' 'rootfs/etc/lsb-release' || true
           test -s meta/var/lib/dpkg/status || { echo "::error::the rootfs artifact has no dpkg database"; exit 1; }
           rm -f dist/rootfs.tar.zst
           grep -c '^Package: ' meta/var/lib/dpkg/status | sed 's/$/ packages in the image/'
@@ -240,6 +241,25 @@ jobs:
           python3 -I build/sources verify --dir dl "${args[@]}"
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/sources-$TAG" --jq '.assets' > assets.json
           python3 -I build/sources verify --dir dl --api-json assets.json
+
+  # What the image calls itself and what artwork it carries (COMPLIANCE LIC-5, TM-1).
+  # Its own job: a finding here never holds back the source release, and E may add
+  # it to `promote`'s needs when stream C has finished TM-1 (lsb-release).
+  marks:
+    needs: [which, make]
+    if: ${{ !cancelled() && needs.make.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: sources-meta
+          path: meta
+      - name: no Ubuntu branding in the image, and it does not name itself Ubuntu
+        run: python3 -I tools/legal/check.py image --status meta/var/lib/dpkg/status --root meta
 
   reverify:
     needs: which

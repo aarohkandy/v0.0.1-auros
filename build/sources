@@ -2,7 +2,7 @@
 """build/sources -- the corresponding source of what one AurOS release ships.
 
 Why this exists (docs/legal/COMPLIANCE.md LIC-1, LIC-3): the image holds
-hundreds of programs under the GNU GPL, LGPL and similar licences, and a
+hundreds of programs under the GNU GPL, LGPL and similar licenses, and a
 person who has a copy of AurOS is entitled to the matching source. The
 duty is ours, not Ubuntu's: pointing at archive.ubuntu.com is not enough
 (old versions leave the pool; GPLv2 s3 wants the source "from the same

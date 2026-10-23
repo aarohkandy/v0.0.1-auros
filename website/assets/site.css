@@ -325,6 +325,7 @@ html[data-build="default"] [data-build-for="fastpath"], html[data-build="fastpat
 .foot { border-top: 2px solid var(--soft); padding-block: 40px 56px; }
 .foot-links { list-style: none; margin: 0 0 20px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 32px; }
 .foot-links a { display: inline-flex; align-items: center; min-height: 48px; }
+.under-get { justify-content: center; margin: 4px 0 0; }
 .foot p { font-size: 18px; color: var(--quiet); }
 
 /* ── pages of instructions (advanced.html, guide.html) ─────────── */

@@ -1,69 +1,63 @@
-# Legal documents: DRAFTS ONLY
+# Legal documents
 
-> **DRAFT: must be reviewed by a lawyer before use.**
-> Nothing in this folder is legal advice, and none of it is in force.
-> These drafts were written by the project's engineering effort to give a
-> lawyer something concrete to start from. They are not published on the
-> website or shown in AurOS, and must not be until a qualified lawyer in
-> the owner's country has reviewed and approved them.
+**Prepared without a lawyer (owner decision D15).** Nothing in this folder is legal advice. The
+agents who wrote it checked each other: the review that found what to write is `COMPLIANCE.md`
+(112 candidate findings, each challenged twice by independent skeptics, 58 kept), and every
+document below was read by two adversarial reviewers before it was linked from the website
+(`REVIEWS.md` has what they found and what changed). An owner who wants a lawyer to read any single
+item can; nothing here needs one to start. The reviewed-under-D15 line the documents carry is the
+gate that used to say "approved by a lawyer": it is closed by the review, not by a person.
 
-| File | What it is for | Where it would appear once approved |
+## The documents
+
+| File | What it is | Where it appears |
 |---|---|---|
-| [TERMS.md](TERMS.md) | Terms of use for the website, the installer and AurOS | website footer; linked from the installer's first page |
-| [PRIVACY.md](PRIVACY.md) | Privacy policy: what AurOS and its website do and don't collect, and which outside services an AurOS computer talks to | website footer; AurOS help pages |
-| [DISCLAIMER.md](DISCLAIMER.md) | Plain disclaimer: free software, no warranty, back up first, not affiliated with Microsoft/Canonical/Mozilla | website footer; installer's Ready page (short form) |
+| [TERMS.md](TERMS.md) | The Terms, v1 | `website/terms.html`; the installer's Ready page links it and carries it as text (`notices/TERMS.txt`) |
+| [DISCLAIMER.md](DISCLAIMER.md) | The Disclaimer, v1 | `website/disclaimer.html`; its short form is in the installer |
+| [PRIVACY.md](PRIVACY.md) | The privacy page, v1 | `website/privacy.html` |
+| [LICENSES.md](LICENSES.md) | Licenses and how to get the source | `website/licenses.html` |
+| [SOURCES.md](SOURCES.md) | How the source releases are made and checked | developers |
+| [COMPLIANCE.md](COMPLIANCE.md) | The review: every finding, its rule, its remedy, its status | the lead, the owner |
+| [WISHES-PRIVACY-DRAFT.md](WISHES-PRIVACY-DRAFT.md) | The privacy text for Wishes, which waits for its gate (D14) | never published as it stands |
+| [signpath-application.md](signpath-application.md) | Text for the SignPath Foundation application | the owner, when he applies |
+| `licenses/`, `notices/` | Full license texts (Debian's, byte for byte), the copyright files of the programs inside the installer, and the files generated from them | `AurOS-Setup.exe`'s Licenses button; the image |
 
-## What the owner must do
+The website pages are **generated** from the Markdown (`python3 -I tools/legal/mkpages.py`), and
+the notice files from the texts they quote (`python3 -I tools/legal/notices.py`); `python3 -I
+tools/legal/check.py` fails if a page or a notice file is not what its source says, if a public
+text uses a word we promised not to, if a page uses another company's name where it would read as
+ours, and (with `--launch`) while the owner's mailbox, `CONTACT_EMAIL`, is still a placeholder.
 
-1. **Take all three to a lawyer** who practises consumer, software and
-   data-protection law where you (the publisher) live and where your users
-   are. Say who the users are: older, non-technical people, worldwide,
-   installing software that changes their computer's drive.
-2. **Fill the placeholders.** Every `[OWNER: ...]` marks a fact only you
-   can supply: your legal name or company, address, country whose law
-   applies, a contact address, an age limit, and whether anything is or
-   will be sold.
-3. **Ask the lawyer specifically about** (each is flagged in the drafts):
-   - whether the warranty disclaimer and liability limits are enforceable
-     against consumers in your users' countries (in the EU and UK, for
-     example, consumer rights and liability for death, personal injury,
-     fraud or gross negligence usually cannot be excluded);
-   - **open-source licence duties for the AurOS image.** The image contains
-     GPL-licensed programs (the Linux kernel and many others) in binary
-     form. Distributing it normally obliges you to provide, or offer in
-     writing, the matching source code. Decide how (a source archive per
-     release is the usual answer) before the first public release;
-   - **trademarks:** "Ubuntu" and Canonical's marks (AurOS ships Ubuntu
-     binaries in a modified image; see D8 in
-     `docs/handoff/SESSION-2026-10-23.md` and
-     `docs/research/other-systems-2026-10.md`), "Firefox", "Windows",
-     "BitLocker", "Intel". The drafts use them only to describe
-     compatibility and say AurOS is not affiliated; confirm that is enough,
-     and whether to write to Canonical as D8 suggests;
-   - the **installer's actions** on the user's PC (shrinking the Windows
-     drive, pausing BitLocker for one restart, carrying the Wi-Fi password
-     across, all with on-screen consent): whether the consent wording on
-     screen is adequate, and whether the terms must be accepted before the
-     installer changes anything (today it does not ask for acceptance);
-   - **data protection:** whether the website's host (GitHub) and the
-     download host (GitHub Releases) logging visitors' IP addresses makes
-     you a controller of that data, and what the privacy policy must then
-     say (GDPR/UK GDPR, California, others);
-   - the **safe-harbour promise** in `SECURITY.md`;
-   - **Wishes** (`docs/AI.md`): her words go to a service on Cloudflare
-     and to Anthropic in the US. Consent screen wording, legal basis,
-     transfer mechanism, processor agreements (sign Anthropic's DPA and
-     ask for zero data retention), and whether the terms need an AI
-     notice. Privacy section 4a and terms section 5 are the drafts;
-   - whether you need an **imprint / legal notice** (required for websites
-     run from Germany and some other countries).
-4. **If anything is ever sold** (support, a pre-installed computer, a paid
-   edition), these drafts are not enough: sales need their own terms
-   (price, refunds, cancellation rights, statutory warranty).
-5. **Keep the facts true.** The privacy draft lists what AurOS sends where,
-   checked against the code on 2026-10-23. Every time a new outside service
-   is added (a crash reporter, an update server, analytics), the policy
-   must change *before* the release that adds it. Ask an engineer to re-run
-   the check described at the end of PRIVACY.md.
-6. Only then: publish the approved versions (website footer, help pages),
-   and remove the "DRAFT" banners as part of that same change.
+## What the owner still has to give
+
+- **A mailbox** people can write to (`CONTACT_EMAIL` stands in every document until then): then
+  `python3 -I tools/legal/check.py set-contact you@example.org`. The rest of the checklist is in
+  `COMPLIANCE.md` section 3.
+- Nothing else is needed to publish these documents. A governing-law clause, a legal name and an
+  address were left out on purpose (the Terms say "write to us first" and "this does not take away
+  any right you have by law"); an LLC (checklist item 11) would put its name in them.
+
+## Rules that keep the documents true
+
+1. **The facts are checked against the code.** Every sentence about what AurOS does or sends is in
+   `CLAIMS.md` with where it is proven; when the code changes, the sentence changes first.
+2. **A new outside service means a new privacy sentence before the release that adds it** (the
+   outcome ping, the report button, the download-cap Worker, the notice feed, Wishes). Run the
+   host list in `PRIVACY.md` against a running computer when the egress test exists
+   (`COMPLIANCE.md` PRI-2).
+3. **Marks.** Other companies' names appear in running text, to say what something resembles or works
+   with, with the non-affiliation paragraph in every footer; never in a title, a button, an
+   address or a logo (`tools/legal/check.py`).
+4. **Accessibility scope.** AurOS is offered in English, for people in the United States for now. No
+   EU-directed marketing, no sale to EU consumers and no EU pre-installed computers until the
+   accessibility work (WP-66, WP-67) is done and `COMPLIANCE.md` WEB-4 is re-read; paid offers in
+   the US, UK, Canada or Australia are re-checked against the accessibility rules at that time.
+5. **State AI laws** (Colorado, California, Utah, Texas) were checked and none applies while Wishes
+   is off and its answers never reach her as the model's own text (`COMPLIANCE.md` appendix 42).
+6. **If anything is ever sold** (support, a paid Wishes quota, a pre-installed computer, a paid
+   edition), these documents are not enough: sales need their own terms (`COMPLIANCE.md` LIA-8,
+   AI-8), a merchant of record, an LLC and insurance. Before AurOS is handed over on hardware:
+   Mozilla's agreement for Firefox (or ship without it), Canonical's answer in writing, the GPLv3
+   path for GRUB (a way to enroll her own key, or Secure Boot off), and the vendors' firmware terms.
+   Codecs: `LIC-10` (the patent licensing questions get asked before any sale).
+7. **Wording that must not come back** is listed in `tools/legal/check.py` (`BANNED`).

@@ -2,9 +2,9 @@ AUROS: THE SOURCE CODE, AND OUR WRITTEN OFFER OF IT
 
 Prepared by the AurOS project without a lawyer. Not legal advice.
 
-AurOS contains programs under the GNU General Public Licence (GPL), the GNU
-Lesser General Public Licence (LGPL), the Mozilla Public Licence and other
-licences. For these programs you are entitled to the source code. We give
+AurOS contains programs under the GNU General Public License (GPL), the GNU
+Lesser General Public License (LGPL), the Mozilla Public License and other
+licenses. For these programs you are entitled to the source code. We give
 it to you, and this is our written offer of it.
 
 WHERE IT IS
@@ -20,7 +20,7 @@ The sources release holds the Ubuntu source packages, in the exact
 versions that are in AurOS, as files you can download. Its file
 SOURCES.txt lists every program and where its source is. Firefox is made
 by Mozilla; SOURCES.txt gives the address where Mozilla publishes its
-source. AurOS's own code is under the MIT licence and is in the same
+source. AurOS's own code is under the MIT license and is in the same
 release. The programs inside the Windows installer AurOS-Setup.exe (the
 Linux kernel, the boot loader and the small system that runs after the
 restart) are covered by the same release.
@@ -48,5 +48,5 @@ This offer is for anyone who has a copy of AurOS, not only for the person
 who first downloaded it. Programs your computer later updates from Ubuntu
 or from Mozilla come with source from them, at their own addresses.
 
-Nothing here limits the rights that the licences of these programs give
-you. If these words and a licence disagree, the licence wins.
+Nothing here limits the rights that the licenses of these programs give
+you. If these words and a license disagree, the license wins.

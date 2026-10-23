@@ -6,9 +6,9 @@ The review behind it: `COMPLIANCE.md` LIC-1 and LIC-3.
 ## Why
 
 AurOS hands a person an image of hundreds of programs. The Linux kernel, the
-boot loader, bash and many more are under the GNU General Public Licence
+boot loader, bash and many more are under the GNU General Public License
 (GPL); glibc and others under the LGPL; Firefox under the Mozilla Public
-Licence. Those licences make *us*, the people who hand over the programs,
+License. Those licenses make *us*, the people who hand over the programs,
 responsible for giving the matching source code (or a written offer of it) to
 everyone who gets a copy. Pointing at Ubuntu's archive is not enough: old
 versions leave it, and the GPL asks for the source from the same place as the
@@ -29,7 +29,7 @@ For every AurOS release `TAG` (say `v0.1.0-618726b`) the workflow
 | `auros-source-<commit>.tar.gz` | `git archive` of the exact commit the image was built from (MIT). |
 
 The release notes carry the written offer (`rootfs/usr/share/doc/auros/SOURCE-OFFER`,
-also in the image, on the website's Licences page and, in a short form, in the
+also in the image, on the website's Licenses page and, in a short form, in the
 notes of the AurOS release itself).
 
 ## How a release is made (`build/sources`)

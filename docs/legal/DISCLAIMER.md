@@ -30,7 +30,7 @@ AurOS is built from Ubuntu 24.04 LTS software. It is not made, endorsed or suppo
 
 ## Other people's programs
 
-Programs you add through **Get more programs** are made by other people, under their own licences and terms. We don't make them or check them.
+Programs you add through **Get more programs** are made by other people, under their own licenses and terms. We don't make them or check them.
 
 ## AurOS will never phone you
 

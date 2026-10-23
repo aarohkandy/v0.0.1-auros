@@ -1,4 +1,4 @@
-# Stream LEGAL: licences, notices, terms, privacy, and the honesty of every claim (session B)
+# Stream LEGAL: licenses, notices, terms, privacy, and the honesty of every claim (session B)
 
 Repository `aarohkandy/v0.0.1-auros`, branch `main`. Rules: `docs/handoff/FIELD-MANUAL.md`.
 Brief: `docs/legal/COMPLIANCE.md` sections 1, 2 and 4 (the LEGAL packages). Owner decision
@@ -7,7 +7,7 @@ every document says plainly it was prepared without a lawyer. Nothing in `docs/l
 advice.
 
 **Owns.** `docs/legal/**`, `docs/PRIVACY.md` (does not exist; the policy lives in
-`docs/legal/PRIVACY.md`), the new `website/{licences,terms,disclaimer,privacy}.html` pages,
+`docs/legal/PRIVACY.md`), the new `website/{licenses,terms,disclaimer,privacy}.html` pages,
 `rootfs/usr/share/doc/auros/**`, `build/sources`, `tools/legal/**`.
 Shared (smallest edit, said in the commit body): footers of the other website pages (D),
 help pages (K), `build/aurbridge` resources and the Ready page (B/A2), `.github/workflows`
@@ -16,7 +16,7 @@ help pages (K), `build/aurbridge` resources and the Ready page (B/A2), `.github/
 ## Order of work (from the lead)
 
 1. LIC-1  source + written offer for what we distribute (`build/sources`, `sources-<tag>` release).
-2. LIC-2/3/5, TM-1/2/3  licences page + texts, non-affiliation line, mark check.
+2. LIC-2/3/5, TM-1/2/3  licenses page + texts, non-affiliation line, mark check.
 3. LIA-1/2, WEB-1/3, PRI-1/2/7, LIA-5  terms, disclaimer, Ready-page strings, honest wording, privacy.
 4. TM-4  free knockout search for "AurOS" (`docs/legal/NAME-SEARCH.md`).
 5. Keep `docs/legal/COMPLIANCE.md` status current; two skeptics review each public document.
@@ -32,7 +32,7 @@ help pages (K), `build/aurbridge` resources and the Ready page (B/A2), `.github/
   (34 cases + 7 mutants), `.github/workflows/sources.yml`, `legal.yml`, `tools/legal/{check,notes}.py/sh`,
   `rootfs/usr/share/doc/auros/SOURCE-OFFER` (forge stamps the releases page into it).
   Still to do for LIC-1: E wires `sources.yml` into release.yml (below); CONTACT_EMAIL stays until the owner has a mailbox.
-- Step 2 (licences page, notices, marks check): in progress. Texts written in `docs/legal/{TERMS,DISCLAIMER,PRIVACY,LICENCES}.md`
+- Step 2 (licenses page, notices, marks check): in progress. Texts written in `docs/legal/{TERMS,DISCLAIMER,PRIVACY,LICENCES}.md`
   (v1, not linked from anywhere until two skeptic reviews have passed).
 
 ## Hand-offs to other streams (via the lead)

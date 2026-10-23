@@ -4,7 +4,7 @@ Version 1, 23 October 2026. Written by the AurOS team without a lawyer. These Te
 
 These Terms are about the AurOS website, the Windows program **AurOS Setup** (the file AurOS-Setup.exe), and the AurOS system it puts on your computer, with its updates. We call all of that "AurOS". "We" are the people who make AurOS, on the AurOS project page on GitHub.
 
-**The programs inside AurOS are not covered by these Terms.** Each one has its own licence (section 3), and those licences always win over these Terms.
+**The programs inside AurOS are not covered by these Terms.** Each one has its own license (section 3), and those licenses always win over these Terms.
 
 ## 1. In short
 
@@ -22,13 +22,13 @@ AurOS is for adults. If you are under 18, ask a parent or guardian to help you, 
 
 ## 3. The programs inside AurOS
 
-AurOS's own programs are free software under the MIT licence. AurOS also includes many programs made by other people, for example Firefox and the Linux system underneath, most of them from Ubuntu. Each one has its own licence. You are free to use and share them, and most can be changed too. The page **Licences and source code** says where to find each licence and how to get the source code.
+AurOS's own programs are free software under the MIT license. AurOS also includes many programs made by other people, for example Firefox and the Linux system underneath, most of them from Ubuntu. Each one has its own license. You are free to use and share them, and most can be changed too. The page **Licenses and source code** says where to find each license and how to get the source code.
 
-Nothing in these Terms limits the rights those licences give you. If anything in these Terms disagrees with the licence of a program, the licence wins.
+Nothing in these Terms limits the rights those licenses give you. If anything in these Terms disagrees with the license of a program, the license wins.
 
-Some computer parts need firmware from the company that made them. Firmware has its maker's own licence, and a copy is on your computer in the folder /usr/share/doc, under the name of the program that carries it. Those licences are between you and the maker.
+Some computer parts need firmware from the company that made them. Firmware has its maker's own license, and a copy is on your computer in the folder /usr/share/doc, under the name of the program that carries it. Those licenses are between you and the maker.
 
-AurOS includes programs that play video, music and photos. Some ways of doing that are covered by patents in some countries. The MIT licence gives no patent licence, and these programs come without a guarantee.
+AurOS includes programs that play video, music and photos. Some ways of doing that are covered by patents in some countries. The MIT license gives no patent license, and these programs come without a guarantee.
 
 AurOS includes standard security software. You are responsible for following the export laws of your country.
 
@@ -51,7 +51,7 @@ Pressing **Install AurOS** means you agree to these Terms. If you don't agree, d
 - **Keep copies of anything important**, such as photos and papers, somewhere else, for example on a memory stick. Do this before you install AurOS and keep doing it. It is good practice with any computer.
 - Keep the computer plugged in while AurOS is being installed.
 - Please use AurOS lawfully, and don't use it to get into other people's computers or accounts.
-- Programs you add through **Get more programs** are made by other people, mostly from the Flathub catalogue. Their own terms apply to them. We don't make them or check them.
+- Programs you add through **Get more programs** are made by other people, mostly from the Flathub catalog. Their own terms apply to them. We don't make them or check them.
 - **Wishes** (an AI helper) is switched off in this version. If it is ever switched on, it uses an AI, which can misunderstand you. It is built to do only a short list of things, each shown to you first, and it cannot delete files, send messages, buy anything or change security settings. It is not a safe way to remember medicine, appointments or anything where missing it could hurt you. A reminder can fail, for example when the computer is off, asleep or has no battery. Use a phone alarm or a person as well. Wishes is free for now and may be limited or unavailable at times.
 
 ## 6. No guarantee
@@ -68,7 +68,7 @@ Nothing in these Terms limits our responsibility where the law does not let it b
 
 ## 8. Changes and stopping
 
-While your computer is online, AurOS gets security fixes from Ubuntu, Mozilla and our own update channel, as long as we keep AurOS going. We may change or stop AurOS, or these Terms. We will try to give at least 90 days' notice before we stop, and if we can't, we will say so as soon as we can. Changing or stopping AurOS does not end the offer of source code (see the page Licences and source code), and it does not take away any right that the licences of its programs give you.
+While your computer is online, AurOS gets security fixes from Ubuntu, Mozilla and our own update channel, as long as we keep AurOS going. We may change or stop AurOS, or these Terms. We will try to give at least 90 days' notice before we stop, and if we can't, we will say so as soon as we can. Changing or stopping AurOS does not end the offer of source code (see the page Licenses and source code), and it does not take away any right that the licenses of its programs give you.
 
 If we change these Terms, we will say so on the website. Changes apply to later installs. We do not change the Terms of an install you have already done.
 

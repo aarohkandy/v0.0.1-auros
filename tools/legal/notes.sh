@@ -32,7 +32,7 @@ The source code of AurOS $tag: the Ubuntu source packages in the exact versions 
 | \`SOURCES.txt\` | Every program, its version, which part holds it, and the address of Firefox's source. |
 | \`PACKAGES.txt\` | Every program in the image, and the source package it was built from. |
 | \`SHA256SUMS\` | \`sha256sum -c SHA256SUMS\` checks every file here. |
-| \`auros-source-*.tar.gz\` | AurOS's own code, at the commit the image was built from (MIT licence). |
+| \`auros-source-*.tar.gz\` | AurOS's own code, at the commit the image was built from (MIT license). |
 
 This release is checked after it is published: every file is downloaded again and every program in the image must have its source here (\`build/sources verify\`). It is never deleted.
 
@@ -44,7 +44,7 @@ EOF
 line)
     tag=${2:?TAG}
     cat <<EOF
-Licences and the complete source code for this release: $rel/tag/sources-$tag . Our written offer of source is in the notes of that release, on the website's Licences page and, on an installed computer, in /usr/share/doc/auros/SOURCE-OFFER.
+Licenses and the complete source code for this release: $rel/tag/sources-$tag . Our written offer of source is in the notes of that release, on the website's Licenses page and, on an installed computer, in /usr/share/doc/auros/SOURCE-OFFER.
 EOF
     ;;
 *) echo "usage: sh tools/legal/notes.sh sources TAG COMMIT RUN_ID | line TAG" >&2; exit 2 ;;

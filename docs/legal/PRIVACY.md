@@ -8,7 +8,7 @@ Who is responsible: the AurOS project, run from the AurOS project page on GitHub
 
 - AurOS collects nothing about you. There is no account, no sign-in, no advert and no tracking on the website, in AurOS Setup, or on your computer.
 - AurOS Setup and AurOS send nothing about you or your computer to us. Your files, your passwords and what you do stay on your computer.
-- To work, your computer does talk to **other organisations' servers**: GitHub, Ubuntu, Mozilla, Flathub, Google's Safe Browsing and others (section 4). They see what any website you visit sees, such as your internet address. We don't control their records, and each has its own privacy policy.
+- To work, your computer does talk to **other organizations' servers**: GitHub, Ubuntu, Mozilla, Flathub, Google's Safe Browsing and others (section 4). They see what any website you visit sees, such as your internet address. We don't control their records, and each has its own privacy policy.
 - If we ever add something that sends anything about you or your computer to us, we will say so on this page **before** the update that does it, and it will be your choice.
 
 ## 2. The website
@@ -31,7 +31,7 @@ While it works, Setup writes notes on your computer so that it can finish, or un
 
 ## 4. AurOS on your computer
 
-AurOS doesn't send us usage numbers, crash reports or a list of your programs. Ubuntu's usage counter ("popularity contest") and its paid "Ubuntu Pro" service are left out of AurOS on purpose.
+AurOS doesn't send us usage numbers, crash reports or a list of your programs. Ubuntu's usage counter ("popularity contest") is left out of AurOS on purpose. Ubuntu's paid "Ubuntu Pro" program is still on the computer, because other software needs it, but it is switched off, and so are Ubuntu's daily news messages.
 
 To keep your computer working and safe, AurOS and the programs it comes with mainly connect to the services below while you are online. Each sees your internet address and what is being downloaded.
 
@@ -42,7 +42,7 @@ To keep your computer working and safe, AurOS and the programs it comes with mai
 | Firefox's own services | Mozilla | Add-ons (including uBlock Origin, from addons.mozilla.org), block lists, and checking whether you are online. Firefox's usage reports (telemetry) are switched off. |
 | uBlock Origin's lists | The list makers (several are hosted on GitHub) | Keeping the ad and scam block lists up to date |
 | Safe Browsing, inside Firefox | Google | Warns before a dangerous website or download. Firefox checks addresses against a list it downloads. For some downloads it sends details of the file (not the file itself) to Google to check it. |
-| Flathub | Flathub, with the GNOME Foundation and partners | The catalogue and downloads in **Get more programs**. The store may also ask the GNOME project's review service for ratings. |
+| Flathub | Flathub, with the GNOME Foundation and partners | The catalog and downloads in **Get more programs**. The store may also ask the GNOME project's review service for ratings. |
 | AurOS's update channel | GitHub, Inc. (GitHub Releases) | AurOS's own updates |
 | Time servers | Ubuntu, the NTP pool, Cloudflare, Netnod, PTB | Keeping the clock right |
 

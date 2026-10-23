@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Licenses and source code &mdash; AurOS</title>
+<meta name="description" content="The licenses of the programs inside AurOS, and how to get their source code.">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#F6F2E9">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Cpath%20d='M16%202L30%2016L16%2030L2%2016Z'%20fill='%230B5D4F'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the text</a>
+
+<header class="bar">
+  <div class="wrap bar-in">
+    <a class="brand" href="index.html"><svg class="mark" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M5 0L10 5L5 10L0 5Z"/></svg>AurOS</a>
+    <a class="bar-link" href="index.html">Back to the simple page</a>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="page-head" aria-labelledby="page-title">
+    <div class="narrow">
+      <h1 id="page-title">Licenses and source code</h1>
+      <p class="note">Version 1, 23 October 2026. Written by the AurOS team without a lawyer. This page is not legal advice.</p>
+      <p class="lede">AurOS’s own programs are free software under the MIT license. AurOS also includes programs made by other people, including the Linux system underneath, Firefox and many programs from Ubuntu. Each one has its own license. You are free to use and share them, and most can be changed too. This page says where the licenses are and how to get the source code.</p>
+    </div>
+  </section>
+
+  <section class="doc sand" id="get-the-source-code" aria-labelledby="get-the-source-code-title">
+    <div class="narrow">
+      <h2 id="get-the-source-code-title">Get the source code</h2>
+      <p>Every AurOS release has a second release beside it on <a href="https://github.com/@AUROS_REPO@/releases">the releases page</a>, named “sources-” followed by the name of the AurOS release. For example, the source for the release v0.1.0-618726b is the release sources-v0.1.0-618726b. It holds the Ubuntu source packages, in the exact versions that are in AurOS, as files you can download. Its file SOURCES.txt lists every program and where its source is. Firefox is made by Mozilla; SOURCES.txt gives the address where Mozilla publishes its source. AurOS’s own code is under the MIT license and is in the same release. The programs inside the Windows installer AurOS-Setup.exe (the Linux kernel, the boot loader and the small system that runs after the restart) are covered by the same release.</p>
+      <p>If this computer has the file /etc/auros/release, it names the release. If not, type “dpkg -l auros” in a terminal: the version shown is also written in the file PACKAGES.txt of the sources release that matches. If you are not sure, write to us and say what you can see.</p>
+      <p>We keep each sources release for at least three years after the last day we offer the matching AurOS release for download, and for as long as we support it. We do not delete them before then.</p>
+      <p><b>If you cannot get the source that way,</b> write to CONTACT_EMAIL and say which release you have. We will send you the source on a USB stick or a disc, for no more than the cost of the medium and the postage. This offer is for anyone who has a copy of AurOS, not only for the person who first downloaded it. Programs your computer later updates from Ubuntu or from Mozilla come with source from them, at their own addresses.</p>
+      <p>Nothing here limits the rights that the licenses of these programs give you. If these words and a license disagree, the license wins.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc" id="which-licenses" aria-labelledby="which-licenses-title">
+    <div class="narrow">
+      <h2 id="which-licenses-title">Which licenses</h2>
+      <ul>
+        <li><p><b>AurOS’s own programs: the desktop, AurOS Setup, the tools</b>. MIT. The text is in the file LICENSE in the source code and in /usr/share/doc/auros/LICENSE</p></li>
+        <li><p><b>The Linux kernel</b>. GNU GPL version 2, with the Linux syscall note</p></li>
+        <li><p><b>GRUB, the start-up menu</b>. GNU GPL version 3 or later</p></li>
+        <li><p><b>shim, which lets Secure Boot start AurOS</b>. BSD 2-clause</p></li>
+        <li><p><b>The C library (glibc), and many other libraries</b>. GNU LGPL version 2.1 or later</p></li>
+        <li><p><b>bash and many tools</b>. GNU GPL version 3 or later</p></li>
+        <li><p><b>systemd</b>. GNU LGPL version 2.1 or later, some parts GPL version 2</p></li>
+        <li><p><b>NTFS tools (ntfs-3g), file system tools (e2fsprogs)</b>. GNU GPL version 2 or later, some parts LGPL</p></li>
+        <li><p><b>Firefox</b>. Mozilla Public License 2.0</p></li>
+        <li><p><b>The typeface, Atkinson Hyperlegible Next</b>. SIL Open Font License 1.1</p></li>
+        <li><p><b>The fallback typeface, DejaVu</b>. Bitstream Vera license, with public-domain changes</p></li>
+        <li><p><b>Parts of the screen software (the Wayland protocol files)</b>. MIT-style and similar permissive licenses</p></li>
+        <li><p><b>Hardware firmware (Wi-Fi, graphics, sound and the like)</b>. Each maker’s own license</p></li>
+      </ul>
+      <p>“Mostly” because a program can contain parts under other licenses. The exact licenses of each program are in its own copyright file.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc sand" id="on-your-computer" aria-labelledby="on-your-computer-title">
+    <div class="narrow">
+      <h2 id="on-your-computer-title">On your computer</h2>
+      <ul>
+        <li><p>Each program’s license is in /usr/share/doc/ in a folder named for the program, in the file named “copyright”. The full texts of the common licenses are in /usr/share/common-licenses.</p></li>
+        <li><p>AurOS’s own notices are in /usr/share/doc/auros: LICENSE, SOURCE-OFFER and THIRD-PARTY-NOTICES.</p></li>
+        <li><p>Firmware from hardware makers has its makers’ licenses, in the copyright files of the programs whose names start with linux-firmware, under /usr/share/doc.</p></li>
+        <li><p>Programs you add through <b>Get more programs</b> come from Flathub. Each carries its own license, and its page shows it.</p></li>
+      </ul>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc" id="the-windows-installer" aria-labelledby="the-windows-installer-title">
+    <div class="narrow">
+      <h2 id="the-windows-installer-title">The Windows installer</h2>
+      <p>AurOS-Setup.exe contains the Linux kernel, GRUB and shim, and a small system that runs after the restart, which includes programs under the GPL and LGPL. The license texts are inside AurOS-Setup.exe (the Licenses button), and the source is in the same sources release. The small system’s own programs are linked to the C library in a way that lets you replace the library; the file docs/RELINK.md in the source code says how.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc sand" id="video-music-and-photos" aria-labelledby="video-music-and-photos-title">
+    <div class="narrow">
+      <h2 id="video-music-and-photos-title">Video, music and photos</h2>
+      <p>AurOS includes programs that play video, music and photos. Some ways of doing that are covered by patents in some countries. The MIT license gives no patent license.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc" id="names" aria-labelledby="names-title">
+    <div class="narrow">
+      <h2 id="names-title">Names</h2>
+      <p>Windows, Microsoft, Edge and BitLocker are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome is a trademark of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, or otherwise approved by Apple Inc. The names are used only to say what something resembles or works with.</p>
+      <p>AurOS is built from Ubuntu 24.04 LTS software. It is not made, endorsed or supported by Canonical.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <ul class="foot-links">
+      <li><a href="index.html">The simple page</a></li>
+      <li><a href="advanced.html">For someone who knows computers</a></li>
+      <li><a href="https://github.com/@AUROS_REPO@/issues">Ask a question</a></li>
+      <li><a href="https://github.com/@AUROS_REPO@">The source code</a></li>
+    </ul>
+    <!-- legal-footer: written by tools/legal/mkpages.py, the same on every page -->
+    <ul class="foot-links foot-legal">
+      <li><a href="licenses.html">Licenses and source code</a></li>
+      <li><a href="terms.html">Terms</a></li>
+      <li><a href="disclaimer.html">Disclaimer</a></li>
+      <li><a href="privacy.html">Privacy</a></li>
+    </ul>
+    <p>No cookies and no ads. AurOS collects nothing about you. GitHub, which hosts this site, keeps its own records of the internet addresses that visit.</p>
+    <p>AurOS&rsquo;s own code is free software (MIT license). It includes programs by others, each under its own license: <a href="licenses.html">licenses and source code</a>. Set in Atkinson Hyperlegible Next (<a href="assets/fonts/OFL.txt">license</a>).</p>
+    <p>AurOS is built from Ubuntu 24.04 LTS software. It is not made, endorsed or supported by Canonical. Windows, Microsoft, Edge and BitLocker are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome is a trademark of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, or otherwise approved by Apple Inc. The names are used only to say what something resembles or works with.</p>
+    <!-- /legal-footer -->
+  </div>
+</footer>
+</body>
+</html>
