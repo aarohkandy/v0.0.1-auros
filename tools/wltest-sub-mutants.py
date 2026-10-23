@@ -17,9 +17,12 @@ import os, subprocess, sys, tempfile, shutil
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src", "aurwl", "aurwl.c")
 CURSOR = os.path.join(ROOT, "src", "aurshell", "cursor.c")
+XWM = os.path.join(ROOT, "src", "aurwl", "xwm.inc")
 
 # (what is broken, scenario that must notice, old, new)
 # A scenario written "cursortest" means tools/cursortest.sh against src/aurshell/cursor.c.
+# A scenario written "x:NAME" is a scenario of tools/wltest-x.sh (the X window manager);
+# the target (5th field) is then usually XWM, src/aurwl/xwm.inc.
 MUTANTS = [
     ("a desync child under a sync parent is not held", "effective-sync",
      "        if (w->sub_sync) return 1;\n        if (++i > PARENT_MAX) return 1;",
@@ -194,6 +197,64 @@ MUTANTS = [
     ("a viewport destination overrides the window geometry (clicks land 20% off in GTK4)", "csd-viewport",
      "    int bw = w->cw, bh = w->ch;\n    if (w->has_geo) {\n        /* The window, not the surface:",
      "    int bw = w->cw, bh = w->ch;\n    if (0) {\n        /* The window, not the surface:"),
+    # ── the X window manager (src/aurwl/xwm.inc), tools/wltest-x.sh ──
+    ("the window manager never takes WM_S0 (X programs hang at a socket nobody reads)", "x:takeover",
+     "    x_set_selection_owner(m, m->check, m->atom[XA_WM_S0]);\n", "\n", XWM),
+    ("windows are not redirected for compositing (mapped and never drawn)", "x:takeover",
+     "            if (p) { xw32(p, m->root); p[4] = 1; }", "            if (p) { xw32(p, m->root); p[4] = 0; }", XWM),
+    ("the window manager does not map the window it was asked to", "x:map",
+     "    if (!w->mapped) x_map(m, w->id);\n    xwm_client_list(m);", "    xwm_client_list(m);", XWM),
+    ("a window is not put at 0,0", "x:map",
+     "    x_configure(m, w->id, XC_X | XC_Y, 0, 0, 0, 0);\n    w->x = w->y = 0;", "    w->x = w->y = 0;", XWM),
+    ("close kills where it should ask", "x:close",
+     "    if (w->wm_delete) x_client_message(m, w->id, m->atom[XA_WM_PROTOCOLS], m->atom[XA_WM_DELETE_WINDOW], 0);\n    else              x_kill_client(m, w->id);",
+     "    x_kill_client(m, w->id);", XWM),
+    ("a program that cannot be asked to close is never killed", "x:close",
+     "    else              x_kill_client(m, w->id);", "    else              ;", XWM),
+    ("focus does not reach the X server", "x:focus",
+     "    x_set_focus(m, w->id);\n    if (w->wm_take_focus)", "    if (w->wm_take_focus)", XWM),
+    ("a program that wants to be told it has focus is not told", "x:focus",
+     "    if (w->wm_take_focus) x_client_message(", "    if (0) x_client_message(", XWM),
+    ("the size the shell asks for ignores the program's minimum", "x:configure",
+     "    if (v < 1) v = 1;\n    if (lo > 0 && v < lo) v = lo;", "    if (v < 1) v = 1;", XWM),
+    ("the size the shell asks for ignores the program's maximum", "x:configure",
+     "    if (hi > 0 && v > hi) v = hi;", "", XWM),
+    ("the same size is asked for again and again", "x:configure",
+     "    if (nw == w->cfg_w && nh == w->cfg_h) return;          /* the same ask is not made twice */", "", XWM),
+    ("a menu is not a popup of the shell", "x:menu",
+     "return w->role == ROLE_X11 && w->xw && w->xw->or_ && xwin_listed(w->xw); }", "return 0; }", XWM),
+    ("a window that is gone stays listed", "x:destroy",
+     "        if (w) { xwin_free(w); xwm_client_list(m); }", "        if (w) { xwm_client_list(m); }", XWM),
+    ("a window that withdrew is not noted", "x:unmap-remap",
+     "        if (w->managed && !w->or_) { w->withdrawn = 1; xwm_set_wm_state(m, w, 0 /* Withdrawn */); }", "", XWM),
+    ("a control character in a title is shown", "x:title-change",
+     "        if (b < 0x20 || b == 0x7F) { dst[o++] = ' '; i++; continue; }", "", XWM),
+    ("an overlong UTF-8 sequence is a title", "x:title-change",
+     "(need == 2 && cp < 0x800) || ", "", XWM),
+    ("a surrogate is a title", "x:title-change",
+     "(cp >= 0xD800 && cp <= 0xDFFF) || ", "", XWM),
+    ("a reply to the wrong request is believed", "x:wrong-sequence",
+     "    if (e.seq != xr16(r + 2)) { xwm_kill(m); return; }", "", XWM),
+    ("a reply of any size is read", "x:hostile",
+     "            total += 4 * (size_t)xr32(e + 4);\n            if (total > XW_REPLY_MAX) { xwm_kill(m); break; }",
+     "            total += 4 * (size_t)xr32(e + 4);", XWM),
+    ("a reply nobody asked for is believed", "x:unsolicited",
+     "    if (!m->pend_n) { xwm_kill(m); return; }", "    if (!m->pend_n) return;", XWM),
+    ("full screen asked by the program is not passed on", "x:requests",
+     "                win_request(w, now ? AURWL_REQ_FULLSCREEN : AURWL_REQ_UNFULLSCREEN);", "", XWM),
+    ("minimise asked by the program is not passed on", "x:requests",
+     "xr32(e + 12) == 3) win_request(w, AURWL_REQ_MINIMIZE);", "xr32(e + 12) == 99) win_request(w, AURWL_REQ_MINIMIZE);", XWM),
+    ("a window named before its surface exists is never paired", "x:surface-late",
+     "        if (w->surf_id == id && !w->win) { xwm_associate(w, id); break; }", "        ;", XWM),
+    ("a window can take a surface that is already something else", "x:role-kept",
+     "    if (s->role != ROLE_NONE && s->role != ROLE_X11) return;     /* a role is for life */", "", XWM),
+    ("Xwayland is not reaped (the window manager outlives it)", "x:x-goes-away",
+     "    if (c->x.wm) { xwm_destroy(c->x.wm); c->x.wm = NULL; }\n    if (c->x.client) { wl_client_destroy(c->x.client); c->x.client = NULL; }\n    struct timespec now;",
+     "    struct timespec now;", XWM),
+    ("a window with no decorations is given a title bar", "x:frameless",
+     "        int csd = (xr32(data) & 2) && xr32(data + 8) == 0;", "        int csd = 0;", XWM),
+    ("hints that do not mention decorations take them away", "x:frameless",
+     "        int csd = (xr32(data) & 2) && xr32(data + 8) == 0;", "        int csd = xr32(data + 8) == 0;", XWM),
 ]
 
 def main():
@@ -219,15 +280,22 @@ def main():
                 continue
             path = os.path.join(tmp, "mutant.c")
             open(path, "w").write(tsrc.replace(old, new))
-            if scenario == "cursortest":
+            if scenario.startswith("x:"):
+                # a copy of the compositor with a copy of xwm.inc beside it: a quoted include looks there first
+                d = os.path.join(tmp, "xtree"); shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
+                shutil.copy(SRC if target != SRC else path, os.path.join(d, "aurwl.c"))
+                shutil.copy(XWM if target != XWM else path, os.path.join(d, "xwm.inc"))
+                env = dict(os.environ, AURWL_C=os.path.join(d, "aurwl.c"), OUT=os.path.join(tmp, "out"))
+                cmd = ["sh", os.path.join(ROOT, "tools", "wltest-x.sh"), scenario[2:]]
+            elif scenario == "cursortest":
                 env = dict(os.environ, CURSOR_C=path, OUT=os.path.join(tmp, "out"))
                 cmd = ["sh", os.path.join(ROOT, "tools", "cursortest.sh")]
             else:
                 env = dict(os.environ, AURWL_C=path, OUT=os.path.join(tmp, "out"))
                 cmd = ["sh", os.path.join(ROOT, "tools", "wltest-sub.sh"), scenario]
-            r = subprocess.run(cmd, env=env, capture_output=True, text=True)
+            r = subprocess.run(cmd, env=env, capture_output=True, text=True, errors="replace")
             out = r.stdout + r.stderr
-            if "error:" in r.stderr and "wltest-sub" not in out.split("error:")[0][-40:]:
+            if "error:" in r.stderr and "wltest-" not in out.split("error:")[0][-40:]:
                 print("BUILD  %-62s\n%s" % (what, r.stderr[-600:]))
                 bad += 1
             elif r.returncode == 0:

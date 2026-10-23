@@ -35,7 +35,12 @@
  *   wltest-x -l         list them
  */
 #define _GNU_SOURCE
-#include "../src/aurwl/aurwl.c"
+/* The compositor, whole (so the test can reach its statics). tools/wltest-sub-mutants.py
+ * points AURWL_SRC at a broken copy; a copy's xwm.inc is the one beside it. */
+#ifndef AURWL_SRC
+#define AURWL_SRC "../src/aurwl/aurwl.c"
+#endif
+#include AURWL_SRC
 
 #include <poll.h>
 #include <stdarg.h>
@@ -297,12 +302,13 @@ static int count_req(uint8_t op, uint32_t first_word, int from)
 }
 
 /* The Wayland child: makes surfaces on command. */
-struct kw { struct wl_display *d; struct wl_compositor *comp; struct wl_shm *shm; struct wl_surface *surf[16]; int n; };
+struct kw { struct wl_display *d; struct wl_compositor *comp; struct wl_subcompositor *sub; struct wl_shm *shm; struct wl_surface *surf[16]; int n; };
 static void kreg(void *data, struct wl_registry *r, uint32_t name, const char *i, uint32_t v)
 {
     struct kw *k = data; (void)v;
     if (!strcmp(i, "wl_compositor")) k->comp = wl_registry_bind(r, name, &wl_compositor_interface, 4);
     else if (!strcmp(i, "wl_shm")) k->shm = wl_registry_bind(r, name, &wl_shm_interface, 1);
+    else if (!strcmp(i, "wl_subcompositor")) k->sub = wl_registry_bind(r, name, &wl_subcompositor_interface, 1);
 }
 static void kreg_rm(void *d, struct wl_registry *r, uint32_t n) { (void)d; (void)r; (void)n; }
 static const struct wl_registry_listener kreg_l = { kreg, kreg_rm };
@@ -314,7 +320,7 @@ static int be_xwayland(int sock, int cmd, int res)
     if (!k.d) return 1;
     wl_registry_add_listener(wl_display_get_registry(k.d), &kreg_l, &k);
     wl_display_roundtrip(k.d);
-    if (!k.comp || !k.shm) return 2;
+    if (!k.comp || !k.shm || !k.sub) return 2;
     char line[64];
     for (;;) {
         size_t n = 0;
@@ -353,6 +359,15 @@ static int be_xwayland(int sock, int cmd, int res)
             int id = (int)wl_proxy_get_id((struct wl_proxy *)s);
             char out[32]; int l = snprintf(out, sizeof out, "%d\n", id);
             if (write(res, out, (size_t)l) < 0) return 4;
+        } else if (line[0] == 'U') {                   /* U <index>: a new surface that is a subsurface of surface <index> (a role of its own) */
+            int i = atoi(line + 2);
+            struct wl_surface *s = wl_compositor_create_surface(k.comp);
+            if (i >= 0 && i < 16 && k.surf[i]) wl_subcompositor_get_subsurface(k.sub, s, k.surf[i]);
+            wl_display_roundtrip(k.d);
+            k.surf[k.n++ % 16] = s;
+            int id = (int)wl_proxy_get_id((struct wl_proxy *)s);
+            char out[32]; int l = snprintf(out, sizeof out, "%d\n", id);
+            if (write(res, out, (size_t)l) < 0) return 4;
         } else if (line[0] == 'F') {                   /* F: now send it */
             wl_display_roundtrip(k.d);
             if (write(res, "0\n", 2) < 0) return 4;
@@ -387,6 +402,12 @@ static int ask_child(const char *line)
         if (poll(&p, 1, 0) > 0) { char ch; if (read(res_fd, &ch, 1) == 1) { if (ch == '\n') return atoi(buf); buf[n++] = ch; } }
     }
     return -1;
+}
+
+static int ask_child_idx_sub(int idx)
+{
+    char line[32]; snprintf(line, sizeof line, "U %d\n", idx);
+    return ask_child(line);
 }
 
 static void start(void)
@@ -501,7 +522,7 @@ static void sc_map(void)
     int base = X.n_reqs;
     int idx = show_window(win, 0xFF336699, "old name", "vlc|Vlc", 0);
     (void)idx;
-    check(count_req(20, win, base) == 8, "expected 8 GetProperty for the window, saw %d", count_req(20, win, base));
+    check(count_req(20, win, base) == XW_NPROPS, "expected %d GetProperty for the window, saw %d", XW_NPROPS, count_req(20, win, base));
     req *mp = last_req(8, win, base);
     check(mp != NULL, "the window was never mapped");
     int at = -1;
@@ -613,6 +634,21 @@ static void sc_configure(void)
     SETTLE();
     c1 = last_req(12, win, base);
     check(c1 && xr32(c1->body + 8) == 900 && xr32(c1->body + 12) == 700, "above the maximum was not lowered to it");
+    /* a program with a minimum and no steps: the rounding does not hide a missing clamp */
+    uint32_t win2 = 0x400021;
+    uint32_t hints2[18] = { 16, 0, 0, 0, 0, 300, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    fx_setprop(win2, "WM_NORMAL_HINTS", "WM_NORMAL_HINTS", 32, hints2, sizeof hints2);
+    show_window(win2, 0xFF000000, "w2", "b|B", 0);
+    aurwl_win *w2 = NULL;
+    for (int i = 0; i < aurwl_window_count(C); i++) if (aurwl_window_at(C, i)->xw && aurwl_window_at(C, i)->xw->id == win2) w2 = aurwl_window_at(C, i);
+    check(w2 != NULL, "the second window is not listed");
+    if (w2) {
+        int b2 = X.n_reqs;
+        aurwl_win_configure(w2, 50, 20, 1, 0, 0);
+        SETTLE();
+        req *c2 = last_req(12, win2, b2);
+        check(c2 && xr32(c2->body + 8) == 300 && xr32(c2->body + 12) == 200, "below the minimum (no steps) was not raised to it");
+    }
     finish();
 }
 
@@ -795,6 +831,20 @@ static void sc_title_change(void)
         p += n;
     }
     check(ok, "invalid UTF-8 in a title was passed on (\"%s\")", w ? aurwl_win_title(w) : "");
+    static const struct { const char *in; const char *out; const char *why; } T[] = {
+        { "x\xc0\x80y",         "x??y",   "an overlong NUL" },
+        { "x\xe0\x80\xafy",     "x???y",  "an overlong slash" },
+        { "x\xed\xa0\x80y",     "x???y",  "a surrogate" },
+        { "x\xf4\x90\x80\x80y", "x????y", "a code point past U+10FFFF" },
+        { "x\xc2\x85y",         "x??y",   "a C1 control" },
+        { "x\xc3\xa9\xe2\x98\x83y", "x\xc3\xa9\xe2\x98\x83y", "valid text" },
+    };
+    for (size_t i = 0; i < sizeof T / sizeof T[0]; i++) {
+        fx_setprop(win, "_NET_WM_NAME", "UTF8_STRING", 8, T[i].in, strlen(T[i].in));
+        ev_property(win, atom_id("_NET_WM_NAME"));
+        SETTLE();
+        check(w && !strcmp(aurwl_win_title(w), T[i].out), "%s in a title: got \"%s\"", T[i].why, w ? aurwl_win_title(w) : "");
+    }
     finish();
 }
 
@@ -887,6 +937,66 @@ static void sc_wrong_sequence(void)
     finish();
 }
 
+/* A reply to a request that was never made. */
+/* A frameless window (Zoom, an Electron splash) says so; the shell then draws no title bar over its own. */
+static void sc_frameless(void)
+{
+    start();
+    uint32_t win = 0x4000f0;
+    uint32_t motif[5] = { 2, 0, 0, 0, 0 };                    /* MWM_HINTS_DECORATIONS set, decorations none */
+    fx_setprop(win, "_MOTIF_WM_HINTS", "_MOTIF_WM_HINTS", 32, motif, sizeof motif);
+    show_window(win, 0xFF204060, "frameless", "z|Z", 0);
+    aurwl_win *w = first_win();
+    check(w && aurwl_win_csd(w), "a window that asked for no decorations was given a title bar");
+    uint32_t motif2[5] = { 2, 0, 1, 0, 0 };                   /* decorations: yes */
+    fx_setprop(win, "_MOTIF_WM_HINTS", "_MOTIF_WM_HINTS", 32, motif2, sizeof motif2);
+    ev_property(win, atom_id("_MOTIF_WM_HINTS"));
+    SETTLE();
+    check(w && !aurwl_win_csd(w), "a window that asked for decorations again still has none");
+    uint32_t motif3[5] = { 1, 0, 0, 0, 0 };                   /* flags that do not mention decorations: no opinion */
+    fx_setprop(win, "_MOTIF_WM_HINTS", "_MOTIF_WM_HINTS", 32, motif3, sizeof motif3);
+    ev_property(win, atom_id("_MOTIF_WM_HINTS"));
+    SETTLE();
+    check(w && !aurwl_win_csd(w), "hints that do not mention decorations took them away");
+    finish();
+}
+
+static void sc_unsolicited(void)
+{
+    start();
+    show_window(0x4000d0, 0xFFC0C0C0, "calm", "c|C", 0);
+    check(C->x.wm && !C->x.wm->dead && C->x.wm->pend_n == 0, "setup: the window manager is idle");
+    uint8_t r[32] = {0};
+    r[0] = 1; xw16(r + 2, 0x1234);
+    fx_send(r, sizeof r);
+    SETTLE();
+    check(C->x.wm == NULL || C->x.wm->dead, "a reply to a request nobody made was believed");
+    finish();
+}
+
+/* A window cannot take a surface that is already something else. */
+static void sc_role_kept(void)
+{
+    start();
+    uint32_t win = 0x4000e0;
+    int idx = show_window(win, 0xFF123456, "real", "r|R", 0);
+    int sub = ask_child_idx_sub(idx);                       /* a subsurface of the window's surface */
+    check(sub > 0, "setup: no subsurface");
+    uint32_t win2 = 0x4000e1;
+    ev_create(win2, 0, 0, 10, 10, 0);
+    ev_map_request(win2);
+    SETTLE();
+    ev_client(win2, atom_id("WL_SURFACE_ID"), (uint32_t)sub, 0, 0);
+    SETTLE();
+    xwin *x2 = xw(win2);
+    check(x2 && x2->win == NULL, "a window took a surface that is a subsurface");
+    int n_sub = 0;
+    aurwl_win *s;
+    wl_list_for_each(s, &C->surfaces, link) if (s->role == ROLE_SUBSURFACE) n_sub++;
+    check(n_sub == 1, "the subsurface lost its role (%d left)", n_sub);
+    finish();
+}
+
 static void sc_x_goes_away(void)
 {
     start();
@@ -903,6 +1013,11 @@ static void sc_x_goes_away(void)
     if (w) aurwl_win_configure(w, 100, 100, 1, 0, 0);       /* nothing to say it to: must not crash */
     if (w) aurwl_win_close(w);
     aurwl_set_focus(C, w);
+    /* ...and its process is collected: everything of it goes, so the next X program starts a fresh one */
+    C->x.pid = 4242;
+    xw_reaped(C, 4242);
+    check(C->x.pid == 0 && C->x.wm == NULL && C->x.client == NULL, "the process was collected and its window manager (or connection) is still here");
+    check(aurwl_window_count(C) == 0, "its windows are still listed after it went (%d)", aurwl_window_count(C));
     finish();
 }
 
@@ -922,6 +1037,9 @@ static const struct { const char *name; void (*fn)(void); } SC[] = {
     { "requests",         sc_requests },
     { "hostile",          sc_hostile },
     { "wrong-sequence",   sc_wrong_sequence },
+    { "frameless",        sc_frameless },
+    { "unsolicited",      sc_unsolicited },
+    { "role-kept",        sc_role_kept },
     { "x-goes-away",      sc_x_goes_away },
 };
 #define NSC ((int)(sizeof SC / sizeof SC[0]))

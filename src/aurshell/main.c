@@ -898,6 +898,10 @@ int main(int argc, char **argv)
                 surface wbody = *s;
                 wbody.h = c.screen_h;
                 L->paint(&c, &wbody, &f, wall);
+                /* As the real loop does, so menus and full-screen windows are
+                 * where the pointer is routed against (the --click path). */
+                session_paint_full(&c, &wbody);
+                session_paint_popups(&c, &wbody);
                 /* The pointer is where --mouse put it, so the program under
                  * it is told and answers with the picture it wants. */
                 if (c.mouse_x >= 0) session_motion(&c, c.mouse_x, c.mouse_y);

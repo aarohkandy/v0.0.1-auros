@@ -3,8 +3,8 @@
 #
 #   sh tools/wltest-x.sh [-asan] [scenario]
 #
-#   AURWL_C / XWM_INC are not overridable here: the test includes aurwl.c whole,
-#   so tools/wltest-sub-mutants.py points it at a mutated copy through -I.
+#   AURWL_C=/path/aurwl.c  test a different compositor source (its xwm.inc is the one beside it): how
+#                          tools/wltest-sub-mutants.py shows each check can fail.
 # Needs libwayland-dev, libxkbcommon-dev, cc. Linux only.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -18,11 +18,10 @@ if [ "${1:-}" = "-asan" ]; then
     CFLAGS="$CFLAGS -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
     shift
 fi
-# MUTANT_DIR: a directory holding a changed aurwl.c / xwm.inc, searched first.
-INC=""
-[ -n "${MUTANT_DIR:-}" ] && INC="-I$MUTANT_DIR"
+DEFS=""
+[ -n "${AURWL_C:-}" ] && DEFS="-DAURWL_SRC=\"$AURWL_C\""
 cc $CFLAGS -o "$OUT/wltest-x" "$HERE/wltest-x.c" "$ROOT/src/aurshell/draw.c" \
    "$W/gen/xdg-shell-protocol.c" "$W/gen/xdg-decoration-protocol.c" \
    "$W/gen/viewporter-protocol.c" "$W/gen/xdg-output-protocol.c" \
-   $INC -I"$W/gen" -I"$W" $(pkg-config --cflags --libs wayland-server wayland-client xkbcommon) -lm
+   $DEFS -I"$W/gen" -I"$W" $(pkg-config --cflags --libs wayland-server wayland-client xkbcommon) -lm
 XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$OUT}" "$OUT/wltest-x" "$@"

@@ -72,6 +72,14 @@ if pkg-config --exists wayland-server xkbcommon 2>/dev/null; then
         "$W/gen/text-input-protocol.c" \
         -I"$W/gen" -I"$W" -- $(pkg-config --libs wayland-server xkbcommon) -lm
 fi
+# fuzz_xwm.c: the X window manager (src/aurwl/xwm.inc, included by aurwl.c) against
+# an X server that lies; it includes aurwl.c whole, like fuzz_aurwl.c.
+if pkg-config --exists wayland-server xkbcommon 2>/dev/null; then
+    build xwm "$HERE/fuzz_xwm.c" "$S/draw.c" \
+        "$W/gen/xdg-shell-protocol.c" "$W/gen/xdg-decoration-protocol.c" \
+        "$W/gen/viewporter-protocol.c" "$W/gen/xdg-output-protocol.c" \
+        -I"$W/gen" -I"$W" -- $(pkg-config --libs wayland-server xkbcommon) -lm
+fi
 # fuzz_aurwl.c includes aurwl.c itself (its end-of-input check reads the
 # compositor's lists).
 if pkg-config --exists wayland-server xkbcommon 2>/dev/null; then

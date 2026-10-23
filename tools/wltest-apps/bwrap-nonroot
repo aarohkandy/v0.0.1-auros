@@ -1,0 +1,5 @@
+#!/bin/sh
+# Flatpak's bubblewrap, with the program inside seen as an ordinary user (uid 1000).
+# The test container runs as root (the host's AppArmor forbids an unprivileged user a user
+# namespace), and VLC and others refuse to run as root. Used through FLATPAK_BWRAP.
+exec /usr/bin/bwrap --unshare-user --uid 1000 --gid 1000 "$@"

@@ -384,6 +384,7 @@ struct xwin;
 static void        xw_surface_gone(aurwl_win *w);
 static void        xw_surface_created(aurwl_win *w);
 static int         xw_listed(const aurwl_win *w);          /* an X window the shell may show */
+static int         xw_csd(const aurwl_win *w);             /* it draws its own title bar (_MOTIF_WM_HINTS) */
 static int         xw_is_popup(const aurwl_win *w);        /* override-redirect: a menu      */
 static aurwl_win  *xw_popup_parent(const aurwl_win *w);
 static void        xw_popup_offset(const aurwl_win *w, int *x, int *y);
@@ -3501,7 +3502,7 @@ const char *aurwl_win_app_id(const aurwl_win *w) { return w ? w->app_id : ""; }
  * before one is attached. Firefox and GTK 3 programs are this. */
 int aurwl_win_csd(const aurwl_win *w)
 {
-    return w && w->xdg_toplevel && (!w->decoration || w->deco_client);
+    return w && ((w->xdg_toplevel && (!w->decoration || w->deco_client)) || xw_csd(w));
 }
 unsigned aurwl_win_take_requests(aurwl_win *w)
 {

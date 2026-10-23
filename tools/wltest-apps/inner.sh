@@ -114,8 +114,13 @@ JS
   flatpak-install)  # FPREF=org.videolan.VLC: download it (and its runtime) into /fp; nothing is drawn
     flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
     exec flatpak install -y --noninteractive flathub ${FPREF:?set FPREF} ;;
-  flatpak)          # FPREF=org.videolan.VLC [FPARGS=--nosocket=wayland]: an installed Flatpak on the real shell, through X11
-    CMD="flatpak run ${FPARGS:-} ${FPREF:?set FPREF}" ;;
+  flatpak)          # FPREF=org.videolan.VLC [FPARGS=--nosocket=wayland] [FPAPPARGS='args to the program']: an installed Flatpak on the real shell, through X11
+    mkdir -p /run/dbus && rm -f /run/dbus/pid && dbus-daemon --system --fork      # flatpak talks to a system bus, and to a session bus
+    case "$FPREF" in    # first-run questions that would sit modal in front of what is under test
+    org.videolan.VLC) d=$HOME/.var/app/org.videolan.VLC/config/vlc; mkdir -p "$d"
+                      printf '[qt]\nqt-privacy-ask=0\n[core]\nmetadata-network-access=0\n' > "$d/vlcrc" ;;
+    esac
+    CMD="dbus-run-session -- flatpak run ${FPARGS:-} ${FPREF:?set FPREF} ${FPAPPARGS:-}" ;;
   click)            # click points in a program's window and show what it was sent (run with WAYLAND_DEBUG=client);
                     # CLICKS="x,y x,y" (window points), XCMD="the program"; for the store: flatpak image, see GS.md notes in WL.md
     gcc -O1 -g -std=gnu11 -o /out/click-probe /w/tools/wltest-apps/click-probe.c aurwl/aurwl.c aurshell/draw.c common/png.c \

@@ -65,7 +65,7 @@ enum {
     XA_TYPE_MENU, XA_TYPE_DROPDOWN, XA_TYPE_POPUP, XA_TYPE_TOOLTIP, XA_TYPE_NOTIFICATION,
     XA_TYPE_COMBO, XA_TYPE_DND,
     XA_NET_WM_STATE, XA_STATE_FULLSCREEN, XA_STATE_MAX_VERT, XA_STATE_MAX_HORZ, XA_STATE_FOCUSED,
-    XA_WM_S0,
+    XA_WM_S0, XA_MOTIF_WM_HINTS,
     XA_COUNT
 };
 static const char *const XA_NAMES[XA_COUNT] = {
@@ -79,7 +79,7 @@ static const char *const XA_NAMES[XA_COUNT] = {
     "_NET_WM_WINDOW_TYPE_COMBO", "_NET_WM_WINDOW_TYPE_DND",
     "_NET_WM_STATE", "_NET_WM_STATE_FULLSCREEN", "_NET_WM_STATE_MAXIMIZED_VERT",
     "_NET_WM_STATE_MAXIMIZED_HORZ", "_NET_WM_STATE_FOCUSED",
-    "WM_S0",
+    "WM_S0", "_MOTIF_WM_HINTS",
 };
 /* the atoms X predefines (X11 protocol appendix) */
 enum { XP_PRIMARY = 1, XP_ATOM = 4, XP_CARDINAL = 6, XP_STRING = 31, XP_WINDOW = 33,
@@ -113,6 +113,7 @@ typedef struct xwin {
     int             hint_min_w, hint_min_h, hint_max_w, hint_max_h;
     int             hint_inc_w, hint_inc_h, hint_base_w, hint_base_h;
     int             fullscreen;           /* _NET_WM_STATE_FULLSCREEN is set         */
+    int             csd;                  /* _MOTIF_WM_HINTS: it draws its own title bar */
     uint32_t        surf_id;              /* WL_SURFACE_ID, 0 until sent             */
     aurwl_win      *win;                  /* the surface, once associated            */
     struct wl_list  link;
@@ -442,6 +443,11 @@ static void xwin_apply_prop(xwin *w, uint32_t atom, uint32_t type, int format,
         }
     } else if (atom == m->atom[XA_NET_WM_WINDOW_TYPE] && format == 32 && units >= 1) {
         w->type = xr32(data);
+    } else if (atom == m->atom[XA_MOTIF_WM_HINTS] && format == 32 && units >= 3) {
+        /* flags, functions, decorations, ...: bit 1 of flags says `decorations` is meant, and 0 is "none":
+         * a frameless Qt or Electron window (Zoom) that draws its own caption. The shell then draws none. */
+        int csd = (xr32(data) & 2) && xr32(data + 8) == 0;
+        if (csd != w->csd) { w->csd = csd; if (w->win) w->win->c->damage_seq++; }
     }
     xwin_sync_names(w);
 }
@@ -481,11 +487,15 @@ static void xwm_finish_manage(xwin *w)
     if (!w->mapped) x_map(m, w->id);
     xwm_client_list(m);
     xwin_sync_names(w);
+    XDBG("window 0x%x ready: \"%s\" class \"%s\" type 0x%x transient 0x%x csd %d min %dx%d max %dx%d inc %dx%d",
+         w->id, w->title[0] ? w->title : w->wm_title, w->app_id, w->type, w->transient_for, w->csd,
+         w->hint_min_w, w->hint_min_h, w->hint_max_w, w->hint_max_h, w->hint_inc_w, w->hint_inc_h);
 }
 
-static const uint32_t XW_PROPS_ATOMS[8] = { XP_WM_NAME, 0 /* _NET_WM_NAME */, XP_WM_CLASS, XP_WM_TRANSIENT_FOR,
+#define XW_NPROPS 9
+static const uint32_t XW_PROPS_ATOMS[XW_NPROPS] = { XP_WM_NAME, 0 /* _NET_WM_NAME */, XP_WM_CLASS, XP_WM_TRANSIENT_FOR,
                                             XP_WM_NORMAL_HINTS, XP_WM_HINTS, 0 /* WM_PROTOCOLS */,
-                                            0 /* _NET_WM_WINDOW_TYPE */ };
+                                            0 /* _NET_WM_WINDOW_TYPE */, 0 /* _MOTIF_WM_HINTS */ };
 
 /* A window asked to be shown (MapRequest), or was already mapped when we
  * arrived: read what we need to know about it, then map it. */
@@ -496,12 +506,13 @@ static void xwm_manage(xwin *w)
     if (w->ready) { x_map(m, w->id); xwm_set_wm_state(m, w, 1); return; }
     if (w->managed) return;                 /* properties already on their way */
     w->managed = 1;
-    w->props_left = 8;
-    for (int i = 0; i < 8; i++) {
+    w->props_left = XW_NPROPS;
+    for (int i = 0; i < XW_NPROPS; i++) {
         uint32_t a = XW_PROPS_ATOMS[i];
         if (i == 1) a = m->atom[XA_NET_WM_NAME];
         if (i == 6) a = m->atom[XA_WM_PROTOCOLS];
         if (i == 7) a = m->atom[XA_NET_WM_WINDOW_TYPE];
+        if (i == 8) a = m->atom[XA_MOTIF_WM_HINTS];
         x_get_prop(m, w->id, a);
     }
 }
@@ -717,7 +728,8 @@ static void xwm_event(xwm *m, const uint8_t *e)
         uint32_t a = xr32(e + 8);
         if (!w || e[16] != 0) break;
         if (a == XP_WM_NAME || a == XP_WM_CLASS || a == XP_WM_NORMAL_HINTS || a == XP_WM_HINTS ||
-            a == XP_WM_TRANSIENT_FOR || a == m->atom[XA_NET_WM_NAME] || a == m->atom[XA_WM_PROTOCOLS])
+            a == XP_WM_TRANSIENT_FOR || a == m->atom[XA_NET_WM_NAME] || a == m->atom[XA_WM_PROTOCOLS] ||
+            a == m->atom[XA_MOTIF_WM_HINTS])
             x_get_prop(m, w->id, a);
         break;
     }
@@ -1130,6 +1142,7 @@ static void xw_surface_gone(aurwl_win *w)
     if (w->xw) { w->xw->win = NULL; w->xw = NULL; }
 }
 static int xw_listed(const aurwl_win *w)   { return w->xw && xwin_listed(w->xw); }
+static int xw_csd(const aurwl_win *w)      { return w->role == ROLE_X11 && w->xw && w->xw->csd && !w->xw->or_; }
 static int xw_is_popup(const aurwl_win *w) { return w->role == ROLE_X11 && w->xw && w->xw->or_ && xwin_listed(w->xw); }
 static aurwl_win *xw_popup_parent(const aurwl_win *w)
 {
