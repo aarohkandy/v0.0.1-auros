@@ -76,11 +76,19 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
   (12 high, 0 blockers after 3 skeptics each); 9 already fixed, the rest assigned with tests required.
 - **Security audit done** (docs/security/FINDINGS.md): 0 critical, 8 high, all assigned: installer trust and
   DLL hijacking, the update-signing key's exposure, mutable release files, no boot fallback, no network time
-  (updates silently stop in the US), no disk encryption yet. - **Legal review done** (docs/legal/COMPLIANCE.md, 58 findings, no lawyer per your D15): before anyone uses
-  AurOS we must publish the full source of the Ubuntu software we ship (GPL) and have a contact address; the
-  legal agent is building the source release, licences page, terms and honest wording now.
+  (updates silently stop in the US), no disk encryption yet. - **Legal work done** (docs/legal/, no lawyer per your D15): every release now gets its GPL source release
+  automatically; licences, terms, disclaimer and privacy pages (v3, each marked "prepared without a lawyer");
+  a launch gate (tools/legal/check.py --launch) that refuses to deploy the site or promote while 35 items remain
+  (most are other agents' wording fixes, now routed; yours: contact mailbox, the name, Mozilla's OK for the
+  Firefox name).
 
 ## Waiting for you (each with my recommendation)
+
+- **THE NAME (decide before anything goes public): "AurOS" collides with registered marks** — Emergent Systems
+  holds US reg. 4512239 AUROS in class 9 (software), and UserTesting rebranded as "Auros" (29 Sep 2026, filed in
+  4 countries). Recommendation: rename now (a find-and-replace today, a crisis after launch). A naming workflow is
+  vetting candidates (trademark + product + domain searches, then a skeptic tries to kill each); the shortlist will
+  be in docs/legal/NAMES.md. Evidence: docs/legal/NAME-SEARCH.md.
 
 - **Legal, in order (docs/legal/COMPLIANCE.md §3):** (a) don't share the current prerelease link yet;
   (b) create one contact email someone reads (a free address is fine for now) and tell me it;
