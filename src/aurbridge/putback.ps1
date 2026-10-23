@@ -53,7 +53,10 @@ function Status([string]$phase, [string]$text) {
             ConvertTo-Json | Set-Content -Path (Join-Path $udir 'status.json') -Encoding ASCII
     } catch {}
 }
-function LP([string]$p) { if ($p.StartsWith('\\?\')) { $p } else { '\\?\' + $p } }
+# Long names: the \\?\ form, but ONLY for a name that needs it. powershell.exe runs .NET with
+# legacy path handling, where the prefix is not understood by File.Open on every volume; a name
+# under 240 characters never needs it.
+function LP([string]$p) { if ($p.Length -lt 240 -or $p.StartsWith('\\?\')) { $p } else { '\\?\' + $p } }
 function Sha256File([string]$path) {
     if (-not $path) { throw 'Sha256File was given no path' }
     $h = [System.Security.Cryptography.SHA256]::Create()
