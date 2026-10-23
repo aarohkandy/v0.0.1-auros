@@ -4,6 +4,10 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Done overnight (proof)
 
+- **Security updates reach her by themselves, proven**: AurOS's own update channel is live, signed with your key;
+  forged or altered updates are refused; on the real image an update installs while she uses it with no restart,
+  and a deliberately broken update is rolled back automatically (16/16 checks, run 39965081792).
+
 - **First AurOS prerelease in your repository**: v0.1.0-618726b (AurOS-Setup.exe 35 MB + image pieces),
   https://github.com/aarohkandy/v0.0.1-auros/releases/tag/v0.1.0-618726b. The real-Windows test has
   now gone website → download → wizard → restart into the install screens for the first time
