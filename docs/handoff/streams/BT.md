@@ -57,16 +57,17 @@ before and passes after:
   firmware (next BootOrder entry = Windows) instead of `grub>`. Proven in `windowsboottest` F.
   S4's `rootfs/usr/lib/auros/lock/lockctl` writes its own ESP cfg for the encrypted layout: it needs
   the same `else ... exit` (told lead).
-- **S-05/S-06 and S-24** (code + unit proven; KVM `firstboottest` D/E in progress): `auros-hold.service`
+- **S-05/S-06 and S-24** (`firstboottest` D and E green; red on the unpatched image, 5 of 9): `auros-hold.service`
   now only publishes state; `auros-keeper.service` -> `keeper` waits for `desktop-up 30` then
   `aurfirst hold`: unconfirmed -> BootNext (only after a desktop worked), confirmed + AurOS no
   longer first -> `promote()` puts it first again (declined: never). `aurfirsttest` S-24 cases.
 
 ## Next steps, in order
 
-1. Re-run `windowsboottest` alone and `firstboottest` (`FIRSTBOOT_ONLY="D E"` then all) and push
-   the keeper commit; the keeper changes the e2e stand-in (it waits for the keeper) so CI's
-   `firstboottest` must be the new one.
+1. Watch the first CI run of `tests` with `windowsboottest` and `rollbacktest` (both gating now) and
+   of the changed `firstboottest` (its stand-in waits for the keeper). Pushed as 69ca6b1; the
+   keeper part was proven by `firstboottest` D and E only (not yet the full A, B, C with the new
+   stand-in: run it on homebase if CI shows red).
 2. Item 3, BLOCKER: GRUB superusers with a per-machine PBKDF2 (every normal entry `--unrestricted`),
    delete the `auros-recovery` (`init=/bin/bash`) entry. The image has ONE fixed `/etc/machine-id`,
    so the secret must be generated at first boot or by `bootchain menu` on the machine, written to
@@ -79,7 +80,7 @@ before and passes after:
    hang and crash-loop cases (needs a watchdog: `softlockup_panic`, systemd `RuntimeWatchdogSec`).
 5. WP-77 Windows-side keeper task (with B) and the `windows-once` variant (F); WP-31 residual (CA and
    SBAT recorded in the journal); WP-53 fwupd.
-6. Mark FINDINGS.md statuses (S-05/06/07/18/24/25, R-10/17/22) once pushed.
+6. FINDINGS.md statuses for S-05/06/07/18/24/25 and R-10/17/22 are marked (69ca6b1).
 
 ## How to verify (homebase, KVM)
 

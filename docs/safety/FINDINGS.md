@@ -18,9 +18,9 @@
 | S-02 | high | A2 | Same defect, second report | `src/aurstage/rescue.c:1200` | fixed in `c994042` (same) |
 | S-03 | high | A2 | No-stick restore writes the table before the EFI partition | `src/aurstage/rescue.c:1297` | fixed in `c994042` (the EFI partition is restored first, only differing megabytes) |
 | S-04 | high | A2 | Boot entry cannot be written (NVRAM full), install still "succeeds" | `src/aurstage/loader.c:187` | fixed in `0d0e047` (nvram_probe at the gate of both paths; nvram_boot_repurpose; nvramtest 27 checks) |
-| S-05 | high | C | The hold re-arms AurOS before the desktop exists | `rootfs/etc/systemd/system/auros-hold.service:19` | open |
-| S-06 | high | C | Same defect, second report | `rootfs/etc/systemd/system/auros-hold.service:19` | open |
-| S-07 | high | C | New kernel is the default before it has ever booted | `rootfs/usr/lib/auros/bootchain:257` | open |
+| S-05 | high | C | The hold re-arms AurOS before the desktop exists | `rootfs/etc/systemd/system/auros-hold.service:19` | fixed in 69ca6b1 (auros-hold only publishes; auros-keeper arms BootNext after the desktop has worked 30 s; firstboottest D red on the old image, green now) |
+| S-06 | high | C | Same defect, second report | `rootfs/etc/systemd/system/auros-hold.service:19` | fixed in 69ca6b1 (same change as S-05) |
+| S-07 | high | C | New kernel is the default before it has ever booted | `rootfs/usr/lib/auros/bootchain:257` | fixed in 69ca6b1 (WP-30 minimal: grub boot counting, auros-boot-ok, previous kernel after two unconfirmed starts; rollbacktest 16/16, counter mutants red) |
 | S-08 | high | R | Ferry reports success when it copied nothing | `src/ferry/ferry:97` | fixed in Ferry and `answer.sh`; the panel must ask whose files (`result=choose`) and show `result=empty` (C) |
 | S-09 | high | R | `/usr/bin/ferry` symlink breaks Ferry | `src/ferry/install.sh:41` | fixed |
 | S-10 | high | R | `auros-answer.service` sandbox blocks the import | `rootfs/etc/systemd/system/auros-answer.service:22` | fixed |
@@ -31,14 +31,14 @@
 | S-15 | medium | A2 | Restore commits table and ESP before checking C: can be grown | `src/aurstage/rescue.c:1475` | fixed in `0d0e047` (growable() before the first write; ntfs_read_state unsure until looked at) |
 | S-16 | medium | A2 | GPT commit relies on an unvalidated old backup | `src/aurstage/commit.c:90` | fixed |
 | S-17 | medium | A2 | A retry captures the shrunk C: as the original | `src/aurstage/rescue.c:590` | fixed |
-| S-18 | medium | A2 | A kernel that loads and then panics is chosen at every start | `rootfs/usr/lib/auros/grub.cfg.in:3` | open |
+| S-18 | medium | A2 | A kernel that loads and then panics is chosen at every start | `rootfs/usr/lib/auros/grub.cfg.in:3` | fixed in 69ca6b1 (same change as S-07) |
 | S-19 | medium | A2 | Two ESPs: boot entry names a partition the files were not copied to | `src/aurbridge/phases.c:239` | fixed |
 | S-20 | medium | B | EFI partition checked with a 1 MiB margin, files stay for good | `src/aurbridge/preflight.c:1405` | partly fixed |
 | S-21 | medium | B | RAID system volume passes preflight; staging cannot find it | `src/aurbridge/preflight.c:1757` | fixed |
 | S-22 | medium | B | Early download is not counted by the check that passes | `src/aurbridge/preflight.c:1267` | open |
 | S-23 | medium | A2 | Hibernation switched off for good, even after Stop | `src/aurbridge/plat_win.c:1391` | fixed: Stop/abort in `fe7702f`; the Put Windows back leg in `0d0e047` (the put-back task restores hibernation) |
-| S-24 | medium | A2 + B | When Windows moves itself first in BootOrder, nothing brings AurOS back | `src/aurfirst/state.c:377` | open |
-| S-25 | medium | C + A2 | Deleting AUROS-ROOT in Disk Management leaves a `grub>` prompt | `build/mkimage:253` | open |
+| S-24 | medium | A2 + B | When Windows moves itself first in BootOrder, nothing brings AurOS back | `src/aurfirst/state.c:377` | fixed in 69ca6b1 (the keeper puts AurOS first again once she confirmed and the desktop works; never after she said no; firstboottest E, aurfirsttest). Windows-side keeper task is WP-77, not done |
+| S-25 | medium | C + A2 | Deleting AUROS-ROOT in Disk Management leaves a `grub>` prompt | `build/mkimage:253` | fixed in 69ca6b1 (build/mkimage: the ESP grub.cfg exits to the firmware with a plain sentence; windowsboottest F). The encrypted layout writes its own cfg: rootfs/usr/lib/auros/lock/lockctl needs the same else/exit |
 | S-26 | medium | B | Encryption fix decrypts every fixed drive and ignores failure | `src/aurbridge/fix_win.c:351` | fixed (code removed) |
 
 ---
@@ -88,7 +88,7 @@
 ### S-05 | high | The "keep coming back to AurOS" hold runs before the desktop, so a desktop that never appears loops her back into AurOS before she has said yes
 - **Owner:** C
 - **Where:** `rootfs/etc/systemd/system/auros-hold.service:19` (`src/aurfirst/state.c:370-394`)
-- **Status on main:** open (unit and `state.c` unchanged).
+- **Status on main:** fixed in 69ca6b1 (auros-hold only publishes; auros-keeper arms BootNext after the desktop has worked 30 s; firstboottest D red on the old image, green now).
 - **Scenario:** The install boot ends in AurOS with BootNext armed. On her PC the kernel boots but aurshell fails every time (graphics or KMS). `auros-hold` runs `Before=aurshell.service`, so `af_hold` re-arms BootNext on every boot while the question is unanswered. `aursorry` tells her to hold the power button and switch on again; that goes straight back to AurOS. Windows is reachable only by arrowing to "Windows" in GRUB's 3-second menu or the firmware boot key. The promise in AURBRIDGE.md ("the moment it does not work the firmware falls through to BootOrder") holds only for failures before the unit runs.
 - **Evidence:** `af_hold` checks stamps, default and BootNext only. `aurshell.service` has `Restart=on-failure` and `StartLimitIntervalSec=0`, so nothing ever gives up or disarms. `shell-guard` safe mode changes arguments, not the hardware fault.
 - **Fix:** Arm BootNext only after the desktop has proved itself: aurshell (or `welcome.c` on its first presented frame) touches a file; a path unit runs `aurfirst hold`. Do not drop the early unit outright: `welcome.c` reads `/run/auros-first.state`, which `hold` publishes, so keep an early `aurfirst state`. Do not use `RuntimeDirectory=` as the flag, it exists before anything is drawn. Also name the start-up menu's "Windows" line on the `aursorry` screen.
@@ -98,7 +98,7 @@
 ### S-06 | high | While AurOS is unconfirmed, the hold re-arms BootNext even when the desktop never starts, so a desktop crash loop keeps her in AurOS
 - **Owner:** C
 - **Where:** `rootfs/etc/systemd/system/auros-hold.service:19`
-- **Status on main:** open. Same root cause as S-05; fix once.
+- **Status on main:** fixed in 69ca6b1 (same change as S-05).
 - **Scenario:** As S-05, found from the "life inside AurOS" angle: the only exit is "No, go back to Windows" on the welcome panel, which lives in the desktop that never starts. The website promises "if AurOS ever fails to start, I start Windows by myself" (`website/index.html:287,361`, `how-it-works.html:175,314`).
 - **Evidence:** As S-05. The staging probe checks Wi-Fi, backlight, sound and carrier only; it never starts a display.
 - **Fix:** As S-05, plus a first-boot display probe in staging if cheap.
@@ -108,7 +108,7 @@
 ### S-07 | high | A brand-new kernel becomes the default before it has ever booted, and nothing detects a failed boot
 - **Owner:** C (S1 for the template)
 - **Where:** `rootfs/usr/lib/auros/bootchain:257` (`grub.cfg.in:3`, `:39`)
-- **Status on main:** open. `58fc41a` touched both files only for `lockdown=integrity`. No `boot_ok`, `recordfail` or boot counter exists.
+- **Status on main:** fixed in 69ca6b1 (WP-30 minimal: grub boot counting, auros-boot-ok, previous kernel after two unconfirmed starts; rollbacktest 16/16, counter mutants red).
 - **Scenario:** After she says yes, AurOS is first in BootOrder. Unattended upgrades install a new Ubuntu kernel; `update-grub` is diverted to `bootchain menu`, which writes the newest kernel as entry 0 with `set default=0`. On her hardware it hangs, black-screens or panics (`panic=10` reboots into the same entry). GRUB's `fallback` to "AurOS (previous kernel)" fires only when GRUB cannot load the entry, never once the kernel has started. Every power-on repeats; the previous kernel and Windows need arrow keys inside a 3-second menu. Choosing "previous" boots once; the next start is the broken kernel again.
 - **Evidence:** `bootupdatetest.sh` boot 3 only damages a kernel's signature so shim refuses it. The docs claim a rollback that does not exist: `rootfs/etc/sysctl.d/61-auros-reliability.conf`, `README.md:57`, `website/how-it-works.html:239`, `docs/security/PLAN.md:36`.
 - **Fix:** A boot-success flag in grubenv (the file `grub.cfg.in` already `load_env`/`save_env`s): at start, if `boot_ok` is not 1 and an `auros-previous` entry exists, default to it with the menu shown longer; set `boot_ok=0` and `save_env`; a unit after the desktop's first frame (same signal as S-05) writes `boot_ok=1` with `grubenv_put`. Only arm it when a second kernel exists. Correct the over-claiming sentences until it lands.
@@ -222,7 +222,7 @@
 ### S-18 | medium | A new kernel that loads but panics or hangs is chosen at every start after confirm; GRUB's fallback only covers kernels it cannot load
 - **Owner:** A2 (C for the clear unit)
 - **Where:** `rootfs/usr/lib/auros/grub.cfg.in:3`
-- **Status on main:** open. Same root cause as S-07; fix once.
+- **Status on main:** fixed in 69ca6b1 (same change as S-07).
 - **Scenario:** As S-07. `bootchain:199-209` says the previous kernel starts "on its own if the newest cannot be"; that holds for a load failure, not for a kernel that starts.
 - **Evidence:** `bootupdatetest.sh` boot 3 tests only a signature failure; no recordfail or boot-success marker exists in `rootfs/` or `build/`.
 - **Fix:** As S-07: a `boot_pending` counter in grubenv; if set, `default=auros-previous` with the menu shown; cleared after the desktop's first frame; add a hanging-kernel case.
@@ -282,7 +282,7 @@
 ### S-24 | medium | When Windows moves itself to the front of BootOrder, AurOS becomes unreachable and nothing brings it back
 - **Owner:** A2 (Windows side) + B (wizard writes the shortcut)
 - **Where:** `src/aurfirst/state.c:377` (the finding cited `src/aurfirst/main.c:1`, a whole-file pointer)
-- **Status on main:** open (`state.c` unchanged; no Windows-side re-assert found).
+- **Status on main:** fixed in 69ca6b1 (the keeper puts AurOS first again once she confirmed and the desktop works; never after she said no; firstboottest E, aurfirsttest). Windows-side keeper task is WP-77, not done.
 - **Scenario:** After confirm, `af_hold` returns early on `confirmed || declined` and nothing else writes BootOrder. She picks Windows from AurOS's menu "for a moment" (what `help/windows.html` tells her to do); Windows re-registers its Boot Manager at the head of BootOrder, which forum reports show happening simply on booting Windows from GRUB. From then every power-on goes to Windows. The help page's "Next time you switch the computer on, AurOS starts again by itself" is false, and AurOS is reachable only via a firmware boot key.
 - **Evidence:** Arch BBS id=236600 and Level1Techs 135245 (both fetched) report the reorder; nothing in `src/aurbridge` leaves a task or shortcut; the "put-back startup task" in START-HERE is about re-growing C:, not BootOrder.
 - **Fix:** Leave a Windows-side route: a startup task or desktop shortcut running an elevated `bcdedit /set {fwbootmgr} bootsequence {AurOS entry}` plus restart, with the AurOS entry's GUID recorded by the installer (`bcdedit /enum firmware`). Gate it on a marker that `aurfirst confirm` leaves on the ESP and remove it in Put Windows back. Until then, stop `windows.html:21` promising AurOS returns by itself.
@@ -292,7 +292,7 @@
 ### S-25 | medium | Deleting the "unknown" AurOS partition in Disk Management leaves the PC stuck at a `grub>` prompt on every start
 - **Owner:** C (image stub) + A2 (`commit.c` attributes)
 - **Where:** `build/mkimage:253`
-- **Status on main:** open (`build/mkimage` unchanged).
+- **Status on main:** fixed in 69ca6b1 (build/mkimage: the ESP grub.cfg exits to the firmware with a plain sentence; windowsboottest F). The encrypted layout writes its own cfg: rootfs/usr/lib/auros/lock/lockctl needs the same else/exit.
 - **Scenario:** AUROS-ROOT is a large letterless "Primary Partition" right after C:; deleting it makes Extend Volume available. AUROS-BOOT is an ESP-typed partition Disk Management will not delete, so firmware still runs its shim and GRUB. The stub `grub.cfg` does `search --fs-uuid` then `configfile` with no failure branch, so GRUB stays at its prompt and the firmware never falls through to Windows. AurOS is first in BootOrder after confirm, so every power-on stops.
 - **Evidence:** `mkimage:253-258`; `commit.c:35-61` gives all three partitions `attrs=0`; no other file rewrites the stub.
 - **Fix:** Wrap the stub: `if search ...; then configfile ...; fi` then `exit`, so a failed search hands control back to the firmware. A non-zero exit status is what makes firmware try the next BootOrder entry; check that GRUB's `exit` takes a code. Optionally set GPT attribute bit 0 on the three partitions (whether Disk Management honours it was not verified).
@@ -324,17 +324,17 @@ These did not survive (at least 2 of 3 skeptics refuted them). Do not re-raise t
 - **R-07** A stale capture on an old memory stick beats the on-disk capture: a stick capture cannot exist, the wizard only does no-stick mode. Latent: prefer the newest `captured_unix` if a stick page ever ships.
 - **R-08** `restore_boot_sectors` misses ext4/LUKS/XFS on 512-byte disks: the backup-sector proof fails after any normal `mkfs` (it zeroes the tail), a reformat needs a manual terminal, and the 8 KiB overwritten is recoverable. Optional hardening: look for the ext4 magic at 1080 at any sector size.
 - **R-09** BootNext is armed before `e2fsck`/`resize2fs` of AurOS's root: a cut leaves a bootable un-grown AurOS (`fsck.repair=yes`, `firstboot.sh` grows it), and moving the arming later would leave a longer window with no AurOS entry. Wording nit on the settle-failed screen only.
-- **R-10** Chainloading Windows through shim and GRUB changes PCR7/PCR4 and triggers the BitLocker recovery screen: no BitLocker PC reaches the install on main (D11 undefined, encrypted drives are a stop). Latent gate for D11: before defining `AB_CHOICE_BITLOCKER_PAUSE`, give Windows a firmware-direct BootNext route and drop the chainload entry on such PCs.
+- **R-10** Chainloading Windows through shim and GRUB changes PCR7/PCR4 and triggers the BitLocker recovery screen: no BitLocker PC reaches the install on main (D11 undefined, encrypted drives are a stop). Latent gate for D11: before defining `AB_CHOICE_BITLOCKER_PAUSE`, give Windows a firmware-direct BootNext route and drop the chainload entry on such PCs. **Fixed in 69ca6b1**: the menu starts Windows through the firmware (BootNext at Windows Boot Manager), PCR 4 and 7 equal a normal morning (windowsboottest with swtpm; the old chainload differs).
 - **R-11** After "yes" nothing keeps AurOS first (Windows update or BIOS NVRAM reset): lands her in her working Windows, AurOS stays in the firmware menu, and falling back to Windows is the design's safe direction. The part that stood is the missing route back, S-24.
 - **R-12** An SBAT-revoked shim powers the PC off: no published SbatLevel revokes the shipped shim 15.8 (`shim,4`), so it needs a future revocation; same exposure as any Linux dual-boot. Watch for a `shim,5` entry.
 - **R-13** Online shrink picks C: by GPT slot, not Windows' offset-ranked number: at the reviewed commit the only callers were the CI-only `gapselftest`; a skeptic found the engine on a newer main requires the offset to match the entry before it uses the number.
 - **R-14** The gap fence does not protect the GPT itself: the only caller was `gapselftest`, whose window comes from `plan.c` clamped to the usable LBAs. Hardening: bound the fence by `first_usable`/`last_usable` before the fast path is selectable.
 - **R-15** The fence checks partitions only when armed: same unwired path; add a live re-check when the fast path streams for minutes.
 - **R-16** The BitLocker `gapselftest` step always passes as SKIPPED: disclosed, the fast path was unwired, and BitLocker PCs were still stopped. Make the BitLocker run a gate before D11.
-- **R-17** After confirm, the GRUB "Windows" entry brings up the BitLocker recovery screen: same as R-10 (an encrypted PC cannot be installed on main).
+- **R-17** After confirm, the GRUB "Windows" entry brings up the BitLocker recovery screen: same as R-10 (an encrypted PC cannot be installed on main). **Fixed in 69ca6b1**: the menu starts Windows through the firmware (BootNext at Windows Boot Manager), PCR 4 and 7 equal a normal morning (windowsboottest with swtpm; the old chainload differs).
 - **R-18** Ferry copies as root with no free-space check and can fill AurOS's root: Ferry could not copy a byte in the sandbox (S-10), and since `a75e9a7` the copier runs as her. Re-raised and closed: the new copier had no free-space check on the way in either; it now refuses before the first byte (exit 4, nothing copied) unless the files fit with at least 1 GiB or 5 % of the disk left over, and skips that test on a resumed import. Test: `src/ferry/tests/run.sh` "R-18".
 - **R-19** An import longer than an hour is killed by `TimeoutStartSec=3600`: unreachable at the reviewed commit because Ferry died on the sandbox first. **Re-checked and live, now fixed (R, 2026-10-23):** `auros-answer.service` has `TimeoutStartSec=infinity`; the two requests that can take hours (the import, and saving her files into Windows before Put Windows back) are bounded inside `answer.sh` by `timeout 43200` (12 h, `AUROS_IMPORT_LIMIT`) so a drive that has stopped answering cannot hold every later request for ever, and a stopped run says `result=failed code=124` with "press it again and it carries on". A killed copy is resumable without duplicates: hidden temporaries are removed on the next run and files already placed are recognised (same size and time). Tests: the kill test in `src/ferry/tests/run.sh` (a `ferry-copy` is SIGKILLed after 30 files are committed, then run again: 600 files exactly once, byte for byte, no "(from Windows)" twins, no temporaries), the unit check, and `answertest.sh` (124 maps to failed). At the reviewed commit `welcome.c` also offered no action on the "Bringing your files across" panel: still C's.
 - **R-20** "Put Windows back" overwrites Windows' whole EFI partition with an install-day copy: same as R-06.
 - **R-21** "Bring my files across" always fails because the installer's shrink left C: dirty: `ntfs-3g.probe --readonly` exits 0 on a dirty-bit-only volume and the `ntfsinfo` grep can never match, so the gate does not fire. The reverse is worth a ticket for R: Ferry's dirty gate is dead code for dirty volumes, so it would import from a volume Windows left unclean (read-only mount, no data loss).
-- **R-22** The only everyday route to Windows chainloads `bootmgfw.efi` from shim and GRUB and shows a BitLocker recovery screen: same as R-10.
+- **R-22** The only everyday route to Windows chainloads `bootmgfw.efi` from shim and GRUB and shows a BitLocker recovery screen: same as R-10. **Fixed in 69ca6b1**: the menu starts Windows through the firmware (BootNext at Windows Boot Manager), PCR 4 and 7 equal a normal morning (windowsboottest with swtpm; the old chainload differs).
 
