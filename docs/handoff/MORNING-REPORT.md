@@ -4,6 +4,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Done overnight (proof)
 
+- **Video calls and films work on the real image** (camera and microphone both ways; streaming video plays).
+  Being fixed: printing (one tiny package), opening Word/Excel files (adding LibreOffice Writer + Calc).
+
 - **Your potato wish works on AurOS** (rendered from the real code): docs/shots/wishes/rail-1366x768-08-confirm.png
   ("Is this what you want?" in plain words, equal Yes/No) and docs/shots/wishes/rail-1366x768-30-fill-potato.png.
   Wishes engine + screens + voice done (~1,500 checks, 180+ deliberate breakages caught); stays off until the
