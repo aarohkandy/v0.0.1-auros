@@ -301,10 +301,29 @@ case "$VER" in
 esac
 VMAJ=$(echo "$VER" | cut -d. -f1); VMIN=$(echo "$VER" | cut -d. -f2)
 VPAT=$(echo "$VER" | cut -d. -f3 | sed 's/[^0-9].*//')
+# THE LICENCES AND THE TERMS TRAVEL INSIDE THE .EXE (LIC-3, LIA-1; stream
+# LEGAL, docs/handoff/streams/LEGAL.md item 7): RCDATA 200 is the licences
+# and notices, 202 the Terms, both UTF-8, shown by the Licenses button and
+# by "Read the Terms" with no internet. docs/legal/notices/ is generated
+# (python3 tools/legal/notices.py). The releases address is stamped into
+# the notices here, from tools/repo.sh like every other address, and a
+# placeholder left behind refuses the build: a licence text that names no
+# place to get the source is a text that breaks the offer it makes.
+NOTICES_SRC="$ROOT/docs/legal/notices"
+for f in NOTICES.txt TERMS.txt; do
+    [ -s "$NOTICES_SRC/$f" ] || die "docs/legal/notices/$f is missing or empty (python3 tools/legal/notices.py makes it)"
+done
+_rel=$(sh "$ROOT/tools/repo.sh" releases) \
+    || die "tools/repo.sh has no releases address to stamp into the licence text"
+sed "s|@AUROS_RELEASES@|$_rel|g" "$NOTICES_SRC/NOTICES.txt" > "$OUT/auros-notices.txt"
+cp "$NOTICES_SRC/TERMS.txt" "$OUT/auros-terms.txt"
+if grep -q '@AUROS_' "$OUT/auros-notices.txt" "$OUT/auros-terms.txt"; then
+    die "the licence text still has an unstamped @AUROS_ placeholder (build/aurbridge stamps only @AUROS_RELEASES@)"
+fi
 if command -v "$WINDRES" >/dev/null 2>&1; then
     printf '1 24 "%s"\n#include "aurbridge-info.rc"\n' "$SRC/aurbridge.manifest" \
         > "$OUT/aurbridge-manifest.rc"
-    "$WINDRES" -O coff --include-dir "$SRC" \
+    "$WINDRES" -O coff --include-dir "$SRC" --include-dir "$OUT" \
         -DAUROS_VER_MAJOR="$VMAJ" -DAUROS_VER_MINOR="$VMIN" -DAUROS_VER_PATCH="${VPAT:-0}" \
         -DAUROS_VER_STR="\\\"$VER\\\"" \
         -i "$OUT/aurbridge-manifest.rc" -o "$OUT/aurbridge-manifest.o" \

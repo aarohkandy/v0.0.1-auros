@@ -179,6 +179,12 @@ typedef struct {
     char     image_on[16];
     uint64_t run_id;
     uint64_t written_unix;
+    /* The Terms she agreed to by pressing Install AurOS ("v3") and when;
+     * empty / 0 where nobody pressed it (the console tool, the tests), and
+     * then not written at all, so those journals are byte for byte what they
+     * were. The staging environment's reader ignores keys it does not know. */
+    char     terms[8];
+    uint64_t terms_unix;
 
     /* ── image_on = "gap": THE FAST PATH (docs/AURBRIDGE.md) ─────────
      *

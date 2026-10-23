@@ -186,6 +186,12 @@ int main(int argc, char **argv)
     /* What the wizard does: nothing is armed until she presses Restart now
      * (tools/armtest.sh). */
     if (getenv("AURBRIDGE_ARM_LATER")) c.arm_later = 1;
+    /* What the wizard does when she presses Install AurOS: the Terms she
+     * agreed to go into the journal (tools/termstest.sh). */
+    if (getenv("AURBRIDGE_TERMS")) {
+        snprintf(c.terms_version, sizeof c.terms_version, "%s", getenv("AURBRIDGE_TERMS"));
+        c.terms_unix = 1760000000ull;
+    }
 
     pf_report r;
     pf_run(&r);

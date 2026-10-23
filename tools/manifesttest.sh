@@ -73,6 +73,9 @@ if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     cp -r build "$TMP/tree/"
     cp -r src/aurbridge "$TMP/tree/src/"
     cp tools/pe_payload.py tools/repo.sh "$TMP/tree/tools/"
+    # the licences and the Terms the installer carries (build/aurbridge embeds them)
+    mkdir -p "$TMP/tree/docs/legal"
+    cp -r docs/legal/notices "$TMP/tree/docs/legal/"
     # the matcher's facts, which build/aurbridge turns into C first (stream HW)
     cp -r hw "$TMP/tree/"
     cp tools/hw/gen-header.py "$TMP/tree/tools/hw/"
@@ -101,6 +104,26 @@ if [ -n "${1:-}" ]; then
     if cmp -s "$TMP/inside.xml" "$MAN"; then ok "...and is the source manifest, byte for byte"
     else bad "...and is the source manifest, byte for byte" \
              "$(wc -c < "$TMP/inside.xml") bytes inside, $(wc -c < "$MAN") in the source"; fi
+
+    # THE LICENCES AND THE TERMS ARE INSIDE (LIC-3, LIA-1): RCDATA 200 and 202,
+    # not empty, equal to what docs/legal/notices holds (the releases address
+    # stamped in), and no placeholder left. The Licenses button and "Read the
+    # Terms" show them with no internet; an installer without them has a button
+    # that opens an empty page.
+    rel=$(sh tools/repo.sh releases 2>/dev/null) || rel="@none@"
+    for pair in "200 NOTICES" "202 TERMS"; do
+        id=${pair% *}; nm=${pair#* }
+        if python3 tools/pe_payload.py get "$1" "$id" "$TMP/res-$id.txt" 2>/dev/null && [ -s "$TMP/res-$id.txt" ]; then
+            ok "resource $id ($nm) is inside $(basename "$1") and not empty"
+            sed "s|@AUROS_RELEASES@|$rel|g" "docs/legal/notices/$nm.txt" > "$TMP/want-$id.txt"
+            if cmp -s "$TMP/res-$id.txt" "$TMP/want-$id.txt"; then ok "... and is docs/legal/notices/$nm.txt, stamped"
+            else bad "... and is docs/legal/notices/$nm.txt, stamped" "it differs (run python3 tools/legal/notices.py, then rebuild)"; fi
+            if grep -q '@AUROS_' "$TMP/res-$id.txt"; then bad "... with no @AUROS_ placeholder left" "one is left"
+            else ok "... with no @AUROS_ placeholder left"; fi
+        else
+            bad "resource $id ($nm) is inside $(basename "$1")" "missing or empty (build/aurbridge embeds it; needs windres)"
+        fi
+    done
 
     # A resource directory the check must refuse: the same program with
     # a '--' written into its manifest, the size unchanged.

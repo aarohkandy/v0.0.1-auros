@@ -2170,6 +2170,9 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
     }
     j.run_id = m->run_id;
     j.written_unix = (uint64_t)time(NULL);
+    /* the Terms she agreed to when she pressed Install AurOS, and when */
+    snprintf(j.terms, sizeof j.terms, "%s", c->terms_version);
+    j.terms_unix = c->terms_unix;
 
     char jtxt[2048];
     size_t jn = fmt_journal_json(&j, jtxt, sizeof jtxt);

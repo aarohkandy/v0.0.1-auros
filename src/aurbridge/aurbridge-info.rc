@@ -22,6 +22,14 @@
 101 AURFONT "fonts/atkinsonnext-700.ttf"
 102 AURFONT "fonts/atkinsonnext-800.ttf"
 
+/* The licences and notices (200) and the Terms (202), UTF-8, read by the
+ * Licenses button and by "Read the Terms" (wizard.c) with no internet.
+ * build/aurbridge stages them in out/ (the releases address stamped in)
+ * from docs/legal/notices/, which tools/legal/notices.py generates.
+ * 201 is left free; the staging payload owns RCDATA 1-5. */
+200 RCDATA "auros-notices.txt"
+202 RCDATA "auros-terms.txt"
+
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION    AUROS_VER_MAJOR, AUROS_VER_MINOR, AUROS_VER_PATCH, 0
  PRODUCTVERSION AUROS_VER_MAJOR, AUROS_VER_MINOR, AUROS_VER_PATCH, 0

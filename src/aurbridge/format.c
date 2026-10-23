@@ -464,6 +464,13 @@ size_t fmt_journal_json(const fmt_journal *j, char *out, size_t n)
      * disagrees with itself. */
     char e_stage[64], e_boot[64], e_on[64];
     char e_prof[2 * sizeof j->profile];
+    char terms[64] = "";
+    if (j->terms[0]) {
+        char e_terms[2 * sizeof j->terms];
+        esc(e_terms, sizeof e_terms, j->terms);
+        snprintf(terms, sizeof terms, ",\"terms\":\"%s\",\"terms_unix\":%llu",
+                 e_terms, (unsigned long long)j->terms_unix);
+    }
     esc(e_serial, sizeof e_serial, j->disk_serial);
     esc(e_model,  sizeof e_model,  j->disk_model);
     esc(e_part,   sizeof e_part,   j->win_part);
@@ -478,7 +485,7 @@ size_t fmt_journal_json(const fmt_journal *j, char *out, size_t n)
         "\"win_part\":\"%s\",\"win_start_lba\":%llu,\"win_sectors\":%llu,"
         "\"win_ntfs_serial\":%llu,\"gpt_sha256\":\"%s\",\"stage\":\"%s\","
         "\"boot_from\":\"%s\",\"profile\":\"%s\",\"image_on\":\"%s\","
-        "\"run_id\":%llu,\"written_unix\":%llu}\n",
+        "\"run_id\":%llu,\"written_unix\":%llu%s}\n",
         e_serial, e_model,
         (unsigned long long)j->disk_bytes, (unsigned)j->logical_sector,
         e_part, (unsigned long long)j->win_start_lba,
@@ -486,7 +493,7 @@ size_t fmt_journal_json(const fmt_journal *j, char *out, size_t n)
         (unsigned long long)j->win_ntfs_serial,
         e_gpt, e_stage, e_boot, e_prof, e_on,
         (unsigned long long)j->run_id,
-        (unsigned long long)j->written_unix);
+        (unsigned long long)j->written_unix, terms);
     if (k < 0 || (size_t)k >= n) return 0;
     int gap = strcmp(j->image_on, "gap") == 0;
     if (!gap && strcmp(j->image_on, "windows") != 0) return (size_t)k;

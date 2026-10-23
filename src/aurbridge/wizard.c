@@ -87,6 +87,7 @@ static LRESULT acc_LresultFromObject(REFIID r, WPARAM w, LPUNKNOWN u)
 #include <wchar.h>
 #include <wctype.h>
 #include <math.h>
+#include <time.h>
 
 #ifndef WM_WTSSESSION_CHANGE
 #define WM_WTSSESSION_CHANGE 0x02B1
@@ -281,7 +282,9 @@ static int   g_focus = -1;             /* index into g_w[]                */
 static int   g_focus_ring = 0;         /* draw rings only after Tab/arrow */
 
 /* scrolling */
-static int   g_scroll[PAGE_COUNT];
+static int   g_scroll[PAGE_COUNT + 1];  /* one per page, and one for the Terms/Licenses pane */
+static int   g_pane;                   /* 0 none, 1 the Terms, 2 the Licenses (read in the window) */
+static int   scr_i(void) { return g_pane ? (int)PAGE_COUNT : (int)g_page; }
 static int   g_content_h, g_view_h;    /* measured during paint           */
 
 /* preflight */
@@ -695,6 +698,7 @@ static int    g_nw;
 enum {
     ID_NONE = 0,
     ID_PRIMARY, ID_BACK, ID_QUIT, ID_LATER, ID_WIFI, ID_HELPER, ID_COPY, ID_STOP, ID_LEAVE, ID_REPORT,
+    ID_TERMS, ID_LICENSES,
     ID_STYLE = 500
 };
 
@@ -1211,6 +1215,7 @@ static void goto_page(page_id p)
         return;
     }
     g_page = p;
+    g_pane = 0;
     page_changed();
     if ((int)p > g_max_page) g_max_page = (int)p;
     g_focus = -1;
@@ -1461,6 +1466,14 @@ static void choices_from_page(ab_choice *c)
     _snprintf(c->timezone, sizeof c->timezone - 1, "%s", g_tz_v[g_sel_tz]);
 #ifdef AB_CHOICE_BRING_WIFI
     c->bring_wifi = wifi_offered() && g_bring_wifi;
+#endif
+#ifdef AB_CHOICE_TERMS
+    /* Install AurOS said "By pressing Install AurOS you agree to the AurOS
+     * Terms"; the version she agreed to and when are written to the install
+     * journal, on this computer only (LEGAL item 2). "v3" is the Terms'
+     * version, docs/legal/TERMS.md line 3. */
+    _snprintf(c->terms_version, sizeof c->terms_version - 1, "%s", "v3");
+    c->terms_unix = (unsigned long long)time(NULL);
 #endif
 #ifdef AB_CHOICE_BITLOCKER_PAUSE
     c->bitlocker_pause = bitlocker_paused_here();
@@ -1843,6 +1856,8 @@ static int  g_side;                    /* the sidebar's width; 0 folded  */
 static int  g_short;                   /* a netbook-height window       */
 static int  g_inset;
 
+static int agree_shown(void);
+static int agree_h(void);
 static void layout(void)
 {
     int lw = MulDiv(g_cw, 96, g_dpi), lh = MulDiv(g_ch, 96, g_dpi);
@@ -1862,9 +1877,9 @@ static void layout(void)
     if (g_body.right < g_body.left + S(200)) g_body.right = g_body.left + S(200);
     g_body.top    = g_inset + (g_side ? S(8) : S(26) + S(g_short ? 12 : 16));
     g_body.bottom = g_foot.top - S(g_short ? 16 : 24);
-    /* "This starts the install." stands above that button (B-2); on a
-     * short window, beside it */
-    if (g_page == PAGE_READY && !g_short) g_body.bottom -= S(26) + S(8);
+    /* THE AGREEMENT stands above Install AurOS (TERMS 4); its height is
+     * what the sentence and the way to read the Terms need at this width */
+    if (agree_shown()) g_body.bottom -= agree_h() - S(12);   /* the page's own 24 px of air is spent on it */
     if (g_body.bottom < g_body.top + S(120)) g_body.bottom = g_body.top + S(120);
 }
 
@@ -2157,18 +2172,30 @@ static int page_welcome(int x, int y, int w)
     int y0 = y;
     int narrow = w > S(720) ? S(720) : w;
     y += page_head(L"Let’s put AurOS on this computer",
-                   L"AurOS is a free, simple new way to use this computer. Windows stays, "
-                   L"with all your files. If AurOS isn’t for you, you can go back to "
-                   L"Windows.", x, y, w);
+                   L"AurOS is a free, simple new way to use this computer. AurOS is made to "
+                   L"keep Windows and your files. If AurOS isn’t for you, you can go back "
+                   L"to Windows.", x, y, w);
     y += S(g_short ? 24 : 40);
 
     int done = g_pf_valid && !g_checking;
     if (!done)
         y += status_row(ST_WORKING, L"Looking at this computer…",
                         L"This only looks. Nothing on this computer is changed.", x, y, narrow);
-    else if (pf_is_go(&g_report))
-        y += status_row(ST_DONE, L"This computer can take AurOS.",
-                        L"Next, you pick how it looks.", x, y, narrow);
+    else if (pf_is_go(&g_report)) {
+        /* FROM HERE THE DOWNLOAD IS RUNNING (check_passed, download_begin),
+         * so "this only looks" is no longer true, and her internet may have
+         * a limit: say so on this page, where the check ends (TERMS 4) */
+        wchar_t sub[420];
+        wcscpy(sub, L"Next, you pick how it looks.");
+        if (g_dl_state == 1)
+            wcscat(sub, L" AurOS is downloading while you read: about 2\u00A0GB to download, "
+                        L"and about 5\u00A0GB more once it is unpacked. If your internet has a data "
+                        L"limit, close this window: closing deletes it.");
+        else if (g_dl_state == 2)
+            wcscat(sub, L" AurOS has downloaded: about 2\u00A0GB, and about 5\u00A0GB more once it is "
+                        L"unpacked. If you close this window, it is deleted.");
+        y += status_row(ST_DONE, L"This computer can take AurOS.", sub, x, y, narrow);
+    }
     else
         y += status_row(ST_TODO, L"Something needs sorting out first.", NULL, x, y, narrow);
 
@@ -2202,7 +2229,7 @@ static int page_welcome(int x, int y, int w)
      * it is left out rather than scrolled to. The page is her first sight of
      * the product and a picture says what a sentence cannot. */
     {
-        int room = (g_body.bottom - g_body.top) - (y - y0) - S(16) - S(28) - S(30);
+        int room = (g_body.bottom - g_body.top) - (y - y0) - S(16) - S(28) - S(34);
         int ph = S(225);
         if (ph > room) ph = room;
         if (ph >= S(150)) {
@@ -3067,65 +3094,105 @@ static int page_ready(int x, int y, int w)
 {
     int y0 = y;
     int narrow = w > S(760) ? S(760) : w;
-    /* tighter when the page carries the two optional lines (her Wi-Fi, the
-     * drive lock): all eight still fit 1366x768 without scrolling */
-    wchar_t hwprobe[8];
-    int extra = wifi_offered() + bitlocker_paused_here() + (hw_ready_line(hwprobe, 8) ? 1 : 0);
-    int gap = S(g_dense ? 6 : g_short ? 10 : extra > 1 ? 6 : extra ? 9 : 16);
-    wchar_t buf[300];
+    wchar_t buf[300], hwl[420];
+    wchar_t rng[64], clk[300];
 
-    y += page_head(L"Ready to install", NULL, x, y, w) + S(g_dense ? 12 : g_short ? 18 : 28);
+    /* THE ROWS, collected first so that the space between them can be
+     * chosen to fit: the first two are the Terms' risk in her words (stream
+     * LEGAL, docs/handoff/streams/LEGAL.md items 1, 10, 11), and everything
+     * else was here before. */
+    struct { int glyph; const wchar_t *text; } row[16];
+    int nr = 0;
+#define ROW(g, t) do { row[nr].glyph = (g); row[nr].text = (t); nr++; } while (0)
 
-    y += glyph_row(G_HOME, L"Windows and all your files stay, and there is enough room for "
-                           L"AurOS.", x, y, narrow) + gap;
+    /* THE ONE HAZARD, before anything else. "Kept" is what AurOS is made to
+     * do, not a promise: the step that makes Windows smaller cannot be undone
+     * half way. */
+    ROW(G_HOME, L"Windows and your files are kept. Setup makes Windows smaller to fit AurOS. "
+                L"If the power fails or the computer crashes during that step, Windows or "
+                L"your files could be damaged and might not come back.");
+    ROW(G_DRIVE, L"Any change to a drive carries some risk. Copy anything you can’t "
+                 L"replace to a memory stick first.");
     /* and the one thing that does not come with her (A-07, EASY rule 9: say
      * it before, not after) */
-    y += glyph_row(G_INFO, L"Programs made for Windows don\u2019t run in AurOS.", x, y, narrow) + gap;
-    /* and what of hers will not work yet, in one line (never a stop) */
-    {
-        wchar_t hwl[420];
-        if (hw_ready_line(hwl, 420)) y += glyph_row(G_INFO, hwl, x, y, narrow) + gap;
-    }
-
-    y += glyph_row(G_LOOK, STYLES[g_sel_style].ready, x, y, narrow) + gap;
+    /* and what of hers will not work yet, in the same row (never a stop) */
+    static wchar_t nowork[480];
+    wcscpy(nowork, L"Programs made for Windows don’t run in AurOS.");
+    if (hw_ready_line(hwl, 420)) { wcscat(nowork, L" "); wcsncat(nowork, hwl, 420); }
+    ROW(G_INFO, nowork);
+    ROW(G_LOOK, STYLES[g_sel_style].ready);
 
     if (g_dl_state == 2) {
         wcscpy(buf, L"AurOS has already downloaded.");
     } else {
         wcscpy(buf, L"AurOS downloads while you wait, so stay connected to the internet.");
     }
-    y += glyph_row(G_DOWN, buf, x, y, narrow) + gap;
+    ROW(G_DOWN, buf);
 
     /* D11, in her words, on a computer whose drive is locked. */
     if (bitlocker_paused_here())
-        y += glyph_row(G_LOCK, L"Windows’ drive lock is paused for one restart and "
-                               L"comes back on by itself.", x, y, narrow) + gap;
+        ROW(G_LOCK, L"Windows’ drive lock is paused for one restart and comes back on by itself.");
 
-    y += glyph_row(G_UNDO, L"The computer restarts once. Then AurOS asks if everything "
-                           L"works. Press \u201CNo, go back to Windows\u201D and it does.",
-                   x, y, narrow) + gap;
+    ROW(G_UNDO, L"The computer restarts once. Then AurOS asks if everything "
+                L"works. Press “No, go back to Windows” and it does.");
 
     int lo, hi;
     eta_range(&lo, &hi);
-    wchar_t rng[64];
     range_words(lo, hi, rng, 64);
-    _snwprintf(buf, 299, L"It takes about %ls. The screen goes dark for a minute or "
+    _snwprintf(clk, 299, L"It takes about %ls. The screen goes dark for a minute or "
                          L"two.%ls", rng,
                disk_is_slow() == 1
                  ? L" This computer has an older, slower kind of drive." : L"");
-    buf[299] = 0;
-    y += glyph_row(G_CLOCK, buf, x, y, narrow);
+    clk[299] = 0;
+    ROW(G_CLOCK, clk);
 
-    /* D10: her Wi-Fi, ticked for her, said by its own name. */
+    /* WHAT SETUP LEAVES BEHIND, said before she agrees (TERMS 4): the Terms
+     * list it and this is the short version. */
+    ROW(G_INFO, L"Setup turns off Fast Startup and hibernation, and leaves a Windows task, "
+                L"“AurOS put-back”, that does nothing unless AurOS is removed.");
+#undef ROW
+
+    /* the Wi-Fi box, measured as it will be drawn */
+    wchar_t title[200];
+    int tog_h = 0;
     if (wifi_offered()) {
-        static wchar_t title[200];
         wchar_t net[128];
         MultiByteToWideChar(CP_UTF8, 0, g_report.wifi_name, -1, net, 127);
         net[127] = 0;
         if (net[0]) _snwprintf(title, 199, L"Bring my Wi-Fi across (%ls)", net);
         else        wcscpy(title, L"Bring my Wi-Fi across");
         title[199] = 0;
-        y += gap + S(4);
+        int tw = narrow - S(14) - S(26) - S(16) - S(14);
+        tog_h = S(14) * 2 + text_h(title, g_f_bodyb, tw, DT_WORDBREAK)
+              + text_h(L"So AurOS is online the moment it starts.", g_f_body, tw, DT_WORDBREAK) + S(2);
+        if (tog_h < S(56)) tog_h = S(56);
+    }
+
+    int head_gap = S(g_dense ? 12 : g_short ? 18 : 28);
+    int head_h = TYPE[type_of(g_f_title)].line;
+    int rows_h = 0, tx_w = narrow - S(30) - S(16);
+    for (int i = 0; i < nr; i++) rows_h += text_h(row[i].text, g_f_body, tx_w, DT_WORDBREAK);
+    /* the space between rows: as much as 16 px when there is room, as little as
+     * 4 px when there is not (past that the page scrolls) */
+    int gaps = nr - 1 + (tog_h ? 1 : 0);
+    /* (render() adds 16 px under every page; the rows must leave it free) */
+    int room = (g_body.bottom - g_body.top) - S(16) - head_h - head_gap - rows_h - (tog_h ? tog_h + S(4) : 0);
+    if (gaps > 0 && room < gaps * S(8)) {          /* tight: the title sits closer to its rows too */
+        head_gap = S(12);
+        room = (g_body.bottom - g_body.top) - S(16) - head_h - head_gap - rows_h - (tog_h ? tog_h + S(4) : 0);
+    }
+    int gap = gaps > 0 ? room / gaps : S(16);
+    if (gap > S(16)) gap = S(16);
+    if (gap < S(4)) gap = S(4);
+
+    y += page_head(L"Ready to install", NULL, x, y, w) + head_gap;
+    for (int i = 0; i < nr; i++) {
+        y += glyph_row(row[i].glyph, row[i].text, x, y, narrow);
+        if (i < nr - 1 || tog_h) y += gap;
+    }
+
+    /* D10: her Wi-Fi, ticked for her, said by its own name. */
+    if (tog_h) {
         y += toggle_row(ID_WIFI, g_bring_wifi, title,
                         L"So AurOS is online the moment it starts.", x, y, narrow);
     }
@@ -3258,8 +3325,9 @@ static int page_progress(int x, int y, int w)
             L"Restart now: the screen goes black for a minute or two. Then you see "
             L"\u201CGetting ready\u201D and \u201CInstalling AurOS\u201D. Do not turn the "
             L"computer off. It restarts by itself, and AurOS asks if everything works.",
-            L"Restart later: this window waits. Nothing changes until you come back and "
-            L"press Restart now.",
+            L"Restart later: this window waits. Setup has already turned off Fast Startup and "
+            L"put AurOS\u2019s start-up files on this computer. Nothing restarts until you come "
+            L"back and press Restart now.",
         };
         y += note_box(NULL, what, 2, x, y, narrow);
         return y - y0;
@@ -3269,8 +3337,8 @@ static int page_progress(int x, int y, int w)
         wchar_t why[400];
         MultiByteToWideChar(CP_UTF8, 0, g_ab_why[0] ? g_ab_why : "it stopped", -1, why, 399);
         why[399] = 0;
-        _snwprintf(buf, 519, L"It stopped before the restart. Your files are safe. %ls",
-                   plain_failure(why));
+        _snwprintf(buf, 519, L"Setup stopped. If Windows does not start, ask someone to help "
+                             L"you. %ls", plain_failure(why));
         buf[519] = 0;
         y += page_head(L"The install stopped", buf, x, y, w);
         return y - y0;
@@ -3288,7 +3356,7 @@ static int page_progress(int x, int y, int w)
     if (g_stop_wanted) {
         y += text_draw(L"Stopping.", g_f_bodyb, C_INK, x, y, narrow, DT_WORDBREAK) + S(4);
         y += text_draw(L"When the step it is on is done, everything is put back and this "
-                       L"window closes by itself. Windows and your files stay as they were.",
+                       L"window closes by itself.",
                        g_f_body, C_INK, x, y, narrow, DT_WORDBREAK);
         return y - y0;
     }
@@ -3333,14 +3401,14 @@ static int welcome_passed(void)
 
 static int primary_visible(void)
 {
-    if (g_confirm) return 1;
+    if (g_confirm || g_pane) return 1;
     if (g_page == PAGE_PROGRESS) return g_install_finished;
     return 1;
 }
 
 static int primary_enabled(void)
 {
-    if (g_confirm) return 1;
+    if (g_confirm || g_pane) return 1;
     switch (g_page) {
     case PAGE_WELCOME:  return welcome_passed();
     case PAGE_BLOCKED:  return sb_page() ? !g_checking
@@ -3356,6 +3424,7 @@ static const wchar_t *primary_label(void)
 {
     if (g_confirm) return g_confirm == 1 ? L"Keep going"
                         : g_confirm == 3 ? L"I have saved my work" : L"Keep this window open";
+    if (g_pane) return L"Done reading";
     switch (g_page) {
     case PAGE_WELCOME:  return L"Next";
     /* WHEN IT CANNOT GO ON, THE ONE BUTTON CLOSES IT. "Check again" on an
@@ -3379,6 +3448,7 @@ static const wchar_t *primary_label(void)
 static int back_visible(void)
 {
     /* Not while "Install AurOS" is checking: that button was pressed. */
+    if (g_pane) return 0;
     return g_page == PAGE_STYLE || (g_page == PAGE_READY && !g_checking);
 }
 static page_id back_target(void)
@@ -3405,6 +3475,266 @@ static const wchar_t *early_words(void)
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+ *  The Terms and the Licenses, read inside the window
+ *
+ *  "By pressing Install AurOS you agree to the AurOS Terms" is only fair
+ *  if she can read them, with the internet down, without a browser: the
+ *  Terms are RCDATA 202 inside this file, and the licences and notices of
+ *  everything AurOS carries (with the written offer of the source) are
+ *  RCDATA 200 (build/aurbridge stages both from docs/legal/notices/;
+ *  stream LEGAL, docs/handoff/streams/LEGAL.md). A pane replaces the page
+ *  until she presses "Done reading" or Esc; nothing behind it is
+ *  reachable, and it changes nothing. The text is third parties' words, so
+ *  it is not held to the installer's own voice rules (wordlint reads the
+ *  string literals above, not this file's resources).
+ * ═══════════════════════════════════════════════════════════════════ */
+static int g_want_focus_id;
+#define RES_NOTICES 200
+#define RES_TERMS   202
+static int      g_pane_opener;          /* the button that opened it, to give focus back */
+static wchar_t *g_pt;                   /* the text, reflowed: a paragraph ends in '\n' */
+static int      g_pt_kind;
+typedef struct { int off, len, ind; } pane_line;   /* ind: pixels, for a hanging indent */
+static pane_line *g_pl;
+static int      g_pl_n, g_pl_cap, g_pl_w = -1;
+static HFONT    g_pl_font;
+
+/* RCDATA `id` as wide text; NULL when this file has no such resource. */
+static wchar_t *res_wide(int id)
+{
+    HRSRC r = FindResourceW(NULL, MAKEINTRESOURCEW(id), (LPCWSTR)RT_RCDATA);
+    if (!r) return NULL;
+    HGLOBAL g = LoadResource(NULL, r);
+    DWORD n = SizeofResource(NULL, r);
+    const char *b = g ? (const char *)LockResource(g) : NULL;
+    if (!b || !n) return NULL;
+    if (n >= 3 && (unsigned char)b[0] == 0xEF && (unsigned char)b[1] == 0xBB && (unsigned char)b[2] == 0xBF) {
+        b += 3; n -= 3;
+    }
+    int w = MultiByteToWideChar(CP_UTF8, 0, b, (int)n, NULL, 0);
+    if (w <= 0) return NULL;
+    wchar_t *o = (wchar_t *)malloc(((size_t)w + 1) * sizeof *o);
+    if (!o) return NULL;
+    MultiByteToWideChar(CP_UTF8, 0, b, (int)n, o, w);
+    o[w] = 0;
+    return o;
+}
+
+/* Hard-wrapped plain text becomes paragraphs: a flush-left (or equally
+ * indented) line that follows a line of 55 characters or more continues it;
+ * a short line, a blank, a list item with a different indent, or a rule
+ * starts a new one. "=====" frames become a thin rule (0x01), "-----"
+ * underlines go. The licences are hard-wrapped at about 75 columns, which
+ * would otherwise wrap again here into a short line after every long one. */
+static void pane_reflow(const wchar_t *raw)
+{
+    size_t n = wcslen(raw), tabs = 0;
+    for (size_t i = 0; i < n; i++) if (raw[i] == L'\t') tabs++;
+    wchar_t *t = (wchar_t *)malloc((n + tabs * 3 + 2) * sizeof *t), *tw = t;
+    for (size_t i = 0; i < n; i++) {
+        if (raw[i] == L'\t') { for (int k = 0; k < 4; k++) *tw++ = L' '; }
+        else if (raw[i] == L'\r') continue;
+        else if (raw[i] == 0x0C) *tw++ = L'\n';
+        else *tw++ = raw[i];
+    }
+    *tw = 0;
+    wchar_t *o = (wchar_t *)malloc((n + 16) * sizeof *o), *w = o;
+    int open = 0, prev_indent = -1, prev_len = 0, blanks = 0;
+    const wchar_t *p = t;
+    while (*p) {
+        const wchar_t *a = p, *e = p;
+        while (*e && *e != L'\n') e++;
+        p = *e ? e + 1 : e;
+        const wchar_t *b = e;
+        while (b > a && b[-1] == L' ') b--;
+        int len = (int)(b - a);
+        if (len == 0) {
+            if (open) { *w++ = L'\n'; open = 0; }
+            if (blanks < 1) *w++ = L'\n';
+            blanks++; prev_indent = -1; prev_len = 0;
+            continue;
+        }
+        blanks = 0;
+        int rule = len >= 3;
+        for (const wchar_t *c = a; rule && c < b; c++) if (!wcschr(L"=-_~*", *c)) rule = 0;
+        if (rule) {
+            if (open) { *w++ = L'\n'; open = 0; }
+            if (a[0] == L'=' || a[0] == L'_' || a[0] == L'~' || a[0] == L'*') { *w++ = 1; *w++ = L'\n'; }
+            prev_indent = -1; prev_len = 0;
+            continue;
+        }
+        int ind = 0;
+        while (a + ind < b && a[ind] == L' ') ind++;
+        if (open && ind == prev_indent && prev_len >= 55) {
+            *w++ = L' ';
+            for (const wchar_t *c = a + ind; c < b; c++) *w++ = *c;
+        } else {
+            if (open) *w++ = L'\n';
+            for (const wchar_t *c = a; c < b; c++) *w++ = *c;
+            open = 1;
+        }
+        prev_indent = ind; prev_len = len;
+    }
+    if (open) *w++ = L'\n';
+    *w = 0;
+    free(t);
+    free(g_pt);
+    g_pt = o;
+}
+
+static void pane_load(void)
+{
+    if (g_pt && g_pt_kind == g_pane) return;
+    wchar_t *raw = res_wide(g_pane == 2 ? RES_NOTICES : RES_TERMS);
+    if (!raw) {
+        raw = _wcsdup(L"This copy of Setup does not carry the text. It is on the AurOS website, "
+                      L"on the Licenses page, and in every AurOS release.");
+    }
+    if (raw) { pane_reflow(raw); free(raw); }
+    g_pt_kind = g_pane;
+    g_pl_w = -1;
+}
+
+static void pane_add(int off, int len, int ind)
+{
+    if (g_pl_n >= g_pl_cap) {
+        int nc = g_pl_cap ? g_pl_cap * 2 : 4096;
+        pane_line *np = (pane_line *)realloc(g_pl, (size_t)nc * sizeof *np);
+        if (!np) return;
+        g_pl = np; g_pl_cap = nc;
+    }
+    g_pl[g_pl_n].off = off; g_pl[g_pl_n].len = len; g_pl[g_pl_n].ind = ind;
+    g_pl_n++;
+}
+
+/* Break the paragraphs into lines that fit `width`, at a space; the first line
+ * keeps its own leading spaces, the rest hang two spaces deeper. */
+static void pane_wrap(int width)
+{
+    if (!g_pt) return;
+    if (g_pl_w == width && g_pl_font == g_f_body) return;
+    g_pl_w = width; g_pl_font = g_f_body; g_pl_n = 0;
+    SelectObject(g_mdc, g_f_body);
+    SIZE sp = { 0, 0 };
+    GetTextExtentPoint32W(g_mdc, L" ", 1, &sp);
+    const wchar_t *base = g_pt, *q = g_pt;
+    while (*q) {
+        const wchar_t *s = q, *e = q;
+        while (*e && *e != L'\n') e++;
+        q = *e ? e + 1 : e;
+        int len = (int)(e - s);
+        if (len == 0 || s[0] == 1) { pane_add((int)(s - base), len, 0); continue; }
+        int lead = 0;
+        while (lead < len && s[lead] == L' ') lead++;
+        int hang = lead ? (lead + 2) * sp.cx : 0;      /* a list item hangs; a paragraph does not */
+        if (hang > width / 3) hang = width / 3;
+        const wchar_t *c = s;
+        int first = 1;
+        while (c < e) {
+            int avail = width - (first ? 0 : hang), rem = (int)(e - c), try_ = rem > 300 ? 300 : rem, fit = 0;
+            SIZE sz = { 0, 0 };
+            GetTextExtentExPointW(g_mdc, c, try_, avail, &fit, NULL, &sz);
+            if (fit >= rem) { pane_add((int)(c - base), rem, first ? 0 : hang); break; }
+            int brk = 0;
+            for (int i = fit; i > 0; i--)
+                if (c[i] == L' ' && c[i - 1] != L' ') { brk = i; break; }
+            if (brk <= 0) brk = fit > 0 ? fit : 1;
+            pane_add((int)(c - base), brk, first ? 0 : hang);
+            c += brk;
+            while (c < e && *c == L' ') c++;
+            first = 0;
+        }
+    }
+}
+
+static void pane_open(int kind, int opener)
+{
+    g_pane = kind;
+    g_pane_opener = opener;
+    g_scroll[PAGE_COUNT] = 0;
+    g_focus = -1;
+    g_focus_ring = 0;
+    page_changed();
+    if (g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
+}
+
+static void pane_close(void)
+{
+    g_pane = 0;
+    page_changed();                      /* a double-click on "Done reading" must not press what is under it */
+    g_want_focus_id = g_pane_opener;
+    if (g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
+}
+
+static const wchar_t *pane_title(void)
+{
+    return g_pane == 2 ? L"Licenses and notices" : L"The AurOS Terms";
+}
+
+static int page_pane(int x, int y, int w)
+{
+    int y0 = y;
+    pane_load();
+    y += page_head(pane_title(), NULL, x, y, w);
+    y += text_draw(L"You can read this without the internet. Scroll with the mouse wheel or "
+                   L"the arrow keys.", g_f_small, C_INK2, x, y + S(4),
+                   w > S(780) ? S(780) : w, DT_WORDBREAK) + S(g_short ? 12 : 20);
+    int tw = w > S(780) ? S(780) : w;
+    pane_wrap(tw);
+    int lh = TYPE[type_of(g_f_body)].line, off = (lh - TYPE[type_of(g_f_body)].tm) / 2;
+    int first = (g_body.top - y) / lh - 1, last = (g_body.bottom - y) / lh + 2;
+    if (first < 0) first = 0;
+    if (last > g_pl_n) last = g_pl_n;
+    SelectObject(g_mdc, g_f_body);
+    SetTextColor(g_mdc, CR(C_INK));
+    SetBkMode(g_mdc, TRANSPARENT);
+    for (int i = first; i < last; i++) {
+        const pane_line *l = &g_pl[i];
+        int ly = y + i * lh;
+        if (l->len == 1 && g_pt[l->off] == 1)
+            aa_line((float)x, (float)(ly + lh / 2), (float)(x + tw), (float)(ly + lh / 2),
+                    (float)S(1), C_RULE, 1.f);
+        else if (l->len > 0)
+            TextOutW(g_mdc, x + l->ind, ly + off, g_pt + l->off, l->len);
+    }
+    return y - y0 + g_pl_n * lh;
+}
+
+/* A LINK THAT IS A BUTTON: ink words, always underlined (2 px, 3 px under the
+ * pointer), no box. Ink and not the green, which is the colour of the one big
+ * button and nothing else. */
+static int draw_link(int id, const wchar_t *label, HFONT f, int x, int y, int w, int h)
+{
+    int idx = w_add(id, W_BUTTON, x, y, w, h, 1);
+    if (idx >= 0) g_w[idx].name = label;
+    int hot = w_hot(idx);
+    int down = hot && g_mouse_down && g_press_idx == idx;
+    RECT box = { x, y, x + w, y + h };
+    text_in(label, f, down ? C_INK2 : C_INK, box, DT_SINGLELINE | DT_LEFT | DT_VCENTER);
+    int tw = text_w(label, f), th = TYPE[type_of(f)].px;
+    int uy = y + (h + th) / 2 + S(2);
+    fill_rr((float)x, (float)uy, (float)tw, (float)S(hot ? 3 : 2), 0.f, hot ? C_INK : C_INK2, 1.f);
+    if (w_focused(idx)) focus_ring((RECT){ x - S(2), y, x + w, y + h }, S(2), S(6));
+    return idx;
+}
+
+/* THE AGREEMENT, directly above Install AurOS (TERMS 4, check.py --launch):
+ * the sentence at the body's size and colour, and the way to read what it
+ * means. On one row when they fit side by side, else two. */
+static const wchar_t AGREE_LINE[] = L"By pressing Install AurOS you agree to the AurOS Terms.";
+static const wchar_t AGREE_LINK[] = L"Read the Terms";
+static int agree_shown(void) { return g_page == PAGE_READY && !g_confirm && !g_pane; }
+static int agree_rows(void)
+{
+    int need = text_w(AGREE_LINE, g_f_body) + S(24) + text_w(AGREE_LINK, g_f_body);
+    return need <= g_foot.right - g_foot.left ? 1 : 2;
+}
+static int agree_h(void)
+{
+    return agree_rows() * TYPE[type_of(g_f_body)].line + S(8);
+}
+
 /* THE BUTTONS, bottom right: the primary at the page's right edge, the
  * second one left of it -- 32 px away when it leaves or undoes something.
  * At the left, why the big button is waiting, or where "Not now" leaves
@@ -3419,16 +3749,25 @@ static void draw_footer(void)
 
     if (primary_visible()) {
         const wchar_t *plab = primary_label();
-        int install = g_page == PAGE_READY && !g_checking;
+        int install = g_page == PAGE_READY && !g_checking && !g_pane && !g_confirm;
         int pw = text_w(plab, g_f_btn) + S(64) + (install ? S(30) : 0);
         int min = install ? S(280) : S(200);
         if (pw < min) pw = min;
         bx -= pw;
         draw_button(ID_PRIMARY, plab, bx, by, pw, bh, 1, install);
-        if (install && !g_short) {
-            RECT a = { bx - S(200), by - S(8) - TYPE[type_of(g_f_small)].line, g_foot.right, by - S(8) };
-            text_in(L"This starts the install.", g_f_small, C_INK2, a,
-                    DT_SINGLELINE | DT_RIGHT | DT_BOTTOM);
+        if (agree_shown()) {
+            /* the sentence, and the way to read what it means, right-aligned
+             * above the button; one row when they fit side by side */
+            int lh = TYPE[type_of(g_f_body)].line, rows = agree_rows();
+            int ly = by - S(8) - lh;                       /* the bottom row */
+            int lw = text_w(AGREE_LINK, g_f_body);
+            RECT a = { g_foot.left, ly - (rows - 1) * lh, g_foot.right, ly - (rows - 1) * lh + lh };
+            if (rows == 1) a.right = g_foot.right - lw - S(24);
+            text_in(AGREE_LINE, g_f_body, C_INK, a, DT_SINGLELINE | DT_RIGHT | DT_VCENTER);
+            int th = lh < S(44) ? S(44) : lh;               /* a target at least 44 px tall */
+            int ty = ly + (lh - th) / 2;
+            if (ty + th > by) ty = by - th;                 /* never over the button */
+            draw_link(ID_TERMS, AGREE_LINK, g_f_body, g_foot.right - lw, ty, lw, th);
         }
     }
 
@@ -3437,7 +3776,9 @@ static void draw_footer(void)
     int ns = 0;
     const wchar_t *lands = NULL;
 #define SEC(l, i, lv) do { sec[ns].label = (l); sec[ns].id = (i); sec[ns].leaves = (lv); ns++; } while (0)
-    if (g_confirm == 3) {
+    if (g_pane && !g_confirm) {
+        /* reading the Terms or the Licenses: one button, back to the page */
+    } else if (g_confirm == 3) {
         SEC(L"Not yet", ID_LEAVE, 1);
         lands = L"Not yet: nothing is changed, and the page stays as it is.";
     } else if (g_confirm) {
@@ -3462,7 +3803,7 @@ static void draw_footer(void)
         SEC(L"Restart later", ID_LATER, 1);
     } else if (g_page == PAGE_PROGRESS && install_failed()) {
         SEC(L"Not now", ID_QUIT, 1);
-        lands = L"Not now: AurOS Setup closes. Nothing has been changed.";
+        lands = L"Not now: AurOS Setup closes.";
     }
     if (g_page == PAGE_BLOCKED && g_rep_state == 1) lands = L"Saving the report\u2026";
     else if (g_page == PAGE_BLOCKED && g_rep_state == 2)
@@ -3478,12 +3819,21 @@ static void draw_footer(void)
     }
 #undef SEC
 
-    if (!lands && g_page == PAGE_READY && !g_checking && g_short) lands = L"Install AurOS starts the install.";
+    /* "Licenses", at the left of every page's foot: the licences of everything
+     * AurOS carries, one press away and readable offline (LIC-3). What the
+     * foot says about the buttons starts after it. */
+    int left = g_foot.left;
+    if (!g_pane && !g_confirm) {
+        const wchar_t *lic = L"Licenses";
+        int lw = text_w(lic, g_f_small), lhh = S(44);
+        draw_link(ID_LICENSES, lic, g_f_small, left, by + (bh - lhh) / 2, lw + S(4), lhh);
+        left += lw + S(32);
+    }
     const wchar_t *say = g_early ? g_early : lands;
-    int sw = bx - S(24) - g_foot.left;
+    int sw = bx - S(24) - left;
     if (say && sw > S(220)) {          /* too narrow to read: the page says it */
         int th = text_h(say, g_f_small, sw, DT_WORDBREAK);
-        text_draw(say, g_f_small, C_INK2, g_foot.left, by + (bh - th) / 2, sw, DT_WORDBREAK);
+        text_draw(say, g_f_small, C_INK2, left, by + (bh - th) / 2, sw, DT_WORDBREAK);
     }
 }
 
@@ -3502,8 +3852,7 @@ static int page_confirm(int x, int y, int w)
     if (g_confirm == 1) {
         y += page_head(L"Stop setting up AurOS?",
                        L"It stops when the step it is on is done, then takes everything "
-                       L"back, so this computer starts Windows as usual. Windows and your "
-                       L"files are not affected.", x, y, w);
+                       L"back, so this computer starts Windows as usual.", x, y, w);
     } else if (g_confirm == 3) {
         /* before Windows restarts for a fix (C-01): her work first */
         y += page_head(L"Save your work first",
@@ -3511,16 +3860,17 @@ static int page_confirm(int x, int y, int w)
                        L"AurOS Setup opens again by itself afterwards.", x, y, w);
     } else {
         y += page_head(L"Close AurOS Setup?",
-                       L"AurOS is ready. If you close this now, AurOS is taken back. "
-                       L"Nothing on this computer has been changed, and you can open "
-                       L"AurOS Setup again later.", x, y, w);
+                       L"AurOS is ready. If you close this now, AurOS is taken back and this "
+                       L"computer starts Windows as usual. You can open AurOS Setup again "
+                       L"later.", x, y, w);
     }
     return y - y0;
 }
 
 static int page_dispatch(int x, int y, int w)
 {
-    if (g_confirm) return page_confirm(x, y, w);
+    if (g_confirm) return page_confirm(x, y, w);    /* a question about closing wins over the pane */
+    if (g_pane) return page_pane(x, y, w);
     switch (g_page) {
     case PAGE_WELCOME:  return page_welcome(x, y, w);
     case PAGE_BLOCKED:  return page_blocked(x, y, w);
@@ -3548,20 +3898,20 @@ static void render(void)
     draw_steps();
 
     g_nw = 0;
-    if (g_scroll[g_page] > scroll_max()) g_scroll[g_page] = scroll_max();
+    if (g_scroll[scr_i()] > scroll_max()) g_scroll[scr_i()] = scroll_max();
     set_clip(g_card.left, g_body.top - S(4), g_card.right, g_body.bottom + S(4));
     g_view_h    = g_body.bottom - g_body.top;
-    g_content_h = page_dispatch(g_body.left, g_body.top - g_scroll[g_page],
+    g_content_h = page_dispatch(g_body.left, g_body.top - g_scroll[scr_i()],
                                 g_body.right - g_body.left) + S(16);
     clip_reset();
 
     if (g_content_h > g_view_h) {
         /* a rule where the page goes on past the edge, instead of text
          * sheared off at it */
-        if (g_scroll[g_page] > 0)
+        if (g_scroll[scr_i()] > 0)
             aa_line((float)g_body.left, (float)(g_body.top - S(4)), (float)g_body.right,
                     (float)(g_body.top - S(4)), (float)S(2), C_RULE, 1.f);
-        if (g_scroll[g_page] < scroll_max())
+        if (g_scroll[scr_i()] < scroll_max())
             aa_line((float)g_body.left, (float)(g_body.bottom + S(4)), (float)g_body.right,
                     (float)(g_body.bottom + S(4)), (float)S(2), C_RULE, 1.f);
 
@@ -3571,7 +3921,7 @@ static void render(void)
         int hh = (int)((float)(g_body.bottom - g_body.top) * frac);
         if (hh < S(44)) hh = S(44);
         int room = (g_body.bottom - g_body.top) - hh;
-        int off  = scroll_max() ? (int)((float)room * (float)g_scroll[g_page]
+        int off  = scroll_max() ? (int)((float)room * (float)g_scroll[scr_i()]
                                         / (float)scroll_max()) : 0;
         fill_rr((float)tx, (float)g_body.top, (float)th,
                 (float)(g_body.bottom - g_body.top), (float)th * 0.5f,
@@ -3693,6 +4043,7 @@ static void do_primary(void)
 {
     if (!primary_visible()) return;
     if (!primary_enabled()) { g_early = early_words(); return; }
+    if (g_pane && !g_confirm) { pane_close(); return; }
     if (g_confirm) {
         /* the answer that keeps what she has: keep going, or keep AurOS for
          * her next restart and let the window go */
@@ -3746,6 +4097,8 @@ static void widget_do(int id)
     case ID_WIFI:    g_bring_wifi = !g_bring_wifi; return;
     case ID_HELPER:  open_helper(); return;
     case ID_REPORT:  start_report(); return;
+    case ID_TERMS:    pane_open(1, ID_TERMS); return;
+    case ID_LICENSES: pane_open(2, ID_LICENSES); return;
     case ID_STOP:    PostMessageW(g_hwnd, WM_CLOSE, 0, 0); return;
     case ID_LEAVE:   if (leave_confirmed()) DestroyWindow(g_hwnd); return;
     case ID_COPY:    copy_for_helper(); return;
@@ -3787,9 +4140,9 @@ static int on_scroll_track(int x, int y)
 static void scroll_by(int dy)
 {
     int m = scroll_max();
-    g_scroll[g_page] += dy;
-    if (g_scroll[g_page] > m) g_scroll[g_page] = m;
-    if (g_scroll[g_page] < 0) g_scroll[g_page] = 0;
+    g_scroll[scr_i()] += dy;
+    if (g_scroll[scr_i()] > m) g_scroll[scr_i()] = m;
+    if (g_scroll[scr_i()] < 0) g_scroll[scr_i()] = 0;
 }
 
 static void focus_visible(void)
@@ -3797,7 +4150,8 @@ static void focus_visible(void)
     if (g_focus < 0 || g_focus >= g_nw) return;
     int id = g_w[g_focus].id;
     if (id == ID_PRIMARY || id == ID_BACK || id == ID_QUIT || id == ID_LATER ||
-        id == ID_HELPER || id == ID_STOP || id == ID_LEAVE || id == ID_REPORT) return;
+        id == ID_HELPER || id == ID_STOP || id == ID_LEAVE || id == ID_REPORT ||
+        id == ID_TERMS || id == ID_LICENSES) return;
     RECT r = g_w[g_focus].r;
     if (r.top < g_body.top)        scroll_by(r.top - g_body.top - S(12));
     else if (r.bottom > g_body.bottom) scroll_by(r.bottom - g_body.bottom + S(12));
@@ -4006,10 +4360,18 @@ static void acc_page_name(wchar_t *out, int n)
     out[0] = 0;
     int k = 0;
 #define SAY(...) do { if (k >= 0 && k < n - 1) { int w_ = _snwprintf(out + k, (size_t)(n - k), __VA_ARGS__); k = w_ < 0 ? -1 : k + w_; } } while (0)
-    switch (g_page) {
+    switch (g_pane ? -1 : (int)g_page) {
+    case -1:
+        SAY(L"%ls. You can read this without the internet. Use the arrow keys to scroll. "
+            L"Press Enter or Escape when you are done reading.", pane_title());
+        break;
     case PAGE_WELCOME:
         SAY(L"Let’s put AurOS on this computer. %ls",
-            welcome_passed() ? L"This computer can take AurOS. Press Enter for Next."
+            welcome_passed() ? (g_dl_state == 1
+                ? L"This computer can take AurOS. AurOS is downloading while you read: about "
+                  L"2 GB, and about 5 GB more once it is unpacked. If your internet has a data "
+                  L"limit, close this window: closing deletes it. Press Enter for Next."
+                : L"This computer can take AurOS. Press Enter for Next.")
             : (g_pf_valid && !g_checking && !pf_is_go(&g_report))
                 ? L"Something needs sorting out first."
                 : L"Looking at this computer. This only looks; nothing is changed.");
@@ -4044,8 +4406,12 @@ static void acc_page_name(wchar_t *out, int n)
         eta_range(&lo, &hi);
         wchar_t rng[64];
         range_words(lo, hi, rng, 64);
-        SAY(L"Ready to install. Windows and all your files stay on this computer. %ls "
-            L"The computer restarts once. It takes about %ls. Press "
+        SAY(L"Ready to install. Windows and your files are kept. Setup makes Windows smaller to "
+            L"fit AurOS. If the power fails or the computer crashes during that step, Windows "
+            L"or your files could be damaged and might not come back. Any change to a drive "
+            L"carries some risk. Copy anything you can’t replace to a memory stick first. "
+            L"%ls The computer restarts once. It takes about %ls. By pressing Install AurOS "
+            L"you agree to the AurOS Terms; the button Read the Terms shows them. Press "
             L"Enter to install AurOS.",
             STYLES[style_ok() ? g_sel_style : 0].ready, rng);
         break;
@@ -4053,11 +4419,11 @@ static void acc_page_name(wchar_t *out, int n)
     case PAGE_PROGRESS:
         if (install_ok())
             SAY(L"Ready to restart. Save anything you’re working on, then press "
-                L"Enter to restart now. Or press Restart later: AurOS goes on next time "
-                L"you restart.");
+                L"Enter to restart now. Or press Restart later: nothing restarts until "
+                L"you come back and press Restart now.");
         else if (install_failed())
-            SAY(L"The install stopped before the restart. Your files are safe. Press "
-                L"Enter to try again.");
+            SAY(L"The install stopped. Setup stopped. If Windows does not start, ask "
+                L"someone to help you. Press Enter to try again.");
         else if (g_stop_wanted)
             SAY(L"Stopping. When the step it is on is done, everything is put back and "
                 L"this window closes by itself.");
@@ -4559,6 +4925,7 @@ static void on_key(WPARAM k)
      * back a page, and that is all. It used to close the window. */
     case VK_ESCAPE:
         if (g_confirm) { g_confirm = 0; page_changed(); }
+        else if (g_pane) pane_close();
         else if (back_visible()) goto_page(back_target());
         break;
     case VK_LEFT:
@@ -4573,8 +4940,8 @@ static void on_key(WPARAM k)
     case VK_DOWN:  scroll_by(S(60));  break;
     case VK_PRIOR: scroll_by(-g_view_h + S(40)); break;
     case VK_NEXT:  scroll_by(g_view_h - S(40));  break;
-    case VK_HOME:  g_scroll[g_page] = 0; break;
-    case VK_END:   g_scroll[g_page] = scroll_max(); break;
+    case VK_HOME:  g_scroll[scr_i()] = 0; break;
+    case VK_END:   g_scroll[scr_i()] = scroll_max(); break;
     default: break;
     }
 }
@@ -4661,10 +5028,10 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (g_drag_bar) {
             int room = g_view_h > 0 ? g_view_h : 1;
             int mx = scroll_max();
-            g_scroll[g_page] = g_drag_s0 + (int)((long long)(g_mouse.y - g_drag_y0)
+            g_scroll[scr_i()] = g_drag_s0 + (int)((long long)(g_mouse.y - g_drag_y0)
                                                  * g_content_h / room);
-            if (g_scroll[g_page] > mx) g_scroll[g_page] = mx;
-            if (g_scroll[g_page] < 0) g_scroll[g_page] = 0;
+            if (g_scroll[scr_i()] > mx) g_scroll[scr_i()] = mx;
+            if (g_scroll[scr_i()] < 0) g_scroll[scr_i()] = 0;
             InvalidateRect(h, NULL, FALSE);
             return 0;
         }
@@ -4684,10 +5051,10 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             /* a press on the track jumps there, then drags from there */
             int mx = scroll_max();
             int span = g_body.bottom - g_body.top;
-            if (span > 0) g_scroll[g_page] = (int)((long long)(g_mouse.y - g_body.top) * mx / span);
-            if (g_scroll[g_page] > mx) g_scroll[g_page] = mx;
-            if (g_scroll[g_page] < 0) g_scroll[g_page] = 0;
-            g_drag_bar = 1; g_drag_y0 = g_mouse.y; g_drag_s0 = g_scroll[g_page];
+            if (span > 0) g_scroll[scr_i()] = (int)((long long)(g_mouse.y - g_body.top) * mx / span);
+            if (g_scroll[scr_i()] > mx) g_scroll[scr_i()] = mx;
+            if (g_scroll[scr_i()] < 0) g_scroll[scr_i()] = 0;
+            g_drag_bar = 1; g_drag_y0 = g_mouse.y; g_drag_s0 = g_scroll[scr_i()];
             SetCapture(h);
             InvalidateRect(h, NULL, FALSE);
             return 0;
@@ -4889,7 +5256,9 @@ static int shot_run(const char *dir)
 
     fx_machine(0); fx_ready();
     g_focus = -1; g_want_focus_id = 0;
+    InterlockedExchange(&g_dl_state, 1);            /* the page the check ends on says AurOS is downloading */
     shot_save(dir, "1c-welcome-ready");
+    InterlockedExchange(&g_dl_state, 0);
 
     fx_machine(0);
     fx_add("removable-attached", PF_WARN, "A USB drive is plugged in");
@@ -4945,6 +5314,11 @@ static int shot_run(const char *dir)
     g_focus = -1; g_focus_ring = 0; g_sel_style = STYLE_DEFAULT;
 
     g_page = PAGE_READY; shot_save(dir, "4a-ready");
+    /* reading the Terms, and the Licenses, inside the window */
+    g_pane = 1; g_scroll[PAGE_COUNT] = 0; shot_save(dir, "4e-ready-terms");
+    g_scroll[PAGE_COUNT] = S(1500); shot_save(dir, "4f-ready-terms-scrolled");
+    g_pane = 2; g_scroll[PAGE_COUNT] = S(2400); shot_save(dir, "4g-licenses");
+    g_pane = 0; g_scroll[PAGE_COUNT] = 0;
     fx_machine(0); fx_ready(); fx_hw(FXH_CAMERA);
     g_page = PAGE_READY; shot_save(dir, "4d-ready-hardware-line");
     fx_machine(0); fx_ready(); fx_hw(FXH_BCM_ETH);
@@ -5215,11 +5589,27 @@ static int nav_test(const char *dir)
                 g_page = P[i].p;
                 g_install_finished = P[i].done;
                 InterlockedExchange(&g_ab_state, P[i].done ? 2 : 0);
-                g_scroll[g_page] = 0;
+                g_scroll[scr_i()] = 0;
                 render();
-                snprintf(what, sizeof what, "the %s page fits %s without scrolling",
-                         P[i].name, SZ[k].name);
-                nt_check(g_content_h <= g_view_h, what);
+                if (P[i].p == PAGE_READY && g_short) {
+                    /* the Terms' risk and agreement (stream LEGAL) are more words than a
+                     * small screen holds: Ready may scroll there, but the risk is its first
+                     * row and the agreement and Install AurOS stay in view beside it */
+                    int pr = -1, tl = -1;
+                    for (int j = 0; j < g_nw; j++) {
+                        if (g_w[j].id == ID_PRIMARY) pr = j;
+                        if (g_w[j].id == ID_TERMS) tl = j;
+                    }
+                    snprintf(what, sizeof what,
+                             "the ready page on %s may scroll, but Install AurOS and its agreement stay in view",
+                             SZ[k].name);
+                    nt_check(pr >= 0 && tl >= 0 && g_w[pr].r.bottom <= g_ch && g_w[tl].r.bottom <= g_w[pr].r.top
+                             && g_w[tl].r.top >= g_body.bottom - S(60) && g_scroll[scr_i()] == 0, what);
+                } else {
+                    snprintf(what, sizeof what, "the %s page fits %s without scrolling",
+                             P[i].name, SZ[k].name);
+                    nt_check(g_content_h <= g_view_h, what);
+                }
                 if (P[i].p == PAGE_STYLE) {
                     int cards = 0;
                     for (int j = 0; j < g_nw; j++)
@@ -5524,7 +5914,22 @@ static int nav_test(const char *dir)
         memset(&c, 0, sizeof c);
         choices_from_page(&c);
         nt_check(g_bring_wifi && c.bring_wifi == 1, "ticked again, the engine is told to");
-        nt_check(g_content_h <= g_view_h, "with the box, Ready still fits without scrolling");
+        /* The Terms' risk and agreement (stream LEGAL) take the room this page
+         * had: with the box AND the drive-lock line, the longest Ready, it
+         * scrolls a little. The risk is still its first row, and Tab brings
+         * the box into view. */
+        g_scroll[PAGE_READY] = 0;
+        render();
+        for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_WIFI) g_focus = i;
+        focus_visible();
+        render();
+        box = -1;
+        for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_WIFI) box = i;
+        nt_check(g_content_h <= g_view_h ||
+                 (box >= 0 && g_w[box].r.top >= g_body.top && g_w[box].r.bottom <= g_body.bottom),
+                 "with the box, Ready fits, or Tab brings the box into view");
+        g_focus = -1;
+        g_scroll[PAGE_READY] = 0;
 #else
         nt_check(box < 0, "on Wi-Fi, but the engine cannot carry it yet: no box, no promise");
 #endif
@@ -5710,11 +6115,160 @@ static int nav_test(const char *dir)
         g_hw_new = g_hw; memset(&g_hw, 0, sizeof g_hw);
     }
 
+    if (g_nt) fprintf(g_nt, "\n16. the Terms and the Licenses: agreed to before Install, readable with no internet\n");
+    {
+        /* the texts travel inside the program (build/aurbridge stages them from
+         * docs/legal/notices/; RCDATA 200 and 202) */
+        wchar_t *terms = res_wide(RES_TERMS), *lic = res_wide(RES_NOTICES);
+        nt_check(terms && wcsstr(terms, L"AUROS TERMS") && wcslen(terms) > 5000,
+                 "the Terms are inside the program (resource 202)");
+        nt_check(lic && wcsstr(lic, L"LICENSES AND NOTICES") && wcslen(lic) > 100000,
+                 "the licences and notices are inside the program (resource 200)");
+        nt_check(lic && !wcsstr(lic, L"@AUROS_") && terms && !wcsstr(terms, L"@AUROS_"),
+                 "... with no @AUROS_ placeholder left in either");
+        free(terms); free(lic);
+
+        fx_machine(0); fx_ready();
+        g_page = PAGE_READY; g_scroll[PAGE_READY] = 0; g_confirm = 0; g_pane = 0; g_checking = 0;
+        g_nt_auto = 1;
+        render();
+        int pr = -1, tl = -1, ll = -1;
+        for (int i = 0; i < g_nw; i++) {
+            if (g_w[i].id == ID_PRIMARY)  pr = i;
+            if (g_w[i].id == ID_TERMS)    tl = i;
+            if (g_w[i].id == ID_LICENSES) ll = i;
+        }
+        nt_check(pr >= 0 && !wcscmp(primary_label(), L"Install AurOS") && g_page == PAGE_READY,
+                 "Ready's one big button is still Install AurOS");
+        nt_check(tl >= 0 && g_w[tl].name && !wcscmp(g_w[tl].name, L"Read the Terms"),
+                 "Ready has the button Read the Terms");
+        nt_check(pr >= 0 && tl >= 0 && g_w[tl].r.right == g_w[pr].r.right && g_w[tl].r.bottom <= g_w[pr].r.top
+                 && g_w[pr].r.top - g_w[tl].r.bottom < S(40),
+                 "... directly above Install AurOS, ending where it ends");
+        nt_check(ll >= 0 && g_w[ll].name && !wcscmp(g_w[ll].name, L"Licenses"),
+                 "Ready has the button Licenses, in the foot");
+        wchar_t rn[1400];
+        acc_page_name(rn, 1400);
+        nt_check(wcsstr(rn, L"By pressing Install AurOS you agree to the AurOS Terms") != NULL,
+                 "the screen reader reads the agreement");
+        nt_check(wcsstr(rn, L"Any change to a drive carries some risk") != NULL &&
+                 wcsstr(rn, L"might not come back") != NULL,
+                 "... and the risk, before the button");
+        ab_choice c;
+        memset(&c, 0, sizeof c);
+        choices_from_page(&c);
+#ifdef AB_CHOICE_TERMS
+        nt_check(!strcmp(c.terms_version, "v3") && c.terms_unix > 1700000000ULL,
+                 "the engine is told which Terms she agreed to (v3) and when, for the install journal");
+#endif
+
+        /* Licenses is in the foot of every page */
+        {
+            static const struct { page_id p; int blocked; const char *name; } PG[] = {
+                { PAGE_WELCOME, 0, "the first page" }, { PAGE_STYLE, 0, "the look page" },
+                { PAGE_READY, 0, "Ready" }, { PAGE_PROGRESS, 0, "the install page" },
+                { PAGE_BLOCKED, 1, "the stop page" },
+            };
+            for (size_t i = 0; i < sizeof PG / sizeof PG[0]; i++) {
+                nt_fake_report(PG[i].blocked);
+                g_page = PG[i].p; g_pane = 0; g_confirm = 0;
+                render();
+                int has = 0;
+                for (int j = 0; j < g_nw; j++) has |= g_w[j].id == ID_LICENSES;
+                char what[96];
+                snprintf(what, sizeof what, "%s has Licenses", PG[i].name);
+                nt_check(has, what);
+            }
+        }
+
+        /* Read the Terms opens them in the window, and Esc comes back to Ready */
+        fx_machine(0); fx_ready();
+        g_page = PAGE_READY; g_scroll[PAGE_READY] = 0; g_pane = 0; g_confirm = 0;
+        render();
+        widget_activate(ID_TERMS);
+        render();
+        nt_check(g_pane == 1 && g_page == PAGE_READY, "Read the Terms opens the Terms in the window");
+        nt_check(g_pl_n > 100 && g_pt && wcsstr(g_pt, L"AUROS TERMS") != NULL,
+                 "... the text is there, wrapped to the window");
+        int only_big = 1;
+        for (int i = 0; i < g_nw; i++) only_big &= g_w[i].id == ID_PRIMARY;
+        nt_check(only_big && !wcscmp(primary_label(), L"Done reading"),
+                 "... nothing else on the screen can be pressed, and the one button is Done reading");
+        nt_check(g_content_h > g_view_h, "... and it scrolls");
+        scroll_by(S(100000));
+        nt_check(g_scroll[scr_i()] == scroll_max() && g_scroll[PAGE_READY] == 0,
+                 "... to its end, apart from Ready's own place");
+        on_key(VK_ESCAPE);
+        render();
+        nt_check(g_pane == 0 && g_page == PAGE_READY && !g_checking && !wcscmp(primary_label(), L"Install AurOS"),
+                 "Esc closes it, and Ready is as it was");
+        /* the press that closes it must not also press what is under it */
+        g_nt_auto = 0;
+        g_nt_clock += 2000;
+        widget_activate(ID_TERMS);
+        g_nt_clock += 2000;
+        widget_activate(ID_PRIMARY);                    /* Done reading */
+        g_nt_clock += 600;                              /* past the repeat rule, inside the settle one */
+        widget_activate(ID_PRIMARY);                    /* the echo of a slow double-click */
+        nt_check(g_pane == 0 && g_page == PAGE_READY && !g_checking,
+                 "a slow double-click on Done reading does not press Install AurOS");
+        g_nt_auto = 1;
+
+        /* Licenses, from the first page: the long text, with no internet */
+        fx_machine(0); fx_ready();
+        g_page = PAGE_WELCOME; g_scroll[PAGE_WELCOME] = 0; g_pane = 0;
+        render();
+        widget_activate(ID_LICENSES);
+        render();
+        nt_check(g_pane == 2 && g_pt && wcsstr(g_pt, L"LICENSES AND NOTICES") != NULL &&
+                 wcsstr(g_pt, L"GNU GENERAL PUBLIC LICENSE") != NULL,
+                 "Licenses opens the licences and notices (the GPL is in it)");
+        nt_check(g_pl_n > 3000 && g_content_h > g_view_h * 20,
+                 "... thousands of lines, scrolled by the same bar");
+        on_key(VK_END);
+        render();
+        nt_check(g_scroll[scr_i()] == scroll_max() && g_scroll[PAGE_WELCOME] == 0, "... to the end and back");
+        on_key(VK_ESCAPE);
+        nt_check(g_pane == 0 && g_page == PAGE_WELCOME, "Esc returns to the first page");
+        /* the question about closing the window, while she is reading: the question wins */
+        fx_machine(0); fx_ready();
+        g_page = PAGE_PROGRESS; g_install_running = 1; g_install_finished = 0;
+        render();
+        widget_activate(ID_LICENSES);
+        render();
+        nt_check(g_pane == 2, "on the install page too, Licenses opens");
+        nt_check(!close_asked(NULL) && g_confirm == 1, "closing the window while reading asks");
+        render();
+        nt_check(!wcscmp(primary_label(), L"Keep going"), "... and the question is what she sees, not the text");
+        on_key(VK_ESCAPE);
+        nt_check(g_confirm == 0 && g_pane == 2, "Esc answers it, and she is still reading");
+        on_key(VK_ESCAPE);
+        nt_check(g_pane == 0, "and the next Esc closes the pane");
+        g_install_running = 0;
+        g_page = PAGE_WELCOME;
+        /* a page that moves on closes the pane (the check can finish behind it) */
+        widget_activate(ID_LICENSES);
+        goto_page(PAGE_STYLE);
+        nt_check(g_pane == 0, "a page that changes closes it");
+        g_page = PAGE_WELCOME;
+    }
+
     if (g_nt) fprintf(g_nt, "\n14. every letter on every page is in the face\n");
     {
         /* the pages at every size were drawn above; draw the ones that only
          * show with a particular finding, and the whole fix table */
         g_missing = 0;
+        /* the first page while the download runs, both panes' headings, and the
+         * Ready page with the agreement */
+        fx_machine(0); fx_ready();
+        g_page = PAGE_WELCOME; g_pane = 0; g_confirm = 0;
+        InterlockedExchange(&g_dl_state, 1); render();
+        InterlockedExchange(&g_dl_state, 2); render();
+        InterlockedExchange(&g_dl_state, 0);
+        g_page = PAGE_READY; render();
+        g_pane = 1; render();
+        g_pane = 2; render();
+        g_pane = 0;
         memset(&g_report, 0, sizeof g_report);
         g_report.system_disk = -1;
         sbdb_judge(&g_report, 1, 0, (const unsigned char *)"", 0, -1, NULL, 0,

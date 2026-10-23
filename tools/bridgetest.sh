@@ -208,6 +208,65 @@ else
         "no journal was written at all"
 fi
 
+# ── the Terms she agreed to (stream LEGAL): kept in the journal, local only ──
+#
+# "By pressing Install AurOS you agree to the AurOS Terms" is only worth
+# something if it is written down where it can be found: the version and the
+# time go into the install journal on the EFI partition. A journal from the
+# console tool, where nobody pressed anything, must stay byte for byte what it
+# was, and the staging environment's strict reader must still read both.
+cat > "$T/t.c" <<'EOC'
+#include <stdio.h>
+#include <string.h>
+#include "format.h"
+#include "journal.h"
+int stage_gpt_sha256(const stage_disk *d, char *hex, size_t n)
+{ (void)d; if (n) hex[0] = 0; return -1; }
+static void fill(fmt_journal *j)
+{
+    memset(j, 0, sizeof *j);
+    snprintf(j->disk_serial, sizeof j->disk_serial, "S/N 1");
+    snprintf(j->disk_model, sizeof j->disk_model, "Disk");
+    j->disk_bytes = 500107862016ull; j->logical_sector = 512;
+    snprintf(j->win_part, sizeof j->win_part, "3");
+    j->win_start_lba = 1050624; j->win_sectors = 931842048; j->win_ntfs_serial = 5;
+    snprintf(j->gpt_sha256, sizeof j->gpt_sha256, "%s",
+             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+    snprintf(j->stage, sizeof j->stage, "armed");
+    snprintf(j->boot_from, sizeof j->boot_from, "esp");
+    snprintf(j->profile, sizeof j->profile, "desktop");
+    j->run_id = 1; j->written_unix = 1758000000ull;
+}
+int main(int argc, char **argv)
+{
+    fmt_journal a, b;
+    char ja[2048], jb[2048];
+    fill(&a); fill(&b);
+    snprintf(b.terms, sizeof b.terms, "v3"); b.terms_unix = 1760000123ull;
+    size_t na = fmt_journal_json(&a, ja, sizeof ja), nb = fmt_journal_json(&b, jb, sizeof jb);
+    if (!na || !nb) { puts("WRITE-FAILED"); return 1; }
+    ja[na] = 0; jb[nb] = 0;
+    int bad = 0;
+    if (strstr(ja, "terms")) { puts("DIFF a journal nobody agreed anything in carries a terms key"); bad++; }
+    if (!strstr(jb, "\"terms\":\"v3\",\"terms_unix\":1760000123}")) { puts("DIFF the agreed Terms are not in the journal"); bad++; }
+    FILE *f = fopen(argv[1], "wb"); fwrite(jb, 1, nb, f); fclose(f);
+    journal r;
+    if (!journal_read(argv[1], &r)) { puts("DIFF the staging reader refuses a journal that has the Terms in it"); bad++; }
+    else if (strcmp(r.profile, "desktop") || r.written_unix != 1758000000ull) { puts("DIFF the reader mis-reads the fields beside them"); bad++; }
+    puts(bad ? "MISMATCH" : "AGREE");
+    return bad ? 1 : 0;
+}
+EOC
+if cc -std=gnu11 -O2 -Isrc/aurbridge -Isrc/aurstage -o "$T/t" "$T/t.c" \
+     src/aurbridge/format.c src/aurstage/journal.c src/aurstage/sha256.c \
+     2>"$T/tc.log" && "$T/t" "$T/terms.json" > "$T/t.out" 2>&1 \
+     && grep -q AGREE "$T/t.out"; then
+    ok "the Terms she agreed to are in the journal, and only then"
+else
+    bad "the Terms she agreed to are in the journal, and only then" \
+        "$(cat "$T/t.out" 2>/dev/null | head -6)" "$(head -4 "$T/tc.log")"
+fi
+
 # ── the fast path's journal, and the plan both halves must agree on ──
 #
 # image_on=gap: Windows has shrunk itself and AurBridge has written the

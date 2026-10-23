@@ -96,6 +96,12 @@ int ab_pieces_parse(const char *text, ab_pieces *out, char *why, size_t n);
 #define AB_CHOICE_FAST_PATH        1
 #endif
 
+/* WHICH TERMS SHE AGREED TO, and when: the wizard's Ready page says "By
+ * pressing Install AurOS you agree to the AurOS Terms" and sets these (the
+ * version is docs/legal/TERMS.md line 3). The engine writes them into the
+ * install journal, which stays on this computer (stream LEGAL). */
+#define AB_CHOICE_TERMS 1
+
 typedef struct {
     char profile[64];          /* "desktop", "school-kiosk"           */
     char shell_archetype[32];  /* shells/<id>.shell                   */
@@ -207,6 +213,10 @@ typedef struct {
      * time it starts. 0 (tests, the console tool) arms at the end of
      * phase 3 as before. */
     int  arm_later;
+    /* "v3": the Terms she agreed to by pressing Install AurOS; empty from
+     * the console tool and the tests, which agree to nothing. */
+    char terms_version[8];
+    unsigned long long terms_unix;   /* when, seconds since 1970 */
 
     /* THE FAST PATH ITSELF (docs/AURBRIDGE.md, "Fast path"): Windows
      * shrinks C: with its own online shrink and the image is written raw
