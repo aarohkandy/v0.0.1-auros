@@ -10,11 +10,11 @@
 # resize2fs, with the libraries `ldd` finds for them), the DejaVu fonts, and
 # the three boot files the installer carries (Linux, GRUB, shim). The exact
 # versions of a given release are in the sources release (PACKAGES.txt); a
-# licence does not change between two builds of one version series.
+# license does not change between two builds of one version series.
 set -eu
 PKGS="linux-image-generic grub-common grub-efi-amd64-signed shim-signed kmod libkmod2 ntfs-3g libntfs-3g89t64 e2fsprogs libext2fs2t64 libcom-err2 libss2 libblkid1 libuuid1 libmount1 libc6 libssl3t64 libzstd1 liblzma5 zlib1g fonts-dejavu-core"
 echo "# Copyright files of the programs inside AurOS-Setup.exe's small system and boot files"
-echo "# (taken from Ubuntu 24.04 LTS; the licences they name are in the full texts that follow)."
+echo "# (taken from Ubuntu 24.04 LTS; the licenses they name are in the full texts that follow)."
 seen=""
 for p in $PKGS; do
     f=/usr/share/doc/$p/copyright

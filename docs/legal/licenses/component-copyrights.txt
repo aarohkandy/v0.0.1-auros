@@ -1,5 +1,5 @@
 # Copyright files of the programs inside AurOS-Setup.exe's small system and boot files
-# (taken from Ubuntu 24.04 LTS; the licences they name are in the full texts that follow).
+# (taken from Ubuntu 24.04 LTS; the licenses they name are in the full texts that follow).
 
 ==================================================================
 linux (the kernel; package linux-image-*)

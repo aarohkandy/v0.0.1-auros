@@ -98,7 +98,7 @@ def offer_text():
 
 
 def notices_txt():
-    s = ["AUROS: LICENCES AND NOTICES\n\n" + NOTE + "\n\n"
+    s = ["AUROS: LICENSES AND NOTICES\n\n" + NOTE + "\n\n"
          "This file is inside AurOS-Setup.exe so that you can read it with no internet. It has, in order:\n"
          "  1. our written offer of the source code\n"
          "  2. the notices of the programs AurOS carries (third-party notices)\n"
