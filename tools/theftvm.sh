@@ -183,6 +183,8 @@ case "$st" in
         fi
     done
     say "pass done in $(( $(date +%s) - t0 )) s (this start)"
+    # how long the pass really took: the service starts it and says so at both ends
+    say "pass-times $(journalctl -b -u auros-lock-encrypt -o short-monotonic 2>/dev/null | grep -E 'encrypting the rest|whole drive is encrypted' | cut -c1-60 | tr '\n' '|')"
     say "letter-after-pass $(sha256sum /var/lib/auros-theft/letter.txt | cut -c1-64)"
     dev=$($L status | sed -n 's/^device=//p')
     say "bench-xts $(cryptsetup benchmark -c aes-xts-plain64 -s 512 2>/dev/null | tail -1)"
@@ -375,7 +377,7 @@ else
     val after-setpin | grep -q 'cipher=aes-xts-plain64' \
         && ok "AES instructions: the drive uses AES-XTS" || bad "AES instructions: AES-XTS" "$(val after-setpin)"
 fi
-note "pass:      $(val 'pass done in' | head -1)"
+note "pass:      $(val 'pass-times' | head -1)"
 note "aes-xts:   $(val bench-xts)"
 note "adiantum:  $(val bench-adiantum)"
 note "read, through the encryption: $(val read-encrypted)"
