@@ -97,18 +97,27 @@ button.get { border: 0; cursor: pointer; }
 .k-phone [data-kind~="phone"], .k-mac [data-kind~="mac"], .k-chromeos [data-kind~="chromeos"],
 .k-linux [data-kind~="linux"], .k-arm [data-kind~="arm"], .k-win32 [data-kind~="win32"] { display: block; }
 .else-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 18px 0 8px; }
+.share { order: -2; }
 .k-mac #copy-link { order: -1; }
-/* On a phone, the picture of what she gets comes before "Send yourself
- * the link" (DESIGN-DIRECTION 5, D P2-12). */
+/* On a phone the button comes first, and the picture of what she gets under
+ * it (DESIGN-DIRECTION 5, D P2-12 had the picture first; then the button was
+ * below the first screen, and the walkthrough, A-01, says the button is the
+ * point). */
 .k-phone .hero .wrap { display: flex; flex-direction: column; }
 .is-elsewhere .hero .hint { display: none; }
-.k-phone .hero { padding-top: 24px; }
-.k-phone .hero .device { order: 1; width: 62%; margin: 0 auto 16px; }
-.k-phone .hero .promise { margin-bottom: 20px; }
+.k-phone .hero { padding-top: 20px; }
+.k-phone .elsewhere { padding: 20px 20px 22px; }
+.k-phone .hero .device { order: 3; width: 70%; margin: 28px auto 0; }
+.k-phone .hero .promise { margin-bottom: 18px; }
+.k-phone .else-title { font-size: 26px; }
 .k-phone .hero .caption { display: none; }
-.k-phone .hero .elsewhere { order: 2; }
-.k-phone .hero .hint { order: 3; }
-.copied { min-height: 1.5em; color: var(--ink); font-weight: 700; margin: 0; }
+.k-phone .hero .elsewhere { order: 1; }
+.k-phone .hero .hint { order: 2; }
+.get.share { flex: 1 1 100%; min-height: 64px; font-size: 24px; padding: 0 28px; }
+.get.share svg { width: 26px; height: 26px; }
+.k-phone .else-actions .btn2 { flex: 1 1 14rem; }
+.copied { margin: 0; min-height: 0; }
+.copied:not(:empty) { margin-top: 16px; padding: 16px 18px; background: var(--selected); border-left: 6px solid var(--go); border-radius: 8px; font: 700 24px/1.3 var(--face); color: var(--ink); overflow-wrap: anywhere; }
 .anyway { margin: 10px 0 0; }
 
 /* the computer in the picture: drawn, flat, no shadow */
@@ -139,6 +148,7 @@ button.get { border: 0; cursor: pointer; }
 .helper .btn2 { min-height: 48px; }
 .file { font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
 .pics { display: grid; gap: 32px; align-content: start; }
+.pics > * { min-width: 0; }
 .pics figure { margin: 0; }
 .browser + .browser { margin-top: 32px; }
 .browser h4 { font: 700 21px/1.3 var(--face); margin-bottom: 14px; }
@@ -151,8 +161,10 @@ button.get { border: 0; cursor: pointer; }
 .sac { background: var(--warn-tint); border-left: 4px solid var(--warn); border-radius: 12px; padding: 18px 22px; }
 .sac p { margin-bottom: 14px; }
 .step > .ask-fig { grid-column: 1 / -1; margin: 8px 0 0; }
+.step.wide-pics { grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); }
+.step.wide-pics .shot { max-width: 760px; }
 @media (max-width: 900px) {
-  .step { grid-template-columns: minmax(0, 1fr); row-gap: 0; }
+  .step, .step.wide-pics { grid-template-columns: minmax(0, 1fr); row-gap: 0; }
   .step > div:not(.step-text), .step > figure { margin-top: 16px; }
   .step-text { display: contents; }
   .step-text > * { margin-bottom: 0.9em; }
@@ -161,7 +173,8 @@ button.get { border: 0; cursor: pointer; }
 }
 @media (max-width: 600px) {
   .step { padding: 20px 16px; }
-  .win, .ss, .uac-body, .ask { padding-left: 52px; padding-right: 16px; }
+  .win, .ss, .edge, .uac-band, .uac-body, .uac-foot { padding-left: 52px; padding-right: 16px; }
+  .ask { padding-left: 52px; padding-right: 16px; }
 }
 
 /* the numbered circles: a yellow ring with an ink edge round what to
@@ -171,6 +184,7 @@ button.get { border: 0; cursor: pointer; }
  * colour. */
 .hit, .ring { position: relative; box-shadow: 0 0 0 2px var(--ink), 0 0 0 7px var(--marker), 0 0 0 10px var(--ink); border-radius: 6px; }
 .hit[data-n]::before, .ring[data-n]::before { content: attr(data-n); position: absolute; right: calc(100% + 18px); bottom: calc(100% - 12px); width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--marker); color: var(--ink); border: 3px solid var(--ink); font: 800 19px/1 var(--face); }
+.e-dots.hit[data-n]::before, .e-arrow.hit[data-n]::before { right: auto; left: 50%; transform: translateX(-50%); bottom: calc(100% + 14px); }
 .ring { position: absolute; display: block; }
 .win-row:has(.hit) { column-gap: 64px; }
 .ask .hit[data-n]::before, .ring.above[data-n]::before { right: auto; left: -14px; bottom: calc(100% + 16px); }
@@ -194,13 +208,49 @@ button.get { border: 0; cursor: pointer; }
 .ss-link { text-decoration: underline; text-underline-offset: 3px; display: inline-block; padding: 2px 4px; }
 .ss .w-btn { background: transparent; color: #fff; border: 2px solid #fff; border-radius: 2px; }
 .uac { background: #FFFFFF; border: 1px solid #C9C9C9; border-radius: 12px; color: #1A1A1A; font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
-.uac-head { background: #F0F0F0; padding: 12px 24px; margin: 0; border-radius: 12px 12px 0 0; }
-.uac-body { padding: 20px 24px 22px 64px; }
-.uac-q { font-size: 22px; font-weight: 600; line-height: 1.3; }
-.uac-app { display: flex; gap: 14px; align-items: center; }
-.uac-icon { width: 36px; height: 36px; flex: none; border-radius: 8px; background: var(--ink); position: relative; }
-.uac-icon::after { content: ""; position: absolute; inset: 11px; background: #fff; transform: rotate(45deg); }
-.uac .w-btn { flex: 1; justify-content: center; }
+.uac p { margin: 0; }
+.uac-band { background: #FFF2C2; border-radius: 12px 12px 0 0; padding: 14px 24px 20px 64px; }
+.uac-head { font-size: 19px; margin-bottom: 14px !important; }
+.uac-q { font-size: 24px; font-weight: 600; line-height: 1.3; }
+.uac-body { padding: 22px 24px 18px 64px; }
+.uac-app { font-size: 22px; font-weight: 600; margin-bottom: 12px !important; }
+.uac-meta { margin-bottom: 18px !important; }
+.uac-more { color: #0F5CA8; }
+.uac-foot { background: #F0F0F0; border-radius: 0 0 12px 12px; padding: 24px 24px 22px 64px; display: flex; gap: 16px; }
+.uac-foot .w-btn { flex: 1; justify-content: center; min-height: 48px; }
+.uac-foot .w-btn.no { background: var(--win-blue); border-color: var(--win-blue); color: #fff; }
+
+/* Edge's own download warnings, drawn from real Edge (Windows 11, October
+ * 2026): the shield, the trash can, the three dots; Delete is black, and
+ * Keep anyway sits behind the small arrow beside it. */
+.edge { background: #FFFFFF; border: 1px solid #C9C9C9; border-radius: 12px; padding: 22px 24px 24px 64px; color: #1A1A1A; font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+.edge p { margin: 0 0 10px; }
+.e-title { font-weight: 600; font-size: 21px; margin-bottom: 14px !important; }
+.e-item { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; background: #F3F3F3; border-radius: 8px; padding: 14px 16px; }
+.e-item.e-plain { background: none; padding: 4px 0; }
+.e-ico { width: 26px; height: 26px; flex: none; color: #1A1A1A; }
+.e-ico.warn { color: #8A5A12; margin-top: 2px; }
+.e-text { flex: 1 1 9rem; min-width: 0; }
+.e-tools { display: flex; gap: 12px; align-items: center; flex: none; margin: 2px 0 0 auto; }
+.e-dots { display: inline-flex; width: 36px; height: 36px; align-items: center; justify-content: center; font-weight: 700; border-radius: 6px; background: #E4E4E4; }
+.e-menu { margin: 34px 0 0 auto; width: fit-content; max-width: 100%; background: #FFFFFF; border: 1px solid #D0D0D0; border-radius: 8px; padding: 8px; display: grid; gap: 16px; justify-items: start; }
+.e-mi { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 10px; }
+.e-mi .e-ico { width: 22px; height: 22px; }
+.e-menu-small { margin-top: 34px; }
+.e-dtitle { font-weight: 600; font-size: 24px; line-height: 1.25; margin-bottom: 12px !important; }
+.e-link { color: #0F5CA8; }
+.e-btns { display: flex; justify-content: flex-end; align-items: center; gap: 16px; margin-top: 52px; }
+.e-cancel { display: inline-flex; align-items: center; min-height: 44px; padding: 0 20px; border: 1px solid #B9B9B9; border-radius: 6px; background: #FFFFFF; }
+.e-split { display: inline-flex; background: #1B1A19; color: #FFFFFF; border-radius: 6px; min-height: 44px; }
+.e-del { display: inline-flex; align-items: center; padding: 0 18px; }
+.e-arrow { display: inline-flex; align-items: center; justify-content: center; width: 40px; border-left: 1px solid #6B6B6B; border-radius: 0 6px 6px 0; }
+.e-chev { width: 20px; height: 20px; }
+.e-file { width: 26px; height: 26px; flex: none; background: var(--win-blue); border-radius: 4px; margin-top: 2px; }
+.e-open { display: inline-block; color: #0F5CA8; margin-top: 22px; padding: 2px 4px; }
+.fig-lead { margin: 0; font-weight: 700; color: var(--ink); }
+.asof { font-weight: 400; color: var(--ink-2); }
+.note h4 { font: 700 21px/1.3 var(--face); margin-bottom: 6px; }
+.step .note { margin-top: 20px; }
 
 /* real pictures of AurOS Setup, with the rings drawn on top */
 .shot { position: relative; border-radius: 12px; background: var(--ink); max-width: 640px; }
@@ -210,6 +260,8 @@ button.get { border: 0; cursor: pointer; }
 /* "Does everything work?", drawn in AurOS's own words (welcome.c) */
 .ask { max-width: 760px; background: var(--paper); border: 1px solid #D9D2C5; border-radius: 12px; padding: 24px; }
 .ask-title { font: 800 28px/1.2 var(--face); margin-bottom: 10px; }
+.ask-q { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--soft); font-weight: 700; }
+.ask-q .a-btn { flex: none; }
 .ask-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 56px 16px; margin-top: 56px; }
 .ask-row .a-btn { width: 100%; }
 .a-line { color: var(--ink-2); font-size: 18px; line-height: 26px; margin: 10px 0 0; }

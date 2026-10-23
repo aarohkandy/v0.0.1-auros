@@ -49,30 +49,34 @@
       <!-- Instead of the button when this is not a Windows computer AurOS
            can go on (assets/door.js). Never shown without script. -->
       <div class="elsewhere" id="elsewhere" hidden>
-        <h2 class="else-title" data-kind="phone mac chromeos linux">Open this page on the Windows computer you want to change.</h2>
+        <h2 class="else-title" data-kind="phone">Open this page on your Windows computer.</h2>
+        <h2 class="else-title" data-kind="mac chromeos linux">Open this page on the Windows computer you want to change.</h2>
         <h2 class="else-title" data-kind="arm win32">AurOS can&rsquo;t go on this computer.</h2>
-        <p data-kind="phone">You&rsquo;re on a phone or tablet, and AurOS goes on a Windows computer. Send yourself the link:</p>
+        <p data-kind="phone">AurOS goes on a Windows computer, not a phone. Send yourself the link:</p>
         <p data-kind="mac">This is a Mac, and AurOS goes on a Windows computer. Send yourself the link:</p>
         <p data-kind="chromeos">This is a Chromebook, and AurOS goes on a Windows computer. Send yourself the link:</p>
         <p data-kind="linux">This computer isn&rsquo;t running Windows, and AurOS goes on a Windows computer. Send yourself the link:</p>
         <p data-kind="arm">It has a different kind of chip inside (called ARM, as in Snapdragon laptops), and AurOS only works on the usual kind. Have another Windows computer? Send yourself the link:</p>
         <p data-kind="win32">It has the older, 32-bit kind of Windows, and AurOS needs the 64-bit kind. Have another Windows computer? Send yourself the link:</p>
         <div class="else-actions">
-          <a class="btn2" id="mail-link" href="mailto:?subject=AurOS">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18v12H3zM3 6l9 7 9-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>
-            Email me the link</a>
+          <button class="get share" type="button" id="share-link" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 15V3m0 0L7.5 7.5M12 3l4.5 4.5M5 12v8h14v-8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>Send this page to myself</span></button>
           <button class="btn2" type="button" id="copy-link">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 9h11v11H9zM5 15H4V4h11v1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>
             Copy the link</button>
+          <a class="btn2" id="mail-link" href="mailto:?subject=AurOS">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18v12H3zM3 6l9 7 9-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>
+            Email me the link</a>
         </div>
-        <p class="copied" id="copied" aria-live="polite"></p>
+        <p class="copied" id="copied" role="status" aria-live="polite"></p>
         <p class="anyway" data-kind="mac chromeos linux arm win32"><a data-download href="https://github.com/@AUROS_REPO@/releases/latest/download/AurOS-Setup.exe">Download the Windows file anyway</a></p>
       </div>
 
       <p class="hint">Do this on the Windows computer you want to change. <a href="#steps">See every step first</a></p>
 
       <figure class="device" aria-labelledby="hero-cap">
-        <div class="device-screen"><img src="assets/shots/look-taskbar.jpg" width="1280" height="800" alt="AurOS looking like Windows: the list of programs open at the bottom left, with Firefox, Your files, Documents, Notes, Photos, Music and video, Calculator, Settings and Get more programs, and a bar along the bottom with Help, Settings, Bigger and Smaller."></div>
+        <div class="device-screen"><img src="assets/shots/look-taskbar.jpg" width="1280" height="800" alt="AurOS looking like Windows: the All my programs list open at the bottom left, with Internet, Your files, Documents, Notes, Photos, Music and video, Calculator, Settings and Get more programs, and a bar along the bottom with Help, Wi-Fi, Settings, Smaller, Bigger and Turn off."></div>
         <div class="device-base"></div>
         <figcaption class="caption" id="hero-cap">AurOS, looking like Windows.</figcaption>
       </figure>
@@ -101,30 +105,49 @@
             <p>Press <b>Get AurOS</b>. Your computer saves a file called <span class="file">AurOS-Setup.exe</span>.</p>
             <p>Your internet browser doesn&rsquo;t know AurOS yet, so it asks if you trust it. Press <b>Keep</b> only if you got this file from this page a moment ago.</p>
             <p>Then open it: press <b>Open file</b> under its name, or find <span class="file">AurOS-Setup.exe</span> in your <b>Downloads</b> folder and open it.</p>
+            <div class="note" id="antivirus">
+              <h4>If your antivirus program takes the file</h4>
+              <p>Some antivirus programs don&rsquo;t know AurOS yet either, and may put the file away. Nothing has been installed, and nothing on your computer has changed. Open your antivirus program, look for its list of blocked files, and put <span class="file">AurOS-Setup.exe</span> back, only if you got it from this page a moment ago. If you can&rsquo;t find it, press <b>Stuck? Show a helper</b>.</p>
+            </div>
             <p class="helper"><a class="btn2" href="guide.html">Stuck? Show a helper</a></p>
           </div>
 
           <div>
             <div class="browser" data-browser="edge">
-              <h4>In Microsoft Edge</h4>
+              <h4>In Microsoft Edge <span class="asof">(as it looks in October 2026)</span></h4>
               <div class="pics">
-                <figure class="win" id="shot-edge-keep" role="img" aria-label="Picture of Edge's downloads, saying AurOS-Setup.exe isn't commonly downloaded. Press the three dots, then Keep.">
-                  <p class="win-title">Downloads</p>
-                  <div class="w-item">
-                    <span class="w-warn" aria-hidden="true"></span>
-                    <span>AurOS-Setup.exe isn&rsquo;t commonly downloaded. Make sure you trust AurOS-Setup.exe before you open it.</span>
+                <figure class="edge" id="shot-edge-keep" role="img" aria-label="Picture of Edge's Downloads list: AurOS-Setup.exe isn't commonly downloaded. Press the three dots, then Keep.">
+                  <p class="e-title">Downloads</p>
+                  <div class="e-item">
+                    <svg class="e-ico warn" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 8v5M12 16v.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+                    <span class="e-text">AurOS-Setup.exe isn&rsquo;t commonly downloaded. Make sure you trust AurOS-Setup.exe before you open it.</span>
+                    <span class="e-tools"><svg class="e-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="e-dots hit" data-n="1">&hellip;</span></span>
                   </div>
-                  <div class="win-row right"><span class="w-btn">Delete</span><span class="w-btn hit" data-n="1">&hellip;</span></div>
-                  <div class="w-menu"><span class="hit" data-n="2">Keep</span><span>Report this file as safe</span><span>Learn more</span></div>
+                  <div class="e-menu">
+                    <span class="e-mi"><svg class="e-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Delete</span>
+                    <span class="e-mi hit" data-n="2">Keep</span>
+                    <span class="e-mi">Report this file as safe</span>
+                    <span class="e-mi">Learn more</span>
+                  </div>
                 </figure>
-                <figure class="win" id="shot-edge-keep-anyway" role="img" aria-label="Picture of Edge asking: Make sure you trust AurOS-Setup.exe before you open it. Press Show more, then Keep anyway.">
-                  <p class="win-title">Make sure you trust AurOS-Setup.exe before you open it</p>
-                  <p>Microsoft Defender SmartScreen couldn&rsquo;t verify if this file is safe because it isn&rsquo;t commonly downloaded.</p>
-                  <p>Publisher: Unknown</p>
-                  <div class="win-row"><span class="w-btn primary">Delete</span><span class="w-btn hit" data-n="3">Show more &#8964;</span></div>
-                  <div class="w-menu"><span class="hit" data-n="4">Keep anyway</span><span>Report this app as safe</span></div>
+                <figure class="edge" id="shot-edge-keep-anyway" role="img" aria-label="Picture of Edge asking: Make sure you trust AurOS-Setup.exe before you open it. Buttons: Cancel, and a black Delete with a small arrow beside it. Press the small arrow, then Keep anyway. Do not press Delete.">
+                  <p class="e-dtitle">Make sure you trust AurOS-Setup.exe before you open it</p>
+                  <p class="e-body">Microsoft Defender SmartScreen couldn&rsquo;t verify if this file is safe because it isn&rsquo;t commonly downloaded. Make sure you trust the file you&rsquo;re downloading or its source before you open it.</p>
+                  <p class="e-body">Name: AurOS-Setup.exe<br>Publisher: Unknown</p>
+                  <p class="e-link">Report this app as safe</p>
+                  <p class="e-link">Learn more</p>
+                  <div class="e-btns"><span class="e-cancel">Cancel</span><span class="e-split"><span class="e-del">Delete</span><span class="e-arrow hit" data-n="3"><svg class="e-chev" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></div>
+                  <div class="e-menu e-menu-small"><span class="e-mi hit" data-n="4">Keep anyway</span></div>
+                </figure>
+                <figure class="edge" id="shot-edge-open" role="img" aria-label="Picture of Edge's Downloads list after Keep anyway: AurOS-Setup.exe, and under it Open file. Press Open file.">
+                  <p class="e-title">Downloads</p>
+                  <div class="e-item e-plain">
+                    <span class="e-file" aria-hidden="true"></span>
+                    <span class="e-text">AurOS-Setup.exe<br><span class="e-open hit" data-n="5">Open file</span></span>
+                  </div>
                 </figure>
               </div>
+              <p class="fig-note">Edge changes its buttons from time to time. If they look different, press the three dots (&hellip;) next to the file, then <b>Keep</b>, then look for <b>Keep anyway</b>. Don&rsquo;t press <b>Delete</b>.</p>
             </div>
 
             <div class="browser" data-browser="chrome">
@@ -157,12 +180,14 @@
           <div class="step-text">
             <span class="num" aria-hidden="true">2</span>
             <h3><span class="vh">Step 2: </span>Say yes to Windows</h3>
-            <p>Windows doesn&rsquo;t know AurOS yet, so it shows a blue box: <b>Windows protected your PC</b>. Press <b>More info</b>, then <b>Run anyway</b>, only if you got this file from this page a moment ago.</p>
-            <p>Then Windows asks whether AurOS may make changes. Press <b>Yes</b>.</p>
+            <p>Windows may show a blue box, <b>Windows protected your PC</b>, because it doesn&rsquo;t know AurOS yet. If you see it, press <b>More info</b>, then <b>Run anyway</b>, only if you got this file from this page a moment ago.</p>
+            <p>Then Windows asks whether AurOS may make changes. Press <b>Yes</b>, the white button on the left. The blue button is <b>No</b>.</p>
+            <p>If Windows asks for a password, stop. It needs the person who set up this computer.</p>
             <p class="helper"><a class="btn2" href="guide.html">Stuck? Show a helper</a></p>
           </div>
 
           <div class="pics">
+            <p class="fig-lead">Only if Windows shows this blue box:</p>
             <figure class="ss" id="shot-smartscreen" role="img" aria-label="Picture of the blue box Windows protected your PC. Press More info.">
               <p class="ss-title">Windows protected your PC</p>
               <p>Microsoft Defender SmartScreen prevented an unrecognized app from starting. Running this app might put your PC at risk.</p>
@@ -174,13 +199,18 @@
               <p>App: AurOS-Setup.exe<br>Publisher: Unknown publisher</p>
               <div class="win-row right"><span class="w-btn hit" data-n="2">Run anyway</span><span class="w-btn">Don&rsquo;t run</span></div>
             </figure>
-            <figure class="uac" id="shot-uac" role="img" aria-label="Picture of Windows asking: Do you want to allow this app from an unknown publisher to make changes to your device? Press Yes.">
-              <p class="uac-head">User Account Control</p>
-              <div class="uac-body">
+            <p class="fig-lead">Then this, always:</p>
+            <figure class="uac" id="shot-uac" role="img" aria-label="Picture of Windows asking: Do you want to allow this app from an unknown publisher to make changes to your device? Under it: AurOS-Setup.exe, Publisher: Unknown. Two buttons: Yes, in white, and No, in blue. Press Yes, the white one.">
+              <div class="uac-band">
+                <p class="uac-head">User Account Control</p>
                 <p class="uac-q">Do you want to allow this app from an unknown publisher to make changes to your device?</p>
-                <p class="uac-app"><span class="uac-icon" aria-hidden="true"></span><span>AurOS-Setup.exe<br>Publisher: Unknown</span></p>
-                <div class="win-row"><span class="w-btn hit" data-n="3">Yes</span><span class="w-btn">No</span></div>
               </div>
+              <div class="uac-body">
+                <p class="uac-app">AurOS-Setup.exe</p>
+                <p class="uac-meta">Publisher: Unknown<br>File origin: Hard drive on this computer</p>
+                <p class="uac-more">Show more details</p>
+              </div>
+              <div class="uac-foot"><span class="w-btn hit" data-n="3">Yes</span><span class="w-btn no">No</span></div>
             </figure>
             <!-- Smart App Control has no Run anyway, and switching it off is a
                  change she is not walked through here
@@ -193,12 +223,12 @@
         </li>
 
         <!-- 3: AurOS Setup -->
-        <li class="step" id="step-install">
+        <li class="step wide-pics" id="step-install">
           <div class="step-text">
             <span class="num" aria-hidden="true">3</span>
             <h3><span class="vh">Step 3: </span>Pick a look, then press Install&nbsp;AurOS</h3>
             <p>AurOS Setup checks your computer first. If anything would stop AurOS working, it tells you <b>before it changes anything</b>.</p>
-            <p>Press <b data-ui="wizard">Next</b>, pick the look you like, press <b data-ui="wizard">Next</b> again, then <b data-ui="wizard">Install AurOS</b>. The computer <b>restarts once, by itself</b>. Leave it switched on.</p>
+            <p>Press <b data-ui="wizard">Next</b>, pick the look you like, press <b data-ui="wizard">Next</b> again, then <b data-ui="wizard">Install AurOS</b>. The computer <b>restarts once, by itself</b>. The screen may go dark for a few minutes. Leave the computer switched on.</p>
             <p data-claim="hold:rearms">When AurOS starts, it asks whether everything works. Until you answer, AurOS starts each time you switch on, and <b>Windows and your files are kept just as they were.</b> If AurOS fails to start, the computer starts Windows instead.</p>
             <p><b data-ui="desktop">No, go back to Windows</b>: Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted.</p>
             <p class="helper"><a class="btn2" href="guide.html">Stuck? Show a helper</a></p>
@@ -207,36 +237,38 @@
           <div class="pics">
             <figure>
               <div class="shot" id="shot-installer-check">
-                <img src="assets/shots/setup-check.jpg" width="1120" height="690" loading="lazy" alt="AurOS Setup, first page: Let's put AurOS on this computer. This computer can take AurOS. A Next button.">
-                <span class="ring above" data-n="1" style="left:77.9%;top:86.4%;width:16.9%;height:8.2%"></span>
+                <img src="assets/shots/setup-check.jpg" width="1260" height="1035" loading="lazy" alt="AurOS Setup, first page: Let's put AurOS on this computer. This computer can take AurOS. A Next button.">
+                <span class="ring above" data-n="1" style="left:72.1%;top:86.9%;width:24.4%;height:8.9%"></span>
               </div>
               <figcaption class="fig-note">When it says it can, press <b data-ui="wizard">Next</b>.</figcaption>
             </figure>
             <figure>
               <div class="shot" id="shot-installer-look">
-                <img src="assets/shots/setup-look.jpg" width="1120" height="690" loading="lazy" alt="AurOS Setup, Pick the look you want: four pictures called Like Windows, Like a Mac, Big and simple, and One thing at a time, with a Next button.">
-                <span class="ring" data-n="2" style="left:27%;top:20.9%;width:16%;height:33.4%"></span>
-                <span class="ring above" data-n="3" style="left:77.9%;top:86.4%;width:16.9%;height:8.2%"></span>
+                <img src="assets/shots/setup-look.jpg" width="1260" height="1035" loading="lazy" alt="AurOS Setup, Pick the look you want: four pictures called Like Windows, Like a Mac, Big and simple, and One thing at a time, with a Next button.">
+                <span class="ring above" data-n="2" style="left:3.7%;top:9.6%;width:45.4%;height:34.6%"></span>
+                <span class="ring above" data-n="3" style="left:72.1%;top:86.9%;width:24.4%;height:8.9%"></span>
               </div>
               <figcaption class="fig-note">Press the look you like, then <b data-ui="wizard">Next</b>.</figcaption>
             </figure>
             <figure>
               <div class="shot" id="shot-installer">
-                <img src="assets/shots/setup-ready.jpg" width="1120" height="690" loading="lazy" alt="AurOS Setup, Ready to install: Windows and all your files stay on this computer. It takes about 10 to 25 minutes. A button says Install AurOS.">
-                <span class="ring above" data-n="4" style="left:77.7%;top:86.4%;width:17.1%;height:8.2%"></span>
+                <img src="assets/shots/setup-ready.jpg" width="1260" height="1035" loading="lazy" alt="AurOS Setup, Ready to install: Windows and all your files stay on this computer. It takes about 10 to 25 minutes. A button says Install AurOS.">
+                <span class="ring above" data-n="4" style="left:62.5%;top:86.9%;width:34.0%;height:8.9%"></span>
               </div>
               <figcaption class="fig-note">Then <b data-ui="wizard">Install AurOS</b>.</figcaption>
             </figure>
 
           </div>
           <figure class="ask-fig">
-            <div class="ask" id="shot-ask" role="img" aria-label="Picture of AurOS after the restart, asking: Does everything work? Check two things first. Three answers, each with what happens: Yes, it all works; Let me look first; No, go back to Windows. Press Let me look first.">
+            <div class="ask" id="shot-ask" role="img" aria-label="Picture of AurOS after the restart, asking: Does everything work? Check two things first. Can you see your photos? A button, Open Your files. Does the internet work? A button, Open Internet. Then three answers, each with what happens next: Yes, it all works; Let me look first; No, go back to Windows. Press Let me look first.">
               <p class="ask-title" data-ui="desktop">Does everything work?</p>
               <p data-ui="desktop">Check two things first.</p>
+              <div class="ask-q"><span data-ui="desktop">Can you see your photos?</span><span class="a-btn" data-ui="desktop">Open Your files</span></div>
+              <div class="ask-q"><span data-ui="desktop">Does the internet work?</span><span class="a-btn" data-ui="desktop">Open Internet</span></div>
               <div class="ask-row">
-                <div><span class="a-btn primary" data-ui="desktop">Yes, it all works</span><p class="a-line" data-ui="desktop">Switching on starts AurOS from now on.</p></div>
-                <div><span class="a-btn hit" data-n="5" data-ui="desktop">Let me look first</span><p class="a-line" data-ui="desktop">Nothing changes. This comes back next time.</p></div>
-                <div><span class="a-btn" data-ui="desktop">No, go back to Windows</span><p class="a-line" data-ui="desktop">Switching on starts Windows again.</p></div>
+                <div><span class="a-btn primary" data-ui="desktop">Yes, it all works</span><p class="a-line" data-ui="desktop">AurOS starts every time from now on. Windows and its files stay on this computer.</p></div>
+                <div><span class="a-btn hit" data-n="5" data-ui="desktop">Let me look first</span><p class="a-line" data-ui="desktop">Nothing changes. AurOS asks again the next time it starts.</p></div>
+                <div><span class="a-btn" data-ui="desktop">No, go back to Windows</span><p class="a-line" data-ui="desktop">Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted.</p></div>
               </div>
             </div>
             <figcaption class="fig-note">After the restart, AurOS asks. Check your files and the internet first. When you&rsquo;re sure, press <b data-ui="desktop">Yes, it all works</b>.</figcaption>

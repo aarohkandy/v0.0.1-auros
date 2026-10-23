@@ -219,11 +219,12 @@ console.log(`checking ${path.relative(REPO, SRC) || SRC} at ${HOME}`);
 
 const external = new Map();   // url -> page it was asked for on
 const broken = new Map();     // url -> status
-async function visit({ name, url = HOME, ua, uad, viewport = { width: 1366, height: 768 }, js = true, device }) {
+async function visit({ name, url = HOME, ua, uad, viewport = { width: 1366, height: 768 }, js = true, device, init }) {
   const ctxOpts = device ? { ...devices[device], deviceScaleFactor: 1 } : { viewport, userAgent: ua };
   if (!js) ctxOpts.javaScriptEnabled = false;
   const ctx = await browser.newContext(ctxOpts);
   if (uad !== undefined && js) await ctx.addInitScript(uadScript, uad);
+  if (init && js) await ctx.addInitScript(init.fn, init.arg);
   const page = await ctx.newPage();
   page.on("request", (rq) => {
     const u = rq.url();
@@ -288,12 +289,12 @@ for (const v of [
   { name: "Windows on ARM (Edge)", ua: UA.winEdge, uad: UAD.winArm, want: /can.t go on this computer/i, shots: ["index-arm.png"] },
   { name: "32-bit Windows (Firefox, no chip hints)", ua: UA.win32Firefox, uad: null, want: /can.t go on this computer/i },
   { name: "32-bit Windows (Edge's hints)", ua: UA.winEdge, uad: { platform: "Windows", architecture: "x86", bitness: "32", mobile: false }, want: /can.t go on this computer/i },
-  { name: "Mac (Safari)", ua: UA.macSafari, uad: null, want: /open this page on the Windows computer/i, shots: ["index-mac.png"] },
-  { name: "Mac (Chrome)", ua: UA.macChrome, uad: UAD.mac, want: /open this page on the Windows computer/i },
-  { name: "iPhone", device: "iPhone 13", uad: null, want: /open this page on the Windows computer/i, shots: ["index-phone-fold.png"] },
-  { name: "Android phone", device: "Pixel 7", uad: UAD.android, want: /open this page on the Windows computer/i },
-  { name: "Chromebook", ua: UA.chromeOS, uad: UAD.chromeOS, want: /open this page on the Windows computer/i },
-  { name: "Linux", ua: UA.linux, uad: UAD.linux, want: /open this page on the Windows computer/i },
+  { name: "Mac (Safari)", ua: UA.macSafari, uad: null, want: /open this page on (the|your) Windows computer/i, shots: ["index-mac.png"] },
+  { name: "Mac (Chrome)", ua: UA.macChrome, uad: UAD.mac, want: /open this page on (the|your) Windows computer/i },
+  { name: "iPhone", device: "iPhone 13", uad: null, want: /open this page on (the|your) Windows computer/i, shots: ["index-phone-fold.png"], init: { fn: () => Object.defineProperty(navigator, "share", { configurable: true, value: () => Promise.resolve() }) } },
+  { name: "Android phone", device: "Pixel 7", uad: UAD.android, want: /open this page on (the|your) Windows computer/i },
+  { name: "Chromebook", ua: UA.chromeOS, uad: UAD.chromeOS, want: /open this page on (the|your) Windows computer/i },
+  { name: "Linux", ua: UA.linux, uad: UAD.linux, want: /open this page on (the|your) Windows computer/i },
 ]) {
   const { ctx, page } = await visit(v);
   const m = await page.evaluate(rectOf, "#elsewhere");
@@ -515,11 +516,12 @@ for (const [at, want] of [
     [/switching (this computer|it) on,? (still )?starts Windows/i, "until she answers, AurOS re-arms itself on every start (auros-hold.service, src/aurfirst/state.c af_hold)"],
     [/can.t be switched back on/i, "Smart App Control can be switched back on since April 2026 (docs/research/every-machine-2026-10.md, section 5)"],
     [/no firefox/i, "the image has Firefox (build/forge)"],
-    [/power cuts?\b/i, "no power-cut promise is proven for this build"],
+    [/\bunplug|\b(\d+|any|every|no) power cuts?\b|power cuts? (are|is|can|won.t|cannot|can.t)\b/i, "no promise about surviving a power cut is proven for this build"],
     [/(bring|brings|bringing) (copies of )?(your|her) (documents|files|pictures)|files across/i, "bringing her files across does not work yet (docs/ATLAS.md, section 8, gap 1)"],
     [/updates? (itself|by itself)|security updates by itself/i, "Firefox, Flathub and base packages do not update yet (session log, 05:40)"],
     [/about 10 minutes/i, "Setup says its own range (wizard.c eta_range)"],
     [/that.s normal|that is normal|normal too/i, "reassure with facts, never adjectives (docs/DESIGN-DIRECTION.md section 4, rule 4)"],
+    [/Show more(?! details)/, "Edge no longer has Show more: Keep anyway is behind the small arrow beside Delete (docs/handoff/streams/F.md, finding 1)"],
     [/double-click/i, "she presses Open file (docs/DESIGN-DIRECTION.md section 5, K P1-4)"],
     [/switch(ing)? (that|it|Smart App Control) off/i, "she is never walked through switching off a Windows protection (DESIGN-DIRECTION section 6, rule 2); the helper's page may", /^(?!advanced\.html$)/],
   ];
@@ -541,6 +543,20 @@ for (const [at, want] of [
     const links = await page.evaluate(() => [...document.querySelectorAll("a[href]")].map((a) => ({ href: a.href, text: a.textContent.trim() })));
     const gh = links.filter((l) => /^https:\/\/(github\.com|[^/]*\.github\.io)\//.test(l.href) && !l.href.startsWith(`https://github.com/${AUROS_REPO}`) && !l.href.startsWith(`https://${PAGES_HOST}`));
     check(gh.length === 0, `promises ${p}: every GitHub address is ${AUROS_REPO}'s`, gh.map((l) => l.href).join(" "));
+    check(!/(\+?\d{1,3}[ .-])?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}/.test(text) && !links.some((l) => /^tel:/i.test(l.href)), `promises ${p}: no phone number, no tel: link (AurOS has no phone line, and never phones)`);
+    if (p === "guide.html") check(text.includes(PAGES_HOST.replace(/\/$/, "")), `promises ${p}: the printed sheet says where to go (${PAGES_HOST.replace(/\/$/, "")})`);
+    if (p === "index.html") {
+      // Numbered circles: in each picture group they count 1, 2, 3... with none missed or repeated.
+      const groups = await page.evaluate(() => [...document.querySelectorAll(".step")].flatMap((li) => {
+        const parts = li.querySelector(".browser") ? [...li.querySelectorAll(".browser")] : [li];
+        return parts.map((g) => ({ at: (li.id || "step") + (g === li ? "" : " " + g.dataset.browser), n: [...g.querySelectorAll("[data-n]")].map((e) => Number(e.dataset.n)) }));
+      }));
+      for (const g of groups.filter((g) => g.n.length)) check(g.n.every((v, i) => v === i + 1), `promises ${p}: the numbered circles in ${g.at} count 1 to ${g.n.length}`, g.n.join(","));
+      const av = await page.evaluate(() => { const e = document.getElementById("antivirus"); return e ? { text: e.innerText, shown: e.getClientRects().length > 0 } : null; });
+      check(av && av.shown && /antivirus/i.test(av.text) && /nothing has been installed/i.test(av.text) && /Stuck\? Show a helper/.test(av.text), `promises ${p}: a calm step for an antivirus program that takes the file`, av ? av.text.slice(0, 80) : "no #antivirus");
+      const edge = await page.evaluate(() => { const e = document.querySelector('[data-browser="edge"]'); return e ? e.innerText : ""; });
+      check(/Keep anyway/.test(edge) && /Open file/.test(edge) && /three dots/.test(edge) && /Don.t press Delete/.test(edge), `promises ${p}: the Edge pictures follow real Edge (Keep, then Keep anyway behind the arrow, then Open file), with the words for when they look different`);
+    }
     const gets = links.filter((l) => /^get aurOS\b/i.test(l.text));
     check(gets.every((l) => l.href === RELEASE_URL), `promises ${p}: every "Get AurOS" link is the download itself (${gets.length})`, gets.map((l) => l.href).join(" "));
     await ctx.close();
@@ -548,6 +564,16 @@ for (const [at, want] of [
   check(facts >= 2 && claims >= 4 && words >= 10, `promises: the pages mark what they promise (${facts} facts, ${claims} claims, ${words} words)`);
   for (const k of Object.keys(FACTS)) console.log(`     the code says ${k} = ${FACTS[k]}`);
   for (const k of Object.keys(CLAIMS)) console.log(`     the code does ${k}: ${CLAIMS[k]}`);
+  // The time she is promised may not be below what the real-Windows journey clock measured.
+  {
+    let J = null; try { J = JSON.parse(read("tools/site/journey.json")); } catch {}
+    const shown = FACTS["time-ssd"].match(/(\d+) to (\d+)/);
+    check(J !== null && shown !== null, "journey: tools/site/journey.json is there, and the page's time reads 'N to M'");
+    if (J && shown) {
+      if (J.ssd_median_min == null) console.log(`     journey clock: no measured median yet (${J.source}); the time shown is Setup's own estimate`);
+      else check(Number(shown[2]) >= Number(J.ssd_median_min), `journey: the time shown (up to ${shown[2]} minutes) is not below the measured median (${J.ssd_median_min})`, J.source);
+    }
+  }
 
   // Floors on every real page, not only the front door.
   for (const p of real.filter((f) => f !== "index.html" && f !== "advanced.html")) {
@@ -574,6 +600,50 @@ for (const [at, want] of [
     const all = await nojs.page.evaluate(() => [...document.querySelectorAll(".look")].filter((f) => f.getClientRects().length).length);
     check(all === 4, "looks: without script all four pictures show", `${all}`);
     await nojs.ctx.close();
+  }
+
+  // Sending the page to herself, from a phone or a Mac: the share sheet where
+  // there is one, else Copy the link; either way a big sentence says what
+  // happened and what to do next.
+  for (const v of [
+    { name: "iPhone", device: "iPhone 13", uad: null },
+    { name: "Android phone", device: "Pixel 7", uad: UAD.android },
+    { name: "Mac (Safari)", ua: UA.macSafari, uad: null },
+  ]) {
+    // with a share sheet
+    let { ctx, page } = await visit({ ...v, name: v.name + " with a share sheet", init: { fn: () => { window.__shared = []; Object.defineProperty(navigator, "share", { configurable: true, value: (d) => { window.__shared.push(d); return window.__shareAnswer ? window.__shareAnswer() : Promise.resolve(); } }); } } });
+    const pageUrl = await page.evaluate(() => location.href.split("#")[0]);
+    const btn = await page.evaluate(rectOf, "#share-link");
+    check(btn && btn.shown && btn.height >= 56 && /send this page to myself/i.test(btn.text), `${v.name}: "Send this page to myself" is there and at least 56px tall`, btn && `${Math.round(btn.height)}px ${JSON.stringify(btn.text)}`);
+    if (v.device) check(btn && inFold(btn), `${v.name}: it is wholly on the first screen`, btn && `at ${Math.round(btn.top)}-${Math.round(btn.bottom)} of ${btn.vh}`);
+    await page.click("#share-link");
+    await page.waitForTimeout(150);
+    const shared = await page.evaluate(() => window.__shared);
+    check(shared.length === 1 && shared[0].url === pageUrl && /windows computer/i.test(shared[0].text || ""), `${v.name}: pressing it opens the share sheet with this page's address`, JSON.stringify(shared));
+    const done = await page.evaluate(() => { const e = document.getElementById("copied"); const cs = getComputedStyle(e); return { text: e.innerText, size: parseFloat(cs.fontSize), shown: e.getClientRects().length > 0 }; });
+    check(done.shown && done.size >= 22 && /now open it on your windows computer/i.test(done.text), `${v.name}: afterwards a big sentence says what to do next`, `${done.size}px ${JSON.stringify(done.text)}`);
+    textFindings(`${v.name} after sharing`, await page.evaluate(measureText));
+    await ctx.close();
+    // Cancel is not an error; any other failure becomes Copy the link
+    ({ ctx, page } = await visit({ ...v, name: v.name + " cancelling", init: { fn: () => { window.__shareAnswer = () => Promise.reject(Object.assign(new Error("x"), { name: "AbortError" })); Object.defineProperty(navigator, "share", { configurable: true, value: () => window.__shareAnswer() }); } } }));
+    await page.click("#share-link"); await page.waitForTimeout(150);
+    check((await page.evaluate(() => document.getElementById("copied").innerText)) === "", `${v.name}: Cancel in the share sheet says nothing and copies nothing`);
+    await ctx.close();
+    ({ ctx, page } = await visit({ ...v, name: v.name + " share failing", init: { fn: () => { Object.defineProperty(navigator, "share", { configurable: true, value: () => Promise.reject(Object.assign(new Error("x"), { name: "NotAllowedError" })) }); } } }));
+    await page.click("#share-link"); await page.waitForTimeout(300);
+    const fb = await page.evaluate(() => document.getElementById("copied").innerText);
+    check(/^Copied\.|press and hold this address/i.test(fb), `${v.name}: if the share sheet fails, the link is copied (or shown) instead`, JSON.stringify(fb));
+    await ctx.close();
+    // without one
+    ({ ctx, page } = await visit({ ...v, name: v.name + " without a share sheet", init: { fn: () => { Object.defineProperty(navigator, "share", { configurable: true, value: undefined }); } } }));
+    const none = await page.evaluate(rectOf, "#share-link");
+    check(!none || !none.shown, `${v.name}: no share button where the browser has no share sheet`);
+    await page.click("#copy-link"); await page.waitForTimeout(300);
+    const cp = await page.evaluate(() => { const e = document.getElementById("copied"); const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return { text: e.innerText, size: parseFloat(cs.fontSize), right: r.right, vw: innerWidth }; });
+    check(/^Copied\. Now paste it|press and hold this address/i.test(cp.text) && cp.size >= 22 && cp.right <= cp.vw, `${v.name}: Copy the link answers in a big sentence that fits the screen`, `${cp.size}px ${JSON.stringify(cp.text)}`);
+    textFindings(`${v.name} after copying`, await page.evaluate(measureText));
+    if (v.name === "iPhone") await shot(page, "index-phone-copied.png");
+    await ctx.close();
   }
 
   // Small: what the first screen costs to load (pictures further down wait).

@@ -1,0 +1,6 @@
+{
+  "source": "none yet: the real-Windows e2e (tools/e2e) has not completed a whole journey (M2: website to AurOS's first question)",
+  "ssd_median_min": null,
+  "hdd_median_min": null,
+  "note": "Minutes from pressing Get AurOS to AurOS asking Does everything work?, the median of the e2e journey clock on a solid-state disk at 50 Mbit/s, and on a throttled hard disk. Stream F fills these from a green run (docs/PLAN-END-TO-END.md WP-08, WP-40). tools/site/check.mjs then fails if the time the front page shows ends below the median. Until then the page shows Setup's own estimate (wizard.c eta_range), checked word for word."
+}

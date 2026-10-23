@@ -76,10 +76,15 @@
       "&body=" + encodeURIComponent("Open this on the Windows computer you want to change:\n\n" + url + "\n");
   }
 
-  function copied(msg) { $("copied").textContent = msg; }
-  $("copy-link").addEventListener("click", function () {
+  /* What she is told after pressing: big, and it says what to do next
+   * (.copied is a 24px box, and a status for a screen reader). */
+  function said(msg) { $("copied").textContent = msg; }
+
+  /* Copy the link. Where the browser won't, the address itself is shown in
+   * the same box, to press and hold. */
+  function copyLink() {
     var url = pageAddress();
-    var ok = function () { copied("Copied. Now paste it into an email or a message to yourself."); };
+    var ok = function () { said("Copied. Now paste it into a message or an email to yourself."); };
     var fallback = function () {
       var t = document.createElement("textarea");
       t.value = url; t.setAttribute("readonly", ""); t.style.position = "fixed"; t.style.opacity = "0";
@@ -87,11 +92,27 @@
       var done = false;
       try { done = document.execCommand("copy"); } catch (e) { done = false; }
       document.body.removeChild(t);
-      if (done) ok(); else copied("Your browser wouldn't copy it. The address is written just below.");
+      if (done) ok();
+      else said("Your browser wouldn't copy it. Press and hold this address, then choose Copy: " + url.replace(/^https?:\/\//, ""));
     };
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, fallback);
     else fallback();
-  });
+  }
+  $("copy-link").addEventListener("click", copyLink);
+
+  /* "Send this page to myself": the phone's own share sheet (Messages,
+   * Mail, Notes, AirDrop...), where it has one. She picks where it goes;
+   * pressing Cancel there is not an error. Without a share sheet the
+   * button stays hidden and Copy the link is the way. */
+  var share = $("share-link");
+  if (share && navigator.share) {
+    share.hidden = false;
+    share.addEventListener("click", function () {
+      navigator.share({ title: "AurOS", text: "Open this on the Windows computer you want to change:", url: pageAddress() })
+        .then(function () { said("Done. Now open it on your Windows computer."); },
+              function (e) { if (!e || e.name !== "AbortError") copyLink(); });
+    });
+  }
 
   /* ── the four looks: one big picture, four buttons ───────────────
    * Without script all four pictures stand one under the other. */

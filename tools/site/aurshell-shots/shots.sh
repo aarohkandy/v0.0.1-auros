@@ -1,11 +1,11 @@
 #!/bin/bash
-# The website's pictures of AurOS (website/assets/shots/look-*.jpg, first-start.jpg):
+# The website's pictures of AurOS (website/assets/shots/look-*.jpg):
 # aurshell --png in Sandstone, the theme every look gets (src/aurbridge/wizard.c).
 # On a Linux box with docker, from the repository root:
 #   docker run --rm --memory 4g -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) \
 #     -v "$PWD":/w -w /w ubuntu:24.04 bash /w/tools/site/aurshell-shots/shots.sh
 # Output: /w/shots-out/*.png (SIZE, default 1280x800: the UI big enough to read
-# in the page; WSIZE for the first-start question, default 1024x640).
+# in the page). The names below are build/forge's rename table, word for word.
 # Convert to JPEG quality 82 for the site.
 set -eu
 export DEBIAN_FRONTEND=noninteractive
@@ -44,7 +44,7 @@ gcc -O2 -std=gnu11 -o /tmp/aurshell aurshell/main.c $SRC \
 # The machine: this image's programs under build/forge's names (tools/storetest.c ship()).
 A=/tmp/apps; mkdir -p $A
 e() { printf '[Desktop Entry]\nType=Application\nName=%s\nComment=%s\nCategories=%s\nExec=%s\n' "$2" "$3" "$4" "$5" > $A/$1.desktop; }
-e firefox "Firefox" "Browse the World Wide Web" "Network;WebBrowser;" "true firefox %u"
+e firefox "Internet" "Websites, news and shopping" "Network;WebBrowser;" "true firefox %u"
 e thunar "Your files" "Everything you have saved, in folders" "System;FileTools;FileManager;" "true thunar"
 e atril "Documents" "Read PDFs and other documents" "GTK;Office;Viewer;" "true atril %U"
 e org.xfce.mousepad "Notes" "Write and read plain notes" "Utility;TextEditor;" "true mousepad %F"
@@ -60,14 +60,4 @@ mkdir -p $HOME
 cd /w
 r() { /tmp/aurshell --shell shells/$2.shell --conf /tmp/conf/shell.conf --policy /nonexistent --png $OUT/$1.png --size ${SIZE:-1280 800} ${3:+--open $3}; }
 r taskbar taskbar; r dock dock; r rail rail; r tiles tiles
-# The first-start question (welcome.c), which --png never opens.
-mkdir -p /tmp/wrun/answer && printf 'phase=asking\n' > /tmp/wrun/state
-cd /w/src && gcc -O2 -std=gnu11 -o /tmp/welcomeshot -I aurshell \
-    -DWELCOME_RUN='"/tmp/wrun"' -DWELCOME_ANSWER='"/tmp/wrun/answer"' \
-    -DWELCOME_STATE='"/tmp/wrun/state"' -DWELCOME_FOUND='"/tmp/wrun/found.json"' \
-    /w/tools/site/aurshell-shots/welcomeshot.c $SRC aurwl/aurwl.c aurwl/gen/xdg-shell-protocol.c aurwl/gen/xdg-decoration-protocol.c \
-    aurwl/gen/viewporter-protocol.c aurwl/gen/xdg-output-protocol.c \
-    common/theme.c common/wall.c common/font.c common/png.c \
-    -I aurwl/gen $(pkg-config --cflags dbus-1) -lwayland-server -lxkbcommon $(pkg-config --libs dbus-1) -lm
-cd /w && /tmp/welcomeshot /tmp/conf/shell.conf shells/taskbar.shell $OUT/welcome-ask.png ${WSIZE:-1024 640}
 chown -R ${HOST_UID}:${HOST_GID} $OUT
