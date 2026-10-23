@@ -37,6 +37,7 @@ grep -v '^#' "$P/apps.tsv" | while IFS="$(printf '\t')" read -r id name what; do
     cmd=$(sed -n 's/^Exec=//p' "$f" | head -1 | sed 's/ %[A-Za-z]//g; s/@@[a-z]*//g; s# run # run --env=WAYLAND_DEBUG=1 #')
     log=/var/lib/auros-parity/app-$name.log
     : > "$log"
+    snap "apps-$name-before"
     t1=$(date +%s)
     setsid sh -c "$cmd" > "$log" 2>&1 &
     wait_for 90 grep -q 'xdg_surface@[0-9]*.get_toplevel' "$log"
@@ -45,7 +46,7 @@ grep -v '^#' "$P/apps.tsv" | while IFS="$(printf '\t')" read -r id name what; do
         sleep 12
         title=$(grep -ao 'xdg_toplevel@[0-9]*.set_title("[^"]*")' "$log" | tail -1 | sed 's/.*set_title("//; s/")$//')
         snap "apps-$name"
-        say "do pixels apps-$name apps.$name.visible 260 130 1020 690 8"; sleep 2
+        say "do changed apps-$name-before apps-$name apps.$name.visible 260 130 1020 690 8"; sleep 4
         result "apps.$name" pass "installed in $inst s ($size), window \"$title\" opened $win s after the press"
     else
         note "$name log: $(head -c 600 "$log" | tr '\n' '|')"

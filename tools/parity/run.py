@@ -291,6 +291,70 @@ def colours_in(path, x0, y0, x1, y1):
     return len(seen)
 
 
+def hue_buckets(path, x0, y0, x1, y1):
+    """(saturated pixels, distinct hue families among them) in a rectangle. A test card or a film is full of
+    saturated colours of many hues; the shell's cards and a blank window have almost none (one green at most)."""
+    import colorsys
+    w, h, bpp, rows = png_pixels(path)
+    n, fam = 0, set()
+    for y in range(max(0, y0), min(h, y1), 2):
+        r = rows[y]
+        for x in range(max(0, x0), min(w, x1), 2):
+            R, G, B = r[x * bpp], r[x * bpp + 1], r[x * bpp + 2]
+            if max(R, G, B) - min(R, G, B) >= 90:
+                n += 1
+                fam.add(int(colorsys.rgb_to_hsv(R / 255, G / 255, B / 255)[0] * 6))
+    return n, len(fam)
+
+
+def near_count(path, x0, y0, x1, y1, rgb, tol):
+    w, h, bpp, rows = png_pixels(path)
+    n = 0
+    for y in range(max(0, y0), min(h, y1), 2):
+        r = rows[y]
+        for x in range(max(0, x0), min(w, x1), 2):
+            if all(abs(r[x * bpp + i] - rgb[i]) <= tol for i in range(3)):
+                n += 1
+    return n
+
+
+def changed_pct(a, b, x0, y0, x1, y1):
+    """Percent of sampled pixels of a rectangle that differ clearly between two screenshots."""
+    wa, ha, ba, ra = png_pixels(a)
+    wb, hb, bb, rb = png_pixels(b)
+    n = d = 0
+    for y in range(max(0, y0), min(ha, hb, y1), 3):
+        for x in range(max(0, x0), min(wa, wb, x1), 3):
+            n += 1
+            if any(abs(ra[y][x * ba + i] - rb[y][x * bb + i]) > 24 for i in range(3)):
+                d += 1
+    return 100.0 * d / max(n, 1)
+
+
+# The first-run card ("Does everything work?") covers the whole desktop until she answers. Its layout has
+# changed between builds, so: if a button's green is where a design puts "Yes, it all works", press the
+# "Let me look first" that design has under it. (pixel of the green button, where to press)
+WELCOME = [((256, 307), (256, 377)),      # builds from 2026-10-23 noon: buttons on the left
+           ((264, 703), (620, 703))]      # the first design: buttons in a row at the bottom
+GREEN = (11, 93, 79)
+
+
+def welcome(q, shots):
+    for attempt in range(3):
+        tmp = os.path.join(shots, "welcome-%d.png" % attempt)
+        q.screendump(tmp)
+        w, h, bpp, rows = png_pixels(tmp)
+        hit = None
+        for (px, py), press in WELCOME:
+            if all(abs(rows[py][px * bpp + i] - GREEN[i]) <= 10 for i in range(3)):
+                hit = press
+        if not hit:
+            return attempt == 0 or True, "the first-run card is gone (pressed Let me look first %d time(s))" % attempt
+        q.click(*hit)
+        time.sleep(4)
+    return False, "the first-run card is still there after three presses of Let me look first"
+
+
 # ── the run ─────────────────────────────────────────────────────────
 
 def read_known_gaps():
@@ -341,17 +405,33 @@ def drive(q, out, timeout, checks):
                 if act == "snap":
                     q.screendump(os.path.join(shots, arg + ".png"))
                     say("screenshot", arg)
-                elif act == "pixels":        # SHOT RESULT x0 y0 x1 y1 MIN
-                    shot, nm, x0, y0, x1, y1, mn = arg.split()
+                elif act in ("hue", "near", "changed", "welcome"):
                     try:
-                        n = colours_in(os.path.join(shots, shot + ".png"), int(x0), int(y0), int(x1), int(y1))
-                    except Exception as e:               # no screenshot: a failure, said plainly
-                        n = -1
-                    ok = n >= int(mn)
-                    results[nm] = {"status": "pass" if ok else "fail", "detail":
-                        ("the window shows a picture (%d colours)" % n) if ok else
-                        ("the window is blank on screen: %d colour(s) where a page has at least %s" % (n, mn))}
-                    say("%-28s %-5s %s" % (nm, results[nm]["status"], results[nm]["detail"]))
+                        if act == "welcome":
+                            ok, det = welcome(q, shots)
+                            nm = "desktop.welcome"
+                        elif act == "hue":                # SHOT RESULT x0 y0 x1 y1 MINFAMILIES
+                            shot, nm, x0, y0, x1, y1, mn = arg.split()
+                            n, fam = hue_buckets(os.path.join(shots, shot + ".png"), int(x0), int(y0), int(x1), int(y1))
+                            ok = fam >= int(mn) and n >= 300
+                            det = ("the window shows its picture (%d saturated pixels in %d hues)" % (n, fam)) if ok else \
+                                  ("nothing like the page is on screen: %d saturated pixels in %d hue(s); a picture has at least %s hues" % (n, fam, mn))
+                        elif act == "near":               # SHOT RESULT x0 y0 x1 y1 R G B TOL MINPIXELS
+                            shot, nm, x0, y0, x1, y1, R, G, B, tol, mn = arg.split()
+                            n = near_count(os.path.join(shots, shot + ".png"), int(x0), int(y0), int(x1), int(y1), (int(R), int(G), int(B)), int(tol))
+                            ok = n >= int(mn)
+                            det = ("the document is on screen (%d pixels of its box colour)" % n) if ok else \
+                                  ("the document is not on screen: %d pixels of its box colour (need %s)" % (n, mn))
+                        else:                             # changed: BEFORE AFTER RESULT x0 y0 x1 y1 MINPCT
+                            ba, aa, nm, x0, y0, x1, y1, mn = arg.split()
+                            pc = changed_pct(os.path.join(shots, ba + ".png"), os.path.join(shots, aa + ".png"), int(x0), int(y0), int(x1), int(y1))
+                            ok = pc >= float(mn)
+                            det = ("a window appeared (%.0f%% of its area changed)" % pc) if ok else \
+                                  ("nothing appeared on screen: only %.1f%% of the area changed (need %s%%)" % (pc, mn))
+                    except Exception as e:                    # no screenshot etc.: a failure, said plainly
+                        nm, ok, det = (arg.split()[1] if act != "welcome" and len(arg.split()) > 1 else "desktop.welcome"), False, "could not look at the screen: %s" % e
+                    results[nm] = {"status": "pass" if ok else "fail", "detail": det}
+                    say("%-28s %-5s %s" % (nm, results[nm]["status"], det))
                 elif act == "key":
                     q.keys(*arg.split("+") if arg != "+" else ["equal"])
                 elif act == "type":
@@ -420,7 +500,8 @@ def main():
 
     gaps = read_known_gaps()
     rows, bad = [], 0
-    for c in a.checks:
+    agg = a.checks + (["desktop"] if "desktop" not in a.checks and any(k.startswith("desktop.") for k in results) else [])
+    for c in agg:
         sub = sorted(k for k in results if k.startswith(c + "."))
         parts = ([c] if c in results else []) + sub
         if not parts:

@@ -46,10 +46,11 @@ PY
 )
     if [ "$t" = OK ]; then result office.save pass "Writer and Calc opened both files and saved them with their contents (text, the formula and its result 42)"
     else result office.save fail "a file did not survive open and save: $t"; fi
+    snap office-before
     gio open "$D/letter.docx" &
     wait_for 120 pgrep -u "$(id -un)" soffice.bin; sleep 25
     snap office-writer
-    say "do pixels office-writer office.visible 260 130 1020 690 6"; sleep 2
+    say "do changed office-before office-writer office.visible 260 130 1020 690 8"; sleep 4
     pkill -u "$(id -un)" soffice.bin
 else
     result office.save fail "no office program is installed: Writer and Calc (libreoffice-writer, libreoffice-calc) are not in the image"

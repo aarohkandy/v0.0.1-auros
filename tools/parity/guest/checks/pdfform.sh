@@ -7,7 +7,7 @@ note "default viewer: $(gio mime application/pdf 2>&1 | head -1)"
 gio open "$HOME/Documents/form.pdf" &
 sleep 15
 snap pdfform-open
-say "do pixels pdfform-open pdfform.visible 390 170 1020 690 4"; sleep 1
+say "do near pdfform-open pdfform.visible 390 170 1020 690 242 242 255 6 400"; sleep 4
 click 742 299; sleep 2
 typing "Ada Lovelace"
 click 742 352; sleep 2
