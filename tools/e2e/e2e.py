@@ -134,6 +134,16 @@ def bitlocker_verdict(variant, vol, prot):
     return None
 
 
+def label_is(label, *words):
+    """OCR read a button's few letters ('| Instal |', 'Install.'): is it one
+    of `words`, allowing a letter or two of noise? (Installed and Installing
+    are other words and are not accepted.)"""
+    import difflib
+    got = re.sub(r"[^a-z]", "", (label or "").lower())
+    return any(got and abs(len(got) - len(w)) <= 1 and
+               difflib.SequenceMatcher(None, got, w.lower()).ratio() >= 0.8 for w in words)
+
+
 def close_verdict(variant, page):
     """Why the installer ended on Close. On the stop this variant's PC was
     made for, no way on is the right red (D13: BitLocker PCs must get
@@ -994,7 +1004,9 @@ class Flow:
                 time.sleep(8)
                 img = self.m.screendump()
                 b = self.store_button(img)
-                if b and re.match(r"(?i)\W*" + STORE_INSTALL + r"\W*$", b[1]):
+                if b:
+                    self.log(f"the store's button reads '{b[1]}' at {b[0]}")
+                if b and label_is(b[1], STORE_INSTALL):
                     btn = b[0]
                 else:
                     btn = vision.find_lone_word(vision.ocr(img), STORE_INSTALL)
@@ -1002,9 +1014,12 @@ class Flow:
                 self.m.shot("store-no-install")
                 raise Failure(f"no '{STORE_INSTALL}' button")
             self.m.click(*vision.centre(btn), label="install")
+            # Hands off the button: the pointer drawn over its letters makes them
+            # unreadable (run 40011085445 read nothing for nine minutes)
+            self.m.move(1150, 300)
             done = None
             deadline = time.time() + 45 * 60
-            clicked, presses = time.time(), 1
+            clicked, presses, seen_label = time.time(), 1, None
             while time.time() < deadline and not done:
                 time.sleep(15)
                 img = self.m.screendump()
@@ -1013,12 +1028,16 @@ class Flow:
                 # later the page still said Install, the pointer on it): a person
                 # presses again, and says so if it never takes.
                 b = self.store_button(img)
-                if b and re.match(r"(?i)\W*" + STORE_INSTALL + r"\W*$", b[1]) and time.time() - clicked > 75:
+                if (b[1] if b else None) != seen_label:
+                    seen_label = b[1] if b else None
+                    self.log(f"the store's button now reads {seen_label!r}")
+                if b and label_is(b[1], STORE_INSTALL) and time.time() - clicked > 75:
                     if presses >= 3:
                         self.m.shot("store-install-did-nothing")
                         raise Failure(f"pressed '{STORE_INSTALL}' {presses} times over {int(time.time() - clicked)} s "
                                       "and the store showed no sign of installing: " + vision.text_of(words)[:400])
                     self.m.click(*vision.centre(b[0]), label="install (again)")
+                    self.m.move(1150, 300)
                     clicked, presses = time.time(), presses + 1
                     continue
                 for bad in ("Authentication", "Failed to install", "Unable to install"):
@@ -1026,7 +1045,7 @@ class Flow:
                         self.m.save(img, "store-" + bad)
                         raise Failure(f"the store says '{bad}': {vision.text_of(words)[:500]}")
                 b = self.store_button(img)
-                if b and re.match(r"(?i)\W*(" + STORE_OPEN + r")\W*$", b[1]):
+                if b and label_is(b[1], *[o for o in STORE_OPEN.split("|") if " " not in o]):
                     done = (b[1], b[0])
                     break
                 for o in STORE_OPEN.split("|"):

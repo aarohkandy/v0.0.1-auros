@@ -220,6 +220,18 @@ def test_aur_dry():
         (e2e.Machine, e2e.run, e2e.OVMF_VARS, e2e.AurFlow.wait_text) = saved
 
 
+def test_label_is():
+    try:
+        import e2e
+    except ImportError:
+        return
+    for text, words, want in (("Install", ("Install",), True), ("| Instal |", ("Install",), True),
+                              ("Install.", ("Install",), True), ("Installed", ("Install",), False),
+                              ("Installing", ("Install",), False), ("Open", ("Open", "Launch"), True),
+                              ("0pen", ("Open", "Launch"), True), ("Cancel", ("Install",), False), ("", ("Install",), False)):
+        check(e2e.label_is(text, *words) is want, f"store: '{text}' {'is' if want else 'is not'} {'/'.join(words)}")
+
+
 def test_store_button_colours():
     """The store's main button is found by its accent colour (OCR on the whole
     screen missed the word on a gold button, run 40005591638)."""
@@ -349,6 +361,7 @@ test_bitlocker_verdict()
 test_timings_summary()
 test_windows_dry()
 test_aur_dry()
+test_label_is()
 test_store_button_colours()
 test_flow_helpers()
 test_measure()
