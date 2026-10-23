@@ -268,6 +268,11 @@ mutant ferry '    [ "$(cat "$FERRY_STATE/state/back.via" 2>/dev/null)" != handov
 mutant ferry 'function v(k,   m, t) { if (match($0, "(^| )" k' 'function v(k,   m, t) { if (match($0, k' \
     "ferry stick list names only the sticks she could use, in plain words"
 
+mutant copy.c "stem[3] >= '0' && stem[3] <= '9');       /* COM0 and LPT0 too: the Windows side refuses them */" "stem[3] >= '1' && stem[3] <= '9');" \
+    "...COM0 and LPT0 in particular are not left as they were"
+mutant copy.c '        if (fd_rows >= 0 && u16len(drel) + (*drel ? 1 : 0) + u16len(want) > WIN_REL_MAX) {' '        if (0) {' \
+    "a path longer than 600 characters: some could not be saved (exit 2)"
+
 # Root: the escalation the lead's review named.
 # Without the switch to her, the self-check refuses to copy at all...
 mutant copy.c 'if (setgroups(1, &gg) || setresgid(g, g, g) || setresuid(u, u, u))' \

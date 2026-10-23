@@ -60,6 +60,17 @@ int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size)
             if (c < 0x20 || strchr("<>:\"/\\|?*", c)) BAD(9);
         }
         if (safe[sl - 1] == '.' || safe[sl - 1] == ' ') BAD(10);
+        {   /* the Windows side's reserved names, COM0 and LPT0 included */
+            char stem[16]; size_t k = 0;
+            while (safe[k] && safe[k] != '.' && k < 8) { stem[k] = (char)toupper((unsigned char)safe[k]); k++; }
+            stem[k] = '\0';
+            if (safe[k] == '\0' || safe[k] == '.') {
+                if (!strcmp(stem, "CON") || !strcmp(stem, "PRN") || !strcmp(stem, "AUX") || !strcmp(stem, "NUL") ||
+                    ((!strncmp(stem, "COM", 3) || !strncmp(stem, "LPT", 3)) && k == 4 && stem[3] >= '0' && stem[3] <= '9'))
+                    BAD(13);
+            }
+        }
+        if (!strcmp(safe, ".") || !strcmp(safe, "..")) BAD(14);
         make_name(safe, count, fin);
         if (!strlen(fin) || strlen(fin) > NAME_LIMIT) BAD(11);
         fold(fin, low, sizeof low);                 /* must not overrun */

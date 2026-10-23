@@ -295,6 +295,19 @@ static int hash_file(int sfd, const char *name, char hex[65])
  * What Linux allows in a name and Windows does not. Returns 1 when the
  * name had to change. Bytes that are not UTF-8 (Linux allows any) would
  * make the NTFS driver refuse the file, so each becomes "_" too. */
+/* UTF-16 length of a UTF-8 string: what Windows counts a path in. */
+static size_t u16len(const char *s)
+{
+    size_t n = 0;
+    for (; *s; s++) {
+        unsigned char c = (unsigned char)*s;
+        if ((c & 0xC0) == 0x80) continue;           /* a continuation byte */
+        n += (c >= 0xF0) ? 2 : 1;                   /* beyond U+FFFF: a surrogate pair */
+    }
+    return n;
+}
+#define WIN_REL_MAX 600     /* the longest path inside a folder the Windows side accepts */
+
 static int win_safe(const char *in, char out[NAME_LIMIT + 1])
 {
     size_t o = 0, i = 0, n = strlen(in);
@@ -325,7 +338,7 @@ static int win_safe(const char *in, char out[NAME_LIMIT + 1])
             int bad = !strcmp(stem, "CON") || !strcmp(stem, "PRN") || !strcmp(stem, "AUX") ||
                       !strcmp(stem, "NUL") ||
                       ((!strncmp(stem, "COM", 3) || !strncmp(stem, "LPT", 3)) && sl == 4 &&
-                       stem[3] >= '1' && stem[3] <= '9');
+                       stem[3] >= '0' && stem[3] <= '9');       /* COM0 and LPT0 too: the Windows side refuses them */
             if (bad && o + 1 <= NAME_LIMIT) { memmove(out + 1, out, o + 1); out[0] = '_'; changed = 1; }
         }
     }
@@ -741,6 +754,16 @@ static void copy_one(struct job *j, int sfd, int dfd, const char *name,
             return;
         }
         if (!want[0]) { note("blocked", j, rel, "It could not be saved on this computer."); j->failed++; missing_any = 1; disp_done++; return; }
+        if (fd_rows >= 0 && u16len(drel) + (*drel ? 1 : 0) + u16len(want) > WIN_REL_MAX) {
+            /* A path the Windows side would refuse -- and it refuses the
+             * whole list for one bad row. Said, and not saved: the run
+             * ends "some could not be saved", never "done". */
+            note("blocked", j, rel, "Its name and the folders it is in are together too long for Windows. "
+                 "Move it nearer the top of its folder, or give it a shorter name, and try again.");
+            j->failed++; missing_any = 1; disp_done++;
+            work_total -= st->st_size + FILE_COST;
+            return;
+        }
         have_want = 1;
     } else
     /* Already here, under its own name or a "(from Windows)" one? */

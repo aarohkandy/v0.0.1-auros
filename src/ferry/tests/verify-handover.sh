@@ -57,20 +57,30 @@ else
     awk -F'\t' '!/^#/ { print $1 "/" $2 }' "$H/manifest.tsv" | LC_ALL=C sort > "$W/listed"
     comm -23 "$W/found" "$W/listed" | head -5 | while IFS= read -r l; do problem "a file the manifest does not list: $l"; done
 
-    # legal Windows names, nothing to rename
+    # The Windows side's own rules (Segment-Ok / Rel-Ok / the list checks in
+    # src/aurbridge/putback.ps1): ONE bad row and it refuses the whole list.
     awk -F'\t' '
         /^#/ { next }
-        { m = split($2, part, "/")
+        NF != 5 { print "row without five fields: " $0; next }
+        $1 !~ /^(Desktop|Documents|Downloads|Music|Pictures|Videos)$/ { print "folder " $1 " is not one of the six" }
+        $3 !~ /^[0-9]+$/ { print "size is not a number in " $2 }
+        $4 !~ /^[0-9a-f]{64}$/ { print "hash is not 64 hex digits in " $2 }
+        $5 !~ /^[0-9]+$/ { print "time is not a number in " $2 }
+        { rel = $2
+          if (length(rel) == 0 || length(rel) > 600 || substr(rel, 1, 1) == "/") print "bad path length or start: " rel
+          m = split(rel, part, "/")
           for (i = 1; i <= m; i++) {
               p = part[i]
-              if (p ~ /[<>:"\\|?*]/ || p ~ /[\001-\037]/) print "illegal character in " $2
-              if (p ~ /[. ]$/) print "trailing dot or space in " $2
+              if (length(p) == 0 || length(p) > 255) print "empty or over-long name part in " rel
+              if (p == "." || p == "..") print ". or .. in " rel
+              if (p ~ /[<>:"\\|?*]/ || p ~ /[\001-\037]/) print "illegal character in " rel
+              if (p ~ /[. ]$/) print "trailing dot or space in " rel
               stem = toupper(p); sub(/\..*/, "", stem)
-              if (stem ~ /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/) print "reserved name in " $2
+              if (stem ~ /^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])$/) print "reserved name in " rel
           }
-          key = tolower($1 "/" $2)
-          if (key in seen) print "names differ only in capitals: " $2 " and " seen[key]
-          seen[key] = $2 }' "$H/manifest.tsv" | head -20 | while IFS= read -r l; do problem "$l"; done
+          key = tolower($1 "/" rel)
+          if (key in seen) print "names differ only in capitals: " rel " and " seen[key]
+          seen[key] = rel }' "$H/manifest.tsv" | head -20 | while IFS= read -r l; do problem "$l"; done
 fi
 
 n=$( [ -f "$H/manifest.tsv" ] && grep -vc '^#' "$H/manifest.tsv" || echo 0)

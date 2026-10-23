@@ -756,6 +756,32 @@ eq "ferry stick list names only the sticks she could use, in plain words" \
    "$(PATH="$TMP/fakebin:$PATH" ferry stick list | tr '\t' '|' | tr '\n' ';')" "/dev/sdb1|HOLIDAY (16 GB)|15500000000|exfat;"
 rm -rf "$HV" "$HV2" "$HV3" "$HV4" "$ST"
 
+# The Windows side refuses a WHOLE list for one bad row: every name must satisfy ITS rules.
+FERRY_OWNER="$OWNER" sh "$HERE/mkhandover.sh" "$TMP/fx" >/dev/null 2>&1
+assert "a home full of awkward names (CON, COM0, lpt0, ..., nul.tar.gz, trailing spaces and dots) gives a list the Windows side's own rules accept" \
+    sh -c "sh '$HERE/verify-handover.sh' '$TMP/fx' | grep -q '^ok '"
+assert "...COM0 and LPT0 in particular are not left as they were" \
+    sh -c "! awk -F'\t' '!/^#/ {print \$2}' '$TMP/fx/AurOS-handover/manifest.tsv' | grep -qiE '^(com0|lpt0)(\.|\$)'"
+rm -rf "$TMP/fx"
+# A path longer than the Windows side accepts (600): said and not saved; never a list it would refuse.
+AHD="$TMP/aurhome-deep"; mkdir -p "$AHD/Documents"
+python3 - "$AHD/Documents" <<'PY'
+import os, sys
+p = sys.argv[1]
+for i in range(12):
+    p = os.path.join(p, "d%d_" % i + "x" * 60)
+os.makedirs(p)
+open(os.path.join(p, "deep.txt"), "w").write("deep\n")
+open(os.path.join(sys.argv[1], "shallow.txt"), "w").write("shallow\n")
+PY
+hers "$AHD"
+HVD="$TMP/hvd"; mkdir -p "$HVD"; hers "$HVD"
+env FERRY_STATE="$TMP/state-hvd" FERRY_HOME="$AHD" FERRY_OWNER="$OWNER" ferry-handover --dir "$HVD" >/dev/null 2>&1
+eq "a path longer than 600 characters: some could not be saved (exit 2)" "$?" 2
+refute "...and the list is not marked complete" test -e "$HVD/AurOS-handover/DONE"
+assert "...and it is said in her words" grep -q 'together too long for Windows' "$TMP/state-hvd/report.d/handover-copy.tsv"
+rm -rf "$AHD" "$HVD"
+
 echo "ferry run says what happened (answer.sh turns it into her screen):"
 # The installer's choices stand, so no stage tries to change this
 # machine's clock, language or keyboard while the tests run.
