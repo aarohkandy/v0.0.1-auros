@@ -992,7 +992,13 @@ int plat_putback_task(const char *disk_guid, uint64_t win_offset,
         snprintf(why, wn, "the task's instructions did not fit.");
         return -1;
     }
+    /* The same bytes twice: the one SYSTEM runs (in the private folder), and a copy
+     * the user's own task can read (the task is registered later, by SYSTEM, when
+     * there are files to save; SYSTEM never writes into a user's profile). */
+    char user_ps1[360];
+    snprintf(user_ps1, sizeof user_ps1, "%s\\user\\savefiles.ps1", dir);
     if (plat_file_put(ps1, PUTBACK_PS1, PUTBACK_PS1_LEN, why, wn) != 0 ||
+        plat_file_put(user_ps1, PUTBACK_PS1, PUTBACK_PS1_LEN, why, wn) != 0 ||
         plat_file_put(json, cfg, (size_t)cl, why, wn) != 0)
         return -1;
 
@@ -1044,6 +1050,9 @@ int plat_putback_task_remove(char *why, size_t wn)
     putback_paths(dir, sizeof dir, ps1, json, sizeof ps1);
     plat_file_delete(ps1, w, sizeof w);
     plat_file_delete(json, w, sizeof w);
+    char user_ps1[360];
+    snprintf(user_ps1, sizeof user_ps1, "%s\\user\\savefiles.ps1", dir);
+    plat_file_delete(user_ps1, w, sizeof w);
     return 0;
 }
 

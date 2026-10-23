@@ -404,22 +404,46 @@ jobs:
 
   # The Windows half of "Put Windows back with her files" (docs/AURBRIDGE.md, the
   # handover): a throwaway disk with a stand-in C:, a handover partition filled as AurOS
-  # fills it, and the SHIPPED put-back script run against it -- happy, cut during the
-  # copy, cut before the removal, a changed file, no DONE, no room, BitLocker.
+  # fills it, and the put-back script run against it -- happy, a cut, hostile lists, links
+  # planted in her profile, a report that lies, a changed file, no DONE, no room, BitLocker.
+  # Needs no build: it tests the script in the source. The job after it checks that the
+  # installer carries exactly that script and registers the task correctly.
   handover:
-    needs: build
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with: { name: exe, path: exe }
+      - name: a deliberately broken script, when one was asked for
+        if: github.event_name == 'workflow_dispatch' && inputs.mutant != 'none'
+        shell: bash
+        env: { MUTANT: "${{ inputs.mutant }}" }
+        run: bash tools/fastpath-mutant.sh "$MUTANT" || true
       - name: her files reach Windows, are checked there, and only then does anything go
         shell: pwsh
         run: |
-          ./tools/handovertest.ps1 -Exe "$PWD\exe\aurbridge.exe" 2>&1 | Tee-Object -FilePath handover.log
+          ./tools/handovertest.ps1 -Script "$PWD\src\aurbridge\putback.ps1" 2>&1 | Tee-Object -FilePath handover.log
           if ($LASTEXITCODE -ne 0) { throw "handovertest exited $LASTEXITCODE" }
           if (Select-String -Path handover.log -Pattern ' FAIL$' -Quiet) { throw "a check failed" }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: handover-log
+          path: handover.log
+
+  taskreg:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: exe, path: exe }
+      - name: the installer carries exactly the script in the source
+        shell: pwsh
+        run: |
+          .\exe\aurbridge.exe putback-script "$env:RUNNER_TEMP\shipped.ps1"
+          if ((Get-FileHash "$env:RUNNER_TEMP\shipped.ps1").Hash -ne (Get-FileHash src\aurbridge\putback.ps1).Hash) { throw "the installer carries a different script" }
+          "ok: the shipped script is the one in the source"
       - name: the startup task is registered the way the install registers it, and taken away again
         shell: pwsh
         run: |
@@ -432,7 +456,7 @@ jobs:
           if ($t.Principal.UserId -ne 'SYSTEM') { throw "the task does not run as SYSTEM" }
           if ($arg -notmatch '-File .*ProgramData.*AurOS.*putback\.ps1') { throw "the task does not run the script from ProgramData" }
           $d = Join-Path $env:ProgramData 'AurOS'
-          foreach ($f in 'putback.ps1', 'putback.json') {
+          foreach ($f in 'putback.ps1', 'putback.json', 'user\savefiles.ps1') {
               if (-not (Test-Path "$d\$f")) { throw "$f is not there" }
               $who = (Get-Acl "$d\$f").Access | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique
               if ($who | Where-Object { $_ -ne 'NT AUTHORITY\SYSTEM' -and $_ -ne 'BUILTIN\Administrators' }) { throw "$f can be written by $($who -join ', ')" }
@@ -440,10 +464,5 @@ jobs:
           $o = & $exe putback-task remove; $o
           if ($LASTEXITCODE -ne 0) { throw "removing the task: $o" }
           if (Get-ScheduledTask -TaskName 'AurOS put-back' -ErrorAction SilentlyContinue) { throw "the task is still registered" }
-          if (Test-Path "$d\putback.ps1") { throw "the script was left behind" }
+          if ((Test-Path "$d\putback.ps1") -or (Test-Path "$d\user\savefiles.ps1")) { throw "the script was left behind" }
           "ok: registered as SYSTEM, running a script only SYSTEM and Administrators can write, and gone again"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
-        with:
-          name: handover-log
-          path: handover.log
