@@ -34,6 +34,40 @@
 set -u
 cd "$(dirname "$0")/.."
 TOP=$PWD
+
+# Did the in-place pass really finish? POSITIVE evidence only: the guest
+# said so, it did not say it timed out, and it reached its own power-off.
+# (The absence of "TIMEOUT" alone passed a guest killed at the wait cap.)
+# $1 is the guest's serial text.
+pass_verdict() {
+    printf '%s\n' "$1" | grep -q "THEFT pass done" &&           # [done]
+    ! printf '%s\n' "$1" | grep -q "THEFT pass TIMEOUT" &&      # [timeout]
+    printf '%s\n' "$1" | grep -q "THEFT poweroff"              # [poweroff]
+}
+if [ "${1:-}" = --selftest ]; then
+    # The verdict on made-up serial logs: only the first may pass.
+    st=0
+    chk() { # WANT NAME TEXT
+        if pass_verdict "$3"; then got=0; else got=1; fi
+        if [ "$got" = "$1" ]; then printf '    %-60s ok\n' "$2"
+        else printf '    %-60s FAIL\n' "$2"; st=1; fi
+    }
+    chk 0 "a pass that said done and powered off" "THEFT pass waiting
+THEFT pass done in 4 s (this start)
+THEFT poweroff"
+    chk 1 "a pass that timed out" "THEFT pass waiting
+THEFT pass TIMEOUT
+THEFT pass done in 601 s (this start)
+THEFT poweroff"
+    chk 1 "a guest killed at the wait cap (nothing after waiting)" "THEFT pass waiting"
+    chk 1 "done, but the guest never reached its power-off" "THEFT pass waiting
+THEFT pass done in 4 s (this start)"
+    chk 1 "powered off without ever finishing the pass" "THEFT pass waiting
+THEFT poweroff"
+    chk 1 "an empty log" ""
+    exit $st
+fi
+
 export PYTHONDONTWRITEBYTECODE=1    # as root in a container this would leave root-owned files in the checkout
 NOAES=0; NOTPM=0
 for a in "$@"; do case "$a" in --noaes) NOAES=1 ;; --notpm) NOTPM=1 ;; esac; done
@@ -343,7 +377,9 @@ esp_ls /auros | grep -q '^.*grub\.cfg' && esp_ls /auros | grep -q 'initrd.img-' 
 # ── 2: the start that encrypts, a power cut mid-pass, the pass, set-pin
 echo "  2  encrypting in place, a power cut, the pass, the first PIN" | tee -a "$EV/summary.txt"
 power_on encrypt
+STARTED=0
 if wait_for "THEFT pass waiting"; then
+    STARTED=1
     ok "the start encrypted in place and AurOS came up on it"
     serial | grep -q 'auros-lock: the drive is being encrypted' && note "$(serial | grep -o 'auros-lock: the drive is being encrypted.*' | head -1)"
     sleep "${THEFT_CUT_AFTER:-8}"
@@ -368,20 +404,24 @@ if [ "$CUT" = 1 ]; then
     wait_for "THEFT pass done" $((PASSLIM + 300))
 fi
 wait_for "THEFT poweroff" 300
-if [ "$CUT" = 1 ]; then
-    serial | grep -q "THEFT pass done" && ! serial | grep -q "THEFT pass TIMEOUT" \
+if [ "$STARTED" = 0 ]; then
+    note "no pass assertion: the encrypting start did not come up (failed above)"
+elif [ "$CUT" = 1 ]; then
+    pass_verdict "$(serial)" \
         && ok "the next start resumed the pass and finished it ($(val 'pass done in'))" \
-        || bad "the pass resumed after the power cut and finished" "$(serial | grep -E 'THEFT pass' | tail -3)"
+        || bad "the pass resumed after the power cut and finished (said done, no timeout, powered off)" "$(serial | grep -E 'THEFT (pass|poweroff)' | tail -3)"
 else
-    ! serial | grep -q "THEFT pass TIMEOUT" && ok "the in-place pass finished" \
-        || bad "the in-place pass finished within ${PASSLIM} s" "$(serial | grep -E 'THEFT pass' | tail -3)"
+    pass_verdict "$(serial)" \
+        && ok "the in-place pass finished ($(val 'pass done in'))" \
+        || bad "the in-place pass finished within ${PASSLIM} s (said done, no timeout, powered off)" "$(serial | grep -E 'THEFT (pass|poweroff)' | tail -3)"
 fi
 [ "$(val letter-after-pass)" = "$LSUM" ] && ok "her letter is intact" || bad "her letter is intact" "$(val letter-after-pass) != $LSUM"
 serial | grep -q "THEFT up .*state=encrypting.*cipher=" || true
 RESCUE=$(val RESCUE | tr -d ' ')
 [ ${#RESCUE} = 24 ] && ok "set-pin gave a 24-number rescue code" || bad "set-pin gave a rescue code" "$(serial | grep -E 'setpin|RESCUE')"
-val after-setpin | grep -q "state=pin" && val after-setpin | grep -q "pin=tpm" \
-    && ok "the PIN is sealed in the VM's TPM" || bad "the PIN is sealed in the TPM" "$(val after-setpin)"
+if [ "$NOTPM" = 1 ]; then WANTPIN=pass; WHERE="a passphrase: no chip"; else WANTPIN=tpm; WHERE="the VM's TPM"; fi
+val after-setpin | grep -q "state=pin" && val after-setpin | grep -q "pin=$WANTPIN" \
+    && ok "the PIN is sealed in $WHERE" || bad "the PIN is sealed in $WHERE" "$(val after-setpin)"
 if [ "$NOAES" = 1 ]; then
     val after-setpin | grep -q 'cipher=xchacha12,aes-adiantum-plain64' \
         && ok "no AES instructions: the drive uses Adiantum" || bad "no AES instructions: Adiantum" "$(val after-setpin)"

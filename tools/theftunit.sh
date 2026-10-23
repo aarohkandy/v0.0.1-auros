@@ -71,6 +71,18 @@ if [ "${1:-}" = --mutants ]; then
     mutant header-unchecked rootfs/usr/lib/auros/lock/encrypt-init 's/if \[ "\$got" = "\$ss" \]; then/if true; then/'
     mutant needs-head rootfs/usr/lib/auros/lock/encrypt-init 's/got=\${1:-}/got=$(echo "${1:-}" | head -1)/'
     mutant sector-always-4096 rootfs/usr/lib/auros/lock/encrypt-init 's/else ss=512; fi/else ss=4096; fi/'
+    # the VM harness's own verdict (run alone: THEFT_ONLY=vmself)
+    vmmutant() { # NAME SED
+        rm -rf "$M/t"; mkdir -p "$M/t"; cp -a src rootfs tools "$M/t/"
+        sed -i "$2" "$M/t/tools/theftvm.sh"
+        if cmp -s "$M/t/tools/theftvm.sh" tools/theftvm.sh; then echo "  mutant $1: the edit did not apply"; survived=$((survived+1)); return; fi
+        if THEFT_SRC="$M/t" THEFT_ONLY=vmself bash "$0" >"$M/log" 2>&1; then
+            echo "  mutant $1: SURVIVED (the suite passed with it)"; survived=$((survived+1))
+        else echo "  mutant $1: killed ($(grep -c FAIL "$M/log") checks failed)"; fi
+    }
+    vmmutant harness-no-poweroff  '/\[poweroff\]/s/grep -q "THEFT poweroff"/true/'
+    vmmutant harness-no-done      '/\[done\]/s/grep -q "THEFT pass done" &&/true \&\&/'
+    vmmutant harness-no-timeout   '/\[timeout\]/s/! printf .*grep -q "THEFT pass TIMEOUT" &&/true \&\&/'
     mutant small-keys         src/aurshell/lockpin.c 's/int kw = (int)(84 \* k)/int kw = (int)(40 * k)/'
     mutant repin-ignored      rootfs/usr/lib/auros/lock/lockctl 's/^    \[ -s "\$REPIN" \] || exit 0/    exit 0/'
     echo
@@ -83,6 +95,21 @@ fail=0; checked=0
 ok()  { checked=$((checked+1)); printf '    %-66s %s\n' "$1" "ok"; }
 bad() { checked=$((checked+1)); fail=$((fail+1)); printf '    %-66s %s\n' "$1" "FAIL"
         shift; for m in "$@"; do printf '      %s\n' "$m"; done; }
+
+# The VM test's own verdict on a pass: it must refuse a guest that timed
+# out, was killed at the cap, or never powered off.
+vmself_check() {
+    local o
+    o=$(bash "$SRC/tools/theftvm.sh" --selftest 2>&1); local rc=$?
+    [ "$rc" = 0 ] && echo "$o" | grep -q "a guest killed at the wait cap" \
+        && ok "the VM test refuses a pass that timed out, was killed at the cap, or never powered off" \
+        || bad "the VM test's pass verdict" "$o"
+}
+if [ "${THEFT_ONLY:-}" = vmself ]; then
+    echo; echo "The VM test's own verdict"; echo
+    vmself_check
+    [ "$fail" -eq 0 ] && exit 0 || exit 1
+fi
 check() { local what=$1; shift; if "$@" >/dev/null 2>&1; then ok "$what"; else bad "$what"; fi; }
 
 # ── never the host's chip ─────────────────────────────────────────
@@ -176,6 +203,7 @@ L() { AUROS_LOCK_DEV="$1" AUROS_LOCK_PIN_BIN="$PIN" AUROS_LOCK_CONF="$T/lock.con
 echo
 echo "The encrypted drive and its PIN"
 echo
+vmself_check
 echo "  in place"
 IMG="$T/a.img"
 mkdrive "$IMG" 1400; D=$DRV
