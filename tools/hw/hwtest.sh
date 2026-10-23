@@ -42,6 +42,42 @@ else
     bad "hwinv.c: its own cases" "$(tail -8 "$T/inv.log" "$T/cc.log" 2>/dev/null)"
 fi
 
+# ── the matcher: facts from hw/compat.json, cases from hwcompat.c ────
+GEN="$T/gen"
+if python3 -I tools/hw/gen-header.py "$GEN" 2>"$T/gen.log"; then
+    ok "hw/compat.json becomes the matcher's tables"
+else bad "hw/compat.json becomes the matcher's tables" "$(cat "$T/gen.log")"; fi
+cat > "$T/cmp_main.c" <<'EOC'
+int hwcompat_selftest(void);
+int main(void){ return hwcompat_selftest() ? 1 : 0; }
+EOC
+CMP_INC="-I$SRC -Ihw/lib -I$GEN"
+if $CC $WARN -Werror -O2 $CMP_INC -o "$T/cmp" "$T/cmp_main.c" hw/lib/hwcompat.c $SRC/hwinv.c 2>"$T/cc.log" \
+   && "$T/cmp" >"$T/cmp.log" 2>&1; then
+    ok "hwcompat.c: $(grep -c ' ok$' "$T/cmp.log") cases, no warnings"
+else bad "hwcompat.c: its own cases" "$(grep -v ' ok$' "$T/cmp.log" | head -8; head -8 "$T/cc.log")"; fi
+if [ -f "$T/cmp.log" ] && grep -q "BCM4352" "$T/cmp.log"; then ok "the BCM4352 case ran"; else bad "the BCM4352 case ran"; fi
+
+# every sentence she can read passes the word rules (docs/EASY.md rule 2)
+if sh tools/wordlint.sh "$GEN/hwcompat_words.h" >"$T/wl.log" 2>&1; then
+    ok "every sentence she reads passes wordlint"
+else bad "every sentence she reads passes wordlint" "$(head -8 "$T/wl.log")"; fi
+
+# the committed compat.json is what the committed seeds say (words and rules)
+if python3 -I - <<'EOP'
+import json
+c = json.load(open("hw/compat.json", encoding="utf-8")); s = json.load(open("hw/seeds.json", encoding="utf-8"))
+assert c["words"] == s["words"] and c["rules"] == s["rules"], "compat.json is not made from seeds.json: run tools/hw/gen-compat.py"
+for r in s["rules"]:
+    assert r["says"] in s["words"], r["id"]
+EOP
+then ok "compat.json carries seeds.json's words and rules"; else bad "compat.json carries seeds.json's words and rules"; fi
+
+# and, where an image is at hand, that it still says what the image can drive
+if [ -n "${HW_ROOTFS:-}" ] && [ -d "$HW_ROOTFS" ]; then
+    python3 -I tools/hw/gen-compat.py "$HW_ROOTFS" --check | sed 's/^/      /'
+fi
+
 # ── what it writes is JSON ───────────────────────────────────────────
 cat > "$T/dump.c" <<'EOC'
 #include "hwinv.h"
@@ -52,8 +88,8 @@ int main(int argc, char **argv)
 {
     hw_inv *v = hwinv_new();
     strcpy(v->dmi_vendor, "ACME \"Quote\" \\ back\tslash"); strcpy(v->dmi_model, "Ünïcode 9");
-    hwinv_add_dev(v, "Net", "PCI\\VEN_14E4&DEV_43B1&SUBSYS_0608105B&REV_03", "Broadcom 802.11ac", "Broadcom", "x", 0, 71);
-    hwinv_add_dev(v, "Camera", "USB\\VID_0BDA&PID_5530&MI_00", "Integrated Camera", "", "usbvideo", 0, 0);
+    hwinv_add_dev(v, "Net", "PCI\\VEN_14E4&DEV_43B1&SUBSYS_0608105B&REV_03", "", "Broadcom 802.11ac", "Broadcom", "x", 0, 71);
+    hwinv_add_dev(v, "Camera", "USB\\VID_0BDA&PID_5530&MI_00", "", "Integrated Camera", "", "usbvideo", 0, 0);
     hwinv_add_printer(v, "Brother", "Brother HL-L2350DW series", "USB001", 1);
     char *js = hwinv_json(v, "t", "now"); char *tx = hwinv_text(v, "t", "now");
     FILE *f = fopen(argv[1], "wb"); fputs(js, f); fclose(f);
@@ -77,10 +113,10 @@ else bad "the JSON parses, keeps quotes, tabs and accents, and has the ids" "$(c
 # ── the Windows part has to at least build clean for Windows ─────────
 MW="${MW:-x86_64-w64-mingw32-gcc}"
 if command -v "$MW" >/dev/null 2>&1; then
-    if $MW $WARN -Werror -O2 -I$SRC -c $SRC/hwinv_win.c -o "$T/win.o" 2>"$T/mw.log" &&
-       $MW $WARN -Werror -O2 -I$SRC -c $SRC/hwinv.c -o "$T/inv.o" 2>>"$T/mw.log"; then
-        ok "hwinv_win.c and hwinv.c build clean for Windows"
-    else bad "hwinv_win.c and hwinv.c build clean for Windows" "$(head -8 "$T/mw.log")"; fi
+    if $MW $WARN -Werror -O2 $CMP_INC -c $SRC/hwinv_win.c -o "$T/win.o" 2>"$T/mw.log" &&
+       $MW $WARN -Werror -O2 $CMP_INC -c $SRC/hwinv.c -o "$T/inv.o" && $MW $WARN -Werror -O2 $CMP_INC -c hw/lib/hwcompat.c -o "$T/cmp.o" 2>>"$T/mw.log"; then
+        ok "hwinv_win.c, hwinv.c and hwcompat.c build clean for Windows"
+    else bad "hwinv_win.c, hwinv.c and hwcompat.c build clean for Windows" "$(head -8 "$T/mw.log")"; fi
 else
     echo "    (no $MW here: the Windows build is checked on Actions)"
 fi
@@ -100,10 +136,35 @@ mutant() {
 mutant "Wi-Fi interface type 71 is no longer Wi-Fi" 's/if_type == 71/if_type == 7101/' $SRC/hwinv.c
 mutant "the PCI device id is read from the wrong field" 's/dev = find_hex(hwid, "DEV_", 4)/dev = find_hex(hwid, "XEV_", 4)/' $SRC/hwinv.c
 mutant "a fax queue counts as a printer" 's/"pdf", "fax", /"pdf", /' $SRC/hwinv.c
-mutant "a PCI bridge is kept" 's/if (k == HW_K_OTHER \&\& !(problem \&\& real))/if (0)/' $SRC/hwinv.c
+mutant "a USB hub is kept" 's/ \&\& !ci_has(name ? name : "", "hub")//' $SRC/hwinv.c
 mutant "JSON stops escaping quotes" "s/if (\*p == '\"' || \*p == '\\\\\\\\')/if (*p == 0x7f)/" $SRC/hwinv.c
 mutant "a five-digit id is accepted" 's/if (hexv((unsigned char)p\[n\]) >= 0) continue;/;/' $SRC/hwinv.c
 mutant "the printer is paired with the wrong USB device" 's/m \* 100 >= 60 \* shorter/1/' $SRC/hwinv.c
+
+# the matcher: change one line of it, or of the facts, and a case must go red
+hmutant() {
+    label=$1; expr=$2; file=$3
+    sed "$expr" "$file" > "$T/hm.c"
+    if cmp -s "$file" "$T/hm.c"; then bad "mutant: $label" "the mutation changed nothing (stale sed)"; return; fi
+    mkdir -p "$T/hmgen"; cp "$GEN"/*.h "$T/hmgen/"
+    case "$file" in
+      *hwcompat_data.h) cp "$T/hm.c" "$T/hmgen/hwcompat_data.h"; src=hw/lib/hwcompat.c ;;
+      *) src="$T/hm.c" ;;
+    esac
+    if $CC $WARN -O2 -I$SRC -I"$(dirname "$file" | sed 's|^'"$GEN"'$|'"$T"'/hmgen|')" -I"$T/hmgen" -Ihw/lib \
+         -o "$T/hm" "$T/cmp_main.c" "$src" $SRC/hwinv.c 2>"$T/hcc.log"; then
+        if "$T/hm" >/dev/null 2>&1; then bad "mutant: $label" "the matcher's cases still passed: they cannot see this"
+        else ok "mutant: $label  -> red"; fi
+    else bad "mutant: $label" "mutant did not compile: $(head -3 "$T/hcc.log")"; fi
+}
+hmutant "the Broadcom rule stops matching (wrong id)" 's/"wifi-broadcom-wl-only"/"wifi-broadcom-x"/' "$GEN/hwcompat_data.h"
+hmutant "a rule that wants 'no driver' applies to working chips too" 's/if (r->need == 1 \&\& nreal) continue;//' hw/lib/hwcompat.c
+hmutant "the best device no longer wins (the worst does)" 's/rank(all\[i\].state) < rank(all\[best\].state)/rank(all[i].state) > rank(all[best].state)/' hw/lib/hwcompat.c
+hmutant "Wi-Fi blocks even with a cable socket" 's/if (!cable) { blocks = 1/if (1) { blocks = 1/' hw/lib/hwcompat.c
+hmutant "a Wi-Fi card is matched by any module, not a Wi-Fi one" 's/if (cat \&\& m->cat != cat) continue;//' hw/lib/hwcompat.c
+hmutant "a missing firmware file is ignored" 's/if (m->fw_unusable) { if (!unusable_module)/if (0) { if (!unusable_module)/' hw/lib/hwcompat.c
+hmutant "a printer model matches part of a word" 's/snprintf(m, sizeof m, " %s ", model);/snprintf(m, sizeof m, "%s", model);/' hw/lib/hwcompat.c
+hmutant "the Windows subsystem ids are read the wrong way round" 's/uint16_t sv = (uint16_t)(d->subsys \& 0xFFFF), sd = (uint16_t)(d->subsys >> 16);/uint16_t sd = (uint16_t)(d->subsys \& 0xFFFF), sv = (uint16_t)(d->subsys >> 16);/' hw/lib/hwcompat.c
 
 echo
 if [ "$fail" -eq 0 ]; then echo "    $checked checks, all as they should be."; else echo "    $fail of $checked wrong."; fi

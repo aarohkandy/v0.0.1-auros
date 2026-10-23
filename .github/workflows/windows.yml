@@ -79,7 +79,7 @@ jobs:
           esac
           printf '%s\n' "$files" > /tmp/files.txt
           # What build/aurbridge compiles and reads, and this file.
-          if grep -qE '^(src/aurbridge/|src/aurstage/(gpt|plan)\.[ch]$|build/aurbridge$|tools/(pe_payload\.py|repo\.sh|manifesttest\.sh)$|\.github/workflows/windows\.yml$)' /tmp/files.txt; then
+          if grep -qE '^(src/aurbridge/|src/aurstage/(gpt|plan)\.[ch]$|build/aurbridge$|hw/(lib/|compat\.json$)|tools/(pe_payload\.py|repo\.sh|manifesttest\.sh|hw/gen-header\.py)$|\.github/workflows/windows\.yml$)' /tmp/files.txt; then
             run=true
           fi
           echo "run=$run" | tee -a "$GITHUB_OUTPUT"

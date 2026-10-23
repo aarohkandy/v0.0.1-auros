@@ -16,6 +16,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include "hwinv.h"
+#include "hwcompat.h"
 #include "preflight.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -111,6 +112,24 @@ static void dev_prop(HDEVINFO set, SP_DEVINFO_DATA *dev, DWORD prop, char *out, 
     }
 }
 
+/* A multi-string property as one string, its entries joined with ';'. */
+static void dev_multi(HDEVINFO set, SP_DEVINFO_DATA *dev, DWORD prop, char *out, size_t n)
+{
+    WCHAR w[1024]; DWORD type = 0, need = 0;
+    size_t j = 0;
+    out[0] = 0;
+    if (!SetupDiGetDeviceRegistryPropertyW(set, dev, prop, &type, (BYTE *)w, sizeof w - 2 * sizeof(WCHAR), &need))
+        return;
+    w[(sizeof w / sizeof w[0]) - 1] = 0;
+    for (const WCHAR *p = w; *p && j + 2 < n; p += wcslen(p) + 1) {
+        char one[160];
+        utf8(p, one, sizeof one);
+        for (size_t k = 0; one[k] && j + 2 < n; k++) out[j++] = one[k];
+        out[j++] = ';';
+    }
+    out[j] = 0;
+}
+
 static void collect_devices(hw_inv *inv)
 {
     read_adapters();
@@ -118,9 +137,12 @@ static void collect_devices(hw_inv *inv)
     if (set == INVALID_HANDLE_VALUE) return;
     SP_DEVINFO_DATA dev; dev.cbSize = sizeof dev;
     for (DWORD i = 0; SetupDiEnumDeviceInfo(set, i, &dev); i++) {
-        char hwid[96], cls[24], name[96], mfg[48], svc[32];
+        char hwid[96], compat[400], cls[24], name[96], mfg[48], svc[32];
         dev_prop(set, &dev, SPDRP_HARDWAREID, hwid, sizeof hwid);
         if (!hwid[0]) { inv->n_dropped++; continue; }
+        dev_multi(set, &dev, SPDRP_COMPATIBLEIDS, compat, sizeof compat);
+        /* the class code is in the hardware ids too on some buses */
+        if (strlen(compat) + 2 < sizeof compat) { size_t l = strlen(compat); compat[l] = ';'; compat[l + 1] = 0; }
         dev_prop(set, &dev, SPDRP_CLASS, cls, sizeof cls);
         dev_prop(set, &dev, SPDRP_FRIENDLYNAME, name, sizeof name);
         if (!name[0]) dev_prop(set, &dev, SPDRP_DEVICEDESC, name, sizeof name);
@@ -133,7 +155,7 @@ static void collect_devices(hw_inv *inv)
 
         const adapter *ad = NULL;
         if (!_stricmp(cls, "Net")) ad = adapter_for(set, &dev);
-        int k = hwinv_add_dev(inv, cls, hwid, name, mfg, svc, problem, ad ? ad->if_type : 0);
+        int k = hwinv_add_dev(inv, cls, hwid, compat, name, mfg, svc, problem, ad ? ad->if_type : 0);
         if (k >= 0 && ad) inv->devs[k].in_use = ad->up;
     }
     SetupDiDestroyDeviceInfoList(set);
@@ -354,6 +376,7 @@ int hwinv_report_main(const char *dir, int gui, const char *tool)
     pf_run(pr);
     collect_from_preflight(inv, pr);
     free(pr);
+    hwcompat_judge(inv);
 
     SYSTEMTIME t; GetLocalTime(&t);
     char made[48];

@@ -12,6 +12,7 @@
 #include "gpt.h"
 #include "plan.h"
 #include "hwinv.h"
+#include "hwcompat.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -417,7 +418,7 @@ int main(int argc, char **argv)
         return 0;
     }
     if (!strcmp(cmd, "selftest")) {
-        int bad = pf_selftest() + gz_selftest() + sbdb_selftest() + hwinv_selftest();
+        int bad = pf_selftest() + gz_selftest() + sbdb_selftest() + hwinv_selftest() + hwcompat_selftest();
         if (bad == 0) puts("aurbridge selftest: ok");
         else fprintf(stderr, "aurbridge selftest: %d check%s wrong\n",
                      bad, bad == 1 ? "" : "s");

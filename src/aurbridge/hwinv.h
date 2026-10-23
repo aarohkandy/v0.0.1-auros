@@ -67,6 +67,7 @@ typedef struct {
     uint32_t subsys;         /* PCI SUBSYS_ssssvvvv as one 32-bit number */
     int      rev;            /* -1 when absent                           */
     int      mi;             /* USB interface number (MI_xx), -1 absent  */
+    int      cc;             /* class: PCI CC_bbssii, USB Class_cc&SubClass_ss&Prot_pp as 0xccssii; -1 unknown */
     char     acpi[16];       /* ACPI\NAME0000 -> "NAME0000"              */
     char     ieee[96];       /* USBPRINT\<maker><model>... -> that text  */
 } hw_id;
@@ -78,6 +79,7 @@ typedef struct {
     uint16_t vid, did;
     uint32_t subsys;
     int      rev;
+    int      cc;             /* as hw_id.cc, from the compatible ids     */
     int      problem;        /* Windows' own problem code, 0 = none      */
     int      in_use;         /* network: Windows is using it right now   */
     char     cls[24];        /* Windows device class: "Net", "Display"   */
@@ -123,7 +125,7 @@ typedef struct {
     int       blocks;        /* 1: AurOS cannot be used without it (the  */
                              /*    only network path she has)            */
     char      id[40];        /* stable code: "wifi-wl-only"              */
-    char      says[200];     /* her sentence                             */
+    char      says[320];     /* her sentence                             */
     char      why[240];      /* ours                                     */
 } hw_verdict;
 
@@ -171,6 +173,10 @@ typedef struct {
 
 /* ── pure: ids, kinds, the record ───────────────────────────────────── */
 
+/* The class code out of Windows' list of COMPATIBLE ids ("PCI\\VEN_8086&DEV_51C8&CC_040300;PCI\\...",
+ * "USB\\Class_0E&SubClass_01&Prot_00"), joined with ';' or '\n'. -1 when it is not there. */
+int  hwinv_parse_cc(const char *compat);
+
 /* Parse a Windows hardware ID ("PCI\VEN_14E4&DEV_43B1&SUBSYS_...",
  * "USB\VID_04F9&PID_0054&MI_01", "HDAUDIO\FUNC_01&VEN_10EC&DEV_0236",
  * "ACPI\GDIX0000", "USBPRINT\Brother..."). Case-insensitive. Returns 1
@@ -193,7 +199,7 @@ void    hwinv_free(hw_inv *);
 /* Add a device as Windows reported it. Classifies it and drops what
  * nobody here needs (bridges, hubs, virtual adapters) unless Windows
  * had a problem with it. Returns the index, or -1 when dropped. */
-int  hwinv_add_dev(hw_inv *, const char *cls, const char *hwid,
+int  hwinv_add_dev(hw_inv *, const char *cls, const char *hwid, const char *compat,
                    const char *name, const char *mfg, const char *service,
                    int problem, int if_type);
 

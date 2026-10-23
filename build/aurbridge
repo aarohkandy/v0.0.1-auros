@@ -65,6 +65,15 @@ done
 STAGE_SHARED="$ROOT/src/aurstage/gpt.c $ROOT/src/aurstage/plan.c"
 STAGE_INC="-I $ROOT/src/aurstage"
 LIB="$LIB $STAGE_SHARED"
+# AND THE HARDWARE MATCHER (stream HW): hw/lib/hwcompat.c judges the PC's
+# devices against hw/compat.json, which tools/hw/gen-compat.py made from
+# the image. The facts become C here, from the committed JSON, so a build
+# needs python3 (it already does) and no image.
+HWGEN="$OUT/hw"
+python3 -I "$ROOT/tools/hw/gen-header.py" "$HWGEN" \
+    || die "hw/compat.json could not be turned into the matcher's tables"
+LIB="$LIB $ROOT/hw/lib/hwcompat.c"
+STAGE_INC="$STAGE_INC -I $SRC -I $ROOT/hw/lib -I $HWGEN"
 note "shared:$(echo "$LIB" | sed "s|$SRC/||g; s|$ROOT/src/||g")"
 note "windows:$(echo "$WINONLY" | sed "s|$SRC/||g")"
 note "simulated:$(echo "$SIMONLY" | sed "s|$SRC/||g")"

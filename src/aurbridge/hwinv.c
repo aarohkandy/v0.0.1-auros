@@ -67,10 +67,22 @@ static long find_hex(const char *s, const char *tok, int digits)
 }
 
 /* ── hardware ids ────────────────────────────────────────────────── */
+int hwinv_parse_cc(const char *compat)
+{
+    if (!compat) return -1;
+    long c6 = find_hex(compat, "CC_", 6);
+    if (c6 >= 0) return (int)c6;
+    long c4 = find_hex(compat, "CC_", 4);          /* PCI\...&CC_0403: no programming interface */
+    if (c4 >= 0) return (int)(c4 << 8);
+    long cl = find_hex(compat, "Class_", 2), sc = find_hex(compat, "SubClass_", 2), pr = find_hex(compat, "Prot_", 2);
+    if (cl >= 0) return (int)((cl << 16) | ((sc >= 0 ? sc : 0) << 8) | (pr >= 0 ? pr : 0));
+    return -1;
+}
+
 int hwinv_parse_hwid(const char *hwid, hw_id *o)
 {
     memset(o, 0, sizeof *o);
-    o->rev = -1; o->mi = -1;
+    o->rev = -1; o->mi = -1; o->cc = -1;
     if (!hwid) return 0;
 
     if (ci_prefix(hwid, "PCI\\")) {
@@ -195,19 +207,27 @@ void hwinv_free(hw_inv *v)
     free(v);
 }
 
-int hwinv_add_dev(hw_inv *v, const char *cls, const char *hwid, const char *name,
-                  const char *mfg, const char *service, int problem, int if_type)
+int hwinv_add_dev(hw_inv *v, const char *cls, const char *hwid, const char *compat,
+                  const char *name, const char *mfg, const char *service, int problem, int if_type)
 {
     hw_id id;
     hwinv_parse_hwid(hwid, &id);
+    id.cc = hwinv_parse_cc(compat);
     hw_kind k = hwinv_kind(cls, &id, name, service, if_type);
-    int real = id.bus != HW_BUS_OTHER;
-    if (k == HW_K_OTHER && !(problem && real)) { v->n_dropped++; return -1; }
+    /* Kept though she would not recognise it: every PCI device (an
+     * unknown camera chip is usually "System" or "Other" to Windows),
+     * every whole USB device with ids (not its interfaces, and not a
+     * hub), and anything Windows itself had a problem with. The matcher
+     * looks at all of them by id; the report lists the odd ones. */
+    int keep = k != HW_K_OTHER || (id.bus == HW_BUS_PCI && id.has_ids) ||
+               (id.bus == HW_BUS_USB && id.has_ids && id.mi < 0 && !ci_has(name ? name : "", "hub")) ||
+               (problem && id.bus != HW_BUS_OTHER);
+    if (!keep) { v->n_dropped++; return -1; }
     if (v->n_devs >= HW_MAX_DEVS) { v->n_dropped++; return -1; }
     hw_dev *d = &v->devs[v->n_devs];
     memset(d, 0, sizeof *d);
     d->kind = k; d->bus = id.bus; d->has_ids = id.has_ids;
-    d->vid = id.vid; d->did = id.did; d->subsys = id.subsys; d->rev = id.rev;
+    d->vid = id.vid; d->did = id.did; d->subsys = id.subsys; d->rev = id.rev; d->cc = id.cc;
     d->problem = problem;
     cpy(d->cls, sizeof d->cls, cls);
     cpy(d->name, sizeof d->name, name);
@@ -463,13 +483,17 @@ char *hwinv_text(const hw_inv *v, const char *tool, const char *made)
             sb_put(&b, "\r\n");
         }
     }
-    int shown_other = 0;
-    for (int i = 0; i < v->n_devs; i++) {
-        const hw_dev *d = &v->devs[i];
-        if (d->kind != HW_K_OTHER) continue;
-        if (!shown_other++) sb_put(&b, "  Windows has NO driver for these:\r\n");
-        id_words(d, t1, sizeof t1);
-        sb_put(&b, "  %-18s %-14s %s\r\n", "Unknown", t1, d->name[0] ? d->name : d->hwid);
+    int h0 = 0, h1 = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < v->n_devs; i++) {
+            const hw_dev *d = &v->devs[i];
+            if (d->kind != HW_K_OTHER || (pass == 0) != (d->problem != 0)) continue;
+            if (pass == 0 && !h0++) sb_put(&b, "  Windows has NO driver for these:\r\n");
+            if (pass == 1 && !h1++) sb_put(&b, "  Everything else on the PCI and USB buses:\r\n");
+            id_words(d, t1, sizeof t1);
+            sb_put(&b, "  %-18s %-14s %s\r\n", pass == 0 ? "No driver" : "", t1,
+                   d->name[0] ? d->name : d->hwid);
+        }
     }
 
     sb_put(&b, "\r\nPRINTERS (and what they are connected to)\r\n");
@@ -601,6 +625,11 @@ int hwinv_selftest(void)
       hwinv_parse_hwid("ACPI\\GDIX0000", &id) && id.bus == HW_BUS_ACPI && !strcmp(id.acpi, "GDIX0000"));
     t("USBPRINT: the printer's own id is kept",
       hwinv_parse_hwid("USBPRINT\\HPLaserJet_Pro_M404dnC7A0", &id) && !strcmp(id.ieee, "HPLaserJet_Pro_M404dnC7A0"));
+    t("class code: PCI audio", hwinv_parse_cc("PCI\\VEN_8086&DEV_51C8&CC_040300;PCI\\VEN_8086&DEV_51C8&CC_0403") == 0x040300);
+    t("class code: only the short PCI form", hwinv_parse_cc("PCI\\VEN_8086&DEV_51C8&CC_0403") == 0x040300);
+    t("class code: USB video interface", hwinv_parse_cc("USB\\Class_0E&SubClass_01&Prot_00;USB\\Class_0E&SubClass_01;USB\\Class_0E") == 0x0E0100);
+    t("class code: USB Bluetooth radio", hwinv_parse_cc("USB\\Class_E0&SubClass_01&Prot_01") == 0xE00101);
+    t("class code: nothing to read", hwinv_parse_cc("USB\\COMPOSITE") == -1 && hwinv_parse_cc(NULL) == -1);
     t("garbage, empty and NULL are not a bus",
       !hwinv_parse_hwid("ROOT\\SYSTEM\\0001", &id) && !hwinv_parse_hwid("", &id) && !hwinv_parse_hwid(NULL, &id));
 
@@ -629,15 +658,22 @@ int hwinv_selftest(void)
     t("an inventory can be made", v != NULL);
     if (!v) return g_bad + 1;
     t("kept: a Wi-Fi card",
-      hwinv_add_dev(v, "Net", "PCI\\VEN_14E4&DEV_43B1&SUBSYS_0608105B&REV_03", "Broadcom 802.11ac Network Adapter",
-                    "Broadcom", "b57nd60a", 0, 71) == 0 && v->devs[0].kind == HW_K_WIFI);
-    t("dropped: a bridge", hwinv_add_dev(v, "System", "PCI\\VEN_8086&DEV_9D10", "PCI Express Root Port", "", "pci", 0, 0) == -1);
+      hwinv_add_dev(v, "Net", "PCI\\VEN_14E4&DEV_43B1&SUBSYS_0608105B&REV_03",
+                    "PCI\\VEN_14E4&DEV_43B1&CC_028000;PCI\\VEN_14E4&DEV_43B1&CC_0280",
+                    "Broadcom 802.11ac Network Adapter", "Broadcom", "b57nd60a", 0, 71) == 0 &&
+      v->devs[0].kind == HW_K_WIFI && v->devs[0].cc == 0x028000);
+    t("kept, though she would not know it: a PCI bridge (the matcher looks at every id)",
+      hwinv_add_dev(v, "System", "PCI\\VEN_8086&DEV_9D10", "PCI\\VEN_8086&DEV_9D10&CC_060400", "PCI Express Root Port", "", "pci", 0, 0) == 1 &&
+      v->devs[1].kind == HW_K_OTHER);
     t("kept though unknown, when Windows had a problem with it",
-      hwinv_add_dev(v, "Unknown", "PCI\\VEN_10EC&DEV_8852", "PCI Device", "", "", 28, 0) == 1 &&
-      v->devs[1].kind == HW_K_OTHER && v->devs[1].problem == 28);
+      hwinv_add_dev(v, "Unknown", "PCI\\VEN_10EC&DEV_8852", "", "PCI Device", "", "", 28, 0) == 2 &&
+      v->devs[2].kind == HW_K_OTHER && v->devs[2].problem == 28);
     t("dropped: a virtual adapter even with a problem (no real bus)",
-      hwinv_add_dev(v, "Net", "ROOT\\NET\\0003", "Microsoft Wi-Fi Direct Virtual Adapter", "", "", 31, 71) == -1);
-    t("dropped devices are counted", v->n_dropped == 2);
+      hwinv_add_dev(v, "Net", "ROOT\\NET\\0003", "", "Microsoft Wi-Fi Direct Virtual Adapter", "", "", 31, 71) == -1);
+    t("dropped: a USB hub", hwinv_add_dev(v, "USB", "USB\\VID_8087&PID_0024", "", "Generic USB Hub", "", "usbhub", 0, 0) == -1);
+    t("dropped: one USB interface of a camera (its parent is kept)",
+      hwinv_add_dev(v, "USB", "USB\\VID_0BDA&PID_5530&MI_02", "", "USB Input Device", "", "HidUsb", 0, 0) == -1);
+    t("dropped devices are counted", v->n_dropped == 3);
 
     int p0 = hwinv_add_printer(v, "Brother HL-L2350DW series", "Brother HL-L2350DW series", "USB001", 1);
     t("a USB printer is kept as USB", p0 == 0 && v->printers[0].conn == HW_CONN_USB);
@@ -697,6 +733,7 @@ int hwinv_selftest(void)
       tx && strstr(tx, "Broadcom 802.11ac") && strstr(tx, "14E4:43B1"));
     t("the plain report says the printer and its port", tx && strstr(tx, "Brother HL-L2350DW") && strstr(tx, "USB 04F9:0054"));
     t("the plain report names the device Windows has no driver for", tx && strstr(tx, "NO driver") && strstr(tx, "8852"));
+    t("the plain report lists the other PCI hardware, one line each", tx && strstr(tx, "PCI Express Root Port"));
     t("the JSON escapes quotes", js && strstr(js, "X555LA \\\"quoted\\\""));
     t("the JSON has the wifi device with its ids",
       js && strstr(js, "\"kind\": \"wifi\"") && strstr(js, "\"vid\": \"14e4\"") && strstr(js, "\"did\": \"43b1\""));
