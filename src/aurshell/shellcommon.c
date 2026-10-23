@@ -310,6 +310,18 @@ void shell_icon_draw(surface *s, shell_icon ic, float cx, float cy, float sz,
         }
         break;
 
+    /* Make a wish. A speech bubble with its tail at the lower left and
+     * three dots cut out: she says what she wants. No other mark in the
+     * set is a bubble. */
+    case ICON_WISH:
+        draw_round_rect(s, mk_box(cx, cy, -11.f, -10.f, 22.f, 15.5f, u),
+                        corners_all(4.5f*u), ink, a);
+        draw_line(s, cx - 6.5f*u, cy + 3.f*u, cx - 8.5f*u, cy + 10.5f*u, 3.4f*u, ink, a);
+        draw_line(s, cx - 8.5f*u, cy + 10.5f*u, cx - 1.f*u, cy + 4.5f*u, 2.8f*u, ink, a);
+        for (int k = -1; k <= 1; k++)
+            draw_circle(s, cx + (float)k * 5.2f*u, cy - 2.3f*u, 1.9f*u, paper, a);
+        break;
+
     case ICON_CALC: {
         draw_rect(s, mk_box(cx, cy, -8.5f, -11.f, 17.f, 22.f, u), ink, a);
         draw_rect(s, mk_box(cx, cy, -5.8f, -8.2f, 11.6f, 4.4f, u), paper, a);
@@ -348,6 +360,7 @@ void shell_seed_apps(shell_ctx *c)
       { "calc",  "Calculator", "Do sums",               ICON_CALC,     0 },
       { "set",   "Settings",   "Change how this works", ICON_SETTINGS, 1 },
       { "help",  "Help",       "Show me how",           ICON_HELP,     0 },
+      { "wish",  "Make a wish", "Tell this computer what to do", ICON_WISH, 0 },
     };
     c->n_apps = (int)(sizeof A / sizeof A[0]);
     if (c->n_apps > SHELL_MAX_APPS) c->n_apps = SHELL_MAX_APPS;
@@ -370,6 +383,7 @@ void shell_seed_apps(shell_ctx *c)
          * mark. What colour means in this system is state: one accent,
          * used where something is happening. */
         c->apps[i].tint = c->fg;
+        if (!strcmp(A[i].id, "wish")) c->apps[i].role = APP_ROLE_WISH;
     }
 }
 
@@ -692,8 +706,15 @@ int shell_launch(shell_ctx *c, int app)
          * which this file cannot call, since every harness links it
          * without the band. */
         c->help_open = c->net_open = c->bt_open = c->power_open = 0;
-        c->welcome_open = 0;
+        c->welcome_open = c->wish_open = 0;
         c->settings_open = 1;
+        return -1;
+    }
+    /* Make a wish is a panel too (src/aurshell/wish.c). */
+    if (c->apps[app].role == APP_ROLE_WISH) {
+        c->help_open = c->net_open = c->bt_open = c->power_open = 0;
+        c->welcome_open = c->settings_open = c->guard_open = 0;
+        c->wish_open = 1;                    /* WISH_OPEN_ASK */
         return -1;
     }
 
@@ -754,14 +775,24 @@ int shell_store_app(const shell_ctx *c)
     return -1;
 }
 
+static int wish_app(const shell_ctx *c)
+{
+    for (int i = 0; i < c->n_apps; i++)
+        if (c->apps[i].role == APP_ROLE_WISH) return i;
+    return -1;
+}
+
 int shell_home_pick(const shell_ctx *c, int cap, int *out)
 {
     if (!c || cap <= 0 || !out) return 0;
     int store = shell_store_app(c);
-    int slots = cap - (store >= 0 ? 1 : 0);
+    /* Make a wish has a fixed place too: just before the store, on every
+     * home that has room for three things (docs/AI.md §4). */
+    int wish = cap >= 3 ? wish_app(c) : -1;
+    int slots = cap - (store >= 0 ? 1 : 0) - (wish >= 0 ? 1 : 0);
     int n = 0;
     for (int i = 0; i < c->n_apps && n < slots; i++)
-        if (i != store) out[n++] = i;
+        if (i != store && i != wish) out[n++] = i;
 
     /* The newest program she installed while the desktop was running,
      * if the table order did not already put it on this screen. It
@@ -769,7 +800,7 @@ int shell_home_pick(const shell_ctx *c, int cap, int *out)
      * browser, her files -- never move under her hand. */
     int newest = -1;
     for (int i = 0; i < c->n_apps; i++)
-        if (i != store && c->apps[i].fresh &&
+        if (i != store && i != wish && c->apps[i].fresh &&
             (newest < 0 || c->apps[i].fresh > c->apps[newest].fresh)) newest = i;
     if (newest >= 0 && slots > 0) {
         int there = 0;
@@ -779,6 +810,7 @@ int shell_home_pick(const shell_ctx *c, int cap, int *out)
             else out[n - 1] = newest;
         }
     }
+    if (wish >= 0) out[n++] = wish;
     if (store >= 0) out[n++] = store;
     return n;
 }

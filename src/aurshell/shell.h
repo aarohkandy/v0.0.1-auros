@@ -38,7 +38,10 @@ typedef enum {
     /* "Get more programs": a carrier bag with a plus cut out of it.
      * "All my programs": a stack of rows. Both added for the store on
      * every home screen; see shell_home_pick(). */
-    ICON_STORE, ICON_LIST
+    ICON_STORE, ICON_LIST,
+    /* "Make a wish" (docs/AI.md §4): a speech bubble -- she says what
+     * she wants -- with three dots cut out of it. */
+    ICON_WISH
 } shell_icon;
 
 /* What an entry IS, beyond being something to start. */
@@ -50,7 +53,11 @@ enum {
     APP_ROLE_STORE,
     /* The shell's own Settings, which opens the Settings panel rather
      * than starting a program. */
-    APP_ROLE_SETTINGS
+    APP_ROLE_SETTINGS,
+    /* "Make a wish" (src/aurshell/wish.c). Opens the Wishes panel, and
+     * shell_home_pick() gives it the place just before the store on
+     * every home, so it does not move as programs are installed. */
+    APP_ROLE_WISH
 };
 
 typedef struct {
@@ -244,6 +251,13 @@ typedef struct shell_ctx_s {
      * lives here, so Help (foot.c) can open it; src/aurshell/guard.c
      * owns the rest. */
     int   guard_open;
+    /* Wishes (docs/AI.md §4; src/aurshell/wish.c owns the rest). Same
+     * arrangement as the others: only the flags live here. wish_open is
+     * WISH_OPEN_ASK or WISH_OPEN_MINE; wishfill_open is set while a wish is
+     * filling the screen, which takes the keyboard like a panel does so
+     * the key that ends it never reaches the program underneath. */
+    int   wish_open;
+    int   wishfill_open;
     /* A program the host should start, as an index into apps plus one,
      * or 0. Set by things that are not the archetype -- the "VLC is
      * ready" card -- because only the host knows the archetype's
@@ -316,7 +330,7 @@ typedef struct shell_ctx_s {
 #define SHELL_PANEL_OPEN(c) \
     ((c)->help_open || (c)->net_open || (c)->settings_open || \
      (c)->bt_open   || (c)->power_open || (c)->welcome_open || \
-     (c)->guard_open)
+     (c)->guard_open || (c)->wish_open || (c)->wishfill_open)
 
 typedef struct {
     const char *id;

@@ -658,7 +658,7 @@ int shell_scan_apps(shell_ctx *c)
         n--; store = -1;
     }
     int want_settings = c->allow_settings && !c->kiosk;
-    int room = SHELL_MAX_APPS - (want_settings ? 1 : 0);
+    int room = SHELL_MAX_APPS - (want_settings ? 1 : 0) - (c->kiosk ? 0 : 1);
     int keep = n < room ? n : room;
     if (store >= keep && keep > 0) {
         /* It takes the last place; the program that was there is the
@@ -717,6 +717,19 @@ int shell_scan_apps(shell_ctx *c)
         a->icon = ICON_SETTINGS;
         a->tint = c->fg;
         a->role = APP_ROLE_SETTINGS;
+        c->n_apps = ++keep;
+    }
+    /* Make a wish is the shell's own as well (src/aurshell/wish.c):
+     * never on a kiosk, which has nobody to ask. */
+    if (!c->kiosk && keep < SHELL_MAX_APPS) {
+        app_entry *a = &c->apps[keep];
+        memset(a, 0, sizeof *a);
+        snprintf(a->id,   sizeof a->id,   "wish");
+        snprintf(a->name, sizeof a->name, "Make a wish");
+        snprintf(a->hint, sizeof a->hint, "Tell this computer what to do");
+        a->icon = ICON_WISH;
+        a->tint = c->fg;
+        a->role = APP_ROLE_WISH;
         c->n_apps = ++keep;
     }
     free(list);

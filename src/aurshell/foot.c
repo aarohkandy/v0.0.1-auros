@@ -555,6 +555,7 @@ void foot_open_only(shell_ctx *c, int *flag)
      * "she pressed Settings" too. */
     c->welcome_open = 0;
     c->guard_open = 0;
+    c->wish_open = 0;          /* Wishes: a panel like the others     */
     c->power_sel = 0;          /* nothing is chosen until she chooses */
     *flag = want;
 }

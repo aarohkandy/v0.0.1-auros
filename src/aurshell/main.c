@@ -40,6 +40,8 @@
 #include "bt.h"
 #include "welcome.h"
 #include "guard.h"
+#include "wish.h"
+#include "wishover.h"
 #include "watch.h"
 #include "appwatch.h"
 #include "run.h"
@@ -1148,6 +1150,7 @@ int main(int argc, char **argv)
      * before it took it. See the transition handler in the loop. */
     int net_open_last = 0;
     int set_open_last = 0;
+    int wish_open_last = 0;
     int bt_open_last  = 0;
     /* Who had the keyboard before a panel took it. A WINDOW ID and not
      * a pointer: the window can be destroyed while the panel is up --
@@ -1326,6 +1329,13 @@ int main(int argc, char **argv)
             set_open_last = c.settings_open;
             dirty = 1;
         }
+        /* Wishes: the same transition, in the same place. */
+        if (!c.wish_open != !wish_open_last) {
+            if (c.wish_open) wish_opened(&c);
+            else             wish_closed(&c);
+            dirty = 1;
+        }
+        wish_open_last = c.wish_open;
         /* Has she gone? The clock is monotonic and the comparison is
          * against the last INPUT, not the last repaint: a video
          * playing does not count as somebody being there, which is
@@ -1478,6 +1488,9 @@ int main(int argc, char **argv)
         net_reap();
         bt_reap();
         if (welcome_step(&c)) dirty = 1;
+        /* The engine's socket, the microphone, and what a wish has put
+         * on the screen -- whether or not the panel is open. */
+        if (wish_step(&c)) dirty = 1;
         run_reap();
         /* The indicator fades on a clock rather than on an event, so
          * the loop has to keep coming round while one is up. */
@@ -1700,6 +1713,7 @@ int main(int argc, char **argv)
             net_paint(&c, fb, &f);
             settings_paint(&c, fb, &f);
             bt_paint(&c, fb, &f);
+            wish_paint(&c, fb, &f);
             /* AFTER the other panels and BEFORE the band. It is the
              * only panel nothing opened on purpose, so it must not be
              * underneath one she did open -- and the band stays on top
@@ -1709,6 +1723,10 @@ int main(int argc, char **argv)
              * a stranger's program arriving, outranks it. Under the band. */
             guard_paint(&c, fb, &f);
             foot_paint(&c, fb, &f);
+            /* What a wish put on the screen: a fill covers everything,
+             * the band included, until the first key or press; cards
+             * stay inside the desktop's own height. */
+            wishover_paint(&c, fb, &f);
             /* Last, over everything including the band: it is the
              * answer to a key that was just pressed, and an answer
              * behind a window is not one. */
@@ -1783,7 +1801,7 @@ int main(int argc, char **argv)
          * the fifth wrote one pollfd past the end of a stack array.
          * Counted from the list rather than from memory, and checked,
          * because the next one added would have done it again. */
-        #define POLL_EXTRAS 6
+        #define POLL_EXTRAS 7
         struct pollfd pfd[MAX_INPUT_DEV + POLL_EXTRAS];
         int np = 0;
         /* How many device slots pfd[] describes. The walk below indexes
@@ -1818,6 +1836,9 @@ int main(int argc, char **argv)
          * the bus; here so an idle desktop wakes for it. */
         int awfd = appwatch_fd();
         if (awfd >= 0) { pfd[np].fd = awfd; pfd[np].events = POLLIN; np++; }
+        /* The Wishes engine: an overlay a wish asks for arrives here. */
+        int wsfd = wish_fd();
+        if (wsfd >= 0) { pfd[np].fd = wsfd; pfd[np].events = POLLIN; np++; }
         int btfd = -1, btslot = -1;
         if ((btfd = bt_fd()) >= 0) {
             btslot = np; pfd[np].fd = btfd;
@@ -1842,6 +1863,8 @@ int main(int argc, char **argv)
         if (ww >= 0 && ww < wait_ms) wait_ms = ww;
         int aw = appwatch_wait_ms();
         if (aw >= 0 && aw < wait_ms) wait_ms = aw;
+        int wsw = wish_wait_ms();
+        if (wsw >= 0 && wsw < wait_ms) wait_ms = wsw;
         if (np > (int)(sizeof pfd / sizeof pfd[0])) {
             /* Unreachable by construction; here because the thing it
              * guards is a stack overflow and "unreachable" is what was
@@ -1983,7 +2006,11 @@ int main(int argc, char **argv)
                          * the wifi panel started whatever icon happened
                          * to be underneath it. */
                         c.mouse_down = 1;
-                        int pad_taken = foot_click(&c, c.mouse_x, c.mouse_y);
+                        /* A wish's fill is over everything, so it is
+                         * asked first; the press that ends it is used up. */
+                        int pad_taken = wishover_click(&c, c.mouse_x, c.mouse_y);
+                        if (!pad_taken)
+                            pad_taken = foot_click(&c, c.mouse_x, c.mouse_y);
                         /* THE WELCOME QUESTION IS ASKED FIRST, because
                          * it is painted last. Click order and paint
                          * order have to be each other's mirror or a
@@ -1994,6 +2021,7 @@ int main(int argc, char **argv)
                             pad_taken = guard_click(&c, c.mouse_x, c.mouse_y);
                         if (!pad_taken)
                             pad_taken = welcome_click(&c, c.mouse_x, c.mouse_y);
+                        if (!pad_taken) pad_taken = wish_click(&c, c.mouse_x, c.mouse_y);
                         if (!pad_taken) pad_taken = net_click(&c, c.mouse_x, c.mouse_y);
                         if (!pad_taken)
                             pad_taken = settings_click(&c, c.mouse_x, c.mouse_y);
@@ -2032,8 +2060,12 @@ int main(int argc, char **argv)
                          * is the way out, and a way out that can be
                          * covered by whatever is on screen is not one. */
                         int taken = 0;
-                        if (ev.value) taken = foot_click(&c, c.mouse_x, c.mouse_y);
-                        else if (c.foot_hover >= 0 || SHELL_PANEL_OPEN(&c))
+                        /* A wish's fill or card is drawn over everything
+                         * else, so it answers first. */
+                        if (ev.value) taken = wishover_click(&c, c.mouse_x, c.mouse_y);
+                        if (!taken && ev.value) taken = foot_click(&c, c.mouse_x, c.mouse_y);
+                        else if (!ev.value && (wishover_take_release() ||
+                                               c.foot_hover >= 0 || SHELL_PANEL_OPEN(&c)))
                             taken = 1;
 
                         /* A panel covers the desktop while it is up, so it
@@ -2052,6 +2084,8 @@ int main(int argc, char **argv)
                             taken = guard_click(&c, c.mouse_x, c.mouse_y);
                             if (!taken)
                                 taken = welcome_click(&c, c.mouse_x, c.mouse_y);
+                            if (!taken)
+                                taken = wish_click(&c, c.mouse_x, c.mouse_y);
                             if (!taken)
                                 taken = net_click(&c, c.mouse_x, c.mouse_y);
                             if (!taken)
@@ -2211,11 +2245,15 @@ int main(int argc, char **argv)
                              * second. Arrows still repeat: that is how a
                              * slider is moved by holding a key. */
                             if (ev.value == 1 || (ev.value == 2 && ev.code != 28)) {
-                                if      (c.guard_open)    guard_key(&c, ev.code);
+                                /* A wish's fill first: the key that ends it
+                                 * is used up (docs/AI.md §3.5). */
+                                if      (c.wishfill_open) wishover_key(&c, ev.code);
+                                else if (c.guard_open)    guard_key(&c, ev.code);
                                 else if (c.net_open)      net_key(&c, ev.code);
                                 else if (c.settings_open) settings_key(&c, ev.code);
                                 else if (c.bt_open)       bt_key(&c, ev.code);
                                 else if (c.welcome_open)  welcome_key(&c, ev.code);
+                                else if (c.wish_open)     wish_key(&c, ev.code);
                                 else                      foot_key(&c, ev.code);
                             }
                             c.key_text[0] = 0;
@@ -2242,6 +2280,8 @@ int main(int argc, char **argv)
             bt_motion(&c, c.mouse_x, c.mouse_y);
             welcome_motion(&c, c.mouse_x, c.mouse_y);
             guard_motion(&c, c.mouse_x, c.mouse_y);
+            wish_motion(&c, c.mouse_x, c.mouse_y);
+            wishover_motion(&c, c.mouse_x, c.mouse_y);
             session_motion(&c, c.mouse_x, c.mouse_y);
             if (L->motion) L->motion(&c, c.mouse_x, c.mouse_y);
         }

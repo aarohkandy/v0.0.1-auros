@@ -15,6 +15,7 @@
 #include "draw.h"
 #include "run.h"
 #include "welcome.h"
+#include "wish.h"
 
 /* ── what is on the main page ───────────────────────────────────────
  *
@@ -27,6 +28,7 @@ enum {
     R_WORDS,       /* the text scale           */
     R_BATTERY,     /* a readout, not a control */
     R_BT,          /* opens the headphones panel */
+    R_WISHES,      /* opens My wishes (src/aurshell/wish.c) */
     R_TIME,        /* opens a page             */
     R_SHELL,       /* opens a page             */
     R_LOOK,        /* opens a page             */
@@ -582,6 +584,7 @@ static const char *row_name(int which)
     case R_WORDS:   return "How big the words are";
     case R_BATTERY: return "Battery";
     case R_BT:      return "Headphones and mice";
+    case R_WISHES:  return "My wishes";
     case R_TIME:    return "The time and date";
     case R_SHELL:   return "How this computer works";
     case R_LOOK:    return "Colors";
@@ -613,6 +616,9 @@ static void row_value(const shell_ctx *c, int which, char *out, size_t n)
         break;
     case R_BT:
         snprintf(out, n, "%s", "Connect one without a cable");
+        break;
+    case R_WISHES:
+        snprintf(out, n, "%s", "See them, turn them on or off");
         break;
     case R_WINDOWS:
         snprintf(out, n, "%s", "Remove AurOS from this computer");
@@ -1253,6 +1259,7 @@ int settings_click(shell_ctx *c, int x, int y)
              * differently. Settings is the index; the panel is the
              * thing. */
             if (which == R_BT) foot_open_only(c, &c->bt_open);
+            if (which == R_WISHES) { foot_open_only(c, &c->wish_open); c->wish_open = WISH_OPEN_MINE; }
             if (which == R_TIME)  { S.page = SET_PAGE_TIME;  S.first_row = 0;
                                     S.sel = -1; fill_page(c); }
             if (which == R_SHELL) { S.page = SET_PAGE_SHELL; S.first_row = 0;
@@ -1301,6 +1308,7 @@ int settings_key(shell_ctx *c, int k)
     if (k == 28 && S.sel >= 0) {                              /* Enter */
         int which = row_at(&v, S.sel);
         if (which == R_BT) foot_open_only(c, &c->bt_open);
+        if (which == R_WISHES) { foot_open_only(c, &c->wish_open); c->wish_open = WISH_OPEN_MINE; }
         if (which == R_TIME)  { S.page = SET_PAGE_TIME;  S.first_row = 0;
                                 S.sel = -1; fill_page(c); }
         if (which == R_SHELL) { S.page = SET_PAGE_SHELL; S.first_row = 0;

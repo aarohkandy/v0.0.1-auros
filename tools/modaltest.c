@@ -74,14 +74,19 @@ static int *flag_any(shell_ctx *c, int i)
     if (i < 5) return flag_of(c, i);
     if (i == 5) return &c->welcome_open;
     if (i == 6) return &c->guard_open;     /* guard.c: Help, keys, polkit */
+    /* Wishes (src/aurshell/wish.c): the panel, opened from a home or
+     * from Settings, and a wish filling the screen. */
+    if (i == 7) return &c->wish_open;
+    if (i == 8) return &c->wishfill_open;
     return NULL;
 }
-static const char *NAMES[7] = { "help", "wifi", "settings",
+static const char *NAMES[9] = { "help", "wifi", "settings",
                                 "headphones", "the power question",
                                 "the welcome question",
-                                "the way out of a page" };
+                                "the way out of a page", "wishes",
+                                "a wish filling the screen" };
 #define N_PANELS 5        /* the ones the band opens */
-#define N_FLAGS  7        /* every one that covers the desktop */
+#define N_FLAGS  9        /* every one that covers the desktop */
 
 static void fresh(shell_ctx *c)
 {
