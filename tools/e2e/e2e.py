@@ -66,6 +66,7 @@ WEBSITE_PAGE = E("WEBSITE_PAGE", "index.html")
 DOWNLOAD_LINK = E("DOWNLOAD_LINK", r"(?i)^\s*get aurOS\b|download.*(installer|aurOS)")
 
 # ── the store, after AurOS works (M3) ────────────────────────────────
+CONTRAST_MIN = 4.5                                    # docs/EASY.md: text on a surface
 STORE_NAME = E("STORE_NAME", "Get more programs")    # the app list's name for it
 STORE_QUERY = E("STORE_QUERY", "VLC")                 # typed into its search
 STORE_RESULT = E("STORE_RESULT", "VLC")               # the result to open
@@ -265,6 +266,7 @@ class Flow:
         self.m = Machine(self.rec, a.work, self.disk, self.vars, self.tpm,
                          throttle=DISK_THROTTLE)
         self.rec.log(f"variant {VARIANT}: disk {DISK_GB} GB, throttle '{DISK_THROTTLE or 'none'}'")
+        self.findings = []          # things a person would be hurt by that do not stop the journey
         self.wizard_pages = []      # the text of each page a button was pressed on
         self.fix_presses = 0
         self.fix_restarts = 0
@@ -1071,7 +1073,13 @@ class Flow:
                 raise Failure(f"no '{STORE_INSTALL}' button")
             self.m.move(1150, 300)
             time.sleep(1)
-            sig0 = self.header_sig(self.m.screendump())      # the page before the press
+            img0 = self.m.screendump()
+            sig0 = self.header_sig(img0)                     # the page before the press
+            ratio = vision.label_contrast(img0, btn)
+            self.log(f"the store's {STORE_INSTALL} button: label contrast {ratio:.1f}:1 (docs/EASY.md wants 4.5)")
+            if ratio < CONTRAST_MIN:
+                self.findings.append(f"the store's '{STORE_INSTALL}' button label has contrast {ratio:.1f}:1, "
+                                     f"under {CONTRAST_MIN}:1 (shot {os.path.basename(self.m.shot('store-install-contrast'))})")
             self.m.click(*vision.centre(btn), label="install")
             # Hands off the button: the pointer drawn over its letters makes them
             # unreadable (run 40011085445 read nothing for nine minutes)
@@ -1147,6 +1155,17 @@ class Flow:
         import hashlib
         return hashlib.md5(img[100:330:3, 240:1040:3].tobytes()).hexdigest()
 
+    def finish_findings(self):
+        """The journey got through; what a person would be hurt by on the way
+        (a label she cannot read) still fails the run, with its words."""
+        if not self.findings:
+            return 0
+        msg = "the journey went through, but: " + "; ".join(self.findings)
+        self.log("FAILED: " + msg)
+        with open(os.path.join(self.a.out, "FAILED.txt"), "w") as fh:
+            fh.write(msg + "\n")
+        return 1
+
     def shutdown(self):
         with self.rec.phase("aurOS: shut down"):
             self.m.stop("powerdown", 300)
@@ -1174,6 +1193,7 @@ class AurFlow(Flow):
         shutil.copyfile(OVMF_VARS, self.vars)
         self.m = Machine(self.rec, a.work, self.disk, self.vars, self.tpm)
         self.wizard_pages, self.fix_presses, self.fix_restarts = [], 0, 0
+        self.findings = []
         self._named_diag = False
 
     def first_screen(self):
@@ -1197,7 +1217,7 @@ def cmd_aur(a):
         if first == "Yes, it all works":
             f.answer_yes()
         f.store()
-        rc = 0
+        rc = f.finish_findings()
     except Failure as e:
         f.log(f"FAILED: {e}")
         with open(os.path.join(a.out, "FAILED.txt"), "w") as fh:
@@ -1230,7 +1250,7 @@ def cmd_flow(a):
         f.answer_yes()
         if E("E2E_STORE", "1") == "1":
             f.store()
-        rc = 0
+        rc = f.finish_findings()
     except Failure as e:
         f.log(f"FAILED: {e}")
         with open(os.path.join(a.out, "FAILED.txt"), "w") as fh:

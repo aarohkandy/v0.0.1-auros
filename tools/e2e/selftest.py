@@ -251,6 +251,25 @@ def test_store_button_colours():
           "store: no button, nothing found")
 
 
+def test_label_contrast():
+    """The store's Install must be readable (docs/EASY.md 4.5): dark letters on
+    dark green, as run 40038619603 had them, fail; white on green passes."""
+    try:
+        import vision, numpy as np
+    except ImportError:
+        return
+    def button(fill, ink):
+        img = np.zeros((200, 400, 3), np.uint8); img[:] = (245, 240, 230)
+        img[50:90, 100:220] = fill
+        img[62:78, 135:185] = ink                      # the word, as a block of ink
+        return vision.label_contrast(img, (100, 50, 120, 40))
+    green = (0x0B, 0x5D, 0x4F)
+    check(button(green, (255, 255, 255)) >= 7, "contrast: white on #0B5D4F reads 7:1 or better")
+    check(button(green, (28, 28, 28)) < 4.5, "contrast: near-black on #0B5D4F is under 4.5 (what run 40038619603 had)")
+    check(button((200, 155, 74), (28, 28, 28)) >= 4.5, "contrast: near-black on gold is fine")
+    check(button(green, green) == 1.0, "contrast: a button with no letters at all is 1:1")
+
+
 def test_flow_helpers():
     try:
         import e2e
@@ -366,6 +385,7 @@ test_timings_summary()
 test_windows_dry()
 test_aur_dry()
 test_label_is()
+test_label_contrast()
 test_store_button_colours()
 test_flow_helpers()
 test_measure()

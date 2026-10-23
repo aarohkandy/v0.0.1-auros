@@ -277,6 +277,41 @@ def find_lone_word(words, word):
     return (w["x"], w["y"], w["w"], w["h"])
 
 
+def _luminance(rgb):
+    """WCAG relative luminance of an sRGB colour."""
+    c = np.asarray(rgb, np.float64) / 255.0
+    c = np.where(c <= 0.03928, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+
+def label_contrast(img, box):
+    """The contrast ratio (WCAG, 1 to 21) between a button's fill and the
+    letters on it. `box` is (x, y, w, h) of the button. The fill is the
+    commonest colour of its edge band; the letters are the pixels of its
+    inside that differ most from the fill. 1.0 when no letters show at all.
+    docs/EASY.md: text on a surface needs 4.5."""
+    x, y, w, h = box
+    sub = img[y:y + h, x:x + w].astype(np.int32)
+    if sub.size == 0:
+        return 1.0
+    m = 5
+    band = np.concatenate([sub[:3].reshape(-1, 3), sub[-3:].reshape(-1, 3),
+                           sub[:, :3].reshape(-1, 3), sub[:, -3:].reshape(-1, 3)])
+    vals, counts = np.unique(band, axis=0, return_counts=True)
+    fill = vals[counts.argmax()]
+    inner = sub[m:-m, m:-m].reshape(-1, 3)
+    if inner.size == 0:
+        return 1.0
+    dist = np.abs(inner - fill).sum(axis=1)
+    if dist.max() < 40:
+        return 1.0                       # nothing but fill: no letters
+    far = inner[dist >= max(40, np.percentile(dist, 90))]
+    text = far.mean(axis=0)
+    l1, l2 = _luminance(fill), _luminance(text)
+    hi, lo = max(l1, l2), min(l1, l2)
+    return float((hi + 0.05) / (lo + 0.05))
+
+
 def centre(box):
     x, y, w, h = box
     return x + w // 2, y + h // 2
