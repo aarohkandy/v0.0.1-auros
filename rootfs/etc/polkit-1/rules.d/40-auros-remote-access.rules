@@ -23,6 +23,19 @@
 // NEVER GATED: removing or updating a program (she must always be able
 // to get rid of one), runtimes, and every other program.
 //
+// PACKAGEKIT, AND WHY ONE ACTION IS NOT ENOUGH. PackageKit's policy file
+// says that package-install-untrusted, package-downgrade and
+// package-remove each IMPLY package-install, so when polkit is asked
+// about an install it asks them too, with the same details -- and
+// build/forge grants package-remove. Refusing only package-install was
+// refused and then let through by the grant for package-remove: pkcheck
+// said "authorized" on the booted image (tools/hardenboottest.sh, S1's
+// finding). So every PackageKit package-* action is gated, except when
+// every package in the request is one that is already on this computer:
+// PackageKit writes such ids with "installed" (or "installed:<where>")
+// in the last field, and a removal only ever names those. An install
+// never does -- apt cannot install a version that is already current.
+//
 // Written for polkit 124's JavaScript engine (duktape): ES5 only.
 // Tested by tools/scamtest/remoteaccess.js (every branch, each shown to
 // fail when broken) and against a real polkitd by tools/scamtest/polkit.sh.
@@ -33,6 +46,21 @@
 // this computer; not ones she uses to reach another (Remmina, KRDC).
 var AUROS_REMOTE_ACCESS = /anydesk|teamviewer|rustdesk|hoptodesk|screenconnect|connectwise|splashtop|logmein|gotoassist|gotoresolve|zohoassist|assistzoho|dwservice|dwagent|getscreen|remoteutilities|supremo|aeroadmin|ultraviewer|nomachine|chromeremotedesktop|remotepc|islonline|beyondtrust|bomgar|dameware|showmypc|litemanager/;
 
+var AUROS_PK = "org.freedesktop.packagekit.package-";
+
+// "name;version;arch;data&name;version;arch;data": true when every id is
+// one that is already installed (a removal), false for anything else,
+// including a list that mixes the two and no list at all.
+function aurosAllInstalled(ids) {
+    var all = String(ids || "");
+    var list = all.split("&");
+    for (var i = 0; i < list.length; i++) {
+        var data = list[i].split(";")[3] || "";
+        if (data !== "installed" && data.indexOf("installed:") !== 0) { return false; }
+    }
+    return all !== "";
+}
+
 polkit.addRule(function (action, subject) {
     var what = "";
     if (action.id === "org.freedesktop.Flatpak.app-install") {
@@ -42,8 +70,11 @@ polkit.addRule(function (action, subject) {
         // The same action removes, with --remove: never in the way of that.
         what = action.lookup("command_line");
         if (/(^|\s)--remove(\s|$)/.test(String(what || ""))) { return undefined; }
-    } else if (action.id === "org.freedesktop.packagekit.package-install") {
-        what = action.lookup("package_ids");    // anydesk;6.3.2;amd64;...
+    } else if (action.id.indexOf(AUROS_PK) === 0) {
+        // package-install, -install-untrusted, -downgrade, -reinstall and
+        // -remove, whichever polkit asks about an install (see above).
+        what = action.lookup("package_ids");    // anydesk;6.3.2;amd64;noble-updates
+        if (aurosAllInstalled(what)) { return undefined; }
     } else {
         return undefined;
     }

@@ -9,7 +9,9 @@
 # system bus (src/aurshell/guard.c, through tools/guardtest.c --listen),
 # that her answer, written by that code, lets the next try through, and
 # that a stand-in for build/forge's 49-auros.rules grant would otherwise
-# have said yes. --prove then removes the rule and watches the
+# have said yes -- including for PackageKit, whose package-remove (which
+# forge grants) IMPLIES package-install, so refusing package-install alone
+# is refused and then let through (the booted-image finding, S1). --prove then removes the rule and watches the
 # AnyDesk check turn green, i.e. this test red.
 #
 # Runs as root in a throwaway Ubuntu 24.04 container, never on a real
@@ -29,11 +31,14 @@ if ! command -v pkcheck >/dev/null || ! command -v cc >/dev/null; then
 fi
 # The two actions' definitions, straight from the packages that own them.
 work=$(mktemp -d)
-( cd "$work" && apt_try download -qq flatpak gdebi >/dev/null 2>&1 )
+( cd "$work" && apt_try download -qq flatpak gdebi packagekit >/dev/null 2>&1 )
 for d in "$work"/*.deb; do dpkg-deb -x "$d" "$work/x"; done
 cp "$work"/x/usr/share/polkit-1/actions/org.freedesktop.Flatpak.policy \
    "$work"/x/usr/share/polkit-1/actions/com.ubuntu.pkexec.gdebi-gtk.policy \
+   "$work"/x/usr/share/polkit-1/actions/org.freedesktop.packagekit.policy \
    /usr/share/polkit-1/actions/
+# noble's own PackageKit rules file, which sorts after ours.
+cp "$work"/x/usr/share/polkit-1/rules.d/org.freedesktop.packagekit.rules /usr/share/polkit-1/rules.d/
 
 # The image's pieces, where the image puts them.
 install -m 0644 rootfs/etc/polkit-1/rules.d/40-auros-remote-access.rules /etc/polkit-1/rules.d/
@@ -48,6 +53,10 @@ polkit.addRule(function(action, subject) {
     case "org.freedesktop.Flatpak.app-install":
     case "org.freedesktop.Flatpak.app-uninstall":
     case "com.ubuntu.pkexec.gdebi.gtk":
+    // The same four build/forge grants (install_cases).
+    case "org.freedesktop.packagekit.package-install":
+    case "org.freedesktop.packagekit.package-remove":
+    case "org.freedesktop.packagekit.system-update":
         return polkit.Result.YES;
     }
     return undefined;
@@ -99,9 +108,19 @@ printf '    %-62s %s\n' "her answer is a file of hers" "$([ "$owner" = her ] && 
 [ "$owner" = her ] || fail=$((fail + 1))
 check "AnyDesk again, after her yes: allowed"             0 $FP.app-install ref app/com.anydesk.Anydesk/x86_64/stable
 check "VLC from the store: as before"                     0 $FP.app-install ref app/org.videolan.VLC/x86_64/stable
+PK=org.freedesktop.packagekit
+check "TeamViewer through PackageKit: refused"            1 $PK.package-install package_ids "teamviewer;15.58.4;amd64;local"
+check "TeamViewer Host through PackageKit: refused"       1 $PK.package-install package_ids "teamviewer-host;15.58.4;amd64;local"
+check "VLC through PackageKit: as before"                 0 $PK.package-install package_ids "vlc;3.0.20;amd64;noble"
+check "removing TeamViewer through PackageKit: never in the way" 0 $PK.package-remove package_ids "teamviewer;15.58.4;amd64;installed"
+check "...and with the archive's own 'installed:' spelling"  0 $PK.package-remove package_ids "teamviewer;15.58.4;amd64;installed:noble-updates"
+check "a list that mixes installed and new: refused"      1 $PK.package-install package_ids "vlc;3.0.20;amd64;installed&rustdesk;1.3.1;amd64;noble"
+check "a system update: never in the way"                 0 $PK.system-update package_ids "libc6;2.39;amd64;noble-updates"
 check "removing AnyDesk: never in the way"                0 $FP.app-uninstall ref app/com.anydesk.Anydesk/x86_64/stable
 check "TeamViewer .deb through gdebi: refused"            1 com.ubuntu.pkexec.gdebi.gtk command_line "$DEB/teamviewer_15.58.4_amd64.deb"
 check "removing it through gdebi: never in the way"       0 com.ubuntu.pkexec.gdebi.gtk command_line "$DEB/teamviewer_15.58.4_amd64.deb --remove"
+su her -s /bin/sh -c 'touch /run/auros-remote-access/teamviewer'
+check "TeamViewer through PackageKit, after her yes: allowed" 0 $PK.package-install package_ids "teamviewer;15.58.4;amd64;local"
 su other -s /bin/sh -c 'touch /run/auros-remote-access/rustdesk'
 check "RustDesk 'yes' written by someone else: refused"   1 $FP.app-install ref app/com.rustdesk.RustDesk/x86_64/stable
 

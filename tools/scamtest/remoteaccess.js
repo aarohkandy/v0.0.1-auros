@@ -24,6 +24,12 @@ const NO = "no";
 const FP = "org.freedesktop.Flatpak.";
 const GDEBI = "com.ubuntu.pkexec.gdebi.gtk";
 const PK = "org.freedesktop.packagekit.package-install";
+// The other PackageKit actions whose policy says they IMPLY package-install:
+// polkit asks them too when an install is asked, and build/forge grants
+// package-remove (tools/scamtest/polkit.sh shows the real polkitd doing it).
+const PKU = "org.freedesktop.packagekit.package-install-untrusted";
+const PKD = "org.freedesktop.packagekit.package-downgrade";
+const PKR = "org.freedesktop.packagekit.package-remove";
 const label = (v) => (/^(app|runtime)\//.test(v) ? v.split("/")[1] : v.split("/").pop()).slice(0, 34);
 const deb = (f) => "/usr/bin/pkexec gdebi-gtk --non-interactive /home/her/Downloads/" + f;
 
@@ -44,6 +50,13 @@ const REMOTE = [
   [GDEBI, "command_line", deb("LogMeIn-Resolve.deb")],
   [GDEBI, "command_line", deb("Zoho_Assist_Agent.deb")],
   [PK, "package_ids", "anydesk;6.3.2;amd64;anydesk-stable"],
+  [PK, "package_ids", "teamviewer;15.58.4;amd64;local"],
+  [PK, "package_ids", "vlc;3.0.20;amd64;noble&teamviewer-host;15.58.4;amd64;local"],
+  [PKU, "package_ids", "teamviewer;15.58.4;amd64;local"],
+  [PKD, "package_ids", "anydesk;6.3.2;amd64;anydesk-stable"],
+  // What polkit asks as part of an install: a removal with ids that are not installed.
+  [PKR, "package_ids", "teamviewer;15.58.4;amd64;local"],
+  [PKR, "package_ids", "vlc;3.0.20;amd64;installed&anydesk;6.3.2;amd64;noble"],
 ];
 // Everyday programs, and programs she uses to reach ANOTHER computer.
 const PLAIN = [
@@ -58,6 +71,9 @@ const PLAIN = [
   [FP + "app-install", "ref", "app/com.github.tchx84.Flatseal/x86_64/stable"],
   [GDEBI, "command_line", deb("google-chrome-stable_current_amd64.deb")],
   [PK, "package_ids", "vlc;3.0.20;amd64;noble"],
+  [PKU, "package_ids", "vlc;3.0.20;amd64;local"],
+  [PKR, "package_ids", "vlc;3.0.20;amd64;installed"],
+  [PK, "eula_id", "teamviewer"],
 ];
 // She must always be able to take one off, or keep it up to date.
 const NEVER = [
@@ -65,7 +81,11 @@ const NEVER = [
   [FP + "app-update", "ref", "app/com.anydesk.Anydesk/x86_64/stable"],
   [FP + "runtime-install", "ref", "runtime/com.anydesk.Anydesk.Locale/x86_64/stable"],
   [GDEBI, "command_line", "/usr/bin/pkexec gdebi-gtk --non-interactive /home/her/Downloads/anydesk_6.3.2-1_amd64.deb --remove"],
-  ["org.freedesktop.packagekit.package-remove", "package_ids", "anydesk;6.3.2;amd64;installed"],
+  [PKR, "package_ids", "anydesk;6.3.2;amd64;installed"],
+  [PKR, "package_ids", "teamviewer;15.58.4;amd64;installed:noble-updates"],
+  [PKR, "package_ids", "teamviewer;15.58.4;amd64;installed&teamviewer-host;15.58.4;amd64;installed"],
+  ["org.freedesktop.packagekit.package-reinstall", "package_ids", "anydesk;6.3.2;amd64;installed"],
+  ["org.freedesktop.packagekit.system-update", "package_ids", "libc6;2.39-0ubuntu8;amd64;noble-updates"],
 ];
 
 // ── the rule, under a stand-in polkit ───────────────────────────────
@@ -212,6 +232,12 @@ if (process.argv.includes("--prove")) {
     ["the rule says nothing instead of NO", "r", (t) => t.replace("return polkit.Result.NO;", "return undefined;")],
     ["AnyDesk is off the list", "r", (t) => t.replace("anydesk|", "")],
     ["names are matched as written", "r", (t) => t.replace('.replace(/[^a-z0-9]/g, "")', "")],
+    ["package-install-untrusted, -downgrade and -remove are not asked about", "r",
+     (t) => t.replace('action.id.indexOf(AUROS_PK) === 0', 'action.id === "org.freedesktop.packagekit.package-install"')],
+    ["a removal of what is installed is refused", "r", (t) => t.replace("if (aurosAllInstalled(what)) { return undefined; }", "")],
+    ["a mixed list counts as a removal", "r", (t) => t.replace("i < list.length", "i < 1")],
+    ["an install counts as a removal", "r", (t) => t.replace('if (data !== "installed" && data.indexOf("installed:") !== 0) { return false; }', "")],
+    ["'installed:<where>' is not a removal", "r", (t) => t.replace(' && data.indexOf("installed:") !== 0', "")],
     ["gdebi --remove is gated too", "r", (t) => t.replace("{ return undefined; }\n", "{ }\n")],
     ["every Flatpak action is gated", "r", (t) => t.replace('action.id === "org.freedesktop.Flatpak.app-install"', 'action.id.indexOf("Flatpak") >= 0')],
     ["a failed helper means yes", "r", (t) => t.replace("return polkit.Result.NO;", "return polkit.Result.YES;")],
