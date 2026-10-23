@@ -261,9 +261,12 @@ Revisit when S4's TPM re-seal exists, and possibly then fwupd for dbx only.
   (`shell-guard`).
 - **A broken AurOS update (aurshell itself crashes):** undone by itself.
   When apt moves AurOS forward, `/usr/lib/auros/keep-previous` (an apt
-  `DPkg::Post-Invoke`, `53auros-updates`) keeps the set from before in
-  `/var/lib/auros/debs-previous`. `/var/lib/auros/debs` always holds the set
-  installed now. Safe mode alone cannot help here: it runs the same broken
+  `DPkg::Post-Invoke`, `53auros-updates`) moves the set that was installed
+  until a moment ago to `/var/lib/auros/debs-previous`. It is already on the
+  disk, so this needs nothing from the network or from apt's cache.
+  `/var/lib/auros/debs` then holds the set installed now, taken from apt's
+  cache when all of its files are there (`APT::Keep-Downloaded-Packages` is
+  on) and empty otherwise. Safe mode alone cannot help here: it runs the same broken
   program. So when the desktop also fails three times in safe mode's last
   step, `shell-guard` calls `/usr/lib/auros/rollback`. That pins the broken
   version to -1 (`preferences.d/00auros-broken-<version>`, sorted before
