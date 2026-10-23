@@ -38,6 +38,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Still red / in progress
 
+- **Caught before anyone used it: Ubuntu security updates would never have installed** (renaming the system to
+  AurOS broke the updater's source names). Proven on the real image, fix in progress, and becomes a release gate.
+
 - **Found overnight, being fixed: Firefox opens as a blank window** (AurOS's compositor did not draw the
   inner surfaces browsers and video players paint into). A new agent owns the compositor and is fixing it;
   a check proves it once fixed. This is exactly why the nightly 'everyday tasks' tests exist.
