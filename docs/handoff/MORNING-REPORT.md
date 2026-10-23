@@ -4,8 +4,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Done overnight (proof)
 
-- **Video calls and films work on the real image** (camera and microphone both ways; streaming video plays).
-  Being fixed: printing (one tiny package), opening Word/Excel files (adding LibreOffice Writer + Calc).
+- **CORRECTION: "video calls and films work on the real image" was NOT proven** — the check that said so was
+  fooled by a card left on screen; a corrected run is queued. The compositor fix itself is proven by its own
+  tests (Firefox, GTK4, Qt, video draw on the real desktop). Being fixed: printing, Word/Excel (LibreOffice).
 
 - **Your potato wish works on AurOS** (rendered from the real code): docs/shots/wishes/rail-1366x768-08-confirm.png
   ("Is this what you want?" in plain words, equal Yes/No) and docs/shots/wishes/rail-1366x768-30-fill-potato.png.
@@ -41,8 +42,9 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 
 ## Still red / in progress
 
-- **Found and being fixed: programs from "Get more programs" installed but would not start** (an extra
-  permission in the desktop session that the app sandbox refuses). One-line fix being proven end to end.
+- **Programs from "Get more programs" would not start** (an extra permission the app sandbox refuses): **fixed and
+  proven** (6b6c438). Next gap: older programs that only speak X11 (VLC, likely Zoom, Spotify, WhatsApp/Teams
+  wrappers) need Xwayland, which AurOS's compositor doesn't have yet — being built.
 
 - **Caught before anyone used it: Ubuntu security updates would never have installed** (renaming the system to
   AurOS broke the updater's source names). **Fixed and proven on the real image** (956af4a); now a release gate.
