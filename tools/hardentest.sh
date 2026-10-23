@@ -130,22 +130,27 @@ fi
 say ""
 say "Kernel command line"
 KOPTS="init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes lockdown=integrity"
-check_lines() { # label file pattern
-    lines=$(grep -E "$3" "$2" 2>/dev/null)
-    if [ -z "$lines" ]; then bad "$1" "no kernel line in ${2#"$RFS"/}"; return; fi
-    miss=""
-    for o in $KOPTS; do
-        printf '%s\n' "$lines" | while read -r l; do
-            case " $l " in *" $o "*) ;; *) echo x ;; esac
-        done | grep -q x && miss="$miss $o"
-    done
-    if printf '%s\n' "$lines" | grep -q 'init_on_free=1'; then miss="$miss (init_on_free=1 is there: a measured cost for little)"; fi
-    [ -z "$miss" ] && ok "$1" || bad "$1" "missing:$miss"
+# EVERY kernel line, one at a time, and the entry it belongs to: an
+# option dropped from just one entry (a rewrite of the menu, a new
+# fallback entry) is named, not averaged away. A kernel line is any
+# `linux`/`linuxefi` line but the restore's own (staging.efi).
+check_lines() { # label file
+    res=$(awk -v kopts="$KOPTS" '
+        BEGIN { n = split(kopts, K, " ") }
+        /^[[:space:]]*menuentry[[:space:]]/ { id = "?"; if (match($0, /--id[ =][^ {]+/)) id = substr($0, RSTART + 5, RLENGTH - 5) }
+        /^[[:space:]]*linux(efi)?[[:space:]]/ && !/staging\.efi/ {
+            lines++; l = " " $0 " "; miss = ""
+            for (i = 1; i <= n; i++) if (index(l, " " K[i] " ") == 0) miss = miss " " K[i]
+            if (index(l, " init_on_free=1 ") > 0) miss = miss " (init_on_free=1 is there: a measured cost for little)"
+            if (miss != "") print "entry " id " lacks" miss
+        }
+        END { if (!lines) print "no kernel line" }' "$2" 2>/dev/null)
+    if [ -z "$res" ]; then ok "$1"; else bad "$1" "$res"; fi
 }
-check_lines "every AurOS entry in grub.cfg.in" "$RFS/usr/lib/auros/grub.cfg.in" '^[[:space:]]*linux[[:space:]]+/boot/vmlinuz-'
-check_lines "the previous-kernel entry auros-bootchain writes" "$RFS/usr/lib/auros/bootchain" '^[[:space:]]*linux[[:space:]]+/boot/vmlinuz-\{v\}'
+check_lines "every AurOS entry in grub.cfg.in" "$RFS/usr/lib/auros/grub.cfg.in"
+check_lines "the previous-kernel entry auros-bootchain writes" "$RFS/usr/lib/auros/bootchain"
 if [ -f "$RFS/boot/grub/grub.cfg" ]; then
-    check_lines "every AurOS entry in the written grub.cfg" "$RFS/boot/grub/grub.cfg" '^[[:space:]]*linux[[:space:]]+/boot/vmlinuz-'
+    check_lines "every AurOS entry in the written grub.cfg" "$RFS/boot/grub/grub.cfg"
 fi
 
 # ── 3. the firewall ──────────────────────────────────────────────────
