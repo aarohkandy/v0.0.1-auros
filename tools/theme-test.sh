@@ -110,6 +110,41 @@ for th in themes/*.theme; do
 done
 printf 'nocturne\n' > "$STATE/theme"
 
+# 4. Text on a coloured fill is readable, in every theme. `@X|on@` is the colour for text on X;
+#    it said `lum(X) > 0.55 ? bg : fg_hi`, which assumes a dark theme, so on the Light theme
+#    (the default) GNOME Software's Install button was ink on dark green. Every X the templates
+#    put |on beside is rendered for every theme and the pair must have 4.5:1 (WCAG AA).
+echo
+echo "text on a fill: 4.5:1 or better, every theme"
+ratio() { # hex hex (no #) -> contrast ratio
+    awk -v a="$1" -v b="$2" '
+        function h(s,i){ return index("0123456789ABCDEF", substr(s,i,1)) - 1 }
+        function ch(s,i){ return h(s,i)*16 + h(s,i+1) }
+        function lin(v){ v = v/255; return v <= 0.03928 ? v/12.92 : exp(2.4*log((v+0.055)/1.055)) }
+        function L(s){ return 0.2126*lin(ch(s,1)) + 0.7152*lin(ch(s,3)) + 0.0722*lin(ch(s,5)) }
+        BEGIN { x = L(toupper(a)); y = L(toupper(b)); if (x < y) { t = x; x = y; y = t }
+                printf "%.2f\n", (x+0.05)/(y+0.05) }'
+}
+fills=$(cat themes/templates/*.tpl | grep -o '@[a-z_][a-z0-9_]*|on[|@]' | sed 's/^@//; s/|on.*//' | sort -u)
+[ -n "$fills" ] || { echo "  FAIL  no @X|on@ in any template (this test would prove nothing)"; fail=1; }
+for th in themes/*.theme; do
+    n=$(basename "$th" .theme)
+    printf '%s\n' "$n" > "$STATE/theme"
+    for x in $fills; do
+        fill=$(printf '@%s|hex@' "$x" | $AURORA render 2>/dev/null)
+        text=$(printf '@%s|on|hex@' "$x" | $AURORA render 2>/dev/null)
+        checked=$((checked + 1))
+        r=$(ratio "$text" "$fill")
+        if awk -v r="$r" 'BEGIN { exit !(r >= 4.5) }'; then
+            printf '  ok    %-12s text on %-6s %s on %s  %s:1\n' "$n" "$x" "$text" "$fill" "$r"
+        else
+            printf '  FAIL  %-12s text on %-6s %s on %s  %s:1 (4.5 needed)\n' "$n" "$x" "$text" "$fill" "$r"
+            fail=1
+        fi
+    done
+done
+printf 'nocturne\n' > "$STATE/theme"
+
 # 3. The target ships mawk, not gawk. They must agree byte for byte --
 #    a gawk extension slipping in here (strtonum) cost a silent theming
 #    failure on the first real image build. This runs aurora twice with

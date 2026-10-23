@@ -295,6 +295,9 @@ jobs:
       - name: updatepolicytest dryrun (would the built image's own unattended-upgrade install an Ubuntu security update? TM-1)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sudo bash tools/updatepolicytest.sh dryrun work/forge/desktop/rootfs 2>&1 | tee transcripts/updatepolicytest-dryrun.txt
+      - name: theme-test (every template resolves in every theme; text on an accent or error fill is 4.5:1 in all five, the Light one included)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/theme-test.sh 2>&1 | tee transcripts/theme-test.txt
       - name: unbrandtest container (Ubuntu's icon theme and name are gone, GTK's icons and Ubuntu's updates are not; the code of build/forge, on a clean Ubuntu 24.04)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: docker run --rm -v "$PWD":/w:ro ubuntu:24.04 bash /w/tools/unbrandtest.sh container 2>&1 | tee transcripts/unbrandtest.txt

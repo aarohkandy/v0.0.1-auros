@@ -119,8 +119,15 @@ function lighten(c,p,  f){ f=p/100.0; return mk(R(c)+(255-R(c))*f, G(c)+(255-G(c
 function darken(c,p,   f){ f=1-p/100.0; return mk(R(c)*f, G(c)*f, B(c)*f) }
 function mix(a,b,p,    f){ f=p/100.0; return mk(R(a)*(1-f)+R(b)*f, G(a)*(1-f)+G(b)*f, B(a)*(1-f)+B(b)*f) }
 function lum(c){ return (0.2126*R(c) + 0.7152*G(c) + 0.0722*B(c))/255.0 }
-# Pick whichever of the theme fg / bg reads better on top of c.
-function on(c){ return lum(c) > 0.55 ? ENVIRON["bg"] : ENVIRON["fg_hi"] }
+# WCAG 2 contrast: relative luminance (sRGB gamma undone) and the ratio of two colours.
+# exp/log, not ^: mawk has no strtonum, but it has these.
+function lin(v){ v = v/255.0; return v <= 0.03928 ? v/12.92 : exp(2.4*log((v+0.055)/1.055)) }
+function rl(c){ return 0.2126*lin(R(c)) + 0.7152*lin(G(c)) + 0.0722*lin(B(c)) }
+function cr(a,b,  x,y,t){ x=rl(a); y=rl(b); if (x<y) { t=x; x=y; y=t } return (x+0.05)/(y+0.05) }
+# Pick whichever of the theme bg / fg_hi reads better on top of c: the higher contrast, not
+# "light on dark". It used to say lum(c) > 0.55 ? bg : fg_hi, which assumes a dark theme: on the
+# Light theme fg_hi is ink, so a button in the accent (a dark green) got ink on dark green.
+function on(c,  a,b){ a = ENVIRON["bg"]; b = ENVIRON["fg_hi"]; return cr(c,a) >= cr(c,b) ? a : b }
 
 function resolve(key,  v){
     v = ENVIRON[key]
