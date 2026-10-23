@@ -285,8 +285,10 @@ $s = New-Scenario forged
 $null = Run-System $s
 $keys = $Fixture | ForEach-Object { $_[0] + '/' + $_[1] }
 # (a) claims for files that are not there
-($keys | ForEach-Object { "$_`t$($s.Letter):\Users\Bob\From AurOS\$($_ -replace '/', '\')`tok" }) -join "`n" |
-    Set-Content (Join-Path $s.Udir 'saved.tsv') -Encoding ASCII
+# (UTF-8, as the user task writes it: an ASCII file turns the accented name into '?', the claim
+# is then about a file that cannot exist, and the check below would pass for the wrong reason)
+$claims = (($keys | ForEach-Object { "$_`t$($s.Letter):\Users\Bob\From AurOS\$($_ -replace '/', '\')`tok" }) -join "`n") + "`n"
+[System.IO.File]::WriteAllText((Join-Path $s.Udir 'saved.tsv'), $claims, (New-Object System.Text.UTF8Encoding($false)))
 $rc = Run-System $s
 Ok 'files that are not there: the partition stays (exit 0)' ($rc -eq 0 -and (Handover-Present $s)) "exit $rc; $(Why $s)"
 # (b) files that are there with the wrong bytes
