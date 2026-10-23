@@ -434,7 +434,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       IN_RUN: ${{ needs.gate.outputs.identrun }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: which build
         id: run
         run: |
@@ -449,7 +449,7 @@ jobs:
           [ -n "$rid" ] || { echo "::error::no build run with a rootfs"; exit 1; }
           echo "build run $rid: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$rid"
           echo "rid=$rid" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: auros-rootfs
           path: dl

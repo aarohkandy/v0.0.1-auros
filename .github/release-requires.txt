@@ -1,0 +1,11 @@
+# Commits a published build must contain, by hash, with what they fixed.
+# release.yml's `which` job checks that the built commit has each as an
+# ancestor, for every [release] and [publish], prerelease or full. Add a line
+# when a fix lands that no release may go out without; never remove one.
+#
+#   commit | what it fixed
+#
+956af4a|TM-1: Ubuntu's security updates were silently never installed (os-release name)
+6917bde|staging "cannot-measure": ntfsresize's answer was dropped on every real volume
+54b783b|aurwl: subsurfaces composited into the window (Firefox was blank)
+e1c8015|grub.cfg.in: the Windows start line carries lockdown=integrity too

@@ -102,6 +102,8 @@ jobs:
       allowed: ${{ steps.w.outputs.allowed }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0   # .github/release-requires.txt asks about ancestors
       - id: w
         env:
           IN_RUN: ${{ inputs.run-id }}
@@ -127,6 +129,17 @@ jobs:
             # Files, not a pipe: under pipefail a SIGPIPE in the middle
             # would turn "refused" into "passed".
             python3 -I tools/releasegate.py /tmp/jobs.txt .github/ci-allow.txt $( [ "$latest" = true ] && echo --latest ) > /tmp/gate.txt 2>&1 && g=0 || g=$?
+            # The fixes this build must contain (.github/release-requires.txt):
+            # a build from before a security or install fix is never
+            # published, as a prerelease or otherwise.
+            head=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$1" --jq .head_sha) || return 1
+            while IFS='|' read -r sha why; do
+              sha=$(printf '%s' "$sha" | tr -d ' ')
+              case "$sha" in ''|'#'*) continue ;; esac
+              if ! git merge-base --is-ancestor "$sha" "$head" 2>/dev/null; then
+                echo "releasegate: REFUSED: build ${head:0:7} does not contain $sha ($why)" >> /tmp/gate.txt; g=1
+              fi
+            done < .github/release-requires.txt
             cat /tmp/gate.txt
             return $g
           }
