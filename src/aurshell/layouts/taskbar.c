@@ -30,7 +30,7 @@
 /* Bar slots. Non-negative slots are window buttons, so one function can
  * own every rectangle the bar contains. */
 enum { SLOT_NONE = -1, SLOT_BAR = -2, SLOT_LAUNCH = -3,
-       SLOT_TRAY = -4, SLOT_CLOCK = -5 };
+       SLOT_TRAY = -4, SLOT_CLOCK = -5, SLOT_WISH = -6 };
 
 /* Parts of a window, likewise, so one function owns window geometry. */
 enum { WP_FRAME = 0, WP_TITLE, WP_BODY, WP_MIN, WP_MAX, WP_CLOSE };
@@ -124,6 +124,14 @@ static rect bar_slot(shell_ctx *c, int W, int H, int slot)
     rect lr = { side, by + pad, lw, ih };
     if (slot == SLOT_LAUNCH) return lr;
 
+    /* "Make a wish" (src/aurshell/wish.c): the button after the
+     * launcher, its words as wide as its text. Absent when the build has
+     * no wishes. */
+    int ww = shell_wish_app(c) >= 0 ? (int)((float)bh * 2.5f) : 0;
+    if (ww > W / 5) ww = W / 5;
+    rect wr = { lr.x + lr.w + gap, by + pad, ww, ih };
+    if (slot == SLOT_WISH) return ww > 0 ? wr : none;
+
     int clock_w = c->show_clock ? (int)((float)bh * 2.15f) : 0;
     int tray_w  = TRAY_N * ih + gap;
     rect cr = { W - side - clock_w, by + pad, clock_w, ih };
@@ -140,7 +148,7 @@ static rect bar_slot(shell_ctx *c, int W, int H, int slot)
      * there and still hittable is worth more than a readable one — it
      * is the only way back to a buried window. */
     int bgap  = c->n_wins > 12 ? 4 : gap;
-    int x0    = lr.x + lr.w + gap * 2;
+    int x0    = lr.x + lr.w + gap * 2 + (ww > 0 ? ww + gap : 0);
     int avail = tr.x - gap * 2 - x0;
     if (avail < 0) avail = 0;
     int n  = c->n_wins < 1 ? 1 : c->n_wins;
@@ -735,12 +743,28 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
     shell_text(s, f->mid, (float)l.x + 30.f, shell_baseline(f->mid, (float)l.y, (float)l.h),
                lt, c->fg_hi, 1.f);
 
+    /* Make a wish: outlined, as the launcher is when it is shut. */
+    rect wr = bar_slot(c, W, H, SLOT_WISH);
+    if (wr.w > 0) {
+        int whot = (p->hover_slot == SLOT_WISH);
+        draw_round_rect(s, wr, corners_all((float)c->radius_sm), whot ? c->surface_hi : c->bg, 1.f);
+        draw_frame(s, wr, whot ? 2 : 1, whot ? c->fg : c->overlay, 1.f);
+        int wa = shell_wish_app(c);
+        shell_icon_draw(s, ICON_WISH, (float)wr.x + 20.f, (float)wr.y + (float)wr.h / 2.f, 20.f,
+                        c->fg, whot ? c->surface_hi : c->bg, 1.f);
+        char wb[48];
+        const char *wt = fit_text(f->mid, wa >= 0 ? c->apps[wa].name : "Make a wish", wb, sizeof wb,
+                                  (float)wr.w - 44.f);
+        shell_text(s, f->mid, (float)wr.x + 38.f, shell_baseline(f->mid, (float)wr.y, (float)wr.h),
+                   wt, c->fg_hi, 1.f);
+    }
+
     /* Window buttons. */
     if (c->n_wins == 0) {
         /* An empty strip is the one moment this model has nothing to
          * say for itself, so it says it in words. */
         rect tray0 = bar_slot(c, W, H, SLOT_TRAY);
-        float hx = (float)(l.x + l.w + 18);
+        float hx = (float)((wr.w > 0 ? wr.x + wr.w : l.x + l.w) + 18);
         char hb[80];
         const char *hint = fit_text(f->small,
                                     "Nothing open yet — pick something from All my programs",
@@ -971,6 +995,11 @@ static int l_click(shell_ctx *c, int x, int y)
             set_menu(c, !p->menu_open);
             return 1;
         }
+        if (pt_in(bar_slot(c, W, H, SLOT_WISH), x, y)) {
+            set_menu(c, 0);
+            shell_launch(c, shell_wish_app(c));      /* opens the panel */
+            return 1;
+        }
         for (int i = 0; i < c->n_wins; i++) {
             if (!pt_in(bar_slot(c, W, H, i), x, y)) continue;
             if (c->wins[i].minimised) restore_win(c, i);
@@ -1032,6 +1061,7 @@ static void l_motion(shell_ctx *c, int x, int y)
     }
     if (pt_in(bar_slot(c, W, H, SLOT_BAR), x, y)) {
         if (pt_in(bar_slot(c, W, H, SLOT_LAUNCH), x, y)) { p->hover_slot = SLOT_LAUNCH; return; }
+        if (pt_in(bar_slot(c, W, H, SLOT_WISH), x, y)) { p->hover_slot = SLOT_WISH; return; }
         for (int i = 0; i < c->n_wins; i++)
             if (pt_in(bar_slot(c, W, H, i), x, y)) { p->hover_slot = i; c->hover = i; return; }
         if (pt_in(bar_slot(c, W, H, SLOT_TRAY), x, y))  p->hover_slot = SLOT_TRAY;

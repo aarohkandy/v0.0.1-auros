@@ -139,7 +139,7 @@ void wishover_keep(shell_ctx *c, int what, const char *old, const char *wish)
 static void keep_revert(shell_ctx *c, card *k)
 {
     if (k->keep_what == WO_KEEP_TEXT) wish_apply_text_scale(c, (float)atof(k->keep_old));
-    else if (k->keep_what == WO_KEEP_LOOK) wish_apply_look(c, k->keep_old);
+    else if (k->keep_what == WO_KEEP_LOOK) wish_restore_look(c, k->keep_old);
 }
 
 void wishover_clear(shell_ctx *c)
@@ -233,11 +233,13 @@ static const char *ot_label(int kind, const card *k)
 
 static int est(const char *s, int px) { return (int)(0.54f * (float)px * (float)strlen(s)); }
 
-static void olayout_k(const shell_ctx *c, int sw, int sh, ogeom *g, float k)
+static void olayout_k(const shell_ctx *c, int sw, int sh, ogeom *g, float k, int tight)
 {
     memset(g, 0, sizeof *g);
     g->k = k;
     g->btn_h = (int)(36.f + 20.f * k); if (g->btn_h < 48) g->btn_h = 48;
+    /* Tight: the buttons are the 48 px floor, not the 56 they like to be. */
+    if (tight) g->btn_h = 48;
     g->gap = (int)(12.f * k); if (g->gap < 12) g->gap = 12;
     g->group = (int)(24.f * k); if (g->group < 24) g->group = 24;
     g->pad = (int)(20.f * k);
@@ -310,11 +312,12 @@ static void olayout(const shell_ctx *c, int sw, int sh, ogeom *g)
 {
     float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
     for (;;) {
-        olayout_k(c, sw, sh, g, k);
-        if (!g->overflow || k <= 1.f) return;
+        olayout_k(c, sw, sh, g, k, 0);
+        if (!g->overflow || k <= 1.f) break;
         k -= 0.1f;
         if (k < 1.f) k = 1.f;
     }
+    if (g->overflow) olayout_k(c, sw, sh, g, k, 1);
 }
 
 int wishover_targets(const shell_ctx *c, int sw, int sh, wish_target *out, int max)

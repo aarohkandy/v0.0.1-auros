@@ -813,12 +813,14 @@ int shell_store_app(const shell_ctx *c)
     return -1;
 }
 
-static int wish_app(const shell_ctx *c)
+int shell_wish_app(const shell_ctx *c)
 {
+    if (!c) return -1;
     for (int i = 0; i < c->n_apps; i++)
         if (c->apps[i].role == APP_ROLE_WISH) return i;
     return -1;
 }
+#define wish_app shell_wish_app
 
 int shell_home_pick(const shell_ctx *c, int cap, int *out)
 {

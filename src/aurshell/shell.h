@@ -444,6 +444,9 @@ int  shell_rescan_apps(shell_ctx *c, int *added, int max);
  * The index of "Get more programs", or -1 when this machine has none
  * (no store installed, or a profile that forbids installing). */
 int  shell_store_app(const shell_ctx *c);
+/* The index of "Make a wish", or -1 (a kiosk has none). src/aurshell/wish.c
+ * owns what it opens; every look places the button itself. */
+int  shell_wish_app(const shell_ctx *c);
 
 /* What a home screen with room for `cap` entries shows, in order, into
  * out[] (at least cap ints). Returns how many.

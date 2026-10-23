@@ -52,6 +52,19 @@ int wishhook_set_triggers(const char *const *words, int n_words,
 
 static int eng = -1;                  /* the engine's end */
 
+static int spawned;
+static char spawned_url[300];
+static int stub_spawn(struct shell_ctx_s *c, const char *blob, int n_args)
+{
+    (void)c;
+    spawned++;
+    /* the tokens: sh -c <script> <url> */
+    const char *p = blob;
+    for (int i = 0; i < n_args - 1 && *p; i++) p += strlen(p) + 1;
+    snprintf(spawned_url, sizeof spawned_url, "%s", p);
+    return 0;
+}
+
 static void plug(void)
 {
     int sv[2];
@@ -147,6 +160,9 @@ static void json(void)
     const char *C = "{\"t\":\"a\\u0007b\\nc\"}";
     js_getstr(C, C + strlen(C), "t", out, sizeof out);
     ok("control characters arrive as spaces", !strcmp(out, "a b c"));
+    const char *R = "{\"t\":\"a\x07" "b\x1b[2Jc\"}";     /* raw bell and escape, not escaped */
+    js_getstr(R, R + strlen(R), "t", out, sizeof out);
+    ok("a raw bell or escape in a string arrives as a space", !strcmp(out, "a b [2Jc"));
     const char *B = "{\"t\":\"unterminated}";
     ok("a malformed line yields nothing", js_get(B, B + strlen(B), "t", NULL) == NULL);
     char q[64];
@@ -244,6 +260,17 @@ static void asking(void)
     drain();
     ok("after 30 seconds they are", strstr(wrote, "\"op\":\"wish\"") != NULL);
     cancel_request();
+
+    /* No consent: her words are held, and nothing is sent. */
+    W.consent = 0;
+    go(WP_ASK);
+    W.last_ms = 0;
+    snprintf(W.text, sizeof W.text, "Make the screen darker");
+    submit(&c);
+    drain();
+    ok("with Wishes not agreed to, nothing is sent: the consent page comes first",
+       !strstr(wrote, "\"op\":\"wish\"") && W.page == WP_CONSENT);
+    W.consent = 1;
 
     /* Under three characters is not sent. */
     go(WP_ASK);
@@ -393,6 +420,28 @@ static void overlays(void)
     int full = c.screen_h + foot_height(&c);
     ok("a card is at most half the screen each way", g.card[0].w <= c.screen_w / 2 &&
        g.card[0].h <= full / 2);
+    {
+        /* The worst case: her biggest text on the smallest screen, with a
+         * reminder that has three buttons. */
+        shell_ctx s2 = c;
+        s2.screen_w = 1024; s2.text_scale = 2.f; s2.screen_h = 600 - foot_height(&s2);
+        wishover_card(&s2, WO_REMIND, "Take my pills with a glass of water and sit down", "Pills", "w9", NULL, 0);
+        ogeom g2;
+        olayout(&s2, s2.screen_w, s2.screen_h, &g2);
+        int fh = s2.screen_h + foot_height(&s2), bad = 0;
+        for (int i = 0; i < O.n; i++)
+            if (g2.card[i].h > fh / 2 || g2.card[i].w > s2.screen_w / 2) bad++;
+        if (bad)
+            for (int i = 0; i < O.n; i++)
+                printf("    card %d is %dx%d on a %dx%d screen\n", i, g2.card[i].w, g2.card[i].h,
+                       s2.screen_w, fh);
+        ok("at 1024x600 and 200% text no card is over half the screen", !bad);
+        wish_target t2[24];
+        int n2 = wishover_targets(&s2, s2.screen_w, s2.screen_h, t2, 24), small = 0;
+        for (int i = 0; i < n2; i++) if (t2[i].r.h < 48 || t2[i].r.w < 48) small++;
+        ok("and every button on it is still at least 48 px", n2 > 0 && !small);
+        drop_card(O.n - 1);
+    }
     ok("a press outside the card goes to what is underneath", wishover_click(&c, 5, 5) == 0);
     int close_i = -1;
     for (int i = 0; i < on; i++) if (ot[i].kind == WOT_CLOSE) close_i = i;
@@ -448,19 +497,41 @@ static void shell_actions(void)
        wishover_cards() == 0);
 
     drain();
+    c.spawn = stub_spawn;
     say(&c, "{\"ev\":\"shell\",\"n\":43,\"do\":{\"type\":\"open_website\",\"url\":\"http://example.com\"}}");
     drain();
-    ok("an address that is not https is refused", strstr(wrote, "\"n\":43,\"ok\":false") != NULL);
-    say(&c, "{\"ev\":\"shell\",\"n\":44,\"do\":{\"type\":\"open_website\",\"url\":\"https://a.example/\\\" --x\"}}");
+    ok("an address that is not https is refused and nothing starts",
+       strstr(wrote, "\"n\":43,\"ok\":false") != NULL && spawned == 0);
+    say(&c, "{\"ev\":\"shell\",\"n\":44,\"do\":{\"type\":\"open_website\",\"url\":\"https://a.example/\\\"x\"}}");
     drain();
-    ok("an address with a quote in it is refused", strstr(wrote, "\"n\":44,\"ok\":false") != NULL);
+    ok("an address with a quote in it is refused and nothing starts",
+       strstr(wrote, "\"n\":44,\"ok\":false") != NULL && spawned == 0);
+    say(&c, "{\"ev\":\"shell\",\"n\":47,\"do\":{\"type\":\"open_website\",\"url\":\"https://www.bbc.co.uk/news\"}}");
+    drain();
+    ok("a plain https address opens, as the last word of the command",
+       strstr(wrote, "\"n\":47,\"ok\":true") != NULL && spawned == 1 &&
+       !strcmp(spawned_url, "https://www.bbc.co.uk/news"));
     say(&c, "{\"ev\":\"shell\",\"n\":45,\"do\":{\"type\":\"install_program\",\"flathub_id\":\"x\"}}");
     drain();
     ok("an action the shell does not do is refused, not faked", strstr(wrote, "\"n\":45,\"ok\":false") != NULL);
-    say(&c, "{\"ev\":\"shell\",\"n\":46,\"do\":{\"type\":\"set_look\",\"look\":\"../../etc\"}}");
+    /* A shells directory with a file that is NOT one of the four looks:
+     * only the name check stands between it and being applied. */
+    char sdir[] = "/tmp/wishtest.shells";
+    mkdir(sdir, 0700);
+    FILE *sf = fopen("/tmp/wishtest.shells/evil.shell", "w");
+    if (sf) { fputs("shell_name=\"evil\"\n", sf); fclose(sf); }
+    sf = fopen("/tmp/wishtest.shells/rail.shell", "w");
+    if (sf) { fputs("shell_name=\"rail\"\n", sf); fclose(sf); }
+    setenv("AUROS_SHELLS", sdir, 1);
+    snprintf(c.layout_id, sizeof c.layout_id, "%s", "taskbar");
+    say(&c, "{\"ev\":\"shell\",\"n\":46,\"do\":{\"type\":\"set_look\",\"look\":\"evil\"}}");
     drain();
-    ok("a look that is not one of the four is refused", strstr(wrote, "\"n\":46,\"ok\":false") != NULL &&
-       !c.want_reload);
+    ok("a look that is not one of the four is refused, even if its file exists",
+       strstr(wrote, "\"n\":46,\"ok\":false") != NULL && !c.want_reload);
+    say(&c, "{\"ev\":\"shell\",\"n\":48,\"do\":{\"type\":\"set_look\",\"look\":\"rail\"}}");
+    drain();
+    ok("one of the four is applied, and Keep this? is asked", strstr(wrote, "\"n\":48,\"ok\":true") != NULL &&
+       c.want_reload && wishover_cards() == 1 && O.cards[0].keep_what == WO_KEEP_LOOK);
 
     say(&c, "{\"ev\":\"triggers\",\"words\":[\"potato\",\"pills\"],\"apps\":[]}");
     ok("the trigger words are handed to the compositor", got_nw == 2 &&
@@ -561,7 +632,43 @@ static void emoji(void)
         buf[at] = keep;
     }
     ok("a damaged PNG is refused or decodes to the right size, never past its end", refused);
-    ok("a truncated PNG is refused", png_decode(buf, n / 2, &w, &h) == NULL);
+    int trunc_ok = 1;
+    for (size_t cut = 8; cut < n; cut += (n / 23 + 1)) {
+        /* An exact-size heap copy, so that a decoder reading one byte past
+         * what it was given is caught by the sanitizer this is built with
+         * rather than silently reading zeros from a bigger buffer. */
+        uint8_t *tc = malloc(cut);
+        memcpy(tc, buf, cut);
+        uint32_t *r = png_decode(tc, cut, &w, &h);
+        if (r) { trunc_ok = 0; free(r); }
+        free(tc);
+    }
+    ok("a PNG cut short anywhere is refused without reading past its end", trunc_ok);
+
+    /* The nastier cut: the chunk says it is whole, but the compressed
+     * stream inside it stops early, so the inflater is the one that has
+     * to notice. Chunk lengths are rewritten to match, with 12 bytes of
+     * tail so the container looks intact. */
+    size_t idat = 0;
+    for (size_t i = 8; i + 12 < n; ) {
+        size_t len = ((size_t)buf[i] << 24) | ((size_t)buf[i + 1] << 16) | ((size_t)buf[i + 2] << 8) | buf[i + 3];
+        if (!memcmp(buf + i + 4, "IDAT", 4)) { idat = i; break; }
+        i += 12 + len;
+    }
+    int inner_ok = idat != 0;
+    size_t full = idat ? (((size_t)buf[idat] << 24) | ((size_t)buf[idat + 1] << 16) | ((size_t)buf[idat + 2] << 8) | buf[idat + 3]) : 0;
+    for (size_t keep = 3; idat && keep < full; keep += (full / 17 + 1)) {
+        size_t m = idat + 8 + keep + 12;
+        uint8_t *tc = malloc(m);
+        memcpy(tc, buf, idat + 8 + keep);
+        memset(tc + idat + 8 + keep, 0, 12);
+        tc[idat] = (uint8_t)(keep >> 24); tc[idat + 1] = (uint8_t)(keep >> 16);
+        tc[idat + 2] = (uint8_t)(keep >> 8); tc[idat + 3] = (uint8_t)keep;
+        uint32_t *r = png_decode(tc, m, &w, &h);
+        if (r) { inner_ok = 0; free(r); }
+        free(tc);
+    }
+    ok("a PNG whose compressed data stops early is refused, not read past", inner_ok);
 
     if (access(WISH_EMOJI_FONT, R_OK) != 0) {
         printf("  (no %s here: the font checks are skipped)\n", WISH_EMOJI_FONT);

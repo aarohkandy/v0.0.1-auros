@@ -668,6 +668,26 @@ static void flatpak_data_dirs(void)
     setenv("XDG_DATA_DIRS", out, 1);
 }
 
+/* What she is looking at, as one number: which panel, and which page of
+ * it. Any change starts the dead time of "one press is one press". Not a
+ * guard -- nothing is ENABLED by it -- so it names the flags itself; it
+ * is a function, with `->`, so tools/modaltest.c (which hunts for guards
+ * written as a list of `c.<panel>_open`) does not mistake it for one. */
+static unsigned screen_signature(const shell_ctx *c)
+{
+    return (unsigned)(c->help_open | c->net_open << 1 | c->settings_open << 2 |
+                      c->bt_open << 3 | c->power_open << 4 | c->welcome_open << 5 |
+                      c->guard_open << 6 | c->wish_open << 7 |
+                      c->wishfill_open << 20) |
+           (unsigned)(c->welcome_open ? welcome_page() : 0) << 8 |
+           (unsigned)(c->settings_open ? settings_page() : 0) << 12 |
+           (unsigned)(c->net_open ? net_page() : 0) << 16 |
+           /* Wishes changes page by itself (asking, waiting, the answer),
+            * so a second press of a double-click must not land on the
+            * button that appears where the first one was. */
+           (unsigned)(c->wish_open ? wish_page() : 0) << 21;
+}
+
 int main(int argc, char **argv)
 {
     flatpak_data_dirs();
@@ -1191,13 +1211,7 @@ int main(int argc, char **argv)
     while (!want_quit) {
         /* What she is looking at, for "one press is one press": any
          * change of panel, page or question starts the dead time. */
-        press_screen(&pr, now_ms(),
-            (unsigned)(c.help_open | c.net_open << 1 | c.settings_open << 2 |
-                       c.bt_open << 3 | c.power_open << 4 | c.welcome_open << 5 |
-                       c.guard_open << 6 | c.wish_open << 7) |
-            (unsigned)(c.welcome_open ? welcome_page() : 0) << 8 |
-            (unsigned)(c.settings_open ? settings_page() : 0) << 12 |
-            (unsigned)(c.net_open ? net_page() : 0) << 16);
+        press_screen(&pr, now_ms(), screen_signature(&c));
         if (want_reload || c.want_reload) {
             want_reload = 0;
             c.want_reload = 0;

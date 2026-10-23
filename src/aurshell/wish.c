@@ -793,7 +793,7 @@ static const struct { const char *name; float scale; } SIZES[] = {
 };
 
 void wish_apply_text_scale(shell_ctx *c, float v);
-void wish_apply_look(shell_ctx *c, const char *look);
+int  wish_apply_look(shell_ctx *c, const char *look);
 
 void wish_apply_text_scale(shell_ctx *c, float v)
 {
@@ -806,11 +806,19 @@ void wish_apply_text_scale(shell_ctx *c, float v)
 
 static const char *const LOOKS[] = { "taskbar", "dock", "rail", "tiles", NULL };
 
-void wish_apply_look(shell_ctx *c, const char *look)
+/* The six the shell has: what a wish may NOT choose (the kiosk and the
+ * tiler) but must be able to go back to if that is what she had. */
+static const char *const LOOKS_ALL[] = { "taskbar", "dock", "rail", "tiles",
+                                         "workbench", "locked", NULL };
+
+/* 1 if the look was changed. The ONE place that decides a look name is
+ * allowed: the file it names is then looked for in the shell's own
+ * directory, so no path she was sent can lead anywhere else. */
+static int apply_look(shell_ctx *c, const char *look, const char *const *allowed)
 {
-    if (!is_one_of(look, LOOKS)) return;
+    if (!is_one_of(look, allowed)) return 0;
     const char *home = getenv("HOME");
-    if (!home || !*home) return;
+    if (!home || !*home) return 0;
     char dir[448], link[512], target[512];
     snprintf(dir, sizeof dir, "%s/.config", home);
     mkdir(dir, 0755);
@@ -820,9 +828,24 @@ void wish_apply_look(shell_ctx *c, const char *look)
     const char *sd = getenv("AUROS_SHELLS");
     snprintf(target, sizeof target, "%s/%s.shell",
              sd && *sd ? sd : "/usr/share/auros/shells", look);
-    if (access(target, R_OK) != 0) return;
+    if (access(target, R_OK) != 0) return 0;
     unlink(link);
-    if (symlink(target, link) == 0) c->want_reload = 1;
+    if (symlink(target, link) != 0) return 0;
+    c->want_reload = 1;
+    return 1;
+}
+
+/* A wish may choose one of four. */
+int wish_apply_look(shell_ctx *c, const char *look)
+{
+    return apply_look(c, look, LOOKS);
+}
+
+/* Putting back what she had: any of the six, and only what the shell
+ * itself reported as its look. */
+int wish_restore_look(shell_ctx *c, const char *look)
+{
+    return apply_look(c, look, LOOKS_ALL);
 }
 
 /* An https address with nothing in it a browser could take as a flag
@@ -889,16 +912,16 @@ static void do_shell(shell_ctx *c, const char *L, const char *E)
         } else if (!strcmp(type, "set_look")) {
             char look[16];
             js_getstr(d, de, "look", look, sizeof look);
-            if (is_one_of(look, LOOKS)) {
-                char old[24];
-                snprintf(old, sizeof old, "%s", c->layout_id);
-                if (is_one_of(old, LOOKS))
-                    snprintf(prev, sizeof prev,
-                             "{\"type\":\"set_look\",\"look\":\"%s\"}", old);
-                wish_apply_look(c, look);
-                ok = c->want_reload;
-                if (ok && prev[0]) wishover_keep(c, WO_KEEP_LOOK, old, title);
-            }
+            char old[24];
+            snprintf(old, sizeof old, "%s", c->layout_id);
+            /* The engine's Undo only knows the four; Keep this? knows all
+             * six, so a wish can always be taken back by pressing it. */
+            if (is_one_of(old, LOOKS))
+                snprintf(prev, sizeof prev,
+                         "{\"type\":\"set_look\",\"look\":\"%s\"}", old);
+            ok = wish_apply_look(c, look);
+            if (ok && is_one_of(old, LOOKS_ALL)) wishover_keep(c, WO_KEEP_LOOK, old, title);
+            if (!ok) prev[0] = 0;
         } else if (!strcmp(type, "open_app")) {
             char app[64];
             js_getstr(d, de, "app", app, sizeof app);

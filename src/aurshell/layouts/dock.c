@@ -99,6 +99,10 @@ static int dock_slots(shell_ctx *c, dock_slot *out)
     out[n].kind = SLOT_FIND; out[n].app = -1; n++;
     int store = shell_store_app(c);
     if (store >= 0) { out[n].kind = SLOT_STORE; out[n].app = store; n++; }
+    /* "Make a wish" is the same kind of thing as the store -- a labelled
+     * button that gets her something -- and so wears its slot. */
+    int wish = shell_wish_app(c);
+    if (wish >= 0) { out[n].kind = SLOT_STORE; out[n].app = wish; n++; }
 
     for (int i = 0; i < c->n_apps && n < MAX_SLOTS; i++)
         if (c->apps[i].pinned && i != store) { out[n].kind = SLOT_FAV; out[n].app = i; n++; }
@@ -478,8 +482,9 @@ static void paint_dock(shell_ctx *c, surface *s, shell_fonts *f, float alpha)
             uint32_t fpaper = fhot ? c->surface_hi : c->surface_c;
             draw_round_rect(s, fp, corners_all((float)c->radius_sm), fpaper, alpha);
             draw_frame(s, fp, fhot ? 2 : 1, fhot ? c->accent : c->fg, alpha);
-            shell_icon_draw(s, ICON_STORE, (float)fp.x + 22.f, (float)fp.y + 22.f,
-                            22.f, c->accent, fpaper, alpha);
+            shell_icon_draw(s, c->apps[sl[i].app].icon, (float)fp.x + 22.f, (float)fp.y + 22.f,
+                            22.f, c->apps[sl[i].app].role == APP_ROLE_STORE ? c->accent : c->fg,
+                            fpaper, alpha);
             shell_text_elided(s, f->mid, (float)fp.x + 42.f,
                               shell_baseline(f->mid, (float)fp.y, 44.f),
                               (float)fp.w - 50.f, c->apps[sl[i].app].name,

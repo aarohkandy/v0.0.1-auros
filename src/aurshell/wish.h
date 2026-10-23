@@ -119,7 +119,8 @@ void wish_send_keep(const char *wid, int yes);
 /* What a wish changed, carried out (wishover.c's "Keep this?" uses them
  * to put it back). */
 void wish_apply_text_scale(shell_ctx *c, float v);
-void wish_apply_look(shell_ctx *c, const char *look);
+int  wish_apply_look(shell_ctx *c, const char *look);
+int  wish_restore_look(shell_ctx *c, const char *look);
 
 /* "Undo my last wish" is offered for 10 minutes after a wish that
  * changed something now. 1 while it is. */
