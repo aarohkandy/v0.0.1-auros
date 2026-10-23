@@ -60,7 +60,8 @@ done
 [ -w /dev/kvm ] || { echo "no KVM"; exit 2; }
 mkdir -p "$EV"; : > "$EV/summary.txt"
 
-T=$(mktemp -d /tmp/theftvm.XXXXXX)
+# TMPDIR on a tmpfs (docker --tmpfs) keeps the 5 GB working disk off a shared disk
+T=$(mktemp -d "${TMPDIR:-/tmp}/theftvm.XXXXXX")
 QP=""; SWP=""; LP=""
 cleanup() {
     set +e
@@ -71,6 +72,7 @@ cleanup() {
     rm -rf "$T"
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 # ── the disk ──────────────────────────────────────────────────────
 DISK="$T/disk.img"

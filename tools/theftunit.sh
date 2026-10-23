@@ -47,8 +47,9 @@ TOP=$PWD
 if [ "${1:-}" = --mutants ]; then
     # Each mutant breaks one thing a check above claims to catch. The
     # suite must FAIL on every one of them.
-    M=$(mktemp -d /tmp/theftmut.XXXXXX)
+    M=$(mktemp -d "${TMPDIR:-/tmp}/theftmut.XXXXXX")
     trap 'rm -rf "$M"' EXIT
+    trap 'exit 130' INT TERM       # the EXIT trap then cleans up (FIELD-MANUAL, disk budget)
     survived=0
     mutant() { # NAME FILE SED
         rm -rf "$M/t"; mkdir -p "$M/t"
@@ -91,7 +92,7 @@ for t in cryptsetup swtpm tpm2_pcrextend gcc mkfs.ext4 losetup systemd-cryptenro
     command -v "$t" >/dev/null || { echo "need $t"; exit 2; }
 done
 
-T=$(mktemp -d /tmp/theft.XXXXXX)
+T=$(mktemp -d "${TMPDIR:-/tmp}/theft.XXXXXX")
 ID=s4t$$$(od -An -tx1 -N3 /dev/urandom | tr -d ' ')
 LOOPS=""; NAMES=""; SWPID=""
 cleanup() {
@@ -106,6 +107,7 @@ cleanup() {
     rm -rf "$T" /run/auros-lock
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM   # a killed run must not leave multi-GB images or loop devices
 
 PIN="$T/aurlock-pin"
 gcc -O2 -std=gnu11 -Wall -Wextra -Werror -o "$PIN" "$SRC/src/aurshell/lockpin.c" \
