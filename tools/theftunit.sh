@@ -482,7 +482,9 @@ for v in 6.8.0-9-generic 6.8.0-10-generic; do : > "$M/boot/vmlinuz-$v"; : > "$M/
 python3 -I "$SRC/rootfs/usr/lib/auros/bootchain" menu --root "$M" --running none >/dev/null 2>&1
 CFG="$M/boot/grub/grub.cfg"
 if [ -s "$CFG" ] && bash "$LOCKCTL" convert-menu "$CFG" "$T/esp.cfg" "$ESPU" "$ROOTU" "$PARTU"; then
-    nl=$(grep -cE '^[[:space:]]*linux[[:space:]]' "$CFG")
+    # the kernel lines: the restore's own kernel on the Windows partition
+    # (linux /EFI/AurOS/staging.efi) is not AurOS's and must stay as it is
+    nl=$(grep -cE '^[[:space:]]*linux[[:space:]]+/boot/vmlinuz-' "$CFG")
     nc=$(grep -cE "^[[:space:]]*linux[[:space:]]+/auros/vmlinuz-.* auros\.lock=PARTUUID=$PARTU( |\$)" "$T/esp.cfg")
     [ "$nl" -ge 4 ] && [ "$nl" = "$nc" ] && ok "the current menu converts: all $nl kernel lines start from the EFI partition and carry the lock" \
         || bad "every kernel line converts" "$nl lines, $nc converted"
