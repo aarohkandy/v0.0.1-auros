@@ -49,6 +49,7 @@ accessible by integration", this page is where to look.
 | Secret name | What it is | When it's needed | How to make it |
 |---|---|---|---|
 | `AUROS_APT_SIGNING_KEY` | the private half of AurOS's own update-signing key (OpenPGP). Computers running AurOS trust only updates sealed with it. **Not Microsoft, not a certificate, free.** | **before the first public release**: computers installed from a release made without it never get AurOS's own fixes | §4a below, about 5 minutes on your Mac |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `ANTHROPIC_API` (or `ANTHROPIC_API_KEY`), optional `WISHES_ALERT_URL` | the Wishes cloud service (AI) | **set (2026-10-23)**; the Anthropic key must be scoped to a workspace | §7 below |
 
 ### 4a. `AUROS_APT_SIGNING_KEY`, step by step (once, about 5 minutes)
 
@@ -161,4 +162,75 @@ Also put a security contact address in `SECURITY.md` where it says `[OWNER: ...]
 ## 6. When you move to a new repository
 
 See `docs/MOVING.md`: one `git clone` brings every file; then redo sections
-1, 2 and 4 on the new repository, and push once to rebuild the release.
+1, 2, 4 and 7 on the new repository, and push once to rebuild the release.
+
+## 7. Wishes: the AI service (Anthropic + Cloudflare)
+
+What it is: `docs/CLOUD.md`. It runs on Cloudflare (no server to look after)
+and uses Anthropic's Claude. You pay Anthropic per wish (about a hundredth of
+a cent) and nothing to Cloudflare until roughly 5,000 people a day use it
+(then $5 a month). The workflow `.github/workflows/cloud.yml` deploys it
+whenever the secrets below exist; without them it only runs the tests.
+
+**Already done (2026-10-23):** `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`
+and the Anthropic key as `ANTHROPIC_API` are set, the service is live at
+https://auros-wishes.aarohkandy.workers.dev. The workflow accepts the key
+under either name, `ANTHROPIC_API` or `ANTHROPIC_API_KEY`; keep the one you have.
+
+### 7a. Anthropic: its own workspace, with a spending limit (5 minutes, needed now)
+
+The key you pasted belongs to the whole organization, and Anthropic refuses
+it for this use ("not scoped to a workspace"). A workspace of its own is
+what the contract asks for anyway: Wishes gets its own monthly limit, and
+nothing else you use Anthropic for can be affected.
+
+1. https://platform.claude.com → **Settings → Workspaces → Create workspace**.
+   Name: `AurOS Wishes`.
+2. Open it → **Limits** → set a **monthly spend limit** (start with **$50**;
+   the service's own daily cap is $5, so this is the backstop).
+3. In that workspace → **API keys → Create key**, name `cloud.yml`. Copy it.
+4. https://github.com/aarohkandy/v0.0.1-auros/settings/secrets/actions →
+   `ANTHROPIC_API` → **Update** → paste → **Update secret**.
+5. Tell an agent "the Wishes key is in" (or: Actions → cloud → **Run
+   workflow**). The run's summary shows the live checks and the cost per wish.
+6. Delete the old organization key in the Console if nothing else uses it.
+
+(Alternative to steps 3–4, if you want to keep the current key: copy the
+workspace's id, `wrkspc_…`, and add it as a repository **variable** — Settings
+→ Secrets and variables → Actions → **Variables** → `ANTHROPIC_WORKSPACE_ID`.)
+
+### 7b. Anthropic: privacy paperwork (before Wishes is switched on for the public)
+
+The contract (`docs/AI.md` §7.12) needs two things only you can ask for:
+
+1. Anthropic's **Data Processing Addendum** (DPA) for your organization.
+   Look for it in the Console's legal or privacy settings; if it is not there
+   as a click-through, ask Anthropic through https://support.claude.com.
+2. **Zero data retention** for the organization (same place: ask support;
+   say it is for an operating system's assistant used by elderly people).
+   Their answer decides the retention sentence in the consent text
+   (`docs/CLOUD.md` §4).
+
+Tell an agent the outcome of each; the consent text is updated from it.
+
+### 7c. Cloudflare token, least privilege (only if you make a new one)
+
+https://dash.cloudflare.com/profile/api-tokens → **Create token → Custom
+token**. Permissions, all **Account** level, for your account only:
+**Workers Scripts: Edit**, **Workers Tail: Read**, **Account Settings: Read**.
+No zone permissions. Paste it into the `CLOUDFLARE_API_TOKEN` secret. The
+account id is on the right of the Workers & Pages overview page
+(`CLOUDFLARE_ACCOUNT_ID`).
+
+### 7d. Optional: a phone alert at half the day's budget (3 minutes)
+
+Install the free **ntfy** app on your phone and subscribe to a topic with a
+long random name (for example `auros-wishes-` and 16 random letters). Add the
+secret `WISHES_ALERT_URL` = `https://ntfy.sh/<that topic>`. Once a day, when
+half the daily budget is used, your phone says so. The message holds a dollar
+amount and nothing about anyone.
+
+What the workflow does with these: it sets the Anthropic key on the Worker
+through stdin (never printed), makes the token-signing secret once by itself
+(nobody, including you, ever needs to see it), deploys, and checks the live
+service. Rotation and outages: `docs/CLOUD.md` §5.
