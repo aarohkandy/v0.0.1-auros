@@ -16,7 +16,9 @@ questions] ("we", "us").
   sign-in, no adverts, no analytics and no tracking, on the website, in
   the installer, or on your computer.
 - **Nothing on your computer is sent to us.** Your files, your
-  passwords and what you do stay on your computer.
+  passwords and what you do stay on your computer. The one exception
+  is **Wishes**, and only if you switch it on: then the words of each
+  wish you make are sent to be understood (section 4a).
 - To download AurOS and keep it safe, your computer does talk to some
   **other organisations' servers** (GitHub, Ubuntu, Mozilla, Flathub,
   Google's Safe Browsing). They see what any website you visit sees,
@@ -94,6 +96,56 @@ table match. Re-check whenever a release adds a service.]
 visit**, have their own privacy policies; we don't control what they
 collect.
 
+## 4a. Wishes (only if you switch it on)
+
+[CHECK: this section follows the contract in `docs/AI.md` (sections 1.4,
+1.8 and the red team's change 12) as of 2026-10-23. Re-check it against
+the shipped service and consent screen before publishing; the consent
+screen must link here.]
+
+Wishes lets you tell your computer, in your own words, what you would
+like it to do ("make the words bigger every evening"). It is **off until
+you say yes** on a screen that explains it first. If you say no, nothing
+is sent, and the rest of AurOS works the same.
+
+When it is on, each time you make a wish or ask a question, your
+computer sends:
+
+- the **words of your wish or question**;
+- your **language**;
+- a **list of what your computer can do** with a wish: which looks and
+  sensors it has, and which programs are installed;
+- a **random number** your computer made up when you switched Wishes
+  on, so that the number of wishes a day can be limited fairly. It is not
+  your name and is not linked to you.
+
+It never sends what you type anywhere else, your files, your contacts,
+your passwords or where you are.
+
+**Who receives it.** Our Wishes service, which runs on **Cloudflare**
+(Cloudflare, Inc., USA), passes your words to **Anthropic** (Anthropic
+PBC, USA), whose AI model, Claude, turns them into a wish. Your computer
+then shows you the wish, in its own words, and does nothing until you
+press Yes. Both companies are in the United States, so your words leave
+your country. [LAWYER: the legal basis (consent?), the transfer
+mechanism to the US, and the processor agreements with Cloudflare and
+Anthropic. OWNER: sign Anthropic's data processing agreement and ask for
+zero data retention; then make the next paragraph match what was agreed.]
+
+**What is kept.** Our service keeps only counts: how many wishes, how
+long they took and what they cost. It never keeps the words of a wish.
+The daily counters are scrambled with a key that is thrown away after two
+days. Anthropic may keep a request for up to 30 days, or longer (up to
+two years) if its safety systems flag it, under its own policy. [CHECK:
+Anthropic's retention terms at the time of publishing, and whether zero
+data retention was granted.] The wishes you keep are stored **on your
+computer**, and are left out of any backup that leaves it.
+
+**Forgetting.** Turning Wishes off, or pressing **Forget everything**,
+deletes your random number and its counts from our service, and deletes
+your wishes from your computer. We cannot delete Anthropic's copy of
+past requests; it expires on Anthropic's schedule.
+
 ### Your files from Windows
 
 On its first start, AurOS offers to **bring copies of your documents,
@@ -124,11 +176,14 @@ AurOS is not aimed at children and collects nothing from anyone.
 ## 7. Your rights
 
 Because we don't collect personal data about people who use AurOS, there
-is usually nothing for us to show, correct or delete. If you think we
+is usually nothing for us to show, correct or delete. If you use Wishes,
+**Forget everything** deletes what our service holds (section 4a). If you think we
 hold something about you (for example an email you sent), ask us at
 [OWNER: contact] and we will tell you and, if you wish, delete it.
 [LAWYER: rights wording for GDPR/UK GDPR, California and other places
-where users live; the supervisory authority to name.]
+where users live; the supervisory authority to name; whether the Wishes
+random number and the text of a wish are personal data, and what that
+changes.]
 
 ## 8. Changes
 

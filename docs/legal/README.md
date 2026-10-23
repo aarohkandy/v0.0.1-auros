@@ -50,6 +50,11 @@
      you a controller of that data, and what the privacy policy must then
      say (GDPR/UK GDPR, California, others);
    - the **safe-harbour promise** in `SECURITY.md`;
+   - **Wishes** (`docs/AI.md`): her words go to a service on Cloudflare
+     and to Anthropic in the US. Consent screen wording, legal basis,
+     transfer mechanism, processor agreements (sign Anthropic's DPA and
+     ask for zero data retention), and whether the terms need an AI
+     notice. Privacy section 4a and terms section 5 are the drafts;
    - whether you need an **imprint / legal notice** (required for websites
      run from Germany and some other countries).
 4. **If anything is ever sold** (support, a pre-installed computer, a paid

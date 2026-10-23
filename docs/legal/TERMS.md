@@ -89,6 +89,17 @@ screen but does not ask the person to accept terms.]
 - Programs you add through **Get more programs** come from other
   people (mainly the Flathub catalogue). Their own terms apply to them,
   and they are not made or checked by us.
+- **Wishes** (if you switch it on) uses an AI model to turn your words
+  into a wish. It can misunderstand you. Your computer always shows what
+  a wish will do and does nothing until you press Yes, and you can stop
+  any wish. A wish can only do a fixed, limited set of harmless things;
+  it cannot delete files, send messages, buy anything or change security
+  settings. The service is free, may limit how many wishes you make in a
+  day, and may be unavailable at times. Don't use it to try to make
+  AurOS do something harmful. How your words are handled is in the
+  privacy policy, section 4a. [LAWYER: whether AI-output and
+  service-availability wording is needed here or in a separate Wishes
+  notice; the EU AI Act's transparency duties, if any.]
 
 ## 6. No guarantee
 
