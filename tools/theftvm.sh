@@ -169,6 +169,11 @@ case "$st" in
         if [ $((n % 15)) -eq 0 ]; then
             say "pass-progress t=$(( $(date +%s) - t0 )) svc=$(systemctl is-active auros-lock-encrypt) seg=[$(cryptsetup luksDump "$dev" 2>/dev/null | grep -E '^ *(offset|length|[0-9]: )' | tr -s ' \t' ' ' | tr '\n' ' ' | cut -c1-240)] ps=[$(ps -eo pid,stat,pcpu,wchan:20,cmd | grep '[c]ryptsetup reencrypt' | head -2 | tr -s ' ' | tr '\n' '|')] dm=[$(for d in /sys/block/dm-*; do printf '%s:susp=%s ' "$(cat $d/dm/name 2>/dev/null)" "$(cat $d/dm/suspended 2>/dev/null)"; done)] mem=[$(grep -E 'MemAvailable|SwapFree' /proc/meminfo | tr -s ' ' | tr '\n' ' ')]"
         fi
+        if [ "$n" -gt 8 ] && ! systemctl is-active --quiet auros-lock-encrypt; then
+            say "pass TIMEOUT"          # the pass service ended and the drive is still not done
+            say "pass-journal $(journalctl -u auros-lock-encrypt -b -o cat 2>/dev/null | tail -6 | tr '\n' '|')"
+            break
+        fi
         if [ $(( $(date +%s) - t0 )) -gt @PASSLIM@ ]; then
             say "pass TIMEOUT"
             say "pass-journal $(journalctl -u auros-lock-encrypt -b -o cat 2>/dev/null | tail -6 | tr '\n' '|')"

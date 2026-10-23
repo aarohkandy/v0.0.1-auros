@@ -350,9 +350,10 @@ cmd_encrypt_pass() {
     # --disable-udev: libdevmapper otherwise waits, at 0% CPU for ever, for
     # a udev answer that only dmsetup's rules give, and this image has
     # none (measured in the VM: the pass sat in a semaphore wait).
-    ionice -c3 nice -n 19 cryptsetup --disable-udev reencrypt --resume-only --batch-mode \
-        --key-file <(printf '%s' "$TEMP_KEY") "$dev" >/dev/null 2>&1 \
-        || die "the pass stopped; it carries on at the next start"
+    local out
+    out=$(ionice -c3 nice -n 19 cryptsetup --disable-udev reencrypt --resume-only --batch-mode \
+        --key-file <(printf '%s' "$TEMP_KEY") "$dev" 2>&1)
+    [ $? = 0 ] || die "the pass stopped; it carries on at the next start: $(echo "$out" | tail -3 | tr '\n' ' ')"
     say "the whole drive is encrypted"
 }
 
