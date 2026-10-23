@@ -10,7 +10,10 @@ today the owner's Mac: `REPO` (the checkout, read through `git -C`;
 the path has a space, so it is always quoted), `BR` (`origin/main`),
 `SCRATCH` (where writers put their worktree), `LOG` (the session's
 Progress log), `PUSH` (`main`, rebased) and `TRAILER` (the one
-Co-Authored-By line). To run one elsewhere, change those lines only. The
+Co-Authored-By line). To run one elsewhere, change those lines only.
+Fetches name their target (`origin +main:refs/remotes/origin/main`): in a
+checkout whose `remote.origin.fetch` still maps another branch, a plain
+`git fetch origin main` leaves `origin/main` stale. The
 repository's GitHub name is never written in: agents ask
 `sh "$REPO/tools/repo.sh"`.
 
