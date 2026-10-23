@@ -670,9 +670,9 @@ elif [ -n "$WANT" ]; then
     REP=$(grep 'aurbridge-report v1 fast=1' "$S/out")
     RFIRST=$(printf '%s' "$REP" | sed -n 's/.* root=\([0-9]*\)\.\..*/\1/p')
     printf '\xff' | dd of="$S/disk.img" bs=1 seek=$((RFIRST*512 + 4096*50)) conv=notrunc status=none
-    ESP_BEFORE=$(mdir -i "$S/disk.img@@$ESPOFF" -/ ::/ 2>/dev/null | grep -v "^ Volume\|bytes free\|^$" | sort)
+    ESP_BEFORE=$(mdir -i "$S/disk.img@@$ESPOFF" -/ -b ::/ 2>/dev/null | sort)
     OTHERS_BEFORE=$(for part in 2 3; do f=$(sgdisk -i $part "$S/disk.img" | sed -n 's/^First sector: \([0-9]*\).*/\1/p'); l=$(sgdisk -i $part "$S/disk.img" | sed -n 's/^Last sector: \([0-9]*\).*/\1/p'); extent_sha "$S/disk.img" $((f*512)) $(((l-f+1)*512)); done)
-    TABLE_BEFORE=$(sgdisk -p "$S/disk.img" 2>/dev/null)
+    TABLE_BEFORE=$(sgdisk -p "$S/disk.img" 2>/dev/null | sed 1d)
     boot_staging "$S/disk.img" "aurstage.install aurstage.min_gb=1" "aurstage-report v1 verdict=" 900 || true
     grep -aq "aurstage-report v1 verdict=" "$MTMP/out.txt" && ! grep -aq "INSTALLTEST-AUROS-STARTED" "$MTMP/out.txt" \
         && ok "staging refuses the damaged root" || bad "staging refuses the damaged root" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -3)"
@@ -686,7 +686,7 @@ elif [ -n "$WANT" ]; then
     else
         bad "\\EFI\\AurOS\\stage.log is there"
     fi
-    ESP_AFTER=$(mdir -i "$R@@$ESPOFF" -/ ::/ 2>/dev/null | grep -v "^ Volume\|bytes free\|^$" | sort)
+    ESP_AFTER=$(mdir -i "$R@@$ESPOFF" -/ -b ::/ 2>/dev/null | sort)
     echo "$ESP_BEFORE" > "$MTMP/espb"; echo "$ESP_AFTER" > "$MTMP/espa"
     DIFF=$(diff "$MTMP/espb" "$MTMP/espa" | grep '^[<>]' | grep -vi 'stage.log' || true)
     [ -z "$DIFF" ] && ok "the EFI partition holds the same files, plus that one" || bad "the EFI partition holds the same files, plus that one" "$DIFF"
@@ -695,7 +695,9 @@ elif [ -n "$WANT" ]; then
     OTHERS_AFTER=$(for part in 2 3; do f=$(sgdisk -i $part "$R" | sed -n 's/^First sector: \([0-9]*\).*/\1/p'); l=$(sgdisk -i $part "$R" | sed -n 's/^Last sector: \([0-9]*\).*/\1/p'); extent_sha "$R" $((f*512)) $(((l-f+1)*512)); done)
     [ "$OTHERS_BEFORE" = "$OTHERS_AFTER" ] && ok "Windows' partition and the recovery partition are byte for byte what they were" \
         || bad "Windows' partition and the recovery partition are byte for byte what they were"
-    [ "$(sgdisk -p "$R" 2>/dev/null)" = "$TABLE_BEFORE" ] && ok "...and so is the partition table" || bad "...and so is the partition table"
+    TABLE_AFTER=$(sgdisk -p "$R" 2>/dev/null | sed 1d)
+    [ "$TABLE_AFTER" = "$TABLE_BEFORE" ] && ok "...and so is the partition table" \
+        || { echo "$TABLE_BEFORE" > "$MTMP/tb"; echo "$TABLE_AFTER" > "$MTMP/ta"; bad "...and so is the partition table" "$(diff "$MTMP/tb" "$MTMP/ta" | head -6)"; }
     # and with aurstage.nolog nothing at all is written
     cp --sparse=always "$S/disk.img" "$MTMP/nolog.img"
     boot_staging "$MTMP/nolog.img" "aurstage.install aurstage.min_gb=1 aurstage.nolog" "aurstage-report v1 verdict=" 900 || true
