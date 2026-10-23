@@ -7,15 +7,32 @@
  * tool or a disk that is failing: every field is untrusted. This harness
  * makes the fuzzer's bytes the whole disk, reads it through
  * gpt_read_with() (the same entry the planner uses), runs every query
- * the planner asks of the table, then does what commit.c does with it:
- * serialises it, and checks that what we would write is a header we
- * ourselves would read back -- a table we cannot re-read after the
- * commit is a machine that does not start.
+ * the planner asks of the table, and then plays commit_table() (commit.c)
+ * on a copy of the disk, writing exactly what it writes where it writes
+ * it. Two promises are checked:
+ *
+ *   1. NOTHING IT WRITES LANDS IN A PARTITION. The four writes (primary
+ *      array and header, backup array and header) go where the table's
+ *      own header fields say; if those point into her Windows partition,
+ *      that is her data overwritten by a partition table.
+ *   2. WHAT IT WRITES, gpt_read() READS BACK: valid, from the primary,
+ *      the same entries. A table we cannot re-read after the commit is a
+ *      machine that does not start.
+ *
+ * Writes that commit.c's wr_arm() gate would refuse (off the disk, or the
+ * primary and backup windows overlapping) are a refusal, not a finding.
+ * A table read from the backup is not committed at all: rescue_capture()
+ * refuses one first (rescue.c).
  *
  * Input: [sector byte][disk image]. Bit 0 of the sector byte picks a
  * 512- or 4096-byte logical sector.
  */
-#include "../../src/aurstage/gpt.c"
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "../../src/aurstage/gpt.h"
 
 typedef struct { const uint8_t *p; size_t n; } disk;
 
@@ -51,23 +68,50 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     (void)gpt_add(&t, GPT_TYPE_LINUX_ROOT, "AUROS-ROOT-WITH-A-NAME-LONGER-THAN-36-CHARACTERS",
                   t.first_usable, s ? s - 1 : 0, NULL, why, sizeof why);
 
-    /* What commit_table() writes, read back the way gpt_read() would.
-     * Only for a table read from the primary: rescue_capture() refuses a
-     * backup-only disk before any commit can happen (rescue.c), so a
-     * backup's entry_lba never becomes a primary header's. */
     if (t.from_backup) return 0;
-    size_t ab = gpt_array_bytes(&t);
-    uint8_t *hdr = malloc(t.sector), *arr = malloc(ab ? ab : 1);
-    if (!hdr || !arr) abort();
-    for (int primary = 1; primary >= 0; primary--) {
-        gpt_serialize(&t, primary, hdr, arr);
-        static gpt_table u;
-        memset(&u, 0, sizeof u);
-        if (parse_header(hdr, t.sector, &u) != 0) abort();
-        if (u.n_entries != t.n_entries || u.entry_size != t.entry_size ||
-            rd32(hdr + 88) != gpt_crc32(arr, ab))
-            abort();
+
+    /* commit_table(), on a copy. */
+    uint64_t S = t.sector, ab = gpt_array_bytes(&t);
+    uint64_t alt = t.disk_sectors - 1, barr = alt - (ab + S - 1) / S;
+    struct { uint64_t off, len; } w[4] = {
+        { t.entry_lba * S, ab }, { S, S }, { barr * S, ab }, { alt * S, S },
+    };
+    uint64_t plo = S, phi = t.entry_lba * S + ab, blo = barr * S, bhi = (alt + 1) * S;
+    if (t.entry_lba > UINT64_MAX / S - 1 || barr > alt || phi <= plo ||
+        phi > d.n || bhi > d.n || (plo < bhi && blo < phi))
+        return 0;                                   /* wr_arm() says no */
+
+    for (int k = 0; k < 4; k++)
+        for (uint32_t i = 0; i < t.n_entries; i++) {
+            const gpt_entry *e = &t.ent[i];
+            if (!gpt_used(e) || e->last < e->first) continue;
+            uint64_t a = e->first * S, b = (e->last + 1) * S;
+            if (e->first > UINT64_MAX / S - 1 || e->last > UINT64_MAX / S - 1) continue;
+            if (w[k].off < b && a < w[k].off + w[k].len) {
+                fprintf(stderr, "commit would write %llu bytes at %llu, inside partition %u [%llu, %llu)\n",
+                        (unsigned long long)w[k].len, (unsigned long long)w[k].off, i + 1,
+                        (unsigned long long)a, (unsigned long long)b);
+                abort();
+            }
+        }
+
+    uint8_t *copy = malloc(d.n), *hdr = malloc(S), *arr = malloc(ab ? ab : 1);
+    if (!copy || !hdr || !arr) abort();
+    memcpy(copy, d.p, d.n);
+    gpt_serialize(&t, 1, hdr, arr);
+    memcpy(copy + w[0].off, arr, ab);
+    memcpy(copy + w[1].off, hdr, S);
+    gpt_serialize(&t, 0, hdr, arr);
+    memcpy(copy + w[2].off, arr, ab);
+    memcpy(copy + w[3].off, hdr, S);
+
+    static gpt_table u;
+    disk c = { copy, d.n };
+    if (gpt_read_with(disk_read, &c, t.sector, d.n, &u) != 0 || !u.valid || u.from_backup ||
+        u.n_entries != t.n_entries || memcmp(u.ent, t.ent, sizeof t.ent[0] * t.n_entries)) {
+        fprintf(stderr, "the table commit_table() would write does not read back\n");
+        abort();
     }
-    free(hdr); free(arr);
+    free(copy); free(hdr); free(arr);
     return 0;
 }

@@ -90,7 +90,9 @@ def gpt_seeds():
     out("gpt", "512-four-entries", b"\x00" + gpt_disk(512, 64, 4, parts))
     out("gpt", "512-backup-only", b"\x00" + gpt_disk(512, 64, 4, parts, corrupt_primary=True))
     out("gpt", "4096-four-entries", b"\x01" + gpt_disk(4096, 16, 4, [(ESP, 3, 5, "EFI"), (MSDATA, 6, 12, "Windows")]))
-    out("gpt", "512-128-entries", b"\x00" + gpt_disk(512, 100, 128, parts))
+    # 128 entries fill LBA 2-33, so the partitions start after them.
+    out("gpt", "512-128-entries", b"\x00" + gpt_disk(512, 100, 128,
+        [(ESP, 34, 40, "EFI system partition"), (MSDATA, 41, 60, "Basic data partition")]))
 
 
 # ── journal: what AurBridge writes before the restart ─────────────

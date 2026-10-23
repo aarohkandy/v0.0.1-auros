@@ -56,7 +56,7 @@ build theme   "$HERE/fuzz_theme.c" "$C/theme.c" "$C/wall.c" "$S/draw.c" -- -lm
 build desktop "$HERE/fuzz_desktop.c" -- -lm
 # Stream A2's parsers: fuzzed here, fixed there (reproducers go to A2).
 build inflate "$HERE/fuzz_inflate.c" "$ROOT/src/aurbridge/inflate.c"
-build gpt     "$HERE/fuzz_gpt.c"
+build gpt     "$HERE/fuzz_gpt.c" "$ROOT/src/aurstage/gpt.c"
 build journal "$HERE/fuzz_journal.c" "$ROOT/src/aurstage/journal.c"
 # Stream R's registry reader (runs as root on her Windows disk's hives).
 build hive    "$HERE/fuzz_hive.c"
