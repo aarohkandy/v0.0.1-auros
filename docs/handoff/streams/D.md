@@ -48,20 +48,48 @@ phones/Macs get "open this on your Windows PC" + send-yourself-the-link.
   hold rearms, charger required, release tested (promote needs the e2e of that
   exe). `tools/wordlint.sh`: no website lines.
 
-## Waiting on others
-- Pictures: AurOS Setup's are B's dark Wine renders (`setup-*.jpg` from
-  docs/shots/wizard/); swap for B's Light restyle when it lands (same names,
-  ring positions in index.html are percentages; recheck them). The desktop
-  pictures say "Firefox" and "All Programs" until C renames them (Internet,
-  All my programs); re-render with `tools/site/aurshell-shots/` then.
-  DESIGN-DIRECTION P0-3 asks for real content (a news page in Internet, 12
-  family photos) captured at 2x: needs C's screenshot set (C P2-16).
-- P2-13 (no printed address anywhere) conflicts with guide.html, which is
-  printed and must say where to go: owner decision on a short address.
-- The slashed zero in "10" is the font's (P2: AurOS Sans, C/B/D together).
+## Second pass (usability walkthrough, F's findings; Sonnet 5.5 session)
+- B-01 + F findings 1-3: the Edge pictures redrawn from real Edge (run
+  39923720924): three dots, Keep, the black Delete whose small arrow hides
+  Keep anyway, Open file; dated "October 2026" with the words for when the
+  buttons look different; UAC as it is (yellow band, unknown publisher, No is
+  the blue highlighted one: the text says Yes is the white one); the blue
+  "Windows protected your PC" box only "if you see it". The old "Show more" is
+  refused by the check (the printed guide said it too). Chrome/Firefox
+  pictures are NOT from real screenshots (the e2e only runs Edge).
+- B-02: a calm "If your antivirus program takes the file" step (no brand,
+  nothing installed, where to look, put it back only if it came from this page).
+- A-01: phone/Mac: "Send this page to myself" (navigator.share), Copy the link
+  with a 24px confirmation (the address itself if the browser won't copy),
+  Email second; on a phone the button is above the picture and wholly on an
+  iPhone's first screen. Tested with the share sheet mocked four ways.
+- A-04: the time follows Setup (B: 25 to 60 minutes, 1 to 3 hours on a hard
+  disk; unmeasured in the code). Hook for the measured median:
+  `tools/site/journey.json` (null until F's journey clock has a whole run).
+- Setup pictures = crops of B's final Light screens (`tools/site/pictures.py`);
+  desktop pictures use C's names (Internet, All my programs, Wi-Fi).
+- Plain zero (`tools/site/plainzero.py`): the font has no alternate, so the
+  zero is redrawn; the typed address on the printed sheet keeps the slashed
+  one. The printed sheet shows the website address; no phone number anywhere
+  (checked). The "Their phone" blank on the sheet is for the helper to write,
+  nothing is printed in it.
+- check.mjs: 298 checks. Three green-to-red drifts were fixed on the way:
+  advanced.html's BIOS title and welcome.c's answer sentences (6845420), B's
+  new time (79a3641), the room figures moving to src/aurstage/plan.c (187a25e).
 
-## Half-done / next
-- P2-12 done: on a phone the picture comes before "Send yourself the link"; a Mac gets Copy first.
+## Waiting on others
+- Real content in the desktop pictures (a news page in Internet, 12 family
+  photos; DESIGN-DIRECTION P0-3) needs C's screenshot set; today they are
+  honest renders of an empty desktop with the programs list.
+- The measured time: stream F's journey clock (no whole journey has completed
+  yet: the last e2e stopped at the BitLocker refusal after the restart).
+- P2-13 (no printed address): the guide prints it; a short address of our own
+  is the owner's WP-15 domain. `AUROS_DOMAIN` moves the Get AurOS link only
+  (stamp.sh); the printed address is still the github.io one.
+- Not done from the walkthrough (not asked): A-02 (a line under the button
+  about not knowing which Windows), A-05 (scroll to step 1 after the press),
+  A-06 (rename "Stuck? Show a helper": DESIGN-DIRECTION fixes that string),
+  A-09, B-03, B-04, B-06.
 
 ## How to verify
 ```sh

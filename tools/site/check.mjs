@@ -645,13 +645,32 @@ for (const [at, want] of [
     const cp = await page.evaluate(() => { const e = document.getElementById("copied"); const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return { text: e.innerText, size: parseFloat(cs.fontSize), right: r.right, vw: innerWidth }; });
     check(/^Copied\. Now paste it|press and hold this address/i.test(cp.text) && cp.size >= 22 && cp.right <= cp.vw, `${v.name}: Copy the link answers in a big sentence that fits the screen`, `${cp.size}px ${JSON.stringify(cp.text)}`);
     textFindings(`${v.name} after copying`, await page.evaluate(measureText));
-    if (v.name === "iPhone") await shot(page, "index-phone-copied.png");
+    if (v.name === "iPhone") { await page.evaluate(() => { document.documentElement.style.scrollBehavior = "auto"; document.getElementById("copied").scrollIntoView({ block: "center" }); }); await page.waitForTimeout(100); await shot(page, "index-phone-copied.png"); }
     await ctx.close();
   }
 
   // The letters: the zero is a plain oval in every weight the site loads
   // (the upstream zero is slashed; docs/research/people-walkthrough-2026-10.md A-03).
   {
+    const ctxGuide = async () => {
+      const { ctx: c2, page: p2 } = await visit({ name: "letters guide", url: HOME + "guide.html", ua: UA.winEdge, uad: UAD.winX64 });
+      const r = await p2.evaluate(async () => {
+        const out = [];
+        for (const e of document.querySelectorAll(".addr")) {
+          const cs = getComputedStyle(e);
+          await document.fonts.load(`${cs.fontWeight} 100px ${cs.fontFamily}`, "0");
+          const c = document.createElement("canvas"); c.width = 200; c.height = 160;
+          const g = c.getContext("2d"); g.font = `${cs.fontWeight} 100px ${cs.fontFamily}`; g.fillText("0", 40, 120);
+          const mid = 40 + g.measureText("0").width / 2;
+          const px = g.getImageData(Math.round(mid) - 2, 120 - 35 - 2, 5, 5).data;
+          let ink = 0; for (let i = 3; i < px.length; i += 4) ink += px[i];
+          out.push({ family: cs.fontFamily, slashed: ink > 0 });
+        }
+        return out;
+      });
+      await c2.close();
+      return r.length ? r : [{ family: "none", slashed: false }];
+    };
     const { ctx, page } = await visit({ name: "letters", ua: UA.winEdge, uad: UAD.winX64 });
     const holes = await page.evaluate(async () => {
       const out = {};
@@ -668,6 +687,9 @@ for (const [at, want] of [
       return out;
     });
     for (const [w, h] of Object.entries(holes)) check(h.loaded && h.ink === 0, `letters: the zero has no slash in the ${w} weight`, JSON.stringify(h));
+    // ...except in an address she types: there the old zero, so it is not read as the letter O.
+    const g = await ctxGuide();
+    check(g.every((x) => x.family.startsWith('"AurOS Zero"') && x.slashed), "letters: the address on the printed sheet keeps the slashed zero", JSON.stringify(g));
     await ctx.close();
   }
 

@@ -13,6 +13,12 @@
 @font-face { font-family: "Atkinson Hyperlegible Next"; src: url("fonts/atkinson-next-700.woff2") format("woff2"); font-weight: 700; font-style: normal; font-display: swap; }
 @font-face { font-family: "Atkinson Hyperlegible Next"; src: url("fonts/atkinson-next-800.woff2") format("woff2"); font-weight: 800; font-style: normal; font-display: swap; }
 
+/* The zero with its slash, for a web address she types from a page (a plain
+ * zero looks like the letter O there). Only U+0030 comes from these files. */
+@font-face { font-family: "AurOS Zero"; src: url("fonts/zero-slashed-400.woff2") format("woff2"); font-weight: 400; unicode-range: U+0030; font-display: swap; }
+@font-face { font-family: "AurOS Zero"; src: url("fonts/zero-slashed-700.woff2") format("woff2"); font-weight: 700; unicode-range: U+0030; font-display: swap; }
+.addr { font-family: "AurOS Zero", var(--face); font-weight: 700; overflow-wrap: anywhere; }
+
 :root {
   --paper: #F6F2E9;
   --soft: #ECE6DA;

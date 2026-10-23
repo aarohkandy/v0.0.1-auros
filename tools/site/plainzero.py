@@ -16,6 +16,10 @@ Everything else is the upstream font, subset to Latin-1, Latin Extended-A and
 the punctuation the site uses. The stream that owns the installer's and the
 desktop's copies can run the same function on its static TTFs (zero_plain()).
 
+Where a zero must not be taken for the letter O (a web address she types from
+a printed sheet), the page uses zero-slashed-400/700.woff2: the upstream zero
+and nothing else (unicode-range U+0030), so only that one glyph is the old one.
+
 The script is repeatable: the same inputs give the same bytes' worth of font.
 """
 import os
@@ -28,6 +32,7 @@ from fontTools.ttLib import TTFont
 
 UNICODES = "U+0020-007E,U+00A0-00FF,U+0100-017F,U+2013,U+2014,U+2018,U+2019,U+201C,U+201D,U+2022,U+2026"
 FILES = [("Regular", "atkinson-next-400"), ("Bold", "atkinson-next-700"), ("ExtraBold", "atkinson-next-800")]
+SLASHED = [("Regular", "zero-slashed-400"), ("Bold", "zero-slashed-700")]
 
 
 def zero_plain(font):
@@ -71,6 +76,23 @@ def main():
         options.hinting = True
         sub = subset.Subsetter(options)
         sub.populate(unicodes=subset.parse_unicodes(UNICODES))
+        sub.subset(font)
+        font.flavor = "woff2"
+        target = os.path.join(out, name + ".woff2")
+        font.save(target)
+        print("%s: %d bytes" % (target, os.path.getsize(target)))
+    slashed_zero_only(src, out)
+
+
+def slashed_zero_only(src, out):
+    """The upstream zero, alone, for the places where 0 must not look like O."""
+    for weight, name in SLASHED:
+        font = TTFont(os.path.join(src, "AtkinsonHyperlegibleNext-%s.ttf" % weight))
+        options = subset.Options()
+        options.flavor = "woff2"
+        options.layout_features = []
+        sub = subset.Subsetter(options)
+        sub.populate(unicodes=[0x30])
         sub.subset(font)
         font.flavor = "woff2"
         target = os.path.join(out, name + ".woff2")
