@@ -78,15 +78,17 @@ dl.answers dd { margin: 8px 0 0 0; }
 .topics a:hover { border-color: var(--ink); }
 .topics b { display: block; font-size: 26px; line-height: 34px; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.18em; }
 .done { margin-top: 48px; padding-top: 24px; border-top: 2px solid var(--rule); }
-/* A picture of one end of the bar, the corner of the screen rounded,
- * drawn no smaller than its own size (640 wide) when there is room. */
+/* A picture of one corner of the bar at the bottom of the screen, drawn at
+ * the bar's own size (tools/helppics.py draws it from src/aurshell/foot.c;
+ * the corner of the screen rounded). Smaller when the window is narrower. */
 .pic { display: block; width: 100%; max-width: 640px; height: auto; margin: 8px 0 24px; }
 .pic .scr { fill: var(--soft); }
 .pic .band { fill: var(--bar); stroke: var(--bar-rule); stroke-width: 2; }  /* outlined: in dark it sits on a page of the same colour */
-.pic .rule { stroke: var(--bar-rule); stroke-width: 2; }
-.pic rect { fill: var(--bar); }
-.pic text { fill: var(--bar-dim); font-size: 22px; }
-.pic .on rect { fill: var(--bar-hot); }
-.pic .on text { fill: var(--bar-ink); font-weight: 700; }
-.pic .ring-edge { fill: none; stroke: var(--ink); stroke-width: 10; }
-.pic .ring { fill: none; stroke: var(--marker); stroke-width: 4; }
+.pic .btn { fill: var(--bar); stroke: var(--bar-dim); stroke-width: 2; }
+.pic .on .btn { fill: var(--bar-hot); stroke: var(--bar-ink); }
+.pic text { fill: var(--bar-ink); font-size: 20px; font-weight: 700; text-anchor: middle; }
+.pic .i { fill: none; stroke: var(--bar-ink); stroke-linecap: round; stroke-linejoin: round; }
+.pic .q { fill: none; stroke: var(--bar); stroke-linecap: round; }   /* the ? cut out of the Help disc */
+.pic .f { fill: var(--bar-ink); stroke: none; }
+.pic .p { fill: var(--bar); stroke: none; }
+.pic .ring { fill: none; stroke: var(--marker); stroke-width: 3.5; }

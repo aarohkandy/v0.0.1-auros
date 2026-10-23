@@ -63,6 +63,26 @@ Brief: `docs/handoff/STREAMS.md` (row K) and the session-B orders in
   bare "Close"), install.c 5 (C/A2 staging: AurBridge, Start installing, "--", partition),
   welcome.c 1 (C: bare "Close"), index.html 3 (D: "That's normal"). Help pages followed C's
   renames (429fd33: Wi-Fi, Internet, All my programs) the moment helptest went red.
+- **Resumed 2026-10-23 evening: helptest red blocked the release (run 39966214944).** C had
+  renamed the bar's buttons (Bigger text, Smaller text, Wi-Fi...) and the Mac look's list; someone
+  patched the three words (9e11a6e). Done properly: the pages and pictures now follow the CURRENT
+  shell: Settings → Put Windows back has "Start Windows this once" (the timed start-up menu is
+  gone from the pages), "Keep AurOS", and "Press again to restart and remove AurOS"; the welcome
+  question asks once more ("Start AurOS from now on" / "Go back to Windows" / "Not yet");
+  Help has "Get me out of this page" (S2: a card with "Close this page"; Esc three times does it
+  too; "Before you install this" asks about remote-control programs); Get more programs sits
+  "last in the row" in Like a Mac and "under All my programs" in Big and simple. The PDF-form
+  tip (Evince loses the last box unless Tab is pressed) is in something-wrong.html#form.
+- **`tools/helppics.py`** draws the bar pictures (inline SVG, `data-bar="left Wi-Fi"`) from foot.c's
+  own geometry: outlined boxes, icon above label, item_w() widths, the 24 px gap between Smaller
+  text and Bigger text, icons mirrored from shellcommon.c. Checked against a real render of
+  foot_paint on homebase (positions identical). helptest now fails if a picture is not exactly
+  what helppics draws, if foot.c's geometry numbers change, if a button named on a page is not a
+  string in src/aurshell (preview/test programs excluded, so sample text can't hide a rename),
+  forge's program names, or the short OTHER_BUTTONS list (Settings rows are marked as buttons now
+  too). 45 checks; each new one shown to fail (hand-moved box, wrong marked button, invented
+  button, renamed Wi-Fi, renamed Get me out, renamed Don't install it, renamed Documents in
+  forge, a changed FOOT_GAP). When the bar changes: `python3 -I tools/helppics.py`, look, commit.
 - Addresses in SECURITY.md, SUPPORT.md, legal: moved to the new repository by stream M
   (2a0ac90, 45dbc93). SUPPORT.md lists the new page and why the pages carry no address.
 

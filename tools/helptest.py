@@ -20,6 +20,8 @@ one of them. Fails if:
     (docs/DESIGN-DIRECTION.md section 3, Body);
   - any text colour pair, light or dark, is under 4.5:1, or a border
     under 4.5:1 on light (3:1 on dark);
+  - a picture of the bar is not exactly what tools/helppics.py draws from
+    the bar's own geometry (the constants it uses must still be in foot.c);
   - a button the pages tell her to press (<span class="press">) is not a
     word the desktop's source says (src/aurshell, forge's program names)
     or one of the few other programs' buttons listed here: the name on the
@@ -40,6 +42,9 @@ import html.parser
 import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import helppics                    # noqa: E402  (draws the pictures; shares the bar's numbers)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -154,9 +159,14 @@ def desktop_words():
         for f in files:
             if f.endswith(".c"):
                 with open(os.path.join(root, f), encoding="utf-8", errors="replace") as fh:
+                    src = fh.read()
+                    # A preview or test program (its own main) makes up
+                    # sample text; the shell is main.c and the rest.
+                    if f != "main.c" and re.search(r"^int main\(", src, re.M):
+                        continue
                     # Comments quote button words too ("Let me look first"
                     # used to say...), so they are taken out first.
-                    code = re.sub(r"/\*.*?\*/", " ", fh.read(), flags=re.S)
+                    code = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
                     words |= set(re.findall(r'"((?:[^"\\\n]|\\.)*)"', code))
     try:
         with open(os.path.join(REPO, "build", "forge"), encoding="utf-8") as fh:
@@ -284,6 +294,27 @@ def main():
     check(n_pics >= 4, f"the pages have pictures of the bar ({n_pics})")
     check(not bad, "every picture is described in words, styled by help.css, and shows the real bar",
           "; ".join(bad[:8]))
+    # the pictures are drawn, not hand-made: each is what helppics draws from foot.c's geometry
+    try:
+        with open(os.path.join(REPO, "src", "aurshell", "foot.c"), encoding="utf-8") as f:
+            foot_src = f.read()
+    except OSError:
+        foot_src = ""
+    lost = [g for g in helppics.GEOMETRY if g not in foot_src]
+    check(not lost, "the bar's geometry is still what the pictures draw (tools/helppics.py)", "; ".join(lost))
+    drawn_wrong = []
+    for p in parsed:
+        text = open(os.path.join(d, p), encoding="utf-8").read()
+        for m in helppics.PIC.finditer(text):
+            try:
+                if helppics.bar(m.group(1), m.group(2)) != m.group(0):
+                    drawn_wrong.append(f"{m.group(1)} {m.group(2)} on {p}")
+            except SystemExit as e:
+                drawn_wrong.append(str(e))
+        if text.count("<svg") != len(helppics.PIC.findall(text)):
+            drawn_wrong.append(f"{p}: a picture without data-bar")
+    check(not drawn_wrong, "every picture is exactly what tools/helppics.py draws",
+          "; ".join(drawn_wrong[:6]) + " (run python3 -I tools/helppics.py)")
     idx_text = html.unescape(" ".join(idx.text)) if idx else ""
     check(bool(show_me) and show_me in idx_text,
           f'the index names the Help panel\'s button as the bar paints it ("{show_me}")')
@@ -291,8 +322,10 @@ def main():
     # 5b. the name on the page is the name on the button
     known = desktop_words() | OTHER_BUTTONS
     check(len(known) > 200, f"read the desktop's words ({len(known)})")
+    straight = lambda t: t.replace("\u2019", "'")          # the pages print curly quotes
+    known = {straight(w) for w in known}
     unknown = sorted({f'"{w}" on {p}' for p, pg in parsed.items() for w in pg.presses
-                      if html.unescape(w) not in known})
+                      if straight(html.unescape(w)) not in known})
     n_press = sum(len(pg.presses) for pg in parsed.values())
     check(not unknown, f"every button the pages name is a button that exists ({n_press} checked)",
           "; ".join(unknown[:8]))
