@@ -79,7 +79,7 @@ jobs:
           esac
           printf '%s\n' "$files" > /tmp/files.txt
           # What build/aurbridge compiles and reads, and this file.
-          if grep -qE '^(src/aurbridge/|src/aurstage/(gpt|plan)\.[ch]$|build/aurbridge$|hw/(lib/|compat\.json$)|tools/(pe_payload\.py|repo\.sh|manifesttest\.sh|hw/gen-header\.py)$|\.github/workflows/windows\.yml$)' /tmp/files.txt; then
+          if grep -qE '^(src/aurbridge/|src/aurstage/(gpt|plan)\.[ch]$|build/aurbridge$|hw/(lib/|compat\.json$)|tools/(pe_payload\.py|repo\.sh|manifesttest\.sh|hw/gen-header\.py|dllcanary\.sh|dllcanary/.*)$|\.github/workflows/windows\.yml$)' /tmp/files.txt; then
             run=true
           fi
           echo "run=$run" | tee -a "$GITHUB_OUTPUT"
@@ -173,6 +173,14 @@ jobs:
           path: |
             out/aurbridge.exe
             out/aurbridge-wizard.exe
+      # The pieces of the DLL-planting test (SEC-003): a DLL that only says
+      # it was loaded, and a program that loads DLLs the unhardened way.
+      - name: DLL-planting test pieces (tools/dllcanary.sh)
+        run: sh tools/dllcanary.sh out/canary
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary
+          path: out/canary
 
   windows-source:
     needs: build
@@ -189,6 +197,76 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "version exited $LASTEXITCODE" }
           .\exe\aurbridge.exe selftest
           if ($LASTEXITCODE -ne 0) { throw "selftest exited $LASTEXITCODE" }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: canary, path: canary }
+      - name: a DLL planted beside the installer is never loaded (SEC-003)
+        shell: pwsh
+        run: |
+          # The installer runs as administrator from Downloads, a folder
+          # any program she runs can write to. Windows looks in the
+          # program's own folder BEFORE System32 for every DLL that is not
+          # a KnownDLL, so a winhttp.dll or oleacc.dll dropped beside
+          # AurOS-Setup.exe used to be loaded with the administrator token.
+          # Here a "canary" DLL (tools/dllcanary/canary.c, it writes
+          # <name>.loaded when anything loads it) is put beside both
+          # programs under the name of every DLL they must take from
+          # System32 only, and the programs are run through everything
+          # that loads a DLL, with that folder as the current folder too.
+          # comctl32.dll is in the second list: on a real Windows even a program that
+          # looks in its own folder gets the system's own copy (the side-by-side
+          # store wins, seen on windows-latest), so a planted one cannot be tested.
+          $core  = 'winhttp.dll','cfgmgr32.dll','oleacc.dll','wlanapi.dll','iphlpapi.dll','winspool.drv','wtsapi32.dll','dwmapi.dll'
+          $extra = 'comctl32.dll','uxtheme.dll','version.dll'
+          $names = $core + $extra
+          $d = Join-Path $env:RUNNER_TEMP 'planted'
+          New-Item -ItemType Directory -Force -Path $d, "$d\r1", "$d\r2", "$d\r3" | Out-Null
+          Copy-Item exe\aurbridge.exe, exe\aurbridge-wizard.exe, canary\control.exe $d
+          foreach ($n in $names) { Copy-Item canary\canary.dll (Join-Path $d $n) }
+          Push-Location $d
+          # 1. THE CONTROL: a program that loads these names the way an
+          # unhardened one does finds the planted copies. If it did not,
+          # "the installer did not load them" would prove nothing.
+          .\control.exe @names
+          $speak = @($names | Where-Object { Test-Path "$d\$_.loaded" })
+          "the control loaded the planted copy of: $($speak -join ', ')"
+          $silent = @($core | Where-Object { $speak -notcontains $_ })
+          if ($silent) { throw "the planted copy of $($silent -join ', ') was not loaded even by a program that looks in its own folder, so this test cannot speak for it" }
+          Get-ChildItem $d -Filter *.loaded | Remove-Item
+          # 2. THE INSTALLER, through everything that loads a DLL: the
+          # report (iphlpapi, winspool, cfgmgr32), preflight (wlanapi,
+          # cfgmgr32), the window and the screen reader (oleacc, wtsapi32),
+          # a download (winhttp).
+          .\aurbridge.exe version
+          if ($LASTEXITCODE -ne 0) { throw "version exited $LASTEXITCODE" }
+          .\aurbridge.exe selftest
+          if ($LASTEXITCODE -ne 0) { throw "selftest exited $LASTEXITCODE" }
+          .\aurbridge.exe preflight
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) { throw "preflight exited $LASTEXITCODE" }
+          .\aurbridge.exe report "$d\r1"
+          if ($LASTEXITCODE -ne 0) { throw "report exited $LASTEXITCODE" }
+          $p = Start-Process -FilePath "$d\aurbridge-wizard.exe" -ArgumentList '--report', "$d\r1" -WorkingDirectory $d -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "--report exited $($p.ExitCode)" }
+          $p = Start-Process -FilePath "$d\aurbridge-wizard.exe" -ArgumentList '--navtest', "$d\r2" -WorkingDirectory $d -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "--navtest exited $($p.ExitCode)" }
+          $p = Start-Process -FilePath "$d\aurbridge-wizard.exe" -ArgumentList '--selftest', "$d\r3" -WorkingDirectory $d -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw "--selftest did not finish in 3 minutes" }
+          if (-not (Select-String -Path "$d\r3\selftest.log" -Pattern 'screen reader    : "[^"]{10,}"' -Quiet)) { throw "the window test did not reach the screen reader (oleacc never ran)" }
+          # a download to a port nobody listens on: it must get as far as
+          # the network, which a WinHTTP that failed to load cannot
+          $z = '0' * 64
+          "base http://127.0.0.1:9/`npiece p.bin 1000 $z" | Out-File -Encoding ascii "$d\pieces.txt"
+          # into a folder of its own that does not exist yet (SEC-010: the download
+          # folder is made private, and one the installer did not make is moved aside)
+          cmd /c "aurbridge.exe getimage pieces.txt dl\x.img $z 1000 > fetch.log 2>&1"
+          Get-Content "$d\fetch.log" | Select-Object -Last 3
+          if (-not (Select-String -Path "$d\fetch.log" -Pattern 'could not reach' -Quiet)) { throw "the download did not get as far as the network (WinHTTP did not load)" }
+          Pop-Location
+          # 3. NOT ONE PLANTED DLL WAS LOADED.
+          $hit = @(Get-ChildItem $d -Filter *.loaded)
+          if ($hit) { throw "the installer loaded a DLL planted beside it: $($hit.Name -join ', ')" }
+          "none of the $($names.Count) planted DLLs was loaded"
+          "### A DLL planted beside the installer (SEC-003)`nnone of $($names.Count) planted DLLs ($($names -join ', ')) was loaded by the console tool or the window, while a program that looks in its own folder loaded $($speak.Count) of them." | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          exit 0
       - name: the PC report, from the console tool and from the installer (read-only)
         shell: pwsh
         run: |

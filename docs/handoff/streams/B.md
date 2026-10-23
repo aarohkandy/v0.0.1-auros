@@ -50,6 +50,24 @@ teal one) and `tools/e2e/selftest.py` ("Close AurOS Setup"),
 
 ## Done and pushed (newest first)
 
+- **SEC-003 extras (the DLL fix itself is A2's: `plat_harden_dll_search()` first
+  in `main`/`WinMain`, `plat_load_system_dll()` for every load by name, the
+  KnownDLLs-only link gate in `fastpath.yml`).** Added on top, each shown red
+  first: (1) `build/aurbridge` refuses a `LoadLibrary*(` anywhere but inside
+  `plat_load_system_dll()` (source search; red on a bare call in preflight.c,
+  in plat_win.c outside that function, and in hwinv_win.c); (2) the windows.yml
+  step "a DLL planted beside the installer is never loaded": a canary DLL
+  (`tools/dllcanary/canary.c`, writes `<name>.loaded` when anything loads it)
+  under nine names (winhttp, cfgmgr32, oleacc, comctl32, wlanapi, iphlpapi,
+  winspool.drv, wtsapi32, dwmapi, plus uxtheme and version if the control can
+  load them) beside both programs, the programs run through preflight, the
+  report, the window and its screen reader, and a download; the control program
+  (`control.c`, plain LoadLibrary) must load them first or the step says it
+  proves nothing; (3) `tools/dlltest.sh`, the same under Wine (red with the
+  System32 flag removed, and with WinHTTP failing to load). Under Wine it speaks
+  for `wlanapi.dll` and `dwmapi.dll` only (Wine lets its built-in copies of the
+  others win); real Windows requires all nine. The download check needs a folder
+  of its own (SEC-010 moves aside one the installer did not make).
 - **LEGAL's installer strings and the Terms/Licenses (docs/handoff/streams/LEGAL.md,
   "B" items).** Done: 1 (Ready's first row is the hazard in her words, and the
   next row says "Any change to a drive carries some risk. Copy anything you
@@ -297,6 +315,11 @@ These are new screens or engine records, not a restyle: plan them with A2/K firs
 
 ## Traps
 
+- **Never call `LoadLibrary*` directly** (SEC-003): use `plat_load_system_dll()`
+  (`build/aurbridge` fails on a bare call). Never link a DLL that is not a
+  KnownDLL (`fastpath.yml` fails). `-lwlanapi` is still never linked.
+- **`tools/dlltest.sh` under Wine runs the windowed programs first**: a prefix
+  whose first program had no screen then refuses to open a window.
 - **The Terms and the Licenses pane** (`g_pane`, `page_pane`, `pane_wrap`):
   its scroll slot is `g_scroll[PAGE_COUNT]` (use `scr_i()`, never `g_page`,
   to index `g_scroll`); the close question (`g_confirm`) wins over the pane;

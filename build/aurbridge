@@ -374,6 +374,23 @@ elif [ "${AUROS_RELEASE:-0}" = 1 ]; then
     die "no $OBJDUMP to check which DLLs the installer needs"
 fi
 
+# NO BARE LoadLibrary (SEC-003). A DLL named without a folder is looked for in
+# the program's own folder before System32, and the program runs as
+# administrator from Downloads. Every load by name goes through
+# plat_load_system_dll() (src/aurbridge/plat_win.c: System32 only), the one
+# place a LoadLibrary call may stand; a new bare call is refused here, before
+# it can ship. (Which DLLs the .exe is LINKED against is the KnownDLLs gate in
+# .github/workflows/fastpath.yml; that is a different hole and not repeated.)
+BARE=$(awk '
+    FNR == 1 { skip = 0 }
+    /^void \*plat_load_system_dll\(/ { skip = 1 }
+    skip { if ($0 ~ /^}/) skip = 0; next }
+    /^[[:space:]]*(\/\*|\*|\/\/)/ { next }
+    /LoadLibrary(Ex)?[AW]?[[:space:]]*\(|LoadPackagedLibrary/ { print FILENAME ":" FNR ": " $0 }
+' "$SRC"/*.c "$SRC"/*.h)
+[ -z "$BARE" ] || { printf '%s\n' "$BARE" >&2; die "a DLL is loaded by name outside plat_load_system_dll() (SEC-003)"; }
+note "no program text loads a DLL by a bare name"
+
 # ── the host-side simulation ───────────────────────────────────────
 #
 # out/aurbridge-sim runs the SAME phase engine against a computer made
