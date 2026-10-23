@@ -20,6 +20,15 @@ on:
     workflows: [build]
     types: [completed]
     branches: [main]
+  # By hand: gh workflow run harden.yml -f only=time [-f run_id=<build run>]
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'all, time (the clock test only) or hardening (the other one)'
+        default: all
+      run_id:
+        description: 'the build run whose image to test (default: the newest)'
+        default: ''
 
 permissions:
   contents: read
@@ -51,6 +60,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
           BUILD_RUN: ${{ github.event.workflow_run.id }}
           BUILD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID_INPUT: ${{ github.event.inputs.run_id }}
         run: |
           R=$GITHUB_REPOSITORY; go=false; rid=""; files=""
           # Image builds of main, newest first: "run-id sha".
@@ -60,7 +70,11 @@ jobs:
           head -5 /tmp/builds.txt
           SUBJ=${MSG%%$'\n'*}
           case "$SUBJ" in *'[harden]'*) word=true ;; *) word=false ;; esac
-          if [ "$EVENT" = workflow_run ]; then
+          if [ "$EVENT" = workflow_dispatch ]; then
+            rid=${RUN_ID_INPUT:-$(head -1 /tmp/builds.txt | cut -d' ' -f1)}
+            [ -n "$rid" ] || { echo "::error::no build of main has its image left; push with [build]"; exit 1; }
+            go=true
+          elif [ "$EVENT" = workflow_run ]; then
             # Only a build that made an image; compared with the image before it.
             if grep -q "^$BUILD_RUN " /tmp/builds.txt; then
               rid=$BUILD_RUN
@@ -123,6 +137,7 @@ jobs:
           rm -rf dl/pieces
           df -h /
       - name: hardenboottest under KVM
+        if: ${{ github.event.inputs.only != 'time' }}
         run: |
           set +e
           sudo env PATH="$PATH" HARDEN_REPORT=out/hardenboot.md sh tools/hardenboottest.sh out/auros-desktop.img 2>&1 | tee out/hardenboottest.txt
@@ -133,7 +148,7 @@ jobs:
       # The clock, on the same image (tools/timeboottest.sh): a PC whose
       # hardware clock Windows keeps in local time, online, three ways.
       - name: timeboottest under KVM
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.inputs.only != 'hardening' }}
         run: |
           set +e
           sudo env PATH="$PATH" TIME_REPORT=out/timeboot.md sh tools/timeboottest.sh out/auros-desktop.img 2>&1 | tee out/timeboottest.txt
