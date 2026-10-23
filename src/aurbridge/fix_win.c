@@ -1,11 +1,15 @@
 /* fix_win.c — see fix.h. Windows only (the build puts *_win.c in both .exe
  * files and never in the simulation). */
 #define WIN32_LEAN_AND_MEAN
+#define PSAPI_VERSION 2        /* GetMappedFileNameW from kernel32, no psapi.dll */
 #include <windows.h>
+#include <psapi.h>
+#include <shlobj.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "fix.h"
+#include "format.h"            /* fmt_sha: the copy is checked against the original */
 #include "plat.h"
 #include "aurbridge-baked.h"   /* AUROS_SITE_W: the website, from build/aurbridge */
 
@@ -311,16 +315,95 @@ int fix_run(const char *id, char *why, size_t n)
 
 #define RESUME_TASK "AurOS installer - continue"
 
+/* WHERE THE TASK STARTS IT FROM: a copy in Program Files, which only an
+ * administrator can write. The task runs with her highest rights and no
+ * question at sign-in, so it must never start a file that something
+ * without those rights could have changed -- and her Downloads folder,
+ * where she ran it from, is writable by every program she runs (atlas
+ * review, finding 13). The folder is found through the registry
+ * (SHGetFolderPath), not %ProgramFiles%, which she could set herself. */
+static int resume_copy_path(wchar_t *dir, wchar_t *file, size_t n, const wchar_t *leaf)
+{
+    wchar_t pf[MAX_PATH];
+    if (SHGetFolderPathW(NULL, CSIDL_PROGRAM_FILES, NULL, SHGFP_TYPE_CURRENT, pf) != S_OK)
+        return -1;
+    if (_snwprintf(dir, n, L"%ls\\AurOS Setup", pf) < 0) return -1;
+    if (_snwprintf(file, n, L"%ls\\%ls", dir, leaf) < 0) return -1;
+    dir[n - 1] = 0; file[n - 1] = 0;
+    return 0;
+}
+
+static int sha_file(HANDLE h, unsigned char out[32])
+{
+    static unsigned char buf[1 << 16];
+    fmt_sha s;
+    fmt_sha_start(&s);
+    LARGE_INTEGER zero = { 0 };
+    if (!SetFilePointerEx(h, zero, NULL, FILE_BEGIN)) return -1;
+    DWORD got;
+    while (ReadFile(h, buf, sizeof buf, &got, NULL) && got) fmt_sha_feed(&s, buf, got);
+    fmt_sha_done(&s, out);
+    return 0;
+}
+
+/* Copies this program, as it is running, into Program Files, and checks
+ * the copy against it. The original is read through the file Windows
+ * mapped this process from, not its name in Downloads: a running
+ * program's file can be renamed and another put in its place. */
+static int resume_copy(wchar_t *dst, size_t n, char *why, size_t wn)
+{
+    wchar_t self[MAX_PATH], dev[MAX_PATH], src[MAX_PATH + 32], dir[MAX_PATH];
+    DWORD k = GetModuleFileNameW(NULL, self, MAX_PATH);
+    if (!k || k >= MAX_PATH) { snprintf(why, wn, "the installer could not find itself on this PC"); return -1; }
+    const wchar_t *leaf = wcsrchr(self, L'\\');
+    leaf = leaf ? leaf + 1 : self;
+    if (resume_copy_path(dir, dst, n, leaf) != 0) {
+        snprintf(why, wn, "Windows would not say where its programs go");
+        return -1;
+    }
+    if (!_wcsicmp(self, dst)) return 0;            /* already running from the copy */
+    wcscpy(src, self);
+    if (GetMappedFileNameW(GetCurrentProcess(), (LPVOID)GetModuleHandleW(NULL), dev, MAX_PATH))
+        _snwprintf(src, MAX_PATH + 31, L"\\\\?\\GLOBALROOT%ls", dev);
+    src[MAX_PATH + 31] = 0;
+    /* Nobody may change the original while it is copied. */
+    HANDLE in = CreateFileW(src, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    if (in == INVALID_HANDLE_VALUE)
+        in = CreateFileW(self, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    if (in == INVALID_HANDLE_VALUE) { snprintf(why, wn, "the installer could not read itself"); return -1; }
+    CreateDirectoryW(dir, NULL);                   /* Program Files' own permissions */
+    HANDLE out = CreateFileW(dst, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, NULL);
+    int ok = out != INVALID_HANDLE_VALUE;
+    static unsigned char buf[1 << 16];
+    DWORD got, put;
+    while (ok && ReadFile(in, buf, sizeof buf, &got, NULL) && got)
+        ok = WriteFile(out, buf, got, &put, NULL) && put == got;
+    unsigned char a[32], b[32];
+    ok = ok && FlushFileBuffers(out) && sha_file(in, a) == 0 && sha_file(out, b) == 0 &&
+         !memcmp(a, b, 32);
+    CloseHandle(in);
+    if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
+    if (!ok) {
+        DeleteFileW(dst);
+        snprintf(why, wn, "the installer could not put a copy of itself where Windows "
+                          "keeps programs");
+        return -1;
+    }
+    return 0;
+}
+
 /* A scheduled task, not a Run key: Windows does not start a program that
  * needs administrator rights from a Run or RunOnce key, and this one does.
  * At this person's next sign-in, with their highest rights, once: the
- * installer removes the task as the first thing it does (fix_resume_done). */
+ * installer removes the task, and the copy it started, as the first thing
+ * it does (fix_resume_done). */
 int fix_resume_arm(char *why, size_t n)
 {
-    wchar_t self[MAX_PATH];
-    char selfa[MAX_PATH * 3], user[256] = "", dom[256] = "", cmd[2048], tail[256];
-    if (!GetModuleFileNameW(NULL, self, MAX_PATH) ||
-        !WideCharToMultiByte(CP_UTF8, 0, self, -1, selfa, sizeof selfa, NULL, NULL)) {
+    wchar_t copy[MAX_PATH];
+    char copya[MAX_PATH * 3], user[256] = "", dom[256] = "", cmd[2048], tail[256];
+    if (resume_copy(copy, MAX_PATH, why, n) != 0) return -1;
+    if (!WideCharToMultiByte(CP_UTF8, 0, copy, -1, copya, sizeof copya, NULL, NULL)) {
         snprintf(why, n, "the installer could not find itself on this PC");
         return -1;
     }
@@ -328,8 +411,9 @@ int fix_resume_arm(char *why, size_t n)
     GetEnvironmentVariableA("USERDOMAIN", dom, sizeof dom);
     snprintf(cmd, sizeof cmd,
              "schtasks.exe /create /f /tn \"" RESUME_TASK "\" /sc onlogon /it /rl highest "
-             "/ru \"%s\\%s\" /tr \"\\\"%s\\\" --resume\"", dom, user, selfa);
+             "/ru \"%s\\%s\" /tr \"\\\"%s\\\" --resume\"", dom, user, copya);
     if (plat_run(cmd, tail, sizeof tail) != 0) {
+        fix_resume_done();             /* takes the copy away again */
         snprintf(why, n, "Windows would not let the installer open itself again after "
                          "the restart");
         return -1;
@@ -341,6 +425,16 @@ void fix_resume_done(void)
 {
     char tail[128];
     plat_run("schtasks.exe /delete /f /tn \"" RESUME_TASK "\"", tail, sizeof tail);
+    /* And the copy: now, or, when this is it running, at the next restart. */
+    wchar_t self[MAX_PATH], dir[MAX_PATH], copy[MAX_PATH];
+    DWORD k = GetModuleFileNameW(NULL, self, MAX_PATH);
+    if (!k || k >= MAX_PATH) return;
+    const wchar_t *leaf = wcsrchr(self, L'\\');
+    if (resume_copy_path(dir, copy, MAX_PATH, leaf ? leaf + 1 : self) != 0) return;
+    if (GetFileAttributesW(copy) == INVALID_FILE_ATTRIBUTES) return;
+    if (_wcsicmp(self, copy) && DeleteFileW(copy)) { RemoveDirectoryW(dir); return; }
+    MoveFileExW(copy, NULL, MOVEFILE_DELAY_UNTIL_REBOOT);
+    MoveFileExW(dir, NULL, MOVEFILE_DELAY_UNTIL_REBOOT);
 }
 
 int fix_restart_and_continue(char *why, size_t n)

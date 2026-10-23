@@ -300,10 +300,24 @@ jobs:
           if ($x -notmatch 'aurbridge\.exe') { throw "the task does not start the installer" }
           if ($x -notmatch 'LogonTrigger') { throw "the task does not run at sign-in" }
           if ($x -notmatch 'HighestAvailable') { throw "the task does not run with the rights the installer needs" }
+          # It runs with her highest rights and no question, so it must
+          # start a copy only an administrator can change -- never the
+          # file in Downloads (or here), which any program she runs can.
+          $copy = Join-Path ${env:ProgramFiles} 'AurOS Setup\aurbridge.exe'
+          if ($x -notmatch [regex]::Escape($copy)) { throw "the task does not start the copy in Program Files: $x" }
+          if ($x -match [regex]::Escape((Resolve-Path .\exe).Path)) { throw "THE TASK STARTS THE FILE IT WAS RUN FROM" }
+          if (-not (Test-Path $copy)) { throw "the copy is not there" }
+          $h1 = (Get-FileHash .\exe\aurbridge.exe).Hash; $h2 = (Get-FileHash $copy).Hash
+          if ($h1 -ne $h2) { throw "the copy is not the installer: $h2, not $h1" }
+          $acl = (Get-Acl (Split-Path $copy)).Access | Where-Object {
+            $_.IdentityReference -match 'Users|Everyone|Authenticated' -and
+            $_.FileSystemRights -match 'Write|Modify|FullControl|CreateFiles' -and $_.AccessControlType -eq 'Allow' }
+          if ($acl) { throw "people without administrator rights can change the copy: $($acl | Out-String)" }
           .\exe\aurbridge.exe resume-done
           schtasks.exe /query /tn $tn 2>&1 | Out-Null
           if ($LASTEXITCODE -eq 0) { throw "the task is still there after resume-done" }
-          "the task is made, starts the installer with --resume at sign-in, and goes again"
+          if (Test-Path $copy) { throw "the copy is still there after resume-done" }
+          "the task starts an administrator-only copy with --resume at sign-in, and both go again"
           exit 0
       - name: an earlier attempt's files on the start-up partition count as room
         shell: pwsh
