@@ -36,6 +36,22 @@ Wi-Fi line names the chip. That line is what decides machines 1 and 4.
 | 4 | **An AMD Ryzen laptop from 2021 to 2024** (Lenovo IdeaPad 3/5, HP 15, Acer Aspire 5) whose Wi-Fi line says **Realtek RTL8852BE or RTL8852CE** (very common in budget laptops). | Our list says that Wi-Fi works but may drop out. Nobody has checked on the real thing. Also tests AMD graphics and AMD sound. | "Realtek 8852" in Device Manager; or just buy and read the report. |
 | 5 | **A business laptop from 2021 to 2024 with a 12th or 13th generation Intel chip** (used ThinkPad T14 / X1, Dell Latitude, HP EliteBook; $300 to $500). | These have the camera on an Intel chip (IPU6) that AurOS cannot use yet: the report must say **"Your camera won't work yet"** and the camera really must not work. Newest Intel Wi-Fi and sound. A very common kind of PC. | "12th Gen" or "13th Gen Core i5/i7", "Windows 11 Pro". |
 
+**Two USB Wi-Fi sticks, about $15 each.** The screen for a computer whose
+Wi-Fi will not work says "a small USB Wi-Fi stick (about $15) fixes this".
+That is only true for sticks whose chip the kernel knows. Buy one of each,
+read the chip off the listing, and plug each into any of the five computers
+before Step 1: the report must say "Your Wi-Fi will work" for the first and
+"won't work" for the second.
+
+| Stick | Chip to look for in the listing | Expected |
+|---|---|---|
+| A | **MediaTek MT7612U** or MT7610U (often sold as "AC600/AC1200 USB 3.0 adapter, MT7612U"), or **Realtek RTL8811CU/RTL8821CU**, or **RTL8188EUS** (the cheapest "N150" ones) | works |
+| B | **Realtek RTL8812AU / RTL8821AU / RTL8811AU** (the very common cheap "AC600" ones, e.g. TP-Link Archer T2U Nano) | **won't work** in the present image: only the newer kernel has a driver |
+
+If A or B behaves differently from the table, that is a finding, and the
+sentence on the screen has to change before launch: she will buy the stick
+the screen tells her to buy.
+
 That is five computers, at least four makers, one with a hard disk (3), one
 Broadcom Wi-Fi-only (1), one with BitLocker (2) — which is what WP-33 asks.
 If one of them is hard to find, the report from a different PC with the

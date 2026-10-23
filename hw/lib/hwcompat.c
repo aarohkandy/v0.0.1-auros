@@ -27,8 +27,15 @@ static int alias_match(const hwc_alias *a, const hw_dev *d)
         if (a->sdid != 0xFFFF && a->sdid != sd) return 0;
     }
     if (a->ccmask) {
-        if (d->cc < 0) return 0;
-        if (((uint32_t)d->cc & a->ccmask) != a->cc) return 0;
+        if (d->cc < 0) {
+            /* Windows gave no class. An entry that names the vendor AND the
+             * product exactly does not need one (the class only picks which
+             * interface of the device the driver takes); an entry that is
+             * ONLY a class cannot be told without it. */
+            if (a->vid == 0xFFFF || a->did == 0xFFFF) return 0;
+        } else if (((uint32_t)d->cc & a->ccmask) != a->cc) {
+            return 0;
+        }
     }
     return 1;
 }
@@ -521,6 +528,9 @@ int hwcompat_selftest(void)
         { "PCI\\VEN_14C3&DEV_0616&SUBSYS_E616185F", "PCI\\VEN_14C3&DEV_0616&CC_028000", "MediaTek MT7922 802.11ax", HW_V_WORKS, "wifi-driver" },
         { "PCI\\VEN_168C&DEV_003E&SUBSYS_0042168C", "PCI\\VEN_168C&DEV_003E&CC_028000", "Qualcomm Atheros QCA6174", HW_V_WORKS, "wifi-driver" },
         { "USB\\VID_0BDA&PID_8812", "", "Realtek RTL8812AU Wireless LAN 802.11ac USB NIC", HW_V_WONT, "wifi-no-driver" },
+        { "USB\\VID_0BDA&PID_8179", "", "Realtek RTL8188EUS Wireless LAN 802.11n USB 2.0 Network Adapter", HW_V_WORKS, "wifi-driver" },
+        { "USB\\VID_0E8D&PID_7612", "USB\\Class_FF&SubClass_FF&Prot_FF", "MediaTek MT7612U 802.11ac USB stick", HW_V_WORKS, "wifi-driver" },
+        { "USB\\VID_2357&PID_0120", "USB\\Class_FF&SubClass_FF&Prot_FF", "TP-Link Archer T2U Nano (Realtek RTL8811AU)", HW_V_WONT, "wifi-no-driver" },
         { "PCI\\VEN_14E4&DEV_43A0&SUBSYS_0612105B", "PCI\\VEN_14E4&DEV_43A0&CC_028000", "Broadcom 802.11ac (BCM4360)", HW_V_WONT, "wifi-broadcom-wl-only" },
         { "PCI\\VEN_14E4&DEV_43A3&SUBSYS_0614106B", "PCI\\VEN_14E4&DEV_43A3&CC_028000", "Broadcom BCM4350 802.11ac", HW_V_WORKS, "wifi-driver" },
     };

@@ -192,6 +192,7 @@ hmutant "the best device no longer wins (the worst does)" 's/rank(all\[i\].state
 hmutant "Wi-Fi blocks even with a cable socket" 's/if (!cable) { blocks = 1/if (1) { blocks = 1/' hw/lib/hwcompat.c
 hmutant "a Wi-Fi card is matched by any module, not a Wi-Fi one" 's/if (cat \&\& m->cat != cat) continue;//' hw/lib/hwcompat.c
 hmutant "the journal line forgets that the computer would have no internet" 's/if (v->verdicts\[i\].blocks) blk = 1;/blk = 0;/' $SRC/hwinv.c
+hmutant "a USB stick with exact ids is turned away when Windows gave no class" 's/if (a->vid == 0xFFFF || a->did == 0xFFFF) return 0;/return 0;/' hw/lib/hwcompat.c
 hmutant "a missing firmware file is ignored" 's/if (m->fw_unusable) { if (!unusable_module)/if (0) { if (!unusable_module)/' hw/lib/hwcompat.c
 hmutant "a printer model matches part of a word" 's/snprintf(m, sizeof m, " %s ", model);/snprintf(m, sizeof m, "%s", model);/' hw/lib/hwcompat.c
 hmutant "the Windows subsystem ids are read the wrong way round" 's/uint16_t sv = (uint16_t)(d->subsys \& 0xFFFF), sd = (uint16_t)(d->subsys >> 16);/uint16_t sd = (uint16_t)(d->subsys \& 0xFFFF), sv = (uint16_t)(d->subsys >> 16);/' hw/lib/hwcompat.c

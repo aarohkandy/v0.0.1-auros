@@ -101,6 +101,18 @@ driver), `sane-airscan`/`sane-utils` (scanners), `printer-driver-foo2zjs`,
    door in 6.8 (no `brcmsmac` module built, `b43` needs firmware we do not
    ship): all "won't work yet". The one case that **blocks**.
 
+## Open design question (B, D, K, lead)
+
+The no-Wi-Fi sentence promises "a small USB Wi-Fi stick (about $15) fixes this". True
+only for sticks whose chip the image's kernel drives. Supported (driver + firmware in
+the image): MediaTek MT7610U/MT7612U/MT7601U, Realtek RTL8188EUS/8192CU/8192EU/8821CU/
+8811CU/8822BU/8822CU, Atheros AR9271, Ralink RT2800/RT3070-family. **Not** supported in
+6.8 (they are in the 7.0 HWE kernel): Realtek RTL8812AU/8821AU/8814AU (the most common
+cheap "AC600" sticks, e.g. TP-Link Archer T2U Nano). Someone has to name chips or
+models the user can buy (website help page that the screen points to), and the lab
+confirms them (CAMPAIGN.md, "Two USB Wi-Fi sticks"). The report with the stick plugged
+in already tells which kind it is.
+
 ## Half-done / not done
 
 - `--report` has not run on a physical PC yet; USB-printer pairing and the
