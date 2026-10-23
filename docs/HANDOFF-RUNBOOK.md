@@ -24,13 +24,14 @@ that mentions them does nothing.
 |---|---|
 | `[build]` (or any change to `build/ src/ rootfs/ profiles/ themes/ shells/` or the workflows) | build + every test |
 | `[test]` | the tests only, against the newest build of the branch with artifacts left (14 days) |
-| `[release]` | build + tests, then a **prerelease** `v<os_version>-<sha7>` if every test passed |
-| `[publish]` / `[publish RUN-ID]` | a **prerelease** of the newest build that passed every test (or of that run); nothing rebuilt |
-| `[publish] [latest]` / `[publish RUN-ID] [latest]` | the same, then **promoted** to the full, latest release (what the website's link serves) -- only if a passing `e2e.yml` run pinned that `AurOS-Setup.exe`'s SHA-256 |
+| `[release]` | build + tests, then a **prerelease** `v<os_version>-<sha7>` if every test passed, then the real-Windows `e2e.yml` on that exact exe and the website check |
+| `[release] [latest]` (lead only) | the same, then **promoted** to the full, latest release (what the website's link serves) only if that e2e passed, then the website deployed |
+| `[publish]` / `[publish RUN-ID]` | a **prerelease** of the newest build that passed every test (or of that run); nothing rebuilt; then the same e2e and site check |
+| `[publish RUN-ID] [latest]` (lead only) | the same, then promoted and deployed |
 
 ```sh
 git commit --allow-empty -m "[publish] the newest green build, as a prerelease"
-git commit --allow-empty -m "[publish 39893191009] [latest] that build, as the release"
+git commit --allow-empty -m "[publish 39893191009] [latest] that build, as the release (lead only)"
 ```
 
 A flaky test: re-run the build run's failed jobs (run page, "Re-run
@@ -46,7 +47,10 @@ What each job is, and what to read when it fails:
 | `build / tests / e2e (NAME)` | that end-to-end test, under KVM | `transcripts-NAME` |
 | `release / publish` | the prerelease exists and reads back byte for byte through GitHub's 302, with `Range` | the job log |
 | `release / windows` | the published AurOS-Setup.exe starts on real Windows; WinHTTP fetches the image from the release | the job log |
-| `release / promote` | (`[latest]` only) a passing `e2e.yml` run installed this AurOS-Setup.exe on a real Windows 11 VM; then the release is made the latest and `releases/latest/download/AurOS-Setup.exe` is checked | the job log |
+| `release / e2e / e2e (base)` | `e2e.yml`, called with this release's AurOS-Setup.exe and its SHA-256: the website, the download (refused if the hash differs), the wizard, the restart, AurOS, a program from the store, on a Windows 11 VM | the job log; prerelease `e2e-<run id>` |
+| `release / site` | the website, stamped for this repository, passes `tools/site/check.mjs` | the job log |
+| `release / promote` | (`[latest]` only) the e2e above passed in THIS run; then the release is made the latest and `releases/latest/download/AurOS-Setup.exe` is checked | the job log |
+| `release / pages` | the checked site deployed to GitHub Pages | the job log |
 
 **Artifacts cannot be downloaded into this container** (the storage host
 is blocked); job logs can, through the GitHub tools, and so can release

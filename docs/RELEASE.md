@@ -18,16 +18,18 @@ count only in the commit's subject line.**
 |---|---|---|
 | A build and every test | changes `build/`, `src/`, `rootfs/`, `profiles/`, `themes/`, `shells/` or the workflows, or says `[build]` in its subject | `build.yml`: build, then `tests.yml` |
 | Tests only, no build | says `[test]` in its subject | `tests.yml` against the newest build of the branch whose artifacts have not expired (14 days) |
-| A prerelease, built and tested | says `[release]` | `build.yml`, `tests.yml`, then `release.yml` if every test passed |
-| A prerelease of a build that already passed | says `[publish]` (newest passing build of the branch) or `[publish RUN-ID]` | `release.yml` only: nothing is rebuilt, so what is published is exactly what was tested |
-| The full release (moves `releases/latest/...`, which the website links to) | says `[publish] [latest]` or `[publish RUN-ID] [latest]` | `release.yml`: the prerelease (made, or found and checked to be the same file), its read-back and Windows checks, then `promote`, which requires a passing `e2e.yml` run whose `INSTALLER_SHA256` is this AurOS-Setup.exe |
+| A prerelease, built and tested, then the real-Windows journey on it | says `[release]` | `build.yml`, `tests.yml`, then `release.yml` if every test passed: prerelease, Windows checks, `e2e.yml` on that exact AurOS-Setup.exe, the website check. Stops there. |
+| **The website's download, start to finish** | says `[release] [latest]` (lead only) | the same, then `promote` (only if the e2e of THIS exe passed in this run) and the Pages deploy |
+| A prerelease of a build that already passed | says `[publish]` (newest passing build of the branch) or `[publish RUN-ID]` | `release.yml` only: nothing is rebuilt, so what is published is exactly what was tested; then the same Windows checks, e2e and site check |
+| That build as the full release | says `[publish RUN-ID] [latest]` (lead only) | the same, then `promote` and Pages; e2e runs again on that exe first |
 
-Every release starts as a prerelease; only `promote` makes one public.
-So the order for a release the website serves is: `[release]` (or
-`[publish]`) → pin `INSTALLER_URL`/`INSTALLER_SHA256` in `e2e.yml` to
-that prerelease's `AurOS-Setup.exe` and let it pass → `[publish RUN-ID]
-[latest]`. A flaky test: "Re-run failed jobs" on the build run (or the
-GitHub tools' `rerun_failed_jobs`), then `[publish RUN-ID]`.
+Every release starts as a prerelease; only `promote` makes one public,
+and only after `e2e.yml` -- called by `release.yml` with the release's
+own AurOS-Setup.exe address and the SHA-256 `publish` computed, so a
+file that does not hash to what was built is refused -- passed in the
+same run. Nothing is pinned by hand. A flaky test: `gh run rerun
+RUN-ID --failed` (the run's own commit is re-run, so a fix to a test
+needs a new `[release]`).
 
 A commit can be empty (`git commit --allow-empty -m "[publish] ..."`).
 
@@ -65,7 +67,11 @@ then reads every file back from its public address through GitHub's
 then, on a Windows runner, starts the downloaded `AurOS-Setup.exe`
 (`--navtest`) and has `aurbridge.exe getimage` -- WinHTTP, the
 installer's own download code -- fetch the image from the release and
-check it.
+check it. Beside that: `e2e.yml` on this release (website in Edge,
+download, wizard, restart, AurOS, a program from the store, on a
+Windows 11 VM; hours), and the website stamped and checked with
+`tools/site/check.mjs`. `promote` ([latest]) needs all three; `pages`
+deploys the site that was checked.
 
 Reading results: `actions_list` / `get_job_logs` with the GitHub tools,
 or `https://api.github.com/repos/$(sh tools/repo.sh)/actions/runs`

@@ -9,7 +9,12 @@ and how to make it.
 Replace `OWNER/REPO` with the repository (today:
 `aarohkandy/v0.0.1-auros`, branch `main`).
 
-## 1. Turn on the website (2 minutes, needed now)
+## 1. Turn on the website (done for aarohkandy/v0.0.1-auros)
+
+Checked 2026-10-23 05:25 UTC with `gh api repos/aarohkandy/v0.0.1-auros/pages`:
+`build_type: workflow` (Source: GitHub Actions), and the `github-pages`
+environment lets `main` deploy. Only a future move needs these clicks again:
+
 
 1. `https://github.com/OWNER/REPO/settings/pages` → **Build and deployment** →
    **Source: GitHub Actions**.
