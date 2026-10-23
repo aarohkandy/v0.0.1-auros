@@ -4,7 +4,7 @@
 # migrant recognises it on sight and has to learn nothing. Where it and
 # the novel archetypes disagree, this one copies what people already do.
 shell_id="taskbar"
-shell_name="The familiar one"
+shell_name="Like Windows"
 shell_tagline="A bar along the bottom with everything you have open."
 
 shell_plain="A bar runs along the bottom of the screen. Every window you

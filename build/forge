@@ -604,6 +604,7 @@ EOL
             -e '/^Name\[/d' -e '/^Comment\[/d' -e '/^GenericName\[/d' \
             "$src" > "$RFS/usr/local/share/applications/$desk.desktop"
     done <<'EOL'
+firefox|Internet|Websites, news and shopping
 thunar|Your files|Everything you have saved, in folders
 mpv|Music and video|Play a song or a film
 mate-calc|Calculator|Add up, and work things out

@@ -730,7 +730,7 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
      * the bar that is not a window, so it wears the brand's own mark. */
     draw_rect(s, (rect){ l.x + 14, l.y + l.h/2 - 4, 8, 8 }, c->accent, 1.f);
     char lb[48];
-    const char *lt = fit_text(f->mid, "All Programs", lb, sizeof lb,
+    const char *lt = fit_text(f->mid, "All my programs", lb, sizeof lb,
                               (float)l.w - 44.f);
     shell_text(s, f->mid, (float)l.x + 30.f, shell_baseline(f->mid, (float)l.y, (float)l.h),
                lt, c->fg_hi, 1.f);
@@ -743,7 +743,7 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
         float hx = (float)(l.x + l.w + 18);
         char hb[80];
         const char *hint = fit_text(f->small,
-                                    "Nothing open yet — pick something from All Programs",
+                                    "Nothing open yet — pick something from All my programs",
                                     hb, sizeof hb, (float)tray0.x - hx - 16.f);
         shell_text(s, f->small, hx, shell_baseline(f->small, (float)l.y, (float)l.h),
                    hint, c->muted, 0.85f);
@@ -820,7 +820,7 @@ static void paint_menu(shell_ctx *c, surface *s, shell_fonts *f)
     float hx = (float)(a.x + c->padding + 4);
     shell_text(s, f->dmid, hx,
                (float)(a.y + c->padding) + (f->dmid ? font_ascent(f->dmid) : 16.f) + 2.f,
-               "All Programs", c->fg_hi, t * 0.98f);
+               "All my programs", c->fg_hi, t * 0.98f);
     shell_text(s, f->small, hx,
                (float)(a.y + c->padding) + (f->dmid ? font_line_height(f->dmid) : 22.f)
                + (f->small ? font_ascent(f->small) : 11.f) + 2.f,

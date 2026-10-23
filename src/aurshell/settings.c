@@ -326,8 +326,12 @@ static void fill_page(shell_ctx *c)
     }
 
     if (S.page == SET_PAGE_SHELL) {
-        static const char *IDS[] = { "rail", "tiles", "locked", "taskbar",
-                                     "dock", "workbench", NULL };
+        /* Her four, in the installer's order and by its names. "Just
+         * these apps" and the keyboard tiler are offered only to a
+         * machine already set to one (a profile chose it): one traps
+         * her, the other expects shortcuts she never learned. */
+        static const char *IDS[] = { "taskbar", "dock", "rail", "tiles",
+                                     "locked", "workbench", NULL };
         char active[CHOICE_LEN] = {0};
         const char *home = getenv("HOME");
         char userlink[512] = {0};
@@ -339,6 +343,9 @@ static void fill_page(shell_ctx *c)
 
         for (int i = 0; IDS[i]; i++) {
             char path[256], name[CHOICE_LEN], plain[CHOICE_LEN];
+            if ((!strcmp(IDS[i], "locked") || !strcmp(IDS[i], "workbench")) &&
+                strcmp(active, IDS[i]))
+                continue;
             snprintf(path, sizeof path, "%s/%s.shell",
                      dir_of("AUROS_SHELLS", "/usr/share/auros/shells"), IDS[i]);
             if (field_of(path, "shell_name", name, sizeof name) < 0) continue;

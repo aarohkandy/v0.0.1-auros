@@ -866,7 +866,7 @@ void net_paint(shell_ctx *c, surface *s, shell_fonts *f)
     font *tiny = f->tiny ? f->tiny : bodyf;
 
     if (head)
-        shell_text(s, head, (float)g.gx, (float)g.head_y, "Internet",
+        shell_text(s, head, (float)g.gx, (float)g.head_y, "Wi-Fi",
                    c->fg, 1.f);
     draw_hrule(s, g.gx, g.rule_y, g.cw, 1, c->fg, 0.28f);
 

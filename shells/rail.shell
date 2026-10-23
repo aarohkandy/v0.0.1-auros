@@ -13,8 +13,8 @@
 # ═══════════════════════════════════════════════════════════════════
 
 shell_id="rail"
-shell_name="Everything in a row"
-shell_tagline="Nothing is ever hidden. Slide left and right."
+shell_name="Big and simple"
+shell_tagline="Big buttons. Nothing ever gets hidden."
 
 # One sentence for a non-technical person choosing at install time.
 shell_plain="Everything you have open sits side by side in a row. What is

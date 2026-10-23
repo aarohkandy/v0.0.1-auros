@@ -31,7 +31,7 @@ cc -O2 -std=gnu11 -o "$T/journey" tools/journey.c \
 # What build/forge ships, by the names it gives them (tools/storetest.c).
 e() { printf '[Desktop Entry]\nType=Application\nName=%s\nComment=%s\nCategories=%s\nExec=true %s\n' \
           "$2" "$3" "$4" "$1" > "$5/$1.desktop"; }
-e firefox "Firefox" "Browse the World Wide Web" "Network;WebBrowser;" "$T/apps"
+e firefox "Internet" "Websites, news and shopping" "Network;WebBrowser;" "$T/apps"
 e thunar "Your files" "Everything you have saved, in folders" "System;FileTools;FileManager;" "$T/apps"
 e org.gnome.Evince "Documents" "Read PDFs and other documents" "GNOME;GTK;Office;Viewer;Graphics;" "$T/apps"
 e org.xfce.mousepad "Notes" "Write and read plain notes" "Utility;TextEditor;" "$T/apps"
@@ -63,11 +63,17 @@ for look in taskbar dock rail tiles; do
         at="$look $1x$2"
         said "$log" "-asks.png"    | grep -qx '   Yes, it all works';         ok "$at: the first start asks" $?
         said "$log" "-desktop.png" | grep -qx '   Get more programs';         ok "$at: Get more programs is on her desktop" $?
+        said "$log" "-desktop.png" | grep -qx '   Wi-Fi';                     ok "$at: the band says Wi-Fi (one name per thing)" $?
+        # (The dock draws its favourites without names until C P1-12.)
+        [ $look = dock ] || { said "$log" "-desktop.png" | grep -qx '   Internet'
+                              ok "$at: the browser is called Internet" $?; }
         said "$log" "-ready.png"   | grep -qx '   VLC media player is ready'; ok "$at: VLC is ready, and it says so" $?
         said "$log" "-opens.png"   | grep -q 'VLC media player';              ok "$at: VLC opens" $?
         case $look in
             taskbar) ! said "$log" "-opens.png" | grep -qx '   Everything on this computer'
-                     ok "$at: the program list gets out of its way" $? ;;
+                     ok "$at: the program list gets out of its way" $?
+                     said "$log" "-desktop.png" | grep -qx '   All my programs'
+                     ok "$at: the button is called All my programs" $? ;;
             tiles)   ! said "$log" "-opens.png" | grep -qx '   Find and add programs to this computer'
                      ok "$at: it fills the screen, not hidden behind the buttons" $? ;;
         esac

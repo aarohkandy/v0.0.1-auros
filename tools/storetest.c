@@ -81,7 +81,7 @@ static void entry(const char *dir, const char *id, const char *name,
 /* What build/forge ships, by the names build/forge gives them. */
 static void ship(const char *d)
 {
-    entry(d, "firefox", "Firefox", "Browse the World Wide Web", "Network;WebBrowser;", "true firefox %u");
+    entry(d, "firefox", "Internet", "Websites, news and shopping", "Network;WebBrowser;", "true firefox %u");
     entry(d, "thunar", "Your files", "Everything you have saved, in folders", "System;FileTools;FileManager;", "true thunar");
     entry(d, "atril", "Documents", "Read PDFs and other documents", "GTK;Office;Viewer;", "true atril %U");
     entry(d, "org.xfce.mousepad", "Notes", "Write and read plain notes", "Utility;TextEditor;", "true mousepad %F");

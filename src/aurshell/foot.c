@@ -44,7 +44,7 @@
 enum { B_HELP, B_NET, B_SETTINGS, B_CLOSE, B_SMALLER, B_BIGGER,
        B_POWER, B_N };
 
-static const char *LABEL[B_N] = { "Help", "Internet", "Settings", "Close this",
+static const char *LABEL[B_N] = { "Help", "Wi-Fi", "Settings", "Close this",
                                   "Smaller", "Bigger", "Turn off" };
 
 /* ── where the buttons are ──────────────────────────────────────────
