@@ -123,11 +123,39 @@ Written before the code landed; each is now in `main`.
 8. **Light ground** (paper `#F6F2E9`): `vision.find_unchecked_boxes` assumes
    a dark ground; the Wi-Fi box (when the engine turns it on) is a 2 px ink
    square on light.
+10. **Restart later no longer closes Setup**: it minimises the window, and
+   nothing is armed until **Restart now** (the engine stops short:
+   `ab_choice.arm_later`, then `ab_arm()` on her press). The install is
+   never armed while nobody is looking. Closing the window (X) on the
+   ready page asks "Close AurOS Setup?": **Keep this window open** (big) /
+   **Close and undo**. So after "Restart now" the e2e sees the screen go
+   black and the machine restart; if it presses "Restart later" nothing
+   else happens until it presses "Restart now" again (un-minimise first).
+11. **"Fix these for me" with a restart among the fixes** (a waiting update,
+    the unmeasurable checks) first shows "Save your work first" with the
+    big button **Restart Windows now** and **Not yet**. The e2e "pending"
+    variant must press that second button too (the driver presses the green
+    one it finds, so it works unchanged; the page text differs).
+12. **The time**: Ready says "It takes about 25 to 60 minutes. The screen goes
+    dark for a minute or two of that." (hours on a hard disk). The progress
+    sentence says "Part 3 of 4", not "Step 3 of 4". The last page says what the
+    black screen is ("Getting ready", "Installing AurOS", do not turn the
+    computer off), matching `src/aurscreen/screen.c`.
 9. Text moved off the screen entirely: the footer hints, the printed web
    address, "Nothing on this computer has been changed" kept. OCR patterns
    that matched "We only read"/"Checking this PC" were already stale.
 
 ## For A2 (engine) and E (release)
+
+- **A2, I edited your file (phases.c / phases.h / simmain.c), backwards
+  compatibly**: the end of `phase_handoff` (the D11 drive-lock pause and
+  BootNext) is now `ab_arm()`, and the BitLocker-back-on + BootNext-clear part
+  of `ab_abort` is `ab_disarm()`. `ab_choice.arm_later` (the wizard sets it)
+  makes `phase_handoff` stop before `ab_arm`; with it 0 (every test, the
+  console tool) nothing changes. New `tools/armtest.sh` (7 checks, 2 go red
+  when `arm_later` is ignored) and `AURBRIDGE_ARM_LATER` / `AURBRIDGE_DISARM`
+  in `simmain.c`. Please add `sh tools/armtest.sh` next to aborttest in
+  fastpath.yml. The staging side needs nothing: it still sees BootNext set.
 
 - **A2, phases.c `esp_room`**: ask the same question as preflight's
   `esp_need()`: `want` = carried (kernel + initramfs + shim + grub + mokmgr)

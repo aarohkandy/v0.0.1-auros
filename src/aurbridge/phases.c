@@ -1940,6 +1940,8 @@ static int esp_room(const char *esp, const char *kern, const char *init,
     return 0;
 }
 
+int ab_arm(ab_machine *m, ab_say say, void *ud, char *why, size_t n);
+
 static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
                          ab_say say, void *ud, char *why, size_t n)
 {
@@ -2186,6 +2188,25 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
         return -1;
     m->boot_made = 1;
 
+    /* WHEN THE WIZARD ASKED FOR IT (arm_later), NOTHING IS ARMED YET: the
+     * drive lock is not paused and BootNext is not set until she presses
+     * Restart now (ab_arm, called from the wizard's button). A restart she
+     * did not press for, or a computer switched off for the night, then
+     * starts Windows as usual; "Restart later" is a window that waits.
+     * Everything else is already done and can be taken back (ab_abort). */
+    if (c->arm_later) {
+        talk(say, ud, "AurOS is ready; nothing starts it until restart is pressed");
+        return 0;
+    }
+    return ab_arm(m, say, ud, why, n);
+}
+
+/* THE LAST STEP, kept apart so it can wait for her press: pause the drive
+ * lock for one restart (D11) and set BootNext. Idempotent: armed twice is
+ * armed once. */
+int ab_arm(ab_machine *m, ab_say say, void *ud, char *why, size_t n)
+{
+    if (m->bootnext_set) return 0;
     /* D11: THE DRIVE LOCK, PAUSED FOR THE RESTART AND NEVER DECRYPTED.
      * -RebootCount 2: protection comes back by itself at the second
      * start of Windows, so the restart into AurOS and the first start of
@@ -2201,6 +2222,7 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
                      "Windows would not pause its drive lock for the restart "
                      "(%s). Nothing will be installed, and everything has "
                      "been put back.", tail);
+            ab_disarm(m, say, ud);
             return -1;
         }
         talk(say, ud, "Windows' drive lock is paused for one restart; it "
@@ -2212,7 +2234,10 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
      * back to Windows by itself, with nobody doing anything and
      * nothing to undo. That property is the whole of R4's answer and
      * it is why BootOrder is never touched. */
-    if (plat_boot_next(m->boot_entry, why, n) != 0) return -1;
+    if (plat_boot_next(m->boot_entry, why, n) != 0) {
+        ab_disarm(m, say, ud);            /* the lock, if it was paused */
+        return -1;
+    }
     m->bootnext_set = 1;
     talk(say, ud, "this computer will start AurOS once, the next time it is "
                   "switched on");
@@ -2253,22 +2278,12 @@ int ab_run(ab_phase upto, const ab_choice *c, pf_report *r, ab_machine *m,
     return 0;
 }
 
-void ab_abort(ab_machine *m, ab_say say, void *ud)
+/* Take back the two things ab_arm does, and only those: the entry, the
+ * files and the download stay, so she can press Restart now again. Safe at
+ * any point, including twice. */
+void ab_disarm(ab_machine *m, ab_say say, void *ud)
 {
     if (!m) return;
-    /* AND WHATEVER WAS UNPACKED GOES. plat_win.c says the payload "is
-     * removed again on the way out, and a leftover from a crash is 28
-     * MB in a directory Windows cleans" -- a failed run is not a
-     * crash, and it is the ordinary path. Six error paths in
-     * phase_handoff and every abort used to leave both files behind.
-     * It is idempotent, so the ones that already free it can stay. */
-    plat_payload_free();
-    /* THE STICK IS LET GO OF FIRST. An aborted phase 2 used to leave
-     * it locked and dismounted for the life of the process -- gone
-     * from Explorer, and with the next write still pointed at the dead
-     * handle, so a user who swapped sticks wrote to the old one. */
-    plat_release();
-
     /* AND BITLOCKER GOES BACK ON.
      *
      * Phase 1 suspends it with -RebootCount 0, which means "until
@@ -2303,6 +2318,26 @@ void ab_abort(ab_machine *m, ab_say say, void *ud)
                           "straight back to Windows.", why);
         }
     }
+}
+
+void ab_abort(ab_machine *m, ab_say say, void *ud)
+{
+    if (!m) return;
+    /* AND WHATEVER WAS UNPACKED GOES. plat_win.c says the payload "is
+     * removed again on the way out, and a leftover from a crash is 28
+     * MB in a directory Windows cleans" -- a failed run is not a
+     * crash, and it is the ordinary path. Six error paths in
+     * phase_handoff and every abort used to leave both files behind.
+     * It is idempotent, so the ones that already free it can stay. */
+    plat_payload_free();
+    /* THE STICK IS LET GO OF FIRST. An aborted phase 2 used to leave
+     * it locked and dismounted for the life of the process -- gone
+     * from Explorer, and with the next write still pointed at the dead
+     * handle, so a user who swapped sticks wrote to the old one. */
+    plat_release();
+
+    /* AND THE DRIVE LOCK GOES BACK ON, and BootNext is cleared. */
+    ab_disarm(m, say, ud);
     /* AND THE REST OF WHAT WAS DONE, in reverse. Each is ours and is
      * taken back only if this run did it: the start-up entry (never in
      * BootOrder, so only the entry goes), the files under \EFI\AurOS,

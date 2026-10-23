@@ -184,6 +184,14 @@ typedef struct {
      * once the engine honours them end to end. */
     int  bring_wifi;
     int  bitlocker_pause;
+    /* The wizard sets this: phase 3 gets everything ready and stops
+     * short of the two things that make the next start into the
+     * installer (the drive lock paused, BootNext set). Those wait for
+     * ab_arm(), called when she presses Restart now, so "Restart later"
+     * is a window that waits and not a computer that installs the next
+     * time it starts. 0 (tests, the console tool) arms at the end of
+     * phase 3 as before. */
+    int  arm_later;
 
     /* THE FAST PATH ITSELF (docs/AURBRIDGE.md, "Fast path"): Windows
      * shrinks C: with its own online shrink and the image is written raw
@@ -272,6 +280,14 @@ int ab_run(ab_phase upto, const ab_choice *c, pf_report *r, ab_machine *m,
 /* Undo everything that can be undone, which before the restart is all
  * of it. Safe to call at any point, including twice. */
 void ab_abort(ab_machine *m, ab_say say, void *ud);
+
+/* The last step, when ab_choice.arm_later held it back: pause the drive
+ * lock for one restart (D11) and set BootNext. 0 armed; -1 with a reason
+ * (and nothing left armed). Idempotent. ab_disarm takes back just these
+ * two, leaving the entry, the files and the download: for when the
+ * restart did not happen after all. */
+int  ab_arm(ab_machine *m, ab_say say, void *ud, char *why, size_t n);
+void ab_disarm(ab_machine *m, ab_say say, void *ud);
 
 /* WHEN SHE LEAVES WITHOUT INSTALLING. ab_cancel_downloads() makes any
  * download in progress, on any thread, stop at its next progress report

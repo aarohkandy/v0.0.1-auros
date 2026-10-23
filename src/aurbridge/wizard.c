@@ -286,14 +286,14 @@ static int   g_shot_mode = 0;
 static int   g_nav_mode  = 0;
 static int   g_selftest  = 0;
 
-/* SET ONLY BY "Restart now", and by Windows itself ending the session.
- * Closing the window before the restart takes everything back
- * (install_cancel), unless she pressed "Restart later" (g_keep_armed):
- * then AurOS goes on at the next restart, whenever she makes it. There
- * is no countdown: nothing restarts this computer but her press
- * (DESIGN-DIRECTION.md B-4). */
+/* SET ONLY BY "Restart now". Nothing starts the install but her press:
+ * the engine stops short of arming the next start (ab_choice.arm_later)
+ * and ab_arm() runs in do_restart(). "Restart later" is a window that
+ * waits (minimised); closing it takes everything back. So there is no
+ * state in which the computer is armed and nobody is looking
+ * (docs/research/people-walkthrough-2026-10.md, C-08). */
 static int   g_restarting = 0;
-static int   g_keep_armed = 0;
+static int   g_nt_restarts, g_nt_waits;       /* --navtest's counters */
 
 /* ═══════════════════════════════════════════════════════════════════
  *  Small helpers
@@ -1390,6 +1390,8 @@ static void install_begin(void)
      * button on it; phases.c refuses without it, and that refusal is
      * the last line of defence if this screen is ever reorganised. */
     g_ab_choice.consent_given = 1;
+    /* ... and the next start is armed only by her press on Restart now */
+    g_ab_choice.arm_later = 1;
 
     /* The machine stays awake from here through the restart even if the
      * early download never started (a developer build, or she moved
@@ -1433,6 +1435,8 @@ static void install_tick(void)
         g_install_running = 0;
         g_install_finished = 1;
         g_install_armed = 1;
+        plat_let_sleep();            /* ready and waiting: the computer may sleep (the
+                                      * window comes forward when it wakes) */
     } else if (st == 3) {
         if (phase < N_PHASES) g_ph[phase] = PH_FAILED;
         g_ph_cur = -1;
@@ -2639,7 +2643,8 @@ static int page_style(int x, int y, int w)
     /* what the chosen one is, in a sentence */
     y += S(16);
     wchar_t line[160];
-    _snwprintf(line, 159, L"You chose %ls. %ls", STYLES[g_sel_style].name, STYLES[g_sel_style].line);
+    _snwprintf(line, 159, L"Picked for you: %ls. Press another look to change it.",
+               STYLES[g_sel_style].name);
     line[159] = 0;
     y += text_draw(line, g_f_body, C_INK, x, y, w, DT_WORDBREAK);
     return y - y0;
@@ -2670,11 +2675,18 @@ static const pf_disk *sys_disk(void)
  * which it is (seek_penalty). These are for the install as the fast
  * path does it (docs/handoff/SESSION-2026-10-23.md, D1): the slow work
  * in Windows while the download runs, about a minute after the restart. */
+/* THE TIME, FOR THE PATH THAT SHIPS (the install that makes room after the
+ * restart: the fast path, which does it in Windows while the download runs,
+ * is not selectable yet). NOT MEASURED: these are what the audit worked out
+ * from the code (docs/research/journey-audit-2026-10-23.md), widened. The
+ * journey clock on a real Windows VM (WP-40, stream F) replaces them. A
+ * range that is too long costs her an impatient wait; one that is too
+ * short costs her the person who switches it off at minute 30. */
 #define ETA_LINK_BPS        3000000.0  /* 24 Mbit/s, until one is measured */
-#define ETA_SSD_WORK_MIN    4
-#define ETA_HDD_WORK_MIN    20
-#define ETA_SSD_AFTER_MIN   3          /* the restart, the check, first start */
-#define ETA_HDD_AFTER_MIN   6
+#define ETA_SSD_WORK_MIN    20         /* the checks, the restart, making room, copying, first start */
+#define ETA_HDD_WORK_MIN    60
+#define ETA_SSD_AFTER_MIN   20         /* what is left once the download is done */
+#define ETA_HDD_AFTER_MIN   75
 #define DL_BYTES_FALLBACK   1800000000ULL
 
 static uint64_t download_bytes(void)
@@ -2741,16 +2753,30 @@ static void eta_range(int *lo, int *hi)
         dl_lo = 0.9; dl_hi = 1.3;
     }
     int s = disk_is_slow();
-    double lo_m = dl * dl_lo + (s == 1 ? ETA_HDD_WORK_MIN + ETA_HDD_AFTER_MIN
-                                       : ETA_SSD_WORK_MIN + ETA_SSD_AFTER_MIN);
-    double hi_m = dl * dl_hi + (s == 0 ? ETA_SSD_WORK_MIN * 1.5 + ETA_SSD_AFTER_MIN
-                                       : ETA_HDD_WORK_MIN * 1.5 + ETA_HDD_AFTER_MIN);
+    double w = (s == 0 ? ETA_SSD_WORK_MIN : ETA_HDD_WORK_MIN);
+    double lo_m = dl * dl_lo + w;
+    double hi_m = dl * dl_hi + w * 2.0;          /* twice what the code says: it is a guess */
+    if (g_dl_state == 2) { lo_m = (s == 0 ? ETA_SSD_AFTER_MIN : ETA_HDD_AFTER_MIN);
+                           hi_m = lo_m * 2.0; }
     int l = (int)(lo_m / 5.0) * 5;
     if (l < 5) l = 5;
     int h = (int)ceil(hi_m / 5.0) * 5;
     if (h > 30) h = (int)ceil(hi_m / 15.0) * 15;
     if (h <= l) h = l + 5;
     *lo = l; *hi = h;
+}
+
+/* "25 to 60 minutes", or "1 to 3 hours" when it is long */
+static void range_words(int lo, int hi, wchar_t *out, int cch)
+{
+    if (hi >= 120) {
+        int l = lo / 60 < 1 ? 1 : lo / 60, h = (hi + 59) / 60;
+        if (h <= l) h = l + 1;
+        _snwprintf(out, (size_t)cch, L"%d to %d hours", l, h);
+    } else {
+        _snwprintf(out, (size_t)cch, L"%d to %d minutes", lo, hi);
+    }
+    out[cch - 1] = 0;
 }
 
 static const pf_volume *sys_volume(void)
@@ -2834,10 +2860,10 @@ static int page_ready(int x, int y, int w)
     uint64_t take, keep;
     space_split(&take, &keep);
     if (take)
-        _snwprintf(buf, 299, L"AurOS uses %d GB. Windows keeps %d GB free.",
-                   (int)((take + GIB / 2) / GIB), (int)(keep / GIB));
+        _snwprintf(buf, 299, L"There is enough room for AurOS. Windows keeps %d GB free.",
+                   (int)(keep / GIB));
     else
-        _snwprintf(buf, 299, L"AurOS uses up to 40 GB. Windows keeps at least 20 GB free.");
+        _snwprintf(buf, 299, L"There is enough room for AurOS. Windows keeps at least 20 GB free.");
     buf[299] = 0;
     y += glyph_row(G_DRIVE, buf, x, y, narrow) + gap;
 
@@ -2846,10 +2872,7 @@ static int page_ready(int x, int y, int w)
     if (g_dl_state == 2) {
         wcscpy(buf, L"AurOS has already downloaded.");
     } else {
-        double gb = (double)download_bytes() / 1e9;
-        _snwprintf(buf, 299, L"It downloads about %.1f GB, so stay connected to the internet.",
-                   gb);
-        buf[299] = 0;
+        wcscpy(buf, L"AurOS downloads while you wait, so stay connected to the internet.");
     }
     y += glyph_row(G_DOWN, buf, x, y, narrow) + gap;
 
@@ -2859,12 +2882,15 @@ static int page_ready(int x, int y, int w)
                                L"comes back on by itself.", x, y, narrow) + gap;
 
     y += glyph_row(G_UNDO, L"The computer restarts once. Then AurOS asks if everything "
-                           L"works. Press No, and the computer goes back to Windows.",
+                           L"works. Press \u201CNo, go back to Windows\u201D and it does.",
                    x, y, narrow) + gap;
 
     int lo, hi;
     eta_range(&lo, &hi);
-    _snwprintf(buf, 299, L"It takes about %d to %d minutes.%ls", lo, hi,
+    wchar_t rng[64];
+    range_words(lo, hi, rng, 64);
+    _snwprintf(buf, 299, L"It takes about %ls. The screen goes dark for a minute or two of "
+                         L"that.%ls", rng,
                disk_is_slow() == 1
                  ? L" This computer has an older, slower kind of drive." : L"");
     buf[299] = 0;
@@ -3006,12 +3032,14 @@ static int page_progress(int x, int y, int w)
 
     if (install_ok()) {
         y += page_head(L"Ready to restart",
-                       L"Save anything you’re working on, then press Restart now.",
+                       L"Save anything you\u2019re working on, then press Restart now.",
                        x, y, w) + S(g_short ? 20 : 32);
         static const wchar_t *const what[] = {
-            L"Restart now: the screen goes black, then AurOS finishes setting up and "
-            L"asks if everything works.",
-            L"Restart later: AurOS Setup closes. AurOS goes on next time you restart.",
+            L"Restart now: the screen goes black for a minute or two. Then you see "
+            L"\u201CGetting ready\u201D and \u201CInstalling AurOS\u201D. Do not turn the "
+            L"computer off. It restarts by itself, and AurOS asks if everything works.",
+            L"Restart later: this window waits. Nothing changes until you come back and "
+            L"press Restart now.",
         };
         y += note_box(NULL, what, 2, x, y, narrow);
         return y - y0;
@@ -3044,7 +3072,7 @@ static int page_progress(int x, int y, int w)
                        g_f_body, C_INK, x, y, narrow, DT_WORDBREAK);
         return y - y0;
     }
-    _snwprintf(buf, 519, L"Step %d of %d: %ls", step_of(phase), N_STEPS, stage_sentence(phase));
+    _snwprintf(buf, 519, L"Part %d of %d: %ls", step_of(phase), N_STEPS, stage_sentence(phase));
     buf[519] = 0;
     y += text_draw(buf, g_f_bodyb, C_INK, x, y, narrow, DT_WORDBREAK) + S(14);
 
@@ -3106,7 +3134,8 @@ static int primary_enabled(void)
 
 static const wchar_t *primary_label(void)
 {
-    if (g_confirm) return g_confirm == 1 ? L"Keep going" : L"Keep it and restart later";
+    if (g_confirm) return g_confirm == 1 ? L"Keep going"
+                        : g_confirm == 3 ? L"Restart Windows now" : L"Keep this window open";
     switch (g_page) {
     case PAGE_WELCOME:  return L"Next";
     /* WHEN IT CANNOT GO ON, THE ONE BUTTON CLOSES IT. "Check again" on an
@@ -3185,7 +3214,10 @@ static void draw_footer(void)
 
     const wchar_t *second = NULL, *lands = NULL;
     int sid = 0, leaves = 0;
-    if (g_confirm) {
+    if (g_confirm == 3) {
+        second = L"Not yet"; sid = ID_LEAVE; leaves = 1;
+        lands = L"Not yet: nothing is changed, and the page stays as it is.";
+    } else if (g_confirm) {
         second = g_confirm == 1 ? L"Stop and undo" : L"Close and undo";
         sid = ID_LEAVE; leaves = 1;
         lands = L"Undo: this computer starts Windows as usual.";
@@ -3237,21 +3269,21 @@ static int g_settle;
 static int page_confirm(int x, int y, int w)
 {
     int y0 = y;
-    int narrow = w > S(720) ? S(720) : w;
     if (g_confirm == 1) {
         y += page_head(L"Stop setting up AurOS?",
                        L"It stops when the step it is on is done, then takes everything "
                        L"back, so this computer starts Windows as usual. Windows and your "
                        L"files are not affected.", x, y, w);
+    } else if (g_confirm == 3) {
+        /* before Windows restarts for a fix (C-01): her work first */
+        y += page_head(L"Save your work first",
+                       L"Fixing this restarts Windows. Save anything you have open now. "
+                       L"AurOS Setup opens again by itself afterwards.", x, y, w);
     } else {
         y += page_head(L"Close AurOS Setup?",
-                       L"AurOS is ready. If you close this now, AurOS is taken back and "
-                       L"this computer starts Windows as usual.", x, y, w);
-        y += S(24);
-        static const wchar_t *const keep[] = {
-            L"Keep it and restart later: AurOS Setup closes. AurOS goes on next time you restart.",
-        };
-        y += note_box(NULL, keep, 1, x, y, narrow);
+                       L"AurOS is ready. If you close this now, AurOS is taken back. "
+                       L"Nothing on this computer has been changed, and you can open "
+                       L"AurOS Setup again later.", x, y, w);
     }
     return y - y0;
 }
@@ -3400,17 +3432,23 @@ static void check_advance(void)
     g_want_focus_id = ID_PRIMARY;      /* Next is now the obvious move */
 }
 
+/* HER PRESS ON RESTART NOW: arm the next start (the drive lock paused
+ * for one restart, BootNext), then restart Windows. If either fails, what
+ * was armed is taken back and she is told in one plain sentence; nothing
+ * is left armed under a computer that did not restart. */
 static void do_restart(void)
 {
-    if (g_nav_mode || g_shot_mode) return;
-    char why[PLAT_WHY];
+    if (g_nav_mode || g_shot_mode) { g_nt_restarts++; return; }
+    char why[PLAT_WHY] = "";
     g_restarting = 1;
-    if (plat_restart(why, sizeof why) != 0) {
+    if (ab_arm(&g_ab_machine, ab_say_cb, NULL, why, sizeof why) != 0 ||
+        plat_restart(why, sizeof why) != 0) {
+        ab_disarm(&g_ab_machine, ab_say_cb, NULL);
         g_restarting = 0;
-        wchar_t w[PLAT_WHY];
-        MultiByteToWideChar(CP_UTF8, 0, why, -1, w, PLAT_WHY);
-        w[PLAT_WHY - 1] = 0;
-        MessageBoxW(g_hwnd, w, L"AurOS Setup", MB_OK | MB_ICONWARNING);
+        MessageBoxW(g_hwnd, L"The computer would not restart.\n\nNothing has been "
+                            L"changed: it starts Windows as usual. Close any program "
+                            L"that is asking to be saved, then press Restart now again.",
+                    L"AurOS Setup", MB_OK | MB_ICONWARNING);
     }
 }
 
@@ -3431,7 +3469,7 @@ static void do_primary(void)
         int c = g_confirm;
         g_confirm = 0;
         page_changed();
-        if (c == 2) { g_keep_armed = 1; DestroyWindow(g_hwnd); }
+        if (c == 3) fix_start();               /* she saved her work: restart for the fix */
         return;
     }
     switch (g_page) {
@@ -3441,6 +3479,9 @@ static void do_primary(void)
                             else start_check(PAGE_STYLE);
                         }
                         else if (any_cannot()) PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
+                        /* a fix that restarts Windows asks first, plainly: her
+                         * work is lost if she has not saved it (C-01) */
+                        else if (fixable_now() == 2) { g_confirm = 3; page_changed(); }
                         else if (fixable_now()) fix_start();
                         else start_check(PAGE_STYLE);
                         break;
@@ -3469,7 +3510,9 @@ static void widget_do(int id)
     case ID_QUIT:    PostMessageW(g_hwnd, WM_CLOSE, 0, 0); return;
     /* AurOS stays armed for the next restart she makes: the window goes,
      * and nothing is taken back (WM_DESTROY). */
-    case ID_LATER:   g_keep_armed = 1; PostMessageW(g_hwnd, WM_CLOSE, 0, 0); return;
+    /* a window that waits: nothing is armed, so nothing happens until she
+     * comes back and presses Restart now */
+    case ID_LATER:   g_nt_waits++; if (g_hwnd) ShowWindow(g_hwnd, SW_MINIMIZE); return;
     case ID_WIFI:    g_bring_wifi = !g_bring_wifi; return;
     case ID_HELPER:  open_helper(); return;
     case ID_STOP:    PostMessageW(g_hwnd, WM_CLOSE, 0, 0); return;
@@ -3768,10 +3811,12 @@ static void acc_page_name(wchar_t *out, int n)
     case PAGE_READY: {
         int lo, hi;
         eta_range(&lo, &hi);
+        wchar_t rng[64];
+        range_words(lo, hi, rng, 64);
         SAY(L"Ready to install. Windows and all your files stay on this computer. %ls "
-            L"The computer restarts once. It takes about %d to %d minutes. Press "
+            L"The computer restarts once. It takes about %ls. Press "
             L"Enter to install AurOS.",
-            STYLES[style_ok() ? g_sel_style : 0].ready, lo, hi);
+            STYLES[style_ok() ? g_sel_style : 0].ready, rng);
         break;
     }
     case PAGE_PROGRESS:
@@ -4150,7 +4195,7 @@ static int close_asked(HWND h)
     /* READY, AND ABOUT TO BE THROWN AWAY. After the last step the
      * window's X used to close it and take back the restart without
      * a word. */
-    if (g_install_armed && !g_restarting && !g_keep_armed) { g_confirm = 2; page_changed(); return 0; }
+    if (g_install_armed && !g_restarting) { g_confirm = 2; page_changed(); return 0; }
     return 1;
 }
 
@@ -4162,6 +4207,7 @@ static int leave_confirmed(void)
     int what = g_confirm;
     g_confirm = 0;
     page_changed();
+    if (what == 3) return 0;               /* "Not yet": back to the page */
     if (what != 1) return 1;
     /* Before the engine has started (it waits for the download that ran
      * behind the pages, which only ever writes \AurOS\ ), there is
@@ -4462,20 +4508,18 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         else InvalidateRect(h, NULL, FALSE);
         return 0;
 
-    /* WINDOWS IS ENDING THE SESSION -- a restart from the Start menu, or
-     * ours. Either way the restart is happening, and it is the one the
-     * armed setting is for. */
+    /* WINDOWS IS ENDING THE SESSION, from the Start menu or anything else:
+     * nothing is armed (only Restart now arms), so that restart starts
+     * Windows as usual. g_restarting is set by our own Restart now and by
+     * the restart a fix asks for, and by nothing here. */
     case WM_ENDSESSION:
-        if (wp) g_restarting = 1;
         return 0;
 
     case WM_DESTROY:
         KillTimer(h, 1);
-        /* Take back the one-shot start-up setting, if it was set. Not
-         * when the window is going BECAUSE of the restart, and not when
-         * she pressed Restart later: then AurOS, and its download, wait
-         * for her next restart. */
-        if (!g_restarting && !(g_keep_armed && g_install_armed)) {
+        /* Take back everything the install did, if it was done. Not when
+         * the window is going BECAUSE of the restart she pressed for. */
+        if (!g_restarting) {
             install_cancel();
             install_forget();
         } else {
@@ -5088,28 +5132,59 @@ static int nav_test(const char *dir)
         g_temp_bytes = 0;
     }
 
-    if (g_nt) fprintf(g_nt, "\n8. the restart: only when she presses for it, now or later\n");
+    if (g_nt) fprintf(g_nt, "\n8. the restart: only when she presses Restart now; later is a window that waits\n");
     {
         nt_fake_report(0);
         g_page = PAGE_PROGRESS; g_install_finished = 1;
         InterlockedExchange(&g_ab_state, 2);
+        g_nt_restarts = 0; g_nt_waits = 0;
         render();
         int later = 0;
         for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_LATER) later = 1;
         nt_check(later && !wcscmp(primary_label(), L"Restart now"),
                  "ready, it offers Restart now and Restart later");
         for (int i = 0; i < 2000; i++) tick();   /* two minutes of the clock */
-        nt_check(!g_restarting && g_page == PAGE_PROGRESS,
+        nt_check(!g_restarting && g_nt_restarts == 0 && g_page == PAGE_PROGRESS,
                  "nothing restarts by itself, however long it waits");
         on_key(VK_ESCAPE);
-        nt_check(g_page == PAGE_PROGRESS && !g_restarting, "Esc does nothing here");
+        nt_check(g_page == PAGE_PROGRESS && g_nt_restarts == 0, "Esc does nothing here");
         widget_activate(ID_LATER);
-        nt_check(g_keep_armed, "Restart later keeps AurOS for her next restart");
-        MSG msg;
-        while (PeekMessageW(&msg, NULL, WM_CLOSE, WM_CLOSE, PM_REMOVE)) { }
-        g_keep_armed = 0;
+        nt_check(g_nt_waits == 1 && g_nt_restarts == 0,
+                 "Restart later only waits (the window is minimised); it restarts nothing");
+        widget_activate(ID_PRIMARY);
+        nt_check(g_nt_restarts == 1, "Restart now is the one thing that restarts");
+        g_nt_restarts = 0;
         g_install_finished = 0;
         InterlockedExchange(&g_ab_state, 0);
+    }
+
+    if (g_nt) fprintf(g_nt, "\n8b. a fix that restarts Windows asks her to save her work first\n");
+    {
+        fx_machine(0);
+        fx_add("pending-reboot", PF_BLOCK, "Windows has updates waiting for a restart");
+        g_page = PAGE_BLOCKED; g_confirm = 0; g_scroll[PAGE_BLOCKED] = 0;
+        render();
+        nt_check(fixable_now() == 2 && !wcscmp(primary_label(), L"Fix these for me"),
+                 "a waiting restart is among the fixes");
+        widget_activate(ID_PRIMARY);
+        render();
+        int not_yet = 0;
+        for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_LEAVE) not_yet = 1;
+        nt_check(g_confirm == 3 && !wcscmp(primary_label(), L"Restart Windows now") && not_yet &&
+                 !g_fix_busy,
+                 "Fix these for me asks first: Save your work first, Restart Windows now / Not yet");
+        widget_activate(ID_LEAVE);
+        nt_check(g_confirm == 0 && !g_fix_busy && g_page == PAGE_BLOCKED, "Not yet changes nothing");
+        fx_machine(0);
+        fx_add("insufficient-space", PF_BLOCK, "Not enough free space");
+        g_temp_bytes = 2300000000ULL;
+        g_page = PAGE_BLOCKED; g_confirm = 0;
+        render();
+        widget_activate(ID_PRIMARY);
+        nt_check(g_confirm == 0, "a fix that does not restart Windows does not ask");
+        g_temp_bytes = 0;
+        g_confirm = 0;
+        g_pf_valid = 1;
     }
 
     if (g_nt) fprintf(g_nt, "\n9. Esc never closes anything\n");
@@ -5133,11 +5208,14 @@ static int nav_test(const char *dir)
         int lo, hi;
         fx_machine(0); fx_ready(); eta_range(&lo, &hi);
         char what[96];
-        snprintf(what, sizeof what, "an SSD laptop: %d to %d minutes", lo, hi);
-        nt_check(lo >= 5 && hi <= 30 && lo < hi, what);
+        snprintf(what, sizeof what, "an SSD laptop: %d to %d minutes, a wide honest range", lo, hi);
+        nt_check(lo >= 15 && hi >= 45 && hi <= 90 && lo < hi, what);
         fx_machine(1); fx_ready(); eta_range(&lo, &hi);
-        snprintf(what, sizeof what, "a hard disk: %d to %d minutes, longer", lo, hi);
-        nt_check(lo >= 20 && hi > 30 && lo < hi, what);
+        snprintf(what, sizeof what, "a hard disk: %d to %d minutes, hours", lo, hi);
+        nt_check(lo >= 45 && hi >= 120 && lo < hi, what);
+        wchar_t rng[64];
+        range_words(lo, hi, rng, 64);
+        nt_check(wcsstr(rng, L"hours") != NULL, "...said in hours");
         int slo, shi;
         fx_machine(0); fx_ready(); eta_range(&slo, &shi);
         InterlockedExchange(&g_dl_state, 2);
@@ -5228,11 +5306,11 @@ static int nav_test(const char *dir)
         /* Ready, and about to be thrown away */
         g_install_running = 0; g_install_finished = 1; g_install_armed = 1;
         InterlockedExchange(&g_ab_state, 2); InterlockedExchange(&g_ab_gate, 1);
-        nt_check(!close_asked(NULL) && g_confirm == 2 && !wcscmp(primary_label(), L"Keep it and restart later"),
-                 "closing a ready install asks: Keep it and restart later, or Close and undo");
+        nt_check(!close_asked(NULL) && g_confirm == 2 && !wcscmp(primary_label(), L"Keep this window open"),
+                 "closing a ready install asks: Keep this window open, or Close and undo");
         widget_activate(ID_PRIMARY);
-        nt_check(g_keep_armed && g_confirm == 0, "Keep it and restart later keeps AurOS armed");
-        g_keep_armed = 0; g_install_armed = 0; g_install_finished = 0;
+        nt_check(g_confirm == 0 && g_nt_restarts == 0, "Keep this window open stays, and restarts nothing");
+        g_install_armed = 0; g_install_finished = 0;
         g_install_running = 0; g_stop_wanted = 0; g_aborts = 0; g_confirm = 0;
         InterlockedExchange(&g_ab_state, 0);
         InterlockedExchange(&g_ab_gate, 0);

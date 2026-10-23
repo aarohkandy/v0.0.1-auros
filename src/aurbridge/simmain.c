@@ -182,6 +182,9 @@ int main(int argc, char **argv)
         c.min_root_bytes = strtoull(getenv("AURBRIDGE_MIN_ROOT_MB"), NULL, 10)
                            * 1000ull * 1000;
     if (getenv("AURBRIDGE_BITLOCKER_PAUSE")) c.bitlocker_pause = 1;
+    /* What the wizard does: nothing is armed until she presses Restart now
+     * (tools/armtest.sh). */
+    if (getenv("AURBRIDGE_ARM_LATER")) c.arm_later = 1;
 
     pf_report r;
     pf_run(&r);
@@ -219,6 +222,21 @@ int main(int argc, char **argv)
                (unsigned long long)m.plan.rec_first,
                (unsigned long long)m.plan.rec_last,
                m.root_sha256, m.boot_sha256);
+    if (getenv("AURBRIDGE_ARM_LATER")) {
+        /* ab_run has stopped short of arming. The test reads the firmware's
+         * variables between these lines. */
+        printf("aurbridge-report v1 step=prepared bootnext=%d\n", m.bootnext_set);
+        fflush(stdout);
+        char awhy[PLAT_WHY] = "";
+        int arc = ab_arm(&m, say, NULL, awhy, sizeof awhy);
+        printf("aurbridge-report v1 step=armed rc=%d bootnext=%d\n", arc, m.bootnext_set);
+        fflush(stdout);
+        if (getenv("AURBRIDGE_DISARM")) {
+            ab_disarm(&m, say, NULL);
+            printf("aurbridge-report v1 step=disarmed bootnext=%d entry=%d\n",
+                   m.bootnext_set, m.boot_made);
+        }
+    }
     /* And taken back, the way closing the window takes it back
      * (tools/aborttest.sh): AURBRIDGE_ABORT runs ab_abort on the armed
      * machine, AURBRIDGE_FORGET then deletes the download. */

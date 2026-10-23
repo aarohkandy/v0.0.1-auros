@@ -211,11 +211,13 @@ static const struct { const char *id; const wchar_t *line; } INSTEAD[] = {
       L"Copy your photos and documents somewhere else today, while the drive "
       L"still works. Then have the drive replaced." },
     { "bitlocker-system",
-      L"Keep using Windows for now, and leave its drive lock as it is: AurOS "
-      L"will never ask you to switch it off." },
+      L"This is a Windows safety feature that comes on by default. It is not a "
+      L"password you forgot. Keep using Windows for now, and leave it on: AurOS "
+      L"will work on locked drives soon." },
     { "bitlocker-other",
-      L"Keep using Windows for now, and leave its drive lock as it is: AurOS "
-      L"will never ask you to switch it off." },
+      L"This is a Windows safety feature that comes on by default. It is not a "
+      L"password you forgot. Keep using Windows for now, and leave it on: AurOS "
+      L"will work on locked drives soon." },
     { "not-elevated",
       L"Close this, open AurOS Setup again from your Downloads, and press Yes "
       L"when Windows asks whether it may make changes." },
