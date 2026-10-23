@@ -95,8 +95,10 @@ C6 (notifications that stay) by a helper: `1c430eb`, `cb52b2c`, `tools/notifytes
 
 ## Performance on a 4 GB 2013 laptop (measured in a VM on homebase EPYC, so ratios, not seconds)
 
-Shell frame (`aurshell --png --frames`): 1.3 to 3.8 ms a paint at 1366x768 and 1024x600 in all four
-looks; start 50 to 86 ms to first frame; resident about 36 MB. Boot time and idle RAM of the whole
+Shell frame (`aurshell --png --frames 200`, re-measured on `cc07a47` with the window-button, Ferry and
+Wishes work in): median 0.7 to 2.0 ms a paint at 1366x768 and 1024x600 in all four looks (worst frame
+4.0 ms); start 27 to 47 ms to first frame; resident 32 MB. (Earlier run: 1.3 to 3.8 ms, 50 to 86 ms, 36 MB;
+the spread is the host's load.) Boot time and idle RAM of the whole
 image are S1's `hardenboottest` medians (see docs/security/HARDENING.md); nothing in the shell
 was found worth cutting. The new office suite is 344 MB installed and does not run until opened.
 
