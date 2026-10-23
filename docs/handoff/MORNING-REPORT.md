@@ -41,9 +41,8 @@ _Last updated: 05:55 UTC 2026-10-23 (22:55 your time). Usage ran out; the lead r
 - **Caught before anyone used it: Ubuntu security updates would never have installed** (renaming the system to
   AurOS broke the updater's source names). Proven on the real image, fix in progress, and becomes a release gate.
 
-- **Found overnight, being fixed: Firefox opens as a blank window** (AurOS's compositor did not draw the
-  inner surfaces browsers and video players paint into). A new agent owns the compositor and is fixing it;
-  a check proves it once fixed. This is exactly why the nightly 'everyday tasks' tests exist.
+- **Fixed overnight: Firefox opened as a blank window** (the compositor never drew the inner surfaces browsers
+  and video players paint into). Now Firefox, GTK4, Qt and video all draw; 21 pixel-exact tests guard it.
 
 - **The one blocker that matters most:** on a real Windows 11 (in the test VM) everything works up to the restart
   (Get AurOS → Restart now in 4 min 19 s), then the install step refuses: the Linux tool that shrinks Windows
