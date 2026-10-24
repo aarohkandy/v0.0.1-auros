@@ -202,3 +202,33 @@ IBus must be disabled, and all three IM variables must be absent from both the
 live shell and user manager. Missing/query-error evidence fails. Parser
 fixtures, shell syntax and ShellCheck pass; runtime awaits this batch's image.
 This adds no extra build or VM boot.
+
+## Follow-through after the all-profile checkpoint
+
+The profile workflow now creates its evidence release once, then runs at most
+two isolated build lanes. Run `40128386837` was replaced while its first job
+was still installing tools; `40128867869` at `1e46ff34` runs all four
+non-desktop profiles, with real composition enabled only for multilingual.
+The workflow change does not rebuild the desktop image.
+
+The browser now calls the real build API/compiler/ledger in a local integration
+test. Only the GitHub verifier boundary is mocked. Proof acceptance, exact
+recipe dispatch, opaque receipt/Bearer handling, ready rendering and reload
+without redispatch pass; the full site suite passes 548 checks. This is not
+signing or installed-OS proof.
+
+The `ee450fbb` image run `40126965912` failed its unit gate because that job
+omitted NumPy and Pillow before the E2E evidence selftest imported them. The
+other workflow already installed these dependencies. `41a57102` aligns the
+unit job; the full evidence selftest and workflow lint pass. The `f1c92a70`
+desktop run `40128386534` was cancelled because its immutable workflow revision
+has the same omission. Independent profile jobs continue. Neither candidate
+is eligible for release on this evidence.
+
+Base discovery now starts with canonical release assets and queries successful
+build runs at the exact release SHA. Ordinary gate-only pushes and unrelated
+evidence releases no longer hide a usable base within the documented bounded
+search. It refuses ambiguous runs and incomplete artifact pagination, uses at
+most 26 GitHub requests, and passes all 82 cloud tests and security review.
+The exact-SHA GitHub query was also checked against real successful run
+`40124183660`. Public build requests and Wishes remain disabled.
