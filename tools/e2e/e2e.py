@@ -1081,9 +1081,14 @@ class Flow:
                     # Explore tab (no word on it; run 40003466428). A person clicks
                     # it; Ctrl+F reached nothing, the keyboard was not in that window.
                     ex, _ = self.ocr_find("Explore")
-                    if ex:
-                        cx, cy = vision.centre(ex)
-                        self.m.click(cx - 206, cy, label="store search (the magnifying glass)")
+                    mag = self.store_magnifier(self.m.screendump(), ex)
+                    if mag and attempt != 1:
+                        self.m.click(*mag, label="store search (the magnifying glass)")
+                    elif ex:
+                        # a click in the window gives it the keyboard, then its own shortcut
+                        self.m.click(*vision.centre(ex), label="store: its Explore tab, for the keyboard")
+                        time.sleep(1)
+                        self.m.key("ctrl", "f", label="store search (Ctrl+F)")
                     else:
                         self.m.key("ctrl", "f", label="store search (Ctrl+F)")
                 time.sleep(2)
@@ -1186,6 +1191,20 @@ class Flow:
             time.sleep(25)
             img = self.m.shot("program-open")
             self.log("on screen: " + vision.text_of(vision.ocr(img))[:500])
+
+    @staticmethod
+    def store_magnifier(img, explore_box):
+        """The search button of the store's header: 47 px right of the window's
+        left frame line, on the tabs' row. (Measured on the screenshots of runs
+        40040689945 / 40047454422: frame at x=243, the button's outline at
+        263..316, its centre 290. An offset from the Explore tab drifted when the
+        tabs gained icons, 196 then 272.) None without an Explore tab to give the row."""
+        if not explore_box:
+            return None
+        cy = vision.centre(explore_box)[1]
+        lum = img[cy].astype(int).sum(axis=1) // 3
+        frame = next((x for x in range(200, 400) if lum[x] < 110), None)
+        return (frame + 47, cy) if frame else None
 
     @staticmethod
     def store_has_content(img):

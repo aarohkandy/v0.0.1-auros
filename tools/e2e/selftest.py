@@ -263,6 +263,19 @@ def test_canon_label():
     check(e2e.canon_label("Zzzzz qqq") == "Zzzzz qqq", "wizard: a reading that is nothing known stays as read")
 
 
+def test_store_magnifier():
+    try:
+        import e2e, numpy as np
+    except ImportError:
+        return
+    img = np.zeros((800, 1280, 3), np.uint8); img[:] = (240, 240, 240)
+    img[:, 192] = 40                                  # the shell's home panel border
+    img[75:715, 243] = 40                             # the store window's frame
+    box = (488, 90, 150, 20)                          # where OCR found 'Explore'
+    check(e2e.AurFlow.store_magnifier(img, box) == (290, 100), "store: the search button is 47 px inside the window frame, on the tabs' row")
+    check(e2e.AurFlow.store_magnifier(img, None) is None, "store: no Explore tab, no guess")
+
+
 def test_store_content():
     try:
         import e2e, numpy as np
@@ -412,6 +425,7 @@ test_windows_dry()
 test_aur_dry()
 test_label_is()
 test_canon_label()
+test_store_magnifier()
 test_store_content()
 test_label_contrast()
 test_store_button_colours()
