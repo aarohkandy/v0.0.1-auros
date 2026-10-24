@@ -33,6 +33,10 @@ jobs:
   package:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    outputs:
+      recipe_id: ${{ steps.recipe.outputs.recipe_id }}
+      expected_look: ${{ steps.recipe.outputs.expected_look }}
+      expected_theme: ${{ steps.recipe.outputs.expected_theme }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -94,6 +98,32 @@ jobs:
             grep -q "^$id " packaging/base-resources.txt \
               || { echo "::error::trusted base installer has no boot resource $id"; exit 1; }
           done
+
+      - name: expose the validated recipe expectations
+        id: recipe
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+
+          with open("packaging/request.json", encoding="utf-8") as stream:
+              recipe = json.load(stream)["recipe"]
+          recipe_id = recipe["id"]
+          preferences = recipe["resolved_preferences"]
+          look = preferences["look"]
+          theme = preferences["theme"]
+          if not re.fullmatch(r"sha256:[0-9a-f]{64}", recipe_id):
+              raise SystemExit("validated recipe has an invalid identity")
+          if look not in {"dock", "rail", "taskbar", "tiles"}:
+              raise SystemExit("validated recipe has an invalid look")
+          if theme not in {"ember", "moss", "nocturne", "sandstone", "slate"}:
+              raise SystemExit("validated recipe has an invalid theme")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"recipe_id={recipe_id}\n")
+              output.write(f"expected_look={look}\n")
+              output.write(f"expected_theme={theme}\n")
+          PY
 
       - name: bounded installer toolchain
         timeout-minutes: 12
@@ -195,13 +225,28 @@ jobs:
     secrets:
       SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
 
+  certify:
+    if: ${{ needs.sign.result == 'success' }}
+    needs: [package, sign]
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/e2e.yml
+    with:
+      installer_artifact: auros-setup-signed
+      installer_sha256: ${{ needs.sign.outputs.signed_sha256 }}
+      variants: base
+      expected_recipe_id: ${{ needs.package.outputs.recipe_id }}
+      expected_look: ${{ needs.package.outputs.expected_look }}
+      expected_theme: ${{ needs.package.outputs.expected_theme }}
+
   # A ready manifest is impossible without the shared signer's successful,
   # same-run two-layer signing evidence. This job only adds immutable assets to
   # the already-tested base prerelease; it never creates, edits, or promotes it.
   publish:
     name: publish
-    if: ${{ needs.sign.result == 'success' }}
-    needs: [package, sign]
+    if: ${{ needs.sign.result == 'success' && needs.certify.result == 'success' && needs.certify.outputs.certified == 'true' }}
+    needs: [package, sign, certify]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

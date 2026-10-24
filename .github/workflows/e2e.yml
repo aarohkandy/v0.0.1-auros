@@ -30,9 +30,17 @@ on:
     inputs:
       installer_url: {type: string, required: false, default: ''}
       installer_sha256: {type: string, required: false, default: ''}
+      installer_artifact: {type: string, required: false, default: ''}
+      expected_recipe_id: {type: string, required: false, default: ''}
+      expected_look: {type: string, required: false, default: ''}
+      expected_theme: {type: string, required: false, default: ''}
       variants: {type: string, required: false, default: base}
       hdd_throttle: {type: string, required: false, default: ''}
       build_run: {type: string, required: false, default: ''}
+    outputs:
+      certified:
+        description: A personalized base journey actually ran with all expectations
+        value: ${{ jobs.custom_certification.outputs.certified }}
   workflow_dispatch:
     inputs:
       installer_url: {type: string, required: false, default: ''}
@@ -83,6 +91,11 @@ jobs:
           BEFORE: ${{ github.event.before }}
           GH_TOKEN: ${{ github.token }}
           IN_URL: ${{ inputs.installer_url }}
+          IN_ARTIFACT: ${{ inputs.installer_artifact }}
+          IN_SHA256: ${{ inputs.installer_sha256 }}
+          EXPECTED_RECIPE_ID: ${{ inputs.expected_recipe_id }}
+          EXPECTED_LOOK: ${{ inputs.expected_look }}
+          EXPECTED_THEME: ${{ inputs.expected_theme }}
           IN_VARIANTS: ${{ inputs.variants }}
           EVENT: ${{ github.event_name }}
         run: |
@@ -93,6 +106,24 @@ jobs:
             case ",$1," in *,aur,*) echo "aur=true" >> "$GITHUB_OUTPUT" ;; *) echo "aur=false" >> "$GITHUB_OUTPUT" ;; esac
             echo "variants=$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps([x for x in sys.stdin.read().split(",") if x and x != "aur"]))')" | tee -a "$GITHUB_OUTPUT"
           }
+          # A same-run custom artifact is deliberately narrower than the URL
+          # interface: exactly one signed artifact, base only, with all three
+          # expectations. A skipped or partially described journey is refused.
+          if [ -n "$IN_ARTIFACT" ]; then
+            [ "$IN_ARTIFACT" = auros-setup-signed ] && [ -z "$IN_URL" ] \
+              || { echo "::error::personalized E2E requires only auros-setup-signed"; exit 2; }
+            [[ $IN_SHA256 =~ ^[0-9a-f]{64}$ ]] \
+              && [[ $EXPECTED_RECIPE_ID =~ ^sha256:[0-9a-f]{64}$ ]] \
+              && [[ $EXPECTED_LOOK =~ ^(dock|rail|taskbar|tiles)$ ]] \
+              && [[ $EXPECTED_THEME =~ ^(ember|moss|nocturne|sandstone|slate)$ ]] \
+              && [ "$IN_VARIANTS" = base ] \
+              || { echo "::error::personalized E2E requires a hash, recipe, look, theme, and only base"; exit 2; }
+            echo "run=true" | tee -a "$GITHUB_OUTPUT"
+            emit base
+            exit 0
+          fi
+          [ -z "$EXPECTED_RECIPE_ID$EXPECTED_LOOK$EXPECTED_THEME" ] \
+            || { echo "::error::recipe expectations require a personalized artifact"; exit 2; }
           # called (release.yml) or started by hand: the inputs say it all
           if [ -n "$IN_URL" ] || [ "$EVENT" = workflow_dispatch ]; then
             echo "run=true" | tee -a "$GITHUB_OUTPUT"
@@ -145,6 +176,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     timeout-minutes: 355
     env:
       E2E_VARIANT: ${{ matrix.variant }}
@@ -152,6 +184,26 @@ jobs:
       E2E_LABEL: ${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: the same-run personalized installer
+        if: inputs.installer_artifact != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs.installer_artifact }}
+          path: ${{ runner.temp }}/personalized-installer
+
+      - name: bind the personalized installer bytes to the signed output
+        if: inputs.installer_artifact != ''
+        env:
+          EXPECTED_SHA256: ${{ inputs.installer_sha256 }}
+        run: |
+          installer="$RUNNER_TEMP/personalized-installer/AurOS-Setup.exe"
+          [ -f "$installer" ] && [ ! -L "$installer" ] \
+            || { echo "::error::signed artifact has no regular AurOS-Setup.exe"; exit 1; }
+          actual=$(sha256sum "$installer" | cut -d' ' -f1)
+          [ "$actual" = "$EXPECTED_SHA256" ] \
+            || { echo "::error::signed artifact hash $actual does not match $EXPECTED_SHA256"; exit 1; }
+          { echo "INSTALLER_PATH=$installer"; echo "INSTALLER_SHA256=$actual"; } >> "$GITHUB_ENV"
 
       # seconds, before hours: the variants' expected words still match
       # the wizard's, and the evidence still has somewhere to go
@@ -254,7 +306,20 @@ jobs:
 
       - name: M3 - the program is on AurOS's disk (machine off)
         if: steps.flow.outcome == 'success'
-        run: /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/inspect" "$E2E_DIR/work"
+        env:
+          EXPECTED_RECIPE_ID: ${{ inputs.expected_recipe_id }}
+          EXPECTED_LOOK: ${{ inputs.expected_look }}
+          EXPECTED_THEME: ${{ inputs.expected_theme }}
+        run: |
+          if [ -n "$EXPECTED_RECIPE_ID" ]; then
+            /usr/bin/python3 tools/e2e/e2e.py inspect \
+              "$E2E_DIR/out/inspect" "$E2E_DIR/work" \
+              --expect-recipe-id "$EXPECTED_RECIPE_ID" \
+              --expect-look "$EXPECTED_LOOK" \
+              --expect-theme "$EXPECTED_THEME"
+          else
+            /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/inspect" "$E2E_DIR/work"
+          fi
 
       # A failed flow: the staging screen gives only a verdict word, so read
       # the disk with the machine off and say its reason again (ntfsresize's
@@ -276,6 +341,34 @@ jobs:
           name: e2e-evidence-${{ matrix.variant }}${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}
           path: ${{ env.E2E_DIR }}/out/e2e-evidence-${{ matrix.variant }}${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}.zip
           if-no-files-found: ignore
+
+  custom_certification:
+    name: custom-certification
+    needs: [gate, e2e]
+    if: ${{ always() && inputs.installer_artifact != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      certified: ${{ steps.certify.outputs.certified }}
+    steps:
+      - id: certify
+        env:
+          GATE_RUN: ${{ needs.gate.outputs.run }}
+          GATE_VARIANTS: ${{ needs.gate.outputs.variants }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          INSTALLER_ARTIFACT: ${{ inputs.installer_artifact }}
+          EXPECTED_RECIPE_ID: ${{ inputs.expected_recipe_id }}
+          EXPECTED_LOOK: ${{ inputs.expected_look }}
+          EXPECTED_THEME: ${{ inputs.expected_theme }}
+        run: |
+          [ "$GATE_RUN" = true ] && [ "$GATE_VARIANTS" = '["base"]' ] \
+            && [ "$E2E_RESULT" = success ] \
+            && [ "$INSTALLER_ARTIFACT" = auros-setup-signed ] \
+            && [[ $EXPECTED_RECIPE_ID =~ ^sha256:[0-9a-f]{64}$ ]] \
+            && [[ $EXPECTED_LOOK =~ ^(dock|rail|taskbar|tiles)$ ]] \
+            && [[ $EXPECTED_THEME =~ ^(ember|moss|nocturne|sandstone|slate)$ ]] \
+            || { echo "::error::personalized base E2E did not run and pass with exact expectations"; exit 1; }
+          echo "certified=true" >> "$GITHUB_OUTPUT"
 
   # The AurOS half alone: boot the image of the release under test (no Windows,
   # no installer) and do what she does after "Yes, it all works": open "Get more

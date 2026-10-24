@@ -468,7 +468,9 @@ class WorkflowContractTests(unittest.TestCase):
         publish = workflow.split("\n  publish:\n", 1)[1]
         self.assertIn("name: publish", publish)
         self.assertIn("needs.sign.result == 'success'", publish)
-        self.assertIn("needs: [package, sign]", publish)
+        self.assertIn("needs.certify.result == 'success'", publish)
+        self.assertIn("needs.certify.outputs.certified == 'true'", publish)
+        self.assertIn("needs: [package, sign, certify]", publish)
         self.assertIn("contents: write", publish)
         self.assertNotIn("--clobber", publish)
         self.assertIn("verify-ready", publish)
@@ -478,6 +480,36 @@ class WorkflowContractTests(unittest.TestCase):
             publish.index("verify-ready"), publish.index("name: auros-custom-delivery")
         )
         self.assertIn("run-name: customize ${{ inputs.request_id }}", workflow)
+
+    def test_custom_certification_cannot_pass_on_a_skipped_journey(self) -> None:
+        customize = (ROOT / ".github/workflows/customize.yml").read_text(
+            encoding="utf-8"
+        )
+        certify = customize.split("\n  certify:\n", 1)[1].split(
+            "\n  # A ready manifest", 1
+        )[0]
+        self.assertIn("installer_artifact: auros-setup-signed", certify)
+        self.assertIn("installer_sha256: ${{ needs.sign.outputs.signed_sha256 }}", certify)
+        self.assertIn("variants: base", certify)
+        expected_outputs = {
+            "expected_recipe_id": "recipe_id",
+            "expected_look": "expected_look",
+            "expected_theme": "expected_theme",
+        }
+        for field, output in expected_outputs.items():
+            self.assertIn(f"{field}: ${{{{ needs.package.outputs.{output} }}}}", certify)
+
+        e2e = (ROOT / ".github/workflows/e2e.yml").read_text(encoding="utf-8")
+        guard = e2e.split("\n  custom_certification:\n", 1)[1].split(
+            "\n  # The AurOS half", 1
+        )[0]
+        self.assertIn("needs: [gate, e2e]", guard)
+        self.assertIn('GATE_VARIANTS" = \'["base"]\'', guard)
+        self.assertIn('E2E_RESULT" = success', guard)
+        self.assertIn("certified=true", guard)
+        self.assertIn("--expect-recipe-id", e2e)
+        self.assertIn("--expect-look", e2e)
+        self.assertIn("--expect-theme", e2e)
 
 
 if __name__ == "__main__":
