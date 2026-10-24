@@ -83,6 +83,12 @@ STATE = "var/lib/auros/bootchain.state"
 # One line: the PBKDF2 hash of the menu lock's password. The password
 # itself is never kept (render_menu, lock_line).
 LOCKSTATE = "var/lib/auros/grub-lock"
+# The one switch that puts a serial console in the menu (SEC-014): not
+# shipped, made by hand by somebody debugging.
+SERIALSWITCH = "etc/auros/grub-serial"
+SERIAL_LINES = ("serial --unit=0 --speed=115200\n"
+                "terminal_input  console serial\n"
+                "terminal_output console serial")
 
 # Most wanted first; the first that passes every check wins. .previous
 # only when Ubuntu's own shim-signed postinst chose it (update-
@@ -292,7 +298,8 @@ def render_menu(root, uuid=None, running=None, fresh_lock=False):
         prev = PREVIOUS.format(v=back, u=uuid)
     out = (t.replace("@ROOT_UUID@", uuid).replace("@KVER@", ks[0])
             .replace("@THEME@", theme).replace("@PREVIOUS@", prev)
-           .replace("@GRUBLOCK@", lock_line(root, fresh_lock)))
+           .replace("@GRUBLOCK@", lock_line(root, fresh_lock))
+           .replace("@SERIAL@", SERIAL_LINES if os.path.exists(os.path.join(root, SERIALSWITCH)) else ""))
     if prev:
         # auros_prev tells the menu's boot counting there is a kernel to
         # fall back to; without one there is nothing to count towards.

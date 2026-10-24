@@ -23,6 +23,11 @@
 #    forge's rootfs, if there is one: update-grub is AurOS's; and any
 #    grub.cfg or EFI stub it has (an image's rootfs has them)
 #
+#  It also fails when a shipped menu has a serial terminal (SEC-014: a
+#  physical-access console nobody uses): `serial`, `terminal_input` or
+#  `terminal_output` naming serial. Only /etc/auros/grub-serial, made by
+#  hand, puts one in; the check is shown red for that.
+#
 #  And the scanner itself is shown to see what it is for: lines that do
 #  give a shell, in each of the usual spellings, are fed to it first.
 #
@@ -69,8 +74,21 @@ def scan(path_or_text, text=False):
                     break
     return bad
 
+# A serial terminal in the menu (SEC-014): a physical-access console on
+# every machine. Only the debugging switch may ask for one.
+SERIAL = re.compile(r"^\s*(serial(\s|$)|terminal_(input|output)\b.*\bserial\b|terminal\s.*\bserial\b)")
+
+def scan_serial(path_or_text, text=False):
+    src = path_or_text if text else open(path_or_text, errors="replace").read()
+    return ["%d: %s" % (n, l.strip()[:100]) for n, l in enumerate(src.splitlines(), 1)
+            if not l.strip().startswith("#") and SERIAL.match(l)]
+
 if __name__ == "__main__":
-    if sys.argv[1] == "--text":
+    if sys.argv[1] == "--serial":
+        out = scan_serial(sys.argv[2])
+    elif sys.argv[1] == "--serial-text":
+        out = scan_serial(sys.stdin.read(), text=True)
+    elif sys.argv[1] == "--text":
         out = scan(sys.stdin.read(), text=True)
     else:
         out = scan(sys.argv[1])
@@ -98,6 +116,15 @@ unseen "$L init=/usr/lib/auros/start-windows" && ok "...nor start-windows, which
 unseen "# linux /boot/vmlinuz-x ro single init=/bin/bash   (a comment saying what used to be here)" \
   && ok "a comment is not a kernel line" || bad "a comment is not a kernel line"
 
+sees_serial() { printf '%s\n' "$1" | python3 -I "$T/scan.py" --serial-text >/dev/null; [ $? = 1 ]; }
+for ln in 'serial --unit=0 --speed=115200' 'terminal_input  console serial' 'terminal_output console serial' \
+          'terminal_output serial' 'terminal serial console'; do
+    sees_serial "$ln" && ok "the line \"$ln\" is seen as a serial console" \
+                      || bad "the line \"$ln\" is seen as a serial console"
+done
+printf '%s\n' 'terminal_output console' '# serial --unit=0' 'set serial_ok=1' | python3 -I "$T/scan.py" --serial-text >/dev/null \
+  && ok "the firmware console and a comment are not" || bad "the firmware console and a comment are not"
+
 # ── what AurOS writes ───────────────────────────────────────────────
 echo
 echo "  every grub menu and stub AurOS writes"
@@ -107,6 +134,10 @@ for f in rootfs/usr/lib/auros/grub.cfg.in rootfs/usr/lib/auros/bootchain build/m
     out=$(python3 -I "$T/scan.py" "$f") && ok "$f: no shell, no recovery entry" \
                                          || bad "$f: no shell, no recovery entry" "$out"
 done
+
+out=$(python3 -I "$T/scan.py" --serial rootfs/usr/lib/auros/grub.cfg.in) \
+  && ok "grub.cfg.in: no serial terminal, unless the debugging switch asks for one" \
+  || bad "grub.cfg.in: no serial terminal, unless the debugging switch asks for one" "$out"
 
 # the menu bootchain really writes, for a machine with two kernels
 R="$T/root"; mkdir -p "$R/boot/grub" "$R/etc" "$R/usr/lib/auros"
@@ -120,6 +151,15 @@ if python3 rootfs/usr/lib/auros/bootchain menu --root "$R" --running none >/dev/
 else
     bad "the menu bootchain renders (two kernels): no shell" "bootchain would not render the fixture"
 fi
+out=$(python3 -I "$T/scan.py" --serial "$R/boot/grub/grub.cfg") \
+  && ok "...and no serial terminal (nobody asked for one)" \
+  || bad "...and no serial terminal (nobody asked for one)" "$out"
+mkdir -p "$R/etc/auros"; : > "$R/etc/auros/grub-serial"
+python3 rootfs/usr/lib/auros/bootchain menu --root "$R" --running none >/dev/null 2>&1
+out=$(python3 -I "$T/scan.py" --serial "$R/boot/grub/grub.cfg") \
+  && bad "the debugging switch puts a serial terminal in the menu" "it did not" \
+  || ok "the debugging switch (/etc/auros/grub-serial) puts one in, and the scan sees it"
+rm -f "$R/etc/auros/grub-serial"
 
 # What mkimage puts in /etc/default/grub is what ships (it overwrites
 # Ubuntu's): read it where it is written. With GRUB_DISABLE_RECOVERY true,
@@ -156,7 +196,10 @@ if [ -d "$RFS/etc" ]; then
         [ -f "$f" ] || continue
         n=$((n+1))
         out=$(python3 -I "$T/scan.py" "$f") && ok "${f#$RFS/}: no shell" || bad "${f#$RFS/}: no shell" "$out"
+        out=$(python3 -I "$T/scan.py" --serial "$f") && ok "${f#$RFS/}: no serial terminal" || bad "${f#$RFS/}: no serial terminal" "$out"
     done
+    [ ! -e "$RFS/etc/auros/grub-serial" ] && ok "etc/auros/grub-serial (the debugging switch) is not shipped" \
+        || bad "etc/auros/grub-serial (the debugging switch) is not shipped"
     [ "$n" -gt 0 ] || echo "    (no grub.cfg in it yet: build/mkimage writes the menu when it builds the disk)"
     # A rootfs that has a menu (taken out of a built image) has the
     # image's /etc/default/grub too.

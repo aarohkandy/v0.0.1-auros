@@ -98,6 +98,11 @@ C="$R/boot/grub/grub.cfg"
 grep -q '^set superusers=' "$C" && grep -q '^password_pbkdf2 ' "$C" \
   && ok "the image's menu carries a lock" || bad "the image's menu carries a lock"
 grep -v '^[[:space:]]*#' "$C" | grep -Eq 'init=/(usr/)?bin/(ba|da)?sh'  && bad "...and no entry starts a shell" || ok "...and no entry starts a shell"
+# SEC-014: no serial terminal in the shipped menu. The keys below still
+# reach it: OVMF carries the firmware console on the serial line, both ways.
+grep -v '^[[:space:]]*#' "$C" | grep -Eq '^[[:space:]]*(serial([[:space:]]|$)|terminal_(input|output)[[:space:]].*serial)' \
+  && bad "...and no serial terminal in it (the keys below arrive through the firmware's)" \
+  || ok "...and no serial terminal in it (the keys below arrive through the firmware's)"
 case "$MUTANT" in
   nolock)       sed -i '/^set superusers=/d; /^password_pbkdf2 /d' "$C" ;;
   lockedboot)   sed -i "s/--class auros --unrestricted --id auros {/--class auros --id auros {/" "$C" ;;

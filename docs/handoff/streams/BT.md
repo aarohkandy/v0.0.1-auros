@@ -118,6 +118,13 @@ before and passes after:
   BT): staging could `umount /sys/firmware/efi/efivars` before `carry_across("/sys")` so systemd mounts it
   fresh, which also fixes bootchain's reads; harmless either way now.
 
+- **SEC-014 serial console**: the shipped menu has no `serial`/`terminal_input serial`/`terminal_output serial`;
+  `/etc/auros/grub-serial` (made by hand, never shipped) puts them back via `@SERIAL@` in the template. No test
+  needs GRUB's serial: OVMF mirrors the firmware console on the serial line both ways, so bootlocktest (keys),
+  windowsboottest, putbacktest pass without it; tools/e2e (real Windows) never touched GRUB's serial.
+  `grubshelltest` fails (shown red on the old template) if a shipped menu has the lines or the switch file ships.
+  Not done: the kernel's `console=ttyS0` on every start line is output only (no getty on it); S1's call.
+
 ## Next steps, in order
 
 0. **Asked by C, not done** (the lead had told BT to stop): with the machine-id emptied in `build/forge`

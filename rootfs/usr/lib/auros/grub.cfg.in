@@ -18,12 +18,18 @@ search --no-floppy --fs-uuid --set=root @ROOT_UUID@
 # every start printed "error: prohibited by secure boot policy" and the
 # menu fell back to grub's built-in ASCII font: the frame drawn in
 # question marks, the arrow-key hint as "?". The firmware console draws
-# with the firmware's own font, works with Secure Boot on, and keeps the
-# menu on the serial line where the tests can read it. Found by
-# tools/bootupdatetest.sh; screenshots of both in docs/results/.
-serial --unit=0 --speed=115200
-terminal_input  console serial
-terminal_output console serial
+# with the firmware's own font and works with Secure Boot on.
+#
+# NO SERIAL TERMINAL (SEC-014). This used to add `serial --unit=0` and
+# `terminal_input console serial`: a physical-access console on every
+# machine, which she will never use. The tests do not need it: OVMF
+# mirrors the firmware console on the serial line, in both directions,
+# so the menu is still readable and its keys still reach it
+# (tools/bootlocktest.sh, tools/hardenboottest.sh). A person debugging
+# may ask for it by creating /etc/auros/grub-serial and running
+# `auros-bootchain menu`; nothing ships that file, and
+# tools/grubshelltest.sh fails if the shipped menu has the lines.
+@SERIAL@
 
 # THE MENU IS LOCKED: NOBODY EDITS A START LINE, OPENS GRUB'S COMMAND LINE,
 # OR PICKS A ROOT SHELL WITHOUT A PASSWORD, AND NOBODY KNOWS IT.
