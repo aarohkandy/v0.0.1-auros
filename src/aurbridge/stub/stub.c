@@ -532,7 +532,10 @@ void stub_start(void)
         LARGE_INTEGER zero;
         zero.QuadPart = 0;
         if (!GetFileInformationByHandle(f, &original_info) || (original_info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
-                || !final_path(f, real, MAX_PATH + 96) || wcmp_i(real, g_exe) != 0
+                || !final_path(f, real, MAX_PATH + 96)
+#ifndef STUB_MUTANT_ACCEPT
+                || wcmp_i(real, g_exe) != 0
+#endif
                 || !SetFilePointerEx(f, zero, NULL, FILE_BEGIN)) {
             CloseHandle(f); fail(L"The installer file is not the ordinary file that was asked for.");
         }
@@ -562,7 +565,11 @@ void stub_start(void)
             || pinned_info.dwVolumeSerialNumber != original_info.dwVolumeSerialNumber
             || pinned_info.nFileIndexHigh != original_info.nFileIndexHigh
             || pinned_info.nFileIndexLow != original_info.nFileIndexLow
-            || !final_path(pin, pinned_path, MAX_PATH + 96) || wcmp_i(pinned_path, g_exe) != 0) {
+            || !final_path(pin, pinned_path, MAX_PATH + 96)
+#ifndef STUB_MUTANT_ACCEPT
+            || wcmp_i(pinned_path, g_exe) != 0
+#endif
+            ) {
         if (pin != INVALID_HANDLE_VALUE) CloseHandle(pin);
         fail(L"The installer file changed before it could start.");
     }
