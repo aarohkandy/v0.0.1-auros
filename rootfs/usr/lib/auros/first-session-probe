@@ -11,6 +11,8 @@ timeout_cmd=${AUROS_PROBE_TIMEOUT:-/usr/bin/timeout}
 profiles_file=${AUROS_PROBE_PROFILES:-/sys/kernel/security/apparmor/profiles}
 run_dir=${AUROS_PROBE_RUN:-/run}
 saved_bin=${AUROS_PROBE_SAVED_BIN:-/run/aurstage/saved.bin}
+mountinfo_file=${AUROS_PROBE_MOUNTINFO:-/proc/1/mountinfo}
+proc_dir=${AUROS_PROBE_PROC:-/proc}
 max_wait=${AUROS_PROBE_MAX_WAIT:-40}
 
 case "$max_wait" in
@@ -56,6 +58,65 @@ case "$run_mode" in
 esac
 [ -e "$saved_bin" ] && saved=present || saved=absent
 
-printf 'v1 apparmor=%s profiles=%s route=%s dns=%s run_mode=%s saved_bin=%s\n' \
-    "$apparmor" "$profiles" "$route" "$dns" "$run_mode" "$saved"
+root_mode=unknown
+root_fs=unknown
+aurstage_mount=unknown
+if [ -r "$mountinfo_file" ]; then
+    mount_facts=$(awk '
+        BEGIN { root_n = 0; stage = "absent"; bad = 0 }
+        {
+            sep = 0
+            for (i = 7; i <= NF; i++) if ($i == "-") { sep = i; break }
+            if (!sep || sep + 1 > NF) { bad = 1; next }
+            if ($5 == "/") {
+                root_n++
+                n = split($6, opt, ","); rw = 0; ro = 0
+                for (i = 1; i <= n; i++) { if (opt[i] == "rw") rw++; if (opt[i] == "ro") ro++ }
+                mode = (rw == 1 && ro == 0) ? "rw" : ((ro == 1 && rw == 0) ? "ro" : "unknown")
+                fs = ($(sep + 1) == "ext4") ? "ext4" : "other"
+            }
+            if ($5 == "/run/aurstage" || index($5, "/run/aurstage/") == 1) stage = "present"
+        }
+        END {
+            if (bad || root_n != 1) exit 1
+            print mode, fs, stage
+        }
+    ' "$mountinfo_file" 2>/dev/null) || mount_facts=
+    set -- $mount_facts
+    if [ "$#" -eq 3 ]; then
+        case "$1" in rw|ro|unknown) root_mode=$1 ;; esac
+        case "$2" in ext4|other|unknown) root_fs=$2 ;; esac
+        case "$3" in absent|present|unknown) aurstage_mount=$3 ;; esac
+    fi
+fi
+
+aurscreen=unknown
+if [ -d "$proc_dir" ] && [ -r "$proc_dir" ]; then
+    aurscreen=absent
+    proc_seen=0
+    proc_unreadable=0
+    for proc_entry in "$proc_dir"/[0-9]*; do
+        [ -d "$proc_entry" ] || continue
+        proc_seen=1
+        if [ ! -r "$proc_entry/comm" ]; then
+            [ -d "$proc_entry" ] && proc_unreadable=1
+            continue
+        fi
+        IFS= read -r proc_name 2>/dev/null < "$proc_entry/comm" || {
+            [ -d "$proc_entry" ] && proc_unreadable=1
+            continue
+        }
+        if [ "$proc_name" = aurscreen ]; then
+            aurscreen=present
+            break
+        fi
+    done
+    if [ "$aurscreen" = absent ] && { [ "$proc_seen" -eq 0 ] || [ "$proc_unreadable" -ne 0 ]; }; then
+        aurscreen=unknown
+    fi
+fi
+
+printf 'v1 apparmor=%s profiles=%s route=%s dns=%s run_mode=%s saved_bin=%s root_mode=%s root_fs=%s aurstage_mount=%s aurscreen=%s\n' \
+    "$apparmor" "$profiles" "$route" "$dns" "$run_mode" "$saved" \
+    "$root_mode" "$root_fs" "$aurstage_mount" "$aurscreen"
 exit 0

@@ -9,7 +9,7 @@ ok() { printf 'ok   %s\n' "$1"; }
 bad() { printf 'FAIL %s%s\n' "$1" "${2:+: $2}"; fail=$((fail + 1)); }
 has() { printf '%s\n' "$2" | grep -q "$3" && ok "$1" || bad "$1" "$2"; }
 
-mkdir "$T/bin" "$T/run"
+mkdir "$T/bin" "$T/run" "$T/proc" "$T/proc/1" "$T/proc/42"
 cat > "$T/bin/aa" <<'EOF'
 #!/bin/sh
 [ -z "${FAKE_AA_AFTER:-}" ] || {
@@ -44,6 +44,14 @@ shift
 exec "$@"
 EOF
 chmod 755 "$T/bin/"*
+cat > "$T/mountinfo" <<'EOF'
+36 25 8:2 / / rw,relatime - ext4 /dev/vda2 rw
+40 36 0:22 / /run rw,nosuid,nodev - tmpfs tmpfs rw
+41 36 0:23 / /run/aurstage2 rw,nosuid,nodev - tmpfs tmpfs rw
+42 36 0:24 / /mnt/name\040with\040spaces rw,nosuid,nodev - tmpfs tmpfs rw
+EOF
+printf 'systemd\n' > "$T/proc/1/comm"
+printf 'aurshell\n' > "$T/proc/42/comm"
 
 run_probe() {
     env AUROS_PROBE_AA_ENABLED="$T/bin/aa" AUROS_PROBE_IP="$T/bin/ip" \
@@ -51,6 +59,8 @@ run_probe() {
         AUROS_PROBE_SLEEP="$T/bin/sleep" AUROS_PROBE_TIMEOUT="$T/bin/timeout" \
         AUROS_PROBE_PROFILES="$T/profiles" AUROS_PROBE_RUN="$T/run" \
         AUROS_PROBE_SAVED_BIN="$T/saved.bin" AUROS_PROBE_MAX_WAIT="${PROBE_WAIT:-4}" \
+        AUROS_PROBE_MOUNTINFO="${PROBE_MOUNTINFO:-$T/mountinfo}" \
+        AUROS_PROBE_PROC="${PROBE_PROC:-$T/proc}" \
         FAKE_COUNT="$T/count" FAKE_ROUTE_AFTER="${FAKE_ROUTE_AFTER:-1}" \
         FAKE_AA_RC="${FAKE_AA_RC:-0}" FAKE_AA_AFTER="${FAKE_AA_AFTER:-}" \
         FAKE_DNS_RC="${FAKE_DNS_RC:-0}" \
@@ -64,14 +74,42 @@ FAKE_ROUTE_AFTER=3 FAKE_AA_AFTER=3 out=$(run_probe)
 [ "$(cat "$T/count")" = 3 ] && ok "the probe retries until AppArmor and the default route are ready" \
     || bad "the probe retries until AppArmor and the default route are ready" "$(cat "$T/count") attempts"
 has "a healthy first session is one exact record" "$out" \
-    '^v1 apparmor=enabled profiles=2 route=default dns=ok run_mode=0755 saved_bin=absent$'
+    '^v1 apparmor=enabled profiles=2 route=default dns=ok run_mode=0755 saved_bin=absent root_mode=rw root_fs=ext4 aurstage_mount=absent aurscreen=absent$'
 
 : > "$T/count"; : > "$T/profiles"; : > "$T/saved.bin"
 PROBE_WAIT=3 FAKE_ROUTE_AFTER=99 FAKE_AA_AFTER= FAKE_AA_RC=1 FAKE_DNS_RC=1 FAKE_RUN_MODE=700 out=$(run_probe)
 [ "$(cat "$T/count")" = 3 ] && ok "negative polling stops at its explicit bound" \
     || bad "negative polling stops at its explicit bound" "$(cat "$T/count") attempts"
 has "negative facts are reported honestly and the script still succeeds" "$out" \
-    '^v1 apparmor=disabled profiles=0 route=missing dns=failed run_mode=0700 saved_bin=present$'
+    '^v1 apparmor=disabled profiles=0 route=missing dns=failed run_mode=0700 saved_bin=present root_mode=rw root_fs=ext4 aurstage_mount=absent aurscreen=absent$'
+
+cat > "$T/mountinfo" <<'EOF'
+36 25 8:2 / / ro,relatime - xfs /dev/vda2 ro
+40 36 0:22 / /run rw,nosuid,nodev - tmpfs tmpfs rw
+41 40 7:1 / /run/aurstage/root\040copy rw,relatime - ext4 /dev/loop1 rw
+EOF
+printf 'aurscreen\n' > "$T/proc/42/comm"
+: > "$T/count"
+out=$(run_probe)
+has "read-only/non-ext4 root, a staging mount and aurscreen are reported" "$out" \
+    'root_mode=ro root_fs=other aurstage_mount=present aurscreen=present$'
+
+: > "$T/count"
+PROBE_MOUNTINFO="$T/no-mountinfo" PROBE_PROC="$T/no-proc" out=$(run_probe)
+has "missing host evidence stays unknown instead of looking healthy" "$out" \
+    'root_mode=unknown root_fs=unknown aurstage_mount=unknown aurscreen=unknown$'
+
+cat > "$T/mountinfo-duplicate-root" <<'EOF'
+36 25 8:2 / / rw,relatime - ext4 /dev/vda2 rw
+37 25 8:3 / / rw,relatime - ext4 /dev/vda3 rw
+EOF
+mkdir "$T/proc-unreadable" "$T/proc-unreadable/1" "$T/proc-unreadable/77"
+printf 'systemd\n' > "$T/proc-unreadable/1/comm"
+mkdir "$T/proc-unreadable/77/comm"
+: > "$T/count"
+PROBE_MOUNTINFO="$T/mountinfo-duplicate-root" PROBE_PROC="$T/proc-unreadable" out=$(run_probe)
+has "ambiguous root and an unreadable existing process stay unknown" "$out" \
+    'root_mode=unknown root_fs=unknown aurstage_mount=unknown aurscreen=unknown$'
 : > "$T/count"
 PROBE_WAIT=999 FAKE_ROUTE_AFTER=99 FAKE_AA_AFTER= FAKE_AA_RC=1 out=$(run_probe)
 [ "$(cat "$T/count")" = 45 ] && ok "even a bad requested wait is capped at 45 seconds" \

@@ -1490,6 +1490,10 @@ FIRST_SESSION_FACTS = (
     ("DNS resolves a public name", "dns", "ok"),
     ("/run mode is 0755", "run_mode", "0755"),
     ("staging saved.bin released", "saved_bin", "absent"),
+    ("installed root filesystem is writable", "root_mode", "rw"),
+    ("installed root filesystem is ext4", "root_fs", "ext4"),
+    ("no staging mount remains under /run/aurstage", "aurstage_mount", "absent"),
+    ("no aurscreen process remains", "aurscreen", "absent"),
 )
 
 FIRST_SESSION_PROBE = re.compile(
@@ -1498,7 +1502,11 @@ FIRST_SESSION_PROBE = re.compile(
     r"route=(?P<route>default|missing) "
     r"dns=(?P<dns>ok|failed) "
     r"run_mode=(?P<run_mode>[0-7]{4}|unknown) "
-    r"saved_bin=(?P<saved_bin>absent|present)"
+    r"saved_bin=(?P<saved_bin>absent|present) "
+    r"root_mode=(?P<root_mode>rw|ro|unknown) "
+    r"root_fs=(?P<root_fs>ext4|other|unknown) "
+    r"aurstage_mount=(?P<aurstage_mount>absent|present|unknown) "
+    r"aurscreen=(?P<aurscreen>absent|present|unknown)"
 )
 
 
@@ -1511,7 +1519,8 @@ def first_session_probe_verdicts(lines):
     the same persistent journal `inspect` already reads.  Its exact message is:
 
       auros-first-session-probe: v1 apparmor=enabled profiles=N route=default
-        dns=ok run_mode=0755 saved_bin=absent
+        dns=ok run_mode=0755 saved_bin=absent root_mode=rw root_fs=ext4
+        aurstage_mount=absent aurscreen=absent
 
     N must be positive. Missing, duplicate, or malformed evidence is red; the
     harness must never infer ephemeral /run state after the machine is off.
