@@ -86,7 +86,7 @@ _Last updated: 00:36 UTC 2026-10-24 (17:36 your time, 23 Oct)._
   and are being fixed: the installer could end "installed" after failing to write AurOS's start-up entry on a PC
   whose firmware store is full (S-04), and a full disk during the download is reported as "the internet stopped".
   Many design rules hold in the code but no test pins them yet; routed to the owners.
-- **Security launch blockers still open:** no disk encryption and no lock screen (SEC-008/029): the work exists
+- **Security launch blockers still open:** a malicious file planted in her Downloads folder can still load into the installer as administrator (SEC-003; being redesigned so the installer elevates only from a private folder); no disk encryption and no lock screen (SEC-008/029): the work exists
   but sits in the encryption agent's 41 held commits (item 0 below); and the update key stays readable by any
   pushed workflow until you do item 8 (SEC-004).
 - **Small things she would notice, found by a sweep and being added (about 10 MB):** Bluetooth headphones paired but
