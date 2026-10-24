@@ -37,6 +37,9 @@ int  winvol_mount(const char *windev, char *root, size_t rn,
  * when nothing was. -1 with a sentence if it is still mounted. */
 int  winvol_umount(char *why, size_t n);
 
+/* Release the mount if necessary and remove its staging-only mountpoint. */
+int  winvol_cleanup(char *why, size_t n);
+
 /* 1 while this program has it mounted. */
 int  winvol_mounted(void);
 

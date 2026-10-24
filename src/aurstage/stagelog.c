@@ -25,17 +25,52 @@
 #include <unistd.h>
 
 #include "aurstage.h"
+#include "transient-mount.h"
 
 #define ESP_MP   "/run/aurstage/esp"
 #define LOG_FILE ESP_MP "/EFI/AurOS/stage.log"
 
+static int g_mounted;
+
+static int unmount_path(const char *path, void *ud)
+{
+    (void)ud;
+    return umount2(path, 0);
+}
+
+static int remove_dir(const char *path, void *ud)
+{
+    (void)ud;
+    return rmdir(path);
+}
+
+int stagelog_cleanup(char *why, size_t n)
+{
+    int rc = transient_mount_cleanup(ESP_MP, "/run/aurstage", &g_mounted,
+                                     unmount_path, remove_dir, NULL);
+    if (rc == TRANSIENT_CLEAN) return 0;
+    if (rc == TRANSIENT_UNMOUNT_FAILED)
+        snprintf(why, n, "the EFI log partition could not be let go of (%s)",
+                 strerror(errno));
+    else if (rc == TRANSIENT_MOUNTPOINT_FAILED)
+        snprintf(why, n, "the EFI log mountpoint could not be removed (%s)",
+                 strerror(errno));
+    else
+        snprintf(why, n, "the staging scratch directory could not be removed (%s)",
+                 strerror(errno));
+    return -1;
+}
+
 /* `esp` names an EFI System Partition's device node. Returns 1 if the log was written. */
 int stagelog_write(const char *esp, const char *text, size_t n)
 {
+    char why[160];
+    if (stagelog_cleanup(why, sizeof why) != 0) return 0;
     mkdir("/run/aurstage", 0700);
     mkdir(ESP_MP, 0700);
     const unsigned long keep = MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_NOATIME;
     if (mount(esp, ESP_MP, "vfat", MS_RDONLY | keep, "") != 0) return 0;
+    g_mounted = 1;
     int wrote = 0;
     struct stat st;
     if (stat(ESP_MP "/EFI/AurOS", &st) == 0 && S_ISDIR(st.st_mode) &&
@@ -53,6 +88,5 @@ int stagelog_write(const char *esp, const char *text, size_t n)
         }
     }
     sync();
-    umount(ESP_MP);
-    return wrote;
+    return stagelog_cleanup(why, sizeof why) == 0 && wrote;
 }

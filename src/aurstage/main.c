@@ -31,6 +31,7 @@
 #include "install.h"
 #include "rescue.h"
 #include "fault.h"
+#include "winvol.h"
 /* For LOADER_BOOT_TYPICAL_MB: how much of the gap the part that starts
  * the computer takes. The dry run has to count it. */
 #include "loader.h"
@@ -595,6 +596,22 @@ static void save_log(const char *text, size_t n)
         }
 }
 
+/* Both readers mount below /run/aurstage. /run crosses into the installed
+ * session, so a live staging mount or its private mountpoint must never cross
+ * with it. Try both cleanups even when the first one fails. */
+static int release_staging_mounts(char *why, size_t n)
+{
+    char log_why[160] = "", win_why[160] = "";
+    int log_bad = stagelog_cleanup(log_why, sizeof log_why) != 0;
+    int win_bad = winvol_cleanup(win_why, sizeof win_why) != 0;
+    if (!log_bad && !win_bad) return 0;
+    if (log_bad && win_bad)
+        snprintf(why, n, "%s; %s", log_why, win_why);
+    else
+        snprintf(why, n, "%s", log_bad ? log_why : win_why);
+    return -1;
+}
+
 int main(void)
 {
     /* stdout unbuffered: everything this says may be the last thing
@@ -604,6 +621,7 @@ int main(void)
     setvbuf(stderr, NULL, _IONBF, 0);
 
     stage_log_set_saver(save_log);
+    stage_handover_set_cleanup(release_staging_mounts);
     stage_say("AurOS staging environment");
     stage_say("this is the one restart; nothing has been changed yet");
     /* AND IF THIS IS A TEST IMAGE, IT SAYS SO BEFORE ANYTHING ELSE.
