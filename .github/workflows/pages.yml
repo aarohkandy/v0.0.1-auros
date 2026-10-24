@@ -114,6 +114,16 @@ jobs:
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
       - name: The site, with this repository written in
         run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"
+      # release.json (release.yml's site job: the sha256 of the AurOS-Setup.exe made the full
+      # release; tools/ops/monitor.py checks the download against it) is not in website/. A deploy
+      # from here would erase it, so the live one is carried over, when it is the right shape.
+      - name: Keep the recorded hash of the full release (release.json)
+        run: |
+          u="$(sh tools/repo.sh site)"; u="${u%/}/release.json"
+          if curl -fsS --max-time 20 --retry 2 -o "$RUNNER_TEMP/release.json" "$u" &&
+             python3 -I -c 'import json,re,sys; sys.exit(0 if re.fullmatch(r"[0-9a-f]{64}", str(json.load(open(sys.argv[1]))["sha256"])) else 1)' "$RUNNER_TEMP/release.json"; then
+            cp "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/site/release.json"; echo "kept $u"
+          else echo "no release.json at $u yet: nothing to keep"; fi
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: ${{ runner.temp }}/site

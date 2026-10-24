@@ -9,7 +9,9 @@ Checks the four things a person meets, against today's addresses
   site      the website answers 200
   download  "Get AurOS" delivers a file (a one-byte Range request);
             --deep (hourly) downloads it and compares its sha256 with the
-            release's SHA256SUMS
+            release's SHA256SUMS and with the site's release.json (the sha256
+            release.yml recorded when it made the release the full one; served
+            by Pages, so replacing release assets does not change it: SEC-005)
   pieces    every piece of the image, from pieces.txt, answers a Range
             request with 206
   channel   the update channel's InRelease verifies against the committed
@@ -118,12 +120,27 @@ def check_download(a, deep):
     want = {l.split()[1].lstrip("*"): l.split()[0] for l in sums.decode("utf-8", "replace").splitlines() if len(l.split()) == 2}
     if "AurOS-Setup.exe" not in want:
         return "SHA256SUMS has no AurOS-Setup.exe line"
+    # The value that is not a release asset: release.json on the site, written by release.yml's
+    # promote path and deployed by Pages. SHA256SUMS lives in the release, so whoever replaces
+    # the exe there can replace it too; this cannot be replaced from the release. A site
+    # with no release.json yet (no [latest] since this existed) is not an outage.
+    ps, _, pb = fetch(a["site"].rstrip("/") + "/release.json")
+    pinned = ""
+    if ps == 200:
+        try:
+            pinned = str(json.loads(pb)["sha256"]).lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", pinned):
+                raise ValueError(pinned)
+        except (ValueError, KeyError, TypeError):
+            return f"{a['site']}release.json is not {{\"sha256\": <64 hex>}}"
     try:
         got, n = sha_of(a["get"])
     except (urllib.error.URLError, http.client.HTTPException, OSError) as e:
         return f"downloading {a['get']} failed: {e}"
     if got != want["AurOS-Setup.exe"]:
         return f"the downloaded file ({n} bytes) hashes to {got[:16]}..., SHA256SUMS says {want['AurOS-Setup.exe'][:16]}..."
+    if pinned and got != pinned:
+        return f"the downloaded file ({n} bytes) hashes to {got[:16]}..., the site's release.json (what release.yml recorded) says {pinned[:16]}...: the release was changed after it was made"
 
 
 def check_pieces(a, deep):
@@ -322,6 +339,8 @@ def selftest():
                 return self.send(503)
             if p == "/site/":
                 return self.send(200, b"<title>AurOS</title>")
+            if p == "/site/release.json":
+                return self.send(200, state["pin"]) if "pin" in state else self.send(404)
             if p == "/get/AurOS-Setup.exe" or p == "/get/piece":
                 if state.get("range200") and rng:
                     return self.send(200, exe)
@@ -381,6 +400,10 @@ def selftest():
     state.update(down="site"); expect("site answers 503 -> site fails", states(), {"site": "fail", "download": "ok"}); state.clear()
     state.update(sum="0" * 64); expect("SHA256SUMS does not match the exe (deep) -> download fails", states(deep=True), {"download": "fail"})
     expect("... and the hourly deep check is what finds it (shallow passes)", states(deep=False), {"download": "ok"}); state.pop("sum")
+    state.update(pin=json.dumps({"tag": "v0", "sha256": good_sum}).encode()); expect("release.json pins the exe's hash (deep) -> download ok", states(deep=True), {"download": "ok"})
+    state.update(pin=json.dumps({"tag": "v0", "sha256": "1" * 64}).encode()); expect("exe and SHA256SUMS agree but release.json pins another hash (a release swapped with its sums) -> download fails", states(deep=True), {"download": "fail"})
+    expect("... only the deep check reads it", states(deep=False), {"download": "ok"})
+    state.update(pin=b"not json"); expect("release.json is garbage (deep) -> download fails", states(deep=True), {"download": "fail"}); state.pop("pin")
     state.update(range200=True); expect("a piece answers a Range request with 200, not 206 -> pieces fails", states(), {"pieces": "fail"}); state.pop("range200")
     state.update(health=b'{"ok":false}'); expect("wishes health says not ok -> wishes fails", states(), {"wishes": "fail"}); state.pop("health")
     state.update(down="wishes"); expect("wishes answers 503 -> wishes fails", states(), {"wishes": "fail"}); state.pop("down")

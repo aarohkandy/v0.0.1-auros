@@ -582,8 +582,9 @@ jobs:
   # website. What is checked is what pages deploys (this run's
   # github-pages artifact).
   site:
-    needs: which
-    if: needs.which.outputs.go == 'true'
+    needs: [which, publish]
+    # publish: release.json below records its AurOS-Setup.exe hash
+    if: ${{ !cancelled() && needs.which.outputs.go == 'true' && needs.publish.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -606,6 +607,18 @@ jobs:
       # website/ names no repository; this one is written in (as pages.yml does).
       - name: the site, with this repository written in
         run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"
+      # THE HASH THAT IS NOT A RELEASE ASSET (SEC-005). Pages serves this file once `pages`
+      # deploys it (a [latest] only); tools/ops/monitor.py --deep compares the exe it
+      # downloads from releases/latest with it. SHA256SUMS lives in the release, so whoever
+      # can replace the exe there can replace that too; this cannot be replaced from there.
+      - name: release.json, the recorded hash of this release's AurOS-Setup.exe
+        env:
+          TAG: ${{ needs.publish.outputs.tag }}
+          SETUP_SHA256: ${{ needs.publish.outputs.setup_sha256 }}
+        run: |
+          printf '%s' "$SETUP_SHA256" | grep -qE '^[0-9a-f]{64}$' || { echo "::error::no SHA-256 for AurOS-Setup.exe from publish"; exit 1; }
+          printf '{"tag":"%s","file":"AurOS-Setup.exe","sha256":"%s","run":"%s"}\n' "$TAG" "$SETUP_SHA256" "$GITHUB_RUN_ID" > "$RUNNER_TEMP/site/release.json"
+          cat "$RUNNER_TEMP/site/release.json"
       - name: the front door, checked the way she meets it
         env:
           PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
