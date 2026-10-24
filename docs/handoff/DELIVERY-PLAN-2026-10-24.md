@@ -568,3 +568,18 @@ the offline store screenshot visibly finds VLC. Neither proves VLC launch.
 The deliberate desktop-failure test also passed. The PAM attribution repair
 passed 31 focused tests and review, is on main `fdfa1116`, and is running in
 diagnostic `40141791633` against the same retained multilingual image.
+
+Full hardening run `40140266950` now passes: 72 runtime hardening checks and
+14 clock checks. `GITHUB_REPOSITORY=aarohkandy/v0.0.1-auros sh
+tools/hardengate.sh 40138682256` accepts this exact-image verdict. Reports and
+runtime evidence are retained in `/tmp/auros-harden-40140266950`. This establishes
+the tested controls, not absence of every possible vulnerability.
+
+The next multilingual diagnostics exposed two further harness assumptions:
+`40141791633` counted accepted socket records as listeners; `40142411622` counted
+duplicate file descriptors for one listener as distinct listeners. Typed socket
+checks and `kcmp(KCMP_FILE)` identity now distinguish these cases while refusing
+actual conflicting listeners. Main `bdfe4ae8` contains the reviewed repairs;
+41 focused tests pass. Diagnostic `40142892395` is running. Neither failed run
+reached the typing, focus, password or reboot proof. Failure evidence now includes
+bounded application connection/trace counters as well as compositor identity.
