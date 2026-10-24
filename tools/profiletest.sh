@@ -421,6 +421,10 @@ judge_fcitx_client_probe() { # evidence-root screenshot-root
     grep -qx 'service_owner_stable=yes' "$D/fcitx.process" 2>/dev/null \
         && ok "the owned Fcitx process retained its D-Bus service" \
         || bad "the owned Fcitx process retained its D-Bus service" "service replacement or restart"
+    grep -qx 'mousepad=pinyin' "$D/selected-engines.txt" 2>/dev/null \
+        && grep -qx 'firefox=pinyin' "$D/selected-engines.txt" 2>/dev/null \
+        && ok "both focused fields selected the exact Pinyin engine" \
+        || bad "both focused fields selected the exact Pinyin engine" "focused engine evidence missing"
     grep -qx 'raw_protocol_logs_retained=no' "$D/protocol-summary.txt" 2>/dev/null \
         && ok "raw protocol logs were removed after reduction" \
         || bad "raw protocol logs were removed after reduction" "redaction proof missing"
@@ -900,6 +904,7 @@ EOF
     done
     printf 'display_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\n' \
         > "$fcitx_fixture/evidence/fcitx.process"
+    printf 'mousepad=pinyin\nfirefox=pinyin\n' > "$fcitx_fixture/evidence/selected-engines.txt"
     printf 'raw_protocol_logs_retained=no\n' > "$fcitx_fixture/evidence/protocol-summary.txt"
     printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\n' > "$fcitx_fixture/evidence/restore.txt"
     for f in fcitx-mousepad-candidate fcitx-mousepad-committed \
@@ -916,6 +921,14 @@ EOF
     checked=$((checked+1))
     printf 'parented_mapped_popup_count=1\nparented_popup_syntax_observed=yes\nconnection_identity=unproven\nlayer_shell_objects=0\npopup_input_grab=no\npopup_width=320\npopup_height=90\n' \
         > "$fcitx_fixture/evidence/firefox-popup.txt"
+    printf 'mousepad=pinyin\n' > "$fcitx_fixture/evidence/selected-engines.txt"
+    if [ "$(fcitx_refuses "$fcitx_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "Fcitx evidence without both focused engine checks" "refused"
+    else
+        printf '    %-62s %s\n' "Fcitx evidence without both focused engine checks" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    printf 'mousepad=pinyin\nfirefox=pinyin\n' > "$fcitx_fixture/evidence/selected-engines.txt"
     printf 'ordinary_service_ready=0\nuser_config_unchanged=no\n' > "$fcitx_fixture/evidence/restore.txt"
     if [ "$(fcitx_refuses "$fcitx_fixture")" -ge 1 ]; then
         printf '    %-62s %s\n' "Fcitx evidence without config and IBus restoration" "refused"
@@ -930,6 +943,27 @@ EOF
         printf '    %-62s %s\n' "the Fcitx parented-popup trace parser" "passes"
     else
         printf '    %-62s %s\n' "the Fcitx parented-popup trace parser" "FAIL"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    if python3 - tools/profiletest-fcitx-guest.sh <<'EOPY'
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+preflight = text.index('fcitx5-remote -m pinyin')
+mouse_focus = text.index('act click-change fcitx-mousepad')
+mouse_select = text.index('select_exact_pinyin mousepad')
+firefox_focus = text.index('act click-form')
+firefox_select = text.index('select_exact_pinyin firefox')
+if not preflight < mouse_focus < mouse_select < firefox_focus < firefox_select:
+    raise SystemExit("Pinyin selection must follow each real focused input context")
+helper = text[text.index('select_exact_pinyin()'):text.index('restore_and_finish()')]
+if 'fcitx5-remote -s pinyin' not in helper or 'fcitx5-remote -n' not in helper:
+    raise SystemExit("focused selector must set and verify the exact engine")
+EOPY
+    then
+        printf '    %-62s %s\n' "Fcitx selects Pinyin only after each field has focus" "passes"
+    else
+        printf '    %-62s %s\n' "Fcitx selects Pinyin only after each field has focus" "FAIL"
         fail=$((fail+1))
     fi
     checked=$((checked+1))
