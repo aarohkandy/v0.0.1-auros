@@ -63,3 +63,33 @@ new adversarial protocol tests. It is not a one-flag repair on this image.
 Any product repair requires a fresh image and certification. A retained-image
 experiment always records separate image-source and test-source identities
 and remains diagnostic.
+
+## Retained-image experiment results
+
+The diagnostic-only gate and typed `x11_panel_probe` dispatch option are now
+implemented. A `[profiles:diagnostic]` push skips image builds only for the
+explicit test/workflow/documentation allowlist. Mixed production changes and
+renames out of production paths force normal profile builds. The gate was
+verified on the actual push; no replacement image was built.
+
+Run `40133525711` stopped before boot because the Actions downloader nested
+the one validated artifact under its name. `7d7054b0` explicitly flattens
+that single-artifact download and avoids publishing nonexistent boot evidence
+when a preflight step failed.
+
+Run `40133696393` then verified and restored the retained image and executed
+the diagnostic. It established five seconds without a default panel, a
+separately launched panel retaining PID 6199, termination of all three
+temporary processes, and restoration of the shipped daemon with exact
+arguments and the live Pinyin engine. The XRes inventory failed both before
+and during preedit. The probe therefore stopped before canonical composition
+and returned failure; no candidate identity/visibility claim is justified.
+The published diagnostic records image source `c1ba6ee5` and test source
+`7d7054b0` separately. Its small evidence archive contains the underlying
+errors for the next repair.
+
+Security review further requires per-window/map-generation XRes verification,
+not cached trust by client resource base, because X IDs can be reused. Bind
+to a focus epoch, revoke on every focus transition, and require a real
+unmap/remap before rebinding. If the real panel remains mapped across focus
+changes, a narrow popup exception is insufficient; do not relax those rules.
