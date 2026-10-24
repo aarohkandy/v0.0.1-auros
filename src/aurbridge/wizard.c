@@ -103,6 +103,7 @@ static LRESULT acc_LresultFromObject(REFIID r, WPARAM w, LPUNKNOWN u)
 #include "hwinv.h"
 #include "hwinv_win.h"
 #include "hwcompat.h"
+#include "recipe.h"
 
 /* Baked in by build/aurbridge. A build that has not been told where
  * the image lives produces an installer that expects it to be sitting
@@ -298,6 +299,10 @@ static page_id      g_check_next = PAGE_STYLE;   /* where a clean check goes */
 
 /* her one answer */
 static int   g_sel_style = STYLE_DEFAULT;
+/* A baked theme has no editable control in this wizard. It follows the
+ * selected look into choices.conf; changing the visible look is still allowed
+ * and makes the baked recipe identity no longer describe the final choices. */
+static char  g_recipe_theme[32];
 /* D10: her Wi-Fi comes across unless she unticks it. */
 static int   g_bring_wifi = 1;
 
@@ -1489,11 +1494,27 @@ static int bitlocker_paused_here(void)
     return 0;
 }
 
+static void recipe_defaults(void)
+{
+    const ab_baked_recipe *recipe = ab_recipe_baked();
+    g_recipe_theme[0] = 0;
+    if (!recipe) return;
+    for (int i = 0; i < N_STYLES; i++) {
+        if (strcmp(STYLES[i].shell, recipe->look) == 0) {
+            g_sel_style = i;
+            break;
+        }
+    }
+    _snprintf(g_recipe_theme, sizeof g_recipe_theme - 1, "%s", recipe->theme);
+    g_recipe_theme[sizeof g_recipe_theme - 1] = 0;
+}
+
 static void choices_from_page(ab_choice *c)
 {
     int s = style_ok() ? g_sel_style : STYLE_DEFAULT;
     _snprintf(c->shell_archetype, sizeof c->shell_archetype - 1, "%s", STYLES[s].shell);
-    _snprintf(c->theme, sizeof c->theme - 1, "%s", STYLES[s].theme);
+    _snprintf(c->theme, sizeof c->theme - 1, "%s",
+              g_recipe_theme[0] ? g_recipe_theme : STYLES[s].theme);
     _snprintf(c->language, sizeof c->language - 1, "%s", g_lang_v[g_sel_lang]);
     _snprintf(c->keyboard, sizeof c->keyboard - 1, "%s", g_kbd_v[g_sel_kbd]);
     _snprintf(c->timezone, sizeof c->timezone - 1, "%s", g_tz_v[g_sel_tz]);
@@ -1522,7 +1543,7 @@ static void choices_from_page(ab_choice *c)
 static void choice_image_source(ab_choice *c)
 {
     memset(c, 0, sizeof *c);
-    _snprintf(c->profile, sizeof c->profile - 1, "%s", "desktop");
+    _snprintf(c->profile, sizeof c->profile - 1, "%s", ab_recipe_image_profile());
     /* NO MEMORY STICK. See page_backup() and docs/AURBRIDGE.md,
      * "Installing without a memory stick". */
     c->no_stick = 1;
@@ -5316,6 +5337,7 @@ static int shot_run(const char *dir)
     shot_size(1120, 690, 96);
     if (!g_px) return 2;
     detect_defaults();
+    recipe_defaults();
     ab_lock_init();
 
     g_page = PAGE_WELCOME;
@@ -5511,6 +5533,7 @@ static int nav_test(const char *dir)
     backbuffer(g_cw, g_ch);
     fonts_make();
     detect_defaults();
+    recipe_defaults();
     ab_lock_init();
 
     if (g_nt) fprintf(g_nt, "AurBridge wizard - navigation gate test\n\n"
@@ -6661,6 +6684,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     if (!g_selftest) fix_resume_done();
 
     detect_defaults();
+    recipe_defaults();
     /* COM on this thread, for the screen-reader object (WM_GETOBJECT). */
     CoInitialize(NULL);
 
