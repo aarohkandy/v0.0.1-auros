@@ -292,3 +292,18 @@ The new push requests only multilingual with real composition and a desktop
 prerelease candidate. It does not promote public latest or enable build
 requests/Wishes. The prior failed desktop run remains useful evidence and
 is allowed to finish its remaining independent tests.
+
+## Candidate checkpoint, 24 October 21:02 UTC
+
+`c1ba6ee5` is pushed to main and codex/delivery. Desktop run `40131473307`
+has built its installer and started full tests. Multilingual run `40131473294`
+has built its image and started the real two-boot typing test. The retained
+image path passed its 12 adversarial fixtures and independent review; all
+42 integrated profile selftests and workflow lint passed before the push.
+
+Previous desktop run `40129427319` at `d7a5675b` finished with 32 successful
+jobs and only the Wishes UI job failing at the now-repaired standalone
+harness links. All selected install, first-boot, network-assumption, offline
+store, update/rollback and power-cut gates passed. The release was correctly
+skipped. This remains separate from the real Windows restart journey.
+The earlier staging KVM run `40126965922` also completed successfully.
