@@ -490,6 +490,7 @@ for (const [at, want] of [
     "auros-max-gb": String(num(plan, /headroom < (\d+) \* PLAN_GIB \? headroom : \1 \* PLAN_GIB/, "the most AurOS takes")),
     "windows-room-gb": String(num(plan, /if \(reserve < (\d+) \* PLAN_GIB\)/, "what Windows keeps when there is room")),
     "time-ssd": eta(false),
+    "journey-ssd": (() => { try { const v = JSON.parse(read("tools/site/journey.json")).ssd_median_min; return v == null ? "none" : String(v); } catch { return "none"; } })(),
     "time-hdd": eta(true),
   };
   // What the code does, in the words the pages use for it.
@@ -516,6 +517,12 @@ for (const [at, want] of [
     wifi: has("AB_CHOICE_BRING_WIFI", fast) ? "comes-across" : "stays-behind",
     hold: fs.existsSync(path.join(REPO, "rootfs/etc/systemd/system/auros-hold.service")) && /int af_hold\(/.test(read("src/aurfirst/state.c")) ? "rearms" : "windows-first",
     charger: /\{\s*"not-on-ac",\s*FIX_WAIT/.test(fixWin) ? "required" : "not-required",
+    // Put Windows back: settings.c says on the row and on its page that what she saved in AurOS goes with it,
+    // and the help page says the same (K's one truth): the FAQ's loss sentence is tied to both.
+    putback: /add_choice\("putback",[\s\S]{0,160}?Anything you saved in AurOS goes with it\./.test(read("src/aurshell/settings.c"))
+          && /Anything you saved in AurOS goes with it/.test(read("rootfs/usr/share/auros/help/windows.html")) ? "removes-saved" : "other",
+    // How far AurOS has been tried: tools/site/journey.json counts runs on a real computer (F's e2e is a virtual one).
+    tested: (() => { try { return JSON.parse(read("tools/site/journey.json")).real_pc_runs > 0 ? "real" : "virtual"; } catch { return "unknown"; } })(),
     dark: /Restart now: the screen goes black for a minute or two/.test(wizard) ? "minute-or-two" : "other",
     stop: /AurOS stops here\. Nothing was changed\./.test(wizard) && /Nothing on this computer has been changed\./.test(wizard) ? "nothing-changed" : "other",
     release: (() => { const y = read(".github/workflows/release.yml"); const p = (y.match(/\n  promote:\n[\s\S]*?(?=\n  [a-z][\w-]*:\n)/) || [""])[0];
@@ -596,7 +603,7 @@ for (const [at, want] of [
     check(gets.every((l) => l.href === RELEASE_URL), `promises ${p}: every "Get AurOS" link is the download itself (${gets.length})`, gets.map((l) => l.href).join(" "));
     await ctx.close();
   }
-  check(facts >= 2 && claims >= 6 && words >= 10, `promises: the pages mark what they promise (${facts} facts, ${claims} claims, ${words} words)`);
+  check(facts >= 3 && claims >= 8 && words >= 10, `promises: the pages mark what they promise (${facts} facts, ${claims} claims, ${words} words)`);
   for (const k of Object.keys(FACTS)) console.log(`     the code says ${k} = ${FACTS[k]}`);
   for (const k of Object.keys(CLAIMS)) console.log(`     the code does ${k}: ${CLAIMS[k]}` + (claimsFor(!DEFAULT_FAST)[k] !== CLAIMS[k] ? ` (with the fast path ${DEFAULT_FAST ? "off" : "ON"}: ${claimsFor(!DEFAULT_FAST)[k]})` : ""));
   console.log(`     the button serves the default build: fast path ${DEFAULT_FAST ? "ON" : "off"} (build/aurbridge)`);
@@ -605,6 +612,7 @@ for (const [at, want] of [
     let J = null; try { J = JSON.parse(read("tools/site/journey.json")); } catch {}
     const shown = FACTS["time-ssd"].match(/(\d+) to (\d+)/);
     check(J !== null && shown !== null, "journey: tools/site/journey.json is there, and the page's time reads 'N to M'");
+    check(J && Number.isFinite(J.ssd_median_min) && Array.isArray(J.runs) && J.runs.length > 0 && J.runs.every((r) => r.run && r.get_aurOS_to_restart_pressed), "journey: the floor is wired (ssd_median_min is a number, with the e2e runs it came from)", J && JSON.stringify(J.ssd_median_min));
     if (J && shown) {
       if (J.ssd_median_min == null) console.log(`     journey clock: no measured median yet (${J.source}); the time shown is Setup's own estimate`);
       else check(Number(shown[2]) >= Number(J.ssd_median_min), `journey: the time shown (up to ${shown[2]} minutes) is not below the measured median (${J.ssd_median_min})`, J.source);
@@ -730,6 +738,24 @@ for (const [at, want] of [
       if (v.name === "1366x768") check(/press tab until/i.test(g.all) && /enter/i.test(g.all) && /small button/i.test(g.all), "B-04: the helper's page gives the keyboard way for the small buttons (Tab until it is outlined, then Enter)");
       await ctx.close();
     }
+  }
+
+  // The helper pages (docs/handoff/GATE-STATUS.md K-P0-1): the warning comes first, and every address the installer sends her to exists.
+  {
+    const { ctx, page } = await visit({ name: "advanced.html order", url: HOME + "advanced.html", ua: UA.winEdge, uad: UAD.winX64 });
+    const o = await page.evaluate(() => {
+      const sec = document.getElementById("smart-app-control");
+      const warn = sec && sec.querySelector(".stop"), step = sec && sec.querySelector("ol.doing li");
+      if (!warn || !step) return null;
+      return { first: !!(warn.compareDocumentPosition(step) & Node.DOCUMENT_POSITION_FOLLOWING), shown: warn.getClientRects().length > 0, text: warn.innerText,
+               ids: [...document.querySelectorAll("[id]")].map((e) => e.id) };
+    });
+    check(o && o.shown && o.first && /before switching it off/i.test(o.text) && /protection/i.test(o.text), "K-P0-1: the Smart App Control warning box (what it takes away) comes before the first step, in advanced.html#smart-app-control", o ? JSON.stringify({ first: o.first, text: o.text.slice(0, 80) }) : "no .stop box or no steps in #smart-app-control");
+    const wanted = new Set();
+    for (const f of ["src/aurbridge/fix_win.c", "src/aurbridge/wizard.c", "src/aurbridge/sbdb.c", "src/aurbridge/preflight.c"]) for (const m of read(f).matchAll(/ADVANCED\s+L"#([\w-]+)"/g)) wanted.add(m[1]);
+    check(wanted.size >= 3, `K-P0-1: the installer names ${wanted.size} anchors on advanced.html (${[...wanted].join(", ")})`);
+    for (const id of wanted) check(o && o.ids.includes(id), `K-P0-1: advanced.html#${id}, which Setup links to, exists`);
+    await ctx.close();
   }
 
   // The headline says what AurOS is (as the installer's first page does), not what it will do to her computer.

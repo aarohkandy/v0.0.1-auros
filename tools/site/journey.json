@@ -1,6 +1,11 @@
 {
-  "source": "none yet: the real-Windows e2e (tools/e2e) has not completed a whole journey (M2: website to AurOS's first question)",
-  "ssd_median_min": null,
+  "source": "stream F's real-Windows e2e (tools/e2e): Windows 11 in a KVM virtual machine on a GitHub runner, AurOS-Setup.exe from this repository's release, Edge opening this website",
+  "ssd_median_min": 8,
   "hdd_median_min": null,
-  "note": "Minutes from pressing Get AurOS to AurOS asking Does everything work?, the median of the e2e journey clock on a solid-state disk at 50 Mbit/s, and on a throttled hard disk. Stream F fills these from a green run (docs/PLAN-END-TO-END.md WP-08, WP-40). tools/site/check.mjs then fails if the time the front page shows ends below the median. Until then the page shows Setup's own estimate (wizard.c eta_range), checked word for word."
+  "runs": [
+    { "run": 40025177049, "get_aurOS_to_restart_pressed": "5:32", "restart_to_aurOS_asks": "1:55" },
+    { "run": 40025046920, "get_aurOS_to_restart_pressed": "6:05", "restart_to_aurOS_asks": "0:01" }
+  ],
+  "real_pc_runs": 0,
+  "note": "Minutes from pressing Get AurOS to AurOS asking Does everything work?, the median of the e2e journey clock rounded up to a whole minute (the two runs above: about 6 and 7.5). It is a FLOOR, not a promise: the runner's internet is fast and the disk is virtual, so a home connection takes longer. tools/site/check.mjs fails if the time the front page promises ends below it. hdd_median_min stays null until an e2e run on a throttled hard disk has completed. real_pc_runs counts journeys on a real computer (none yet); while it is 0 the page says it has been tried only on a virtual one. Replace these numbers from F's evidence (notes-base.md in each e2e-<run> release)."
 }
