@@ -12,8 +12,53 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+FORGE_ROOT = ROOT
+_FORGE_FIXTURE = None
 
 from src.customize.build_adapter import AdapterError, resolve_recipe  # noqa: E402
+
+
+def setUpModule():
+    """Run Forge from committed source, isolated from CI's transcript files."""
+
+    global FORGE_ROOT, _FORGE_FIXTURE
+    commit = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+    _FORGE_FIXTURE = tempfile.TemporaryDirectory(prefix="auros-customize-test-")
+    FORGE_ROOT = Path(_FORGE_FIXTURE.name) / "source"
+    subprocess.run(
+        [
+            "git",
+            "clone",
+            "--quiet",
+            "--shared",
+            "--no-checkout",
+            str(ROOT),
+            str(FORGE_ROOT),
+        ],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(FORGE_ROOT), "checkout", "--quiet", "--detach", commit],
+        check=True,
+    )
+    status = subprocess.run(
+        ["git", "-C", str(FORGE_ROOT), "status", "--porcelain"],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout
+    if status:
+        raise AssertionError(f"Forge fixture is not clean:\n{status}")
+
+
+def tearDownModule():
+    if _FORGE_FIXTURE is not None:
+        _FORGE_FIXTURE.cleanup()
 
 
 def recipe(base="desktop", preferences=None):
@@ -25,8 +70,8 @@ def recipe(base="desktop", preferences=None):
 
 def forge(*args, input_bytes=None):
     return subprocess.run(
-        [str(ROOT / "build" / "forge"), *args],
-        cwd=ROOT,
+        [str(FORGE_ROOT / "build" / "forge"), *args],
+        cwd=FORGE_ROOT,
         input=input_bytes,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -166,7 +211,7 @@ class BuildAdapterTests(unittest.TestCase):
                     self.assertFalse(marker.exists())
 
     def test_resolve_never_mutates_source_profiles_or_creates_artifact(self):
-        profiles = sorted((ROOT / "profiles").glob("*.profile"))
+        profiles = sorted((FORGE_ROOT / "profiles").glob("*.profile"))
         before = {
             path: hashlib.sha256(path.read_bytes()).hexdigest() for path in profiles
         }

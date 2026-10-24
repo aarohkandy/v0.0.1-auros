@@ -23,6 +23,7 @@ ERROR_SCHEMA = "org.auros.recipe-error"
 CONTRACT_VERSION = 1
 COMPILER_VERSION = "1.0.0"
 MAX_RECIPE_BYTES = 16 * 1024
+MAX_RECIPE_DEPTH = 8
 
 PUBLIC_LOOKS = {
     "dock": {
@@ -148,6 +149,35 @@ def _reject_constant(value: str) -> NoReturn:
     _fail("invalid_json_number", "$", f"JSON number {value!r} is not permitted")
 
 
+def _check_json_depth(text: str) -> None:
+    """Reject deep JSON before decoder recursion differs across Python versions."""
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for character in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
+        elif character in "[{":
+            depth += 1
+            if depth > MAX_RECIPE_DEPTH:
+                _fail(
+                    "recipe_too_deep",
+                    "$",
+                    f"recipe exceeds the {MAX_RECIPE_DEPTH}-level nesting limit",
+                )
+        elif character in "]}":
+            depth -= 1
+
+
 def parse_recipe(data: bytes | str) -> dict[str, Any]:
     """Parse JSON with a small input cap and strict JSON number/object rules."""
 
@@ -168,6 +198,7 @@ def parse_recipe(data: bytes | str) -> dict[str, Any]:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         _fail("invalid_encoding", "$", "recipe must be valid UTF-8")
+    _check_json_depth(text)
     try:
         value = json.loads(
             text,
