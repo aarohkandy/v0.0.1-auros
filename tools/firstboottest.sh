@@ -74,7 +74,8 @@ ibus_negative_report() { # report-file boot-number
 
 if [ "$PROFILE" = selftest ]; then
     S=$(mktemp "${TMPDIR:-/tmp}/firstboottest-selftest.XXXXXX") || exit 2
-    trap 'rm -f "$S" "$S.new"' EXIT
+    D=$(mktemp -d "${TMPDIR:-/tmp}/firstboottest-theme.XXXXXX") || exit 2
+    trap 'rm -f "$S" "$S.new"; rm -rf "$D"' EXIT
     cat > "$S" <<'EOF'
 1 ibus-unit=disabled
 1 ibus-user-GTK_IM_MODULE=absent
@@ -103,7 +104,63 @@ EOF
     sed 's/ibus-shell-XMODIFIERS=absent/ibus-shell-XMODIFIERS=present/' "$S" > "$S.new"
     ! ibus_negative_report "$S.new" 1 \
         || { echo "IBus negative report accepted a present shell variable"; exit 1; }
-    echo "firstboottest IBus negative-report selftest passed"
+
+    # A generic install has no recipe_id, so firstboot itself renders the
+    # selected theme. A renderer can update shell.conf and then fail on a
+    # later template; that partial output must not earn the completion stamp.
+    mkdir -p "$D/root/etc/auros" "$D/bin"
+    printf 'sandstone\n' > "$D/root/etc/auros/theme"
+    printf 'theme=sandstone\nshell=taskbar\n' > "$D/root/etc/auros/installer-choices.conf"
+    cat > "$D/bin/aurora" <<'EOF'
+#!/bin/sh
+printf 'theme_name = Light\n' > "$AUROS_FIRSTBOOT_ROOT/etc/auros/shell.conf"
+echo 'injected failure after partial render'
+exit 1
+EOF
+    chmod +x "$D/bin/aurora"
+    if AUROS_FIRSTBOOT_ROOT="$D/root" PATH="$D/bin:$PATH" \
+       sh rootfs/usr/lib/auros/firstboot.sh; then
+        echo "firstboot accepted a partial theme render"
+        exit 1
+    fi
+    [ -f "$D/root/etc/auros/shell.conf" ] \
+        || { echo "partial-render fixture did not run"; exit 1; }
+    [ ! -e "$D/root/var/lib/auros/firstboot.done" ] \
+        || { echo "partial theme render received the completion stamp"; exit 1; }
+    ! grep -q '^firstboot: theme applied:' "$D/root/var/log/auros-firstboot.log" 2>/dev/null \
+        || { echo "partial theme render received the success marker"; exit 1; }
+
+    cat > "$D/bin/aurora" <<'EOF'
+#!/bin/sh
+[ "$1" = set ] && [ "$2" = sandstone ] || exit 2
+printf '%s\n' "$2" > "$AUROS_FIRSTBOOT_ROOT/etc/auros/theme"
+exit 0
+EOF
+    chmod +x "$D/bin/aurora"
+    AUROS_FIRSTBOOT_ROOT="$D/root" PATH="$D/bin:$PATH" \
+        sh rootfs/usr/lib/auros/firstboot.sh \
+        || { echo "firstboot refused a complete theme render"; exit 1; }
+    [ -f "$D/root/var/lib/auros/firstboot.done" ] \
+        || { echo "complete theme render did not receive the completion stamp"; exit 1; }
+    grep -qx 'firstboot: theme applied: sandstone' "$D/root/var/log/auros-firstboot.log" \
+        || { echo "complete theme render has no exact success marker"; exit 1; }
+
+    # A personalized receipt is written only after choices.sh has already run
+    # this renderer successfully. Firstboot must keep skipping the duplicate.
+    rm -f "$D/root/var/lib/auros/firstboot.done" "$D/aurora-invoked"
+    printf 'recipe_id=sha256:%064d\n' 0 >> "$D/root/etc/auros/installer-choices.conf"
+    cat > "$D/bin/aurora" <<'EOF'
+#!/bin/sh
+touch "$AUROS_FIRSTBOOT_ROOT/../aurora-invoked"
+exit 1
+EOF
+    chmod +x "$D/bin/aurora"
+    AUROS_FIRSTBOOT_ROOT="$D/root" PATH="$D/bin:$PATH" \
+        sh rootfs/usr/lib/auros/firstboot.sh \
+        || { echo "firstboot retried a completed personalized render"; exit 1; }
+    [ -f "$D/root/var/lib/auros/firstboot.done" ] && [ ! -e "$D/aurora-invoked" ] \
+        || { echo "personalized receipt did not skip the duplicate renderer"; exit 1; }
+    echo "firstboottest focused selftest passed"
     exit 0
 fi
 
