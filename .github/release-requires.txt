@@ -14,3 +14,6 @@ e1c8015|grub.cfg.in: the Windows start line carries lockdown=integrity too
 f38af6f|the Install label was unreadable (text on the accent)
 c74a440|signtest: its tree copy lacked docs/legal/notices, so tests / unit was red on every build before it
 afc82b8|release.yml publish: checkout ran after the download and deleted the installer, so no build before it can be published
+2f7ab0b|aurwl: a slow program's answers to its configures were refused, and its second window died
+e80590e|aurwl: the Wayland clipboard was served to every X program at all times (review W01/W05/W09/W19)
+402273f|the screen went dark in a VLC film or a Zoom call (no ScreenSaver inhibit); "Bigger text" never reached X programs

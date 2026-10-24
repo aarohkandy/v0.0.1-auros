@@ -4,6 +4,11 @@
 . /usr/lib/auros-parity/lib.sh
 me=$(id -un)
 tick() { cut -d. -f1 /proc/uptime; }
+# X programs (VLC, Zoom, Spotify) draw through Xwayland, so a window of theirs is not a Wayland toplevel. run.sh drops
+# DISPLAY for the other checks; here it is what the desktop itself publishes for programs it does not start (run.c),
+# and xprobe.py counts the windows the desktop's own X window manager manages (_NET_CLIENT_LIST). W15.
+eval "$(systemctl --user show-environment | sed -n "s/^DISPLAY=\(.*\)$/export DISPLAY='\1'/p")"
+xcount() { python3 "$P/xprobe.py" 0 2>/dev/null | awk '{print $2+0}'; }
 
 # room for the runtimes: wait for the disk to have grown (first boot / root.sh)
 wait_for 240 sh -c '[ "$(df -BG --output=size / | tail -1 | tr -dc 0-9)" -ge 15 ]'
@@ -43,15 +48,18 @@ grep -v '^#' "$P/apps.tsv" | while IFS="$(printf '\t')" read -r id name what; do
     : > "$log"
     snap "apps-$name-before"
     t1=$(date +%s)
+    x0=$(xcount)
     setsid sh -c "$cmd" > "$log" 2>&1 &
-    wait_for 90 grep -q 'xdg_surface[@#][0-9]*.get_toplevel' "$log"
+    shown() { grep -q 'xdg_surface[@#][0-9]*.get_toplevel' "$log" || [ "$(xcount)" -gt "$x0" ]; }
+    wait_for 90 shown
     win=$(( $(date +%s) - t1 ))
-    if grep -q 'xdg_surface[@#][0-9]*.get_toplevel' "$log"; then
+    if shown; then
+        via="Wayland"; grep -q 'xdg_surface[@#][0-9]*.get_toplevel' "$log" || via="X11, through Xwayland"
         sleep 12
         title=$(grep -aoE 'xdg_toplevel[@#][0-9]*.set_title\("[^"]*"\)' "$log" | tail -1 | sed 's/.*set_title("//; s/")$//')
         snap "apps-$name"
         act changed apps-$name-before apps-$name apps.$name.visible 260 130 1020 690 1.5
-        result "apps.$name" pass "installed in $inst s ($size), window \"$title\" opened $win s after the press"
+        result "apps.$name" pass "installed in $inst s ($size), window \"$title\" ($via) opened $win s after the press"
     else
         note "$name log: $(head -c 600 "$log" | tr '\n' '|')"
         if [ -z "$DIAG" ]; then
@@ -62,7 +70,7 @@ grep -v '^#' "$P/apps.tsv" | while IFS="$(printf '\t')" read -r id name what; do
             note "diag: system: $(journalctl --no-pager -n 60 2>&1 | grep -ai 'flatpak\|bwrap\|ldconfig' | tail -n 6 | cut -c1-250 | tr '\n' '|')"
         fi
         why=$(grep -ai 'cannot open display\|unable to open display\|could not connect\|Gtk-WARNING\|error' "$log" | head -2 | tr '\n' ' ' | cut -c1-200)
-        x11=""; grep -aqiE 'cannot open display|unable to open display|could not connect to display|qt platform plugin|no suitable interface module|xcb' "$log" && x11=" (it looks for an X11 display, and this desktop has no Xwayland)"
+        x11=""; grep -aqiE 'cannot open display|unable to open display|could not connect to display|qt platform plugin|no suitable interface module|xcb' "$log" && x11=" (it looks for an X11 display: DISPLAY=${DISPLAY:-unset}, X windows managed now: $(xcount))"
         result "apps.$name" fail "installed in $inst s ($size) but no window in 90 s$x11: ${why:-$(tail -n 2 "$log" | tr '\n' ' ' | cut -c1-200)}"
     fi
     flatpak kill "$id" 2>/dev/null; pkill -u "$me" -f "$id" 2>/dev/null; sleep 3

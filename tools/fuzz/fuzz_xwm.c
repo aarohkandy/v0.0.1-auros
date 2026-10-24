@@ -38,7 +38,13 @@
  * tools/fuzz/mkseeds_bin.py.
  */
 #define _GNU_SOURCE
-#include "../../src/aurwl/aurwl.c"
+/* A small clipboard cap (the real one is 16 MiB): a few big replies or INCR chunks reach it, so the cap
+ * itself is fuzzed (W28). */
+#define XC_MAX (96u << 10)
+#ifndef AURWL_SRC
+#define AURWL_SRC "../../src/aurwl/aurwl.c"
+#endif
+#include AURWL_SRC
 
 #include <stdarg.h>
 #include <stdint.h>
@@ -62,6 +68,7 @@ static uint32_t u32(void)
 /* ── the pretend X server ─────────────────────────────────────────── */
 #define FX_ROOT   0x2au
 #define FX_BASE   0x00400000u
+#define FX_CLIENT 0x00600000u                /* the X programs' resource ids (the window manager's own are FX_BASE's) */
 #define FX_MASK   0x001fffffu
 #define NPOOL     6                          /* window ids the fuzzer plays with */
 #define NSURF     8
@@ -82,7 +89,7 @@ static uint32_t pool_win(uint8_t b)
 {
     if (b % 16 == 15) return FX_ROOT;
     if (b % 16 == 14) return u32();
-    return FX_BASE + 1u + (uint32_t)(b % NPOOL);
+    return FX_CLIENT + 1u + (uint32_t)(b % NPOOL);
 }
 static uint32_t atom_pick(uint8_t b)
 {
@@ -117,8 +124,9 @@ static void fx_send(const void *b, size_t n)
 /* One reply. A little of the time it is wrong in a way a lying server would be. */
 static void fx_reply(uint8_t byte1, uint16_t seq, const void *extra, size_t extra_len, const uint8_t head[24])
 {
-    uint8_t buf[32 + 1024 * 4] = {0};
-    if (extra_len > 4096) extra_len = 4096;
+    static uint8_t buf[32 + 40000 + 4];
+    memset(buf, 0, 64);
+    if (extra_len > 40000) extra_len = 40000;       /* past 64 KiB is reached by a chunk run, not one reply */
     size_t padded = (extra_len + 3) & ~(size_t)3;
     buf[0] = 1; buf[1] = byte1;
     xw16(buf + 2, seq);
@@ -158,7 +166,7 @@ static void fx_setup_reply(void)
 }
 
 /* Properties on the window manager's own window (the clipboard's), and INCR. */
-static struct { uint32_t win, atom, type; int format; uint8_t data[512]; size_t n; int used; } sp[4];
+static struct { uint32_t win, atom, type; int format; uint8_t data[32768]; size_t n; int used; } sp[4];
 static int sp_incr;                                    /* more INCR chunks to send after each read */
 static void sp_set(uint32_t win, uint32_t atom, uint32_t type, int format, const uint8_t *data, size_t n)
 {
@@ -235,8 +243,10 @@ static void fx_request(const uint8_t *r, size_t len)
                 uint32_t win = sp[i].win, atom = sp[i].atom;
                 sp[i].used = 0;
                 if (sp_incr-- > 0) {                          /* INCR: the next chunk, and a property notify */
-                    uint8_t chunk[64]; size_t cn = sp_incr ? 4 * (size_t)(1 + u8() % 16) : 0;
-                    for (size_t k = 0; k < cn; k++) chunk[k] = u8();
+                    static uint8_t chunk[32768]; size_t cn = sp_incr ? 4 * (size_t)(1 + u8() % 16) : 0;
+                    uint8_t big = u8();
+                    if (sp_incr && (big & 3) == 0) cn = 4096u * (size_t)(1 + (big >> 2) % 8);     /* up to 32 KiB a chunk: three of them pass the cap */
+                    for (size_t k = 0; k < cn; k++) chunk[k] = k < 64 ? u8() : (uint8_t)k;
                     sp_set(win, atom, XP_STRING, 8, chunk, cn);
                     uint8_t ev[32] = {0}; ev[0] = 28; xw32(ev + 4, win); xw32(ev + 8, atom);
                     fx_send(ev, 32);
@@ -283,11 +293,12 @@ static void fx_request(const uint8_t *r, size_t len)
         uint32_t requestor = xr32(b), selection = xr32(b + 4), target = xr32(b + 8), prop = xr32(b + 12);
         uint8_t how = u8();
         if (how & 1) {                                    /* something goes in the property (a target list, data, or INCR) */
-            uint8_t data[512]; size_t n = (size_t)(u8() % 64) * 4;
-            for (size_t i = 0; i < n; i++) data[i] = u8();
+            static uint8_t data[32768]; size_t n = (size_t)(u8() % 64) * 4;
+            if ((how & 0x80) && (how & 1)) n = 4096u * (size_t)(1 + u8() % 8);                  /* a big value, up to 32 KiB */
+            for (size_t i = 0; i < n; i++) data[i] = i < 256 ? u8() : (uint8_t)i;
             if (how & 2) for (size_t i = 0; i + 4 <= n; i += 4) xw32(data + i, (how & 4) ? 1000u + (uint32_t)(u8() % XA_COUNT) : 3000u + (uint32_t)(u8() % 12));
             sp_set(requestor, prop, (how & 8) ? 1000u + XA_INCR : (how & 16) ? XP_ATOM : target, (how & 32) ? 8 : 32, data, n);
-            if (how & 8) sp_incr = 1 + u8() % 4;
+            if (how & 8) sp_incr = 1 + u8() % 12;
         }
         uint8_t f[28] = {0};
         xw32(f + 4, requestor); xw32(f + 8, selection); xw32(f + 12, target); xw32(f + 16, (how & 64) ? 0 : prop);
@@ -440,10 +451,31 @@ static void surface_step(void)
 /* Wayland programs copy and paste. */
 static int paste_rd[6], n_paste_rd;
 static const char *const MIMES[] = { "text/plain;charset=utf-8", "text/plain", "image/png", "text/html", "UTF8_STRING", "image/png" };
+/* An X program that has the keyboard, as the shell would make one: a surface, an X window paired with it, focus. The
+ * clipboard only accepts an X copy from the X program that has the keyboard (W05), so without this the fuzzer rarely
+ * gets as far as an X owner, a paste, and the INCR stream that the cap (W28) is for. */
+static void prime_x_focus(void)
+{
+    xwm *m = C->x.wm;
+    if (!m || m->dead || m->state != 2 || !C->x.client) return;
+    if (!surf[0]) {
+        comp_create_surface(xc, comp, 0x10u);
+        struct wl_resource *r = wl_client_get_object(xc, 0x10u);
+        if (!r || !wl_resource_instance_of(r, &wl_surface_interface, &surface_impl)) return;
+        surf[0] = wl_resource_get_user_data(r); surf_id[0] = 0x10u;
+    }
+    xwin *w = xwin_find(m, FX_CLIENT + 1u);
+    if (!w) w = xwin_new(m, FX_CLIENT + 1u);
+    if (!w) return;
+    w->ready = 1; w->mapped = 1;
+    xwm_associate(w, surf_id[0]);
+    if (w->win) { w->win->mapped = 1; aurwl_set_focus(C, w->win); }
+}
+
 static void clip_step(void)
 {
     uint8_t k = u8();
-    switch (k % 5) {
+    switch (k % 7) {
     case 0: {                                              /* a program copies (a source made as a program's would be) */
         if (!C->x.client || (C->selection && (k & 0x40))) break;
         data_source *ds = calloc(1, sizeof *ds);
@@ -471,6 +503,10 @@ static void clip_step(void)
     case 3:                                                /* a reader takes what has come */
         for (int i = 0; i < n_paste_rd; i++) { uint8_t buf[4096]; while (read(paste_rd[i], buf, sizeof buf) > 0) ; }
         break;
+    case 5: prime_x_focus(); break;                        /* an X program has the keyboard ... */
+    case 6:                                                /* ... and copies: the owner is asked what it has (the server answers as the fuzzer likes) */
+        if (C->x.wm && !C->x.wm->dead && C->x.wm->state == 2) { xc_owner_changed(C->x.wm, FX_CLIENT + 1u); fx_dispatch(); }
+        break;
     default:                                               /* patience runs out: every transfer waiting is told to give up */
         if (C->x.wm) {
             xfer *x; xpaste *p;
@@ -485,6 +521,11 @@ static void clip_step(void)
 
 static void sweep(void)                                    /* what the compositor holds must still be consistent */
 {
+    if (C->x.wm) {                                         /* no transfer may hold more than the cap, whatever the X side sent (W28) */
+        xpaste *p; xfer *x;
+        wl_list_for_each(p, &C->x.wm->pastes, link) if (p->n > XC_MAX) { fprintf(stderr, "a paste holds %zu bytes, past the cap\n", p->n); abort(); }
+        wl_list_for_each(x, &C->x.wm->xfers, link) if (x->n > XC_MAX) { fprintf(stderr, "a transfer holds %zu bytes, past the cap\n", x->n); abort(); }
+    }
     if (!C->x.client) {                                    /* the connection went (a kill): its surfaces with it */
         memset(surf, 0, sizeof surf); memset(surf_id, 0, sizeof surf_id);
         return;

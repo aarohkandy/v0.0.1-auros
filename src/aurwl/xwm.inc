@@ -52,7 +52,9 @@
 #include <sys/stat.h>
 
 #define XW_MAX_WINS    256          /* X windows tracked per server           */
+#ifndef XC_MAX                          /* (tools/fuzz/fuzz_xwm.c sets a small one, so its inputs can reach it) */
 #define XC_MAX         (16u << 20)  /* the most clipboard data either way (a screenshot) */
+#endif
 #define XW_IN_MAX      (XC_MAX + (1u << 20))   /* the most we hold of what it sent       */
 #define XW_OUT_MAX     (XC_MAX + (1u << 20))   /* ...and of what we have yet to send     */
 #define XW_REPLY_MAX   (XC_MAX + 4096)         /* one reply larger than this is a lie    */

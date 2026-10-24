@@ -862,6 +862,7 @@ int main(int argc, char **argv)
             c.wl = aurwl_create(png_w, c.screen_h, 60000);
             if (!c.wl) { fprintf(stderr, "aurshell: no compositor\n");
                          free_fonts(&f); return 1; }
+            aurwl_set_text_scale(c.wl, c.text_scale);        /* X programs get her size (Xft.dpi), as on the real desktop */
             c.spawn = session_spawn;
             fprintf(stderr, "aurshell: WAYLAND_DISPLAY=%s, starting %s\n",
                     aurwl_socket(c.wl), with_app);
