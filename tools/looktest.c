@@ -128,6 +128,19 @@ int main(void)
     ok(file_has(ini3, "gtk-application-prefer-dark-theme=0\n") &&
        file_has(ini4, "gtk-application-prefer-dark-theme=0\n"), "and are light, as Sandstone is");
     ok(file_has(ini3, "gtk-font-name=Inter 11\n"), "the rest of settings.ini is kept");
+    {
+        char active[48];
+        ok(settings_theme_current(active, sizeof active) == 0 && !strcmp(active, "sandstone"),
+           "the shared theme control reports the applied theme");
+        ok(!settings_theme_apply(&C, "../nocturne") &&
+           settings_theme_current(active, sizeof active) == 0 && !strcmp(active, "sandstone"),
+           "an unsafe theme id is refused without changing the current theme");
+        setenv("PATH", home, 1);
+        ok(!settings_theme_apply(&C, "nocturne") &&
+           settings_theme_current(active, sizeof active) == 0 && !strcmp(active, "sandstone"),
+           "a theme helper failure is reported and leaves the previous theme active");
+        setenv("PATH", path, 1);
+    }
 
     ok(press("Light writing on a dark background"), "she presses the dark one");
     ok(file_has(ini3, "gtk-application-prefer-dark-theme=1\n") &&

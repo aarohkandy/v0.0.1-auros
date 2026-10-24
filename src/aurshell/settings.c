@@ -252,11 +252,26 @@ static void link_name(const char *path, char *out, size_t n)
     if (dot) *dot = 0;
 }
 
+static const char *dir_of(const char *var, const char *def);
+
 /* Which theme is in force: hers if she has chosen one, otherwise the
  * machine's. Read from the file rather than remembered, because the
  * band's own reload can change it underneath us. */
-static int current_theme_id(char *out, size_t n)
+static int theme_id_valid(const char *id)
 {
+    if (!id || !*id || strlen(id) > 40) return 0;
+    for (const char *p = id; *p; p++)
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') || *p == '-'))
+            return 0;
+    char path[512];
+    snprintf(path, sizeof path, "%s/%s.theme",
+             dir_of("AUROS_THEME_DIR", "/usr/share/auros/themes"), id);
+    return access(path, R_OK) == 0;
+}
+
+int settings_theme_current(char *out, size_t n)
+{
+    if (!out || !n) return -1;
     out[0] = 0;
     const char *home = getenv("HOME");
     char path[512];
@@ -275,7 +290,8 @@ static int current_theme_id(char *out, size_t n)
                          out[l-1] == ' ')) out[--l] = 0;
         }
         fclose(f);
-        if (out[0]) return 0;
+        if (theme_id_valid(out)) return 0;
+        out[0] = 0;
     }
     return -1;
 }
@@ -388,7 +404,7 @@ static void fill_page(shell_ctx *c)
          * for profiles; they are not hers to stumble into. */
         static const char *IDS[] = { "sandstone", "nocturne", NULL };
         char cur[CHOICE_LEN] = {0};
-        current_theme_id(cur, sizeof cur);
+        settings_theme_current(cur, sizeof cur);
         for (int i = 0; IDS[i]; i++) {
             char path[256], name[CHOICE_LEN], note[CHOICE_LEN];
             snprintf(path, sizeof path, "%s/%s.theme",
@@ -681,7 +697,7 @@ static void row_value(const shell_ctx *c, int which, char *out, size_t n)
         /* The theme she is using, by its own name -- not the brand,
          * which is the same on every theme and told her nothing. */
         char id[CHOICE_LEN] = {0};
-        if (current_theme_id(id, sizeof id) == 0) {
+        if (settings_theme_current(id, sizeof id) == 0) {
             char path[256];
             snprintf(path, sizeof path, "%s/%s.theme",
                      dir_of("AUROS_THEME_DIR", "/usr/share/auros/themes"), id);
@@ -1068,6 +1084,33 @@ static void gtk_follow(const char *id, const char *css_dir)
     }
 }
 
+int settings_theme_apply(shell_ctx *c, const char *id)
+{
+    if (!c || !c->allow_theme_change || !theme_id_valid(id)) return 0;
+
+    char dir[512], cache[512];
+    if (user_path(dir, sizeof dir, "") < 0 ||
+        user_path(cache, sizeof cache, "cache") < 0)
+        return 0;
+    size_t dl = strlen(dir);
+    if (dl && dir[dl-1] == '/') dir[dl-1] = 0;
+
+    setenv("AURORA_STATE",  dir, 1);
+    setenv("AURORA_OUTDIR", dir, 1);
+    setenv("AURORA_ONLY",   "shell.conf gtk.css", 1);
+    setenv("AURORA_CACHE", cache, 1);
+    const char *argv[] = { "aurora", "set", id, NULL };
+    int rc = run_status(argv, 2500);
+    if (rc == RUN_NOSTART || rc > 0) return 0;
+
+    gtk_follow(id, dir);
+    if (rc == 0)
+        c->want_reload = 1;
+    else
+        S.reload_at = now_ms() + 700;
+    return 1;
+}
+
 static void choose(shell_ctx *c, int idx)
 {
     if (idx < 0 || idx >= S.n_ch) return;
@@ -1208,21 +1251,6 @@ static void choose(shell_ctx *c, int idx)
     }
 
     if (S.page == SET_PAGE_LOOK) {
-        if (!c->allow_theme_change) return;
-        char statef[512], conf[512], cache[512];
-        if (user_path(statef, sizeof statef, "theme") < 0) return;
-        if (user_path(conf,   sizeof conf,   "shell.conf") < 0) return;
-        if (user_path(cache,  sizeof cache,  "cache") < 0) return;
-
-        FILE *f = fopen(statef, "w");
-        if (!f) {
-            snprintf(S.said, sizeof S.said, "%s",
-                     "That could not be saved. Nothing has changed.");
-            return;
-        }
-        fprintf(f, "%s\n", id);
-        fclose(f);
-
         /* aurora renders a theme into a shell.conf, and every template
          * names an absolute path under /etc/auros -- which is root's,
          * and must stay root's, because policy.conf lives beside them
@@ -1237,34 +1265,12 @@ static void choose(shell_ctx *c, int idx)
          * output; AURORA_ONLY renders the one file of eleven that the
          * desktop reads, because she is watching the screen while it
          * happens. */
-        char dir[512];
-        user_path(dir, sizeof dir, "");
-        size_t dl = strlen(dir);
-        if (dl && dir[dl-1] == '/') dir[dl-1] = 0;
-        setenv("AURORA_STATE",  dir, 1);
-        setenv("AURORA_OUTDIR", dir, 1);
-        /* And gtk.css, for the programs -- see gtk_follow(). */
-        setenv("AURORA_ONLY",   "shell.conf gtk.css", 1);
-        setenv("AURORA_CACHE", cache, 1);
-        const char *argv[] = { "aurora", "set", id, NULL };
-        int rc = run_status(argv, 2500);
-        if (rc > 0) {
+        if (!settings_theme_apply(c, id)) {
             snprintf(S.said, sizeof S.said, "%s",
                      "The look could not be changed just now.");
             return;
         }
         S.cur_ch = idx;
-        gtk_follow(id, dir);
-        if (rc == 0) {
-            /* It has finished and the file is on disk, so the reload
-             * can happen on this pass rather than on a timer. */
-            c->want_reload = 1;
-        } else {
-            /* Still running after two and a half seconds. Give it a
-             * moment more and reload anyway: the file may well appear,
-             * and a reload of an unchanged file costs one repaint. */
-            S.reload_at = now_ms() + 700;
-        }
         snprintf(S.said, sizeof S.said, "Now using %s.", S.ch[idx].label);
         return;
     }

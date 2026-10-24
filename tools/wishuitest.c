@@ -27,6 +27,26 @@
 #include "../src/aurshell/foot.h"
 #include "../src/common/png.h"
 
+static char mock_theme[48] = "nocturne";
+static int mock_theme_readable = 1;
+static int mock_theme_applies;
+int settings_theme_current(char *out, size_t n)
+{
+    if (!mock_theme_readable || !out || !n) return -1;
+    snprintf(out, n, "%s", mock_theme);
+    return 0;
+}
+int settings_theme_apply(shell_ctx *c, const char *id)
+{
+    if (!c || !c->allow_theme_change ||
+        (strcmp(id, "sandstone") && strcmp(id, "nocturne")))
+        return 0;
+    snprintf(mock_theme, sizeof mock_theme, "%s", id);
+    mock_theme_applies++;
+    c->want_reload = 1;
+    return 1;
+}
+
 static int checked, failed;
 static void ok(const char *what, int good)
 {
@@ -551,6 +571,7 @@ static void shell_actions(void)
     snprintf(home, sizeof home, "/tmp/wishuitest.%d.home", (int)getpid());
     setenv("HOME", home, 1);
     mkdir(home, 0700);
+    c.allow_theme_change = 1;
     drain();
     say(&c, "{\"ev\":\"shell\",\"n\":42,\"wid\":\"\",\"title\":\"Bigger words\","
             "\"do\":{\"type\":\"set_text_size\",\"size\":\"bigger\"}}");
@@ -597,6 +618,36 @@ static void shell_actions(void)
     say(&c, "{\"ev\":\"shell\",\"n\":52,\"do\":{\"type\":\"do_not_disturb\"}}");
     drain();
     ok("a quiet-time event with no state is refused", strstr(wrote, "\"n\":52,\"ok\":false") != NULL);
+
+    snprintf(mock_theme, sizeof mock_theme, "%s", "nocturne");
+    mock_theme_readable = 1;
+    mock_theme_applies = 0;
+    say(&c, "{\"ev\":\"shell\",\"n\":53,\"do\":{\"type\":\"set_wallpaper\",\"theme_name\":\"sandstone\"}}");
+    drain();
+    ok("an installed theme is applied through the local theme control",
+       mock_theme_applies == 1 && !strcmp(mock_theme, "sandstone") && c.want_reload);
+    ok("the engine receives the exact previous theme for Undo",
+       strstr(wrote, "{\"op\":\"did\",\"n\":53,\"ok\":true,\"prev\":{\"type\":\"set_wallpaper\",\"theme\":\"nocturne\"}}") != NULL);
+    say(&c, "{\"ev\":\"shell\",\"n\":54,\"do\":{\"type\":\"set_wallpaper\",\"color\":\"#112233\"}}");
+    drain();
+    ok("a raw wallpaper color stays honestly refused",
+       strstr(wrote, "\"n\":54,\"ok\":false") != NULL && mock_theme_applies == 1);
+    say(&c, "{\"ev\":\"shell\",\"n\":55,\"do\":{\"type\":\"set_wallpaper\",\"theme_name\":\"missing\"}}");
+    drain();
+    ok("a missing theme is refused without an Undo claim",
+       strstr(wrote, "{\"op\":\"did\",\"n\":55,\"ok\":false}") != NULL &&
+       mock_theme_applies == 1);
+    say(&c, "{\"ev\":\"shell\",\"n\":56,\"do\":{\"type\":\"set_wallpaper\",\"theme_name\":\"nocturne\",\"color\":\"#112233\"}}");
+    drain();
+    ok("an ambiguous theme-and-color action is refused",
+       strstr(wrote, "\"n\":56,\"ok\":false") != NULL && mock_theme_applies == 1);
+    mock_theme_readable = 0;
+    say(&c, "{\"ev\":\"shell\",\"n\":57,\"do\":{\"type\":\"set_wallpaper\",\"theme_name\":\"nocturne\"}}");
+    drain();
+    ok("a theme change is refused when its previous state cannot be captured",
+       strstr(wrote, "\"n\":57,\"ok\":false") != NULL && mock_theme_applies == 1);
+    mock_theme_readable = 1;
+    c.want_reload = 0;
     /* A shells directory with a file that is NOT one of the four looks:
      * only the name check stands between it and being applied. */
     char sdir[64], sfile[96];
