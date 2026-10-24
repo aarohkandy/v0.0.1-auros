@@ -1,8 +1,23 @@
 # Morning report (for Aaroh) — kept current by the lead
 
-_Last updated: 07:40 UTC 2026-10-24 (00:40 your time)._
+_Last updated: 00:36 UTC 2026-10-24 (17:36 your time, 23 Oct)._
 
 ## Done overnight (proof)
+
+- **Safety review done** (docs/safety/FINDINGS.md): 26 confirmed ways her disk or Windows could be hurt
+  (12 high, 0 blockers after 3 skeptics each); 9 already fixed, the rest assigned with tests required.
+- **Security audit done** (docs/security/FINDINGS.md): 0 critical, 8 high, all assigned: installer trust and
+  DLL hijacking, the update-signing key's exposure, mutable release files, no boot fallback, no network time
+  (updates silently stop in the US), no disk encryption yet. - **Legal work done** (docs/legal/, no lawyer per your D15): every release now gets its GPL source release
+  automatically; licences, terms, disclaimer and privacy pages (v3, each marked "prepared without a lawyer");
+  a launch gate (tools/legal/check.py --launch) that refuses to deploy the site or promote while 35 items remain
+  (most are other agents' wording fixes, now routed; yours: contact mailbox, the name, Mozilla's OK for the
+  Firefox name).
+- **Legal work done** (docs/legal/, no lawyer per your D15): every release now gets its GPL source release
+  automatically; licences, terms, disclaimer and privacy pages (v3, each marked "prepared without a lawyer");
+  a launch gate (tools/legal/check.py --launch) that refuses to deploy the site or promote while 35 items remain
+  (most are other agents' wording fixes, now routed; yours: contact mailbox, the name, Mozilla's OK for the
+  Firefox name).
 
 - **AurOS installs on real Windows 11 and reaches its first screen in about 8 minutes** (fast path, machine time:
   website +1:29, download clicks +2:19, three installer screens, Restart now +6:36, install step 18 s, "Does
@@ -51,51 +66,30 @@ _Last updated: 07:40 UTC 2026-10-24 (00:40 your time)._
 - Plans: expert map (docs/ATLAS.md), master plan (docs/PLAN-END-TO-END.md), design direction
   (docs/DESIGN-DIRECTION.md), AI contract v1 after a red team (docs/AI.md §7).
 
-## Still red / in progress
+## Still red / in progress (00:36 UTC 24 Oct)
 
-- **The store's Install button is unreadable** (near-black text on the green; real-Windows run 40038619603), and
-  its star icons show "missing picture". Cause found: the theme picked the text colour for a dark theme only.
-  Stream C is fixing both, with a contrast test over every theme.
-
-- **Found and fixed tonight: every click in modern (GTK4) programs landed ~25% off target** — why the store's
-  small Install button did nothing. Fixed (7381d67); in the next release candidate.
-
-- **8 of the 10 top programs install from "Get more programs" (no password) and open in 1-2 s**: WhatsApp,
-  Teams, Spotify, Solitaire, Thunderbird, gThumb, LibreOffice, Chromium. **Zoom and VLC now draw too** (Xwayland landed: 6b7919b).
-  LibreOffice Writer+Calc are in the image; printing works. (run 40012157679)
-- **Programs from "Get more programs" would not start** (an extra permission the app sandbox refuses): **fixed and
-  proven** (6b6c438). Next gap: older programs that only speak X11 (VLC, likely Zoom, Spotify, WhatsApp/Teams
-  wrappers) need Xwayland, which AurOS's compositor doesn't have yet — being built.
-
-- **Caught before anyone used it: Ubuntu security updates would never have installed** (renaming the system to
-  AurOS broke the updater's source names). **Fixed and proven on the real image** (956af4a); now a release gate.
-
-- **Fixed overnight: Firefox opened as a blank window** (the compositor never drew the inner surfaces browsers
-  and video players paint into). Now Firefox, GTK4, Qt and video all draw; 21 pixel-exact tests guard it.
-
-- **The one blocker that matters most:** on a real Windows 11 (in the test VM) everything works up to the restart
-  (Get AurOS → Restart now in 4 min 19 s), then the install step refuses: the Linux tool that shrinks Windows
-  could not read a fresh Windows 11 drive (`cannot-measure`). **Solved:** a bug in our own code (it threw away
-  the tool's answer when the output was long, which it always is on a real drive); fixed in 6917bde with a test.
-  A new prerelease and a new real-Windows run are next. Also seen: Windows 11 switched
-  BitLocker on by itself at first login, so encrypted PCs will be the norm (your D13 was right).
-
-- **Honest install time today (the installer's own measured estimate): 25-60 minutes on a solid-state
-  drive, 1-3 hours on a hard disk.** Under an hour holds on SSD PCs only. The fast path (stream A2:
-  Windows shrinks itself and AurOS is written during the download) is the fix; it is being built.
-
-- No install has passed end to end on real Windows yet (the e2e run is the gate); it now reaches the restart.
-- Data-safety fixes in flight: staging clock bug for US time zones, BitLocker never decrypted,
-  Recycle Bin never emptied, double-click skipping the Ready page, shared password removed.
-- **Safety review done** (docs/safety/FINDINGS.md): 26 confirmed ways her disk or Windows could be hurt
-  (12 high, 0 blockers after 3 skeptics each); 9 already fixed, the rest assigned with tests required.
-- **Security audit done** (docs/security/FINDINGS.md): 0 critical, 8 high, all assigned: installer trust and
-  DLL hijacking, the update-signing key's exposure, mutable release files, no boot fallback, no network time
-  (updates silently stop in the US), no disk encryption yet. - **Legal work done** (docs/legal/, no lawyer per your D15): every release now gets its GPL source release
-  automatically; licences, terms, disclaimer and privacy pages (v3, each marked "prepared without a lawyer");
-  a launch gate (tools/legal/check.py --launch) that refuses to deploy the site or promote while 35 items remain
-  (most are other agents' wording fixes, now routed; yours: contact mailbox, the name, Mozilla's OK for the
-  Firefox name).
+- **The full journey on real Windows is one step from green.** Website → installer → AurOS's first screen works
+  (8 min with the fast path). The next step, "Start AurOS from now on", failed on every real install; the cause is
+  found and fixed twice over (76d89b9 in AurOS, 7dce7f3 in the install step). **Release candidate 6 (b28851a)**
+  carries the first fix plus the store fixes below; it publishes itself and runs the whole journey on real
+  Windows 11 (normal, BitLocker, older route) through to installing VLC.
+- **The store's Install button was unreadable and its icons missing**: fixed (f38af6f, 14b3d2a) with a contrast
+  test over every theme; in RC6.
+- **Gate audit, adversarially checked (docs/handoff/GATE-STATUS.md):** every high-rated safety finding has its fix on
+  main; most also have a test that fails if the fix is removed, the rest are being tested now. Two real bugs surfaced
+  and are being fixed: the installer could end "installed" after failing to write AurOS's start-up entry on a PC
+  whose firmware store is full (S-04), and a full disk during the download is reported as "the internet stopped".
+  Many design rules hold in the code but no test pins them yet; routed to the owners.
+- **Security launch blockers still open:** no disk encryption and no lock screen (SEC-008/029): the work exists
+  but sits in the encryption agent's 41 held commits (item 0 below); and the update key stays readable by any
+  pushed workflow until you do item 8 (SEC-004).
+- **Programs:** all 10 top programs draw now, including old-style ones (VLC, Zoom), with copy-paste between old and
+  new programs (79211d8). An adversarial review of that code is running before it ships.
+- **Install time:** fast path measured at 8 minutes on real Windows 11 (VM, solid-state). The website's button still
+  gets the older route (25-60 min on SSD, 1-3 h on a hard disk) until the fast path passes real Windows in both the
+  normal and BitLocker cases.
+- **Caught tonight:** a hardening test (USB printing) had been failing for 100 runs while showing green, because the
+  job was skipped. Fixed (c56e891); a public release is now refused unless that test passed on that exact build.
 
 ## Waiting for you (each with my recommendation)
 
@@ -117,6 +111,9 @@ _Last updated: 07:40 UTC 2026-10-24 (00:40 your time)._
      release-blocking check is already green on main without it).
    - the encrypted-disk agent's **41 commits** (disk encryption + PIN, proven in a real-image VM with a virtual
      TPM, switched OFF by default) on branch `wt-s4`.
+   **S4's commits are the two open security launch blockers (disk encryption, lock screen).** Also decide: a PIN at
+   start-up for her (recommendation: a 4-digit PIN she chooses at install, with a printed rescue code; AurOS asks
+   for it only at start-up and after sleep), or no PIN (then a stolen laptop's files are readable).
    Say "push P's commits" / "push K's commit" / "push S4's commits" (or "push all held
    commits"). Or say "allow agent pushes" and I add a project permission rule so this stops happening.
 
