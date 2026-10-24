@@ -45,6 +45,19 @@ def parse_setup_root(body):
     return struct.unpack_from("<I", body, off)[0]
 
 
+def parse_query_extension_reply(head, name):
+    """Return the assigned opcode from a 32-byte core QueryExtension reply."""
+    if len(head) != 32 or head[0] != 1:
+        raise X11Error("invalid QueryExtension reply for " + name)
+    # Byte 1 is padding.  The fixed reply fields begin after reply length:
+    # present at byte 8 and major-opcode at byte 9 (X11 core protocol).
+    if not head[8]:
+        raise X11Error(name + " extension unavailable")
+    if not head[9]:
+        raise X11Error(name + " returned no major opcode")
+    return head[9]
+
+
 def parse_xres_ids(body, count):
     """Parse XRes 1.2 ClientIdValue records into (resource_base, pid)."""
     out = []
@@ -178,9 +191,7 @@ class XConnection:
         packet = struct.pack("<BBHHH", 98, 0, (8 + _pad4(len(raw))) // 4,
                              len(raw), 0) + raw + b"\0" * (_pad4(len(raw)) - len(raw))
         head, _ = self.request(packet)
-        if not head[1]:
-            raise X11Error(name + " extension unavailable")
-        return head[8]
+        return parse_query_extension_reply(head, name)
 
     def query_tree(self, window):
         head, body = self.request(struct.pack("<BBHI", 15, 0, 2, window))

@@ -220,8 +220,14 @@ run_x11_panel_probe() {
     mkdir -p "$XOUT" "$XRUN"
     chown "$desktop_user" "$XRUN"
     result=complete
+    restoration_failed=0
+    probe_failure_kind=
     note() { printf '%s\n' "$*" >> "$XOUT/probe.log"; }
     incomplete() { result=incomplete; note "ERROR: $*"; }
+    restoration_incomplete() {
+        restoration_failed=1
+        incomplete "$*"
+    }
     inconclusive() {
         [ "$result" = complete ] && result=inconclusive
         note "INCONCLUSIVE: $*"
@@ -430,12 +436,12 @@ EOPY
 
     for cleanup_unit in "$mouse_x11_unit" "$panel_unit" "$daemon_unit"; do
         if ! as_desktop systemctl --user stop "$cleanup_unit" >/dev/null 2>&1; then
-            incomplete "could not stop transient unit $cleanup_unit"
+            restoration_incomplete "could not stop transient unit $cleanup_unit"
         fi
         cleanup_state=$(as_desktop systemctl --user is-active "$cleanup_unit" 2>/dev/null || true)
         note "cleanup_unit=$cleanup_unit active_state=${cleanup_state:-unloaded}"
         case "$cleanup_state" in inactive|failed|unknown|'') ;;
-          *) incomplete "transient unit $cleanup_unit remained $cleanup_state" ;;
+          *) restoration_incomplete "transient unit $cleanup_unit remained $cleanup_state" ;;
         esac
     done
     for cleanup_pid in "$mouse_x11_pid" "$panel_pid" "$daemon_pid"; do
@@ -443,27 +449,27 @@ EOPY
         if wait_pid_gone "$cleanup_pid"; then
             note "cleanup_pid=$cleanup_pid gone=yes"
         else
-            incomplete "transient PID $cleanup_pid remained after unit stop"
+            restoration_incomplete "transient PID $cleanup_pid remained after unit stop"
         fi
     done
     # Stop first so stdio buffers and journald pipes are closed before their
     # files are copied out of the desktop-owned runtime directory.
     cp -a "$XRUN/." "$XOUT/runtime-output/" 2>/dev/null || true
     as_desktop systemctl --user start auros-ibus.service >/dev/null 2>&1 \
-        || incomplete "ordinary IBus service did not restart"
+        || restoration_incomplete "ordinary IBus service did not restart"
     wait_active auros-ibus.service \
-        || incomplete "ordinary IBus service was not active after probe cleanup"
+        || restoration_incomplete "ordinary IBus service was not active after probe cleanup"
     shipped_pid=$(as_desktop systemctl --user show -p MainPID --value \
         auros-ibus.service 2>/dev/null)
     case "$shipped_pid" in ''|0|*[!0-9]*)
-        incomplete "ordinary IBus service MainPID unavailable" ;;
+        restoration_incomplete "ordinary IBus service MainPID unavailable" ;;
       *)
         record_process "$shipped_pid" "$XOUT/shipped-service"
         grep -qx 'exe=/usr/bin/ibus-daemon' "$XOUT/shipped-service.process" \
-            || incomplete "ordinary service MainPID is not /usr/bin/ibus-daemon"
+            || restoration_incomplete "ordinary service MainPID is not /usr/bin/ibus-daemon"
         grep -qx 'cmdline=/usr/bin/ibus-daemon --replace --xim ' \
             "$XOUT/shipped-service.process" \
-            || incomplete "ordinary service arguments were not exactly shipped arguments"
+            || restoration_incomplete "ordinary service arguments were not exactly shipped arguments"
         ;;
     esac
     shipped_ready=0; i=0
@@ -477,20 +483,32 @@ EOPY
         sleep 0.25; i=$((i + 1))
     done
     [ "$shipped_ready" = 1 ] \
-        || incomplete "ordinary IBus service was not ready with exact pinyin engine"
+        || restoration_incomplete "ordinary IBus service was not ready with exact pinyin engine"
     note "ordinary_service_ready=$shipped_ready main_pid=${shipped_pid:-missing}"
     note "status=$result"
     sync
     say "ibus-x11-probe=$result evidence=round$round/x11-panel"
-    [ "$result" != incomplete ]
+    if [ "$result" = incomplete ]; then
+        if [ "$restoration_failed" = 1 ]; then
+            probe_failure_kind=restoration
+        else
+            probe_failure_kind=diagnostic
+        fi
+        return 1
+    fi
+    return 0
 }
 
 if [ "$round" = 1 ] && [ -x /usr/lib/auros-profiletest/x11_xres_probe.py ]; then
     # Take the baseline before opening the diagnostic Mousepad; the host uses
     # it only to locate/focus that real window.
     act baseline x11-probe-mousepad || fail "could not record X11 probe baseline"
-    run_x11_panel_probe \
-        || fail "X11 panel diagnostic cleanup/restoration was incomplete"
+    if ! run_x11_panel_probe; then
+        case "$probe_failure_kind" in
+          restoration) fail "X11 panel diagnostic restoration failed" ;;
+          *) fail "X11 panel diagnostic was incomplete" ;;
+        esac
+    fi
 fi
 
 # Mousepad: open an existing empty file so Ctrl+S never opens a filename
