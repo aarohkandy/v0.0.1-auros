@@ -21,7 +21,7 @@ PLAN_SCHEMA = "org.auros.build-plan"
 CATALOGUE_SCHEMA = "org.auros.recipe-catalogue"
 ERROR_SCHEMA = "org.auros.recipe-error"
 CONTRACT_VERSION = 1
-COMPILER_VERSION = "1.0.0"
+COMPILER_VERSION = "1.0.1"
 MAX_RECIPE_BYTES = 16 * 1024
 MAX_RECIPE_DEPTH = 8
 
