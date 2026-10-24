@@ -549,13 +549,19 @@ assert "ferry started through a link finds its own tools" \
 mkdir -p "$TMP/stale-bin"
 cat > "$TMP/stale-bin/blkid" <<'EOF'
 #!/bin/sh
-[ "$*" = "-L AUROSHANDOV" ] || exit 2
-printf '%s\n' /dev/loop-stale-auros
+printf '%s\n' "$*" >> "$BLKID_CALLS"
+case "$*" in
+    '-L AUROSHANDOV') printf '%s\n' /dev/loop-stale-auros ;;
+    '-p -o value -s LABEL /dev/loop-stale-auros') exit 2 ;;
+    *) exit 2 ;;
+esac
 EOF
 chmod +x "$TMP/stale-bin/blkid"
 refute "a detached handover volume left in blkid's cache is ignored" \
-    env PATH="$TMP/stale-bin:/usr/bin:/bin" FERRY_HANDOVER_DEV= \
+    env PATH="$TMP/stale-bin:/usr/bin:/bin" BLKID_CALLS="$TMP/blkid.calls" FERRY_HANDOVER_DEV= \
         sh -c '. "$1"; find_handover' "$FERRY/ferry" "$FERRY/ferry-common.sh"
+eq "...the cached path is checked against the device's current label" \
+    "$(tail -1 "$TMP/blkid.calls")" '-p -o value -s LABEL /dev/loop-stale-auros'
 
 echo "the way back (her AurOS files into Windows before Put Windows back):"
 BK="$TMP/win-back"; cp -r "$WIN" "$BK"; hers "$BK"
