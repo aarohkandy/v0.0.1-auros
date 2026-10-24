@@ -51,8 +51,14 @@ esac
 # ── 1b. What the person chose in the installer: language, keyboard,
 # time zone, look and desktop. Before the theme step, because the look
 # they chose is what that step applies. See choices.sh.
+personalization_retry=0
 if [ -x /usr/lib/auros/choices.sh ]; then
-    /usr/lib/auros/choices.sh 2>&1 || echo "choices: did not finish; defaults kept"
+    /usr/lib/auros/choices.sh 2>&1
+    choices_rc=$?
+    if [ "$choices_rc" -ne 0 ]; then
+        echo "choices: did not finish; defaults kept"
+        [ "$choices_rc" -eq 3 ] && personalization_retry=1
+    fi
 fi
 
 # ── 1c. Her Wi-Fi from Windows, if she let the installer bring it (D10):
@@ -64,8 +70,10 @@ fi
 
 # ── 2. Re-apply the theme.
 # The image was themed at build time, but the display resolution is only
-# known now, so the wallpaper is regenerated at the real size.
-if command -v aurora >/dev/null 2>&1; then
+# known now, so the wallpaper is regenerated at the real size. A personalized
+# receipt exists only after choices.sh has already completed this exact render.
+if ! grep -q '^recipe_id=sha256:[0-9a-f]\{64\}$' /etc/auros/installer-choices.conf 2>/dev/null &&
+   command -v aurora >/dev/null 2>&1; then
     aurora set "$(cat /etc/auros/theme 2>/dev/null || echo nocturne)" 2>&1 || true
 fi
 
@@ -80,5 +88,9 @@ if [ -x /usr/lib/ferry/ferry-detect ]; then
         || echo "no Windows installation found"
 fi
 
+if [ "$personalization_retry" = 1 ]; then
+    echo "personalized choices will be tried again at the next start"
+    exit 1
+fi
 touch "$STAMP"
 echo "=== first boot complete ==="

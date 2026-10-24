@@ -1310,7 +1310,11 @@ int plat_file_put(const char *to, const void *buf, size_t n,
         }
         done += put;
     }
-    if (rc == 0) FlushFileBuffers(h);
+    if (rc == 0 && !FlushFileBuffers(h)) {
+        why_of(why, wn, "the file was written but could not be made durable",
+               GetLastError());
+        rc = -1;
+    }
     CloseHandle(h);
     return rc;
 }

@@ -95,6 +95,7 @@ keyboard=xkb:es
 timezone=iana:Europe/Madrid
 theme=moss
 shell=taskbar
+recipe_id=sha256:2023b6b99ce28e351a8398c213596708038775f5934cd466bc6193f60b45e986
 EOF
 run "$R" "$TMP/c1.conf"
 check "it finishes"                        test $? -eq 0
@@ -110,8 +111,10 @@ check "the look is Moss"                   grep -qx moss "$R/etc/auros/theme"
 check "the desktop is the taskbar one" \
     test "$(readlink "$R/etc/auros/shell/active.shell")" = /usr/share/auros/shells/taskbar.shell
 C="$R/etc/auros/installer-choices.conf"
-check "all five are recorded for Ferry" \
-    test "$(grep -c '=' "$C")" -eq 5
+check "all five and the applied recipe identity are recorded for Ferry" \
+    test "$(grep -c '=' "$C")" -eq 6
+check "personalized success names the exact recipe" \
+    grep -qx 'choices: personalized recipe applied: sha256:2023b6b99ce28e351a8398c213596708038775f5934cd466bc6193f60b45e986' "$TMP/out.txt"
 
 echo
 echo "  every card the installer offers (read out of src/aurbridge/wizard.c)"
@@ -200,6 +203,83 @@ check "and nothing recorded as chosen" \
     test "$(grep -c '=' "$R/etc/auros/installer-choices.conf")" -eq 0
 check "each refusal is said out loud" \
     test "$(grep -c 'left as it was' "$TMP/out.txt")" -eq 5
+
+echo
+echo "  a personalized choice is evidence only after the complete look applies"
+R=$TMP/r6; mkroot "$R"
+cat > "$TMP/c6.conf" <<'EOF'
+theme=missing
+shell=taskbar
+recipe_id=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+EOF
+if run "$R" "$TMP/c6.conf"; then
+    bad "a missing personalized theme makes applying the recipe fail"
+else
+    ok "a missing personalized theme makes applying the recipe fail"
+fi
+check "the failed recipe identity is not installed" \
+    sh -c "! grep -q '^recipe_id=' '$R/etc/auros/installer-choices.conf'"
+check "failure is explicit, never a personalized success" \
+    sh -c "grep -q 'personalized recipe was not applied' '$TMP/out.txt' && ! grep -q 'personalized recipe applied:' '$TMP/out.txt'"
+
+R=$TMP/r7; mkroot "$R"; mkdir -p "$TMP/bin"
+cat > "$TMP/bin/aurora" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$TMP/bin/aurora"
+cat > "$TMP/c7.conf" <<'EOF'
+theme=moss
+shell=tiles
+recipe_id=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+EOF
+if PATH="$TMP/bin:$PATH" AUROS_CHOICES_RUN_AURORA=1 run "$R" "$TMP/c7.conf"; then
+    bad "a renderer failure makes applying the personalized recipe fail"
+else
+    ok "a renderer failure makes applying the personalized recipe fail"
+fi
+check "renderer failure leaves no recipe identity evidence" \
+    sh -c "! grep -q '^recipe_id=' '$R/etc/auros/installer-choices.conf'"
+
+R=$TMP/r8; mkroot "$R"
+cat > "$TMP/bin/mv" <<'EOF'
+#!/bin/sh
+case "$2" in */etc/auros/installer-choices.conf) exit 1 ;; esac
+exec /bin/mv "$@"
+EOF
+chmod +x "$TMP/bin/mv"
+cat > "$TMP/c8.conf" <<'EOF'
+theme=moss
+shell=tiles
+recipe_id=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+EOF
+if PATH="$TMP/bin:$PATH" run "$R" "$TMP/c8.conf"; then
+    bad "a receipt commit failure cannot report personalized success"
+else
+    ok "a receipt commit failure cannot report personalized success"
+fi
+check "receipt failure is explicit and leaves no success log" \
+    sh -c "grep -q 'could not commit the installed choices receipt' '$TMP/out.txt' && ! grep -q 'personalized recipe applied:' '$TMP/out.txt'"
+
+R=$TMP/r9; mkroot "$R"; mkdir -p "$TMP/bin-gtk"
+cat > "$TMP/bin-gtk/sed" <<'EOF'
+#!/bin/sh
+[ "$1" = -i ] && exit 1
+exec /usr/bin/sed "$@"
+EOF
+chmod +x "$TMP/bin-gtk/sed"
+cat > "$TMP/c9.conf" <<'EOF'
+theme=moss
+shell=tiles
+recipe_id=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+EOF
+if PATH="$TMP/bin-gtk:$PATH" run "$R" "$TMP/c9.conf"; then
+    bad "a GTK light/dark failure cannot report the complete look applied"
+else
+    ok "a GTK light/dark failure cannot report the complete look applied"
+fi
+check "GTK failure leaves no recipe identity evidence" \
+    sh -c "! grep -q '^recipe_id=' '$R/etc/auros/installer-choices.conf'"
 
 echo
 echo "  and the script is never sourced"
