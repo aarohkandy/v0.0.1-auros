@@ -1055,7 +1055,22 @@ class Flow:
                 raise Failure(f"no '{STORE_NAME}' anywhere a person would look: " +
                               vision.text_of(words)[:600])
             self.m.click(*vision.centre(b), label="open " + STORE_NAME)
-            p, _, words = self.wait_text(["Search", "Explore", "Installed", "Updates", "Software", "Instal"], 300, every=10)
+            # Opened = its window is there: a word of it read (OCR garbles the tabs, "#extere
+            # / Ginstat...", their icons in front), or its frame seen in pixels.
+            p, words = None, None
+            deadline = time.time() + 300
+            while time.time() < deadline and not p:
+                img = self.m.screendump()
+                if self.store_frame(img):
+                    p = "its window frame"
+                    break
+                words = vision.ocr(img)
+                for w in ("Search", "Explore", "Installed", "Updates", "Software", "Instal"):
+                    if vision.find_text(words, w):
+                        p = w
+                        break
+                if not p:
+                    time.sleep(8)
             if not p:
                 self.m.shot("store-did-not-open")
                 raise Failure("the store NEVER OPENED (no window of it read on screen in 5 minutes): " +
@@ -1206,11 +1221,24 @@ class Flow:
         return (frame + 47, cy) if frame else None
 
     @staticmethod
+    def store_frame(img):
+        """The x of the store window's left frame line (a dark vertical line down
+        most of the rows 150..500 between x=200 and 400), or None: the shell's
+        own panel border at x=192 is not in that range."""
+        lum = img[150:500, 200:400].astype(int).sum(axis=2) // 3
+        dark = (lum < 110).mean(axis=0)
+        cols = np.nonzero(dark > 0.9)[0]
+        return int(cols[0]) + 200 if len(cols) else None
+
+    @staticmethod
     def store_has_content(img):
-        """The store's window shows something under its header: more than a
-        few percent of the area where its body is differs from the commonest
-        colour there (an empty body is one flat colour)."""
-        reg = img[140:700:2, 236:1056:2].reshape(-1, 3)
+        """The store's window shows something under its header: in a block just
+        below the header (x from the window's frame, y 150..420: inside the
+        smallest window it has opened as), more than a few percent of the
+        pixels differ from the commonest colour there. An empty body is one
+        flat colour; a page of tiles is not."""
+        x0 = (AurFlow.store_frame(img) or 243) + 10
+        reg = img[150:420:2, x0:x0 + 540:2].reshape(-1, 3)
         vals, counts = np.unique(reg, axis=0, return_counts=True)
         return 1.0 - counts.max() / len(reg) > 0.03
 

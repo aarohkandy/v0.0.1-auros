@@ -279,6 +279,18 @@ def test_store_magnifier():
     check(e2e.AurFlow.store_magnifier(img, box) is None, "store: no window frame, no guess")
 
 
+def test_store_frame():
+    try:
+        import e2e, numpy as np
+    except ImportError:
+        return
+    img = np.zeros((800, 1280, 3), np.uint8); img[:] = (240, 240, 240)
+    img[:, 192] = 40
+    check(e2e.AurFlow.store_frame(img) is None, "store: no window, only the shell's panel border: no frame")
+    img[75:715, 243] = 40
+    check(e2e.AurFlow.store_frame(img) == 243, "store: a window's left frame is found at its column")
+
+
 def test_store_content():
     try:
         import e2e, numpy as np
@@ -429,6 +441,7 @@ test_aur_dry()
 test_label_is()
 test_canon_label()
 test_store_magnifier()
+test_store_frame()
 test_store_content()
 test_label_contrast()
 test_store_button_colours()
