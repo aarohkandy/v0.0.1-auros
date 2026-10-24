@@ -256,6 +256,7 @@ jobs:
           # cfgmgr32.dll, cryptbase.dll and cryptsp.dll are NOT here: Windows itself takes
           # them from the program's folder before main (next step), and a planted
           # cfgmgr32.dll stops the programs from starting at all.
+          function Die($m) { Write-Host "::error::$m"; exit 1 }
           $core  = 'winhttp.dll','oleacc.dll','wlanapi.dll','iphlpapi.dll','winspool.drv','wtsapi32.dll','dwmapi.dll'
           $extra = 'comctl32.dll','uxtheme.dll','version.dll'
           $names = $core + $extra
@@ -271,7 +272,7 @@ jobs:
           $speak = @($names | Where-Object { Test-Path "$d\$_.loaded" })
           "the control loaded the planted copy of: $($speak -join ', ')"
           $silent = @($core | Where-Object { $speak -notcontains $_ })
-          if ($silent) { throw "the planted copy of $($silent -join ', ') was not loaded even by a program that looks in its own folder, so this test cannot speak for it" }
+          if ($silent) { Die "the planted copy of $($silent -join ', ') was not loaded even by a program that looks in its own folder, so this test cannot speak for it" }
           Get-ChildItem $d -Filter *.loaded | Remove-Item
           # 2. THE INSTALLER, through everything that loads a DLL: the
           # report (iphlpapi, winspool), preflight (wlanapi), the window and the
@@ -311,11 +312,11 @@ jobs:
             if (Test-Path $l) { Select-String -Path $l -Pattern '\[FAIL\]|FAILED' | ForEach-Object { $_.Line } | Select-Object -First 12 }
           }
           $hit = @(Get-ChildItem $d -Filter *.loaded)
-          if ($hit) { throw "the installer loaded a DLL planted beside it: $($hit.Name -join ', ')   ($($codes -join '; '))" }
+          if ($hit) { Die "the installer loaded a DLL planted beside it: $($hit.Name -join ', ')   ($($codes -join '; '))" }
           $failed = @($codes | Where-Object { $_ -notmatch ' 0$' })
-          if ($failed) { throw "a program did not run to its end with the planted DLLs beside it: $($failed -join '; ')" }
-          if (-not $reached) { throw "the download did not get as far as the network (WinHTTP did not load)" }
-          if (-not (Select-String -Path "$d\r3\selftest.log" -Pattern 'screen reader    : "[^"]{10,}"' -Quiet)) { throw "the window test did not reach the screen reader (oleacc never ran)" }
+          if ($failed) { Die "a program did not run to its end with the planted DLLs beside it: $($failed -join '; ')" }
+          if (-not $reached) { Die "the download did not get as far as the network (WinHTTP did not load)" }
+          if (-not (Select-String -Path "$d\r3\selftest.log" -Pattern 'screen reader    : "[^"]{10,}"' -Quiet)) { Die "the window test did not reach the screen reader (oleacc never ran)" }
           "none of the $($names.Count) planted DLLs was loaded"
           "### A DLL planted beside the installer (SEC-003)`nnone of $($names.Count) planted DLLs ($($names -join ', ')) was loaded by the console tool or the window, while a program that looks in its own folder loaded $($speak.Count) of them." | Out-File $env:GITHUB_STEP_SUMMARY -Append
           exit 0

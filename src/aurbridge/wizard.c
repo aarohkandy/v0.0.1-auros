@@ -6505,7 +6505,11 @@ static int nav_test(const char *dir)
                 GetTextMetricsW(g_mdc, &tm);
                 const wchar_t *want = TYPE[i].display ? FACE_DISPLAY : FACE_TEXT;
                 /* GDI keeps 31 letters of a face name: "...Next ExtraBold" arrives as "...Next Extr" */
-                if (wcsnicmp(face, want, 31) != 0 || tm.tmWeight != TYPE[i].weight) {
+                /* the display cut is its own family at its own weight class: real Windows says 800
+                 * (the font's), Wine says 400 (the weight it was asked for) */
+                int wok = TYPE[i].display ? (tm.tmWeight == 400 || tm.tmWeight == 800)
+                                          : tm.tmWeight == TYPE[i].weight;
+                if (wcsnicmp(face, want, 31) != 0 || !wok) {
                     if (!bad++) snprintf(first, sizeof first, "type %d: '%ls' weight %ld, wanted '%ls' weight %d",
                                          i, face, (long)tm.tmWeight, want, TYPE[i].weight);
                 }
