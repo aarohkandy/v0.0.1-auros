@@ -377,3 +377,32 @@ explicit default-appearance proof, fastpath BitLocker coverage, strict restore
 deadlines/evidence and the reduced restore setup. Its release marker starts
 exact-artifact tests; the independent Fcitx experiment remains off-product
 and will use a branch-only retained-image dispatch after its own review.
+
+## Manual screenshot review invalidates launch verdicts
+
+Do not treat the green c1 base or fastpath E2E result as end-to-end app proof.
+The final base screenshot (`0054-program-open.png`) actually shows the VLC
+store listing and a “Sorry, something went wrong” toast, with only Software
+on the taskbar. The fastpath final screenshot also remains on the store
+listing. Neither proves a running VLC application. Network, catalogue and
+installation assertions remain separate evidence; the launch verdict is a
+false positive. Product error diagnosis and strict UI launch-proof repair
+are active in independent worktrees.
+
+The candidate cannot automatically become latest: its subject has `[release]`
+but no `[latest]`, and unsigned releases are independently refused by the
+promotion gate. Preserve the running BitLocker evidence instead of cancelling
+the workflow. A fresh signed candidate with corrected app-launch proof is
+still required for public latest.
+
+New desktop candidate `beddd205` is building in `40136360732`; it contains the
+reviewed generic-firstboot fix but not the newly discovered launch repair.
+The firstboot retry regression is additionally wired into the working branch's
+unit workflow for the next source batch.
+
+The Fcitx branch dispatch `40136687367` correctly refused execution before
+boot because retained-image diagnostics are main-only. Reviewed diagnostic
+changes were then moved to main as `d8f09685`, excluding the unrelated unit
+workflow change to avoid an unnecessary image build. The real experiment is
+`40136819107` against retained image source `40131473294`; production input
+configuration remains unchanged.
