@@ -156,7 +156,7 @@ jobs:
           sh tools/apt.sh \
               gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev wine wine64 osslsigncode openssl python3 gcc libc6-dev make \
               grub-common gdisk mtools dosfstools cpio sbsigntool libxml2-utils file \
-              binutils zstd e2fsprogs fonts-dejavu-core fonts-atkinson-hyperlegible ovmf pkg-config libdbus-1-dev
+              binutils zstd e2fsprogs fonts-dejavu-core fonts-atkinson-hyperlegible ovmf pkg-config libdbus-1-dev libwayland-dev libxkbcommon-dev xkb-data
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: auros-installer
@@ -412,6 +412,11 @@ jobs:
              src/aurshell/layouts/[a-z]*.c src/common/theme.c src/common/font.c \
              -I src/aurshell -I src/common -lm
           "$RUNNER_TEMP/floorstest" 2>&1 | tee transcripts/floorstest.txt
+      # CIW: the ten C unit tests tools/README.md lists that no workflow compiled.
+      # tools/ctests.sh builds and runs all of them and names the ones that fail.
+      - name: ctests (modal panels, hit-testing, the kiosk allow-list, launching, wifi, power, row stride, bluetooth, typing, touchpads)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/ctests.sh 2>&1 | tee transcripts/ctests.txt
       - name: shrinktargettest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/shrinktargettest.sh 2>&1 | tee transcripts/shrinktargettest.txt
