@@ -1131,6 +1131,7 @@ int main(int argc, char **argv)
     power_refresh();
 
     c.wl = aurwl_create(disp->width, c.screen_h, disp->refresh_mhz);    /* the screen the windows have: not the band */
+    if (c.wl) aurwl_set_text_scale(c.wl, c.text_scale);             /* X programs get her size (Xft.dpi) when X starts (W32) */
     if (c.wl) {
         c.spawn = session_spawn;
         fprintf(stderr, "aurshell: applications may connect on WAYLAND_DISPLAY=%s\n",
@@ -1393,7 +1394,8 @@ int main(int argc, char **argv)
          * screen, and that counts as her being here -- as of now, so the
          * ten minutes start when the film ends, not two hours ago.
          * (stream WL's edit; stream C owns this file) */
-        if (c.wl && aurwl_idle_inhibited(c.wl)) last_input_ms = now_ms();
+        /* ...and so does a program that asked over D-Bus (VLC, Zoom: notify.c, org.freedesktop.ScreenSaver) */
+        if ((c.wl && aurwl_idle_inhibited(c.wl)) || notify_idle_inhibited()) last_input_ms = now_ms();
         if (c.screen_off_min > 0 && !screen_dark) {
             int64_t idle = now_ms() - last_input_ms;
             if (idle > (int64_t)c.screen_off_min * 60000) {
@@ -1570,6 +1572,7 @@ int main(int argc, char **argv)
         if (c.text_changed) {
             c.text_changed = 0;
             textsys_apply(c.text_scale);      /* and her programs' */
+            if (c.wl) aurwl_set_text_scale(c.wl, c.text_scale);   /* ...the X ones too */
             free_fonts(&f);
             load_fonts(&f, &c);
             c.screen_h = disp->height - foot_height(&c);

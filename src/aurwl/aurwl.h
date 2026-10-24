@@ -73,6 +73,9 @@ aurwl_win  *aurwl_window_at(const aurwl *c, int i);
 uint32_t    aurwl_win_id(const aurwl_win *w);
 const char *aurwl_win_title(const aurwl_win *w);
 const char *aurwl_win_app_id(const aurwl_win *w);
+/* Her text size (1.0 = normal). X programs read it as Xft.dpi on the X root, set when X starts and
+ * whenever this changes (xwm.inc); without it "Bigger" never reached VLC or Zoom. */
+void        aurwl_set_text_scale(aurwl *c, float scale);
 int         aurwl_win_is_x11(const aurwl_win *w);     /* an X program: it cannot say what a field holds */
 
 /* 1 when this toplevel draws its own title bar and window buttons (it

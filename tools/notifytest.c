@@ -223,6 +223,63 @@ static int wait_owned(shell_ctx *c, int ms)
     return notify_open();
 }
 
+/* ── a program on the bus that asks for the screen to stay on ───────
+ * A real second connection, a real method call, answered by the shell while
+ * this harness pumps it (a film player and the desktop are two processes). */
+static DBusConnection *saver_client(void)
+{
+    DBusError e; dbus_error_init(&e);
+    DBusConnection *k = dbus_connection_open_private(bus_addr, &e);
+    if (!k) { dbus_error_free(&e); return NULL; }
+    dbus_connection_set_exit_on_disconnect(k, FALSE);
+    if (!dbus_bus_register(k, &e)) { dbus_error_free(&e); dbus_connection_close(k); dbus_connection_unref(k); return NULL; }
+    return k;
+}
+/* Returns 0 with *cookie set (Inhibit), 0 (UnInhibit), or -1 for an error reply or no answer. */
+static int saver_call(shell_ctx *c, DBusConnection *k, const char *path, const char *member,
+                      const char *app, const char *why, dbus_uint32_t cookie, int bad, dbus_uint32_t *out)
+{
+    DBusMessage *m = dbus_message_new_method_call("org.freedesktop.ScreenSaver", path,
+                                                  "org.freedesktop.ScreenSaver", member);
+    if (!m) return -1;
+    if (!strcmp(member, "Inhibit")) {
+        if (bad) dbus_message_append_args(m, DBUS_TYPE_STRING, &app, DBUS_TYPE_INVALID);
+        else     dbus_message_append_args(m, DBUS_TYPE_STRING, &app, DBUS_TYPE_STRING, &why, DBUS_TYPE_INVALID);
+    } else if (!strcmp(member, "UnInhibit")) {
+        dbus_message_append_args(m, DBUS_TYPE_UINT32, &cookie, DBUS_TYPE_INVALID);
+    }
+    DBusPendingCall *pc = NULL;
+    if (!dbus_connection_send_with_reply(k, m, &pc, 3000) || !pc) { dbus_message_unref(m); return -1; }
+    dbus_message_unref(m);
+    int rv = -1;
+    for (int i = 0; i < 300; i++) {
+        notify_pump(c);
+        dbus_connection_read_write(k, 0);
+        while (dbus_connection_dispatch(k) == DBUS_DISPATCH_DATA_REMAINS) { }
+        if (dbus_pending_call_get_completed(pc)) {
+            DBusMessage *r = dbus_pending_call_steal_reply(pc);
+            if (r && dbus_message_get_type(r) == DBUS_MESSAGE_TYPE_METHOD_RETURN) {
+                rv = 0;
+                if (out) dbus_message_get_args(r, NULL, DBUS_TYPE_UINT32, out, DBUS_TYPE_INVALID);
+            }
+            if (r) dbus_message_unref(r);
+            break;
+        }
+        wait_ms(10);
+    }
+    dbus_pending_call_unref(pc);
+    return rv;
+}
+static int inhibited_within(shell_ctx *c, int want, int ms)
+{
+    for (int i = 0; i < ms / 10; i++) {
+        notify_pump(c);
+        if (!!notify_idle_inhibited() == want) return 1;
+        wait_ms(10);
+    }
+    return !!notify_idle_inhibited() == want;
+}
+
 static void fresh(shell_ctx *c)
 {
     memset(c, 0, sizeof *c);
@@ -777,6 +834,35 @@ int main(void)
         ok("it says it can show a body", strstr(out, "body") != NULL);
         ok("...and does NOT claim buttons it will not draw",
            strstr(out, "actions") == NULL);
+    }
+
+    printf("\n  a film or a call keeps the screen on (org.freedesktop.ScreenSaver)\n");
+    {
+        const char *P1 = "/org/freedesktop/ScreenSaver", *P2 = "/ScreenSaver";
+        DBusConnection *vlc = saver_client(), *other = saver_client();
+        ok("two programs can join the bus", vlc && other);
+        dbus_uint32_t ck = 0, ck2 = 0;
+        ok("nothing holds the screen on at first", !notify_idle_inhibited());
+        int r = saver_call(&c, vlc, P1, "Inhibit", "VLC media player", "Playing a film", 0, 0, &ck);
+        ok("a program can ask for the screen to stay on", r == 0 && ck != 0);
+        ok("...and the shell then counts it as her being there", inhibited_within(&c, 1, 500));
+        saver_call(&c, other, P1, "UnInhibit", NULL, NULL, ck, 0, NULL);
+        ok("another program cannot end it", inhibited_within(&c, 1, 300));
+        r = saver_call(&c, vlc, P1, "UnInhibit", NULL, NULL, ck, 0, NULL);
+        ok("the program that asked ends it, and the screen may go dark again", r == 0 && inhibited_within(&c, 0, 500));
+        r = saver_call(&c, vlc, P2, "Inhibit", "Zoom", "In a meeting", 0, 0, &ck2);
+        ok("the older KDE path (/ScreenSaver) is served too", r == 0 && ck2 != 0 && ck2 != ck && inhibited_within(&c, 1, 500));
+        r = saver_call(&c, other, P1, "Inhibit", "x", NULL, 0, 1, NULL);
+        ok("a call with the wrong arguments is refused, not believed", r != 0);
+        if (vlc) { dbus_connection_close(vlc); dbus_connection_unref(vlc); }
+        ok("a program that quits without ending it lets go (a crash must not keep the screen on)",
+           inhibited_within(&c, 0, 3000));
+        int granted = 0;
+        for (int i = 0; i < 24; i++)
+            if (saver_call(&c, other, P1, "Inhibit", "greedy", "x", 0, 0, &ck) == 0) granted++;
+        ok("one program cannot take an unlimited number", granted == 16);
+        if (other) { dbus_connection_close(other); dbus_connection_unref(other); }
+        ok("...and they all go with it", inhibited_within(&c, 0, 3000));
     }
 
     notify_fini();

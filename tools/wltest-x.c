@@ -1199,6 +1199,41 @@ static void sc_x_goes_away(void)
     finish();
 }
 
+/* W32: "Bigger text" reaches X programs as Xft.dpi in RESOURCE_MANAGER (atom 23) on the root window. */
+static const char *xft_dpi_now(int from)
+{
+    static char t[64];
+    for (int i = X.n_reqs - 1; i >= from; i--)
+        if (X.reqs[i].op == 18 && xr32(X.reqs[i].body) == FX_ROOT && xr32(X.reqs[i].body + 4) == 23) {
+            size_t n = X.reqs[i].dlen < sizeof t - 1 ? X.reqs[i].dlen : sizeof t - 1;
+            memcpy(t, X.reqs[i].body + 20, n); t[n] = 0;
+            return t;
+        }
+    return NULL;
+}
+static void sc_text_scale(void)
+{
+    start();
+    const char *t = xft_dpi_now(0);
+    check(t && !strcmp(t, "Xft.dpi:\t96\n"), "X starts without Xft.dpi 96 (\"%s\")", t ? t : "nothing");
+    int base = X.n_reqs;
+    aurwl_set_text_scale(C, 2.0f);
+    SETTLE();
+    t = xft_dpi_now(base);
+    check(t && !strcmp(t, "Xft.dpi:\t192\n"), "Bigger text 200%% did not reach X programs (\"%s\")", t ? t : "nothing");
+    base = X.n_reqs;
+    aurwl_set_text_scale(C, 1.25f);
+    SETTLE();
+    t = xft_dpi_now(base);
+    check(t && !strcmp(t, "Xft.dpi:\t120\n"), "125%% text is not 120 dpi (\"%s\")", t ? t : "nothing");
+    base = X.n_reqs;
+    aurwl_set_text_scale(C, 1000.f);                                  /* nonsense is normal size */
+    SETTLE();
+    t = xft_dpi_now(base);
+    check(t && !strcmp(t, "Xft.dpi:\t96\n"), "an absurd size was passed to X programs (\"%s\")", t ? t : "nothing");
+    finish();
+}
+
 #include "wltest-x-clip.inc"
 
 static aurwl_win *win_of_x(uint32_t id)
@@ -1301,6 +1336,7 @@ static const struct { const char *name; void (*fn)(void); } SC[] = {
     { "clip-password-hint", sc_clip_password_hint },
     { "clip-hijack",      sc_clip_hijack },
     { "clip-incr-cap",    sc_clip_incr_cap },
+    { "text-scale",       sc_text_scale },
     { "x-goes-away",      sc_x_goes_away },
 };
 #define NSC ((int)(sizeof SC / sizeof SC[0]))

@@ -196,6 +196,10 @@ int  notify_click(shell_ctx *c, int x, int y);
  * from the program she is typing in. */
 int  notify_key(shell_ctx *c, int keycode);
 
+/* 1 while a program has asked, over org.freedesktop.ScreenSaver, that the screen not go dark
+ * (VLC playing, a Zoom call). main.c treats it as input. */
+int  notify_idle_inhibited(void);
+
 /* Put one up from inside the shell itself, in her words. The battery
  * warning and "this program would not start" are notifications, not
  * on-screen messages: they are things she may want to read twice. */

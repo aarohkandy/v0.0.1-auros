@@ -498,6 +498,121 @@ bad: {
     }
 }
 
+/* ── org.freedesktop.ScreenSaver: a film must not go dark ───────────
+ *
+ * VLC and Zoom (Flathub: both ask for --talk-name=org.freedesktop.ScreenSaver, VLC also
+ * org.freedesktop.PowerManagement) and Chromium/Electron programs say "do not blank the
+ * screen" this way, over the session bus. They are X11 or sandboxed programs that cannot
+ * use zwp_idle_inhibit_v1, so before this the screen went dark in the middle of a
+ * film or a call after screen_off_minutes. The shell already serves the bus, so the
+ * shell is the screensaver service. A cookie is one Inhibit; it ends with UnInhibit by its
+ * owner, or when its owner leaves the bus (a program that crashes must not keep the screen
+ * on for ever). main.c asks notify_idle_inhibited() beside aurwl_idle_inhibited().
+ *
+ * NOT served: org.freedesktop.portal.Inhibit (xdg-desktop-portal's backend does not
+ * reach the shell), org.freedesktop.PowerManagement, org.gnome.SessionManager. */
+#define SAVER_NAME  "org.freedesktop.ScreenSaver"
+#define SAVER_MAX   64          /* ponytail: a flat table; a program asking for more than this is refused */
+#define SAVER_EACH  16
+static struct { uint32_t cookie; char who[48]; } SV[SAVER_MAX];
+static int      sv_n;
+static uint32_t sv_next = 1;
+static int      sv_poke;        /* SimulateUserActivity: counts as one more idle reset */
+
+int notify_idle_inhibited(void)
+{
+    int on = sv_n > 0 || sv_poke;
+    sv_poke = 0;
+    return on;
+}
+
+static void sv_drop_who(const char *who)
+{
+    for (int i = 0; i < sv_n; )
+        if (!strcmp(SV[i].who, who)) SV[i] = SV[--sv_n];
+        else i++;
+}
+
+static void reply_error(DBusConnection *c, DBusMessage *m, const char *name, const char *text)
+{
+    DBusMessage *e = dbus_message_new_error(m, name, text);
+    if (e) { dbus_connection_send(c, e, NULL); dbus_message_unref(e); }
+}
+
+static DBusHandlerResult on_saver(DBusConnection *c, DBusMessage *m, void *ud)
+{
+    (void)ud;
+    if (dbus_message_get_type(m) != DBUS_MESSAGE_TYPE_METHOD_CALL) return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+    const char *who = dbus_message_get_sender(m);
+    if (!who || !*who) return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+    if (dbus_message_is_method_call(m, SAVER_NAME, "Inhibit")) {
+        const char *app = NULL, *why = NULL;
+        if (!dbus_message_get_args(m, NULL, DBUS_TYPE_STRING, &app, DBUS_TYPE_STRING, &why, DBUS_TYPE_INVALID)) {
+            reply_error(c, m, DBUS_ERROR_INVALID_ARGS, "Inhibit takes (ss)");
+            return DBUS_HANDLER_RESULT_HANDLED;
+        }
+        int mine = 0;
+        for (int i = 0; i < sv_n; i++) mine += !strcmp(SV[i].who, who);
+        if (sv_n >= SAVER_MAX || mine >= SAVER_EACH) {
+            reply_error(c, m, DBUS_ERROR_LIMITS_EXCEEDED, "too many inhibitors");
+            return DBUS_HANDLER_RESULT_HANDLED;
+        }
+        uint32_t k = sv_next++;
+        if (!sv_next) sv_next = 1;
+        SV[sv_n].cookie = k;
+        snprintf(SV[sv_n].who, sizeof SV[sv_n].who, "%s", who);
+        sv_n++;
+        DBusMessage *r = dbus_message_new_method_return(m);
+        if (r) {
+            dbus_message_append_args(r, DBUS_TYPE_UINT32, &k, DBUS_TYPE_INVALID);
+            dbus_connection_send(c, r, NULL); dbus_message_unref(r);
+        }
+        return DBUS_HANDLER_RESULT_HANDLED;
+    }
+    if (dbus_message_is_method_call(m, SAVER_NAME, "UnInhibit")) {
+        dbus_uint32_t k = 0;
+        if (!dbus_message_get_args(m, NULL, DBUS_TYPE_UINT32, &k, DBUS_TYPE_INVALID)) {
+            reply_error(c, m, DBUS_ERROR_INVALID_ARGS, "UnInhibit takes (u)");
+            return DBUS_HANDLER_RESULT_HANDLED;
+        }
+        for (int i = 0; i < sv_n; i++)                 /* only the program that asked can end it */
+            if (SV[i].cookie == k && !strcmp(SV[i].who, who)) { SV[i] = SV[--sv_n]; break; }
+        DBusMessage *r = dbus_message_new_method_return(m);
+        if (r) { dbus_connection_send(c, r, NULL); dbus_message_unref(r); }
+        return DBUS_HANDLER_RESULT_HANDLED;
+    }
+    if (dbus_message_is_method_call(m, SAVER_NAME, "SimulateUserActivity")) {
+        sv_poke = 1;
+        DBusMessage *r = dbus_message_new_method_return(m);
+        if (r) { dbus_connection_send(c, r, NULL); dbus_message_unref(r); }
+        return DBUS_HANDLER_RESULT_HANDLED;
+    }
+    if (dbus_message_is_method_call(m, SAVER_NAME, "GetActive")) {
+        dbus_bool_t no = FALSE;                        /* the screen is never "saved" by this service */
+        DBusMessage *r = dbus_message_new_method_return(m);
+        if (r) {
+            dbus_message_append_args(r, DBUS_TYPE_BOOLEAN, &no, DBUS_TYPE_INVALID);
+            dbus_connection_send(c, r, NULL); dbus_message_unref(r);
+        }
+        return DBUS_HANDLER_RESULT_HANDLED;
+    }
+    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+}
+static const DBusObjectPathVTable SAVER_VTABLE = { NULL, on_saver, NULL, NULL, NULL, NULL };
+
+/* A program left the bus: whatever it held is released. */
+static DBusHandlerResult on_gone(DBusConnection *c, DBusMessage *m, void *ud)
+{
+    (void)c; (void)ud;
+    const char *name = NULL, *old = NULL, *now = NULL;
+    if (dbus_message_is_signal(m, "org.freedesktop.DBus", "NameOwnerChanged") &&
+        dbus_message_get_args(m, NULL, DBUS_TYPE_STRING, &name, DBUS_TYPE_STRING, &old,
+                              DBUS_TYPE_STRING, &now, DBUS_TYPE_INVALID) &&
+        old && *old && (!now || !*now))
+        sv_drop_who(old);
+    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+}
+
 static DBusHandlerResult on_msg(DBusConnection *c, DBusMessage *m, void *ud)
 {
     (void)ud;
@@ -718,6 +833,21 @@ static int handshake_step(void)
         notify_close();
         return 1;
     }
+    /* The screensaver service, beside it. Asked for without waiting for the answer: if another
+     * program already is the screensaver, ours is simply never called. */
+    if (dbus_connection_register_object_path(N.conn, "/org/freedesktop/ScreenSaver", &SAVER_VTABLE, NULL) &&
+        dbus_connection_register_object_path(N.conn, "/ScreenSaver", &SAVER_VTABLE, NULL)) {
+        DBusMessage *q = dbus_message_new_method_call("org.freedesktop.DBus", "/org/freedesktop/DBus",
+                                                      "org.freedesktop.DBus", "RequestName");
+        const char *nm = SAVER_NAME;
+        dbus_uint32_t fl = DBUS_NAME_FLAG_DO_NOT_QUEUE;
+        if (q && dbus_message_append_args(q, DBUS_TYPE_STRING, &nm, DBUS_TYPE_UINT32, &fl, DBUS_TYPE_INVALID))
+            dbus_connection_send(N.conn, q, NULL);
+        if (q) dbus_message_unref(q);
+        dbus_connection_add_filter(N.conn, on_gone, NULL, NULL);
+        dbus_bus_add_match(N.conn, "type='signal',sender='org.freedesktop.DBus',"
+                                   "interface='org.freedesktop.DBus',member='NameOwnerChanged'", NULL);
+    }
     N.state = NS_OWNED;
     N.owned = 1;
     snprintf(N.addr, sizeof N.addr, "%s", bus_addr_now());
@@ -799,7 +929,12 @@ void notify_close(void)
     /* No release_name: that is another blocking round trip, and
      * closing the connection makes the bus drop every name we hold
      * anyway. */
-    if (N.owned) dbus_connection_unregister_object_path(N.conn, BUS_PATH);
+    if (N.owned) {
+        dbus_connection_unregister_object_path(N.conn, BUS_PATH);
+        dbus_connection_unregister_object_path(N.conn, "/org/freedesktop/ScreenSaver");
+        dbus_connection_unregister_object_path(N.conn, "/ScreenSaver");
+    }
+    sv_n = 0;                              /* their owners are on a bus we have left */
     dbus_connection_close(N.conn);
     dbus_connection_unref(N.conn);
     N.conn = NULL;

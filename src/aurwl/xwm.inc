@@ -874,10 +874,24 @@ static void xwm_reply(xwm *m, const uint8_t *r, size_t total)
     }
 }
 
+/* "Bigger text" for X programs (W32): Xft.dpi in RESOURCE_MANAGER on the root, which Qt, Chromium and GTK
+ * on X read when they start (one already open keeps its size until reopened). Written when the window
+ * manager comes up and whenever her size changes. */
+static void xw_text_scale(aurwl *c)
+{
+    xwm *m = c->x.wm;
+    if (!m || m->dead || m->state != 2) return;
+    char t[48];
+    int n = snprintf(t, sizeof t, "Xft.dpi:\t%d\n", (int)(96.f * (c->text_scale >= 1.f ? c->text_scale : 1.f) + 0.5f));
+    x_change_prop(m, m->root, 23 /* RESOURCE_MANAGER */, XP_STRING, 8, t, (size_t)n);
+    xflush(m);
+}
+
 /* The atoms are known: become the window manager. */
 static void xwm_setup_done(xwm *m)
 {
     m->state = 2;
+    xw_text_scale(m->c);
     x_select_events(m, m->root, XM_SUBSTRUCTURE_REDIRECT | XM_SUBSTRUCTURE_NOTIFY | XM_PROPERTY);
 
     /* The window that says a window manager is running (EWMH). */

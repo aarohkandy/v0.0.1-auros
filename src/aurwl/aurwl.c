@@ -314,6 +314,7 @@ struct aurwl {
         int                 shape;       /* wp_cursor_shape_device_v1 shape  */
     } cursor;
     /* The clipboard, when an X program owns it (xclip.inc): offered to Wayland programs as the mime types below. */
+    float               text_scale;   /* hers; 0 until the shell says (xwm.inc writes it as Xft.dpi) */
     int                 xsel_active;
     char                xsel_mimes[16][64];
     int                 xsel_n;
@@ -390,6 +391,7 @@ static void        xw_surface_created(aurwl_win *w);
 static int         xw_listed(const aurwl_win *w);          /* an X window the shell may show */
 static int         xw_csd(const aurwl_win *w);             /* it draws its own title bar (_MOTIF_WM_HINTS) */
 static void        xw_raise(aurwl *c, aurwl_win *w);        /* top of the X stack: the pointer is entering it */
+static void        xw_text_scale(aurwl *c);               /* her text size reached X programs (Xft.dpi) */
 static void        xw_selection_changed(aurwl *c);          /* the Wayland clipboard changed hands */
 static void        xw_paste(aurwl *c, const char *mime, int fd);   /* a Wayland program pastes what an X program copied */
 static void        selection_broadcast(aurwl *c);
@@ -3545,6 +3547,12 @@ uint32_t    aurwl_win_id(const aurwl_win *w)     { return w ? w->id : 0; }
 const char *aurwl_win_title(const aurwl_win *w)  { return w ? w->title : ""; }
 const char *aurwl_win_app_id(const aurwl_win *w) { return w ? w->app_id : ""; }
 int         aurwl_win_is_x11(const aurwl_win *w)  { return w && w->role == ROLE_X11; }
+void        aurwl_set_text_scale(aurwl *c, float scale)
+{
+    if (!c) return;
+    c->text_scale = scale >= 1.f && scale <= 4.f ? scale : 1.f;      /* NaN and nonsense are "normal" */
+    xw_text_scale(c);
+}
 /* A toplevel draws its own title bar unless it was given ours: no
  * xdg-decoration object means "clients continue to self-decorate" (the
  * protocol's words), and so does a request for client-side. Settled
