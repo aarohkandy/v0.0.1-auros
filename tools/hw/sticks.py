@@ -271,7 +271,11 @@ def check_surfaces(S, errs):
             if STICK.search(t):
                 n_seen += 1
                 low = t.lower()
-                if not any(n in low for n in names) and anchor not in low:
+                # The installer's named button opens the checked list. Its
+                # label is the link on these native screens, where an HTML
+                # fragment cannot be embedded in the sentence itself.
+                linked = anchor in low or "show a helper how" in low
+                if not any(n in low for n in names) and not linked:
                     errs.append("%s: mentions a USB Wi-Fi stick with no chip from hw/sticks.json and no link to #%s: %r" % (where, anchor, t[:110]))
             if BANNED.search(t) and not NEGATION.search(t):
                 errs.append("%s: names a Realtek AU chip without saying it is not recommended: %r" % (where, t[:110]))

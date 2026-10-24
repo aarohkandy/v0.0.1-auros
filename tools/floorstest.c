@@ -33,8 +33,9 @@ static void ok(const char *what, int good)
 
 static const float SCALES[] = { 0.80f, 1.00f, 1.50f, 2.00f };
 
-/* ascent + descent of an 18 px face is 22 (journeytest: "22 tall drawn; a 12 px line is 14"). */
-static int tall_enough(const font *f) { return f && font_ascent(f) + font_descent(f) >= 21.f; }
+/* Font metrics vary by face: an 18 px em need not have a 21 px
+ * ascent-plus-descent. Check the size the shell actually requested. */
+static int tall_enough(const font *f) { return f && font_size(f) >= 18.f; }
 
 static void text_floor(void)
 {

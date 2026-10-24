@@ -4,8 +4,8 @@
   "words": {
     "wifi.works":       "Your Wi-Fi will work.",
     "wifi.partial":     "Your Wi-Fi will work, but it may be slower or drop out sometimes.",
-    "wifi.wont":        "Your Wi-Fi won't work with AurOS yet. A network cable will. So will a USB Wi-Fi stick with a MediaTek MT7612U, MT7921 or MT7601U chip: the list of sticks is on our website.",
-    "wifi.wont_alone":  "Your Wi-Fi won't work with AurOS yet, and this computer has no place for a network cable, so AurOS would have no internet. A USB Wi-Fi stick with a MediaTek MT7612U, MT7921 or MT7601U chip fixes this: the list is on our website. Plug one in and start again. Nothing has been changed.",
+    "wifi.wont":        "Your Wi-Fi won't work with AurOS yet. A network cable will. A USB Wi-Fi stick can also fix this. Press Show a helper how to see which kind.",
+    "wifi.wont_alone":  "Your Wi-Fi won't work with AurOS yet, and this computer has no place for a network cable, so AurOS would have no internet. A USB Wi-Fi stick can fix this. Press Show a helper how to see which kind. Plug one in and start again. Nothing has been changed.",
     "wifi.unknown":     "We can't tell if your Wi-Fi will work. A network cable will, if you have one.",
     "ethernet.works":   "Your network cable will work.",
     "ethernet.wont":    "Your network cable socket won't work with AurOS yet.",

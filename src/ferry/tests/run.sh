@@ -543,6 +543,20 @@ mkdir -p "$TMP/usrbin"; ln -s "$FERRY/ferry" "$TMP/usrbin/ferry"
 assert "ferry started through a link finds its own tools" \
     sh -c "env -u FERRY_HIVE_BACKEND PATH=/usr/bin:/bin '$TMP/usrbin/ferry' backend | grep -q ."
 
+# blkid caches labels. The handover-volume test can detach a loop device and
+# leave a stale AUROSHANDOV result behind; that must not divert `ferry back`
+# away from the live Windows volume.
+mkdir -p "$TMP/stale-bin"
+cat > "$TMP/stale-bin/blkid" <<'EOF'
+#!/bin/sh
+[ "$*" = "-L AUROSHANDOV" ] || exit 2
+printf '%s\n' /dev/loop-stale-auros
+EOF
+chmod +x "$TMP/stale-bin/blkid"
+refute "a detached handover volume left in blkid's cache is ignored" \
+    env PATH="$TMP/stale-bin:/usr/bin:/bin" FERRY_HANDOVER_DEV= \
+        sh -c '. "$1"; find_handover' "$FERRY/ferry" "$FERRY/ferry-common.sh"
+
 echo "the way back (her AurOS files into Windows before Put Windows back):"
 BK="$TMP/win-back"; cp -r "$WIN" "$BK"; hers "$BK"
 AH="$TMP/aurhome"; mkdir -p "$AH/Pictures/2024" "$AH/Documents" "$AH/Desktop" "$AH/Downloads" "$AH/Music" "$AH/Videos"

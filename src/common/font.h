@@ -52,6 +52,8 @@ void  font_set_fallback_path(font *f, const char *path);
  * stores descent as a negative number. */
 float font_ascent(const font *f);
 float font_descent(const font *f);
+/* The pixel-per-em size requested when this face was loaded. */
+float font_size(const font *f);
 /* ascent + descent + lineGap: the recommended baseline-to-baseline step. */
 float font_line_height(const font *f);
 

@@ -2238,6 +2238,7 @@ void font_free(font *f)
 
 float font_ascent(const font *f)      { return f ? f->ascent : 0.0f; }
 float font_descent(const font *f)     { return f ? f->descent : 0.0f; }
+float font_size(const font *f)        { return f ? f->px : 0.0f; }
 float font_line_height(const font *f) { return f ? f->ascent + f->descent + f->line_gap : 0.0f; }
 
 /* ── a second face for what the first lacks ─────────────────────────
