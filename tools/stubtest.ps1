@@ -116,22 +116,23 @@ $target = Join-Path $root 'junction-target'
 $dd = New-Downloads 'junction-real' "$Stubs\aurbridge-setup-test.exe"
 Plant-Junction $target
 $code = Run "$dd\AurOS-Setup.exe" "--quiet-failure --report `"$dd\r`"" $dd 30
+$ran = Test-Path "$dd\r\AurOS-report.txt"
 $left = @(Get-ChildItem $target -Force | ForEach-Object Name)
-if ($code -eq 0 -or $left) { Die "a junction at the folder's name was not refused: exit $code, the target holds: $($left -join ', ')" }
-Ok "a junction planted at the folder's name is refused (exit $code) and nothing is written through it"
+if ($code -eq 0 -or $ran -or $left) { Die "a junction at the folder's name was not refused: exit $code, the installer ran: $ran, the target holds: $($left -join ', ')" }
+Ok "a junction planted at the folder's name is refused (exit $code): the installer did not run and nothing is written through it"
 $dd = New-Downloads 'junction-mutant' "$Stubs\aurbridge-setup-accept-mutant.exe"
 Plant-Junction $target
 $code = Run "$dd\AurOS-Setup.exe" "--quiet-failure --report `"$dd\r`"" $dd 30
-$left = @(Get-ChildItem $target -Force | ForEach-Object Name)
-if (-not ($left -contains 'setup.exe')) { Die "the junction check passed a stub that accepts a folder that is already there: it proves nothing (exit $code, target: $($left -join ', '))" }
-Ok "the same check catches a stub that accepts what is already there: it wrote setup.exe through the junction"
+$ran = Test-Path "$dd\r\AurOS-report.txt"
+if (-not ($ran -and $code -eq 0)) { Die "the junction check passed a stub that accepts a folder that is already there: it proves nothing (exit $code, the installer ran: $ran)" }
+Ok "the same check catches a stub that accepts what is already there: it ran the installer from inside the junction's target"
 cmd /c rmdir "$fixed" 2>$null; Remove-Item $target -Recurse -Force -ErrorAction SilentlyContinue
 
 # a folder that is already there, and is not a link, is refused too
 New-Item -ItemType Directory -Force -Path $fixed | Out-Null
 $dd = New-Downloads 'exists' "$Stubs\aurbridge-setup-test.exe"
 $code = Run "$dd\AurOS-Setup.exe" "--quiet-failure --report `"$dd\r`"" $dd 30
-if ($code -eq 0 -or (Test-Path "$fixed\setup.exe")) { Die "a folder that was already there was accepted: exit $code" }
+if ($code -eq 0 -or (Test-Path "$dd\r\AurOS-report.txt")) { Die "a folder that was already there was accepted: exit $code" }
 Ok "a folder that is already there is refused, not shared (exit $code)"
 Remove-Item $fixed -Recurse -Force -ErrorAction SilentlyContinue
 
