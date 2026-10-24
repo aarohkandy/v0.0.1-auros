@@ -20,7 +20,7 @@
  * Then, ELEVATED, so that Administrators can own what it makes:
  *
  *   1. SetDefaultDllDirectories(System32): from here a LoadLibrary is System32's.
- *   2. a fresh folder with a random name under <system drive>\ProgramData,
+ *   2. a fresh folder with a random name under Windows' configured ProgramData,
  *      created in one call with its security descriptor (CREATE_NEW: if the
  *      name exists, it is refused, never accepted): owner Administrators, SYSTEM
  *      and Administrators full control and nobody else, not inheriting anything.
@@ -44,11 +44,17 @@
 #include <stdint.h>
 
 #ifndef CHILD_SHA256
-#error "build/aurbridge bakes the installer's SHA-256 in: -DCHILD_SHA256=\"<64 hex>\""
+#error "the build bakes AurOS Setup's SHA-256 in: -DCHILD_SHA256=\"<64 hex>\""
 #endif
 #define RES_CHILD 300                       /* RCDATA: the installer (stub.rc) */
 #define PREFIX    L"AurOS-Setup-"
 #define CHILD_EXE L"setup.exe"
+
+static wchar_t g_base[MAX_PATH + 16];   /* <system drive>\ProgramData */
+static wchar_t g_dir[MAX_PATH + 64];    /* ...\AurOS-Setup-<16 hex> */
+static wchar_t g_exe[MAX_PATH + 96];    /* ...\setup.exe */
+static wchar_t g_cmd[32768];            /* CreateProcessW's documented command-line limit */
+static int g_have_private;              /* only remove a directory this run created */
 
 /* Test builds only (never shipped; build/aurbridge refuses them in a release):
  *   STUB_FIXED_NAME   the folder's name is this, so a test can plant something at it
@@ -156,6 +162,11 @@ static wchar_t *wcat(wchar_t *d, size_t cap, const wchar_t *s)
 static int g_quiet;                 /* "--quiet-failure": no box, for a test with nobody to press OK */
 static void fail(const wchar_t *why)
 {
+    if (g_have_private) {
+        if (g_exe[0]) DeleteFileW(g_exe);
+        RemoveDirectoryW(g_dir);
+        g_have_private = 0;
+    }
     if (g_quiet) ExitProcess(3);
     /* user32 is not linked (kernel32 only); by now loads are System32's */
     HMODULE u = LoadLibraryExW(L"user32.dll", NULL, 0x800 /* LOAD_LIBRARY_SEARCH_SYSTEM32 */);
@@ -215,13 +226,15 @@ static int sd_is_ours(const unsigned char *sd, DWORD len)
     uint16_t asz, cnt;
     memcpy(&asz, a + 2, 2); memcpy(&cnt, a + 4, 2);
     if (a[0] != 2 && a[0] != 4) return 0;
-    if (cnt != 2 || od + asz > len) return 0;
+    if (cnt != 2 || asz != 8 + (8 + 12) + (8 + 16) || od + asz > len) return 0;
     int saw_sys = 0, saw_adm = 0;
     const unsigned char *e = a + 8;
     for (int i = 0; i < 2; i++) {
         uint16_t sz; uint32_t mask;
+        if (e + 8 > a + asz) return 0;
         memcpy(&sz, e + 2, 2); memcpy(&mask, e + 4, 4);
-        if (e[0] != 0 || (e[1] & 0x0F) != 3 || (mask & FILE_ALL) != FILE_ALL) return 0;   /* allowed, OI|CI, full */
+        if ((sz != 8 + 12 && sz != 8 + 16) || e + sz > a + asz) return 0;
+        if (e[0] != 0 || e[1] != 3 || mask != FILE_ALL) return 0;   /* allowed, OI|CI, exactly full */
         if (sz == 8 + 12 && sid_is(e + 8, SID_SYSTEM, 12)) saw_sys++;
         else if (sz == 8 + 16 && sid_is(e + 8, SID_ADMINS, 16)) saw_adm++;
         else return 0;
@@ -247,11 +260,6 @@ static int acl_of_handle_is_ours(HANDLE h)
 }
 
 /* ── paths ────────────────────────────────────────────────────────── */
-static wchar_t g_base[MAX_PATH + 16];   /* <system drive>\ProgramData */
-static wchar_t g_dir[MAX_PATH + 64];    /* ...\AurOS-Setup-<16 hex> */
-static wchar_t g_exe[MAX_PATH + 96];    /* ...\setup.exe */
-static wchar_t g_cmd[8192];
-
 static int is_dir_not_link(const wchar_t *p)
 {
     DWORD a = GetFileAttributesW(p);
@@ -284,20 +292,44 @@ static int dir_is_trustworthy(const wchar_t *path, int check_acl)
     return ok;
 }
 
+/* Ask Windows for the configured common-program-data folder. It may be moved
+ * away from C:\ProgramData. shell32 and ole32 are loaded only after harden(). */
+static int program_data_path(wchar_t *out, size_t cap)
+{
+    static const GUID folder = { 0x62AB5D82, 0xFDC1, 0x4DC3,
+        { 0xA9, 0xDD, 0x07, 0x0D, 0x1D, 0x49, 0x5D, 0x97 } };
+    typedef LONG (WINAPI *PFN_GET)(const GUID *, DWORD, HANDLE, wchar_t **);
+    typedef void (WINAPI *PFN_FREE)(void *);
+    HMODULE shell = LoadLibraryExW(L"shell32.dll", NULL, 0x800 /* LOAD_LIBRARY_SEARCH_SYSTEM32 */);
+    HMODULE ole = LoadLibraryExW(L"ole32.dll", NULL, 0x800 /* LOAD_LIBRARY_SEARCH_SYSTEM32 */);
+    PFN_GET get = shell ? (PFN_GET)(void *)GetProcAddress(shell, "SHGetKnownFolderPath") : NULL;
+    PFN_FREE free_mem = ole ? (PFN_FREE)(void *)GetProcAddress(ole, "CoTaskMemFree") : NULL;
+    wchar_t *p = NULL;
+    int ok = get && free_mem && get(&folder, 0, NULL, &p) >= 0 && p
+          && wlen(p) + 1 <= cap && wcat(out, cap, p);
+    if (p && free_mem) free_mem(p);
+    if (ole) FreeLibrary(ole);
+    if (shell) FreeLibrary(shell);
+    return ok;
+}
+
 static void hex16(wchar_t *o, uint64_t v)
 {
     static const wchar_t hx[] = L"0123456789abcdef";
     for (int i = 0; i < 16; i++) o[i] = hx[(v >> (60 - 4 * i)) & 15];
     o[16] = 0;
 }
-static uint64_t mix(int tries)
+static int random64(uint64_t *v)
 {
-    LARGE_INTEGER q; QueryPerformanceCounter(&q);
-    FILETIME ft; GetSystemTimeAsFileTime(&ft);
-    uint64_t v = (uint64_t)q.QuadPart * 0x9E3779B97F4A7C15ull ^ (((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime);
-    v ^= ((uint64_t)GetCurrentProcessId() << 32) ^ GetCurrentThreadId() ^ (uint64_t)(uintptr_t)&v ^ ((uint64_t)tries * 0xBF58476D1CE4E5B9ull);
-    v ^= v >> 31; v *= 0x94D049BB133111EBull; v ^= v >> 29;
-    return v;
+    /* Loaded only after the DLL search is restricted to System32. A name that a
+     * process beside the download can predict is not random for this purpose: it
+     * could plant that directory before CreateDirectoryW's atomic create. */
+    typedef LONG (WINAPI *PFN)(void *, unsigned char *, ULONG, ULONG);
+    HMODULE b = LoadLibraryExW(L"bcrypt.dll", NULL, 0x800 /* LOAD_LIBRARY_SEARCH_SYSTEM32 */);
+    PFN gen = b ? (PFN)(void *)GetProcAddress(b, "BCryptGenRandom") : NULL;
+    LONG st = gen ? gen(NULL, (unsigned char *)v, sizeof *v, 2 /* BCRYPT_USE_SYSTEM_PREFERRED_RNG */) : -1;
+    if (b) FreeLibrary(b);
+    return st >= 0;
 }
 
 /* ── the leftovers of a run that was cut short ───────────────────── */
@@ -341,19 +373,20 @@ static const wchar_t *args_of(const wchar_t *cl)
 }
 
 /* ── the stub ─────────────────────────────────────────────────────── */
-static void harden(void)
+static int harden(void)
 {
     typedef BOOL (WINAPI *PFN)(DWORD);
     HMODULE k = GetModuleHandleW(L"kernel32.dll");
     PFN f = k ? (PFN)(void *)GetProcAddress(k, "SetDefaultDllDirectories") : NULL;
-    if (f && f(0x800)) return;
-    SetDllDirectoryW(L"");
+    return f && f(0x800 /* LOAD_LIBRARY_SEARCH_SYSTEM32 */);
 }
 
 __attribute__((force_align_arg_pointer))
 void stub_start(void)
 {
-    harden();
+    /* There is no safe weaker mode. In particular SetDllDirectoryW("") still
+     * leaves other search locations in play for DLLs loaded later. */
+    if (!harden()) ExitProcess(1);
     sd_build();
     {   /* "--quiet-failure" is the one thing this program reads from its arguments: it only
          * decides whether a failure says so in a box; every argument goes on to the installer */
@@ -364,12 +397,10 @@ void stub_start(void)
         g_quiet = !q[i] && (!a[i] || a[i] == L' ');
     }
 
-    /* the trusted base: the system drive's ProgramData, named from the system's own
-     * answer (not from an environment variable a launcher could set), and not a link */
-    UINT k = GetWindowsDirectoryW(g_base, MAX_PATH);
-    if (k < 3 || k >= MAX_PATH || g_base[1] != L':') fail(L"Windows would not say where it is.");
-    g_base[2] = 0;
-    wcat(g_base, MAX_PATH + 16, L"\\ProgramData");
+    /* The trusted base comes from Windows' Known Folder API, not an environment
+     * variable a launcher can set and not an assumption that it lives on C:. */
+    g_base[0] = 0;
+    if (!program_data_path(g_base, MAX_PATH + 16)) fail(L"Windows would not say where its programs' data belongs.");
     if (!is_dir_not_link(g_base)) fail(L"The folder for programs' data is missing or is not a plain folder.");
 
     clean_stale();
@@ -383,10 +414,13 @@ void stub_start(void)
     for (int tries = 0; tries < 16 && !made; tries++) {
         wchar_t hx[17];
 #ifdef STUB_FIXED_NAME
-        (void)hx; (void)mix;
+        (void)hx; (void)random64;
         g_dir[0] = 0; wcat(g_dir, MAX_PATH + 64, g_base); wcat(g_dir, MAX_PATH + 64, L"\\" PREFIX STUB_FIXED_NAME);
 #else
-        hex16(hx, mix(tries));
+        uint64_t rnd;
+        (void)tries;
+        if (!random64(&rnd)) fail(L"Windows could not make a safe random folder name.");
+        hex16(hx, rnd);
         g_dir[0] = 0; wcat(g_dir, MAX_PATH + 64, g_base); wcat(g_dir, MAX_PATH + 64, L"\\" PREFIX); wcat(g_dir, MAX_PATH + 64, hx);
 #endif
 #ifdef STUB_MUTANT_INHERIT
@@ -406,6 +440,7 @@ void stub_start(void)
         }
     }
     if (!made) fail(L"A private folder could not be made.");
+    g_have_private = 1;
 #if !defined(STUB_MUTANT_ACCEPT) && !defined(STUB_MUTANT_INHERIT)
     if (!dir_is_trustworthy(g_dir, 1)) fail(L"The private folder is not the one that was asked for, or not private.");
 #endif
@@ -425,44 +460,51 @@ void stub_start(void)
     }
 #endif
     g_exe[0] = 0; wcat(g_exe, MAX_PATH + 96, g_dir); wcat(g_exe, MAX_PATH + 96, L"\\" CHILD_EXE);
-    HANDLE f = CreateFileW(g_exe, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE f = CreateFileW(g_exe, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_NEW,
+                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
     if (f == INVALID_HANDLE_VALUE) fail(L"The installer could not be put in the private folder.");
     for (DWORD done = 0; done < n; ) {
         DWORD w = 0, chunk = n - done > (1u << 20) ? (1u << 20) : n - done;
         if (!WriteFile(f, bytes + done, chunk, &w, NULL) || !w) { CloseHandle(f); fail(L"The installer could not be written."); }
         done += w;
     }
-    FlushFileBuffers(f);
-    CloseHandle(f);
+    if (!FlushFileBuffers(f)) { CloseHandle(f); fail(L"The installer could not be written safely."); }
 
-    /* read it back from the disk and check it is what was built */
+    /* Verify the same handle that was created: no close/reopen path race and no
+     * reparse object can stand in for the ordinary file we just wrote. */
     {
         static unsigned char buf[1 << 16];
+        static wchar_t real[MAX_PATH + 96];
         char got[65];
         sha_t s;
+        BY_HANDLE_FILE_INFORMATION fi;
+        LARGE_INTEGER zero;
+        zero.QuadPart = 0;
+        if (!GetFileInformationByHandle(f, &fi) || (fi.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+                || !final_path(f, real, MAX_PATH + 96) || wcmp_i(real, g_exe) != 0
+                || !SetFilePointerEx(f, zero, NULL, FILE_BEGIN)) {
+            CloseHandle(f); fail(L"The installer file is not the ordinary file that was asked for.");
+        }
         sha_start(&s);
-        HANDLE rf = CreateFileW(g_exe, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (rf == INVALID_HANDLE_VALUE) fail(L"The installer could not be read back.");
         for (;;) {
             DWORD got_n = 0;
-            if (!ReadFile(rf, buf, sizeof buf, &got_n, NULL)) { CloseHandle(rf); fail(L"The installer could not be read back."); }
+            if (!ReadFile(f, buf, sizeof buf, &got_n, NULL)) { CloseHandle(f); fail(L"The installer could not be read back."); }
             if (!got_n) break;
             sha_feed(&s, buf, got_n);
         }
-        CloseHandle(rf);
         sha_hex(&s, got);
         const char *want = CHILD_SHA256;
         int same = 1;
         for (int i = 0; i < 64; i++) if (got[i] != want[i]) same = 0;
-        if (!same) fail(L"The installer is not the one this file was built with.");
+        if (!same) { CloseHandle(f); fail(L"The installer is not the one this file was built with."); }
     }
+    CloseHandle(f);
 
     /* run it from there, given what we were given */
     g_cmd[0] = 0;
-    wcat(g_cmd, 8192, L"\"");
-    wcat(g_cmd, 8192, g_exe);
-    wcat(g_cmd, 8192, L"\" ");
-    wcat(g_cmd, 8192, args_of(GetCommandLineW()));
+    if (!wcat(g_cmd, 32768, L"\"") || !wcat(g_cmd, 32768, g_exe)
+            || !wcat(g_cmd, 32768, L"\" ") || !wcat(g_cmd, 32768, args_of(GetCommandLineW())))
+        fail(L"The command given to AurOS Setup is too long for Windows.");
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
     memset(&si, 0, sizeof si); si.cb = sizeof si;
@@ -478,5 +520,6 @@ void stub_start(void)
 #ifndef STUB_MUTANT_HERE
     RemoveDirectoryW(g_dir);
 #endif
+    g_have_private = 0;
     ExitProcess(code);
 }

@@ -20,4 +20,3 @@
  * 201 is left free; the staging payload owns RCDATA 1-5. */
 200 RCDATA "auros-notices.txt"
 202 RCDATA "auros-terms.txt"
-

@@ -10,15 +10,20 @@
 # Every check below that says "must" has a twin that says "the mutant does": a version
 # of the stub made wrong in the one way the check is about, which the check must catch.
 # A check whose twin passes proves nothing and fails the run.
-param([string]$Exe = 'exe', [string]$Stubs = 'stubtest', [string]$Canary = 'canary')
+param([string]$Exe = 'exe', [string]$Stubs = 'stubtest', [string]$Canary = 'canary', [switch]$IsolatedRunner)
 $ErrorActionPreference = 'Stop'
+if (-not $IsolatedRunner -or $env:GITHUB_ACTIONS -ne 'true') {
+    Write-Host '::error::stubtest stops setup.exe processes and cleans its ProgramData test folders; run it only on an isolated GitHub runner with -IsolatedRunner'
+    exit 1
+}
 $root = Join-Path $env:RUNNER_TEMP 'stubtest'
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $root | Out-Null
-$base = Join-Path $env:SystemDrive 'ProgramData'
-$fixed = Join-Path $base 'AurOS-Setup-0123456789abcdef'     # the name the test builds use
 function Die($m) { Write-Host "::error::$m"; exit 1 }
 function Ok($m) { "ok: $m" }
+$base = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+if (-not $base) { Die 'Windows did not report its common application-data folder' }
+$fixed = Join-Path $base 'AurOS-Setup-0123456789abcdef'     # the name the test builds use
 
 # every name a planted DLL could be taken under: what the installer loads by name, what
 # Windows' own DLLs ask for (run 40047918166), and the usual hijack names
@@ -51,7 +56,7 @@ $d = New-Downloads 'old-way' "$Exe\aurbridge-wizard.exe"
 $code = Run "$d\AurOS-Setup.exe" "--report `"$d\r`"" $d 20
 $took = @(Planted $d)
 Ok "the installer started from Downloads, the old way: $code, took $($took -join ', ')"
-if (-not ($took -or $code -eq 'HUNG')) { Die "the planted DLLs were not taken by the installer started the old way, so this test cannot tell a safe program from an unsafe one on this runner" }
+if (-not $took) { Die "the planted DLLs were not taken by the installer started the old way, so this test cannot tell a safe program from an unsafe one on this runner (exit $code)" }
 
 # ── 2. the downloaded program, in the same folder, takes none ──
 $d = New-Downloads 'stub' "$Exe\aurbridge-setup.exe"
@@ -99,6 +104,10 @@ function Inspect-Private($stubFile, $what) {
 $r = Inspect-Private "$Exe\aurbridge-setup.exe" 'real'
 if ($r.problem) { Die "the private folder is wrong: $($r.problem)" }
 Ok "while the installer runs, its folder $($r.why) is owned by Administrators, protected, SYSTEM and Administrators only, holds setup.exe only, and goes when it ends"
+$r2 = Inspect-Private "$Exe\aurbridge-setup.exe" 'real-again'
+if ($r2.problem) { Die "the private folder is wrong on a second run: $($r2.problem)" }
+if ($r2.why -eq $r.why) { Die "two runs used the same private folder name: $($r.why)" }
+Ok "two runs used distinct Windows-generated random folder names ($($r.why), $($r2.why))"
 $r = Inspect-Private "$Stubs\aurbridge-setup-inherit-mutant.exe" 'inherit'
 if (-not $r.problem) { Die "the check of the private folder passed a stub that made it with inherited permissions: it proves nothing" }
 Ok "the same check catches a stub that makes the folder with inherited permissions ($($r.problem))"
@@ -136,11 +145,18 @@ if ($code -eq 0 -or (Test-Path "$dd\r\AurOS-report.txt")) { Die "a folder that w
 Ok "a folder that is already there is refused, not shared (exit $code)"
 Remove-Item $fixed -Recurse -Force -ErrorAction SilentlyContinue
 
+# the bytes on disk are checked against the hash baked into the actual stub code
+$dd = New-Downloads 'bad-hash-mutant' "$Stubs\aurbridge-setup-bad-hash-mutant.exe"
+$code = Run "$dd\AurOS-Setup.exe" "--quiet-failure --report `"$dd\r`"" $dd 20
+if ($code -ne 3 -or (Test-Path "$dd\r\AurOS-report.txt")) { Die "a stub with the wrong baked-in installer hash ran its installer: exit $code" }
+if (Stray) { Die "the bad-hash refusal left a private folder behind: $((Stray | ForEach-Object Name) -join ', ')" }
+Ok "the extracted installer is refused before launch when its SHA-256 does not match the hash baked into the stub"
+
 # ── 5. beside Downloads is the one place the installer must not run from ──
 $dd = New-Downloads 'here-mutant' "$Stubs\aurbridge-setup-here-mutant.exe"
 $code = Run "$dd\AurOS-Setup.exe" "--quiet-failure --report `"$dd\r`"" $dd 20
 $took = @(Planted $dd)
-if (-not ($took -or $code -eq 'HUNG')) { Die "the planted DLLs were not taken by a stub that runs the installer from Downloads: the check proves nothing" }
+if (-not $took) { Die "the planted DLLs were not taken by a stub that runs the installer from Downloads: the check proves nothing (exit $code)" }
 Ok "the same planted DLLs are caught when a stub runs the installer from Downloads (exit $code, took $($took -join ', '))"
 Get-Process -Name setup -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 

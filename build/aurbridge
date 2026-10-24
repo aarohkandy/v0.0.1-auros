@@ -354,6 +354,18 @@ if [ -n "$MANIFEST_OBJ" ]; then
     note "manifest inside the .exe checked: Windows can load it"
 fi
 
+# When signing is configured, the installer carried inside the downloaded
+# bootstrap must be signed before it is embedded and hashed. Signing only the
+# outer file leaves the extracted child unsigned, which application-control
+# policy can refuse even though the download itself is trusted.
+SIGNING_CONFIGURED=""
+if sh "$ROOT/build/sign" --configured 2>/dev/null; then
+    step "signing the installer that the downloaded program carries"
+    sh "$ROOT/build/sign" "$OUT/aurbridge-wizard.exe" \
+        || die "the installer carried inside the downloaded program could not be signed"
+    SIGNING_CONFIGURED=1
+fi
+
 # ── THE PROGRAM SHE DOWNLOADS: a stub that imports kernel32 only (SEC-003) ──────────
 #
 # AurOS-Setup.exe is this stub, not the wizard. It has the wizard's manifest (one UAC
@@ -407,6 +419,7 @@ if command -v "$WINDRES" >/dev/null 2>&1; then
                  "accept-mutant:-DSTUB_FIXED_NAME=L\\\"0123456789abcdef\\\" -DSTUB_MUTANT_ACCEPT" \
                  "inherit-mutant:-DSTUB_MUTANT_INHERIT" \
                  "here-mutant:-DSTUB_MUTANT_HERE" \
+                 "bad-hash-mutant:-UCHILD_SHA256 -DCHILD_SHA256=\\\"0000000000000000000000000000000000000000000000000000000000000000\\\"" \
                  "wine:-DSTUB_NO_ACL_CHECK"; do
             vn=${v%%:*}; vf=${v#*:}
             # shellcheck disable=SC2086
@@ -542,8 +555,8 @@ else
 fi
 
 step "signing"
-if sh "$ROOT/build/sign" --configured 2>/dev/null; then
-    sh "$ROOT/build/sign" "$OUT/aurbridge.exe" "$OUT/aurbridge-wizard.exe" \
+if [ -n "$SIGNING_CONFIGURED" ]; then
+    sh "$ROOT/build/sign" "$OUT/aurbridge.exe" ${STUB_OK:+"$OUT/aurbridge-setup.exe"} \
         || die "the installer could not be signed"
 else
     note "unsigned, by design: AurOS ships without a code-signing key"
@@ -570,4 +583,4 @@ if [ "${1:-}" = "test" ]; then
     sh "$ROOT/tools/bridgetest.sh" || die "the two halves disagree"
 fi
 
-printf '\n%s::%s %s\n' "$C_OK" "$C_RST" "$OUT/aurbridge.exe, $OUT/aurbridge-wizard.exe"
+printf '\n%s::%s %s\n' "$C_OK" "$C_RST" "$OUT/aurbridge.exe, $OUT/aurbridge-wizard.exe${STUB_OK:+, $OUT/aurbridge-setup.exe}"

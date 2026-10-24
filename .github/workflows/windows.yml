@@ -345,7 +345,7 @@ jobs:
       # a junction at its name is refused, and each of those checks catches its own mutant.
       - name: the downloaded program takes nothing from its folder (SEC-003)
         shell: pwsh
-        run: pwsh -NoProfile -File tools/stubtest.ps1 -Exe exe -Stubs stubtest -Canary canary
+        run: pwsh -NoProfile -File tools/stubtest.ps1 -Exe exe -Stubs stubtest -Canary canary -IsolatedRunner
       - name: the PC report, from the console tool and from the installer (read-only)
         shell: pwsh
         run: |
