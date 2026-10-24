@@ -23,4 +23,5 @@ cc $CFLAGS -o "$OUT/wltest-xlife" "$HERE/wltest-xlife.c" "$AURWL_C" "$ROOT/src/a
    "$W/gen/xdg-shell-protocol.c" "$W/gen/xdg-decoration-protocol.c" \
    "$W/gen/viewporter-protocol.c" "$W/gen/xdg-output-protocol.c" \
    -I"$W/gen" -I"$W" $(pkg-config --cflags --libs wayland-server xkbcommon) -lm
-"$OUT/wltest-xlife"
+# A hang must end by itself (one once sat in connect() for hours): the test has its own alarm, and this is the belt.
+if command -v timeout >/dev/null 2>&1; then timeout 300 "$OUT/wltest-xlife"; else "$OUT/wltest-xlife"; fi

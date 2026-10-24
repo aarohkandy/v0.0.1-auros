@@ -134,6 +134,11 @@ Add the XML to that loop + the README loop, `#include` the .inc in aurwl.c, add 
 
 ## Traps
 
+- homebase: a hung `wltest-xlife.sh -asan` of mine (container `ab5da6584193`, "beautiful_mcnulty", image
+  auros-s3-fuzz) is still running at 0% CPU and 75 MiB; the permission system refused me the kill, so it
+  goes to the box's owner (`docker kill ab5da6584193`). The cause (a blocking connect() into a full listen
+  backlog) is fixed: the test's connections never block, it has an alarm, and the script a `timeout 300`.
+  Run tests in containers with `--name wl-...` and a `timeout` inside, so none outlives its test.
 - A client is entitled to be behind: it may answer (ack_configure) every configure it was sent, in
   order, long after newer ones went out. Never reject an answer for being old; reject one for being
   a serial this window was never sent. `wltest-apps.sh firefox-stall` is the real-program check.
