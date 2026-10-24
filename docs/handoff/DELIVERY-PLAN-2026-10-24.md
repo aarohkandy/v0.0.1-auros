@@ -9,7 +9,7 @@ earlier failures and superseded evidence deliberately.
 
 - Candidate `e0d0aadc`, [build/release run 40138682256](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40138682256), passed its full image suite and published prerelease `v0.1.0-e0d0aad`. Source publication and notice checks passed. It is not public latest.
 - Exact-image [hardening run 40140266950](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40140266950) passed 72 hardening and 14 clock checks; `hardengate.sh` accepts it for this candidate.
-- Both base Windows journeys failed: fastpath clicked the search entry instead of the VLC result; ordinary base installed VLC but Open did not map a program window. The strict launch check correctly rejected the store preview. The BitLocker journeys are still running. App launch, encrypted-drive return and file-preserving recovery remain unproved. The older c1 app-launch result was invalidated and must not be reused.
+- All four Windows journeys failed: fastpath base clicked the search entry instead of the VLC result; ordinary base installed VLC but Open did not map a program window; ordinary BitLocker refused on its legacy path; fastpath BitLocker failed the harness's pre-install baseline capture. The strict launch check correctly rejected the store preview. App launch, encrypted-drive return and file-preserving recovery remain unproved. The older c1 app-launch result was invalidated and must not be reused.
 - The release Windows job failed its fastpath no-scroll fixture. The working branch already has its tested correction and a visible, accessible drive-protection confirmation, but this candidate does not contain them. Do not rerun the unchanged installer expecting a different result.
 - Multilingual first-stage typing passed in Mousepad and Firefox. Second-stage `40142892395` reached the Mousepad focus lifecycle but failed end attribution because the probe counted its own held trace descriptor as another writer. A separate IBus restoration readiness race is being repaired. Password/reboot proof remains pending. Production remains IBus; main contains diagnostic harness fixes, not an activated input replacement.
 - `codex/delivery` retains the installer follow-ups and reduced artifact downloads for the next combined candidate. Preserve exact source/artifact identity when using any earlier evidence.
@@ -618,3 +618,22 @@ the remaining launch failure is under independent diagnosis, not assumed fixed.
 Owners are separate: CI coverage fixes search-result selection; the service-race
 debugger fixes production readiness; the app-launch debugger investigates VLC;
 the multilingual owner finishes trace attribution/restoration diagnostics.
+
+The software startup repair is integrated as `96ace8a0`: Type=notify announces
+readiness only after the USR1 trap exists, and the dispatcher only signals an
+active service. The old source failed seven focused checks; the fixed source
+passes 31, the existing mutations, and an actual Ubuntu 24 systemd startup/wake
+probe. Independent review passed. Full next-image confirmation remains required.
+
+`84f16361` integrates the result-row selection and BitLocker helper routing
+repairs. Guest evidence proved both put-back scripts clobbered helper.ps1's `$c`
+command envelope with `Get-Partition`, sending an immediate blank-ID reply.
+Renaming the local preserves all original baseline and restoration checks and
+the timeout. Integrated E2E selftests and independent review pass.
+
+Duplicate same-image hardening run `40143618949` was cancelled during artifact
+download, before tests began, because full verdict `40140266950` already passed.
+VLC-focused exact-image parity run `40143621769` is testing the launch failure.
+Multilingual diagnostic `40143674648` uses main `7192fbd7` with the probe's own
+authenticated trace descriptor accounted for and bounded IBus readiness polling.
+No new product image has been built while these diagnoses are in flight.
