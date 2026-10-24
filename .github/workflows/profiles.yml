@@ -13,6 +13,8 @@
 #            push changed profiles/, tools/profiletest* or this file. A
 #            change to one of the four profile files builds only that
 #            one; desktop.profile, which they all inherit, builds all.
+#            [profiles:diagnostic] suppresses image builds only for a
+#            strict test/docs allowlist, so retained images can be reused.
 #            [ibus-functional] adds multilingual and makes only that job
 #            perform the opt-in two-boot Mousepad and Firefox Pinyin proof.
 #   lint     seconds: tools/profiletest.sh selftest (every check fails
@@ -39,6 +41,11 @@ on:
         description: Exact completed main profiles run whose retained multilingual image to diagnose
         required: true
         type: string
+      x11_panel_probe:
+        description: Also observe the X11 panel during this retained multilingual diagnostic
+        required: false
+        default: false
+        type: boolean
 
 # contents: write is for the jobs that make or fill a release, and only
 # those (SEC-005): a job that runs a lot of code cannot replace what a
@@ -67,48 +74,26 @@ jobs:
       list: ${{ steps.g.outputs.list }}
       ibus_functional: ${{ steps.g.outputs.ibus_functional }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: profile gate rejects unsafe suppression
+        run: python3 tools/profiletest-gate.py selftest
       - id: g
         env:
           MSG: ${{ github.event.head_commit.message }}
           BEFORE: ${{ github.event.before }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          all="office revive school-kiosk multilingual"
-          go=false; want=""; ibus_functional=false
           SUBJ=${MSG%%$'\n'*}
-          case "$SUBJ" in
-            *'[profiles'*)
-              go=true
-              inner=${SUBJ#*\[profiles}; inner=${inner%%\]*}
-              for p in $inner; do
-                case " $all " in *" $p "*) want="$want $p" ;; esac
-              done
-              [ -n "$want" ] || want=$all ;;
-          esac
-          case "$SUBJ" in
-            *'[ibus-functional]'*)
-              ibus_functional=true; go=true
-              case " $want " in *' multilingual '*) : ;; *) want="$want multilingual" ;; esac
-              ;;
-          esac
           case "$BEFORE" in
             ''|0000000000000000000000000000000000000000)
-              files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
+              gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA?per_page=100" > /tmp/changed-pages.json \
+                || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
             *)
-              files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
+              gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA?per_page=100" > /tmp/changed-pages.json \
+                || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
           esac
-          printf '%s\n' "$files" > /tmp/files.txt
-          if [ "$go" = false ]; then
-            if grep -qE '^(profiles/desktop\.profile|tools/profiletest[^/]*|tools/(profile_image|test_profile_image)\.py|\.github/workflows/profiles\.yml)$' /tmp/files.txt; then
-              go=true; want=$all
-            else
-              for p in $all; do
-                grep -qx "profiles/$p.profile" /tmp/files.txt && { go=true; want="$want $p"; }
-              done
-            fi
-          fi
-          list=$(printf '%s\n' $want | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
-          { echo "go=$go"; echo "list=$list"; echo "ibus_functional=$ibus_functional"; } | tee -a "$GITHUB_OUTPUT"
+          python3 tools/profiletest-gate.py decide --subject "$SUBJ" \
+            --github-pages /tmp/changed-pages.json --github-output "$GITHUB_OUTPUT"
 
   lint:
     needs: gate
@@ -155,6 +140,9 @@ jobs:
                   ("group: profiles-$" + "{{ github.ref }}-$" + "{{ matrix.profile }}") in profile and
                   ("group: profiles-$" + "{{ github.ref }}-multilingual") in retest and
                   ("group: profiles-$" + "{{ github.ref }}-multilingual") in prune,
+              "the X11 probe exists only in the retained diagnostic":
+                  "PROFILETEST_IBUS_X11_PROBE" not in profile and
+                  retest.count("PROFILETEST_IBUS_X11_PROBE") == 1,
           }
           failed = [message for message, ok in checks.items() if not ok]
           if failed:
@@ -469,8 +457,14 @@ jobs:
       - name: run the current functional harness against the retained image
         id: diagnostic
         run: |
+          case '${{ inputs.x11_panel_probe }}' in
+            true) x11_panel_probe=1 ;;
+            false|'') x11_panel_probe=0 ;;
+            *) echo "::error::x11_panel_probe must be a boolean"; exit 2 ;;
+          esac
           set +e
           sudo env PATH="$PATH" PROFILETEST_IBUS_FUNCTIONAL=1 \
+            PROFILETEST_IBUS_X11_PROBE="$x11_panel_probe" \
             sh tools/profiletest.sh boot multilingual "$PWD/ev" 2>&1 | tee ev/multilingual-boot.txt
           rc=${PIPESTATUS[0]}
           set -e

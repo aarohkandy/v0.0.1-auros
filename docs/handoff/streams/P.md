@@ -109,6 +109,12 @@ exact old image bytes without rebuilding the OS:
 gh workflow run profiles.yml --ref main -f retained_multilingual_run_id=<source-run-id>
 ```
 
+For a test-harness-only push, include `[profiles:diagnostic]` in the commit subject. The gate
+skips new profile images only when every changed file is the profile test harness/helper,
+`profiles.yml`, or documentation. Any mixed or production change ignores the marker and builds
+all four profiles. To include the opt-in X11 panel observation in the retained diagnostic, pass
+`-f x11_panel_probe=true`; it remains diagnostic evidence and is not a visibility success gate.
+
 The workflow accepts only a completed `main` push of this repository's `profiles.yml`, verifies
 the immutable manifest and every release asset before unpacking, and records the image source
 SHA separately from the current test source SHA. This is diagnostic evidence only. It does not
