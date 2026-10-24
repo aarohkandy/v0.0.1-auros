@@ -88,13 +88,14 @@ a red, absent or unfinished boot refuses, a green one passes), run by
 workflowlint.yml.
 
 **Signing (docs/SIGNING.md, decision D12).** When the repository variable
-`SIGNPATH_ORGANIZATION_ID` exists, a `sign` job sits between the tests and
-`publish`: it sends the unsigned `AurOS-Setup.exe` to SignPath from the same
-run, waits for the owner's approval there, checks what comes back
-(`tools/signed-check.sh`) and hands the signed file to `publish`. Nothing is
-published if that fails; with the variable absent the job is skipped and the
-release is unsigned as before. Only a `[release]` run can be signed (the
-build and the signature must be one run).
+`SIGNPATH_ORGANIZATION_ID` exists, the same-run `sign` job first signs and
+verifies `aurbridge-wizard.exe`, rebuilds the protected bootstrap around those
+exact signed bytes, then signs and verifies the outer `AurOS-Setup.exe`. Both
+SignPath requests require approval. The required inner artifact configuration,
+source SHA, Authenticode-only changes, embedded resource and four transition
+hashes all fail closed; `AurOS-Setup-signing-provenance.txt` is published with
+the final signed outer. With the organization variable absent, the job is
+skipped and the release remains unsigned. Only a `[release]` run can be signed.
 
 Reading results: `actions_list` / `get_job_logs` with the GitHub tools,
 or `https://api.github.com/repos/$(sh tools/repo.sh)/actions/runs`
