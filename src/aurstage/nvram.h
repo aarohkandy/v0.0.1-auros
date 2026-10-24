@@ -107,4 +107,8 @@ int nvram_boot_next(uint16_t num, char *why, size_t n);
  * one of them is the one that boots. */
 int nvram_boot_forget(const char *desc, char *why, size_t n);
 
+/* Remove one exact Boot#### slot. Used to undo the entry staged before a table commit without
+ * deleting an AurOS entry that belongs to another disk. */
+int nvram_boot_forget_number(uint16_t num, char *why, size_t n);
+
 #endif

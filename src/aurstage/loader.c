@@ -158,10 +158,18 @@ out:
     return rc;
 }
 
-int loader_register(const gpt_table *nw, const stage_layout *L,
-                    uint16_t *entry_out, char *why, size_t n)
+/* THE ENTRY IS WRITTEN BEFORE THE TABLE, AND ONLY BootNext AFTER IT (docs/safety S-04).
+ *
+ * The entry names the partition by the GUID commit_build has already given it, so it can be
+ * written while the old table is still in force. That makes "the firmware will not take the
+ * entry" a refusal with nothing committed -- Windows starts, nothing of AurOS is on the menu --
+ * instead of a verdict=installed over a machine that can never start what it just installed.
+ * What can still fail afterwards is the two-byte one-shot, and then the entry is in the menu.
+ * loader_drop removes this exact entry when the commit is known not to have started. */
+int loader_entry(const gpt_table *nw, const stage_layout *L,
+                 uint16_t *entry_out, char *why, size_t n)
 {
-    /* THE PARTITION AS THE COMMIT LEFT IT, found by its start block.
+    /* THE PARTITION AS THE COMMIT WILL LEAVE IT, found by its start block.
      * Never by index: gpt_add appends into the first free slot, which
      * is not the last slot on a table somebody has already deleted a
      * partition from. */
@@ -184,23 +192,19 @@ int loader_register(const gpt_table *nw, const stage_layout *L,
     memcpy(hd.guid, nw->ent[idx].uuid, 16);
 
     uint16_t num = 0;
-    if (nvram_boot_set(LOADER_ENTRY_DESC, &hd, LOADER_PATH, NULL, &num,
-                       why, n) != 0) {
-        /* NO ROOM FOR A NEW ENTRY: the one the Windows half made is already in
-         * the store, and replacing it in its own slot needs only the
-         * difference in size (docs/safety S-04). */
-        char first[200];
-        snprintf(first, sizeof first, "%s", why);
-        if (nvram_boot_repurpose(LOADER_INSTALLER_DESC, LOADER_ENTRY_DESC, &hd,
-                                 LOADER_PATH, NULL, &num, why, n) != 0) {
-            snprintf(why, n, "%s", first);
-            return -1;
-        }
-        if (entry_out) *entry_out = num;
-        if (nvram_boot_next(num, why, n) != 0) return 1;
-        return 0;
-    }
+    /* This must be a new entry. Replacing the Windows half's installer entry before the table
+     * commit would require preserving and transactionally restoring its exact bytes on every
+     * pre-commit failure. Refusing safely is better than destroying the machine's retry entry. */
+    if (nvram_boot_set(LOADER_ENTRY_DESC, &hd, LOADER_PATH, NULL, &num, why, n) != 0)
+        return -1;
     if (entry_out) *entry_out = num;
+    return 0;
+}
+
+/* After the commit: arm the one-shot, and take away the entry the Windows half made to get here.
+ * 0 armed, 1 the entry is there and only the one-shot failed. */
+int loader_arm(uint16_t num, char *why, size_t n)
+{
     /* THE ENTRY IS DOWN. A one-shot that will not arm after that is
      * worth a different sentence: the machine can be started into
      * AurOS from its own boot menu, and telling somebody the install
@@ -215,4 +219,21 @@ int loader_register(const gpt_table *nw, const stage_layout *L,
     char ignored[200];
     nvram_boot_forget(LOADER_INSTALLER_DESC, ignored, sizeof ignored);
     return 0;
+}
+
+/* The commit is known not to have started: this entry names a partition that will not exist. */
+void loader_drop(uint16_t entry)
+{
+    char why[200];
+    if (nvram_boot_forget_number(entry, why, sizeof why) != 0)
+        stage_warn("the unused AurOS start-up entry could not be removed (%s)", why);
+}
+
+int loader_register(const gpt_table *nw, const stage_layout *L,
+                    uint16_t *entry_out, char *why, size_t n)
+{
+    uint16_t entry = 0;
+    uint16_t *out = entry_out ? entry_out : &entry;
+    if (loader_entry(nw, L, out, why, n) != 0) return -1;
+    return loader_arm(*out, why, n);
 }

@@ -28,7 +28,7 @@
 #  QEMU, and the fault staging image: the powercut-nostick prerequisites.
 #
 #    sudo AURSTAGE_FAULT=1 ./build/staging && sudo sh tools/fasttest.sh [scenario ...]
-#    scenarios: happy bitlocker abort failures noroom cuts handover stagelog   (default: all)
+#    scenarios: happy bitlocker abort failures noroom cuts nvfull handover stagelog   (default: all)
 #    handover also needs exfatprogs and the exfat kernel driver (a2-kvm image).
 # ═══════════════════════════════════════════════════════════════════
 set -u
@@ -60,7 +60,7 @@ trap _a2_clean EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-WANT="${*:-happy bitlocker abort failures noroom cuts handover stagelog}"
+WANT="${*:-happy bitlocker abort failures noroom cuts nvfull handover stagelog}"
 want() { case " $WANT " in *" $1 "*) return 0 ;; esac; return 1; }
 
 echo
@@ -221,7 +221,7 @@ win_files_now() { # image label
 # boot staging on a copy of $1 with the journal the engine made, on one disk
 boot_staging() { # disk  kargs  marker  [timeout]
     cp --sparse=always "$1" "$MTMP/run.img"
-    cp /usr/share/OVMF/OVMF_VARS_4M.fd "$MTMP/vars.fd"
+    cp "${NVRAM_SEED:-/usr/share/OVMF/OVMF_VARS_4M.fd}" "$MTMP/vars.fd"
     : > "$MTMP/out.txt"
     qemu-system-x86_64 -machine q35,accel=tcg -m 1536 -smp 2 \
         -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
@@ -306,6 +306,20 @@ fi
 grep -aq "INSTALLTEST-EFIVARS-RW" "$MTMP/out.txt" \
     && ok "...and hands it the firmware's variable store writable (RC1: read-only, 'Yes, it all works' was refused)" \
     || bad "...and hands it the firmware's variable store writable" "$(grep -a 'INSTALLTEST-EFIVARS' "$MTMP/out.txt" | head -1)"
+grep -aq "INSTALLTEST-NET-DOWN" "$MTMP/out.txt" && grep -aq "INSTALLTEST-ADDRS-0" "$MTMP/out.txt" \
+    && ok "...and every network interface down, with no inherited address" \
+    || bad "...and every network interface down, with no inherited address" "$(grep -a 'INSTALLTEST-NET\|INSTALLTEST-ADDRS' "$MTMP/out.txt" | head -2 | tr '\n' ' ')"
+grep -aq "INSTALLTEST-SECURITYFS-RO" "$MTMP/out.txt" \
+    && bad "...and no read-only securityfs for AppArmor to find" || ok "...and no read-only securityfs for AppArmor to find"
+grep -aq "INSTALLTEST-RUN-MODE-0755" "$MTMP/out.txt" \
+    && ok "...and hands it /run with mode 0755" \
+    || bad "...and hands it /run with mode 0755" "$(grep -a 'INSTALLTEST-RUN-MODE' "$MTMP/out.txt" | head -1)"
+grep -aq "INSTALLTEST-SCRATCH-GONE" "$MTMP/out.txt" \
+    && ok "...and releases the in-memory copy of the machine's start-up files" \
+    || bad "...and releases the in-memory copy of the machine's start-up files" "$(grep -a 'INSTALLTEST-SCRATCH' "$MTMP/out.txt" | head -1)"
+grep -aq "INSTALLTEST-FDS-0[[:space:]]*$" "$MTMP/out.txt" \
+    && ok "...and no staging descriptor reaches installed init" \
+    || bad "...and no staging descriptor reaches installed init" "$(grep -a 'INSTALLTEST-FDS' "$MTMP/out.txt" | head -1)"
 grep -aq "verdict=installed .*mode=gap" "$MTMP/out.txt" && ok "...in gap mode, and says so" || bad "...in gap mode" "$(grep -a aurstage-report "$MTMP/out.txt" | tail -1)"
 grep -aq "the copy written before the restart is exactly right\|Checking the copy of AurOS that Windows wrote" "$MTMP/out.txt" \
     && ok "...having checked every byte Windows wrote" || bad "...having checked every byte Windows wrote"
@@ -470,7 +484,7 @@ full_again() { # image label
         && ok "$2: ...and the EFI partition byte for byte what it was" || bad "$2: ...and the EFI partition byte for byte what it was"
     win_files_now "$1" "$2"
 }
-for pt in gate mirror-end commit-array commit-sector commit-backup boot-entry settle-end; do
+for pt in gate mirror-end entry-written commit-array commit-sector commit-backup boot-entry settle-end; do
     printf '\n  ── %s\n' "$pt"
     if boot_staging "$ARMED" "aurstage.install aurstage.min_gb=1 aurstage.die_at=$pt" "AURSTAGE-FAULT $pt" 600; then
         ok "the machine stops dead at $pt"
@@ -480,7 +494,7 @@ for pt in gate mirror-end commit-array commit-sector commit-backup boot-entry se
     cp --sparse=always "$MTMP/run.img" "$MTMP/cut.img"
     win_files_now "$MTMP/cut.img" "after the cut"
     case "$pt" in
-      gate|mirror-end|commit-array)
+      gate|mirror-end|entry-written|commit-array)
         # The old table is in force; Windows is as Windows left it, C: smaller.
         [ "$(nparts "$MTMP/cut.img")" = 3 ] && ok "the old table is still the one in force (3 partitions)" \
             || bad "the old table is still the one in force (3 partitions)" "$(nparts "$MTMP/cut.img")"
@@ -506,6 +520,68 @@ for pt in gate mirror-end commit-array commit-sector commit-backup boot-entry se
         ;;
     esac
 done
+fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+#  A START-UP LIST THAT IS FULL BY BYTES (docs/safety S-04).
+#
+#  Probe refusal and the real entry write are separate: a firmware can accept the probe and still
+#  reject the later write. Neither path may commit the table or report the installation complete.
+# ═══════════════════════════════════════════════════════════════════
+if want nvfull; then
+echo
+echo "  a start-up list that is full by bytes: refused before the table is committed"
+new_machine nvfull
+if ! run_engine || ! grep -q 'aurbridge-report v1 fast=1 ' "$S/out"; then
+    bad "the engine arms the machine for the full-list cases" "$(tail -3 "$S/err")"
+else
+ARMED="$S/disk.img"
+table_of() { sgdisk -p "$1" 2>/dev/null | sed -n '/^Number/,$p'; }
+TABLE0=$(table_of "$ARMED")
+FULL="$MTMP/full.fd"
+cp /usr/share/OVMF/OVMF_VARS_4M.fd "$FULL"
+python3 tools/efivarstore.py "$FULL" fill 100 >/dev/null
+LEFT=$(python3 -c "import sys; sys.path.insert(0,'tools'); import efivarstore as e; print(e.free_bytes('$FULL'))")
+[ "$LEFT" -le 110 ] && ok "the store is full by bytes ($LEFT left; one entry is about 200)" \
+    || bad "the store is full by bytes" "$LEFT left"
+
+# The early probe refuses before any table write.
+NVRAM_SEED="$FULL" boot_staging "$ARMED" "aurstage.install aurstage.min_gb=1" "aurstage-report v1 verdict=" 600
+grep -aq "verdict=no-startup-room" "$MTMP/out.txt" \
+    && ok "no room for an entry: refused before anything is written" \
+    || bad "no room for an entry: refused before anything is written" "$(grep -a 'aurstage-report\|aurstage:' "$MTMP/out.txt" | tail -3)"
+[ "$(table_of "$MTMP/run.img")" = "$TABLE0" ] \
+    && ok "...and the table is the one the engine left" || bad "...and the table is the one the engine left"
+grep -aq "verdict=installed" "$MTMP/out.txt" \
+    && bad "...and never says installed" || ok "...and never says installed"
+
+# The entry write itself fails after a successful probe. This is the S-04 regression.
+NVRAM_SEED="$FULL" boot_staging "$ARMED" "aurstage.install aurstage.min_gb=1 aurstage.fail_at=probe" "aurstage-report v1 verdict=" 600
+grep -aq "verdict=boot-entry-failed" "$MTMP/out.txt" \
+    && ok "the write fails after the probe: refused, with an explicit verdict" \
+    || bad "the write fails after the probe: refused" "$(grep -a 'aurstage-report\|aurstage:' "$MTMP/out.txt" | tail -3)"
+[ "$(table_of "$MTMP/run.img")" = "$TABLE0" ] \
+    && ok "...nothing was committed" || bad "...nothing was committed" "$(table_of "$MTMP/run.img" | head -4)"
+grep -aq "verdict=installed" "$MTMP/out.txt" \
+    && bad "...and never says installed" || ok "...and never says installed"
+grep -aq "Windows starts as usual" "$MTMP/out.txt" \
+    && ok "...and tells her Windows starts as usual" || bad "...and tells her Windows starts as usual"
+
+# If the table commit fails after the entry was staged, only that exact entry is undone. An AurOS
+# entry for another partition or disk must survive.
+DROP="$MTMP/drop.fd"
+cp /usr/share/OVMF/OVMF_VARS_4M.fd "$DROP"
+python3 tools/efivarstore.py "$DROP" plant-hd Boot0008 "AurOS" '\EFI\AurOS\shimx64.efi' "$ARMED" 1 \
+    || bad "the other AurOS entry is planted"
+NVRAM_SEED="$DROP" boot_staging "$ARMED" "aurstage.install aurstage.min_gb=1 aurstage.fail_at=commit" "verdict=commit-failed" 600
+if python3 tools/efivarstore.py "$MTMP/vars.fd" entry "AurOS" > "$MTMP/drop-entry.txt" 2>/dev/null; then
+    grep -qx 'num=0008' "$MTMP/drop-entry.txt" \
+        && ok "a failed table commit removes only its staged entry" \
+        || bad "a failed table commit removes only its staged entry" "$(cat "$MTMP/drop-entry.txt")"
+else
+    bad "a failed table commit preserves another disk's AurOS entry" "none"
+fi
 fi
 fi
 
