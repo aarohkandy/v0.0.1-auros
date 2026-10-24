@@ -8,6 +8,8 @@
 #  mean changing code.
 #
 #    forge build   PROFILE      run every stage
+#    forge build   --recipe F   validate F, then build its base profile
+#    forge resolve PROFILE|--recipe F   inspect the same inputs, build nothing
 #    forge stage   PROFILE N    run one stage (for iterating)
 #    forge list                 list profiles
 #    forge shell   PROFILE      chroot into the built rootfs
@@ -18,7 +20,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE_DIR="$ROOT/profiles"
 WORK="$ROOT/work/forge"
-OUT="$ROOT/out"
+OUT="${AUROS_OUTPUT_DIR:-$ROOT/out}"
 
 C_OK=$'\033[38;2;125;211;192m'; C_ERR=$'\033[38;2;242;120;141m'
 C_DIM=$'\033[38;2;110;120;134m'; C_RST=$'\033[0m'
@@ -58,6 +60,221 @@ warn_note() {
 # Stream W1's lines that build, install and enable aurwish are
 # `if wishes_on; then ... fi`.
 wishes_on() { [ "${wishes:-off}" = on ]; }
+
+# A recipe is untrusted JSON. Python validates it and returns five fixed,
+# tab-separated ASCII fields. Nothing from the recipe is sourced, evaluated,
+# expanded as a command, or used as a path. The checked-in base profile is
+# loaded first; only the two typed appearance variables are then replaced.
+parse_build_args() {
+    BUILD_PROFILE=""
+    BUILD_RECIPE=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --recipe)
+                [ $# -ge 2 ] || die "--recipe needs a JSON file"
+                [ -z "$BUILD_RECIPE" ] || die "--recipe was given twice"
+                BUILD_RECIPE=$2
+                shift 2
+                ;;
+            --*) die "unknown forge option: $1" ;;
+            *)
+                [ -z "$BUILD_PROFILE" ] || die "more than one profile was given"
+                BUILD_PROFILE=$1
+                shift
+                ;;
+        esac
+    done
+    [ -n "$BUILD_PROFILE" ] || [ -n "$BUILD_RECIPE" ] || \
+        die "give a profile or --recipe FILE"
+}
+
+reexec_recipe_from_snapshot() { # build|resolve, optional expected profile, raw recipe path
+    local command=$1 expected=${2:-} recipe=$3 commit snapshot recipe_path
+    [ -z "${AUROS_IMMUTABLE_COMMIT:-}" ] || return 0
+    commit=$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null) || \
+        die "recipe builds require a Git checkout with a known commit"
+    [ -z "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ] || \
+        die "recipe builds require a clean Git checkout"
+    if [ "$recipe" = - ]; then
+        recipe_path=-
+    else
+        [ -f "$recipe" ] || die "no recipe file: $recipe"
+        recipe_path=$(cd "$(dirname "$recipe")" && pwd)/$(basename "$recipe")
+    fi
+
+    snapshot=$(mktemp -d "${TMPDIR:-/tmp}/auros-forge-source.XXXXXX") || \
+        die "could not create an immutable source snapshot"
+    if ! git -C "$ROOT" archive --format=tar "$commit" | tar -xf - -C "$snapshot"; then
+        rm -rf -- "$snapshot"
+        die "could not extract source commit $commit"
+    fi
+    touch "$snapshot/.auros-forge-snapshot"
+    mkdir -p "$snapshot/work" "$snapshot/out"
+    chmod -R a-w "$snapshot"
+    chmod u+w "$snapshot/work" "$snapshot/out"
+
+    local child=("$snapshot/build/forge" "$command")
+    [ -z "$expected" ] || child+=("$expected")
+    child+=(--recipe "$recipe_path")
+    exec env AUROS_IMMUTABLE_COMMIT="$commit" \
+        AUROS_SNAPSHOT_DIR="$snapshot" AUROS_OUTPUT_DIR="$OUT" "${child[@]}"
+}
+
+forge_source_identity() {
+    FORGE_SOURCE_COMMIT=unknown
+    FORGE_SOURCE_DIRTY=unknown
+    if [ -n "${AUROS_IMMUTABLE_COMMIT:-}" ]; then
+        FORGE_SOURCE_COMMIT=$AUROS_IMMUTABLE_COMMIT
+        FORGE_SOURCE_DIRTY=false
+    elif FORGE_SOURCE_COMMIT=$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null); then
+        if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
+            FORGE_SOURCE_DIRTY=true
+        else
+            FORGE_SOURCE_DIRTY=false
+        fi
+    else
+        FORGE_SOURCE_COMMIT=unknown
+    fi
+}
+
+resolve_build_input() { # optional expected profile, optional raw recipe
+    local expected=${1:-} recipe=${2:-} result
+    RECIPE_ACTIVE=""
+    RECIPE_ID=""
+    RECIPE_RECEIPT_B64=""
+    if [ -z "$recipe" ]; then
+        [ -n "$expected" ] || die "a profile is required without --recipe"
+        load_profile "$expected"
+        return
+    fi
+
+    forge_source_identity
+    local args=(python3 "$ROOT/src/customize/build_adapter.py" "$recipe"
+                --source-commit "$FORGE_SOURCE_COMMIT"
+                --source-dirty "$FORGE_SOURCE_DIRTY")
+    [ -z "$expected" ] || args+=(--expected-base "$expected")
+    result=$("${args[@]}") || die "recipe validation failed"
+    IFS=$'\t' read -r recipe_base recipe_look recipe_theme recipe_id receipt_b64 <<< "$result"
+
+    case "$recipe_base" in
+        desktop|multilingual|office|revive|school-kiosk) ;;
+        *) die "recipe adapter returned an unsupported base" ;;
+    esac
+    case "$recipe_look" in
+        dock|rail|taskbar|tiles) ;;
+        locked) [ "$recipe_base" = school-kiosk ] || \
+                    die "the locked look is reserved for school-kiosk" ;;
+        *) die "recipe adapter returned an unsupported look" ;;
+    esac
+    case "$recipe_theme" in
+        ember|moss|nocturne|sandstone|slate) ;;
+        *) die "recipe adapter returned an unsupported theme" ;;
+    esac
+    [[ "$recipe_id" =~ ^sha256:[0-9a-f]{64}$ ]] || \
+        die "recipe adapter returned an invalid recipe id"
+    case "$receipt_b64" in
+        ''|*[!A-Za-z0-9+/=]*) die "recipe adapter returned invalid receipt data" ;;
+    esac
+
+    load_profile "$recipe_base"
+    [ "$profile_id" = "$recipe_base" ] || \
+        die "recipe base '$recipe_base' loaded profile_id '$profile_id'"
+    shell_archetype=$recipe_look
+    theme=$recipe_theme
+    [ -f "$ROOT/shells/$shell_archetype.shell" ] || \
+        die "recipe selected missing shell '$shell_archetype'"
+    [ -f "$ROOT/themes/$theme.theme" ] || \
+        die "recipe selected missing theme '$theme'"
+    RECIPE_ACTIVE=1
+    RECIPE_ID=$recipe_id
+    RECIPE_RECEIPT_B64=$receipt_b64
+    RECIPE_SOURCE_COMMIT=$FORGE_SOURCE_COMMIT
+    RECIPE_SOURCE_DIRTY=$FORGE_SOURCE_DIRTY
+}
+
+write_recipe_receipt() { # destination, artifact-created true|false, optional artifact
+    local destination=$1 created=$2 artifact=${3:-}
+    if [ -z "${RECIPE_ACTIVE:-}" ]; then
+        rm -f "$destination"
+        return
+    fi
+    install -d "$(dirname "$destination")"
+    RECIPE_RECEIPT_B64=$RECIPE_RECEIPT_B64 python3 - \
+        "$destination" "$created" "$artifact" <<'PY'
+import base64
+import hashlib
+import json
+import os
+import pathlib
+import sys
+
+destination = pathlib.Path(sys.argv[1])
+document = json.loads(base64.b64decode(os.environ["RECIPE_RECEIPT_B64"], validate=True))
+document["artifact_created"] = sys.argv[2] == "true"
+if sys.argv[3]:
+    artifact = pathlib.Path(sys.argv[3])
+    digest = hashlib.sha256()
+    with artifact.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    document["artifact"] = {
+        "bytes": artifact.stat().st_size,
+        "name": artifact.name,
+        "sha256": digest.hexdigest(),
+    }
+temporary = destination.with_name(destination.name + ".new")
+temporary.write_text(
+    json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n",
+    encoding="ascii",
+)
+os.chmod(temporary, 0o644)
+temporary.replace(destination)
+PY
+}
+
+prepare_full_build() {
+    FORGE_FULL_BUILD=1
+    install -d "$OUT"
+    FORGE_FINAL_SQUASH="$OUT/$profile_id-$os_version.squashfs"
+    FORGE_PENDING_SQUASH="$FORGE_FINAL_SQUASH.incomplete"
+    FORGE_RECIPE_METADATA="$OUT/$profile_id-$os_version.recipe.json"
+    rm -f "$FORGE_FINAL_SQUASH" "$FORGE_PENDING_SQUASH" "$FORGE_RECIPE_METADATA"
+    if [ -n "${RECIPE_ACTIVE:-}" ]; then
+        [ "$RECIPE_SOURCE_COMMIT" != unknown ] && \
+        [ "$RECIPE_SOURCE_DIRTY" = false ] || \
+            die "recipe builds require a clean Git checkout with a known commit"
+    fi
+}
+
+verify_recipe_source() {
+    [ -n "${RECIPE_ACTIVE:-}" ] || return 0
+    forge_source_identity
+    [ "$FORGE_SOURCE_COMMIT" = "$RECIPE_SOURCE_COMMIT" ] && \
+    [ "$FORGE_SOURCE_DIRTY" = false ] || \
+        die "source changed during the recipe build; refusing to publish its metadata"
+}
+
+finalize_full_build() {
+    [ -n "${FORGE_PENDING_SQUASH:-}" ] && \
+    [ -f "$FORGE_PENDING_SQUASH" ] || die "the build produced no pending squashfs"
+    verify_recipe_source
+    mv "$FORGE_PENDING_SQUASH" "$FORGE_FINAL_SQUASH"
+    write_recipe_receipt "$FORGE_RECIPE_METADATA" true "$FORGE_FINAL_SQUASH"
+}
+
+print_resolved_build_input() {
+    python3 - "$profile_id" "$theme" "$shell_archetype" "${RECIPE_ID:-none}" <<'PY'
+import json
+import sys
+
+print(json.dumps({
+    "artifact_created": False,
+    "base_profile": sys.argv[1],
+    "recipe_id": sys.argv[4],
+    "resolved_preferences": {"look": sys.argv[3], "theme": sys.argv[2]},
+}, sort_keys=True, separators=(",", ":")))
+PY
+}
 
 load_profile() {
     local name=$1 chain="" cur=$1 depth=0 f
@@ -140,7 +357,20 @@ chroot_done() {
         mountpoint -q "$RFS/$m" && umount -lf "$RFS/$m" || true
     done
 }
-trap 'chroot_done 2>/dev/null || true' EXIT
+forge_exit_cleanup() {
+    chroot_done 2>/dev/null || true
+    if [ -n "${AUROS_SNAPSHOT_DIR:-}" ] && \
+       [ -f "$AUROS_SNAPSHOT_DIR/.auros-forge-snapshot" ]; then
+        case "$(basename "$AUROS_SNAPSHOT_DIR")" in
+            auros-forge-source.??????)
+                chmod -R u+w "$AUROS_SNAPSHOT_DIR" 2>/dev/null || true
+                rm -rf -- "$AUROS_SNAPSHOT_DIR"
+                ;;
+            *) warn "refusing to remove unexpected snapshot path: $AUROS_SNAPSHOT_DIR" ;;
+        esac
+    fi
+}
+trap 'forge_exit_cleanup' EXIT
 
 inchroot() {
     chroot "$RFS" /usr/bin/env -i \
@@ -1917,6 +2147,9 @@ EOL
                "$RFS/etc/auros/shell/active.shell"
         note "archetype: $shell_archetype"
     else
+        if [ -n "${RECIPE_ACTIVE:-}" ]; then
+            die "recipe selected shell '$shell_archetype', but it is missing from the rootfs"
+        fi
         ln -sf "/usr/share/auros/shells/rail.shell" \
                "$RFS/etc/auros/shell/active.shell"
         note "archetype '$shell_archetype' not found - falling back to rail"
@@ -2318,6 +2551,10 @@ EOE
 # ── stage 5: theme ─────────────────────────────────────────────────
 stage_theme() {
     step "stage 5/7  theme: $theme"
+    if [ -n "${RECIPE_ACTIVE:-}" ] && \
+       [ ! -f "$RFS/usr/share/auros/themes/$theme.theme" ]; then
+        die "recipe selected theme '$theme', but it is missing from the rootfs"
+    fi
     chroot_prep
     inchroot "aurora set $theme" || die "aurora could not apply '$theme'"
     inchroot "aurwall --conf /etc/auros/shell.conf --out /usr/share/auros/wallpaper.png \
@@ -2542,6 +2779,10 @@ seal_identity() {
 
 stage_squash() {
     step "stage 6/7  compress"
+    # Put the validated request beside the installed system's other identity
+    # records. A legacy or staged non-recipe build removes any receipt left in
+    # a reused rootfs, so it cannot claim somebody else's customization.
+    write_recipe_receipt "$RFS/etc/auros/customization-receipt.json" false
     # AurOS's own files become dpkg packages and the signed apt source is
     # pinned, so a fix can reach a computer already installed. Last, so
     # dpkg records the files as every earlier stage left them.
@@ -2551,10 +2792,22 @@ stage_squash() {
     squash_preconditions
     harden_verify
     mkdir -p "$OUT"
-    local sq="$OUT/$profile_id-$os_version.squashfs"
-    rm -f "$sq"
+    local final_sq="$OUT/$profile_id-$os_version.squashfs"
+    local sq="$final_sq"
+    if [ "${FORGE_FULL_BUILD:-0}" = 1 ]; then
+        sq="$final_sq.incomplete"
+        FORGE_FINAL_SQUASH=$final_sq
+        FORGE_PENDING_SQUASH=$sq
+    fi
+    local receipt="$OUT/$profile_id-$os_version.recipe.json"
+    # A failed new build must not leave an older customization receipt beside
+    # its output name. The new receipt appears only after squashfs succeeds.
+    rm -f "$receipt" "$sq"
     mksquashfs "$RFS" "$sq" -comp zstd -Xcompression-level 15 -noappend -quiet \
         -e "$RFS/.forge-bootstrapped"
+    if [ "${FORGE_FULL_BUILD:-0}" != 1 ]; then
+        write_recipe_receipt "$receipt" true "$sq"
+    fi
     note "$(basename "$sq")  $(du -h "$sq" | cut -f1)"
 }
 
@@ -2575,7 +2828,12 @@ run_stage() {
 
 case "${1:-}" in
     build)
-        load_profile "${2:?usage: forge build PROFILE}"
+        parse_build_args "${@:2}"
+        if [ -n "$BUILD_RECIPE" ]; then
+            reexec_recipe_from_snapshot build "$BUILD_PROFILE" "$BUILD_RECIPE"
+        fi
+        resolve_build_input "$BUILD_PROFILE" "$BUILD_RECIPE"
+        prepare_full_build
         say "forging '$profile_name' ($profile_id)"
         for s in 1 2 3 4 5 6 7; do run_stage $s; done
 
@@ -2655,7 +2913,15 @@ case "${1:-}" in
      this machine (see the lines above). Her first store page would be empty.
      Unset REQUIRE_FLATHUB_CATALOGUE for a build that is not for release."
         fi
+        finalize_full_build
         printf '\n%s::%s %s is built.\n' "$C_OK" "$C_RST" "$brand_name $os_version" ;;
+    resolve)
+        parse_build_args "${@:2}"
+        if [ -n "$BUILD_RECIPE" ]; then
+            reexec_recipe_from_snapshot resolve "$BUILD_PROFILE" "$BUILD_RECIPE"
+        fi
+        resolve_build_input "$BUILD_PROFILE" "$BUILD_RECIPE"
+        print_resolved_build_input ;;
     stage)
         load_profile "${2:?usage: forge stage PROFILE N}"
         run_stage "${3:?which stage?}" ;;
@@ -2678,6 +2944,12 @@ case "${1:-}" in
 forge — the AurOS image builder
 
   forge build PROFILE       build a complete image
+  forge build --recipe FILE build from a validated customization recipe
+  forge build PROFILE --recipe FILE
+                            require the recipe to use PROFILE
+  forge resolve PROFILE     inspect build inputs without building
+  forge resolve --recipe FILE [PROFILE]
+                            validate and resolve a recipe without building
   forge stage PROFILE N     run a single stage (1-7)
   forge shell PROFILE       chroot into the built rootfs
   forge clean PROFILE       remove the work tree
