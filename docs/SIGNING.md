@@ -7,10 +7,11 @@
 > services" still holds). **Until the certificate exists the installer ships
 > unsigned, exactly as before, and the clicks in the first table are what
 > she meets.** Everything below the first table is ready and switched off:
-> the day the owner adds one repository variable and one secret (section 4),
-> the next `[release]` is signed.
+> the day the owner adds the repository variables and secret in section 4,
+> the next `[release]` signs both layers.
 
-Files: `.github/workflows/release.yml` (jobs `signgate`, `sign`),
+Files: `.github/workflows/release.yml` (job `sign`),
+`build/aurbridge-stub` (rebuilds the outer around the signed inner),
 `tools/signed-check.sh` and `tools/authenticode.py` (the checks on what comes
 back), `tools/signtest.sh` (proves each check fails when it should),
 `website/code-signing.html` (the policy page SignPath requires),
@@ -90,97 +91,92 @@ rules change). **"Ready"** means it is true in this repository today.
 | Installer announces what it changes and says how to uninstall | the wizard's pages say what will happen; "Put Windows back" removes AurOS | ready |
 | Privacy: say what is sent where, or "will not transfer any information to other networked systems" unless asked | on the policy page: only the image download the person asked for, from GitHub | ready |
 
-## 3. How the signature gets onto the file
+## 3. How both signatures get onto the download
 
 ```
-build (unsigned AurOS-Setup.exe) -> tests -> signgate -> sign -> publish -> windows + e2e + site -> promote
-                                              |            \- waits for the owner's approval in SignPath
-                                              \- skipped, cleanly, until the variable and the secret exist
+build unsigned wizard + outer
+  -> sign wizard (manual approval)
+  -> verify it is the built wizard plus Authenticode
+  -> rebuild the kernel32-only outer around those exact signed bytes
+  -> sign outer (manual approval)
+  -> verify both signatures and the embedded bytes
+  -> publish -> windows + e2e + site -> promote
 ```
 
 `release.yml` job by job:
 
-1. **`signgate`** decides, in seconds, with no secret printed: signing is
-   on only if the repository variable `SIGNPATH_ORGANIZATION_ID` and the
-   secret `SIGNPATH_API_TOKEN` both exist. Otherwise `sign` is skipped and
-   the unsigned path runs exactly as it always has.
-2. **`sign`** (only when on):
-   - refuses to run unless the build was made in this same run
-     (`[release]`); a `[publish RUN-ID]` of an older build cannot be signed,
-     because SignPath must be able to tie the file to the build that made
-     it. (With signing on, such a publish fails with a message saying to
-     use `[release]`, rather than quietly publishing unsigned.)
-   - uploads `AurOS-Setup.exe` alone as a workflow artifact (SignPath only
-     accepts an artifact stored by the run it is submitted from);
-   - submits it with `signpath/github-action-submit-signing-request`, pinned
-     to a commit, and **waits** (up to 4 hours) for the approver;
-   - downloads the signed file and runs `tools/signed-check.sh` on it.
-3. **`tools/signed-check.sh UNSIGNED SIGNED`** fails the run unless all of:
-   - `osslsigncode verify` accepts the signature against the system's
-     trusted roots (SignPath's certificate chains to a public authority);
-   - the signer's name is `SignPath Foundation` (`AUROS_SIGN_SUBJECT`
-     overrides, for tests);
-   - the Authenticode digest of the signed file equals the unsigned file's
-     (`tools/authenticode.py`): the signed file is the built file plus a
-     signature, byte for byte nothing else (the checksum field and the
-     certificate table are the only parts a signature may change). The
-     signature alone would be just as valid on a different file. (osslsigncode
-     prints a "message digest" of its own that is not this number; it is
-     deliberately not compared, because this check is stronger: it covers
-     every byte Authenticode defines, and osslsigncode's verify already
-     proved the signature covers the file as signed.)
-4. **`publish`** uses the signed file when `sign` ran, records both hashes in
-   the release notes (the unsigned one the build made, the signed one people
-   download), puts the signed one in `SHA256SUMS`, and everything after it
-   (`windows`, `e2e`, `promote`) works on the signed file: the Windows job
-   requires `Get-AuthenticodeSignature` to say `Valid`, and `e2e` is handed
-   the signed file's hash, so the hours-long journey is run on the file
-   people get.
-5. If signing is on and `sign` fails or is not approved in time, **nothing
-   is published**. There is no fallback to unsigned once the owner has
-   switched signing on.
+1. Signing is on when `SIGNPATH_ORGANIZATION_ID` exists. The job then requires
+   `SIGNPATH_API_TOKEN` and `SIGNPATH_INNER_ARTIFACT_CONFIGURATION_SLUG`; a
+   missing inner configuration is a hard failure, never an outer-only signed
+   release. With the organization variable absent, the unsigned path remains
+   available.
+2. The `sign` job accepts only a `[release]` build from the same workflow run.
+   It checks that the full commit in `build-info.txt`, `GITHUB_SHA`, and the
+   checked-out source are identical, and that the build's outer resource 300
+   is byte-identical to its accompanying unsigned wizard.
+3. The first SignPath request uploads only `aurbridge-wizard.exe`, uses the
+   inner artifact configuration, and waits for manual approval. The returned
+   file passes `tools/signed-check.sh`: public trust, the SignPath Foundation
+   subject, and an Authenticode digest proving only signing fields changed.
+4. `build/aurbridge-stub` then builds only the freestanding kernel32 bootstrap
+   from that signed wizard. It recomputes the baked child SHA-256, embeds the
+   signed bytes as resource 300, checks the manifest, imports and extracted
+   resource, and is the same helper used by the ordinary `build/aurbridge`
+   path.
+5. The rebuilt unsigned outer is a second same-run artifact and a second
+   SignPath request, again requiring approval. Its result must be the rebuilt
+   outer plus Authenticode only. Resource 300 is extracted again, compared
+   byte for byte with the signed wizard, and its signature is verified.
+6. `AurOS-Setup-signing-provenance.txt` records the exact source commit, build
+   run, hashes of the original and signed wizard, the build's original outer,
+   the rebuilt unsigned outer and signed outer, plus the verified
+   relationships. It is published beside the installer and covered by
+   `SHA256SUMS`. Windows and e2e then test the final signed outer.
 
-`tools/signtest.sh` (19 checks, in CI on every build) proves each check in
-(3) refuses its own failure, with a throwaway CA standing in for SignPath's:
-a signed file changed afterwards, a **validly signed different file**, an
-unsigned file sent back as signed, an already-signed build, a wrong signer
-name, a signer no public authority vouches for; and that a file whose length
-is not a multiple of 8 (signing pads it) is accepted. Each check was
-removed in turn on CI and the matching test went red (digest comparison,
-signer name, signature verification, the "already signed" input); the
-"returned file is signed" line is also caught by the signature check, so it
-is a clearer message rather than a separate gate.
+If either approval, configuration, signature, source binding, rebuild, byte
+comparison or upload fails, nothing is published. There is no downgrade after
+signing has been switched on.
+
+`tools/signed-check.sh UNSIGNED SIGNED` verifies each service response.
+`tools/signtest.sh` uses a throwaway CA to test the same two-stage order without
+a paid service: sign the wizard, rebuild, sign the outer, extract resource 300,
+and compare every transition. It also keeps the existing negative checks for
+tampering, a different validly signed file, no signature, a wrong signer and
+an untrusted signer.
 
 ## 4. What only the owner can do (in this order)
 
-1. **Two-factor sign-in on GitHub** for `aarohkandy` (GitHub → Settings →
-   Password and authentication → Two-factor authentication), and on
-   SignPath when the account exists. SignPath requires it of everyone in the
-   team.
-2. **Apply**: `https://signpath.org/apply`. The text to paste is in
-   `docs/legal/signpath-application.md`; it has the facts, the answers to
-   the questions their review asks, and what to fill in. Use the real
-   contact address there.
-3. **When they approve**: sign in to SignPath, create the project **AurOS**
-   (slug `auros`), and:
-   - add the predefined trusted build system **GitHub.com** and link it to
-     the project;
-   - create the artifact configuration (the default one) as below;
-   - create the signing policy `release-signing` for the certificate they
-     issue, with **manual approval required** and the owner as approver;
-   - create a user for CI with the *submitter* role on that policy and make
-     an API token for it.
-4. **In GitHub** (`https://github.com/aarohkandy/v0.0.1-auros/settings/secrets/actions`
-   and `.../settings/variables/actions`): the **secret** `SIGNPATH_API_TOKEN`
-   (the token) and the **variable** `SIGNPATH_ORGANIZATION_ID` (SignPath →
-   Organization → the ID). Optional variables if the slugs differ:
-   `SIGNPATH_PROJECT_SLUG` (default `auros`), `SIGNPATH_SIGNING_POLICY_SLUG`
-   (default `release-signing`).
-5. Tell the lead. The next `[release]` signs. The owner approves the request
-   in SignPath (they send an email); the run waits for it.
+1. Enable two-factor sign-in on GitHub and SignPath for every team member.
+2. Apply at `https://signpath.org/apply` using
+   `docs/legal/signpath-application.md`.
+3. In the AurOS SignPath project, link the predefined GitHub.com trusted build
+   system and create two artifact configurations. Both use the same issued
+   certificate and a signing policy that requires manual approval:
+   - `wizard`: signs only `aurbridge-wizard.exe`;
+   - `default` (or another chosen outer slug): signs only `AurOS-Setup.exe`.
+4. Create a CI submitter token. In GitHub Actions secrets set
+   `SIGNPATH_API_TOKEN`; in variables set `SIGNPATH_ORGANIZATION_ID` and the
+   required `SIGNPATH_INNER_ARTIFACT_CONFIGURATION_SLUG` (for example
+   `wizard`). Optional variables are `SIGNPATH_PROJECT_SLUG` (default
+   `auros`), `SIGNPATH_SIGNING_POLICY_SLUG` (shared default
+   `release-signing`), stage-specific policy slugs, and
+   `SIGNPATH_OUTER_ARTIFACT_CONFIGURATION_SLUG` (default `default`).
+5. Tell the lead. The next `[release]` produces two requests; approve the
+   wizard request and then the rebuilt outer request.
 
-The artifact configuration (SignPath → Project → Artifact configurations →
-default → paste; `upload-artifact` makes a ZIP, so the root is a zip file):
+Inner artifact configuration:
+
+```xml
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="aurbridge-wizard.exe" product-name="AurOS">
+      <authenticode-sign/>
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
+```
+
+Outer artifact configuration:
 
 ```xml
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
@@ -192,17 +188,16 @@ default → paste; `upload-artifact` makes a ZIP, so the root is a zip file):
 </artifact-configuration>
 ```
 
-`product-name="AurOS"` is the file-metadata restriction SignPath requires;
-set `product-version` as well once a version is chosen for the first signed
-release (it must be the same value in every build of that release).
+Set `product-version` too when the first signed release version is fixed; both
+configurations must restrict it to the same release version.
 
 ## 5. What the build does regardless
 
-- `build/aurbridge` signs only if signing material is configured by the
+- `build/aurbridge` signs both layers only if signing material is configured by the
   environment (the paths `build/sign` has always had: a PKCS#11 token, a
   PKCS#12 file, or a PEM pair). In CI none is, so the installer from
-  `build.yml` is **always unsigned**; the signature is added afterwards, by
-  SignPath, in `release.yml`. `AUROS_RELEASE=1` does not refuse an unsigned
+  `build.yml` is **always unsigned**; the two signatures are added afterwards,
+  by SignPath, in `release.yml`. `AUROS_RELEASE=1` does not refuse an unsigned
   installer.
 - `tools/signtest.sh` keeps both paths honest: the optional local signing
   (a throwaway CA; SHA-256, replace-not-stack, one changed byte breaks it)

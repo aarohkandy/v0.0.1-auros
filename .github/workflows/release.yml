@@ -21,11 +21,10 @@
 #
 #   sign      only when signing is switched on (docs/SIGNING.md: the
 #             repository variable SIGNPATH_ORGANIZATION_ID exists; the
-#             secret SIGNPATH_API_TOKEN must then too): the unsigned
-#             AurOS-Setup.exe is sent to SignPath from this run, the job
-#             waits for the owner's approval there, and the file that
-#             comes back is checked (tools/signed-check.sh) before
-#             anything is published. Skipped cleanly otherwise.
+#             token and inner artifact configuration must then too): the
+#             wizard is signed and verified first, the bootstrap rebuilt
+#             around it, then the outer is signed and verified. Both requests
+#             are from this run and require approval. Skipped cleanly otherwise.
 #   publish   the release, with AurOS-Setup.exe (the signed one if sign
 #             ran), the image pieces,
 #             pieces.txt, SHA256SUMS, image.sha256 and image.bytes; then
@@ -183,84 +182,150 @@ jobs:
           allowed=$(grep '^releasegate: ALLOWED' /tmp/gate.txt 2>/dev/null | sed 's/^releasegate: //' | paste -sd';' - | tr '|' '/' || true)
           { echo "go=$go"; echo "run_id=$rid"; echo "latest=$latest"; echo "allowed=$allowed"; } | tee -a "$GITHUB_OUTPUT"
 
-  # SIGNING (docs/SIGNING.md, decision D12). The variable is the switch:
-  # while SIGNPATH_ORGANIZATION_ID does not exist this job is skipped, no
-  # runner is used, and the release is unsigned exactly as before. Once it
-  # exists the secret SIGNPATH_API_TOKEN must too (and build.yml passes
-  # secrets down: `secrets: inherit`), and nothing is published unless
-  # the file that comes back is signed and is the file that was built --
-  # there is no quiet fallback to an unsigned release.
+  # SIGNING (docs/SIGNING.md, decision D12). Sign the inner wizard first,
+  # rebuild the kernel32-only bootstrap around those exact bytes, then sign
+  # the outer download. Both requests belong to this run and both require
+  # SignPath approval. Once signing is switched on, any missing input or
+  # configuration fails closed; publish never falls back to unsigned.
   sign:
     needs: which
     if: needs.which.outputs.go == 'true' && vars.SIGNPATH_ORGANIZATION_ID != ''
     runs-on: ubuntu-24.04
-    # waits for a person to approve in SignPath (up to 4 hours)
-    timeout-minutes: 300
+    timeout-minutes: 360
     permissions:
       contents: read
       actions: read
     outputs:
-      unsigned_sha256: ${{ steps.u.outputs.sha256 }}
-      signed_sha256: ${{ steps.s.outputs.sha256 }}
+      build_outer_sha256: ${{ steps.hashes.outputs.build_outer_sha256 }}
+      unsigned_wizard_sha256: ${{ steps.hashes.outputs.unsigned_wizard_sha256 }}
+      signed_wizard_sha256: ${{ steps.final.outputs.signed_wizard_sha256 }}
+      rebuilt_outer_sha256: ${{ steps.final.outputs.rebuilt_outer_sha256 }}
+      signed_sha256: ${{ steps.final.outputs.signed_sha256 }}
     env:
       TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
       RID: ${{ needs.which.outputs.run-id }}
+      INNER_CONFIG: ${{ vars.SIGNPATH_INNER_ARTIFACT_CONFIGURATION_SLUG }}
     steps:
-      - name: the token is here, and this run built the file
+      - name: both signing stages are configured for this run
         run: |
-          [ -n "$TOKEN" ] || { echo "::error::SIGNPATH_ORGANIZATION_ID is set, so signing is on, but the secret SIGNPATH_API_TOKEN is empty or not passed to release.yml (build.yml needs secrets: inherit). Add the secret, or delete the variable to ship unsigned."; exit 1; }
-          # SignPath ties a signing request to the build that made the
-          # file. A file built by an earlier run ([publish RUN-ID]) has
-          # no such tie from this run, so it is refused rather than
-          # signed or quietly published unsigned.
-          [ "$RID" = "$GITHUB_RUN_ID" ] || { echo "::error::signing is on, and this file was built by run $RID, not by this run ($GITHUB_RUN_ID). Signed releases come from a [release] commit, where the build and the signature are one run."; exit 1; }
+          [ -n "$TOKEN" ] || { echo "::error::SIGNPATH_ORGANIZATION_ID is set, so signing is on, but SIGNPATH_API_TOKEN is empty or was not passed to release.yml. Add the secret, or delete the organization variable to ship unsigned."; exit 1; }
+          [ -n "$INNER_CONFIG" ] || { echo "::error::signing is on, but SIGNPATH_INNER_ARTIFACT_CONFIGURATION_SLUG is empty. Create the SignPath configuration that signs only aurbridge-wizard.exe and set this repository variable; refusing to produce an outer-only signature."; exit 1; }
+          [ "$RID" = "$GITHUB_RUN_ID" ] || { echo "::error::signing is on, and this file was built by run $RID, not this run ($GITHUB_RUN_ID). Signed releases must come from a [release] commit so both signing requests are tied to the build that made the files."; exit 1; }
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - run: sh tools/apt.sh osslsigncode python3
+        with:
+          fetch-depth: 1
+      - run: sh tools/apt.sh osslsigncode python3 gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: auros-installer
           path: dl
           run-id: ${{ needs.which.outputs.run-id }}
           github-token: ${{ github.token }}
-      - id: u
-        name: the unsigned file, on its own
+      - id: hashes
+        name: bind the unsigned files to this exact source and build
         run: |
-          mkdir unsigned signed
-          cp dl/AurOS-Setup.exe unsigned/
-          echo "sha256=$(sha256sum unsigned/AurOS-Setup.exe | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
-      - id: up
-        # SignPath only accepts a file this run stored as an artifact
+          mkdir unsigned inner-signed rebuilt outer-signed signed
+          cp dl/aurbridge-wizard.exe unsigned/aurbridge-wizard.exe
+          cp dl/AurOS-Setup.exe unsigned/AurOS-Setup.exe
+          built=$(sed -n 's/^tag .* commit \([0-9a-f]\{40\}\), run .*/\1/p' dl/build-info.txt)
+          [ "$(printf '%s\n' "$built" | wc -l)" = 1 ] && [ -n "$built" ] \
+            || { echo "::error::build-info.txt does not name exactly one full source commit"; exit 1; }
+          [ "$built" = "$GITHUB_SHA" ] && [ "$built" = "$(git rev-parse HEAD)" ] \
+            || { echo "::error::artifact source $built, workflow source $GITHUB_SHA, and checked-out source $(git rev-parse HEAD) do not match exactly"; exit 1; }
+          python3 tools/pe_payload.py get unsigned/AurOS-Setup.exe 300 /tmp/build-inner.exe
+          cmp /tmp/build-inner.exe unsigned/aurbridge-wizard.exe \
+            || { echo "::error::the build's outer installer does not contain its accompanying unsigned wizard"; exit 1; }
+          echo "build_outer_sha256=$(sha256sum unsigned/AurOS-Setup.exe | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "unsigned_wizard_sha256=$(sha256sum unsigned/aurbridge-wizard.exe | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$built" >> "$GITHUB_OUTPUT"
+      - id: inner-upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: auros-setup-unsigned
-          path: unsigned/AurOS-Setup.exe
+          name: auros-wizard-unsigned
+          path: unsigned/aurbridge-wizard.exe
           retention-days: 30
           if-no-files-found: error
-      - name: submit the signing request, and wait for the approver
-        # pinned to the commit of v3.0
-        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092
+      - name: sign the wizard that the bootstrap extracts
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
           project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'auros' }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
-          github-artifact-id: ${{ steps.up.outputs.artifact-id }}
+          signing-policy-slug: ${{ vars.SIGNPATH_INNER_SIGNING_POLICY_SLUG || vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_INNER_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.inner-upload.outputs.artifact-id }}
           wait-for-completion: true
-          wait-for-completion-timeout-in-seconds: 14400
-          output-artifact-directory: signed
-      - name: what came back is signed, by them, and is the file that was built
+          wait-for-completion-timeout-in-seconds: 9000
+          output-artifact-directory: inner-signed
+      - name: verify the inner signature and rebuild the bootstrap
         run: |
-          ls -l signed
-          sh tools/signed-check.sh unsigned/AurOS-Setup.exe signed/AurOS-Setup.exe
-      - id: s
-        run: echo "sha256=$(sha256sum signed/AurOS-Setup.exe | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+          [ -f inner-signed/aurbridge-wizard.exe ] \
+            || { echo "::error::SignPath did not return aurbridge-wizard.exe at the configured artifact path"; exit 1; }
+          sh tools/signed-check.sh unsigned/aurbridge-wizard.exe inner-signed/aurbridge-wizard.exe
+          AUROS_STUB_WORK="$RUNNER_TEMP/signed-stub" \
+            sh build/aurbridge-stub inner-signed/aurbridge-wizard.exe rebuilt/AurOS-Setup.exe
+          sh tools/checksec.sh rebuilt/AurOS-Setup.exe
+          python3 tools/pe_payload.py get rebuilt/AurOS-Setup.exe 300 /tmp/signed-inner.exe
+          cmp /tmp/signed-inner.exe inner-signed/aurbridge-wizard.exe \
+            || { echo "::error::the rebuilt bootstrap does not contain the exact signed wizard"; exit 1; }
+      - id: outer-upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: auros-setup-rebuilt-unsigned
+          path: rebuilt/AurOS-Setup.exe
+          retention-days: 30
+          if-no-files-found: error
+      - name: sign the rebuilt outer download
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'auros' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_OUTER_SIGNING_POLICY_SLUG || vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_OUTER_ARTIFACT_CONFIGURATION_SLUG || 'default' }}
+          github-artifact-id: ${{ steps.outer-upload.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 9000
+          output-artifact-directory: outer-signed
+      - id: final
+        name: verify both signed layers and record their provenance
+        run: |
+          [ -f outer-signed/AurOS-Setup.exe ] \
+            || { echo "::error::SignPath did not return AurOS-Setup.exe at the configured artifact path"; exit 1; }
+          sh tools/signed-check.sh rebuilt/AurOS-Setup.exe outer-signed/AurOS-Setup.exe
+          python3 tools/pe_payload.py get outer-signed/AurOS-Setup.exe 300 /tmp/published-inner.exe
+          cmp /tmp/published-inner.exe inner-signed/aurbridge-wizard.exe \
+            || { echo "::error::outer signing changed or replaced the embedded signed wizard"; exit 1; }
+          AUROS_SIGN_SUBJECT="${AUROS_SIGN_SUBJECT:-SignPath Foundation}" sh build/sign --check /tmp/published-inner.exe
+          cp outer-signed/AurOS-Setup.exe signed/AurOS-Setup.exe
+          uw=$(sha256sum unsigned/aurbridge-wizard.exe | cut -d' ' -f1)
+          sw=$(sha256sum inner-signed/aurbridge-wizard.exe | cut -d' ' -f1)
+          bo=$(sha256sum unsigned/AurOS-Setup.exe | cut -d' ' -f1)
+          ro=$(sha256sum rebuilt/AurOS-Setup.exe | cut -d' ' -f1)
+          so=$(sha256sum signed/AurOS-Setup.exe | cut -d' ' -f1)
+          {
+            echo "source_commit ${{ steps.hashes.outputs.source_sha }}"
+            echo "build_run $RID"
+            echo "unsigned_wizard_sha256 $uw"
+            echo "signed_wizard_sha256 $sw"
+            echo "build_unsigned_outer_sha256 $bo"
+            echo "rebuilt_unsigned_outer_sha256 $ro"
+            echo "signed_outer_sha256 $so"
+            echo "verified signed_wizard_is_authenticode_form_of_unsigned_wizard"
+            echo "verified rebuilt_unsigned_outer_embeds_signed_wizard_byte_for_byte"
+            echo "verified signed_outer_is_authenticode_form_of_rebuilt_unsigned_outer"
+            echo "verified signed_outer_embeds_signed_wizard_byte_for_byte"
+          } > signed/signing-provenance.txt
+          cat signed/signing-provenance.txt
+          echo "signed_wizard_sha256=$sw" >> "$GITHUB_OUTPUT"
+          echo "rebuilt_outer_sha256=$ro" >> "$GITHUB_OUTPUT"
+          echo "signed_sha256=$so" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: auros-setup-signed
-          path: signed/AurOS-Setup.exe
+          path: signed/
           retention-days: 30
           if-no-files-found: error
-
   publish:
     needs: [which, sign]
     # `sign` is skipped (signing off) or succeeded; if it ran and failed,
@@ -288,7 +353,10 @@ jobs:
       RID: ${{ needs.which.outputs.run-id }}
       SIGNED: ${{ needs.sign.result == 'success' }}
       ALLOWED: ${{ needs.which.outputs.allowed }}
-      UNSIGNED_SHA256: ${{ needs.sign.outputs.unsigned_sha256 }}
+      BUILD_OUTER_SHA256: ${{ needs.sign.outputs.build_outer_sha256 }}
+      UNSIGNED_WIZARD_SHA256: ${{ needs.sign.outputs.unsigned_wizard_sha256 }}
+      SIGNED_WIZARD_SHA256: ${{ needs.sign.outputs.signed_wizard_sha256 }}
+      REBUILT_OUTER_SHA256: ${{ needs.sign.outputs.rebuilt_outer_sha256 }}
       SIGNED_SHA256: ${{ needs.sign.outputs.signed_sha256 }}
     steps:
       # tools/legal/notes.sh (the written offer of source) lives in the tree.
@@ -317,15 +385,24 @@ jobs:
         run: |
           cat dist/installer/build-info.txt
           if [ "$SIGNED" = true ]; then
-            # The signed file replaces the unsigned one, after proof that
-            # it is that file plus a signature (the sign job did this;
-            # asked again of the bytes about to be published).
-            [ "$(sha256sum dist/installer/AurOS-Setup.exe | cut -d' ' -f1)" = "$UNSIGNED_SHA256" ] \
-              || { echo "::error::the build's AurOS-Setup.exe is not the one that was sent for signing"; exit 1; }
+            # The first signing request changes the embedded wizard, so the
+            # final outer cannot be a signature-only form of the build's
+            # original outer. Check every handoff recorded by sign instead.
+            [ "$(sha256sum dist/installer/AurOS-Setup.exe | cut -d' ' -f1)" = "$BUILD_OUTER_SHA256" ] \
+              || { echo "::error::the build's outer installer is not the one the sign job received"; exit 1; }
+            [ "$(sha256sum dist/installer/aurbridge-wizard.exe | cut -d' ' -f1)" = "$UNSIGNED_WIZARD_SHA256" ] \
+              || { echo "::error::the build's wizard is not the one the sign job received"; exit 1; }
             [ "$(sha256sum dist/signed/AurOS-Setup.exe | cut -d' ' -f1)" = "$SIGNED_SHA256" ] \
               || { echo "::error::the signed AurOS-Setup.exe is not the one the sign job verified"; exit 1; }
+            grep -qx "unsigned_wizard_sha256 $UNSIGNED_WIZARD_SHA256" dist/signed/signing-provenance.txt
+            grep -qx "signed_wizard_sha256 $SIGNED_WIZARD_SHA256" dist/signed/signing-provenance.txt
+            grep -qx "build_unsigned_outer_sha256 $BUILD_OUTER_SHA256" dist/signed/signing-provenance.txt
+            grep -qx "rebuilt_unsigned_outer_sha256 $REBUILT_OUTER_SHA256" dist/signed/signing-provenance.txt
+            grep -qx "signed_outer_sha256 $SIGNED_SHA256" dist/signed/signing-provenance.txt
             cp dist/signed/AurOS-Setup.exe dist/installer/AurOS-Setup.exe
-            echo "signed AurOS-Setup.exe replaces the build's (unsigned $UNSIGNED_SHA256)"
+            cp dist/signed/signing-provenance.txt rel-signing-provenance.txt
+            echo "signed inner and outer AurOS Setup verified; provenance follows"
+            cat rel-signing-provenance.txt
           fi
           # The tag is the one baked into this build's installer.
           TAG=$(sed -n 's|^base https://[^ ]*/\([^/]*\)/$|\1|p' dist/pieces/pieces.txt | head -1)
@@ -334,6 +411,7 @@ jobs:
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           mkdir -p rel
           cp dist/installer/AurOS-Setup.exe dist/pieces/pieces.txt dist/pieces/auros-desktop.img.gz.* rel/
+          if [ "$SIGNED" = true ]; then cp rel-signing-provenance.txt rel/AurOS-Setup-signing-provenance.txt; fi
           # The fast-path installer, if this build made one (build.yml):
           # beside the normal one, never instead of it, never what the
           # website links to.
@@ -348,6 +426,7 @@ jobs:
           # The pieces are the ones the list names, before anything is published.
           ( cd rel && grep '^piece ' pieces.txt | awk '{print $4"  "$2}' | sha256sum -c --quiet )
           ( cd rel && sha256sum AurOS-Setup.exe $( [ -f AurOS-Setup-fastpath.exe ] && echo AurOS-Setup-fastpath.exe ) \
+              $( [ -f AurOS-Setup-signing-provenance.txt ] && echo AurOS-Setup-signing-provenance.txt ) \
               pieces.txt auros-desktop.img.gz.* > SHA256SUMS )
           img=$(cat dist/pieces/image.sha256); bytes=$(cat dist/pieces/image.bytes)
           setup=$(sha256sum rel/AurOS-Setup.exe | cut -d' ' -f1)
@@ -357,7 +436,7 @@ jobs:
           run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RID"
           if [ "$SIGNED" = true ]; then
             site="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"
-            SIGLINE="AurOS-Setup.exe is signed. Free code signing provided by SignPath.io, certificate by SignPath Foundation. Code signing policy: $site/code-signing.html . It is the file the build made (SHA-256 \`$UNSIGNED_SHA256\`) plus a signature, checked byte for byte before this was published. Windows may still ask a new file a question or two."
+            SIGLINE="AurOS-Setup.exe and the installer it carries are both signed. Free code signing provided by SignPath.io, certificate by SignPath Foundation. Code signing policy: $site/code-signing.html . The signed inner installer was embedded and hashed into a rebuilt bootstrap before that outer file was signed; \`AurOS-Setup-signing-provenance.txt\` records and verifies all four byte transitions. Windows may still ask a new file a question or two."
           else
             SIGLINE="AurOS-Setup.exe is not signed yet. Windows asks before it starts it: in Edge, *Keep* and then *Keep anyway*; on the blue SmartScreen panel, *More info* and then *Run anyway*. On a PC with Smart App Control on, that has to be switched off first."
           fi
@@ -371,6 +450,7 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| Installer | \`AurOS-Setup.exe\`, $(stat -c %s rel/AurOS-Setup.exe) bytes, SHA-256 \`$setup\` |"
+            [ "$SIGNED" != true ] || echo "| Signing provenance | \`AurOS-Setup-signing-provenance.txt\`: source commit and hashes of the original wizard, signed wizard, rebuilt outer and signed outer |"
             [ -z "$fastpath" ] || echo "| Fast-path installer | \`AurOS-Setup-fastpath.exe\`, SHA-256 \`$fastpath\`: the same release built with the fast path (\`AUROS_FASTPATH=1\`). For testing; the website does not link to it, and it is not signed. |"
             echo "| Image | $bytes bytes, SHA-256 \`$img\` |"
             echo "| Download | $dl bytes of gzip in $n pieces of 90 MiB (\`pieces.txt\`); the installer fetches, checks and resumes them |"
@@ -408,7 +488,8 @@ jobs:
             echo "release $TAG already exists with this build's AurOS-Setup.exe"
             # Releases from before these two were assets get them now.
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber rel/image.sha256 rel/image.bytes \
-                $( [ -n "$fastpath" ] && echo rel/AurOS-Setup-fastpath.exe )
+                $( [ -n "$fastpath" ] && echo rel/AurOS-Setup-fastpath.exe ) \
+                $( [ -f rel/AurOS-Setup-signing-provenance.txt ] && echo rel/AurOS-Setup-signing-provenance.txt )
           else
             # WHERE THE TAG GOES. The workflow token may create a tag only
             # at the tip of a branch: probed on 2026-10-23 (run 39923676690,
@@ -430,6 +511,7 @@ jobs:
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$def" --prerelease \
                 --title "AurOS $TAG" --notes-file notes.md \
                 rel/AurOS-Setup.exe $( [ -n "$fastpath" ] && echo rel/AurOS-Setup-fastpath.exe ) \
+                $( [ -f rel/AurOS-Setup-signing-provenance.txt ] && echo rel/AurOS-Setup-signing-provenance.txt ) \
                 rel/pieces.txt rel/SHA256SUMS rel/image.sha256 rel/image.bytes \
                 rel/auros-desktop.img.gz.*
           fi
@@ -438,7 +520,10 @@ jobs:
         run: |
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
           mkdir -p back && cd back
-          for f in AurOS-Setup.exe $( [ -f ../rel/AurOS-Setup-fastpath.exe ] && echo AurOS-Setup-fastpath.exe ) pieces.txt SHA256SUMS image.sha256 image.bytes; do
+          for f in AurOS-Setup.exe \
+              $( [ -f ../rel/AurOS-Setup-fastpath.exe ] && echo AurOS-Setup-fastpath.exe ) \
+              $( [ -f ../rel/AurOS-Setup-signing-provenance.txt ] && echo AurOS-Setup-signing-provenance.txt ) \
+              pieces.txt SHA256SUMS image.sha256 image.bytes; do
             curl -fsSL --retry 5 -o "$f" "$base/$f"
             cmp "$f" "../rel/$f"
           done

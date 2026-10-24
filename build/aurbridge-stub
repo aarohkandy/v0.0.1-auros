@@ -1,0 +1,81 @@
+#!/bin/sh
+# Build only the kernel32 bootstrap around an already-built wizard.
+#
+# The release signing job uses this after SignPath has signed the wizard:
+# the exact signed bytes are hashed into the stub and embedded as RCDATA 300.
+# Keeping this as the same builder used by build/aurbridge prevents the
+# post-signing release path from becoming a second, untested implementation.
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+SRC="$ROOT/src/aurbridge"
+INNER=${1:-}
+OUTER=${2:-}
+[ -n "$INNER" ] && [ -f "$INNER" ] && [ -n "$OUTER" ] || {
+    echo "usage: build/aurbridge-stub INNER-WIZARD.exe OUTER-SETUP.exe" >&2
+    exit 2
+}
+case "$INNER" in /*) ;; *) INNER="$PWD/$INNER" ;; esac
+case "$OUTER" in /*) ;; *) OUTER="$PWD/$OUTER" ;; esac
+WORK=${AUROS_STUB_WORK:-$(dirname "$OUTER")}
+mkdir -p "$WORK" "$(dirname "$OUTER")"
+
+die() { echo "aurbridge-stub: $*" >&2; exit 1; }
+CC=${CC:-x86_64-w64-mingw32-gcc}
+WINDRES=${WINDRES:-x86_64-w64-mingw32-windres}
+OBJDUMP=${OBJDUMP:-x86_64-w64-mingw32-objdump}
+for tool in "$CC" "$WINDRES" "$OBJDUMP" python3; do
+    command -v "$tool" >/dev/null 2>&1 || die "no $tool"
+done
+
+VER=${AUROS_VERSION:-0.1.0}
+case "$VER" in [0-9]*.[0-9]*.[0-9]*) ;; *) die "AUROS_VERSION=$VER is not x.y.z" ;; esac
+VMAJ=$(printf '%s' "$VER" | cut -d. -f1)
+VMIN=$(printf '%s' "$VER" | cut -d. -f2)
+VPAT=$(printf '%s' "$VER" | cut -d. -f3 | sed 's/[^0-9].*//')
+CHILD_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$INNER")
+RC="$WORK/aurbridge-stub.rc"
+RES="$WORK/aurbridge-stub-res.o"
+printf '1 24 "%s"\n#include "aurbridge-ident.rc"\n300 RCDATA "%s"\n' \
+    "$SRC/aurbridge.manifest" "$INNER" > "$RC"
+"$WINDRES" -O coff --include-dir "$SRC" --include-dir "$WORK" \
+    -DAUROS_VER_MAJOR="$VMAJ" -DAUROS_VER_MINOR="$VMIN" -DAUROS_VER_PATCH="${VPAT:-0}" \
+    -DAUROS_VER_STR="\\\"$VER\\\"" -i "$RC" -o "$RES" \
+    || die "the stub's manifest, identity and embedded installer would not build"
+
+STUB_FLAGS="-O2 -mwindows -nostdlib -nostartfiles -ffreestanding -fno-builtin -fno-stack-protector \
+    -fno-tree-loop-distribute-patterns -fno-asynchronous-unwind-tables \
+    -Wl,-e,stub_start -Wl,--subsystem,windows -Wl,--dynamicbase,--nxcompat,--high-entropy-va"
+# shellcheck disable=SC2086
+"$CC" $STUB_FLAGS -DCHILD_SHA256="\"$CHILD_SHA\"" -o "$OUTER" \
+    "$SRC/stub/stub.c" "$RES" -lkernel32 || die "the stub did not build"
+
+python3 "$ROOT/tools/pe_payload.py" check "$OUTER" >/dev/null \
+    || die "the manifest inside $(basename "$OUTER") is one Windows would refuse"
+IMPORTS=$("$OBJDUMP" -p "$OUTER" | sed -n 's/^[[:space:]]*DLL Name: //p' | tr 'A-Z' 'a-z' | tr '\n' ' ')
+[ "$IMPORTS" = "kernel32.dll " ] \
+    || die "$(basename "$OUTER") must import kernel32 only, and imports: $IMPORTS"
+INSIDE="$WORK/.aurbridge-stub-inside.$$"
+trap 'rm -f "$INSIDE"' EXIT HUP INT TERM
+python3 "$ROOT/tools/pe_payload.py" get "$OUTER" 300 "$INSIDE" \
+    && cmp -s "$INSIDE" "$INNER" \
+    || die "the embedded installer is not the exact input wizard"
+rm -f "$INSIDE"; trap - EXIT HUP INT TERM
+
+if [ "${AUROS_STUB_TESTS:-0}" = 1 ] && [ "${AUROS_RELEASE:-0}" != 1 ]; then
+    TESTDIR=$(dirname "$OUTER")/stubtest
+    mkdir -p "$TESTDIR"
+    for v in "test:-DSTUB_FIXED_NAME=L\\\"0123456789abcdef\\\"" \
+             "accept-mutant:-DSTUB_FIXED_NAME=L\\\"0123456789abcdef\\\" -DSTUB_MUTANT_ACCEPT" \
+             "inherit-mutant:-DSTUB_MUTANT_INHERIT" \
+             "here-mutant:-DSTUB_MUTANT_HERE" \
+             "bad-hash-mutant:-UCHILD_SHA256 -DCHILD_SHA256=\\\"0000000000000000000000000000000000000000000000000000000000000000\\\"" \
+             "wine:-DSTUB_NO_ACL_CHECK"; do
+        vn=${v%%:*}; vf=${v#*:}
+        # shellcheck disable=SC2086
+        eval "\"$CC\" $STUB_FLAGS -DCHILD_SHA256='\"$CHILD_SHA\"' $vf -o '$TESTDIR/aurbridge-setup-$vn.exe' '$SRC/stub/stub.c' '$RES' -lkernel32" \
+            || die "the stub's test build $vn did not build"
+    done
+fi
+
+printf '%s\n' "aurbridge-stub: $(basename "$OUTER") carries $(basename "$INNER") byte for byte (sha256 ${CHILD_SHA%${CHILD_SHA#????????}}...), imports kernel32 only"

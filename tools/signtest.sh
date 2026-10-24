@@ -261,6 +261,34 @@ if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
         bad "without one it builds, says it is unsigned, and is" \
             "exit $B2: $(printf '%s' "$OUT2" | tail -3)"
     fi
+
+    # The SignPath release order, using this throwaway signer: sign the
+    # wizard, rebuild the stub around those returned bytes, then sign the
+    # rebuilt outer. This is deliberately separate from build/aurbridge's
+    # local-key path because release.yml receives each signature from a
+    # service in two sequential requests.
+    cp "$TMP/tree/out/aurbridge-wizard.exe" "$TMP/service-wizard-unsigned.exe"
+    cp "$TMP/tree/out/aurbridge-setup.exe" "$TMP/service-outer-from-build.exe"
+    cp "$TMP/service-wizard-unsigned.exe" "$TMP/service-wizard-signed.exe"
+    if sh build/sign "$TMP/service-wizard-signed.exe" >/dev/null 2>&1 &&
+       AUROS_SIGN_SUBJECT="AurOS Test Signer" $SC \
+           "$TMP/service-wizard-unsigned.exe" "$TMP/service-wizard-signed.exe" >/dev/null 2>&1 &&
+       AUROS_STUB_WORK="$TMP/service-stub-work" \
+           sh build/aurbridge-stub "$TMP/service-wizard-signed.exe" "$TMP/service-outer-unsigned.exe" >/dev/null 2>&1 &&
+       python3 tools/pe_payload.py get "$TMP/service-outer-unsigned.exe" 300 "$TMP/service-inner.exe" &&
+       cmp -s "$TMP/service-inner.exe" "$TMP/service-wizard-signed.exe" &&
+       ! cmp -s "$TMP/service-outer-from-build.exe" "$TMP/service-outer-unsigned.exe" &&
+       cp "$TMP/service-outer-unsigned.exe" "$TMP/service-outer-signed.exe" &&
+       sh build/sign "$TMP/service-outer-signed.exe" >/dev/null 2>&1 &&
+       AUROS_SIGN_SUBJECT="AurOS Test Signer" $SC \
+           "$TMP/service-outer-unsigned.exe" "$TMP/service-outer-signed.exe" >/dev/null 2>&1 &&
+       python3 tools/pe_payload.py get "$TMP/service-outer-signed.exe" 300 "$TMP/service-published-inner.exe" &&
+       cmp -s "$TMP/service-published-inner.exe" "$TMP/service-wizard-signed.exe" &&
+       sh build/sign --check "$TMP/service-published-inner.exe" >/dev/null 2>&1; then
+        ok "the two-stage service order signs the inner, embeds it exactly, then signs the outer"
+    else
+        bad "the two-stage service order signs the inner, embeds it exactly, then signs the outer"
+    fi
 else
     echo "    (no mingw-w64: the build's own signing step was not run)"
 fi
