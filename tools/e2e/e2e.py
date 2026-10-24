@@ -1554,6 +1554,75 @@ def first_session_probe_verdicts(lines):
     return out
 
 
+def first_session_lines(text):
+    """The first boot in a persistent journal, before shutdown begins."""
+    lines = text.splitlines()
+    starts = [i for i, line in enumerate(lines) if "kernel: Command line:" in line]
+    seg = lines[starts[0]:(starts[1] if len(starts) > 1 else len(lines))] if starts else lines
+    end = next((i for i, line in enumerate(seg)
+                if re.search(r"Power key pressed|System is powering down", line)), len(seg))
+    return seg[:end]
+
+
+def personalized_verdicts(expected, receipt, theme, shell_target,
+                          firstboot_stamp, firstboot_log, journal):
+    """Verdicts proving a personalized installer recipe reached the live OS.
+
+    This consumes only evidence read from a powered-off installed disk.  It
+    does not infer success from the requested recipe or from build metadata.
+    """
+    recipe_id, look, want_theme = expected
+
+    def one_value(key):
+        values = [line[len(key) + 1:] for line in (receipt or "").splitlines()
+                  if line.startswith(key + "=")]
+        if len(values) != 1:
+            return None, ("missing" if not values else
+                          f"recorded {len(values)} times; expected exactly once")
+        return values[0], values[0]
+
+    out = []
+    for name, key, want in (("saved recipe id", "recipe_id", recipe_id),
+                            ("saved look", "shell", look),
+                            ("saved theme", "theme", want_theme)):
+        got, detail = one_value(key)
+        out.append((name, got == want,
+                    f"{key}={got}" if got == want else
+                    f"expected {key}={want}; installed receipt: {detail}"))
+
+    out.append(("applied theme", theme == want_theme + "\n",
+                f"/etc/auros/theme={want_theme}" if theme == want_theme + "\n" else
+                f"expected {want_theme!r}; got {(theme if theme is not None else 'missing')!r}"))
+    want_shell = f"/usr/share/auros/shells/{look}.shell"
+    out.append(("applied look", shell_target == want_shell,
+                f"active.shell -> {want_shell}" if shell_target == want_shell else
+                f"expected {want_shell}; got {shell_target or 'missing'}"))
+    out.append(("first boot completion stamp", firstboot_stamp,
+                "/var/lib/auros/firstboot.done exists" if firstboot_stamp else "stamp is missing"))
+    completed = "=== first boot complete ===" in (firstboot_log or "").splitlines()
+    out.append(("first boot completed", completed,
+                "completion line is in /var/log/auros-firstboot.log" if completed else
+                "completion line is missing from /var/log/auros-firstboot.log"))
+    applied_line = f"choices: personalized recipe applied: {recipe_id}"
+    logged = applied_line in (firstboot_log or "").splitlines()
+    out.append(("personalized recipe applied at first boot", logged,
+                applied_line if logged else "personalized success line is missing from the first-boot log"))
+
+    first = first_session_lines(journal or "")
+    runtime_line = (f"personalized recipe applied: {recipe_id}; "
+                    f"theme={want_theme}; shell={look}")
+    journal_recipe = any(line.endswith(runtime_line) for line in first)
+    out.append(("first-session journal has applied recipe and theme", journal_recipe,
+                runtime_line if journal_recipe else
+                "exact personalized runtime record is missing from the first session"))
+    journal_look = any(re.search(rf"aurshell: archetype '{re.escape(look)}' \(", line)
+                       for line in first)
+    out.append(("live shell uses chosen look", journal_look,
+                f"aurshell: archetype '{look}'" if journal_look else
+                f"no live archetype '{look}' in the first session"))
+    return out
+
+
 def journal_verdicts(text):
     """Gating verdicts from AurOS's own journal of its FIRST session (the first
     boot in it: the one the installer handed over to, on a Windows variant; the
@@ -1561,11 +1630,7 @@ def journal_verdicts(text):
     Written after run 40050260949: on a real install NetworkManager 'assumed' the NIC
     the installer left configured, never ran DHCP, and Flathub's catalogue, the
     clock and so the store never came: the journal said all of it, nothing read it."""
-    lines = text.splitlines()
-    starts = [i for i, l in enumerate(lines) if "kernel: Command line:" in l]
-    seg = lines[starts[0]:(starts[1] if len(starts) > 1 else len(lines))] if starts else lines
-    end = next((i for i, l in enumerate(seg) if re.search(r"Power key pressed|System is powering down", l)), len(seg))
-    win = seg[:end]
+    win = first_session_lines(text)
 
     def ts(l):
         import datetime
@@ -1606,7 +1671,7 @@ def journal_verdicts(text):
     return out
 
 
-def aur_root_report(rec, mnt, out_dir):
+def aur_root_report(rec, mnt, out_dir, expected_personalization=None):
     """What AurOS's own disk says, read with the machine off (every variant, pass
     or fail): its logs, the software catalogue (what the store has to show),
     stamps of the store's first-start job, and the journal of every boot. The
@@ -1639,7 +1704,33 @@ def aur_root_report(rec, mnt, out_dir):
                      r"aurwl|aurshell|wayland|xdg-desktop-portal|dbus-run-session", re.I)
     pick = [l for l in full.splitlines() if key.search(l)]
     warn = [l for l in full.splitlines() if re.search(r"\b(warning|error|critical|failed|denied|fatal)\b", l, re.I)]
-    v = journal_verdicts(full.split("-----", 1)[-1])
+    journal = full.split("-----", 1)[-1]
+    v = journal_verdicts(journal)
+    if expected_personalization:
+        def root_file(rel):
+            result = run(["sudo", "head", "-c", "65536", os.path.join(mnt, rel)], rec, check=False)
+            return result.stdout if result.returncode == 0 else None
+
+        link = run(["sudo", "readlink", os.path.join(mnt, "etc/auros/shell/active.shell")],
+                   rec, check=False)
+        stamp = run(["sudo", "test", "-f", os.path.join(mnt, "var/lib/auros/firstboot.done")],
+                    rec, check=False).returncode == 0
+        pv = personalized_verdicts(
+            expected_personalization,
+            root_file("etc/auros/installer-choices.conf"),
+            root_file("etc/auros/theme"),
+            link.stdout.strip() if link.returncode == 0 else None,
+            stamp,
+            root_file("var/log/auros-firstboot.log"),
+            journal)
+        v.extend(pv)
+        ptext = "\n".join(f"{'ok  ' if ok else 'RED '} {name}: {detail}"
+                           for name, ok, detail in pv)
+        try:
+            with open(os.path.join(out_dir, "personalized-verdicts.txt"), "w") as fh:
+                fh.write("The requested recipe on the installed, powered-off system:\n" + ptext + "\n")
+        except OSError:
+            pass
     vtext = "\n".join(f"{'ok  ' if ok else 'RED '} {name}: {detail}" for name, ok, detail in v)
     try:
         with open(os.path.join(out_dir, "journal-verdicts.txt"), "w") as fh:
@@ -1745,7 +1836,9 @@ def cmd_inspect(a):
                                     f"cat {mnt}/etc/os-release 2>/dev/null | head -3"],
                                    rec, check=False).stdout)
                     if fs == "ext4" and os.path.exists(os.path.join(mnt, "usr/lib/auros")):
-                        out.append(aur_root_report(rec, mnt, a.out))
+                        expected = ((a.expect_recipe_id, a.expect_look, a.expect_theme)
+                                    if a.expect_recipe_id else None)
+                        out.append(aur_root_report(rec, mnt, a.out, expected))
                 finally:
                     run(["sudo", "umount", mnt], rec, check=False)
             out.append("found: " + json.dumps(found, indent=1))
@@ -1784,7 +1877,21 @@ def main():
     i = sub.add_parser("inspect")
     i.add_argument("out"); i.add_argument("work")
     i.add_argument("--diag", action="store_true", help="after a failed flow: say what the disk holds, no verdict")
+    i.add_argument("--expect-recipe-id", help="require this personalized sha256 recipe on the installed system")
+    i.add_argument("--expect-look", help="require this shell archetype on the installed system")
+    i.add_argument("--expect-theme", help="require this theme on the installed system")
     a = p.parse_args()
+    if a.cmd == "inspect":
+        expected = (a.expect_recipe_id, a.expect_look, a.expect_theme)
+        if any(expected) and not all(expected):
+            p.error("--expect-recipe-id, --expect-look and --expect-theme must be given together")
+        if a.diag and any(expected):
+            p.error("personalized expectations cannot be combined with --diag, which does not return a verdict")
+        if a.expect_recipe_id and not re.fullmatch(r"sha256:[0-9a-f]{64}", a.expect_recipe_id):
+            p.error("--expect-recipe-id must be sha256: followed by 64 lowercase hexadecimal digits")
+        for flag, value in (("--expect-look", a.expect_look), ("--expect-theme", a.expect_theme)):
+            if value and not re.fullmatch(r"[a-z0-9-]{1,32}", value):
+                p.error(f"{flag} must be a lowercase id (letters, digits and hyphens; 1-32 characters)")
     os.makedirs(a.out, exist_ok=True)
     return {"windows": cmd_windows, "flow": cmd_flow, "aur": cmd_aur, "inspect": cmd_inspect}[a.cmd](a)
 
