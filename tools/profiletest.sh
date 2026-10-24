@@ -487,11 +487,13 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root
             && grep -qx 'candidate_popup_maps=0' "$R/password-suppression.txt" 2>/dev/null \
             && grep -qx 'candidate_popup_configures=0' "$R/password-suppression.txt" 2>/dev/null \
             && grep -qx 'candidate_popup_grabs=0' "$R/password-suppression.txt" 2>/dev/null \
+            && grep -qx 'focus_event_observed=yes' "$R/password-suppression.txt" 2>/dev/null \
             && grep -qx 'ascii_value_exact=yes' "$R/password-suppression.txt" 2>/dev/null \
             && grep -qx 'composition_start_count=0' "$R/password-suppression.txt" 2>/dev/null \
             && grep -qx 'composition_update_count=0' "$R/password-suppression.txt" 2>/dev/null \
             && grep -qx 'composition_end_count=0' "$R/password-suppression.txt" 2>/dev/null \
             && grep -qx 'composition_input_count=0' "$R/password-suppression.txt" 2>/dev/null \
+            && grep -qx 'raw_password_focus_log_retained=no' "$R/password-suppression.txt" 2>/dev/null \
             && grep -qx 'raw_password_value_log_retained=no' "$R/password-suppression.txt" 2>/dev/null \
             && grep -qx 'raw_password_event_log_retained=no' "$R/password-suppression.txt" 2>/dev/null \
             && ok "the synthetic password field showed no observed popup or browser composition event in round $round" \
@@ -1045,7 +1047,7 @@ EOF
         fail=$((fail+1))
     fi
     checked=$((checked+1))
-    if python3 - tools/profiletest-fcitx-guest.sh <<'EOPY'
+    if python3 - tools/profiletest-fcitx-guest.sh tools/profiletest.sh <<'EOPY'
 import sys
 text = open(sys.argv[1], encoding="utf-8").read()
 preflight = text.index('fcitx5-remote -m pinyin')
@@ -1085,6 +1087,19 @@ for status in ('active_before_rc', 'ipid_rc', 'identity_before_rc', 'engines_rc'
                'active_after_rc', 'ipid_after_rc', 'identity_after_rc'):
     if f'[ "${status}" = 0 ]' not in loop:
         raise SystemExit("IBus restoration must reject partial failed command output")
+host = open(sys.argv[2], encoding="utf-8").read()
+action_helper = host.index('ibus_host_action() {', host.index('# ── start it'))
+action_result = host[action_helper:host.index('\n}\n\nT0=', action_helper)]
+marker_check = action_result.index('[ -f "$CHAN/failed-$id" ]')
+dispatch = action_result.index('case "$verb" in')
+if marker_check > dispatch:
+    raise SystemExit("a published action failure must be replayed as an acknowledgement, not as an action")
+result_branch = action_result.index('if [ "$action_ok" = 0 ]', dispatch)
+failure = action_result[action_result.index('else', result_branch):]
+marker_write = failure.index(': > "$CHAN/failed-$id"')
+ack_write = failure.index('printf \'%s\\n\' "$id" > "$CHAN/.acks"')
+if marker_write > ack_write or 'if : > "$CHAN/failed-$id"; then' not in failure:
+    raise SystemExit("an action failure must be published before its acknowledgement")
 EOPY
     then
         printf '    %-62s %s\n' "Fcitx centers each field before focused Pinyin selection" "passes"
@@ -1116,7 +1131,7 @@ EOPY
         printf 'status=pass\nchildren_at_boundaries=0\ncompositor_connections_at_boundaries=1\napplication_trace_writers_at_boundaries=1\nforeign_trace_writers_at_boundaries=0\nauthenticated_probe_trace_writer_at_end=1\npeer_pid=exact_aurshell\npeer_path=exact_wayland_display\nlistener_inode=exact_wayland_display\nservice_main_pid=exact_dbus_run_session\ncompositor_exe=exact_usr_bin_aurshell\nservice_invocation_id=exact_systemd_property_and_environment\nservice_control_group=exact_systemd_property\npam_session_cgroup=exact_expected_user_session_scope\ncompositor_in_pam_session_cgroup=yes\ncompositor_descends_from_service_main_pid=yes\nobserved_service_main_pid=100\nobserved_compositor_pid=102\nobserved_service_control_group=/system.slice/aurshell.service\nobserved_pam_session_control_group=/user.slice/user-1000.slice/session-c1.scope\n' > "$R/mousepad-connection.txt"
         printf 'initial_unmapped_before_b_input=yes\nmapped_candidate_while_away=no\nreturn_map_epoch=fresh\npopup_input_grab=no\nb_saved_sentinel=20\na_saved_file_unchanged=yes\n' > "$R/focus-lifecycle.txt"
         printf '20\n' > "$R/focus-b-sentinel.hex"
-        printf 'candidate_popup_creations=0\ncandidate_popup_maps=0\ncandidate_popup_configures=0\ncandidate_popup_grabs=0\nobserved_candidate_popup=no\nascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' > "$R/password-suppression.txt"
+        printf 'candidate_popup_creations=0\ncandidate_popup_maps=0\ncandidate_popup_configures=0\ncandidate_popup_grabs=0\nobserved_candidate_popup=no\nfocus_event_observed=yes\nascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\nraw_password_focus_log_retained=no\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' > "$R/password-suppression.txt"
         printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\ncleanup_pids_gone=1\n' > "$R/restore.txt"
         printf 'exe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\nconfig_hash=abc\ndisplay_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\n' > "$R/fcitx.process"
         for app in mousepad firefox; do
@@ -1579,6 +1594,10 @@ ibus_host_action() {
     case "$id" in *[!0-9]*|'') return 0 ;; esac
     ack=$(cat "$CHAN/acks" 2>/dev/null || echo 0)
     [ "$id" -gt "$ack" ] || return 0
+    if [ -f "$CHAN/failed-$id" ]; then
+        printf '%s\n' "$id" > "$CHAN/.acks" && mv "$CHAN/.acks" "$CHAN/acks"
+        return
+    fi
     action_ok=0
     case "$verb" in
       type-pinyin)
@@ -1656,6 +1675,18 @@ ibus_host_action() {
         case "${1:-}" in ''|*[!A-Za-z0-9._-]*) action_ok=1 ;;
             *) shot "$1" || action_ok=1 ;; esac
         ;;
+      form-shot)
+        case "${1:-}" in ''|*[!A-Za-z0-9._-]*) action_ok=1 ;;
+          *)
+            form_shot="$T/form-shot-$id.ppm"
+            qmp "$Q" "{\"execute\":\"screendump\",\"arguments\":{\"filename\":\"$form_shot\"}}" \
+                >/dev/null 2>&1 \
+                && screen_has_form "$form_shot" >/dev/null \
+                && shot_py "$form_shot" "$EV/$1.png" >/dev/null \
+                || action_ok=1
+            ;;
+        esac
+        ;;
       candidate-shot)
         case "${1:-}:${2:-}" in *[!A-Za-z0-9._:-]*|:|*:) action_ok=1 ;;
           *)
@@ -1673,7 +1704,9 @@ ibus_host_action() {
     if [ "$action_ok" = 0 ]; then
         printf '%s\n' "$id" > "$CHAN/.acks" && mv "$CHAN/.acks" "$CHAN/acks"
     else
-        : > "$CHAN/failed-$id"
+        if : > "$CHAN/failed-$id"; then
+            printf '%s\n' "$id" > "$CHAN/.acks" && mv "$CHAN/.acks" "$CHAN/acks"
+        fi
     fi
 }
 
