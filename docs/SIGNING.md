@@ -133,7 +133,11 @@ build unsigned wizard + outer
 6. `AurOS-Setup-signing-provenance.txt` records the exact source commit, build
    run, hashes of the original and signed wizard, the build's original outer,
    the rebuilt unsigned outer and signed outer, plus the verified
-   relationships. It is published beside the installer and covered by
+   relationships. Personalized packages also retain their original unsigned
+   package manifest and build-info file; their hashes are bound into the
+   signing provenance after validating the manifest against the exact unsigned
+   installer. The manifest remains an unsigned-build record, not a claim that
+   image downloads are ready. It is published beside the installer and covered by
    `SHA256SUMS`. Windows and e2e then test the final signed outer.
 
 If either approval, configuration, signature, source binding, rebuild, byte

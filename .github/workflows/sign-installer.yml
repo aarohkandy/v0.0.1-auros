@@ -10,6 +10,9 @@ on:
       installer-artifact:
         type: string
         default: auros-installer
+      custom-package:
+        type: boolean
+        default: false
     secrets:
       SIGNPATH_API_TOKEN:
         required: true
@@ -46,6 +49,7 @@ jobs:
     env:
       RID: ${{ inputs.run-id }}
       INNER_CONFIG: ${{ vars.SIGNPATH_INNER_ARTIFACT_CONFIGURATION_SLUG }}
+      CUSTOM_PACKAGE: ${{ inputs.custom-package }}
     steps:
       - name: both signing stages are configured for this run
         env:
@@ -78,6 +82,13 @@ jobs:
           python3 tools/pe_payload.py get unsigned/AurOS-Setup.exe 300 /tmp/build-inner.exe
           cmp /tmp/build-inner.exe unsigned/aurbridge-wizard.exe \
             || { echo "::error::the build's outer installer does not contain its accompanying unsigned wizard"; exit 1; }
+          cp dl/build-info.txt signed/build-info.txt
+          if [ "$CUSTOM_PACKAGE" = true ]; then
+            python3 tools/customize/base_build.py preserve-provenance \
+              --provenance dl/provenance.json \
+              --installer unsigned/AurOS-Setup.exe \
+              --output signed/custom-package-provenance.json
+          fi
           echo "build_outer_sha256=$(sha256sum unsigned/AurOS-Setup.exe | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "unsigned_wizard_sha256=$(sha256sum unsigned/aurbridge-wizard.exe | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "source_sha=$built" >> "$GITHUB_OUTPUT"
@@ -154,6 +165,11 @@ jobs:
             echo "build_unsigned_outer_sha256 $bo"
             echo "rebuilt_unsigned_outer_sha256 $ro"
             echo "signed_outer_sha256 $so"
+            echo "build_info_sha256 $(sha256sum signed/build-info.txt | cut -d' ' -f1)"
+            if [ "$CUSTOM_PACKAGE" = true ]; then
+              echo "custom_package_provenance_sha256 $(sha256sum signed/custom-package-provenance.json | cut -d' ' -f1)"
+              echo "verified custom_package_provenance_describes_build_unsigned_outer"
+            fi
             echo "verified signed_wizard_is_authenticode_form_of_unsigned_wizard"
             echo "verified rebuilt_unsigned_outer_embeds_signed_wizard_byte_for_byte"
             echo "verified signed_outer_is_authenticode_form_of_rebuilt_unsigned_outer"
