@@ -24,7 +24,7 @@ The completed path must connect request, validation, consent, artifact identity,
 
 - [x] Unit owner: reproduce and repair RC7 font/hardware/layout/Ferry failures. Integrated unit gates passed at `5d1c50d3` and `d7a5675b`, including the corrected test dependencies.
 - [x] Compositor owner: reproduce uncaught mutants, repair relevant code/tests, prove intended breakages are caught. Integrated image CI passes all four mutation shards and checks.
-- [ ] Wishes UI owner: original UI failures repaired; new theme adapter passes UI mutations but `d7a5675b` exposes paint/end-to-end regressions under investigation. Feature remains disabled.
+- [x] Wishes UI owner: standalone paint/end-to-end harness seams repaired; the full Wishes UI, paint, end-to-end and mutation job passes on `c1ba6ee5`. Feature remains disabled pending its separate activation requirements.
 - [x] Installer safety owner: recover S-04, refuse before table commit when boot-entry creation fails, verify focused fault paths. Exact new-candidate Windows journey remains a separate release gate.
 - [x] Bootstrapper owner: recover B's protected Windows loader design and validate Windows runner hostile-DLL/junction cases. Physical Windows 11 proof remains separate.
 - [ ] Lead: integrate CIW regression coverage and verify the tests exercised match the shipped path.
@@ -307,3 +307,26 @@ harness links. All selected install, first-boot, network-assumption, offline
 store, update/rollback and power-cut gates passed. The release was correctly
 skipped. This remains separate from the real Windows restart journey.
 The earlier staging KVM run `40126965922` also completed successfully.
+
+## Follow-through after candidate tests
+
+Candidate `c1ba6ee5`, build `40131473307`, completed every selected test job
+and entered prerelease publication. However, the restore test took 1,304
+seconds and its old harness silently accepted a 1,200-second boot timeout.
+Its 24 assertions are insufficient to close restore reliability. A focused
+repair will fail immediately at the deadline, retain serial, framebuffer and
+guest evidence, and support a clearly labelled single-test diagnostic using
+the existing candidate artifacts. This diagnostic is not release certification.
+
+Multilingual production run `40131473294` passed exact Pinyin composition
+in Mousepad and Firefox before and after reboot, and retained a validated
+image. Screenshots still expose a missing candidate chooser and a technical
+IBus warning. Identity diagnostic `40134236489` authenticated the candidate
+with server-derived XRes PID and restored normal composition afterward.
+Focus lifecycle diagnostic `40135172647` is now running against that same
+image; no compositor exception has been implemented. See
+`MULTILINGUAL-INPUT-2026-10-24.md` for the trust boundary and stop conditions.
+
+The exact Windows base, BitLocker and fast-path journeys remain required.
+Public delivery, signing configuration, monitored contacts and physical-PC
+proof remain unresolved; automated prerelease publication does not close them.
