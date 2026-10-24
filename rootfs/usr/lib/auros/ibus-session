@@ -1,0 +1,25 @@
+#!/bin/sh
+# The user manager starts before aurshell has made its Wayland socket and
+# Xwayland display. Wait for aurshell's dbus-update-activation-environment
+# publication, then give IBus that exact display environment.
+set -eu
+
+i=0
+while [ "$i" -lt 100 ]; do
+    manager_env=$(/usr/bin/systemctl --user show-environment 2>/dev/null || :)
+    wayland_display=$(printf '%s\n' "$manager_env" | sed -n 's/^WAYLAND_DISPLAY=//p' | head -n 1)
+    [ -z "$wayland_display" ] || break
+    i=$((i + 1))
+    sleep 0.1
+done
+
+if [ -z "${wayland_display:-}" ]; then
+    echo "auros-ibus: the desktop did not publish WAYLAND_DISPLAY" >&2
+    exit 1
+fi
+
+display=$(printf '%s\n' "$manager_env" | sed -n 's/^DISPLAY=//p' | head -n 1)
+export WAYLAND_DISPLAY="$wayland_display"
+if [ -n "$display" ]; then export DISPLAY="$display"; else unset DISPLAY; fi
+
+exec /usr/bin/ibus-daemon --replace --xim

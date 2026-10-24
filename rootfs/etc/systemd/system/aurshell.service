@@ -93,6 +93,10 @@ PAMName=aurshell
 # ten minutes; then it names the plain home and the machine's own
 # settings (aurshell.service.d/50-auros-safe-mode.conf, shell-guard).
 ExecStart=/usr/bin/dbus-run-session -- /usr/bin/aurshell $AURSHELL_SAFE
+# Generated only for a profile whose input_method is ibus. Directly launched
+# GTK, Qt and Xwayland programs inherit the same input-method choice as
+# services launched by the user's systemd instance.
+EnvironmentFile=-/etc/auros/input-method.env
 
 # A Wayland socket has to live somewhere a client can find it, and a
 # system service gets no XDG_RUNTIME_DIR from anybody. This unit used

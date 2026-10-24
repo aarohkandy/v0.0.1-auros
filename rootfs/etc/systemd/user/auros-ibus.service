@@ -1,0 +1,14 @@
+[Unit]
+Description=AurOS multilingual input method
+Documentation=man:ibus-daemon(1)
+ConditionFileIsExecutable=/usr/bin/ibus-daemon
+ConditionFileIsExecutable=/usr/lib/auros/ibus-session
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/auros/ibus-session
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

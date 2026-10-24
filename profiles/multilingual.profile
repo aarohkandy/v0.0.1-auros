@@ -13,7 +13,10 @@ keyboard_layout="fr"
 timezone="Europe/Paris"
 
 # Input methods and the font coverage those locales actually need.
-packages_extra="ibus ibus-pinyin ibus-m17n
+input_method="ibus"
+packages_extra="ibus ibus-pinyin ibus-m17n ibus-gtk ibus-gtk3 ibus-gtk4
                 fonts-noto-cjk fonts-noto-color-emoji fonts-noto-core
                 language-pack-fr language-pack-zh-hans language-pack-es
-                language-pack-ar"
+                language-pack-ar
+                language-pack-gnome-fr language-pack-gnome-zh-hans
+                language-pack-gnome-es language-pack-gnome-ar"
