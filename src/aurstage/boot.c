@@ -25,7 +25,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <net/if.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
+#include <sys/socket.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -33,6 +36,7 @@
 #include <time.h>
 
 #include "aurstage.h"
+#include "handover-mount.h"
 
 /* ── the kernel command line ─────────────────────────────────────── */
 
@@ -259,25 +263,26 @@ void stage_warn(const char *fmt, ...)
 
 int stage_mount_pseudo(void)
 {
-    struct { const char *src, *dst, *type; unsigned long flags; } M[] = {
-        { "proc",     "/proc",    "proc",     MS_NOSUID | MS_NOEXEC | MS_NODEV },
-        { "sysfs",    "/sys",     "sysfs",    MS_NOSUID | MS_NOEXEC | MS_NODEV },
-        { "devtmpfs", "/dev",     "devtmpfs", MS_NOSUID },
-        { "tmpfs",    "/run",     "tmpfs",    MS_NOSUID | MS_NODEV },
+    struct { const char *src, *dst, *type; unsigned long flags; const char *data; } M[] = {
+        { "proc",     "/proc",    "proc",     MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL },
+        { "sysfs",    "/sys",     "sysfs",    MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL },
+        { "devtmpfs", "/dev",     "devtmpfs", MS_NOSUID, NULL },
+        /* This mount is carried into the installed system, where /run belongs to root. */
+        { "tmpfs",    "/run",     "tmpfs",    MS_NOSUID | MS_NODEV, "mode=0755" },
         /* Boot entries cannot be read or armed from Linux without
          * this, and stage C has to be able to put BootOrder back. It
          * is mounted read-only here: stage A writes nothing, and that
          * includes NVRAM. */
-        { "efivarfs", "/sys/firmware/efi/efivars", "efivarfs", MS_RDONLY },
+        { "efivarfs", "/sys/firmware/efi/efivars", "efivarfs", MS_RDONLY, NULL },
         /* Only so that stage_say_secure() can read the kernel's
          * lockdown mode off /sys/kernel/security/lockdown. */
         { "securityfs", "/sys/kernel/security", "securityfs",
-          MS_RDONLY | MS_NOSUID | MS_NOEXEC | MS_NODEV },
+          MS_RDONLY | MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL },
     };
     int bad = 0;
     for (size_t i = 0; i < sizeof M / sizeof M[0]; i++) {
         mkdir(M[i].dst, 0755);
-        if (mount(M[i].src, M[i].dst, M[i].type, M[i].flags, NULL) == 0) continue;
+        if (mount(M[i].src, M[i].dst, M[i].type, M[i].flags, M[i].data) == 0) continue;
         if (errno == EBUSY) continue;                /* already there */
         /* efivarfs is absent on a BIOS machine, which this product
          * refuses anyway -- but it refuses it with a sentence, not by
@@ -429,11 +434,85 @@ int stage_wait_for_disks(int timeout_ms)
  * system we are about to become needs them, and remounting from
  * inside a switch_root that has already thrown away the old root is
  * not something to attempt. */
-static void carry_across(const char *from, const char *to)
+static int carry_across(const char *from, const char *to)
 {
-    mkdir(to, 0755);
-    if (mount(from, to, NULL, MS_MOVE, NULL) != 0)
+    if (mkdir(to, 0755) != 0 && errno != EEXIST) {
+        stage_warn("could not prepare %s for handover (%s)", to, strerror(errno));
+        return -1;
+    }
+    if (mount(from, to, NULL, MS_MOVE, NULL) != 0) {
         stage_warn("could not carry %s across (%s)", from, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+static int carry_back(const char *from, const char *to)
+{
+    if (mount(from, to, NULL, MS_MOVE, NULL) != 0) {
+        stage_warn("could not put %s back after a failed handover (%s)", to, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+static void reboot_broken_handover(void)
+{
+    stage_warn("the staging environment could not be restored; restarting with a clean kernel");
+    sync();
+    reboot(RB_AUTOBOOT);
+    for (;;) pause();
+}
+
+typedef struct {
+    const char *new_root;
+    int efivars_detached;
+    int efivars_made_rw;
+    int securityfs_detached;
+} handover_cleanup;
+
+static int carry_move(const char *from, const char *to, void *ud)
+{
+    (void)ud;
+    return carry_across(from, to);
+}
+
+static int carry_rollback(const char *from, const char *to, void *ud)
+{
+    (void)ud;
+    return carry_back(from, to);
+}
+
+static int handover_cleanup_failed(void *ud)
+{
+    handover_cleanup *c = ud;
+    int failed = 0;
+    if (c->securityfs_detached &&
+        mount("securityfs", "/sys/kernel/security", "securityfs",
+              MS_RDONLY | MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) != 0) {
+        stage_warn("could not restore staging's securityfs after failed handover (%s)",
+                   strerror(errno));
+        failed = 1;
+    }
+    if (c->efivars_detached &&
+        mount("efivarfs", "/sys/firmware/efi/efivars", "efivarfs", MS_RDONLY, NULL) != 0) {
+        stage_warn("could not restore staging's firmware variables after failed handover (%s)",
+                   strerror(errno));
+        failed = 1;
+    }
+    if (c->efivars_made_rw &&
+        mount("efivarfs", "/sys/firmware/efi/efivars", "efivarfs",
+              MS_REMOUNT | MS_RDONLY, NULL) != 0) {
+        stage_warn("could not restore staging's firmware variables read-only after failed handover (%s)",
+                   strerror(errno));
+        failed = 1;
+    }
+    if (chdir("/") != 0) failed = 1;
+    if (umount(c->new_root) != 0) {
+        stage_warn("could not unmount the new root after failed handover (%s)", strerror(errno));
+        failed = 1;
+    }
+    return failed ? -1 : 0;
 }
 
 /* Empty the initramfs so its memory is given back, then become the
@@ -467,11 +546,69 @@ static void wipe_initramfs(int root_dev, const char *dir, int depth)
     closedir(dp);
 }
 
+/* The hardware probe brings wired interfaces up to read carrier state. The kernel state is then
+ * carried into AurOS in this same boot, where NetworkManager can mistake it for an externally
+ * configured connection and never ask for a lease. Put every non-loopback interface back down. */
+static void reset_network(void)
+{
+    int s = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (s < 0) {
+        stage_warn("could not reset network interfaces before handover (%s)", strerror(errno));
+        return;
+    }
+    DIR *d = opendir("/sys/class/net");
+    if (!d) {
+        stage_warn("could not list network interfaces before handover (%s)", strerror(errno));
+        close(s);
+        return;
+    }
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.' || !strcmp(e->d_name, "lo")) continue;
+        if (strlen(e->d_name) >= IFNAMSIZ) {
+            stage_warn("refusing to truncate a network interface name before handover");
+            continue;
+        }
+        struct ifreq r;
+        memset(&r, 0, sizeof r);
+        memcpy(r.ifr_name, e->d_name, strlen(e->d_name) + 1);
+        if (ioctl(s, SIOCGIFFLAGS, &r) != 0) {
+            stage_warn("could not read network interface %s before handover (%s)",
+                       e->d_name, strerror(errno));
+            continue;
+        }
+        if (!(r.ifr_flags & IFF_UP)) continue;
+        r.ifr_flags &= (short)~IFF_UP;
+        if (ioctl(s, SIOCSIFFLAGS, &r) != 0)
+            stage_warn("could not put network interface %s down before handover (%s)",
+                       e->d_name, strerror(errno));
+    }
+    closedir(d);
+    close(s);
+}
+
+/* wr_scratch holds up to a gigabyte and a copy of the machine's EFI files here while the install
+ * runs. The checked copy is on disk before handover, so retaining saved.bin in the /run carried
+ * into AurOS only wastes RAM and exposes those files to the installed session. */
+static void forget_saved_scratch(void)
+{
+    if (unlink("/run/aurstage/saved.bin") != 0 && errno != ENOENT)
+        stage_warn("could not release the saved start-up copy before handover (%s)",
+                   strerror(errno));
+    if (rmdir("/run/aurstage") != 0 && errno != ENOENT && errno != ENOTEMPTY)
+        stage_warn("could not remove staging's scratch directory before handover (%s)",
+                   strerror(errno));
+}
+
 int stage_switch_root(const char *root_dev)
 {
     const char *NEW = "/newroot";
+    handover_cleanup cleanup = { NEW, 0, 0, 0 };
     stage_screen_stop();
-    mkdir(NEW, 0755);
+    if (mkdir(NEW, 0755) != 0 && errno != EEXIST) {
+        stage_warn("cannot prepare the new root (%s)", strerror(errno));
+        return -1;
+    }
 
     /* READ-ONLY *AND* noload, AND THE SECOND HALF IS THE POINT.
      *
@@ -507,6 +644,12 @@ int stage_switch_root(const char *root_dev)
         umount(NEW);
         return -1;
     }
+    if (stat("/", &st) != 0) {
+        stage_warn("cannot identify the staging root (%s)", strerror(errno));
+        umount(NEW);
+        return -1;
+    }
+    int initramfs_dev = (int)st.st_dev;
     stage_say("handing over to the system on %s, in this same boot", root_dev);
 
     /* THE VARIABLE STORE IS LEFT FOR THE NEW SYSTEM TO MOUNT, THE NORMAL WAY.
@@ -518,26 +661,65 @@ int stage_switch_root(const char *root_dev)
      * mount is dropped and systemd mounts its own, writable, with nosuid/nodev/noexec.
      * If it is busy it is made writable instead. A BIOS machine has none. fasttest
      * checks what the new system finds. */
-    if (umount2("/sys/firmware/efi/efivars", 0) != 0 && errno != EINVAL && errno != ENOENT)
-        mount("efivarfs", "/sys/firmware/efi/efivars", "efivarfs", MS_REMOUNT, NULL);
+    if (umount2("/sys/firmware/efi/efivars", 0) == 0) {
+        cleanup.efivars_detached = 1;
+    } else if (errno != EINVAL && errno != ENOENT) {
+        if (mount("efivarfs", "/sys/firmware/efi/efivars", "efivarfs",
+                  MS_REMOUNT, NULL) != 0) {
+            stage_warn("could not make the firmware variable store writable for handover (%s)",
+                       strerror(errno));
+            goto handover_failed;
+        }
+        cleanup.efivars_made_rw = 1;
+    }
 
-    carry_across("/dev",  "/newroot/dev");
-    carry_across("/proc", "/newroot/proc");
-    carry_across("/sys",  "/newroot/sys");
-    carry_across("/run",  "/newroot/run");
+    /* securityfs is mounted read-only for staging's lockdown line. AppArmor writes its profiles
+     * there, so leave it for the installed system to mount with its normal flags. */
+    if (umount2("/sys/kernel/security", 0) == 0) {
+        cleanup.securityfs_detached = 1;
+    } else if (errno != EINVAL && errno != ENOENT) {
+        stage_warn("could not unmount staging's securityfs before handover (%s)",
+                   strerror(errno));
+        goto handover_failed;
+    }
 
-    if (stat("/", &st) != 0) return -1;
-    int initramfs_dev = (int)st.st_dev;
+    /* Enter the new root before moving any mount. This proves the cwd needed by
+     * wipe_initramfs is available while failure is still fully recoverable. */
+    if (chdir(NEW) != 0) {
+        stage_warn("could not enter the new root (%s)", strerror(errno));
+        goto handover_failed;
+    }
+    reset_network();
+    forget_saved_scratch();
 
-    if (chdir(NEW) != 0) { stage_warn("chdir: %s", strerror(errno)); return -1; }
+    static const handover_mount CARRY[] = {
+        { "/dev",  "/newroot/dev" },
+        { "/proc", "/newroot/proc" },
+        { "/sys",  "/newroot/sys" },
+        { "/run",  "/newroot/run" },
+    };
+    int moved = handover_move_transaction(CARRY, sizeof CARRY / sizeof CARRY[0],
+                                          carry_move, carry_rollback,
+                                          handover_cleanup_failed, &cleanup);
+    if (moved != 0) {
+        if (moved == -2) reboot_broken_handover();
+        return -1;
+    }
+
     wipe_initramfs(initramfs_dev, "/", 0);
     if (mount(".", "/", NULL, MS_MOVE, NULL) != 0) {
         stage_warn("could not move the new root into place (%s)",
                    strerror(errno));
-        return -1;
+        reboot_broken_handover();
     }
-    if (chroot(".") != 0) { stage_warn("chroot: %s", strerror(errno)); return -1; }
-    if (chdir("/") != 0)  { stage_warn("chdir: %s", strerror(errno)); return -1; }
+    if (chroot(".") != 0) {
+        stage_warn("could not enter the installed filesystem (%s)", strerror(errno));
+        reboot_broken_handover();
+    }
+    if (chdir("/") != 0) {
+        stage_warn("could not enter the installed system's root directory (%s)", strerror(errno));
+        reboot_broken_handover();
+    }
 
     /* Whatever the installed system uses as PID 1. systemd first
      * because that is what this image actually ships; the others are
@@ -552,5 +734,9 @@ int stage_switch_root(const char *root_dev)
         execv(INITS[i], argv);
     }
     stage_warn("nothing in the new root would start as init");
+    reboot_broken_handover();
+
+handover_failed:
+    if (handover_cleanup_failed(&cleanup) != 0) reboot_broken_handover();
     return -1;
 }

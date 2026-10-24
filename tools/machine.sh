@@ -166,23 +166,91 @@ mach_image() {
 
     cat > "$MTMP/init.c" <<'EOC'
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/reboot.h>
 #include <sys/mount.h>
+#include <sys/stat.h>
 #include <sys/statfs.h>
 #include <sys/statvfs.h>
 #define EFI "/sys/firmware/efi/efivars"
-/* What the installed system finds when it starts, as its init would: an efivarfs somebody left
- * mounted is judged as it is (RC1 on real Windows: read-only, so "Yes, it all works" was refused);
- * with none, it mounts one the way systemd does. */
+/* What the installed system finds when it starts, as its init would. An efivarfs somebody left
+ * mounted is judged as it is; with none, it is mounted the way systemd does. */
 static const char *efivars(void){
     struct statfs f; struct statvfs v;
     if (statfs(EFI, &f) == 0 && (unsigned)f.f_type == 0xde5e81e4u)
         return statvfs(EFI, &v) == 0 && !(v.f_flag & ST_RDONLY) && access(EFI, W_OK) == 0 ? "RW" : "RO";
     return mount("efivarfs", EFI, "efivarfs", MS_NOSUID|MS_NODEV|MS_NOEXEC, NULL) == 0 ? "RW" : "NONE";
 }
-int main(void){ puts("\nINSTALLTEST-AUROS-STARTED");
+/* DOWN when no interface but lo is up; UP-name for the first that is; NONE when there is none. */
+static const char *net(char *buf, size_t n){
+    int s = socket(AF_INET, SOCK_DGRAM, 0); DIR *d = opendir("/sys/class/net"); struct dirent *e; int seen = 0;
+    snprintf(buf, n, "DOWN");
+    while (s >= 0 && d && (e = readdir(d))) {
+        struct ifreq r;
+        if (e->d_name[0] == '.' || !strcmp(e->d_name, "lo")) continue;
+        seen++;
+        memset(&r, 0, sizeof r); strncpy(r.ifr_name, e->d_name, IFNAMSIZ - 1);
+        if (ioctl(s, SIOCGIFFLAGS, &r) == 0 && (r.ifr_flags & IFF_UP)) { snprintf(buf, n, "UP-%s", e->d_name); break; }
+    }
+    if (d) closedir(d);
+    if (s >= 0) close(s);
+    if (!seen) snprintf(buf, n, "NONE");
+    return buf;
+}
+/* IPv6 link-local counts: it made NetworkManager call the inherited link assumed. */
+static int addrs(void){
+    FILE *f = fopen("/proc/net/if_inet6", "r"); char l[256]; int n = 0;
+    while (f && fgets(l, sizeof l, f)) { if (!strstr(l, " lo\n") && !strstr(l, " lo ")) n++; }
+    if (f) fclose(f);
+    return n;
+}
+static const char *secfs(void){
+    struct statfs f; struct statvfs v;
+    if (statfs("/sys/kernel/security", &f) == 0 && (unsigned)f.f_type == 0x73636673u)
+        return statvfs("/sys/kernel/security", &v) == 0 && (v.f_flag & ST_RDONLY) ? "RO" : "RW";
+    return "ABSENT";
+}
+static int fds(char *what, size_t wn){
+    DIR *d = opendir("/proc/self/fd"); struct dirent *e; int n = 0; what[0] = 0;
+    while (d && (e = readdir(d))) {
+        char p[64], t[256]; ssize_t k;
+        if (e->d_name[0] == '.' || atoi(e->d_name) <= 2 || atoi(e->d_name) == dirfd(d)) continue;
+        n++;
+        snprintf(p, sizeof p, "/proc/self/fd/%s", e->d_name);
+        k = readlink(p, t, sizeof t - 1);
+        if (k > 0) { t[k] = 0; if (strlen(what) + strlen(t) + 3 < wn) { strcat(what, " "); strcat(what, t); } }
+    }
+    if (d) closedir(d);
+    return n;
+}
+/* What / is after the one thing every system's init does to it: remount it read-write. */
+static const char *root(char *buf, size_t n){
+    FILE *f = fopen("/proc/self/mounts", "r"); char l[512]; int noload = 0, jb = 0, rc;
+    while (f && fgets(l, sizeof l, f)) if (strstr(l, " / ext4 ") && strstr(l, "noload")) noload = 1;
+    if (f) fclose(f);
+    rc = mount(NULL, "/", NULL, MS_REMOUNT, NULL) == 0 ? 0 : errno;
+    { DIR *d = opendir("/proc/fs/jbd2"); struct dirent *e; while (d && (e = readdir(d))) if (e->d_name[0] != '.') jb++; if (d) closedir(d); }
+    snprintf(buf, n, "%s-%s-%s", noload ? "NOLOAD" : "plain", rc == 0 ? "RW" : "REMOUNT-FAILED", jb ? "JOURNAL" : "NOJOURNAL");
+    return buf;
+}
+static unsigned run_mode(void){ struct stat st; return stat("/run", &st) == 0 ? (unsigned)st.st_mode & 07777u : 0; }
+int main(void){ char b[64];
+                puts("\nINSTALLTEST-AUROS-STARTED");
                 printf("INSTALLTEST-EFIVARS-%s\n", efivars());
+                printf("INSTALLTEST-NET-%s\n", net(b, sizeof b));
+                printf("INSTALLTEST-ADDRS-%d\n", addrs());
+                printf("INSTALLTEST-SECURITYFS-%s\n", secfs());
+                { char w[300]; int n = fds(w, sizeof w); printf("INSTALLTEST-FDS-%d%s\n", n, w); }
+                printf("INSTALLTEST-ROOT-%s\n", root(b, sizeof b));
+                printf("INSTALLTEST-RUN-MODE-%04o\n", run_mode());
+                printf("INSTALLTEST-SCRATCH-%s\n", access("/run/aurstage/saved.bin", F_OK) == 0 ? "LEFT" : "GONE");
                 fflush(stdout);
                 sync(); sleep(2); reboot(RB_POWER_OFF); for(;;) pause(); }
 EOC

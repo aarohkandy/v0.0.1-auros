@@ -404,7 +404,20 @@ int nvram_boot_set(const char *desc, const nvram_hd *on, const char *loader,
         }
     }
 
-    if (boot_write_at(num, desc, on, loader, cmdline, why, n) != 0) return -1;
+    if (boot_write_at(num, desc, on, loader, cmdline, why, n) != 0) {
+        /* A failed create may still have truncated or partly written its new Boot#### file. It is
+         * not an old exact-match entry when fc.found is false, so remove that residue before the
+         * caller reports a clean refusal. Existing entries are left alone: restoring one requires
+         * preserving its exact original bytes before boot_write_at. */
+        if (!fc.found) {
+            char first[200], cleanup[200];
+            snprintf(first, sizeof first, "%s", why);
+            if (nvram_boot_forget_number((uint16_t)num, cleanup, sizeof cleanup) != 0)
+                snprintf(why, n, "%s; the incomplete entry also could not be removed: %s",
+                         first, cleanup);
+        }
+        return -1;
+    }
     if (num_out) *num_out = (uint16_t)num;
     return 0;
 }
@@ -579,4 +592,27 @@ int nvram_boot_forget(const char *desc, char *why, size_t n)
         return -1;
     }
     return gone;
+}
+
+int nvram_boot_forget_number(uint16_t num, char *why, size_t n)
+{
+    if (!nvram_present()) {
+        snprintf(why, n, "this computer's start-up settings are not readable.");
+        return -1;
+    }
+    char path[512];
+    if ((size_t)snprintf(path, sizeof path, "%s/Boot%04X-%s",
+                         NVRAM_DIR, num, GLOBAL_GUID) >= sizeof path) {
+        snprintf(why, n, "the start-up entry's path is too long.");
+        return -1;
+    }
+    nvram_rw();
+    unlock(path);
+    int rc = unlink(path);
+    int saved = errno;
+    nvram_ro();
+    if (rc == 0 || saved == ENOENT) return 0;
+    snprintf(why, n, "the unused start-up entry could not be removed (%s).",
+             strerror(saved));
+    return -1;
 }

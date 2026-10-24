@@ -226,6 +226,40 @@ def plant(path, name, guid, data):
     open(path, 'wb').write(bytes(blob))
 
 
+FILLER_GUID = '7c1b47f2-0f6d-4a53-9e2a-5a3f0a1d9b11'
+
+
+def free_bytes(path):
+    blob = bytearray(open(path, 'rb').read())
+    _hdr_len, _hsz, end, at = store_offsets(blob)
+    return end - at
+
+
+def fill(path, keep):
+    """Use the variable store until only KEEP bytes remain.
+
+    This models a store that is full by bytes, rather than by Boot#### numbers. Only live filler
+    variables are added, so the firmware has no deleted records to reclaim.
+    """
+    n = 0
+    while True:
+        blob = bytearray(open(path, 'rb').read())
+        _hdr_len, hsz, end, at = store_offsets(blob)
+        free = end - at
+        nm = ('Filler%04d' % n).encode('utf-16-le') + b'\x00\x00'
+        if free - keep > 4000 + hsz + len(nm) + 4:
+            dlen = 4000
+        else:
+            dlen = free - keep - hsz - len(nm)
+            dlen -= (hsz + len(nm) + dlen) % 4
+            if dlen < 0:
+                return
+        plant(path, 'Filler%04d' % n, FILLER_GUID, bytes([0xA5]) * dlen)
+        n += 1
+        if free_bytes(path) <= keep + 3:
+            return
+
+
 def _x509_cn(der):
     """The subject common name of a DER certificate, by openssl, which
     is not the code under test (src/aurbridge/sbdb.c is)."""
@@ -453,6 +487,11 @@ def main():
         if len(new) == len(live[-1]):
             sys.exit('%s is not in db' % sys.argv[3])
         supersede(path, 'db', new)
+        return
+    if what == 'fill':
+        # fill VARS.fd KEEP: variables of no consequence until KEEP bytes remain
+        fill(path, int(sys.argv[3]))
+        print('%d bytes left' % free_bytes(path))
         return
     if what == 'plant':
         # plant VARS.fd Boot0007 "Some Description" \\EFI\\x\\y.efi

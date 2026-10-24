@@ -377,7 +377,7 @@ static void install_gap(const stage_machine *m, journal *j)
     /* CAN AUROS BE ADDED TO THIS COMPUTER'S START-UP LIST AT ALL? Asked now,
      * with nothing changed: a store with no room for the entry used to be found
      * out after the table was committed (docs/safety S-04). */
-    if (nvram_probe(why, sizeof why) != 0)
+    if (!fault_fail("probe") && nvram_probe(why, sizeof why) != 0)
         refuse("This computer's start-up list is full, so AurOS could not be "
                "added to it.", "Nothing has been changed. Ask someone who "
                "knows computers to clear old entries from it.",
@@ -465,18 +465,44 @@ static void install_gap(const stage_machine *m, journal *j)
     if (plan_check(&old, &L, j->root_len, j->boot_len, j->rsc_bytes, min_root,
                    why, sizeof why) != 0)
         give_up(why, NULL, "plan-changed", NOW_ROOM_MADE);
+    /* THE START-UP ENTRY, BEFORE THE TABLE (docs/safety S-04). The probe above asked; this is
+     * the write, and a firmware that will not take it is a refusal with nothing committed:
+     * Windows starts, and no AurOS is on the disk that nothing can start. It used to be a
+    * warning after the commit, ending in verdict=installed over a machine with no way in. */
+    uint16_t boot_entry = 0;
+    int entry_failed;
+    if (fault_fail("entry-write")) {
+        snprintf(why, sizeof why, "the start-up entry write failed because a test asked it to");
+        entry_failed = 1;
+    } else {
+        entry_failed = loader_entry(&nw, &L, &boot_entry, why, sizeof why) != 0;
+    }
+    if (entry_failed) {
+        stage_warn("this computer's firmware would not take AurOS's start-up entry (%s).", why);
+        give_up("AurOS could not be added to this computer's start-up list.",
+                "Windows starts as usual. Ask someone who knows computers to clear old entries "
+                "from the start-up list.", "boot-entry-failed", NOW_ROOM_MADE);
+    }
+    fault_maybe("entry-written");
     stage_say("Writing the new layout.");
-    if (commit_table(&t, &nw, commit_note, NULL, why, sizeof why) != 0)
+    if (fault_fail("commit")) {
+        snprintf(why, sizeof why, "the table commit failed because a test asked it to");
+        loader_drop(boot_entry);
         give_up(why, NULL, "commit-failed", NOW_ROOM_MADE);
+    }
+    if (commit_table(&t, &nw, commit_note, NULL, why, sizeof why) != 0) {
+        /* The commit writes the new backup first. A later failure may leave that new table in
+         * force, so the entry must stay unless we can prove no table write happened. */
+        give_up(why, NULL, "commit-failed", NOW_ROOM_MADE);
+    }
     wr_disarm(&t, WR_GPT_PRIMARY);
     wr_disarm(&t, WR_GPT_BACKUP);
     wr_close(&t);
 
-    uint16_t boot_entry = 0;
-    int reg = loader_register(&nw, &L, &boot_entry, why, sizeof why);
+    int reg = loader_arm(boot_entry, why, sizeof why);
     if (reg != 0)
-        stage_warn("AurOS is installed but this computer would not be asked to "
-                   "start it next (%s). Hold the key your computer shows at "
+        stage_warn("AurOS is in this computer's start-up menu, but this computer would not be "
+                   "asked to start it next (%s). Hold the key your computer shows at "
                    "start-up for a boot menu and choose AurOS.", why);
     else
         stage_say("startup  AurOS is in this computer's start-up menu (entry "
@@ -916,7 +942,7 @@ void install_run(const stage_machine *m)
     /* CAN AUROS BE ADDED TO THIS COMPUTER'S START-UP LIST AT ALL? Asked now,
      * with nothing changed: a store with no room for the entry used to be found
      * out after the table was committed (docs/safety S-04). */
-    if (nvram_probe(why, sizeof why) != 0)
+    if (!fault_fail("probe") && nvram_probe(why, sizeof why) != 0)
         refuse("This computer's start-up list is full, so AurOS could not be "
                "added to it.", "Nothing has been changed. Ask someone who "
                "knows computers to clear old entries from it.",
@@ -1109,10 +1135,36 @@ void install_run(const stage_machine *m)
         give_up(why, "The Windows drive is smaller but still works.",
                 "plan-changed", NOW_SMALLER);
 
+    /* THE START-UP ENTRY, BEFORE THE TABLE (docs/safety S-04): see the fast path. Here Windows
+    * has been made smaller already, so the sentence says so. */
+    uint16_t boot_entry = 0;
+    int entry_failed;
+    if (fault_fail("entry-write")) {
+        snprintf(why, sizeof why, "the start-up entry write failed because a test asked it to");
+        entry_failed = 1;
+    } else {
+        entry_failed = loader_entry(&nw, &L, &boot_entry, why, sizeof why) != 0;
+    }
+    if (entry_failed) {
+        stage_warn("this computer's firmware would not take AurOS's start-up entry (%s).", why);
+        give_up("AurOS could not be added to this computer's start-up list.",
+                "The Windows drive is smaller but still works. Ask someone who knows "
+                "computers to clear old entries from the start-up list.",
+                "boot-entry-failed", NOW_SMALLER);
+    }
+    fault_maybe("entry-written");
+
     stage_say("%s", "");
     stage_say("Writing the new layout.");
-    if (commit_table(&t, &nw, commit_note, NULL, why, sizeof why) != 0)
+    if (fault_fail("commit")) {
+        snprintf(why, sizeof why, "the table commit failed because a test asked it to");
+        loader_drop(boot_entry);
         give_up(why, NULL, "commit-failed", NOW_SMALLER);
+    }
+    if (commit_table(&t, &nw, commit_note, NULL, why, sizeof why) != 0) {
+        /* See the fast path above: a failed commit can still make the new backup authoritative. */
+        give_up(why, NULL, "commit-failed", NOW_SMALLER);
+    }
     /* AND THE TWO MOST DANGEROUS WINDOWS IN THE PRODUCT ARE SHUT.
      *
      * wr.h: "Disarm one window, so that a phase which is finished
@@ -1126,19 +1178,17 @@ void install_run(const stage_machine *m)
 
     /* ── phase 8c: the firmware's menu ─────────────────────────────
      *
-     * The boot entry names the partition the commit has just made, by
-     * the GUID the commit generated, so it cannot be written before
-     * this point. BootOrder is NOT touched -- switching this machine
+     * The boot entry was written above, before the table (it names the
+     * partition by the GUID commit_build generated; S-04). BootOrder is
+     * NOT touched -- switching this machine
      * on still reaches Windows until the user has seen AurOS work.
      * What is armed is BootNext, which the firmware clears as it uses
      * it: the next start reaches AurOS once, and a machine that
      * cannot start AurOS comes back to Windows by itself.
      *
-     * A failure is a warning. AurOS is on the disk and verified; what
-     * is missing is a line in a menu, and the sentence says how to
-     * get there without it. */
-    uint16_t boot_entry = 0;
-    int reg = loader_register(&nw, &L, &boot_entry, why, sizeof why);
+     * A failure of the one-shot is a warning: the entry is in the menu
+     * and the sentence says how to get there. */
+    int reg = loader_arm(boot_entry, why, sizeof why);
     if (reg > 0) {
         /* THE ENTRY IS THERE AND ONLY THE ONE-SHOT FAILED, which is a
          * different sentence. Saying "could not add itself to the
@@ -1147,12 +1197,6 @@ void install_run(const stage_machine *m)
         stage_warn("AurOS is in this computer's start-up menu, but this "
                    "computer would not be asked to start it next time (%s).",
                    why);
-        stage_say("         Hold the key your computer shows at start-up for "
-                  "a boot menu");
-        stage_say("         and choose AurOS from it.");
-    } else if (reg < 0) {
-        stage_warn("AurOS is installed but could not add itself to this "
-                   "computer's start-up menu (%s).", why);
         stage_say("         Hold the key your computer shows at start-up for "
                   "a boot menu");
         stage_say("         and choose AurOS from it.");
