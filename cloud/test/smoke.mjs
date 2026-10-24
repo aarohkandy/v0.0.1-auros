@@ -19,6 +19,18 @@ const post = async (path, body, token) => {
   const text = await r.text();
   return { status: r.status, body: text ? JSON.parse(text) : null, ms: Date.now() - t };
 };
+// Calls that go through the ledger (a Durable Object) can meet a platform blip: the service
+// then answers 503 within 6 s. Try such a call up to three times, 5 s apart.
+const postRetry = async (path, body, token, what) => {
+  let r;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    r = await post(path, body, token);
+    if (r.status !== 503) break;
+    console.log(`note: ${what} answered 503 (attempt ${attempt}); ${attempt < 3 ? "trying again in 5 s" : "giving up"}`);
+    if (attempt < 3) await new Promise((x) => setTimeout(x, 5000));
+  }
+  return r;
+};
 const wish = (text, compass) => ({ text, lang: "en", schema: { v: 1, ...ALL }, sensors: { compass, tilt: false, light: false } });
 
 const POTATO = "every time I type potato, fill my screen with potatoes";
@@ -44,14 +56,7 @@ for (;; nonce++) {
   if (z >= first.body.bits) break;
 }
 console.log(`     proof of work: ${nonce + 1} hashes, ${Date.now() - t0} ms on this machine`);
-// A platform blip (the ledger is a Durable Object) answers 503 once in a while: try again twice, 5 s apart.
-let reg;
-for (let attempt = 1; attempt <= 3; attempt++) {
-  reg = await post("/v1/register", { install_id: installId, version: "smoke", consent_version: "1", pow: { day: first.body.day, nonce: String(nonce) } });
-  if (reg.status !== 503) break;
-  console.log(`note: register answered 503 (attempt ${attempt}); ${attempt < 3 ? "trying again in 5 s" : "giving up"}`);
-  if (attempt < 3) await new Promise((r) => setTimeout(r, 5000));
-}
+const reg = await postRetry("/v1/register", { install_id: installId, version: "smoke", consent_version: "1", pow: { day: first.body.day, nonce: String(nonce) } }, undefined, "register");
 if (reg.status === 429) {
   console.log("note: this network has used its 3 registrations today; end-to-end part skipped");
   process.exit(failed ? 1 : 3);
@@ -83,7 +88,7 @@ if (resting) {
   r = await post("/v1/ask", { question: PRINT, lang: "en" }, token);
   check(r.status === 200 && r.body.help_page_id === "printing", "ask: printing help page", `${r.ms} ms ${JSON.stringify(r.body)}`);
 }
-r = await post("/v1/forget", {}, token);
+r = await postRetry("/v1/forget", {}, token, "forget");
 check(r.status === 204, "forget");
 r = await post("/v1/wish", wish(POTATO, true), token);
 // While resting, liveness is not looked up (nothing is touched), so a forgotten token gets the same 503.
