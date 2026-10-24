@@ -345,6 +345,73 @@ def test_journal_verdicts():
     check(e2e.journal_verdicts("")[0][1] is False, "journal: no journal at all is RED, never silently green")
 
 
+def test_personalized_verdicts():
+    """Pure contract checks. Real personalized readiness still requires the VM run."""
+    try:
+        import e2e
+    except ImportError:
+        return
+    rid = "sha256:" + "a" * 64
+    expected = (rid, "taskbar", "moss")
+    first = "\n".join((
+        "2026-10-24T01:00:00+00:00 auros kernel: Command line: quiet",
+        f"2026-10-24T01:00:04+00:00 auros auros-firstboot[12]: personalized recipe applied: {rid}; theme=moss; shell=taskbar",
+        "2026-10-24T01:00:05+00:00 auros aurshell[44]: aurshell: archetype 'taskbar' (Taskbar)",
+        "2026-10-24T01:01:00+00:00 auros systemd-logind[1]: Power key pressed",
+    ))
+    log = f"choices: personalized recipe applied: {rid}\n=== first boot complete ===\n"
+    receipt = f"language=en_US.UTF-8\nrecipe_id={rid}\ntheme=moss\nshell=taskbar\n"
+    good = e2e.personalized_verdicts(expected, receipt, "moss\n",
+                                     "/usr/share/auros/shells/taskbar.shell", True, log, first)
+    check(all(ok for _, ok, _ in good),
+          "personalized contract: matching powered-off artifacts and first-session records are green")
+    extended = e2e.personalized_verdicts(expected, receipt, "moss\n",
+                                          "/usr/share/auros/shells/taskbar.shell", True, log,
+                                          first.replace("; shell=taskbar", "; shell=taskbar; extra=1"))
+    check(not dict((name, ok) for name, ok, _ in extended)[
+              "first-session journal has applied recipe and theme"],
+          "personalized contract: the combined runtime record must match exactly")
+
+    missing = e2e.personalized_verdicts(expected, None, None, None, False, None, None)
+    check(len(missing) == len(good) and not any(ok for _, ok, _ in missing),
+          "personalized contract: every missing installed artifact or live record is RED")
+
+    wrong = e2e.personalized_verdicts(
+        expected, f"recipe_id=sha256:{'b' * 64}\ntheme=ember\nshell=dock\n", "ember\n",
+        "/usr/share/auros/shells/dock.shell", True,
+        f"choices: personalized recipe applied: sha256:{'b' * 64}\n=== first boot complete ===\n",
+        first.replace(rid, "sha256:" + "b" * 64).replace("moss", "ember").replace("taskbar", "dock"))
+    by_name = {name: ok for name, ok, _ in wrong}
+    check(not any(by_name[name] for name in (
+              "saved recipe id", "saved look", "saved theme", "applied theme", "applied look",
+              "personalized recipe applied at first boot",
+              "first-session journal has applied recipe and theme", "live shell uses chosen look")),
+          "personalized contract: a complete but different recipe cannot satisfy the requested one")
+
+    override = e2e.personalized_verdicts(
+        expected, "theme=ember\nshell=dock\n", "ember\n",
+        "/usr/share/auros/shells/dock.shell", True, "=== first boot complete ===\n",
+        first.replace(f"personalized recipe applied: {rid}; theme=moss; shell=taskbar",
+                      "personalized override applied: theme=ember; shell=dock")
+             .replace("'taskbar'", "'dock'"))
+    check(not dict((name, ok) for name, ok, _ in override)["saved recipe id"] and
+          not dict((name, ok) for name, ok, _ in override)["personalized recipe applied at first boot"],
+          "personalized contract: an installer override with no recipe id is explicitly RED")
+
+    later = first + "\n" + "\n".join((
+        "2026-10-24T02:00:00+00:00 auros kernel: Command line: quiet",
+        f"2026-10-24T02:00:03+00:00 auros auros-firstboot: personalized recipe applied: {rid}; theme=moss; shell=taskbar",
+        "2026-10-24T02:00:05+00:00 auros aurshell: archetype 'taskbar' (Taskbar)",
+    ))
+    empty_first = later.replace(f"personalized recipe applied: {rid}; theme=moss; shell=taskbar",
+                                "personalized recipe absent", 1) \
+                       .replace("archetype 'taskbar'", "archetype 'dock'", 1)
+    after_reboot = e2e.personalized_verdicts(expected, receipt, "moss\n",
+                                              "/usr/share/auros/shells/taskbar.shell", True, log, empty_first)
+    check(not all(ok for _, ok, _ in after_reboot),
+          "personalized contract: a later boot cannot replace missing first-session evidence")
+
+
 def test_store_frame():
     try:
         import e2e, numpy as np
@@ -517,6 +584,7 @@ test_label_is()
 test_canon_label()
 test_store_magnifier()
 test_journal_verdicts()
+test_personalized_verdicts()
 test_store_frame()
 test_store_content()
 test_label_contrast()

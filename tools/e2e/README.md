@@ -168,6 +168,21 @@ python3 tools/e2e/e2e.py inspect /big/out/inspect /big/work
 python3 tools/e2e/vision.py some-shot.png   # what the driver sees in a screenshot
 ```
 
+For an installer baked for one exact personalized recipe, make the final
+powered-off inspection recipe-specific:
+
+```sh
+python3 tools/e2e/e2e.py inspect /big/out/inspect /big/work \
+  --expect-recipe-id sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --expect-look taskbar --expect-theme moss
+```
+
+The three expectations are all-or-none. They gate the installed receipt,
+the applied theme and shell files, first-boot completion, and the chosen
+recipe, theme and live shell in the first session's journal. This is the
+final step of a run that used that exact personalized EXE; it is not a
+substitute for the Windows-to-AurOS journey.
+
 ## Known limits: it is a VM, not a PC
 
 - The disk is QEMU's AHCI with a plain SATA SSD: no Intel RST/VMD, no
