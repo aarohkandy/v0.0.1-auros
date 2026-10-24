@@ -4,6 +4,11 @@ _Last updated: 00:36 UTC 2026-10-24 (17:36 your time, 23 Oct)._
 
 ## Done overnight (proof)
 
+- **On release candidate 6's image, a program installs from the store and opens, end to end and checked by machine**
+  (run 40047454422): AurOS's first screen in 36 s, "Start AurOS from now on", the store, the Install button now readable
+  (5.2:1), VLC installed in 2 min, opens in 26 s, and found on the disk afterwards. The same journey starting from
+  Windows (website → install → this) is running on RC6 now.
+
 - **Safety review done** (docs/safety/FINDINGS.md): 26 confirmed ways her disk or Windows could be hurt
   (12 high, 0 blockers after 3 skeptics each); 9 already fixed, the rest assigned with tests required.
 - **Security audit done** (docs/security/FINDINGS.md): 0 critical, 8 high, all assigned: installer trust and
