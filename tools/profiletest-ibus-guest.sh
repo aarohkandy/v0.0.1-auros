@@ -251,7 +251,20 @@ run_x11_panel_probe() {
         done
         return 1
     }
-    daemon_pid= panel_pid= retained_pid= mouse_x11_pid=
+    capture_xres() { # phase output-json
+        xres_phase=$1; xres_output=$2
+        if ! xres_timeout=$(probe_remaining); then
+            incomplete "XRes whole-probe deadline expired during $xres_phase"
+            return 1
+        fi
+        if ! as_desktop python3 /usr/lib/auros-profiletest/x11_xres_probe.py \
+                --display "$display" --pid "$panel_pid" --timeout "$xres_timeout" \
+                > "$xres_output" 2> "$XOUT/xres-$xres_phase.stderr"; then
+            incomplete "XRes inventory during $xres_phase failed"
+            return 1
+        fi
+    }
+    daemon_pid= panel_pid= retained_pid= mouse_x11_pid= focus_away_pid=
 
     note "diagnostic_only=yes"
     note "candidate_visibility_is_not_a_success_gate=yes"
@@ -274,6 +287,7 @@ run_x11_panel_probe() {
     daemon_unit=auros-profiletest-ibus-x11-daemon
     panel_unit=auros-profiletest-ibus-x11-panel
     mouse_x11_unit=auros-profiletest-ibus-x11-mousepad
+    focus_away_unit=auros-profiletest-ibus-x11-focus-away
     as_desktop systemd-run --user --quiet --collect --unit="$daemon_unit" \
         --property=Type=exec \
         --property="StandardOutput=append:$XRUN/daemon.stdout" \
@@ -434,17 +448,96 @@ EOPY
         fi
     fi
 
-    for cleanup_unit in "$mouse_x11_unit" "$panel_unit" "$daemon_unit"; do
-        if ! as_desktop systemctl --user stop "$cleanup_unit" >/dev/null 2>&1; then
-            restoration_incomplete "could not stop transient unit $cleanup_unit"
+    # A -> B: a separately launched native Wayland editor takes real pointer
+    # focus while the authenticated X11 candidate exists for editor A.
+    act baseline x11-probe-focus-away \
+        || incomplete "could not record focus-away baseline"
+    focus_away_file="$XRUN/focus-away.txt"
+    : > "$focus_away_file"; chown "$desktop_user" "$focus_away_file"
+    as_desktop systemd-run --user --quiet --collect --unit="$focus_away_unit" \
+        --property=Type=exec --setenv=GDK_BACKEND=wayland \
+        -- mousepad --disable-server "$focus_away_file" >/dev/null 2>&1 \
+        || incomplete "second native Wayland Mousepad did not start"
+    wait_active "$focus_away_unit" \
+        || incomplete "second native Wayland Mousepad did not stay active"
+    focus_away_pid=$(as_desktop systemctl --user show -p MainPID --value \
+        "$focus_away_unit" 2>/dev/null)
+    case "$focus_away_pid" in ''|0|*[!0-9]*)
+        incomplete "second native Mousepad MainPID unavailable" ;;
+      *)
+        tr '\0' '\n' < "/proc/$focus_away_pid/environ" 2>/dev/null \
+            | grep -E '^(GDK_BACKEND|WAYLAND_DISPLAY|DISPLAY)=' \
+            > "$XOUT/focus-away.env" || true
+        grep -qx 'GDK_BACKEND=wayland' "$XOUT/focus-away.env" \
+            || incomplete "second Mousepad was not explicitly native Wayland"
+        ;;
+    esac
+    act wait-change x11-probe-focus-away \
+        || incomplete "second native Mousepad did not map visibly"
+    act click-change x11-probe-focus-away \
+        || incomplete "second native Mousepad did not receive pointer focus"
+    act key spc || incomplete "host did not type focus proof into second Mousepad"
+    act chord ctrl s || incomplete "host did not save second Mousepad focus proof"
+    wait_hex_file "$focus_away_file" 20 \
+        || incomplete "second Mousepad did not save exact QMP focus proof"
+    act shot ibus-x11-focus-away || incomplete "focus-away screenshot failed"
+    sleep 1
+    capture_xres focus-away "$XOUT/xres-focus-away.json" || true
+
+    # B -> A: remove B, click the original editor, and create a fresh preedit.
+    as_desktop systemctl --user stop "$focus_away_unit" >/dev/null 2>&1 \
+        || restoration_incomplete "could not stop second native Mousepad"
+    wait_pid_gone "$focus_away_pid" \
+        || restoration_incomplete "second native Mousepad PID remained after stop"
+    note "focus_away_pid=${focus_away_pid:-missing} gone=$(pid_gone "$focus_away_pid" && echo yes || echo no)"
+    act click-center || incomplete "original native Mousepad did not receive return click"
+    select_ibus_engine pinyin x11-panel-return \
+        || incomplete "pinyin could not be reselected after focus returned"
+    act type-pinyin || incomplete "host did not type fresh return preedit"
+    act shot ibus-x11-focus-return || incomplete "focus-return screenshot failed"
+    sleep 1
+    capture_xres focus-return "$XOUT/xres-focus-return.json" || true
+    if [ -s "$XOUT/xres-preedit.json" ] && \
+       [ -s "$XOUT/xres-focus-away.json" ] && \
+       [ -s "$XOUT/xres-focus-return.json" ]; then
+        if ! python3 - "$XOUT/xres-preedit.json" \
+                "$XOUT/xres-focus-away.json" "$XOUT/xres-focus-return.json" \
+                "$panel_pid" > "$XOUT/candidate-lifecycle.txt" <<'EOPY'
+import json, sys
+sys.path.insert(0, "/usr/lib/auros-profiletest")
+from x11_xres_probe import candidate_lifecycle
+reports = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:4]]
+result = candidate_lifecycle(*reports, int(sys.argv[4]))
+for key in ("preedit_candidate_xid", "return_candidate_xid", "xid_reused",
+            "preedit_map_state", "focus_away_map_state", "focus_return_map_state"):
+    print("%s=%s" % (key, result[key]))
+EOPY
+        then
+            incomplete "SECURITY STOP: candidate did not unmap and return safely with native focus"
         fi
+    else
+        incomplete "candidate focus-lifecycle evidence unavailable"
+    fi
+    if [ -s "$XOUT/candidate-lifecycle.txt" ]; then
+        cat "$XOUT/candidate-lifecycle.txt" >> "$XOUT/probe.log"
+    fi
+
+    for cleanup_unit in "$focus_away_unit" "$mouse_x11_unit" "$panel_unit" "$daemon_unit"; do
+        cleanup_state=$(as_desktop systemctl --user is-active "$cleanup_unit" 2>/dev/null || true)
+        case "$cleanup_state" in inactive|failed|unknown|'') ;;
+          *)
+            if ! as_desktop systemctl --user stop "$cleanup_unit" >/dev/null 2>&1; then
+                restoration_incomplete "could not stop transient unit $cleanup_unit"
+            fi
+            ;;
+        esac
         cleanup_state=$(as_desktop systemctl --user is-active "$cleanup_unit" 2>/dev/null || true)
         note "cleanup_unit=$cleanup_unit active_state=${cleanup_state:-unloaded}"
         case "$cleanup_state" in inactive|failed|unknown|'') ;;
           *) restoration_incomplete "transient unit $cleanup_unit remained $cleanup_state" ;;
         esac
     done
-    for cleanup_pid in "$mouse_x11_pid" "$panel_pid" "$daemon_pid"; do
+    for cleanup_pid in "$focus_away_pid" "$mouse_x11_pid" "$panel_pid" "$daemon_pid"; do
         [ -n "$cleanup_pid" ] || continue
         if wait_pid_gone "$cleanup_pid"; then
             note "cleanup_pid=$cleanup_pid gone=yes"

@@ -116,6 +116,50 @@ def evidence_state(report, wanted_pid):
     return "inconclusive"
 
 
+def candidate_lifecycle(preedit, away, returned, wanted_pid):
+    """Prove an authenticated candidate unmaps and a safe one returns."""
+    reports = (("preedit", preedit), ("focus-away", away),
+               ("focus-return", returned))
+    for phase, report in reports:
+        if report.get("wanted_pid") != wanted_pid:
+            raise X11Error(phase + " requested PID mismatch")
+        windows = report.get("windows", [])
+        if any(window.get("pid") != wanted_pid for window in windows):
+            raise X11Error(phase + " contains another server PID")
+        if any(bool(window.get("mapped")) != (window.get("map_state") == 2)
+               for window in windows):
+            raise X11Error(phase + " has inconsistent map-state evidence")
+    candidates = [window for window in preedit.get("windows", [])
+                  if window.get("mapped") and window.get("override_redirect")]
+    if len(candidates) != 1:
+        raise X11Error("preedit must have exactly one mapped override-redirect candidate")
+    xid = candidates[0].get("xid")
+    if not xid:
+        raise X11Error("preedit candidate XID unavailable")
+
+    away_same = [window for window in away.get("windows", [])
+                 if window.get("xid") == xid]
+    if (len(away_same) != 1 or away_same[0].get("mapped") or
+            away_same[0].get("map_state") != 0):
+        raise X11Error("candidate did not become unmapped on native focus loss")
+    if any(window.get("mapped") for window in away.get("windows", [])):
+        raise X11Error("a panel window remained mapped on native focus loss")
+
+    returned_mapped = [window for window in returned.get("windows", [])
+                       if window.get("mapped")]
+    if len(returned_mapped) != 1 or not returned_mapped[0].get("override_redirect"):
+        raise X11Error("return preedit lacks one authenticated mapped candidate")
+    returned_candidate = returned_mapped[0]
+    if returned_candidate.get("map_state") != 2 or not returned_candidate.get("xid"):
+        raise X11Error("return candidate map-state or XID is unavailable")
+    return_xid = returned_candidate["xid"]
+    return {"preedit_candidate_xid": xid, "return_candidate_xid": return_xid,
+            "xid_reused": "yes" if return_xid == xid else "no",
+            "preedit_map_state": 2,
+            "focus_away_map_state": away_same[0].get("map_state"),
+            "focus_return_map_state": returned_candidate.get("map_state")}
+
+
 class XConnection:
     def __init__(self, display, deadline):
         number = display.split(":", 1)[-1].split(".", 1)[0]

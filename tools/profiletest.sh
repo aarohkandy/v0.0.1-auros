@@ -409,14 +409,30 @@ judge_ibus_x11_probe() { # evidence-root screenshot-root
         ;;
       *) bad "XRes panel identity classification is valid" "identity_state=$identity" ;;
     esac
+    grep -Eq '^preedit_candidate_xid=0x[0-9a-fA-F]+$' "$XEV/candidate-lifecycle.txt" 2>/dev/null \
+        && grep -Eq '^return_candidate_xid=0x[0-9a-fA-F]+$' "$XEV/candidate-lifecycle.txt" 2>/dev/null \
+        && grep -Eq '^xid_reused=(yes|no)$' "$XEV/candidate-lifecycle.txt" 2>/dev/null \
+        && grep -qx 'preedit_map_state=2' "$XEV/candidate-lifecycle.txt" 2>/dev/null \
+        && grep -qx 'focus_away_map_state=0' "$XEV/candidate-lifecycle.txt" 2>/dev/null \
+        && grep -qx 'focus_return_map_state=2' "$XEV/candidate-lifecycle.txt" 2>/dev/null \
+        && ok "the authenticated candidate unmapped and returned with native focus" \
+        || bad "the authenticated candidate unmapped and returned with native focus" \
+               "SECURITY STOP: exact lifecycle evidence missing"
+    grep -qx 'GDK_BACKEND=wayland' "$XEV/focus-away.env" 2>/dev/null \
+        && grep -Eq '^focus_away_pid=[0-9]+ gone=yes$' "$XEV/probe.log" 2>/dev/null \
+        && [ "$(od -An -tx1 "$XEV/runtime-output/focus-away.txt" 2>/dev/null | tr -d ' \n')" = 20 ] \
+        && ok "the focus-away application was native Wayland and exited" \
+        || bad "the focus-away application was native Wayland and exited" \
+               "native focus-away identity or cleanup missing"
     cleanup_ok=1
-    for cleanup_unit in auros-profiletest-ibus-x11-mousepad \
+    for cleanup_unit in auros-profiletest-ibus-x11-focus-away \
+                        auros-profiletest-ibus-x11-mousepad \
                         auros-profiletest-ibus-x11-panel \
                         auros-profiletest-ibus-x11-daemon; do
         grep -Eq "^cleanup_unit=$cleanup_unit active_state=(inactive|failed|unknown|unloaded)$" \
             "$XEV/probe.log" 2>/dev/null || cleanup_ok=0
     done
-    [ "$(grep -Ec '^cleanup_pid=[0-9]+ gone=yes$' "$XEV/probe.log" 2>/dev/null || true)" -eq 3 ] \
+    [ "$(grep -Ec '^cleanup_pid=[0-9]+ gone=yes$' "$XEV/probe.log" 2>/dev/null || true)" -eq 4 ] \
         || cleanup_ok=0
     [ "$cleanup_ok" = 1 ] \
         && ok "all transient units stopped and their recorded PIDs exited" \
@@ -429,10 +445,15 @@ judge_ibus_x11_probe() { # evidence-root screenshot-root
         && ok "the shipped IBus service resumed with exact arguments and Pinyin" \
         || bad "the shipped IBus service resumed with exact arguments and Pinyin" \
                "restart identity or readiness evidence missing"
-    [ -s "$SHOTS/ibus-x11-before.png" ] && [ -s "$SHOTS/ibus-x11-preedit.png" ] \
-        && ok "the X11 diagnostic retained before/preedit screenshots" \
-        || bad "the X11 diagnostic retained before/preedit screenshots" \
-               "missing ibus-x11-before.png or ibus-x11-preedit.png"
+    screenshots_ok=1
+    for lifecycle_shot in ibus-x11-before ibus-x11-preedit \
+                          ibus-x11-focus-away ibus-x11-focus-return; do
+        [ -s "$SHOTS/$lifecycle_shot.png" ] || screenshots_ok=0
+    done
+    [ "$screenshots_ok" = 1 ] \
+        && ok "the X11 diagnostic retained each focus-lifecycle screenshot" \
+        || bad "the X11 diagnostic retained each focus-lifecycle screenshot" \
+               "one or more X11 lifecycle screenshots are missing"
     printf '    %-62s %s\n' "candidate visibility and product eligibility" \
         "NOT ESTABLISHED by this diagnostic"
 }
@@ -705,9 +726,12 @@ EOPY
 default_panel_count=0
 default_panel_quiescence_s=5
 panel_start_pid=20 panel_retained_pid=20
+focus_away_pid=22 gone=yes
+cleanup_unit=auros-profiletest-ibus-x11-focus-away active_state=inactive
 cleanup_unit=auros-profiletest-ibus-x11-mousepad active_state=inactive
 cleanup_unit=auros-profiletest-ibus-x11-panel active_state=inactive
 cleanup_unit=auros-profiletest-ibus-x11-daemon active_state=inactive
+cleanup_pid=22 gone=yes
 cleanup_pid=21 gone=yes
 cleanup_pid=20 gone=yes
 cleanup_pid=19 gone=yes
@@ -715,13 +739,22 @@ ordinary_service_ready=1 main_pid=30
 status=$probe_status
 EOF
         printf 'identity_state=%s\n' "$identity" > "$d/evidence/candidate-summary.txt"
+        printf '%s\n' 'preedit_candidate_xid=0x20' 'return_candidate_xid=0x20' \
+            'xid_reused=yes' 'preedit_map_state=2' \
+            'focus_away_map_state=0' 'focus_return_map_state=2' \
+            > "$d/evidence/candidate-lifecycle.txt"
+        printf '%s\n' 'GDK_BACKEND=wayland' > "$d/evidence/focus-away.env"
         printf '%s\n' 'exe=/usr/libexec/ibus-ui-gtk3' > "$d/evidence/panel-start.process"
         printf '%s\n' 'exe=/usr/bin/ibus-daemon' \
             'cmdline=/usr/bin/ibus-daemon --replace --xim ' \
             > "$d/evidence/shipped-service.process"
         printf '%s\n' pinyin > "$d/evidence/shipped-engine-ids.txt"
+        mkdir -p "$d/evidence/runtime-output"
+        printf ' ' > "$d/evidence/runtime-output/focus-away.txt"
         printf x > "$d/shots/ibus-x11-before.png"
         printf x > "$d/shots/ibus-x11-preedit.png"
+        printf x > "$d/shots/ibus-x11-focus-away.png"
+        printf x > "$d/shots/ibus-x11-focus-return.png"
     }
     x11_refuses() {
         ( fail=0; checked=0
@@ -738,6 +771,20 @@ EOF
         printf '    %-62s %s\n' "empty XRes window/PID evidence stays neutral" "accepted"
     else
         printf '    %-62s %s\n' "empty XRes window/PID evidence stays neutral" "FAIL"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    x11_fixture "$T/x11" mapped complete
+    sed 's/focus_away_map_state=0/focus_away_map_state=2/' \
+        "$T/x11/evidence/candidate-lifecycle.txt" \
+        > "$T/x11/evidence/candidate-lifecycle.new"
+    mv "$T/x11/evidence/candidate-lifecycle.new" \
+        "$T/x11/evidence/candidate-lifecycle.txt"
+    n=$(x11_refuses "$T/x11")
+    if [ "$n" -ge 1 ]; then
+        printf '    %-62s %s\n' "X11 candidate left mapped across native focus loss" "refused"
+    else
+        printf '    %-62s %s\n' "X11 candidate left mapped across native focus loss" "ACCEPTED"
         fail=$((fail+1))
     fi
     checked=$((checked+1))
