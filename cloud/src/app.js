@@ -299,6 +299,9 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
       else res = json(404, { error: "path" });
     } catch (e) {
       m.reason = "crash:" + (e && e.name);
+      // Platform and storage errors say what broke ("Durable Object storage operation
+      // exceeded timeout", "reset because its code was updated"); none carries her words.
+      m.detail = `${e?.remote ? "remote " : ""}${e?.overloaded ? "overloaded " : ""}${e?.retryable ? "retryable " : ""}${String(e?.message ?? "").replace(/[^\x20-\x7e]/g, " ").slice(0, 160)}`.trim();
       res = busy(m);
     }
     m.status = res.status;

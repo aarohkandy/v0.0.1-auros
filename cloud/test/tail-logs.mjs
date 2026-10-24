@@ -18,6 +18,8 @@ writeFileSync(process.argv[3], lines.join("\n"));
 const outcomes = {};
 for (const e of events) outcomes[e.outcome] = (outcomes[e.outcome] || 0) + 1;
 const cpu = events.map((e) => e.cpuTime).filter((x) => typeof x === "number").sort((a, b) => a - b);
+// Exceptions the platform recorded (name and message only): why a request crashed.
+for (const e of events) for (const x of e.exceptions || []) console.log(`  EXCEPTION ${e.event?.request?.url ?? ""}: ${x.name}: ${String(x.message).slice(0, 300)}`);
 const byPath = {};
 for (const e of events) {
   if (typeof e.cpuTime !== "number") continue;
