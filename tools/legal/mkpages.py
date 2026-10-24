@@ -212,7 +212,7 @@ def outputs():
     out = {}
     for md, name, title, desc, toc in PAGES:
         out["website/" + name] = page(md, title, desc, toc)
-    for name in ("index", "guide", "advanced", "status", "code-signing"):
+    for name in ("index", "guide", "advanced", "status", "code-signing", "request"):
         rel = "website/%s.html" % name
         with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
             t = fh.read()
