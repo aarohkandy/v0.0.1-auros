@@ -28,6 +28,14 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/wrtest.XXXXXX")
 # optional and not conditional on reaching the end.
 trap 'if [ -f "$TMP/disks.bak" ]; then cp "$TMP/disks.bak" src/aurstage/disks.c; fi
       rm -f src/aurstage/evade.h; rm -rf "$TMP"' EXIT
+# A killed run (INT, TERM) must restore the tree too: sh runs the EXIT trap
+# only if it exits through `exit`.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# The builds below are for their refusals, not their output: out/ holds the
+# staging image the installer embeds and the end-to-end tests just tested,
+# and rebuilding it there changed its bytes under exetest (CIW).
+AUROS_STAGING_OUT="$TMP/out"; export AUROS_STAGING_OUT
 
 echo
 echo "Can anything write to a disk except the one file that may?"

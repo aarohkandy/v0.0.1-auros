@@ -28,7 +28,19 @@ Artifacts for the runs: build run 40046138543 (8dd0c05).
 | keytest | wired | green; mutants: evdev+8 offset wrong (aurwl.c:3737) -> 16 of 19 wrong; control characters let through (aurwl.c:3742) -> 4 of 19 wrong |
 | padtest | wired | green; mutant: `PAD_TAP_MS` 0 (pad.c:54) -> FAIL |
 
-(Later rows are added as each test is run.)
+| wrtest | wired (unit, sudo) | green 23/23; mutants: window bound loosened by 8 bytes (wr.c:114) -> 2 of 23 wrong; the build gate's `die` removed (build/staging:169) -> 2 of 23 wrong. Test fix: it rebuilt the staging image into out/ (changing the bytes exetest compares); builds now go to `$TMP/out`, and INT/TERM restore the sabotaged disks.c (tools/wrtest.sh) |
+| healthtest | wired (unit) | green 14/14; mutants: pending sector not a refusal (health.c:262) -> 2 of 14; "plugged in" always true (health.c:91) -> 2 of 14 |
+| termstest | wired (unit) | green 2/2; mutant: terms never written to the journal (format.c:468), sim rebuilt -> 1 of 2 wrong |
+| ntfstest | wired (unit, sudo) | green 29/29; mutant: a "hibr" header read as not hibernated (ntfs.c:533) -> 3 of 29. Gap noted, not fixed: a live (nonzero, not "hibr") hiberfil header is untested (ntfs.c:536 mutant survives) |
+| shrinktest | wired (unit, sudo) | green 10/10; mutant: achieved size not read back (shrink.c:358) -> 1 of 10 |
+| handoverlinuxtest | wired (unit, sudo; needs exfatprogs) | green 19/19; mutants: disk read-back check off (handover.sh:138) -> 1 of 19; free-room check off (handover.sh:98) -> 2 of 19 |
+| exetest | wired (unit, after Wine, before signtest) | green 17/17 with GITHUB_REPOSITORY set (CI sets it); mutant: a server that ignores Range no longer restarts at 0 (plat_sim.c:1254), sim rebuilt -> 1 of 17. ORDER MATTERS: it runs build/aurbridge, which rewrites out/aurbridge*.exe |
+| matrixtest | wired (e2e matrix) | green 10/10 (3m38 under KVM); mutant: BitLocker signature check off (ntfs.c:54), staging rebuilt -> 1 of 10 wrong |
+| loadertest | wired (e2e matrix) | green 18/18 (1m18 under KVM); mutant: BootNext never armed (loader.c:208), staging rebuilt -> 1 failed |
+| failtest | wired (e2e matrix, image) | needs the full image: NOT run on homebase (disk 17 GB free). First proof is the CI run, plus a `*mut-*` branch |
+| renametest | already wired by 229316c | green 21/21; mutant: the store renamed "Software" in build/forge's table (747) -> 1 of 21 |
+| theftunit | see below | green 49/49 |
+| apptest | retired | a launcher: `exec python3 tools/parity/run.py --checks apps`, which parity.yml runs itself (phase 2). Not a test with its own verdict |
 
 ## Traps
 

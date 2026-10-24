@@ -119,6 +119,11 @@ jobs:
               t("windowsboottest", "windowsboottest", image=True),
               t("rollbacktest", "rollbacktest", image=True),
               t("bootlocktest", "bootlocktest", image=True),
+              # CIW: the data-safety suites that need QEMU. failtest boots the full image with
+              # its desktop made to fail and looks at the screen (~7 minutes with a cold image).
+              t("failtest", "failtest", image=True),
+              t("matrixtest", "matrixtest"),
+              t("loadertest", "loadertest"),
           ]
           # tools/powercut-nostick.sh takes instants as arguments; with none it
           # also runs "what the screen says" and the restore half. About 60
@@ -156,7 +161,7 @@ jobs:
           sh tools/apt.sh \
               gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev wine wine64 osslsigncode openssl python3 gcc libc6-dev make \
               grub-common gdisk mtools dosfstools cpio sbsigntool libxml2-utils file \
-              binutils zstd e2fsprogs fonts-dejavu-core fonts-atkinson-hyperlegible ovmf pkg-config libdbus-1-dev libwayland-dev libxkbcommon-dev xkb-data
+              binutils zstd e2fsprogs fonts-dejavu-core fonts-atkinson-hyperlegible ovmf pkg-config libdbus-1-dev libwayland-dev libxkbcommon-dev xkb-data exfatprogs
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: auros-installer
@@ -447,6 +452,27 @@ jobs:
       - name: grubshelltest (no grub menu AurOS writes offers a shell)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/grubshelltest.sh work/forge/desktop/rootfs 2>&1 | tee transcripts/grubshelltest.txt
+      # CIW: the data-safety and install scripts the docs call proof and no workflow ran
+      # (docs/reviews/CI-TRUTH-2026-10-24.md D.12). Each was shown to go red on a mutant of the
+      # code it guards (docs/handoff/streams/CIW.md). Root, because they mount, loop and resize.
+      - name: wrtest (writes land only where they were armed to; no second file may open a disk writably)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo sh tools/wrtest.sh 2>&1 | tee transcripts/wrtest.txt
+      - name: healthtest (it refuses a laptop on battery and a drive with a sector it cannot read)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/healthtest.sh 2>&1 | tee transcripts/healthtest.txt
+      - name: ntfstest (the NTFS reader refuses BitLocker, a dirty volume, a hibernated Windows, a busy log)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo sh tools/ntfstest.sh 2>&1 | tee transcripts/ntfstest.txt
+      - name: shrinktest (the one step with no way back - a real NTFS volume shrinks and every file survives)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo sh tools/shrinktest.sh 2>&1 | tee transcripts/shrinktest.txt
+      - name: termstest (the Terms she agreed to are in the install journal, and only then)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/termstest.sh 2>&1 | tee transcripts/termstest.txt
+      - name: handoverlinuxtest (her files, in a file in AurOS's root, at the disk address AurOS gives)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo sh tools/handoverlinuxtest.sh 2>&1 | tee transcripts/handoverlinuxtest.txt
       - name: manifesttest (the published wizard)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/manifesttest.sh dl/installer/AurOS-Setup.exe 2>&1 | tee transcripts/manifesttest.txt
@@ -466,6 +492,11 @@ jobs:
         run: |
           wineboot -i >/dev/null 2>&1 || true
           wine out/aurbridge.exe selftest 2>&1 | tee transcripts/wineselftest.txt
+      # CIW: exetest signs and rebuilds the installer (build/aurbridge) in this tree, so like
+      # signtest it must come after everything that reads out/.
+      - name: exetest (one file - the staging environment is inside the .exe, signing leaves it be, a download resumes)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/exetest.sh 2>&1 | tee transcripts/exetest.txt
       # Last: its final check runs build/aurbridge in this tree, which
       # rewrites out/.
       - name: signtest
