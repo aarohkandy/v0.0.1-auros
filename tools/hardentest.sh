@@ -124,6 +124,34 @@ if [ -e "$RFS/usr/bin/flatpak" ]; then
     grep -q '^[[:space:]]*userns,' "$RFS/etc/apparmor.d/flatpak" 2>/dev/null \
         && ok "AppArmor lets Flatpak make its sandbox (userns)" \
         || bad "AppArmor lets Flatpak make its sandbox (userns)" "etc/apparmor.d/flatpak has no userns rule"
+
+    # Flatpak executes bubblewrap to construct the namespace. On Ubuntu 24.04,
+    # an unprofiled bwrap is moved into the generic unprivileged_userns profile,
+    # which strips the capabilities it needs to configure the sandbox loopback.
+    # The dedicated profile permits setup, then stacks every child with
+    # unpriv_bwrap so programs inside the sandbox do not keep those capabilities.
+    BWRAP_AA="$RFS/etc/apparmor.d/bwrap"
+    bwrap_setup=$(sed -n '/^profile bwrap \/usr\/bin\/bwrap /,/^}/p' "$BWRAP_AA" 2>/dev/null)
+    bwrap_child=$(sed -n '/^profile unpriv_bwrap /,/^}/p' "$BWRAP_AA" 2>/dev/null)
+    if printf '%s\n' "$bwrap_setup" | grep -qx \
+           'profile bwrap /usr/bin/bwrap flags=(attach_disconnected,mediate_deleted) {' && \
+       printf '%s\n' "$bwrap_child" | grep -qx \
+           'profile unpriv_bwrap flags=(attach_disconnected,mediate_deleted) {' && \
+       printf '%s\n' "$bwrap_setup" | grep -qx '  allow capability,' && \
+       printf '%s\n' "$bwrap_setup" | grep -qx '  allow userns,'; then
+        ok "AppArmor lets bubblewrap configure Flatpak's namespace"
+    else
+        bad "AppArmor lets bubblewrap configure Flatpak's namespace" \
+            "etc/apparmor.d/bwrap must mediate deleted files and allow capability and userns during setup"
+    fi
+    if printf '%s\n' "$bwrap_setup" | grep -qx '  allow pix /\*\* -> &bwrap//&unpriv_bwrap,' && \
+       printf '%s\n' "$bwrap_child" | grep -qx '  audit deny capability,' && \
+       ! printf '%s\n' "$bwrap_child" | grep -qx '  allow capability,'; then
+        ok "AppArmor strips bubblewrap setup capabilities from sandboxed programs"
+    else
+        bad "AppArmor strips bubblewrap setup capabilities from sandboxed programs" \
+            "bwrap children must stack with unpriv_bwrap, whose capability rule is audit deny"
+    fi
 fi
 
 # ── 2. the kernel command line, on every way AurOS can start ─────────
