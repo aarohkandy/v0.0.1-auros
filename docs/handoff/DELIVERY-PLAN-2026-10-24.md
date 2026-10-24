@@ -452,3 +452,21 @@ both profiles and the subsequent stacked application-execution rule. Static
 policy checks and mutation tests pass; a bounded homebase VM probe is testing
 child capability restrictions and atomic saves before integration. This cached
 image is diagnostic evidence only, not a release certificate.
+
+The optional exact-SHA fastpath BitLocker lane now includes a file-preserving
+put-back test (`ffc27785`). It retains store/app launch proof, records sanitized
+BitLocker state on both Windows returns, and checks original Windows and restored
+AurOS file hashes, original partition/firmware state, task/volume cleanup and Fast
+Startup. Recovery secrets are excluded. Independent review, integrated E2E
+selftests and all 29 workflow lint checks pass. No real run of this extension has
+occurred yet; it must use the next fresh candidate, not the invalidated c1 image.
+
+The focused Fcitx ordering repair was pushed to main as `f472874d`; retained-image
+run `40137862304` got past engine availability but failed at
+`Mousepad_parented-popup_syntax_missing`. Composition/candidate suitability remain
+unproven. The next diagnostic must explain this evidence gap before another run;
+no production input change has been made.
+
+Queued duplicate old-image hardening run `40137331627` was cancelled to avoid
+repeating the still-running `40136360642` check. Neither can certify the upcoming
+bwrap-policy candidate, which will require its own exact-image gate.
