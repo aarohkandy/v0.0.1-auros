@@ -22,7 +22,12 @@ def _diagnostic_path(value: str) -> bool:
     return (
         value.startswith("docs/")
         or value == ".github/workflows/profiles.yml"
-        or value in {"tools/profile_image.py", "tools/test_profile_image.py"}
+        or value in {
+            "tools/profile_image.py",
+            "tools/test_profile_image.py",
+            "tools/x11_xres_probe.py",
+            "tools/test_x11_xres_probe.py",
+        }
         or re.fullmatch(r"tools/profiletest[^/]*", value) is not None
     )
 
@@ -116,6 +121,8 @@ def _selftest() -> None:
         "tools/profiletest-gate.py",
         "tools/profile_image.py",
         "tools/test_profile_image.py",
+        "tools/x11_xres_probe.py",
+        "tools/test_x11_xres_probe.py",
         ".github/workflows/profiles.yml",
         "docs/handoff/streams/P.md",
     ]

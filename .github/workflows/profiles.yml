@@ -483,7 +483,7 @@ jobs:
           files=()
           for f in ev/multilingual-retest-v1.json ev/multilingual.png ev/multilingual-report.txt \
                    ev/multilingual-image.txt ev/multilingual-serial.txt ev/multilingual-boot.txt \
-                   ev/ibus-round*-candidate.png; do
+                   ev/ibus-round*-candidate.png ev/ibus-x11-before.png ev/ibus-x11-preedit.png; do
             [ -f "$f" ] && files+=("$f")
           done
           if [ -d ev/ibus ]; then
