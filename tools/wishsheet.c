@@ -26,6 +26,20 @@
 #include "../src/common/png.h"
 #include "../src/common/wall.h"
 
+/* This paint harness never executes shell actions. Satisfy wish.c's local
+ * theme adapter seam while keeping any accidental theme event refused. */
+int settings_theme_current(char *out, size_t n)
+{
+    if (out && n) out[0] = 0;
+    return -1;
+}
+int settings_theme_validate(const char *id) { (void)id; return 0; }
+int settings_theme_apply(shell_ctx *c, const char *id)
+{
+    (void)c; (void)id;
+    return 0;
+}
+
 static uint64_t fake_ms = 1000000;
 static uint64_t fake_now(void) { return fake_ms; }
 
