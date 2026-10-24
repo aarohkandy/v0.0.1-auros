@@ -1,0 +1,86 @@
+# SEC-004's proof: is the update-signing key out of reach of a branch that is not main?
+# Started by hand, on a THROWAWAY branch, naming the secret:
+#
+#   git push origin HEAD:refs/heads/canary-sec004
+#   gh workflow run canary-signing.yml --ref canary-sec004 -f secret=AUROS_APT_SIGNING_KEY
+#   gh run watch   (then:  git push origin :canary-sec004 )
+#
+# Two jobs try to read the secret the way a hostile branch would:
+#   outside  no environment: sees the secret only while it is a REPOSITORY secret.
+#            After the owner moves it into the `apt-signing` environment
+#            (docs/OWNER-SETUP.md 4a-lock) it must see nothing.
+#   inside   environment apt-signing: the deployment-branch rule (main only) must
+#            refuse this job before it starts. If it starts, a throwaway branch can
+#            reach the key.
+# `verdict` is red unless both held. It is also red on main (run it on a branch:
+# the point is the branch). The secret's NAME is an input, so this file never names
+# the key (tools/workflowlint.py keeps the key's name out of every other job), and
+# nothing is printed but yes or no.
+#
+# Before the owner's clicks the verdict MUST be red (the key is a repository secret
+# and the environment has no branch rule): that is the proof this can fail.
+# While `inside` waits for a reviewer's click (reviewer set, branch rule not yet),
+# cancel the run: a refused branch fails at once, it does not wait.
+name: canary-signing
+
+on:
+  workflow_dispatch:
+    inputs:
+      secret:
+        description: 'the name of the secret to look for'
+        required: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  outside:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      visible: ${{ steps.c.outputs.visible }}
+    steps:
+      - id: c
+        env:
+          NAME: ${{ inputs.secret }}
+          VALUE: ${{ secrets[inputs.secret] }}
+        run: |
+          if [ -n "$VALUE" ]; then v=yes; else v=no; fi
+          echo "visible=$v" >> "$GITHUB_OUTPUT"
+          echo "branch $GITHUB_REF_NAME: secret $NAME visible to a job outside any environment: $v"
+
+  inside:
+    # The environment's deployment-branch rule decides whether this job starts.
+    environment: apt-signing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          NAME: ${{ inputs.secret }}
+          VALUE: ${{ secrets[inputs.secret] }}
+        run: |
+          if [ -n "$VALUE" ]; then v=yes; else v=no; fi
+          echo "branch $GITHUB_REF_NAME: the apt-signing environment let this job start; secret $NAME visible in it: $v"
+
+  verdict:
+    needs: [outside, inside]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      OUTSIDE: ${{ needs.outside.outputs.visible }}
+      INSIDE: ${{ needs.inside.result }}
+      BRANCH: ${{ github.ref_name }}
+      DEFAULT: ${{ github.event.repository.default_branch }}
+    steps:
+      - run: |
+          bad=0
+          if [ "$BRANCH" = "$DEFAULT" ]; then echo "::error::run this on a throwaway branch, not on $DEFAULT"; bad=1; fi
+          if [ "$OUTSIDE" != no ]; then echo "::error::the key is visible to a job outside any environment (outside said '$OUTSIDE'): any branch can print it"; bad=1; fi
+          if [ "$INSIDE" = success ]; then echo "::error::the apt-signing environment let a job on branch $BRANCH start: set its deployment branches to main only"; bad=1; fi
+          [ "$bad" = 0 ] && echo "CANARY OK: on branch $BRANCH the key is not visible outside the environment, and the environment refused this branch (inside: $INSIDE)"
+          exit $bad
