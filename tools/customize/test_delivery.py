@@ -511,6 +511,15 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("--expect-look", e2e)
         self.assertIn("--expect-theme", e2e)
 
+    def test_every_release_e2e_caller_grants_reusable_permissions(self) -> None:
+        release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        callers = release.split("uses: ./.github/workflows/e2e.yml")
+        self.assertEqual(len(callers), 3)
+        for caller in callers[1:]:
+            permissions = caller.split("with:", 1)[0]
+            self.assertIn("contents: write", permissions)
+            self.assertIn("actions: read", permissions)
+
 
 if __name__ == "__main__":
     unittest.main()
