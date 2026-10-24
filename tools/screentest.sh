@@ -190,6 +190,35 @@ S=$( { head -c 20000 /dev/urandom; printf '\naurstage-progress 999\naurstage-pro
 [ "$(fld "$S" pct)" = 0 ] && ok "garbage and out-of-range numbers: no crash, clamped" \
     || bad "garbage and out-of-range numbers: no crash, clamped" "$S"
 
+# THE FACE, THE HEADING AND THE MARK (C-P0-3): what a picture of the state would show.
+# The face: built with the files build/staging copies in as ui.ttf and ui-bold.ttf, the screen sets
+# its words in them; built with nothing there it falls back to DejaVu (and says so).
+echo
+echo "  the face, the heading, the mark"
+mkdir -p "$T/fonts"
+for f in ui ui-bold; do
+    src=$(sed -n "s|^cp \"\$ROOT/\(src/aurbridge/fonts/[^\"]*\)\" usr/share/auros/fonts/$f.ttf.*|\1|p" build/staging | head -1)
+    if [ -n "$src" ] && [ -f "$src" ]; then cp "$src" "$T/fonts/$f.ttf"; ok "build/staging copies $src in as $f.ttf"
+    else bad "build/staging copies a font in as $f.ttf" "no 'cp ... $f.ttf' line in build/staging, or the file is missing"; fi
+done
+gcc -O2 -std=gnu11 -Wall -Wextra -Werror -DFONT_DIR="\"$T/fonts\"" -o "$T/aurscreen-ui" src/aurscreen/screen.c \
+    src/aurshell/kms.c src/aurshell/draw.c src/common/font.c src/common/png.c -lm || { echo "aurscreen did not build"; exit 1; }
+face_of() { printf '%s\n' "$1" | sed -n 's/^face=//p'; }
+G=$(part | "$T/aurscreen-ui" --mode install --state)
+[ "$(face_of "$G")" = ui ] && ok "with the shipped files it is set in the UI face" || bad "with the shipped files it is set in the UI face" "face=$(face_of "$G")"
+[ "$(face_of "$(part | "$B" --mode install --state)")" = fallback ] \
+    && ok "with none it says it fell back (DejaVu), not that it is the UI face" || bad "with none it says it fell back"
+head_of() { printf '%s\n' "$1" | sed -n 's/^title=//p'; }
+[ "$(head_of "$G")" = "Installing AurOS" ] && ok "heading while it installs: Installing AurOS" || bad "heading while it installs" "$(head_of "$G")"
+F=$( { part; say "aurstage-report v1 verdict=write-failed record=failed -"; } | "$T/aurscreen-ui" --mode install --state)
+[ "$(head_of "$F")" = "AurOS didn't go on this time" ] && ok "heading when it stopped: AurOS didn't go on this time" \
+    || bad "heading when it stopped: AurOS didn't go on this time" "$(head_of "$F")"
+R=$( { say "" "Windows is back." "aurstage-report v1 verdict=restored record=done -"; } | "$T/aurscreen-ui" --mode restore --state)
+[ "$(head_of "$R")" = "Windows is back" ] && ok "heading when Windows is back: Windows is back" || bad "heading when Windows is back" "$(head_of "$R")"
+mk=$(printf '%s\n' "$G" | sed -n 's/^mark=//p'); gr=$(printf '%s\n' "$G" | sed -n 's/^ground=//p')
+[ "$mk" = 0B5D4F ] && ok "the mark is drawn, in the go green (0B5D4F)" || bad "the mark is drawn, in the go green" "colour at its middle: $mk"
+[ "$gr" = F6F2E9 ] && ok "on paper (F6F2E9): the Light look, not the old dark one" || bad "on paper (F6F2E9)" "colour of the page: $gr"
+
 echo
 echo "  pictures"
 for sz in "1024 768" "1366 768" "1920 1080" "800 600"; do

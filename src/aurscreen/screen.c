@@ -439,6 +439,7 @@ static void feed(state *s, char *line)
 #ifndef FONT_DIR
 #define FONT_DIR "/usr/share/auros/fonts"
 #endif
+static int face_is_ui = -1;          /* the UI face loaded (1), or its fallback (0): tools/screentest.sh asks */
 static font *pick(float px, int bold)
 {
     static const char *R[] = { FONT_DIR "/ui.ttf",
@@ -447,7 +448,10 @@ static font *pick(float px, int bold)
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", NULL };
     const char **t = bold ? B : R;
-    for (int i = 0; t[i]; i++) { font *f = font_load(t[i], px); if (f) return f; }
+    for (int i = 0; t[i]; i++) {
+        font *f = font_load(t[i], px);
+        if (f) { if (!bold) face_is_ui = (i == 0); return f; }
+    }
     return NULL;
 }
 
@@ -495,6 +499,16 @@ static const char *title_of(const state *st)
     return "Installing AurOS";
 }
 
+/* Where the mark's middle is, so that tools/screentest.sh can read the colour there. */
+static void mark_centre(int w, int h, float *cx, float *cy)
+{
+    float k = (float)h / 720.f;
+    if (k < 1.0f) k = 1.0f;
+    if (k > 2.4f) k = 2.4f;
+    *cx = (float)(int)(w * 0.09f) + 14.f * k;
+    *cy = (float)(int)(h * 0.09f) + 14.f * k;
+}
+
 static void paint(surface *s, const state *st)
 {
     float k = (float)s->h / 720.f;
@@ -509,7 +523,8 @@ static void paint(surface *s, const state *st)
     int y = (int)(s->h * 0.09f);
 
     /* the mark: the same diamond as the website and the installer */
-    float cx = (float)L + 14.f * k, cy = (float)y + 14.f * k, r = 13.f * k;
+    float cx, cy, r = 13.f * k;
+    mark_centre(s->w, s->h, &cx, &cy);
     for (int dy = -(int)r; dy <= (int)r; dy++) {
         int half = (int)(r - (dy < 0 ? -dy : dy));
         draw_rect(s, (rect){ (int)cx - half, (int)cy + dy, 2 * half + 1, 1 }, GO, 1.f);
@@ -687,6 +702,20 @@ int main(int argc, char **argv)
                    st.pct, st.stopped, st.handover, st.finished,
                    st.verdict[0] ? st.verdict : "-", e < 0 ? -1 : (int)e, st.where, c, st.countdown);
             for (int i = 0; i < st.npara; i++) printf("para=%s\n", st.para[i]);
+            /* What a picture of this state would show: the heading, the face it is set in, the
+             * colour of the mark and of the page (tools/screentest.sh holds them to the Light
+             * tokens and the shipped face). */
+            surface *o = surface_new(1280, 720);
+            if (o) {
+                float mx, my;
+                paint(o, &st);
+                mark_centre(o->w, o->h, &mx, &my);
+                printf("title=%s\nface=%s\nmark=%06X\nground=%06X\n", title_of(&st),
+                       face_is_ui == 1 ? "ui" : "fallback",
+                       o->px[(int)my * o->stride + (int)mx] & 0xFFFFFFu,
+                       o->px[2 * o->stride + 2] & 0xFFFFFFu);
+                surface_free(o);
+            }
         }
         if (png) {
             surface *o = surface_new(pw, ph);
