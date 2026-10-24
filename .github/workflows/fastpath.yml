@@ -131,6 +131,85 @@ jobs:
           name: exe-fast
           path: fast/
 
+  # The normal Windows workflow runs the default wizard's navigation gate.
+  # Run it again on this workflow's AUROS_FASTPATH=1 build: that is the only
+  # build which draws the longer BitLocker warning and Wi-Fi row together.
+  navtest-fastpath:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: exe-fast, path: exe-fast }
+      - name: run the fast-path wizard navigation gate, bounded
+        shell: pwsh
+        run: |
+          $out = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\fastpath-nav"
+          $exe = (Resolve-Path .\exe-fast\aurbridge-wizard.exe).Path
+          $p = Start-Process -FilePath $exe -ArgumentList '--navtest', $out.FullName -PassThru
+          if (-not $p.WaitForExit(300000)) {
+            $p.Kill($true)
+            $p.WaitForExit()
+            Set-Content "$env:RUNNER_TEMP\fastpath-nav-exit.txt" 'timeout'
+            'fast-path --navtest timed out after 300 seconds; verification will fail after evidence is saved'
+          } else {
+            Set-Content "$env:RUNNER_TEMP\fastpath-nav-exit.txt" "$($p.ExitCode)"
+            "fast-path --navtest exited $($p.ExitCode); verification follows after screenshots"
+          }
+      - name: render the same fast-path wizard at every fixture size
+        if: always()
+        shell: pwsh
+        run: |
+          $out = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\fastpath-shots"
+          $exe = (Resolve-Path .\exe-fast\aurbridge-wizard.exe).Path
+          $p = Start-Process -FilePath $exe -ArgumentList '--shot', $out.FullName -PassThru
+          if (-not $p.WaitForExit(300000)) {
+            $p.Kill($true)
+            $p.WaitForExit()
+            Set-Content "$env:RUNNER_TEMP\fastpath-shot-exit.txt" 'timeout'
+            'fast-path --shot timed out after 300 seconds; verification will fail after evidence is saved'
+          } else {
+            Set-Content "$env:RUNNER_TEMP\fastpath-shot-exit.txt" "$($p.ExitCode)"
+            "fast-path --shot exited $($p.ExitCode)"
+          }
+      - name: require the fast-path-only Ready fixture and every navigation check
+        if: always()
+        shell: pwsh
+        run: |
+          $navCode = Get-Content "$env:RUNNER_TEMP\fastpath-nav-exit.txt" -ErrorAction SilentlyContinue
+          $shotCode = Get-Content "$env:RUNNER_TEMP\fastpath-shot-exit.txt" -ErrorAction SilentlyContinue
+          $log = "$env:RUNNER_TEMP\fastpath-nav\navtest.log"
+          if (-not (Test-Path $log)) { throw 'fast-path --navtest wrote no navtest.log' }
+          Get-Content $log
+          if ($navCode -ne '0') { throw "fast-path --navtest did not exit zero: $navCode" }
+          if (Select-String -Path $log -Pattern '^  \[FAIL\]' -Quiet) { throw 'fast-path navtest contains a FAIL line' }
+          if (-not (Select-String -Path $log -Pattern '^ALL PASS \(0 failures\)$' -Quiet)) { throw 'fast-path navtest has no exact ALL PASS verdict' }
+          $required = @(
+            'the ready page on a 1024x600 netbook may scroll, but Install AurOS and its agreement stay in view',
+            'the ready page on a 1366x768 laptop at 150% may scroll, but Install AurOS and its agreement stay in view',
+            'on Wi-Fi: the box is there, ticked for her',
+            'with the box, Ready fits, or Tab brings the box into view'
+          )
+          foreach ($line in $required) {
+            if (-not (Select-String -Path $log -SimpleMatch "[PASS] $line" -Quiet)) {
+              throw "fast-path navtest did not prove its Ready fixture: $line"
+            }
+          }
+          if ($shotCode -ne '0') { throw "fast-path --shot did not exit zero: $shotCode" }
+          $shots = @(Get-ChildItem "$env:RUNNER_TEMP\fastpath-shots" -File -Recurse -ErrorAction SilentlyContinue)
+          if ($shots.Count -eq 0) { throw 'fast-path --shot saved no screenshots' }
+          "fast-path navigation passed; retained $($shots.Count) screenshots"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: fastpath-navtest-evidence
+          path: |
+            ${{ runner.temp }}/fastpath-nav/**
+            ${{ runner.temp }}/fastpath-shots/**
+            ${{ runner.temp }}/fastpath-nav-exit.txt
+            ${{ runner.temp }}/fastpath-shot-exit.txt
+          if-no-files-found: warn
+
   gapselftest:
     needs: build
     runs-on: windows-latest
