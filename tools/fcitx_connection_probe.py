@@ -26,6 +26,21 @@ EXPECTED_COMPOSITOR_EXE = "/usr/bin/aurshell"
 EXPECTED_SERVICE_CONTROL_GROUP = "/system.slice/aurshell.service"
 INVOCATION_RE = re.compile(r"[0-9a-f]{32}")
 SESSION_RE = re.compile(r"/user\.slice/user-([0-9]+)\.slice/session-[A-Za-z0-9_.:-]+\.scope")
+SUCCESS_CLAIMS = (
+    "status=pass\nchildren_at_boundaries=0\ncompositor_connections_at_boundaries=1\n"
+    "application_trace_writers_at_boundaries=1\n"
+    "foreign_trace_writers_at_boundaries=0\n"
+    "authenticated_probe_trace_writer_at_end=1\n"
+    "peer_pid=exact_aurshell\npeer_path=exact_wayland_display\n"
+    "listener_inode=exact_wayland_display\n"
+    "service_main_pid=exact_dbus_run_session\n"
+    "compositor_exe=exact_usr_bin_aurshell\n"
+    "service_invocation_id=exact_systemd_property_and_environment\n"
+    "service_control_group=exact_systemd_property\n"
+    "pam_session_cgroup=exact_expected_user_session_scope\n"
+    "compositor_in_pam_session_cgroup=yes\n"
+    "compositor_descends_from_service_main_pid=yes\n"
+)
 
 
 def descendants_from_parents(pid: int, parents: dict[int, int]) -> list[int]:
@@ -494,7 +509,7 @@ def verify_listener(shell_pid: int, shell_pidfd: int, display_path: Path,
 
 
 def snapshot(app_pid: int, shell_pid: int, display_path: Path, trace: Path,
-             evidence=None):
+             evidence=None, retained_trace_fd=None):
     if evidence is None:
         evidence = {}
     pidfd = os.pidfd_open(app_pid, 0)
@@ -506,15 +521,29 @@ def snapshot(app_pid: int, shell_pid: int, display_path: Path, trace: Path,
         writers = fd_writers(trace)
         evidence["application_descendant_count"] = len(children)
         evidence["trace_writer_count"] = len(writers)
+        application_writers = [writer for writer in writers if writer[0] == app_pid]
+        expected_probe_writer = ((os.getpid(), retained_trace_fd)
+                                 if retained_trace_fd is not None else None)
+        probe_writers = ([expected_probe_writer]
+                         if expected_probe_writer in writers else [])
+        foreign_writers = [writer for writer in writers
+                           if writer not in application_writers
+                           and writer not in probe_writers]
+        evidence["application_trace_writer_count"] = len(application_writers)
+        evidence["probe_trace_writer_count"] = len(probe_writers)
+        evidence["foreign_trace_writer_count"] = len(foreign_writers)
         held, matches = socket_inventory(
             app_pid, pidfd, shell_pid, display_path, evidence)
         if children:
             raise RuntimeError(f"application descendants={len(children)}")
-        if len(writers) != 1 or writers[0][0] != app_pid:
+        if (len(application_writers) != 1 or foreign_writers
+                or (retained_trace_fd is None and probe_writers)
+                or (retained_trace_fd is not None and len(probe_writers) != 1)):
             raise RuntimeError(f"trace writer count={len(writers)}")
         if len(matches) != 1:
             raise RuntimeError(f"compositor socket count={len(matches)}")
-        trace_copy = duplicate_fd(pidfd, writers[0][1])
+        trace_fd = application_writers[0][1]
+        trace_copy = duplicate_fd(pidfd, trace_fd)
         held.append(trace_copy)
         trace_stat = os.fstat(trace_copy)
         wanted = trace.stat()
@@ -522,7 +551,7 @@ def snapshot(app_pid: int, shell_pid: int, display_path: Path, trace: Path,
             raise RuntimeError("trace writer changed during inspection")
         evidence["trace_sink_identity_exact"] = "yes"
         return (pidfd, held, matches[0][0], os.fstat(matches[0][1]).st_ino,
-                writers[0][1], trace_stat.st_dev, trace_stat.st_ino, trace_copy)
+                trace_fd, trace_stat.st_dev, trace_stat.st_ino, trace_copy)
     except Exception:
         _close_failed_snapshot(pidfd, held)
         raise
@@ -612,7 +641,7 @@ def main() -> None:
         try:
             second = snapshot(
                 args.app_pid, shell_pid, args.display_path, args.trace,
-                end_application_evidence)
+                end_application_evidence, retained_trace_fd=trace_copy)
         finally:
             observed.update({f"end_{key}": value
                              for key, value in end_application_evidence.items()})
@@ -628,18 +657,7 @@ def main() -> None:
             close_snapshot(second_pidfd, second_held)
         if not stable:
             raise RuntimeError("connection or trace sink changed during interval")
-        args.output.write_text(
-            "status=pass\nchildren_at_boundaries=0\ncompositor_connections_at_boundaries=1\n"
-            "trace_writers_at_boundaries=1\npeer_pid=exact_aurshell\n"
-            "peer_path=exact_wayland_display\nlistener_inode=exact_wayland_display\n"
-            "service_main_pid=exact_dbus_run_session\n"
-            "compositor_exe=exact_usr_bin_aurshell\n"
-            "service_invocation_id=exact_systemd_property_and_environment\n"
-            "service_control_group=exact_systemd_property\n"
-            "pam_session_cgroup=exact_expected_user_session_scope\n"
-            "compositor_in_pam_session_cgroup=yes\n"
-            "compositor_descends_from_service_main_pid=yes\n",
-            encoding="ascii")
+        args.output.write_text(SUCCESS_CLAIMS, encoding="ascii")
         with args.output.open("a", encoding="ascii") as evidence_file:
             for key, value in sorted(observed.items()):
                 evidence_file.write(f"observed_{key}={value}\n")

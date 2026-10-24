@@ -41,6 +41,43 @@ as_desktop() {
         XDG_RUNTIME_DIR="/run/user/$desktop_uid" \
         DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$desktop_uid/bus" "$@"
 }
+monotonic_ms() { awk '{printf "%d\n", $1 * 1000}' /proc/uptime; }
+as_desktop_until() { # absolute monotonic millisecond deadline, command...
+    deadline=$1; shift
+    now=$(monotonic_ms); remaining=$((deadline-now))
+    [ "$remaining" -gt 0 ] || return 124
+    limit=$(awk -v ms="$remaining" 'BEGIN {printf "%.3fs", ms / 1000}')
+    timeout "$limit" runuser -u "$desktop_user" -- env HOME="$desktop_home" \
+        USER="$desktop_user" LOGNAME="$desktop_user" \
+        XDG_RUNTIME_DIR="/run/user/$desktop_uid" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$desktop_uid/bus" "$@"
+}
+ibus_identity_snapshot() { # deadline, pid; print authenticated process start time
+    identity_deadline=$1; identity_pid=$2
+    identity_now=$(monotonic_ms); identity_remaining=$((identity_deadline-identity_now))
+    [ "$identity_remaining" -gt 0 ] || return 124
+    identity_limit=$(awk -v ms="$identity_remaining" 'BEGIN {printf "%.3fs", ms / 1000}')
+    timeout "$identity_limit" python3 - "$identity_pid" <<'PY'
+import os, pathlib, sys
+pid = sys.argv[1]
+try:
+    root = pathlib.Path("/proc") / pid
+    executable = os.readlink(root / "exe")
+    cmdline = (root / "cmdline").read_bytes().split(b"\0")
+    stat = (root / "stat").read_text(encoding="ascii")
+    fields = stat.rsplit(")", 1)[1].split()
+except (OSError, UnicodeDecodeError, IndexError):
+    raise SystemExit(1)
+if executable != "/usr/bin/ibus-daemon":
+    raise SystemExit(1)
+if cmdline != [b"/usr/bin/ibus-daemon", b"--replace", b"--xim", b""]:
+    raise SystemExit(1)
+try:
+    print(int(fields[19]))
+except (ValueError, IndexError):
+    raise SystemExit(1)
+PY
+}
 user_env=$(as_desktop systemctl --user show-environment 2>/dev/null || true)
 wayland=$(printf '%s\n' "$user_env" | sed -n 's/^WAYLAND_DISPLAY=//p' | tail -1)
 display=$(printf '%s\n' "$user_env" | sed -n 's/^DISPLAY=//p' | tail -1)
@@ -187,20 +224,56 @@ restore_and_finish() {
     for p in "$password_pid" "$firefox_pid" "$mouse_b_pid" "$mouse_pid" "$fcitx_pid"; do
         [ -z "$p" ] || wait_pid_gone "$p" || cleanup_ok=0
     done
-    if [ "$ibus_stopped" = 1 ]; then as_desktop systemctl --user start auros-ibus.service >/dev/null 2>&1 || cleanup_ok=0; fi
-    ordinary=0
-    if [ "$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null)" = active ]; then
-        ipid=$(as_desktop systemctl --user show -p MainPID --value auros-ibus.service 2>/dev/null)
-        if [ -n "$ipid" ] && [ "$(readlink "/proc/$ipid/exe" 2>/dev/null)" = /usr/bin/ibus-daemon ] && \
-           tr '\0' ' ' < "/proc/$ipid/cmdline" 2>/dev/null | grep -qx '/usr/bin/ibus-daemon --replace --xim '; then
-            i=0
-            while [ "$i" -lt 20 ]; do
-                if as_desktop env DISPLAY="$display" WAYLAND_DISPLAY="$wayland" GTK_IM_MODULE=ibus \
-                    ibus list-engine --name-only 2>/dev/null | grep -Fqx pinyin; then ordinary=1; break; fi
-                sleep .25; i=$((i+1))
-            done
-        fi
+    ibus_start_rc=not-needed
+    if [ "$ibus_stopped" = 1 ]; then
+        ibus_start_rc=0
+        as_desktop systemctl --user start auros-ibus.service >/dev/null 2>&1 \
+            || { ibus_start_rc=$?; cleanup_ok=0; }
     fi
+    ordinary=0
+    ibus_active_seen=no; ibus_identity_seen=no; ibus_identity_stable_seen=no; ibus_pinyin_seen=no
+    ibus_deadline=$(( $(monotonic_ms) + 10000 ))
+    while [ "$(monotonic_ms)" -lt "$ibus_deadline" ]; do
+        active_before=; active_before_rc=0
+        active_before=$(as_desktop_until "$ibus_deadline" systemctl --user is-active \
+            auros-ibus.service 2>/dev/null) || active_before_rc=$?
+        if [ "$active_before_rc" = 0 ] && [ "$active_before" = active ]; then
+            ibus_active_seen=yes
+            ipid=; ipid_rc=0
+            ipid=$(as_desktop_until "$ibus_deadline" systemctl --user show \
+                -p MainPID --value auros-ibus.service 2>/dev/null) || ipid_rc=$?
+            identity_before=; identity_before_rc=0
+            identity_before=$(ibus_identity_snapshot "$ibus_deadline" "$ipid" \
+                2>/dev/null) || identity_before_rc=$?
+            if [ "$ipid_rc" = 0 ] && [ "$identity_before_rc" = 0 ] && \
+               [ -n "$identity_before" ]; then
+                ibus_identity_seen=yes
+                engines=; engines_rc=0
+                engines=$(as_desktop_until "$ibus_deadline" env DISPLAY="$display" \
+                    WAYLAND_DISPLAY="$wayland" GTK_IM_MODULE=ibus \
+                    ibus list-engine --name-only 2>/dev/null) || engines_rc=$?
+                if [ "$engines_rc" = 0 ] && printf '%s\n' "$engines" | grep -Fqx pinyin; then
+                    ibus_pinyin_seen=yes
+                    active_after=; active_after_rc=0
+                    active_after=$(as_desktop_until "$ibus_deadline" systemctl --user \
+                        is-active auros-ibus.service 2>/dev/null) || active_after_rc=$?
+                    ipid_after=; ipid_after_rc=0
+                    ipid_after=$(as_desktop_until "$ibus_deadline" systemctl --user show \
+                        -p MainPID --value auros-ibus.service 2>/dev/null) || ipid_after_rc=$?
+                    identity_after=; identity_after_rc=0
+                    identity_after=$(ibus_identity_snapshot "$ibus_deadline" "$ipid_after" \
+                        2>/dev/null) || identity_after_rc=$?
+                    if [ "$active_after_rc" = 0 ] && [ "$ipid_after_rc" = 0 ] && \
+                       [ "$identity_after_rc" = 0 ] && [ "$active_after" = active ] && \
+                       [ "$ipid_after" = "$ipid" ] && \
+                       [ -n "$identity_after" ] && [ "$identity_after" = "$identity_before" ]; then
+                        ibus_identity_stable_seen=yes; ordinary=1; break
+                    fi
+                fi
+            fi
+        fi
+        sleep .25
+    done
     unchanged=no; [ "$(config_snapshot)" = "$config_before" ] && unchanged=yes
     find "$RUNTIME" -name '*.trace' -type f -delete 2>/dev/null || cleanup_ok=0
     if find "$RUNTIME" -name '*.trace' -type f -print -quit 2>/dev/null | grep -q .; then
@@ -213,6 +286,10 @@ restore_and_finish() {
     printf 'raw_protocol_logs_retained=%s\n' "$raw_retained" > "$STATE/protocol-summary.txt"
     printf 'ordinary_service_ready=%s\nuser_config_unchanged=%s\ncleanup_pids_gone=%s\n' \
         "$ordinary" "$unchanged" "$cleanup_ok" > "$STATE/restore.txt"
+    printf 'service_start_rc=%s\nservice_active_seen=%s\nservice_identity_seen=%s\n' \
+        "$ibus_start_rc" "$ibus_active_seen" "$ibus_identity_seen" >> "$STATE/restore.txt"
+    printf 'service_identity_stable_seen=%s\npinyin_engine_seen=%s\n' \
+        "$ibus_identity_stable_seen" "$ibus_pinyin_seen" >> "$STATE/restore.txt"
     if [ "$ordinary" != 1 ] || [ "$unchanged" != yes ] || [ "$cleanup_ok" != 1 ]; then
         final_state=fail; final_reason=cleanup_or_IBus_restoration_failed
     fi
