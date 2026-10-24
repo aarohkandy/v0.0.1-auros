@@ -961,6 +961,14 @@ for (const [at, want] of [
       if (m.fact) { facts++; check(FACTS[m.fact] !== undefined && m.text === FACTS[m.fact], `promises ${p}: "${m.text}" is what the code says for ${m.fact}`, `the code says "${FACTS[m.fact]}"`); }
       if (m.claim) { claims++; const [k, v] = m.claim.split(":"); const fast = m.buildFor ? m.buildFor === "fastpath" : DEFAULT_FAST; const want = claimsFor(fast)[k];
         check(want === v, `promises ${p}: the page says ${k} ${v}${m.buildFor ? ` (for the ${m.buildFor} build)` : ""}, the code ${want}`, `rewrite "${m.text.slice(0, 70)}..." for "${want}", or change the code`); }
+      if (m.claim === "bitlocker:pauses") {
+        check(/stays paused until Windows turns it back on/i.test(m.text) && /Start Windows again/i.test(m.text),
+          `promises ${p}: the BitLocker wording says Windows must run before protection can resume`, m.text);
+        check(/anyone with this computer could read the Windows drive/i.test(m.text),
+          `promises ${p}: the BitLocker wording discloses what paused protection means`, m.text);
+        check(!/one restart|nothing is unlocked/i.test(m.text),
+          `promises ${p}: the BitLocker wording does not promise an unmeasured restart count or call the paused drive locked`, m.text);
+      }
       if (m.ui) { words++; check(UI[m.ui] && UI[m.ui](m.text), `promises ${p}: "${m.text}" is a word on the ${m.ui} screen`, `not found in its source`); }
     }
     const text = await page.evaluate(() => document.body.innerText);
@@ -1132,7 +1140,19 @@ for (const [at, want] of [
     const joined = (src) => src.replace(/"\s*\n\s*L?"/g, "").replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\"/g, '"');
     let P = null; try { P = JSON.parse(read("website/assets/shots/pictures.json")); } catch {}
     check(P !== null && Object.keys(P.pictures || {}).length === 7, "pictures: website/assets/shots/pictures.json describes the 3 Setup and 4 look pictures", P ? Object.keys(P.pictures || {}).join(",") : "missing");
-    const wizSrc = joined([wizard, fixWin, read("src/aurbridge/preflight.c")].join("\n"));
+    const preflight = read("src/aurbridge/preflight.c"), phaseImpl = read("src/aurbridge/phases.c");
+    const wizSrc = joined([wizard, fixWin, preflight].join("\n"));
+    const setupCode = [wizard, preflight, phaseImpl].join("\n")
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    const setupStrings = [...joined(setupCode).matchAll(/L?"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]).join(" ");
+    check(!/paused for (one|the) restart|(comes|goes|turns) (itself )?back on/i.test(setupStrings),
+      `pictures: no Setup message promises an unmeasured BitLocker restart count or automatic resume`,
+      (setupStrings.match(/.{0,50}(paused for (one|the) restart|(comes|goes|turns) (itself )?back on).{0,50}/i) || [""])[0]);
+    const disarmCode = joined(((phaseImpl.match(/void ab_disarm\([\s\S]*?\nvoid ab_abort\(/) || [""])[0])
+      .replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, ""));
+    check(/files remain encrypted/i.test(disarmCode) && /anyone with this computer could read/i.test(disarmCode) &&
+          !/drive is not encrypted/i.test(disarmCode),
+      `pictures: a failed BitLocker resume says the files remain encrypted but readable`, disarmCode.slice(-500));
     const shellFiles = (() => { const out = []; const walk = (d) => { for (const f of fs.readdirSync(path.join(REPO, d), { withFileTypes: true })) { if (f.isDirectory()) walk(d + "/" + f.name); else if (/\.[ch]$/.test(f.name)) out.push(d + "/" + f.name); } }; walk("src/aurshell"); return out; })();
     const shellSrc = joined(shellFiles.map(read).join("\n") + "\n" + read("build/forge"));
     const eta = FACTS["time-ssd"];
@@ -1153,7 +1173,14 @@ for (const [at, want] of [
     {
       const region = (wizard.match(/struct \{ int glyph; const wchar_t \*text; \} row\[16\];[\s\S]*?#undef ROW/) || [""])[0];
       const lits = [...joined(region).matchAll(/L"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]).filter((t) => t.length >= 25);
-      const optional = [/^Windows’ drive lock is paused/, /^AurOS has already downloaded/, /^\s*This computer has an older, slower kind of drive/];
+      const lock = joined((region.match(/ROW\(G_LOCK,[\s\S]*?\);/) || [""])[0]);
+      check(/stays paused until Windows turns it back on/i.test(lock) && /Start Windows again/i.test(lock),
+        `pictures: Setup says Windows must run before paused drive protection can resume`, lock);
+      check(/anyone with this computer could read the Windows drive/i.test(lock),
+        `pictures: Setup explains what paused drive protection means`, lock);
+      check(!/one restart|comes back on by itself|nothing is unlocked/i.test(lock),
+        `pictures: Setup does not promise an unmeasured restart count or call the paused drive locked`, lock);
+      const optional = [/^Setup pauses Windows’ drive protection/, /^AurOS has already downloaded/, /^\s*This computer has an older, slower kind of drive/];
       const says = (((P || {}).pictures || {})["setup-ready.jpg"] || { says: [] }).says;
       const missing = lits.filter((t) => !optional.some((r) => r.test(t))).filter((t) => { const head = t.split("%ls")[0].trim(); return !says.some((l) => l.startsWith(head)); });
       check(lits.length >= 6 && missing.length === 0, `pictures: Setup's Ready page says nothing more than setup-ready.jpg shows (${lits.length} rows read from wizard.c)`, missing.map((m) => JSON.stringify(m.slice(0, 70))).join(" | "));

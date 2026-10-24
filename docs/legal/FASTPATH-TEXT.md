@@ -11,18 +11,21 @@ Written from the code at 2026-10-24 (`src/aurbridge/phases.c`, `wizard.c`); re-r
 
 **Terms, section 4 (what Setup does), add:**
 
-> On a computer whose drive Windows has locked (BitLocker), Setup turns the lock off until Windows has started once more
-> after the install: until then the drive is not protected, and anyone who has the computer could read it. The lock comes
-> back on by itself. It is never removed. Setup also copies the Wi-Fi network you are connected to (its name and password) to
+> On a computer whose drive Windows has locked (BitLocker), Setup pauses the drive's protection. The files stay encrypted,
+> but while protection is paused anyone who has the computer could read the Windows drive. Start Windows again to let
+> Windows turn protection back on; until Windows reports that it has, protection remains paused. Setup does not decrypt the
+> drive or remove BitLocker. Setup also copies the Wi-Fi network you are connected to (its name and password) to
 > a place on the computer's start-up partition, so that AurOS can get online when it starts; it is ticked for you on the
 > Ready screen and you can untick it. The copy is not encrypted while it waits there, and AurOS deletes it once it has
 > stored the password.
 
-(Why "until Windows has started once more": the pause uses `-RebootCount 2` in `phases.c`; and "not encrypted": the
-start-up partition is never BitLocker-encrypted. Whether "AurOS deletes it" holds in every failure path is open: see
-`COMPLIANCE.md` 4.8 item 4; do not publish the last sentence until `tools/wifitest.sh` proves it for a failed install.)
+`phases.c` requests `-RebootCount 2`, but that setting alone does not prove which boots Windows counts when the first boot
+is AurOS. Do not state a restart count or automatic-resume instant until the real journey records Windows' protection
+status after the AurOS handover and after each later Windows start. The start-up partition is never BitLocker-encrypted.
+Whether "AurOS deletes it" holds in every failure path is open: see `COMPLIANCE.md` 4.8 item 4; do not publish the last
+sentence until `tools/wifitest.sh` proves it for a failed install.
 
 **Privacy, section 3, add:** the same Wi-Fi sentence: read on the same computer, never sent over the internet.
 
 **Ready page:** the pre-ticked Wi-Fi box must say, in its own line, "Copies this Wi-Fi's password to AurOS on this computer.
-Not sent anywhere." (COMPLIANCE 4.8 item 4), and the drive-lock line must say how long.
+Not sent anywhere." (COMPLIANCE 4.8 item 4), and the drive-protection line must use the same no-count wording above.

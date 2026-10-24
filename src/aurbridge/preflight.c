@@ -1147,7 +1147,7 @@ static int volume_is_bitlocker(const char *drive)
  * rather than NTFS, Windows' own shrink is unavailable on an encrypted
  * volume, and Suspend-BitLocker does not decrypt a single sector. Only
  * a full decryption clears it -- and AurOS never asks for one (owner
- * decision D11: paused for one restart, never decrypted). So until the
+ * decision D11: protection paused, never decrypted). So until the
  * engine can pause it, this is a stop she cannot clear, said as one:
  * the wizard's only button is Close. */
 #ifndef AB_CHOICE_BITLOCKER_PAUSE
@@ -1162,19 +1162,30 @@ static const char *BITLOCKER_REMEDY =
 static void add_bitlocker(pf_report *r, const char *drive, int is_sys)
 {
     char det[512];
+#ifdef AB_CHOICE_BITLOCKER_PAUSE
+    snprintf(det, sizeof det,
+        "Drive %s is encrypted with BitLocker.%s", drive,
+        is_sys ? " This is the drive Windows is installed on. Setup asks "
+                 "Windows itself to make room while the drive stays encrypted."
+               : " AurOS does not need to open or change this drive.");
+#else
     snprintf(det, sizeof det,
         "Drive %s is encrypted with BitLocker.%s", drive,
         is_sys ? " This is the drive Windows is installed on. There is no way "
                  "to resize an encrypted drive safely: the tools that could do "
                  "it cannot read it, and the ones that can read it will not "
                  "resize it." : "");
+#endif
 #ifdef AB_CHOICE_BITLOCKER_PAUSE
-    /* D11: THE ENGINE PAUSES IT FOR ONE RESTART, it does not decrypt, and
+    /* D11: THE ENGINE PAUSES PROTECTION, it does not decrypt, and
      * Windows shrinks its own volume with the lock on (D1). Not a stop: a
      * fact the Ready page says in her words. */
     add(r, is_sys ? "bitlocker-system" : "bitlocker-other", "R1", PF_INFO,
         "This drive is encrypted with BitLocker",
-        det, "Nothing to do: it is paused for one restart and turns itself back on.");
+        det, is_sys ? "Nothing to do: Setup can pause this protection. It stays "
+                      "paused until Windows turns it back on; start Windows again "
+                      "to let that happen."
+                    : "Nothing to do: AurOS leaves this drive alone.");
 #else
     /* R1: the highest-consequence item in the product. */
     add(r, is_sys ? "bitlocker-system" : "bitlocker-other", "R1", PF_BLOCK,
