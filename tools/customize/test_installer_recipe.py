@@ -131,6 +131,7 @@ class InstallerRecipeTests(unittest.TestCase):
 #include <string.h>
 #include "recipe.h"
 int main(void) {
+    if (ab_recipe_status() != AB_RECIPE_ABSENT) return 1;
     if (ab_recipe_baked() != 0) return 1;
     if (strcmp(ab_recipe_image_profile(), "desktop")) return 2;
     if (*ab_recipe_id_for_selection("desktop", "taskbar", "sandstone")) return 3;
@@ -150,6 +151,7 @@ int main(void) {
 #include "recipe.h"
 int main(void) {
     const ab_baked_recipe *r = ab_recipe_baked();
+    if (ab_recipe_status() != AB_RECIPE_VALID) return 1;
     if (!r || strcmp(r->look, "tiles") || strcmp(r->theme, "nocturne")) return 1;
     if (!*ab_recipe_id_for_selection("desktop", "tiles", "nocturne")) return 2;
     if (*ab_recipe_id_for_selection("desktop", "dock", "nocturne")) return 3;
@@ -173,8 +175,9 @@ int main(void) {
 #include <string.h>
 #include "recipe.h"
 int main(void) {
-    if (ab_recipe_baked() != 0) return 1;
-    if (strcmp(ab_recipe_image_profile(), "desktop")) return 2;
+    if (ab_recipe_status() != AB_RECIPE_INVALID) return 1;
+    if (ab_recipe_baked() != 0) return 2;
+    if (*ab_recipe_image_profile()) return 3;
     return 0;
 }
 ''',

@@ -6642,6 +6642,17 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     plat_harden_dll_search();                       /* SEC-003: before anything is loaded */
     (void)prev; (void)cmd;
 
+    /* A personalized installer must never turn into a generic one because its
+     * baked data was stale or malformed. Refuse before reports, downloads,
+     * checks, or any machine-changing path can start. */
+    if (ab_recipe_status() == AB_RECIPE_INVALID) {
+        MessageBoxW(NULL,
+                    L"This copy of AurOS Setup has invalid personalization data.\n\n"
+                    L"Download a fresh copy of AurOS Setup and try again.",
+                    L"AurOS Setup", MB_OK | MB_ICONERROR);
+        return 2;
+    }
+
     /* Dev harness switches. They only render and report; none of them can
      * change anything on the machine. */
     const char *shot = NULL, *navtest = NULL, *report_dir = NULL;
