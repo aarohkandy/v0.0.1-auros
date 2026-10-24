@@ -554,3 +554,17 @@ rootfs, and staging-module extraction is limited to its actual consumers.
 Same-run image pieces and both SHA-256 verification layers are unchanged.
 All 29 workflow files and expanded matrix requirements passed validation.
 The change will take effect on a future candidate, not the running one.
+
+Follow-through: all candidate image tests passed and prerelease
+`v0.1.0-e0d0aad` was published. Its ordinary and fastpath base/BitLocker Windows
+journeys are running. The release Windows navigation job failed the same stale
+fastpath no-scroll assertion already repaired on the working branch; its later
+download checks therefore did not run. Do not call this release green or retry
+the unchanged executable to hide that result.
+
+Retained candidate evidence in `/tmp/auros-candidate-firstsession-40138682256`
+shows DHCP/route/catalogue success with the network fix and failure without it;
+the offline store screenshot visibly finds VLC. Neither proves VLC launch.
+The deliberate desktop-failure test also passed. The PAM attribution repair
+passed 31 focused tests and review, is on main `fdfa1116`, and is running in
+diagnostic `40141791633` against the same retained multilingual image.
