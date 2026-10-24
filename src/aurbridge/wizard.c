@@ -6647,7 +6647,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
      * checks, or any machine-changing path can start. */
     if (ab_recipe_status() == AB_RECIPE_INVALID) {
         MessageBoxW(NULL,
-                    L"This copy of AurOS Setup has invalid personalization data.\n\n"
+                    L"This copy of AurOS Setup cannot read your choices.\n\n"
                     L"Download a fresh copy of AurOS Setup and try again.",
                     L"AurOS Setup", MB_OK | MB_ICONERROR);
         return 2;
