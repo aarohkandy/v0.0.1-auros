@@ -65,7 +65,10 @@ verify() { # both modes: the state afterwards
     check "...and neither theme is on the disk" sh -c '! ls /usr/share/icons | grep -qi "ubuntu-mono\|humanity"'
     check "GTK's icons stay: adwaita-icon-theme is installed" sh -c 'dpkg-query -W -f="\${Status}" adwaita-icon-theme | grep -q "ok installed"'
     check "...with its dependency answered by aurosicons" sh -c 'dpkg-query -W -f="\${Status} \${Provides}" aurosicons | grep -q "ok installed.*ubuntu-mono"'
-    check "...and it is not in auros-*, the update channel's namespace (keep-previous, rollback)" sh -c '[ -z "$(dpkg-query -W -f="\${Package}\n" auros "auros-*" 2>/dev/null)" ]'
+    # The built image HAS packages in that namespace on purpose (auros, auros-config,
+    # auros-desktop, ...; RC5 run 40040610042, build log "registered with dpkg"): the
+    # stand-in must not be one of them, so none of them provides ubuntu-mono.
+    check "...and it is not in auros-*, the update channel's namespace (keep-previous, rollback)" sh -c '! dpkg-query -W -f="\${Package} \${Provides}\n" auros "auros-*" 2>/dev/null | grep -q ubuntu-mono'
     check "apt-get check is clean" apt-get check
     check "dpkg --audit has nothing to say" sh -c '[ -z "$(dpkg --audit)" ]'
     check "apt will not put Ubuntu's icon theme back (pinned out)" sh -c '! apt-get -s install ubuntu-mono 2>&1 | grep -q "^Inst ubuntu-mono"'
