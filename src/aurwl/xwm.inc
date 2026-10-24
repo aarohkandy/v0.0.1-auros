@@ -1238,6 +1238,12 @@ static aurwl_win *xw_popup_parent(const aurwl_win *w)
     xwin *p = xwm_popup_parent(w->xw->m);
     return p ? p->win : NULL;
 }
+static uint32_t xw_transient_id(const aurwl_win *w)
+{
+    if (!w->xw || w->xw->or_ || !w->xw->transient_for) return 0;
+    xwin *p = xwin_find(w->xw->m, w->xw->transient_for);
+    return (p && p->win && p->win != w) ? p->win->id : 0;
+}
 static void xw_popup_offset(const aurwl_win *w, int *x, int *y)
 {
     int ox = 0, oy = 0;

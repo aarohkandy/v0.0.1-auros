@@ -115,6 +115,8 @@ typedef struct {
      * buttons, one above the other, is the thing nobody can work out.
      * The footer's "Close this" is still the one place to close. */
     int       csd;
+    /* The wid of the window this one is a dialog of (xdg set_parent, WM_TRANSIENT_FOR), 0 if none. */
+    uint32_t  dialog_of;
     /* The program asked to fill the screen (a film's full-screen button,
      * a page's video): it covers the whole desktop above the band, which
      * stays, so "Close this" is always there. Cleared when it stops being

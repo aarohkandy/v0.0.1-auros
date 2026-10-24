@@ -127,6 +127,8 @@ void        aurwl_win_kill(aurwl_win *w);
  * must route input to them first, or a browser has no context menu. */
 int         aurwl_win_is_popup(const aurwl_win *w);
 aurwl_win  *aurwl_win_parent(const aurwl_win *w);
+/* A dialog's parent: the id (aurwl_win_id) of the window it belongs to, or 0. */
+uint32_t    aurwl_win_transient_for(const aurwl_win *w);
 void        aurwl_win_popup_offset(const aurwl_win *w, int *x, int *y);
 
 /* ── input ──────────────────────────────────────────────────────── */

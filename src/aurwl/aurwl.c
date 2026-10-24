@@ -156,6 +156,7 @@ struct aurwl_win {
     aurwl              *c;
     struct wl_resource *res;          /* wl_surface */
     uint32_t            id;
+    uint32_t            tparent;      /* xdg_toplevel.set_parent: the id of the window this is a dialog of, 0 if none */
 
     surf_state          pending, current;
     /* A client may destroy a wl_buffer it has attached but not yet
@@ -397,6 +398,7 @@ static void        xw_paste(aurwl *c, const char *mime, int fd);   /* a Wayland 
 static void        selection_broadcast(aurwl *c);
 static int         xw_is_popup(const aurwl_win *w);        /* override-redirect: a menu      */
 static aurwl_win  *xw_popup_parent(const aurwl_win *w);
+static uint32_t    xw_transient_id(const aurwl_win *w);    /* WM_TRANSIENT_FOR, as the other window's id */
 static void        xw_popup_offset(const aurwl_win *w, int *x, int *y);
 static int         xw_configure(aurwl_win *w, int width, int height, int act, int max, int full);
 static void        xw_focus(aurwl *c, aurwl_win *w);
@@ -2764,7 +2766,11 @@ static void configure_toplevel(aurwl_win *w)
 }
 
 static void tl_set_parent(struct wl_client *cl, struct wl_resource *r, struct wl_resource *p)
-{ (void)cl; (void)r; (void)p; }
+{
+    (void)cl;
+    aurwl_win *w = wl_resource_get_user_data(r), *pw = p ? wl_resource_get_user_data(p) : NULL;
+    if (w) w->tparent = pw ? pw->id : 0;     /* the id, not the pointer: the parent may go first */
+}
 /* Every handler below can be reached after its surface is gone: the
  * resource outlives the surface for as long as it takes libwayland to
  * work through a dead client's object list, and we disarm it rather
@@ -3647,6 +3653,13 @@ void aurwl_win_content_offset(const aurwl_win *w, int *x, int *y)
     if (y) *y = gy;
 }
 int         aurwl_win_is_popup(const aurwl_win *w) { return w && (w->role == ROLE_POPUP || xw_is_popup(w)); }
+/* The window this one is a dialog of: the id of the window named by xdg_toplevel.set_parent or by
+ * WM_TRANSIENT_FOR, or 0. The shell opens a dialog in front of what it belongs to (session.c). */
+uint32_t aurwl_win_transient_for(const aurwl_win *w)
+{
+    if (!w) return 0;
+    return w->role == ROLE_X11 ? xw_transient_id(w) : w->tparent;
+}
 aurwl_win  *aurwl_win_parent(const aurwl_win *w)
 {
     if (!w) return NULL;

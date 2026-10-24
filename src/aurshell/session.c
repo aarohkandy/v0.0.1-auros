@@ -127,6 +127,7 @@ void session_sync(shell_ctx *c, const shell_layout *L)
             if (i < 0) continue;                         /* list is full */
             c->wins[i].wid = id;
             c->wins[i].starting = 0;
+            c->wins[i].dialog_of = aurwl_win_transient_for(w);
             if (c->wins[i].app < 0) c->wins[i].app = app;
             /* A window that has just appeared is the one the user is
              * waiting for, so the archetype is asked to bring it into
@@ -134,8 +135,18 @@ void session_sync(shell_ctx *c, const shell_layout *L)
              * has to scroll, a stack has to raise, and only the
              * archetype knows which it is. */
             if (present) present(c, i); else c->focus = i;
+            /* A dialog opens IN FRONT of what it belongs to, whichever of the two mapped first:
+             * VLC's first-run question (and every "Do you want to save?") must be what she sees,
+             * not a card beside the program that is waiting for her answer. (F's real-Windows run,
+             * finding 9: it sat half off the screen behind VLC's window.) So a window that arrives
+             * after its own dialogs is brought forward, and then they are, over it. */
+            for (int j = 0; j < c->n_wins; j++)
+                if (j != i && c->wins[j].wid && c->wins[j].dialog_of == id && !c->wins[j].minimised) {
+                    if (present) present(c, j); else c->focus = j;
+                }
         }
         seen[i] = 1;
+        c->wins[i].dialog_of = aurwl_win_transient_for(w);
 
         win_entry *e = &c->wins[i];
         const char *title = aurwl_win_title(w);
@@ -211,6 +222,8 @@ void session_sync(shell_ctx *c, const shell_layout *L)
              * bookkeeping; the path a real application exits through
              * did not, and that is the path that actually happens. */
             if (removed) removed(c, i);
+            uint32_t parent = e->dialog_of;
+            int was_front = (c->focus == i);
             for (int j = i; j + 1 < c->n_wins; j++) c->wins[j] = c->wins[j + 1];
             c->n_wins--;
             /* A decrement, not a clamp. When the slot that went was
@@ -221,6 +234,11 @@ void session_sync(shell_ctx *c, const shell_layout *L)
             if (c->focus > i) c->focus--;
             else if (c->focus == i) c->focus = c->n_wins - 1;
             if (c->focus >= c->n_wins) c->focus = c->n_wins - 1;
+            /* The question was answered: back to the program that asked it. */
+            if (was_front && parent) {
+                int pj = slot_for_wid(c, parent);
+                if (pj >= 0) { if (present) present(c, pj); else c->focus = pj; }
+            }
             continue;
         }
         if (e->starting) {

@@ -25,6 +25,7 @@ on:
       - 'tools/wltest-sub.*'
       - 'tools/wltest-x*'
       - 'tools/wltest-deco.*'
+      - 'tools/wltest-dialog.*'
       - 'tools/checksec.sh'
       - 'build/cflags'
       - '.github/workflows/fuzz.yml'
@@ -62,5 +63,9 @@ jobs:
       # that bar can ask of the shell, so the shell draws one set of buttons.
       - name: wltest-deco (a program's own title bar)
         run: sh tools/wltest-deco.sh
+      # Stream C: a dialog opens in front of the program that asked it (VLC's first-run
+      # question was buried behind VLC), in every look and in either order of mapping.
+      - name: wltest-dialog (a dialog in front of its program)
+        run: sh tools/wltest-dialog.sh
       - name: hardening gate selftest
         run: sh tools/checksec.sh --selftest
