@@ -19,6 +19,8 @@ from pathlib import Path
 SYS_PIDFD_GETFD_X86_64 = 438
 SYS_KCMP_X86_64 = 312
 KCMP_FILE = 0
+EXPECTED_SERVICE_EXE = "/usr/bin/dbus-run-session"
+EXPECTED_COMPOSITOR_EXE = "/usr/bin/aurshell"
 
 
 def descendants_from_parents(pid: int, parents: dict[int, int]) -> list[int]:
@@ -33,7 +35,12 @@ def descendants_from_parents(pid: int, parents: dict[int, int]) -> list[int]:
 
 
 def parse_ppid(stat_line: str) -> int:
-    return int(stat_line.rsplit(")", 1)[1].split()[1])
+    return parse_process_stat(stat_line)[0]
+
+
+def parse_process_stat(stat_line: str) -> tuple[int, int]:
+    fields = stat_line.rsplit(")", 1)[1].split()
+    return int(fields[1]), int(fields[19])
 
 
 def descendants(pid: int) -> list[int]:
@@ -47,6 +54,87 @@ def descendants(pid: int) -> list[int]:
         except (OSError, ValueError, IndexError):
             continue
     return descendants_from_parents(pid, parents)
+
+
+def select_compositor(service_main_pid: int, cgroup_pids: set[int],
+                      executables: dict[int, str], parents: dict[int, int]) -> int:
+    """Select the exact compositor in one authenticated service snapshot."""
+    if service_main_pid not in cgroup_pids:
+        raise RuntimeError("aurshell.service MainPID is outside its control group")
+    if executables.get(service_main_pid) != EXPECTED_SERVICE_EXE:
+        raise RuntimeError("aurshell.service MainPID is not the exact session wrapper")
+    candidates = sorted(pid for pid in cgroup_pids
+                        if executables.get(pid) == EXPECTED_COMPOSITOR_EXE)
+    if len(candidates) != 1:
+        raise RuntimeError(f"expected one exact aurshell compositor, got {len(candidates)}")
+    compositor = candidates[0]
+    seen = set()
+    current = compositor
+    while current != service_main_pid:
+        if current in seen:
+            raise RuntimeError("compositor ancestry contains a loop")
+        seen.add(current)
+        if current not in cgroup_pids:
+            raise RuntimeError("compositor ancestry left the service control group")
+        current = parents.get(current, 0)
+        if current <= 0:
+            raise RuntimeError("compositor does not descend from service MainPID")
+    return compositor
+
+
+def service_snapshot(control_group: str):
+    """Read one exact cgroup, executable, ancestry and start-time snapshot."""
+    if not control_group.startswith("/") or control_group == "/" or ".." in control_group.split("/"):
+        raise RuntimeError("invalid aurshell.service control group")
+    cgroup_root = Path("/sys/fs/cgroup").resolve()
+    cgroup_path = (cgroup_root / control_group.lstrip("/")).resolve()
+    if cgroup_path.parent != cgroup_root and cgroup_root not in cgroup_path.parents:
+        raise RuntimeError("aurshell.service control group escaped cgroup root")
+    try:
+        cgroup_pids = {int(value) for value in
+                       (cgroup_path / "cgroup.procs").read_text(encoding="ascii").splitlines()}
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("could not read aurshell.service process membership") from exc
+    executables = {}
+    parents = {}
+    starttimes = {}
+    for pid in cgroup_pids:
+        try:
+            executables[pid] = os.readlink(Path("/proc") / str(pid) / "exe")
+            parents[pid], starttimes[pid] = parse_process_stat(
+                (Path("/proc") / str(pid) / "stat").read_text())
+            membership = (Path("/proc") / str(pid) / "cgroup").read_text(encoding="ascii").splitlines()
+        except (OSError, ValueError, IndexError) as exc:
+            raise RuntimeError("aurshell.service process snapshot changed") from exc
+        if f"0::{control_group}" not in membership:
+            raise RuntimeError("process disagrees with aurshell.service control group")
+    return cgroup_pids, executables, parents, starttimes
+
+
+def read_service_topology(service_main_pid: int, control_group: str) -> tuple[int, int, int]:
+    """Resolve and pin the compositor from two identical service snapshots."""
+    first = service_snapshot(control_group)
+    cgroup_pids, executables, parents, _starttimes = first
+    compositor = select_compositor(service_main_pid, cgroup_pids, executables, parents)
+    main_pidfd = os.pidfd_open(service_main_pid, 0)
+    compositor_pidfd = -1
+    try:
+        compositor_pidfd = os.pidfd_open(compositor, 0)
+        second = service_snapshot(control_group)
+        if second != first:
+            raise RuntimeError("aurshell.service topology changed during authentication")
+        if not pidfd_alive(main_pidfd) or not pidfd_alive(compositor_pidfd):
+            raise RuntimeError("aurshell.service identity exited during authentication")
+        if os.readlink(Path("/proc") / str(service_main_pid) / "exe") != EXPECTED_SERVICE_EXE:
+            raise RuntimeError("aurshell.service wrapper changed during authentication")
+        if os.readlink(Path("/proc") / str(compositor) / "exe") != EXPECTED_COMPOSITOR_EXE:
+            raise RuntimeError("aurshell compositor changed during authentication")
+        return compositor, main_pidfd, compositor_pidfd
+    except Exception:
+        if compositor_pidfd >= 0:
+            os.close(compositor_pidfd)
+        os.close(main_pidfd)
+        raise
 
 
 def fd_writers(path: Path) -> list[tuple[int, int]]:
@@ -77,6 +165,12 @@ def fd_writers(path: Path) -> list[tuple[int, int]]:
 
 def fd_flags_writable(flags: int) -> bool:
     return (flags & os.O_ACCMODE) in (os.O_WRONLY, os.O_RDWR)
+
+
+def is_stream_socket(sock: socket.socket, *, listener: bool) -> bool:
+    if sock.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) != socket.SOCK_STREAM:
+        return False
+    return not listener or sock.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN) == 1
 
 
 def duplicate_fd(pidfd: int, target_fd: int) -> int:
@@ -126,6 +220,8 @@ def socket_inventory(pid: int, pidfd: int, shell_pid: int, display_path: Path):
                 sock = socket.socket(fileno=duplicate)
                 try:
                     if sock.family != socket.AF_UNIX:
+                        continue
+                    if not is_stream_socket(sock, listener=False):
                         continue
                     try:
                         peer_name = sock.getpeername()
@@ -177,34 +273,31 @@ def unix_path_inodes(display_path: Path) -> set[int]:
     return result
 
 
-def verify_listener(shell_pid: int, display_path: Path) -> None:
+def verify_listener(shell_pid: int, shell_pidfd: int, display_path: Path) -> None:
     expected = display_path.stat()
     if not stat.S_ISSOCK(expected.st_mode):
         raise RuntimeError("WAYLAND_DISPLAY path is not a socket")
-    pidfd = os.pidfd_open(shell_pid, 0)
     path_inodes = unix_path_inodes(display_path)
     if len(path_inodes) != 1:
         raise RuntimeError(f"expected one WAYLAND_DISPLAY socket inode, got {len(path_inodes)}")
     found = 0
-    try:
-        for entry in (Path("/proc") / str(shell_pid) / "fd").iterdir():
-            try:
-                if not os.readlink(entry).startswith("socket:["):
-                    continue
-                duplicate = duplicate_fd(pidfd, int(entry.name))
-                try:
-                    sock = socket.socket(fileno=duplicate)
-                    name = sock.getsockname()
-                    inode = os.fstat(duplicate).st_ino
-                    sock.detach()
-                    if name == str(display_path) and inode in path_inodes:
-                        found += 1
-                finally:
-                    os.close(duplicate)
-            except (OSError, ValueError):
+    for entry in (Path("/proc") / str(shell_pid) / "fd").iterdir():
+        try:
+            if not os.readlink(entry).startswith("socket:["):
                 continue
-    finally:
-        os.close(pidfd)
+            duplicate = duplicate_fd(shell_pidfd, int(entry.name))
+            try:
+                sock = socket.socket(fileno=duplicate)
+                name = sock.getsockname()
+                inode = os.fstat(duplicate).st_ino
+                valid_listener = is_stream_socket(sock, listener=True)
+                sock.detach()
+                if (valid_listener and name == str(display_path) and inode in path_inodes):
+                    found += 1
+            finally:
+                os.close(duplicate)
+        except (OSError, ValueError):
+            continue
     if found != 1:
         raise RuntimeError(f"expected one exact AurWL listener, got {found}")
 
@@ -246,7 +339,8 @@ def pidfd_alive(pidfd: int) -> bool:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--app-pid", type=int, required=True)
-    parser.add_argument("--shell-pid", type=int, required=True)
+    parser.add_argument("--service-main-pid", type=int, required=True)
+    parser.add_argument("--service-control-group", required=True)
     parser.add_argument("--display-path", type=Path, required=True)
     parser.add_argument("--trace", type=Path, required=True)
     parser.add_argument("--ready", type=Path, required=True)
@@ -255,11 +349,15 @@ def main() -> None:
     args = parser.parse_args()
     held = []
     app_pidfd = -1
+    service_pidfd = -1
+    compositor_pidfd = -1
     try:
-        verify_listener(args.shell_pid, args.display_path)
+        shell_pid, service_pidfd, compositor_pidfd = read_service_topology(
+            args.service_main_pid, args.service_control_group)
+        verify_listener(shell_pid, compositor_pidfd, args.display_path)
         (app_pidfd, held, wayland_fd, wayland_inode, trace_fd, trace_dev,
          trace_inode, trace_copy) = snapshot(
-            args.app_pid, args.shell_pid, args.display_path, args.trace)
+            args.app_pid, shell_pid, args.display_path, args.trace)
         args.ready.write_text("ready\n", encoding="ascii")
         deadline = time.monotonic() + 180
         while not args.done.exists():
@@ -269,8 +367,20 @@ def main() -> None:
         before = (wayland_fd, wayland_inode, trace_fd, trace_dev, trace_inode)
         if not pidfd_alive(app_pidfd):
             raise RuntimeError("application exited during connection interval")
+        if not pidfd_alive(service_pidfd) or not pidfd_alive(compositor_pidfd):
+            raise RuntimeError("authenticated aurshell.service identity exited during interval")
+        (second_shell_pid, second_service_pidfd,
+         second_compositor_pidfd) = read_service_topology(
+            args.service_main_pid, args.service_control_group)
+        try:
+            if second_shell_pid != shell_pid:
+                raise RuntimeError("aurshell compositor identity changed during interval")
+            verify_listener(second_shell_pid, second_compositor_pidfd, args.display_path)
+        finally:
+            os.close(second_compositor_pidfd)
+            os.close(second_service_pidfd)
         second = snapshot(
-            args.app_pid, args.shell_pid, args.display_path, args.trace)
+            args.app_pid, shell_pid, args.display_path, args.trace)
         (second_pidfd, second_held, second_wayland_fd, second_wayland_inode,
          second_trace_fd, second_trace_dev, second_trace_inode,
          second_trace_copy) = second
@@ -286,16 +396,26 @@ def main() -> None:
         args.output.write_text(
             "status=pass\nchildren_at_boundaries=0\ncompositor_connections_at_boundaries=1\n"
             "trace_writers_at_boundaries=1\npeer_pid=exact_aurshell\n"
-            "peer_path=exact_wayland_display\nlistener_inode=exact_wayland_display\n",
+            "peer_path=exact_wayland_display\nlistener_inode=exact_wayland_display\n"
+            "service_main_pid=exact_dbus_run_session\n"
+            "compositor_exe=exact_usr_bin_aurshell\n"
+            "compositor_in_service_cgroup=yes\n"
+            "compositor_descends_from_service_main_pid=yes\n",
             encoding="ascii")
     except Exception as exc:
-        args.output.write_text(f"status=fail\nreason={type(exc).__name__}\n", encoding="ascii")
+        detail = str(exc).replace("\n", " ")[:240]
+        args.output.write_text(
+            f"status=fail\nreason={type(exc).__name__}: {detail}\n", encoding="ascii")
         raise
     finally:
         for value in held:
             os.close(value)
         if app_pidfd >= 0:
             os.close(app_pidfd)
+        if compositor_pidfd >= 0:
+            os.close(compositor_pidfd)
+        if service_pidfd >= 0:
+            os.close(service_pidfd)
 
 
 if __name__ == "__main__":
