@@ -484,7 +484,12 @@ jobs:
         run: sh tools/termstest.sh 2>&1 | tee transcripts/termstest.txt
       - name: handoverlinuxtest (her files, in a file in AurOS's root, at the disk address AurOS gives)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: sudo sh tools/handoverlinuxtest.sh 2>&1 | tee transcripts/handoverlinuxtest.txt
+        run: |
+          # The runner's kernel (linux-azure) has no exfat driver: mount -t exfat finds
+          # /sbin/mount.exfat first when it exists, and exfat-fuse is the same format
+          # through FUSE. (modprobe first, in case a newer image has the driver.)
+          sudo modprobe exfat 2>/dev/null || { sh tools/apt.sh exfat-fuse; sudo ln -sf mount.exfat-fuse /sbin/mount.exfat; }
+          sudo sh tools/handoverlinuxtest.sh 2>&1 | tee transcripts/handoverlinuxtest.txt
       - name: manifesttest (the published wizard)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/manifesttest.sh dl/installer/AurOS-Setup.exe 2>&1 | tee transcripts/manifesttest.txt
@@ -529,6 +534,31 @@ jobs:
           for f in transcripts/*.txt; do
             echo "=== $(basename "$f" .txt)"; tail -n 3 "$f"
           done
+
+  # CIW: the encrypted drive and its PIN (docs/security/THEFT.md), on a file against a
+  # software security chip. Apart from `unit` so that a runner without device-mapper or swtpm
+  # fails by itself and cannot take the unit gate down. The feature is switched off in the
+  # image; the test of the code that will turn it on is not.
+  theft:
+    needs: which
+    if: needs.which.outputs.go == 'true' && needs.which.outputs.suite == 'gating'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: tools
+        run: |
+          sh tools/apt.sh cryptsetup-bin libcryptsetup-dev systemd swtpm swtpm-tools tpm2-tools \
+              libtss2-tcti-swtpm0t64 gcc libc6-dev e2fsprogs util-linux fonts-dejavu-core
+          mkdir -p transcripts
+      - name: theftunit (the PIN, the rescue code, a wrong PIN, a locked chip, a different chip, no chip)
+        run: sudo bash tools/theftunit.sh 2>&1 | tee transcripts/theftunit.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: transcripts-theft
+          path: transcripts/
+          retention-days: 30
 
   # Wishes (streams W1 and W2). These tests build and break whole copies of
   # the tree (every mutant is a sanitized build), about 15 minutes of work; in
