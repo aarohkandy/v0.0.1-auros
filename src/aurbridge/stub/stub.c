@@ -153,8 +153,10 @@ static wchar_t *wcat(wchar_t *d, size_t cap, const wchar_t *s)
 }
 
 /* ── what is said when it cannot go on ───────────────────────────── */
+static int g_quiet;                 /* "--quiet-failure": no box, for a test with nobody to press OK */
 static void fail(const wchar_t *why)
 {
+    if (g_quiet) ExitProcess(3);
     /* user32 is not linked (kernel32 only); by now loads are System32's */
     HMODULE u = LoadLibraryExW(L"user32.dll", NULL, 0x800 /* LOAD_LIBRARY_SEARCH_SYSTEM32 */);
     typedef int (WINAPI *PFN_MB)(HWND, LPCWSTR, LPCWSTR, UINT);
@@ -353,6 +355,14 @@ void stub_start(void)
 {
     harden();
     sd_build();
+    {   /* "--quiet-failure" is the one thing this program reads from its arguments: it only
+         * decides whether a failure says so in a box; every argument goes on to the installer */
+        const wchar_t *a = args_of(GetCommandLineW());
+        static const wchar_t q[] = L"--quiet-failure";
+        int i = 0;
+        while (q[i] && a[i] == q[i]) i++;
+        g_quiet = !q[i] && (!a[i] || a[i] == L' ');
+    }
 
     /* the trusted base: the system drive's ProgramData, named from the system's own
      * answer (not from an environment variable a launcher could set), and not a link */
@@ -396,7 +406,7 @@ void stub_start(void)
         }
     }
     if (!made) fail(L"A private folder could not be made.");
-#ifndef STUB_MUTANT_ACCEPT
+#if !defined(STUB_MUTANT_ACCEPT) && !defined(STUB_MUTANT_INHERIT)
     if (!dir_is_trustworthy(g_dir, 1)) fail(L"The private folder is not the one that was asked for, or not private.");
 #endif
 
