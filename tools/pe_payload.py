@@ -14,6 +14,12 @@ language, without asking the program that wrote it.
 
     tools/pe_payload.py list     EXE
     tools/pe_payload.py get      EXE ID OUTFILE
+
+AurOS-Setup.exe is a stub that carries the installer as RCDATA 300 (SEC-003,
+src/aurbridge/stub/stub.c). `list` and `get` look INSIDE it (the stub's own line
+300 is listed too, and `get EXE 300` is the installer itself), so every gate that asks
+"does it carry resources 1-5, 200, 202" still asks the installer; `check`, `manifest`
+and `dashed` are about the file itself, the stub, which has the installer's manifest.
     tools/pe_payload.py manifest EXE            print the RT_MANIFEST
     tools/pe_payload.py check    EXE-or-XML     is it a manifest Windows loads?
     tools/pe_payload.py dashed   EXE OUT        EXE with '--' written into its manifest (the shape
@@ -39,7 +45,7 @@ def _u32(b, o): return struct.unpack_from('<I', b, o)[0]
 
 class PE:
     def __init__(self, path):
-        self.b = open(path, 'rb').read()
+        self.b = path if isinstance(path, (bytes, bytearray)) else open(path, 'rb').read()
         if self.b[:2] != b'MZ':
             raise SystemExit('%s is not a Windows program' % path)
         pe = _u32(self.b, 0x3C)
@@ -165,9 +171,16 @@ def main():
         return
     pe = PE(path)
     res = pe.rcdata()
+    inner = None
+    if 300 in res and pe.b[res[300][0]:res[300][0] + 2] == b'MZ':
+        o, n = res[300]
+        inner = PE(bytes(pe.b[o:o + n]))
     if what == 'list':
         for rid in sorted(res):
             print('%d %d' % (rid, res[rid][1]))
+        if inner:
+            for rid, (_o, ln) in sorted(inner.rcdata().items()):
+                print('%d %d' % (rid, ln))
         return
     if what == 'manifest':
         man = pe.resources(RT_MANIFEST)
@@ -178,10 +191,14 @@ def main():
         return
     if what == 'get':
         rid = int(sys.argv[3])
+        src = pe
+        if inner and rid != 300:
+            src = inner
+            res = inner.rcdata()
         if rid not in res:
             raise SystemExit(1)
         off, ln = res[rid]
-        open(sys.argv[4], 'wb').write(pe.b[off:off + ln])
+        open(sys.argv[4], 'wb').write(src.b[off:off + ln])
         return
     raise SystemExit(__doc__)
 
