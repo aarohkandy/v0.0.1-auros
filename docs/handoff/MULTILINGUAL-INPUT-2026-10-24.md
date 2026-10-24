@@ -108,3 +108,125 @@ one freshly XRes-authenticated candidate from the retained process. A new
 XID is acceptable with fresh authentication. Mapped-away or ambiguous states
 stop the experiment. Sixteen parser tests, 47 harness checks and independent
 security review pass; runtime lifecycle evidence is still pending.
+
+## Security stop: the panel process does not authenticate its content
+
+The proposed X11 exception is blocked even if the focus-lifecycle diagnostic
+passes. A pidfd proves which process rendered a window and XRes proves which X
+client owns it. Neither proves who supplied the words that process displays.
+
+This conclusion is from source review, not a reproduced exploit. No arbitrary
+client was run against the retained image, no foreign client called the real
+panel's `UpdateLookupTable`, and no malicious engine was registered or selected
+at runtime. The runtime work above proves the legitimate panel's process,
+window and composition behavior only.
+
+The reviewed sources are Ubuntu Noble's `ibus` source package at commit
+`dcffa98a63b75d46e1946a492cf399387f1b68da` on `ubuntu/noble-updates` and the
+upstream IBus 1.5.29 tag at commit
+`0ad8e77bd36545974ad8acd0a5283cf72bc7c8ad`. Noble identifies the package as
+1.5.29-1. The control-plane files below are identical to the upstream tag
+before Ubuntu's patch series. Ubuntu's panel patch adds Unity property
+forwarding; it does not restrict lookup-table senders or engine registration.
+
+There are two independent source-level paths for another process in the same
+login session to choose panel content:
+
+1. `bus/server.c` lines 103-136 accepts the EXTERNAL authentication mechanism
+   and authorizes every peer with the daemon's user ID. The private IBus bus
+   routes calls addressed to `org.freedesktop.IBus.Panel` to the panel's one
+   connection. `src/ibuspanelservice.c` lines 1084-1118 compares the service's
+   receive-side `GDBusConnection` with the connection on which it received the
+   call, but does not check the `sender` argument. That comparison is true for
+   calls forwarded from any sender to that service connection. Lines 1149-1160
+   deserialize any `UpdateLookupTable` argument and emit it. The GTK panel
+   passes a visible table straight to `CandidatePanel`
+   (`ui/gtk3/panel.vala` lines 1748-1751), which copies its candidate strings
+   and shows the popup when the list is nonempty
+   (`ui/gtk3/candidatepanel.vala` lines 196-238 and 246-261).
+2. `org.freedesktop.IBus.RegisterComponent` has no caller allowlist.
+   `bus/ibusimpl.c` lines 1319-1368 creates an engine factory proxy on the
+   caller's connection and adds its engine descriptions to the registered
+   engine list. Any peer can also create its own input context (lines
+   1196-1223), set `IBUS_CAP_FOCUS`, call `FocusIn`, and select an engine
+   (`bus/inputcontext.c` lines 1137-1155, 1204-1219 and 1281-1319). Global
+   engine mode defaults on, and `SetGlobalEngine` has no sender restriction
+   (`bus/ibusimpl.c` lines 1743-1787). A registered engine's lookup-table
+   signal is then relayed by the daemon to the real panel.
+
+Input-context methods are bound to the connection that created that context.
+That does not close the second path: an untrusted process owns its own context
+and IBus accepts that context's assertion that it has focus. IBus focus is not
+bound to AurWL's keyboard focus or to a Wayland client identity.
+
+This is a narrow same-user overlay risk, not root or compositor code execution.
+AurOS does not currently grant it: the X window manager suppresses an unrelated
+override-redirect X11 panel over a native Wayland application. Applications do
+already trust IBus for their ordinary in-process preedit and commit path, which
+is how the exact `你好` composition proof succeeds. Making the separate panel
+visible and clickable over another client would add the privilege. Therefore
+the exception remains blocked regardless of the A-to-B-to-A focus result.
+
+## Bounded safer paths
+
+### Render lookup UI in the input client
+
+IBus has a client-side delivery branch. In `bus/inputcontext.c` lines
+2145-2172, a context advertising `IBUS_CAP_LOOKUP_TABLE` receives an
+`UpdateLookupTable` signal instead of sending the table to the shared panel.
+That would avoid a separately privileged cross-client window if the focused
+toolkit rendered the chooser as its own Wayland popup.
+
+The shipped GTK IBus module does not implement that path. Its initial
+capabilities are preedit, focus and optionally surrounding text
+(`client/gtk3/ibusimcontext.c` lines 1081-1103); it does not advertise
+`IBUS_CAP_LOOKUP_TABLE`, connect an update-lookup-table handler, or contain a
+candidate renderer. `GtkIMContext` supplies preedit and commit integration,
+but does not provide a generic candidate-list widget that IBus can turn on.
+Merely setting the capability bit would divert lookup tables away from the
+panel and leave them undisplayed.
+
+A client-rendered repair therefore means maintained toolkit input-module work:
+deserialize bounded tables, render a same-client `xdg_popup` tied to the
+focused surface and cursor rectangle, route selection back to that context,
+and repeat the work for every supported toolkit. It may cover GTK Mousepad and
+Firefox first, but it is not an existing switch and does not cover Qt or other
+clients automatically. Its useful security property is that an application
+cannot obtain a new cross-client overlay; its candidate UI remains subject to
+the compositor's ordinary same-client popup and focus rules.
+
+### Authenticate and isolate a shared panel control plane
+
+A shared panel can be reconsidered only if its content path is made narrower
+than the current same-user IBus bus. The minimum boundary needs all of the
+following, followed by adversarial runtime proof:
+
+* The panel must not accept lookup or focus methods through a replaceable
+  well-known name on the shared IBus bus. It needs a private inherited channel
+  whose sole writer is the owned daemon or a small trusted relay, with peer
+  credentials checked before any content is accepted.
+* The daemon or relay must bind each input context to the peer credentials of
+  the process that created it, and bind that identity to AurWL's currently
+  focused Wayland client. An application calling `FocusIn` cannot itself grant
+  that binding. Focus changes must issue a globally nonrepeating generation;
+  old generations cannot authorize a later XID, remap or reused PID.
+* Only root-owned, explicitly allowed engine factories may supply content to
+  the elevated panel. Untrusted peers cannot use `RegisterComponent`, replace
+  an installed engine name, or switch the focused context to an unapproved
+  engine. Otherwise a correctly focused application can still ask a malicious
+  engine to populate the trusted renderer.
+* Every update must carry the authenticated context and current focus
+  generation. The panel and compositor must discard it after focus loss,
+  context disconnect, engine replacement, panel or daemon death, window
+  unmap/destroy, Xwayland restart, or an exec/pidfd identity change. Geometry
+  and pointer access remain bounded to the focused application's visible area;
+  keyboard focus never moves to the panel.
+* Negative tests must attempt direct panel calls, malicious component
+  registration, engine-name replacement, false `FocusIn`, stale-generation
+  replay, PID/XID reuse and updates racing focus loss. A normal Pinyin test is
+  not evidence for these boundaries.
+
+That is the smallest defensible shared-panel boundary visible in the reviewed
+architecture. It requires coordinated compositor, IBus daemon and client
+identity work, so it is not the narrow X11 popup exception originally under
+investigation and is not implemented.
