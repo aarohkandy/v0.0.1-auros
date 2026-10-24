@@ -189,3 +189,16 @@ report records the rail/sandstone desktop as user auros, French locale, no
 failed units, active IBus, GTK/Qt/XMODIFIERS set, Wayland `wayland-0`, X display
 `:0`, and an available Pinyin engine. Boot took about nine seconds in that VM.
 This establishes wiring and boot, not application composition.
+
+The theme-backed wallpaper adapter is integrated through `29eed4ee`. Independent
+review caught and resolved a mismatched Undo field, helper timeouts reported as
+success, and invalid previous themes. Tests now replay the actual saved Undo
+action, kill/reap timed-out helpers, and use aurora to validate the previous
+theme before applying a change. Linux real/inert Wishes UI tests and all 25
+theme-helper checks pass. Raw colors remain refused and Wishes stays disabled.
+
+Desktop isolation is covered by `4d3f3795` inside the existing first-boot VM:
+IBus must be disabled, and all three IM variables must be absent from both the
+live shell and user manager. Missing/query-error evidence fails. Parser
+fixtures, shell syntax and ShellCheck pass; runtime awaits this batch's image.
+This adds no extra build or VM boot.

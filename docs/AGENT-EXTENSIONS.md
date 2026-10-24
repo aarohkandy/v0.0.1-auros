@@ -69,8 +69,10 @@ the capability list sent by the device.
 For shell actions, return success only after applying the change; retain the
 previous value for reversal where appropriate. Do not add an action to the
 advertised supported set while the shell merely recognizes its name. As of this
-checkpoint, `src/aurshell/wish.c` explicitly refuses wallpaper, night light
-and pointer size controls it cannot apply. Its do-not-disturb adapter validates
+checkpoint, `src/aurshell/wish.c` applies installed wallpaper themes through the
+shared Settings helper and records a validated previous theme for Undo. Raw
+wallpaper colors, night light and pointer size remain refused. Its
+do-not-disturb adapter validates
 the event and acknowledges the engine's already-applied suppression of Wishes
 interruptions. This does not control other applications' notifications, and
 Wishes remains disabled pending its activation and runtime gates.
