@@ -137,7 +137,7 @@ export class Ledger {
       for (const day of [dayOf(now), dayOf(now - DAY_MS)]) {
         if (!(await this.val("dk:" + day, now))) continue;
         const h = await this.hmac(day, "tok:" + tid, now);
-        gone.push(`q:${day}:wish:${h}`, `q:${day}:ask:${h}`);
+        gone.push(`q:${day}:wish:${h}`, `q:${day}:ask:${h}`, `q:${day}:configure:${h}`);
       }
       await this.s.delete(gone);
       this.keys.clear();

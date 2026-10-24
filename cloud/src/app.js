@@ -5,13 +5,14 @@ import Anthropic from "@anthropic-ai/sdk";
 import { ASK_OUTPUT, MAX_TEXT, MISSING, WISH_OUTPUT, checkRequest, checkWish, parseWish } from "./validate.js";
 import { ASK_SYSTEM, WISH_SYSTEM, askMessage, wishMessage } from "./prompts.js";
 import { DAY_MS, dayOf } from "./ledger.js";
+import { CONFIGURE_MAX_TEXT, CONFIGURE_OUTPUT, CONFIGURE_SYSTEM, ConfigureOutputError, analyzeConfigureRequest, configureMessage, planFromModel, unsupportedPlan } from "./configure.js";
 
 // Haiku-class per AI.md 7.10: thinking off so the fixed max_tokens all goes to
 // the answer. Changing the model means changing PRICE and re-running
 // test/live-eval.mjs; it is deliberately not a setting.
 export const MODEL = "claude-haiku-5-5";
 const PRICE = { in: 0.10, write: 0.125, read: 0.01, out: 0.50 }; // USD per million tokens, prompts under 100k
-const MAX_TOKENS = { wish: 400, ask: 300 };
+const MAX_TOKENS = { wish: 400, ask: 300, configure: 220 };
 const MAX_COST_USD = 0.01; // a request estimated above this is refused (AI.md 7.10)
 const MAX_BODY = 8 * 1024;
 const DEADLINE_MS = 15_000; // the computer gives up at 20 s
@@ -191,12 +192,10 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
     return { out, usd };
   }
 
-  // Token, cost estimate, quota, pool and slot; then Claude. Returns {res}
-  // (a ready error) or {out, settle}: settle(gotWish) must be called once.
-  async function guarded(tid, route, system, user, schema, m) {
-    if (!env.ANTHROPIC_API_KEY) { m.reason = "no_key"; return { res: busy(m) }; }
-    const estUsd = ((system.length / 3 + user.length) * PRICE.in + MAX_TOKENS[route] * PRICE.out) / 1e6;
-    if (estUsd > MAX_COST_USD) { m.reason = "cost"; return { res: busy(m) }; }
+  // Token liveness, quota, budget, pool and slot. Even a cheap local refusal
+  // goes through this admission so forgotten tokens and request floods do not
+  // bypass the service's controls.
+  async function admitted(tid, route, estUsd, m) {
     const t = now();
     const a = await ledgerCall("admit", ledger.admit({ tid, route, estUsd, now: t }));
     if (a.status === 401) return { res: json(401, { error: "token" }) };
@@ -226,6 +225,17 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
         if (env.ALERT_URL) await fetch(env.ALERT_URL, { method: "POST", body: `AurOS Wishes has used half of today's budget ($${s.total.toFixed(2)} of $${cfg.budgetUsd}).` }).catch(() => {}); // once a day
       }
     };
+    return { settle, t };
+  }
+
+  // Admission, then Claude. Returns {res} (a ready error) or {out, settle}:
+  // settle(gotWish) must be called once.
+  async function guarded(tid, route, system, user, schema, m) {
+    if (!env.ANTHROPIC_API_KEY) { m.reason = "no_key"; return { res: busy(m) }; }
+    const estUsd = ((system.length / 3 + user.length) * PRICE.in + MAX_TOKENS[route] * PRICE.out) / 1e6;
+    if (estUsd > MAX_COST_USD) { m.reason = "cost"; return { res: busy(m) }; }
+    const a = await admitted(tid, route, estUsd, m);
+    if (a.res) return a;
     let r;
     try {
       r = await callClaude(route, system, user, schema, m);
@@ -234,10 +244,10 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
       // What the owner must fix (a refused key, a bad request): Anthropic's own
       // message, which describes the request's shape, never its content.
       if (["auth", "bad_request", "not_found", "error"].includes(m.reason)) m.detail = `${e?.status ?? ""} ${e?.error?.error?.type ?? e?.name ?? ""} ${String(e?.error?.error?.message ?? e?.message ?? "").slice(0, 200)}`.trim();
-      await settle(false, 0, false); // Claude never answered: the slot, the estimate and her request come back
-      return { res: busy(m, m.reason === "spend_limit" ? secondsToMidnight(t) : undefined) };
+      await a.settle(false, 0, false); // Claude never answered: the slot, the estimate and her request come back
+      return { res: busy(m, m.reason === "spend_limit" ? secondsToMidnight(a.t) : undefined) };
     }
-    return { out: r.out, settle: (gotWish) => settle(true, r.usd, gotWish) };
+    return { out: r.out, settle: (gotWish) => a.settle(true, r.usd, gotWish) };
   }
 
   function busy(m, retry = 30 + Math.floor(Math.random() * 30)) {
@@ -298,6 +308,39 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
     return json(200, res);
   }
 
+  async function configurePlan(request, m) {
+    const tid = await authed(request);
+    if (!tid) return json(401, { error: "token" });
+    if (off()) { m.reason = "off"; return busy(m, 3600); }
+    const body = await readJson(request);
+    if (!checkRequest("configure", body)) {
+      return json(400, { error: body && typeof body.text === "string" && [...body.text].length > CONFIGURE_MAX_TEXT ? "too_long" : "request" });
+    }
+    const analysis = analyzeConfigureRequest(body.text);
+    if (analysis.reason) {
+      const a = await admitted(tid, "configure", 0, m);
+      if (a.res) return a.res;
+      await a.settle(true, 0, false);
+      m.kind = "unsupported"; m.missing = analysis.reason;
+      return json(422, unsupportedPlan(analysis.reason));
+    }
+    const g = await guarded(tid, "configure", CONFIGURE_SYSTEM, configureMessage(body), CONFIGURE_OUTPUT, m);
+    if (g.res) return g.res;
+    let plan;
+    try {
+      plan = planFromModel(g.out, analysis.expected);
+    } catch (e) {
+      if (!(e instanceof ConfigureOutputError)) throw e;
+      m.rejected = "configure_output";
+      await g.settle(false);
+      return json(503, { error: "invalid_model_output", status: "unavailable" }, { "retry-after": "30" });
+    }
+    m.kind = plan.status;
+    m.missing = plan.reason;
+    await g.settle(false);
+    return json(plan.status === "unsupported" ? 422 : 200, plan);
+  }
+
   async function forget(request) {
     const tid = await authed(request);
     if (!tid) return json(401, { error: "token" });
@@ -314,13 +357,14 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
       if (!env.TOKEN_SECRET) { m.reason = "no_secret"; res = busy(m); }
       else if (path === "/v1/health" && request.method === "GET") res = json(200, { ok: true, wishes: off() ? "resting" : "on" });
       else if (request.method !== "POST") res = json(path.startsWith("/v1/") ? 405 : 404, { error: "method" });
-      else if (["/v1/register", "/v1/wish", "/v1/ask"].includes(path) && !inRegion(request)) {
+      else if (["/v1/register", "/v1/wish", "/v1/ask", "/v1/configure/plan"].includes(path) && !inRegion(request)) {
         m.limited = "region"; // the country itself is not logged
         res = json(403, { error: "region", text: "Wishes is not available in your country yet." });
       }
       else if (path === "/v1/register") res = await register(request, m);
       else if (path === "/v1/wish") res = await wish(request, m);
       else if (path === "/v1/ask") res = await ask(request, m);
+      else if (path === "/v1/configure/plan") res = await configurePlan(request, m);
       else if (path === "/v1/forget") res = await forget(request);
       else res = json(404, { error: "path" });
     } catch (e) {

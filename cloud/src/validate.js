@@ -5,6 +5,7 @@
 import { Validator } from "@cfworker/json-schema";
 import wishSchema from "../../docs/wish-v1.schema.json" with { type: "json" };
 import help from "./help.gen.js";
+import { CONFIGURE_MAX_TEXT } from "./configure.js";
 
 export { wishSchema };
 export const MAX_TEXT = 300; // characters of her wish or question (AI.md 7.10)
@@ -72,6 +73,15 @@ const requests = {
       question: { type: "string", minLength: 1, maxLength: MAX_TEXT },
       lang: LANG,
       context: { type: "object", properties: { look: { enum: ["taskbar", "dock", "rail", "tiles"] } } },
+    },
+  }),
+  configure: v({
+    type: "object",
+    additionalProperties: false,
+    required: ["text"],
+    properties: {
+      text: { type: "string", minLength: 1, maxLength: CONFIGURE_MAX_TEXT },
+      lang: LANG,
     },
   }),
 };
