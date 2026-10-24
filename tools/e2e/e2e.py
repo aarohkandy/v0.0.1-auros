@@ -1084,12 +1084,11 @@ class Flow:
                     mag = self.store_magnifier(self.m.screendump(), ex)
                     if mag and attempt != 1:
                         self.m.click(*mag, label="store search (the magnifying glass)")
-                    elif ex:
-                        # a click in the window gives it the keyboard, then its own shortcut
-                        self.m.click(*vision.centre(ex), label="store: its Explore tab, for the keyboard")
-                        time.sleep(1)
-                        self.m.key("ctrl", "f", label="store search (Ctrl+F)")
                     else:
+                        # a click in the window's header gives it the keyboard, then its own shortcut
+                        if mag:
+                            self.m.click(mag[0] + 300, mag[1], label="store: its header, for the keyboard")
+                            time.sleep(1)
                         self.m.key("ctrl", "f", label="store search (Ctrl+F)")
                 time.sleep(2)
                 self.m.key("ctrl", "a")
@@ -1193,16 +1192,16 @@ class Flow:
             self.log("on screen: " + vision.text_of(vision.ocr(img))[:500])
 
     @staticmethod
-    def store_magnifier(img, explore_box):
+    def store_magnifier(img, explore_box=None):
         """The search button of the store's header: 47 px right of the window's
         left frame line, on the tabs' row. (Measured on the screenshots of runs
         40040689945 / 40047454422: frame at x=243, the button's outline at
         263..316, its centre 290. An offset from the Explore tab drifted when the
-        tabs gained icons, 196 then 272.) None without an Explore tab to give the row."""
-        if not explore_box:
-            return None
-        cy = vision.centre(explore_box)[1]
-        lum = img[cy].astype(int).sum(axis=1) // 3
+        tabs gained icons, 196 then 272, and OCR missed the tab altogether in
+        run 40051742550: so the frame is found by pixels, on the row of the tabs
+        when OCR gave it, else y=103 (the header's middle at 100 and at 107).)"""
+        cy = vision.centre(explore_box)[1] if explore_box else 103
+        lum = img[300].astype(int).sum(axis=1) // 3       # a row through the window's body
         frame = next((x for x in range(200, 400) if lum[x] < 110), None)
         return (frame + 47, cy) if frame else None
 

@@ -273,7 +273,10 @@ def test_store_magnifier():
     img[75:715, 243] = 40                             # the store window's frame
     box = (488, 90, 150, 20)                          # where OCR found 'Explore'
     check(e2e.AurFlow.store_magnifier(img, box) == (290, 100), "store: the search button is 47 px inside the window frame, on the tabs' row")
-    check(e2e.AurFlow.store_magnifier(img, None) is None, "store: no Explore tab, no guess")
+    check(e2e.AurFlow.store_magnifier(img, None) == (290, 103), "store: with no Explore tab read by OCR, the header's middle row is used")
+    img[300, 243] = 240
+    img[:, 243] = 240
+    check(e2e.AurFlow.store_magnifier(img, box) is None, "store: no window frame, no guess")
 
 
 def test_store_content():
