@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:auros:recipe:v1",
+  "title": "AurOS customization recipe v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "base"],
+  "properties": {
+    "schema": { "const": "org.auros.recipe" },
+    "version": { "type": "integer", "const": 1 },
+    "base": {
+      "enum": ["desktop", "multilingual", "office", "revive", "school-kiosk"]
+    },
+    "preferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "look": { "enum": ["dock", "rail", "taskbar", "tiles"] },
+        "theme": { "enum": ["ember", "moss", "nocturne", "sandstone", "slate"] }
+      }
+    }
+  }
+}
