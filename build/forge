@@ -749,6 +749,14 @@ libreoffice-writer|Letters|Write a letter, or open a Word file
 libreoffice-calc|Spreadsheets|Numbers in tables, or open an Excel file
 EOL
 
+    # libreoffice-math is installed so a formula inside a Word file is drawn,
+    # not so that "LibreOffice Math" sits among her programs: hide the launcher.
+    if [ -f "$RFS/usr/share/applications/libreoffice-math.desktop" ]; then
+        sed -e '/^NoDisplay=/d' -e 's/^\[Desktop Entry\]$/&\nNoDisplay=true/' \
+            "$RFS/usr/share/applications/libreoffice-math.desktop" \
+            > "$RFS/usr/local/share/applications/libreoffice-math.desktop"
+    fi
+
     # ── a network printer's name, and opening her files ────────────
     stage_mdns
     stage_xdg_open

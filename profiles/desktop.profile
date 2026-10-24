@@ -121,6 +121,11 @@ keyboard_variant=""
 # /etc/nsswitch.conf, which build/forge checks). Without it the printer is
 # listed and "Print" says nothing and prints nothing (PARITY, 17:50:
 # printer.local unresolvable). 0.1 MB; avahi-daemon, above, answers for it.
+# system-config-printer-udev: plug in a USB printer older than IPP-USB and it
+#   is set up by itself; without it (only a Recommends) nothing happens and
+#   she is left to find Printers and add it by hand.
+# dmsetup: the udev rules that let an encrypted USB stick unlock; without
+#   them the unlock waits forever on a notice that never comes.
 packages_hardware="linux-firmware-minimal linux-image-generic
                    linux-firmware-amd-graphics linux-firmware-amd-misc
                    linux-firmware-intel-graphics linux-firmware-intel-misc
@@ -139,6 +144,7 @@ packages_hardware="linux-firmware-minimal linux-image-generic
                    ipp-usb
                    printer-driver-gutenprint printer-driver-hpcups
                    cups-pk-helper system-config-printer
+                   system-config-printer-udev dmsetup
                    pciutils usbutils"
 
 # Boot chain. Signed, so Secure Boot does not have to be disabled.
@@ -228,6 +234,10 @@ earlyoom_min_free_percent="5"
 #                       five stars and its Flathub source (F's real-Windows
 #                       store run, 40038619603; reproduced in WL's harness:
 #                       stars with it, the glyph without).
+#   libspa-0.2-bluetooth  PipeWire's Bluetooth plug-in: without it her
+#                       headphones pair and connect and play no sound.
+#   rtkit               lets the sound server ask for real-time priority:
+#                       without it music crackles when the machine is busy.
 #
 # mesa-vulkan-drivers was removed rather than lost: it is ~100 MB, and
 # nothing in this product can use it. The compositor composites on the
@@ -235,6 +245,7 @@ earlyoom_min_free_percent="5"
 # driver worth loading.
 packages_desktop="xwayland libinput10 libdrm2 libgbm1
                   pipewire pipewire-pulse wireplumber
+                  libspa-0.2-bluetooth rtkit
                   fontconfig fonts-dejavu-core fonts-liberation2
                   dbus-user-session dbus-daemon ca-certificates
                   libgl1-mesa-dri libegl-mesa0 libglx-mesa0
@@ -345,6 +356,23 @@ browser_fallback="epiphany-browser"
 #              to download (apt simulation on noble, Installed-Size).
 #   heif-gdk-pixbuf, libheif-plugin-libde265   a photo from an iPhone
 #              (.heic) opens in Photos instead of being a blank file.
+#   tumbler    the little pictures of her photos and PDFs in Your files and
+#              Photos; without it (only a Recommends) every file is a plain
+#              icon. NOT tumbler-plugins-extra: it pulls in WebKit (~140 MB).
+#   unzip, zip   what the Zip files program actually runs; without them it
+#              opens, and cannot open or make a zip file.
+#   eject      the eject arrow beside a USB stick, SD card or CD; without it
+#              the disk vanishes and an error box says it could not eject.
+#   webp-pixbuf-loader   a picture saved from a web page is often .webp;
+#              without it Photos shows an error instead of the picture.
+#   libreoffice-math   the formulas in a Word or LibreOffice file; without it
+#              (only a Recommends) they silently disappear. Its launcher is
+#              hidden by build/forge: it is not a program she opens.
+#   hunspell-en-us, hyphen-en-us, mythes-en-us   spell-check, hyphenation and
+#              synonyms in Letters; named here because they arrived only by
+#              accident, and a letter with no red underlines looks fine.
+#   libmtp-runtime   the probe that recognises an Android phone missing from
+#              the built-in list, so it appears in Your files when plugged in.
 #   libglib2.0-bin   `gio`, which our xdg-open hands every "open this" to (so
 #              a program's request goes where a double-click would; named
 #              here so that it is installed on purpose, not by luck).
@@ -353,6 +381,8 @@ packages_files="thunar thunar-volman gvfs gvfs-backends udisks2
                 libreoffice-writer libreoffice-calc libreoffice-gtk3
                 fonts-crosextra-carlito fonts-crosextra-caladea
                 heif-gdk-pixbuf libheif-plugin-libde265 libglib2.0-bin
+                tumbler unzip zip eject webp-pixbuf-loader libreoffice-math
+                hunspell-en-us hyphen-en-us mythes-en-us libmtp-runtime
                 shared-mime-info desktop-file-utils xdg-user-dirs"
 
 # The browse-and-install store. Heavier than everything above put

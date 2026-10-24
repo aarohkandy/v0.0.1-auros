@@ -24,6 +24,14 @@
 #               database and mimeapps.list -- the chain xdg-open now uses
 #               (asked from inside the image: needs root or passwordless sudo)
 #
+#  4. WHAT A NO-RECOMMENDS INSTALL QUIETLY DROPPED (docs/reviews/RECOMMENDS-
+#     2026-10-24.md): thumbnails, Bluetooth sound, USB printer set-up, zip
+#     files, the eject arrow, encrypted sticks, .webp pictures, real-time
+#     sound, formulas in Word files, spell-check, phones. Each is checked by
+#     doing the thing in the built image where that is cheap (the thumbnail
+#     service answers on D-Bus; LibreOffice keeps a formula), and by the file
+#     the package exists to provide where it is not.
+#
 #    sh tools/everydaytest.sh
 # ═══════════════════════════════════════════════════════════════════
 set -u
@@ -44,11 +52,13 @@ PROFILE=profiles/desktop.profile
 PKGS=$(grep -v '^[[:space:]]*#' "$PROFILE" | tr -s ' \n\t"=' '\n' | sort -u)
 has() { printf '%s\n' "$PKGS" | grep -qx "$1"; }
 for p in libnss-mdns libreoffice-writer libreoffice-calc libreoffice-gtk3 \
-         fonts-crosextra-carlito fonts-crosextra-caladea heif-gdk-pixbuf libheif-plugin-libde265 libglib2.0-bin; do
+         fonts-crosextra-carlito fonts-crosextra-caladea heif-gdk-pixbuf libheif-plugin-libde265 libglib2.0-bin \
+         tumbler libspa-0.2-bluetooth system-config-printer-udev unzip zip eject dmsetup webp-pixbuf-loader rtkit \
+         libreoffice-math hunspell-en-us hyphen-en-us mythes-en-us libmtp-runtime; do
     if has "$p"; then ok "$p is in the image"; else bad "$p is NOT in the profile"; fi
 done
-for p in libreoffice-impress libreoffice-draw libreoffice-base default-jre openjdk-17-jre libreoffice-java-common; do
-    if has "$p"; then bad "$p is in the profile (decision 14: Writer and Calc only, no Java)"
+for p in libreoffice-impress libreoffice-draw libreoffice-base default-jre openjdk-17-jre libreoffice-java-common tumbler-plugins-extra; do
+    if has "$p"; then bad "$p is in the profile (decision 14: Writer and Calc only, no Java; tumbler-plugins-extra pulls in WebKit, ~140 MB)"
     else ok "$p is kept out"; fi
 done
 
@@ -226,6 +236,118 @@ else
         expect a.pptx  auros-program-file.desktop          "a presentation"
         expect a.odp   auros-program-file.desktop          "a LibreOffice presentation"
     fi
+fi
+
+# ── what the no-Recommends install dropped ──────────────────────────
+echo
+echo "what a no-Recommends install quietly dropped (docs/reviews/RECOMMENDS-2026-10-24.md)"
+want() { # label  path-glob-under-the-image  what she would notice without it
+    if ls $RFS/$2 >/dev/null 2>&1; then ok "$1"; else bad "$1" "no $2 in the image: $3"; fi
+}
+want "Bluetooth headphones make sound: PipeWire's BlueZ plug-in is where PipeWire loads it" \
+     "usr/lib/*/spa-0.2/bluez5/libspa-bluez5.so" "they pair and connect and play nothing"
+want "an older USB printer sets itself up: the udev rule is there" \
+     "usr/lib/udev/rules.d/70-printers.rules" "plugging it in does nothing"
+want "the eject arrow works: eject is on the path" \
+     "usr/bin/eject" "the disk vanishes, then 'Failed to eject'"
+want "an encrypted stick unlocks: the device-mapper udev rules are there" \
+     "usr/lib/udev/rules.d/95-dm-notify.rules" "the unlock waits for a notice that never comes"
+want "...both of them" "usr/lib/udev/rules.d/55-dm.rules" "no device-mapper rules"
+want "sound can ask for real-time priority: rtkit's D-Bus service is there" \
+     "usr/share/dbus-1/system-services/org.freedesktop.RealtimeKit1.service" "music crackles when the machine is busy"
+want "...and its daemon" "usr/libexec/rtkit-daemon" "the service points at nothing"
+want "spell-check works in Letters: the English (US) dictionary is there" \
+     "usr/share/hunspell/en_US.dic" "no red underlines"
+want "...and its rules" "usr/share/hunspell/en_US.aff" "no red underlines"
+want "hyphenation works in Letters" "usr/share/hyphen/hyph_en_US.dic" "no hyphenation"
+want "the thesaurus works in Letters" "usr/share/mythes/th_en_US_v2.dat" "no synonyms"
+want "an unlisted Android phone is recognised: mtp-probe is there" \
+     "usr/lib/udev/mtp-probe" "the phone is plugged in and never appears"
+want "formulas in a Word file can be drawn: LibreOffice Math is there" \
+     "usr/lib/libreoffice/program/libsmlo.so" "the formula silently disappears"
+# .webp is something Photos must be able to decode (build/forge maps it to Photos).
+lc=$(ls $RFS/usr/lib/*/gdk-pixbuf-2.0/*/loaders.cache 2>/dev/null | head -1)
+if [ -n "$lc" ] && grep -q 'pixbufloader[-_]webp' "$lc"; then ok "a .webp picture opens in Photos: gdk-pixbuf lists the WebP loader"
+else bad "a .webp picture opens in Photos: gdk-pixbuf lists the WebP loader" "loaders.cache (${lc:-not found}) has no webp: a picture saved from a web page shows an error"; fi
+# LibreOffice Math is installed to draw formulas, not to be a program in her list.
+ml="$RFS/usr/local/share/applications/libreoffice-math.desktop"
+if [ -f "$RFS/usr/share/applications/libreoffice-math.desktop" ]; then
+    grep -qx 'NoDisplay=true' "$ml" 2>/dev/null && ok "...and 'LibreOffice Math' is not among her programs" \
+        || bad "...and 'LibreOffice Math' is not among her programs" "$ml does not hide it (build/forge)"
+fi
+if [ -z "$CH" ] || [ ! -w "$RFS/tmp" ]; then
+    echo "  (the checks that run programs in the image need root and a writable $RFS/tmp; not run here)"
+else
+    # An unpacked rootfs has no /proc and may have no /dev; LibreOffice and the bus want both.
+    SUDO=${CH%chroot}; MNT=""
+    [ -c "$RFS/dev/null" ] || { ${SUDO}mount --bind /dev "$RFS/dev" 2>/dev/null && MNT="$MNT dev"; }
+    [ -e "$RFS/proc/self" ] || { ${SUDO}mount -t proc proc "$RFS/proc" 2>/dev/null && MNT="$MNT proc"; }
+    FD2="/tmp/everyday2.$$"
+    mkdir -p "$RFS$FD2/home" "$RFS$FD2/run" "$RFS$FD2/out"; chmod 700 "$RFS$FD2/run"
+    trap 'cd /; for m in $MNT; do ${SUDO}umount "$RFS/$m" 2>/dev/null; done; rm -rf "$T" "${RFS:?}${FD:-/x}" "${RFS:?}$FD2"' EXIT INT TERM
+    inimg() { $CH "$RFS" /usr/bin/env HOME="$FD2/home" XDG_RUNTIME_DIR="$FD2/run" XDG_CONFIG_HOME="$FD2/home/cfg" \
+                  XDG_CACHE_HOME="$FD2/home/cache" XDG_DATA_HOME="$FD2/home/data" "$@"; }
+
+    # The thumbnail service Thunar and Photos ask for answers on the session
+    # bus, starts by itself, and says it can do photos and PDFs.
+    cat > "$RFS$FD2/thumb.sh" <<'THUMB'
+out=$(dbus-daemon --session --fork --print-address=1 --print-pid=1) || exit 3
+export DBUS_SESSION_BUS_ADDRESS=$(echo "$out" | sed -n 1p)
+gdbus call --session --dest org.freedesktop.thumbnails.Thumbnailer1 \
+     --object-path /org/freedesktop/thumbnails/Thumbnailer1 \
+     --method org.freedesktop.thumbnails.Thumbnailer1.GetSupported 2>&1
+kill $(echo "$out" | sed -n 2p)
+THUMB
+    inimg /bin/sh "$FD2/thumb.sh" > "$T/thumb.out" 2>&1
+    if grep -q "'image/jpeg'" "$T/thumb.out" && grep -q "'application/pdf'" "$T/thumb.out"; then
+        ok "her photos and PDFs get little pictures: the thumbnail service starts, lists image/jpeg and application/pdf"
+    else bad "her photos and PDFs get little pictures: the thumbnail service starts, lists image/jpeg and application/pdf" \
+             "$(head -c 300 "$T/thumb.out")"; fi
+
+    # The Bluetooth plug-in loads: nothing it needs is missing.
+    sp=$(cd "$RFS" && ls usr/lib/*/spa-0.2/bluez5/libspa-bluez5.so 2>/dev/null | head -1)
+    if [ -z "$sp" ]; then bad "the Bluetooth plug-in loads (every library it needs is there)" "no libspa-bluez5.so"
+    elif inimg /usr/bin/ldd "/$sp" 2>&1 | grep -q 'not found'; then
+        bad "the Bluetooth plug-in loads (every library it needs is there)" "$(inimg /usr/bin/ldd "/$sp" 2>&1 | grep 'not found')"
+    else ok "the Bluetooth plug-in loads (every library it needs is there)"; fi
+
+    # The programs Zip files runs: make a zip, list it.
+    printf 'x' > "$RFS$FD2/a.txt"
+    inimg /bin/sh -c "cd $FD2 && zip -q t.zip a.txt && unzip -l t.zip" > "$T/zip.out" 2>&1
+    grep -q 'a\.txt' "$T/zip.out" && ok "a zip file can be made and listed (what Zip files runs)" \
+        || bad "a zip file can be made and listed (what Zip files runs)" "$(head -c 200 "$T/zip.out")"
+
+    # A formula in a document survives Writer: an .odt with a formula object,
+    # saved as .docx, must come out as Word's own equation (OMML), which only
+    # happens with LibreOffice Math installed. (--convert-to pdf "succeeds"
+    # without it too, with a gap where the formula was.)
+    python3 -I - "$RFS$FD2/f.odt" <<'PY'
+import sys, zipfile
+ns = ('xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" '
+      'xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" '
+      'xmlns:xlink="http://www.w3.org/1999/xlink"')
+body = ('<?xml version="1.0" encoding="UTF-8"?><office:document-content %s office:version="1.2"><office:body><office:text><text:p>'
+        'Before <draw:frame draw:name="F1" text:anchor-type="as-char" svg:width="3cm" svg:height="1cm"><draw:object xlink:href="./Object 1" '
+        'xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/></draw:frame> After</text:p></office:text></office:body></office:document-content>') % ns
+man = ('<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">'
+       '<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.text"/>'
+       '<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>'
+       '<manifest:file-entry manifest:full-path="Object 1/" manifest:media-type="application/vnd.oasis.opendocument.formula"/>'
+       '<manifest:file-entry manifest:full-path="Object 1/content.xml" manifest:media-type="text/xml"/></manifest:manifest>')
+mml = ('<?xml version="1.0" encoding="UTF-8"?><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>E</mi><mo>=</mo><mi>m</mi>'
+       '<msup><mi>c</mi><mn>2</mn></msup></mrow><annotation encoding="StarMath 5.0">E = m c^2</annotation></semantics></math>')
+with zipfile.ZipFile(sys.argv[1], 'w') as z:
+    z.writestr(zipfile.ZipInfo('mimetype'), 'application/vnd.oasis.opendocument.text')
+    z.writestr('content.xml', body, zipfile.ZIP_DEFLATED)
+    z.writestr('META-INF/manifest.xml', man, zipfile.ZIP_DEFLATED)
+    z.writestr('Object 1/content.xml', mml, zipfile.ZIP_DEFLATED)
+PY
+    inimg timeout 180 /usr/bin/soffice --headless "-env:UserInstallation=file://$FD2/ui" \
+          --convert-to docx --outdir "$FD2/out" "$FD2/f.odt" > "$T/soffice.out" 2>&1
+    if python3 -I -c 'import sys,zipfile; sys.exit(0 if b"<m:oMath" in zipfile.ZipFile(sys.argv[1]).read("word/document.xml") else 1)' "$RFS$FD2/out/f.docx" 2>/dev/null; then
+        ok "a formula in a document survives Letters (saved as Word, it is still an equation)"
+    else bad "a formula in a document survives Letters (saved as Word, it is still an equation)" \
+             "no equation in the .docx: it disappeared. $(tail -c 200 "$T/soffice.out")"; fi
 fi
 
 echo
