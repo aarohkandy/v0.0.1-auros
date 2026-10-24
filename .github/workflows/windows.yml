@@ -73,7 +73,7 @@ jobs:
           esac
           printf '%s\n' "$files" > /tmp/files.txt
           # What build/aurbridge compiles and reads, and this file.
-          if grep -qE '^(src/aurbridge/|src/aurstage/(gpt|plan)\.[ch]$|build/aurbridge$|hw/(lib/|compat\.json$)|tools/(pe_payload\.py|repo\.sh|manifesttest\.sh|hw/gen-header\.py|dllcanary\.sh|dllcanary/.*)$|\.github/workflows/windows\.yml$)' /tmp/files.txt; then
+          if grep -qE '^(src/aurbridge/|src/aurstage/(gpt|plan)\.[ch]$|build/aurbridge$|hw/(lib/|compat\.json$)|tools/(pe_payload\.py|repo\.sh|manifesttest\.sh|stubtest\.ps1|hw/gen-header\.py|dllcanary\.sh|dllcanary/.*)$|\.github/workflows/(build|windows)\.yml$)' /tmp/files.txt; then
             run=true
           fi
           echo "run=$run" | tee -a "$GITHUB_OUTPUT"
@@ -187,6 +187,8 @@ jobs:
           done
           exit 1
       - name: build/aurbridge
+        env:
+          AUROS_STUB_TESTS: '1'          # also the stub's test builds (never shipped): tools/stubtest.ps1
         run: sh build/aurbridge
       - name: manifest gate (tools/manifesttest.sh)
         run: sh tools/manifesttest.sh out/aurbridge-wizard.exe
@@ -211,6 +213,11 @@ jobs:
           path: |
             out/aurbridge.exe
             out/aurbridge-wizard.exe
+            out/aurbridge-setup.exe
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: stubtest
+          path: out/stubtest
       # The pieces of the DLL-planting test (SEC-003): a DLL that only says
       # it was loaded, and a program that loads DLLs the unhardened way.
       - name: DLL-planting test pieces (tools/dllcanary.sh)
@@ -238,6 +245,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "selftest exited $LASTEXITCODE" }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { name: canary, path: canary }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: stubtest, path: stubtest }
       - name: a DLL planted beside the installer is never loaded (SEC-003)
         shell: pwsh
         run: |
@@ -323,43 +332,20 @@ jobs:
           "none of the $($names.Count) planted DLLs was loaded"
           "### A DLL planted beside the installer (SEC-003)`nnone of $($names.Count) planted DLLs ($($names -join ', ')) was loaded by the console tool or the window, while a program that looks in its own folder loaded $($speak.Count) of them." | Out-File $env:GITHUB_STEP_SUMMARY -Append
           exit 0
-      # THE PART OF SEC-003 THAT IS NOT CLOSED, kept in view. This very test found it
-      # on windows-latest (2026-10-24, runs 40043760099 and 40047918166): before main,
-      # while Windows loads the programs' own system DLLs, a cfgmgr32.dll in the
-      # programs' folder is taken instead of the system's (and, both being written to
-      # fail, stops the program), and a cryptbase.dll or cryptsp.dll there is loaded and run.
-      # Windows resolves the DLLs those DLLs need by the ordinary search, programs' folder
-      # first, and a program has no switch for it before it starts: not KnownDLLs-only
-      # imports, not SetDefaultDllDirectories in main, not the load configuration's
-      # dependent load flags (tried: they protect a program's OWN imports and not these).
-      # This step goes RED and the job stays green until a fix is found (continue-on-error).
-      - name: KNOWN OPEN (SEC-003), DLLs Windows still takes from the installer folder before main
-        continue-on-error: true
+      # SEC-003, CLOSED BY THE PROGRAM SHE DOWNLOADS (src/aurbridge/stub/stub.c). Before it, this
+      # very test found on windows-latest (2026-10-24, runs 40043760099, 40047918166) that
+      # before main, while Windows loads the installer's own system DLLs, a cfgmgr32.dll
+      # in the installer's folder was taken instead of the system's (and stopped the program), and
+      # a cryptbase.dll or cryptsp.dll there was loaded and run, whatever the installer did
+      # in main (KnownDLL-only imports, SetDefaultDllDirectories, the load configuration's
+      # dependent load flags: tried, none reaches a system DLL's own imports). The downloaded
+      # program imports kernel32 only and runs the installer from a private folder. This step
+      # is the proof, and it gates: the installer started the old way takes the planted DLLs
+      # (or the test is blind), the downloaded program takes none, its folder is exactly ours,
+      # a junction at its name is refused, and each of those checks catches its own mutant.
+      - name: the downloaded program takes nothing from its folder (SEC-003)
         shell: pwsh
-        run: |
-          $open = @()
-          foreach ($n in 'cfgmgr32.dll','cryptbase.dll','cryptsp.dll') {
-            $d = Join-Path $env:RUNNER_TEMP ('open-' + ($n -replace '\.','_'))
-            New-Item -ItemType Directory -Force -Path $d | Out-Null
-            Copy-Item exe\aurbridge.exe, exe\aurbridge-wizard.exe $d
-            Copy-Item canary\canary.dll (Join-Path $d $n)
-            foreach ($exe in 'aurbridge.exe','aurbridge-wizard.exe') {
-              $a = if ($exe -eq 'aurbridge.exe') { 'version' } else { '--report', "$d\r" }
-              if ($exe -ne 'aurbridge.exe') { New-Item -ItemType Directory -Force -Path "$d\r" | Out-Null }
-              $p = Start-Process -FilePath "$d\$exe" -ArgumentList $a -WorkingDirectory $d -PassThru
-              $state = if ($p.WaitForExit(15000)) { "exit $($p.ExitCode)" } else { $p.Kill(); 'stopped at start-up (waiting)' }
-              if ((Test-Path "$d\$n.loaded") -or $state -like 'stopped*') {
-                $open += "$exe took the planted $n from its own folder ($state)"
-              }
-              Remove-Item "$d\$n.loaded" -ErrorAction SilentlyContinue
-            }
-          }
-          if ($open) {
-            "### SEC-003 is NOT fully closed`n" + (($open | ForEach-Object { "- $_" }) -join "`n") | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            $open
-            throw "SEC-003 residual: $($open.Count) planted DLL(s) were taken from the installer's folder before main"
-          }
-          "no planted DLL was taken before main"
+        run: pwsh -NoProfile -File tools/stubtest.ps1 -Exe exe -Stubs stubtest -Canary canary -IsolatedRunner
       - name: the PC report, from the console tool and from the installer (read-only)
         shell: pwsh
         run: |
@@ -641,13 +627,13 @@ jobs:
         run: |
           # What SmartScreen's "Run anyway", the administrator question and
           # the Downloads folder show before it runs (src/aurbridge/aurbridge-info.rc).
-          $v = (Get-Item .\exe\aurbridge-wizard.exe).VersionInfo
+          $v = (Get-Item .\exe\aurbridge-setup.exe).VersionInfo
           $v | Format-List ProductName, FileDescription, CompanyName, FileVersion, OriginalFilename
           if ($v.ProductName -ne 'AurOS') { throw "ProductName is '$($v.ProductName)'" }
           if ($v.FileDescription -ne 'AurOS Setup') { throw "FileDescription is '$($v.FileDescription)'" }
           if ($v.CompanyName -ne 'AurOS') { throw "CompanyName is '$($v.CompanyName)'" }
           Add-Type -AssemblyName System.Drawing
-          $i = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path .\exe\aurbridge-wizard.exe).Path)
+          $i = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path .\exe\aurbridge-setup.exe).Path)
           $b = $i.ToBitmap()
           $c = $b.GetPixel([int]($b.Width / 2), [int]($b.Height / 2))
           "icon centre: $c"
@@ -656,7 +642,7 @@ jobs:
       - name: wizard starts the way a double-click starts it
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath (Resolve-Path .\exe\aurbridge-wizard.exe).Path -PassThru
+          $p = Start-Process -FilePath (Resolve-Path .\exe\aurbridge-setup.exe).Path -PassThru
           Start-Sleep -Seconds 8
           if ($p.HasExited) { throw "the wizard exited on its own, code $($p.ExitCode)" }
           $p.Kill()

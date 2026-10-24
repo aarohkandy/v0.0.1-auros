@@ -242,16 +242,20 @@ if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     AUROS_REPO=$(sh tools/repo.sh) || AUROS_REPO=""
     export AUROS_REPO
     if sh "$TMP/tree/build/aurbridge" > "$TMP/b1.log" 2>&1 &&
-       sh build/sign --check "$TMP/tree/out/aurbridge-wizard.exe" "$TMP/tree/out/aurbridge.exe" >/dev/null 2>&1; then
-        ok "with a key configured, the build signs what it builds"
+       sh build/sign --check "$TMP/tree/out/aurbridge-wizard.exe" "$TMP/tree/out/aurbridge.exe" "$TMP/tree/out/aurbridge-setup.exe" >/dev/null 2>&1 &&
+       python3 tools/pe_payload.py get "$TMP/tree/out/aurbridge-setup.exe" 300 "$TMP/inner-signed.exe" &&
+       cmp -s "$TMP/inner-signed.exe" "$TMP/tree/out/aurbridge-wizard.exe" &&
+       sh build/sign --check "$TMP/inner-signed.exe" >/dev/null 2>&1; then
+        ok "with a key configured, the build signs the outer download and its embedded installer"
     else
-        bad "with a key configured, the build signs what it builds" "$(tail -4 "$TMP/b1.log")"
+        bad "with a key configured, the build signs the outer download and its embedded installer" "$(tail -6 "$TMP/b1.log")"
     fi
     OUT2=$( unset AUROS_SIGN_CERT AUROS_SIGN_KEY
             AUROS_RELEASE=0 sh "$TMP/tree/build/aurbridge" 2>&1 ) \
       && B2=0 || B2=1
     if [ "$B2" = 0 ] && printf '%s' "$OUT2" | grep -q 'unsigned, by design' &&
-       ! sh build/sign --check "$TMP/tree/out/aurbridge-wizard.exe" >/dev/null 2>&1; then
+       ! sh build/sign --check "$TMP/tree/out/aurbridge-wizard.exe" >/dev/null 2>&1 &&
+       ! sh build/sign --check "$TMP/tree/out/aurbridge-setup.exe" >/dev/null 2>&1; then
         ok "without one it builds, says it is unsigned, and is"
     else
         bad "without one it builds, says it is unsigned, and is" \

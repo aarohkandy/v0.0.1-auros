@@ -354,9 +354,87 @@ if [ -n "$MANIFEST_OBJ" ]; then
     note "manifest inside the .exe checked: Windows can load it"
 fi
 
-CS=$(sh "$ROOT/tools/checksec.sh" "$OUT/aurbridge.exe" "$OUT/aurbridge-wizard.exe" 2>&1) \
+# When signing is configured, the installer carried inside the downloaded
+# bootstrap must be signed before it is embedded and hashed. Signing only the
+# outer file leaves the extracted child unsigned, which application-control
+# policy can refuse even though the download itself is trusted.
+SIGNING_CONFIGURED=""
+if sh "$ROOT/build/sign" --configured 2>/dev/null; then
+    step "signing the installer that the downloaded program carries"
+    sh "$ROOT/build/sign" "$OUT/aurbridge-wizard.exe" \
+        || die "the installer carried inside the downloaded program could not be signed"
+    SIGNING_CONFIGURED=1
+fi
+
+# ── THE PROGRAM SHE DOWNLOADS: a stub that imports kernel32 only (SEC-003) ──────────
+#
+# AurOS-Setup.exe is this stub, not the wizard. It has the wizard's manifest (one UAC
+# question, the same file name, icon, publisher and place as before), carries the wizard
+# as a resource, and runs it from a folder nobody else can write, because the wizard
+# itself, started from Downloads with administrator rights, loads system DLLs' own
+# imports (cfgmgr32, cryptbase, cryptsp) from Downloads before main: a program that
+# imports kernel32 only has nothing else to load first. src/aurbridge/stub/stub.c says
+# the rest. The wizard stays what every test already starts; this is what is shipped.
+OBJDUMP="${OBJDUMP:-x86_64-w64-mingw32-objdump}"
+STUB_FLAGS="-O2 -mwindows -nostdlib -nostartfiles -ffreestanding -fno-builtin -fno-stack-protector \
+    -fno-tree-loop-distribute-patterns -fno-asynchronous-unwind-tables \
+    -Wl,-e,stub_start -Wl,--subsystem,windows -Wl,--dynamicbase,--nxcompat,--high-entropy-va"
+STUB_OK=""
+if command -v "$WINDRES" >/dev/null 2>&1; then
+    step "aurbridge-setup.exe (the downloaded program: kernel32 only)"
+    CHILD_SHA=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$OUT/aurbridge-wizard.exe")
+    printf '1 24 "%s"\n#include "aurbridge-ident.rc"\n300 RCDATA "aurbridge-wizard.exe"\n' "$SRC/aurbridge.manifest" \
+        > "$OUT/aurbridge-stub.rc"
+    "$WINDRES" -O coff --include-dir "$SRC" --include-dir "$OUT" \
+        -DAUROS_VER_MAJOR="$VMAJ" -DAUROS_VER_MINOR="$VMIN" -DAUROS_VER_PATCH="${VPAT:-0}" \
+        -DAUROS_VER_STR="\\\"$VER\\\"" \
+        -i "$OUT/aurbridge-stub.rc" -o "$OUT/aurbridge-stub-res.o" \
+        || die "the stub's manifest, name, icon and the installer inside it would not build"
+    # shellcheck disable=SC2086
+    $CC $STUB_FLAGS -DCHILD_SHA256="\"$CHILD_SHA\"" -o "$OUT/aurbridge-setup.exe" \
+        "$SRC/stub/stub.c" "$OUT/aurbridge-stub-res.o" -lkernel32 \
+        || die "the stub did not build"
+    note "$(du -h "$OUT/aurbridge-setup.exe" | cut -f1), carries the installer (sha256 ${CHILD_SHA%${CHILD_SHA#????????}}...)"
+    python3 "$ROOT/tools/pe_payload.py" check "$OUT/aurbridge-setup.exe" >/dev/null \
+        || die "the manifest inside aurbridge-setup.exe is one Windows would refuse"
+    # IT IMPORTS KERNEL32 AND NOTHING ELSE: that is the whole point of it
+    STUB_IMPORTS=$("${OBJDUMP:-x86_64-w64-mingw32-objdump}" -p "$OUT/aurbridge-setup.exe" | sed -n 's/^[[:space:]]*DLL Name: //p' | tr 'A-Z' 'a-z' | tr '\n' ' ')
+    [ "$STUB_IMPORTS" = "kernel32.dll " ] \
+        || die "aurbridge-setup.exe must import kernel32 only, and imports: $STUB_IMPORTS(SEC-003)"
+    note "imports kernel32 only"
+    # THE INSTALLER INSIDE IS THE ONE JUST BUILT
+    python3 "$ROOT/tools/pe_payload.py" get "$OUT/aurbridge-setup.exe" 300 "$OUT/.inside.exe" \
+        && cmp -s "$OUT/.inside.exe" "$OUT/aurbridge-wizard.exe" \
+        || die "the installer carried inside aurbridge-setup.exe is not the one just built"
+    rm -f "$OUT/.inside.exe"
+    note "carries aurbridge-wizard.exe, byte for byte"
+    STUB_OK=1
+    # TEST BUILDS OF THE STUB (CI only, never shipped): AUROS_STUB_TESTS=1
+    #   setup-test         a fixed folder name, so a test can plant a junction at it
+    #   setup-nolink-mutant, setup-inherit-mutant, setup-here-mutant   the three that
+    #                      must be RED where a test is run on real Windows (windows.yml)
+    if [ "${AUROS_STUB_TESTS:-0}" = 1 ] && [ "${AUROS_RELEASE:-0}" != 1 ]; then
+        mkdir -p "$OUT/stubtest"
+        for v in "test:-DSTUB_FIXED_NAME=L\\\"0123456789abcdef\\\"" \
+                 "accept-mutant:-DSTUB_FIXED_NAME=L\\\"0123456789abcdef\\\" -DSTUB_MUTANT_ACCEPT" \
+                 "inherit-mutant:-DSTUB_MUTANT_INHERIT" \
+                 "here-mutant:-DSTUB_MUTANT_HERE" \
+                 "bad-hash-mutant:-UCHILD_SHA256 -DCHILD_SHA256=\\\"0000000000000000000000000000000000000000000000000000000000000000\\\"" \
+                 "wine:-DSTUB_NO_ACL_CHECK"; do
+            vn=${v%%:*}; vf=${v#*:}
+            # shellcheck disable=SC2086
+            eval "$CC $STUB_FLAGS -DCHILD_SHA256='\"$CHILD_SHA\"' $vf -o '$OUT/stubtest/aurbridge-setup-$vn.exe' '$SRC/stub/stub.c' '$OUT/aurbridge-stub-res.o' -lkernel32" \
+                || die "the stub's test build $vn did not build"
+        done
+        note "test builds of the stub: $(ls "$OUT/stubtest" | tr '\n' ' ')(never shipped)"
+    fi
+elif [ "${AUROS_RELEASE:-0}" = 1 ]; then
+    die "no $WINDRES, so the downloaded program would have no manifest, icon or installer inside it"
+fi
+
+CS=$(sh "$ROOT/tools/checksec.sh" "$OUT/aurbridge.exe" "$OUT/aurbridge-wizard.exe" ${STUB_OK:+"$OUT/aurbridge-setup.exe"} 2>&1) \
     || { printf '%s\n' "$CS" >&2; die "the installer was built without ASLR or DEP (above)"; }
-note "ASLR + DEP checked on both .exe files"
+note "ASLR + DEP checked on every .exe file"
 
 # ONLY WINDOWS' OWN DLLs. A .exe that imports a DLL no PC has does not
 # start ("libssp-0.dll was not found"): a hardening flag once did that
@@ -477,8 +555,8 @@ else
 fi
 
 step "signing"
-if sh "$ROOT/build/sign" --configured 2>/dev/null; then
-    sh "$ROOT/build/sign" "$OUT/aurbridge.exe" "$OUT/aurbridge-wizard.exe" \
+if [ -n "$SIGNING_CONFIGURED" ]; then
+    sh "$ROOT/build/sign" "$OUT/aurbridge.exe" ${STUB_OK:+"$OUT/aurbridge-setup.exe"} \
         || die "the installer could not be signed"
 else
     note "unsigned, by design: AurOS ships without a code-signing key"
@@ -505,4 +583,4 @@ if [ "${1:-}" = "test" ]; then
     sh "$ROOT/tools/bridgetest.sh" || die "the two halves disagree"
 fi
 
-printf '\n%s::%s %s\n' "$C_OK" "$C_RST" "$OUT/aurbridge.exe, $OUT/aurbridge-wizard.exe"
+printf '\n%s::%s %s\n' "$C_OK" "$C_RST" "$OUT/aurbridge.exe, $OUT/aurbridge-wizard.exe${STUB_OK:+, $OUT/aurbridge-setup.exe}"

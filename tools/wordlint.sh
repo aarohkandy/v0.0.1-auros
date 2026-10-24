@@ -145,7 +145,7 @@ def surfaces():
     if args:
         return [os.path.abspath(a) for a in args]
     pats = ["website/*.html", "rootfs/usr/share/auros/help/*.html",
-            "src/aurbridge/wizard.c", "src/aurbridge/fix_win.c",
+            "src/aurbridge/wizard.c", "src/aurbridge/fix_win.c", "src/aurbridge/stub/stub.c",
             "src/aurstage/install.c", "src/aurscreen/screen.c",
             "src/aurshell/*.c", "src/aurshell/layouts/*.c"]
     return sorted(f for p in pats for f in glob.glob(os.path.join(repo, p)))
