@@ -2,16 +2,16 @@
 
 Owner authorization on 24 October 2026: implement, test adversarially, use bounded parallel agents, and push verified checkpoints to `aarohkandy/v0.0.1-auros`. The target is a nontechnical person describing the system they want, receiving it quickly, installing it safely, and using it without a terminal or helper.
 
-## Current checkpoint (24 October, 23:30 UTC)
+## Current checkpoint (24 October, 23:40 UTC)
 
 This section is the current summary; the chronological checkpoints below retain
 earlier failures and superseded evidence deliberately.
 
 - Candidate `e0d0aadc`, [build/release run 40138682256](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40138682256), passed its full image suite and published prerelease `v0.1.0-e0d0aad`. Source publication and notice checks passed. It is not public latest.
 - Exact-image [hardening run 40140266950](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40140266950) passed 72 hardening and 14 clock checks; `hardengate.sh` accepts it for this candidate.
-- Four exact-installer Windows journeys are running. App launch, encrypted-drive return and file-preserving recovery are still unproved for this candidate. The older c1 app-launch result was invalidated and must not be reused.
+- Both base Windows journeys failed: fastpath clicked the search entry instead of the VLC result; ordinary base installed VLC but Open did not map a program window. The strict launch check correctly rejected the store preview. The BitLocker journeys are still running. App launch, encrypted-drive return and file-preserving recovery remain unproved. The older c1 app-launch result was invalidated and must not be reused.
 - The release Windows job failed its fastpath no-scroll fixture. The working branch already has its tested correction and a visible, accessible drive-protection confirmation, but this candidate does not contain them. Do not rerun the unchanged installer expecting a different result.
-- Multilingual first-stage typing passed in Mousepad and Firefox. Second-stage ownership/focus/password/reboot evidence is still pending; latest diagnostic is `40142892395`. Production remains IBus. Main contains diagnostic harness fixes, not an activated input replacement.
+- Multilingual first-stage typing passed in Mousepad and Firefox. Second-stage `40142892395` reached the Mousepad focus lifecycle but failed end attribution because the probe counted its own held trace descriptor as another writer. A separate IBus restoration readiness race is being repaired. Password/reboot proof remains pending. Production remains IBus; main contains diagnostic harness fixes, not an activated input replacement.
 - `codex/delivery` retains the installer follow-ups and reduced artifact downloads for the next combined candidate. Preserve exact source/artifact identity when using any earlier evidence.
 - Public delivery remains disabled pending signing/service configuration and release proof. Managed profiles, physical-PC tests, contact/name decisions, held encryption work and unfinished Wishes actions remain open. No zero-vulnerability or end-to-end completion claim is justified.
 
@@ -596,3 +596,25 @@ actual conflicting listeners. Main `bdfe4ae8` contains the reviewed repairs;
 41 focused tests pass. Diagnostic `40142892395` is running. Neither failed run
 reached the typing, focus, password or reboot proof. Failure evidence now includes
 bounded application connection/trace counters as well as compositor identity.
+
+## Installed candidate failures being repaired
+
+Fastpath base job `121014781615` reached the installed desktop in 7m49s from
+the test's Windows start, then clicked the search-entry text at `(343,162)`
+instead of the visible VLC result. It never reached Install. Evidence:
+`/tmp/auros-e0-fastpath-base-40138682256/unpacked`. The installed session proved
+network/DNS/time/security/mount checks, but also exposed a real startup race:
+NetworkManager sends SIGUSR1 after systemd marks the simple software-preparation
+service active and before its shell installs a trap. It dies, waits 60 seconds,
+then succeeds. Fix the race; do not whitelist its failed-unit evidence.
+
+Ordinary base job `121014779480` installed VLC, then Open never produced its
+window. Screenshot `0057-program-did-not-open.png` is still the Software detail
+page with its embedded preview. The strict launch check correctly failed.
+Evidence: `/tmp/auros-e0-base-40138682256/unpacked`. This run has the bwrap policy
+loaded and no corresponding launch-time bwrap denial in its retained journal;
+the remaining launch failure is under independent diagnosis, not assumed fixed.
+
+Owners are separate: CI coverage fixes search-result selection; the service-race
+debugger fixes production readiness; the app-launch debugger investigates VLC;
+the multilingual owner finishes trace attribution/restoration diagnostics.
