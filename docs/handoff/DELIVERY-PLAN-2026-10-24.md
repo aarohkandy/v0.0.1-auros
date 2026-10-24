@@ -495,3 +495,27 @@ Fcitx trace parser repair is on main `5f98accc`; diagnostic `40138556854` now us
 the actual libwayland `interface@id` syntax. The preceding screenshot visibly
 contains a candidate row, but exact 你好 composition, popup attribution and
 connection identity remain unproved pending the bounded diagnostic evidence.
+
+## Candidate e0d0aadc and follow-up diagnostics
+
+Fresh candidate `e0d0aadc` is building/testing in `40138682256`; it is a prerelease
+candidate, not a latest promotion. Its Linux image has built and entered the full
+suite. Windows workflow `40138682232` passes. Fastpath's new navigation job exposed
+a stale no-scroll expectation; test-only follow-up `a4e50572` instead proves footer
+visibility and bounded scrolling to the final choice. Branch-only Windows run
+`40139104228` passes all jobs, avoiding a redundant OS rebuild.
+
+Manual screenshot review of that passing navigation fixture still found a product
+understandability gap: the BitLocker warning can be below the fold while Install is
+enabled. Actual suspension occurs later at Restart now, immediately before ab_arm.
+A dedicated accessible confirmation at that point is being implemented separately;
+no default flip or public promotion is justified by the scrolling test alone.
+
+First-stage Fcitx retained-image run `40139052850` passes. Mousepad and Firefox both
+produce exact UTF-8 你好; each trace contains one mapped parented popup with positive
+geometry and no grab/layer-shell. Retained screenshots show the candidate row and
+committed/submitted text. Owned daemon identity stayed stable, temporary processes
+and raw traces were removed, and shipped IBus/config were restored. Evidence is
+`/tmp/auros-fcitx-40139052850.7dIc8C`. This does not prove connection identity,
+focus revocation, password suppression or reboot behavior. Those are the next
+explicitly opt-in diagnostic stage; production input configuration remains IBus.
