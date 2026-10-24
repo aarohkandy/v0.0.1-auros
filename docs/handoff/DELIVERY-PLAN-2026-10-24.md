@@ -117,3 +117,13 @@ Personalized packaging is implemented in `customize.yml`, using validated same-c
 Profile review identified the next bounded work: non-desktop image filenames are now generated safely from the known profile, but revive/multilingual are still refused for delivery until profile-specific installation proof exists. Multilingual input-method session wiring and translations remain incomplete. Office/school management enrollment/update settings remain missing. The four historical raw-image boots are not current Windows installation proof.
 
 The next candidate uses `[release]` without `[latest]`: passing image gates may create a prerelease and run exact-installer Windows base/BitLocker journeys, but cannot make it the public latest. `[e2e:none]` suppresses only the independent push-triggered journey against an old pinned installer; the release's explicit artifact journeys still run.
+
+## Delivery integration follow-up
+
+The e2aceed3 candidate was cancelled after its Windows build caught a missing profile-refusal help row. The row is repaired; generic and personalized installers cross-compile with manifest, mitigation, DLL and embedded-resource checks. This is compile evidence, not a Windows installation result.
+
+The natural-language request preview now runs locally and requires accepting its proposed choices. Multilingual images now wire IBus into the real user session and wait for both Wayland and Xwayland. Wiring tests pass; the profile probe has 34 positive/negative checks and requires live Pinyin engine evidence. Actual Pinyin typing in Mousepad and Firefox remains unproven.
+
+The custom build API and publication workflow are integrated but disabled by default. They use a one-use bounded proof, atomic quotas, secret receipts, verified released-base commits, exact-tag dispatch, two-stage signing, public readback and immutable same-run manifest evidence. Combined cloud tests pass 71/71 and customization tests pass 46/46 before the final asset-replacement regression. Final review identified a missing comparison between the current release EXE digest and the immutable manifest; this is being repaired before the next push. Public promotion now explicitly refuses unsigned installers.
+
+Next: integrate the tested browser service flow and final review fixes, push one coherent prerelease candidate with a multilingual profile build, and inspect its exact image/Windows results. Signing configuration, monitored contact/name decisions, physical-PC testing, managed-profile enrollment and held encryption work remain open. No feature is activated merely because its source tests pass.
