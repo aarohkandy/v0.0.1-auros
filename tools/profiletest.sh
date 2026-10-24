@@ -52,6 +52,10 @@
 #    PROFILETEST_TIMEOUT  seconds to wait for the desktop (default 900)
 #    PROFILETEST_MEM      MiB for the VM (default: 2048 for revive --
 #                         the machine it is for -- else 4096)
+#    PROFILETEST_IBUS_FUNCTIONAL=1
+#                         for multilingual only: type real Pinyin into
+#                         Mousepad and Firefox, reboot, and repeat. This is
+#                         deliberately opt-in because it boots twice.
 # ═══════════════════════════════════════════════════════════════════
 set -u
 cd "$(dirname "$0")/.."
@@ -317,9 +321,50 @@ judge_report() { # profile report-file
                    "WAYLAND_DISPLAY=$(rv ibus_wayland) DISPLAY=$(rv ibus_display)"
         [ "$(rv ibus_pinyin)" = yes ] && ok "Pinyin is available through the user's live IBus" \
             || bad "Pinyin is available through the user's live IBus" "pinyin=$(rv ibus_pinyin)"
-        printf '    %-62s %s\n' "typing Pinyin in Mousepad and Firefox" \
-            "UNPROVEN -- needs the functional input test"
+        if [ "${PROFILETEST_IBUS_FUNCTIONAL:-0}" = 1 ]; then
+            printf '    %-62s %s\n' "typing Pinyin in Mousepad and Firefox" \
+                "checked below from exact application evidence"
+        else
+            printf '    %-62s %s\n' "typing Pinyin in Mousepad and Firefox" \
+                "UNPROVEN -- set PROFILETEST_IBUS_FUNCTIONAL=1"
+        fi
     fi
+}
+
+# Exact application evidence from the optional functional run. Screenshots
+# show the real candidate UI, but pixels alone never pass: Mousepad must save
+# the exact UTF-8 bytes and Firefox must submit the exact encoded form value.
+judge_ibus_functional() { # evidence-root screenshot-root
+    D=$1; SHOTS=$2
+    for round in 1 2; do
+        R="$D/round$round"
+        [ -d "$R" ] || { bad "Pinyin round $round produced evidence" "missing $R"; continue; }
+        hex=$(od -An -tx1 "$R/mousepad.txt" 2>/dev/null | tr -d ' \n')
+        [ "$hex" = e4bda0e5a5bd ] \
+            && ok "round $round: Mousepad saved the exact Pinyin composition" \
+            || bad "round $round: Mousepad saved the exact Pinyin composition" "UTF-8 bytes: ${hex:-missing}"
+        grep -Fq '"GET /?text=%E4%BD%A0%E5%A5%BD HTTP/' "$R/firefox-http.log" 2>/dev/null \
+            && ok "round $round: Firefox submitted the exact Pinyin composition" \
+            || bad "round $round: Firefox submitted the exact Pinyin composition" "exact local request missing"
+        grep -qx 'GTK_IM_MODULE=ibus' "$R/firefox.env" 2>/dev/null \
+            && grep -q '^WAYLAND_DISPLAY=.' "$R/firefox.env" 2>/dev/null \
+            && grep -q '^DISPLAY=.' "$R/firefox.env" 2>/dev/null \
+            && ok "round $round: the tested Firefox inherited the live IBus session" \
+            || bad "round $round: the tested Firefox inherited the live IBus session" \
+                   "$(tr '\n' ' ' < "$R/firefox.env" 2>/dev/null || echo missing)"
+        grep -qx 'mousepad=pass' "$R/result" 2>/dev/null \
+            && grep -qx 'firefox=pass' "$R/result" 2>/dev/null \
+            && grep -qx 'status=pass' "$R/result" 2>/dev/null \
+            && ok "round $round: the guest completed both real application checks" \
+            || bad "round $round: the guest completed both real application checks" \
+                   "$(tr '\n' ' ' < "$R/result" 2>/dev/null || echo missing)"
+        for app in mousepad firefox; do
+            shot="$SHOTS/ibus-round$round-$app-candidate.png"
+            [ -s "$shot" ] \
+                && ok "round $round: $app candidate-state screenshot was captured" \
+                || bad "round $round: $app candidate-state screenshot was captured" "missing $shot"
+        done
+    done
 }
 
 # ═══ lint ═══════════════════════════════════════════════════════════
@@ -529,15 +574,78 @@ EOR
     mrep "...without Xwayland in the IBus session"  's/ibus_display=:0/ibus_display=/'
     mrep "...with no Pinyin engine evidence"        '/^PROFILETEST ibus_pinyin=/d'
     mrep "...without a live Pinyin engine"          's/ibus_pinyin=yes/ibus_pinyin=no/'
+
+    # The functional judge requires two complete rounds and exact evidence.
+    # Its positive fixture proves the expected shape; each mutation below
+    # proves a screenshot or a vague success line cannot replace real text.
+    functional_fixture() { # directory
+        d=$1; rm -rf "$d"; mkdir -p "$d/evidence/round1" "$d/evidence/round2" "$d/shots"
+        for n in 1 2; do
+            python3 - "$d/evidence/round$n/mousepad.txt" <<'EOPY'
+import sys
+open(sys.argv[1], 'wb').write(bytes.fromhex('e4bda0e5a5bd'))
+EOPY
+            printf '%s\n' \
+                '127.0.0.1 - - [test] "GET / HTTP/1.1" 200 -' \
+                '127.0.0.1 - - [test] "GET /?text=%E4%BD%A0%E5%A5%BD HTTP/1.1" 200 -' \
+                > "$d/evidence/round$n/firefox-http.log"
+            printf '%s\n' 'GTK_IM_MODULE=ibus' 'WAYLAND_DISPLAY=wayland-0' 'DISPLAY=:0' \
+                > "$d/evidence/round$n/firefox.env"
+            printf '%s\n' 'mousepad=pass' 'firefox=pass' 'status=pass' \
+                > "$d/evidence/round$n/result"
+            : > "$d/shots/ibus-round$n-mousepad-candidate.png"
+            : > "$d/shots/ibus-round$n-firefox-candidate.png"
+            # A real PNG is nonempty; the content is tested by shot_py above.
+            printf x >> "$d/shots/ibus-round$n-mousepad-candidate.png"
+            printf x >> "$d/shots/ibus-round$n-firefox-candidate.png"
+        done
+    }
+    functional_refuses() { # fixture dir -> number of failures
+        ( fail=0; checked=0
+          judge_ibus_functional "$1/evidence" "$1/shots" >/dev/null 2>&1
+          echo "$fail" )
+    }
+    functional_case() { # description mutation-command
+        functional_fixture "$T/functional"
+        sh -c "$2" sh "$T/functional"
+        n=$(functional_refuses "$T/functional")
+        if [ "$n" -ge 1 ]; then printf '    %-62s %s\n' "$1" "refused"
+        else printf '    %-62s %s\n' "$1" "ACCEPTED -- the functional check is dead"; fail=$((fail+1)); fi
+        checked=$((checked+1))
+    }
+    functional_fixture "$T/functional"
+    n=$(functional_refuses "$T/functional")
+    if [ "$n" = 0 ]; then printf '    %-62s %s\n' "two exact Pinyin application rounds" "accepted"
+    else printf '    %-62s %s\n' "two exact Pinyin application rounds" "REFUSED ($n)"; fail=$((fail+1)); fi
+    checked=$((checked+1))
+    functional_case "...with Latin text saved by Mousepad" \
+        'printf nihao > "$1/evidence/round1/mousepad.txt"'
+    functional_case "...with a different Firefox form value" \
+        'f="$1/evidence/round1/firefox-http.log"; sed "s/%E5%A5%BD/%E5%A5%BF/" "$f" > "$f.new" && mv "$f.new" "$f"'
+    functional_case "...without Firefox inheriting GTK IBus" \
+        'f="$1/evidence/round1/firefox.env"; sed "/^GTK_IM_MODULE=/d" "$f" > "$f.new" && mv "$f.new" "$f"'
+    functional_case "...with a missing candidate screenshot" \
+        'rm "$1/shots/ibus-round1-firefox-candidate.png"'
+    functional_case "...with no successful post-restart round" \
+        'rm -rf "$1/evidence/round2"'
+    sh -n tools/profiletest-ibus-guest.sh || { printf '    %-62s %s\n' \
+        "the injected Pinyin guest orchestrator parses" "FAIL"; fail=$((fail+1)); }
+    checked=$((checked+1))
     echo
     [ "$fail" -eq 0 ] && { echo "$checked checks: every check refuses what it exists to refuse."; exit 0; }
     echo "$fail of $checked wrong."; exit 1
 fi
 
 # ═══ boot ═══════════════════════════════════════════════════════════
-[ "$MODE" = boot ] || { sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ "$MODE" = boot ] || { sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 P="${1:-}"; [ -n "$P" ] || { echo "usage: $0 boot <profile> [evidence-dir]"; exit 2; }
 EV="${2:-$ROOT/out/profiletest-$P}"
+IBUS_FUNCTIONAL=${PROFILETEST_IBUS_FUNCTIONAL:-0}
+case "$IBUS_FUNCTIONAL" in 0|1) ;; *) echo "PROFILETEST_IBUS_FUNCTIONAL must be 0 or 1"; exit 2 ;; esac
+if [ "$IBUS_FUNCTIONAL" = 1 ] && [ "$P" != multilingual ]; then
+    echo "PROFILETEST_IBUS_FUNCTIONAL=1 is only valid for the multilingual profile"
+    exit 2
+fi
 for t in qemu-system-x86_64 sgdisk python3 losetup mount; do
     command -v "$t" >/dev/null 2>&1 || { echo "need $t"; exit 2; }
 done
@@ -547,7 +655,11 @@ CODE=/usr/share/OVMF/OVMF_CODE_4M.fd; VARS=/usr/share/OVMF/OVMF_VARS_4M.fd
 IMG="out/auros-$P.img"
 if [ ! -f "$IMG" ] && [ -f "$IMG.zst" ]; then IMG="$IMG.zst"; fi
 [ -f "$IMG" ] || { echo "no image for $P: run sudo ./build/all $P --keep=raw"; exit 2; }
-TIMEOUT="${PROFILETEST_TIMEOUT:-900}"
+if [ "$IBUS_FUNCTIONAL" = 1 ]; then
+    TIMEOUT="${PROFILETEST_TIMEOUT:-1800}"
+else
+    TIMEOUT="${PROFILETEST_TIMEOUT:-900}"
+fi
 if [ -n "${PROFILETEST_MEM:-}" ]; then MEM=$PROFILETEST_MEM
 elif [ "$P" = revive ]; then MEM=2048; else MEM=4096; fi
 
@@ -692,10 +804,22 @@ if grep -Eq '^profile[[:space:]]*=[[:space:]]*multilingual$' /etc/auros/policy.c
     say "ibus_display=$ibus_display"
     say "ibus_pinyin=$ibus_pinyin"
 fi
+if [ -x /usr/lib/auros-profiletest/ibus-functional.sh ]; then
+    exec /usr/lib/auros-profiletest/ibus-functional.sh
+fi
 journalctl -b -p err --no-pager -o cat 2>/dev/null | tail -20 | sed 's/^/PROFILETEST journal: /' > "$S"
 say "done"
 EOS
 chmod 755 "$M/usr/lib/auros-profiletest/probe.sh"
+if [ "$IBUS_FUNCTIONAL" = 1 ]; then
+    install -m 755 "$ROOT/tools/profiletest-ibus-guest.sh" \
+        "$M/usr/lib/auros-profiletest/ibus-functional.sh"
+    # If this scratch OVMF happens to contain an AurOS boot entry, do not let
+    # the install hand-over question cover the applications under test.
+    install -d "$M/var/lib/auros"
+    printf '%s\n' 'profiletest scratch image: conversion already confirmed' \
+        > "$M/var/lib/auros/converted.confirmed"
+fi
 cat > "$M/etc/systemd/system/auros-profiletest.service" <<'EOU'
 [Unit]
 Description=NOT PART OF AUROS: tools/profiletest.sh's probe
@@ -719,6 +843,14 @@ accel=tcg; [ -w /dev/kvm ] && accel=kvm
 cp "$VARS" "$T/vars.fd"
 SER="$EV/$P-serial.txt"; : > "$SER"
 Q="$T/qmp.sock"
+VIRTFS_ARGS=""
+if [ "$IBUS_FUNCTIONAL" = 1 ]; then
+    CHAN="$T/host"; mkdir -p "$CHAN"; echo 0 > "$CHAN/acks"
+    VIRTFS_ARGS="-virtfs local,path=$CHAN,mount_tag=profiletest,security_model=none,id=profiletest"
+fi
+# VIRTFS_ARGS is either empty or one test-only QEMU device whose path is the
+# mktemp directory above (and therefore contains no whitespace).
+# shellcheck disable=SC2086
 qemu-system-x86_64 -machine q35,accel=$accel -cpu max -m "$MEM" -smp 2 \
     -drive if=pflash,format=raw,unit=0,readonly=on,file="$CODE" \
     -drive if=pflash,format=raw,unit=1,file="$T/vars.fd" \
@@ -727,19 +859,12 @@ qemu-system-x86_64 -machine q35,accel=$accel -cpu max -m "$MEM" -smp 2 \
     -device VGA,edid=on,xres=1280,yres=800 -display none \
     -device qemu-xhci,id=xhci -device usb-tablet,bus=xhci.0 -device usb-kbd,bus=xhci.0 \
     -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+    $VIRTFS_ARGS \
     -serial file:"$SER" -qmp unix:"$Q",server=on,wait=off \
     >"$T/qemu.log" 2>&1 &
 QP=$!
 echo
 echo "  started ($accel, ${MEM} MiB, 1280x800); waiting for its desktop"
-T0=$(date +%s); up=""
-while kill -0 "$QP" 2>/dev/null; do
-    el=$(( $(date +%s) - T0 ))
-    [ "$el" -ge "$TIMEOUT" ] && break
-    grep -aq '^PROFILETEST up' "$SER" && [ -z "$up" ] && up=$el
-    grep -aq '^PROFILETEST done\|^PROFILETEST never-up' "$SER" && break
-    sleep 2
-done
 shot() { # name -> sets SHOT_STAT
     rm -f "$T/s.ppm"
     if qmp "$Q" "{\"execute\":\"screendump\",\"arguments\":{\"filename\":\"$T/s.ppm\"}}" >/dev/null 2>&1 &&
@@ -747,8 +872,175 @@ shot() { # name -> sets SHOT_STAT
         SHOT_STAT=$(shot_py "$T/s.ppm" "$EV/$1.png")
     else
         SHOT_STAT="no picture"
+        return 1
     fi
 }
+send_qcode() { # one physical QMP qcode
+    qmp "$Q" "{\"execute\":\"send-key\",\"arguments\":{\"keys\":[{\"type\":\"qcode\",\"data\":\"$1\"}],\"hold-time\":60}}"
+}
+send_chord() { # two simultaneous physical QMP qcodes
+    qmp "$Q" "{\"execute\":\"send-key\",\"arguments\":{\"keys\":[{\"type\":\"qcode\",\"data\":\"$1\"},{\"type\":\"qcode\",\"data\":\"$2\"}],\"hold-time\":60}}"
+}
+screen_changed() { # before.ppm after.ppm -- more than 3% of sampled pixels changed visibly
+    python3 - "$1" "$2" <<'EOPY'
+import sys
+def ppm(path):
+    d=open(path,'rb').read(); parts=[]; i=0
+    while len(parts)<4:
+        while d[i:i+1].isspace(): i+=1
+        if d[i:i+1]==b'#':
+            while d[i:i+1] not in (b'\n',b''): i+=1
+            continue
+        j=i
+        while not d[j:j+1].isspace(): j+=1
+        parts.append(d[i:j]); i=j
+    i+=1
+    return int(parts[1]),int(parts[2]),d[i:]
+w,h,a=ppm(sys.argv[1]); w2,h2,b=ppm(sys.argv[2])
+if (w,h)!=(w2,h2): raise SystemExit(0)
+changed=total=0; xs=[]; ys=[]
+for y in range(0,h,4):
+    for x in range(0,w,4):
+        p=(y*w+x)*3; total+=1
+        if sum(abs(a[p+k]-b[p+k]) for k in range(3))>24:
+            changed+=1; xs.append(x); ys.append(y)
+if changed*100 < total*3: raise SystemExit(1)
+print((min(xs)+max(xs))//2, (min(ys)+max(ys))//2)
+EOPY
+}
+screen_has_form() { # ppm -- print centre of the test page's unique background
+    python3 - "$1" <<'EOPY'
+import sys
+d=open(sys.argv[1],'rb').read(); parts=[]; i=0
+while len(parts)<4:
+    while d[i:i+1].isspace(): i+=1
+    j=i
+    while not d[j:j+1].isspace(): j+=1
+    parts.append(d[i:j]); i=j
+i+=1
+w,h=int(parts[1]),int(parts[2]); px=d[i:]; target=bytes((1,222,173))
+count=0; xs=[]; ys=[]
+for y in range(0,h,4):
+    for x in range(0,w,4):
+        p=(y*w+x)*3
+        if px[p:p+3]==target: count+=1; xs.append(x); ys.append(y)
+if count<1000: raise SystemExit(1)
+print((min(xs)+max(xs))//2, (min(ys)+max(ys))//2)
+EOPY
+}
+click_at() { # screen x y
+    ax=$(( $1 * 32767 / 1280 )); ay=$(( $2 * 32767 / 800 ))
+    qmp "$Q" \
+      "{\"execute\":\"input-send-event\",\"arguments\":{\"events\":[{\"type\":\"abs\",\"data\":{\"axis\":\"x\",\"value\":$ax}},{\"type\":\"abs\",\"data\":{\"axis\":\"y\",\"value\":$ay}}]}}" || return 1
+    sleep 0.15
+    qmp "$Q" \
+      '{"execute":"input-send-event","arguments":{"events":[{"type":"btn","data":{"down":true,"button":"left"}}]}}' || return 1
+    sleep 0.08
+    qmp "$Q" \
+      '{"execute":"input-send-event","arguments":{"events":[{"type":"btn","data":{"down":false,"button":"left"}}]}}'
+}
+click_center() { click_at 640 380; }
+ibus_host_action() {
+    [ "$IBUS_FUNCTIONAL" = 1 ] || return 0
+    line=$(tr -d '\r' < "$SER" | sed -n 's/^PROFILETEST ibus-do=//p' | tail -1)
+    [ -n "$line" ] || return 0
+    set -- $line
+    id=${1:-0}; verb=${2:-}; shift 2 || return 0
+    case "$id" in *[!0-9]*|'') return 0 ;; esac
+    ack=$(cat "$CHAN/acks" 2>/dev/null || echo 0)
+    [ "$id" -gt "$ack" ] || return 0
+    action_ok=0
+    case "$verb" in
+      type-pinyin)
+        # The multilingual profile uses French AZERTY. Physical Q is logical
+        # A, so these real key presses type the Pinyin spelling "nihao".
+        for key in n i h q o; do
+            send_qcode "$key" >/dev/null 2>&1 || { action_ok=1; break; }
+            sleep 0.12
+        done
+        ;;
+      key)
+        case "${1:-}" in spc|ret) send_qcode "$1" >/dev/null 2>&1 || action_ok=1 ;;
+            *) action_ok=1 ;; esac
+        ;;
+      chord)
+        [ "${1:-}" = ctrl ] && [ "${2:-}" = s ] \
+            && send_chord ctrl s >/dev/null 2>&1 || action_ok=1
+        ;;
+      click-center)
+        click_center >/dev/null 2>&1 || action_ok=1
+        ;;
+      click-form)
+        if read -r form_x form_y < "$T/form-point" 2>/dev/null; then
+            click_at "$form_x" "$form_y" >/dev/null 2>&1 || action_ok=1
+        else
+            action_ok=1
+        fi
+        ;;
+      click-change)
+        case "${1:-}" in ''|*[!A-Za-z0-9._-]*) action_ok=1 ;;
+          *)
+            if read -r change_x change_y < "$T/change-point-$1" 2>/dev/null; then
+                click_at "$change_x" "$change_y" >/dev/null 2>&1 || action_ok=1
+            else
+                action_ok=1
+            fi
+            ;;
+        esac
+        ;;
+      baseline)
+        case "${1:-}" in ''|*[!A-Za-z0-9._-]*) action_ok=1 ;;
+          *) qmp "$Q" "{\"execute\":\"screendump\",\"arguments\":{\"filename\":\"$T/baseline-$1.ppm\"}}" \
+                 >/dev/null 2>&1 || action_ok=1 ;; esac
+        ;;
+      wait-change)
+        case "${1:-}" in ''|*[!A-Za-z0-9._-]*) action_ok=1 ;;
+          *)
+            before="$T/baseline-$1.ppm"; changed=0; tries=0
+            while [ "$tries" -lt 60 ] && [ -s "$before" ]; do
+                qmp "$Q" "{\"execute\":\"screendump\",\"arguments\":{\"filename\":\"$T/change-$id.ppm\"}}" \
+                    >/dev/null 2>&1 || break
+                if screen_changed "$before" "$T/change-$id.ppm" > "$T/change-point-$1"; then
+                    changed=1; break
+                fi
+                sleep 1; tries=$((tries + 1))
+            done
+            [ "$changed" = 1 ] || action_ok=1
+            ;;
+        esac
+        ;;
+      wait-form)
+        form_seen=0; tries=0
+        while [ "$tries" -lt 60 ]; do
+            qmp "$Q" "{\"execute\":\"screendump\",\"arguments\":{\"filename\":\"$T/form-$id.ppm\"}}" \
+                >/dev/null 2>&1 || break
+            if screen_has_form "$T/form-$id.ppm" > "$T/form-point"; then form_seen=1; break; fi
+            sleep 1; tries=$((tries + 1))
+        done
+        [ "$form_seen" = 1 ] || action_ok=1
+        ;;
+      shot)
+        case "${1:-}" in ''|*[!A-Za-z0-9._-]*) action_ok=1 ;;
+            *) shot "$1" || action_ok=1 ;; esac
+        ;;
+      *) action_ok=1 ;;
+    esac
+    if [ "$action_ok" = 0 ]; then
+        printf '%s\n' "$id" > "$CHAN/.acks" && mv "$CHAN/.acks" "$CHAN/acks"
+    else
+        : > "$CHAN/failed-$id"
+    fi
+}
+
+T0=$(date +%s); up=""
+while kill -0 "$QP" 2>/dev/null; do
+    el=$(( $(date +%s) - T0 ))
+    [ "$el" -ge "$TIMEOUT" ] && break
+    grep -aq '^PROFILETEST up' "$SER" && [ -z "$up" ] && up=$el
+    ibus_host_action
+    grep -aq '^PROFILETEST done\|^PROFILETEST never-up' "$SER" && break
+    sleep 2
+done
 if kill -0 "$QP" 2>/dev/null; then
     shot "$P"
     S1=$SHOT_STAT
@@ -757,10 +1049,22 @@ else
 fi
 tr -d '\r' < "$SER" | grep -a '^PROFILETEST' > "$EV/$P-report.txt"
 [ -n "$QP" ] && kill -9 "$QP" 2>/dev/null; wait "$QP" 2>/dev/null; QP=""
+if [ "$IBUS_FUNCTIONAL" = 1 ]; then
+    sync
+    LP=$(losetup --find --show -o $((RS * 512)) --sizelimit $(((RE - RS + 1) * 512)) "$DISK")
+    mount "$LP" "$T/m" || { echo "  cannot remount functional evidence"; exit 1; }
+    rm -rf "$EV/ibus"
+    mkdir -p "$EV/ibus"
+    cp -a "$T/m/var/lib/auros-profiletest/ibus/." "$EV/ibus/" 2>/dev/null || true
+    umount "$T/m"; losetup -d "$LP"; LP=""
+fi
 
 echo
 echo "  what the running system said"
 judge_report "$P" "$EV/$P-report.txt"
+if [ "$IBUS_FUNCTIONAL" = 1 ]; then
+    judge_ibus_functional "$EV/ibus" "$EV"
+fi
 drawn_enough "$S1" && ok "the screen shows a desktop ($S1)" \
                    || bad "the screen shows a desktop" "$S1"
 {
