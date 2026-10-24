@@ -101,13 +101,34 @@ PID, complete transient-process cleanup, shipped IBus restoration, and both
 canonical composition rounds passed. This proves identity, not chooser
 visibility.
 
-The next retained-image diagnostic proves native application focus A to B to
-A with an exact QMP-injected saved byte. It requires the old candidate to
-unmap and every panel window to be unmapped away; return requires exactly
-one freshly XRes-authenticated candidate from the retained process. A new
-XID is acceptable with fresh authentication. Mapped-away or ambiguous states
-stop the experiment. Sixteen parser tests, 47 harness checks and independent
-security review pass; runtime lifecycle evidence is still pending.
+The retained-image diagnostic was designed to prove native application focus
+A to B to A with an exact QMP-injected saved byte. It requires the old
+candidate and every panel window to be unmapped away; return requires exactly
+one freshly XRes-authenticated candidate from the retained process. A new XID
+is acceptable with fresh authentication. Mapped-away or ambiguous states stop
+the experiment. Sixteen parser tests, 47 harness checks and independent
+security review passed before the runtime attempt below.
+
+Run `40135172647` returned incomplete, so it does not prove that full focus
+sequence. The raw XRes lifecycle did observe the authenticated candidate
+window `0x0060000f` transition from map state 2 to 0 and back to 2, with the
+same retained panel PID and XID. The second native Wayland Mousepad also saved
+the exact QMP-injected byte `20`, and its process exited cleanly. Those facts
+show that keyboard input reached the second process while the candidate was
+unmapped; they do not prove the required pointer-focus transition.
+
+The host's visual locator caused the incomplete result. It requires more than
+3 percent of sampled screen pixels to differ from a baseline before it emits
+a click point. The blank second editor covered the blank first editor with
+nearly identical geometry. Comparing the retained before and focus-away PNGs
+with the locator's sampling and difference rule finds only 122 of 64,000
+samples changed, about 0.19 percent. Consequently `wait-change` emitted no
+point and `click-change` could not perform or prove the requested pointer
+click. The focus-return screenshot also does not visibly establish that the
+original editor was restored. Treat the 2-to-0-to-2 map sequence as useful
+diagnostic behavior only, not complete A-to-B-to-A focus proof. No rerun is
+needed for the proposed X11 exception because the independent content-
+authentication stop below already blocks it.
 
 ## Security stop: the panel process does not authenticate its content
 
