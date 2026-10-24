@@ -659,6 +659,38 @@ static void l_request(shell_ctx *c, int win, unsigned rq)
     if (rq & WREQ_MINIMIZE) { (void)win; P(c)->list = 0; focus_card(c, 0, 0.36f); }
 }
 
+/* The rows of the card in front, the neighbours that peek in at the sides (what is on screen of
+ * them, which is what she can press), and the window that is in front. */
+static int l_targets(shell_ctx *c, shell_target *o, int max)
+{
+    rail_priv *p = P(c);
+    int W = c->screen_w, H = c->screen_h, n = 0;
+    int cur = (int)(p->slide.value + 0.5f);
+    rect scr = { 0, 0, W, H };
+#define ADD(R, WHAT, KIND) do { rect r_ = (R); if (r_.w > 0 && r_.h > 0 && n < max) { \
+        o[n].r = r_; o[n].what = (WHAT); o[n].kind = (KIND); n++; } } while (0)
+    if (cur == 0) {
+        rect a = card_rect(c, W, H, 0);
+        int rows[LIST_MAX];
+        int nr = p->list ? list_rows(c, a, p->list_first, rows) : home_rows(c, a, rows);
+        for (int i = 0; i < nr; i++)
+            ADD(p->list ? list_rect(c, a, i) : tile_rect(c, a, i),
+                p->list ? "a row of the list of programs" : "a row of Home", TARGET_PRESS);
+    } else {
+        ADD(card_rect(c, W, H, cur), "a window", TARGET_WINDOW);
+    }
+    for (int i = 0; i < card_count(c); i++) {
+        if (i == cur) continue;
+        rect a = card_rect(c, W, H, i), v;
+        int x0 = a.x > 0 ? a.x : 0, y0 = a.y > 0 ? a.y : 0;
+        int x1 = a.x + a.w < scr.w ? a.x + a.w : scr.w, y1 = a.y + a.h < scr.h ? a.y + a.h : scr.h;
+        v = (rect){ x0, y0, x1 > x0 ? x1 - x0 : 0, y1 > y0 ? y1 - y0 : 0 };   /* what is on screen of it */
+        ADD(v, i == 0 ? "the Home card at the side" : "a window's card at the side", TARGET_PRESS);
+    }
+#undef ADD
+    return n;
+}
+
 const shell_layout layout_rail = {
     .request = l_request,
     .id = "rail",
@@ -670,4 +702,5 @@ const shell_layout layout_rail = {
     .step = l_step,
     .fini = l_fini,
     .present = l_present,
+    .targets = l_targets,
 };

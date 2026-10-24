@@ -33,7 +33,7 @@
 #define DOCK_PAD_B    10
 #define DOCK_ICON_PX  56.f
 #define DOCK_LABEL_H  48      /* two lines of 18 px                      */
-#define WIN_TITLE_H   46
+#define WIN_TITLE_H   48      /* the two buttons in it are 44 px: the floor for anything she presses */
 /* A program that draws its own title bar gets none of ours. */
 #define TITLE_OF(c, i) ((c)->wins[i].csd ? 0 : WIN_TITLE_H)
 #define CASCADE_STEP  110
@@ -174,7 +174,11 @@ static rect dock_rect(shell_ctx *c, int sw, int sh, int slot)
             if (i + 1 < n) inner += (sl[i + 1].kind != sl[i].kind) ? sep : gap;
             if (i + 1 == fixed_n) fixed_inner = inner;
         }
-        if (inner + 2 * pad <= avail || cell <= 92) break;
+        /* 92 is the least a cell keeps its name in; past that (more programs than the room
+         * holds, five running beside the favourites on a 1024 px screen) the names go and the
+         * cells shrink to the icon, 56 px: still a target, and still on the screen. The dock
+         * used to stop at 92 and run off the right edge. */
+        if (inner + 2 * pad <= avail || cell <= 56) break;
         cell -= 2;
     }
     if (fixed_n == n) fixed_inner = inner;
@@ -328,6 +332,19 @@ static rect find_panel_rect(shell_ctx *c, int sw, int sh, int nres)
     return (rect){ px, c->bar_h + 16, pw, ph };
 }
 
+/* The two buttons at the right of a window's bar, 44 px square: close, and to its left minimise.
+ * ONE owner, for painting, hit-testing and tools/floorstest.c. Empty for a program that draws
+ * its own bar. */
+enum { WB_CLOSE = 0, WB_MIN = 1 };
+static rect win_btn(shell_ctx *c, int sw, int sh, int i, int which)
+{
+    int th = TITLE_OF(c, i);
+    if (th <= 0) return (rect){ 0, 0, 0, 0 };
+    rect a = win_rect(c, sw, sh, i);
+    int bs = th - 4;
+    return (rect){ a.x + a.w - 6 - bs - which * (bs + 4), a.y + (th - bs) / 2, bs, bs };
+}
+
 /* ── helpers over the window list ───────────────────────────────── */
 static int app_window(shell_ctx *c, int app)
 {
@@ -395,7 +412,7 @@ static void paint_win(shell_ctx *c, surface *s, shell_fonts *f, int i, int focus
         /* The name and the line after it stop short of the two buttons: a
          * long page title used to run on underneath them. */
         float tx = (float)(a.x + c->padding + 28);
-        float stop = (float)(a.x + a.w - c->padding - 11) - 30.f - 5.f - 16.f;
+        float stop = (float)win_btn(c, s->w, s->h, i, WB_MIN).x - 8.f;
         float room = stop - tx;
         float nw = shell_text_w(f->mid, w->title);
         float by = shell_baseline(f->mid, (float)a.y, (float)th);
@@ -411,12 +428,12 @@ static void paint_win(shell_ctx *c, surface *s, shell_fonts *f, int i, int focus
          * dock is a fixed place to get the window back from. Two square
          * wells, not two discs: a circle behind a glyph is the one shape
          * this whole theme is trying not to repeat. */
-        float cy = (float)(a.y + th / 2);
-        float bx = (float)(a.x + a.w - c->padding - 11);
-        draw_line(s, bx - 4.f, cy - 4.f, bx + 4.f, cy + 4.f, 1.7f, c->fg, al * 0.95f);
-        draw_line(s, bx + 4.f, cy - 4.f, bx - 4.f, cy + 4.f, 1.7f, c->fg, al * 0.95f);
-        bx -= 30.f;
-        draw_hrule(s, (int)(bx - 5.f), (int)(cy + 3.f), 11, 2, c->fg, al * 0.95f);
+        rect xb = win_btn(c, s->w, s->h, i, WB_CLOSE), mb = win_btn(c, s->w, s->h, i, WB_MIN);
+        float cy = (float)(xb.y + xb.h / 2), bx = (float)(xb.x + xb.w / 2);
+        draw_line(s, bx - 5.f, cy - 5.f, bx + 5.f, cy + 5.f, 1.7f, c->fg, al * 0.95f);
+        draw_line(s, bx + 5.f, cy - 5.f, bx - 5.f, cy + 5.f, 1.7f, c->fg, al * 0.95f);
+        bx = (float)(mb.x + mb.w / 2);
+        draw_hrule(s, (int)(bx - 6.f), (int)(cy + 3.f), 12, 2, c->fg, al * 0.95f);
     }
 
     rect body = { a.x, a.y + th, a.w, a.h - th };
@@ -497,12 +514,15 @@ static void paint_dock(shell_ctx *c, surface *s, shell_fonts *f, float alpha)
             is_focus = (wi >= 0 && wi == c->focus);
         }
         float isz = DOCK_ICON_PX * k;
+        float label_y = (float)r.y + isz + 8.f + font_ascent(lf);
+        if (isz > (float)r.w - 4.f) isz = (float)r.w - 4.f;       /* a crowded dock: the icon fits its cell */
         shell_icon_draw(s, ic, cx, (float)r.y + isz * 0.5f + 2.f, isz, ink,
                         c->bg_alt, alpha);
-        /* The name under it: two lines at most, each centred, never cut. */
-        shell_text_wrap_centred(s, lf, (float)r.x + 4.f,
-                                (float)r.y + isz + 8.f + font_ascent(lf),
-                                (float)r.w - 8.f, 22.f * k, name, c->fg_hi, alpha, 2);
+        /* The name under it: two lines at most, each centred, never cut. A cell too narrow to
+         * hold it (a crowded dock) has no name rather than half of one. */
+        if (r.w >= 92)
+            shell_text_wrap_centred(s, lf, (float)r.x + 4.f, label_y,
+                                    (float)r.w - 8.f, 22.f * k, name, c->fg_hi, alpha, 2);
 
         /* Running indicator. One mark per APP, never one per window:
          * "how many windows do I have" is the question a taskbar
@@ -831,9 +851,9 @@ static int l_click(shell_ctx *c, int x, int y)
             if (x < a.x || x >= a.x + a.w || y < a.y || y >= a.y + a.h) continue;
             c->focus = i;
             if (y < a.y + TITLE_OF(c, i)) {
-                float bx = (float)(a.x + a.w - c->padding - 12);
-                if (x > bx - 14.f) { ask_close(c, i); return 1; }   /* close   */
-                if (x > bx - 44.f) { c->wins[i].minimised = 1; return 1; }
+                rect xb = win_btn(c, sw, sh, i, WB_CLOSE), mb = win_btn(c, sw, sh, i, WB_MIN);
+                if (x >= xb.x && x < xb.x + xb.w && y >= xb.y && y < xb.y + xb.h) { ask_close(c, i); return 1; }
+                if (x >= mb.x && x < mb.x + mb.w && y >= mb.y && y < mb.y + mb.h) { c->wins[i].minimised = 1; return 1; }
                 p->drag = i; p->grab_x = x - a.x; p->grab_y = y - a.y;
                 p->drag_x0 = x; p->drag_y0 = y; p->drag_live = 0;
             }
@@ -1005,6 +1025,36 @@ static void l_removed(shell_ctx *c, int i)
     if (p->drag == i) p->drag = -1; else if (p->drag > i) p->drag--;
 }
 
+/* Everything she presses, and every window, where the dock and the cascade put them now. */
+static int l_targets(shell_ctx *c, shell_target *o, int max)
+{
+    dock_priv *p = P(c);
+    int sw = c->screen_w, sh = c->screen_h, n = 0;
+#define ADD(R, WHAT, KIND) do { rect r_ = (R); if (r_.w > 0 && r_.h > 0 && n < max) { \
+        o[n].r = r_; o[n].what = (WHAT); o[n].kind = (KIND); n++; } } while (0)
+    dock_slot sl[MAX_SLOTS];
+    int ns = dock_slots(c, sl);
+    for (int i = 0; i < ns; i++)
+        ADD(dock_rect(c, sw, sh, i), sl[i].kind == SLOT_FIND ? "the All my programs cell of the dock" : "a cell of the dock",
+            TARGET_PRESS);
+    if (p->find_open) {
+        find_hit hit[FIND_MAX];
+        int nres = find_search(c, p->q, hit);
+        rect a = find_panel_rect(c, sw, sh, nres);
+        int shown = nres < find_rows_fit(c, sh) ? nres : find_rows_fit(c, sh);
+        for (int i = 0; i < shown; i++)
+            ADD(((rect){ a.x, a.y + FIND_TOP + i * FIND_ROW_H, a.w, FIND_ROW_H }), "a row of the finder", TARGET_PRESS);
+    }
+    for (int i = 0; i < c->n_wins; i++) {
+        if (c->wins[i].minimised) continue;
+        ADD(win_rect(c, sw, sh, i), "a window", TARGET_WINDOW);
+        ADD(win_btn(c, sw, sh, i, WB_CLOSE), "a window's close button", TARGET_PRESS);
+        ADD(win_btn(c, sw, sh, i, WB_MIN),   "a window's minimise button", TARGET_PRESS);
+    }
+#undef ADD
+    return n;
+}
+
 const shell_layout layout_dock = {
     .id = "dock",
     .request = l_request,
@@ -1017,4 +1067,5 @@ const shell_layout layout_dock = {
     .key = l_key,
     .step = l_step,
     .fini = l_fini,
+    .targets = l_targets,
 };

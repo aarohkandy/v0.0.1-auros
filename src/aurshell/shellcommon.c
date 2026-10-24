@@ -857,14 +857,20 @@ void shell_fonts_load(shell_fonts *f, const shell_ctx *c)
      * design whose hierarchy collapses at 150% was not a hierarchy. */
     float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
     base *= k; sm *= k; lg *= k;
+    /* THE FLOOR: nothing she reads is under 18 px, at any size (EASY.md; DESIGN-DIRECTION
+     * section 3). "Smaller text" shrinks the headings and the room between things; the words
+     * stop at 18, as the band's already do (foot.c FOOT_MIN_PX). Without this the theme's
+     * 18 px captions were 14 at 80%. tools/floorstest.c holds every font to it. */
+#define FLOOR(px) ((px) < 18.f ? 18.f : (px))
 
-    f->huge  = open_font(disp, lg * 2.25f);
-    f->big   = open_font(disp, lg * 1.45f);
-    f->dmid  = open_font(disp, lg * 1.2f);
-    f->mid   = open_font(bold, base * 1.10f);
-    f->label = open_font(bold, sm);
-    f->small = open_font(text, base);
-    f->tiny  = open_font(text, sm);
+    f->huge  = open_font(disp, FLOOR(lg * 2.25f));
+    f->big   = open_font(disp, FLOOR(lg * 1.45f));
+    f->dmid  = open_font(disp, FLOOR(lg * 1.2f));
+    f->mid   = open_font(bold, FLOOR(base * 1.10f));
+    f->label = open_font(bold, FLOOR(sm));
+    f->small = open_font(text, FLOOR(base));
+    f->tiny  = open_font(text, FLOOR(sm));
+#undef FLOOR
     {
         double lh = theme_num(&c->theme, "line_height", 1.45);
         f->lh = (float)(lh < 0.8 ? 0.8 : lh > 3.0 ? 3.0 : lh);

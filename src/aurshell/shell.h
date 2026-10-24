@@ -380,6 +380,12 @@ typedef struct shell_ctx_s {
      (c)->bt_open   || (c)->power_open || (c)->welcome_open || \
      (c)->guard_open || (c)->wish_open || (c)->wishfill_open)
 
+/* One thing an archetype draws that she presses (kind 0), or one window as the archetype placed
+ * it (kind 1), for whoever has to check them: tools/floorstest.c holds every kind-0 rectangle
+ * to the 44 px floor and every rectangle to the screen. `what` names it in a failure line. */
+typedef struct { rect r; const char *what; int kind; } shell_target;
+enum { TARGET_PRESS = 0, TARGET_WINDOW = 1 };
+
 typedef struct {
     const char *id;
     void (*init) (shell_ctx *c);
@@ -415,6 +421,11 @@ typedef struct {
     /* 1 when the window is as large as this archetype ever makes it, so
      * the program can show the right button. Optional; default 0. */
     int  (*maxed)(const shell_ctx *c, int win);
+    /* Every control and window the archetype has on screen in the state c is in (its apps, its
+     * windows, whether its menu or finder is open, its size and her text size), from the same
+     * geometry functions painting and hit-testing use, so the harness measures what she presses.
+     * Returns how many it wrote, at most max. Optional. */
+    int  (*targets)(shell_ctx *c, shell_target *out, int max);
 } shell_layout;
 
 /* Shared helpers every layout may use, so six renderers do not each

@@ -85,7 +85,8 @@ static rect  lerp_rect(rect a, rect b, float t)
  * The bar is taller than a status strip because it holds real targets,
  * not just read-only text. */
 static int bar_height(shell_ctx *c) { return c->bar_h + (c->target_large ? 14 : 6); }
-static int title_h(shell_ctx *c)    { return c->target_large ? 44 : 36; }
+/* 48: the three buttons in it are 44 px, the floor for anything she presses (EASY.md rule 4). */
+static int title_h(shell_ctx *c)    { return c->target_large ? 52 : 48; }
 /* A program that draws its own title bar and buttons gets none of ours:
  * two sets, one above the other, is what nobody can work out. */
 static int title_of(shell_ctx *c, int i) { return c->wins[i].csd ? 0 : title_h(c); }
@@ -256,9 +257,9 @@ static rect win_part(shell_ctx *c, int W, int H, int i, int part)
     if (part == WP_BODY)  { rect b = { a.x, a.y + th, a.w, a.h - th }; return b; }
 
     if (th == 0) return (rect){ 0, 0, 0, 0 };        /* its own bar has them */
-    int bs = th - 14; if (bs < 18) bs = 18;
+    int bs = th - 4; if (bs < 44) bs = 44;
     int idx = (part == WP_CLOSE) ? 0 : (part == WP_MAX ? 1 : 2);
-    rect b = { a.x + a.w - 8 - bs - idx * (bs + 4), a.y + (th - bs) / 2, bs, bs };
+    rect b = { a.x + a.w - 6 - bs - idx * (bs + 4), a.y + (th - bs) / 2, bs, bs };
     return b;
 }
 
@@ -1237,6 +1238,36 @@ static void l_present(shell_ctx *c, int win)
     restore_win(c, win);
 }
 
+/* Everything she presses, and every window, where the bar and the cascade put them now. */
+static int l_targets(shell_ctx *c, shell_target *o, int max)
+{
+    tb_priv *p = P(c);
+    int W = c->screen_w, H = c->screen_h, n = 0;
+    stack_sync(c);
+#define ADD(R, WHAT, KIND) do { rect r_ = (R); if (r_.w > 0 && r_.h > 0 && n < max) { \
+        o[n].r = r_; o[n].what = (WHAT); o[n].kind = (KIND); n++; } } while (0)
+    ADD(bar_slot(c, W, H, SLOT_LAUNCH), "the All my programs button", TARGET_PRESS);
+    ADD(bar_slot(c, W, H, SLOT_WISH),   "the wish button", TARGET_PRESS);
+    { rect tr = bar_slot(c, W, H, SLOT_TRAY);
+      ADD(((rect){ tr.x, tr.y, tr.h, tr.h }), "the Wi-Fi mark in the bar", TARGET_PRESS); }
+    for (int i = 0; i < c->n_wins; i++)
+        ADD(bar_slot(c, W, H, i), "a window's button in the bar", TARGET_PRESS);
+    if (p->menu_open) {
+        int cols, rows, shown;
+        menu_shape(c, W, H, &cols, &rows, &shown);
+        for (int r = 0; r < shown; r++) ADD(menu_part(c, W, H, r), "a row of the programs menu", TARGET_PRESS);
+    }
+    for (int i = 0; i < c->n_wins; i++) {
+        if (c->wins[i].minimised) continue;
+        ADD(win_part(c, W, H, i, WP_FRAME), "a window", TARGET_WINDOW);
+        ADD(win_part(c, W, H, i, WP_CLOSE), "a window's close button", TARGET_PRESS);
+        ADD(win_part(c, W, H, i, WP_MAX),   "a window's maximise button", TARGET_PRESS);
+        ADD(win_part(c, W, H, i, WP_MIN),   "a window's minimise button", TARGET_PRESS);
+    }
+#undef ADD
+    return n;
+}
+
 const shell_layout layout_taskbar = {
     .id = "taskbar",
     .init = l_init,
@@ -1250,4 +1281,5 @@ const shell_layout layout_taskbar = {
     .maxed = l_maxed,
     .fini = l_fini,
     .removed = l_removed,
+    .targets = l_targets,
 };

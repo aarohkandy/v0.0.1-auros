@@ -940,6 +940,32 @@ static void l_request(shell_ctx *c, int win, unsigned rq)
     if ((rq & WREQ_MINIMIZE) && P(c)->win == win) go_home(c);
 }
 
+/* Home, the page buttons, every tile on the page; or, with a program open, the program. */
+static int l_targets(shell_ctx *c, shell_target *o, int max)
+{
+    tiles_priv *p = P(c);
+    int w = c->screen_w, h = c->screen_h, n = 0;
+#define ADD(R, WHAT, KIND) do { rect r_ = (R); if (r_.w > 0 && r_.h > 0 && n < max) { \
+        o[n].r = r_; o[n].what = (WHAT); o[n].kind = (KIND); n++; } } while (0)
+    ADD(home_btn_rect(c, w, h), "the Home button", TARGET_PRESS);
+    if (clampf(p->open.value, 0.f, 1.f) >= 0.999f) {
+        ADD(full_rect(c, w, h), "a window", TARGET_WINDOW);
+        return n;
+    }
+    grid_m g = grid_metrics(c, w, h);
+    if (g.pages > 1)
+        for (int i = 0; i < 2; i++)
+            ADD(nav_rect(c, w, h, i), i ? "the Next page button" : "the Previous page button", TARGET_PRESS);
+    int first = p->page * g.per, last = first + g.per;
+    if (last > c->n_apps) last = c->n_apps;
+    for (int k = first; k < last; k++) {
+        int i = display_app(c, g.per, k);
+        if (i >= 0) ADD(tile_rect(c, w, h, i), "a tile", TARGET_PRESS);
+    }
+#undef ADD
+    return n;
+}
+
 const shell_layout layout_tiles = {
     .id = "tiles",
     .request = l_request,
@@ -951,4 +977,5 @@ const shell_layout layout_tiles = {
     .step = l_step,
     .present = l_present,
     .fini = l_fini,
+    .targets = l_targets,
 };
