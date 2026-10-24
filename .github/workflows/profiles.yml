@@ -398,6 +398,7 @@ jobs:
           run-id: ${{ inputs.retained_multilingual_run_id }}
           github-token: ${{ github.token }}
           path: retained-anchor
+          merge-multiple: true
       - name: immutable manifest agrees with bounded release assets
         run: |
           [ -f retained-anchor/multilingual-image-v1.json ] \
@@ -477,7 +478,7 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           exit "$rc"
       - name: publish diagnostic evidence with both source identities
-        if: ${{ always() && !cancelled() }}
+        if: ${{ !cancelled() && (steps.diagnostic.outcome == 'success' || steps.diagnostic.outcome == 'failure') }}
         run: |
           sudo chown -R "$(id -u):$(id -g)" ev
           files=()
