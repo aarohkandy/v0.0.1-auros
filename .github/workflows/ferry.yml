@@ -1,0 +1,150 @@
+# ferry.yml -- stream R: "Bring my files across" and "Put Windows back"
+# are tested the way they run, and the tests are shown to be able to fail.
+#
+#   suite     src/ferry/tests/run.sh twice: as an ordinary user, and as ROOT
+#             (how Ferry really runs). The user run skips the checks that
+#             need root: that root never writes into her home, that a
+#             symlink she planted gains nothing, that ferry-copy refuses to
+#             write as root. tests.yml's Ferry step is the user run only.
+#
+#   sandbox   src/ferry/tests/insystemd.sh -> sandbox.sh: a throwaway
+#             privileged container with systemd as PID 1, Ferry installed
+#             as the image installs it, and answer.sh run under EVERY
+#             [Service] property of rootfs/etc/systemd/system/
+#             auros-answer.service (ProtectSystem=strict, ProtectHome,
+#             StateDirectory, RuntimeDirectory, ReadWritePaths...) on REAL
+#             loop volumes: an NTFS "Windows" (import, Put Windows back with
+#             a photo that must arrive byte for byte), an exFAT
+#             AUROSHANDOV handover volume, a FAT stick. Nothing else in CI
+#             ran Ferry inside that sandbox: reverting the unit stayed green
+#             (docs/handoff/GATE-STATUS.md, S-10).
+#
+#             And the other half of a test: the same run against the unit
+#             with ONE fix taken out must FAIL, in the test's own words
+#             ("sandbox tests: N passed, M failed", M > 0). ProtectHome=yes
+#             (the home folder hidden: nothing could be copied), no
+#             StateDirectory=ferry (Ferry cannot write its records), no
+#             "ferry" in RuntimeDirectory (nowhere to mount the Windows
+#             drive). A mutation that did not change the file, or a run that
+#             failed for any other reason (systemd did not come up, the
+#             image would not build), fails the job.
+#
+# Cheap enough to run on every push that touches what it checks.
+name: ferry
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/ferry/**'
+      - 'rootfs/etc/systemd/system/auros-answer.service'
+      - 'rootfs/usr/lib/auros/answer.sh'
+      - 'tools/checksec.sh'
+      - '.github/workflows/ferry.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ferry-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: sh tools/apt.sh gcc make python3 dash
+      - name: build
+        run: cd src/ferry && make
+      - name: the suite, as an ordinary user
+        run: cd src/ferry && sh tests/run.sh 2>&1 | tee "$RUNNER_TEMP/user.txt"
+      - name: "the suite, as root (how Ferry runs, with the checks the user run skips)"
+        run: |
+          cd src/ferry
+          sudo env "PATH=$PATH" sh tests/run.sh 2>&1 | tee "$RUNNER_TEMP/root.txt"
+          # "as root: skipped" would mean the checks this job exists for did not run
+          if grep -q 'as root: skipped' "$RUNNER_TEMP/root.txt"; then
+            echo "::error::the root-only checks were skipped in the root run"; exit 1
+          fi
+          grep -q '^  ok   nothing was written through her symlinks into a root-owned folder' "$RUNNER_TEMP/root.txt"
+      - name: summary
+        if: always()
+        run: |
+          { echo '### Ferry suite'
+            echo "- user: $(tail -1 "$RUNNER_TEMP/user.txt" 2>/dev/null)"
+            echo "- root: $(tail -1 "$RUNNER_TEMP/root.txt" 2>/dev/null)"; } >> "$GITHUB_STEP_SUMMARY"
+
+  sandbox:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      # The free plan runs 20 jobs at a time for the whole repository
+      # (docs/handoff/FIELD-MANUAL.md): two at once.
+      max-parallel: 2
+      matrix:
+        mutation: [none, protecthome, statedir, runtimedir]
+    name: sandbox (${{ matrix.mutation }})
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: "kernel drivers the test needs (exFAT, FAT, loop devices)"
+        run: |
+          sudo modprobe loop || true
+          sudo modprobe exfat || true
+          sudo modprobe vfat || true
+          ls -l /dev/loop-control
+          grep -E 'exfat|vfat|fuse' /proc/filesystems || true
+      - name: "the unit, with one fix taken out (or not)"
+        env:
+          MUTATION: ${{ matrix.mutation }}
+        run: |
+          U=rootfs/etc/systemd/system/auros-answer.service
+          M=src/ferry/tests/mutant.service
+          case "$MUTATION" in
+            none)        cp "$U" "$M" ;;
+            protecthome) sed 's/^ProtectHome=no$/ProtectHome=yes/' "$U" > "$M" ;;
+            statedir)    sed '/^StateDirectory=ferry$/d; /^StateDirectoryMode=/d' "$U" > "$M" ;;
+            runtimedir)  sed 's/^RuntimeDirectory=auros-answer ferry$/RuntimeDirectory=auros-answer/' "$U" > "$M" ;;
+          esac
+          if [ "$MUTATION" != none ] && cmp -s "$U" "$M"; then
+            echo "::error::the $MUTATION mutation did not change the unit (its text moved?)"; exit 1
+          fi
+          diff "$U" "$M" || true
+      - name: "Ferry inside the unit's sandbox, on real volumes"
+        env:
+          MUTATION: ${{ matrix.mutation }}
+        run: |
+          cd src/ferry
+          set +e
+          UNIT=src/ferry/tests/mutant.service sh tests/insystemd.sh > "$RUNNER_TEMP/sandbox.txt" 2>&1
+          rc=$?
+          set -e
+          tail -60 "$RUNNER_TEMP/sandbox.txt"
+          line=$(grep -E '^sandbox tests: [0-9]+ passed, [0-9]+ failed' "$RUNNER_TEMP/sandbox.txt" | tail -1 || true)
+          echo "result line: ${line:-none}"
+          if [ "$MUTATION" = none ]; then
+            # the real unit: everything passes
+            [ "$rc" = 0 ] && grep -qE ' 0 failed$' <<<"$line"
+          else
+            # the unit with a fix removed: the test must say so, in its own words.
+            # Not "systemd did not come up" or a build failure (those end without the line).
+            if [ "$rc" = 0 ]; then
+              echo "::error::the sandbox test stayed GREEN with the $MUTATION fix taken out: it cannot tell"; exit 1
+            fi
+            grep -qE ' [1-9][0-9]* failed$' <<<"$line" || { echo "::error::it failed, but not as a test (no result line): infrastructure"; exit 1; }
+            echo "red as it should be: the sandbox test catches the missing $MUTATION fix"
+          fi
+      - name: summary
+        if: always()
+        env:
+          MUTATION: ${{ matrix.mutation }}
+        run: |
+          { echo "### Ferry sandbox ($MUTATION)"
+            echo '```'; grep -E '^(sandbox tests|[0-9]\. )|FAIL' "$RUNNER_TEMP/sandbox.txt" 2>/dev/null | head -30; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
