@@ -24,6 +24,16 @@
    downloaded (RC3's publish, run 40026374421: dist/installer was gone).
 8. A job that calls e2e.yml (release.yml's e2e, e2e-fastpath) journeys EVERY
    prerelease on real Windows: it must not wait for [latest] or promote.
+10. The update-signing key comes LAST. It is named by one step at most, not
+   in the job's own `env`; that step has at least three steps before it and
+   an `if:` on an earlier step's output (`steps.x.outputs...`), so it is
+   loaded only after the job's checks and only when there is something to
+   sign (a run once loaded it on a runner for a commit whose BODY merely
+   mentioned [latest]).
+11. A workflow started by `workflow_run` that names the key decides through
+   `tools/aptgate.sh decide` (the commit SUBJECT says [latest] and the
+   triggering run's promote job concluded success, asked of the API, failing
+   closed), never from a substring of the whole commit message alone.
 9. No dynamic reads of secrets: `secrets[...]` (a name chosen at run time,
    e.g. `secrets[inputs.x]`) and `toJSON(secrets)` hand every secret of the
    repository to a run on any branch and slip past rule 6; each secret is
@@ -72,6 +82,12 @@ def lint(path, text):
             env = env.get("name") if isinstance(env, dict) else env
             if env != "apt-signing":
                 out.append("%s: job %s uses the update-signing key outside the apt-signing environment" % (path, name))
+        if "AUROS_APT_SIGNING_KEY" in yaml.dump({k: v for k, v in job.items() if k != "steps"}):
+            out.append("%s: job %s names the update-signing key outside a step: only one late, conditional step may" % (path, name))
+        for i, st in enumerate(job.get("steps") or []):
+            if isinstance(st, dict) and "AUROS_APT_SIGNING_KEY" in yaml.dump(st):
+                if i < 3 or not re.search(r"steps\.[A-Za-z0-9_-]+\.outputs\.", str(st.get("if", ""))):
+                    out.append("%s: job %s step %d loads the update-signing key before the job's checks or without an if: on an earlier step's output" % (path, name, i + 1))
         if "uses" not in job and "timeout-minutes" not in job:
             out.append("%s: job %s has no timeout-minutes" % (path, name))
         for step in job.get("steps") or []:
@@ -79,7 +95,17 @@ def lint(path, text):
             if run and re.search(r"\bapt-get\b", run) and "tools/apt.sh" not in run \
                     and not re.search(r"\btimeout\b[^\n]*apt-get", run):
                 out.append("%s: job %s calls apt-get without tools/apt.sh or timeout" % (path, name))
+    triggers = doc.get(True, doc.get("on"))
+    if "workflow_run" in (triggers if isinstance(triggers, (dict, list)) else []) \
+            and "AUROS_APT_SIGNING_KEY" in text and "tools/aptgate.sh decide" not in text:
+        out.append("%s: started by workflow_run and names the update-signing key, but never calls tools/aptgate.sh decide" % path)
     return out
+
+
+KEY = ("jobs:\n  a:\n    timeout-minutes: 5\n    environment: apt-signing\n    steps:\n"
+       "      - run: one\n      - run: two\n      - run: three\n"
+       "      - if: steps.n.outputs.go == 'true'\n        run: echo ${{ secrets.AUROS_APT_SIGNING_KEY }}\n")
+WR = "on:\n  workflow_run:\n    workflows: [build]\n    types: [completed]\n"
 
 
 def selftest():
@@ -112,9 +138,18 @@ def selftest():
         ("job-level contents: write passes",
          good.replace("    steps:", "    permissions:\n      contents: write\n    steps:"), 0),
         ("the signing key outside the apt-signing environment is refused",
-         good + "      - run: echo ${{ secrets.AUROS_APT_SIGNING_KEY }}\n", 1),
-        ("the signing key inside the apt-signing environment passes",
-         good.replace("    steps:", "    environment: apt-signing\n    steps:") + "      - run: echo ${{ secrets.AUROS_APT_SIGNING_KEY }}\n", 0),
+         KEY.replace("    environment: apt-signing\n", ""), 1),
+        ("the signing key inside the apt-signing environment passes", KEY, 0),
+        ("a late, conditional key step passes", KEY, 0),
+        ("a key step with no if: is refused", KEY.replace("      - if: steps.n.outputs.go == 'true'\n        run:", "      - run:"), 1),
+        ("a key step that is the first step is refused",
+         "jobs:\n  a:\n    timeout-minutes: 5\n    environment: apt-signing\n    steps:\n      - if: steps.n.outputs.go == 'true'\n        run: echo ${{ secrets.AUROS_APT_SIGNING_KEY }}\n      - run: one\n      - run: two\n      - run: three\n", 1),
+        ("a key step that only tests something unrelated is refused", KEY.replace("steps.n.outputs.go == 'true'", "github.event_name == 'push'"), 1),
+        ("the key in the job's own env is refused",
+         KEY.replace("    environment: apt-signing\n", "    environment: apt-signing\n    env:\n      K: ${{ secrets.AUROS_APT_SIGNING_KEY }}\n"), 1),
+        ("workflow_run + the key, no aptgate, is refused", WR + KEY, 1),
+        ("workflow_run + the key, through aptgate, passes", WR + KEY.replace("      - run: one\n", "      - run: bash tools/aptgate.sh decide\n"), 0),
+        ("push + the key needs no aptgate", "on:\n  push:\n" + KEY, 0),
     ]
     bad = 0
     for what, text, want in cases:

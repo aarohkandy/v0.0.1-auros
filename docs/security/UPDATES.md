@@ -188,15 +188,27 @@ a time, and each turns the test red.
 
 ### Publishing: `.github/workflows/aptrepo.yml`
 
-- **By itself** after a green build or release run that promoted a release
-  (`[latest]` in its subject): that release is published. A promoted fix
-  reaches every AurOS computer with nobody remembering to.
+- **By itself** after a real promote: a `build` or `release` run whose commit
+  SUBJECT (first line) says `[latest]` and whose `promote` job concluded
+  `success`, asked of the API by `tools/aptgate.sh decide`. A body that
+  merely mentions the word, a run whose promote was skipped, cancelled or
+  failed, and an API error all publish nothing (the last also stops the job).
+  A promoted fix reaches every AurOS computer with nobody remembering to.
+  (Before 2026-10-24 the condition was a substring of the whole commit
+  message: it fired three times by accident, runs 40042981951, 40042987246
+  and 40046665287, and the last loaded the signing key on a runner.)
 - `[apt]` in a commit subject: the latest release. `[apt TAG]`: that release
   (an urgent fix that is still a prerelease). Also `workflow_dispatch`.
 - The `.deb`s come **out of the released image** (debugfs, no root), so what
   the channel serves is what those computers have. The image must carry the
   committed key and point at this repository's channel, or nothing is
   published. Older than what is published: refused. Equal: nothing to do.
+- The signing key is loaded LAST, in the `publish` job's `apt-signing`
+  environment, and only when there is something to sign: after the release
+  is named, its packages are out of the image and checked, and the version
+  is newer than what is published. `tools/workflowlint.py` (rule 10) refuses
+  a key step that is early or unconditional, and (rule 11) a `workflow_run`
+  workflow that names the key without `tools/aptgate.sh decide`.
 - Signs with every key in the secret `AUROS_APT_SIGNING_KEY` that is in the
   committed keyring (two during a rotation), and refuses a secret key that
   is not. Verifies against the committed file. Uploads the packages first

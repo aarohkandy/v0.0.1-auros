@@ -5,10 +5,12 @@
 #            test. [apt] in the commit SUBJECT publishes the latest
 #            (website) release; [apt TAG] publishes that release (an
 #            urgent fix that is still a prerelease). A build or release
-#            run that promoted a release ([latest] in its subject, and
-#            green) publishes it by itself -- so a promoted fix reaches
-#            every AurOS computer with nobody remembering to. Also
-#            workflow_dispatch (tag optional).
+#            run publishes by itself ONLY if its commit SUBJECT (first
+#            line) says [latest] AND that run's promote job concluded
+#            success, asked of the API (tools/aptgate.sh; an API error
+#            stops the job, nothing is published) -- never a body that
+#            merely mentions the word, never a skipped or failed run.
+#            Also workflow_dispatch (tag optional).
 #   test     tools/updatetest.sh in a fresh ubuntu:24.04 with a throwaway
 #            key, then once with each protection removed: each of those
 #            must FAIL, or the test is not testing anything.
@@ -50,14 +52,20 @@ defaults:
 
 jobs:
   gate:
-    # A workflow_run counts only after a green run that promoted a
-    # release; decided here, without a runner, for all the others.
+    # A cheap prefilter, NOT the decision: a substring test on the WHOLE
+    # commit message also matches a body that only mentions the word (it
+    # did, three times, and once loaded the signing key on a runner). The
+    # decision is tools/aptgate.sh below: the SUBJECT says [latest] and the
+    # triggering run's promote job concluded success, asked of the API,
+    # failing closed.
     if: >-
       github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       contains(github.event.workflow_run.head_commit.message, '[latest]'))
+      contains(github.event.workflow_run.head_commit.message, '[latest]')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
       test: ${{ steps.g.outputs.test }}
       publish: ${{ steps.g.outputs.publish }}
@@ -67,17 +75,30 @@ jobs:
       ident: ${{ steps.g.outputs.ident }}
       identrun: ${{ steps.g.outputs.identrun }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: g
         env:
           EVENT: ${{ github.event_name }}
           MSG: ${{ github.event.head_commit.message }}
+          WR_MSG: ${{ github.event.workflow_run.head_commit.message }}
+          WR_ID: ${{ github.event.workflow_run.id }}
           BEFORE: ${{ github.event.before }}
           IN_TAG: ${{ inputs.tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
           test=false; publish=false; tag=""; boot=false; bootrun=""; ident=false; identrun=""
           case "$EVENT" in
-            workflow_run) test=true; publish=true ;;
+            workflow_run)
+              # Only a real promote in the triggering run, [latest] in the
+              # subject. Could not decide (an API error) stops the job:
+              # nothing is published.
+              decision=$(MSG="$WR_MSG" RUN_ID="$WR_ID" REPO="$GITHUB_REPOSITORY" bash tools/aptgate.sh decide) || {
+                printf '%s\n' "$decision"
+                echo "::error::could not decide whether a promote happened in run $WR_ID: nothing is published"
+                exit 1
+              }
+              printf '%s\n' "$decision"
+              case "$decision" in publish=true*) test=true; publish=true ;; esac ;;
             workflow_dispatch) test=true; publish=true; tag=$IN_TAG ;;
             push)
               SUBJ=${MSG%%$'\n'*}
@@ -99,7 +120,7 @@ jobs:
                 *)
                   files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename' || true) ;;
               esac
-              if printf '%s\n' "$files" | grep -qE '^(build/aptchannel|tools/(update(policy)?|flatpakupdate)test\.sh|tools/repo\.sh|rootfs/etc/apt/|rootfs/etc/systemd/system/auros-flatpak-update|rootfs/usr/lib/auros/(hold-running-apps|keep-previous|rollback|shell-guard)|\.github/workflows/aptrepo\.yml$)'; then
+              if printf '%s\n' "$files" | grep -qE '^(build/aptchannel|tools/aptgate\.sh|tools/(update(policy)?|flatpakupdate)test\.sh|tools/repo\.sh|rootfs/etc/apt/|rootfs/etc/systemd/system/auros-flatpak-update|rootfs/usr/lib/auros/(hold-running-apps|keep-previous|rollback|shell-guard)|\.github/workflows/aptrepo\.yml$)'; then
                 test=true
               fi ;;
           esac
@@ -112,6 +133,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: the publish gate fires only for a real promote (selftest, every refusal)
+        run: bash tools/aptgate.sh selftest
       - name: the address is derived, never typed
         run: |
           want="https://github.com/$GITHUB_REPOSITORY/releases/download/apt/"
@@ -198,46 +221,6 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: the signing key is the one AurOS computers trust
-        env:
-          SIGNING_KEY: ${{ secrets.AUROS_APT_SIGNING_KEY }}
-        run: |
-          if [ -z "$SIGNING_KEY" ]; then
-            echo "::error::No update-signing key yet. The owner adds the secret AUROS_APT_SIGNING_KEY once (docs/OWNER-SETUP.md 4a). Nothing was published."
-            exit 1
-          fi
-          export GNUPGHOME="$RUNNER_TEMP/gnupg"; mkdir -m 700 "$GNUPGHOME"; echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
-          printf '%s\n' "$SIGNING_KEY" | gpg --batch --quiet --import
-          # Every secret key in the secret (two during a rotation).
-          fprs=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec:/{s=1; next} s && /^fpr:/{print $10; s=0}')
-          [ -n "$fprs" ] || { echo "::error::the secret AUROS_APT_SIGNING_KEY holds no OpenPGP private key"; exit 1; }
-          if [ ! -s "$KR" ]; then
-            gpg --armor --export $fprs > auros-archive-keyring.asc
-            { echo "### The update key's public half, to commit"
-              echo "Fingerprint(s): \`$(echo $fprs)\`"
-              echo
-              echo "Check it is the fingerprint the owner wrote down, then commit this file as \`$KR\` (also this run's artifact \`auros-archive-keyring\`):"
-              echo '```'; cat auros-archive-keyring.asc; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::$KR is not committed yet: nothing was published. The key's public half (fingerprint $(echo $fprs)) is in this run's summary and artifact. Commit it, then [release], [latest], and the channel publishes."
-            exit 1
-          fi
-          pub=$(gpg --batch --with-colons --import-options show-only --import "$KR" 2>/dev/null | awk -F: '/^fpr:/{print $10}')
-          for f in $fprs; do
-            printf '%s\n' "$pub" | grep -qx "$f" || { echo "::error::the secret's key $f is not in the committed $KR. Refusing to sign with a key no AurOS computer trusts."; exit 1; }
-            exp=$(gpg --list-keys --with-colons "$f" | awk -F: '/^pub:/{print $7; exit}')
-            if [ -n "$exp" ]; then
-              days=$(( (exp - $(date +%s)) / 86400 ))
-              echo "key $f expires in $days days"
-              [ "$days" -ge 180 ] || echo "::warning::the update key $f expires in $days days: rotate it now (docs/security/UPDATES.md, 'Key rotation')"
-            fi
-          done
-          echo "FPRS=$(echo $fprs)" >> "$GITHUB_ENV"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: failure() && hashFiles('auros-archive-keyring.asc') != ''
-        with:
-          name: auros-archive-keyring
-          path: auros-archive-keyring.asc
-
       - name: which release
         run: |
           tag=$IN_TAG
@@ -294,10 +277,58 @@ jobs:
           fi
           echo "go=$go" >> "$GITHUB_OUTPUT"
 
+      # The key comes LAST and only when there is something to sign: after
+      # the release is named, its packages are out of the image and checked,
+      # and the version is newer than what is published. Nothing above this
+      # line has the key (tools/workflowlint.py, rule 10).
+      - name: the repository, unsigned
+        if: steps.newer.outputs.go == 'true'
+        run: build/aptchannel repo debs repo
+
+      - name: the signing key is the one AurOS computers trust
+        if: steps.newer.outputs.go == 'true'
+        env:
+          SIGNING_KEY: ${{ secrets.AUROS_APT_SIGNING_KEY }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::error::No update-signing key yet. The owner adds the secret AUROS_APT_SIGNING_KEY once (docs/OWNER-SETUP.md 4a). Nothing was published."
+            exit 1
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"; mkdir -m 700 "$GNUPGHOME"; echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          printf '%s\n' "$SIGNING_KEY" | gpg --batch --quiet --import
+          # Every secret key in the secret (two during a rotation).
+          fprs=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec:/{s=1; next} s && /^fpr:/{print $10; s=0}')
+          [ -n "$fprs" ] || { echo "::error::the secret AUROS_APT_SIGNING_KEY holds no OpenPGP private key"; exit 1; }
+          if [ ! -s "$KR" ]; then
+            gpg --armor --export $fprs > auros-archive-keyring.asc
+            { echo "### The update key's public half, to commit"
+              echo "Fingerprint(s): \`$(echo $fprs)\`"
+              echo
+              echo "Check it is the fingerprint the owner wrote down, then commit this file as \`$KR\` (also this run's artifact \`auros-archive-keyring\`):"
+              echo '```'; cat auros-archive-keyring.asc; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::$KR is not committed yet: nothing was published. The key's public half (fingerprint $(echo $fprs)) is in this run's summary and artifact. Commit it, then [release], [latest], and the channel publishes."
+            exit 1
+          fi
+          pub=$(gpg --batch --with-colons --import-options show-only --import "$KR" 2>/dev/null | awk -F: '/^fpr:/{print $10}')
+          for f in $fprs; do
+            printf '%s\n' "$pub" | grep -qx "$f" || { echo "::error::the secret's key $f is not in the committed $KR. Refusing to sign with a key no AurOS computer trusts."; exit 1; }
+            exp=$(gpg --list-keys --with-colons "$f" | awk -F: '/^pub:/{print $7; exit}')
+            if [ -n "$exp" ]; then
+              days=$(( (exp - $(date +%s)) / 86400 ))
+              echo "key $f expires in $days days"
+              [ "$days" -ge 180 ] || echo "::warning::the update key $f expires in $days days: rotate it now (docs/security/UPDATES.md, 'Key rotation')"
+            fi
+          done
+          echo "FPRS=$(echo $fprs)" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure() && hashFiles('auros-archive-keyring.asc') != ''
+        with:
+          name: auros-archive-keyring
+          path: auros-archive-keyring.asc
+
       - name: the repository, signed, checked against the committed key
         if: steps.newer.outputs.go == 'true'
         run: |
-          build/aptchannel repo debs repo
           build/aptchannel sign repo $FPRS
           build/aptchannel verify repo "$KR"
 
@@ -355,7 +386,7 @@ jobs:
             cd /tmp && apt-get download $(apt-cache pkgnames auros)
             ls -la /tmp/*.deb'
           { echo "### AurOS updates: auros $NEW from $TAG"
-            echo "Published at $(build/aptchannel url), signed by \`$FPRS\`; read back and fetched by a real apt."; } >> "$GITHUB_STEP_SUMMARY"
+            echo "Published at $(build/aptchannel url), signed by \`${FPRS:-the key in the channel}\`; read back and fetched by a real apt."; } >> "$GITHUB_STEP_SUMMARY"
 
   # [updateboot] / [updateboot RUN-ID] in the subject: tools/updateboottest.sh
   # under KVM on a built image (that run's, else the newest build run whose
