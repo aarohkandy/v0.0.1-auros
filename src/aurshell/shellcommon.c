@@ -1066,3 +1066,5 @@ int shell_display_order(const shell_ctx *c, int first_cap, int *out)
     }
     return n;
 }
+
+int shell_primary_n;

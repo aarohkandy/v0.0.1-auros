@@ -836,6 +836,7 @@ static void paint_action(surface *s, shell_fonts *f, const shell_ctx *c,
                          rect r, const char *label, int hot, int primary,
                          int enabled)
 {
+    if (primary && enabled) shell_primary_n++;
     uint32_t fill = primary ? c->fg : c->surface_c;
     uint32_t ink  = primary ? c->bg : c->fg;
     if (hot && !primary) fill = c->surface_hi;

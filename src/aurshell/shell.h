@@ -545,6 +545,11 @@ int  shell_display_order(const shell_ctx *c, int first_cap, int *out);
  * box it occupies. tools/storetest.c presses words by finding them
  * here, which is how a person finds them. */
 typedef struct { char s[72]; int x, y, w, h; } shell_text_rec;
+
+/* One panel, one primary action: how many buttons drawn as THE button (filled, the lit one) a
+ * panel's paint has made since a harness last zeroed this. Every panel's button painter adds one
+ * for a primary button; tools/primarytest.c holds each panel to one at most. */
+extern int shell_primary_n;
 #define SHELL_TEXT_LOG_MAX 512
 extern int            shell_text_log_on;
 extern int            shell_text_log_n;

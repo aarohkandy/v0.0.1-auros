@@ -63,12 +63,14 @@ static void shot(const char *name)
     body.h = c.screen_h;
     L->paint(&c, &body, &F, WALL);
     shell_text_log_on = 1;
+    shell_primary_n = 0;                      /* what the panels paint next: one lit button at most */
     if (!SHELL_PANEL_OPEN(&c)) notify_paint(&c, S, &F);
     net_paint(&c, S, &F);
     welcome_paint(&c, S, &F);
     foot_paint(&c, S, &F);
     osd_paint(&c, S, &F);
     shell_text_log_on = 0;
+    int primaries = shell_primary_n;
 
     char p[512];
     snprintf(p, sizeof p, "%s/%s-%d-%s.png", outdir, tag, ++step_no, name);
@@ -86,6 +88,8 @@ static void shot(const char *name)
     for (int i = 0; i < shell_text_log_n; i++)
         if (shell_text_log[i].w > 0)
             printf("## %d %s\n", shell_text_log[i].h, shell_text_log[i].s);
+    /* And how many buttons were drawn as THE button (one primary action per panel). */
+    printf("&& primary %d\n", primaries);
 }
 
 /* NEVER COVERS A BUTTON (docs/DESIGN-DIRECTION.md §5 C6).

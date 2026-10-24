@@ -500,6 +500,7 @@ static void bt_layout(const shell_ctx *c, int sw, int sh,
 static void paint_action(surface *s, shell_fonts *f, const shell_ctx *c,
                          rect r, const char *label, int hot, int primary)
 {
+    if (primary) shell_primary_n++;
     draw_rect(s, r, primary ? c->fg : (hot ? c->surface_hi : c->surface_c), 1.f);
     if (!primary) draw_frame(s, r, 1, c->subtle, hot ? 0.9f : 0.5f);
     font *ft = f->mid ? f->mid : f->small;

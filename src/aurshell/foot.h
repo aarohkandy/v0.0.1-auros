@@ -106,7 +106,9 @@ int  foot_help_open(const shell_ctx *c);
  * ONE function for painting, pressing and tools/targets.c. 0 in a
  * kiosk; the panel also leaves it out when the pages are not on this
  * computer. */
+#ifndef FOOT_HELP_PAGES              /* (a harness points it at a file of its own) */
 #define FOOT_HELP_PAGES "/usr/share/auros/help/index.html"
+#endif
 int  foot_help_button(const shell_ctx *c, int sw, int sh, rect *out);
 /* The two Wishes buttons under it ("What my wishes did today", "Stop all
  * wishes"), idx 0 and 1, only when Wishes are on this computer

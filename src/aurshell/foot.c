@@ -426,7 +426,11 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
         rect hb;
         if (foot_help_out(c, s->w, s->h, &hb)) {
             float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
-            draw_rect(s, hb, FOOT_INK, 1.f);
+            /* Outlined, heavily: the way out of a page she does not trust is the first thing on
+             * the panel and cannot be missed, but "Show me how" stays the ONE lit button (one
+             * primary action per panel, tools/primarytest.c). */
+            draw_rect(s, hb, FOOT_BG, 1.f);
+            draw_frame(s, hb, 4, FOOT_INK, 1.f);
             if (c->foot_hover == HOVER_OUT)
                 draw_frame(s, (rect){ hb.x - 4, hb.y - 4, hb.w + 8, hb.h + 8 },
                            2, FOOT_INK, 1.f);
@@ -435,7 +439,7 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
                 shell_text_elided(s, nm, (float)hb.x + 18.f,
                                   shell_baseline(nm, (float)hb.y, (float)hb.h),
                                   (float)hb.w - 36.f, "Get me out of this page",
-                                  FOOT_BG, 1.f);
+                                  FOOT_INK, 1.f);
             x = hb.x;
             y = hb.y + hb.h + (int)(28.f * k);
         }
@@ -443,6 +447,7 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
             /* Filled, the one lit thing on the panel: it is what she
              * came for. Hover rings it rather than recolouring it. */
             float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
+            shell_primary_n++;
             draw_rect(s, hb, FOOT_INK, 1.f);
             if (c->foot_hover == HOVER_PAGES)
                 draw_frame(s, (rect){ hb.x - 4, hb.y - 4, hb.w + 8, hb.h + 8 },

@@ -94,14 +94,17 @@ for look in taskbar dock rail tiles; do
         said "$log" "-blocked.png" | grep -qx '   Save my files to a USB stick first'; ok "$at: ...and offers the stick" $?
         said "$log" "-blocked.png" | grep -qx '   Keep AurOS';                ok "$at: ...or to keep things as they are" $?
         said1 "$log" "-blocked.png" | grep -q 'Nothing was removed'; ok "$at: ...and says nothing was removed" $?
-        small=$(for s in whose bringing empty stick-plug stick-pick stick-saving stick-done blocked; do said "$log" "-$s.png" | awk '/^## /{ if ($2 < 21) print }'; done | grep -v "Help\|Wi-Fi\|Settings\|Smaller\|Bigger\|Turn off\|Close this" | wc -l)
-        [ "$small" -eq 0 ];                                              ok "$at: nothing on those screens is under 18 px" $?
+        small=$(for s in whose bringing empty stick-plug stick-pick stick-saving stick-done blocked; do said "$log" "-$s.png" | awk '/^## /{ if ($2 < 21) print }'; done | wc -l)
+        [ "$small" -eq 0 ];                                              ok "$at: nothing on those screens is under 18 px (the band's buttons too)" $?
         said "$log" "-sure.png"    | grep -qx '   Start AurOS from now on';   ok "$at: Yes asks once more before it decides" $?
+        # One primary action per panel: no screen of the first ten minutes draws two lit buttons.
+        ! awk '/^&& primary/ && $3 > 1 { bad = 1 } END { exit !bad }' "$log"
+                                                                           ok "$at: no panel draws two primary buttons" $?
         ! said "$log" "-asks.png" "-sure.png" | grep -q '…';             ok "$at: the question is never cut short" $?
         # What each answer does is read at 18 px or more (22 tall drawn;
         # a 12 px line is 14), on the screen that decides for good.
-        small=$(said "$log" "-asks.png" | awk '/^## /{ if ($2 < 21) print }' | grep -v "Help\|Wi-Fi\|Settings\|Smaller\|Bigger\|Turn off" | wc -l)
-        [ "$small" -eq 0 ];                                              ok "$at: nothing on the question is under 18 px" $?
+        small=$(said "$log" "-asks.png" | awk '/^## /{ if ($2 < 21) print }' | wc -l)
+        [ "$small" -eq 0 ];                                              ok "$at: nothing on the question is under 18 px (the band's buttons too)" $?
         said "$log" "-asks.png" | grep -q '^   Windows starts the next time this computer starts'
         ok "$at: what No does is on the screen" $?
         said "$log" "-online.png"  | grep -qx '   Press the name of your Wi-Fi.'

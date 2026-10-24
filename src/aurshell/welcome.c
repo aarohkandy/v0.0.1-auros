@@ -864,7 +864,7 @@ static void paint_action(surface *s, shell_fonts *f, const shell_ctx *c,
     /* What can be pressed looks pressable: the go fill, or a 2 px rule.
      * Hover only darkens the rule (DESIGN-DIRECTION §3). */
     corners rr = corners_all(8.f);
-    if (primary) draw_round_rect(s, r, rr, c->accent, 1.f);
+    if (primary) { shell_primary_n++; draw_round_rect(s, r, rr, c->accent, 1.f); }
     else {
         draw_round_rect(s, r, rr, c->surface_c, 1.f);
         draw_round_rect_border(s, r, rr, 2.f, hot ? c->fg : c->overlay, 1.f);

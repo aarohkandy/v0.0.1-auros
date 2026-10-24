@@ -336,6 +336,7 @@ void guard_paint(shell_ctx *c, surface *s, shell_fonts *f)
     for (int i = 0; i < nb; i++) {
         int hot = G.hover == id[i] || G.sel == i;
         int primary = (i == 0);              /* the safe choice is first */
+        if (primary) shell_primary_n++;
         draw_rect(s, b[i], primary ? c->accent : (hot ? c->surface_hi : c->surface_c), 1.f);
         if (!primary || hot) draw_frame(s, b[i], hot ? 3 : 1, c->fg, hot ? 0.9f : 0.5f);
         if (lf)
