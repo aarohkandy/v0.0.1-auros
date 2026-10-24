@@ -448,8 +448,11 @@ find_handover() {
     if [ -n "${FERRY_HANDOVER_DEV:-}" ]; then printf '%s\n' "$FERRY_HANDOVER_DEV"; return 0; fi
     _handover=$(blkid -L AUROSHANDOV 2>/dev/null) || return 1
     # libblkid may remember a labelled loop device after it is detached.
-    # Never hand that stale path to ferry-handover as if a volume exists.
-    [ -n "$_handover" ] && [ -b "$_handover" ] || return 1
+    # A detached loop node still passes `test -b`, so probe the device itself
+    # rather than trusting the cached label-to-path lookup.
+    [ -n "$_handover" ] || return 1
+    [ "$(blkid -p -o value -s LABEL "$_handover" 2>/dev/null)" = AUROSHANDOV ] || return 1
+    [ -b "$_handover" ] || return 1
     printf '%s\n' "$_handover"
 }
 
