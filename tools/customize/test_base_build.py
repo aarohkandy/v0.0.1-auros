@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import json
 import sys
 import tempfile
@@ -14,7 +16,9 @@ sys.path.insert(0, str(ROOT))
 from tools.customize.base_build import (  # noqa: E402
     BaseBuildError,
     finish_provenance,
+    main,
     package_build_info,
+    preserve_provenance,
     validate_files,
     validate_run,
 )
@@ -223,6 +227,113 @@ class FileValidationTests(unittest.TestCase):
             self.assertIn(
                 "state unsigned-custom-artifact; not published or download-ready", info
             )
+
+
+class PreserveProvenanceTests(unittest.TestCase):
+    def fixture(self, directory: Path) -> tuple[Path, Path, bytes]:
+        metadata, base = FileValidationTests().fixture(directory)
+        pending = validate_files(request(), metadata, base)
+        custom_dir = directory / "custom"
+        custom_dir.mkdir()
+        custom = custom_dir / "AurOS-Setup.exe"
+        custom.write_bytes(b"MZcustom unsigned installer")
+        value = finish_provenance(pending, custom)
+        raw = (json.dumps(value, indent=2, sort_keys=False) + "\n").encode("utf-8")
+        provenance = directory / "custom-provenance.json"
+        provenance.write_bytes(raw)
+        return provenance, custom, raw
+
+    def test_preserves_valid_manifest_bytes_exactly(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_name:
+            directory = Path(directory_name)
+            provenance, installer, raw = self.fixture(directory)
+            output = directory / "signed" / "custom-provenance.json"
+            digest = preserve_provenance(provenance, installer, output)
+            self.assertEqual(output.read_bytes(), raw)
+            self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
+
+    def test_cli_prints_preserved_manifest_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_name:
+            directory = Path(directory_name)
+            provenance, installer, raw = self.fixture(directory)
+            output = directory / "output.json"
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                result = main(
+                    [
+                        "preserve-provenance",
+                        "--provenance",
+                        str(provenance),
+                        "--installer",
+                        str(installer),
+                        "--output",
+                        str(output),
+                    ]
+                )
+            self.assertEqual(result, 0)
+            self.assertEqual(stdout.getvalue(), hashlib.sha256(raw).hexdigest() + "\n")
+            self.assertEqual(output.read_bytes(), raw)
+
+    def test_rejects_missing_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_name:
+            directory = Path(directory_name)
+            _provenance, installer, _raw = self.fixture(directory)
+            with self.assertRaises(BaseBuildError):
+                preserve_provenance(
+                    directory / "missing.json", installer, directory / "output.json"
+                )
+
+    def test_rejects_tampered_custom_installer_hash_or_size(self) -> None:
+        for field, value in (("sha256", "0" * 64), ("bytes", 1)):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory_name:
+                directory = Path(directory_name)
+                provenance, installer, _raw = self.fixture(directory)
+                document = json.loads(provenance.read_text(encoding="utf-8"))
+                document["custom_installer"][field] = value
+                provenance.write_text(json.dumps(document), encoding="utf-8")
+                output = directory / "output.json"
+                with self.assertRaises(BaseBuildError):
+                    preserve_provenance(provenance, installer, output)
+                self.assertFalse(output.exists())
+
+    def test_rejects_malformed_recipe_claims(self) -> None:
+        mutations = (
+            lambda value: value["recipe"].update({"id": "recipe-1"}),
+            lambda value: value["recipe"].update({"base": "office"}),
+            lambda value: value["recipe"]["resolved_preferences"].update(
+                {"look": "$(touch /tmp/pwned)"}
+            ),
+            lambda value: value["recipe"].update({"untrusted": True}),
+        )
+        for mutation in mutations:
+            with tempfile.TemporaryDirectory() as directory_name:
+                directory = Path(directory_name)
+                provenance, installer, _raw = self.fixture(directory)
+                document = json.loads(provenance.read_text(encoding="utf-8"))
+                mutation(document)
+                provenance.write_text(json.dumps(document), encoding="utf-8")
+                with self.assertRaises(BaseBuildError):
+                    preserve_provenance(provenance, installer, directory / "output.json")
+
+    def test_rejects_malformed_base_claims(self) -> None:
+        mutations = (
+            lambda value: value["base_build"].update({"image_sha256": "bad"}),
+            lambda value: value["base_build"].update({"image_bytes": 0}),
+            lambda value: value["base_build"].update(
+                {"pieces_base": "https://attacker.invalid/pieces/"}
+            ),
+            lambda value: value.update({"repository": "attacker.invalid/repo/path"}),
+            lambda value: value["base_build"].update({"opaque": "claim"}),
+        )
+        for mutation in mutations:
+            with tempfile.TemporaryDirectory() as directory_name:
+                directory = Path(directory_name)
+                provenance, installer, _raw = self.fixture(directory)
+                document = json.loads(provenance.read_text(encoding="utf-8"))
+                mutation(document)
+                provenance.write_text(json.dumps(document), encoding="utf-8")
+                with self.assertRaises(BaseBuildError):
+                    preserve_provenance(provenance, installer, directory / "output.json")
 
 
 class WorkflowContractTests(unittest.TestCase):

@@ -82,6 +82,171 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
         raise
 
 
+def _exact_fields(value: dict[str, Any], expected: set[str], name: str) -> None:
+    if set(value) != expected:
+        missing = sorted(expected - set(value))
+        unknown = sorted(set(value) - expected)
+        _fail(f"{name} fields are invalid (missing={missing}, unknown={unknown})")
+
+
+def _strict_json(data: bytes) -> dict[str, Any]:
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in items:
+            if key in value:
+                _fail(f"provenance contains duplicate field {key!r}")
+            value[key] = item
+        return value
+
+    try:
+        value = json.loads(data.decode("utf-8"), object_pairs_hook=pairs)
+    except UnicodeDecodeError:
+        _fail("provenance is not UTF-8")
+    except json.JSONDecodeError as exc:
+        _fail(f"provenance is not one JSON document: {exc}")
+    if not isinstance(value, dict):
+        _fail("provenance must be a JSON object")
+    return value
+
+
+def validate_unsigned_provenance(value: dict[str, Any], installer: Path) -> None:
+    """Validate every claim retained beside a later signed installer."""
+
+    _exact_fields(
+        value,
+        {
+            "schema",
+            "version",
+            "state",
+            "signed",
+            "public_release",
+            "download_ready",
+            "repository",
+            "base_build",
+            "recipe",
+            "custom_installer",
+        },
+        "provenance",
+    )
+    if (
+        value.get("schema") != "org.auros.custom-package-provenance"
+        or type(value.get("version")) is not int
+        or value.get("version") != 1
+    ):
+        _fail("provenance schema or version is invalid")
+    if value.get("state") != "unsigned-custom-artifact":
+        _fail("provenance does not describe an unsigned custom artifact")
+    for field in ("signed", "public_release", "download_ready"):
+        if value.get(field) is not False:
+            _fail(f"provenance {field} must remain false")
+
+    repository = value.get("repository")
+    if not isinstance(repository, str) or not re.fullmatch(
+        r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", repository
+    ):
+        _fail("provenance repository is invalid")
+    base = value.get("base_build")
+    if not isinstance(base, dict):
+        _fail("provenance base_build must be an object")
+    _exact_fields(
+        base,
+        {
+            "run_id",
+            "head_sha",
+            "tag",
+            "profile",
+            "installer_sha256",
+            "image_sha256",
+            "image_bytes",
+            "pieces_sha256",
+            "pieces_base",
+        },
+        "base_build",
+    )
+    if type(base.get("run_id")) is not int or base["run_id"] <= 0:
+        _fail("base build run ID is invalid")
+    if not COMMIT.fullmatch(str(base.get("head_sha"))):
+        _fail("base build source commit is invalid")
+    if not re.fullmatch(r"v[0-9A-Za-z.+-]+-[0-9a-f]{7}", str(base.get("tag"))):
+        _fail("base build tag is invalid")
+    if base.get("profile") != "desktop":
+        _fail("base build profile is not deliverable")
+    for field in ("installer_sha256", "image_sha256", "pieces_sha256"):
+        if not SHA256.fullmatch(str(base.get(field))):
+            _fail(f"base build {field} is invalid")
+    if type(base.get("image_bytes")) is not int or base["image_bytes"] <= 0:
+        _fail("base image size is invalid")
+    expected_base = (
+        f"https://github.com/{repository}/releases/download/{base['tag']}/"
+    )
+    if base.get("pieces_base") != expected_base:
+        _fail("base pieces URL does not match the repository and tag")
+
+    recipe = value.get("recipe")
+    if not isinstance(recipe, dict):
+        _fail("provenance recipe must be an object")
+    _exact_fields(recipe, {"id", "base", "resolved_preferences"}, "recipe")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", str(recipe.get("id"))):
+        _fail("recipe identity is invalid")
+    if recipe.get("base") != "desktop":
+        _fail("recipe base is not deliverable")
+    preferences = recipe.get("resolved_preferences")
+    if not isinstance(preferences, dict):
+        _fail("resolved recipe preferences must be an object")
+    _exact_fields(preferences, {"look", "theme"}, "resolved preferences")
+    if preferences.get("look") not in {"dock", "rail", "taskbar", "tiles"}:
+        _fail("resolved recipe look is invalid")
+    if preferences.get("theme") not in {
+        "ember",
+        "moss",
+        "nocturne",
+        "sandstone",
+        "slate",
+    }:
+        _fail("resolved recipe theme is invalid")
+
+    custom = value.get("custom_installer")
+    if not isinstance(custom, dict):
+        _fail("custom_installer must be an object")
+    _exact_fields(custom, {"filename", "sha256", "bytes"}, "custom_installer")
+    if custom.get("filename") != "AurOS-Setup.exe":
+        _fail("custom installer filename is invalid")
+    try:
+        size = installer.stat().st_size
+    except OSError as exc:
+        _fail(f"could not inspect unsigned custom installer: {exc}")
+    if type(custom.get("bytes")) is not int or custom["bytes"] != size:
+        _fail("custom installer size does not match provenance")
+    recorded_sha = custom.get("sha256")
+    if not SHA256.fullmatch(str(recorded_sha)) or recorded_sha != _sha256(installer):
+        _fail("custom installer hash does not match provenance")
+
+
+def preserve_provenance(provenance: Path, installer: Path, output: Path) -> str:
+    """Validate and atomically preserve the original unsigned manifest bytes."""
+
+    try:
+        raw = provenance.read_bytes()
+    except OSError as exc:
+        _fail(f"could not read provenance: {exc}")
+    if len(raw) > MAX_TEXT:
+        _fail(f"provenance exceeds the {MAX_TEXT}-byte metadata limit")
+    validate_unsigned_provenance(_strict_json(raw), installer)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=output.name + ".", dir=output.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(raw)
+        os.replace(temporary, output)
+    except OSError as exc:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        _fail(f"could not preserve provenance: {exc}")
+    return hashlib.sha256(raw).hexdigest()
+
+
 def validate_run(
     run: dict[str, Any],
     artifacts: list[dict[str, Any]],
@@ -347,6 +512,10 @@ def main(argv: list[str] | None = None) -> int:
     finish.add_argument("--build-info", required=True, type=Path)
     finish.add_argument("--source-sha", required=True)
     finish.add_argument("--run-id", required=True, type=int)
+    preserve = sub.add_parser("preserve-provenance")
+    preserve.add_argument("--provenance", required=True, type=Path)
+    preserve.add_argument("--installer", required=True, type=Path)
+    preserve.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
 
     try:
@@ -389,7 +558,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.provenance,
                 validate_files(request, args.metadata, args.installer),
             )
-        else:
+        elif args.command == "finish":
             provenance = json.loads(_read_text(args.provenance))
             finished = finish_provenance(provenance, args.installer)
             _write_json(args.provenance, finished)
@@ -397,6 +566,8 @@ def main(argv: list[str] | None = None) -> int:
                 package_build_info(finished, args.installer, args.source_sha, args.run_id),
                 encoding="utf-8",
             )
+        else:
+            print(preserve_provenance(args.provenance, args.installer, args.output))
     except (BaseBuildError, RecipeError, json.JSONDecodeError, UnicodeEncodeError, OSError) as exc:
         print(f"base build: {exc}", file=sys.stderr)
         return 2
