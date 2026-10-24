@@ -47,6 +47,8 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import crypto from "node:crypto";
 import { execSync, execFileSync } from "node:child_process";
+import { BuildJobLedger, createBuildApi } from "../../cloud/src/builds.js";
+import { MapStorage } from "../../cloud/src/ledger.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..");
@@ -711,6 +713,99 @@ for (const v of [
     check(got.href === ready.download.url && got.hash === ready.download.sha256 && /My everyday computer/.test(got.choices),
       "request build: ready download is the exact allowlisted GitHub EXE and hash tied to submitted choices", JSON.stringify(got));
     textFindings("request build ready", await page.evaluate(measureText));
+    await ctx.close();
+  }
+
+  // One local seam test uses the shipped browser code and the real compiler,
+  // build API and in-memory ledger together. Only the GitHub verifier result
+  // is mocked: this proves the hand-off, not a real signing or install run.
+  {
+    const siteOrigin = "https://site.example";
+    const apiOrigin = "https://builds.integration.example";
+    const sourceSha = "a".repeat(40);
+    const expectedRecipe = { schema: "org.auros.recipe", version: 1, base: "desktop", preferences: { look: "dock", theme: "moss" } };
+    const expectedCanonical = '{"base":"desktop","preferences":{"look":"dock","theme":"moss"},"schema":"org.auros.recipe","version":1}';
+    const requests = [];
+    let dispatches = 0;
+    let statusChecks = 0;
+    let dispatched;
+    const github = {
+      findGreenBase: async () => ({ sourceSha, runId: 91, tag: "v0.1.0-aaaaaaa" }),
+      discoverVerifiedDelivery: async () => ({ state: "absent" }),
+      dispatch: async (request) => { dispatches++; dispatched = request; },
+      status: async (request) => {
+        statusChecks++;
+        const suffix = request.recipeId.slice(7);
+        const name = `AurOS-Custom-${suffix}.exe`;
+        const release = "https://github.com/aarohkandy/v0.0.1-auros/releases/download/v0.1.0-aaaaaaa/";
+        return {
+          state: "download-ready", runId: 44, signedArtifactId: 8,
+          download: { name, url: release + name, sha256: "b".repeat(64), bytes: 123456, manifest_url: release + name.replace(/\.exe$/, ".json") },
+          evidence: { requestId: request.requestId, runId: 44, note: "local mocked GitHub verifier verdict" },
+        };
+      },
+    };
+    const jobs = new BuildJobLedger(new MapStorage(), { perNet: 1, global: 3 });
+    const api = createBuildApi({
+      env: {
+        BUILD_REQUESTS_ENABLED: "1", BUILD_ALLOWED_ORIGIN: siteOrigin,
+        BUILD_NETWORK_SECRET: "local-integration-network-key-long-enough",
+        BUILD_CHALLENGE_SECRET: "local-integration-challenge-key-long-enough",
+        BUILD_POW_BITS: "12", BUILD_REQUESTS_PER_NET: "1", BUILD_REQUESTS_GLOBAL: "3",
+      },
+      jobs, github, now: () => Date.parse("2026-10-24T12:00:00Z"),
+    });
+    const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 }, userAgent: UA.winEdge });
+    await ctx.addInitScript(uadScript, UAD.winX64);
+    await ctx.route(siteOrigin + "/**", (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === "/build-service.json") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ enabled: true, api_origin: apiOrigin }) });
+      let rel = decodeURIComponent(url.pathname).replace(/^\/+/, "") || "index.html";
+      const file = path.resolve(SITE, rel);
+      if (!file.startsWith(SITE + path.sep) || !fs.existsSync(file)) return route.fulfill({ status: 404, body: "404" });
+      return route.fulfill({ path: file, contentType: TYPES[path.extname(file).toLowerCase()] || "application/octet-stream" });
+    });
+    await ctx.route(apiOrigin + "/**", async (route) => {
+      const incoming = route.request();
+      const headers = new Headers(incoming.headers());
+      headers.set("cf-connecting-ip", "203.0.113.9");
+      const method = incoming.method();
+      const body = method === "GET" || method === "HEAD" || method === "OPTIONS" ? undefined : incoming.postDataBuffer();
+      if (method !== "OPTIONS") requests.push({ method, path: new URL(incoming.url()).pathname, body: incoming.postData() || "", authorization: headers.get("authorization") || "" });
+      const response = await api(new Request(incoming.url(), { method, headers, body }));
+      const responseHeaders = Object.fromEntries(response.headers.entries());
+      await route.fulfill({ status: response.status, headers: responseHeaders, body: Buffer.from(await response.arrayBuffer()) });
+    });
+    const page = await ctx.newPage();
+    await page.goto(siteOrigin + "/request.html", { waitUntil: "load" });
+    await page.waitForSelector("#build-request:not([hidden])");
+    await page.check("input[name=look][value=dock]");
+    await page.check("input[name=theme][value=moss]");
+    await page.click("#request-build");
+    await page.waitForSelector("#build-result:not([hidden])", { timeout: 30000 });
+    const first = await page.evaluate(() => ({
+      href: document.getElementById("build-download").href,
+      hash: document.getElementById("build-sha256").innerText,
+      stored: JSON.parse(localStorage.getItem("auros.build-receipt.v1")),
+    }));
+    const challengePosts = requests.filter((r) => r.method === "POST" && r.path === "/v1/builds/challenge");
+    const buildPosts = requests.filter((r) => r.method === "POST" && r.path === "/v1/builds");
+    const statusGets = requests.filter((r) => r.method === "GET" && /^\/v1\/builds\//.test(r.path));
+    check(challengePosts.length === 1 && buildPosts.length === 1 && JSON.stringify(JSON.parse(challengePosts[0].body)) === JSON.stringify(expectedRecipe) && buildPosts[0].body === challengePosts[0].body,
+      "request build integration: shipped browser proof is accepted by the real compiler and API for the exact reviewed recipe", JSON.stringify(requests.map((r) => [r.method, r.path])));
+    check(dispatches === 1 && dispatched && dispatched.recipe === expectedCanonical && statusChecks === 1,
+      "request build integration: the real ledger dispatches one canonical recipe and checks one mocked GitHub verifier verdict", JSON.stringify({ dispatches, statusChecks, recipe: dispatched?.recipe }));
+    check(statusGets.length === 1 && /^Bearer [A-Za-z0-9_-]{32}$/.test(statusGets[0].authorization) && first.stored && first.stored.token === statusGets[0].authorization.slice(7),
+      "request build integration: the opaque receipt is saved locally and sent only as a Bearer header");
+    check(first.href === `https://github.com/aarohkandy/v0.0.1-auros/releases/download/v0.1.0-aaaaaaa/AurOS-Custom-${first.stored.recipe_id.slice(7)}.exe` && first.hash === "b".repeat(64),
+      "request build integration: the browser shows the mocked verified-delivery URL and hash tied to its real recipe ID", JSON.stringify({ href: first.href, hash: first.hash }));
+
+    const beforeReload = requests.length;
+    await page.reload({ waitUntil: "load" });
+    await page.waitForSelector("#build-result:not([hidden])");
+    const afterReload = requests.slice(beforeReload);
+    check(afterReload.filter((r) => r.method === "GET" && /^\/v1\/builds\//.test(r.path)).length === 1 && !afterReload.some((r) => r.method === "POST") && dispatches === 1 && statusChecks === 1,
+      "request build integration: reload reuses the saved receipt with one GET and no resubmit, redispatch or new verifier call", JSON.stringify(afterReload.map((r) => [r.method, r.path])));
     await ctx.close();
   }
 }
