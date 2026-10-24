@@ -16,6 +16,7 @@ const HASH = /^[0-9a-f]{64}$/;
 const RECIPE_ID = /^sha256:[0-9a-f]{64}$/;
 const TAG = /^v[0-9A-Za-z.+-]+-[0-9a-f]{7}$/;
 const CHALLENGE = /^([A-Za-z0-9_-]{22})\.([1-9][0-9]{9,12})\.([0-9a-f]{64})\.([A-Za-z0-9_-]{43})$/;
+const JSON_NUMBER = Symbol("strict JSON number");
 
 const b64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const hash = async (value) => b64(await crypto.subtle.digest("SHA-256", enc.encode(value)));
@@ -157,14 +158,14 @@ function strictJson(text) {
     at += m[0].length;
     const n = Number(m[0]);
     if (!Number.isFinite(n)) throw new Error("invalid_json_number");
-    return { __jsonNumber: m[0], value: n };
+    return { [JSON_NUMBER]: m[0], value: n };
   };
   const result = value(); ws();
   if (at !== text.length) throw new Error("invalid_json");
   return result;
 }
 
-const integer = (value) => value?.__jsonNumber && /^[1-9][0-9]*$/.test(value.__jsonNumber) ? value.value : null;
+const integer = (value) => value?.[JSON_NUMBER] && /^[1-9][0-9]*$/.test(value[JSON_NUMBER]) ? value.value : null;
 
 function deliveryManifest(raw, expected) {
   if (!(raw instanceof Uint8Array) || raw.byteLength > RECIPE_LIMIT) throw new Error("delivery manifest too large");
@@ -172,7 +173,7 @@ function deliveryManifest(raw, expected) {
   try { text = new TextDecoder("utf-8", { fatal: true }).decode(raw); } catch { throw new Error("delivery manifest encoding"); }
   const m = strictJson(text);
   if (!exact(m, ["schema", "version", "state", "request_id", "source", "base", "recipe", "installer"], ["schema", "version", "state", "request_id", "source", "base", "recipe", "installer"])) throw new Error("delivery manifest fields");
-  if (m.schema !== "org.auros.custom-delivery" || m.version?.__jsonNumber !== "1" || m.state !== "download-ready" || m.request_id !== expected.requestId) throw new Error("delivery manifest identity");
+  if (m.schema !== "org.auros.custom-delivery" || m.version?.[JSON_NUMBER] !== "1" || m.state !== "download-ready" || m.request_id !== expected.requestId) throw new Error("delivery manifest identity");
   if (!exact(m.source, ["repository", "commit", "workflow_run_id"], ["repository", "commit", "workflow_run_id"]) || m.source.repository !== expected.repository || m.source.commit !== expected.sourceSha || integer(m.source.workflow_run_id) !== expected.runId) throw new Error("delivery manifest source");
   if (!exact(m.base, ["build_run_id", "tag", "image_sha256", "image_bytes"], ["build_run_id", "tag", "image_sha256", "image_bytes"]) || integer(m.base.build_run_id) !== expected.baseRunId || !TAG.test(m.base.tag) || !HASH.test(m.base.image_sha256) || integer(m.base.image_bytes) === null) throw new Error("delivery manifest base");
   if (!exact(m.recipe, ["id", "base", "resolved_preferences"], ["id", "base", "resolved_preferences"]) || m.recipe.id !== expected.recipeId || m.recipe.base !== "desktop") throw new Error("delivery manifest recipe");
@@ -191,7 +192,7 @@ export async function compileDesktopRecipe(raw) {
   try { text = new TextDecoder("utf-8", { fatal: true }).decode(raw); } catch { throw new Error("invalid_encoding"); }
   const value = strictJson(text);
   if (!exact(value, ["schema", "version", "base", "preferences"], ["schema", "version", "base"])) throw new Error("recipe_fields");
-  if (value.schema !== "org.auros.recipe" || value.version?.__jsonNumber !== "1") throw new Error("recipe_contract");
+  if (value.schema !== "org.auros.recipe" || value.version?.[JSON_NUMBER] !== "1") throw new Error("recipe_contract");
   if (value.base !== "desktop") throw new Error("desktop_only");
   const preferences = value.preferences ?? {};
   if (!exact(preferences, ["look", "theme"])) throw new Error("preference_fields");

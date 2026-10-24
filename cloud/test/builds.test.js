@@ -111,6 +111,7 @@ test("only strict desktop recipe v1 is accepted; executable and ambiguous JSON i
     '{"schema":"org.auros.recipe","version":1,"base":"desktop","base":"desktop"}',
     JSON.stringify({ ...RECIPE, preferences: { look: "../../root" } }),
     JSON.stringify({ ...RECIPE, version: 1.0 }).replace('"version":1', '"version":1.0'),
+    JSON.stringify({ ...RECIPE, version: { __jsonNumber: "1", value: 1 } }),
     '{"schema":"org.auros.recipe","version":1,"base":"desktop","__proto__":{"base":"desktop"}}',
     '{"schema":"org.auros.recipe","version":1,"base":"desktop","constructor":{}}',
     '{"schema":"org.auros.recipe","version":1,"base":"desktop","prototype":{}}',
@@ -400,6 +401,10 @@ test("GitHub status binds correlation/source and requires package, sign, publish
   assert.equal(ready.download.sha256, "e".repeat(64));
 
   f = apiFixture({ run, jobs, artifacts, releases: [{ tag_name: tag, prerelease: true, draft: false, assets }], assetBody: JSON.stringify({ ...manifest, request_id: "22345678-1234-4123-8123-123456789abc" }), evidenceZip });
+  assert.equal((await f.github.status({ requestId: id, sourceSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_manifest_invalid");
+
+  const spoofedNumberManifest = JSON.stringify({ ...manifest, source: { ...manifest.source, workflow_run_id: { __jsonNumber: "44", value: 44 } } });
+  f = apiFixture({ run, jobs, artifacts, releases: [{ tag_name: tag, prerelease: true, draft: false, assets }], assetBody: spoofedNumberManifest, evidenceZip: storedZip(manifestName, spoofedNumberManifest) });
   assert.equal((await f.github.status({ requestId: id, sourceSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_manifest_invalid");
 
   for (const digest of [undefined, "sha256:not-a-hash", `sha256:${"f".repeat(64)}`]) {
