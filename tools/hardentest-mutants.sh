@@ -23,7 +23,7 @@ PATHS="etc/sysctl.d usr/lib/sysctl.d etc/sysctl.conf
        etc/systemd/system var/lib/dpkg/status etc/cups/cupsd.conf
        usr/lib/cups/backend/usb etc/avahi/avahi-daemon.conf etc/modprobe.d
        etc/systemd/journald.conf.d etc/default/zramswap etc/default/earlyoom
-       usr/share/auros/shells/rail.shell etc/apparmor.d/flatpak usr/bin/flatpak
+       usr/share/auros/shells/rail.shell etc/apparmor.d/flatpak etc/apparmor.d/bwrap usr/bin/flatpak
        etc/chrony etc/NetworkManager/dispatcher.d usr/lib/auros/choices.sh
        etc/machine-id var/lib/dbus/machine-id etc/systemd/system-preset
        etc/auros/policy.conf etc/systemd/logind.conf.d etc/ipp-usb
@@ -87,6 +87,10 @@ mutate "vm.swappiness = 150"                 "echo 'vm.swappiness = 60' > etc/sy
 mutate "user.max_user_namespaces is not 0"   "echo 'user.max_user_namespaces = 0' > etc/sysctl.d/70-x.conf"
 if [ -e "$T/good/usr/bin/flatpak" ]; then
 mutate "AppArmor lets Flatpak make its sandbox" "sed -i '/userns,/d' etc/apparmor.d/flatpak"
+mutate "AppArmor lets bubblewrap configure Flatpak's namespace" "sed -i '/^  allow capability,/d' etc/apparmor.d/bwrap"
+mutate "AppArmor lets bubblewrap configure Flatpak's namespace" "sed -i 's/,mediate_deleted//g' etc/apparmor.d/bwrap"
+mutate "AppArmor strips bubblewrap setup capabilities from sandboxed programs" "sed -i 's/^  audit deny capability,/  allow capability,/' etc/apparmor.d/bwrap"
+mutate "AppArmor strips bubblewrap setup capabilities from sandboxed programs" "sed -i '/&bwrap\/\/&unpriv_bwrap/d' etc/apparmor.d/bwrap"
 fi
 mutate "every AurOS entry in grub.cfg.in"    "sed -i '0,/^ *linux .* slab_nomerge/s/ slab_nomerge//' usr/lib/auros/grub.cfg.in"
 mutate "every AurOS entry in grub.cfg.in"    "sed -i 's/ panic=10 / panic=10 init_on_free=1 /' usr/lib/auros/grub.cfg.in"

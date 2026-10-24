@@ -17,7 +17,7 @@ name: harden
 # title is the only record of which image was tested. release.yml's promote
 # (tools/hardengate.sh) looks for "harden of build run <id>"; any other
 # event keeps GitHub's default title (the single space).
-run-name: ${{ github.event_name == 'workflow_run' && format('harden of build run {0}', github.event.workflow_run.id) || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_id != '' && format('harden of build run {0}', github.event.inputs.run_id)) || ' ' }}
+run-name: ${{ github.event_name == 'workflow_run' && format('harden of build run {0}', github.event.workflow_run.id) || (github.event_name == 'workflow_dispatch' && github.event.inputs.only == 'bwrap-profile' && format('diagnostic bwrap profile on build run {0}', github.event.inputs.run_id)) || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_id != '' && format('harden of build run {0}', github.event.inputs.run_id)) || ' ' }}
 
 on:
   push:
@@ -30,7 +30,9 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: 'all, time (the clock test only) or hardening (the other one)'
+        description: 'full gate, one gate, or a non-certifying bwrap profile probe'
+        type: choice
+        options: [all, time, hardening, bwrap-profile]
         default: all
       run_id:
         description: 'the build run whose image to test (default: the newest)'
@@ -45,7 +47,7 @@ defaults:
     shell: bash
 
 env:
-  HARDENING_INPUTS: '^(build/harden|build/forge|profiles/desktop\.profile|rootfs/etc/(sysctl\.d|modprobe\.d|nftables\.conf|systemd/journald\.conf\.d|avahi|cups|chrony|NetworkManager/dispatcher\.d)|rootfs/etc/systemd/system/(aurshell\.service|auros-dpkg-repair\.service)|rootfs/usr/lib/auros/(grub\.cfg\.in|bootchain|shell-guard|dpkg-repair|choices\.sh)|tools/hardenboottest\.sh|tools/timeboottest\.sh|tools/hardentest|\.github/workflows/harden\.yml)'
+  HARDENING_INPUTS: '^(build/harden|build/forge|profiles/desktop\.profile|rootfs/etc/(apparmor\.d|sysctl\.d|modprobe\.d|nftables\.conf|systemd/journald\.conf\.d|avahi|cups|chrony|NetworkManager/dispatcher\.d)|rootfs/etc/systemd/system/(aurshell\.service|auros-dpkg-repair\.service)|rootfs/usr/lib/auros/(grub\.cfg\.in|bootchain|shell-guard|dpkg-repair|choices\.sh)|tools/hardenboottest\.sh|tools/timeboottest\.sh|tools/hardentest|\.github/workflows/harden\.yml)'
 
 jobs:
   which:
@@ -151,9 +153,18 @@ jobs:
           df -h /
       - name: hardenboottest under KVM
         if: ${{ github.event.inputs.only != 'time' }}
+        env:
+          ONLY: ${{ github.event.inputs.only }}
         run: |
+          extra=()
+          if [[ "$ONLY" == bwrap-profile ]]; then
+            # The artifact is an older image. Install this checkout's profile
+            # only into hardenboottest's throw-away disk copies. The distinct
+            # run title keeps this diagnostic out of tools/hardengate.sh.
+            extra+=("HARDEN_BWRAP_PROFILE=$PWD/rootfs/etc/apparmor.d/bwrap" HARDEN_RUNS=0)
+          fi
           set +e
-          sudo env PATH="$PATH" HARDEN_REPORT=out/hardenboot.md sh tools/hardenboottest.sh out/auros-desktop.img 2>&1 | tee out/hardenboottest.txt
+          sudo env PATH="$PATH" HARDEN_REPORT=out/hardenboot.md "${extra[@]}" sh tools/hardenboottest.sh out/auros-desktop.img 2>&1 | tee out/hardenboottest.txt
           rc=${PIPESTATUS[0]}
           set -e
           cat out/hardenboot.md >> "$GITHUB_STEP_SUMMARY" || true
@@ -161,7 +172,7 @@ jobs:
       # The clock, on the same image (tools/timeboottest.sh): a PC whose
       # hardware clock Windows keeps in local time, online, three ways.
       - name: timeboottest under KVM
-        if: ${{ !cancelled() && github.event.inputs.only != 'hardening' }}
+        if: ${{ !cancelled() && github.event.inputs.only != 'hardening' && github.event.inputs.only != 'bwrap-profile' }}
         run: |
           set +e
           sudo env PATH="$PATH" TIME_REPORT=out/timeboot.md sh tools/timeboottest.sh out/auros-desktop.img 2>&1 | tee out/timeboottest.txt

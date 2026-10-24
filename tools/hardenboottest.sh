@@ -72,6 +72,7 @@ MEM="${HARDEN_MEM:-4096}"
 RUNS="${HARDEN_RUNS:-3}"
 REPORT="${HARDEN_REPORT:-out/hardenboot.md}"
 FULL_TIMEOUT="${HARDEN_TIMEOUT:-1500}"
+BWRAP_PROFILE="${HARDEN_BWRAP_PROFILE:-}"
 TP=17777 UP=10631 HP=18080   # host ports: inbound TCP, inbound UDP, the page "from outside"
 KOPTS="init_on_alloc=1 slab_nomerge randomize_kstack_offset=on vsyscall=none debugfs=off panic=10 fsck.repair=yes lockdown=integrity"
 
@@ -208,9 +209,87 @@ setpriv --reuid="$u" --regid="$(id -g "$u")" --init-groups python3 -c \
     'import socket; socket.socket(2, 6, 33)' > "$OUT/dccp.txt" 2>&1   # AF_INET, SOCK_DCCP, IPPROTO_DCCP
 put dccp_socket "$?"
 grep -q '^dccp ' /proc/modules && put dccp_loaded yes || put dccp_loaded no
+# Invoke /usr/bin/bwrap directly: this proves its own AppArmor attachment,
+# rather than forcing the flatpak label with aa-exec. The first child performs
+# the O_TMPFILE + linkat operation broken by LP #2072811 and reports its actual
+# stacked label and capability set.
+BD=/var/tmp/auros-bwrap-probe
+rm -rf "$BD"; install -d -o "$u" -g "$(id -g "$u")" -m 0700 "$BD"
+cat > "$BD/atomic.py" <<'EOPY'
+import ctypes, os
+print("label=" + open("/proc/self/attr/current").read().strip())
+for line in open("/proc/self/status"):
+    if line.startswith("CapEff:"):
+        print("capeff=" + line.split()[1])
+print("started=yes")
+fd = os.open(".", os.O_TMPFILE | os.O_RDWR, 0o600)
+try:
+    os.write(fd, b"saved safely\n")
+    libc = ctypes.CDLL(None, use_errno=True)
+    source = f"/proc/self/fd/{fd}".encode()
+    at_fdcwd = -100
+    if libc.linkat(at_fdcwd, source, at_fdcwd, b"saved", 0x400) != 0: # AT_SYMLINK_FOLLOW
+        err = ctypes.get_errno()
+        print("atomic=no")
+        print(f"atomic_errno={err}")
+    else:
+        assert open("saved", "rb").read() == b"saved safely\n"
+        os.unlink("saved")
+        print("atomic=yes")
+finally:
+    os.close(fd)
+EOPY
+chown "$u:$(id -g "$u")" "$BD/atomic.py"
+atomic_since=$(date --iso-8601=seconds)
 setpriv --reuid="$u" --regid="$(id -g "$u")" --init-groups \
-    aa-exec -p flatpak -- bwrap --unshare-user --unshare-pid --ro-bind / / /bin/true > "$OUT/bwrap.txt" 2>&1
+    bwrap --unshare-user --unshare-pid --unshare-net --ro-bind / / \
+    --bind "$BD" "$BD" --chdir "$BD" /usr/bin/python3 "$BD/atomic.py" \
+    > "$OUT/bwrap.txt" 2>&1
 put bwrap "$?"
+put bwrap_label "$(sed -n 's/^label=//p' "$OUT/bwrap.txt" | tail -1)"
+put bwrap_caps "$(sed -n 's/^capeff=//p' "$OUT/bwrap.txt" | tail -1)"
+put bwrap_started "$(sed -n 's/^started=//p' "$OUT/bwrap.txt" | tail -1)"
+put bwrap_atomic "$(sed -n 's/^atomic=//p' "$OUT/bwrap.txt" | tail -1)"
+put bwrap_atomic_errno "$(sed -n 's/^atomic_errno=//p' "$OUT/bwrap.txt" | tail -1)"
+journalctl -k --since "$atomic_since" --no-pager > "$OUT/bwrap-atomic-kernel.txt" 2>&1
+if grep 'apparmor="DENIED"' "$OUT/bwrap-atomic-kernel.txt" | grep 'operation="link"' | \
+   grep 'info="Failed name lookup - deleted entry"' | grep -Eq 'profile="[^"]*unpriv_bwrap[^"]*"'; then
+    put bwrap_atomic_audit yes
+else
+    put bwrap_atomic_audit no
+fi
+
+# Give the child CAP_NET_ADMIN deliberately. Its kernel credential therefore
+# has the bit, but unpriv_bwrap must still deny using it. The controls-removed
+# boot changes that one deny to allow and must be able to bring loopback down.
+since=$(date --iso-8601=seconds)
+setpriv --reuid="$u" --regid="$(id -g "$u")" --init-groups \
+    bwrap --cap-add CAP_NET_ADMIN --unshare-user --unshare-pid --unshare-net \
+    --ro-bind / / /bin/sh -c \
+    'printf "label="; cat /proc/self/attr/current; sed -n "s/^CapEff:[[:space:]]*//p" /proc/self/status | sed "s/^/capeff=/"; ip link set lo down; echo "capop=$?"' \
+    > "$OUT/bwrap-cap.txt" 2>&1
+put bwrap_cap_label "$(sed -n 's/^label=//p' "$OUT/bwrap-cap.txt" | tail -1)"
+put bwrap_cap_eff "$(sed -n 's/^capeff=//p' "$OUT/bwrap-cap.txt" | tail -1)"
+put bwrap_cap_op "$(sed -n 's/^capop=//p' "$OUT/bwrap-cap.txt" | tail -1)"
+journalctl -k --since "$since" --no-pager > "$OUT/bwrap-kernel.txt" 2>&1
+if grep -Eq 'apparmor="DENIED".*profile="unpriv_bwrap".*capname="net_admin"' "$OUT/bwrap-kernel.txt"; then
+    put bwrap_cap_audit yes
+else
+    put bwrap_cap_audit no
+fi
+if grep -q '^bwrap ' /sys/kernel/security/apparmor/profiles 2>/dev/null && \
+   grep -q '^unpriv_bwrap ' /sys/kernel/security/apparmor/profiles 2>/dev/null; then
+    put bwrap_profiles loaded
+else
+    put bwrap_profiles missing
+fi
+rm -rf "$BD"
+if [ "$mode" = bwrap ]; then
+    con "done"
+    sync
+    systemctl poweroff
+    exit 0
+fi
 
 # ── network ──
 i=0; while [ -z "$(ip -4 -o addr show scope global)" ] && [ $i -lt 90 ]; do sleep 1; i=$((i+1)); done
@@ -434,6 +513,11 @@ strip_controls() {
           "$M/etc/polkit-1/rules.d/40-auros-remote-access.rules" \
           "$M/etc/systemd/system/serial-getty@.service" "$M/etc/systemd/system/console-getty.service"
     sed -i -e 's/^disable-publishing=yes/disable-publishing=no/' -e 's/^\(publish-[a-z]*\)=no/\1=yes/' "$M/etc/avahi/avahi-daemon.conf"
+    # Bubblewrap still starts, but the two security/compatibility properties
+    # below must fail independently without their policy rules.
+    sed -i -e 's/,mediate_deleted//g' \
+           -e 's/^  audit deny capability,/  allow capability,/' \
+           "$M/etc/apparmor.d/bwrap"
     for o in $KOPTS; do sed -i "s/ $o\( \|\$\)/\1/" "$M/boot/grub/grub.cfg"; done
     # The boot menu's lock (stream BT): no superusers, no password.
     sed -i '/^[[:space:]]*set[[:space:]]\{1,\}superusers=/d; /^[[:space:]]*password\(_pbkdf2\)\{0,1\}[[:space:]]/d' \
@@ -652,6 +736,10 @@ awk "/^done <<'EOF'\$/ {f=1; next} f && /^EOF\$/ {exit} f {print \$1, \$2}" tool
 [ -s "$T/keys" ] || { echo "could not read the sysctl list out of tools/hardentest.sh"; exit 2; }
 echo
 say "## Hardening, booted ($(basename "$IMG"), ${MEM} MB, 2 cores, Secure Boot, $(echo "$ACCEL" | cut -d' ' -f1))"
+if [ -n "$BWRAP_PROFILE" ]; then
+    say ""
+    say "**Diagnostic only:** the bwrap profile came from the test checkout, not this image; this is not release certification."
+fi
 say ""
 # ONE working copy of the disk at a time (the image is 2.6 GB of real
 # data; two copies at once are 5 GB on a machine other people share). It
@@ -661,13 +749,26 @@ make_disk() { # hard|base  [static]
     rm -f "$T/disk.img"
     cp --sparse=always "$IMG" "$T/disk.img" || exit 2
     mount_root "$T/disk.img" || exit 2
+    if [ -n "$BWRAP_PROFILE" ]; then
+        [ -f "$BWRAP_PROFILE" ] || { echo "no diagnostic bwrap profile at $BWRAP_PROFILE"; exit 2; }
+        install -m 0644 "$BWRAP_PROFILE" "$T/m/etc/apparmor.d/bwrap"
+    fi
     inject
     [ "$1" = base ] && strip_controls
     if [ "${2:-}" = static ]; then
-        RFS="$T/m" HARDEN_QUIET=1 sh tools/hardentest.sh > "$T/static.$1" 2>&1; echo $? > "$T/static.$1.rc"
-        # The static checks, each shown to fail when its control is taken
-        # away, on this very image (a few MB of it are copied out).
-        [ "$1" = hard ] && { RFS="$T/m" sh tools/hardentest-mutants.sh > "$T/mutants.out" 2>&1; echo $? > "$T/mutants.rc"; }
+        if [ -n "$BWRAP_PROFILE" ]; then
+            echo "skipped: injected-profile diagnostic is not release certification" > "$T/static.$1"
+            echo diagnostic-only > "$T/static.$1.rc"
+            if [ "$1" = hard ]; then
+                echo "skipped: injected-profile diagnostic is not release certification" > "$T/mutants.out"
+                echo diagnostic-only > "$T/mutants.rc"
+            fi
+        else
+            RFS="$T/m" HARDEN_QUIET=1 sh tools/hardentest.sh > "$T/static.$1" 2>&1; echo $? > "$T/static.$1.rc"
+            # The static checks, each shown to fail when its control is taken
+            # away, on this very image (a few MB of it are copied out).
+            [ "$1" = hard ] && { RFS="$T/m" sh tools/hardentest-mutants.sh > "$T/mutants.out" 2>&1; echo $? > "$T/mutants.rc"; }
+        fi
     fi
     umount_root
 }
@@ -677,23 +778,75 @@ need=$(( $(du -k "$IMG" | cut -f1) / 1048576 + ${HARDEN_MINFREE_GB:-8} ))
 
 for d in hard base; do
     make_disk $d static
-    echo "  $d: the boot menu (edit, command line, recovery shell)"
-    mount_root "$T/disk.img" || exit 2
-    se=$(shell_entry "$T/m"); [ $d = hard ] && SHELL_ID=${se% *}
-    umount_root
-    { echo "grub_edit=$(menu_probe "$T/disk.img" "$d.edit" edit)"
-      echo "grub_console=$(menu_probe "$T/disk.img" "$d.console" console)"
-      if [ -n "$se" ]; then
-          echo "grub_shell=$(menu_probe "$T/disk.img" "$d.shell" shell "${se#* }")"
-      else echo "grub_shell=none"; fi
-    } > "$T/menu.$d"
-    echo "  $d: a full boot with every check (about 8 minutes under KVM)"
-    power_on "$T/disk.img" $d full "$FULL_TIMEOUT"
+    if [ -n "$BWRAP_PROFILE" ]; then
+        echo "  $d: bwrap profile diagnostic"
+        power_on "$T/disk.img" $d bwrap 300
+    else
+        echo "  $d: the boot menu (edit, command line, recovery shell)"
+        mount_root "$T/disk.img" || exit 2
+        se=$(shell_entry "$T/m"); [ $d = hard ] && SHELL_ID=${se% *}
+        umount_root
+        { echo "grub_edit=$(menu_probe "$T/disk.img" "$d.edit" edit)"
+          echo "grub_console=$(menu_probe "$T/disk.img" "$d.console" console)"
+          if [ -n "$se" ]; then
+              echo "grub_shell=$(menu_probe "$T/disk.img" "$d.shell" shell "${se#* }")"
+          else echo "grub_shell=none"; fi
+        } > "$T/menu.$d"
+        echo "  $d: a full boot with every check (about 8 minutes under KVM)"
+        power_on "$T/disk.img" $d full "$FULL_TIMEOUT"
+    fi
     rm -f "$T/disk.img"
 done
 RH="$T/rec.hard/result"; RB="$T/rec.base/result"
-cat "$T/menu.hard" >> "$RH"; cat "$T/menu.base" >> "$RB"
-{ echo "mutants_rc=$(cat "$T/mutants.rc" 2>/dev/null)"; echo "mutants=$(tail -1 "$T/mutants.out" 2>/dev/null)"; } >> "$RH"
+if [ -z "$BWRAP_PROFILE" ]; then
+    cat "$T/menu.hard" >> "$RH"; cat "$T/menu.base" >> "$RB"
+fi
+{ echo "static_rc=$(cat "$T/static.hard.rc" 2>/dev/null)"; echo "mutants_rc=$(cat "$T/mutants.rc" 2>/dev/null)"; echo "mutants=$(tail -1 "$T/mutants.out" 2>/dev/null)"; } >> "$RH"
+echo "static_rc=$(cat "$T/static.base.rc" 2>/dev/null)" >> "$RB"
+if [ -n "$BWRAP_PROFILE" ]; then
+    dval() { awk -v k="$2" 'index($0, k "=") == 1 { v = substr($0, length(k) + 2) } END { print v }' "$1"; }
+    diag_fail=0; diag_checked=0
+    diag() { # description command...
+        desc=$1; shift; diag_checked=$((diag_checked+1))
+        if "$@"; then say "- $desc: ok"; else say "- $desc: FAIL"; diag_fail=$((diag_fail+1)); fi
+    }
+    eqv() { [ "$(dval "$1" "$2")" = "$3" ]; }
+    nev() { v=$(dval "$1" "$2"); [ -n "$v" ] && [ "$v" != "$3" ]; }
+    stacked() { case "$(dval "$1" "$2")" in *bwrap*unpriv_bwrap*) return 0 ;; esac; return 1; }
+    capbit() { v=$(dval "$1" bwrap_cap_eff); [ -n "$v" ] || return 1; n=$(printf '%d' "0x$v" 2>/dev/null) || return 1; [ $((n & 4096)) -ne 0 ]; }
+    say "## Bubblewrap profile diagnostic"
+    diag "hardened bwrap starts" eqv "$RH" bwrap 0
+    diag "both profiles are loaded" eqv "$RH" bwrap_profiles loaded
+    diag "ordinary child has the stacked label" stacked "$RH" bwrap_label
+    diag "ordinary child has no effective capability" eqv "$RH" bwrap_caps 0000000000000000
+    diag "hardened atomic probe starts" eqv "$RH" bwrap_started yes
+    diag "O_TMPFILE atomic save succeeds with mediate_deleted" eqv "$RH" bwrap_atomic yes
+    diag "atomic save has no deleted-link denial" eqv "$RH" bwrap_atomic_audit no
+    diag "requested CAP_NET_ADMIN reaches the child" capbit "$RH"
+    diag "unpriv_bwrap blocks CAP_NET_ADMIN use" nev "$RH" bwrap_cap_op 0
+    diag "the denial is attributed to unpriv_bwrap" eqv "$RH" bwrap_cap_audit yes
+    diag "control bwrap still starts" eqv "$RB" bwrap 0
+    diag "control child still has the stacked label" stacked "$RB" bwrap_label
+    diag "control atomic probe starts" eqv "$RB" bwrap_started yes
+    diag "without mediate_deleted, atomic save fails" eqv "$RB" bwrap_atomic no
+    # AppArmor reports error=-2 for its deleted-name lookup and linkat exposes
+    # the same ENOENT to the caller. The matching audit below proves this is
+    # the intended mediate_deleted control, not a missing probe path.
+    diag "atomic failure has the expected deleted-name errno" eqv "$RB" bwrap_atomic_errno 2
+    diag "atomic failure is an unpriv_bwrap deleted-link denial" eqv "$RB" bwrap_atomic_audit yes
+    diag "control still requests CAP_NET_ADMIN" capbit "$RB"
+    diag "allow-capability control can use CAP_NET_ADMIN" eqv "$RB" bwrap_cap_op 0
+    diag "allow-capability control has no denial" eqv "$RB" bwrap_cap_audit no
+    say "hardened values: label=$(dval "$RH" bwrap_label), cap=$(dval "$RH" bwrap_cap_eff), capop=$(dval "$RH" bwrap_cap_op), atomic=$(dval "$RH" bwrap_atomic), audit=$(dval "$RH" bwrap_cap_audit)"
+    say "control values: label=$(dval "$RB" bwrap_label), cap=$(dval "$RB" bwrap_cap_eff), capop=$(dval "$RB" bwrap_cap_op), atomic=$(dval "$RB" bwrap_atomic), errno=$(dval "$RB" bwrap_atomic_errno), atomic_audit=$(dval "$RB" bwrap_atomic_audit), cap_audit=$(dval "$RB" bwrap_cap_audit)"
+    mkdir -p "$(dirname "$REPORT")"
+    tar -C "$T" -czf "${REPORT%.*}-evidence.tar.gz" rec.hard rec.base \
+        serial.hard serial.base static.hard static.base mutants.out
+    if [ "$diag_fail" -eq 0 ]; then say "bwrap diagnostic: $diag_checked checks, all ok"; else say "bwrap diagnostic: $diag_fail of $diag_checked checks FAILED"; fi
+    cp "$T/report" "$REPORT"
+    [ "$diag_fail" -eq 0 ]
+    exit
+fi
 # (not inside the loop above: a first version classified there and its
 # lines never reached the record; here the files are known to be there)
 ls "$T"/shot.*.ppm 2>&1 | sed 's/^/    screenshot file: /'
@@ -767,6 +920,14 @@ remote_yes() { is "$1" remote_consent "$(val desktop_user "$1")" && is "$1" remo
 deb_gate() { not_is "$1" remote_deb 0 && is "$1" remote_deb_signal yes; }
 dpkg_fixed() { is "$1" dpkg_less "install ok installed"; }
 no_caps() { [ "$(val desktop_caps "$1")" = "0000000000000000 0000000000000000 0000000000000000 0000000000000000 " ]; }
+bwrap_stacked() { case "$(val bwrap_label "$1")" in *bwrap*unpriv_bwrap*) return 0 ;; esac; return 1; }
+bwrap_cap_blocked() {
+    case "$(val bwrap_cap_label "$1")" in *bwrap*unpriv_bwrap*) ;; *) return 1 ;; esac
+    cap=$(val bwrap_cap_eff "$1"); op=$(val bwrap_cap_op "$1")
+    [ -n "$cap" ] && [ -n "$op" ] || return 1
+    capn=$(printf '%d' "0x$cap" 2>/dev/null) || return 1
+    [ $((capn & 4096)) -ne 0 ] && [ "$op" != 0 ] && is "$1" bwrap_cap_audit yes
+}
 
 say "| check | hardened | controls removed | verdict |"
 say "|---|---|---|---|"
@@ -789,6 +950,11 @@ while read -r key want; do
 done < "$T/keys"
 row control "an ordinary program cannot load dccp (socket refused)" dccp_refused
 row both    "Flatpak's sandbox (bubblewrap, userns) still starts" is bwrap 0
+row both    "AppArmor loads the bwrap setup and child profiles" is bwrap_profiles loaded
+row both    "a bubblewrap child runs under bwrap stacked with unpriv_bwrap" bwrap_stacked
+row both    "an ordinary bubblewrap child starts with no effective capability" is bwrap_caps 0000000000000000
+row control "a Flatpak-style O_TMPFILE atomic save can be linked into place" is bwrap_atomic yes
+row control "unpriv_bwrap denies a capability even when the child requests and holds it" bwrap_cap_blocked
 row both    "the desktop holds no capability (bubblewrap refuses any: no Flatpak program would open)" no_caps
 row both    "her own traffic works (DHCP address, a page from outside)" outbound
 row both    "nothing listens on the network (cups-browsed is gone)" no_listeners
