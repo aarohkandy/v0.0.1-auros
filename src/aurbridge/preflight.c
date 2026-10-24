@@ -2,6 +2,8 @@
  * Strictly read-only. R-numbers reference docs/research/red-team.md. */
 
 #include "preflight.h"
+#include "profile_image.h"
+#include "recipe.h"
 #include "plat.h"
 #include "sbdb.h"
 #include "phases.h"           /* AB_CHOICE_BITLOCKER_PAUSE: what the engine can do */
@@ -1309,9 +1311,12 @@ static void check_volumes(pf_report *r)
                 uint64_t img = 0, have = 0;
 #ifndef AB_CHOICE_FAST_PATH
                 {   /* the copy that is downloading into C:\AurOS, and what of it is there */
-                    char dir[16], path[64];
+                    char dir[16], path[64], image_name[40];
                     snprintf(dir, sizeof dir, "%s", drive);
-                    snprintf(path, sizeof path, "%s\\AurOS\\auros-desktop.img", dir);
+                    if (ab_profile_image_name(ab_recipe_image_profile(), image_name,
+                                              sizeof image_name) != 0)
+                        return;
+                    snprintf(path, sizeof path, "%s\\AurOS\\%s", dir, image_name);
                     img = AUROS_IMAGE_BYTES ? AUROS_IMAGE_BYTES : 6ULL * 1024 * 1024 * 1024;
                     plat_file_size(path, &have);
                 }
@@ -1987,6 +1992,7 @@ static void check_wifi(pf_report *r)
 /* ── public API ──────────────────────────────────────────────────── */
 void pf_run(pf_report *r)
 {
+    char image_name[40];
     memset(r, 0, sizeof *r);
     r->secure_boot     = -1;
     r->system_disk     = -1;
@@ -1995,6 +2001,15 @@ void pf_run(pf_report *r)
     r->esp_found       = -1;
     r->fde_third_party = -1;
     r->recovery_disk   = -1;
+
+    if (ab_profile_image_name(ab_recipe_image_profile(), image_name,
+                              sizeof image_name) != 0) {
+        add(r, "installer-profile", "", PF_BLOCK,
+            "This copy of AurOS Setup is incomplete",
+            "Its system profile is missing or is not one AurOS recognizes.",
+            "Download a fresh copy of AurOS Setup and try again.");
+        return;
+    }
 
     if (check_machine(r)) return;  /* nothing else matters on an ARM PC */
     check_admin(r);
@@ -2044,8 +2059,40 @@ static void fill_bs(BYTE *sec, const char *oem, const char *fat54, const char *f
 int pf_selftest(void)
 {
     BYTE sec[512];
+    char image_name[40];
     g_fail = 0;
     printf("\n  preflight self-test\n\n");
+
+    t("profile image: desktop keeps its published name",
+      ab_profile_image_name("desktop", image_name, sizeof image_name) == 0 &&
+      !strcmp(image_name, "auros-desktop.img"));
+    t("profile image: revive has its own name",
+      ab_profile_image_name("revive", image_name, sizeof image_name) == 0 &&
+      !strcmp(image_name, "auros-revive.img"));
+    t("profile image: multilingual has its own name",
+      ab_profile_image_name("multilingual", image_name, sizeof image_name) == 0 &&
+      !strcmp(image_name, "auros-multilingual.img"));
+    t("profile image: office and school-kiosk are known",
+      ab_profile_image_name("office", image_name, sizeof image_name) == 0 &&
+      !strcmp(image_name, "auros-office.img") &&
+      ab_profile_image_name("school-kiosk", image_name, sizeof image_name) == 0 &&
+      !strcmp(image_name, "auros-school-kiosk.img"));
+    t("profile image: paths and unknown profiles are refused",
+      ab_profile_image_name("../desktop", image_name, sizeof image_name) != 0 &&
+      image_name[0] == 0 &&
+      ab_profile_image_name("desktop\\evil", image_name, sizeof image_name) != 0 &&
+      image_name[0] == 0 &&
+      ab_profile_image_name("Desktop", image_name, sizeof image_name) != 0 &&
+      image_name[0] == 0 &&
+      ab_profile_image_name("", image_name, sizeof image_name) != 0 &&
+      image_name[0] == 0);
+    t("profile image: a short output buffer fails closed",
+      ab_profile_image_name("desktop", image_name, 8) != 0 && image_name[0] == 0);
+    t("profile image: missing arguments are refused",
+      ab_profile_image_name(NULL, image_name, sizeof image_name) != 0 &&
+      image_name[0] == 0 &&
+      ab_profile_image_name("desktop", NULL, sizeof image_name) != 0 &&
+      ab_profile_image_name("desktop", image_name, 0) != 0);
 
     fill_bs(sec, "NTFS    ", NULL, NULL);
     t("boot sector: NTFS", boot_sector_kind(sec) == PF_BS_NTFS);
