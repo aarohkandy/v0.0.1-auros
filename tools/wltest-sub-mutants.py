@@ -356,6 +356,12 @@ MUTANTS = [
      "    if (owner) m->clip_wl = 0;                                /* somebody else has it: it is not ours to let go of (SelectionClear may come later) */", "", XCLIP),
     ("an X window is not recognised as one", "x:clip-bg-x-refused",
      "int         aurwl_win_is_x11(const aurwl_win *w)  { return w && w->role == ROLE_X11; }", "int         aurwl_win_is_x11(const aurwl_win *w)  { return 0; }"),
+    ("Bigger text does not reach X programs", "x:text-scale",
+     "(int)(96.f * (c->text_scale >= 1.f ? c->text_scale : 1.f) + 0.5f)", "96", XWM),
+    ("X starts without her text size", "x:text-scale",
+     "    m->state = 2;\n    xw_text_scale(m->c);\n", "    m->state = 2;\n", XWM),
+    ("an absurd text size reaches X", "x:text-scale",
+     "    c->text_scale = scale >= 1.f && scale <= 4.f ? scale : 1.f;", "    c->text_scale = scale;"),
     ("INCR chunks are added without a limit", "x:clip-incr-cap",
      "p->n + bytes > XC_MAX || ", "", XCLIP),
 ]
@@ -372,6 +378,8 @@ def verdict(scenario, r):
         return "ALIVE"
     if scenario == "cursortest":                 # prints "  FAIL  <what>" per failed check and exits 1
         return "caught" if r.returncode == 1 and re.search(r"^  FAIL  ", r.stdout, re.M) else "OTHER"
+    if scenario == "deco":                       # prints "    <what>   ok|FAIL" per check and exits 1 when any failed
+        return "caught" if r.returncode == 1 and re.search(r"^\s+\S.*\sFAIL\s*$", r.stdout, re.M) else "OTHER"
     name = scenario[2:] if scenario.startswith("x:") else scenario
     # the test prints "  <name>  FAIL" when that scenario ended with a failed check
     if r.returncode == 1 and re.search(r"^\s*%s\s+FAIL\s*$" % re.escape(name), r.stdout, re.M):
@@ -380,15 +388,19 @@ def verdict(scenario, r):
 
 def main():
     only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else ""
+    shard = sys.argv[sys.argv.index("--shard") + 1] if "--shard" in sys.argv else ""   # "I/N": every Nth mutant, from the Ith (CI runs four)
+    si, sn = (int(x) for x in shard.split("/")) if shard else (1, 1)
     src = open(SRC).read()
     tmp = tempfile.mkdtemp(prefix="wltest-sub-mutants.")
     bad = ran = 0
     try:
-        for m in MUTANTS:
+        for idx, m in enumerate(MUTANTS):
             what, scenario, old, new = m[:4]
             target = m[4] if len(m) > 4 else SRC
             tsrc = open(target).read() if target != SRC else src
             if only and only not in what and only not in scenario:
+                continue
+            if sn > 1 and (idx % sn) != si - 1:
                 continue
             ran += 1
             if tsrc.count(old) != 1:

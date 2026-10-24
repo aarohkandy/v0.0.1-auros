@@ -12,8 +12,8 @@ from the Actions API); ALLOW is .github/ci-allow.txt; TODAY is a UTC date
 
 The rules (docs/safety/FINDINGS.md S-11 is why the power-cut ones are here):
   1. `build` succeeded.
-  2. `tests / unit` succeeded, at least 5 `tests / e2e (...)` jobs ran, and
-     EVERY `tests / ...` job succeeded.
+  2. `tests / unit` and `tests / wl (checks)` (the compositor's tests, WL2) succeeded,
+     at least 5 `tests / e2e (...)` jobs ran, and EVERY `tests / ...` job succeeded.
   3. At least 4 `powercut / e2e (...)` jobs ran (the power cut in the
      mode that ships, tests.yml suite "nostick"), and every one of them
      succeeded -- or failed AND is on the allow-list with an expiry date
@@ -78,6 +78,8 @@ def judge(jobs_text, allow, today, latest=False):
         why.append("build: %s" % jobs.get("build", "did not run"))
     if jobs.get("tests / unit") != "success":
         why.append("tests / unit: %s" % jobs.get("tests / unit", "did not run"))
+    if jobs.get("tests / wl (checks)") != "success":      # the compositor's tests are a gate (W16): they must have RUN
+        why.append("tests / wl (checks): %s" % jobs.get("tests / wl (checks)", "did not run"))
     tests = {n: c for n, c in jobs.items() if n.startswith("tests / ")}
     e2e = [n for n in tests if re.match(r"tests / e2e \(", n)]
     if len([n for n in e2e if tests[n] == "success"]) < MIN_E2E:
@@ -186,6 +188,7 @@ def selftest():
     green = "\n".join(
         ["build|success", "tests / unit|success"]
         + ["tests / e2e (t%d)|success" % i for i in range(7)]
+        + ["tests / wl (checks)|success", "tests / wl (mutants-1)|success"]
         + ["powercut / e2e (p%d)|success" % i for i in range(4)])
     today = "2026-10-24"
     allow = {"powercut / e2e (p2)": ("2026-10-30", "S-03"), "powercut / e2e (p3)": ("2026-10-20", "old")}
@@ -210,6 +213,9 @@ def selftest():
     case("a failing gating test is refused, allow-list or not",
          green.replace("t3)|success", "t3)|failure"), {"tests / e2e (t3)": ("2099-01-01", "x")}, True)
     case("a failing unit job is refused", green.replace("tests / unit|success", "tests / unit|failure"), {}, True)
+    case("a compositor test that did not run is refused", "\n".join(l for l in green.splitlines() if "wl (checks)" not in l), {}, True)
+    case("a failing compositor test is refused", green.replace("wl (checks)|success", "wl (checks)|failure"), {}, True)
+    case("a compositor mutant that survived is refused", green.replace("wl (mutants-1)|success", "wl (mutants-1)|failure"), {}, True)
     case("a failing build is refused", green.replace("build|success", "build|failure"), {}, True)
     case("too few gating e2e jobs is refused", "\n".join(l for l in green.splitlines() if not l.endswith("(t0)|success") and not l.endswith("(t1)|success") and not l.endswith("(t2)|success")), {}, True)
     try:

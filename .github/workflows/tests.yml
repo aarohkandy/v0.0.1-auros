@@ -522,6 +522,60 @@ jobs:
             echo "=== $(basename "$f" .txt)"; tail -n 3 "$f"
           done
 
+  # Stream WL2: the compositor's own tests were in fuzz.yml, which no release read (W16). As a job of
+  # tests.yml they are gates: releasegate.py refuses a release if any `tests / ...` job is not green,
+  # and requires `tests / wl (checks)` to exist. `mutants-N` break the compositor/shell in one
+  # place at a time (tools/wltest-sub-mutants.py, tools/notifytest-mutants.py) and require the
+  # test aimed at it to say FAIL, so a check that can no longer fail turns the release red.
+  wl:
+    needs: which
+    if: needs.which.outputs.go == 'true' && needs.which.outputs.suite == 'gating'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [checks, mutants-1, mutants-2, mutants-3, mutants-4]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: tools
+        run: |
+          sh tools/apt.sh clang gcc libc6-dev make python3 pkg-config libwayland-dev libxkbcommon-dev \
+              libdbus-1-dev dbus libglib2.0-bin xkb-data fonts-dejavu-core
+          mkdir -p transcripts
+      - name: fuzz regressions (every crash a fuzzer ever found, ASan + UBSan)
+        if: ${{ matrix.part == 'checks' }}
+        run: sh tools/fuzz/regress.sh "$RUNNER_TEMP/fuzz" 2>&1 | tee transcripts/fuzz-regress.txt
+      - name: wltest-sub (subsurfaces, pointer, drag and drop, idle, cursors; ASan + UBSan)
+        if: ${{ matrix.part == 'checks' }}
+        run: sh tools/wltest-sub.sh -asan 2>&1 | tee transcripts/wltest-sub.txt
+      - name: wltest-x (the X window manager and the clipboard bridge; ASan + UBSan)
+        if: ${{ matrix.part == 'checks' }}
+        run: sh tools/wltest-x.sh -asan 2>&1 | tee transcripts/wltest-x.txt
+      - name: wltest-deco (a program's own title bar, the keyboard, the menus)
+        if: ${{ matrix.part == 'checks' }}
+        run: sh tools/wltest-deco.sh 2>&1 | tee transcripts/wltest-deco.txt
+      - name: wishtest-hook (the typed-word matcher never sees a secret or an X program)
+        if: ${{ matrix.part == 'checks' }}
+        run: |
+          cc -std=gnu11 -g -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all \
+             -I src/aurwl tools/wishtest-hook.c src/aurwl/wishhook.c -o "$RUNNER_TEMP/wishhook"
+          "$RUNNER_TEMP/wishhook" 2>&1 | tee transcripts/wishtest-hook.txt
+      - name: the screensaver service, with a deliberate breakage each (tools/notifytest-mutants.py)
+        if: ${{ matrix.part == 'checks' }}
+        run: python3 tools/notifytest-mutants.py 2>&1 | tee transcripts/notifytest-mutants.txt
+      - name: the compositor's mutants, a quarter each (tools/wltest-sub-mutants.py)
+        if: ${{ startsWith(matrix.part, 'mutants-') }}
+        run: python3 tools/wltest-sub-mutants.py --shard "${MATRIX_PART#mutants-}/4" 2>&1 | tee transcripts/mutants.txt
+        env:
+          MATRIX_PART: ${{ matrix.part }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: transcripts-wl-${{ matrix.part }}
+          path: transcripts/
+          retention-days: 30
+
   e2e:
     needs: which
     if: needs.which.outputs.go == 'true'
