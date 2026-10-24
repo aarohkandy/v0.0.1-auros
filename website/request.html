@@ -31,7 +31,7 @@
       <p class="lede">Pick the kind of computer you want, then choose how it looks. At the end, you can save those choices in a small recipe file.</p>
       <div class="stop request-stop">
         <h2>This does not make an AurOS download yet.</h2>
-        <p>The file records your choices for a builder or helper. Today&rsquo;s <span class="file">AurOS-Setup.exe</span> does not read it, and this page does not send it anywhere.</p>
+        <p id="request-boundary">The file records your choices for a builder or helper. Today&rsquo;s <span class="file">AurOS-Setup.exe</span> does not read it, and this page does not send it anywhere.</p>
       </div>
     </div>
   </section>
@@ -169,6 +169,23 @@
           <button class="btn2" type="reset">Start over</button>
         </div>
         <p class="copied" id="recipe-status" role="status" aria-live="polite"></p>
+        <section class="build-request" id="build-request" aria-labelledby="build-title" hidden>
+          <h3 id="build-title">Ask for a tested AurOS build</h3>
+          <p id="build-availability">This service can build only <strong>My everyday computer</strong> right now. Other starting points need more release work and will not be partly fulfilled.</p>
+          <p>Your ordinary-language words stay in this browser. If you continue, this page sends only the starting point, arrangement and colours shown above. It saves an opaque receipt in this browser so it can recover the build status after a refresh. The service also keeps the job record and one-way network hashes used to prevent abuse.</p>
+          <button class="get" type="button" id="request-build">Request this tested build</button>
+          <button class="btn2" type="button" id="check-build" hidden>Check build status</button>
+          <p class="request-message" id="build-status" role="status" aria-live="polite"></p>
+          <div class="recipe-review build-result" id="build-result" hidden>
+            <h4>Your ready AurOS</h4>
+            <dl>
+              <div><dt>Choices</dt><dd id="build-choices"></dd></div>
+              <div><dt>File</dt><dd id="build-file"></dd></div>
+              <div><dt>SHA-256</dt><dd><code id="build-sha256"></code></dd></div>
+            </dl>
+            <p><a class="get" id="build-download" href="#">Download this verified EXE</a></p>
+          </div>
+        </section>
         <div class="stop unsupported">
           <h3>Want something outside these choices?</h3>
           <p>Things such as &ldquo;make the screen brighter when the computer points north,&rdquo; adding a program, or changing how the system works need new code and testing. This page does not pretend to accept them. The safe next step is to describe that work on the <a href="https://github.com/@AUROS_REPO@/issues">AurOS project page</a>.</p>

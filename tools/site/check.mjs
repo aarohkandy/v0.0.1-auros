@@ -451,6 +451,7 @@ for (const v of [
   check(JSON.stringify(start.themes) === JSON.stringify(["", "sandstone", "nocturne", "ember", "moss", "slate"]), "request: theme is optional and limited to the five shipped themes", JSON.stringify(start.themes));
   check(start.other.length === 0 && start.plain.max === 300 && start.plain.labels === 1, "request: the one plain-language box is bounded, labelled, and no other open-ended input exists", JSON.stringify({ other: start.other, plain: start.plain }));
   check(/does not make an AurOS download yet/i.test(start.text) && /AurOS-Setup\.exe does not read it/i.test(start.text) && /does not send it anywhere/i.test(start.text), "request: it says a valid recipe is not a build, today's installer does not read it, and nothing is sent");
+  check(await page.locator("#build-request").isHidden(), "request build: disabled default leaves the honest local recipe preview unchanged");
 
   // Once the authoritative compiler is present, CI ties the hand-written,
   // buildless page to its catalogue. The page may add plain-language context,
@@ -562,6 +563,130 @@ for (const v of [
     cards: [...document.querySelectorAll(".choice-card")].every((e) => e.getBoundingClientRect().height >= 44) }));
   check(fit.sw <= fit.cw + 1 && fit.cards, "request: at 320px there is no sideways scrolling and every choice target is at least 44px", `${fit.sw}px of content in ${fit.cw}px`);
   await narrow.ctx.close();
+
+  // The build adapter is inert by default. These contexts replace only its
+  // checked-in static configuration and API, never the public default.
+  const API = "https://builds.example";
+  const ID = "123e4567-e89b-42d3-a456-426614174000";
+  const TOKEN = "abcdefghijklmnopqrstuvwxYZ012345";
+  const RID = "sha256:" + "a".repeat(64);
+  const desktop = { schema: "org.auros.recipe", version: 1, base: "desktop" };
+  async function buildVisit(handler, receipt) {
+    const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 }, userAgent: UA.winEdge });
+    await ctx.addInitScript(uadScript, UAD.winX64);
+    if (receipt) await ctx.addInitScript((saved) => localStorage.setItem("auros.build-receipt.v1", JSON.stringify(saved)), receipt);
+    await ctx.route("**/build-service.json", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ enabled: true, api_origin: API }) }));
+    await ctx.route(API + "/**", handler);
+    const page = await ctx.newPage();
+    await page.goto(HOME + "request.html", { waitUntil: "load" });
+    await page.waitForSelector("#build-request:not([hidden])");
+    return { ctx, page };
+  }
+  const challenge = { challenge: "0123456789abcdef0123456789abcdef", expires_at: "2026-10-24T12:00:00Z", bits: 0, proof_prefix: "auros-build-v1:" };
+  const acceptedJob = { id: ID, token: TOKEN, recipe_id: RID, state: "queued", status_url: "/v1/builds/" + ID, download_ready: false };
+  const pending = { id: ID, recipe_id: RID, state: "running", failure: null, download_ready: false, download: null, expires_at: "2026-10-25T12:00:00Z" };
+
+  {
+    const { ctx, page } = await buildVisit((route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "base_unavailable", download_ready: false }) }));
+    await page.click("#request-build");
+    await page.waitForFunction(() => /not available/i.test(document.getElementById("build-status").innerText));
+    check(/not available for a tested build/i.test(await page.locator("#build-status").innerText()), "request build: service refusals are shown as refusals, not progress");
+    await ctx.close();
+  }
+  {
+    let calls = 0;
+    const { ctx, page } = await buildVisit((route) => { calls++; return route.abort(); });
+    await page.check("input[name=base][value=revive]");
+    await page.click("#request-build");
+    const text = await page.locator("#build-status").innerText();
+    check(/only My everyday computer/i.test(text) && /not partly submitted/i.test(text) && calls === 0,
+      "request build: unsupported bases are wholly refused before any network request", JSON.stringify({ text, calls }));
+    await ctx.close();
+  }
+  {
+    const { ctx, page } = await buildVisit(async (route) => {
+      if (route.request().url().endsWith("/challenge")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(challenge) });
+      return route.fulfill({ status: 429, contentType: "application/json", body: JSON.stringify({ error: "network_quota", download_ready: false }) });
+    });
+    await page.click("#request-build");
+    await page.waitForFunction(() => /temporary request limit/i.test(document.getElementById("build-status").innerText));
+    check(/temporary request limit/i.test(await page.locator("#build-status").innerText()), "request build: rate limits are explained without fake progress");
+    await ctx.close();
+  }
+  {
+    const { ctx, page } = await buildVisit((route) => route.abort("connectionfailed"));
+    await page.click("#request-build");
+    await page.waitForFunction(() => /fetch|network|could not|failed/i.test(document.getElementById("build-status").innerText));
+    check(!(await page.locator("#build-status").innerText()).includes(TOKEN), "request build: network failure is explicit and never exposes a receipt token");
+    await ctx.close();
+  }
+  {
+    let buildPosts = 0;
+    let releaseChallenge;
+    const challengeGate = new Promise((resolve) => { releaseChallenge = resolve; });
+    const { ctx, page } = await buildVisit(async (route) => {
+      if (route.request().url().endsWith("/challenge")) {
+        await challengeGate;
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(challenge) });
+      }
+      buildPosts++;
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(acceptedJob) });
+    });
+    const challengeRequest = page.waitForRequest((request) => request.url().endsWith("/challenge"));
+    await page.click("#request-build");
+    await challengeRequest;
+    await page.check("input[name=theme][value=moss]");
+    releaseChallenge();
+    await page.waitForFunction(() => /choices changed/i.test(document.getElementById("build-status").innerText));
+    check(buildPosts === 0, "request build: changed choices invalidate prepared proof before submission", String(buildPosts));
+    await ctx.close();
+  }
+  {
+    let posts = 0, auth = "";
+    const receipt = { api_origin: API, id: ID, token: TOKEN, recipe_id: RID, recipe: desktop };
+    const { ctx, page } = await buildVisit((route) => {
+      if (route.request().method() === "POST") posts++;
+      auth = route.request().headers().authorization || "";
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(pending) });
+    }, receipt);
+    await page.waitForFunction(() => /signing must pass/i.test(document.getElementById("build-status").innerText));
+    const body = await page.locator("body").innerText();
+    check(posts === 0 && auth === "Bearer " + TOKEN && !body.includes(TOKEN) && !page.url().includes(TOKEN) && await page.locator("#build-result").isHidden(),
+      "request build: refresh resumes an unsigned pending job with header-only receipt and no resubmission", JSON.stringify({ posts, auth: auth ? "present" : "missing" }));
+    await ctx.close();
+  }
+  {
+    const receipt = { api_origin: API, id: ID, token: TOKEN, recipe_id: RID, recipe: desktop };
+    const wrong = { ...pending, recipe_id: "sha256:" + "b".repeat(64) };
+    const { ctx, page } = await buildVisit((route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(wrong) }), receipt);
+    await page.waitForFunction(() => /different choices/i.test(document.getElementById("build-status").innerText));
+    check(await page.locator("#build-result").isHidden(), "request build: a stale or foreign recipe result is blocked");
+    await ctx.close();
+  }
+  {
+    const receipt = { api_origin: API, id: ID, token: TOKEN, recipe_id: RID, recipe: desktop };
+    const failed = { ...pending, state: "failed", failure: "signing_failed" };
+    const { ctx, page } = await buildVisit((route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(failed) }), receipt);
+    await page.waitForFunction(() => /build failed/i.test(document.getElementById("build-status").innerText));
+    check(/signing_failed/.test(await page.locator("#build-status").innerText()) && await page.locator("#build-result").isHidden(), "request build: real build failures remain failures with no download");
+    await ctx.close();
+  }
+  {
+    const receipt = { api_origin: API, id: ID, token: TOKEN, recipe_id: RID, recipe: desktop };
+    const name = "AurOS-Custom-" + "a".repeat(64) + ".exe";
+    const ready = { ...pending, state: "download-ready", download_ready: true, download: {
+      name, sha256: "b".repeat(64), bytes: 123456,
+      url: "https://github.com/aarohkandy/v0.0.1-auros/releases/download/custom-test/" + name,
+      manifest_url: "https://github.com/aarohkandy/v0.0.1-auros/releases/download/custom-test/AurOS-Custom-" + "a".repeat(64) + ".json",
+    } };
+    const { ctx, page } = await buildVisit((route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(ready) }), receipt);
+    await page.waitForSelector("#build-result:not([hidden])");
+    const got = await page.evaluate(() => ({ href: document.getElementById("build-download").href, hash: document.getElementById("build-sha256").innerText, choices: document.getElementById("build-choices").innerText }));
+    check(got.href === ready.download.url && got.hash === ready.download.sha256 && /My everyday computer/.test(got.choices),
+      "request build: ready download is the exact allowlisted GitHub EXE and hash tied to submitted choices", JSON.stringify(got));
+    textFindings("request build ready", await page.evaluate(measureText));
+    await ctx.close();
+  }
 }
 
 // 6. Published as it is in the tree (no stamp) on another repository's
