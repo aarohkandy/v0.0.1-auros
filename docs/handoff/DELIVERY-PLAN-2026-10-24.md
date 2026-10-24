@@ -419,3 +419,36 @@ before repeating the full test suite on an image known to lack this launch
 fix. Its reviewed firstboot changes remain committed and will be included in
 the next candidate. The c1 BitLocker journey is preserved and has reached
 the actual installer/first-session phase.
+
+## Current verification checkpoint
+
+The c1 release run `40131473307` finished failed. Its BitLocker journey used
+normal `AurOS-Setup.exe` and stopped at the legacy installer's intentional
+locked-drive refusal, before modifying the drive. This is not evidence about
+fastpath correctness. Fastpath must still qualify on exact published bytes.
+
+The strict app checker now rejects the recorded base and fastpath false-green
+screenshots. It requires a separately attributed VLC task, foreground title
+and application controls; the optional VLC privacy dialog is handled once and
+does not itself count as launch proof. Integrated E2E selftests pass, including
+recorded false-positive fixtures. Dry-run servers use ephemeral ports so
+parallel tests cannot collide.
+
+Fcitx diagnostic `40136819107` failed before composition with
+`exact_pinyin_engine_unavailable`. No popup or composition result was proved;
+raw-trace cleanup and restoration of the shipped IBus configuration passed.
+A focused diagnostic repair is underway, without changing production input.
+
+The fastpath audit found a disclosure and verification gap: current code uses
+BitLocker `RebootCount 2`, while some text promises a single restart pause.
+Protection is suspended with a clear key available until Windows resumes it;
+remaining in AurOS does not establish that Windows protection has resumed.
+Correct the misleading wording and measure first/second Windows return state.
+Do not flip the default before exact-artifact BitLocker return and recovery
+proof. The real BitLocker file-preserving put-back journey remains unproven.
+
+The proposed bwrap policy includes upstream's `mediate_deleted` correction on
+both profiles and the subsequent stacked application-execution rule. Static
+policy checks and mutation tests pass; a bounded homebase VM probe is testing
+child capability restrictions and atomic saves before integration. This cached
+image is diagnostic evidence only, not a release certificate.
