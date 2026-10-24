@@ -5,14 +5,14 @@ import Anthropic from "@anthropic-ai/sdk";
 import { ASK_OUTPUT, MAX_TEXT, MISSING, WISH_OUTPUT, checkRequest, checkWish, parseWish } from "./validate.js";
 import { ASK_SYSTEM, WISH_SYSTEM, askMessage, wishMessage } from "./prompts.js";
 import { DAY_MS, dayOf } from "./ledger.js";
-import { CONFIGURE_MAX_TEXT, CONFIGURE_OUTPUT, CONFIGURE_SYSTEM, ConfigureOutputError, analyzeConfigureRequest, configureMessage, planFromModel, unsupportedPlan } from "./configure.js";
+import { CONFIGURE_MAX_TEXT, analyzeConfigureRequest, planFromSelection, unsupportedPlan } from "./configure.js";
 
 // Haiku-class per AI.md 7.10: thinking off so the fixed max_tokens all goes to
 // the answer. Changing the model means changing PRICE and re-running
 // test/live-eval.mjs; it is deliberately not a setting.
 export const MODEL = "claude-haiku-5-5";
 const PRICE = { in: 0.10, write: 0.125, read: 0.01, out: 0.50 }; // USD per million tokens, prompts under 100k
-const MAX_TOKENS = { wish: 400, ask: 300, configure: 220 };
+const MAX_TOKENS = { wish: 400, ask: 300 };
 const MAX_COST_USD = 0.01; // a request estimated above this is refused (AI.md 7.10)
 const MAX_BODY = 8 * 1024;
 const DEADLINE_MS = 15_000; // the computer gives up at 20 s
@@ -136,8 +136,9 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
   }
   const tagOf = async (tid) => [...(await sha256("tag:" + tid)).slice(0, 6)].map((b) => b.toString(16).padStart(2, "0")).join("");
 
-  // Wishes is offered only in the allowed countries. Register, wish and ask are
-  // refused elsewhere; forget and health are not (anyone may delete her data).
+  // Wishes is offered only in the allowed countries. Register, wish, ask and
+  // configure are refused elsewhere; forget and health are not (anyone may
+  // delete her data).
   function inRegion(request) {
     if (cfg.countries === null) return true;
     // Only the edge's own value: a header a client could send is never read.
@@ -147,8 +148,9 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
   }
 
   // The kill switch (docs/CLOUD.md section 0): a daily budget of 0 answers every
-  // wish and ask with the plain 503, before any body is read, any counter is
-  // touched or Claude is called. Register, forget and health still work.
+  // wish, ask and configure request with the plain 503, before any body is read,
+  // any counter is touched or Claude is called. Register, forget and health
+  // still work.
   const off = () => !(cfg.budgetUsd > 0);
 
   async function register(request, m) {
@@ -317,27 +319,12 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
       return json(400, { error: body && typeof body.text === "string" && [...body.text].length > CONFIGURE_MAX_TEXT ? "too_long" : "request" });
     }
     const analysis = analyzeConfigureRequest(body.text);
-    if (analysis.reason) {
-      const a = await admitted(tid, "configure", 0, m);
-      if (a.res) return a.res;
-      await a.settle(true, 0, false);
-      m.kind = "unsupported"; m.missing = analysis.reason;
-      return json(422, unsupportedPlan(analysis.reason));
-    }
-    const g = await guarded(tid, "configure", CONFIGURE_SYSTEM, configureMessage(body), CONFIGURE_OUTPUT, m);
-    if (g.res) return g.res;
-    let plan;
-    try {
-      plan = planFromModel(g.out, analysis.expected);
-    } catch (e) {
-      if (!(e instanceof ConfigureOutputError)) throw e;
-      m.rejected = "configure_output";
-      await g.settle(false);
-      return json(503, { error: "invalid_model_output", status: "unavailable" }, { "retry-after": "30" });
-    }
+    const a = await admitted(tid, "configure", 0, m);
+    if (a.res) return a.res;
+    const plan = analysis.reason ? unsupportedPlan(analysis.reason) : planFromSelection(analysis.expected);
     m.kind = plan.status;
     m.missing = plan.reason;
-    await g.settle(false);
+    await a.settle(true, 0, false);
     return json(plan.status === "unsupported" ? 422 : 200, plan);
   }
 
