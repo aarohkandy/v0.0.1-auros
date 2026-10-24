@@ -26,7 +26,7 @@ The completed path must connect request, validation, consent, artifact identity,
 - [x] Compositor owner: reproduce uncaught mutants, repair relevant code/tests, prove intended breakages are caught. Integrated image CI passes all four mutation shards and checks.
 - [x] Wishes UI owner: reproduce failed UI cases; fix without enabling the disabled production feature. Integrated image CI passes UI and voice suites.
 - [ ] Installer safety owner: recover S-04, refuse before table commit when boot-entry creation fails, verify byte preservation and fault paths.
-- [ ] Bootstrapper owner: recover B's protected Windows loader design and validate real Windows hostile-DLL/junction cases.
+- [x] Bootstrapper owner: recover B's protected Windows loader design and validate Windows runner hostile-DLL/junction cases. Physical Windows 11 proof remains separate.
 - [ ] Lead: integrate CIW regression coverage and verify the tests exercised match the shipped path.
 - [ ] Independent handover review: kernel/modules, network/time, mounts, devices/display, PID1/services and installed-vs-bare journal differences.
 
@@ -89,10 +89,19 @@ Build run `40117947027` at `a9588c78` built the image successfully. All 16 gatin
 
 The Windows bootstrap remains on its own branch. Windows run `40117947925` proved hostile-DLL positive control and protected extraction, then found a junction mutation fixture blocked by a second independent guard. Test-only repair `9e4736ee` is under Windows run `40124061490`; production checks are unchanged. Two-stage SignPath code integration and actual baked installer recipe defaults are the next bounded implementation slices.
 
-Follow-up: Windows run `40124061490` at `9e4736ee` passed all jobs. Its protected bootstrap is integrated as `5cc1b47`; this is Windows Server 2025 runner evidence, not a physical Windows 11 install/restart campaign. Recipe defaults and malformed-recipe refusal are integrated, with 18 combined customization tests passing. The build-script hookup and production nested signing remain pending the coordinated signing slice. Do not mark the full SEC-003 release journey closed yet.
+Follow-up: Windows run `40124061490` at `9e4736ee` passed all jobs. Its protected bootstrap is integrated as `5cc1b47`; this is Windows Server 2025 runner evidence, not a physical Windows 11 install/restart campaign. Recipe defaults and malformed-recipe refusal are integrated, with 18 combined customization tests passing. The build-script hookup and shared two-stage signing implementation are now integrated; live signing still requires the owner's SignPath configuration. Do not mark the full SEC-003 release journey closed yet.
 
 ## Deferred security integration notes
 
 S4's 41 held commits are not activation-ready. Preserve the disabled final runtime/test tree rather than replaying old CI wholesale. Missing setup/recovery/PAM and encrypted handover work, a filesystem-shrink power-cut window, and physical-machine evidence remain blockers. Ferry must not copy personal data while an empty temporary encryption key remains usable. The held workflow also needs pinned actions, minimal permissions and exact-build evidence before reuse.
 
-Protected bootstrap signing requires two stages: verify the signed inner wizard against same-run build bytes, rebuild only the stub from the exact build source with that signed payload, sign the outer, then verify both signatures and extracted payload identity. Current outer-only SignPath signing does not prove this. Owner SignPath policy configuration is still required; keep the issue open.
+Protected bootstrap signing requires two stages: verify the signed inner wizard against same-run build bytes, rebuild only the stub from the exact build source with that signed payload, sign the outer, then verify both signatures and extracted payload identity. The shared signer now implements this chain and an independent review confirms same-run/source binding and scoped credentials. Live SignPath policy configuration and approval are still required; keep the issue open.
+
+## Current implementation checkpoint
+
+- Ferry's final detached-loop fix verifies the current on-disk label, not merely a surviving block node. Linux handover 19/19 and Ferry 274/274 pass. Build `40124183660` at `5d1c50d3` is running the integrated gates; do not infer its result from earlier runs.
+- Installer recipes are baked into the wizard, fail closed when malformed, and require an explicit matching desktop image plus image hash/size. Generic defaults remain unchanged. Combined Windows cross-build at `60765790` verifies exact embedded wizard bytes, recipe constants, stale-header removal, manifests and ASLR/DEP; it is not an installation test.
+- Signing is implemented once in `sign-installer.yml`: signed inner wizard, rebuilt protected outer, signed outer, exact-byte and source/run proof. The signing credential is limited to the relevant steps. No live signature has been obtained; the necessary repository variables/token are absent.
+- Configure requests now use deterministic local validation and no model call. Cloud tests pass 53/53; bare Office requests refuse rather than silently selecting an OS base. Cloud deployment/budget is unchanged.
+- First-session journal evidence is now produced by an asynchronous service and consumed by the installed-journey harness: AppArmor and loaded profiles, route, DNS, `/run` permissions, and staging scratch cleanup. Missing evidence fails the journey. Runtime proof awaits the next candidate.
+- Work in progress: reuse verified desktop base artifacts for small personalized installer builds, complete the independent same-boot handover audit, then run exact-candidate Windows install journeys. Public delivery and the remaining four profile builds are not yet complete.
