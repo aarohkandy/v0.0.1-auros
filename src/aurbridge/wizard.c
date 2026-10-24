@@ -1352,9 +1352,11 @@ static volatile LONG g_ab_state;   /* 0 idle, 1 running, 2 done, 3 failed */
 static volatile LONG g_stop_wanted;
 static volatile LONG g_ab_gate;
 static int    g_aborts;            /* ab_abort calls, for --navtest       */
-/* THE QUESTION WHEN SHE CLOSES THE WINDOW, drawn in the window (the stock
- * message box was a different program's words, in a different look):
- * 0 none, 1 stop setting up?, 2 close with AurOS ready? Esc cancels it. */
+/* QUESTIONS DRAWN IN THE WINDOW (the stock message box was a different
+ * program's words, in a different look): 1 stop setting up?, 2 close with
+ * AurOS ready?, 3 save before a Windows fix?, 4 pause drive protection?
+ * Esc cancels any of them. */
+#define CONFIRM_BITLOCKER 4
 static int    g_confirm;
 static int    leave_confirmed(void);
 static int    g_ab_phase;          /* which ab_phase is running           */
@@ -3517,7 +3519,9 @@ static int primary_enabled(void)
 static const wchar_t *primary_label(void)
 {
     if (g_confirm) return g_confirm == 1 ? L"Keep going"
-                        : g_confirm == 3 ? L"I have saved my work" : L"Keep this window open";
+                        : g_confirm == 3 ? L"I have saved my work"
+                        : g_confirm == CONFIRM_BITLOCKER ? L"Pause protection and restart"
+                        : L"Keep this window open";
     if (g_pane) return L"Done reading";
     switch (g_page) {
     case PAGE_WELCOME:  return L"Next";
@@ -3872,9 +3876,11 @@ static void draw_footer(void)
 #define SEC(l, i, lv) do { sec[ns].label = (l); sec[ns].id = (i); sec[ns].leaves = (lv); ns++; } while (0)
     if (g_pane && !g_confirm) {
         /* reading the Terms or the Licenses: one button, back to the page */
-    } else if (g_confirm == 3) {
+    } else if (g_confirm == 3 || g_confirm == CONFIRM_BITLOCKER) {
         SEC(L"Not yet", ID_LEAVE, 1);
-        lands = L"Not yet: nothing is changed, and the page stays as it is.";
+        lands = g_confirm == CONFIRM_BITLOCKER
+                  ? L"Not yet: Windows protection stays on, and nothing restarts."
+                  : L"Not yet: nothing is changed, and the page stays as it is.";
     } else if (g_confirm) {
         SEC(g_confirm == 1 ? L"Stop and undo" : L"Close and undo", ID_LEAVE, 1);
         lands = L"Undo: this computer starts Windows as usual.";
@@ -3947,6 +3953,12 @@ static int page_confirm(int x, int y, int w)
         y += page_head(L"Stop setting up AurOS?",
                        L"It stops when the step it is on is done, then takes everything "
                        L"back, so this computer starts Windows as usual.", x, y, w);
+    } else if (g_confirm == CONFIRM_BITLOCKER) {
+        y += page_head(L"Pause Windows drive protection?",
+                       L"Starting AurOS requires Windows drive protection to be paused. "
+                       L"While it is paused, anyone with this computer could read the "
+                       L"Windows drive. Start Windows again to let Windows turn protection "
+                       L"back on.", x, y, w);
     } else if (g_confirm == 3) {
         /* before Windows restarts for a fix (C-01): her work first */
         y += page_head(L"Save your work first",
@@ -4106,8 +4118,8 @@ static void check_advance(void)
     g_want_focus_id = ID_PRIMARY;      /* Next is now the obvious move */
 }
 
-/* HER PRESS ON RESTART NOW: arm the next start (the drive lock paused
- * for one restart, BootNext), then restart Windows. If either fails, what
+/* HER PRESS ON RESTART NOW: arm the next start (drive protection paused,
+ * BootNext), then restart Windows. If either fails, what
  * was armed is taken back and she is told in one plain sentence; nothing
  * is left armed under a computer that did not restart. */
 static void do_restart(void)
@@ -4145,6 +4157,7 @@ static void do_primary(void)
         g_confirm = 0;
         page_changed();
         if (c == 3) fix_start();               /* she saved her work: restart for the fix */
+        else if (c == CONFIRM_BITLOCKER) do_restart();
         return;
     }
     switch (g_page) {
@@ -4163,7 +4176,18 @@ static void do_primary(void)
     case PAGE_STYLE:    goto_page(PAGE_READY); g_want_focus_id = ID_PRIMARY; break;
     case PAGE_READY:    start_check(PAGE_PROGRESS); break;
     case PAGE_PROGRESS:
-        if (install_ok()) { do_restart(); break; }
+        if (install_ok()) {
+            if (g_ab_machine.fast && g_ab_machine.bitlocker) {
+                /* This press does not pause anything. The explicit answer on
+                 * the next page is the only path to ab_arm(). */
+                g_confirm = CONFIRM_BITLOCKER;
+                g_focus = -1;
+                g_want_focus_id = ID_LEAVE;   /* the safe answer owns Enter */
+                g_focus_ring = 1;
+                page_changed();
+            } else do_restart();
+            break;
+        }
         if (install_failed()) {
             /* As if she had closed it and opened it again: what the
              * stopped attempt did is taken back, then a fresh check,
@@ -4444,7 +4468,7 @@ static const IID ACC_IID_IAccessible = { 0x618736E0, 0x3C3D, 0x11CF,
 
 static IAccessible *g_acc_std;         /* Windows' own, for parent and siblings */
 static wchar_t      g_acc_name[600];   /* the page's name, as last announced    */
-static int          g_acc_page = -1;
+static int          g_acc_surface = -1;
 
 /* The page, in a sentence or two: what she would read first. Stable
  * while the page stands still -- no seconds, no minutes -- so that a
@@ -4454,7 +4478,13 @@ static void acc_page_name(wchar_t *out, int n)
     out[0] = 0;
     int k = 0;
 #define SAY(...) do { if (k >= 0 && k < n - 1) { int w_ = _snwprintf(out + k, (size_t)(n - k), __VA_ARGS__); k = w_ < 0 ? -1 : k + w_; } } while (0)
-    switch (g_pane ? -1 : (int)g_page) {
+    if (g_confirm == CONFIRM_BITLOCKER) {
+        SAY(L"Pause Windows drive protection? Starting AurOS requires Windows drive "
+            L"protection to be paused. While it is paused, anyone with this computer "
+            L"could read the Windows drive. Start Windows again to let Windows turn "
+            L"protection back on. Not yet is selected. Press Tab, then Enter, to pause "
+            L"protection and restart.");
+    } else switch (g_pane ? -1 : (int)g_page) {
     case -1:
         SAY(L"%ls. You can read this without the internet. Use the arrow keys to scroll. "
             L"Press Enter or Escape when you are done reading.", pane_title());
@@ -4787,9 +4817,10 @@ static void acc_after_render(void)
         wcscpy(g_acc_name, b);
         NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, g_hwnd, OBJID_CLIENT, CHILDID_SELF);
     }
-    if (g_acc_page != (int)g_page) {
-        g_acc_page = (int)g_page;
-        int p = acc_primary_index();
+    int surface = (int)g_page | (g_pane << 8) | (g_confirm << 16);
+    if (g_acc_surface != surface) {
+        g_acc_surface = surface;
+        int p = g_focus >= 0 && g_focus < g_nw ? g_focus : acc_primary_index();
         if (p >= 0 && GetFocus() == g_hwnd)
             NotifyWinEvent(EVENT_OBJECT_FOCUS, g_hwnd, OBJID_CLIENT, p + 1);
     }
@@ -4898,7 +4929,7 @@ static int leave_confirmed(void)
     int what = g_confirm;
     g_confirm = 0;
     page_changed();
-    if (what == 3) return 0;               /* "Not yet": back to the page */
+    if (what == 3 || what == CONFIRM_BITLOCKER) return 0; /* "Not yet": back to the page */
     if (what != 1) return 1;
     /* Before the engine has started (it waits for the download that ran
      * behind the pages, which only ever writes \AurOS\ ), there is
@@ -5452,6 +5483,12 @@ static int shot_run(const char *dir)
     g_install_running = 0; g_install_finished = 1;
     InterlockedExchange(&g_ab_state, 2);
     shot_save(dir, "5c-ready-to-restart");
+#if defined(AB_CHOICE_BRING_WIFI) && defined(AB_CHOICE_BITLOCKER_PAUSE)
+    g_ab_machine.fast = 1; g_ab_machine.bitlocker = 1;
+    g_confirm = CONFIRM_BITLOCKER; g_focus = -1; g_want_focus_id = ID_LEAVE; g_focus_ring = 1;
+    shot_save(dir, "5d-drive-protection-question");
+    g_confirm = 0; g_focus_ring = 0; g_ab_machine.fast = 0; g_ab_machine.bitlocker = 0;
+#endif
     g_install_armed = 1; g_confirm = 2;
     shot_save(dir, "5g-close-question-ready");
     g_confirm = 0; g_install_armed = 0;
@@ -5492,6 +5529,12 @@ static int shot_run(const char *dir)
         g_install_running = 0; g_install_finished = 1;
         InterlockedExchange(&g_ab_state, 2);
         snprintf(n, sizeof n, "%s-5c-ready-to-restart", SZ[k].pre); shot_save(dir, n);
+#if defined(AB_CHOICE_BRING_WIFI) && defined(AB_CHOICE_BITLOCKER_PAUSE)
+        g_ab_machine.fast = 1; g_ab_machine.bitlocker = 1;
+        g_confirm = CONFIRM_BITLOCKER; g_focus = -1; g_want_focus_id = ID_LEAVE; g_focus_ring = 1;
+        snprintf(n, sizeof n, "%s-5d-drive-protection-question", SZ[k].pre); shot_save(dir, n);
+        g_confirm = 0; g_focus_ring = 0; g_ab_machine.fast = 0; g_ab_machine.bitlocker = 0;
+#endif
         InterlockedExchange(&g_ab_state, 0);
         g_install_finished = 0; g_eta_min = -1; g_bar_f = 0.f;
         fx_machine(0);
@@ -6070,6 +6113,92 @@ static int nav_test(const char *dir)
         g_report.wifi_connected = 0;
         g_report.volumes[0].bitlocker = 0;
         g_bring_wifi = 1;
+    }
+
+    if (g_nt) fprintf(g_nt, "\n12b. drive protection is explained again immediately before it is paused\n");
+    {
+        nt_fake_report(0);
+        g_page = PAGE_PROGRESS;
+        g_install_running = 0; g_install_finished = 1; g_confirm = 0;
+        InterlockedExchange(&g_ab_state, 2);
+        memset(&g_ab_machine, 0, sizeof g_ab_machine);
+        g_nt_restarts = 0;
+
+        widget_activate(ID_PRIMARY);
+        nt_check(g_nt_restarts == 1 && g_confirm == 0,
+                 "a prepared install without fast-path BitLocker restarts directly");
+
+        g_nt_restarts = 0;
+        g_ab_machine.fast = 1; g_ab_machine.bitlocker = 1;
+        widget_activate(ID_PRIMARY);
+        render();
+        int leave = -1, primary = -1;
+        for (int i = 0; i < g_nw; i++) {
+            if (g_w[i].id == ID_LEAVE) leave = i;
+            if (g_w[i].id == ID_PRIMARY) primary = i;
+        }
+        nt_check(g_confirm == CONFIRM_BITLOCKER && g_nt_restarts == 0,
+                 "fast-path BitLocker asks before protection is paused or anything restarts");
+        nt_check(primary >= 0 && leave >= 0 && g_w[primary].name && g_w[leave].name &&
+                 !wcscmp(g_w[primary].name, L"Pause protection and restart") &&
+                 !wcscmp(g_w[leave].name, L"Not yet"),
+                 "the question has Pause protection and restart, and Not yet");
+        nt_check(g_focus == leave,
+                 "Not yet has the initial keyboard focus");
+        wchar_t bn[900];
+        acc_page_name(bn, 900);
+        nt_check(wcsstr(bn, L"anyone with this computer could read the Windows drive") &&
+                 wcsstr(bn, L"Not yet is selected"),
+                 "a screen reader says the clear-key consequence and the safe selected answer");
+        nt_check(g_content_h <= g_view_h,
+                 "the drive-protection question fits without scrolling");
+
+        g_nt_auto = 0;                       /* the echo of Restart now */
+        widget_activate(ID_PRIMARY);
+        nt_check(g_confirm == CONFIRM_BITLOCKER && g_nt_restarts == 0,
+                 "a double-click cannot cross the drive-protection question");
+        g_nt_auto = 1;
+        on_key(VK_ESCAPE);
+        nt_check(g_confirm == 0 && g_nt_restarts == 0 && install_ok(),
+                 "Esc answers Not yet: protection stays on and the prepared install waits");
+
+        widget_activate(ID_PRIMARY);
+        render();
+        widget_activate(ID_LEAVE);
+        nt_check(g_confirm == 0 && g_nt_restarts == 0 && install_ok(),
+                 "Not yet starts nothing and returns to Restart now");
+
+        widget_activate(ID_PRIMARY);
+        render();
+        on_key(VK_RETURN);                   /* safe answer owns Enter */
+        nt_check(g_confirm == 0 && g_nt_restarts == 0,
+                 "Enter on the initially focused Not yet starts nothing");
+
+        widget_activate(ID_PRIMARY);
+        render();
+        on_key(VK_TAB);                      /* move from Not yet to the explicit action */
+        on_key(VK_RETURN);
+        nt_check(g_confirm == 0 && g_nt_restarts == 1,
+                 "only the settled explicit confirmation reaches restart");
+
+        static const struct { int w, h, dpi; } CS[] = {
+            { 1024, 530, 96 }, { 1366, 663, 144 }, { 1680, 1035, 144 },
+        };
+        int fits = 1;
+        for (size_t i = 0; i < sizeof CS / sizeof CS[0]; i++) {
+            shot_size(CS[i].w, CS[i].h, CS[i].dpi);
+            g_confirm = CONFIRM_BITLOCKER; g_focus = -1; g_want_focus_id = ID_LEAVE;
+            render();
+            fits &= g_content_h <= g_view_h;
+        }
+        nt_check(fits, "the drive-protection question fits every supported screen size");
+        shot_size(1120, 690, 96);
+
+        memset(&g_ab_machine, 0, sizeof g_ab_machine);
+        g_confirm = 0; g_focus = -1; g_want_focus_id = 0; g_focus_ring = 0;
+        g_nt_restarts = 0;
+        g_install_finished = 0;
+        InterlockedExchange(&g_ab_state, 0);
     }
 
     if (g_nt) fprintf(g_nt, "\n13. closing in the middle of a step never cuts it off, and asks in the window\n");
