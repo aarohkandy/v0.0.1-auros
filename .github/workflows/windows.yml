@@ -223,6 +223,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { name: exe, path: exe }
       - name: console tool starts and passes its selftest
@@ -305,6 +306,10 @@ jobs:
           Pop-Location
           # 3. NOT ONE PLANTED DLL WAS LOADED, and every program ran to its end.
           "exit codes: $($codes -join '; ')"
+          # what a failing program said (navtest's FAIL lines), so the cause is in this log
+          foreach ($l in "$d\r2\navtest.log", "$d\r3\selftest.log") {
+            if (Test-Path $l) { Select-String -Path $l -Pattern '\[FAIL\]|FAILED' | ForEach-Object { $_.Line } | Select-Object -First 12 }
+          }
           $hit = @(Get-ChildItem $d -Filter *.loaded)
           if ($hit) { throw "the installer loaded a DLL planted beside it: $($hit.Name -join ', ')   ($($codes -join '; '))" }
           $failed = @($codes | Where-Object { $_ -notmatch ' 0$' })
@@ -604,6 +609,29 @@ jobs:
           # A screen reader, asking Windows for the window's accessible
           # object, gets the page's words and its button by name.
           if (-not (Select-String -Path "$d\selftest.log" -Pattern 'screen reader    : "[^"]{10,}", [1-9][0-9]* parts, button "[^"]+"' -Quiet)) { throw "a screen reader gets nothing from the window" }
+      # THE WEBSITE'S INSTALLER PICTURES (D-P0-2): the three on the front page (website/assets/shots/
+      # setup-check, setup-look, setup-ready) were made by Wine. These are every page drawn by real
+      # Windows with this build's own letters; D takes them from the artifact once the wizard is
+      # frozen. Evidence, not a gate (a failure here is red on the step and the job stays green).
+      - name: every page as real Windows draws it (the website's pictures come from here)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP 'shots'
+          New-Item -ItemType Directory -Force -Path "$d\png" | Out-Null
+          $p = Start-Process -FilePath (Resolve-Path .\exe\aurbridge-wizard.exe).Path -ArgumentList '--shot', $d -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "--shot exited $($p.ExitCode)" }
+          $bmps = @(Get-ChildItem $d -Filter *.bmp | ForEach-Object { $_.FullName })
+          if ($bmps.Count -lt 40) { throw "only $($bmps.Count) pictures were drawn" }
+          python tools\wizard\bmp2png.py --out "$d\png" @bmps
+          "$($bmps.Count) pictures drawn by real Windows" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          Copy-Item "$d\png" "$PWD\wizard-shots-windows" -Recurse
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: wizard-shots-windows
+          path: wizard-shots-windows
+          if-no-files-found: ignore
       - name: the installer says its own name, and has its icon
         shell: pwsh
         run: |
