@@ -131,9 +131,14 @@ JS
     IMG=$(find /out -name '*.png' -size +600k | head -1)
     /out/clip-probe /out $IMG
     for f in x-reads wl-reads; do printf '%s: ' "$f"; cat "/out/$f.txt" 2>/dev/null; echo; done
+    # The clipboard follows the keyboard: xclip has no window, so it is refused both ways (clip-probe.c says why).
+    # x-reads must not hold the Wayland copy; wl-reads is the Wayland program's own copy, never xclip's.
+    if grep -q from-wayland /out/x-reads.txt 2>/dev/null; then echo "PRIVACY FAIL: an X client with no window with the keyboard read the Wayland copy"
+    elif grep -q from-x /out/wl-reads.txt 2>/dev/null; then echo "PRIVACY FAIL: an X client with no window with the keyboard replaced the Wayland copy"
+    else echo "PRIVACY OK: xclip read nothing of the Wayland copy and its own copy did not reach the Wayland program"; fi
     if [ -n "$IMG" ]; then
         ls -l "$IMG" /out/x-image.png /out/wl-image.png 2>&1 | sed 's/^/  /'
-        for f in x wl; do cmp -s "$IMG" "/out/$f-image.png" && echo "$f-image: identical" || { echo "$f-image: DIFFERENT"; cat "/out/$f-image.err" 2>/dev/null; }; done
+        for f in x wl; do cmp -s "$IMG" "/out/$f-image.png" && echo "$f-image: PRIVACY FAIL, the picture crossed" || echo "$f-image: did not cross (refused, as it must be)"; done
     fi
     exit 0 ;;
   click)            # click points in a program's window and show what it was sent (run with WAYLAND_DEBUG=client);

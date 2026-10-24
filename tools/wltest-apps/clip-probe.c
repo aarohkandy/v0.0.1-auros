@@ -14,6 +14,13 @@
  *   A'. wl-copy --type image/png, read by xclip -t image/png  -> OUTDIR/x-image.png
  *   B'. xclip -t image/png copies, wl-paste -t image/png reads -> OUTDIR/wl-image.png
  * Prints what it did; the files say what arrived.
+ *
+ * SINCE THE CLIPBOARD FOLLOWS THE KEYBOARD (src/aurwl/xclip.inc, review W01/W05/W09/W19) nothing crosses:
+ * x-reads has no "from-wayland" (xclip says "target STRING not available"), wl-reads has no "from-x" (it is
+ * the Wayland program's own copy), and the pictures do not arrive. xclip is an X client with no window, so it is never the X program the keyboard is in, and it
+ * is refused in both directions (it cannot read the Wayland copy, and its copy does not reach the Wayland
+ * program). This is the real-program proof of the refusal. The crossing itself, for an X program that has a
+ * window with the keyboard (VLC to Firefox and back), is proven on the wire by tools/wltest-x.sh.
  */
 #define _GNU_SOURCE
 #include <poll.h>
