@@ -1,0 +1,27 @@
+[Unit]
+Description=AurOS: record this session's installed-system state
+After=apparmor.service NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/auros/first-session-probe
+TimeoutStartSec=50
+SyslogIdentifier=auros-first-session-probe
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/run /sys/kernel/security
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

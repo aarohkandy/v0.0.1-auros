@@ -1,0 +1,61 @@
+#!/bin/sh
+# Facts that disappear when this boot ends. They go only to the local journal;
+# tools/e2e/e2e.py reads that journal after the machine is safely off.
+
+aa_enabled=${AUROS_PROBE_AA_ENABLED:-/usr/bin/aa-enabled}
+ip=${AUROS_PROBE_IP:-/usr/sbin/ip}
+getent=${AUROS_PROBE_GETENT:-/usr/bin/getent}
+stat=${AUROS_PROBE_STAT:-/usr/bin/stat}
+sleep_cmd=${AUROS_PROBE_SLEEP:-/usr/bin/sleep}
+timeout_cmd=${AUROS_PROBE_TIMEOUT:-/usr/bin/timeout}
+profiles_file=${AUROS_PROBE_PROFILES:-/sys/kernel/security/apparmor/profiles}
+run_dir=${AUROS_PROBE_RUN:-/run}
+saved_bin=${AUROS_PROBE_SAVED_BIN:-/run/aurstage/saved.bin}
+max_wait=${AUROS_PROBE_MAX_WAIT:-40}
+
+case "$max_wait" in
+    ''|*[!0-9]*) max_wait=40 ;;
+esac
+[ "$max_wait" -le 45 ] 2>/dev/null || max_wait=45
+
+apparmor=disabled
+profiles=0
+route=missing
+i=0
+while [ "$i" -lt "$max_wait" ]; do
+    "$aa_enabled" >/dev/null 2>&1 && apparmor=enabled || apparmor=disabled
+    if [ -r "$profiles_file" ]; then
+        profiles=$(awk 'NF { n++ } END { print n + 0 }' "$profiles_file" 2>/dev/null)
+    else
+        profiles=0
+    fi
+    case "$profiles" in ''|*[!0-9]*) profiles=0 ;; esac
+    if "$ip" route show default 2>/dev/null | grep -q .; then
+        route=default
+    else
+        route=missing
+    fi
+    if [ "$apparmor" = enabled ] && [ "$profiles" -gt 0 ] && [ "$route" = default ]; then
+        break
+    fi
+    i=$((i + 1))
+    [ "$i" -lt "$max_wait" ] && "$sleep_cmd" 1
+done
+
+dns=failed
+if [ "$route" = default ] &&
+   "$timeout_cmd" 5 "$getent" ahostsv4 github.com >/dev/null 2>&1; then
+    dns=ok
+fi
+
+run_mode=$("$stat" -c %a "$run_dir" 2>/dev/null) || run_mode=unknown
+case "$run_mode" in
+    [0-7][0-7][0-7]) run_mode=0$run_mode ;;
+    [0-7][0-7][0-7][0-7]) ;;
+    *) run_mode=unknown ;;
+esac
+[ -e "$saved_bin" ] && saved=present || saved=absent
+
+printf 'v1 apparmor=%s profiles=%s route=%s dns=%s run_mode=%s saved_bin=%s\n' \
+    "$apparmor" "$profiles" "$route" "$dns" "$run_mode" "$saved"
+exit 0

@@ -102,21 +102,21 @@ every three minutes. Inside the zip: `windows/` (M1) and
 SmartScreen), `guest-diagnostics.log`, and `FAILED.txt` when it failed;
 `inspect/disk-inspection.txt` for M3.
 
-The offline inspection gates one record from a root oneshot in the installed
+The offline inspection gates one record from a root diagnostic in the installed
 system's **first session**:
 
 ```
 auros-first-session-probe: v1 apparmor=enabled profiles=N route=default dns=ok run_mode=0755 saved_bin=absent
 ```
 
-The producer must run after `apparmor.service` and NetworkManager is online,
-before the desktop is accepted as healthy. It obtains `apparmor` from
-`aa-enabled`, counts the non-empty lines in
+The service starts after `apparmor.service` and `NetworkManager.service` but
+does not hold the desktop. It polls AppArmor and the default route for at most
+40 seconds. It obtains `apparmor` from `aa-enabled`, counts the non-empty lines in
 `/sys/kernel/security/apparmor/profiles`, checks `ip route show default`, makes
-one bounded public DNS lookup, reads `stat -c %a /run`, and tests the exact path
-`/run/aurstage/saved.bin`. It writes one record with `logger -t
-auros-first-session-probe`. The e2e harness cannot safely manufacture this
-record: AurOS intentionally has no guest agent or serial login, and the host
+one five-second DNS lookup for `github.com`, reads `stat -c %a /run`, and tests the exact path
+`/run/aurstage/saved.bin`. It writes one line to stdout; its systemd unit gives
+that line `SyslogIdentifier=auros-first-session-probe`. The e2e harness cannot
+safely manufacture this record: AurOS intentionally has no guest agent or serial login, and the host
 must not mount its live disk. A missing, duplicate, or malformed record fails
 all five verdicts. NetworkManager's own DHCP/`CONNECTED_GLOBAL` journal lines
 remain a separate network verdict.

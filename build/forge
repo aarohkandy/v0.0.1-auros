@@ -1616,6 +1616,8 @@ stage_overlay() {
     chmod 755 "$RFS/usr/lib/auros/choices.sh" 2>/dev/null || true
     chmod 755 "$RFS/usr/lib/auros/software-ready.sh" "$RFS/usr/lib/auros/not-first-hour" \
         2>/dev/null || true
+    chmod 755 "$RFS/usr/lib/auros/first-session-probe" \
+        || die "could not make the first-session probe executable"
 
     # THE BOOT CHAIN BELONGS TO AUROS, NOT TO update-grub AND grub-install.
     #
@@ -1656,6 +1658,7 @@ stage_overlay() {
      would enumerate (and could mount) Windows' EFI partition"
 
     enable_unit auros-firstboot.service multi-user.target
+    enable_unit auros-first-session-probe.service multi-user.target
     # Phases 9 and 10. The hold runs on every boot until somebody has
     # answered; the path unit is how the desktop asks for the three
     # things that have to happen as root. See src/aurfirst/aurfirst.h.
@@ -2642,6 +2645,7 @@ squash_preconditions() {
              usr/lib/auros/firstboot.sh \
              usr/lib/auros/choices.sh \
              usr/lib/auros/software-ready.sh \
+             usr/lib/auros/first-session-probe \
              usr/lib/auros/not-first-hour \
              etc/systemd/system/auros-software.service \
              etc/systemd/system/apt-daily-upgrade.service.d/50-auros-first-hour.conf \
@@ -2664,6 +2668,7 @@ squash_preconditions() {
              etc/systemd/system/auros-answer.path \
              etc/systemd/system/auros-answer.service \
              etc/systemd/system/auros-firstboot.service \
+             etc/systemd/system/auros-first-session-probe.service \
              etc/auros/services; do
         [ -e "$RFS/$f" ] || missing="$missing
        $f"
@@ -2675,6 +2680,7 @@ squash_preconditions() {
              multi-user.target.wants/auros-keeper.service \
              multi-user.target.wants/auros-answer.path \
              multi-user.target.wants/auros-firstboot.service \
+             multi-user.target.wants/auros-first-session-probe.service \
              multi-user.target.wants/auros-software.service \
              graphical.target.wants/aurshell.service; do
         [ -L "$RFS/etc/systemd/system/$f" ] ||
