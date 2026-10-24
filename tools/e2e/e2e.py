@@ -1187,6 +1187,84 @@ class Flow:
         import hashlib
         return hashlib.md5(img[100:330:3, 240:1040:3].tobytes()).hexdigest()
 
+    # -- D13, after AurOS: Windows comes back, with BitLocker on, no recovery key asked --
+    def pick_grub_entry(self, name, tries=12):
+        """In AurOS's start menu (text GRUB): move down until the line that
+        says exactly `name` is the highlighted one (its row is light: the
+        selected row is drawn inverted), then Enter. Fails with what is shown."""
+        for i in range(tries):
+            img = self.m.screendump()
+            words = vision.ocr(img)
+            lines = {}
+            for w in words:
+                lines.setdefault(w["line"], []).append(w)
+            for ws in lines.values():
+                text = " ".join(w["text"] for w in ws)
+                if re.sub(r"[^a-z]", "", text.lower()) == re.sub(r"[^a-z]", "", name.lower()):
+                    y0 = max(0, min(w["y"] for w in ws) - 2)
+                    y1 = min(img.shape[0], max(w["y"] + w["h"] for w in ws) + 2)
+                    lum = float(img[y0:y1, :].mean())
+                    self.log(f"start menu: '{text}' row brightness {lum:.0f}")
+                    if lum > 110:                      # the selected row is light
+                        self.m.key("ret", label=f"start menu: {name}")
+                        return
+            self.m.key("down", label="start menu: down" if i == 0 else None)
+            time.sleep(1.2)
+        self.m.shot("start-menu-no-entry")
+        raise Failure(f"AurOS's start menu never highlighted '{name}': " +
+                      vision.text_of(vision.ocr(self.m.screendump()))[:400])
+
+    def back_to_windows(self):
+        """The machine is switched off and on again like a person would, AurOS's
+        start menu picks Windows, and Windows must come up WITHOUT the BitLocker
+        recovery screen and with BitLocker protecting C: again (D13). Written
+        from the menu's source (rootfs/usr/lib/auros/grub.cfg.in), NOT yet seen
+        working: the first run that gets here shows how far it goes."""
+        with self.rec.phase("windows: back from AurOS, through its own start menu"):
+            t = time.time()
+            self.m.start()
+            self.m.auto_shots(10)
+            # a key every half second stops the menu's 3-second countdown
+            seen_menu = False
+            deadline = time.time() + 180
+            while time.time() < deadline and not seen_menu:
+                self.m.key("shift")
+                time.sleep(0.5)
+                if int(time.time() - t) % 4 == 0:
+                    img = self.m.screendump()
+                    words = vision.ocr(img)
+                    seen_menu = bool(vision.find_text(words, "verbose") or vision.find_text(words, "GRUB"))
+            if not seen_menu:
+                raise Failure("AurOS's start menu never showed after the restart")
+            self.m.shot("start-menu")
+            self.pick_grub_entry("Windows")
+            # Windows starts through the firmware (start-windows), BitLocker sealed to it:
+            # a recovery screen is the failure D13 forbids
+            deadline = time.time() + 12 * 60
+            while time.time() < deadline:
+                if self.hub.event("helper-up", since=t) is not None:
+                    break
+                words = vision.ocr(self.m.screendump())
+                text = vision.text_of(words)
+                if re.search(r"recovery key|BitLocker recovery|enter the recovery", text, re.I):
+                    self.m.shot("bitlocker-recovery-screen")
+                    raise Failure("Windows asked for the BitLocker recovery key after AurOS: " + text[:300])
+                time.sleep(10)
+            else:
+                self.m.shot("windows-did-not-come-back")
+                raise Failure("Windows did not come back through AurOS's start menu in 12 minutes: " +
+                              vision.text_of(vision.ocr(self.m.screendump()))[:300])
+            time.sleep(45)
+            self.m.shot("windows-back")
+            deadline = time.time() + 4 * 60
+            while True:
+                vol, prot, pct = self.bitlocker_state("after the way back from AurOS")
+                if vol == "FullyEncrypted" and prot == "On":
+                    break
+                if time.time() > deadline:
+                    raise Failure(f"Windows is back but BitLocker is {vol}, protection {prot} (D13: on again, never decrypted)")
+                time.sleep(20)
+
     def finish_findings(self):
         """The journey got through; what a person would be hurt by on the way
         (a label she cannot read) still fails the run, with its words."""
@@ -1280,8 +1358,22 @@ def cmd_flow(a):
         f.check_variant()
         f.watch_install()
         f.answer_yes()
+        store_fail = None
         if E("E2E_STORE", "1") == "1":
-            f.store()
+            try:
+                f.store()
+            except Failure as e:
+                store_fail = e          # the way back to Windows is checked all the same
+        if VARIANT == "bitlocker":
+            f.shutdown()
+            try:
+                f.back_to_windows()
+            except Failure as e:
+                if store_fail is None:
+                    raise
+                f.log(f"FAILED (also): {e}")
+        if store_fail is not None:
+            raise store_fail
         rc = f.finish_findings()
     except Failure as e:
         f.log(f"FAILED: {e}")
