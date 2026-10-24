@@ -30,7 +30,7 @@ class ConnectionProbeTest(unittest.TestCase):
         valid = {100: "/usr/bin/dbus-run-session", 101: "/usr/bin/aurshell",
                  102: "/usr/bin/dbus-daemon"}
         cases = [
-            (99, pids, valid, parents, "outside its control group"),
+            (99, pids, valid, parents, "outside its PAM session scope"),
             (100, pids, {**valid, 100: "/usr/bin/aurshell"}, parents,
              "not the exact session wrapper"),
             (100, pids, {**valid, 102: "/usr/bin/aurshell"}, parents,
@@ -44,7 +44,7 @@ class ConnectionProbeTest(unittest.TestCase):
         pids = {100, 102}
         executables = {100: "/usr/bin/dbus-run-session", 102: "/usr/bin/aurshell"}
         for parents, message in (
-                ({100: 1, 102: 77}, "left the service control group"),
+                ({100: 1, 102: 77}, "left the PAM session scope"),
                 ({100: 1, 102: 102}, "ancestry contains a loop")):
             with self.subTest(message=message), self.assertRaisesRegex(RuntimeError, message):
                 probe.select_compositor(100, pids, executables, parents)
@@ -60,17 +60,58 @@ class ConnectionProbeTest(unittest.TestCase):
         self.assertTrue(probe.fd_flags_writable(os.O_WRONLY))
         self.assertTrue(probe.fd_flags_writable(os.O_RDWR | os.O_APPEND))
 
-    def test_service_topology_rejects_pid_reuse_between_snapshot_and_pidfd(self):
+    def test_service_topology_rejects_stale_systemd_identity_even_same_tick(self):
         first = ({100, 102},
                  {100: "/usr/bin/dbus-run-session", 102: "/usr/bin/aurshell"},
                  {100: 1, 102: 100}, {100: 10, 102: 20})
-        reused = ({100, 102}, first[1], first[2], {100: 10, 102: 99})
-        with mock.patch.object(probe, "service_snapshot", side_effect=[first, reused]), \
+        path = mock.Mock()
+        path.is_dir.return_value = True
+        expected = (100, "/system.slice/aurshell.service", "a" * 32)
+        with mock.patch.object(probe, "cgroup_path", return_value=path), \
+             mock.patch.object(probe, "process_cgroup", return_value="/user.slice/user-1000.slice/session-c1.scope"), \
+             mock.patch.object(probe, "session_snapshot", side_effect=[first, first]), \
+             mock.patch.object(probe, "systemd_service_properties", side_effect=[
+                 expected, (999, expected[1], "b" * 32)]), \
              mock.patch.object(probe.os, "pidfd_open", side_effect=[31, 32], create=True), \
+             mock.patch.object(probe, "pidfd_alive", return_value=True), \
+             mock.patch.object(probe.os, "readlink", return_value="/usr/bin/dbus-run-session"), \
+             mock.patch.object(probe, "process_uid", return_value=1000), \
+             mock.patch.object(probe, "process_invocation_id", return_value="a" * 32), \
              mock.patch.object(probe.os, "close") as close:
-            with self.assertRaisesRegex(RuntimeError, "topology changed"):
-                probe.read_service_topology(100, "/system.slice/aurshell.service")
+            with self.assertRaisesRegex(RuntimeError, "properties changed during"):
+                probe.read_service_topology(
+                    100, "/system.slice/aurshell.service", 1000, "a" * 32)
             self.assertEqual(close.call_count, 2)
+
+    def test_service_topology_binds_pam_scope_and_systemd_invocation(self):
+        snapshot = ({100, 101, 102},
+                    {100: "/usr/bin/dbus-run-session", 101: "/usr/bin/dbus-daemon",
+                     102: "/usr/bin/aurshell"},
+                    {100: 1, 101: 100, 102: 100}, {100: 10, 101: 11, 102: 12})
+        path = mock.Mock(); path.is_dir.return_value = True
+        scope = "/user.slice/user-1000.slice/session-c1.scope"
+        with mock.patch.object(probe, "cgroup_path", return_value=path), \
+             mock.patch.object(probe, "process_cgroup", return_value=scope), \
+             mock.patch.object(probe, "session_snapshot", side_effect=[snapshot, snapshot]), \
+             mock.patch.object(probe, "systemd_service_properties", return_value=(
+                 100, "/system.slice/aurshell.service", "a" * 32)), \
+             mock.patch.object(probe.os, "pidfd_open", side_effect=[31, 32], create=True), \
+             mock.patch.object(probe, "pidfd_alive", return_value=True), \
+             mock.patch.object(probe.os, "readlink", side_effect=[
+                 "/usr/bin/dbus-run-session", "/usr/bin/aurshell"]), \
+             mock.patch.object(probe, "process_uid", return_value=1000), \
+             mock.patch.object(probe, "process_invocation_id", return_value="a" * 32):
+            self.assertEqual(probe.read_service_topology(
+                100, "/system.slice/aurshell.service", 1000, "a" * 32),
+                (102, 31, 32, scope))
+
+    def test_session_scope_rejects_arbitrary_or_wrong_user_cgroup(self):
+        for value in ("/system.slice/aurshell.service",
+                      "/user.slice/user-999.slice/session-c1.scope",
+                      "/user.slice/user-1000.slice/app.scope"):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                    RuntimeError, "expected user PAM session scope"):
+                probe.session_snapshot(value, 1000)
 
     def test_socket_semantics_require_stream_and_listener_accept(self):
         endpoint = mock.Mock()
