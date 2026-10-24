@@ -835,6 +835,9 @@ jobs:
           ls -la out
           df -h /
           echo "setup $(( $(date +%s) - T0 )) s" | tee transcripts/timing-${{ matrix.label }}.txt
+      - name: putback timeout harness selftest
+        if: matrix.test == 'putbacktest'
+        run: PUTBACK_SELFTEST=timeout sh tools/putbacktest.sh 2>&1 | tee transcripts/putback-timeout-selftest.txt
       - name: ${{ matrix.label }} under KVM
         run: |
           T=$(date +%s)
