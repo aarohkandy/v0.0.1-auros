@@ -3879,7 +3879,7 @@ static void draw_footer(void)
     } else if (g_confirm == 3 || g_confirm == CONFIRM_BITLOCKER) {
         SEC(L"Not yet", ID_LEAVE, 1);
         lands = g_confirm == CONFIRM_BITLOCKER
-                  ? L"Not yet: Windows protection stays on, and nothing restarts."
+                  ? L"Not yet: drive protection is not changed, and nothing restarts."
                   : L"Not yet: nothing is changed, and the page stays as it is.";
     } else if (g_confirm) {
         SEC(g_confirm == 1 ? L"Stop and undo" : L"Close and undo", ID_LEAVE, 1);
