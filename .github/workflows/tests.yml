@@ -169,7 +169,7 @@ jobs:
           sh tools/apt.sh \
               gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev wine wine64 osslsigncode openssl python3 gcc libc6-dev make \
               grub-common gdisk mtools dosfstools cpio sbsigntool libxml2-utils file \
-              binutils zstd e2fsprogs fonts-dejavu-core fonts-atkinson-hyperlegible ovmf pkg-config libdbus-1-dev libwayland-dev libxkbcommon-dev xkb-data exfatprogs
+              binutils zstd e2fsprogs fonts-dejavu-core fonts-atkinson-hyperlegible ovmf pkg-config libdbus-1-dev libwayland-dev libxkbcommon-dev xkb-data exfatprogs python3-numpy python3-pil
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: auros-installer
