@@ -501,8 +501,9 @@ int hwcompat_selftest(void)
     t("BCM4352, no cable socket: Wi-Fi won't work, and it blocks", is(x, HW_V_WONT, "wifi-broadcom-wl-only") && x->blocks == 1);
     t("  and she is told so plainly", x && strstr(x->says, "no place for a network cable") && strstr(x->says, "Nothing has been changed"));
     t("  and the reason is ours to read", x && strstr(x->why, "wl") && strstr(x->why, "bcma"));
-    t("  and it points to the page that says which USB Wi-Fi stick to buy, and names the chips",
-      x && !strcmp(x->link, "advanced.html#wifi-sticks") && strstr(x->says, "MT7612U") && strstr(x->says, "MT7601U"));
+    t("  and it points to the page that says which USB Wi-Fi stick to buy, without naming chips to her",
+      x && !strcmp(x->link, "advanced.html#wifi-sticks") && strstr(x->says, "Show a helper how") &&
+      !strstr(x->says, "MT7612U") && !strstr(x->says, "MT7601U"));
     {
         char j[128];
         size_t jl = hwinv_journal(v, j, sizeof j);

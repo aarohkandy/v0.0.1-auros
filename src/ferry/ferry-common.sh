@@ -446,7 +446,11 @@ mount_vol() { # DEV MNT rw|ro UID GID
 # the volume labelled AUROSHANDOV (an exFAT label holds 11 characters).
 find_handover() {
     if [ -n "${FERRY_HANDOVER_DEV:-}" ]; then printf '%s\n' "$FERRY_HANDOVER_DEV"; return 0; fi
-    blkid -L AUROSHANDOV 2>/dev/null
+    _handover=$(blkid -L AUROSHANDOV 2>/dev/null) || return 1
+    # libblkid may remember a labelled loop device after it is detached.
+    # Never hand that stale path to ferry-handover as if a volume exists.
+    [ -n "$_handover" ] && [ -b "$_handover" ] || return 1
+    printf '%s\n' "$_handover"
 }
 
 # ── The completion signal. The desktop asks "Can you see your photos?"

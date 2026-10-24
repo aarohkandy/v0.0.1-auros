@@ -87,14 +87,14 @@ int main(int argc, char **argv)
     shell_theme_load(&c, &t);
     c.text_scale = 1.f;
     shell_fonts f; shell_fonts_load(&f, &c);
-    font *want = font_load(argv[2], 14.f);
+    font *want = font_load(argv[2], 20.f);
     if (!f.small || !want) return 2;
     float a = font_text_width(f.small, "iiiiWWWW"), b = font_text_width(want, "iiiiWWWW");
     printf("%.1f %.1f\n", a, b);
     return (a > b - 0.5f && a < b + 0.5f) ? 0 : 1;
 }
 EOC
-    printf 'font_text = Narrow\nfont_size = 14\n' > "$T/theme.conf"
+    printf 'font_text = Narrow\nfont_size = 20\n' > "$T/theme.conf"
     if cc -O2 -std=gnu11 -o "$T/name" "$T/name.c" -DAUROS_FONT_DIR="\"$T/fonts\"" \
            -I src/aurshell -I src/common src/aurshell/shellcommon.c src/aurshell/draw.c \
            src/aurshell/anim.c src/aurshell/layouts/*.c src/common/theme.c \
