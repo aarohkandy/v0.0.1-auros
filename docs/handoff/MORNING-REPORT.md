@@ -128,8 +128,8 @@ _Last updated: 00:36 UTC 2026-10-24 (17:36 your time, 23 Oct)._
 7. **Anthropic paperwork** (console.anthropic.com): accept the Data Processing Addendum, request zero
    data retention, and confirm the AurOS Wishes workspace has a monthly spend limit (docs/OWNER-SETUP.md §7b).
 8. **Protect the update key** — confirmed tonight by a canary run (40046763411): today a throwaway branch can load
-   the key (it ran our own code, printed only "yes", nothing leaked; no rotation needed in my view).
-   **Protect the update key** (docs/OWNER-SETUP.md, written by the pipeline agent): create the environment
+   the key (it ran our own code, printed only "yes", nothing leaked; no rotation needed in my view). How
+   (docs/OWNER-SETUP.md, written by the pipeline agent): create the environment
    `apt-signing` (main only, you as required reviewer), move the secret into it, turn on branch protection
-   for main and GitHub's release immutability. Today any pushed workflow could read the key.
+   for main. Leave GitHub's release immutability off for now (the pipeline agent is moving evidence uploads first).
 9. Set the watchdog task to Auto mode (Scheduled → "AurOS: restart the swarm if it stopped").
