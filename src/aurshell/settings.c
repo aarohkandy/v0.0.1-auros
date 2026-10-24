@@ -7,8 +7,10 @@
 #include <time.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include "settings.h"
 #include "power.h"
@@ -1084,6 +1086,60 @@ static void gtk_follow(const char *id, const char *css_dir)
     }
 }
 
+/* Unlike run_status(), a timed-out theme command must not keep running:
+ * Wishes cannot say that a change worked, record Undo, and then learn that
+ * aurora failed. Kill its whole session at the deadline and reap it here. */
+static int theme_status(const char *const argv[], int timeout_ms)
+{
+    pid_t pid = fork();
+    if (pid < 0) return RUN_NOSTART;
+    if (pid == 0) {
+        int nullfd = open("/dev/null", O_WRONLY);
+        if (nullfd >= 0) {
+            dup2(nullfd, STDOUT_FILENO);
+            dup2(nullfd, STDERR_FILENO);
+            if (nullfd > STDERR_FILENO) close(nullfd);
+        }
+        setsid();
+        setenv("LC_ALL", "C", 1);
+        execvp(argv[0], (char *const *)argv);
+        _exit(127);
+    }
+
+    struct timespec t0;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (;;) {
+        int st = 0;
+        pid_t r = waitpid(pid, &st, WNOHANG);
+        if (r == pid) {
+            if (WIFEXITED(st)) return WEXITSTATUS(st);
+            if (WIFSIGNALED(st)) return 128 + WTERMSIG(st);
+            return RUN_RUNNING;
+        }
+        if (r < 0 && errno != EINTR) return RUN_RUNNING;
+
+        struct timespec tn;
+        clock_gettime(CLOCK_MONOTONIC, &tn);
+        long spent = (tn.tv_sec - t0.tv_sec) * 1000L
+                   + (tn.tv_nsec - t0.tv_nsec) / 1000000L;
+        if (spent >= timeout_ms) {
+            kill(-pid, SIGKILL);
+            kill(pid, SIGKILL);
+            while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
+            return RUN_RUNNING;
+        }
+        struct timespec nap = { 0, 10 * 1000 * 1000 };
+        nanosleep(&nap, NULL);
+    }
+}
+
+int settings_theme_validate(const char *id)
+{
+    if (!theme_id_valid(id)) return 0;
+    const char *argv[] = { "aurora", "validate", id, NULL };
+    return theme_status(argv, 2500) == 0;
+}
+
 int settings_theme_apply(shell_ctx *c, const char *id)
 {
     if (!c || !c->allow_theme_change || !theme_id_valid(id)) return 0;
@@ -1100,14 +1156,11 @@ int settings_theme_apply(shell_ctx *c, const char *id)
     setenv("AURORA_ONLY",   "shell.conf gtk.css", 1);
     setenv("AURORA_CACHE", cache, 1);
     const char *argv[] = { "aurora", "set", id, NULL };
-    int rc = run_status(argv, 2500);
-    if (rc == RUN_NOSTART || rc > 0) return 0;
+    int rc = theme_status(argv, 2500);
+    if (rc != 0) return 0;
 
     gtk_follow(id, dir);
-    if (rc == 0)
-        c->want_reload = 1;
-    else
-        S.reload_at = now_ms() + 700;
+    c->want_reload = 1;
     return 1;
 }
 

@@ -1016,11 +1016,13 @@ static void do_shell(shell_ctx *c, const char *L, const char *E)
 #if AUROS_WISHES
         else if (!strcmp(type, "set_wallpaper")) {
             char theme[48], old[48];
-            const char *ce;
+            const char *ce, *ne;
             int has_color = js_get(d, de, "color", &ce) != NULL;
-            if (!has_color &&
-                js_getstr(d, de, "theme_name", theme, sizeof theme) == 0 &&
+            int has_unresolved = js_get(d, de, "theme_name", &ne) != NULL;
+            if (!has_color && !has_unresolved &&
+                js_getstr(d, de, "theme", theme, sizeof theme) == 0 &&
                 settings_theme_current(old, sizeof old) == 0 &&
+                settings_theme_validate(old) &&
                 settings_theme_apply(c, theme)) {
                 snprintf(prev, sizeof prev,
                          "{\"type\":\"set_wallpaper\",\"theme\":\"%s\"}", old);

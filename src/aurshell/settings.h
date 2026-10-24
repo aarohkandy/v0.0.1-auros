@@ -86,9 +86,10 @@ int  settings_page(void);
 
 /* The same local theme control used by the Colors page. Theme ids are
  * accepted only when their installed .theme file exists. The apply call
- * returns 1 once aurora has applied (or accepted) the change, 0 if nothing
- * was claimed; on success it also arranges the shell reload. */
+ * returns 1 only after aurora has applied the change, 0 on refusal, failure
+ * or timeout; on success it also arranges the shell reload. */
 int settings_theme_current(char *out, size_t n);
+int settings_theme_validate(const char *id);
 int settings_theme_apply(shell_ctx *c, const char *id);
 
 #endif
