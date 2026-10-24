@@ -73,10 +73,14 @@ test("mixed supported and unsupported request stays unsupported", () => {
   assert.equal(analyzeConfigureRequest("Use the Revive base in moss and also make the pointer enormous").reason, "other");
 });
 
-test("bare Office is not mistaken for the office computer base", () => {
-  assert.equal(analyzeConfigureRequest("Give me Office").reason, "other");
-  assert.deepEqual(analyzeConfigureRequest("Use the office computer base").expected,
-    { base: "office", look: "default", theme: "default" });
+test("program-like Office is refused while explicit office and work OS requests select the base", () => {
+  for (const text of ["Give me Office", "Microsoft Office in moss", "Office with a taskbar"]) {
+    assert.equal(analyzeConfigureRequest(text).reason, "programs", text);
+  }
+  for (const text of ["Use the office computer base", "Build an office OS", "Make a work OS", "An operating system for the office"]) {
+    assert.deepEqual(analyzeConfigureRequest(text).expected,
+      { base: "office", look: "default", theme: "default" }, text);
+  }
 });
 
 test("configure route authenticates and honors the budget switch before reading or planning", async () => {

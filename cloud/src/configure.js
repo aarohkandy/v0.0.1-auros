@@ -41,13 +41,16 @@ export function obviousUnsupported(text) {
   if (/\b(whenever|every\s+time|when\s+I|if\s+.+\s+then)\b/iu.test(s)) return "custom_behavior";
   if (/https?:\/\/|www\.|\b(?:shell|command|script|source\s+code|terminal|sudo|powershell|bash|registry)\b/iu.test(s)) return "custom_behavior";
   if (/\b(?:install|add|include|bundle|preload)(?:\s+me)?\s+(?:an?\s+)?(?:app|application|program|package|software|[A-Z][\p{L}\p{N}._+-]*)\b/iu.test(s)) return "programs";
+  // "Office" by itself usually names the application suite. Require words
+  // that explicitly describe the office OS base before treating it as a base.
+  if (/\boffice\b/iu.test(s) && !(/\boffice\s+(?:os|operating\s+system|base|computers?)\b|\b(?:os|operating\s+system|computers?)\s+for\s+(?:an?\s+|the\s+)?office\b/iu.test(s))) return "programs";
   return null;
 }
 
 const CONCEPTS = [
   ["base", "desktop", [/\b(?:everyday|ordinary|personal|standard)(?:\s+computer)?\b/giu, /\bdesktop\b/giu]],
   ["base", "multilingual", [/\bmultilingual\b/giu, /\bmultiple\s+languages?\b/giu]],
-  ["base", "office", [/\boffice\s+(?:base|computers?)\b/giu, /\b(?:organisation|organization|business|company|workplace)(?:\s+computers?)?\b/giu]],
+  ["base", "office", [/\boffice\s+(?:os|operating\s+system|base|computers?)\b/giu, /\b(?:os|operating\s+system|computers?)\s+for\s+(?:an?\s+|the\s+)?office\b/giu, /\bwork\s+(?:os|operating\s+system|base|computers?)\b/giu, /\b(?:organisation|organization|business|company|workplace)(?:\s+computers?)?\b/giu]],
   ["base", "revive", [/\brevive\b/giu, /\b(?:old|older|slow|slower)(?:\s+computer|\s+laptop)?\b/giu, /\b2\s*gb\b/giu, /\bspinning\s+disk\b/giu]],
   ["base", "school-kiosk", [/\bschool(?:\s+computer)?\b/giu, /\bkiosk\b/giu, /\bbrowser[ -]only\b/giu, /\blocked(?:\s+computer)?\b/giu]],
   ["look", "taskbar", [/\bwindows[ -]like\b/giu, /\blike\s+windows\b/giu, /\btaskbar\b/giu, /\bbottom\s+bar\b/giu]],
