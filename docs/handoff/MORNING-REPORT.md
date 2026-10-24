@@ -141,4 +141,6 @@ _Last updated: 00:36 UTC 2026-10-24 (17:36 your time, 23 Oct)._
    ok, you're done. Optional and cheap only now, before anyone has installed AurOS: make a fresh update key at the
    same time (agents walk you through it; you confirm the new fingerprint). Leave GitHub's release immutability off
    for now (the pipeline agent is moving evidence uploads first).
+10. **A stuck test container on homebase** (yours to kill; an agent was refused and I won't work around a refusal):
+   `docker kill ab5da6584193` (beautiful_mcnulty, image auros-s3-fuzz, a hung compositor test; idle, 75 MB). Harmless if left.
 9. Set the watchdog task to Auto mode (Scheduled → "AurOS: restart the swarm if it stopped").
