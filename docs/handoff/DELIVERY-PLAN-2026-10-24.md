@@ -22,21 +22,21 @@ The completed path must connect request, validation, consent, artifact identity,
 
 ### Stage 1 Restore release correctness
 
-- [ ] Unit owner: reproduce RC7 font/hardware/layout/Ferry failures; fix product or test root causes without weakening gates.
+- [x] Unit owner: reproduce and repair RC7 font/hardware/layout/Ferry failures. Integrated unit gate passed at `5d1c50d3`; later candidate dependency correction is awaiting its own full run.
 - [x] Compositor owner: reproduce uncaught mutants, repair relevant code/tests, prove intended breakages are caught. Integrated image CI passes all four mutation shards and checks.
-- [x] Wishes UI owner: reproduce failed UI cases; fix without enabling the disabled production feature. Integrated image CI passes UI and voice suites.
-- [ ] Installer safety owner: recover S-04, refuse before table commit when boot-entry creation fails, verify byte preservation and fault paths.
+- [ ] Wishes UI owner: original UI failures repaired; new theme adapter passes UI mutations but `d7a5675b` exposes paint/end-to-end regressions under investigation. Feature remains disabled.
+- [x] Installer safety owner: recover S-04, refuse before table commit when boot-entry creation fails, verify focused fault paths. Exact new-candidate Windows journey remains a separate release gate.
 - [x] Bootstrapper owner: recover B's protected Windows loader design and validate Windows runner hostile-DLL/junction cases. Physical Windows 11 proof remains separate.
 - [ ] Lead: integrate CIW regression coverage and verify the tests exercised match the shipped path.
-- [ ] Independent handover review: kernel/modules, network/time, mounts, devices/display, PID1/services and installed-vs-bare journal differences.
+- [x] Independent handover review: kernel/modules, network/time, mounts, devices/display, PID1/services reviewed and concrete findings repaired. Runtime installed-session proof remains required.
 
 ### Stage 2 Build a reusable customization path
 
 - [x] Contract owner: strict schema, stable profile catalogue, deterministic compilation, policy preservation, hostile-input tests. Cross-Python depth behavior and dirty-CI fixture repair are included in the follow-up checkpoint.
-- [ ] Website owner: accessible request/review flow, honest artifact status, no fake queue or AI result; keep public download gating intact.
+- [x] Website owner: accessible request/review flow and honest artifact status implemented; 548 browser checks pass, including the real local API/compiler/ledger with only GitHub verification mocked. Public build service remains disabled.
 - [ ] Delivery adapter: choose and implement authenticated recipe transport to the installer; pin base artifact and configuration digest; reject mismatches, stale/unsupported recipes and downgrade attempts.
 - [ ] Installer/first-boot adapter: apply only allowlisted preferences, retain policy constraints and rollback behavior, confirm requested result in the installed system.
-- [ ] Agent extension contract: document permitted extension points and tests so new sensors/actions require small changes instead of another OS fork.
+- [x] Agent extension contract: permitted extension points and required tests documented in `docs/AGENT-EXTENSIONS.md`.
 - [ ] Wishes: finish missing action implementations/configuration/voice dependencies and real-image tests before enabling. No budget or model-spend changes without explicit accounting.
 
 ### Stage 3 Prove release and operations
@@ -253,3 +253,24 @@ The exact-SHA GitHub query was also checked against real successful run
 
 No new desktop image is requested by this documentation checkpoint. The
 original Claude checkouts and held encryption work remain preserved.
+
+## Follow-through, 24 October after 20:40 UTC
+
+The multilingual functional run `40128867869` failed before typing: Mousepad
+opened and was focused, but IBus engine selection failed. The exact installed
+engine is `pinyin`; this is not evidence of a libpinyin naming mismatch. The
+old helper discarded the setter error. The repaired helper retains engine
+inventory, setter/getter status and stderr, retries at most three times, and
+requires the exact observed engine. All 42 harness checks and independent
+review pass. Application composition still requires another boot.
+
+Candidate `d7a5675b` run `40129427319` passed Wishes UI plus its 36 mutations
+and gallery checks, then failed paint and end-to-end Wishes tests. These are
+being diagnosed before requesting another desktop candidate. Other image
+gates continue; the candidate cannot release with these failures.
+
+To avoid repeatedly rebuilding multilingual for harness-only diagnostics, a
+bounded retained-image path is being implemented. Its immutable small
+manifest will bind the image bytes; reused-image evidence will name both
+image-source and test-source commits and remain diagnostic, never a new
+production certification. No extra paid service is introduced.
