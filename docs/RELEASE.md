@@ -16,7 +16,7 @@ count only in the commit's subject line.**
 
 | To get | Push a commit that | What runs |
 |---|---|---|
-| A build and every test | changes `build/`, `src/`, `rootfs/`, `profiles/`, `themes/`, `shells/` or the workflows, or says `[build]` in its subject | `build.yml`: build, then `tests.yml` |
+| A build and every test | changes `build/`, `src/`, `rootfs/`, `profiles/`, `themes/`, `shells/`, `hw/`, `docs/legal/notices/`, a tool the build calls (`tools/{apt,checksec,repo,wishesoff,plainwords,machine,hardentest}.sh`, `pe_payload.py`, `hw/`, `legal/notices.py`) or `build.yml`, `tests.yml`, `release.yml`, `harden.yml`, `e2e.yml`, `sources.yml`, or says `[build]` in its subject | `build.yml`: build, then `tests.yml` |
 | Tests only, no build | says `[test]` in its subject | `tests.yml` against the newest build of the branch whose artifacts have not expired (14 days) |
 | A prerelease, built and tested, then the real-Windows journey on it | says `[release]` | `build.yml`, `tests.yml`, then `release.yml` if every test passed: prerelease, Windows checks, `e2e.yml` on that exact AurOS-Setup.exe, the website check. Stops there. |
 | **The website's download, start to finish** | says `[release] [latest]` (lead only) | **refused up front** (see below): harden has not run on a build that has not finished. Push `[release]`, wait for harden, then `[publish RUN-ID] [latest]`. |

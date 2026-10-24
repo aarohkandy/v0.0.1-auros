@@ -82,13 +82,18 @@ jobs:
           # The files this push changed; the push payload does not list them.
           case "$BEFORE" in
             ''|0000000000000000000000000000000000000000)
-              files=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.files[].filename' || true) ;;
+              files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
             *)
-              files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename' || true) ;;
+              files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
           esac
           printf '%s\n' "$files" > /tmp/files.txt
           sed -n '1,60p' /tmp/files.txt
-          if grep -qE '^(build/|src/|rootfs/|profiles/|themes/|shells/|\.github/workflows/(build|tests)\.yml$)' /tmp/files.txt; then
+          # Everything the build and `tests / unit` read: the folders, hw/ (compat data and the
+          # generated headers), the licence texts baked into the installer, the few tools/ files
+          # build/aurbridge, forge and harden call, and the workflows that make or test a release
+          # (a file here that does not parse stops every run that calls it; CI-truth C.10).
+          # A test script alone is `[test]`.
+          if grep -qE '^(build/|src/|rootfs/|profiles/|themes/|shells/|hw/|docs/legal/notices/|tools/(apt|checksec|repo|wishesoff|plainwords|machine|hardentest)\.sh$|tools/pe_payload\.py$|tools/hw/|tools/legal/notices\.py$|\.github/workflows/(build|tests|release|harden|e2e|sources)\.yml$)' /tmp/files.txt; then
             build=true
           fi
           { echo "build=$build"; echo "release=$release"; echo "latest=$latest"; } | tee -a "$GITHUB_OUTPUT"

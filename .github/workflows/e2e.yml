@@ -104,9 +104,9 @@ jobs:
           # the files this push changed (the payload does not list them)
           case "$BEFORE" in
             ''|0000000000000000000000000000000000000000)
-              files=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.files[].filename' || true) ;;
+              files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
             *)
-              files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename' || true) ;;
+              files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
           esac
           printf '%s\n' "$files"
           # (the README alone is not worth hours of runner)

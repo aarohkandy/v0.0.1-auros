@@ -89,14 +89,14 @@ jobs:
             if grep -q "^$BUILD_RUN " /tmp/builds.txt; then
               rid=$BUILD_RUN
               prev=$(awk -v r="$BUILD_RUN" 'f { print $2; exit } $1 == r { f = 1 }' /tmp/builds.txt)
-              [ -n "$prev" ] && files=$(gh api "repos/$R/compare/$prev...$BUILD_SHA" --jq '.files[].filename' || true)
+              if [ -n "$prev" ]; then files=$(gh api --paginate "repos/$R/compare/$prev...$BUILD_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; }; fi
               [ -z "$prev" ] && word=true   # the first image there is: test it
             fi
           else
             rid=$(head -1 /tmp/builds.txt | cut -d' ' -f1)
             case "$BEFORE" in
-              ''|0000000000000000000000000000000000000000) files=$(gh api "repos/$R/commits/$GITHUB_SHA" --jq '.files[].filename' || true) ;;
-              *) files=$(gh api "repos/$R/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename' || true) ;;
+              ''|0000000000000000000000000000000000000000) files=$(gh api --paginate "repos/$R/commits/$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
+              *) files=$(gh api --paginate "repos/$R/compare/$BEFORE...$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
             esac
             # A push that changes the image itself waits for its build
             # (the workflow_run above); this one only tests the test.
