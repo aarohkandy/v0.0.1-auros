@@ -764,6 +764,9 @@ int main(int argc, char **argv)
     theme_t t = {0};
     if (theme_load(&t, conf) < 0)
         fprintf(stderr, "aurshell: no %s — using built-in defaults\n", conf);
+    else
+        fprintf(stderr, "aurshell: theme '%s'\n",
+                theme_str(&t, "theme_name", "unknown"));
 
     shell_ctx c;
     memset(&c, 0, sizeof c);
