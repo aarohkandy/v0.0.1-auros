@@ -68,7 +68,7 @@ _Last updated: 00:36 UTC 2026-10-24 (17:36 your time, 23 Oct)._
 
 ## Still red / in progress (00:36 UTC 24 Oct)
 
-- **The full journey on real Windows is one step from green.** Website → installer → AurOS's first screen works
+- **Release candidate 6 is published (v0.1.0-b28851a, every gate green) and is on real Windows now.** The full journey is one step from green: Website → installer → AurOS's first screen works
   (8 min with the fast path). The next step, "Start AurOS from now on", failed on every real install; the cause is
   found and fixed twice over (76d89b9 in AurOS, 7dce7f3 in the install step). **Release candidate 6 (b28851a)**
   carries the first fix plus the store fixes below; it publishes itself and runs the whole journey on real
