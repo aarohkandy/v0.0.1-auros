@@ -263,6 +263,20 @@ def test_canon_label():
     check(e2e.canon_label("Zzzzz qqq") == "Zzzzz qqq", "wizard: a reading that is nothing known stays as read")
 
 
+def test_store_content():
+    try:
+        import e2e, numpy as np
+    except ImportError:
+        return
+    blank = np.zeros((800, 1280, 3), np.uint8); blank[:] = (245, 241, 234)
+    blank[80:84, 237:851] = 30                         # a window's frame and header line
+    check(not e2e.AurFlow.store_has_content(blank), "store: a window with a header and an empty body is EMPTY")
+    full = blank.copy()
+    for k in range(10):
+        full[160 + k * 50:190 + k * 50, 300:700] = (60 + k * 15, 90, 120)        # rows of content
+    check(e2e.AurFlow.store_has_content(full), "store: a window with rows of content has content")
+
+
 def test_label_contrast():
     """The store's Install must be readable (docs/EASY.md 4.5): dark letters on
     dark green, as run 40038619603 had them, fail; white on green passes."""
@@ -398,6 +412,7 @@ test_windows_dry()
 test_aur_dry()
 test_label_is()
 test_canon_label()
+test_store_content()
 test_label_contrast()
 test_store_button_colours()
 test_flow_helpers()

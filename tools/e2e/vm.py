@@ -382,6 +382,16 @@ class Machine:
                     "-device", f"ide-cd,drive=cd{i},bus=ide.{i + 1}" +
                     (",bootindex=2" if i == 0 else "")]
         self.rec.log("qemu: " + " ".join(cmd))
+        # the machine, for whoever compares two runs (the AurOS-only VM and the
+        # Windows one are the same Machine, but say so in the evidence)
+        with open(os.path.join(self.rec.out, "vm-config.txt"), "a") as cfg:
+            cfg.write(f"--- {time.strftime('%H:%M:%S')} {self.name}\n"
+                      f"cpus {self.cpus}, ram {self.ram} MB, machine q35 + KVM ({ACCEL}), UEFI Secure Boot (OVMF 4M, MS keys), "
+                      f"TPM 2.0 (swtpm tpm-tis)\n"
+                      f"disk: {self.disk} (qcow2) on q35's AHCI as ide-hd, {'7200 rpm HDD, throttled ' + self.throttle if self.throttle else 'non-rotating SSD'}\n"
+                      f"nic: e1000e, QEMU user-mode NAT (10.0.2.0/24, DNS 10.0.2.3)\n"
+                      f"display: VGA {self.xres}x{self.yres} (no GPU, no virtio-gpu); input: usb-tablet on xHCI; no sound\n"
+                      f"cdroms: {self.cdroms or 'none'}\n\ncommand:\n  " + " ".join(cmd) + "\n\n")
         self.qlog = open(os.path.join(self.rec.out, "qemu.log"), "a")
         self.proc = subprocess.Popen(cmd, stdout=self.qlog, stderr=subprocess.STDOUT)
         try:

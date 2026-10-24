@@ -24,6 +24,7 @@ marks where it went). The settings that change between builds are the
 environment variables below; tools/e2e/README.md has the rest.
 """
 import argparse
+import numpy as np
 import json
 import os
 import re
@@ -1054,12 +1055,21 @@ class Flow:
                 raise Failure(f"no '{STORE_NAME}' anywhere a person would look: " +
                               vision.text_of(words)[:600])
             self.m.click(*vision.centre(b), label="open " + STORE_NAME)
-            p, _, words = self.wait_text(["Search", "Explore", "Installed", "Updates", "Software"], 300, every=10)
+            p, _, words = self.wait_text(["Search", "Explore", "Installed", "Updates", "Software", "Instal"], 300, every=10)
             if not p:
                 self.m.shot("store-did-not-open")
-                raise Failure("the store did not open (nothing of its window read on screen in 5 minutes): " +
+                raise Failure("the store NEVER OPENED (no window of it read on screen in 5 minutes): " +
                               vision.text_of(vision.ocr(self.m.screendump()))[:400])
             self.m.shot("store-open")
+            # opened is not the same as showing something: its window drew its header
+            # and an empty body for five minutes on a real install (run 40043978048)
+            deadline = time.time() + 300
+            while time.time() < deadline and not self.store_has_content(self.m.screendump()):
+                time.sleep(10)
+            if not self.store_has_content(self.m.screendump()):
+                self.m.shot("store-empty")
+                raise Failure("the store OPENED but its catalogue stayed EMPTY for 5 minutes (header bar and tabs "
+                              "drawn, nothing under them): " + vision.text_of(vision.ocr(self.m.screendump()))[:300])
         with self.rec.phase("aurOS: find and install " + STORE_QUERY):
             found = None
             for attempt in range(3):
@@ -1176,6 +1186,15 @@ class Flow:
             time.sleep(25)
             img = self.m.shot("program-open")
             self.log("on screen: " + vision.text_of(vision.ocr(img))[:500])
+
+    @staticmethod
+    def store_has_content(img):
+        """The store's window shows something under its header: more than a
+        few percent of the area where its body is differs from the commonest
+        colour there (an empty body is one flat colour)."""
+        reg = img[140:700:2, 236:1056:2].reshape(-1, 3)
+        vals, counts = np.unique(reg, axis=0, return_counts=True)
+        return 1.0 - counts.max() / len(reg) > 0.03
 
     def store_button(self, img):
         """The store's main button on an app's page: (box, what it says), or
@@ -1406,6 +1425,46 @@ def cmd_flow(a):
 #  After the run: what is on the disk
 # ════════════════════════════════════════════════════════════════════
 
+def aur_root_report(rec, mnt, out_dir):
+    """What AurOS's own disk says, read with the machine off (every variant, pass
+    or fail): its logs, the software catalogue (what the store has to show),
+    stamps of the store's first-start job, and the journal of every boot. The
+    whole journal goes to aur-journal.txt (packagekit's one-line-per-package
+    assertion spam left out); the summary here is for a reader in a hurry."""
+    lines = []
+    sh = lambda cmd: run(["sudo", "sh", "-c", f"cd {mnt} && {cmd}"], rec, check=False).stdout
+    lines.append("--- AurOS's logs\n" + sh(
+        "ls -la var/log 2>&1 | head -40; "
+        "for f in var/log/auros-answer.log var/log/auros-firstboot.log; do echo \"== $f\"; head -c 3000 \"$f\" 2>&1; echo; done"))
+    lines.append("--- the software catalogue (what the store shows), with times\n" + sh(
+        "find var/lib/flatpak/appstream var/lib/flatpak/repo -maxdepth 3 -printf '%TY-%Tm-%Td %TH:%TM:%TS %10s %p\\n' 2>&1 | head -60; "
+        "echo; du -sh var/lib/flatpak var/lib/flatpak/appstream 2>&1; "
+        "echo; ls -la var/lib/flatpak/app 2>&1 | head; ls -la usr/share/swcatalog usr/share/app-info var/lib/swcatalog 2>&1 | head -20"))
+    lines.append("--- AurOS's own state (software-ready and friends)\n" + sh(
+        "ls -laR var/lib/auros etc/auros 2>&1 | head -60; "
+        "for f in var/lib/auros/software-ready*; do echo \"== $f\"; head -c 2000 \"$f\" 2>&1; echo; done; "
+        "ls -la etc/systemd/system/*.wants 2>&1 | grep -i 'auros\\|software' | head"))
+    jd = f"{mnt}/var/log/journal"
+    full = run(["sudo", "sh", "-c",
+                f"journalctl -D {jd} --no-pager -o short-iso --list-boots 2>&1 | head -20; echo '-----'; "
+                f"journalctl -D {jd} --no-pager -o short-iso 2>&1 | grep -v set_update_severity | head -c 6000000"],
+               rec, check=False).stdout
+    try:
+        with open(os.path.join(out_dir, "aur-journal.txt"), "w") as fh:
+            fh.write(full)
+    except OSError:
+        pass
+    key = re.compile(r"gnome-software|flatpak|packagekit|auros-software|software-ready|NetworkManager|chrony|timesyncd|"
+                     r"aurwl|aurshell|wayland|xdg-desktop-portal|dbus-run-session", re.I)
+    pick = [l for l in full.splitlines() if key.search(l)]
+    warn = [l for l in full.splitlines() if re.search(r"\b(warning|error|critical|failed|denied|fatal)\b", l, re.I)]
+    lines.append(f"--- the journal ({len(full.splitlines())} lines, all boots; aur-journal.txt has all)\n" +
+                 full.split("-----")[0].strip())
+    lines.append("--- about the store and its neighbours (last 250)\n" + "\n".join(l[:260] for l in pick[-250:]))
+    lines.append("--- every warning and error of the journal (last 250)\n" + "\n".join(l[:260] for l in warn[-250:]))
+    return "\n".join(lines)
+
+
 def diagnose_partition(rec, p, fs, mnt):
     """After a flow that failed with the machine off: what the staging
     installer saw, said again by the same tools, read-only. The staging
@@ -1430,30 +1489,6 @@ def diagnose_partition(rec, p, fs, mnt):
                 lines.append(run(["sudo", "sh", "-c", f"ls -la {mnt} | head -40; echo; ls -laR {mnt}/AurOS 2>&1 | head -60; "
                                   f"echo; for f in {mnt}/AurOS/*.txt {mnt}/AurOS/*.log {mnt}/AurOS/*.json; do "
                                   "[ -f \"$f\" ] && { echo \"== $f\"; head -c 8000 \"$f\"; echo; }; done 2>&1"],
-                                 rec, check=False).stdout)
-            finally:
-                run(["sudo", "umount", mnt], rec, check=False)
-    elif fs in ("ext4", "btrfs", "xfs"):
-        # AurOS's own disk: why did something inside it do nothing? (run
-        # 40008357634: the store's Install button pressed, nothing happened)
-        r = run(["sudo", "mount", "-o", "ro,noload" if fs == "ext4" else "ro", dev, mnt], rec, check=False)
-        if r.returncode == 0:
-            try:
-                lines.append(run(["sudo", "sh", "-c",
-                                  f"ls -la {mnt}/var/log {mnt}/var/log/journal 2>&1 | head -40; echo; "
-                                  f"for f in {mnt}/var/log/auros-answer.log {mnt}/var/log/auros-firstboot.log; do "
-                                  "echo \"== $f\"; head -c 3000 \"$f\" 2>&1; echo; done; "
-                                  f"ls -laR {mnt}/var/lib/auros {mnt}/etc/auros 2>&1 | head -40; echo; "
-                                  f"ls -la {mnt}/var/lib/flatpak/app {mnt}/var/lib/flatpak/repo 2>&1 | head -20; echo; "
-                                  f"ls {mnt}/etc/polkit-1/rules.d {mnt}/usr/share/polkit-1/rules.d 2>&1; echo; "
-                                  f"cat {mnt}/etc/polkit-1/rules.d/49-auros.rules 2>&1 | head -60; echo; "
-                                  # (packagekitd prints one assertion line per package, hundreds: left out)
-                                  f"journalctl --directory={mnt}/var/log/journal --no-pager -o short-monotonic 2>&1 | "
-                                  "grep -v 'set_update_severity' > /tmp/e2e-journal.txt; wc -l /tmp/e2e-journal.txt; "
-                                  "echo '--- the last 120 lines'; tail -120 /tmp/e2e-journal.txt | cut -c1-300; "
-                                  "echo '--- about the store and its install'; "
-                                  "grep -iE 'gnome-software|software|flatpak|polkit|denied|critical|warning|error|failed' /tmp/e2e-journal.txt | "
-                                  "tail -150 | cut -c1-300"],
                                  rec, check=False).stdout)
             finally:
                 run(["sudo", "umount", mnt], rec, check=False)
@@ -1519,6 +1554,8 @@ def cmd_inspect(a):
                                     f"ls -l {mnt}/var/lib/flatpak/app 2>/dev/null; "
                                     f"cat {mnt}/etc/os-release 2>/dev/null | head -3"],
                                    rec, check=False).stdout)
+                    if fs == "ext4" and os.path.exists(os.path.join(mnt, "usr/lib/auros")):
+                        out.append(aur_root_report(rec, mnt, a.out))
                 finally:
                     run(["sudo", "umount", mnt], rec, check=False)
             out.append("found: " + json.dumps(found, indent=1))
