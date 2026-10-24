@@ -469,6 +469,47 @@ EOL
 # if the image does not already have it. Which of the two happened is
 # written into the image (/etc/auros/software-sources, and the build's
 # own record), so nobody has to guess afterwards.
+#
+# AND ITS CATALOGUE, so the store is never an empty page. GNOME Software
+# draws what is in /var/lib/flatpak/appstream/flathub; with nothing there
+# its first page is a header bar over a blank sheet (RC1 and RC6 on real
+# Windows: five minutes of it, then the journey gave up -- "failed to get
+# featured apps: no apps to show"). So the build fetches it here, the way
+# the first online start would: `flatpak update --appstream` writes the
+# listing (appstream.xml.gz) and the icons the store draws (64x64, 128x128).
+# It is dated the day of the build; auros-software.service refreshes it
+# the first time the computer is online, and the store shows this one in
+# the meantime, offline too. Measured: ~117 MB on disk, ~61 MB of the
+# download (docs/handoff/streams/STORE.md).
+#
+# A builder that can reach Flathub but cannot finish this is not a good
+# builder for a release: REQUIRE_FLATHUB_CATALOGUE=1 (build.yml sets it)
+# makes that fatal at the end of the build, as a missing browser is.
+stage_flathub_catalogue() {
+    local i dir="$RFS/var/lib/flatpak/appstream/flathub/x86_64/active" n=0
+    for i in 1 2 3; do
+        if inchroot "timeout 600 flatpak update --system --appstream flathub" 2>&1 | sed 's/^/   /'; then
+            [ -s "$dir/appstream.xml.gz" ] && break
+        fi
+        warn "Flathub's catalogue: try $i of 3 did not finish"; sleep $((i * 10))
+    done
+    # Not "a file exists": a listing that has the programs in it, VLC among them.
+    if [ -s "$dir/appstream.xml.gz" ]; then
+        n=$(zcat "$dir/appstream.xml.gz" | grep -c '<component' || true)
+    fi
+    # (a count, not grep -q: under pipefail grep -q ends zcat early and "fails")
+    if [ "$n" -ge 1000 ] && [ "$(zcat "$dir/appstream.xml.gz" | grep -c 'org.videolan.VLC' || true)" -ge 1 ]; then
+        note "Flathub's catalogue is in the image: $n programs, $(du -sm "$RFS/var/lib/flatpak" | cut -f1) MB under /var/lib/flatpak ($(du -sm "$dir/icons" | cut -f1) MB of icons)"
+        printf 'flathub_catalogue=build\nflathub_catalogue_date=%s\n' "$(date -u +%F)" \
+            >> "$RFS/etc/auros/software-sources"
+        warn_note "flathub_catalogue=build ($n programs)"
+    else
+        rm -rf "$RFS/var/lib/flatpak/appstream"
+        warn "Flathub's catalogue could not be put in the image ($n programs read)"
+        warn_note "flathub_catalogue=MISSING"
+        printf 'flathub_catalogue=first-online\n' >> "$RFS/etc/auros/software-sources"
+    fi
+}
 FLATHUB_URL="https://dl.flathub.org/repo/flathub.flatpakrepo"
 flatpakrepo_ok() {
     grep -q '^\[Flatpak Repo\]' "$1" &&
@@ -490,6 +531,7 @@ stage_flathub() {
                 > "$RFS/etc/auros/software-sources"
             warn_note "flathub=build ($sum)"
             note "Flathub added to the image (flathub.flatpakrepo sha256 $sum)"
+            stage_flathub_catalogue
             return 0
         fi
         warn "flatpak remote-add failed here; the first time it is online the"
@@ -2599,6 +2641,19 @@ case "${1:-}" in
      network; if this build is for you rather than for somebody else,
      set browser_fallback_ok=\"yes\" in the profile or run
      ALLOW_BROWSER_FALLBACK=1 build/forge build $profile_id."
+        fi
+        # AND AN EMPTY STORE IS NOT A SUCCESS. The catalogue is what her first
+        # "Get more programs" shows; a release without it opens a blank page
+        # (stage_flathub_catalogue). build.yml sets REQUIRE_FLATHUB_CATALOGUE=1,
+        # because GitHub's runners can reach Flathub; a build on a machine that
+        # cannot says so in build-warnings and still finishes.
+        if [ "${REQUIRE_FLATHUB_CATALOGUE:-0}" = 1 ] && [ -x "$RFS/usr/bin/flatpak" ] && \
+           grep -q '^flathub_catalogue=MISSING$\|^flathub=first-online$' "$RFS/etc/auros/build-warnings" 2>/dev/null; then
+            printf '\n'
+            die "this image has NO CATALOGUE for Get more programs and will not be built.
+     Flathub could not be reached, or its listing could not be read, from
+     this machine (see the lines above). Her first store page would be empty.
+     Unset REQUIRE_FLATHUB_CATALOGUE for a build that is not for release."
         fi
         printf '\n%s::%s %s is built.\n' "$C_OK" "$C_RST" "$brand_name $os_version" ;;
     stage)

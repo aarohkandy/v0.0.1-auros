@@ -208,7 +208,9 @@ jobs:
           T=$(date +%s)
           # NOT ALLOW_BROWSER_FALLBACK: this network reaches Mozilla, so
           # the profile's Firefox must arrive, or the build stops.
-          sudo env -u ALLOW_BROWSER_FALLBACK AUROS_DOMAIN="$AUROS_DOMAIN" AUROS_BUILD_TAG="$TAG" ./build/all desktop --keep=raw 2>&1 | tee /tmp/forge.log
+          # AND REQUIRE_FLATHUB_CATALOGUE: the same network reaches Flathub, so
+          # the store's catalogue must arrive too, or her first store page is blank.
+          sudo env -u ALLOW_BROWSER_FALLBACK REQUIRE_FLATHUB_CATALOGUE=1 AUROS_DOMAIN="$AUROS_DOMAIN" AUROS_BUILD_TAG="$TAG" ./build/all desktop --keep=raw 2>&1 | tee /tmp/forge.log
           echo "forge+mkimage $(( $(date +%s) - T )) s" >> dist/installer/timings.txt
           ls -la out out/manifests
           df -h /

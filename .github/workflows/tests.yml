@@ -291,6 +291,18 @@ jobs:
       - name: nmtest (the image's NetworkManager - the cable is managed, names resolve)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: RFS=work/forge/desktop/rootfs sh tools/nmtest.sh 2>&1 | tee transcripts/nmtest.txt
+      - name: storecatalogue (the image carries Flathub catalogue - VLC is in it, and its icons - and the check is red on five broken trees)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          { sh tools/storecatalogue.sh selftest && sh tools/storecatalogue.sh work/forge/desktop/rootfs; } 2>&1 | tee transcripts/storecatalogue.txt
+      - name: softwarereadytest (the catalogue and apt's lists have a stamp each; why a step failed reaches the journal; two deliberate breakages)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          { sh tools/softwarereadytest.sh
+            for b in stamp why; do
+              if sh tools/softwarereadytest.sh --break=$b >/dev/null 2>&1; then echo "softwarereadytest: --break=$b was NOT caught"; exit 1; fi
+              echo "softwarereadytest: --break=$b is caught"
+            done; } 2>&1 | tee transcripts/softwarereadytest.txt
       - name: everydaytest (printer.local resolves; Word and Excel open in Writer and Calc; every program's open goes where a double-click would)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: RFS=work/forge/desktop/rootfs sh tools/everydaytest.sh 2>&1 | tee transcripts/everydaytest.txt
