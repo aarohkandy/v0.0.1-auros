@@ -10,6 +10,7 @@
 #include <time.h>
 
 #include "commit.h"
+#include "fault.h"
 #include "rescue.h"
 
 int commit_build(const gpt_table *old, const stage_layout *L,
@@ -265,6 +266,9 @@ int commit_settle(const char *disk_dev, const char *root_dev,
 
     /* 3. Grow it into the partition. */
     const char *grow[] = { "/sbin/resize2fs", root_dev, NULL };
+    /* A power cut INSIDE resize2fs (docs/safety S-11): a fault build can ask to stop here, 80 ms
+     * into it. Nothing in a release build. */
+    fault_maybe_soon("settle-mid", 80);
     rc = run_fixed(grow, tail, sizeof tail);
     if (rc != 0) {
         /* NOT FATAL, and this is a judgement worth stating: AurOS is

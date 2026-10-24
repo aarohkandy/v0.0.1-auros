@@ -5,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "fault.h"
 #include "loader.h"
 #include "nvram.h"
 #include "aurstage.h"
@@ -158,10 +159,18 @@ out:
     return rc;
 }
 
-int loader_register(const gpt_table *nw, const stage_layout *L,
-                    uint16_t *entry_out, char *why, size_t n)
+/* THE ENTRY IS WRITTEN BEFORE THE TABLE, AND ONLY BootNext AFTER IT (docs/safety S-04).
+ *
+ * The entry names the partition by the GUID commit_build has already given it, so it can be
+ * written while the old table is still in force. That makes "the firmware will not take the
+ * entry" a refusal with nothing committed -- Windows starts, nothing of AurOS is on the menu --
+ * instead of a verdict=installed over a machine that can never start what it just installed.
+ * What can still fail afterwards is the two-byte one-shot, and then the entry is in the menu.
+ * An entry that is left behind by a commit that did not happen is taken out by loader_drop. */
+int loader_entry(const gpt_table *nw, const stage_layout *L,
+                 uint16_t *entry_out, char *why, size_t n)
 {
-    /* THE PARTITION AS THE COMMIT LEFT IT, found by its start block.
+    /* THE PARTITION AS THE COMMIT WILL LEAVE IT, found by its start block.
      * Never by index: gpt_add appends into the first free slot, which
      * is not the last slot on a table somebody has already deleted a
      * partition from. */
@@ -184,23 +193,35 @@ int loader_register(const gpt_table *nw, const stage_layout *L,
     memcpy(hd.guid, nw->ent[idx].uuid, 16);
 
     uint16_t num = 0;
-    if (nvram_boot_set(LOADER_ENTRY_DESC, &hd, LOADER_PATH, NULL, &num,
-                       why, n) != 0) {
+    /* (fault_fail: a test can make the NEW entry's write fail, to reach the branch below on a
+     * firmware whose accounting it cannot steer; nothing in a release build.) */
+    int made = fault_fail("entry-new")
+             ? (snprintf(why, n, "this computer's firmware would not take a new start-up entry "
+                                 "(a test asked for this)"), -1)
+             : nvram_boot_set(LOADER_ENTRY_DESC, &hd, LOADER_PATH, NULL, &num, why, n);
+    if (made != 0) {
         /* NO ROOM FOR A NEW ENTRY: the one the Windows half made is already in
          * the store, and replacing it in its own slot needs only the
          * difference in size (docs/safety S-04). */
         char first[200];
         snprintf(first, sizeof first, "%s", why);
+        char second[200];
         if (nvram_boot_repurpose(LOADER_INSTALLER_DESC, LOADER_ENTRY_DESC, &hd,
-                                 LOADER_PATH, NULL, &num, why, n) != 0) {
-            snprintf(why, n, "%s", first);
+                                 LOADER_PATH, NULL, &num, second, sizeof second) != 0) {
+            snprintf(why, n, "%s; and the entry the installer made could not be replaced either: %s",
+                     first, second);
             return -1;
         }
-        if (entry_out) *entry_out = num;
-        if (nvram_boot_next(num, why, n) != 0) return 1;
-        return 0;
     }
     if (entry_out) *entry_out = num;
+    return 0;
+}
+
+/* After the commit: arm the one-shot, and take away the entry the Windows half made to get here.
+ * 0 armed, 1 the entry is there and only the one-shot failed (a different sentence: the machine's
+ * menu has AurOS in it). */
+int loader_arm(uint16_t num, char *why, size_t n)
+{
     /* THE ENTRY IS DOWN. A one-shot that will not arm after that is
      * worth a different sentence: the machine can be started into
      * AurOS from its own boot menu, and telling somebody the install
@@ -211,8 +232,23 @@ int loader_register(const gpt_table *nw, const stage_layout *L,
      * Leaving it means a boot menu with two AurOS lines in it, one of
      * which restarts an installer that will refuse -- correctly, and
      * to somebody who did not want an installer. A failure to remove
-     * it is not a failure of the install. */
+     * it is not a failure of the install. (When the entry above was made IN ITS
+     * SLOT there is nothing left by that name.) */
     char ignored[200];
     nvram_boot_forget(LOADER_INSTALLER_DESC, ignored, sizeof ignored);
     return 0;
+}
+
+/* The commit did not happen: the entry it was written for names a partition that will not exist. */
+void loader_drop(void)
+{
+    char ignored[200];
+    nvram_boot_forget(LOADER_ENTRY_DESC, ignored, sizeof ignored);
+}
+
+int loader_register(const gpt_table *nw, const stage_layout *L,
+                    uint16_t *entry_out, char *why, size_t n)
+{
+    if (loader_entry(nw, L, entry_out, why, n) != 0) return -1;
+    return loader_arm(entry_out ? *entry_out : 0, why, n);
 }

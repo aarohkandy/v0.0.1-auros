@@ -47,6 +47,12 @@
  * nothing when AURSTAGE_FAULT is not defined. */
 void fault_maybe(const char *name);
 
+/* Stop the machine dead `ms` milliseconds from now, wherever the work is then, if the kernel command
+ * line asked to die at `name`. For an instant INSIDE a program this installer runs and does not
+ * control (resize2fs), which fault_maybe cannot reach: it returns at once, and a helper process does
+ * the stopping. Compiles to nothing when AURSTAGE_FAULT is not defined. */
+void fault_maybe_soon(const char *name, int ms);
+
 /* 1 if the kernel command line asked the step `name` to FAIL
  * (aurstage.fail_at=<name>) -- the ordinary failure path of that step,
  * taken on purpose, so a test can read what she is told then. Always 0

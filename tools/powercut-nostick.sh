@@ -217,7 +217,7 @@ if [ -z "${*:-}" ] || [ "${*:-}" = messages ]; then
 fi
 [ "${*:-}" = messages ] && set --
 
-POINTS="${*:-gate shrink-begin shrink-end mirror-end write-mid write-end boot-mid boot-end commit-array commit-sector commit-backup boot-entry settle-end}"
+POINTS="${*:-gate shrink-begin shrink-mid shrink-end mirror-end write-mid write-end boot-mid boot-end entry-written commit-array commit-sector commit-backup boot-entry settle-mid settle-end}"
 [ "${ONLY:-}" = restore ] && POINTS=""
 for pt in $POINTS; do
     printf '\n  ── %s\n' "$pt"
@@ -238,7 +238,7 @@ for pt in $POINTS; do
     esac
 
     case "$pt" in
-      commit-sector|commit-backup|boot-entry|settle-end)
+      commit-sector|commit-backup|boot-entry|settle-mid|settle-end)
         # The new table is in force; the way back went onto this disk
         # before the image did.
         if boot "$MTMP/cut.img" "aurstage.restore" "verdict=restored" 900; then

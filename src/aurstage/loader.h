@@ -155,4 +155,13 @@ int loader_write_boot(wr_target *t, const image_src *img,
 int loader_register(const gpt_table *nw, const stage_layout *L,
                     uint16_t *entry_out, char *why, size_t n);
 
+/* The same, in the two halves install.c calls (docs/safety S-04): the entry BEFORE the commit, so
+ * that a firmware that will not take it is a refusal with nothing committed (-1; `why` says what the
+ * firmware said); the one-shot AFTER it (0 armed, 1 the entry is there and only the one-shot failed).
+ * loader_drop takes our entry out again when the commit that it was written for did not happen. */
+int  loader_entry(const gpt_table *nw, const stage_layout *L,
+                  uint16_t *entry_out, char *why, size_t n);
+int  loader_arm(uint16_t entry, char *why, size_t n);
+void loader_drop(void);
+
 #endif

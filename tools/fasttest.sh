@@ -28,7 +28,7 @@
 #  QEMU, and the fault staging image: the powercut-nostick prerequisites.
 #
 #    sudo AURSTAGE_FAULT=1 ./build/staging && sudo sh tools/fasttest.sh [scenario ...]
-#    scenarios: happy bitlocker abort failures noroom cuts handover stagelog   (default: all)
+#    scenarios: happy bitlocker abort failures noroom cuts nvfull handover stagelog   (default: all)
 #    handover also needs exfatprogs and the exfat kernel driver (a2-kvm image).
 # ═══════════════════════════════════════════════════════════════════
 set -u
@@ -60,7 +60,7 @@ trap _a2_clean EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-WANT="${*:-happy bitlocker abort failures noroom cuts handover stagelog}"
+WANT="${*:-happy bitlocker abort failures noroom cuts nvfull handover stagelog}"
 want() { case " $WANT " in *" $1 "*) return 0 ;; esac; return 1; }
 
 echo
@@ -221,7 +221,7 @@ win_files_now() { # image label
 # boot staging on a copy of $1 with the journal the engine made, on one disk
 boot_staging() { # disk  kargs  marker  [timeout]
     cp --sparse=always "$1" "$MTMP/run.img"
-    cp /usr/share/OVMF/OVMF_VARS_4M.fd "$MTMP/vars.fd"
+    cp "${NVRAM_SEED:-/usr/share/OVMF/OVMF_VARS_4M.fd}" "$MTMP/vars.fd"
     : > "$MTMP/out.txt"
     qemu-system-x86_64 -machine q35,accel=tcg -m 1536 -smp 2 \
         -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
@@ -470,7 +470,7 @@ full_again() { # image label
         && ok "$2: ...and the EFI partition byte for byte what it was" || bad "$2: ...and the EFI partition byte for byte what it was"
     win_files_now "$1" "$2"
 }
-for pt in gate mirror-end commit-array commit-sector commit-backup boot-entry settle-end; do
+for pt in gate mirror-end entry-written commit-array commit-sector commit-backup boot-entry settle-mid settle-end; do
     printf '\n  ── %s\n' "$pt"
     if boot_staging "$ARMED" "aurstage.install aurstage.min_gb=1 aurstage.die_at=$pt" "AURSTAGE-FAULT $pt" 600; then
         ok "the machine stops dead at $pt"
@@ -480,7 +480,7 @@ for pt in gate mirror-end commit-array commit-sector commit-backup boot-entry se
     cp --sparse=always "$MTMP/run.img" "$MTMP/cut.img"
     win_files_now "$MTMP/cut.img" "after the cut"
     case "$pt" in
-      gate|mirror-end|commit-array)
+      gate|mirror-end|entry-written|commit-array)
         # The old table is in force; Windows is as Windows left it, C: smaller.
         [ "$(nparts "$MTMP/cut.img")" = 3 ] && ok "the old table is still the one in force (3 partitions)" \
             || bad "the old table is still the one in force (3 partitions)" "$(nparts "$MTMP/cut.img")"
@@ -506,6 +506,76 @@ for pt in gate mirror-end commit-array commit-sector commit-backup boot-entry se
         ;;
     esac
 done
+fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════
+#  A START-UP LIST THAT IS FULL BY BYTES (docs/safety S-04).
+#
+#  An old Lenovo or HP has no room left in its NVRAM for one more entry. The firmware says so
+#  with a refused write -- not with a Boot#### number running out -- and the install used to find
+#  that out after the table was committed and finish as verdict=installed over a machine that
+#  nothing could start. The store here is the REAL one, OVMF's, filled to the byte with variables
+#  that cannot be reclaimed (tools/efivarstore.py fill: what a firmware counts as full is not the
+#  free bytes it shows -- OVMF refuses a new entry well above them -- so only "nothing left" is
+#  claimed), and staging is the real staging:
+#
+#    1  no room at all           refused before anything is written, saying why (the probe)
+#    2  the probe out of the way  the write itself fails: refused too, the table as it was, and
+#       (a test knob)             NEVER verdict=installed
+#    3  the entry the Windows half made is in the list and the NEW entry cannot be written (a test
+#       knob, because OVMF cannot be steered to the one window where a replacement fits and a
+#       creation does not): AurOS's entry goes over it, in its slot, and the install goes ahead
+#
+#  Red when the install.c probe is deleted (1), when the failure after it is a warning again (2),
+#  or when loader.c's repurpose branch is deleted (3).
+# ═══════════════════════════════════════════════════════════════════
+if want nvfull; then
+echo
+echo "  a start-up list that is full by bytes: refused, or the Windows half's entry is used"
+new_machine nvfull
+if ! run_engine || ! grep -q 'aurbridge-report v1 fast=1 ' "$S/out"; then
+    bad "the engine arms the machine for the full-list cases" "$(tail -3 "$S/err")"
+else
+ARMED="$S/disk.img"
+table_of() { sgdisk -p "$1" 2>/dev/null | sed -n '/^Number/,$p'; }
+TABLE0=$(table_of "$ARMED")
+FULL="$MTMP/full.fd"
+cp /usr/share/OVMF/OVMF_VARS_4M.fd "$FULL"
+python3 tools/efivarstore.py "$FULL" fill 100 >/dev/null
+LEFT=$(python3 -c "import sys; sys.path.insert(0,'tools'); import efivarstore as e; print(e.free_bytes('$FULL'))")
+[ "$LEFT" -le 110 ] && ok "the store is full by bytes ($LEFT left; one entry is about 200)" || bad "the store is full by bytes" "$LEFT left"
+
+# 1. the probe
+NVRAM_SEED="$FULL" boot_staging "$ARMED" "aurstage.install aurstage.min_gb=1" "aurstage-report v1 verdict=" 600
+grep -aq "verdict=no-startup-room" "$MTMP/out.txt" && ok "no room for an entry: refused before anything is written, in words" \
+    || bad "no room for an entry: refused before anything is written" "$(grep -a 'aurstage-report\|aurstage:' "$MTMP/out.txt" | tail -3)"
+[ "$(table_of "$MTMP/run.img")" = "$TABLE0" ] && ok "...and the table is the one the engine left" || bad "...and the table is the one the engine left"
+grep -aq "verdict=installed" "$MTMP/out.txt" && bad "...and never says installed" || ok "...and never says installed"
+
+# 2. the write fails after the probe passed
+NVRAM_SEED="$FULL" boot_staging "$ARMED" "aurstage.install aurstage.min_gb=1 aurstage.fail_at=probe" "aurstage-report v1 verdict=" 600
+grep -aq "verdict=boot-entry-failed" "$MTMP/out.txt" && ok "the write fails after the probe passed: not installed, and it says so" \
+    || bad "the write fails after the probe passed: not installed" "$(grep -a 'aurstage-report\|aurstage:' "$MTMP/out.txt" | tail -3)"
+[ "$(table_of "$MTMP/run.img")" = "$TABLE0" ] && ok "...nothing was committed: the table is the one the engine left" || bad "...nothing was committed" "$(table_of "$MTMP/run.img" | head -4)"
+grep -aq "verdict=installed" "$MTMP/out.txt" && bad "...and never says installed" || ok "...and never says installed"
+grep -aq "Windows starts as usual" "$MTMP/out.txt" && ok "...and tells her Windows starts as usual" || bad "...and tells her Windows starts as usual"
+
+# 3. the Windows half's entry is in the list and a new entry cannot be written
+INST="$MTMP/inst.fd"
+cp /usr/share/OVMF/OVMF_VARS_4M.fd "$INST"
+python3 tools/efivarstore.py "$INST" plant-hd Boot0009 "AurOS Installer" '\EFI\AurOS\shimx64.efi' "$ARMED" 1 &&
+python3 tools/efivarstore.py "$INST" set-next 0009 || bad "the Windows half's entry is planted"
+NVRAM_SEED="$INST" boot_staging "$ARMED" "aurstage.install aurstage.min_gb=1 aurstage.fail_at=entry-new" "INSTALLTEST-AUROS-STARTED\|aurstage-report v1 verdict=[a-z-]* record=failed\|aurstage-report v1 verdict=[a-z-]* record=refused" 400
+if grep -aq "INSTALLTEST-AUROS-STARTED" "$MTMP/out.txt"; then
+    ok "a new entry cannot be written but the Windows half's can be replaced: the install goes ahead"
+else bad "a new entry cannot be written but the Windows half's can be replaced: the install goes ahead" "$(grep -a 'aurstage' "$MTMP/out.txt" | grep -a -i 'report\|start-up\|entry\|firmware\|space' | tail -5)"; fi
+if python3 tools/efivarstore.py "$MTMP/vars.fd" entry "AurOS" > "$MTMP/entry.txt" 2>/dev/null; then
+    grep -qx 'num=0009' "$MTMP/entry.txt" && ok "...AurOS's entry is in the slot the Windows half's was in (0009)" \
+        || bad "...AurOS's entry is in that slot" "$(cat "$MTMP/entry.txt")"
+else bad "...AurOS's entry is in the list" "none"; fi
+python3 tools/efivarstore.py "$MTMP/vars.fd" entry "AurOS Installer" >/dev/null 2>&1 \
+    && bad "...and nothing called AurOS Installer is left behind" || ok "...and nothing called AurOS Installer is left behind"
 fi
 fi
 

@@ -166,9 +166,9 @@ echo
 echo "  the power goes during the install"
 PRISTINE=$(md5sum "$DISK" | cut -d' ' -f1)
 
-for pt in gate capture-mid shrink-begin shrink-end write-mid write-end \
-          boot-mid boot-end \
-          commit-array commit-sector commit-backup boot-entry settle-end; do
+for pt in gate capture-mid shrink-begin shrink-mid shrink-end write-mid write-end \
+          boot-mid boot-end entry-written \
+          commit-array commit-sector commit-backup boot-entry settle-mid settle-end; do
     printf '\n  ── %s\n' "$pt"
     if mach_boot "$IMG" "$DISK" "$STICK" \
                  "aurstage.install aurstage.min_gb=1 aurstage.die_at=$pt" \

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/reboot.h>
+#include <sys/types.h>
 
 #include "fault.h"
 #include "aurstage.h"
@@ -41,6 +42,18 @@ void fault_maybe(const char *name)
     for (;;) pause();
 }
 
+void fault_maybe_soon(const char *name, int ms)
+{
+    char want[64];
+    if (stage_cmdline_value("aurstage.die_at=", want, sizeof want) != 0) return;
+    if (strcmp(want, name) != 0) return;
+    pid_t p = fork();
+    if (p != 0) return;                     /* the work carries on; the helper stops it */
+    usleep((useconds_t)ms * 1000);
+    fault_maybe(name);
+    _exit(0);
+}
+
 int fault_fail(const char *name)
 {
     char want[64];
@@ -56,5 +69,6 @@ int fault_fail(const char *name)
 int  fault_build(void) { return 0; }
 void fault_maybe(const char *name) { (void)name; }
 int  fault_fail(const char *name) { (void)name; return 0; }
+void fault_maybe_soon(const char *name, int ms) { (void)name; (void)ms; }
 
 #endif
