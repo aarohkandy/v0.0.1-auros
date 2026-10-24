@@ -37,6 +37,7 @@ on:
       variants: {type: string, required: false, default: base}
       hdd_throttle: {type: string, required: false, default: ''}
       build_run: {type: string, required: false, default: ''}
+      bitlocker_putback: {type: boolean, required: false, default: false}
     outputs:
       certified:
         description: A personalized base journey actually ran with all expectations
@@ -50,6 +51,11 @@ on:
       # variants=aur only: the image of this build run (its auros-pieces artifact)
       # instead of a release's, e.g. a green build newer than the last prerelease
       build_run: {type: string, required: false, default: ''}
+      bitlocker_putback:
+        description: Diagnostic only - prove fastpath BitLocker Put Windows back
+        type: boolean
+        required: false
+        default: false
 
 # contents: write is for the jobs that make or fill a release, and only
 # those (SEC-005): a job that runs a lot of code cannot replace what a
@@ -97,6 +103,7 @@ jobs:
           EXPECTED_LOOK: ${{ inputs.expected_look }}
           EXPECTED_THEME: ${{ inputs.expected_theme }}
           IN_VARIANTS: ${{ inputs.variants }}
+          IN_BITLOCKER_PUTBACK: ${{ inputs.bitlocker_putback }}
           EVENT: ${{ github.event_name }}
         run: |
           # "aur" is not a Windows: it boots the AurOS image alone and drives its
@@ -110,6 +117,8 @@ jobs:
           # interface: exactly one signed artifact, base only, with all three
           # expectations. A skipped or partially described journey is refused.
           if [ -n "$IN_ARTIFACT" ]; then
+            [ "$IN_BITLOCKER_PUTBACK" != true ] \
+              || { echo "::error::put-back E2E does not accept a personalized artifact"; exit 2; }
             [ "$IN_ARTIFACT" = auros-setup-signed ] && [ -z "$IN_URL" ] \
               || { echo "::error::personalized E2E requires only auros-setup-signed"; exit 2; }
             [[ $IN_SHA256 =~ ^[0-9a-f]{64}$ ]] \
@@ -124,6 +133,26 @@ jobs:
           fi
           [ -z "$EXPECTED_RECIPE_ID$EXPECTED_LOOK$EXPECTED_THEME" ] \
             || { echo "::error::recipe expectations require a personalized artifact"; exit 2; }
+          if [ "$IN_BITLOCKER_PUTBACK" = true ]; then
+            [[ $IN_SHA256 =~ ^[0-9a-f]{64}$ ]] \
+              && [[ ,$IN_VARIANTS, == *,bitlocker,* ]] \
+              || { echo "::error::put-back E2E requires an exact hash and the bitlocker variant"; exit 2; }
+            if ! python3 <<'PY'
+          import os, re, urllib.parse
+          u = urllib.parse.urlsplit(os.environ['IN_URL'])
+          want = '/' + os.environ['GITHUB_REPOSITORY'] + '/releases/download/'
+          assert u.scheme == 'https' and u.netloc == 'github.com' and not u.query and not u.fragment
+          assert u.path.startswith(want)
+          rest = u.path[len(want):]
+          tag, sep, name = rest.partition('/')
+          assert sep and re.fullmatch(r'[A-Za-z0-9._-]{1,128}', tag)
+          assert name == 'AurOS-Setup-fastpath.exe'
+          PY
+            then
+              echo "::error::put-back E2E requires this repository's exact fastpath release URL"
+              exit 2
+            fi
+          fi
           # called (release.yml) or started by hand: the inputs say it all
           if [ -n "$IN_URL" ] || [ "$EVENT" = workflow_dispatch ]; then
             echo "run=true" | tee -a "$GITHUB_OUTPUT"
@@ -182,6 +211,7 @@ jobs:
       E2E_VARIANT: ${{ matrix.variant }}
       # two installers in one run id (release.yml) must not share file names
       E2E_LABEL: ${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}
+      E2E_BITLOCKER_PUTBACK: ${{ inputs.bitlocker_putback && matrix.variant == 'bitlocker' && '1' || '0' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -305,7 +335,7 @@ jobs:
           /usr/bin/python3 tools/e2e/e2e.py flow "$E2E_DIR/out/flow" "$E2E_DIR/golden" "$E2E_DIR/work"
 
       - name: M3 - the program is on AurOS's disk (machine off)
-        if: steps.flow.outcome == 'success'
+        if: steps.flow.outcome == 'success' && env.E2E_BITLOCKER_PUTBACK != '1'
         env:
           EXPECTED_RECIPE_ID: ${{ inputs.expected_recipe_id }}
           EXPECTED_LOOK: ${{ inputs.expected_look }}
@@ -330,7 +360,13 @@ jobs:
       - name: what the disk says (the flow failed; machine off)
         if: always() && steps.flow.outcome == 'failure'
         continue-on-error: true
-        run: /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/diag" "$E2E_DIR/work" --diag
+        run: |
+          if [ -e "$E2E_DIR/out/flow/UNSAFE-DISK-ATTACHED.txt" ]; then
+            echo "::error::disk diagnostics skipped because the flow could not prove its host mount detached"
+            cat "$E2E_DIR/out/flow/UNSAFE-DISK-ATTACHED.txt"
+          else
+            /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/diag" "$E2E_DIR/work" --diag
+          fi
 
       - name: publish the evidence (prerelease e2e-${{ github.run_id }})
         if: always()

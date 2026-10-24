@@ -21,7 +21,7 @@
 
 Run from anywhere: python3 tools/e2e/selftest.py
 """
-import ast, json, os, re, subprocess, sys, tempfile
+import ast, inspect, json, os, re, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "..", "..", "src", "aurbridge")
@@ -140,6 +140,96 @@ def test_bitlocker_verdict():
     with open(os.path.join(HERE, "guest", "specialize.cmd")) as f:
         sp = f.read()
     check("PreventDeviceEncryption" in sp, "the plain PC: Windows' automatic device encryption is switched off in specialize.cmd")
+
+
+def test_bitlocker_putback_contract():
+    try:
+        import e2e, types
+    except ImportError:
+        return
+    guid = "{01234567-89ab-cdef-0123-456789abcdef}"
+    good = {"volume_status": "FullyEncrypted", "protection_status": "On",
+            "encryption_percentage": 100, "protectors": [
+                {"type": "Tpm", "id": guid}, {"type": "RecoveryPassword", "id": guid}]}
+    parsed = e2e.parse_bitlocker_evidence("AUROS_BITLOCKER_STATE " + json.dumps(good))
+    check(e2e.bitlocker_return_verdict(parsed) is None,
+          "put-back: sanitized fully encrypted/protected state is green")
+    for field, value in (("volume_status", "FullyDecrypted"),
+                         ("protection_status", "Off"), ("encryption_percentage", 50)):
+        bad = dict(parsed); bad[field] = value
+        check(e2e.bitlocker_return_verdict(bad) is not None,
+              f"put-back: unsafe {field} is RED on either Windows return")
+    changed = json.loads(json.dumps(parsed))
+    changed["protectors"][0]["id"] = "{11234567-89ab-cdef-0123-456789abcdef}"
+    check(e2e.bitlocker_return_verdict(changed, parsed["protectors"]) is not None,
+          "put-back: replaced protector identity is RED on either Windows return")
+    secret = dict(good); secret["recovery_password"] = "forbidden"
+    try:
+        e2e.parse_bitlocker_evidence("AUROS_BITLOCKER_STATE " + json.dumps(secret))
+        rejected = False
+    except e2e.Failure:
+        rejected = True
+    check(rejected, "put-back: an unexpected secret-bearing BitLocker field is refused")
+    try:
+        e2e.parse_bitlocker_evidence("AUROS_BITLOCKER_STATE " + json.dumps({**good, "protectors": []}))
+        rejected = False
+    except e2e.Failure:
+        rejected = True
+    check(rejected, "put-back: missing protector identities are refused")
+
+    base = {"c_bytes": 1000, "c_offset": 2048, "partition_sha256": "e" * 64,
+            "firmware_sha256": "f" * 64, "hiberboot": 1, "canary_sha256": "a" * 64}
+    fixture = {"sha256": "b" * 64}
+    final = {"phase": "finished", "status_at": "2026-10-24T22:00:00Z",
+             "c_bytes": 1000, "c_offset": 2048, "partition_sha256": "e" * 64,
+             "firmware_sha256": "f" * 64, "hiberboot": 1,
+             "canary_sha256": "a" * 64, "restored_sha256": "b" * 64,
+             "handover_volumes": 0, "putback_tasks": 0}
+    check(not e2e.putback_completion_errors(base, fixture, final),
+          "put-back: exact completed Windows state is green")
+    mutations = (("phase", "error"), ("c_bytes", 999), ("c_offset", 999),
+                 ("partition_sha256", "0" * 64), ("firmware_sha256", "1" * 64), ("hiberboot", 0),
+                 ("canary_sha256", "c" * 64), ("restored_sha256", "d" * 64),
+                 ("handover_volumes", 1), ("putback_tasks", 1))
+    for field, value in mutations:
+        bad = dict(final); bad[field] = value
+        check(e2e.putback_completion_errors(base, fixture, bad),
+              f"put-back: mismatched {field} fails closed")
+    check(e2e.putback_completion_errors(base, fixture, {}),
+          "put-back: missing final state fails closed")
+    check(e2e.putback_completion_errors(base, fixture, final, 1800000000),
+          "put-back: a stale finished status cannot satisfy a new request")
+
+    flow = e2e.Flow.__new__(e2e.Flow)
+    flow.m = types.SimpleNamespace(alive=lambda: True)
+    try:
+        flow.seed_putback_fixture()
+        rejected = False
+    except e2e.Failure:
+        rejected = True
+    check(rejected, "put-back: fixture injection refuses a live VM before touching a disk")
+
+    workflow = open(os.path.join(HERE, "..", "..", ".github", "workflows", "e2e.yml")).read()
+    release = open(os.path.join(HERE, "..", "..", ".github", "workflows", "release.yml")).read()
+    fastpath = release.split("\n  e2e-fastpath:\n", 1)[-1].split("\n  # THE SOURCE CODE", 1)[0]
+    ordinary = release.split("\n  e2e:\n", 1)[-1].split("\n  # The fast-path", 1)[0]
+    check("bitlocker_putback: true" in fastpath and "bitlocker_putback" not in ordinary,
+          "put-back: only the diagnostic fastpath release lane enables the destructive leg")
+    check("name == 'AurOS-Setup-fastpath.exe'" in workflow and
+          "^[0-9a-f]{64}$" in workflow and "*,bitlocker,*" in workflow,
+          "put-back: workflow requires the exact fastpath name, SHA-256 and BitLocker variant")
+    check("UNSAFE-DISK-ATTACHED.txt" in workflow,
+          "put-back: failure diagnostics never reopen an overlay whose detach was unproven")
+    flow_source = open(os.path.join(HERE, "e2e.py")).read().split("def cmd_flow(a):", 1)[-1]
+    check(flow_source.index("f.store()") < flow_source.index("f.complete_putback()"),
+          "put-back: store installation and real program launch remain before removal")
+    check("manage-bde" not in inspect.getsource(e2e.Flow.bitlocker_evidence) and
+          "RecoveryPassword" not in inspect.getsource(e2e.Flow.bitlocker_evidence),
+          "put-back: evidence schema excludes raw protector output")
+    wait_source = inspect.getsource(e2e.Flow.wait_windows_return)
+    check(wait_source.index("self.write_bitlocker_return(evidence)") <
+          wait_source.index("if time.time() > deadline"),
+          "put-back: a RED first or second protection state is recorded before failure")
 
 
 def test_timings_summary():
@@ -645,7 +735,10 @@ def test_flow_helpers():
     asked.clear(); f.wizard_named(win); f.wizard_named(win)
     check(len(asked) == 3 and sum("UI Automation sees" in l for l in logs) == 1,
           "flow: unreadable names are diagnosed once (a broad look, logged), not every second")
-    out = ["STATE FullyEncrypted|Off|100\nProtection Status: Protection Off"]
+    out = ["AUROS_BITLOCKER_STATE " + json.dumps({
+        "volume_status": "FullyEncrypted", "protection_status": "Off",
+        "encryption_percentage": 100,
+        "protectors": [{"type": "Tpm", "id": "{01234567-89ab-cdef-0123-456789abcdef}"}]})]
     f.guest = lambda script, timeout=120: out[0]
     check(f.bitlocker_state("t") == ("FullyEncrypted", "Off", 100.0), "flow: BitLocker's state is read from Windows' own words")
     out[0] = "Access is denied"
@@ -744,6 +837,7 @@ test_expect()
 test_wizard_contract()
 test_stops()
 test_bitlocker_verdict()
+test_bitlocker_putback_contract()
 test_timings_summary()
 test_windows_dry()
 test_aur_dry()

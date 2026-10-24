@@ -14,6 +14,7 @@ GitHub Actions Linux runner, and keeps a screenshot of every screen.
 | (cache) | The installed machine (disk, firmware variables, TPM state) is kept in the Actions cache. | Later runs start from the same fresh Windows in minutes. |
 | M2 `e2e.py flow` | Edge opens the real website (served from the runner, `http://10.0.2.2:8000`), its download button ("Get AurOS") is pressed (any boxes gating it ticked first); Edge's download warnings answered (Keep, Keep anyway); the file's SHA-256 checked; SmartScreen's "More info", "Run anyway"; UAC's Yes (Alt+Y on the secure desktop); then the wizard: the teal primary button pressed whenever it is enabled, check boxes ticked, the typed word typed, until "Restart now". Then the restart is watched: firmware, the staging screen, AurOS's first start, and "Yes, it all works" is pressed. | The published installer, as a person gets it, takes this PC to AurOS: downloaded, trusted past Windows' warnings, elevated, preflight passes on a real machine, the image downloads and checks, BootNext is honoured by real firmware under Secure Boot (shim, grub, staging kernel), the real NTFS is shrunk, AurOS written, verified and started, and its first question answered. |
 | M3 `e2e.py flow` (end) and `e2e.py inspect` | In AurOS: the store ("Get more programs") opened, a program searched for, installed and opened. Then the machine is shut down and its disk read with `qemu-nbd`, read-only. | A person can add a program; the program is on AurOS's disk, not just on the screen. |
+| Fastpath BitLocker put-back diagnostic | After the normal store and program-launch proof, Windows is started once and its protection is recorded. The powered-off disposable overlay receives one known AurOS document. AurOS is started again, Settings' two deliberate **Put Windows back** presses are driven by sight, and Windows is checked after the restore. | The fastpath can return a BitLocker PC and its AurOS files to Windows without a recovery prompt, loss of the original Windows canary, loss of protection, or leftover handover state. |
 
 Every press is a QMP keyboard or tablet event (what a person's hands
 do); none is a hidden test mode of the product. Before each press a
@@ -78,6 +79,30 @@ in `e2e.py` names the words a wizard page must show, that "Fix these
 for me" was pressed, and (pending) that Windows restarted for the fix.
 A variant whose PC came out wrong fails instead of quietly testing the
 plain PC again.
+
+`bitlocker_putback=true` is a narrow diagnostic input for the exact
+SHA-pinned `AurOS-Setup-fastpath.exe` release URL and a variant list that
+contains `bitlocker`. `release.yml` enables it only on the fastpath caller;
+the public/default installer and promotion gates are unchanged. The normal
+store install and real program-launch proof still run before removal.
+
+The put-back leg is destructive only to that job's `WORK/win.qcow2`
+copy-on-write overlay. Fixture injection refuses a running VM, a symlink or
+non-owned disk path, a non-overlay image, and zero or multiple AurOS roots;
+it never opens the cached golden or a host disk for writing. The final gate
+requires `status.json` phase `finished`, the restored AurOS file's exact hash,
+an unchanged Windows canary, the original C: size and Fast Startup setting,
+no `AUROSHANDOV` volume, and no put-back scheduled task.
+
+`bitlocker-return-1.json` and `bitlocker-return-2.json` record the two Windows
+returns. They contain only encryption status and percentage plus protector
+types and identifiers. Recovery passwords and raw protector output are never
+requested or archived. This observes protection after each return; it does
+not claim that the consumed firmware reboot counter is observable afterward.
+Expect roughly 90–180 minutes for the complete fastpath BitLocker journey,
+with 10–30 minutes typical for put-back. The workflow retains its 355-minute
+job cap; the second Windows return is bounded at 20 minutes and its asynchronous
+file/cleanup completion gets a further 30-minute deadline.
 
 The variant's Windows is set up by `guest/firstlogon.ps1` from
 `e2e\variant.txt` on the answer CD (`mkanswer.sh`, `E2E_GOLDEN`,

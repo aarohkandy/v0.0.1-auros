@@ -24,6 +24,9 @@ marks where it went). The settings that change between builds are the
 environment variables below; tools/e2e/README.md has the rest.
 """
 import argparse
+import datetime
+import hashlib
+import math
 import numpy as np
 import json
 import os
@@ -81,6 +84,7 @@ APP_FILES = E("APP_FILES", "usr/bin/vlc var/lib/flatpak/app/org.videolan.VLC")
 
 # ── which PC (tools/e2e/README.md, "Variants") ──────────────────────
 VARIANT = E("E2E_VARIANT", "base")
+BITLOCKER_PUTBACK = E("E2E_BITLOCKER_PUTBACK", "0") == "1"
 DISK_GB = int(E("E2E_DISK_GB", "128"))
 DISK_THROTTLE = E("E2E_DISK_THROTTLE", "")     # e.g. bps=104857600,iops=120
 
@@ -138,6 +142,92 @@ def bitlocker_verdict(variant, vol, prot):
         return (f"the {variant} PC has BitLocker on its drive ({vol}, protection {prot}): "
                 "Windows turned device encryption on by itself; the plain PC must have none")
     return None
+
+
+def parse_bitlocker_evidence(text):
+    """Parse the deliberately small, secret-free BitLocker record emitted by
+    the guest. Recovery passwords and raw protector output never cross the
+    helper boundary or enter the evidence archive."""
+    prefix = "AUROS_BITLOCKER_STATE "
+    rows = [line[len(prefix):] for line in text.splitlines() if line.startswith(prefix)]
+    if len(rows) != 1:
+        raise Failure("Windows returned no single sanitized BitLocker state")
+    try:
+        state = json.loads(rows[0])
+    except (TypeError, ValueError) as e:
+        raise Failure(f"Windows returned malformed sanitized BitLocker state: {e}")
+    if set(state) != {"volume_status", "protection_status", "encryption_percentage", "protectors"}:
+        raise Failure("Windows returned an unexpected BitLocker state schema")
+    if (isinstance(state["encryption_percentage"], bool) or
+            not isinstance(state["encryption_percentage"], (int, float)) or
+            not math.isfinite(float(state["encryption_percentage"])) or
+            not 0 <= float(state["encryption_percentage"]) <= 100):
+        raise Failure("Windows returned a non-numeric BitLocker percentage")
+    protectors = state["protectors"]
+    if not isinstance(protectors, list) or not protectors:
+        raise Failure("Windows returned no BitLocker protector identities")
+    clean = []
+    for protector in protectors:
+        if set(protector) != {"type", "id"}:
+            raise Failure("Windows returned an unexpected protector schema")
+        ptype, pid = protector["type"], protector["id"]
+        if not isinstance(ptype, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,31}", ptype):
+            raise Failure("Windows returned an invalid protector type")
+        if not isinstance(pid, str) or not re.fullmatch(
+                r"\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
+                r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}", pid):
+            raise Failure("Windows returned an invalid protector identifier")
+        clean.append({"type": ptype, "id": pid.lower()})
+    clean.sort(key=lambda p: (p["type"], p["id"]))
+    state["protectors"] = clean
+    state["encryption_percentage"] = float(state["encryption_percentage"])
+    return state
+
+
+def bitlocker_return_verdict(state, baseline_protectors=None):
+    """A return to Windows is green only with encryption and protection on."""
+    if state["volume_status"] != "FullyEncrypted":
+        return f"volume is {state['volume_status']}, not FullyEncrypted"
+    if state["protection_status"] != "On":
+        return f"protection is {state['protection_status']}, not On"
+    if state["encryption_percentage"] < 99.0:
+        return f"encryption is only {state['encryption_percentage']}%"
+    if baseline_protectors is not None and state["protectors"] != baseline_protectors:
+        return "BitLocker protector types or identifiers changed from the pre-install baseline"
+    return None
+
+
+def putback_completion_errors(base, fixture, state, requested_at=None):
+    """Return every fail-closed mismatch in Windows' final put-back report."""
+    required = {"phase", "status_at", "c_bytes", "c_offset", "partition_sha256",
+                "firmware_sha256", "hiberboot", "canary_sha256", "restored_sha256",
+                "handover_volumes", "putback_tasks"}
+    if not isinstance(state, dict) or set(state) != required:
+        return ["completion report schema is missing or unexpected"]
+    checks = (
+        (state["phase"] == "finished", f"put-back phase is {state['phase']!r}, not 'finished'"),
+        (state["c_bytes"] == base["c_bytes"], "Windows C: was not restored to its original size"),
+        (state["c_offset"] == base["c_offset"], "Windows C: moved from its original partition offset"),
+        (state["partition_sha256"] == base["partition_sha256"],
+         "the original partition map was not restored exactly"),
+        (state["firmware_sha256"] == base["firmware_sha256"],
+         "the original firmware boot entries were not restored exactly"),
+        (state["hiberboot"] == base["hiberboot"], "Fast Startup was not restored"),
+        (state["canary_sha256"] == base["canary_sha256"], "the original Windows canary changed"),
+        (state["restored_sha256"] == fixture["sha256"], "the AurOS file was not restored byte-for-byte"),
+        (state["handover_volumes"] == 0, "the AUROSHANDOV volume remains"),
+        (state["putback_tasks"] == 0, "a put-back scheduled task remains"),
+    )
+    errors = [message for ok, message in checks if not ok]
+    if requested_at is not None:
+        try:
+            observed = datetime.datetime.fromisoformat(
+                state["status_at"].replace("Z", "+00:00")).timestamp()
+        except (AttributeError, TypeError, ValueError):
+            observed = 0
+        if observed < requested_at - 120:
+            errors.append("put-back status is stale or has no valid completion timestamp")
+    return errors
 
 
 def label_is(label, *words):
@@ -301,6 +391,9 @@ class Flow:
         self.fix_presses = 0
         self.fix_restarts = 0
         self._named_diag = False
+        self.putback_base = None
+        self.putback_fixture = None
+        self.putback_requested_at = None
 
     def check_variant(self):
         """After the wizard: the variant's PC got the stop it was made
@@ -326,19 +419,33 @@ class Flow:
     def bitlocker_state(self, when):
         """What Windows itself says about BitLocker on C: (read with the
         elevated helper). Returns (volume status, protection, percent)."""
-        out = self.guest("$v = Get-BitLockerVolume -MountPoint C:; "
-                         "\"STATE $($v.VolumeStatus)|$($v.ProtectionStatus)|$($v.EncryptionPercentage)\"; "
-                         "manage-bde -status C:")
-        m = re.search(r"STATE (\w+)\|(\w+)\|([\d.]+)", out)
-        self.log(f"bitlocker {when}: {m.group(0) if m else 'unreadable'}\n{out.strip()[:900]}")
-        if not m:
+        try:
+            state = self.bitlocker_evidence()
+        except Failure as e:
+            self.log(f"bitlocker {when}: unreadable ({e})")
             # (the helper is elevated, and can read it; if it cannot, only the
             # bitlocker variant depends on knowing, the staging screen refuses
             # an encrypted drive anyway)
             if VARIANT == "bitlocker":
-                raise Failure(f"variant bitlocker: cannot read BitLocker's state {when}: {out.strip()[:300]}")
+                raise Failure(f"variant bitlocker: cannot read BitLocker's state {when}: {e}")
             return "unknown", "unknown", 0.0
-        return m.group(1), m.group(2), float(m.group(3))
+        self.log(f"bitlocker {when}: {state['volume_status']}|{state['protection_status']}|"
+                 f"{state['encryption_percentage']}; protectors=" +
+                 ",".join(p["type"] for p in state["protectors"]))
+        return state["volume_status"], state["protection_status"], state["encryption_percentage"]
+
+    def bitlocker_evidence(self):
+        """Return only the non-secret BitLocker fields needed by this test.
+        Never ask Windows for, print, or retain recovery password material."""
+        out = self.guest(
+            "$v=Get-BitLockerVolume -MountPoint C:; "
+            "$p=@($v.KeyProtector | ForEach-Object { "
+            "@{type=[string]$_.KeyProtectorType;id=[string]$_.KeyProtectorId} }); "
+            "$s=@{volume_status=[string]$v.VolumeStatus;"
+            "protection_status=[string]$v.ProtectionStatus;"
+            "encryption_percentage=[double]$v.EncryptionPercentage;protectors=$p}; "
+            "'AUROS_BITLOCKER_STATE '+($s|ConvertTo-Json -Compress -Depth 4)")
+        return parse_bitlocker_evidence(out)
 
     def turn_on_bitlocker(self):
         """BitLocker as a PC with a TPM has it: on C:, a TPM protector and a
@@ -537,7 +644,55 @@ class Flow:
                 raise Failure(bad)
             with open(os.path.join(self.a.out, "windows-facts.txt"), "w") as fh:
                 fh.write(facts)
+            if BITLOCKER_PUTBACK:
+                self.prepare_putback_windows()
         self.m.auto_shots(30)
+
+    def prepare_putback_windows(self):
+        """Place a harmless canary in the disposable Windows guest and retain
+        the exact pre-install state that put-back must restore."""
+        if VARIANT != "bitlocker":
+            raise Failure("BitLocker put-back was requested outside the bitlocker variant")
+        token = "auros-e2e-windows-" + os.urandom(16).hex()
+        out = self.guest(
+            "$ErrorActionPreference='Stop'; "
+            "function H([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
+            "([BitConverter]::ToString($a.ComputeHash([Text.Encoding]::UTF8.GetBytes($x)))-replace'-','').ToLowerInvariant()"
+            "}finally{$a.Dispose()}}; "
+            "$p=Join-Path $env:USERPROFILE 'Documents\\auros-e2e-before.txt'; "
+            f"[IO.File]::WriteAllText($p,'{token}',[Text.Encoding]::ASCII); "
+            "$c=Get-Partition -DriveLetter C; "
+            "$pm=((Get-Partition|Sort-Object DiskNumber,Offset|ForEach-Object{"
+            "'{0}|{1}|{2}|{3}|{4}'-f $_.DiskNumber,$_.PartitionNumber,$_.Offset,$_.Size,$_.GptType})-join';'); "
+            "$fwRaw=& bcdedit.exe /enum firmware 2>&1; if($LASTEXITCODE -ne 0){throw 'bcdedit failed'}; "
+            "$fw=(($fwRaw|Out-String).Trim()); "
+            "$h=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power').HiberbootEnabled; "
+            "$s=@{c_bytes=[uint64]$c.Size;c_offset=[uint64]$c.Offset;partition_sha256=(H $pm);"
+            "firmware_sha256=(H $fw);hiberboot=[int]$h;"
+            "canary_sha256=(Get-FileHash $p -Algorithm SHA256).Hash.ToLowerInvariant()}; "
+            "'AUROS_PUTBACK_BASE '+($s|ConvertTo-Json -Compress)")
+        rows = [x[len("AUROS_PUTBACK_BASE "):] for x in out.splitlines()
+                if x.startswith("AUROS_PUTBACK_BASE ")]
+        try:
+            base = json.loads(rows[0]) if len(rows) == 1 else None
+        except ValueError:
+            base = None
+        if (not isinstance(base, dict) or set(base) != {"c_bytes", "c_offset", "partition_sha256",
+                                                        "firmware_sha256", "hiberboot", "canary_sha256"}
+                or not isinstance(base["c_bytes"], int) or base["c_bytes"] <= 0
+                or not isinstance(base["c_offset"], int) or base["c_offset"] <= 0
+                or base["hiberboot"] not in (0, 1)
+                or any(not re.fullmatch(r"[0-9a-f]{64}", str(base[k]))
+                       for k in ("partition_sha256", "firmware_sha256", "canary_sha256"))):
+            raise Failure("Windows did not return the exact pre-install put-back state")
+        protectors = self.bitlocker_evidence()["protectors"]
+        if not {"Tpm", "RecoveryPassword"}.issubset({p["type"] for p in protectors}):
+            raise Failure("the baseline BitLocker volume lacks its TPM or recovery protector")
+        base["protectors"] = protectors
+        self.putback_base = base
+        with open(os.path.join(self.a.out, "putback-before.json"), "w") as fh:
+            json.dump(base, fh, indent=2, sort_keys=True)
+            fh.write("\n")
 
     # -- 2. Edge: the website, its download link, Edge's own warnings --
     def open_website(self):
@@ -1422,6 +1577,59 @@ class Flow:
         raise Failure(f"AurOS's start menu never highlighted '{name}': " +
                       vision.text_of(vision.ocr(self.m.screendump()))[:400])
 
+    def wait_windows_return(self, since, ordinal, reason, timeout=12 * 60):
+        """Wait for Windows without ever exposing a recovery password, then
+        record a sanitized protection state for this particular return."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.hub.event("helper-up", since=since) is not None:
+                break
+            words = vision.ocr(self.m.screendump())
+            text = vision.text_of(words)
+            if re.search(r"recovery key|BitLocker recovery|enter the recovery", text, re.I):
+                self.m.shot(f"bitlocker-recovery-screen-return-{ordinal}")
+                raise Failure(f"Windows return {ordinal} asked for the BitLocker recovery key")
+            time.sleep(10)
+        else:
+            self.m.shot(f"windows-return-{ordinal}-missing")
+            raise Failure(f"Windows return {ordinal} did not reach its helper in {timeout // 60} minutes")
+        time.sleep(45)
+        self.m.shot(f"windows-return-{ordinal}")
+        deadline = time.time() + 4 * 60
+        while True:
+            state = self.bitlocker_evidence()
+            baseline = self.putback_base["protectors"] if self.putback_base else None
+            bad = bitlocker_return_verdict(state, baseline)
+            evidence = {"schema": 1, "return": ordinal, "reason": reason,
+                        "observed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "protection_ok": bad is None, "failure": bad, **state}
+            self.write_bitlocker_return(evidence)
+            if bad is None:
+                break
+            if time.time() > deadline:
+                raise Failure(f"Windows return {ordinal} has unsafe BitLocker state: {bad}")
+            time.sleep(20)
+
+        self.log(f"Windows return {ordinal}: BitLocker fully encrypted and protection on")
+        return evidence
+
+    def write_bitlocker_return(self, evidence):
+        """Keep the last sanitized observation even when the return is RED."""
+        ordinal, reason = evidence["return"], evidence["reason"]
+        state = evidence
+        with open(os.path.join(self.a.out, f"bitlocker-return-{ordinal}.json"), "w") as fh:
+            json.dump(evidence, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        with open(os.path.join(self.a.out, f"bitlocker-return-{ordinal}.txt"), "w") as fh:
+            fh.write(f"Windows return {ordinal}: {reason}\n")
+            fh.write(f"volume={state['volume_status']} protection={state['protection_status']} "
+                     f"encrypted={state['encryption_percentage']}%\n")
+            fh.write(f"protection_ok={str(evidence['protection_ok']).lower()}\n")
+            if evidence["failure"]:
+                fh.write(f"failure={evidence['failure']}\n")
+            for protector in state["protectors"]:
+                fh.write(f"protector type={protector['type']} id={protector['id']}\n")
+
     def back_to_windows(self):
         """The machine is switched off and on again like a person would, AurOS's
         start menu picks Windows, and Windows must come up WITHOUT the BitLocker
@@ -1454,32 +1662,230 @@ class Flow:
                               vision.text_of(vision.ocr(self.m.screendump()))[:300])
             self.m.shot("start-menu")
             self.pick_grub_entry("Windows")
-            # Windows starts through the firmware (start-windows), BitLocker sealed to it:
-            # a recovery screen is the failure D13 forbids
-            deadline = time.time() + 12 * 60
-            while time.time() < deadline:
-                if self.hub.event("helper-up", since=t) is not None:
+            return self.wait_windows_return(
+                t, 1, "first Windows return selected from AurOS after installation")
+
+    def seed_putback_fixture(self):
+        """Put one known file in AurOS while the disposable VM is off.
+
+        This touches only this run's qcow2 overlay. It refuses a live VM,
+        symlinks, a disk outside WORK, a non-overlay image, and ambiguous
+        AurOS roots. The golden image and host disks are never candidates.
+        """
+        if self.m.alive():
+            raise Failure("refusing to seed the put-back fixture while the VM is running")
+        work = os.path.realpath(self.a.work)
+        disk = os.path.realpath(self.disk)
+        if os.path.islink(self.disk) or os.path.dirname(disk) != work or os.path.basename(disk) != "win.qcow2":
+            raise Failure("refusing to seed a disk that is not WORK/win.qcow2")
+        info = json.loads(run(["qemu-img", "info", "--output=json", disk], self.rec).stdout)
+        backing = info.get("full-backing-filename") or info.get("backing-filename")
+        if info.get("format") != "qcow2" or not backing or os.path.realpath(backing) == disk:
+            raise Failure("refusing to seed a disk that is not a qcow2 overlay")
+
+        data = ("AurOS put-back E2E fixture " + os.urandom(24).hex() + "\n").encode("ascii")
+        fixture = {"name": "auros-e2e-putback.txt", "sha256": hashlib.sha256(data).hexdigest(),
+                   "bytes": len(data)}
+        local = os.path.join(work, "putback-fixture")
+        with open(local, "wb") as fh:
+            fh.write(data)
+        dev, mnt, chosen = "/dev/nbd7", os.path.join(work, "putback-mnt"), None
+        os.makedirs(mnt, exist_ok=True)
+        run("sudo modprobe nbd max_part=16", self.rec, check=False)
+        if run(["sudo", "qemu-nbd", "--connect", dev, disk], self.rec, check=False).returncode != 0:
+            raise Failure("could not attach the disposable overlay for the put-back fixture")
+        try:
+            time.sleep(3)
+            run(["sudo", "partprobe", dev], self.rec, check=False)
+            base = os.path.basename(dev)
+            candidates = []
+            for part in sorted(p for p in os.listdir("/dev") if p.startswith(base + "p")):
+                path = "/dev/" + part
+                fs = run(["sudo", "blkid", "-o", "value", "-s", "TYPE", path], self.rec,
+                         check=False).stdout.strip()
+                if fs != "ext4":
+                    continue
+                if run(["sudo", "mount", "-o", "ro,noload", path, mnt], self.rec,
+                       check=False).returncode != 0:
+                    continue
+                try:
+                    if os.path.isfile(os.path.join(mnt, "usr/lib/auros/answer.sh")) and \
+                            os.path.isdir(os.path.join(mnt, "home/her/Documents")):
+                        present = [rel for rel in APP_FILES.split()
+                                   if os.path.lexists(os.path.join(mnt, rel))]
+                        candidates.append((path, present))
+                finally:
+                    run(["sudo", "umount", mnt], self.rec)
+            if len(candidates) != 1:
+                raise Failure(f"expected exactly one installed AurOS root, found {len(candidates)}")
+            chosen, installed_apps = candidates[0]
+            if not installed_apps:
+                raise Failure("the installed program is absent before put-back")
+            with open(os.path.join(self.a.out, "putback-app-on-disk.txt"), "w") as fh:
+                fh.write("Program evidence present before removal:\n" + "\n".join(installed_apps) + "\n")
+            if run(["sudo", "mount", "-o", "rw", chosen, mnt], self.rec,
+                   check=False).returncode != 0:
+                raise Failure("could not mount the installed AurOS root for the fixture")
+            try:
+                docs = os.path.join(mnt, "home/her/Documents")
+                dest = os.path.join(docs, fixture["name"])
+                if os.path.islink(docs) or os.path.lexists(dest):
+                    raise Failure("refusing an unexpected Documents link or existing fixture path")
+                run(["sudo", "cp", "--", local, dest], self.rec)
+                run(["sudo", "chown", "--reference=" + docs, "--", dest], self.rec)
+                run(["sudo", "chmod", "0644", "--", dest], self.rec)
+                run(["sudo", "sync"], self.rec)
+            finally:
+                run(["sudo", "umount", mnt], self.rec)
+        finally:
+            mounts = run(["findmnt", "-rn", "-o", "SOURCE"], self.rec, check=False).stdout.splitlines()
+            still_mounted = [source for source in mounts if source == dev or source.startswith(dev + "p")]
+            if still_mounted:
+                run(["sudo", "umount", mnt], self.rec, check=False)
+                mounts = run(["findmnt", "-rn", "-o", "SOURCE"], self.rec,
+                             check=False).stdout.splitlines()
+                still_mounted = [source for source in mounts
+                                 if source == dev or source.startswith(dev + "p")]
+            unsafe = os.path.join(self.a.out, "UNSAFE-DISK-ATTACHED.txt")
+            if still_mounted:
+                with open(unsafe, "w") as fh:
+                    fh.write("nbd partitions remain mounted; do not open this overlay again\n")
+                raise Failure("refusing to detach or boot: nbd partitions remain mounted: " +
+                              ", ".join(still_mounted))
+            if run(["sudo", "qemu-nbd", "--disconnect", dev], self.rec,
+                   check=False).returncode != 0:
+                with open(unsafe, "w") as fh:
+                    fh.write("qemu-nbd disconnect failed; do not open this overlay again\n")
+                raise Failure("refusing to boot: qemu-nbd did not detach the qcow2 overlay")
+            for _ in range(20):
+                if not os.path.exists("/sys/block/" + os.path.basename(dev) + "/pid"):
                     break
-                words = vision.ocr(self.m.screendump())
-                text = vision.text_of(words)
-                if re.search(r"recovery key|BitLocker recovery|enter the recovery", text, re.I):
-                    self.m.shot("bitlocker-recovery-screen")
-                    raise Failure("Windows asked for the BitLocker recovery key after AurOS: " + text[:300])
-                time.sleep(10)
+                time.sleep(0.25)
             else:
-                self.m.shot("windows-did-not-come-back")
-                raise Failure("Windows did not come back through AurOS's start menu in 12 minutes: " +
-                              vision.text_of(vision.ocr(self.m.screendump()))[:300])
-            time.sleep(45)
-            self.m.shot("windows-back")
-            deadline = time.time() + 4 * 60
-            while True:
-                vol, prot, pct = self.bitlocker_state("after the way back from AurOS")
-                if vol == "FullyEncrypted" and prot == "On":
+                with open(unsafe, "w") as fh:
+                    fh.write("qemu-nbd still reports the overlay attached; do not open it again\n")
+                raise Failure("refusing to boot: the qcow2 overlay remains attached to qemu-nbd")
+            try:
+                os.unlink(local)
+            except FileNotFoundError:
+                pass
+        self.putback_fixture = fixture
+        with open(os.path.join(self.a.out, "putback-fixture.json"), "w") as fh:
+            json.dump(fixture, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+
+    def request_putback(self):
+        """Boot AurOS normally and use the same two deliberate presses a
+        person uses in Settings to request put-back."""
+        with self.rec.phase("aurOS: request Put Windows back with files"):
+            t = time.time()
+            self.m.start()
+            self.m.auto_shots(10)
+            deadline = time.time() + 10 * 60
+            settings = None
+            while time.time() < deadline:
+                img = self.m.screendump()
+                words = vision.ocr(img)
+                settings = vision.find_text(words, "Settings", last=True)
+                if settings:
                     break
-                if time.time() > deadline:
-                    raise Failure(f"Windows is back but BitLocker is {vol}, protection {prot} (D13: on again, never decrypted)")
+                self.m.key("home", label="AurOS: show home")
+                time.sleep(8)
+            if not settings:
+                self.m.shot("putback-no-settings")
+                raise Failure("AurOS did not show Settings before put-back")
+            self.m.click(*vision.centre(settings), label="AurOS: Settings")
+            time.sleep(3)
+            putback, words = self.ocr_find("Put Windows back")
+            if not putback:
+                raise Failure("Settings did not offer Put Windows back: " + vision.text_of(words)[:400])
+            self.m.click(*vision.centre(putback), label="Settings: Put Windows back")
+            time.sleep(3)
+            remove, words = self.ocr_find("Remove AurOS and put Windows back")
+            if not remove:
+                raise Failure("Put Windows back did not offer removal: " + vision.text_of(words)[:400])
+            self.m.click(*vision.centre(remove), label="Put Windows back: first deliberate press")
+            time.sleep(2.0)
+            armed, words = self.ocr_find("Press again to restart and remove AurOS")
+            if not armed:
+                raise Failure("Put Windows back did not arm its second press: " + vision.text_of(words)[:400])
+            self.putback_requested_at = time.time()
+            self.m.click(*vision.centre(armed), label="Put Windows back: second deliberate press")
+            return t
+
+    def putback_final_state(self):
+        """Read bounded final state; hashes and counts only, never file data."""
+        if not self.putback_base or not self.putback_fixture:
+            raise Failure("put-back verification has no recorded initial state or fixture")
+        restored = "C:\\Users\\aurtest\\From AurOS\\Documents\\" + self.putback_fixture["name"]
+        out = self.guest(
+            "$ErrorActionPreference='Stop'; "
+            "function H([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
+            "([BitConverter]::ToString($a.ComputeHash([Text.Encoding]::UTF8.GetBytes($x)))-replace'-','').ToLowerInvariant()"
+            "}finally{$a.Dispose()}}; "
+            "$st=$null; try {$st=Get-Content 'C:\\ProgramData\\AurOS\\user\\status.json' -Raw|ConvertFrom-Json}catch{}; "
+            "$c=Get-Partition -DriveLetter C; "
+            "$pm=((Get-Partition|Sort-Object DiskNumber,Offset|ForEach-Object{"
+            "'{0}|{1}|{2}|{3}|{4}'-f $_.DiskNumber,$_.PartitionNumber,$_.Offset,$_.Size,$_.GptType})-join';'); "
+            "$fwRaw=& bcdedit.exe /enum firmware 2>&1; if($LASTEXITCODE -ne 0){throw 'bcdedit failed'}; "
+            "$fw=(($fwRaw|Out-String).Trim()); "
+            "$h=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power').HiberbootEnabled; "
+            "$can='C:\\Users\\aurtest\\Documents\\auros-e2e-before.txt'; "
+            f"$rest='{restored}'; "
+            "$tasks=@(Get-ScheduledTask -ErrorAction SilentlyContinue|Where-Object {$_.TaskName -like 'AurOS put-back*'}); "
+            "$vols=@(Get-Volume -ErrorAction SilentlyContinue|Where-Object {$_.FileSystemLabel -eq 'AUROSHANDOV'}); "
+            "$s=@{phase=$(if($st){[string]$st.phase}else{''});status_at=$(if($st){[string]$st.at}else{''});"
+            "c_bytes=[uint64]$c.Size;c_offset=[uint64]$c.Offset;partition_sha256=(H $pm);firmware_sha256=(H $fw);hiberboot=[int]$h;"
+            "canary_sha256=$(if(Test-Path -LiteralPath $can){(Get-FileHash -LiteralPath $can -Algorithm SHA256).Hash.ToLowerInvariant()}else{''});"
+            "restored_sha256=$(if(Test-Path -LiteralPath $rest){(Get-FileHash -LiteralPath $rest -Algorithm SHA256).Hash.ToLowerInvariant()}else{''});"
+            "handover_volumes=[int]$vols.Count;putback_tasks=[int]$tasks.Count}; "
+            "'AUROS_PUTBACK_FINAL '+($s|ConvertTo-Json -Compress)")
+        rows = [x[len("AUROS_PUTBACK_FINAL "):] for x in out.splitlines()
+                if x.startswith("AUROS_PUTBACK_FINAL ")]
+        try:
+            state = json.loads(rows[0]) if len(rows) == 1 else None
+        except ValueError:
+            state = None
+        if isinstance(state, dict):
+            with open(os.path.join(self.a.out, "putback-final-observation.json"), "w") as fh:
+                json.dump(state, fh, indent=2, sort_keys=True)
+                fh.write("\n")
+        errors = putback_completion_errors(
+            self.putback_base, self.putback_fixture, state, self.putback_requested_at)
+        if errors:
+            raise Failure("put-back did not finish safely: " + "; ".join(errors))
+        with open(os.path.join(self.a.out, "putback-finished.json"), "w") as fh:
+            json.dump(state, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        return state
+
+    def complete_putback(self):
+        """Run the destructive leg only in this run's disposable overlay."""
+        self.shutdown()
+        self.seed_putback_fixture()
+        since = self.request_putback()
+        # The restore and Windows tasks are asynchronous. A helper-up event is
+        # only the beginning; final state below is polled to a bounded deadline.
+        second = self.wait_windows_return(since, 2, "after Put Windows back removed AurOS", 20 * 60)
+        deadline = time.time() + 30 * 60
+        last = None
+        while time.time() < deadline:
+            try:
+                self.putback_final_state()
+                break
+            except Failure as e:
+                last = e
                 time.sleep(20)
+        else:
+            raise Failure(f"put-back did not reach verified completion in 30 minutes: {last}")
+        first_path = os.path.join(self.a.out, "bitlocker-return-1.json")
+        if not os.path.isfile(first_path):
+            raise Failure("the first Windows return has no protection evidence")
+        with open(first_path) as fh:
+            first = json.load(fh)
+        with open(os.path.join(self.a.out, "bitlocker-returns.json"), "w") as fh:
+            json.dump([first, second], fh, indent=2, sort_keys=True)
+            fh.write("\n")
 
     def finish_findings(self):
         """The journey got through; what a person would be hurt by on the way
@@ -1562,6 +1968,8 @@ def cmd_aur(a):
 
 
 def cmd_flow(a):
+    if BITLOCKER_PUTBACK and VARIANT != "bitlocker":
+        raise Failure("E2E_BITLOCKER_PUTBACK is valid only for the bitlocker variant")
     f = Flow(a)
     rc = 1
     try:
@@ -1584,6 +1992,8 @@ def cmd_flow(a):
             f.shutdown()
             try:
                 f.back_to_windows()
+                if BITLOCKER_PUTBACK:
+                    f.complete_putback()
             except Failure as e:
                 if store_fail is None:
                     raise
