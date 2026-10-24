@@ -127,9 +127,10 @@ _Last updated: 00:36 UTC 2026-10-24 (17:36 your time, 23 Oct)._
    plan's 10 ms CPU limit is tighter than the service's 11-33 ms cold starts.
 7. **Anthropic paperwork** (console.anthropic.com): accept the Data Processing Addendum, request zero
    data retention, and confirm the AurOS Wishes workspace has a monthly spend limit (docs/OWNER-SETUP.md §7b).
-8. **Protect the update key** — confirmed tonight by a canary run (40046763411): today a throwaway branch can load
-   the key (it ran our own code, printed only "yes", nothing leaked; no rotation needed in my view). How
-   (docs/OWNER-SETUP.md, written by the pipeline agent): create the environment
-   `apt-signing` (main only, you as required reviewer), move the secret into it, turn on branch protection
-   for main. Leave GitHub's release immutability off for now (the pipeline agent is moving evidence uploads first).
+8. **Protect the update key.** Today any workflow on any branch can read it: a test run tonight loaded it on a
+   throwaway branch (our own code, printed only "yes", nothing leaked). The steps are in docs/OWNER-SETUP.md 4a-lock.
+   When you're done, run `sh tools/sec004check.sh` on your Mac (read-only). It is red on 6 counts now; when it says
+   ok, you're done. Optional and cheap only now, before anyone has installed AurOS: make a fresh update key at the
+   same time (agents walk you through it; you confirm the new fingerprint). Leave GitHub's release immutability off
+   for now (the pipeline agent is moving evidence uploads first).
 9. Set the watchdog task to Auto mode (Scheduled → "AurOS: restart the swarm if it stopped").
