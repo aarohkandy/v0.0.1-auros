@@ -30,6 +30,11 @@ A result becomes `download-ready` only when all of these still agree:
 - the release asset's canonical identity, byte count, and GitHub SHA-256
   digest against the immutable manifest.
 
+The first delivery for an exact base and recipe runs a real Windows installation
+certification and can take hours. Repeated matching requests reuse its verified
+installer. Do not advertise instant first-time delivery; a public rollout needs
+pre-certified common combinations or a measured shorter certification path.
+
 Readiness is cached for at most 15 seconds and then revalidated. A missing or
 changed asset revokes readiness on the next check. This is a check-time
 guarantee: a release administrator could replace an asset after the final

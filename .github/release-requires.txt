@@ -25,3 +25,6 @@ bf97f1d4|record actual first-session security and network state for the installe
 9222d21a|staging and installed boot select the same kernel and matching modules
 ad6ce42f|refuse same-boot handover when display, temporary mounts, or saved scratch remain
 fc5ca152|retain and validate personalized-package provenance through both signing stages
+d6ee1e1a|public promotion refuses an unsigned installer
+480c5fd2|personalized choices persist durably and first boot never stamps a failed application complete
+feb4029d|personalized delivery requires the exact signed installer to pass the real Windows journey
