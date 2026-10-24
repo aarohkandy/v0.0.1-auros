@@ -20,7 +20,7 @@
 #          powercut-nostick (the power cut in the mode that ships, no
 #          memory stick: four jobs, S-11), powercuttest (the older mode,
 #          with a stick), firstboottest, installtest, bootupdatetest, updateboottest,
-#          choicesboottest, putbacktest
+#          choicesboottest, putbacktest, nmassumetest, storeoffline
 #
 # The scripts were written for a container without KVM, so each has
 # `-machine ...,accel=tcg` written into it. They are not edited for
@@ -119,6 +119,14 @@ jobs:
               t("windowsboottest", "windowsboottest", image=True),
               t("rollbacktest", "rollbacktest", image=True),
               t("bootlocktest", "bootlocktest", image=True),
+              # The first desktop session inherits a card staging already
+              # brought up. Prove NetworkManager takes it over, and that the
+              # fix is what makes the difference (two real image boots).
+              t("nmassumetest", "nmassumetest", "out/auros-desktop.img", image=True),
+              # The store must still show programs and find VLC when there is
+              # no network. Keep its screenshots and GNOME Software logs with
+              # the job transcript.
+              t("storeoffline", "storeoffline", "out/auros-desktop.img transcripts/storeoffline-out", image=True),
               # CIW: the data-safety suites that need QEMU. failtest boots the full image with
               # its desktop made to fail and looks at the screen (~7 minutes with a cold image).
               t("failtest", "failtest", image=True),
@@ -645,6 +653,12 @@ jobs:
       - name: wltest-x (the X window manager and the clipboard bridge; ASan + UBSan)
         if: ${{ matrix.part == 'checks' }}
         run: sh tools/wltest-x.sh -asan 2>&1 | tee transcripts/wltest-x.txt
+      - name: wltest-xlife (Xwayland starts, is reaped, restarts, and eventually gives up; ASan + UBSan)
+        if: ${{ matrix.part == 'checks' }}
+        run: sh tools/wltest-xlife.sh -asan 2>&1 | tee transcripts/wltest-xlife.txt
+      - name: wltest-dialog (a dialog opens in front of its program in either mapping order)
+        if: ${{ matrix.part == 'checks' }}
+        run: timeout 300 sh tools/wltest-dialog.sh 2>&1 | tee transcripts/wltest-dialog.txt
       - name: wltest-deco (a program's own title bar, the keyboard, the menus)
         if: ${{ matrix.part == 'checks' }}
         run: sh tools/wltest-deco.sh 2>&1 | tee transcripts/wltest-deco.txt
@@ -696,7 +710,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           sh tools/apt.sh \
               qemu-system-x86 qemu-utils ovmf gdisk dosfstools mtools e2fsprogs cpio python3 \
-              zstd grub-common sbsigntool file binutils iproute2 gcc libc6-dev swtpm python3-cryptography
+              zstd grub-common sbsigntool file binutils iproute2 gcc libc6-dev swtpm python3-cryptography fdisk
           ls -l /dev/kvm
           [ -w /dev/kvm ] || { echo "no usable /dev/kvm"; exit 1; }
           ls -l /usr/share/OVMF/
@@ -716,6 +730,9 @@ jobs:
           EOF
           sudo chmod 755 /usr/local/bin/qemu-system-x86_64
           sudo sh -c 'command -v qemu-system-x86_64'
+      - name: nmassumetest's isolated KVM image
+        if: matrix.test == 'nmassumetest'
+        run: docker build -t a2-kvm:latest tools/parity
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: auros-installer
