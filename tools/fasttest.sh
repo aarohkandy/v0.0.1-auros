@@ -303,6 +303,9 @@ if boot_staging "$S/disk.img" "aurstage.install aurstage.min_gb=1" "INSTALLTEST-
 else
     bad "staging installs it, and the new system starts" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -6)"
 fi
+grep -aq "INSTALLTEST-EFIVARS-RW" "$MTMP/out.txt" \
+    && ok "...and hands it the firmware's variable store writable (RC1: read-only, 'Yes, it all works' was refused)" \
+    || bad "...and hands it the firmware's variable store writable" "$(grep -a 'INSTALLTEST-EFIVARS' "$MTMP/out.txt" | head -1)"
 grep -aq "verdict=installed .*mode=gap" "$MTMP/out.txt" && ok "...in gap mode, and says so" || bad "...in gap mode" "$(grep -a aurstage-report "$MTMP/out.txt" | tail -1)"
 grep -aq "the copy written before the restart is exactly right\|Checking the copy of AurOS that Windows wrote" "$MTMP/out.txt" \
     && ok "...having checked every byte Windows wrote" || bad "...having checked every byte Windows wrote"

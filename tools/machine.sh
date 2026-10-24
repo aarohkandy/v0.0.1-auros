@@ -168,7 +168,22 @@ mach_image() {
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/reboot.h>
-int main(void){ puts("\nINSTALLTEST-AUROS-STARTED"); fflush(stdout);
+#include <sys/mount.h>
+#include <sys/statfs.h>
+#include <sys/statvfs.h>
+#define EFI "/sys/firmware/efi/efivars"
+/* What the installed system finds when it starts, as its init would: an efivarfs somebody left
+ * mounted is judged as it is (RC1 on real Windows: read-only, so "Yes, it all works" was refused);
+ * with none, it mounts one the way systemd does. */
+static const char *efivars(void){
+    struct statfs f; struct statvfs v;
+    if (statfs(EFI, &f) == 0 && (unsigned)f.f_type == 0xde5e81e4u)
+        return statvfs(EFI, &v) == 0 && !(v.f_flag & ST_RDONLY) && access(EFI, W_OK) == 0 ? "RW" : "RO";
+    return mount("efivarfs", EFI, "efivarfs", MS_NOSUID|MS_NODEV|MS_NOEXEC, NULL) == 0 ? "RW" : "NONE";
+}
+int main(void){ puts("\nINSTALLTEST-AUROS-STARTED");
+                printf("INSTALLTEST-EFIVARS-%s\n", efivars());
+                fflush(stdout);
                 sync(); sleep(2); reboot(RB_POWER_OFF); for(;;) pause(); }
 EOC
     cc -static -O2 -o "$MTMP/init" "$MTMP/init.c" 2>/dev/null \

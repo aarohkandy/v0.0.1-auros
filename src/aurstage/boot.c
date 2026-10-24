@@ -509,6 +509,18 @@ int stage_switch_root(const char *root_dev)
     }
     stage_say("handing over to the system on %s, in this same boot", root_dev);
 
+    /* THE VARIABLE STORE IS LEFT FOR THE NEW SYSTEM TO MOUNT, THE NORMAL WAY.
+     * Staging mounts efivarfs read-only on purpose and writes through a remount of its
+     * own; /sys goes across in the SAME boot, so on a real install the new system's
+     * first start had a read-only store and "Yes, it all works" was refused ("this
+     * computer would not let AurOS change what it starts", RC1 on real Windows; BT's
+     * aurfirst remounts on EROFS as well). Staging is finished writing by now, so the
+     * mount is dropped and systemd mounts its own, writable, with nosuid/nodev/noexec.
+     * If it is busy it is made writable instead. A BIOS machine has none. fasttest
+     * checks what the new system finds. */
+    if (umount2("/sys/firmware/efi/efivars", 0) != 0 && errno != EINVAL && errno != ENOENT)
+        mount("efivarfs", "/sys/firmware/efi/efivars", "efivarfs", MS_REMOUNT, NULL);
+
     carry_across("/dev",  "/newroot/dev");
     carry_across("/proc", "/newroot/proc");
     carry_across("/sys",  "/newroot/sys");
