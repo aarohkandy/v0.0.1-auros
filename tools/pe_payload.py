@@ -16,6 +16,8 @@ language, without asking the program that wrote it.
     tools/pe_payload.py get      EXE ID OUTFILE
     tools/pe_payload.py manifest EXE            print the RT_MANIFEST
     tools/pe_payload.py check    EXE-or-XML     is it a manifest Windows loads?
+    tools/pe_payload.py dashed   EXE OUT        EXE with '--' written into its manifest (the shape
+                                                that failed on the first real PC): a known-bad build
 
 `check` exists because the first real Windows PC refused to start the
 wizard: "its side-by-side configuration is incorrect". Its manifest had
@@ -98,6 +100,25 @@ class PE:
         return found
 
 
+def dashed(src, dst):
+    """The same program with a '--' inside an XML comment in its manifest: same size, a manifest
+    Windows refuses ("its side-by-side configuration is incorrect"). windows.yml starts it on a
+    real Windows, which must refuse it, or nothing there proves Windows can tell a good
+    installer from a bad one. It used to be fetched from the old repository; it is made from
+    the build under test instead."""
+    pe = PE(src)
+    man = pe.resources(RT_MANIFEST)
+    if 1 not in man:
+        raise SystemExit('%s has no manifest to spoil' % src)
+    off, ln = man[1]
+    b = bytearray(pe.b)
+    m = bytes(b[off:off + ln])
+    i = m.index(b'<description>')
+    bad = b'<!-- a -- b -->'
+    b[off + i:off + i + len(bad)] = bad
+    open(dst, 'wb').write(b)
+
+
 def check_manifest(data):
     """→ None if Windows can load this manifest, else why not."""
     import xml.dom.minidom
@@ -135,6 +156,12 @@ def main():
             raise SystemExit('%s: Windows would refuse to start this: %s'
                              % (path, why))
         print('%s: manifest ok' % path)
+        return
+    if what == 'dashed':
+        if len(sys.argv) < 4:
+            raise SystemExit(__doc__)
+        dashed(path, sys.argv[3])
+        print('%s: manifest spoiled on purpose' % sys.argv[3])
         return
     pe = PE(path)
     res = pe.rcdata()

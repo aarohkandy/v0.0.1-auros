@@ -33,17 +33,9 @@ on:
         required: false
         default: ""
 
-env:
-  # The known-bad file is in a commit of the image-desktop branch, which
-  # only the old repository has (it was not moved: 7 GB). Pinned by its
-  # hash, so where it is read from does not matter.
-  KNOWN_BAD_URL: https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/d2735b6b775b1952c724aabdfdf2567246ab6c74/AurOS-Installer-test.exe
-  KNOWN_BAD_SHA256: 3e32e929f57c5c2673f4547a09b44c827743d191120d22a57dfc6f28a4f3e875
-  # (The old repository's installer and image used to stand here as a fallback for
-  # "no release yet". It made windows-published and windows-download green about files
-  # this repository never built (docs/reviews/CI-TRUTH-2026-10-24.md). Nothing is
-  # fetched from the old repository for them any more: the `pins` job tests this
-  # repository's newest release, or fails and says there is nothing to test.)
+# (Nothing in this workflow is fetched from the old repository any more. The "no release yet" fallback
+# made windows-published and windows-download green about files this repository never built, and the
+# known-bad installer is now this build's own wizard with a spoiled manifest: docs/reviews/CI-TRUTH-2026-10-24.md.)
 
 # ONE OF EACH JOB AT A TIME PER BRANCH, NEVER CANCELLED, AND ONLY FOR
 # PUSHES THAT NEED IT. The group used to be on the workflow: every push
@@ -198,10 +190,21 @@ jobs:
         run: sh build/aurbridge
       - name: manifest gate (tools/manifesttest.sh)
         run: sh tools/manifesttest.sh out/aurbridge-wizard.exe
+      # THE KNOWN-BAD, FROM THIS BUILD: the wizard with '--' written into its manifest, which is
+      # what failed on the first real PC. windows-known-bad must see Windows refuse it.
+      - name: known-bad build (the same program with a manifest Windows refuses)
+        run: |
+          mkdir -p out/known-bad
+          python3 tools/pe_payload.py dashed out/aurbridge-wizard.exe out/known-bad/known-bad.exe
+          ! python3 tools/pe_payload.py check out/known-bad/known-bad.exe
       - name: host-side selftests
         run: |
           out/aurbridge-sim gzselftest
           out/aurbridge-sim sbselftest
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: known-bad
+          path: out/known-bad/known-bad.exe
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: exe
@@ -699,18 +702,19 @@ jobs:
           "the published installer was running after 8 seconds"
 
   windows-known-bad:
-    needs: gate
+    needs: [gate, build]
     if: needs.gate.outputs.run == 'true'
     concurrency: { group: 'windows-${{ github.ref }}-windows-known-bad', cancel-in-progress: false }
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: known-bad, path: . }
       - name: the build that failed on the first real PC fails here too
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri $env:KNOWN_BAD_URL -OutFile bad.exe
-          $h = (Get-FileHash bad.exe -Algorithm SHA256).Hash.ToLower()
-          if ($h -ne $env:KNOWN_BAD_SHA256) { throw "not the known-bad file: $h" }
+          # known-bad.exe is this build's wizard with a manifest Windows refuses (build job).
+          Copy-Item known-bad.exe bad.exe
           $started = $true
           try {
             $p = Start-Process -FilePath (Resolve-Path .\bad.exe).Path -PassThru -ErrorAction Stop
