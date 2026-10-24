@@ -9,9 +9,11 @@ import ctypes
 import errno
 import os
 import platform
+import re
 import socket
 import stat
 import struct
+import subprocess
 import select
 import time
 from pathlib import Path
@@ -21,6 +23,9 @@ SYS_KCMP_X86_64 = 312
 KCMP_FILE = 0
 EXPECTED_SERVICE_EXE = "/usr/bin/dbus-run-session"
 EXPECTED_COMPOSITOR_EXE = "/usr/bin/aurshell"
+EXPECTED_SERVICE_CONTROL_GROUP = "/system.slice/aurshell.service"
+INVOCATION_RE = re.compile(r"[0-9a-f]{32}")
+SESSION_RE = re.compile(r"/user\.slice/user-([0-9]+)\.slice/session-[A-Za-z0-9_.:-]+\.scope")
 
 
 def descendants_from_parents(pid: int, parents: dict[int, int]) -> list[int]:
@@ -60,7 +65,7 @@ def select_compositor(service_main_pid: int, cgroup_pids: set[int],
                       executables: dict[int, str], parents: dict[int, int]) -> int:
     """Select the exact compositor in one authenticated service snapshot."""
     if service_main_pid not in cgroup_pids:
-        raise RuntimeError("aurshell.service MainPID is outside its control group")
+        raise RuntimeError("aurshell.service MainPID is outside its PAM session scope")
     if executables.get(service_main_pid) != EXPECTED_SERVICE_EXE:
         raise RuntimeError("aurshell.service MainPID is not the exact session wrapper")
     candidates = sorted(pid for pid in cgroup_pids
@@ -75,26 +80,93 @@ def select_compositor(service_main_pid: int, cgroup_pids: set[int],
             raise RuntimeError("compositor ancestry contains a loop")
         seen.add(current)
         if current not in cgroup_pids:
-            raise RuntimeError("compositor ancestry left the service control group")
+            raise RuntimeError("compositor ancestry left the PAM session scope")
         current = parents.get(current, 0)
         if current <= 0:
             raise RuntimeError("compositor does not descend from service MainPID")
     return compositor
 
 
-def service_snapshot(control_group: str):
-    """Read one exact cgroup, executable, ancestry and start-time snapshot."""
+def cgroup_path(control_group: str) -> Path:
     if not control_group.startswith("/") or control_group == "/" or ".." in control_group.split("/"):
-        raise RuntimeError("invalid aurshell.service control group")
+        raise RuntimeError("invalid control group")
     cgroup_root = Path("/sys/fs/cgroup").resolve()
-    cgroup_path = (cgroup_root / control_group.lstrip("/")).resolve()
-    if cgroup_path.parent != cgroup_root and cgroup_root not in cgroup_path.parents:
-        raise RuntimeError("aurshell.service control group escaped cgroup root")
+    result = (cgroup_root / control_group.lstrip("/")).resolve()
+    if result.parent != cgroup_root and cgroup_root not in result.parents:
+        raise RuntimeError("control group escaped cgroup root")
+    return result
+
+
+def process_cgroup(pid: int) -> str:
+    try:
+        lines = (Path("/proc") / str(pid) / "cgroup").read_text(encoding="ascii").splitlines()
+    except OSError as exc:
+        raise RuntimeError("could not read process control group") from exc
+    unified = [line[3:] for line in lines if line.startswith("0::")]
+    if len(unified) != 1:
+        raise RuntimeError("process has no unique unified control group")
+    return unified[0]
+
+
+def process_uid(pid: int) -> int:
+    try:
+        line = next(value for value in (Path("/proc") / str(pid) / "status").read_text().splitlines()
+                    if value.startswith("Uid:"))
+        values = [int(value) for value in line.split()[1:]]
+    except (OSError, StopIteration, ValueError) as exc:
+        raise RuntimeError("could not authenticate process uid") from exc
+    if len(values) != 4 or len(set(values)) != 1:
+        raise RuntimeError("process uid identities disagree")
+    return values[0]
+
+
+def process_invocation_id(pid: int) -> str:
+    try:
+        values = [value.split(b"=", 1)[1].decode("ascii")
+                  for value in (Path("/proc") / str(pid) / "environ").read_bytes().split(b"\0")
+                  if value.startswith(b"INVOCATION_ID=")]
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RuntimeError("could not authenticate service invocation") from exc
+    if len(values) != 1 or not INVOCATION_RE.fullmatch(values[0]):
+        raise RuntimeError("process has no unique valid service invocation id")
+    return values[0]
+
+
+def systemd_service_properties() -> tuple[int, str, str]:
+    try:
+        completed = subprocess.run(
+            ["systemctl", "show", "aurshell.service", "--no-pager",
+             "--property=MainPID", "--property=ControlGroup", "--property=InvocationID"],
+            check=True, capture_output=True, text=True, timeout=5,
+            env={**os.environ, "LC_ALL": "C"})
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("could not authenticate current aurshell.service properties") from exc
+    properties = {}
+    for line in completed.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or key not in {"MainPID", "ControlGroup", "InvocationID"} or key in properties:
+            raise RuntimeError("invalid aurshell.service property response")
+        properties[key] = value
+    if set(properties) != {"MainPID", "ControlGroup", "InvocationID"}:
+        raise RuntimeError("incomplete aurshell.service property response")
+    try:
+        main_pid = int(properties["MainPID"])
+    except ValueError as exc:
+        raise RuntimeError("invalid aurshell.service MainPID") from exc
+    return main_pid, properties["ControlGroup"], properties["InvocationID"]
+
+
+def session_snapshot(session_control_group: str, expected_uid: int):
+    """Read one exact PAM session cgroup process topology snapshot."""
+    match = SESSION_RE.fullmatch(session_control_group)
+    if not match or int(match.group(1)) != expected_uid:
+        raise RuntimeError("MainPID is not in the expected user PAM session scope")
+    path = cgroup_path(session_control_group)
     try:
         cgroup_pids = {int(value) for value in
-                       (cgroup_path / "cgroup.procs").read_text(encoding="ascii").splitlines()}
+                       (path / "cgroup.procs").read_text(encoding="ascii").splitlines()}
     except (OSError, ValueError) as exc:
-        raise RuntimeError("could not read aurshell.service process membership") from exc
+        raise RuntimeError("could not read PAM session process membership") from exc
     executables = {}
     parents = {}
     starttimes = {}
@@ -103,33 +175,59 @@ def service_snapshot(control_group: str):
             executables[pid] = os.readlink(Path("/proc") / str(pid) / "exe")
             parents[pid], starttimes[pid] = parse_process_stat(
                 (Path("/proc") / str(pid) / "stat").read_text())
-            membership = (Path("/proc") / str(pid) / "cgroup").read_text(encoding="ascii").splitlines()
         except (OSError, ValueError, IndexError) as exc:
-            raise RuntimeError("aurshell.service process snapshot changed") from exc
-        if f"0::{control_group}" not in membership:
-            raise RuntimeError("process disagrees with aurshell.service control group")
+            raise RuntimeError("PAM session process snapshot changed") from exc
+        if process_cgroup(pid) != session_control_group:
+            raise RuntimeError("process disagrees with PAM session control group")
     return cgroup_pids, executables, parents, starttimes
 
 
-def read_service_topology(service_main_pid: int, control_group: str) -> tuple[int, int, int]:
-    """Resolve and pin the compositor from two identical service snapshots."""
-    first = service_snapshot(control_group)
-    cgroup_pids, executables, parents, _starttimes = first
-    compositor = select_compositor(service_main_pid, cgroup_pids, executables, parents)
+def read_service_topology(service_main_pid: int, service_control_group: str,
+                          expected_uid: int, invocation_id: str) -> tuple[int, int, int, str]:
+    """Bind systemd's service identity to its PAM-migrated compositor."""
+    # systemd.exec(5), PAMName=: pam_systemd commonly migrates MainPID into
+    # its session scope; children belong to that scope while MainPID remains
+    # associated with the original service. Authenticate both associations.
+    if service_control_group != EXPECTED_SERVICE_CONTROL_GROUP:
+        raise RuntimeError("unexpected aurshell.service control group")
+    if not cgroup_path(service_control_group).is_dir():
+        raise RuntimeError("aurshell.service control group is unavailable")
+    if not INVOCATION_RE.fullmatch(invocation_id):
+        raise RuntimeError("invalid aurshell.service invocation id")
+    expected_properties = (service_main_pid, service_control_group, invocation_id)
+    if systemd_service_properties() != expected_properties:
+        raise RuntimeError("aurshell.service properties changed before authentication")
     main_pidfd = os.pidfd_open(service_main_pid, 0)
     compositor_pidfd = -1
     try:
+        if not pidfd_alive(main_pidfd):
+            raise RuntimeError("aurshell.service MainPID exited during authentication")
+        if os.readlink(Path("/proc") / str(service_main_pid) / "exe") != EXPECTED_SERVICE_EXE:
+            raise RuntimeError("aurshell.service MainPID is not the exact session wrapper")
+        if process_uid(service_main_pid) != expected_uid:
+            raise RuntimeError("aurshell.service MainPID has the wrong uid")
+        if process_invocation_id(service_main_pid) != invocation_id:
+            raise RuntimeError("aurshell.service MainPID has the wrong invocation id")
+        session_control_group = process_cgroup(service_main_pid)
+        first = session_snapshot(session_control_group, expected_uid)
+        cgroup_pids, executables, parents, _starttimes = first
+        compositor = select_compositor(service_main_pid, cgroup_pids, executables, parents)
         compositor_pidfd = os.pidfd_open(compositor, 0)
-        second = service_snapshot(control_group)
+        second = session_snapshot(session_control_group, expected_uid)
         if second != first:
-            raise RuntimeError("aurshell.service topology changed during authentication")
+            raise RuntimeError("PAM session topology changed during authentication")
+        if systemd_service_properties() != expected_properties:
+            raise RuntimeError("aurshell.service properties changed during authentication")
         if not pidfd_alive(main_pidfd) or not pidfd_alive(compositor_pidfd):
             raise RuntimeError("aurshell.service identity exited during authentication")
-        if os.readlink(Path("/proc") / str(service_main_pid) / "exe") != EXPECTED_SERVICE_EXE:
-            raise RuntimeError("aurshell.service wrapper changed during authentication")
         if os.readlink(Path("/proc") / str(compositor) / "exe") != EXPECTED_COMPOSITOR_EXE:
             raise RuntimeError("aurshell compositor changed during authentication")
-        return compositor, main_pidfd, compositor_pidfd
+        if process_uid(service_main_pid) != expected_uid or process_uid(compositor) != expected_uid:
+            raise RuntimeError("aurshell service identity has the wrong uid")
+        if (process_invocation_id(service_main_pid) != invocation_id
+                or process_invocation_id(compositor) != invocation_id):
+            raise RuntimeError("aurshell processes disagree with systemd invocation id")
+        return compositor, main_pidfd, compositor_pidfd, session_control_group
     except Exception:
         if compositor_pidfd >= 0:
             os.close(compositor_pidfd)
@@ -341,6 +439,8 @@ def main() -> None:
     parser.add_argument("--app-pid", type=int, required=True)
     parser.add_argument("--service-main-pid", type=int, required=True)
     parser.add_argument("--service-control-group", required=True)
+    parser.add_argument("--service-invocation-id", required=True)
+    parser.add_argument("--expected-uid", type=int, required=True)
     parser.add_argument("--display-path", type=Path, required=True)
     parser.add_argument("--trace", type=Path, required=True)
     parser.add_argument("--ready", type=Path, required=True)
@@ -352,8 +452,10 @@ def main() -> None:
     service_pidfd = -1
     compositor_pidfd = -1
     try:
-        shell_pid, service_pidfd, compositor_pidfd = read_service_topology(
-            args.service_main_pid, args.service_control_group)
+        (shell_pid, service_pidfd, compositor_pidfd,
+         session_control_group) = read_service_topology(
+            args.service_main_pid, args.service_control_group,
+            args.expected_uid, args.service_invocation_id)
         verify_listener(shell_pid, compositor_pidfd, args.display_path)
         (app_pidfd, held, wayland_fd, wayland_inode, trace_fd, trace_dev,
          trace_inode, trace_copy) = snapshot(
@@ -370,10 +472,12 @@ def main() -> None:
         if not pidfd_alive(service_pidfd) or not pidfd_alive(compositor_pidfd):
             raise RuntimeError("authenticated aurshell.service identity exited during interval")
         (second_shell_pid, second_service_pidfd,
-         second_compositor_pidfd) = read_service_topology(
-            args.service_main_pid, args.service_control_group)
+         second_compositor_pidfd, second_session_control_group) = read_service_topology(
+            args.service_main_pid, args.service_control_group,
+            args.expected_uid, args.service_invocation_id)
         try:
-            if second_shell_pid != shell_pid:
+            if (second_shell_pid != shell_pid
+                    or second_session_control_group != session_control_group):
                 raise RuntimeError("aurshell compositor identity changed during interval")
             verify_listener(second_shell_pid, second_compositor_pidfd, args.display_path)
         finally:
@@ -399,9 +503,17 @@ def main() -> None:
             "peer_path=exact_wayland_display\nlistener_inode=exact_wayland_display\n"
             "service_main_pid=exact_dbus_run_session\n"
             "compositor_exe=exact_usr_bin_aurshell\n"
-            "compositor_in_service_cgroup=yes\n"
+            "service_invocation_id=exact_systemd_property_and_environment\n"
+            "service_control_group=exact_systemd_property\n"
+            "pam_session_cgroup=exact_expected_user_session_scope\n"
+            "compositor_in_pam_session_cgroup=yes\n"
             "compositor_descends_from_service_main_pid=yes\n",
             encoding="ascii")
+        with args.output.open("a", encoding="ascii") as evidence:
+            evidence.write(f"observed_service_main_pid={args.service_main_pid}\n")
+            evidence.write(f"observed_compositor_pid={shell_pid}\n")
+            evidence.write(f"observed_service_control_group={args.service_control_group}\n")
+            evidence.write(f"observed_pam_session_control_group={session_control_group}\n")
     except Exception as exc:
         detail = str(exc).replace("\n", " ")[:240]
         args.output.write_text(
