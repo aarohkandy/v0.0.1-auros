@@ -16,6 +16,8 @@
    Restart now, Fix these for me, Close).
 4. publish.sh's four ways out (the run's release; at the default branch;
    the newest e2e-* release as r<run>-*; none at all), with a fake gh.
+5. The installed first-session producer's positive, negative and bounded-retry
+   records, plus its systemd and forge wiring (first-session-probetest.sh).
 
 Run from anywhere: python3 tools/e2e/selftest.py
 """
@@ -479,6 +481,15 @@ def test_publish():
             check(a.returncode == 0 and b.returncode == 0, f"publish ({mode}): never fails the job")
 
 
+def test_first_session_probe():
+    script = os.path.join(HERE, "first-session-probetest.sh")
+    r = subprocess.run(["sh", script], capture_output=True, text=True)
+    if r.returncode:
+        print(r.stdout + r.stderr)
+    check(r.returncode == 0,
+          "first session: the journal producer reports real state, stops retrying, and is enabled")
+
+
 test_expect()
 test_wizard_contract()
 test_stops()
@@ -498,5 +509,6 @@ test_flow_helpers()
 test_measure()
 test_edge_item()
 test_publish()
+test_first_session_probe()
 print(f"\n{len(fails)} failed" if fails else "\nall passed")
 sys.exit(1 if fails else 0)
