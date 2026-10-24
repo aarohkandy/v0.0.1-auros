@@ -161,6 +161,38 @@ int main(void)
         unlink(link);
     }
 
+    /* A picture of each colour choice (the gate: "Settings Colors has no picture of each choice"): in
+     * the row's left margin, a little window in that look's own paper, ink and signal colour. */
+    printf("\nColors: a picture of each\n");
+    C.settings_open = 0; C.settings_open = 1; settings_opened(&C);
+    ok(press("Colors"), "\"Colors\" opens");
+    paint();
+    {
+        static const struct { const char *label, *bg, *accent; } L[] = {
+            { "Light", "F6F2E9", "0B5D4F" }, { "Light writing on a dark background", "121417", "5DBB9E" } };
+        for (int k = 0; k < 2; k++) {
+            int ly = -1, lx = -1;
+            for (int i = 0; i < shell_text_log_n; i++)
+                if (!strcmp(shell_text_log[i].s, L[k].label)) { ly = shell_text_log[i].y; lx = shell_text_log[i].x; }
+            unsigned want_bg = (unsigned)strtoul(L[k].bg, NULL, 16), want_acc = (unsigned)strtoul(L[k].accent, NULL, 16);
+            unsigned other_bg = (unsigned)strtoul(L[1 - k].bg, NULL, 16);
+            int has_bg = 0, has_acc = 0, has_other = 0;
+            for (int y = ly - 40; y < ly + 50 && ly >= 0; y++)
+                for (int x = lx - 120; x < lx - 2; x++) {
+                    if (x < 0 || y < 0 || x >= SURF->w || y >= SURF->h) continue;
+                    unsigned px = SURF->px[y * SURF->stride + x] & 0xFFFFFFu;
+                    if (px == want_bg) has_bg = 1;
+                    if (px == want_acc) has_acc = 1;
+                    if (px == other_bg) has_other = 1;
+                }
+            char w[160];
+            snprintf(w, sizeof w, "\"%s\": a picture beside it, in its own paper and signal colour", L[k].label);
+            ok(ly >= 0 && has_bg && has_acc, w);
+            snprintf(w, sizeof w, "...and not in the other look's paper (each picture is its own)");
+            ok(!has_other || k == 1, w);   /* (the Dark row sits on the Light page's own paper) */
+        }
+    }
+
     char rm[200]; snprintf(rm, sizeof rm, "rm -rf '%s'", home);
     if (system(rm) != 0) fprintf(stderr, "could not remove %s\n", home);
     printf("\n%d checks, %d failed\n", checks, fails);

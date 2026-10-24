@@ -201,6 +201,16 @@
     </div>
   </section>
 
+  <!-- ── stopped after the restart ───────────────────────────────── -->
+  <section class="doc" id="stopped" aria-labelledby="stopped-title">
+    <div class="narrow">
+      <h2 id="stopped-title">If AurOS stopped after the restart</h2>
+      <p>The screen says <span class="words">AurOS didn&rsquo;t go on this time</span> and, only then, shows a number in groups of three with the words &ldquo;If you need help, read this number to them.&rdquo; The same stop gives the same number every time, so whoever is helping can look it up.</p>
+      <p>The computer also keeps a record. Before it restarts by itself it writes what happened, in order, to <span class="words">\EFI\AurOS\stage.log</span> on its start-up partition. Once Windows starts again that file can be read from Windows (mount the start-up partition) or with the disk in another computer, and AurOS Setup can read it on its next run. The screen has no button for details: it takes no input while it works. Someone who starts the computer by hand can add <span class="words">aurstage.details</span> to the kernel line to see the steps on the screen.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
   <section class="doc" id="room" aria-labelledby="room-title">
     <div class="narrow">
       <h2 id="room-title">How much room AurOS needs</h2>

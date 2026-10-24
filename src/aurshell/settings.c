@@ -85,6 +85,8 @@ typedef struct {
     char id[CHOICE_LEN];     /* what to write down          */
     char label[CHOICE_LEN];  /* what she reads              */
     char note[CHOICE_LEN];   /* one line under it, or empty */
+    int  has_pic;            /* a picture of what it looks like (Colors)      */
+    uint32_t pic_bg, pic_fg, pic_accent;
 } choice;
 
 /* The places most people are. Not every zone the world has -- there
@@ -205,6 +207,7 @@ static void add_choice(const char *id, const char *label, const char *note)
     snprintf(S.ch[S.n_ch].id,    CHOICE_LEN, "%s", id);
     snprintf(S.ch[S.n_ch].label, CHOICE_LEN, "%s", label);
     snprintf(S.ch[S.n_ch].note,  CHOICE_LEN, "%s", note ? note : "");
+    S.ch[S.n_ch].has_pic = 0;
     S.n_ch++;
 }
 
@@ -395,6 +398,16 @@ static void fill_page(shell_ctx *c)
             if (field_of(path, "theme_description", note, sizeof note) < 0)
                 note[0] = 0;
             add_choice(IDS[i], name, note);
+            /* A picture of each, in its own three colours: paper, ink and the one signal. She
+             * chooses by looking, not by reading "Light writing on a dark background". */
+            char v[24];
+            choice *pc = &S.ch[S.n_ch - 1];
+            if (S.n_ch > 0 && !strcmp(pc->id, IDS[i]) && field_of(path, "bg", v, sizeof v) == 0) {
+                pc->pic_bg = (uint32_t)strtoul(v[0] == '#' ? v + 1 : v, NULL, 16);
+                if (field_of(path, "fg", v, sizeof v) == 0) pc->pic_fg = (uint32_t)strtoul(v[0] == '#' ? v + 1 : v, NULL, 16);
+                if (field_of(path, "accent", v, sizeof v) == 0) pc->pic_accent = (uint32_t)strtoul(v[0] == '#' ? v + 1 : v, NULL, 16);
+                pc->has_pic = 1;
+            }
             if (cur[0] && !strcmp(cur, IDS[i])) S.cur_ch = S.n_ch - 1;
         }
         return;
@@ -786,18 +799,32 @@ void settings_paint(shell_ctx *c, surface *s, shell_fonts *f)
             if (idx < 0 || idx >= S.n_ch) continue;
             const char *mark = (idx == S.cur_ch) ? "Now" : NULL;
             float mw = (mark && tiny) ? shell_text_w(tiny, mark) : 0.f;
+            /* The picture, left of the words: a small window in the look's own colours. */
+            float px0 = 0.f;
+            if (S.ch[idx].has_pic) {
+                int ph = r.h - 16; if (ph > 56) ph = 56;
+                int pw = ph * 3 / 2;
+                rect pr = { r.x + 4, r.y + (r.h - ph) / 2, pw, ph };
+                draw_round_rect(s, pr, corners_all(6.f), S.ch[idx].pic_bg, 1.f);
+                draw_round_rect_border(s, pr, corners_all(6.f), 2.f, c->fg, 0.55f);
+                draw_rect(s, (rect){ pr.x + 8, pr.y + 9, pw * 55 / 100, 4 }, S.ch[idx].pic_fg, 1.f);
+                draw_rect(s, (rect){ pr.x + 8, pr.y + 17, pw * 75 / 100, 3 }, S.ch[idx].pic_fg, 0.55f);
+                draw_round_rect(s, (rect){ pr.x + 8, pr.y + ph - 17, pw * 40 / 100, 9 }, corners_all(3.f),
+                                S.ch[idx].pic_accent, 1.f);
+                px0 = (float)pw + 14.f;
+            }
             if (mark && tiny)
                 shell_text(s, tiny, (float)(r.x + r.w) - mw, by, mark,
                            c->accent, 1.f);
             if (name)
-                shell_text_elided(s, name, (float)r.x + 4.f,
+                shell_text_elided(s, name, (float)r.x + 4.f + px0,
                                   by - (S.ch[idx].note[0] ? 9.f * k : 0.f),
-                                  (float)r.w - mw - 24.f,
+                                  (float)r.w - mw - 24.f - px0,
                                   S.ch[idx].label, c->fg, 1.f);
             if (tiny && S.ch[idx].note[0])
-                shell_text_elided(s, tiny, (float)r.x + 4.f,
+                shell_text_elided(s, tiny, (float)r.x + 4.f + px0,
                                   by + (float)(15.f * k),
-                                  (float)r.w - mw - 24.f,
+                                  (float)r.w - mw - 24.f - px0,
                                   S.ch[idx].note, c->fg, 0.55f);
             continue;
         }

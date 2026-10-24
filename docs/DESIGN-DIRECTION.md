@@ -562,9 +562,15 @@ first. Until then D ships text fixes only.
      digits only, in groups of three ("482 917 365"), with "If you need help,
      read this number to them." A code on a screen where nothing went wrong
      looks like an error.
-   - **Show details for a helper**: a smaller secondary button, away from the
-     primary. Its page starts "This is for a helper. Pressing this did not
-     change anything." **Hide details** sits where she pressed.
+   - ~~**Show details for a helper** button~~ -- **not built, by decision
+     (D16c, 2026-10-24).** The screen paints from a pipe under PID 1 and reads
+     no input, so a button on it could not be pressed. What a helper needs is
+     there without one: the number on a stopped screen (the same stop gives the
+     same number), and `\EFI\AurOS\stage.log`, written before the restart on
+     the computer's start-up partition and readable from Windows afterwards
+     (docs/AURBRIDGE.md, "The stage log"). `aurstage.details` on the kernel line
+     stays for experts who start the computer by hand. website/advanced.html
+     says where to look.
    - Same Light tokens and the drawn mark.
    - Failed install: "AurOS didn't go on this time" in ink, then the string 4
      wording.
