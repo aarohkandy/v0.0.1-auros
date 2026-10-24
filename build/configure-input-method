@@ -1,0 +1,33 @@
+#!/bin/sh
+# Write profile-specific input-method state into a forged rootfs. Keeping this
+# out of rootfs/ makes the ordinary desktop inherit no IBus environment.
+set -eu
+
+rfs=${1:?rootfs path required}
+method=${2:-}
+env_file="$rfs/etc/auros/input-method.env"
+env_link="$rfs/etc/environment.d/80-auros-input-method.conf"
+unit_link="$rfs/etc/systemd/user/default.target.wants/auros-ibus.service"
+
+rm -f "$env_file" "$env_link" "$unit_link"
+
+case "$method" in
+    '') exit 0 ;;
+    ibus) ;;
+    *) echo "unsupported input method: $method" >&2; exit 2 ;;
+esac
+
+[ -f "$rfs/etc/systemd/user/auros-ibus.service" ] || {
+    echo "missing auros-ibus.service in rootfs" >&2
+    exit 1
+}
+
+install -d "$rfs/etc/auros" "$rfs/etc/environment.d" \
+           "$rfs/etc/systemd/user/default.target.wants"
+cat > "$env_file" <<'EOF'
+GTK_IM_MODULE=ibus
+QT_IM_MODULE=ibus
+XMODIFIERS=@im=ibus
+EOF
+ln -s ../auros/input-method.env "$env_link"
+ln -s ../auros-ibus.service "$unit_link"

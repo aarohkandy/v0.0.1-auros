@@ -323,6 +323,10 @@ load_profile() {
      not a plain account name." ;;
         esac
     fi
+    case "${input_method:-}" in
+        ''|ibus) ;;
+        *) die "profile '$profile_id' names unsupported input_method '$input_method'" ;;
+    esac
 }
 
 # Every chroot command runs with the API filesystems mounted and
@@ -1618,6 +1622,8 @@ stage_overlay() {
         2>/dev/null || true
     chmod 755 "$RFS/usr/lib/auros/first-session-probe" \
         || die "could not make the first-session probe executable"
+    sh "$ROOT/build/configure-input-method" "$RFS" "${input_method:-}" \
+        || die "could not configure input method '${input_method:-none}'"
 
     # THE BOOT CHAIN BELONGS TO AUROS, NOT TO update-grub AND grub-install.
     #
