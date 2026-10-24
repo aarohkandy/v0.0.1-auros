@@ -5,6 +5,11 @@
 # Does nothing once the service has finished (it is not running then).
 case "${2:-}" in
     up|dhcp4-change|dhcp6-change|connectivity-change)
-        systemctl kill --kill-whom=main -s USR1 auros-software.service >/dev/null 2>&1 ;;
+        # Type=notify keeps the service in "activating" until its USR1 trap is
+        # installed.  Do not signal the shell in the pre-handler startup gap.
+        state=$(systemctl show --property=ActiveState --value auros-software.service 2>/dev/null) || state=
+        if [ "$state" = active ]; then
+            systemctl kill --kill-whom=main -s USR1 auros-software.service >/dev/null 2>&1
+        fi ;;
 esac
 exit 0
