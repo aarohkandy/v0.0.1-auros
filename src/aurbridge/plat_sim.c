@@ -570,6 +570,7 @@ int plat_dir_private(const char *path, char *why, size_t wn)
     return 0;
 }
 
+int plat_explorer_path(char *out, size_t n) { if (n) out[0] = 0; return -1; }
 void plat_harden_dll_search(void) {}
 const unsigned char *plat_putback_script(unsigned *len) { *len = 0; return NULL; }
 void *plat_load_system_dll(const char *name) { (void)name; return NULL; }
@@ -911,6 +912,21 @@ int plat_file_rename(const char *from, const char *to, char *why, size_t wn)
 
 uint64_t plat_free_space(const char *path)
 {
+    /* $AURBRIDGE_SIM/esp-free: the bytes the simulated EFI partition has free, so a
+     * test can ask what the engine does at 40 MiB (tools/esptest.sh, audit S-20);
+     * the host's own free space says nothing about a 100 MB partition. */
+    const char *sim = getenv("AURBRIDGE_SIM");
+    if (sim && strstr(path, "/esp/")) {
+        char f[1100];
+        snprintf(f, sizeof f, "%s/esp-free", sim);
+        FILE *fp = fopen(f, "r");
+        if (fp) {
+            unsigned long long v = 0;
+            int ok = fscanf(fp, "%llu", &v) == 1;
+            fclose(fp);
+            if (ok) return (uint64_t)v;
+        }
+    }
     char dir[1024];
     snprintf(dir, sizeof dir, "%s", path);
     char *slash = strrchr(dir, '/');

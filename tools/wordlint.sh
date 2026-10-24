@@ -34,7 +34,10 @@ def easy_words():
 EASY = easy_words()
 # Windows' own words, quoted so she recognises the screen. Not ours to change.
 WINDOWS_SAYS = ["Windows protected your PC", "might put your PC at risk",
-                "couldn\u2019t verify if this file is safe", "couldn't verify if this file is safe"]
+                "couldn\u2019t verify if this file is safe", "couldn't verify if this file is safe",
+                # the firmware's own screen, quoted so she can find the line to change (the
+                # Secure Boot page's sketch): its words, not ours
+                "UEFI Firmware Settings", "Allow Microsoft 3rd Party UEFI CA"]
 
 VOICE = [
     (r"\baurbridge\b", "AurBridge (it is AurOS Setup)", re.I),
@@ -48,11 +51,20 @@ VOICE = [
     (r"\w ?-- ?\w", '"--" (it is "—")', 0),
 ]
 
+# What the computer is made of is not hers to know (DESIGN-DIRECTION B-9: "starts up an older
+# way", not BIOS; the helper pages, advanced.html and licenses.html, have the names).
+HARDWARE = [
+    (r"\bBIOS\b", "BIOS (say how the computer starts up)", 0),
+    (r"\bUEFI\b", "UEFI (say how the computer starts up)", 0),
+    (r"\bNTFS\b", "NTFS (say Windows' drive)", 0),
+    (r"\b(MT|RTL|BCM|QCA|AR9)\d{3,5}[A-Z]{0,3}\b", "a chip's name (the helper page names them)", 0),
+]
+
 def voice_hits(text, easy):
     for q in WINDOWS_SAYS:
         text = text.replace(q, " ")
     out = []
-    for pat, why, fl in VOICE:
+    for pat, why, fl in VOICE + (HARDWARE if easy else []):
         # "Wi-Fi" itself matches the wifi pattern; only other spellings count.
         if any(m.group(0) != "Wi-Fi" for m in re.finditer(pat, text, fl)):
             out.append(why)
@@ -105,8 +117,10 @@ def c_strings(src):
     # however many lines the format string takes.
     code = re.sub(r"(?:fprintf\(\s*stderr\b|\bfputs\().*?\)\s*;", lambda m: "\n" * m.group(0).count("\n"), code, flags=re.S)
     out = []
+    raw = src.split("\n")
     for n, line in enumerate(code.split("\n"), 1):
-        if LOGLINE.search(line):
+        # a test's data: the engine's own sentences, quoted to prove a mapping (the marker is a comment)
+        if LOGLINE.search(line) or (n <= len(raw) and "wordlint:ignore" in raw[n - 1]):
             continue
         for m in re.finditer(r'L?"((?:[^"\\\n]|\\.)*)"', line):
             s = m.group(1)

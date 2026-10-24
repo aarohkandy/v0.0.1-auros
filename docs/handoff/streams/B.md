@@ -50,24 +50,60 @@ teal one) and `tools/e2e/selftest.py` ("Close AurOS Setup"),
 
 ## Done and pushed (newest first)
 
-- **SEC-003 extras (the DLL fix itself is A2's: `plat_harden_dll_search()` first
-  in `main`/`WinMain`, `plat_load_system_dll()` for every load by name, the
-  KnownDLLs-only link gate in `fastpath.yml`).** Added on top, each shown red
-  first: (1) `build/aurbridge` refuses a `LoadLibrary*(` anywhere but inside
-  `plat_load_system_dll()` (source search; red on a bare call in preflight.c,
-  in plat_win.c outside that function, and in hwinv_win.c); (2) the windows.yml
-  step "a DLL planted beside the installer is never loaded": a canary DLL
-  (`tools/dllcanary/canary.c`, writes `<name>.loaded` when anything loads it)
-  under nine names (winhttp, cfgmgr32, oleacc, comctl32, wlanapi, iphlpapi,
-  winspool.drv, wtsapi32, dwmapi, plus uxtheme and version if the control can
-  load them) beside both programs, the programs run through preflight, the
-  report, the window and its screen reader, and a download; the control program
-  (`control.c`, plain LoadLibrary) must load them first or the step says it
-  proves nothing; (3) `tools/dlltest.sh`, the same under Wine (red with the
-  System32 flag removed, and with WinHTTP failing to load). Under Wine it speaks
-  for `wlanapi.dll` and `dwmapi.dll` only (Wine lets its built-in copies of the
-  others win); real Windows requires all nine. The download check needs a folder
-  of its own (SEC-010 moves aside one the installer did not make).
+- **From the gate audit (docs/handoff/GATE-STATUS.md), each shown red first.**
+  B-P0-6: `plain_failure` names what ran out before the download's own wrapper
+  ("...could not be downloaded intact: <cause>. Check this computer is online"
+  put "internet" in every download failure, a full drive included); the fallback no
+  longer says "Nothing was changed"; the screen reader reads the same reason
+  (`stopped_reason()`); navtest 17. S-22: `check_volumes` asks for AurOS's need PLUS
+  the part of the image that has not arrived, crediting what is in
+  `C:\AurOS\auros-desktop.img` (not on the fast path); four selftest cases
+  (`space_enough`). S-20: `tools/esptest.sh` refuses 40 and 53 MiB free and arms at
+  56 (a release carries 33 MiB, the engine adds 21; the simulated partition reads
+  `$AURBRIDGE_SIM/esp-free`). SEC-002 sibling: the helper page opens through
+  `plat_explorer_path()` (the Windows folder's own explorer.exe, a full path);
+  `aurbridge.exe explorercheck` + the runcheck job plant an explorer.exe beside the
+  installer and ask which one is named; navtest 17b. Design pins, navtest 18: every
+  text/ground pair at least 4.5:1 (19 pairs), `GetTextFace`/weight for all 7 type
+  sizes at 96, 144 and 144-dense dpi, the Secure Boot page (title, three buttons,
+  the clipboard paragraph, where Not now lands), the look picker (2x2, one Chosen
+  with its check mark, only that card green), no drawn string holds `://`, `.html`,
+  `www.` or `github.io` (`nt_drawn`, the log of every string the pages draw), no stop
+  line names a Wi-Fi chip (fix_win.c's no-internet line no longer does). wordlint now
+  refuses BIOS, UEFI, NTFS and chip names in her text (not advanced.html or
+  licenses.html), and skips a test-data line marked `wordlint:ignore`. windows.yml
+  `pins` tests this repository's newest AurOS release (the `release_tag` input names
+  one), says which in the summary, and FAILS when there is none; the old repository's
+  v4 files are no longer a fallback.
+- **SEC-003 extras (the DLL fix itself is A2's: `plat_harden_dll_search()` first in
+  `main`/`WinMain`, `plat_load_system_dll()` for every load by name, the
+  KnownDLLs-only link gate in `fastpath.yml`) and what they found.** Added: (1)
+  `build/aurbridge` refuses a `LoadLibrary*(` anywhere but inside
+  `plat_load_system_dll()` (red on a bare call in preflight.c, in plat_win.c outside
+  that function, in hwinv_win.c); (2) the windows.yml step "a DLL planted beside the
+  installer is never loaded": a canary DLL (`tools/dllcanary/canary.c`, writes
+  `<name>.loaded` when anything loads it) under the names the installer loads by name
+  (winhttp, oleacc, wlanapi, iphlpapi, winspool, wtsapi32, dwmapi, and comctl32,
+  uxtheme, version where the control can load them) beside both programs, the
+  programs run through preflight, the report, the window, the screen reader and a
+  download; a control program (`control.c`, plain LoadLibrary) must load them first;
+  (3) `tools/dlltest.sh`, the same under Wine (red with the System32 flag removed,
+  and with WinHTTP failing to load; Wine speaks for wlanapi and dwmapi only). Real
+  Windows red proof: a branch with `LoadLibraryExW(..., 0)` and no
+  `SetDefaultDllDirectories` made the step go red (run RUN-MUT, branch deleted).
+  **FOUND, NOT FIXED: SEC-003 is not closed.** On windows-latest (Windows 11, runs
+  40043760099, 40047918166) a `cfgmgr32.dll` in the installer's folder is taken
+  instead of the system's before `main` (both programs, planted DLL ran or the
+  program waited on an error), and `cryptbase.dll` and `cryptsp.dll` there are
+  loaded and run, though every import is a KnownDLL and `main` starts with
+  `SetDefaultDllDirectories`. Tried: the load configuration's `DependentLoadFlags` =
+  0x800 (it does keep a planted `winhttp.dll` out of a program's OWN imports, proven
+  with probe programs, and does not touch these); one import at a time from
+  kernel32, advapi32, setupapi, shell32, ole32, oleaut32, msvcrt, user32, gdi32 (none
+  of them alone loads the planted names; the real programs do, after combase/wintypes
+  in the module list). The windows.yml step "KNOWN OPEN (SEC-003)..." reports it red
+  without failing the job. Next idea: find which import combination does it (the
+  module order is in the run 40047918166 log) and drop or load that one late.
 - **LEGAL's installer strings and the Terms/Licenses (docs/handoff/streams/LEGAL.md,
   "B" items).** Done: 1 (Ready's first row is the hazard in her words, and the
   next row says "Any change to a drive carries some risk. Copy anything you
