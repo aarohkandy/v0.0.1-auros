@@ -36,7 +36,7 @@ bg="#121417"           # desktop void / deepest background
 bg_alt="#181B1F"       # panels, bar background
 surface="#1E2226"      # cards, windows, menus
 surface_hi="#203630"   # hover / selected row
-overlay="#7A828C"      # borders, dividers, separators -- load-bearing
+overlay="#838B95"      # borders, dividers, separators -- load-bearing
 muted="#A3AAB2"        # disabled text, inactive glyphs
 subtle="#C3C8CE"       # secondary text, captions
 fg="#ECEEF0"           # primary text
@@ -72,7 +72,7 @@ info="#C3C8CE"
 # A terminal has sixteen colours because programs address them by
 # number and expect red to be red. These stay recognisable and are
 # muted to sit in the same room as the rest of the palette.
-ansi0="#191D21"   ansi8="#6A7178"
+ansi0="#191D21"   ansi8="#7A8187"
 ansi1="#C96A5E"   ansi9="#DE8578"
 ansi2="#8FB573"   ansi10="#A8CB8C"
 ansi3="#C89B4A"   ansi11="#DDB365"

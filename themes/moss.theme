@@ -20,7 +20,7 @@ muted="#677969"  # deliberately quiet, but still 3:1 -- "quiet" is not
 accent="#8FBF7F"  accent_alt="#C9A86C"  accent_warm="#E0B88A"
 ok="#8FBF7F"      warn="#E0B88A"  err="#D2807C"  info="#87AFC0"
 
-ansi0="#1A221C"  ansi8="#5A6A5C"
+ansi0="#1A221C"  ansi8="#748276"
 ansi1="#D2807C"  ansi9="#E59A96"
 ansi2="#8FBF7F"  ansi10="#A9D69A"
 ansi3="#C9A86C"  ansi11="#E0C58A"

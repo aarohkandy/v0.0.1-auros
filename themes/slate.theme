@@ -25,7 +25,7 @@ muted="#76828F"   subtle="#9BA7B4"   fg="#D5DCE4"  fg_hi="#F2F5F8"
 accent="#7FA8D4"  accent_alt="#9BB8C9"  accent_warm="#D9B78A"
 ok="#8FC49B"      warn="#DEBE7A"  err="#DE8D8D"  info="#8FB6D4"
 
-ansi0="#1C2128"  ansi8="#5A6672"
+ansi0="#1C2128"  ansi8="#76808A"
 ansi1="#DE8D8D"  ansi9="#EEAAAA"
 ansi2="#8FC49B"  ansi10="#AEDCB8"
 ansi3="#DEBE7A"  ansi11="#EDD59B"

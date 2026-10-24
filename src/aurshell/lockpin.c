@@ -372,15 +372,18 @@ static void look_load(look *L, const char *theme_path, int h)
     static theme_t t;
     memset(&t, 0, sizeof t);
     theme_load(&t, theme_path ? theme_path : "/etc/auros/shell.conf");
-    L->bg     = theme_color(&t, "bg",      0x0B0E14);
-    L->ink    = theme_color(&t, "fg_hi",   0xECEFF2);
-    L->body   = theme_color(&t, "fg",      0xD6DAE0);
-    L->dim    = theme_color(&t, "subtle",  0x8C95A0);
-    L->faint  = theme_color(&t, "overlay", 0x4A525C);
-    L->accent = theme_color(&t, "accent",  0x7DD3C0);
-    L->bad    = theme_color(&t, "err",     0xF2788D);
-    L->key    = theme_color(&t, "surface", 0x161B23);
-    L->line   = theme_color(&t, "overlay", 0x4A525C);
+    /* The defaults are the Light tokens (themes/sandstone.theme): Light is the default on every
+     * surface, and a lock screen that fell back to the old Nocturne teal was the one place it
+     * was not. tools/theme-test.sh checks every default against sandstone. */
+    L->bg     = theme_color(&t, "bg",      0xF6F2E9);
+    L->ink    = theme_color(&t, "fg_hi",   0x17181A);
+    L->body   = theme_color(&t, "fg",      0x17181A);
+    L->dim    = theme_color(&t, "subtle",  0x3A3D42);
+    L->faint  = theme_color(&t, "overlay", 0x6E675C);
+    L->accent = theme_color(&t, "accent",  0x0B5D4F);
+    L->bad    = theme_color(&t, "err",     0x9E2B22);
+    L->key    = theme_color(&t, "surface", 0xFCFAF5);
+    L->line   = theme_color(&t, "overlay", 0x6E675C);
     L->on_accent = L->bg;
     float k = (float)h / 720.f;
     L->k = k < 0.85f ? 0.85f : k > 2.4f ? 2.4f : k;

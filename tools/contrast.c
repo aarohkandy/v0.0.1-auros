@@ -74,8 +74,14 @@ static const pair PAIRS[] = {
   { "col_ok",      "col_surface", "a confirmation",                  3.0, REQUIRED },
   { "col_warn",    "col_surface", "a warning",                       3.0, REQUIRED },
   { "col_muted",   "col_surface", "text that is deliberately quiet", 3.0, ADVISORY },
-  { "col_overlay", "col_surface", "a divider or border",             3.0, ADVISORY },
-  { "col_overlay", "col_bg",      "a divider on the desktop",        3.0, ADVISORY },
+  /* The words on a coloured fill: aurora's @accent|on@ (GTK's Install button, selected rows,
+   * the terminal cursor) and the shell's own primary button, which paints the theme's bg on it. */
+  { "col_on_accent", "col_accent", "the words on an accent fill",    4.5, REQUIRED },
+  { "col_bg",      "col_accent",  "the words on a primary button",   4.5, REQUIRED },
+  /* Rules are structure here (DESIGN-DIRECTION: shadows were replaced by hairlines), so they
+   * clear 4.5, like text: strict, for the two looks she can choose. */
+  { "col_overlay", "col_surface", "a divider or border",             4.5, ADVISORY },
+  { "col_overlay", "col_bg",      "a divider on the desktop",        4.5, ADVISORY },
 };
 
 int main(int argc, char **argv)

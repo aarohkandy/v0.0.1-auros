@@ -24,7 +24,9 @@
 @define-color borders                @overlay@;
 
 * {
-  outline-color: @accent|rgba:0.55@;
+  /* Solid, not 55%: over the Light paper that was 2.6:1, and a focus ring she cannot
+     find is a keyboard she cannot use (tools/theme-test.sh holds it to 3:1). */
+  outline-color: @accent@;
   -gtk-secondary-caret-color: @accent@;
 }
 

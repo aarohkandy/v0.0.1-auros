@@ -157,6 +157,78 @@ for th in themes/*.theme; do
 done
 printf 'nocturne\n' > "$STATE/theme"
 
+# 5. Every other pair gtk.css and terminal.conf draw, in every theme: text on its ground at 4.5:1
+#    (disabled text and anything that only has to be found: 3:1), and the sixteen terminal colours
+#    against the terminal background. (Black, white and bright white are exempt: they are ink and
+#    paper by definition, and a program that prints paper on paper has chosen to.)
+echo
+echo "gtk.css and terminal pairs, every theme"
+cat > "$STATE/pairs" <<'PAIRS'
+body text on the window (fg on bg);fg;bg;4.5
+entry text (fg_hi on bg);fg_hi;bg;4.5
+button text (fg on surface);fg;surface;4.5
+a hovered button or row (fg on surface_hi);fg;surface_hi;4.5
+header bar, top (fg_hi on bg_alt);fg_hi;bg_alt;4.5
+header bar, bottom (fg_hi on bg_alt darkened);fg_hi;bg_alt|darken:6;4.5
+a tooltip (fg_hi on surface_hi);fg_hi;surface_hi;4.5
+selected text (fg_hi on the 35% accent selection);fg_hi;accent|mix:bg:65;4.5
+a disabled button (muted on surface darkened);muted;surface|darken:4;3.0
+the border of an entry or a button (overlay on bg);overlay;bg;3.0
+the border of a menu or a tooltip (overlay on surface);overlay;surface;3.0
+a scrollbar slider (overlay lightened on bg);overlay|lighten:10;bg;3.0
+the focus ring (the accent, drawn solid, on bg);accent;bg;3.0
+the accent on a card (a switch, a progress bar);accent;surface;3.0
+PAIRS
+for th in themes/*.theme; do
+    n=$(basename "$th" .theme)
+    printf '%s\n' "$n" > "$STATE/theme"
+    : > "$STATE/probe"
+    while IFS=';' read -r what fgt bgt need; do
+        printf '@%s|hex@ @%s|hex@\n' "$fgt" "$bgt" >> "$STATE/probe"
+    done < "$STATE/pairs"
+    $AURORA render < "$STATE/probe" > "$STATE/probe.out" 2>/dev/null
+    paste -d';' "$STATE/pairs" "$STATE/probe.out" > "$STATE/pairs.out"
+    bad_here=0
+    while IFS=';' read -r what fgt bgt need colours; do
+        set -- $colours
+        checked=$((checked + 1))
+        r=$(ratio "$1" "$2")
+        if awk -v r="$r" -v n="$need" 'BEGIN { exit !(r >= n) }'; then :
+        else printf '  FAIL  %-12s %s  %s on %s  %s:1 (%s needed)\n' "$n" "$what" "$1" "$2" "$r" "$need"; fail=1; bad_here=1; fi
+    done < "$STATE/pairs.out"
+    # the sixteen terminal colours against its background
+    bgc=$(printf '@bg|hex@' | $AURORA render 2>/dev/null)
+    for i in 1 2 3 4 5 6 8 9 10 11 12 13 14; do
+        c=$(printf '@ansi%s|hex@' "$i" | $AURORA render 2>/dev/null)
+        checked=$((checked + 1))
+        r=$(ratio "$c" "$bgc")
+        if awk -v r="$r" 'BEGIN { exit !(r >= 4.5) }'; then :
+        else printf '  FAIL  %-12s terminal colour %-2s %s on %s  %s:1 (4.5 needed)\n' "$n" "$i" "$c" "$bgc" "$r"; fail=1; bad_here=1; fi
+    done
+    [ "$bad_here" = 0 ] && printf '  ok    %-12s every pair clears its floor\n' "$n"
+done
+printf 'nocturne\n' > "$STATE/theme"
+
+# 6. A C default is a theme too. The lock screen falls back to these when the shell's conf lacks
+#    a key; they were the old Nocturne teal, the one place the default look was not Light.
+#    Every theme_color(&t, "KEY", 0xRRGGBB) default in the shell's C must be sandstone's own.
+echo
+echo "C colour defaults are the Light tokens"
+for src in src/aurshell/*.c; do
+    grep -o 'theme_color(&t, "[a-z_]*", *0x[0-9A-Fa-f]*)' "$src" 2>/dev/null | sed "s|^|$src |"
+done | while read -r src call; do
+    key=$(printf '%s' "$call" | sed 's/.*"\([a-z_]*\)".*/\1/')
+    hex=$(printf '%s' "$call" | sed 's/.*0x\([0-9A-Fa-f]*\)).*/\1/' | tr a-f A-F)
+    want=$(grep -oE "(^|[[:space:]])$key=\"#[0-9A-Fa-f]+\"" themes/sandstone.theme | head -1 | sed 's/.*#//; s/"//' | tr a-f A-F)
+    printf '%s %s %s %s\n' "$src" "$key" "$hex" "$want"
+done > "$STATE/defaults"
+while read -r src key hex want; do
+    checked=$((checked + 1))
+    if [ -z "$want" ]; then printf '  ok    %s "%s" (no Light token of that name: not a colour of the look)\n' "$src" "$key"
+    elif [ "$hex" = "$want" ]; then printf '  ok    %s "%s" is 0x%s, the Light token\n' "$src" "$key" "$hex"
+    else printf '  FAIL  %s "%s" defaults to 0x%s; the Light token is #%s\n' "$src" "$key" "$hex" "$want"; fail=1; fi
+done < "$STATE/defaults"
+
 # 3. The target ships mawk, not gawk. They must agree byte for byte --
 #    a gawk extension slipping in here (strtonum) cost a silent theming
 #    failure on the first real image build. This runs aurora twice with
