@@ -294,24 +294,37 @@ def same_open_file_description(first_fd: int, second_fd: int) -> bool:
     return result == 0
 
 
-def socket_inventory(pid: int, pidfd: int, shell_pid: int, display_path: Path):
+def socket_inventory(pid: int, pidfd: int, shell_pid: int, display_path: Path,
+                     evidence=None):
+    if evidence is None:
+        evidence = {}
     held = []
     matches = []
     duplicate_errors = []
+    evidence["application_socket_fd_count"] = 0
+    evidence["application_socket_inspection_error_count"] = 0
+    evidence["matching_compositor_connection_count"] = 0
     try:
-        entries = sorted((Path("/proc") / str(pid) / "fd").iterdir(),
-                         key=lambda item: int(item.name))
+        try:
+            entries = sorted((Path("/proc") / str(pid) / "fd").iterdir(),
+                             key=lambda item: int(item.name))
+        except (OSError, ValueError) as exc:
+            evidence["application_socket_inspection_error_count"] += 1
+            raise RuntimeError("application FD inventory unavailable") from exc
         for entry in entries:
             try:
                 link = os.readlink(entry)
             except OSError as exc:
+                evidence["application_socket_inspection_error_count"] += 1
                 raise RuntimeError("application FD inventory changed") from exc
             if not link.startswith("socket:["):
                 continue
+            evidence["application_socket_fd_count"] += 1
             try:
                 duplicate = duplicate_fd(pidfd, int(entry.name))
             except OSError as exc:
                 duplicate_errors.append(exc)
+                evidence["application_socket_inspection_error_count"] = len(duplicate_errors)
                 continue
             held.append(duplicate)
             try:
@@ -334,9 +347,11 @@ def socket_inventory(pid: int, pidfd: int, shell_pid: int, display_path: Path):
                 finally:
                     sock.detach()
             except (OSError, ValueError) as exc:
+                evidence["application_socket_inspection_error_count"] += 1
                 raise RuntimeError("application socket inventory incomplete") from exc
             if peer[0] == shell_pid:
                 matches.append((int(entry.name), duplicate))
+                evidence["matching_compositor_connection_count"] = len(matches)
         if duplicate_errors:
             raise RuntimeError("pidfd_getfd could not inspect every application socket")
         return held, matches
@@ -407,54 +422,81 @@ def verify_listener(shell_pid: int, shell_pidfd: int, display_path: Path,
     if not stat.S_ISSOCK(expected.st_mode):
         raise RuntimeError("WAYLAND_DISPLAY path is not a socket")
     listener_inode, _path_count = unix_path_listener(display_path, evidence)
-    found = 0
+    matching_listener_fds = []
     socket_fds = 0
     evidence["compositor_socket_fd_count"] = 0
+    evidence["matching_accepting_listener_fd_count"] = 0
+    evidence["matching_accepting_listener_open_description_count"] = 0
     evidence["matching_accepting_listener_count"] = 0
-    for entry in (Path("/proc") / str(shell_pid) / "fd").iterdir():
-        try:
-            link = os.readlink(entry)
-        except OSError as exc:
-            raise RuntimeError("compositor FD inventory changed") from exc
-        if not link.startswith("socket:["):
-            continue
-        socket_fds += 1
-        evidence["compositor_socket_fd_count"] = socket_fds
-        try:
-            duplicate = duplicate_fd(shell_pidfd, int(entry.name))
-            try:
-                sock = socket.socket(fileno=duplicate)
-                try:
-                    name = sock.getsockname()
-                    inode = os.fstat(duplicate).st_ino
-                    valid_listener = (sock.family == socket.AF_UNIX
-                                      and is_stream_socket(sock, listener=True))
-                finally:
-                    sock.detach()
-                if (valid_listener and name == str(display_path)
-                        and inode == listener_inode):
-                    found += 1
-                    evidence["matching_accepting_listener_count"] = found
-            finally:
-                os.close(duplicate)
-        except (OSError, ValueError) as exc:
-            raise RuntimeError("could not inspect every compositor socket FD") from exc
-    authenticate_display_path(display_path, shell_pid)
-    after = display_path.stat()
-    if (after.st_dev, after.st_ino) != (expected.st_dev, expected.st_ino):
-        raise RuntimeError("WAYLAND_DISPLAY path changed during authentication")
-    after_evidence = {}
     try:
-        after_listener_inode, _after_count = unix_path_listener(display_path, after_evidence)
+        for entry in (Path("/proc") / str(shell_pid) / "fd").iterdir():
+            try:
+                link = os.readlink(entry)
+            except OSError as exc:
+                raise RuntimeError("compositor FD inventory changed") from exc
+            if not link.startswith("socket:["):
+                continue
+            socket_fds += 1
+            evidence["compositor_socket_fd_count"] = socket_fds
+            duplicate = -1
+            keep = False
+            try:
+                duplicate = duplicate_fd(shell_pidfd, int(entry.name))
+                try:
+                    sock = socket.socket(fileno=duplicate)
+                    try:
+                        name = sock.getsockname()
+                        inode = os.fstat(duplicate).st_ino
+                        valid_listener = (sock.family == socket.AF_UNIX
+                                          and is_stream_socket(sock, listener=True))
+                    finally:
+                        sock.detach()
+                    if (valid_listener and name == str(display_path)
+                            and inode == listener_inode):
+                        matching_listener_fds.append(duplicate)
+                        keep = True
+                        evidence["matching_accepting_listener_fd_count"] = len(
+                            matching_listener_fds)
+                finally:
+                    if duplicate >= 0 and not keep:
+                        os.close(duplicate)
+            except (OSError, ValueError) as exc:
+                raise RuntimeError("could not inspect every compositor socket FD") from exc
+        unique_listener_fds = []
+        try:
+            for duplicate in matching_listener_fds:
+                if not any(same_open_file_description(duplicate, known)
+                           for known in unique_listener_fds):
+                    unique_listener_fds.append(duplicate)
+        except OSError as exc:
+            raise RuntimeError("could not compare compositor listener descriptions") from exc
+        evidence["matching_accepting_listener_open_description_count"] = len(
+            unique_listener_fds)
+        evidence["matching_accepting_listener_count"] = len(unique_listener_fds)
+        authenticate_display_path(display_path, shell_pid)
+        after = display_path.stat()
+        if (after.st_dev, after.st_ino) != (expected.st_dev, expected.st_ino):
+            raise RuntimeError("WAYLAND_DISPLAY path changed during authentication")
+        after_evidence = {}
+        try:
+            after_listener_inode, _after_count = unix_path_listener(display_path, after_evidence)
+        finally:
+            evidence.update({f"after_{key}": value for key, value in after_evidence.items()})
+        if after_listener_inode != listener_inode:
+            raise RuntimeError("WAYLAND_DISPLAY listener changed during authentication")
+        if len(unique_listener_fds) != 1:
+            raise RuntimeError(
+                "expected one exact AurWL listener open description, "
+                f"got {len(unique_listener_fds)}")
     finally:
-        evidence.update({f"after_{key}": value for key, value in after_evidence.items()})
-    if after_listener_inode != listener_inode:
-        raise RuntimeError("WAYLAND_DISPLAY listener changed during authentication")
-    if found != 1:
-        raise RuntimeError(f"expected one exact AurWL listener, got {found}")
+        for duplicate in matching_listener_fds:
+            os.close(duplicate)
 
 
-def snapshot(app_pid: int, shell_pid: int, display_path: Path, trace: Path):
+def snapshot(app_pid: int, shell_pid: int, display_path: Path, trace: Path,
+             evidence=None):
+    if evidence is None:
+        evidence = {}
     pidfd = os.pidfd_open(app_pid, 0)
     held = []
     try:
@@ -462,7 +504,10 @@ def snapshot(app_pid: int, shell_pid: int, display_path: Path, trace: Path):
             raise RuntimeError("application exited before identity snapshot")
         children = descendants(app_pid)
         writers = fd_writers(trace)
-        held, matches = socket_inventory(app_pid, pidfd, shell_pid, display_path)
+        evidence["application_descendant_count"] = len(children)
+        evidence["trace_writer_count"] = len(writers)
+        held, matches = socket_inventory(
+            app_pid, pidfd, shell_pid, display_path, evidence)
         if children:
             raise RuntimeError(f"application descendants={len(children)}")
         if len(writers) != 1 or writers[0][0] != app_pid:
@@ -475,6 +520,7 @@ def snapshot(app_pid: int, shell_pid: int, display_path: Path, trace: Path):
         wanted = trace.stat()
         if (trace_stat.st_dev, trace_stat.st_ino) != (wanted.st_dev, wanted.st_ino):
             raise RuntimeError("trace writer changed during inspection")
+        evidence["trace_sink_identity_exact"] = "yes"
         return (pidfd, held, matches[0][0], os.fstat(matches[0][1]).st_ino,
                 writers[0][1], trace_stat.st_dev, trace_stat.st_ino, trace_copy)
     except Exception:
@@ -524,9 +570,15 @@ def main() -> None:
         finally:
             observed.update({f"start_{key}": value
                              for key, value in start_listener_evidence.items()})
-        (app_pidfd, held, wayland_fd, wayland_inode, trace_fd, trace_dev,
-         trace_inode, trace_copy) = snapshot(
-            args.app_pid, shell_pid, args.display_path, args.trace)
+        start_application_evidence = {}
+        try:
+            (app_pidfd, held, wayland_fd, wayland_inode, trace_fd, trace_dev,
+             trace_inode, trace_copy) = snapshot(
+                args.app_pid, shell_pid, args.display_path, args.trace,
+                start_application_evidence)
+        finally:
+            observed.update({f"start_{key}": value
+                             for key, value in start_application_evidence.items()})
         args.ready.write_text("ready\n", encoding="ascii")
         deadline = time.monotonic() + 180
         while not args.done.exists():
@@ -556,8 +608,14 @@ def main() -> None:
         finally:
             os.close(second_compositor_pidfd)
             os.close(second_service_pidfd)
-        second = snapshot(
-            args.app_pid, shell_pid, args.display_path, args.trace)
+        end_application_evidence = {}
+        try:
+            second = snapshot(
+                args.app_pid, shell_pid, args.display_path, args.trace,
+                end_application_evidence)
+        finally:
+            observed.update({f"end_{key}": value
+                             for key, value in end_application_evidence.items()})
         (second_pidfd, second_held, second_wayland_fd, second_wayland_inode,
          second_trace_fd, second_trace_dev, second_trace_inode,
          second_trace_copy) = second

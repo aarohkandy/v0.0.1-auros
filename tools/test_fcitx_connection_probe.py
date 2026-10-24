@@ -150,14 +150,34 @@ class ConnectionProbeTest(unittest.TestCase):
         broken.family = probe.socket.AF_UNIX
         broken.getsockopt.return_value = probe.socket.SOCK_STREAM
         broken.getpeername.side_effect = OSError(errno.EIO, "broken")
+        evidence = {}
         with mock.patch.object(probe.os, "readlink", return_value="socket:[1]"), \
              mock.patch.object(probe.os, "close"), \
              mock.patch.object(probe.Path, "iterdir", return_value=[entry]), \
              mock.patch.object(probe, "duplicate_fd", return_value=51), \
              mock.patch.object(probe.socket, "socket", return_value=broken):
             with self.assertRaisesRegex(RuntimeError, "inventory incomplete"):
-                probe.socket_inventory(11, 41, 22, Path("/run/user/1000/wayland-0"))
+                probe.socket_inventory(
+                    11, 41, 22, Path("/run/user/1000/wayland-0"), evidence)
             broken.detach.assert_called_once()
+        self.assertEqual(evidence, {
+            "application_socket_fd_count": 1,
+            "application_socket_inspection_error_count": 1,
+            "matching_compositor_connection_count": 0,
+        })
+
+    def test_socket_inventory_records_fd_enumeration_failure(self):
+        evidence = {}
+        with mock.patch.object(
+                probe.Path, "iterdir", side_effect=OSError(errno.EACCES, "denied")):
+            with self.assertRaisesRegex(RuntimeError, "FD inventory unavailable"):
+                probe.socket_inventory(
+                    11, 41, 22, Path("/run/user/1000/wayland-0"), evidence)
+        self.assertEqual(evidence, {
+            "application_socket_fd_count": 0,
+            "application_socket_inspection_error_count": 1,
+            "matching_compositor_connection_count": 0,
+        })
 
     def test_unix_path_listener_reads_typed_kernel_record(self):
         content = ("Num RefCount Protocol Flags Type St Inode Path\n"
@@ -205,10 +225,59 @@ class ConnectionProbeTest(unittest.TestCase):
             "wayland_path_inode_count": 4,
             "global_matching_listener_count": 1,
             "compositor_socket_fd_count": 1,
+            "matching_accepting_listener_fd_count": 1,
+            "matching_accepting_listener_open_description_count": 1,
             "matching_accepting_listener_count": 1,
             "after_wayland_path_inode_count": 4,
             "after_global_matching_listener_count": 1,
         })
+
+    def test_listener_allows_duplicate_fds_for_one_listening_description(self):
+        path = Path("/run/user/1000/wayland-0")
+        entries = [mock.Mock(), mock.Mock()]
+        entries[0].name, entries[1].name = "7", "8"
+        listeners = [mock.Mock(), mock.Mock()]
+        for listener in listeners:
+            listener.family = probe.socket.AF_UNIX
+            listener.getsockname.return_value = str(path)
+            listener.getsockopt.side_effect = [probe.socket.SOCK_STREAM, 1]
+        evidence = {}
+        with mock.patch.object(probe.Path, "stat", return_value=mock.Mock(
+                st_mode=0o140777, st_dev=1, st_ino=9)), \
+             mock.patch.object(probe, "unix_path_listener", side_effect=[(22, 4), (22, 5)]), \
+             mock.patch.object(probe, "authenticate_display_path"), \
+             mock.patch.object(probe.Path, "iterdir", return_value=entries), \
+             mock.patch.object(probe.os, "readlink", return_value="socket:[22]"), \
+             mock.patch.object(probe, "duplicate_fd", side_effect=[51, 52]), \
+             mock.patch.object(probe.socket, "socket", side_effect=listeners), \
+             mock.patch.object(probe.os, "fstat", side_effect=[
+                 mock.Mock(st_ino=22), mock.Mock(st_ino=22)]), \
+             mock.patch.object(probe, "same_open_file_description", return_value=True), \
+             mock.patch.object(probe.os, "close"):
+            probe.verify_listener(964, 32, path, evidence)
+
+    def test_listener_rejects_two_distinct_listening_descriptions(self):
+        path = Path("/run/user/1000/wayland-0")
+        entries = [mock.Mock(), mock.Mock()]
+        entries[0].name, entries[1].name = "7", "8"
+        listeners = [mock.Mock(), mock.Mock()]
+        for listener in listeners:
+            listener.family = probe.socket.AF_UNIX
+            listener.getsockname.return_value = str(path)
+            listener.getsockopt.side_effect = [probe.socket.SOCK_STREAM, 1]
+        with mock.patch.object(probe.Path, "stat", return_value=mock.Mock(
+                st_mode=0o140777, st_dev=1, st_ino=9)), \
+             mock.patch.object(probe, "unix_path_listener", side_effect=[(22, 4), (22, 5)]), \
+             mock.patch.object(probe, "authenticate_display_path"), \
+             mock.patch.object(probe.Path, "iterdir", return_value=entries), \
+             mock.patch.object(probe.os, "readlink", return_value="socket:[22]"), \
+             mock.patch.object(probe, "duplicate_fd", side_effect=[51, 52]), \
+             mock.patch.object(probe.socket, "socket", side_effect=listeners), \
+             mock.patch.object(probe.os, "fstat", return_value=mock.Mock(st_ino=22)), \
+             mock.patch.object(probe, "same_open_file_description", return_value=False), \
+             mock.patch.object(probe.os, "close"):
+            with self.assertRaisesRegex(RuntimeError, "open description, got 2"):
+                probe.verify_listener(964, 32, path)
 
     def test_listener_rejects_path_rebind_after_compositor_inspection(self):
         path = Path("/run/user/1000/wayland-0")
@@ -305,6 +374,19 @@ class ConnectionProbeTest(unittest.TestCase):
                  mock.patch.object(probe.os, "close"):
                 with self.assertRaisesRegex(RuntimeError, error):
                     probe.snapshot(11, 22, Path("/wayland-0"), path)
+
+    def test_snapshot_retains_bounded_assumption_counts_on_failure(self):
+        evidence = {}
+        with mock.patch.object(probe, "descendants", return_value=[12]), \
+             mock.patch.object(probe, "fd_writers", return_value=[(11, 7)]), \
+             mock.patch.object(probe, "socket_inventory", return_value=([2], [(9, 2)])), \
+             mock.patch.object(probe.os, "pidfd_open", return_value=1, create=True), \
+             mock.patch.object(probe, "pidfd_alive", return_value=True), \
+             mock.patch.object(probe.os, "close"):
+            with self.assertRaisesRegex(RuntimeError, "descendants=1"):
+                probe.snapshot(11, 22, Path("/wayland-0"), Path("/trace"), evidence)
+        self.assertEqual(evidence["application_descendant_count"], 1)
+        self.assertEqual(evidence["trace_writer_count"], 1)
 
     def test_snapshot_accepts_one_stable_writer_and_connection(self):
         with mock.patch.object(probe, "descendants", return_value=[]), \
