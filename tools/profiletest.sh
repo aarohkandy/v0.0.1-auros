@@ -631,6 +631,13 @@ EOPY
     sh -n tools/profiletest-ibus-guest.sh || { printf '    %-62s %s\n' \
         "the injected Pinyin guest orchestrator parses" "FAIL"; fail=$((fail+1)); }
     checked=$((checked+1))
+    if sh tools/profiletest-ibus-guest.sh selftest >/dev/null; then
+        printf '    %-62s %s\n' "the bounded IBus engine selector" "passes"
+    else
+        printf '    %-62s %s\n' "the bounded IBus engine selector" "FAIL"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
     echo
     [ "$fail" -eq 0 ] && { echo "$checked checks: every check refuses what it exists to refuse."; exit 0; }
     echo "$fail of $checked wrong."; exit 1
@@ -790,8 +797,8 @@ if grep -Eq '^profile[[:space:]]*=[[:space:]]*multilingual$' /etc/auros/policy.c
     ibus_display=$(env_value DISPLAY)
     ibus_engines=$(as_desktop env DISPLAY="$ibus_display" WAYLAND_DISPLAY="$ibus_wayland" \
         GTK_IM_MODULE="$ibus_gtk" QT_IM_MODULE="$ibus_qt" XMODIFIERS="$ibus_xmodifiers" \
-        ibus list-engine 2>/dev/null || true)
-    if printf '%s\n' "$ibus_engines" | grep -Eq '(^|[[:space:]:])pinyin([[:space:]]|$)'; then
+        ibus list-engine --name-only 2>/dev/null || true)
+    if printf '%s\n' "$ibus_engines" | grep -Fqx pinyin; then
         ibus_pinyin=yes
     else
         ibus_pinyin=no
