@@ -330,3 +330,37 @@ image; no compositor exception has been implemented. See
 The exact Windows base, BitLocker and fast-path journeys remain required.
 Public delivery, signing configuration, monitored contacts and physical-PC
 proof remain unresolved; automated prerelease publication does not close them.
+
+## Working-branch verification follow-up
+
+The candidate published as `v0.1.0-c1ba6ee`; its published-executable and
+WinHTTP download checks passed. Exact base, BitLocker and fast-path base
+installation journeys are running within build `40131473307`. The corrected
+restore diagnostic is run `40135313128`, harness `1652e904`, against that
+candidate's immutable artifacts. It remains diagnostic, not certification.
+
+Branch-only dispatch works without first adding the dispatch trigger to main.
+This avoided a replacement image build for the restore investigation. Future
+putback jobs now omit an unused 1.53 GB rootfs download and staging-tree setup
+while retaining image assembly and exact checksum verification.
+
+Review of generic appearance assertions exposed a real firstboot failure path.
+Generic `aurora set` failure previously allowed a completion stamp after partial
+rendering. The working branch now withholds completion, returns failure and
+retries next boot, with a terminal marker only after successful rendering and
+exact ACTIVE theme readback. A failing-before/fixed-after partial-render test,
+successful retry and personalized-render skip all pass. Independent review is
+clean. Generic E2E now requires this exact marker plus zero recipe IDs, exact
+persisted choices and live first-session appearance. The older c1 image cannot
+meet the new marker contract; do not waste a diagnostic run pretending it can.
+A fresh candidate must certify this product change.
+
+Fastpath release E2E now selects both base and BitLocker on the working branch.
+Fastpath remains candidate-only and outside promotion because the website's
+shipped route still uses the normal installer. No promotion policy was weakened
+or silently expanded.
+
+The IBus cross-client panel exception was rejected after source review found
+that renderer identity does not authenticate candidate contents. A bounded
+Fcitx client-side popup experiment is being prepared on the retained disposable
+image; no shipped input-method or compositor privilege has changed.
