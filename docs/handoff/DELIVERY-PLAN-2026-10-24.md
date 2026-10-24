@@ -232,3 +232,24 @@ search. It refuses ambiguous runs and incomplete artifact pagination, uses at
 most 26 GitHub requests, and passes all 82 cloud tests and security review.
 The exact-SHA GitHub query was also checked against real successful run
 `40124183660`. Public build requests and Wishes remain disabled.
+
+## Runtime checkpoint, 24 October 20:36 UTC
+
+- Main candidate `d7a5675b`, build `40129427319`: image and installer built;
+  full test jobs are running. Its cloud workflow passed with feature switches
+  off. This candidate includes the missing test dependencies.
+- Profile run `40128867869` at `1e46ff34`: office, revive and school-kiosk
+  build/boot jobs passed. Multilingual built and is running the two-boot Pinyin
+  application test. The ordinary desktop has its own image/test run above.
+- Office and Revive reports show their expected rail/slate and taskbar/ember
+  desktops, non-root user auros, Firefox installed, and no failed units.
+- Earlier image run `40126965912` at `ee450fbb` finished with 32 successful jobs
+  and only the dependency-broken unit job failing. All 16 selected VM jobs,
+  four additional power-cut jobs, compositor checks/mutations, Wishes UI/voice,
+  and theft checks passed. This is not a successful release or real-Windows
+  restart proof; its release stage was skipped.
+- Site run `40129160239` at `16cad481` passed the 548-check suite including the
+  browser-to-real-API test with mocked GitHub verification.
+
+No new desktop image is requested by this documentation checkpoint. The
+original Claude checkouts and held encryption work remain preserved.
