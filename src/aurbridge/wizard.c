@@ -3222,9 +3222,13 @@ static int page_ready(int x, int y, int w)
     }
     ROW(G_DOWN, buf);
 
-    /* D11, in her words, on a computer whose drive is locked. */
+    /* D11, in her words, on a computer whose drive is locked. Windows
+     * cannot resume this protection while she remains in AurOS, and a
+     * suspended drive has a clear key, so say both facts before consent. */
     if (bitlocker_paused_here())
-        ROW(G_LOCK, L"Windows’ drive lock is paused for one restart and comes back on by itself.");
+        ROW(G_LOCK, L"Setup pauses Windows’ drive protection. It stays paused until Windows "
+                    L"turns it back on. Start Windows again to let that happen. While paused, "
+                    L"anyone with this computer could read the Windows drive.");
 
     ROW(G_UNDO, L"The computer restarts once. Then AurOS asks if everything "
                 L"works. Press “No, go back to Windows” and it does.");
@@ -5682,6 +5686,16 @@ static int nav_test(const char *dir)
             for (size_t i = 0; i < sizeof P / sizeof P[0]; i++) {
                 char what[160];
                 nt_fake_report(0);
+#ifdef AB_CHOICE_BITLOCKER_PAUSE
+                /* The fast path's longest Ready page: its drive-protection
+                 * warning and Wi-Fi choice must remain usable at the minimum
+                 * window sizes, even though the default build omits both. */
+                if (P[i].p == PAGE_READY) {
+                    g_report.wifi_connected = 1;
+                    snprintf(g_report.wifi_name, sizeof g_report.wifi_name, "HomeNet");
+                    g_report.volumes[0].bitlocker = 1;
+                }
+#endif
                 g_page = P[i].p;
                 g_install_finished = P[i].done;
                 InterlockedExchange(&g_ab_state, P[i].done ? 2 : 0);
@@ -5702,7 +5716,8 @@ static int nav_test(const char *dir)
                     snprintf(what, sizeof what,
                              "the ready page on %s may scroll, but Install AurOS and its agreement stay in view",
                              SZ[k].name);
-                    nt_check(pr >= 0 && tl >= 0 && g_w[pr].r.bottom <= g_ch && g_w[tl].r.bottom <= g_w[pr].r.top
+                    nt_check(g_content_h > g_view_h && pr >= 0 && tl >= 0 &&
+                             g_w[pr].r.bottom <= g_ch && g_w[tl].r.bottom <= g_w[pr].r.top
                              && g_w[tl].r.top >= g_body.bottom - S(60) && g_scroll[scr_i()] == 0, what);
                 } else {
                     snprintf(what, sizeof what, "the %s page fits %s without scrolling",

@@ -335,7 +335,7 @@
         <div><dt>Keep it plugged in</dt><dd data-claim="charger:required">Plug in the charger before you start, and leave it in until AurOS has started. AurOS Setup waits for it.</dd></div>
         <div><dt>Locked drives</dt><dd>
           <span data-build-for="default" data-claim="bitlocker:refuses">If Windows has locked this computer&rsquo;s drive, AurOS can&rsquo;t go on it yet. Many newer laptops do this by themselves. AurOS Setup checks, and tells you before it changes anything.</span>
-          <span data-build-for="fastpath" data-claim="bitlocker:pauses">If Windows has locked this computer&rsquo;s drive (many newer laptops do this by themselves), AurOS Setup pauses the lock for one restart, and it comes back on by itself. Nothing is unlocked or removed.</span>
+          <span data-build-for="fastpath" data-claim="bitlocker:pauses">If Windows has locked this computer&rsquo;s drive (many newer laptops do this by themselves), AurOS Setup pauses its protection. It stays paused until Windows turns it back on. Start Windows again to let that happen. While it is paused, anyone with this computer could read the Windows drive.</span>
         </dd></div>
         <div><dt>Your Wi-Fi</dt><dd>
           <span data-build-for="default" data-claim="wifi:stays-behind">AurOS doesn&rsquo;t bring your Wi-Fi across yet. After the restart, press <b data-ui="desktop">Wi-Fi</b> at the bottom left and choose your network. You will need its password, so have it to hand.</span>

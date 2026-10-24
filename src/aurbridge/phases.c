@@ -381,7 +381,8 @@ static int phase_consent(const ab_choice *c, pf_report *r, ab_machine *m,
     if (m->fast) {
         if (m->bitlocker && !c->bitlocker_pause) {
             snprintf(why, n, "this computer's drive is locked with BitLocker, "
-                             "and pausing the lock for one restart was not "
+                             "and pausing its protection until Windows turns "
+                             "it back on was not "
                              "agreed to. Nothing has been changed.");
             return -1;
         }
@@ -427,7 +428,8 @@ static int phase_consent(const ab_choice *c, pf_report *r, ab_machine *m,
             return -1;
         }
         m->bitlocker_suspended = 1;
-        talk(say, ud, "BitLocker is paused; it goes back on by itself");
+        talk(say, ud, "BitLocker protection is paused. While it is paused, "
+                      "anyone with this computer could read the Windows drive");
     }
     talk(say, ud, "agreed: AurOS will be installed alongside Windows");
     return 0;
@@ -2439,8 +2441,9 @@ int ab_arm(ab_machine *m, ab_say say, void *ud, char *why, size_t n)
                 ab_disarm(m, say, ud);
                 return -1;
             }
-            talk(say, ud, "Windows' drive lock is paused for the restart; it "
-                          "turns itself back on");
+            talk(say, ud, "Windows' drive protection is paused. Start Windows "
+                          "again to let Windows turn it back on; until it does, "
+                          "anyone with this computer could read the Windows drive");
         }
     }
 
@@ -2519,8 +2522,9 @@ void ab_disarm(ab_machine *m, ab_say say, void *ud)
         } else {
             talk(say, ud, "BitLocker could NOT be switched back on (%s). Open "
                           "Windows, search for BitLocker, and choose Resume "
-                          "protection -- until you do, this computer's drive "
-                          "is not encrypted.", tail);
+                          "protection. The files remain encrypted, but until "
+                          "you resume protection anyone with this computer "
+                          "could read the Windows drive.", tail);
         }
     }
     if (m->bootnext_set) {
