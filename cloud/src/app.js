@@ -40,6 +40,7 @@ export function config(env) {
     establishDays: n("ESTABLISH_DAYS", 7),
     registerPerNet: n("REGISTER_PER_NET", 3),
     maxInflight: n("MAX_INFLIGHT", 40),
+    ledgerMs: n("LEDGER_TIMEOUT_MS", 6000),
     powBits: n("POW_BITS", 21),
     banned: new Set(String(env.BANNED || "").split(/[\s,]+/).filter(Boolean)),
     countries: countries(env.ALLOW_COUNTRIES),
@@ -104,6 +105,21 @@ async function readJson(request) {
 
 export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSON.stringify(o)), now = Date.now }) {
   const cfg = config(env);
+
+  // The Durable Object is the one thing every wish waits on. When the platform
+  // has trouble with it (a Cloudflare incident in Ashburn hung it for 12-30 s on
+  // 2026-10-24) a request must not hang with it: give up after ledgerMs with a
+  // clean 503 that says why in the log (crash:LedgerTimeout), well inside the
+  // computer's 20 s patience.
+  const ledgerCall = (what, p) => {
+    let timer;
+    const limit = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(Object.assign(new Error(`${what} took longer than ${cfg.ledgerMs} ms`), { name: "LedgerTimeout" })), cfg.ledgerMs);
+    });
+    const call = Promise.resolve(p);
+    call.catch(() => {}); // a call that fails after we gave up is not an unhandled rejection
+    return Promise.race([call, limit]).finally(() => clearTimeout(timer));
+  };
   let keyPromise;
   const tokenKey = () => (keyPromise ??= crypto.subtle.importKey("raw", enc.encode(env.TOKEN_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]));
   const sign = async (s) => new Uint8Array(await crypto.subtle.sign("HMAC", await tokenKey(), enc.encode(s)));
@@ -144,7 +160,7 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
       return json(400, { error: "pow", day: dayOf(t), bits: cfg.powBits });
     }
     const tid = b64(await sign("install:" + body.install_id)).slice(0, 22);
-    const r = await ledger.register({ tid, net: netOf(request.headers.get("cf-connecting-ip")), now: t });
+    const r = await ledgerCall("register", ledger.register({ tid, net: netOf(request.headers.get("cf-connecting-ip")), now: t }));
     if (!r.ok) {
       m.limited = "register";
       const retry = secondsToMidnight(t);
@@ -182,7 +198,7 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
     const estUsd = ((system.length / 3 + user.length) * PRICE.in + MAX_TOKENS[route] * PRICE.out) / 1e6;
     if (estUsd > MAX_COST_USD) { m.reason = "cost"; return { res: busy(m) }; }
     const t = now();
-    const a = await ledger.admit({ tid, route, estUsd, now: t });
+    const a = await ledgerCall("admit", ledger.admit({ tid, route, estUsd, now: t }));
     if (a.status === 401) return { res: json(401, { error: "token" }) };
     if (a.status === 429) {
       m.limited = "quota";
@@ -193,8 +209,18 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
     if (a.status === 503) { m.reason = a.reason; return { res: busy(m, a.reason === "budget" ? secondsToMidnight(t) : undefined) }; }
     m.pool = a.pool;
     const settle = async (answered, usd, gotWish) => {
-      const s = await ledger.settle({ tid, lease: a.lease, qk: a.qk, sk: a.sk, estUsd, usd, answered, gotWish, now: now() });
       m.usd = +usd.toFixed(6);
+      let s;
+      try {
+        s = await ledgerCall("settle", ledger.settle({ tid, lease: a.lease, qk: a.qk, sk: a.sk, estUsd, usd, answered, gotWish, now: now() }));
+      } catch (e) {
+        // Claude has answered and been paid: bookkeeping trouble must not lose her
+        // answer. The estimate stays reserved (the budget errs on the safe side)
+        // and the slot frees itself after 60 s.
+        m.settle = "failed";
+        m.detail = String(e?.message ?? "").replace(/[^\x20-\x7e]/g, " ").slice(0, 160);
+        return;
+      }
       if (s.alert) {
         log({ ev: "budget_half", spent_usd: +s.total.toFixed(2), budget_usd: cfg.budgetUsd });
         if (env.ALERT_URL) await fetch(env.ALERT_URL, { method: "POST", body: `AurOS Wishes has used half of today's budget ($${s.total.toFixed(2)} of $${cfg.budgetUsd}).` }).catch(() => {}); // once a day
@@ -275,7 +301,7 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
   async function forget(request) {
     const tid = await authed(request);
     if (!tid) return json(401, { error: "token" });
-    await ledger.forget({ tid, now: now() });
+    await ledgerCall("forget", ledger.forget({ tid, now: now() }));
     return json(204, null);
   }
 

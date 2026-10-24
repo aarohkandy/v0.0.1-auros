@@ -352,3 +352,65 @@ test("a refusal from Claude is a cannot, with no retry", async () => {
   assert.deepEqual(await r.json(), { kind: "cannot", missing: "other" });
   assert.equal(app.calls.length, 1);
 });
+
+// 2026-10-24 00:42 UTC, run 40046138490: during a Cloudflare incident in Ashburn the
+// ledger (Durable Object) hung for 12-30 s, then the register answered 503 crash:Error.
+// The service must answer fast and cleanly, and say why in the log.
+const hang = () => new Promise(() => {});
+
+test("a hung ledger: register, wish, ask and forget answer 503 within the limit, Claude is not called", async () => {
+  const app = makeApp({ respond: () => wishOut(POTATO), env: { LEDGER_TIMEOUT_MS: "60" } });
+  const { token } = await register(app);
+  app.ledger.register = hang;
+  app.ledger.admit = hang;
+  app.ledger.forget = hang;
+  const timed = async (path, body, opts) => {
+    const t = Date.now();
+    const r = await app.call(path, body, opts);
+    return [r, Date.now() - t];
+  };
+  const day = dayOf(app.time.t);
+  const id = newInstallId();
+  for (const [what, [r, ms]] of Object.entries({
+    register: await timed("/v1/register", { install_id: id, consent_version: "1", pow: { day, nonce: solvePow(day, id, 8) } }, { ip: "192.0.2.77" }),
+    wish: await timed("/v1/wish", wishBody("potato"), { token }),
+    ask: await timed("/v1/ask", { question: "how do I print?" }, { token }),
+    forget: await timed("/v1/forget", {}, { token }),
+  })) {
+    assert.equal(r.status, 503, what);
+    assert.ok(ms < 1000, `${what} took ${ms} ms`);
+  }
+  assert.equal(app.calls.length, 0, "Claude is never called when the ledger cannot say yes");
+  const crashes = app.logs.map((l) => JSON.parse(l)).filter((l) => l.reason === "crash:LedgerTimeout");
+  assert.equal(crashes.length, 4);
+  assert.match(crashes[0].detail, /took longer than 60 ms/);
+});
+
+test("a ledger that throws: 503 with the platform's message in the log, nothing else leaks", async () => {
+  const app = makeApp({ respond: () => wishOut(POTATO) });
+  const { token } = await register(app);
+  app.ledger.admit = async () => { throw Object.assign(new Error("Durable Object storage operation exceeded timeout which caused object to be reset."), { remote: true, retryable: true }); };
+  const r = await app.call("/v1/wish", wishBody("zebra-quartz potato"), { token });
+  assert.equal(r.status, 503);
+  const b = await r.json();
+  assert.equal(b.text, "Wishes are resting for a little while");
+  assert.deepEqual(Object.keys(b).sort(), ["retry_after", "text"]);
+  const l = JSON.parse(app.logs.at(-1));
+  assert.equal(l.reason, "crash:Error");
+  assert.match(l.detail, /^remote retryable Durable Object storage operation exceeded timeout/);
+  assert.ok(!app.logs.join("\n").includes("zebra-quartz"));
+});
+
+test("bookkeeping failing after Claude answered does not lose her answer", async () => {
+  for (const fail of [hang, async () => { throw new Error("storage reset"); }]) {
+    const app = makeApp({ respond: () => wishOut(POTATO), env: { LEDGER_TIMEOUT_MS: "60" } });
+    const { token } = await register(app);
+    app.ledger.settle = fail;
+    const r = await app.call("/v1/wish", wishBody("potato"), { token });
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { kind: "wish", wish: POTATO });
+    const l = JSON.parse(app.logs.at(-1));
+    assert.equal(l.settle, "failed");
+    assert.equal(app.calls.length, 1);
+  }
+});

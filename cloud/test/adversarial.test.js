@@ -104,6 +104,6 @@ test("the logs never hold her words, a token, an install id, an address or a hea
   }
   for (const line of app.logs) {
     const o = JSON.parse(line);
-    for (const k of Object.keys(o)) assert.ok(["ev", "route", "status", "ms", "pool", "in", "out", "cr", "cw", "stop", "usd", "kind", "missing", "help", "reason", "limited", "tag", "rejected", "resting", "consent", "bad", "spent_usd", "budget_usd", "detail"].includes(k), `unexpected log field ${k}`);
+    for (const k of Object.keys(o)) assert.ok(["ev", "route", "status", "ms", "pool", "in", "out", "cr", "cw", "stop", "usd", "kind", "missing", "help", "reason", "limited", "tag", "rejected", "resting", "consent", "bad", "spent_usd", "budget_usd", "detail", "settle"].includes(k), `unexpected log field ${k}`);
   }
 });

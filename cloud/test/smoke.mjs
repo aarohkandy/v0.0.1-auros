@@ -44,7 +44,14 @@ for (;; nonce++) {
   if (z >= first.body.bits) break;
 }
 console.log(`     proof of work: ${nonce + 1} hashes, ${Date.now() - t0} ms on this machine`);
-const reg = await post("/v1/register", { install_id: installId, version: "smoke", consent_version: "1", pow: { day: first.body.day, nonce: String(nonce) } });
+// A platform blip (the ledger is a Durable Object) answers 503 once in a while: try again twice, 5 s apart.
+let reg;
+for (let attempt = 1; attempt <= 3; attempt++) {
+  reg = await post("/v1/register", { install_id: installId, version: "smoke", consent_version: "1", pow: { day: first.body.day, nonce: String(nonce) } });
+  if (reg.status !== 503) break;
+  console.log(`note: register answered 503 (attempt ${attempt}); ${attempt < 3 ? "trying again in 5 s" : "giving up"}`);
+  if (attempt < 3) await new Promise((r) => setTimeout(r, 5000));
+}
 if (reg.status === 429) {
   console.log("note: this network has used its 3 registrations today; end-to-end part skipped");
   process.exit(failed ? 1 : 3);
