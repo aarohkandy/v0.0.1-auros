@@ -1,34 +1,31 @@
-# SEC-004's proof: is the update-signing key out of reach of a branch that is not main?
-# Started by hand, on a THROWAWAY branch, naming the secret:
+# SEC-004's runtime proof, with a DECOY. It never touches the update-signing key: both
+# jobs read APT_ENV_CANARY, a secret with a dummy value that the owner puts in the
+# `apt-signing` environment, and only there (docs/OWNER-SETUP.md 4a-lock, step 4).
+# Where the real key lives is proved from the API, by tools/sec004check.sh, run on
+# the owner's Mac; no runner ever sees it.
 #
-#   git push origin HEAD:refs/heads/canary-sec004
-#   gh workflow run canary-signing.yml --ref canary-sec004 -f secret=AUROS_APT_SIGNING_KEY
-#   gh run watch   (then:  git push origin :canary-sec004 )
-#
-# Two jobs try to read the secret the way a hostile branch would:
-#   outside  no environment: sees the secret only while it is a REPOSITORY secret.
-#            After the owner moves it into the `apt-signing` environment
-#            (docs/OWNER-SETUP.md 4a-lock) it must see nothing.
-#   inside   environment apt-signing: the deployment-branch rule (main only) must
-#            refuse this job before it starts. If it starts, a throwaway branch can
-#            reach the key.
-# `verdict` is red unless both held. It is also red on main (run it on a branch:
-# the point is the branch). The secret's NAME is an input, so this file never names
-# the key (tools/workflowlint.py keeps the key's name out of every other job), and
-# nothing is printed but yes or no.
-#
-# Before the owner's clicks the verdict MUST be red (the key is a repository secret
-# and the environment has no branch rule): that is the proof this can fail.
-# While `inside` waits for a reviewer's click (reviewer set, branch rule not yet),
-# cancel the run: a refused branch fails at once, it does not wait.
+# Started by hand. Nothing here takes an input.
+#   On a THROWAWAY branch (the attack):
+#     git push origin HEAD:refs/heads/canary-sec004
+#     gh workflow run canary-signing.yml --ref canary-sec004
+#     gh run watch        (then:  git push origin :canary-sec004 )
+#   `outside` has no environment and must see nothing. `inside` is in apt-signing, whose
+#   deployment-branch rule (main only) must REFUSE the branch before the job starts.
+#   The verdict is green only on positive evidence: `outside` said "no", and `inside`
+#   failed with its steps never run and GitHub's own words in the job's annotations
+#   ("not allowed to deploy to apt-signing"). A cancelled, timed-out or otherwise failed
+#   `inside` is not evidence: the verdict is red, and prints what it found.
+#   On main (the control, once, after the owner's clicks):
+#     gh workflow run canary-signing.yml
+#   `inside` must start (after the reviewer's click) and see the decoy ("yes"); `outside`
+#   still "no". That shows the decoy is really in the environment, so "no" outside means
+#   something.
+# Before the owner's clicks the attack run is red: the environment has no branch rule,
+# so `inside` starts.
 name: canary-signing
 
 on:
   workflow_dispatch:
-    inputs:
-      secret:
-        description: 'the name of the secret to look for'
-        required: true
 
 permissions:
   contents: read
@@ -46,41 +43,68 @@ jobs:
     steps:
       - id: c
         env:
-          NAME: ${{ inputs.secret }}
-          VALUE: ${{ secrets[inputs.secret] }}
+          DECOY: ${{ secrets.APT_ENV_CANARY }}
         run: |
-          if [ -n "$VALUE" ]; then v=yes; else v=no; fi
+          if [ -n "$DECOY" ]; then v=yes; else v=no; fi
           echo "visible=$v" >> "$GITHUB_OUTPUT"
-          echo "branch $GITHUB_REF_NAME: secret $NAME visible to a job outside any environment: $v"
+          echo "branch $GITHUB_REF_NAME: the decoy secret is visible to a job outside any environment: $v"
 
   inside:
     # The environment's deployment-branch rule decides whether this job starts.
     environment: apt-signing
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    outputs:
+      visible: ${{ steps.c.outputs.visible }}
     steps:
-      - env:
-          NAME: ${{ inputs.secret }}
-          VALUE: ${{ secrets[inputs.secret] }}
+      - id: c
+        env:
+          DECOY: ${{ secrets.APT_ENV_CANARY }}
         run: |
-          if [ -n "$VALUE" ]; then v=yes; else v=no; fi
-          echo "branch $GITHUB_REF_NAME: the apt-signing environment let this job start; secret $NAME visible in it: $v"
+          if [ -n "$DECOY" ]; then v=yes; else v=no; fi
+          echo "visible=$v" >> "$GITHUB_OUTPUT"
+          echo "branch $GITHUB_REF_NAME: the apt-signing environment let this job start; the decoy is visible in it: $v"
 
   verdict:
     needs: [outside, inside]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     env:
+      GH_TOKEN: ${{ github.token }}
       OUTSIDE: ${{ needs.outside.outputs.visible }}
-      INSIDE: ${{ needs.inside.result }}
+      INSIDE_RESULT: ${{ needs.inside.result }}
+      INSIDE_VISIBLE: ${{ needs.inside.outputs.visible }}
       BRANCH: ${{ github.ref_name }}
       DEFAULT: ${{ github.event.repository.default_branch }}
     steps:
       - run: |
           bad=0
-          if [ "$BRANCH" = "$DEFAULT" ]; then echo "::error::run this on a throwaway branch, not on $DEFAULT"; bad=1; fi
-          if [ "$OUTSIDE" != no ]; then echo "::error::the key is visible to a job outside any environment (outside said '$OUTSIDE'): any branch can print it"; bad=1; fi
-          if [ "$INSIDE" = success ]; then echo "::error::the apt-signing environment let a job on branch $BRANCH start: set its deployment branches to main only"; bad=1; fi
-          [ "$bad" = 0 ] && echo "CANARY OK: on branch $BRANCH the key is not visible outside the environment, and the environment refused this branch (inside: $INSIDE)"
+          [ "$OUTSIDE" = no ] || { echo "::error::outside said '$OUTSIDE', not 'no': the decoy is visible to a job outside the environment, or that job did not run"; bad=1; }
+          if [ "$BRANCH" = "$DEFAULT" ]; then
+            # The control: the environment holds the decoy and the job on main can read it.
+            if [ "$INSIDE_RESULT" = success ] && [ "$INSIDE_VISIBLE" = yes ]; then
+              echo "control ok: on $DEFAULT the apt-signing job started and sees the decoy, so 'no' outside means something"
+            else
+              echo "::error::control failed: inside was '$INSIDE_RESULT', decoy visible '$INSIDE_VISIBLE'; is APT_ENV_CANARY in the apt-signing environment?"; bad=1
+            fi
+          else
+            # The attack: positive evidence of refusal, nothing less.
+            jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --jq '.jobs[] | select(.name == "inside") | "\(.id)|\(.conclusion)|\([.steps[]? | select(.status == "completed" and .conclusion != "skipped")] | length)"') || jobs=""
+            id=${jobs%%|*}; rest=${jobs#*|}; conc=${rest%%|*}; ran=${rest#*|}
+            ann=""
+            [ -n "$id" ] && ann=$(gh api "repos/$GITHUB_REPOSITORY/check-runs/$id/annotations" --jq '.[].message' 2>/dev/null) || true
+            echo "inside: result=$INSIDE_RESULT conclusion=${conc:-?} steps-run=${ran:-?}"
+            echo "inside annotations: ${ann:-none}"
+            if [ "$INSIDE_RESULT" = failure ] && [ "$conc" = failure ] && [ "${ran:-1}" = 0 ] && printf '%s' "$ann" | grep -qiE 'not allowed to deploy to .*apt-signing'; then
+              echo "refusal confirmed: GitHub would not start a job from branch $BRANCH in apt-signing"
+            else
+              echo "::error::no positive evidence that apt-signing refused branch $BRANCH (cancelled, timed out, started, failed for another reason, or GitHub worded it differently: see the lines above)"; bad=1
+            fi
+          fi
+          [ "$bad" = 0 ] && echo "CANARY OK"
           exit $bad

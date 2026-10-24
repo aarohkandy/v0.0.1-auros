@@ -19,6 +19,15 @@
 6. The update-signing key (secrets.AUROS_APT_SIGNING_KEY) is named only in
    a job that runs in the environment `apt-signing`, whose deployment
    branches and reviewer the owner sets (SEC-004, docs/OWNER-SETUP.md).
+7. actions/checkout comes before any download-artifact in a job: checkout
+   cleans untracked files, so after a download it deletes what was
+   downloaded (RC3's publish, run 40026374421: dist/installer was gone).
+8. A job that calls e2e.yml (release.yml's e2e, e2e-fastpath) journeys EVERY
+   prerelease on real Windows: it must not wait for [latest] or promote.
+9. No dynamic reads of secrets: `secrets[...]` (a name chosen at run time,
+   e.g. `secrets[inputs.x]`) and `toJSON(secrets)` hand every secret of the
+   repository to a run on any branch and slip past rule 6; each secret is
+   named in the file that uses it (`secrets.NAME`).
 """
 import glob, os, re, sys
 
@@ -36,6 +45,9 @@ def lint(path, text):
         return ["%s: does not parse: %s" % (path, str(e).replace("\n", " ")[:160])]
     if not isinstance(doc, dict) or not isinstance(doc.get("jobs"), dict):
         return ["%s: no jobs" % path]
+    code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+    if re.search(r"secrets\s*\[|toJSON\(\s*secrets", code, re.I):
+        out.append("%s: reads secrets dynamically (secrets[...] or toJSON(secrets)): name each secret" % path)
     perms = doc.get("permissions")
     if perms == "write-all" or (isinstance(perms, dict) and perms.get("contents") == "write"):
         out.append("%s: workflow-level contents: write (give it to the job that needs it)" % path)
@@ -90,6 +102,11 @@ def selftest():
          good + "      - uses: actions/checkout@" + "a" * 40 + "\n      - uses: actions/download-artifact@" + "a" * 40 + "\n", 0),
         ("release.yml's e2e waiting for latest is refused", "jobs:\n  e2e:\n    needs: promote\n    uses: ./.github/workflows/e2e.yml\n", 1),
         ("an e2e that needs only the publish passes", "jobs:\n  e2e:\n    needs: publish\n    uses: ./.github/workflows/e2e.yml\n", 0),
+        ("secrets[inputs.x] is refused", good + "      - env:\n          V: ${{ secrets[inputs.name] }}\n        run: x\n", 1),
+        ("secrets['NAME'] is refused", good + "      - env:\n          V: ${{ secrets['NAME'] }}\n        run: x\n", 1),
+        ("toJSON(secrets) is refused", good + "      - env:\n          V: ${{ toJSON(secrets) }}\n        run: x\n", 1),
+        ("a named secret passes", good + "      - env:\n          V: ${{ secrets.APT_ENV_CANARY }}\n        run: x\n", 0),
+        ("secrets: inherit passes", "jobs:\n  a:\n    uses: ./.github/workflows/x.yml\n    secrets: inherit\n", 0),
         ("workflow-level contents: write is refused",
          "permissions:\n  contents: write\n" + good, 1),
         ("job-level contents: write passes",

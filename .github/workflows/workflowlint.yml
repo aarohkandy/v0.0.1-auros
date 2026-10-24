@@ -15,6 +15,8 @@ on:
       - 'tools/releasegate.py'
       - 'tools/hardengate.sh'
       - 'tools/hardengatetest.sh'
+      - 'tools/sec004check.sh'
+      - 'tools/sec004checktest.sh'
 
 permissions:
   contents: read
@@ -36,3 +38,6 @@ jobs:
       # cut; a [latest] without a passing hardening boot of its image).
       - run: python3 -I tools/releasegate.py selftest
       - run: sh tools/hardengatetest.sh
+      # SEC-004: the owner-side check of where the signing key lives is red for
+      # each missing step and green only when all are done.
+      - run: sh tools/sec004checktest.sh

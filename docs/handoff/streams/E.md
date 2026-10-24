@@ -193,6 +193,19 @@ which only a **full** (non-pre) release moves. **Only the lead pushes `[latest]`
   `[publish RUN-ID] [latest]`. A `[release]` subject forces harden to boot that image (a10d966).
   Runs before this change have the title `harden` and can never be matched (RC5's will be).
 
+## SEC-004 canary (redesigned 00:55 UTC after the security review)
+
+`canary-signing.yml` reads only the decoy `APT_ENV_CANARY` (no input, no `secrets[...]`; workflowlint
+rule 9 forbids both) and its verdict is fail-closed: on a branch it is green only if `outside` said
+"no" AND `inside` failed with no step run AND the job's annotation says "not allowed to deploy to
+apt-signing"; cancelled/timed out/other failure is red and prints what it found. On main it is the
+control (decoy visible inside only). Where the real key lives is `tools/sec004check.sh` (owner's Mac,
+API only; red today on 6 counts; `tools/sec004checktest.sh` 12 cases). **My first canary (run
+40046763411, 00:48 UTC, 7c087c8) read the REAL key into two runner jobs on a throwaway branch**
+(never printed; boolean only) before this redesign: GitHub masks it in logs, but if you want zero
+doubt, rotate the key before launch.
+The annotation wording is a best guess until the owner's clicks make GitHub refuse a branch.
+
 ## SEC-005 plan: nothing that changes after it is published may live in a published release
 
 Why: release immutability (OWNER-SETUP 4d) forbids adding, replacing or deleting assets of a release

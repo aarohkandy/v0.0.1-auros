@@ -172,10 +172,15 @@ make the environment strict, move the key into it, and delete the old copy.
    ```sh
    gh secret set AUROS_APT_SIGNING_KEY --env apt-signing -R aarohkandy/v0.0.1-auros < ~/AurOS-update-key/auros-apt-signing-key.PRIVATE.asc &&
    gh secret delete AUROS_APT_SIGNING_KEY -R aarohkandy/v0.0.1-auros &&
+   echo decoy | gh secret set APT_ENV_CANARY --env apt-signing -R aarohkandy/v0.0.1-auros &&
    gh secret list -R aarohkandy/v0.0.1-auros && gh secret list --env apt-signing -R aarohkandy/v0.0.1-auros
    ```
 
-   The first list must **not** show `AUROS_APT_SIGNING_KEY`; the second must.
+   The first list must **not** show `AUROS_APT_SIGNING_KEY`; the second must,
+   and `APT_ENV_CANARY` too. (That one is a decoy with a dummy value, only
+   for the check below: it lets a test prove that a job outside the
+   environment cannot read what is inside, without anything ever touching
+   the real key.)
 5. **Stop force-pushes and deletion on `main`**:
    `https://github.com/aarohkandy/v0.0.1-auros/settings/rules` → **New
    ruleset** → **New branch ruleset** → name `main` → Enforcement status
@@ -189,24 +194,36 @@ make the environment strict, move the key into it, and delete the old copy.
    **Approve and deploy**. That is the point: nothing can sign an update
    without you.
 
-To check it worked, run the canary (`.github/workflows/canary-signing.yml`;
-it prints only yes or no, never the key). In Terminal, in a clone of the repository:
+To check it worked (two checks; neither puts the key on a runner):
 
-```sh
-git push origin HEAD:refs/heads/canary-sec004
-gh workflow run canary-signing.yml --ref canary-sec004 -f secret=AUROS_APT_SIGNING_KEY -R aarohkandy/v0.0.1-auros
-gh run watch -R aarohkandy/v0.0.1-auros      # pick the canary-signing run
-git push origin :canary-sec004               # delete the throwaway branch
-```
+1. **Where everything lives**, from the API. In Terminal, in a clone of the repository:
 
-It must end green, with `CANARY OK`: the key is not visible outside the
-environment, and the environment refused the branch (the `inside` job fails
-at once with "Branch canary-sec004 is not allowed to deploy to apt-signing").
-Before your clicks it ends red: run 40046763411 (2026-10-24, on this
-repository as it stood) printed that the key **is** visible to a job on a
-throwaway branch, and that the environment let the branch in. (If `inside`
-sits at "Waiting" for a reviewer, the branch rule in step 3 is missing: cancel
-the run and fix step 3.)
+   ```sh
+   sh tools/sec004check.sh aarohkandy/v0.0.1-auros
+   ```
+
+   Every line must say `ok` (the key and the decoy are not repository secrets
+   and are secrets of `apt-signing`; its deployment branches are exactly
+   `main`; a required reviewer; `main` cannot be deleted or force-pushed).
+   Today it is red on all of these (2026-10-24). `tools/sec004checktest.sh`
+   shows it goes red for each missing step.
+2. **A branch cannot get in**, with the decoy (`.github/workflows/canary-signing.yml`):
+
+   ```sh
+   git push origin HEAD:refs/heads/canary-sec004
+   gh workflow run canary-signing.yml --ref canary-sec004 -R aarohkandy/v0.0.1-auros
+   gh run watch -R aarohkandy/v0.0.1-auros      # pick the canary-signing run
+   git push origin :canary-sec004               # delete the throwaway branch
+   ```
+
+   It must end green with `CANARY OK`: the decoy is not visible outside the
+   environment, and GitHub refused the branch ("Branch canary-sec004 is not
+   allowed to deploy to apt-signing"). Then once on `main`, as a control:
+   `gh workflow run canary-signing.yml -R aarohkandy/v0.0.1-auros` and click
+   **Approve and deploy** when GitHub asks: `inside` must start and see the decoy.
+   If the first one is red with "no positive evidence", read the two lines it
+   prints (`inside:` and `inside annotations:`) and tell an agent: it means
+   GitHub worded the refusal differently, not that the key is exposed.
 
 ### 4b. Private security reports (1 minute, before launch)
 
