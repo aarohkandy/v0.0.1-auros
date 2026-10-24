@@ -66,6 +66,7 @@ static struct {
     prop     props[64]; int n_props;
     int      garble;                         /* answer replies wrongly: 1 length, 2 sequence */
     int      mute;                           /* answer nothing */
+    uint32_t stack[64]; int n_stack;         /* X's stacking order, bottom to top: created on top, moved only by ConfigureWindow */
 } X;
 
 static char dyn_names[16][64]; static int n_dyn;
@@ -249,6 +250,21 @@ static void fx_request(const uint8_t *r, size_t len)
         fx_reply(0, q->seq, NULL, 0, head);
         break;
     }
+    case 12: {                                            /* ConfigureWindow: a restack moves the window in the pretend X stack */
+        uint16_t mask = xr16(b + 4);
+        if (mask & XC_STACK) {
+            unsigned idx = (unsigned)__builtin_popcount(mask & (XC_X | XC_Y | XC_W | XC_H | XC_BORDER | XC_SIBLING));
+            uint32_t mode = xr32(b + 8 + 4 * idx), win = xr32(b);
+            int at = -1;
+            for (int i = 0; i < X.n_stack; i++) if (X.stack[i] == win) at = i;
+            if (at >= 0) {
+                for (int i = at; i + 1 < X.n_stack; i++) X.stack[i] = X.stack[i + 1];
+                if (mode == 0) X.stack[X.n_stack - 1] = win;                          /* Above */
+                else { for (int i = X.n_stack - 1; i > 0; i--) X.stack[i] = X.stack[i - 1]; X.stack[0] = win; }   /* Below */
+            }
+        }
+        break;
+    }
     case 22:                                              /* SetSelectionOwner: XFixes tells every listener who owns it now */
         if (xr32(b + 4) == atom_id("CLIPBOARD")) {
             uint8_t f[28] = {0};
@@ -377,8 +393,11 @@ static void ev_create(uint32_t win, int x, int y, int w, int h, int or_)
     xw32(f, FX_ROOT); xw32(f + 4, win);
     xw16(f + 8, (uint16_t)x); xw16(f + 10, (uint16_t)y); xw16(f + 12, (uint16_t)w); xw16(f + 14, (uint16_t)h);
     f[18] = (uint8_t)or_;
+    if (X.n_stack < 64) X.stack[X.n_stack++] = win;
     ev32(16, f);
 }
+/* Which window Xwayland would hand a click to, where every window covers the same place: the top one. */
+static uint32_t fx_top(void) { return X.n_stack ? X.stack[X.n_stack - 1] : 0; }
 static void ev_map_request(uint32_t win) { uint8_t f[28] = {0}; xw32(f, FX_ROOT); xw32(f + 4, win); ev32(20, f); }
 static void ev_map_notify(uint32_t win, int or_) { uint8_t f[28] = {0}; xw32(f, win); xw32(f + 4, win); f[8] = (uint8_t)or_; ev32(19, f); }
 static void ev_unmap(uint32_t win) { uint8_t f[28] = {0}; xw32(f, FX_ROOT); xw32(f + 4, win); ev32(18, f); }
@@ -437,6 +456,20 @@ static req *last_req(uint8_t op, uint32_t first_word, int from)
     for (int i = X.n_reqs - 1; i >= from; i--)
         if (X.reqs[i].op == op && (first_word == 0 || xr32(X.reqs[i].body) == first_word)) return &X.reqs[i];
     return NULL;
+}
+/* ConfigureWindow requests that ask for a size (not a restack). */
+static req *last_size(uint32_t win, int from)
+{
+    for (int i = X.n_reqs - 1; i >= from; i--)
+        if (X.reqs[i].op == 12 && xr32(X.reqs[i].body) == win && (xr16(X.reqs[i].body + 4) & (XC_W | XC_H))) return &X.reqs[i];
+    return NULL;
+}
+static int count_size(uint32_t win, int from)
+{
+    int n = 0;
+    for (int i = from; i < X.n_reqs; i++)
+        if (X.reqs[i].op == 12 && xr32(X.reqs[i].body) == win && (xr16(X.reqs[i].body + 4) & (XC_W | XC_H))) n++;
+    return n;
 }
 static int count_req(uint8_t op, uint32_t first_word, int from)
 {
@@ -758,26 +791,26 @@ static void sc_configure(void)
     int base = X.n_reqs;
     aurwl_win_configure(w, 640, 480, 1, 0, 0);
     SETTLE();
-    req *c1 = last_req(12, win, base);
+    req *c1 = last_size(win, base);
     check(c1 && xr16(c1->body + 4) == (XC_W | XC_H), "no resize was asked for");
     /* 640 and 480, in steps of 10 from the 200x100 minimum: exact */
     check(c1 && xr32(c1->body + 8) == 640 && xr32(c1->body + 12) == 480, "asked for %u x %u, wanted 640 x 480",
           c1 ? xr32(c1->body + 8) : 0, c1 ? xr32(c1->body + 12) : 0);
-    int n = count_req(12, win, base);
+    int n = count_size(win, base);
     aurwl_win_configure(w, 640, 480, 1, 0, 0);
     aurwl_win_configure(w, 640, 480, 0, 0, 0);
     SETTLE();
-    check(count_req(12, win, base) == n, "the same size was asked for twice");
+    check(count_size(win, base) == n, "the same size was asked for twice");
     aurwl_win_configure(w, 645, 487, 1, 0, 0);               /* off the 10-pixel steps: rounded down to 640 x 480 */
     SETTLE();
-    check(count_req(12, win, base) == n, "a size that rounds to the same was asked for again");
+    check(count_size(win, base) == n, "a size that rounds to the same was asked for again");
     aurwl_win_configure(w, 50, 20, 1, 0, 0);                  /* below the minimum */
     SETTLE();
-    c1 = last_req(12, win, base);
+    c1 = last_size(win, base);
     check(c1 && xr32(c1->body + 8) == 200 && xr32(c1->body + 12) == 100, "below the minimum was not raised to it");
     aurwl_win_configure(w, 5000, 5000, 1, 0, 0);              /* above the maximum */
     SETTLE();
-    c1 = last_req(12, win, base);
+    c1 = last_size(win, base);
     check(c1 && xr32(c1->body + 8) == 900 && xr32(c1->body + 12) == 700, "above the maximum was not lowered to it");
     /* a program with a minimum and no steps: the rounding does not hide a missing clamp */
     uint32_t win2 = 0x400021;
@@ -791,7 +824,7 @@ static void sc_configure(void)
         int b2 = X.n_reqs;
         aurwl_win_configure(w2, 50, 20, 1, 0, 0);
         SETTLE();
-        req *c2 = last_req(12, win2, b2);
+        req *c2 = last_size(win2, b2);
         check(c2 && xr32(c2->body + 8) == 300 && xr32(c2->body + 12) == 200, "below the minimum (no steps) was not raised to it");
     }
     finish();
@@ -1168,6 +1201,37 @@ static void sc_x_goes_away(void)
 
 #include "wltest-x-clip.inc"
 
+static aurwl_win *win_of_x(uint32_t id)
+{
+    for (int i = 0; i < aurwl_window_count(C); i++) { aurwl_win *w = aurwl_window_at(C, i); if (w->xw && w->xw->id == id) return w; }
+    return NULL;
+}
+
+/* Two windows of one program (a player and its dialog) sit in the same place; Xwayland gives a click to the top
+ * one, so the one she points at or types into must be the top one. */
+static void sc_restack(void)
+{
+    start();
+    uint32_t m1 = 0x400100, d1 = 0x400101;
+    show_window(m1, 0xFF112233, "main", "v|V", 0);
+    show_window(d1, 0xFF445566, "dialog", "v|V", 0);
+    aurwl_win *wm = win_of_x(m1), *wd = win_of_x(d1);
+    check(wm && wd, "setup: both windows are listed");
+    check(fx_top() == d1, "setup: the later window is on top");
+    if (!wm || !wd) { finish(); return; }
+    aurwl_set_focus(C, wm); SETTLE();
+    check(fx_top() == m1, "giving a window the keyboard did not put it on top of the X stack");
+    aurwl_set_focus(C, wd); SETTLE();
+    check(fx_top() == d1, "the dialog was not put on top when it got the keyboard");
+    aurwl_win_configure(wm, 300, 200, 1, 0, 0); SETTLE();                  /* the shell says: this is the one in use */
+    check(fx_top() == m1, "a window the shell calls active was not put on top");
+    aurwl_set_focus(C, NULL); aurwl_set_focus(C, wd); SETTLE();
+    check(fx_top() == d1, "setup: the dialog is on top again");
+    aurwl_pointer_motion(C, wm, 5, 5, 100); SETTLE();                       /* the pointer goes into the player's window */
+    check(fx_top() == m1, "the pointer entering a window did not put it on top (the click would go to the dialog)");
+    finish();
+}
+
 static const struct { const char *name; void (*fn)(void); } SC[] = {
     { "takeover",         sc_takeover },
     { "map",              sc_map },
@@ -1197,6 +1261,7 @@ static const struct { const char *name; void (*fn)(void); } SC[] = {
     { "clip-refused",     sc_clip_refused },
     { "clip-newest-wins", sc_clip_newest_wins },
     { "clip-too-big",     sc_clip_too_big },
+    { "restack",          sc_restack },
     { "x-goes-away",      sc_x_goes_away },
 };
 #define NSC ((int)(sizeof SC / sizeof SC[0]))

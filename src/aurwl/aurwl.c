@@ -389,6 +389,7 @@ static void        xw_surface_gone(aurwl_win *w);
 static void        xw_surface_created(aurwl_win *w);
 static int         xw_listed(const aurwl_win *w);          /* an X window the shell may show */
 static int         xw_csd(const aurwl_win *w);             /* it draws its own title bar (_MOTIF_WM_HINTS) */
+static void        xw_raise(aurwl *c, aurwl_win *w);        /* top of the X stack: the pointer is entering it */
 static void        xw_selection_changed(aurwl *c);          /* the Wayland clipboard changed hands */
 static void        xw_paste(aurwl *c, const char *mime, int fd);   /* a Wayland program pastes what an X program copied */
 static void        selection_broadcast(aurwl *c);
@@ -3849,6 +3850,7 @@ void aurwl_pointer_motion(aurwl *c, aurwl_win *w, int sx, int sy, uint32_t t)
         ptr_leave(c);
         c->ptr_surf = hit;
         if (hit) {
+            xw_raise(c, root_of(hit));          /* an X window must be the top one before Xwayland sees the pointer in it */
             struct wl_client *nw = win_client(hit);
             uint32_t ser = serial_of(c);
             c->ptr_enter_serial = ser;

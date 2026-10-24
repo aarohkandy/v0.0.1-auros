@@ -120,6 +120,7 @@ typedef struct xwin {
     int             hint_inc_w, hint_inc_h, hint_base_w, hint_base_h;
     int             fullscreen;           /* _NET_WM_STATE_FULLSCREEN is set         */
     int             csd;                  /* _MOTIF_WM_HINTS: it draws its own title bar */
+    int             activated;            /* the shell last said it is the window in use */
     uint32_t        surf_id;              /* WL_SURFACE_ID, 0 until sent             */
     aurwl_win      *win;                  /* the surface, once associated            */
     struct wl_list  link;
@@ -353,6 +354,16 @@ static void x_set_selection_owner(xwm *m, uint32_t owner, uint32_t selection)
     uint8_t *p = xreq(m, 22, 0, 12);
     if (!p) return;
     xw32(p, owner); xw32(p + 4, selection); xw32(p + 8, 0 /* CurrentTime */);
+}
+/* To the top of the X stack (ConfigureWindow, stack-mode Above). Every X window sits at the
+ * same place, so which one Xwayland hands a click to is decided by stacking alone: the
+ * window she is pointing at, or typing into, must be the top one. */
+static void x_raise(xwm *m, uint32_t win)
+{
+    uint8_t *p = xreq(m, 12, 0, 8 + 4);
+    if (!p) return;
+    xw32(p, win); xw16(p + 4, XC_STACK);
+    xw32(p + 8, 0 /* Above */);
 }
 static void x_set_focus(xwm *m, uint32_t win)
 {
@@ -599,8 +610,10 @@ static int xw_clamp_dim(int v, int lo, int hi, int inc, int base)
 static void xwm_configure(xwin *w, int width, int height, int activated, int maximized, int fullscreen)
 {
     xwm *m = w->m;
-    (void)activated; (void)maximized;
+    (void)maximized;
     if (w->or_ || !w->ready) return;
+    if (activated && !w->activated) { x_raise(m, w->id); xflush(m); }     /* it is the window in use: on top */
+    w->activated = activated != 0;
     if (fullscreen != w->fullscreen) { w->fullscreen = fullscreen != 0; xwm_set_net_state(m, w); }
     if (width <= 0 || height <= 0) return;                 /* the shell has no opinion */
     int nw = xw_clamp_dim(width,  w->hint_min_w, w->hint_max_w, w->hint_inc_w, w->hint_base_w);
@@ -623,7 +636,9 @@ static void xwm_focus(aurwl *c, xwin *w)
         xflush(m);
         return;
     }
+    if (w->or_) return;                                      /* a menu is never given the keyboard */
     m->active = w;
+    x_raise(m, w->id);
     XDBG("focus: SetInputFocus 0x%x (take_focus %d, input hint %d)", w->id, w->wm_take_focus, w->input_hint);
     x_set_focus(m, w->id);
     if (w->wm_take_focus) x_client_message(m, w->id, m->atom[XA_WM_PROTOCOLS], m->atom[XA_WM_TAKE_FOCUS], 0);
@@ -1219,6 +1234,14 @@ static void xw_focus(aurwl *c, aurwl_win *w)
     if (!c->x.wm) return;
     if (w && w->xw) xwm_focus(c, w->xw);
     else            xwm_focus(c, NULL);
+}
+/* The pointer is about to enter this window's surface: make it the top X window first. */
+static void xw_raise(aurwl *c, aurwl_win *w)
+{
+    xwm *m = c->x.wm;
+    if (!m || m->dead || !w || !w->xw || w->xw->or_ || !w->xw->ready) return;
+    x_raise(m, w->xw->id);
+    xflush(m);
 }
 static int xw_close(aurwl_win *w) { if (!w->xw) return 0; xwm_close(w->xw); return 1; }
 static int xw_kill(aurwl_win *w)  { if (!w->xw) return 0; xwm_kill_window(w->xw); return 1; }

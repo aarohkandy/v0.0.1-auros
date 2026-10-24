@@ -291,6 +291,15 @@ MUTANTS = [
      "        if (c->selection) { wl_data_source_send_cancelled(c->selection); c->selection = NULL; }   /* the newer copy wins */", "", XCLIP),
     ("a newer Wayland copy leaves the X copy offered", "x:clip-newest-wins",
      "    if (c->selection) c->xsel_active = 0;                    /* a Wayland program owns it now */", "", XCLIP),
+    # ── review W02: X stacking ──
+    ("giving an X window the keyboard does not raise it", "x:restack",
+     "    m->active = w;\n    x_raise(m, w->id);", "    m->active = w;", XWM),
+    ("an X window the shell calls active is not raised", "x:restack",
+     "    if (activated && !w->activated) { x_raise(m, w->id); xflush(m); }     /* it is the window in use: on top */\n", "", XWM),
+    ("the pointer entering an X window does not raise it", "x:restack",
+     "            xw_raise(c, root_of(hit));          /* an X window must be the top one before Xwayland sees the pointer in it */\n", ""),
+    ("a raise lowers instead", "x:restack",
+     "    xw32(p + 8, 0 /* Above */);", "    xw32(p + 8, 1 /* Below */);", XWM),
 ]
 
 def main():
