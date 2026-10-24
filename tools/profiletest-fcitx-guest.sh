@@ -130,6 +130,19 @@ fcitx_owner_pid() {
         | awk '$1=="u" && $2 ~ /^[0-9]+$/ {print $2}'
 }
 
+select_exact_pinyin() { # focused application name
+    selected_for=$1; i=0
+    while [ "$i" -lt 30 ]; do
+        if as_fcitx_desktop fcitx5-remote -s pinyin >/dev/null 2>&1 && \
+           [ "$(as_fcitx_desktop fcitx5-remote -n 2>/dev/null)" = pinyin ]; then
+            printf '%s=pinyin\n' "$selected_for" >> "$STATE/selected-engines.txt"
+            return 0
+        fi
+        sleep 1; i=$((i+1))
+    done
+    return 1
+}
+
 restore_and_finish() {
     cleanup_ok=1
     : > "$STATE/cleanup-units.txt"
@@ -234,10 +247,13 @@ owner=$(fcitx_owner_pid); [ "$owner" = "$fcitx_pid" ] || fail "Fcitx D-Bus owner
     tr '\0' '\n' < "/proc/$fcitx_pid/environ" | grep -q '^WAYLAND_DISPLAY=' && echo wayland_display_unset=no || echo wayland_display_unset=yes
 } > "$STATE/fcitx.process"
 
+# CurrentInputMethod and SetCurrentIM operate on Fcitx's most recent input
+# context. Before an application focuses a text field there is no such context,
+# so -n is empty and -s is intentionally a no-op. Prove the entry exists now;
+# select and verify it separately after each application gains focus below.
 i=0
 while [ "$i" -lt 30 ]; do
-    if as_fcitx_desktop fcitx5-remote -s pinyin >/dev/null 2>&1 && \
-       [ "$(as_fcitx_desktop fcitx5-remote -n 2>/dev/null)" = pinyin ]; then break; fi
+    [ "$(as_fcitx_desktop fcitx5-remote -m pinyin 2>/dev/null)" = pinyin ] && break
     sleep 1; i=$((i+1))
 done
 [ "$i" -lt 30 ] || fail "exact pinyin engine unavailable"
@@ -271,7 +287,7 @@ grep -qx 'GDK_BACKEND=wayland' "$STATE/mousepad.env" && grep -qx 'GTK_IM_MODULE=
     && ! grep -q '^DISPLAY=' "$STATE/mousepad.env" || fail "Mousepad native Wayland isolation missing"
 act wait-change fcitx-mousepad || fail "Mousepad did not map"
 act click-change fcitx-mousepad || fail "Mousepad focus click failed"
-as_fcitx_desktop fcitx5-remote -s pinyin >/dev/null 2>&1 || fail "Mousepad Pinyin select failed"
+select_exact_pinyin mousepad || fail "Mousepad Pinyin select failed"
 act baseline fcitx-mousepad-candidate || fail "Mousepad candidate baseline failed"
 boundary=$(wc -c < "$mouse_trace" | tr -d ' ')
 act type-pinyin || fail "Mousepad typing failed"; sleep 1
@@ -315,7 +331,7 @@ i=0; while [ "$i" -lt 60 ] && ! grep -q '"GET / HTTP/' "$STATE/firefox-http.log"
 [ "$i" -lt 60 ] || fail "Firefox form unavailable"
 act wait-form || fail "Firefox form not visible"
 act click-form || fail "Firefox field focus failed"
-as_fcitx_desktop fcitx5-remote -s pinyin >/dev/null 2>&1 || fail "Firefox Pinyin select failed"
+select_exact_pinyin firefox || fail "Firefox Pinyin select failed"
 act baseline fcitx-firefox-candidate || fail "Firefox candidate baseline failed"
 boundary=$(wc -c < "$firefox_trace" | tr -d ' ')
 act type-pinyin || fail "Firefox typing failed"; sleep 1
