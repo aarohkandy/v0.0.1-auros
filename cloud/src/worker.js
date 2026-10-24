@@ -54,6 +54,10 @@ export class BuildJobs extends DurableObject {
   }
   claimPoll(a) { return this.l.claimPoll(a); }
   update(a) { return this.l.update(a); }
+  delivery(a) { return this.l.delivery(a); }
+  deliveryForRecipe(a) { return this.l.deliveryForRecipe(a); }
+  saveDelivery(a) { return this.l.saveDelivery(a); }
+  abandonDelivery(a) { return this.l.abandonDelivery(a); }
   async alarm() {
     await this.l.sweep(Date.now());
     await this.ctx.storage.setAlarm(Date.now() + HOUR);
