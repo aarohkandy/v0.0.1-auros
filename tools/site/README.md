@@ -20,18 +20,31 @@ the font has no other, so `tools/site/plainzero.py UPSTREAM_DIR` redraws it
 the slashed zero (`.addr`, `zero-slashed-*.woff2`, U+0030 only), or it reads
 as the letter O. Floors: text 18px+, contrast 4.5:1+, targets 44px+.
 
-**Pictures.** `assets/shots/look-*.jpg`: aurshell in the Light theme, run on a
-Linux box with docker (`tools/site/aurshell-shots/shots.sh`; its app names are
-build/forge's rename table). `setup-*.jpg`: crops of B's own Light Setup
-screens (`python3 tools/site/pictures.py` reads `docs/shots/wizard/hidpi-*.png`
-and prints where each numbered ring goes: paste the percentages into the
-`.ring` elements of `index.html`). The warnings of Edge, Windows and UAC, and
-"Does everything work?", are HTML drawings (`.edge`, `.ss`, `.uac`, `.ask`),
-sharp at any size and in the exact words. Edge's come from real Edge
-(stream F's e2e evidence, run 39923720924, Windows 11 26H2); Chrome's and
-Firefox's from Chromium's source and the research doc, since the e2e runs
-only Edge. Edge is dated on the page: when a newer e2e shows different
-buttons, redraw and change the date.
+**Pictures.** All made by `python3 tools/site/pictures.py` from the project's
+own renders, and tied to them by `website/assets/shots/pictures.json`:
+`setup-*.jpg` are crops of B's renders of AurOS Setup (`docs/shots/wizard/
+hidpi-*.png`: the installer's paint code run under Wine, NOT photographs of a
+real Windows screen, so the page says "made on a test computer" until
+`REAL_WINDOWS = True` in pictures.py, when B retakes them on real Windows);
+`look-*.jpg` are C's renders of the four looks (`docs/shots/shells/<look>-
+1366x768-desktop.png`, the shipping shell code, Light, the programs build/
+forge ships), shown 560px or wider. For each picture the sidecar holds the
+source render's SHA-256, every line of text in it, and where its numbered
+rings go; `check.mjs` (section "THE PICTURES") fails if a render was replaced
+and the script not run again, if a line the picture shows is no longer a
+string in the installer or the shell, if Setup's Ready page now says a row the
+picture lacks, if a ring is not where the button is, or if the test-render note
+is missing (or still there once they are real). The warnings of Edge, Windows
+and UAC, and "Does everything work?", are HTML drawings (`.edge`, `.ss`,
+`.uac`, `.ask`), sharp at any size and in the exact words. Edge's come from
+real Edge (stream F's e2e evidence, run 39923720924, Windows 11 26H2) and are
+dated on the page. Chrome's and Firefox's are NOT from real screenshots (the
+e2e only runs Edge). Not done: a real program in the pictures (a news page in
+Internet, a folder of photos): `tools/wltest-apps.sh custom:'...'` could put
+Firefox on the shell, but the page it would show on a Linux user agent is the
+"open this on a Windows computer" box.
+`tools/site/aurshell-shots/` is the earlier kit (my own render of the four
+looks from build/forge's names); the site no longer uses it.
 
 **Promises.** Anything the site says the product does is marked and
 checked against the code by `check.mjs` (section 7):
@@ -43,11 +56,13 @@ build are listed in `STALE` and must not come back. When the code changes
 what it does, the check goes red until the words change too.
 
 **The time.** The page says what Setup says (wizard.c `eta_range`, read by
-the check). `tools/site/journey.json` is where stream F records the median of
-the e2e journey clock (SSD and HDD) once a whole journey has been measured;
-from then on the check fails if the page's time ends below it
-(docs/PLAN-END-TO-END.md WP-40). Until then it says "none yet" and the check
-says so in its output.
+the check). `tools/site/journey.json` is F's measured journey (the e2e runs
+that reached AurOS: about 6 and 7.5 minutes from Get AurOS to AurOS asking, on
+a fast runner link; 8 rounded up): the check fails if the time the page
+promises ends below it, and the page quotes it. `real_pc_runs` is 0 while
+every run has been on a virtual machine, and the front page says "tried so far
+on a virtual Windows 11 computer" until it is not. `hdd_median_min` stays null
+until a throttled hard-disk run completes.
 
 **Phones.** A phone or tablet sees "Send this page to myself" first (the
 share sheet), then Copy the link and Email me the link; the check mocks the

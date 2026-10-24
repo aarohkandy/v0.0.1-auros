@@ -193,6 +193,11 @@ button.get { border: 0; cursor: pointer; }
 .hit[data-n]::before, .ring[data-n]::before { content: attr(data-n); position: absolute; right: calc(100% + 18px); bottom: calc(100% - 12px); width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--marker); color: var(--ink); border: 3px solid var(--ink); font: 800 19px/1 var(--face); }
 .e-dots.hit[data-n]::before, .e-arrow.hit[data-n]::before { right: auto; left: 50%; transform: translateX(-50%); bottom: calc(100% + 14px); }
 .ring { position: absolute; display: block; }
+/* the badge under the ring, outside the picture: where there is text above the button */
+/* inside the ring, at its top-left corner: where the heading is just above */
+.ring.in[data-n]::before { right: auto; left: 8px; bottom: auto; top: 8px; }
+.ring.below[data-n]::before { right: auto; left: 50%; transform: translateX(-50%); bottom: auto; top: calc(100% + 14px); }
+.shot:has(.ring.below) { margin-bottom: 48px; }
 .win-row:has(.hit) { column-gap: 64px; }
 .ring.above[data-n]::before { right: auto; left: -14px; bottom: calc(100% + 16px); }
 

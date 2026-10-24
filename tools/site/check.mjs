@@ -45,6 +45,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import os from "node:os";
+import crypto from "node:crypto";
 import { execSync, execFileSync } from "node:child_process";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -706,7 +707,8 @@ for (const [at, want] of [
       await page.evaluate(() => { window.__prevented = null; window.addEventListener("click", (e) => { window.__prevented = e.defaultPrevented; e.preventDefault(); }); });
       const before = await page.evaluate(() => { const e = document.getElementById("here"); return e ? e.innerText.trim() : "missing"; });
       await page.click(sel);
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(900);
+      for (let i = 0, last = -1; i < 40; i++) { const y = await page.evaluate(() => scrollY); if (y === last) break; last = y; await page.waitForTimeout(250); } // the smooth scroll has come to rest
       const after = await page.evaluate(() => { const h = document.getElementById("here"); const st = document.getElementById("step-download").getBoundingClientRect(); return { shown: !!h && h.getClientRects().length > 0, text: h ? h.innerText : "", live: h ? (h.getAttribute("role") || h.getAttribute("aria-live")) : null, top: st.top, y: scrollY, prevented: window.__prevented }; });
       check(before === "", `A-05 ${sel}: before the press nothing says "you are here"`, JSON.stringify(before));
       check(after.shown && /you are here/i.test(after.text) && /asking if you trust the file/i.test(after.text) && after.live, `A-05 ${sel}: after the press, "You are here: your browser is asking if you trust the file", announced`, JSON.stringify(after));
@@ -736,6 +738,69 @@ for (const [at, want] of [
       const g = await page.evaluate(() => { const h = document.querySelector(".page-head"); const pr = document.getElementById("print").getBoundingClientRect(); return { head: h.innerText, printBottom: pr.bottom, vh: innerHeight, all: document.body.innerText }; });
       check(/close/i.test(g.head) && /nothing has been changed/i.test(g.head) && /show this page to someone you trust/i.test(g.head) && g.printBottom <= g.vh, `A-06 guide ${v.name}: the first screen is what she does (close it, Not now changes nothing, show this to someone she trusts), then Print`, JSON.stringify(g.head.slice(0, 160)));
       if (v.name === "1366x768") check(/press tab until/i.test(g.all) && /enter/i.test(g.all) && /small button/i.test(g.all), "B-04: the helper's page gives the keyboard way for the small buttons (Tab until it is outlined, then Enter)");
+      await ctx.close();
+    }
+  }
+
+  // THE PICTURES, tied to what they show (docs/handoff/GATE-STATUS.md D-P0-2, D-P0-3). website/assets/shots/pictures.json
+  // (tools/site/pictures.py) records each picture's source render and its hash, every line of text in it, and where its rings go.
+  {
+    const sha = (rel) => { try { return crypto.createHash("sha256").update(fs.readFileSync(path.join(REPO, rel))).digest("hex"); } catch { return null; } };
+    const joined = (src) => src.replace(/"\s*\n\s*L?"/g, "").replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\"/g, '"');
+    let P = null; try { P = JSON.parse(read("website/assets/shots/pictures.json")); } catch {}
+    check(P !== null && Object.keys(P.pictures || {}).length === 7, "pictures: website/assets/shots/pictures.json describes the 3 Setup and 4 look pictures", P ? Object.keys(P.pictures || {}).join(",") : "missing");
+    const wizSrc = joined([wizard, fixWin, read("src/aurbridge/preflight.c")].join("\n"));
+    const shellFiles = (() => { const out = []; const walk = (d) => { for (const f of fs.readdirSync(path.join(REPO, d), { withFileTypes: true })) { if (f.isDirectory()) walk(d + "/" + f.name); else if (/\.[ch]$/.test(f.name)) out.push(d + "/" + f.name); } }; walk("src/aurshell"); return out; })();
+    const shellSrc = joined(shellFiles.map(read).join("\n") + "\n" + read("build/forge"));
+    const eta = FACTS["time-ssd"];
+    for (const [file, e] of Object.entries((P || {}).pictures || {})) {
+      const isSetup = file.startsWith("setup-");
+      check(sha(e.source) === e.source_sha256, `pictures: ${file} was made from the current ${e.source}`, "that render changed: run python3 tools/site/pictures.py and look at the result");
+      const src = isSetup ? wizSrc : shellSrc;
+      const gone = e.says.filter((line) => {
+        const t = line.replace(/\d+ to \d+ (minutes|hours)/, "%ls");
+        return !src.includes(t);
+      });
+      check(gone.length === 0, `pictures: every line ${file} shows is still a string in ${isSetup ? "the installer" : "the shell or build/forge's program names"} (${e.says.length} lines)`, gone.map((g) => JSON.stringify(g)).join(" | "));
+      check(!e.says.some((l) => /\.\.\.|…/.test(l)), `pictures: ${file} shows no text cut short with an ellipsis`);
+      const range = e.says.map((l) => l.match(/(\d+ to \d+) (minutes|hours)/)).find(Boolean);
+      if (range) check(range[1] === eta, `pictures: the time in ${file} (${range[1]}) is what Setup says now (${eta})`);
+    }
+    // Ready: a row Setup added since the picture was made would make it promise less than the installer says.
+    {
+      const region = (wizard.match(/struct \{ int glyph; const wchar_t \*text; \} row\[16\];[\s\S]*?#undef ROW/) || [""])[0];
+      const lits = [...joined(region).matchAll(/L"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]).filter((t) => t.length >= 25);
+      const optional = [/^Windows’ drive lock is paused/, /^AurOS has already downloaded/, /^\s*This computer has an older, slower kind of drive/];
+      const says = (((P || {}).pictures || {})["setup-ready.jpg"] || { says: [] }).says;
+      const missing = lits.filter((t) => !optional.some((r) => r.test(t))).filter((t) => { const head = t.split("%ls")[0].trim(); return !says.some((l) => l.startsWith(head)); });
+      check(lits.length >= 6 && missing.length === 0, `pictures: Setup's Ready page says nothing more than setup-ready.jpg shows (${lits.length} rows read from wizard.c)`, missing.map((m) => JSON.stringify(m.slice(0, 70))).join(" | "));
+    }
+    // The page: the rings, and the note about how the Setup pictures were made.
+    {
+      const { ctx, page } = await visit({ name: "pictures on the page", ua: UA.winEdge, uad: UAD.winX64 });
+      const got = await page.evaluate(() => [...document.querySelectorAll(".shot")].map((f) => ({ img: (f.querySelector("img") || {}).getAttribute ? f.querySelector("img").getAttribute("src").split("/").pop() : "", w: +f.querySelector("img").getAttribute("width"), h: +f.querySelector("img").getAttribute("height"),
+        rings: [...f.querySelectorAll(".ring")].map((r) => ({ n: r.dataset.n, style: r.getAttribute("style").replace(/\s+/g, "") })) })));
+      const want = { "setup-check.jpg": ["1"], "setup-look.jpg": ["2", "3"], "setup-ready.jpg": ["4"] };
+      for (const g of got) {
+        const e = ((P || {}).pictures || {})[g.img];
+        check(e && JSON.stringify(g.rings.map((r) => r.n)) === JSON.stringify(want[g.img]), `pictures: ${g.img} carries the numbered circles ${(want[g.img] || []).join(", ")} (1 to 4 across the three Setup pictures; 5 is the first question)`, JSON.stringify(g.rings.map((r) => r.n)));
+        check(e && JSON.stringify(g.rings.map((r) => r.style)) === JSON.stringify(e.rings.map((r) => r.style.replace(/\s+/g, ""))), `pictures: the rings on ${g.img} sit where pictures.py found the buttons`, e ? JSON.stringify(g.rings.map((r) => r.style)) : "unknown picture");
+      }
+      check(got.length === 3, `pictures: the page shows the three Setup pictures (${got.length})`);
+      const note = await page.evaluate(() => { const n = document.getElementById("setup-note"); return n ? { text: n.innerText, shown: n.getClientRects().length > 0 } : null; });
+      if (P && P.setup_on_real_windows === false) check(note && note.shown && /test computer/i.test(note.text), "pictures: the Setup pictures are test renders, and the page says so", JSON.stringify(note));
+      else check(!note, "pictures: the Setup pictures are real Windows screenshots now, so the 'test computer' note is gone", JSON.stringify(note));
+      // The looks: shown big enough to read (560px or wider), the size they were made at, and each one the real thing.
+      const widths = [];
+      for (const id of ["taskbar", "dock", "rail", "tiles"]) {
+        await page.click(`#tab-${id}`);
+        widths.push(await page.evaluate(async (i) => { const im = document.querySelector(`#look-${i} img`); im.loading = "eager"; if (!im.complete || !im.naturalWidth) await new Promise((ok) => { im.addEventListener("load", ok, { once: true }); setTimeout(ok, 3000); }); const r = im.getBoundingClientRect(); return { id: i, w: Math.round(r.width), nat: [im.naturalWidth, im.naturalHeight], attr: [+im.getAttribute("width"), +im.getAttribute("height")], src: im.getAttribute("src").split("/").pop() }; }, id));
+      }
+      for (const w of widths) {
+        const e = ((P || {}).pictures || {})[w.src];
+        check(w.w >= 560, `pictures: the ${w.id} look is shown ${w.w}px wide (560 or more, at 1366px)`);
+        check(e && e.size && w.nat[0] === e.size[0] && w.nat[1] === e.size[1] && w.attr[0] === e.size[0] && w.attr[1] === e.size[1], `pictures: ${w.src} is ${e && e.size ? e.size.join("x") : "?"} and the page says so`, JSON.stringify(w));
+      }
       await ctx.close();
     }
   }

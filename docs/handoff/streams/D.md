@@ -104,6 +104,21 @@ phones/Macs get "open this on your Windows PC" + send-yourself-the-link.
   must change `index.html`'s `#shot-ask` (data-ui reads the source).
 - NAME: the product name may change (LEGAL's TM-4 found a conflict). Nothing here is renamed; the owner decides.
 
+- Gate audit (docs/handoff/GATE-STATUS.md; 476 checks): D-P0-2 the Setup crops are made from B's current
+  renders (the Ready page now shows LEGAL's risk row, the agreement line, Read the Terms, Licenses) and
+  tied to them (hash, every line against wizard.c, no row Ready says that the picture lacks, the ring
+  positions, numbered 1 to 4 across the three), and the page says they are test renders until B retakes
+  them on real Windows (`REAL_WINDOWS` in tools/site/pictures.py). D-P0-3 the four looks are C's fresh
+  renders (docs/shots/shells, current shell, no cut text, a printer and a gear), 1366x768, shown 871px
+  wide, same tie. D-P0-4 the FAQ's Put Windows back sentence is tied to settings.c and the help page;
+  "not yet tested on a real computer" became "tried so far on a virtual Windows 11 computer" tied to
+  journey.json's `real_pc_runs`; the journey floor is wired (8 minutes from F's runs). K-P0-1 the Smart
+  App Control warning box must precede the steps, and every anchor Setup links to (#bios, #rst,
+  #wifi-stick) must exist. Each new check was shown red by mutating a page, the installer, forge, a
+  render, a ring.
+- NOT done: real program content in the desktop pictures (a news page in Internet, 12 photos), and
+  HDD in journey.json.
+
 ## Waiting on others
 - Real content in the desktop pictures (a news page in Internet, 12 family
   photos; DESIGN-DIRECTION P0-3) needs C's screenshot set; today they are
