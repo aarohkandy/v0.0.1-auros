@@ -56,6 +56,11 @@
 #                         for multilingual only: type real Pinyin into
 #                         Mousepad and Firefox, reboot, and repeat. This is
 #                         deliberately opt-in because it boots twice.
+#    PROFILETEST_IBUS_X11_PROBE=1
+#                         with the functional multilingual run only: collect
+#                         diagnostic XRes/process/screenshot evidence for an
+#                         explicitly X11 ibus-ui-gtk3 panel. It does not make
+#                         candidate visibility a product success claim.
 # ═══════════════════════════════════════════════════════════════════
 set -u
 cd "$(dirname "$0")/.."
@@ -638,6 +643,22 @@ EOPY
         fail=$((fail+1))
     fi
     checked=$((checked+1))
+    if python3 tools/test_x11_xres_probe.py >/dev/null; then
+        printf '    %-62s %s\n' "the bounded raw XRes diagnostic parser" "passes"
+    else
+        printf '    %-62s %s\n' "the bounded raw XRes diagnostic parser" "FAIL"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    if PROFILETEST_IBUS_X11_PROBE=1 PROFILETEST_IBUS_FUNCTIONAL=0 \
+       sh tools/profiletest.sh boot multilingual 2>&1 \
+           | grep -Fq 'requires the multilingual functional run'; then
+        printf '    %-62s %s\n' "the X11 diagnostic cannot silently add boot cost" "passes"
+    else
+        printf '    %-62s %s\n' "the X11 diagnostic cannot silently add boot cost" "FAIL"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
     echo
     [ "$fail" -eq 0 ] && { echo "$checked checks: every check refuses what it exists to refuse."; exit 0; }
     echo "$fail of $checked wrong."; exit 1
@@ -649,8 +670,14 @@ P="${1:-}"; [ -n "$P" ] || { echo "usage: $0 boot <profile> [evidence-dir]"; exi
 EV="${2:-$ROOT/out/profiletest-$P}"
 IBUS_FUNCTIONAL=${PROFILETEST_IBUS_FUNCTIONAL:-0}
 case "$IBUS_FUNCTIONAL" in 0|1) ;; *) echo "PROFILETEST_IBUS_FUNCTIONAL must be 0 or 1"; exit 2 ;; esac
+IBUS_X11_PROBE=${PROFILETEST_IBUS_X11_PROBE:-0}
+case "$IBUS_X11_PROBE" in 0|1) ;; *) echo "PROFILETEST_IBUS_X11_PROBE must be 0 or 1"; exit 2 ;; esac
 if [ "$IBUS_FUNCTIONAL" = 1 ] && [ "$P" != multilingual ]; then
     echo "PROFILETEST_IBUS_FUNCTIONAL=1 is only valid for the multilingual profile"
+    exit 2
+fi
+if [ "$IBUS_X11_PROBE" = 1 ] && { [ "$IBUS_FUNCTIONAL" != 1 ] || [ "$P" != multilingual ]; }; then
+    echo "PROFILETEST_IBUS_X11_PROBE=1 requires the multilingual functional run"
     exit 2
 fi
 for t in qemu-system-x86_64 sgdisk python3 losetup mount; do
@@ -821,6 +848,10 @@ chmod 755 "$M/usr/lib/auros-profiletest/probe.sh"
 if [ "$IBUS_FUNCTIONAL" = 1 ]; then
     install -m 755 "$ROOT/tools/profiletest-ibus-guest.sh" \
         "$M/usr/lib/auros-profiletest/ibus-functional.sh"
+    if [ "$IBUS_X11_PROBE" = 1 ]; then
+        install -m 755 "$ROOT/tools/x11_xres_probe.py" \
+            "$M/usr/lib/auros-profiletest/x11_xres_probe.py"
+    fi
     # If this scratch OVMF happens to contain an AurOS boot entry, do not let
     # the install hand-over question cover the applications under test.
     install -d "$M/var/lib/auros"
@@ -1071,6 +1102,34 @@ echo "  what the running system said"
 judge_report "$P" "$EV/$P-report.txt"
 if [ "$IBUS_FUNCTIONAL" = 1 ]; then
     judge_ibus_functional "$EV/ibus" "$EV"
+    if [ "$IBUS_X11_PROBE" = 1 ]; then
+        XEV="$EV/ibus/round1/x11-panel"
+        grep -qx 'status=complete' "$XEV/probe.log" 2>/dev/null \
+            && ok "the opt-in X11 panel diagnostic completed" \
+            || bad "the opt-in X11 panel diagnostic completed" \
+                   "$(tail -20 "$XEV/probe.log" 2>/dev/null | tr '\n' ' ' || echo missing)"
+        grep -qx 'default_panel_count=0' "$XEV/probe.log" 2>/dev/null \
+            && ok "ibus-daemon --panel=disable launched no default panel" \
+            || bad "ibus-daemon --panel=disable launched no default panel" \
+                   "$(grep default_panel_count "$XEV/probe.log" 2>/dev/null || echo missing)"
+        panel_start=$(sed -n 's/.*panel_start_pid=\([0-9][0-9]*\).*/\1/p' "$XEV/probe.log" | tail -1)
+        panel_retained=$(sed -n 's/.*panel_retained_pid=\([0-9][0-9]*\).*/\1/p' "$XEV/probe.log" | tail -1)
+        [ -n "$panel_start" ] && [ "$panel_start" = "$panel_retained" ] \
+            && grep -qx 'exe=/usr/libexec/ibus-ui-gtk3' "$XEV/panel-start.process" 2>/dev/null \
+            && ok "the exact X11 panel retained its spawned PID" \
+            || bad "the exact X11 panel retained its spawned PID" \
+                   "start=${panel_start:-missing} retained=${panel_retained:-missing}"
+        [ -s "$XEV/xres-preedit.json" ] && [ -s "$XEV/candidate-summary.txt" ] \
+            && ok "XRes 1.2 recorded panel-owned mapping and absolute geometry" \
+            || bad "XRes 1.2 recorded panel-owned mapping and absolute geometry" \
+                   "missing XRes/candidate evidence"
+        [ -s "$EV/ibus-x11-before.png" ] && [ -s "$EV/ibus-x11-preedit.png" ] \
+            && ok "the X11 diagnostic retained before/preedit screenshots" \
+            || bad "the X11 diagnostic retained before/preedit screenshots" \
+                   "missing ibus-x11-before.png or ibus-x11-preedit.png"
+        printf '    %-62s %s\n' "candidate visibility from this diagnostic" \
+            "RECORDED ONLY -- not a product success gate"
+    fi
 fi
 drawn_enough "$S1" && ok "the screen shows a desktop ($S1)" \
                    || bad "the screen shows a desktop" "$S1"
