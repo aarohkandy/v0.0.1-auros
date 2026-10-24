@@ -433,7 +433,7 @@ static void wired(const char *main_c)
     if (!s) { ok("main.c can be read", 0); return; }
     char *watch = strstr(s, "guard_watch_key(&c, ev.code, ev.value");
     char *media = strstr(s, "media_key(&c, ev.code)) {");
-    char *sess  = strstr(s, "consumed = session_key(&c, ev.code");
+    char *sess  = strstr(s, "session_key_super(&c, key_seen, ev.code");
     ok("every key meets guard_watch_key before any program or the volume keys",
        watch && media && sess && watch < media && watch < sess);
     /* The card takes keys ahead of the panels it can be opened over. Other
