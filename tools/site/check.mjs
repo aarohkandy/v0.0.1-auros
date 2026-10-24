@@ -418,6 +418,14 @@ for (const v of [
   }
   check(missing.length === 0, `links: every internal link, picture, script and anchor exists (${targets.size} checked on ${pages.size} pages)`, missing.slice(0, 10).join("; "));
 
+  const realPages = [...pages].filter((p) => !isStub(fs.readFileSync(path.join(SITE, p), "utf8")));
+  const badPrivacyFooters = realPages.filter((p) => {
+    const html = fs.readFileSync(path.join(SITE, p), "utf8");
+    const footer = html.match(/<!-- legal-footer:[\s\S]*?<!-- \/legal-footer -->/);
+    return !footer || /collects nothing about you/i.test(footer[0]) || !/href="privacy\.html"[^>]*>Privacy page<\/a>/i.test(footer[0]);
+  });
+  check(badPrivacyFooters.length === 0, "privacy: every legal footer links the request-handling disclosure without a collects-nothing claim", badPrivacyFooters.join(", "));
+
   for (const p of [...pages].sort()) {
     const html = fs.readFileSync(path.join(SITE, p), "utf8");
     if (isStub(html)) continue;

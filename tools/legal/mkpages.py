@@ -13,7 +13,7 @@ repository's releases address, filled in by tools/site/stamp.sh like every other
 
 The footer block between <!-- legal-footer --> and <!-- /legal-footer --> is the same on every
 page (index, guide, advanced, status, code-signing and the four new ones): the links to
-the four pages, what the site collects, the license of AurOS's code, and the non-affiliation
+the four pages, where request handling is explained, the license of AurOS's code, and the non-affiliation
 paragraph (docs/legal/COMPLIANCE.md TM-3, LIC-2, PRI-1).
 """
 import html, os, re, sys
@@ -111,7 +111,7 @@ FOOTER = """    <!-- legal-footer: written by tools/legal/mkpages.py, the same o
       <li><a href="disclaimer.html">Disclaimer</a></li>
       <li><a href="privacy.html">Privacy</a></li>
     </ul>
-    <p>No cookies and no ads. This site collects nothing about you. GitHub, which hosts it, keeps its own records of the internet addresses that visit. Write to us: CONTACT_EMAIL.</p>
+    <p>No cookies or ads. Read how requests are handled on our <a href="privacy.html">Privacy page</a>. GitHub, which hosts this site, keeps its own records of the internet addresses that visit. Write to us: CONTACT_EMAIL.</p>
     <p>AurOS&rsquo;s own code is free software (MIT license). It includes programs by others, each under its own license: <a href="licenses.html">licenses and source code</a>. Set in Atkinson Hyperlegible Next (<a href="assets/fonts/OFL.txt">license</a>).</p>
     <p>%s %s</p>
     <!-- /legal-footer -->""" % (html.escape(UBUNTU, quote=False), html.escape(TM, quote=False))
