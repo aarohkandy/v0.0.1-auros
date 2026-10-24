@@ -1022,7 +1022,14 @@ class Flow:
         with self.rec.phase("aurOS: open the store"):
             # Panels left over from the first start (bring my files, close)
             for dismiss in ("Not now", "Close"):
-                b, _ = self.ocr_find(dismiss)
+                b, words = self.ocr_find(dismiss)
+                if not b and dismiss == "Not now":
+                    # "Bring my files across" is the page's green button and "Not now" sits a
+                    # button's height under it; OCR read it as 'ai' in run 40043978048
+                    bring = vision.find_text(words, "Bring my files")
+                    if bring:
+                        x, y = vision.centre(bring)
+                        b = (x - 40, y + 66 - 12, 80, 24)
                 if b:
                     self.m.click(*vision.centre(b), label="dismiss " + dismiss)
                     time.sleep(3)
