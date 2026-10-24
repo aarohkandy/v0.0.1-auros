@@ -2,6 +2,19 @@
 
 Owner authorization on 24 October 2026: implement, test adversarially, use bounded parallel agents, and push verified checkpoints to `aarohkandy/v0.0.1-auros`. The target is a nontechnical person describing the system they want, receiving it quickly, installing it safely, and using it without a terminal or helper.
 
+## Current checkpoint (24 October, 23:30 UTC)
+
+This section is the current summary; the chronological checkpoints below retain
+earlier failures and superseded evidence deliberately.
+
+- Candidate `e0d0aadc`, [build/release run 40138682256](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40138682256), passed its full image suite and published prerelease `v0.1.0-e0d0aad`. Source publication and notice checks passed. It is not public latest.
+- Exact-image [hardening run 40140266950](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40140266950) passed 72 hardening and 14 clock checks; `hardengate.sh` accepts it for this candidate.
+- Four exact-installer Windows journeys are running. App launch, encrypted-drive return and file-preserving recovery are still unproved for this candidate. The older c1 app-launch result was invalidated and must not be reused.
+- The release Windows job failed its fastpath no-scroll fixture. The working branch already has its tested correction and a visible, accessible drive-protection confirmation, but this candidate does not contain them. Do not rerun the unchanged installer expecting a different result.
+- Multilingual first-stage typing passed in Mousepad and Firefox. Second-stage ownership/focus/password/reboot evidence is still pending; latest diagnostic is `40142892395`. Production remains IBus. Main contains diagnostic harness fixes, not an activated input replacement.
+- `codex/delivery` retains the installer follow-ups and reduced artifact downloads for the next combined candidate. Preserve exact source/artifact identity when using any earlier evidence.
+- Public delivery remains disabled pending signing/service configuration and release proof. Managed profiles, physical-PC tests, contact/name decisions, held encryption work and unfinished Wishes actions remain open. No zero-vulnerability or end-to-end completion claim is justified.
+
 ## Starting evidence
 
 - Remote main is `5b1f28e6`; original Desktop checkout is 783 commits behind. Work is coordinated from `/Users/aaroh/Documents/ChatGPT/auros` with isolated worker worktrees. Original Claude trees are preserved.
