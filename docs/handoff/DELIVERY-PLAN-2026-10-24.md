@@ -163,3 +163,29 @@ Remaining active slices are adoption of operator-precertified custom deliveries
 and candidate CI follow-through. The shipped browser's 16-bit request proof
 completed three fixed local challenges in 9.83, 1.79 and 1.79 seconds with no
 timeouts. No live API requests or paid model calls were used for that test.
+
+The older repaired image run `40124183660` at `5d1c50d3` completed successfully,
+including its selected unit, boot and power-cut gates. This is not evidence for
+newer source. The candidate scamtest failure was an assertion still looking for
+the old direct session-key call. Its repaired test passes all 51 Linux checks
+and rejects all 19 intentional mutants; production guard ordering was intact.
+
+Operator-precertified delivery adoption is integrated as `31e45443`. It checks
+the original run, signed and immutable evidence, current release identity and
+asset digest before adoption. A per-recipe discovery lease prevents duplicate
+dispatch from simultaneous requests. Security review and all 81 cloud tests
+pass. The new browser error wording passes the 543-check site suite and the
+plain-word check.
+
+The opt-in Pinyin harness is integrated as `ed5c4812`. It drives physical QMP
+keys into Mousepad and Firefox, checks their exact saved/submitted text, and
+repeats on the same disk after a reboot. Its 41 self-checks and workflow lint
+pass; actual typing remains unproven until the image job runs. The next batch
+deliberately requests all four non-desktop profiles, with functional input
+enabled only for multilingual. The main build supplies the desktop evidence.
+
+Multilingual run `40126965872` at `ee450fbb` completed successfully. Its guest
+report records the rail/sandstone desktop as user auros, French locale, no
+failed units, active IBus, GTK/Qt/XMODIFIERS set, Wayland `wayland-0`, X display
+`:0`, and an available Pinyin engine. Boot took about nine seconds in that VM.
+This establishes wiring and boot, not application composition.
