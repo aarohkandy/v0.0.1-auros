@@ -200,6 +200,24 @@ test("authenticated status polling is cached to bound GitHub API use", async () 
   assert.equal(f.calls.status, 2);
 });
 
+test("download readiness is revalidated and revoked when current evidence changes", async () => {
+  let current = { state: "download-ready", runId: 44, signedArtifactId: 8, download: { name: "AurOS-Custom.exe", url: "https://github.com/owner/repo/releases/download/v0.1.0/AurOS-Custom.exe", sha256: "e".repeat(64), bytes: 1234 } };
+  const f = fixture({ github: { status: async () => { f.calls.status++; return current; } } });
+  const { body } = await submit(f);
+  let status = await (await f.call(body.status_url, { token: body.token })).json();
+  assert.equal(status.download_ready, true);
+  current = { state: "failed", runId: 44, failure: "delivery_manifest_invalid" };
+  status = await (await f.call(body.status_url, { token: body.token })).json();
+  assert.equal(status.download_ready, true, "ready evidence is cached only for the bounded poll lease");
+  assert.equal(f.calls.status, 1);
+  f.time.t += 15_000;
+  status = await (await f.call(body.status_url, { token: body.token })).json();
+  assert.equal(status.download_ready, false);
+  assert.equal(status.state, "failed");
+  assert.equal(status.download, null);
+  assert.equal(f.calls.status, 2);
+});
+
 test("concurrent status polls claim one GitHub lookup and failures back off", async () => {
   let release;
   let calls = 0;
@@ -360,7 +378,7 @@ test("GitHub status binds correlation/source and requires package, sign, publish
   const jobs = [{ name: "package", conclusion: "success" }, { name: "sign / sign", conclusion: "success" }, { name: "publish", conclusion: "success" }];
   const assets = [
     { id: 10, name: manifestName, size: 900, url: "https://api.github.com/repos/owner/repo/releases/assets/10", browser_download_url: `https://github.com/owner/repo/releases/download/${tag}/${manifestName}` },
-    { id: 11, name: installerName, size: 1234, url: "https://api.github.com/repos/owner/repo/releases/assets/11", browser_download_url: installerUrl },
+    { id: 11, name: installerName, size: 1234, digest: `sha256:${"e".repeat(64)}`, url: "https://api.github.com/repos/owner/repo/releases/assets/11", browser_download_url: installerUrl },
   ];
   const manifest = {
     schema: "org.auros.custom-delivery", version: 1, state: "download-ready", request_id: id,
@@ -383,4 +401,10 @@ test("GitHub status binds correlation/source and requires package, sign, publish
 
   f = apiFixture({ run, jobs, artifacts, releases: [{ tag_name: tag, prerelease: true, draft: false, assets }], assetBody: JSON.stringify({ ...manifest, request_id: "22345678-1234-4123-8123-123456789abc" }), evidenceZip });
   assert.equal((await f.github.status({ requestId: id, sourceSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_manifest_invalid");
+
+  for (const digest of [undefined, "sha256:not-a-hash", `sha256:${"f".repeat(64)}`]) {
+    const replaced = assets.map((asset) => asset.name === installerName ? { ...asset, digest } : asset);
+    f = apiFixture({ run, jobs, artifacts, releases: [{ tag_name: tag, prerelease: true, draft: false, assets: replaced }], assetBody: manifestText, evidenceZip });
+    assert.equal((await f.github.status({ requestId: id, sourceSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, digest?.startsWith("sha256:") && digest.length === 71 ? "delivery_manifest_invalid" : "delivery_asset_invalid");
+  }
 });
