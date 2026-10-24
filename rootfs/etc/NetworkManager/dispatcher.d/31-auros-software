@@ -1,0 +1,10 @@
+#!/bin/sh
+# A network has just come up (or its internet has just been found): wake
+# auros-software.service, if it is still waiting out a pause, so "Get
+# more programs" is brought up to date now rather than at its next retry.
+# Does nothing once the service has finished (it is not running then).
+case "${2:-}" in
+    up|dhcp4-change|dhcp6-change|connectivity-change)
+        systemctl kill --kill-whom=main -s USR1 auros-software.service >/dev/null 2>&1 ;;
+esac
+exit 0

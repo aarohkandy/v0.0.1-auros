@@ -25,7 +25,9 @@
 #  step 3 (a slow mirror, a clock a few hours out) made step 2 run
 #  again from the top, for as long as it took. Now a step that worked
 #  is never repeated and never held up by one that did not; the first
-#  try is quick, and the pause between tries grows to a minute.
+#  try is quick, the pause between tries grows to a minute, and a
+#  network coming up ends the pause at once (NetworkManager's dispatcher
+#  sends this script USR1).
 #  software-ready is written when both are done, and ends this service.
 #
 #  When a step fails the reason goes to the journal in the tool's own
@@ -91,6 +93,7 @@ apt_lists() {
     say "apt's lists: not yet: $(why "$out")"; return 1
 }
 
+trap : USR1
 delay=${AUROS_FIRST_DELAY:-10}
 while :; do
     if [ -e "$CATALOGUE" ] && [ -e "$APT" ]; then
@@ -103,6 +106,10 @@ while :; do
         [ -e "$APT" ] || apt_lists
         [ -e "$CATALOGUE" ] && [ -e "$APT" ] && continue
     fi
-    sleep "$delay"
+    # The pause ends early when the network comes up: NetworkManager's
+    # dispatcher (31-auros-software) sends USR1. (`wait` returns at a trapped
+    # signal; the sleep it was waiting for is then put away.)
+    sleep "$delay" & pause=$!
+    wait "$pause" 2>/dev/null; kill "$pause" 2>/dev/null
     delay=$((delay * 2)); [ "$delay" -le 60 ] || delay=60
 done

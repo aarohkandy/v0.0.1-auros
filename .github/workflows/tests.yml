@@ -295,11 +295,11 @@ jobs:
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           { sh tools/storecatalogue.sh selftest && sh tools/storecatalogue.sh work/forge/desktop/rootfs; } 2>&1 | tee transcripts/storecatalogue.txt
-      - name: softwarereadytest (the catalogue and apt's lists have a stamp each; why a step failed reaches the journal; two deliberate breakages)
+      - name: softwarereadytest (the catalogue and apt's lists have a stamp each; why a step failed reaches the journal; three deliberate breakages)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           { sh tools/softwarereadytest.sh
-            for b in stamp why; do
+            for b in stamp why wake; do
               if sh tools/softwarereadytest.sh --break=$b >/dev/null 2>&1; then echo "softwarereadytest: --break=$b was NOT caught"; exit 1; fi
               echo "softwarereadytest: --break=$b is caught"
             done; } 2>&1 | tee transcripts/softwarereadytest.txt

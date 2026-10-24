@@ -62,6 +62,8 @@ run_nm --print-config --config="$RFS/etc/NetworkManager/NetworkManager.conf" \
 check "NetworkManager reads it"         grep -q '^\[main\]' "$TMP/conf"
 check "no device type is left unmanaged (the cable works)" \
     sh -c "! grep -q '^unmanaged-devices=' '$TMP/conf'"
+check "a card that arrives configured is configured again (keep-configuration=no)" \
+    sh -c "sed -n '/^\\[device\\]/,/^\\[/p' '$TMP/conf' | grep -q '^keep-configuration=no'"
 if [ -x "$RFS/usr/lib/systemd/systemd-resolved" ]; then
     ok "systemd-resolved is in the image, so dns=systemd-resolved is fine"
 else

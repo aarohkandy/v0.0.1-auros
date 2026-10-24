@@ -25,6 +25,7 @@
 #    --break=stamp   the script is changed so a worked catalogue is
 #                    fetched again on every pass: the test must FAIL.
 #    --break=why     the tools' words are thrown away again: must FAIL.
+#    --break=wake    a network coming up no longer ends the pause: must FAIL.
 #
 #  No root, no network. POSIX sh.
 # ═══════════════════════════════════════════════════════════════════
@@ -47,6 +48,9 @@ S="$SCRIPT"
 case "$BREAK" in
     stamp) S="$T/mutant.sh"
            sed 's/\[ -e "\$CATALOGUE" \] || catalogue/catalogue/' "$SCRIPT" > "$S"
+           cmp -s "$S" "$SCRIPT" && { echo "softwarereadytest: the mutation changed nothing" >&2; exit 2; } ;;
+    wake)  S="$T/mutant.sh"
+           sed 's/^trap : USR1$//' "$SCRIPT" > "$S"
            cmp -s "$S" "$SCRIPT" && { echo "softwarereadytest: the mutation changed nothing" >&2; exit 2; } ;;
     why)   S="$T/mutant.sh"
            sed 's/^why() .*/why() { :; }/' "$SCRIPT" > "$S"
@@ -103,6 +107,7 @@ cat > "$T/bin/sleep" <<'EOF'
 #!/bin/sh
 W=$STANDIN_DIR
 echo "$1" >> "$W/sleeps"
+[ -e "$W/block" ] && exec /bin/sleep 20       # a pause that really lasts, for the wake-up case
 [ "$(wc -l < "$W/sleeps")" -le 30 ] || kill -TERM "$PPID"      # a loop that never ends
 exit 0
 EOF
@@ -155,6 +160,19 @@ check "it asked again after each pause (4 questions)"        4 "$(count online.n
 run add-flathub update=0 apt=0 saved=1
 has   "Flathub added when the image lacks it"                "$W/out" "Flathub added"
 check "...by the one command Flathub's own page gives"       "remote-add --system --if-not-exists flathub $W/saved.flatpakrepo" "$(cat "$W/remote-add.args" 2>/dev/null)"
+
+# 5. the network comes up in the middle of a pause: the pause ends at once
+#    (NetworkManager's dispatcher sends USR1), not after the 10 s it asked for
+W="$T/wake"; rm -rf "$W"; mkdir -p "$W/state"; echo 1 > "$W/update.failures"; : > "$W/block"; touch "$W/have-flathub"
+STANDIN_DIR="$W" PATH="$T/bin:$PATH" AUROS_STATE="$W/state" AUROS_ONLINE_WAIT=1 sh "$S" > "$W/out" 2>&1 &
+pid=$!
+i=0; while [ ! -s "$W/sleeps" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+kill -USR1 "$pid" 2>/dev/null
+i=0; while kill -0 "$pid" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null; bad "a pause ends when the network comes up" "still waiting 5 s after USR1"
+else ok "a pause ends when the network comes up (USR1)"; fi
+pkill -f "sleep 20" 2>/dev/null || true
+check "...and the work was done by then" 1 "$([ -e "$W/state/software-ready" ] && echo 1 || echo 0)"
 
 echo
 if [ "$fail" -gt 0 ]; then echo "softwarereadytest: $fail of $checked FAILED"; exit 1; fi
