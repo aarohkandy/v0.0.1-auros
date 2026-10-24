@@ -126,7 +126,7 @@ jobs:
               # The store must still show programs and find VLC when there is
               # no network. Keep its screenshots and GNOME Software logs with
               # the job transcript.
-              t("storeoffline", "storeoffline", "out/auros-desktop.img transcripts/storeoffline-out", image=True),
+              t("storeoffline", "storeoffline", "out/auros-desktop.img $PWD/transcripts/storeoffline-out", image=True),
               # CIW: the data-safety suites that need QEMU. failtest boots the full image with
               # its desktop made to fail and looks at the screen (~7 minutes with a cold image).
               t("failtest", "failtest", image=True),
