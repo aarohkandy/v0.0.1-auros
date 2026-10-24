@@ -286,7 +286,31 @@ def test_journal_verdicts():
         return
     fx = lambda n: open(os.path.join(HERE, "fixtures", n)).read()
     bare = e2e.journal_verdicts(fx("journal-bare-boot.txt"))
-    check(all(ok for _, ok, _ in bare), "journal: a bare boot of the image is green on all four (" + "; ".join(f"{n}={ok}" for n, ok, _ in bare) + ")")
+    check(all(ok for _, ok, _ in bare), "journal: a bare boot of the image is green on every first-session verdict (" + "; ".join(f"{n}={ok}" for n, ok, _ in bare) + ")")
+    probe_names = {n for n, _, _ in e2e.first_session_probe_verdicts([])}
+    check(probe_names == {n for n, _, _ in bare if n in probe_names},
+          "journal: all five root-observed first-session facts are gating verdicts")
+    marker = next(l for l in fx("journal-bare-boot.txt").splitlines()
+                  if "auros-first-session-probe" in l)
+    for field, value, verdict in (
+            ("apparmor", "disabled", "AppArmor enabled with a loaded profile"),
+            ("profiles", "0", "AppArmor enabled with a loaded profile"),
+            ("route", "missing", "default route present"),
+            ("dns", "failed", "DNS resolves a public name"),
+            ("run_mode", "0700", "/run mode is 0755"),
+            ("saved_bin", "present", "staging saved.bin released")):
+        bad = re.sub(rf"{field}=[^ ]+", f"{field}={value}", marker)
+        got = dict((n, ok) for n, ok, _ in e2e.first_session_probe_verdicts([bad]))
+        check(got[verdict] is False, f"journal probe: {field}={value} makes '{verdict}' RED")
+    missing = e2e.first_session_probe_verdicts([])
+    check(len(missing) == 5 and not any(ok for _, ok, _ in missing),
+          "journal probe: missing guest evidence makes all five facts RED")
+    duplicate = e2e.first_session_probe_verdicts([marker, marker])
+    check(not any(ok for _, ok, _ in duplicate),
+          "journal probe: duplicate guest evidence is ambiguous and RED")
+    malformed = e2e.first_session_probe_verdicts([marker + " dns=ok"])
+    check(not any(ok for _, ok, _ in malformed),
+          "journal probe: duplicate fields make the whole record malformed and RED")
     real = {n: ok for n, ok, _ in e2e.journal_verdicts(fx("journal-real-install.txt"))}
     check(real.get("network within 60 s of the desktop") is False, "journal: run 40050260949's install, no DHCP lease: network RED")
     check(real.get("Flathub's catalogue fetched") is False, "journal: ... catalogue never fetched: RED")
