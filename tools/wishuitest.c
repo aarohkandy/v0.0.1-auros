@@ -29,12 +29,17 @@
 
 static char mock_theme[48] = "nocturne";
 static int mock_theme_readable = 1;
+static int mock_theme_valid = 1;
 static int mock_theme_applies;
 int settings_theme_current(char *out, size_t n)
 {
     if (!mock_theme_readable || !out || !n) return -1;
     snprintf(out, n, "%s", mock_theme);
     return 0;
+}
+int settings_theme_validate(const char *id)
+{
+    return mock_theme_valid && id && (!strcmp(id, "sandstone") || !strcmp(id, "nocturne"));
 }
 int settings_theme_apply(shell_ctx *c, const char *id)
 {
@@ -621,32 +626,55 @@ static void shell_actions(void)
 
     snprintf(mock_theme, sizeof mock_theme, "%s", "nocturne");
     mock_theme_readable = 1;
+    mock_theme_valid = 1;
     mock_theme_applies = 0;
-    say(&c, "{\"ev\":\"shell\",\"n\":53,\"do\":{\"type\":\"set_wallpaper\",\"theme_name\":\"sandstone\"}}");
+    say(&c, "{\"ev\":\"shell\",\"n\":53,\"do\":{\"type\":\"set_wallpaper\",\"theme\":\"sandstone\"}}");
     drain();
     ok("an installed theme is applied through the local theme control",
        mock_theme_applies == 1 && !strcmp(mock_theme, "sandstone") && c.want_reload);
     ok("the engine receives the exact previous theme for Undo",
        strstr(wrote, "{\"op\":\"did\",\"n\":53,\"ok\":true,\"prev\":{\"type\":\"set_wallpaper\",\"theme\":\"nocturne\"}}") != NULL);
-    say(&c, "{\"ev\":\"shell\",\"n\":54,\"do\":{\"type\":\"set_wallpaper\",\"color\":\"#112233\"}}");
+    {
+        const char *p = strstr(wrote, "\"prev\":");
+        const char *end = strrchr(wrote, '}');
+        char undo[512];
+        int pn = p && end && end > p + 7 ? (int)(end - (p + 7)) : 0;
+        snprintf(undo, sizeof undo, "{\"ev\":\"shell\",\"n\":54,\"do\":%.*s}", pn, p ? p + 7 : "");
+        say(&c, undo);
+    }
+    drain();
+    ok("feeding the emitted Undo action restores the previous theme",
+       strstr(wrote, "\"n\":54,\"ok\":true") != NULL &&
+       mock_theme_applies == 2 && !strcmp(mock_theme, "nocturne"));
+    say(&c, "{\"ev\":\"shell\",\"n\":55,\"do\":{\"type\":\"set_wallpaper\",\"color\":\"#112233\"}}");
     drain();
     ok("a raw wallpaper color stays honestly refused",
-       strstr(wrote, "\"n\":54,\"ok\":false") != NULL && mock_theme_applies == 1);
-    say(&c, "{\"ev\":\"shell\",\"n\":55,\"do\":{\"type\":\"set_wallpaper\",\"theme_name\":\"missing\"}}");
+       strstr(wrote, "\"n\":55,\"ok\":false") != NULL && mock_theme_applies == 2);
+    say(&c, "{\"ev\":\"shell\",\"n\":56,\"do\":{\"type\":\"set_wallpaper\",\"theme\":\"missing\"}}");
     drain();
     ok("a missing theme is refused without an Undo claim",
-       strstr(wrote, "{\"op\":\"did\",\"n\":55,\"ok\":false}") != NULL &&
-       mock_theme_applies == 1);
-    say(&c, "{\"ev\":\"shell\",\"n\":56,\"do\":{\"type\":\"set_wallpaper\",\"theme_name\":\"nocturne\",\"color\":\"#112233\"}}");
+       strstr(wrote, "{\"op\":\"did\",\"n\":56,\"ok\":false}") != NULL &&
+       mock_theme_applies == 2);
+    say(&c, "{\"ev\":\"shell\",\"n\":57,\"do\":{\"type\":\"set_wallpaper\",\"theme\":\"sandstone\",\"color\":\"#112233\"}}");
     drain();
     ok("an ambiguous theme-and-color action is refused",
-       strstr(wrote, "\"n\":56,\"ok\":false") != NULL && mock_theme_applies == 1);
+       strstr(wrote, "\"n\":57,\"ok\":false") != NULL && mock_theme_applies == 2);
+    say(&c, "{\"ev\":\"shell\",\"n\":58,\"do\":{\"type\":\"set_wallpaper\",\"theme_name\":\"Sandstone\"}}");
+    drain();
+    ok("an unresolved theme name is not trusted as an installed id",
+       strstr(wrote, "\"n\":58,\"ok\":false") != NULL && mock_theme_applies == 2);
     mock_theme_readable = 0;
-    say(&c, "{\"ev\":\"shell\",\"n\":57,\"do\":{\"type\":\"set_wallpaper\",\"theme_name\":\"nocturne\"}}");
+    say(&c, "{\"ev\":\"shell\",\"n\":59,\"do\":{\"type\":\"set_wallpaper\",\"theme\":\"sandstone\"}}");
     drain();
     ok("a theme change is refused when its previous state cannot be captured",
-       strstr(wrote, "\"n\":57,\"ok\":false") != NULL && mock_theme_applies == 1);
+       strstr(wrote, "\"n\":59,\"ok\":false") != NULL && mock_theme_applies == 2);
     mock_theme_readable = 1;
+    mock_theme_valid = 0;
+    say(&c, "{\"ev\":\"shell\",\"n\":60,\"do\":{\"type\":\"set_wallpaper\",\"theme\":\"sandstone\"}}");
+    drain();
+    ok("a malformed previous theme is not offered as unusable Undo",
+       strstr(wrote, "\"n\":60,\"ok\":false") != NULL && mock_theme_applies == 2);
+    mock_theme_valid = 1;
     c.want_reload = 0;
     /* A shells directory with a file that is NOT one of the four looks:
      * only the name check stands between it and being applied. */

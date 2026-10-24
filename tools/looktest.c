@@ -132,6 +132,7 @@ int main(void)
         char active[48];
         ok(settings_theme_current(active, sizeof active) == 0 && !strcmp(active, "sandstone"),
            "the shared theme control reports the applied theme");
+        ok(settings_theme_validate(active), "the applied theme is complete enough to restore");
         ok(!settings_theme_apply(&C, "../nocturne") &&
            settings_theme_current(active, sizeof active) == 0 && !strcmp(active, "sandstone"),
            "an unsafe theme id is refused without changing the current theme");
@@ -139,7 +140,31 @@ int main(void)
         ok(!settings_theme_apply(&C, "nocturne") &&
            settings_theme_current(active, sizeof active) == 0 && !strcmp(active, "sandstone"),
            "a theme helper failure is reported and leaves the previous theme active");
+        char fake[600];
+        snprintf(fake, sizeof fake, "%s/aurora", home);
+        put(fake, "#!/bin/sh\n/bin/sleep 4\nexit 1\n");
+        chmod(fake, 0700);
+        C.want_reload = 0;
+        ok(!settings_theme_apply(&C, "nocturne") && !C.want_reload &&
+           file_has(ini3, "gtk-application-prefer-dark-theme=0\n"),
+           "a timed-out theme helper is stopped and never reported as applied");
         setenv("PATH", path, 1);
+
+        char bad[600], badf[700], statef[700], themes[700];
+        snprintf(bad, sizeof bad, "%s/badthemes", home); mkdir(bad, 0755);
+        snprintf(badf, sizeof badf, "%s/broken.theme", bad);
+        put(badf, "theme_name=\"Broken\"\ntheme_variant=\"dark\"\n");
+        snprintf(statef, sizeof statef, "%s/.config/auros/theme", home);
+        put(statef, "broken\n");
+        setenv("AUROS_THEME_DIR", bad, 1);
+        setenv("AURORA_THEMES", bad, 1);
+        ok(settings_theme_current(active, sizeof active) == 0 && !strcmp(active, "broken") &&
+           !settings_theme_validate(active),
+           "a readable but malformed current theme is not considered reversible");
+        snprintf(themes, sizeof themes, "%s/themes", cwd);
+        setenv("AUROS_THEME_DIR", themes, 1);
+        setenv("AURORA_THEMES", themes, 1);
+        put(statef, "sandstone\n");
     }
 
     ok(press("Light writing on a dark background"), "she presses the dark one");
