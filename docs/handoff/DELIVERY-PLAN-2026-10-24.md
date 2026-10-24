@@ -535,3 +535,22 @@ for all Windows journeys. It uses the published Actions image pieces and verifie
 their hashes. An automatically triggered duplicate after build completion can be
 cancelled before work if this same-image run already supplies the full verdict;
 never cancel or disregard a real failing result.
+
+## Verification and CI efficiency follow-through
+
+Candidate `40138682256` has passed 31 jobs; failure-display and kernel rollback
+VM tests are still running. Full hardening `40140266950` remains in progress.
+Neither status is a completed installation or release verdict.
+
+Second-stage Fcitx diagnostic `40141218804` failed before composition because
+the harness required the service MainPID to remain in its service cgroup.
+The PAM session moves it into a session scope. The diagnostic owner is repairing
+the attribution check while retaining exact service/process/socket identity
+checks; production input remains unchanged.
+
+Working-branch `35f8b12e` removes unnecessary CI artifact transfers: nine
+image-only jobs skip installer and rootfs downloads, boot-update also skips
+rootfs, and staging-module extraction is limited to its actual consumers.
+Same-run image pieces and both SHA-256 verification layers are unchanged.
+All 29 workflow files and expanded matrix requirements passed validation.
+The change will take effect on a future candidate, not the running one.
