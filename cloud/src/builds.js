@@ -8,6 +8,7 @@ const enc = new TextEncoder();
 const RECIPE_LIMIT = 16 * 1024;
 const ZIP_LIMIT = 64 * 1024;
 const JOB_MS = 24 * 60 * 60 * 1000;
+const DISCOVERY_MS = 60 * 1000;
 const RECEIPT = /^[A-Za-z0-9_-]{32}$/;
 const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA = /^[0-9a-f]{40}$/;
@@ -238,7 +239,7 @@ export class BuildJobLedger {
       return { status: 200 };
     });
   }
-  reserve({ id, tokenHash, sourceSha, baseRunId, baseTag, recipeId, canonical, now }) {
+  reserve({ id, tokenHash, sourceSha, baseRunId, baseTag, recipeId, canonical, discoveryId = null, now }) {
     return this.serial(async () => {
       const dk = `build-dedupe:${sourceSha}:${recipeId}`;
       const existingId = await this.val(dk, now);
@@ -254,12 +255,37 @@ export class BuildJobLedger {
       const saved = await this.s.get(deliveryKey);
       const delivery = saved?.v;
       if (delivery && (delivery.sourceSha !== sourceSha || delivery.baseRunId !== baseRunId || delivery.baseTag !== baseTag || delivery.recipeId !== recipeId || delivery.canonical !== canonical || !JOB_ID.test(delivery.requestId || ""))) throw new Error("canonical delivery identity conflict");
+      const discoveryKey = `build-discovery:${sourceSha}:${recipeId}`;
+      if (!delivery) {
+        const discovery = await this.val(discoveryKey, now);
+        if (!discoveryId || discovery?.id !== discoveryId) throw new Error("custom delivery discovery lease lost");
+      }
       const reused = Boolean(delivery);
       const job = { id, owners: [tokenHash], sourceSha, baseRunId, baseTag, recipeId, canonical, deliveryRequestId: delivery?.requestId ?? id, state: reused ? "queued" : "dispatching", dispatchAttempts: reused ? 0 : 1, runId: delivery?.runId ?? null, signedArtifactId: null, download: null, nextCheckAt: now, createdAt: now, expiresAt: now + JOB_MS, failure: null };
       await this.s.put(`build-job:${id}`, { v: job, exp: job.expiresAt });
       await this.s.put(dk, { v: id, exp: job.expiresAt });
       if (!delivery) await this.s.put(deliveryKey, { v: { sourceSha, baseRunId, baseTag, recipeId, canonical, requestId: id, runId: null, evidence: null, createdAt: now } });
+      if (!delivery) await this.s.delete(discoveryKey);
       return { status: reused ? 200 : 201, deduplicated: reused, canonicalReuse: reused, job };
+    });
+  }
+  beginDiscovery({ sourceSha, recipeId, id, now }) {
+    return this.serial(async () => {
+      const delivery = (await this.s.get(`build-delivery:${sourceSha}:${recipeId}`))?.v;
+      if (delivery) return { state: "existing" };
+      const key = `build-discovery:${sourceSha}:${recipeId}`;
+      if (await this.val(key, now)) return { state: "busy" };
+      await this.s.put(key, { v: { id }, exp: now + DISCOVERY_MS });
+      return { state: "owner" };
+    });
+  }
+  releaseDiscovery({ sourceSha, recipeId, id, now }) {
+    return this.serial(async () => {
+      const key = `build-discovery:${sourceSha}:${recipeId}`;
+      const discovery = await this.val(key, now);
+      if (discovery?.id !== id) return false;
+      await this.s.delete(key);
+      return true;
     });
   }
   deliveryForRecipe({ recipeId }) {
@@ -274,6 +300,27 @@ export class BuildJobLedger {
   }
   delivery({ sourceSha, recipeId }) {
     return this.serial(async () => (await this.s.get(`build-delivery:${sourceSha}:${recipeId}`))?.v ?? null);
+  }
+  adoptDelivery({ sourceSha, baseRunId, baseTag, recipeId, canonical, requestId, runId, evidence, discoveryId, now }) {
+    return this.serial(async () => {
+      if (!SHA.test(sourceSha || "") || !Number.isInteger(baseRunId) || baseRunId <= 0 || !TAG.test(baseTag || "") || !RECIPE_ID.test(recipeId || "") || !JOB_ID.test(requestId || "") || !Number.isInteger(runId) || runId <= 0 || typeof canonical !== "string") return { adopted: false, conflict: true };
+      const encoded = JSON.stringify(evidence);
+      const gatesExact = Array.isArray(evidence?.gates) && evidence.gates.length === DELIVERY_GATES.length && evidence.gates.every((name, at) => name === DELIVERY_GATES[at]);
+      if (!evidence || encoded.length > RECIPE_LIMIT * 2 || evidence.requestId !== requestId || evidence.runId !== runId || evidence.sourceSha !== sourceSha || evidence.baseRunId !== baseRunId || evidence.releaseTag !== baseTag || !gatesExact || !Number.isInteger(evidence.signedArtifactId) || evidence.signedArtifactId <= 0 || !Number.isInteger(evidence.immutableArtifactId) || evidence.immutableArtifactId <= 0 || !Number.isInteger(evidence.releaseId) || evidence.releaseId <= 0 || !Number.isInteger(evidence.manifestAssetId) || evidence.manifestAssetId <= 0 || !Number.isInteger(evidence.installerAssetId) || evidence.installerAssetId <= 0 || !/^sha256:[0-9a-f]{64}$/.test(evidence.installerDigest || "") || typeof evidence.manifest !== "string") return { adopted: false, conflict: true };
+      const key = `build-delivery:${sourceSha}:${recipeId}`;
+      const discoveryKey = `build-discovery:${sourceSha}:${recipeId}`;
+      const discovery = await this.val(discoveryKey, now);
+      if (!discoveryId || discovery?.id !== discoveryId) return { adopted: false, conflict: true };
+      const value = { sourceSha, baseRunId, baseTag, recipeId, canonical, requestId, runId, evidence, createdAt: now };
+      const existing = (await this.s.get(key))?.v;
+      if (existing) {
+        await this.s.delete(discoveryKey);
+        return JSON.stringify(existing) === JSON.stringify({ ...value, createdAt: existing.createdAt }) ? { adopted: false, conflict: false } : { adopted: false, conflict: true };
+      }
+      await this.s.put(key, { v: value });
+      await this.s.delete(discoveryKey);
+      return { adopted: true, conflict: false };
+    });
   }
   saveDelivery({ id, runId, evidence }) {
     return this.serial(async () => {
@@ -407,10 +454,46 @@ export function createBuildApi({ env, jobs, github, now = Date.now }) {
         else return response(503, { error: "base_unavailable", download_ready: false }, cors);
       }
       if (!SHA.test(base.sourceSha) || !Number.isInteger(base.runId) || base.runId <= 0 || !TAG.test(base.tag || "") || !base.tag.endsWith(`-${base.sourceSha.slice(0, 7)}`)) return response(503, { error: "base_unavailable", download_ready: false }, cors);
+      const discoveryId = crypto.randomUUID();
+      const discoveryLease = await jobs.beginDiscovery({ sourceSha: base.sourceSha, recipeId: compiled.recipeId, id: discoveryId, now: now() });
+      if (discoveryLease.state === "busy") return response(503, { error: "existing_delivery_busy", download_ready: false }, cors);
+      if (discoveryLease.state === "owner") {
+        let discovered;
+        const submitted = compiled.recipe;
+        const resolved = { look: submitted.preferences?.look || "rail", theme: submitted.preferences?.theme || "sandstone" };
+        try { discovered = await github.discoverVerifiedDelivery({ sourceSha: base.sourceSha, baseRunId: base.runId, baseTag: base.tag, recipeId: compiled.recipeId, resolved }); }
+        catch {
+          await jobs.releaseDiscovery({ sourceSha: base.sourceSha, recipeId: compiled.recipeId, id: discoveryId, now: now() });
+          return response(503, { error: "existing_delivery_unavailable", download_ready: false }, cors);
+        }
+        if (discovered.state === "invalid") {
+          await jobs.releaseDiscovery({ sourceSha: base.sourceSha, recipeId: compiled.recipeId, id: discoveryId, now: now() });
+          return response(409, { error: "existing_delivery_invalid", failure: discovered.failure, download_ready: false }, cors);
+        }
+        if (discovered.state === "unavailable") {
+          await jobs.releaseDiscovery({ sourceSha: base.sourceSha, recipeId: compiled.recipeId, id: discoveryId, now: now() });
+          return response(503, { error: "existing_delivery_unavailable", failure: discovered.failure, download_ready: false }, cors);
+        }
+        if (discovered.state === "download-ready") {
+          const adopted = await jobs.adoptDelivery({ sourceSha: base.sourceSha, baseRunId: base.runId, baseTag: base.tag, recipeId: compiled.recipeId, canonical: compiled.canonical, requestId: discovered.evidence?.requestId, runId: discovered.runId, evidence: discovered.evidence, discoveryId, now: now() });
+          if (!adopted || adopted.conflict) {
+            await jobs.releaseDiscovery({ sourceSha: base.sourceSha, recipeId: compiled.recipeId, id: discoveryId, now: now() });
+            return response(409, { error: "existing_delivery_conflict", download_ready: false }, cors);
+          }
+        } else if (discovered.state !== "absent") {
+          await jobs.releaseDiscovery({ sourceSha: base.sourceSha, recipeId: compiled.recipeId, id: discoveryId, now: now() });
+          return response(503, { error: "existing_delivery_unavailable", download_ready: false }, cors);
+        }
+      }
       const token = receipt();
       const id = crypto.randomUUID();
       const tokenHash = await hash("receipt:" + token);
-      const reserved = await jobs.reserve({ id, tokenHash, sourceSha: base.sourceSha, baseRunId: base.runId, baseTag: base.tag, recipeId: compiled.recipeId, canonical: compiled.canonical, now: now() });
+      let reserved;
+      try { reserved = await jobs.reserve({ id, tokenHash, sourceSha: base.sourceSha, baseRunId: base.runId, baseTag: base.tag, recipeId: compiled.recipeId, canonical: compiled.canonical, discoveryId: discoveryLease.state === "owner" ? discoveryId : null, now: now() }); }
+      catch {
+        await jobs.releaseDiscovery({ sourceSha: base.sourceSha, recipeId: compiled.recipeId, id: discoveryId, now: now() });
+        return response(409, { error: "existing_delivery_conflict", download_ready: false }, cors);
+      }
       const job = reserved.job;
       if (!reserved.deduplicated) {
         try {
@@ -503,7 +586,38 @@ export class GitHubBuilds {
     if (commit.sha !== sourceSha) throw new GitHubHttpError(409);
     await this.api("/actions/workflows/customize.yml/dispatches", { method: "POST", body: JSON.stringify({ ref: tag, inputs: { recipe, base_build_run_id: String(baseRunId), request_id: requestId } }) });
   }
-  async status({ requestId, sourceSha, baseRunId, recipeId, resolved, expectedRunId = null, evidence = null }) {
+  async discoverVerifiedDelivery({ sourceSha, baseRunId, baseTag, recipeId, resolved }) {
+    if (!SHA.test(sourceSha || "") || !Number.isInteger(baseRunId) || baseRunId <= 0 || !TAG.test(baseTag || "") || !RECIPE_ID.test(recipeId || "")) throw new Error("invalid discovery identity");
+    const suffix = recipeId.slice("sha256:".length);
+    const manifestName = `AurOS-Custom-${suffix}.json`;
+    const installerName = `AurOS-Custom-${suffix}.exe`;
+    const release = await this.api(`/releases/tags/${encodeURIComponent(baseTag)}`);
+    const manifests = (release.assets || []).filter((asset) => asset.name === manifestName);
+    const installers = (release.assets || []).filter((asset) => asset.name === installerName);
+    if (manifests.length === 0 && installers.length === 0) return { state: "absent" };
+    if (manifests.length !== 1 || installers.length !== 1) return { state: "invalid", failure: "existing_delivery_assets_invalid" };
+    const manifestAsset = manifests[0];
+    const expectedApi = `https://api.github.com/repos/${this.repository}/releases/assets/${manifestAsset.id}`;
+    const expectedUrl = `https://github.com/${this.repository}/releases/download/${baseTag}/${manifestName}`;
+    if (!Number.isInteger(release.id) || release.id <= 0 || release.tag_name !== baseTag || release.prerelease !== true || release.draft === true || !Number.isInteger(manifestAsset.id) || manifestAsset.id <= 0 || manifestAsset.url !== expectedApi || manifestAsset.browser_download_url !== expectedUrl || !Number.isInteger(manifestAsset.size) || manifestAsset.size <= 0 || manifestAsset.size > RECIPE_LIMIT) return { state: "invalid", failure: "existing_delivery_assets_invalid" };
+    let locator;
+    try {
+      const response = await this.request(expectedApi, { headers: { accept: "application/octet-stream" }, followSigned: true });
+      if (!response.ok) throw new Error("manifest download failed");
+      const raw = await readLimited(response, RECIPE_LIMIT);
+      locator = strictJson(new TextDecoder("utf-8", { fatal: true }).decode(raw));
+    } catch {
+      return { state: "invalid", failure: "existing_delivery_locator_invalid" };
+    }
+    const requestId = locator?.request_id;
+    const runId = integer(locator?.source?.workflow_run_id);
+    if (!JOB_ID.test(requestId || "") || runId === null) return { state: "invalid", failure: "existing_delivery_locator_invalid" };
+    const verdict = await this.status({ requestId, sourceSha, baseRunId, recipeId, resolved, expectedRunId: runId, expectedBaseTag: baseTag });
+    if (verdict.state === "download-ready") return verdict;
+    if (["queued", "running", "not-found"].includes(verdict.state)) return { state: "unavailable", failure: "existing_delivery_not_ready" };
+    return { state: "invalid", failure: verdict.failure || "existing_delivery_invalid" };
+  }
+  async status({ requestId, sourceSha, baseRunId, recipeId, resolved, expectedRunId = null, evidence = null, expectedBaseTag = null }) {
     let run;
     let signed = [];
     let immutable = [];
@@ -538,7 +652,8 @@ export class GitHubBuilds {
     const suffix = recipeId.slice("sha256:".length);
     const manifestName = `AurOS-Custom-${suffix}.json`;
     const installerName = `AurOS-Custom-${suffix}.exe`;
-    const releases = evidence ? [await this.api(`/releases/tags/${encodeURIComponent(evidence.releaseTag || "")}`)] : await this.api("/releases?per_page=20");
+    const exactTag = evidence?.releaseTag || expectedBaseTag;
+    const releases = exactTag ? [await this.api(`/releases/tags/${encodeURIComponent(exactTag)}`)] : await this.api("/releases?per_page=20");
     const candidates = releases.filter((release) => (release.assets || []).some((asset) => asset.name === manifestName));
     if (candidates.length !== 1) return { state: "failed", runId: run.id, failure: "delivery_manifest_missing" };
     const release = candidates[0];
@@ -551,7 +666,7 @@ export class GitHubBuilds {
     const expectedManifestUrl = `https://github.com/${this.repository}/releases/download/${release.tag_name}/${manifestName}`;
     const expectedAssetApi = `https://api.github.com/repos/${this.repository}/releases/assets/${manifestAsset.id}`;
     const expectedInstallerApi = `https://api.github.com/repos/${this.repository}/releases/assets/${installerAsset.id}`;
-    if (!Number.isInteger(release.id) || release.id <= 0 || !TAG.test(release.tag_name || "") || release.draft === true || release.prerelease !== true ||
+    if (!Number.isInteger(release.id) || release.id <= 0 || !TAG.test(release.tag_name || "") || (expectedBaseTag !== null && release.tag_name !== expectedBaseTag) || release.draft === true || release.prerelease !== true ||
         !Number.isInteger(manifestAsset.id) || manifestAsset.id <= 0 || manifestAsset.url !== expectedAssetApi ||
         !Number.isInteger(manifestAsset.size) || manifestAsset.size <= 0 || manifestAsset.size > RECIPE_LIMIT ||
         manifestAsset.browser_download_url !== expectedManifestUrl ||

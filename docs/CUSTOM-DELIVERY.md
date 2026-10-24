@@ -105,6 +105,44 @@ Keep at least one fully green, released base younger than 30 days. Rebuild and
 release a base before expiry; do not delete its tag, prerelease, or required
 artifacts while requests may use it.
 
+### Pre-certify common recipes
+
+An operator can run `.github/workflows/customize.yml` before a person asks for
+a common combination. This saves that person's build, signing-approval, and
+Windows-certification wait. It does not create or bypass a public receipt.
+Finish pre-certification before advertising the combination or accepting public
+requests for it; do not race an operator dispatch against a public submission.
+
+1. Use the exact base run, source, and prerelease tag that the public service
+   will select. A newer eligible base changes the delivery identity.
+2. Generate a new lowercase UUID for `request_id` and retain it with the
+   operator record. Never leave `request_id` empty. An empty/null identity
+   cannot be correlated or adopted safely.
+3. Dispatch `customize.yml` at that exact verified base tag with the strict
+   canonical desktop recipe, the matching base build run ID, and that UUID.
+4. Approve both SignPath requests. Wait for both certification jobs and
+   `publish` to succeed. Confirm the immutable `auros-custom-delivery` artifact
+   and the recipe-named release `.exe` and `.json` exist.
+5. Within the immutable artifact's 30-day retention window, submit the same
+   recipe once through the ordinary public flow. Its proof and network/global
+   quota still apply. The service treats the release manifest only as a locator,
+   verifies the original run, every gate, signed and immutable artifacts, tag,
+   source, and current asset digest, then atomically records the canonical
+   delivery and returns a normal 24-hour receipt. It must not dispatch another
+   customization run.
+
+Discovery for one exact base and recipe is serialized. A concurrent public
+submission receives `existing_delivery_busy` and may retry through the normal
+proof-and-quota flow; it cannot make a second discovery or dispatch while the
+first submission is adopting or reserving that delivery.
+
+This same path can recover a lost canonical Durable Object record while the
+immutable artifact remains available. After that artifact expires, mutable
+release assets alone cannot prove the original delivery. The occupied recipe
+filenames then fail closed and must not be overwritten or rebuilt under a new
+request identity. Partial assets, an invalid UUID, a foreign or failed run, or
+any evidence mismatch also fail closed and consume the already-admitted quota.
+
 ## Configuration, quotas, and receipts
 
 Set `BUILD_ALLOWED_ORIGIN` to the one exact HTTPS website origin, with no path.

@@ -56,6 +56,9 @@ export class BuildJobs extends DurableObject {
   update(a) { return this.l.update(a); }
   delivery(a) { return this.l.delivery(a); }
   deliveryForRecipe(a) { return this.l.deliveryForRecipe(a); }
+  beginDiscovery(a) { return this.l.beginDiscovery(a); }
+  releaseDiscovery(a) { return this.l.releaseDiscovery(a); }
+  adoptDelivery(a) { return this.l.adoptDelivery(a); }
   saveDelivery(a) { return this.l.saveDelivery(a); }
   abandonDelivery(a) { return this.l.abandonDelivery(a); }
   async alarm() {
