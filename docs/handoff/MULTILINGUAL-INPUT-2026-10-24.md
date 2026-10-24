@@ -93,3 +93,18 @@ not cached trust by client resource base, because X IDs can be reused. Bind
 to a focus epoch, revoke on every focus transition, and require a real
 unmap/remap before rebinding. If the real panel remains mapped across focus
 changes, a narrow popup exception is insufficient; do not relax those rules.
+
+Run `40134236489` passed after correcting QueryExtension's wire offsets.
+XRes 1.2 authenticated PID 6248's candidate window `0x0060000f`, mapped
+override-redirect, 635 by 77 at (0,0). Default-panel quiescence, exact spawned
+PID, complete transient-process cleanup, shipped IBus restoration, and both
+canonical composition rounds passed. This proves identity, not chooser
+visibility.
+
+The next retained-image diagnostic proves native application focus A to B to
+A with an exact QMP-injected saved byte. It requires the old candidate to
+unmap and every panel window to be unmapped away; return requires exactly
+one freshly XRes-authenticated candidate from the retained process. A new
+XID is acceptable with fresh authentication. Mapped-away or ambiguous states
+stop the experiment. Sixteen parser tests, 47 harness checks and independent
+security review pass; runtime lifecycle evidence is still pending.
