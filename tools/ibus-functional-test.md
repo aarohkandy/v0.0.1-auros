@@ -8,7 +8,7 @@ This check is evidence for a built and booted `multilingual` image. Passing
 
        systemctl --user is-active auros-ibus.service
        systemctl --user show-environment | grep -E '^(GTK_IM_MODULE|QT_IM_MODULE|XMODIFIERS|WAYLAND_DISPLAY|DISPLAY)='
-       ibus list-engine | grep -E '(^|:)pinyin($|:)'
+       ibus list-engine | grep -E '(^|[[:space:]:])pinyin([[:space:]]|$)'
 
    The service must be `active`, all three input-method variables must have
    the values from `/etc/auros/input-method.env`, and a Pinyin engine must be
@@ -44,3 +44,13 @@ This check is evidence for a built and booted `multilingual` image. Passing
 
 Until both application checks pass after a restart, report the edition as
 “IBus wiring present; functional input unproven,” not as working Pinyin.
+
+The boot harness automates this exact check when explicitly requested:
+
+    sudo env PROFILETEST_IBUS_FUNCTIONAL=1 \
+      sh tools/profiletest.sh boot multilingual out/profiletest-multilingual
+
+The ordinary profile boot remains a single, cheaper boot. The functional mode
+uses QMP's USB keyboard for all typed text, keeps screenshots of each candidate
+selection, validates Mousepad's exact UTF-8 file and Firefox's exact local form
+request, then reboots the same scratch disk and repeats both checks.

@@ -13,6 +13,8 @@
 #            push changed profiles/, tools/profiletest* or this file. A
 #            change to one of the four profile files builds only that
 #            one; desktop.profile, which they all inherit, builds all.
+#            [ibus-functional] adds multilingual and makes only that job
+#            perform the opt-in two-boot Mousepad and Firefox Pinyin proof.
 #   lint     seconds: tools/profiletest.sh selftest (every check fails
 #            on broken input) and lint (every package exists, no snap
 #            stubs, no unknown excludes) -- before an hour of builds.
@@ -55,6 +57,7 @@ jobs:
     outputs:
       go: ${{ steps.g.outputs.go }}
       list: ${{ steps.g.outputs.list }}
+      ibus_functional: ${{ steps.g.outputs.ibus_functional }}
     steps:
       - id: g
         env:
@@ -63,7 +66,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           all="office revive school-kiosk multilingual"
-          go=false; want=""
+          go=false; want=""; ibus_functional=false
           SUBJ=${MSG%%$'\n'*}
           case "$SUBJ" in
             *'[profiles'*)
@@ -73,6 +76,12 @@ jobs:
                 case " $all " in *" $p "*) want="$want $p" ;; esac
               done
               [ -n "$want" ] || want=$all ;;
+          esac
+          case "$SUBJ" in
+            *'[ibus-functional]'*)
+              ibus_functional=true; go=true
+              case " $want " in *' multilingual '*) : ;; *) want="$want multilingual" ;; esac
+              ;;
           esac
           case "$BEFORE" in
             ''|0000000000000000000000000000000000000000)
@@ -91,7 +100,7 @@ jobs:
             fi
           fi
           list=$(printf '%s\n' $want | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
-          { echo "go=$go"; echo "list=$list"; } | tee -a "$GITHUB_OUTPUT"
+          { echo "go=$go"; echo "list=$list"; echo "ibus_functional=$ibus_functional"; } | tee -a "$GITHUB_OUTPUT"
 
   lint:
     needs: gate
@@ -221,7 +230,12 @@ jobs:
 
       - name: boot it to its desktop under KVM
         run: |
-          sudo env PATH="$PATH" sh tools/profiletest.sh boot "$P" "$PWD/ev" 2>&1 | tee "ev/$P-boot.txt"
+          ibus_functional=0
+          if [ "${{ needs.gate.outputs.ibus_functional }}" = true ] && [ "$P" = multilingual ]; then
+            ibus_functional=1
+          fi
+          sudo env PATH="$PATH" PROFILETEST_IBUS_FUNCTIONAL="$ibus_functional" \
+            sh tools/profiletest.sh boot "$P" "$PWD/ev" 2>&1 | tee "ev/$P-boot.txt"
 
       - name: publish the evidence
         if: ${{ !cancelled() }}
@@ -229,10 +243,16 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" ev
           cat "ev/$P-size.txt" "ev/$P-image.txt" >> "ev/$P-image.txt.new" 2>/dev/null || true
           [ -f "ev/$P-image.txt.new" ] && mv -f "ev/$P-image.txt.new" "ev/$P-image.txt"
+          if [ -d ev/ibus ]; then
+            tar -C ev -czf "ev/$P-ibus-evidence.tar.gz" ibus
+          fi
           ls -la ev
           files=()
           for f in "ev/$P.png" "ev/$P-report.txt" "ev/$P-image.txt" "ev/$P-serial.txt" \
                    "ev/$P-boot.txt" "ev/$P-build.log.gz" "ev/$P-size.txt"; do
+            [ -f "$f" ] && files+=("$f")
+          done
+          for f in ev/ibus-round*-candidate.png "ev/$P-ibus-evidence.tar.gz"; do
             [ -f "$f" ] && files+=("$f")
           done
           [ "${#files[@]}" -gt 0 ] && gh release upload "$TAG" "${files[@]}" --clobber
