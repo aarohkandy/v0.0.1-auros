@@ -5,6 +5,7 @@
     python3 -I tools/releasegate.py harden ROWS RUN-ID   did the hardening boot of THIS build's image pass?
     python3 -I tools/releasegate.py e2e JOBS             did a real Windows install THIS AurOS-Setup.exe, base AND bitlocker?
     python3 -I tools/releasegate.py selftest             each rule refuses what it exists to refuse
+    python3 -I tools/releasegate.py signed VALUE         public promotion requires this publish's signed=true
 
 JOBS is the build run's job list (release.yml's `which` job fetches it
 from the Actions API); ALLOW is .github/ci-allow.txt; TODAY is a UTC date
@@ -150,6 +151,13 @@ def judge_harden(rows_text, rid):
             "hardenboottest or timeboottest: dispatch harden with only=all)" % (rid, ", ".join(b for _, b in mine))]
 
 
+def judge_signature(value):
+    return [] if value == "true" else [
+        "this publish's installer is not verified signed; keep the prerelease and configure "
+        "both SignPath stages (docs/SIGNING.md section 4) before a new [release] [latest]"
+    ]
+
+
 def selftest():
     h = {"r": "2026-10-24T01:00:00Z", "o": "2026-10-24T00:00:00Z"}
     def hc(what, rows, want_refused, rid="900"):
@@ -158,6 +166,11 @@ def selftest():
         print("    %-62s %s" % (what, "ok" if got == want_refused else "FAIL"))
         bad += got != want_refused
     bad = 0
+    for value in ("true", "false", "", "True", "success", " true", "true\n"):
+        passed = not judge_signature(value)
+        expected = value == "true"
+        print("    signing state %-48r %s" % (value, "ok" if passed == expected else "FAIL"))
+        bad += passed != expected
     def ec(what, jobs, want_refused):
         nonlocal bad
         got = bool(judge_e2e("\n".join(jobs)))
@@ -236,6 +249,13 @@ def selftest():
 def main(argv):
     if len(argv) > 1 and argv[1] == "selftest":
         return selftest()
+    if len(argv) > 1 and argv[1] == "signed":
+        if len(argv) != 3:
+            return 2
+        why = judge_signature(argv[2])
+        for w in why:
+            print("releasegate: REFUSED:", w, file=sys.stderr)
+        return 1 if why else 0
     if len(argv) > 1 and argv[1] == "e2e":
         if len(argv) != 3:
             print(__doc__, file=sys.stderr)

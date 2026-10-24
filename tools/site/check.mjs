@@ -664,7 +664,7 @@ for (const [at, want] of [
     release: (() => { const y = read(".github/workflows/release.yml"); const p = (y.match(/\n  promote:\n[\s\S]*?(?=\n  [a-z][\w-]*:\n)/) || [""])[0];
       // promote waits for the e2e job and asks the jobs themselves (tools/releasegate.py e2e: the real-Windows
       // journey of THIS exe passed), and the site is deployed only after promote
-      return /needs: \[[^\]]*\be2e\b/.test(p) && /releasegate\.py e2e/.test(p) && /\n  pages:\n\s+needs: promote/.test(y) ? "tested" : "untested"; })(),
+      return /needs: \[[^\]]*\be2e\b/.test(p) && /releasegate\.py e2e/.test(p) && /needs\.publish\.outputs\.signed/.test(p) && /releasegate\.py signed "\$SIGNED"/.test(p) && /\n  pages:\n\s+needs: promote/.test(y) ? "tested" : "untested"; })(),
   });
   const CLAIMS = claimsFor(DEFAULT_FAST);
   const UI = {

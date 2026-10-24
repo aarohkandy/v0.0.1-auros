@@ -110,7 +110,9 @@ build unsigned wizard + outer
    `SIGNPATH_API_TOKEN` and `SIGNPATH_INNER_ARTIFACT_CONFIGURATION_SLUG`; a
    missing inner configuration is a hard failure, never an outer-only signed
    release. With the organization variable absent, the unsigned path remains
-   available.
+   available for testing as a prerelease. Public `[latest]` promotion requires
+   this exact publish's `signed=true`; missing or false signature state fails
+   promotion explicitly and leaves the prerelease intact.
 2. The shared signer accepts only an installer built in the same workflow run.
    Ordinary releases enter through a `[release]` build; personalized packaging
    uses the same signer and verification chain.
