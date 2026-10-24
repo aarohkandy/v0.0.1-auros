@@ -257,6 +257,13 @@ MUTANTS = [
      "        int csd = (xr32(data) & 2) && xr32(data + 8) == 0;", "        int csd = 0;", XWM),
     ("hints that do not mention decorations take them away", "x:frameless",
      "        int csd = (xr32(data) & 2) && xr32(data + 8) == 0;", "        int csd = xr32(data + 8) == 0;", XWM),
+    # ── W29: x:client-configure had no mutant ──
+    ("a program's own resize is granted where it asked, not at (0,0)", "x:client-configure",
+     "        x_configure(m, win, XC_X | XC_Y | XC_W | XC_H, 0, 0, nw, nh);\n        w->cfg_w = nw;", "        x_configure(m, win, XC_X | XC_Y | XC_W | XC_H, x, y, nw, nh);\n        w->cfg_w = nw;", XWM),
+    ("a resize that changes nothing is not answered (ICCCM)", "x:client-configure",
+     "        if (!changed) {                                 /* ICCCM: tell it where it is */", "        if (0) {", XWM),
+    ("an absurd size asked by a program is passed on", "x:client-configure",
+     "        nw = xw_clamp_dim(nw, 0, 0, 0, 0); nh = xw_clamp_dim(nh, 0, 0, 0, 0);\n", "", XWM),
     # ── the clipboard (src/aurwl/xclip.inc), the same scenarios ──
     ("the window manager never claims CLIPBOARD for a Wayland program's copy", "x:clip-text-wl-to-x",
      "    m->clip_wl = 1;\n    xflush(m);", "    xflush(m);", XCLIP),

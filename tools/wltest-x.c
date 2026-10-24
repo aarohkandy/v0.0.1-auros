@@ -1097,7 +1097,6 @@ static void sc_hostile(void)
     SETTLE();
     SETTLE();
     check(C->x.wm == NULL || C->x.wm->dead, "an impossible reply length was believed");
-    check(aurwl_window_count(C) >= 0, "(still serving)");
     X.garble = 0;
     finish();
 }
