@@ -33,6 +33,12 @@ name: profiles
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      retained_multilingual_run_id:
+        description: Exact completed main profiles run whose retained multilingual image to diagnose
+        required: true
+        type: string
 
 # contents: write is for the jobs that make or fill a release, and only
 # those (SEC-005): a job that runs a lot of code cannot replace what a
@@ -53,6 +59,7 @@ defaults:
 
 jobs:
   gate:
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -92,7 +99,7 @@ jobs:
           esac
           printf '%s\n' "$files" > /tmp/files.txt
           if [ "$go" = false ]; then
-            if grep -qE '^(profiles/desktop\.profile|tools/profiletest[^/]*|\.github/workflows/profiles\.yml)$' /tmp/files.txt; then
+            if grep -qE '^(profiles/desktop\.profile|tools/profiletest[^/]*|tools/(profile_image|test_profile_image)\.py|\.github/workflows/profiles\.yml)$' /tmp/files.txt; then
               go=true; want=$all
             else
               for p in $all; do
@@ -112,6 +119,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: every check refuses what it exists to refuse
         run: sh tools/profiletest.sh selftest
+      - name: retained image evidence rejects substitutions
+        run: python3 -m unittest -v tools/test_profile_image.py
       - name: every profile asks only for what its suite has
         run: sh tools/profiletest.sh lint office revive school-kiosk multilingual desktop
       - name: one verified evidence release feeds at most two build lanes
@@ -121,16 +130,31 @@ jobs:
 
           text = Path(".github/workflows/profiles.yml").read_text(encoding="utf-8")
           evidence = text.split("\n  evidence:\n", 1)[1].split("\n  profile:\n", 1)[0]
-          profile = text.split("\n  profile:\n", 1)[1].split("\n  summary:\n", 1)[0]
+          profile = text.split("\n  profile:\n", 1)[1].split("\n  ibus-retest:\n", 1)[0]
+          retest = text.split("\n  ibus-retest:\n", 1)[1].split("\n  summary:\n", 1)[0]
+          prune = text.split("\n  prune:\n", 1)[1]
           checks = {
-              "exactly one job creates the evidence release":
-                  text.count("gh release " + "create") == 1,
+              "exactly one normal job creates the evidence release":
+                  evidence.count("gh release " + "create") == 1,
               "the setup job verifies its release":
                   'gh release view "$TAG"' in evidence,
               "profiles wait for the verified release":
                   "needs: [gate, lint, evidence]" in profile,
               "the matrix uses the repository-wide two-lane limit":
                   "max-parallel: 2" in profile,
+              "the immutable anchor precedes mutable publication":
+                  profile.index("name: profile-$" + "{{ matrix.profile }}") <
+                  profile.index("- name: publish the evidence"),
+              "retained pieces publish before their eligibility manifest":
+                  profile.index('gh release upload "$TAG" "${pieces[@]}"') <
+                  profile.index('gh release upload "$TAG" ev/multilingual-image-v1.json'),
+              "the isolated diagnostic creates and verifies its own release":
+                  retest.count("gh release " + "create") == 1 and
+                  'gh release view "$TAG"' in retest,
+              "build, diagnostic, and pruning share the multilingual lock":
+                  ("group: profiles-$" + "{{ github.ref }}-$" + "{{ matrix.profile }}") in profile and
+                  ("group: profiles-$" + "{{ github.ref }}-multilingual") in retest and
+                  ("group: profiles-$" + "{{ github.ref }}-multilingual") in prune,
           }
           failed = [message for message, ok in checks.items() if not ok]
           if failed:
@@ -266,7 +290,20 @@ jobs:
         run: |
           img="out/auros-$P.img"
           raw=$(stat -c %s "$img")
-          gz=$(pigz -9 -p "$(nproc)" -c "$img" | wc -c)
+          if [ "${{ needs.gate.outputs.ibus_functional }}" = true ] && [ "$P" = multilingual ]; then
+            mkdir -p ev/retained
+            packed=ev/retained/auros-multilingual.img.gz
+            pigz -9 -p "$(nproc)" -c "$img" > "$packed"
+            gz=$(stat -c %s "$packed")
+            split -b 94371840 -d -a 3 "$packed" ev/retained/auros-multilingual.img.gz.
+            python3 tools/profile_image.py create \
+              --image "$img" --gzip "$packed" --pieces ev/retained \
+              --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" \
+              --source-sha "$GITHUB_SHA" --output ev/multilingual-image-v1.json
+            rm -f "$packed"
+          else
+            gz=$(pigz -9 -p "$(nproc)" -c "$img" | wc -c)
+          fi
           {
             echo "image_bytes=$raw"
             echo "download_gzip9_bytes=$gz"
@@ -282,6 +319,17 @@ jobs:
           fi
           sudo env PATH="$PATH" PROFILETEST_IBUS_FUNCTIONAL="$ibus_functional" \
             sh tools/profiletest.sh boot "$P" "$PWD/ev" 2>&1 | tee "ev/$P-boot.txt"
+
+      # Upload the small immutable manifest before its mutable release pieces.
+      # A later diagnostic trusts this artifact, then checks each release asset.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: profile-${{ matrix.profile }}
+          path: |
+            ev/
+            !ev/retained/
+          if-no-files-found: ignore
 
       - name: publish the evidence
         if: ${{ !cancelled() }}
@@ -302,6 +350,18 @@ jobs:
             [ -f "$f" ] && files+=("$f")
           done
           [ "${#files[@]}" -gt 0 ] && gh release upload "$TAG" "${files[@]}" --clobber
+          # Pieces first and the manifest last: the manifest is the eligibility
+          # marker used by pruning, so a partial upload can never replace the
+          # preceding complete retained image.
+          if [ -f ev/multilingual-image-v1.json ]; then
+            pieces=()
+            for f in ev/retained/auros-multilingual.img.gz.*; do
+              [ -f "$f" ] && pieces+=("$f")
+            done
+            [ "${#pieces[@]}" -gt 0 ] || { echo "::error::retained image has no pieces"; exit 1; }
+            gh release upload "$TAG" "${pieces[@]}" --clobber
+            gh release upload "$TAG" ev/multilingual-image-v1.json --clobber
+          fi
           {
             echo "### $P"
             echo '```'
@@ -310,12 +370,137 @@ jobs:
             echo '```'
             echo "screenshot: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG/$P.png"
           } >> "$GITHUB_STEP_SUMMARY"
-      # The same files as an Actions artifact, so a release that could
-      # not be made never loses the evidence (gh run download fetches it).
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ !cancelled() }}
+  ibus-retest:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    timeout-minutes: 75
+    concurrency:
+      # The same lane as a multilingual build: retention/pruning cannot
+      # replace the source while a diagnostic is reading it.
+      group: profiles-${{ github.ref }}-multilingual
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: profiles-${{ github.run_id }}
+      SOURCE_RUN: ${{ inputs.retained_multilingual_run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: accept only one completed main profiles run from this repository
+        id: source
+        run: |
+          [ "$GITHUB_REF" = refs/heads/main ] \
+            || { echo "::error::retained image diagnostics run only from main"; exit 2; }
+          [[ "$SOURCE_RUN" =~ ^[1-9][0-9]{0,19}$ ]] \
+            || { echo "::error::retained_multilingual_run_id must be a decimal Actions run id"; exit 2; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" > "$RUNNER_TEMP/source-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts?per_page=100" \
+            > "$RUNNER_TEMP/source-artifacts.json"
+          python3 tools/profile_image.py source \
+            --run-json "$RUNNER_TEMP/source-run.json" \
+            --artifacts-json "$RUNNER_TEMP/source-artifacts.json" \
+            --repository "$GITHUB_REPOSITORY" --run-id "$SOURCE_RUN" \
+            --github-output "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: profile-${{ matrix.profile }}
+          artifact-ids: ${{ steps.source.outputs.artifact_id }}
+          run-id: ${{ inputs.retained_multilingual_run_id }}
+          github-token: ${{ github.token }}
+          path: retained-anchor
+      - name: immutable manifest agrees with bounded release assets
+        run: |
+          [ -f retained-anchor/multilingual-image-v1.json ] \
+            || { echo "::error::source artifact has no retained multilingual image manifest"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/profiles-$SOURCE_RUN" \
+            > "$RUNNER_TEMP/source-release.json"
+          python3 tools/profile_image.py plan \
+            --anchor retained-anchor/multilingual-image-v1.json \
+            --release-json "$RUNNER_TEMP/source-release.json" \
+            --repository "$GITHUB_REPOSITORY" --run-id "$SOURCE_RUN" \
+            --source-sha "${{ steps.source.outputs.source_sha }}" \
+            --download-plan "$RUNNER_TEMP/download-plan.tsv"
+      - name: room, tools, KVM
+        run: |
+          mkdir -p ev out
+          ( sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+              /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift \
+              /usr/local/share/chromium /usr/local/julia* 2>/dev/null; echo removed > /tmp/freed ) &
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          for i in 1 2 3; do
+            sudo timeout 300 apt-get update -q &&
+            sudo DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y -q --no-install-recommends \
+              zstd gdisk dosfstools mtools e2fsprogs qemu-system-x86 qemu-utils ovmf python3 && break
+            [ "$i" = 3 ] && exit 1; sleep 15
+          done
+          while [ ! -f /tmp/freed ]; do sleep 2; done
+          ls -l /dev/kvm; df -h /
+      - name: download and restore the exact retained image
+        run: |
+          mkdir -p retained-download
+          while IFS=$'\t' read -r asset_id name bytes; do
+            gh api -H 'Accept: application/octet-stream' \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "retained-download/$name"
+            [ "$(stat -c %s "retained-download/$name")" = "$bytes" ] \
+              || { echo "::error::release asset $asset_id changed size during download"; exit 1; }
+          done < "$RUNNER_TEMP/download-plan.tsv"
+          python3 tools/profile_image.py restore \
+            --anchor retained-anchor/multilingual-image-v1.json \
+            --release-manifest retained-download/multilingual-image-v1.json \
+            --pieces retained-download --output out/auros-multilingual.img
+      - name: make and verify this diagnostic run's evidence release
+        run: |
+          mk() { gh release create "$TAG" --prerelease --target "$1" \
+                   --title "profiles: retained multilingual diagnostic, run $GITHUB_RUN_ID" \
+                   --notes "Diagnostic only. Image: run $SOURCE_RUN. Test code: $GITHUB_SHA."; }
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            if ! mk "$GITHUB_SHA"; then
+              gh release view "$TAG" >/dev/null 2>&1 ||
+                mk main || { echo "::error::could not create diagnostic evidence release $TAG"; exit 1; }
+            fi
+          fi
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || { echo "::error::diagnostic evidence release $TAG does not exist"; exit 1; }
+      - name: run the current functional harness against the retained image
+        id: diagnostic
+        run: |
+          set +e
+          sudo env PATH="$PATH" PROFILETEST_IBUS_FUNCTIONAL=1 \
+            sh tools/profiletest.sh boot multilingual "$PWD/ev" 2>&1 | tee ev/multilingual-boot.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          result=fail; [ "$rc" = 0 ] && result=pass
+          python3 tools/profile_image.py diagnostic \
+            --anchor retained-anchor/multilingual-image-v1.json \
+            --test-run-id "$GITHUB_RUN_ID" --test-source-sha "$GITHUB_SHA" \
+            --result "$result" --output ev/multilingual-retest-v1.json
+          echo "Diagnostic only: image source ${{ steps.source.outputs.source_sha }}; test source $GITHUB_SHA; result $result" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+      - name: publish diagnostic evidence with both source identities
+        if: ${{ always() && !cancelled() }}
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" ev
+          files=()
+          for f in ev/multilingual-retest-v1.json ev/multilingual.png ev/multilingual-report.txt \
+                   ev/multilingual-image.txt ev/multilingual-serial.txt ev/multilingual-boot.txt \
+                   ev/ibus-round*-candidate.png; do
+            [ -f "$f" ] && files+=("$f")
+          done
+          if [ -d ev/ibus ]; then
+            tar -C ev -czf ev/multilingual-ibus-evidence.tar.gz ibus
+            files+=(ev/multilingual-ibus-evidence.tar.gz)
+          fi
+          [ "${#files[@]}" -gt 0 ] && gh release upload "$TAG" "${files[@]}" --clobber
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() && !cancelled() }}
+        with:
+          name: profile-multilingual-diagnostic
           path: ev/
           if-no-files-found: ignore
 
@@ -350,11 +535,46 @@ jobs:
           } > notes.md
           cat notes.md | tee -a "$GITHUB_STEP_SUMMARY"
           gh release edit "$TAG" --notes-file notes.md
-      - name: keep the newest four profiles-* prereleases
+
+  prune:
+    needs: [gate, profile]
+    if: ${{ always() && needs.gate.outputs.go == 'true' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    timeout-minutes: 10
+    # Publication, retained-image diagnostics, and deletion share one lock.
+    # No summary can remove an image while a diagnostic is downloading it.
+    concurrency:
+      group: profiles-${{ github.ref }}-multilingual
+      cancel-in-progress: false
+    env:
+      TAG: profiles-${{ github.run_id }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: keep four recent runs and at most one retained multilingual image
         run: |
-          gh release list --limit 100 --json tagName,createdAt \
-              --jq '[.[] | select(.tagName | startswith("profiles-"))] | sort_by(.createdAt) | reverse | .[4:] | .[].tagName' |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.tag_name | startswith("profiles-")) | [.tag_name,.created_at] | @tsv' |
+            sort -t $'\t' -k2,2r | cut -f1 > "$RUNNER_TEMP/profile-tags"
+          retained=""
           while read -r t; do
+            gh release view "$t" --json assets --jq '.assets[].name' > "$RUNNER_TEMP/assets" 2>/dev/null || true
+            if [ -z "$retained" ] && grep -qx multilingual-image-v1.json "$RUNNER_TEMP/assets"; then
+              retained=$t
+              continue
+            fi
+            # Pieces first, the manifest last. If GitHub interrupts cleanup,
+            # the next run still sees the manifest and finishes the job.
+            { grep -E '^auros-multilingual\.img\.gz\.[0-9]{3}$' "$RUNNER_TEMP/assets" || true; } |
+              while read -r asset; do gh release delete-asset "$t" "$asset" --yes; done
+            if grep -qx multilingual-image-v1.json "$RUNNER_TEMP/assets"; then
+              gh release delete-asset "$t" multilingual-image-v1.json --yes
+            fi
+          done < "$RUNNER_TEMP/profile-tags"
+          tail -n +5 "$RUNNER_TEMP/profile-tags" | while read -r t; do
             [ "$t" = "$TAG" ] && continue
+            [ -n "$retained" ] && [ "$t" = "$retained" ] && continue
             gh release delete "$t" --cleanup-tag --yes || true
           done
