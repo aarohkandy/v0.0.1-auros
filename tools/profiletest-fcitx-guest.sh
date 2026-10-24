@@ -308,7 +308,7 @@ mouse_pid=
 
 FORM="$RUNTIME/form"; mkdir -p "$FORM" "$RUNTIME/firefox-profile"
 cat > "$FORM/index.html" <<'EOF'
-<!doctype html><meta charset="utf-8"><style>html,body,form{width:100%;height:100%;margin:0}form{position:relative;background:#01dead}input{position:absolute;left:15%;top:50%;width:70%;height:140px;font-size:48px}</style><form method="get" autocomplete="off"><input name="text" autocomplete="off" autofocus aria-label="Pinyin test"><button hidden>Submit</button></form>
+<!doctype html><meta charset="utf-8"><style>html,body,form{width:100%;height:100%;margin:0}form{position:relative;background:#01dead}input{position:absolute;left:15%;top:calc(50% - 70px);width:70%;height:140px;font-size:48px}</style><form method="get" autocomplete="off"><input name="text" autocomplete="off" autofocus aria-label="Pinyin test"><button hidden>Submit</button></form>
 EOF
 cat > "$RUNTIME/firefox-profile/user.js" <<'EOF'
 user_pref("browser.shell.checkDefaultBrowser", false);

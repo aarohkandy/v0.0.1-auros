@@ -959,11 +959,13 @@ if not preflight < mouse_focus < mouse_select < firefox_focus < firefox_select:
 helper = text[text.index('select_exact_pinyin()'):text.index('restore_and_finish()')]
 if 'fcitx5-remote -s pinyin' not in helper or 'fcitx5-remote -n' not in helper:
     raise SystemExit("focused selector must set and verify the exact engine")
+if 'top:calc(50% - 70px)' not in text or 'height:140px' not in text:
+    raise SystemExit("Firefox field must be centered on the measured form click point")
 EOPY
     then
-        printf '    %-62s %s\n' "Fcitx selects Pinyin only after each field has focus" "passes"
+        printf '    %-62s %s\n' "Fcitx centers each field before focused Pinyin selection" "passes"
     else
-        printf '    %-62s %s\n' "Fcitx selects Pinyin only after each field has focus" "FAIL"
+        printf '    %-62s %s\n' "Fcitx centers each field before focused Pinyin selection" "FAIL"
         fail=$((fail+1))
     fi
     checked=$((checked+1))
