@@ -23,8 +23,8 @@ The completed path must connect request, validation, consent, artifact identity,
 ### Stage 1 Restore release correctness
 
 - [ ] Unit owner: reproduce RC7 font/hardware/layout/Ferry failures; fix product or test root causes without weakening gates.
-- [ ] Compositor owner: reproduce uncaught mutants, repair relevant code/tests, prove intended breakages are caught.
-- [ ] Wishes UI owner: reproduce failed UI cases; fix without enabling the disabled production feature.
+- [x] Compositor owner: reproduce uncaught mutants, repair relevant code/tests, prove intended breakages are caught. Integrated image CI passes all four mutation shards and checks.
+- [x] Wishes UI owner: reproduce failed UI cases; fix without enabling the disabled production feature. Integrated image CI passes UI and voice suites.
 - [ ] Installer safety owner: recover S-04, refuse before table commit when boot-entry creation fails, verify byte preservation and fault paths.
 - [ ] Bootstrapper owner: recover B's protected Windows loader design and validate real Windows hostile-DLL/junction cases.
 - [ ] Lead: integrate CIW regression coverage and verify the tests exercised match the shipped path.
@@ -32,7 +32,7 @@ The completed path must connect request, validation, consent, artifact identity,
 
 ### Stage 2 Build a reusable customization path
 
-- [ ] Contract owner: strict schema, stable profile catalogue, deterministic compilation, policy preservation, hostile-input tests.
+- [x] Contract owner: strict schema, stable profile catalogue, deterministic compilation, policy preservation, hostile-input tests. Cross-Python depth behavior and dirty-CI fixture repair are included in the follow-up checkpoint.
 - [ ] Website owner: accessible request/review flow, honest artifact status, no fake queue or AI result; keep public download gating intact.
 - [ ] Delivery adapter: choose and implement authenticated recipe transport to the installer; pin base artifact and configuration digest; reject mismatches, stale/unsupported recipes and downgrade attempts.
 - [ ] Installer/first-boot adapter: apply only allowlisted preferences, retain policy constraints and rollback behavior, confirm requested result in the installed system.
@@ -82,6 +82,12 @@ These questions do not block repairing current release tests or installer safety
 ## Credit efficiency update
 
 The owner explicitly prioritized credit efficiency during implementation. Finish assigned critical-path work without expanding the agent tree, reuse existing reviews and evidence, avoid redundant testing, and batch pushes to reduce repeated image CI builds. No automatic continuation or new paid service has been configured.
+
+## Integrated CI follow-up
+
+Build run `40117947027` at `a9588c78` built the image successfully. All 16 gating VM jobs, four power-cut jobs, four compositor mutation shards, compositor checks, Wishes UI/voice, and theft checks passed. The workflow remains failed because its unit job found the new page's missing shared footer, Python-version-dependent excessive-depth refusal, dirty-checkout recipe test fixtures, and remaining Ferry failures. Footer and recipe fixes are prepared; Ferry is being reproduced from this exact log. None of this is physical-PC proof or a public release.
+
+The Windows bootstrap remains on its own branch. Windows run `40117947925` proved hostile-DLL positive control and protected extraction, then found a junction mutation fixture blocked by a second independent guard. Test-only repair `9e4736ee` is under Windows run `40124061490`; production checks are unchanged. Two-stage SignPath code integration and actual baked installer recipe defaults are the next bounded implementation slices.
 
 ## Deferred security integration notes
 
