@@ -464,7 +464,10 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root
             && grep -qx 'listener_inode=exact_wayland_display' "$R/mousepad-connection.txt" 2>/dev/null \
             && grep -qx 'service_main_pid=exact_dbus_run_session' "$R/mousepad-connection.txt" 2>/dev/null \
             && grep -qx 'compositor_exe=exact_usr_bin_aurshell' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'compositor_in_service_cgroup=yes' "$R/mousepad-connection.txt" 2>/dev/null \
+            && grep -qx 'service_invocation_id=exact_systemd_property_and_environment' "$R/mousepad-connection.txt" 2>/dev/null \
+            && grep -qx 'service_control_group=exact_systemd_property' "$R/mousepad-connection.txt" 2>/dev/null \
+            && grep -qx 'pam_session_cgroup=exact_expected_user_session_scope' "$R/mousepad-connection.txt" 2>/dev/null \
+            && grep -qx 'compositor_in_pam_session_cgroup=yes' "$R/mousepad-connection.txt" 2>/dev/null \
             && grep -qx 'compositor_descends_from_service_main_pid=yes' "$R/mousepad-connection.txt" 2>/dev/null \
             && ok "Mousepad held one exact AurWL connection in round $round" \
             || bad "Mousepad held one exact AurWL connection in round $round" "pidfd/socket identity evidence missing"
@@ -1083,7 +1086,7 @@ EOPY
     for round in 1 2; do
         R="$security_fixture/evidence/round$round"; mkdir -p "$R"
         printf 'status=pass\n' > "$R/result"
-        printf 'status=pass\nchildren_at_boundaries=0\ncompositor_connections_at_boundaries=1\ntrace_writers_at_boundaries=1\npeer_pid=exact_aurshell\npeer_path=exact_wayland_display\nlistener_inode=exact_wayland_display\nservice_main_pid=exact_dbus_run_session\ncompositor_exe=exact_usr_bin_aurshell\ncompositor_in_service_cgroup=yes\ncompositor_descends_from_service_main_pid=yes\n' > "$R/mousepad-connection.txt"
+        printf 'status=pass\nchildren_at_boundaries=0\ncompositor_connections_at_boundaries=1\ntrace_writers_at_boundaries=1\npeer_pid=exact_aurshell\npeer_path=exact_wayland_display\nlistener_inode=exact_wayland_display\nservice_main_pid=exact_dbus_run_session\ncompositor_exe=exact_usr_bin_aurshell\nservice_invocation_id=exact_systemd_property_and_environment\nservice_control_group=exact_systemd_property\npam_session_cgroup=exact_expected_user_session_scope\ncompositor_in_pam_session_cgroup=yes\ncompositor_descends_from_service_main_pid=yes\nobserved_service_main_pid=100\nobserved_compositor_pid=102\nobserved_service_control_group=/system.slice/aurshell.service\nobserved_pam_session_control_group=/user.slice/user-1000.slice/session-c1.scope\n' > "$R/mousepad-connection.txt"
         printf 'initial_unmapped_before_b_input=yes\nmapped_candidate_while_away=no\nreturn_map_epoch=fresh\npopup_input_grab=no\nb_saved_sentinel=20\na_saved_file_unchanged=yes\n' > "$R/focus-lifecycle.txt"
         printf '20\n' > "$R/focus-b-sentinel.hex"
         printf 'candidate_popup_creations=0\ncandidate_popup_maps=0\ncandidate_popup_configures=0\ncandidate_popup_grabs=0\nobserved_candidate_popup=no\nascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' > "$R/password-suppression.txt"
@@ -1109,7 +1112,7 @@ EOPY
         printf '    %-62s %s\n' "complete bounded Fcitx security evidence" "REFUSED"; fail=$((fail+1))
     fi
     checked=$((checked+1))
-    sed '/^compositor_in_service_cgroup=yes$/d' \
+    sed '/^compositor_in_pam_session_cgroup=yes$/d' \
         "$security_fixture/evidence/round1/mousepad-connection.txt" \
         > "$security_fixture/evidence/round1/mousepad-connection.tmp"
     mv "$security_fixture/evidence/round1/mousepad-connection.tmp" \
@@ -1120,7 +1123,7 @@ EOPY
         printf '    %-62s %s\n' "Fcitx compositor outside authenticated service topology" "ACCEPTED"; fail=$((fail+1))
     fi
     checked=$((checked+1))
-    printf 'compositor_in_service_cgroup=yes\n' \
+    printf 'compositor_in_pam_session_cgroup=yes\n' \
         >> "$security_fixture/evidence/round1/mousepad-connection.txt"
     rm "$security_fixture/evidence/round2/focus-lifecycle.txt"
     if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
