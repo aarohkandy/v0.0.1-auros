@@ -38,6 +38,7 @@
 #include "aurstage.h"
 #include "handover-mount.h"
 #include "screen-stop.h"
+#include "transient-mount.h"
 
 /* ── the kernel command line ─────────────────────────────────────── */
 
@@ -603,14 +604,32 @@ static void reset_network(void)
 /* wr_scratch holds up to a gigabyte and a copy of the machine's EFI files here while the install
  * runs. The checked copy is on disk before handover, so retaining saved.bin in the /run carried
  * into AurOS only wastes RAM and exposes those files to the installed session. */
-static void forget_saved_scratch(void)
+static int remove_scratch_file(const char *path, void *ud)
 {
-    if (unlink("/run/aurstage/saved.bin") != 0 && errno != ENOENT)
+    (void)ud;
+    return unlink(path);
+}
+
+static int remove_scratch_dir(const char *path, void *ud)
+{
+    (void)ud;
+    return rmdir(path);
+}
+
+static int forget_saved_scratch(void)
+{
+    int rc = transient_scratch_cleanup("/run/aurstage/saved.bin", "/run/aurstage",
+                                       remove_scratch_file, remove_scratch_dir, NULL);
+    if (rc == TRANSIENT_FILE_FAILED) {
         stage_warn("could not release the saved start-up copy before handover (%s)",
                    strerror(errno));
-    if (rmdir("/run/aurstage") != 0 && errno != ENOENT && errno != ENOTEMPTY)
-        stage_warn("could not remove staging's scratch directory before handover (%s)",
-                   strerror(errno));
+        return -1;
+    }
+    if (rc != TRANSIENT_CLEAN) {
+        stage_warn("staging scratch remains before handover (%s)", strerror(errno));
+        return -1;
+    }
+    return 0;
 }
 
 int stage_switch_root(const char *root_dev)
@@ -712,7 +731,7 @@ int stage_switch_root(const char *root_dev)
         goto handover_failed;
     }
     reset_network();
-    forget_saved_scratch();
+    if (forget_saved_scratch() != 0) goto handover_failed;
 
     static const handover_mount CARRY[] = {
         { "/dev",  "/newroot/dev" },
