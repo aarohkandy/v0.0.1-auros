@@ -19,3 +19,4 @@ e80590e|aurwl: the Wayland clipboard was served to every X program at all times 
 402273f|the screen went dark in a VLC film or a Zoom call (no ScreenSaver inhibit); "Bigger text" never reached X programs
 63e1017a|same-boot installation preserves kernel hardening and rejects Windows environment kernel-argument injection
 2efb1d00|refuse before partition commit if boot entry creation fails; roll back failed same-boot mount moves
+5cc1b47|kernel32-only protected Windows bootstrap before loading the installer wizard

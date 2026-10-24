@@ -89,6 +89,8 @@ Build run `40117947027` at `a9588c78` built the image successfully. All 16 gatin
 
 The Windows bootstrap remains on its own branch. Windows run `40117947925` proved hostile-DLL positive control and protected extraction, then found a junction mutation fixture blocked by a second independent guard. Test-only repair `9e4736ee` is under Windows run `40124061490`; production checks are unchanged. Two-stage SignPath code integration and actual baked installer recipe defaults are the next bounded implementation slices.
 
+Follow-up: Windows run `40124061490` at `9e4736ee` passed all jobs. Its protected bootstrap is integrated as `5cc1b47`; this is Windows Server 2025 runner evidence, not a physical Windows 11 install/restart campaign. Recipe defaults and malformed-recipe refusal are integrated, with 18 combined customization tests passing. The build-script hookup and production nested signing remain pending the coordinated signing slice. Do not mark the full SEC-003 release journey closed yet.
+
 ## Deferred security integration notes
 
 S4's 41 held commits are not activation-ready. Preserve the disabled final runtime/test tree rather than replaying old CI wholesale. Missing setup/recovery/PAM and encrypted handover work, a filesystem-shrink power-cut window, and physical-machine evidence remain blockers. Ferry must not copy personal data while an empty temporary encryption key remains usable. The held workflow also needs pinned actions, minimal permissions and exact-build evidence before reuse.
