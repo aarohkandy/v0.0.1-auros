@@ -1452,6 +1452,7 @@ int main(int argc, char **argv)
         appwatch_pump();
         if (appwatch_due()) {
             int added[8];
+            int want_card = shell_want_ready_card(&c);     /* before the table changes under the indices */
             int k = shell_rescan_apps(&c, added, 8);
             if (k >= 0) {
                 fprintf(stderr, "aurshell: programs changed: %d on this "
@@ -1460,7 +1461,7 @@ int main(int argc, char **argv)
                 /* In her words, and the card is the shortcut: pressing
                  * it opens the program. Three at most -- a system update
                  * that adds a dozen helpers is not a dozen pieces of news. */
-                for (int i = 0; i < k && i < 3; i++) {
+                for (int i = 0; want_card && i < k && i < 3; i++) {
                     char sum[96];
                     snprintf(sum, sizeof sum, "%s is ready", c.apps[added[i]].name);
                     notify_local_open(sum, "Press here to open it.", c.apps[added[i]].id);

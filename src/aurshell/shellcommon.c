@@ -991,6 +991,14 @@ void shell_close_win(shell_ctx *c, int win)
 
 /* ── the store, on every home screen ─────────────────────────────── */
 
+int shell_want_ready_card(const shell_ctx *c)
+{
+    if (c->focus < 0 || c->focus >= c->n_wins) return 1;
+    const win_entry *w = &c->wins[c->focus];
+    if (w->minimised || w->app < 0 || w->app >= c->n_apps) return 1;
+    return c->apps[w->app].role != APP_ROLE_STORE;
+}
+
 int shell_store_app(const shell_ctx *c)
 {
     if (!c) return -1;

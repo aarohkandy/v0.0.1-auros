@@ -113,10 +113,10 @@ static const struct { int w, h; } SIZES[] = { { 1024, 600 }, { 1366, 768 }, { 19
 static int inside_screen(rect r, int W, int H) { return r.x >= 0 && r.y >= 0 && r.x + r.w <= W && r.y + r.h <= H; }
 
 /* What is open, and what is on the desk. */
-enum { S_WINS, S_MENU, S_FIND, S_HOME, S_LIST, S_PAGES, S_BUSY };
+enum { S_WINS, S_MENU, S_FIND, S_HOME, S_LIST, S_PAGES, S_BUSY, S_MANY };
 static const char *SCEN[] = { "three programs open", "the programs menu open", "the finder open",
                               "nothing open (Home)", "the list of programs open", "thirty programs, paged",
-                              "five unpinned programs running beside the favourites" };
+                              "five unpinned programs running beside the favourites", "eight windows open" };
 
 static void press_what(rig *R, const char *prefix)     /* press the first published control whose name starts so */
 {
@@ -137,7 +137,7 @@ static void floors(const char *look, int scen)
         for (size_t k = 0; k < sizeof SCALES / sizeof *SCALES; k++) {
             static rig R;
             make(&R, look, SIZES[sz].w, SIZES[sz].h, SCALES[k], scen == S_PAGES ? 30 : 12,
-                 (scen == S_HOME || scen == S_LIST || scen == S_MENU || scen == S_PAGES) ? 0 : scen == S_BUSY ? 9 : 3, 0);
+                 (scen == S_HOME || scen == S_LIST || scen == S_MENU || scen == S_PAGES) ? 0 : scen == S_BUSY ? 9 : scen == S_MANY ? 8 : 3, 0);
             /* S_MENU: with nothing open the taskbar opens the programs menu by itself (no button to guess). */
             if (scen == S_FIND)  press_what(&R, "the All my programs cell");
             if (scen == S_LIST) {                                     /* rail: the second-last row of Home */
@@ -152,8 +152,15 @@ static void floors(const char *look, int scen)
             shell_target T[96];
             int n = R.L->targets(&R.c, T, 96);
             char nm[200];
-            int small = 0, off = 0, press = 0;
+            int small = 0, off = 0, press = 0, wins = 0, woff = 0;
             for (int i = 0; i < n; i++) {
+                if (T[i].kind == TARGET_WINDOW) {          /* a window is placed wholly on the screen (OBS-REAL-IMAGE) */
+                    wins++;
+                    if (!inside_screen(T[i].r, SIZES[sz].w, R.c.screen_h) && !woff++)
+                        printf("      first: a window is at %d,%d %dx%d, off the %dx%d screen\n",
+                               T[i].r.x, T[i].r.y, T[i].r.w, T[i].r.h, SIZES[sz].w, R.c.screen_h);
+                    continue;
+                }
                 if (T[i].kind != TARGET_PRESS) continue;
                 press++;
                 int shorter = T[i].r.w < T[i].r.h ? T[i].r.w : T[i].r.h;
@@ -166,6 +173,11 @@ static void floors(const char *look, int scen)
             snprintf(nm, sizeof nm, "%s %dx%d text %.0f%%, %s: %d controls, each 44 px+ and on the screen",
                      look, SIZES[sz].w, SIZES[sz].h, (double)(SCALES[k] * 100.f), SCEN[scen], press);
             ok(nm, press > 0 && !small && !off);
+            if (wins) {
+                snprintf(nm, sizeof nm, "%s %dx%d text %.0f%%, %s: %d window(s), each wholly on the screen",
+                         look, SIZES[sz].w, SIZES[sz].h, (double)(SCALES[k] * 100.f), SCEN[scen], wins);
+                ok(nm, !woff);
+            }
             if (getenv("FLOORS_DUMP"))                          /* FLOORS_DUMP=1: every rectangle, for reading */
                 for (int q = 0; q < n; q++)
                     printf("        %-36s %5d,%-5d %4dx%-4d %s\n", T[q].what, T[q].r.x, T[q].r.y, T[q].r.w, T[q].r.h,
@@ -178,10 +190,10 @@ int main(void)
     printf("the shell's floors: 18 px words, 44 px targets, windows on the screen\n");
     text_floor();
     printf("\ntargets: 44 px, on the screen, in each look\n");
-    floors("taskbar", S_WINS); floors("taskbar", S_MENU);
-    floors("dock", S_WINS);    floors("dock", S_FIND);   floors("dock", S_HOME);   floors("dock", S_BUSY);
-    floors("rail", S_WINS);    floors("rail", S_HOME);   floors("rail", S_LIST);
-    floors("tiles", S_WINS);   floors("tiles", S_HOME);  floors("tiles", S_PAGES);
+    floors("taskbar", S_WINS); floors("taskbar", S_MENU); floors("taskbar", S_MANY);
+    floors("dock", S_WINS);    floors("dock", S_MANY);    floors("dock", S_FIND);   floors("dock", S_HOME);   floors("dock", S_BUSY);
+    floors("rail", S_WINS);    floors("rail", S_MANY);   floors("rail", S_HOME);   floors("rail", S_LIST);
+    floors("tiles", S_WINS);   floors("tiles", S_MANY);   floors("tiles", S_HOME);  floors("tiles", S_PAGES);
     printf("\n%d checks, %d failed\n", checked, fail);
     return fail ? 1 : 0;
 }

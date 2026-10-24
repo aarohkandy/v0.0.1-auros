@@ -518,6 +518,10 @@ int  shell_rescan_apps(shell_ctx *c, int *added, int max);
  * The index of "Get more programs", or -1 when this machine has none
  * (no store installed, or a profile that forbids installing). */
 int  shell_store_app(const shell_ctx *c);
+/* A program has just been installed: should the shell say so with a card ("VLC is ready: press here
+ * to open it")? Not while she is IN the store: its own page already has an Open button for that
+ * program, and two ways to the same thing is a question (F's real-Windows run, finding 9). */
+int  shell_want_ready_card(const shell_ctx *c);
 /* The index of "Make a wish", or -1 (a kiosk has none). src/aurshell/wish.c
  * owns what it opens; every look places the button itself. */
 int  shell_wish_app(const shell_ctx *c);

@@ -300,6 +300,12 @@ int main(int argc, char **argv)
         snprintf(dirs, sizeof dirs, "%s:%s", had ? had : "", argv[6]);
         setenv("AUROS_APP_DIRS", dirs, 1);
         int added[8];
+        /* She is IN the store: its page has the Open button, so there is no card (one path). */
+        printf("&& ready-card-in-store %d\n", shell_want_ready_card(&c));
+        for (int i = 0; i < c.n_wins; i++)           /* then she goes elsewhere (Home): the card is how she hears */
+            if (c.wins[i].app >= 0 && c.wins[i].app < c.n_apps && c.apps[c.wins[i].app].role == APP_ROLE_STORE) c.wins[i].minimised = 1;
+        c.focus = -1;
+        printf("&& ready-card-elsewhere %d\n", shell_want_ready_card(&c));
         int k = shell_rescan_apps(&c, added, 8);
         for (int i = 0; i < k && i < 3; i++) {
             char sum[96];

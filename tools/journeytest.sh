@@ -97,6 +97,12 @@ for look in taskbar dock rail tiles; do
         small=$(for s in whose bringing empty stick-plug stick-pick stick-saving stick-done blocked; do said "$log" "-$s.png" | awk '/^## /{ if ($2 < 21) print }'; done | wc -l)
         [ "$small" -eq 0 ];                                              ok "$at: nothing on those screens is under 18 px (the band's buttons too)" $?
         said "$log" "-sure.png"    | grep -qx '   Start AurOS from now on';   ok "$at: Yes asks once more before it decides" $?
+        # One path to a thing (F finding 9): in the store, its own Open button is the way, so no
+        # "is ready" card sits over it; away from it, the card is how she hears.
+        grep -qx '&& ready-card-in-store 0' "$log" && grep -qx '&& ready-card-elsewhere 1' "$log"
+                                                                           ok "$at: no ready card over the store's own Open button; one when she is elsewhere" $?
+        grep -q 'want_card = shell_want_ready_card' src/aurshell/main.c && grep -q 'want_card && i < k' src/aurshell/main.c
+                                                                           ok "$at: ...and the shell's loop asks it (a rule nobody calls protects nobody)" $?
         # One primary action per panel: no screen of the first ten minutes draws two lit buttons.
         ! awk '/^&& primary/ && $3 > 1 { bad = 1 } END { exit !bad }' "$log"
                                                                            ok "$at: no panel draws two primary buttons" $?
