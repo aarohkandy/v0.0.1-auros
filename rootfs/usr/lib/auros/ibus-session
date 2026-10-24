@@ -4,22 +4,25 @@
 # publication, then give IBus that exact display environment.
 set -eu
 
+max_attempts=${AUROS_IBUS_WAIT_ATTEMPTS:-100}
+case "$max_attempts" in ''|*[!0-9]*) max_attempts=100 ;; esac
+
 i=0
-while [ "$i" -lt 100 ]; do
+while [ "$i" -lt "$max_attempts" ]; do
     manager_env=$(/usr/bin/systemctl --user show-environment 2>/dev/null || :)
     wayland_display=$(printf '%s\n' "$manager_env" | sed -n 's/^WAYLAND_DISPLAY=//p' | head -n 1)
-    [ -z "$wayland_display" ] || break
+    display=$(printf '%s\n' "$manager_env" | sed -n 's/^DISPLAY=//p' | head -n 1)
+    if [ -n "$wayland_display" ] && [ -n "$display" ]; then break; fi
     i=$((i + 1))
     sleep 0.1
 done
 
-if [ -z "${wayland_display:-}" ]; then
-    echo "auros-ibus: the desktop did not publish WAYLAND_DISPLAY" >&2
+if [ -z "${wayland_display:-}" ] || [ -z "${display:-}" ]; then
+    echo "auros-ibus: the desktop did not publish both WAYLAND_DISPLAY and DISPLAY" >&2
     exit 1
 fi
 
-display=$(printf '%s\n' "$manager_env" | sed -n 's/^DISPLAY=//p' | head -n 1)
 export WAYLAND_DISPLAY="$wayland_display"
-if [ -n "$display" ]; then export DISPLAY="$display"; else unset DISPLAY; fi
+export DISPLAY="$display"
 
 exec /usr/bin/ibus-daemon --replace --xim
