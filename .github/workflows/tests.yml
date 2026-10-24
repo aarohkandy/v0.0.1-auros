@@ -365,6 +365,9 @@ jobs:
       - name: nvramtest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sudo sh tools/nvramtest.sh 2>&1 | tee transcripts/nvramtest.txt
+      - name: handover mount rollback and cleanup
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/handover-mounttest.sh 2>&1 | tee transcripts/handover-mounttest.txt
       - name: bridgetest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/bridgetest.sh 2>&1 | tee transcripts/bridgetest.txt
