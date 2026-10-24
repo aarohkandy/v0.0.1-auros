@@ -19,6 +19,10 @@ const TAG = /^v[0-9A-Za-z.+-]+-[0-9a-f]{7}$/;
 const CHALLENGE = /^([A-Za-z0-9_-]{22})\.([1-9][0-9]{9,12})\.([0-9a-f]{64})\.([A-Za-z0-9_-]{43})$/;
 const JSON_NUMBER = Symbol("strict JSON number");
 const DELIVERY_GATES = ["package", "sign / sign", "certify / e2e (base)", "certify / custom-certification", "publish"];
+const BASE_RELEASE_ASSETS = ["AurOS-Setup.exe", "SHA256SUMS", "pieces.txt", "image.sha256", "image.bytes"];
+const BASE_RELEASE_LIMIT = 50;
+const BASE_CANDIDATE_LIMIT = 5;
+const BASE_RUN_LIMIT = 3;
 
 const b64 = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const hash = async (value) => b64(await crypto.subtle.digest("SHA-256", enc.encode(value)));
@@ -562,19 +566,26 @@ export class GitHubBuilds {
     return r.status === 204 ? null : r.json();
   }
   async findGreenBase() {
-    const q = new URLSearchParams({ branch: "main", event: "push", status: "success", per_page: "10" });
-    const found = await this.api(`/actions/workflows/build.yml/runs?${q}`);
-    const releases = await this.api("/releases?per_page=20");
-    const runs = (found.workflow_runs || []).filter((x) => SHA.test(x.head_sha || "") && x.head_branch === "main" && x.event === "push" && x.status === "completed" && x.conclusion === "success" && x.path === ".github/workflows/build.yml");
-    for (const run of runs) {
-      const matching = releases.filter((release) => release.prerelease === true && release.draft !== true && TAG.test(release.tag_name || "") && release.tag_name.endsWith(`-${run.head_sha.slice(0, 7)}`));
-      if (matching.length !== 1) continue;
-      const release = matching[0];
-      const [commit, artifacts] = await Promise.all([this.api(`/commits/${encodeURIComponent(release.tag_name)}`), this.api(`/actions/runs/${run.id}/artifacts?per_page=100`)]);
-      if (commit.sha !== run.head_sha) continue;
-      const required = ["auros-installer", "auros-base-metadata"];
-      if (!required.every((name) => (artifacts.artifacts || []).filter((x) => x.name === name && !x.expired).length === 1)) continue;
-      return { sourceSha: run.head_sha, runId: run.id, tag: release.tag_name };
+    const releases = await this.api(`/releases?per_page=${BASE_RELEASE_LIMIT}`);
+    const candidates = (releases || []).filter((release) => {
+      const assets = release.assets || [];
+      return release.prerelease === true && release.draft !== true && TAG.test(release.tag_name || "") &&
+        BASE_RELEASE_ASSETS.every((name) => assets.filter((asset) => asset.name === name).length === 1);
+    }).slice(0, BASE_CANDIDATE_LIMIT);
+    for (const release of candidates) {
+      const commit = await this.api(`/commits/${encodeURIComponent(release.tag_name)}`);
+      if (!SHA.test(commit.sha || "") || !release.tag_name.endsWith(`-${commit.sha.slice(0, 7)}`)) continue;
+      const q = new URLSearchParams({ branch: "main", event: "push", status: "success", head_sha: commit.sha, per_page: String(BASE_RUN_LIMIT) });
+      const found = await this.api(`/actions/workflows/build.yml/runs?${q}`);
+      if (!Number.isInteger(found.total_count) || found.total_count < 1 || found.total_count > BASE_RUN_LIMIT) continue;
+      const runs = (found.workflow_runs || []).filter((x) => Number.isInteger(x.id) && x.id > 0 && x.head_sha === commit.sha && x.head_branch === "main" && x.event === "push" && x.status === "completed" && x.conclusion === "success" && x.path === ".github/workflows/build.yml");
+      const eligible = [];
+      for (const run of runs) {
+        const artifacts = await this.api(`/actions/runs/${run.id}/artifacts?per_page=100`);
+        const required = ["auros-installer", "auros-base-metadata"];
+        if (Number.isInteger(artifacts.total_count) && artifacts.total_count <= 100 && required.every((name) => (artifacts.artifacts || []).filter((x) => x.name === name && !x.expired).length === 1)) eligible.push(run);
+      }
+      if (eligible.length === 1) return { sourceSha: commit.sha, runId: eligible[0].id, tag: release.tag_name };
     }
     throw new Error("exact green released base unavailable");
   }
