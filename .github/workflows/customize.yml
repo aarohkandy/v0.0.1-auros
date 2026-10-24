@@ -99,6 +99,7 @@ jobs:
       - name: extract the exact signed boot resources
         run: |
           base=packaging/base-installer/AurOS-Setup.exe
+          mkdir -p out
           python3 tools/pe_payload.py get "$base" 1 out/auros-staging-vmlinuz
           python3 tools/pe_payload.py get "$base" 2 out/auros-staging.img
           python3 tools/pe_payload.py get "$base" 3 out/auros-staging-shimx64.efi

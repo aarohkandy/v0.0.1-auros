@@ -225,5 +225,25 @@ class FileValidationTests(unittest.TestCase):
             )
 
 
+class WorkflowContractTests(unittest.TestCase):
+    def test_extraction_creates_output_directory_before_all_five_resources(self) -> None:
+        workflow = (ROOT / ".github/workflows/customize.yml").read_text(encoding="utf-8")
+        extraction = workflow.split(
+            "- name: extract the exact signed boot resources", 1
+        )[1].split("- name: rebuild only the personalized installer", 1)[0]
+        self.assertLess(extraction.index("mkdir -p out"), extraction.index("pe_payload.py get"))
+        expected = {
+            1: "out/auros-staging-vmlinuz",
+            2: "out/auros-staging.img",
+            3: "out/auros-staging-shimx64.efi",
+            4: "out/auros-staging-grubx64.efi",
+            5: "out/auros-staging-mmx64.efi",
+        }
+        for resource_id, output in expected.items():
+            self.assertIn(
+                f'pe_payload.py get "$base" {resource_id} {output}', extraction
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
