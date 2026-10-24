@@ -779,6 +779,7 @@ jobs:
           run-id: ${{ needs.which.outputs.run-id }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.test != 'putbacktest'
         with:
           name: auros-rootfs
           path: dl/rootfs
@@ -805,6 +806,8 @@ jobs:
           cp dl/installer/aurbridge.exe dl/installer/aurbridge-wizard.exe dl/installer/aurbridge-sim \
              dl/installer/auros-staging.img dl/installer/auros-staging-vmlinuz dl/installer/auros-staging-*.efi out/
           chmod +x out/aurbridge-sim
+          # putbacktest uses only the image and staging boot files copied above.
+          if [ "${{ matrix.test }}" != putbacktest ]; then
           sudo mkdir -p work/forge/desktop
           zstd -dc dl/rootfs/rootfs.tar.zst | sudo tar -C work/forge/desktop --numeric-owner -xf -
           rm -rf dl/rootfs
@@ -818,6 +821,7 @@ jobs:
             sudo AUROS_STAGING_OUT="$RUNNER_TEMP/staging-out" ./build/staging desktop > /dev/null
           fi
           sudo test -d work/staging/lib/modules
+          fi
           if [ "${{ matrix.test }}" = powercuttest ] || [ "${{ matrix.test }}" = powercut-nostick ]; then
             # Its own staging build, with fault injection compiled in
             # (out/auros-staging-fault*; seconds). Never published.
