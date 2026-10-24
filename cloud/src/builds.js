@@ -258,7 +258,7 @@ export class BuildJobLedger {
     return this.serial(async () => {
       const job = await this.val(`build-job:${id}`, now);
       if (!job || !job.owners.includes(tokenHash)) return null;
-      if (["failed", "download-ready"].includes(job.state) || job.nextCheckAt > now) return { job, claimed: false };
+      if (job.state === "failed" || job.nextCheckAt > now) return { job, claimed: false };
       job.nextCheckAt = now + 15_000;
       await this.s.put(`build-job:${id}`, { v: job, exp: job.expiresAt });
       return { job, claimed: true };
@@ -460,11 +460,14 @@ export class GitHubBuilds {
     const expectedUrl = `https://github.com/${this.repository}/releases/download/${release.tag_name}/${installerName}`;
     const expectedManifestUrl = `https://github.com/${this.repository}/releases/download/${release.tag_name}/${manifestName}`;
     const expectedAssetApi = `https://api.github.com/repos/${this.repository}/releases/assets/${manifestAsset.id}`;
+    const expectedInstallerApi = `https://api.github.com/repos/${this.repository}/releases/assets/${installerAsset.id}`;
     if (!TAG.test(release.tag_name || "") || release.draft === true || release.prerelease !== true ||
         !Number.isInteger(manifestAsset.id) || manifestAsset.id <= 0 || manifestAsset.url !== expectedAssetApi ||
         !Number.isInteger(manifestAsset.size) || manifestAsset.size <= 0 || manifestAsset.size > RECIPE_LIMIT ||
         manifestAsset.browser_download_url !== expectedManifestUrl ||
-        !Number.isInteger(installerAsset.size) || installerAsset.size <= 0 || installerAsset.browser_download_url !== expectedUrl) {
+        !Number.isInteger(installerAsset.id) || installerAsset.id <= 0 || installerAsset.url !== expectedInstallerApi ||
+        !Number.isInteger(installerAsset.size) || installerAsset.size <= 0 || installerAsset.browser_download_url !== expectedUrl ||
+        !/^sha256:[0-9a-f]{64}$/.test(installerAsset.digest || "")) {
       return { state: "failed", runId: run.id, failure: "delivery_asset_invalid" };
     }
     let raw;
@@ -481,6 +484,7 @@ export class GitHubBuilds {
       if (!sameBytes(raw, storedZipFile(zip, manifestName))) throw new Error("mutable release manifest differs from immutable run evidence");
       const parsed = deliveryManifest(raw, { requestId, repository: this.repository, sourceSha, runId: run.id, baseRunId, recipeId, resolved, installerName, installerUrl: expectedUrl, installerBytes: installerAsset.size, manifestUrl: manifestAsset.browser_download_url });
       if (release.tag_name !== parsed.baseTag) throw new Error("release tag mismatch");
+      if (installerAsset.digest !== `sha256:${parsed.download.sha256}`) throw new Error("release installer digest mismatch");
       const download = parsed.download;
       return { state: "download-ready", runId: run.id, signedArtifactId: signed[0].id, download };
     } catch {
