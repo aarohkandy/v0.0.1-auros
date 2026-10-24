@@ -22,6 +22,7 @@
 #include "foot.h"
 #include "draw.h"
 #include "run.h"
+#include "settings.h"
 
 #define TEXT_MAX   300         /* the service takes 300 characters      */
 #define SENT_MAX   480
@@ -1012,7 +1013,22 @@ static void do_shell(shell_ctx *c, const char *L, const char *E)
             ok = b && ((be - b == 4 && !memcmp(b, "true", 4)) ||
                        (be - b == 5 && !memcmp(b, "false", 5)));
         }
-        /* set_wallpaper, night_light and pointer_size have
+#if AUROS_WISHES
+        else if (!strcmp(type, "set_wallpaper")) {
+            char theme[48], old[48];
+            const char *ce;
+            int has_color = js_get(d, de, "color", &ce) != NULL;
+            if (!has_color &&
+                js_getstr(d, de, "theme_name", theme, sizeof theme) == 0 &&
+                settings_theme_current(old, sizeof old) == 0 &&
+                settings_theme_apply(c, theme)) {
+                snprintf(prev, sizeof prev,
+                         "{\"type\":\"set_wallpaper\",\"theme\":\"%s\"}", old);
+                ok = 1;
+            }
+        }
+#endif
+        /* Color wallpaper, night_light and pointer_size have
          * no control in this shell yet: refused honestly, nothing faked. */
     }
     if (prev[0])
