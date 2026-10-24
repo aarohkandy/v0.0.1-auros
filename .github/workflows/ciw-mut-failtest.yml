@@ -1,0 +1,67 @@
+# MUTANT BRANCH ONLY (never merged): does tools/failtest.sh go red when the image is broken?
+name: ciw-mut-failtest
+on:
+  push:
+    branches: ['*mut-*']
+permissions:
+  contents: read
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  mut:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        mutant: [no-stopost, getty-fallback, no-sorry-binary, silent-sorry]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: KVM, QEMU, OVMF
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules; sudo udevadm trigger --name-match=kvm
+          sh tools/apt.sh qemu-system-x86 qemu-utils ovmf gdisk e2fsprogs python3
+          sudo tee /usr/local/bin/qemu-system-x86_64 >/dev/null <<'EOF2'
+          #!/bin/sh
+          accel="${AUROS_QEMU_ACCEL:-kvm}"
+          for a do
+              shift
+              case "$a" in *accel=tcg*) a=$(printf '%s' "$a" | sed "s/accel=tcg/accel=$accel/") ;; esac
+              set -- "$@" "$a"
+          done
+          exec /usr/bin/qemu-system-x86_64 "$@"
+          EOF2
+          sudo chmod 755 /usr/local/bin/qemu-system-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: auros-pieces
+          path: dl/pieces
+          run-id: "40046138543"
+          github-token: ${{ github.token }}
+      - name: the image, joined; then broken the way this mutant says
+        run: |
+          mkdir -p out
+          cat dl/pieces/auros-desktop.img.gz.* | gzip -dc | cp --sparse=always /dev/stdin out/auros-desktop.img
+          rm -rf dl/pieces
+          OFF=$(sgdisk -i 2 out/auros-desktop.img | sed -n 's/^First sector: \([0-9]*\).*/\1/p')
+          L=$(sudo losetup -o $((OFF * 512)) --find --show out/auros-desktop.img)
+          mkdir m; sudo mount "$L" m
+          U=m/etc/systemd/system/aurshell.service
+          case "${{ matrix.mutant }}" in
+            no-stopost)       sudo sed -i '/aursorry/d' "$U" ;;
+            getty-fallback)   sudo sed -i 's/^\[Unit\]$/[Unit]\nOnFailure=getty@tty1.service/' "$U" ;;
+            no-sorry-binary)  sudo rm -f m/usr/bin/aursorry ;;
+            silent-sorry)     sudo sh -c 'printf "#!/bin/sh\nexit 0\n" > m/usr/bin/aursorry; chmod 755 m/usr/bin/aursorry' ;;
+          esac
+          grep -n "aursorry\|OnFailure" "$U" || true
+          sudo umount m; sudo losetup -d "$L"
+      - name: failtest on the broken image (it must FAIL)
+        run: |
+          set +e
+          sudo env PATH="$PATH" WAIT=90 sh tools/failtest.sh 2>&1 | tee failtest.txt
+          rc=${PIPESTATUS[0]}
+          echo "failtest exit=$rc on mutant ${{ matrix.mutant }}"
+          [ "$rc" -ne 0 ] && echo "MUTANT KILLED (red as it should be)" || { echo "MUTANT SURVIVED"; exit 1; }
