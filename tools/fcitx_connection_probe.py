@@ -359,43 +359,97 @@ def _close_failed_snapshot(pidfd: int, held: list[int]) -> None:
         os.close(pidfd)
 
 
-def unix_path_inodes(display_path: Path) -> set[int]:
-    result = set()
+def unix_path_listener(display_path: Path, evidence=None) -> tuple[int, int]:
+    if evidence is None:
+        evidence = {}
+    listeners = []
+    path_count = 0
     for line in Path("/proc/net/unix").read_text(encoding="ascii").splitlines()[1:]:
         fields = line.split()
         if len(fields) >= 8 and fields[7] == str(display_path):
+            path_count += 1
             try:
-                result.add(int(fields[6]))
+                flags = int(fields[3], 16)
+                socket_type = int(fields[4], 16)
+                state = int(fields[5], 16)
+                inode = int(fields[6])
             except ValueError:
-                raise RuntimeError("invalid /proc/net/unix inode")
-    return result
+                raise RuntimeError("invalid /proc/net/unix WAYLAND_DISPLAY record")
+            if (socket_type == socket.SOCK_STREAM and flags & 0x00010000
+                    and state == 0x01):
+                listeners.append(inode)
+    evidence["wayland_path_inode_count"] = path_count
+    evidence["global_matching_listener_count"] = len(listeners)
+    if len(listeners) != 1:
+        raise RuntimeError(
+            f"expected one global WAYLAND_DISPLAY listening record, got {len(listeners)}")
+    return listeners[0], path_count
 
 
-def verify_listener(shell_pid: int, shell_pidfd: int, display_path: Path) -> None:
+def authenticate_display_path(display_path: Path, shell_pid: int) -> None:
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(2)
+            client.connect(str(display_path))
+            peer = struct.unpack("3i", client.getsockopt(
+                socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
+    except OSError as exc:
+        raise RuntimeError("could not connect to current WAYLAND_DISPLAY path") from exc
+    if peer[0] != shell_pid:
+        raise RuntimeError("current WAYLAND_DISPLAY path has the wrong peer")
+
+
+def verify_listener(shell_pid: int, shell_pidfd: int, display_path: Path,
+                    evidence=None) -> None:
+    if evidence is None:
+        evidence = {}
     expected = display_path.stat()
     if not stat.S_ISSOCK(expected.st_mode):
         raise RuntimeError("WAYLAND_DISPLAY path is not a socket")
-    path_inodes = unix_path_inodes(display_path)
-    if len(path_inodes) != 1:
-        raise RuntimeError(f"expected one WAYLAND_DISPLAY socket inode, got {len(path_inodes)}")
+    listener_inode, _path_count = unix_path_listener(display_path, evidence)
     found = 0
+    socket_fds = 0
+    evidence["compositor_socket_fd_count"] = 0
+    evidence["matching_accepting_listener_count"] = 0
     for entry in (Path("/proc") / str(shell_pid) / "fd").iterdir():
         try:
-            if not os.readlink(entry).startswith("socket:["):
-                continue
+            link = os.readlink(entry)
+        except OSError as exc:
+            raise RuntimeError("compositor FD inventory changed") from exc
+        if not link.startswith("socket:["):
+            continue
+        socket_fds += 1
+        evidence["compositor_socket_fd_count"] = socket_fds
+        try:
             duplicate = duplicate_fd(shell_pidfd, int(entry.name))
             try:
                 sock = socket.socket(fileno=duplicate)
-                name = sock.getsockname()
-                inode = os.fstat(duplicate).st_ino
-                valid_listener = is_stream_socket(sock, listener=True)
-                sock.detach()
-                if (valid_listener and name == str(display_path) and inode in path_inodes):
+                try:
+                    name = sock.getsockname()
+                    inode = os.fstat(duplicate).st_ino
+                    valid_listener = (sock.family == socket.AF_UNIX
+                                      and is_stream_socket(sock, listener=True))
+                finally:
+                    sock.detach()
+                if (valid_listener and name == str(display_path)
+                        and inode == listener_inode):
                     found += 1
+                    evidence["matching_accepting_listener_count"] = found
             finally:
                 os.close(duplicate)
-        except (OSError, ValueError):
-            continue
+        except (OSError, ValueError) as exc:
+            raise RuntimeError("could not inspect every compositor socket FD") from exc
+    authenticate_display_path(display_path, shell_pid)
+    after = display_path.stat()
+    if (after.st_dev, after.st_ino) != (expected.st_dev, expected.st_ino):
+        raise RuntimeError("WAYLAND_DISPLAY path changed during authentication")
+    after_evidence = {}
+    try:
+        after_listener_inode, _after_count = unix_path_listener(display_path, after_evidence)
+    finally:
+        evidence.update({f"after_{key}": value for key, value in after_evidence.items()})
+    if after_listener_inode != listener_inode:
+        raise RuntimeError("WAYLAND_DISPLAY listener changed during authentication")
     if found != 1:
         raise RuntimeError(f"expected one exact AurWL listener, got {found}")
 
@@ -451,12 +505,25 @@ def main() -> None:
     app_pidfd = -1
     service_pidfd = -1
     compositor_pidfd = -1
+    observed = {}
     try:
         (shell_pid, service_pidfd, compositor_pidfd,
          session_control_group) = read_service_topology(
             args.service_main_pid, args.service_control_group,
             args.expected_uid, args.service_invocation_id)
-        verify_listener(shell_pid, compositor_pidfd, args.display_path)
+        observed.update({
+            "service_main_pid": args.service_main_pid,
+            "compositor_pid": shell_pid,
+            "service_control_group": args.service_control_group,
+            "pam_session_control_group": session_control_group,
+        })
+        start_listener_evidence = {}
+        try:
+            verify_listener(shell_pid, compositor_pidfd, args.display_path,
+                            start_listener_evidence)
+        finally:
+            observed.update({f"start_{key}": value
+                             for key, value in start_listener_evidence.items()})
         (app_pidfd, held, wayland_fd, wayland_inode, trace_fd, trace_dev,
          trace_inode, trace_copy) = snapshot(
             args.app_pid, shell_pid, args.display_path, args.trace)
@@ -479,7 +546,13 @@ def main() -> None:
             if (second_shell_pid != shell_pid
                     or second_session_control_group != session_control_group):
                 raise RuntimeError("aurshell compositor identity changed during interval")
-            verify_listener(second_shell_pid, second_compositor_pidfd, args.display_path)
+            end_listener_evidence = {}
+            try:
+                verify_listener(second_shell_pid, second_compositor_pidfd,
+                                args.display_path, end_listener_evidence)
+            finally:
+                observed.update({f"end_{key}": value
+                                 for key, value in end_listener_evidence.items()})
         finally:
             os.close(second_compositor_pidfd)
             os.close(second_service_pidfd)
@@ -509,15 +582,14 @@ def main() -> None:
             "compositor_in_pam_session_cgroup=yes\n"
             "compositor_descends_from_service_main_pid=yes\n",
             encoding="ascii")
-        with args.output.open("a", encoding="ascii") as evidence:
-            evidence.write(f"observed_service_main_pid={args.service_main_pid}\n")
-            evidence.write(f"observed_compositor_pid={shell_pid}\n")
-            evidence.write(f"observed_service_control_group={args.service_control_group}\n")
-            evidence.write(f"observed_pam_session_control_group={session_control_group}\n")
+        with args.output.open("a", encoding="ascii") as evidence_file:
+            for key, value in sorted(observed.items()):
+                evidence_file.write(f"observed_{key}={value}\n")
     except Exception as exc:
         detail = str(exc).replace("\n", " ")[:240]
-        args.output.write_text(
-            f"status=fail\nreason={type(exc).__name__}: {detail}\n", encoding="ascii")
+        lines = [f"status=fail\nreason={type(exc).__name__}: {detail}\n"]
+        lines.extend(f"observed_{key}={value}\n" for key, value in sorted(observed.items()))
+        args.output.write_text("".join(lines), encoding="ascii")
         raise
     finally:
         for value in held:
