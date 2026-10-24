@@ -22,7 +22,7 @@ The completed path must connect request, validation, consent, artifact identity,
 
 ### Stage 1 Restore release correctness
 
-- [x] Unit owner: reproduce and repair RC7 font/hardware/layout/Ferry failures. Integrated unit gate passed at `5d1c50d3`; later candidate dependency correction is awaiting its own full run.
+- [x] Unit owner: reproduce and repair RC7 font/hardware/layout/Ferry failures. Integrated unit gates passed at `5d1c50d3` and `d7a5675b`, including the corrected test dependencies.
 - [x] Compositor owner: reproduce uncaught mutants, repair relevant code/tests, prove intended breakages are caught. Integrated image CI passes all four mutation shards and checks.
 - [ ] Wishes UI owner: original UI failures repaired; new theme adapter passes UI mutations but `d7a5675b` exposes paint/end-to-end regressions under investigation. Feature remains disabled.
 - [x] Installer safety owner: recover S-04, refuse before table commit when boot-entry creation fails, verify focused fault paths. Exact new-candidate Windows journey remains a separate release gate.
@@ -274,3 +274,21 @@ bounded retained-image path is being implemented. Its immutable small
 manifest will bind the image bytes; reused-image evidence will name both
 image-source and test-source commits and remain diagnostic, never a new
 production certification. No extra paid service is introduced.
+
+The full unit job of `40129427319` subsequently passed. Wishes paint and
+end-to-end failures were missing linker seams in their standalone C harnesses,
+not observed product behavior. `472011e3` provides explicit failing theme
+stubs in those two unrelated-action harnesses. Linux paint checks pass, all
+eight paint mutants are caught, and real Wishes end-to-end passes 19/19.
+The full theme adapter retains its separate real-helper/Undo coverage.
+
+The first-boot VM gate at `d7a5675b` also passed, including the ordinary-desktop
+IBus negative control. The next batched candidate contains the Wishes harness
+link repairs, bounded IBus diagnostic repair, and reviewed retained-image
+workflow. Combined checks: 42 profile selftests, 12 adversarial retention
+tests, all 29 workflow files, plus the Linux Wishes results above.
+
+The new push requests only multilingual with real composition and a desktop
+prerelease candidate. It does not promote public latest or enable build
+requests/Wishes. The prior failed desktop run remains useful evidence and
+is allowed to finish its remaining independent tests.
