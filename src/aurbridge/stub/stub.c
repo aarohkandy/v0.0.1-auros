@@ -313,6 +313,56 @@ static int program_data_path(wchar_t *out, size_t cap)
     return ok;
 }
 
+/* The downloaded file can be started by any unelevated process, which also
+ * chooses its environment. The elevated installer uses these values for disk
+ * selection, private task files and temporary payloads, so replace them with
+ * Windows' answers before the child inherits anything. */
+static int secure_child_environment(void)
+{
+    static wchar_t win[MAX_PATH + 1], temp[MAX_PATH + 16], safe_search[4 * MAX_PATH];
+    static wchar_t sam[512];
+    UINT n = GetWindowsDirectoryW(win, MAX_PATH);
+    if (n < 3 || n >= MAX_PATH || win[1] != L':') return 0;
+    wchar_t drive[3] = { win[0], L':', 0 };
+    temp[0] = 0;
+    safe_search[0] = 0;
+    if (!wcat(temp, MAX_PATH + 16, win) || !wcat(temp, MAX_PATH + 16, L"\\Temp")
+            || !is_dir_not_link(temp)
+            || !wcat(safe_search, 4 * MAX_PATH, win) || !wcat(safe_search, 4 * MAX_PATH, L"\\System32;")
+            || !wcat(safe_search, 4 * MAX_PATH, win) || !wcat(safe_search, 4 * MAX_PATH, L";")
+            || !wcat(safe_search, 4 * MAX_PATH, win) || !wcat(safe_search, 4 * MAX_PATH, L"\\System32\\Wbem;")
+            || !wcat(safe_search, 4 * MAX_PATH, win) || !wcat(safe_search, 4 * MAX_PATH, L"\\System32\\WindowsPowerShell\\v1.0\\"))
+        return 0;
+
+    typedef BOOLEAN (WINAPI *PFN_NAME)(int, wchar_t *, ULONG *);
+    HMODULE sec = LoadLibraryExW(L"secur32.dll", NULL, 0x800 /* LOAD_LIBRARY_SEARCH_SYSTEM32 */);
+    PFN_NAME get_name = sec ? (PFN_NAME)(void *)GetProcAddress(sec, "GetUserNameExW") : NULL;
+    ULONG sn = (ULONG)(sizeof sam / sizeof sam[0]);
+    int named = get_name && get_name(2 /* NameSamCompatible: DOMAIN\\user */, sam, &sn);
+    if (sec) FreeLibrary(sec);
+    if (!named) return 0;
+    wchar_t *slash = sam;
+    while (*slash && *slash != L'\\') slash++;
+    if (*slash != L'\\' || slash == sam || !slash[1]) return 0;
+    *slash = 0;
+
+    if (!SetEnvironmentVariableW(L"ProgramData", g_base)
+            || !SetEnvironmentVariableW(L"SystemDrive", drive)
+            || !SetEnvironmentVariableW(L"SystemRoot", win)
+            || !SetEnvironmentVariableW(L"windir", win)
+            || !SetEnvironmentVariableW(L"TEMP", temp)
+            || !SetEnvironmentVariableW(L"TMP", temp)
+            || !SetEnvironmentVariableW(L"Path" /* wordlint:ignore -- Windows' name */, safe_search)
+            || !SetEnvironmentVariableW(L"USERNAME", slash + 1)
+            || !SetEnvironmentVariableW(L"USERDOMAIN", sam))
+        return 0;
+    SetEnvironmentVariableW(L"AURBRIDGE_STAGING_KARGS", NULL);
+    SetEnvironmentVariableW(L"AURBRIDGE_TEST_FVE", NULL);
+    SetEnvironmentVariableW(L"AURBRIDGE_TEST_RST_SERVICE", NULL);
+    SetEnvironmentVariableW(L"__COMPAT_LAYER", NULL);
+    return 1;
+}
+
 static void hex16(wchar_t *o, uint64_t v)
 {
     static const wchar_t hx[] = L"0123456789abcdef";
@@ -460,6 +510,8 @@ void stub_start(void)
     }
 #endif
     g_exe[0] = 0; wcat(g_exe, MAX_PATH + 96, g_dir); wcat(g_exe, MAX_PATH + 96, L"\\" CHILD_EXE);
+    BY_HANDLE_FILE_INFORMATION original_info;
+    memset(&original_info, 0, sizeof original_info);
     HANDLE f = CreateFileW(g_exe, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_NEW,
                            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
     if (f == INVALID_HANDLE_VALUE) fail(L"The installer could not be put in the private folder.");
@@ -477,10 +529,9 @@ void stub_start(void)
         static wchar_t real[MAX_PATH + 96];
         char got[65];
         sha_t s;
-        BY_HANDLE_FILE_INFORMATION fi;
         LARGE_INTEGER zero;
         zero.QuadPart = 0;
-        if (!GetFileInformationByHandle(f, &fi) || (fi.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+        if (!GetFileInformationByHandle(f, &original_info) || (original_info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
                 || !final_path(f, real, MAX_PATH + 96) || wcmp_i(real, g_exe) != 0
                 || !SetFilePointerEx(f, zero, NULL, FILE_BEGIN)) {
             CloseHandle(f); fail(L"The installer file is not the ordinary file that was asked for.");
@@ -500,7 +551,24 @@ void stub_start(void)
     }
     CloseHandle(f);
 
+    /* Reopen and pin the exact file identity until CreateProcess has opened its
+     * image section. FILE_SHARE_READ denies rename/delete during that last use. */
+    HANDLE pin = CreateFileW(g_exe, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                             FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    BY_HANDLE_FILE_INFORMATION pinned_info;
+    static wchar_t pinned_path[MAX_PATH + 96];
+    if (pin == INVALID_HANDLE_VALUE || !GetFileInformationByHandle(pin, &pinned_info)
+            || (pinned_info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+            || pinned_info.dwVolumeSerialNumber != original_info.dwVolumeSerialNumber
+            || pinned_info.nFileIndexHigh != original_info.nFileIndexHigh
+            || pinned_info.nFileIndexLow != original_info.nFileIndexLow
+            || !final_path(pin, pinned_path, MAX_PATH + 96) || wcmp_i(pinned_path, g_exe) != 0) {
+        if (pin != INVALID_HANDLE_VALUE) CloseHandle(pin);
+        fail(L"The installer file changed before it could start.");
+    }
+
     /* run it from there, given what we were given */
+    if (!secure_child_environment()) fail(L"Windows could not make a safe environment for AurOS Setup.");
     g_cmd[0] = 0;
     if (!wcat(g_cmd, 32768, L"\"") || !wcat(g_cmd, 32768, g_exe)
             || !wcat(g_cmd, 32768, L"\" ") || !wcat(g_cmd, 32768, args_of(GetCommandLineW())))
@@ -509,7 +577,11 @@ void stub_start(void)
     PROCESS_INFORMATION pi;
     memset(&si, 0, sizeof si); si.cb = sizeof si;
     memset(&pi, 0, sizeof pi);
-    if (!CreateProcessW(g_exe, g_cmd, NULL, NULL, FALSE, 0, NULL, g_dir, &si, &pi)) fail(L"The installer would not start.");
+    if (!CreateProcessW(g_exe, g_cmd, NULL, NULL, FALSE, 0, NULL, g_dir, &si, &pi)) {
+        CloseHandle(pin);
+        fail(L"The installer would not start.");
+    }
+    CloseHandle(pin);
     CloseHandle(pi.hThread);
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD code = 0;

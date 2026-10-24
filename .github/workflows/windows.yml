@@ -73,7 +73,7 @@ jobs:
           esac
           printf '%s\n' "$files" > /tmp/files.txt
           # What build/aurbridge compiles and reads, and this file.
-          if grep -qE '^(src/aurbridge/|src/aurstage/(gpt|plan)\.[ch]$|build/aurbridge$|hw/(lib/|compat\.json$)|tools/(pe_payload\.py|repo\.sh|manifesttest\.sh|hw/gen-header\.py|dllcanary\.sh|dllcanary/.*)$|\.github/workflows/windows\.yml$)' /tmp/files.txt; then
+          if grep -qE '^(src/aurbridge/|src/aurstage/(gpt|plan)\.[ch]$|build/aurbridge$|hw/(lib/|compat\.json$)|tools/(pe_payload\.py|repo\.sh|manifesttest\.sh|stubtest\.ps1|hw/gen-header\.py|dllcanary\.sh|dllcanary/.*)$|\.github/workflows/(build|windows)\.yml$)' /tmp/files.txt; then
             run=true
           fi
           echo "run=$run" | tee -a "$GITHUB_OUTPUT"
@@ -627,13 +627,13 @@ jobs:
         run: |
           # What SmartScreen's "Run anyway", the administrator question and
           # the Downloads folder show before it runs (src/aurbridge/aurbridge-info.rc).
-          $v = (Get-Item .\exe\aurbridge-wizard.exe).VersionInfo
+          $v = (Get-Item .\exe\aurbridge-setup.exe).VersionInfo
           $v | Format-List ProductName, FileDescription, CompanyName, FileVersion, OriginalFilename
           if ($v.ProductName -ne 'AurOS') { throw "ProductName is '$($v.ProductName)'" }
           if ($v.FileDescription -ne 'AurOS Setup') { throw "FileDescription is '$($v.FileDescription)'" }
           if ($v.CompanyName -ne 'AurOS') { throw "CompanyName is '$($v.CompanyName)'" }
           Add-Type -AssemblyName System.Drawing
-          $i = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path .\exe\aurbridge-wizard.exe).Path)
+          $i = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path .\exe\aurbridge-setup.exe).Path)
           $b = $i.ToBitmap()
           $c = $b.GetPixel([int]($b.Width / 2), [int]($b.Height / 2))
           "icon centre: $c"
@@ -642,7 +642,7 @@ jobs:
       - name: wizard starts the way a double-click starts it
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath (Resolve-Path .\exe\aurbridge-wizard.exe).Path -PassThru
+          $p = Start-Process -FilePath (Resolve-Path .\exe\aurbridge-setup.exe).Path -PassThru
           Start-Sleep -Seconds 8
           if ($p.HasExited) { throw "the wizard exited on its own, code $($p.ExitCode)" }
           $p.Kill()

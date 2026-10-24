@@ -28,7 +28,8 @@ $fixed = Join-Path $base 'AurOS-Setup-0123456789abcdef'     # the name the test 
 # every name a planted DLL could be taken under: what the installer loads by name, what
 # Windows' own DLLs ask for (run 40047918166), and the usual hijack names
 $names = 'winhttp.dll','oleacc.dll','wlanapi.dll','iphlpapi.dll','winspool.drv','wtsapi32.dll','dwmapi.dll',
-         'cfgmgr32.dll','cryptbase.dll','cryptsp.dll','comctl32.dll','uxtheme.dll','version.dll','sechost.dll','bcrypt.dll'
+         'cfgmgr32.dll','cryptbase.dll','cryptsp.dll','comctl32.dll','uxtheme.dll','version.dll','sechost.dll','bcrypt.dll',
+         'secur32.dll','shell32.dll','ole32.dll'
 
 # a folder like Downloads: the program, and a planted copy of every name beside it
 function New-Downloads($name, $exeFile) {

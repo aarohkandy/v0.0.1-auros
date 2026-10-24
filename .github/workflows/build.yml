@@ -359,7 +359,12 @@ jobs:
           export AUROS_IMAGE_SHA256=$(cat dist/pieces/image.sha256)
           export AUROS_IMAGE_BYTES=$(cat dist/pieces/image.bytes)
           AUROS_FASTPATH=1 AUROS_RELEASE=1 sh build/aurbridge
-          if cmp -s out/aurbridge-setup.exe dist/installer/AurOS-Setup.exe; then
+          # Compare the installers carried inside, not the outer files: configured
+          # signing timestamps make independently built wrappers differ even when
+          # AUROS_FASTPATH changed no product bytes.
+          python3 tools/pe_payload.py get out/aurbridge-setup.exe 300 /tmp/fastpath-inner.exe
+          python3 tools/pe_payload.py get dist/installer/AurOS-Setup.exe 300 /tmp/normal-inner.exe
+          if cmp -s /tmp/fastpath-inner.exe /tmp/normal-inner.exe; then
             echo "::notice title=No fast-path installer::AUROS_FASTPATH=1 changed nothing in this tree (build/aurbridge does not read it yet), so there is nothing to publish beside AurOS-Setup.exe"
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "fastpath: identical to the normal installer (AUROS_FASTPATH not wired in this tree): not published" | tee -a dist/installer/build-info.txt
