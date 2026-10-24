@@ -1638,6 +1638,64 @@ def personalized_verdicts(expected, receipt, theme, shell_target,
     return out
 
 
+def generic_default_verdicts(expected, receipt, theme, shell_target,
+                             firstboot_stamp, firstboot_log, journal):
+    """Verdicts proving the generic installer's shipped defaults reached the live OS."""
+    look, want_theme = expected
+
+    def one_value(key):
+        values = [line[len(key) + 1:] for line in (receipt or "").splitlines()
+                  if line.startswith(key + "=")]
+        if len(values) != 1:
+            return None, ("missing" if not values else
+                          f"recorded {len(values)} times; expected exactly once")
+        return values[0], values[0]
+
+    out = []
+    recipe_values = [line[len("recipe_id="):] for line in (receipt or "").splitlines()
+                     if line.startswith("recipe_id=")]
+    generic_receipt = receipt is not None and not recipe_values
+    out.append(("no personalized recipe id", generic_receipt,
+                "installed receipt has no recipe_id" if generic_receipt else
+                ("installed receipt is missing" if receipt is None else
+                 f"installed receipt has {len(recipe_values)} recipe_id value(s)")))
+    for name, key, want in (("saved default look", "shell", look),
+                            ("saved default theme", "theme", want_theme)):
+        got, detail = one_value(key)
+        out.append((name, got == want,
+                    f"{key}={got}" if got == want else
+                    f"expected {key}={want}; installed receipt: {detail}"))
+
+    out.append(("applied default theme", theme == want_theme + "\n",
+                f"/etc/auros/theme={want_theme}" if theme == want_theme + "\n" else
+                f"expected {want_theme!r}; got {(theme if theme is not None else 'missing')!r}"))
+    want_shell = f"/usr/share/auros/shells/{look}.shell"
+    out.append(("applied default look", shell_target == want_shell,
+                f"active.shell -> {want_shell}" if shell_target == want_shell else
+                f"expected {want_shell}; got {shell_target or 'missing'}"))
+    out.append(("first boot completion stamp", firstboot_stamp,
+                "/var/lib/auros/firstboot.done exists" if firstboot_stamp else "stamp is missing"))
+    completed = "=== first boot complete ===" in (firstboot_log or "").splitlines()
+    out.append(("first boot completed", completed,
+                "completion line is in /var/log/auros-firstboot.log" if completed else
+                "completion line is missing from /var/log/auros-firstboot.log"))
+
+    first = first_session_lines(journal or "")
+    journal_look = any(re.search(rf"aurshell: archetype '{re.escape(look)}' \(", line)
+                       for line in first)
+    out.append(("live shell uses default look", journal_look,
+                f"aurshell: archetype '{look}'" if journal_look else
+                f"no live archetype '{look}' in the first session"))
+    theme_label = PERSONALIZED_THEME_LABELS.get(want_theme)
+    live_theme = (theme_label is not None and
+                  any(line.endswith(f"aurshell: theme '{theme_label}'") for line in first))
+    out.append(("live shell loaded default theme", live_theme,
+                f"aurshell: theme '{theme_label}'" if live_theme else
+                (f"no theme label mapping for {want_theme}" if theme_label is None else
+                 f"no live theme '{theme_label}' in the first session")))
+    return out
+
+
 def journal_verdicts(text):
     """Gating verdicts from AurOS's own journal of its FIRST session (the first
     boot in it: the one the installer handed over to, on a Windows variant; the
@@ -1686,7 +1744,8 @@ def journal_verdicts(text):
     return out
 
 
-def aur_root_report(rec, mnt, out_dir, expected_personalization=None):
+def aur_root_report(rec, mnt, out_dir, expected_personalization=None,
+                    expected_defaults=None):
     """What AurOS's own disk says, read with the machine off (every variant, pass
     or fail): its logs, the software catalogue (what the store has to show),
     stamps of the store's first-start job, and the journal of every boot. The
@@ -1721,7 +1780,7 @@ def aur_root_report(rec, mnt, out_dir, expected_personalization=None):
     warn = [l for l in full.splitlines() if re.search(r"\b(warning|error|critical|failed|denied|fatal)\b", l, re.I)]
     journal = full.split("-----", 1)[-1]
     v = journal_verdicts(journal)
-    if expected_personalization:
+    if expected_personalization or expected_defaults:
         def root_file(rel):
             result = run(["sudo", "head", "-c", "65536", os.path.join(mnt, rel)], rec, check=False)
             return result.stdout if result.returncode == 0 else None
@@ -1730,20 +1789,26 @@ def aur_root_report(rec, mnt, out_dir, expected_personalization=None):
                    rec, check=False)
         stamp = run(["sudo", "test", "-f", os.path.join(mnt, "var/lib/auros/firstboot.done")],
                     rec, check=False).returncode == 0
-        pv = personalized_verdicts(
-            expected_personalization,
-            root_file("etc/auros/installer-choices.conf"),
-            root_file("etc/auros/theme"),
-            link.stdout.strip() if link.returncode == 0 else None,
-            stamp,
-            root_file("var/log/auros-firstboot.log"),
-            journal)
+        evidence = (root_file("etc/auros/installer-choices.conf"),
+                    root_file("etc/auros/theme"),
+                    link.stdout.strip() if link.returncode == 0 else None,
+                    stamp,
+                    root_file("var/log/auros-firstboot.log"),
+                    journal)
+        if expected_personalization:
+            pv = personalized_verdicts(expected_personalization, *evidence)
+            heading = "The requested recipe on the installed, powered-off system:\n"
+            verdict_file = "personalized-verdicts.txt"
+        else:
+            pv = generic_default_verdicts(expected_defaults, *evidence)
+            heading = "The shipped defaults on the installed, powered-off system:\n"
+            verdict_file = "default-choice-verdicts.txt"
         v.extend(pv)
         ptext = "\n".join(f"{'ok  ' if ok else 'RED '} {name}: {detail}"
                            for name, ok, detail in pv)
         try:
-            with open(os.path.join(out_dir, "personalized-verdicts.txt"), "w") as fh:
-                fh.write("The requested recipe on the installed, powered-off system:\n" + ptext + "\n")
+            with open(os.path.join(out_dir, verdict_file), "w") as fh:
+                fh.write(heading + ptext + "\n")
         except OSError:
             pass
     vtext = "\n".join(f"{'ok  ' if ok else 'RED '} {name}: {detail}" for name, ok, detail in v)
@@ -1851,9 +1916,11 @@ def cmd_inspect(a):
                                     f"cat {mnt}/etc/os-release 2>/dev/null | head -3"],
                                    rec, check=False).stdout)
                     if fs == "ext4" and os.path.exists(os.path.join(mnt, "usr/lib/auros")):
-                        expected = ((a.expect_recipe_id, a.expect_look, a.expect_theme)
-                                    if a.expect_recipe_id else None)
-                        out.append(aur_root_report(rec, mnt, a.out, expected))
+                        personalized = ((a.expect_recipe_id, a.expect_look, a.expect_theme)
+                                        if a.expect_recipe_id else None)
+                        defaults = ((a.expect_look, a.expect_theme)
+                                    if a.expect_look and not a.expect_recipe_id else None)
+                        out.append(aur_root_report(rec, mnt, a.out, personalized, defaults))
                 finally:
                     run(["sudo", "umount", mnt], rec, check=False)
             out.append("found: " + json.dumps(found, indent=1))
@@ -1897,11 +1964,13 @@ def main():
     i.add_argument("--expect-theme", help="require this theme on the installed system")
     a = p.parse_args()
     if a.cmd == "inspect":
-        expected = (a.expect_recipe_id, a.expect_look, a.expect_theme)
-        if any(expected) and not all(expected):
-            p.error("--expect-recipe-id, --expect-look and --expect-theme must be given together")
-        if a.diag and any(expected):
-            p.error("personalized expectations cannot be combined with --diag, which does not return a verdict")
+        choices = (a.expect_look, a.expect_theme)
+        if any(choices) and not all(choices):
+            p.error("--expect-look and --expect-theme must be given together")
+        if a.expect_recipe_id and not all(choices):
+            p.error("--expect-recipe-id requires --expect-look and --expect-theme")
+        if a.diag and (a.expect_recipe_id or any(choices)):
+            p.error("installed-choice expectations cannot be combined with --diag, which does not return a verdict")
         if a.expect_recipe_id and not re.fullmatch(r"sha256:[0-9a-f]{64}", a.expect_recipe_id):
             p.error("--expect-recipe-id must be sha256: followed by 64 lowercase hexadecimal digits")
         for flag, value in (("--expect-look", a.expect_look), ("--expect-theme", a.expect_theme)):

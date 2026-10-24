@@ -522,6 +522,7 @@ jobs:
     with:
       installer_url: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}/AurOS-Setup-fastpath.exe
       installer_sha256: ${{ needs.publish.outputs.fastpath_sha256 }}
+      variants: base,bitlocker
 
   # THE SOURCE CODE of what was just published, as its sibling release
   # `sources-<tag>` (stream LEGAL, docs/legal/SOURCES.md): the Ubuntu source

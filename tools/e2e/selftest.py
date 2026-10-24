@@ -89,6 +89,22 @@ def test_wizard_contract():
     # final Restart now and returns. No other primary label may say it.
     others = [t for t in re.findall(r'L"([^"]*)"', body) if re.search("restart", t, re.I) and t != "Restart now"]
     check(not others, f"wizard: no other primary button says 'restart' (the driver would stop there): {others}")
+    styles = re.findall(r'\{\s*"([a-z0-9-]+)",\s*"([a-z0-9-]+)",\s*L"', wz)
+    default = re.search(r"#define STYLE_DEFAULT\s+(\d+)", wz)
+    shipped = styles[int(default.group(1))] if styles and default else None
+    workflow = open(os.path.join(HERE, "..", "..", ".github", "workflows", "e2e.yml")).read()
+    inspect_step = workflow.split("\n      - name: M3 - the program is on AurOS's disk", 1)[-1] \
+                           .split("\n      # A failed flow", 1)[0]
+    generic = inspect_step.rsplit("\n          else\n", 1)[-1]
+    match = re.search(r"e2e\.py inspect.*?--expect-look ([a-z0-9-]+).*?"
+                      r"--expect-theme ([a-z0-9-]+)\s+fi", generic, re.S)
+    checked = match.groups() if match else None
+    check(checked == shipped,
+          f"wizard: generic E2E checks the shipped default look/theme {shipped} (got {checked})")
+    release = open(os.path.join(HERE, "..", "..", ".github", "workflows", "release.yml")).read()
+    fastpath = release.split("\n  e2e-fastpath:\n", 1)[-1].split("\n  # THE SOURCE CODE", 1)[0]
+    check("variants: base,bitlocker" in fastpath,
+          "release: fast-path runs both the base and BitLocker journeys")
 
 
 def test_stops():
@@ -439,6 +455,53 @@ def test_personalized_verdicts():
           "personalized contract: a later boot cannot replace missing first-session recipe, look or theme evidence")
 
 
+def test_generic_default_verdicts():
+    """The generic installer must persist and run its actual shipped defaults."""
+    try:
+        import e2e
+    except ImportError:
+        return
+    expected = ("taskbar", "sandstone")
+    first = "\n".join((
+        "2026-10-24T01:00:00+00:00 auros kernel: Command line: quiet",
+        "2026-10-24T01:00:05+00:00 auros aurshell[44]: aurshell: theme 'Light'",
+        "2026-10-24T01:00:05+00:00 auros aurshell[44]: aurshell: archetype 'taskbar' (Taskbar)",
+        "2026-10-24T01:01:00+00:00 auros systemd-logind[1]: Power key pressed",
+    ))
+    receipt = "language=en_US.UTF-8\ntheme=sandstone\nshell=taskbar\n"
+    log = "=== first boot complete ===\n"
+    good = e2e.generic_default_verdicts(
+        expected, receipt, "sandstone\n", "/usr/share/auros/shells/taskbar.shell",
+        True, log, first)
+    check(all(ok for _, ok, _ in good),
+          "generic defaults: matching persisted and first-session state is green")
+
+    wrong = e2e.generic_default_verdicts(
+        expected, "theme=ember\nshell=dock\n", "ember\n",
+        "/usr/share/auros/shells/dock.shell", True, log,
+        first.replace("theme 'Light'", "theme 'Ember'")
+             .replace("archetype 'taskbar'", "archetype 'dock'"))
+    wrong_by_name = {name: ok for name, ok, _ in wrong}
+    check(not any(wrong_by_name[name] for name in (
+              "saved default look", "saved default theme", "applied default theme",
+              "applied default look", "live shell uses default look",
+              "live shell loaded default theme")),
+          "generic defaults: a complete but different installed look and theme are RED")
+
+    missing = e2e.generic_default_verdicts(expected, None, None, None, False, None, None)
+    check(len(missing) == len(good) and not any(ok for _, ok, _ in missing),
+          "generic defaults: missing persisted and live evidence is entirely RED")
+
+    personalized = e2e.generic_default_verdicts(
+        expected, receipt + "recipe_id=sha256:" + "a" * 64 + "\n", "sandstone\n",
+        "/usr/share/auros/shells/taskbar.shell", True, log, first)
+    personalized_by_name = {name: ok for name, ok, _ in personalized}
+    check(not personalized_by_name["no personalized recipe id"] and
+          all(ok for name, ok in personalized_by_name.items()
+              if name != "no personalized recipe id"),
+          "generic defaults: a personalized receipt with the same look and theme is RED")
+
+
 def test_store_frame():
     try:
         import e2e, numpy as np
@@ -612,6 +675,7 @@ test_canon_label()
 test_store_magnifier()
 test_journal_verdicts()
 test_personalized_verdicts()
+test_generic_default_verdicts()
 test_store_frame()
 test_store_content()
 test_label_contrast()
