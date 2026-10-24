@@ -2,10 +2,17 @@
 """Serve one synthetic password field and retain only boolean test results."""
 import argparse
 import http.server
+import os
 import urllib.parse
 from pathlib import Path
 
-PAGE = b'''<!doctype html><meta charset="utf-8"><style>html,body,form{width:100%;height:100%;margin:0}form{position:relative;background:#01dead}input{position:absolute;left:15%;top:calc(50% - 70px);width:70%;height:140px;font-size:48px}input:focus{outline:12px solid #1234ef}</style><form method="post" autocomplete="off"><input type="password" name="value" autocomplete="new-password" aria-label="Synthetic password test"><input type="hidden" name="starts" value="0"><input type="hidden" name="updates" value="0"><input type="hidden" name="ends" value="0"><input type="hidden" name="compositioninputs" value="0"><button hidden>Submit</button></form><script>let s=0,u=0,e=0,c=0;const i=document.querySelector('input[type=password]');i.addEventListener('compositionstart',()=>s++);i.addEventListener('compositionupdate',()=>u++);i.addEventListener('compositionend',()=>e++);i.addEventListener('beforeinput',x=>{if(x.isComposing||String(x.inputType).includes('Composition'))c++});i.addEventListener('input',x=>{if(x.isComposing||String(x.inputType).includes('Composition'))c++});document.querySelector('form').addEventListener('submit',()=>{for(const [n,v] of [['starts',s],['updates',u],['ends',e],['compositioninputs',c]])document.querySelector('[name='+n+']').value=v})</script>'''
+PAGE = b'''<!doctype html><meta charset="utf-8"><style>html,body,form{width:100%;height:100%;margin:0}form{position:relative;background:#01dead}input{position:absolute;left:15%;top:calc(50% - 70px);width:70%;height:140px;font-size:48px}input:focus{outline:12px solid #1234ef}</style><form method="post" autocomplete="off"><input type="password" name="value" autocomplete="new-password" aria-label="Synthetic password test"><input type="hidden" name="starts" value="0"><input type="hidden" name="updates" value="0"><input type="hidden" name="ends" value="0"><input type="hidden" name="compositioninputs" value="0"><button hidden>Submit</button></form><script>let s=0,u=0,e=0,c=0;const i=document.querySelector('input[type=password]');i.addEventListener('focus',()=>fetch('/focused',{method:'POST',body:'focused=1'}));i.addEventListener('compositionstart',()=>s++);i.addEventListener('compositionupdate',()=>u++);i.addEventListener('compositionend',()=>e++);i.addEventListener('beforeinput',x=>{if(x.isComposing||String(x.inputType).includes('Composition'))c++});i.addEventListener('input',x=>{if(x.isComposing||String(x.inputType).includes('Composition'))c++});document.querySelector('form').addEventListener('submit',()=>{for(const [n,v] of [['starts',s],['updates',u],['ends',e],['compositioninputs',c]])document.querySelector('[name='+n+']').value=v})</script>'''
+
+
+def bounded_focus(body: bytes) -> str:
+    if len(body) > 64 or body != b"focused=1":
+        raise ValueError("invalid focus event")
+    return "focus_event_observed=yes\n"
 
 
 def bounded_result(body: bytes) -> str:
@@ -24,7 +31,14 @@ def bounded_result(body: bytes) -> str:
             f"composition_input_count={numbers['compositioninputs']}\n")
 
 
-def serve(output: Path, port: int) -> None:
+def write_new(path: Path, result: str) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="ascii") as stream:
+        stream.write(result)
+
+
+def serve(output: Path, focus_output: Path, port: int) -> None:
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
@@ -44,9 +58,14 @@ def serve(output: Path, port: int) -> None:
                 length = int(self.headers.get("Content-Length", "-1"))
                 if length < 0 or length > 256:
                     raise ValueError("invalid content length")
-                result = bounded_result(self.rfile.read(length))
-                output.write_text(result, encoding="ascii")
-            except (UnicodeError, ValueError):
+                body = self.rfile.read(length)
+                if self.path == "/focused":
+                    write_new(focus_output, bounded_focus(body))
+                elif self.path == "/":
+                    write_new(output, bounded_result(body))
+                else:
+                    raise ValueError("unexpected request path")
+            except (OSError, UnicodeError, ValueError):
                 self.send_error(400)
                 return
             self.send_response(204)
@@ -59,9 +78,10 @@ def serve(output: Path, port: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--focus-output", type=Path, required=True)
     parser.add_argument("--port", type=int, default=8766)
     args = parser.parse_args()
-    serve(args.output, args.port)
+    serve(args.output, args.focus_output, args.port)
 
 
 if __name__ == "__main__":
