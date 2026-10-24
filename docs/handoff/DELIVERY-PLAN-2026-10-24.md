@@ -105,3 +105,15 @@ Protected bootstrap signing requires two stages: verify the signed inner wizard 
 - Configure requests now use deterministic local validation and no model call. Cloud tests pass 53/53; bare Office requests refuse rather than silently selecting an OS base. Cloud deployment/budget is unchanged.
 - First-session journal evidence is now produced by an asynchronous service and consumed by the installed-journey harness: AppArmor and loaded profiles, route, DNS, `/run` permissions, and staging scratch cleanup. Missing evidence fails the journey. Runtime proof awaits the next candidate.
 - Work in progress: reuse verified desktop base artifacts for small personalized installer builds, complete the independent same-boot handover audit, then run exact-candidate Windows install journeys. Public delivery and the remaining four profile builds are not yet complete.
+
+## Candidate checkpoint after handover audit
+
+The previously lost independent handover review was rerun. Its concrete findings are now addressed: one shared version-sorted kernel selector; checked display-process termination; checked ESP/Windows unmount and owned mountpoint cleanup; and refusal if saved scratch or any staging directory content remains. Failures recover the existing mount/cwd state and use the installed-flow restart path rather than carrying unsafe state into the desktop. Focused handover injection tests pass 22/22; kernel drift fixtures pass 5/5. Initial full static Linux staging link passed. Runtime KVM/Windows proof remains required.
+
+The first-session probe also measures PID1's actual root mount (not the diagnostic service's read-only sandbox), ext4, writable root, absence of staging mounts, and absence of aurscreen. Its producer/parser self-tests pass, and they now run before publication as well as in the Windows journey harness.
+
+Personalized packaging is implemented in `customize.yml`, using validated same-commit green base artifacts and rebuilding only AurBridge. It remains explicitly unsigned/unpublished/not-download-ready until subsequent delivery gates. With SignPath configured it calls the shared signer, preserving the original unsigned package manifest and binding its hash into the signed-byte provenance. Independent review closed the dropped-manifest issue. Combined customization tests pass 32/32 and workflow lint passes all 29 files.
+
+Profile review identified the next bounded work: non-desktop image filenames are now generated safely from the known profile, but revive/multilingual are still refused for delivery until profile-specific installation proof exists. Multilingual input-method session wiring and translations remain incomplete. Office/school management enrollment/update settings remain missing. The four historical raw-image boots are not current Windows installation proof.
+
+The next candidate uses `[release]` without `[latest]`: passing image gates may create a prerelease and run exact-installer Windows base/BitLocker journeys, but cannot make it the public latest. `[e2e:none]` suppresses only the independent push-triggered journey against an old pinned installer; the release's explicit artifact journeys still run.

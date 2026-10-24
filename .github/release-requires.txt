@@ -22,3 +22,6 @@ e80590e|aurwl: the Wayland clipboard was served to every X program at all times 
 5cc1b47|kernel32-only protected Windows bootstrap before loading the installer wizard
 bf97f1d4|record actual first-session security and network state for the installed-journey gates
 287aa5fd|verify both signed installer layers through the shared same-run signing chain
+9222d21a|staging and installed boot select the same kernel and matching modules
+ad6ce42f|refuse same-boot handover when display, temporary mounts, or saved scratch remain
+fc5ca152|retain and validate personalized-package provenance through both signing stages
