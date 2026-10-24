@@ -10,6 +10,7 @@ from pathlib import Path
 from src.customize.recipe import (
     BASES,
     MAX_RECIPE_BYTES,
+    MAX_RECIPE_DEPTH,
     PUBLIC_LOOKS,
     RECIPE_SCHEMA,
     THEMES,
@@ -173,7 +174,14 @@ class RecipeTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "invalid_encoding")
         with self.assertRaises(RecipeError) as caught:
             parse_recipe(("[" * 1200 + "0" + "]" * 1200).encode("ascii"))
-        self.assertEqual(caught.exception.code, "invalid_json")
+        self.assertEqual(caught.exception.code, "recipe_too_deep")
+
+    def test_depth_limit_ignores_brackets_inside_strings(self):
+        nested = "[" * MAX_RECIPE_DEPTH + "0" + "]" * MAX_RECIPE_DEPTH
+        self.assertIsInstance(parse_recipe('{"unknown":"[[[{{{"}'), dict)
+        with self.assertRaises(RecipeError) as caught:
+            parse_recipe(nested)
+        self.assertEqual(caught.exception.code, "wrong_type")
 
     def test_unicode_confusable_field_does_not_match_contract(self):
         recipe = valid()
