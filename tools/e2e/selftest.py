@@ -219,11 +219,13 @@ def test_aur_dry():
         def alive(self): return self.up
         def stop(self, how="powerdown", t=0): self.up = False; calls.append(how)
 
-    saved = (e2e.Machine, e2e.run, e2e.OVMF_VARS, e2e.AurFlow.wait_text)
+    original_hub = e2e.Hub
+    saved = (e2e.Machine, e2e.Hub, e2e.run, e2e.OVMF_VARS, e2e.AurFlow.wait_text)
     try:
         with tempfile.TemporaryDirectory() as t:
             open(f"{t}/vars", "w").close()
             e2e.Machine, e2e.OVMF_VARS = FakeMachine, f"{t}/vars"
+            e2e.Hub = lambda rec: original_hub(rec, port=0)
             e2e.run = lambda cmd, rec=None, **k: calls.append(" ".join(cmd))
             e2e.AurFlow.wait_text = lambda self, phrases, timeout, every=10, fail=(): (None, None, None)
             a = types.SimpleNamespace(out=f"{t}/out", image="/img/auros.img", work=f"{t}/work", grow_gb=16)
@@ -235,7 +237,7 @@ def test_aur_dry():
                   "aur: the image is booted from an overlay larger than itself (its first start grows the root)")
             check("quit" in calls, "aur: the machine is always stopped")
     finally:
-        (e2e.Machine, e2e.run, e2e.OVMF_VARS, e2e.AurFlow.wait_text) = saved
+        (e2e.Machine, e2e.Hub, e2e.run, e2e.OVMF_VARS, e2e.AurFlow.wait_text) = saved
 
 
 def test_label_is():
@@ -586,8 +588,21 @@ def test_program_launch_proof():
           "launch: the real Software error toast is RED even if app identity also appears")
     privacy = [word(text, 250 + offset * 85, 400, line=6)
                for offset, text in enumerate(("Privacy", "and", "Network", "Access", "Policy"))]
-    check(e2e.AurFlow.program_launch_error(privacy) == "Privacy and Network Access Policy",
-          "launch: VLC's privacy/network first-run dialog is not a usable app window")
+    check(e2e.AurFlow.program_launch_error(privacy) is None and
+          e2e.AurFlow.program_privacy_step(privacy, 800, "VLC") == (None, None),
+          "launch: an unattributed privacy dialog is neither an app nor a store launch error")
+    privacy_step = privacy + [word("VLC", 350, 688, line=2),
+                              word("Continue", 520, 520, line=7)]
+    privacy_identity, privacy_continue = e2e.AurFlow.program_privacy_step(
+        privacy_step, 800, "VLC")
+    check(privacy_identity[0] == "window task" and privacy_continue is not None and
+          e2e.AurFlow.program_window_proven(privacy_step, 800, "VLC", controls) is None,
+          "launch: attributed privacy Continue is a transition, never final app proof")
+    wrong_continue = privacy + [word("VLC", 350, 688, line=2),
+                                word("Continued", 520, 520, line=7),
+                                word("Continue", 900, 520, line=8)]
+    check(e2e.AurFlow.program_privacy_step(wrong_continue, 800, "VLC")[1] is None,
+          "launch: a prefix or unrelated Continue cannot satisfy VLC's modal")
 
 
 def test_label_contrast():

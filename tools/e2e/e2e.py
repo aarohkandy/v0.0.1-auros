@@ -1205,6 +1205,7 @@ class Flow:
             self.m.click(*vision.centre(done[1]), label="open the installed program: " + done[0])
             self.m.move(1150, 300)
             deadline = time.time() + 120
+            privacy_continued = False
             while time.time() < deadline:
                 time.sleep(5)
                 img = self.m.screendump()
@@ -1215,6 +1216,19 @@ class Flow:
                     raise Failure(f"the store could not open {STORE_QUERY}: {error}: " +
                                   vision.text_of(words)[:500])
                 identity = self.program_window_identity(words, img.shape[0], STORE_RESULT)
+                privacy_step = self.program_privacy_step(
+                    words, img.shape[0], STORE_RESULT)
+                if privacy_step is not None:
+                    identity, proceed = privacy_step
+                    if not identity or not proceed or privacy_continued:
+                        self.m.save(img, "program-launch-failed")
+                        raise Failure(f"{STORE_QUERY}'s first-launch privacy dialog was not a "
+                                      "single attributed Continue step: " +
+                                      vision.text_of(words)[:500])
+                    self.m.click(*vision.centre(proceed),
+                                 label=f"continue {STORE_RESULT}'s first launch")
+                    privacy_continued = True
+                    continue
                 if identity:
                     where, box = identity
                     # A window task is independent compositor evidence, but the
@@ -1232,6 +1246,19 @@ class Flow:
                             raise Failure(f"{STORE_QUERY} did not reach a usable window: {error}: " +
                                           vision.text_of(words)[:500])
                         identity = self.program_window_identity(words, img.shape[0], STORE_RESULT)
+                        privacy_step = self.program_privacy_step(
+                            words, img.shape[0], STORE_RESULT)
+                        if privacy_step is not None:
+                            identity, proceed = privacy_step
+                            if not identity or not proceed or privacy_continued:
+                                self.m.save(img, "program-launch-failed")
+                                raise Failure(f"{STORE_QUERY}'s first-launch privacy dialog was not a "
+                                              "single attributed Continue step: " +
+                                              vision.text_of(words)[:500])
+                            self.m.click(*vision.centre(proceed),
+                                         label=f"continue {STORE_RESULT}'s first launch")
+                            privacy_continued = True
+                            continue
                     proven = self.program_window_proven(
                         words, img.shape[0], STORE_RESULT, STORE_APP_CONTROLS.split("|"))
                     if proven:
@@ -1250,11 +1277,29 @@ class Flow:
     @staticmethod
     def program_launch_error(words):
         """A visible store error after Open is a failure, never app evidence."""
-        for message in ("Sorry, something went wrong", "This did not start",
-                        "Privacy and Network Access Policy"):
+        for message in ("Sorry, something went wrong", "This did not start"):
             if vision.find_text(words, message):
                 return message
         return None
+
+    @classmethod
+    def program_privacy_step(cls, words, screen_h, app_name):
+        """Return mapped identity and this dialog's exact Continue control."""
+        privacy = vision.find_text(words, "Privacy and Network Access Policy")
+        if not privacy:
+            return None
+        px, py, pw, ph = privacy
+        buttons = []
+        for word in words:
+            if re.sub(r"[^a-z]", "", word.get("text", "").lower()) != "continue":
+                continue
+            box = (word.get("x", 0), word.get("y", 0),
+                   word.get("w", 0), word.get("h", 0))
+            cx, cy = vision.centre(box)
+            if px <= cx <= px + pw and py + ph < cy <= py + ph + 300:
+                buttons.append(box)
+        proceed = buttons[0] if len(buttons) == 1 else None
+        return cls.program_window_identity(words, screen_h, app_name), proceed
 
     @staticmethod
     def program_window_identity(words, screen_h, app_name):
