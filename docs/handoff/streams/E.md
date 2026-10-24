@@ -193,6 +193,30 @@ which only a **full** (non-pre) release moves. **Only the lead pushes `[latest]`
   `[publish RUN-ID] [latest]`. A `[release]` subject forces harden to boot that image (a10d966).
   Runs before this change have the title `harden` and can never be matched (RC5's will be).
 
+## SEC-005 plan: nothing that changes after it is published may live in a published release
+
+Why: release immutability (OWNER-SETUP 4d) forbids adding, replacing or deleting assets of a release
+once published; the website serves `releases/latest/download/AurOS-Setup.exe`. Today every job below
+holds `contents: write` and `--clobber`s into a published release, so the setting cannot be ticked.
+Rule: a release is created once (draft, all assets uploaded, then published) and never touched again;
+anything that is rewritten lives somewhere else.
+
+| What | Where it writes now | Change | Owner |
+|---|---|---|---|
+| The release itself (`release.yml` publish) | `gh release create` with assets in one call, prerelease; on re-publish `gh release upload --clobber` image.sha256/.bytes | already one-shot (gh makes a draft while it uploads). Re-publish: upload only the assets the release lacks | E (small, do with the tick) |
+| `sources-<tag>` (`sources.yml`) | draft, completed, verified, then published; later `release edit` notes, `upload NOTICES.txt` | already draft-then-publish; move the NOTICES upload and the legal notes line before publish | LEGAL / E |
+| promote (`release.yml`) | `gh release edit --prerelease=false --latest` | metadata only, not an asset; verify on a throwaway repo that GitHub allows it for an immutable release | E |
+| Apt channel (`aptrepo.yml`, tag `apt`) | `--clobber` on every update, `delete-asset` | cannot live on an immutable release by nature. Move to a second repository `aarohkandy/auros-apt` (immutability off there; only the apt job's token can write it, in the `apt-signing` environment) and change `tools/repo.sh apt`, the image's sources.list, `monitor.py` | S5 + owner decision |
+| e2e evidence (`tools/e2e/publish.sh`: `e2e-<run>`, refreshed during the run) | create then `upload --clobber` many times, `release edit`, `delete` old | progress goes to workflow artifacts (already uploaded as `e2e-evidence-*`); one short final job (the only one with `contents: write`) creates the release as a draft, uploads, publishes. Old `e2e-*` deletion stays (deleting a whole release is allowed) | F |
+| profiles (`profiles.yml`), othersys (`tools/othersys/publish.sh`), parity (`parity.yml`) | same create/upload/--clobber/delete pattern | same: artifacts during the run, a final publish job; `mk()` helpers create drafts | P / H / the owner of parity |
+| fleet counts (`fleet.yml`, tag `fleet`) | `upload fleet.csv --clobber` | it is data, not a release: move to an artifact or the second repository | OPS |
+| `drill.yml` | throwaway prerelease, deleted at the end | fine (whole-release delete) | OPS |
+
+After all of that: `contents: write` is held by `publish`, `sources`/`make`, `promote` (this repository's
+release) and one tiny publish job per evidence workflow, none of which runs code from a test. Test with
+a scratch repository that has immutability on: `gh release create --draft`, upload, `gh release edit
+--draft=false`, then `gh release upload --clobber` must fail with 422. Only then tell the owner (4d).
+
 ## Open / next
 
 1. The first full chain has not run end to end: `[release] [latest]` has never been pushed

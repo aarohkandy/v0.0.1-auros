@@ -189,8 +189,24 @@ make the environment strict, move the key into it, and delete the old copy.
    **Approve and deploy**. That is the point: nothing can sign an update
    without you.
 
-To check it worked, ask an agent to run a throwaway-branch canary that prints
-whether the key is visible (it must say it is not).
+To check it worked, run the canary (`.github/workflows/canary-signing.yml`;
+it prints only yes or no, never the key). In Terminal, in a clone of the repository:
+
+```sh
+git push origin HEAD:refs/heads/canary-sec004
+gh workflow run canary-signing.yml --ref canary-sec004 -f secret=AUROS_APT_SIGNING_KEY -R aarohkandy/v0.0.1-auros
+gh run watch -R aarohkandy/v0.0.1-auros      # pick the canary-signing run
+git push origin :canary-sec004               # delete the throwaway branch
+```
+
+It must end green, with `CANARY OK`: the key is not visible outside the
+environment, and the environment refused the branch (the `inside` job fails
+at once with "Branch canary-sec004 is not allowed to deploy to apt-signing").
+Before your clicks it ends red: run 40046763411 (2026-10-24, on this
+repository as it stood) printed that the key **is** visible to a job on a
+throwaway branch, and that the environment let the branch in. (If `inside`
+sits at "Waiting" for a reviewer, the branch rule in step 3 is missing: cancel
+the run and fix step 3.)
 
 ### 4b. Private security reports (1 minute, before launch)
 
@@ -199,6 +215,21 @@ is off until you switch it on: `https://github.com/OWNER/REPO/settings/security_
 → **Private vulnerability reporting** → **Enable**. (Checked 2026-10-23: off.)
 Also put a security contact address in `SECURITY.md` where it says `[OWNER: ...]`.
 
+### 4c. Require pinned actions (SEC-005; 1 minute, safe to do now)
+
+Every workflow already pins every action to a full commit SHA
+(`tools/workflowlint.py` fails the build otherwise), so this setting can make
+it a rule of the repository without breaking anything. Today it is off
+(`sha_pinning_required: false`, checked 2026-10-24).
+
+1. `https://github.com/aarohkandy/v0.0.1-auros/settings/actions` → **Actions
+   permissions** → tick **Require actions to be pinned to a full-length commit
+   SHA** → **Save**. Or in Terminal:
+   `gh api -X PUT repos/aarohkandy/v0.0.1-auros/actions/permissions -F enabled=true -f allowed_actions=all -F sha_pinning_required=true`
+2. Check: `gh api repos/aarohkandy/v0.0.1-auros/actions/permissions --jq .sha_pinning_required` says `true`.
+   If a workflow later fails with "not pinned", an agent used a tag: ask for
+   it to be pinned (the lint says which).
+
 ### 4d. Release immutability (SEC-005; do it only after the evidence jobs change)
 
 GitHub can make a published release's files and tag unchangeable, so that
@@ -206,6 +237,13 @@ code in a CI job cannot swap `AurOS-Setup.exe` in the release the website
 button serves. The setting: `https://github.com/aarohkandy/v0.0.1-auros/settings`
 → scroll to **Releases** → tick **Enable release immutability** (it applies
 to releases published after you tick it).
+
+**The clicks, when an agent says "evidence jobs are draft-then-publish"**
+(plan and who does what: `docs/handoff/streams/E.md`, "SEC-005 plan"): settings
+page above → **Releases** → tick **Enable release immutability** → then, in
+Terminal, `gh api repos/aarohkandy/v0.0.1-auros/immutable-releases --jq .enabled`
+must say `true` (today: `false`), and `gh release upload <an old tag> x --clobber`
+on a release made after the tick must fail. Then (4c) nothing else is needed.
 
 **Do not tick it yet.** The real-Windows e2e, profiles and other-systems
 workflows (`tools/e2e/publish.sh`, `profiles.yml`, `othersys.yml`) attach
