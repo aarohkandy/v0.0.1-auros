@@ -22,6 +22,25 @@ class ParserTests(unittest.TestCase):
         struct.pack_into("<I", body, 56, 0x12345678)
         self.assertEqual(probe.parse_setup_root(bytes(body)), 0x12345678)
 
+    def test_query_extension_real_wire_offsets_skip_reply_padding(self):
+        # Shape captured from the X11 core QueryExtension reply: byte 1 is
+        # padding, present and major-opcode are bytes 8 and 9.
+        head = bytearray(32)
+        head[0] = 1
+        head[8] = 1
+        head[9] = 145
+        self.assertEqual(
+            probe.parse_query_extension_reply(bytes(head), "X-Resource"), 145)
+
+    def test_query_extension_absent_and_zero_opcode_fail_closed(self):
+        head = bytearray(32)
+        head[0] = 1
+        with self.assertRaises(probe.X11Error):
+            probe.parse_query_extension_reply(bytes(head), "X-Resource")
+        head[8] = 1
+        with self.assertRaises(probe.X11Error):
+            probe.parse_query_extension_reply(bytes(head), "X-Resource")
+
     def test_xres_local_pid_is_server_record_not_window_property(self):
         body = struct.pack("<IIII", 0x04000000, probe.LOCAL_CLIENT_PID, 4, 4242)
         self.assertEqual(probe.parse_xres_ids(body, 1), [(0x04000000, 4242)])
