@@ -21,8 +21,12 @@ gh api -X GET --paginate "repos/$repo/actions/workflows/harden.yml/runs" -f per_
 : > "$tmp/rows"
 while IFS='|' read -r id at ev; do
     [ -n "$id" ] || continue
+    # "success" only when the job succeeded AND both tests ran and passed on the image
+    # (steps "hardenboottest under KVM" and "timeboottest under KVM"): a dispatch with
+    # -f only=time or -f only=hardening skips one of them and the job is still green.
+    # That is "partial": no verdict (tools/releasegate.py harden).
     boot=$(gh api "repos/$repo/actions/runs/$id/jobs?filter=latest&per_page=100" \
-        --jq '[.jobs[] | select(.name == "boot") | (.conclusion // .status)] | first // "none"')
+        --jq '[.jobs[] | select(.name == "boot")] | first | if . == null then "none" elif .conclusion == "success" then (if ([.steps[] | select(.conclusion == "success" and (.name == "hardenboottest under KVM" or .name == "timeboottest under KVM"))] | length) == 2 then "success" else "partial" end) else (.conclusion // .status) end')
     echo "$at|$ev|harden of build run $rid|$boot" >> "$tmp/rows"
 done < "$tmp/runs"
 cat "$tmp/rows"

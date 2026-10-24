@@ -25,7 +25,9 @@ jq -r "$expr" < "$f"
 GH
 chmod +x "$tmp/bin/gh"
 fail=0
-# case NAME EXPECTED-EXIT BOOT... : harden runs 1.. of build run 900, newest last; BOOT = conclusion or status
+# case NAME EXPECTED-EXIT BOOT... : harden runs 1.. of build run 900, newest last; BOOT = conclusion or status;
+# "success" has both tests' steps green, "nohard"/"notime" is a green job that skipped hardenboottest / timeboottest
+# (a dispatch with only=time / only=hardening)
 run() {
     name=$1; want=$2; shift 2
     FAKE=$tmp/f; rm -rf "$FAKE"; mkdir "$FAKE"; export FAKE
@@ -34,15 +36,21 @@ run() {
     for b in "$@"; do
         n=$((n + 1))
         runs="$runs{\"id\":$n,\"created_at\":\"2026-10-24T0$n:00:00Z\",\"event\":\"workflow_run\",\"display_title\":\"harden of build run 900\"},"
+        h=success; t=success
+        case $b in
+            nohard) b=success; h=skipped ;;
+            notime) b=success; t=skipped ;;
+        esac
         case $b in
             success|failure|cancelled|skipped) c="\"$b\"" ;; *) c=null ;;
         esac
-        echo "{\"jobs\":[{\"name\":\"which\",\"conclusion\":\"success\",\"status\":\"completed\"},{\"name\":\"boot\",\"conclusion\":$c,\"status\":\"$b\"}]}" > "$FAKE/jobs-$n.json"
+        steps="[{\"name\":\"hardenboottest under KVM\",\"conclusion\":\"$h\"},{\"name\":\"timeboottest under KVM\",\"conclusion\":\"$t\"}]"
+        echo "{\"jobs\":[{\"name\":\"which\",\"conclusion\":\"success\",\"status\":\"completed\"},{\"name\":\"boot\",\"conclusion\":$c,\"status\":\"$b\",\"steps\":$steps}]}" > "$FAKE/jobs-$n.json"
     done
     # a run of another build, green: must never count
     runs="$runs{\"id\":99,\"created_at\":\"2026-10-24T09:00:00Z\",\"event\":\"workflow_run\",\"display_title\":\"harden of build run 901\"}"
     echo "{\"workflow_runs\":[$runs]}" > "$FAKE/runs.json"
-    echo '{"jobs":[{"name":"boot","conclusion":"success","status":"completed"}]}' > "$FAKE/jobs-99.json"
+    echo '{"jobs":[{"name":"boot","conclusion":"success","status":"completed","steps":[{"name":"hardenboottest under KVM","conclusion":"success"},{"name":"timeboottest under KVM","conclusion":"success"}]}]}' > "$FAKE/jobs-99.json"
     PATH=$tmp/bin:$PATH GITHUB_REPOSITORY=o/r sh "$here/hardengate.sh" 900 >"$tmp/out" 2>&1; got=$?
     if [ "$got" = "$want" ]; then printf '    %-58s ok\n' "$name"; else printf '    %-58s FAIL (exit %s, wanted %s)\n' "$name" "$got" "$want"; sed 's/^/        /' "$tmp/out"; fail=$((fail + 1)); fi
 }
@@ -52,6 +60,10 @@ run "no harden run of the build is refused (only another build's)" 1
 run "a boot still running is refused" 1 in_progress
 run "a skipped boot is refused" 1 skipped
 run "a cancelled boot is refused" 1 cancelled
+run "a green job that skipped hardenboottest (only=time) is refused" 1 nohard
+run "a green job that skipped timeboottest (only=hardening) is refused" 1 notime
+run "a red run is not overridden by a green only=time dispatch" 1 failure nohard
+run "a full green is not undone by a later only=time dispatch" 0 success nohard
 run "red, then a green re-run, passes" 0 failure success
 run "green, then a red re-run, is refused" 1 success failure
 run "a red boot is not hidden by a later cancelled one" 1 failure cancelled

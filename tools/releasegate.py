@@ -31,8 +31,10 @@ The rules (docs/safety/FINDINGS.md S-11 is why the power-cut ones are here):
      fetches them); a run counts only if its title is "harden of build run
      RUN-ID" (harden.yml's run-name) and its event is workflow_run or
      workflow_dispatch. The newest one with a verdict (boot success or
-     failure) decides; skipped, cancelled, running or none is no verdict,
-     and no verdict refuses. A red re-run to green is a pass.
+     failure) decides; skipped, cancelled, running, none or "partial" (the
+     job passed but hardenboottest or timeboottest did not run: a dispatch
+     with only=time/hardening; tools/hardengate.sh) is no verdict, and no
+     verdict refuses. A red re-run to green is a pass.
 
 ALLOW lines:  job name | expires YYYY-MM-DD (UTC, inclusive) | why
 e.g.          powercut / e2e (powercut-nostick-early)|2026-10-30|S-03: ...
@@ -109,7 +111,8 @@ def judge_harden(rows_text, rid):
             return []
         if boot == "failure":
             return ["the hardening boot test of build run %s's image FAILED (harden.yml, job boot)" % rid]
-    return ["the hardening boot test of build run %s's image has no verdict yet (%s)" % (rid, ", ".join(b for _, b in mine))]
+    return ["the hardening boot test of build run %s's image has no verdict yet (%s; \"partial\" is a run that skipped "
+            "hardenboottest or timeboottest: dispatch harden with only=all)" % (rid, ", ".join(b for _, b in mine))]
 
 
 def selftest():
@@ -132,6 +135,9 @@ def selftest():
     hc("red, then re-run green (newer) passes", [h["o"] + "|workflow_run|" + t + "|failure", h["r"] + "|workflow_dispatch|" + t + "|success"], False)
     hc("green, then red (newer) is refused", [h["o"] + "|workflow_run|" + t + "|success", h["r"] + "|workflow_dispatch|" + t + "|failure"], True)
     hc("a newer cancelled run does not hide an older red", [h["o"] + "|workflow_run|" + t + "|failure", h["r"] + "|workflow_run|" + t + "|cancelled"], True)
+    hc("a partial run (one of the two tests skipped) is no verdict: refused", [h["r"] + "|workflow_dispatch|" + t + "|partial"], True)
+    hc("a newer partial run does not override an older red", [h["o"] + "|workflow_run|" + t + "|failure", h["r"] + "|workflow_dispatch|" + t + "|partial"], True)
+    hc("a newer partial run does not undo an older full green", [h["o"] + "|workflow_run|" + t + "|success", h["r"] + "|workflow_dispatch|" + t + "|partial"], False)
     hc("run 90 is not run 900", [h["r"] + "|workflow_run|harden of build run 9000|success"], True)
     green = "\n".join(
         ["build|success", "tests / unit|success"]
