@@ -8,7 +8,7 @@ This check is evidence for a built and booted `multilingual` image. Passing
 
        systemctl --user is-active auros-ibus.service
        systemctl --user show-environment | grep -E '^(GTK_IM_MODULE|QT_IM_MODULE|XMODIFIERS|WAYLAND_DISPLAY|DISPLAY)='
-       ibus list-engine | grep -E '(^|[[:space:]:])pinyin([[:space:]]|$)'
+       ibus list-engine --name-only | grep -Fx pinyin
 
    The service must be `active`, all three input-method variables must have
    the values from `/etc/auros/input-method.env`, and a Pinyin engine must be

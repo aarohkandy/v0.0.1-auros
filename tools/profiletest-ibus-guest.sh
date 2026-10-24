@@ -10,6 +10,73 @@ STATE=/var/lib/auros-profiletest/ibus
 HOST=/run/auros-profiletest-host
 say() { printf '\nPROFILETEST %s\n' "$*" > "$S"; }
 
+select_ibus_engine() { # engine phase
+    engine=$1
+    phase=$2
+    log="$OUT/$phase-engine-select.log"
+    : > "$log"
+    attempt=1
+    while [ "$attempt" -le 3 ]; do
+        printf 'attempt=%s command=ibus engine %s\n' "$attempt" "$engine" >> "$log"
+        ibus_cmd ibus engine "$engine" >> "$log" 2>&1
+        set_rc=$?
+        printf 'attempt=%s set_rc=%s\n' "$attempt" "$set_rc" >> "$log"
+        current=$(ibus_cmd ibus engine 2>> "$log")
+        get_rc=$?
+        current=$(printf '%s' "$current" | tr -d '\r\n')
+        printf 'attempt=%s get_rc=%s current=%s\n' \
+            "$attempt" "$get_rc" "$current" >> "$log"
+        [ "$get_rc" -eq 0 ] && [ "$current" = "$engine" ] && return 0
+        sleep "${IBUS_SELECT_RETRY_DELAY:-2}"
+        attempt=$((attempt + 1))
+    done
+    return 1
+}
+
+if [ "${1:-}" = selftest ]; then
+    OUT=$(mktemp -d "${TMPDIR:-/tmp}/profiletest-ibus-select.XXXXXX")
+    trap 'rm -rf "$OUT"' EXIT
+    IBUS_SELECT_RETRY_DELAY=0
+    mock_state="$OUT/state"
+    mock_calls="$OUT/calls"
+    ibus_cmd() {
+        printf '%s\n' "$*" >> "$mock_calls"
+        if [ "${3:-}" = pinyin ]; then
+            printf pinyin > "$mock_state"
+            printf '%s\n' 'setter exceeded its foreground deadline' >&2
+            return 124
+        fi
+        cat "$mock_state" 2>/dev/null || return 1
+    }
+    select_ibus_engine pinyin late \
+        || { echo "late engine activation was not accepted" >&2; exit 1; }
+    grep -Fqx 'attempt=1 set_rc=124' "$OUT/late-engine-select.log" \
+        || { echo "setter failure was not retained" >&2; exit 1; }
+    grep -Fqx 'ibus engine pinyin' "$mock_calls" \
+        || { echo "selector did not request the exact engine ID" >&2; exit 1; }
+
+    : > "$mock_calls"
+    ibus_cmd() {
+        printf '%s\n' "$*" >> "$mock_calls"
+        if [ "${3:-}" = pinyin ]; then
+            printf '%s\n' 'Set global engine failed.' >&2
+            return 1
+        fi
+        printf '%s\n' 'No engine is set.' >&2
+        return 1
+    }
+    if select_ibus_engine pinyin failed; then
+        echo "a never-selected engine was accepted" >&2
+        exit 1
+    fi
+    grep -Fq 'Set global engine failed.' "$OUT/failed-engine-select.log" \
+        || { echo "setter stderr was discarded" >&2; exit 1; }
+    [ "$(grep -c '^ibus engine pinyin$' "$mock_calls")" -eq 3 ] \
+        || { echo "selector did not stop after three attempts" >&2; exit 1; }
+    echo "IBus engine selector selftest: pass"
+    exit 0
+fi
+
 mkdir -p "$STATE" "$HOST"
 if ! mountpoint -q "$HOST" 2>/dev/null; then
     modprobe 9pnet_virtio 2>/dev/null || true
@@ -89,6 +156,13 @@ ibus_cmd() {
         GTK_IM_MODULE="$gtk" QT_IM_MODULE="$qt" XMODIFIERS="$xmod" "$@"
 }
 
+if ! ibus_cmd ibus list-engine --name-only > "$OUT/ibus-engine-ids.txt" \
+        2> "$OUT/ibus-engine-list.stderr"; then
+    fail "could not list exact IBus engine IDs"
+fi
+grep -Fqx pinyin "$OUT/ibus-engine-ids.txt" \
+    || fail "the exact pinyin IBus engine ID is unavailable"
+
 wait_active() {
     unit=$1; i=0
     while [ "$i" -lt 30 ]; do
@@ -121,8 +195,8 @@ as_desktop systemd-run --user --quiet --collect --unit="$mouse_unit" \
 wait_active "$mouse_unit" || fail "Mousepad unit did not become active"
 act wait-change "mousepad-$round" || fail "Mousepad did not map a visible window"
 act click-change "mousepad-$round" || fail "host did not focus Mousepad's editor"
-ibus_cmd ibus engine pinyin >/dev/null 2>&1 || fail "could not select pinyin for Mousepad"
-[ "$(ibus_cmd ibus engine 2>/dev/null)" = pinyin ] || fail "Mousepad did not get the pinyin engine"
+select_ibus_engine pinyin mousepad \
+    || fail "could not select pinyin for Mousepad; see mousepad-engine-select.log"
 act type-pinyin || fail "host did not type into Mousepad"
 act shot "ibus-round$round-mousepad-candidate" || fail "Mousepad screenshot failed"
 act key spc || fail "host did not choose the Mousepad candidate"
@@ -190,8 +264,8 @@ tr '\0' '\n' < "/proc/$firefox_pid/environ" 2>/dev/null \
     | grep -E '^(GTK_IM_MODULE|WAYLAND_DISPLAY|DISPLAY)=' > "$OUT/firefox.env" \
     || fail "Firefox environment unavailable"
 grep -qx 'GTK_IM_MODULE=ibus' "$OUT/firefox.env" || fail "Firefox did not inherit GTK IBus"
-ibus_cmd ibus engine pinyin >/dev/null 2>&1 || fail "could not reselect pinyin for Firefox"
-[ "$(ibus_cmd ibus engine 2>/dev/null)" = pinyin ] || fail "Firefox did not get the pinyin engine"
+select_ibus_engine pinyin firefox \
+    || fail "could not select pinyin for Firefox; see firefox-engine-select.log"
 act type-pinyin || fail "host did not type into Firefox"
 act shot "ibus-round$round-firefox-candidate" || fail "Firefox screenshot failed"
 act key spc || fail "host did not choose the Firefox candidate"
