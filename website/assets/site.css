@@ -367,6 +367,18 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 
 /* ── request preview: five real profiles, allowlisted choices only ── */
 .request-stop h2 { font-size: 25px; margin-bottom: 8px; }
+.request-words { padding-top: clamp(36px, 5vw, 64px); }
+.request-words .narrow > h2 { font-size: clamp(30px, 3.2vw, 40px); line-height: 1.15; font-weight: 800; margin-bottom: 14px; }
+.request-text-label { display: block; margin: 26px 0 8px; font-weight: 700; }
+#plain-request { display: block; width: 100%; min-height: 132px; resize: vertical; padding: 14px 16px; border: 2px solid var(--rule); border-radius: 8px; background: var(--card); color: var(--ink); font: 400 21px/1.45 var(--face); }
+#plain-request:focus-visible { border-color: var(--ink); }
+.request-count { margin: 2px 0 14px; color: var(--quiet); font-size: 18px; }
+.request-message:empty { display: none; }
+.request-message:not(:empty) { margin: 18px 0 0; padding: 16px 18px; border-left: 6px solid var(--warn); border-radius: 8px; background: var(--warn-tint); font-weight: 700; }
+.request-message.ok:not(:empty) { border-left-color: var(--go); background: var(--selected); }
+.request-proposal h3 { margin: 0 0 16px; font-size: 25px; }
+.request-proposal > p { margin-top: 22px; }
+.request-accept { margin-top: 8px; font-size: 24px; min-height: 64px; }
 .request-form { margin: 0; }
 .request-set { min-width: 0; margin: 0; padding: 0; border: 0; }
 .request-set legend, .request-finish h2 { width: 100%; font: 800 clamp(30px, 3.2vw, 40px)/1.15 var(--face); margin: 0 0 18px; }

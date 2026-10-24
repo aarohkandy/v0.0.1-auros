@@ -36,6 +36,30 @@
     </div>
   </section>
 
+  <section class="doc request-words" aria-labelledby="request-words-title">
+    <div class="narrow">
+      <h2 id="request-words-title">Or say what you want.</h2>
+      <p>Use ordinary words. This preview understands only the starting points, arrangements and colours on this page. It does not use AI, send your words anywhere or quietly ignore part of a request.</p>
+      <label class="request-text-label" for="plain-request">What should your AurOS be like?</label>
+      <textarea id="plain-request" rows="4" maxlength="300" aria-describedby="request-words-help request-count"></textarea>
+      <p id="request-words-help" class="request-help">For example: &ldquo;An older, slower computer that looks like Windows, in warm Ember colours.&rdquo;</p>
+      <p id="request-count" class="request-count">0 of 300 characters</p>
+      <button class="btn2" type="button" id="understand-request">Understand my request</button>
+      <p class="request-message" id="request-words-status" role="status" aria-live="polite"></p>
+      <div class="recipe-review request-proposal" id="request-proposal" hidden>
+        <h3>I understood this:</h3>
+        <dl>
+          <div><dt>Starting point</dt><dd id="proposal-base"></dd></div>
+          <div><dt>Arrangement</dt><dd id="proposal-look"></dd></div>
+          <div><dt>Colours</dt><dd id="proposal-theme"></dd></div>
+        </dl>
+        <p>This is still a recipe preview, not a built or downloadable AurOS. Check all three choices before accepting them.</p>
+        <button class="get request-accept" type="button" id="accept-request">Use these choices</button>
+      </div>
+      <noscript><p class="warnbox">Understanding ordinary words needs JavaScript. You can still use every choice below.</p></noscript>
+    </div>
+  </section>
+
   <form id="chooser" class="request-form" novalidate>
     <section class="doc sand" aria-labelledby="base-title">
       <div class="narrow">
@@ -176,6 +200,6 @@
   </div>
 </footer>
 
-<script src="assets/request.js"></script>
+<script type="module" src="assets/request.js"></script>
 </body>
 </html>

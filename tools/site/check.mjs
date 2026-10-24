@@ -433,6 +433,8 @@ for (const v of [
 //     recipe, but it must never imply that the recipe was built, uploaded or
 //     applied by today's installer.
 {
+  execFileSync("node", [path.join(REPO, "tools", "site", "generate-configure-browser.mjs"), "--check"]);
+  pass("request: the browser interpreter is generated from cloud/src/configure.js and is current");
   const { ctx, page } = await visit({ name: "request recipe", url: HOME + "request.html", ua: UA.winEdge, uad: UAD.winX64 });
   const start = await page.evaluate(() => ({
     recipe: JSON.parse(document.getElementById("recipe-preview").textContent),
@@ -440,13 +442,14 @@ for (const v of [
     bases: [...document.querySelectorAll("input[name=base]")].map((e) => e.value),
     looks: [...document.querySelectorAll("input[name=look]")].map((e) => e.value),
     themes: [...document.querySelectorAll("input[name=theme]")].map((e) => e.value),
-    other: [...document.querySelectorAll("input:not([type=radio]), textarea, select")].map((e) => e.outerHTML),
+    other: [...document.querySelectorAll("input:not([type=radio]), textarea:not(#plain-request), select")].map((e) => e.outerHTML),
+    plain: { max: document.getElementById("plain-request").maxLength, labels: document.getElementById("plain-request").labels.length },
   }));
   check(JSON.stringify(start.recipe) === JSON.stringify({ schema: "org.auros.recipe", version: 1, base: "desktop" }), "request: the default recipe is the exact v1 desktop contract", JSON.stringify(start.recipe));
   check(JSON.stringify(start.bases) === JSON.stringify(["desktop", "revive", "multilingual", "office", "school-kiosk"]), "request: all five real base profiles are offered once", JSON.stringify(start.bases));
   check(JSON.stringify(start.looks) === JSON.stringify(["", "taskbar", "dock", "rail", "tiles"]), "request: look is optional and limited to the four public arrangements", JSON.stringify(start.looks));
   check(JSON.stringify(start.themes) === JSON.stringify(["", "sandstone", "nocturne", "ember", "moss", "slate"]), "request: theme is optional and limited to the five shipped themes", JSON.stringify(start.themes));
-  check(start.other.length === 0, "request: there are no prose, package, URL or other open-ended inputs", start.other.join("; "));
+  check(start.other.length === 0 && start.plain.max === 300 && start.plain.labels === 1, "request: the one plain-language box is bounded, labelled, and no other open-ended input exists", JSON.stringify({ other: start.other, plain: start.plain }));
   check(/does not make an AurOS download yet/i.test(start.text) && /AurOS-Setup\.exe does not read it/i.test(start.text) && /does not send it anywhere/i.test(start.text), "request: it says a valid recipe is not a build, today's installer does not read it, and nothing is sent");
 
   // Once the authoritative compiler is present, CI ties the hand-written,
@@ -471,6 +474,65 @@ for (const v of [
         `request: keeping ${base.id}'s usual choices resolves to its catalogue defaults`, JSON.stringify(plan.resolved_preferences));
     }
   }
+
+  const formSelection = () => page.evaluate(() => ({
+    base: document.querySelector("input[name=base]:checked").value,
+    look: document.querySelector("input[name=look]:checked").value,
+    theme: document.querySelector("input[name=theme]:checked").value,
+    recipe: JSON.parse(document.getElementById("recipe-preview").textContent),
+  }));
+  const initialSelection = await formSelection();
+  await page.click("#understand-request");
+  const empty = await page.evaluate(() => ({ text: document.getElementById("request-words-status").innerText, focus: document.activeElement.id }));
+  check(/write what you want first/i.test(empty.text) && /nothing was changed/i.test(empty.text) && empty.focus === "plain-request" && JSON.stringify(await formSelection()) === JSON.stringify(initialSelection),
+    "request words: empty input explains what to do, focuses the labelled box, and changes nothing", JSON.stringify(empty));
+
+  await page.fill("#plain-request", "An older, slower computer with a familiar Windows-like bar and warm ember colours.");
+  await page.click("#understand-request");
+  const proposed = await page.evaluate(() => ({
+    shown: document.getElementById("request-proposal").getClientRects().length > 0,
+    base: document.getElementById("proposal-base").innerText,
+    look: document.getElementById("proposal-look").innerText,
+    theme: document.getElementById("proposal-theme").innerText,
+    status: document.getElementById("request-words-status").innerText,
+  }));
+  check(proposed.shown && proposed.base === "An older, slower computer" && proposed.look === "Like Windows" && proposed.theme === "Ember" && /form has not changed/i.test(proposed.status) && JSON.stringify(await formSelection()) === JSON.stringify(initialSelection),
+    "request words: a supported request shows all resolved choices without changing the form", JSON.stringify(proposed));
+  await page.click("#accept-request");
+  const accepted = await formSelection();
+  check(JSON.stringify(accepted) === JSON.stringify({ base: "revive", look: "taskbar", theme: "ember", recipe: { schema: "org.auros.recipe", version: 1, base: "revive", preferences: { look: "taskbar", theme: "ember" } } }),
+    "request words: explicit acceptance applies exactly the reviewed recipe", JSON.stringify(accepted));
+
+  for (const [words, reason] of [
+    ["Make the screen brighter whenever this computer points north", /hardware-sensor support/iu],
+    ["Use the Revive base in moss and also make the pointer enormous", /part of that request is outside/iu],
+    ["Give me Office", /adding or naming programs/iu],
+  ]) {
+    await page.fill("#plain-request", words);
+    await page.click("#understand-request");
+    const refused = await page.evaluate(() => ({ text: document.getElementById("request-words-status").innerText,
+      proposal: document.getElementById("request-proposal").getClientRects().length > 0 }));
+    check(reason.test(refused.text) && /nothing was changed/i.test(refused.text) && !refused.proposal && JSON.stringify(await formSelection()) === JSON.stringify(accepted),
+      `request words: unsupported request is wholly refused without partial changes (${JSON.stringify(words)})`, JSON.stringify(refused));
+  }
+
+  await page.fill("#plain-request", "Use the office computer base");
+  await page.click("#understand-request");
+  const office = await page.evaluate(() => ({ base: document.getElementById("proposal-base").innerText,
+    look: document.getElementById("proposal-look").innerText, theme: document.getElementById("proposal-theme").innerText }));
+  check(JSON.stringify(office) === JSON.stringify({ base: "Computers for an organisation", look: "Big and simple", theme: "Slate" }) && JSON.stringify(await formSelection()) === JSON.stringify(accepted),
+    "request words: explicit office-computer wording resolves to office defaults and still waits for acceptance", JSON.stringify(office));
+  await page.evaluate(() => {
+    const button = document.getElementById("accept-request");
+    const input = document.getElementById("plain-request");
+    input.value = "An everyday computer in moss";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    button.click();
+  });
+  const stale = await page.evaluate(() => ({ text: document.getElementById("request-words-status").innerText,
+    proposal: document.getElementById("request-proposal").getClientRects().length > 0 }));
+  check(/words changed/i.test(stale.text) && /nothing was changed/i.test(stale.text) && !stale.proposal && JSON.stringify(await formSelection()) === JSON.stringify(accepted),
+    "request words: editing after review makes acceptance stale and applies nothing", JSON.stringify(stale));
 
   await page.check("input[name=base][value=office]");
   await page.check("input[name=look][value=dock]");
