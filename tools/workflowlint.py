@@ -34,6 +34,9 @@
    `tools/aptgate.sh decide` (the commit SUBJECT says [latest] and the
    triggering run's promote job concluded success, asked of the API, failing
    closed), never from a substring of the whole commit message alone.
+10. A mutant is applied without `|| true` (tools/fastpath-mutant.sh): one that
+   fails to apply would run the clean test, and the run that "must go red"
+   reads green.
 9. No dynamic reads of secrets: `secrets[...]` (a name chosen at run time,
    e.g. `secrets[inputs.x]`) and `toJSON(secrets)` hand every secret of the
    repository to a run on any branch and slip past rule 6; each secret is
@@ -92,6 +95,8 @@ def lint(path, text):
             out.append("%s: job %s has no timeout-minutes" % (path, name))
         for step in job.get("steps") or []:
             run = step.get("run") if isinstance(step, dict) else None
+            if run and re.search(r"-mutant\.sh[^\n]*\|\|\s*true", run):
+                out.append("%s: job %s runs a mutant with || true: a mutant that fails to apply reads green" % (path, name))
             if run and re.search(r"\bapt-get\b", run) and "tools/apt.sh" not in run \
                     and not re.search(r"\btimeout\b[^\n]*apt-get", run):
                 out.append("%s: job %s calls apt-get without tools/apt.sh or timeout" % (path, name))
@@ -128,6 +133,8 @@ def selftest():
          good + "      - uses: actions/checkout@" + "a" * 40 + "\n      - uses: actions/download-artifact@" + "a" * 40 + "\n", 0),
         ("release.yml's e2e waiting for latest is refused", "jobs:\n  e2e:\n    needs: promote\n    uses: ./.github/workflows/e2e.yml\n", 1),
         ("an e2e that needs only the publish passes", "jobs:\n  e2e:\n    needs: publish\n    uses: ./.github/workflows/e2e.yml\n", 0),
+        ("a mutant run with || true is refused", good + "      - run: bash tools/fastpath-mutant.sh \"$M\" || true\n", 1),
+        ("a mutant run without it passes", good + "      - run: bash tools/fastpath-mutant.sh \"$M\"\n", 0),
         ("secrets[inputs.x] is refused", good + "      - env:\n          V: ${{ secrets[inputs.name] }}\n        run: x\n", 1),
         ("secrets['NAME'] is refused", good + "      - env:\n          V: ${{ secrets['NAME'] }}\n        run: x\n", 1),
         ("toJSON(secrets) is refused", good + "      - env:\n          V: ${{ toJSON(secrets) }}\n        run: x\n", 1),

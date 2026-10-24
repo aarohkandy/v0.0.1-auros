@@ -94,7 +94,13 @@ jobs:
   which:
     # Decided without a runner where it can be: every push to the
     # branch starts this workflow, and runners are shared by them all.
-    if: inputs.run-id != '' || contains(github.event.head_commit.message, '[publish')
+    # [publish ...] opens the SUBJECT (after an optional [othersys-skip]): a
+    # commit whose BODY merely mentions it (a message explaining what
+    # [publish] does) used to start this job, say go=false and leave a
+    # workflow run that read "success" with nothing published -- a hollow
+    # green two runs cited (CI-truth). The expression cannot cut at the end
+    # of the first line, so the subject's start is what it can see.
+    if: inputs.run-id != '' || startsWith(github.event.head_commit.message, '[publish') || startsWith(github.event.head_commit.message, '[othersys-skip] [publish')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -545,6 +551,8 @@ jobs:
     with:
       installer_url: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}/AurOS-Setup.exe
       installer_sha256: ${{ needs.publish.outputs.setup_sha256 }}
+      # base AND bitlocker: both are v0.1 gates (D13, LEAD-RESUME section 5) and promote asks for both
+      variants: base,bitlocker
 
   # The fast-path installer through the same real-Windows journey, when
   # this release has one. NOT in promote's needs: the website's download is
@@ -652,19 +660,16 @@ jobs:
       - name: a real Windows installed THIS AurOS-Setup.exe end to end, in this run
         run: |
           # `needs` already says e2e did not fail. This asks the jobs
-          # themselves, so an e2e that was skipped (its gate said no)
-          # cannot count as one that passed: at least one e2e job of
-          # this run, and every one of them, succeeded. They were handed
-          # this release's address and SHA-256 (the e2e job above) and
-          # refuse a download that does not hash to it.
+          # themselves (tools/releasegate.py e2e): the real-Windows journey of
+          # THIS release's AurOS-Setup.exe passed in the variants base AND
+          # bitlocker (D13), and no other variant of it failed. The jobs were
+          # handed this release's address and SHA-256 (the e2e job above) and
+          # refuse a download that does not hash to it. A skipped job, or the
+          # fast path's, is not one.
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" \
               --jq '.jobs[] | "\(.name)|\(.conclusion)"' > /tmp/jobs.txt
-          grep -E '(^|/ )e2e / e2e \(' /tmp/jobs.txt > /tmp/e2e.txt || true
-          cat /tmp/e2e.txt
-          if [ ! -s /tmp/e2e.txt ] || grep -qv '|success$' /tmp/e2e.txt; then
-            echo "::error::no passing real-Windows e2e of AurOS-Setup.exe $SETUP_SHA256 in this run; $TAG stays a prerelease"
-            exit 1
-          fi
+          grep -E '^e2e( |-)' /tmp/jobs.txt || true
+          python3 -I tools/releasegate.py e2e /tmp/jobs.txt || { echo "::error::no passing real-Windows e2e of AurOS-Setup.exe $SETUP_SHA256 in base and bitlocker in this run; $TAG stays a prerelease"; exit 1; }
           echo "e2e passed in $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID on AurOS-Setup.exe $SETUP_SHA256"
       - name: the full release
         run: |

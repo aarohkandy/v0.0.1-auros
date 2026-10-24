@@ -193,6 +193,18 @@ which only a **full** (non-pre) release moves. **Only the lead pushes `[latest]`
   `[publish RUN-ID] [latest]`. A `[release]` subject forces harden to boot that image (a10d966).
   Runs before this change have the title `harden` and can never be matched (RC5's will be).
 
+## CI-truth items done (01:30 UTC; docs/reviews/CI-TRUTH-2026-10-24.md)
+
+C.9 hardengate needs both hardenboottest and timeboottest steps green ("partial" = no verdict) (6b8a8c2);
+C.11 file lists fail closed and paginate in build/e2e/profiles/othersys/harden (aptrepo is S5's);
+C.10 build.yml's gate also builds for hw/, docs/legal/notices/, the tools the build calls and
+release/harden/e2e/sources.yml (a test script alone stays `[test]`); promote needs e2e base AND bitlocker
+(`releasegate.py e2e`, release.yml's e2e now runs `variants: base,bitlocker`, the fast path stays base);
+E.15 release-requires has 9 lines now; E.16 fastpath's mutant step has no `|| true` and runs for
+putback-* only (lint rule 10); `which` starts only when `[publish` OPENS the subject (after an optional
+`[othersys-skip]`): a body mention starts nothing, so no hollow green. Docs fixed: PLAN-END-TO-END 37/220,
+FIELD-MANUAL 110. Not mine: the unwired tests (CIW), aptrepo (S5).
+
 ## SEC-004 canary (redesigned 00:55 UTC after the security review)
 
 `canary-signing.yml` reads only the decoy `APT_ENV_CANARY` (no input, no `secrets[...]`; workflowlint

@@ -9,3 +9,8 @@
 6917bde|staging "cannot-measure": ntfsresize's answer was dropped on every real volume
 54b783b|aurwl: subsurfaces composited into the window (Firefox was blank)
 e1c8015|grub.cfg.in: the Windows start line carries lockdown=integrity too
+76d89b9|aurfirst: "Start AurOS from now on" was refused on a real install (efivarfs)
+7381d67|aurwl: clicks landed 20% off in GTK4 windows; the store's Install button never worked
+f38af6f|the Install label was unreadable (text on the accent)
+c74a440|signtest: its tree copy lacked docs/legal/notices, so tests / unit was red on every build before it
+afc82b8|release.yml publish: checkout ran after the download and deleted the installer, so no build before it can be published

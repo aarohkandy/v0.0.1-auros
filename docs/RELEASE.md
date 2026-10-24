@@ -20,8 +20,8 @@ count only in the commit's subject line.**
 | Tests only, no build | says `[test]` in its subject | `tests.yml` against the newest build of the branch whose artifacts have not expired (14 days) |
 | A prerelease, built and tested, then the real-Windows journey on it | says `[release]` | `build.yml`, `tests.yml`, then `release.yml` if every test passed: prerelease, Windows checks, `e2e.yml` on that exact AurOS-Setup.exe, the website check. Stops there. |
 | **The website's download, start to finish** | says `[release] [latest]` (lead only) | **refused up front** (see below): harden has not run on a build that has not finished. Push `[release]`, wait for harden, then `[publish RUN-ID] [latest]`. |
-| A prerelease of a build that already passed | says `[publish]` (newest passing build of the branch) or `[publish RUN-ID]` | `release.yml` only: nothing is rebuilt, so what is published is exactly what was tested; then the same Windows checks, e2e and site check |
-| That build as the full release | says `[publish RUN-ID] [latest]` (lead only) | the same, then `promote` (e2e of THIS exe passed in this run **and** harden's `boot` passed on this build's image) and Pages; e2e runs again on that exe first |
+| A prerelease of a build that already passed | opens its subject with `[publish]` (newest passing build of the branch) or `[publish RUN-ID]` (after an optional `[othersys-skip]`; a body that mentions it starts nothing) | `release.yml` only: nothing is rebuilt, so what is published is exactly what was tested; then the same Windows checks, e2e and site check |
+| That build as the full release | says `[publish RUN-ID] [latest]` (lead only) | the same, then `promote` (the real-Windows journey of THIS exe passed in this run in the `base` AND `bitlocker` variants, **and** harden's `boot` passed on this build's image) and Pages; e2e runs again on that exe first |
 
 Every release starts as a prerelease; only `promote` makes one public,
 and only after `e2e.yml` -- called by `release.yml` with the release's

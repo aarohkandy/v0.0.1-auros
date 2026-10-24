@@ -3,6 +3,7 @@
 
     python3 -I tools/releasegate.py JOBS ALLOW [TODAY] [--latest]   JOBS: lines "name|conclusion"
     python3 -I tools/releasegate.py harden ROWS RUN-ID   did the hardening boot of THIS build's image pass?
+    python3 -I tools/releasegate.py e2e JOBS             did a real Windows install THIS AurOS-Setup.exe, base AND bitlocker?
     python3 -I tools/releasegate.py selftest             each rule refuses what it exists to refuse
 
 JOBS is the build run's job list (release.yml's `which` job fetches it
@@ -35,6 +36,13 @@ The rules (docs/safety/FINDINGS.md S-11 is why the power-cut ones are here):
      job passed but hardenboottest or timeboottest did not run: a dispatch
      with only=time/hardening; tools/hardengate.sh) is no verdict, and no
      verdict refuses. A red re-run to green is a pass.
+
+  5. (--latest only, `e2e`) the real-Windows journey (e2e.yml, called by
+     release.yml as job `e2e`) of the release's own AurOS-Setup.exe passed in
+     the variants base AND bitlocker (D13): JOBS are the run's "name|conclusion"
+     lines; `e2e / e2e (base)` and `e2e / e2e (bitlocker)` must both be
+     success, and no other `e2e / e2e (...)` job may have failed. The fast
+     path's jobs (`e2e-fastpath / ...`) never count for this.
 
 ALLOW lines:  job name | expires YYYY-MM-DD (UTC, inclusive) | why
 e.g.          powercut / e2e (powercut-nostick-early)|2026-10-30|S-03: ...
@@ -95,6 +103,27 @@ def judge(jobs_text, allow, today, latest=False):
     return why, notes
 
 
+E2E_VARIANTS = ("base", "bitlocker")
+
+
+def judge_e2e(jobs_text):
+    """-> refusals. Both variants of the legacy installer's journey, nothing else counts."""
+    jobs = {}
+    for line in jobs_text.splitlines():
+        if "|" in line:
+            name, conc = line.rsplit("|", 1)
+            jobs[name.strip()] = conc.strip()
+    why = []
+    for v in E2E_VARIANTS:
+        c = jobs.get("e2e / e2e (%s)" % v)
+        if c != "success":
+            why.append("no passing real-Windows journey of AurOS-Setup.exe in the %s variant (e2e / e2e (%s): %s)" % (v, v, c or "did not run"))
+    for n, c in sorted(jobs.items()):
+        if n.startswith("e2e / e2e (") and c != "success" and n[len("e2e / e2e ("):-1] not in E2E_VARIANTS:
+            why.append("%s: %s" % (n, c))
+    return why
+
+
 def judge_harden(rows_text, rid):
     """-> refusals. The newest harden run of build run RID with a verdict decides."""
     title = "harden of build run %s" % rid
@@ -123,6 +152,21 @@ def selftest():
         print("    %-62s %s" % (what, "ok" if got == want_refused else "FAIL"))
         bad += got != want_refused
     bad = 0
+    def ec(what, jobs, want_refused):
+        nonlocal bad
+        got = bool(judge_e2e("\n".join(jobs)))
+        print("    %-62s %s" % (what, "ok" if got == want_refused else "FAIL"))
+        bad += got != want_refused
+    ok2 = ["e2e / gate|success", "e2e / e2e (base)|success", "e2e / e2e (bitlocker)|success", "e2e-fastpath / e2e (base)|success"]
+    ec("base and bitlocker both green pass", ok2, False)
+    ec("base only is refused", [j for j in ok2 if "bitlocker" not in j], True)
+    ec("bitlocker only is refused", [j for j in ok2 if "(base)|success" not in j or "fastpath" in j], True)
+    ec("bitlocker red is refused", [j.replace("bitlocker)|success", "bitlocker)|failure") for j in ok2], True)
+    ec("bitlocker skipped is refused", [j.replace("bitlocker)|success", "bitlocker)|skipped") for j in ok2], True)
+    ec("base cancelled is refused", [j.replace("e2e / e2e (base)|success", "e2e / e2e (base)|cancelled") for j in ok2], True)
+    ec("the fast path's two green jobs do not stand in", ["e2e-fastpath / e2e (base)|success", "e2e-fastpath / e2e (bitlocker)|success"], True)
+    ec("a third variant failing is refused", ok2 + ["e2e / e2e (hdd)|failure"], True)
+    ec("no e2e jobs at all is refused", [], True)
     t = "harden of build run 900"
     hc("a green hardening boot of this build passes", [h["r"] + "|workflow_run|" + t + "|success"], False)
     hc("a red hardening boot of this build is refused", [h["r"] + "|workflow_run|" + t + "|failure"], True)
@@ -180,6 +224,16 @@ def selftest():
 def main(argv):
     if len(argv) > 1 and argv[1] == "selftest":
         return selftest()
+    if len(argv) > 1 and argv[1] == "e2e":
+        if len(argv) != 3:
+            print(__doc__, file=sys.stderr)
+            return 2
+        why = judge_e2e(open(argv[2], encoding="utf-8").read())
+        for w in why:
+            print("releasegate: REFUSED:", w, file=sys.stderr)
+        if not why:
+            print("releasegate: ok, a real Windows installed this AurOS-Setup.exe in both variants (base, bitlocker)")
+        return 1 if why else 0
     if len(argv) > 1 and argv[1] == "harden":
         if len(argv) != 4:
             print(__doc__, file=sys.stderr)

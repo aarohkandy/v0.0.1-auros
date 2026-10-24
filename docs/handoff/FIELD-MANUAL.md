@@ -107,7 +107,7 @@ Trigger words are read from the commit **SUBJECT** only:
 | `[e2e]`, `[e2e:all]`, `[e2e:a,b]`, `[e2e:none]` | real-Windows journey | stream F, lead |
 | `[profiles ...]`, `[othersys]`, `[othersys-skip]` | aux workflows | their streams |
 
-- `windows.yml` runs on every push (installer on a real Windows Server VM).
+- `windows.yml` runs the installer on a real Windows Server VM only when a push changes what it tests (src/aurbridge/, src/aurstage/{gpt,plan}, build/aurbridge, tools/pe_payload.py, repo.sh, manifesttest.sh, itself) or says `[windows]`; most pushes skip it. It gates nothing but itself.
 - Every job has `timeout-minutes`; every `apt-get` is bounded (`timeout 300`,
   3 tries). Add both to anything new.
 - Concurrency: one run per workflow per branch, queued, newest pending wins,

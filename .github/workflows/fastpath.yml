@@ -441,11 +441,15 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Only the putback-* mutants break what this job tests (the others break the
+      # installer's source, which the build job above applies). Applied without a
+      # `|| true`: a mutant that fails to apply ("mutant void") must stop the job, or
+      # the clean test runs and the "must go red" run reads green (CI-truth E.16).
       - name: a deliberately broken script, when one was asked for
-        if: github.event_name == 'workflow_dispatch' && inputs.mutant != 'none'
+        if: github.event_name == 'workflow_dispatch' && startsWith(inputs.mutant, 'putback-')
         shell: bash
         env: { MUTANT: "${{ inputs.mutant }}" }
-        run: bash tools/fastpath-mutant.sh "$MUTANT" || true
+        run: bash tools/fastpath-mutant.sh "$MUTANT"
       - name: her files reach Windows, are checked there, and only then does anything go
         shell: pwsh
         run: |
