@@ -3748,7 +3748,18 @@ int aurwl_key_utf8(const aurwl *c, uint32_t code, char *out, size_t n)
 
 void aurwl_set_focus(aurwl *c, aurwl_win *w)
 {
-    if (!c || c->focus == w) return;
+    if (!c) return;
+    /* A MENU IS NEVER GIVEN THE KEYBOARD. A press inside a popup used to move it: the window she
+     * was typing into got a leave, the menu an enter, and when the menu closed focus was NULL,
+     * so every key was dropped until she clicked a window again. (For an X menu it was also
+     * SetInputFocus on a window nobody manages.) The keyboard stays with the window the popup
+     * belongs to; a popup with no window to give it to changes nothing. */
+    for (int i = 0; w && aurwl_win_is_popup(w); i++) {
+        aurwl_win *p = aurwl_win_parent(w);
+        if (!p || i > PARENT_MAX) return;
+        w = p;
+    }
+    if (c->focus == w) return;
     if (wishhook_reset) wishhook_reset();            /* a new field: the word so far is not hers */
     uint32_t ser = serial_of(c);
 

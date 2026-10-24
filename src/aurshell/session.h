@@ -30,6 +30,13 @@ int  session_key(shell_ctx *c, int code, int pressed);
  * a use-after-free reachable by waiting. */
 aurwl_win *session_win(shell_ctx *c, uint32_t wid);
 
+/* The keyboard goes to the window the shell shows as in use (none at Home, while it is starting, or when
+ * minimised). Call it after session_sync, whenever no panel holds the keyboard. */
+void session_focus_follow(shell_ctx *c);
+
+/* Tell the programs their screen is the body above the shell's band (call when screen_h changes). */
+void session_fit_output(shell_ctx *c, int display_w);
+
 /* A program that asked for the whole screen, over everything the archetype
  * drew (and nothing else: the band stays). */
 void session_paint_full(shell_ctx *c, surface *fb);

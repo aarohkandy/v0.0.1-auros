@@ -122,7 +122,7 @@ static void img_rect(img *m, int x, int y, int w, int h, uint32_t argb)
 
 /* ── the line between the two processes ───────────────────────────── */
 
-enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_TI, M_IDLE, M_TIME, M_KEY, M_CURSOR, M_LEAVE, M_CONF, M_END };
+enum { M_EXPECT = 1, M_MOVE, M_BUTTON, M_FOCUS, M_FRAME, M_RESIZE, M_ASK, M_TI, M_IDLE, M_TIME, M_KEY, M_CURSOR, M_LEAVE, M_CONF, M_FOCUSPOP, M_FOCUSIS, M_END };
 typedef struct { int kind, a, b, c, d; } msg;
 
 static int xfer(int fd, void *buf, size_t n, int wr)
@@ -222,6 +222,21 @@ static int serve(aurwl *c, int chan, pid_t kid, int *child_result)
         case M_MOVE:   aurwl_pointer_motion(c, w, m.a, m.b, now_ms()); break;
         case M_BUTTON: aurwl_pointer_button(c, (uint32_t)m.a, m.b, now_ms()); break;
         case M_FOCUS:  aurwl_set_focus(c, w); break;
+        case M_FOCUSPOP: {        /* "the shell was pressed inside a menu": the keyboard is asked to go to it */
+            for (int i = 0, n = aurwl_window_count(c); i < n; i++) {
+                aurwl_win *x = aurwl_window_at(c, i);
+                if (x && aurwl_win_is_popup(x)) { aurwl_set_focus(c, x); break; }
+            }
+            break;
+        }
+        case M_FOCUSIS: {         /* "who has the keyboard?" a: 0 nobody, 1 the first window, 2 a popup */
+            aurwl_win *f = aurwl_focus(c);
+            int is = !f ? 0 : aurwl_win_is_popup(f) ? 2 : (f == w ? 1 : 3);
+            reply = (uint8_t)(is == m.a ? 0 : 1);
+            if (reply) { printf("      the keyboard is with %s, expected %s\n", is == 0 ? "nobody" : is == 1 ? "the window" : is == 2 ? "a popup" : "another window",
+                                m.a == 0 ? "nobody" : m.a == 1 ? "the window" : "a popup"); fails_here++; }
+            break;
+        }
         case M_KEY:    aurwl_key(c, (uint32_t)m.a, m.b, now_ms()); break;
         case M_LEAVE:  aurwl_pointer_motion(c, NULL, 0, 0, now_ms()); break;   /* off every window */
         case M_CURSOR: {  /* "what is the pointer asked to look like?" a=kind b,c=hotspot d=shape; IMAGE: w,h, pixels follow */
@@ -1388,6 +1403,53 @@ static void sc_slow_client(struct cl *c)
     top *a; slow_storm(c, &a);
     wrong_serial(c, a, 0, "an answer from before anything was sent was accepted (after the oldest were forgotten)");
 }
+/* 29. A menu is never given the keyboard. Pressing inside one used to move the keyboard to it, and when it
+ * closed the keyboard was NOBODY's: every key was dropped until she clicked a window again. */
+typedef struct { struct wl_surface *s; struct xdg_surface *xs; struct xdg_popup *pp; int configured; } popup;
+static void pop_xs_configure(void *d, struct xdg_surface *xs, uint32_t serial)
+{ popup *p = d; xdg_surface_ack_configure(xs, serial); p->configured = 1; }
+static const struct xdg_surface_listener pop_xs_l = { pop_xs_configure };
+static void pop_configure(void *d, struct xdg_popup *p, int32_t x, int32_t y, int32_t w, int32_t h)
+{ (void)d; (void)p; (void)x; (void)y; (void)w; (void)h; }
+static void pop_done(void *d, struct xdg_popup *p) { (void)d; (void)p; }
+static const struct xdg_popup_listener pop_l = { .configure = pop_configure, .popup_done = pop_done };
+static popup *mkpopup(struct cl *c, top *parent, const img *m)
+{
+    popup *p = calloc(1, sizeof *p);
+    p->s = wl_compositor_create_surface(c->comp);
+    p->xs = xdg_wm_base_get_xdg_surface(c->wm, p->s);
+    xdg_surface_add_listener(p->xs, &pop_xs_l, p);
+    struct xdg_positioner *pos = xdg_wm_base_create_positioner(c->wm);
+    xdg_positioner_set_size(pos, m->w, m->h);
+    xdg_positioner_set_anchor_rect(pos, 2, 2, 1, 1);
+    p->pp = xdg_surface_get_popup(p->xs, parent->xs, pos);
+    xdg_popup_add_listener(p->pp, &pop_l, p);
+    xdg_positioner_destroy(pos);
+    wl_surface_commit(p->s);
+    for (int i = 0; i < 20 && !p->configured; i++) wl_display_roundtrip(c->dpy);
+    shmbuf b = mkbuf(c, m, XRGB);
+    wl_surface_attach(p->s, b.buf, 0, 0);
+    wl_surface_damage_buffer(p->s, 0, 0, m->w, m->h);
+    wl_surface_commit(p->s);
+    wl_display_roundtrip(c->dpy);
+    return p;
+}
+static void sc_popup_focus(struct cl *c)
+{
+    img root = img_solid(80, 60, GREY), menu = img_solid(30, 20, GREEN);
+    top *t = mktop(c, &root, XRGB);
+    ask(c, M_FOCUS, 0, 0);
+    ask(c, M_FOCUSIS, 1, 0);
+    popup *p = mkpopup(c, t, &menu);
+    ask(c, M_FOCUSPOP, 0, 0);                        /* the press inside the menu */
+    ask(c, M_FOCUSIS, 1, 0);                         /* the window still has the keyboard */
+    xdg_popup_destroy(p->pp);                        /* the item was chosen: the menu goes */
+    xdg_surface_destroy(p->xs);
+    wl_surface_destroy(p->s);
+    wl_display_roundtrip(c->dpy);
+    ask(c, M_FOCUSIS, 1, 0);                         /* ...and typing still works (focus was NULL here, once) */
+}
+
 static void sc_slow_future(struct cl *c)
 {
     top *a; slow_storm(c, &a);
@@ -1496,6 +1558,7 @@ static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "cursor-shape",     sc_cursor_shape },
     { "slow-client",      sc_slow_client },
     { "slow-future",      sc_slow_future },
+    { "popup-focus",      sc_popup_focus },
     { "serial-foreign",   sc_serial_foreign },
     { "serial-invented",  sc_serial_invented },
 };

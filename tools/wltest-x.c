@@ -1232,6 +1232,39 @@ static void sc_restack(void)
     finish();
 }
 
+/* A menu is shown while the program that owns it is the one in use, and never takes the keyboard. A program
+ * that is not in use cannot paint over everything or take her clicks (it may be any size, anywhere, even
+ * invisible: nothing manages an override-redirect window). */
+static void sc_menu_bound(void)
+{
+    start();
+    uint32_t a = 0x400200, b = 0x600001, ma = 0x400201, mb = 0x600002;     /* two programs: two X resource-id bases */
+    show_window(a, 0xFF204060, "prog a", "a|A", 0);
+    show_window(b, 0xFF206040, "prog b", "b|B", 0);
+    aurwl_win *wa = win_of_x(a), *wb = win_of_x(b);
+    check(wa && wb, "setup: both programs have a window");
+    if (!wa || !wb) { finish(); return; }
+    aurwl_set_focus(C, wa); SETTLE();
+    show_window(mb, 0xFFFFFFFF, NULL, NULL, 1);               /* program b's menu while a is in use */
+    check(win_of_x(mb) == NULL, "another program's override-redirect window is shown over the one in use");
+    show_window(ma, 0xFFFFFFFF, NULL, NULL, 1);               /* program a's menu */
+    aurwl_win *wma = win_of_x(ma);
+    check(wma && aurwl_win_is_popup(wma) && aurwl_win_parent(wma) == wa, "the menu of the program in use is not its popup");
+    aurwl_set_focus(C, wb); SETTLE();
+    check(win_of_x(ma) == NULL, "a menu stays shown after its program stopped being the one in use");
+    check(win_of_x(mb) != NULL, "a menu is not shown when its program becomes the one in use");
+    aurwl_set_focus(C, NULL); SETTLE();
+    check(win_of_x(ma) == NULL && win_of_x(mb) == NULL, "menus are shown with nothing (or a Wayland window) in use");
+    aurwl_set_focus(C, wb); SETTLE();
+    aurwl_win *wmb = win_of_x(mb);
+    aurwl_set_focus(C, wmb); SETTLE();                         /* what pressing inside the menu does */
+    check(aurwl_focus(C) == wb, "a press in a menu gave it the keyboard");
+    check(C->x.wm->active && !C->x.wm->active->or_, "X was told a menu is the window in use");
+    xwm_focus(C, wmb->xw);                                     /* and the X side refuses it on its own too */
+    check(C->x.wm->active && !C->x.wm->active->or_, "the X side made a menu the window in use");
+    finish();
+}
+
 static const struct { const char *name; void (*fn)(void); } SC[] = {
     { "takeover",         sc_takeover },
     { "map",              sc_map },
@@ -1262,6 +1295,7 @@ static const struct { const char *name; void (*fn)(void); } SC[] = {
     { "clip-newest-wins", sc_clip_newest_wins },
     { "clip-too-big",     sc_clip_too_big },
     { "restack",          sc_restack },
+    { "menu-bound",       sc_menu_bound },
     { "x-goes-away",      sc_x_goes_away },
 };
 #define NSC ((int)(sizeof SC / sizeof SC[0]))

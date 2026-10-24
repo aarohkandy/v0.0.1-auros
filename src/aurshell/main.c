@@ -859,7 +859,7 @@ int main(int argc, char **argv)
                     snprintf(rd, sizeof rd, "%s", "/tmp");
                 setenv("XDG_RUNTIME_DIR", rd, 1);
             }
-            c.wl = aurwl_create(png_w, png_h, 60000);
+            c.wl = aurwl_create(png_w, c.screen_h, 60000);
             if (!c.wl) { fprintf(stderr, "aurshell: no compositor\n");
                          free_fonts(&f); return 1; }
             c.spawn = session_spawn;
@@ -933,13 +933,14 @@ int main(int argc, char **argv)
                     if (ch >= '1' && ch <= '9') code = 2 + (ch - '1');
                     if (ch == '0') code = 11;
                     if (ch == ' ') code = 57;
+                    if (ch == '\\' && type_text[type_i] == 'n') { type_i++; code = 28; }      /* a typed \n is Enter */
                     if (code > 0) { session_key(&c, code, 1); session_key(&c, code, 0); }
                     type_next = el + 80;
                 }
-                if (c.n_wins > 0 && !aurwl_focus(c.wl)) {
-                    int n = aurwl_window_count(c.wl);
-                    if (n) aurwl_set_focus(c.wl, aurwl_window_at(c.wl, 0));
-                }
+                /* As the real loop: the keyboard goes where the shell says. (This used to give the oldest
+                 * window the keyboard whenever nothing had it, which hid every focus defect from the
+                 * real-program runs.) */
+                session_focus_follow(&c);
             }
             fprintf(stderr, "aurshell: %d window%s on the desktop\n",
                     c.n_wins, c.n_wins == 1 ? "" : "s");
@@ -1129,7 +1130,7 @@ int main(int argc, char **argv)
      * that has to feel immediate. */
     power_refresh();
 
-    c.wl = aurwl_create(disp->width, disp->height, disp->refresh_mhz);
+    c.wl = aurwl_create(disp->width, c.screen_h, disp->refresh_mhz);    /* the screen the windows have: not the band */
     if (c.wl) {
         c.spawn = session_spawn;
         fprintf(stderr, "aurshell: applications may connect on WAYLAND_DISPLAY=%s\n",
@@ -1321,6 +1322,7 @@ int main(int argc, char **argv)
              * an unreadable active.shell used to leave the archetype
              * painting into a body of the wrong height. */
             c.screen_h = disp->height - foot_height(&c);
+            session_fit_output(&c, disp->width);
         }
 
         /* A VT switch away means another process owns the display.
@@ -1556,6 +1558,7 @@ int main(int argc, char **argv)
             aurwl_reap(c.wl);
             int before = c.n_wins;
             session_sync(&c, L);
+            if (!SHELL_PANEL_OPEN(&c)) session_focus_follow(&c);    /* keys go to the window she is looking at */
             uint32_t seq = aurwl_damage_seq(c.wl);
             if (seq != last_damage || c.n_wins != before) { last_damage = seq; dirty = 1; }
         }
@@ -1570,6 +1573,7 @@ int main(int argc, char **argv)
             free_fonts(&f);
             load_fonts(&f, &c);
             c.screen_h = disp->height - foot_height(&c);
+            session_fit_output(&c, disp->width);
             dirty = 1;
         }
 

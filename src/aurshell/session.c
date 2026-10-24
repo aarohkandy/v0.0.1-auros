@@ -265,6 +265,13 @@ static aurwl_win *window_under(shell_ctx *c, int x, int y, int *sx, int *sy)
             /* ...and into the space the CLIENT measures in, which is
              * the buffer's unless a viewport gave it another one. */
             aurwl_win_logical_size(w, &lw, &lh);
+            /* A menu's pixels that are not there (fully transparent) take no clicks: a program may map
+             * a popup bigger than it draws, and the click belongs to what is visibly underneath. */
+            if (aurwl_win_is_popup(w) && s->px && s->w > 0 && s->h > 0) {
+                long vx = (long)(x - r.x) * s->w / r.w, vy = (long)(y - r.y) * s->h / r.h;
+                if (vx >= 0 && vy >= 0 && vx < s->w && vy < s->h && (s->px[(size_t)vy * s->stride + (size_t)vx] >> 24) == 0)
+                    break;
+            }
             if (sx) *sx = ox + (int)((long)(x - r.x) * lw / r.w);
             if (sy) *sy = oy + (int)((long)(y - r.y) * lh / r.h);
             return w;
@@ -282,6 +289,31 @@ aurwl_win *session_win(shell_ctx *c, uint32_t wid)
         if (w && aurwl_win_id(w) == wid) return w;
     }
     return NULL;
+}
+
+/* THE SCREEN THE PROGRAMS HAVE IS THE BODY, NOT THE DISPLAY. The band at the bottom is the shell's, so the output
+ * they are told about ends above it: a menu that slides to the bottom edge of "the screen", an X menu placed
+ * against the X root, a toolbar that bottom-aligns -- all of them used to run under the band, where they were
+ * clipped and their clicks went to the band's buttons. Call it whenever screen_h changes (text size). */
+void session_fit_output(shell_ctx *c, int display_w)
+{
+    if (c && c->wl) aurwl_resize_output(c->wl, display_w, c->screen_h);
+}
+
+/* THE KEYBOARD GOES WHERE THE SHELL SAYS. Focus used to move only when she clicked on a window's own
+ * pixels, so launching a program, picking another in the taskbar, closing the one in front, minimising
+ * it or going Home left her typing into whatever she last clicked (or into nothing, once it closed).
+ * The window drawn as the one in use is the one that gets the keys; Home, a placeholder that is still
+ * starting, and a minimised window get none (so the shell's own type-to-search sees the letters). */
+void session_focus_follow(shell_ctx *c)
+{
+    if (!c || !c->wl) return;
+    aurwl_win *want = NULL;
+    if (c->focus >= 0 && c->focus < c->n_wins) {
+        const win_entry *e = &c->wins[c->focus];
+        if (e->wid && !e->minimised) want = session_win(c, e->wid);
+    }
+    if (want != aurwl_focus(c->wl)) aurwl_set_focus(c->wl, want);
 }
 
 int session_motion(shell_ctx *c, int x, int y)

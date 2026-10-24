@@ -18,6 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src", "aurwl", "aurwl.c")
 CURSOR = os.path.join(ROOT, "src", "aurshell", "cursor.c")
 XWM = os.path.join(ROOT, "src", "aurwl", "xwm.inc")
+SESSION = os.path.join(ROOT, "src", "aurshell", "session.c")
 XCLIP = os.path.join(ROOT, "src", "aurwl", "xclip.inc")
 
 # (what is broken, scenario that must notice, old, new)
@@ -300,6 +301,32 @@ MUTANTS = [
      "            xw_raise(c, root_of(hit));          /* an X window must be the top one before Xwayland sees the pointer in it */\n", ""),
     ("a raise lowers instead", "x:restack",
      "    xw32(p + 8, 0 /* Above */);", "    xw32(p + 8, 1 /* Below */);", XWM),
+    # ── review W04/W11/W12/W21: menus ──
+    ("a menu is shown when its program is not the one in use (any size, anywhere, even invisible)", "x:menu-bound",
+     "    if (m->active && !m->active->or_ && xwin_listed(m->active)) return m->active;\n    return NULL;",
+     "    if (m->active && !m->active->or_ && xwin_listed(m->active)) return m->active;\n    xwin *w; wl_list_for_each(w, &m->wins, link) if (!w->or_ && xwin_listed(w)) return w;\n    return NULL;", XWM),
+    ("a menu of one program is shown over another's window", "x:menu-bound",
+     "    return p && ((p->id ^ w->id) & ~w->m->id_mask) == 0;       /* the resource-id base names the client */",
+     "    return p != NULL;", XWM),
+    ("a press in a menu gives it the keyboard", "x:menu-bound",
+     "    for (int i = 0; w && aurwl_win_is_popup(w); i++) {\n        aurwl_win *p = aurwl_win_parent(w);\n        if (!p || i > PARENT_MAX) return;\n        w = p;\n    }\n", ""),
+    ("an X menu is made the window in use", "x:menu-bound",
+     "    if (w->or_) return;                                      /* a menu is never given the keyboard */\n", "", XWM),
+    ("closing a menu that was given the keyboard leaves nobody with it", "popup-focus",
+     "    for (int i = 0; w && aurwl_win_is_popup(w); i++) {\n        aurwl_win *p = aurwl_win_parent(w);\n        if (!p || i > PARENT_MAX) return;\n        w = p;\n    }\n", ""),
+    # ── review W03: the keyboard follows the shell (tools/wltest-deco.sh, against session.c) ──
+    ("the keyboard stays where it was", "deco",
+     "    if (want != aurwl_focus(c->wl)) aurwl_set_focus(c->wl, want);", "", SESSION),
+    ("a minimised window keeps the keyboard", "deco",
+     "        if (e->wid && !e->minimised) want = session_win(c, e->wid);", "        if (e->wid) want = session_win(c, e->wid);", SESSION),
+    ("Home keeps the keyboard on the program that is hidden", "deco",
+     "    if (want != aurwl_focus(c->wl)) aurwl_set_focus(c->wl, want);", "    if (want && want != aurwl_focus(c->wl)) aurwl_set_focus(c->wl, want);", SESSION),
+    ("a program that is still starting is given the keyboard of the one before it", "deco",
+     "        if (e->wid && !e->minimised) want = session_win(c, e->wid);", "        if (!e->minimised) want = session_win(c, e->wid ? e->wid : 1);", SESSION),
+    ("a menu's transparent half takes clicks", "deco",
+     "                if (vx >= 0 && vy >= 0 && vx < s->w && vy < s->h && (s->px[(size_t)vy * s->stride + (size_t)vx] >> 24) == 0)\n                    break;\n", "", SESSION),
+    ("the programs are told the whole display, band included", "deco",
+     "    if (c && c->wl) aurwl_resize_output(c->wl, display_w, c->screen_h);", "    if (c && c->wl) aurwl_resize_output(c->wl, display_w, c->screen_h + 80);", SESSION),
 ]
 
 def main():
@@ -333,6 +360,10 @@ def main():
                 shutil.copy(XCLIP if target != XCLIP else path, os.path.join(d, "xclip.inc"))
                 env = dict(os.environ, AURWL_C=os.path.join(d, "aurwl.c"), OUT=os.path.join(tmp, "out"))
                 cmd = ["sh", os.path.join(ROOT, "tools", "wltest-x.sh"), scenario[2:]]
+            elif scenario == "deco":
+                # tools/wltest-deco.sh against a broken src/aurshell/session.c (any check failing is a catch)
+                env = dict(os.environ, SESSION_C=path)
+                cmd = ["sh", os.path.join(ROOT, "tools", "wltest-deco.sh")]
             elif scenario == "cursortest":
                 env = dict(os.environ, CURSOR_C=path, OUT=os.path.join(tmp, "out"))
                 cmd = ["sh", os.path.join(ROOT, "tools", "cursortest.sh")]

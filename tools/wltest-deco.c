@@ -65,7 +65,16 @@ struct cl {
     int mode[NW];                 /* what the compositor told it: 1 client, 2 server, 0 nothing */
     int configured[NW];
     int film_full, film_w, film_h, film_n;   /* the last configure the film got */
+    int out_w, out_h;                         /* the screen it was told it has (wl_output mode) */
 };
+
+static void out_geometry(void *d, struct wl_output *o, int32_t x, int32_t y, int32_t pw, int32_t ph, int32_t sp, const char *mk, const char *md, int32_t tr)
+{ (void)d; (void)o; (void)x; (void)y; (void)pw; (void)ph; (void)sp; (void)mk; (void)md; (void)tr; }
+static void out_mode(void *d, struct wl_output *o, uint32_t fl, int32_t w, int32_t h, int32_t rf)
+{ struct cl *c = d; (void)o; (void)fl; (void)rf; c->out_w = w; c->out_h = h; }
+static void out_done(void *d, struct wl_output *o) { (void)d; (void)o; }
+static void out_scale(void *d, struct wl_output *o, int32_t f) { (void)d; (void)o; (void)f; }
+static const struct wl_output_listener out_l = { out_geometry, out_mode, out_done, out_scale };
 
 static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char *iface, uint32_t ver)
 {
@@ -74,6 +83,10 @@ static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char
     else if (!strcmp(iface, "wl_shm")) c->shm = wl_registry_bind(r, name, &wl_shm_interface, 1);
     else if (!strcmp(iface, "wl_seat")) c->seat = wl_registry_bind(r, name, &wl_seat_interface, 5);
     else if (!strcmp(iface, "xdg_wm_base")) c->wm = wl_registry_bind(r, name, &xdg_wm_base_interface, 2);
+    else if (!strcmp(iface, "wl_output")) {
+        struct wl_output *o = wl_registry_bind(r, name, &wl_output_interface, ver < 2 ? ver : 2);
+        wl_output_add_listener(o, &out_l, c);
+    }
     else if (!strcmp(iface, "zxdg_decoration_manager_v1"))
         c->deco = wl_registry_bind(r, name, &zxdg_decoration_manager_v1_interface, 1);
 }
@@ -110,6 +123,14 @@ static void dc_configure(void *d, struct zxdg_toplevel_decoration_v1 *z, uint32_
 { (void)z; struct tag *t = d; t->c->mode[t->i] = (int)mode; }
 static const struct zxdg_toplevel_decoration_v1_listener dc_l = { dc_configure };
 
+static void pop_xs_configure(void *d, struct xdg_surface *xs, uint32_t serial)
+{ xdg_surface_ack_configure(xs, serial); *(int *)d = 1; }
+static const struct xdg_surface_listener pop_xs_l = { pop_xs_configure };
+static void pop_configure(void *d, struct xdg_popup *p, int32_t x, int32_t y, int32_t w, int32_t h)
+{ (void)d; (void)p; (void)x; (void)y; (void)w; (void)h; }
+static void pop_done(void *d, struct xdg_popup *p) { (void)d; (void)p; }
+static const struct xdg_popup_listener pop_l = { .configure = pop_configure, .popup_done = pop_done };
+
 static void give_buffer(struct cl *c, int i)
 {
     int w = 64, h = 64;
@@ -130,13 +151,13 @@ static void give_buffer(struct cl *c, int i)
 
 /* What the client saw, handed to the compositor side at each step; the
  * compositor answers with one byte when it has done what that step needs. */
-typedef struct { int label; int mode[NW]; int film_full, film_w, film_h; } report;
+typedef struct { int label; int mode[NW]; int film_full, film_w, film_h; int out_w, out_h; } report;
 
 static void step(struct wl_display *dpy, struct cl *c, int chan, int label)
 {
     wl_display_roundtrip(dpy);
     wl_display_roundtrip(dpy);
-    report rp = { .label = label, .film_full = c->film_full, .film_w = c->film_w, .film_h = c->film_h };
+    report rp = { .label = label, .film_full = c->film_full, .film_w = c->film_w, .film_h = c->film_h, .out_w = c->out_w, .out_h = c->out_h };
     for (int i = 0; i < NW; i++) rp.mode[i] = c->mode[i];
     if (write(chan, &rp, sizeof rp) != (ssize_t)sizeof rp) _exit(93);
     char go;
@@ -181,6 +202,30 @@ static int client(const char *sock, int chan)
     for (int i = 0; i < NW; i++) give_buffer(&c, i);
     wl_display_roundtrip(dpy);
 
+    /* A menu with a half that is drawn and a half that is not there (fully transparent): 40x20. */
+    {
+        static int pconf;
+        struct wl_surface *ps = wl_compositor_create_surface(c.comp);
+        struct xdg_surface *pxs = xdg_wm_base_get_xdg_surface(c.wm, ps);
+        xdg_surface_add_listener(pxs, &pop_xs_l, &pconf);
+        struct xdg_positioner *pos = xdg_wm_base_create_positioner(c.wm);
+        xdg_positioner_set_size(pos, 40, 20);
+        xdg_positioner_set_anchor_rect(pos, 2, 2, 1, 1);
+        struct xdg_popup *pp = xdg_surface_get_popup(pxs, c.xs[1], pos);
+        xdg_popup_add_listener(pp, &pop_l, NULL);
+        wl_surface_commit(ps);
+        for (int tries = 0; tries < 20 && !pconf; tries++) wl_display_roundtrip(dpy);
+        size_t n = 40 * 20 * 4;
+        int fd = memfd_create("menu", MFD_CLOEXEC);
+        if (fd < 0 || ftruncate(fd, (off_t)n) < 0) { perror("memfd"); exit(98); }
+        uint32_t *map = mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        for (int y = 0; y < 20; y++) for (int x = 0; x < 40; x++) map[y * 40 + x] = x < 20 ? 0xFFFF0000u : 0x00000000u;
+        struct wl_shm_pool *pool = wl_shm_create_pool(c.shm, fd, (int)n);
+        struct wl_buffer *b = wl_shm_pool_create_buffer(pool, 0, 40, 20, 160, WL_SHM_FORMAT_ARGB8888);
+        wl_surface_attach(ps, b, 0, 0); wl_surface_damage(ps, 0, 0, 40, 20); wl_surface_commit(ps);
+        wl_display_roundtrip(dpy);
+    }
+
     /* The program's own title bar: drag, minimise, maximise. */
     xdg_toplevel_move(c.tl[4], c.seat, 1);
     xdg_toplevel_set_minimized(c.tl[4]);
@@ -196,6 +241,8 @@ static int client(const char *sock, int chan)
     step(dpy, &c, chan, 3);                    /* many frames later, it must still be */
     step(dpy, &c, chan, 4);                    /* ...and the shell moves something else to the front */
     step(dpy, &c, chan, 5);                    /* the film has been told */
+    step(dpy, &c, chan, 6);
+    step(dpy, &c, chan, 7);                    /* the shell has told it how much screen it has */
     wl_display_disconnect(dpy);
     return 0;
 }
@@ -323,6 +370,65 @@ int main(void)
     ack(sp[0]);
     NEXT(5);
     ok("...and the film is told it is not full screen any more", rp.film_full == 0);
+
+    /* The keyboard follows the shell's focus: it used to move only when she clicked on a window's pixels. */
+    printf("\nthe keyboard goes where the shell says\n");
+    aurwl_win *front = session_win(&sc, sc.wins[sc.focus].wid);
+    session_focus_follow(&sc);
+    ok("the window shown as in use has the keyboard", front != NULL && aurwl_focus(c) == front);
+    int other = (sc.focus == 0) ? 1 : 0;
+    sc.focus = other;
+    session_focus_follow(&sc);
+    ok("picking another window moves the keyboard to it", aurwl_focus(c) == session_win(&sc, sc.wins[other].wid));
+    aurwl_set_focus(c, NULL);                                   /* the window that had it closed: aurwl has nobody */
+    session_focus_follow(&sc);
+    ok("when the one with the keyboard closes, the one in front gets it", aurwl_focus(c) == session_win(&sc, sc.wins[other].wid));
+    sc.wins[other].minimised = 1;
+    session_focus_follow(&sc);
+    ok("a minimised window has no keyboard", aurwl_focus(c) == NULL);
+    sc.wins[other].minimised = 0;
+    session_focus_follow(&sc);
+    ok("...and has it again when it is restored", aurwl_focus(c) == session_win(&sc, sc.wins[other].wid));
+    sc.focus = -1;
+    session_focus_follow(&sc);
+    ok("Home has none (the shell's own type-to-search gets the letters)", aurwl_focus(c) == NULL);
+    sc.focus = other;
+    uint32_t keep_wid = sc.wins[other].wid;
+    sc.wins[other].wid = 0;                                     /* a placeholder for a program that is still starting */
+    session_focus_follow(&sc);
+    ok("a program that is still starting has none", aurwl_focus(c) == NULL);
+    sc.wins[other].wid = keep_wid;
+
+    /* A menu's pixels that are not there take no clicks (a program may map a popup bigger than it draws). */
+    printf("\na menu takes clicks only where it is drawn\n");
+    aurwl_win *menu = NULL;
+    for (int i = 0, n = aurwl_window_count(c); i < n; i++) { aurwl_win *x = aurwl_window_at(c, i); if (x && aurwl_win_is_popup(x)) menu = x; }
+    ok("the compositor has the menu", menu != NULL);
+    if (menu) {
+        surface *fb = surface_new(1280, 720);
+        draw_track_reset();
+        session_paint_popups(&sc, fb);
+        int ox = 0, oy = 0;
+        aurwl_win_popup_offset(menu, &ox, &oy);
+        int on_drawn = session_button(&sc, ox + 5, oy + 5, 0x110, 1);
+        session_button(&sc, ox + 5, oy + 5, 0x110, 0);
+        int on_clear = session_button(&sc, ox + 30, oy + 5, 0x110, 1);
+        session_button(&sc, ox + 30, oy + 5, 0x110, 0);
+        ok("a click on its drawn half is the menu's", on_drawn == 1);
+        ok("a click on its transparent half goes to what is underneath", on_clear == 0);
+        surface_free(fb);
+    }
+    ok("the programs were first told the whole display", rp.out_h == 720);
+    ack(sp[0]);
+
+    /* The band is the shell's: the programs' screen ends above it. */
+    printf("\nthe screen the programs have\n");
+    NEXT(6);
+    sc.screen_h = 640;
+    session_fit_output(&sc, 1280);
+    ack(sp[0]);
+    NEXT(7);
+    ok("the programs were told the screen is the body above the band", rp.out_w == 1280 && rp.out_h == 640);
     ack(sp[0]);
 
 done:;

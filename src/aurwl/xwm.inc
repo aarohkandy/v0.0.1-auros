@@ -404,6 +404,16 @@ static void xwin_free(xwin *w)
 /* On screen: the shell may list it. */
 static int xwin_listed(const xwin *w)
 { return w->win && (w->or_ || w->ready); }
+static xwin *xwm_popup_parent(xwm *m);
+/* ...and is shown: a window of the program in use, or a menu of it. A menu of any other program
+ * is not (it has no parent, and a different X client than the window that has the keyboard). */
+static int xwin_shown(const xwin *w)
+{
+    if (!xwin_listed(w)) return 0;
+    if (!w->or_) return 1;
+    xwin *p = xwm_popup_parent(w->m);
+    return p && ((p->id ^ w->id) & ~w->m->id_mask) == 0;       /* the resource-id base names the client */
+}
 
 static void xwin_sync_names(xwin *w)
 {
@@ -655,12 +665,14 @@ static void xwm_close(xwin *w)
 }
 static void xwm_kill_window(xwin *w) { x_kill_client(w->m, w->id); xflush(w->m); }
 
-/* The window a menu belongs to: the one in use. */
+/* The window a menu belongs to: the X window that has the keyboard, and nothing else. An
+ * override-redirect window may be any size anywhere and nothing manages it, so a program
+ * that is not the one in use (or one that never shows a window at all) must not get to paint
+ * over everything and take her clicks: its menus are shown while that program is the one
+ * she is using, and only then. */
 static xwin *xwm_popup_parent(xwm *m)
 {
     if (m->active && !m->active->or_ && xwin_listed(m->active)) return m->active;
-    xwin *w;
-    wl_list_for_each(w, &m->wins, link) if (!w->or_ && xwin_listed(w)) return w;
     return NULL;
 }
 
@@ -1203,7 +1215,7 @@ static void xw_surface_gone(aurwl_win *w)
 {
     if (w->xw) { w->xw->win = NULL; w->xw = NULL; }
 }
-static int xw_listed(const aurwl_win *w)   { return w->xw && xwin_listed(w->xw); }
+static int xw_listed(const aurwl_win *w)   { return w->xw && xwin_shown(w->xw); }
 static int xw_csd(const aurwl_win *w)      { return w->role == ROLE_X11 && w->xw && w->xw->csd && !w->xw->or_; }
 static int xw_is_popup(const aurwl_win *w) { return w->role == ROLE_X11 && w->xw && w->xw->or_ && xwin_listed(w->xw); }
 static aurwl_win *xw_popup_parent(const aurwl_win *w)
