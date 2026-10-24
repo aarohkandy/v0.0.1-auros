@@ -13,6 +13,7 @@
 #include "format.h"
 #include "gpt.h"
 #include "plan.h"
+#include "bootargs.h"
 
 #define MIB (1024ull * 1024)
 
@@ -2244,7 +2245,14 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
      * real \EFI\ubuntu\grub.cfg is present (tools/nosticktest.sh boots
      * it that way, with Secure Boot on). So \EFI\ubuntu is left alone,
      * and a PC that dual-boots Ubuntu is not refused. */
-    const char *extra = getenv("AURBRIDGE_STAGING_KARGS");  /* tests only */
+    const char *extra = ab_stage_test_args();  /* host simulation only */
+    char stage_args[1024], cmdline[1024];
+    if (ab_stage_cmdline(stage_args, sizeof stage_args, c->profile, extra, 0) != 0 ||
+        ab_stage_cmdline(cmdline, sizeof cmdline, c->profile, extra, 1) != 0) {
+        snprintf(why, n, "the start-up settings could not be written.");
+        plat_esp_close(); plat_payload_free();
+        return -1;
+    }
     char shim[512], grub[512], mokm[512], w2[PLAT_WHY];
     int chain = plat_payload(PAYLOAD_SHIM, shim, sizeof shim, w2, sizeof w2) == 0 &&
                 plat_payload(PAYLOAD_GRUB, grub, sizeof grub, w2, sizeof w2) == 0;
@@ -2293,11 +2301,10 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
              * there were one to two minutes of black with no word about
              * how long, and people held the power button down. */
             "    echo 'AurOS is starting. About one minute. Please do not press anything.'\n"
-            "    linux /EFI/AurOS/staging.efi aurstage.install "
-            "aurstage.profile=%s console=tty0 gpt quiet loglevel=3 vt.global_cursor_default=0%s%s\n"
+            "    linux /EFI/AurOS/staging.efi %s\n"
             "    initrd /EFI/AurOS/staging.img\n"
             "}\n",
-            c->profile, extra ? " " : "", extra ? extra : "");
+            stage_args);
         if (cl <= 0 || (size_t)cl >= sizeof cfg) {
             snprintf(why, n, "the start-up settings could not be written.");
             plat_esp_close(); plat_payload_free();
@@ -2339,12 +2346,6 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
      * command line at all: shim reads a non-empty one as the name of
      * the next thing to start, and the kernel's arguments are in
      * grub.cfg. */
-    char cmdline[512];
-    snprintf(cmdline, sizeof cmdline,
-             "initrd=\\EFI\\AurOS\\staging.img aurstage.install "
-             "aurstage.profile=%s console=tty0 gpt quiet loglevel=3 "
-             "vt.global_cursor_default=0%s%s", c->profile,
-             extra ? " " : "", extra ? extra : "");
     if (plat_boot_make("AurOS Installer", &m->esp,
                        chain ? "\\EFI\\AurOS\\shimx64.efi"
                              : "\\EFI\\AurOS\\staging.efi",

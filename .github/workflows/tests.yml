@@ -203,6 +203,9 @@ jobs:
       - name: repotest (no repository named by hand)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/repotest.sh 2>&1 | tee transcripts/repotest.txt
+      - name: staging kernel arguments (same hardening before and after handover)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: python3 -I tools/bootargstest.py 2>&1 | tee transcripts/bootargstest.txt
       # WP-15 (stream OPS): once the owner sets the repository variable
       # AUROS_DOMAIN, no GitHub or workers.dev address may be left in what
       # an installed PC keeps. Until then it prints them and passes.

@@ -403,7 +403,7 @@ step "aurbridge-sim (not shipped)"
 HOSTCC="${HOSTCC:-cc}"
 if command -v "$HOSTCC" >/dev/null 2>&1; then
     SIMLIB=""
-    for f in "$SRC"/format.c "$SRC"/phases.c "$SRC"/inflate.c "$SRC"/sbdb.c; do SIMLIB="$SIMLIB $f"; done
+    for f in "$SRC"/format.c "$SRC"/phases.c "$SRC"/bootargs.c "$SRC"/inflate.c "$SRC"/sbdb.c; do SIMLIB="$SIMLIB $f"; done
     SIMLIB="$SIMLIB $STAGE_SHARED"
     # shellcheck disable=SC2086
     $HOSTCC -O2 $WARN -I "$OUT" $STAGE_INC -o "$OUT/aurbridge-sim" $SIMLIB $SIMONLY \
