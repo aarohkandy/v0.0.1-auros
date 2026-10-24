@@ -2313,6 +2313,7 @@ EOL
             cat > "$_home/.config/gtk-$_v/settings.ini" <<EOL
 [Settings]
 gtk-application-prefer-dark-theme=$prefer_dark
+gtk-icon-theme-name=Adwaita
 gtk-font-name=$(sed -n 's/^font_sans="\(.*\)"/\1/p' \
                 "$RFS/usr/share/auros/themes/$theme.theme" 2>/dev/null | head -1 \
                 | sed 's/\([a-z]\)\([A-Z]\)/\1 \2/g') 14

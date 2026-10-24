@@ -1,0 +1,8 @@
+# AurOS: the icon theme is Adwaita, and the GTK theme with it. Ubuntu's own override
+# (10_ubuntu-settings) says Yaru, which AurOS does not ship: GTK4 then looks in hicolor only,
+# and GNOME Software draws the "image missing" glyph for its stars and its Flathub source.
+# Compiled by build/forge (glib-compile-schemas) after rootfs/ is laid down. The name sorts
+# after 10_ubuntu-settings, so this one wins. tools/hardentest.sh checks it.
+[org.gnome.desktop.interface]
+icon-theme='Adwaita'
+gtk-theme='Adwaita'

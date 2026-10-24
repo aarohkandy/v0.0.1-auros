@@ -28,7 +28,8 @@ PATHS="etc/sysctl.d usr/lib/sysctl.d etc/sysctl.conf
        etc/machine-id var/lib/dbus/machine-id etc/systemd/system-preset
        etc/auros/policy.conf etc/systemd/logind.conf.d etc/ipp-usb
        usr/lib/os-release etc/os-release etc/lsb-release var/lib/dpkg/diversions
-       etc/apt/preferences.d"
+       etc/apt/preferences.d etc/gtk-3.0 etc/xdg/gtk-3.0 etc/xdg/gtk-4.0 etc/skel/.config/gtk-3.0
+       etc/skel/.config/gtk-4.0"
 mkdir -p "$T/good"
 for p in $PATHS; do
     [ -e "$RFS/$p" ] || [ -L "$RFS/$p" ] || continue
@@ -36,8 +37,18 @@ for p in $PATHS; do
     cp -a "$RFS/$p" "$T/good/$p"
 done
 
-# (only the names in usr/share/icons are read, not the icons)
+# The icon check reads a few files, not the icons: the themes' index.theme, the star, the
+# gsettings overrides and the settings.ini files. (And the names in usr/share/icons.)
 [ -d "$RFS/usr/share/icons/Adwaita" ] && mkdir -p "$T/good/usr/share/icons/Adwaita"
+for f in usr/share/icons/Adwaita/index.theme usr/share/icons/hicolor/index.theme \
+         $(cd "$RFS" && find usr/share/icons -name 'starred-symbolic.*' 2>/dev/null | head -3) \
+         $(cd "$RFS" && ls usr/share/glib-2.0/schemas/*.override 2>/dev/null) \
+         $(cd "$RFS" && find usr/lib -name 'libpixbufloader-svg.so' 2>/dev/null | head -1) \
+         $(cd "$RFS" && find usr/lib -name loaders.cache -path '*gdk-pixbuf*' 2>/dev/null | head -1) \
+         $(cd "$RFS" && ls home/*/.config/gtk-*/settings.ini 2>/dev/null); do
+    [ -e "$RFS/$f" ] || continue
+    mkdir -p "$T/good/$(dirname "$f")"; cp -a "$RFS/$f" "$T/good/$f"
+done
 
 fail=0; n=0
 run() { RFS="$1" sh tools/hardentest.sh 2>&1; }
@@ -142,6 +153,12 @@ mutate "humanity-icon-theme (Ubuntu's icon artwork) is not in the image" "mkdir 
 mutate "adwaita's dependency on ubuntu-mono is answered" "sed -i '/^Provides:.*ubuntu-mono/d' var/lib/dpkg/status"
 mutate "apt is told never to fetch Ubuntu's icon theme back" "rm etc/apt/preferences.d/auros-no-ubuntu-icons"
 
+# Icons
+mutate "gdk-pixbuf can read SVG, so Adwaita's symbolic icons draw" "find usr/lib -name 'libpixbufloader-svg.so' -delete"
+mutate "gdk-pixbuf can read SVG, so Adwaita's symbolic icons draw" "find usr/lib -name loaders.cache -exec sed -i '/libpixbufloader-svg/d' {} +"
+mutate "icon theme 'Yaru' (etc/xdg/gtk-4.0/settings.ini)" "printf '[Settings]\ngtk-icon-theme-name=Yaru\n' > etc/xdg/gtk-4.0/settings.ini"
+mutate "icon theme 'Yaru' (a gsettings override)" "printf \"[org.gnome.desktop.interface]\nicon-theme='Yaru'\n\" > usr/share/glib-2.0/schemas/91_auros-icons.gschema.override"
+mutate "starred-symbolic (GNOME Software's stars) resolves in 'Adwaita'" "find usr/share/icons -name 'starred-symbolic.*' -delete"
 mutate "every auros-* package is at one version" "printf 'Package: auros-stand-in\nStatus: install ok installed\nVersion: 1\n\nPackage: auros-other\nStatus: install ok installed\nVersion: 2\n\n' >> var/lib/dpkg/status"
 
 # Console logins

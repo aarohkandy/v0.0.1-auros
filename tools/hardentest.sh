@@ -466,6 +466,66 @@ if installed adwaita-icon-theme; then
     else bad "apt is told never to fetch Ubuntu's icon theme back" "no etc/apt/preferences.d/auros-no-ubuntu-icons pinning ubuntu-mono to -1"; fi
 else bad "GTK's icons: adwaita-icon-theme is installed" "it is not: every GTK program would have no icons"; fi
 
+# ── icons: every setting names a theme that is there ───────────────────
+#
+# Ubuntu's gsettings override and /etc/gtk-3.0/settings.ini named Yaru, which AurOS
+# does not ship. GTK4 asked for a theme that is not there looks in hicolor and nowhere
+# else, so GNOME Software (F's real-Windows store run 40038619603) drew the "image
+# missing" glyph for its five stars and for the Flathub source. Adwaita is named
+# everywhere now; this reads every place that names one, and finds the star in it.
+say ""
+say "Icons (every setting names a theme that is in /usr/share/icons)"
+ICONS="$RFS/usr/share/icons"
+: > "$T/icon-names"
+for f in "$RFS"/etc/gtk-3.0/settings.ini "$RFS"/etc/xdg/gtk-3.0/settings.ini "$RFS"/etc/xdg/gtk-4.0/settings.ini \
+         "$RFS"/etc/skel/.config/gtk-3.0/settings.ini "$RFS"/etc/skel/.config/gtk-4.0/settings.ini "$RFS"/home/*/.config/gtk-*/settings.ini; do
+    [ -f "$f" ] || continue
+    n=$(sed -n 's/^[[:space:]]*gtk-icon-theme-name[[:space:]]*=[[:space:]]*//p' "$f" | tail -1 | tr -d "\"'" | sed 's/[[:space:]]*$//')
+    [ -n "$n" ] && printf '%s|%s\n' "${f#$RFS/}" "$n" >> "$T/icon-names"
+done
+# gsettings: schema overrides are read in file-name order and the last one wins.
+gs=$(for f in "$RFS"/usr/share/glib-2.0/schemas/*.override; do
+         [ -f "$f" ] && awk '/^\[/ { s = $0 } s == "[org.gnome.desktop.interface]" && /^icon-theme[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*/, ""); v = $0 } END { print v }' "$f"
+     done | grep . | tail -1 | tr -d "'\"")
+[ -n "$gs" ] && printf 'a gsettings override|%s\n' "$gs" >> "$T/icon-names"
+[ -s "$T/icon-names" ] || printf 'the default (nothing sets one)|Adwaita\n' >> "$T/icon-names"
+# starred-symbolic in the theme or one it inherits (the file GNOME Software's stars are).
+icon_found() { # theme
+    queue="$1 hicolor"; seen=" "
+    while set -- $queue; [ $# -gt 0 ]; do
+        t=$1; shift; queue="$*"
+        case "$seen" in *" $t "*) continue ;; esac
+        seen="$seen$t "
+        [ -f "$ICONS/$t/index.theme" ] || continue
+        [ -n "$(find "$ICONS/$t" -name 'starred-symbolic.*' 2>/dev/null | head -1)" ] && return 0
+        queue="$queue $(sed -n 's/^Inherits=//p' "$ICONS/$t/index.theme" | head -1 | tr ',' ' ')"
+    done
+    return 1
+}
+sort -u "$T/icon-names" > "$T/icon-names.u"
+while IFS='|' read -r where n; do
+    if [ -f "$ICONS/$n/index.theme" ]; then ok "icon theme '$n' ($where) is in /usr/share/icons"
+    else bad "icon theme '$n' ($where) is in /usr/share/icons" "usr/share/icons has no $n/index.theme: GTK4 would use hicolor alone and draw the image-missing glyph"; fi
+done < "$T/icon-names.u"
+for n in $(cut -d'|' -f2 "$T/icon-names.u" | sort -u); do
+    if icon_found "$n"; then ok "starred-symbolic (GNOME Software's stars) resolves in '$n'"
+    else bad "starred-symbolic (GNOME Software's stars) resolves in '$n'" "no starred-symbolic.* in $n or what it inherits, or $n is not there: the stars draw as the image-missing glyph"; fi
+done
+
+# The icons are SVGs. Adwaita's symbolic icons (the stars, the source icon, every toolbar) are
+# SVG files, and GTK draws them through gdk-pixbuf's SVG loader, which is the package
+# librsvg2-common: adwaita-icon-theme only recommends it, and an image built without
+# recommends had every one of them drawn as the image-missing glyph. Present and registered
+# in the loader cache, or the stars are not there.
+if installed adwaita-icon-theme; then
+    svg=$(find "$RFS"/usr/lib -name 'libpixbufloader-svg.so' 2>/dev/null | head -1)
+    cache=$(find "$RFS"/usr/lib -name loaders.cache -path '*gdk-pixbuf*' 2>/dev/null | head -1)
+    if [ -n "$svg" ] && [ -n "$cache" ] && grep -q 'libpixbufloader-svg' "$cache"; then
+        ok "gdk-pixbuf can read SVG, so Adwaita's symbolic icons draw (librsvg2-common, in the loader cache)"
+    else bad "gdk-pixbuf can read SVG, so Adwaita's symbolic icons draw (librsvg2-common, in the loader cache)" \
+            "no libpixbufloader-svg.so in usr/lib, or loaders.cache does not list it: GNOME Software's stars and its source icon draw as the image-missing glyph"; fi
+fi
+
 # AurOS's own packages move together. keep-previous (the rollback's set) and
 # rollback treat every installed `auros` and `auros-*` as a part of the update
 # channel at the version of `auros` itself; one with a version of its own makes

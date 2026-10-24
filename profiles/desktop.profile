@@ -220,6 +220,14 @@ earlyoom_min_free_percent="5"
 #   *-icon-theme,       GTK and Qt applications look broken, or refuse
 #   gsettings-*,        to start, without their schemas, icons and mime
 #   shared-mime-info    database. This is not decoration.
+#   librsvg2-common     the gdk-pixbuf loader for SVG. Every symbolic icon in
+#                       Adwaita is an SVG, and adwaita-icon-theme only
+#                       RECOMMENDS this (the build installs without
+#                       recommends), so without it every GTK program drew
+#                       the "image missing" glyph where GNOME Software has its
+#                       five stars and its Flathub source (F's real-Windows
+#                       store run, 40038619603; reproduced in WL's harness:
+#                       stars with it, the glyph without).
 #
 # mesa-vulkan-drivers was removed rather than lost: it is ~100 MB, and
 # nothing in this product can use it. The compositor composites on the
@@ -230,7 +238,7 @@ packages_desktop="xwayland libinput10 libdrm2 libgbm1
                   fontconfig fonts-dejavu-core fonts-liberation2
                   dbus-user-session dbus-daemon ca-certificates
                   libgl1-mesa-dri libegl-mesa0 libglx-mesa0
-                  adwaita-icon-theme hicolor-icon-theme
+                  adwaita-icon-theme librsvg2-common hicolor-icon-theme
                   gsettings-desktop-schemas shared-mime-info xdg-utils
                   fonts-noto-color-emoji"
 
