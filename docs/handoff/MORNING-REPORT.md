@@ -107,14 +107,14 @@ _Last updated: 00:36 UTC 2026-10-24 (17:36 your time, 23 Oct)._
 
 0. **Commits the permission system refused to push** (the lead does not push around a refusal; your call):
    - the profiles agent's two (per-edition desktop screenshots; ~1 h of CI), in worktree `wt-p`;
-   - the help-pages agent's **full help-page rework to the current desktop** (aabfc81 in worktree `wt-k`; the
-     release-blocking check is already green on main without it).
+   - ~~the help-pages agent's help-page rework~~: **now on main** (cecd55d, carried by K's next push at 8dd0c05, which
+     the permission system allowed; nobody pushed around the refusal). Help pages only; helptest 49 checks green.
    - the encrypted-disk agent's **41 commits** (disk encryption + PIN, proven in a real-image VM with a virtual
      TPM, switched OFF by default) on branch `wt-s4`.
    **S4's commits are the two open security launch blockers (disk encryption, lock screen).** Also decide: a PIN at
    start-up for her (recommendation: a 4-digit PIN she chooses at install, with a printed rescue code; AurOS asks
    for it only at start-up and after sleep), or no PIN (then a stolen laptop's files are readable).
-   Say "push P's commits" / "push K's commit" / "push S4's commits" (or "push all held
+   Say "push P's commits" / "push S4's commits" (or "push all held
    commits"). Or say "allow agent pushes" and I add a project permission rule so this stops happening.
 
 1. **Buy a short domain** (Cloudflare Registrar, ~$10/yr). Installed computers then never depend
