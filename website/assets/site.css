@@ -365,6 +365,42 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 .words { font-weight: 700; }
 .totop { margin-top: 22px; }
 
+/* ── request preview: five real profiles, allowlisted choices only ── */
+.request-stop h2 { font-size: 25px; margin-bottom: 8px; }
+.request-form { margin: 0; }
+.request-set { min-width: 0; margin: 0; padding: 0; border: 0; }
+.request-set legend, .request-finish h2 { width: 100%; font: 800 clamp(30px, 3.2vw, 40px)/1.15 var(--face); margin: 0 0 18px; }
+.request-number { display: inline-flex; align-items: center; justify-content: center; width: 1.45em; height: 1.45em; margin-right: 0.28em; border: 3px solid var(--ink); border-radius: 50%; font-size: 0.72em; vertical-align: 0.12em; }
+.request-help { max-width: 43rem; color: var(--ink-2); }
+.choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 24px; }
+.choice-card { position: relative; display: flex; gap: 16px; min-height: 116px; padding: 20px; border: 2px solid var(--rule); border-radius: 12px; background: var(--card); cursor: pointer; }
+.choice-card:hover { border-color: var(--ink); }
+.choice-card:has(input:checked) { border: 3px solid var(--go); padding: 19px; background: var(--selected); }
+.choice-card:has(input:disabled) { border-color: var(--soft); background: var(--paper); color: var(--quiet); cursor: not-allowed; }
+.choice-card input { flex: none; width: 24px; height: 24px; margin: 3px 0 0; accent-color: var(--go); }
+.choice-card strong, .choice-card small { display: block; }
+.choice-card strong { font-size: 22px; line-height: 1.25; }
+.choice-card small { margin-top: 6px; color: var(--ink-2); font: 400 18px/1.45 var(--face); }
+.choice-card:has(input:disabled) small { color: var(--quiet); }
+.base-grid .choice-card:first-child { grid-column: 1 / -1; }
+.recipe-review { margin: 26px 0; padding: clamp(20px, 3vw, 30px); border-radius: 12px; background: var(--soft); }
+.recipe-review dl { margin: 0; display: grid; gap: 12px; }
+.recipe-review dl > div { display: grid; grid-template-columns: minmax(9rem, 1fr) minmax(0, 2fr); gap: 12px 24px; }
+.recipe-review dt { font-weight: 700; }
+.recipe-review dd { margin: 0; }
+.recipe-review details { margin-top: 24px; }
+.recipe-review summary { min-height: 48px; display: flex; align-items: center; font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 0.2em; cursor: pointer; }
+.recipe-review pre { margin: 10px 0 0; padding: 16px; border-radius: 8px; background: var(--ink); color: var(--paper); font: 400 18px/1.5 ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.request-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 28px; }
+.unsupported { margin-top: 40px; }
+.unsupported h3 { font-size: 25px; margin-bottom: 8px; }
+@media (max-width: 720px) {
+  .choice-grid { grid-template-columns: minmax(0, 1fr); }
+  .base-grid .choice-card:first-child { grid-column: auto; }
+  .recipe-review dl > div { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .request-actions > * { width: 100%; }
+}
+
 /* the sheet to print (guide.html) */
 .sheet { background: var(--card); border-radius: 12px; padding: clamp(24px, 4vw, 56px); max-width: 52rem; margin: 0 auto; }
 .sheet-brand { display: flex; align-items: center; gap: 0.3em; font: 800 22px/1 var(--face); margin-bottom: 14px; }
