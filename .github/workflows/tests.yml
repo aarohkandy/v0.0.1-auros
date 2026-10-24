@@ -214,6 +214,9 @@ jobs:
       - name: staging kernel arguments (same hardening before and after handover)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: python3 -I tools/bootargstest.py 2>&1 | tee transcripts/bootargstest.txt
+      - name: staging and installed image select the same kernel
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/kernelversiontest.sh 2>&1 | tee transcripts/kernelversiontest.txt
       - name: customization recipe contract (strict data and profile policy)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: python3 -m unittest discover -s src/customize/tests -v 2>&1 | tee transcripts/customization.txt

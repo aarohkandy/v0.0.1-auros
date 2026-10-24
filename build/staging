@@ -59,8 +59,8 @@ warn() { printf '%s!!%s %s\n' "$C_WRN" "$C_RST" "$*" >&2; }
 die()  { printf '%s::%s %s\n' "$C_ERR" "$C_RST" "$*" >&2; exit 1; }
 
 [ -d "$RFS" ] || die "no rootfs at $RFS — run ./build/forge build $PROFILE first"
-KVER=$(ls "$RFS/lib/modules" 2>/dev/null | head -1)
-[ -n "$KVER" ] || die "no kernel modules in $RFS"
+KVER=$("$ROOT/build/kernel-version" "$RFS") \
+    || die "the rootfs has no bootable kernel and matching modules"
 
 rm -rf "$WORK"; mkdir -p "$WORK" "$OUT"
 cd "$WORK"

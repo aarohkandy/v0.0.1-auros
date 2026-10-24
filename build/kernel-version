@@ -1,0 +1,27 @@
+#!/bin/sh
+# Select the kernel both the installed image and the staging environment boot.
+set -eu
+
+if [ "$#" -ne 1 ] || [ ! -d "$1" ]; then
+    echo "kernel-version: expected one root filesystem directory" >&2
+    exit 2
+fi
+
+root=${1%/}
+version=$(
+    for image in "$root"/boot/vmlinuz-*; do
+        [ -f "$image" ] || continue
+        printf '%s\n' "${image##*/vmlinuz-}"
+    done | LC_ALL=C sort -V | tail -1
+)
+
+[ -n "$version" ] || {
+    echo "kernel-version: no kernel image under $root/boot" >&2
+    exit 1
+}
+[ -d "$root/lib/modules/$version" ] || {
+    echo "kernel-version: kernel $version has no matching modules under $root/lib/modules" >&2
+    exit 1
+}
+
+printf '%s\n' "$version"
