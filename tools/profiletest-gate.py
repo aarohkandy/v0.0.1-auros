@@ -27,6 +27,9 @@ def _diagnostic_path(value: str) -> bool:
             "tools/test_profile_image.py",
             "tools/x11_xres_probe.py",
             "tools/test_x11_xres_probe.py",
+            "tools/profiletest-fcitx-guest.sh",
+            "tools/fcitx_wayland_trace.py",
+            "tools/test_fcitx_wayland_trace.py",
         }
         or re.fullmatch(r"tools/profiletest[^/]*", value) is not None
     )
@@ -115,6 +118,24 @@ def decide(subject: str, files: list[str]) -> dict[str, object]:
     }
 
 
+def probe_mode(x11: str, fcitx: str) -> dict[str, str]:
+    values = {"true": "1", "false": "0", "": "0"}
+    if x11 not in values or fcitx not in values:
+        raise ValueError("diagnostic probe options must be booleans")
+    selected_x11 = values[x11]
+    selected_fcitx = values[fcitx]
+    if selected_x11 == "1" and selected_fcitx == "1":
+        raise ValueError("x11_panel_probe and fcitx_client_probe are mutually exclusive")
+    if selected_fcitx == "1":
+        mode = "fcitx-client"
+    elif selected_x11 == "1":
+        mode = "x11-panel"
+    else:
+        mode = "ibus-functional"
+    ibus = "0" if selected_fcitx == "1" else "1"
+    return {"ibus": ibus, "x11": selected_x11, "fcitx": selected_fcitx, "mode": mode}
+
+
 def _selftest() -> None:
     allowed = [
         "tools/profiletest.sh",
@@ -123,6 +144,9 @@ def _selftest() -> None:
         "tools/test_profile_image.py",
         "tools/x11_xres_probe.py",
         "tools/test_x11_xres_probe.py",
+        "tools/profiletest-fcitx-guest.sh",
+        "tools/fcitx_wayland_trace.py",
+        "tools/test_fcitx_wayland_trace.py",
         ".github/workflows/profiles.yml",
         "docs/handoff/streams/P.md",
     ]
@@ -151,6 +175,22 @@ def _selftest() -> None:
     assert decide("unfinished [profiles", ["docs/note.md"])["list"] == list(PROFILES)
     functional = decide("[ibus-functional]", ["docs/note.md"])
     assert functional["list"] == ["multilingual"] and functional["ibus_functional"] is True
+    assert probe_mode("false", "false") == {
+        "ibus": "1", "x11": "0", "fcitx": "0", "mode": "ibus-functional",
+    }
+    assert probe_mode("true", "false") == {
+        "ibus": "1", "x11": "1", "fcitx": "0", "mode": "x11-panel",
+    }
+    assert probe_mode("false", "true") == {
+        "ibus": "0", "x11": "0", "fcitx": "1", "mode": "fcitx-client",
+    }
+    for options in (("true", "true"), ("yes", "false"), ("false", "1")):
+        try:
+            probe_mode(*options)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"unsafe diagnostic probe options accepted: {options!r}")
     for files in ([], ["../src/main.c"], ["/src/main.c"], ["src\\main.c"]):
         try:
             decide("", files)
@@ -182,11 +222,26 @@ def main() -> None:
     choose.add_argument("--subject", required=True)
     choose.add_argument("--github-pages", type=Path, required=True)
     choose.add_argument("--github-output", type=Path, required=True)
+    mode = sub.add_parser("probe-mode")
+    mode.add_argument("--x11", required=True)
+    mode.add_argument("--fcitx", required=True)
+    mode.add_argument("--github-output", type=Path, required=True)
     sub.add_parser("selftest")
     args = parser.parse_args()
 
     if args.command == "selftest":
         _selftest()
+        return
+
+    if args.command == "probe-mode":
+        try:
+            result = probe_mode(args.x11, args.fcitx)
+        except ValueError as exc:
+            parser.error(str(exc))
+        lines = [f"{key}={value}" for key, value in result.items()]
+        with args.github_output.open("a", encoding="utf-8") as output:
+            output.write("\n".join(lines) + "\n")
+        print("\n".join(lines))
         return
 
     pages = json.loads(args.github_pages.read_text(encoding="utf-8"))
