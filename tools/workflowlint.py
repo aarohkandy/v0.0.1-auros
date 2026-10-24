@@ -41,6 +41,9 @@
    e.g. `secrets[inputs.x]`) and `toJSON(secrets)` hand every secret of the
    repository to a run on any branch and slip past rule 6; each secret is
    named in the file that uses it (`secrets.NAME`).
+12. The installer-signing token is never in workflow or job env. Only the
+    configuration check and signing actions need it; unrelated actions must
+    not inherit signing authority.
 """
 import glob, os, re, sys
 
@@ -62,11 +65,15 @@ def lint(path, text):
     if re.search(r"secrets\s*\[|toJSON\(\s*secrets", code, re.I):
         out.append("%s: reads secrets dynamically (secrets[...] or toJSON(secrets)): name each secret" % path)
     perms = doc.get("permissions")
+    if "SIGNPATH_API_TOKEN" in yaml.dump(doc.get("env", {})):
+        out.append("%s: installer-signing token in workflow env: scope it to a signing step" % path)
     if perms == "write-all" or (isinstance(perms, dict) and perms.get("contents") == "write"):
         out.append("%s: workflow-level contents: write (give it to the job that needs it)" % path)
     for name, job in doc["jobs"].items():
         if not isinstance(job, dict):
             out.append("%s: job %s is not a mapping" % (path, name)); continue
+        if "SIGNPATH_API_TOKEN" in yaml.dump(job.get("env", {})):
+            out.append("%s: job %s has the installer-signing token in job env: scope it to a signing step" % (path, name))
         uses = [job.get("uses")] + [st.get("uses") for st in job.get("steps") or [] if isinstance(st, dict)]
         for u in uses:
             if u and not u.startswith("./") and not re.search(r"@[0-9a-f]{40}$", u):
@@ -157,6 +164,14 @@ def selftest():
         ("workflow_run + the key, no aptgate, is refused", WR + KEY, 1),
         ("workflow_run + the key, through aptgate, passes", WR + KEY.replace("      - run: one\n", "      - run: bash tools/aptgate.sh decide\n"), 0),
         ("push + the key needs no aptgate", "on:\n  push:\n" + KEY, 0),
+        ("installer token in workflow env is refused",
+         "env:\n  TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}\n" + good, 1),
+        ("installer token in job env is refused",
+         good.replace("    steps:", "    env:\n      TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}\n    steps:"), 1),
+        ("installer token in one step passes",
+         good + "      - run: test -n \"$TOKEN\"\n        env:\n          TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}\n", 0),
+        ("explicit installer token handoff passes",
+         "jobs:\n  sign:\n    uses: ./.github/workflows/sign-installer.yml\n    secrets:\n      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}\n", 0),
     ]
     bad = 0
     for what, text, want in cases:
