@@ -183,6 +183,16 @@ which only a **full** (non-pre) release moves. **Only the lead pushes `[latest]`
   build run 40038558072) carries the old release.yml, so its `release / publish` will fail the
   same way after its tests: publish it with `[publish 40038558072]` from a tip with afc82b8.
 
+- **[latest] needs harden's `boot` green on the build's own image** (lead's order, 00:15 UTC):
+  `tools/hardengate.sh RUN-ID` (called by `which`'s gate and by `promote`) finds the harden run titled
+  `harden of build run RUN-ID` (harden.yml `run-name`; a workflow_run's head_sha is main's tip, so the
+  title is the only link) and judges its `boot` job with `tools/releasegate.py harden`. Proofs:
+  `releasegate.py selftest` (12 harden cases) and `tools/hardengatetest.sh` (fake gh, 10 cases; a
+  mutant that lets a red through fails it), both run by workflowlint.yml. Consequence: one-shot
+  `[release] [latest]` is refused up front; the path is `[release]`, wait for harden, then
+  `[publish RUN-ID] [latest]`. A `[release]` subject forces harden to boot that image (a10d966).
+  Runs before this change have the title `harden` and can never be matched (RC5's will be).
+
 ## Open / next
 
 1. The first full chain has not run end to end: `[release] [latest]` has never been pushed

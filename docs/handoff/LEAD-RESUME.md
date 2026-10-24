@@ -106,7 +106,9 @@ every blocker/high in `docs/safety/FINDINGS.md` and `docs/security/FINDINGS.md`
 fixed with a test → design P0s applied → then promote.
 
 - **Never `[latest]` (public promote) unless all of these hold**: the e2e
-  above is green on that exact exe; no open blocker in the safety/security
+  above is green on that exact exe; harden's `boot` passed on that build run's
+  image (`tools/hardengate.sh`; so `[release]` first, then `[publish RUN-ID]
+  [latest]` once harden is done: docs/RELEASE.md); no open blocker in the safety/security
   findings; the update keyring is in the image (it is: afa7755); and the owner
   has either bought the domain (decision 1, WP-15) or said in chat to promote
   without it. Until then, prereleases only.

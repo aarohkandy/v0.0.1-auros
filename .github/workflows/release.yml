@@ -142,6 +142,13 @@ jobs:
                 echo "releasegate: REFUSED: build ${head:0:7} does not contain $sha ($why)" >> /tmp/gate.txt; g=1
               fi
             done < .github/release-requires.txt
+            # The full release also needs the hardening boot test of THIS
+            # build's image to have passed (tools/hardengate.sh): harden.yml
+            # starts after a build run finishes, so a [latest] is
+            # [publish RUN-ID] [latest] on a build whose harden is done.
+            if [ "$latest" = true ]; then
+              sh tools/hardengate.sh "$1" > /tmp/harden.txt 2>&1 || { cat /tmp/harden.txt >> /tmp/gate.txt; g=1; }
+            fi
             cat /tmp/gate.txt
             return $g
           }
@@ -619,7 +626,16 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ needs.publish.outputs.tag }}
       SETUP_SHA256: ${{ needs.publish.outputs.setup_sha256 }}
+      RID: ${{ needs.which.outputs.run-id }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: the hardening boot test passed on THIS build's image
+        run: |
+          # harden.yml (job boot) boots the image of a finished build and
+          # runs tools/hardenboottest.sh. Not the newest harden run: the
+          # one whose title names this build run (tools/hardengate.sh).
+          # `which` asked already; this is the check that decides.
+          sh tools/hardengate.sh "$RID" || { echo "::error::no passing hardening boot of build run $RID's image; $TAG stays a prerelease"; exit 1; }
       - name: a real Windows installed THIS AurOS-Setup.exe end to end, in this run
         run: |
           # `needs` already says e2e did not fail. This asks the jobs

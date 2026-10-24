@@ -19,9 +19,9 @@ count only in the commit's subject line.**
 | A build and every test | changes `build/`, `src/`, `rootfs/`, `profiles/`, `themes/`, `shells/` or the workflows, or says `[build]` in its subject | `build.yml`: build, then `tests.yml` |
 | Tests only, no build | says `[test]` in its subject | `tests.yml` against the newest build of the branch whose artifacts have not expired (14 days) |
 | A prerelease, built and tested, then the real-Windows journey on it | says `[release]` | `build.yml`, `tests.yml`, then `release.yml` if every test passed: prerelease, Windows checks, `e2e.yml` on that exact AurOS-Setup.exe, the website check. Stops there. |
-| **The website's download, start to finish** | says `[release] [latest]` (lead only) | the same, then `promote` (only if the e2e of THIS exe passed in this run) and the Pages deploy |
+| **The website's download, start to finish** | says `[release] [latest]` (lead only) | **refused up front** (see below): harden has not run on a build that has not finished. Push `[release]`, wait for harden, then `[publish RUN-ID] [latest]`. |
 | A prerelease of a build that already passed | says `[publish]` (newest passing build of the branch) or `[publish RUN-ID]` | `release.yml` only: nothing is rebuilt, so what is published is exactly what was tested; then the same Windows checks, e2e and site check |
-| That build as the full release | says `[publish RUN-ID] [latest]` (lead only) | the same, then `promote` and Pages; e2e runs again on that exe first |
+| That build as the full release | says `[publish RUN-ID] [latest]` (lead only) | the same, then `promote` (e2e of THIS exe passed in this run **and** harden's `boot` passed on this build's image) and Pages; e2e runs again on that exe first |
 
 Every release starts as a prerelease; only `promote` makes one public,
 and only after `e2e.yml` -- called by `release.yml` with the release's
@@ -72,6 +72,20 @@ download, wizard, restart, AurOS, a program from the store, on a
 Windows 11 VM; hours), and the website stamped and checked with
 `tools/site/check.mjs`. `promote` ([latest]) needs all three; `pages`
 deploys the site that was checked.
+
+**A [latest] also needs the hardening boot test of its image.** harden.yml
+boots the image of a finished build run (`boot` job, `tools/hardenboottest.sh`).
+It runs after the build run completes, so it cannot be inside the same
+chain: `which` (up front) and `promote` (the deciding check) both run
+`tools/hardengate.sh RUN-ID`, which finds the harden run whose title is
+`harden of build run RUN-ID` (harden.yml's `run-name`; its `head_sha` is the
+tip of main, not the build's) and takes the newest verdict of its `boot`
+job: success passes; failure, skipped, cancelled, running or no run refuses.
+Not the newest harden run overall. A `[release]` subject forces harden to
+boot that candidate's image. Prereleases are unaffected. The proofs:
+`tools/releasegate.py selftest` and `tools/hardengatetest.sh` (a fake `gh`;
+a red, absent or unfinished boot refuses, a green one passes), run by
+workflowlint.yml.
 
 **Signing (docs/SIGNING.md, decision D12).** When the repository variable
 `SIGNPATH_ORGANIZATION_ID` exists, a `sign` job sits between the tests and

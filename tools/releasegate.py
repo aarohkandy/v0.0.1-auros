@@ -2,6 +2,7 @@
 """releasegate -- may this build run be published as a release?
 
     python3 -I tools/releasegate.py JOBS ALLOW [TODAY] [--latest]   JOBS: lines "name|conclusion"
+    python3 -I tools/releasegate.py harden ROWS RUN-ID   did the hardening boot of THIS build's image pass?
     python3 -I tools/releasegate.py selftest             each rule refuses what it exists to refuse
 
 JOBS is the build run's job list (release.yml's `which` job fetches it
@@ -23,6 +24,15 @@ The rules (docs/safety/FINDINGS.md S-11 is why the power-cut ones are here):
   release the website serves) an allow-list entry excuses nothing: a
   failure the allow-list tolerates lets a PRERELEASE out, never the
   download button.
+
+  4. (--latest only, `harden`) the hardening boot test (harden.yml, job
+     `boot`, tools/hardenboottest.sh) of THAT build run's image passed.
+     ROWS are harden runs, "created_at|event|title|boot" (tools/hardengate.sh
+     fetches them); a run counts only if its title is "harden of build run
+     RUN-ID" (harden.yml's run-name) and its event is workflow_run or
+     workflow_dispatch. The newest one with a verdict (boot success or
+     failure) decides; skipped, cancelled, running or none is no verdict,
+     and no verdict refuses. A red re-run to green is a pass.
 
 ALLOW lines:  job name | expires YYYY-MM-DD (UTC, inclusive) | why
 e.g.          powercut / e2e (powercut-nostick-early)|2026-10-30|S-03: ...
@@ -83,14 +93,52 @@ def judge(jobs_text, allow, today, latest=False):
     return why, notes
 
 
+def judge_harden(rows_text, rid):
+    """-> refusals. The newest harden run of build run RID with a verdict decides."""
+    title = "harden of build run %s" % rid
+    mine = []
+    for line in rows_text.splitlines():
+        p = line.split("|")
+        if len(p) == 4 and p[1] in ("workflow_run", "workflow_dispatch") and p[2].strip() == title:
+            mine.append((p[0].strip(), p[3].strip()))
+    if not mine:
+        return ["no harden run of build run %s (harden.yml starts one when a build finishes; a [latest] waits for it: "
+                "push [release], let harden finish, then [publish %s] [latest])" % (rid, rid)]
+    for _, boot in sorted(mine, reverse=True):
+        if boot == "success":
+            return []
+        if boot == "failure":
+            return ["the hardening boot test of build run %s's image FAILED (harden.yml, job boot)" % rid]
+    return ["the hardening boot test of build run %s's image has no verdict yet (%s)" % (rid, ", ".join(b for _, b in mine))]
+
+
 def selftest():
+    h = {"r": "2026-10-24T01:00:00Z", "o": "2026-10-24T00:00:00Z"}
+    def hc(what, rows, want_refused, rid="900"):
+        nonlocal bad
+        got = bool(judge_harden("\n".join(rows), rid))
+        print("    %-62s %s" % (what, "ok" if got == want_refused else "FAIL"))
+        bad += got != want_refused
+    bad = 0
+    t = "harden of build run 900"
+    hc("a green hardening boot of this build passes", [h["r"] + "|workflow_run|" + t + "|success"], False)
+    hc("a red hardening boot of this build is refused", [h["r"] + "|workflow_run|" + t + "|failure"], True)
+    hc("no harden run of this build is refused", [], True)
+    hc("a green boot of ANOTHER build is refused", [h["r"] + "|workflow_run|harden of build run 901|success"], True)
+    hc("a green push-event run with this title is refused", [h["r"] + "|push|" + t + "|success"], True)
+    hc("a skipped boot is no verdict: refused", [h["r"] + "|workflow_run|" + t + "|skipped"], True)
+    hc("a cancelled boot is no verdict: refused", [h["r"] + "|workflow_run|" + t + "|cancelled"], True)
+    hc("a boot still running is refused", [h["r"] + "|workflow_run|" + t + "|in_progress"], True)
+    hc("red, then re-run green (newer) passes", [h["o"] + "|workflow_run|" + t + "|failure", h["r"] + "|workflow_dispatch|" + t + "|success"], False)
+    hc("green, then red (newer) is refused", [h["o"] + "|workflow_run|" + t + "|success", h["r"] + "|workflow_dispatch|" + t + "|failure"], True)
+    hc("a newer cancelled run does not hide an older red", [h["o"] + "|workflow_run|" + t + "|failure", h["r"] + "|workflow_run|" + t + "|cancelled"], True)
+    hc("run 90 is not run 900", [h["r"] + "|workflow_run|harden of build run 9000|success"], True)
     green = "\n".join(
         ["build|success", "tests / unit|success"]
         + ["tests / e2e (t%d)|success" % i for i in range(7)]
         + ["powercut / e2e (p%d)|success" % i for i in range(4)])
     today = "2026-10-24"
     allow = {"powercut / e2e (p2)": ("2026-10-30", "S-03"), "powercut / e2e (p3)": ("2026-10-20", "old")}
-    bad = 0
 
     def case(what, jobs, allow_, want_refused, latest=False):
         nonlocal bad
@@ -126,6 +174,16 @@ def selftest():
 def main(argv):
     if len(argv) > 1 and argv[1] == "selftest":
         return selftest()
+    if len(argv) > 1 and argv[1] == "harden":
+        if len(argv) != 4:
+            print(__doc__, file=sys.stderr)
+            return 2
+        why = judge_harden(open(argv[2], encoding="utf-8").read(), argv[3])
+        for w in why:
+            print("releasegate: REFUSED:", w, file=sys.stderr)
+        if not why:
+            print("releasegate: ok, the hardening boot of build run %s's image passed" % argv[3])
+        return 1 if why else 0
     if len(argv) < 3:
         print(__doc__, file=sys.stderr)
         return 2

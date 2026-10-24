@@ -12,6 +12,12 @@
 # and what each boot recorded are the `hardenboot` artifact.
 # docs/security/HARDENING.md says what each line means.
 name: harden
+# The run's title names the build whose image it boots: a run started by a
+# workflow_run has the tip of main as its head_sha, not the build's, so the
+# title is the only record of which image was tested. release.yml's promote
+# (tools/hardengate.sh) looks for "harden of build run <id>"; any other
+# event keeps GitHub's default title (the single space).
+run-name: ${{ github.event_name == 'workflow_run' && format('harden of build run {0}', github.event.workflow_run.id) || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_id != '' && format('harden of build run {0}', github.event.inputs.run_id)) || ' ' }}
 
 on:
   push:
