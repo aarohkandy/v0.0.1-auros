@@ -106,6 +106,13 @@ typedef struct {
     int removes;
 } transient_fixture;
 
+typedef struct {
+    int file_errno;
+    int dir_errno;
+    int files;
+    int dirs;
+} scratch_fixture;
+
 static int fake_unmount(const char *path, void *ud)
 {
     transient_fixture *f = ud;
@@ -127,6 +134,24 @@ static int fake_remove(const char *path, void *ud)
         errno = ENOTEMPTY;
         return -1;
     }
+    return 0;
+}
+
+static int fake_remove_file(const char *path, void *ud)
+{
+    scratch_fixture *f = ud;
+    (void)path;
+    f->files++;
+    if (f->file_errno) { errno = f->file_errno; return -1; }
+    return 0;
+}
+
+static int fake_remove_scratch_dir(const char *path, void *ud)
+{
+    scratch_fixture *f = ud;
+    (void)path;
+    f->dirs++;
+    if (f->dir_errno) { errno = f->dir_errno; return -1; }
     return 0;
 }
 
@@ -227,6 +252,24 @@ int main(void)
     failed += check(rc == TRANSIENT_MOUNTPOINT_FAILED && dirty_dir.unmounts == 0 &&
                     dirty_dir.removes == 1,
                     "a nonempty staging mountpoint blocks handover", &(fixture){0});
+
+    scratch_fixture sensitive = { .file_errno = EACCES };
+    rc = transient_scratch_cleanup("/run/aurstage/saved.bin", "/run/aurstage",
+                                   fake_remove_file, fake_remove_scratch_dir, &sensitive);
+    failed += check(rc == TRANSIENT_FILE_FAILED && sensitive.files == 1 && sensitive.dirs == 0,
+                    "a saved.bin unlink failure blocks handover", &(fixture){0});
+
+    scratch_fixture leftover = { .dir_errno = ENOTEMPTY };
+    rc = transient_scratch_cleanup("/run/aurstage/saved.bin", "/run/aurstage",
+                                   fake_remove_file, fake_remove_scratch_dir, &leftover);
+    failed += check(rc == TRANSIENT_PARENT_FAILED && leftover.files == 1 && leftover.dirs == 1,
+                    "unknown staging scratch blocks the /run handover", &(fixture){0});
+
+    scratch_fixture absent = { .file_errno = ENOENT, .dir_errno = ENOENT };
+    rc = transient_scratch_cleanup("/run/aurstage/saved.bin", "/run/aurstage",
+                                   fake_remove_file, fake_remove_scratch_dir, &absent);
+    failed += check(rc == TRANSIENT_CLEAN && absent.files == 1 && absent.dirs == 1,
+                    "already-absent staging scratch is safe", &(fixture){0});
 
     printf("%d failed\n", failed);
     return failed != 0;
