@@ -251,6 +251,18 @@ def test_store_button_colours():
           "store: no button, nothing found")
 
 
+def test_canon_label():
+    try:
+        import e2e
+    except ImportError:
+        return
+    for raw, want in (("R¢start now", "Restart now"), ("J Install AugOs", "Install AurOS"), ("| Install urOS |", "Install AurOS"),
+                      ("Checkpagain", "Check again"), ("gt", "Next"), ("| Next |", "Next"), ("Fix thesé for me", "Fix these for me"),
+                      ("Close AurOS Setup", "Close AurOS Setup"), ("Restart later", "Restart later")):
+        check(e2e.canon_label(raw) == want, f"wizard: the button read as {raw!r} is '{want}'")
+    check(e2e.canon_label("Zzzzz qqq") == "Zzzzz qqq", "wizard: a reading that is nothing known stays as read")
+
+
 def test_label_contrast():
     """The store's Install must be readable (docs/EASY.md 4.5): dark letters on
     dark green, as run 40038619603 had them, fail; white on green passes."""
@@ -385,6 +397,7 @@ test_timings_summary()
 test_windows_dry()
 test_aur_dry()
 test_label_is()
+test_canon_label()
 test_label_contrast()
 test_store_button_colours()
 test_flow_helpers()

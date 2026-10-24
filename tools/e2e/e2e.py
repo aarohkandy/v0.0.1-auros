@@ -96,7 +96,10 @@ VARIANT_EXPECT = {
     # (A2's fast path, AB_CHOICE_BITLOCKER_PAUSE) it stops at a plain page
     # with only Close, and this variant is red for that reason. Once it can:
     # the install must go on, and check_bitlocker() holds the proofs.
-    "bitlocker": {"page": r"is encrypted|encryption off|has locked", "fix": False, "restarts": 0,
+    # An installer that can pause BitLocker (the fast path) shows no stop at all: the
+    # page is then optional, and the proofs are BitLocker fully encrypted when it
+    # asks to restart, and (still to write) Windows coming back with it on.
+    "bitlocker": {"page": r"is encrypted|encryption off|has locked", "fix": False, "restarts": 0, "optional": True,
                   "why_red": "D13 needs BitLocker paused for one restart, never decrypted: A2's fast path"},
     "pending":   {"page": r"waiting (to|for a) restart|finish an update", "fix": True, "restarts": 1},
     # not a stop: the Ready page says the drive is the slow kind (the installer
@@ -143,6 +146,31 @@ def label_is(label, *words):
     got = re.sub(r"[^a-z]", "", (label or "").lower())
     return any(got and abs(len(got) - len(w)) <= 1 and
                difflib.SequenceMatcher(None, got, w.lower()).ratio() >= 0.8 for w in words)
+
+
+# What the installer's primary button can say (src/aurbridge/wizard.c primary_label,
+# and its stops): OCR reads these as "R¢start now", "J Install AugOs", "Checkpagain",
+# and a regex on the raw reading missed "Restart now" (run 40038600863, so the
+# BitLocker check before the restart never ran).
+WIZARD_LABELS = ("Next", "Back", "Install AurOS", "Restart now", "Restart later", "Fix these for me",
+                 "Check again", "Close AurOS Setup", "Try again", "Show a helper how",
+                 "Copy for a helper", "Not now", "Checking", "Fixing", "Close")
+WIZARD_ALIASES = {"gt": "Next", "gt next": "Next"}      # the arrow glyph on Next reads as 'gt'
+
+
+def canon_label(raw):
+    """The known button label a noisy OCR reading is closest to (or the reading)."""
+    import difflib
+    got = re.sub(r"[^a-z ]", "", (raw or "").lower()).strip()
+    if got in WIZARD_ALIASES:
+        return WIZARD_ALIASES[got]
+    flat = got.replace(" ", "")
+    best, score = None, 0.0
+    for w in WIZARD_LABELS:
+        r = difflib.SequenceMatcher(None, flat, w.lower().replace(" ", "")).ratio()
+        if r > score:
+            best, score = w, r
+    return best if best and score >= 0.62 else raw
 
 
 def close_verdict(variant, page):
@@ -281,6 +309,9 @@ class Flow:
         seen = [t for t in self.wizard_pages if re.search(want["page"], t, re.I)]
         self.log(f"variant {VARIANT}: pages matching /{want['page']}/: {len(seen)}, "
                  f"'Fix these for me' pressed {self.fix_presses}, restarts for a fix {self.fix_restarts}")
+        if not seen and want.get("optional"):
+            self.log(f"variant {VARIANT}: the installer went on with no stop page: it deals with this PC itself")
+            return
         if not seen:
             raise Failure(f"variant {VARIANT}: no wizard page said /{want['page']}/, so this PC was "
                           "not the one the variant claims (or the installer did not notice); pages: " +
@@ -820,6 +851,7 @@ class Flow:
                 if btns:
                     b = max(btns, key=lambda b: (b[1] + b[3], b[0] + b[2]))
                     label = label or vision.text_of(vision.ocr(img, b, psm=7)).strip() or "?"
+                    raw_label, label = label, canon_label(label)
                     # OCR reads the same button a little differently each time
                     # ("Check again", "Checkiagain"): count presses by its first letters
                     # (run 39964877711 pressed 60 of them and never called it stuck)
@@ -842,7 +874,7 @@ class Flow:
                         page = " ".join(e.get("name") or "" for e in named if e.get("type") == "Pane")
                         page = (page + " || " if page else "") + vision.text_of(vision.ocr(img, rect))
                         self.wizard_pages.append(page)
-                        self.log(f"wizard page before '{label}': {page[:400]}")
+                        self.log(f"wizard page before '{label}' (read as {raw_label!r}): {page[:400]}")
                     if re.search(r"fix these", label, re.I):
                         self.fix_presses += 1
                     if key != last_label:
