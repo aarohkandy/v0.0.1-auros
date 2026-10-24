@@ -406,6 +406,10 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 .request-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 28px; }
 .unsupported { margin-top: 40px; }
 .unsupported h3 { font-size: 25px; margin-bottom: 8px; }
+.build-request { margin-top: 36px; padding-top: 30px; border-top: 3px solid var(--ink); }
+.build-request h3, .build-result h4 { font-size: 25px; margin: 0 0 12px; }
+.build-request > button { margin: 12px 10px 0 0; }
+.build-result code { overflow-wrap: anywhere; }
 @media (max-width: 720px) {
   .choice-grid { grid-template-columns: minmax(0, 1fr); }
   .base-grid .choice-card:first-child { grid-column: auto; }
