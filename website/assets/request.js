@@ -227,6 +227,9 @@ function apiError(code, status) {
   var known = {
     desktop_only: "Only My everyday computer can be built by this service.",
     base_unavailable: "This starting point is not available for a tested build yet.",
+    existing_delivery_busy: "This choice is being checked for another request. Please try again later.",
+    existing_delivery_unavailable: "We could not check the saved installer for this choice. A download is not available. Please try again later.",
+    existing_delivery_conflict: "The saved build details do not agree. A download is not available. Please try again later.",
     builds_disabled: "The build service is unavailable right now.",
     network_quota: "This network has reached the temporary request limit. Try again later.",
     global_quota: "The build service has reached its temporary request limit. Try again later.",

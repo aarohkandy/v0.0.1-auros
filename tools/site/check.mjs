@@ -594,6 +594,24 @@ for (const v of [
   const acceptedJob = { id: ID, token: TOKEN, recipe_id: RID, state: "queued", status_url: "/v1/builds/" + ID, download_ready: false };
   const pending = { id: ID, recipe_id: RID, state: "running", failure: null, download_ready: false, download: null, expires_at: "2026-10-25T12:00:00Z" };
 
+  for (const [error, status, words] of [
+    ["existing_delivery_busy", 503, "being checked for another request"],
+    ["existing_delivery_unavailable", 503, "could not check the saved installer"],
+    ["existing_delivery_conflict", 409, "saved build details do not agree"]
+  ]) {
+    let submissions = 0;
+    const { ctx, page } = await buildVisit((route) => {
+      if (route.request().url().endsWith("/challenge")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(challenge) });
+      submissions++;
+      return route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ error, download_ready: false }) });
+    });
+    await page.click("#request-build");
+    await page.waitForFunction((text) => document.getElementById("build-status").innerText.includes(text), words);
+    check(submissions === 1 && await page.locator("#build-download").isHidden(),
+      "request build: " + error + " explains the refusal without a download or repeated submission");
+    await ctx.close();
+  }
+
   {
     const { ctx, page } = await buildVisit((route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "base_unavailable", download_ready: false }) }));
     await page.click("#request-build");
