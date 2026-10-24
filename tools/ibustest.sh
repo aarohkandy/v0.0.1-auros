@@ -73,6 +73,17 @@ fi
 check test ! -e "$t/record"
 check grep -q 'did not publish both WAYLAND_DISPLAY and DISPLAY' "$t/not-ready.err"
 
+rm -f "$t/state" "$t/record"
+sed 's/sleep 0.1/:/' "$t/ibus-session" > "$t/ibus-fast"
+if AUROS_IBUS_TEST_STATE="$t/state" AUROS_IBUS_TEST_RECORD="$t/record" \
+   AUROS_IBUS_TEST_MODE=never AUROS_IBUS_WAIT_ATTEMPTS=999 \
+   sh "$t/ibus-fast" 2> "$t/not-ready.err"; then
+    echo "FAIL: IBus started without a display after an excessive wait override" >&2
+    fail=$((fail + 1))
+fi
+check test "$(cat "$t/state")" -eq 100
+check test ! -e "$t/record"
+
 mkdir -p "$t/etc/systemd/user"
 cp rootfs/etc/systemd/user/auros-ibus.service "$t/etc/systemd/user/"
 

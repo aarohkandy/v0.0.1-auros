@@ -6,6 +6,7 @@ set -eu
 
 max_attempts=${AUROS_IBUS_WAIT_ATTEMPTS:-100}
 case "$max_attempts" in ''|*[!0-9]*) max_attempts=100 ;; esac
+[ "$max_attempts" -le 100 ] 2>/dev/null || max_attempts=100
 
 i=0
 while [ "$i" -lt "$max_attempts" ]; do

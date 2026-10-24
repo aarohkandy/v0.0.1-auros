@@ -277,6 +277,7 @@ PY
 }
 
 load_profile() {
+    input_method=""
     local name=$1 chain="" cur=$1 depth=0 f
     while [ -n "$cur" ]; do
         f="$PROFILE_DIR/$cur.profile"

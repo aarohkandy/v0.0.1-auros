@@ -220,6 +220,9 @@ jobs:
       - name: installed journey evidence rejects missing and broken state
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: python3 tools/e2e/selftest.py 2>&1 | tee transcripts/e2e-selftest.txt
+      - name: multilingual input waits for the real session displays
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/ibustest.sh 2>&1 | tee transcripts/ibustest.txt
       - name: customization recipe contract (strict data and profile policy)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: python3 -m unittest discover -s src/customize/tests -v 2>&1 | tee transcripts/customization.txt
