@@ -302,6 +302,24 @@ judge_report() { # profile report-file
         [ "$(rv tty2)" = masked ] && ok "there is no console on Ctrl-Alt-F2" \
             || bad "there is no console on Ctrl-Alt-F2" "getty@tty2: $(rv tty2)"
     fi
+    if [ "$p" = multilingual ]; then
+        [ "$(rv ibus_unit)" = active ] && ok "the user's IBus service is running" \
+            || bad "the user's IBus service is running" "auros-ibus.service: $(rv ibus_unit)"
+        [ "$(rv ibus_gtk)" = ibus ] && ok "the user manager gives GTK programs IBus" \
+            || bad "the user manager gives GTK programs IBus" "GTK_IM_MODULE=$(rv ibus_gtk)"
+        [ "$(rv ibus_qt)" = ibus ] && ok "the user manager gives Qt programs IBus" \
+            || bad "the user manager gives Qt programs IBus" "QT_IM_MODULE=$(rv ibus_qt)"
+        [ "$(rv ibus_xmodifiers)" = '@im=ibus' ] && ok "the user manager gives X programs IBus" \
+            || bad "the user manager gives X programs IBus" "XMODIFIERS=$(rv ibus_xmodifiers)"
+        [ -n "$(rv ibus_wayland)" ] && [ -n "$(rv ibus_display)" ] \
+            && ok "the IBus session has the real Wayland and Xwayland displays" \
+            || bad "the IBus session has the real Wayland and Xwayland displays" \
+                   "WAYLAND_DISPLAY=$(rv ibus_wayland) DISPLAY=$(rv ibus_display)"
+        [ "$(rv ibus_pinyin)" = yes ] && ok "Pinyin is available through the user's live IBus" \
+            || bad "Pinyin is available through the user's live IBus" "pinyin=$(rv ibus_pinyin)"
+        printf '    %-62s %s\n' "typing Pinyin in Mousepad and Firefox" \
+            "UNPROVEN -- needs the functional input test"
+    fi
 }
 
 # ═══ lint ═══════════════════════════════════════════════════════════
@@ -462,6 +480,55 @@ EOR
     if [ "$b" -ge 1 ]; then printf '    %-62s %s\n' "...with its language never generated" "refused"
     else printf '    %-62s %s\n' "...with its language never generated" "ACCEPTED -- dead"; fail=$((fail+1)); fi
     checked=$((checked+1))
+
+    # Multilingual has runtime promises the other profiles deliberately do
+    # not make. Its evidence comes from the real user's manager and IBus bus,
+    # and every missing part must make the report fail.
+    multilingual_good() {
+        cat <<EOR
+PROFILETEST up 41
+PROFILETEST aurshell=active
+PROFILETEST shell=/usr/share/auros/shells/rail.shell
+PROFILETEST theme=sandstone
+PROFILETEST user=auros
+PROFILETEST lang=LANG=fr_FR.UTF-8
+PROFILETEST locales=C.utf8 ar_EG.utf8 en_US.utf8 es_ES.utf8 fr_FR.utf8 zh_CN.utf8 POSIX
+PROFILETEST browser=/usr/bin/firefox
+PROFILETEST failed=
+PROFILETEST swap=/dev/zram0 partition 1.9G;
+PROFILETEST earlyoom=active
+PROFILETEST tty2=masked
+PROFILETEST ibus_unit=active
+PROFILETEST ibus_gtk=ibus
+PROFILETEST ibus_qt=ibus
+PROFILETEST ibus_xmodifiers=@im=ibus
+PROFILETEST ibus_wayland=wayland-0
+PROFILETEST ibus_display=:0
+PROFILETEST ibus_pinyin=yes
+PROFILETEST done
+EOR
+    }
+    multilingual_good > "$T/m.good"
+    m=$( fail=0; checked=0; judge_report multilingual "$T/m.good" >/dev/null; echo "$fail" )
+    if [ "$m" = 0 ]; then printf '    %-62s %s\n' "a multilingual session with live IBus evidence" "accepted"
+    else printf '    %-62s %s\n' "a multilingual session with live IBus evidence" "REFUSED ($m)"; fail=$((fail+1)); fi
+    checked=$((checked+1))
+    mrep() { # description sed-expr
+        multilingual_good | sed "$2" > "$T/m.bad"
+        m=$( fail=0; checked=0; judge_report multilingual "$T/m.bad" >/dev/null; echo "$fail" )
+        if [ "$m" -ge 1 ]; then printf '    %-62s %s\n' "$1" "refused"
+        else printf '    %-62s %s\n' "$1" "ACCEPTED -- the check is dead"; fail=$((fail+1)); fi
+        checked=$((checked+1))
+    }
+    mrep "...with no IBus service evidence"       '/^PROFILETEST ibus_unit=/d'
+    mrep "...with a failed IBus service"           's/ibus_unit=active/ibus_unit=failed/'
+    mrep "...without GTK input-method environment" '/^PROFILETEST ibus_gtk=/d'
+    mrep "...with the wrong Qt input method"        's/ibus_qt=ibus/ibus_qt=none/'
+    mrep "...without X input-method environment"   '/^PROFILETEST ibus_xmodifiers=/d'
+    mrep "...without Wayland in the IBus session"   's/ibus_wayland=wayland-0/ibus_wayland=/'
+    mrep "...without Xwayland in the IBus session"  's/ibus_display=:0/ibus_display=/'
+    mrep "...with no Pinyin engine evidence"        '/^PROFILETEST ibus_pinyin=/d'
+    mrep "...without a live Pinyin engine"          's/ibus_pinyin=yes/ibus_pinyin=no/'
     echo
     [ "$fail" -eq 0 ] && { echo "$checked checks: every check refuses what it exists to refuse."; exit 0; }
     echo "$fail of $checked wrong."; exit 1
@@ -593,6 +660,38 @@ say "jobs=$(systemctl list-jobs --no-legend 2>/dev/null | awk '{print $2}' | tr 
 say "mem=$(free -m | awk '/^Mem:/ {print "used " $3 " MiB of " $2}')"
 say "rootdf=$(df -BM --output=used,size / | tail -1)"
 say "kernel=$(uname -r)"
+if grep -Eq '^profile[[:space:]]*=[[:space:]]*multilingual$' /etc/auros/policy.conf 2>/dev/null; then
+    desktop_user=$(stat -c %U /run/auros)
+    desktop_uid=$(id -u "$desktop_user" 2>/dev/null || true)
+    as_desktop() {
+        timeout 8 runuser -u "$desktop_user" -- env \
+            XDG_RUNTIME_DIR="/run/user/$desktop_uid" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$desktop_uid/bus" "$@"
+    }
+    ibus_unit=$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null || true)
+    user_env=$(as_desktop systemctl --user show-environment 2>/dev/null || true)
+    env_value() { printf '%s\n' "$user_env" | sed -n "s/^$1=//p" | tail -1; }
+    ibus_gtk=$(env_value GTK_IM_MODULE)
+    ibus_qt=$(env_value QT_IM_MODULE)
+    ibus_xmodifiers=$(env_value XMODIFIERS)
+    ibus_wayland=$(env_value WAYLAND_DISPLAY)
+    ibus_display=$(env_value DISPLAY)
+    ibus_engines=$(as_desktop env DISPLAY="$ibus_display" WAYLAND_DISPLAY="$ibus_wayland" \
+        GTK_IM_MODULE="$ibus_gtk" QT_IM_MODULE="$ibus_qt" XMODIFIERS="$ibus_xmodifiers" \
+        ibus list-engine 2>/dev/null || true)
+    if printf '%s\n' "$ibus_engines" | grep -Eq '(^|[[:space:]:])pinyin([[:space:]]|$)'; then
+        ibus_pinyin=yes
+    else
+        ibus_pinyin=no
+    fi
+    say "ibus_unit=$ibus_unit"
+    say "ibus_gtk=$ibus_gtk"
+    say "ibus_qt=$ibus_qt"
+    say "ibus_xmodifiers=$ibus_xmodifiers"
+    say "ibus_wayland=$ibus_wayland"
+    say "ibus_display=$ibus_display"
+    say "ibus_pinyin=$ibus_pinyin"
+fi
 journalctl -b -p err --no-pager -o cat 2>/dev/null | tail -20 | sed 's/^/PROFILETEST journal: /' > "$S"
 say "done"
 EOS
