@@ -59,29 +59,26 @@ esac
 # Return 124 only when a still-running boot reaches its deadline. A normal
 # shutdown and the restore's final report are both successful ends.
 wait_for_boot() { # pid serial
-    waited=0
-    while kill -0 "$1" 2>/dev/null && [ "$waited" -lt "$BOOT_TIMEOUT" ]; do
-        grep -aq 'aurstage-report v1 verdict=restore' "$2" && { sleep 3; return 0; }
-        sleep "$POLL_INTERVAL"
-        waited=$((waited + POLL_INTERVAL))
+    deadline=$(( $(date +%s) + BOOT_TIMEOUT ))
+    while kill -0 "$1" 2>/dev/null; do
+        now=$(date +%s)
+        [ "$now" -ge "$deadline" ] && return 124
+        # Bound every scan: serial output can grow for the life of the VM.
+        if tail -c 1048576 "$2" 2>/dev/null | grep -aq 'aurstage-report v1 verdict=restore'; then
+            left=$((deadline - $(date +%s)))
+            [ "$left" -le 0 ] && return 124
+            [ "$left" -lt 3 ] && sleep "$left" || sleep 3
+            return 0
+        fi
+        now=$(date +%s)
+        [ "$now" -ge "$deadline" ] && return 124
+        left=$((deadline - now))
+        [ "$left" -lt "$POLL_INTERVAL" ] && sleep "$left" || sleep "$POLL_INTERVAL"
     done
-    kill -0 "$1" 2>/dev/null && return 124
     return 0
 }
 
-# A quick regression for the deadline itself; it needs no image or QEMU.
-if [ "${PUTBACK_SELFTEST:-}" = timeout ]; then
-    s=$(mktemp); : > "$s"
-    sleep 30 & p=$!
-    BOOT_TIMEOUT=1; POLL_INTERVAL=1
-    wait_for_boot "$p" "$s"; rc=$?
-    kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null
-    rm -f "$s"
-    [ "$rc" -eq 124 ] || { echo "timeout selftest: expected 124, got $rc"; exit 1; }
-    echo "timeout selftest: ok"
-    exit 0
-fi
-
+if [ "${PUTBACK_SELFTEST:-}" != timeout ]; then
 fail=0; checked=0
 ok()  { checked=$((checked+1)); printf '    %-62s %s\n' "$1" "ok"; }
 bad() { checked=$((checked+1)); fail=$((fail+1)); printf '    %-62s %s\n' "$1" "FAIL"
@@ -224,6 +221,8 @@ python3 "$E" "$NV" plant-hd Boot0002 "AurOS" '\EFI\AurOS\shimx64.efi' "$DISK" "$
 python3 "$E" "$NV" set-order 0000 &&
 python3 "$E" "$NV" set-next 0002 || { echo "  could not make the firmware"; exit 2; }
 
+fi
+
 BOOTN=0
 QEXTRA=""
 capture_framebuffer() { # qmp output
@@ -307,6 +306,69 @@ power_on() { # mode
     fi
     return 0
 }
+
+# Exercise the real boot timeout and evidence path without an image or a VM.
+if [ "${PUTBACK_SELFTEST:-}" = timeout ]; then
+    S=$(mktemp -d "${TMPDIR:-/tmp}/putback-selftest.XXXXXX")
+    T="$S/state"; EVIDENCE="$S/evidence"
+    mkdir -p "$T/m/etc/auros-e2e" "$T/m/var/lib/auros-e2e" "$T/m/boot/grub" "$S/bin"
+    python3 - "$T/m/var/lib/auros-e2e/log" <<'GUEST_PY'
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_text("x" * (1048576 + 17) + "\nguest metadata\n")
+GUEST_PY
+    printf 'answer metadata\n' > "$T/m/var/lib/auros-e2e/answer.log.1"
+    printf 'result metadata\n' > "$T/m/var/lib/auros-e2e/result.1"
+    cat > "$S/bin/qemu-system-x86_64" <<'QEMU_PY'
+#!/usr/bin/env python3
+import json, socket, sys, time
+serial = sys.argv[sys.argv.index("-serial") + 1].removeprefix("file:")
+qmp = sys.argv[sys.argv.index("-qmp") + 1].removeprefix("unix:").split(",", 1)[0]
+with open(serial, "wb") as out:
+    out.write(b"aurstage-report v1 verdict=restore\n" + b"s" * (1048576 + 17))
+s = socket.socket(socket.AF_UNIX); s.bind(qmp); s.listen(1)
+c, _ = s.accept(); f = c.makefile("rwb", buffering=0)
+f.write(b'{"QMP":{"version":{}}}\n')
+for _ in range(2):
+    command = json.loads(f.readline())
+    if command.get("execute") == "screendump":
+        with open(command["arguments"]["filename"], "wb") as out:
+            out.write(b"P6\n1 1\n255\n\0\0\0")
+    f.write(b'{"return":{}}\n')
+time.sleep(30)
+QEMU_PY
+    cat > "$S/bin/grub-editenv" <<'GRUB_SH'
+#!/bin/sh
+printf 'next_entry=put-windows-back\n'
+GRUB_SH
+    chmod 755 "$S/bin/qemu-system-x86_64" "$S/bin/grub-editenv"
+    PATH="$S/bin:$PATH"
+    mount_root() { LP=mock; return 0; }
+    umount_root() { LP=""; }
+    BOOT_TIMEOUT=1; POLL_INTERVAL=1; BOOTN=0; QEXTRA=""
+    CODE=mock-code; NV=mock-vars; DISK=mock-disk; WIN=mock-windows; QP=""
+    started=$(date +%s)
+    power_on none; rc=$?
+    elapsed=$(( $(date +%s) - started ))
+    bad=0
+    [ "$rc" -eq 124 ] || { echo "timeout selftest: expected 124, got $rc"; bad=1; }
+    [ "$elapsed" -le 5 ] || { echo "timeout selftest: deadline took ${elapsed}s"; bad=1; }
+    [ "$QP" = "" ] || { echo "timeout selftest: QEMU was not reaped"; bad=1; }
+    [ "$(wc -c < "$EVIDENCE/serial-1.log")" -eq 1048576 ] \
+        || { echo "timeout selftest: serial evidence was not capped"; bad=1; }
+    [ "$(wc -c < "$EVIDENCE/guest-1.log")" -eq 1048576 ] \
+        || { echo "timeout selftest: guest evidence was not capped"; bad=1; }
+    grep -q 'next_entry=put-windows-back' "$EVIDENCE/grubenv-1.txt" \
+        || { echo "timeout selftest: grubenv evidence missing"; bad=1; }
+    grep -q 'answer metadata' "$EVIDENCE/answer.log.1" \
+        || { echo "timeout selftest: answer evidence missing"; bad=1; }
+    [ "$(head -c 2 "$EVIDENCE/framebuffer-1.ppm")" = P6 ] \
+        || { echo "timeout selftest: framebuffer evidence missing"; bad=1; }
+    rm -rf "$S"
+    [ "$bad" -eq 0 ] || exit 1
+    echo "timeout selftest: fail-fast evidence ok"
+    exit 0
+fi
 e2e_log() { mount_root && cat "$T/m/var/lib/auros-e2e/log" 2>/dev/null; umount_root; }
 grubenv_list() { mount_root && grub-editenv "$T/m/boot/grub/grubenv" list 2>/dev/null; umount_root; }
 
