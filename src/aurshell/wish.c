@@ -1002,8 +1002,17 @@ static void do_shell(shell_ctx *c, const char *L, const char *E)
             char url[256];
             js_getstr(d, de, "url", url, sizeof url);
             if (plain_https(url) && c->spawn) { open_url(c, url); ok = 1; }
+        } else if (!strcmp(type, "do_not_disturb")) {
+            /* The engine applies and times this before it sends the shell
+             * event: its may_interrupt() is the control that holds back
+             * wish cards and sounds. This side only acknowledges that
+             * already-applied local state, and still rejects a malformed
+             * event rather than claiming it worked. */
+            const char *be, *b = js_get(d, de, "on", &be);
+            ok = b && ((be - b == 4 && !memcmp(b, "true", 4)) ||
+                       (be - b == 5 && !memcmp(b, "false", 5)));
         }
-        /* set_wallpaper, night_light, pointer_size and do_not_disturb have
+        /* set_wallpaper, night_light and pointer_size have
          * no control in this shell yet: refused honestly, nothing faked. */
     }
     if (prev[0])
