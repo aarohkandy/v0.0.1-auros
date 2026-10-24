@@ -69,9 +69,11 @@ the capability list sent by the device.
 For shell actions, return success only after applying the change; retain the
 previous value for reversal where appropriate. Do not add an action to the
 advertised supported set while the shell merely recognizes its name. As of this
-checkpoint, `src/aurshell/wish.c` explicitly refuses wallpaper, night light,
-pointer size and do-not-disturb controls it cannot apply. The engine's own
-do-not-disturb state does not prove shell integration is complete.
+checkpoint, `src/aurshell/wish.c` explicitly refuses wallpaper, night light
+and pointer size controls it cannot apply. Its do-not-disturb adapter validates
+the event and acknowledges the engine's already-applied suppression of Wishes
+interruptions. This does not control other applications' notifications, and
+Wishes remains disabled pending its activation and runtime gates.
 
 Preserve kiosk and organization policy. Preserve bounded input, timeouts,
 resource limits, privacy boundaries and missing-device refusals. Do not turn a

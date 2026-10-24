@@ -143,3 +143,23 @@ The quiet-time Wishes adapter now acknowledges the engine's already-applied inte
 Work is backed up on codex/delivery. The next main checkpoint requests a prerelease and only the multilingual profile build, with independent stale-installer E2E suppressed. It does not request public latest. Remaining external prerequisites include SignPath/GitHub App configuration and a monitored contact; physical-PC proof, multilingual typing, managed profiles, encryption integration and exact-candidate install results remain open.
 
 Final combined source checks before the candidate push: 77 cloud tests, 49 customization tests, 540 browser checks, all E2E harness selftests, 29 workflow files, and legal generation/checks passed. Public legal launch still refuses the existing contact placeholder.
+
+## Active candidate follow-through
+
+Candidate `ee450fbb` is on main. Its Windows startup/security/download workflow
+and cloud tests (including the Linux burst load test) passed. Cloud deployed
+with custom builds and Wishes still disabled. The image and multilingual
+profile builds are still running; these results do not establish a completed
+Windows install journey. Release workflow callers pass the exact published
+installer URL/hash to both base and BitLocker journeys automatically.
+
+The word check found one technical term in the privacy notice. Branch checkpoint
+`95a9c478` repairs it and the stale privacy-page description; local word/legal
+checks pass. The separate scamtest failure is being investigated before the
+next main batch.
+
+Remaining active slices are adoption of operator-precertified custom deliveries
+(including concurrency review), a real Pinyin composition test across reboot,
+and candidate CI follow-through. The shipped browser's 16-bit request proof
+completed three fixed local challenges in 9.83, 1.79 and 1.79 seconds with no
+timeouts. No live API requests or paid model calls were used for that test.
