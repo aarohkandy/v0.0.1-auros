@@ -85,6 +85,18 @@ APP_FILES = E("APP_FILES", "usr/bin/vlc var/lib/flatpak/app/org.videolan.VLC")
 # ── which PC (tools/e2e/README.md, "Variants") ──────────────────────
 VARIANT = E("E2E_VARIANT", "base")
 BITLOCKER_PUTBACK = E("E2E_BITLOCKER_PUTBACK", "0") == "1"
+BITLOCKER_PAUSE_HEADING = "Pause Windows drive protection?"
+BITLOCKER_PAUSE_BODY = (
+    "Starting AurOS requires Windows drive protection to be paused. While it is paused, "
+    "anyone with this computer could read the Windows drive. Start Windows again to let "
+    "Windows turn protection back on."
+)
+BITLOCKER_PAUSE_ACCESSIBLE = (
+    f"{BITLOCKER_PAUSE_HEADING} {BITLOCKER_PAUSE_BODY} Not yet is selected. "
+    "Press Tab, then Enter, to pause protection and restart."
+)
+BITLOCKER_PAUSE_PRIMARY = "Pause protection and restart"
+BITLOCKER_PAUSE_SECONDARY = "Not yet"
 DISK_GB = int(E("E2E_DISK_GB", "128"))
 DISK_THROTTLE = E("E2E_DISK_THROTTLE", "")     # e.g. bps=104857600,iops=120
 
@@ -142,6 +154,58 @@ def bitlocker_verdict(variant, vol, prot):
         return (f"the {variant} PC has BitLocker on its drive ({vol}, protection {prot}): "
                 "Windows turned device encryption on by itself; the plain PC must have none")
     return None
+
+
+def bitlocker_pause_lane_error(variant, putback, installer_name, installer_sha256):
+    """Fail closed unless pause-driving is the exact pinned fastpath lane."""
+    if not putback:
+        return None
+    if variant != "bitlocker":
+        return "E2E_BITLOCKER_PUTBACK is valid only for the bitlocker variant"
+    if installer_name != "AurOS-Setup-fastpath.exe":
+        return "BitLocker put-back requires AurOS-Setup-fastpath.exe"
+    if not re.fullmatch(r"[0-9a-f]{64}", installer_sha256 or ""):
+        return "BitLocker put-back requires the fastpath installer's lowercase SHA-256"
+    return None
+
+
+def bitlocker_pause_controls(named):
+    """Return the exact two actions of the in-window BitLocker warning.
+
+    UI Automation names come from the installer's own MSAA tree.  No OCR
+    approximation is allowed for the action that temporarily weakens drive
+    protection.
+    """
+    panes = [e for e in named if e.get("type") == "Pane" and
+             e.get("name") == BITLOCKER_PAUSE_ACCESSIBLE and e.get("rect") and
+             e["rect"][2] > 0 and e["rect"][3] > 0]
+    if len(panes) != 1:
+        raise Failure("the exact BitLocker pause warning was not exposed once to accessibility")
+    pane = panes[0]
+    actions = [e for e in named if e.get("type") == "Button" and e.get("enabled", True) and
+               e.get("rect") and e["rect"][2] > 0 and e["rect"][3] > 0 and inside(e, pane)]
+    if len(actions) != 2 or {e.get("name") for e in actions} != {
+            BITLOCKER_PAUSE_PRIMARY, BITLOCKER_PAUSE_SECONDARY}:
+        raise Failure("the BitLocker pause warning did not expose exactly its two expected actions")
+
+    def exact_button(name):
+        got = [e for e in actions if e.get("name") == name]
+        if len(got) != 1:
+            raise Failure(f"the BitLocker pause warning did not expose exactly one enabled {name!r} button")
+        return got[0]
+
+    return exact_button(BITLOCKER_PAUSE_PRIMARY), exact_button(BITLOCKER_PAUSE_SECONDARY)
+
+
+def bitlocker_restart_control_error(putback, installing, named_primary, raw_label, label):
+    """The weakening warning may be entered only from exact Restart now."""
+    if not putback or not installing:
+        return None
+    exact = (len(named_primary) == 1 and named_primary[0].get("name") == "Restart now" and
+             raw_label == "Restart now" and label == "Restart now")
+    return None if exact else (
+        "the fastpath BitLocker lane requires the exact named Restart now control "
+        "before showing its warning")
 
 
 def parse_bitlocker_evidence(text):
@@ -933,6 +997,77 @@ class Flow:
                                   "Text", "Document", "Group", "List", "ListItem", "Image"], max=60)
         return got
 
+    def wait_bitlocker_pause_confirmation(self, label):
+        """Wait for, record and return the exact safe pause question."""
+        deadline = time.time() + 30
+        last = "the installer exposed no readable controls"
+        while time.time() < deadline:
+            if not self.m.alive():
+                raise Failure("Windows restarted before the BitLocker pause was explicitly confirmed")
+            img = self.m.screendump()
+            win = self.wizard_win()
+            named = self.wizard_named(win)
+            try:
+                primary, secondary = bitlocker_pause_controls(named)
+            except Failure as e:
+                last = str(e)
+                time.sleep(1)
+                continue
+            # The wizard deliberately ignores action presses during the first
+            # 700 ms of a new page. Re-read the exact controls after settling;
+            # never click a rectangle retained from a page that changed.
+            time.sleep(1.2)
+            img = self.m.screendump()
+            win = self.wizard_win()
+            named = self.wizard_named(win)
+            try:
+                primary, secondary = bitlocker_pause_controls(named)
+            except Failure as e:
+                last = str(e)
+                continue
+            self.m.save(img, label)
+            self.log("BitLocker pause confirmation: " + BITLOCKER_PAUSE_ACCESSIBLE)
+            return primary, secondary
+        raise Failure("the exact BitLocker pause confirmation did not appear: " + last)
+
+    def prove_pause_not_armed(self, seen_events):
+        """Enter must choose the initially focused Not yet and leave Windows safe."""
+        self.m.key("ret", label="BitLocker warning: initially focused Not yet")
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            resets = [e for e in self.m.qmp.events[seen_events:] if e[1] == "RESET"]
+            if resets or not self.m.alive():
+                raise Failure("the first BitLocker warning action restarted instead of choosing Not yet")
+            img = self.m.screendump()
+            win = self.wizard_win()
+            named = self.wizard_named(win)
+            modal = [e for e in named if e.get("type") == "Pane" and
+                     e.get("name") == BITLOCKER_PAUSE_ACCESSIBLE]
+            restart = [e for e in named if e.get("type") == "Button" and
+                       e.get("name") == "Restart now" and e.get("enabled", True) and
+                       (e.get("key") or "").lower() == "enter"]
+            if not modal and len(restart) == 1:
+                vol, prot, pct = self.bitlocker_state("after the initially focused Not yet")
+                if vol != "FullyEncrypted" or prot != "On" or pct < 99:
+                    raise Failure("the first BitLocker warning action changed protection instead of "
+                                  f"choosing Not yet ({vol}, protection {prot}, {pct}%)")
+                self.m.save(img, "bitlocker-pause-not-yet")
+                return
+            time.sleep(1)
+        raise Failure("Enter did not choose the BitLocker warning's initially focused Not yet")
+
+    def drive_bitlocker_pause_confirmation(self, already_checked, seen_events):
+        """Exercise safe default once, then explicitly choose the weakening action."""
+        primary, _ = self.wait_bitlocker_pause_confirmation(
+            "bitlocker-pause-warning-" + ("confirm" if already_checked else "not-yet"))
+        if not already_checked:
+            self.prove_pause_not_armed(seen_events)
+            return False
+        self.m.click(*vision.centre(primary["rect"]),
+                     label="wizard " + BITLOCKER_PAUSE_PRIMARY)
+        self.restart_clicked = time.time()
+        return True
+
     def drive_wizard(self):
         """Press the primary button whenever it is enabled (found by name:
         the installer's button whose key is Enter; by colour when names
@@ -944,6 +1079,7 @@ class Flow:
         idle_since = time.time()
         last_label = None
         installing = False          # pressed the button that starts the install
+        pause_warning_checked = False
         seen_events = len(self.m.qmp.events)
         last_text, text_since = "", time.time()
         last_sig, cand = None, [None, 0.0]     # the button about to be pressed, since when
@@ -1009,6 +1145,11 @@ class Flow:
                     b = max(btns, key=lambda b: (b[1] + b[3], b[0] + b[2]))
                     label = label or vision.text_of(vision.ocr(img, b, psm=7)).strip() or "?"
                     raw_label, label = label, canon_label(label)
+                    restart_error = bitlocker_restart_control_error(
+                        BITLOCKER_PUTBACK, installing, on, raw_label, label)
+                    if restart_error:
+                        self.m.save(img, "bitlocker-pause-unsafe-restart-control")
+                        raise Failure(restart_error)
                     # OCR reads the same button a little differently each time
                     # ("Check again", "Checkiagain"): count presses by its first letters
                     # (run 39964877711 pressed 60 of them and never called it stuck)
@@ -1051,6 +1192,15 @@ class Flow:
                             self.check_plain_before_restart()
                     self.m.click(*vision.centre(b), label="wizard " + label)
                     cand[0] = None
+                    if label == "Restart now" and BITLOCKER_PUTBACK:
+                        if not self.drive_bitlocker_pause_confirmation(
+                                pause_warning_checked, seen_events):
+                            pause_warning_checked = True
+                            idle_since = time.time()
+                            time.sleep(1)
+                            continue
+                        stage[0].__exit__(None, None, None)
+                        return
                     if re.search(r"install|erase", label, re.I):
                         installing = True
                     if re.search(r"restart", label, re.I):
@@ -1968,8 +2118,10 @@ def cmd_aur(a):
 
 
 def cmd_flow(a):
-    if BITLOCKER_PUTBACK and VARIANT != "bitlocker":
-        raise Failure("E2E_BITLOCKER_PUTBACK is valid only for the bitlocker variant")
+    lane_error = bitlocker_pause_lane_error(
+        VARIANT, BITLOCKER_PUTBACK, INSTALLER_NAME, INSTALLER_SHA256)
+    if lane_error:
+        raise Failure(lane_error)
     f = Flow(a)
     rc = 1
     try:

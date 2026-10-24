@@ -85,10 +85,14 @@ def test_wizard_contract():
     for word, why in (("Install AurOS", "starts the install"), ("Restart now", "ends the wizard"),
                       ("Fix these for me", "counts a fix"), ("Close AurOS Setup", "means it cannot go on")):
         check('L"%s"' % word in body, f"wizard: a primary button says '{word}' ({why})")
-    # The driver treats a green button whose label has "restart" in it as the
-    # final Restart now and returns. No other primary label may say it.
-    others = [t for t in re.findall(r'L"([^"]*)"', body) if re.search("restart", t, re.I) and t != "Restart now"]
-    check(not others, f"wizard: no other primary button says 'restart' (the driver would stop there): {others}")
+    # The fastpath BitLocker confirmation has one deliberately separate
+    # restart action. The driver handles it only through its exact warning
+    # contract; every other restart-bearing primary would be unsafe ambiguity.
+    allowed_restarts = {"Restart now", "Pause protection and restart"}
+    others = [t for t in re.findall(r'L"([^"]*)"', body)
+              if re.search("restart", t, re.I) and t not in allowed_restarts]
+    check(not others,
+          f"wizard: only final Restart now and the exact BitLocker confirmation may say restart: {others}")
     styles = re.findall(r'\{\s*"([a-z0-9-]+)",\s*"([a-z0-9-]+)",\s*L"', wz)
     default = re.search(r"#define STYLE_DEFAULT\s+(\d+)", wz)
     shipped = styles[int(default.group(1))] if styles and default else None
@@ -140,6 +144,140 @@ def test_bitlocker_verdict():
     with open(os.path.join(HERE, "guest", "specialize.cmd")) as f:
         sp = f.read()
     check("PreventDeviceEncryption" in sp, "the plain PC: Windows' automatic device encryption is switched off in specialize.cmd")
+
+
+def test_bitlocker_pause_confirmation():
+    try:
+        import e2e
+    except ImportError:
+        return
+
+    sha = "a" * 64
+    check(e2e.bitlocker_pause_lane_error(
+              "bitlocker", True, "AurOS-Setup-fastpath.exe", sha) is None,
+          "pause warning: only the SHA-pinned fastpath BitLocker lane may drive it")
+    for variant, putback, name, digest, why in (
+            ("base", True, "AurOS-Setup-fastpath.exe", sha, "base variant"),
+            ("bitlocker", True, "AurOS-Setup.exe", sha, "generic installer"),
+            ("bitlocker", True, "AurOS-Setup-fastpath.exe", "", "missing hash"),
+            ("bitlocker", True, "AurOS-Setup-fastpath.exe", "A" * 64, "noncanonical hash")):
+        check(e2e.bitlocker_pause_lane_error(variant, putback, name, digest) is not None,
+              f"pause warning: {why} is refused")
+    check(e2e.bitlocker_pause_lane_error("base", False, "anything.exe", "") is None,
+          "pause warning: ordinary lanes remain unchanged")
+
+    restart = {"type": "Button", "name": "Restart now", "enabled": True,
+               "key": "Enter", "rect": [600, 600, 200, 50]}
+    check(e2e.bitlocker_restart_control_error(
+              True, True, [restart], "Restart now", "Restart now") is None,
+          "pause warning: exact named Restart now may open the warning")
+    for named, raw, canonical, why in (
+            ([], "?", "?", "unknown colour/OCR fallback"),
+            ([restart], "R¢start now", "Restart now", "fuzzy Restart now"),
+            ([{**restart, "name": "Restart later"}], "Restart later", "Restart later",
+             "Restart later"),
+            ([restart, dict(restart)], "Restart now", "Restart now", "duplicate named primary")):
+        check(e2e.bitlocker_restart_control_error(True, True, named, raw, canonical) is not None,
+              f"pause warning: {why} is refused before any click")
+    check(e2e.bitlocker_restart_control_error(True, False, [], "?", "?") is None,
+          "pause warning: pre-install wizard pages retain their existing driver")
+
+    pane = {"type": "Pane", "name": e2e.BITLOCKER_PAUSE_ACCESSIBLE,
+            "rect": [200, 120, 800, 400], "enabled": True}
+    primary = {"type": "Button", "name": e2e.BITLOCKER_PAUSE_PRIMARY,
+               "rect": [650, 460, 260, 50], "enabled": True, "key": ""}
+    secondary = {"type": "Button", "name": e2e.BITLOCKER_PAUSE_SECONDARY,
+                 "rect": [400, 460, 180, 50], "enabled": True, "key": ""}
+    got_primary, got_secondary = e2e.bitlocker_pause_controls([pane, primary, secondary])
+    check(got_primary is primary and got_secondary is secondary,
+          "pause warning: exact accessible copy and exact two actions are accepted")
+    mutations = (
+        ([primary, secondary], "missing warning"),
+        ([{**pane, "name": pane["name"].replace("anyone", "someone")}, primary, secondary],
+         "changed safety copy"),
+        ([pane, secondary], "missing explicit primary"),
+        ([pane, {**primary, "name": "Pause protection & restart"}, secondary],
+         "fuzzy primary"),
+        ([pane, {**primary, "enabled": False}, secondary], "disabled primary"),
+        ([pane, primary, dict(primary), secondary], "duplicate primary"),
+        ([pane, primary], "missing safe secondary"),
+        ([pane, primary, {**secondary, "enabled": False}], "disabled safe secondary"),
+        ([pane, primary, {**secondary, "name": "Maybe later"}], "renamed safe secondary"),
+        ([pane, primary, secondary,
+          {"type": "Button", "name": "Help", "rect": [300, 200, 100, 40], "enabled": True}],
+         "extra in-warning action"),
+        ([pane, {**primary, "rect": [1050, 460, 200, 50]}, secondary],
+         "primary outside warning"),
+    )
+    for controls, why in mutations:
+        try:
+            e2e.bitlocker_pause_controls(controls)
+            refused = False
+        except e2e.Failure:
+            refused = True
+        check(refused, f"pause warning: {why} is refused without a click")
+
+    class FakeMachine:
+        def __init__(self, restart=False):
+            self.qmp = type("Qmp", (), {"events": []})()
+            self.restart = restart
+            self.keys = []
+        def key(self, key, label=None):
+            self.keys.append((key, label))
+            if self.restart:
+                self.qmp.events.append((1.0, "RESET", {}))
+        def alive(self): return True
+        def screendump(self): return object()
+        def save(self, img, label): pass
+        def click(self, x, y, label=None): self.keys.append(("click", label))
+
+    restart_control = {"type": "Button", "name": "Restart now", "enabled": True,
+                       "key": "Enter", "rect": [600, 600, 200, 50]}
+    flow = object.__new__(e2e.Flow)
+    flow.m = FakeMachine()
+    flow.wizard_win = lambda: {"proc": "AurOS-Setup-fastpath", "rect": [0, 0, 1000, 700]}
+    flow.wizard_named = lambda win: [restart_control]
+    flow.bitlocker_state = lambda why: ("FullyEncrypted", "On", 100.0)
+    flow.prove_pause_not_armed(0)
+    check(flow.m.keys == [("ret", "BitLocker warning: initially focused Not yet")],
+          "pause warning: Enter proves the initial Not yet focus and returns to Restart now")
+
+    unsafe_state = object.__new__(e2e.Flow)
+    unsafe_state.m = FakeMachine()
+    unsafe_state.wizard_win = flow.wizard_win
+    unsafe_state.wizard_named = flow.wizard_named
+    unsafe_state.bitlocker_state = lambda why: ("FullyEncrypted", "Off", 100.0)
+    try:
+        unsafe_state.prove_pause_not_armed(0)
+        refused = False
+    except e2e.Failure:
+        refused = True
+    check(refused, "pause warning: Not yet that leaves protection off is RED")
+
+    unsafe = object.__new__(e2e.Flow)
+    unsafe.m = FakeMachine(restart=True)
+    unsafe.wizard_win = flow.wizard_win
+    unsafe.wizard_named = flow.wizard_named
+    unsafe.bitlocker_state = flow.bitlocker_state
+    try:
+        unsafe.prove_pause_not_armed(0)
+        refused = False
+    except e2e.Failure:
+        refused = True
+    check(refused, "pause warning: an Enter that restarts is RED before explicit confirmation")
+
+    sequence = object.__new__(e2e.Flow)
+    sequence.m = FakeMachine()
+    labels, proofs = [], []
+    sequence.wait_bitlocker_pause_confirmation = lambda label: (
+        labels.append(label) or primary, secondary)
+    sequence.prove_pause_not_armed = lambda seen: proofs.append(seen)
+    first_restarted = sequence.drive_bitlocker_pause_confirmation(False, 7)
+    second_restarted = sequence.drive_bitlocker_pause_confirmation(True, 8)
+    check(not first_restarted and second_restarted and proofs == [7] and
+          labels == ["bitlocker-pause-warning-not-yet", "bitlocker-pause-warning-confirm"] and
+          sequence.m.keys == [("click", "wizard " + e2e.BITLOCKER_PAUSE_PRIMARY)],
+          "pause warning: first pass proves Not yet; only the second explicitly clicks pause/restart")
 
 
 def test_bitlocker_putback_contract():
@@ -837,6 +975,7 @@ test_expect()
 test_wizard_contract()
 test_stops()
 test_bitlocker_verdict()
+test_bitlocker_pause_confirmation()
 test_bitlocker_putback_contract()
 test_timings_summary()
 test_windows_dry()
