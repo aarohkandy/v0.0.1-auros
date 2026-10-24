@@ -46,6 +46,11 @@ on:
         required: false
         default: false
         type: boolean
+      fcitx_client_probe:
+        description: Exercise FCITX clients in this retained multilingual diagnostic
+        required: false
+        default: false
+        type: boolean
 
 # contents: write is for the jobs that make or fill a release, and only
 # those (SEC-005): a job that runs a lot of code cannot replace what a
@@ -77,6 +82,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: profile gate rejects unsafe suppression
         run: python3 tools/profiletest-gate.py selftest
+      - name: FCITX trace parser rejects malformed evidence
+        run: python3 -m unittest -v tools/test_fcitx_wayland_trace.py
       - id: g
         env:
           MSG: ${{ github.event.head_commit.message }}
@@ -143,6 +150,11 @@ jobs:
               "the X11 probe exists only in the retained diagnostic":
                   "PROFILETEST_IBUS_X11_PROBE" not in profile and
                   retest.count("PROFILETEST_IBUS_X11_PROBE") == 1,
+              "the FCITX probe exists only in the retained diagnostic":
+                  "PROFILETEST_FCITX_CLIENT_PROBE" not in profile and
+                  retest.count("PROFILETEST_FCITX_CLIENT_PROBE") == 1,
+              "diagnostic probe options are validated together":
+                  "profiletest-gate.py probe-mode" in retest,
           }
           failed = [message for message, ok in checks.items() if not ok]
           if failed:
@@ -377,6 +389,13 @@ jobs:
       SOURCE_RUN: ${{ inputs.retained_multilingual_run_id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: accept one diagnostic probe mode
+        id: mode
+        run: |
+          python3 tools/profiletest-gate.py probe-mode \
+            --x11 '${{ inputs.x11_panel_probe }}' \
+            --fcitx '${{ inputs.fcitx_client_probe }}' \
+            --github-output "$GITHUB_OUTPUT"
       - name: accept only one completed main profiles run from this repository
         id: source
         run: |
@@ -458,14 +477,10 @@ jobs:
       - name: run the current functional harness against the retained image
         id: diagnostic
         run: |
-          case '${{ inputs.x11_panel_probe }}' in
-            true) x11_panel_probe=1 ;;
-            false|'') x11_panel_probe=0 ;;
-            *) echo "::error::x11_panel_probe must be a boolean"; exit 2 ;;
-          esac
           set +e
-          sudo env PATH="$PATH" PROFILETEST_IBUS_FUNCTIONAL=1 \
-            PROFILETEST_IBUS_X11_PROBE="$x11_panel_probe" \
+          sudo env PATH="$PATH" PROFILETEST_IBUS_FUNCTIONAL="${{ steps.mode.outputs.ibus }}" \
+            PROFILETEST_IBUS_X11_PROBE="${{ steps.mode.outputs.x11 }}" \
+            PROFILETEST_FCITX_CLIENT_PROBE="${{ steps.mode.outputs.fcitx }}" \
             sh tools/profiletest.sh boot multilingual "$PWD/ev" 2>&1 | tee ev/multilingual-boot.txt
           rc=${PIPESTATUS[0]}
           set -e
@@ -474,7 +489,25 @@ jobs:
             --anchor retained-anchor/multilingual-image-v1.json \
             --test-run-id "$GITHUB_RUN_ID" --test-source-sha "$GITHUB_SHA" \
             --result "$result" --output ev/multilingual-retest-v1.json
-          echo "Diagnostic only: image source ${{ steps.source.outputs.source_sha }}; test source $GITHUB_SHA; result $result" \
+          DIAGNOSTIC_MODE='${{ steps.mode.outputs.mode }}' \
+          X11_PANEL_PROBE='${{ steps.mode.outputs.x11 }}' \
+          FCITX_CLIENT_PROBE='${{ steps.mode.outputs.fcitx }}' python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("ev/multilingual-retest-v1.json")
+          value = json.loads(path.read_text(encoding="utf-8"))
+          if value.get("schema") != "auros-profile-diagnostic-v1":
+              raise SystemExit("unexpected diagnostic provenance schema")
+          value["diagnostic_mode"] = os.environ["DIAGNOSTIC_MODE"]
+          value["x11_panel_probe"] = os.environ["X11_PANEL_PROBE"] == "1"
+          value["fcitx_client_probe"] = os.environ["FCITX_CLIENT_PROBE"] == "1"
+          temporary = path.with_suffix(".json.tmp")
+          temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          temporary.replace(path)
+          PY
+          echo "Diagnostic only (${{ steps.mode.outputs.mode }}): image source ${{ steps.source.outputs.source_sha }}; test source $GITHUB_SHA; result $result" \
             | tee -a "$GITHUB_STEP_SUMMARY"
           exit "$rc"
       - name: publish diagnostic evidence with both source identities
@@ -484,12 +517,18 @@ jobs:
           files=()
           for f in ev/multilingual-retest-v1.json ev/multilingual.png ev/multilingual-report.txt \
                    ev/multilingual-image.txt ev/multilingual-serial.txt ev/multilingual-boot.txt \
-                   ev/ibus-round*-candidate.png ev/ibus-x11-before.png ev/ibus-x11-preedit.png; do
+                   ev/ibus-round*-candidate.png ev/ibus-x11-before.png ev/ibus-x11-preedit.png \
+                   ev/fcitx-mousepad-candidate.png ev/fcitx-mousepad-committed.png \
+                   ev/fcitx-firefox-candidate.png ev/fcitx-firefox-submitted.png; do
             [ -f "$f" ] && files+=("$f")
           done
           if [ -d ev/ibus ]; then
             tar -C ev -czf ev/multilingual-ibus-evidence.tar.gz ibus
             files+=(ev/multilingual-ibus-evidence.tar.gz)
+          fi
+          if [ -d ev/fcitx ]; then
+            tar -C ev -czf ev/multilingual-fcitx-evidence.tar.gz fcitx
+            files+=(ev/multilingual-fcitx-evidence.tar.gz)
           fi
           [ "${#files[@]}" -gt 0 ] && gh release upload "$TAG" "${files[@]}" --clobber
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
