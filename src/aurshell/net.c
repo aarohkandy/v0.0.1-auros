@@ -645,7 +645,7 @@ int net_online(void)
 enum { A_CLOSE, A_JOIN, A_BACK, A_MORE, A_AGAIN, A_STOP, A_N };
 
 static const char *ACT_LABEL[A_N] = {
-    "Close", "Connect", "Go back", "Show more", "Try again", "Stop"
+    "Close Wi-Fi", "Connect", "Go back", "Show more", "Try again", "Stop"
 };
 
 typedef struct {

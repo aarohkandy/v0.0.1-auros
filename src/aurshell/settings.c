@@ -471,7 +471,7 @@ void settings_closed(shell_ctx *c) { (void)c; S.drag_row = -1; }
  * ask about a machine it is not.
  */
 enum { A_CLOSE, A_BACK, A_MORE, A_N };
-static const char *ACT_LABEL[A_N] = { "Close", "Go back", "Show more" };
+static const char *ACT_LABEL[A_N] = { "Close Settings", "Go back", "Show more" };
 
 /* Per row, in reading order: minus, the track, plus. A row that is a
  * readout has none; a row that opens a page is one big target. */

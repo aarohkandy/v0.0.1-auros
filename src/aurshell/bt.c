@@ -411,7 +411,7 @@ int bt_pump(shell_ctx *c)
  * machine is not showing and a radio it does not have.
  */
 enum { A_CLOSE, A_AGAIN, A_BACK, A_MORE, A_N };
-static const char *ACT_LABEL[A_N] = { "Close", "Look again", "Go back",
+static const char *ACT_LABEL[A_N] = { "Close Bluetooth", "Look again", "Go back",
                                       "Show more" };
 
 typedef struct {

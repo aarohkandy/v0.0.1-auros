@@ -1,7 +1,7 @@
 # The words she reads (docs/DESIGN-DIRECTION.md section 4 and K P1-6,
 # docs/EASY.md rule 2), on every push that changes them:
-#   tools/wordlint.sh   website, help pages, installer, staging screens,
-#                       first-start question: forbidden words and names
+#   tools/wordlint.sh   website, help pages, installer, staging screens and
+#                       the whole desktop shell: forbidden words and names
 #   tools/helptest.py   the help pages: offline, her words, real buttons
 # Python's standard library only; a few seconds.
 name: words

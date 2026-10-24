@@ -566,7 +566,7 @@ static void paint_attract(shell_ctx *c, surface *s, shell_fonts *f,
 {
     const char *TITLE = "Ready when you are";
     const char *SUB   = "Touch the screen or move the mouse to start.";
-    const char *FOOT  = "Nothing from the last session was kept.";
+    const char *FOOT  = "Nothing from last time was kept.";
 
     /* A flat veil. The version this replaces blurred the whole
      * 1366x768 framebuffer at radius 28 and then laid 86% of the

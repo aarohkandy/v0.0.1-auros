@@ -17,7 +17,8 @@
 # website/*.html and the help pages (not inside data-ui="...": those quote
 # another screen, and are checked at their source); the string literals of the installer
 # (wizard.c, fix_win.c), the staging screens (install.c, screen.c) and
-# the first-start question (welcome.c), outside comments and log lines.
+# the whole desktop shell (src/aurshell/*.c and layouts/*.c: first start,
+# Settings, Wi-Fi, Bluetooth, the four looks), outside comments and log lines.
 # Standard library only.
 exec python3 -I - "$(cd "$(dirname "$0")/.." && pwd)" "$@" <<'PY'
 import glob, html, html.parser, os, re, sys
@@ -94,12 +95,15 @@ class Visible(html.parser.HTMLParser):
             for p in self.press:
                 p[1] += data
 
-LOGLINE = re.compile(r"\b(f?printf|perror|syslog|OutputDebugString\w*|log_\w*|\w*_log|LOG\w*|trace\w*|dbg\w*|say)\s*\(|^\s*#\s*(include|if)")
+LOGLINE = re.compile(r"\b(f?printf|perror|syslog|OutputDebugString\w*|log_\w*|\w*_log|LOG\w*|trace\w*|dbg\w*|say|strstr|strcasestr)\s*\(|^\s*#\s*(include|if)")
 
 def c_strings(src):
     """(line, text) of each string literal outside comments and log lines."""
     code = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), src, flags=re.S)
     code = re.sub(r"//[^\n]*", "", code)
+    # What goes to stderr is for whoever runs the program, not for her: the whole statement,
+    # however many lines the format string takes.
+    code = re.sub(r"(?:fprintf\(\s*stderr\b|\bfputs\().*?\)\s*;", lambda m: "\n" * m.group(0).count("\n"), code, flags=re.S)
     out = []
     for n, line in enumerate(code.split("\n"), 1):
         if LOGLINE.search(line):
@@ -112,6 +116,12 @@ def c_strings(src):
                 continue
             if re.search(r"\w=%", s):
                 continue
+            # Not on her screen: XML, a command line the shell runs, the list of files a theme
+            # renders, a string the program matches in another program's output.
+            if re.match(r"\s*</?\w", s) or "/dev/null" in s or re.search(r"\bexec \w", s):
+                continue
+            if re.fullmatch(r"[\w-]+\.\w+( [\w-]+\.\w+)*", s):
+                continue
             if re.search(r"[A-Za-z]", s):
                 out.append((n, bytes(s, "utf-8").decode("unicode_escape", "replace")
                             if "\\u" in s else s))
@@ -123,7 +133,7 @@ def surfaces():
     pats = ["website/*.html", "rootfs/usr/share/auros/help/*.html",
             "src/aurbridge/wizard.c", "src/aurbridge/fix_win.c",
             "src/aurstage/install.c", "src/aurscreen/screen.c",
-            "src/aurshell/welcome.c"]
+            "src/aurshell/*.c", "src/aurshell/layouts/*.c"]
     return sorted(f for p in pats for f in glob.glob(os.path.join(repo, p)))
 
 hits = 0
