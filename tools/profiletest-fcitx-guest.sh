@@ -324,16 +324,17 @@ act wait-change fcitx-mousepad || fail "Mousepad did not map"
 act click-change fcitx-mousepad || fail "Mousepad focus click failed"
 select_exact_pinyin mousepad || fail "Mousepad Pinyin select failed"
 if [ "$SECURITY" = 1 ]; then
-    shell_pid=$(systemctl show -p MainPID --value aurshell.service 2>/dev/null)
-    case "$shell_pid" in ''|0|*[!0-9]*) fail "AurWL PID unavailable";; esac
-    [ "$(readlink "/proc/$shell_pid/exe" 2>/dev/null)" = /usr/bin/aurshell ] \
-        || fail "AurWL MainPID identity mismatch"
+    shell_main_pid=$(systemctl show -p MainPID --value aurshell.service 2>/dev/null)
+    shell_control_group=$(systemctl show -p ControlGroup --value aurshell.service 2>/dev/null)
+    case "$shell_main_pid" in ''|0|*[!0-9]*) fail "AurWL service MainPID unavailable";; esac
+    case "$shell_control_group" in /*) :;; *) fail "AurWL service control group unavailable";; esac
     display_path="/run/user/$desktop_uid/$wayland"
     case "$wayland" in /*) display_path=$wayland;; esac
     conn_ready="$RUNTIME/connection.ready"; conn_done="$RUNTIME/connection.done"
     rm -f "$conn_ready" "$conn_done"
     python3 /usr/lib/auros-profiletest/fcitx_connection_probe.py \
-        --app-pid "$mouse_pid" --shell-pid "$shell_pid" --display-path "$display_path" \
+        --app-pid "$mouse_pid" --service-main-pid "$shell_main_pid" \
+        --service-control-group "$shell_control_group" --display-path "$display_path" \
         --trace "$mouse_trace" --ready "$conn_ready" --done "$conn_done" \
         --output "$STATE/mousepad-connection.txt" > "$RUNTIME/connection.stdout" 2> "$RUNTIME/connection.stderr" &
     connection_probe_pid=$!

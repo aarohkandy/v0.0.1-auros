@@ -11,13 +11,75 @@ import fcitx_connection_probe as probe
 
 
 class ConnectionProbeTest(unittest.TestCase):
+    def test_selects_exact_compositor_below_real_service_wrapper_shape(self):
+        # aurshell.service is Type=simple and ExecStart begins with
+        # dbus-run-session. The wrapper is MainPID; its aurshell child owns
+        # WAYLAND_DISPLAY, while the private bus is a sibling.
+        pids = {100, 101, 102}
+        executables = {
+            100: "/usr/bin/dbus-run-session",
+            101: "/usr/bin/dbus-daemon",
+            102: "/usr/bin/aurshell",
+        }
+        parents = {100: 1, 101: 100, 102: 100}
+        self.assertEqual(probe.select_compositor(100, pids, executables, parents), 102)
+
+    def test_compositor_identity_rejects_wrong_wrapper_or_ambiguity(self):
+        pids = {100, 101, 102}
+        parents = {100: 1, 101: 100, 102: 100}
+        valid = {100: "/usr/bin/dbus-run-session", 101: "/usr/bin/aurshell",
+                 102: "/usr/bin/dbus-daemon"}
+        cases = [
+            (99, pids, valid, parents, "outside its control group"),
+            (100, pids, {**valid, 100: "/usr/bin/aurshell"}, parents,
+             "not the exact session wrapper"),
+            (100, pids, {**valid, 102: "/usr/bin/aurshell"}, parents,
+             "expected one exact aurshell compositor, got 2"),
+        ]
+        for main, members, executables, links, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(RuntimeError, message):
+                probe.select_compositor(main, members, executables, links)
+
+    def test_compositor_identity_rejects_out_of_cgroup_ancestry(self):
+        pids = {100, 102}
+        executables = {100: "/usr/bin/dbus-run-session", 102: "/usr/bin/aurshell"}
+        for parents, message in (
+                ({100: 1, 102: 77}, "left the service control group"),
+                ({100: 1, 102: 102}, "ancestry contains a loop")):
+            with self.subTest(message=message), self.assertRaisesRegex(RuntimeError, message):
+                probe.select_compositor(100, pids, executables, parents)
+
     def test_descendants_are_transitive(self):
         self.assertEqual(probe.descendants_from_parents(
                 10, {11: 10, 12: 11, 13: 99, 14: 12}), [11, 12, 14])
-        self.assertEqual(probe.parse_ppid("123 (name with spaces) S 77 1 2 3"), 77)
+        stat = "123 (name with spaces) " + " ".join(
+            ["S", "77"] + ["0"] * 17 + ["999"])
+        self.assertEqual(probe.parse_process_stat(stat), (77, 999))
+        self.assertEqual(probe.parse_ppid(stat), 77)
         self.assertFalse(probe.fd_flags_writable(os.O_RDONLY))
         self.assertTrue(probe.fd_flags_writable(os.O_WRONLY))
         self.assertTrue(probe.fd_flags_writable(os.O_RDWR | os.O_APPEND))
+
+    def test_service_topology_rejects_pid_reuse_between_snapshot_and_pidfd(self):
+        first = ({100, 102},
+                 {100: "/usr/bin/dbus-run-session", 102: "/usr/bin/aurshell"},
+                 {100: 1, 102: 100}, {100: 10, 102: 20})
+        reused = ({100, 102}, first[1], first[2], {100: 10, 102: 99})
+        with mock.patch.object(probe, "service_snapshot", side_effect=[first, reused]), \
+             mock.patch.object(probe.os, "pidfd_open", side_effect=[31, 32], create=True), \
+             mock.patch.object(probe.os, "close") as close:
+            with self.assertRaisesRegex(RuntimeError, "topology changed"):
+                probe.read_service_topology(100, "/system.slice/aurshell.service")
+            self.assertEqual(close.call_count, 2)
+
+    def test_socket_semantics_require_stream_and_listener_accept(self):
+        endpoint = mock.Mock()
+        endpoint.getsockopt.return_value = probe.socket.SOCK_DGRAM
+        self.assertFalse(probe.is_stream_socket(endpoint, listener=False))
+        endpoint.getsockopt.side_effect = [probe.socket.SOCK_STREAM, 0]
+        self.assertFalse(probe.is_stream_socket(endpoint, listener=True))
+        endpoint.getsockopt.side_effect = [probe.socket.SOCK_STREAM, 1]
+        self.assertTrue(probe.is_stream_socket(endpoint, listener=True))
 
     def test_socket_inventory_fails_when_pidfd_introspection_is_unavailable(self):
         entries = [mock.Mock(name="3")]
@@ -45,6 +107,7 @@ class ConnectionProbeTest(unittest.TestCase):
         entry = mock.Mock(name="3"); entry.name = "3"
         broken = mock.Mock()
         broken.family = probe.socket.AF_UNIX
+        broken.getsockopt.return_value = probe.socket.SOCK_STREAM
         broken.getpeername.side_effect = OSError(errno.EIO, "broken")
         with mock.patch.object(probe.os, "readlink", return_value="socket:[1]"), \
              mock.patch.object(probe.os, "close"), \
