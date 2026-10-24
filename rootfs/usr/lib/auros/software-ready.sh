@@ -34,8 +34,9 @@
 #  words (it used to go to /dev/null, and a store that stayed empty for
 #  five minutes could not say why).
 #
-#  Nothing here can hold up the desktop: the unit is Type=simple and
-#  waits for the network itself.
+#  Nothing here can hold up the desktop: the unit reports ready as soon
+#  as its wake-up signal handler is installed, then waits for the network
+#  itself.
 # ═══════════════════════════════════════════════════════════════════
 set -u
 STATE=${AUROS_STATE:-/var/lib/auros}
@@ -94,6 +95,13 @@ apt_lists() {
 }
 
 trap : USR1
+# NetworkManager can report an already-up connection at the same instant this
+# service starts.  Keep the Type=notify unit in "activating" until USR1 is safe;
+# the dispatcher only signals an active (therefore ready) service.
+if ! systemd-notify --ready --pid="$$"; then
+    say "could not report startup readiness"
+    exit 1
+fi
 delay=${AUROS_FIRST_DELAY:-10}
 while :; do
     if [ -e "$CATALOGUE" ] && [ -e "$APT" ]; then

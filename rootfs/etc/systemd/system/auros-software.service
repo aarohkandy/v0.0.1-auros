@@ -11,14 +11,16 @@ Documentation=file:/usr/lib/auros/software-ready.sh
 # while she is still reading the welcome screen. Each of the two has its
 # own stamp, so one failing never repeats or delays the other.
 #
-# Type=simple, so nothing waits for it: a oneshot pulled in by
-# multi-user.target would hold that target up for as long as the
-# network takes, and the script waits for the network by itself.
+# Type=notify holds startup only until the script installs its USR1 handler
+# and immediately reports ready. A oneshot would hold multi-user.target up
+# for as long as the network takes; the script waits for that in the
+# background by itself.
 After=auros-firstboot.service NetworkManager.service
 ConditionPathExists=!/var/lib/auros/software-ready
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 ExecStart=/usr/lib/auros/software-ready.sh
 # It is the background. Her clicks come first.
 Nice=10
