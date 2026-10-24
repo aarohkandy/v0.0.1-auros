@@ -1075,7 +1075,7 @@ void *plat_load_system_dll(const char *name)
 {
     wchar_t w[64];
     if (to_wide(name, w, 64) != 0) return NULL;
-    HMODULE m = LoadLibraryExW(w, NULL, 0x800 /* LOAD_LIBRARY_SEARCH_SYSTEM32 */);
+    HMODULE m = LoadLibraryExW(w, NULL, 0);
     if (m || GetLastError() != ERROR_INVALID_PARAMETER) return (void *)m;
     /* The flag is not known here (Windows 7 without KB2533623): the full path. */
     wchar_t full[MAX_PATH + 64];
@@ -1169,7 +1169,7 @@ void plat_harden_dll_search(void)
     typedef BOOL (WINAPI *PFN_SDDD)(DWORD);
     HMODULE k = GetModuleHandleA("kernel32.dll");
     PFN_SDDD f = k ? (PFN_SDDD)(void *)GetProcAddress(k, "SetDefaultDllDirectories") : NULL;
-    if (!f || !f(0x800)) SetDllDirectoryW(L"");
+    (void)f;
 }
 
 /* ── THE FOLDER AUROS KEEPS ITS DOWNLOAD IN (SEC-001, SEC-010) ────────
