@@ -371,3 +371,9 @@ checks, 114 seconds of VM testing, exit 0. Its provenance binds the image to
 687 seconds, supporting removal of the unused rootfs transfer in future runs.
 The earlier stall remains unexplained rather than claimed fixed. The strict
 fail-fast harness is included in the next candidate's ordinary gating suite.
+
+The next desktop candidate includes the reviewed generic-firstboot repair,
+explicit default-appearance proof, fastpath BitLocker coverage, strict restore
+deadlines/evidence and the reduced restore setup. Its release marker starts
+exact-artifact tests; the independent Fcitx experiment remains off-product
+and will use a branch-only retained-image dispatch after its own review.
