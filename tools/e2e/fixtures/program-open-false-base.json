@@ -1,0 +1,19 @@
+{
+  "source": "run 40131473307, flow/shots/0054-program-open.png, sha256 4dd0ef8997d451c31c38e5d0dace002e064ce55eb76c7554d10f814a350ab99e",
+  "screen_h": 800,
+  "words": [
+    {"text": "VLC", "x": 390, "y": 188, "w": 47, "h": 25, "line": [1, 1, 1]},
+    {"text": "VLC", "x": 655, "y": 337, "w": 24, "h": 9, "line": [2, 1, 1]},
+    {"text": "media", "x": 683, "y": 337, "w": 31, "h": 9, "line": [2, 1, 1]},
+    {"text": "player", "x": 718, "y": 337, "w": 34, "h": 9, "line": [2, 1, 1]},
+    {"text": "Media", "x": 251, "y": 354, "w": 28, "h": 9, "line": [2, 2, 1]},
+    {"text": "Playback", "x": 284, "y": 354, "w": 45, "h": 9, "line": [2, 2, 1]},
+    {"text": "Audio", "x": 334, "y": 354, "w": 27, "h": 9, "line": [2, 2, 1]},
+    {"text": "Video", "x": 366, "y": 354, "w": 27, "h": 9, "line": [2, 2, 1]},
+    {"text": "Sorry,", "x": 344, "y": 454, "w": 55, "h": 19, "line": [3, 1, 1]},
+    {"text": "something", "x": 404, "y": 454, "w": 95, "h": 19, "line": [3, 1, 1]},
+    {"text": "went", "x": 504, "y": 454, "w": 43, "h": 19, "line": [3, 1, 1]},
+    {"text": "wrong", "x": 552, "y": 454, "w": 54, "h": 19, "line": [3, 1, 1]},
+    {"text": "Software", "x": 336, "y": 686, "w": 91, "h": 22, "line": [4, 1, 1]}
+  ]
+}
