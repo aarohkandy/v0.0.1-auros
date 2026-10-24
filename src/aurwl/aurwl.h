@@ -73,6 +73,7 @@ aurwl_win  *aurwl_window_at(const aurwl *c, int i);
 uint32_t    aurwl_win_id(const aurwl_win *w);
 const char *aurwl_win_title(const aurwl_win *w);
 const char *aurwl_win_app_id(const aurwl_win *w);
+int         aurwl_win_is_x11(const aurwl_win *w);     /* an X program: it cannot say what a field holds */
 
 /* 1 when this toplevel draws its own title bar and window buttons (it
  * negotiated no server-side decoration), so the shell must not draw a

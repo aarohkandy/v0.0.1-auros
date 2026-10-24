@@ -25,6 +25,8 @@ int textinput_state(void) { return ti_now; }
 aurwl_win *aurwl_focus(const aurwl *c) { (void)c; return (aurwl_win *)&ti_now; }
 const char *aurwl_win_app_id(const aurwl_win *w) { (void)w; return app_now; }
 static const char *title_now = "Untitled";
+static int x11_now;
+int aurwl_win_is_x11(const aurwl_win *w) { (void)w; return x11_now; }
 const char *aurwl_win_title(const aurwl_win *w) { (void)w; return title_now; }
 
 /* char -> (evdev code, shift) for the keys these tests press */
@@ -82,6 +84,7 @@ static int any_word(void) { char o[33]; return wishhook_take_word(o); }
 static void setup(void)
 {
     ti_now = TI_PLAIN;
+    x11_now = 0;
     app_now = "org.gnome.gedit";
     title_now = "Untitled";
     const char *w[] = { "potato", "carrot" };
@@ -358,6 +361,22 @@ static void test_queue_is_bounded(void)
     CHECK(n == 8);                                          /* a flood is bounded, not stored */
 }
 
+/* W06: an X program (Discord, Spotify, Zoom, xterm) cannot say it is a password field, and its class and
+ * title look ordinary: whatever is typed into it is never matched, and what was held is dropped. */
+static void test_x_programs_are_never_matched(void)
+{
+    cur = __func__;
+    setup();
+    x11_now = 1;
+    app_now = "discord"; title_now = "Discord";              /* ordinary-looking, and not a browser */
+    type("potato "); CHECK(any_word() == 0);
+    type("pota"); wishhook_reset(); type("to "); CHECK(any_word() == 0);   /* the word is not assembled across a focus change either */
+    ti_now = TI_PLAIN;                                       /* even if something claimed the field was plain */
+    type("carrot"); key(ENTER); CHECK(any_word() == 0);
+    x11_now = 0;                                             /* the same program as a Wayland one is matched: this is not a blanket off switch */
+    type("potato "); CHECK(got("potato") == 1);
+}
+
 int main(void)
 {
     test_potato_whole_word();
@@ -371,6 +390,7 @@ int main(void)
     test_apps();
     test_the_shells_calls();
     test_queue_is_bounded();
+    test_x_programs_are_never_matched();
     printf("wishtest-hook: %d checks, %d failed\n", passes + fails, fails);
     return fails ? 1 : 0;
 }

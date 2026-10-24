@@ -148,6 +148,7 @@ HOOK_MUTANTS = [
     ("hook: a secret field is not a reason", '    if (st == TI_SENSITIVE) return 1;\n', ''),
     ("hook: an ordinary field is not trusted", '    if (st == TI_PLAIN) return 0;\n', ''),
     ("hook: a browser with no field is trusted", '    return has_any(app, BROWSER_APPS);', '    return 0;'),
+    ("hook: an X program's keys are matched", '    if (aurwl_win_is_x11(w)) return 1;', '    if (0) return 1;'),
     ("hook: a program that will not say who it is is trusted", '    if (!app || !*app) return 1;                  /* a program that will not say who it is */\n', ''),
     ("hook: the half word survives a secret field", '        wipe();\n        bad = 1;\n        was_sensitive = 1;\n        return;', '        was_sensitive = 1;\n        return;'),
     ("hook: Enter does not end a word", '        end_of_word();\n        return;\n    case K_BACKSPACE:', '        return;\n    case K_BACKSPACE:'),

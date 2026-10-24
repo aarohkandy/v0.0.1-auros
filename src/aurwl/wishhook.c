@@ -174,6 +174,7 @@ static int has_any(const char *text, const char *const *list)
 static int sensitive_now(aurwl *c)
 {
     aurwl_win *w = aurwl_focus(c);
+    if (aurwl_win_is_x11(w)) return 1;            /* an X program cannot announce a field, nor say what it holds: nothing it gets typed is matched */
     const char *app = aurwl_win_app_id(w);
     if (has_any(app, NEVER_APPS) || has_any(aurwl_win_title(w), SECRET_TITLES)) return 1;
     int st = textinput_state ? textinput_state() : TI_UNKNOWN;

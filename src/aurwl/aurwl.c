@@ -3544,6 +3544,7 @@ aurwl_win *aurwl_window_at(const aurwl *c, int i)
 uint32_t    aurwl_win_id(const aurwl_win *w)     { return w ? w->id : 0; }
 const char *aurwl_win_title(const aurwl_win *w)  { return w ? w->title : ""; }
 const char *aurwl_win_app_id(const aurwl_win *w) { return w ? w->app_id : ""; }
+int         aurwl_win_is_x11(const aurwl_win *w)  { return w && w->role == ROLE_X11; }
 /* A toplevel draws its own title bar unless it was given ours: no
  * xdg-decoration object means "clients continue to self-decorate" (the
  * protocol's words), and so does a request for client-side. Settled
