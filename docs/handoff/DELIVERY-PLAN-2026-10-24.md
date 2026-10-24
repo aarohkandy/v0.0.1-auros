@@ -364,3 +364,10 @@ The IBus cross-client panel exception was rejected after source review found
 that renderer identity does not authenticate candidate contents. A bounded
 Fcitx client-side popup experiment is being prepared on the retained disposable
 image; no shipped input-method or compositor privilege has changed.
+
+Corrected restore diagnostic `40135313128` has now passed: six boots, all 24
+checks, 114 seconds of VM testing, exit 0. Its provenance binds the image to
+`c1ba6ee5` and the harness to `1652e904`; no timeout was accepted. Setup took
+687 seconds, supporting removal of the unused rootfs transfer in future runs.
+The earlier stall remains unexplained rather than claimed fixed. The strict
+fail-fast harness is included in the next candidate's ordinary gating suite.
