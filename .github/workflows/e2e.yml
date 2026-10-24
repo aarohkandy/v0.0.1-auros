@@ -318,7 +318,10 @@ jobs:
               --expect-look "$EXPECTED_LOOK" \
               --expect-theme "$EXPECTED_THEME"
           else
-            /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/inspect" "$E2E_DIR/work"
+            /usr/bin/python3 tools/e2e/e2e.py inspect \
+              "$E2E_DIR/out/inspect" "$E2E_DIR/work" \
+              --expect-look taskbar \
+              --expect-theme sandstone
           fi
 
       # A failed flow: the staging screen gives only a verdict word, so read
