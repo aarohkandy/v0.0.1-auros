@@ -1,6 +1,6 @@
 # Morning report (for Aaroh) — kept current by the lead
 
-_Last updated: 00:36 UTC 2026-10-24 (17:36 your time, 23 Oct)._
+_Last updated: 17:27 UTC 2026-10-24. Swarm stopped at the owner's request; RC7 (89ad43c) is building. Resume: docs/handoff/LEAD-RESUME.md._
 
 ## Done overnight (proof)
 
