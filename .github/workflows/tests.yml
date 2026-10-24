@@ -32,6 +32,17 @@ name: tests
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: numeric build run whose existing artifacts are diagnosed
+        type: string
+        required: true
+      diagnostic-test:
+        description: one diagnostic test; this is not release certification
+        type: choice
+        required: true
+        options: [putbacktest]
   workflow_call:
     inputs:
       run-id:
@@ -58,7 +69,7 @@ jobs:
   which:
     # Decided without a runner where it can be: every push to the
     # branch starts this workflow, and runners are shared by them all.
-    if: inputs.run-id != '' || contains(github.event.head_commit.message, '[test]') || contains(github.event.head_commit.message, '[test:nostick]')
+    if: github.event_name == 'workflow_dispatch' || inputs.run-id != '' || contains(github.event.head_commit.message, '[test]') || contains(github.event.head_commit.message, '[test:nostick]')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -66,17 +77,23 @@ jobs:
       run-id: ${{ steps.w.outputs.run_id }}
       suite: ${{ steps.w.outputs.suite }}
       matrix: ${{ steps.w.outputs.matrix }}
+      source-sha: ${{ steps.w.outputs.source_sha }}
     steps:
       - id: w
         env:
           IN_RUN: ${{ inputs.run-id }}
           IN_SUITE: ${{ inputs.suite }}
+          IN_DIAGNOSTIC: ${{ inputs.diagnostic-test }}
           MSG: ${{ github.event.head_commit.message }}
           BRANCH: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
         run: |
           go=false; rid=""
           if [ -n "$IN_RUN" ]; then
+            if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+              case "$IN_RUN" in ''|*[!0-9]*) echo "::error::run-id must be numeric"; exit 1 ;; esac
+              [ "$IN_DIAGNOSTIC" = putbacktest ] || { echo "::error::unsupported diagnostic-test"; exit 1; }
+            fi
             go=true; rid=$IN_RUN
           else
             # In the subject line only, as in build.yml.
@@ -89,10 +106,16 @@ jobs:
             esac
           fi
           suite=${IN_SUITE:-gating}
+          [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || suite=diagnostic-putback
           case "${MSG%%$'\n'*}" in *'[test:nostick]'*) [ -n "$IN_RUN" ] || suite=nostick ;; esac
           echo "go=$go" | tee -a "$GITHUB_OUTPUT"
           echo "run_id=$rid" | tee -a "$GITHUB_OUTPUT"
           echo "suite=$suite" | tee -a "$GITHUB_OUTPUT"
+          source_sha=""
+          if [ "$suite" = diagnostic-putback ]; then
+            source_sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$rid" --jq .head_sha)
+          fi
+          echo "source_sha=$source_sha" | tee -a "$GITHUB_OUTPUT"
           # The KVM jobs of this suite, longest first (GitHub starts them
           # in this order). gating is the suites build.yml's `tests` runs;
           # nostick is the power cut in the mode that ships (S-11), run by
@@ -142,7 +165,8 @@ jobs:
               t("powercut-nostick", "powercut-nostick-write", "write-mid write-end boot-mid boot-end"),
               t("powercut-nostick", "powercut-nostick-early", "gate shrink-begin shrink-end mirror-end"),
           ]
-          chosen = nostick if sys.argv[1] == "nostick" else gating
+          diagnostic = [t("putbacktest", "diagnostic-putbacktest", "desktop", image=True)]
+          chosen = diagnostic if sys.argv[1] == "diagnostic-putback" else (nostick if sys.argv[1] == "nostick" else gating)
           # two jobs with one label upload one artifact name twice (HTTP 409
           # fails the second) and read as one job to tools/releasegate.py;
           # run 39973122644 had updateboottest twice after two merges
@@ -770,6 +794,14 @@ jobs:
       - name: the build's out/ and work/, put back where the tests look
         run: |
           mkdir -p out transcripts
+          if [ "${{ needs.which.outputs.suite }}" = diagnostic-putback ]; then
+            {
+              echo "DIAGNOSTIC ONLY: this single test is not release certification"
+              echo "artifact-run=${{ needs.which.outputs.run-id }}"
+              echo "artifact-source-sha=${{ needs.which.outputs.source-sha }}"
+              echo "test-harness-sha=$GITHUB_SHA"
+            } | tee transcripts/diagnostic-provenance.txt
+          fi
           cp dl/installer/aurbridge.exe dl/installer/aurbridge-wizard.exe dl/installer/aurbridge-sim \
              dl/installer/auros-staging.img dl/installer/auros-staging-vmlinuz dl/installer/auros-staging-*.efi out/
           chmod +x out/aurbridge-sim
@@ -807,10 +839,16 @@ jobs:
         run: |
           T=$(date +%s)
           set +e
-          sudo env PATH="$PATH" ONLY="${{ matrix.only }}" sh tools/${{ matrix.test }}.sh ${{ matrix.args }} > transcripts/${{ matrix.label }}.txt 2>&1
-          rc=$?
+          if [ "${{ matrix.test }}" = putbacktest ]; then
+            sudo env PATH="$PATH" ONLY="${{ matrix.only }}" PUTBACK_EVIDENCE="$PWD/transcripts/putbacktest-evidence" \
+              sh tools/${{ matrix.test }}.sh ${{ matrix.args }} 2>&1 | tee transcripts/${{ matrix.label }}.txt
+            rc=${PIPESTATUS[0]}
+          else
+            sudo env PATH="$PATH" ONLY="${{ matrix.only }}" sh tools/${{ matrix.test }}.sh ${{ matrix.args }} > transcripts/${{ matrix.label }}.txt 2>&1
+            rc=$?
+            cat transcripts/${{ matrix.label }}.txt
+          fi
           set -e
-          cat transcripts/${{ matrix.label }}.txt
           echo "${{ matrix.label }} exit=$rc $(( $(date +%s) - T )) s" | tee -a transcripts/timing-${{ matrix.label }}.txt
           tail -3 transcripts/${{ matrix.label }}.txt >> "$GITHUB_STEP_SUMMARY"
           exit $rc
