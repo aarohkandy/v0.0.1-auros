@@ -26,6 +26,10 @@
 #endif
 
 #if AUROS_RECIPE_PRESENT
+static const ab_baked_recipe baked_recipe = {
+    AUROS_RECIPE_BASE, AUROS_RECIPE_LOOK, AUROS_RECIPE_THEME, AUROS_RECIPE_ID
+};
+
 static int one_of(const char *value, const char *const *allowed, size_t count)
 {
     size_t i;
@@ -49,24 +53,30 @@ static int valid_identity(const char *value)
 }
 #endif
 
-const ab_baked_recipe *ab_recipe_baked(void)
+int ab_recipe_status(void)
 {
 #if AUROS_RECIPE_PRESENT
     static const char *const looks[] = { "dock", "rail", "taskbar", "tiles" };
     static const char *const themes[] = {
         "ember", "moss", "nocturne", "sandstone", "slate"
     };
-    static const ab_baked_recipe recipe = {
-        AUROS_RECIPE_BASE, AUROS_RECIPE_LOOK, AUROS_RECIPE_THEME, AUROS_RECIPE_ID
-    };
     /* Packaging currently enables desktop only. Keep this check aligned with
      * tools/customize/installer_recipe.py's delivery allowlist. */
-    if (strcmp(recipe.base, "desktop") != 0 ||
-        !one_of(recipe.look, looks, sizeof looks / sizeof looks[0]) ||
-        !one_of(recipe.theme, themes, sizeof themes / sizeof themes[0]) ||
-        !valid_identity(recipe.recipe_id))
-        return NULL;
-    return &recipe;
+    if (strcmp(baked_recipe.base, "desktop") != 0 ||
+        !one_of(baked_recipe.look, looks, sizeof looks / sizeof looks[0]) ||
+        !one_of(baked_recipe.theme, themes, sizeof themes / sizeof themes[0]) ||
+        !valid_identity(baked_recipe.recipe_id))
+        return AB_RECIPE_INVALID;
+    return AB_RECIPE_VALID;
+#else
+    return AB_RECIPE_ABSENT;
+#endif
+}
+
+const ab_baked_recipe *ab_recipe_baked(void)
+{
+#if AUROS_RECIPE_PRESENT
+    return ab_recipe_status() == AB_RECIPE_VALID ? &baked_recipe : NULL;
 #else
     return NULL;
 #endif
@@ -74,8 +84,11 @@ const ab_baked_recipe *ab_recipe_baked(void)
 
 const char *ab_recipe_image_profile(void)
 {
-    const ab_baked_recipe *recipe = ab_recipe_baked();
-    return recipe ? recipe->base : "desktop";
+#if AUROS_RECIPE_PRESENT
+    return ab_recipe_status() == AB_RECIPE_VALID ? baked_recipe.base : "";
+#else
+    return "desktop";
+#endif
 }
 
 const char *ab_recipe_id_for_selection(const char *profile,

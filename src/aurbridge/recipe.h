@@ -8,11 +8,21 @@ typedef struct {
     const char *recipe_id;
 } ab_baked_recipe;
 
-/* NULL for a generic installer. Generated values are checked again here so a
- * hand-written or stale header cannot turn arbitrary strings into choices. */
+enum {
+    AB_RECIPE_INVALID = -1,
+    AB_RECIPE_ABSENT = 0,
+    AB_RECIPE_VALID = 1
+};
+
+/* A present but malformed generated header is different from no recipe. */
+int ab_recipe_status(void);
+
+/* NULL unless the generated recipe is present and valid. Generated values are
+ * checked again here so a hand-written or stale header cannot become choices. */
 const ab_baked_recipe *ab_recipe_baked(void);
 
-/* The existing developer/generic installer remains a desktop installer. */
+/* The existing generic installer remains desktop. Invalid data returns an
+ * empty profile and the wizard refuses to start. */
 const char *ab_recipe_image_profile(void);
 
 /* A recipe identity describes the resolved triple exactly. If the person
