@@ -6,9 +6,22 @@ Not published (this folder is not `website/`).
 button, the three steps with a picture of every screen, the four looks,
 the small print, questions. `advanced.html` is for someone who knows
 computers (the installer names it when it cannot go on, `fix_win.c`).
-`guide.html` is one sheet to print. Every other `.html` is a redirect
-from an old address. One stylesheet (`assets/site.css`), one script
-(`assets/door.js`), no fonts to download, no other server.
+`guide.html` is one sheet to print. `request.html` is a local-only preview
+of the custom-build request contract. Every other `.html` is a redirect
+from an old address. One stylesheet (`assets/site.css`), two small scripts
+(`assets/door.js` and `assets/request.js`), no fonts to download, no other
+server.
+
+**Custom-build preview.** `request.html` writes the versioned
+`org.auros.recipe` JSON contract. Its inputs are closed lists: one of the
+five real profiles and optional shipped look/theme identifiers. It collects
+no prose or personal details and sends nothing. The school kiosk cannot take
+a public look override because its locked layout is policy. This is not the
+delivery path: a trusted service still has to validate a recipe, build and
+test an image, bind the normalized recipe to the signed artifact, and return
+that artifact. Until that adapter exists, the page must keep saying that the
+generic installer does not read the recipe and that saving one is not a
+custom build.
 
 **Design.** docs/DESIGN-DIRECTION.md section 5 (D) is the law: paper and
 ink, one green (#0B5D4F) that means "press here" and "chosen", links in ink,

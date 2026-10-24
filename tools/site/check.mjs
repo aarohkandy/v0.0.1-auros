@@ -429,6 +429,79 @@ for (const v of [
   check(external.size === 0, `requests: no page asks another server for anything`, [...external].map(([u, w]) => `${u} (${w})`).slice(0, 10).join("; "));
 }
 
+// 5a. The custom-build preview is a small, closed contract. It may save a
+//     recipe, but it must never imply that the recipe was built, uploaded or
+//     applied by today's installer.
+{
+  const { ctx, page } = await visit({ name: "request recipe", url: HOME + "request.html", ua: UA.winEdge, uad: UAD.winX64 });
+  const start = await page.evaluate(() => ({
+    recipe: JSON.parse(document.getElementById("recipe-preview").textContent),
+    text: document.body.innerText,
+    bases: [...document.querySelectorAll("input[name=base]")].map((e) => e.value),
+    looks: [...document.querySelectorAll("input[name=look]")].map((e) => e.value),
+    themes: [...document.querySelectorAll("input[name=theme]")].map((e) => e.value),
+    other: [...document.querySelectorAll("input:not([type=radio]), textarea, select")].map((e) => e.outerHTML),
+  }));
+  check(JSON.stringify(start.recipe) === JSON.stringify({ schema: "org.auros.recipe", version: 1, base: "desktop" }), "request: the default recipe is the exact v1 desktop contract", JSON.stringify(start.recipe));
+  check(JSON.stringify(start.bases) === JSON.stringify(["desktop", "revive", "multilingual", "office", "school-kiosk"]), "request: all five real base profiles are offered once", JSON.stringify(start.bases));
+  check(JSON.stringify(start.looks) === JSON.stringify(["", "taskbar", "dock", "rail", "tiles"]), "request: look is optional and limited to the four public arrangements", JSON.stringify(start.looks));
+  check(JSON.stringify(start.themes) === JSON.stringify(["", "sandstone", "nocturne", "ember", "moss", "slate"]), "request: theme is optional and limited to the five shipped themes", JSON.stringify(start.themes));
+  check(start.other.length === 0, "request: there are no prose, package, URL or other open-ended inputs", start.other.join("; "));
+  check(/does not make an AurOS download yet/i.test(start.text) && /AurOS-Setup\.exe does not read it/i.test(start.text) && /does not send it anywhere/i.test(start.text), "request: it says a valid recipe is not a build, today's installer does not read it, and nothing is sent");
+
+  // Once the authoritative compiler is present, CI ties the hand-written,
+  // buildless page to its catalogue. The page may add plain-language context,
+  // but its identifiers and contract labels cannot silently diverge.
+  const recipeCompiler = path.join(REPO, "src", "customize", "recipe.py");
+  if (fs.existsSync(recipeCompiler)) {
+    const catalogue = JSON.parse(execFileSync("python3", ["-m", "src.customize.recipe", "catalogue"], { cwd: REPO }).toString());
+    const ids = (items) => items.map((item) => item.id).sort();
+    check(catalogue.schema === "org.auros.recipe-catalogue" && catalogue.version === 1, "request: the website reads the authoritative v1 recipe catalogue", JSON.stringify({ schema: catalogue.schema, version: catalogue.version }));
+    check(JSON.stringify([...start.bases].sort()) === JSON.stringify(ids(catalogue.bases)), "request: base IDs match the compiler catalogue", JSON.stringify(ids(catalogue.bases)));
+    check(JSON.stringify(start.looks.filter(Boolean).sort()) === JSON.stringify(ids(catalogue.looks)), "request: look IDs match the compiler catalogue", JSON.stringify(ids(catalogue.looks)));
+    check(JSON.stringify(start.themes.filter(Boolean).sort()) === JSON.stringify(ids(catalogue.themes)), "request: theme IDs match the compiler catalogue", JSON.stringify(ids(catalogue.themes)));
+    const labels = catalogue.bases.concat(catalogue.looks, catalogue.themes).map((item) => item.label);
+    check(labels.every((label) => start.text.includes(label)), "request: every compiler catalogue label appears on the page", labels.filter((label) => !start.text.includes(label)).join(", "));
+    for (const base of catalogue.bases) {
+      const plan = JSON.parse(execFileSync("python3", ["-m", "src.customize.recipe", "compile", "-"], {
+        cwd: REPO,
+        input: JSON.stringify({ schema: "org.auros.recipe", version: 1, base: base.id }),
+      }).toString());
+      check(plan.resolved_preferences.look === base.default_look && plan.resolved_preferences.theme === base.default_theme,
+        `request: keeping ${base.id}'s usual choices resolves to its catalogue defaults`, JSON.stringify(plan.resolved_preferences));
+    }
+  }
+
+  await page.check("input[name=base][value=office]");
+  await page.check("input[name=look][value=dock]");
+  await page.check("input[name=theme][value=moss]");
+  const changed = await page.evaluate(() => JSON.parse(document.getElementById("recipe-preview").textContent));
+  check(JSON.stringify(changed) === JSON.stringify({ schema: "org.auros.recipe", version: 1, base: "office", preferences: { look: "dock", theme: "moss" } }), "request: supported choices produce only allowlisted recipe fields", JSON.stringify(changed));
+
+  await page.check("input[name=base][value=school-kiosk]");
+  const kiosk = await page.evaluate(() => ({
+    recipe: JSON.parse(document.getElementById("recipe-preview").textContent),
+    look: document.querySelector("input[name=look]:checked").value,
+    disabled: [...document.querySelectorAll("input[name=look]")].filter((e) => e.value).every((e) => e.disabled),
+    warning: document.getElementById("kiosk-look-note").getClientRects().length > 0,
+  }));
+  check(kiosk.look === "" && kiosk.disabled && kiosk.warning && !(kiosk.recipe.preferences || {}).look, "request: school-kiosk rejects a public look override and explains why", JSON.stringify(kiosk));
+
+  const download = page.waitForEvent("download");
+  await page.click("#save-recipe");
+  const saved = await download;
+  check(saved.suggestedFilename() === "auros-recipe.json", "request: Save my recipe downloads auros-recipe.json", saved.suggestedFilename());
+  const status = await page.evaluate(() => document.getElementById("recipe-status").innerText);
+  check(/has not been sent anywhere/i.test(status), "request: after saving, the page repeats that nothing was sent", JSON.stringify(status));
+  await ctx.close();
+
+  const narrow = await visit({ name: "request 320px", url: HOME + "request.html", ua: UA.winEdge, uad: UAD.winX64, viewport: { width: 320, height: 640 } });
+  const fit = await narrow.page.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth,
+    cards: [...document.querySelectorAll(".choice-card")].every((e) => e.getBoundingClientRect().height >= 44) }));
+  check(fit.sw <= fit.cw + 1 && fit.cards, "request: at 320px there is no sideways scrolling and every choice target is at least 44px", `${fit.sw}px of content in ${fit.cw}px`);
+  await narrow.ctx.close();
+}
+
 // 6. Published as it is in the tree (no stamp) on another repository's
 //    GitHub Pages: the button works the release out from the page's own
 //    address (assets/door.js), for a project site and for owner.github.io.
