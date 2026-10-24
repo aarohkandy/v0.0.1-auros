@@ -67,7 +67,13 @@ jobs:
         run: cd src/ferry && sh tests/run.sh 2>&1 | tee "$RUNNER_TEMP/user.txt"
       - name: "the suite, as root (how Ferry runs, with the checks the user run skips)"
         run: |
-          cd src/ferry
+          # From a copy anyone can read: the checkout is under /home/runner
+          # (mode 750), and the copier, after it becomes the test user, must
+          # be able to run the helpers (in the image they are in /usr/lib/ferry).
+          sudo rm -rf /opt/ferry-ci
+          sudo cp -a "$GITHUB_WORKSPACE" /opt/ferry-ci
+          sudo chmod -R a+rX /opt/ferry-ci
+          cd /opt/ferry-ci/src/ferry
           sudo env "PATH=$PATH" sh tests/run.sh 2>&1 | tee "$RUNNER_TEMP/root.txt"
           # "as root: skipped" would mean the checks this job exists for did not run
           if grep -q 'as root: skipped' "$RUNNER_TEMP/root.txt"; then
@@ -96,11 +102,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: "kernel drivers the test needs (exFAT, FAT, loop devices)"
         run: |
+          # The runner's Azure kernel ships exFAT only in the -extra modules
+          # package (run 40046027441: "Module exfat not found").
+          sh tools/apt.sh "linux-modules-extra-$(uname -r)"
           sudo modprobe loop || true
-          sudo modprobe exfat || true
+          sudo modprobe exfat
           sudo modprobe vfat || true
           ls -l /dev/loop-control
-          grep -E 'exfat|vfat|fuse' /proc/filesystems || true
+          grep -E 'exfat|vfat|fuse' /proc/filesystems
+          grep -q exfat /proc/filesystems || { echo "::error::this runner's kernel has no exFAT driver"; exit 1; }
       - name: "the unit, with one fix taken out (or not)"
         env:
           MUTATION: ${{ matrix.mutation }}
