@@ -159,13 +159,134 @@ class ConnectionProbeTest(unittest.TestCase):
                 probe.socket_inventory(11, 41, 22, Path("/run/user/1000/wayland-0"))
             broken.detach.assert_called_once()
 
-    def test_unix_path_inodes_reads_the_kernel_socket_inode(self):
+    def test_unix_path_listener_reads_typed_kernel_record(self):
         content = ("Num RefCount Protocol Flags Type St Inode Path\n"
                    "0000: 2 0 00010000 0001 01 12345 /run/user/1000/wayland-0\n"
-                   "0001: 2 0 00000000 0001 03 54321\n")
+                   "0001: 2 0 00000000 0001 03 54321 /run/user/1000/wayland-0\n"
+                   "0002: 2 0 00000000 0001 03 54322 /run/user/1000/wayland-0\n"
+                   "0003: 2 0 00000000 0001 03 54323 /run/user/1000/wayland-0\n")
         with mock.patch.object(probe.Path, "read_text", return_value=content):
-            self.assertEqual(probe.unix_path_inodes(
-                Path("/run/user/1000/wayland-0")), {12345})
+            self.assertEqual(probe.unix_path_listener(
+                Path("/run/user/1000/wayland-0")), (12345, 4))
+
+    def test_unix_path_listener_rejects_foreign_rebind(self):
+        content = ("Num RefCount Protocol Flags Type St Inode Path\n"
+                   "0000: 2 0 00010000 0001 01 12345 /run/user/1000/wayland-0\n"
+                   "0001: 2 0 00010000 0001 01 54321 /run/user/1000/wayland-0\n")
+        evidence = {}
+        with mock.patch.object(probe.Path, "read_text", return_value=content):
+            with self.assertRaisesRegex(RuntimeError, "got 2"):
+                probe.unix_path_listener(Path("/run/user/1000/wayland-0"), evidence)
+        self.assertEqual(evidence["wayland_path_inode_count"], 2)
+        self.assertEqual(evidence["global_matching_listener_count"], 2)
+
+    def test_listener_allows_accepted_wayland_sockets_with_same_path(self):
+        path = Path("/run/user/1000/wayland-0")
+        entry = mock.Mock(); entry.name = "7"
+        listener = mock.Mock()
+        listener.family = probe.socket.AF_UNIX
+        listener.getsockname.return_value = str(path)
+        listener.getsockopt.side_effect = [probe.socket.SOCK_STREAM, 1]
+        evidence = {}
+        def listener_record(_path, record):
+            record.update(wayland_path_inode_count=4, global_matching_listener_count=1)
+            return 22, 4
+        with mock.patch.object(probe.Path, "stat", return_value=mock.Mock(st_mode=0o140777)), \
+             mock.patch.object(probe, "unix_path_listener", side_effect=listener_record), \
+             mock.patch.object(probe, "authenticate_display_path"), \
+             mock.patch.object(probe.Path, "iterdir", return_value=[entry]), \
+             mock.patch.object(probe.os, "readlink", return_value="socket:[22]"), \
+             mock.patch.object(probe, "duplicate_fd", return_value=51), \
+             mock.patch.object(probe.socket, "socket", return_value=listener), \
+             mock.patch.object(probe.os, "fstat", return_value=mock.Mock(st_ino=22)), \
+             mock.patch.object(probe.os, "close"):
+            probe.verify_listener(102, 32, path, evidence)
+        self.assertEqual(evidence, {
+            "wayland_path_inode_count": 4,
+            "global_matching_listener_count": 1,
+            "compositor_socket_fd_count": 1,
+            "matching_accepting_listener_count": 1,
+            "after_wayland_path_inode_count": 4,
+            "after_global_matching_listener_count": 1,
+        })
+
+    def test_listener_rejects_path_rebind_after_compositor_inspection(self):
+        path = Path("/run/user/1000/wayland-0")
+        entry = mock.Mock(); entry.name = "7"
+        listener = mock.Mock(); listener.family = probe.socket.AF_UNIX
+        listener.getsockname.return_value = str(path)
+        listener.getsockopt.side_effect = [probe.socket.SOCK_STREAM, 1]
+        with mock.patch.object(probe.Path, "stat", return_value=mock.Mock(
+                st_mode=0o140777, st_dev=1, st_ino=9)), \
+             mock.patch.object(probe, "unix_path_listener", side_effect=[(22, 4), (99, 4)]), \
+             mock.patch.object(probe, "authenticate_display_path"), \
+             mock.patch.object(probe.Path, "iterdir", return_value=[entry]), \
+             mock.patch.object(probe.os, "readlink", return_value="socket:[22]"), \
+             mock.patch.object(probe, "duplicate_fd", return_value=51), \
+             mock.patch.object(probe.socket, "socket", return_value=listener), \
+             mock.patch.object(probe.os, "fstat", return_value=mock.Mock(st_ino=22)), \
+             mock.patch.object(probe.os, "close"):
+            with self.assertRaisesRegex(RuntimeError, "listener changed"):
+                probe.verify_listener(102, 32, path)
+
+    def test_listener_retains_second_scan_failure_counts(self):
+        path = Path("/run/user/1000/wayland-0")
+        entry = mock.Mock(); entry.name = "7"
+        listener = mock.Mock(); listener.family = probe.socket.AF_UNIX
+        listener.getsockname.return_value = str(path)
+        listener.getsockopt.side_effect = [probe.socket.SOCK_STREAM, 1]
+        scans = 0
+        def listener_scan(_path, record):
+            nonlocal scans
+            scans += 1
+            record["wayland_path_inode_count"] = 5
+            record["global_matching_listener_count"] = scans
+            if scans == 2:
+                raise RuntimeError("expected one global WAYLAND_DISPLAY listening record, got 2")
+            return 22, 5
+        evidence = {}
+        with mock.patch.object(probe.Path, "stat", return_value=mock.Mock(
+                st_mode=0o140777, st_dev=1, st_ino=9)), \
+             mock.patch.object(probe, "unix_path_listener", side_effect=listener_scan), \
+             mock.patch.object(probe, "authenticate_display_path"), \
+             mock.patch.object(probe.Path, "iterdir", return_value=[entry]), \
+             mock.patch.object(probe.os, "readlink", return_value="socket:[22]"), \
+             mock.patch.object(probe, "duplicate_fd", return_value=51), \
+             mock.patch.object(probe.socket, "socket", return_value=listener), \
+             mock.patch.object(probe.os, "fstat", return_value=mock.Mock(st_ino=22)), \
+             mock.patch.object(probe.os, "close"):
+            with self.assertRaisesRegex(RuntimeError, "got 2"):
+                probe.verify_listener(102, 32, path, evidence)
+        self.assertEqual(evidence["after_wayland_path_inode_count"], 5)
+        self.assertEqual(evidence["after_global_matching_listener_count"], 2)
+
+    def test_current_display_path_requires_exact_compositor_peer(self):
+        client = mock.MagicMock()
+        client.__enter__.return_value = client
+        client.getsockopt.return_value = probe.struct.pack("3i", 999, 1000, 1000)
+        with mock.patch.object(probe.socket, "socket", return_value=client), \
+             mock.patch.object(probe.socket, "SO_PEERCRED", 17, create=True):
+            with self.assertRaisesRegex(RuntimeError, "wrong peer"):
+                probe.authenticate_display_path(Path("/run/user/1000/wayland-0"), 102)
+
+    def test_listener_rejects_partial_compositor_socket_inspection(self):
+        path = Path("/run/user/1000/wayland-0")
+        entries = [mock.Mock(), mock.Mock()]
+        entries[0].name, entries[1].name = "7", "8"
+        listener = mock.Mock()
+        listener.family = probe.socket.AF_UNIX
+        listener.getsockname.return_value = str(path)
+        listener.getsockopt.side_effect = [probe.socket.SOCK_STREAM, 1]
+        with mock.patch.object(probe.Path, "stat", return_value=mock.Mock(st_mode=0o140777)), \
+             mock.patch.object(probe, "unix_path_listener", return_value=(22, 4)), \
+             mock.patch.object(probe.Path, "iterdir", return_value=entries), \
+             mock.patch.object(probe.os, "readlink", return_value="socket:[22]"), \
+             mock.patch.object(probe, "duplicate_fd", side_effect=[51, PermissionError()]), \
+             mock.patch.object(probe.socket, "socket", return_value=listener), \
+             mock.patch.object(probe.os, "fstat", return_value=mock.Mock(st_ino=22)), \
+             mock.patch.object(probe.os, "close"):
+            with self.assertRaisesRegex(RuntimeError, "every compositor socket FD"):
+                probe.verify_listener(102, 32, path)
 
     def test_snapshot_rejects_children_multiple_connections_and_writers(self):
         path = Path("/trace")
