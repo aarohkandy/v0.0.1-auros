@@ -105,6 +105,15 @@ Keep at least one fully green, released base younger than 30 days. Rebuild and
 release a base before expiry; do not delete its tag, prerelease, or required
 artifacts while requests may use it.
 
+Base discovery reads at most 50 recent releases, considers at most five that
+have the complete canonical AurOS release asset set, and asks for at most three
+successful `build.yml` runs at each candidate's exact tag commit. Each run is
+accepted only when it is a completed successful `main` push at that exact SHA
+and has one unexpired `auros-installer` and `auros-base-metadata` artifact.
+This is at most 26 GitHub API requests per lookup. Ambiguous runs, expired or
+duplicate artifacts, runs with more than 100 artifacts, tag/SHA mismatches, and
+candidates outside those explicit bounds fail closed.
+
 ### Pre-certify common recipes
 
 An operator can run `.github/workflows/customize.yml` before a person asks for

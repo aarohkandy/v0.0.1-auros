@@ -485,18 +485,21 @@ function storedZip(name, contents) {
   return new Blob([local, central, end]);
 }
 
-function apiFixture({ run, jobs = [], artifacts = [], releases = [], assetBody = "", evidenceZip = new Blob(), commitSha = SHA }) {
+function apiFixture({ run, buildRuns, recentBuildRuns = [], jobs = [], artifacts = [], artifactTotal = artifacts.length, releases = [], assetBody = "", evidenceZip = new Blob(), commitSha = SHA }) {
   const seen = [];
   const request = async (url, init = {}) => {
     seen.push({ url, init });
     if (url.includes("/git/ref/heads/main")) return new Response(JSON.stringify({ object: { sha: SHA } }), { status: 200 });
     if (url.includes("/commits/")) return new Response(JSON.stringify({ sha: commitSha }), { status: 200 });
-    if (url.includes("/actions/workflows/build.yml/runs")) return new Response(JSON.stringify({ workflow_runs: run ? [run] : [] }), { status: 200 });
+    if (url.includes("/actions/workflows/build.yml/runs")) {
+      const workflowRuns = new URL(url).searchParams.has("head_sha") ? (buildRuns ?? (run ? [run] : [])) : recentBuildRuns;
+      return new Response(JSON.stringify({ total_count: workflowRuns.length, workflow_runs: workflowRuns }), { status: 200 });
+    }
     if (url.includes("/actions/workflows/customize.yml/runs")) return new Response(JSON.stringify({ workflow_runs: run ? [run] : [] }), { status: 200 });
     if (/\/actions\/runs\/[0-9]+$/.test(url)) return new Response(JSON.stringify(run), { status: run ? 200 : 404 });
     if (url.includes("/jobs")) return new Response(JSON.stringify({ jobs }), { status: 200 });
     if (url.includes("/actions/artifacts/")) return new Response(evidenceZip, { status: 200 });
-    if (url.includes("/artifacts")) return new Response(JSON.stringify({ artifacts }), { status: 200 });
+    if (url.includes("/artifacts")) return new Response(JSON.stringify({ total_count: artifactTotal, artifacts }), { status: 200 });
     if (url.includes("/releases/tags/")) return new Response(JSON.stringify(releases[0]), { status: releases[0] ? 200 : 404 });
     if (url.includes("/releases?")) return new Response(JSON.stringify(releases), { status: 200 });
     if (url.includes("/releases/assets/")) return new Response(assetBody, { status: 200 });
@@ -568,12 +571,31 @@ test("GitHub lookup pins the exact successful main push and dispatches fixed wor
   const base = { id: 7, head_sha: SHA, head_branch: "main", event: "push", status: "completed", conclusion: "success", path: ".github/workflows/build.yml" };
   const tag = "v0.1.0-aaaaaaa";
   const artifacts = [{ name: "auros-installer", expired: false }, { name: "auros-base-metadata", expired: false }];
-  const f = apiFixture({ run: base, artifacts, releases: [{ tag_name: tag, prerelease: true, draft: false }] });
+  const releaseAssets = ["AurOS-Setup.exe", "SHA256SUMS", "pieces.txt", "image.sha256", "image.bytes"].map((name) => ({ name }));
+  const f = apiFixture({ run: base, artifacts, releases: [{ tag_name: tag, prerelease: true, draft: false, assets: releaseAssets }] });
   assert.deepEqual(await f.github.findGreenBase(), { sourceSha: SHA, runId: 7, tag });
   const id = "12345678-1234-4123-8123-123456789abc";
   await f.github.dispatch({ requestId: id, recipe: "{}", baseRunId: 7, sourceSha: SHA, tag });
   const sent = f.seen.find((x) => x.url.includes("dispatches"));
   assert.deepEqual(JSON.parse(sent.init.body), { ref: tag, inputs: { recipe: "{}", base_build_run_id: "7", request_id: id } });
+});
+
+test("base lookup is driven by canonical releases when hollow runs and unrelated releases hide it", async () => {
+  const base = { id: 7, head_sha: SHA, head_branch: "main", event: "push", status: "completed", conclusion: "success", path: ".github/workflows/build.yml" };
+  const hollow = Array.from({ length: 10 }, (_, i) => ({ ...base, id: 100 + i, head_sha: String(i).repeat(40) }));
+  const unrelated = Array.from({ length: 25 }, (_, i) => ({ tag_name: `profiles-${i}`, prerelease: true, draft: false, assets: [{ name: "profile-build.log" }] }));
+  const tag = "v0.1.0-aaaaaaa";
+  const releaseAssets = ["AurOS-Setup.exe", "SHA256SUMS", "pieces.txt", "image.sha256", "image.bytes"].map((name) => ({ name }));
+  const artifacts = [{ name: "auros-installer", expired: false }, { name: "auros-base-metadata", expired: false }];
+  const f = apiFixture({ buildRuns: [base], recentBuildRuns: hollow, artifacts, releases: [...unrelated, { tag_name: tag, prerelease: true, draft: false, assets: releaseAssets }] });
+  assert.deepEqual(await f.github.findGreenBase(), { sourceSha: SHA, runId: 7, tag });
+  const buildQueries = f.seen.filter((x) => x.url.includes("/actions/workflows/build.yml/runs"));
+  assert.equal(buildQueries.length, 1);
+  assert.equal(new URL(buildQueries[0].url).searchParams.get("head_sha"), SHA);
+  assert.ok(f.seen.length <= 26, "base discovery keeps its documented API request bound");
+
+  const overflow = apiFixture({ buildRuns: [base], artifacts, artifactTotal: 102, releases: [{ tag_name: tag, prerelease: true, draft: false, assets: releaseAssets }] });
+  await assert.rejects(() => overflow.github.findGreenBase(), /exact green released base unavailable/);
 });
 
 test("GitHub App request accepts the App's RSA key and never forwards auth to asset storage", async () => {
