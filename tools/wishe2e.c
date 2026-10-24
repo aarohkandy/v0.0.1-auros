@@ -22,6 +22,20 @@
 #include "../src/aurshell/wishgallery.c"
 #include "../src/aurshell/foot.h"
 
+/* This scenario exercises the fill-screen action, not local theme changes.
+ * Keep the unlinked Settings seam fail-closed if an unexpected event arrives. */
+int settings_theme_current(char *out, size_t n)
+{
+    if (out && n) out[0] = 0;
+    return -1;
+}
+int settings_theme_validate(const char *id) { (void)id; return 0; }
+int settings_theme_apply(shell_ctx *c, const char *id)
+{
+    (void)c; (void)id;
+    return 0;
+}
+
 static int checked, failed;
 static void ok(const char *what, int good)
 {
