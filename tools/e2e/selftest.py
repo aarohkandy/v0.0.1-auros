@@ -353,9 +353,23 @@ def test_personalized_verdicts():
         return
     rid = "sha256:" + "a" * 64
     expected = (rid, "taskbar", "moss")
+    shell_source = open(os.path.join(HERE, "..", "..", "src", "aurshell", "main.c"),
+                        encoding="utf-8").read()
+    loaded_log = re.search(
+        r'if \(theme_load\(&t, conf\) < 0\)\s*fprintf\([^;]+;\s*else\s*'
+        r'fprintf\([^;]+aurshell: theme [^;]+theme_str\(&t, "theme_name", "unknown"\)',
+        shell_source, re.S)
+    check(loaded_log is not None,
+          "personalized contract: aurshell reports the theme only after theme_load succeeds")
+    theme_dir = os.path.join(HERE, "..", "..", "themes")
+    for theme_id, label in e2e.PERSONALIZED_THEME_LABELS.items():
+        source = open(os.path.join(theme_dir, theme_id + ".theme"), encoding="utf-8").read()
+        check(f'theme_name="{label}"' in source,
+              f"personalized contract: {theme_id} maps to its shipped renderer label {label!r}")
     first = "\n".join((
         "2026-10-24T01:00:00+00:00 auros kernel: Command line: quiet",
         f"2026-10-24T01:00:04+00:00 auros auros-firstboot[12]: personalized recipe applied: {rid}; theme=moss; shell=taskbar",
+        "2026-10-24T01:00:05+00:00 auros aurshell[44]: aurshell: theme 'Moss'",
         "2026-10-24T01:00:05+00:00 auros aurshell[44]: aurshell: archetype 'taskbar' (Taskbar)",
         "2026-10-24T01:01:00+00:00 auros systemd-logind[1]: Power key pressed",
     ))
@@ -371,6 +385,11 @@ def test_personalized_verdicts():
     check(not dict((name, ok) for name, ok, _ in extended)[
               "first-session journal has applied recipe and theme"],
           "personalized contract: the combined runtime record must match exactly")
+    no_live_theme = e2e.personalized_verdicts(
+        expected, receipt, "moss\n", "/usr/share/auros/shells/taskbar.shell", True, log,
+        first.replace("aurshell: theme 'Moss'", "aurshell: theme unavailable"))
+    check(not dict((name, ok) for name, ok, _ in no_live_theme)["live shell loaded chosen theme"],
+          "personalized contract: no live renderer theme record is RED")
 
     missing = e2e.personalized_verdicts(expected, None, None, None, False, None, None)
     check(len(missing) == len(good) and not any(ok for _, ok, _ in missing),
@@ -380,12 +399,14 @@ def test_personalized_verdicts():
         expected, f"recipe_id=sha256:{'b' * 64}\ntheme=ember\nshell=dock\n", "ember\n",
         "/usr/share/auros/shells/dock.shell", True,
         f"choices: personalized recipe applied: sha256:{'b' * 64}\n=== first boot complete ===\n",
-        first.replace(rid, "sha256:" + "b" * 64).replace("moss", "ember").replace("taskbar", "dock"))
+        first.replace(rid, "sha256:" + "b" * 64).replace("moss", "ember")
+             .replace("taskbar", "dock").replace("theme 'Moss'", "theme 'Ember'"))
     by_name = {name: ok for name, ok, _ in wrong}
     check(not any(by_name[name] for name in (
               "saved recipe id", "saved look", "saved theme", "applied theme", "applied look",
               "personalized recipe applied at first boot",
-              "first-session journal has applied recipe and theme", "live shell uses chosen look")),
+              "first-session journal has applied recipe and theme", "live shell uses chosen look",
+              "live shell loaded chosen theme")),
           "personalized contract: a complete but different recipe cannot satisfy the requested one")
 
     override = e2e.personalized_verdicts(
@@ -393,23 +414,29 @@ def test_personalized_verdicts():
         "/usr/share/auros/shells/dock.shell", True, "=== first boot complete ===\n",
         first.replace(f"personalized recipe applied: {rid}; theme=moss; shell=taskbar",
                       "personalized override applied: theme=ember; shell=dock")
-             .replace("'taskbar'", "'dock'"))
+             .replace("'taskbar'", "'dock'").replace("theme 'Moss'", "theme 'Ember'"))
     check(not dict((name, ok) for name, ok, _ in override)["saved recipe id"] and
-          not dict((name, ok) for name, ok, _ in override)["personalized recipe applied at first boot"],
+          not dict((name, ok) for name, ok, _ in override)["personalized recipe applied at first boot"] and
+          not dict((name, ok) for name, ok, _ in override)["live shell loaded chosen theme"],
           "personalized contract: an installer override with no recipe id is explicitly RED")
 
     later = first + "\n" + "\n".join((
         "2026-10-24T02:00:00+00:00 auros kernel: Command line: quiet",
         f"2026-10-24T02:00:03+00:00 auros auros-firstboot: personalized recipe applied: {rid}; theme=moss; shell=taskbar",
+        "2026-10-24T02:00:04+00:00 auros aurshell: theme 'Moss'",
         "2026-10-24T02:00:05+00:00 auros aurshell: archetype 'taskbar' (Taskbar)",
     ))
     empty_first = later.replace(f"personalized recipe applied: {rid}; theme=moss; shell=taskbar",
                                 "personalized recipe absent", 1) \
+                       .replace("theme 'Moss'", "theme 'Ember'", 1) \
                        .replace("archetype 'taskbar'", "archetype 'dock'", 1)
     after_reboot = e2e.personalized_verdicts(expected, receipt, "moss\n",
                                               "/usr/share/auros/shells/taskbar.shell", True, log, empty_first)
-    check(not all(ok for _, ok, _ in after_reboot),
-          "personalized contract: a later boot cannot replace missing first-session evidence")
+    after_reboot_by_name = {name: ok for name, ok, _ in after_reboot}
+    check(not after_reboot_by_name["first-session journal has applied recipe and theme"] and
+          not after_reboot_by_name["live shell uses chosen look"] and
+          not after_reboot_by_name["live shell loaded chosen theme"],
+          "personalized contract: a later boot cannot replace missing first-session recipe, look or theme evidence")
 
 
 def test_store_frame():

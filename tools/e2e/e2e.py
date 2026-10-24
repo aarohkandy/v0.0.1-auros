@@ -1509,6 +1509,14 @@ FIRST_SESSION_PROBE = re.compile(
     r"aurscreen=(?P<aurscreen>absent|present|unknown)"
 )
 
+PERSONALIZED_THEME_LABELS = {
+    "ember": "Ember",
+    "moss": "Moss",
+    "nocturne": "Light writing on a dark background",
+    "sandstone": "Light",
+    "slate": "Slate",
+}
+
 
 def first_session_probe_verdicts(lines):
     """Parse one root-observed state record from the installed session.
@@ -1620,6 +1628,13 @@ def personalized_verdicts(expected, receipt, theme, shell_target,
     out.append(("live shell uses chosen look", journal_look,
                 f"aurshell: archetype '{look}'" if journal_look else
                 f"no live archetype '{look}' in the first session"))
+    theme_label = PERSONALIZED_THEME_LABELS.get(want_theme)
+    live_theme = (theme_label is not None and
+                  any(line.endswith(f"aurshell: theme '{theme_label}'") for line in first))
+    out.append(("live shell loaded chosen theme", live_theme,
+                f"aurshell: theme '{theme_label}'" if live_theme else
+                (f"no theme label mapping for {want_theme}" if theme_label is None else
+                 f"no live theme '{theme_label}' in the first session")))
     return out
 
 
