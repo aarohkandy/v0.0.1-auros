@@ -104,7 +104,7 @@ async function readJson(request) {
   try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(all)); } catch { return undefined; }
 }
 
-export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSON.stringify(o)), now = Date.now }) {
+export function createApp({ env, ledger, anthropic, buildApi = null, log = (o) => console.log(JSON.stringify(o)), now = Date.now }) {
   const cfg = config(env);
 
   // The Durable Object is the one thing every wish waits on. When the platform
@@ -338,10 +338,11 @@ export function createApp({ env, ledger, anthropic, log = (o) => console.log(JSO
   return async function fetchHandler(request) {
     const t0 = now();
     const path = new URL(request.url).pathname;
-    const m = { ev: "req", route: path };
+    const m = { ev: "req", route: path.startsWith("/v1/builds/") && path !== "/v1/builds/challenge" ? "/v1/builds/:id" : path };
     let res;
     try {
-      if (!env.TOKEN_SECRET) { m.reason = "no_secret"; res = busy(m); }
+      if (buildApi && (path === "/v1/builds" || path.startsWith("/v1/builds/"))) res = await buildApi(request);
+      else if (!env.TOKEN_SECRET) { m.reason = "no_secret"; res = busy(m); }
       else if (path === "/v1/health" && request.method === "GET") res = json(200, { ok: true, wishes: off() ? "resting" : "on" });
       else if (request.method !== "POST") res = json(path.startsWith("/v1/") ? 405 : 404, { error: "method" });
       else if (["/v1/register", "/v1/wish", "/v1/ask", "/v1/configure/plan"].includes(path) && !inRegion(request)) {

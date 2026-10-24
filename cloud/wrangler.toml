@@ -26,14 +26,32 @@ REGISTER_PER_NET = "3"
 MAX_INFLIGHT = "40"
 POW_BITS = "21"
 BANNED = ""
+# Custom builds are a separate, model-free service and remain fail-closed until
+# its reviewed browser flow is configured. BUILD_NETWORK_SECRET,
+# BUILD_CHALLENGE_SECRET and GITHUB_APP_PRIVATE_KEY are Worker secrets;
+# GITHUB_APP_ID and GITHUB_APP_INSTALLATION_ID are deployment variables.
+BUILD_REQUESTS_ENABLED = "0"
+BUILD_ALLOWED_ORIGIN = ""
+BUILD_REQUESTS_PER_NET = "1"
+BUILD_REQUESTS_GLOBAL = "5"
+BUILD_POW_BITS = "20"
+BUILD_GITHUB_REPOSITORY = "aarohkandy/v0.0.1-auros"
 
 [[durable_objects.bindings]]
 name = "LEDGER"
 class_name = "Ledger"
 
+[[durable_objects.bindings]]
+name = "BUILD_JOBS"
+class_name = "BuildJobs"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Ledger"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["BuildJobs"]
 
 # Only the service's own log lines (counts, latency, tokens, cost) are kept:
 # Cloudflare's per-request invocation logs (which carry addresses) are off.
