@@ -11,6 +11,13 @@ import fcitx_connection_probe as probe
 
 
 class ConnectionProbeTest(unittest.TestCase):
+    def test_success_claims_distinguish_application_and_probe_writers(self):
+        claims = probe.SUCCESS_CLAIMS.splitlines()
+        self.assertIn("application_trace_writers_at_boundaries=1", claims)
+        self.assertIn("foreign_trace_writers_at_boundaries=0", claims)
+        self.assertIn("authenticated_probe_trace_writer_at_end=1", claims)
+        self.assertNotIn("trace_writers_at_boundaries=1", claims)
+
     def test_selects_exact_compositor_below_real_service_wrapper_shape(self):
         # aurshell.service is Type=simple and ExecStart begins with
         # dbus-run-session. The wrapper is MainPID; its aurshell child owns
@@ -399,6 +406,45 @@ class ConnectionProbeTest(unittest.TestCase):
              mock.patch.object(probe.Path, "stat", return_value=mock.Mock(st_dev=8, st_ino=44)):
             self.assertEqual(probe.snapshot(11, 22, Path("/wayland-0"), Path("/trace")),
                              (1, [2, 5], 9, 123, 7, 8, 44, 5))
+
+    def test_end_snapshot_accepts_only_its_retained_trace_writer(self):
+        evidence = {}
+        probe_pid = os.getpid()
+        with mock.patch.object(probe, "descendants", return_value=[]), \
+             mock.patch.object(probe, "fd_writers", return_value=[
+                 (11, 7), (probe_pid, 5)]), \
+             mock.patch.object(probe, "socket_inventory", return_value=([2], [(9, 2)])), \
+             mock.patch.object(probe.os, "pidfd_open", return_value=1, create=True), \
+             mock.patch.object(probe, "pidfd_alive", return_value=True), \
+             mock.patch.object(probe, "duplicate_fd", return_value=6), \
+             mock.patch.object(probe.os, "fstat", side_effect=[
+                 mock.Mock(st_dev=8, st_ino=44), mock.Mock(st_ino=123)]), \
+             mock.patch.object(probe.Path, "stat", return_value=mock.Mock(
+                 st_dev=8, st_ino=44)):
+            self.assertEqual(probe.snapshot(
+                11, 22, Path("/wayland-0"), Path("/trace"), evidence,
+                retained_trace_fd=5),
+                (1, [2, 6], 9, 123, 7, 8, 44, 6))
+        self.assertEqual(evidence["trace_writer_count"], 2)
+        self.assertEqual(evidence["application_trace_writer_count"], 1)
+        self.assertEqual(evidence["probe_trace_writer_count"], 1)
+        self.assertEqual(evidence["foreign_trace_writer_count"], 0)
+
+    def test_end_snapshot_rejects_unrecognized_second_trace_writer(self):
+        evidence = {}
+        with mock.patch.object(probe, "descendants", return_value=[]), \
+             mock.patch.object(probe, "fd_writers", return_value=[
+                 (11, 7), (os.getpid(), 6)]), \
+             mock.patch.object(probe, "socket_inventory", return_value=([2], [(9, 2)])), \
+             mock.patch.object(probe.os, "pidfd_open", return_value=1, create=True), \
+             mock.patch.object(probe, "pidfd_alive", return_value=True), \
+             mock.patch.object(probe.os, "close"):
+            with self.assertRaisesRegex(RuntimeError, "trace writer count=2"):
+                probe.snapshot(
+                    11, 22, Path("/wayland-0"), Path("/trace"), evidence,
+                    retained_trace_fd=5)
+        self.assertEqual(evidence["probe_trace_writer_count"], 0)
+        self.assertEqual(evidence["foreign_trace_writer_count"], 1)
 
     def test_open_description_comparison_fails_closed(self):
         fake = mock.Mock()
