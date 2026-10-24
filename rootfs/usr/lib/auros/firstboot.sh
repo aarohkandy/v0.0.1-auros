@@ -8,9 +8,11 @@
 #  migration is recoverable, one that fails to boot is not.
 # ═══════════════════════════════════════════════════════════════════
 set -u
-STAMP=/var/lib/auros/firstboot.done
-LOG=/var/log/auros-firstboot.log
-mkdir -p /var/lib/auros
+ROOT="${AUROS_FIRSTBOOT_ROOT:-}"
+case "$ROOT" in ''|/*) ;; *) echo "AUROS_FIRSTBOOT_ROOT must be absolute" >&2; exit 2 ;; esac
+STAMP="$ROOT/var/lib/auros/firstboot.done"
+LOG="$ROOT/var/log/auros-firstboot.log"
+mkdir -p "$ROOT/var/lib/auros" "$ROOT/var/log"
 exec >>"$LOG" 2>&1
 echo "=== AurOS first boot $(date -Is) ==="
 
@@ -23,8 +25,8 @@ echo "=== AurOS first boot $(date -Is) ==="
 # (rootfs/usr/lib/auros/bootchain, lock_line). The image carries one made
 # when it was built; the first start makes this machine's own, so that no
 # two machines share one. Not worth failing a start for.
-if [ -x /usr/lib/auros/bootchain ]; then
-    /usr/lib/auros/bootchain relock 2>&1 || echo "bootchain relock: the image's lock stays"
+if [ -x "$ROOT/usr/lib/auros/bootchain" ]; then
+    "$ROOT/usr/lib/auros/bootchain" relock 2>&1 || echo "bootchain relock: the image's lock stays"
 fi
 
 # ── 1. Grow the root filesystem to fill its partition.
@@ -33,7 +35,8 @@ fi
 # than the partition it landed in. Growing happens here, where a real
 # kernel and resize2fs exist, rather than in the Windows-side installer
 # where neither does.
-root_src=$(findmnt -n -o SOURCE / 2>/dev/null)
+root_src=""
+[ -n "$ROOT" ] || root_src=$(findmnt -n -o SOURCE / 2>/dev/null)
 case "$root_src" in
     /dev/*)
         echo "growing $root_src"
@@ -52,8 +55,8 @@ esac
 # time zone, look and desktop. Before the theme step, because the look
 # they chose is what that step applies. See choices.sh.
 personalization_retry=0
-if [ -x /usr/lib/auros/choices.sh ]; then
-    /usr/lib/auros/choices.sh 2>&1
+if [ -x "$ROOT/usr/lib/auros/choices.sh" ]; then
+    "$ROOT/usr/lib/auros/choices.sh" 2>&1
     choices_rc=$?
     if [ "$choices_rc" -ne 0 ]; then
         echo "choices: did not finish; defaults kept"
@@ -64,32 +67,43 @@ fi
 # ── 1c. Her Wi-Fi from Windows, if she let the installer bring it (D10):
 # a NetworkManager keyfile for the one network she was on, and the copy on
 # the EFI partition deleted. See wifi-across.sh.
-if [ -x /usr/lib/auros/wifi-across.sh ]; then
-    /usr/lib/auros/wifi-across.sh 2>&1 || echo "wifi: did not finish"
+if [ -x "$ROOT/usr/lib/auros/wifi-across.sh" ]; then
+    "$ROOT/usr/lib/auros/wifi-across.sh" 2>&1 || echo "wifi: did not finish"
 fi
 
 # ── 2. Re-apply the theme.
 # The image was themed at build time, but the display resolution is only
 # known now, so the wallpaper is regenerated at the real size. A personalized
 # receipt exists only after choices.sh has already completed this exact render.
-if ! grep -q '^recipe_id=sha256:[0-9a-f]\{64\}$' /etc/auros/installer-choices.conf 2>/dev/null &&
-   command -v aurora >/dev/null 2>&1; then
-    aurora set "$(cat /etc/auros/theme 2>/dev/null || echo nocturne)" 2>&1 || true
+theme_retry=0
+if ! grep -q '^recipe_id=sha256:[0-9a-f]\{64\}$' "$ROOT/etc/auros/installer-choices.conf" 2>/dev/null; then
+    wanted_theme=$(cat "$ROOT/etc/auros/theme" 2>/dev/null || echo nocturne)
+    if command -v aurora >/dev/null 2>&1 && aurora set "$wanted_theme" 2>&1 &&
+       [ "$(cat "$ROOT/etc/auros/theme" 2>/dev/null)" = "$wanted_theme" ]; then
+        echo "firstboot: theme applied: $wanted_theme"
+    else
+        echo "firstboot: theme '$wanted_theme' did not finish; it will be tried again"
+        theme_retry=1
+    fi
 fi
 
 # ── 3. Offer migration if a Windows installation is still on the disk.
 # Ferry is not run automatically: it copies personal data and the user
 # consents to that in the desktop, not in a boot script. This only
 # records what was found so the welcome flow can offer it.
-if [ -x /usr/lib/ferry/ferry-detect ]; then
+if [ -x "$ROOT/usr/lib/ferry/ferry-detect" ]; then
     echo "scanning for a Windows installation"
-    /usr/lib/ferry/ferry-detect > /var/lib/auros/windows-found.json 2>/dev/null \
+    "$ROOT/usr/lib/ferry/ferry-detect" > "$ROOT/var/lib/auros/windows-found.json" 2>/dev/null \
         && echo "scan written to /var/lib/auros/windows-found.json" \
         || echo "no Windows installation found"
 fi
 
 if [ "$personalization_retry" = 1 ]; then
     echo "personalized choices will be tried again at the next start"
+    exit 1
+fi
+if [ "$theme_retry" = 1 ]; then
+    echo "the theme will be tried again at the next start"
     exit 1
 fi
 touch "$STAMP"
