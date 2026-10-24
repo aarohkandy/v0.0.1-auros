@@ -279,6 +279,30 @@ def test_store_magnifier():
     check(e2e.AurFlow.store_magnifier(img, box) is None, "store: no window frame, no guess")
 
 
+def test_journal_verdicts():
+    try:
+        import e2e
+    except ImportError:
+        return
+    fx = lambda n: open(os.path.join(HERE, "fixtures", n)).read()
+    bare = e2e.journal_verdicts(fx("journal-bare-boot.txt"))
+    check(all(ok for _, ok, _ in bare), "journal: a bare boot of the image is green on all four (" + "; ".join(f"{n}={ok}" for n, ok, _ in bare) + ")")
+    real = {n: ok for n, ok, _ in e2e.journal_verdicts(fx("journal-real-install.txt"))}
+    check(real.get("network within 60 s of the desktop") is False, "journal: run 40050260949's install, no DHCP lease: network RED")
+    check(real.get("Flathub's catalogue fetched") is False, "journal: ... catalogue never fetched: RED")
+    check(real.get("clock synced (chrony)") is False, "journal: ... chrony never synced: RED")
+    check(real.get("no unit failed that does not fail on the bare boot") is True, "journal: ... no unit failed before the power button (shutdown noise is not counted)")
+    broken = fx("journal-bare-boot.txt") + "\n2026-10-24T02:09:30+00:00 auros systemd[1]: auros-software.service: Failed with result 'exit-code'.\n"
+    broken = broken.replace("Power key pressed short.", "X").replace("System is powering down.", "Y")
+    check(dict((n, ok) for n, ok, _ in e2e.journal_verdicts(broken))["no unit failed that does not fail on the bare boot"] is False,
+          "journal: a unit that fails in the session (not at shutdown) is RED")
+    slow = "\n".join(l.replace("T02:09:21", "T02:11:21") if ("dhcp4" in l or "CONNECTED_GLOBAL" in l) else l
+                     for l in fx("journal-bare-boot.txt").splitlines())
+    check(dict((n, ok) for n, ok, _ in e2e.journal_verdicts(slow))["network within 60 s of the desktop"] is False,
+          "journal: a lease two minutes after the desktop is RED (the 60 s rule)")
+    check(e2e.journal_verdicts("")[0][1] is False, "journal: no journal at all is RED, never silently green")
+
+
 def test_store_frame():
     try:
         import e2e, numpy as np
@@ -441,6 +465,7 @@ test_aur_dry()
 test_label_is()
 test_canon_label()
 test_store_magnifier()
+test_journal_verdicts()
 test_store_frame()
 test_store_content()
 test_label_contrast()

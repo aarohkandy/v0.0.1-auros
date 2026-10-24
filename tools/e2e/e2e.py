@@ -1479,6 +1479,62 @@ def cmd_flow(a):
 #  After the run: what is on the disk
 # ════════════════════════════════════════════════════════════════════
 
+# Units that fail on a bare boot of the image, in the normal part of a session (before
+# the power button): none today (the aur variant's journal, run 40052634313).
+BASELINE_FAILED_UNITS = frozenset()
+
+
+def journal_verdicts(text):
+    """Gating verdicts from AurOS's own journal of its FIRST session (the first
+    boot in it: the one the installer handed over to, on a Windows variant; the
+    only one on the bare image), up to the power button. [(name, ok, detail)].
+    Written after run 40050260949: on a real install NetworkManager 'assumed' the NIC
+    the installer left configured, never ran DHCP, and Flathub's catalogue, the
+    clock and so the store never came: the journal said all of it, nothing read it."""
+    lines = text.splitlines()
+    starts = [i for i, l in enumerate(lines) if "kernel: Command line:" in l]
+    seg = lines[starts[0]:(starts[1] if len(starts) > 1 else len(lines))] if starts else lines
+    end = next((i for i, l in enumerate(seg) if re.search(r"Power key pressed|System is powering down", l)), len(seg))
+    win = seg[:end]
+
+    def ts(l):
+        import datetime
+        try:
+            return datetime.datetime.fromisoformat(l.split(" ", 1)[0]).timestamp()
+        except ValueError:
+            return None
+
+    def first(rx):
+        return next((l for l in win if re.search(rx, l)), None)
+
+    out = []
+    if not win or not any("systemd" in l for l in win):
+        return [("journal readable", False, "AurOS's journal has no first session in it (not persistent, or unreadable)")]
+    desk = first(r"Started aurshell\.service")
+    net = first(r"NetworkManager state is now CONNECTED_GLOBAL") or first(r"dhcp4 \(\S+\): state changed new lease")
+    if not net:
+        st = [l.split("manager: ", 1)[-1] for l in win if "NetworkManager state is now" in l]
+        out.append(("network within 60 s of the desktop", False,
+                    "no DHCP lease and never CONNECTED_GLOBAL in the whole session; NetworkManager said: " +
+                    (st[-1] if st else "nothing")))
+    else:
+        td, tn = (ts(desk) if desk else None), ts(net)
+        late = td is not None and tn is not None and tn - td > 60
+        out.append(("network within 60 s of the desktop", not late,
+                    (f"online {int(tn - td)} s after the desktop" if td and tn else "online") + ": " + net.split(" ", 2)[-1][:120]))
+    cat = first(r"software-ready: Flathub's catalogue fetched")
+    out.append(("Flathub's catalogue fetched", bool(cat),
+                cat.split("software-ready: ")[-1] if cat else "never; software-ready said: " +
+                ((first(r"software-ready: Flathub's catalogue: not yet") or "nothing").split("software-ready: ")[-1])))
+    chr_ = first(r"chronyd\[\d+\]: Selected source")
+    out.append(("clock synced (chrony)", bool(chr_), chr_.split("chronyd")[-1][:100] if chr_ else "chrony never selected a time source"))
+    failed = sorted({m.group(1) for l in win for m in [re.search(r"([\w@:.\\-]+\.(?:service|socket|mount|timer|path))(?:: Failed with result|: Failed to start| entered failed state)", l)] if m}
+                    - BASELINE_FAILED_UNITS)
+    out.append(("no unit failed that does not fail on the bare boot", not failed,
+                "none" if not failed else "failed: " + ", ".join(failed)))
+    return out
+
+
 def aur_root_report(rec, mnt, out_dir):
     """What AurOS's own disk says, read with the machine off (every variant, pass
     or fail): its logs, the software catalogue (what the store has to show),
@@ -1512,6 +1568,15 @@ def aur_root_report(rec, mnt, out_dir):
                      r"aurwl|aurshell|wayland|xdg-desktop-portal|dbus-run-session", re.I)
     pick = [l for l in full.splitlines() if key.search(l)]
     warn = [l for l in full.splitlines() if re.search(r"\b(warning|error|critical|failed|denied|fatal)\b", l, re.I)]
+    v = journal_verdicts(full.split("-----", 1)[-1])
+    vtext = "\n".join(f"{'ok  ' if ok else 'RED '} {name}: {detail}" for name, ok, detail in v)
+    try:
+        with open(os.path.join(out_dir, "journal-verdicts.txt"), "w") as fh:
+            fh.write("The first AurOS session after the install, from its own journal:\n" + vtext + "\n")
+    except OSError:
+        pass
+    rec.journal_red = [f"{name}: {detail}" for name, ok, detail in v if not ok]
+    lines.append("--- verdicts from the first session's journal\n" + vtext)
     lines.append(f"--- the journal ({len(full.splitlines())} lines, all boots; aur-journal.txt has all)\n" +
                  full.split("-----")[0].strip())
     lines.append("--- about the store and its neighbours (last 250)\n" + "\n".join(l[:260] for l in pick[-250:]))
@@ -1615,8 +1680,13 @@ def cmd_inspect(a):
             out.append("found: " + json.dumps(found, indent=1))
             with open(os.path.join(a.out, "disk-inspection.txt"), "w") as fh:
                 fh.write("\n".join(out))
+            red = getattr(rec, "journal_red", [])
+            if red:
+                rec.log("JOURNAL VERDICTS RED: " + " | ".join(red))
             if a.diag:         # after a failed flow: what the disk says, not a verdict
                 return 0
+            if red:
+                raise Failure("AurOS's first session after the install: " + " | ".join(red))
             if not found:
                 raise Failure(f"none of {APP_FILES} is on any Linux partition")
         finally:

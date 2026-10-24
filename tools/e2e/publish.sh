@@ -129,6 +129,10 @@ final)
             echo
         done
     } > notes.md
+    # AurOS's first session, read from its own journal (e2e.py inspect)
+    for f in */journal-verdicts.txt; do
+        [ -f "$f" ] && { echo; echo "### ${f%/*}: AurOS's first session"; echo; sed 's/^/    /' "$f"; } >> notes.md
+    done
     cat notes.md
     zipf=e2e-evidence-$variant.zip
     rm -f "$zipf"

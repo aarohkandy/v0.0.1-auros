@@ -1,0 +1,20 @@
+2026-10-24T02:02:57+00:00 auros kernel: Command line: BOOT_IMAGE=/EFI/AurOS/staging.efi aurstage.install aurstage.profile=desktop console=tty0 gpt quiet loglevel=3 vt.global_cursor_default=0
+2026-10-24T02:02:59+00:00 auros NetworkManager[523]: <info>  [1792807379.3699] manager: NetworkManager state is now CONNECTED_LOCAL
+2026-10-24T02:03:02+00:00 auros systemd[1]: Started aurshell.service - AurOS desktop shell.
+2026-10-24T02:03:02+00:00 auros systemd[1]: Reached target graphical.target - Graphical Interface.
+2026-10-24T02:03:03+00:00 auros software-ready.sh[2711]: software-ready: Flathub's catalogue: not yet
+2026-10-24T02:03:10+00:00 auros software-ready.sh[2711]: software-ready: apt's lists fetched
+2026-10-24T02:03:42+00:00 auros systemd[1]: Reached target network-online.target - Network is Online.
+2026-10-24T02:04:10+00:00 auros software-ready.sh[2711]: software-ready: Flathub's catalogue: not yet
+2026-10-24T02:04:17+00:00 auros software-ready.sh[2711]: software-ready: apt's lists fetched
+2026-10-24T02:05:17+00:00 auros software-ready.sh[2711]: software-ready: Flathub's catalogue: not yet
+2026-10-24T02:05:24+00:00 auros software-ready.sh[2711]: software-ready: apt's lists fetched
+2026-10-24T02:06:24+00:00 auros software-ready.sh[2711]: software-ready: Flathub's catalogue: not yet
+2026-10-24T02:06:31+00:00 auros software-ready.sh[2711]: software-ready: apt's lists fetched
+2026-10-24T02:07:31+00:00 auros software-ready.sh[2711]: software-ready: Flathub's catalogue: not yet
+2026-10-24T02:07:38+00:00 auros software-ready.sh[2711]: software-ready: apt's lists fetched
+2026-10-24T02:08:38+00:00 auros software-ready.sh[2711]: software-ready: Flathub's catalogue: not yet
+2026-10-24T02:08:44+00:00 auros systemd-logind[499]: Power key pressed short.
+2026-10-24T02:08:44+00:00 auros systemd-logind[499]: System is powering down.
+2026-10-24T02:08:44+00:00 auros systemd[2752]: xdg-desktop-portal-gtk.service: Failed with result 'exit-code'.
+2026-10-24T02:08:45+00:00 auros systemd[2752]: xdg-document-portal.service: Failed with result 'exit-code'.
