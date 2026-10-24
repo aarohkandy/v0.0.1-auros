@@ -18,7 +18,8 @@
 #   lint     seconds: tools/profiletest.sh selftest (every check fails
 #            on broken input) and lint (every package exists, no snap
 #            stubs, no unknown excludes) -- before an hour of builds.
-#   profile  one job per profile, ONE AT A TIME (max-parallel: 1; the
+#   evidence makes and verifies the one prerelease shared by this run.
+#   profile  one job per profile, TWO AT A TIME (max-parallel: 2; the
 #            free plan has 20 job slots shared by every workflow here).
 #            Evidence goes to prerelease profiles-<run id>:
 #              https://github.com/<repo>/releases/download/profiles-<run>/<profile>.png
@@ -113,9 +114,65 @@ jobs:
         run: sh tools/profiletest.sh selftest
       - name: every profile asks only for what its suite has
         run: sh tools/profiletest.sh lint office revive school-kiosk multilingual desktop
+      - name: one verified evidence release feeds at most two build lanes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          text = Path(".github/workflows/profiles.yml").read_text(encoding="utf-8")
+          evidence = text.split("\n  evidence:\n", 1)[1].split("\n  profile:\n", 1)[0]
+          profile = text.split("\n  profile:\n", 1)[1].split("\n  summary:\n", 1)[0]
+          checks = {
+              "exactly one job creates the evidence release":
+                  text.count("gh release " + "create") == 1,
+              "the setup job verifies its release":
+                  'gh release view "$TAG"' in evidence,
+              "profiles wait for the verified release":
+                  "needs: [gate, lint, evidence]" in profile,
+              "the matrix uses the repository-wide two-lane limit":
+                  "max-parallel: 2" in profile,
+          }
+          failed = [message for message, ok in checks.items() if not ok]
+          if failed:
+              raise SystemExit("profile workflow: " + "; ".join(failed))
+          print("profile workflow: one verified release, at most two build lanes")
+          PY
+
+  evidence:
+    needs: [gate, lint]
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    timeout-minutes: 5
+    env:
+      TAG: profiles-${{ github.run_id }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: make and verify this run's evidence release
+        run: |
+          # At this commit if GitHub allows it, else at main: the token
+          # may not make a tag on a commit that changes a workflow file
+          # (HTTP 403 "Resource not accessible by integration"; run
+          # 39902765034). The files are this run's either way.
+          mk() { gh release create "$TAG" --prerelease --target "$1" \
+                   --title "profiles: every version builds and boots, run $GITHUB_RUN_ID" \
+                   --notes "Running: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"; }
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            if ! mk "$GITHUB_SHA"; then
+              if ! gh release view "$TAG" >/dev/null 2>&1; then
+                mk main || { echo "::error::could not create evidence release $TAG at $GITHUB_SHA or main"; exit 1; }
+              fi
+            fi
+          fi
+          gh release view "$TAG" >/dev/null 2>&1 || {
+            echo "::error::evidence release $TAG does not exist after creation"
+            exit 1
+          }
 
   profile:
-    needs: [gate, lint]
+    needs: [gate, lint, evidence]
     if: needs.gate.outputs.go == 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -123,7 +180,7 @@ jobs:
       actions: read
     timeout-minutes: 150
     strategy:
-      max-parallel: 1
+      max-parallel: 2
       fail-fast: false
       matrix:
         profile: ${{ fromJSON(needs.gate.outputs.list) }}
@@ -160,17 +217,6 @@ jobs:
           done
           while [ ! -f /tmp/freed ]; do sleep 2; done
           ls -l /dev/kvm; df -h /
-
-      - name: release for this run's evidence
-        run: |
-          # At this commit if GitHub allows it, else at main: the token
-          # may not make a tag on a commit that changes a workflow file
-          # (HTTP 403 "Resource not accessible by integration"; run
-          # 39902765034). The files are this run's either way.
-          mk() { gh release create "$TAG" --prerelease --target "$1" \
-                   --title "profiles: every version builds and boots, run $GITHUB_RUN_ID" \
-                   --notes "Running: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"; }
-          gh release view "$TAG" >/dev/null 2>&1 || mk "$GITHUB_SHA" || mk main || true
 
       # build.yml's cache, by build.yml's exact key: debootstrap reads
       # only the release pocket, so the base is the same bytes for every

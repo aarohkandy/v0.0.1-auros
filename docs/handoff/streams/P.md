@@ -44,6 +44,10 @@ with a screenshot, an image size and a boot result for each.
 
 ## Half-done / not pushed
 
+- Profile builds are prepared to run two at a time, the repository-wide matrix limit. A short
+  `evidence` job creates and verifies the run's prerelease before either build lane starts, so
+  concurrent profiles only upload their uniquely named files. Two lanes check all bases faster
+  without taking four of the repository's shared runner slots.
 - Run 39902765034 (commit 07ee591): first full build+boot of all four, one at a time.
 
 ## Next 5 steps
@@ -51,7 +55,7 @@ with a screenshot, an image size and a boot result for each.
 1. Write `.github/workflows/profiles.yml`: push on `claude/**`; a `gate` job (like build.yml's)
    runs when the subject has `[profiles]` (optionally `[profiles office revive]` for a subset) or
    the push changed `profiles/`, `tools/profiletest*` or `profiles.yml`. Then a matrix job over the
-   four profiles with `max-parallel: 1`, `fail-fast: false`, and job-level
+   four profiles with `max-parallel: 2`, `fail-fast: false`, and job-level
    `concurrency: profiles-<ref>-<profile>` (`cancel-in-progress: false`; NOT workflow-level:
    docs-only pushes would replace a pending real run). Each leg: free disk, apt tools
    (debootstrap squashfs-tools zstd gdisk dosfstools mtools e2fsprogs sbsigntool python3 cpio
@@ -72,7 +76,7 @@ with a screenshot, an image size and a boot result for each.
 
 - Any push touching `profiles/` also triggers the desktop `build.yml` (its gate greps `^profiles/`).
   Batch profile edits.
-- Free plan: 20 concurrent jobs shared by ~15 agents. Keep max-parallel 1.
+- Free plan: 20 concurrent jobs shared by ~15 agents. Keep max-parallel at 2 or less.
 - This checkout's `remote.origin.fetch` maps only the old branch, so `git fetch origin main`
   does NOT move `origin/main` and the field manual's push loop rebases onto a stale tip. Use
   `git fetch -q origin +main:refs/remotes/origin/main` in the loop.
