@@ -61,6 +61,10 @@
 #                         diagnostic XRes/process/screenshot evidence for an
 #                         explicitly X11 ibus-ui-gtk3 panel. It does not make
 #                         candidate visibility a product success claim.
+#    PROFILETEST_FCITX_CLIENT_PROBE=1
+#                         for a retained multilingual diagnostic only: install
+#                         Noble's Fcitx GTK module into the scratch copy and
+#                         record composition and parented-popup protocol syntax.
 # ═══════════════════════════════════════════════════════════════════
 set -u
 cd "$(dirname "$0")/.."
@@ -372,6 +376,60 @@ judge_ibus_functional() { # evidence-root screenshot-root
     done
 }
 
+judge_fcitx_client_probe() { # evidence-root screenshot-root
+    D=$1; SHOTS=$2
+    status=$(sed -n 's/^status=//p' "$D/result" 2>/dev/null | tail -1)
+    case "$status" in
+      pass) ok "the opt-in Fcitx first-stage diagnostic completed" ;;
+      unavailable) bad "the opt-in Fcitx packages were available" \
+          "UNAVAILABLE: $(sed -n 's/^reason=//p' "$D/result" 2>/dev/null | tail -1)" ;;
+      *) bad "the opt-in Fcitx first-stage diagnostic completed" \
+          "$(tr '\n' ' ' < "$D/result" 2>/dev/null || echo missing)" ;;
+    esac
+    printf '    %-62s %s\n' "candidate pixels and Wayland connection identity" \
+        "UNPROVEN -- inspect screenshots; connection-tagged evidence is still required"
+    for app in mousepad firefox; do
+        grep -qx 'parented_mapped_popup_count=1' "$D/$app-popup.txt" 2>/dev/null \
+            && grep -qx 'parented_popup_syntax_observed=yes' "$D/$app-popup.txt" 2>/dev/null \
+            && grep -qx 'connection_identity=unproven' "$D/$app-popup.txt" 2>/dev/null \
+            && grep -qx 'layer_shell_objects=0' "$D/$app-popup.txt" 2>/dev/null \
+            && grep -qx 'popup_input_grab=no' "$D/$app-popup.txt" 2>/dev/null \
+            && grep -Eq '^popup_width=[1-9][0-9]*$' "$D/$app-popup.txt" 2>/dev/null \
+            && grep -Eq '^popup_height=[1-9][0-9]*$' "$D/$app-popup.txt" 2>/dev/null \
+            && ok "$app emitted mapped parented-popup protocol syntax" \
+            || bad "$app emitted mapped parented-popup protocol syntax" \
+                   "parented-popup syntax evidence missing"
+        hex=$(od -An -tx1 "$D/$app.txt" 2>/dev/null | tr -d ' \n')
+        [ "$hex" = e4bda0e5a5bd ] \
+            && ok "$app produced the exact Pinyin composition" \
+            || bad "$app produced the exact Pinyin composition" "UTF-8 bytes: ${hex:-missing}"
+        for phase in candidate committed; do
+            [ "$app" = firefox ] && [ "$phase" = committed ] && phase=submitted
+            [ -s "$SHOTS/fcitx-$app-$phase.png" ] \
+                && ok "$app $phase screenshot was retained" \
+                || bad "$app $phase screenshot was retained" "missing screenshot"
+        done
+        grep -Eq '^changed_samples=[0-9]+ total_samples=[0-9]+$' \
+            "$D/fcitx-$app-candidate-change.txt" 2>/dev/null \
+            && ok "$app candidate phase changed screen pixels" \
+            || bad "$app candidate phase changed screen pixels" "pixel-change evidence missing"
+    done
+    grep -qx 'display_unset=yes' "$D/fcitx.process" 2>/dev/null \
+        && grep -qx 'wayland_display_unset=yes' "$D/fcitx.process" 2>/dev/null \
+        && ok "the Fcitx daemon had no fallback display" \
+        || bad "the Fcitx daemon had no fallback display" "fallback isolation missing"
+    grep -qx 'service_owner_stable=yes' "$D/fcitx.process" 2>/dev/null \
+        && ok "the owned Fcitx process retained its D-Bus service" \
+        || bad "the owned Fcitx process retained its D-Bus service" "service replacement or restart"
+    grep -qx 'raw_protocol_logs_retained=no' "$D/protocol-summary.txt" 2>/dev/null \
+        && ok "raw protocol logs were removed after reduction" \
+        || bad "raw protocol logs were removed after reduction" "redaction proof missing"
+    grep -qx 'ordinary_service_ready=1' "$D/restore.txt" 2>/dev/null \
+        && grep -qx 'user_config_unchanged=yes' "$D/restore.txt" 2>/dev/null \
+        && ok "the shipped IBus session and user config were restored" \
+        || bad "the shipped IBus session and user config were restored" "restore evidence missing"
+}
+
 # Judge the opt-in diagnostic without turning the absence of a candidate
 # window into product evidence.  Server PID identity can be useful when no
 # panel window mapped, but only a mapped window carries geometry evidence.
@@ -529,6 +587,14 @@ EOP
         one "...asking for zram with no zram-tools to provide it" 's/^shell_archetype=.*/&\npackages_security="nftables earlyoom"/'
     else
         printf '    %-62s %s\n' "the office profile as it is now" "FAILS ($base): fix it first"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    if PROFILETEST_FCITX_CLIENT_PROBE=1 PROFILETEST_IBUS_FUNCTIONAL=1 \
+       sh tools/profiletest.sh boot multilingual 2>&1 | grep -Fq 'cannot be combined'; then
+        printf '    %-62s %s\n' "the Fcitx and IBus functional runs are exclusive" "passes"
+    else
+        printf '    %-62s %s\n' "the Fcitx and IBus functional runs are exclusive" "FAIL"
         fail=$((fail+1))
     fi
     checked=$((checked+1))
@@ -824,6 +890,57 @@ EOF
         fail=$((fail+1))
     fi
     checked=$((checked+1))
+    fcitx_fixture="$T/fcitx"; mkdir -p "$fcitx_fixture/evidence" "$fcitx_fixture/shots"
+    printf 'status=pass\nreason=test\n' > "$fcitx_fixture/evidence/result"
+    for app in mousepad firefox; do
+        printf 'parented_mapped_popup_count=1\nparented_popup_syntax_observed=yes\nconnection_identity=unproven\nlayer_shell_objects=0\npopup_input_grab=no\npopup_width=320\npopup_height=90\n' \
+            > "$fcitx_fixture/evidence/$app-popup.txt"
+        printf '\344\275\240\345\245\275' > "$fcitx_fixture/evidence/$app.txt"
+        printf 'changed_samples=400 total_samples=64000\n' > "$fcitx_fixture/evidence/fcitx-$app-candidate-change.txt"
+    done
+    printf 'display_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\n' \
+        > "$fcitx_fixture/evidence/fcitx.process"
+    printf 'raw_protocol_logs_retained=no\n' > "$fcitx_fixture/evidence/protocol-summary.txt"
+    printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\n' > "$fcitx_fixture/evidence/restore.txt"
+    for f in fcitx-mousepad-candidate fcitx-mousepad-committed \
+             fcitx-firefox-candidate fcitx-firefox-submitted; do printf x > "$fcitx_fixture/shots/$f.png"; done
+    fcitx_refuses() {
+        ( fail=0; checked=0; judge_fcitx_client_probe "$1/evidence" "$1/shots" >/dev/null 2>&1; echo "$fail" )
+    }
+    printf 'parented_mapped_popup_count=0\n' > "$fcitx_fixture/evidence/firefox-popup.txt"
+    if [ "$(fcitx_refuses "$fcitx_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "Fcitx evidence without parented-popup syntax" "refused"
+    else
+        printf '    %-62s %s\n' "Fcitx evidence without parented-popup syntax" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    printf 'parented_mapped_popup_count=1\nparented_popup_syntax_observed=yes\nconnection_identity=unproven\nlayer_shell_objects=0\npopup_input_grab=no\npopup_width=320\npopup_height=90\n' \
+        > "$fcitx_fixture/evidence/firefox-popup.txt"
+    printf 'ordinary_service_ready=0\nuser_config_unchanged=no\n' > "$fcitx_fixture/evidence/restore.txt"
+    if [ "$(fcitx_refuses "$fcitx_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "Fcitx evidence without config and IBus restoration" "refused"
+    else
+        printf '    %-62s %s\n' "Fcitx evidence without config and IBus restoration" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sh -n tools/profiletest-fcitx-guest.sh || { printf '    %-62s %s\n' \
+        "the injected Fcitx guest orchestrator parses" "FAIL"; fail=$((fail+1)); }
+    checked=$((checked+1))
+    if python3 tools/test_fcitx_wayland_trace.py >/dev/null; then
+        printf '    %-62s %s\n' "the Fcitx parented-popup trace parser" "passes"
+    else
+        printf '    %-62s %s\n' "the Fcitx parented-popup trace parser" "FAIL"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    if PROFILETEST_FCITX_CLIENT_PROBE=1 PROFILETEST_IBUS_X11_PROBE=1 \
+       sh tools/profiletest.sh boot multilingual 2>&1 | grep -Fq 'cannot be combined'; then
+        printf '    %-62s %s\n' "the Fcitx and X11 diagnostics are exclusive" "passes"
+    else
+        printf '    %-62s %s\n' "the Fcitx and X11 diagnostics are exclusive" "FAIL"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
     echo
     [ "$fail" -eq 0 ] && { echo "$checked checks: every check refuses what it exists to refuse."; exit 0; }
     echo "$fail of $checked wrong."; exit 1
@@ -837,14 +954,26 @@ IBUS_FUNCTIONAL=${PROFILETEST_IBUS_FUNCTIONAL:-0}
 case "$IBUS_FUNCTIONAL" in 0|1) ;; *) echo "PROFILETEST_IBUS_FUNCTIONAL must be 0 or 1"; exit 2 ;; esac
 IBUS_X11_PROBE=${PROFILETEST_IBUS_X11_PROBE:-0}
 case "$IBUS_X11_PROBE" in 0|1) ;; *) echo "PROFILETEST_IBUS_X11_PROBE must be 0 or 1"; exit 2 ;; esac
+FCITX_CLIENT_PROBE=${PROFILETEST_FCITX_CLIENT_PROBE:-0}
+case "$FCITX_CLIENT_PROBE" in 0|1) ;; *) echo "PROFILETEST_FCITX_CLIENT_PROBE must be 0 or 1"; exit 2 ;; esac
 if [ "$IBUS_FUNCTIONAL" = 1 ] && [ "$P" != multilingual ]; then
     echo "PROFILETEST_IBUS_FUNCTIONAL=1 is only valid for the multilingual profile"
+    exit 2
+fi
+if [ "$FCITX_CLIENT_PROBE" = 1 ] && { [ "$IBUS_X11_PROBE" = 1 ] || [ "$IBUS_FUNCTIONAL" = 1 ]; }; then
+    echo "PROFILETEST_FCITX_CLIENT_PROBE cannot be combined with an IBus functional or X11 run"
     exit 2
 fi
 if [ "$IBUS_X11_PROBE" = 1 ] && { [ "$IBUS_FUNCTIONAL" != 1 ] || [ "$P" != multilingual ]; }; then
     echo "PROFILETEST_IBUS_X11_PROBE=1 requires the multilingual functional run"
     exit 2
 fi
+if [ "$FCITX_CLIENT_PROBE" = 1 ] && [ "$P" != multilingual ]; then
+    echo "PROFILETEST_FCITX_CLIENT_PROBE=1 is only valid for multilingual"
+    exit 2
+fi
+INPUT_FUNCTIONAL=$IBUS_FUNCTIONAL
+[ "$FCITX_CLIENT_PROBE" = 1 ] && INPUT_FUNCTIONAL=1
 for t in qemu-system-x86_64 sgdisk python3 losetup mount; do
     command -v "$t" >/dev/null 2>&1 || { echo "need $t"; exit 2; }
 done
@@ -854,7 +983,7 @@ CODE=/usr/share/OVMF/OVMF_CODE_4M.fd; VARS=/usr/share/OVMF/OVMF_VARS_4M.fd
 IMG="out/auros-$P.img"
 if [ ! -f "$IMG" ] && [ -f "$IMG.zst" ]; then IMG="$IMG.zst"; fi
 [ -f "$IMG" ] || { echo "no image for $P: run sudo ./build/all $P --keep=raw"; exit 2; }
-if [ "$IBUS_FUNCTIONAL" = 1 ]; then
+if [ "$INPUT_FUNCTIONAL" = 1 ]; then
     TIMEOUT="${PROFILETEST_TIMEOUT:-1800}"
 else
     TIMEOUT="${PROFILETEST_TIMEOUT:-900}"
@@ -1003,6 +1132,9 @@ if grep -Eq '^profile[[:space:]]*=[[:space:]]*multilingual$' /etc/auros/policy.c
     say "ibus_display=$ibus_display"
     say "ibus_pinyin=$ibus_pinyin"
 fi
+if [ -x /usr/lib/auros-profiletest/fcitx-functional.sh ]; then
+    exec /usr/lib/auros-profiletest/fcitx-functional.sh
+fi
 if [ -x /usr/lib/auros-profiletest/ibus-functional.sh ]; then
     exec /usr/lib/auros-profiletest/ibus-functional.sh
 fi
@@ -1010,13 +1142,20 @@ journalctl -b -p err --no-pager -o cat 2>/dev/null | tail -20 | sed 's/^/PROFILE
 say "done"
 EOS
 chmod 755 "$M/usr/lib/auros-profiletest/probe.sh"
-if [ "$IBUS_FUNCTIONAL" = 1 ]; then
+if [ "$FCITX_CLIENT_PROBE" = 1 ]; then
+    install -m 755 "$ROOT/tools/profiletest-fcitx-guest.sh" \
+        "$M/usr/lib/auros-profiletest/fcitx-functional.sh"
+    install -m 755 "$ROOT/tools/fcitx_wayland_trace.py" \
+        "$M/usr/lib/auros-profiletest/fcitx_wayland_trace.py"
+elif [ "$IBUS_FUNCTIONAL" = 1 ]; then
     install -m 755 "$ROOT/tools/profiletest-ibus-guest.sh" \
         "$M/usr/lib/auros-profiletest/ibus-functional.sh"
     if [ "$IBUS_X11_PROBE" = 1 ]; then
         install -m 755 "$ROOT/tools/x11_xres_probe.py" \
             "$M/usr/lib/auros-profiletest/x11_xres_probe.py"
     fi
+fi
+if [ "$INPUT_FUNCTIONAL" = 1 ]; then
     # If this scratch OVMF happens to contain an AurOS boot entry, do not let
     # the install hand-over question cover the applications under test.
     install -d "$M/var/lib/auros"
@@ -1047,7 +1186,7 @@ cp "$VARS" "$T/vars.fd"
 SER="$EV/$P-serial.txt"; : > "$SER"
 Q="$T/qmp.sock"
 VIRTFS_ARGS=""
-if [ "$IBUS_FUNCTIONAL" = 1 ]; then
+if [ "$INPUT_FUNCTIONAL" = 1 ]; then
     CHAN="$T/host"; mkdir -p "$CHAN"; echo 0 > "$CHAN/acks"
     VIRTFS_ARGS="-virtfs local,path=$CHAN,mount_tag=profiletest,security_model=none,id=profiletest"
 fi
@@ -1111,6 +1250,32 @@ if changed*100 < total*3: raise SystemExit(1)
 print((min(xs)+max(xs))//2, (min(ys)+max(ys))//2)
 EOPY
 }
+candidate_changed() { # before.ppm after.ppm -- at least 0.25% changed
+    python3 - "$1" "$2" <<'EOPY'
+import sys
+def ppm(path):
+    d=open(path,'rb').read(); parts=[]; i=0
+    while len(parts)<4:
+        while d[i:i+1].isspace(): i+=1
+        if d[i:i+1]==b'#':
+            while d[i:i+1] not in (b'\n',b''): i+=1
+            continue
+        j=i
+        while not d[j:j+1].isspace(): j+=1
+        parts.append(d[i:j]); i=j
+    i+=1
+    return int(parts[1]),int(parts[2]),d[i:]
+w,h,a=ppm(sys.argv[1]); w2,h2,b=ppm(sys.argv[2])
+if (w,h)!=(w2,h2): raise SystemExit(1)
+changed=total=0
+for y in range(0,h,4):
+    for x in range(0,w,4):
+        p=(y*w+x)*3; total+=1
+        if sum(abs(a[p+k]-b[p+k]) for k in range(3))>24: changed+=1
+if changed*400 < total: raise SystemExit(1)
+print("changed_samples=%d total_samples=%d" % (changed,total))
+EOPY
+}
 screen_has_form() { # ppm -- print centre of the test page's unique background
     python3 - "$1" <<'EOPY'
 import sys
@@ -1144,8 +1309,9 @@ click_at() { # screen x y
 }
 click_center() { click_at 640 380; }
 ibus_host_action() {
-    [ "$IBUS_FUNCTIONAL" = 1 ] || return 0
-    line=$(tr -d '\r' < "$SER" | sed -n 's/^PROFILETEST ibus-do=//p' | tail -1)
+    [ "$INPUT_FUNCTIONAL" = 1 ] || return 0
+    if [ "$FCITX_CLIENT_PROBE" = 1 ]; then action_marker=fcitx-do; else action_marker=ibus-do; fi
+    line=$(tr -d '\r' < "$SER" | sed -n "s/^PROFILETEST $action_marker=//p" | tail -1)
     [ -n "$line" ] || return 0
     set -- $line
     id=${1:-0}; verb=${2:-}; shift 2 || return 0
@@ -1226,6 +1392,18 @@ ibus_host_action() {
         case "${1:-}" in ''|*[!A-Za-z0-9._-]*) action_ok=1 ;;
             *) shot "$1" || action_ok=1 ;; esac
         ;;
+      candidate-shot)
+        case "${1:-}:${2:-}" in *[!A-Za-z0-9._:-]*|:|*:) action_ok=1 ;;
+          *)
+            before="$T/baseline-$1.ppm"; after="$T/candidate-$id.ppm"
+            qmp "$Q" "{\"execute\":\"screendump\",\"arguments\":{\"filename\":\"$after\"}}" \
+                >/dev/null 2>&1 \
+                && candidate_changed "$before" "$after" > "$EV/$2-change.txt" \
+                && shot_py "$after" "$EV/$2.png" >/dev/null \
+                || action_ok=1
+            ;;
+        esac
+        ;;
       *) action_ok=1 ;;
     esac
     if [ "$action_ok" = 0 ]; then
@@ -1252,7 +1430,15 @@ else
 fi
 tr -d '\r' < "$SER" | grep -a '^PROFILETEST' > "$EV/$P-report.txt"
 [ -n "$QP" ] && kill -9 "$QP" 2>/dev/null; wait "$QP" 2>/dev/null; QP=""
-if [ "$IBUS_FUNCTIONAL" = 1 ]; then
+if [ "$FCITX_CLIENT_PROBE" = 1 ]; then
+    sync
+    LP=$(losetup --find --show -o $((RS * 512)) --sizelimit $(((RE - RS + 1) * 512)) "$DISK")
+    mount "$LP" "$T/m" || { echo "  cannot remount Fcitx evidence"; exit 1; }
+    rm -rf "$EV/fcitx"; mkdir -p "$EV/fcitx"
+    cp -a "$T/m/var/lib/auros-profiletest/fcitx/." "$EV/fcitx/" 2>/dev/null || true
+    cp "$EV"/fcitx-*-candidate-change.txt "$EV/fcitx/" 2>/dev/null || true
+    umount "$T/m"; losetup -d "$LP"; LP=""
+elif [ "$IBUS_FUNCTIONAL" = 1 ]; then
     sync
     LP=$(losetup --find --show -o $((RS * 512)) --sizelimit $(((RE - RS + 1) * 512)) "$DISK")
     mount "$LP" "$T/m" || { echo "  cannot remount functional evidence"; exit 1; }
@@ -1271,6 +1457,9 @@ if [ "$IBUS_FUNCTIONAL" = 1 ]; then
         XEV="$EV/ibus/round1/x11-panel"
         judge_ibus_x11_probe "$XEV" "$EV"
     fi
+fi
+if [ "$FCITX_CLIENT_PROBE" = 1 ]; then
+    judge_fcitx_client_probe "$EV/fcitx" "$EV"
 fi
 drawn_enough "$S1" && ok "the screen shows a desktop ($S1)" \
                    || bad "the screen shows a desktop" "$S1"
