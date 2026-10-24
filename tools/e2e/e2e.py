@@ -1484,6 +1484,57 @@ def cmd_flow(a):
 BASELINE_FAILED_UNITS = frozenset()
 
 
+FIRST_SESSION_FACTS = (
+    ("AppArmor enabled with a loaded profile", "apparmor", "enabled"),
+    ("default route present", "route", "default"),
+    ("DNS resolves a public name", "dns", "ok"),
+    ("/run mode is 0755", "run_mode", "0755"),
+    ("staging saved.bin released", "saved_bin", "absent"),
+)
+
+
+def first_session_probe_verdicts(lines):
+    """Parse one root-observed state record from the installed session.
+
+    The Linux guest deliberately has no test command channel: no guest agent,
+    no serial login, and its live disk must not be mounted by the host.  A
+    bounded oneshot in the image therefore records these facts in the same
+    persistent journal `inspect` already reads.  Its exact message is:
+
+      auros-first-session-probe: v1 apparmor=enabled profiles=N route=default
+        dns=ok run_mode=0755 saved_bin=absent
+
+    N must be positive. Missing, duplicate, or malformed evidence is red; the
+    harness must never infer ephemeral /run state after the machine is off.
+    """
+    records = [l for l in lines if re.search(r"auros-first-session-probe(?:\[\d+\])?: v1\b", l)]
+    detail = "the first-session probe record is missing"
+    values = {}
+    valid = False
+    if len(records) == 1:
+        tail = records[0].split(": v1", 1)[-1]
+        pairs = re.findall(r"(?:^|\s)([a-z_]+)=([^\s]+)", tail)
+        values = dict(pairs)
+        detail = records[0].split(": v1", 1)[-1].strip()
+        keys = {"apparmor", "profiles", "route", "dns", "run_mode", "saved_bin"}
+        valid = len(pairs) == len(keys) and set(values) == keys
+        if not valid:
+            detail = "malformed probe record: " + detail
+    elif len(records) > 1:
+        detail = f"{len(records)} probe records found; expected exactly one"
+
+    out = []
+    profiles = values.get("profiles", "")
+    profile_ok = profiles.isdigit() and int(profiles) > 0
+    for name, key, want in FIRST_SESSION_FACTS:
+        ok = valid and values.get(key) == want
+        if key == "apparmor":
+            ok = ok and profile_ok
+        out.append((name, ok, detail if not ok else
+                    (f"enabled, {profiles} profile(s) loaded" if key == "apparmor" else f"{key}={want}")))
+    return out
+
+
 def journal_verdicts(text):
     """Gating verdicts from AurOS's own journal of its FIRST session (the first
     boot in it: the one the installer handed over to, on a Windows variant; the
@@ -1510,6 +1561,7 @@ def journal_verdicts(text):
     out = []
     if not win or not any("systemd" in l for l in win):
         return [("journal readable", False, "AurOS's journal has no first session in it (not persistent, or unreadable)")]
+    out.extend(first_session_probe_verdicts(win))
     desk = first(r"Started aurshell\.service")
     net = first(r"NetworkManager state is now CONNECTED_GLOBAL") or first(r"dhcp4 \(\S+\): state changed new lease")
     if not net:
