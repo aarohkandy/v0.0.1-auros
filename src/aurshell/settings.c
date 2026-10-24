@@ -753,8 +753,8 @@ void settings_paint(shell_ctx *c, surface *s, shell_fonts *f)
         : S.page == SET_PAGE_SHELL ? "Press one. The desktop changes straight away."
         : S.page == SET_PAGE_LOOK  ? "Press one to try it."
         : S.page == SET_PAGE_WINDOWS
-            ? "This computer restarts and removes AurOS. Anything you saved "
-              "in AurOS goes with it. Windows gets all its space back."
+            ? "This computer restarts and removes AurOS. "
+              "Anything you saved in AurOS goes with it. Windows gets all its space back."
                                    : "Anything you change here you can change back.";
     if (bodyf)
     {

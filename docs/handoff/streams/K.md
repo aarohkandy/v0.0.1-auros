@@ -100,6 +100,15 @@ Checked in code: `aurfirst decline` sets the next start to Windows and deletes n
 | Put Windows back (Settings) | This computer restarts and removes AurOS. Anything you saved in AurOS goes with it. Windows gets all its space back. |
 | D's FAQ "Can I go back?" (add) | Put Windows back removes AurOS, and anything you saved in AurOS goes with it, so copy what you want to keep onto a memory stick first. |
 
+**What "Put Windows back" removes is ONE pinned sentence: "Anything you saved in AurOS goes with it."**
+helptest fails unless it is in every place that says it: settings.c twice (its row and its page, each a
+single string literal), windows.html, guide.html, and index.html's "Can I go back?" answer (the first
+letter may be lower case there). Change the sentence in all of them together and in helptest's `loss`
+pattern, or it is red. D owns index.html and guide.html: keep it. Open question for the lead and C: R's
+Put Windows back now copies her Documents, Pictures, Desktop, Downloads, Music and Videos into her
+Windows folder under "From AurOS" first (answer.sh back_files). The pinned sentence is the cautious one
+(everything else goes); when the screens say "your files are saved to Windows first", change it here.
+
 C's declined screen today says "You can start it again from the menu when you switch on":
 after a decline Windows is the firmware default, so that menu is the firmware's (timed, and
 not hers). Raised with the lead.

@@ -32,6 +32,9 @@ one of them. Fails if:
     exactly one of them;
   - the Help panel's button is not called what the index says it is
     (read from src/aurshell/foot.c), so "press Help, then ..." is true;
+  - what "Put Windows back" removes is not said in the one pinned sentence
+    in every place that says it (the Settings screen twice, the windows help
+    page, the printable guide and the front page's questions);
   - a page spells out a web address: the pages work offline and are not
     rebuilt when the project moves, so they name no address at all.
 
@@ -329,6 +332,38 @@ def main():
     n_press = sum(len(pg.presses) for pg in parsed.values())
     check(not unknown, f"every button the pages name is a button that exists ({n_press} checked)",
           "; ".join(unknown[:8]))
+
+    # 5c. one truth about going back: the loss half. The words for each answer
+    # agree everywhere; what "Put Windows back" REMOVES is said once, and every
+    # place that says it carries it verbatim (the first letter may be a capital
+    # or not: it begins a sentence in some places and not in others). Whoever
+    # changes the sentence changes LOSS and every place together, or this is red.
+    loss = re.compile(r"[Aa]nything you saved in AurOS goes with it\b")
+    def loss_in(path):
+        full = os.path.join(REPO, path)
+        try:
+            raw = open(full, encoding="utf-8").read()
+        except OSError:
+            return None
+        if path.endswith(".c"):
+            code = re.sub(r"/\*.*?\*/", " ", raw, flags=re.S)
+            # in one string literal on one line: a sentence split across two
+            # literals cannot be found by anyone who searches for it
+            return len(re.findall(r'"[^"\n]*' + loss.pattern + r'[^"\n]*"', code))
+        pg = Page(); pg.feed(raw)
+        return len(loss.findall(" ".join(" ".join(pg.text).split())))
+    wins = parsed.get("windows.html")
+    n_win = len(loss.findall(" ".join(" ".join(wins.text).split()))) if wins else 0
+    places = [("src/aurshell/settings.c", 2, "the Settings screen (its row and its page)"),
+              ("website/guide.html", 1, "the printable guide"),
+              ("website/index.html", 1, "the front page's questions")]
+    lost = [] if n_win >= 1 else ["the windows help page"]
+    for path, want, what in places:
+        got = loss_in(path)
+        if got is None or got < want:
+            lost.append(f"{what} ({path}: {got} of {want})")
+    check(not lost, "what Put Windows back removes is one sentence in every place: "
+          '"Anything you saved in AurOS goes with it."', "missing in " + "; ".join(lost))
 
     # 6. no web address on any page
     addr = []
