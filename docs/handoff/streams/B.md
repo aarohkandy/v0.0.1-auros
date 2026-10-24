@@ -89,8 +89,10 @@ teal one) and `tools/e2e/selftest.py` ("Close AurOS Setup"),
   download; a control program (`control.c`, plain LoadLibrary) must load them first;
   (3) `tools/dlltest.sh`, the same under Wine (red with the System32 flag removed,
   and with WinHTTP failing to load; Wine speaks for wlanapi and dwmapi only). Real
-  Windows red proof: a branch with `LoadLibraryExW(..., 0)` and no
-  `SetDefaultDllDirectories` made the step go red (run RUN-MUT, branch deleted).
+  Windows, red then green: a branch with `LoadLibraryExW(..., 0)` and no
+  `SetDefaultDllDirectories` made the step go red naming iphlpapi, oleacc, winhttp,
+  winspool, wlanapi and wtsapi32 (run 40050533851), the same code without the
+  mutation passed it (run 40050532220); both branches were deleted at once.
   **FOUND, NOT FIXED: SEC-003 is not closed.** On windows-latest (Windows 11, runs
   40043760099, 40047918166) a `cfgmgr32.dll` in the installer's folder is taken
   instead of the system's before `main` (both programs, planted DLL ran or the
