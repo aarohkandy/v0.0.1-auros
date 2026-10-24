@@ -284,6 +284,37 @@ test("an expired unpolled request keeps its original correlation identity", asyn
   assert.equal(f.calls.dispatch, 1);
 });
 
+test("a fresh receipt rechecks the same failed workflow after its successful rerun", async () => {
+  let originalRequestId;
+  let rerunSucceeded = false;
+  const f = fixture({ env: { BUILD_REQUESTS_PER_NET: "3" }, github: {
+    dispatch: async ({ requestId }) => { f.calls.dispatch++; originalRequestId = requestId; },
+    status: async ({ requestId, expectedRunId }) => {
+      f.calls.status++;
+      assert.equal(requestId, originalRequestId);
+      if (!rerunSucceeded) return { state: "failed", runId: 44, failure: "workflow_failed" };
+      assert.equal(expectedRunId, 44, "the rerun keeps the original workflow identity");
+      return { state: "download-ready", runId: 44, signedArtifactId: 8, download: { name: "AurOS-Custom.exe", url: "https://github.com/owner/repo/releases/download/v0.1.0/AurOS-Custom.exe", sha256: "e".repeat(64), bytes: 1234 }, evidence: { requestId: originalRequestId, runId: 44, manifest: "{}" } };
+    },
+  } });
+  const first = await submit(f);
+  let status = await (await f.call(first.body.status_url, { token: first.body.token })).json();
+  assert.equal(status.state, "failed");
+  assert.equal(f.calls.status, 1);
+  rerunSucceeded = true;
+  status = await (await f.call(first.body.status_url, { token: first.body.token })).json();
+  assert.equal(status.state, "failed", "a terminal receipt does not silently restart polling");
+  assert.equal(f.calls.status, 1);
+  f.time.t += 24 * 60 * 60 * 1000 + 1;
+  const repeated = await submit(f);
+  assert.notEqual(repeated.body.id, first.body.id);
+  status = await (await f.call(repeated.body.status_url, { token: repeated.body.token })).json();
+  assert.equal(status.state, "download-ready");
+  assert.equal(status.download_ready, true);
+  assert.equal(f.calls.dispatch, 1, "the successful rerun is rechecked without redispatch");
+  assert.equal(f.calls.status, 2);
+});
+
 test("canonical delivery identity survives ledger process eviction", async () => {
   const storage = new MapStorage();
   const cfg = { perNet: 1, global: 5 };
