@@ -104,6 +104,7 @@ static LRESULT acc_LresultFromObject(REFIID r, WPARAM w, LPUNKNOWN u)
 #include "hwinv_win.h"
 #include "hwcompat.h"
 #include "recipe.h"
+#include "profile_image.h"
 
 /* Baked in by build/aurbridge. A build that has not been told where
  * the image lives produces an installer that expects it to be sitting
@@ -1542,8 +1543,11 @@ static void choices_from_page(ab_choice *c)
  * one writes while the other reads. */
 static void choice_image_source(ab_choice *c)
 {
+    char image_name[40];
     memset(c, 0, sizeof *c);
     _snprintf(c->profile, sizeof c->profile - 1, "%s", ab_recipe_image_profile());
+    if (ab_profile_image_name(c->profile, image_name, sizeof image_name) != 0)
+        return;
     /* NO MEMORY STICK. See page_backup() and docs/AURBRIDGE.md,
      * "Installing without a memory stick". */
     c->no_stick = 1;
@@ -1567,9 +1571,9 @@ static void choice_image_source(ab_choice *c)
         if (k == 0 || k >= sizeof sd || sd[1] != ':') snprintf(sd, sizeof sd, "C:");
         sd[2] = 0;
         _snprintf(c->image_path, sizeof c->image_path - 1,
-                  "%s\\AurOS\\auros-desktop.img", sd);
+                  "%s\\AurOS\\%s", sd, image_name);
     }
-    beside_me(c->image_alt_path, sizeof c->image_alt_path, "auros-desktop.img");
+    beside_me(c->image_alt_path, sizeof c->image_alt_path, image_name);
     c->pieces_text = AUROS_PIECES_TEXT;
     /* WHERE TO GET IT, BAKED IN WHEN THIS WAS BUILT. Empty in a
      * developer build, which then requires the image to be sitting
