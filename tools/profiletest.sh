@@ -458,7 +458,9 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root
         grep -qx 'status=pass' "$R/mousepad-connection.txt" 2>/dev/null \
             && grep -qx 'children_at_boundaries=0' "$R/mousepad-connection.txt" 2>/dev/null \
             && grep -qx 'compositor_connections_at_boundaries=1' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'trace_writers_at_boundaries=1' "$R/mousepad-connection.txt" 2>/dev/null \
+            && grep -qx 'application_trace_writers_at_boundaries=1' "$R/mousepad-connection.txt" 2>/dev/null \
+            && grep -qx 'foreign_trace_writers_at_boundaries=0' "$R/mousepad-connection.txt" 2>/dev/null \
+            && grep -qx 'authenticated_probe_trace_writer_at_end=1' "$R/mousepad-connection.txt" 2>/dev/null \
             && grep -qx 'peer_pid=exact_aurshell' "$R/mousepad-connection.txt" 2>/dev/null \
             && grep -qx 'peer_path=exact_wayland_display' "$R/mousepad-connection.txt" 2>/dev/null \
             && grep -qx 'listener_inode=exact_wayland_display' "$R/mousepad-connection.txt" 2>/dev/null \
@@ -1058,6 +1060,31 @@ if 'fcitx5-remote -s pinyin' not in helper or 'fcitx5-remote -n' not in helper:
     raise SystemExit("focused selector must set and verify the exact engine")
 if 'top:calc(50% - 70px)' not in text or 'height:140px' not in text:
     raise SystemExit("Firefox field must be centered on the measured form click point")
+restore = text[text.index('restore_and_finish()'):text.index('fail() {')]
+loop = restore[restore.index('ibus_deadline='):restore.index('unchanged=no')]
+for required in ('as_desktop_until "$ibus_deadline" systemctl --user is-active',
+                 'ibus_identity_snapshot "$ibus_deadline" "$ipid"',
+                 'ibus list-engine --name-only',
+                 'grep -Fqx pinyin',
+                 'ibus_identity_snapshot "$ibus_deadline" "$ipid_after"',
+                 '"$identity_after" = "$identity_before"'):
+    if required not in loop:
+        raise SystemExit("IBus restoration must retry every exact readiness predicate")
+for phase in ('service_start_rc', 'service_active_seen',
+              'service_identity_seen', 'service_identity_stable_seen',
+              'pinyin_engine_seen'):
+    if phase not in restore:
+        raise SystemExit("IBus restoration must retain bounded phase evidence")
+identity = text[text.index('ibus_identity_snapshot()'):text.index('user_env=')]
+if 'cmdline != [b"/usr/bin/ibus-daemon", b"--replace", b"--xim", b""]' not in identity:
+    raise SystemExit("IBus restoration must authenticate exact argv tokens")
+if ('as_desktop_until()' not in text or 'remaining=$((deadline-now))' not in text
+        or 'identity_remaining=$((identity_deadline-identity_now))' not in text):
+    raise SystemExit("IBus restoration must share one monotonic deadline")
+for status in ('active_before_rc', 'ipid_rc', 'identity_before_rc', 'engines_rc',
+               'active_after_rc', 'ipid_after_rc', 'identity_after_rc'):
+    if f'[ "${status}" = 0 ]' not in loop:
+        raise SystemExit("IBus restoration must reject partial failed command output")
 EOPY
     then
         printf '    %-62s %s\n' "Fcitx centers each field before focused Pinyin selection" "passes"
@@ -1086,7 +1113,7 @@ EOPY
     for round in 1 2; do
         R="$security_fixture/evidence/round$round"; mkdir -p "$R"
         printf 'status=pass\n' > "$R/result"
-        printf 'status=pass\nchildren_at_boundaries=0\ncompositor_connections_at_boundaries=1\ntrace_writers_at_boundaries=1\npeer_pid=exact_aurshell\npeer_path=exact_wayland_display\nlistener_inode=exact_wayland_display\nservice_main_pid=exact_dbus_run_session\ncompositor_exe=exact_usr_bin_aurshell\nservice_invocation_id=exact_systemd_property_and_environment\nservice_control_group=exact_systemd_property\npam_session_cgroup=exact_expected_user_session_scope\ncompositor_in_pam_session_cgroup=yes\ncompositor_descends_from_service_main_pid=yes\nobserved_service_main_pid=100\nobserved_compositor_pid=102\nobserved_service_control_group=/system.slice/aurshell.service\nobserved_pam_session_control_group=/user.slice/user-1000.slice/session-c1.scope\n' > "$R/mousepad-connection.txt"
+        printf 'status=pass\nchildren_at_boundaries=0\ncompositor_connections_at_boundaries=1\napplication_trace_writers_at_boundaries=1\nforeign_trace_writers_at_boundaries=0\nauthenticated_probe_trace_writer_at_end=1\npeer_pid=exact_aurshell\npeer_path=exact_wayland_display\nlistener_inode=exact_wayland_display\nservice_main_pid=exact_dbus_run_session\ncompositor_exe=exact_usr_bin_aurshell\nservice_invocation_id=exact_systemd_property_and_environment\nservice_control_group=exact_systemd_property\npam_session_cgroup=exact_expected_user_session_scope\ncompositor_in_pam_session_cgroup=yes\ncompositor_descends_from_service_main_pid=yes\nobserved_service_main_pid=100\nobserved_compositor_pid=102\nobserved_service_control_group=/system.slice/aurshell.service\nobserved_pam_session_control_group=/user.slice/user-1000.slice/session-c1.scope\n' > "$R/mousepad-connection.txt"
         printf 'initial_unmapped_before_b_input=yes\nmapped_candidate_while_away=no\nreturn_map_epoch=fresh\npopup_input_grab=no\nb_saved_sentinel=20\na_saved_file_unchanged=yes\n' > "$R/focus-lifecycle.txt"
         printf '20\n' > "$R/focus-b-sentinel.hex"
         printf 'candidate_popup_creations=0\ncandidate_popup_maps=0\ncandidate_popup_configures=0\ncandidate_popup_grabs=0\nobserved_candidate_popup=no\nascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' > "$R/password-suppression.txt"
@@ -1112,6 +1139,22 @@ EOPY
         printf '    %-62s %s\n' "complete bounded Fcitx security evidence" "REFUSED"; fail=$((fail+1))
     fi
     checked=$((checked+1))
+    sed 's/foreign_trace_writers_at_boundaries=0/foreign_trace_writers_at_boundaries=1/' \
+        "$security_fixture/evidence/round1/mousepad-connection.txt" \
+        > "$security_fixture/evidence/round1/mousepad-connection.tmp"
+    mv "$security_fixture/evidence/round1/mousepad-connection.tmp" \
+       "$security_fixture/evidence/round1/mousepad-connection.txt"
+    if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "Fcitx connection evidence with a foreign trace writer" "refused"
+    else
+        printf '    %-62s %s\n' "Fcitx connection evidence with a foreign trace writer" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed 's/foreign_trace_writers_at_boundaries=1/foreign_trace_writers_at_boundaries=0/' \
+        "$security_fixture/evidence/round1/mousepad-connection.txt" \
+        > "$security_fixture/evidence/round1/mousepad-connection.tmp"
+    mv "$security_fixture/evidence/round1/mousepad-connection.tmp" \
+       "$security_fixture/evidence/round1/mousepad-connection.txt"
     sed '/^compositor_in_pam_session_cgroup=yes$/d' \
         "$security_fixture/evidence/round1/mousepad-connection.txt" \
         > "$security_fixture/evidence/round1/mousepad-connection.tmp"
