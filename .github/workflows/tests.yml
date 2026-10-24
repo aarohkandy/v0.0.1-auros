@@ -124,36 +124,50 @@ jobs:
           # fail only as .github/ci-allow.txt says, with a date.
           python3 - "$suite" <<'PY' | tee -a "$GITHUB_OUTPUT"
           import json, sys
-          def t(test, label, args="", only="", image=False):
-              return {"test": test, "label": label, "args": args, "only": only, "image": image}
+          def t(test, label, args="", only="", image=False,
+                installer=True, rootfs=True, staging_work=True):
+              return {"test": test, "label": label, "args": args, "only": only,
+                      "image": image, "installer": installer, "rootfs": rootfs,
+                      "staging_work": staging_work}
           gating = [
               t("nosticktest", "nosticktest"),
               t("powercuttest", "powercuttest"),
-              t("firstboottest", "firstboottest", "desktop", image=True),
+              t("firstboottest", "firstboottest", "desktop", image=True,
+                installer=False, rootfs=False, staging_work=False),
               t("installtest", "installtest"),
-              t("bootupdatetest", "bootupdatetest", image=True),
+              t("bootupdatetest", "bootupdatetest", image=True,
+                rootfs=False, staging_work=False),
               # an AurOS update on the real image under Secure Boot: arrives
               # while the desktop runs, a broken one undoes itself, the fix
               # installs (S5; green 16/16 on aptrepo runs 39965081792 and
               # 39967482502). ~12 minutes.
-              t("updateboottest", "updateboottest", image=True),
-              t("choicesboottest", "choicesboottest", image=True),
-              t("putbacktest", "putbacktest", image=True),
-              t("windowsboottest", "windowsboottest", image=True),
-              t("rollbacktest", "rollbacktest", image=True),
-              t("bootlocktest", "bootlocktest", image=True),
+              t("updateboottest", "updateboottest", image=True,
+                installer=False, rootfs=False, staging_work=False),
+              t("choicesboottest", "choicesboottest", image=True,
+                installer=False, rootfs=False, staging_work=False),
+              t("putbacktest", "putbacktest", image=True,
+                rootfs=False, staging_work=False),
+              t("windowsboottest", "windowsboottest", image=True,
+                installer=False, rootfs=False, staging_work=False),
+              t("rollbacktest", "rollbacktest", image=True,
+                installer=False, rootfs=False, staging_work=False),
+              t("bootlocktest", "bootlocktest", image=True,
+                installer=False, rootfs=False, staging_work=False),
               # The first desktop session inherits a card staging already
               # brought up. Prove NetworkManager takes it over, and that the
               # fix is what makes the difference (two real image boots).
-              t("nmassumetest", "nmassumetest", "out/auros-desktop.img", image=True),
+              t("nmassumetest", "nmassumetest", "out/auros-desktop.img", image=True,
+                installer=False, rootfs=False, staging_work=False),
               # The store must still show programs and find VLC when there is
               # no network. Keep its screenshots and GNOME Software logs with
               # the job transcript.
-              t("storeoffline", "storeoffline", "out/auros-desktop.img $PWD/transcripts/storeoffline-out", image=True),
+              t("storeoffline", "storeoffline", "out/auros-desktop.img $PWD/transcripts/storeoffline-out", image=True,
+                installer=False, rootfs=False, staging_work=False),
               # CIW: the data-safety suites that need QEMU. failtest boots the full image with
               # its desktop made to fail and looks at the screen (~7 minutes with a cold image).
-              t("failtest", "failtest", image=True),
-              t("matrixtest", "matrixtest"),
+              t("failtest", "failtest", image=True,
+                installer=False, rootfs=False, staging_work=False),
+              t("matrixtest", "matrixtest", staging_work=False),
               t("loadertest", "loadertest"),
           ]
           # tools/powercut-nostick.sh takes instants as arguments; with none it
@@ -165,7 +179,8 @@ jobs:
               t("powercut-nostick", "powercut-nostick-write", "write-mid write-end boot-mid boot-end"),
               t("powercut-nostick", "powercut-nostick-early", "gate shrink-begin shrink-end mirror-end"),
           ]
-          diagnostic = [t("putbacktest", "diagnostic-putbacktest", "desktop", image=True)]
+          diagnostic = [t("putbacktest", "diagnostic-putbacktest", "desktop", image=True,
+                          rootfs=False, staging_work=False)]
           chosen = diagnostic if sys.argv[1] == "diagnostic-putback" else (nostick if sys.argv[1] == "nostick" else gating)
           # two jobs with one label upload one artifact name twice (HTTP 409
           # fails the second) and read as one job to tools/releasegate.py;
@@ -776,13 +791,14 @@ jobs:
         if: matrix.test == 'nmassumetest'
         run: docker build -t a2-kvm:latest tools/parity
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.installer
         with:
           name: auros-installer
           path: dl/installer
           run-id: ${{ needs.which.outputs.run-id }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        if: matrix.test != 'putbacktest'
+        if: matrix.rootfs
         with:
           name: auros-rootfs
           path: dl/rootfs
@@ -806,24 +822,27 @@ jobs:
               echo "test-harness-sha=$GITHUB_SHA"
             } | tee transcripts/diagnostic-provenance.txt
           fi
-          cp dl/installer/aurbridge.exe dl/installer/aurbridge-wizard.exe dl/installer/aurbridge-sim \
-             dl/installer/auros-staging.img dl/installer/auros-staging-vmlinuz dl/installer/auros-staging-*.efi out/
-          chmod +x out/aurbridge-sim
-          # putbacktest uses only the image and staging boot files copied above.
-          if [ "${{ matrix.test }}" != putbacktest ]; then
-          sudo mkdir -p work/forge/desktop
-          zstd -dc dl/rootfs/rootfs.tar.zst | sudo tar -C work/forge/desktop --numeric-owner -xf -
-          rm -rf dl/rootfs
-          # build/staging's tree (tools/machine.sh takes its modules).
-          # A build from before it was an artifact: remade from the same
-          # rootfs, which is where its modules come from, into a scratch
-          # out/ so the tested files are untouched.
-          if [ -f dl/installer/staging-work.tar.zst ]; then
-            zstd -dc dl/installer/staging-work.tar.zst | sudo tar -C work --numeric-owner -xf -
-          else
-            sudo AUROS_STAGING_OUT="$RUNNER_TEMP/staging-out" ./build/staging desktop > /dev/null
+          if [ "${{ matrix.installer }}" = true ]; then
+            cp dl/installer/aurbridge.exe dl/installer/aurbridge-wizard.exe dl/installer/aurbridge-sim \
+               dl/installer/auros-staging.img dl/installer/auros-staging-vmlinuz dl/installer/auros-staging-*.efi out/
+            chmod +x out/aurbridge-sim
           fi
-          sudo test -d work/staging/lib/modules
+          if [ "${{ matrix.rootfs }}" = true ]; then
+            sudo mkdir -p work/forge/desktop
+            zstd -dc dl/rootfs/rootfs.tar.zst | sudo tar -C work/forge/desktop --numeric-owner -xf -
+            rm -rf dl/rootfs
+          fi
+          if [ "${{ matrix.staging_work }}" = true ]; then
+            # build/staging's tree (tools/machine.sh takes its modules).
+            # A build from before it was an artifact: remade from the same
+            # rootfs, which is where its modules come from, into a scratch
+            # out/ so the tested files are untouched.
+            if [ -f dl/installer/staging-work.tar.zst ]; then
+              zstd -dc dl/installer/staging-work.tar.zst | sudo tar -C work --numeric-owner -xf -
+            else
+              sudo AUROS_STAGING_OUT="$RUNNER_TEMP/staging-out" ./build/staging desktop > /dev/null
+            fi
+            sudo test -d work/staging/lib/modules
           fi
           if [ "${{ matrix.test }}" = powercuttest ] || [ "${{ matrix.test }}" = powercut-nostick ]; then
             # Its own staging build, with fault injection compiled in
