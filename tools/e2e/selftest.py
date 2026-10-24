@@ -537,6 +537,59 @@ def test_store_content():
     check(e2e.AurFlow.store_has_content(full), "store: a window with rows of content has content")
 
 
+def test_program_launch_proof():
+    """Store listing and preview text are not proof that the program launched."""
+    try:
+        import e2e
+    except ImportError:
+        return
+
+    def word(text, x, y, w=80, h=20, line=1):
+        return {"text": text, "x": x, "y": y, "w": w, "h": h, "line": line}
+
+    fixtures = os.path.join(HERE, "fixtures")
+    false_base = json.load(open(os.path.join(fixtures, "program-open-false-base.json")))
+    false_fast = json.load(open(os.path.join(fixtures, "program-open-false-fastpath.json")))
+    controls = ["Media", "Playback", "Audio", "Video", "Subtitle", "Tools", "View", "Help"]
+    for label, fixture in (("base error-toast", false_base), ("fastpath no-toast", false_fast)):
+        check(e2e.AurFlow.program_window_identity(
+                  fixture["words"], fixture["screen_h"], "VLC") is None,
+              f"launch: run 40131473307 {label} Software preview is not a mapped VLC app")
+        check(len(e2e.AurFlow.program_window_controls(fixture["words"], controls)) >= 2,
+              f"launch: run 40131473307 {label} contains misleading preview controls")
+    check(e2e.AurFlow.program_launch_error(false_base["words"]) ==
+          "Sorry, something went wrong",
+          "launch: run 40131473307's real Software error toast is RED")
+
+    preview = false_fast["words"]
+
+    actual_controls = [word("Media", 300, 135, line=5), word("Playback", 360, 135, line=5)]
+    task = preview + [word("VLC", 350, 688, line=2)] + actual_controls
+    check(e2e.AurFlow.program_window_identity(task, 800, "VLC")[0] == "window task" and
+          e2e.AurFlow.program_window_proven(task, 800, "VLC", controls) is None,
+          "launch: a mapped shell task must be focused before its controls can prove VLC")
+    forged_title = preview + [word("VLC", 520, 95, line=3)]
+    check(e2e.AurFlow.program_window_proven(forged_title, 800, "VLC", controls) is None,
+          "launch: a VLC title cannot borrow controls from Software's lower preview")
+    title = preview + [word("VLC", 520, 95, line=3)] + actual_controls
+    check(e2e.AurFlow.program_window_proven(title, 800, "VLC", controls) is not None,
+          "launch: a top-level VLC title plus real controls prove a visible mapped app window")
+    identity_only = preview + [word("VLC", 350, 688, line=2)]
+    check(e2e.AurFlow.program_window_identity(identity_only, 800, "VLC") is not None and
+          len(e2e.AurFlow.program_window_controls(identity_only, controls)) >= 2 and
+          e2e.AurFlow.program_window_proven(identity_only, 800, "VLC", controls) is None,
+          "launch: a task plus Software's preview controls is not enough")
+
+    error_words = [item for item in false_base["words"] if item.get("line") == [3, 1, 1]]
+    failed = task + error_words
+    check(e2e.AurFlow.program_launch_error(failed) == "Sorry, something went wrong",
+          "launch: the real Software error toast is RED even if app identity also appears")
+    privacy = [word(text, 250 + offset * 85, 400, line=6)
+               for offset, text in enumerate(("Privacy", "and", "Network", "Access", "Policy"))]
+    check(e2e.AurFlow.program_launch_error(privacy) == "Privacy and Network Access Policy",
+          "launch: VLC's privacy/network first-run dialog is not a usable app window")
+
+
 def test_label_contrast():
     """The store's Install must be readable (docs/EASY.md 4.5): dark letters on
     dark green, as run 40038619603 had them, fail; white on green passes."""
@@ -687,6 +740,7 @@ test_personalized_verdicts()
 test_generic_default_verdicts()
 test_store_frame()
 test_store_content()
+test_program_launch_proof()
 test_label_contrast()
 test_store_button_colours()
 test_flow_helpers()

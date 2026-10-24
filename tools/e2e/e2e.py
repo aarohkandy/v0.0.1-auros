@@ -73,6 +73,7 @@ STORE_QUERY = E("STORE_QUERY", "VLC")                 # typed into its search
 STORE_RESULT = E("STORE_RESULT", "VLC")               # the result to open
 STORE_INSTALL = E("STORE_INSTALL", "Install")         # the button that installs
 STORE_OPEN = E("STORE_OPEN", "Open|Launch|Press here to open")  # appears when installed
+STORE_APP_CONTROLS = E("STORE_APP_CONTROLS", "Media|Playback|Audio|Video|Subtitle|Tools|View|Help")
 # the accents the store's main button can be: AurOS's gold (legacy theme), its
 # green (#0B5D4F light, #5DBB9E dark), the old teal
 STORE_ACCENTS = ((200, 155, 74), (0x0B, 0x5D, 0x4F), (0x5D, 0xBB, 0x9E), (0x7D, 0xD3, 0xC0))
@@ -1202,9 +1203,99 @@ class Flow:
             self.m.shot("store-installed")
         with self.rec.phase("aurOS: open " + STORE_QUERY):
             self.m.click(*vision.centre(done[1]), label="open the installed program: " + done[0])
-            time.sleep(25)
-            img = self.m.shot("program-open")
-            self.log("on screen: " + vision.text_of(vision.ocr(img))[:500])
+            self.m.move(1150, 300)
+            deadline = time.time() + 120
+            while time.time() < deadline:
+                time.sleep(5)
+                img = self.m.screendump()
+                words = vision.ocr(img)
+                error = self.program_launch_error(words)
+                if error:
+                    self.m.save(img, "program-launch-failed")
+                    raise Failure(f"the store could not open {STORE_QUERY}: {error}: " +
+                                  vision.text_of(words)[:500])
+                identity = self.program_window_identity(words, img.shape[0], STORE_RESULT)
+                if identity:
+                    where, box = identity
+                    # A window task is independent compositor evidence, but the
+                    # program may still be behind Software. Bring that exact task
+                    # forward before judging its client controls; this prevents
+                    # Software's embedded VLC promotional screenshot supplying them.
+                    if where == "window task":
+                        self.m.click(*vision.centre(box), label=f"show the mapped {STORE_RESULT} window")
+                        time.sleep(3)
+                        img = self.m.screendump()
+                        words = vision.ocr(img)
+                        error = self.program_launch_error(words)
+                        if error:
+                            self.m.save(img, "program-launch-failed")
+                            raise Failure(f"{STORE_QUERY} did not reach a usable window: {error}: " +
+                                          vision.text_of(words)[:500])
+                        identity = self.program_window_identity(words, img.shape[0], STORE_RESULT)
+                    proven = self.program_window_proven(
+                        words, img.shape[0], STORE_RESULT, STORE_APP_CONTROLS.split("|"))
+                    if proven:
+                        identity, controls = proven
+                        self.m.save(img, "program-open")
+                        self.log(f"mapped program window identity: {identity}; "
+                                 f"visible controls: {', '.join(controls)}; on screen: " +
+                                 vision.text_of(words)[:500])
+                        break
+            else:
+                img = self.m.shot("program-did-not-open")
+                raise Failure(f"{STORE_QUERY} never opened a mapped program window in 2 minutes; "
+                              "the store's listing and preview are not a running app: " +
+                              vision.text_of(vision.ocr(img))[:500])
+
+    @staticmethod
+    def program_launch_error(words):
+        """A visible store error after Open is a failure, never app evidence."""
+        for message in ("Sorry, something went wrong", "This did not start",
+                        "Privacy and Network Access Policy"):
+            if vision.find_text(words, message):
+                return message
+        return None
+
+    @staticmethod
+    def program_window_identity(words, screen_h, app_name):
+        """Return visible identity belonging to a mapped top-level app window.
+
+        The shell paints mapped window identity in the top-level title band and,
+        for layouts with a window task band, at the bottom.  Store listing text
+        and its promotional screenshots live in the middle and are deliberately
+        excluded: run 40131473307 showed a VLC screenshot there after launch had
+        failed, which is not a running VLC window or process.
+        """
+        top = max(120, screen_h // 5)
+        bottom = screen_h - max(120, screen_h // 5)
+        shell_identity = [word for word in words
+                          if word.get("y", 0) + word.get("h", 0) <= top or
+                          word.get("y", 0) >= bottom]
+        box = vision.find_text(shell_identity, app_name)
+        if not box:
+            return None
+        where = "title" if box[1] < top else "window task"
+        return where, box
+
+    @staticmethod
+    def program_window_controls(words, app_controls, title_box=None):
+        """Client controls visible immediately below the foreground title."""
+        if title_box:
+            title_bottom = title_box[1] + title_box[3]
+            words = [word for word in words
+                     if title_bottom <= word.get("y", 0) <= title_bottom + 180]
+        return [control for control in app_controls if vision.find_text(words, control)]
+
+    @classmethod
+    def program_window_proven(cls, words, screen_h, app_name, app_controls):
+        """Require the app to own the foreground title and expose real controls."""
+        identity = cls.program_window_identity(words, screen_h, app_name)
+        if not identity or identity[0] != "title":
+            return None
+        controls = cls.program_window_controls(words, app_controls, identity[1])
+        if len(controls) < 2:
+            return None
+        return identity, controls
 
     @staticmethod
     def store_magnifier(img, explore_box=None):
