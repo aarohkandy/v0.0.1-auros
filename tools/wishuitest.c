@@ -585,6 +585,18 @@ static void shell_actions(void)
     say(&c, "{\"ev\":\"shell\",\"n\":45,\"do\":{\"type\":\"install_program\",\"flathub_id\":\"x\"}}");
     drain();
     ok("an action the shell does not do is refused, not faked", strstr(wrote, "\"n\":45,\"ok\":false") != NULL);
+    say(&c, "{\"ev\":\"shell\",\"n\":49,\"do\":{\"type\":\"do_not_disturb\",\"on\":true,\"until\":\"07:00\"}}");
+    drain();
+    ok("the engine's active quiet time is acknowledged", strstr(wrote, "\"n\":49,\"ok\":true") != NULL);
+    say(&c, "{\"ev\":\"shell\",\"n\":50,\"do\":{\"type\":\"do_not_disturb\",\"on\":false}}");
+    drain();
+    ok("ending quiet time is acknowledged", strstr(wrote, "\"n\":50,\"ok\":true") != NULL);
+    say(&c, "{\"ev\":\"shell\",\"n\":51,\"do\":{\"type\":\"do_not_disturb\",\"on\":\"yes\"}}");
+    drain();
+    ok("a non-boolean quiet-time state is refused", strstr(wrote, "\"n\":51,\"ok\":false") != NULL);
+    say(&c, "{\"ev\":\"shell\",\"n\":52,\"do\":{\"type\":\"do_not_disturb\"}}");
+    drain();
+    ok("a quiet-time event with no state is refused", strstr(wrote, "\"n\":52,\"ok\":false") != NULL);
     /* A shells directory with a file that is NOT one of the four looks:
      * only the name check stands between it and being applied. */
     char sdir[64], sfile[96];
