@@ -912,6 +912,16 @@ static void sc_client_configure(void)
     SETTLE();
     c = last_req(12, win, base);
     check(c && xr32(c->body + 16) <= XW_SIZE_MAX && xr32(c->body + 20) <= XW_SIZE_MAX, "an absurd size was passed on");
+    /* Keep the per-dimension cap observable independently of the area cap.  A
+     * square this large is also rejected by MAX_BUF_PIXELS, which can hide a
+     * missing xw_clamp_dim() call by restoring the window's old dimensions. */
+    base = X.n_reqs;
+    ev_configure_request(win, 0, 0, 65535, 1, XC_W | XC_H);
+    SETTLE();
+    c = last_req(12, win, base);
+    check(c && xr32(c->body + 16) == XW_SIZE_MAX && xr32(c->body + 20) == 1,
+          "one absurd dimension was not clamped (%u x %u)",
+          c ? xr32(c->body + 16) : 0, c ? xr32(c->body + 20) : 0);
     /* a window we do not manage: as asked */
     base = X.n_reqs;
     ev_configure_request(0x500000, 5, 6, 7, 8, XC_X | XC_Y | XC_W | XC_H);
@@ -1310,10 +1320,21 @@ static void sc_xclient_gone(void)
     show_window(win, 0xFF204060, "a", "a|A", 0);
     wl_client_destroy(C->x.client);
     check(C->x.client == NULL, "setup: the connection is gone");
-    check(C->x.wm->xclient == NULL, "the window manager still points at the connection that was freed");
-    ev_client(win, atom_id("WL_SURFACE_ID"), 7, 0, 0);               /* what it wrote before it died */
-    SETTLE();
-    check(C->x.wm && !C->x.wm->dead, "the window manager was killed by a message about a surface that is gone");
+    if (check(C->x.wm->xclient == NULL, "the window manager still points at the connection that was freed")) {
+        /* Run the stale message in a child so a bad lookup is reported by this
+         * scenario instead of crashing the mutation runner before its FAIL
+         * verdict.  The parent keeps a clean copy of the compositor to tear
+         * down after the probe. */
+        pid_t probe = fork();
+        if (probe == 0) {
+            ev_client(win, atom_id("WL_SURFACE_ID"), 7, 0, 0);       /* what it wrote before it died */
+            SETTLE();
+            _exit(C->x.wm && !C->x.wm->dead ? 0 : 1);
+        }
+        int status = 0;
+        check(probe > 0 && waitpid(probe, &status, 0) == probe && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+              "a message about a surface that is gone crashed or killed the window manager");
+    }
     finish();
 }
 

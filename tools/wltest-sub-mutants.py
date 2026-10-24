@@ -350,7 +350,7 @@ MUTANTS = [
     ("the copy is not offered to X when an X program gets the keyboard", "x:clip-text-wl-to-x",
      "    if (!xc_focus_base(m)) xc_release(m);\n    else if (!m->clip_wl) xc_claim(m);", "    if (!xc_focus_base(m)) xc_release(m);", XCLIP),
     ("the window manager never hears the keyboard moved", "x:clip-bg-x-refused",
-     "    xc_focus_changed(c);\n}\n/* The pointer is about to enter", "}\n/* The pointer is about to enter", XWM),
+     "    xc_focus_changed(c);", "    ;", XWM),
     ("any X program takes the clipboard from the one she is using", "x:clip-hijack",
      "    if (!fb || (owner & ~m->id_mask) != fb) {                 /* not the program she is using: it does not get to copy */", "    if (0) {", XCLIP),
     ("another X program takes it while an X program has the keyboard", "x:clip-hijack",
