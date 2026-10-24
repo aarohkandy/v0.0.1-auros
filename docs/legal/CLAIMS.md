@@ -10,7 +10,7 @@ changes before the code ships.
 
 | # | Sentence (short) | Where | Proof | Kind |
 |---|---|---|---|---|
-| 1 | The website sets no cookies, uses no analytics, loads nothing from another server | PRIVACY 2; footer | `tools/site/check.mjs` "no page asks another server for anything"; `website/assets/door.js` has no cookie, storage or request code | code |
+| 1 | The website sets no cookies, uses no analytics or advertising tracking, and its ordinary pages load nothing from another server; the optional custom-build flow uses local storage and the disclosed build API only when enabled | PRIVACY 2; footer | `tools/site/check.mjs`; `website/assets/door.js`; the custom-build adapter and `website/build-service.json` keep the service disabled by default | code |
 | 2 | GitHub hosts the site and keeps its own records of addresses | PRIVACY 2; footer | GitHub Pages docs (visitor addresses are logged for security) | external |
 | 3 | AurOS Setup sends nothing about you or your computer to us | PRIVACY 1, 3; site "Your privacy" | `src/aurbridge/plat_win.c` WinHTTP is used only to fetch the image pieces from the baked-in release address (`phases.c` `out->base`); no other network call exists in `src/aurbridge` | reading |
 | 4 | Setup downloads the image from GitHub Releases and checks it | TERMS 4; PRIVACY 3 | `aurbridge-sim getimage` in `build.yml` ("the pieces, put back together by the installer's own code"); every piece hash-checked | CI |
@@ -50,4 +50,4 @@ changes before the code ships.
 | 41 | Help pages no longer say "Your computer is fine" / "safe"; they say the page cannot see inside the computer | help `never-call`, `something-wrong`; status | `check.py` BANNED (`computer is (safe|fine)`) | code |
 | 42 | NOTICES.txt (all full license texts the copyright files point at) is attached to every AurOS release and every sources release | LICENSES; SOURCE-OFFER notes | `sources.yml` (the pointer + NOTICES step; add only); `notices.py` `referenced_texts()` fails on a text it lacks | code + CI |
 | 43 | The mail offer is valid for at least three years after the last day the release is offered, and while it is supported | SOURCE-OFFER | `check.py` `check_offer` (three-year, medium, naming rule) | code |
-
+| 44 | The optional custom-build service is off by default; words remain local; when enabled it receives only closed recipe fields, stores a 24-hour job with receipt hashes, and uses secret-keyed network hashes for quotas; GitHub Actions artifacts last 7 or 30 days while published release files have no automatic cleanup | PRIVACY 1, 2, 6, 7 | `cloud/wrangler.toml`; `cloud/src/builds.js` (`compileDesktopRecipe`, `BuildJobLedger`, `netOf`, receipt hashing); `cloud/src/worker.js` (hourly sweep); `.github/workflows/customize.yml`; `.github/workflows/sign-installer.yml`; website custom-build adapter | code; **re-check before enabling the service or changing provider retention** |
