@@ -73,11 +73,12 @@ _Last updated: 00:36 UTC 2026-10-24 (17:36 your time, 23 Oct)._
 
 ## Still red / in progress (00:36 UTC 24 Oct)
 
-- **Release candidate 6 is published (v0.1.0-b28851a, every gate green) and is on real Windows now.** The full journey is one step from green: Website → installer → AurOS's first screen works
-  (8 min with the fast path). The next step, "Start AurOS from now on", failed on every real install; the cause is
-  found and fixed twice over (76d89b9 in AurOS, 7dce7f3 in the install step). **Release candidate 6 (b28851a)**
-  carries the first fix plus the store fixes below; it publishes itself and runs the whole journey on real
-  Windows 11 (normal, BitLocker, older route) through to installing VLC.
+- **Release candidate 6 (v0.1.0-b28851a, every gate green) on real Windows 11, fast path:** website → download →
+  installer → restart → AurOS installed in 1 min 8 s → "Does everything work?" at 6 min → **"AurOS starts from now on"
+  works** (the step that failed on every real install before; fixed and now proven). The one step still red: the first
+  time she opens the store after a real install, its window opens but stays empty (on the same image started on its
+  own, VLC installs and opens: see above). Being fixed two ways: the store's catalogue will ship inside AurOS so it is
+  never empty, and the cause on the installed path is being traced. The older-route journey and BitLocker are running.
 - **The store's Install button was unreadable and its icons missing**: fixed (f38af6f, 14b3d2a) with a contrast
   test over every theme; in RC6.
 - **Gate audit, adversarially checked (docs/handoff/GATE-STATUS.md):** every high-rated safety finding has its fix on
@@ -88,6 +89,8 @@ _Last updated: 00:36 UTC 2026-10-24 (17:36 your time, 23 Oct)._
 - **Security launch blockers still open:** no disk encryption and no lock screen (SEC-008/029): the work exists
   but sits in the encryption agent's 41 held commits (item 0 below); and the update key stays readable by any
   pushed workflow until you do item 8 (SEC-004).
+- **Small things she would notice, found by a sweep and being added (about 10 MB):** Bluetooth headphones paired but
+  silent, no photo thumbnails in Files, some USB printers not set up, .zip files not opening, Eject failing.
 - **Programs:** all 10 top programs draw now, including old-style ones (VLC, Zoom), with copy-paste between old and
   new programs (79211d8). An adversarial review of that code is running before it ships.
 - **Install time:** fast path measured at 8 minutes on real Windows 11 (VM, solid-state). The website's button still
