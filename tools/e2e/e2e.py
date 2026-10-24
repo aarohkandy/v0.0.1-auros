@@ -1679,6 +1679,11 @@ def generic_default_verdicts(expected, receipt, theme, shell_target,
     out.append(("first boot completed", completed,
                 "completion line is in /var/log/auros-firstboot.log" if completed else
                 "completion line is missing from /var/log/auros-firstboot.log"))
+    rendered_line = f"firstboot: theme applied: {want_theme}"
+    rendered = (firstboot_log or "").splitlines().count(rendered_line) == 1
+    out.append(("default theme render completed", rendered,
+                rendered_line if rendered else
+                f"expected exactly one {rendered_line!r} success marker"))
 
     first = first_session_lines(journal or "")
     journal_look = any(re.search(rf"aurshell: archetype '{re.escape(look)}' \(", line)
