@@ -154,7 +154,7 @@ Layout=
 EOF
 chown -R "$desktop_user" "$RUNTIME"
 
-ibus_stopped=0; fcitx_pid=; mouse_pid=; mouse_b_pid=; firefox_pid=; password_pid=; http_pid=; password_http_pid=; connection_probe_pid=; final_state=fail; final_reason=unexpected_exit
+ibus_stopped=0; fcitx_pid=; mouse_pid=; mouse_b_pid=; firefox_pid=; password_pid=; http_pid=; password_http_pid=; password_summary=; password_focus=; connection_probe_pid=; final_state=fail; final_reason=unexpected_exit
 pid_gone() { [ -z "${1:-}" ] || [ ! -d "/proc/$1" ]; }
 wait_pid_gone() { p=$1; i=0; while [ "$i" -lt 30 ]; do pid_gone "$p" && return 0; sleep .1; i=$((i+1)); done; return 1; }
 wait_active() { u=$1; i=0; while [ "$i" -lt 30 ]; do [ "$(as_desktop systemctl --user is-active "$u" 2>/dev/null)" = active ] && return 0; sleep 1; i=$((i+1)); done; return 1; }
@@ -192,10 +192,12 @@ select_exact_pinyin() { # focused application name
 
 restore_and_finish() {
     cleanup_ok=1
+    password_server_unit_stopped=0
     : > "$STATE/cleanup-units.txt"
-    for u in auros-profiletest-fcitx-password auros-profiletest-fcitx-firefox \
+    for u in auros-profiletest-fcitx-password-http auros-profiletest-fcitx-password auros-profiletest-fcitx-firefox \
              auros-profiletest-fcitx-mousepad-b auros-profiletest-fcitx-mousepad \
              auros-profiletest-fcitx-daemon; do
+        unit_cleanup_ok=1
         stop_rc=0; as_desktop systemctl --user stop "$u" >/dev/null 2>&1 || stop_rc=$?
         show_rc=0
         unit_show=$(as_desktop systemctl --user show -p LoadState -p ActiveState -p ControlGroup \
@@ -209,17 +211,32 @@ restore_and_finish() {
             "$u" "$stop_rc" "$show_rc" "${load_state:-missing}" \
             "${unit_state:-missing}" "$cgroup_empty" >> "$STATE/cleanup-units.txt"
         if [ "$show_rc" != 0 ]; then
-            cleanup_ok=0
+            cleanup_ok=0; unit_cleanup_ok=0
         elif [ "$load_state" = not-found ]; then
-            [ "$cgroup_empty" = yes ] || cleanup_ok=0
+            [ "$cgroup_empty" = yes ] || { cleanup_ok=0; unit_cleanup_ok=0; }
         else
-            [ "$stop_rc" = 0 ] || cleanup_ok=0
-            case "$unit_state" in inactive|failed) ;; *) cleanup_ok=0 ;; esac
+            [ "$stop_rc" = 0 ] || { cleanup_ok=0; unit_cleanup_ok=0; }
+            case "$unit_state" in inactive|failed) ;; *) cleanup_ok=0; unit_cleanup_ok=0 ;; esac
         fi
-        [ "$cgroup_empty" = yes ] || cleanup_ok=0
+        [ "$cgroup_empty" = yes ] || { cleanup_ok=0; unit_cleanup_ok=0; }
+        [ "$u" != auros-profiletest-fcitx-password-http ] \
+            || password_server_unit_stopped=$unit_cleanup_ok
     done
     [ -z "${http_pid:-}" ] || { kill "$http_pid" 2>/dev/null || true; wait "$http_pid" 2>/dev/null || true; }
-    [ -z "${password_http_pid:-}" ] || { kill "$password_http_pid" 2>/dev/null || true; wait "$password_http_pid" 2>/dev/null || true; }
+    password_server_pid_gone=1
+    [ -z "${password_http_pid:-}" ] || wait_pid_gone "$password_http_pid" \
+        || { cleanup_ok=0; password_server_pid_gone=0; }
+    if [ "$password_server_unit_stopped" = 1 ] && [ "$password_server_pid_gone" = 1 ]; then
+        as_desktop rm -f ${password_focus:+"$password_focus"} \
+            ${password_summary:+"$password_summary"} "$RUNTIME/password-server.stderr" \
+            || cleanup_ok=0
+        [ -z "${password_focus:-}" ] || [ ! -e "$password_focus" ] || cleanup_ok=0
+        [ -z "${password_summary:-}" ] || [ ! -e "$password_summary" ] || cleanup_ok=0
+        [ ! -e "$RUNTIME/password-server.stderr" ] || cleanup_ok=0
+    else
+        cleanup_ok=0
+    fi
+    password_http_pid=
     [ -z "${connection_probe_pid:-}" ] || { kill "$connection_probe_pid" 2>/dev/null || true; wait "$connection_probe_pid" 2>/dev/null || true; }
     for p in "$password_pid" "$firefox_pid" "$mouse_b_pid" "$mouse_pid" "$fcitx_pid"; do
         [ -z "$p" ] || wait_pid_gone "$p" || cleanup_ok=0
@@ -546,10 +563,17 @@ if [ "$SECURITY" = 1 ]; then
     cp "$RUNTIME/firefox-profile/user.js" "$RUNTIME/password-profile/user.js"
     chown -R "$desktop_user" "$RUNTIME/password-profile"
     password_summary="$RUNTIME/password-summary"
-    rm -f "$password_summary"
-    python3 /usr/lib/auros-profiletest/fcitx_password_server.py \
-        --output "$password_summary" --port 8766 > /dev/null 2> "$RUNTIME/password-server.stderr" &
-    password_http_pid=$!
+    password_focus="$RUNTIME/password-focus"
+    as_desktop rm -f "$password_summary" "$password_focus" \
+        || fail "old reduced password evidence could not be removed"
+    as_desktop systemd-run --user --quiet --collect --unit=auros-profiletest-fcitx-password-http \
+        --property=Type=exec -- python3 /usr/lib/auros-profiletest/fcitx_password_server.py \
+        --output "$password_summary" --focus-output "$password_focus" --port 8766 \
+        >/dev/null 2>&1 || fail "password server did not start"
+    wait_active auros-profiletest-fcitx-password-http || fail "password server did not stay active"
+    password_http_pid=$(as_desktop systemctl --user show -p MainPID --value \
+        auros-profiletest-fcitx-password-http 2>/dev/null)
+    case "$password_http_pid" in ''|0|*[!0-9]*) fail "password server PID unavailable";; esac
     i=0; while [ "$i" -lt 30 ]; do
         python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8766/", timeout=1).read(1)' \
             >/dev/null 2>&1 && break
@@ -574,8 +598,11 @@ if [ "$SECURITY" = 1 ]; then
     act baseline "fcitx-round$security_round-password-focus" || fail "password focus baseline failed"
     password_boundary=$(wc -c < "$password_trace" | tr -d ' ')
     act click-form || fail "password field focus failed"
-    act candidate-shot "fcitx-round$security_round-password-focus" \
-        "fcitx-round$security_round-password-focused" || fail "password focus was not visibly confirmed"
+    i=0; while [ "$i" -lt 30 ] && ! grep -qx 'focus_event_observed=yes' \
+        "$password_focus" 2>/dev/null; do sleep .1; i=$((i+1)); done
+    [ "$i" -lt 30 ] || fail "password focus event unavailable"
+    act form-shot "fcitx-round$security_round-password-focused" \
+        || fail "focused password form was not visible"
     act type-pinyin || fail "synthetic password input failed"
     act shot "fcitx-round$security_round-password-masked" || fail "masked password screenshot failed"
     act key ret || fail "synthetic password submit failed"
@@ -590,12 +617,18 @@ if [ "$SECURITY" = 1 ]; then
     python3 /usr/lib/auros-profiletest/fcitx_wayland_trace.py "$password_trace" \
         --after-byte "$password_boundary" --no-popup > "$STATE/password-suppression.txt" \
         2> "$STATE/password-suppression.stderr" || fail "password field popup suppression failed"
+    cat "$password_focus" >> "$STATE/password-suppression.txt"
     cat "$password_summary" >> "$STATE/password-suppression.txt"
     trace_has_no_input_text "$password_trace" || fail "password protocol trace retained input text"
-    rm -f "$password_summary" "$RUNTIME/password-server.stderr"
-    [ ! -e "$password_summary" ] && [ ! -e "$RUNTIME/password-server.stderr" ] \
+    as_desktop systemctl --user stop auros-profiletest-fcitx-password-http >/dev/null 2>&1 \
+        || fail "password server stop failed"
+    wait_pid_gone "$password_http_pid" || fail "password server PID remained"
+    password_http_pid=
+    as_desktop rm -f "$password_focus" "$password_summary" "$RUNTIME/password-server.stderr"
+    [ ! -e "$password_focus" ] && [ ! -e "$password_summary" ] \
+        && [ ! -e "$RUNTIME/password-server.stderr" ] \
         || fail "password value or event logs remained"
-    printf 'raw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' \
+    printf 'raw_password_focus_log_retained=no\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' \
         >> "$STATE/password-suppression.txt"
 fi
 printf 'service_owner_stable=yes\n' >> "$STATE/fcitx.process"
