@@ -1250,18 +1250,26 @@ class Flow:
             t = time.time()
             self.m.start()
             self.m.auto_shots(10)
-            # a key every half second stops the menu's 3-second countdown
+            # The menu counts down 3 seconds and OCR takes longer than that, so first a
+            # key every 0.4 s, blind, for as long as the firmware and shim need (any key
+            # stops the countdown for good); only then look (run 40047642180 looked too
+            # early, the countdown ran out and AurOS's desktop came up).
+            end_blind = time.time() + 40
+            while time.time() < end_blind:
+                self.m.key("shift")
+                time.sleep(0.4)
             seen_menu = False
-            deadline = time.time() + 180
+            deadline = time.time() + 120
             while time.time() < deadline and not seen_menu:
                 self.m.key("shift")
-                time.sleep(0.5)
-                if int(time.time() - t) % 4 == 0:
-                    img = self.m.screendump()
-                    words = vision.ocr(img)
-                    seen_menu = bool(vision.find_text(words, "verbose") or vision.find_text(words, "GRUB"))
+                words = vision.ocr(self.m.screendump())
+                seen_menu = bool(vision.find_text(words, "verbose") or vision.find_text(words, "GRUB"))
+                if not seen_menu:
+                    self.log("start menu: not yet: " + vision.text_of(words)[:160])
             if not seen_menu:
-                raise Failure("AurOS's start menu never showed after the restart")
+                self.m.shot("start-menu-never-showed")
+                raise Failure("AurOS's start menu never showed after the restart: " +
+                              vision.text_of(vision.ocr(self.m.screendump()))[:300])
             self.m.shot("start-menu")
             self.pick_grub_entry("Windows")
             # Windows starts through the firmware (start-windows), BitLocker sealed to it:
