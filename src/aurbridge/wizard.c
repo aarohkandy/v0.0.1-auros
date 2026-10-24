@@ -5477,6 +5477,13 @@ static int shot_run(const char *dir)
         fx_machine(0); fx_ready(); g_sel_style = STYLE_DEFAULT;
         g_page = PAGE_WELCOME; snprintf(n, sizeof n, "%s-1c-welcome-ready", SZ[k].pre); shot_save(dir, n);
         g_page = PAGE_STYLE;   snprintf(n, sizeof n, "%s-3a-style", SZ[k].pre);         shot_save(dir, n);
+#if defined(AB_CHOICE_BRING_WIFI) && defined(AB_CHOICE_BITLOCKER_PAUSE)
+        /* Match --navtest's longest fast-path Ready fixture so CI keeps
+         * screenshots of the layout it actually gates at every size. */
+        g_report.wifi_connected = 1;
+        snprintf(g_report.wifi_name, sizeof g_report.wifi_name, "HomeNet");
+        g_report.volumes[0].bitlocker = 1;
+#endif
         g_page = PAGE_READY;   snprintf(n, sizeof n, "%s-4a-ready", SZ[k].pre);         shot_save(dir, n);
         g_page = PAGE_PROGRESS;
         g_install_running = 1; g_install_finished = 0;
@@ -5704,10 +5711,10 @@ static int nav_test(const char *dir)
                 InterlockedExchange(&g_dl_state, P[i].p == PAGE_WELCOME ? 1 : 0);
                 render();
                 InterlockedExchange(&g_dl_state, 0);
-                if (P[i].p == PAGE_READY && g_short) {
-                    /* the Terms' risk and agreement (stream LEGAL) are more words than a
-                     * small screen holds: Ready may scroll there, but the risk is its first
-                     * row and the agreement and Install AurOS stay in view beside it */
+                if (P[i].p == PAGE_READY && g_content_h > g_view_h) {
+                    /* Ready may scroll whenever its measured rows need the room. The risk
+                     * remains first, the agreement and Install AurOS remain in the fixed
+                     * footer, and the end of every row remains reachable. */
                     int pr = -1, tl = -1;
                     for (int j = 0; j < g_nw; j++) {
                         if (g_w[j].id == ID_PRIMARY) pr = j;
@@ -5719,6 +5726,19 @@ static int nav_test(const char *dir)
                     nt_check(g_content_h > g_view_h && pr >= 0 && tl >= 0 &&
                              g_w[pr].r.bottom <= g_ch && g_w[tl].r.bottom <= g_w[pr].r.top
                              && g_w[tl].r.top >= g_body.bottom - S(60) && g_scroll[scr_i()] == 0, what);
+                    scroll_by(g_content_h);
+                    render();
+                    snprintf(what, sizeof what,
+                             "the whole Ready page can be reached by scrolling on %s", SZ[k].name);
+                    nt_check(g_scroll[scr_i()] == g_content_h - g_view_h, what);
+#ifdef AB_CHOICE_BRING_WIFI
+                    int wifi = -1;
+                    for (int j = 0; j < g_nw; j++) if (g_w[j].id == ID_WIFI) wifi = j;
+                    snprintf(what, sizeof what,
+                             "scrolling reaches the last Ready choice on %s", SZ[k].name);
+                    nt_check(wifi >= 0 && g_w[wifi].r.top >= g_body.top &&
+                             g_w[wifi].r.bottom <= g_body.bottom, what);
+#endif
                 } else {
                     snprintf(what, sizeof what, "the %s page fits %s without scrolling",
                              P[i].name, SZ[k].name);
