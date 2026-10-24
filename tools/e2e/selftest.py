@@ -364,6 +364,10 @@ def test_bitlocker_putback_contract():
     check("manage-bde" not in inspect.getsource(e2e.Flow.bitlocker_evidence) and
           "RecoveryPassword" not in inspect.getsource(e2e.Flow.bitlocker_evidence),
           "put-back: evidence schema excludes raw protector output")
+    putback_guest_source = (inspect.getsource(e2e.Flow.prepare_putback_windows) +
+                            inspect.getsource(e2e.Flow.putback_final_state))
+    check("$c=" not in putback_guest_source and "$c." not in putback_guest_source,
+          "put-back: guest scripts preserve the helper's command-envelope variable")
     wait_source = inspect.getsource(e2e.Flow.wait_windows_return)
     check(wait_source.index("self.write_bitlocker_return(evidence)") <
           wait_source.index("if time.time() > deadline"),
@@ -767,6 +771,43 @@ def test_store_content():
     check(e2e.AurFlow.store_has_content(full), "store: a window with rows of content has content")
 
 
+def test_store_result():
+    """The query and first result can have exactly the same name."""
+    try:
+        import e2e
+    except ImportError:
+        return
+
+    def word(text, x, y, w=28, h=18, line=1):
+        return {"text": text, "x": x, "y": y, "w": w, "h": h, "line": line}
+
+    # Run 40138682256, screenshot 0045: the old full-screen lookup clicked
+    # (343,162), the Search entry, instead of the catalogue title near y=254.
+    query = word("VLC", 330, 153, line=1)
+    result = word("VLC", 371, 248, line=2)
+    words = [query, result,
+             word("VLC", 371, 272, line=3), word("media", 405, 272, line=3)]
+    check(e2e.AurFlow.store_result(words, 800, "VLC", "VLC") == (371, 248, 28, 18),
+          "store result: duplicate query text selects the real catalogue row")
+    check(e2e.AurFlow.store_result([query], 800, "VLC", "VLC") is None,
+          "store result: query text alone is not a catalogue result")
+    duplicate = word("VLC", 371, 348, line=4)
+    check(e2e.AurFlow.store_result([result, duplicate], 800, "VLC", "VLC") is None,
+          "store result: a missing query cannot make a result's identity ambiguous")
+    prefix = word("VLCstream", 371, 248, w=80, line=2)
+    prefix_query = word("VLCstream", 330, 153, w=80, line=1)
+    description = [word("VLC", 371, 248, line=2),
+                   word("media", 405, 248, w=45, line=2)]
+    check(e2e.AurFlow.store_result([query, prefix], 800, "VLC", "VLC") is None,
+          "store result: a prefixed app name is not the requested result")
+    check(e2e.AurFlow.store_result([prefix_query, result], 800, "VLC", "VLC") is None,
+          "store result: a prefixed query cannot anchor a result click")
+    check(e2e.AurFlow.store_result([query] + description, 800, "VLC", "VLC") is None,
+          "store result: description text containing the query is not a title")
+    check(e2e.AurFlow.store_result([query, result, duplicate], 800, "VLC", "VLC") is None,
+          "store result: duplicate exact result rows fail closed")
+
+
 def test_program_launch_proof():
     """Store listing and preview text are not proof that the program launched."""
     try:
@@ -988,6 +1029,7 @@ test_personalized_verdicts()
 test_generic_default_verdicts()
 test_store_frame()
 test_store_content()
+test_store_result()
 test_program_launch_proof()
 test_label_contrast()
 test_store_button_colours()

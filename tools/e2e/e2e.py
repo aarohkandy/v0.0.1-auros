@@ -671,6 +671,20 @@ class Flow:
             time.sleep(every)
         return None, None, None
 
+    def wait_store_result(self, query, phrase, timeout, every=10):
+        """Wait for a named catalogue row, excluding the query field."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if not self.m.alive():
+                raise Failure("the machine switched off")
+            img = self.m.screendump()
+            words = vision.ocr(img)
+            found = self.store_result(words, img.shape[0], query, phrase)
+            if found:
+                return found, words
+            time.sleep(every)
+        return None, None
+
     # -- 1. Windows, as the person finds it --
     def boot_windows(self):
         with self.rec.phase("windows: power on to the desktop"):
@@ -725,13 +739,13 @@ class Flow:
             "}finally{$a.Dispose()}}; "
             "$p=Join-Path $env:USERPROFILE 'Documents\\auros-e2e-before.txt'; "
             f"[IO.File]::WriteAllText($p,'{token}',[Text.Encoding]::ASCII); "
-            "$c=Get-Partition -DriveLetter C; "
+            "$cpart=Get-Partition -DriveLetter C; "
             "$pm=((Get-Partition|Sort-Object DiskNumber,Offset|ForEach-Object{"
             "'{0}|{1}|{2}|{3}|{4}'-f $_.DiskNumber,$_.PartitionNumber,$_.Offset,$_.Size,$_.GptType})-join';'); "
             "$fwRaw=& bcdedit.exe /enum firmware 2>&1; if($LASTEXITCODE -ne 0){throw 'bcdedit failed'}; "
             "$fw=(($fwRaw|Out-String).Trim()); "
             "$h=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power').HiberbootEnabled; "
-            "$s=@{c_bytes=[uint64]$c.Size;c_offset=[uint64]$c.Offset;partition_sha256=(H $pm);"
+            "$s=@{c_bytes=[uint64]$cpart.Size;c_offset=[uint64]$cpart.Offset;partition_sha256=(H $pm);"
             "firmware_sha256=(H $fw);hiberboot=[int]$h;"
             "canary_sha256=(Get-FileHash $p -Algorithm SHA256).Hash.ToLowerInvariant()}; "
             "'AUROS_PUTBACK_BASE '+($s|ConvertTo-Json -Compress)")
@@ -1416,8 +1430,8 @@ class Flow:
                 self.m.type(STORE_QUERY, label="search")
                 self.m.key("ret")
                 # the catalogue can take a minute or two after first going online
-                p, found, _ = self.wait_text([STORE_RESULT], 90, every=10)
-                if p:
+                found, _ = self.wait_store_result(STORE_QUERY, STORE_RESULT, 90, every=10)
+                if found:
                     break
                 self.m.shot("store-no-result-yet")
             if not found:
@@ -1660,6 +1674,47 @@ class Flow:
         lum = img[300].astype(int).sum(axis=1) // 3       # a row through the window's body
         frame = next((x for x in range(200, 400) if lum[x] < 110), None)
         return (frame + 47, cy) if frame else None
+
+    @staticmethod
+    def store_result(words, screen_h, query, phrase):
+        """The one exact result-title line below the typed query, or None.
+
+        Run 40138682256 exposed ``VLC`` in both places. A full-screen lookup
+        clicked the query at y=162 instead of the result at y=254. Relative
+        placement distinguishes them without assuming a window size, while an
+        exact, unique line refuses prefixes, descriptions and ambiguous rows.
+        """
+        lines = {}
+        for word in words:
+            raw_line = word.get("line")
+            key = tuple(raw_line) if isinstance(raw_line, (list, tuple)) else (raw_line,)
+            lines.setdefault(key, []).append(word)
+
+        def normalized(line):
+            text = " ".join(word.get("text", "") for word in
+                            sorted(line, key=lambda word: word.get("x", 0)))
+            return re.sub(r"[^a-z0-9]", "", text.lower())
+
+        def box(line):
+            x0 = min(word.get("x", 0) for word in line)
+            y0 = min(word.get("y", 0) for word in line)
+            x1 = max(word.get("x", 0) + word.get("w", 0) for word in line)
+            y1 = max(word.get("y", 0) + word.get("h", 0) for word in line)
+            return x0, y0, x1 - x0, y1 - y0
+
+        want_query = re.sub(r"[^a-z0-9]", "", query.lower())
+        want_result = re.sub(r"[^a-z0-9]", "", phrase.lower())
+        query_boxes = [box(line) for line in lines.values()
+                       if normalized(line) == want_query and
+                       box(line)[1] + box(line)[3] < screen_h // 4]
+        if len(query_boxes) != 1:
+            return None
+        query_box = query_boxes[0]
+        query_bottom = query_box[1] + query_box[3]
+        candidates = [box(line) for line in lines.values()
+                      if normalized(line) == want_result and
+                      box(line)[1] >= screen_h // 4 and box(line)[1] > query_bottom]
+        return candidates[0] if len(candidates) == 1 else None
 
     @staticmethod
     def store_frame(img):
@@ -1974,7 +2029,7 @@ class Flow:
             "([BitConverter]::ToString($a.ComputeHash([Text.Encoding]::UTF8.GetBytes($x)))-replace'-','').ToLowerInvariant()"
             "}finally{$a.Dispose()}}; "
             "$st=$null; try {$st=Get-Content 'C:\\ProgramData\\AurOS\\user\\status.json' -Raw|ConvertFrom-Json}catch{}; "
-            "$c=Get-Partition -DriveLetter C; "
+            "$cpart=Get-Partition -DriveLetter C; "
             "$pm=((Get-Partition|Sort-Object DiskNumber,Offset|ForEach-Object{"
             "'{0}|{1}|{2}|{3}|{4}'-f $_.DiskNumber,$_.PartitionNumber,$_.Offset,$_.Size,$_.GptType})-join';'); "
             "$fwRaw=& bcdedit.exe /enum firmware 2>&1; if($LASTEXITCODE -ne 0){throw 'bcdedit failed'}; "
@@ -1985,7 +2040,7 @@ class Flow:
             "$tasks=@(Get-ScheduledTask -ErrorAction SilentlyContinue|Where-Object {$_.TaskName -like 'AurOS put-back*'}); "
             "$vols=@(Get-Volume -ErrorAction SilentlyContinue|Where-Object {$_.FileSystemLabel -eq 'AUROSHANDOV'}); "
             "$s=@{phase=$(if($st){[string]$st.phase}else{''});status_at=$(if($st){[string]$st.at}else{''});"
-            "c_bytes=[uint64]$c.Size;c_offset=[uint64]$c.Offset;partition_sha256=(H $pm);firmware_sha256=(H $fw);hiberboot=[int]$h;"
+            "c_bytes=[uint64]$cpart.Size;c_offset=[uint64]$cpart.Offset;partition_sha256=(H $pm);firmware_sha256=(H $fw);hiberboot=[int]$h;"
             "canary_sha256=$(if(Test-Path -LiteralPath $can){(Get-FileHash -LiteralPath $can -Algorithm SHA256).Hash.ToLowerInvariant()}else{''});"
             "restored_sha256=$(if(Test-Path -LiteralPath $rest){(Get-FileHash -LiteralPath $rest -Algorithm SHA256).Hash.ToLowerInvariant()}else{''});"
             "handover_volumes=[int]$vols.Count;putback_tasks=[int]$tasks.Count}; "
