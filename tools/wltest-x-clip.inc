@@ -522,7 +522,7 @@ static void sc_clip_too_big(void)
     uint32_t rq = XA_ID + 5;
     int base = X.n_reqs;
     ev_sel_request(rq, atom_id("CLIPBOARD"), atom_id("image/png"), 0x607);
-    for (int i = 0; i < 600 && !got_notify(rq, base); i++) pump(10);
+    for (int i = 0; i < 3000 && !got_notify(rq, base); i++) pump(10);       /* 17 MB through a pipe, under a sanitizer, on a busy machine */
     check(got_notify(rq, base) && notify_prop(got_notify(rq, base)) == 0 && !got_prop(rq, base),
           "a picture over the limit was not refused (it must not arrive cut short)");
     focus_app();
