@@ -79,20 +79,24 @@ DISK="$TMP/disk.img"
 # the same numbers and a partition table that disagrees with the
 # journal by a typo would look exactly like the attack the journal is
 # there to stop.
-# One gibibyte of Windows, not four. The surface test reads every
+# Two gibibytes of Windows, not four. The surface test reads every
 # sector of the reclaimable space and that is almost the whole cost of
 # this suite under emulation; a bigger volume buys nothing, because
 # what is being tested is that the read happens and reports honestly,
-# not how long a real disk takes.
+# not how long a real disk takes. Not one: the dry run asks for the
+# floor (`aurstage.min_gb=1`) PLUS the part AurOS starts from and a copy
+# of the machine's own EFI partition (about 1.6 GB together), so a 1 GiB
+# volume was refused (verdict=no-room, correctly) for months and the
+# suite's one red stopped meaning anything.
 P1S=2048;    P1E=206847        # ESP, 100 MiB
-P2S=206848;  P2E=2303999       # Windows, 1 GiB
-P3S=2304000; P3E=6291422       # AurOS, the rest of 3 GiB
+P2S=206848;  P2E=4401151       # Windows, 2 GiB
+P3S=4401152; P3E=6291422       # AurOS, the rest of 3 GiB
 SERIAL=AUROSTEST
 DISKSECT=6291456               # 3 GiB in 512-byte sectors
 truncate -s 3G "$DISK"
 sgdisk --zap-all "$DISK" >/dev/null 2>&1
 sgdisk -n 1:2048:+100M -t 1:ef00 -c 1:"EFI"     "$DISK" >/dev/null 2>&1
-sgdisk -n 2:0:+1G      -t 2:0700 -c 2:"Windows" "$DISK" >/dev/null 2>&1
+sgdisk -n 2:0:+2G      -t 2:0700 -c 2:"Windows" "$DISK" >/dev/null 2>&1
 sgdisk -n 3:0:0        -t 3:8304 -c 3:"AurOS"   "$DISK" >/dev/null 2>&1
 
 mkpart() { # start-sector end-sector kind
@@ -286,8 +290,8 @@ echo "  the dry run, all the way through"
 # floor, and every sector of the reclaimable space read back. On a
 # two-gigabyte volume under emulation this is the slowest case here,
 # and that is the point -- it is doing the reading.
-# aurstage.min_gb=1 because this fixture's Windows volume is a
-# gibibyte: the real floor is twenty-four, and a twenty-five gigabyte
+# aurstage.min_gb=1 because this fixture's Windows volume is two
+# gibibytes: the real floor is twenty-four, and a twenty-five gigabyte
 # fixture would be a twenty-five gigabyte surface test under emulation
 # for no extra confidence. The floor itself gets its own case below.
 run_case "a healthy machine: it says it could be converted" \

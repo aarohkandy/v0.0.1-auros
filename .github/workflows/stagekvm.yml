@@ -108,8 +108,8 @@ jobs:
           zstd -dc dl/installer/staging-work.tar.zst | sudo tar -C work --numeric-owner -xf -
           sudo ./build/staging desktop > transcripts/build-staging.txt 2>&1 || { tail -20 transcripts/build-staging.txt; exit 1; }
           # (the engine carries the signed shim and grub the line above leaves in out/, so it is built after it;
-          # root made those files, and the engine's build runs as the runner)
-          sudo chmod -R a+rX out
+          # sudo made out/ and work/ root's, and the engine's build runs as the runner)
+          sudo chown -R "$(id -u):$(id -g)" out work
           sh build/aurbridge > transcripts/build-aurbridge.txt 2>&1 || { tail -20 transcripts/build-aurbridge.txt; exit 1; }
           sudo AURSTAGE_FAULT=1 ./build/staging desktop > transcripts/build-staging-fault.txt 2>&1 || { tail -20 transcripts/build-staging-fault.txt; exit 1; }
           ls -la out
