@@ -30,6 +30,10 @@ def _diagnostic_path(value: str) -> bool:
             "tools/profiletest-fcitx-guest.sh",
             "tools/fcitx_wayland_trace.py",
             "tools/test_fcitx_wayland_trace.py",
+            "tools/fcitx_connection_probe.py",
+            "tools/test_fcitx_connection_probe.py",
+            "tools/fcitx_password_server.py",
+            "tools/test_fcitx_password_server.py",
         }
         or re.fullmatch(r"tools/profiletest[^/]*", value) is not None
     )
@@ -118,22 +122,28 @@ def decide(subject: str, files: list[str]) -> dict[str, object]:
     }
 
 
-def probe_mode(x11: str, fcitx: str) -> dict[str, str]:
+def probe_mode(x11: str, fcitx: str, security: str) -> dict[str, str]:
     values = {"true": "1", "false": "0", "": "0"}
-    if x11 not in values or fcitx not in values:
+    if x11 not in values or fcitx not in values or security not in values:
         raise ValueError("diagnostic probe options must be booleans")
     selected_x11 = values[x11]
     selected_fcitx = values[fcitx]
+    selected_security = values[security]
     if selected_x11 == "1" and selected_fcitx == "1":
         raise ValueError("x11_panel_probe and fcitx_client_probe are mutually exclusive")
-    if selected_fcitx == "1":
+    if selected_security == "1" and selected_fcitx != "1":
+        raise ValueError("fcitx_security_probe requires fcitx_client_probe")
+    if selected_security == "1":
+        mode = "fcitx-security"
+    elif selected_fcitx == "1":
         mode = "fcitx-client"
     elif selected_x11 == "1":
         mode = "x11-panel"
     else:
         mode = "ibus-functional"
     ibus = "0" if selected_fcitx == "1" else "1"
-    return {"ibus": ibus, "x11": selected_x11, "fcitx": selected_fcitx, "mode": mode}
+    return {"ibus": ibus, "x11": selected_x11, "fcitx": selected_fcitx,
+            "security": selected_security, "mode": mode}
 
 
 def _selftest() -> None:
@@ -147,6 +157,10 @@ def _selftest() -> None:
         "tools/profiletest-fcitx-guest.sh",
         "tools/fcitx_wayland_trace.py",
         "tools/test_fcitx_wayland_trace.py",
+        "tools/fcitx_connection_probe.py",
+        "tools/test_fcitx_connection_probe.py",
+        "tools/fcitx_password_server.py",
+        "tools/test_fcitx_password_server.py",
         ".github/workflows/profiles.yml",
         "docs/handoff/streams/P.md",
     ]
@@ -175,16 +189,20 @@ def _selftest() -> None:
     assert decide("unfinished [profiles", ["docs/note.md"])["list"] == list(PROFILES)
     functional = decide("[ibus-functional]", ["docs/note.md"])
     assert functional["list"] == ["multilingual"] and functional["ibus_functional"] is True
-    assert probe_mode("false", "false") == {
-        "ibus": "1", "x11": "0", "fcitx": "0", "mode": "ibus-functional",
+    assert probe_mode("false", "false", "false") == {
+        "ibus": "1", "x11": "0", "fcitx": "0", "security": "0", "mode": "ibus-functional",
     }
-    assert probe_mode("true", "false") == {
-        "ibus": "1", "x11": "1", "fcitx": "0", "mode": "x11-panel",
+    assert probe_mode("true", "false", "false") == {
+        "ibus": "1", "x11": "1", "fcitx": "0", "security": "0", "mode": "x11-panel",
     }
-    assert probe_mode("false", "true") == {
-        "ibus": "0", "x11": "0", "fcitx": "1", "mode": "fcitx-client",
+    assert probe_mode("false", "true", "false") == {
+        "ibus": "0", "x11": "0", "fcitx": "1", "security": "0", "mode": "fcitx-client",
     }
-    for options in (("true", "true"), ("yes", "false"), ("false", "1")):
+    assert probe_mode("false", "true", "true") == {
+        "ibus": "0", "x11": "0", "fcitx": "1", "security": "1", "mode": "fcitx-security",
+    }
+    for options in (("true", "true", "false"), ("yes", "false", "false"),
+                    ("false", "1", "false"), ("false", "false", "true")):
         try:
             probe_mode(*options)
         except ValueError:
@@ -225,6 +243,7 @@ def main() -> None:
     mode = sub.add_parser("probe-mode")
     mode.add_argument("--x11", required=True)
     mode.add_argument("--fcitx", required=True)
+    mode.add_argument("--security", required=True)
     mode.add_argument("--github-output", type=Path, required=True)
     sub.add_parser("selftest")
     args = parser.parse_args()
@@ -235,7 +254,7 @@ def main() -> None:
 
     if args.command == "probe-mode":
         try:
-            result = probe_mode(args.x11, args.fcitx)
+            result = probe_mode(args.x11, args.fcitx, args.security)
         except ValueError as exc:
             parser.error(str(exc))
         lines = [f"{key}={value}" for key, value in result.items()]

@@ -434,6 +434,89 @@ judge_fcitx_client_probe() { # evidence-root screenshot-root
         || bad "the shipped IBus session and user config were restored" "restore evidence missing"
 }
 
+judge_fcitx_security_probe() { # evidence-root screenshot-root
+    D=$1; SHOTS=$2
+    for round in 1 2; do
+        R="$D/round$round"
+        grep -qx 'status=pass' "$R/result" 2>/dev/null \
+            && ok "Fcitx security round $round completed" \
+            || bad "Fcitx security round $round completed" "missing pass result"
+        round_apps=yes
+        for app in mousepad firefox; do
+            [ "$(od -An -tx1 "$R/$app.txt" 2>/dev/null | tr -d ' \n')" = e4bda0e5a5bd ] \
+                && grep -qx 'parented_mapped_popup_count=1' "$R/$app-popup.txt" 2>/dev/null \
+                && grep -qx 'popup_input_grab=no' "$R/$app-popup.txt" 2>/dev/null \
+                && grep -qx 'layer_shell_objects=0' "$R/$app-popup.txt" 2>/dev/null \
+                || round_apps=no
+        done
+        [ "$round_apps" = yes ] \
+            && grep -qx 'mousepad=pinyin' "$R/selected-engines.txt" 2>/dev/null \
+            && grep -qx 'firefox=pinyin' "$R/selected-engines.txt" 2>/dev/null \
+            && grep -qx 'raw_protocol_logs_retained=no' "$R/protocol-summary.txt" 2>/dev/null \
+            && ok "round $round repeated exact composition and popup predicates" \
+            || bad "round $round repeated exact composition and popup predicates" "first-stage round evidence missing"
+        grep -qx 'status=pass' "$R/mousepad-connection.txt" 2>/dev/null \
+            && grep -qx 'children_at_boundaries=0' "$R/mousepad-connection.txt" 2>/dev/null \
+            && grep -qx 'compositor_connections_at_boundaries=1' "$R/mousepad-connection.txt" 2>/dev/null \
+            && grep -qx 'trace_writers_at_boundaries=1' "$R/mousepad-connection.txt" 2>/dev/null \
+            && grep -qx 'peer_pid=exact_aurshell' "$R/mousepad-connection.txt" 2>/dev/null \
+            && grep -qx 'peer_path=exact_wayland_display' "$R/mousepad-connection.txt" 2>/dev/null \
+            && grep -qx 'listener_inode=exact_wayland_display' "$R/mousepad-connection.txt" 2>/dev/null \
+            && ok "Mousepad held one exact AurWL connection in round $round" \
+            || bad "Mousepad held one exact AurWL connection in round $round" "pidfd/socket identity evidence missing"
+        grep -qx 'initial_unmapped_before_b_input=yes' "$R/focus-lifecycle.txt" 2>/dev/null \
+            && grep -qx 'mapped_candidate_while_away=no' "$R/focus-lifecycle.txt" 2>/dev/null \
+            && grep -qx 'return_map_epoch=fresh' "$R/focus-lifecycle.txt" 2>/dev/null \
+            && grep -qx 'popup_input_grab=no' "$R/focus-lifecycle.txt" 2>/dev/null \
+            && grep -qx 'b_saved_sentinel=20' "$R/focus-lifecycle.txt" 2>/dev/null \
+            && grep -qx 'a_saved_file_unchanged=yes' "$R/focus-lifecycle.txt" 2>/dev/null \
+            && grep -qx '20' "$R/focus-b-sentinel.hex" 2>/dev/null \
+            && ok "A to B to A revoked and freshly mapped the candidate in round $round" \
+            || bad "A to B to A revoked and freshly mapped the candidate in round $round" "focus lifecycle evidence missing"
+        grep -qx 'observed_candidate_popup=no' "$R/password-suppression.txt" 2>/dev/null \
+            && grep -qx 'candidate_popup_creations=0' "$R/password-suppression.txt" 2>/dev/null \
+            && grep -qx 'candidate_popup_maps=0' "$R/password-suppression.txt" 2>/dev/null \
+            && grep -qx 'candidate_popup_configures=0' "$R/password-suppression.txt" 2>/dev/null \
+            && grep -qx 'candidate_popup_grabs=0' "$R/password-suppression.txt" 2>/dev/null \
+            && grep -qx 'ascii_value_exact=yes' "$R/password-suppression.txt" 2>/dev/null \
+            && grep -qx 'composition_start_count=0' "$R/password-suppression.txt" 2>/dev/null \
+            && grep -qx 'composition_update_count=0' "$R/password-suppression.txt" 2>/dev/null \
+            && grep -qx 'composition_end_count=0' "$R/password-suppression.txt" 2>/dev/null \
+            && grep -qx 'composition_input_count=0' "$R/password-suppression.txt" 2>/dev/null \
+            && grep -qx 'raw_password_value_log_retained=no' "$R/password-suppression.txt" 2>/dev/null \
+            && grep -qx 'raw_password_event_log_retained=no' "$R/password-suppression.txt" 2>/dev/null \
+            && ok "the synthetic password field showed no observed popup or browser composition event in round $round" \
+            || bad "the synthetic password field showed no observed popup or browser composition event in round $round" "bounded suppression evidence missing"
+        [ -s "$SHOTS/fcitx-round$round-focus-away.png" ] \
+            && [ -s "$SHOTS/fcitx-round$round-password-focused.png" ] \
+            && [ -s "$SHOTS/fcitx-round$round-password-masked.png" ] \
+            && ok "round $round focus and masked-password screenshots were retained" \
+            || bad "round $round focus and masked-password screenshots were retained" "security screenshot missing"
+        grep -qx 'ordinary_service_ready=1' "$R/restore.txt" 2>/dev/null \
+            && grep -qx 'user_config_unchanged=yes' "$R/restore.txt" 2>/dev/null \
+            && grep -qx 'cleanup_pids_gone=1' "$R/restore.txt" 2>/dev/null \
+            && ok "round $round restored shipped IBus and removed transient processes" \
+            || bad "round $round restored shipped IBus and removed transient processes" "round cleanup evidence missing"
+        grep -qx 'exe=/usr/bin/fcitx5' "$R/fcitx.process" 2>/dev/null \
+            && grep -qx 'cmdline=/usr/bin/fcitx5 -D' "$R/fcitx.process" 2>/dev/null \
+            && grep -qx 'display_unset=yes' "$R/fcitx.process" 2>/dev/null \
+            && grep -qx 'wayland_display_unset=yes' "$R/fcitx.process" 2>/dev/null \
+            && grep -qx 'service_owner_stable=yes' "$R/fcitx.process" 2>/dev/null \
+            && ok "round $round retained the exact isolated Fcitx process" \
+            || bad "round $round retained the exact isolated Fcitx process" "process identity evidence missing"
+    done
+    grep -qx 'fcitx_autostart_before_explicit_launch=no' "$D/round2/reboot.txt" 2>/dev/null \
+        && ok "Fcitx did not autostart after the scratch reboot" \
+        || bad "Fcitx did not autostart after the scratch reboot" "round-two prelaunch evidence missing"
+    h1=$(sed -n 's/^config_hash=//p' "$D/round1/fcitx.process" 2>/dev/null)
+    h2=$(sed -n 's/^config_hash=//p' "$D/round2/fcitx.process" 2>/dev/null)
+    [ -n "$h1" ] && [ "$h1" = "$h2" ] \
+        && ok "both rounds used the exact same isolated Fcitx configuration" \
+        || bad "both rounds used the exact same isolated Fcitx configuration" "config hashes differ or are missing"
+    printf '    %-62s %s\n' "Firefox Wayland connection identity" \
+        "UNPROVEN -- this stage authenticates the Mousepad interval only"
+}
+
 # Judge the opt-in diagnostic without turning the absence of a candidate
 # window into product evidence.  Server PID identity can be useful when no
 # panel window mapped, but only a mapped window carries geometry evidence.
@@ -946,6 +1029,13 @@ EOF
         fail=$((fail+1))
     fi
     checked=$((checked+1))
+    if python3 -m unittest -q tools/test_fcitx_connection_probe.py tools/test_fcitx_password_server.py; then
+        printf '    %-62s %s\n' "the Fcitx connection and password reducers" "pass"
+    else
+        printf '    %-62s %s\n' "the Fcitx connection and password reducers" "FAIL"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
     if python3 - tools/profiletest-fcitx-guest.sh <<'EOPY'
 import sys
 text = open(sys.argv[1], encoding="utf-8").read()
@@ -977,6 +1067,63 @@ EOPY
         fail=$((fail+1))
     fi
     checked=$((checked+1))
+    if PROFILETEST_FCITX_SECURITY_PROBE=1 PROFILETEST_FCITX_CLIENT_PROBE=0 \
+       sh tools/profiletest.sh boot multilingual 2>&1 | grep -Fq 'requires the Fcitx client probe'; then
+        printf '    %-62s %s\n' "the Fcitx security stage cannot silently enable its prerequisite" "passes"
+    else
+        printf '    %-62s %s\n' "the Fcitx security stage cannot silently enable its prerequisite" "FAIL"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    security_fixture="$T/fcitx-security"; mkdir -p "$security_fixture/evidence" "$security_fixture/shots"
+    for round in 1 2; do
+        R="$security_fixture/evidence/round$round"; mkdir -p "$R"
+        printf 'status=pass\n' > "$R/result"
+        printf 'status=pass\nchildren_at_boundaries=0\ncompositor_connections_at_boundaries=1\ntrace_writers_at_boundaries=1\npeer_pid=exact_aurshell\npeer_path=exact_wayland_display\nlistener_inode=exact_wayland_display\n' > "$R/mousepad-connection.txt"
+        printf 'initial_unmapped_before_b_input=yes\nmapped_candidate_while_away=no\nreturn_map_epoch=fresh\npopup_input_grab=no\nb_saved_sentinel=20\na_saved_file_unchanged=yes\n' > "$R/focus-lifecycle.txt"
+        printf '20\n' > "$R/focus-b-sentinel.hex"
+        printf 'candidate_popup_creations=0\ncandidate_popup_maps=0\ncandidate_popup_configures=0\ncandidate_popup_grabs=0\nobserved_candidate_popup=no\nascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' > "$R/password-suppression.txt"
+        printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\ncleanup_pids_gone=1\n' > "$R/restore.txt"
+        printf 'exe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\nconfig_hash=abc\ndisplay_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\n' > "$R/fcitx.process"
+        for app in mousepad firefox; do
+            printf '\344\275\240\345\245\275' > "$R/$app.txt"
+            printf 'parented_mapped_popup_count=1\npopup_input_grab=no\nlayer_shell_objects=0\n' > "$R/$app-popup.txt"
+        done
+        printf 'mousepad=pinyin\nfirefox=pinyin\n' > "$R/selected-engines.txt"
+        printf 'raw_protocol_logs_retained=no\n' > "$R/protocol-summary.txt"
+        printf x > "$security_fixture/shots/fcitx-round$round-focus-away.png"
+        printf x > "$security_fixture/shots/fcitx-round$round-password-focused.png"
+        printf x > "$security_fixture/shots/fcitx-round$round-password-masked.png"
+    done
+    printf 'fcitx_autostart_before_explicit_launch=no\n' > "$security_fixture/evidence/round2/reboot.txt"
+    security_refuses() {
+        ( fail=0; checked=0; judge_fcitx_security_probe "$1/evidence" "$1/shots" >/dev/null 2>&1; echo "$fail" )
+    }
+    if [ "$(security_refuses "$security_fixture")" = 0 ]; then
+        printf '    %-62s %s\n' "complete bounded Fcitx security evidence" "accepted"
+    else
+        printf '    %-62s %s\n' "complete bounded Fcitx security evidence" "REFUSED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    rm "$security_fixture/evidence/round2/focus-lifecycle.txt"
+    if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "Fcitx security evidence missing focus revocation" "refused"
+    else
+        printf '    %-62s %s\n' "Fcitx security evidence missing focus revocation" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    printf 'initial_unmapped_before_b_input=yes\nmapped_candidate_while_away=no\nreturn_map_epoch=fresh\npopup_input_grab=no\nb_saved_sentinel=20\na_saved_file_unchanged=yes\n' > "$security_fixture/evidence/round2/focus-lifecycle.txt"
+    sed 's/composition_update_count=0/composition_update_count=1/' \
+        "$security_fixture/evidence/round1/password-suppression.txt" \
+        > "$security_fixture/evidence/round1/password-suppression.tmp"
+    mv "$security_fixture/evidence/round1/password-suppression.tmp" \
+       "$security_fixture/evidence/round1/password-suppression.txt"
+    if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "Fcitx security evidence with password composition" "refused"
+    else
+        printf '    %-62s %s\n' "Fcitx security evidence with password composition" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
     echo
     [ "$fail" -eq 0 ] && { echo "$checked checks: every check refuses what it exists to refuse."; exit 0; }
     echo "$fail of $checked wrong."; exit 1
@@ -992,6 +1139,8 @@ IBUS_X11_PROBE=${PROFILETEST_IBUS_X11_PROBE:-0}
 case "$IBUS_X11_PROBE" in 0|1) ;; *) echo "PROFILETEST_IBUS_X11_PROBE must be 0 or 1"; exit 2 ;; esac
 FCITX_CLIENT_PROBE=${PROFILETEST_FCITX_CLIENT_PROBE:-0}
 case "$FCITX_CLIENT_PROBE" in 0|1) ;; *) echo "PROFILETEST_FCITX_CLIENT_PROBE must be 0 or 1"; exit 2 ;; esac
+FCITX_SECURITY_PROBE=${PROFILETEST_FCITX_SECURITY_PROBE:-0}
+case "$FCITX_SECURITY_PROBE" in 0|1) ;; *) echo "PROFILETEST_FCITX_SECURITY_PROBE must be 0 or 1"; exit 2 ;; esac
 if [ "$IBUS_FUNCTIONAL" = 1 ] && [ "$P" != multilingual ]; then
     echo "PROFILETEST_IBUS_FUNCTIONAL=1 is only valid for the multilingual profile"
     exit 2
@@ -1008,6 +1157,10 @@ if [ "$FCITX_CLIENT_PROBE" = 1 ] && [ "$P" != multilingual ]; then
     echo "PROFILETEST_FCITX_CLIENT_PROBE=1 is only valid for multilingual"
     exit 2
 fi
+if [ "$FCITX_SECURITY_PROBE" = 1 ] && [ "$FCITX_CLIENT_PROBE" != 1 ]; then
+    echo "PROFILETEST_FCITX_SECURITY_PROBE=1 requires the Fcitx client probe"
+    exit 2
+fi
 INPUT_FUNCTIONAL=$IBUS_FUNCTIONAL
 [ "$FCITX_CLIENT_PROBE" = 1 ] && INPUT_FUNCTIONAL=1
 for t in qemu-system-x86_64 sgdisk python3 losetup mount; do
@@ -1019,7 +1172,9 @@ CODE=/usr/share/OVMF/OVMF_CODE_4M.fd; VARS=/usr/share/OVMF/OVMF_VARS_4M.fd
 IMG="out/auros-$P.img"
 if [ ! -f "$IMG" ] && [ -f "$IMG.zst" ]; then IMG="$IMG.zst"; fi
 [ -f "$IMG" ] || { echo "no image for $P: run sudo ./build/all $P --keep=raw"; exit 2; }
-if [ "$INPUT_FUNCTIONAL" = 1 ]; then
+if [ "$FCITX_SECURITY_PROBE" = 1 ]; then
+    TIMEOUT="${PROFILETEST_TIMEOUT:-2400}"
+elif [ "$INPUT_FUNCTIONAL" = 1 ]; then
     TIMEOUT="${PROFILETEST_TIMEOUT:-1800}"
 else
     TIMEOUT="${PROFILETEST_TIMEOUT:-900}"
@@ -1183,6 +1338,13 @@ if [ "$FCITX_CLIENT_PROBE" = 1 ]; then
         "$M/usr/lib/auros-profiletest/fcitx-functional.sh"
     install -m 755 "$ROOT/tools/fcitx_wayland_trace.py" \
         "$M/usr/lib/auros-profiletest/fcitx_wayland_trace.py"
+    if [ "$FCITX_SECURITY_PROBE" = 1 ]; then
+        install -m 755 "$ROOT/tools/fcitx_connection_probe.py" \
+            "$M/usr/lib/auros-profiletest/fcitx_connection_probe.py"
+        install -m 755 "$ROOT/tools/fcitx_password_server.py" \
+            "$M/usr/lib/auros-profiletest/fcitx_password_server.py"
+        : > "$M/usr/lib/auros-profiletest/fcitx-security.enabled"
+    fi
 elif [ "$IBUS_FUNCTIONAL" = 1 ]; then
     install -m 755 "$ROOT/tools/profiletest-ibus-guest.sh" \
         "$M/usr/lib/auros-profiletest/ibus-functional.sh"
@@ -1365,12 +1527,15 @@ ibus_host_action() {
         done
         ;;
       key)
-        case "${1:-}" in spc|ret) send_qcode "$1" >/dev/null 2>&1 || action_ok=1 ;;
+        case "${1:-}" in spc|ret|esc|backspace) send_qcode "$1" >/dev/null 2>&1 || action_ok=1 ;;
             *) action_ok=1 ;; esac
         ;;
       chord)
-        [ "${1:-}" = ctrl ] && [ "${2:-}" = s ] \
-            && send_chord ctrl s >/dev/null 2>&1 || action_ok=1
+        if [ "${1:-}" = ctrl ] && { [ "${2:-}" = s ] || [ "${2:-}" = q ]; }; then
+            send_chord ctrl "$2" >/dev/null 2>&1 || action_ok=1
+        else
+            action_ok=1
+        fi
         ;;
       click-center)
         click_center >/dev/null 2>&1 || action_ok=1
@@ -1496,6 +1661,9 @@ if [ "$IBUS_FUNCTIONAL" = 1 ]; then
 fi
 if [ "$FCITX_CLIENT_PROBE" = 1 ]; then
     judge_fcitx_client_probe "$EV/fcitx" "$EV"
+    if [ "$FCITX_SECURITY_PROBE" = 1 ]; then
+        judge_fcitx_security_probe "$EV/fcitx" "$EV"
+    fi
 fi
 drawn_enough "$S1" && ok "the screen shows a desktop ($S1)" \
                    || bad "the screen shows a desktop" "$S1"

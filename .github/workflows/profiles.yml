@@ -51,6 +51,11 @@ on:
         required: false
         default: false
         type: boolean
+      fcitx_security_probe:
+        description: Add two-round focus and sensitive-field checks to the FCITX diagnostic
+        required: false
+        default: false
+        type: boolean
 
 # contents: write is for the jobs that make or fill a release, and only
 # those (SEC-005): a job that runs a lot of code cannot replace what a
@@ -83,7 +88,9 @@ jobs:
       - name: profile gate rejects unsafe suppression
         run: python3 tools/profiletest-gate.py selftest
       - name: FCITX trace parser rejects malformed evidence
-        run: python3 -m unittest -v tools/test_fcitx_wayland_trace.py
+        run: |
+          python3 -m unittest -v tools/test_fcitx_wayland_trace.py \
+            tools/test_fcitx_connection_probe.py tools/test_fcitx_password_server.py
       - id: g
         env:
           MSG: ${{ github.event.head_commit.message }}
@@ -153,6 +160,9 @@ jobs:
               "the FCITX probe exists only in the retained diagnostic":
                   "PROFILETEST_FCITX_CLIENT_PROBE" not in profile and
                   retest.count("PROFILETEST_FCITX_CLIENT_PROBE") == 1,
+              "the FCITX security stage exists only in the retained diagnostic":
+                  "PROFILETEST_FCITX_SECURITY_PROBE" not in profile and
+                  retest.count("PROFILETEST_FCITX_SECURITY_PROBE") == 1,
               "diagnostic probe options are validated together":
                   "profiletest-gate.py probe-mode" in retest,
           }
@@ -395,6 +405,7 @@ jobs:
           python3 tools/profiletest-gate.py probe-mode \
             --x11 '${{ inputs.x11_panel_probe }}' \
             --fcitx '${{ inputs.fcitx_client_probe }}' \
+            --security '${{ inputs.fcitx_security_probe }}' \
             --github-output "$GITHUB_OUTPUT"
       - name: accept only one completed main profiles run from this repository
         id: source
@@ -481,6 +492,7 @@ jobs:
           sudo env PATH="$PATH" PROFILETEST_IBUS_FUNCTIONAL="${{ steps.mode.outputs.ibus }}" \
             PROFILETEST_IBUS_X11_PROBE="${{ steps.mode.outputs.x11 }}" \
             PROFILETEST_FCITX_CLIENT_PROBE="${{ steps.mode.outputs.fcitx }}" \
+            PROFILETEST_FCITX_SECURITY_PROBE="${{ steps.mode.outputs.security }}" \
             sh tools/profiletest.sh boot multilingual "$PWD/ev" 2>&1 | tee ev/multilingual-boot.txt
           rc=${PIPESTATUS[0]}
           set -e
@@ -491,7 +503,8 @@ jobs:
             --result "$result" --output ev/multilingual-retest-v1.json
           DIAGNOSTIC_MODE='${{ steps.mode.outputs.mode }}' \
           X11_PANEL_PROBE='${{ steps.mode.outputs.x11 }}' \
-          FCITX_CLIENT_PROBE='${{ steps.mode.outputs.fcitx }}' python3 - <<'PY'
+          FCITX_CLIENT_PROBE='${{ steps.mode.outputs.fcitx }}' \
+          FCITX_SECURITY_PROBE='${{ steps.mode.outputs.security }}' python3 - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -503,6 +516,7 @@ jobs:
           value["diagnostic_mode"] = os.environ["DIAGNOSTIC_MODE"]
           value["x11_panel_probe"] = os.environ["X11_PANEL_PROBE"] == "1"
           value["fcitx_client_probe"] = os.environ["FCITX_CLIENT_PROBE"] == "1"
+          value["fcitx_security_probe"] = os.environ["FCITX_SECURITY_PROBE"] == "1"
           temporary = path.with_suffix(".json.tmp")
           temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           temporary.replace(path)
@@ -519,7 +533,9 @@ jobs:
                    ev/multilingual-image.txt ev/multilingual-serial.txt ev/multilingual-boot.txt \
                    ev/ibus-round*-candidate.png ev/ibus-x11-before.png ev/ibus-x11-preedit.png \
                    ev/fcitx-mousepad-candidate.png ev/fcitx-mousepad-committed.png \
-                   ev/fcitx-firefox-candidate.png ev/fcitx-firefox-submitted.png; do
+                   ev/fcitx-firefox-candidate.png ev/fcitx-firefox-submitted.png \
+                   ev/fcitx-round*-focus-away.png ev/fcitx-round*-password-focused.png \
+                   ev/fcitx-round*-password-masked.png; do
             [ -f "$f" ] && files+=("$f")
           done
           if [ -d ev/ibus ]; then

@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Serve one synthetic password field and retain only boolean test results."""
+import argparse
+import http.server
+import urllib.parse
+from pathlib import Path
+
+PAGE = b'''<!doctype html><meta charset="utf-8"><style>html,body,form{width:100%;height:100%;margin:0}form{position:relative;background:#01dead}input{position:absolute;left:15%;top:calc(50% - 70px);width:70%;height:140px;font-size:48px}input:focus{outline:12px solid #1234ef}</style><form method="post" autocomplete="off"><input type="password" name="value" autocomplete="new-password" aria-label="Synthetic password test"><input type="hidden" name="starts" value="0"><input type="hidden" name="updates" value="0"><input type="hidden" name="ends" value="0"><input type="hidden" name="compositioninputs" value="0"><button hidden>Submit</button></form><script>let s=0,u=0,e=0,c=0;const i=document.querySelector('input[type=password]');i.addEventListener('compositionstart',()=>s++);i.addEventListener('compositionupdate',()=>u++);i.addEventListener('compositionend',()=>e++);i.addEventListener('beforeinput',x=>{if(x.isComposing||String(x.inputType).includes('Composition'))c++});i.addEventListener('input',x=>{if(x.isComposing||String(x.inputType).includes('Composition'))c++});document.querySelector('form').addEventListener('submit',()=>{for(const [n,v] of [['starts',s],['updates',u],['ends',e],['compositioninputs',c]])document.querySelector('[name='+n+']').value=v})</script>'''
+
+
+def bounded_result(body: bytes) -> str:
+    if len(body) > 256:
+        raise ValueError("request body too large")
+    values = urllib.parse.parse_qs(body.decode("ascii", "strict"),
+                                  keep_blank_values=True, strict_parsing=True)
+    counters = {"starts", "updates", "ends", "compositioninputs"}
+    if set(values) != {"value"} | counters or any(len(v) != 1 for v in values.values()):
+        raise ValueError("unexpected request fields")
+    numbers = {name: values[name][0] if values[name][0].isdigit() else "invalid" for name in counters}
+    return (f"ascii_value_exact={'yes' if values['value'][0] == 'nihao' else 'no'}\n"
+            f"composition_start_count={numbers['starts']}\n"
+            f"composition_update_count={numbers['updates']}\n"
+            f"composition_end_count={numbers['ends']}\n"
+            f"composition_input_count={numbers['compositioninputs']}\n")
+
+
+def serve(output: Path, port: int) -> None:
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def do_GET(self):
+            if self.path != "/":
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(PAGE)))
+            self.end_headers()
+            self.wfile.write(PAGE)
+
+        def do_POST(self):
+            try:
+                length = int(self.headers.get("Content-Length", "-1"))
+                if length < 0 or length > 256:
+                    raise ValueError("invalid content length")
+                result = bounded_result(self.rfile.read(length))
+                output.write_text(result, encoding="ascii")
+            except (UnicodeError, ValueError):
+                self.send_error(400)
+                return
+            self.send_response(204)
+            self.end_headers()
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.serve_forever()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--port", type=int, default=8766)
+    args = parser.parse_args()
+    serve(args.output, args.port)
+
+
+if __name__ == "__main__":
+    main()
