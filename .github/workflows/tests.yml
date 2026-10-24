@@ -268,6 +268,9 @@ jobs:
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           { sh tools/wishesoff.sh selftest && sh tools/wishesoff.sh work/forge/desktop/rootfs; } 2>&1 | tee transcripts/wishesoff.txt
+      - name: firstboot retries a partial generic theme render
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/firstboottest.sh selftest 2>&1 | tee transcripts/firstboot-retry-selftest.txt
       - name: aurfirsttest
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/aurfirsttest.sh 2>&1 | tee transcripts/aurfirsttest.txt
