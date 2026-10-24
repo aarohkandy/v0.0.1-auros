@@ -74,7 +74,7 @@ teal one) and `tools/e2e/selftest.py` ("Close AurOS Setup"),
   licenses.html), and skips a test-data line marked `wordlint:ignore`. windows.yml
   `pins` tests this repository's newest AurOS release (the `release_tag` input names
   one), says which in the summary, and FAILS when there is none; the old repository's
-  v4 files are no longer a fallback.
+  v4 files are no longer a fallback. `windows-known-bad` is this build's own wizard with a spoiled manifest (`tools/pe_payload.py dashed`, made in the build job, refused-by-`check` there), so nothing is fetched from the old repository.
 - **SEC-003 extras (the DLL fix itself is A2's: `plat_harden_dll_search()` first in
   `main`/`WinMain`, `plat_load_system_dll()` for every load by name, the
   KnownDLLs-only link gate in `fastpath.yml`) and what they found.** Added: (1)
@@ -106,6 +106,42 @@ teal one) and `tools/e2e/selftest.py` ("Close AurOS Setup"),
   in the module list). The windows.yml step "KNOWN OPEN (SEC-003)..." reports it red
   without failing the job. Next idea: find which import combination does it (the
   module order is in the run 40047918166 log) and drop or load that one late.
+- **SEC-003, the unelevated bootstrapper: evaluated, and the design as asked is UNSOUND;
+  a sound variant is written down, not built (awaiting a go).** The design: the
+  downloaded exe runs `asInvoker`, makes a private directory "only SYSTEM and
+  Administrators can write", copies itself there, checks the copy, `runas`-es it; the
+  elevated copy refuses to run unless its directory has exactly that ACL. Why it
+  fails: (1) an UNELEVATED process cannot make such a directory. It owns what it
+  creates, and an owner can always rewrite the ACL (WRITE_DAC); it cannot make
+  Administrators the owner (a filtered token has that group deny-only and no
+  SeTakeOwnership/SeRestore). So the "private" directory is her own, and any program
+  running as her can swap the copy between the check and the `runas`, or put DLLs
+  beside it, which is the whole threat. (2) the elevated copy's "refuse unless the
+  directory has exactly that ACL" runs in `main`, after the loader has already taken
+  cfgmgr32/cryptbase/cryptsp from that directory: the same hole. (3) UAC would be
+  approving a path she cannot see into. **A sound variant**, which needs the ELEVATED
+  stage to be the minimal one: the downloaded `AurOS-Setup.exe` becomes a stub that
+  imports kernel32 only (`-nostdlib`), manifest `requireAdministrator` exactly as
+  today; first thing `SetDefaultDllDirectories`; then, being elevated (so Administrators
+  CAN own it), it creates a fresh directory under %ProgramData% with a protected ACL
+  (A2's `plat_dir_private` rules, SEC-010), writes the real installer from its own
+  resource with CREATE_NEW, runs it from there (the child inherits the elevation, no
+  second prompt), waits, deletes the directory (a restart kills the stub; the next run
+  removes stale ones, owner Administrators only). The one premise, shown on real
+  Windows: a kernel32-only program loads none of the planted cfgmgr32, cryptbase,
+  cryptsp, sechost, rpcrt4, sspicli, bcrypt, winhttp (probe `p_k32`, run 40047084974;
+  advapi32, setupapi, shell32, ole32, oleaut32, msvcrt and user32/gdi32 alone did not
+  either, so the hole is in how the real programs combine their imports). Your
+  checklist: the UAC prompt is the same file, name, icon, "unknown publisher" and path
+  as today; SmartScreen/Smart App Control judge the downloaded file (the stub), and the
+  extracted child carries no mark-of-the-web, so no second warning (SAC blocks an
+  unsigned one equally either way); e2e: one UAC prompt as today, arguments forwarded,
+  CI keeps running the wizard exe directly; resume after a restart is unchanged (the
+  running child already copies itself, hash-checked, to Program Files); the fast
+  path's C:\AurOS is the child's (SEC-001/010) as now; cleanup as above. Cost: two
+  programs per release (E's release.yml and SignPath sign the stub), one more CI check
+  (canary beside the stub: green; a mutant that extracts into Downloads: red). Not
+  built because the design asked for is not the one that works; say go and I build it.
 - **LEGAL's installer strings and the Terms/Licenses (docs/handoff/streams/LEGAL.md,
   "B" items).** Done: 1 (Ready's first row is the hazard in her words, and the
   next row says "Any change to a drive carries some risk. Copy anything you
