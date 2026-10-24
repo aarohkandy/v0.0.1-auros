@@ -97,3 +97,20 @@ with a screenshot, an image size and a boot result for each.
 Actions: the `profiles` run is green, and each profile's PNG shows its desktop (office: rail in
 slate; revive: taskbar in ember; school-kiosk: locked, only the browser; multilingual: rail,
 French).
+
+### Re-run only the multilingual typing diagnostic
+
+A push whose subject contains `[ibus-functional]` retains that run's multilingual image in
+90 MiB pieces on its `profiles-<run-id>` prerelease. The small manifest is also kept in the
+immutable `profile-multilingual` Actions artifact. To exercise newer test code against those
+exact old image bytes without rebuilding the OS:
+
+```
+gh workflow run profiles.yml --ref main -f retained_multilingual_run_id=<source-run-id>
+```
+
+The workflow accepts only a completed `main` push of this repository's `profiles.yml`, verifies
+the immutable manifest and every release asset before unpacking, and records the image source
+SHA separately from the current test source SHA. This is diagnostic evidence only. It does not
+certify a new production image. Only the newest retained multilingual image is kept; after its
+small Actions artifact expires, reuse fails closed and a new `[ibus-functional]` build is needed.
