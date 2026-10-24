@@ -47,6 +47,40 @@ E=tools/efivarstore.py
 CODE=/usr/share/OVMF/OVMF_CODE_4M.ms.fd
 VARS=/usr/share/OVMF/OVMF_VARS_4M.ms.fd
 BOOT_TIMEOUT="${PUTBACK_TIMEOUT:-1200}"
+POLL_INTERVAL="${PUTBACK_POLL_INTERVAL:-2}"
+EVIDENCE="${PUTBACK_EVIDENCE:-$PWD/transcripts/putbacktest-evidence}"
+
+case "$BOOT_TIMEOUT:$POLL_INTERVAL" in
+    *[!0-9:]*|:*|*:) echo "PUTBACK_TIMEOUT and PUTBACK_POLL_INTERVAL must be positive integers"; exit 2 ;;
+esac
+[ "$BOOT_TIMEOUT" -gt 0 ] 2>/dev/null && [ "$POLL_INTERVAL" -gt 0 ] 2>/dev/null \
+    || { echo "PUTBACK_TIMEOUT and PUTBACK_POLL_INTERVAL must be positive integers"; exit 2; }
+
+# Return 124 only when a still-running boot reaches its deadline. A normal
+# shutdown and the restore's final report are both successful ends.
+wait_for_boot() { # pid serial
+    waited=0
+    while kill -0 "$1" 2>/dev/null && [ "$waited" -lt "$BOOT_TIMEOUT" ]; do
+        grep -aq 'aurstage-report v1 verdict=restore' "$2" && { sleep 3; return 0; }
+        sleep "$POLL_INTERVAL"
+        waited=$((waited + POLL_INTERVAL))
+    done
+    kill -0 "$1" 2>/dev/null && return 124
+    return 0
+}
+
+# A quick regression for the deadline itself; it needs no image or QEMU.
+if [ "${PUTBACK_SELFTEST:-}" = timeout ]; then
+    s=$(mktemp); : > "$s"
+    sleep 30 & p=$!
+    BOOT_TIMEOUT=1; POLL_INTERVAL=1
+    wait_for_boot "$p" "$s"; rc=$?
+    kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null
+    rm -f "$s"
+    [ "$rc" -eq 124 ] || { echo "timeout selftest: expected 124, got $rc"; exit 1; }
+    echo "timeout selftest: ok"
+    exit 0
+fi
 
 fail=0; checked=0
 ok()  { checked=$((checked+1)); printf '    %-62s %s\n' "$1" "ok"; }
@@ -192,37 +226,93 @@ python3 "$E" "$NV" set-next 0002 || { echo "  could not make the firmware"; exit
 
 BOOTN=0
 QEXTRA=""
+capture_framebuffer() { # qmp output
+    python3 - "$1" "$2" <<'PY'
+import json, socket, sys, time
+
+sock = socket.socket(socket.AF_UNIX)
+sock.settimeout(1)
+deadline = time.monotonic() + 3
+while True:
+    try:
+        sock.connect(sys.argv[1])
+        break
+    except (FileNotFoundError, ConnectionRefusedError):
+        if time.monotonic() >= deadline:
+            raise
+        time.sleep(0.1)
+stream = sock.makefile("rwb", buffering=0)
+stream.readline()
+for command in (
+    {"execute": "qmp_capabilities"},
+    {"execute": "screendump", "arguments": {"filename": sys.argv[2]}},
+):
+    stream.write(json.dumps(command).encode() + b"\n")
+    while True:
+        reply = json.loads(stream.readline())
+        if "return" in reply:
+            break
+        if "error" in reply:
+            raise RuntimeError(reply["error"])
+sock.close()
+PY
+}
+
+save_timeout_evidence() { # boot serial qmp
+    mkdir -p "$EVIDENCE"
+    tail -c 1048576 "$2" > "$EVIDENCE/serial-$1.log" 2>/dev/null || :
+    capture_framebuffer "$3" "$EVIDENCE/framebuffer-$1.ppm" 2> "$EVIDENCE/framebuffer-$1.error" || :
+    [ -s "$EVIDENCE/framebuffer-$1.error" ] || rm -f "$EVIDENCE/framebuffer-$1.error"
+}
+
+save_guest_evidence() { # boot
+    if mount_root; then
+        tail -c 1048576 "$T/m/var/lib/auros-e2e/log" > "$EVIDENCE/guest-$1.log" 2>/dev/null || :
+        grub-editenv "$T/m/boot/grub/grubenv" list > "$EVIDENCE/grubenv-$1.txt" 2>&1 || :
+        for f in "$T/m/var/lib/auros-e2e"/answer.log.* "$T/m/var/lib/auros-e2e"/result.*; do
+            [ -f "$f" ] || continue
+            tail -c 262144 "$f" > "$EVIDENCE/$(basename "$f")"
+        done
+        umount_root
+    else
+        printf 'could not mount AUROS-ROOT after timeout\n' > "$EVIDENCE/guest-$1.error"
+    fi
+}
+
 power_on() { # mode
     BOOTN=$((BOOTN + 1))
     mount_root || return 1
     printf '%s\n' "$1" > "$T/m/etc/auros-e2e/mode"
     printf '%s\n' "$BOOTN" > "$T/m/etc/auros-e2e/boot"
     umount_root
-    SER="$T/serial.$BOOTN"; : > "$SER"
+    SER="$T/serial.$BOOTN"; QMP="$T/qmp.$BOOTN"; : > "$SER"
     qemu-system-x86_64 -machine q35,smm=on,accel=tcg -m 2048 -smp 2 -no-reboot \
         -global driver=cfi.pflash01,property=secure,value=on \
         -drive if=pflash,format=raw,unit=0,readonly=on,file="$CODE" \
         -drive if=pflash,format=raw,unit=1,file="$NV" \
         -drive file="$DISK",format=raw,if=none,id=d0 -device virtio-blk-pci,drive=d0 \
         -drive file="$WIN",format=raw,if=none,id=d1 -device virtio-blk-pci,drive=d1 \
-        -device virtio-vga -display none -serial file:"$SER" -net none $QEXTRA \
+        -device virtio-vga -display none -serial file:"$SER" \
+        -qmp unix:"$QMP",server=on,wait=off -net none $QEXTRA \
         >/dev/null 2>&1 &
     QP=$!
-    i=0
-    while kill -0 "$QP" 2>/dev/null && [ "$i" -lt "$BOOT_TIMEOUT" ]; do
-        # The restore stops and waits for the power button; its report
-        # line is the end of what there is to read.
-        grep -aq 'aurstage-report v1 verdict=restore' "$SER" && { sleep 3; break; }
-        sleep 2; i=$((i + 2))
-    done
+    wait_for_boot "$QP" "$SER"; rc=$?
+    [ "$rc" -eq 124 ] && save_timeout_evidence "$BOOTN" "$SER" "$QMP"
     kill -9 "$QP" 2>/dev/null; wait "$QP" 2>/dev/null; QP=""
+    if [ "$rc" -eq 124 ]; then
+        save_guest_evidence "$BOOTN"
+        echo "  ERROR: boot $BOOTN exceeded its ${BOOT_TIMEOUT}s deadline"
+        echo "  diagnostic evidence: $EVIDENCE"
+        return 124
+    fi
+    return 0
 }
 e2e_log() { mount_root && cat "$T/m/var/lib/auros-e2e/log" 2>/dev/null; umount_root; }
 grubenv_list() { mount_root && grub-editenv "$T/m/boot/grub/grubenv" list 2>/dev/null; umount_root; }
 
 # ── boot 1: AurOS, and the button ───────────────────────────────────
 echo "  boot 1: AurOS, where she presses Put Windows back"
-power_on putback
+power_on putback || exit $?
 L=$(e2e_log)
 case "$L" in *"1 pressed putback"*) ok "the desktop came up and the button was pressed" ;;
     *) bad "the desktop came up and the button was pressed" "$(echo "$L" | tail -4)" ;; esac
@@ -250,7 +340,7 @@ echo
 echo "  boot 2: the next start, with nobody touching anything"
 mount_root && grub-editenv "$T/m/boot/grub/grubenv" set \
     "aurstage_extra=console=ttyS0,115200n8 aurstage.nolog"; umount_root
-power_on none
+power_on none || exit $?
 S2=$(tr -d '\r' < "$T/serial.2")
 echo "$S2" | grep -aq 'starting Boot0002 "AurOS"' \
   && ok "the firmware started AurOS's entry" \
@@ -283,7 +373,7 @@ echo
 echo "  boot 3: the start after that"
 mount_root && grub-editenv "$T/m/boot/grub/grubenv" unset aurstage_extra; umount_root
 python3 "$E" "$NV" set-next 0002 >/dev/null
-power_on none
+power_on none || exit $?
 S3=$(tr -d '\r' < "$T/serial.3")
 echo "$S3" | grep -aq 'AurOS staging environment' \
   && bad "it does not restore again" "$(echo "$S3" | grep -a 'aurstage' | head -2)" \
@@ -296,7 +386,7 @@ case "$L" in *"3 up mode=none"*) ok "...it starts AurOS" ;;
 echo
 echo "  boot 4: she presses it again; the firmware then starts Windows instead"
 python3 "$E" "$NV" set-next 0002 >/dev/null
-power_on putback
+power_on putback || exit $?
 mount_root; R=$(cat "$T/m/var/lib/auros-e2e/result.4" 2>/dev/null); umount_root
 GL=$(grubenv_list)
 case "$R" in *"request=putback"*"result=ok"*) ok "answered ok again" ;;
@@ -311,7 +401,7 @@ echo
 echo "  boot 5: three weeks later, AurOS is started again"
 QEXTRA="-rtc base=$(date -u -d '+21 days' '+%Y-%m-%dT%H:%M:%S')"
 python3 "$E" "$NV" set-next 0002 >/dev/null
-power_on none
+power_on none || exit $?
 QEXTRA=""
 S5=$(tr -d '\r' < "$T/serial.5")
 echo "$S5" | grep -aq 'AurOS staging environment' \
@@ -331,7 +421,7 @@ case "$GL" in *next_entry=put*|*auros_asked=[0-9]*) bad "...and the request is u
 echo
 echo "  boot 6: the start after that"
 python3 "$E" "$NV" set-next 0002 >/dev/null
-power_on none
+power_on none || exit $?
 S6=$(tr -d '\r' < "$T/serial.6")
 echo "$S6" | grep -aq 'AurOS staging environment' \
   && bad "it does not go to the restore" "$(echo "$S6" | grep -a 'aurstage' | head -2)" \
