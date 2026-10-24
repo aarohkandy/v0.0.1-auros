@@ -469,7 +469,7 @@ def test_generic_default_verdicts():
         "2026-10-24T01:01:00+00:00 auros systemd-logind[1]: Power key pressed",
     ))
     receipt = "language=en_US.UTF-8\ntheme=sandstone\nshell=taskbar\n"
-    log = "=== first boot complete ===\n"
+    log = "firstboot: theme applied: sandstone\n=== first boot complete ===\n"
     good = e2e.generic_default_verdicts(
         expected, receipt, "sandstone\n", "/usr/share/auros/shells/taskbar.shell",
         True, log, first)
@@ -491,6 +491,15 @@ def test_generic_default_verdicts():
     missing = e2e.generic_default_verdicts(expected, None, None, None, False, None, None)
     check(len(missing) == len(good) and not any(ok for _, ok, _ in missing),
           "generic defaults: missing persisted and live evidence is entirely RED")
+
+    no_render_success = e2e.generic_default_verdicts(
+        expected, receipt, "sandstone\n", "/usr/share/auros/shells/taskbar.shell",
+        True, "=== first boot complete ===\n", first)
+    no_render_by_name = {name: ok for name, ok, _ in no_render_success}
+    check(not no_render_by_name["default theme render completed"] and
+          all(ok for name, ok in no_render_by_name.items()
+              if name != "default theme render completed"),
+          "generic defaults: otherwise complete evidence without Aurora's success marker is RED")
 
     personalized = e2e.generic_default_verdicts(
         expected, receipt + "recipe_id=sha256:" + "a" * 64 + "\n", "sandstone\n",
