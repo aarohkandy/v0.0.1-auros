@@ -20,6 +20,18 @@
  *  the target and write what arrives to the pipe it gave us. INCR (the way X
  *  programs send what is too big for one property) is understood.
  *
+ *  WHOSE KEYBOARD IT IS (W01, W05, W09, W19). A Wayland program's copy is only
+ *  ever offered to the program being typed into (aurwl.c, ddev_set_selection);
+ *  the bridge keeps that rule for X. We hold the X CLIPBOARD for a Wayland copy
+ *  only while an X window has the keyboard, let go the moment it leaves (so a
+ *  background X program neither reads the copy nor learns when she made it),
+ *  answer a request only if the requestor is a window of the X client that owns
+ *  the focused window (same resource-id base), and take a new X owner only if it
+ *  IS that client. A source that offers x-kde-passwordManagerHint is never
+ *  published to X at all. LIMIT: X lets any client name another's window as the
+ *  requestor, and the focused X program can read what it is given; X programs
+ *  were never isolated from each other. This stops the background ones.
+ *
  *  What is bridged: CLIPBOARD, and any data of mime type "a/b" by the name an
  *  X program uses for it (image/png, text/html, text/uri-list), plus text in
  *  all its X names (UTF8_STRING, STRING, TEXT). One transfer is at most
@@ -65,11 +77,25 @@ static int xc_slot(xwm *m, const char *name, uint32_t atom)
     return i;
 }
 
-static data_source *xc_source(aurwl *c) { return c->selection ? wl_resource_get_user_data(c->selection) : NULL; }
 static int xc_offers(const data_source *ds, const char *mime)
 {
     for (int i = 0; ds && i < ds->n_mimes; i++) if (!strcmp(ds->mimes[i], mime)) return 1;
     return 0;
+}
+/* The Wayland copy X may see: none if it says it is a password. */
+static data_source *xc_source(aurwl *c)
+{
+    data_source *ds = c->selection ? wl_resource_get_user_data(c->selection) : NULL;
+    return xc_offers(ds, "x-kde-passwordManagerHint") ? NULL : ds;
+}
+
+/* The X client that has the keyboard, as the base of its resource ids; 0 when the
+ * keyboard is a Wayland program's (or nobody's). */
+static uint32_t xc_focus_base(xwm *m)
+{
+    aurwl_win *f = m->c->focus;
+    if (!f || !f->xw || f->xw != m->active) return 0;
+    return f->xw->id & ~m->id_mask;
 }
 
 static void xc_notify(xwm *m, uint32_t requestor, uint32_t selection, uint32_t target, uint32_t prop, uint32_t time)
@@ -170,8 +196,18 @@ static int xfer_read(int fd, uint32_t mask, void *data)
 }
 
 /* The Wayland selection changed (or went): the X side follows. */
+static void xc_release(xwm *m)
+{
+    if (!m->clip_wl) return;
+    x_set_selection_owner(m, 0, m->atom[XA_CLIPBOARD]);
+    m->clip_wl = 0;
+    xflush(m);
+}
+/* Take the X CLIPBOARD for the Wayland copy: only while an X window has the keyboard, only
+ * once the copy's mime names are interned, and never for a copy X may not see. */
 static void xc_claim(xwm *m)
 {
+    if (m->clip_atoms_left > 0 || !xc_focus_base(m) || !xc_source(m->c)) return;
     x_set_selection_owner(m, m->check, m->atom[XA_CLIPBOARD]);
     m->clip_wl = 1;
     xflush(m);
@@ -182,10 +218,7 @@ static void xc_publish(xwm *m)
     if (m->dead || m->state != 2) return;
     m->clip_gen++;
     data_source *ds = xc_source(c);
-    if (!ds) {
-        if (m->clip_wl) { x_set_selection_owner(m, 0, m->atom[XA_CLIPBOARD]); m->clip_wl = 0; xflush(m); }
-        return;
-    }
+    if (!ds) { xc_release(m); return; }
     m->clip_atoms_left = 0;
     for (int i = 0; i < ds->n_mimes; i++) {                 /* X names for the mime types: ask for the ones it has not met */
         const char *n = ds->mimes[i];
@@ -199,6 +232,14 @@ static void xc_publish(xwm *m)
         m->clip_atoms_left++;
     }
     if (!m->clip_atoms_left) xc_claim(m); else xflush(m);
+}
+/* The keyboard moved to or from an X window: the X side claims the Wayland copy, or lets go. */
+static void xc_focus_changed(aurwl *c)
+{
+    xwm *m = c->x.wm;
+    if (!m || m->dead || m->state != 2) return;
+    if (!xc_focus_base(m)) xc_release(m);
+    else if (!m->clip_wl) xc_claim(m);
 }
 
 /* What the source is asked for when an X program wants `target`: the mime type,
@@ -219,7 +260,9 @@ static void xc_serve(xwm *m, uint32_t requestor, uint32_t selection, uint32_t ta
     aurwl *c = m->c;
     data_source *ds = xc_source(c);
     if (!prop) prop = target;                              /* an old program: the property is the target's name */
-    if (selection != m->atom[XA_CLIPBOARD] || !ds || !m->clip_wl) { xc_notify(m, requestor, selection, target, 0, time); return; }
+    uint32_t fb = xc_focus_base(m);
+    if (selection != m->atom[XA_CLIPBOARD] || !ds || !m->clip_wl ||
+        !fb || (requestor & ~m->id_mask) != fb) { xc_notify(m, requestor, selection, target, 0, time); return; }
 
     if (target == m->atom[XA_TARGETS]) {
         uint32_t list[8 + 16]; size_t n = 0;
@@ -415,8 +458,15 @@ static void xc_owner_changed(xwm *m, uint32_t owner)
     aurwl *c = m->c;
     m->xq_gen++; m->clip_x = owner;
     if (owner == m->check) return;                            /* that is us, taking it for a Wayland program */
+    if (owner) m->clip_wl = 0;                                /* somebody else has it: it is not ours to let go of (SelectionClear may come later) */
     if (!owner) {
         if (c->xsel_active) { c->xsel_active = 0; c->xsel_n = 0; selection_broadcast(c); }
+        return;
+    }
+    uint32_t fb = xc_focus_base(m);
+    if (!fb || (owner & ~m->id_mask) != fb) {                 /* not the program she is using: it does not get to copy */
+        if (c->xsel_active) { c->xsel_active = 0; c->xsel_n = 0; selection_broadcast(c); }   /* what it took is not the copy she made */
+        xc_claim(m);                                          /* a Wayland copy is hers again, if an X program has the keyboard */
         return;
     }
     x_convert(m, m->atom[XA_CLIPBOARD], m->atom[XA_TARGETS], m->atom[XA_AUR_TGT]);

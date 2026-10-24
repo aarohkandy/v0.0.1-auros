@@ -12,7 +12,7 @@ non-zero.
 
 Needs what tools/wltest-sub.sh needs (Linux, libwayland-dev, cc).
 """
-import os, subprocess, sys, tempfile, shutil
+import os, re, subprocess, sys, tempfile, shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src", "aurwl", "aurwl.c")
@@ -283,7 +283,7 @@ MUTANTS = [
     ("an X program's copy is not offered", "x:clip-text-x-to-wl",
      "        c->xsel_active = 1;\n        if (c->selection)", "        c->xsel_active = 0;\n        if (c->selection)", XCLIP),
     ("an X program that quit is still offered", "x:clip-text-x-to-wl",
-     "        if (c->xsel_active) { c->xsel_active = 0; c->xsel_n = 0; selection_broadcast(c); }", "", XCLIP),
+     "    if (!owner) {\n        if (c->xsel_active) { c->xsel_active = 0; c->xsel_n = 0; selection_broadcast(c); }", "    if (!owner) {", XCLIP),
     ("an image type of an X program is not offered", "x:clip-image-x-to-wl",
      "        else if (strchr(name, '/') && strcmp(name, XC_UTF8) && strcmp(name, XC_PLAIN)) xc_add_mime(c, name);", "", XCLIP),
     ("an owner that refuses TARGETS is offered anyway", "x:clip-refused",
@@ -327,7 +327,56 @@ MUTANTS = [
      "                if (vx >= 0 && vy >= 0 && vx < s->w && vy < s->h && (s->px[(size_t)vy * s->stride + (size_t)vx] >> 24) == 0)\n                    break;\n", "", SESSION),
     ("the programs are told the whole display, band included", "deco",
      "    if (c && c->wl) aurwl_resize_output(c->wl, display_w, c->screen_h);", "    if (c && c->wl) aurwl_resize_output(c->wl, display_w, c->screen_h + 80);", SESSION),
+    # ── whose keyboard it is (W01/W05/W09/W19), W28 ──
+    ("the Wayland copy is taken for X while a Wayland program has the keyboard", "x:clip-wl-focused-refused",
+     "    if (m->clip_atoms_left > 0 || !xc_focus_base(m) || !xc_source(m->c)) return;", "    if (m->clip_atoms_left > 0 || !xc_source(m->c)) return;", XCLIP),
+    ("a password manager's copy is published to X", "x:clip-password-hint",
+     "    return xc_offers(ds, \"x-kde-passwordManagerHint\") ? NULL : ds;", "    return ds;", XCLIP),
+    ("any window reads the copy", "x:clip-bg-x-refused",
+     "        !fb || (requestor & ~m->id_mask) != fb) { xc_notify(", "        0) { xc_notify(", XCLIP),
+    ("a background X program reads the copy while another has the keyboard", "x:clip-bg-x-refused",
+     "        !fb || (requestor & ~m->id_mask) != fb) { xc_notify(", "        !fb) { xc_notify(", XCLIP),
+    ("a request is served when no X program has the keyboard", "x:clip-wl-focused-refused",
+     "        !fb || (requestor & ~m->id_mask) != fb) { xc_notify(", "        (requestor & ~m->id_mask) != fb) { xc_notify(", XCLIP),
+    ("CLIPBOARD is kept on the X side after the keyboard leaves X", "x:clip-bg-x-refused",
+     "    if (!xc_focus_base(m)) xc_release(m);\n    else if (!m->clip_wl) xc_claim(m);", "    if (xc_focus_base(m) && !m->clip_wl) xc_claim(m);", XCLIP),
+    ("the copy is not offered to X when an X program gets the keyboard", "x:clip-text-wl-to-x",
+     "    if (!xc_focus_base(m)) xc_release(m);\n    else if (!m->clip_wl) xc_claim(m);", "    if (!xc_focus_base(m)) xc_release(m);", XCLIP),
+    ("the window manager never hears the keyboard moved", "x:clip-bg-x-refused",
+     "    xc_focus_changed(c);\n}\nstatic int xw_close", "}\nstatic int xw_close", XWM),
+    ("any X program takes the clipboard from the one she is using", "x:clip-hijack",
+     "    if (!fb || (owner & ~m->id_mask) != fb) {                 /* not the program she is using: it does not get to copy */", "    if (0) {", XCLIP),
+    ("another X program takes it while an X program has the keyboard", "x:clip-hijack",
+     "    if (!fb || (owner & ~m->id_mask) != fb) {                 /* not the program she is using: it does not get to copy */", "    if (!fb) {", XCLIP),
+    ("what a background program took stays offered", "x:clip-hijack",
+     "        if (c->xsel_active) { c->xsel_active = 0; c->xsel_n = 0; selection_broadcast(c); }   /* what it took is not the copy she made */", "", XCLIP),
+    ("the Wayland copy is not taken back from a background program", "x:clip-hijack",
+     "        xc_claim(m);                                          /* a Wayland copy is hers again, if an X program has the keyboard */", "", XCLIP),
+    ("an owner change by another program is not noticed as ours being lost", "x:clip-newest-wins",
+     "    if (owner) m->clip_wl = 0;                                /* somebody else has it: it is not ours to let go of (SelectionClear may come later) */", "", XCLIP),
+    ("an X window is not recognised as one", "x:clip-bg-x-refused",
+     "int         aurwl_win_is_x11(const aurwl_win *w)  { return w && w->role == ROLE_X11; }", "int         aurwl_win_is_x11(const aurwl_win *w)  { return 0; }"),
+    ("INCR chunks are added without a limit", "x:clip-incr-cap",
+     "p->n + bytes > XC_MAX || ", "", XCLIP),
 ]
+
+COMPILE_ERROR = re.compile(r"^\S+:\d+:\d+: (fatal )?error:|undefined reference to|ld returned", re.M)
+
+def verdict(scenario, r):
+    """A mutant is caught only when the scenario it is aimed at ran and said FAIL itself.
+    Any other non-zero exit (a compile error in the test, a misspelt scenario, the 90 s alarm,
+    a crash of the harness) proves nothing about the check, so it is not a catch (W29)."""
+    if COMPILE_ERROR.search(r.stderr):
+        return "BUILD"
+    if r.returncode == 0:
+        return "ALIVE"
+    if scenario == "cursortest":                 # prints "  FAIL  <what>" per failed check and exits 1
+        return "caught" if r.returncode == 1 and re.search(r"^  FAIL  ", r.stdout, re.M) else "OTHER"
+    name = scenario[2:] if scenario.startswith("x:") else scenario
+    # the test prints "  <name>  FAIL" when that scenario ended with a failed check
+    if r.returncode == 1 and re.search(r"^\s*%s\s+FAIL\s*$" % re.escape(name), r.stdout, re.M):
+        return "caught"
+    return "OTHER"
 
 def main():
     only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else ""
@@ -371,12 +420,16 @@ def main():
                 env = dict(os.environ, AURWL_C=path, OUT=os.path.join(tmp, "out"))
                 cmd = ["sh", os.path.join(ROOT, "tools", "wltest-sub.sh"), scenario]
             r = subprocess.run(cmd, env=env, capture_output=True, text=True, errors="replace")
-            out = r.stdout + r.stderr
-            if "error:" in r.stderr and "wltest-" not in out.split("error:")[0][-40:]:
+            v = verdict(scenario, r)
+            if v == "BUILD":
                 print("BUILD  %-62s\n%s" % (what, r.stderr[-600:]))
                 bad += 1
-            elif r.returncode == 0:
+            elif v == "ALIVE":
                 print("ALIVE  %-62s (scenario %s still passes)" % (what, scenario))
+                bad += 1
+            elif v == "OTHER":
+                print("OTHER  %-62s (exit %d, but %s did not print its own FAIL: a crash, a hang or a wrong name is not a catch)\n%s"
+                      % (what, r.returncode, scenario, (r.stdout + r.stderr)[-400:]))
                 bad += 1
             else:
                 print("caught %-62s by %s" % (what, scenario))

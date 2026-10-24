@@ -1241,11 +1241,13 @@ static int xw_configure(aurwl_win *w, int width, int height, int act, int max, i
     xwm_configure(w->xw, width, height, act, max, full);
     return 1;
 }
+static void xc_focus_changed(aurwl *c);                       /* xclip.inc: the clipboard follows the keyboard */
 static void xw_focus(aurwl *c, aurwl_win *w)
 {
     if (!c->x.wm) return;
     if (w && w->xw) xwm_focus(c, w->xw);
     else            xwm_focus(c, NULL);
+    xc_focus_changed(c);
 }
 /* The pointer is about to enter this window's surface: make it the top X window first. */
 static void xw_raise(aurwl *c, aurwl_win *w)

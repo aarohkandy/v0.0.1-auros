@@ -1296,6 +1296,11 @@ static const struct { const char *name; void (*fn)(void); } SC[] = {
     { "clip-too-big",     sc_clip_too_big },
     { "restack",          sc_restack },
     { "menu-bound",       sc_menu_bound },
+    { "clip-wl-focused-refused", sc_clip_wl_focused_refused },
+    { "clip-bg-x-refused", sc_clip_bg_x_refused },
+    { "clip-password-hint", sc_clip_password_hint },
+    { "clip-hijack",      sc_clip_hijack },
+    { "clip-incr-cap",    sc_clip_incr_cap },
     { "x-goes-away",      sc_x_goes_away },
 };
 #define NSC ((int)(sizeof SC / sizeof SC[0]))

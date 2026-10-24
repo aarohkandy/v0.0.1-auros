@@ -7,11 +7,17 @@
  *   W              open a window (so it can have the keyboard)
  *   T <text>       copy text (text/plain;charset=utf-8)
  *   I <mime> <n>   copy n bytes of a known pattern as <mime> (an image, say)
+ *   P <text>       copy text that says it is a password (x-kde-passwordManagerHint)
  *   S              copy something it then never writes (a program that hangs)
  *   X              clear its copy
  *   V <mime>       paste: reply "<bytes> <fnv32>" of what arrived ("0 811c9dc5" if nothing)
  *   M              reply the mime types the clipboard offers it, comma separated, or "none"
  *   K              reply how many times its copy was cancelled (somebody else's is newer)
+ *
+ * WHOSE KEYBOARD IT IS (xclip.inc, W01/W05/W09/W19). Two pretend X programs: XA, the one she
+ * is using, and XB, in the background; the Wayland program has a window too. The Wayland
+ * copy is held on the X side only while an X window has the keyboard, and only XA's windows
+ * are served; an X copy counts only from the X program that has the keyboard.
  *
  * What is proved, both ways: text, a picture too big for one request (300 000
  * bytes, with INCR on the X side and without), Latin-1 for programs that only know
@@ -28,6 +34,7 @@ struct ap {
     char mimes[16][64]; int nm, cur_nm;
     struct wl_data_source *src;
     uint8_t *payload; size_t plen; int hang;
+    const char *extra;                                      /* a second mime type the copy offers (a password manager's hint) */
     int cancelled, configured;
 };
 static void pattern(uint8_t *p, size_t n) { for (size_t i = 0; i < n; i++) p[i] = (uint8_t)(i * 31 + 7 + (i >> 8)); }
@@ -96,6 +103,7 @@ static void ap_copy(struct ap *a, const char *mime, const uint8_t *data, size_t 
     a->src = wl_data_device_manager_create_data_source(a->ddm);
     wl_data_source_add_listener(a->src, &ap_src_l, a);
     wl_data_source_offer(a->src, mime);
+    if (a->extra) wl_data_source_offer(a->src, a->extra);
     wl_data_device_set_selection(a->dev, a->src, 1);
     wl_display_roundtrip(a->d);
 }
@@ -141,6 +149,10 @@ static int be_wlapp(int sock, int cmd, int res)
             wl_display_roundtrip(a.d);
         } else if (line[0] == 'T') {
             ap_copy(&a, "text/plain;charset=utf-8", (const uint8_t *)line + 2, strlen(line + 2), 0);
+        } else if (line[0] == 'P') {                         /* P <text>: a copy that says it is a password */
+            a.extra = "x-kde-passwordManagerHint";
+            ap_copy(&a, "text/plain;charset=utf-8", (const uint8_t *)line + 2, strlen(line + 2), 0);
+            a.extra = NULL;
         } else if (line[0] == 'I') {
             char mime[64]; size_t cnt = 0;
             if (sscanf(line + 2, "%63s %zu", mime, &cnt) != 2 || cnt > (20u << 20)) return 4;
@@ -249,13 +261,34 @@ static req *got_prop(uint32_t requestor, int from) { return last_req(18, request
 static req *got_notify(uint32_t requestor, int from) { return last_req(25, requestor, from); }
 static uint32_t notify_prop(const req *n) { return n ? xr32(n->body + 8 + 20) : 0xdeadbeef; }   /* event: body+8; property at +20 */
 
+#define XA_ID 0x600040u    /* the X program she is using: its resource ids start at 0x600000 ...           */
+#define XB_ID 0x800040u    /* ... and another X program in the background, 0x800000 (the window manager: 0x400000) */
+static aurwl_win *xa_win, *xb_win;
+static void focus_to(aurwl_win *w) { aurwl_set_focus(C, w); pump(20); }
+static void focus_app(void) { focus_to(app_window()); }
+static void focus_xa(void)  { focus_to(xa_win); }
+static void focus_xb(void)  { focus_to(xb_win); }
+/* SetSelectionOwner(CLIPBOARD, owner) among the window manager's requests from `from` on. */
+static req *owner_req(uint32_t owner, int from)
+{
+    for (int i = X.n_reqs - 1; i >= from; i--)
+        if (X.reqs[i].op == 22 && xr32(X.reqs[i].body + 4) == atom_id("CLIPBOARD") && xr32(X.reqs[i].body) == owner) return &X.reqs[i];
+    return NULL;
+}
+static req *claim_req(int from)   { return owner_req(C->x.wm->check, from); }
+static req *release_req(int from) { return owner_req(0, from); }
+
 static void clip_start(void)
 {
     start();
     app_start();
     ask_app("W");
-    aurwl_win *w = app_window();
-    if (w) aurwl_set_focus(C, w);
+    show_window(XA_ID, 0xFF204060, "xa", "xa|Xa", 0);
+    show_window(XB_ID, 0xFF206040, "xb", "xb|Xb", 0);
+    xa_win = xw(XA_ID) ? xw(XA_ID)->win : NULL;
+    xb_win = xw(XB_ID) ? xw(XB_ID)->win : NULL;
+    check(xa_win && xb_win && app_window(), "setup: the X programs or the Wayland program have no window");
+    focus_app();
     for (int i = 0; i < 4; i++) { free(SP[i].data); SP[i].data = NULL; SP[i].used = 0; }
     memset(&XO, 0, sizeof XO);
     xc_timeout_ms = 10000;
@@ -268,6 +301,20 @@ static void clip_finish(void)
 }
 
 /* ── Wayland -> X ─────────────────────────────────────────────────── */
+/* A Wayland program copies (it has the keyboard: nobody else can), then she goes to the X program:
+ * only then is CLIPBOARD taken on the X side. */
+static void copy_to_x(const char *line)
+{
+    focus_app();
+    int base = X.n_reqs;
+    ask_app(line);
+    SETTLE();
+    check(!claim_req(base), "the clipboard was offered to X while a Wayland program had the keyboard");
+    focus_xa();
+    WAIT(claim_req(base));
+    SETTLE();
+    check(count_req(22, C->x.wm->check, base) == 1, "CLIPBOARD was claimed %d times for one copy", count_req(22, C->x.wm->check, base));
+}
 static void sc_clip_text_wl_to_x(void)
 {
     clip_start();
@@ -275,16 +322,14 @@ static void sc_clip_text_wl_to_x(void)
     XO.n_targets = 0; XO.targets[XO.n_targets++] = atom_id("TARGETS"); XO.targets[XO.n_targets++] = atom_id("UTF8_STRING");
     XO.text = malloc(6); memcpy(XO.text, "stale", 5); XO.text_n = 5;       /* what a (mistaken) question to the X side would find */
     int base = X.n_reqs;
-    ask_app("I image/png 10");                                        /* so that "image/png" is a name the window manager knows ... */
-    WAIT(last_req(22, C->x.wm->check, base));
+    copy_to_x("I image/png 10");                                      /* so that "image/png" is a name the window manager knows ... */
     base = X.n_reqs;
-    ask_app("T hello from wayland");                                  /* ... and the copy it is now asked about has only text */
-    WAIT(last_req(22, C->x.wm->check, base));
-    req *so = last_req(22, C->x.wm->check, base);
+    copy_to_x("T hello from wayland");                                /* ... and the copy it is now asked about has only text */
+    req *so = claim_req(base);
     check(so && xr32(so->body + 4) == atom_id("CLIPBOARD"), "the window manager did not take the CLIPBOARD selection for its window");
     check(so != NULL, "the text copy was not taken for X");
 
-    uint32_t rq = 0x500001;
+    uint32_t rq = XA_ID + 1;
     base = X.n_reqs;
     ev_sel_request(rq, atom_id("CLIPBOARD"), atom_id("TARGETS"), 0x601);                     /* what can you give me? */
     WAIT(got_notify(rq, base));
@@ -320,11 +365,9 @@ static void sc_clip_text_wl_to_x(void)
 static void sc_clip_latin1(void)
 {
     clip_start();
+    copy_to_x("T caf\xc3\xa9 \xc4\x80 \xe2\x98\x83!");
+    uint32_t rq = XA_ID + 2;
     int base = X.n_reqs;
-    ask_app("T caf\xc3\xa9 \xc4\x80 \xe2\x98\x83!");
-    WAIT(last_req(22, C->x.wm->check, base));
-    uint32_t rq = 0x500002;
-    base = X.n_reqs;
     ev_sel_request(rq, atom_id("CLIPBOARD"), XP_STRING, 0x604);                               /* a program that only knows STRING */
     WAIT(got_notify(rq, base));
     req *cp = got_prop(rq, base);
@@ -338,10 +381,9 @@ static void sc_clip_image_wl_to_x(void)
 {
     clip_start();
     int base = X.n_reqs;
-    ask_app("I image/png 300000");                                                           /* more than a plain request carries */
-    WAIT(last_req(22, C->x.wm->check, base));
-    check(last_req(22, C->x.wm->check, base) != NULL, "the selection was not taken for a picture");
-    uint32_t rq = 0x500003;
+    copy_to_x("I image/png 300000");                                                         /* more than a plain request carries */
+    check(claim_req(base) != NULL, "the selection was not taken for a picture");
+    uint32_t rq = XA_ID + 3;
     base = X.n_reqs;
     ev_sel_request(rq, atom_id("CLIPBOARD"), atom_id("image/png"), 0x605);
     WAIT(got_notify(rq, base));
@@ -357,12 +399,10 @@ static void sc_clip_image_wl_to_x(void)
 static void sc_clip_wl_hangs(void)
 {
     clip_start();
-    int base = X.n_reqs;
-    ask_app("S");
-    WAIT(last_req(22, C->x.wm->check, base));
+    copy_to_x("S");
     xc_timeout_ms = 300;
-    uint32_t rq = 0x500004;
-    base = X.n_reqs;
+    uint32_t rq = XA_ID + 4;
+    int base = X.n_reqs;
     ev_sel_request(rq, atom_id("CLIPBOARD"), atom_id("UTF8_STRING"), 0x606);
     for (int i = 0; i < 100 && !got_notify(rq, base); i++) pump(10);
     check(got_notify(rq, base) && notify_prop(got_notify(rq, base)) == 0, "a program that never writes held the X program for ever");
@@ -382,7 +422,10 @@ static void x_owner_with(const char *text, size_t img_n, int incr)
     if (text) { XO.text_n = strlen(text); XO.text = malloc(XO.text_n + 1); memcpy(XO.text, text, XO.text_n); }
     if (img_n) { XO.img = malloc(img_n); pattern(XO.img, img_n); XO.img_n = img_n; XO.img_atom = img; }
     XO.incr = incr;
-    ev_xfixes_owner(0x500010);
+    focus_xa();                                                                              /* she copies in the X program she is using ... */
+    ev_xfixes_owner(XA_ID + 0x10);
+    WAIT(C->xsel_active);
+    focus_app();                                                                             /* ... and goes to the Wayland program to paste */
 }
 static int wait_offer(void)
 {
@@ -446,8 +489,10 @@ static void sc_clip_refused(void)
     clip_start();
     XO.n_targets = 0; free(XO.text); XO.text = NULL;                                          /* an owner that answers no TARGETS: refuses */
     XO.n_targets = -1;
-    ev_xfixes_owner(0x500011);
+    focus_xa();
+    ev_xfixes_owner(XA_ID + 0x11);
     SETTLE();
+    focus_app();
     check(!strcmp(ask_app("M"), "none"), "an owner that would not say what it has was offered anyway");
     XO.n_targets = 0;
     clip_finish();
@@ -457,17 +502,14 @@ static void sc_clip_refused(void)
 static void sc_clip_newest_wins(void)
 {
     clip_start();
-    int base = X.n_reqs;
-    ask_app("T from the program");                                                           /* a Wayland copy */
-    WAIT(last_req(22, C->x.wm->check, base));
-    x_owner_with("from x", 0, 0);                                                            /* then an X copy: newer */
+    copy_to_x("T from the program");                                                         /* a Wayland copy, taken for the X program she is using */
+    x_owner_with("from x", 0, 0);                                                            /* then an X copy by that program: newer */
     for (int i = 0; i < 100 && strcmp(ask_app("K"), "1"); i++) pump(10);
     check(!strcmp(ask_app("K"), "1"), "the older Wayland copy was not cancelled when an X program copied");
     check(wait_offer(), "the X copy was not offered");
-    base = X.n_reqs;
-    ask_app("T newest");                                                                     /* then a Wayland copy again */
-    WAIT(last_req(22, C->x.wm->check, base));
-    check(last_req(22, C->x.wm->check, base) != NULL, "the Wayland copy was not taken back for X");
+    int base = X.n_reqs;
+    copy_to_x("T newest");                                                                   /* then a Wayland copy again */
+    check(claim_req(base) != NULL, "the Wayland copy was not taken back for X");
     check(!C->xsel_active, "an X copy is still offered after a newer Wayland copy");
     clip_finish();
 }
@@ -476,18 +518,149 @@ static void sc_clip_newest_wins(void)
 static void sc_clip_too_big(void)
 {
     clip_start();
+    copy_to_x("I image/png 17000000");                                                       /* over 16 MiB */
+    uint32_t rq = XA_ID + 5;
     int base = X.n_reqs;
-    ask_app("I image/png 17000000");                                                         /* over 16 MiB */
-    WAIT(last_req(22, C->x.wm->check, base));
-    uint32_t rq = 0x500005;
-    base = X.n_reqs;
     ev_sel_request(rq, atom_id("CLIPBOARD"), atom_id("image/png"), 0x607);
     for (int i = 0; i < 600 && !got_notify(rq, base); i++) pump(10);
     check(got_notify(rq, base) && notify_prop(got_notify(rq, base)) == 0 && !got_prop(rq, base),
           "a picture over the limit was not refused (it must not arrive cut short)");
+    focus_app();
     ask_app("X");
     x_owner_with(NULL, 17000000, 0);
     check(wait_offer(), "no offer for the big X picture");
     paste_check("image/png", (const uint8_t *)"", 0, "a picture over the limit pasted from X");
+    clip_finish();
+}
+
+/* ── whose keyboard it is ─────────────────────────────────────────── */
+/* How a request was answered: refused is a SelectionNotify with property None and no data written. */
+static int refused(uint32_t rq, uint32_t target, uint32_t prop)
+{
+    int base = X.n_reqs;
+    ev_sel_request(rq, atom_id("CLIPBOARD"), target, prop);
+    WAIT(got_notify(rq, base));
+    return got_notify(rq, base) && notify_prop(got_notify(rq, base)) == 0 && !got_prop(rq, base);
+}
+static int served(uint32_t rq, uint32_t target, uint32_t prop)
+{
+    int base = X.n_reqs;
+    ev_sel_request(rq, atom_id("CLIPBOARD"), target, prop);
+    WAIT(got_notify(rq, base));
+    return got_notify(rq, base) && notify_prop(got_notify(rq, base)) == prop && got_prop(rq, base);
+}
+
+/* W01: she copies in a Wayland program and keeps typing there. No X program can see it: nothing is
+ * published, and a request is refused, however it is made. */
+static void sc_clip_wl_focused_refused(void)
+{
+    clip_start();
+    int base = X.n_reqs;
+    ask_app("T the account number");
+    SETTLE();
+    check(count_req(22, 0, base) == 0, "a Wayland copy announced itself to X programs (%d SetSelectionOwner)", count_req(22, 0, base));
+    C->x.wm->clip_wl = 1;                                                                    /* and even if the claim had somehow been left in place, the answer is no */
+    check(refused(0x00000123, atom_id("UTF8_STRING"), 0x700), "a window of the X server itself read a Wayland program's copy");
+    check(refused(XA_ID + 1, atom_id("TARGETS"), 0x701), "TARGETS was answered while a Wayland program had the keyboard");
+    check(refused(XA_ID + 1, atom_id("UTF8_STRING"), 0x702), "the copy was handed to an X program while a Wayland program had the keyboard");
+    check(refused(XB_ID + 1, atom_id("UTF8_STRING"), 0x703), "the copy was handed to a background X program");
+    check(!strcmp(ask_app("K"), "0"), "the Wayland program's copy was cancelled");
+    clip_finish();
+}
+
+/* W01/W09/W19: an X program has the keyboard; another X program, in the background, asks. Only the
+ * program she is using is served, and the moment she leaves, CLIPBOARD is let go. */
+static void sc_clip_bg_x_refused(void)
+{
+    clip_start();
+    check(aurwl_win_is_x11(xa_win) && !aurwl_win_is_x11(app_window()), "an X window is not told from a Wayland one (the typed-word matcher relies on it)");
+    copy_to_x("T the account number");
+    check(refused(XB_ID + 1, atom_id("TARGETS"), 0x711), "a background X program was told what the copy offers");
+    check(refused(XB_ID + 1, atom_id("UTF8_STRING"), 0x712), "a background X program read the copy");
+    check(refused(0x00000123, atom_id("UTF8_STRING"), 0x713), "a window of the X server itself read the copy");
+    check(served(XA_ID + 1, atom_id("UTF8_STRING"), 0x714), "the X program she is using was not served");
+    int base = X.n_reqs;
+    focus_xb();                                                                              /* she goes to the other X program: that is the one served now */
+    check(served(XB_ID + 1, atom_id("UTF8_STRING"), 0x715), "the X program she moved to was not served");
+    check(refused(XA_ID + 1, atom_id("UTF8_STRING"), 0x716), "the X program she left still reads the copy");
+    base = X.n_reqs;
+    focus_app();
+    WAIT(release_req(base));
+    check(release_req(base) != NULL, "CLIPBOARD was still held on the X side after she went back to a Wayland program");
+    check(refused(XB_ID + 1, atom_id("UTF8_STRING"), 0x717), "a request was served after the keyboard went back to a Wayland program");
+    base = X.n_reqs;
+    focus_xa();
+    WAIT(claim_req(base));
+    check(claim_req(base) != NULL, "the copy was not offered again when an X program got the keyboard back");
+    check(served(XA_ID + 1, atom_id("UTF8_STRING"), 0x718), "no service after the keyboard came back to X");
+    clip_finish();
+}
+
+/* A copy that says it is a password never goes to X, whoever has the keyboard. */
+static void sc_clip_password_hint(void)
+{
+    clip_start();
+    focus_app();
+    int base = X.n_reqs;
+    ask_app("P hunter2");
+    SETTLE();
+    focus_xa();
+    SETTLE();
+    check(!claim_req(base), "a password manager's copy was offered to X");
+    check(refused(XA_ID + 1, atom_id("UTF8_STRING"), 0x721), "a password manager's copy was handed to an X program");
+    check(refused(XA_ID + 1, atom_id("TARGETS"), 0x722), "a password manager's copy was listed to an X program");
+    clip_finish();
+}
+
+/* W05: a background X program takes CLIPBOARD. The copy she just made in the Wayland program she is
+ * typing into is not cancelled, and what the thief holds is not offered to her. */
+static void sc_clip_hijack(void)
+{
+    clip_start();
+    focus_app();
+    ask_app("T the payee");
+    int base = X.n_reqs;
+    XO.n_targets = 0; XO.targets[XO.n_targets++] = atom_id("TARGETS"); XO.targets[XO.n_targets++] = atom_id("UTF8_STRING");
+    XO.text = malloc(8); memcpy(XO.text, "mallory", 7); XO.text_n = 7;
+    ev_xfixes_owner(XB_ID + 0x10);                                                           /* a background program takes it */
+    SETTLE();
+    check(!strcmp(ask_app("K"), "0"), "a background X program cancelled the copy she made");
+    check(!C->xsel_active, "a background X program's text is offered to the program she is typing into");
+    check(count_req(24, 0, base) == 0, "the window manager asked a background X program what it holds");
+    /* and when she is in an X program: the same, and the copy is taken back */
+    base = X.n_reqs;
+    focus_xa();
+    WAIT(claim_req(base));
+    base = X.n_reqs;
+    ev_xfixes_owner(XB_ID + 0x10);
+    WAIT(claim_req(base));
+    check(claim_req(base) != NULL, "the copy was not taken back from a background X program");
+    check(!C->xsel_active && count_req(24, 0, base) == 0, "a background X program's copy was accepted while another X program had the keyboard");
+    /* the program she is using may copy */
+    focus_app();
+    ask_app("T older");
+    focus_xa();
+    ev_xfixes_owner(XA_ID + 0x10);
+    WAIT(C->xsel_active);
+    check(C->xsel_active, "the X program she is using could not copy");
+    /* a thief after that does not replace what she copied */
+    focus_app();
+    ev_xfixes_owner(XB_ID + 0x10);
+    SETTLE();
+    check(!C->xsel_active, "a background X program replaced the X copy she had made");
+    clip_finish();
+}
+
+/* W28: an INCR transfer that never ends is cut off at the cap (16 MiB), not at the timeout and not never. */
+static void sc_clip_incr_cap(void)
+{
+    clip_start();
+    xc_timeout_ms = 4000;                                                                    /* the test's reader gives up after 5 s: the cap must act before the compositor's own timeout */
+    x_owner_with(NULL, 17000000, 1);                                                         /* 17 000 000 bytes in chunks of 100 000 */
+    check(wait_offer(), "no offer for the big picture");
+    int base = X.n_reqs;
+    paste_check("image/png", (const uint8_t *)"", 0, "an INCR picture over the limit");
+    int reads = count_req(20, 0, base);
+    check(reads > 100 && reads < 171, "INCR was not cut off at the cap: %d chunks read (the cap is after 168)", reads);
     clip_finish();
 }
