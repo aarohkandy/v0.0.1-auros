@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -182,6 +183,84 @@ int main(void) {
 }
 ''',
         )
+
+    def test_personalized_choice_receipt_is_required_and_exact(self) -> None:
+        generated = compile_installer_recipe(
+            recipe("desktop", {"look": "tiles", "theme": "moss"}), "desktop"
+        )
+        expected_id = re.search(r'AUROS_RECIPE_ID "([^"]+)"', generated)
+        self.assertIsNotNone(expected_id)
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            (temporary / "aurbridge-recipe.h").write_text(generated, encoding="ascii")
+            harness = temporary / "harness.c"
+            harness.write_text(
+                r'''
+#include <stdio.h>
+#include <string.h>
+#include "phases.h"
+int ab_test_write_choices(const ab_choice *, int, const char *, ab_say,
+                          void *, char *, size_t);
+static int fail_put;
+static char receipt[2048];
+int plat_file_put(const char *path, const void *buf, size_t n,
+                  char *why, size_t wn) {
+    (void)path;
+    if (fail_put) {
+        snprintf(why, wn, "injected write failure");
+        return -1;
+    }
+    if (n >= sizeof receipt) return -1;
+    memcpy(receipt, buf, n); receipt[n] = 0;
+    return 0;
+}
+static void quiet(const char *line, void *unused) {(void)line; (void)unused;}
+int main(void) {
+    ab_choice c = {0}; char why[256] = {0};
+    strcpy(c.profile, "desktop"); strcpy(c.shell_archetype, "tiles");
+    strcpy(c.theme, "moss");
+    if (ab_test_write_choices(&c, 0, "/esp", quiet, 0, why, sizeof why)) return 1;
+    if (!strstr(receipt, "recipe_id=@RID@\n")) return 2;
+    strcpy(c.shell_archetype, "dock"); receipt[0] = 0;
+    if (ab_test_write_choices(&c, 0, "/esp", quiet, 0, why, sizeof why)) return 3;
+    if (strstr(receipt, "recipe_id=")) return 4;
+    fail_put = 1; strcpy(c.shell_archetype, "tiles");
+    if (ab_test_write_choices(&c, 0, "/esp", quiet, 0, why, sizeof why) != -1) return 5;
+    if (!strstr(why, "Nothing will be installed")) return 6;
+    strcpy(c.shell_archetype, "dock"); why[0] = 0;
+    if (ab_test_write_choices(&c, 0, "/esp", quiet, 0, why, sizeof why) != -1) return 7;
+    return 0;
+}
+'''.replace("@RID@", expected_id.group(1)),
+                encoding="ascii",
+            )
+            common = [
+                "cc", "-std=c11", "-ffunction-sections", "-fdata-sections",
+                "-I", str(temporary), "-I", str(ROOT / "src/aurbridge"),
+                "-I", str(ROOT / "src/aurstage"),
+            ]
+            objects = []
+            for source, extra in (
+                (ROOT / "src/aurbridge/phases.c", ["-DAUROS_CHOICE_TEST"]),
+                (ROOT / "src/aurbridge/recipe.c", []),
+                (harness, []),
+            ):
+                obj = temporary / (source.stem + ".o")
+                result = subprocess.run(
+                    common + extra + ["-c", str(source), "-o", str(obj)],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                objects.append(obj)
+            binary = temporary / "choice-receipt-test"
+            dead_strip = ["-Wl,-dead_strip"] if sys.platform == "darwin" else ["-Wl,--gc-sections"]
+            result = subprocess.run(
+                ["cc", *dead_strip, *(str(obj) for obj in objects), "-o", str(binary)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            ran = subprocess.run([str(binary)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(ran.returncode, 0, ran.stderr.decode())
 
 
 if __name__ == "__main__":

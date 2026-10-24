@@ -14,6 +14,7 @@
 #include "gpt.h"
 #include "plan.h"
 #include "bootargs.h"
+#include "recipe.h"
 
 #define MIB (1024ull * 1024)
 
@@ -1915,12 +1916,17 @@ static int choice_value_ok(const char *v)
 
 /* \EFI\AurOS\choices.conf. The EFI partition is the one place both
  * sides of the restart can reach that the install leaves exactly as it
- * found it, and it is written in both modes, stick or not. A failure
- * here is a note, not a refusal: AurOS installs with its defaults. */
-static void write_choices(const ab_choice *c, int via_gap, const char *esp,
-                          ab_say say, void *ud)
+ * found it, and it is written in both modes, stick or not. A generic
+ * installer can fall back to image defaults. A personalized installer
+ * refuses here because this is the only path from its reviewed recipe
+ * to the installed system, and the restart has not been armed yet. */
+static int write_choices(const ab_choice *c, int via_gap, const char *esp,
+                         ab_say say, void *ud, char *why, size_t n)
 {
     char buf[1024], path[512], w[PLAT_WHY];
+    const int personalized = ab_recipe_status() == AB_RECIPE_VALID;
+    const char *recipe_id = ab_recipe_id_for_selection(
+        c->profile, c->shell_archetype, c->theme);
     int k = snprintf(buf, sizeof buf,
                      "# What was chosen in the AurOS installer. Applied once, at\n"
                      "# AurOS's first start (/usr/lib/auros/choices.sh).\n");
@@ -1928,6 +1934,7 @@ static void write_choices(const ab_choice *c, int via_gap, const char *esp,
         { "language", c->language }, { "keyboard", c->keyboard },
         { "timezone", c->timezone }, { "theme",    c->theme },
         { "shell",    c->shell_archetype },
+        { "recipe_id", recipe_id },
     };
     for (size_t i = 0; i < sizeof kv / sizeof kv[0]; i++)
         if (choice_value_ok(kv[i].val) && k > 0 && (size_t)k < sizeof buf)
@@ -1938,12 +1945,32 @@ static void write_choices(const ab_choice *c, int via_gap, const char *esp,
      * partition (src/aurbridge/putback.ps1), so only then may AurOS leave them there. */
     if (via_gap && k > 0 && (size_t)k < sizeof buf)
         k += snprintf(buf + k, sizeof buf - (size_t)k, "via=gap\n");
-    if (k <= 0 || (size_t)k >= sizeof buf) return;
+    if (k <= 0 || (size_t)k >= sizeof buf) {
+        if (personalized)
+            snprintf(why, n, "the personalized choices are too large to write; "
+                             "nothing will be installed.");
+        return personalized ? -1 : 0;
+    }
     snprintf(path, sizeof path, "%s/EFI/AurOS/choices.conf", esp);
-    if (plat_file_put(path, buf, (size_t)k, w, sizeof w) != 0)
+    if (plat_file_put(path, buf, (size_t)k, w, sizeof w) != 0) {
+        if (personalized) {
+            snprintf(why, n, "your personalized look could not be written down "
+                             "(%s). Nothing will be installed.", w);
+            return -1;
+        }
         talk(say, ud, "your language, keyboard and look could not be written "
                       "down (%s); AurOS will start with its own", w);
+    }
+    return 0;
 }
+
+#ifdef AUROS_CHOICE_TEST
+int ab_test_write_choices(const ab_choice *c, int via_gap, const char *esp,
+                          ab_say say, void *ud, char *why, size_t n)
+{
+    return write_choices(c, via_gap, esp, say, ud, why, n);
+}
+#endif
 
 /* ── her Wi-Fi, across (decision D10) ─────────────────────────────────
  *
@@ -2333,7 +2360,11 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
         talk(say, ud, "NOTE: this build starts the installer directly, which "
                       "only works with Secure Boot off");
     }
-    write_choices(c, m->fast, esp, say, ud);
+    if (write_choices(c, m->fast, esp, say, ud, why, n) != 0) {
+        plat_esp_close();
+        plat_payload_free();
+        return -1;
+    }
     write_wifi(c, esp, say, ud);
     plat_esp_close();
     /* Anything that was unpacked to get here is gone again. The bytes

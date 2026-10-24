@@ -29,6 +29,7 @@
 #      rtc=utc                    (optional: Windows keeps the PC's clock in UTC)
 #      theme=moss
 #      shell=taskbar
+#      recipe_id=sha256:<64 lowercase hex> (personalized installers only)
 #
 #  For tests: AUROS_CHOICES_FILE names the file (skipping the search),
 #  and AUROS_CHOICES_ROOT is a directory standing in for / -- in which
@@ -84,9 +85,24 @@ get() { # key -> value of the LAST line for it, or nothing
 }
 matches() { printf '%s' "$1" | grep -Eq "^($2)\$"; }
 
+recipe_id=$(get recipe_id)
+receipt_fail() {
+    say "$1"
+    [ -n "$recipe_id" ] && exit 3
+    exit 1
+}
 mkdir -p "$ROOT/etc/auros"
-: > "$OUT.new"
+: > "$OUT.new" || receipt_fail "could not create the installed choices receipt"
 record() { printf '%s=%s\n' "$1" "$2" >> "$OUT.new"; }
+recipe_valid=0
+if [ -n "$recipe_id" ]; then
+    if matches "$recipe_id" 'sha256:[0-9a-f]{64}'; then
+        recipe_valid=1
+    else
+        say "personalized recipe identity is invalid; it will not be recorded"
+    fi
+fi
+applied_theme="" applied_shell=""
 
 # ── language ───────────────────────────────────────────────────────
 #
@@ -241,6 +257,7 @@ fi
 # renders /etc/auros/gtk/gtk.css, which those settings files import);
 # this is the light-or-dark switch that sits beside them.
 gtk_follow() { # theme
+    _failed=0
     _variant=$(sed -n 's/^theme_variant="\{0,1\}\([a-z]*\)"\{0,1\}.*/\1/p' \
                "$ROOT/usr/share/auros/themes/$1.theme" 2>/dev/null | head -n 1)
     case "$_variant" in
@@ -254,17 +271,24 @@ gtk_follow() { # theme
         # the file's owner, so it stays hers.
         [ -f "$_ini" ] && [ ! -L "$_ini" ] || continue
         sed -i "s/^gtk-application-prefer-dark-theme=.*/gtk-application-prefer-dark-theme=$_dark/" \
-            "$_ini" 2>/dev/null || say "could not set light/dark in $_ini"
+            "$_ini" 2>/dev/null || {
+                say "could not set light/dark in $_ini"
+                _failed=1
+            }
     done
+    [ "$_failed" = 0 ]
 }
 
 v=$(get theme)
 if [ -n "$v" ]; then
     if matches "$v" '[a-z0-9-]{1,32}' && [ -f "$ROOT/usr/share/auros/themes/$v.theme" ]; then
-        printf '%s\n' "$v" > "$ROOT/etc/auros/theme"
-        gtk_follow "$v"
-        record theme "$v"
-        say "theme: $v"
+        if printf '%s\n' "$v" > "$ROOT/etc/auros/theme" &&
+           gtk_follow "$v" && record theme "$v"; then
+            applied_theme=$v
+            say "theme: $v"
+        else
+            say "theme '$v' could not be written; left as it was"
+        fi
     else
         say "theme '$v' is not one this system has; left as it was"
     fi
@@ -272,10 +296,14 @@ fi
 v=$(get shell)
 if [ -n "$v" ]; then
     if matches "$v" '[a-z0-9-]{1,32}' && [ -f "$ROOT/usr/share/auros/shells/$v.shell" ]; then
-        mkdir -p "$ROOT/etc/auros/shell"
-        ln -sf "/usr/share/auros/shells/$v.shell" "$ROOT/etc/auros/shell/active.shell"
-        record shell "$v"
-        say "desktop: $v"
+        if mkdir -p "$ROOT/etc/auros/shell" &&
+           ln -sf "/usr/share/auros/shells/$v.shell" "$ROOT/etc/auros/shell/active.shell" &&
+           record shell "$v"; then
+            applied_shell=$v
+            say "desktop: $v"
+        else
+            say "desktop '$v' could not be written; left as it was"
+        fi
     else
         say "desktop '$v' is not one this system has; left as it was"
     fi
@@ -290,5 +318,41 @@ if [ "$v" = gap ]; then
     say "installed by the fast path"
 fi
 
-mv "$OUT.new" "$OUT"
+# A recipe identity correlates this local application receipt with the build
+# request; it does not authenticate the ESP sidecar. Preserve it only after
+# both requested values were accepted and the real theme renderer succeeded. Test roots apply files only;
+# AUROS_CHOICES_RUN_AURORA lets the focused test exercise renderer failures.
+recipe_failed=0
+recipe_success=0
+if [ -n "$recipe_id" ]; then
+    requested_theme=$(get theme)
+    requested_shell=$(get shell)
+    if [ "$recipe_valid" != 1 ] || [ "$applied_theme" != "$requested_theme" ] ||
+       [ "$applied_shell" != "$requested_shell" ] ||
+       [ -z "$requested_theme" ] || [ -z "$requested_shell" ]; then
+        recipe_failed=1
+    elif [ -z "$ROOT" ] || [ "${AUROS_CHOICES_RUN_AURORA:-}" = 1 ]; then
+        if ! command -v aurora >/dev/null 2>&1 || ! aurora set "$requested_theme"; then
+            say "personalized recipe was not applied: theme rendering failed"
+            recipe_failed=1
+        fi
+    fi
+    if [ "$recipe_failed" = 0 ] && record recipe_id "$recipe_id"; then
+        recipe_success=1
+    else
+        recipe_failed=1
+        say "personalized recipe was not applied; its identity was not recorded"
+    fi
+fi
+
+if ! mv "$OUT.new" "$OUT"; then
+    receipt_fail "could not commit the installed choices receipt"
+fi
+if [ "$recipe_success" = 1 ]; then
+    say "personalized recipe applied: $recipe_id"
+    if [ -z "$ROOT" ] && command -v logger >/dev/null 2>&1; then
+        logger -t auros-firstboot -- "personalized recipe applied: $recipe_id; theme=$requested_theme; shell=$requested_shell"
+    fi
+fi
+[ "$recipe_failed" = 0 ] || exit 3
 exit 0
