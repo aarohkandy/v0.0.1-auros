@@ -144,8 +144,8 @@ chroot "$MNT" /usr/bin/env -i \
 # kernel version already, so generating the file directly is both
 # deterministic and brandable.
 step "writing grub.cfg"
-KVER=$(basename "$(ls -1 "$MNT"/boot/vmlinuz-* | sort -V | tail -1)" | sed 's/^vmlinuz-//')
-[ -n "$KVER" ] || die "no kernel in the image"
+KVER=$("$ROOT/build/kernel-version" "$MNT") \
+    || die "the image has no bootable kernel and matching modules"
 note "kernel $KVER"
 
 # Theme colours, if aurora has rendered them into the image: the
