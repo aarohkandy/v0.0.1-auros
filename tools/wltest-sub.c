@@ -1266,6 +1266,35 @@ static void sc_dnd(struct cl *c)
     wl_data_source_destroy(src);
 }
 
+/* 32. A drop whose target never says finish used to block every later drag, for every program, for ever. */
+static void sc_dnd_hung(struct cl *c)
+{
+    if (!c->ddm || !c->seat) { printf("      no data device manager\n"); c->failed = 1; return; }
+    c->ddev = wl_data_device_manager_get_data_device(c->ddm, c->seat);
+    wl_data_device_add_listener(c->ddev, &dd_l, c);
+    img root = img_solid(100, 80, GREY), page = img_solid(60, 40, GREEN);
+    top *t = mktop(c, &root, XRGB);
+    sub P = mksub(c, t->s, 10, 10, &page, XRGB, 1);
+    wl_surface_commit(t->s);
+    ask(c, M_FOCUS, 0, 0);
+    wl_display_roundtrip(c->dpy);
+
+    struct wl_data_source *src = dd_begin(c, P.s, 15, 15, 0);
+    wl_data_offer_accept(c->dnd.offer, c->dnd.serial, "text/plain");
+    wl_data_offer_set_actions(c->dnd.offer, ACT_COPY, ACT_COPY);
+    wl_display_roundtrip(c->dpy);
+    ask(c, M_BUTTON, 0x110, 0);                      /* the drop */
+    check(c, c->dnd.drops == 1, "setup: the drop was not delivered");
+    int cancelled = c->dsrc.cancelled;
+    usleep(500 * 1000);                              /* the target never says finish */
+    ask(c, M_MOVE, 20, 20);
+    check(c, c->dsrc.cancelled == cancelled + 1, "the source was not told when the target never finished");
+    wl_data_source_destroy(src);
+    struct wl_data_source *again = dd_begin(c, P.s, 21, 21, 0);             /* somebody else's drag */
+    check(c, c->dsrc.cancelled == 0 && c->dnd.enters == 1, "a drag was refused because an earlier drop was never finished");   /* (dd_begin counts afresh) */
+    wl_data_source_destroy(again);
+}
+
 /* 25. The pointer's picture. A program under the pointer may set a picture
  * of its own (wl_pointer.set_cursor: pixels, a hotspot, attach offsets move
  * it), hide the pointer (null surface), or name a shape
@@ -1450,6 +1479,81 @@ static void sc_popup_focus(struct cl *c)
     ask(c, M_FOCUSIS, 1, 0);                         /* ...and typing still works (focus was NULL here, once) */
 }
 
+/* 30. No buffer may be bigger than the machine will hold. Each side was bounded and the product was not: a
+ * 16384 x 16384 buffer from a sparse pool is a gigabyte of store, copied whole on the first commit. The
+ * window keeps what it had, and a big buffer that is allowed still works. */
+static void sc_huge_buffer(struct cl *c)
+{
+    img small = img_solid(40, 30, RED);
+    top *t = mktop(c, &small, XRGB);
+    const int W = 8192, H = 5120;                       /* 42 million pixels: over the limit (33 million) */
+    size_t stride = (size_t)W * 4, n = stride * (size_t)H;
+    int fd = memfd_create("wltest-sub-huge", MFD_CLOEXEC);
+    if (fd < 0 || ftruncate(fd, (off_t)n) < 0) { perror("memfd"); exit(98); }
+    struct wl_shm_pool *pool = wl_shm_create_pool(c->shm, fd, (int)n);
+    close(fd);
+    struct wl_buffer *b = wl_shm_pool_create_buffer(pool, 0, W, H, (int)stride, XRGB);
+    wl_shm_pool_destroy(pool);
+    wl_surface_attach(t->s, b, 0, 0);
+    wl_surface_damage_buffer(t->s, 0, 0, 16, 16);
+    wl_surface_commit(t->s);
+    expect(c, &small);                                   /* refused: what it had is still what it shows */
+    wl_buffer_destroy(b);
+    img big = img_solid(1200, 800, GREEN);              /* a big one that is allowed */
+    shmbuf ok = mkbuf(c, &big, XRGB);
+    wl_surface_attach(t->s, ok.buf, 0, 0);
+    wl_surface_damage_buffer(t->s, 0, 0, 1200, 800);
+    wl_surface_commit(t->s);
+    expect(c, &big);
+}
+
+/* 31. She starts a selection, drags off every window and lets go there. The program must hear the button come
+ * up (it was told "leave" with the button held and never "up": the selection kept growing with the pointer). */
+static void sc_release_outside(struct cl *c)
+{
+    img root = img_solid(100, 80, GREY);
+    top *t = mktop(c, &root, XRGB);
+    ask(c, M_FOCUS, 0, 0);
+    ask(c, M_MOVE, 30, 30);
+    int b0 = c->pe.buttons;
+    ask(c, M_BUTTON, 0x110, 1);
+    check(c, c->pe.buttons == b0 + 1, "setup: the press did not arrive");
+    ask(c, M_LEAVE, 0, 0);                           /* the pointer is off every window, the button still down */
+    check(c, c->pe.leaves == 0, "the program was told the pointer left while its button was held");
+    ask(c, M_BUTTON, 0x110, 0);                      /* ...and she lets go out there */
+    check(c, c->pe.buttons == b0 + 2, "the release was never delivered: the program still thinks the button is down");
+    check(c, c->pe.leaves == 1, "the program was not told the pointer left once the button was up");
+    ask(c, M_MOVE, 40, 40);                          /* she comes back: a fresh enter, and nothing is held */
+    check(c, c->pe.in == t->s, "the pointer did not come back into the window");
+    int bb = c->pe.buttons;
+    ask(c, M_BUTTON, 0x110, 1);
+    ask(c, M_BUTTON, 0x110, 0);
+    check(c, c->pe.buttons == bb + 2, "a click after that did not arrive as a press and a release");
+}
+
+/* 33. A program may have only so many windows at once (the shell walks the window list on every pointer movement
+ * and every frame, and each step of it walks the surface list). */
+static void sc_window_cap(struct cl *c)
+{
+    img root = img_solid(20, 20, GREY);
+    top *keep = mktop(c, &root, XRGB);
+    (void)keep;
+    for (int i = 1; i < 128; i++) {                  /* 127 more: 128 in all is allowed */
+        struct wl_surface *s = wl_compositor_create_surface(c->comp);
+        struct xdg_surface *xs = xdg_wm_base_get_xdg_surface(c->wm, s);
+        xdg_surface_get_toplevel(xs);
+    }
+    wl_display_roundtrip(c->dpy);
+    check(c, wl_display_get_error(c->dpy) == 0, "128 windows from one program were refused");
+    struct wl_surface *s = wl_compositor_create_surface(c->comp);
+    struct xdg_surface *xs = xdg_wm_base_get_xdg_surface(c->wm, s);
+    xdg_surface_get_toplevel(xs);                    /* the 129th */
+    wl_display_roundtrip(c->dpy);
+    const struct wl_interface *iface = NULL; uint32_t id = 0;
+    uint32_t code = wl_display_get_protocol_error(c->dpy, &iface, &id);
+    check(c, iface == &xdg_surface_interface && code == XDG_WM_BASE_ERROR_ROLE, "a 129th window from one program was allowed");
+}
+
 static void sc_slow_future(struct cl *c)
 {
     top *a; slow_storm(c, &a);
@@ -1559,6 +1663,10 @@ static const struct { const char *name; void (*fn)(struct cl *); } SC[] = {
     { "slow-client",      sc_slow_client },
     { "slow-future",      sc_slow_future },
     { "popup-focus",      sc_popup_focus },
+    { "huge-buffer",      sc_huge_buffer },
+    { "release-outside",  sc_release_outside },
+    { "dnd-hung",         sc_dnd_hung },
+    { "window-cap",       sc_window_cap },
     { "serial-foreign",   sc_serial_foreign },
     { "serial-invented",  sc_serial_invented },
 };
@@ -1632,6 +1740,7 @@ int main(int argc, char **argv)
     }
     signal(SIGPIPE, SIG_IGN);
     setenv("AUROS_NO_XWAYLAND", "1", 1);        /* these scenarios are about Wayland; no X sockets in /tmp */
+    setenv("AUROS_DRAG_FINISH_MS", "300", 1);   /* a drop is given up on after this long (the real one: 10 s) */
     int failed = 0, ran = 0;
     for (int i = 0; i < NSC; i++) {
         if (only >= 0 && i != only) continue;

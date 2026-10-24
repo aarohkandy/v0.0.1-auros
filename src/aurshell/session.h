@@ -34,6 +34,10 @@ aurwl_win *session_win(shell_ctx *c, uint32_t wid);
  * minimised). Call it after session_sync, whenever no panel holds the keyboard. */
 void session_focus_follow(shell_ctx *c);
 
+/* A key press or release, where Super held back everything the program had not already seen go down.
+ * `held` is 24 words of memory the caller keeps between keys. Returns session_key's result, or -1 when kept. */
+int session_key_super(shell_ctx *c, uint32_t held[24], int code, int value, int super_down);
+
 /* Tell the programs their screen is the body above the shell's band (call when screen_h changes). */
 void session_fit_output(shell_ctx *c, int display_w);
 

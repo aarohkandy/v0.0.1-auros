@@ -412,7 +412,7 @@ static void shell_step(void)
     case 4: if (w) { int a, b; aurwl_win_popup_offset(w, &a, &b); (void)aurwl_win_parent(w); (void)aurwl_win_is_popup(w); } break;
     case 5: if (w) { surface *s = aurwl_win_content(w); if (s && s->w > 0) (void)s->px[0]; int a, b; aurwl_win_logical_size(w, &a, &b); aurwl_win_pref_size(w, &a, &b); } break;
     case 6: if (w) (void)aurwl_win_take_requests(w); break;
-    case 7: if (w) { (void)aurwl_win_title(w); (void)aurwl_win_app_id(w); (void)aurwl_win_csd(w); } break;
+    case 7: if (w) { (void)aurwl_win_title(w); (void)aurwl_win_app_id(w); (void)aurwl_win_csd(w); (void)aurwl_win_dialog(C, w); } break;
     case 8: aurwl_pointer_motion(C, w, (int)(u32() % 200), (int)(u32() % 200), 1000); break;
     case 9: aurwl_key(C, 30 + u8() % 20, u8() & 1, 1000); break;
     case 10: aurwl_resize_output(C, 640 + (int)(u8() % 8) * 100, 480 + (int)(u8() % 5) * 100); break;
@@ -556,7 +556,11 @@ static void step(void)
         fx_send(r, 32 + 4 * (size_t)(r[4] % 3));
         break;
     }
-    case 6: if ((b >> 3) == 31 && sfd >= 0) { close(sfd); sfd = -1; } else clip_step(); break;    /* the X server dies, rarely */
+    case 6:
+        if ((b >> 3) == 31 && sfd >= 0) { close(sfd); sfd = -1; }                        /* the X server dies, rarely */
+        else if ((b >> 3) == 30 && C->x.client) wl_client_destroy(C->x.client);          /* ...or its Wayland connection goes first, with events unread */
+        else clip_step();
+        break;
     default: send_event(); send_event(); break;
     }
     settle();
@@ -614,7 +618,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     if (sfd >= 0) { close(sfd); sfd = -1; }
     settle();
     C->x.pid = 4242;
-    xw_reaped(C, 4242);
+    xw_reaped(C, 4242, 0);
     aurwl_dispatch(C);
     close(pfd); pfd = -1;
     xc = NULL; comp = NULL;

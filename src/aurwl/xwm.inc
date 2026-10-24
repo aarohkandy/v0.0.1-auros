@@ -58,7 +58,7 @@
 #define XW_IN_MAX      (XC_MAX + (1u << 20))   /* the most we hold of what it sent       */
 #define XW_OUT_MAX     (XC_MAX + (1u << 20))   /* ...and of what we have yet to send     */
 #define XW_REPLY_MAX   (XC_MAX + 4096)         /* one reply larger than this is a lie    */
-#define XW_PEND_MAX    512          /* requests awaiting a reply              */
+#define XW_PEND_MAX    4096         /* requests awaiting a reply (a burst of window changes is hundreds) */
 #define XW_PROP_WORDS  4096         /* property words we ask for (16 KiB)     */
 #define XW_SIZE_MAX    16384
 
@@ -485,7 +485,7 @@ static void xwin_apply_prop(xwin *w, uint32_t atom, uint32_t type, int format,
         if (fl & 16)  { w->hint_min_w = H(5);  w->hint_min_h = H(6); }
         if (fl & 32)  { w->hint_max_w = H(7);  w->hint_max_h = H(8); }
         if (fl & 64)  { w->hint_inc_w = H(9);  w->hint_inc_h = H(10); }
-        if (fl & 256) { w->hint_base_w = H(13); w->hint_base_h = H(14); }
+        if ((fl & 256) && units >= 17) { w->hint_base_w = H(15); w->hint_base_h = H(16); }    /* base size is words 15 and 16 (13 and 14 are the largest aspect) */
         #undef H
     } else if (atom == XP_WM_HINTS && format == 32 && units >= 2) {
         w->input_hint = (xr32(data) & 1) ? xr32(data + 4) != 0 : 1;
@@ -583,7 +583,7 @@ static void xwm_associate(xwin *w, uint32_t surface_id)
 {
     xwm *m = w->m;
     w->surf_id = surface_id;
-    struct wl_resource *r = surface_id ? wl_client_get_object(m->xclient, surface_id) : NULL;
+    struct wl_resource *r = surface_id && m->xclient ? wl_client_get_object(m->xclient, surface_id) : NULL;
     if (!r || !wl_resource_instance_of(r, &wl_surface_interface, &surface_impl)) {
         XDBG("window 0x%x names surface %u, which does not exist yet", w->id, surface_id);
         return;
@@ -630,6 +630,7 @@ static void xwm_configure(xwin *w, int width, int height, int activated, int max
     if (width <= 0 || height <= 0) return;                 /* the shell has no opinion */
     int nw = xw_clamp_dim(width,  w->hint_min_w, w->hint_max_w, w->hint_inc_w, w->hint_base_w);
     int nh = xw_clamp_dim(height, w->hint_min_h, w->hint_max_h, w->hint_inc_h, w->hint_base_h);
+    if ((int64_t)nw * nh > MAX_BUF_PIXELS) { nw = width; nh = height; }   /* a minimum no window could be given: ignored */
     if (nw == w->cfg_w && nh == w->cfg_h) return;          /* the same ask is not made twice */
     w->cfg_w = nw; w->cfg_h = nh;
     x_configure(m, w->id, XC_W | XC_H, 0, 0, nw, nh);
@@ -652,7 +653,7 @@ static void xwm_focus(aurwl *c, xwin *w)
     m->active = w;
     x_raise(m, w->id);
     XDBG("focus: SetInputFocus 0x%x (take_focus %d, input hint %d)", w->id, w->wm_take_focus, w->input_hint);
-    x_set_focus(m, w->id);
+    if (w->input_hint) x_set_focus(m, w->id);            /* ICCCM: input=False is "never SetInputFocus me": WM_TAKE_FOCUS is the way in, if there is one */
     if (w->wm_take_focus) x_client_message(m, w->id, m->atom[XA_WM_PROTOCOLS], m->atom[XA_WM_TAKE_FOCUS], 0);
     x_change_prop(m, m->root, m->atom[XA_NET_ACTIVE_WINDOW], XP_WINDOW, 32, &w->id, 1);
     xflush(m);
@@ -771,6 +772,7 @@ static void xwm_event(xwm *m, const uint8_t *e)
         }
         int nw = (mask & XC_W) ? rw : w->w, nh = (mask & XC_H) ? rh : w->h;
         nw = xw_clamp_dim(nw, 0, 0, 0, 0); nh = xw_clamp_dim(nh, 0, 0, 0, 0);
+        if ((int64_t)nw * nh > MAX_BUF_PIXELS) { nw = w->w > 0 ? w->w : 1; nh = w->h > 0 ? w->h : 1; }   /* more than a window may be: it stays as it was */
         int changed = w->x != 0 || w->y != 0 || w->w != nw || w->h != nh;
         x_configure(m, win, XC_X | XC_Y | XC_W | XC_H, 0, 0, nw, nh);
         w->cfg_w = nw; w->cfg_h = nh;
@@ -789,6 +791,7 @@ static void xwm_event(xwm *m, const uint8_t *e)
         xwin *w = xwin_find(m, xr32(e + 4));
         uint32_t a = xr32(e + 8);
         if (!w || e[16] != 0) break;
+        if (m->pend_n > XW_PEND_MAX / 2) break;                /* a program changing a title in a loop: not every change is read */
         if (a == XP_WM_NAME || a == XP_WM_CLASS || a == XP_WM_NORMAL_HINTS || a == XP_WM_HINTS ||
             a == XP_WM_TRANSIENT_FOR || a == m->atom[XA_NET_WM_NAME] || a == m->atom[XA_WM_PROTOCOLS] ||
             a == m->atom[XA_MOTIF_WM_HINTS])
@@ -1019,6 +1022,11 @@ static void xwm_kill(xwm *m)
     m->dead = 1;
     if (m->src) { wl_event_source_remove(m->src); m->src = NULL; }
     if (m->fd >= 0) { close(m->fd); m->fd = -1; }
+    /* A window manager that is gone leaves Xwayland running with nothing placing its windows or
+     * redirecting new ones: programs would start, play and never show a window, and the shell's Close
+     * and Force quit would do nothing. Xwayland is ended; the reap starts a fresh one (and a fresh
+     * window manager) for the next X program. */
+    if (m->c->x.pid > 0) kill(m->c->x.pid, SIGTERM);
 }
 
 static xwm *xwm_create(aurwl *c, int fd, struct wl_client *xclient)
@@ -1183,25 +1191,47 @@ static void x_xclient_gone(struct wl_listener *l, void *d)
     (void)d;
     aurwl *c = wl_container_of(l, c, x.gone);
     c->x.client = NULL;
+    if (c->x.wm) c->x.wm->xclient = NULL;          /* the window manager may still read what was written before it died */
     wl_list_init(&l->link);
 }
 
 /* Xwayland exited (the last X program ended, or it died). */
-static void x_stopped(aurwl *c)
+static int x_try_display(aurwl *c, int n);
+static void x_arm(aurwl *c);
+
+/* X comes back a while after it was given up on (a missing library is fixed, the machine was short of memory). */
+static int x_retry(void *data)
+{
+    aurwl *c = data;
+    if (c->x.retry) { wl_event_source_remove(c->x.retry); c->x.retry = NULL; }
+    c->x.failures = 0;
+    int want = c->x.display;
+    if (x_try_display(c, want) != 0) for (int n = 0; n < 33; n++) if (x_try_display(c, n) == 0) break;
+    if (c->x.lfd >= 0) { c->x.enabled = 1; x_arm(c); fprintf(stderr, "aurwl: X programs can run again (:%d)\n", c->x.display); }
+    return 0;
+}
+
+/* `status` is what waitpid said. A FAILURE is an Xwayland that dies badly (a signal, a non-zero exit) within two
+ * seconds of starting: a missing library, a bad flag. One that leaves cleanly is how it always ends (-terminate:
+ * the last X program has gone), however short the program's life was, so it does not count; Zoom crashing three
+ * times at launch used to switch X off for the whole login. */
+static void x_stopped(aurwl *c, int status)
 {
     c->x.pid = 0;
     if (c->x.wm) { xwm_destroy(c->x.wm); c->x.wm = NULL; }
     if (c->x.client) { wl_client_destroy(c->x.client); c->x.client = NULL; }
     struct timespec now; clock_gettime(CLOCK_MONOTONIC, &now);
-    /* One that does not even live two seconds is not going to: a missing
-     * library, a bad flag. After three the machine stops offering X rather
-     * than leave a program waiting at a socket nobody serves. */
-    if (now.tv_sec - c->x.started.tv_sec < 2) c->x.failures++; else c->x.failures = 0;
+    int clean = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    if (!clean && now.tv_sec - c->x.started.tv_sec < 2) c->x.failures++; else c->x.failures = 0;
     if (c->x.failures >= 3) {
-        fprintf(stderr, "aurwl: Xwayland keeps failing; X programs will not run\n");
+        /* Stop offering X rather than leave a program waiting at a socket nobody serves ... for a while. */
+        fprintf(stderr, "aurwl: Xwayland keeps failing; X programs will not run for %d seconds\n", (c->x.retry_ms + 999) / 1000);
         c->x.enabled = 0;
+        x_disarm(c);
         if (c->x.lfd >= 0) { close(c->x.lfd); c->x.lfd = -1; }
         unlink(c->x.sock_path); unlink(c->x.lock_path);
+        c->x.retry = wl_event_loop_add_timer(c->loop, x_retry, c);
+        if (c->x.retry) wl_event_source_timer_update(c->x.retry, c->x.retry_ms);
         return;
     }
     x_arm(c);
@@ -1210,6 +1240,8 @@ static void x_stopped(aurwl *c)
 static void x_init(aurwl *c)
 {
     c->x.lfd = -1;
+    c->x.retry_ms = 30000;
+    if (getenv("AUROS_X_RETRY_MS")) c->x.retry_ms = atoi(getenv("AUROS_X_RETRY_MS"));       /* a test hook */
     if (getenv("AUROS_NO_XWAYLAND") || !x_available()) return;
     for (int n = 0; n < 33; n++) if (x_try_display(c, n) == 0) break;
     if (c->x.lfd < 0) { fprintf(stderr, "aurwl: no free X display; X programs will not run\n"); return; }
@@ -1220,6 +1252,7 @@ static void x_init(aurwl *c)
 static void x_shutdown(aurwl *c)
 {
     x_disarm(c);
+    if (c->x.retry) { wl_event_source_remove(c->x.retry); c->x.retry = NULL; }
     if (c->x.pid) { kill(c->x.pid, SIGTERM); waitpid(c->x.pid, NULL, 0); c->x.pid = 0; }
     if (c->x.wm) { xwm_destroy(c->x.wm); c->x.wm = NULL; }
     if (c->x.lfd >= 0) { close(c->x.lfd); c->x.lfd = -1; unlink(c->x.sock_path); unlink(c->x.lock_path); }
@@ -1271,6 +1304,11 @@ static void xw_focus(aurwl *c, aurwl_win *w)
     else            xwm_focus(c, NULL);
     xc_focus_changed(c);
 }
+/* ICCCM 4.1.7: a window with input=False and no WM_TAKE_FOCUS is never to be given the focus. */
+static int xw_takes_focus(const aurwl_win *w)
+{
+    return !(w->role == ROLE_X11 && w->xw && !w->xw->or_ && !w->xw->input_hint && !w->xw->wm_take_focus);
+}
 /* The pointer is about to enter this window's surface: make it the top X window first. */
 static void xw_raise(aurwl *c, aurwl_win *w)
 {
@@ -1287,7 +1325,7 @@ static void xw_shutdown(aurwl *c)
     x_shutdown(c);
     if (c->x.client) { wl_list_remove(&c->x.gone.link); wl_list_init(&c->x.gone.link); c->x.client = NULL; }
 }
-static void xw_reaped(aurwl *c, pid_t pid) { if (pid && pid == c->x.pid) x_stopped(c); }
+static void xw_reaped(aurwl *c, pid_t pid, int status) { if (pid && pid == c->x.pid) x_stopped(c, status); }
 
 /* A surface of Xwayland's was just made: is it one a window has already
  * claimed? */

@@ -67,6 +67,7 @@ void textinput_focus(struct wl_client *client, struct wl_resource *surface) __at
  * refuse rather than to try the allocation. */
 #define CFG_REMEMBER 32     /* configure serials kept per window; see aurwl_win.sent */
 #define MAX_DIM     16384
+#define MAX_BUF_PIXELS (32 * 1024 * 1024)   /* one client buffer: 128 MiB of pixels (8K is 33 million) */
 /* How deep a chain of parents or subsurfaces may be before we stop
  * walking it. Any real window tree is a handful deep; a client can make
  * one a hundred thousand deep for the price of some memory. */
@@ -332,8 +333,11 @@ struct aurwl {
         struct wl_listener  gone;
         struct timespec     started;
         int                 failures;
+        int                 retry_ms;       /* X comes back this long after it was given up on */
+        struct wl_event_source *retry;
     } x;
     uint32_t            ptr_enter_serial;  /* the enter a set_cursor must quote */
+    int                 ptr_off;           /* a button is held and the pointer is off every window: the grab goes on */
     struct wl_list      cursor_devs;       /* wp_cursor_shape_device_v1        */
 
     int                 ow, oh, refresh_mhz;
@@ -371,6 +375,8 @@ struct aurwl {
         char                mime[64];    /* what the target accepted, "" none */
         uint32_t            dst_actions, dst_pref, chosen;
         int                 dropped;     /* `drop` sent; waiting for `finish` */
+        uint32_t            dropped_ms;  /* when */
+        uint32_t            finish_ms;   /* how long a target may take to say finish */
     } drag;
     int                 ptr_x, ptr_y; /* surface-local, last sent        */
     int                 ptr_rx, ptr_ry; /* the window's surface coordinates, last given */
@@ -393,6 +399,7 @@ static int         xw_listed(const aurwl_win *w);          /* an X window the sh
 static int         xw_csd(const aurwl_win *w);             /* it draws its own title bar (_MOTIF_WM_HINTS) */
 static void        xw_raise(aurwl *c, aurwl_win *w);        /* top of the X stack: the pointer is entering it */
 static void        xw_text_scale(aurwl *c);               /* her text size reached X programs (Xft.dpi) */
+static int         xw_takes_focus(const aurwl_win *w);          /* ICCCM: input=False and no WM_TAKE_FOCUS means never */
 static void        xw_selection_changed(aurwl *c);          /* the Wayland clipboard changed hands */
 static void        xw_paste(aurwl *c, const char *mime, int fd);   /* a Wayland program pastes what an X program copied */
 static void        selection_broadcast(aurwl *c);
@@ -406,7 +413,7 @@ static int         xw_close(aurwl_win *w);
 static int         xw_kill(aurwl_win *w);
 static void        xw_init(aurwl *c);
 static void        xw_shutdown(aurwl *c);
-static void        xw_reaped(aurwl *c, pid_t pid);
+static void        xw_reaped(aurwl *c, pid_t pid, int status);
 
 /* ── small helpers ──────────────────────────────────────────────── */
 
@@ -727,6 +734,9 @@ static int take_buffer(aurwl_win *w, struct wl_resource *buf, irect *copied, int
     uint32_t fmt    = wl_shm_buffer_get_format(shm);
 
     if (bw <= 0 || bh <= 0 || bw > MAX_DIM || bh > MAX_DIM) return 0;
+    /* Each side was bounded and the product was not: 16384 x 16384 is a gigabyte of store, copied whole on the first
+     * commit, from a sparse pool that cost the client nothing. The buffer is refused (the window stays blank). */
+    if ((int64_t)bw * bh > MAX_BUF_PIXELS) return 0;
     if (fmt != WL_SHM_FORMAT_ARGB8888 && fmt != WL_SHM_FORMAT_XRGB8888) {
         wl_resource_post_error(buf, 0, "unsupported shm format %u", fmt);
         return 0;
@@ -835,7 +845,7 @@ static void logical_size(const aurwl_win *w, int *lw, int *lh)
 /* Total pixels one flattened window may take: 128 MiB. A 4K screen is
  * 8 million. Past this the window is shown without its subsurfaces
  * rather than allocating whatever a client asked for. */
-#define FLAT_MAX_PIXELS (32 * 1024 * 1024)
+#define FLAT_MAX_PIXELS MAX_BUF_PIXELS
 
 /* A list node that is always safe to remove again. */
 static void unlink_init(struct wl_list *n) { wl_list_remove(n); wl_list_init(n); }
@@ -1551,6 +1561,8 @@ static void surface_free_res(struct wl_resource *r)
     if (c->cursor.surf == w || c->ptr_surf == w || c->ptr_focus == w) cursor_reset(c);
     if (c->ptr_surf == w)  c->ptr_surf = NULL;
     if (c->ptr_focus == w) { c->ptr_focus = NULL; c->ptr_surf = NULL; }
+    if (!c->ptr_surf) c->ptr_off = 0;
+
 
     /* When a client dies, libwayland destroys its resources in an order
      * we do not choose -- and it destroyed the wl_surface BEFORE the
@@ -2457,12 +2469,25 @@ static void drag_motion(aurwl *c, aurwl_win *w, int sx, int sy, uint32_t t)
 /* After a drop the target has the data and the pointer is free again; the
  * drag only lasts until the target says finish. If it never does -- it
  * destroyed the offer, or quit -- that is the end of it too. */
+static uint32_t mono_ms(void)
+{
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint32_t)(ts.tv_sec * 1000u + ts.tv_nsec / 1000000u);
+}
+
 static void drag_validate(aurwl *c)
 {
     if (c->drag.active && c->drag.dropped &&
         (!res_in_list(&c->offers, c->drag.offer) || !res_in_list(&c->devices, c->drag.dev))) {
         c->drag.target = NULL;
         drag_end(c);
+    } else if (c->drag.active && c->drag.dropped && mono_ms() - c->drag.dropped_ms > c->drag.finish_ms) {
+        /* The target took the drop and never said finish (hung, busy, buggy, or hostile): every other program's
+         * drag was refused for as long as that lasted. The source is told it did not finish. */
+        struct wl_resource *src = c->drag.source;
+        c->drag.target = NULL;
+        drag_end(c);
+        if (src) wl_data_source_send_cancelled(src);
     }
 }
 
@@ -2478,6 +2503,7 @@ static void drag_release(aurwl *c)
     if (src && wl_resource_get_version(src) >= WL_DATA_SOURCE_DND_DROP_PERFORMED_SINCE_VERSION)
         wl_data_source_send_dnd_drop_performed(src);
     c->drag.dropped = 1;
+    c->drag.dropped_ms = mono_ms();
     /* From version 3 the target says it has finished with the data (finish)
      * and only then does the source hear dnd_finished; before that the
      * drop is the end of it. */
@@ -2496,6 +2522,7 @@ static void ddev_start_drag(struct wl_client *cl, struct wl_resource *r,
     aurwl_win *ow = origin ? wl_resource_get_user_data(origin) : NULL;
     aurwl_win *iw = icon ? wl_resource_get_user_data(icon) : NULL;
     if (iw && !take_role(iw, ROLE_CURSOR, r, WL_DATA_DEVICE_ERROR_ROLE)) return;
+    drag_validate(c);                                  /* a drop that was never finished does not stop this one */
 
     /* A drag begins with a button held down on a surface of the program
      * that asks, and the serial it quotes is that button's. Anything else
@@ -2869,6 +2896,20 @@ static void popup_gone(struct wl_resource *r)
 
 /* ── xdg_surface ────────────────────────────────────────────────── */
 
+/* Windows (not surfaces) a program may have at once. The window list is walked by the shell on every frame and
+ * every pointer event, and each step of it walks the surface list: a program that mapped four thousand tiny
+ * toplevels made a mouse movement cost tens of milliseconds. MAX_WINS was written and used nowhere. */
+static int too_many_windows(struct wl_client *cl, struct wl_resource *r, aurwl *c)
+{
+    int n = 0;
+    aurwl_win *x;
+    wl_list_for_each(x, &c->surfaces, link)
+        if ((x->role == ROLE_TOPLEVEL || x->role == ROLE_POPUP) && x->res && wl_resource_get_client(x->res) == cl) n++;
+    if (n < MAX_WINS) return 0;
+    wl_resource_post_error(r, XDG_WM_BASE_ERROR_ROLE, "no more than %d windows per program", MAX_WINS);
+    return 1;
+}
+
 static void xs_get_toplevel(struct wl_client *cl, struct wl_resource *r, uint32_t id)
 {
     aurwl_win *w = wl_resource_get_user_data(r);
@@ -2884,6 +2925,7 @@ static void xs_get_toplevel(struct wl_client *cl, struct wl_resource *r, uint32_
                                "this surface already has a role");
         return;
     }
+    if (too_many_windows(cl, r, w->c)) return;
     struct wl_resource *tl = wl_resource_create(cl, &xdg_toplevel_interface,
                                                 wl_resource_get_version(r), id);
     if (!tl) { wl_client_post_no_memory(cl); return; }
@@ -2921,6 +2963,7 @@ static void xs_get_popup(struct wl_client *cl, struct wl_resource *r, uint32_t i
                                "this surface already has a role");
         return;
     }
+    if (too_many_windows(cl, r, w->c)) return;
     struct wl_resource *pr = wl_resource_create(cl, &xdg_popup_interface,
                                                 wl_resource_get_version(r), id);
     if (!pr) { wl_client_post_no_memory(cl); return; }
@@ -3368,6 +3411,7 @@ aurwl *aurwl_create(int w, int h, int refresh_mhz)
     c->oh = h > 0 ? h : 720;
     c->refresh_mhz = refresh_mhz > 0 ? refresh_mhz : 60000;
     c->keymap_fd = -1;
+    c->drag.finish_ms = getenv("AUROS_DRAG_FINISH_MS") ? (uint32_t)atoi(getenv("AUROS_DRAG_FINISH_MS")) : 10000;   /* the env is a test hook */
 
     wl_list_init(&c->surfaces);  wl_list_init(&c->seats);
     wl_list_init(&c->pointers);  wl_list_init(&c->keyboards);
@@ -3683,6 +3727,20 @@ void aurwl_win_pref_size(const aurwl_win *w, int *w_out, int *h_out)
     logical_size(w, w_out, h_out);
 }
 
+/* The window `w` is blocked on, if it has a dialog open: the newest window that names `w` as its parent
+ * (xdg_toplevel.set_parent, or an X window's WM_TRANSIENT_FOR). A modal dialog hides behind its window when she
+ * picks the window, and the window ignores her; the shell sends her to the dialog instead. */
+aurwl_win *aurwl_win_dialog(aurwl *c, const aurwl_win *w)
+{
+    aurwl_win *found = NULL, *x;
+    if (!c || !w) return NULL;
+    wl_list_for_each(x, &c->surfaces, link) {
+        if (x == w || !win_visible(x) || aurwl_win_is_popup(x)) continue;
+        if (aurwl_win_transient_for(x) == w->id) found = x;
+    }
+    return found;
+}
+
 void aurwl_win_logical_size(const aurwl_win *w, int *lw, int *lh)
 {
     if (!w) { if (lw) *lw = 1; if (lh) *lh = 1; return; }
@@ -3781,6 +3839,7 @@ void aurwl_set_focus(aurwl *c, aurwl_win *w)
         if (!p || i > PARENT_MAX) return;
         w = p;
     }
+    if (w && !xw_takes_focus(w)) return;              /* a window that says it must not be given the keyboard is not */
     if (c->focus == w) return;
     if (wishhook_reset) wishhook_reset();            /* a new field: the word so far is not hers */
     uint32_t ser = serial_of(c);
@@ -3856,8 +3915,12 @@ void aurwl_pointer_motion(aurwl *c, aurwl_win *w, int sx, int sy, uint32_t t)
         drag_motion(c, w, sx, sy, t);
         return;
     }
-    /* The shell does not pass on a release that happens off every window,
-     * so a grab must not outlive the pointer leaving them all. */
+    /* A button is held and the pointer has left every window: the program that was pressed keeps the pointer
+     * until the release (an implicit grab) and hears the release, then the leave. Telling it "leave" with the
+     * button down, and never "up", left it believing the button stayed down: a selection or a scrollbar drag
+     * that kept following the pointer after she let go. (The shell passes the release on: session_button.) */
+    if (!w && c->btns_down > 0 && c->ptr_surf) { c->ptr_off = 1; c->ptr_focus = NULL; return; }
+    c->ptr_off = 0;
     if (!w) c->btns_down = 0;
 
     aurwl_win *hit = NULL;
@@ -3933,6 +3996,7 @@ void aurwl_pointer_button(aurwl *c, uint32_t button, int pressed, uint32_t t)
             if (wl_resource_get_version(p) >= WL_POINTER_FRAME_SINCE_VERSION)
                 wl_pointer_send_frame(p);
         }
+    if (!pressed && c->ptr_off && c->btns_down == 0) { c->ptr_off = 0; ptr_leave(c); }     /* let go out there: now it left */
 }
 
 void aurwl_pointer_axis(aurwl *c, int horizontal, double step, uint32_t t)
@@ -4033,10 +4097,12 @@ pid_t aurwl_spawn(aurwl *c, const char *const argv[])
         /* Toolkits pick a backend from the environment before they look
          * at what is actually available, and the guesses they make on a
          * machine with no X server are all wrong in different ways. */
-        setenv("GDK_BACKEND", "wayland", 1);
-        setenv("QT_QPA_PLATFORM", "wayland", 1);
-        setenv("SDL_VIDEODRIVER", "wayland", 1);
-        setenv("CLUTTER_BACKEND", "wayland", 1);
+        /* ...but with Xwayland there, a program that has no Wayland plugin (a Qt program from the archive, an
+         * AppImage with only xcb) may use X instead of failing: Wayland first, X as the second choice. */
+        setenv("GDK_BACKEND", c->x.enabled ? "wayland,x11" : "wayland", 1);
+        setenv("QT_QPA_PLATFORM", c->x.enabled ? "wayland;xcb" : "wayland", 1);
+        setenv("SDL_VIDEODRIVER", c->x.enabled ? "wayland,x11" : "wayland", 1);
+        if (c->x.enabled) unsetenv("CLUTTER_BACKEND"); else setenv("CLUTTER_BACKEND", "wayland", 1);
         setenv("MOZ_ENABLE_WAYLAND", "1", 1);
         setenv("XDG_SESSION_TYPE", "wayland", 1);
         setenv("XDG_CURRENT_DESKTOP", "AurOS", 1);
@@ -4067,13 +4133,14 @@ void aurwl_reap(aurwl *c)
 {
     if (!c) return;
     for (int i = c->n_kids - 1; i >= 0; i--) {
-        pid_t p = waitpid(c->kids[i], NULL, WNOHANG);
+        int status = 0;
+        pid_t p = waitpid(c->kids[i], &status, WNOHANG);
         /* >0 exited; <0 means it is not ours any more (already
          * collected, or never was), and either way the slot is stale. */
         if (p != 0) {
             pid_t done = c->kids[i];
             c->kids[i] = c->kids[--c->n_kids];
-            xw_reaped(c, done);        /* Xwayland has gone: the next X program starts a new one */
+            xw_reaped(c, done, p > 0 ? status : 0);        /* Xwayland has gone: the next X program starts a new one */
         }
     }
 }

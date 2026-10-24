@@ -330,8 +330,32 @@ void session_focus_follow(shell_ctx *c)
     if (c->focus >= 0 && c->focus < c->n_wins) {
         const win_entry *e = &c->wins[c->focus];
         if (e->wid && !e->minimised) want = session_win(c, e->wid);
+        /* A MODAL DIALOG IS WHERE SHE GOES. The program under a dialog ignores her, and the dialog was drawn
+         * behind it the moment she picked the program (VLC's Open Network Stream, a Zoom dialog): a window that
+         * looked frozen with no way to see why. Picking the program picks its dialog. */
+        for (int hops = 0; want && hops < 4; hops++) {
+            aurwl_win *d = aurwl_win_dialog(c->wl, want);
+            int slot = d ? slot_for_wid(c, aurwl_win_id(d)) : -1;
+            if (slot < 0 || c->wins[slot].minimised) break;
+            want = d;
+            c->focus = slot;
+        }
     }
     if (want != aurwl_focus(c->wl)) aurwl_set_focus(c->wl, want);
+}
+
+/* A key from the keyboard while Super is held belongs to the desktop, not to the program: but what the program
+ * SAW go down must see come up (Shift pressed, then Super tapped, then Shift let go left every letter capital
+ * and a held key repeating for ever), so a release is passed on for a press that was. Returns what session_key
+ * returns, or -1 when the key was kept from the program. `held` is the caller's memory (one bit a key code). */
+int session_key_super(shell_ctx *c, uint32_t held[24], int code, int value, int super_down)
+{
+    if (code < 0 || code >= 24 * 32) return -1;
+    uint32_t bit = 1u << (code & 31), *word = &held[code >> 5];
+    if (super_down && !(value != 1 && (*word & bit))) return -1;
+    int r = session_key(c, code, value != 0);
+    if (value == 1) *word |= bit; else if (value == 0) *word &= ~bit;
+    return r;
 }
 
 int session_motion(shell_ctx *c, int x, int y)

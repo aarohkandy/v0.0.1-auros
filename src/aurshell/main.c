@@ -1178,6 +1178,7 @@ int main(int argc, char **argv)
     int dirty = 1, last_min = -1;
     uint32_t last_damage = 0;
     int super_down = 0;
+    static uint32_t key_seen[24];             /* the keys a program has seen go down (and so must see come up) */
     /* PHASE 9, ASKED ONCE PER SESSION AND NOT BY A BUTTON.
      *
      * Nothing on the band opens this one: it opens itself, here, if
@@ -2293,8 +2294,7 @@ int main(int argc, char **argv)
                          * also tells the application to let go of
                          * whatever it thought was held. */
                         int consumed = 0;
-                        if (!super_down)
-                            consumed = session_key(&c, ev.code, ev.value != 0);
+                        { int kr = session_key_super(&c, key_seen, ev.code, ev.value, super_down); if (kr > 0) consumed = kr; }
 
                         /* A panel on screen is modal, so it answers the
                          * keyboard and NOTHING behind it does -- not

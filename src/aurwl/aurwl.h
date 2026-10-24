@@ -136,6 +136,9 @@ void        aurwl_win_popup_offset(const aurwl_win *w, int *x, int *y);
 /* Keyboard focus. Passing NULL takes focus back for the shell itself,
  * which is what a shell overlay or an empty desktop wants. */
 void        aurwl_set_focus(aurwl *c, aurwl_win *w);
+
+/* The dialog `w` is blocked on (it names `w` as its parent), or NULL. */
+aurwl_win  *aurwl_win_dialog(aurwl *c, const aurwl_win *w);
 aurwl_win  *aurwl_focus(const aurwl *c);
 
 /* Pointer, in surface-local coordinates. Pass NULL for `w` when the

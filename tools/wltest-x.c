@@ -1192,7 +1192,7 @@ static void sc_x_goes_away(void)
     aurwl_set_focus(C, w);
     /* ...and its process is collected: everything of it goes, so the next X program starts a fresh one */
     C->x.pid = 4242;
-    xw_reaped(C, 4242);
+    xw_reaped(C, 4242, 0);
     check(C->x.pid == 0 && C->x.wm == NULL && C->x.client == NULL, "the process was collected and its window manager (or connection) is still here");
     check(aurwl_window_count(C) == 0, "its windows are still listed after it went (%d)", aurwl_window_count(C));
     finish();
@@ -1299,6 +1299,136 @@ static void sc_menu_bound(void)
     finish();
 }
 
+/* Xwayland's Wayland connection goes first (a crash, an OOM kill, or aurwl dropping it) while what it wrote to the
+ * window manager is still unread: the window manager must not follow a pointer to the freed connection. */
+static void sc_xclient_gone(void)
+{
+    start();
+    C->x.gone.notify = x_xclient_gone;
+    wl_client_add_destroy_listener(C->x.client, &C->x.gone);
+    uint32_t win = 0x400300;
+    show_window(win, 0xFF204060, "a", "a|A", 0);
+    wl_client_destroy(C->x.client);
+    check(C->x.client == NULL, "setup: the connection is gone");
+    check(C->x.wm->xclient == NULL, "the window manager still points at the connection that was freed");
+    ev_client(win, atom_id("WL_SURFACE_ID"), 7, 0, 0);               /* what it wrote before it died */
+    SETTLE();
+    check(C->x.wm && !C->x.wm->dead, "the window manager was killed by a message about a surface that is gone");
+    finish();
+}
+
+/* Sizes no window could be given are not asked for (the buffer of that size is a gigabyte). */
+static void sc_hints_huge(void)
+{
+    start();
+    uint32_t win = 0x400310;
+    uint32_t hints[18] = { 16, 0, 0, 0, 0, 16384, 16384, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };    /* a minimum of 16384 x 16384 */
+    fx_setprop(win, "WM_NORMAL_HINTS", "WM_NORMAL_HINTS", 32, hints, sizeof hints);
+    show_window(win, 0xFF000000, "w", "a|A", 0);
+    aurwl_win *w = win_of_x(win);
+    check(w != NULL, "setup: no window");
+    if (!w) { finish(); return; }
+    int base = X.n_reqs;
+    aurwl_win_configure(w, 640, 480, 1, 0, 0); SETTLE();
+    req *c1 = last_size(win, base);
+    check(c1 && xr32(c1->body + 8) == 640 && xr32(c1->body + 12) == 480, "a minimum of 16384 x 16384 was forced on the window (%u x %u)",
+          c1 ? xr32(c1->body + 8) : 0, c1 ? xr32(c1->body + 12) : 0);
+    base = X.n_reqs;
+    ev_configure_request(win, 0, 0, 16000, 16000, XC_W | XC_H);        /* the program asks for 16000 x 16000 */
+    SETTLE();
+    c1 = last_size(win, base);
+    check(c1 && (int64_t)xr32(c1->body + 16) * xr32(c1->body + 20) <= MAX_BUF_PIXELS, "a window of 16000 x 16000 was granted (%u x %u)",
+          c1 ? xr32(c1->body + 16) : 0, c1 ? xr32(c1->body + 20) : 0);
+    finish();
+}
+
+/* A program that changes its title in a loop makes hundreds of changes arrive before one answer is read. */
+static void sc_property_burst(void)
+{
+    start();
+    uint32_t win = 0x400320;
+    show_window(win, 0xFF303030, "t", "a|A", 0);
+    enum { N = 5000 };
+    uint8_t *burst = calloc(N, 32);                           /* 5000 changes in one write: all in before any answer is read */
+    for (int i = 0; i < N; i++) { burst[32 * i] = 28; xw32(burst + 32 * i + 4, win); xw32(burst + 32 * i + 8, XP_WM_NAME); }
+    fx_send(burst, (size_t)N * 32);
+    free(burst);
+    SETTLE(); SETTLE(); SETTLE();
+    check(C->x.wm && !C->x.wm->dead, "5000 title changes in a burst killed the window manager");
+    finish();
+}
+
+/* A window manager that dies takes Xwayland with it, so the next X program gets a working one. */
+static void sc_wm_death(void)
+{
+    start();
+    pid_t xp = fork();
+    if (xp == 0) { for (;;) pause(); }
+    C->x.pid = xp;
+    X.garble = 2;                                              /* every reply has the wrong sequence number: it ends the connection */
+    ev_create(0x400330, 0, 0, 10, 10, 0);
+    ev_map_request(0x400330);
+    SETTLE(); SETTLE();
+    check(C->x.wm == NULL || C->x.wm->dead, "setup: the window manager did not die");
+    int st = 0, got = 0;
+    for (int i = 0; i < 300 && !got; i++) { pump(10); usleep(10000); got = waitpid(xp, &st, WNOHANG) == xp; }   /* (pump returns at once when the X side has hung up) */
+    if (!got) { kill(xp, SIGKILL); waitpid(xp, &st, 0); }
+    check(got && WIFSIGNALED(st) && WTERMSIG(st) == SIGTERM, "Xwayland was left running without a window manager (got %d, status 0x%x, wm %s)",
+          got, st, C->x.wm ? (C->x.wm->dead ? "dead" : "alive") : "none");
+    C->x.pid = 0;
+    X.garble = 0;
+    finish();
+}
+
+/* PBaseSize: a grid window (a terminal) is base + k * increment, with the base in words 15 and 16 of
+ * WM_NORMAL_HINTS (13 and 14 are the largest aspect: a different thing). */
+static void sc_hints_base(void)
+{
+    start();
+    uint32_t win = 0x400340;
+    uint32_t hints[18] = { 16 | 64 | 128 | 256, 0, 0, 0, 0, 100, 50, 0, 0, 10, 10, 3, 4, 7, 7, 20, 10, 0 };   /* min 100x50, inc 10x10, aspect, base 20x10 */
+    fx_setprop(win, "WM_NORMAL_HINTS", "WM_NORMAL_HINTS", 32, hints, sizeof hints);
+    show_window(win, 0xFF000000, "term", "t|T", 0);
+    aurwl_win *w = win_of_x(win);
+    check(w != NULL, "setup: no window");
+    if (!w) { finish(); return; }
+    int base = X.n_reqs;
+    aurwl_win_configure(w, 303, 203, 1, 0, 0); SETTLE();
+    req *c1 = last_size(win, base);
+    check(c1 && xr32(c1->body + 8) == 300 && xr32(c1->body + 12) == 200, "a grid window was not 20 + 28 * 10 by 10 + 19 * 10 (got %u x %u)",
+          c1 ? xr32(c1->body + 8) : 0, c1 ? xr32(c1->body + 12) : 0);
+    finish();
+}
+
+/* ICCCM 4.1.7: input=False is "never SetInputFocus me"; with WM_TAKE_FOCUS the message is the way in; with neither the
+ * window is never given the keyboard (a floating toolbar of a meeting program, a Java window). */
+static void sc_input_hint(void)
+{
+    start();
+    uint32_t a = 0x400350, b = 0x400351, cc = 0x400352;
+    uint32_t noinput[9] = { 1, 0, 0, 0, 0, 0, 0, 0, 0 };                    /* InputHint set, input False */
+    fx_setprop(b, "WM_HINTS", "WM_HINTS", 32, noinput, sizeof noinput);
+    fx_setprop(cc, "WM_HINTS", "WM_HINTS", 32, noinput, sizeof noinput);
+    fx_setprop(cc, "WM_PROTOCOLS", "ATOM", 32, (uint32_t[]){ atom_id("WM_TAKE_FOCUS") }, 4);
+    show_window(a, 0xFF101010, "passive", "a|A", 0);
+    show_window(b, 0xFF202020, "never", "b|B", 0);
+    show_window(cc, 0xFF303030, "global", "c|C", 0);
+    aurwl_win *wa = win_of_x(a), *wb = win_of_x(b), *wc = win_of_x(cc);
+    check(wa && wb && wc, "setup: three windows");
+    if (!(wa && wb && wc)) { finish(); return; }
+    int base = X.n_reqs;
+    aurwl_set_focus(C, wa); SETTLE();
+    check(count_req(42, a, base) == 1 && aurwl_focus(C) == wa, "a window that takes input was not given the focus");
+    aurwl_set_focus(C, wb); SETTLE();
+    check(count_req(42, b, base) == 0, "SetInputFocus on a window that says input=False and cannot be told to take it");
+    check(aurwl_focus(C) == wa, "the keyboard was given to a window that must never have it");
+    aurwl_set_focus(C, wc); SETTLE();
+    check(count_req(42, cc, base) == 0, "SetInputFocus on a globally active window (it takes the focus itself)");
+    check(count_req(25, cc, base) >= 1, "a globally active window was not sent WM_TAKE_FOCUS");
+    check(aurwl_focus(C) == wc, "the keyboard did not go to the globally active window");
+    finish();
+}
+
 static const struct { const char *name; void (*fn)(void); } SC[] = {
     { "takeover",         sc_takeover },
     { "map",              sc_map },
@@ -1329,6 +1459,12 @@ static const struct { const char *name; void (*fn)(void); } SC[] = {
     { "clip-newest-wins", sc_clip_newest_wins },
     { "clip-too-big",     sc_clip_too_big },
     { "restack",          sc_restack },
+    { "hints-base",       sc_hints_base },
+    { "input-hint",       sc_input_hint },
+    { "xclient-gone",     sc_xclient_gone },
+    { "hints-huge",       sc_hints_huge },
+    { "property-burst",   sc_property_burst },
+    { "wm-death",         sc_wm_death },
     { "menu-bound",       sc_menu_bound },
     { "clip-wl-focused-refused", sc_clip_wl_focused_refused },
     { "clip-bg-x-refused", sc_clip_bg_x_refused },

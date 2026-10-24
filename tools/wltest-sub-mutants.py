@@ -214,7 +214,7 @@ MUTANTS = [
     ("a program that cannot be asked to close is never killed", "x:close",
      "    else              x_kill_client(m, w->id);", "    else              ;", XWM),
     ("focus does not reach the X server", "x:focus",
-     "    x_set_focus(m, w->id);\n    if (w->wm_take_focus)", "    if (w->wm_take_focus)", XWM),
+     "    if (w->input_hint) x_set_focus(m, w->id);", "", XWM),
     ("a program that wants to be told it has focus is not told", "x:focus",
      "    if (w->wm_take_focus) x_client_message(", "    if (0) x_client_message(", XWM),
     ("the size the shell asks for ignores the program's minimum", "x:configure",
@@ -371,6 +371,68 @@ MUTANTS = [
      "    c->text_scale = scale >= 1.f && scale <= 4.f ? scale : 1.f;", "    c->text_scale = scale;"),
     ("INCR chunks are added without a limit", "x:clip-incr-cap",
      "p->n + bytes > XC_MAX || ", "", XCLIP),
+    # ── review W07 W08 W10 W18 W31 ──
+    ("the window manager follows a pointer to Xwayland's freed connection", "x:xclient-gone",
+     "    if (c->x.wm) c->x.wm->xclient = NULL;          /* the window manager may still read what was written before it died */\n", "", XWM),
+    ("a surface named after its connection went is looked up on freed memory", "x:xclient-gone",
+     "    struct wl_resource *r = surface_id && m->xclient ? wl_client_get_object(m->xclient, surface_id) : NULL;",
+     "    struct wl_resource *r = surface_id ? wl_client_get_object(m->xclient ? m->xclient : (struct wl_client *)1, surface_id) : NULL;", XWM),
+    ("a minimum size no window could have is forced", "x:hints-huge",
+     "    if ((int64_t)nw * nh > MAX_BUF_PIXELS) { nw = width; nh = height; }   /* a minimum no window could be given: ignored */\n", "", XWM),
+    ("a program may ask for a window of any area", "x:hints-huge",
+     "        if ((int64_t)nw * nh > MAX_BUF_PIXELS) { nw = w->w > 0 ? w->w : 1; nh = w->h > 0 ? w->h : 1; }   /* more than a window may be: it stays as it was */\n", "", XWM),
+    ("a burst of title changes kills the window manager", "x:property-burst",
+     "        if (m->pend_n > XW_PEND_MAX / 2) break;                /* a program changing a title in a loop: not every change is read */\n", "", XWM),
+    ("a dead window manager leaves Xwayland running", "x:wm-death",
+     "    if (m->c->x.pid > 0) kill(m->c->x.pid, SIGTERM);\n", "", XWM),
+    ("a buffer of any area is taken", "huge-buffer",
+     "    if ((int64_t)bw * bh > MAX_BUF_PIXELS) return 0;\n", ""),
+    # ── review W17 W18 W31: Xwayland's life (tools/wltest-xlife.sh) ──
+    ("Xwayland is never collected: the second X program waits for ever", "xlife",
+     "            xw_reaped(c, done, p > 0 ? status : 0);        /* Xwayland has gone: the next X program starts a new one */\n", ""),
+    ("the socket is not listened to again after Xwayland ended", "xlife",
+     "        return;\n    }\n    x_arm(c);\n}", "        return;\n    }\n}", XWM),
+    ("a clean exit counts as a failure", "xlife",
+     "    if (!clean && now.tv_sec - c->x.started.tv_sec < 2) c->x.failures++; else c->x.failures = 0;",
+     "    if (now.tv_sec - c->x.started.tv_sec < 2) c->x.failures++; else c->x.failures = 0;", XWM),
+    ("X never comes back after it was given up on", "xlife",
+     "        if (c->x.retry) wl_event_source_timer_update(c->x.retry, c->x.retry_ms);\n", "", XWM),
+    ("the X socket is readable by other users", "xlife",
+     "    chmod(sock, 0700);", "    chmod(sock, 0777);", XWM),
+    ("a lock whose owner is alive is taken", "xlife",
+     "        if (p > 0 && (kill(p, 0) == 0 || errno == EPERM)) return -1;", "", XWM),
+    ("Xwayland is started without its listening socket", "xlife",
+     '"-listenfd", lf, "-wm", wm, (char *)NULL);', '"-wm", wm, (char *)NULL);', XWM),
+    # ── review W14 ──
+    ("a button held while the pointer leaves every window is dropped (the program never hears it come up)", "release-outside",
+     "    if (!w && c->btns_down > 0 && c->ptr_surf) { c->ptr_off = 1; c->ptr_focus = NULL; return; }\n", ""),
+    ("after the release out there the program is never told the pointer left", "release-outside",
+     "    if (!pressed && c->ptr_off && c->btns_down == 0) { c->ptr_off = 0; ptr_leave(c); }     /* let go out there: now it left */\n", ""),
+    # ── review W22 W23 ──
+    ("a program may have any number of windows", "window-cap",
+     "    if (n < MAX_WINS) return 0;\n    wl_resource_post_error(r, XDG_WM_BASE_ERROR_ROLE, \"no more than %d windows per program\", MAX_WINS);\n    return 1;",
+     "    return 0;"),
+    ("a drop that is never finished blocks every later drag", "dnd-hung",
+     "    } else if (c->drag.active && c->drag.dropped && mono_ms() - c->drag.dropped_ms > c->drag.finish_ms) {", "    } else if (0) {"),
+    # ── review W24 W25 W26 W27 W30 ──
+    ("the base size is read from the aspect words", "x:hints-base",
+     "        if ((fl & 256) && units >= 17) { w->hint_base_w = H(15); w->hint_base_h = H(16); }", "        if ((fl & 256) && units >= 17) { w->hint_base_w = H(13); w->hint_base_h = H(14); }", XWM),
+    ("a window that says input=False is given SetInputFocus", "x:input-hint",
+     "    if (w->input_hint) x_set_focus(m, w->id);", "    x_set_focus(m, w->id);", XWM),
+    ("a window that must never have the keyboard is given it", "x:input-hint",
+     "    return !(w->role == ROLE_X11 && w->xw && !w->xw->or_ && !w->xw->input_hint && !w->xw->wm_take_focus);", "    return 1;", XWM),
+    ("a globally active window is not sent WM_TAKE_FOCUS", "x:input-hint",
+     "    if (w->wm_take_focus) x_client_message(", "    if (0) x_client_message(", XWM),
+    ("Wayland-only toolkits are forced even when X is there", "xlife",
+     '        setenv("GDK_BACKEND", c->x.enabled ? "wayland,x11" : "wayland", 1);', '        setenv("GDK_BACKEND", "wayland", 1);'),
+    ("picking a program with a dialog open goes to the program", "deco",
+     "            want = d;\n            c->focus = slot;", "            break;", SESSION),
+    ("a dialog that is minimised is sent to", "deco",
+     "            if (slot < 0 || c->wins[slot].minimised) break;", "            if (slot < 0) break;", SESSION),
+    ("a release during Super is always kept from the program", "deco",
+     "    if (super_down && !(value != 1 && (*word & bit))) return -1;", "    if (super_down) return -1;", SESSION),
+    ("a release during Super reaches the program though it never saw the press", "deco",
+     "    if (super_down && !(value != 1 && (*word & bit))) return -1;", "    if (super_down && !(value != 1)) return -1;", SESSION),
 ]
 
 COMPILE_ERROR = re.compile(r"^\S+:\d+:\d+: (fatal )?error:|undefined reference to|ld returned", re.M)
@@ -385,7 +447,7 @@ def verdict(scenario, r):
         return "ALIVE"
     if scenario == "cursortest":                 # prints "  FAIL  <what>" per failed check and exits 1
         return "caught" if r.returncode == 1 and re.search(r"^  FAIL  ", r.stdout, re.M) else "OTHER"
-    if scenario == "deco":                       # prints "    <what>   ok|FAIL" per check and exits 1 when any failed
+    if scenario in ("deco", "xlife"):            # prints "    <what>   ok|FAIL" per check and exits 1 when any failed
         return "caught" if r.returncode == 1 and re.search(r"^\s+\S.*\sFAIL\s*$", r.stdout, re.M) else "OTHER"
     name = scenario[2:] if scenario.startswith("x:") else scenario
     # the test prints "  <name>  FAIL" when that scenario ended with a failed check
@@ -420,14 +482,15 @@ def main():
                 continue
             path = os.path.join(tmp, "mutant.c")
             open(path, "w").write(tsrc.replace(old, new))
-            if scenario.startswith("x:"):
+            if scenario.startswith("x:") or scenario == "xlife":
                 # a copy of the compositor with a copy of xwm.inc beside it: a quoted include looks there first
                 d = os.path.join(tmp, "xtree"); shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
                 shutil.copy(SRC if target != SRC else path, os.path.join(d, "aurwl.c"))
                 shutil.copy(XWM if target != XWM else path, os.path.join(d, "xwm.inc"))
                 shutil.copy(XCLIP if target != XCLIP else path, os.path.join(d, "xclip.inc"))
                 env = dict(os.environ, AURWL_C=os.path.join(d, "aurwl.c"), OUT=os.path.join(tmp, "out"))
-                cmd = ["sh", os.path.join(ROOT, "tools", "wltest-x.sh"), scenario[2:]]
+                cmd = ["sh", os.path.join(ROOT, "tools", "wltest-x.sh"), scenario[2:]] if scenario != "xlife" else \
+                      ["sh", os.path.join(ROOT, "tools", "wltest-xlife.sh")]
             elif scenario == "deco":
                 # tools/wltest-deco.sh against a broken src/aurshell/session.c (any check failing is a catch)
                 env = dict(os.environ, SESSION_C=path)

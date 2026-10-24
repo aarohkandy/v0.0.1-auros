@@ -199,6 +199,7 @@ static int client(const char *sock, int chan)
         for (int i = 0; i < NW; i++) all &= c.configured[i];
         if (all) break;
     }
+    xdg_toplevel_set_parent(c.tl[3], c.tl[2]);       /* "own" is a dialog of "ssd2" */
     for (int i = 0; i < NW; i++) give_buffer(&c, i);
     wl_display_roundtrip(dpy);
 
@@ -398,6 +399,37 @@ int main(void)
     session_focus_follow(&sc);
     ok("a program that is still starting has none", aurwl_focus(c) == NULL);
     sc.wins[other].wid = keep_wid;
+
+    /* A dialog the program is blocked on is where she goes when she picks the program. */
+    printf("\npicking a program with a dialog open\n");
+    int ssd2 = -1, own = -1;
+    for (int i = 0; i < sc.n_wins; i++) { if (!strcmp(sc.wins[i].title, "ssd2")) ssd2 = i; if (!strcmp(sc.wins[i].title, "own")) own = i; }
+    ok("setup: the program and its dialog both have a slot", ssd2 >= 0 && own >= 0);
+    if (ssd2 >= 0 && own >= 0) {
+        sc.focus = ssd2;
+        session_focus_follow(&sc);
+        ok("the keyboard is the dialog's, not the blocked program's", aurwl_focus(c) == session_win(&sc, sc.wins[own].wid));
+        ok("...and the shell shows the dialog as the one in use", sc.focus == own);
+        sc.wins[own].minimised = 1;
+        sc.focus = ssd2;
+        session_focus_follow(&sc);
+        ok("a dialog that is minimised is not sent to", aurwl_focus(c) == session_win(&sc, sc.wins[ssd2].wid));
+        sc.wins[own].minimised = 0;
+    }
+
+    /* Super held: the desktop's chord. What a program saw go down must still see come up. */
+    printf("\nkeys while Super is held\n");
+    {
+        uint32_t held[24]; memset(held, 0, sizeof held);
+        sc.focus = other;
+        session_focus_follow(&sc);
+        ok("a key pressed before Super goes to the program", session_key_super(&sc, held, 42, 1, 0) != -1);
+        ok("a key pressed while Super is held is kept from it", session_key_super(&sc, held, 30, 1, 1) == -1);
+        ok("...and so is its release", session_key_super(&sc, held, 30, 0, 1) == -1);
+        ok("the release, while Super is held, of what the program saw go down still reaches it", session_key_super(&sc, held, 42, 0, 1) != -1);
+        ok("...once", session_key_super(&sc, held, 42, 0, 1) == -1);
+        ok("with Super up everything goes through", session_key_super(&sc, held, 30, 1, 0) != -1 && session_key_super(&sc, held, 30, 0, 0) != -1);
+    }
 
     /* A menu's pixels that are not there take no clicks (a program may map a popup bigger than it draws). */
     printf("\na menu takes clicks only where it is drawn\n");
