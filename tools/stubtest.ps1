@@ -32,11 +32,11 @@ $names = 'winhttp.dll','oleacc.dll','wlanapi.dll','iphlpapi.dll','winspool.drv',
          'secur32.dll','shell32.dll','ole32.dll'
 
 # a folder like Downloads: the program, and a planted copy of every name beside it
-function New-Downloads($name, $exeFile) {
+function New-Downloads($name, $exeFile, $plant = $names) {
     $d = Join-Path $root $name
     New-Item -ItemType Directory -Force -Path "$d\r" | Out-Null
     Copy-Item $exeFile "$d\AurOS-Setup.exe"
-    foreach ($n in $names) { Copy-Item "$Canary\canary.dll" (Join-Path $d $n) }
+    foreach ($n in $plant) { Copy-Item "$Canary\canary.dll" (Join-Path $d $n) }
     return $d
 }
 function Planted($d) { @(Get-ChildItem $d -Filter *.loaded -ErrorAction SilentlyContinue | ForEach-Object { $_.Name -replace '\.loaded$','' }) }
@@ -53,7 +53,7 @@ function Stray() { @(Get-ChildItem $base -Directory -Filter 'AurOS-Setup-*' -Err
 Get-ChildItem $base -Directory -Filter 'AurOS-Setup-*' -ErrorAction SilentlyContinue | ForEach-Object { cmd /c rmdir "$($_.FullName)" 2>$null }
 
 # ── 1. the hole is real here: the installer, started the old way, takes planted DLLs ──
-$d = New-Downloads 'old-way' "$Exe\aurbridge-wizard.exe"
+$d = New-Downloads 'old-way' "$Exe\aurbridge-wizard.exe" @('cryptbase.dll')
 $code = Run "$d\AurOS-Setup.exe" "--report `"$d\r`"" $d 20
 $took = @(Planted $d)
 Ok "the installer started from Downloads, the old way: $code, took $($took -join ', ')"
@@ -154,7 +154,7 @@ if (Stray) { Die "the bad-hash refusal left a private folder behind: $((Stray | 
 Ok "the extracted installer is refused before launch when its SHA-256 does not match the hash baked into the stub"
 
 # ── 5. beside Downloads is the one place the installer must not run from ──
-$dd = New-Downloads 'here-mutant' "$Stubs\aurbridge-setup-here-mutant.exe"
+$dd = New-Downloads 'here-mutant' "$Stubs\aurbridge-setup-here-mutant.exe" @('cryptbase.dll')
 $code = Run "$dd\AurOS-Setup.exe" "--quiet-failure --report `"$dd\r`"" $dd 20
 $took = @(Planted $dd)
 if (-not $took) { Die "the planted DLLs were not taken by a stub that runs the installer from Downloads: the check proves nothing (exit $code)" }
