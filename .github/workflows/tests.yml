@@ -217,6 +217,9 @@ jobs:
       - name: customization recipe contract (strict data and profile policy)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: python3 -m unittest discover -s src/customize/tests -v 2>&1 | tee transcripts/customization.txt
+      - name: customization build adapter (typed overrides and source identity)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/customize/test.sh 2>&1 | tee transcripts/customization-build.txt
       # WP-15 (stream OPS): once the owner sets the repository variable
       # AUROS_DOMAIN, no GitHub or workers.dev address may be left in what
       # an installed PC keeps. Until then it prints them and passes.
