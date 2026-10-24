@@ -6,9 +6,9 @@ test can see the whole chain: the panel, the socket, the engine, the engine's
 own checks, and back. The real service is cloud/ (stream CL); what its answers
 look like is docs/AI.md section 5.
 
-  python3 tools/wishe2e-cloud.py PORT
+  python3 tools/wishe2e-cloud.py PORT SERVICE_LOG [READY_FILE]
 """
-import json, sys, time
+import json, os, sys, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 POTATO = {"v": 1, "when": {"type": "typed_word", "word": "potato"},
@@ -46,4 +46,13 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"kind": "cannot", "missing": "other"})
         self.send(404, {})
 
-HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+# Binding the socket is part of starting the stand-in.  Tell the launcher only
+# after that has happened: a spawned Python process is not yet a listening
+# HTTP server.  The short delay is a test hook used by wishe2e.sh to keep that
+# ordering covered instead of relying on the scheduler.
+time.sleep(float(os.environ.get("WISHE2E_CLOUD_START_DELAY", "0")))
+server = HTTPServer(("127.0.0.1", int(sys.argv[1])), H)
+if len(sys.argv) > 3:
+    with open(sys.argv[3], "w") as ready:
+        ready.write(f"{server.server_port}\n")
+server.serve_forever()

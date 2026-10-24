@@ -28,10 +28,27 @@ cc -O1 -g -std=gnu11 -w -DAUROS_WISHES=1 -o "$T/wishe2e" "$ROOT/tools/wishe2e.c"
    "$ROOT"/src/aurshell/layouts/[a-z]*.c "$ROOT/src/common/theme.c" "$ROOT/src/common/font.c" \
    "$ROOT/src/common/png.c" -I "$ROOT/src/aurshell" -I "$ROOT/src/common" -lm
 
-PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
 : > "$T/service.log"
-python3 "$ROOT/tools/wishe2e-cloud.py" "$PORT" "$T/service.log" > "$T/cloud.out" 2>&1 < /dev/null &
+# Delay the stand-in's bind so this gate continuously proves that it waits for
+# the service, rather than passing or failing according to process scheduling.
+WISHE2E_CLOUD_START_DELAY=1 python3 "$ROOT/tools/wishe2e-cloud.py" 0 "$T/service.log" \
+    "$T/cloud.ready" > "$T/cloud.out" 2>&1 < /dev/null &
 CLOUD=$!
+i=0
+while [ ! -s "$T/cloud.ready" ] && kill -0 "$CLOUD" 2>/dev/null && [ $i -lt 50 ]; do
+    sleep 0.2
+    i=$((i + 1))
+done
+if ! { [ -s "$T/cloud.ready" ] && kill -0 "$CLOUD" 2>/dev/null; }; then
+    echo "the stand-in Wishes service did not start"
+    cat "$T/cloud.out"
+    exit 1
+fi
+PORT=$(cat "$T/cloud.ready")
+case "$PORT" in
+    ''|*[!0-9]*) echo "the stand-in Wishes service reported a bad port: $PORT"; exit 1 ;;
+esac
+[ "$PORT" -gt 0 ] || { echo "the stand-in Wishes service reported a bad port: $PORT"; exit 1; }
 printf 'url=http://127.0.0.1:%s\n' "$PORT" > "$T/wishes.conf"
 printf 'wishes = on\n' > "$T/policy.conf"
 printf 'wishes=on\n' > "$T/features"
