@@ -55,6 +55,13 @@ static int press(const char *words)
         }
     return 0;
 }
+static int shown(const char *words)
+{
+    paint();
+    for (int i = 0; i < shell_text_log_n; i++)
+        if (!strcmp(shell_text_log[i].s, words) && shell_text_log[i].w > 0) return 1;
+    return 0;
+}
 static int file_has(const char *path, const char *needle)
 {
     FILE *f = fopen(path, "r");
@@ -130,6 +137,29 @@ int main(void)
     put(g3, "@import url(\"file:///etc/auros/gtk/gtk.css\");\nwindow { font-size: 20px; }\n");
     ok(press("Light"), "with a gtk.css of her own, she presses \"Light\"");
     ok(file_has(g3, "font-size: 20px"), "her own gtk.css is left exactly as she wrote it");
+
+    /* The four ways the computer can work, by the names the installer and the website use (C-P0-4):
+     * the names come from shells/*.shell, and the two she was never meant to stumble on
+     * ("Just these apps", the keyboard tiler) appear only on a machine a profile set to one. */
+    printf("\nhow this computer works: her four, by name\n");
+    C.settings_open = 0; C.settings_open = 1; settings_opened(&C);
+    ok(press("How this computer works"), "\"How this computer works\" opens");
+    ok(shown("Like Windows") && shown("Like a Mac") && shown("Big and simple") && shown("One thing at a time"),
+       "Like Windows, Like a Mac, Big and simple, One thing at a time");
+    ok(!shown("Just these apps") && !shown("Panes and keyboard"),
+       "...and not \"Just these apps\" or the keyboard tiler (nothing she set up put her on one)");
+    {   /* a machine a profile put on Just these apps offers that one, and still not the tiler */
+        char dir[900], link[1100], tgt[1100];
+        snprintf(dir, sizeof dir, "%s/.config/auros", home); mkdir(dir, 0755);
+        snprintf(link, sizeof link, "%s/active.shell", dir);
+        snprintf(tgt, sizeof tgt, "%s/shells/locked.shell", cwd);
+        if (symlink(tgt, link) != 0) perror("symlink");
+        C.settings_open = 0; C.settings_open = 1; settings_opened(&C);
+        press("How this computer works");
+        ok(shown("Just these apps") && !shown("Panes and keyboard"),
+           "on a machine already set to Just these apps, that one is offered; the tiler still is not");
+        unlink(link);
+    }
 
     char rm[200]; snprintf(rm, sizeof rm, "rm -rf '%s'", home);
     if (system(rm) != 0) fprintf(stderr, "could not remove %s\n", home);

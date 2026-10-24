@@ -298,6 +298,9 @@ jobs:
       - name: theme-test (every template resolves in every theme; text on an accent or error fill is 4.5:1 in all five, the Light one included)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/theme-test.sh 2>&1 | tee transcripts/theme-test.txt
+      - name: renametest (build/forge's own rename loop - Internet, Your files, Get more programs and the rest - on stand-in desktop files)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/renametest.sh 2>&1 | tee transcripts/renametest.txt
       - name: contrast-test (the shell's palette in Light and Dark - text, rules and the words on the accent at 4.5:1 - and the other three themes' meaning pairs)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: sh tools/contrast-test.sh 2>&1 | tee transcripts/contrast-test.txt
