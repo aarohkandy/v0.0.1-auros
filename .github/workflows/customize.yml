@@ -1,4 +1,5 @@
 name: customize
+run-name: customize ${{ inputs.request_id }}
 
 on:
   workflow_dispatch:
@@ -10,6 +11,10 @@ on:
       base_build_run_id:
         description: Successful build.yml run from this exact main commit
         required: true
+        type: string
+      request_id:
+        description: Optional opaque request UUID used only to correlate this run
+        required: false
         type: string
 
 permissions:
@@ -37,9 +42,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AUROS_RECIPE_JSON: ${{ inputs.recipe }}
           BASE_BUILD_RUN_ID: ${{ inputs.base_build_run_id }}
+          REQUEST_ID: ${{ inputs.request_id }}
         run: |
-          [ "$GITHUB_REF" = refs/heads/main ] \
-            || { echo "::error::custom packaging must run from main"; exit 2; }
+          if [ "$GITHUB_REF" != refs/heads/main ] \
+             && [[ ! $GITHUB_REF =~ ^refs/tags/v[0-9A-Za-z.+-]+-[0-9a-f]{7}$ ]]; then
+            echo "::error::custom packaging must run from main or a strict release tag"
+            exit 2
+          fi
+          python3 tools/customize/delivery.py validate-request-id --request-id "$REQUEST_ID"
           [[ $BASE_BUILD_RUN_ID =~ ^[1-9][0-9]*$ ]] \
             || { echo "::error::base_build_run_id must be a positive Actions run ID"; exit 2; }
           mkdir -p packaging
@@ -74,6 +84,9 @@ jobs:
             --request packaging/request.json \
             --metadata packaging/base-metadata \
             --installer packaging/base-installer/AurOS-Setup.exe \
+            --provenance packaging/provenance.json
+          python3 tools/customize/delivery.py validate-source-ref \
+            --ref "$GITHUB_REF" --source-sha "$GITHUB_SHA" \
             --provenance packaging/provenance.json
           python3 tools/pe_payload.py list packaging/base-installer/AurOS-Setup.exe \
             > packaging/base-resources.txt
@@ -181,3 +194,128 @@ jobs:
       custom-package: true
     secrets:
       SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+
+  # A ready manifest is impossible without the shared signer's successful,
+  # same-run two-layer signing evidence. This job only adds immutable assets to
+  # the already-tested base prerelease; it never creates, edits, or promotes it.
+  publish:
+    name: publish
+    if: ${{ needs.sign.result == 'success' }}
+    needs: [package, sign]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REQUEST_ID: ${{ inputs.request_id }}
+      EXPECTED_SIGNED_SHA: ${{ needs.sign.outputs.signed_sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: auros-setup-signed
+          path: delivery/signed
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: verify signed delivery against its exact tested base
+        id: delivery
+        run: |
+          tag=$(python3 -c 'import json; print(json.load(open("delivery/signed/custom-package-provenance.json"))["base_build"]["tag"])')
+          [[ $tag =~ ^v[0-9A-Za-z.+-]+-[0-9a-f]{7}$ ]] \
+            || { echo "::error::signed provenance has an invalid base tag"; exit 2; }
+          mkdir -p delivery/base delivery/publish
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > delivery/base/release.json
+          gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha > delivery/base/release-source.txt
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern pieces.txt --pattern image.sha256 --pattern image.bytes \
+            --dir delivery/base
+          python3 tools/customize/delivery.py prepare \
+            --provenance delivery/signed/custom-package-provenance.json \
+            --signing-provenance delivery/signed/signing-provenance.txt \
+            --installer delivery/signed/AurOS-Setup.exe \
+            --release delivery/base/release.json \
+            --pieces delivery/base/pieces.txt \
+            --image-sha delivery/base/image.sha256 \
+            --image-bytes delivery/base/image.bytes \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-sha "$GITHUB_SHA" \
+            --release-source-sha "$(tr -d ' \r\n' < delivery/base/release-source.txt)" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --signed-sha256 "$EXPECTED_SIGNED_SHA" \
+            --request-id "$REQUEST_ID" \
+            --output-dir delivery/publish \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: publish and read back the signed executable
+        env:
+          TAG: ${{ steps.delivery.outputs.tag }}
+          INSTALLER_NAME: ${{ steps.delivery.outputs.installer_name }}
+          INSTALLER_EXISTS: ${{ steps.delivery.outputs.installer_exists }}
+        run: |
+          if [ "$INSTALLER_EXISTS" != true ]; then
+            if ! gh release upload "$TAG" "delivery/publish/$INSTALLER_NAME" \
+              --repo "$GITHUB_REPOSITORY"; then
+              echo "::warning::installer upload raced or failed; exact readback must now prove it"
+            fi
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > delivery/exe-release.json
+          gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha \
+            > delivery/exe-release-source.txt
+          mkdir delivery/exe-readback
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$INSTALLER_NAME" --dir delivery/exe-readback
+          python3 tools/customize/delivery.py make-manifest \
+            --plan delivery/publish/delivery-plan.json \
+            --release delivery/exe-release.json \
+            --release-source-sha "$(tr -d ' \r\n' < delivery/exe-release-source.txt)" \
+            --readback-installer "delivery/exe-readback/$INSTALLER_NAME" \
+            --output "delivery/publish/${INSTALLER_NAME%.exe}.json"
+
+      - name: publish the bounded manifest and verify both public assets
+        env:
+          TAG: ${{ steps.delivery.outputs.tag }}
+          INSTALLER_NAME: ${{ steps.delivery.outputs.installer_name }}
+          MANIFEST_NAME: ${{ steps.delivery.outputs.manifest_name }}
+          MANIFEST_EXISTS: ${{ steps.delivery.outputs.manifest_exists }}
+        run: |
+          if [ "$MANIFEST_EXISTS" != true ]; then
+            if ! gh release upload "$TAG" "delivery/publish/$MANIFEST_NAME" \
+              --repo "$GITHUB_REPOSITORY"; then
+              echo "::warning::manifest upload raced or failed; exact readback must now prove it"
+            fi
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > delivery/final-release.json
+          gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha \
+            > delivery/final-release-source.txt
+          mkdir delivery/final-readback
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$INSTALLER_NAME" --pattern "$MANIFEST_NAME" \
+            --dir delivery/final-readback
+          url=$(python3 tools/customize/delivery.py verify-ready \
+            --plan delivery/publish/delivery-plan.json \
+            --release delivery/final-release.json \
+            --release-source-sha "$(tr -d ' \r\n' < delivery/final-release-source.txt)" \
+            --expected-manifest "delivery/publish/$MANIFEST_NAME" \
+            --readback-manifest "delivery/final-readback/$MANIFEST_NAME" \
+            --expected-installer "delivery/publish/$INSTALLER_NAME" \
+            --readback-installer "delivery/final-readback/$INSTALLER_NAME")
+          {
+            echo '### Personalized installer is download-ready'
+            echo "Signed executable: $url"
+            echo "Delivery manifest: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$MANIFEST_NAME"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # This one-file, same-run artifact is immutable after upload. The cloud
+      # compares its exact manifest bytes with the mutable release asset before
+      # returning the EXE URL.
+      - name: preserve the verified ready manifest with this run
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: auros-custom-delivery
+          path: delivery/final-readback/${{ steps.delivery.outputs.manifest_name }}
+          compression-level: 0
+          retention-days: 30
+          if-no-files-found: error
