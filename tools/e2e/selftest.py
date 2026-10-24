@@ -310,9 +310,17 @@ def test_journal_verdicts():
     duplicate = e2e.first_session_probe_verdicts([marker, marker])
     check(not any(ok for _, ok, _ in duplicate),
           "journal probe: duplicate guest evidence is ambiguous and RED")
-    malformed = e2e.first_session_probe_verdicts([marker + " dns=ok"])
-    check(not any(ok for _, ok, _ in malformed),
-          "journal probe: duplicate fields make the whole record malformed and RED")
+    malformed_records = (
+        ("missing field", re.sub(r" dns=ok", "", marker)),
+        ("duplicate field", marker + " dns=ok"),
+        ("trailing token", marker + " trailing"),
+        ("non-ASCII profile count", marker.replace("profiles=14", "profiles=\u0661")),
+        ("huge profile count", marker.replace("profiles=14", "profiles=" + "9" * 10000)),
+    )
+    for reason, record in malformed_records:
+        malformed = e2e.first_session_probe_verdicts([record])
+        check(not any(ok for _, ok, _ in malformed),
+              f"journal probe: {reason} makes the whole record malformed and RED")
     real = {n: ok for n, ok, _ in e2e.journal_verdicts(fx("journal-real-install.txt"))}
     check(real.get("network within 60 s of the desktop") is False, "journal: run 40050260949's install, no DHCP lease: network RED")
     check(real.get("Flathub's catalogue fetched") is False, "journal: ... catalogue never fetched: RED")

@@ -1492,14 +1492,23 @@ FIRST_SESSION_FACTS = (
     ("staging saved.bin released", "saved_bin", "absent"),
 )
 
+FIRST_SESSION_PROBE = re.compile(
+    r"apparmor=(?P<apparmor>enabled|disabled) "
+    r"profiles=(?P<profiles>[0-9]{1,6}) "
+    r"route=(?P<route>default|missing) "
+    r"dns=(?P<dns>ok|failed) "
+    r"run_mode=(?P<run_mode>[0-7]{4}|unknown) "
+    r"saved_bin=(?P<saved_bin>absent|present)"
+)
+
 
 def first_session_probe_verdicts(lines):
     """Parse one root-observed state record from the installed session.
 
     The Linux guest deliberately has no test command channel: no guest agent,
     no serial login, and its live disk must not be mounted by the host.  A
-    bounded oneshot in the image therefore records these facts in the same
-    persistent journal `inspect` already reads.  Its exact message is:
+    bounded asynchronous service in the image therefore records these facts in
+    the same persistent journal `inspect` already reads.  Its exact message is:
 
       auros-first-session-probe: v1 apparmor=enabled profiles=N route=default
         dns=ok run_mode=0755 saved_bin=absent
@@ -1507,25 +1516,26 @@ def first_session_probe_verdicts(lines):
     N must be positive. Missing, duplicate, or malformed evidence is red; the
     harness must never infer ephemeral /run state after the machine is off.
     """
-    records = [l for l in lines if re.search(r"auros-first-session-probe(?:\[\d+\])?: v1\b", l)]
+    records = [l for l in lines if re.search(r"auros-first-session-probe(?:\[[0-9]+\])?: v1\b", l)]
     detail = "the first-session probe record is missing"
     values = {}
     valid = False
     if len(records) == 1:
-        tail = records[0].split(": v1", 1)[-1]
-        pairs = re.findall(r"(?:^|\s)([a-z_]+)=([^\s]+)", tail)
-        values = dict(pairs)
-        detail = records[0].split(": v1", 1)[-1].strip()
-        keys = {"apparmor", "profiles", "route", "dns", "run_mode", "saved_bin"}
-        valid = len(pairs) == len(keys) and set(values) == keys
-        if not valid:
-            detail = "malformed probe record: " + detail
+        tail = records[0].split(": v1", 1)[-1].strip()
+        match = FIRST_SESSION_PROBE.fullmatch(tail)
+        if match:
+            values = match.groupdict()
+            detail = tail
+            valid = True
+        else:
+            shown = tail[:240] + ("..." if len(tail) > 240 else "")
+            detail = "malformed probe record: " + shown
     elif len(records) > 1:
         detail = f"{len(records)} probe records found; expected exactly one"
 
     out = []
     profiles = values.get("profiles", "")
-    profile_ok = profiles.isdigit() and int(profiles) > 0
+    profile_ok = valid and int(profiles) > 0
     for name, key, want in FIRST_SESSION_FACTS:
         ok = valid and values.get(key) == want
         if key == "apparmor":

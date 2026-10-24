@@ -85,6 +85,8 @@ grep -q 'AA_ENABLED:-/usr/bin/aa-enabled' rootfs/usr/lib/auros/first-session-pro
 unit=rootfs/etc/systemd/system/auros-first-session-probe.service
 grep -q '^Type=simple$' "$unit" && ok "the diagnostic runs asynchronously from the boot target" \
     || bad "the diagnostic runs asynchronously from the boot target"
+grep -q '^RuntimeMaxSec=50$' "$unit" && ok "the diagnostic has a service-level runtime ceiling" \
+    || bad "the diagnostic has a service-level runtime ceiling"
 grep -q '^After=apparmor.service NetworkManager.service$' "$unit" &&
     ! grep -q '^Before=' "$unit" && ok "it waits for services but never holds the desktop" \
     || bad "it waits for services but never holds the desktop"

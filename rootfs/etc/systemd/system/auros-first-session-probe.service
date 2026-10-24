@@ -6,6 +6,7 @@ After=apparmor.service NetworkManager.service
 Type=simple
 ExecStart=/usr/lib/auros/first-session-probe
 TimeoutStartSec=50
+RuntimeMaxSec=50
 SyslogIdentifier=auros-first-session-probe
 StandardOutput=journal
 StandardError=journal
