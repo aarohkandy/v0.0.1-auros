@@ -9,15 +9,18 @@ import re
 from pathlib import Path
 from typing import Dict, Union
 
-GET_SURFACE = re.compile(r"xdg_wm_base#\d+\.get_xdg_surface\(new id xdg_surface#(\d+), wl_surface#(\d+)\)")
-GET_TOPLEVEL = re.compile(r"xdg_surface#(\d+)\.get_toplevel\(new id xdg_toplevel#\d+\)")
-GET_POPUP = re.compile(r"xdg_surface#(\d+)\.get_popup\(new id xdg_popup#(\d+), xdg_surface#(\d+), xdg_positioner#\d+\)")
-ATTACH = re.compile(r"wl_surface#(\d+)\.attach\(([^,]+),")
-COMMIT = re.compile(r"wl_surface#(\d+)\.commit\(\)")
-CONFIGURE = re.compile(r"xdg_popup#(\d+)\.configure\((-?\d+), (-?\d+), (\d+), (\d+)\)")
-GRAB = re.compile(r"xdg_popup#(\d+)\.grab\(")
-XDG_DESTROY = re.compile(r"xdg_surface#(\d+)\.destroy\(\)")
-WL_DESTROY = re.compile(r"wl_surface#(\d+)\.destroy\(\)")
+# libwayland's closure logger renders every object as interface@id. Keep these
+# patterns aligned with that real wire-debug syntax; accepting a made-up
+# separator would let fixtures pass while every guest trace remains invisible.
+GET_SURFACE = re.compile(r"xdg_wm_base@\d+\.get_xdg_surface\(new id xdg_surface@(\d+), wl_surface@(\d+)\)")
+GET_TOPLEVEL = re.compile(r"xdg_surface@(\d+)\.get_toplevel\(new id xdg_toplevel@\d+\)")
+GET_POPUP = re.compile(r"xdg_surface@(\d+)\.get_popup\(new id xdg_popup@(\d+), xdg_surface@(\d+), xdg_positioner@\d+\)")
+ATTACH = re.compile(r"wl_surface@(\d+)\.attach\(([^,]+),")
+COMMIT = re.compile(r"wl_surface@(\d+)\.commit\(\)")
+CONFIGURE = re.compile(r"xdg_popup@(\d+)\.configure\((-?\d+), (-?\d+), (\d+), (\d+)\)")
+GRAB = re.compile(r"xdg_popup@(\d+)\.grab\(")
+XDG_DESTROY = re.compile(r"xdg_surface@(\d+)\.destroy\(\)")
+WL_DESTROY = re.compile(r"wl_surface@(\d+)\.destroy\(\)")
 
 
 def analyze(raw: bytes, after: int) -> Dict[str, Union[str, int]]:
@@ -27,6 +30,8 @@ def analyze(raw: bytes, after: int) -> Dict[str, Union[str, int]]:
     roots = set()
     # child xdg surface -> [popup, parent, wl surface, pending buffer, mapped, geometry]
     candidates = {}
+    counts = {"surface": 0, "toplevel": 0, "popup": 0,
+              "attach": 0, "commit": 0, "configure": 0}
     position = 0
     for raw_line in raw.splitlines(keepends=True):
         line_start = position
@@ -37,24 +42,29 @@ def analyze(raw: bytes, after: int) -> Dict[str, Union[str, int]]:
             raise ValueError("a layer-shell object appeared during the candidate phase")
         match = GET_SURFACE.search(line)
         if match:
+            counts["surface"] += 1
             xdg_to_wl[int(match.group(1))] = int(match.group(2))
         match = GET_TOPLEVEL.search(line)
         if match:
+            counts["toplevel"] += 1
             roots.add(int(match.group(1)))
         match = GET_POPUP.search(line) if candidate_phase else None
         if match:
+            counts["popup"] += 1
             child, popup, parent = map(int, match.groups())
             wl_surface = xdg_to_wl.get(child)
             if parent in roots and wl_surface is not None:
                 candidates[child] = [popup, parent, wl_surface, None, False, None]
         match = ATTACH.search(line) if candidate_phase else None
         if match:
+            counts["attach"] += 1
             wl_surface = int(match.group(1))
             for state in candidates.values():
                 if state[2] == wl_surface:
                     state[3] = match.group(2).strip() != "nil"
         match = COMMIT.search(line) if candidate_phase else None
         if match:
+            counts["commit"] += 1
             wl_surface = int(match.group(1))
             for state in candidates.values():
                 if state[2] == wl_surface and state[3] is not None:
@@ -62,6 +72,7 @@ def analyze(raw: bytes, after: int) -> Dict[str, Union[str, int]]:
                     state[3] = None
         match = CONFIGURE.search(line) if candidate_phase else None
         if match:
+            counts["configure"] += 1
             popup, x, y, width, height = map(int, match.groups())
             for state in candidates.values():
                 if state[0] == popup and width > 0 and height > 0:
@@ -84,7 +95,10 @@ def analyze(raw: bytes, after: int) -> Dict[str, Union[str, int]]:
     popups = [(child, state[0], state[1]) for child, state in candidates.items()
               if state[4] and state[5] is not None]
     if len(popups) != 1:
-        raise ValueError(f"expected exactly one mapped popup parented to a toplevel, got {len(popups)}")
+        summary = " ".join(f"{key}={counts[key]}" for key in
+                           ("surface", "toplevel", "popup", "attach", "commit", "configure"))
+        raise ValueError(
+            f"expected exactly one mapped popup parented to a toplevel, got {len(popups)} ({summary})")
     child, popup, parent = popups[0]
     geometry = candidates[child][5]
     return {
