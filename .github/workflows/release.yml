@@ -202,11 +202,12 @@ jobs:
       rebuilt_outer_sha256: ${{ steps.final.outputs.rebuilt_outer_sha256 }}
       signed_sha256: ${{ steps.final.outputs.signed_sha256 }}
     env:
-      TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
       RID: ${{ needs.which.outputs.run-id }}
       INNER_CONFIG: ${{ vars.SIGNPATH_INNER_ARTIFACT_CONFIGURATION_SLUG }}
     steps:
       - name: both signing stages are configured for this run
+        env:
+          TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
         run: |
           [ -n "$TOKEN" ] || { echo "::error::SIGNPATH_ORGANIZATION_ID is set, so signing is on, but SIGNPATH_API_TOKEN is empty or was not passed to release.yml. Add the secret, or delete the organization variable to ship unsigned."; exit 1; }
           [ -n "$INNER_CONFIG" ] || { echo "::error::signing is on, but SIGNPATH_INNER_ARTIFACT_CONFIGURATION_SLUG is empty. Create the SignPath configuration that signs only aurbridge-wizard.exe and set this repository variable; refusing to produce an outer-only signature."; exit 1; }
