@@ -1,7 +1,7 @@
 2026-10-24T02:09:14+00:00 auros kernel: Command line: BOOT_IMAGE=/boot/vmlinuz-6.8.0-147-generic root=UUID=6a230cce-c9d9-4587-9540-a54906973dd2 ro quiet splash console=tty0 console=ttyS0,115200n8 init_on_alloc=1 slab_nom
 2026-10-24T02:09:20+00:00 auros systemd[1]: Started aurshell.service - AurOS desktop shell.
 2026-10-24T02:09:20+00:00 auros systemd[1]: Reached target graphical.target - Graphical Interface.
-2026-10-24T02:09:20+00:00 auros auros-first-session-probe[812]: v1 apparmor=enabled profiles=14 route=default dns=ok run_mode=0755 saved_bin=absent
+2026-10-24T02:09:20+00:00 auros auros-first-session-probe[812]: v1 apparmor=enabled profiles=14 route=default dns=ok run_mode=0755 saved_bin=absent root_mode=rw root_fs=ext4 aurstage_mount=absent aurscreen=absent
 2026-10-24T02:09:21+00:00 auros NetworkManager[756]: <info>  [1792807761.1654] manager: NetworkManager state is now CONNECTING
 2026-10-24T02:09:21+00:00 auros NetworkManager[756]: <info>  [1792807761.1752] dhcp4 (enp0s1): activation: beginning transaction (timeout in 45 seconds)
 2026-10-24T02:09:21+00:00 auros NetworkManager[756]: <info>  [1792807761.1797] dhcp4 (enp0s1): state changed new lease, address=10.0.2.15, acd pending

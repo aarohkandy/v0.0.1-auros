@@ -291,7 +291,7 @@ def test_journal_verdicts():
     check(all(ok for _, ok, _ in bare), "journal: a bare boot of the image is green on every first-session verdict (" + "; ".join(f"{n}={ok}" for n, ok, _ in bare) + ")")
     probe_names = {n for n, _, _ in e2e.first_session_probe_verdicts([])}
     check(probe_names == {n for n, _, _ in bare if n in probe_names},
-          "journal: all five root-observed first-session facts are gating verdicts")
+          "journal: all nine root-observed first-session facts are gating verdicts")
     marker = next(l for l in fx("journal-bare-boot.txt").splitlines()
                   if "auros-first-session-probe" in l)
     for field, value, verdict in (
@@ -300,13 +300,21 @@ def test_journal_verdicts():
             ("route", "missing", "default route present"),
             ("dns", "failed", "DNS resolves a public name"),
             ("run_mode", "0700", "/run mode is 0755"),
-            ("saved_bin", "present", "staging saved.bin released")):
+            ("saved_bin", "present", "staging saved.bin released"),
+            ("root_mode", "ro", "installed root filesystem is writable"),
+            ("root_fs", "other", "installed root filesystem is ext4"),
+            ("aurstage_mount", "present", "no staging mount remains under /run/aurstage"),
+            ("aurscreen", "present", "no aurscreen process remains"),
+            ("root_mode", "unknown", "installed root filesystem is writable"),
+            ("root_fs", "unknown", "installed root filesystem is ext4"),
+            ("aurstage_mount", "unknown", "no staging mount remains under /run/aurstage"),
+            ("aurscreen", "unknown", "no aurscreen process remains")):
         bad = re.sub(rf"{field}=[^ ]+", f"{field}={value}", marker)
         got = dict((n, ok) for n, ok, _ in e2e.first_session_probe_verdicts([bad]))
         check(got[verdict] is False, f"journal probe: {field}={value} makes '{verdict}' RED")
     missing = e2e.first_session_probe_verdicts([])
-    check(len(missing) == 5 and not any(ok for _, ok, _ in missing),
-          "journal probe: missing guest evidence makes all five facts RED")
+    check(len(missing) == 9 and not any(ok for _, ok, _ in missing),
+          "journal probe: missing guest evidence makes all nine facts RED")
     duplicate = e2e.first_session_probe_verdicts([marker, marker])
     check(not any(ok for _, ok, _ in duplicate),
           "journal probe: duplicate guest evidence is ambiguous and RED")
