@@ -291,7 +291,10 @@ jobs:
           # staging environment, no signed shim, or no image address.
           # Unsigned by the owner's decision (docs/SIGNING.md).
           AUROS_RELEASE=1 sh build/aurbridge
-          cp out/aurbridge-wizard.exe dist/installer/AurOS-Setup.exe
+          # AurOS-Setup.exe is the stub (src/aurbridge/stub/stub.c, SEC-003): kernel32 only, it
+          # runs the installer it carries from a private folder. The installer itself, the
+          # console tool and the rest are copied below for the tests, as before.
+          cp out/aurbridge-setup.exe dist/installer/AurOS-Setup.exe
           cp out/aurbridge.exe out/aurbridge-wizard.exe out/aurbridge-sim dist/installer/
           cp out/auros-staging.img out/auros-staging-vmlinuz out/auros-staging-*.efi dist/installer/
           cp dist/pieces/pieces.txt dist/pieces/image.sha256 dist/pieces/image.bytes dist/installer/
@@ -354,12 +357,12 @@ jobs:
           export AUROS_IMAGE_SHA256=$(cat dist/pieces/image.sha256)
           export AUROS_IMAGE_BYTES=$(cat dist/pieces/image.bytes)
           AUROS_FASTPATH=1 AUROS_RELEASE=1 sh build/aurbridge
-          if cmp -s out/aurbridge-wizard.exe dist/installer/AurOS-Setup.exe; then
+          if cmp -s out/aurbridge-setup.exe dist/installer/AurOS-Setup.exe; then
             echo "::notice title=No fast-path installer::AUROS_FASTPATH=1 changed nothing in this tree (build/aurbridge does not read it yet), so there is nothing to publish beside AurOS-Setup.exe"
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "fastpath: identical to the normal installer (AUROS_FASTPATH not wired in this tree): not published" | tee -a dist/installer/build-info.txt
           else
-            cp out/aurbridge-wizard.exe dist/installer/AurOS-Setup-fastpath.exe
+            cp out/aurbridge-setup.exe dist/installer/AurOS-Setup-fastpath.exe
             # the same gates the normal installer passed
             python3 tools/pe_payload.py list dist/installer/AurOS-Setup-fastpath.exe > /tmp/res-fp.txt
             for id in 1 2 3 4 5; do
