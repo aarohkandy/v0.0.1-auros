@@ -11,6 +11,7 @@
 > the next `[release]` signs both layers.
 
 Files: `.github/workflows/release.yml` (job `sign`),
+`.github/workflows/sign-installer.yml` (shared two-stage signer),
 `build/aurbridge-stub` (rebuilds the outer around the signed inner),
 `tools/signed-check.sh` and `tools/authenticode.py` (the checks on what comes
 back), `tools/signtest.sh` (proves each check fails when it should),
@@ -103,14 +104,16 @@ build unsigned wizard + outer
   -> publish -> windows + e2e + site -> promote
 ```
 
-`release.yml` job by job:
+`release.yml` calls the shared `sign-installer.yml` workflow:
 
 1. Signing is on when `SIGNPATH_ORGANIZATION_ID` exists. The job then requires
    `SIGNPATH_API_TOKEN` and `SIGNPATH_INNER_ARTIFACT_CONFIGURATION_SLUG`; a
    missing inner configuration is a hard failure, never an outer-only signed
    release. With the organization variable absent, the unsigned path remains
    available.
-2. The `sign` job accepts only a `[release]` build from the same workflow run.
+2. The shared signer accepts only an installer built in the same workflow run.
+   Ordinary releases enter through a `[release]` build; personalized packaging
+   uses the same signer and verification chain.
    It checks that the full commit in `build-info.txt`, `GITHUB_SHA`, and the
    checked-out source are identical, and that the build's outer resource 300
    is byte-identical to its accompanying unsigned wizard.
@@ -197,7 +200,7 @@ configurations must restrict it to the same release version.
   environment (the paths `build/sign` has always had: a PKCS#11 token, a
   PKCS#12 file, or a PEM pair). In CI none is, so the installer from
   `build.yml` is **always unsigned**; the two signatures are added afterwards,
-  by SignPath, in `release.yml`. `AUROS_RELEASE=1` does not refuse an unsigned
+  by SignPath, in `sign-installer.yml`. `AUROS_RELEASE=1` does not refuse an unsigned
   installer.
 - `tools/signtest.sh` keeps both paths honest: the optional local signing
   (a throwaway CA; SHA-256, replace-not-stack, one changed byte breaks it)
