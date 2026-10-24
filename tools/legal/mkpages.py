@@ -27,7 +27,7 @@ PAGES = [  # (markdown, page, title, description, show contents)
     ("docs/legal/DISCLAIMER.md", "disclaimer.html", "Disclaimer",
      "AurOS is free and comes as it is. What we have tested, what we haven't, and why to copy your photos first.", False),
     ("docs/legal/PRIVACY.md", "privacy.html", "Privacy",
-     "What AurOS collects (nothing), and which other organizations' servers your computer talks to.", True),
+     "What AurOS and optional build requests store, and which services your computer contacts.", True),
     ("docs/legal/LICENSES.md", "licenses.html", "Licenses and source code",
      "The licenses of the programs inside AurOS, and how to get their source code.", False),
 ]
