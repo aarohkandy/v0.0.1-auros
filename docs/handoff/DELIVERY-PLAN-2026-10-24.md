@@ -519,3 +519,19 @@ and raw traces were removed, and shipped IBus/config were restored. Evidence is
 `/tmp/auros-fcitx-40139052850.7dIc8C`. This does not prove connection identity,
 focus revocation, password suppression or reboot behavior. Those are the next
 explicitly opt-in diagnostic stage; production input configuration remains IBus.
+
+The restart-time confirmation is integrated on the working branch (`0c89532a`,
+with exact UIA/cancellation proof in `c3f71c75`). Windows run `40139923016` passes
+its fastpath navigation job; the retained tight screenshot shows the full warning,
+all actions, and initial Not yet focus without scrolling. The combined E2E
+selftest passes. Later copy-only `ad8446cc` says cancellation leaves protection
+unchanged, rather than incorrectly assuming Windows had not already paused it.
+The actual new confirmation journey is still pending a future exact installer.
+These changes are not yet in candidate `e0d0aadc` or remote main.
+
+Full exact-image hardening for candidate build `40138682256` was dispatched early
+as `40140266950` (`only=all`), to overlap the rest of the suite rather than wait
+for all Windows journeys. It uses the published Actions image pieces and verifies
+their hashes. An automatically triggered duplicate after build completion can be
+cancelled before work if this same-image run already supplies the full verdict;
+never cancel or disregard a real failing result.
