@@ -108,6 +108,52 @@ class ParserTests(unittest.TestCase):
                                             "width": 3, "height": 4}}]}
         self.assertEqual(probe.evidence_state(mapped, 42), "mapped")
 
+    def test_candidate_lifecycle_accepts_same_xid_unmap_then_remap(self):
+        def report(windows):
+            return {"wanted_pid": 42, "windows": windows}
+        mapped = {"xid": "0x20", "pid": 42, "mapped": True,
+                  "map_state": 2, "override_redirect": True}
+        unmapped = {**mapped, "mapped": False, "map_state": 0}
+        lifecycle = probe.candidate_lifecycle(
+            report([mapped]), report([unmapped]), report([mapped]), 42)
+        self.assertEqual(lifecycle,
+                         {"preedit_candidate_xid": "0x20",
+                          "return_candidate_xid": "0x20", "xid_reused": "yes",
+                          "preedit_map_state": 2,
+                          "focus_away_map_state": 0,
+                          "focus_return_map_state": 2})
+
+    def test_candidate_lifecycle_accepts_fresh_authenticated_return_xid(self):
+        def report(windows):
+            return {"wanted_pid": 42, "windows": windows}
+        mapped = {"xid": "0x20", "pid": 42, "mapped": True,
+                  "map_state": 2, "override_redirect": True}
+        unmapped = {**mapped, "mapped": False, "map_state": 0}
+        replacement = {**mapped, "xid": "0x21"}
+        lifecycle = probe.candidate_lifecycle(
+            report([mapped]), report([unmapped]), report([replacement]), 42)
+        self.assertEqual(lifecycle["xid_reused"], "no")
+        self.assertEqual(lifecycle["return_candidate_xid"], "0x21")
+
+    def test_candidate_lifecycle_rejects_mapped_away_or_ambiguous_return(self):
+        def report(windows):
+            return {"wanted_pid": 42, "windows": windows}
+        mapped = {"xid": "0x20", "pid": 42, "mapped": True,
+                  "map_state": 2, "override_redirect": True}
+        unmapped = {**mapped, "mapped": False, "map_state": 0}
+        replacement = {**mapped, "xid": "0x21"}
+        with self.assertRaises(probe.X11Error):
+            probe.candidate_lifecycle(
+                report([mapped]), report([mapped]), report([mapped]), 42)
+        with self.assertRaises(probe.X11Error):
+            probe.candidate_lifecycle(
+                report([mapped]), report([unmapped]),
+                report([mapped, replacement]), 42)
+        inconsistent = {**mapped, "map_state": 0}
+        with self.assertRaises(probe.X11Error):
+            probe.candidate_lifecycle(
+                report([inconsistent]), report([unmapped]), report([mapped]), 42)
+
 
 if __name__ == "__main__":
     unittest.main()
