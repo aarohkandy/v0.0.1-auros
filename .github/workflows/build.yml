@@ -93,7 +93,7 @@ jobs:
           # build/aurbridge, forge and harden call, and the workflows that make or test a release
           # (a file here that does not parse stops every run that calls it; CI-truth C.10).
           # A test script alone is `[test]`.
-          if grep -qE '^(build/|src/|rootfs/|profiles/|themes/|shells/|hw/|docs/legal/notices/|tools/(apt|checksec|repo|wishesoff|plainwords|machine|hardentest)\.sh$|tools/pe_payload\.py$|tools/hw/|tools/legal/notices\.py$|\.github/workflows/(build|tests|release|harden|e2e|sources)\.yml$)' /tmp/files.txt; then
+          if grep -qE '^(build/|src/|rootfs/|profiles/|themes/|shells/|hw/|docs/legal/notices/|tools/(apt|checksec|repo|wishesoff|plainwords|machine|hardentest)\.sh$|tools/pe_payload\.py$|tools/customize/|tools/hw/|tools/legal/notices\.py$|\.github/workflows/(build|tests|release|harden|e2e|sources|customize|sign-installer)\.yml$)' /tmp/files.txt; then
             build=true
           fi
           { echo "build=$build"; echo "release=$release"; echo "latest=$latest"; } | tee -a "$GITHUB_OUTPUT"
@@ -324,6 +324,20 @@ jobs:
           out/aurbridge-sim gzselftest
           out/aurbridge-sim sbselftest
 
+      # Small, immutable inputs for rebuilding only the installer around this
+      # exact green desktop image. Copy them before the optional fast-path
+      # rebuild touches out/: build-info therefore identifies the normal
+      # installer archived by this same run.
+      - name: reusable base image metadata
+        run: |
+          mkdir -p dist/base-metadata
+          cp dist/pieces/pieces.txt dist/pieces/image.sha256 \
+             dist/pieces/image.bytes dist/installer/build-info.txt \
+             dist/base-metadata/
+          psha=$(sha256sum dist/base-metadata/pieces.txt | cut -d' ' -f1)
+          pbytes=$(stat -c %s dist/base-metadata/pieces.txt)
+          echo "pieces.txt $pbytes bytes, sha256 $psha" >> dist/base-metadata/build-info.txt
+
       - name: the pieces, put back together by the installer's own code
         run: |
           T=$(date +%s)
@@ -405,6 +419,12 @@ jobs:
         with:
           name: auros-installer
           path: dist/installer/
+          retention-days: 30
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: auros-base-metadata
+          path: dist/base-metadata/
           retention-days: 30
           if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
