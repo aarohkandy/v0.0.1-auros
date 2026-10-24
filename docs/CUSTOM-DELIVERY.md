@@ -21,7 +21,8 @@ that server-verified tag.
 A result becomes `download-ready` only when all of these still agree:
 
 - the uniquely correlated workflow run and its source commit;
-- successful `package`, `sign / sign`, and `publish` jobs;
+- successful `package`, `sign / sign`, `certify / e2e (base)`,
+  `certify / custom-certification`, and `publish` jobs;
 - the same-run signed-installer artifact;
 - the release `.exe` and bounded JSON manifest;
 - the same manifest preserved as the immutable, same-run
@@ -85,8 +86,9 @@ approvals must complete successfully. If signing is absent, skipped, refused,
 or times out, `publish` does not run and the API never returns a download.
 
 Before activation, prove one custom run through the live SignPath project.
-Confirm that its run name is `customize <request UUID>`, its jobs are exactly
-`package`, `sign / sign`, and `publish`, and it retains:
+Confirm that its run name is `customize <request UUID>`, its required jobs are
+exactly `package`, `sign / sign`, `certify / e2e (base)`,
+`certify / custom-certification`, and `publish`, and it retains:
 
 - `auros-setup-signed`, 30 days;
 - `auros-custom-delivery`, 30 days, containing exactly the final manifest;
@@ -110,7 +112,7 @@ The conservative defaults are:
 |---|---:|---|
 | `BUILD_REQUESTS_PER_NET` | 1/day | 1–3 per IPv4 `/24` or IPv6 `/64` |
 | `BUILD_REQUESTS_GLOBAL` | 5/day | 1–20 total submissions |
-| `BUILD_POW_BITS` | 20 | 12–24 leading zero bits |
+| `BUILD_POW_BITS` | 16 | 12–24 leading zero bits |
 | Build receipt lifetime | 24 hours | Fixed in the service |
 | Proof challenge lifetime | 5 minutes | Fixed; bound to recipe and network, one use |
 
@@ -118,20 +120,37 @@ Keep the defaults for initial activation. Raise a limit only after examining
 signing capacity, GitHub Actions use, failures, and abuse. A repeated exact
 recipe/source request deduplicates its build, but it still consumes submission
 quota so popular recipes cannot be used to exhaust receipt ownership for free.
+Proof of work is only an abuse cost, not authentication. The atomic per-network
+and global quotas are the actual bound on build and signing work. Sixteen bits
+keeps the automatic browser step practical on slower computers while every
+accepted proof remains recipe/network-bound and one use.
 
 The response contains a random 192-bit receipt once. The browser must retain
 it for status polling and send it as a bearer token. Only its SHA-256 hash is
 stored. Anyone holding the receipt can see that job's status and eventual
 download metadata; a lost receipt cannot be recovered.
 
-For up to 24 hours, the Durable Object stores the canonical bounded recipe,
-recipe ID, source/base/run identifiers, state, artifact identifiers, download
-metadata, and receipt hashes. It stores salted network-prefix hashes for
-quota counting, not raw addresses. Daily counters can remain through the end
-of the following UTC day; challenge-consumption markers remain until challenge
-expiry. No name, email, free-text request, raw IP address, or Wishes content is
-part of a build record. Cloudflare and GitHub retain their own service metadata
-under their policies.
+Receipt authorization records expire after 24 hours. Separately, the Durable
+Object retains one canonical record for each admitted exact base and recipe so
+a later receipt reuses the original request, certification, and signatures.
+That record has no automatic expiry. It contains the bounded recipe and ID,
+source/base/original request/run identifiers, and, once verified, the exact
+manifest plus the verified gate, Actions artifact, release, and asset
+identities. That bounded record replaces the dependency on GitHub retaining
+the completed run and artifacts forever; each status check still revalidates
+the live release tag, source commit, manifest bytes, asset identities, size,
+and digest. It never contains the receipt or a network identifier. Creating a
+canonical record consumes the same atomic
+submission quota as a new build; the fixed recipe catalogue also bounds the
+number created for any base. Do not delete one while its release assets remain:
+without the original evidence, that occupied recipe filename must fail closed
+rather than sign a replacement under new provenance.
+
+The service stores salted network-prefix hashes for quota counting, not raw
+addresses. Daily counters can remain through the end of the following UTC day;
+challenge-consumption markers remain until challenge expiry. No name, email,
+free-text request, raw IP address, or Wishes content is part of a build record.
+Cloudflare and GitHub retain their own service metadata under their policies.
 
 ## Activation
 
@@ -166,7 +185,8 @@ Do these in order. Do not activate a partly configured service.
 9. Change only `BUILD_REQUESTS_ENABLED` to `"1"`, review that diff, and deploy.
 10. Submit one bounded desktop recipe from the configured origin. Preserve its
     receipt, approve both SignPath requests, and verify the status progresses
-    to `download-ready` only after `publish`. Confirm the returned recipe ID,
+    to `download-ready` only after both certification jobs and `publish`.
+    Confirm the returned recipe ID,
     source/base IDs, exact `.exe` name, byte count, and SHA-256 against the
     immutable manifest, then verify Authenticode on a downloaded copy.
 
