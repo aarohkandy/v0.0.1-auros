@@ -181,6 +181,318 @@ wait_hex_file() {
     return 1
 }
 
+record_process() { # pid output-prefix
+    pid=$1; prefix=$2
+    {
+        printf 'pid=%s\n' "$pid"
+        printf 'exe='; readlink "/proc/$pid/exe" 2>&1 || true
+        printf 'cmdline='; tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true; printf '\n'
+        sed -n 's/^\(Name\|Uid\|Gid\|PPid\):[[:space:]]*/\L\1=/p' "/proc/$pid/status" 2>/dev/null
+    } > "$prefix.process"
+    : > "$prefix.ancestry"
+    depth=0
+    while [ "$depth" -lt 12 ] && [ "$pid" -gt 1 ] 2>/dev/null; do
+        name=$(cat "/proc/$pid/comm" 2>/dev/null || echo gone)
+        ppid=$(sed -n 's/^PPid:[[:space:]]*//p' "/proc/$pid/status" 2>/dev/null)
+        printf 'depth=%s pid=%s ppid=%s name=%s\n' \
+            "$depth" "$pid" "${ppid:-unknown}" "$name" >> "$prefix.ancestry"
+        case "$ppid" in ''|*[!0-9]*) break ;; esac
+        pid=$ppid; depth=$((depth + 1))
+    done
+}
+
+desktop_processes() { # executable basename
+    wanted=$1
+    for status in /proc/[0-9]*/status; do
+        [ -r "$status" ] || continue
+        uid=$(sed -n 's/^Uid:[[:space:]]*\([0-9]*\).*/\1/p' "$status")
+        [ "$uid" = "$desktop_uid" ] || continue
+        pid=${status#/proc/}; pid=${pid%/status}
+        exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || continue
+        [ "${exe##*/}" = "$wanted" ] && printf '%s\n' "$pid"
+    done
+}
+
+run_x11_panel_probe() {
+    XOUT="$OUT/x11-panel"
+    XRUN="$RUNTIME/x11-panel"
+    rm -rf "$XOUT" "$XRUN"
+    mkdir -p "$XOUT" "$XRUN"
+    chown "$desktop_user" "$XRUN"
+    result=complete
+    note() { printf '%s\n' "$*" >> "$XOUT/probe.log"; }
+    incomplete() { result=incomplete; note "ERROR: $*"; }
+    inconclusive() {
+        [ "$result" = complete ] && result=inconclusive
+        note "INCONCLUSIVE: $*"
+    }
+    # One phase deadline bounds both inventories and every reply/event they
+    # consume.  Individual helper calls get only the remaining time.
+    probe_deadline=$(( $(cut -d. -f1 /proc/uptime) + 120 ))
+    probe_remaining() {
+        now=$(cut -d. -f1 /proc/uptime)
+        remaining=$((probe_deadline - now))
+        [ "$remaining" -gt 0 ] || return 1
+        [ "$remaining" -le 60 ] || remaining=60
+        printf '%s\n' "$remaining"
+    }
+    pid_gone() { [ -z "$1" ] || [ ! -d "/proc/$1" ]; }
+    wait_pid_gone() {
+        gone_pid=$1; gone_i=0
+        while [ "$gone_i" -lt 30 ]; do
+            pid_gone "$gone_pid" && return 0
+            sleep 0.1; gone_i=$((gone_i + 1))
+        done
+        return 1
+    }
+    daemon_pid= panel_pid= retained_pid= mouse_x11_pid=
+
+    note "diagnostic_only=yes"
+    note "candidate_visibility_is_not_a_success_gate=yes"
+    note "display=$display wayland=$wayland desktop_user=$desktop_user"
+    desktop_processes ibus-daemon > "$XOUT/processes-before-daemon.txt"
+    desktop_processes ibus-ui-gtk3 > "$XOUT/processes-before-panel.txt"
+
+    as_desktop systemctl --user stop auros-ibus.service >/dev/null 2>&1 \
+        || incomplete "could not stop the ordinary IBus service"
+    i=0
+    while [ "$i" -lt 20 ] && { [ -n "$(desktop_processes ibus-daemon)" ] || \
+                                  [ -n "$(desktop_processes ibus-ui-gtk3)" ]; }; do
+        sleep 0.25; i=$((i + 1))
+    done
+    [ -z "$(desktop_processes ibus-daemon)" ] \
+        || incomplete "an old ibus-daemon remained before the isolated launch"
+    [ -z "$(desktop_processes ibus-ui-gtk3)" ] \
+        || incomplete "an old ibus-ui-gtk3 remained before the isolated launch"
+
+    daemon_unit=auros-profiletest-ibus-x11-daemon
+    panel_unit=auros-profiletest-ibus-x11-panel
+    mouse_x11_unit=auros-profiletest-ibus-x11-mousepad
+    as_desktop systemd-run --user --quiet --collect --unit="$daemon_unit" \
+        --property=Type=exec \
+        --property="StandardOutput=append:$XRUN/daemon.stdout" \
+        --property="StandardError=append:$XRUN/daemon.stderr" \
+        -- /usr/bin/ibus-daemon --replace --xim --panel=disable \
+        || incomplete "could not launch ibus-daemon --panel=disable"
+    wait_active "$daemon_unit" || incomplete "the panel-disabled daemon did not stay active"
+    daemon_pid=$(as_desktop systemctl --user show -p MainPID --value "$daemon_unit" 2>/dev/null)
+    case "$daemon_pid" in ''|0|*[!0-9]*) incomplete "panel-disabled daemon MainPID unavailable" ;;
+      *)
+        record_process "$daemon_pid" "$XOUT/daemon"
+        grep -qx 'exe=/usr/bin/ibus-daemon' "$XOUT/daemon.process" \
+            || incomplete "daemon MainPID is not /usr/bin/ibus-daemon"
+        grep -qx 'cmdline=/usr/bin/ibus-daemon --replace --xim --panel=disable ' \
+            "$XOUT/daemon.process" \
+            || incomplete "daemon arguments were not exactly the isolated probe arguments"
+        ;;
+    esac
+    bus_ready=0; i=0
+    while [ "$i" -lt 20 ]; do
+        if ibus_cmd ibus list-engine --name-only > "$XOUT/daemon-engine-ids.txt" \
+                2> "$XOUT/daemon-engine-list.stderr"; then
+            bus_ready=1; break
+        fi
+        sleep 0.25; i=$((i + 1))
+    done
+    if [ "$bus_ready" = 1 ]; then
+        grep -Fqx pinyin "$XOUT/daemon-engine-ids.txt" \
+            || incomplete "panel-disabled daemon did not expose pinyin"
+    else
+        incomplete "panel-disabled daemon did not answer on the real IBus bus"
+    fi
+    : > "$XOUT/panels-after-daemon.txt"
+    default_panel_count=0; i=0
+    while [ "$i" -lt 20 ]; do
+        desktop_processes ibus-ui-gtk3 > "$XOUT/panels-after-daemon.sample"
+        if [ -s "$XOUT/panels-after-daemon.sample" ]; then
+            cp "$XOUT/panels-after-daemon.sample" "$XOUT/panels-after-daemon.txt"
+            default_panel_count=$(wc -l < "$XOUT/panels-after-daemon.txt" | tr -d ' ')
+            break
+        fi
+        sleep 0.25; i=$((i + 1))
+    done
+    rm -f "$XOUT/panels-after-daemon.sample"
+    note "default_panel_quiescence_s=5"
+    note "default_panel_count=$default_panel_count"
+    [ "$default_panel_count" = 0 ] \
+        || incomplete "ibus-daemon --panel=disable spawned a default panel"
+
+    if [ "$default_panel_count" = 0 ] && \
+       as_desktop systemd-run --user --quiet --collect --unit="$panel_unit" \
+        --property=Type=exec --setenv=GDK_BACKEND=x11 \
+        --property="StandardOutput=append:$XRUN/panel.stdout" \
+        --property="StandardError=append:$XRUN/panel.stderr" \
+        -- /usr/libexec/ibus-ui-gtk3; then
+        wait_active "$panel_unit" || incomplete "the exact X11 panel did not stay active"
+    else
+        incomplete "could not launch exact /usr/libexec/ibus-ui-gtk3"
+    fi
+    panel_pid=$(as_desktop systemctl --user show -p MainPID --value "$panel_unit" 2>/dev/null)
+    case "$panel_pid" in ''|0|*[!0-9]*) incomplete "X11 panel MainPID unavailable" ;;
+      *)
+        record_process "$panel_pid" "$XOUT/panel-start"
+        panel_exe=$(readlink "/proc/$panel_pid/exe" 2>/dev/null || true)
+        [ "$panel_exe" = /usr/libexec/ibus-ui-gtk3 ] \
+            || incomplete "panel MainPID is not the exact ibus-ui-gtk3 executable"
+        sleep 3
+        retained_pid=$(as_desktop systemctl --user show -p MainPID --value "$panel_unit" 2>/dev/null)
+        note "panel_start_pid=$panel_pid panel_retained_pid=$retained_pid"
+        [ "$retained_pid" = "$panel_pid" ] && [ -d "/proc/$panel_pid" ] \
+            || incomplete "ibus-ui-gtk3 did not retain its spawned PID"
+        ;;
+    esac
+
+    mouse_x11_file="$XRUN/mousepad.txt"
+    : > "$mouse_x11_file"
+    as_desktop systemd-run --user --quiet --collect --unit="$mouse_x11_unit" \
+        --property=Type=exec --setenv=GDK_BACKEND=wayland \
+        -- mousepad "$mouse_x11_file" >/dev/null 2>&1 \
+        || incomplete "native Wayland Mousepad did not start"
+    wait_active "$mouse_x11_unit" || incomplete "native Wayland Mousepad did not stay active"
+    mouse_x11_pid=$(as_desktop systemctl --user show -p MainPID --value "$mouse_x11_unit" 2>/dev/null)
+    case "$mouse_x11_pid" in ''|0|*[!0-9]*) incomplete "native Mousepad MainPID unavailable" ;;
+      *)
+        tr '\0' '\n' < "/proc/$mouse_x11_pid/environ" 2>/dev/null \
+            | grep -E '^(GDK_BACKEND|WAYLAND_DISPLAY|DISPLAY)=' > "$XOUT/mousepad.env" || true
+        grep -qx 'GDK_BACKEND=wayland' "$XOUT/mousepad.env" \
+            || incomplete "Mousepad was not explicitly forced to native Wayland"
+        ;;
+    esac
+    act wait-change "x11-probe-mousepad" \
+        || incomplete "native Wayland Mousepad did not map visibly"
+    act click-change "x11-probe-mousepad" \
+        || incomplete "native Wayland Mousepad was not focused"
+    select_ibus_engine pinyin x11-panel \
+        || incomplete "pinyin could not be selected for the X11 panel probe"
+    act shot ibus-x11-before || incomplete "pre-probe screenshot failed"
+    if [ -n "${panel_pid:-}" ] && [ -d "/proc/$panel_pid" ]; then
+        if xres_timeout=$(probe_remaining); then
+            as_desktop python3 /usr/lib/auros-profiletest/x11_xres_probe.py \
+                --display "$display" --pid "$panel_pid" --timeout "$xres_timeout" \
+                > "$XOUT/xres-before.json" 2> "$XOUT/xres-before.stderr" \
+                || incomplete "XRes inventory before typing failed"
+        else
+            incomplete "XRes whole-probe deadline expired before baseline"
+        fi
+    fi
+    act type-pinyin || incomplete "host did not type Pinyin preedit"
+    act shot ibus-x11-preedit || incomplete "preedit screenshot failed"
+    if [ -n "${panel_pid:-}" ] && [ -d "/proc/$panel_pid" ]; then
+        record_process "$panel_pid" "$XOUT/panel-after-preedit"
+        if xres_timeout=$(probe_remaining); then
+            as_desktop python3 /usr/lib/auros-profiletest/x11_xres_probe.py \
+                --display "$display" --pid "$panel_pid" --timeout "$xres_timeout" \
+                > "$XOUT/xres-preedit.json" 2> "$XOUT/xres-preedit.stderr" \
+                || incomplete "XRes inventory during preedit failed"
+        else
+            incomplete "XRes whole-probe deadline expired before preedit"
+        fi
+        if [ -s "$XOUT/xres-preedit.json" ] && ! python3 - "$XOUT/xres-preedit.json" "$panel_pid" \
+                > "$XOUT/candidate-summary.txt" <<'EOPY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+pid = int(sys.argv[2])
+major, minor = map(int, d["xres_version"].split("."))
+if (major, minor) < (1, 2) or d.get("wanted_pid") != pid:
+    raise SystemExit("XRes version or requested PID mismatch")
+w = d.get("windows", [])
+if any(x.get("pid") != pid for x in w):
+    raise SystemExit("server returned a window with a different LOCAL_CLIENT_PID")
+clients = [x for x in d.get("local_clients", []) if x.get("pid") == pid]
+if len(clients) > 1:
+    raise SystemExit("server returned multiple LOCAL_CLIENT_PID records")
+mapped = [x for x in w if x.get("mapped")]
+override = [x for x in mapped if x.get("override_redirect")]
+state = "mapped" if mapped else "identity-only" if len(clients) == 1 else "inconclusive"
+print("xres_version=%s" % d["xres_version"])
+print("identity_state=%s" % state)
+print("server_local_client_pid_records=%d" % len(clients))
+print("server_pid_windows=%d" % len(w))
+print("mapped_server_pid_windows=%d" % len(mapped))
+print("mapped_override_redirect_windows=%d" % len(override))
+for x in mapped:
+    g = x["absolute"]
+    print("mapped xid=%s override_redirect=%s x=%s y=%s width=%s height=%s pid=%s" %
+          (x["xid"], str(x["override_redirect"]).lower(), g["x"], g["y"],
+           g["width"], g["height"], x["pid"]))
+EOPY
+        then
+            incomplete "XRes LOCAL_CLIENT_PID evidence was inconsistent"
+        fi
+        if [ -s "$XOUT/candidate-summary.txt" ]; then
+            cat "$XOUT/candidate-summary.txt" >> "$XOUT/probe.log"
+            grep -qx 'identity_state=inconclusive' "$XOUT/candidate-summary.txt" \
+                && inconclusive "XRes found neither a mapped panel window nor one server PID record"
+        else
+            incomplete "XRes candidate classification unavailable"
+        fi
+    fi
+
+    for cleanup_unit in "$mouse_x11_unit" "$panel_unit" "$daemon_unit"; do
+        if ! as_desktop systemctl --user stop "$cleanup_unit" >/dev/null 2>&1; then
+            incomplete "could not stop transient unit $cleanup_unit"
+        fi
+        cleanup_state=$(as_desktop systemctl --user is-active "$cleanup_unit" 2>/dev/null || true)
+        note "cleanup_unit=$cleanup_unit active_state=${cleanup_state:-unloaded}"
+        case "$cleanup_state" in inactive|failed|unknown|'') ;;
+          *) incomplete "transient unit $cleanup_unit remained $cleanup_state" ;;
+        esac
+    done
+    for cleanup_pid in "$mouse_x11_pid" "$panel_pid" "$daemon_pid"; do
+        [ -n "$cleanup_pid" ] || continue
+        if wait_pid_gone "$cleanup_pid"; then
+            note "cleanup_pid=$cleanup_pid gone=yes"
+        else
+            incomplete "transient PID $cleanup_pid remained after unit stop"
+        fi
+    done
+    # Stop first so stdio buffers and journald pipes are closed before their
+    # files are copied out of the desktop-owned runtime directory.
+    cp -a "$XRUN/." "$XOUT/runtime-output/" 2>/dev/null || true
+    as_desktop systemctl --user start auros-ibus.service >/dev/null 2>&1 \
+        || incomplete "ordinary IBus service did not restart"
+    wait_active auros-ibus.service \
+        || incomplete "ordinary IBus service was not active after probe cleanup"
+    shipped_pid=$(as_desktop systemctl --user show -p MainPID --value \
+        auros-ibus.service 2>/dev/null)
+    case "$shipped_pid" in ''|0|*[!0-9]*)
+        incomplete "ordinary IBus service MainPID unavailable" ;;
+      *)
+        record_process "$shipped_pid" "$XOUT/shipped-service"
+        grep -qx 'exe=/usr/bin/ibus-daemon' "$XOUT/shipped-service.process" \
+            || incomplete "ordinary service MainPID is not /usr/bin/ibus-daemon"
+        grep -qx 'cmdline=/usr/bin/ibus-daemon --replace --xim ' \
+            "$XOUT/shipped-service.process" \
+            || incomplete "ordinary service arguments were not exactly shipped arguments"
+        ;;
+    esac
+    shipped_ready=0; i=0
+    while [ "$i" -lt 20 ]; do
+        if ibus_cmd ibus list-engine --name-only \
+                > "$XOUT/shipped-engine-ids.txt" \
+                2> "$XOUT/shipped-engine-list.stderr" && \
+           grep -Fqx pinyin "$XOUT/shipped-engine-ids.txt"; then
+            shipped_ready=1; break
+        fi
+        sleep 0.25; i=$((i + 1))
+    done
+    [ "$shipped_ready" = 1 ] \
+        || incomplete "ordinary IBus service was not ready with exact pinyin engine"
+    note "ordinary_service_ready=$shipped_ready main_pid=${shipped_pid:-missing}"
+    note "status=$result"
+    sync
+    say "ibus-x11-probe=$result evidence=round$round/x11-panel"
+    [ "$result" != incomplete ]
+}
+
+if [ "$round" = 1 ] && [ -x /usr/lib/auros-profiletest/x11_xres_probe.py ]; then
+    # Take the baseline before opening the diagnostic Mousepad; the host uses
+    # it only to locate/focus that real window.
+    act baseline x11-probe-mousepad || fail "could not record X11 probe baseline"
+    run_x11_panel_probe \
+        || fail "X11 panel diagnostic cleanup/restoration was incomplete"
+fi
+
 # Mousepad: open an existing empty file so Ctrl+S never opens a filename
 # dialog. The host proves the screen changed, then clicks the editor through
 # the real USB tablet. All text still comes from the QMP USB keyboard.

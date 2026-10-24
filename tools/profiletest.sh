@@ -56,6 +56,11 @@
 #                         for multilingual only: type real Pinyin into
 #                         Mousepad and Firefox, reboot, and repeat. This is
 #                         deliberately opt-in because it boots twice.
+#    PROFILETEST_IBUS_X11_PROBE=1
+#                         with the functional multilingual run only: collect
+#                         diagnostic XRes/process/screenshot evidence for an
+#                         explicitly X11 ibus-ui-gtk3 panel. It does not make
+#                         candidate visibility a product success claim.
 # ═══════════════════════════════════════════════════════════════════
 set -u
 cd "$(dirname "$0")/.."
@@ -367,6 +372,71 @@ judge_ibus_functional() { # evidence-root screenshot-root
     done
 }
 
+# Judge the opt-in diagnostic without turning the absence of a candidate
+# window into product evidence.  Server PID identity can be useful when no
+# panel window mapped, but only a mapped window carries geometry evidence.
+judge_ibus_x11_probe() { # evidence-root screenshot-root
+    XEV=$1; SHOTS=$2
+    status=$(sed -n 's/^status=//p' "$XEV/probe.log" 2>/dev/null | tail -1)
+    case "$status" in
+      complete) ok "the opt-in X11 panel diagnostic completed" ;;
+      inconclusive)
+        printf '    %-62s %s\n' "the opt-in X11 panel diagnostic" \
+            "INCONCLUSIVE -- no product eligibility"
+        ;;
+      *) bad "the opt-in X11 panel diagnostic completed" \
+             "$(tail -20 "$XEV/probe.log" 2>/dev/null | tr '\n' ' ' || echo missing)" ;;
+    esac
+    grep -qx 'default_panel_count=0' "$XEV/probe.log" 2>/dev/null \
+        && grep -qx 'default_panel_quiescence_s=5' "$XEV/probe.log" 2>/dev/null \
+        && ok "ibus-daemon --panel=disable launched no default panel" \
+        || bad "ibus-daemon --panel=disable launched no default panel" \
+               "$(grep default_panel_count "$XEV/probe.log" 2>/dev/null || echo missing)"
+    panel_start=$(sed -n 's/.*panel_start_pid=\([0-9][0-9]*\).*/\1/p' "$XEV/probe.log" | tail -1)
+    panel_retained=$(sed -n 's/.*panel_retained_pid=\([0-9][0-9]*\).*/\1/p' "$XEV/probe.log" | tail -1)
+    [ -n "$panel_start" ] && [ "$panel_start" = "$panel_retained" ] \
+        && grep -qx 'exe=/usr/libexec/ibus-ui-gtk3' "$XEV/panel-start.process" 2>/dev/null \
+        && ok "the exact X11 panel retained its spawned PID" \
+        || bad "the exact X11 panel retained its spawned PID" \
+               "start=${panel_start:-missing} retained=${panel_retained:-missing}"
+    identity=$(sed -n 's/^identity_state=//p' "$XEV/candidate-summary.txt" 2>/dev/null | tail -1)
+    case "$identity" in
+      mapped) ok "XRes authenticated a mapped panel window and its absolute geometry" ;;
+      identity-only) ok "XRes authenticated the retained panel PID (no mapped candidate geometry)" ;;
+      inconclusive|'')
+        printf '    %-62s %s\n' "XRes panel identity and candidate geometry" \
+            "INCONCLUSIVE -- no product eligibility"
+        ;;
+      *) bad "XRes panel identity classification is valid" "identity_state=$identity" ;;
+    esac
+    cleanup_ok=1
+    for cleanup_unit in auros-profiletest-ibus-x11-mousepad \
+                        auros-profiletest-ibus-x11-panel \
+                        auros-profiletest-ibus-x11-daemon; do
+        grep -Eq "^cleanup_unit=$cleanup_unit active_state=(inactive|failed|unknown|unloaded)$" \
+            "$XEV/probe.log" 2>/dev/null || cleanup_ok=0
+    done
+    [ "$(grep -Ec '^cleanup_pid=[0-9]+ gone=yes$' "$XEV/probe.log" 2>/dev/null || true)" -eq 3 ] \
+        || cleanup_ok=0
+    [ "$cleanup_ok" = 1 ] \
+        && ok "all transient units stopped and their recorded PIDs exited" \
+        || bad "all transient units stopped and their recorded PIDs exited" \
+               "cleanup evidence missing or incomplete"
+    grep -Eq '^ordinary_service_ready=1 main_pid=[0-9]+$' "$XEV/probe.log" 2>/dev/null \
+        && grep -qx 'exe=/usr/bin/ibus-daemon' "$XEV/shipped-service.process" 2>/dev/null \
+        && grep -qx 'cmdline=/usr/bin/ibus-daemon --replace --xim ' "$XEV/shipped-service.process" 2>/dev/null \
+        && grep -Fqx pinyin "$XEV/shipped-engine-ids.txt" 2>/dev/null \
+        && ok "the shipped IBus service resumed with exact arguments and Pinyin" \
+        || bad "the shipped IBus service resumed with exact arguments and Pinyin" \
+               "restart identity or readiness evidence missing"
+    [ -s "$SHOTS/ibus-x11-before.png" ] && [ -s "$SHOTS/ibus-x11-preedit.png" ] \
+        && ok "the X11 diagnostic retained before/preedit screenshots" \
+        || bad "the X11 diagnostic retained before/preedit screenshots" \
+               "missing ibus-x11-before.png or ibus-x11-preedit.png"
+    printf '    %-62s %s\n' "candidate visibility and product eligibility" \
+        "NOT ESTABLISHED by this diagnostic"
+}
+
 # ═══ lint ═══════════════════════════════════════════════════════════
 if [ "$MODE" = lint ]; then
     for t in curl xz awk; do command -v $t >/dev/null 2>&1 || { echo "need $t"; exit 2; }; done
@@ -628,6 +698,59 @@ EOPY
         'rm "$1/shots/ibus-round1-firefox-candidate.png"'
     functional_case "...with no successful post-restart round" \
         'rm -rf "$1/evidence/round2"'
+    x11_fixture() { # directory identity-state status
+        d=$1; identity=$2; probe_status=$3
+        rm -rf "$d"; mkdir -p "$d/evidence" "$d/shots"
+        cat > "$d/evidence/probe.log" <<EOF
+default_panel_count=0
+default_panel_quiescence_s=5
+panel_start_pid=20 panel_retained_pid=20
+cleanup_unit=auros-profiletest-ibus-x11-mousepad active_state=inactive
+cleanup_unit=auros-profiletest-ibus-x11-panel active_state=inactive
+cleanup_unit=auros-profiletest-ibus-x11-daemon active_state=inactive
+cleanup_pid=21 gone=yes
+cleanup_pid=20 gone=yes
+cleanup_pid=19 gone=yes
+ordinary_service_ready=1 main_pid=30
+status=$probe_status
+EOF
+        printf 'identity_state=%s\n' "$identity" > "$d/evidence/candidate-summary.txt"
+        printf '%s\n' 'exe=/usr/libexec/ibus-ui-gtk3' > "$d/evidence/panel-start.process"
+        printf '%s\n' 'exe=/usr/bin/ibus-daemon' \
+            'cmdline=/usr/bin/ibus-daemon --replace --xim ' \
+            > "$d/evidence/shipped-service.process"
+        printf '%s\n' pinyin > "$d/evidence/shipped-engine-ids.txt"
+        printf x > "$d/shots/ibus-x11-before.png"
+        printf x > "$d/shots/ibus-x11-preedit.png"
+    }
+    x11_refuses() {
+        ( fail=0; checked=0
+          judge_ibus_x11_probe "$1/evidence" "$1/shots" >/dev/null 2>&1
+          echo "$fail" )
+    }
+    x11_fixture "$T/x11" inconclusive inconclusive
+    n=$(x11_refuses "$T/x11")
+    x11_judgement=$(judge_ibus_x11_probe "$T/x11/evidence" "$T/x11/shots")
+    case "$x11_judgement" in *'INCONCLUSIVE -- no product eligibility'*) neutral=yes ;;
+      *) neutral=no ;;
+    esac
+    if [ "$n" = 0 ] && [ "$neutral" = yes ]; then
+        printf '    %-62s %s\n' "empty XRes window/PID evidence stays neutral" "accepted"
+    else
+        printf '    %-62s %s\n' "empty XRes window/PID evidence stays neutral" "FAIL"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    x11_fixture "$T/x11" identity-only complete
+    rm "$T/x11/evidence/shipped-engine-ids.txt"
+    n=$(x11_refuses "$T/x11")
+    if [ "$n" -ge 1 ]; then
+        printf '    %-62s %s\n' "X11 cleanup without restored Pinyin readiness" "refused"
+    else
+        printf '    %-62s %s\n' "X11 cleanup without restored Pinyin readiness" "ACCEPTED"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
     sh -n tools/profiletest-ibus-guest.sh || { printf '    %-62s %s\n' \
         "the injected Pinyin guest orchestrator parses" "FAIL"; fail=$((fail+1)); }
     checked=$((checked+1))
@@ -635,6 +758,22 @@ EOPY
         printf '    %-62s %s\n' "the bounded IBus engine selector" "passes"
     else
         printf '    %-62s %s\n' "the bounded IBus engine selector" "FAIL"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    if python3 tools/test_x11_xres_probe.py >/dev/null; then
+        printf '    %-62s %s\n' "the bounded raw XRes diagnostic parser" "passes"
+    else
+        printf '    %-62s %s\n' "the bounded raw XRes diagnostic parser" "FAIL"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    if PROFILETEST_IBUS_X11_PROBE=1 PROFILETEST_IBUS_FUNCTIONAL=0 \
+       sh tools/profiletest.sh boot multilingual 2>&1 \
+           | grep -Fq 'requires the multilingual functional run'; then
+        printf '    %-62s %s\n' "the X11 diagnostic cannot silently add boot cost" "passes"
+    else
+        printf '    %-62s %s\n' "the X11 diagnostic cannot silently add boot cost" "FAIL"
         fail=$((fail+1))
     fi
     checked=$((checked+1))
@@ -649,8 +788,14 @@ P="${1:-}"; [ -n "$P" ] || { echo "usage: $0 boot <profile> [evidence-dir]"; exi
 EV="${2:-$ROOT/out/profiletest-$P}"
 IBUS_FUNCTIONAL=${PROFILETEST_IBUS_FUNCTIONAL:-0}
 case "$IBUS_FUNCTIONAL" in 0|1) ;; *) echo "PROFILETEST_IBUS_FUNCTIONAL must be 0 or 1"; exit 2 ;; esac
+IBUS_X11_PROBE=${PROFILETEST_IBUS_X11_PROBE:-0}
+case "$IBUS_X11_PROBE" in 0|1) ;; *) echo "PROFILETEST_IBUS_X11_PROBE must be 0 or 1"; exit 2 ;; esac
 if [ "$IBUS_FUNCTIONAL" = 1 ] && [ "$P" != multilingual ]; then
     echo "PROFILETEST_IBUS_FUNCTIONAL=1 is only valid for the multilingual profile"
+    exit 2
+fi
+if [ "$IBUS_X11_PROBE" = 1 ] && { [ "$IBUS_FUNCTIONAL" != 1 ] || [ "$P" != multilingual ]; }; then
+    echo "PROFILETEST_IBUS_X11_PROBE=1 requires the multilingual functional run"
     exit 2
 fi
 for t in qemu-system-x86_64 sgdisk python3 losetup mount; do
@@ -821,6 +966,10 @@ chmod 755 "$M/usr/lib/auros-profiletest/probe.sh"
 if [ "$IBUS_FUNCTIONAL" = 1 ]; then
     install -m 755 "$ROOT/tools/profiletest-ibus-guest.sh" \
         "$M/usr/lib/auros-profiletest/ibus-functional.sh"
+    if [ "$IBUS_X11_PROBE" = 1 ]; then
+        install -m 755 "$ROOT/tools/x11_xres_probe.py" \
+            "$M/usr/lib/auros-profiletest/x11_xres_probe.py"
+    fi
     # If this scratch OVMF happens to contain an AurOS boot entry, do not let
     # the install hand-over question cover the applications under test.
     install -d "$M/var/lib/auros"
@@ -1071,6 +1220,10 @@ echo "  what the running system said"
 judge_report "$P" "$EV/$P-report.txt"
 if [ "$IBUS_FUNCTIONAL" = 1 ]; then
     judge_ibus_functional "$EV/ibus" "$EV"
+    if [ "$IBUS_X11_PROBE" = 1 ]; then
+        XEV="$EV/ibus/round1/x11-panel"
+        judge_ibus_x11_probe "$XEV" "$EV"
+    fi
 fi
 drawn_enough "$S1" && ok "the screen shows a desktop ($S1)" \
                    || bad "the screen shows a desktop" "$S1"
