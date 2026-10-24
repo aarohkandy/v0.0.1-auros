@@ -62,6 +62,51 @@ ok()  { checked=$((checked+1)); printf '    %-60s %s\n' "$1" "ok"; }
 bad() { checked=$((checked+1)); fail=$((fail+1)); printf '    %-60s %s\n' "$1" "FAIL"
         shift; for m in "$@"; do printf '      %s\n' "$m"; done; }
 
+ibus_negative_report() { # report-file boot-number
+    report=$1 boot=$2
+    grep -Fqx "$boot ibus-unit=disabled" "$report" 2>/dev/null || return 1
+    for scope in user shell; do
+        for var in GTK_IM_MODULE QT_IM_MODULE XMODIFIERS; do
+            grep -Fqx "$boot ibus-$scope-$var=absent" "$report" 2>/dev/null || return 1
+        done
+    done
+}
+
+if [ "$PROFILE" = selftest ]; then
+    S=$(mktemp "${TMPDIR:-/tmp}/firstboottest-selftest.XXXXXX") || exit 2
+    trap 'rm -f "$S" "$S.new"' EXIT
+    cat > "$S" <<'EOF'
+1 ibus-unit=disabled
+1 ibus-user-GTK_IM_MODULE=absent
+1 ibus-user-QT_IM_MODULE=absent
+1 ibus-user-XMODIFIERS=absent
+1 ibus-shell-GTK_IM_MODULE=absent
+1 ibus-shell-QT_IM_MODULE=absent
+1 ibus-shell-XMODIFIERS=absent
+EOF
+    ibus_negative_report "$S" 1 || { echo "valid IBus negative report was refused"; exit 1; }
+    n=0
+    while IFS= read -r line; do
+        n=$((n + 1))
+        sed "${n}d" "$S" > "$S.new"
+        if ibus_negative_report "$S.new" 1; then
+            echo "IBus negative report accepted missing fact: $line"
+            exit 1
+        fi
+    done < "$S"
+    sed 's/ibus-unit=disabled/ibus-unit=static/' "$S" > "$S.new"
+    ! ibus_negative_report "$S.new" 1 \
+        || { echo "IBus negative report accepted a static unit"; exit 1; }
+    sed 's/ibus-user-GTK_IM_MODULE=absent/ibus-user-GTK_IM_MODULE=query-error/' "$S" > "$S.new"
+    ! ibus_negative_report "$S.new" 1 \
+        || { echo "IBus negative report accepted a failed user-bus query"; exit 1; }
+    sed 's/ibus-shell-XMODIFIERS=absent/ibus-shell-XMODIFIERS=present/' "$S" > "$S.new"
+    ! ibus_negative_report "$S.new" 1 \
+        || { echo "IBus negative report accepted a present shell variable"; exit 1; }
+    echo "firstboottest IBus negative-report selftest passed"
+    exit 0
+fi
+
 for t in qemu-system-x86_64 zstd sgdisk python3 losetup mount runuser \
          mkfs.vfat mmd mcopy; do
     command -v "$t" >/dev/null 2>&1 || { echo "need $t"; exit 2; }
@@ -138,6 +183,57 @@ i=0
 while [ ! -d /run/auros ] && [ "$i" -lt 300 ]; do sleep 1; i=$((i+1)); done
 if [ -d /run/auros ]; then log "desktop $(stat -c %U:%a /run/auros) after ${i}s"
 else log "desktop NEVER after ${i}s: $(systemctl is-active aurshell.service)"; fi
+if [ -d /run/auros ]; then
+    u=$(stat -c %U /run/auros 2>/dev/null)
+    uid=$(id -u "$u" 2>/dev/null)
+    userctl() {
+        timeout 8 runuser -u "$u" -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" systemctl --user "$@"
+    }
+    j=0; user_env_ok=no
+    while [ "$j" -lt 30 ]; do
+        if user_env=$(userctl show-environment 2>/dev/null); then
+            user_env_ok=yes
+            break
+        fi
+        sleep 1; j=$((j + 1))
+    done
+    if [ "$user_env_ok" = yes ]; then
+        for var in GTK_IM_MODULE QT_IM_MODULE XMODIFIERS; do
+            if printf '%s\n' "$user_env" | grep -q "^$var="; then
+                log "ibus-user-$var=present"
+            else
+                log "ibus-user-$var=absent"
+            fi
+        done
+        enabled=$(userctl is-enabled auros-ibus.service 2>/dev/null); enabled_rc=$?
+        if [ "$enabled_rc" -eq 1 ] && [ "$enabled" = disabled ]; then
+            log "ibus-unit=disabled"
+        else
+            log "ibus-unit=query-error:${enabled_rc}:${enabled:-no-output}"
+        fi
+    else
+        for var in GTK_IM_MODULE QT_IM_MODULE XMODIFIERS; do
+            log "ibus-user-$var=query-error"
+        done
+        log "ibus-unit=query-error:user-bus"
+    fi
+    shell_pid=$(systemctl show -p MainPID --value aurshell.service 2>/dev/null)
+    if [ "${shell_pid:-0}" -gt 0 ] 2>/dev/null && [ -r "/proc/$shell_pid/environ" ] \
+        && shell_env=$(tr '\0' '\n' < "/proc/$shell_pid/environ" 2>/dev/null); then
+        for var in GTK_IM_MODULE QT_IM_MODULE XMODIFIERS; do
+            if printf '%s\n' "$shell_env" | grep -q "^$var="; then
+                log "ibus-shell-$var=present"
+            else
+                log "ibus-shell-$var=absent"
+            fi
+        done
+    else
+        for var in GTK_IM_MODULE QT_IM_MODULE XMODIFIERS; do
+            log "ibus-shell-$var=query-error"
+        done
+    fi
+fi
 if [ "$mode" = confirm ] || [ "$mode" = decline ] || [ "$mode" = confirmro ]; then
     word=${mode%ro}
     if [ "$mode" = confirmro ]; then
@@ -305,6 +401,12 @@ started 0002 && ok "AurOS starts from its own entry, not the removable path" \
 said "desktop" && ! said "desktop NEVER" \
     && ok "the desktop comes up" \
     || bad "the desktop comes up" "$(why_not)"
+if [ "$PROFILE" = desktop ]; then
+    ibus_negative_report "$R/log" "$BOOTN" \
+        && ok "the ordinary desktop has no IBus service or input-method environment" \
+        || bad "the ordinary desktop has no IBus service or input-method environment" \
+               "$(sed -n "s/^$BOOTN ibus-/  /p" "$R/log" 2>/dev/null)"
+fi
 [ "$(next)" = "0002" ] \
     && ok "the one-shot is armed again for the next start" \
     || bad "the one-shot is armed again for the next start" \
