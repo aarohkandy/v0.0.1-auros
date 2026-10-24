@@ -387,6 +387,15 @@ int main(int argc, char **argv)
         printf("runcheck rc=%d tail=%s\n", rc, tail);
         return 0;
     }
+    /* `explorercheck`: the program the wizard opens a helper page with, as a full
+     * path (never a bare name beside this exe; SEC-002 sibling). CI plants an
+     * explorer.exe beside this program and asks which one it names. */
+    if (!strcmp(cmd, "explorercheck")) {
+        char p[1024] = "";
+        int rc = plat_explorer_path(p, sizeof p);
+        printf("explorercheck rc=%d path=%s\n", rc, p);
+        return rc ? 1 : 0;
+    }
     /* `dircheck DIR` makes DIR the way the installer makes its download
      * folder (plat_dir_private) and says what it did; `dircheck sid SID`
      * says whether the installer would trust an owner with that SID. CI on

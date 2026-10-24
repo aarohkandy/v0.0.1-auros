@@ -299,6 +299,15 @@ jobs:
               if ($o -notmatch 'rc=-1' -or $o -notmatch 'belong to Windows') { throw "was not refused: $c -> $o" }
           }
           if (Test-Path PLANTED-RAN.txt) { throw "A PLANTED PROGRAM RAN (after the refusals)" }
+          # The helper page is opened through Explorer, by its full path (SEC-002 sibling):
+          # with an explorer.exe planted beside the installer, the one it names is Windows' own.
+          Copy-Item schtasks.exe explorer.exe
+          $o = .\aurbridge.exe explorercheck
+          "explorercheck -> $o"
+          $want = Join-Path (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').SystemRoot 'explorer.exe'
+          if ($o -notmatch '^explorercheck rc=0 path=(.+)$' -or $Matches[1].Trim() -ne $want) { throw "the helper is opened with $o, not $want" }
+          if ($Matches[1] -like "$PWD*") { throw "the helper would be opened with the program beside the installer" }
+          Remove-Item explorer.exe
           "ok: only Windows' own programs start, and a planted one never does"
 
       # SEC-003: the same folder holds a wlanapi.dll, a winspool.drv, a winhttp.dll and

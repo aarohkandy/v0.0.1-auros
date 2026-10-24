@@ -6,6 +6,9 @@
 #include "sbdb.h"
 #include "phases.h"           /* AB_CHOICE_BITLOCKER_PAUSE: what the engine can do */
 #include "aurbridge-baked.h"
+#ifndef AUROS_IMAGE_BYTES
+#define AUROS_IMAGE_BYTES 0ULL      /* a developer build bakes no size */
+#endif
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1002,6 +1005,23 @@ static uint64_t shrink_giveable(uint64_t offline_shrinkable)
          ? offline_shrinkable - PF_WINDOWS_KEEP : 0;
 }
 
+/* S-22: THE COPY OF AUROS THAT IS COMING COUNTS TOO. Without a memory stick the
+ * image is downloaded into C:\AurOS the moment this check passes and stays there
+ * through the shrink (the shrink cannot give back room a file sits in), so the
+ * room the drive must be able to give is AurOS's own need PLUS what has not
+ * arrived yet. phases.c asks the same after the download; asking it here keeps
+ * a check that says "go" from being refused five gigabytes later. What has
+ * already arrived is credited: the measurement itself shrinks by exactly that
+ * much as it lands. (Not for the fast path, which never keeps the image there.) */
+static uint64_t image_still_to_come(uint64_t image_bytes, uint64_t have)
+{
+    return have >= image_bytes ? 0 : image_bytes - have;
+}
+static int space_enough(uint64_t giveable, uint64_t image_bytes, uint64_t have)
+{
+    return giveable >= PF_AUROS_NEED + image_still_to_come(image_bytes, have);
+}
+
 static void bitmap_scan(const BYTE *bits, uint64_t nbits, uint64_t base,
                         uint64_t *used, uint64_t *end)
 {
@@ -1286,16 +1306,28 @@ static void check_volumes(pf_report *r)
                         "restart. When it finishes cleanly, run AurBridge again.");
             } else {
                 uint64_t giveable = shrink_giveable(v->offline_shrinkable);
+                uint64_t img = 0, have = 0;
+#ifndef AB_CHOICE_FAST_PATH
+                {   /* the copy that is downloading into C:\AurOS, and what of it is there */
+                    char dir[16], path[64];
+                    snprintf(dir, sizeof dir, "%s", drive);
+                    snprintf(path, sizeof path, "%s\\AurOS\\auros-desktop.img", dir);
+                    img = AUROS_IMAGE_BYTES ? AUROS_IMAGE_BYTES : 6ULL * 1024 * 1024 * 1024;
+                    plat_file_size(path, &have);
+                }
+#endif
+                uint64_t more = image_still_to_come(img, have);
 
                 size_str(giveable, a, sizeof a);
                 size_str(v->used_bytes, b, sizeof b);
-                size_str(PF_AUROS_NEED, c, sizeof c);
-                if (giveable < PF_AUROS_NEED) {
+                size_str(PF_AUROS_NEED + more, c, sizeof c);
+                if (!space_enough(giveable, img, have)) {
                     snprintf(det, sizeof det,
                         "Drive %s holds %s of files. Once Windows keeps the 8 GB it needs "
                         "to carry on updating itself, about %s can be freed. AurOS needs "
                         "%s: room for the system, your files, and the rescue files that "
-                        "can put Windows back.", drive, b, a, c);
+                        "can put Windows back%s.", drive, b, a, c,
+                        more ? ", and for the copy of AurOS that is still arriving" : "");
                     add(r, "insufficient-space", "R7", PF_BLOCK, "Not enough free space",
                         det,
                         "Empty the Recycle Bin, then use Windows' Disk Cleanup, or move "
@@ -2312,6 +2344,15 @@ int pf_selftest(void)
           shrink_giveable(0) == 0 && shrink_giveable(1) == 0);
         t("shrink: free space alone would have said yes",
           (size - used) >= PF_AUROS_NEED);   /* the old check's answer */
+        /* S-22, two cases: 30 GB spare above AurOS's own need, a 5 GB copy still to come */
+        const uint64_t img = 5 * G, spare = PF_AUROS_NEED + 2 * G;
+        t("room: 2 GB over the need is not enough while 5 GB of AurOS is still to arrive",
+          !space_enough(spare, img, 0));
+        t("room: the same drive is enough once the copy has arrived (credited, not counted twice)",
+          space_enough(spare, img, img));
+        t("room: half arrived leaves 2.5 GB to come, still more than 2 GB over",
+          !space_enough(spare, img, img / 2) && space_enough(PF_AUROS_NEED + 3 * G, img, img / 2));
+        t("room: more on disk than expected never underflows", image_still_to_come(img, img * 2) == 0);
     }
 
     {   /* Numbers the user is asked to act on. */

@@ -150,7 +150,7 @@ static const fix_info FIXES[] = {
      * sentence, which says which stick and why). */
     { "no-internet", FIX_WAIT,
       L"AurOS would have no internet on this computer",
-      L"Plug in a USB Wi-Fi stick (MT7612U, MT7921 or MT7601U chip). We carry on by ourselves.", NULL },
+      L"Plug in a USB Wi-Fi stick. Show a helper how says which. We carry on by ourselves.", NULL },
     /* From sbdb.c, not preflight.c's add(): the wizard gives the first its
      * own page with the sketch (DESIGN-DIRECTION.md B-5). */
     { "secure-boot-ca", FIX_CANNOT,

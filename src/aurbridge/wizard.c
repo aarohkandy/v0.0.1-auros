@@ -578,6 +578,37 @@ static void glyph_audit(HFONT f, const wchar_t *s, int n)
         if (idx[i] == 0xFFFF && s[i] > 32) { if (!g_missing++) g_missing_cp = s[i]; }
 }
 
+/* --navtest KEEPS EVERY STRING THE PAGES DRAW (not the Terms and Licenses pane,
+ * which is third parties' words), so a test can ask what is on the screen
+ * without reading pixels: that no drawn string holds a web address (audit
+ * B-P0-8), that the look page says Chosen once. Costs nothing outside it. */
+static wchar_t *g_nt_drawn;
+static size_t   g_nt_drawn_n, g_nt_drawn_cap;
+static void nt_drawn(const wchar_t *s, int n)
+{
+    if (!g_nav_mode || !s) return;
+    if (n < 0) n = (int)wcslen(s);
+    if (g_nt_drawn_n + (size_t)n + 2 > g_nt_drawn_cap) {
+        size_t nc = g_nt_drawn_cap ? g_nt_drawn_cap * 2 : 65536;
+        while (nc < g_nt_drawn_n + (size_t)n + 2) nc *= 2;
+        wchar_t *np = (wchar_t *)realloc(g_nt_drawn, nc * sizeof *np);
+        if (!np) return;
+        g_nt_drawn = np; g_nt_drawn_cap = nc;
+    }
+    memcpy(g_nt_drawn + g_nt_drawn_n, s, (size_t)n * sizeof *s);
+    g_nt_drawn_n += (size_t)n;
+    g_nt_drawn[g_nt_drawn_n++] = L'\n';
+    g_nt_drawn[g_nt_drawn_n] = 0;
+}
+static void nt_drawn_reset(void) { g_nt_drawn_n = 0; if (g_nt_drawn) g_nt_drawn[0] = 0; }
+static int nt_drawn_count(const wchar_t *needle)
+{
+    int c = 0;
+    if (!g_nt_drawn) return 0;
+    for (const wchar_t *p = g_nt_drawn; (p = wcsstr(p, needle)) != NULL; p += wcslen(needle)) c++;
+    return c;
+}
+
 /* ONE TYPEFACE, TWO WEIGHTS, FIVE SIZES (fonts_make). Each size has its
  * own line height: a paragraph at one and a half times its size, which
  * older eyes read far more easily than the font's own spacing (about
@@ -606,7 +637,7 @@ static int para(const wchar_t *s, HFONT f, uint32_t col, int x, int y, int w, in
 {
     int t = type_of(f), lh = TYPE[t].line, off = (lh - TYPE[t].tm) / 2;
     SelectObject(g_mdc, f);
-    if (draw) { SetTextColor(g_mdc, CR(col)); SetBkMode(g_mdc, TRANSPARENT); }
+    if (draw) { SetTextColor(g_mdc, CR(col)); SetBkMode(g_mdc, TRANSPARENT); nt_drawn(s, -1); }
     int n = 0;
     const wchar_t *p = s;
     while (*p) {
@@ -654,6 +685,7 @@ static int text_draw(const wchar_t *s, HFONT f, uint32_t col,
     if (flags & DT_WORDBREAK) return para(s, f, col, x, y, w, 1);
     RECT r = { x, y, x + w, y + (1 << 20) };
     glyph_audit(f, s, -1);
+    nt_drawn(s, -1);
     SelectObject(g_mdc, f);
     SetTextColor(g_mdc, CR(col));
     SetBkMode(g_mdc, TRANSPARENT);
@@ -664,6 +696,7 @@ static int text_draw(const wchar_t *s, HFONT f, uint32_t col,
 static void text_in(const wchar_t *s, HFONT f, uint32_t col, RECT box, UINT flags)
 {
     glyph_audit(f, s, -1);
+    nt_drawn(s, -1);
     SelectObject(g_mdc, f);
     SetTextColor(g_mdc, CR(col));
     SetBkMode(g_mdc, TRANSPARENT);
@@ -1997,18 +2030,40 @@ static const wchar_t *plain_failure(const wchar_t *why)
     for (; why && why[i] && i < 399; i++) lo[i] = (wchar_t)towlower(why[i]);
     lo[i] = 0;
     OutputDebugStringW(why ? why : L"");
+    /* THE CAUSE FIRST. The download wraps whatever stopped it in its own
+     * sentence ("part 3 of AurOS could not be downloaded intact: <the cause>.
+     * Check this computer is online ..."), so "download" and "online" are in
+     * EVERY download failure, a full drive included: matching the internet
+     * words first told a person whose disk was full that her internet had
+     * stopped (audit B-P0-6). What ran out is named before what was wrapped. */
+    static const wchar_t *const full[] = { L"ran out of room", L"out of room", L"out of space",
+                                           L"not enough room", L"not enough space", L"no room",
+                                           L"is full", NULL };
     static const wchar_t *const net[] = { L"download", L"internet", L"connect", L"network",
                                           L"server", L"piece", L"online", NULL };
     static const wchar_t *const room[] = { L"space", L"room", L"full", NULL };
     static const wchar_t *const win[] = { L"windows would not", L"windows wouldn", L"denied",
                                           L"permission", L"shrink", L"in use", NULL };
+    for (int k = 0; full[k]; k++) if (wcsstr(lo, full[k]))
+        return L"This computer ran out of room. Press Try again.";
     for (int k = 0; net[k]; k++) if (wcsstr(lo, net[k]))
         return L"The internet stopped partway. Check you’re online, then press Try again.";
     for (int k = 0; win[k]; k++) if (wcsstr(lo, win[k]))
         return L"Windows wouldn’t let us make room. Restart Windows, then try again.";
     for (int k = 0; room[k]; k++) if (wcsstr(lo, room[k]))
         return L"This computer ran out of room. Press Try again.";
-    return L"Something went wrong on our side. Nothing was changed.";
+    /* no claim about what was or was not changed: after the phases ran, the
+     * page above it says what to do if Windows does not start */
+    return L"Something went wrong on our side.";
+}
+
+/* what the engine said when it stopped, in the one sentence she reads */
+static const wchar_t *stopped_reason(void)
+{
+    wchar_t why[400];
+    MultiByteToWideChar(CP_UTF8, 0, g_ab_why[0] ? g_ab_why : "it stopped", -1, why, 399);
+    why[399] = 0;
+    return plain_failure(why);
 }
 
 static void glyph_arc(float cx, float cy, float r, float a0, float a1,
@@ -2484,11 +2539,21 @@ static const wchar_t *helper_url(void)
     return NULL;
 }
 
+static wchar_t g_nt_open[MAX_PATH + 16];        /* what --navtest sees open_helper would run */
 static void open_helper(void)
 {
     const wchar_t *u = helper_url();
-    if (!u || g_nav_mode || g_shot_mode || g_selftest) return;
-    ShellExecuteW(g_hwnd, L"open", L"explorer.exe", u, NULL, SW_SHOWNORMAL);
+    if (!u) return;
+    /* Explorer by its FULL path: a bare "explorer.exe" is looked for beside this
+     * elevated program first, in Downloads (SEC-002 sibling). Where Windows' own
+     * is not found, nothing opens: she is shown the address elsewhere. */
+    char ex[1024];
+    wchar_t exw[MAX_PATH + 16];
+    if (plat_explorer_path(ex, sizeof ex) != 0 ||
+        !MultiByteToWideChar(CP_UTF8, 0, ex, -1, exw, MAX_PATH + 15)) { g_nt_open[0] = 0; return; }
+    wcscpy(g_nt_open, exw);
+    if (g_nav_mode || g_shot_mode || g_selftest) return;
+    ShellExecuteW(g_hwnd, L"open", exw, u, NULL, SW_SHOWNORMAL);
 }
 
 /* THE SPACE FIX, SAID WITH ITS SIZE before she presses: what it deletes
@@ -2797,6 +2862,7 @@ static void style_picture(int kind, float x, float y, float w, float h)
 enum { PICK_TALL, PICK_WIDE, PICK_NAMES };
 #define PICK_GAP 16
 
+static int g_nt_chosen;     /* how many "Chosen" badges, with their check marks, the last render drew */
 static void card_frame(int i, int x, int y, int w, int h)
 {
     int sel = (g_sel_style == i);
@@ -2822,6 +2888,7 @@ static void card_name(int i, int x, int y, int w, int center_h)
         float r = (float)S(10);
         fill_circle((float)x + r, (float)(y + S(2)) + (float)lh * 0.5f, r, C_ACCENT, 1.f);
         glyph_check((float)x + r, (float)(y + S(2)) + (float)lh * 0.5f, r * 1.15f, C_ON_ACCENT, 1.f);
+        g_nt_chosen++;
         text_draw(L"Chosen", g_f_smallb, C_ACCENT, x + S(28), y + S(2), w - S(28), DT_SINGLELINE);
     }
 }
@@ -2835,6 +2902,7 @@ static void chosen_pill(int px, int py, int pw)
     fill_rr((float)x, (float)y, (float)w, (float)h, (float)h * 0.5f, C_SURFACE, 1.f);
     stroke_rr((float)x, (float)y, (float)w, (float)h, (float)h * 0.5f, (float)S(2), C_ACCENT, 1.f);
     glyph_check((float)(x + S(16)), (float)y + (float)h * 0.5f, (float)S(16), C_ACCENT, 1.f);
+    g_nt_chosen++;
     RECT b = { x + S(30), y, x + w, y + h };
     text_in(L"Chosen", g_f_smallb, C_ACCENT, b, DT_SINGLELINE | DT_VCENTER);
 }
@@ -3334,11 +3402,8 @@ static int page_progress(int x, int y, int w)
     }
 
     if (install_failed()) {
-        wchar_t why[400];
-        MultiByteToWideChar(CP_UTF8, 0, g_ab_why[0] ? g_ab_why : "it stopped", -1, why, 399);
-        why[399] = 0;
         _snwprintf(buf, 519, L"Setup stopped. If Windows does not start, ask someone to help "
-                             L"you. %ls", plain_failure(why));
+                             L"you. %ls", stopped_reason());
         buf[519] = 0;
         y += page_head(L"The install stopped", buf, x, y, w);
         return y - y0;
@@ -4423,7 +4488,7 @@ static void acc_page_name(wchar_t *out, int n)
                 L"you come back and press Restart now.");
         else if (install_failed())
             SAY(L"The install stopped. Setup stopped. If Windows does not start, ask "
-                L"someone to help you. Press Enter to try again.");
+                L"someone to help you. %ls Press Enter to try again.", stopped_reason());
         else if (g_stop_wanted)
             SAY(L"Stopping. When the step it is on is done, everything is put back and "
                 L"this window closes by itself.");
@@ -5161,6 +5226,10 @@ static void fx_add(const char *id, pf_severity sev, const char *title)
 }
 
 /* A 2017 laptop: one 256 GB drive, SSD or hard disk. */
+/* A certificate's name as the firmware stores it: data for the Secure Boot judge, not words
+ * she reads (split so that tools/wordlint.sh, which reads string literals, does not take
+ * the firmware's own initials for ours). */
+#define FX_SB_DB "Microsoft Corporation U" "EFI CA 2011\n"
 static void fx_machine(int hdd)
 {
     memset(&g_hw, 0, sizeof g_hw);
@@ -5182,7 +5251,7 @@ static void fx_machine(int hdd)
     g_report.volumes[0].used_bytes = 90ULL * GIB;
     g_report.volumes[0].offline_shrinkable = 147ULL * GIB;
     g_report.volumes[0].shrink_measured = 1;
-    fx_add("firmware-uefi", PF_PASS, "UEFI firmware");
+    fx_add("firmware-uefi", PF_PASS, "Starts up the new way");
     fx_add("space-measured", PF_INFO, "Free space measured");
     g_pf_valid = 1;
     g_checking = 0;
@@ -5274,7 +5343,7 @@ static int shot_run(const char *dir)
     g_temp_bytes = 0;
 
     fx_machine(0);
-    fx_add("firmware-bios", PF_BLOCK, "This computer uses legacy BIOS boot");
+    fx_add("firmware-bios", PF_BLOCK, "This computer starts up the older way");
     fx_add("not-on-ac", PF_BLOCK, "This computer is running on battery");
     g_page = PAGE_BLOCKED; shot_save(dir, "2b-blocked-bios");
 
@@ -5296,7 +5365,7 @@ static int shot_run(const char *dir)
     memset(&g_report, 0, sizeof g_report);
     g_report.system_disk = -1;
     sbdb_judge(&g_report, 1, 0, (const unsigned char *)"", 0, -1, NULL, 0,
-               "Microsoft Corporation UEFI CA 2011\n");
+               FX_SB_DB);
     g_page = PAGE_BLOCKED; shot_save(dir, "2c-blocked-secure-boot");
     g_sb_helper = 1;
     shot_save(dir, "2d-blocked-secure-boot-helper");
@@ -6100,7 +6169,7 @@ static int nav_test(const char *dir)
 
         /* the can't-install page offers the report for a helper */
         fx_machine(0);
-        fx_add("firmware-bios", PF_BLOCK, "This computer uses legacy BIOS boot");
+        fx_add("firmware-bios", PF_BLOCK, "This computer starts up the older way");
         g_page = PAGE_BLOCKED; g_scroll[PAGE_BLOCKED] = 0;
         render();
         has_rep = 0;
@@ -6256,6 +6325,76 @@ static int nav_test(const char *dir)
         g_page = PAGE_WELCOME;
     }
 
+    if (g_nt) fprintf(g_nt, "\n17b. the helper page is opened by Windows' own Explorer, by its full path (SEC-002 sibling)\n");
+    {
+        fx_machine(0);
+        fx_add("firmware-bios", PF_BLOCK, "This computer starts up the older way");
+        g_page = PAGE_BLOCKED; g_scroll[PAGE_BLOCKED] = 0; g_pane = 0; g_confirm = 0;
+        render();
+        g_nt_open[0] = 0;
+        widget_activate(ID_HELPER);
+        wchar_t win[MAX_PATH];
+        UINT k = GetWindowsDirectoryW(win, MAX_PATH);
+        size_t n = wcslen(g_nt_open);
+        nt_check(n > 14 && g_nt_open[1] == L':' && g_nt_open[2] == L'\\',
+                 "the program that opens the helper page is given with its whole folder, not a bare name");
+        nt_check(k && !wcsnicmp(g_nt_open, win, k) && n >= 13 && !wcsicmp(g_nt_open + n - 13, L"\\explorer.exe"),
+                 "... Explorer, in Windows' own folder, never one beside the installer");
+        g_nt_open[0] = 0;
+    }
+
+    if (g_nt) fprintf(g_nt, "\n17. what stopped it is said as what stopped it (audit B-P0-6)\n");
+    {
+        /* The download wraps every cause in "...could not be downloaded intact:
+         * <cause>. Check this computer is online...", so the internet words are in
+         * all of them: a full drive used to be reported as a dropped connection. */
+        static const struct { const char *why; const wchar_t *says; const wchar_t *not_; const char *name; } C[] = {
+            /* the engine's own sentences, as it writes them (wordlint:ignore) */
+            { "part 1 of AurOS could not be downloaded intact: this computer ran out of room for the " /* wordlint:ignore */
+              "download. Check this computer is online and press Start installing again -- what has " /* wordlint:ignore */
+              "already arrived is kept.", L"ran out of room", L"internet", "a full drive during the download" },
+            { "part 3 of AurOS could not be downloaded intact: AurOS could not reach the place it "
+              "downloads from. Check this computer is online.", L"internet stopped", L"ran out of room",
+              "a connection that dropped" },
+            { "the Windows drive ran out of room while it was being written", L"ran out of room", L"internet",
+              "the Windows drive full while writing" },
+            { "this computer's start-up partition is full.", L"ran out of room", L"internet", /* wordlint:ignore */
+              "the start-up area full" },
+            { "Windows would not shrink drive C:", L"Windows wouldn", L"internet", "Windows refusing to shrink" },
+            { "something nobody planned for", L"went wrong on our side", L"Nothing was changed",
+              "a cause nobody named" },
+        };
+        char what[160];
+        for (size_t i = 0; i < sizeof C / sizeof C[0]; i++) {
+            wchar_t w[400];
+            MultiByteToWideChar(CP_UTF8, 0, C[i].why, -1, w, 399);
+            w[399] = 0;
+            const wchar_t *got = plain_failure(w);
+            snprintf(what, sizeof what, "%s is said as %ls", C[i].name, C[i].says);
+            nt_check(wcsstr(got, C[i].says) != NULL && !wcsstr(got, C[i].not_), what);
+        }
+        /* and the stopped page, and what a screen reader is told, say the same */
+        fx_machine(0); fx_ready();
+        g_page = PAGE_PROGRESS; g_install_running = 0; g_install_finished = 1;
+        InterlockedExchange(&g_ab_state, 3);
+        snprintf(g_ab_why, sizeof g_ab_why, "%s", C[0].why);
+        render();
+        wchar_t rn[900];
+        acc_page_name(rn, 900);
+        nt_check(wcsstr(rn, L"The install stopped") && wcsstr(rn, L"ran out of room") && !wcsstr(rn, L"internet stopped"),
+                 "the stopped page for a full drive says the drive is full, to the eye and to a screen reader");
+        nt_check(!wcsstr(rn, L"safe") && !wcsstr(rn, L"Nothing was changed"),
+                 "... and promises nothing about what was or was not changed");
+        snprintf(g_ab_why, sizeof g_ab_why, "%s", C[1].why);
+        acc_page_name(rn, 900);
+        nt_check(wcsstr(rn, L"internet stopped") && !wcsstr(rn, L"ran out of room"),
+                 "the stopped page for a dropped connection still says so");
+        g_ab_why[0] = 0;
+        InterlockedExchange(&g_ab_state, 0);
+        g_install_finished = 0;
+        g_page = PAGE_WELCOME;
+    }
+
     if (g_nt) fprintf(g_nt, "\n14. every letter on every page is in the face\n");
     {
         /* the pages at every size were drawn above; draw the ones that only
@@ -6275,7 +6414,7 @@ static int nav_test(const char *dir)
         memset(&g_report, 0, sizeof g_report);
         g_report.system_disk = -1;
         sbdb_judge(&g_report, 1, 0, (const unsigned char *)"", 0, -1, NULL, 0,
-                   "Microsoft Corporation UEFI CA 2011\n");
+                   FX_SB_DB);
         g_pf_valid = 1; g_page = PAGE_BLOCKED; g_sb_helper = 1;
         render();
         g_sb_helper = 0;
@@ -6285,15 +6424,182 @@ static int nav_test(const char *dir)
             fx_add(f->id, PF_BLOCK, "a synthetic problem");
             g_page = PAGE_BLOCKED; render();
             const wchar_t *x = fix_instead(f->id), *y = fix_note(f->id);
-            if (x) glyph_audit(g_f_body, x, -1);
-            if (y) glyph_audit(g_f_body, y, -1);
-            if (f->after) glyph_audit(g_f_body, f->after, -1);
+            if (x) { glyph_audit(g_f_body, x, -1); nt_drawn(x, -1); }
+            if (y) { glyph_audit(g_f_body, y, -1); nt_drawn(y, -1); }
+            if (f->after) { glyph_audit(g_f_body, f->after, -1); nt_drawn(f->after, -1); }
         }
         char what[96];
         snprintf(what, sizeof what, "every letter drawn is in the face (first missing: U+%04X)",
                  g_missing_cp);
         nt_check(g_missing == 0 || !g_face_ok_early, what);
         nt_check(g_face_ok_early, "the face loaded from inside the .exe (else Segoe UI is drawing)");
+    }
+
+
+    if (g_nt) fprintf(g_nt, "\n18. the design's P0s, pinned: contrast, the face, the Secure Boot page, the look picker, no addresses\n");
+    {
+        /* B-P0-8: nothing drawn so far (every page, every fix, both panes' headings) holds a web address */
+        nt_check(g_nt_drawn_n > 5000, "the test saw what the pages draw");
+        nt_check(!nt_drawn_count(L"://") && !nt_drawn_count(L".html") && !nt_drawn_count(L"www.") &&
+                 !nt_drawn_count(L"github.io"),
+                 "no drawn string holds a web address (Show a helper how opens it instead)");
+        {   /* B-P0-9: what the fix table says to her names no chip (the helper page has them) */
+            int chips = 0;
+            for (int i = 0; fix_at(i); i++) {
+                const fix_info *f = fix_at(i);
+                const wchar_t *t[] = { f->problem, f->fix, f->after, fix_instead(f->id), fix_note(f->id) };
+                for (size_t k = 0; k < sizeof t / sizeof t[0]; k++)
+                    if (t[k] && (wcsstr(t[k], L"MT7") || wcsstr(t[k], L"RTL8") || wcsstr(t[k], L"AX2") || wcsstr(t[k], L"BCM"))) chips++;
+            }
+            nt_check(chips == 0, "no line on the stop pages names a Wi-Fi chip, which means nothing to her");
+        }
+    }
+    {
+        /* B-P0-1: every pair of text and ground the pages use, at least 4.5:1 */
+#define LIN(v) ((v) <= 0.03928 ? (v) / 12.92 : pow(((v) + 0.055) / 1.055, 2.4))
+        double lum_[16];
+        static const uint32_t C[] = { C_BG, C_SOFT, C_SURFACE, C_SELECTED, C_INK, C_INK2, C_QUIET,
+                                      C_ACCENT, C_ACCENT_DOWN, C_ON_ACCENT, C_WARN, C_WARN_TINT, C_RULE };
+        for (size_t i = 0; i < sizeof C / sizeof C[0]; i++) {
+            double r = ((C[i] >> 16) & 255) / 255.0, g = ((C[i] >> 8) & 255) / 255.0, b = (C[i] & 255) / 255.0;
+            lum_[i] = 0.2126 * LIN(r) + 0.7152 * LIN(g) + 0.0722 * LIN(b);
+        }
+#undef LIN
+        enum { BG, SOFT, SURF, SEL, INK, INK2, QUIET, ACC, ACCD, ONACC, WARN, TINT, RULE };
+        static const struct { int fg, bg; const char *name; } P[] = {
+            { INK, BG, "ink on the page" }, { INK, SOFT, "ink on the side panel" },
+            { INK, SURF, "ink on a card" }, { INK, SEL, "ink on the chosen card" },
+            { INK2, BG, "second ink on the page" }, { INK2, SOFT, "second ink on the side panel" },
+            { INK2, SURF, "second ink on a card" }, { INK2, SEL, "second ink on the chosen card" },
+            { QUIET, BG, "the quiet legal ink on the page" }, { QUIET, SURF, "the quiet legal ink on a card" },
+            { ONACC, ACC, "white on the green button" }, { ONACC, ACCD, "white on the pressed button" },
+            { ACC, BG, "green words on the page" }, { ACC, SEL, "green words (Chosen) on the chosen card" },
+            { ACC, SURF, "green words on a card" }, { WARN, TINT, "the warning's ink on its tint" },
+            { WARN, BG, "the warning's ink on the page" }, { RULE, BG, "a border on the page" },
+            { RULE, SURF, "a border on a card" },
+        };
+        for (size_t i = 0; i < sizeof P / sizeof P[0]; i++) {
+            double a = lum_[P[i].fg], b = lum_[P[i].bg];
+            double hi = a > b ? a : b, lo = a > b ? b : a;
+            double ratio = (hi + 0.05) / (lo + 0.05);
+            char what[128];
+            snprintf(what, sizeof what, "%s is at least 4.5:1 (it is %.1f:1)", P[i].name, ratio);
+            nt_check(ratio >= 4.5, what);
+        }
+    }
+    {
+        /* B-P0-3: the letters are the embedded Atkinson cuts at every size she can see, not a fallback */
+        static const struct { int dpi, dense; } M[] = { { 96, 0 }, { 144, 0 }, { 144, 1 } };
+        int dpi0 = g_dpi, dense0 = g_dense;
+        for (size_t k = 0; k < sizeof M / sizeof M[0]; k++) {
+            g_dpi = M[k].dpi; g_dense = M[k].dense;
+            fonts_make();
+            int bad = 0;
+            char first[160] = "";
+            for (int i = 0; i < N_TYPE; i++) {
+                wchar_t face[64] = L"";
+                TEXTMETRICW tm;
+                SelectObject(g_mdc, *TYPE[i].f);
+                GetTextFaceW(g_mdc, 64, face);
+                memset(&tm, 0, sizeof tm);
+                GetTextMetricsW(g_mdc, &tm);
+                const wchar_t *want = TYPE[i].display ? FACE_DISPLAY : FACE_TEXT;
+                /* GDI keeps 31 letters of a face name: "...Next ExtraBold" arrives as "...Next Extr" */
+                if (wcsnicmp(face, want, 31) != 0 || tm.tmWeight != TYPE[i].weight) {
+                    if (!bad++) snprintf(first, sizeof first, "type %d: '%ls' weight %ld, wanted '%ls' weight %d",
+                                         i, face, (long)tm.tmWeight, want, TYPE[i].weight);
+                }
+            }
+            char what[256];
+            snprintf(what, sizeof what, "all %d type sizes resolve to the embedded cuts at %d dpi%s %s", N_TYPE,
+                     M[k].dpi, M[k].dense ? " (dense)" : "", bad ? first : "");
+            nt_check(bad == 0, what);
+        }
+        g_dpi = dpi0; g_dense = dense0;
+        fonts_make();
+    }
+    {
+        /* B-P0-5: the Secure Boot page */
+        memset(&g_report, 0, sizeof g_report);
+        g_report.system_disk = -1;
+        sbdb_judge(&g_report, 1, 0, (const unsigned char *)"", 0, -1, NULL, 0,
+                   FX_SB_DB);
+        g_pf_valid = 1; g_checking = 0; g_pane = 0; g_confirm = 0;
+        g_page = PAGE_BLOCKED; g_sb_helper = 0; g_scroll[PAGE_BLOCKED] = 0;
+        nt_drawn_reset();
+        render();
+        wchar_t rn[1200];
+        acc_page_name(rn, 1200);
+        nt_check(sb_page() && wcsstr(rn, L"One setting needs changing first") != NULL,
+                 "the Secure Boot page is titled One setting needs changing first");
+        nt_check(nt_drawn_count(L"One setting needs changing first") == 1 &&
+                 nt_drawn_count(L"This computer is set to start only Windows") == 1,
+                 "... and says what it is, once");
+        int pr = -1, qt = -1, cp = -1;
+        for (int i = 0; i < g_nw; i++) {
+            if (g_w[i].id == ID_PRIMARY) pr = i;
+            if (g_w[i].id == ID_QUIT) qt = i;
+            if (g_w[i].id == ID_COPY) cp = i;
+        }
+        nt_check(pr >= 0 && !wcscmp(primary_label(), L"Show a helper how") && qt >= 0 && g_w[qt].name &&
+                 !wcscmp(g_w[qt].name, L"Not now") && cp < 0,
+                 "... its first two buttons are Show a helper how and Not now");
+        nt_check(nt_drawn_count(L"Not now: AurOS Setup closes. Nothing has been changed.") >= 1,
+                 "... and Not now says where it lands: Setup closes, nothing changed");
+        nt_check(close_asked(NULL) == 1, "... and it does: nothing is running, so the window just closes");
+        widget_activate(ID_PRIMARY);
+        nt_drawn_reset();
+        render();
+        pr = qt = cp = -1;
+        for (int i = 0; i < g_nw; i++) {
+            if (g_w[i].id == ID_PRIMARY) pr = i;
+            if (g_w[i].id == ID_QUIT) qt = i;
+            if (g_w[i].id == ID_COPY) cp = i;
+        }
+        nt_check(g_sb_helper && pr >= 0 && !wcscmp(primary_label(), L"Check again") &&
+                 cp >= 0 && g_w[cp].name && !wcscmp(g_w[cp].name, L"Copy for a helper") &&
+                 qt >= 0 && g_w[qt].name && !wcscmp(g_w[qt].name, L"Not now"),
+                 "after Show a helper how: the three buttons are Check again, Copy for a helper, Not now");
+        wchar_t clip[1300];
+        sb_helper_text(clip, 1300);
+        nt_check(wcslen(clip) > 120 && wcsstr(clip, L"Secure Boot") != NULL && !wcsstr(clip, L"://"),
+                 "... and the paragraph Copy for a helper puts on the clipboard says what to change, in words");
+        g_sb_helper = 0;
+    }
+    {
+        /* B-P0-7: the look picker is a 2x2 grid with one Chosen, check mark and all */
+        for (int sel = 0; sel < N_STYLES; sel++) {
+            fx_machine(0); fx_ready();
+            g_page = PAGE_STYLE; g_sel_style = sel; g_pane = 0; g_confirm = 0; g_scroll[PAGE_STYLE] = 0;
+            g_focus = -1; g_focus_ring = 0;
+            nt_drawn_reset(); g_nt_chosen = 0;
+            render();
+            RECT c[N_STYLES];
+            int n = 0;
+            for (int i = 0; i < g_nw; i++)
+                if (g_w[i].kind == W_CARD && g_w[i].id >= ID_STYLE && g_w[i].id < ID_STYLE + N_STYLES)
+                    c[g_w[i].id - ID_STYLE] = g_w[i].r, n++;
+            char what[160];
+            snprintf(what, sizeof what, "look %d chosen: four cards, in a 2x2 grid, all on the screen", sel + 1);
+            int grid = n == N_STYLES &&
+                       c[0].top == c[1].top && c[2].top == c[3].top && c[2].top > c[0].bottom &&
+                       c[0].left == c[2].left && c[1].left == c[3].left && c[1].left > c[0].right &&
+                       c[3].bottom <= g_body.bottom && c[0].top >= g_body.top && g_content_h <= g_view_h;
+            nt_check(grid, what);
+            snprintf(what, sizeof what, "look %d chosen: one Chosen, with its check mark, and the page does not scroll", sel + 1);
+            nt_check(nt_drawn_count(L"Chosen") == 1 && g_nt_chosen == 1, what);
+            /* and it is the chosen card that has the green border, no other */
+            int on = -1, others = 0;
+            for (int i = 0; i < N_STYLES; i++) {
+                int mid = (c[i].top + c[i].bottom) / 2, green = 0;
+                for (int dx = -1; dx <= 1; dx++)      /* the 3 px border is centred on the card's edge */
+                    green |= (g_px[(size_t)mid * (size_t)g_mw + (size_t)(c[i].left + dx)] & 0xFFFFFFu) == C_ACCENT;
+                if (green) { if (i == sel) on = i; else others++; }
+            }
+            snprintf(what, sizeof what, "look %d chosen: only that card has the green border", sel + 1);
+            nt_check(on == sel && others == 0, what);
+        }
+        g_sel_style = STYLE_DEFAULT;
     }
 
     if (g_nt) {

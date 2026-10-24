@@ -1147,6 +1147,17 @@ static void make_dirs(const char *path)
     }
 }
 
+int plat_explorer_path(char *out, size_t n)
+{
+    wchar_t w[MAX_PATH + 16];
+    UINT k = GetWindowsDirectoryW(w, MAX_PATH);     /* the system's own answer, not %SystemRoot% */
+    if (!k || k >= MAX_PATH) return -1;
+    if (k && w[k - 1] == L'\\') w[--k] = 0;
+    wcscat(w, L"\\explorer.exe");
+    if (GetFileAttributesW(w) == INVALID_FILE_ATTRIBUTES) return -1;
+    return WideCharToMultiByte(CP_UTF8, 0, w, -1, out, (int)n, NULL, NULL) > 0 ? 0 : -1;
+}
+
 void plat_harden_dll_search(void)
 {
     /* LOAD_LIBRARY_SEARCH_SYSTEM32 is 0x800. Found at run time because the

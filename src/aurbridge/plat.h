@@ -403,6 +403,13 @@ int plat_efi_sigdb(const char *name, unsigned char *buf, size_t cap,
  * needs. Returns the exit status, or -1 if it would not start. */
 int plat_run(const char *cmdline, char *tail, size_t n);
 
+/* THE ONE PLACE EXPLORER IS NAMED (SEC-002 sibling): the wizard opens a helper
+ * page "as her, not as administrator" through Explorer, and a bare
+ * "explorer.exe" from an elevated program in Downloads starts whatever is
+ * beside it first. This is the full path of Windows' own explorer.exe (the
+ * Windows folder, not System32), UTF-8, or -1 when it is not there. */
+int plat_explorer_path(char *out, size_t n);
+
 /* ── Fast Startup, off ──────────────────────────────────────────────
  *
  * The first thing an install does. With Fast Startup on, Windows'
