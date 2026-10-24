@@ -406,3 +406,16 @@ changes were then moved to main as `d8f09685`, excluding the unrelated unit
 workflow change to avoid an unnecessary image build. The real experiment is
 `40136819107` against retained image source `40131473294`; production input
 configuration remains unchanged.
+
+Both base and fastpath journals identify the launch failure: `/usr/bin/bwrap`
+enters a user namespace, receives the generic `unprivileged_userns` AppArmor
+restriction, and is denied `setpcap` and `net_admin`; loopback setup then fails
+with `RTM_NEWADDR: Operation not permitted`. A narrow upstream-derived bwrap
+policy, preserving restrictions on executed children, is under independent
+review. No global AppArmor or user-namespace setting will be disabled.
+
+Build `40136360732` for `beddd205` was deliberately cancelled by the lead
+before repeating the full test suite on an image known to lack this launch
+fix. Its reviewed firstboot changes remain committed and will be included in
+the next candidate. The c1 BitLocker journey is preserved and has reached
+the actual installer/first-session phase.
