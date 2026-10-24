@@ -8,14 +8,18 @@ the small print, questions. `advanced.html` is for someone who knows
 computers (the installer names it when it cannot go on, `fix_win.c`).
 `guide.html` is one sheet to print. `request.html` is a local-only preview
 of the custom-build request contract. Every other `.html` is a redirect
-from an old address. One stylesheet (`assets/site.css`), two small scripts
-(`assets/door.js` and `assets/request.js`), no fonts to download, no other
-server.
+from an old address. One stylesheet (`assets/site.css`), the front-door and
+request scripts, and the generated request interpreter; no fonts to download
+and no other server.
 
 **Custom-build preview.** `request.html` writes the versioned
 `org.auros.recipe` JSON contract. Its inputs are closed lists: one of the
 five real profiles and optional shipped look/theme identifiers. It collects
-no prose or personal details and sends nothing. The school kiosk cannot take
+no personal details and sends nothing. Its optional ordinary-words box runs
+the exact deterministic interpreter generated from `cloud/src/configure.js`;
+`generate-configure-browser.mjs --check` prevents a separate parser from
+drifting. The words are used only to propose the same closed choices and are
+never put in the recipe. The school kiosk cannot take
 a public look override because its locked layout is policy. This is not the
 delivery path: a trusted service still has to validate a recipe, build and
 test an image, bind the normalized recipe to the signed artifact, and return
