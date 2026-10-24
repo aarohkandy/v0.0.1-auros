@@ -470,3 +470,28 @@ no production input change has been made.
 Queued duplicate old-image hardening run `40137331627` was cancelled to avoid
 repeating the still-running `40136360642` check. Neither can certify the upcoming
 bwrap-policy candidate, which will require its own exact-image gate.
+
+## Reviewed Flatpak repair and BitLocker wording
+
+`82423122` integrates the narrow upstream-derived bwrap policy. Static hardening
+passes 108 checks and catches all 82 mutants. Independent security review passed
+all 19 focused retained-image VM predicates: direct bwrap attachment and stacked
+child, successful atomic save, zero ordinary child capabilities, and denial of
+an explicitly retained NET_ADMIN capability. Removing mediate_deleted produces
+the observed errno 2 with deleted-link audits; allowing capabilities makes the
+same network operation succeed. Evidence is `/tmp/auros-vlc-runtime-evidence.tar.gz`.
+These diagnostic boots do not certify the new product image or actual VLC launch.
+Normal release hardening remains full; shortened injected-profile diagnostics
+cannot satisfy release certification. Owned remote processes/disks were cleaned.
+
+BitLocker wording is corrected in `8db0e865`, including failure messages and the
+unpublished legal draft. The site gate passes 556 checks. Exact generic and
+fastpath cross-builds pass, with both manifest suites 15/15 and byte-identical
+embedded wizard resources. The Ready layout fixture compiled, but no display was
+available for local execution; an explicit same-run fastpath Windows navigation
+job is being added so that fixture actually executes.
+
+Fcitx trace parser repair is on main `5f98accc`; diagnostic `40138556854` now uses
+the actual libwayland `interface@id` syntax. The preceding screenshot visibly
+contains a candidate row, but exact 你好 composition, popup attribution and
+connection identity remain unproved pending the bounded diagnostic evidence.
