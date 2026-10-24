@@ -27,6 +27,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "windows-published / windows-download test this release of this repository (empty: its newest AurOS release, a prerelease if that is all there is)"
+        required: false
+        default: ""
 
 env:
   # The known-bad file is in a commit of the image-desktop branch, which
@@ -34,14 +39,11 @@ env:
   # hash, so where it is read from does not matter.
   KNOWN_BAD_URL: https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/d2735b6b775b1952c724aabdfdf2567246ab6c74/AurOS-Installer-test.exe
   KNOWN_BAD_SHA256: 3e32e929f57c5c2673f4547a09b44c827743d191120d22a57dfc6f28a4f3e875
-  # ONLY UNTIL THIS REPOSITORY HAS A FULL RELEASE: the installer and image
-  # the old repository published (v4), pinned by hash. The pins job
-  # replaces all five with this repository's newest full release.
-  PUBLISHED_URL: https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/image-desktop/AurOS-Installer-test.exe
-  PUBLISHED_SHA256: ef903efd9cdeb10e15e52b3ce9e4eac83788f3396ac9f029ed04f2cfca1c5891
-  IMAGE_PIECES_URL: https://raw.githubusercontent.com/ComputerDude771/auros-from-scratch/image-desktop/v4/pieces.txt
-  IMAGE_SHA256: b36100653b1b3dd339c6209cdd60ab169706717f512f2bb5dee0273dd404da41
-  IMAGE_BYTES: 5333057536
+  # (The old repository's installer and image used to stand here as a fallback for
+  # "no release yet". It made windows-published and windows-download green about files
+  # this repository never built (docs/reviews/CI-TRUTH-2026-10-24.md). Nothing is
+  # fetched from the old repository for them any more: the `pins` job tests this
+  # repository's newest release, or fails and says there is nothing to test.)
 
 # ONE OF EACH JOB AT A TIME PER BRANCH, NEVER CANCELLED, AND ONLY FOR
 # PUSHES THAT NEED IT. The group used to be on the workflow: every push
@@ -104,36 +106,69 @@ jobs:
       pieces_url: ${{ steps.p.outputs.pieces_url }}
       image_sha256: ${{ steps.p.outputs.image_sha256 }}
       image_bytes: ${{ steps.p.outputs.image_bytes }}
+      tested: ${{ steps.p.outputs.tested }}
     steps:
+      # WHAT A PERSON DOWNLOADS, asked at run time: the release named in the
+      # `release_tag` input of a manual run, else this repository's NEWEST AurOS
+      # release, a prerelease if that is all there is (releases/latest never names
+      # one, and answered "none" here for weeks). It must carry AurOS-Setup.exe,
+      # SHA256SUMS, pieces.txt, image.sha256 and image.bytes. With nothing to test
+      # this job FAILS with the reason: a green here must mean a file of this
+      # repository was started on Windows, never that a file of another one was.
       - id: p
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_IN: ${{ inputs.release_tag }}
         run: |
-          code=$(curl -sS --retry 5 -o latest.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
-                 "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest")
-          case "$code" in
-            200)
-              tag=$(python3 -c 'import json; print(json.load(open("latest.json"))["tag_name"])')
-              base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
-              for f in SHA256SUMS image.sha256 image.bytes; do curl -fsSL --retry 5 -o "$f" "$base/$f"; done
-              published_url=$base/AurOS-Setup.exe
-              published_sha256=$(awk '$2 == "AurOS-Setup.exe" || $2 == "*AurOS-Setup.exe" {print $1}' SHA256SUMS)
-              pieces_url=$base/pieces.txt
-              image_sha256=$(tr -d ' \r\n' < image.sha256)
-              image_bytes=$(tr -d ' \r\n' < image.bytes)
-              from="release $tag of $GITHUB_REPOSITORY" ;;
-            404)
-              published_url=$PUBLISHED_URL published_sha256=$PUBLISHED_SHA256
-              pieces_url=$IMAGE_PIECES_URL image_sha256=$IMAGE_SHA256 image_bytes=$IMAGE_BYTES
-              from="the old repository's v4 files (env above): $GITHUB_REPOSITORY has no full release yet" ;;
-            *) echo "::error::the releases API answered $code"; cat latest.json; exit 1 ;;
-          esac
+          set -u
+          code=$(curl -sS --retry 5 -o releases.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+                 "https://api.github.com/repos/$GITHUB_REPOSITORY/releases?per_page=50")
+          [ "$code" = 200 ] || { echo "::error::the releases API answered $code"; cat releases.json; exit 1; }
+          python3 - > pick.env <<'PY'
+          import json, os, re, shlex
+          want = os.environ.get("TAG_IN", "").strip()
+          need = {"AurOS-Setup.exe", "SHA256SUMS", "pieces.txt", "image.sha256", "image.bytes"}
+          skipped = []
+          for r in json.load(open("releases.json")):
+              t = r["tag_name"]
+              if r.get("draft"):
+                  continue
+              if want and t != want:
+                  continue
+              if not want and not re.match(r"^v[0-9]", t):
+                  continue                       # sources-*, apt, profiles-*: not an AurOS release
+              have = {a["name"] for a in r.get("assets", [])}
+              if need <= have:
+                  print("tag=%s" % shlex.quote(t))
+                  print("kind=%s" % shlex.quote("prerelease" if r.get("prerelease") else "full release"))
+                  raise SystemExit(0)
+              skipped.append("%s lacks %s" % (t, ", ".join(sorted(need - have))))
+          print("none=1")
+          print("why=%s" % shlex.quote("; ".join(skipped[:5]) or ("no release named %s" % want if want else "no AurOS release at all")))
+          PY
+          . ./pick.env
+          if [ "${none:-}" = 1 ]; then
+            msg="NOTHING TO TEST: $GITHUB_REPOSITORY has no AurOS release with an installer and an image (${why}). windows-published and windows-download did not run, and this job is red on purpose: a green here would say nothing about this repository's files."
+            echo "::error::$msg"
+            echo "### $msg" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+          for f in SHA256SUMS image.sha256 image.bytes; do curl -fsSL --retry 5 -o "$f" "$base/$f"; done
+          published_url=$base/AurOS-Setup.exe
+          published_sha256=$(awk '$2 == "AurOS-Setup.exe" || $2 == "*AurOS-Setup.exe" {print $1}' SHA256SUMS)
+          pieces_url=$base/pieces.txt
+          image_sha256=$(tr -d ' \r\n' < image.sha256)
+          image_bytes=$(tr -d ' \r\n' < image.bytes)
           [[ $published_sha256 =~ ^[0-9a-f]{64}$ && $image_sha256 =~ ^[0-9a-f]{64}$ && $image_bytes =~ ^[0-9]+$ ]] \
-            || { echo "::error::$from: no AurOS-Setup.exe in SHA256SUMS, or no image.sha256/image.bytes"; exit 1; }
+            || { echo "::error::$tag: no AurOS-Setup.exe in SHA256SUMS, or no image.sha256/image.bytes"; exit 1; }
+          tested="the $kind $tag of $GITHUB_REPOSITORY"
+          [ "$kind" = prerelease ] && tested="$tested (a prerelease: not what the website links to yet)"
           { echo "published_url=$published_url"; echo "published_sha256=$published_sha256"
-            echo "pieces_url=$pieces_url"; echo "image_sha256=$image_sha256"; echo "image_bytes=$image_bytes"; } | tee -a "$GITHUB_OUTPUT"
-          echo "what a person downloads: $from" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "pieces_url=$pieces_url"; echo "image_sha256=$image_sha256"; echo "image_bytes=$image_bytes"
+            echo "tested=$tested"; } | tee -a "$GITHUB_OUTPUT"
+          echo "what a person downloads, tested here: $tested" | tee -a "$GITHUB_STEP_SUMMARY"
 
   build:
     needs: gate
@@ -212,10 +247,15 @@ jobs:
           # programs under the name of every DLL they must take from
           # System32 only, and the programs are run through everything
           # that loads a DLL, with that folder as the current folder too.
+          # The names the installer loads BY NAME are the core (winhttp, oleacc, wlanapi,
+          # iphlpapi, winspool, wtsapi32) with dwmapi, which a window's theme may ask for.
           # comctl32.dll is in the second list: on a real Windows even a program that
-          # looks in its own folder gets the system's own copy (the side-by-side
-          # store wins, seen on windows-latest), so a planted one cannot be tested.
-          $core  = 'winhttp.dll','cfgmgr32.dll','oleacc.dll','wlanapi.dll','iphlpapi.dll','winspool.drv','wtsapi32.dll','dwmapi.dll'
+          # looks in its own folder gets the system's own copy (the side-by-side store
+          # wins, seen on windows-latest), so a planted one cannot be tested.
+          # cfgmgr32.dll, cryptbase.dll and cryptsp.dll are NOT here: Windows itself takes
+          # them from the program's folder before main (next step), and a planted
+          # cfgmgr32.dll stops the programs from starting at all.
+          $core  = 'winhttp.dll','oleacc.dll','wlanapi.dll','iphlpapi.dll','winspool.drv','wtsapi32.dll','dwmapi.dll'
           $extra = 'comctl32.dll','uxtheme.dll','version.dll'
           $names = $core + $extra
           $d = Join-Path $env:RUNNER_TEMP 'planted'
@@ -233,9 +273,8 @@ jobs:
           if ($silent) { throw "the planted copy of $($silent -join ', ') was not loaded even by a program that looks in its own folder, so this test cannot speak for it" }
           Get-ChildItem $d -Filter *.loaded | Remove-Item
           # 2. THE INSTALLER, through everything that loads a DLL: the
-          # report (iphlpapi, winspool, cfgmgr32), preflight (wlanapi,
-          # cfgmgr32), the window and the screen reader (oleacc, wtsapi32),
-          # a download (winhttp).
+          # report (iphlpapi, winspool), preflight (wlanapi), the window and the
+          # screen reader (oleacc, wtsapi32), a download (winhttp).
           # (the exit codes are kept and judged AFTER the markers: a planted DLL that was
           # loaded makes a program fail to start, and which one ran is the useful message)
           $codes = @()
@@ -275,6 +314,43 @@ jobs:
           "none of the $($names.Count) planted DLLs was loaded"
           "### A DLL planted beside the installer (SEC-003)`nnone of $($names.Count) planted DLLs ($($names -join ', ')) was loaded by the console tool or the window, while a program that looks in its own folder loaded $($speak.Count) of them." | Out-File $env:GITHUB_STEP_SUMMARY -Append
           exit 0
+      # THE PART OF SEC-003 THAT IS NOT CLOSED, kept in view. This very test found it
+      # on windows-latest (2026-10-24, runs 40043760099 and 40047918166): before main,
+      # while Windows loads the programs' own system DLLs, a cfgmgr32.dll in the
+      # programs' folder is taken instead of the system's (and, both being written to
+      # fail, stops the program), and a cryptbase.dll or cryptsp.dll there is loaded and run.
+      # Windows resolves the DLLs those DLLs need by the ordinary search, programs' folder
+      # first, and a program has no switch for it before it starts: not KnownDLLs-only
+      # imports, not SetDefaultDllDirectories in main, not the load configuration's
+      # dependent load flags (tried: they protect a program's OWN imports and not these).
+      # This step goes RED and the job stays green until a fix is found (continue-on-error).
+      - name: KNOWN OPEN (SEC-003), DLLs Windows still takes from the installer folder before main
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $open = @()
+          foreach ($n in 'cfgmgr32.dll','cryptbase.dll','cryptsp.dll') {
+            $d = Join-Path $env:RUNNER_TEMP ('open-' + ($n -replace '\.','_'))
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            Copy-Item exe\aurbridge.exe, exe\aurbridge-wizard.exe $d
+            Copy-Item canary\canary.dll (Join-Path $d $n)
+            foreach ($exe in 'aurbridge.exe','aurbridge-wizard.exe') {
+              $a = if ($exe -eq 'aurbridge.exe') { 'version' } else { '--report', "$d\r" }
+              if ($exe -ne 'aurbridge.exe') { New-Item -ItemType Directory -Force -Path "$d\r" | Out-Null }
+              $p = Start-Process -FilePath "$d\$exe" -ArgumentList $a -WorkingDirectory $d -PassThru
+              $state = if ($p.WaitForExit(15000)) { "exit $($p.ExitCode)" } else { $p.Kill(); 'stopped at start-up (waiting)' }
+              if ((Test-Path "$d\$n.loaded") -or $state -like 'stopped*') {
+                $open += "$exe took the planted $n from its own folder ($state)"
+              }
+              Remove-Item "$d\$n.loaded" -ErrorAction SilentlyContinue
+            }
+          }
+          if ($open) {
+            "### SEC-003 is NOT fully closed`n" + (($open | ForEach-Object { "- $_" }) -join "`n") | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            $open
+            throw "SEC-003 residual: $($open.Count) planted DLL(s) were taken from the installer's folder before main"
+          }
+          "no planted DLL was taken before main"
       - name: the PC report, from the console tool and from the installer (read-only)
         shell: pwsh
         run: |
@@ -565,7 +641,10 @@ jobs:
     steps:
       - name: download what a person downloads
         shell: pwsh
+        env:
+          TESTED: ${{ needs.pins.outputs.tested }}
         run: |
+          "### windows-published started $env:TESTED" | Out-File $env:GITHUB_STEP_SUMMARY -Append
           Invoke-WebRequest -Uri $env:PUBLISHED_URL -OutFile AurOS-Installer-test.exe
           $h = (Get-FileHash AurOS-Installer-test.exe -Algorithm SHA256).Hash.ToLower()
           "SHA-256 $h"
@@ -628,7 +707,10 @@ jobs:
         with: { name: exe, path: exe }
       - name: WinHTTP fetches the published image, and it checks out
         shell: pwsh
+        env:
+          TESTED: ${{ needs.pins.outputs.tested }}
         run: |
+          "### windows-download fetched the image of $env:TESTED" | Out-File $env:GITHUB_STEP_SUMMARY -Append
           $list = "$env:RUNNER_TEMP\pieces.txt"
           Invoke-WebRequest -Uri $env:IMAGE_PIECES_URL -OutFile $list
           $out = "$env:RUNNER_TEMP\auros-desktop.img"
