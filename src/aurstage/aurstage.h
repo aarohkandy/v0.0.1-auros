@@ -178,9 +178,13 @@ int  stage_cmdline_has(const char *word);
  * registered saver is called with all of it. main() registers the one that writes
  * \EFI\AurOS\stage.log (stagelog.c); a program that links boot.c alone has none. */
 void stage_log_set_saver(void (*f)(const char *text, size_t n));
+/* Register the staging-only mount cleanup that must succeed before /run is
+ * carried into the installed system. */
+void stage_handover_set_cleanup(int (*f)(char *why, size_t n));
 /* stagelog.c: write `text` to \EFI\AurOS\stage.log on the EFI partition `esp` (a device
  * node), if \EFI\AurOS is there. 1 if written. */
 int  stagelog_write(const char *esp, const char *text, size_t n);
+int  stagelog_cleanup(char *why, size_t n);
 int  stage_cmdline_value(const char *key, char *out, size_t n);
 
 /* MemAvailable, in bytes; 0 if the kernel will not say. */
@@ -202,7 +206,8 @@ void stage_warn(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
  * console is always written first. Stopped before switch_root so the
  * installed desktop can take the display. */
 void stage_screen_start(void);
-void stage_screen_stop(void);
+/* 0 only when the child is gone and reaped. */
+int stage_screen_stop(void);
 void stage_progress(int pct);
 /* One line for the screen alone ("aurstage-mode gap", "aurstage-now
  * smaller", "aurstage-countdown 12": see src/aurscreen/screen.c). The

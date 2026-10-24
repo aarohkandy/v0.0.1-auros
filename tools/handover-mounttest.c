@@ -1,7 +1,11 @@
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
+#include <signal.h>
 
 #include "handover-mount.h"
+#include "screen-stop.h"
+#include "transient-mount.h"
 
 typedef struct {
     int fail_move;
@@ -59,6 +63,73 @@ static int check(int yes, const char *name, const fixture *f)
     return 1;
 }
 
+typedef struct {
+    int signals;
+    int waits;
+    int pauses;
+    int reap_after_kill;
+    int never_reap;
+    int wait_error;
+    int kill_error;
+} screen_fixture;
+
+static int fake_signal(pid_t pid, int sig, void *ud)
+{
+    screen_fixture *f = ud;
+    (void)pid;
+    f->signals |= sig == SIGTERM ? 1 : 2;
+    if (sig == SIGKILL && f->kill_error) { errno = EPERM; return -1; }
+    return 0;
+}
+
+static pid_t fake_wait(pid_t pid, int *status, int flags, void *ud)
+{
+    screen_fixture *f = ud;
+    (void)status; (void)flags;
+    f->waits++;
+    if (f->wait_error) { errno = EIO; return -1; }
+    if (f->never_reap) return 0;
+    if (f->reap_after_kill && !(f->signals & 2)) return 0;
+    return pid;
+}
+
+static void fake_pause(void *ud)
+{
+    screen_fixture *f = ud;
+    f->pauses++;
+}
+
+typedef struct {
+    int fail_unmount;
+    int fail_mountpoint_remove;
+    int unmounts;
+    int removes;
+} transient_fixture;
+
+static int fake_unmount(const char *path, void *ud)
+{
+    transient_fixture *f = ud;
+    (void)path;
+    f->unmounts++;
+    if (f->fail_unmount) { errno = EBUSY; return -1; }
+    return 0;
+}
+
+static int fake_remove(const char *path, void *ud)
+{
+    transient_fixture *f = ud;
+    f->removes++;
+    if (f->fail_mountpoint_remove && f->removes == 1) {
+        errno = ENOTEMPTY;
+        return -1;
+    }
+    if (!strcmp(path, "/run/aurstage")) {
+        errno = ENOTEMPTY;
+        return -1;
+    }
+    return 0;
+}
+
 int main(void)
 {
     static const handover_mount mounts[] = {
@@ -109,6 +180,53 @@ int main(void)
                                    cleanup_handover, &dirty);
     failed += check(rc == -2 && dirty.rollbacks == 2 && dirty.cleanups == 1 && !dirty.wiped,
                     "failed special-mount/newroot cleanup requires reboot", &dirty);
+
+    screen_fixture term = { 0 };
+    rc = screen_stop_process(42, 2, fake_signal, fake_wait, fake_pause, &term);
+    failed += check(rc == 0 && term.signals == 1 && term.waits == 1,
+                    "a screen reaped after SIGTERM needs no SIGKILL", &(fixture){0});
+
+    screen_fixture killed = { .reap_after_kill = 1 };
+    rc = screen_stop_process(42, 2, fake_signal, fake_wait, fake_pause, &killed);
+    failed += check(rc == 0 && killed.signals == 3 && killed.waits == 3,
+                    "a screen that ignores SIGTERM is reaped after SIGKILL", &(fixture){0});
+
+    screen_fixture stuck = { .never_reap = 1 };
+    rc = screen_stop_process(42, 2, fake_signal, fake_wait, fake_pause, &stuck);
+    failed += check(rc == -1 && stuck.signals == 3 && stuck.waits == 4,
+                    "an unreaped screen makes handover fail after SIGKILL", &(fixture){0});
+
+    screen_fixture bad_wait = { .wait_error = 1 };
+    rc = screen_stop_process(42, 2, fake_signal, fake_wait, fake_pause, &bad_wait);
+    failed += check(rc == -1 && bad_wait.signals == 3 && bad_wait.waits == 2,
+                    "a wait failure still tries SIGKILL, then makes handover fail", &(fixture){0});
+
+    screen_fixture bad_kill = { .never_reap = 1, .kill_error = 1 };
+    rc = screen_stop_process(42, 2, fake_signal, fake_wait, fake_pause, &bad_kill);
+    failed += check(rc == -1 && bad_kill.signals == 3 && bad_kill.waits == 4,
+                    "a failed SIGKILL cannot be mistaken for a stopped screen", &(fixture){0});
+
+    int mounted = 1;
+    transient_fixture busy = { .fail_unmount = 1 };
+    rc = transient_mount_cleanup("/run/aurstage/esp", "/run/aurstage", &mounted,
+                                 fake_unmount, fake_remove, &busy);
+    failed += check(rc == TRANSIENT_UNMOUNT_FAILED && mounted == 1 &&
+                    busy.unmounts == 1 && busy.removes == 0,
+                    "an unmount failure keeps the mount live and blocks handover", &(fixture){0});
+
+    transient_fixture clean = { 0 };
+    rc = transient_mount_cleanup("/run/aurstage/esp", "/run/aurstage", &mounted,
+                                 fake_unmount, fake_remove, &clean);
+    failed += check(rc == 0 && mounted == 0 && clean.unmounts == 1 && clean.removes == 2,
+                    "a retry releases the mount and removes its owned directory", &(fixture){0});
+
+    mounted = 0;
+    transient_fixture dirty_dir = { .fail_mountpoint_remove = 1 };
+    rc = transient_mount_cleanup("/run/aurstage/windows", "/run/aurstage", &mounted,
+                                 fake_unmount, fake_remove, &dirty_dir);
+    failed += check(rc == TRANSIENT_MOUNTPOINT_FAILED && dirty_dir.unmounts == 0 &&
+                    dirty_dir.removes == 1,
+                    "a nonempty staging mountpoint blocks handover", &(fixture){0});
 
     printf("%d failed\n", failed);
     return failed != 0;

@@ -10,11 +10,24 @@
 #include <sys/wait.h>
 
 #include "winvol.h"
+#include "transient-mount.h"
 
 #define WINVOL_DIR   "/run/aurstage"
 #define WINVOL_ROOT  "/run/aurstage/windows"
 
 static int g_mounted;
+
+static int unmount_path(const char *path, void *ud)
+{
+    (void)ud;
+    return umount2(path, 0);
+}
+
+static int remove_dir(const char *path, void *ud)
+{
+    (void)ud;
+    return rmdir(path);
+}
 
 int winvol_mounted(void) { return g_mounted; }
 
@@ -76,14 +89,24 @@ int winvol_mount(const char *windev, char *root, size_t rn,
 
 int winvol_umount(char *why, size_t n)
 {
-    if (!g_mounted) return 0;
-    sync();
-    if (umount2(WINVOL_ROOT, 0) != 0) {
+    return winvol_cleanup(why, n);
+}
+
+int winvol_cleanup(char *why, size_t n)
+{
+    if (g_mounted) sync();
+    int rc = transient_mount_cleanup(WINVOL_ROOT, WINVOL_DIR, &g_mounted,
+                                     unmount_path, remove_dir, NULL);
+    if (rc == TRANSIENT_CLEAN) return 0;
+    if (rc == TRANSIENT_UNMOUNT_FAILED)
         snprintf(why, n, "the Windows drive could not be let go of (%s), and "
-                         "AurOS will not resize a drive that is still open.",
+                         "AurOS will not continue while it is still open.",
                  strerror(errno));
-        return -1;
-    }
-    g_mounted = 0;
-    return 0;
+    else if (rc == TRANSIENT_MOUNTPOINT_FAILED)
+        snprintf(why, n, "the Windows-drive mountpoint could not be removed (%s).",
+                 strerror(errno));
+    else
+        snprintf(why, n, "the staging scratch directory could not be removed (%s).",
+                 strerror(errno));
+    return -1;
 }

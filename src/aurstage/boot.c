@@ -37,6 +37,7 @@
 
 #include "aurstage.h"
 #include "handover-mount.h"
+#include "screen-stop.h"
 
 /* ── the kernel command line ─────────────────────────────────────── */
 
@@ -102,7 +103,10 @@ static char   g_ring[48 * 1024];
 static size_t g_ringn;
 static void (*g_saver)(const char *text, size_t n);
 static int  g_saving;
+static int (*g_handover_cleanup)(char *why, size_t n);
 void stage_log_set_saver(void (*f)(const char *text, size_t n)) { g_saver = f; }
+void stage_handover_set_cleanup(int (*f)(char *why, size_t n))
+{ g_handover_cleanup = f; }
 
 /* ── the screen ──────────────────────────────────────────────────
  *
@@ -157,27 +161,36 @@ void stage_screen_start(void)
 /* Before switch_root: the screen holds the display, and AurOS's own
  * desktop has to be able to take it. Closing the pipe tells it to
  * stop listening; SIGTERM tells it to let go of the display. */
-void stage_screen_stop(void)
+static int screen_signal(pid_t pid, int sig, void *ud)
+{
+    (void)ud;
+    return kill(pid, sig);
+}
+
+static pid_t screen_wait(pid_t pid, int *status, int flags, void *ud)
+{
+    (void)ud;
+    return waitpid(pid, status, flags);
+}
+
+static void screen_pause(void *ud)
+{
+    (void)ud;
+    struct timespec t = { 0, 50 * 1000 * 1000 };
+    nanosleep(&t, NULL);
+}
+
+int stage_screen_stop(void)
 {
     if (screen_fd >= 0) { close(screen_fd); screen_fd = -1; }
-    if (screen_pid <= 0) return;
-    kill(screen_pid, SIGTERM);
-    for (int i = 0; i < 40; i++) {
-        if (waitpid(screen_pid, NULL, WNOHANG) == screen_pid) { screen_pid = 0; return; }
-        struct timespec t = { 0, 50 * 1000 * 1000 };
-        nanosleep(&t, NULL);
-    }
-    /* Bounded even now: a process stuck inside the display driver does
-     * not die on SIGKILL until it leaves it, and the handover to AurOS
-     * is not going to wait on a progress screen. If it is still there,
-     * it is left; switch_root does not need it gone, only quiet. */
-    kill(screen_pid, SIGKILL);
-    for (int i = 0; i < 40; i++) {
-        if (waitpid(screen_pid, NULL, WNOHANG) == screen_pid) break;
-        struct timespec t = { 0, 50 * 1000 * 1000 };
-        nanosleep(&t, NULL);
+    if (screen_pid <= 0) return 0;
+    if (screen_stop_process(screen_pid, 40, screen_signal, screen_wait,
+                            screen_pause, NULL) != 0) {
+        stage_warn("the progress screen did not release the display after SIGKILL");
+        return -1;
     }
     screen_pid = 0;
+    return 0;
 }
 
 /* A long step's percentage, to the screen only: the console already
@@ -604,7 +617,16 @@ int stage_switch_root(const char *root_dev)
 {
     const char *NEW = "/newroot";
     handover_cleanup cleanup = { NEW, 0, 0, 0 };
-    stage_screen_stop();
+    if (stage_screen_stop() != 0) return -1;
+    char release_why[200];
+    if (!g_handover_cleanup) {
+        stage_warn("no staging-mount cleanup was registered; refusing same-boot handover");
+        return -1;
+    }
+    if (g_handover_cleanup(release_why, sizeof release_why) != 0) {
+        stage_warn("cannot release staging-only mounts before handover (%s)", release_why);
+        return -1;
+    }
     if (mkdir(NEW, 0755) != 0 && errno != EEXIST) {
         stage_warn("cannot prepare the new root (%s)", strerror(errno));
         return -1;
