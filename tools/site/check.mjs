@@ -527,7 +527,9 @@ for (const [at, want] of [
     dark: /Restart now: the screen goes black for a minute or two/.test(wizard) ? "minute-or-two" : "other",
     stop: /AurOS stops here\. Nothing was changed\./.test(wizard) && /Nothing on this computer has been changed\./.test(wizard) ? "nothing-changed" : "other",
     release: (() => { const y = read(".github/workflows/release.yml"); const p = (y.match(/\n  promote:\n[\s\S]*?(?=\n  [a-z][\w-]*:\n)/) || [""])[0];
-      return /needs: \[[^\]]*\be2e\b/.test(p) && /\|success\$/.test(p) && /\n  pages:\n\s+needs: promote/.test(y) ? "tested" : "untested"; })(),
+      // promote waits for the e2e job and asks the jobs themselves (tools/releasegate.py e2e: the real-Windows
+      // journey of THIS exe passed), and the site is deployed only after promote
+      return /needs: \[[^\]]*\be2e\b/.test(p) && /releasegate\.py e2e/.test(p) && /\n  pages:\n\s+needs: promote/.test(y) ? "tested" : "untested"; })(),
   });
   const CLAIMS = claimsFor(DEFAULT_FAST);
   const UI = {
