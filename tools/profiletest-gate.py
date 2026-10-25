@@ -38,6 +38,8 @@ def _diagnostic_path(value: str) -> bool:
             "tools/test_fcitx_marker_visibility.py",
             "tools/fcitx_password_server.py",
             "tools/test_fcitx_password_server.py",
+            "tools/fcitx_trace_writers.py",
+            "tools/test_fcitx_trace_writers.py",
         }
         or re.fullmatch(r"tools/profiletest[^/]*", value) is not None
     )
@@ -178,6 +180,8 @@ def _selftest() -> None:
         "tools/test_fcitx_marker_visibility.py",
         "tools/fcitx_password_server.py",
         "tools/test_fcitx_password_server.py",
+        "tools/fcitx_trace_writers.py",
+        "tools/test_fcitx_trace_writers.py",
         ".github/workflows/profiles.yml",
         "docs/handoff/streams/P.md",
     ]
