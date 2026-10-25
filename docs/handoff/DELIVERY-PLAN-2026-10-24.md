@@ -2,7 +2,7 @@
 
 Owner authorization on 24 October 2026: implement, test adversarially, use bounded parallel agents, and push verified checkpoints to `aarohkandy/v0.0.1-auros`. The target is a nontechnical person describing the system they want, receiving it quickly, installing it safely, and using it without a terminal or helper.
 
-## Current checkpoint (25 October, 02:16 UTC)
+## Current checkpoint (25 October, 02:36 UTC)
 
 This is the current summary; chronological entries below retain earlier
 failures and superseded evidence deliberately.
@@ -903,3 +903,9 @@ User-profile hashes differ across boot. Runtime serialization is a hypothesis; e
 BitLocker run `40152103698` FAILED before restart: the PowerShell baseline repair is proven by complete `putback-before.json` and exact protector/partition/file/firmware evidence, but the harness could not obtain the visible Restart now button through UI Automation. It refused before suspension/restart. Exact foreground HWND/process and elevated helper were correct; the product exposes an MSAA accessibility tree, while the harness queried an empty UIA tree. A scoped cross-process MSAA lookup/probe is being prepared, preserving exact button identity, enabled state and geometry. No Windows-return or Put Windows back pass; default promotion remains held. Evidence `/tmp/auros-40152103698-bitlocker.63qxlo/extracted`.
 
 Multilingual diagnostic `40154456991` FAILED with useful exact evidence. Runtime profiles were unchanged within each round; immutable template unchanged at all four boundaries. Across reboot the runtime profile added seven comment records (77 bytes total) and a one-byte blank line. Every original non-comment record remained byte-identical and ordered; no setting changed. Cause is not established. Round2 additionally recorded exactly one unattributed, unmapped/unconfigured/ungrabbed popup creation after submit, with zero popup events during focus/input/screenshot phases. Exact password server input and zero composition events passed. These findings support reviewing a comments-only profile comparison and separating sensitive-focus observations from submission/navigation observations; no gate correction is accepted without adversarial tests/review. Artifact `12583823011`, local `/tmp/auros-fcitx-profile-drift-40154456991-v1`.
+
+## Exact fastpath base journey PASS, 25 October 02:36 UTC
+
+Run `40153730622` is SUCCESS with harness `750fa4d5`, product candidate `3629b114`, exact fastpath EXE SHA-256 `b5440e94d2a576e38003a2ff69bb440bc60a496cbe72e405c6ba1fd948a54e26`. Website → Windows installer → restart → AurOS onboarding → store → installed VLC → real foreground VLC player passed in 9m29s. Lead inspected `0052-program-open.png`: actual VLC title, menus, cone canvas, and player controls with a separate task; not the store preview. Scope start journal and installed-disk evidence agree. This proves the store locator and first-launch handling on those exact bytes.
+
+Sealed artifact `/tmp/auros-40153730622-base.Adop8g/unpacked/e2e-evidence-base-fastpath.zip`, SHA-256 `0b82935b52c17b0ce5a7c72050dcf5f59f1abe69501d05c6d556bbccf7a0d1b3`. Unpacked `/tmp/auros-40153730622-base.Adop8g/evidence`. This is Windows 11 VM proof for the fastpath base lane, not encrypted-drive return/putback, a personalized signed download, a physical PC, the later Wi-Fi follow-up, or the still-held default promotion.
