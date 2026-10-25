@@ -32,7 +32,19 @@ Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 Add-Type -AssemblyName Accessibility
 $accessibilityAssembly = [Accessibility.IAccessible].Assembly.Location
 Add-Type -ReferencedAssemblies $accessibilityAssembly -TypeDefinition @'
-using System; using System.Runtime.InteropServices;
+using System; using System.Collections.Generic; using System.Runtime.InteropServices;
+public sealed class E2eMsaaItem {
+  public int Child;
+  public int Role;
+  public string Name;
+  public int State;
+  public int X;
+  public int Y;
+  public int Width;
+  public int Height;
+  public string KeyboardShortcut;
+  public string DefaultAction;
+}
 public static class E2eUser32 {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll", CharSet=CharSet.Unicode)]
@@ -40,33 +52,54 @@ public static class E2eUser32 {
   [DllImport("user32.dll")]
   public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
   [DllImport("oleacc.dll")]
-  public static extern int AccessibleObjectFromWindow(
+  private static extern int AccessibleObjectFromWindow(
     IntPtr hwnd, int objectId, ref Guid iid,
     [MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible accessible);
 
-  // PowerShell exposes a custom MSAA object as System.__ComObject and would
-  // otherwise try IDispatch name lookup. AurBridge deliberately implements
-  // the IAccessible vtable, not name lookup, so keep every call strongly typed.
-  public static int AccChildCount(Accessibility.IAccessible a) { return a.accChildCount; }
-  public static int AccRole(Accessibility.IAccessible a, int child) {
-    return Convert.ToInt32(a.get_accRole(child));
-  }
-  public static string AccName(Accessibility.IAccessible a, int child) {
-    return a.get_accName(child);
-  }
-  public static int AccState(Accessibility.IAccessible a, int child) {
-    return Convert.ToInt32(a.get_accState(child));
-  }
-  public static int[] AccLocation(Accessibility.IAccessible a, int child) {
-    int x, y, width, height;
-    a.accLocation(out x, out y, out width, out height, child);
-    return new int[] { x, y, width, height };
-  }
-  public static string AccKeyboardShortcut(Accessibility.IAccessible a, int child) {
-    return a.get_accKeyboardShortcut(child);
-  }
-  public static string AccDefaultAction(Accessibility.IAccessible a, int child) {
-    return a.get_accDefaultAction(child);
+  // Keep the RCW inside this typed bridge. Windows PowerShell cannot bind its
+  // System.__ComObject back to IAccessible, and AurBridge intentionally does
+  // not implement IDispatch name lookup.
+  public static E2eMsaaItem[] ReadAccessible(IntPtr hwnd) {
+    Guid iid = new Guid("618736e0-3c3d-11cf-810c-00aa00389b71");
+    Accessibility.IAccessible accessible = null;
+    int hr = AccessibleObjectFromWindow(hwnd, -4, ref iid, out accessible);
+    if (hr != 0 || accessible == null) {
+      throw new COMException(
+        String.Format("AurBridge MSAA: AccessibleObjectFromWindow failed (HRESULT 0x{0:X8})", hr), hr);
+    }
+    try {
+      int count = accessible.accChildCount;
+      if (count < 0 || count > 80) {
+        throw new InvalidOperationException("AurBridge MSAA: implausible child count " + count);
+      }
+      List<E2eMsaaItem> result = new List<E2eMsaaItem>(count + 1);
+      for (int child = 0; child <= count; child++) {
+        try {
+          int x, y, width, height;
+          accessible.accLocation(out x, out y, out width, out height, child);
+          result.Add(new E2eMsaaItem {
+            Child = child,
+            Role = Convert.ToInt32(accessible.get_accRole(child)),
+            Name = accessible.get_accName(child),
+            State = Convert.ToInt32(accessible.get_accState(child)),
+            X = x,
+            Y = y,
+            Width = width,
+            Height = height,
+            KeyboardShortcut = accessible.get_accKeyboardShortcut(child),
+            DefaultAction = accessible.get_accDefaultAction(child)
+          });
+        } catch (Exception ex) {
+          throw new InvalidOperationException(
+            "AurBridge MSAA child " + child + " could not be read exactly", ex);
+        }
+      }
+      return result.ToArray();
+    } finally {
+      if (Marshal.IsComObject(accessible)) {
+        Marshal.FinalReleaseComObject(accessible);
+      }
+    }
   }
 }
 '@
@@ -111,42 +144,25 @@ function AurBridgeMsaaElements($w, $types, $max) {
     throw 'AurBridge MSAA: the selected HWND is not the exact AurBridgeWizard window'
   }
 
-  [Guid]$iid = '618736e0-3c3d-11cf-810c-00aa00389b71'
-  [Accessibility.IAccessible]$acc = $null
-  # OBJID_CLIENT is -4; the signed and unsigned Win32 declarations carry the
-  # same four bits, while Windows PowerShell 5.1 cannot cast its signed
-  # 0xfffffffc literal to UInt32.
-  $hr = [E2eUser32]::AccessibleObjectFromWindow(
-          $hwnd, -4, [ref]$iid, [ref]$acc)
-  if ($hr -ne 0 -or $null -eq $acc) {
-    throw ('AurBridge MSAA: AccessibleObjectFromWindow failed (HRESULT 0x{0:X8})' -f $hr)
-  }
-
   $roleNames = @{ 0x0a = 'Pane'; 0x2b = 'Button'; 0x2c = 'CheckBox'; 0x2d = 'RadioButton' }
   $wanted = @{}; foreach ($t in $types) { $wanted[[string]$t] = $true }
   $out = @()
-  try {
-    $count = [E2eUser32]::AccChildCount($acc)
-    if ($count -lt 0 -or $count -gt 80) {
-      throw "AurBridge MSAA: implausible child count $count"
-    }
-    # CHILDID_SELF (0) is the warning Pane; positive IDs are the exact
-    # simple children backed by the wizard's current widget list.
-    $children = @(0)
-    if ($count -gt 0) { $children += 1..$count }
-    foreach ($child in $children) {
+  # CHILDID_SELF (0) is the warning Pane; positive IDs are the exact simple
+  # children backed by the wizard's current widget list. The typed bridge owns
+  # and releases the COM object before returning these plain managed records.
+  foreach ($item in @([E2eUser32]::ReadAccessible($hwnd))) {
+      $child = [int]$item.Child
       try {
-        $role = [E2eUser32]::AccRole($acc, $child)
+        $role = [int]$item.Role
         $type = $roleNames[$role]
         if (-not $type) {
           throw ('unexpected role 0x{0:x}' -f $role)
         }
         if (-not $wanted.ContainsKey($type)) { continue }
-        $name = [E2eUser32]::AccName($acc, $child)
-        $state = [E2eUser32]::AccState($acc, $child)
-        $location = [E2eUser32]::AccLocation($acc, $child)
-        [int]$x = $location[0]; [int]$y = $location[1]
-        [int]$width = $location[2]; [int]$height = $location[3]
+        $name = [string]$item.Name
+        $state = [int]$item.State
+        [int]$x = $item.X; [int]$y = $item.Y
+        [int]$width = $item.Width; [int]$height = $item.Height
         if (-not $name -or $width -le 0 -or $height -le 0) {
           throw 'empty name or rectangle'
         }
@@ -154,8 +170,8 @@ function AurBridgeMsaaElements($w, $types, $max) {
         # disabled one remains visible in the result with enabled=false so
         # the caller's exact security predicate rejects it explicitly.
         if (($state -band 0x8000) -or ($state -band 0x10000)) { continue }
-        $key = [E2eUser32]::AccKeyboardShortcut($acc, $child)
-        $action = [E2eUser32]::AccDefaultAction($acc, $child)
+        $key = [string]$item.KeyboardShortcut
+        $action = [string]$item.DefaultAction
         if ($child -gt 0 -and -not $action) { throw 'control has no default action' }
         $toggle = $null
         if ($type -ceq 'CheckBox') {
@@ -173,11 +189,6 @@ function AurBridgeMsaaElements($w, $types, $max) {
       } catch {
         throw "AurBridge MSAA child $child could not be read exactly: $_"
       }
-    }
-  } finally {
-    if ([Runtime.InteropServices.Marshal]::IsComObject($acc)) {
-      [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($acc)
-    }
   }
   return $out
 }
