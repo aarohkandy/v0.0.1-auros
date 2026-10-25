@@ -368,6 +368,11 @@ def test_bitlocker_putback_contract():
                             inspect.getsource(e2e.Flow.putback_final_state))
     check("$c=" not in putback_guest_source and "$c." not in putback_guest_source,
           "put-back: guest scripts preserve the helper's command-envelope variable")
+    check("function H" not in putback_guest_source and
+          putback_guest_source.count("function Get-AurOSSha256") == 2 and
+          putback_guest_source.count("(Get-AurOSSha256 $pm)") == 2 and
+          putback_guest_source.count("(Get-AurOSSha256 $fw)") == 2,
+          "put-back: both snapshots avoid PowerShell's h/Get-History alias")
     wait_source = inspect.getsource(e2e.Flow.wait_windows_return)
     check(wait_source.index("self.write_bitlocker_return(evidence)") <
           wait_source.index("if time.time() > deadline"),

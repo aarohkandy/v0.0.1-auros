@@ -735,7 +735,7 @@ class Flow:
         token = "auros-e2e-windows-" + os.urandom(16).hex()
         out = self.guest(
             "$ErrorActionPreference='Stop'; "
-            "function H([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
+            "function Get-AurOSSha256([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
             "([BitConverter]::ToString($a.ComputeHash([Text.Encoding]::UTF8.GetBytes($x)))-replace'-','').ToLowerInvariant()"
             "}finally{$a.Dispose()}}; "
             "$p=Join-Path $env:USERPROFILE 'Documents\\auros-e2e-before.txt'; "
@@ -746,8 +746,8 @@ class Flow:
             "$fwRaw=& bcdedit.exe /enum firmware 2>&1; if($LASTEXITCODE -ne 0){throw 'bcdedit failed'}; "
             "$fw=(($fwRaw|Out-String).Trim()); "
             "$h=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power').HiberbootEnabled; "
-            "$s=@{c_bytes=[uint64]$cpart.Size;c_offset=[uint64]$cpart.Offset;partition_sha256=(H $pm);"
-            "firmware_sha256=(H $fw);hiberboot=[int]$h;"
+            "$s=@{c_bytes=[uint64]$cpart.Size;c_offset=[uint64]$cpart.Offset;partition_sha256=(Get-AurOSSha256 $pm);"
+            "firmware_sha256=(Get-AurOSSha256 $fw);hiberboot=[int]$h;"
             "canary_sha256=(Get-FileHash $p -Algorithm SHA256).Hash.ToLowerInvariant()}; "
             "'AUROS_PUTBACK_BASE '+($s|ConvertTo-Json -Compress)")
         rows = [x[len("AUROS_PUTBACK_BASE "):] for x in out.splitlines()
@@ -763,7 +763,7 @@ class Flow:
                 or base["hiberboot"] not in (0, 1)
                 or any(not re.fullmatch(r"[0-9a-f]{64}", str(base[k]))
                        for k in ("partition_sha256", "firmware_sha256", "canary_sha256"))):
-            raise Failure("Windows did not return the exact pre-install put-back state")
+            raise Failure("the Windows put-back baseline snapshot was unavailable or invalid")
         protectors = self.bitlocker_evidence()["protectors"]
         if not {"Tpm", "RecoveryPassword"}.issubset({p["type"] for p in protectors}):
             raise Failure("the baseline BitLocker volume lacks its TPM or recovery protector")
@@ -2202,7 +2202,7 @@ class Flow:
         restored = "C:\\Users\\aurtest\\From AurOS\\Documents\\" + self.putback_fixture["name"]
         out = self.guest(
             "$ErrorActionPreference='Stop'; "
-            "function H([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
+            "function Get-AurOSSha256([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
             "([BitConverter]::ToString($a.ComputeHash([Text.Encoding]::UTF8.GetBytes($x)))-replace'-','').ToLowerInvariant()"
             "}finally{$a.Dispose()}}; "
             "$st=$null; try {$st=Get-Content 'C:\\ProgramData\\AurOS\\user\\status.json' -Raw|ConvertFrom-Json}catch{}; "
@@ -2217,7 +2217,7 @@ class Flow:
             "$tasks=@(Get-ScheduledTask -ErrorAction SilentlyContinue|Where-Object {$_.TaskName -like 'AurOS put-back*'}); "
             "$vols=@(Get-Volume -ErrorAction SilentlyContinue|Where-Object {$_.FileSystemLabel -eq 'AUROSHANDOV'}); "
             "$s=@{phase=$(if($st){[string]$st.phase}else{''});status_at=$(if($st){[string]$st.at}else{''});"
-            "c_bytes=[uint64]$cpart.Size;c_offset=[uint64]$cpart.Offset;partition_sha256=(H $pm);firmware_sha256=(H $fw);hiberboot=[int]$h;"
+            "c_bytes=[uint64]$cpart.Size;c_offset=[uint64]$cpart.Offset;partition_sha256=(Get-AurOSSha256 $pm);firmware_sha256=(Get-AurOSSha256 $fw);hiberboot=[int]$h;"
             "canary_sha256=$(if(Test-Path -LiteralPath $can){(Get-FileHash -LiteralPath $can -Algorithm SHA256).Hash.ToLowerInvariant()}else{''});"
             "restored_sha256=$(if(Test-Path -LiteralPath $rest){(Get-FileHash -LiteralPath $rest -Algorithm SHA256).Hash.ToLowerInvariant()}else{''});"
             "handover_volumes=[int]$vols.Count;putback_tasks=[int]$tasks.Count}; "
