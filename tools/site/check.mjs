@@ -460,8 +460,23 @@ for (const v of [
   check(JSON.stringify(start.looks) === JSON.stringify(["", "taskbar", "dock", "rail", "tiles"]), "request: look is optional and limited to the four public arrangements", JSON.stringify(start.looks));
   check(JSON.stringify(start.themes) === JSON.stringify(["", "sandstone", "nocturne", "ember", "moss", "slate"]), "request: theme is optional and limited to the five shipped themes", JSON.stringify(start.themes));
   check(start.other.length === 0 && start.plain.max === 300 && start.plain.labels === 1, "request: the one plain-language box is bounded, labelled, and no other open-ended input exists", JSON.stringify({ other: start.other, plain: start.plain }));
-  check(/does not make an AurOS download yet/i.test(start.text) && /AurOS-Setup\.exe does not read it/i.test(start.text) && /does not send it anywhere/i.test(start.text), "request: it says a valid recipe is not a build, today's installer does not read it, and nothing is sent");
-  check(await page.locator("#build-request").isHidden(), "request build: disabled default leaves the honest local recipe preview unchanged");
+  // This context uses the real staged file, not a config route mock. Check
+  // enabled and disabled deployments against the exact bytes being published.
+  const configBytes = fs.readFileSync(path.join(SRC, "build-service.json"));
+  const servedConfig = await ctx.request.get(HOME + "build-service.json");
+  check(servedConfig.ok() && (await servedConfig.body()).equals(configBytes),
+    "request build: the browser serves the exact final staged configuration");
+  const stagedConfig = JSON.parse(configBytes.toString("utf8"));
+  check(typeof stagedConfig.enabled === "boolean", "request build: staged enabled switch is a boolean");
+  await page.waitForFunction((enabled) => document.getElementById("build-request").hidden === !enabled, stagedConfig.enabled);
+  check((await page.locator("#build-request").isVisible()) === stagedConfig.enabled,
+    "request build: final staged configuration controls the real build form without a mock");
+  const boundary = await page.locator("#request-boundary").innerText();
+  const honestSending = stagedConfig.enabled
+    ? /Saving the recipe stays local/i.test(boundary) && /request below sends only the reviewed recipe fields/i.test(boundary)
+    : /does not send it anywhere/i.test(boundary);
+  check(/does not make an AurOS download yet/i.test(start.text) && /AurOS-Setup\.exe does not read it/i.test(boundary) && honestSending,
+    "request: the final staged mode explains local saving and exactly when a reviewed recipe is sent");
 
   // Once the authoritative compiler is present, CI ties the hand-written,
   // buildless page to its catalogue. The page may add plain-language context,

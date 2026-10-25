@@ -21,7 +21,15 @@ if (mode === "off") {
   if (resting.length < 2) { console.log("FAIL: expected at least a wish and an ask answered by the kill switch"); bad++; }
   if (resting.length + strangers.length !== claudeRoutes.length) { console.log("FAIL: a wish or ask was answered some other way"); bad++; }
   if (withTokens.length) { console.log("FAIL: a request line shows Claude was called"); bad++; }
-} else {
+} else if (mode === "on") {
+  // The smoke always sends these two unauthenticated requests before registration.
+  // Require both exact routes/statuses, not an arbitrary nonempty tail file.
+  for (const route of ["/v1/wish", "/v1/ask"]) {
+    if (!claudeRoutes.some((l) => l.route === route && l.status === 401)) {
+      console.log(`FAIL: missing smoke refusal evidence for ${route}`); bad++;
+    }
+  }
   console.log(`logs: ${reqs.length} request lines, ${withTokens.length} with token counts`);
 }
+else { console.log("FAIL: invalid log mode"); bad++; }
 process.exit(bad ? 1 : 0);

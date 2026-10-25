@@ -60,6 +60,7 @@ function runConfig({ enabled, absent = [], overrides = {}, workerSecrets = secre
       ...process.env,
       PATH: `${bin}:${process.env.PATH}`,
       WRANGLER: "wrangler@test",
+      BUILD_PUBLISHED_ORIGIN: "https://example.test",
       HAVE_DEPLOY_CREDENTIALS: deployCredentials ? "true" : "false",
       GITHUB_OUTPUT: join(dir, "github-output"),
       FAKE_LIST_FAIL: listFails ? "1" : "0",
@@ -98,6 +99,7 @@ esac
     ...sentinel,
     PATH: `${bin}:${process.env.PATH}`,
     WRANGLER: "wrangler@test",
+      BUILD_PUBLISHED_ORIGIN: "https://example.test",
     HAVE_DEPLOY_CREDENTIALS: "true",
     FAKE_SECRET_LIST: JSON.stringify(["TOKEN_SECRET", ...secretNames].map((name) => ({ name, type: "secret_text" }))),
     COMMAND_RECORD: record,
@@ -108,7 +110,13 @@ esac
     ALERT_URL: "",
     CUSTOM_DELIVERY_ENABLED: enabled ? "true" : "false",
   };
+  const fakeGh = join(bin, "gh");
+  writeFileSync(fakeGh, '#!/bin/sh\nprintf "%s\\n" "$GITHUB_SHA"\n');
+  chmodSync(fakeGh, 0o700);
+  baseEnv.GITHUB_SHA = "a".repeat(40);
+  baseEnv.GITHUB_REPOSITORY = "aarohkandy/v0.0.1-auros";
   const run = (script) => {
+    script = script.replaceAll("../tools/site/require_current_main.sh", new URL("../../tools/site/require_current_main.sh", import.meta.url).pathname);
     const result = spawnSync("bash", ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script], { cwd: dir, encoding: "utf8", env: baseEnv });
     assert.equal(result.status, 0, result.stdout + result.stderr);
     const output = result.stdout + result.stderr;
@@ -239,7 +247,36 @@ test("workflow wires every setting through its bounded channel", () => {
 });
 
 test("deployment runs custom-build preflight independently in the configured mode", () => {
-  assert.match(buildPreflightScript, /node test\/build-preflight\.mjs "\$URL" "\$mode" "\$BUILD_ALLOWED_ORIGIN"/);
+  assert.match(buildPreflightScript, /node test\/build-preflight\.mjs "\$AUROS_WISHES_URL" "\$mode" "\$BUILD_ALLOWED_ORIGIN"/);
   assert.match(buildPreflightScript, /\[ "\$CUSTOM_DELIVERY_ENABLED" != true \] \|\| mode=on/);
   assert.ok(workflow.indexOf("- name: Custom delivery live preflight") < workflow.indexOf("- name: Live end to end, with its logs captured"));
+});
+
+test("enabled deployment refuses origin differing from versioned publishing authority", () => {
+  const result = runConfig({ enabled: true, overrides: { BUILD_PUBLISHED_ORIGIN: "https://different.test" } });
+  assert.notEqual(result.status, 0);
+  assert.match(result.output, /differs from versioned publishing settings/);
+  assert.match(deployScript, /--var "BUILD_ALLOWED_ORIGIN:\$BUILD_PUBLISHED_ORIGIN"/);
+});
+
+test("enabled publication cannot accept skipped smoke or missing log assertions", () => {
+  const live = stepScript("Live end to end, with its logs captured");
+  assert.match(live, /URL="\$AUROS_WISHES_URL"/);
+  assert.ok(live.indexOf('node test/publication-evidence.mjs') < live.indexOf('if [ "$smoke" = 3 ]'));
+  assert.ok(live.indexOf('log_proven=1') > live.indexOf('node test/log-assert.mjs'));
+});
+
+test("every Worker mutation step checks current main before any wrangler call", () => {
+  for (const script of [refreshScript, deployScript, workerSecretsScript]) {
+    assert.ok(script.indexOf('bash ../tools/site/require_current_main.sh') >= 0);
+    assert.ok(script.indexOf('bash ../tools/site/require_current_main.sh') < script.indexOf('npx'));
+  }
+  assert.match(workflow, /group: cloud-\$\{\{ github.ref \}\}\n  cancel-in-progress: false/);
+});
+
+test("monitor and publisher share versioned public addresses", () => {
+  const monitor = readFileSync(new URL('../../.github/workflows/monitor.yml', import.meta.url), 'utf8');
+  assert.match(monitor, /tools\/site\/publish_settings.py --github-env/);
+  assert.match(monitor, /s\/\^AUROS_WISHES_URL=\/WISHES_URL=\/p/);
+  assert.doesNotMatch(monitor, /vars\.AUROS_(WISHES_URL|DOMAIN)/);
 });
