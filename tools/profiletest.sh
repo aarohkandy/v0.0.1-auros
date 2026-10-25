@@ -548,7 +548,7 @@ zero = {
     "reduced_events_recorded", "reduced_events_omitted", "layer_shell_objects",
 }
 phases = ("focus_to_input", "input_to_screenshot",
-          "screenshot_to_submit", "after_submit")
+          "screenshot_to_submit", "submit_to_stop", "after_stop", "after_submit")
 for phase in phases:
     for kind in ("popup", "map", "configure", "grab"):
         zero.add(f"{phase}_{kind}_events")
@@ -557,6 +557,7 @@ numeric = {
     "candidate_objects_omitted", "candidate_objects_destroyed_after_focus",
     "focus_boundary_byte", "input_boundary_byte",
     "screenshot_boundary_byte", "submit_boundary_byte",
+    "stop_boundary_byte",
 }
 allowed = zero | numeric | {
     "observed_candidate_popup", "connection_identity", "popup_attribution",
@@ -583,7 +584,7 @@ object_pattern = re.compile(
     r"child:[1-9][0-9]*,popup:[1-9][0-9]*,wl:(?:0|[1-9][0-9]*),"
     r"parent:[1-9][0-9]*,parent_role:(?:toplevel|popup|unknown),"
     r"created_phase:(?:before_focus|focus_to_input|input_to_screenshot|"
-    r"screenshot_to_submit|after_submit),mapped_at_focus:no,"
+    r"screenshot_to_submit|submit_to_stop|after_stop),mapped_at_focus:no,"
     r"map_count:0,unmap_count:[0-9]+,configure_count:0,grab_count:0,"
     r"destroyed:(?:yes|no)")
 if any(not object_pattern.fullmatch(value) for value in objects.values()):
@@ -591,6 +592,7 @@ if any(not object_pattern.fullmatch(value) for value in objects.values()):
 boundaries = [int(values[key]) for key in
               ("focus_boundary_byte", "input_boundary_byte",
                "screenshot_boundary_byte", "submit_boundary_byte")]
+boundaries.append(int(values["stop_boundary_byte"]))
 if boundaries != sorted(boundaries):
     raise SystemExit(1)
 PY
@@ -873,8 +875,8 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root [source]
             && exact_closed_password_trace "$R/password-trace-closed.txt" \
             && exact_sensitive_service_identity "$R/service-owner-sensitive.txt" \
             && [ "$password_env_ok" = yes ] \
-            && ok "the synthetic password field showed no observed popup or browser composition event in round $round" \
-            || bad "the synthetic password field showed no observed popup or browser composition event in round $round" "bounded suppression evidence is missing or ambiguous"
+            && ok "the standalone password input retained focus, accepted exact ASCII, emitted zero observed composition events, and showed no protocol popup activity in round $round" \
+            || bad "the standalone password input retained focus, accepted exact ASCII, emitted zero observed composition events, and showed no protocol popup activity in round $round" "bounded suppression evidence is missing or ambiguous"
         [ -s "$SHOTS/fcitx-round$round-focus-away.png" ] \
             && [ -s "$SHOTS/fcitx-round$round-password-focused.png" ] \
             && [ -s "$SHOTS/fcitx-round$round-password-masked.png" ] \
@@ -958,6 +960,8 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root [source]
     fi
     printf '    %-62s %s\n' "Firefox Wayland connection identity" \
         "UNPROVEN -- this stage authenticates the Mousepad interval only"
+    printf '    %-62s %s\n' "native form submission, navigation, and password-manager behavior" \
+        "UNPROVEN -- the security fixture is one standalone password input"
 }
 
 # Judge the opt-in diagnostic without turning the absence of a candidate
@@ -1609,11 +1613,13 @@ identity_before = text.index('password_fcitx_owner=$(fcitx_owner_name)', passwor
 password_boundary = text.index('password_boundary=$(wc -c < "$password_trace"', password_visible)
 identity_after = text.index('verify_fcitx_identity "$password_fcitx_owner"', password_click)
 popup_reduce = text.index('fcitx_wayland_trace.py "$password_trace_copy"', password_click)
+password_stop_boundary = text.index('password_stop_boundary=$(wc -c < "$password_trace"', identity_after)
 password_stop = text.index('systemctl --user stop auros-profiletest-fcitx-password', identity_after)
 unit_state = text.index('password_unit_show=$(as_desktop systemctl --user show', password_stop)
 writer_inventory = text.index('trace_writer_count "$password_trace"', password_stop)
 closed_copy = text.index('install -o root -g root -m 600 "$password_trace"', writer_inventory)
-if not (identity_before < password_boundary < password_click < identity_after < password_stop
+if not (identity_before < password_boundary < password_click < identity_after
+        < password_stop_boundary < password_stop
         < unit_state < writer_inventory < closed_copy < popup_reduce):
     raise SystemExit("Fcitx identity must bind both sensitive-phase boundaries before reduction")
 if ('ControlGroup' not in text[unit_state:writer_inventory]
@@ -1812,6 +1818,7 @@ focus_boundary_byte=10
 input_boundary_byte=20
 screenshot_boundary_byte=30
 submit_boundary_byte=30
+stop_boundary_byte=40
 focus_to_input_popup_events=0
 focus_to_input_map_events=0
 focus_to_input_configure_events=0
@@ -1824,6 +1831,14 @@ screenshot_to_submit_popup_events=0
 screenshot_to_submit_map_events=0
 screenshot_to_submit_configure_events=0
 screenshot_to_submit_grab_events=0
+submit_to_stop_popup_events=0
+submit_to_stop_map_events=0
+submit_to_stop_configure_events=0
+submit_to_stop_grab_events=0
+after_stop_popup_events=0
+after_stop_map_events=0
+after_stop_configure_events=0
+after_stop_grab_events=0
 after_submit_popup_events=0
 after_submit_map_events=0
 after_submit_configure_events=0

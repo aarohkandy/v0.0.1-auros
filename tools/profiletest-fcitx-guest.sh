@@ -886,6 +886,7 @@ if [ "$SECURITY" = 1 ]; then
     verify_fcitx_identity "$password_fcitx_owner" \
         || fail "Fcitx identity changed during password test"
     printf 'identity_after_sensitive=yes\n' >> "$STATE/service-owner-sensitive.txt"
+    password_stop_boundary=$(wc -c < "$password_trace" | tr -d ' ')
     as_desktop systemctl --user stop auros-profiletest-fcitx-password >/dev/null 2>&1 \
         || fail "password Firefox stop failed"
     wait_pid_gone "$password_pid" || fail "password Firefox PID remained"
@@ -922,7 +923,7 @@ if [ "$SECURITY" = 1 ]; then
     python3 /usr/lib/auros-profiletest/fcitx_wayland_trace.py "$password_trace_copy" \
         --after-byte "$password_boundary" --input-byte "$password_input_boundary" \
         --screenshot-byte "$password_screenshot_boundary" \
-        --submit-byte "$password_submit_boundary" --no-popup \
+        --submit-byte "$password_submit_boundary" --stop-byte "$password_stop_boundary" --no-popup \
         > "$STATE/password-popup-events.txt" \
         2> "$STATE/password-suppression.stderr" || fail "password field popup suppression failed"
     grep -E '^(candidate_popup_(creations|maps|configures|grabs)|layer_shell_objects|observed_candidate_popup)=' \
