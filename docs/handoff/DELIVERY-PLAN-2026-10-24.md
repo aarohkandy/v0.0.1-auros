@@ -14,7 +14,7 @@ failures and superseded evidence deliberately.
 - Follow-up Wi-Fi fix `7210f1ef` / `f1683bd9` is on delivery, not in `3629b114`: defer plaintext carry-over until Restart now, clean uncertain failures, disclose password copy, avoid unsupported failure reassurance. Focused Windows workflow `40149373093` passed all seven jobs; normal/large-text disclosure screenshots were inspected. Fastpath remains non-default.
 - Default-fastpath promotion commit `65f55242` is prepared and independently reviewed in an isolated branch and MUST stay held until the exact fastpath BitLocker journey proves Windows return, restored protection and file-preserving Put Windows back. It must preserve generic-installer recovery coverage and matching versioned Terms/Privacy disclosures.
 - Independent current-source audit confirmed that generic installs reject personalized default-look receipts and launch proof rejects Software’s embedded VLC preview; exact regression tests pass.
-- Deployment wiring and runtime credential validation are integrated on delivery (`b6091c96` through `21b936bd`): 100 combined cloud tests and 29 workflow checks pass; the browser/API fixture uses disposable RSA credentials and all 556 checks pass. Build delivery remains disabled; no remote secrets or deployment were changed. Harness-only production multilingual run `40150677765` FAILED at second-editor visibility before focus/password/reboot proof. It validated shipped service and first candidate only. A bounded second-editor proof repair `83e3274a` is held pending fixes for truncated PPM parsing and contiguous block-marker rendering identified by lead review. Do not rerun before those fixes/review. The exact fresh image remains `40148012574`; no rebuild is needed.
+- Deployment wiring and runtime credential validation are integrated on delivery (`b6091c96` through `21b936bd`): 100 combined cloud tests and 29 workflow checks pass; the browser/API fixture uses disposable RSA credentials and all 556 checks pass. Build delivery remains disabled; no remote secrets or deployment were changed. Harness-only production multilingual run `40150677765` FAILED at second-editor visibility before focus/password/reboot proof. It validated shipped service and first candidate only. Second-editor proof repairs `83e3274a` + `8377624b` (delivery `46b21489` + `3f3535a2`, main `d33b9994`) passed review and 95 harness checks. Lead caught and resolved truncated-PPM hangs and touching-block rendering assumptions before dispatch. Exact retained-image rerun `40152195863` is now pending; do not duplicate it. The exact fresh image remains `40148012574`; no rebuild is needed.
 - Public delivery remains disabled pending signing/service configuration and release proof. Managed profiles, physical-PC tests, contact/name decisions, held encryption work and unfinished Wishes actions remain open. No zero-vulnerability or end-to-end completion claim is justified.
 
 ## Starting evidence
@@ -862,3 +862,24 @@ fastpath base + BitLocker with put-back enabled. Exact EXE SHA-256:
 `b5440e94d2a576e38003a2ff69bb440bc60a496cbe72e405c6ba1fd948a54e26`.
 No ordinary legacy rerun or full rebuild was started. Default promotion
 `65f55242` stays held; Wi-Fi/cloud follow-ups stay on delivery.
+
+## Second-editor proof repair rerun
+
+The generic 3% pixel-change predicate could miss nearly identical editor
+windows, and older apparent passes could be satisfied by unrelated
+notifications. New test content uses a fixed 24-row block staircase, with
+marker-specific visibility, exact second-process/argv/input environment,
+authenticated AurWL connection and mapped ordinary toplevel proof. Only an
+observed changed marker pixel authorizes the click; exact saved sentinel,
+unchanged first editor and full A-to-B-to-A lifecycle remain mandatory.
+Baseline/after frames and reduced failure facts are retained.
+
+Lead review additionally caught an EOF loop in the new frame parser and a
+font-rendering assumption about gaps between full-block text rows. Follow-up
+`8377624b` bounds/validates frames and recognizes touching-row width changes.
+Verification: 55 Python tests, 95 harness checks, gate/workflow checks, and
+independent re-review. These are harness results, not runtime proof.
+
+One retained fresh-image rerun:
+[40152195863](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40152195863),
+harness `d33b9994`, image from `40148012574`. No new OS image was built.
