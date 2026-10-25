@@ -21,7 +21,7 @@
 
 Run from anywhere: python3 tools/e2e/selftest.py
 """
-import ast, inspect, json, os, re, subprocess, sys, tempfile
+import ast, inspect, json, os, re, shutil, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "..", "..", "src", "aurbridge")
@@ -772,40 +772,77 @@ def test_store_content():
 
 
 def test_store_result():
-    """The query and first result can have exactly the same name."""
+    """Only one exact title in the detected results body authorizes a click."""
     try:
-        import e2e
+        import e2e, vision, numpy as np
     except ImportError:
         return
 
     def word(text, x, y, w=28, h=18, line=1):
         return {"text": text, "x": x, "y": y, "w": w, "h": h, "line": line}
 
-    # Run 40138682256, screenshot 0045: the old full-screen lookup clicked
-    # (343,162), the Search entry, instead of the catalogue title near y=254.
-    query = word("VLC", 330, 153, line=1)
     result = word("VLC", 371, 248, line=2)
-    words = [query, result,
-             word("VLC", 371, 272, line=3), word("media", 405, 272, line=3)]
-    check(e2e.AurFlow.store_result(words, 800, "VLC", "VLC") == (371, 248, 28, 18),
-          "store result: duplicate query text selects the real catalogue row")
-    check(e2e.AurFlow.store_result([query], 800, "VLC", "VLC") is None,
-          "store result: query text alone is not a catalogue result")
+    description = [word("VLC", 371, 272, line=3),
+                   word("media", 405, 272, w=45, line=3)]
+    check(e2e.AurFlow.store_result([result] + description, "VLC") ==
+          (371, 248, 28, 18),
+          "store result: the unique exact title in the detected body is selected")
     duplicate = word("VLC", 371, 348, line=4)
-    check(e2e.AurFlow.store_result([result, duplicate], 800, "VLC", "VLC") is None,
-          "store result: a missing query cannot make a result's identity ambiguous")
+    check(e2e.AurFlow.store_result([result, duplicate], "VLC") is None,
+          "store result: duplicate exact rows fail closed")
     prefix = word("VLCstream", 371, 248, w=80, line=2)
-    prefix_query = word("VLCstream", 330, 153, w=80, line=1)
-    description = [word("VLC", 371, 248, line=2),
-                   word("media", 405, 248, w=45, line=2)]
-    check(e2e.AurFlow.store_result([query, prefix], 800, "VLC", "VLC") is None,
+    check(e2e.AurFlow.store_result([prefix], "VLC") is None,
           "store result: a prefixed app name is not the requested result")
-    check(e2e.AurFlow.store_result([prefix_query, result], 800, "VLC", "VLC") is None,
-          "store result: a prefixed query cannot anchor a result click")
-    check(e2e.AurFlow.store_result([query] + description, 800, "VLC", "VLC") is None,
+    check(e2e.AurFlow.store_result(description, "VLC") is None,
           "store result: description text containing the query is not a title")
-    check(e2e.AurFlow.store_result([query, result, duplicate], 800, "VLC", "VLC") is None,
-          "store result: duplicate exact result rows fail closed")
+    exact_description = [word("GridPlayer", 371, 248, w=80, line=2),
+                         word("VLC", 371, 272, line=3)]
+    check(e2e.AurFlow.store_result(exact_description, "VLC") is None,
+          "store result: an exact standalone description is not a title")
+    check(e2e.AurFlow.store_result(
+              [word("GridPlayer", 371, 248, w=80, line=2)], "VLC") is None,
+          "store result: a different app title is not the requested result")
+
+    if shutil.which("tesseract"):
+        fixtures = (
+            "store-results-vlc-fastpath-40148012698.png",
+            "store-results-vlc-base-40148012698.png",
+        )
+        for fixture in fixtures:
+            shot = vision.load(os.path.join(HERE, "fixtures", fixture))
+            whole = vision.ocr(shot)
+            check(e2e.AurFlow.store_result(whole, "VLC") is None,
+                  f"store result: {fixture} whole-screen OCR reproduces the missed title")
+            region = e2e.AurFlow.store_results_region(shot)
+            check(region is not None and region[0] > 237 and region[1] > 185 and
+                  region[0] + region[2] <= 850 and region[1] + region[3] <= 518,
+                  f"store result: {fixture} frame and search border derive the body {region}")
+            cropped = vision.ocr(shot, region)
+            found = e2e.AurFlow.store_result(cropped, "VLC")
+            check(found is not None and found[1] > region[1],
+                  f"store result: cropped OCR finds {fixture}'s visible VLC title at {found}")
+    else:
+        check(True, "store result: real screenshot OCR waits for the runner's tesseract dependency")
+
+    # The body boundary follows a moved/resized window's visible borders; the
+    # typed query above that boundary can never become a result candidate.
+    img = np.zeros((800, 1280, 3), np.uint8); img[:] = 240
+    left, right, top, search_bottom, bottom = 320, 1000, 120, 230, 610
+    img[top:bottom + 1, left] = 30
+    img[top:bottom + 1, right] = 30
+    for y in (top, 165, 180, search_bottom, bottom):
+        img[y, left:right + 1] = 30
+    region = e2e.AurFlow.store_results_region(img)
+    check(region == (321, 231, 679, 379),
+          f"store result: moved/resized visible borders derive the body {region}")
+    query_point = (500, 200)
+    check(not (region[0] <= query_point[0] < region[0] + region[2] and
+               region[1] <= query_point[1] < region[1] + region[3]),
+          "store result: the exact query field is outside the detected body")
+    malformed = img.copy()
+    malformed[top:bottom + 1, left + 220] = 30
+    check(e2e.AurFlow.store_results_region(malformed) is None,
+          "store result: an ambiguous early right border fails closed")
 
 
 def test_store_open_click_boundary():
