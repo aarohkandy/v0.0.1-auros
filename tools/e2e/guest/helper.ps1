@@ -43,6 +43,31 @@ public static class E2eUser32 {
   public static extern int AccessibleObjectFromWindow(
     IntPtr hwnd, int objectId, ref Guid iid,
     [MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible accessible);
+
+  // PowerShell exposes a custom MSAA object as System.__ComObject and would
+  // otherwise try IDispatch name lookup. AurBridge deliberately implements
+  // the IAccessible vtable, not name lookup, so keep every call strongly typed.
+  public static int AccChildCount(Accessibility.IAccessible a) { return a.accChildCount; }
+  public static int AccRole(Accessibility.IAccessible a, int child) {
+    return Convert.ToInt32(a.get_accRole(child));
+  }
+  public static string AccName(Accessibility.IAccessible a, int child) {
+    return a.get_accName(child);
+  }
+  public static int AccState(Accessibility.IAccessible a, int child) {
+    return Convert.ToInt32(a.get_accState(child));
+  }
+  public static int[] AccLocation(Accessibility.IAccessible a, int child) {
+    int x, y, width, height;
+    a.accLocation(out x, out y, out width, out height, child);
+    return new int[] { x, y, width, height };
+  }
+  public static string AccKeyboardShortcut(Accessibility.IAccessible a, int child) {
+    return a.get_accKeyboardShortcut(child);
+  }
+  public static string AccDefaultAction(Accessibility.IAccessible a, int child) {
+    return a.get_accDefaultAction(child);
+  }
 }
 '@
 $AE = [System.Windows.Automation.AutomationElement]
@@ -101,7 +126,7 @@ function AurBridgeMsaaElements($w, $types, $max) {
   $wanted = @{}; foreach ($t in $types) { $wanted[[string]$t] = $true }
   $out = @()
   try {
-    $count = [int]$acc.accChildCount
+    $count = [E2eUser32]::AccChildCount($acc)
     if ($count -lt 0 -or $count -gt 80) {
       throw "AurBridge MSAA: implausible child count $count"
     }
@@ -111,16 +136,17 @@ function AurBridgeMsaaElements($w, $types, $max) {
     if ($count -gt 0) { $children += 1..$count }
     foreach ($child in $children) {
       try {
-        $role = [Convert]::ToInt32($acc.get_accRole($child))
+        $role = [E2eUser32]::AccRole($acc, $child)
         $type = $roleNames[$role]
         if (-not $type) {
           throw ('unexpected role 0x{0:x}' -f $role)
         }
         if (-not $wanted.ContainsKey($type)) { continue }
-        $name = [string]$acc.get_accName($child)
-        $state = [Convert]::ToInt32($acc.get_accState($child))
-        [int]$x = 0; [int]$y = 0; [int]$width = 0; [int]$height = 0
-        [void]$acc.accLocation([ref]$x, [ref]$y, [ref]$width, [ref]$height, $child)
+        $name = [E2eUser32]::AccName($acc, $child)
+        $state = [E2eUser32]::AccState($acc, $child)
+        $location = [E2eUser32]::AccLocation($acc, $child)
+        [int]$x = $location[0]; [int]$y = $location[1]
+        [int]$width = $location[2]; [int]$height = $location[3]
         if (-not $name -or $width -le 0 -or $height -le 0) {
           throw 'empty name or rectangle'
         }
@@ -128,8 +154,8 @@ function AurBridgeMsaaElements($w, $types, $max) {
         # disabled one remains visible in the result with enabled=false so
         # the caller's exact security predicate rejects it explicitly.
         if (($state -band 0x8000) -or ($state -band 0x10000)) { continue }
-        $key = [string]$acc.get_accKeyboardShortcut($child)
-        $action = [string]$acc.get_accDefaultAction($child)
+        $key = [E2eUser32]::AccKeyboardShortcut($acc, $child)
+        $action = [E2eUser32]::AccDefaultAction($acc, $child)
         if ($child -gt 0 -and -not $action) { throw 'control has no default action' }
         $toggle = $null
         if ($type -ceq 'CheckBox') {
