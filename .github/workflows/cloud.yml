@@ -107,7 +107,6 @@ jobs:
           fi
         working-directory: .
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        if: steps.have.outputs.ok == 'true'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         if: steps.have.outputs.ok == 'true'
         with:
@@ -115,12 +114,123 @@ jobs:
       - if: steps.have.outputs.ok == 'true'
         run: timeout 300 npm ci --no-audit --no-fund
 
+      - name: Custom delivery configuration
+        id: custom
+        env:
+          HAVE_DEPLOY_CREDENTIALS: ${{ steps.have.outputs.ok }}
+          BUILD_NETWORK_SECRET: ${{ secrets.BUILD_NETWORK_SECRET }}
+          BUILD_CHALLENGE_SECRET: ${{ secrets.BUILD_CHALLENGE_SECRET }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
+          GITHUB_APP_ID: ${{ vars.GITHUB_APP_ID }}
+          GITHUB_APP_INSTALLATION_ID: ${{ vars.GITHUB_APP_INSTALLATION_ID }}
+        run: |
+          set +x
+          disabled=$(grep -Ec '^BUILD_REQUESTS_ENABLED[[:space:]]*=[[:space:]]*"0"([[:space:]]*#.*)?$' wrangler.toml || true)
+          enabled=$(grep -Ec '^BUILD_REQUESTS_ENABLED[[:space:]]*=[[:space:]]*"1"([[:space:]]*#.*)?$' wrangler.toml || true)
+          if [ "$disabled" = 1 ] && [ "$enabled" = 0 ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Custom delivery remains disabled; any supplied credentials will be staged."
+            exit 0
+          fi
+          if [ "$enabled" != 1 ] || [ "$disabled" != 0 ]; then
+            echo "::error title=Custom delivery configuration invalid::BUILD_REQUESTS_ENABLED must appear exactly once and be either 0 or 1."
+            exit 1
+          fi
+
+          missing=()
+          for name in BUILD_NETWORK_SECRET BUILD_CHALLENGE_SECRET GITHUB_APP_PRIVATE_KEY GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID; do
+            if [ -z "${!name}" ]; then missing+=("$name"); fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "::error title=Custom delivery configuration incomplete::BUILD_REQUESTS_ENABLED is 1, but these named settings are absent: ${missing[*]}"
+            exit 1
+          fi
+          if [ "${#BUILD_NETWORK_SECRET}" -lt 32 ] || [ "${#BUILD_CHALLENGE_SECRET}" -lt 32 ]; then
+            echo "::error title=Custom delivery configuration invalid::BUILD_NETWORK_SECRET and BUILD_CHALLENGE_SECRET must each contain at least 32 characters."
+            exit 1
+          fi
+          if [[ ! "$GITHUB_APP_ID" =~ ^[1-9][0-9]*$ ]] || [[ ! "$GITHUB_APP_INSTALLATION_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error title=Custom delivery configuration invalid::The GitHub App and installation IDs must be positive decimal integers."
+            exit 1
+          fi
+          if ! printf '%s' "$GITHUB_APP_PRIVATE_KEY" | node -e '
+            let raw = "";
+            process.stdin.setEncoding("utf8");
+            process.stdin.on("data", (chunk) => { raw += chunk; });
+            process.stdin.on("end", () => process.stdout.write(raw.replace(/\\n/g, "\n")));
+          ' | openssl rsa -check -noout >/dev/null 2>&1; then
+            echo "::error title=Custom delivery configuration invalid::GITHUB_APP_PRIVATE_KEY is not a valid RSA PKCS#1 or PKCS#8 private key."
+            exit 1
+          fi
+          origin=$(sed -nE 's/^BUILD_ALLOWED_ORIGIN[[:space:]]*=[[:space:]]*"([^"[:space:]]+)"([[:space:]]*#.*)?$/\1/p' wrangler.toml)
+          if ! ORIGIN="$origin" node -e '
+            try {
+              const raw = process.env.ORIGIN;
+              const url = new URL(raw);
+              const labels = url.hostname.split(".");
+              const validHost = labels.every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label));
+              process.exit(url.protocol === "https:" && url.origin === raw && validHost ? 0 : 1);
+            } catch { process.exit(1); }
+          '; then
+            echo "::error title=Custom delivery configuration invalid::BUILD_ALLOWED_ORIGIN must be one exact HTTPS origin with no path."
+            exit 1
+          fi
+          if ! grep -Eq '^BUILD_GITHUB_REPOSITORY[[:space:]]*=[[:space:]]*"aarohkandy/v0\.0\.1-auros"([[:space:]]*#.*)?$' wrangler.toml; then
+            echo "::error title=Custom delivery configuration invalid::BUILD_GITHUB_REPOSITORY is not the fixed reviewed repository."
+            exit 1
+          fi
+          if [ "$HAVE_DEPLOY_CREDENTIALS" != true ]; then
+            echo "::error title=Custom delivery activation refused::The deploy credentials are absent, so the existing Worker secrets cannot be verified."
+            exit 1
+          fi
+
+          if ! names=$(timeout 120 npx --yes "$WRANGLER" secret list --format json 2>/dev/null); then
+            echo "::error title=Custom delivery activation refused::The existing Worker secret names could not be read. Deploy once with BUILD_REQUESTS_ENABLED set to 0."
+            exit 1
+          fi
+          for name in BUILD_NETWORK_SECRET BUILD_CHALLENGE_SECRET GITHUB_APP_PRIVATE_KEY; do
+            if ! printf '%s' "$names" | node -e '
+              let raw = "";
+              process.stdin.setEncoding("utf8");
+              process.stdin.on("data", (chunk) => { raw += chunk; });
+              process.stdin.on("end", () => {
+                try {
+                  const entries = JSON.parse(raw);
+                  process.exit(Array.isArray(entries) && entries.some((entry) => entry && entry.name === process.argv[1]) ? 0 : 1);
+                } catch { process.exit(1); }
+              });
+            ' "$name"; then
+              echo "::error title=Custom delivery activation refused::Worker secret $name is not staged. Deploy once with BUILD_REQUESTS_ENABLED set to 0."
+              exit 1
+            fi
+          done
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Refresh custom delivery secrets before enabled deploy
+        if: steps.custom.outputs.enabled == 'true'
+        env:
+          BUILD_NETWORK_SECRET: ${{ secrets.BUILD_NETWORK_SECRET }}
+          BUILD_CHALLENGE_SECRET: ${{ secrets.BUILD_CHALLENGE_SECRET }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
+        run: |
+          set +x
+          # The existing Worker is still disabled here. Rotate its credentials
+          # before deploying the version that accepts build requests.
+          printf '%s' "$BUILD_NETWORK_SECRET" | timeout 120 npx --yes "$WRANGLER" secret put BUILD_NETWORK_SECRET
+          printf '%s' "$BUILD_CHALLENGE_SECRET" | timeout 120 npx --yes "$WRANGLER" secret put BUILD_CHALLENGE_SECRET
+          printf '%s' "$GITHUB_APP_PRIVATE_KEY" | timeout 120 npx --yes "$WRANGLER" secret put GITHUB_APP_PRIVATE_KEY
+
       - name: Deploy
         id: deploy
         if: steps.have.outputs.ok == 'true'
+        env:
+          GITHUB_APP_ID: ${{ vars.GITHUB_APP_ID }}
+          GITHUB_APP_INSTALLATION_ID: ${{ vars.GITHUB_APP_INSTALLATION_ID }}
         run: |
           extra=()
-          if [ -n "$ANTHROPIC_WORKSPACE_ID" ]; then extra=(--var "ANTHROPIC_WORKSPACE_ID:$ANTHROPIC_WORKSPACE_ID"); fi
+          if [ -n "$ANTHROPIC_WORKSPACE_ID" ]; then extra+=(--var "ANTHROPIC_WORKSPACE_ID:$ANTHROPIC_WORKSPACE_ID"); fi
+          if [ -n "$GITHUB_APP_ID" ]; then extra+=(--var "GITHUB_APP_ID:$GITHUB_APP_ID"); fi
+          if [ -n "$GITHUB_APP_INSTALLATION_ID" ]; then extra+=(--var "GITHUB_APP_INSTALLATION_ID:$GITHUB_APP_INSTALLATION_ID"); fi
           timeout 300 npx --yes "$WRANGLER" deploy "${extra[@]}" 2>&1 | tee deploy.log
           url=$(grep -oE 'https://auros-wishes\.[a-z0-9-]+\.workers\.dev' deploy.log | head -1)
           if [ -z "$url" ]; then
@@ -132,6 +242,11 @@ jobs:
 
       - name: Worker secrets (stdin only, never echoed)
         if: steps.have.outputs.ok == 'true'
+        env:
+          BUILD_NETWORK_SECRET: ${{ secrets.BUILD_NETWORK_SECRET }}
+          BUILD_CHALLENGE_SECRET: ${{ secrets.BUILD_CHALLENGE_SECRET }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
+          CUSTOM_DELIVERY_ENABLED: ${{ steps.custom.outputs.enabled }}
         run: |
           set +x
           names=$(timeout 120 npx --yes "$WRANGLER" secret list --format json 2>/dev/null || echo '[]')
@@ -141,6 +256,11 @@ jobs:
           fi
           printf '%s' "$ANTHROPIC_API_KEY" | timeout 120 npx --yes "$WRANGLER" secret put ANTHROPIC_API_KEY
           if [ -n "$ALERT_URL" ]; then printf '%s' "$ALERT_URL" | timeout 120 npx --yes "$WRANGLER" secret put ALERT_URL; fi
+          if [ "$CUSTOM_DELIVERY_ENABLED" != true ]; then
+            if [ -n "$BUILD_NETWORK_SECRET" ]; then printf '%s' "$BUILD_NETWORK_SECRET" | timeout 120 npx --yes "$WRANGLER" secret put BUILD_NETWORK_SECRET; fi
+            if [ -n "$BUILD_CHALLENGE_SECRET" ]; then printf '%s' "$BUILD_CHALLENGE_SECRET" | timeout 120 npx --yes "$WRANGLER" secret put BUILD_CHALLENGE_SECRET; fi
+            if [ -n "$GITHUB_APP_PRIVATE_KEY" ]; then printf '%s' "$GITHUB_APP_PRIVATE_KEY" | timeout 120 npx --yes "$WRANGLER" secret put GITHUB_APP_PRIVATE_KEY; fi
+          fi
 
       - name: Mode (kill switch on or off)
         id: mode
