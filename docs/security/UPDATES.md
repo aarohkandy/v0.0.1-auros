@@ -463,3 +463,44 @@ ls /var/lib/auros/debs                    # the parts this image shipped with
 grep -h 'Packages that will be upgraded' /var/log/unattended-upgrades/unattended-upgrades.log | tail
 systemctl list-timers apt-daily-upgrade.timer auros-flatpak-update.timer
 ```
+
+### Dormant personal-profile channel tooling
+
+`build/aptchannel --profile desktop|revive|multilingual` selects an explicit
+channel descriptor. `descriptor`, `url`, `preferences`, and `unattended` print
+its identity or proposed policy; `pack`, `repo`, `release`, `sign`, and `verify`
+operate on local artifacts. Desktop retains its existing `apt` tag, `AurOS`
+label, `stable` suite and exact pin file. Its legacy pin matches origin and
+label only; suite enforcement here is the publisher/verification gate and
+unattended policy, not a new desktop client pin. Revive and multilingual use
+`apt-<profile>`, `AurOS-<profile>`, and `stable-<profile>`. Office and school-kiosk
+channels are unavailable. This does not publish anything or activate an image
+source: non-desktop `image` selection is refused, and the existing image hook
+still disables sources for every non-desktop image.
+
+New packages carry `X-AurOS-Profile` (the image hook records its actual profile,
+even when its source is disabled). Repository assembly and verification reject
+wrong-profile packages, inconsistent index metadata, and mixed legacy/identified
+sets. Entirely untagged historical desktop archives remain accepted only as
+legacy desktop; this cannot retrospectively prove their build profile. Signed
+Release origin, label, suite and codename must match the selected descriptor.
+`tools/channelcheck.sh --profile ID` applies the same checks when an explicitly
+selected channel is eventually available; it does not create that channel.
+
+These package checks are publisher checks, not an apt feature: apt ignores the
+custom package field. Generated non-desktop pins permit only that profile's
+signed label and suite and reject other AurOS repositories, even signed by the
+same trusted key. `updatetest.sh` tests all nine client/publisher combinations
+against real signed local repositories plus legacy/mixed and re-signed identity
+mutations. Future activation still requires publishing a tested profile archive,
+installing its matching source, pin and unattended policy together, and proving
+actual update/rollback on that profile. The emitted unattended fragment contains
+only the AurOS origin; it must not replace the existing Ubuntu/Mozilla policy.
+
+Validation (2026-10-25): the focused update suite passed **71/71** in a disposable
+Ubuntu 24.04 container, including the original signed-update, key rotation,
+conffile preservation and rollback checks. The new matrix also refused signed
+same-label/wrong-suite personal channels and a signed divergent compressed index.
+The modified live `channelcheck.sh` has not been run against a published personal
+channel because none is enabled; local signed repositories exercise its shared
+verifier. No profile source, public archive, signing key or workflow was activated.
