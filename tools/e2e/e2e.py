@@ -134,10 +134,135 @@ PRIMARY_RGB = ((0x7D, 0xD3, 0xC0), (0x0B, 0x5D, 0x4F), (0x5D, 0xBB, 0x9E))
 # Edge's words for a download it holds back until the person says keep
 WARN_RX = (r"(isn.t commonly downloaded|can.t be downloaded securely|might be dangerous|"
            r"download blocked|was blocked|unsafe|couldn.t verify)")
+BUSY_DIAGNOSTIC_INTERVAL = 5 * 60
+BUSY_DIAGNOSTIC_TIMEOUT = 45
+BUSY_DIAGNOSTIC_GUEST_TIMEOUT_MS = 40 * 1000
 
 
 def left():
     return DEADLINE - time.time()
+
+
+def busy_diagnostic_due(idle_since, last_diagnostic, now):
+    """One diagnostic per five quiet minutes, never a burst after a delay."""
+    return (now - idle_since >= BUSY_DIAGNOSTIC_INTERVAL and
+            now - last_diagnostic >= BUSY_DIAGNOSTIC_INTERVAL)
+
+
+def busy_wizard_script(pid):
+    """A bounded-output, read-only Windows snapshot for a busy installer.
+
+    Command lines are inspected only to classify Resize-Partition. They are
+    deliberately absent from every object written to the evidence.
+    """
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        raise ValueError("the wizard PID is not a positive integer")
+    return rf'''
+$ErrorActionPreference = 'Stop'
+$rootPid = {pid}
+Write-Output 'AURBUSY v1'
+try {{
+  $root = @(Get-CimInstance Win32_Process -Filter ("ProcessId = {{0}}" -f $rootPid))
+  $children = @(Get-CimInstance Win32_Process -Filter ("ParentProcessId = {{0}}" -f $rootPid) |
+    Sort-Object ProcessId)
+  $rows = @($root) + @($children | Select-Object -First 15)
+  foreach ($row in $rows | Sort-Object ProcessId) {{
+    try {{
+      $runtime = Get-Process -Id $row.ProcessId -ErrorAction Stop
+      $cpu = if ($null -eq $runtime.CPU) {{ $null }} else {{ [Math]::Round([double]$runtime.CPU, 3) }}
+      $resize = $false
+      if ($row.ProcessId -ne $rootPid) {{
+        $resize = [bool]($row.CommandLine -match '(?i)(^|[ ;''"])(Resize-Partition)([ ;''"]|$)')
+      }}
+      [pscustomobject]@{{ kind='process'; role=$(if ($row.ProcessId -eq $rootPid) {{'wizard'}} else {{'child'}});
+        name=$row.Name; pid=[int]$row.ProcessId; parent=[int]$row.ParentProcessId;
+        responding=[bool]$runtime.Responding; cpu_seconds=$cpu; resize_partition=$resize }} |
+        ConvertTo-Json -Compress
+    }} catch {{
+      Write-Output ('AURBUSY ERROR process-row pid=' + $row.ProcessId + ' ' + $_.Exception.GetType().FullName)
+    }}
+  }}
+  [pscustomobject]@{{ kind='processes'; child_shown=[int][Math]::Min($children.Count, 15);
+    child_total=[int]$children.Count; capped=[bool]($children.Count -gt 15) }} |
+    ConvertTo-Json -Compress
+}} catch {{
+  Write-Output ('AURBUSY ERROR process ' + $_.Exception.GetType().FullName)
+}}
+try {{
+  $part = Get-Partition -DriveLetter C -ErrorAction Stop
+  [pscustomobject]@{{ kind='partition'; disk=[int]$part.DiskNumber;
+    partition=[int]$part.PartitionNumber; offset=[uint64]$part.Offset; size=[uint64]$part.Size }} |
+    ConvertTo-Json -Compress
+  $vol = Get-Volume -DriveLetter C -ErrorAction Stop
+  [pscustomobject]@{{ kind='volume'; size=[uint64]$vol.Size;
+    free=[uint64]$vol.SizeRemaining; health=[string]$vol.HealthStatus }} |
+    ConvertTo-Json -Compress
+}} catch {{
+  Write-Output ('AURBUSY ERROR storage ' + $_.Exception.GetType().FullName)
+}}
+try {{
+  $pieces = @(Get-ChildItem -LiteralPath 'C:\AurOS' -File -Filter '*.gz.*' -ErrorAction Stop |
+    Sort-Object Name | Select-Object -First 65)
+  foreach ($piece in $pieces | Select-Object -First 64) {{
+    [pscustomobject]@{{ kind='piece'; name=$piece.Name; length=[uint64]$piece.Length;
+      modified_utc=$piece.LastWriteTimeUtc.ToString('o') }} | ConvertTo-Json -Compress
+  }}
+  [pscustomobject]@{{ kind='pieces'; shown=[int][Math]::Min($pieces.Count, 64);
+    capped=[bool]($pieces.Count -gt 64) }} | ConvertTo-Json -Compress
+}} catch [System.Management.Automation.ItemNotFoundException] {{
+  [pscustomobject]@{{ kind='pieces'; shown=0; capped=$false; directory='absent' }} |
+    ConvertTo-Json -Compress
+}} catch {{
+  Write-Output ('AURBUSY ERROR pieces ' + $_.Exception.GetType().FullName)
+}}
+Write-Output 'AURBUSY done'
+'''.strip()
+
+
+def busy_wizard_summary(out):
+    """Safe bounded summary for driver.log and its three-minute live tail."""
+    processes, storage, pieces, errors = [], {}, None, []
+    piece_bytes, piece_newest = 0, None
+    for line in out.splitlines():
+        if line.startswith("AURBUSY ERROR"):
+            safe = re.fullmatch(r"AURBUSY ERROR [a-z-]+(?: pid=\d+)? [A-Za-z0-9_.]+", line)
+            errors.append(safe.group(0) if safe else "AURBUSY ERROR malformed")
+            continue
+        if not line.startswith("{"):
+            continue
+        try:
+            item = json.loads(line)
+        except (TypeError, ValueError):
+            errors.append("AURBUSY ERROR malformed-json")
+            continue
+        kind = item.get("kind")
+        if kind == "process" and len(processes) < 16:
+            processes.append("%s:%s:%s:responding=%s:cpu=%s:resize=%s" % (
+                item.get("role"), item.get("name"), item.get("pid"),
+                str(item.get("responding")).lower(), item.get("cpu_seconds"),
+                str(item.get("resize_partition")).lower()))
+        elif kind in ("partition", "volume"):
+            storage[kind] = item
+        elif kind == "piece":
+            length, modified = item.get("length"), item.get("modified_utc")
+            if isinstance(length, int) and length >= 0:
+                piece_bytes += length
+            if isinstance(modified, str) and (piece_newest is None or modified > piece_newest):
+                piece_newest = modified
+        elif kind == "pieces":
+            pieces = item
+    p = storage.get("partition", {})
+    v = storage.get("volume", {})
+    fields = ["process=" + (",".join(processes) if processes else "none"),
+              "C=partition-size:%s volume-size:%s free:%s health:%s" %
+              (p.get("size"), v.get("size"), v.get("free"), v.get("health"))]
+    if pieces is not None:
+        fields.append("pieces=shown:%s bytes:%s newest:%s capped:%s" %
+                      (pieces.get("shown"), piece_bytes, piece_newest,
+                       str(pieces.get("capped")).lower()))
+    if errors:
+        fields.append("errors=" + ",".join(errors[:4]))
+    return " | ".join(fields)[:1200]
 
 
 def bitlocker_verdict(variant, vol, prot):
@@ -619,9 +744,67 @@ class Flow:
     def guest(self, script, timeout=120):
         r = self.hub.ask("run", script=script, timeout=timeout)
         out = (r or {}).get("output") or (r or {}).get("error") or "(no answer)"
-        with open(os.path.join(self.a.out, "guest-diagnostics.log"), "a") as f:
-            f.write(f"--- {time.strftime('%H:%M:%S')} {script}\n{out}\n")
+        self.record_guest_diagnostic(script, out)
         return out
+
+    def record_guest_diagnostic(self, label, out):
+        with open(os.path.join(self.a.out, "guest-diagnostics.log"), "a") as f:
+            f.write(f"--- {time.strftime('%H:%M:%S')} {label}\n{out}\n")
+
+    def record_busy_wizard_diagnostic(self, pid, out):
+        label = "busy wizard snapshot" + (f" pid={pid}" if isinstance(pid, int) else "")
+        try:
+            self.record_guest_diagnostic(label, out)
+            return True
+        except OSError as exc:
+            self.log("busy wizard diagnostic: evidence write failed: " + type(exc).__name__)
+            return False
+
+    def busy_wizard_diagnostic(self, win):
+        """Record a read-only snapshot without interrupting an installation."""
+        pid = (win or {}).get("pid")
+        try:
+            script = busy_wizard_script(pid)
+        except (TypeError, ValueError) as exc:
+            out = f"not run: {exc}"
+            self.record_busy_wizard_diagnostic(pid, out)
+            self.log("busy wizard diagnostic: " + out)
+            return False
+        try:
+            result = self.hub.ask("diagnostic", script=script,
+                                  timeout_ms=BUSY_DIAGNOSTIC_GUEST_TIMEOUT_MS,
+                                  timeout=BUSY_DIAGNOSTIC_TIMEOUT)
+        except Exception as exc:
+            # Do not let telemetry stop a still-active disk operation, and do
+            # not copy exception text that might contain a command line.
+            out = "failed: helper call raised " + type(exc).__name__
+            self.record_busy_wizard_diagnostic(pid, out)
+            self.log("busy wizard diagnostic: " + out)
+            return False
+        if result is None:
+            out = f"failed: helper timed out after {BUSY_DIAGNOSTIC_TIMEOUT} seconds"
+        elif not result.get("ok"):
+            # The script emits safe section-specific exception types itself.
+            # Only our fixed timeout is safe to preserve; another helper-level
+            # error can echo its input, so keep that one generic.
+            error = result.get("error") or ""
+            if re.fullmatch(r"diagnostic child exceeded \d+ ms and was stopped", error):
+                out = "failed: " + error
+            else:
+                out = "failed: guest helper rejected the diagnostic command"
+        else:
+            out = result.get("output") or "failed: guest helper returned no output"
+        wrote = self.record_busy_wizard_diagnostic(pid, out)
+        complete = out.startswith("AURBUSY v1") and out.rstrip().endswith("AURBUSY done")
+        ok = complete and "AURBUSY ERROR" not in out
+        if ok:
+            status = "recorded | " + busy_wizard_summary(out)
+        elif complete:
+            status = "recorded with explicit section errors | " + busy_wizard_summary(out)
+        else:
+            status = "incomplete output (full result is in guest-diagnostics.log)"
+        self.log("busy wizard diagnostic: " + status)
+        return ok and wrote
 
     def click_el(self, e, why):
         x, y, w, h = e["rect"]
@@ -1098,6 +1281,7 @@ class Flow:
         pause_warning_checked = False
         seen_events = len(self.m.qmp.events)
         last_text, text_since = "", time.time()
+        last_busy_diagnostic = idle_since
         last_sig, cand = None, [None, 0.0]     # the button about to be pressed, since when
         run_start = time.time()                # when the label pressed now was first pressed
         rect = self.wizard_rect()
@@ -1287,8 +1471,12 @@ class Flow:
                     else:
                         self.m.key("end", label="nothing to click: scroll to the end")
                     idle_since = time.time()
-                if time.time() - idle_since > 300 and int(time.time() - idle_since) % 300 < 15:
+                now = time.time()
+                if busy_diagnostic_due(idle_since, last_busy_diagnostic, now):
                     self.log("wizard waiting: " + text[-300:])
+                    if installing and busy:
+                        self.busy_wizard_diagnostic(win)
+                    last_busy_diagnostic = now
                 time.sleep(15 if busy else 5)
             raise Failure("ran out of time in the wizard")
         except BaseException:
