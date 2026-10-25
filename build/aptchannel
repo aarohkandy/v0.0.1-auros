@@ -10,6 +10,10 @@
 #  This makes them packages, and publishes those packages as a signed
 #  apt repository that every AurOS computer already trusts.
 #
+#    aptchannel [--profile desktop|revive|multilingual] COMMAND ...
+#        explicit dormant personal-channel tooling; default is desktop.
+#        descriptor/preferences/unattended print identity or proposed policy.
+#        Non-desktop image activation is refused.
 #    aptchannel image RFS [PROFILE_ID OS_VERSION]
 #        forge's hook, run just before the rootfs is sealed: pack every
 #        AurOS file in RFS into auros-* packages, register them with
@@ -68,6 +72,43 @@ PACKAGES="auros-desktop auros-first auros-bootchain auros-ferry auros-config aur
 die()  { printf 'aptchannel: %s\n' "$*" >&2; exit 1; }
 note() { printf '   %s\n' "$*"; }
 warn() { printf 'aptchannel: WARNING: %s\n' "$*" >&2; }
+
+# Dormant tooling only: selecting a profile never enables an image source.
+PROFILE=desktop
+if [ "${1:-}" = --profile ]; then
+    PROFILE=${2:?--profile needs an ID}; shift 2
+fi
+case "$PROFILE" in
+    desktop) ;;
+    revive|multilingual)
+        [ -z "${AUROS_APT_TAG:-}" ] || die "profile tags cannot be overridden"
+        APT_TAG=apt-$PROFILE; LABEL=AurOS-$PROFILE; SUITE=stable-$PROFILE ;;
+    *) die "unavailable channel profile '$PROFILE'" ;;
+esac
+
+PACKAGE_PROFILE=$PROFILE
+
+# Publisher checks. Legacy desktop archives predate the custom field, but
+# a repository must never mix legacy and identified packages.
+package_identity() {
+    local got
+    got=$(dpkg-deb -f "$1" X-AurOS-Profile) || die "cannot read package identity from $1"
+    if [ -z "$got" ] && [ "$PROFILE" = desktop ]; then printf legacy; return; fi
+    [ "$got" = "$PROFILE" ] || die "$1 has profile '$got', expected '$PROFILE'"
+    printf '%s' "$got"
+}
+release_identity() {
+    local file=$1 key want got
+    for key in Origin Label Suite Codename; do
+        case "$key" in Origin) want=$ORIGIN ;; Label) want=$LABEL ;; *) want=$SUITE ;; esac
+        got=$(sed -n "s/^$key: //p" "$file")
+        [ "$got" = "$want" ] || die "$file has unexpected $key '$got'"
+    done
+}
+profile_preferences() {
+    if [ "$PROFILE" = desktop ]; then cat "$ROOT/rootfs/etc/apt/preferences.d/auros"; return; fi
+    printf 'Package: auros auros-*\nPin: release o=AurOS, l=%s, a=%s\nPin-Priority: 500\n\nPackage: *\nPin: release o=AurOS\nPin-Priority: -1\n' "$LABEL" "$SUITE"
+}
 
 # ── where it lives ─────────────────────────────────────────────────
 #
@@ -354,6 +395,7 @@ cmd_pack() { # RFS OUTDIR VERSION
         repl=$(for o in $PACKAGES; do [ "$o" = "$pkg" ] || printf '%s (<< %s), ' "$o" "$ver"; done | sed 's/, $//')
         {
             printf 'Package: %s\nVersion: %s\nArchitecture: %s\n' "$pkg" "$ver" "$ARCH"
+            printf 'X-AurOS-Profile: %s\n' "$PACKAGE_PROFILE"
             printf 'Maintainer: %s\nSection: misc\nPriority: optional\n' "$MAINTAINER"
             printf 'Installed-Size: %s\n' "$size"
             [ -n "$deps" ] && printf 'Depends: %s\n' "$deps"
@@ -372,6 +414,7 @@ cmd_pack() { # RFS OUTDIR VERSION
     d="$work/auros"; mkdir -p "$d/DEBIAN"
     {
         printf 'Package: auros\nVersion: %s\nArchitecture: %s\n' "$ver" "$ARCH"
+        printf 'X-AurOS-Profile: %s\n' "$PACKAGE_PROFILE"
         printf 'Maintainer: %s\nSection: metapackages\nPriority: optional\n' "$MAINTAINER"
         printf 'Depends: %s\n' "$(for p in $built; do printf '%s (= %s), ' "$p" "$ver"; done | sed 's/, $//')"
         printf 'Description: %s\n %s\n' "$(describe auros | cut -d'|' -f1)" "$(describe auros | cut -d'|' -f2)"
@@ -385,6 +428,9 @@ cmd_pack() { # RFS OUTDIR VERSION
 # ── image: forge's hook ────────────────────────────────────────────
 cmd_image() { # RFS [PROFILE_ID OS_VERSION]
     local rfs=${1:?RFS} prof=${2:-} osv=${3:-}
+    [ "$PROFILE" = desktop ] || die "profile image channels remain disabled"
+    PACKAGE_PROFILE=${prof:-desktop}
+    case "$PACKAGE_PROFILE" in *[!a-z0-9-]*) die "invalid image profile" ;; esac
     [ "$(id -u)" = 0 ] || die "image needs root (it runs dpkg inside the rootfs)"
     [ -x "$rfs/usr/bin/dpkg" ] || die "$rfs has no dpkg"
     if [ -z "$osv" ]; then
@@ -443,7 +489,7 @@ $bad"
 deb_field() { dpkg-deb -f "$1" "$2"; }
 
 cmd_repo() { # DEBDIR REPODIR
-    local in=${1:?DEBDIR} out=${2:?REPODIR} f p v best
+    local in=${1:?DEBDIR} out=${2:?REPODIR} f p v best identity= seen=
     [ -d "$in" ] || die "no directory $in"
     mkdir -p "$out"
     rm -f "$out"/*.deb "$out"/Packages "$out"/Packages.gz "$out"/Release "$out"/InRelease "$out"/Release.gpg
@@ -452,6 +498,9 @@ cmd_repo() { # DEBDIR REPODIR
     declare -A pick=()
     for f in "$in"/*.deb; do
         [ -e "$f" ] || die "no .deb files in $in"
+        identity=$(package_identity "$f") || exit 1
+        [ -z "$seen" ] || [ "$seen" = "$identity" ] || die "mixed package profile identities"
+        seen=$identity
         p=$(deb_field "$f" Package); v=$(deb_field "$f" Version)
         case "$p" in auros|auros-*) ;; *) die "$f is '$p', not one of AurOS's packages" ;; esac
         [ "$(deb_field "$f" Architecture)" = "$ARCH" ] || die "$f is not $ARCH"
@@ -528,21 +577,32 @@ cmd_verify() { # REPODIR KEYRING
     # The signed text must be the Release we are about to serve.
     gpg --batch --quiet --decrypt "$out/InRelease" 2>/dev/null > "$tmp/r" || true
     cmp -s "$tmp/r" "$out/Release" || { rm -rf "$tmp"; die "InRelease does not carry this Release"; }
-    local h sz f
+    release_identity "$out/Release"
+    local h sz f identity declared seen=
     while read -r h sz f; do
         [ "$(sha256sum "$out/$f" | cut -d' ' -f1)" = "$h" ] || { rm -rf "$tmp"; die "$f does not match Release"; }
         [ "$(stat -c %s "$out/$f")" = "$sz" ] || { rm -rf "$tmp"; die "$f is not the size Release says"; }
     done < <(sed -n '/^SHA256:/,/^[A-Z]/p' "$out/Release" | sed -n 's/^ //p')
-    while read -r f h; do
+    gzip -dc "$out/Packages.gz" > "$tmp/packages" || { rm -rf "$tmp"; die "invalid Packages.gz"; }
+    cmp -s "$tmp/packages" "$out/Packages" || { rm -rf "$tmp"; die "Packages.gz differs from Packages"; }
+    while read -r f h declared; do
         [ "$(sha256sum "$out/$f" | cut -d' ' -f1)" = "$h" ] || { rm -rf "$tmp"; die "$f does not match Packages"; }
+        identity=$(package_identity "$out/$f") || { rm -rf "$tmp"; exit 1; }
+        [ -z "$seen" ] || [ "$seen" = "$identity" ] || { rm -rf "$tmp"; die "mixed package profile identities"; }
+        [ "$declared" = "$identity" ] || { rm -rf "$tmp"; die "Packages profile disagrees with $f"; }
+        seen=$identity
         ok=$((ok+1))
-    done < <(awk '/^Filename:/{f=$2} /^SHA256:/{print f, $2}' "$out/Packages" | sed 's#^\./##')
+    done < <(awk 'BEGIN {p="legacy"} /^Filename:/{f=$2} /^SHA256:/{h=$2} /^X-AurOS-Profile:/{p=$2; n++} /^$/{if(f!="") print f,h,(n>1?"duplicate":p); f=h=""; p="legacy"; n=0} END {if(f!="") print f,h,(n>1?"duplicate":p)}' "$out/Packages" | sed 's#^\./##')
     rm -rf "$tmp"
     [ "$ok" -ge 1 ] || die "Packages lists no .deb"
     note "verified: signature by the pinned key, Release, Packages, $ok packages"
 }
 
 case "${1:-}" in
+    package-profile) shift; package_identity "${1:?DEB}"; printf '\n' ;;
+    descriptor) printf 'Profile: %s\nTag: %s\nOrigin: %s\nLabel: %s\nSuite: %s\nImage-Activation: %s\n' "$PROFILE" "$APT_TAG" "$ORIGIN" "$LABEL" "$SUITE" "$([ "$PROFILE" = desktop ] && echo existing || echo disabled)" ;;
+    preferences) profile_preferences ;;
+    unattended) printf 'Unattended-Upgrade::Origins-Pattern { "origin=%s,label=%s,archive=%s"; };\n' "$ORIGIN" "$LABEL" "$SUITE" ;;
     image)  shift; cmd_image "$@" ;;
     pack)   shift; cmd_pack "$@" ;;
     repo)   shift; cmd_repo "$@" ;;

@@ -227,6 +227,108 @@ for _ in $(seq 50); do
 done
 URL="http://127.0.0.1:$PORT/"
 
+# Dormant personal channels: package/publisher identity and actual apt policy.
+for profile in desktop revive multilingual; do
+    mkrfs "$T/rfs-$profile" "$profile" 1
+    bash "$F/build/aptchannel" --profile "$profile" pack "$T/rfs-$profile" "$T/debs-$profile" "$V2" >"$T/log/pack-$profile" 2>&1 || need "profile pack failed"
+    bash "$AC" --profile "$profile" repo "$T/debs-$profile" "$T/profile-$profile" >/dev/null || need "profile repo failed"
+    bash "$AC" --profile "$profile" sign "$T/profile-$profile" "$A" >/dev/null || need "profile sign failed"
+    bash "$AC" --profile "$profile" verify "$T/profile-$profile" "$T/A.asc" >/dev/null 2>&1 && ok "$profile: own signed repository accepted" || bad "$profile: own signed repository accepted"
+    bash "$AC" --profile "$profile" preferences > "$T/prefs-$profile"
+    for other in desktop revive multilingual; do
+        [ "$other" = "$profile" ] && continue
+        bash "$AC" --profile "$other" verify "$T/profile-$profile" "$T/A.asc" >/dev/null 2>&1 && bad "$other refuses signed $profile repository" || ok "$other refuses signed $profile repository"
+        bash "$AC" --profile "$other" repo "$T/debs-$profile" "$T/refused" >/dev/null 2>&1 && bad "$other refuses $profile packages" || ok "$other refuses $profile packages"
+    done
+done
+# Legacy desktop is accepted only as a coherent set, never mixed with
+# newly identified packages. Missing metadata is not a non-desktop escape.
+mkdir -p "$T/debs-legacy" "$T/debs-mixed"
+for deb in "$T/debs-desktop"/*.deb; do
+    rm -rf "$T/unpack-profile"
+    dpkg-deb -R "$deb" "$T/unpack-profile" >/dev/null
+    sed -i '/^X-AurOS-Profile:/d' "$T/unpack-profile/DEBIAN/control"
+    dpkg-deb --root-owner-group -b "$T/unpack-profile" "$T/debs-legacy/${deb##*/}" >/dev/null || need "legacy fixture failed"
+done
+bash "$AC" repo "$T/debs-legacy" "$T/profile-legacy" >/dev/null &&
+    bash "$AC" sign "$T/profile-legacy" "$A" >/dev/null &&
+    bash "$AC" verify "$T/profile-legacy" "$T/A.asc" >/dev/null 2>&1 && ok "legacy desktop remains compatible" || bad "legacy desktop remains compatible"
+cp "$T/debs-legacy"/*.deb "$T/debs-mixed/"
+cp "$T/debs-desktop/auros_${V2}_amd64.deb" "$T/debs-mixed/"
+bash "$AC" repo "$T/debs-mixed" "$T/refused" >/dev/null 2>&1 && bad "mixed legacy/identified refused" || ok "mixed legacy/identified refused"
+for profile in revive multilingual; do
+    bash "$AC" --profile "$profile" repo "$T/debs-legacy" "$T/refused" >/dev/null 2>&1 && bad "$profile refuses legacy packages" || ok "$profile refuses legacy packages"
+done
+# Re-sign mutations with the trusted key: validate identities, not just GPG.
+for mutation in suite index-profile compressed-index; do
+    cp -a "$T/profile-revive" "$T/mutation-$mutation"
+    if [ "$mutation" = suite ]; then
+        sed -i 's/^Suite: .*/Suite: stable/' "$T/mutation-$mutation/Release"
+    elif [ "$mutation" = compressed-index ]; then
+        printf 'not the plain index\n' | gzip -n > "$T/mutation-$mutation/Packages.gz"
+        python3 - "$T/mutation-$mutation" <<'PYFIX'
+import hashlib, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+release = root / "Release"
+lines = release.read_text().splitlines()
+algorithm = None
+for i, line in enumerate(lines):
+    if line in ("SHA256:", "SHA512:"):
+        algorithm = line[:-1].lower()
+    elif line.startswith(" ") and line.split()[-1] == "Packages.gz":
+        data = (root / "Packages.gz").read_bytes()
+        lines[i] = f" {hashlib.new(algorithm, data).hexdigest()} {len(data)} Packages.gz"
+release.write_text("\n".join(lines) + "\n")
+PYFIX
+    else
+        sed -i 's/^X-AurOS-Profile: revive/X-AurOS-Profile: multilingual/' "$T/mutation-$mutation/Packages"
+        bash "$AC" --profile revive release "$T/mutation-$mutation" >/dev/null || need "mutation release failed"
+    fi
+    bash "$AC" --profile revive sign "$T/mutation-$mutation" "$A" >/dev/null || need "mutation signing failed"
+    bash "$AC" --profile revive verify "$T/mutation-$mutation" "$T/A.asc" >/dev/null 2>&1 && bad "signed $mutation mutation refused" || ok "signed $mutation mutation refused"
+done
+for profile in revive multilingual; do
+    bash "$AC" --profile "$profile" image "$T/rfs-$profile" "$profile" 1 >/dev/null 2>"$T/log/image-guard" && bad "$profile image activation refused" || {
+        grep -q 'profile image channels remain disabled' "$T/log/image-guard" && ok "$profile image activation refused" || bad "$profile image activation refused for intended reason"
+    }
+done
+for invalid in office school-kiosk '' '../desktop'; do
+    bash "$AC" --profile "$invalid" descriptor >/dev/null 2>&1 && bad "unavailable profile '$invalid' refused" || ok "unavailable profile '$invalid' refused"
+done
+# One trusted signing key is intentionally shared: only label/suite policy
+# can reject a wrong channel, not a different signing key.
+cp "$T/A.asc" /usr/share/keyrings/auros-archive-keyring.asc
+mkdir -p "$T/apt-empty"
+: > "$T/apt-status"
+for client in desktop revive multilingual; do
+    for publisher in desktop revive multilingual; do
+        rm -rf "$SRV"; cp -a "$T/profile-$publisher" "$SRV"
+        lists="$T/lists-$client-$publisher"
+        mkdir -p "$lists/partial"
+        bash "$AC" source "$URL" > "$T/profile.sources"
+        opts=(-o Dir::Etc::sourcelist="$T/profile.sources" -o Dir::Etc::sourceparts="$T/apt-empty"
+              -o Dir::Etc::preferences="$T/prefs-$client" -o Dir::Etc::preferencesparts="$T/apt-empty"
+              -o Dir::State::status="$T/apt-status" -o Dir::State::lists="$lists" -o APT::Sandbox::User=root)
+        apt-get "${opts[@]}" update > "$T/log/apt-$client-$publisher" 2>&1 || need "profile apt update failed"
+        candidate=$(apt-cache "${opts[@]}" policy auros-desktop | sed -n 's/^ *Candidate: //p')
+        expected='(none)'; [ "$client" = "$publisher" ] && expected=$V2
+        [ "$candidate" = "$expected" ] && ok "$client apt candidate from $publisher: $expected" || bad "$client apt candidate from $publisher" "$candidate, expected $expected"
+    done
+done
+
+for client in revive multilingual; do
+    rm -rf "$SRV"; cp -a "$T/profile-$client" "$SRV"
+    sed -i 's/^Suite: .*/Suite: stable/' "$SRV/Release"
+    bash "$AC" --profile "$client" sign "$SRV" "$A" >/dev/null || need "wrong-suite signing failed"
+    lists="$T/lists-$client-wrong-suite"; mkdir -p "$lists/partial"
+    opts=(-o Dir::Etc::sourcelist="$T/profile.sources" -o Dir::Etc::sourceparts="$T/apt-empty"
+          -o Dir::Etc::preferences="$T/prefs-$client" -o Dir::Etc::preferencesparts="$T/apt-empty"
+          -o Dir::State::status="$T/apt-status" -o Dir::State::lists="$lists" -o APT::Sandbox::User=root)
+    apt-get "${opts[@]}" update > "$T/log/apt-$client-wrong-suite" 2>&1 || need "wrong-suite apt update failed"
+    candidate=$(apt-cache "${opts[@]}" policy auros-desktop | sed -n 's/^ *Candidate: //p')
+    [ "$candidate" = '(none)' ] && ok "$client apt refuses same label with wrong suite" || bad "$client apt refuses same label with wrong suite"
+done
+
 # Only AurOS's source: Ubuntu's are put aside, so this is offline, fast,
 # and nothing but our repository can be the reason for what happens.
 mkdir -p /etc/apt/sources.list.d
