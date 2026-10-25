@@ -307,7 +307,6 @@ jobs:
             || { echo "::error::signed provenance has an invalid base tag"; exit 2; }
           mkdir -p delivery/base delivery/publish
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > delivery/base/release.json
-          gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha > delivery/base/release-source.txt
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
             --pattern pieces.txt --pattern image.sha256 --pattern image.bytes \
             --dir delivery/base
@@ -321,7 +320,6 @@ jobs:
             --image-bytes delivery/base/image.bytes \
             --repository "$GITHUB_REPOSITORY" \
             --source-sha "$GITHUB_SHA" \
-            --release-source-sha "$(tr -d ' \r\n' < delivery/base/release-source.txt)" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --signed-sha256 "$EXPECTED_SIGNED_SHA" \
             --request-id "$REQUEST_ID" \
@@ -341,15 +339,12 @@ jobs:
             fi
           fi
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > delivery/exe-release.json
-          gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha \
-            > delivery/exe-release-source.txt
           mkdir delivery/exe-readback
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern "$INSTALLER_NAME" --dir delivery/exe-readback
           python3 tools/customize/delivery.py make-manifest \
             --plan delivery/publish/delivery-plan.json \
             --release delivery/exe-release.json \
-            --release-source-sha "$(tr -d ' \r\n' < delivery/exe-release-source.txt)" \
             --readback-installer "delivery/exe-readback/$INSTALLER_NAME" \
             --output "delivery/publish/${INSTALLER_NAME%.exe}.json"
 
@@ -367,8 +362,6 @@ jobs:
             fi
           fi
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > delivery/final-release.json
-          gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha \
-            > delivery/final-release-source.txt
           mkdir delivery/final-readback
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern "$INSTALLER_NAME" --pattern "$MANIFEST_NAME" \
@@ -376,7 +369,6 @@ jobs:
           url=$(python3 tools/customize/delivery.py verify-ready \
             --plan delivery/publish/delivery-plan.json \
             --release delivery/final-release.json \
-            --release-source-sha "$(tr -d ' \r\n' < delivery/final-release-source.txt)" \
             --expected-manifest "delivery/publish/$MANIFEST_NAME" \
             --readback-manifest "delivery/final-readback/$MANIFEST_NAME" \
             --expected-installer "delivery/publish/$INSTALLER_NAME" \
