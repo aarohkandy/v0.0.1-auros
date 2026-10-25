@@ -27,6 +27,7 @@ param(
   [switch]$BoundedDiagnosticSelftest,
   [string]$AccessibilityRequestBase64 = '',
   [int]$AccessibilityChildBlockMs = 0,
+  [switch]$AccessibilityChildEvidence,
   [switch]$AccessibilityIsolationSelftest
 )
 
@@ -94,11 +95,22 @@ function Invoke-BoundedDiagnostic([string]$script, [int]$timeoutMs) {
       $partial = $read.text
       $truncated = [bool]$read.truncated
     } catch { $outputRead = $false }
+    $errorOutput = ''
+    $errorTruncated = $false
+    $errorRead = $true
+    try {
+      $errorResult = Read-DiagnosticOutput $stderr 8192
+      $errorOutput = $errorResult.text
+      $errorTruncated = [bool]$errorResult.truncated
+    } catch { $errorRead = $false }
     return @{
       status = $status
       output = $partial
       output_read = $outputRead
       output_truncated = $truncated
+      error_output = $errorOutput
+      error_output_read = $errorRead
+      error_output_truncated = $errorTruncated
       exit_code = $(if ($verifiedExited) { [int]$process.ExitCode } else { $null })
     }
   } finally {
@@ -466,7 +478,7 @@ function Parse-AccessibilityChildOutput($diagnostic) {
 }
 
 function Invoke-IsolatedAccessibility([hashtable]$request, [int]$timeoutMs = 20000,
-                                      [int]$testBlockMs = 0) {
+                                      [int]$testBlockMs = 0, [bool]$testEvidence = $false) {
   if (-not $PSCommandPath -or -not (Test-Path -LiteralPath $PSCommandPath -PathType Leaf)) {
     return [pscustomobject]@{ ok = $false; status = 'helper-path-unavailable'; error = 'accessibility helper path is unavailable' }
   }
@@ -477,15 +489,22 @@ function Invoke-IsolatedAccessibility([hashtable]$request, [int]$timeoutMs = 200
   }
   $request64 = [Convert]::ToBase64String($requestBytes)
   $quotedPath = $PSCommandPath.Replace("'", "''")
-  $script = "& '$quotedPath' -AccessibilityRequestBase64 '$request64' -AccessibilityChildBlockMs $testBlockMs"
+  $evidenceArg = if ($testEvidence) { ' -AccessibilityChildEvidence' } else { '' }
+  $script = "& '$quotedPath' -AccessibilityRequestBase64 '$request64' -AccessibilityChildBlockMs $testBlockMs$evidenceArg"
   $diagnostic = Invoke-BoundedDiagnostic $script $timeoutMs
   try { return Parse-AccessibilityChildOutput $diagnostic }
   catch {
     $reason = [string]$_
     return [pscustomobject]@{
       ok = $false; status = $reason; error = "isolated accessibility request failed: $reason"
+      exit_code = $diagnostic.exit_code
       test_ready = [bool]($testBlockMs -gt 0 -and $diagnostic.output_read -and
         -not $diagnostic.output_truncated -and $diagnostic.output -ceq 'accessibility-child-ready')
+      test_error = $(if ($testEvidence) {
+        if (-not $diagnostic.error_output_read) { 'stderr-unreadable' }
+        elseif ($diagnostic.error_output_truncated) { 'stderr-truncated' }
+        else { [string]$diagnostic.error_output }
+      } else { '' })
     }
   }
 }
@@ -504,6 +523,7 @@ if ($AccessibilityRequestBase64) {
     if ($requestObject -isnot [pscustomobject]) { throw 'accessibility request must be one object' }
     $request = @{}
     foreach ($property in $requestObject.PSObject.Properties) { $request[$property.Name] = $property.Value }
+    if ($AccessibilityChildEvidence) { [Console]::Error.WriteLine('accessibility-phase=request-decoded') }
     if ($AccessibilityChildBlockMs -lt 0 -or $AccessibilityChildBlockMs -gt 30000) {
       throw 'accessibility child block is outside 0..30000 ms'
     }
@@ -513,7 +533,11 @@ if ($AccessibilityRequestBase64) {
       Start-Sleep -Milliseconds $AccessibilityChildBlockMs
     }
     $child = AccessibilityChildResult $request
+    if ($AccessibilityChildEvidence) { [Console]::Error.WriteLine('accessibility-phase=result-created') }
   } catch {
+    if ($AccessibilityChildEvidence) {
+      [Console]::Error.WriteLine("accessibility-phase=caught category=$($_.CategoryInfo.Category) id=$($_.FullyQualifiedErrorId)")
+    }
     $child = @{ ok = $false; status = 'request-error'; error = [string]$_ }
   }
   $output = $child | ConvertTo-Json -Depth 8 -Compress
@@ -521,6 +545,7 @@ if ($AccessibilityRequestBase64) {
     $output = @{ ok = $false; status = 'response-too-large'; error = 'accessibility response exceeds 60000 bytes' } |
       ConvertTo-Json -Compress
   }
+  if ($AccessibilityChildEvidence) { [Console]::Error.WriteLine('accessibility-phase=writing-result') }
   [Console]::Out.WriteLine($output)
   exit 0
 }
@@ -540,13 +565,13 @@ if ($AccessibilityIsolationSelftest) {
   catch { if ([string]$_ -cnotmatch 'child-output-truncated') { throw } }
 
   $request = @{ op = 'elements'; match = '^AurBridgeWizard$'; types = @('Button','RadioButton','CheckBox','Pane'); max = 80 }
-  $timed = Invoke-IsolatedAccessibility $request 5000 30000
+  $timed = Invoke-IsolatedAccessibility $request 5000 30000 $true
   if ($timed.ok -or $timed.status -cnotmatch 'child-timeout' -or -not $timed.test_ready) {
     throw "blocked accessibility child did not time out exactly: $($timed.status)"
   }
-  $recovered = Invoke-IsolatedAccessibility $request 20000
+  $recovered = Invoke-IsolatedAccessibility $request 20000 0 $true
   if (-not $recovered.ok -or $recovered.status -cne 'ok') {
-    throw "accessibility did not recover after timeout: $($recovered.status)"
+    throw "accessibility did not recover after timeout: $($recovered.status), exit=$($recovered.exit_code); $($recovered.test_error)"
   }
   $exact = @($recovered.elements | Where-Object {
     $_.pid -eq $MsaaProbePid -and [int64]$_.hwnd -eq $MsaaProbeHwnd -and
