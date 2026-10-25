@@ -32,8 +32,9 @@ REQUEST_ID = "123e4567-e89b-42d3-a456-426614174000"
 
 
 class Fixture:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, authority: str = AUTHORITY) -> None:
         self.root = root
+        self.authority = authority
         self.signed = root / "AurOS-Setup.exe"
         self.signed.write_bytes(b"MZ signed personalized installer")
         self.signed_sha = hashlib.sha256(self.signed.read_bytes()).hexdigest()
@@ -63,7 +64,7 @@ class Fixture:
             "public_release": False,
             "download_ready": False,
             "repository": REPOSITORY,
-            "authority": {"head_sha": AUTHORITY},
+            "authority": {"head_sha": authority},
             "base_build": {
                 "run_id": BASE_RUN_ID,
                 "head_sha": SOURCE,
@@ -93,7 +94,7 @@ class Fixture:
         )
         self.signing = root / "signing-provenance.txt"
         values = {
-            "source_commit": AUTHORITY,
+            "source_commit": authority,
             "build_run": str(RUN_ID),
             "unsigned_wizard_sha256": "7" * 64,
             "signed_wizard_sha256": "8" * 64,
@@ -172,8 +173,7 @@ class Fixture:
             image_sha_path=self.image_sha_path,
             image_bytes_path=self.image_bytes_path,
             repository=REPOSITORY,
-            source_sha=AUTHORITY,
-            release_source_sha=SOURCE,
+            source_sha=self.authority,
             workflow_run_id=RUN_ID,
             signed_sha256=self.signed_sha,
             request_id=REQUEST_ID,
@@ -220,16 +220,63 @@ class DeliveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
             plan, output = fixture.prepare()
-            installer_name = f"AurOS-Custom-{RECIPE_HEX}.exe"
+            installer_name = f"AurOS-Custom-{AUTHORITY}-{RECIPE_HEX}.exe"
             self.assertEqual(plan["installer"]["name"], installer_name)
             self.assertEqual(plan["request_id"], REQUEST_ID)
             self.assertEqual((output / installer_name).read_bytes(), fixture.signed.read_bytes())
             self.assertEqual(plan["state"], "verified-signed-awaiting-publication")
 
+    def test_authority_advance_cannot_collide_for_same_base_and_recipe(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            first_root = root / "first"
+            second_root = root / "second"
+            first_root.mkdir()
+            second_root.mkdir()
+            first, _ = Fixture(first_root, "a" * 40).prepare()
+            second, _ = Fixture(second_root, "d" * 40).prepare()
+            self.assertNotEqual(first["installer"]["name"], second["installer"]["name"])
+            self.assertNotEqual(first["manifest_name"], second["manifest_name"])
+            self.assertEqual(first["base"], second["base"])
+            self.assertEqual(first["recipe"], second["recipe"])
+
+    def test_release_tag_target_is_not_identity_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            output = Path(name) / "publish"
+            plan = prepare(
+                provenance_path=fixture.provenance,
+                signing_path=fixture.signing,
+                installer=fixture.signed,
+                release_path=fixture.release,
+                pieces_path=fixture.pieces,
+                image_sha_path=fixture.image_sha_path,
+                image_bytes_path=fixture.image_bytes_path,
+                repository=REPOSITORY,
+                source_sha=AUTHORITY,
+                workflow_run_id=RUN_ID,
+                signed_sha256=fixture.signed_sha,
+                request_id=REQUEST_ID,
+                output_dir=output,
+            )
+            installer_name = plan["installer"]["name"]
+            fixture.add_asset(
+                installer_name, fixture.signed.stat().st_size, fixture.signed_sha
+            )
+            fixture.write_release()
+            readback = Path(name) / "readback.exe"
+            readback.write_bytes(fixture.signed.read_bytes())
+            manifest = make_manifest(
+                output / "delivery-plan.json",
+                fixture.release,
+                readback,
+                output / plan["manifest_name"],
+            )
+            self.assertEqual(manifest["base"]["head_sha"], SOURCE)
+
     def test_rejects_mismatched_source_run_and_signed_hash(self) -> None:
         cases = {
             "source": {"source_sha": "d" * 40},
-            "release source": {"release_source_sha": "d" * 40},
             "run": {"workflow_run_id": RUN_ID + 1},
             "signed output": {"signed_sha256": "d" * 64},
         }
@@ -246,7 +293,6 @@ class DeliveryTests(unittest.TestCase):
                     "image_bytes_path": fixture.image_bytes_path,
                     "repository": REPOSITORY,
                     "source_sha": AUTHORITY,
-                    "release_source_sha": SOURCE,
                     "workflow_run_id": RUN_ID,
                     "signed_sha256": fixture.signed_sha,
                     "request_id": REQUEST_ID,
@@ -319,7 +365,6 @@ class DeliveryTests(unittest.TestCase):
                     make_manifest(
                         plan_path,
                         fixture.release,
-                        SOURCE,
                         fixture.signed,
                         output / plan["manifest_name"],
                     )
@@ -333,9 +378,17 @@ class DeliveryTests(unittest.TestCase):
                         "browser_download_url"
                     ] = "https://attacker.invalid/pieces.txt"
                 elif mutation == "exe conflict":
-                    fixture.add_asset(f"AurOS-Custom-{RECIPE_HEX}.exe", 1, "d" * 64)
+                    fixture.add_asset(
+                        f"AurOS-Custom-{AUTHORITY}-{RECIPE_HEX}.exe",
+                        1,
+                        "d" * 64,
+                    )
                 else:
-                    fixture.add_asset(f"AurOS-Custom-{RECIPE_HEX}.json", 1, "d" * 64)
+                    fixture.add_asset(
+                        f"AurOS-Custom-{AUTHORITY}-{RECIPE_HEX}.json",
+                        1,
+                        "d" * 64,
+                    )
                 fixture.write_release()
                 with self.assertRaises(DeliveryError):
                     fixture.prepare()
@@ -363,7 +416,6 @@ class DeliveryTests(unittest.TestCase):
                 make_manifest(
                     output / "delivery-plan.json",
                     fixture.release,
-                    SOURCE,
                     fixture.signed,
                     output / plan["manifest_name"],
                 )
@@ -382,7 +434,6 @@ class DeliveryTests(unittest.TestCase):
             manifest = make_manifest(
                 output / "delivery-plan.json",
                 fixture.release,
-                SOURCE,
                 readback_installer,
                 manifest_path,
             )
@@ -401,7 +452,6 @@ class DeliveryTests(unittest.TestCase):
             url = verify_ready(
                 output / "delivery-plan.json",
                 fixture.release,
-                SOURCE,
                 manifest_path,
                 readback_manifest,
                 output / installer_name,
@@ -424,7 +474,6 @@ class DeliveryTests(unittest.TestCase):
             make_manifest(
                 second_output / "delivery-plan.json",
                 fixture.release,
-                SOURCE,
                 fixture.signed,
                 manifest_path,
             )
@@ -438,8 +487,8 @@ class DeliveryTests(unittest.TestCase):
             self.assertTrue(third["existing_installer"])
             self.assertTrue(third["existing_manifest"])
 
-    def test_final_gate_rejects_changed_source_release_or_any_base_asset(self) -> None:
-        mutations = ["source", "release id"] + [
+    def test_final_gate_rejects_changed_release_or_any_base_asset(self) -> None:
+        mutations = ["release id"] + [
             f"asset {index}" for index in range(6)
         ]
         for mutation in mutations:
@@ -451,10 +500,7 @@ class DeliveryTests(unittest.TestCase):
                     installer_name, fixture.signed.stat().st_size, fixture.signed_sha
                 )
                 fixture.write_release()
-                source = SOURCE
-                if mutation == "source":
-                    source = "d" * 40
-                elif mutation == "release id":
+                if mutation == "release id":
                     fixture.release_value["id"] += 1
                 else:
                     index = int(mutation.split()[1])
@@ -464,7 +510,6 @@ class DeliveryTests(unittest.TestCase):
                     make_manifest(
                         output / "delivery-plan.json",
                         fixture.release,
-                        source,
                         fixture.signed,
                         output / plan["manifest_name"],
                     )
@@ -486,7 +531,6 @@ class DeliveryTests(unittest.TestCase):
                 make_manifest(
                     output / "delivery-plan.json",
                     fixture.release,
-                    SOURCE,
                     readback_installer,
                     manifest_path,
                 )
@@ -506,7 +550,6 @@ class DeliveryTests(unittest.TestCase):
                     verify_ready(
                         output / "delivery-plan.json",
                         fixture.release,
-                        SOURCE,
                         manifest_path,
                         readback_manifest,
                         output / installer_name,
