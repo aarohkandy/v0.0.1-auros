@@ -425,6 +425,8 @@ def test_grub_capture():
           "Windows return: the exact shipped verbose menu is GRUB")
     check(e2e.Flow.boot_screen_kind("GNU GRUB rescue error: AurOS verbose boot Windows") == "unknown",
           "Windows return: GRUB rescue or error text cannot impersonate the shipped menu")
+    check(e2e.Flow.boot_screen_kind(captured_desktop + " BitLocker recovery") == "unknown",
+          "Windows return: recovery text also disqualifies an otherwise exact desktop")
     check(e2e.Flow.boot_screen_kind("BitLocker recovery Enter the recovery key") == "unknown",
           "Windows return: a recovery screen is never eligible for a retry")
 
@@ -436,7 +438,8 @@ def test_grub_capture():
     class Machine:
         def __init__(self, clock):
             self.clock, self.starts, self.start_finished = clock, 0, []
-            self.stops, self.keys = [], []
+            self.keys, self.powerdowns = [], []
+            self.qmp = type("QMP", (), {"cmd": lambda qmp, op: self.powerdowns.append(op)})()
         def start(self):
             self.starts += 1
             self.clock.now += 0.2
@@ -448,7 +451,7 @@ def test_grub_capture():
         def screendump(self):
             return captured_desktop if self.starts == 1 else grub_text
         def save(self, img, label): pass
-        def stop(self, how, timeout): self.stops.append((how, timeout))
+        def wait_exit(self, timeout): return True
 
     clock, old_time, old_ocr = Clock(), e2e.time, e2e.vision.ocr
     machine = Machine(clock)
@@ -461,7 +464,7 @@ def test_grub_capture():
         since = flow.start_at_grub_menu(attempts=2, pulse_seconds=0.8, scan_seconds=1)
     finally:
         e2e.time, e2e.vision.ocr = old_time, old_ocr
-    check(machine.starts == 2 and machine.stops == [("powerdown", 300)] and
+    check(machine.starts == 2 and machine.powerdowns == ["system_powerdown"] and
           since == machine.start_finished[-1],
           "Windows return: an exact AurOS desktop gets one graceful retry with a fresh timestamp")
     check(machine.keys and all(key == "up" for key, _, _ in machine.keys),
@@ -474,7 +477,7 @@ def test_grub_capture():
 
     clock = Clock()
     unsafe = Machine(clock)
-    unsafe.screendump = lambda: "BitLocker recovery Enter the recovery key"
+    unsafe.screendump = lambda: captured_desktop + " BitLocker recovery Enter the recovery key"
     flow.m = unsafe
     try:
         e2e.time = clock
@@ -485,8 +488,25 @@ def test_grub_capture():
         refused = True
     finally:
         e2e.time, e2e.vision.ocr = old_time, old_ocr
-    check(refused and unsafe.starts == 1 and not unsafe.stops,
+    check(refused and unsafe.starts == 1 and not unsafe.powerdowns,
           "Windows return: an unknown or recovery screen fails without power cycling")
+
+    clock = Clock()
+    stuck = Machine(clock)
+    stuck.screendump = lambda: captured_desktop
+    stuck.wait_exit = lambda timeout: False
+    flow.m = stuck
+    try:
+        e2e.time = clock
+        e2e.vision.ocr = lambda screen: [{"text": word} for word in screen.split()]
+        flow.start_at_grub_menu(attempts=2, pulse_seconds=0.4, scan_seconds=0.5)
+        refused = False
+    except e2e.Failure:
+        refused = True
+    finally:
+        e2e.time, e2e.vision.ocr = old_time, old_ocr
+    check(refused and stuck.starts == 1 and stuck.powerdowns == ["system_powerdown"],
+          "Windows return: an unconfirmed ACPI shutdown forbids retry and forced quit/kill")
 
 
 def test_timings_summary():
