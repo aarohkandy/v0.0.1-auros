@@ -258,7 +258,7 @@ jobs:
             # 120 (a 5400 rpm laptop drive, QD1) made Windows take 18 minutes to
             # boot (run 39972010732); 300 is a 7200 rpm drive with queueing.
             hdd)       golden=base throttle=${HDD_THROTTLE:-bps=104857600,iops=300} ;;
-            bitlocker) ;;
+            bitlocker) golden=base ;;
             smalldisk) disk=72 ;;
             pending)   ;;
             win10)     winver=10 ;;
@@ -290,8 +290,9 @@ jobs:
 
       # Only the base Windows is cached: a golden is several GB and the
       # repository's caches share 10 GB, so one per variant would push out
-      # every other workflow's (and each other). The rest install Windows
-      # afresh, about 15 minutes.
+      # every other workflow's (and each other). HDD and BitLocker start
+      # from that clean base; variants that need a different disk or guest
+      # state install Windows afresh, about 15 minutes.
       - name: the installed Windows, from the cache
         id: golden
         if: env.E2E_GOLDEN == 'base'
