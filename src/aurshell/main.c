@@ -850,6 +850,8 @@ int main(int argc, char **argv)
         build_wallpaper(&wall, png_w, png_h, &t);
         c.screen_w = png_w;
         c.screen_h = png_h - foot_height(&c);
+        c.output_w = png_w;
+        c.output_h = png_h;
         if (L->init) L->init(&c);
 
         /* Offscreen, but with real applications in it. Everything below
@@ -1104,6 +1106,8 @@ int main(int argc, char **argv)
 
     c.screen_w = disp->width;
     c.screen_h = disp->height - foot_height(&c);
+    c.output_w = disp->width;
+    c.output_h = disp->height;
 
     /* A Wayland socket has to live somewhere a client can find it, and
      * so does the sound server's, and the portal's, and everything
@@ -1759,6 +1763,10 @@ int main(int argc, char **argv)
              * The display copy is made only after every layer and the cursor,
              * so client buffers stay untouched and tint cannot accumulate. */
             surface *frame = nightlight_frame(&c, fb);
+            if (!frame) {
+                fprintf(stderr, "aurshell: night light disabled — cannot resize its frame\n");
+                frame = fb;
+            }
             /* Cleared before the archetype paints, so the rectangles it
              * records are this frame's and input routes against what is
              * on screen rather than what was. */
@@ -1842,7 +1850,12 @@ int main(int argc, char **argv)
             /* Display colour adjustment belongs after screenshots and after
              * the cursor. It changes only the KMS copy, never the canonical
              * frame or a client's retained surface. */
-            nightlight_present(&c, fb);
+            if (nightlight_present(&c, fb) < 0) {
+                fprintf(stderr, "aurshell: night light disabled — cannot present its frame\n");
+                nightlight_fini(&c);
+                dirty = 1;
+                continue;
+            }
             /* A failed flip is not cosmetic: it means we no longer own
              * the display. Say so once rather than painting into the
              * void for the rest of the session. */

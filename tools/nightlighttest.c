@@ -54,11 +54,17 @@ static void production_wiring(const char *path)
     const char *osd = wishover ? strstr(wishover, "osd_paint(&c, frame, &f);") : NULL;
     const char *shot = osd ? strstr(osd, "png_write_rgb(path, frame->px, frame->w, frame->h)") : NULL;
     const char *cursor = shot ? strstr(shot, "session_paint_cursor(&c, frame);") : NULL;
-    const char *present = cursor ? strstr(cursor, "nightlight_present(&c, fb);") : NULL;
+    const char *present = cursor ? strstr(cursor, "if (nightlight_present(&c, fb) < 0)") : NULL;
     const char *flip = present ? strstr(present, "kms_flip(disp)") : NULL;
     ok("production paints an untinted frame, screenshots it, then warms every displayed layer",
        begin && body && paint && full && popups && notify && net && settings && bt &&
        wish && welcome && guard && foot && wishover && osd && shot && cursor && present && flip);
+    ok("production handles frame allocation and presentation failures explicitly",
+       begin && strstr(begin, "if (!frame)") &&
+       strstr(begin, "if (nightlight_present(&c, fb) < 0)"));
+    ok("production records the immutable physical output dimensions",
+       strstr(s, "c.output_w = disp->width;") &&
+       strstr(s, "c.output_h = disp->height;"));
     ok("a shell action schedules the frame that presents its new state",
        strstr(s, "if (wish_step(&c)) dirty = 1;") != NULL);
     free(s);
@@ -96,29 +102,62 @@ int main(int argc, char **argv)
        !memcmp(dst.px + dst.stride, src.px + src.stride, 3 * sizeof(uint32_t)));
     ok("an in-place pass is refused so tint cannot accumulate",
        nightlight_blit(&src, &src, 1) < 0);
+    uint32_t overlap_mem[12], overlap_before[12];
+    for (int i = 0; i < 12; i++) overlap_mem[i] = 0x10203040u + (uint32_t)i;
+    memcpy(overlap_before, overlap_mem, sizeof overlap_mem);
+    surface overlap_src = { overlap_mem, 3, 2, 4 };
+    surface overlap_dst = { overlap_mem + 1, 3, 2, 4 };
+    ok("partly overlapping surfaces are refused before any write",
+       nightlight_blit(&overlap_dst, &overlap_src, 1) < 0 &&
+       !memcmp(overlap_mem, overlap_before, sizeof overlap_mem));
+    ok("reverse partly overlapping surfaces are also refused",
+       nightlight_blit(&overlap_src, &overlap_dst, 1) < 0 &&
+       !memcmp(overlap_mem, overlap_before, sizeof overlap_mem));
     surface short_row = src;
     short_row.stride = 2;
     ok("an impossible stride is refused without writing",
        nightlight_blit(&dst, &short_row, 1) < 0);
+    surface wrapped = { (uint32_t *)(uintptr_t)(UINTPTR_MAX - 1u), 3, 2, 3 };
+    ok("a pixel address whose byte range wraps is refused before access",
+       nightlight_blit(&dst, &wrapped, 1) < 0);
 
     shell_ctx c;
     memset(&c, 0, sizeof c);
-    c.screen_w = 3;
-    c.screen_h = 2;
-    ok("turning on allocates a separate canonical frame",
+    /* Model a wish handled between a layout-changing action and the main
+     * loop's next geometry recompute: layout dimensions are stale, while the
+     * physical output dimensions remain authoritative. */
+    c.screen_w = 2;
+    c.screen_h = 1;
+    c.output_w = 3;
+    c.output_h = 2;
+    ok("turning on uses immutable output dimensions despite stale layout state",
        nightlight_set(&c, 1) && c.night_frame && c.night_light &&
+       c.night_frame->w == 3 && c.night_frame->h == 2 &&
        nightlight_frame(&c, &dst) == c.night_frame && c.night_frame->px != dst.px);
     if (c.night_frame) {
         surface_fill(c.night_frame, 0xFF204060u);
-        nightlight_present(&c, &dst);
+        ok("a valid staged frame presents successfully",
+           nightlight_present(&c, &dst) == 0);
         uint32_t once = dst.px[0];
         surface_fill(c.night_frame, 0xFF204060u);
-        nightlight_present(&c, &dst);
+        int again = nightlight_present(&c, &dst);
         ok("two presents derive from untinted pixels instead of accumulating",
-           once == 0xFF203B45u && dst.px[0] == once && c.night_frame->px[0] == 0xFF204060u);
+           again == 0 && once == 0xFF203B45u && dst.px[0] == once &&
+           c.night_frame->px[0] == 0xFF204060u);
         ok("turning off copies the canonical frame without colour changes",
            nightlight_set(&c, 0) && !c.night_light &&
-           (nightlight_present(&c, &dst), dst.px[0] == 0xFF204060u));
+           nightlight_present(&c, &dst) == 0 && dst.px[0] == 0xFF204060u);
+
+        uint32_t resized_mem[8] = {0};
+        surface resized = { resized_mem, 4, 2, 4 };
+        surface *old_frame = c.night_frame;
+        ok("a display size change atomically replaces the canonical frame",
+           nightlight_set(&c, 1) && nightlight_frame(&c, &resized) == c.night_frame &&
+           c.night_frame != old_frame && c.night_frame->w == 4 && c.night_frame->h == 2 &&
+           c.night_light == 1);
+        surface bad_display = { resized_mem, 0, 2, 4 };
+        ok("an impossible resize explicitly disables night light",
+           nightlight_frame(&c, &bad_display) == NULL && !c.night_frame && !c.night_light);
     }
     nightlight_fini(&c);
     ok("the staging frame is released", !c.night_frame && !c.night_light);
