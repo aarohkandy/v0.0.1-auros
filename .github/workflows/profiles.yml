@@ -95,7 +95,7 @@ jobs:
         run: python3 tools/profiletest-gate.py selftest
       - name: FCITX trace parser rejects malformed evidence
         run: |
-          python3 -m unittest -v tools/test_fcitx_wayland_trace.py \
+          python3 -m unittest -v tools/test_profiletest_revive.py tools/test_fcitx_wayland_trace.py \
             tools/test_fcitx_connection_probe.py tools/test_fcitx_password_server.py \
             tools/test_fcitx_trace_writers.py tools/test_fcitx_profile_snapshot.py \
             tools/test_fcitx_marker_visibility.py
@@ -262,7 +262,7 @@ jobs:
             sudo DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y -q --no-install-recommends \
                 debootstrap squashfs-tools zstd gdisk dosfstools mtools e2fsprogs \
                 sbsigntool gcc libc6-dev make python3 cpio file binutils pigz \
-                qemu-system-x86 qemu-utils ovmf && break
+                qemu-system-x86 qemu-utils ovmf tesseract-ocr && break
             [ "$i" = 3 ] && exit 1; sleep 15
           done
           while [ ! -f /tmp/freed ]; do sleep 2; done
@@ -338,12 +338,18 @@ jobs:
           } | tee "ev/$P-size.txt"
 
       - name: boot it to its desktop under KVM
+        env:
+          PROFILE_SUBJECT: ${{ github.event.head_commit.message }}
         run: |
           fcitx_production=0
+          revive_functional=0
+          if [ "$P" = revive ] && [[ "${PROFILE_SUBJECT%%$'\n'*}" == *"[revive-functional]"* ]]; then
+            revive_functional=1
+          fi
           if [ "${{ needs.gate.outputs.ibus_functional }}" = true ] && [ "$P" = multilingual ]; then
             fcitx_production=1
           fi
-          sudo env PATH="$PATH" PROFILETEST_FCITX_PRODUCTION="$fcitx_production" \
+          sudo env PATH="$PATH" PROFILETEST_REVIVE_FUNCTIONAL="$revive_functional" PROFILETEST_FCITX_PRODUCTION="$fcitx_production" \
             sh tools/profiletest.sh boot "$P" "$PWD/ev" 2>&1 | tee "ev/$P-boot.txt"
 
       # Upload the small immutable manifest before its mutable release pieces.
@@ -366,13 +372,16 @@ jobs:
           if [ -d ev/ibus ]; then
             tar -C ev -czf "ev/$P-ibus-evidence.tar.gz" ibus
           fi
+          if [ -d ev/revive ]; then
+            tar -C ev -czf ev/revive-runtime-evidence.tar.gz revive
+          fi
           ls -la ev
           files=()
           for f in "ev/$P.png" "ev/$P-report.txt" "ev/$P-image.txt" "ev/$P-serial.txt" \
                    "ev/$P-boot.txt" "ev/$P-build.log.gz" "ev/$P-size.txt"; do
             [ -f "$f" ] && files+=("$f")
           done
-          for f in ev/ibus-round*-candidate.png "ev/$P-ibus-evidence.tar.gz"; do
+          for f in ev/ibus-round*-candidate.png "ev/$P-ibus-evidence.tar.gz" ev/revive-runtime-evidence.tar.gz; do
             [ -f "$f" ] && files+=("$f")
           done
           [ "${#files[@]}" -gt 0 ] && gh release upload "$TAG" "${files[@]}" --clobber
