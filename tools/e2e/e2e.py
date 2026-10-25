@@ -135,7 +135,7 @@ PRIMARY_RGB = ((0x7D, 0xD3, 0xC0), (0x0B, 0x5D, 0x4F), (0x5D, 0xBB, 0x9E))
 WARN_RX = (r"(isn.t commonly downloaded|can.t be downloaded securely|might be dangerous|"
            r"download blocked|was blocked|unsafe|couldn.t verify)")
 BUSY_DIAGNOSTIC_INTERVAL = 5 * 60
-BUSY_DIAGNOSTIC_TIMEOUT = 45
+BUSY_DIAGNOSTIC_TIMEOUT = 55
 BUSY_DIAGNOSTIC_GUEST_TIMEOUT_MS = 40 * 1000
 
 
@@ -263,6 +263,24 @@ def busy_wizard_summary(out):
     if errors:
         fields.append("errors=" + ",".join(errors[:4]))
     return " | ".join(fields)[:1200]
+
+
+def busy_blockstats_summary(rows):
+    """Only activity counters for the exact VM disk; never node filenames."""
+    disks = [row for row in (rows or []) if row.get("device") == "disk0"]
+    if len(disks) != 1 or not isinstance(disks[0].get("stats"), dict):
+        raise ValueError(f"query-blockstats returned {len(disks)} exact disk0 records")
+    stats = disks[0]["stats"]
+    names = ("rd_operations", "rd_bytes", "wr_operations", "wr_bytes", "flush_operations")
+    values = {}
+    for name in names:
+        value = stats.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"query-blockstats has no nonnegative {name}")
+        values[name] = value
+    return ("disk0 read_requests={rd_operations} read_bytes={rd_bytes} "
+            "write_requests={wr_operations} write_bytes={wr_bytes} "
+            "flush_requests={flush_operations}").format(**values)
 
 
 def bitlocker_verdict(variant, vol, prot):
@@ -760,9 +778,24 @@ class Flow:
             self.log("busy wizard diagnostic: evidence write failed: " + type(exc).__name__)
             return False
 
+    def busy_blockstats_diagnostic(self):
+        """Snapshot host-observed disk activity even if the guest helper is stuck."""
+        try:
+            summary = busy_blockstats_summary(self.m.qmp.cmd("query-blockstats"))
+        except Exception as exc:
+            self.log("busy wizard disk diagnostic failed: " + type(exc).__name__)
+            return False
+        self.log("busy wizard disk diagnostic: " + summary)
+        return True
+
     def busy_wizard_diagnostic(self, win):
         """Record a read-only snapshot without interrupting an installation."""
         pid = (win or {}).get("pid")
+        if not win or pid is None:
+            out = "not run: exact wizard identity unavailable from the guest window helper"
+            self.record_busy_wizard_diagnostic(pid, out)
+            self.log("busy wizard diagnostic: " + out)
+            return False
         try:
             script = busy_wizard_script(pid)
         except (TypeError, ValueError) as exc:
@@ -784,27 +817,39 @@ class Flow:
         if result is None:
             out = f"failed: helper timed out after {BUSY_DIAGNOSTIC_TIMEOUT} seconds"
         elif not result.get("ok"):
-            # The script emits safe section-specific exception types itself.
-            # Only our fixed timeout is safe to preserve; another helper-level
-            # error can echo its input, so keep that one generic.
-            error = result.get("error") or ""
-            if re.fullmatch(r"diagnostic child exceeded \d+ ms and was stopped", error):
-                out = "failed: " + error
-            else:
-                out = "failed: guest helper rejected the diagnostic command"
+            # A helper-level error can echo its input, so don't persist it.
+            out = "failed: guest helper rejected the diagnostic command"
         else:
             out = result.get("output") or "failed: guest helper returned no output"
+            diagnostic_status = result.get("diagnostic_status", "ok")
+            status_words = {
+                "timeout": ("child exceeded %d ms and its exit was verified" %
+                            BUSY_DIAGNOSTIC_GUEST_TIMEOUT_MS),
+                "termination-failed": "child termination could not be verified within 5000 ms",
+                "exit": "child exited nonzero",
+            }
+            if diagnostic_status != "ok":
+                safe_status = status_words.get(diagnostic_status, "unknown helper status")
+                out = out.rstrip() + "\nAURBUSY STATUS " + safe_status + "\n"
+            if result.get("diagnostic_output_read", True) is not True:
+                out = out.rstrip() + "\nAURBUSY STATUS partial output could not be read\n"
         wrote = self.record_busy_wizard_diagnostic(pid, out)
         complete = out.startswith("AURBUSY v1") and out.rstrip().endswith("AURBUSY done")
         ok = complete and "AURBUSY ERROR" not in out
-        if ok:
+        diagnostic_status = (result or {}).get("diagnostic_status", "ok")
+        output_read = (result or {}).get("diagnostic_output_read", True) is True
+        if ok and diagnostic_status == "ok" and output_read:
             status = "recorded | " + busy_wizard_summary(out)
+        elif not output_read:
+            status = "partial output read failed | " + busy_wizard_summary(out)
+        elif diagnostic_status in ("timeout", "termination-failed", "exit"):
+            status = diagnostic_status + " with partial evidence | " + busy_wizard_summary(out)
         elif complete:
             status = "recorded with explicit section errors | " + busy_wizard_summary(out)
         else:
             status = "incomplete output (full result is in guest-diagnostics.log)"
         self.log("busy wizard diagnostic: " + status)
-        return ok and wrote
+        return ok and diagnostic_status == "ok" and output_read and wrote
 
     def click_el(self, e, why):
         x, y, w, h = e["rect"]
@@ -1475,6 +1520,7 @@ class Flow:
                 if busy_diagnostic_due(idle_since, last_busy_diagnostic, now):
                     self.log("wizard waiting: " + text[-300:])
                     if installing and busy:
+                        self.busy_blockstats_diagnostic()
                         self.busy_wizard_diagnostic(win)
                     last_busy_diagnostic = now
                 time.sleep(15 if busy else 5)

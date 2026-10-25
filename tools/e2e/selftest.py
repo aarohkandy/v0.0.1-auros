@@ -1263,6 +1263,17 @@ def test_busy_wizard_diagnostic():
           "free:300" in summary and "pieces=shown:4 bytes:123 newest:now" in summary and
           "do-not-copy-this-name" not in summary,
           "busy diagnostic: the live tail summarizes state without piece names")
+    blockstats = e2e.busy_blockstats_summary([
+        {"device": "disk0", "stats": {"rd_operations": 12, "rd_bytes": 34,
+                                        "wr_operations": 56, "wr_bytes": 78,
+                                        "flush_operations": 9},
+         "node-name": "secret-node", "inserted": {"file": "/secret/disk.qcow2"}},
+        {"device": "unrelated", "stats": {}}
+    ])
+    check(blockstats == ("disk0 read_requests=12 read_bytes=34 write_requests=56 "
+                         "write_bytes=78 flush_requests=9") and
+          "secret" not in blockstats and "/" not in blockstats,
+          "busy diagnostic: QMP evidence is exact disk counters without names or paths")
 
     class FakeHub:
         def __init__(self, result=None, error=None):
@@ -1283,6 +1294,22 @@ def test_busy_wizard_diagnostic():
         f.a = type("Args", (), {"out": out})()
         f.hub, f.rec = hub, FakeRec()
         return f
+
+    class FakeQmp:
+        def __init__(self, result=None, error=None): self.result, self.error = result, error
+        def cmd(self, name):
+            if self.error: raise self.error
+            return self.result
+
+    with tempfile.TemporaryDirectory() as t:
+        f = flow(t, FakeHub())
+        f.m = type("Machine", (), {"qmp": FakeQmp([
+            {"device": "disk0", "stats": {"rd_operations": 1, "rd_bytes": 2,
+                                            "wr_operations": 3, "wr_bytes": 4,
+                                            "flush_operations": 5}}
+        ])})()
+        check(f.busy_blockstats_diagnostic() and "read_requests=1" in f.rec.lines[-1],
+              "busy diagnostic: host disk counters work without the guest helper")
 
     with tempfile.TemporaryDirectory() as t:
         hub = FakeHub({"ok": True, "output": "AURBUSY v1\nAURBUSY done\n"})
@@ -1309,14 +1336,40 @@ def test_busy_wizard_diagnostic():
         check("rejected" in evidence and secret not in evidence,
               "busy diagnostic: helper errors are explicit without leaking raw input")
 
+    partial = ('AURBUSY v1\n'
+               '{"kind":"process","role":"wizard","name":"AurOS-Setup.exe",'
+               '"pid":4242,"responding":true,"cpu_seconds":2.5,'
+               '"resize_partition":false}\n')
     with tempfile.TemporaryDirectory() as t:
-        hub = FakeHub({"ok": False,
-                       "error": "diagnostic child exceeded 40000 ms and was stopped"})
+        hub = FakeHub({"ok": True, "diagnostic_status": "timeout", "output": partial})
         f = flow(t, hub)
         check(not f.busy_wizard_diagnostic({"pid": 4242}) and
-              "exceeded 40000 ms and was stopped" in
-              open(os.path.join(t, "guest-diagnostics.log")).read(),
-              "busy diagnostic: the killed guest timeout is named explicitly")
+              "timeout with partial evidence" in f.rec.lines[-1] and
+              "wizard:AurOS-Setup.exe:4242" in f.rec.lines[-1],
+              "busy diagnostic: timeout keeps and live-summarizes partial process evidence")
+        evidence = open(os.path.join(t, "guest-diagnostics.log")).read()
+        check("AURBUSY v1" in evidence and "exit was verified" in evidence and
+              "was stopped" not in evidence,
+              "busy diagnostic: timeout claims only a verified exit")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "diagnostic_status": "termination-failed",
+                       "output": partial})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": 4242}) and
+              "termination-failed with partial evidence" in f.rec.lines[-1],
+              "busy diagnostic: failed termination is explicit and retains partial evidence")
+        evidence = open(os.path.join(t, "guest-diagnostics.log")).read()
+        check("termination could not be verified within 5000 ms" in evidence,
+              "busy diagnostic: failed termination never claims the child stopped")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "diagnostic_status": "timeout",
+                       "diagnostic_output_read": False, "output": ""})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": 4242}) and
+              "partial output read failed" in f.rec.lines[-1],
+              "busy diagnostic: an unreadable partial file is explicit and nonfatal")
 
     with tempfile.TemporaryDirectory() as t:
         hub = FakeHub({"ok": True, "output":
@@ -1332,7 +1385,7 @@ def test_busy_wizard_diagnostic():
         check(not f.busy_wizard_diagnostic({"pid": 4242}),
               "busy diagnostic: timeout is diagnostic, not fatal")
         evidence = open(os.path.join(t, "guest-diagnostics.log")).read()
-        check("timed out after 45 seconds" in evidence,
+        check("timed out after 55 seconds" in evidence,
               "busy diagnostic: timeout evidence names the exact bound")
 
     with tempfile.TemporaryDirectory() as t:
@@ -1340,6 +1393,13 @@ def test_busy_wizard_diagnostic():
         f = flow(t, hub)
         check(not f.busy_wizard_diagnostic({"pid": "4242"}) and not hub.calls,
               "busy diagnostic: a non-integer PID is refused before guest execution")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "output": "should not run"})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic(None) and not hub.calls and
+              "exact wizard identity unavailable" in f.rec.lines[-1],
+              "busy diagnostic: missing wizard identity is explicit without a guest command")
 
     with tempfile.TemporaryDirectory() as t:
         hub = FakeHub({"ok": True, "output": "AURBUSY v1\nAURBUSY done\n"})
@@ -1352,8 +1412,12 @@ def test_busy_wizard_diagnostic():
     helper = open(os.path.join(HERE, "guest", "helper.ps1")).read()
     bounded = re.search(r"function Invoke-BoundedDiagnostic.*?^}", helper, re.S | re.M)
     check(bounded is not None and "WaitForExit($timeoutMs)" in bounded.group(0) and
-          "Stop-Process" in bounded.group(0) and "WaitForExit()" not in bounded.group(0),
-          "busy diagnostic: the guest child is forcibly stopped without an unbounded wait")
+          "Stop-Process" in bounded.group(0) and "WaitForExit()" not in bounded.group(0) and
+          "Read-DiagnosticOutput" in bounded.group(0),
+          "busy diagnostic: timeout keeps bounded partial output without an unbounded wait")
+    check("[switch]$BoundedDiagnosticSelftest" in helper and
+          "bounded diagnostic native probe: PASS" in helper,
+          "busy diagnostic: Windows has a native success and timeout probe")
 
 
 test_expect()
