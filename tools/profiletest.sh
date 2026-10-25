@@ -2292,6 +2292,12 @@ fi
 [ "$MODE" = boot ] || { sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 P="${1:-}"; [ -n "$P" ] || { echo "usage: $0 boot <profile> [evidence-dir]"; exit 2; }
 EV="${2:-$ROOT/out/profiletest-$P}"
+REVIVE_FUNCTIONAL=${PROFILETEST_REVIVE_FUNCTIONAL:-0}
+case "$REVIVE_FUNCTIONAL:$P" in 0:*|1:revive) ;; *) echo "Revive probe requires PROFILETEST_REVIVE_FUNCTIONAL=1 and profile revive"; exit 2;; esac
+if [ "$REVIVE_FUNCTIONAL" = 1 ]; then
+    command -v tesseract >/dev/null || { echo "Revive probe needs host tesseract"; exit 2; }
+    [ "${PROFILETEST_MEM:-2048}" = 2048 ] || { echo "Revive probe requires 2048 MiB"; exit 2; }
+fi
 IBUS_FUNCTIONAL=${PROFILETEST_IBUS_FUNCTIONAL:-0}
 case "$IBUS_FUNCTIONAL" in 0|1) ;; *) echo "PROFILETEST_IBUS_FUNCTIONAL must be 0 or 1"; exit 2 ;; esac
 IBUS_X11_PROBE=${PROFILETEST_IBUS_X11_PROBE:-0}
@@ -2336,6 +2342,7 @@ fi
 INPUT_FUNCTIONAL=$IBUS_FUNCTIONAL
 [ "$FCITX_CLIENT_PROBE" = 1 ] && INPUT_FUNCTIONAL=1
 [ "$FCITX_PRODUCTION" = 1 ] && INPUT_FUNCTIONAL=1
+[ "$REVIVE_FUNCTIONAL" = 1 ] && INPUT_FUNCTIONAL=1
 for t in qemu-system-x86_64 sgdisk python3 losetup mount; do
     command -v "$t" >/dev/null 2>&1 || { echo "need $t"; exit 2; }
 done
@@ -2540,6 +2547,9 @@ if grep -Eq '^profile[[:space:]]*=[[:space:]]*multilingual$' /etc/auros/policy.c
         say "fcitx_pinyin=$fcitx_pinyin"
     fi
 fi
+if [ -x /usr/lib/auros-profiletest/revive-functional.sh ]; then
+    exec /usr/lib/auros-profiletest/revive-functional.sh
+fi
 if [ -x /usr/lib/auros-profiletest/fcitx-functional.sh ]; then
     exec /usr/lib/auros-profiletest/fcitx-functional.sh
 fi
@@ -2550,6 +2560,10 @@ journalctl -b -p err --no-pager -o cat 2>/dev/null | tail -20 | sed 's/^/PROFILE
 say "done"
 EOS
 chmod 755 "$M/usr/lib/auros-profiletest/probe.sh"
+if [ "$REVIVE_FUNCTIONAL" = 1 ]; then
+    install -m 755 "$ROOT/tools/profiletest-revive-guest.sh" "$M/usr/lib/auros-profiletest/revive-functional.sh"
+    install -m 755 "$ROOT/tools/profiletest-revive.py" "$M/usr/lib/auros-profiletest/profiletest-revive.py"
+fi
 if [ "$FCITX_CLIENT_PROBE" = 1 ] || [ "$FCITX_PRODUCTION" = 1 ]; then
     install -m 755 "$ROOT/tools/profiletest-fcitx-guest.sh" \
         "$M/usr/lib/auros-profiletest/fcitx-functional.sh"
@@ -2714,7 +2728,9 @@ click_at() { # screen x y
 click_center() { click_at 640 380; }
 ibus_host_action() {
     [ "$INPUT_FUNCTIONAL" = 1 ] || return 0
-    if [ "$FCITX_CLIENT_PROBE" = 1 ] || [ "$FCITX_PRODUCTION" = 1 ]; then
+    if [ "$REVIVE_FUNCTIONAL" = 1 ]; then
+        action_marker=revive-do
+    elif [ "$FCITX_CLIENT_PROBE" = 1 ] || [ "$FCITX_PRODUCTION" = 1 ]; then
         action_marker=fcitx-do
     else
         action_marker=ibus-do
@@ -2732,6 +2748,30 @@ ibus_host_action() {
     fi
     action_ok=0
     case "$verb" in
+      revive-type)
+        [ "$REVIVE_FUNCTIONAL" = 1 ] || return 1
+        case "${1:-}" in browser) letters="r e v i v e p r o o f";; letter) letters="r e v i v e l e t t e r";; *) letters=; action_ok=1;; esac
+        for key in $letters; do
+            send_qcode "$key" >/dev/null 2>&1 || { action_ok=1; break; }
+            sleep .12
+        done
+        ;;
+      revive-visible)
+        [ "$REVIVE_FUNCTIONAL" = 1 ] || return 1
+        case "${1:-}" in browser-ready|letter-ready|firefox|abiword) ;; *) return 1;; esac
+        mkdir -p "$EV/revive"
+        seen=0; tries=0
+        while [ "$tries" -lt 30 ]; do
+            shot "revive/$1" || break
+            timeout 5 tesseract "$EV/revive/$1.png" "$EV/revive/$1.ocr" --psm 11 2>/dev/null || break
+            if python3 "$ROOT/tools/profiletest-revive.py" visible "$EV/revive/$1.ocr.txt"; then
+                python3 "$ROOT/tools/profiletest-revive.py" bind "$EV/revive/$1.ocr.txt" || break
+                seen=1; break
+            fi
+            sleep 1; tries=$((tries+1))
+        done
+        [ "$seen" = 1 ] || action_ok=1
+        ;;
       type-pinyin)
         # The multilingual profile uses French AZERTY. Physical Q is logical
         # A, so these real key presses type the Pinyin spelling "nihao".
@@ -2888,6 +2928,18 @@ elif [ "$IBUS_FUNCTIONAL" = 1 ]; then
     mkdir -p "$EV/ibus"
     cp -a "$T/m/var/lib/auros-profiletest/ibus/." "$EV/ibus/" 2>/dev/null || true
     umount "$T/m"; losetup -d "$LP"; LP=""
+fi
+
+if [ "$REVIVE_FUNCTIONAL" = 1 ]; then
+    sync
+    LP=$(losetup --find --show -o $((RS * 512)) --sizelimit $(((RE - RS + 1) * 512)) "$DISK")
+    mount "$LP" "$T/m" || { echo "cannot remount Revive evidence"; exit 1; }
+    mkdir -p "$EV/revive"
+    cp -a "$T/m/var/lib/auros-profiletest/revive/." "$EV/revive/" || { echo "missing Revive evidence"; exit 1; }
+    umount "$T/m"; losetup -d "$LP"; LP=""
+    python3 "$ROOT/tools/profiletest-revive.py" reduce "$EV/revive" \
+        && ok "Revive browser and document real keyboard use under 2 GiB" \
+        || bad "Revive browser and document real keyboard use under 2 GiB" "see revive evidence; Gnumeric is not tested"
 fi
 
 echo
