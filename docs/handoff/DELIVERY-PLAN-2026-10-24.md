@@ -666,3 +666,33 @@ For the next candidate, one main push headed `[release] [e2e:none]` runs the
 prerelease build and four exact-installer Windows journeys. Allow its automatic
 exact-build hardening workflow to start after completion rather than manually
 duplicating it. No `[latest]` promotion is authorized by the present evidence.
+
+## Next-candidate preparation (25 October, 00:20 UTC)
+
+The byte-exact `e0d0aadc` image (raw SHA
+`8aa04990bd0e32918fd6cfc77b5c9b5797076ee175d2ce04c88c348294a0aa84`)
+launched VLC through Software Install → recognized Open in 11 seconds in both
+a verbose diagnostic and an untouched-image repetition. Both reached a real
+VLC privacy dialog and main player; the old harness incorrectly rejected the
+wide dialog's Continue placement. `4591d00e` integrates the reviewed correction,
+using mapped window identity plus nearby client controls and dialog attribution
+before one default action. Store-preview-only negative cases remain refused.
+Integrated E2E selftests pass, including the new image-integrity regression.
+A final live test of the corrected dialog action is running. The original Open
+no-op remains an unresolved intermittent issue: shared GNOME Software launch
+cancellation during post-install reload is source/log-supported, not yet a
+controlled reproduction. No distro package fork or extra settle delay was added.
+
+`5401e288` / `bc3815d0` verify compressed pieces and reconstructed raw hashes in
+the standalone AurOS diagnostic lane. The real workflow step passes a valid
+fixture and rejects corrupt pieces, wrong raw digest, and missing metadata.
+The four Windows release journeys already verify their installer bytes.
+
+Multilingual `40145440411` stopped at the second Mousepad visibility check;
+it does not prove whether a surface failed to map or the visual detector missed
+it. `40145726339` attempt 1 never reached Fcitx: Mozilla's APT index did not
+match signed Release size/hash during publication. Attempt 2 retries that
+infrastructure failure on unchanged main `3b2fd5ea`. That source includes the
+fresh focus-marker boundary and closed 15-key password evidence schema.
+Early unavailable exits also need an evidence sync before the host stops QEMU;
+a focused repair is being prepared without changing package verification.
