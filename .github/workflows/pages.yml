@@ -31,6 +31,8 @@ on:
       - 'website/**'
       - 'tools/site/**'
       - 'tools/repo.sh'
+      - 'cloud/wrangler.toml'
+      - 'cloud/test/build-preflight.mjs'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -43,6 +45,9 @@ permissions:
 # Get AurOS button goes to get.<domain>. Empty until he sets the variable.
 env:
   AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
+  # Existing Worker address contract (monitor.yml and docs/CLOUD.md). The
+  # checked-in website stays disabled; only the staged Pages artifact uses it.
+  AUROS_WISHES_URL: ${{ vars.AUROS_WISHES_URL || format('https://auros-wishes.{0}.workers.dev', github.repository_owner) }}
 
 concurrency:
   group: pages
@@ -73,6 +78,18 @@ jobs:
           fi
       - name: The site, with this repository written in
         run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"
+      - name: Custom-build site configuration tests
+        run: python3 -I tools/site/test_build_service_config.py
+      - name: Custom-build site configuration is coherent
+        run: |
+          site=$(sh tools/repo.sh site)
+          python3 -I tools/site/build_service_config.py \
+            --wrangler cloud/wrangler.toml --site-url "$site" \
+            --api-origin "$AUROS_WISHES_URL" --output "$RUNNER_TEMP/build-service.json"
+          if node -e 'process.exit(require(process.argv[1]).enabled === true ? 0 : 1)' "$RUNNER_TEMP/build-service.json"; then
+            origin=$(SITE="$site" node -e 'process.stdout.write(new URL(process.env.SITE).origin)')
+            node cloud/test/build-preflight.mjs "$AUROS_WISHES_URL" on "$origin"
+          fi
       - name: Check the front door
         env:
           PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
@@ -114,6 +131,16 @@ jobs:
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
       - name: The site, with this repository written in
         run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"
+      - name: Configure the optional custom-build service in the staged site
+        run: |
+          site=$(sh tools/repo.sh site)
+          python3 -I tools/site/build_service_config.py \
+            --wrangler cloud/wrangler.toml --site-url "$site" \
+            --api-origin "$AUROS_WISHES_URL" --output "$RUNNER_TEMP/site/build-service.json"
+          if node -e 'process.exit(require(process.argv[1]).enabled === true ? 0 : 1)' "$RUNNER_TEMP/site/build-service.json"; then
+            origin=$(SITE="$site" node -e 'process.stdout.write(new URL(process.env.SITE).origin)')
+            node cloud/test/build-preflight.mjs "$AUROS_WISHES_URL" on "$origin"
+          fi
       # release.json (release.yml's site job: the sha256 of the AurOS-Setup.exe made the full
       # release; tools/ops/monitor.py checks the download against it) is not in website/. A deploy
       # from here would erase it, so the live one is carried over, when it is the right shape.

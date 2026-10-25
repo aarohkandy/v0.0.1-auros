@@ -129,6 +129,8 @@ jobs:
           enabled=$(grep -Ec '^BUILD_REQUESTS_ENABLED[[:space:]]*=[[:space:]]*"1"([[:space:]]*#.*)?$' wrangler.toml || true)
           if [ "$disabled" = 1 ] && [ "$enabled" = 0 ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
+            origin=$(sed -nE 's/^BUILD_ALLOWED_ORIGIN[[:space:]]*=[[:space:]]*"([^"[:space:]]*)"([[:space:]]*#.*)?$/\1/p' wrangler.toml)
+            echo "origin=$origin" >> "$GITHUB_OUTPUT"
             echo "Custom delivery remains disabled; any supplied credentials will be staged."
             exit 0
           fi
@@ -204,6 +206,7 @@ jobs:
               exit 1
             fi
           done
+          echo "origin=$origin" >> "$GITHUB_OUTPUT"
           echo "enabled=true" >> "$GITHUB_OUTPUT"
 
       - name: Refresh custom delivery secrets before enabled deploy
@@ -269,6 +272,20 @@ jobs:
           if grep -Eq '^DAILY_BUDGET_USD[[:space:]]*=[[:space:]]*"0(\.0*)?"' wrangler.toml; then m=off; else m=on; fi
           echo "expect=$m" >> "$GITHUB_OUTPUT"
           echo "### Wishes is $m (DAILY_BUDGET_USD in cloud/wrangler.toml)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Custom delivery live preflight
+        if: steps.have.outputs.ok == 'true'
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+          CUSTOM_DELIVERY_ENABLED: ${{ steps.custom.outputs.enabled }}
+          BUILD_ALLOWED_ORIGIN: ${{ steps.custom.outputs.origin }}
+        run: |
+          mode=off
+          [ "$CUSTOM_DELIVERY_ENABLED" != true ] || mode=on
+          # Enabled readiness uses OPTIONS only: no quota, job, dispatch or
+          # signing work is created. Disabled mode proves both POST doors stop
+          # before their bodies or Durable Object state are touched.
+          timeout 45 node test/build-preflight.mjs "$URL" "$mode" "$BUILD_ALLOWED_ORIGIN"
 
       - name: Live end to end, with its logs captured
         if: steps.have.outputs.ok == 'true'
