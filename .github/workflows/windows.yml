@@ -667,6 +667,13 @@ jobs:
             }
             $hwnd = [int64]$primary[0].hwnd
 
+            # A provider that blocks cannot wedge the serial guest helper.
+            # Kill the isolated child at its deadline, then immediately read
+            # the same exact live process/HWND through a fresh child.
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper `
+              -AccessibilityIsolationSelftest -MsaaProbePid $p.Id -MsaaProbeHwnd $hwnd
+            if ($LASTEXITCODE -ne 0) { throw 'the accessibility isolation recovery probe failed' }
+
             # A neighbouring or invented HWND must never inherit this process's
             # authority.
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper `
