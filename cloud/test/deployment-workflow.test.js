@@ -25,6 +25,7 @@ const configScript = stepScript("Custom delivery configuration");
 const refreshScript = stepScript("Refresh custom delivery secrets before enabled deploy");
 const deployScript = stepScript("Deploy");
 const workerSecretsScript = stepScript("Worker secrets (stdin only, never echoed)");
+const buildPreflightScript = stepScript("Custom delivery live preflight");
 const secretNames = ["BUILD_NETWORK_SECRET", "BUILD_CHALLENGE_SECRET", "GITHUB_APP_PRIVATE_KEY"];
 const variableNames = ["GITHUB_APP_ID", "GITHUB_APP_INSTALLATION_ID"];
 const allNames = [...secretNames, ...variableNames];
@@ -235,4 +236,10 @@ test("workflow wires every setting through its bounded channel", () => {
   assert.match(workflow, /set \+x/);
   const config = readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");
   assert.match(config, /^BUILD_REQUESTS_ENABLED\s*=\s*"0"$/m);
+});
+
+test("deployment runs custom-build preflight independently in the configured mode", () => {
+  assert.match(buildPreflightScript, /node test\/build-preflight\.mjs "\$URL" "\$mode" "\$BUILD_ALLOWED_ORIGIN"/);
+  assert.match(buildPreflightScript, /\[ "\$CUSTOM_DELIVERY_ENABLED" != true \] \|\| mode=on/);
+  assert.ok(workflow.indexOf("- name: Custom delivery live preflight") < workflow.indexOf("- name: Live end to end, with its logs captured"));
 });
