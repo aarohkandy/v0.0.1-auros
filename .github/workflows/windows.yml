@@ -668,7 +668,9 @@ jobs:
             # authority.
             & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper `
               -MsaaProbePid $p.Id -MsaaProbeHwnd ($hwnd + 1) 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) { throw 'the MSAA probe accepted the wrong HWND' }
+            $wrongHwndExit = $LASTEXITCODE
+            if ($wrongHwndExit -eq 0) { throw 'the MSAA probe accepted the wrong HWND' }
+            $global:LASTEXITCODE = 0
           } finally {
             if (-not $probe.HasExited) { $probe.Kill() }
             if ($p -and -not $p.HasExited) { $p.Kill() }
@@ -679,7 +681,11 @@ jobs:
           # helper checks both values against the live top-level window.
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper `
             -MsaaProbePid $p.Id -MsaaProbeHwnd $hwnd 2>$null | Out-Null
-          if ($LASTEXITCODE -eq 0) { throw 'the MSAA probe accepted a stale process/HWND pair' }
+          $staleExit = $LASTEXITCODE
+          if ($staleExit -eq 0) { throw 'the MSAA probe accepted a stale process/HWND pair' }
+          $global:LASTEXITCODE = 0
+          'PASS: the exact cross-process MSAA controls were readable; wrong and stale HWNDs were refused'
+          exit 0
       # THE WEBSITE'S INSTALLER PICTURES (D-P0-2): the three on the front page (website/assets/shots/
       # setup-check, setup-look, setup-ready) were made by Wine. These are every page drawn by real
       # Windows with this build's own letters; D takes them from the artifact once the wizard is
