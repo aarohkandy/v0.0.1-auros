@@ -202,15 +202,39 @@ test("receipt is returned once, hashed at rest, and required for status", async 
   assert.equal((await status.json()).download_ready, false);
 });
 
-test("network and global quotas are atomic while same-recipe discovery is serialized", async () => {
-  const f = fixture({ env: { BUILD_REQUESTS_PER_NET: "2", BUILD_REQUESTS_GLOBAL: "2" } });
+test("concurrent build admissions increment the global quota atomically", async () => {
+  const now = Date.parse("2026-10-24T12:00:00Z");
+  const storage = new MapStorage();
+  const jobs = new BuildJobLedger(storage, { perNet: 1, global: 1 });
   const [a, b] = await Promise.all([
-    submit(f, RECIPE, { ip: "203.0.113.1" }),
-    submit(f, RECIPE, { ip: "203.0.113.2" }),
+    jobs.admit({ netHash: "network-a", challengeId: "challenge-a", challengeExpires: now + 60_000, now }),
+    jobs.admit({ netHash: "network-b", challengeId: "challenge-b", challengeExpires: now + 60_000, now }),
   ]);
-  assert.deepEqual([a.res.status, b.res.status].sort(), [201, 503]);
+  assert.deepEqual([a.status, b.status].sort(), [200, 429]);
+  assert.equal([a.reason, b.reason].includes("global_quota"), true);
+  const globalEntries = [...storage.m.entries()].filter(([key]) => key.startsWith("build-global:"));
+  assert.equal(globalEntries.length, 1);
+  assert.equal(globalEntries[0][1].v, 1);
+});
+
+test("overlapping same-recipe discovery is serialized and each admission counts toward quota", async () => {
+  let entered;
+  let release;
+  const started = new Promise((resolve) => { entered = resolve; });
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const f = fixture({ env: { BUILD_REQUESTS_PER_NET: "2", BUILD_REQUESTS_GLOBAL: "2" }, github: {
+    discoverVerifiedDelivery: async () => { f.calls.discover++; entered(); await blocked; return { state: "absent" }; },
+  } });
+  const firstPromise = submit(f, RECIPE, { ip: "203.0.113.1" });
+  await started;
+  const competing = await submit(f, RECIPE, { ip: "203.0.113.2" });
+  release();
+  const first = await firstPromise;
+  assert.equal(first.res.status, 201);
+  assert.equal(competing.res.status, 503);
+  assert.equal(competing.body.error, "existing_delivery_busy");
+  assert.equal(f.calls.discover, 1, "the competing request cannot make a contradictory discovery");
   assert.equal(f.calls.dispatch, 1, "one exact build is dispatched under a race");
-  assert.equal([a.body.error, b.body.error].includes("existing_delivery_busy"), true);
   const different = await submit(f, { ...RECIPE, preferences: { look: "rail" } }, { ip: "198.51.100.1" });
   assert.equal(different.res.status, 429);
   assert.equal(different.body.error, "global_quota");
@@ -246,27 +270,18 @@ test("occupied discovery remains quota-gated and never dispatches", async () => 
   }
 });
 
-test("same-recipe discovery is serialized before an absent result may dispatch", async () => {
-  let entered;
-  let release;
-  const started = new Promise((resolve) => { entered = resolve; });
-  const blocked = new Promise((resolve) => { release = resolve; });
-  const f = fixture({ env: { BUILD_REQUESTS_PER_NET: "2", BUILD_REQUESTS_GLOBAL: "3" }, github: {
-    discoverVerifiedDelivery: async () => { f.calls.discover++; entered(); await blocked; return { state: "absent" }; },
-  } });
-  const firstPromise = submit(f, RECIPE, { ip: "203.0.113.1" });
-  await started;
-  const competing = await submit(f, RECIPE, { ip: "198.51.100.1" });
-  assert.equal(competing.res.status, 503);
-  assert.equal(competing.body.error, "existing_delivery_busy");
-  assert.equal(f.calls.discover, 1, "the competing request cannot make a contradictory discovery");
-  assert.equal(f.calls.dispatch, 0);
-  release();
-  const first = await firstPromise;
+test("a later same-recipe submission reuses the reserved canonical request", async () => {
+  const f = fixture({ env: { BUILD_REQUESTS_PER_NET: "2", BUILD_REQUESTS_GLOBAL: "3" } });
+  const first = await submit(f, RECIPE, { ip: "203.0.113.1" });
   assert.equal(first.res.status, 201);
   assert.equal(f.calls.dispatch, 1);
   const retry = await submit(f, RECIPE, { ip: "192.0.2.1" });
   assert.equal(retry.res.status, 200);
+  assert.equal(retry.body.id, first.body.id);
+  assert.equal(retry.body.status_url, first.body.status_url);
+  assert.notEqual(retry.body.token, first.body.token, "each owner receives a fresh receipt for the same job");
+  assert.equal((await f.call(first.body.status_url, { token: first.body.token })).status, 200);
+  assert.equal((await f.call(retry.body.status_url, { token: retry.body.token })).status, 200);
   assert.equal(f.calls.discover, 1);
   assert.equal(f.calls.dispatch, 1, "retry reuses the reserved canonical request");
 });
