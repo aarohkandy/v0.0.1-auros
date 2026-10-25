@@ -608,8 +608,8 @@ jobs:
           $probeOut = "$d\probe.json"
           $probeErr = "$d\probe.err"
           $probeReady = "$d\probe.ready"
-          # The selftest is deliberately short-lived. Start the exact-class
-          # watcher first; its returned PID must be the process launched below.
+          # Start the exact-class watcher first; its returned PID must be the
+          # read-only accessibility harness process launched below.
           $probe = Start-Process -FilePath powershell.exe -ArgumentList @(
             '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $helper,
             '-MsaaProbeWaitSec', '30', '-MsaaProbePrimaryEnabled', '1',
@@ -618,9 +618,10 @@ jobs:
           $p = $null
           try {
             # Unlike the in-process screen-reader check above, this uses the
-            # production guest helper from a separate process. A clean runner
-            # exposes Next; a runner that preflight validly blocks exposes one
-            # of the stop page's exact primary labels instead.
+            # production guest helper from a separate process. The explicit
+            # harness switch keeps the exact window/provider stable after its
+            # read-only preflight until this step kills it. A clean runner
+            # exposes Next; a runner that validly blocks exposes a stop label.
             $readyBy = [DateTime]::UtcNow.AddSeconds(20)
             while (-not (Test-Path $probeReady) -and [DateTime]::UtcNow -lt $readyBy) {
               if ($probe.HasExited) {
@@ -629,7 +630,7 @@ jobs:
               Start-Sleep -Milliseconds 50
             }
             if (-not (Test-Path $probeReady)) { throw 'the MSAA watcher was not ready in 20 seconds' }
-            $p = Start-Process -FilePath $exe -ArgumentList '--selftest', $d.FullName -PassThru
+            $p = Start-Process -FilePath $exe -ArgumentList '--accessibility-test' -PassThru
             if (-not $probe.WaitForExit(45000)) {
               $probe.Kill()
               throw 'the cross-process MSAA probe did not finish'
