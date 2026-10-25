@@ -599,9 +599,10 @@ test("operator delivery discovery treats its manifest only as a locator and veri
     { id: 11, name: installerName, size: 1234, digest: `sha256:${"e".repeat(64)}`, url: "https://api.github.com/repos/owner/repo/releases/assets/11", browser_download_url: installerUrl },
   ];
   const manifest = {
-    schema: "org.auros.custom-delivery", version: 1, state: "download-ready", request_id: id,
-    source: { repository: "owner/repo", commit: AUTHORITY_SHA, workflow_run_id: 44 },
-    base: { build_run_id: 91, tag, image_sha256: "d".repeat(64), image_bytes: 123456 },
+    schema: "org.auros.custom-delivery", version: 2, state: "download-ready", request_id: id,
+    repository: "owner/repo",
+    authority: { head_sha: AUTHORITY_SHA, workflow_run_id: 44 },
+    base: { head_sha: SHA, build_run_id: 91, tag, image_sha256: "d".repeat(64), image_bytes: 123456 },
     recipe: { id: recipeId, base: "desktop", resolved_preferences: { look: "dock", theme: "moss" } },
     installer: { name: installerName, url: installerUrl, sha256: "e".repeat(64), bytes: 1234 },
   };
@@ -627,8 +628,9 @@ test("operator delivery discovery treats its manifest only as a locator and veri
 
   for (const forged of [
     { ...manifest, request_id: null },
-    { ...manifest, request_id: "22345678-1234-4123-8123-123456789abc", source: { ...manifest.source, workflow_run_id: { value: 44 } } },
+    { ...manifest, request_id: "22345678-1234-4123-8123-123456789abc", authority: { ...manifest.authority, workflow_run_id: { value: 44 } } },
     { ...manifest, installer: { ...manifest.installer, url: "https://evil.example/payload.exe" } },
+    { schema: "org.auros.custom-delivery", version: 1, state: "download-ready", request_id: id, source: { repository: "owner/repo", commit: AUTHORITY_SHA, workflow_run_id: 44 }, base: { build_run_id: 91, tag, image_sha256: "d".repeat(64), image_bytes: 123456 }, recipe: manifest.recipe, installer: manifest.installer },
   ]) {
     const text = JSON.stringify(forged);
     f = apiFixture({ run, jobs, artifacts, releases: [release], assetBody: text, evidenceZip: storedZip(manifestName, text) });
@@ -713,9 +715,10 @@ test("GitHub status binds correlation/source and requires package, sign, publish
     { id: 11, name: installerName, size: 1234, digest: `sha256:${"e".repeat(64)}`, url: "https://api.github.com/repos/owner/repo/releases/assets/11", browser_download_url: installerUrl },
   ];
   const manifest = {
-    schema: "org.auros.custom-delivery", version: 1, state: "download-ready", request_id: id,
-    source: { repository: "owner/repo", commit: AUTHORITY_SHA, workflow_run_id: 44 },
-    base: { build_run_id: 91, tag, image_sha256: "d".repeat(64), image_bytes: 123456 },
+    schema: "org.auros.custom-delivery", version: 2, state: "download-ready", request_id: id,
+    repository: "owner/repo",
+    authority: { head_sha: AUTHORITY_SHA, workflow_run_id: 44 },
+    base: { head_sha: SHA, build_run_id: 91, tag, image_sha256: "d".repeat(64), image_bytes: 123456 },
     recipe: { id: recipeId, base: "desktop", resolved_preferences: { look: "dock", theme: "moss" } },
     installer: { name: installerName, url: installerUrl, sha256: "e".repeat(64), bytes: 1234 },
   };
@@ -752,7 +755,7 @@ test("GitHub status binds correlation/source and requires package, sign, publish
   f = apiFixture({ run, jobs, artifacts, releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets }], assetBody: JSON.stringify({ ...manifest, request_id: "22345678-1234-4123-8123-123456789abc" }), evidenceZip });
   assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_manifest_invalid");
 
-  const spoofedNumberManifest = JSON.stringify({ ...manifest, source: { ...manifest.source, workflow_run_id: { __jsonNumber: "44", value: 44 } } });
+  const spoofedNumberManifest = JSON.stringify({ ...manifest, authority: { ...manifest.authority, workflow_run_id: { __jsonNumber: "44", value: 44 } } });
   f = apiFixture({ run, jobs, artifacts, releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets }], assetBody: spoofedNumberManifest, evidenceZip: storedZip(manifestName, spoofedNumberManifest) });
   assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_manifest_invalid");
 

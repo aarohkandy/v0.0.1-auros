@@ -178,10 +178,10 @@ function deliveryManifest(raw, expected) {
   let text;
   try { text = new TextDecoder("utf-8", { fatal: true }).decode(raw); } catch { throw new Error("delivery manifest encoding"); }
   const m = strictJson(text);
-  if (!exact(m, ["schema", "version", "state", "request_id", "source", "base", "recipe", "installer"], ["schema", "version", "state", "request_id", "source", "base", "recipe", "installer"])) throw new Error("delivery manifest fields");
-  if (m.schema !== "org.auros.custom-delivery" || m.version?.[JSON_NUMBER] !== "1" || m.state !== "download-ready" || m.request_id !== expected.requestId) throw new Error("delivery manifest identity");
-  if (!exact(m.source, ["repository", "commit", "workflow_run_id"], ["repository", "commit", "workflow_run_id"]) || m.source.repository !== expected.repository || m.source.commit !== expected.authoritySha || integer(m.source.workflow_run_id) !== expected.runId) throw new Error("delivery manifest source");
-  if (!exact(m.base, ["build_run_id", "tag", "image_sha256", "image_bytes"], ["build_run_id", "tag", "image_sha256", "image_bytes"]) || integer(m.base.build_run_id) !== expected.baseRunId || !TAG.test(m.base.tag) || !HASH.test(m.base.image_sha256) || integer(m.base.image_bytes) === null) throw new Error("delivery manifest base");
+  if (!exact(m, ["schema", "version", "state", "request_id", "repository", "authority", "base", "recipe", "installer"], ["schema", "version", "state", "request_id", "repository", "authority", "base", "recipe", "installer"])) throw new Error("delivery manifest fields");
+  if (m.schema !== "org.auros.custom-delivery" || m.version?.[JSON_NUMBER] !== "2" || m.state !== "download-ready" || m.request_id !== expected.requestId || m.repository !== expected.repository) throw new Error("delivery manifest identity");
+  if (!exact(m.authority, ["head_sha", "workflow_run_id"], ["head_sha", "workflow_run_id"]) || m.authority.head_sha !== expected.authoritySha || integer(m.authority.workflow_run_id) !== expected.runId) throw new Error("delivery manifest authority");
+  if (!exact(m.base, ["head_sha", "build_run_id", "tag", "image_sha256", "image_bytes"], ["head_sha", "build_run_id", "tag", "image_sha256", "image_bytes"]) || m.base.head_sha !== expected.baseSha || integer(m.base.build_run_id) !== expected.baseRunId || !TAG.test(m.base.tag) || !m.base.tag.endsWith(`-${expected.baseSha.slice(0, 7)}`) || !HASH.test(m.base.image_sha256) || integer(m.base.image_bytes) === null) throw new Error("delivery manifest base");
   if (!exact(m.recipe, ["id", "base", "resolved_preferences"], ["id", "base", "resolved_preferences"]) || m.recipe.id !== expected.recipeId || m.recipe.base !== "desktop") throw new Error("delivery manifest recipe");
   const prefs = m.recipe.resolved_preferences;
   if (!exact(prefs, ["look", "theme"], ["look", "theme"]) || prefs.look !== expected.resolved.look || prefs.theme !== expected.resolved.theme) throw new Error("delivery manifest preferences");
@@ -627,7 +627,7 @@ export class GitHubBuilds {
       return { state: "invalid", failure: "existing_delivery_locator_invalid" };
     }
     const requestId = locator?.request_id;
-    const runId = integer(locator?.source?.workflow_run_id);
+    const runId = integer(locator?.authority?.workflow_run_id);
     if (!JOB_ID.test(requestId || "") || runId === null) return { state: "invalid", failure: "existing_delivery_locator_invalid" };
     const verdict = await this.status({ requestId, authoritySha, baseSha, baseRunId, recipeId, resolved, expectedRunId: runId, expectedBaseTag: baseTag });
     if (verdict.state === "download-ready") return verdict;
@@ -711,7 +711,7 @@ export class GitHubBuilds {
         const zip = await readLimited(evidenceResponse, ZIP_LIMIT);
         if (!sameBytes(raw, storedZipFile(zip, manifestName))) throw new Error("mutable release manifest differs from immutable run evidence");
       }
-      const parsed = deliveryManifest(raw, { requestId, repository: this.repository, authoritySha, runId: run.id, baseRunId, recipeId, resolved, installerName, installerUrl: expectedUrl, installerBytes: installerAsset.size, manifestUrl: manifestAsset.browser_download_url });
+      const parsed = deliveryManifest(raw, { requestId, repository: this.repository, authoritySha, baseSha, runId: run.id, baseRunId, recipeId, resolved, installerName, installerUrl: expectedUrl, installerBytes: installerAsset.size, manifestUrl: manifestAsset.browser_download_url });
       if (release.tag_name !== parsed.baseTag) throw new Error("release tag mismatch");
       if (installerAsset.digest !== `sha256:${parsed.download.sha256}`) throw new Error("release installer digest mismatch");
       const download = parsed.download;
