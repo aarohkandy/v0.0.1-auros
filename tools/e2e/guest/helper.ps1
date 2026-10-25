@@ -63,6 +63,7 @@ function Invoke-BoundedDiagnostic([string]$script, [int]$timeoutMs) {
   $stderr = [IO.Path]::GetTempFileName()
   $process = $null
   $verifiedExited = $false
+  $exitCode = $null
   try {
     $preamble = '[Console]::OutputEncoding = [Text.Encoding]::UTF8' + "`n"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($preamble + $script))
@@ -70,6 +71,10 @@ function Invoke-BoundedDiagnostic([string]$script, [int]$timeoutMs) {
     $process = Start-Process -FilePath $exe -ArgumentList @(
       '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded
     ) -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+    # Pin the native process handle before either timed wait. Windows
+    # PowerShell's Process adapter can otherwise expose inconsistent exit
+    # state when ExitCode is first read immediately after a fast child exits.
+    [void]$process.Handle
     $status = 'ok'
     if (-not $process.WaitForExit($timeoutMs)) {
       try {
@@ -79,13 +84,27 @@ function Invoke-BoundedDiagnostic([string]$script, [int]$timeoutMs) {
       }
       if ($process.WaitForExit(5000) -and $process.HasExited) {
         $verifiedExited = $true
-        if ($status -ne 'termination-failed') { $status = 'timeout' }
+        $rawExitCode = $null
+        try { $process.Refresh(); $rawExitCode = $process.ExitCode }
+        catch { $status = 'exit-code-unavailable' }
+        if ($null -eq $rawExitCode) { $status = 'exit-code-unavailable' }
+        else {
+          $exitCode = [int]$rawExitCode
+          if ($status -ne 'termination-failed') { $status = 'timeout' }
+        }
       } else {
         $status = 'termination-failed'
       }
     } else {
       $verifiedExited = $true
-      if ($process.ExitCode -ne 0) { $status = 'exit' }
+      $rawExitCode = $null
+      try { $process.Refresh(); $rawExitCode = $process.ExitCode }
+      catch { $status = 'exit-code-unavailable' }
+      if ($null -eq $rawExitCode) { $status = 'exit-code-unavailable' }
+      else {
+        $exitCode = [int]$rawExitCode
+        if ($exitCode -ne 0) { $status = 'exit' }
+      }
     }
     $partial = ''
     $truncated = $false
@@ -111,7 +130,7 @@ function Invoke-BoundedDiagnostic([string]$script, [int]$timeoutMs) {
       error_output = $errorOutput
       error_output_read = $errorRead
       error_output_truncated = $errorTruncated
-      exit_code = $(if ($verifiedExited) { [int]$process.ExitCode } else { $null })
+      exit_code = $exitCode
     }
   } finally {
     if ($process -and -not $verifiedExited) {
@@ -123,23 +142,36 @@ function Invoke-BoundedDiagnostic([string]$script, [int]$timeoutMs) {
     if (-not $process -or $verifiedExited) {
       Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction SilentlyContinue
     }
+    if ($process) { $process.Dispose() }
   }
 }
 
 if ($BoundedDiagnosticSelftest) {
   $success = Invoke-BoundedDiagnostic "Write-Output 'bounded-success'" 5000
   if ($success.status -cne 'ok' -or -not $success.output_read -or
-      $success.output.Trim() -cne 'bounded-success') {
+      $success.exit_code -ne 0 -or $success.output.Trim() -cne 'bounded-success') {
     throw "bounded diagnostic success probe failed: $($success.status) '$($success.output)'"
   }
   $timeout = Invoke-BoundedDiagnostic "Write-Output 'partial-before-timeout'; [Console]::Out.Flush(); Start-Sleep 30" 5000
   if ($timeout.status -cne 'timeout' -or -not $timeout.output_read -or
-      $timeout.output_truncated -or $timeout.output -notmatch 'partial-before-timeout') {
+      $timeout.exit_code -eq $null -or $timeout.output_truncated -or
+      $timeout.output -notmatch 'partial-before-timeout') {
     throw "bounded diagnostic timeout probe failed: $($timeout.status) '$($timeout.output)'"
+  }
+  foreach ($n in 1..5) {
+    $quick = Invoke-BoundedDiagnostic "Write-Output 'quick-$n'" 5000
+    if ($quick.status -cne 'ok' -or $quick.exit_code -ne 0 -or
+        $quick.output.Trim() -cne "quick-$n") {
+      throw "bounded diagnostic quick-exit probe $n failed: $($quick.status), exit=$($quick.exit_code)"
+    }
+  }
+  $nonzero = Invoke-BoundedDiagnostic 'exit 7' 5000
+  if ($nonzero.status -cne 'exit' -or $nonzero.exit_code -ne 7) {
+    throw "bounded diagnostic nonzero probe failed: $($nonzero.status), exit=$($nonzero.exit_code)"
   }
   $large = Invoke-BoundedDiagnostic "[Console]::Out.Write(('x' * 70000)); [Console]::Out.Flush()" 10000
   if ($large.status -cne 'ok' -or -not $large.output_read -or
-      -not $large.output_truncated -or $large.output.Length -ne 65536) {
+      $large.exit_code -ne 0 -or -not $large.output_truncated -or $large.output.Length -ne 65536) {
     throw "bounded diagnostic truncation probe failed: $($large.status), truncated=$($large.output_truncated), length=$($large.output.Length)"
   }
   Write-Output 'bounded diagnostic native probe: PASS'
