@@ -24,7 +24,8 @@ class ReviveTest(unittest.TestCase):
             unit = f'auros-profiletest-revive-{app}.service'
             identity = dict(pid=100, start_ticks=123, uid=1000, exe=exe, unit=unit,
                             cgroup='/user.slice/user-1000.slice/' + unit)
-            apps[app] = dict(before=identity, after=copy.deepcopy(identity), stopped=True)
+            apps[app] = dict(before=identity, after=copy.deepcopy(identity), stopped=True,
+                             display={'DISPLAY': ':0', 'WAYLAND_DISPLAY': 'wayland-0', 'XDG_RUNTIME_DIR': '/run/user/1000'})
             def chunk(kind, data):
                 return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
             png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 1280, 800, 8, 2, 0, 0, 0))
@@ -32,7 +33,12 @@ class ReviveTest(unittest.TestCase):
             (self.path / f'{app}.png').write_bytes(png)
         self.result = dict(schema='revive-runtime-v1', status='pass', apps=apps,
                            oom_before=0, oom_after=0, earlyoom_kills=0,
-                           mem_kib=2000000, cleanup=True, reason='')
+                           mem_kib=2000000, cleanup=True, reason='',
+                           manager_display={'DISPLAY': ':0', 'WAYLAND_DISPLAY': 'wayland-0', 'XDG_RUNTIME_DIR': '/run/user/1000'},
+                           firefox_package_owner='firefox: /usr/lib/firefox/firefox-bin', cleanup_method='systemd-stop',
+                           health={'earlyoom_before': 'active', 'earlyoom_after': 'active',
+                                   'system_failed_before': [], 'system_failed_after': [],
+                                   'user_failed_before': [], 'user_failed_after': []})
         self.browser = dict(value=probe.BROWSER, trusted_keys=len(probe.BROWSER), focused=True, trusted_submit=True)
         self.write_result()
         self.write_browser()
@@ -153,6 +159,29 @@ class ReviveTest(unittest.TestCase):
         for sha, repo, run in [('main', 'owner/repo', 1), ('a' * 40, 'owner/repo/extra', 1), ('a' * 40, 'owner/repo', 0)]:
             with self.assertRaises(ValueError):
                 probe.retain('missing', self.path, sha, repo, run)
+
+    def test_post_application_health(self):
+        original = copy.deepcopy(self.result)
+        for field, value in [('earlyoom_after', 'inactive'), ('system_failed_after', ['broken.service']), ('user_failed_after', ['broken.service'])]:
+            self.result = copy.deepcopy(original)
+            self.result['health'][field] = value
+            self.write_result(); self.refused()
+
+    def test_manager_display_missing_or_not_inherited(self):
+        self.result['manager_display']['WAYLAND_DISPLAY'] = ''
+        self.write_result(); self.refused()
+        self.result['manager_display']['WAYLAND_DISPLAY'] = 'wayland-0'
+        self.result['apps']['abiword']['display']['DISPLAY'] = ':1'
+        self.write_result(); self.refused()
+
+    def test_no_guessing_firefox_launcher_or_package(self):
+        for phase in ('before', 'after'):
+            self.result['apps']['firefox'][phase]['exe'] = '/usr/lib/firefox/firefox'
+        self.write_result(); self.refused()
+        for phase in ('before', 'after'):
+            self.result['apps']['firefox'][phase]['exe'] = '/usr/lib/firefox/firefox-bin'
+        self.result['firefox_package_owner'] = 'other: /usr/lib/firefox/firefox-bin'
+        self.write_result(); self.refused()
 
     def test_unknown_fields(self):
         self.result['unreviewed'] = True
