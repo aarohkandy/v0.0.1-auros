@@ -504,13 +504,15 @@ exact_password_suppression() { # reduced evidence file
             expected["composition_update_count"]="0"
             expected["composition_end_count"]="0"
             expected["composition_input_count"]="0"
+            expected["active_element_before_result"]="yes"
+            expected["active_element_after_result"]="yes"
             expected["raw_password_focus_log_retained"]="no"
             expected["raw_password_value_log_retained"]="no"
             expected["raw_password_event_log_retained"]="no"
         }
         NF != 2 || !($1 in expected) || seen[$1] || $2 != expected[$1] { bad=1 }
         !seen[$1]++ { count++ }
-        END { exit bad || count != 15 }
+        END { exit bad || count != 17 }
     ' "$1" 2>/dev/null
 }
 
@@ -594,6 +596,17 @@ if boundaries != sorted(boundaries):
 PY
 }
 
+exact_closed_password_trace() { # authenticated writer shutdown evidence
+    awk -F= '
+        BEGIN { fixed["unit_inactive"]="yes"; fixed["pid_gone"]="yes"; fixed["writer_count"]="0"; variable["closed_bytes"]=1 }
+        NF != 2 || (!($1 in fixed) && !($1 in variable)) || seen[$1] { bad=1 }
+        ($1 in fixed) && $2 != fixed[$1] { bad=1 }
+        ($1 == "closed_bytes") && $2 !~ /^[1-9][0-9]*$/ { bad=1 }
+        !seen[$1]++ { count++ }
+        END { exit bad || count != 4 }
+    ' "$1" 2>/dev/null
+}
+
 exact_sensitive_service_identity() { # reduced Fcitx identity at sensitive boundaries
     awk -F= '
         BEGIN {
@@ -643,15 +656,21 @@ exact_shipped_process() { # reduced production process file
             fixed["service_owner_stable"]="yes"
             variable["pid"]=1; variable["boot_id"]=1; variable["start_time"]=1
             variable["config_hash"]=1
+            variable["uid"]=1
+            variable["xdg_config_home"]=1
+            fixed["home"]="/home/auros"
+            allowed_xdg["absent"]=1; allowed_xdg["/home/auros/.config"]=1
         }
         NF != 2 || (!( $1 in fixed) && !($1 in variable)) || seen[$1] { bad=1 }
         ($1 in fixed) && $2 != fixed[$1] { bad=1 }
+        $1 == "xdg_config_home" && !($2 in allowed_xdg) { bad=1 }
         !seen[$1]++ { count++ }
-        END { exit bad || count != 11 }
+        END { exit bad || count != 14 }
     ' "$1" 2>/dev/null \
         && grep -Eq '^pid=[1-9][0-9]*$' "$1" 2>/dev/null \
         && grep -Eq '^start_time=[1-9][0-9]*$' "$1" 2>/dev/null \
         && grep -Eq '^config_hash=[0-9a-f]{64}$' "$1" 2>/dev/null \
+        && grep -Eq '^uid=[1-9][0-9]*$' "$1" 2>/dev/null \
         && grep -Eq '^boot_id=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "$1" 2>/dev/null
 }
 
@@ -851,6 +870,7 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root [source]
         fi
         exact_password_suppression "$R/password-suppression.txt" \
             && exact_password_popup_events "$R/password-popup-events.txt" \
+            && exact_closed_password_trace "$R/password-trace-closed.txt" \
             && exact_sensitive_service_identity "$R/service-owner-sensitive.txt" \
             && [ "$password_env_ok" = yes ] \
             && ok "the synthetic password field showed no observed popup or browser composition event in round $round" \
@@ -913,13 +933,29 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root [source]
     h1=$(sed -n 's/^config_hash=//p' "$D/round1/fcitx.process" 2>/dev/null)
     h2=$(sed -n 's/^config_hash=//p' "$D/round2/fcitx.process" 2>/dev/null)
     if [ "$SECURITY_SOURCE" = shipped-fcitx ]; then
-        config_claim="both rounds started with identical shipped Fcitx user-profile bytes"
+        comparison=$(python3 "$ROOT/tools/fcitx_profile_snapshot.py" compare \
+            --round1-config-hash "$h1" --round2-config-hash "$h2" \
+            --runtime-round1-start "$D/round1/profile-runtime-start.json" \
+            --runtime-round1-end "$D/round1/profile-runtime-end.json" \
+            --runtime-round2-start "$D/round2/profile-runtime-start.json" \
+            --runtime-round2-end "$D/round2/profile-runtime-end.json" \
+            --template-round1-start "$D/round1/profile-template-start.json" \
+            --template-round1-end "$D/round1/profile-template-end.json" \
+            --template-round2-start "$D/round2/profile-template-start.json" \
+            --template-round2-end "$D/round2/profile-template-end.json" 2>/dev/null) \
+            && comparison_ok=yes || comparison_ok=no
+        [ "$comparison_ok" = yes ] \
+                && ok "only comments or blank lines differed at the observed shipped Fcitx profile boundaries" \
+            || bad "only comments or blank lines differed across shipped Fcitx profile boots" "template, within-round, process-bound, or semantic profile evidence differs"
+        raw_equal=$(printf '%s\n' "$comparison" | sed -n 's/^cross_boot_raw_equal=//p')
+        printf '    %-62s %s\n' "cross-boot shipped Fcitx raw profile bytes" \
+            "$( [ "$raw_equal" = yes ] && echo identical || echo 'DIFFERENT -- retained as informational evidence' )"
     else
         config_claim="both rounds used the exact same isolated Fcitx configuration"
+        [ -n "$h1" ] && [ "$h1" = "$h2" ] \
+            && ok "$config_claim" \
+            || bad "$config_claim" "config hashes differ or are missing"
     fi
-    [ -n "$h1" ] && [ "$h1" = "$h2" ] \
-        && ok "$config_claim" \
-        || bad "$config_claim" "config hashes differ or are missing"
     printf '    %-62s %s\n' "Firefox Wayland connection identity" \
         "UNPROVEN -- this stage authenticates the Mousepad interval only"
 }
@@ -1572,9 +1608,18 @@ if not password_visible < preclick_absence < password_click:
 identity_before = text.index('password_fcitx_owner=$(fcitx_owner_name)', password_visible)
 password_boundary = text.index('password_boundary=$(wc -c < "$password_trace"', password_visible)
 identity_after = text.index('verify_fcitx_identity "$password_fcitx_owner"', password_click)
-popup_reduce = text.index('fcitx_wayland_trace.py "$password_trace"', password_click)
-if not identity_before < password_boundary < password_click < identity_after < popup_reduce:
+popup_reduce = text.index('fcitx_wayland_trace.py "$password_trace_copy"', password_click)
+password_stop = text.index('systemctl --user stop auros-profiletest-fcitx-password', identity_after)
+unit_state = text.index('password_unit_show=$(as_desktop systemctl --user show', password_stop)
+writer_inventory = text.index('trace_writer_count "$password_trace"', password_stop)
+closed_copy = text.index('install -o root -g root -m 600 "$password_trace"', writer_inventory)
+if not (identity_before < password_boundary < password_click < identity_after < password_stop
+        < unit_state < writer_inventory < closed_copy < popup_reduce):
     raise SystemExit("Fcitx identity must bind both sensitive-phase boundaries before reduction")
+if ('ControlGroup' not in text[unit_state:writer_inventory]
+        or '--cgroup-root /sys/fs/cgroup --control-group "$password_control_group"'
+        not in text[unit_state:writer_inventory]):
+    raise SystemExit("password trace closure must prove an empty stopped unit cgroup")
 password_launch = text[text.index('if [ "$PRODUCTION" = 1 ]; then', password_test):password_visible]
 production_password, legacy_password = password_launch.split('\n    else\n', 1)
 if 'GTK_IM_MODULE=fcitx' in production_password or 'XDG_CONFIG_HOME="$CFG"' in production_password:
@@ -1589,12 +1634,18 @@ restore = text[text.index('restore_and_finish()'):text.index('fail() {')]
 if restore.index('profile_snapshot end') > restore.index('unchanged=no'):
     raise SystemExit("end profile snapshot must precede the existing raw-hash comparison")
 start_snapshot = text.index('profile_snapshot start || fail')
-first_action = text.index('actno=$(cat "$STATE/action-sequence"')
-if start_snapshot > first_action:
-    raise SystemExit("start profile snapshot must precede interactive actions")
+authenticated_owner = text.index('owner=$(fcitx_owner_pid)')
+process_evidence = text.index('> "$STATE/fcitx.process"', authenticated_owner)
+interactive_preflight = text.index('fcitx5-remote -m pinyin', process_evidence)
+if not authenticated_owner < start_snapshot < process_evidence < interactive_preflight:
+    raise SystemExit("start profile snapshot must bind authenticated process evidence before interaction")
 if ('--input "$desktop_home/.config/fcitx5/profile"' not in text
         or '--input /usr/share/auros/fcitx-profile' not in text):
     raise SystemExit("profile snapshots must remain limited to runtime and immutable profile files")
+if ('fcitx-profile-snapshot.py' not in text[authenticated_owner:process_evidence]
+        or 'identity --pid "$fcitx_pid" --expected-uid "$desktop_uid" --home "$desktop_home"'
+        not in text[authenticated_owner:process_evidence]):
+    raise SystemExit("profile snapshot must be bound to the daemon config pathname")
 loop = restore[restore.index('ibus_deadline='):restore.index('unchanged=no')]
 for required in ('as_desktop_until "$ibus_deadline" systemctl --user is-active',
                  'ibus_identity_snapshot "$ibus_deadline" "$ipid"',
@@ -1733,7 +1784,7 @@ EOPY
         printf 'toplevel_xdg_surface=20\ntoplevel_wl_surface=19\nmapped_toplevel_count=1\nlayer_shell_objects=0\n' > "$R/mousepad-b-toplevel.txt"
         printf 'initial_popup_wl_surface=30\nreturn_popup_wl_surface=31\ninitial_unmapped_before_b_input=yes\nmapped_candidate_while_away=no\nreturn_map_epoch=fresh\nreturn_popup_reused=no\npopup_input_grab=no\nlayer_shell_objects=0\nb_saved_sentinel=20\na_saved_file_unchanged=yes\n' > "$R/focus-lifecycle.txt"
         printf '20\n' > "$R/focus-b-sentinel.hex"
-        printf 'candidate_popup_creations=0\ncandidate_popup_maps=0\ncandidate_popup_configures=0\ncandidate_popup_grabs=0\nlayer_shell_objects=0\nobserved_candidate_popup=no\nfocus_event_observed=yes\nascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\nraw_password_focus_log_retained=no\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' > "$R/password-suppression.txt"
+        printf 'candidate_popup_creations=0\ncandidate_popup_maps=0\ncandidate_popup_configures=0\ncandidate_popup_grabs=0\nlayer_shell_objects=0\nobserved_candidate_popup=no\nfocus_event_observed=yes\nascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\nactive_element_before_result=yes\nactive_element_after_result=yes\nraw_password_focus_log_retained=no\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' > "$R/password-suppression.txt"
         printf 'pid=123\nstart_time=456\nexe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\ndbus_owner=:1.%s\nidentity_before_sensitive=yes\nidentity_after_sensitive=yes\n' \
             "$round" > "$R/service-owner-sensitive.txt"
         cat > "$R/password-popup-events.txt" <<'EOF'
@@ -1778,6 +1829,8 @@ after_submit_map_events=0
 after_submit_configure_events=0
 after_submit_grab_events=0
 EOF
+        printf 'unit_inactive=yes\npid_gone=yes\nwriter_count=0\nclosed_bytes=40000\n' \
+            > "$R/password-trace-closed.txt"
         printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\ncleanup_pids_gone=1\nsource=retained-ibus-conversion\n' > "$R/restore.txt"
         printf 'exe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\nconfig_hash=abc\ndisplay_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\nboot_id=00000000-0000-4000-8000-00000000000%s\n' "$round" > "$R/fcitx.process"
         printf 'GDK_BACKEND=wayland\nGTK_IM_MODULE=fcitx\nWAYLAND_DISPLAY=wayland-0\n' > "$R/password.env"
@@ -1942,8 +1995,9 @@ Layout=
 EOF
     for round in 1 2; do
         R="$production_security_fixture/evidence/round$round"
+        fixture_profile_hash=$(sha256sum "$T/fcitx-profile" | awk '{print $1}')
         printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\ncleanup_pids_gone=1\nsource=shipped-fcitx\nservice_start_rc=not-needed\nservice_active_seen=no\nservice_identity_seen=no\nservice_identity_stable_seen=no\npinyin_engine_seen=no\n' > "$R/restore.txt"
-        printf 'pid=123\nexe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\nconfig_hash=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ndisplay_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\nboot_id=10000000-0000-4000-8000-00000000000%s\nunit=auros-fcitx.service\nibus_inactive=yes\nstart_time=123\n' "$round" > "$R/fcitx.process"
+        printf 'pid=123\nexe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\nconfig_hash=%s\ndisplay_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\nboot_id=10000000-0000-4000-8000-00000000000%s\nunit=auros-fcitx.service\nibus_inactive=yes\nstart_time=123\nuid=1000\nhome=/home/auros\nxdg_config_home=absent\n' "$fixture_profile_hash" "$round" > "$R/fcitx.process"
         for phase in start end; do
             python3 tools/fcitx_profile_snapshot.py create --source runtime --phase "$phase" \
                 --input "$T/fcitx-profile" --output "$R/profile-runtime-$phase.json" || exit 1
@@ -1961,6 +2015,80 @@ EOF
         printf '    %-62s %s\n' "complete shipped Fcitx security evidence" "REFUSED"; fail=$((fail+1))
     fi
     checked=$((checked+1))
+    cat > "$T/fcitx-profile-commented" <<'EOF'
+[Groups/0]
+# group name
+Name=Default
+# layout
+Default Layout=fr
+# input method
+DefaultIM=pinyin
+
+[Groups/0/Items/0]
+# name
+Name=keyboard-fr
+# layout
+Layout=
+
+[Groups/0/Items/1]
+# name
+Name=pinyin
+# layout
+Layout=
+
+[GroupOrder]
+0=Default
+
+EOF
+    cp "$production_security_fixture/evidence/round2/fcitx.process" "$T/comment-process"
+    for phase in start end; do
+        cp "$production_security_fixture/evidence/round2/profile-runtime-$phase.json" \
+            "$T/comment-runtime-$phase.json"
+        python3 tools/fcitx_profile_snapshot.py create --source runtime --phase "$phase" \
+            --input "$T/fcitx-profile-commented" \
+            --output "$production_security_fixture/evidence/round2/profile-runtime-$phase.json" || exit 1
+    done
+    comment_hash=$(sha256sum "$T/fcitx-profile-commented" | awk '{print $1}')
+    sed "s/^config_hash=.*/config_hash=$comment_hash/" "$T/comment-process" \
+        > "$production_security_fixture/evidence/round2/fcitx.process"
+    if [ "$(production_security_refuses "$production_security_fixture")" = 0 ]; then
+        printf '    %-62s %s\n' "cross-boot comment and blank-only profile drift" "accepted"
+    else
+        printf '    %-62s %s\n' "cross-boot comment and blank-only profile drift" "REFUSED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    cp "$T/comment-process" "$production_security_fixture/evidence/round2/fcitx.process"
+    for phase in start end; do
+        cp "$T/comment-runtime-$phase.json" \
+            "$production_security_fixture/evidence/round2/profile-runtime-$phase.json"
+    done
+    closed_trace="$production_security_fixture/evidence/round1/password-trace-closed.txt"
+    sed 's/writer_count=0/writer_count=1/' "$closed_trace" > "$closed_trace.tmp"
+    mv "$closed_trace.tmp" "$closed_trace"
+    if [ "$(production_security_refuses "$production_security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "password evidence reduced with a live trace writer" "refused"
+    else
+        printf '    %-62s %s\n' "password evidence reduced with a live trace writer" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed 's/writer_count=1/writer_count=0/' "$closed_trace" > "$closed_trace.tmp"
+    mv "$closed_trace.tmp" "$closed_trace"
+    sed 's|home=/home/auros|home=/tmp/unbound|' \
+        "$production_security_fixture/evidence/round1/fcitx.process" \
+        > "$production_security_fixture/evidence/round1/fcitx.process.tmp"
+    mv "$production_security_fixture/evidence/round1/fcitx.process.tmp" \
+        "$production_security_fixture/evidence/round1/fcitx.process"
+    if [ "$(production_security_refuses "$production_security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "production profile evidence from an unbound daemon HOME" "refused"
+    else
+        printf '    %-62s %s\n' "production profile evidence from an unbound daemon HOME" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed 's|home=/tmp/unbound|home=/home/auros|' \
+        "$production_security_fixture/evidence/round1/fcitx.process" \
+        > "$production_security_fixture/evidence/round1/fcitx.process.tmp"
+    mv "$production_security_fixture/evidence/round1/fcitx.process.tmp" \
+        "$production_security_fixture/evidence/round1/fcitx.process"
     cp "$production_security_fixture/evidence/round1/profile-runtime-start.json" \
         "$T/profile-runtime-start.json"
     python3 - "$production_security_fixture/evidence/round1/profile-runtime-start.json" <<'PY'
@@ -2412,16 +2540,20 @@ if [ "$FCITX_CLIENT_PROBE" = 1 ] || [ "$FCITX_PRODUCTION" = 1 ]; then
         "$M/usr/lib/auros-profiletest/fcitx-functional.sh"
     install -m 755 "$ROOT/tools/fcitx_wayland_trace.py" \
         "$M/usr/lib/auros-profiletest/fcitx_wayland_trace.py"
+    if [ "$FCITX_SECURITY_PROBE" = 1 ] || [ "$FCITX_PRODUCTION" = 1 ]; then
+        install -m 755 "$ROOT/tools/fcitx_profile_snapshot.py" \
+            "$M/usr/lib/auros-profiletest/fcitx-profile-snapshot.py"
+    fi
     if [ "$FCITX_PRODUCTION" = 1 ]; then
         : > "$M/usr/lib/auros-profiletest/fcitx-production.enabled"
     fi
     if [ "$FCITX_SECURITY_PROBE" = 1 ]; then
-        install -m 755 "$ROOT/tools/fcitx_profile_snapshot.py" \
-            "$M/usr/lib/auros-profiletest/fcitx-profile-snapshot.py"
         install -m 755 "$ROOT/tools/fcitx_connection_probe.py" \
             "$M/usr/lib/auros-profiletest/fcitx_connection_probe.py"
         install -m 755 "$ROOT/tools/fcitx_password_server.py" \
             "$M/usr/lib/auros-profiletest/fcitx_password_server.py"
+        install -m 755 "$ROOT/tools/fcitx_trace_writers.py" \
+            "$M/usr/lib/auros-profiletest/fcitx_trace_writers.py"
         : > "$M/usr/lib/auros-profiletest/fcitx-security.enabled"
     fi
 elif [ "$IBUS_FUNCTIONAL" = 1 ]; then

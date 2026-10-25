@@ -97,6 +97,7 @@ jobs:
         run: |
           python3 -m unittest -v tools/test_fcitx_wayland_trace.py \
             tools/test_fcitx_connection_probe.py tools/test_fcitx_password_server.py \
+            tools/test_fcitx_trace_writers.py tools/test_fcitx_profile_snapshot.py \
             tools/test_fcitx_marker_visibility.py
       - id: g
         env:

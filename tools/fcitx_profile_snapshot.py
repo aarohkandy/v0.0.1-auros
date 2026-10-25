@@ -214,6 +214,91 @@ def validate(value: object, source: str, phase: str) -> None:
         raise SnapshotError("snapshot record sizes do not match the file size")
 
 
+def semantic_records(value: dict[str, object]) -> list[dict[str, object]]:
+    """Return the exact ordered non-comment/nonblank byte evidence."""
+    return [
+        {key: item[key] for key in item if key != "line"}
+        for item in value["records"]  # type: ignore[union-attr]
+        if item["kind"] not in {"comment", "blank"}
+    ]
+
+
+def profile_identity(environ: bytes, actual_uid: int, expected_uid: int,
+                     home: str) -> dict[str, str]:
+    if actual_uid != expected_uid:
+        raise SnapshotError("shipped Fcitx UID mismatch")
+    entries = environ.split(b"\0")
+    homes = [entry[5:] for entry in entries if entry.startswith(b"HOME=")]
+    xdgs = [entry[16:] for entry in entries if entry.startswith(b"XDG_CONFIG_HOME=")]
+    expected_home = os.fsencode(home)
+    if homes != [expected_home]:
+        raise SnapshotError("shipped Fcitx HOME mismatch")
+    if not xdgs:
+        xdg = "absent"
+    elif xdgs == [expected_home + b"/.config"]:
+        xdg = home + "/.config"
+    else:
+        raise SnapshotError("shipped Fcitx XDG_CONFIG_HOME mismatch")
+    return {"uid": str(expected_uid), "home": home, "xdg_config_home": xdg}
+
+
+def compare_boundaries(values: dict[str, dict[str, object]],
+                       config_hashes: tuple[str, str]) -> dict[str, object]:
+    expected_names = {
+        f"{source}{round_number}{phase}"
+        for source in ("runtime", "template")
+        for round_number in (1, 2)
+        for phase in ("start", "end")
+    }
+    if set(values) != expected_names:
+        raise SnapshotError("comparison snapshot names are not exact")
+    for source in ("runtime", "template"):
+        for round_number in (1, 2):
+            for phase in ("start", "end"):
+                validate(values[f"{source}{round_number}{phase}"], source, phase)
+
+    templates = [values[f"template{round_number}{phase}"]
+                 for round_number in (1, 2) for phase in ("start", "end")]
+    template_identity = {(item["raw_sha256"], item["raw_bytes"]) for item in templates}
+    if len(template_identity) != 1:
+        raise SnapshotError("template bytes differ across observed boundaries")
+
+    runtimes = [values[f"runtime{round_number}{phase}"]
+                for round_number in (1, 2) for phase in ("start", "end")]
+    for round_number in (1, 2):
+        start = values[f"runtime{round_number}start"]
+        end = values[f"runtime{round_number}end"]
+        if ((start["raw_sha256"], start["raw_bytes"], start["records"])
+                != (end["raw_sha256"], end["raw_bytes"], end["records"])):
+            raise SnapshotError(f"round {round_number} runtime bytes changed")
+        if start["raw_sha256"] != config_hashes[round_number - 1]:
+            raise SnapshotError(f"round {round_number} runtime hash is not bound to process evidence")
+
+    projections = [semantic_records(item) for item in templates + runtimes]
+    if any(item != projections[0] for item in projections[1:]):
+        raise SnapshotError("non-comment profile bytes differ across boundaries")
+    r1 = values["runtime1start"]
+    r2 = values["runtime2start"]
+    return {
+        "status": "pass",
+        "template_raw_sha256": templates[0]["raw_sha256"],
+        "round1_raw_sha256": r1["raw_sha256"],
+        "round2_raw_sha256": r2["raw_sha256"],
+        "cross_boot_raw_equal": "yes" if r1["raw_sha256"] == r2["raw_sha256"] else "no",
+        "cross_boot_comment_blank_only": "yes",
+    }
+
+
+def _load_snapshot(path: Path) -> dict[str, object]:
+    data = path.read_bytes()
+    if len(data) > 65536:
+        raise SnapshotError("reduced snapshot exceeds 65536 bytes")
+    value = json.loads(data.decode("utf-8"))
+    if not isinstance(value, dict):
+        raise SnapshotError("snapshot root is not an object")
+    return value
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -226,6 +311,18 @@ def main() -> int:
     check.add_argument("--source", choices=sorted(SOURCES), required=True)
     check.add_argument("--phase", choices=sorted(PHASES), required=True)
     check.add_argument("snapshot", type=Path)
+    compare = sub.add_parser("compare")
+    compare.add_argument("--round1-config-hash", required=True)
+    compare.add_argument("--round2-config-hash", required=True)
+    for source in ("runtime", "template"):
+        for round_number in (1, 2):
+            for phase in ("start", "end"):
+                compare.add_argument(
+                    f"--{source}-round{round_number}-{phase}", type=Path, required=True)
+    identity = sub.add_parser("identity")
+    identity.add_argument("--pid", type=int, required=True)
+    identity.add_argument("--expected-uid", type=int, required=True)
+    identity.add_argument("--home", required=True)
     args = parser.parse_args()
     try:
         if args.command == "create":
@@ -236,11 +333,27 @@ def main() -> int:
             temporary = args.output.with_name(args.output.name + ".tmp")
             temporary.write_text(encoded, encoding="utf-8")
             os.replace(temporary, args.output)
+        elif args.command == "validate":
+            validate(_load_snapshot(args.snapshot), args.source, args.phase)
+        elif args.command == "compare":
+            values = {}
+            for source in ("runtime", "template"):
+                for round_number in (1, 2):
+                    for phase in ("start", "end"):
+                        key = f"{source}{round_number}{phase}"
+                        values[key] = _load_snapshot(
+                            getattr(args, f"{source}_round{round_number}_{phase}"))
+            result = compare_boundaries(
+                values, (args.round1_config_hash, args.round2_config_hash))
+            for key, value in result.items():
+                print(f"{key}={value}")
         else:
-            data = args.snapshot.read_bytes()
-            if len(data) > 65536:
-                raise SnapshotError("reduced snapshot exceeds 65536 bytes")
-            validate(json.loads(data.decode("utf-8")), args.source, args.phase)
+            proc = Path("/proc") / str(args.pid)
+            result = profile_identity(
+                (proc / "environ").read_bytes(), proc.stat().st_uid,
+                args.expected_uid, args.home)
+            for key, value in result.items():
+                print(f"{key}={value}")
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, SnapshotError) as exc:
         print(f"fcitx profile snapshot: {exc}", file=sys.stderr)
         return 1

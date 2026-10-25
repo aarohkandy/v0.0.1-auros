@@ -219,6 +219,9 @@ raw = open(sys.argv[1], "rb").read()
 raise SystemExit(1 if b"nihao" in raw.lower() or bytes.fromhex("e4bda0e5a5bd") in raw else 0)
 PY
 }
+trace_writer_count() { # regular file; count writable /proc fd aliases
+    python3 /usr/lib/auros-profiletest/fcitx_trace_writers.py "$1"
+}
 
 as_fcitx_desktop() {
     if [ "$PRODUCTION" = 1 ]; then
@@ -308,13 +311,19 @@ restore_and_finish() {
         || { cleanup_ok=0; password_server_pid_gone=0; }
     if [ "$password_server_unit_stopped" = 1 ] && [ "$password_server_pid_gone" = 1 ]; then
         as_desktop rm -f ${password_focus:+"$password_focus"} \
-            ${password_summary:+"$password_summary"} "$RUNTIME/password-server.stderr" \
+            ${password_summary:+"$password_summary"} \
+            ${password_completion:+"$password_completion"} "$RUNTIME/password-server.stderr" \
             || cleanup_ok=0
         [ -z "${password_focus:-}" ] || [ ! -e "$password_focus" ] || cleanup_ok=0
         [ -z "${password_summary:-}" ] || [ ! -e "$password_summary" ] || cleanup_ok=0
+        [ -z "${password_completion:-}" ] || [ ! -e "$password_completion" ] || cleanup_ok=0
         [ ! -e "$RUNTIME/password-server.stderr" ] || cleanup_ok=0
     else
         cleanup_ok=0
+    fi
+    if [ -n "${password_trace_copy:-}" ]; then
+        rm -f "$password_trace_copy" || cleanup_ok=0
+        [ ! -e "$password_trace_copy" ] || cleanup_ok=0
     fi
     password_http_pid=
     [ -z "${connection_probe_pid:-}" ] || { kill "$connection_probe_pid" 2>/dev/null || true; wait "$connection_probe_pid" 2>/dev/null || true; }
@@ -436,8 +445,6 @@ restore_and_finish() {
 fail() { final_state=fail; final_reason=$(printf '%s' "$*" | tr ' ' '_'); restore_and_finish; }
 trap 'final_state=fail; final_reason=signal; restore_and_finish' HUP INT TERM
 
-profile_snapshot start || fail "bounded Fcitx profile start snapshot failed"
-
 actno=$(cat "$STATE/action-sequence" 2>/dev/null || echo 0)
 case "$actno" in ''|*[!0-9]*) actno=0;; esac
 act() {
@@ -496,11 +503,19 @@ case "$fcitx_start" in ''|*[!0-9]*) fail "owned Fcitx start time unavailable";; 
 [ "$(tr '\0' ' ' < "/proc/$fcitx_pid/cmdline" 2>/dev/null)" = '/usr/bin/fcitx5 -D ' ] \
     || fail "owned Fcitx arguments mismatch"
 owner=$(fcitx_owner_pid); [ "$owner" = "$fcitx_pid" ] || fail "Fcitx D-Bus owner mismatch"
+process_profile_lines=
+if [ "$PRODUCTION" = 1 ]; then
+    process_profile_lines=$(python3 /usr/lib/auros-profiletest/fcitx-profile-snapshot.py \
+        identity --pid "$fcitx_pid" --expected-uid "$desktop_uid" --home "$desktop_home") \
+        || fail "shipped Fcitx profile path identity mismatch"
+fi
+profile_snapshot start || fail "bounded Fcitx profile start snapshot failed"
 {
     printf 'pid=%s\nexe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\n' "$fcitx_pid"
     [ "$PRODUCTION" = 0 ] || printf 'unit=auros-fcitx.service\nibus_inactive=yes\n'
     [ -z "$boot_id" ] || printf 'boot_id=%s\n' "$boot_id"
     printf 'start_time=%s\n' "$fcitx_start"
+    [ -z "$process_profile_lines" ] || printf '%s\n' "$process_profile_lines"
     printf 'config_hash=%s\n' "$(sha256sum "$CFG/fcitx5/profile" | awk '{print $1}')"
     tr '\0' '\n' < "/proc/$fcitx_pid/environ" | grep -q '^DISPLAY=' && echo display_unset=no || echo display_unset=yes
     tr '\0' '\n' < "/proc/$fcitx_pid/environ" | grep -q '^WAYLAND_DISPLAY=' && echo wayland_display_unset=no || echo wayland_display_unset=yes
@@ -779,11 +794,13 @@ if [ "$SECURITY" = 1 ]; then
     chown -R "$desktop_user" "$RUNTIME/password-profile"
     password_summary="$RUNTIME/password-summary"
     password_focus="$RUNTIME/password-focus"
-    as_desktop rm -f "$password_summary" "$password_focus" \
+    password_completion="$RUNTIME/password-completion"
+    as_desktop rm -f "$password_summary" "$password_focus" "$password_completion" \
         || fail "old reduced password evidence could not be removed"
     as_desktop systemd-run --user --quiet --collect --unit=auros-profiletest-fcitx-password-http \
         --property=Type=exec -- python3 /usr/lib/auros-profiletest/fcitx_password_server.py \
-        --output "$password_summary" --focus-output "$password_focus" --port 8766 \
+        --output "$password_summary" --focus-output "$password_focus" \
+        --completion-output "$password_completion" --port 8766 \
         >/dev/null 2>&1 || fail "password server did not start"
     wait_active auros-profiletest-fcitx-password-http || fail "password server did not stay active"
     password_http_pid=$(as_desktop systemctl --user show -p MainPID --value \
@@ -852,20 +869,57 @@ if [ "$SECURITY" = 1 ]; then
     password_screenshot_boundary=$(wc -c < "$password_trace" | tr -d ' ')
     password_submit_boundary=$(wc -c < "$password_trace" | tr -d ' ')
     act key ret || fail "synthetic password submit failed"
-    i=0; while [ "$i" -lt 30 ] && [ ! -s "$password_summary" ]; do sleep .1; i=$((i+1)); done
+    i=0; while [ "$i" -lt 30 ] && { [ ! -s "$password_summary" ] \
+        || [ ! -s "$password_completion" ]; }; do sleep .1; i=$((i+1)); done
     [ "$i" -lt 30 ] || fail "password result unavailable"
     grep -qx 'ascii_value_exact=yes' "$password_summary" \
         && grep -qx 'composition_start_count=0' "$password_summary" \
         && grep -qx 'composition_update_count=0' "$password_summary" \
         && grep -qx 'composition_end_count=0' "$password_summary" \
         && grep -qx 'composition_input_count=0' "$password_summary" \
+        && grep -qx 'active_element_before_result=yes' "$password_summary" \
+        && grep -qx 'active_element_after_result=yes' "$password_completion" \
         || fail "password field composition suppression failed"
     cat "$password_focus" > "$STATE/password-focus.txt"
     cat "$password_summary" > "$STATE/password-summary.txt"
+    cat "$password_completion" >> "$STATE/password-summary.txt"
     verify_fcitx_identity "$password_fcitx_owner" \
         || fail "Fcitx identity changed during password test"
     printf 'identity_after_sensitive=yes\n' >> "$STATE/service-owner-sensitive.txt"
-    python3 /usr/lib/auros-profiletest/fcitx_wayland_trace.py "$password_trace" \
+    as_desktop systemctl --user stop auros-profiletest-fcitx-password >/dev/null 2>&1 \
+        || fail "password Firefox stop failed"
+    wait_pid_gone "$password_pid" || fail "password Firefox PID remained"
+    password_unit_show=$(as_desktop systemctl --user show -p LoadState -p ActiveState -p ControlGroup \
+        auros-profiletest-fcitx-password 2>/dev/null) \
+        || fail "password Firefox unit state unavailable"
+    password_load_state=$(printf '%s\n' "$password_unit_show" | sed -n 's/^LoadState=//p')
+    password_active_state=$(printf '%s\n' "$password_unit_show" | sed -n 's/^ActiveState=//p')
+    password_control_group=$(printf '%s\n' "$password_unit_show" | sed -n 's/^ControlGroup=//p')
+    if [ -z "$password_control_group" ]; then
+        password_cgroup_state=removed
+    else
+        password_cgroup_state=$(python3 /usr/lib/auros-profiletest/fcitx_trace_writers.py \
+            --cgroup-root /sys/fs/cgroup --control-group "$password_control_group") \
+            || fail "password Firefox cgroup inventory failed"
+    fi
+    case "$password_load_state:$password_active_state:$password_cgroup_state" in
+      not-found::removed|not-found:inactive:removed|*:inactive:empty|*:inactive:removed|*:failed:empty|*:failed:removed) ;;
+      *) fail "password Firefox unit or cgroup remained active" ;;
+    esac
+    password_pid=
+    password_trace_writers=$(trace_writer_count "$password_trace") \
+        || fail "password trace writer inventory failed"
+    [ "$password_trace_writers" = 0 ] || fail "password trace writer remained"
+    password_trace_closed_bytes=$(wc -c < "$password_trace" | tr -d ' ')
+    sleep .2
+    [ "$(wc -c < "$password_trace" | tr -d ' ')" = "$password_trace_closed_bytes" ] \
+        || fail "password trace changed after writer cleanup"
+    password_trace_copy="$STATE/password-trace.closed"
+    install -o root -g root -m 600 "$password_trace" "$password_trace_copy" \
+        || fail "closed password trace copy failed"
+    printf 'unit_inactive=yes\npid_gone=yes\nwriter_count=0\nclosed_bytes=%s\n' \
+        "$password_trace_closed_bytes" > "$STATE/password-trace-closed.txt"
+    python3 /usr/lib/auros-profiletest/fcitx_wayland_trace.py "$password_trace_copy" \
         --after-byte "$password_boundary" --input-byte "$password_input_boundary" \
         --screenshot-byte "$password_screenshot_boundary" \
         --submit-byte "$password_submit_boundary" --no-popup \
@@ -876,13 +930,18 @@ if [ "$SECURITY" = 1 ]; then
         || fail "reduced password popup summary missing"
     cat "$password_focus" >> "$STATE/password-suppression.txt"
     cat "$password_summary" >> "$STATE/password-suppression.txt"
-    trace_has_no_input_text "$password_trace" || fail "password protocol trace retained input text"
+    cat "$password_completion" >> "$STATE/password-suppression.txt"
+    trace_has_no_input_text "$password_trace_copy" || fail "password protocol trace retained input text"
+    rm -f "$password_trace_copy" || fail "closed password trace copy removal failed"
+    [ ! -e "$password_trace_copy" ] || fail "closed password trace copy remained"
     as_desktop systemctl --user stop auros-profiletest-fcitx-password-http >/dev/null 2>&1 \
         || fail "password server stop failed"
     wait_pid_gone "$password_http_pid" || fail "password server PID remained"
     password_http_pid=
-    as_desktop rm -f "$password_focus" "$password_summary" "$RUNTIME/password-server.stderr"
+    as_desktop rm -f "$password_focus" "$password_summary" "$password_completion" \
+        "$RUNTIME/password-server.stderr"
     [ ! -e "$password_focus" ] && [ ! -e "$password_summary" ] \
+        && [ ! -e "$password_completion" ] \
         && [ ! -e "$RUNTIME/password-server.stderr" ] \
         || fail "password value or event logs remained"
     printf 'raw_password_focus_log_retained=no\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' \
