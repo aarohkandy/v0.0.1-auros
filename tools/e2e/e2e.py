@@ -2364,9 +2364,12 @@ class Flow:
         """
         plain = re.sub(r"[^a-z0-9]", "", text.lower())
         unsafe = ("recovery", "error", "rescue")
-        menu = ("gnugrub", "aurosverboseboot", "windows")
-        if (not any(word in plain for word in unsafe) and
-                all(word in plain for word in menu) and plain.count("auros") >= 2):
+        if any(word in plain for word in unsafe):
+            return "unknown"
+        # The boot screenshot from run 40161971669 has the GNU GRUB header,
+        # but entry OCR is the authority: themes may omit or miss that header.
+        menu = ("aurosverboseboot", "windows")
+        if all(word in plain for word in menu) and plain.count("auros") >= 2:
             return "grub"
         desktop = ("allmyprograms", "everythingonthiscomputer", "playasongorafilm")
         return "auros-desktop" if all(phrase in plain for phrase in desktop) else "unknown"
@@ -2408,7 +2411,13 @@ class Flow:
             if kind != "auros-desktop" or attempt + 1 == attempts:
                 break
             self.log("start menu: countdown escaped; gracefully stopping AurOS before one retry")
-            self.m.stop("powerdown", 300)
+            # Machine.stop() eventually forces QMP quit/kill.  A retry may only
+            # follow a guest-confirmed ACPI shutdown, never that cleanup fallback.
+            self.m.auto_shots(None)
+            self.m.qmp.cmd("system_powerdown")
+            if not self.m.wait_exit(300):
+                raise Failure("AurOS did not complete a graceful shutdown before boot-menu retry")
+            self.log("qemu: AurOS completed the graceful retry shutdown")
 
         raise Failure("AurOS's GRUB start menu never showed after the restart: " +
                       last_text[:300])
