@@ -88,9 +88,14 @@ names already exist. It also validates the secret lengths, positive decimal
 IDs, RSA private key, exact HTTPS origin, and fixed repository. A missing or invalid
 value, an unreadable secret list, or an unstaged Worker secret fails the
 workflow before the enabled version is deployed. On the later enabled run, the
-secrets are refreshed before `wrangler deploy`; following the activation order
-keeps the prior Worker disabled during that refresh. This means the first
-configured deployment must remain disabled.
+secrets are refreshed before `wrangler deploy`. During first activation,
+following the activation order keeps the prior Worker disabled during that
+refresh. Subsequent enabled deployments may refresh an already enabled Worker;
+reapplying unchanged values is harmless. An intentional
+`BUILD_CHALLENGE_SECRET` rotation invalidates unexpired five-minute challenges,
+and changing `BUILD_NETWORK_SECRET` changes the pseudonymous network quota keys.
+Schedule either rotation accordingly. This means the first configured
+deployment must remain disabled.
 
 The secret-name check proves only that the three names were staged on the
 Worker. The disabled live-route checks in Activation step 8 are the separate
