@@ -2,7 +2,7 @@
 
 Owner authorization on 24 October 2026: implement, test adversarially, use bounded parallel agents, and push verified checkpoints to `aarohkandy/v0.0.1-auros`. The target is a nontechnical person describing the system they want, receiving it quickly, installing it safely, and using it without a terminal or helper.
 
-## Current checkpoint (25 October, 00:14 UTC)
+## Current checkpoint (25 October, 00:22 UTC)
 
 This section is the current summary; the chronological checkpoints below retain
 earlier failures and superseded evidence deliberately.
@@ -11,8 +11,8 @@ earlier failures and superseded evidence deliberately.
 - Exact-image [hardening run 40140266950](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40140266950) passed 72 hardening and 14 clock checks; `hardengate.sh` accepts it for this candidate.
 - All four Windows journeys failed: fastpath base clicked the search entry instead of the VLC result; ordinary base installed VLC but Open did not map a program window; ordinary BitLocker refused on its legacy path; fastpath BitLocker failed the harness's pre-install baseline capture. The strict launch check correctly rejected the store preview. App launch, encrypted-drive return and file-preserving recovery remain unproved. The older c1 app-launch result was invalidated and must not be reused.
 - The release Windows job failed its fastpath no-scroll fixture. The working branch already has its tested correction and a visible, accessible drive-protection confirmation, but this candidate does not contain them. Do not rerun the unchanged installer expecting a different result.
-- Multilingual diagnostic `40144734247` passed both boots of its live typing/focus/password/restoration checks, then failed because round-two evidence was not synced before shutdown. Main `18927e7b` fixes evidence persistence; `40145440411` is running. A precise follow-up review found two still-open proof gaps: no focus-marker absence assertion immediately before the click, and password evidence accepts extra/contradictory lines. Both require repair before closing this diagnostic. Production remains IBus, with a stale startup warning visible in retained screenshots; Fcitx is not activated.
-- `codex/delivery` retains the installer follow-ups and reduced artifact downloads for the next combined candidate. Preserve exact source/artifact identity when using any earlier evidence.
+- Multilingual diagnostic `40144734247` passed both boots of its then-current live checks, then failed evidence persistence. Follow-ups repair persistence, enforce a fresh focus marker and reject ambiguous password evidence. `40145440411` stopped at second-window visibility; `40145726339` attempt 1 stopped at an inconsistent Mozilla package index before testing. Attempt 2 is running. Full diagnostic proof remains open. Production remains IBus, with a stale startup warning visible in retained screenshots; Fcitx is not activated.
+- `codex/delivery` retains installer follow-ups, the software startup race repair, store selection/privacy-dialog test repairs, image-integrity checks, and reduced artifact downloads for the next combined candidate. Two focused reproductions launched real VLC from Software, including one byte-exact image; the original Open no-op remains an intermittent unresolved risk. Preserve exact source/artifact identity when using earlier evidence.
 - Public delivery remains disabled pending signing/service configuration and release proof. Managed profiles, physical-PC tests, contact/name decisions, held encryption work and unfinished Wishes actions remain open. No zero-vulnerability or end-to-end completion claim is justified.
 
 ## Starting evidence
@@ -694,5 +694,6 @@ it. `40145726339` attempt 1 never reached Fcitx: Mozilla's APT index did not
 match signed Release size/hash during publication. Attempt 2 retries that
 infrastructure failure on unchanged main `3b2fd5ea`. That source includes the
 fresh focus-marker boundary and closed 15-key password evidence schema.
-Early unavailable exits also need an evidence sync before the host stops QEMU;
-a focused repair is being prepared without changing package verification.
+Early unavailable exits also needed an evidence sync before the host stops QEMU;
+`a01e2b27` integrates the reviewed three-path repair and ordering regressions
+without changing package verification.
