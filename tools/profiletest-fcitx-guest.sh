@@ -15,10 +15,15 @@ SECURITY=0
 [ -f /usr/lib/auros-profiletest/fcitx-security.enabled ] && SECURITY=1
 PRODUCTION=0
 [ -f /usr/lib/auros-profiletest/fcitx-production.enabled ] && PRODUCTION=1
-[ "$PRODUCTION" = 0 ] || [ "$SECURITY" = 0 ] || {
-    printf 'status=fail\nreason=production and security modes cannot be combined\n' > "$STATE/result"
-    sync; say "fcitx-probe=fail reason=production and security modes cannot be combined"; say done; exit 0
-}
+boot_id=
+if [ "$PRODUCTION" = 1 ] && [ "$SECURITY" = 1 ]; then
+    boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+    printf '%s\n' "$boot_id" \
+        | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || {
+        printf 'status=fail\nreason=boot identity unavailable\n' > "$STATE/result"
+        sync; say "fcitx-probe=fail reason=boot identity unavailable"; say done; exit 0
+    }
+fi
 security_round=1
 if [ "$SECURITY" = 1 ] && [ "$(cat "$STATE/security-next-round" 2>/dev/null)" = 2 ]; then
     security_round=2
@@ -401,11 +406,18 @@ act() {
 }
 
 if [ "$SECURITY" = 1 ] && [ "$security_round" = 2 ]; then
-    if pgrep -u "$desktop_uid" -x fcitx5 >/dev/null 2>&1 || \
-       [ "$(as_desktop systemctl --user is-active auros-profiletest-fcitx-daemon 2>/dev/null)" = active ]; then
-        fail "Fcitx autostarted before explicit round two launch"
+    if [ "$PRODUCTION" = 1 ]; then
+        wait_active auros-fcitx.service || fail "shipped Fcitx did not autostart after reboot"
+        [ "$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null)" = inactive ] \
+            || fail "conflicting shipped IBus autostarted after reboot"
+        printf 'shipped_fcitx_autostart_ready=yes\n' > "$STATE/reboot.txt"
+    else
+        if pgrep -u "$desktop_uid" -x fcitx5 >/dev/null 2>&1 || \
+           [ "$(as_desktop systemctl --user is-active auros-profiletest-fcitx-daemon 2>/dev/null)" = active ]; then
+            fail "Fcitx autostarted before explicit round two launch"
+        fi
+        printf 'fcitx_autostart_before_explicit_launch=no\n' > "$STATE/reboot.txt"
     fi
-    printf 'fcitx_autostart_before_explicit_launch=no\n' > "$STATE/reboot.txt"
 fi
 
 if [ "$PRODUCTION" = 1 ]; then
@@ -440,6 +452,7 @@ owner=$(fcitx_owner_pid); [ "$owner" = "$fcitx_pid" ] || fail "Fcitx D-Bus owner
 {
     printf 'pid=%s\nexe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\n' "$fcitx_pid"
     [ "$PRODUCTION" = 0 ] || printf 'unit=auros-fcitx.service\nibus_inactive=yes\n'
+    [ -z "$boot_id" ] || printf 'boot_id=%s\n' "$boot_id"
     printf 'start_time=%s\n' "$fcitx_start"
     printf 'config_hash=%s\n' "$(sha256sum "$CFG/fcitx5/profile" | awk '{print $1}')"
     tr '\0' '\n' < "/proc/$fcitx_pid/environ" | grep -q '^DISPLAY=' && echo display_unset=no || echo display_unset=yes
@@ -665,17 +678,37 @@ if [ "$SECURITY" = 1 ]; then
     [ "$i" -lt 30 ] || fail "password server unavailable"
     password_trace="$RUNTIME/password.trace"; : > "$password_trace"; chown "$desktop_user" "$password_trace"
     act baseline fcitx-password || fail "password page baseline failed"
-    as_desktop systemd-run --user --quiet --collect --unit=auros-profiletest-fcitx-password \
-        --property=Type=exec --property="StandardError=append:$password_trace" -- \
-        /usr/bin/env -u DISPLAY HOME="$desktop_home" XDG_RUNTIME_DIR="/run/user/$desktop_uid" \
-        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$desktop_uid/bus" \
-        GDK_BACKEND=wayland GTK_IM_MODULE=fcitx WAYLAND_DISPLAY="$wayland" \
-        XDG_CONFIG_HOME="$CFG" XDG_CACHE_HOME="$CACHE" XDG_DATA_HOME="$DATA" WAYLAND_DEBUG=client \
-        firefox --no-remote --new-instance --profile "$RUNTIME/password-profile" \
-        http://127.0.0.1:8766/ >/dev/null 2>&1 || fail "password Firefox did not start"
+    if [ "$PRODUCTION" = 1 ]; then
+        as_desktop systemd-run --user --quiet --collect --unit=auros-profiletest-fcitx-password \
+            --property=Type=exec --property="StandardError=append:$password_trace" -- \
+            /usr/bin/env -u DISPLAY HOME="$desktop_home" XDG_RUNTIME_DIR="/run/user/$desktop_uid" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$desktop_uid/bus" \
+            GDK_BACKEND=wayland WAYLAND_DISPLAY="$wayland" WAYLAND_DEBUG=client \
+            firefox --no-remote --new-instance --profile "$RUNTIME/password-profile" \
+            http://127.0.0.1:8766/ >/dev/null 2>&1 || fail "password Firefox did not start"
+    else
+        as_desktop systemd-run --user --quiet --collect --unit=auros-profiletest-fcitx-password \
+            --property=Type=exec --property="StandardError=append:$password_trace" -- \
+            /usr/bin/env -u DISPLAY HOME="$desktop_home" XDG_RUNTIME_DIR="/run/user/$desktop_uid" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$desktop_uid/bus" \
+            GDK_BACKEND=wayland GTK_IM_MODULE=fcitx WAYLAND_DISPLAY="$wayland" \
+            XDG_CONFIG_HOME="$CFG" XDG_CACHE_HOME="$CACHE" XDG_DATA_HOME="$DATA" WAYLAND_DEBUG=client \
+            firefox --no-remote --new-instance --profile "$RUNTIME/password-profile" \
+            http://127.0.0.1:8766/ >/dev/null 2>&1 || fail "password Firefox did not start"
+    fi
     wait_active auros-profiletest-fcitx-password || fail "password Firefox did not stay active"
     password_pid=$(as_desktop systemctl --user show -p MainPID --value auros-profiletest-fcitx-password 2>/dev/null)
     case "$password_pid" in ''|0|*[!0-9]*) fail "password Firefox PID unavailable";; esac
+    tr '\0' '\n' < "/proc/$password_pid/environ" \
+        | grep -E '^(GDK_BACKEND|GTK_IM_MODULE|WAYLAND_DISPLAY|DISPLAY|XDG_CONFIG_HOME)=' \
+        > "$STATE/password.env"
+    grep -qx 'GDK_BACKEND=wayland' "$STATE/password.env" \
+        && grep -qx 'GTK_IM_MODULE=fcitx' "$STATE/password.env" \
+        && ! grep -q '^DISPLAY=' "$STATE/password.env" \
+        || fail "password Firefox native Wayland input environment missing"
+    if [ "$PRODUCTION" = 1 ] && grep -q '^XDG_CONFIG_HOME=' "$STATE/password.env"; then
+        fail "password Firefox did not inherit production configuration"
+    fi
     act wait-form || fail "password form not visible"
     act baseline "fcitx-round$security_round-password-focus" || fail "password focus baseline failed"
     password_boundary=$(wc -c < "$password_trace" | tr -d ' ')
