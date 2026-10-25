@@ -1227,6 +1227,135 @@ def test_image_integrity_step():
           "image download: pieces and reconstructed image are verified by the real workflow step")
 
 
+def test_busy_wizard_diagnostic():
+    try:
+        import e2e
+    except ImportError:
+        return
+
+    check(not e2e.busy_diagnostic_due(100.0, 100.0, 399.9),
+          "busy diagnostic: it does not run before five quiet minutes")
+    check(e2e.busy_diagnostic_due(100.0, 100.0, 400.0),
+          "busy diagnostic: it is due at five quiet minutes")
+    check(not e2e.busy_diagnostic_due(100.0, 400.0, 699.9),
+          "busy diagnostic: it cannot burst twice within five minutes")
+
+    script = e2e.busy_wizard_script(4242)
+    check("$rootPid = 4242" in script and "ParentProcessId = {0}" in script,
+          "busy diagnostic: process selection is the exact wizard and its direct children")
+    check("Resize-Partition" in script and "CommandLine" in script and
+          "command_line=" not in script.lower(),
+          "busy diagnostic: a command line is classified but never an output field")
+    check("Get-Partition -DriveLetter C" in script and "Get-Volume -DriveLetter C" in script,
+          "busy diagnostic: storage reads are limited to drive C")
+    check("Get-ChildItem -LiteralPath 'C:\\AurOS'" in script and
+          "Get-FileHash" not in script and "Get-Content" not in script,
+          "busy diagnostic: piece evidence is metadata only, never hashing or content")
+    summary = e2e.busy_wizard_summary(
+        'AURBUSY v1\n'
+        '{"kind":"process","role":"wizard","name":"AurOS-Setup.exe","pid":4242,'
+        '"parent":10,"responding":true,"cpu_seconds":1.25,"resize_partition":false}\n'
+        '{"kind":"partition","disk":0,"partition":3,"offset":1,"size":900}\n'
+        '{"kind":"volume","size":900,"free":300,"health":"Healthy"}\n'
+        '{"kind":"piece","name":"do-not-copy-this-name","length":123,"modified_utc":"now"}\n'
+        '{"kind":"pieces","shown":4,"capped":false}\nAURBUSY done\n')
+    check("wizard:AurOS-Setup.exe:4242" in summary and "partition-size:900" in summary and
+          "free:300" in summary and "pieces=shown:4 bytes:123 newest:now" in summary and
+          "do-not-copy-this-name" not in summary,
+          "busy diagnostic: the live tail summarizes state without piece names")
+
+    class FakeHub:
+        def __init__(self, result=None, error=None):
+            self.result, self.error, self.calls = result, error, []
+
+        def ask(self, op, **kw):
+            self.calls.append((op, kw))
+            if self.error:
+                raise self.error
+            return self.result
+
+    class FakeRec:
+        def __init__(self): self.lines = []
+        def log(self, line): self.lines.append(line)
+
+    def flow(out, hub):
+        f = e2e.Flow.__new__(e2e.Flow)
+        f.a = type("Args", (), {"out": out})()
+        f.hub, f.rec = hub, FakeRec()
+        return f
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "output": "AURBUSY v1\nAURBUSY done\n"})
+        f = flow(t, hub)
+        check(f.busy_wizard_diagnostic({"pid": 4242}),
+              "busy diagnostic: a complete bounded snapshot is accepted")
+        check(hub.calls[0][0] == "diagnostic" and
+              hub.calls[0][1]["timeout"] == e2e.BUSY_DIAGNOSTIC_TIMEOUT <= 60 and
+              hub.calls[0][1]["timeout_ms"] == e2e.BUSY_DIAGNOSTIC_GUEST_TIMEOUT_MS <
+              e2e.BUSY_DIAGNOSTIC_TIMEOUT * 1000,
+              "busy diagnostic: a killed-on-timeout guest command precedes the host bound")
+        evidence = open(os.path.join(t, "guest-diagnostics.log")).read()
+        check("busy wizard snapshot pid=4242" in evidence and "AURBUSY done" in evidence and
+              "busy wizard diagnostic: recorded" in f.rec.lines[-1],
+              "busy diagnostic: successful output is appended to guest evidence")
+
+    with tempfile.TemporaryDirectory() as t:
+        secret = "SECRET --token should-never-enter-evidence"
+        hub = FakeHub({"ok": False, "error": secret})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": 4242}),
+              "busy diagnostic: helper rejection is diagnostic, not fatal")
+        evidence = open(os.path.join(t, "guest-diagnostics.log")).read()
+        check("rejected" in evidence and secret not in evidence,
+              "busy diagnostic: helper errors are explicit without leaking raw input")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": False,
+                       "error": "diagnostic child exceeded 40000 ms and was stopped"})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": 4242}) and
+              "exceeded 40000 ms and was stopped" in
+              open(os.path.join(t, "guest-diagnostics.log")).read(),
+              "busy diagnostic: the killed guest timeout is named explicitly")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "output":
+                       "AURBUSY v1\nAURBUSY ERROR storage Example.Type\nAURBUSY done\n"})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": 4242}) and
+              "recorded with explicit section errors" in f.rec.lines[-1],
+              "busy diagnostic: a section failure stays explicit without aborting the flow")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub(None)
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": 4242}),
+              "busy diagnostic: timeout is diagnostic, not fatal")
+        evidence = open(os.path.join(t, "guest-diagnostics.log")).read()
+        check("timed out after 45 seconds" in evidence,
+              "busy diagnostic: timeout evidence names the exact bound")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "output": "should not run"})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": "4242"}) and not hub.calls,
+              "busy diagnostic: a non-integer PID is refused before guest execution")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "output": "AURBUSY v1\nAURBUSY done\n"})
+        f = flow(t, hub)
+        f.record_guest_diagnostic = lambda label, out: (_ for _ in ()).throw(OSError("disk full"))
+        check(not f.busy_wizard_diagnostic({"pid": 4242}) and
+              f.rec.lines[-2].endswith("evidence write failed: OSError"),
+              "busy diagnostic: an evidence write failure is explicit and does not abort the flow")
+
+    helper = open(os.path.join(HERE, "guest", "helper.ps1")).read()
+    bounded = re.search(r"function Invoke-BoundedDiagnostic.*?^}", helper, re.S | re.M)
+    check(bounded is not None and "WaitForExit($timeoutMs)" in bounded.group(0) and
+          "Stop-Process" in bounded.group(0) and "WaitForExit()" not in bounded.group(0),
+          "busy diagnostic: the guest child is forcibly stopped without an unbounded wait")
+
+
 test_expect()
 test_wizard_contract()
 test_stops()
@@ -1255,5 +1384,6 @@ test_edge_item()
 test_publish()
 test_first_session_probe()
 test_image_integrity_step()
+test_busy_wizard_diagnostic()
 print(f"\n{len(fails)} failed" if fails else "\nall passed")
 sys.exit(1 if fails else 0)
