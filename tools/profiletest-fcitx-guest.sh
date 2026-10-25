@@ -321,6 +321,7 @@ restore_and_finish() {
             exit 0
         fi
     fi
+    sync
     say "fcitx-probe=$final_state evidence=fcitx reason=$final_reason"; say done; exit 0
 }
 fail() { final_state=fail; final_reason=$(printf '%s' "$*" | tr ' ' '_'); restore_and_finish; }
