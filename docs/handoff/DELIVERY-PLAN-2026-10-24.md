@@ -2,7 +2,7 @@
 
 Owner authorization on 24 October 2026: implement, test adversarially, use bounded parallel agents, and push verified checkpoints to `aarohkandy/v0.0.1-auros`. The target is a nontechnical person describing the system they want, receiving it quickly, installing it safely, and using it without a terminal or helper.
 
-## Current checkpoint (25 October, 04:58 UTC)
+## Current checkpoint (25 October, 04:56 UTC)
 
 Chronological entries below preserve failures, prior hypotheses and superseded evidence.
 
@@ -1007,4 +1007,4 @@ Helddefault65f55242 still NOT integrated. Apply-check now conflicts only structu
 
 ## Continued recovery and integration audit
 
-Recovery40161971669 completed fresh M1 and cache persistence and is now in M2/M3. Encryption, restart and recovery are not yet claimed. Focused independent audit of a1a8caf5 confirmed the earlier generic-default/personalized receipt confusion and exact-base-tag verification omissions are both fixed with regressions. Main and held default remain unchanged.
+Recovery40161971669 completed fresh M1 and cache persistence and is now in M2/M3. Evidence at04:55:51Z shows the persisted helper running, SecureBoot on and BitLocker fixture encryption advancing86%→90% with TPM and RecoveryPassword protectors. Encryption, restart and recovery are not yet claimed. Focused independent audit of a1a8caf5 confirmed the earlier generic-default/personalized receipt confusion and exact-base-tag verification omissions are both fixed with regressions. Main and held default remain unchanged.
