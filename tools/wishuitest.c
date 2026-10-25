@@ -624,6 +624,33 @@ static void shell_actions(void)
     drain();
     ok("a quiet-time event with no state is refused", strstr(wrote, "\"n\":52,\"ok\":false") != NULL);
 
+    say(&c, "{\"ev\":\"shell\",\"n\":61,\"do\":{\"type\":\"night_light\",\"on\":true}}");
+    drain();
+    ok("night light starts only after an untinted frame is available",
+       c.night_light == 1 && c.night_frame != NULL);
+    ok("night light reports the exact previous state for Undo",
+       strstr(wrote, "{\"op\":\"did\",\"n\":61,\"ok\":true,\"prev\":{\"type\":\"night_light\",\"on\":false}}") != NULL);
+    say(&c, "{\"ev\":\"shell\",\"n\":62,\"do\":{\"type\":\"night_light\",\"on\":false}}");
+    drain();
+    ok("the emitted inverse turns night light off",
+       !c.night_light && strstr(wrote, "\"n\":62,\"ok\":true") != NULL);
+    say(&c, "{\"ev\":\"shell\",\"n\":63,\"do\":{\"type\":\"night_light\",\"on\":\"yes\"}}");
+    drain();
+    ok("a non-boolean night-light state is refused",
+       !c.night_light && strstr(wrote, "\"n\":63,\"ok\":false") != NULL);
+    say(&c, "{\"ev\":\"shell\",\"n\":64,\"do\":{\"type\":\"night_light\"}}");
+    drain();
+    ok("a night-light event with no state is refused",
+       !c.night_light && strstr(wrote, "\"n\":64,\"ok\":false") != NULL);
+    say(&c, "{\"ev\":\"shell\",\"n\":65,\"do\":{\"type\":\"night_light\",\"on\":true,\"on\":false}}");
+    drain();
+    ok("a duplicate night-light state is refused",
+       !c.night_light && strstr(wrote, "\"n\":65,\"ok\":false") != NULL);
+    say(&c, "{\"ev\":\"shell\",\"n\":66,\"do\":{\"type\":\"night_light\",\"on\":true,\"temperature\":1000}}");
+    drain();
+    ok("an extra night-light field is refused",
+       !c.night_light && strstr(wrote, "\"n\":66,\"ok\":false") != NULL);
+
     snprintf(mock_theme, sizeof mock_theme, "%s", "nocturne");
     mock_theme_readable = 1;
     mock_theme_valid = 1;
@@ -701,6 +728,7 @@ static void shell_actions(void)
     say(&c, "{\"ev\":\"triggers\",\"words\":[\"potato\",\"pills\"],\"apps\":[]}");
     ok("the trigger words are handed to the compositor", got_nw == 2 &&
        !strcmp(got_words[0], "potato") && !strcmp(got_words[1], "pills"));
+    nightlight_fini(&c);
 }
 
 /* ── 6. every target, every page, every size ─────────────────────── */
