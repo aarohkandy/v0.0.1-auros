@@ -2,19 +2,19 @@
 
 Owner authorization on 24 October 2026: implement, test adversarially, use bounded parallel agents, and push verified checkpoints to `aarohkandy/v0.0.1-auros`. The target is a nontechnical person describing the system they want, receiving it quickly, installing it safely, and using it without a terminal or helper.
 
-## Current checkpoint (25 October, 01:22 UTC)
+## Current checkpoint (25 October, 01:52 UTC)
 
 This is the current summary; chronological entries below retain earlier
 failures and superseded evidence deliberately.
 
-- Main candidate `3629b114` is under [build/release run 40148012698](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40148012698). The full image suite passed, including unit, compositor, all 16 VM checks and four power-cut jobs. Prerelease publication/readback passed; the four exact-installer Windows journeys are now running, alongside Windows navigation/download checks. No Windows-journey verdict yet. It includes startup readiness, result selection, after-dwell Open validation, privacy-dialog attribution, and visible BitLocker confirmation repairs. No public/latest promotion.
+- Main candidate `3629b114` is under [build/release run 40148012698](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40148012698). The full image suite, prerelease readback, Windows navigation/download, site and source publication passed. The overall run FAILED its four Windows journeys: both base lanes had an OCR false-negative despite visible VLC results; ordinary BitLocker refused as the legacy default; fastpath BitLocker failed before install on the test hash-helper/PowerShell h-alias collision. These are not end-to-end passes. Corrected harness main `3df6181e` is now running the SAME fastpath EXE in focused base+BitLocker/put-back run `40152103698`; no image rebuild. Automatic hardening `40151838977` is checking exact build `40148012698`. It includes startup readiness, result selection, after-dwell Open validation, privacy-dialog attribution, and visible BitLocker confirmation repairs. No public/latest promotion.
 - Fresh multilingual [run 40148012574](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40148012574) passed all 48 checks on `3629b114`, with real Mousepad/Firefox candidate screenshots and exact `你好` output. This is one shipped-Fcitx functional boot, not a multilingual Windows journey or production reboot-security certification. Other profiles' input behavior is unchanged.
 - Retained-image multilingual diagnostic `40145726339` attempt 2 passed the bounded two-round focus/password/cleanup test. Correct artifact: `12581007423`; stale same-name first-attempt artifact: `12581236003`. Firefox compositor connection identity remains unproved. Do not relabel retained-image security evidence as new-production-image evidence.
 - Earlier candidate `e0d0aadc` published prerelease `v0.1.0-e0d0aad` and passed 72 hardening plus 14 clock checks in `40140266950`; this is not hardening proof for the new candidate. Its four Windows journeys failed. The launch failures do not establish a GNOME Software defect because the old test could click stale coordinates. A direct stock-binary control proved dispatch only; its screenshot was a store preview and the initial mapped-window claim was corrected. No GNOME package patch was applied.
 - Follow-up Wi-Fi fix `7210f1ef` / `f1683bd9` is on delivery, not in `3629b114`: defer plaintext carry-over until Restart now, clean uncertain failures, disclose password copy, avoid unsupported failure reassurance. Focused Windows workflow `40149373093` passed all seven jobs; normal/large-text disclosure screenshots were inspected. Fastpath remains non-default.
 - Default-fastpath promotion commit `65f55242` is prepared and independently reviewed in an isolated branch and MUST stay held until the exact fastpath BitLocker journey proves Windows return, restored protection and file-preserving Put Windows back. It must preserve generic-installer recovery coverage and matching versioned Terms/Privacy disclosures.
 - Independent current-source audit confirmed that generic installs reject personalized default-look receipts and launch proof rejects Software’s embedded VLC preview; exact regression tests pass.
-- Deployment wiring and runtime credential validation are integrated on delivery (`b6091c96` through `21b936bd`): 100 combined cloud tests and 29 workflow checks pass; the browser/API fixture uses disposable RSA credentials and all 556 checks pass. Build delivery remains disabled; no remote secrets or deployment were changed. Harness-only production multilingual reboot/focus/password certification is running as `40150677765` on main `8a0d002d`, reusing the exact fresh image from `40148012574`. Delivery contains the same patch as `fe76b78f`; no image rebuild was dispatched. The separate push run `40150676528` is only the diagnostic gate, not runtime proof.
+- Deployment wiring and runtime credential validation are integrated on delivery (`b6091c96` through `21b936bd`): 100 combined cloud tests and 29 workflow checks pass; the browser/API fixture uses disposable RSA credentials and all 556 checks pass. Build delivery remains disabled; no remote secrets or deployment were changed. Harness-only production multilingual run `40150677765` FAILED at second-editor visibility before focus/password/reboot proof. It validated shipped service and first candidate only. A bounded second-editor proof repair `83e3274a` is held pending fixes for truncated PPM parsing and contiguous block-marker rendering identified by lead review. Do not rerun before those fixes/review. The exact fresh image remains `40148012574`; no rebuild is needed.
 - Public delivery remains disabled pending signing/service configuration and release proof. Managed profiles, physical-PC tests, contact/name decisions, held encryption work and unfinished Wishes actions remain open. No zero-vulnerability or end-to-end completion claim is justified.
 
 ## Starting evidence
@@ -837,3 +837,28 @@ and Wi-Fi follow-ups remain on delivery, and default promotion `65f55242`
 remains held. Runtime result is pending in
 [run 40150677765](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40150677765).
 Do not dispatch a duplicate or cite the push-only gate as runtime evidence.
+
+## Candidate Windows failure diagnosis and focused rerun
+
+Both base lanes in `40148012698` reached AurOS and a populated store, but the
+whole-screen OCR omitted the search query/result title. The old locator
+required that query anchor. Lead inspected fastpath `0050-failure.png`; actual
+VLC row is visible. Journals prove DHCP/DNS/catalogue ready before Software
+opened. Worker reproduced on ordinary and fastpath screenshots with Tesseract.
+`ebc553b7` crops the observed store body and requires an exact unique
+title/summary pair; actual-image and adverse fixtures plus independent review
+passed. This does not yet prove install or app launch.
+
+Fastpath BitLocker failed before installation: `function H` was shadowed by
+PowerShell alias `h=Get-History`, producing an Id conversion error in <1s, not
+a timeout or evaluated Windows-state mismatch. The same alias occurred in the
+final recovery snapshot. `38b741be` renames both helpers and all four calls;
+local source regressions pass, real Windows execution remains pending.
+
+Integrated delivery `0034a3ab`/`fdb2ee51`, main diagnostic `3df6181e`. Full
+E2E selftest passed after integration. One focused rerun:
+[40152103698](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40152103698),
+fastpath base + BitLocker with put-back enabled. Exact EXE SHA-256:
+`b5440e94d2a576e38003a2ff69bb440bc60a496cbe72e405c6ba1fd948a54e26`.
+No ordinary legacy rerun or full rebuild was started. Default promotion
+`65f55242` stays held; Wi-Fi/cloud follow-ups stay on delivery.
