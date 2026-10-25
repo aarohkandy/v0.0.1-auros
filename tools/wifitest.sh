@@ -5,10 +5,12 @@
 #  Two halves of one promise, each checked where it happens:
 #
 #   the engine (out/aurbridge-sim, a simulated computer made of files)
-#     with the box ticked it writes \EFI\AurOS\wifi.conf: the one network,
-#     three lines. Unticked it writes nothing and takes away one an earlier
-#     attempt left. A name or key it cannot write down without doubt is not
-#     carried (and the install carries on). The key appears NOWHERE else:
+#     with the box ticked it writes \EFI\AurOS\wifi.conf only when Restart
+#     now is pressed: the one network, three lines. Restart later and taking
+#     an armed restart back leave no password there. Unticked it writes
+#     nothing and takes away one an earlier attempt left. A name or key it
+#     cannot write down without doubt is not carried (and the install carries
+#     on). The key appears NOWHERE else:
 #     not in a log, not in the firmware's variables, not in choices.conf.
 #     Closing the installer takes the file away.
 #
@@ -67,6 +69,11 @@ conf() { cat "$S/esp/EFI/AurOS/wifi.conf" 2>/dev/null; }
 
 echo "  the engine"
 wifi_in "Home Network" wpa-psk "$KEY"
+engine later AURBRIDGE_BRING_WIFI=1 AURBRIDGE_ARM_LATER=1 AURBRIDGE_RESTART_LATER=1
+grep -q 'step=prepared bootnext=0' "$S/out" && [ ! -f "$S/esp/EFI/AurOS/wifi.conf" ] \
+    && ok "Restart later: no Wi-Fi password is left on the EFI partition" \
+    || bad "Restart later: no Wi-Fi password is left on the EFI partition" "$(conf)" "$(cat "$S/out")"
+
 engine on AURBRIDGE_BRING_WIFI=1
 grep -q 'verdict=armed' "$S/out" && ok "ticked: the install arms" || bad "ticked: the install arms" "$(tail -2 "$S/err")"
 [ "$(conf)" = "ssid=Home Network
@@ -123,6 +130,56 @@ wifi_in "Home" wpa-psk "$KEY"
 engine aborted AURBRIDGE_BRING_WIFI=1 AURBRIDGE_ABORT=1
 [ ! -f "$S/esp/EFI/AurOS/wifi.conf" ] && grep -q 'verdict=aborted' "$S/out" \
     && ok "closing the installer takes the file away" || bad "closing the installer takes the file away" "$(conf)"
+
+engine disarmed AURBRIDGE_BRING_WIFI=1 AURBRIDGE_ARM_LATER=1 AURBRIDGE_DISARM=1
+[ ! -f "$S/esp/EFI/AurOS/wifi.conf" ] && grep -q 'step=disarmed bootnext=0' "$S/out" \
+    && ok "a restart failure rollback takes the Wi-Fi password away" \
+    || bad "a restart failure rollback takes the Wi-Fi password away" "$(conf)" "$(cat "$S/out")"
+
+engine rearmed AURBRIDGE_BRING_WIFI=1 AURBRIDGE_ARM_LATER=1 AURBRIDGE_DISARM=1 AURBRIDGE_REARM=1
+[ -f "$S/esp/EFI/AurOS/wifi.conf" ] && grep -q 'step=rearmed rc=0 bootnext=1' "$S/out" \
+    && ok "the same prepared install can retry after arming was taken back" \
+    || bad "the same prepared install can retry after arming was taken back" "$(conf)" "$(cat "$S/out")"
+
+engine stalefail AURBRIDGE_BRING_WIFI=1 AURBRIDGE_ARM_LATER=1 AURBRIDGE_SIM_FAIL_WIFI_DELETE_AT=2
+grep -q 'step=armed rc=-1 bootnext=0' "$S/out" && grep -q 'old Wi-Fi password copy could not be removed' "$S/err" \
+    && ok "if an old Wi-Fi copy cannot be removed, Restart now refuses" \
+    || bad "if an old Wi-Fi copy cannot be removed, Restart now refuses" "$(cat "$S/out")" "$(tail -4 "$S/err")"
+
+for failkind in partial full; do
+    engine "write-$failkind" AURBRIDGE_BRING_WIFI=1 AURBRIDGE_ARM_LATER=1 \
+        AURBRIDGE_SIM_FAIL_WIFI_PUT="$failkind"
+    [ ! -f "$S/esp/EFI/AurOS/wifi.conf" ] && grep -q 'step=armed rc=0 bootnext=1' "$S/out" \
+        && ok "a $failkind failed Wi-Fi write is deleted before boot is armed" \
+        || bad "a $failkind failed Wi-Fi write is deleted before boot is armed" "$(conf)" "$(cat "$S/out")"
+done
+
+engine unsafeput AURBRIDGE_BRING_WIFI=1 AURBRIDGE_ARM_LATER=1 \
+    AURBRIDGE_SIM_FAIL_WIFI_PUT=partial AURBRIDGE_SIM_FAIL_WIFI_DELETE_AT=3
+grep -q 'step=armed rc=-1 bootnext=0' "$S/out" && grep -q 'incomplete Wi-Fi password copy could not be removed' "$S/err" \
+    && [ ! -f "$S/esp/EFI/AurOS/wifi.conf" ] \
+    && ok "a failed write refuses to arm and outer rollback retries cleanup" \
+    || bad "a failed write refuses to arm and outer rollback retries cleanup" "$(conf)" "$(cat "$S/out")" "$(tail -4 "$S/err")"
+
+engine noesp AURBRIDGE_BRING_WIFI=1 AURBRIDGE_ARM_LATER=1 AURBRIDGE_SIM_FAIL_ESP_OPEN_AT=2
+[ ! -f "$S/esp/EFI/AurOS/wifi.conf" ] && grep -q 'step=armed rc=-1 bootnext=0' "$S/out" \
+    && grep -q 'could not be checked for an old Wi-Fi password copy' "$S/err" \
+    && ok "if the EFI partition cannot reopen, Restart now refuses and cleanup retries" \
+    || bad "if the EFI partition cannot reopen, Restart now refuses and cleanup retries" "$(conf)" "$(cat "$S/out")" "$(tail -4 "$S/err")"
+
+engine bootfail AURBRIDGE_BRING_WIFI=1 AURBRIDGE_ARM_LATER=1 AURBRIDGE_SIM_FAIL_BOOTNEXT=1
+[ ! -f "$S/esp/EFI/AurOS/wifi.conf" ] && grep -q 'step=armed rc=-1 bootnext=0' "$S/out" \
+    && ok "if BootNext fails after the copy, the Wi-Fi password is removed" \
+    || bad "if BootNext fails after the copy, the Wi-Fi password is removed" "$(conf)" "$(cat "$S/out")"
+
+wifi_in "Second Network" wpa-psk "second-password"
+cp "$T/wifi.in" "$S/wifi.txt"
+env AURBRIDGE_BRING_WIFI=1 out/aurbridge-sim "$S" desktop none "$I" "$T/kern" "$T/initrd" \
+    > "$S/retry.out" 2> "$S/retry.err"
+[ "$(conf)" = "ssid=Second Network
+security=wpa-psk
+psk=second-password" ] && ok "retry reads and carries the current Wi-Fi password" \
+    || bad "retry reads and carries the current Wi-Fi password" "$(conf)" "$(tail -3 "$S/retry.err")"
 
 echo
 echo "  first boot"
