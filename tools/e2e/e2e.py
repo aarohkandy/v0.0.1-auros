@@ -172,9 +172,9 @@ def bitlocker_pause_lane_error(variant, putback, installer_name, installer_sha25
 def bitlocker_pause_controls(named):
     """Return the exact two actions of the in-window BitLocker warning.
 
-    UI Automation names come from the installer's own MSAA tree.  No OCR
-    approximation is allowed for the action that temporarily weakens drive
-    protection.
+    The elevated helper reads the installer's own MSAA OBJID_CLIENT tree. No
+    OCR approximation is allowed for the action that temporarily weakens
+    drive protection.
     """
     panes = [e for e in named if e.get("type") == "Pane" and
              e.get("name") == BITLOCKER_PAUSE_ACCESSIBLE and e.get("rect") and
@@ -993,21 +993,21 @@ class Flow:
 
     def wizard_named(self, win):
         """The installer's own controls, by name: its screen-reader object
-        (MSAA), read through UI Automation by the elevated helper. Its
-        primary button is the one whose key is Enter (B keeps the names
-        stable, docs/handoff/streams/B.md "Changed for e2e"). [] for an
-        installer without one, or a helper that cannot see inside it."""
-        if not win or not win.get("proc"):
+        (MSAA OBJID_CLIENT), read directly by the elevated helper after exact
+        process, HWND and class checks. Its primary button is the one whose
+        key is Enter (B keeps the names stable, docs/handoff/streams/B.md
+        "Changed for e2e"). [] for an installer without one."""
+        if not win or not win.get("proc") or not win.get("hwnd"):
             return []
         match = "^" + re.escape(win["proc"]) + "$"
         got = [e for e in self.elements(match, ["Button", "RadioButton", "CheckBox", "Pane"],
                                         max=80, quiet=True)
-               if e.get("proc") == win["proc"]]
+               if e.get("proc") == win["proc"] and e.get("hwnd") == win["hwnd"]]
         if not got and not self._named_diag:
             # Once, so that the evidence says why names could not be read
             # (not elevated, an installer without the screen-reader object...)
             self._named_diag = True
-            self.log("installer window as UI Automation sees it: " + json.dumps(win))
+            self.log("installer top-level window as UI Automation sees it: " + json.dumps(win))
             self.elements(match, ["Button", "RadioButton", "CheckBox", "Pane", "Window", "Custom",
                                   "Text", "Document", "Group", "List", "ListItem", "Image"], max=60)
         return got
