@@ -96,7 +96,8 @@ jobs:
       - name: FCITX trace parser rejects malformed evidence
         run: |
           python3 -m unittest -v tools/test_fcitx_wayland_trace.py \
-            tools/test_fcitx_connection_probe.py tools/test_fcitx_password_server.py
+            tools/test_fcitx_connection_probe.py tools/test_fcitx_password_server.py \
+            tools/test_fcitx_marker_visibility.py
       - id: g
         env:
           MSG: ${{ github.event.head_commit.message }}
@@ -553,7 +554,10 @@ jobs:
                    ev/fcitx-mousepad-candidate.png ev/fcitx-mousepad-committed.png \
                    ev/fcitx-firefox-candidate.png ev/fcitx-firefox-submitted.png \
                    ev/fcitx-round*-focus-away.png ev/fcitx-round*-password-focused.png \
-                   ev/fcitx-round*-password-masked.png; do
+                   ev/fcitx-round*-password-masked.png \
+                   ev/fcitx-round*-mousepad-b-before.png \
+                   ev/fcitx-round*-mousepad-b-after.png \
+                   ev/fcitx-round*-mousepad-b-visibility.txt; do
             [ -f "$f" ] && files+=("$f")
           done
           if [ -d ev/ibus ]; then

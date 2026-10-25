@@ -32,6 +32,8 @@ def _diagnostic_path(value: str) -> bool:
             "tools/test_fcitx_wayland_trace.py",
             "tools/fcitx_connection_probe.py",
             "tools/test_fcitx_connection_probe.py",
+            "tools/fcitx_marker_visibility.py",
+            "tools/test_fcitx_marker_visibility.py",
             "tools/fcitx_password_server.py",
             "tools/test_fcitx_password_server.py",
         }
@@ -168,6 +170,8 @@ def _selftest() -> None:
         "tools/test_fcitx_wayland_trace.py",
         "tools/fcitx_connection_probe.py",
         "tools/test_fcitx_connection_probe.py",
+        "tools/fcitx_marker_visibility.py",
+        "tools/test_fcitx_marker_visibility.py",
         "tools/fcitx_password_server.py",
         "tools/test_fcitx_password_server.py",
         ".github/workflows/profiles.yml",
