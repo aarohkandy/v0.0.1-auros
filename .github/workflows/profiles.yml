@@ -40,7 +40,13 @@ on:
     inputs:
       retained_multilingual_run_id:
         description: Exact completed main profiles run whose retained multilingual image to diagnose
-        required: true
+        required: false
+        default: ''
+        type: string
+      retained_revive_run_id:
+        description: Exact completed main profiles run whose retained Revive image to diagnose
+        required: false
+        default: ''
         type: string
       x11_panel_probe:
         description: Also observe the X11 panel during this retained multilingual diagnostic
@@ -81,6 +87,24 @@ defaults:
 # waiting office, and nothing else.
 
 jobs:
+  dispatch-input:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: accept exactly one retained profile source
+        env:
+          MULTILINGUAL_RUN: ${{ inputs.retained_multilingual_run_id }}
+          REVIVE_RUN: ${{ inputs.retained_revive_run_id }}
+        run: |
+          count=0
+          [ -z "$MULTILINGUAL_RUN" ] || count=$((count + 1))
+          [ -z "$REVIVE_RUN" ] || count=$((count + 1))
+          [ "$count" = 1 ] || {
+            echo "::error::provide exactly one retained multilingual or Revive source run"
+            exit 2
+          }
+
   gate:
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
@@ -138,7 +162,8 @@ jobs:
           text = Path(".github/workflows/profiles.yml").read_text(encoding="utf-8")
           evidence = text.split("\n  evidence:\n", 1)[1].split("\n  profile:\n", 1)[0]
           profile = text.split("\n  profile:\n", 1)[1].split("\n  ibus-retest:\n", 1)[0]
-          retest = text.split("\n  ibus-retest:\n", 1)[1].split("\n  summary:\n", 1)[0]
+          retest = text.split("\n  ibus-retest:\n", 1)[1].split("\n  revive-retest:\n", 1)[0]
+          revive_retest = text.split("\n  revive-retest:\n", 1)[1].split("\n  summary:\n", 1)[0]
           prune = text.split("\n  prune:\n", 1)[1]
           checks = {
               "exactly one normal job creates the evidence release":
@@ -181,6 +206,10 @@ jobs:
                   'PROFILETEST_FCITX_PRODUCTION="${' + '{ steps.mode.outputs.production }}"' in retest,
               "diagnostic probe options are validated together":
                   "profiletest-gate.py probe-mode" in retest,
+              "Revive diagnostic restores an exact artifact without building":
+                  "profile_image.py revive-restore" in revive_retest and
+                  "PROFILETEST_REVIVE_FUNCTIONAL=1" in revive_retest and
+                  "build/all" not in revive_retest,
           }
           failed = [message for message, ok in checks.items() if not ok]
           if failed:
@@ -461,7 +490,8 @@ jobs:
           retention-days: 30
           if-no-files-found: error
   ibus-retest:
-    if: github.event_name == 'workflow_dispatch'
+    needs: dispatch-input
+    if: github.event_name == 'workflow_dispatch' && inputs.retained_multilingual_run_id != '' && inputs.retained_revive_run_id == ''
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -638,6 +668,131 @@ jobs:
         if: ${{ always() && !cancelled() }}
         with:
           name: profile-multilingual-diagnostic
+          path: ev/
+          if-no-files-found: ignore
+
+  revive-retest:
+    needs: dispatch-input
+    if: github.event_name == 'workflow_dispatch' && inputs.retained_revive_run_id != '' && inputs.retained_multilingual_run_id == ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    timeout-minutes: 75
+    concurrency:
+      group: profiles-${{ github.ref }}-revive
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: profiles-${{ github.run_id }}
+      SOURCE_RUN: ${{ inputs.retained_revive_run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: accept the exact retained Revive source attempt
+        id: source
+        run: |
+          [ "$GITHUB_REF" = refs/heads/main ] \
+            || { echo "::error::retained image diagnostics run only from main"; exit 2; }
+          [[ "$SOURCE_RUN" =~ ^[1-9][0-9]{0,19}$ ]] \
+            || { echo "::error::retained_revive_run_id must be a decimal Actions run id"; exit 2; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" \
+            > "$RUNNER_TEMP/source-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/jobs?filter=latest&per_page=100" \
+            > "$RUNNER_TEMP/source-jobs.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts?per_page=100" \
+            > "$RUNNER_TEMP/source-artifacts.json"
+          python3 tools/profile_image.py revive-source \
+            --run-json "$RUNNER_TEMP/source-run.json" \
+            --jobs-json "$RUNNER_TEMP/source-jobs.json" \
+            --artifacts-json "$RUNNER_TEMP/source-artifacts.json" \
+            --repository "$GITHUB_REPOSITORY" --run-id "$SOURCE_RUN" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: room, tools, and KVM
+        run: |
+          mkdir -p ev out retained-anchor
+          ( sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+              /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift \
+              /usr/local/share/chromium /usr/local/julia* 2>/dev/null; echo removed > /tmp/freed ) &
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          for i in 1 2 3; do
+            sudo timeout 300 apt-get update -q &&
+            sudo DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y -q --no-install-recommends \
+              gdisk dosfstools mtools e2fsprogs qemu-system-x86 qemu-utils ovmf \
+              python3 tesseract-ocr && break
+            [ "$i" = 3 ] && exit 1; sleep 15
+          done
+          while [ ! -f /tmp/freed ]; do sleep 2; done
+          ls -l /dev/kvm
+          df -h /
+      - name: download and restore the exact retained Revive artifact
+        run: |
+          gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/${{ steps.source.outputs.artifact_id }}/zip" \
+            > "$RUNNER_TEMP/revive-artifact.zip"
+          python3 tools/profile_image.py revive-restore \
+            --artifact-zip "$RUNNER_TEMP/revive-artifact.zip" \
+            --artifact-bytes '${{ steps.source.outputs.artifact_bytes }}' \
+            --artifact-sha256 '${{ steps.source.outputs.artifact_sha256 }}' \
+            --repository "$GITHUB_REPOSITORY" --run-id "$SOURCE_RUN" \
+            --source-sha '${{ steps.source.outputs.source_sha }}' \
+            --output out/auros-revive.img \
+            --manifest-output retained-anchor/manifest.json
+      - name: make and verify this diagnostic run's evidence release
+        run: |
+          mk() { gh release create "$TAG" --prerelease --target "$1" \
+                   --title "profiles: retained Revive diagnostic, run $GITHUB_RUN_ID" \
+                   --notes "Diagnostic only. Image: run $SOURCE_RUN attempt ${{ steps.source.outputs.run_attempt }}, artifact ${{ steps.source.outputs.artifact_id }}. Test code: $GITHUB_SHA."; }
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            if ! mk "$GITHUB_SHA"; then
+              gh release view "$TAG" >/dev/null 2>&1 ||
+                mk main || { echo "::error::could not create diagnostic evidence release $TAG"; exit 1; }
+            fi
+          fi
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || { echo "::error::diagnostic evidence release $TAG does not exist"; exit 1; }
+      - name: run the current Revive functional harness against the retained image
+        id: diagnostic
+        run: |
+          set +e
+          sudo env PATH="$PATH" PROFILETEST_REVIVE_FUNCTIONAL=1 \
+            sh tools/profiletest.sh boot revive "$PWD/ev" 2>&1 | tee ev/revive-boot.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          result=fail; [ "$rc" = 0 ] && result=pass
+          python3 tools/profile_image.py revive-diagnostic \
+            --manifest retained-anchor/manifest.json \
+            --repository "$GITHUB_REPOSITORY" --run-id "$SOURCE_RUN" \
+            --source-sha '${{ steps.source.outputs.source_sha }}' \
+            --source-run-attempt '${{ steps.source.outputs.run_attempt }}' \
+            --source-artifact-id '${{ steps.source.outputs.artifact_id }}' \
+            --source-artifact-sha256 '${{ steps.source.outputs.artifact_sha256 }}' \
+            --test-run-id "$GITHUB_RUN_ID" --test-source-sha "$GITHUB_SHA" \
+            --result "$result" --output ev/revive-retest-v1.json
+          echo "Diagnostic only: image source ${{ steps.source.outputs.source_sha }} run $SOURCE_RUN attempt ${{ steps.source.outputs.run_attempt }} artifact ${{ steps.source.outputs.artifact_id }}; test source $GITHUB_SHA; result $result" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+      - name: publish diagnostic evidence with both source identities
+        if: ${{ !cancelled() && (steps.diagnostic.outcome == 'success' || steps.diagnostic.outcome == 'failure') }}
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" ev
+          if [ -d ev/revive ]; then
+            tar -C ev -czf ev/revive-runtime-evidence.tar.gz revive
+          fi
+          files=()
+          for f in ev/revive-retest-v1.json ev/revive.png ev/revive-report.txt \
+                   ev/revive-image.txt ev/revive-serial.txt ev/revive-boot.txt \
+                   ev/revive-runtime-evidence.tar.gz; do
+            [ -f "$f" ] && files+=("$f")
+          done
+          [ "${#files[@]}" -gt 0 ] && gh release upload "$TAG" "${files[@]}" --clobber
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() && !cancelled() }}
+        with:
+          name: profile-revive-diagnostic
           path: ev/
           if-no-files-found: ignore
 
