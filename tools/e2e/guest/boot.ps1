@@ -11,4 +11,7 @@ while ($true) {
   } catch { }
   Start-Sleep 5
 }
-Invoke-Expression $code
+$helper = 'C:\e2e\helper.ps1'
+[IO.File]::WriteAllText($helper, $code, [Text.UTF8Encoding]::new($false))
+& powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $helper
+if ($LASTEXITCODE -ne 0) { throw "E2E helper exited $LASTEXITCODE" }
