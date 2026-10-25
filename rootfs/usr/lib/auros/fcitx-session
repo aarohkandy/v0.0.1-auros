@@ -1,0 +1,47 @@
+#!/bin/sh
+# Start the client-rendered GTK input path without granting the daemon an X11
+# or Wayland surface.  Fresh users get the same bounded Pinyin profile that
+# passed the retained-image diagnostic; an existing choice is never replaced.
+set -eu
+
+[ -x /usr/bin/fcitx5 ] || {
+    echo "auros-fcitx: /usr/bin/fcitx5 is missing" >&2
+    exit 1
+}
+[ -r /usr/share/auros/fcitx-profile ] || {
+    echo "auros-fcitx: /usr/share/auros/fcitx-profile is missing" >&2
+    exit 1
+}
+
+: "${HOME:?auros-fcitx: HOME is unset}"
+config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+config_dir="$config_home/fcitx5"
+profile="$config_dir/profile"
+tmp=
+cleanup() { [ -z "$tmp" ] || rm -f "$tmp"; }
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+if [ ! -e "$profile" ]; then
+    umask 077
+    mkdir -p "$config_dir" || {
+        echo "auros-fcitx: cannot create $config_dir" >&2
+        exit 1
+    }
+    tmp="$profile.auros.$$"
+    if ! ( set -C; cat /usr/share/auros/fcitx-profile > "$tmp" )
+    then
+        echo "auros-fcitx: cannot stage the default profile" >&2
+        exit 1
+    fi
+    if ! ln "$tmp" "$profile" 2>/dev/null && [ ! -e "$profile" ]; then
+        echo "auros-fcitx: cannot install the default profile" >&2
+        exit 1
+    fi
+    rm -f "$tmp"
+    tmp=
+fi
+
+trap - EXIT HUP INT TERM
+unset DISPLAY WAYLAND_DISPLAY
+exec /usr/bin/fcitx5 -D

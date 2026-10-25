@@ -1,0 +1,15 @@
+[Unit]
+Description=AurOS multilingual input method
+Documentation=man:fcitx5(1)
+Conflicts=auros-ibus.service
+
+[Service]
+Type=dbus
+BusName=org.fcitx.Fcitx5
+ExecStart=/usr/lib/auros/fcitx-session
+UnsetEnvironment=DISPLAY WAYLAND_DISPLAY
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

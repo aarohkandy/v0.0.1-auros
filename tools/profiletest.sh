@@ -65,6 +65,10 @@
 #                         for a retained multilingual diagnostic only: install
 #                         Noble's Fcitx GTK module into the scratch copy and
 #                         record composition and parented-popup protocol syntax.
+#    PROFILETEST_FCITX_PRODUCTION=1
+#                         for a fresh multilingual image only: exercise the
+#                         shipped Fcitx service in Mousepad and Firefox without
+#                         installing packages or replacing the service.
 # ═══════════════════════════════════════════════════════════════════
 set -u
 cd "$(dirname "$0")/.."
@@ -316,26 +320,53 @@ judge_report() { # profile report-file
             || bad "there is no console on Ctrl-Alt-F2" "getty@tty2: $(rv tty2)"
     fi
     if [ "$p" = multilingual ]; then
-        [ "$(rv ibus_unit)" = active ] && ok "the user's IBus service is running" \
-            || bad "the user's IBus service is running" "auros-ibus.service: $(rv ibus_unit)"
-        [ "$(rv ibus_gtk)" = ibus ] && ok "the user manager gives GTK programs IBus" \
-            || bad "the user manager gives GTK programs IBus" "GTK_IM_MODULE=$(rv ibus_gtk)"
-        [ "$(rv ibus_qt)" = ibus ] && ok "the user manager gives Qt programs IBus" \
-            || bad "the user manager gives Qt programs IBus" "QT_IM_MODULE=$(rv ibus_qt)"
-        [ "$(rv ibus_xmodifiers)" = '@im=ibus' ] && ok "the user manager gives X programs IBus" \
-            || bad "the user manager gives X programs IBus" "XMODIFIERS=$(rv ibus_xmodifiers)"
-        [ -n "$(rv ibus_wayland)" ] && [ -n "$(rv ibus_display)" ] \
-            && ok "the IBus session has the real Wayland and Xwayland displays" \
-            || bad "the IBus session has the real Wayland and Xwayland displays" \
-                   "WAYLAND_DISPLAY=$(rv ibus_wayland) DISPLAY=$(rv ibus_display)"
-        [ "$(rv ibus_pinyin)" = yes ] && ok "Pinyin is available through the user's live IBus" \
-            || bad "Pinyin is available through the user's live IBus" "pinyin=$(rv ibus_pinyin)"
-        if [ "${PROFILETEST_IBUS_FUNCTIONAL:-0}" = 1 ]; then
+        legacy_ibus=0
+        [ "${PROFILETEST_IBUS_FUNCTIONAL:-0}" = 1 ] && legacy_ibus=1
+        [ "${PROFILETEST_FCITX_CLIENT_PROBE:-0}" = 1 ] && legacy_ibus=1
+        if [ "$legacy_ibus" = 1 ]; then
+            [ "$(rv ibus_unit)" = active ] && ok "the retained image's IBus service is running" \
+                || bad "the retained image's IBus service is running" "auros-ibus.service: $(rv ibus_unit)"
+            [ "$(rv ibus_gtk)" = ibus ] && ok "the retained user manager gives GTK programs IBus" \
+                || bad "the retained user manager gives GTK programs IBus" "GTK_IM_MODULE=$(rv ibus_gtk)"
+            [ "$(rv ibus_qt)" = ibus ] && ok "the retained user manager gives Qt programs IBus" \
+                || bad "the retained user manager gives Qt programs IBus" "QT_IM_MODULE=$(rv ibus_qt)"
+            [ "$(rv ibus_xmodifiers)" = '@im=ibus' ] && ok "the retained user manager gives X programs IBus" \
+                || bad "the retained user manager gives X programs IBus" "XMODIFIERS=$(rv ibus_xmodifiers)"
+            [ -n "$(rv ibus_wayland)" ] && [ -n "$(rv ibus_display)" ] \
+                && ok "the retained IBus session has both displays" \
+                || bad "the retained IBus session has both displays" \
+                       "WAYLAND_DISPLAY=$(rv ibus_wayland) DISPLAY=$(rv ibus_display)"
+            [ "$(rv ibus_pinyin)" = yes ] && ok "Pinyin is available through retained-image IBus" \
+                || bad "Pinyin is available through retained-image IBus" "pinyin=$(rv ibus_pinyin)"
+        else
+            [ "$(rv fcitx_unit)" = active ] && ok "the user's Fcitx service is running" \
+                || bad "the user's Fcitx service is running" "auros-fcitx.service: $(rv fcitx_unit)"
+            [ "$(rv ibus_unit)" = inactive ] && ok "the conflicting IBus service is inactive" \
+                || bad "the conflicting IBus service is inactive" "auros-ibus.service: $(rv ibus_unit)"
+            [ "$(rv fcitx_gtk)" = fcitx ] && [ -z "$(rv fcitx_qt)" ] \
+                && [ -z "$(rv fcitx_xmodifiers)" ] \
+                && ok "only the tested GTK input module is selected" \
+                || bad "only the tested GTK input module is selected" \
+                       "GTK=$(rv fcitx_gtk) QT=$(rv fcitx_qt) XMODIFIERS=$(rv fcitx_xmodifiers)"
+            [ "$(rv fcitx_identity)" = exact ] && ok "the Fcitx service has the exact executable and arguments" \
+                || bad "the Fcitx service has the exact executable and arguments" "identity=$(rv fcitx_identity)"
+            [ "$(rv fcitx_owner)" = exact ] && ok "the exact Fcitx process owns its D-Bus service" \
+                || bad "the exact Fcitx process owns its D-Bus service" "owner=$(rv fcitx_owner)"
+            [ "$(rv fcitx_display)" = absent ] && [ "$(rv fcitx_wayland)" = absent ] \
+                && ok "the Fcitx daemon has no display fallback" \
+                || bad "the Fcitx daemon has no display fallback" \
+                       "DISPLAY=$(rv fcitx_display) WAYLAND_DISPLAY=$(rv fcitx_wayland)"
+            [ "$(rv fcitx_pinyin)" = yes ] && ok "Pinyin is available through the live Fcitx service" \
+                || bad "Pinyin is available through the live Fcitx service" "pinyin=$(rv fcitx_pinyin)"
+        fi
+        if [ "${PROFILETEST_IBUS_FUNCTIONAL:-0}" = 1 ] || \
+           [ "${PROFILETEST_FCITX_CLIENT_PROBE:-0}" = 1 ] || \
+           [ "${PROFILETEST_FCITX_PRODUCTION:-0}" = 1 ]; then
             printf '    %-62s %s\n' "typing Pinyin in Mousepad and Firefox" \
                 "checked below from exact application evidence"
         else
             printf '    %-62s %s\n' "typing Pinyin in Mousepad and Firefox" \
-                "UNPROVEN -- set PROFILETEST_IBUS_FUNCTIONAL=1"
+                "requires the fresh-image functional certification"
         fi
     fi
 }
@@ -376,8 +407,8 @@ judge_ibus_functional() { # evidence-root screenshot-root
     done
 }
 
-judge_fcitx_client_probe() { # evidence-root screenshot-root
-    D=$1; SHOTS=$2
+judge_fcitx_client_probe() { # evidence-root screenshot-root [source]
+    D=$1; SHOTS=$2; EXPECTED_SOURCE=${3:-retained-ibus-conversion}
     status=$(sed -n 's/^status=//p' "$D/result" 2>/dev/null | tail -1)
     case "$status" in
       pass) ok "the opt-in Fcitx first-stage diagnostic completed" ;;
@@ -386,6 +417,10 @@ judge_fcitx_client_probe() { # evidence-root screenshot-root
       *) bad "the opt-in Fcitx first-stage diagnostic completed" \
           "$(tr '\n' ' ' < "$D/result" 2>/dev/null || echo missing)" ;;
     esac
+    grep -qx "source=$EXPECTED_SOURCE" "$D/restore.txt" 2>/dev/null \
+        && ok "the Fcitx evidence came from the requested source" \
+        || bad "the Fcitx evidence came from the requested source" \
+               "expected $EXPECTED_SOURCE"
     printf '    %-62s %s\n' "candidate pixels and Wayland connection identity" \
         "UNPROVEN -- inspect screenshots; connection-tagged evidence is still required"
     for app in mousepad firefox; do
@@ -430,8 +465,24 @@ judge_fcitx_client_probe() { # evidence-root screenshot-root
         || bad "raw protocol logs were removed after reduction" "redaction proof missing"
     grep -qx 'ordinary_service_ready=1' "$D/restore.txt" 2>/dev/null \
         && grep -qx 'user_config_unchanged=yes' "$D/restore.txt" 2>/dev/null \
-        && ok "the shipped IBus session and user config were restored" \
-        || bad "the shipped IBus session and user config were restored" "restore evidence missing"
+        && ok "the shipped input service stayed ready and user config was preserved" \
+        || bad "the shipped input service stayed ready and user config was preserved" "readiness evidence missing"
+}
+
+judge_fcitx_production() { # evidence-root screenshot-root
+    D=$1; SHOTS=$2
+    judge_fcitx_client_probe "$D" "$SHOTS" shipped-fcitx
+    grep -qx 'unit=auros-fcitx.service' "$D/fcitx.process" 2>/dev/null \
+        && grep -qx 'ibus_inactive=yes' "$D/fcitx.process" 2>/dev/null \
+        && grep -Eq '^start_time=[1-9][0-9]*$' "$D/fcitx.process" 2>/dev/null \
+        && ok "the production proof exercised only the shipped Fcitx service" \
+        || bad "the production proof exercised only the shipped Fcitx service" \
+               "shipped service evidence missing"
+    grep -qx 'GTK_IM_MODULE=fcitx' "$D/mousepad.env" 2>/dev/null \
+        && grep -qx 'GTK_IM_MODULE=fcitx' "$D/firefox.env" 2>/dev/null \
+        && ok "both applications inherited the shipped GTK input module" \
+        || bad "both applications inherited the shipped GTK input module" \
+               "application environment evidence missing"
 }
 
 exact_password_suppression() { # reduced evidence file
@@ -700,6 +751,14 @@ EOP
         fail=$((fail+1))
     fi
     checked=$((checked+1))
+    if PROFILETEST_FCITX_PRODUCTION=1 PROFILETEST_FCITX_CLIENT_PROBE=1 \
+       sh tools/profiletest.sh boot multilingual 2>&1 | grep -Fq 'cannot be combined'; then
+        printf '    %-62s %s\n' "production and retained Fcitx modes are exclusive" "passes"
+    else
+        printf '    %-62s %s\n' "production and retained Fcitx modes are exclusive" "FAIL"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
     if PROFILETEST_FCITX_CLIENT_PROBE=1 PROFILETEST_IBUS_FUNCTIONAL=1 \
        sh tools/profiletest.sh boot multilingual 2>&1 | grep -Fq 'cannot be combined'; then
         printf '    %-62s %s\n' "the Fcitx and IBus functional runs are exclusive" "passes"
@@ -794,8 +853,8 @@ EOR
     checked=$((checked+1))
 
     # Multilingual has runtime promises the other profiles deliberately do
-    # not make. Its evidence comes from the real user's manager and IBus bus,
-    # and every missing part must make the report fail.
+    # not make. Its production evidence comes from the real user's manager,
+    # the exact Fcitx process and its D-Bus owner. Every missing part fails.
     multilingual_good() {
         cat <<EOR
 PROFILETEST up 41
@@ -810,20 +869,23 @@ PROFILETEST failed=
 PROFILETEST swap=/dev/zram0 partition 1.9G;
 PROFILETEST earlyoom=active
 PROFILETEST tty2=masked
-PROFILETEST ibus_unit=active
-PROFILETEST ibus_gtk=ibus
-PROFILETEST ibus_qt=ibus
-PROFILETEST ibus_xmodifiers=@im=ibus
-PROFILETEST ibus_wayland=wayland-0
-PROFILETEST ibus_display=:0
-PROFILETEST ibus_pinyin=yes
+PROFILETEST fcitx_unit=active
+PROFILETEST ibus_unit=inactive
+PROFILETEST fcitx_gtk=fcitx
+PROFILETEST fcitx_qt=
+PROFILETEST fcitx_xmodifiers=
+PROFILETEST fcitx_identity=exact
+PROFILETEST fcitx_owner=exact
+PROFILETEST fcitx_display=absent
+PROFILETEST fcitx_wayland=absent
+PROFILETEST fcitx_pinyin=yes
 PROFILETEST done
 EOR
     }
     multilingual_good > "$T/m.good"
     m=$( fail=0; checked=0; judge_report multilingual "$T/m.good" >/dev/null; echo "$fail" )
-    if [ "$m" = 0 ]; then printf '    %-62s %s\n' "a multilingual session with live IBus evidence" "accepted"
-    else printf '    %-62s %s\n' "a multilingual session with live IBus evidence" "REFUSED ($m)"; fail=$((fail+1)); fi
+    if [ "$m" = 0 ]; then printf '    %-62s %s\n' "a multilingual session with live Fcitx evidence" "accepted"
+    else printf '    %-62s %s\n' "a multilingual session with live Fcitx evidence" "REFUSED ($m)"; fail=$((fail+1)); fi
     checked=$((checked+1))
     mrep() { # description sed-expr
         multilingual_good | sed "$2" > "$T/m.bad"
@@ -832,15 +894,44 @@ EOR
         else printf '    %-62s %s\n' "$1" "ACCEPTED -- the check is dead"; fail=$((fail+1)); fi
         checked=$((checked+1))
     }
-    mrep "...with no IBus service evidence"       '/^PROFILETEST ibus_unit=/d'
-    mrep "...with a failed IBus service"           's/ibus_unit=active/ibus_unit=failed/'
-    mrep "...without GTK input-method environment" '/^PROFILETEST ibus_gtk=/d'
-    mrep "...with the wrong Qt input method"        's/ibus_qt=ibus/ibus_qt=none/'
-    mrep "...without X input-method environment"   '/^PROFILETEST ibus_xmodifiers=/d'
-    mrep "...without Wayland in the IBus session"   's/ibus_wayland=wayland-0/ibus_wayland=/'
-    mrep "...without Xwayland in the IBus session"  's/ibus_display=:0/ibus_display=/'
-    mrep "...with no Pinyin engine evidence"        '/^PROFILETEST ibus_pinyin=/d'
-    mrep "...without a live Pinyin engine"          's/ibus_pinyin=yes/ibus_pinyin=no/'
+    mrep "...with no Fcitx service evidence"       '/^PROFILETEST fcitx_unit=/d'
+    mrep "...with a failed Fcitx service"          's/fcitx_unit=active/fcitx_unit=failed/'
+    mrep "...with conflicting IBus active"         's/ibus_unit=inactive/ibus_unit=active/'
+    mrep "...without GTK input-method environment" '/^PROFILETEST fcitx_gtk=/d'
+    mrep "...with an untested Qt input method"      's/fcitx_qt=/fcitx_qt=fcitx/'
+    mrep "...with an X input-method environment"   's/fcitx_xmodifiers=/fcitx_xmodifiers=@im=fcitx/'
+    mrep "...with the wrong Fcitx executable"      's/fcitx_identity=exact/fcitx_identity=wrong/'
+    mrep "...with the wrong D-Bus owner"           's/fcitx_owner=exact/fcitx_owner=wrong/'
+    mrep "...with an X11 fallback"                 's/fcitx_display=absent/fcitx_display=present/'
+    mrep "...with a Wayland daemon connection"     's/fcitx_wayland=absent/fcitx_wayland=present/'
+    mrep "...with no Pinyin engine evidence"       '/^PROFILETEST fcitx_pinyin=/d'
+    mrep "...without a live Pinyin engine"         's/fcitx_pinyin=yes/fcitx_pinyin=no/'
+
+    # Retained-image diagnostics still describe the older, source-bound IBus
+    # image. They must keep their own baseline instead of being relabelled as
+    # evidence for the new production Fcitx wiring.
+    multilingual_legacy_ibus_good() {
+        multilingual_good | sed \
+            -e '/^PROFILETEST fcitx_/d' \
+            -e 's/^PROFILETEST ibus_unit=inactive/PROFILETEST ibus_unit=active/' \
+            -e '/^PROFILETEST ibus_unit=active/a\
+PROFILETEST ibus_gtk=ibus\
+PROFILETEST ibus_qt=ibus\
+PROFILETEST ibus_xmodifiers=@im=ibus\
+PROFILETEST ibus_wayland=wayland-0\
+PROFILETEST ibus_display=:0\
+PROFILETEST ibus_pinyin=yes'
+    }
+    multilingual_legacy_ibus_good > "$T/m.legacy"
+    m=$( PROFILETEST_FCITX_CLIENT_PROBE=1; export PROFILETEST_FCITX_CLIENT_PROBE
+         fail=0; checked=0; judge_report multilingual "$T/m.legacy" >/dev/null; echo "$fail" )
+    if [ "$m" = 0 ]; then
+        printf '    %-62s %s\n' "a retained IBus image keeps source-specific expectations" "accepted"
+    else
+        printf '    %-62s %s\n' "a retained IBus image keeps source-specific expectations" "REFUSED ($m)"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
 
     # The functional judge requires two complete rounds and exact evidence.
     # Its positive fixture proves the expected shape; each mutation below
@@ -1012,7 +1103,7 @@ EOF
         > "$fcitx_fixture/evidence/fcitx.process"
     printf 'mousepad=pinyin\nfirefox=pinyin\n' > "$fcitx_fixture/evidence/selected-engines.txt"
     printf 'raw_protocol_logs_retained=no\n' > "$fcitx_fixture/evidence/protocol-summary.txt"
-    printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\n' > "$fcitx_fixture/evidence/restore.txt"
+    printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\nsource=retained-ibus-conversion\n' > "$fcitx_fixture/evidence/restore.txt"
     for f in fcitx-mousepad-candidate fcitx-mousepad-committed \
              fcitx-firefox-candidate fcitx-firefox-submitted; do printf x > "$fcitx_fixture/shots/$f.png"; done
     fcitx_refuses() {
@@ -1035,11 +1126,48 @@ EOF
     fi
     checked=$((checked+1))
     printf 'mousepad=pinyin\nfirefox=pinyin\n' > "$fcitx_fixture/evidence/selected-engines.txt"
-    printf 'ordinary_service_ready=0\nuser_config_unchanged=no\n' > "$fcitx_fixture/evidence/restore.txt"
+    printf 'ordinary_service_ready=0\nuser_config_unchanged=no\nsource=retained-ibus-conversion\n' > "$fcitx_fixture/evidence/restore.txt"
     if [ "$(fcitx_refuses "$fcitx_fixture")" -ge 1 ]; then
         printf '    %-62s %s\n' "Fcitx evidence without config and IBus restoration" "refused"
     else
         printf '    %-62s %s\n' "Fcitx evidence without config and IBus restoration" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\nsource=shipped-fcitx\n' \
+        > "$fcitx_fixture/evidence/restore.txt"
+    printf 'display_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\nunit=auros-fcitx.service\nibus_inactive=yes\nstart_time=123\n' \
+        > "$fcitx_fixture/evidence/fcitx.process"
+    printf 'GDK_BACKEND=wayland\nGTK_IM_MODULE=fcitx\nWAYLAND_DISPLAY=wayland-0\n' \
+        > "$fcitx_fixture/evidence/mousepad.env"
+    cp "$fcitx_fixture/evidence/mousepad.env" "$fcitx_fixture/evidence/firefox.env"
+    production_refuses() {
+        ( fail=0; checked=0; judge_fcitx_production "$1/evidence" "$1/shots" >/dev/null 2>&1; echo "$fail" )
+    }
+    if [ "$(production_refuses "$fcitx_fixture")" = 0 ]; then
+        printf '    %-62s %s\n' "shipped Fcitx application evidence" "accepted"
+    else
+        printf '    %-62s %s\n' "shipped Fcitx application evidence" "REFUSED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed 's/unit=auros-fcitx.service/unit=auros-profiletest-fcitx-daemon/' \
+        "$fcitx_fixture/evidence/fcitx.process" > "$fcitx_fixture/evidence/fcitx.process.tmp"
+    mv "$fcitx_fixture/evidence/fcitx.process.tmp" "$fcitx_fixture/evidence/fcitx.process"
+    if [ "$(production_refuses "$fcitx_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "production evidence from a transient Fcitx daemon" "refused"
+    else
+        printf '    %-62s %s\n' "production evidence from a transient Fcitx daemon" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed 's/unit=auros-profiletest-fcitx-daemon/unit=auros-fcitx.service/' \
+        "$fcitx_fixture/evidence/fcitx.process" > "$fcitx_fixture/evidence/fcitx.process.tmp"
+    mv "$fcitx_fixture/evidence/fcitx.process.tmp" "$fcitx_fixture/evidence/fcitx.process"
+    sed 's/GTK_IM_MODULE=fcitx/GTK_IM_MODULE=ibus/' "$fcitx_fixture/evidence/firefox.env" \
+        > "$fcitx_fixture/evidence/firefox.env.tmp"
+    mv "$fcitx_fixture/evidence/firefox.env.tmp" "$fcitx_fixture/evidence/firefox.env"
+    if [ "$(production_refuses "$fcitx_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "production evidence with a forced Firefox input module" "refused"
+    else
+        printf '    %-62s %s\n' "production evidence with a forced Firefox input module" "ACCEPTED"; fail=$((fail+1))
     fi
     checked=$((checked+1))
     sh -n tools/profiletest-fcitx-guest.sh || { printf '    %-62s %s\n' \
@@ -1137,6 +1265,11 @@ for reason, marker in early_reports:
     if reason not in early_flush_errors(mutant):
         raise SystemExit(f"selftest did not reject missing early evidence flush: {reason}")
 host = open(sys.argv[2], encoding="utf-8").read()
+production_probe = host.index('[ ! -f /usr/lib/auros-profiletest/fcitx-production.enabled ]')
+legacy_probe = host.index('ibus_unit=$(as_desktop systemctl --user is-active', production_probe)
+production_facts = host.index('fcitx_unit=$(as_desktop systemctl --user is-active', legacy_probe)
+if not production_probe < legacy_probe < production_facts:
+    raise SystemExit("production marker must bypass retained-IBus fact collection")
 action_helper = host.index('ibus_host_action() {', host.index('# ── start it'))
 action_result = host[action_helper:host.index('\n}\n\nT0=', action_helper)]
 marker_check = action_result.index('[ -f "$CHAN/failed-$id" ]')
@@ -1284,6 +1417,8 @@ IBUS_X11_PROBE=${PROFILETEST_IBUS_X11_PROBE:-0}
 case "$IBUS_X11_PROBE" in 0|1) ;; *) echo "PROFILETEST_IBUS_X11_PROBE must be 0 or 1"; exit 2 ;; esac
 FCITX_CLIENT_PROBE=${PROFILETEST_FCITX_CLIENT_PROBE:-0}
 case "$FCITX_CLIENT_PROBE" in 0|1) ;; *) echo "PROFILETEST_FCITX_CLIENT_PROBE must be 0 or 1"; exit 2 ;; esac
+FCITX_PRODUCTION=${PROFILETEST_FCITX_PRODUCTION:-0}
+case "$FCITX_PRODUCTION" in 0|1) ;; *) echo "PROFILETEST_FCITX_PRODUCTION must be 0 or 1"; exit 2 ;; esac
 FCITX_SECURITY_PROBE=${PROFILETEST_FCITX_SECURITY_PROBE:-0}
 case "$FCITX_SECURITY_PROBE" in 0|1) ;; *) echo "PROFILETEST_FCITX_SECURITY_PROBE must be 0 or 1"; exit 2 ;; esac
 if [ "$IBUS_FUNCTIONAL" = 1 ] && [ "$P" != multilingual ]; then
@@ -1294,6 +1429,12 @@ if [ "$FCITX_CLIENT_PROBE" = 1 ] && { [ "$IBUS_X11_PROBE" = 1 ] || [ "$IBUS_FUNC
     echo "PROFILETEST_FCITX_CLIENT_PROBE cannot be combined with an IBus functional or X11 run"
     exit 2
 fi
+if [ "$FCITX_PRODUCTION" = 1 ] && { [ "$FCITX_CLIENT_PROBE" = 1 ] || \
+     [ "$FCITX_SECURITY_PROBE" = 1 ] || [ "$IBUS_X11_PROBE" = 1 ] || \
+     [ "$IBUS_FUNCTIONAL" = 1 ]; }; then
+    echo "PROFILETEST_FCITX_PRODUCTION cannot be combined with another input-method probe"
+    exit 2
+fi
 if [ "$IBUS_X11_PROBE" = 1 ] && { [ "$IBUS_FUNCTIONAL" != 1 ] || [ "$P" != multilingual ]; }; then
     echo "PROFILETEST_IBUS_X11_PROBE=1 requires the multilingual functional run"
     exit 2
@@ -1302,12 +1443,17 @@ if [ "$FCITX_CLIENT_PROBE" = 1 ] && [ "$P" != multilingual ]; then
     echo "PROFILETEST_FCITX_CLIENT_PROBE=1 is only valid for multilingual"
     exit 2
 fi
+if [ "$FCITX_PRODUCTION" = 1 ] && [ "$P" != multilingual ]; then
+    echo "PROFILETEST_FCITX_PRODUCTION=1 is only valid for multilingual"
+    exit 2
+fi
 if [ "$FCITX_SECURITY_PROBE" = 1 ] && [ "$FCITX_CLIENT_PROBE" != 1 ]; then
     echo "PROFILETEST_FCITX_SECURITY_PROBE=1 requires the Fcitx client probe"
     exit 2
 fi
 INPUT_FUNCTIONAL=$IBUS_FUNCTIONAL
 [ "$FCITX_CLIENT_PROBE" = 1 ] && INPUT_FUNCTIONAL=1
+[ "$FCITX_PRODUCTION" = 1 ] && INPUT_FUNCTIONAL=1
 for t in qemu-system-x86_64 sgdisk python3 losetup mount; do
     command -v "$t" >/dev/null 2>&1 || { echo "need $t"; exit 2; }
 done
@@ -1444,29 +1590,73 @@ if grep -Eq '^profile[[:space:]]*=[[:space:]]*multilingual$' /etc/auros/policy.c
             XDG_RUNTIME_DIR="/run/user/$desktop_uid" \
             DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$desktop_uid/bus" "$@"
     }
-    ibus_unit=$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null || true)
     user_env=$(as_desktop systemctl --user show-environment 2>/dev/null || true)
     env_value() { printf '%s\n' "$user_env" | sed -n "s/^$1=//p" | tail -1; }
-    ibus_gtk=$(env_value GTK_IM_MODULE)
-    ibus_qt=$(env_value QT_IM_MODULE)
-    ibus_xmodifiers=$(env_value XMODIFIERS)
-    ibus_wayland=$(env_value WAYLAND_DISPLAY)
-    ibus_display=$(env_value DISPLAY)
-    ibus_engines=$(as_desktop env DISPLAY="$ibus_display" WAYLAND_DISPLAY="$ibus_wayland" \
-        GTK_IM_MODULE="$ibus_gtk" QT_IM_MODULE="$ibus_qt" XMODIFIERS="$ibus_xmodifiers" \
-        ibus list-engine --name-only 2>/dev/null || true)
-    if printf '%s\n' "$ibus_engines" | grep -Fqx pinyin; then
-        ibus_pinyin=yes
+    if { [ -x /usr/lib/auros-profiletest/fcitx-functional.sh ] && \
+         [ ! -f /usr/lib/auros-profiletest/fcitx-production.enabled ]; } || \
+       [ -x /usr/lib/auros-profiletest/ibus-functional.sh ]; then
+        ibus_unit=$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null || true)
+        ibus_gtk=$(env_value GTK_IM_MODULE)
+        ibus_qt=$(env_value QT_IM_MODULE)
+        ibus_xmodifiers=$(env_value XMODIFIERS)
+        ibus_wayland=$(env_value WAYLAND_DISPLAY)
+        ibus_display=$(env_value DISPLAY)
+        ibus_engines=$(as_desktop env DISPLAY="$ibus_display" WAYLAND_DISPLAY="$ibus_wayland" \
+            GTK_IM_MODULE="$ibus_gtk" QT_IM_MODULE="$ibus_qt" XMODIFIERS="$ibus_xmodifiers" \
+            ibus list-engine --name-only 2>/dev/null || true)
+        if printf '%s\n' "$ibus_engines" | grep -Fqx pinyin; then
+            ibus_pinyin=yes
+        else
+            ibus_pinyin=no
+        fi
+        say "ibus_unit=$ibus_unit"
+        say "ibus_gtk=$ibus_gtk"
+        say "ibus_qt=$ibus_qt"
+        say "ibus_xmodifiers=$ibus_xmodifiers"
+        say "ibus_wayland=$ibus_wayland"
+        say "ibus_display=$ibus_display"
+        say "ibus_pinyin=$ibus_pinyin"
     else
-        ibus_pinyin=no
+        fcitx_unit=$(as_desktop systemctl --user is-active auros-fcitx.service 2>/dev/null || true)
+        ibus_unit=$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null || true)
+        fcitx_pid=$(as_desktop systemctl --user show -p MainPID --value auros-fcitx.service 2>/dev/null || true)
+        fcitx_identity=missing; fcitx_owner=missing; fcitx_display=unknown; fcitx_wayland=unknown
+        case "$fcitx_pid" in
+          ''|0|*[!0-9]*) ;;
+          *)
+            if [ "$(readlink "/proc/$fcitx_pid/exe" 2>/dev/null)" = /usr/bin/fcitx5 ] && \
+               [ "$(tr '\0' ' ' < "/proc/$fcitx_pid/cmdline" 2>/dev/null)" = '/usr/bin/fcitx5 -D ' ]; then
+                fcitx_identity=exact
+            else
+                fcitx_identity=wrong
+            fi
+            owner=$(as_desktop busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
+                org.freedesktop.DBus GetConnectionUnixProcessID s org.fcitx.Fcitx5 2>/dev/null \
+                | awk '$1=="u" && $2 ~ /^[0-9]+$/ {print $2}')
+            [ "$owner" = "$fcitx_pid" ] && fcitx_owner=exact || fcitx_owner=wrong
+            proc_env=$(tr '\0' '\n' < "/proc/$fcitx_pid/environ" 2>/dev/null || true)
+            printf '%s\n' "$proc_env" | grep -q '^DISPLAY=' \
+                && fcitx_display=present || fcitx_display=absent
+            printf '%s\n' "$proc_env" | grep -q '^WAYLAND_DISPLAY=' \
+                && fcitx_wayland=present || fcitx_wayland=absent
+            ;;
+        esac
+        if [ "$(as_desktop fcitx5-remote -m pinyin 2>/dev/null || true)" = pinyin ]; then
+            fcitx_pinyin=yes
+        else
+            fcitx_pinyin=no
+        fi
+        say "fcitx_unit=$fcitx_unit"
+        say "ibus_unit=$ibus_unit"
+        say "fcitx_gtk=$(env_value GTK_IM_MODULE)"
+        say "fcitx_qt=$(env_value QT_IM_MODULE)"
+        say "fcitx_xmodifiers=$(env_value XMODIFIERS)"
+        say "fcitx_identity=$fcitx_identity"
+        say "fcitx_owner=$fcitx_owner"
+        say "fcitx_display=$fcitx_display"
+        say "fcitx_wayland=$fcitx_wayland"
+        say "fcitx_pinyin=$fcitx_pinyin"
     fi
-    say "ibus_unit=$ibus_unit"
-    say "ibus_gtk=$ibus_gtk"
-    say "ibus_qt=$ibus_qt"
-    say "ibus_xmodifiers=$ibus_xmodifiers"
-    say "ibus_wayland=$ibus_wayland"
-    say "ibus_display=$ibus_display"
-    say "ibus_pinyin=$ibus_pinyin"
 fi
 if [ -x /usr/lib/auros-profiletest/fcitx-functional.sh ]; then
     exec /usr/lib/auros-profiletest/fcitx-functional.sh
@@ -1478,11 +1668,14 @@ journalctl -b -p err --no-pager -o cat 2>/dev/null | tail -20 | sed 's/^/PROFILE
 say "done"
 EOS
 chmod 755 "$M/usr/lib/auros-profiletest/probe.sh"
-if [ "$FCITX_CLIENT_PROBE" = 1 ]; then
+if [ "$FCITX_CLIENT_PROBE" = 1 ] || [ "$FCITX_PRODUCTION" = 1 ]; then
     install -m 755 "$ROOT/tools/profiletest-fcitx-guest.sh" \
         "$M/usr/lib/auros-profiletest/fcitx-functional.sh"
     install -m 755 "$ROOT/tools/fcitx_wayland_trace.py" \
         "$M/usr/lib/auros-profiletest/fcitx_wayland_trace.py"
+    if [ "$FCITX_PRODUCTION" = 1 ]; then
+        : > "$M/usr/lib/auros-profiletest/fcitx-production.enabled"
+    fi
     if [ "$FCITX_SECURITY_PROBE" = 1 ]; then
         install -m 755 "$ROOT/tools/fcitx_connection_probe.py" \
             "$M/usr/lib/auros-profiletest/fcitx_connection_probe.py"
@@ -1653,7 +1846,11 @@ click_at() { # screen x y
 click_center() { click_at 640 380; }
 ibus_host_action() {
     [ "$INPUT_FUNCTIONAL" = 1 ] || return 0
-    if [ "$FCITX_CLIENT_PROBE" = 1 ]; then action_marker=fcitx-do; else action_marker=ibus-do; fi
+    if [ "$FCITX_CLIENT_PROBE" = 1 ] || [ "$FCITX_PRODUCTION" = 1 ]; then
+        action_marker=fcitx-do
+    else
+        action_marker=ibus-do
+    fi
     line=$(tr -d '\r' < "$SER" | sed -n "s/^PROFILETEST $action_marker=//p" | tail -1)
     [ -n "$line" ] || return 0
     set -- $line
@@ -1794,7 +1991,7 @@ else
 fi
 tr -d '\r' < "$SER" | grep -a '^PROFILETEST' > "$EV/$P-report.txt"
 [ -n "$QP" ] && kill -9 "$QP" 2>/dev/null; wait "$QP" 2>/dev/null; QP=""
-if [ "$FCITX_CLIENT_PROBE" = 1 ]; then
+if [ "$FCITX_CLIENT_PROBE" = 1 ] || [ "$FCITX_PRODUCTION" = 1 ]; then
     sync
     LP=$(losetup --find --show -o $((RS * 512)) --sizelimit $(((RE - RS + 1) * 512)) "$DISK")
     mount "$LP" "$T/m" || { echo "  cannot remount Fcitx evidence"; exit 1; }
@@ -1827,6 +2024,9 @@ if [ "$FCITX_CLIENT_PROBE" = 1 ]; then
     if [ "$FCITX_SECURITY_PROBE" = 1 ]; then
         judge_fcitx_security_probe "$EV/fcitx" "$EV"
     fi
+fi
+if [ "$FCITX_PRODUCTION" = 1 ]; then
+    judge_fcitx_production "$EV/fcitx" "$EV"
 fi
 drawn_enough "$S1" && ok "the screen shows a desktop ($S1)" \
                    || bad "the screen shows a desktop" "$S1"

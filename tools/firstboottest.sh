@@ -65,6 +65,7 @@ bad() { checked=$((checked+1)); fail=$((fail+1)); printf '    %-60s %s\n' "$1" "
 ibus_negative_report() { # report-file boot-number
     report=$1 boot=$2
     grep -Fqx "$boot ibus-unit=disabled" "$report" 2>/dev/null || return 1
+    grep -Fqx "$boot fcitx-unit=disabled" "$report" 2>/dev/null || return 1
     for scope in user shell; do
         for var in GTK_IM_MODULE QT_IM_MODULE XMODIFIERS; do
             grep -Fqx "$boot ibus-$scope-$var=absent" "$report" 2>/dev/null || return 1
@@ -78,6 +79,7 @@ if [ "$PROFILE" = selftest ]; then
     trap 'rm -f "$S" "$S.new"; rm -rf "$D"' EXIT
     cat > "$S" <<'EOF'
 1 ibus-unit=disabled
+1 fcitx-unit=disabled
 1 ibus-user-GTK_IM_MODULE=absent
 1 ibus-user-QT_IM_MODULE=absent
 1 ibus-user-XMODIFIERS=absent
@@ -98,6 +100,9 @@ EOF
     sed 's/ibus-unit=disabled/ibus-unit=static/' "$S" > "$S.new"
     ! ibus_negative_report "$S.new" 1 \
         || { echo "IBus negative report accepted a static unit"; exit 1; }
+    sed 's/fcitx-unit=disabled/fcitx-unit=enabled/' "$S" > "$S.new"
+    ! ibus_negative_report "$S.new" 1 \
+        || { echo "input-method negative report accepted enabled Fcitx"; exit 1; }
     sed 's/ibus-user-GTK_IM_MODULE=absent/ibus-user-GTK_IM_MODULE=query-error/' "$S" > "$S.new"
     ! ibus_negative_report "$S.new" 1 \
         || { echo "IBus negative report accepted a failed user-bus query"; exit 1; }
@@ -269,11 +274,18 @@ if [ -d /run/auros ]; then
         else
             log "ibus-unit=query-error:${enabled_rc}:${enabled:-no-output}"
         fi
+        enabled=$(userctl is-enabled auros-fcitx.service 2>/dev/null); enabled_rc=$?
+        if [ "$enabled_rc" -eq 1 ] && [ "$enabled" = disabled ]; then
+            log "fcitx-unit=disabled"
+        else
+            log "fcitx-unit=query-error:${enabled_rc}:${enabled:-no-output}"
+        fi
     else
         for var in GTK_IM_MODULE QT_IM_MODULE XMODIFIERS; do
             log "ibus-user-$var=query-error"
         done
         log "ibus-unit=query-error:user-bus"
+        log "fcitx-unit=query-error:user-bus"
     fi
     shell_pid=$(systemctl show -p MainPID --value aurshell.service 2>/dev/null)
     if [ "${shell_pid:-0}" -gt 0 ] 2>/dev/null && [ -r "/proc/$shell_pid/environ" ] \
@@ -460,9 +472,9 @@ said "desktop" && ! said "desktop NEVER" \
     || bad "the desktop comes up" "$(why_not)"
 if [ "$PROFILE" = desktop ]; then
     ibus_negative_report "$R/log" "$BOOTN" \
-        && ok "the ordinary desktop has no IBus service or input-method environment" \
-        || bad "the ordinary desktop has no IBus service or input-method environment" \
-               "$(sed -n "s/^$BOOTN ibus-/  /p" "$R/log" 2>/dev/null)"
+        && ok "the ordinary desktop has no input-method service or environment" \
+        || bad "the ordinary desktop has no input-method service or environment" \
+               "$(sed -n "s/^$BOOTN \(ibus\|fcitx\)-/  /p" "$R/log" 2>/dev/null)"
 fi
 [ "$(next)" = "0002" ] \
     && ok "the one-shot is armed again for the next start" \

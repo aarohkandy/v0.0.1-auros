@@ -1,33 +1,130 @@
 #!/bin/sh
 # Write profile-specific input-method state into a forged rootfs. Keeping this
-# out of rootfs/ makes the ordinary desktop inherit no IBus environment.
+# out of rootfs/ makes the ordinary desktop inherit no input-method state.
 set -eu
 
 rfs=${1:?rootfs path required}
 method=${2:-}
+keyboard_layout=${3:-}
 env_file="$rfs/etc/auros/input-method.env"
 env_link="$rfs/etc/environment.d/80-auros-input-method.conf"
 unit_link="$rfs/etc/systemd/user/default.target.wants/auros-ibus.service"
+fcitx_unit_link="$rfs/etc/systemd/user/default.target.wants/auros-fcitx.service"
+fcitx_profile="$rfs/usr/share/auros/fcitx-profile"
 
-rm -f "$env_file" "$env_link" "$unit_link"
+rm -f "$env_file" "$env_link" "$unit_link" "$fcitx_unit_link" "$fcitx_profile"
 
 case "$method" in
     '') exit 0 ;;
-    ibus) ;;
-    *) echo "unsupported input method: $method" >&2; exit 2 ;;
-esac
-
-[ -f "$rfs/etc/systemd/user/auros-ibus.service" ] || {
-    echo "missing auros-ibus.service in rootfs" >&2
-    exit 1
-}
-
-install -d "$rfs/etc/auros" "$rfs/etc/environment.d" \
-           "$rfs/etc/systemd/user/default.target.wants"
-cat > "$env_file" <<'EOF'
+    ibus)
+        unit=auros-ibus.service
+        cat_env() {
+            cat <<'EOF'
 GTK_IM_MODULE=ibus
 QT_IM_MODULE=ibus
 XMODIFIERS=@im=ibus
 EOF
+        }
+        ;;
+    fcitx)
+        unit=auros-fcitx.service
+        cat_env() {
+            cat <<'EOF'
+GTK_IM_MODULE=fcitx
+EOF
+        }
+        ;;
+    *) echo "unsupported input method: $method" >&2; exit 2 ;;
+esac
+
+[ -f "$rfs/etc/systemd/user/$unit" ] || {
+    echo "missing $unit in rootfs" >&2
+    exit 1
+}
+if [ "$method" = fcitx ]; then
+    case "$keyboard_layout" in
+        ''|*[!A-Za-z0-9_-]*)
+            echo "invalid Fcitx keyboard layout: ${keyboard_layout:-empty}" >&2
+            exit 1
+            ;;
+    esac
+    [ -x "$rfs/usr/lib/auros/fcitx-session" ] || {
+        echo "missing executable /usr/lib/auros/fcitx-session in rootfs" >&2
+        exit 1
+    }
+    [ -x "$rfs/usr/bin/fcitx5" ] || {
+        echo "missing executable /usr/bin/fcitx5 in rootfs" >&2
+        exit 1
+    }
+    status="$rfs/var/lib/dpkg/status"
+    [ -f "$status" ] || {
+        echo "missing dpkg status in rootfs" >&2
+        exit 1
+    }
+    for expected in fcitx5=5.1.7-1build3 \
+                    fcitx5-frontend-gtk3=5.1.1-1build2 \
+                    fcitx5-pinyin=5.1.3-1build3; do
+        package=${expected%%=*}
+        version=${expected#*=}
+        installed=$(awk -v want="$package" '
+            BEGIN { RS=""; FS="\n" }
+            {
+                name=""; state=""; found=""
+                for (i=1; i<=NF; i++) {
+                    if ($i ~ /^Package: /) name=substr($i, 10)
+                    if ($i ~ /^Status: /) state=substr($i, 9)
+                    if ($i ~ /^Version: /) found=substr($i, 10)
+                }
+                if (name == want) { print state "|" found; exit }
+            }
+        ' "$status")
+        [ "$installed" = "install ok installed|$version" ] || {
+            echo "$package state/version '${installed:-missing}' is not reviewed 'install ok installed|$version'" >&2
+            exit 1
+        }
+    done
+    for package in ibus ibus-pinyin ibus-m17n ibus-gtk ibus-gtk3 ibus-gtk4; do
+        if awk -v want="$package" '
+            BEGIN { RS=""; FS="\n"; found=0 }
+            {
+                name=""; state=""
+                for (i=1; i<=NF; i++) {
+                    if ($i ~ /^Package: /) name=substr($i, 10)
+                    if ($i ~ /^Status: /) state=substr($i, 9)
+                }
+                if (name == want && state == "install ok installed") found=1
+            }
+            END { exit !found }
+        ' "$status"; then
+            echo "conflicting input-method package remains installed: $package" >&2
+            exit 1
+        fi
+    done
+fi
+
+install -d "$rfs/etc/auros" "$rfs/etc/environment.d" \
+           "$rfs/etc/systemd/user/default.target.wants"
+if [ "$method" = fcitx ]; then
+    install -d "$rfs/usr/share/auros"
+    cat > "$fcitx_profile" <<EOF
+[Groups/0]
+Name=Default
+Default Layout=$keyboard_layout
+DefaultIM=pinyin
+
+[Groups/0/Items/0]
+Name=keyboard-$keyboard_layout
+Layout=
+
+[Groups/0/Items/1]
+Name=pinyin
+Layout=
+
+[GroupOrder]
+0=Default
+EOF
+    chmod 0644 "$fcitx_profile"
+fi
+cat_env > "$env_file"
 ln -s ../auros/input-method.env "$env_link"
-ln -s ../auros-ibus.service "$unit_link"
+ln -s "../$unit" "$rfs/etc/systemd/user/default.target.wants/$unit"
