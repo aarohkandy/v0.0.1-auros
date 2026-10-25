@@ -9,7 +9,15 @@ on:
         required: true
         type: string
       base_build_run_id:
-        description: Successful build.yml run from this exact main commit
+        description: Exact successful build.yml run whose base is reused
+        required: true
+        type: string
+      base_build_sha:
+        description: Exact source commit of the reused base build
+        required: true
+        type: string
+      base_build_tag:
+        description: Release asset namespace recorded by the reused base build
         required: true
         type: string
       request_id:
@@ -46,21 +54,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AUROS_RECIPE_JSON: ${{ inputs.recipe }}
           BASE_BUILD_RUN_ID: ${{ inputs.base_build_run_id }}
+          BASE_BUILD_SHA: ${{ inputs.base_build_sha }}
+          BASE_BUILD_TAG: ${{ inputs.base_build_tag }}
           REQUEST_ID: ${{ inputs.request_id }}
         run: |
-          if [ "$GITHUB_REF" != refs/heads/main ] \
-             && [[ ! $GITHUB_REF =~ ^refs/tags/v[0-9A-Za-z.+-]+-[0-9a-f]{7}$ ]]; then
-            echo "::error::custom packaging must run from main or a strict release tag"
-            exit 2
-          fi
+          [ "$GITHUB_REF" = refs/heads/main ] \
+            || { echo "::error::custom packaging must run from current main authority"; exit 2; }
           python3 tools/customize/delivery.py validate-request-id --request-id "$REQUEST_ID"
           [[ $BASE_BUILD_RUN_ID =~ ^[1-9][0-9]*$ ]] \
             || { echo "::error::base_build_run_id must be a positive Actions run ID"; exit 2; }
+          [[ $BASE_BUILD_SHA =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "::error::base_build_sha must be one full lowercase commit SHA"; exit 2; }
+          [[ $BASE_BUILD_TAG =~ ^v[0-9A-Za-z.+-]+-[0-9a-f]{7}$ ]] \
+            || { echo "::error::base_build_tag must be a strict AurOS release tag"; exit 2; }
+          [ "${BASE_BUILD_TAG##*-}" = "${BASE_BUILD_SHA:0:7}" ] \
+            || { echo "::error::base_build_tag suffix does not match base_build_sha"; exit 2; }
           mkdir -p packaging
           python3 tools/customize/base_build.py validate-run \
             --repository "$GITHUB_REPOSITORY" \
             --run-id "$BASE_BUILD_RUN_ID" \
-            --head-sha "$GITHUB_SHA" \
+            --head-sha "$BASE_BUILD_SHA" \
+            --authority-sha "$GITHUB_SHA" \
             --request packaging/request.json \
             --recipe-output packaging/recipe.json \
             --github-output "$GITHUB_OUTPUT"
@@ -89,6 +103,15 @@ jobs:
             --metadata packaging/base-metadata \
             --installer packaging/base-installer/AurOS-Setup.exe \
             --provenance packaging/provenance.json
+          python3 - "$BASE_BUILD_TAG" <<'PY'
+          import json
+          import sys
+
+          with open("packaging/provenance.json", encoding="utf-8") as stream:
+              proven = json.load(stream)["base_build"]["tag"]
+          if proven != sys.argv[1]:
+              raise SystemExit("explicit base_build_tag does not match validated base metadata")
+          PY
           python3 tools/customize/delivery.py validate-source-ref \
             --ref "$GITHUB_REF" --source-sha "$GITHUB_SHA" \
             --provenance packaging/provenance.json
@@ -158,9 +181,20 @@ jobs:
           export AUROS_IMAGE_PIECES="$PWD/packaging/base-metadata/pieces.txt"
           AUROS_IMAGE_SHA256=$(tr -d ' \r\n' < packaging/base-metadata/image.sha256)
           AUROS_IMAGE_BYTES=$(tr -d ' \r\n' < packaging/base-metadata/image.bytes)
-          AUROS_VERSION=$(sed -n 's/^os_version="\{0,1\}\([0-9A-Za-z.+-]*\)"\{0,1\}.*/\1/p' profiles/desktop.profile | head -1)
+          AUROS_VERSION=$(python3 - <<'PY'
+          import json
+          import re
+
+          with open("packaging/provenance.json", encoding="utf-8") as stream:
+              tag = json.load(stream)["base_build"]["tag"]
+          match = re.fullmatch(r"v([0-9A-Za-z.+-]+)-[0-9a-f]{7}", tag)
+          if not match:
+              raise SystemExit("validated base provenance has no usable AurOS version")
+          print(match.group(1))
+          PY
+          )
           [[ $AUROS_VERSION =~ ^[0-9]+[.][0-9]+[.][0-9]+[0-9A-Za-z.+-]*$ ]] \
-            || { echo "::error::desktop profile has no valid os_version"; exit 1; }
+            || { echo "::error::validated base has no valid os_version"; exit 1; }
           export AUROS_IMAGE_SHA256 AUROS_IMAGE_BYTES AUROS_VERSION
           AUROS_RELEASE=1 sh build/aurbridge
           recipe_id=$(python3 -c 'import json; print(json.load(open("packaging/request.json"))["recipe"]["id"])')
