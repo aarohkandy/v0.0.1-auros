@@ -82,6 +82,69 @@ is_luks() { cryptsetup isLuks --type luks2 "$1" 2>/dev/null; }
 in_pass() { cryptsetup luksDump "$1" 2>/dev/null | grep -q 'online-reencrypt'; }
 slot_used() { cryptsetup luksDump "$1" 2>/dev/null | grep -qE "^  $2: luks2"; }
 
+# Read the LUKS2 metadata as data, rather than inferring keyslot absence from
+# a failed passphrase probe.  stdout is two key=value lines on success.  Any
+# malformed or ambiguous metadata is an error and therefore cannot authorize
+# the PIN-only state.
+metadata_status() {
+    /usr/bin/python3 -I -c '
+import json, sys
+
+def pairs(items):
+    out = {}
+    for key, value in items:
+        if key in out:
+            raise ValueError("duplicate JSON key")
+        out[key] = value
+    return out
+
+def integer(value):
+    return type(value) is int and value >= 0
+
+try:
+    root = json.load(sys.stdin, object_pairs_hook=pairs,
+                     parse_constant=lambda value: (_ for _ in ()).throw(ValueError("non-finite number")))
+    if type(root) is not dict:
+        raise ValueError("root is not an object")
+    keyslots = root.get("keyslots")
+    tokens = root.get("tokens")
+    if type(keyslots) is not dict or not keyslots or type(tokens) is not dict:
+        raise ValueError("missing keyslots or tokens")
+    for slot, body in keyslots.items():
+        if (type(slot) is not str or not slot.isdecimal() or
+                str(int(slot)) != slot or type(body) is not dict):
+            raise ValueError("invalid keyslot map")
+    for token_id, body in tokens.items():
+        if (type(token_id) is not str or not token_id.isdecimal() or
+                str(int(token_id)) != token_id or type(body) is not dict):
+            raise ValueError("invalid token map")
+    hints = [body for body in tokens.values() if body.get("type") == "auros-hint"]
+    if len(hints) > 1:
+        raise ValueError("ambiguous AurOS hint")
+    kind = "none"
+    if hints:
+        hint = hints[0]
+        allowed = {"type", "keyslots", "pin_length", "pin_kind", "pin_slot", "rescue_slot"}
+        if set(hint) != allowed or hint["keyslots"] != []:
+            raise ValueError("invalid AurOS hint")
+        kind = hint["pin_kind"]
+        pin_slot = hint["pin_slot"]
+        rescue_slot = hint["rescue_slot"]
+        length = hint["pin_length"]
+        if kind not in ("tpm", "pass") or not integer(pin_slot) or not integer(rescue_slot):
+            raise ValueError("invalid AurOS hint identity")
+        if pin_slot == rescue_slot or str(pin_slot) not in keyslots or str(rescue_slot) not in keyslots:
+            raise ValueError("stale AurOS hint")
+        if not integer(length) or not 4 <= length <= 6 or (kind == "pass" and length != 6):
+            raise ValueError("invalid PIN length")
+    temporary = "present" if "0" in keyslots else "absent"
+    print("temporary_key=" + temporary)
+    print("metadata_pin=" + kind)
+except (ValueError, TypeError, json.JSONDecodeError):
+    sys.exit(1)
+'
+}
+
 # The hint token: {"type":"auros-hint","keyslots":[],...}. Read as
 # key=value; written whole.
 hint() { # DEV KEY
@@ -185,20 +248,31 @@ temp_forget() { # DEV RESCUE-CODE
 # ── status ─────────────────────────────────────────────────────────
 
 cmd_status() {
-    local dev state kind
+    local dev state=unknown kind=none temporary=unknown dump metadata parsed
     dev=$(device)
     [ -n "$dev" ] || die "cannot tell which partition AurOS is on"
     if ! is_luks "$dev"; then
         [ "$(conf armed)" = 1 ] && state=armed || state=plain
-    elif in_pass "$dev"; then state=encrypting
-    elif opens_with "$dev" "$TEMP_KEY" 0; then state=open-no-pin
-    else state=pin
+    elif dump=$(cryptsetup luksDump "$dev" 2>/dev/null) \
+        && metadata=$(cryptsetup luksDump --dump-json-metadata "$dev" 2>/dev/null) \
+        && parsed=$(printf '%s' "$metadata" | metadata_status); then
+        temporary=$(printf '%s\n' "$parsed" | sed -n 's/^temporary_key=//p')
+        kind=$(printf '%s\n' "$parsed" | sed -n 's/^metadata_pin=//p')
+        if printf '%s\n' "$dump" | grep -q 'online-reencrypt'; then
+            state=encrypting; kind=none
+        elif [ "$temporary" = present ] && opens_with "$dev" "$TEMP_KEY" 0; then
+            state=open-no-pin; kind=none
+        elif [ "$temporary" = absent ] && { [ "$kind" = tpm ] || [ "$kind" = pass ]; }; then
+            state=pin
+        else
+            state=unknown; kind=none
+        fi
     fi
-    kind=$( is_luks "$dev" && hint "$dev" pin_kind )
     echo "device=$dev"
     echo "state=$state"
     echo "pin=${kind:-none}"
-    is_luks "$dev" && cryptsetup luksDump "$dev" | sed -n 's/^[[:space:]]*cipher: *\(.*\)$/cipher=\1/p' | head -1
+    echo "temporary_key=$temporary"
+    [ -n "${dump:-}" ] && printf '%s\n' "$dump" | sed -n 's/^[[:space:]]*cipher: *\(.*\)$/cipher=\1/p' | head -1
     if [ -n "${AUROS_LOCK_TPM:-}" ]; then
         AURLOCK_TPM2_DEVICE="$AUROS_LOCK_TPM" "$PINBIN" --tpm-status
     else

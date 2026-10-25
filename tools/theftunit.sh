@@ -208,6 +208,85 @@ echo
 echo "The encrypted drive and its PIN"
 echo
 vmself_check
+
+# Status is a security boundary for Ferry: only a parsed LUKS2 keyslot map
+# may say the temporary slot is absent.  Exercise the real lockctl with a
+# fake cryptsetup so malformed metadata and probe errors stay deterministic.
+mkdir -p "$T/status-bin"
+cat > "$T/status-bin/cryptsetup" <<'FAKECRYPT'
+#!/bin/sh
+case "$1" in
+    isLuks) exit "${STATUS_IS_LUKS_RC:-0}" ;;
+    luksDump)
+        if [ "${2:-}" = --dump-json-metadata ]; then
+            [ "${STATUS_JSON_RC:-0}" = 0 ] || exit "$STATUS_JSON_RC"
+            cat "$STATUS_JSON"
+        else
+            [ "${STATUS_DUMP_RC:-0}" = 0 ] || exit "$STATUS_DUMP_RC"
+            cat "$STATUS_DUMP"
+        fi
+        ;;
+    open) exit "${STATUS_OPEN_RC:-1}" ;;
+    *) exit 2 ;;
+esac
+FAKECRYPT
+cat > "$T/status-pin" <<'FAKEPIN'
+#!/bin/sh
+[ "${1:-}" = --tpm-status ] && { echo tpm=no; exit 0; }
+exit 2
+FAKEPIN
+chmod 755 "$T/status-bin/cryptsetup" "$T/status-pin"
+printf 'LUKS header information\n  cipher: aes-xts-plain64\n' > "$T/status-dump"
+status_mock() {
+    PATH="$T/status-bin:$PATH" AUROS_LOCK_DEV=/dev/mock AUROS_LOCK_CONF="$T/no-status-conf" \
+        AUROS_LOCK_PIN_BIN="$T/status-pin" STATUS_JSON="$1" STATUS_DUMP="$T/status-dump" \
+        STATUS_OPEN_RC="${2:-1}" STATUS_JSON_RC="${3:-0}" STATUS_DUMP_RC="${4:-0}" \
+        bash "$LOCKCTL" status
+}
+status_exact() { # DESCRIPTION JSON OPEN EXPECTED-STATE EXPECTED-PIN EXPECTED-TEMP
+    local description=$1 json=$2 open=$3 estate=$4 epin=$5 etemp=$6 out
+    out=$(status_mock "$json" "$open")
+    if [ "$(printf '%s\n' "$out" | grep -c '^state=')" = 1 ] \
+        && [ "$(printf '%s\n' "$out" | grep -c '^pin=')" = 1 ] \
+        && [ "$(printf '%s\n' "$out" | grep -c '^temporary_key=')" = 1 ] \
+        && printf '%s\n' "$out" | grep -qx "state=$estate" \
+        && printf '%s\n' "$out" | grep -qx "pin=$epin" \
+        && printf '%s\n' "$out" | grep -qx "temporary_key=$etemp"; then
+        ok "$description"
+    else
+        bad "$description" "$out"
+    fi
+}
+cat > "$T/status-present.json" <<'JSON'
+{"keyslots":{"0":{}},"tokens":{}}
+JSON
+cat > "$T/status-absent.json" <<'JSON'
+{"keyslots":{"1":{},"2":{}},"tokens":{"31":{"type":"auros-hint","keyslots":[],"pin_length":6,"pin_kind":"pass","pin_slot":2,"rescue_slot":1}}}
+JSON
+cat > "$T/status-stale.json" <<'JSON'
+{"keyslots":{"1":{}},"tokens":{"31":{"type":"auros-hint","keyslots":[],"pin_length":6,"pin_kind":"pass","pin_slot":2,"rescue_slot":1}}}
+JSON
+cat > "$T/status-duplicate.json" <<'JSON'
+{"keyslots":{"1":{},"2":{}},"keyslots":{"1":{},"2":{}},"tokens":{}}
+JSON
+cat > "$T/status-empty.json" <<'JSON'
+{"keyslots":{},"tokens":{}}
+JSON
+status_exact "status proves slot 0 present and the temporary key opens" "$T/status-present.json" 0 open-no-pin none present
+status_exact "slot 0 present plus an ambiguous key-probe failure is unknown, never PIN-ready" "$T/status-present.json" 2 unknown none present
+status_exact "status proves slot 0 absent and its PIN and rescue slots still exist" "$T/status-absent.json" 1 pin pass absent
+status_exact "a hint naming a missing PIN slot is unknown, never PIN-ready" "$T/status-stale.json" 1 unknown none unknown
+status_exact "duplicate JSON identity fields are unknown" "$T/status-duplicate.json" 1 unknown none unknown
+status_exact "an impossible LUKS map with no keyslots is unknown" "$T/status-empty.json" 1 unknown none unknown
+out=$(status_mock "$T/status-absent.json" 1 4)
+printf '%s\n' "$out" | grep -qx state=unknown && printf '%s\n' "$out" | grep -qx temporary_key=unknown \
+    && ok "a metadata read error is unknown, never absence" \
+    || bad "a metadata read error is unknown, never absence" "$out"
+out=$(status_mock "$T/status-absent.json" 1 0 4)
+printf '%s\n' "$out" | grep -qx state=unknown && printf '%s\n' "$out" | grep -qx temporary_key=unknown \
+    && ok "a LUKS header read error is unknown, never PIN-ready" \
+    || bad "a LUKS header read error is unknown, never PIN-ready" "$out"
+
 echo "  in place"
 IMG="$T/a.img"
 mkdrive "$IMG" 1400; D=$DRV
@@ -246,6 +325,9 @@ if [ -b "/dev/mapper/$LAST" ]; then
     L "$D" encrypt-pass >/dev/null 2>&1
     L "$D" status | grep -qx state=open-no-pin && ok "the pass resumes and finishes; state open-no-pin" \
         || bad "the pass resumes and finishes" "$(L "$D" status | tr '\n' ' ')"
+    L "$D" status | grep -qx temporary_key=present \
+        && ok "status positively reports the reserved temporary keyslot before PIN enrollment" \
+        || bad "status reports the temporary keyslot before PIN enrollment" "$(L "$D" status | tr '\n' ' ')"
     [ "$(sha256sum "$T/m/photo" | cut -c1-64)" = "$(cat "$IMG.sum")" ] \
         && ok "her files are intact after the pass" || bad "her files are intact after the pass"
     close_last
@@ -320,6 +402,9 @@ echo "$code" | grep -qE '^[0-9]{4}( [0-9]{4}){5}$' && ok "set-pin prints a rescu
 CODE=$(echo "$code" | tr -d ' ')
 L "$D" status | grep -qx state=pin && ok "state pin" || bad "state pin" "$(L "$D" status | tr '\n' ' ')"
 L "$D" status | grep -qx pin=tpm && ok "the PIN is sealed in the chip" || bad "the PIN is sealed in the chip"
+L "$D" status | grep -qx temporary_key=absent \
+    && ok "status proves reserved keyslot 0 is absent after PIN enrollment" \
+    || bad "status proves the temporary key is absent" "$(L "$D" status | tr '\n' ' ')"
 ! cryptsetup open --test-passphrase --key-file <(printf '%s' 'AurOS: no PIN has been chosen yet') "$D" 2>/dev/null \
     && ok "the temporary key no longer opens the drive" || bad "the temporary key no longer opens the drive"
 open_try "$D" 1234; v=$V; [ "$v" = open ] && ok "the right PIN opens it (the start page's code)" || bad "the right PIN opens it" "got $v"
