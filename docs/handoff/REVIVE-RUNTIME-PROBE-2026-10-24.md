@@ -40,12 +40,15 @@ runtime probe fails after image creation. It reuses the size-measurement gzip
 and records source SHA, repository, workflow, run ID, profile, raw/compressed
 sizes and SHA256 values in `manifest.json`. Creation checks the checkout SHA
 and decompresses the gzip to verify the exact raw digest. The large image is
-excluded from ordinary evidence artifacts and releases. Before any manual
-reuse, compare artifact run metadata with the manifest and verify both sizes
-and hashes; do not trust a downloaded filename alone. No generic retained
-Revive dispatch workflow is added. These artifacts may contain several GiB
-of compressed data and expire automatically, so preserve needed evidence
-before expiry.
+excluded from ordinary evidence artifacts and releases. While it is live,
+`gh workflow run profiles.yml --ref main -f retained_revive_run_id=<source-run-id>`
+runs only the current functional harness against those exact bytes. The
+diagnostic requires the exact latest source attempt's successful image-build
+and retention steps, validates the artifact ZIP, manifest, compressed bytes,
+and raw bytes, and records the source attempt and artifact separately from
+the current test run. It cannot create delivery-ready metadata. These
+artifacts may contain several GiB of compressed data and expire automatically,
+so preserve needed evidence before expiry.
 
 Firefox identity review: retained production run `40156605186` identifies the
 source browser route as `mozilla-apt` and retains display environment and

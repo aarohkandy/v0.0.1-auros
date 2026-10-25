@@ -8,13 +8,17 @@ completed source run and live backing bytes; a record never authorizes delivery.
 from __future__ import annotations
 
 import argparse
+import datetime
 import gzip
 import hashlib
 import io
 import json
 import os
 import re
+import stat
 import tempfile
+import zipfile
+import zlib
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -38,6 +42,13 @@ SHA256 = re.compile(r"[0-9a-f]{64}")
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 PIECE = re.compile(r"auros-multilingual\.img\.gz\.([0-9]{3})")
 RUNTIME_PROFILES = {"multilingual", "revive"}
+REVIVE_ARTIFACT_NAME = "profile-revive-runtime-image"
+REVIVE_MANIFEST_NAME = "manifest.json"
+REVIVE_GZIP_NAME = "auros-revive.img.gz"
+MAX_REVIVE_ZIP_BYTES = 9 * 1024 * 1024 * 1024
+MAX_REVIVE_GZIP_BYTES = 8 * 1024 * 1024 * 1024
+MAX_REVIVE_IMAGE_BYTES = 24 * 1024 * 1024 * 1024
+MAX_REVIVE_RATIO = 256
 
 
 class RetentionError(ValueError):
@@ -68,6 +79,16 @@ def _hash(path: Path) -> tuple[int, str]:
             size += len(block)
             digest.update(block)
     return size, digest.hexdigest()
+
+
+def _time(value: Any, name: str) -> datetime.datetime:
+    if type(value) is not str or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", value):
+        fail(f"{name} is not a UTC timestamp")
+    try:
+        return datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=datetime.timezone.utc)
+    except ValueError:
+        fail(f"{name} is not a valid UTC timestamp")
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
@@ -205,7 +226,7 @@ def create_manifest(image_path: Path, gzip_path: Path, pieces_dir: Path,
 
 
 def validate_source(run: Any, artifacts: Any, repository: str, run_id: int) -> tuple[str, int]:
-    if not REPOSITORY.fullmatch(repository):
+    if type(repository) is not str or not REPOSITORY.fullmatch(repository):
         fail("repository is invalid")
     _integer(run_id, "run_id", 1, 10**20)
     if type(run) is not dict:
@@ -242,6 +263,82 @@ def validate_source(run: Any, artifacts: Any, repository: str, run_id: int) -> t
     if len(matches) != 1:
         fail("source run must have exactly one live profile-multilingual artifact")
     return run["head_sha"], matches[0]
+
+
+def validate_revive_source(run: Any, jobs: Any, artifacts: Any,
+                           repository: str, run_id: int) -> dict[str, Any]:
+    """Bind one retained Revive artifact to the exact latest source attempt."""
+    if type(repository) is not str or not REPOSITORY.fullmatch(repository):
+        fail("repository is invalid")
+    _integer(run_id, "run_id", 1, 10**20)
+    if type(run) is not dict or type(run.get("head_repository")) is not dict:
+        fail("source run response is invalid")
+    attempt = run.get("run_attempt")
+    _integer(attempt, "source run_attempt", 1, 10**9)
+    started = _time(run.get("run_started_at"), "source run start")
+    finished = _time(run.get("updated_at"), "source run finish")
+    if not all((run.get("id") == run_id, run.get("status") == "completed",
+                run.get("conclusion") in {"success", "failure"}, run.get("event") == "push",
+                run.get("head_branch") == "main", run.get("path") == WORKFLOW,
+                run["head_repository"].get("full_name") == repository,
+                type(run.get("head_sha")) is str and SHA.fullmatch(run["head_sha"]))) \
+            or finished < started:
+        fail("source run is not a completed trusted main profiles push")
+
+    if type(jobs) is not dict or type(jobs.get("jobs")) is not list:
+        fail("source jobs response is invalid")
+    if type(jobs.get("total_count")) is not int or jobs["total_count"] != len(jobs["jobs"]) \
+            or not 1 <= jobs["total_count"] <= 100:
+        fail("source jobs response is incomplete or unbounded")
+    matches = [job for job in jobs["jobs"]
+               if type(job) is dict and job.get("name") == "revive"]
+    if len(matches) != 1:
+        fail("source attempt must contain exactly one Revive job")
+    job = matches[0]
+    job_started = _time(job.get("started_at"), "Revive job start")
+    job_finished = _time(job.get("completed_at"), "Revive job finish")
+    if not all((job.get("run_id") == run_id, job.get("run_attempt") == attempt,
+                job.get("status") == "completed", job.get("conclusion") in {"success", "failure"})) \
+            or not started <= job_started <= job_finished <= finished:
+        fail("Revive job is not from the accepted source attempt")
+    if type(job.get("steps")) is not list or len(job["steps"]) > 100:
+        fail("Revive job steps are invalid or unbounded")
+    required_steps = {
+        "build/all revive, no browser fallback",
+        "how big it is",
+        "retain exact Revive image for bounded diagnostic reuse",
+    }
+    successful = [step.get("name") for step in job["steps"] if type(step) is dict
+                  and step.get("name") in required_steps and step.get("conclusion") == "success"]
+    if len(successful) != len(required_steps) or set(successful) != required_steps:
+        fail("Revive image build or retention did not succeed in the accepted attempt")
+
+    if type(artifacts) is not dict or type(artifacts.get("artifacts")) is not list:
+        fail("source artifact response is invalid")
+    if type(artifacts.get("total_count")) is not int \
+            or artifacts["total_count"] != len(artifacts["artifacts"]) \
+            or artifacts["total_count"] > 100:
+        fail("source artifact response is incomplete or unbounded")
+    candidates = [item for item in artifacts["artifacts"] if type(item) is dict
+                  and item.get("name") == REVIVE_ARTIFACT_NAME]
+    if len(candidates) != 1:
+        fail("source run must have exactly one Revive runtime image artifact")
+    artifact = candidates[0]
+    workflow_run = artifact.get("workflow_run")
+    artifact_id = artifact.get("id")
+    artifact_bytes = artifact.get("size_in_bytes")
+    digest = artifact.get("digest")
+    created = _time(artifact.get("created_at"), "Revive artifact creation")
+    if artifact.get("expired") is not False \
+            or type(workflow_run) is not dict or workflow_run.get("id") != run_id \
+            or type(artifact_id) is not int or artifact_id <= 0 \
+            or type(artifact_bytes) is not int or not 1 <= artifact_bytes <= MAX_REVIVE_ZIP_BYTES \
+            or type(digest) is not str or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest) \
+            or not job_started <= created <= job_finished:
+        fail("Revive artifact is expired, unbounded, or not from the accepted attempt")
+    return {"source_sha": run["head_sha"], "run_attempt": attempt,
+            "artifact_id": artifact_id, "artifact_bytes": artifact_bytes,
+            "artifact_sha256": digest.removeprefix("sha256:")}
 
 
 def validate_release(manifest: dict[str, Any], manifest_raw: bytes, release: Any,
@@ -373,6 +470,138 @@ def restore(manifest: dict[str, Any], pieces_dir: Path, output: Path) -> None:
             pass
 
 
+def validate_revive_manifest(value: Any, repository: str, run_id: int,
+                             source_sha: str) -> dict[str, Any]:
+    if type(repository) is not str or not REPOSITORY.fullmatch(repository) \
+            or type(source_sha) is not str or not SHA.fullmatch(source_sha):
+        fail("Revive source identity is invalid")
+    _integer(run_id, "Revive run_id", 1, 10**20)
+    root = _exact(value, {"schema", "profile", "repository", "workflow", "source_sha",
+                          "image_run_id", "raw", "compressed", "filename"},
+                  "Revive retained image manifest")
+    _integer(root["image_run_id"], "Revive image_run_id", 1, 10**20)
+    if (root["schema"], root["profile"], root["repository"], root["workflow"],
+            root["source_sha"], root["image_run_id"], root["filename"]) != (
+                "auros-revive-retained-v1", "revive", repository, WORKFLOW,
+                source_sha, run_id, REVIVE_GZIP_NAME):
+        fail("Revive retained image manifest has the wrong identity")
+    raw = _exact(root["raw"], {"bytes", "sha256"}, "Revive raw image facts")
+    compressed = _exact(root["compressed"], {"bytes", "sha256"},
+                        "Revive compressed image facts")
+    _integer(raw["bytes"], "Revive raw image bytes", 1, MAX_REVIVE_IMAGE_BYTES)
+    _integer(compressed["bytes"], "Revive compressed image bytes", 1,
+             MAX_REVIVE_GZIP_BYTES)
+    if raw["bytes"] > compressed["bytes"] * MAX_REVIVE_RATIO:
+        fail("Revive retained image exceeds the bounded expansion ratio")
+    if any(type(item["sha256"]) is not str or not SHA256.fullmatch(item["sha256"])
+           for item in (raw, compressed)):
+        fail("Revive retained image hash is invalid")
+    return root
+
+
+class _DigestReader:
+    def __init__(self, source: BinaryIO):
+        self.source = source
+        self.bytes = 0
+        self.digest = hashlib.sha256()
+
+    def read(self, size: int = -1) -> bytes:
+        data = self.source.read(size)
+        self.bytes += len(data)
+        self.digest.update(data)
+        return data
+
+
+def restore_revive_zip(archive_path: Path, output: Path, manifest_output: Path,
+                       repository: str, run_id: int, source_sha: str,
+                       artifact_bytes: int, artifact_sha256: str) -> dict[str, Any]:
+    _integer(artifact_bytes, "Revive artifact bytes", 1, MAX_REVIVE_ZIP_BYTES)
+    if type(artifact_sha256) is not str or not SHA256.fullmatch(artifact_sha256):
+        fail("Revive artifact sha256 is invalid")
+    if archive_path.is_symlink() or not archive_path.is_file():
+        fail("Revive artifact ZIP is missing or is a link")
+    if output.exists() or output.is_symlink() or manifest_output.exists() \
+            or manifest_output.is_symlink():
+        fail("Revive restore outputs must not already exist")
+    actual_bytes, actual_sha = _hash(archive_path)
+    if (actual_bytes, actual_sha) != (artifact_bytes, artifact_sha256):
+        fail("Revive artifact ZIP differs from GitHub's exact artifact identity")
+    temporary: str | None = None
+    success = False
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            entries = archive.infolist()
+            if len(entries) != 2 or {item.filename for item in entries} != {
+                    REVIVE_MANIFEST_NAME, REVIVE_GZIP_NAME}:
+                fail("Revive artifact ZIP must contain exactly its manifest and gzip")
+            for item in entries:
+                mode = item.external_attr >> 16
+                if item.is_dir() or stat.S_ISLNK(mode) or item.flag_bits & 1 \
+                        or item.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
+                    fail("Revive artifact ZIP has a link, directory, encryption, or unsafe method")
+            manifest_info = archive.getinfo(REVIVE_MANIFEST_NAME)
+            if not 1 <= manifest_info.file_size <= MAX_MANIFEST_BYTES:
+                fail("Revive artifact manifest is empty or oversized")
+            with archive.open(manifest_info) as source:
+                manifest_raw = source.read(MAX_MANIFEST_BYTES + 1)
+            manifest = validate_revive_manifest(
+                _parse_json(manifest_raw, "Revive retained image manifest"),
+                repository, run_id, source_sha)
+            gzip_info = archive.getinfo(REVIVE_GZIP_NAME)
+            if gzip_info.file_size != manifest["compressed"]["bytes"] \
+                    or gzip_info.file_size > MAX_REVIVE_GZIP_BYTES:
+                fail("Revive gzip ZIP entry has the wrong or an unbounded size")
+
+            output.parent.mkdir(parents=True, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(prefix=output.name + ".", dir=output.parent)
+            raw_bytes = 0
+            raw_digest = hashlib.sha256()
+            with os.fdopen(fd, "wb") as dst, archive.open(gzip_info) as zipped:
+                compressed = _DigestReader(zipped)
+                with gzip.GzipFile(fileobj=compressed) as unpacked:
+                    while block := unpacked.read(1024 * 1024):
+                        raw_bytes += len(block)
+                        if raw_bytes > manifest["raw"]["bytes"] \
+                                or raw_bytes > MAX_REVIVE_IMAGE_BYTES:
+                            fail("Revive image expanded past its immutable bound")
+                        raw_digest.update(block)
+                        if block.count(0) == len(block):
+                            dst.seek(len(block), os.SEEK_CUR)
+                        else:
+                            dst.write(block)
+                    dst.truncate(raw_bytes)
+                while compressed.read(1024 * 1024):
+                    pass
+            if (compressed.bytes, compressed.digest.hexdigest()) != (
+                    manifest["compressed"]["bytes"], manifest["compressed"]["sha256"]):
+                fail("Revive gzip failed its immutable size or hash")
+            if (raw_bytes, raw_digest.hexdigest()) != (
+                    manifest["raw"]["bytes"], manifest["raw"]["sha256"]):
+                fail("Revive image failed its immutable size or hash")
+            os.replace(temporary, output)
+            temporary = None
+            _write_json(manifest_output, manifest)
+            success = True
+            return manifest
+    except RetentionError:
+        raise
+    except (OSError, EOFError, gzip.BadGzipFile, zipfile.BadZipFile,
+            zipfile.LargeZipFile, RuntimeError, zlib.error) as exc:
+        fail(f"could not restore retained Revive image: {exc}")
+    finally:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+        if not success:
+            for path in (output, manifest_output):
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+
+
 def diagnostic(manifest: dict[str, Any], test_run_id: int, test_source_sha: str,
                result: str) -> dict[str, Any]:
     manifest = validate_manifest(manifest)
@@ -391,6 +620,39 @@ def diagnostic(manifest: dict[str, Any], test_run_id: int, test_source_sha: str,
         "image_bytes": manifest["image"]["bytes"],
         "test_run_id": test_run_id,
         "test_source_sha": test_source_sha,
+    }
+
+
+def revive_diagnostic(manifest: dict[str, Any], test_run_id: int, test_source_sha: str,
+                      result: str, source_run_attempt: int, source_artifact_id: int,
+                      source_artifact_sha256: str, repository: str, run_id: int,
+                      source_sha: str) -> dict[str, Any]:
+    manifest = validate_revive_manifest(manifest, repository, run_id, source_sha)
+    for value, name in ((test_run_id, "test_run_id"),
+                        (source_run_attempt, "source_run_attempt"),
+                        (source_artifact_id, "source_artifact_id")):
+        _integer(value, name, 1, 10**20)
+    if type(test_source_sha) is not str or not SHA.fullmatch(test_source_sha) \
+            or result not in {"pass", "fail"} \
+            or type(source_artifact_sha256) is not str \
+            or not SHA256.fullmatch(source_artifact_sha256):
+        fail("Revive diagnostic identity or result is invalid")
+    return {
+        "schema": DIAGNOSTIC_SCHEMA,
+        "state": "diagnostic-retained-image",
+        "result": result,
+        "repository": manifest["repository"],
+        "profile": "revive",
+        "image_run_id": manifest["image_run_id"],
+        "image_source_sha": manifest["source_sha"],
+        "image_sha256": manifest["raw"]["sha256"],
+        "image_bytes": manifest["raw"]["bytes"],
+        "source_run_attempt": source_run_attempt,
+        "source_artifact_id": source_artifact_id,
+        "source_artifact_sha256": source_artifact_sha256,
+        "test_run_id": test_run_id,
+        "test_source_sha": test_source_sha,
+        "delivery_authorized": False,
     }
 
 
@@ -611,6 +873,13 @@ def main() -> int:
     source.add_argument("--repository", required=True)
     source.add_argument("--run-id", type=int, required=True)
     source.add_argument("--github-output", type=Path, required=True)
+    revive_source = sub.add_parser("revive-source")
+    revive_source.add_argument("--run-json", type=Path, required=True)
+    revive_source.add_argument("--jobs-json", type=Path, required=True)
+    revive_source.add_argument("--artifacts-json", type=Path, required=True)
+    revive_source.add_argument("--repository", required=True)
+    revive_source.add_argument("--run-id", type=int, required=True)
+    revive_source.add_argument("--github-output", type=Path, required=True)
     plan = sub.add_parser("plan")
     plan.add_argument("--anchor", type=Path, required=True)
     plan.add_argument("--release-json", type=Path, required=True)
@@ -623,12 +892,33 @@ def main() -> int:
     unpack.add_argument("--release-manifest", type=Path, required=True)
     unpack.add_argument("--pieces", type=Path, required=True)
     unpack.add_argument("--output", type=Path, required=True)
+    revive_unpack = sub.add_parser("revive-restore")
+    revive_unpack.add_argument("--artifact-zip", type=Path, required=True)
+    revive_unpack.add_argument("--artifact-bytes", type=int, required=True)
+    revive_unpack.add_argument("--artifact-sha256", required=True)
+    revive_unpack.add_argument("--repository", required=True)
+    revive_unpack.add_argument("--run-id", type=int, required=True)
+    revive_unpack.add_argument("--source-sha", required=True)
+    revive_unpack.add_argument("--output", type=Path, required=True)
+    revive_unpack.add_argument("--manifest-output", type=Path, required=True)
     diag = sub.add_parser("diagnostic")
     diag.add_argument("--anchor", type=Path, required=True)
     diag.add_argument("--test-run-id", type=int, required=True)
     diag.add_argument("--test-source-sha", required=True)
     diag.add_argument("--result", choices=("pass", "fail"), required=True)
     diag.add_argument("--output", type=Path, required=True)
+    revive_diag = sub.add_parser("revive-diagnostic")
+    revive_diag.add_argument("--manifest", type=Path, required=True)
+    revive_diag.add_argument("--test-run-id", type=int, required=True)
+    revive_diag.add_argument("--test-source-sha", required=True)
+    revive_diag.add_argument("--result", choices=("pass", "fail"), required=True)
+    revive_diag.add_argument("--source-run-attempt", type=int, required=True)
+    revive_diag.add_argument("--source-artifact-id", type=int, required=True)
+    revive_diag.add_argument("--source-artifact-sha256", required=True)
+    revive_diag.add_argument("--repository", required=True)
+    revive_diag.add_argument("--run-id", type=int, required=True)
+    revive_diag.add_argument("--source-sha", required=True)
+    revive_diag.add_argument("--output", type=Path, required=True)
     certify = sub.add_parser("certify")
     certify.add_argument("--source-manifest", type=Path, required=True)
     certify.add_argument("--profile", choices=sorted(RUNTIME_PROFILES), required=True)
@@ -649,6 +939,16 @@ def main() -> int:
             source_sha, artifact_id = validate_source(run, artifacts, args.repository, args.run_id)
             with args.github_output.open("a", encoding="utf-8") as out:
                 out.write(f"source_sha={source_sha}\nartifact_id={artifact_id}\n")
+        elif args.command == "revive-source":
+            run, _ = _load_json(args.run_json, "source run", 1024 * 1024)
+            jobs, _ = _load_json(args.jobs_json, "source jobs", 4 * 1024 * 1024)
+            artifacts, _ = _load_json(args.artifacts_json, "source artifacts", 4 * 1024 * 1024)
+            identity = validate_revive_source(run, jobs, artifacts,
+                                              args.repository, args.run_id)
+            with args.github_output.open("a", encoding="utf-8") as out:
+                for key in ("source_sha", "run_attempt", "artifact_id",
+                            "artifact_bytes", "artifact_sha256"):
+                    out.write(f"{key}={identity[key]}\n")
         elif args.command == "plan":
             anchor, anchor_raw = _load_json(args.anchor, "immutable image manifest")
             release, _ = _load_json(args.release_json, "source release", 4 * 1024 * 1024)
@@ -663,11 +963,22 @@ def main() -> int:
             _, release_raw = _load_json(args.release_manifest, "downloaded release manifest")
             validate_downloaded_manifest(anchor_raw, release_raw)
             restore(anchor, args.pieces, args.output)
+        elif args.command == "revive-restore":
+            restore_revive_zip(args.artifact_zip, args.output, args.manifest_output,
+                               args.repository, args.run_id, args.source_sha,
+                               args.artifact_bytes, args.artifact_sha256)
         elif args.command == "diagnostic":
             anchor, _ = _load_json(args.anchor, "immutable image manifest")
             _write_json(args.output, diagnostic(anchor, args.test_run_id,
                                                 args.test_source_sha, args.result))
-        else:
+        elif args.command == "revive-diagnostic":
+            manifest, _ = _load_json(args.manifest, "Revive retained image manifest")
+            _write_json(args.output, revive_diagnostic(
+                manifest, args.test_run_id, args.test_source_sha, args.result,
+                args.source_run_attempt, args.source_artifact_id,
+                args.source_artifact_sha256, args.repository, args.run_id,
+                args.source_sha))
+        else:  # certify
             _, source_raw = _load_json(args.source_manifest, "retained image manifest")
             _write_json(args.output, runtime_record(source_raw, args.profile,
                                                     args.repository, args.run_id, args.run_attempt,
