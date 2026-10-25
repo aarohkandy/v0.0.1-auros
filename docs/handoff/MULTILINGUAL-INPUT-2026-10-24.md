@@ -251,3 +251,93 @@ That is the smallest defensible shared-panel boundary visible in the reviewed
 architecture. It requires coordinated compositor, IBus daemon and client
 identity work, so it is not the narrow X11 popup exception originally under
 investigation and is not implemented.
+
+## Fcitx client-side diagnostic result
+
+The safer client-side path has now passed its bounded retained-image
+diagnostic. The successful second attempt of run `40145726339` used image
+source `c1ba6ee5`, image SHA-256
+`275bdf0cd6caa02c05fb328fe18407d1306212550584ee6cfcaef426013a178c`,
+and test source `3b2fd5ea`. The exact successful Actions artifact ID is
+`12581007423`.
+
+The diagnostic installed Noble's exact source-reviewed packages only in the
+disposable scratch guest: `fcitx5` 5.1.7-1build3,
+`fcitx5-frontend-gtk3` 5.1.1-1build2 and `fcitx5-pinyin`
+5.1.3-1build3. It started an isolated Fcitx daemon without `DISPLAY` or a
+Wayland display, forced the applications onto native Wayland with the GTK
+Fcitx input module, and did not change the retained product image.
+
+Both rounds, separated by a real guest reboot, passed these bounded checks:
+
+* Mousepad and Firefox each selected the exact `pinyin` engine and produced
+  the exact UTF-8 text `你好`. Each emitted one mapped, parented, non-grabbing
+  `xdg_popup` syntax sequence with no layer-shell object in each round. The
+  artifact retains one final candidate and committed or submitted screenshot
+  set; its focus-away and password screenshots are retained separately for
+  both rounds.
+* During the Mousepad interval, the probe authenticated one application
+  connection to the exact AurWL socket and peer. It held the application PID,
+  pidfd, trace writer, display inode, compositor executable, service identity,
+  service cgroup and PAM session ancestry across the measured interval, with
+  no application children or foreign trace writer at its boundaries.
+* Moving focus from Mousepad A to Mousepad B unmapped the candidate before B
+  received input. B alone saved the exact sentinel byte `20`; A remained
+  unchanged. Returning to A created a fresh candidate map epoch without an
+  input grab.
+* The controlled password field received the exact synthetic ASCII value but
+  produced no observed candidate popup, popup map/configure/grab, layer-shell
+  object, or browser composition start/update/end/input event. Only reduced
+  counts and masked screenshots remain; the raw password value, focus and
+  event logs were deleted.
+* Fcitx did not autostart after reboot. Both rounds used the same isolated
+  configuration and exact transient process. Temporary processes were gone,
+  the user's Fcitx configuration hash was unchanged, and the shipped IBus
+  service, exact process identity and live Pinyin engine were restored after
+  each round.
+
+This remains diagnostic evidence, not a shipped multilingual configuration.
+The Firefox trace proves exact composition and parented-popup syntax, but its
+Wayland connection identity is still unproven; the authenticated connection
+interval covers Mousepad only. Do not generalize the Mousepad identity result
+to Firefox or claim that every toolkit has a same-client candidate popup.
+
+The screenshots expose two notification UX items. Round one shows an
+`Fcitx 5 is ready` notification and a three-message indicator. A production
+Fcitx session must not leave that technical startup notice in front of the
+user. Round two shows the technical IBus notification described earlier in
+this handoff. The run did not retain a journal proving that notification's
+individual instance; attribution to the shipped IBus session rests on the
+reviewed Noble source, the known shipped launch mode, and its presence before
+the diagnostic stopped IBus. The temporary Fcitx path did not generate an
+IBus warning. Both visible notices remain product UX work for the chosen
+multilingual input architecture.
+
+The workflow published two artifacts with the same name for run
+`40145726339`. Artifact `12581236003` belongs to the stale failed attempt;
+artifact `12581007423` contains the successful second-attempt evidence.
+Automation and operators must select this evidence by exact artifact ID (and
+verify the embedded image/test identities), not take the first name match.
+
+## Smallest production-readiness step
+
+Make one explicit architecture decision: use Fcitx's GTK client-side candidate
+path for the multilingual profile, with no X11 panel exception and no new
+AurWL popup privilege. Then implement only that profile-scoped production
+slice: add the three proven Noble package names through the existing
+source-locked build, fail closed on an unreviewed resolved version, start the
+daemon with no display fallback, replace or disable `auros-ibus.service` only
+for the multilingual profile, set the GTK input-module environment, and
+install the minimal Pinyin configuration through the existing session/profile
+wiring. Exactly one input stack should be active in that session. Keep the
+desktop and other profiles unchanged.
+
+Certify that fresh image once with the already-built end-to-end checks: exact
+Mousepad and Firefox composition, visible candidate state, Mousepad connection
+and A-to-B-to-A focus lifecycle, password suppression, reboot behavior,
+cleanup, and ordinary session startup. Record Firefox connection identity as
+an explicit remaining limitation unless the release claim requires it; in
+that case, add only a Firefox-specific connection proof before making a
+same-client security claim. Do not extend the shared-panel or compositor
+exception experiments. They address the rejected architecture rather than the
+smallest viable product path.
