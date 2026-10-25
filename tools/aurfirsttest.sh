@@ -631,6 +631,7 @@ askf() { # word -> result; runs from an empty directory, so a name that was exec
     ( cd "$TMP/cwd" && AUROS_ANSWER_OUT="$AO" AUROS_STATE="$TMP/state2" AUROS_BIN="$TMP/bin" \
         AUROS_LOG="$TMP/answer.log" AF_RUN_USER="$AR" AUROS_FERRY="$TMP/ferry" \
         AUROS_LOCK_CONF="$TMP/lock.conf" AUROS_LOCKCTL="$TMP/lockctl" \
+        AUROS_LOCK_STATUS_LIMIT=1 \
         sh "$OLDPWD/rootfs/usr/lib/auros/answer.sh" >/dev/null 2>&1 )
     cat "$AO/result" 2>/dev/null
 }
@@ -656,7 +657,9 @@ cat > "$TMP/lockctl" <<EOF
 #!/bin/sh
 [ "\$1" = status ] || exit 2
 cat "$TMP/lock.status" 2>/dev/null
-exit "\$(cat "$TMP/lock.rc" 2>/dev/null || echo 0)"
+rc=\$(cat "$TMP/lock.rc" 2>/dev/null || echo 0)
+[ "\$rc" = hang ] && { sleep 3; exit 0; }
+exit "\$rc"
 EOF
 chmod 755 "$TMP/lockctl"
 s4_import() { # label status rc expected
@@ -679,7 +682,13 @@ s4_import() { # label status rc expected
 s4_import "S4 with a PIN allows Windows files to be imported" \
           'device=/dev/test
 state=pin
-pin=tpm' 0 allow
+pin=tpm
+temporary_key=absent' 0 allow
+s4_import "S4 with a passphrase PIN allows Windows files to be imported" \
+          'device=/dev/test
+state=pin
+pin=pass
+temporary_key=absent' 0 allow
 for state in plain armed encrypting open-no-pin; do
     s4_import "S4 state $state refuses before Ferry reads Windows" \
               "device=/dev/test
@@ -687,11 +696,34 @@ state=$state
 pin=none" 0 refuse
 done
 s4_import "an armed S4 helper failure refuses before Ferry" 'state=pin' 1 refuse
+s4_import "an armed S4 helper timeout refuses before Ferry" 'state=pin
+pin=tpm
+temporary_key=absent' hang refuse
 s4_import "armed S4 status with no state refuses before Ferry" 'device=/dev/test' 0 refuse
 s4_import "armed S4 status with duplicate states refuses before Ferry" \
           'state=pin
 state=pin' 0 refuse
 s4_import "armed S4 status with an unknown state refuses before Ferry" 'state=finished' 0 refuse
+s4_import "armed S4 status with no PIN metadata refuses before Ferry" 'state=pin' 0 refuse
+s4_import "armed S4 status with pin=none refuses before Ferry" 'state=pin
+pin=none' 0 refuse
+s4_import "armed S4 status with duplicate PIN metadata refuses before Ferry" 'state=pin
+pin=tpm
+pin=tpm' 0 refuse
+s4_import "armed S4 status with unknown PIN metadata refuses before Ferry" 'state=pin
+pin=other' 0 refuse
+s4_import "old S4 pin status without temporary-key proof refuses before Ferry" 'state=pin
+pin=tpm' 0 refuse
+s4_import "armed S4 status with a present temporary key refuses before Ferry" 'state=pin
+pin=tpm
+temporary_key=present' 0 refuse
+s4_import "armed S4 status with unknown temporary-key proof refuses before Ferry" 'state=pin
+pin=tpm
+temporary_key=unknown' 0 refuse
+s4_import "armed S4 status with duplicate temporary-key proof refuses before Ferry" 'state=pin
+pin=tpm
+temporary_key=absent
+temporary_key=absent' 0 refuse
 mv "$TMP/lockctl" "$TMP/lockctl.away"; : > "$TMP/ferry.args"
 R=$(askf import:Harold)
 case "$R" in
@@ -701,6 +733,27 @@ case "$R" in
   *) bad "an unavailable armed S4 helper refuses before Ferry" "$(echo "$R" | tr '\n' ' ')" ;;
 esac
 mv "$TMP/lockctl.away" "$TMP/lockctl"
+# Only a genuinely absent or exact off configuration is dormant. Existing
+# malformed or unreadable configuration refuses before the status helper too.
+for config in '' 'armed=maybe' 'armed=0
+armed=1'; do
+    printf '%s\n' "$config" > "$TMP/lock.conf"; : > "$TMP/ferry.args"
+    R=$(askf import:Harold)
+    case "$R" in
+      *"result=refused"*) [ ! -s "$TMP/ferry.args" ] \
+          && ok "malformed S4 configuration refuses before Ferry" \
+          || bad "malformed S4 configuration refuses before Ferry" "Ferry got: $(cat "$TMP/ferry.args")" ;;
+      *) bad "malformed S4 configuration refuses before Ferry" "$(echo "$R" | tr '\n' ' ')" ;;
+    esac
+done
+printf 'armed=1\n' > "$TMP/lock.conf"; chmod 000 "$TMP/lock.conf"; : > "$TMP/ferry.args"
+R=$(askf import:Harold); chmod 600 "$TMP/lock.conf"
+case "$R" in
+  *"result=refused"*) [ ! -s "$TMP/ferry.args" ] \
+      && ok "an unreadable S4 configuration refuses before Ferry" \
+      || bad "an unreadable S4 configuration refuses before Ferry" "Ferry got: $(cat "$TMP/ferry.args")" ;;
+  *) bad "an unreadable S4 configuration refuses before Ferry" "$(echo "$R" | tr '\n' ' ')" ;;
+esac
 # A dormant/off S4 configuration must not turn the existing product into a
 # dependency on lockctl. Make the helper fail and prove Ferry still runs.
 printf 'armed=0\n' > "$TMP/lock.conf"; printf '1\n' > "$TMP/lock.rc"; : > "$TMP/ferry.args"

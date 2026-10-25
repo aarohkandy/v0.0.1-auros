@@ -48,6 +48,8 @@ RTC=${AUROS_RTC:-/sys/class/rtc/rtc0/since_epoch}
 # for tools/aurfirsttest.sh only; the service sets neither variable.
 LOCK_CONF=${AUROS_LOCK_CONF:-/etc/auros/lock}
 LOCKCTL=${AUROS_LOCKCTL:-/usr/lib/auros/lock/lockctl}
+LOCK_STATUS_LIMIT=${AUROS_LOCK_STATUS_LIMIT:-30}
+case "$LOCK_STATUS_LIMIT" in [1-9]|[12][0-9]|30) ;; *) LOCK_STATUS_LIMIT=30 ;; esac
 # The one entry "Put Windows back" restarts into: the "Yes" inside the
 # submenu build/mkimage writes, by id.
 PUTBACK_ENTRY='put-windows-back>put-windows-back-yes'
@@ -150,13 +152,35 @@ read_asked() {
 # or failed status refuses before Ferry is started. With S4 absent/off this is
 # deliberately a no-op, so carrying its dormant files changes nothing.
 s4_ferry_ready() {
-    grep -qx 'armed=1' "$LOCK_CONF" 2>/dev/null || return 0
+    # Only absence means dormant. An existing config is root's statement that
+    # S4 has started to change state, so a partial/unreadable one cannot bypass
+    # the gate during prepare's write.
+    [ ! -e "$LOCK_CONF" ] && [ ! -L "$LOCK_CONF" ] && return 0
+    lock_config=$(cat "$LOCK_CONF" 2>/dev/null) || return 1
+    lock_armed_count=$(printf '%s\n' "$lock_config" | grep -c '^armed=')
+    [ "$lock_armed_count" = 1 ] || return 1
+    lock_armed=$(printf '%s\n' "$lock_config" | sed -n 's/^armed=//p')
+    case "$lock_armed" in 0) return 0 ;; 1) ;; *) return 1 ;; esac
     [ -x "$LOCKCTL" ] || return 1
-    lock_status=$("$LOCKCTL" status 2>/dev/null) || return 1
+    lock_status=$(/usr/bin/timeout --kill-after=5s "${LOCK_STATUS_LIMIT}s" \
+        "$LOCKCTL" status 2>/dev/null) \
+        || return 1
     lock_state_count=$(printf '%s\n' "$lock_status" | grep -c '^state=')
     [ "$lock_state_count" = 1 ] || return 1
     lock_state=$(printf '%s\n' "$lock_status" | sed -n 's/^state=//p')
-    [ "$lock_state" = pin ]
+    [ "$lock_state" = pin ] || return 1
+    lock_pin_count=$(printf '%s\n' "$lock_status" | grep -c '^pin=')
+    [ "$lock_pin_count" = 1 ] || return 1
+    lock_pin=$(printf '%s\n' "$lock_status" | sed -n 's/^pin=//p')
+    case "$lock_pin" in tpm|pass) ;; *) return 1 ;; esac
+    # The dormant S4 lockctl does not emit this yet. state=pin plus a hint
+    # token is insufficient: a failed temporary-key probe and stale hint can
+    # produce both while the empty key remains usable. Activation must first
+    # add an explicit tri-state probe whose errors never mean absent.
+    lock_temporary_count=$(printf '%s\n' "$lock_status" | grep -c '^temporary_key=')
+    [ "$lock_temporary_count" = 1 ] || return 1
+    lock_temporary=$(printf '%s\n' "$lock_status" | sed -n 's/^temporary_key=//p')
+    [ "$lock_temporary" = absent ]
 }
 
 # SAVE HER FILES IN WINDOWS BEFORE WINDOWS IS PUT BACK. Returns 0 only
