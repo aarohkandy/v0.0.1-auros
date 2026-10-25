@@ -13,8 +13,11 @@ changes a customer image; profiletest injects it into its disposable copy.
   the complete PNG pixel stream and checksums.
 - Both applications retain exact executable, user, systemd unit/cgroup, PID
   and start-time identity before and after interaction. They run sequentially,
-  must stop with no remaining processes in their cgroups, and must not cause
-  kernel OOM or earlyoom kills. Screenshots, OCR, document and result remain
+  receive forced systemd service cleanup with no remaining cgroup processes;
+  this does **not** prove normal application Quit. They must not cause kernel
+  OOM or earlyoom kills. Earlyoom must still be active afterward, and neither
+  system nor user failed-unit inventories may gain new entries. The user
+  manager display environment must exist and be inherited by each app. Screenshots, OCR, document and result remain
   in the `revive` evidence directory, also published as a small tarball.
 
 For an existing image on a Linux host with the usual profiletest dependencies
@@ -43,3 +46,14 @@ and hashes; do not trust a downloaded filename alone. No generic retained
 Revive dispatch workflow is added. These artifacts may contain several GiB
 of compressed data and expire automatically, so preserve needed evidence
 before expiry.
+
+Firefox identity review: retained production run `40156605186` identifies the
+source browser route as `mozilla-apt` and retains display environment and
+process disappearance, but does **not** retain Firefox's `/proc/exe` path.
+The older hardening harness's `firefox-bin` process-name observation does not
+prove a launcher executable transition. This probe therefore invokes
+`/usr/lib/firefox/firefox-bin` directly, requires its exact `dpkg-query -S`
+owner to be `firefox`, and checks the exact running executable path before
+and after input. It has no tarball-path fallback. A packaging layout that
+does not satisfy that contract fails explicitly and needs evidence review;
+the existing multilingual success is not claimed to prove this new launch.
