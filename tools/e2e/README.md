@@ -94,6 +94,12 @@ it never opens the cached golden or a host disk for writing. The final gate
 requires `status.json` phase `finished`, the restored AurOS file's exact hash,
 an unchanged Windows canary, the original C: size and Fast Startup setting,
 no `AUROSHANDOV` volume, and no put-back scheduled task.
+The before/after partition fingerprint covers GPT disk and partition GUIDs,
+geometry, GPT type, and the states exposed by Windows' Storage CIM objects. A
+present but null partition `IsReadOnly` or `NoDefaultDriveLetter` value is
+recorded as `unreported`, distinct from both false and true; absent fields and
+null values for every other recorded flag fail closed. It does not claim to
+capture every raw GPT attribute bit.
 
 `bitlocker-return-1.json` and `bitlocker-return-2.json` record the two Windows
 returns. They contain only encryption status and percentage plus protector
