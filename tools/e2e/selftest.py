@@ -373,6 +373,40 @@ def test_bitlocker_putback_contract():
           putback_guest_source.count("(Get-AurOSSha256 $pm)") == 2 and
           putback_guest_source.count("(Get-AurOSSha256 $fw)") == 2,
           "put-back: both snapshots avoid PowerShell's h/Get-History alias")
+    fingerprint = e2e.PUTBACK_PARTITION_FINGERPRINT_PS
+    required = ("'Guid'", "'GptType'", "'IsReadOnly'",
+                "'IsOffline'", "'IsSystem'", "'IsBoot'", "'IsHidden'",
+                "'NoDefaultDriveLetter'", "'PartitionStyle'", "[Guid]::TryParse",
+                "[Guid]::Empty", "invalid storage flag")
+    check(all(field in fingerprint for field in required) and
+          "'DriveLetter'" not in fingerprint and "'AccessPaths'" not in fingerprint,
+          "put-back: shared fingerprint requires GPT identities and stable flags only")
+    check(putback_guest_source.count("PUTBACK_PARTITION_FINGERPRINT_PS") == 2 and
+          putback_guest_source.count("PUTBACK_PARTITION_FINGERPRINT_CAPTURE_PS") == 2 and
+          putback_guest_source.count("function Get-AurOSPartitionFingerprint") == 0 and
+          fingerprint.count("function Get-AurOSPartitionFingerprint") == 1 and
+          e2e.PUTBACK_PARTITION_FINGERPRINT_CAPTURE_PS.count(
+              "$pm=Get-AurOSPartitionFingerprint") == 1,
+          "put-back: baseline and final use one identical versioned partition serializer")
+    capture = e2e.PUTBACK_PARTITION_FINGERPRINT_CAPTURE_PS
+    check("Get-Partition -DriveLetter C" in capture and
+          "Get-Disk -Number $systemDisk" in capture and
+          "Get-Partition -DiskNumber $systemDisk" in capture and
+          "@(Get-Disk)" not in capture and "@(Get-Partition)" not in capture,
+          "put-back: snapshots cover only the Windows system disk, not unrelated host disks")
+    native_fixture = e2e.PUTBACK_PARTITION_FINGERPRINT_SELFTEST_PS
+    check(putback_guest_source.count("PUTBACK_PARTITION_FINGERPRINT_SELFTEST_PS") == 1 and
+          "AUROS_PARTITION_FINGERPRINT_SELFTEST PASS" in native_fixture and
+          "native Windows GPT fingerprint selftest did not pass exactly once" in putback_guest_source,
+          "put-back: actual baseline executes and requires the bounded native serializer fixture")
+    check("$mockWant='v1;D|" in native_fixture and
+          all(name in native_fixture for name in
+              ("disk GUID", "partition GUID", "GPT type", "zero disk GUID", "zero partition GUID",
+               "invalid disk GUID", "invalid partition GUID", "invalid GPT type",
+               "non-GPT disk", "non-boolean flag", "missing NoDefaultDriveLetter")) and
+          "foreach($n in @('IsReadOnly','IsOffline','IsSystem'))" in native_fixture and
+          "foreach($n in @('IsReadOnly','IsOffline','IsSystem','IsBoot','IsHidden','NoDefaultDriveLetter'))" in native_fixture,
+          "put-back: native mock holds geometry while exercising every recorded identity and flag")
     wait_source = inspect.getsource(e2e.Flow.wait_windows_return)
     check(wait_source.index("self.write_bitlocker_return(evidence)") <
           wait_source.index("if time.time() > deadline"),
