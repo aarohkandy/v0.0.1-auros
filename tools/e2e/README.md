@@ -62,14 +62,15 @@ A harness change runs `base` only; in the head commit's subject
 `[e2e:all]` runs every variant (`E2E_VARIANTS` in the workflow),
 `[e2e:base,hdd]` those, `[e2e:none]` nothing. Only the base Windows is
 kept in the Actions cache (a golden is several GB, and the repository's
-caches share 10 GB); the others install Windows afresh, about 15
-minutes, and `hdd` uses the base one.
+caches share 10 GB). The `hdd` and `bitlocker` variants copy that clean
+base before changing their per-run machine; variants that need a different
+disk or installed guest state install Windows afresh, about 15 minutes.
 
 | Variant | The PC | How it is made |
 |---|---|---|
-| `base` | Windows 11, 128 GB SSD, Fast Startup on (Windows' default) | as described above |
+| `base` | Windows 11, 128 GB SSD, Fast Startup on (Windows' default) | as described above; this clean installed Windows is cached and copied for `hdd` and `bitlocker` before either changes its per-run copy |
 | `hdd` | the same, on a hard disk | QEMU block throttling: 100 MB/s, 300 IO/s (`E2E_DISK_THROTTLE`; dispatch input `hdd_throttle`, e.g. `bps=104857600,iops=120` for a 5400 rpm laptop drive); the timings are the wall clock on such a disk |
-| `bitlocker` | BitLocker / device encryption on | first logon: `Enable-BitLocker C: -TpmProtector -UsedSpaceOnly`, waited until fully encrypted; the installer must deal with it |
+| `bitlocker` | BitLocker / device encryption on | starts from the cached clean `base` Windows; the flow turns BitLocker on in its copy with `Enable-BitLocker C: -TpmProtector -UsedSpaceOnly`, waits until fully encrypted, and verifies protection before the installer runs |
 | `smalldisk` | a 72 GB drive whose leftovers in `C:\Windows\Temp` leave 30 GB free | first logon makes one leftover file of (free − 30 GB): 22 GB to give against the 28 needed, enough once the installer's space fix empties that folder |
 | `pending` | Windows waiting for a restart after servicing | at the test's logon a scheduled task enables a Windows feature with `/norestart` (real `RebootPending`, cleared by a real restart) |
 | `win10` | Windows 10 Enterprise 22H2 evaluation | `WINDOWS_VERSION=10` in `get-windows.sh` |
