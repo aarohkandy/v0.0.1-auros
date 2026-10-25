@@ -545,17 +545,14 @@ jobs:
 
   # Before anything is promoted, not after: a site that fails its check
   # stops the promote, instead of leaving a new release behind an old
-  # website. What is checked is what pages deploys (this run's
-  # github-pages artifact).
+  # website. This source-specific check gates promotion; the shared publisher
+  # later stages and checks current main instead of deploying an old artifact.
   site:
     needs: [which, publish]
     # publish: release.json below records its AurOS-Setup.exe hash
     if: ${{ !cancelled() && needs.which.outputs.go == 'true' && needs.publish.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    env:
-      AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
-      AUROS_WISHES_URL: ${{ vars.AUROS_WISHES_URL || format('https://auros-wishes.{0}.workers.dev', github.repository_owner) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -574,6 +571,8 @@ jobs:
         if: needs.which.outputs.latest == 'true'
         run: python3 -I tools/legal/check.py --launch
       # website/ names no repository; this one is written in (as pages.yml does).
+      - name: Versioned public publishing settings
+        run: python3 -I tools/site/publish_settings.py --github-env "$GITHUB_ENV"
       - name: the site, with this repository written in
         run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"
       # THE HASH THAT IS NOT A RELEASE ASSET (SEC-005). Pages serves this file once `pages`
@@ -588,23 +587,16 @@ jobs:
           printf '%s' "$SETUP_SHA256" | grep -qE '^[0-9a-f]{64}$' || { echo "::error::no SHA-256 for AurOS-Setup.exe from publish"; exit 1; }
           printf '{"tag":"%s","file":"AurOS-Setup.exe","sha256":"%s","run":"%s"}\n' "$TAG" "$SETUP_SHA256" "$GITHUB_RUN_ID" > "$RUNNER_TEMP/site/release.json"
           cat "$RUNNER_TEMP/site/release.json"
-      - name: the front door, checked the way she meets it
-        env:
-          PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
-        run: node tools/site/check.mjs --dir "$RUNNER_TEMP/site"
       - name: Configure the optional custom-build service in the staged site
         run: |
           site=$(sh tools/repo.sh site)
           python3 -I tools/site/build_service_config.py \
             --wrangler cloud/wrangler.toml --site-url "$site" \
             --api-origin "$AUROS_WISHES_URL" --output "$RUNNER_TEMP/site/build-service.json"
-          if node -e 'process.exit(require(process.argv[1]).enabled === true ? 0 : 1)' "$RUNNER_TEMP/site/build-service.json"; then
-            origin=$(SITE="$site" node -e 'process.stdout.write(new URL(process.env.SITE).origin)')
-            node cloud/test/build-preflight.mjs "$AUROS_WISHES_URL" on "$origin"
-          fi
-      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
-        with:
-          path: ${{ runner.temp }}/site
+      - name: the front door, checked the way she meets it
+        env:
+          PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
+        run: node tools/site/check.mjs --dir "$RUNNER_TEMP/site"
 
   promote:
     needs: [which, publish, windows, e2e, site, sources]
@@ -657,35 +649,16 @@ jobs:
   # new behind it. A release made with GITHUB_TOKEN starts no other
   # workflow, and pages.yml cannot be dispatched from here (dispatch
   # only works for workflows on the default branch), so the deploy is
-  # done here, with the same actions pages.yml uses. Its own job, so a
+  # requested here through the same publisher pages.yml uses. Its own job, so a
   # repository without Pages switched on fails here and not in promote.
   pages:
     needs: promote
     if: ${{ !cancelled() && needs.promote.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
     permissions:
       contents: read
+      actions: read
       pages: write
       id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - name: the website's download link answers, and Pages is on
-        run: |
-          code=$(curl -sS -L -o /dev/null -r 0-0 -w '%{http_code}' \
-                 "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/AurOS-Setup.exe")
-          case "$code" in 200|206) echo "releases/latest/download/AurOS-Setup.exe answers $code" ;;
-            *) echo "::error::releases/latest/download/AurOS-Setup.exe answers $code"; exit 1 ;; esac
-          if ! gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type > /tmp/pages.txt 2>/dev/null; then
-            echo "::error::Enable Pages: Settings → Pages → Source: GitHub Actions (the release itself is published)"
-            exit 1
-          fi
-          echo "Pages is on ($(cat /tmp/pages.txt))"
-      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
-      # the github-pages artifact the site job checked
-      - id: deploy
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+    # The old source-specific site check gates promotion; it is never deployed
+    # hours later. This request publishes freshly checked authoritative main.
+    uses: ./.github/workflows/publish-pages.yml

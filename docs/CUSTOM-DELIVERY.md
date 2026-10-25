@@ -261,8 +261,12 @@ Do these in order. Do not activate a partly configured service.
    `BUILD_CHALLENGE_SECRET`, each with at least 32 random characters.
 4. Set the exact `BUILD_ALLOWED_ORIGIN`; confirm the repository remains fixed
    as `BUILD_GITHUB_REPOSITORY` and the browser cannot supply either value.
-   Confirm the existing repository variable `AUROS_WISHES_URL` is the Worker's
-   exact HTTPS origin, or that its documented `workers.dev` default is correct.
+   Set `tools/site/publish-settings.json` to the reviewed public domain and
+   exact Worker `api_origin`, or keep its explicit empty defaults. These
+   versioned settings govern site publishing and cloud CORS/preflight; Actions
+   variables no longer override these public publishing addresses. If choosing
+   a custom domain, also align the installer/build variable `AUROS_DOMAIN` and
+   Pages CNAME before activation. Enabled publication refuses a mismatch.
 5. Complete [SIGNING.md](SIGNING.md), including two-factor authentication and
    manual approval, then prove a signed custom run and its publish evidence.
 6. Confirm a recent successful `main` base run, its exact-source prerelease,
@@ -286,12 +290,17 @@ Do these in order. Do not activate a partly configured service.
    The cloud workflow must pass the independent read-only build preflight. It
    sends only CORS `OPTIONS`; it creates no challenge, quota row, job, workflow
    dispatch, signing request, or model call.
-10. After the enabled cloud deployment succeeds, run `pages.yml`. Pages derives
-    the public site's exact origin, requires it to equal `BUILD_ALLOWED_ORIGIN`,
-    repeats the read-only live preflight, and writes the enabled
-    `build-service.json` only into the staged Pages artifact. The checked-in
-    file remains disabled. If the Pages run raced the cloud deployment and
-    failed its probe, rerun Pages; do not bypass the probe.
+10. After the enabled cloud deployment succeeds, run `pages.yml` on main.
+    Both Pages callers use one serialized publisher that checks out current
+    main, stages the final generated `build-service.json`, and browser-tests
+    that exact tree. Enabled publication waits up to ten minutes for a
+    successful same-source cloud workflow with actual deployment, secrets,
+    live preflight and live smoke steps; a skipped/probe-only green run is
+    insufficient. It then repeats read-only preflight and rechecks current
+    main, versioned settings, tested bytes and the latest installer identity
+    immediately before deploying. The checked-in website configuration stays
+    disabled. If main advances during publication, rerun Pages on current
+    main; if that source lacks cloud evidence, run cloud on that main first.
 11. Open the deployed `request.html` and submit one bounded desktop recipe.
     Preserve its
     receipt, approve both SignPath requests, and verify the status progresses
@@ -306,7 +315,9 @@ Any mismatch means activation failed. Disable the API before investigating.
 
 Set `BUILD_REQUESTS_ENABLED = "0"`, review the one-line change, and deploy it.
 Let the same push's Pages workflow publish the disabled staged configuration;
-if Pages did not run, dispatch it after the cloud deployment.
+if Pages did not run, dispatch it on current main. Publishing the disabled
+site does not wait for cloud completion; disabling the API remains a separate
+required incident action.
 This blocks new challenges, submissions, and status reads. Workflows already
 dispatched to GitHub continue independently, so inspect or cancel them in
 Actions when necessary. Disabling the API does not delete an installer already
@@ -333,3 +344,36 @@ tool or built-in Node harness, or upgrading once `autocannon` removes the
 vulnerable chain. A package override to `uuid>=11.1.1` is acceptable only after
 the full load test proves `hyperid` compatibility. No dependency was changed
 as part of this runbook.
+
+## Publishing authority and queued releases
+
+`tools/site/publish-settings.json` is the nonsecret, versioned public-address
+source of truth. Its schema accepts only `version`, `domain` and `api_origin`;
+empty strings explicitly select the existing GitHub Pages/workers.dev defaults.
+The publish guard reads the file at an exact current-main SHA using the normal
+`contents: read` token. It does not need the Variables REST permission or an
+additional personal token. The API switch remains in `cloud/wrangler.toml`.
+Its enabled `BUILD_ALLOWED_ORIGIN` must equal the origin derived from these
+settings; cloud deployment also passes that derived origin explicitly.
+
+A release's source-specific website test still gates product promotion.
+Hours later its Pages job requests publication of newly checked **current
+main**, never uploads its old prepared site. Both callers enter one reusable
+publisher with `cancel-in-progress: false`. GitHub may replace one pending
+request with another; every pending request means the same operation, publish
+current authority, so an old release request cannot replace an incident-disable
+request with an old enabled artifact. A main/settings/release change during a
+running publish fails explicitly. Recover with a manual Pages run on current
+main; this does not undo or repeat product-release promotion.
+
+The publisher downloads the actual latest public installer, verifies its
+size and available GitHub digest, records its independently computed SHA256,
+and refuses if that release asset changes before deployment. Public URL
+settings do not migrate addresses already baked into installers: choosing a
+custom domain still requires aligned build settings and a new verified release.
+
+A configured Pages CNAME must match the versioned domain. An absent Pages
+CNAME is allowed because `infra/edge` can proxy the custom domain to Pages;
+this is not proof that DNS or edge routing is configured. Verify that routing
+as part of domain setup before activation. Cloud mutation steps also refuse
+a source that is no longer current main, within the serialized cloud workflow.

@@ -75,21 +75,26 @@ class BuildServiceConfigTest(unittest.TestCase):
                 self.assertEqual(self.invoke(), 1)
                 self.assertFalse(self.output.exists())
 
-    def test_every_site_publisher_only_enables_its_staged_artifact_after_preflight(self):
+    def test_publishers_share_authoritative_path_and_check_final_config(self):
         root = pathlib.Path(__file__).resolve().parents[2]
-        pages = (root / ".github/workflows/pages.yml").read_text(encoding="utf-8")
-        release = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
-        source = json.loads((root / "website/build-service.json").read_text(encoding="utf-8"))
-        self.assertEqual(source, {"enabled": False, "api_origin": ""})
-        for name, workflow in (("pages", pages), ("release", release)):
+        self.assertEqual(json.loads((root / "website/build-service.json").read_text()), {"enabled": False, "api_origin": ""})
+        for name in ("pages", "release"):
+            workflow = (root / ".github/workflows" / (name + ".yml")).read_text()
             with self.subTest(workflow=name):
-                self.assertIn('--output "$RUNNER_TEMP/site/build-service.json"', workflow)
-                self.assertNotIn('--output "website/build-service.json"', workflow)
-                self.assertIn('node cloud/test/build-preflight.mjs "$AUROS_WISHES_URL" on "$origin"', workflow)
-                self.assertLess(workflow.index("Configure the optional custom-build service in the staged site"),
-                                workflow.index("actions/upload-pages-artifact@"))
-        self.assertEqual(pages.count('node cloud/test/build-preflight.mjs "$AUROS_WISHES_URL" on "$origin"'), 2)
-        self.assertEqual(release.count('node cloud/test/build-preflight.mjs "$AUROS_WISHES_URL" on "$origin"'), 1)
+                self.assertIn("uses: ./.github/workflows/publish-pages.yml", workflow)
+                self.assertNotIn("uses: actions/deploy-pages@", workflow)
+                config = workflow.index('--output "$RUNNER_TEMP/site/build-service.json"')
+                check = workflow.index('node tools/site/check.mjs --dir "$RUNNER_TEMP/site"', config)
+                self.assertLess(config, check)
+        publisher = (root / ".github/workflows/publish-pages.yml").read_text()
+        prepare = publisher.index("publish_guard.py prepare")
+        check = publisher.index("node tools/site/check.mjs")
+        guard = publisher.index("publish_guard.py guard")
+        deploy = publisher.index("uses: actions/deploy-pages@")
+        self.assertLess(prepare, check)
+        self.assertLess(check, guard)
+        self.assertLess(guard, deploy)
+        self.assertIn("cancel-in-progress: false", publisher)
 
 
 if __name__ == "__main__":

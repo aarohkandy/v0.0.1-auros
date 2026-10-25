@@ -34,27 +34,19 @@ on:
       - 'cloud/wrangler.toml'
       - 'cloud/test/build-preflight.mjs'
       - '.github/workflows/pages.yml'
+      - '.github/workflows/publish-pages.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
-# The owner's domain (docs/ops/DOMAIN.md): the site is stamped with it, and the
-# Get AurOS button goes to get.<domain>. Empty until he sets the variable.
-env:
-  AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
-  # Existing Worker address contract (monitor.yml and docs/CLOUD.md). The
-  # checked-in website stays disabled; only the staged Pages artifact uses it.
-  AUROS_WISHES_URL: ${{ vars.AUROS_WISHES_URL || format('https://auros-wishes.{0}.workers.dev', github.repository_owner) }}
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
   check:
+    permissions:
+      contents: read
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     outputs:
@@ -76,20 +68,18 @@ jobs:
           if ! NODE_PATH="$RUNNER_TEMP/pw/node_modules" node -e "require('playwright').chromium.launch().then(b => b.close())"; then
             timeout 600 "$pw" install --with-deps chromium
           fi
+      - name: Versioned public publishing settings
+        run: python3 -I tools/site/publish_settings.py --github-env "$GITHUB_ENV"
       - name: The site, with this repository written in
         run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"
       - name: Custom-build site configuration tests
-        run: python3 -I tools/site/test_build_service_config.py
+        run: python3 -I tools/site/test_build_service_config.py && python3 -I tools/site/test_publish_guard.py
       - name: Custom-build site configuration is coherent
         run: |
           site=$(sh tools/repo.sh site)
           python3 -I tools/site/build_service_config.py \
             --wrangler cloud/wrangler.toml --site-url "$site" \
-            --api-origin "$AUROS_WISHES_URL" --output "$RUNNER_TEMP/build-service.json"
-          if node -e 'process.exit(require(process.argv[1]).enabled === true ? 0 : 1)' "$RUNNER_TEMP/build-service.json"; then
-            origin=$(SITE="$site" node -e 'process.stdout.write(new URL(process.env.SITE).origin)')
-            node cloud/test/build-preflight.mjs "$AUROS_WISHES_URL" on "$origin"
-          fi
+            --api-origin "$AUROS_WISHES_URL" --output "$RUNNER_TEMP/site/build-service.json"
       - name: Check the front door
         env:
           PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
@@ -117,42 +107,5 @@ jobs:
   deploy:
     needs: check
     if: needs.check.outputs.download == 'yes'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      # The public site is not put up while the legal pack is not ready (stream LEGAL: the owner's
-      # mailbox, the installer's agreement line and Licenses button, the reviews). It says what is missing.
-      - name: The legal pack is ready for the public (tools/legal/check.py --launch)
-        run: python3 -I tools/legal/check.py --launch
-      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
-      - name: The site, with this repository written in
-        run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"
-      - name: Configure the optional custom-build service in the staged site
-        run: |
-          site=$(sh tools/repo.sh site)
-          python3 -I tools/site/build_service_config.py \
-            --wrangler cloud/wrangler.toml --site-url "$site" \
-            --api-origin "$AUROS_WISHES_URL" --output "$RUNNER_TEMP/site/build-service.json"
-          if node -e 'process.exit(require(process.argv[1]).enabled === true ? 0 : 1)' "$RUNNER_TEMP/site/build-service.json"; then
-            origin=$(SITE="$site" node -e 'process.stdout.write(new URL(process.env.SITE).origin)')
-            node cloud/test/build-preflight.mjs "$AUROS_WISHES_URL" on "$origin"
-          fi
-      # release.json (release.yml's site job: the sha256 of the AurOS-Setup.exe made the full
-      # release; tools/ops/monitor.py checks the download against it) is not in website/. A deploy
-      # from here would erase it, so the live one is carried over, when it is the right shape.
-      - name: Keep the recorded hash of the full release (release.json)
-        run: |
-          u="$(sh tools/repo.sh site)"; u="${u%/}/release.json"
-          if curl -fsS --max-time 20 --retry 2 -o "$RUNNER_TEMP/release.json" "$u" &&
-             python3 -I -c 'import json,re,sys; sys.exit(0 if re.fullmatch(r"[0-9a-f]{64}", str(json.load(open(sys.argv[1]))["sha256"])) else 1)' "$RUNNER_TEMP/release.json"; then
-            cp "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/site/release.json"; echo "kept $u"
-          else echo "no release.json at $u yet: nothing to keep"; fi
-      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
-        with:
-          path: ${{ runner.temp }}/site
-      - id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+    # Trigger context only: the shared publisher stages and checks current main.
+    uses: ./.github/workflows/publish-pages.yml
