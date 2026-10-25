@@ -7,7 +7,7 @@ Output contains object IDs and counts, never trace text.
 import argparse
 import re
 from pathlib import Path
-from typing import Dict, Union
+from typing import Dict, List, Union
 
 # libwayland's closure logger renders every object as interface@id. Keep these
 # patterns aligned with that real wire-debug syntax; accepting a made-up
@@ -225,63 +225,250 @@ def analyze_lifecycle(raw: bytes, initial_after: int, away_after: int,
         "layer_shell_objects": 0,
     }
 
-def analyze_no_popup(raw: bytes, after: int) -> Dict[str, Union[str, int]]:
-    """Reject a pre-existing or newly active popup after a sensitive click."""
-    if after < 0 or after > len(raw):
-        raise ValueError("trace boundary is outside the trace")
-    counts = {"popup": 0, "map": 0, "configure": 0, "grab": 0}
+class ReducedEvidenceError(ValueError):
+    """A fail-closed verdict carrying only bounded, reduced evidence."""
+
+    def __init__(self, message: str, evidence: Dict[str, Union[str, int]]):
+        super().__init__(message)
+        self.evidence = evidence
+
+
+def _password_phase(position: int, after: int, input_after: int,
+                    screenshot_after: int, submit_after: int) -> str:
+    if position < input_after:
+        return "focus_to_input"
+    if position < screenshot_after:
+        return "input_to_screenshot"
+    if position < submit_after:
+        return "screenshot_to_submit"
+    return "after_submit"
+
+
+def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
+                     screenshot_after: int = None,
+                     submit_after: int = None) -> Dict[str, Union[str, int]]:
+    """Reject popup activity after sensitive focus and return redacted evidence.
+
+    The candidate-prefixed compatibility counters conservatively include every
+    Firefox xdg_popup event. Neither its Fcitx attribution nor its connection
+    identity is proven by the merged client trace.
+    """
+    input_after = after if input_after is None else input_after
+    screenshot_after = input_after if screenshot_after is None else screenshot_after
+    submit_after = screenshot_after if submit_after is None else submit_after
+    if not 0 <= after <= input_after <= screenshot_after <= submit_after <= len(raw):
+        raise ValueError("password trace boundaries are not ordered within the trace")
+
+    phases = ("focus_to_input", "input_to_screenshot",
+              "screenshot_to_submit", "after_submit")
+    kinds = ("popup", "map", "configure", "grab")
+    counts = {kind: 0 for kind in kinds}
+    phase_counts = {(phase, kind): 0 for phase in phases for kind in kinds}
+    matched = {"configure": 0, "grab": 0}
+    unmatched = {"configure": 0, "grab": 0}
     xdg_to_wl = {}
-    candidate_wls = set()
+    roots = set()
+    objects = {}
+    active_child = {}
+    popup_to_object = {}
+    wl_to_object = {}
+    historical_candidate_wls = set()
     pending = {}
+    historical_pending = {}
     mapped = {}
+    relevant = set()
+    events: List[str] = []
+    omitted_events = 0
+    layer_shell_objects = 0
+    mapped_at_focus = set()
     checked_boundary = False
+
+    def record_event(kind: str, phase: str, popup_id: int = 0,
+                     object_id: int = 0, matched_candidate: bool = False) -> None:
+        nonlocal omitted_events
+        counts[kind] += 1
+        phase_counts[(phase, kind)] += 1
+        if kind in matched:
+            bucket = matched if matched_candidate else unmatched
+            bucket[kind] += 1
+        if object_id:
+            relevant.add(object_id)
+        child = objects[object_id]["child"] if object_id else 0
+        if len(events) < 32:
+            events.append(
+                f"type:{kind},phase:{phase},popup:{popup_id},"
+                f"child:{child},candidate:{'yes' if matched_candidate else 'no'}")
+        else:
+            omitted_events += 1
+
     for position, line in _lines(raw):
+        if not checked_boundary and position >= after:
+            mapped_at_focus = {child for child, state in mapped.items() if state}
+            relevant.update(mapped_at_focus)
+            checked_boundary = True
+        phase = _password_phase(position, after, input_after,
+                                screenshot_after, submit_after)
         surface = GET_SURFACE.search(line)
         if surface:
             xdg_to_wl[int(surface.group(1))] = int(surface.group(2))
+        top = GET_TOPLEVEL.search(line)
+        if top:
+            roots.add(int(top.group(1)))
         popup = GET_POPUP.search(line)
         if popup:
-            child = int(popup.group(1))
-            if child in xdg_to_wl:
-                wl = xdg_to_wl[child]
-                candidate_wls.add(wl)
-                mapped.setdefault(wl, False)
+            child, popup_id, parent = map(int, popup.groups())
+            wl = xdg_to_wl.get(child, 0)
+            object_id = len(objects) + 1
+            parent_role = ("toplevel" if parent in roots else
+                           "popup" if parent in active_child else "unknown")
+            objects[object_id] = {
+                "child": child, "popup": popup_id, "parent": parent, "wl": wl,
+                "parent_role": parent_role,
+                "candidate": bool(wl and parent_role == "toplevel"),
+                "created_phase": phase if position >= after else "before_focus",
+                "map_count": 0, "unmap_count": 0,
+                "configure_count": 0, "grab_count": 0,
+                "destroyed": "no",
+            }
+            active_child[child] = object_id
+            popup_to_object[popup_id] = object_id
+            if wl:
+                wl_to_object[wl] = object_id
+                mapped.setdefault(object_id, False)
+            if position >= after:
+                record_event("popup", phase, popup_id, object_id,
+                             objects[object_id]["candidate"])
         attach = ATTACH.search(line)
-        if attach and int(attach.group(1)) in candidate_wls:
-            pending[int(attach.group(1))] = attach.group(2).strip() != "nil"
+        if attach:
+            wl = int(attach.group(1))
+            object_id = wl_to_object.get(wl)
+            if object_id is not None:
+                pending[object_id] = attach.group(2).strip() != "nil"
+            elif wl in historical_candidate_wls:
+                historical_pending[wl] = attach.group(2).strip() != "nil"
         commit = COMMIT.search(line)
-        if commit and int(commit.group(1)) in pending:
+        if commit:
             wl = int(commit.group(1))
-            maps = pending.pop(wl)
-            mapped[wl] = maps
-            if position >= after and maps:
-                counts["map"] += 1
-        if not checked_boundary and position >= after:
-            if any(mapped.values()):
-                raise ValueError("a candidate popup was already mapped at sensitive focus")
-            checked_boundary = True
-        if position < after:
-            continue
-        if "layer_shell" in line:
-            raise ValueError("a layer-shell object appeared after sensitive focus")
-        if popup:
-            counts["popup"] += 1
-        if CONFIGURE.search(line):
-            counts["configure"] += 1
-        if GRAB.search(line):
-            counts["grab"] += 1
-    if not checked_boundary and any(mapped.values()):
-        raise ValueError("a candidate popup was already mapped at sensitive focus")
-    if any(counts.values()):
-        raise ValueError("popup activity appeared after sensitive focus")
-    return {
-        "candidate_popup_creations": 0,
-        "candidate_popup_maps": 0,
-        "candidate_popup_configures": 0,
-        "candidate_popup_grabs": 0,
-        "layer_shell_objects": 0,
-        "observed_candidate_popup": "no",
+            object_id = wl_to_object.get(wl)
+            if object_id is not None and object_id in pending:
+                maps = pending.pop(object_id)
+                was_mapped = mapped.get(object_id, False)
+                mapped[object_id] = maps
+                if position >= after and maps:
+                    objects[object_id]["map_count"] += 1
+                    record_event("map", phase, objects[object_id]["popup"], object_id,
+                                 objects[object_id]["candidate"])
+                elif position >= after and was_mapped and not maps:
+                    objects[object_id]["unmap_count"] += 1
+                    relevant.add(object_id)
+            elif wl in historical_pending:
+                maps = historical_pending.pop(wl)
+                if position >= after and maps:
+                    record_event("map", phase)
+        configure = CONFIGURE.search(line)
+        if configure and position >= after:
+            popup_id = int(configure.group(1))
+            object_id = popup_to_object.get(popup_id, 0)
+            if object_id:
+                objects[object_id]["configure_count"] += 1
+            record_event("configure", phase, popup_id, object_id,
+                         bool(object_id and objects[object_id]["candidate"]))
+        grab = GRAB.search(line)
+        if grab and position >= after:
+            popup_id = int(grab.group(1))
+            object_id = popup_to_object.get(popup_id, 0)
+            if object_id:
+                objects[object_id]["grab_count"] += 1
+            record_event("grab", phase, popup_id, object_id,
+                         bool(object_id and objects[object_id]["candidate"]))
+        if position >= after and "layer_shell" in line:
+            layer_shell_objects += 1
+        xdg_destroy = XDG_DESTROY.search(line)
+        if xdg_destroy:
+            child = int(xdg_destroy.group(1))
+            roots.discard(child)
+            object_id = active_child.pop(child, None)
+            if object_id is not None:
+                objects[object_id]["destroyed"] = "yes"
+                if position >= after:
+                    relevant.add(object_id)
+                popup_to_object.pop(objects[object_id]["popup"], None)
+                mapped.pop(object_id, None)
+                wl = objects[object_id]["wl"]
+                if wl:
+                    historical_candidate_wls.add(wl)
+                    if wl_to_object.get(wl) == object_id:
+                        wl_to_object.pop(wl)
+        wl_destroy = WL_DESTROY.search(line)
+        if wl_destroy:
+            wl = int(wl_destroy.group(1))
+            object_id = wl_to_object.pop(wl, None)
+            if object_id is not None:
+                objects[object_id]["destroyed"] = "yes"
+                if position >= after:
+                    relevant.add(object_id)
+                popup_to_object.pop(objects[object_id]["popup"], None)
+                active_child.pop(objects[object_id]["child"], None)
+                mapped.pop(object_id, None)
+                historical_candidate_wls.add(wl)
+
+    if not checked_boundary:
+        mapped_at_focus = {child for child, state in mapped.items() if state}
+        relevant.update(mapped_at_focus)
+    relevant_objects = sorted(relevant)
+    evidence: Dict[str, Union[str, int]] = {
+        "candidate_popup_creations": counts["popup"],
+        "candidate_popup_maps": counts["map"],
+        "candidate_popup_configures": counts["configure"],
+        "candidate_popup_grabs": counts["grab"],
+        "candidate_popup_configures_matched": matched["configure"],
+        "candidate_popup_configures_unmatched": unmatched["configure"],
+        "candidate_popup_grabs_matched": matched["grab"],
+        "candidate_popup_grabs_unmatched": unmatched["grab"],
+        "candidate_objects_at_focus": len(mapped_at_focus),
+        "candidate_objects_relevant": len(relevant_objects),
+        "candidate_objects_recorded": min(len(relevant_objects), 16),
+        "candidate_objects_omitted": max(0, len(relevant_objects) - 16),
+        "candidate_objects_mapped_at_end": sum(bool(mapped.get(object_id, False))
+                                                   for object_id in relevant_objects),
+        "candidate_objects_destroyed_after_focus": sum(
+            objects[object_id]["destroyed"] == "yes" for object_id in relevant_objects),
+        "reduced_events_recorded": len(events),
+        "reduced_events_omitted": omitted_events,
+        "layer_shell_objects": layer_shell_objects,
+        "observed_candidate_popup": "yes" if any(counts.values()) or mapped_at_focus else "no",
+        "connection_identity": "unproven",
+        "popup_attribution": "unproven",
+        "focus_boundary_byte": after,
+        "input_boundary_byte": input_after,
+        "screenshot_boundary_byte": screenshot_after,
+        "submit_boundary_byte": submit_after,
     }
+    for phase in phases:
+        for kind in kinds:
+            evidence[f"{phase}_{kind}_events"] = phase_counts[(phase, kind)]
+    for index, object_id in enumerate(relevant_objects[:16], 1):
+        state = objects[object_id]
+        evidence[f"candidate_object_{index}"] = (
+            f"child:{state['child']},popup:{state['popup']},wl:{state['wl']},"
+            f"parent:{state['parent']},parent_role:{state['parent_role']},"
+            f"created_phase:{state['created_phase']},"
+            f"mapped_at_focus:{'yes' if object_id in mapped_at_focus else 'no'},"
+            f"map_count:{state['map_count']},unmap_count:{state['unmap_count']},"
+            f"configure_count:{state['configure_count']},grab_count:{state['grab_count']},"
+            f"destroyed:{state['destroyed']}")
+    for index, event in enumerate(events, 1):
+        evidence[f"reduced_event_{index}"] = event
+
+    if mapped_at_focus:
+        raise ReducedEvidenceError(
+            "a candidate popup was already mapped at sensitive focus", evidence)
+    if layer_shell_objects:
+        raise ReducedEvidenceError(
+            "a layer-shell object appeared after sensitive focus", evidence)
+    if any(counts.values()):
+        raise ReducedEvidenceError("popup activity appeared after sensitive focus", evidence)
+    return evidence
 
 
 def analyze_toplevel(raw: bytes, after: int) -> Dict[str, Union[str, int]]:
@@ -344,6 +531,9 @@ def main() -> None:
     ap.add_argument("--away-byte", type=int)
     ap.add_argument("--b-input-byte", type=int)
     ap.add_argument("--return-byte", type=int)
+    ap.add_argument("--input-byte", type=int)
+    ap.add_argument("--screenshot-byte", type=int)
+    ap.add_argument("--submit-byte", type=int)
     args = ap.parse_args()
     raw = args.trace.read_bytes()
     if args.lifecycle:
@@ -352,7 +542,13 @@ def main() -> None:
         result = analyze_lifecycle(raw, args.after_byte, args.away_byte,
                                    args.b_input_byte, args.return_byte)
     elif args.no_popup:
-        result = analyze_no_popup(raw, args.after_byte)
+        try:
+            result = analyze_no_popup(raw, args.after_byte, args.input_byte,
+                                      args.screenshot_byte, args.submit_byte)
+        except ReducedEvidenceError as exc:
+            for key, value in exc.evidence.items():
+                print(f"{key}={value}")
+            raise SystemExit(str(exc))
     elif args.toplevel:
         result = analyze_toplevel(raw, args.after_byte)
     else:

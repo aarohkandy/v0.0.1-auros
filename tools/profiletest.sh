@@ -514,6 +514,104 @@ exact_password_suppression() { # reduced evidence file
     ' "$1" 2>/dev/null
 }
 
+exact_password_popup_events() { # bounded reduced protocol evidence file
+    python3 - "$1" <<'PY'
+import re, sys
+
+path = sys.argv[1]
+try:
+    lines = open(path, encoding="ascii").read().splitlines()
+except (OSError, UnicodeError):
+    raise SystemExit(1)
+values = {}
+objects = {}
+for line in lines:
+    if line.count("=") != 1:
+        raise SystemExit(1)
+    key, value = line.split("=", 1)
+    if key in values or key in objects:
+        raise SystemExit(1)
+    match = re.fullmatch(r"candidate_object_([1-9][0-9]*)", key)
+    if match:
+        objects[int(match.group(1))] = value
+    else:
+        values[key] = value
+
+zero = {
+    "candidate_popup_creations", "candidate_popup_maps",
+    "candidate_popup_configures", "candidate_popup_grabs",
+    "candidate_popup_configures_matched", "candidate_popup_configures_unmatched",
+    "candidate_popup_grabs_matched", "candidate_popup_grabs_unmatched",
+    "candidate_objects_at_focus", "candidate_objects_mapped_at_end",
+    "reduced_events_recorded", "reduced_events_omitted", "layer_shell_objects",
+}
+phases = ("focus_to_input", "input_to_screenshot",
+          "screenshot_to_submit", "after_submit")
+for phase in phases:
+    for kind in ("popup", "map", "configure", "grab"):
+        zero.add(f"{phase}_{kind}_events")
+numeric = {
+    "candidate_objects_relevant", "candidate_objects_recorded",
+    "candidate_objects_omitted", "candidate_objects_destroyed_after_focus",
+    "focus_boundary_byte", "input_boundary_byte",
+    "screenshot_boundary_byte", "submit_boundary_byte",
+}
+allowed = zero | numeric | {
+    "observed_candidate_popup", "connection_identity", "popup_attribution",
+}
+if set(values) != allowed or any(values[key] != "0" for key in zero):
+    raise SystemExit(1)
+if values["observed_candidate_popup"] != "no":
+    raise SystemExit(1)
+if values["connection_identity"] != "unproven":
+    raise SystemExit(1)
+if values["popup_attribution"] != "unproven":
+    raise SystemExit(1)
+if any(not re.fullmatch(r"0|[1-9][0-9]*", values[key]) for key in numeric):
+    raise SystemExit(1)
+relevant = int(values["candidate_objects_relevant"])
+recorded = int(values["candidate_objects_recorded"])
+omitted = int(values["candidate_objects_omitted"])
+destroyed = int(values["candidate_objects_destroyed_after_focus"])
+if recorded > 16 or relevant != recorded + omitted or destroyed > relevant:
+    raise SystemExit(1)
+if set(objects) != set(range(1, recorded + 1)):
+    raise SystemExit(1)
+object_pattern = re.compile(
+    r"child:[1-9][0-9]*,popup:[1-9][0-9]*,wl:(?:0|[1-9][0-9]*),"
+    r"parent:[1-9][0-9]*,parent_role:(?:toplevel|popup|unknown),"
+    r"created_phase:(?:before_focus|focus_to_input|input_to_screenshot|"
+    r"screenshot_to_submit|after_submit),mapped_at_focus:no,"
+    r"map_count:0,unmap_count:[0-9]+,configure_count:0,grab_count:0,"
+    r"destroyed:(?:yes|no)")
+if any(not object_pattern.fullmatch(value) for value in objects.values()):
+    raise SystemExit(1)
+boundaries = [int(values[key]) for key in
+              ("focus_boundary_byte", "input_boundary_byte",
+               "screenshot_boundary_byte", "submit_boundary_byte")]
+if boundaries != sorted(boundaries):
+    raise SystemExit(1)
+PY
+}
+
+exact_sensitive_service_identity() { # reduced Fcitx identity at sensitive boundaries
+    awk -F= '
+        BEGIN {
+            fixed["exe"]="/usr/bin/fcitx5"; fixed["cmdline"]="/usr/bin/fcitx5 -D"
+            fixed["identity_before_sensitive"]="yes"; fixed["identity_after_sensitive"]="yes"
+            variable["pid"]=1; variable["start_time"]=1; variable["dbus_owner"]=1
+            for (key in fixed) expected[key]=1
+            for (key in variable) expected[key]=1
+        }
+        NF != 2 || !($1 in expected) || seen[$1] { bad=1 }
+        ($1 in fixed) && $2 != fixed[$1] { bad=1 }
+        ($1 == "pid" || $1 == "start_time") && $2 !~ /^[1-9][0-9]*$/ { bad=1 }
+        $1 == "dbus_owner" && $2 !~ /^:[0-9]+[.][0-9]+$/ { bad=1 }
+        !seen[$1]++ { count++ }
+        END { exit bad || count != 7 }
+    ' "$1" 2>/dev/null
+}
+
 exact_shipped_restore() { # reduced production restore file
     awk -F= '
         BEGIN {
@@ -747,14 +845,16 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root [source]
                 || password_env_ok=no
         fi
         exact_password_suppression "$R/password-suppression.txt" \
+            && exact_password_popup_events "$R/password-popup-events.txt" \
+            && exact_sensitive_service_identity "$R/service-owner-sensitive.txt" \
             && [ "$password_env_ok" = yes ] \
             && ok "the synthetic password field showed no observed popup or browser composition event in round $round" \
             || bad "the synthetic password field showed no observed popup or browser composition event in round $round" "bounded suppression evidence is missing or ambiguous"
         [ -s "$SHOTS/fcitx-round$round-focus-away.png" ] \
             && [ -s "$SHOTS/fcitx-round$round-password-focused.png" ] \
             && [ -s "$SHOTS/fcitx-round$round-password-masked.png" ] \
-            && ok "round $round focus and masked-password screenshots were retained" \
-            || bad "round $round focus and masked-password screenshots were retained" "security screenshot missing"
+            && ok "round $round password-phase screenshots were retained" \
+            || bad "round $round password-phase screenshots were retained" "security screenshot missing"
         service_ok=no
         if [ "$SECURITY_SOURCE" = shipped-fcitx ]; then
             exact_shipped_restore "$R/restore.txt" && service_ok=yes
@@ -1449,6 +1549,12 @@ preclick_absence = text.index('[ ! -e "$password_focus" ] || fail "password focu
 password_click = text.index('act click-form', password_visible)
 if not password_visible < preclick_absence < password_click:
     raise SystemExit("password focus evidence must be absent immediately before the injected click")
+identity_before = text.index('password_fcitx_owner=$(fcitx_owner_name)', password_visible)
+password_boundary = text.index('password_boundary=$(wc -c < "$password_trace"', password_visible)
+identity_after = text.index('verify_fcitx_identity "$password_fcitx_owner"', password_click)
+popup_reduce = text.index('fcitx_wayland_trace.py "$password_trace"', password_click)
+if not identity_before < password_boundary < password_click < identity_after < popup_reduce:
+    raise SystemExit("Fcitx identity must bind both sensitive-phase boundaries before reduction")
 password_launch = text[text.index('if [ "$PRODUCTION" = 1 ]; then', password_test):password_visible]
 production_password, legacy_password = password_launch.split('\n    else\n', 1)
 if 'GTK_IM_MODULE=fcitx' in production_password or 'XDG_CONFIG_HOME="$CFG"' in production_password:
@@ -1599,6 +1705,50 @@ EOPY
         printf 'initial_popup_wl_surface=30\nreturn_popup_wl_surface=31\ninitial_unmapped_before_b_input=yes\nmapped_candidate_while_away=no\nreturn_map_epoch=fresh\nreturn_popup_reused=no\npopup_input_grab=no\nlayer_shell_objects=0\nb_saved_sentinel=20\na_saved_file_unchanged=yes\n' > "$R/focus-lifecycle.txt"
         printf '20\n' > "$R/focus-b-sentinel.hex"
         printf 'candidate_popup_creations=0\ncandidate_popup_maps=0\ncandidate_popup_configures=0\ncandidate_popup_grabs=0\nlayer_shell_objects=0\nobserved_candidate_popup=no\nfocus_event_observed=yes\nascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\nraw_password_focus_log_retained=no\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' > "$R/password-suppression.txt"
+        printf 'pid=123\nstart_time=456\nexe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\ndbus_owner=:1.%s\nidentity_before_sensitive=yes\nidentity_after_sensitive=yes\n' \
+            "$round" > "$R/service-owner-sensitive.txt"
+        cat > "$R/password-popup-events.txt" <<'EOF'
+candidate_popup_creations=0
+candidate_popup_maps=0
+candidate_popup_configures=0
+candidate_popup_grabs=0
+candidate_popup_configures_matched=0
+candidate_popup_configures_unmatched=0
+candidate_popup_grabs_matched=0
+candidate_popup_grabs_unmatched=0
+candidate_objects_at_focus=0
+candidate_objects_relevant=0
+candidate_objects_recorded=0
+candidate_objects_omitted=0
+candidate_objects_mapped_at_end=0
+candidate_objects_destroyed_after_focus=0
+reduced_events_recorded=0
+reduced_events_omitted=0
+layer_shell_objects=0
+observed_candidate_popup=no
+connection_identity=unproven
+popup_attribution=unproven
+focus_boundary_byte=10
+input_boundary_byte=20
+screenshot_boundary_byte=30
+submit_boundary_byte=30
+focus_to_input_popup_events=0
+focus_to_input_map_events=0
+focus_to_input_configure_events=0
+focus_to_input_grab_events=0
+input_to_screenshot_popup_events=0
+input_to_screenshot_map_events=0
+input_to_screenshot_configure_events=0
+input_to_screenshot_grab_events=0
+screenshot_to_submit_popup_events=0
+screenshot_to_submit_map_events=0
+screenshot_to_submit_configure_events=0
+screenshot_to_submit_grab_events=0
+after_submit_popup_events=0
+after_submit_map_events=0
+after_submit_configure_events=0
+after_submit_grab_events=0
+EOF
         printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\ncleanup_pids_gone=1\nsource=retained-ibus-conversion\n' > "$R/restore.txt"
         printf 'exe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\nconfig_hash=abc\ndisplay_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\nboot_id=00000000-0000-4000-8000-00000000000%s\n' "$round" > "$R/fcitx.process"
         printf 'GDK_BACKEND=wayland\nGTK_IM_MODULE=fcitx\nWAYLAND_DISPLAY=wayland-0\n' > "$R/password.env"
@@ -1830,6 +1980,39 @@ EOPY
         cp "$password_evidence.clean" "$password_evidence"
     done
     rm "$password_evidence.clean"
+    popup_evidence="$security_fixture/evidence/round1/password-popup-events.txt"
+    cp "$popup_evidence" "$popup_evidence.clean"
+    for mutation in duplicate contradictory unknown attribution; do
+        case "$mutation" in
+          duplicate) printf 'focus_boundary_byte=10\n' >> "$popup_evidence" ;;
+          contradictory) sed 's/observed_candidate_popup=no/observed_candidate_popup=yes/' \
+              "$popup_evidence.clean" > "$popup_evidence" ;;
+          unknown) printf 'unreviewed_protocol_claim=yes\n' >> "$popup_evidence" ;;
+          attribution) sed 's/popup_attribution=unproven/popup_attribution=fcitx/' \
+              "$popup_evidence.clean" > "$popup_evidence" ;;
+        esac
+        if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+            printf '    %-62s %s\n' "Fcitx popup evidence with $mutation data" "refused"
+        else
+            printf '    %-62s %s\n' "Fcitx popup evidence with $mutation data" "ACCEPTED"
+            fail=$((fail+1))
+        fi
+        checked=$((checked+1))
+        cp "$popup_evidence.clean" "$popup_evidence"
+    done
+    rm "$popup_evidence.clean"
+    sensitive_identity="$security_fixture/evidence/round1/service-owner-sensitive.txt"
+    cp "$sensitive_identity" "$sensitive_identity.clean"
+    sed -i.bak '/^identity_after_sensitive=yes$/d' "$sensitive_identity"
+    rm "$sensitive_identity.bak"
+    if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "Fcitx sensitive phase without ending service identity" "refused"
+    else
+        printf '    %-62s %s\n' "Fcitx sensitive phase without ending service identity" "ACCEPTED"
+        fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    mv "$sensitive_identity.clean" "$sensitive_identity"
     sed 's/foreign_trace_writers_at_boundaries=0/foreign_trace_writers_at_boundaries=1/' \
         "$security_fixture/evidence/round1/mousepad-connection.txt" \
         > "$security_fixture/evidence/round1/mousepad-connection.tmp"
