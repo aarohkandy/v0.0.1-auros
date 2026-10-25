@@ -423,7 +423,7 @@ class WorkflowContractTests(unittest.TestCase):
             "python3 tools/customize/delivery.py prepare", 1
         )[1].split("\n\n", 1)[0]
         self.assertIn('--source-sha "$GITHUB_SHA"', prepare)
-        self.assertIn('--release-source-sha "$(tr -d', prepare)
+        self.assertNotIn("release-source-sha", workflow)
 
     def test_extraction_creates_output_directory_before_all_five_resources(self) -> None:
         workflow = (ROOT / ".github/workflows/customize.yml").read_text(encoding="utf-8")

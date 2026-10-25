@@ -333,14 +333,12 @@ def _asset(
 
 
 def _validate_release(
-    release: dict[str, Any], repository: str, base: dict[str, Any], release_source_sha: str
+    release: dict[str, Any], base: dict[str, Any]
 ) -> dict[str, dict[str, Any]]:
     if release.get("tag_name") != base["tag"]:
         _fail("release tag does not match base provenance")
     if release.get("draft") is not False or release.get("prerelease") is not True:
         _fail("base release must be a published prerelease")
-    if not COMMIT.fullmatch(release_source_sha) or release_source_sha != base["head_sha"]:
-        _fail("base release does not resolve to the proven source commit")
     return _assets(release)
 
 
@@ -458,7 +456,6 @@ def prepare(
     image_bytes_path: Path,
     repository: str,
     source_sha: str,
-    release_source_sha: str,
     workflow_run_id: int,
     signed_sha256: str,
     request_id: str,
@@ -496,7 +493,7 @@ def prepare(
     if signed_size <= 0:
         _fail("signed installer is empty")
     release, _raw = _json(release_path)
-    assets = _validate_release(release, repository, base, release_source_sha)
+    assets = _validate_release(release, base)
     base_assets = _validate_base_assets(
         assets,
         repository,
@@ -506,8 +503,9 @@ def prepare(
         image_bytes_path,
     )
     recipe_hex = recipe["id"][7:]
-    installer_name = f"AurOS-Custom-{recipe_hex}.exe"
-    manifest_name = f"AurOS-Custom-{recipe_hex}.json"
+    authority_sha = authority["head_sha"]
+    installer_name = f"AurOS-Custom-{authority_sha}-{recipe_hex}.exe"
+    manifest_name = f"AurOS-Custom-{authority_sha}-{recipe_hex}.json"
     existing_installer = installer_name in assets
     existing_manifest = manifest_name in assets
     if existing_installer:
@@ -649,13 +647,14 @@ def _plan(path: Path) -> dict[str, Any]:
         _fail("delivery plan installer is invalid")
     _exact(installer, {"name", "sha256", "bytes"}, "plan installer")
     recipe_hex = recipe["id"][7:]
-    if installer.get("name") != f"AurOS-Custom-{recipe_hex}.exe":
+    authority_sha = authority["head_sha"]
+    if installer.get("name") != f"AurOS-Custom-{authority_sha}-{recipe_hex}.exe":
         _fail("delivery plan installer name is invalid")
     if not SHA256.fullmatch(str(installer.get("sha256"))):
         _fail("delivery plan installer hash is invalid")
     if type(installer.get("bytes")) is not int or installer["bytes"] <= 0:
         _fail("delivery plan installer size is invalid")
-    if plan.get("manifest_name") != f"AurOS-Custom-{recipe_hex}.json":
+    if plan.get("manifest_name") != f"AurOS-Custom-{authority_sha}-{recipe_hex}.json":
         _fail("delivery plan manifest name is invalid")
     base_assets = plan.get("base_assets")
     if not isinstance(base_assets, list) or not 5 <= len(base_assets) <= 1000:
@@ -692,7 +691,6 @@ def _plan(path: Path) -> dict[str, Any]:
 def _manifest_value(
     plan: dict[str, Any],
     release: dict[str, Any],
-    release_source_sha: str,
     readback_installer: Path,
 ) -> dict[str, Any]:
     base = plan["base"]
@@ -703,10 +701,6 @@ def _manifest_value(
         or release.get("prerelease") is not True
     ):
         _fail("base prerelease identity changed before manifest creation")
-    if release_source_sha != base["head_sha"] or not COMMIT.fullmatch(
-        release_source_sha
-    ):
-        _fail("base release tag no longer resolves to the proven source")
     _validate_base_snapshot(plan, release)
     assets = _assets(release)
     installer = plan["installer"]
@@ -744,13 +738,12 @@ def _manifest_value(
 def make_manifest(
     plan_path: Path,
     release_path: Path,
-    release_source_sha: str,
     readback_installer: Path,
     output: Path,
 ) -> dict[str, Any]:
     plan = _plan(plan_path)
     release, _raw = _json(release_path)
-    manifest = _manifest_value(plan, release, release_source_sha, readback_installer)
+    manifest = _manifest_value(plan, release, readback_installer)
     _write_json(output, manifest)
     return manifest
 
@@ -758,7 +751,6 @@ def make_manifest(
 def verify_ready(
     plan_path: Path,
     release_path: Path,
-    release_source_sha: str,
     expected_manifest: Path,
     readback_manifest: Path,
     expected_installer: Path,
@@ -770,9 +762,7 @@ def verify_ready(
         _fail("published delivery manifest readback changed")
     manifest, _raw = _json(readback_manifest)
     release, _release_raw = _json(release_path)
-    expected_manifest_value = _manifest_value(
-        plan, release, release_source_sha, readback_installer
-    )
+    expected_manifest_value = _manifest_value(plan, release, readback_installer)
     if manifest != expected_manifest_value:
         _fail("published delivery manifest claims do not match verified evidence")
     if (
@@ -830,7 +820,6 @@ def main(argv: list[str] | None = None) -> int:
     prepare_parser.add_argument("--image-bytes", required=True, type=Path)
     prepare_parser.add_argument("--repository", required=True)
     prepare_parser.add_argument("--source-sha", required=True)
-    prepare_parser.add_argument("--release-source-sha", required=True)
     prepare_parser.add_argument("--workflow-run-id", required=True, type=int)
     prepare_parser.add_argument("--signed-sha256", required=True)
     prepare_parser.add_argument("--request-id", default="")
@@ -839,13 +828,11 @@ def main(argv: list[str] | None = None) -> int:
     manifest_parser = sub.add_parser("make-manifest")
     manifest_parser.add_argument("--plan", required=True, type=Path)
     manifest_parser.add_argument("--release", required=True, type=Path)
-    manifest_parser.add_argument("--release-source-sha", required=True)
     manifest_parser.add_argument("--readback-installer", required=True, type=Path)
     manifest_parser.add_argument("--output", required=True, type=Path)
     verify_parser = sub.add_parser("verify-ready")
     verify_parser.add_argument("--plan", required=True, type=Path)
     verify_parser.add_argument("--release", required=True, type=Path)
-    verify_parser.add_argument("--release-source-sha", required=True)
     verify_parser.add_argument("--expected-manifest", required=True, type=Path)
     verify_parser.add_argument("--readback-manifest", required=True, type=Path)
     verify_parser.add_argument("--expected-installer", required=True, type=Path)
@@ -867,7 +854,6 @@ def main(argv: list[str] | None = None) -> int:
                 image_bytes_path=args.image_bytes,
                 repository=args.repository,
                 source_sha=args.source_sha,
-                release_source_sha=args.release_source_sha,
                 workflow_run_id=args.workflow_run_id,
                 signed_sha256=args.signed_sha256,
                 request_id=args.request_id,
@@ -878,7 +864,6 @@ def main(argv: list[str] | None = None) -> int:
             make_manifest(
                 args.plan,
                 args.release,
-                args.release_source_sha,
                 args.readback_installer,
                 args.output,
             )
@@ -887,7 +872,6 @@ def main(argv: list[str] | None = None) -> int:
                 verify_ready(
                     args.plan,
                     args.release,
-                    args.release_source_sha,
                     args.expected_manifest,
                     args.readback_manifest,
                     args.expected_installer,
