@@ -9,15 +9,20 @@ trap 'rm -rf "$TMP"' EXIT
 
 python3 - "$ROOT/.github/workflows/e2e.yml" "$TMP/step.sh" <<'PY'
 import sys
-import yaml
 
-workflow = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-for step in workflow["jobs"]["aur"]["steps"]:
-    if step.get("name", "").startswith("the image under test"):
-        open(sys.argv[2], "w", encoding="utf-8").write(step["run"])
-        break
-else:
+text = open(sys.argv[1], encoding="utf-8").read()
+marker = "      - name: the image under test (a build run's pieces, else the release's)\n"
+try:
+    block = text.split(marker, 1)[1].split("        run: |\n", 1)[1]
+    block = block.split("\n      - name:", 1)[0]
+except IndexError:
     raise SystemExit("image step not found")
+lines = block.splitlines()
+if not lines or any(line and not line.startswith("          ") for line in lines):
+    raise SystemExit("image step has unexpected indentation")
+open(sys.argv[2], "w", encoding="utf-8").write(
+    "\n".join(line[10:] for line in lines) + "\n"
+)
 PY
 
 mkdir -p "$TMP/bin"
@@ -49,19 +54,59 @@ done
 [ "$image_sha" -eq 0 ] || [ ! -e "$FIXTURE/image.sha256" ] || cp "$FIXTURE/image.sha256" "$dest"/
 SH
 chmod +x "$TMP/bin/gh"
-cat > "$TMP/bin/sha256sum" <<'SH'
-#!/bin/sh
-# macOS's sha256sum has GNU-compatible checking but no --quiet flag.
-if [ "${1:-}" = -c ] && [ "${2:-}" = --quiet ]; then
-    [ -s "$3" ] || exit 1
-    exec /sbin/sha256sum -c "$3" >/dev/null
+
+# Ubuntu has GNU sha256sum. Only provide a stream-compatible adapter on hosts
+# such as macOS whose checksum tool lacks the GNU checking interface.
+empty_sha=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+: > "$TMP/empty"
+if ! printf '%s  %s\n' "$empty_sha" "$TMP/empty" | sha256sum -c --quiet >/dev/null 2>&1; then
+    cat > "$TMP/bin/sha256sum" <<'PY'
+#!/usr/bin/env python3
+import hashlib
+import re
+import sys
+
+args = sys.argv[1:]
+if not args or args.pop(0) != "-c":
+    raise SystemExit("checksum adapter supports only sha256sum -c")
+quiet = False
+if args and args[0] == "--quiet":
+    quiet = True
+    args.pop(0)
+if len(args) > 1:
+    raise SystemExit("checksum adapter received unexpected arguments")
+source = open(args[0], encoding="utf-8") if args else sys.stdin
+lines = source.read().splitlines()
+if source is not sys.stdin:
+    source.close()
+if not lines:
+    raise SystemExit("sha256sum: no properly formatted checksum lines found")
+failed = False
+for line in lines:
+    match = re.fullmatch(r"([0-9A-Fa-f]{64}) [ *](.+)", line)
+    if not match:
+        failed = True
+        continue
+    expected, path = match.groups()
+    try:
+        with open(path, "rb") as checked:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: checked.read(1024 * 1024), b""):
+                digest.update(chunk)
+            actual = digest.hexdigest()
+    except OSError as error:
+        print(f"sha256sum: {path}: {error}", file=sys.stderr)
+        failed = True
+        continue
+    if actual.lower() != expected.lower():
+        print(f"{path}: FAILED", file=sys.stderr)
+        failed = True
+    elif not quiet:
+        print(f"{path}: OK")
+raise SystemExit(1 if failed else 0)
+PY
+    chmod +x "$TMP/bin/sha256sum"
 fi
-if [ "${1:-}" = -c ] && [ "$#" -eq 1 ]; then
-    exec /sbin/sha256sum -c /dev/stdin
-fi
-exec /sbin/sha256sum "$@"
-SH
-chmod +x "$TMP/bin/sha256sum"
 
 make_fixture() {
     dest=$1
