@@ -2344,9 +2344,9 @@ class Flow:
                 if re.sub(r"[^a-z]", "", text.lower()) == re.sub(r"[^a-z]", "", name.lower()):
                     y0 = max(0, min(w["y"] for w in ws) - 2)
                     y1 = min(img.shape[0], max(w["y"] + w["h"] for w in ws) + 2)
-                    lum = float(img[y0:y1, :].mean())
-                    self.log(f"start menu: '{text}' row brightness {lum:.0f}")
-                    if lum > 110:                      # the selected row is light
+                    selected, coverage = self.grub_row_selected(img, y0, y1)
+                    self.log(f"start menu: '{text}' selected-cyan coverage {coverage:.3f}")
+                    if selected:
                         self.m.key("ret", label=f"start menu: {name}")
                         return
             self.m.key("down", label="start menu: down" if i == 0 else None)
@@ -2354,6 +2354,24 @@ class Flow:
         self.m.shot("start-menu-no-entry")
         raise Failure(f"AurOS's start menu never highlighted '{name}': " +
                       vision.text_of(vision.ocr(self.m.screendump()))[:400])
+
+    @staticmethod
+    def grub_row_selected(img, y0, y1):
+        """Recognise the selected row in the shipped GRUB theme.
+
+        Run 40161971669 proved the highlight is cyan RGB(0,152,152), whose
+        whole-screen mean is dark.  Require that observed theme over nearly the
+        full menu width; unsupported themes fail closed instead of guessing.
+        """
+        if y0 < 0 or y1 <= y0 or y1 > img.shape[0]:
+            return False, 0.0
+        band = img[y0:y1, :]
+        delta = np.abs(band[:, :, 1].astype(np.int16) - band[:, :, 2].astype(np.int16))
+        cyan = ((band[:, :, 0] <= 20) & (band[:, :, 1] >= 140) &
+                (band[:, :, 1] <= 165) & (band[:, :, 2] >= 140) &
+                (band[:, :, 2] <= 165) & (delta <= 8))
+        coverage = float(cyan.mean())
+        return coverage >= 0.45, coverage
 
     @staticmethod
     def boot_screen_kind(text):
