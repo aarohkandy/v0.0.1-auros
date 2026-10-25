@@ -751,3 +751,29 @@ one desktop candidate with four Windows journeys, plus one fresh multilingual
 image/production functional test. Let exact-build hardening start automatically.
 No latest/public promotion. The next results must settle any remaining launch,
 BitLocker-return, recovery, and shipped-profile failures.
+
+## Candidate 3629b114 and corrected dispatch-control evidence
+
+Combined main candidate `3629b114d4bcd1ff74a18fbeb3072bc9d5512110` is under
+[build run 40148012698](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40148012698)
+and [multilingual run 40148012574](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40148012574).
+The same-commit standalone push E2E is intentionally skipped; release-called
+Windows journeys must run against this candidate. Do not manually duplicate
+hardening. The legal check passed; no image/installed-journey verdict yet.
+
+The direct installed-VLC control finally verified actual instrumentation in
+stock GNOME Software: action=5 launch job, exact Flatpak ownership/object ID,
+libflatpak success, and an app scope. Its screenshot **does not show mapped VLC**:
+lead inspection found only Software's embedded Big Buck Bunny preview. The
+diagnostic driver falsely matched preview text and stopped too early. The
+agent's initial mapped-window/root-cause claims were corrected; no production
+code uses that diagnostic driver. This control proves dispatch only, not first
+install, visible app readiness, or root cause of the earlier failures.
+
+Corrected evidence is `/tmp/auros-vlc-focused-control/focused-control-evidence/`,
+with `README.md` and `SCREENSHOT-INTERPRETATION.md`; archive SHA-256
+`c8925fdeec6e9d3c2c62afff820543835ecbba3352d23e38d8ad37033161b851`.
+Remote mirror is `~/work/auros-vlc-exact/out/focused-control-evidence/`.
+Owned diagnostic overlays/processes were removed; exact original raw image
+remains verified. Earlier `0039-failure.png` genuinely shows VLC privacy/main
+windows but belongs to a different run. Keep these claims separate.
