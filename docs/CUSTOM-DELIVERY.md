@@ -274,13 +274,13 @@ Do these in order. Do not activate a partly configured service.
     Both Pages callers use one serialized publisher that checks out current
     main, stages the final generated `build-service.json`, and browser-tests
     that exact tree. Enabled publication waits up to ten minutes for a
-    successful same-source cloud workflow with actual deployment, secrets,
+    successful cloud workflow with the identical cloud dependency digest and actual deployment, secrets,
     live preflight and live smoke steps; a skipped/probe-only green run is
     insufficient. It then repeats read-only preflight and rechecks current
     main, versioned settings, tested bytes and the latest installer identity
     immediately before deploying. The checked-in website configuration stays
     disabled. If main advances during publication, rerun Pages on current
-    main; if that source lacks cloud evidence, run cloud on that main first.
+    main; if the cloud dependencies lack retained evidence, run cloud on that main first.
 11. Open the deployed `request.html` and submit one bounded desktop recipe.
     Preserve its
     receipt, approve both SignPath requests, and verify the status progresses
@@ -357,3 +357,22 @@ CNAME is allowed because `infra/edge` can proxy the custom domain to Pages;
 this is not proof that DNS or edge routing is configured. Verify that routing
 as part of domain setup before activation. Cloud mutation steps also refuse
 a source that is no longer current main, within the serialized cloud workflow.
+
+Cloud evidence can be reused across website, OS and documentation changes only
+when the exact versioned dependency inventory matches. The publisher independently
+recomputes Git-tree digests at both sources, validates a bounded proof artifact
+against its exact successful run attempt, and refuses newer matching failed
+attempts. Proofs are retained for 30 days. The complete run search covers 31 days
+and refuses overflow above 1,000 runs; GitHub [limits reruns to 30 days](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs),
+and this workflow's bounded jobs fit inside the additional day. Expired evidence
+requires a fresh cloud run, not a fallback to an unverifiable old success.
+
+The public endpoint must return that deployment's exact source SHA and random
+public deployment nonce, including through a custom domain. The default
+workers.dev URL must also equal the deploy command's URL. A separate random
+smoke correlation value is masked and synchronized through the existing secrets
+step; it is never included in health responses. Only exact matching request
+headers add its bounded correlation fields to the Worker's logs. The smoke
+assertions require matching source, deployment nonce, correlation value and
+expected routes. A nonempty unrelated tail cannot prove the deployment. All
+identity reads and disabled-mode smoke checks avoid model calls.

@@ -1,6 +1,7 @@
 // The Wishes service (docs/AI.md section 5 as amended by section 7): a plain
 // fetch handler, so the same code runs on Cloudflare Workers (src/worker.js)
 // and under Node (tests, dev-server.mjs).
+import { deploymentIdentity, smokeLogIdentity } from "./deployment-identity.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { ASK_OUTPUT, MAX_TEXT, MISSING, WISH_OUTPUT, checkRequest, checkWish, parseWish } from "./validate.js";
 import { ASK_SYSTEM, WISH_SYSTEM, askMessage, wishMessage } from "./prompts.js";
@@ -338,12 +339,12 @@ export function createApp({ env, ledger, anthropic, buildApi = null, log = (o) =
   return async function fetchHandler(request) {
     const t0 = now();
     const path = new URL(request.url).pathname;
-    const m = { ev: "req", route: path.startsWith("/v1/builds/") && path !== "/v1/builds/challenge" ? "/v1/builds/:id" : path };
+    const m = { ...smokeLogIdentity(env, request), ev: "req", route: path.startsWith("/v1/builds/") && path !== "/v1/builds/challenge" ? "/v1/builds/:id" : path };
     let res;
     try {
       if (buildApi && (path === "/v1/builds" || path.startsWith("/v1/builds/"))) res = await buildApi(request);
       else if (!env.TOKEN_SECRET) { m.reason = "no_secret"; res = busy(m); }
-      else if (path === "/v1/health" && request.method === "GET") res = json(200, { ok: true, wishes: off() ? "resting" : "on" });
+      else if (path === "/v1/health" && request.method === "GET") res = json(200, { ok: true, wishes: off() ? "resting" : "on", ...(deploymentIdentity(env) ? { deployment: deploymentIdentity(env) } : {}) });
       else if (request.method !== "POST") res = json(path.startsWith("/v1/") ? 405 : 404, { error: "method" });
       else if (["/v1/register", "/v1/wish", "/v1/ask", "/v1/configure/plan"].includes(path) && !inRegion(request)) {
         m.limited = "region"; // the country itself is not logged
@@ -364,7 +365,7 @@ export function createApp({ env, ledger, anthropic, buildApi = null, log = (o) =
     }
     m.status = res.status;
     m.ms = now() - t0;
-    log(m); // counts, latency, tokens and cost only: never her words, a token, an id or an address
+    log(m); // Counts plus matching CI correlation only; never her words, auth token, install id or address.
     return res;
   };
 }

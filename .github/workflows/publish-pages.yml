@@ -50,7 +50,12 @@ jobs:
         shell: bash
         run: |
           npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/pw" playwright@1.56.1
-          timeout 600 "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+          pw="$RUNNER_TEMP/pw/node_modules/.bin/playwright"
+          timeout 180 "$pw" install chromium
+          # Avoid an unconditional apt transaction on already-equipped runners.
+          if ! NODE_PATH="$RUNNER_TEMP/pw/node_modules" timeout 30 node -e "require('playwright').chromium.launch().then(b => b.close())"; then
+            timeout 600 "$pw" install --with-deps chromium
+          fi
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
       - name: Stage authoritative configuration and verified latest release
         run: python3 -I tools/site/publish_guard.py prepare --directory "$RUNNER_TEMP/site" --state "$RUNNER_TEMP/publish-state.json"
