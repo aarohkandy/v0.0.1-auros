@@ -1012,6 +1012,15 @@ def test_first_session_probe():
           "first session: the journal producer reports real state, stops retrying, and is enabled")
 
 
+def test_image_integrity_step():
+    script = os.path.join(HERE, "image-integrity-test.sh")
+    r = subprocess.run(["bash", script], capture_output=True, text=True)
+    if r.returncode:
+        print(r.stdout + r.stderr)
+    check(r.returncode == 0,
+          "image download: pieces and reconstructed image are verified by the real workflow step")
+
+
 test_expect()
 test_wizard_contract()
 test_stops()
@@ -1038,5 +1047,6 @@ test_measure()
 test_edge_item()
 test_publish()
 test_first_session_probe()
+test_image_integrity_step()
 print(f"\n{len(fails)} failed" if fails else "\nall passed")
 sys.exit(1 if fails else 0)
