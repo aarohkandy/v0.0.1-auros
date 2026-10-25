@@ -387,6 +387,36 @@ Post '/e2e/event?name=helper-up' @{
   elevated = $who.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Invoke-BoundedDiagnostic([string]$script, [int]$timeoutMs) {
+  if ($timeoutMs -lt 1000 -or $timeoutMs -gt 45000) {
+    throw 'diagnostic timeout must be from 1000 through 45000 ms'
+  }
+  $stdout = [IO.Path]::GetTempFileName()
+  $stderr = [IO.Path]::GetTempFileName()
+  $process = $null
+  try {
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+    $exe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $process = Start-Process -FilePath $exe -ArgumentList @(
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded
+    ) -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+    if (-not $process.WaitForExit($timeoutMs)) {
+      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+      [void]$process.WaitForExit(5000)
+      throw "diagnostic child exceeded $timeoutMs ms and was stopped"
+    }
+    if ($process.ExitCode -ne 0) {
+      throw "diagnostic child exited $($process.ExitCode)"
+    }
+    return [IO.File]::ReadAllText($stdout)
+  } finally {
+    if ($process -and -not $process.HasExited) {
+      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction SilentlyContinue
+  }
+}
+
 while ($true) {
   try {
     $r = Invoke-WebRequest -UseBasicParsing "$hub/e2e/cmd" -TimeoutSec 40
@@ -406,6 +436,7 @@ while ($true) {
         $res.elements = @(Elements $c.match @($c.types) $max)
       }
       'run'      { $res.output = (Invoke-Expression $c.script 2>&1 | Out-String -Width 220) }
+      'diagnostic' { $res.output = Invoke-BoundedDiagnostic $c.script ([int]$c.timeout_ms) }
       default    { $res.ok = $false; $res.error = "unknown op $($c.op)" }
     }
   } catch { $res.ok = $false; $res.error = "$_" }
