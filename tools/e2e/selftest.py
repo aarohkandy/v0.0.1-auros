@@ -832,6 +832,41 @@ def test_program_launch_proof():
     check(e2e.AurFlow.program_privacy_step(wrong_continue, 800, "VLC")[1] is None,
           "launch: a prefix or unrelated Continue cannot satisfy VLC's modal")
 
+    real_privacy = json.load(open(os.path.join(fixtures, "program-open-vlc-privacy.json")))
+    real_identity, real_continue = e2e.AurFlow.program_privacy_step(
+        real_privacy["words"], real_privacy["screen_h"], "VLC")
+    check(real_identity[0] == "privacy dialog" and real_continue == "focused default",
+          "launch: exact-image VLC privacy dialog is attributed when OCR misses Continue")
+    no_window_title = [item for item in real_privacy["words"]
+                       if not (item.get("x", 0) > 1050 and item.get("y", 0) < 140)]
+    check(e2e.AurFlow.program_privacy_step(
+              no_window_title, real_privacy["screen_h"], "VLC")[1] is None,
+          "launch: the dialog body and store preview cannot replace mapped VLC window identity")
+    preview_continue = no_window_title + [word("Continue", 400, 300, line=25)]
+    check(e2e.AurFlow.program_privacy_step(
+              preview_continue, real_privacy["screen_h"], "VLC") == (None, None),
+          "launch: a preview privacy dialog and Continue are inert without a mapped VLC window")
+    no_window_controls = [item for item in real_privacy["words"]
+                          if not (item.get("x", 0) > 1050 and 140 <= item.get("y", 0) < 180)]
+    check(e2e.AurFlow.program_privacy_step(
+              no_window_controls, real_privacy["screen_h"], "VLC")[1] is None,
+          "launch: an OCR-tolerant VLC title still needs its visible client controls")
+    no_vlc_body = [item for item in real_privacy["words"]
+                   if item.get("line") != [9, 1, 1]]
+    check(e2e.AurFlow.program_privacy_step(
+              no_vlc_body, real_privacy["screen_h"], "VLC")[1] is None,
+          "launch: privacy text plus Software's VLC preview is not mapped VLC identity")
+    duplicate_continue = real_privacy["words"] + [
+        word("Continue", 400, 300, line=25), word("Continue", 520, 330, line=26)]
+    check(e2e.AurFlow.program_privacy_step(
+              duplicate_continue, real_privacy["screen_h"], "VLC")[1] is None,
+          "launch: two plausible Continue controls remain ambiguous")
+    distant_vlc = privacy + [word("VLC", 900, 700, line=9),
+                             word("media", 940, 700, line=9),
+                             word("player", 990, 700, line=9)]
+    check(e2e.AurFlow.program_privacy_step(distant_vlc, 800, "VLC")[1] is None,
+          "launch: VLC text outside the privacy dialog cannot trigger its default action")
+
 
 def test_label_contrast():
     """The store's Install must be readable (docs/EASY.md 4.5): dark letters on
