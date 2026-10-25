@@ -1413,12 +1413,19 @@ def test_busy_wizard_diagnostic():
     bounded = re.search(r"function Invoke-BoundedDiagnostic.*?^}", helper, re.S | re.M)
     check(bounded is not None and "WaitForExit($timeoutMs)" in bounded.group(0) and
           "Stop-Process" in bounded.group(0) and "WaitForExit()" not in bounded.group(0) and
-          "Read-DiagnosticOutput" in bounded.group(0),
+          "Read-DiagnosticOutput" in bounded.group(0) and
+          "[void]$process.Handle" in bounded.group(0) and
+          "$process.Dispose()" in bounded.group(0) and
+          "$process.Refresh()" in bounded.group(0) and
+          "if ($exitCode -ne 0)" in bounded.group(0) and
+          "exit_code = $exitCode" in bounded.group(0),
           "busy diagnostic: timeout keeps bounded partial output without an unbounded wait")
     check("[switch]$BoundedDiagnosticSelftest" in helper and
           "bounded diagnostic native probe: PASS" in helper and
-          "output_truncated" in helper and "('x' * 70000)" in helper,
-          "busy diagnostic: Windows probes success, timeout, and output truncation")
+          "output_truncated" in helper and "('x' * 70000)" in helper and
+          "foreach ($n in 1..5)" in helper and
+          "Invoke-BoundedDiagnostic 'exit 7'" in helper,
+          "busy diagnostic: Windows probes quick exits, nonzero, timeout, and output truncation")
     isolation = re.search(r"function Invoke-IsolatedAccessibility.*?^}", helper, re.S | re.M)
     parser = re.search(r"function Parse-AccessibilityChildOutput.*?^}", helper, re.S | re.M)
     check(isolation is not None and "Invoke-BoundedDiagnostic" in isolation.group(0) and
