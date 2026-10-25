@@ -12,6 +12,11 @@ const repo = fileURLToPath(new URL("../..", import.meta.url));
 const ORIGIN = "https://aarohkandy.github.io";
 const SHA = "a".repeat(40);
 const RECIPE = { schema: "org.auros.recipe", version: 1, base: "desktop", preferences: { theme: "moss", look: "dock" } };
+const { privateKey: fixturePrivateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const GITHUB_APP_PRIVATE_KEY = fixturePrivateKey.export({ format: "pem", type: "pkcs8" }).toString();
+const GITHUB_APP_RSA_PRIVATE_KEY = fixturePrivateKey.export({ format: "pem", type: "pkcs1" }).toString();
+const { privateKey: fixtureEcPrivateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+const GITHUB_APP_EC_PRIVATE_KEY = fixtureEcPrivateKey.export({ format: "pem", type: "pkcs8" }).toString();
 
 function fixture({ env = {}, github = {}, clock } = {}) {
   const time = clock || { t: Date.parse("2026-10-24T12:00:00Z") };
@@ -24,6 +29,9 @@ function fixture({ env = {}, github = {}, clock } = {}) {
     BUILD_POW_BITS: "12",
     BUILD_REQUESTS_PER_NET: "1",
     BUILD_REQUESTS_GLOBAL: "3",
+    GITHUB_APP_ID: "12345",
+    GITHUB_APP_INSTALLATION_ID: "67890",
+    GITHUB_APP_PRIVATE_KEY,
     ...env,
   };
   const calls = { dispatch: 0, status: 0, discover: 0 };
@@ -88,6 +96,52 @@ test("submission is disabled by default and requires exact configured origin and
   assert.equal(r.status, 204);
   assert.equal(r.headers.get("access-control-allow-origin"), ORIGIN);
   assert.equal(r.headers.get("access-control-allow-methods"), "GET, POST, OPTIONS");
+});
+
+test("enabled build requests require complete usable GitHub App configuration", async () => {
+  for (const privateKey of [
+    GITHUB_APP_PRIVATE_KEY,
+    GITHUB_APP_PRIVATE_KEY.replace(/\n/g, "\\n"),
+    GITHUB_APP_RSA_PRIVATE_KEY,
+  ]) {
+    const valid = fixture({ env: { GITHUB_APP_PRIVATE_KEY: privateKey } });
+    const response = await valid.call("/v1/builds/challenge", { method: "POST", body: RECIPE });
+    assert.equal(response.status, 200);
+  }
+
+  let r;
+  for (const [name, env] of [
+    ["missing app id", { GITHUB_APP_ID: undefined }],
+    ["zero app id", { GITHUB_APP_ID: "0" }],
+    ["non-decimal app id", { GITHUB_APP_ID: "app-123" }],
+    ["missing installation id", { GITHUB_APP_INSTALLATION_ID: undefined }],
+    ["leading-zero installation id", { GITHUB_APP_INSTALLATION_ID: "0123" }],
+    ["missing private key", { GITHUB_APP_PRIVATE_KEY: undefined }],
+    ["unsupported private key", { GITHUB_APP_PRIVATE_KEY: "-----BEGIN EC PRIVATE KEY-----\nAA==\n-----END EC PRIVATE KEY-----" }],
+    ["non-RSA PKCS8 private key", { GITHUB_APP_PRIVATE_KEY: GITHUB_APP_EC_PRIVATE_KEY }],
+    ["invalid private key", { GITHUB_APP_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nAA==\n-----END PRIVATE KEY-----" }],
+  ]) {
+    const f = fixture({ env });
+    r = await f.call("/v1/builds/challenge", { method: "POST", body: RECIPE });
+    assert.equal(r.status, 503, name);
+    assert.deepEqual(await r.json(), { error: "builds_disabled", download_ready: false }, name);
+    r = await f.call("/v1/builds/challenge", { method: "OPTIONS" });
+    assert.equal(r.status, 403, `${name} preflight`);
+    assert.deepEqual(await r.json(), { error: "builds_disabled" }, `${name} preflight`);
+  }
+
+  const disabled = fixture({ env: {
+    BUILD_REQUESTS_ENABLED: "0",
+    GITHUB_APP_ID: undefined,
+    GITHUB_APP_INSTALLATION_ID: undefined,
+    GITHUB_APP_PRIVATE_KEY: undefined,
+  } });
+  r = await disabled.call("/v1/builds/challenge", { method: "POST", body: RECIPE });
+  assert.equal(r.status, 503);
+  assert.deepEqual(await r.json(), { error: "builds_disabled", download_ready: false });
+  r = await disabled.call("/v1/builds/challenge", { method: "OPTIONS" });
+  assert.equal(r.status, 403);
+  assert.deepEqual(await r.json(), { error: "builds_disabled" });
 });
 
 test("custom build proof defaults to the measured browser-safe 16 bits", async () => {
