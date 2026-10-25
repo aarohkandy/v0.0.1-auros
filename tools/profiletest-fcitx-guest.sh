@@ -598,6 +598,7 @@ if [ "$SECURITY" = 1 ]; then
     act wait-form || fail "password form not visible"
     act baseline "fcitx-round$security_round-password-focus" || fail "password focus baseline failed"
     password_boundary=$(wc -c < "$password_trace" | tr -d ' ')
+    [ ! -e "$password_focus" ] || fail "password focused before injected click"
     act click-form || fail "password field focus failed"
     i=0; while [ "$i" -lt 30 ] && ! grep -qx 'focus_event_observed=yes' \
         "$password_focus" 2>/dev/null; do sleep .1; i=$((i+1)); done

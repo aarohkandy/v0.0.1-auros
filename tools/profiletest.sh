@@ -434,6 +434,31 @@ judge_fcitx_client_probe() { # evidence-root screenshot-root
         || bad "the shipped IBus session and user config were restored" "restore evidence missing"
 }
 
+exact_password_suppression() { # reduced evidence file
+    awk -F= '
+        BEGIN {
+            expected["candidate_popup_creations"]="0"
+            expected["candidate_popup_maps"]="0"
+            expected["candidate_popup_configures"]="0"
+            expected["candidate_popup_grabs"]="0"
+            expected["layer_shell_objects"]="0"
+            expected["observed_candidate_popup"]="no"
+            expected["focus_event_observed"]="yes"
+            expected["ascii_value_exact"]="yes"
+            expected["composition_start_count"]="0"
+            expected["composition_update_count"]="0"
+            expected["composition_end_count"]="0"
+            expected["composition_input_count"]="0"
+            expected["raw_password_focus_log_retained"]="no"
+            expected["raw_password_value_log_retained"]="no"
+            expected["raw_password_event_log_retained"]="no"
+        }
+        NF != 2 || !($1 in expected) || seen[$1] || $2 != expected[$1] { bad=1 }
+        !seen[$1]++ { count++ }
+        END { exit bad || count != 15 }
+    ' "$1" 2>/dev/null
+}
+
 judge_fcitx_security_probe() { # evidence-root screenshot-root
     D=$1; SHOTS=$2
     for round in 1 2; do
@@ -482,22 +507,9 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root
             && grep -qx '20' "$R/focus-b-sentinel.hex" 2>/dev/null \
             && ok "A to B to A revoked and freshly mapped the candidate in round $round" \
             || bad "A to B to A revoked and freshly mapped the candidate in round $round" "focus lifecycle evidence missing"
-        grep -qx 'observed_candidate_popup=no' "$R/password-suppression.txt" 2>/dev/null \
-            && grep -qx 'candidate_popup_creations=0' "$R/password-suppression.txt" 2>/dev/null \
-            && grep -qx 'candidate_popup_maps=0' "$R/password-suppression.txt" 2>/dev/null \
-            && grep -qx 'candidate_popup_configures=0' "$R/password-suppression.txt" 2>/dev/null \
-            && grep -qx 'candidate_popup_grabs=0' "$R/password-suppression.txt" 2>/dev/null \
-            && grep -qx 'focus_event_observed=yes' "$R/password-suppression.txt" 2>/dev/null \
-            && grep -qx 'ascii_value_exact=yes' "$R/password-suppression.txt" 2>/dev/null \
-            && grep -qx 'composition_start_count=0' "$R/password-suppression.txt" 2>/dev/null \
-            && grep -qx 'composition_update_count=0' "$R/password-suppression.txt" 2>/dev/null \
-            && grep -qx 'composition_end_count=0' "$R/password-suppression.txt" 2>/dev/null \
-            && grep -qx 'composition_input_count=0' "$R/password-suppression.txt" 2>/dev/null \
-            && grep -qx 'raw_password_focus_log_retained=no' "$R/password-suppression.txt" 2>/dev/null \
-            && grep -qx 'raw_password_value_log_retained=no' "$R/password-suppression.txt" 2>/dev/null \
-            && grep -qx 'raw_password_event_log_retained=no' "$R/password-suppression.txt" 2>/dev/null \
+        exact_password_suppression "$R/password-suppression.txt" \
             && ok "the synthetic password field showed no observed popup or browser composition event in round $round" \
-            || bad "the synthetic password field showed no observed popup or browser composition event in round $round" "bounded suppression evidence missing"
+            || bad "the synthetic password field showed no observed popup or browser composition event in round $round" "bounded suppression evidence is missing or ambiguous"
         [ -s "$SHOTS/fcitx-round$round-focus-away.png" ] \
             && [ -s "$SHOTS/fcitx-round$round-password-focused.png" ] \
             && [ -s "$SHOTS/fcitx-round$round-password-masked.png" ] \
@@ -1062,6 +1074,12 @@ if 'fcitx5-remote -s pinyin' not in helper or 'fcitx5-remote -n' not in helper:
     raise SystemExit("focused selector must set and verify the exact engine")
 if 'top:calc(50% - 70px)' not in text or 'height:140px' not in text:
     raise SystemExit("Firefox field must be centered on the measured form click point")
+password_test = text.index('password_summary="$RUNTIME/password-summary"')
+password_visible = text.index('act wait-form', password_test)
+preclick_absence = text.index('[ ! -e "$password_focus" ] || fail "password focused before injected click"', password_visible)
+password_click = text.index('act click-form', password_visible)
+if not password_visible < preclick_absence < password_click:
+    raise SystemExit("password focus evidence must be absent immediately before the injected click")
 restore = text[text.index('restore_and_finish()'):text.index('fail() {')]
 loop = restore[restore.index('ibus_deadline='):restore.index('unchanged=no')]
 for required in ('as_desktop_until "$ibus_deadline" systemctl --user is-active',
@@ -1135,7 +1153,7 @@ EOPY
         printf 'status=pass\nchildren_at_boundaries=0\ncompositor_connections_at_boundaries=1\napplication_trace_writers_at_boundaries=1\nforeign_trace_writers_at_boundaries=0\nauthenticated_probe_trace_writer_at_end=1\npeer_pid=exact_aurshell\npeer_path=exact_wayland_display\nlistener_inode=exact_wayland_display\nservice_main_pid=exact_dbus_run_session\ncompositor_exe=exact_usr_bin_aurshell\nservice_invocation_id=exact_systemd_property_and_environment\nservice_control_group=exact_systemd_property\npam_session_cgroup=exact_expected_user_session_scope\ncompositor_in_pam_session_cgroup=yes\ncompositor_descends_from_service_main_pid=yes\nobserved_service_main_pid=100\nobserved_compositor_pid=102\nobserved_service_control_group=/system.slice/aurshell.service\nobserved_pam_session_control_group=/user.slice/user-1000.slice/session-c1.scope\n' > "$R/mousepad-connection.txt"
         printf 'initial_unmapped_before_b_input=yes\nmapped_candidate_while_away=no\nreturn_map_epoch=fresh\npopup_input_grab=no\nb_saved_sentinel=20\na_saved_file_unchanged=yes\n' > "$R/focus-lifecycle.txt"
         printf '20\n' > "$R/focus-b-sentinel.hex"
-        printf 'candidate_popup_creations=0\ncandidate_popup_maps=0\ncandidate_popup_configures=0\ncandidate_popup_grabs=0\nobserved_candidate_popup=no\nfocus_event_observed=yes\nascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\nraw_password_focus_log_retained=no\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' > "$R/password-suppression.txt"
+        printf 'candidate_popup_creations=0\ncandidate_popup_maps=0\ncandidate_popup_configures=0\ncandidate_popup_grabs=0\nlayer_shell_objects=0\nobserved_candidate_popup=no\nfocus_event_observed=yes\nascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\nraw_password_focus_log_retained=no\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' > "$R/password-suppression.txt"
         printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\ncleanup_pids_gone=1\n' > "$R/restore.txt"
         printf 'exe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\nconfig_hash=abc\ndisplay_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\n' > "$R/fcitx.process"
         for app in mousepad firefox; do
@@ -1158,6 +1176,24 @@ EOPY
         printf '    %-62s %s\n' "complete bounded Fcitx security evidence" "REFUSED"; fail=$((fail+1))
     fi
     checked=$((checked+1))
+    password_evidence="$security_fixture/evidence/round1/password-suppression.txt"
+    cp "$password_evidence" "$password_evidence.clean"
+    for mutation in duplicate contradictory unknown; do
+        case "$mutation" in
+          duplicate) printf 'composition_update_count=0\n' >> "$password_evidence" ;;
+          contradictory) printf 'composition_update_count=1\n' >> "$password_evidence" ;;
+          unknown) printf 'unreviewed_claim=yes\n' >> "$password_evidence" ;;
+        esac
+        if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+            printf '    %-62s %s\n' "Fcitx password evidence with $mutation data" "refused"
+        else
+            printf '    %-62s %s\n' "Fcitx password evidence with $mutation data" "ACCEPTED"
+            fail=$((fail+1))
+        fi
+        checked=$((checked+1))
+        cp "$password_evidence.clean" "$password_evidence"
+    done
+    rm "$password_evidence.clean"
     sed 's/foreign_trace_writers_at_boundaries=0/foreign_trace_writers_at_boundaries=1/' \
         "$security_fixture/evidence/round1/mousepad-connection.txt" \
         > "$security_fixture/evidence/round1/mousepad-connection.tmp"
