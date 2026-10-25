@@ -556,12 +556,16 @@ numeric = {
     "focus_boundary_byte", "input_boundary_byte",
     "screenshot_boundary_byte", "submit_boundary_byte",
 }
-allowed = zero | numeric | {"observed_candidate_popup", "connection_identity"}
+allowed = zero | numeric | {
+    "observed_candidate_popup", "connection_identity", "popup_attribution",
+}
 if set(values) != allowed or any(values[key] != "0" for key in zero):
     raise SystemExit(1)
 if values["observed_candidate_popup"] != "no":
     raise SystemExit(1)
 if values["connection_identity"] != "unproven":
+    raise SystemExit(1)
+if values["popup_attribution"] != "unproven":
     raise SystemExit(1)
 if any(not re.fullmatch(r"0|[1-9][0-9]*", values[key]) for key in numeric):
     raise SystemExit(1)
@@ -1723,6 +1727,7 @@ reduced_events_omitted=0
 layer_shell_objects=0
 observed_candidate_popup=no
 connection_identity=unproven
+popup_attribution=unproven
 focus_boundary_byte=10
 input_boundary_byte=20
 screenshot_boundary_byte=30
@@ -1977,12 +1982,14 @@ EOF
     rm "$password_evidence.clean"
     popup_evidence="$security_fixture/evidence/round1/password-popup-events.txt"
     cp "$popup_evidence" "$popup_evidence.clean"
-    for mutation in duplicate contradictory unknown; do
+    for mutation in duplicate contradictory unknown attribution; do
         case "$mutation" in
           duplicate) printf 'focus_boundary_byte=10\n' >> "$popup_evidence" ;;
           contradictory) sed 's/observed_candidate_popup=no/observed_candidate_popup=yes/' \
               "$popup_evidence.clean" > "$popup_evidence" ;;
           unknown) printf 'unreviewed_protocol_claim=yes\n' >> "$popup_evidence" ;;
+          attribution) sed 's/popup_attribution=unproven/popup_attribution=fcitx/' \
+              "$popup_evidence.clean" > "$popup_evidence" ;;
         esac
         if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
             printf '    %-62s %s\n' "Fcitx popup evidence with $mutation data" "refused"

@@ -247,7 +247,12 @@ def _password_phase(position: int, after: int, input_after: int,
 def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
                      screenshot_after: int = None,
                      submit_after: int = None) -> Dict[str, Union[str, int]]:
-    """Reject popup activity after sensitive focus and return redacted evidence."""
+    """Reject popup activity after sensitive focus and return redacted evidence.
+
+    The candidate-prefixed compatibility counters conservatively include every
+    Firefox xdg_popup event. Neither its Fcitx attribution nor its connection
+    identity is proven by the merged client trace.
+    """
     input_after = after if input_after is None else input_after
     screenshot_after = input_after if screenshot_after is None else screenshot_after
     submit_after = screenshot_after if submit_after is None else submit_after
@@ -433,6 +438,7 @@ def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
         "layer_shell_objects": layer_shell_objects,
         "observed_candidate_popup": "yes" if any(counts.values()) or mapped_at_focus else "no",
         "connection_identity": "unproven",
+        "popup_attribution": "unproven",
         "focus_boundary_byte": after,
         "input_boundary_byte": input_after,
         "screenshot_boundary_byte": screenshot_after,
