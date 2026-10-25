@@ -15,8 +15,13 @@ import profile_image as pi
 
 REPO = "owner/repository"
 RUN = 40123456789
+ATTEMPT = 3
 SOURCE = "a" * 40
 TEST_SOURCE = "b" * 40
+
+
+def canonical(value: dict) -> bytes:
+    return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
 
 
 class ProfileImageTest(unittest.TestCase):
@@ -203,6 +208,135 @@ class ProfileImageTest(unittest.TestCase):
         self.assertEqual(value["image_source_sha"], SOURCE)
         self.assertEqual(value["test_source_sha"], TEST_SOURCE)
         self.assertEqual(value["result"], "fail")
+
+    def test_runtime_record_normalizes_multilingual_delivery_identity(self) -> None:
+        value = pi.runtime_record(canonical(self.manifest),
+                                  "multilingual", REPO, RUN, ATTEMPT, SOURCE)
+        self.assertEqual(value["schema"], "auros-profile-runtime-image-v1")
+        self.assertEqual(value["state"], "runtime-certified-evidence-only")
+        self.assertEqual(value["purpose"], "profile-runtime-evidence")
+        self.assertEqual(value["runtime_proof"], {
+            "job": "multilingual", "mode": "multilingual-functional-v1",
+            "run_id": RUN, "run_attempt": ATTEMPT, "source_sha": SOURCE,
+        })
+        self.assertEqual(value["storage"]["type"], "profile-prerelease-pieces")
+        self.assertEqual(value["storage"]["tag"], f"profiles-{RUN}")
+        self.assertEqual(value["storage"]["files"], self.manifest["pieces"])
+        self.assertEqual(value["availability"], {
+            "metadata_retention": "actions-artifact-30-days",
+            "backing_retention": "profile-prerelease-pruned",
+            "access": "requires-live-backing-validation", "delivery_authorized": False,
+        })
+        self.assertEqual(pi.validate_runtime_record(value, REPO, RUN, SOURCE,
+                                                    "multilingual", ATTEMPT), value)
+        with self.assertRaises(pi.RetentionError):
+            pi.validate_runtime_record(value, REPO, RUN, SOURCE, "multilingual", ATTEMPT + 1)
+        for kwargs in ({"run_id": True}, {"run_attempt": True}, {"profile": []},
+                       {"repository": []}, {"source_sha": []}):
+            with self.assertRaises(pi.RetentionError):
+                pi.validate_runtime_record(value, **kwargs)
+
+    def test_runtime_record_normalizes_revive_artifact_without_copying_image(self) -> None:
+        raw_image = self.image.read_bytes()
+        packed = self.gzip.read_bytes()
+        source = {
+            "schema": "auros-revive-retained-v1", "profile": "revive",
+            "repository": REPO, "workflow": pi.WORKFLOW,
+            "source_sha": SOURCE, "image_run_id": RUN,
+            "raw": {"bytes": len(raw_image), "sha256": hashlib.sha256(raw_image).hexdigest()},
+            "compressed": {"bytes": len(packed), "sha256": hashlib.sha256(packed).hexdigest()},
+            "filename": "auros-revive.img.gz",
+        }
+        value = pi.runtime_record(canonical(source), "revive", REPO, RUN, ATTEMPT, SOURCE)
+        self.assertEqual(value["runtime_proof"]["mode"], "revive-functional-v1")
+        self.assertEqual(value["storage"], {
+            "type": "actions-artifact", "artifact_name": "profile-revive-runtime-image",
+            "manifest_name": "manifest.json",
+            "files": [{"name": "auros-revive.img.gz", "bytes": len(packed),
+                       "sha256": hashlib.sha256(packed).hexdigest()}],
+        })
+
+    def test_runtime_record_rejects_identity_hash_size_and_path_tampering(self) -> None:
+        value = pi.runtime_record(canonical(self.manifest),
+                                  "multilingual", REPO, RUN, ATTEMPT, SOURCE)
+        mutations = []
+        for path, replacement in (
+            (("repository",), "foreign/repo"),
+            (("image_run_id",), RUN + 1),
+            (("image_source_sha",), TEST_SOURCE),
+            (("runtime_proof", "job"), "revive"),
+            (("image", "sha256"), "0" * 63),
+            (("storage", "files", 0, "name"), "../image.gz.000"),
+            (("storage", "files", 0, "bytes"), 0),
+        ):
+            changed = copy.deepcopy(value)
+            target = changed
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = replacement
+            mutations.append(changed)
+        extra = copy.deepcopy(value)
+        extra["public_ready"] = True
+        mutations.append(extra)
+        for changed in mutations:
+            with self.assertRaises(pi.RetentionError):
+                pi.validate_runtime_record(changed, REPO, RUN, SOURCE, "multilingual")
+
+    def test_runtime_record_rejects_json_type_confusion(self) -> None:
+        value = pi.runtime_record(canonical(self.manifest),
+                                  "multilingual", REPO, RUN, ATTEMPT, SOURCE)
+        for path, replacement in (
+            (("profile",), []),
+            (("image_run_id",), True),
+            (("runtime_proof", "run_id"), float(RUN)),
+            (("runtime_proof", "run_attempt"), True),
+            (("runtime_proof", "source_sha"), {}),
+            (("runtime_proof", "job"), []),
+            (("availability", "delivery_authorized"), 0),
+        ):
+            changed = copy.deepcopy(value)
+            target = changed
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = replacement
+            with self.assertRaises(pi.RetentionError):
+                pi.validate_runtime_record(changed, REPO, RUN, SOURCE, "multilingual")
+
+        revive = {
+            "schema": "auros-revive-retained-v1", "profile": "revive",
+            "repository": REPO, "workflow": pi.WORKFLOW,
+            "source_sha": SOURCE, "image_run_id": True,
+            "raw": {"bytes": 1, "sha256": "0" * 64},
+            "compressed": {"bytes": 1, "sha256": "1" * 64},
+            "filename": "auros-revive.img.gz",
+        }
+        with self.assertRaises(pi.RetentionError):
+            pi.runtime_record(canonical(revive), "revive", REPO, 1, ATTEMPT, SOURCE)
+
+    def test_runtime_record_digest_is_bound_to_the_parsed_source_bytes(self) -> None:
+        raw = canonical(self.manifest)
+        value = pi.runtime_record(raw, "multilingual", REPO, RUN, ATTEMPT, SOURCE)
+        self.assertEqual(value["source_manifest"]["sha256"], hashlib.sha256(raw).hexdigest())
+        foreign = copy.deepcopy(self.manifest)
+        foreign["repository"] = "foreign/repository"
+        with self.assertRaises(pi.RetentionError):
+            pi.runtime_record(canonical(foreign), "multilingual", REPO, RUN, ATTEMPT, SOURCE)
+
+    def test_runtime_source_parser_rejects_duplicate_fields(self) -> None:
+        path = self.root / "duplicate.json"
+        path.write_text('{"schema":"first","schema":"second"}\n')
+        with self.assertRaises(pi.RetentionError):
+            pi._load_json(path, "retained image manifest")
+
+    def test_workflow_records_only_successful_functional_profile_metadata(self) -> None:
+        workflow = (Path(__file__).parents[1] / ".github/workflows/profiles.yml").read_text()
+        self.assertIn("python3 tools/profile_image.py certify", workflow)
+        self.assertIn("profile-${{ matrix.profile }}-runtime-image-metadata", workflow)
+        self.assertIn("retention-days: 30", workflow)
+        self.assertIn("--run-attempt \"$GITHUB_RUN_ATTEMPT\"", workflow)
+        self.assertIn("!ev/*-runtime-image-v1.json", workflow)
+        self.assertIn("multilingual-image-v1.json", workflow)
+        self.assertIn("retained-revive/manifest.json", workflow)
 
 
 if __name__ == "__main__":

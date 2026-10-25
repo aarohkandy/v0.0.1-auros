@@ -360,6 +360,27 @@ jobs:
           sudo env PATH="$PATH" PROFILETEST_REVIVE_FUNCTIONAL="$revive_functional" PROFILETEST_FCITX_PRODUCTION="$fcitx_production" \
             sh tools/profiletest.sh boot "$P" "$PWD/ev" 2>&1 | tee "ev/$P-boot.txt"
 
+      # This small record is a prerequisite for a future profile-aware installer.
+      # It names already-retained bytes and the successful functional profile job;
+      # it does not publish or authorize those diagnostic bytes for delivery.
+      - name: record the exact successfully tested profile image
+        env:
+          PROFILE_SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          source_manifest=""
+          if [ "$P" = multilingual ] && [ "${{ needs.gate.outputs.ibus_functional }}" = true ]; then
+            source_manifest=ev/multilingual-image-v1.json
+          elif [ "$P" = revive ] && [[ "${PROFILE_SUBJECT%%$'\n'*}" == *"[revive-functional]"* ]]; then
+            source_manifest=ev/retained-revive/manifest.json
+          else
+            exit 0
+          fi
+          python3 tools/profile_image.py certify \
+            --source-manifest "$source_manifest" --profile "$P" \
+            --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --source-sha "$GITHUB_SHA" --output "ev/$P-runtime-image-v1.json"
+
       # Keep only the exact functional Revive build, including failed probes.
       # This uses the same gzip as size measurement, not a second rebuild.
       - name: retain exact Revive image for bounded diagnostic reuse
@@ -382,6 +403,7 @@ jobs:
             ev/
             !ev/retained/
             !ev/retained-revive/
+            !ev/*-runtime-image-v1.json
           if-no-files-found: ignore
 
       - name: publish the evidence
@@ -426,6 +448,18 @@ jobs:
             echo '```'
             echo "screenshot: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG/$P.png"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Upload this canonical small record only after its named backing storage
+      # was successfully uploaded. Future consumers must still validate the
+      # completed source run; this artifact does not activate delivery.
+      - name: retain canonical tested-image metadata without duplicating image bytes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ success() && hashFiles(format('ev/{0}-runtime-image-v1.json', matrix.profile)) != '' }}
+        with:
+          name: profile-${{ matrix.profile }}-runtime-image-metadata
+          path: ev/${{ matrix.profile }}-runtime-image-v1.json
+          retention-days: 30
+          if-no-files-found: error
   ibus-retest:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
