@@ -670,6 +670,11 @@ exact_production_reboot() { # reduced round-two reboot file
     [ "$(cat "$1" 2>/dev/null)" = shipped_fcitx_autostart_ready=yes ]
 }
 
+exact_profile_snapshot() { # file source phase
+    python3 "$ROOT/tools/fcitx_profile_snapshot.py" validate \
+        --source "$2" --phase "$3" "$1" >/dev/null 2>&1
+}
+
 exact_mousepad_b_process() { # reduced second-editor process file
     awk -F= '
         BEGIN {
@@ -880,6 +885,16 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root [source]
         [ "$process_ok" = yes ] \
             && ok "round $round retained the exact Fcitx service identity" \
             || bad "round $round retained the exact Fcitx service identity" "process identity evidence missing"
+        if [ "$SECURITY_SOURCE" = shipped-fcitx ]; then
+            snapshots_ok=yes
+            for phase in start end; do
+                exact_profile_snapshot "$R/profile-runtime-$phase.json" runtime "$phase" || snapshots_ok=no
+                exact_profile_snapshot "$R/profile-template-$phase.json" template "$phase" || snapshots_ok=no
+            done
+            [ "$snapshots_ok" = yes ] \
+                && ok "round $round retained bounded Fcitx profile byte evidence" \
+                || bad "round $round retained bounded Fcitx profile byte evidence" "snapshot evidence missing, malformed, or unsafe"
+        fi
     done
     if [ "$SECURITY_SOURCE" = shipped-fcitx ]; then
         exact_production_reboot "$D/round2/reboot.txt" \
@@ -897,9 +912,14 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root [source]
     fi
     h1=$(sed -n 's/^config_hash=//p' "$D/round1/fcitx.process" 2>/dev/null)
     h2=$(sed -n 's/^config_hash=//p' "$D/round2/fcitx.process" 2>/dev/null)
+    if [ "$SECURITY_SOURCE" = shipped-fcitx ]; then
+        config_claim="both rounds started with identical shipped Fcitx user-profile bytes"
+    else
+        config_claim="both rounds used the exact same isolated Fcitx configuration"
+    fi
     [ -n "$h1" ] && [ "$h1" = "$h2" ] \
-        && ok "both rounds used the exact same isolated Fcitx configuration" \
-        || bad "both rounds used the exact same isolated Fcitx configuration" "config hashes differ or are missing"
+        && ok "$config_claim" \
+        || bad "$config_claim" "config hashes differ or are missing"
     printf '    %-62s %s\n' "Firefox Wayland connection identity" \
         "UNPROVEN -- this stage authenticates the Mousepad interval only"
 }
@@ -1566,6 +1586,15 @@ for required in ('shipped_fcitx_autostart_ready=yes', 'fcitx_autostart_before_ex
     if required not in round_two:
         raise SystemExit("round two must retain source-specific reboot evidence")
 restore = text[text.index('restore_and_finish()'):text.index('fail() {')]
+if restore.index('profile_snapshot end') > restore.index('unchanged=no'):
+    raise SystemExit("end profile snapshot must precede the existing raw-hash comparison")
+start_snapshot = text.index('profile_snapshot start || fail')
+first_action = text.index('actno=$(cat "$STATE/action-sequence"')
+if start_snapshot > first_action:
+    raise SystemExit("start profile snapshot must precede interactive actions")
+if ('--input "$desktop_home/.config/fcitx5/profile"' not in text
+        or '--input /usr/share/auros/fcitx-profile' not in text):
+    raise SystemExit("profile snapshots must remain limited to runtime and immutable profile files")
 loop = restore[restore.index('ibus_deadline='):restore.index('unchanged=no')]
 for required in ('as_desktop_until "$ibus_deadline" systemctl --user is-active',
                  'ibus_identity_snapshot "$ibus_deadline" "$ipid"',
@@ -1894,10 +1923,33 @@ EOF
     rm "$lifecycle.clean"
     production_security_fixture="$T/fcitx-production-security"
     cp -R "$security_fixture" "$production_security_fixture"
+    cat > "$T/fcitx-profile" <<'EOF'
+[Groups/0]
+Name=Default
+Default Layout=fr
+DefaultIM=pinyin
+
+[Groups/0/Items/0]
+Name=keyboard-fr
+Layout=
+
+[Groups/0/Items/1]
+Name=pinyin
+Layout=
+
+[GroupOrder]
+0=Default
+EOF
     for round in 1 2; do
         R="$production_security_fixture/evidence/round$round"
         printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\ncleanup_pids_gone=1\nsource=shipped-fcitx\nservice_start_rc=not-needed\nservice_active_seen=no\nservice_identity_seen=no\nservice_identity_stable_seen=no\npinyin_engine_seen=no\n' > "$R/restore.txt"
         printf 'pid=123\nexe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\nconfig_hash=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ndisplay_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\nboot_id=10000000-0000-4000-8000-00000000000%s\nunit=auros-fcitx.service\nibus_inactive=yes\nstart_time=123\n' "$round" > "$R/fcitx.process"
+        for phase in start end; do
+            python3 tools/fcitx_profile_snapshot.py create --source runtime --phase "$phase" \
+                --input "$T/fcitx-profile" --output "$R/profile-runtime-$phase.json" || exit 1
+            python3 tools/fcitx_profile_snapshot.py create --source template --phase "$phase" \
+                --input "$T/fcitx-profile" --output "$R/profile-template-$phase.json" || exit 1
+        done
     done
     printf 'shipped_fcitx_autostart_ready=yes\n' > "$production_security_fixture/evidence/round2/reboot.txt"
     production_security_refuses() {
@@ -1909,6 +1961,33 @@ EOF
         printf '    %-62s %s\n' "complete shipped Fcitx security evidence" "REFUSED"; fail=$((fail+1))
     fi
     checked=$((checked+1))
+    cp "$production_security_fixture/evidence/round1/profile-runtime-start.json" \
+        "$T/profile-runtime-start.json"
+    python3 - "$production_security_fixture/evidence/round1/profile-runtime-start.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+value = json.load(open(path, encoding="utf-8"))
+value["records"][1]["value"] = "private-text"
+open(path, "w", encoding="utf-8").write(json.dumps(value) + "\n")
+PY
+    if [ "$(production_security_refuses "$production_security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "profile snapshot exposing an unknown value" "refused"
+    else
+        printf '    %-62s %s\n' "profile snapshot exposing an unknown value" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    cp "$T/profile-runtime-start.json" \
+        "$production_security_fixture/evidence/round1/profile-runtime-start.json"
+    rm "$production_security_fixture/evidence/round1/profile-template-end.json"
+    if [ "$(production_security_refuses "$production_security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "production evidence missing a profile boundary snapshot" "refused"
+    else
+        printf '    %-62s %s\n' "production evidence missing a profile boundary snapshot" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    python3 tools/fcitx_profile_snapshot.py create --source template --phase end \
+        --input "$T/fcitx-profile" \
+        --output "$production_security_fixture/evidence/round1/profile-template-end.json" || exit 1
     cp "$production_security_fixture/evidence/round2/fcitx.process" "$T/production.process"
     sed 's/10000000-0000-4000-8000-000000000002/10000000-0000-4000-8000-000000000001/' \
         "$T/production.process" > "$production_security_fixture/evidence/round2/fcitx.process"
@@ -2337,6 +2416,8 @@ if [ "$FCITX_CLIENT_PROBE" = 1 ] || [ "$FCITX_PRODUCTION" = 1 ]; then
         : > "$M/usr/lib/auros-profiletest/fcitx-production.enabled"
     fi
     if [ "$FCITX_SECURITY_PROBE" = 1 ]; then
+        install -m 755 "$ROOT/tools/fcitx_profile_snapshot.py" \
+            "$M/usr/lib/auros-profiletest/fcitx-profile-snapshot.py"
         install -m 755 "$ROOT/tools/fcitx_connection_probe.py" \
             "$M/usr/lib/auros-profiletest/fcitx_connection_probe.py"
         install -m 755 "$ROOT/tools/fcitx_password_server.py" \

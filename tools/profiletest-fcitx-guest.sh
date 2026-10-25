@@ -109,6 +109,22 @@ config_snapshot() {
 }
 config_before=$(config_snapshot)
 
+profile_snapshot() { # start|end; production-security evidence only
+    profile_phase=$1
+    [ "$PRODUCTION" = 1 ] && [ "$SECURITY" = 1 ] || return 0
+    helper=/usr/lib/auros-profiletest/fcitx-profile-snapshot.py
+    "$helper" create --source runtime --phase "$profile_phase" \
+        --input "$desktop_home/.config/fcitx5/profile" \
+        --output "$STATE/profile-runtime-$profile_phase.json" \
+        2> "$STATE/profile-snapshot-$profile_phase.stderr" || return 1
+    "$helper" create --source template --phase "$profile_phase" \
+        --input /usr/share/auros/fcitx-profile \
+        --output "$STATE/profile-template-$profile_phase.json" \
+        2>> "$STATE/profile-snapshot-$profile_phase.stderr" || return 1
+    [ ! -s "$STATE/profile-snapshot-$profile_phase.stderr" ] || return 1
+    rm -f "$STATE/profile-snapshot-$profile_phase.stderr"
+}
+
 for unit in auros-profiletest-fcitx-mousepad auros-profiletest-fcitx-mousepad-b \
             auros-profiletest-fcitx-firefox auros-profiletest-fcitx-password \
             auros-profiletest-fcitx-daemon; do
@@ -374,6 +390,11 @@ restore_and_finish() {
         sleep .25
       done
     fi
+    if ! profile_snapshot end; then
+        cleanup_ok=0
+        final_state=fail
+        final_reason=bounded_Fcitx_profile_end_snapshot_failed
+    fi
     unchanged=no; [ "$(config_snapshot)" = "$config_before" ] && unchanged=yes
     find "$RUNTIME" -name '*.trace' -type f -delete 2>/dev/null || cleanup_ok=0
     if find "$RUNTIME" -name '*.trace' -type f -print -quit 2>/dev/null | grep -q .; then
@@ -414,6 +435,8 @@ restore_and_finish() {
 }
 fail() { final_state=fail; final_reason=$(printf '%s' "$*" | tr ' ' '_'); restore_and_finish; }
 trap 'final_state=fail; final_reason=signal; restore_and_finish' HUP INT TERM
+
+profile_snapshot start || fail "bounded Fcitx profile start snapshot failed"
 
 actno=$(cat "$STATE/action-sequence" 2>/dev/null || echo 0)
 case "$actno" in ''|*[!0-9]*) actno=0;; esac
