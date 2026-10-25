@@ -256,6 +256,13 @@ xdg_surface@31.destroy()
         with self.assertRaisesRegex(ValueError, "not ordered"):
             analyze_no_popup(PREFIX, 4, 3, 5, 6)
 
+    def test_no_popup_treats_a_boundary_crossing_line_as_sensitive(self):
+        event = b"xdg_surface@31.get_popup(new id xdg_popup@32, xdg_surface@20, xdg_positioner@29)\n"
+        raw = PREFIX + event
+        boundary = len(PREFIX) + len(event) // 2
+        with self.assertRaisesRegex(ValueError, "popup activity"):
+            analyze_no_popup(raw, boundary, boundary, len(raw), len(raw))
+
     def test_no_popup_keeps_destroyed_surface_ids_fail_closed(self):
         created = PREFIX + b'''xdg_wm_base@8.get_xdg_surface(new id xdg_surface@31, wl_surface@30)
 xdg_surface@31.get_popup(new id xdg_popup@32, xdg_surface@20, xdg_positioner@29)

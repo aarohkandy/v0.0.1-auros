@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fcitx_password_server import PAGE, bounded_focus, bounded_result, write_new
+from fcitx_password_server import PAGE, bounded_completion, bounded_focus, bounded_result, write_new
 
 
 class PasswordResultTest(unittest.TestCase):
@@ -14,6 +14,12 @@ class PasswordResultTest(unittest.TestCase):
         self.assertNotIn(b"autofocus", PAGE)
         self.assertIn(b"input:focus", PAGE)
         self.assertIn(b"/focused", PAGE)
+        self.assertIn(b"preventDefault()", PAGE)
+        self.assertIn(b"new URLSearchParams(new FormData(f))", PAGE)
+        self.assertIn(b"document.activeElement===i", PAGE)
+        self.assertIn(b'type="hidden" name="focusbefore"', PAGE)
+        self.assertIn(b'type="hidden" name="focusafter"', PAGE)
+        self.assertNotIn(b'<form method="post"', PAGE)
 
     def test_focus_marker_accepts_only_the_exact_bounded_event(self):
         self.assertEqual(bounded_focus(b"focused=1"), "focus_event_observed=yes\n")
@@ -39,19 +45,26 @@ class PasswordResultTest(unittest.TestCase):
 
     def test_reduces_exact_synthetic_value_and_zero_events(self):
         self.assertEqual(
-            bounded_result(b"value=nihao&starts=0&updates=0&ends=0&compositioninputs=0"),
-            "ascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\n")
+            bounded_result(b"value=nihao&starts=0&updates=0&ends=0&compositioninputs=0&focusbefore=yes&focusafter=no"),
+            "ascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\nactive_element_before_result=yes\n")
+
+    def test_completion_requires_focus_before_and_after_result(self):
+        body = b"value=nihao&starts=0&updates=0&ends=0&compositioninputs=0&focusbefore=yes&focusafter=yes"
+        self.assertEqual(bounded_completion(body), "active_element_after_result=yes\n")
+        for replacement in (b"focusbefore=no", b"focusafter=no"):
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                bounded_completion(body.replace(replacement.replace(b"no", b"yes"), replacement))
 
     def test_rejects_extra_missing_duplicate_or_oversized_fields(self):
-        full = b"value=nihao&starts=0&updates=0&ends=0&compositioninputs=0"
+        full = b"value=nihao&starts=0&updates=0&ends=0&compositioninputs=0&focusbefore=yes&focusafter=no"
         for body in (b"value=nihao&starts=0", full + b"&raw=x",
                      full.replace(b"value=nihao", b"value=nihao&value=x"), b"x" * 257):
             with self.subTest(body=body), self.assertRaises(ValueError):
                 bounded_result(body)
 
     def test_records_mismatch_without_retaining_value(self):
-        got = bounded_result(b"value=wrong&starts=2&updates=3&ends=4&compositioninputs=5")
-        self.assertEqual(got, "ascii_value_exact=no\ncomposition_start_count=2\ncomposition_update_count=3\ncomposition_end_count=4\ncomposition_input_count=5\n")
+        got = bounded_result(b"value=wrong&starts=2&updates=3&ends=4&compositioninputs=5&focusbefore=yes&focusafter=no")
+        self.assertEqual(got, "ascii_value_exact=no\ncomposition_start_count=2\ncomposition_update_count=3\ncomposition_end_count=4\ncomposition_input_count=5\nactive_element_before_result=yes\n")
         self.assertNotIn("wrong", got)
 
 

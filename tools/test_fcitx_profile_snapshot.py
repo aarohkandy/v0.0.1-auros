@@ -29,6 +29,18 @@ Layout=
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_profile_identity_parses_nul_entries_without_newline_forgery(self):
+        expected = {"uid": "1000", "home": "/home/auros", "xdg_config_home": "absent"}
+        self.assertEqual(subject.profile_identity(
+            b"HOME=/home/auros\0OTHER=x\nHOME=/wrong\0", 1000, 1000, "/home/auros"), expected)
+        for environ in (
+                b"HOME=/wrong\0OTHER=x\nHOME=/home/auros\0",
+                b"HOME=/home/auros\0HOME=/home/auros\0",
+                b"HOME=/home/auros\0XDG_CONFIG_HOME=/wrong\0",
+                b"HOME=/home/auros\0OTHER=x\nXDG_CONFIG_HOME=/home/auros/.config\0XDG_CONFIG_HOME=/wrong\0"):
+            with self.subTest(environ=environ), self.assertRaises(subject.SnapshotError):
+                subject.profile_identity(environ, 1000, 1000, "/home/auros")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -122,6 +134,51 @@ class SnapshotTests(unittest.TestCase):
             [sys.executable, script, "validate", "--source", "runtime", "--phase", "end", output],
             check=False, capture_output=True, text=True)
         self.assertNotEqual(wrong.returncode, 0)
+
+    def boundary_values(self):
+        values = {}
+        for source in ("runtime", "template"):
+            for round_number in (1, 2):
+                for phase in ("start", "end"):
+                    values[f"{source}{round_number}{phase}"] = subject.snapshot(
+                        self.write(), source, phase)
+        return values
+
+    def test_comparison_allows_only_cross_boot_comments_and_blanks(self):
+        values = self.boundary_values()
+        changed = b"[Groups/0]\n# group name\nName=Default\n# layout\nDefault Layout=fr\n# input method name\nDefaultIM=pinyin\n\n[Groups/0/Items/0]\n# name\nName=keyboard-fr\n# layout\nLayout=\n\n[Groups/0/Items/1]\n# name\nName=pinyin\n# layout\nLayout=\n\n[GroupOrder]\n0=Default\n\n"
+        for phase in ("start", "end"):
+            values[f"runtime2{phase}"] = subject.snapshot(
+                self.write(changed), "runtime", phase)
+        result = subject.compare_boundaries(
+            values, (values["runtime1start"]["raw_sha256"],
+                     values["runtime2start"]["raw_sha256"]))
+        self.assertEqual(result["cross_boot_raw_equal"], "no")
+        self.assertEqual(result["cross_boot_comment_blank_only"], "yes")
+
+    def test_comparison_rejects_every_other_boundary_change(self):
+        mutations = {
+            "within_round": ("runtime1end", PROFILE + "\n"),
+            "template_comment": ("template2end", "# comment\n" + PROFILE),
+            "value": ("runtime2start", PROFILE.replace("DefaultIM=pinyin", "DefaultIM=keyboard-fr")),
+            "order": ("runtime2start", PROFILE.replace("Name=Default\nDefault Layout=fr", "Default Layout=fr\nName=Default")),
+            "inline_comment": ("runtime2start", PROFILE.replace("DefaultIM=pinyin", "DefaultIM=pinyin # comment")),
+        }
+        for label, (key, content) in mutations.items():
+            with self.subTest(label=label):
+                values = self.boundary_values()
+                source = "runtime" if key.startswith("runtime") else "template"
+                phase = "start" if key.endswith("start") else "end"
+                values[key] = subject.snapshot(self.write(content.encode()), source, phase)
+                hashes = (values["runtime1start"]["raw_sha256"],
+                          values["runtime2start"]["raw_sha256"])
+                with self.assertRaises(subject.SnapshotError):
+                    subject.compare_boundaries(values, hashes)
+
+    def test_comparison_rejects_process_hash_mismatch(self):
+        values = self.boundary_values()
+        with self.assertRaisesRegex(subject.SnapshotError, "process evidence"):
+            subject.compare_boundaries(values, ("0" * 64, values["runtime2start"]["raw_sha256"]))
 
 
 if __name__ == "__main__":

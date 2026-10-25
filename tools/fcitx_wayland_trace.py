@@ -126,6 +126,15 @@ def _lines(raw: bytes):
         yield start, raw_line.decode("utf-8", "replace")
 
 
+def _bounded_lines(raw: bytes):
+    """Yield both offsets so a boundary-crossing line stays fail closed."""
+    position = 0
+    for raw_line in raw.splitlines(keepends=True):
+        start = position
+        position += len(raw_line)
+        yield start, position, raw_line.decode("utf-8", "replace")
+
+
 def analyze_lifecycle(raw: bytes, initial_after: int, away_after: int,
                       b_input_after: int, return_after: int) -> Dict[str, Union[str, int]]:
     """Prove all candidates revoke before B input and remap in a new A epoch."""
@@ -233,13 +242,13 @@ class ReducedEvidenceError(ValueError):
         self.evidence = evidence
 
 
-def _password_phase(position: int, after: int, input_after: int,
+def _password_phase(line_end: int, after: int, input_after: int,
                     screenshot_after: int, submit_after: int) -> str:
-    if position < input_after:
+    if line_end <= input_after:
         return "focus_to_input"
-    if position < screenshot_after:
+    if line_end <= screenshot_after:
         return "input_to_screenshot"
-    if position < submit_after:
+    if line_end <= submit_after:
         return "screenshot_to_submit"
     return "after_submit"
 
@@ -301,12 +310,13 @@ def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
         else:
             omitted_events += 1
 
-    for position, line in _lines(raw):
-        if not checked_boundary and position >= after:
+    for position, line_end, line in _bounded_lines(raw):
+        sensitive = line_end > after
+        if not checked_boundary and sensitive:
             mapped_at_focus = {child for child, state in mapped.items() if state}
             relevant.update(mapped_at_focus)
             checked_boundary = True
-        phase = _password_phase(position, after, input_after,
+        phase = _password_phase(line_end, after, input_after,
                                 screenshot_after, submit_after)
         surface = GET_SURFACE.search(line)
         if surface:
@@ -325,7 +335,7 @@ def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
                 "child": child, "popup": popup_id, "parent": parent, "wl": wl,
                 "parent_role": parent_role,
                 "candidate": bool(wl and parent_role == "toplevel"),
-                "created_phase": phase if position >= after else "before_focus",
+                "created_phase": phase if sensitive else "before_focus",
                 "map_count": 0, "unmap_count": 0,
                 "configure_count": 0, "grab_count": 0,
                 "destroyed": "no",
@@ -335,7 +345,7 @@ def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
             if wl:
                 wl_to_object[wl] = object_id
                 mapped.setdefault(object_id, False)
-            if position >= after:
+            if sensitive:
                 record_event("popup", phase, popup_id, object_id,
                              objects[object_id]["candidate"])
         attach = ATTACH.search(line)
@@ -354,19 +364,19 @@ def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
                 maps = pending.pop(object_id)
                 was_mapped = mapped.get(object_id, False)
                 mapped[object_id] = maps
-                if position >= after and maps:
+                if sensitive and maps:
                     objects[object_id]["map_count"] += 1
                     record_event("map", phase, objects[object_id]["popup"], object_id,
                                  objects[object_id]["candidate"])
-                elif position >= after and was_mapped and not maps:
+                elif sensitive and was_mapped and not maps:
                     objects[object_id]["unmap_count"] += 1
                     relevant.add(object_id)
             elif wl in historical_pending:
                 maps = historical_pending.pop(wl)
-                if position >= after and maps:
+                if sensitive and maps:
                     record_event("map", phase)
         configure = CONFIGURE.search(line)
-        if configure and position >= after:
+        if configure and sensitive:
             popup_id = int(configure.group(1))
             object_id = popup_to_object.get(popup_id, 0)
             if object_id:
@@ -374,14 +384,14 @@ def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
             record_event("configure", phase, popup_id, object_id,
                          bool(object_id and objects[object_id]["candidate"]))
         grab = GRAB.search(line)
-        if grab and position >= after:
+        if grab and sensitive:
             popup_id = int(grab.group(1))
             object_id = popup_to_object.get(popup_id, 0)
             if object_id:
                 objects[object_id]["grab_count"] += 1
             record_event("grab", phase, popup_id, object_id,
                          bool(object_id and objects[object_id]["candidate"]))
-        if position >= after and "layer_shell" in line:
+        if sensitive and "layer_shell" in line:
             layer_shell_objects += 1
         xdg_destroy = XDG_DESTROY.search(line)
         if xdg_destroy:
@@ -390,7 +400,7 @@ def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
             object_id = active_child.pop(child, None)
             if object_id is not None:
                 objects[object_id]["destroyed"] = "yes"
-                if position >= after:
+                if sensitive:
                     relevant.add(object_id)
                 popup_to_object.pop(objects[object_id]["popup"], None)
                 mapped.pop(object_id, None)
@@ -405,7 +415,7 @@ def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
             object_id = wl_to_object.pop(wl, None)
             if object_id is not None:
                 objects[object_id]["destroyed"] = "yes"
-                if position >= after:
+                if sensitive:
                     relevant.add(object_id)
                 popup_to_object.pop(objects[object_id]["popup"], None)
                 active_child.pop(objects[object_id]["child"], None)
