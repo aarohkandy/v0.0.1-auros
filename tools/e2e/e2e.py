@@ -1002,7 +1002,8 @@ class Flow:
         match = "^" + re.escape(win["proc"]) + "$"
         got = [e for e in self.elements(match, ["Button", "RadioButton", "CheckBox", "Pane"],
                                         max=80, quiet=True)
-               if e.get("proc") == win["proc"] and e.get("hwnd") == win["hwnd"]]
+               if e.get("proc") == win["proc"] and e.get("pid") == win.get("pid") and
+               e.get("hwnd") == win["hwnd"]]
         if not got and not self._named_diag:
             # Once, so that the evidence says why names could not be read
             # (not elevated, an installer without the screen-reader object...)

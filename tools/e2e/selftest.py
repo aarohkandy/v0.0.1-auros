@@ -1101,17 +1101,18 @@ def test_flow_helpers():
     f._named_diag = False
     logs, asked = [], []
     f.log = logs.append
-    win = {"proc": "AurOS-Setup", "hwnd": 4242,
+    win = {"proc": "AurOS-Setup", "pid": 101, "hwnd": 4242,
            "rect": [80, 0, 1100, 740], "name": "Install AurOS"}
     els = [{"type": "Button", "name": "Install AurOS", "proc": "AurOS-Setup", "rect": [950, 650, 190, 56],
-            "hwnd": 4242, "key": "Enter", "enabled": True},
-           {"type": "Button", "name": "Close", "proc": "msedge", "hwnd": 7,
+            "pid": 101, "hwnd": 4242, "key": "Enter", "enabled": True},
+           {"type": "Button", "name": "Close", "proc": "msedge", "pid": 202, "hwnd": 7,
             "rect": [1, 1, 2, 2]}]
     f.elements = lambda match, types, max=400, quiet=False: (asked.append(match), els)[1]
     got = f.wizard_named(win)
     check([e["name"] for e in got] == ["Install AurOS"], "flow: the installer's controls are the installer process's only")
     check(asked[0] == "^AurOS\\-Setup$", "flow: they are asked of that process by name")
     els.append({**els[0], "name": "Wrong window", "hwnd": 4243})
+    els.append({**els[0], "name": "Reused process name", "pid": 102})
     got = f.wizard_named(win)
     check([e["name"] for e in got] == ["Install AurOS"],
           "flow: a same-process control cannot cross the exact wizard HWND boundary")
