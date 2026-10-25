@@ -122,18 +122,26 @@ def decide(subject: str, files: list[str]) -> dict[str, object]:
     }
 
 
-def probe_mode(x11: str, fcitx: str, security: str) -> dict[str, str]:
+def probe_mode(x11: str, fcitx: str, security: str,
+               production_security: str) -> dict[str, str]:
     values = {"true": "1", "false": "0", "": "0"}
-    if x11 not in values or fcitx not in values or security not in values:
+    if (x11 not in values or fcitx not in values or security not in values
+            or production_security not in values):
         raise ValueError("diagnostic probe options must be booleans")
     selected_x11 = values[x11]
     selected_fcitx = values[fcitx]
     selected_security = values[security]
+    selected_production = values[production_security]
+    if selected_production == "1" and "1" in (
+            selected_x11, selected_fcitx, selected_security):
+        raise ValueError("fcitx_production_security_probe is mutually exclusive")
     if selected_x11 == "1" and selected_fcitx == "1":
         raise ValueError("x11_panel_probe and fcitx_client_probe are mutually exclusive")
     if selected_security == "1" and selected_fcitx != "1":
         raise ValueError("fcitx_security_probe requires fcitx_client_probe")
-    if selected_security == "1":
+    if selected_production == "1":
+        mode = "fcitx-production-security"
+    elif selected_security == "1":
         mode = "fcitx-security"
     elif selected_fcitx == "1":
         mode = "fcitx-client"
@@ -141,9 +149,10 @@ def probe_mode(x11: str, fcitx: str, security: str) -> dict[str, str]:
         mode = "x11-panel"
     else:
         mode = "ibus-functional"
-    ibus = "0" if selected_fcitx == "1" else "1"
+    ibus = "0" if selected_fcitx == "1" or selected_production == "1" else "1"
     return {"ibus": ibus, "x11": selected_x11, "fcitx": selected_fcitx,
-            "security": selected_security, "mode": mode}
+            "security": "1" if selected_production == "1" else selected_security,
+            "production": selected_production, "mode": mode}
 
 
 def _selftest() -> None:
@@ -189,20 +198,33 @@ def _selftest() -> None:
     assert decide("unfinished [profiles", ["docs/note.md"])["list"] == list(PROFILES)
     functional = decide("[ibus-functional]", ["docs/note.md"])
     assert functional["list"] == ["multilingual"] and functional["ibus_functional"] is True
-    assert probe_mode("false", "false", "false") == {
-        "ibus": "1", "x11": "0", "fcitx": "0", "security": "0", "mode": "ibus-functional",
+    assert probe_mode("false", "false", "false", "false") == {
+        "ibus": "1", "x11": "0", "fcitx": "0", "security": "0",
+        "production": "0", "mode": "ibus-functional",
     }
-    assert probe_mode("true", "false", "false") == {
-        "ibus": "1", "x11": "1", "fcitx": "0", "security": "0", "mode": "x11-panel",
+    assert probe_mode("true", "false", "false", "false") == {
+        "ibus": "1", "x11": "1", "fcitx": "0", "security": "0",
+        "production": "0", "mode": "x11-panel",
     }
-    assert probe_mode("false", "true", "false") == {
-        "ibus": "0", "x11": "0", "fcitx": "1", "security": "0", "mode": "fcitx-client",
+    assert probe_mode("false", "true", "false", "false") == {
+        "ibus": "0", "x11": "0", "fcitx": "1", "security": "0",
+        "production": "0", "mode": "fcitx-client",
     }
-    assert probe_mode("false", "true", "true") == {
-        "ibus": "0", "x11": "0", "fcitx": "1", "security": "1", "mode": "fcitx-security",
+    assert probe_mode("false", "true", "true", "false") == {
+        "ibus": "0", "x11": "0", "fcitx": "1", "security": "1",
+        "production": "0", "mode": "fcitx-security",
     }
-    for options in (("true", "true", "false"), ("yes", "false", "false"),
-                    ("false", "1", "false"), ("false", "false", "true")):
+    assert probe_mode("false", "false", "false", "true") == {
+        "ibus": "0", "x11": "0", "fcitx": "0", "security": "1",
+        "production": "1", "mode": "fcitx-production-security",
+    }
+    for options in (("true", "true", "false", "false"),
+                    ("yes", "false", "false", "false"),
+                    ("false", "1", "false", "false"),
+                    ("false", "false", "true", "false"),
+                    ("false", "true", "false", "true"),
+                    ("false", "false", "true", "true"),
+                    ("true", "false", "false", "true")):
         try:
             probe_mode(*options)
         except ValueError:
@@ -244,6 +266,7 @@ def main() -> None:
     mode.add_argument("--x11", required=True)
     mode.add_argument("--fcitx", required=True)
     mode.add_argument("--security", required=True)
+    mode.add_argument("--production-security", required=True)
     mode.add_argument("--github-output", type=Path, required=True)
     sub.add_parser("selftest")
     args = parser.parse_args()
@@ -254,7 +277,8 @@ def main() -> None:
 
     if args.command == "probe-mode":
         try:
-            result = probe_mode(args.x11, args.fcitx, args.security)
+            result = probe_mode(args.x11, args.fcitx, args.security,
+                                args.production_security)
         except ValueError as exc:
             parser.error(str(exc))
         lines = [f"{key}={value}" for key, value in result.items()]
