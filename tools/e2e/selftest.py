@@ -396,6 +396,25 @@ def test_grub_capture():
     check(e2e.Flow.boot_screen_kind("BitLocker recovery Enter the recovery key") == "unknown",
           "Windows return: a recovery screen is never eligible for a retry")
 
+    # Exact retained frame from run 40161971669: AurOS is selected and Windows
+    # is not.  Its cyan selection has a dark whole-row mean, which caught the
+    # old brightness test.  Move only that observed theme band to synthesize a
+    # Windows-selected frame without inventing different colours or geometry.
+    shot = e2e.vision.load(os.path.join(
+        HERE, "fixtures", "run-40161971669-grub-auros-selected.png"))
+    aur_selected, aur_coverage = e2e.Flow.grub_row_selected(shot, 180, 201)
+    windows_selected, windows_coverage = e2e.Flow.grub_row_selected(shot, 239, 258)
+    check(aur_selected and aur_coverage > 0.45 and float(shot[180:201, :].mean()) < 110 and
+          not windows_selected and windows_coverage == 0,
+          "Windows return: captured selected AurOS cannot authorize unselected Windows")
+    windows_shot = shot.copy()
+    windows_shot[180:201, 252:1029] = (0, 0, 0)
+    windows_shot[239:258, 252:1029] = (0, 152, 152)
+    windows_selected, windows_coverage = e2e.Flow.grub_row_selected(windows_shot, 239, 258)
+    wrong_selected, _ = e2e.Flow.grub_row_selected(windows_shot, 201, 220)
+    check(windows_selected and windows_coverage > 0.45 and not wrong_selected,
+          "Windows return: the observed cyan theme authorizes only the selected Windows row")
+
     class Clock:
         now = 0.0
         def time(self): return self.now
