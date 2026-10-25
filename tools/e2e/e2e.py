@@ -2331,24 +2331,20 @@ class Flow:
     # -- D13, after AurOS: Windows comes back, with BitLocker on, no recovery key asked --
     def pick_grub_entry(self, name, tries=12):
         """In AurOS's start menu (text GRUB): move down until the line that
-        says exactly `name` is the highlighted one (its row is light: the
-        selected row is drawn inverted), then Enter. Fails with what is shown."""
+        says exactly `name` is the highlighted cyan row, then Enter. Fails
+        with what is shown."""
         for i in range(tries):
             img = self.m.screendump()
-            words = vision.ocr(img)
-            lines = {}
-            for w in words:
-                lines.setdefault(w["line"], []).append(w)
-            for ws in lines.values():
-                text = " ".join(w["text"] for w in ws)
-                if re.sub(r"[^a-z]", "", text.lower()) == re.sub(r"[^a-z]", "", name.lower()):
-                    y0 = max(0, min(w["y"] for w in ws) - 2)
-                    y1 = min(img.shape[0], max(w["y"] + w["h"] for w in ws) + 2)
-                    selected, coverage = self.grub_row_selected(img, y0, y1)
-                    self.log(f"start menu: '{text}' selected-cyan coverage {coverage:.3f}")
-                    if selected:
-                        self.m.key("ret", label=f"start menu: {name}")
-                        return
+            selected = self.grub_selected_row_image(img)
+            if selected is not None:
+                row, coverage, bounds = selected
+                text = vision.text_of(vision.ocr(row, scale=3, psm=7))
+                self.log(f"start menu: selected row '{text}' cyan coverage {coverage:.3f} "
+                         f"at {bounds}")
+                if (re.sub(r"[^a-z]", "", text.lower()) ==
+                        re.sub(r"[^a-z]", "", name.lower())):
+                    self.m.key("ret", label=f"start menu: {name}")
+                    return
             self.m.key("down", label="start menu: down" if i == 0 else None)
             time.sleep(1.2)
         self.m.shot("start-menu-no-entry")
@@ -2356,22 +2352,43 @@ class Flow:
                       vision.text_of(vision.ocr(self.m.screendump()))[:400])
 
     @staticmethod
-    def grub_row_selected(img, y0, y1):
-        """Recognise the selected row in the shipped GRUB theme.
+    def grub_selected_row_image(img):
+        """Return the readable selected row in the shipped GRUB theme.
 
         Run 40161971669 proved the highlight is cyan RGB(0,152,152), whose
-        whole-screen mean is dark.  Require that observed theme over nearly the
-        full menu width; unsupported themes fail closed instead of guessing.
+        whole-screen mean is dark.  Locate its one full-width band, replace only
+        that observed cyan with white so Tesseract can retain the black glyphs,
+        and reject unsupported or ambiguous themes instead of guessing.
         """
-        if y0 < 0 or y1 <= y0 or y1 > img.shape[0]:
-            return False, 0.0
-        band = img[y0:y1, :]
-        delta = np.abs(band[:, :, 1].astype(np.int16) - band[:, :, 2].astype(np.int16))
-        cyan = ((band[:, :, 0] <= 20) & (band[:, :, 1] >= 140) &
-                (band[:, :, 1] <= 165) & (band[:, :, 2] >= 140) &
-                (band[:, :, 2] <= 165) & (delta <= 8))
-        coverage = float(cyan.mean())
-        return coverage >= 0.45, coverage
+        delta = np.abs(img[:, :, 1].astype(np.int16) - img[:, :, 2].astype(np.int16))
+        cyan = ((img[:, :, 0] <= 20) & (img[:, :, 1] >= 140) &
+                (img[:, :, 1] <= 165) & (img[:, :, 2] >= 140) &
+                (img[:, :, 2] <= 165) & (delta <= 8))
+        active = np.flatnonzero(cyan.mean(axis=1) >= 0.45)
+        if not len(active):
+            return None
+        breaks = np.flatnonzero(np.diff(active) != 1)
+        groups = np.split(active, breaks + 1)
+        if len(groups) != 1 or len(groups[0]) < 8:
+            return None
+        y0, y1 = int(groups[0][0]), int(groups[0][-1]) + 1
+        xs = np.flatnonzero(cyan[y0:y1].any(axis=0))
+        if not len(xs):
+            return None
+        x0, x1 = int(xs[0]), int(xs[-1]) + 1
+        coverage = float(cyan[y0:y1].mean())
+        row = img[y0:y1, x0:x1].copy()
+        row_cyan = cyan[y0:y1, x0:x1]
+        row[row_cyan] = (255, 255, 255)
+        # Remove the hundreds of blank pixels to the right.  Tesseract psm 7
+        # drops the short label when it occupies only a few percent of a line.
+        ink_y, ink_x = np.nonzero(row.max(axis=2) <= 40)
+        if not len(ink_x):
+            return None
+        tx0, tx1 = max(0, int(ink_x.min()) - 8), min(row.shape[1], int(ink_x.max()) + 9)
+        ty0, ty1 = max(0, int(ink_y.min()) - 2), min(row.shape[0], int(ink_y.max()) + 3)
+        row = row[ty0:ty1, tx0:tx1]
+        return row, coverage, (x0, y0, x1, y1)
 
     @staticmethod
     def boot_screen_kind(text):
