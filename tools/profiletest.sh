@@ -1087,6 +1087,10 @@ for status in ('active_before_rc', 'ipid_rc', 'identity_before_rc', 'engines_rc'
                'active_after_rc', 'ipid_after_rc', 'identity_after_rc'):
     if f'[ "${status}" = 0 ]' not in loop:
         raise SystemExit("IBus restoration must reject partial failed command output")
+round_copy = text.index('find "$STATE" -maxdepth 1 -type f ! -name security-next-round -exec cp -p')
+final_report = text.index('say "fcitx-probe=$final_state', round_copy)
+if '\n    sync\n' not in text[round_copy:final_report]:
+    raise SystemExit("each security round must persist its copied evidence before reporting done")
 host = open(sys.argv[2], encoding="utf-8").read()
 action_helper = host.index('ibus_host_action() {', host.index('# ── start it'))
 action_result = host[action_helper:host.index('\n}\n\nT0=', action_helper)]
