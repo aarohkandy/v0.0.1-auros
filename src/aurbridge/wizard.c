@@ -3036,20 +3036,12 @@ static const pf_disk *sys_disk(void)
 
 /* ── How long, honestly ────────────────────────────────────────────
  *
- * The download is most of it (and size is known: the piece list baked
- * into this installer says it to the byte). After that it depends on
- * the drive: an SSD makes room and writes AurOS in a few minutes, a
- * hard disk takes several times as long, and preflight asks the drive
- * which it is (seek_penalty). These are for the install as the fast
- * path does it (docs/handoff/SESSION-2026-10-23.md, D1): the slow work
- * in Windows while the download runs, about a minute after the restart. */
-/* THE TIME, FOR THE PATH THAT SHIPS (the install that makes room after the
- * restart: the fast path, which does it in Windows while the download runs,
- * is not selectable yet). NOT MEASURED: these are what the audit worked out
- * from the code (docs/research/journey-audit-2026-10-23.md), widened. The
- * journey clock on a real Windows VM (WP-40, stream F) replaces them. A
- * range that is too long costs her an impatient wait; one that is too
- * short costs her the person who switches it off at minute 30. */
+ * BEFORE SHE STARTS, give a deliberately broad allowance for the whole
+ * journey through the restart and first start. It combines the known
+ * download size with the drive kind. These allowances are not measurements
+ * from physical PCs, so keep the range wide. Once installation is running,
+ * eta_sample() instead measures only the work left before Restart now; the
+ * two estimates deliberately describe different endpoints. */
 #define ETA_LINK_BPS        3000000.0  /* 24 Mbit/s, until one is measured */
 #define ETA_SSD_WORK_MIN    20         /* the checks, the restart, making room, copying, first start */
 #define ETA_HDD_WORK_MIN    60
@@ -3079,12 +3071,6 @@ static int disk_is_slow(void)
 {
     const pf_disk *d = sys_disk();
     return d ? d->seek_penalty : -1;
-}
-
-static int after_restart_min(void)
-{
-    int s = disk_is_slow();
-    return s == 1 ? ETA_HDD_AFTER_MIN : s == 0 ? ETA_SSD_AFTER_MIN : ETA_HDD_AFTER_MIN;
 }
 
 /* HER INTERNET, MEASURED. The download starts the moment the check
@@ -3243,8 +3229,7 @@ static int page_ready(int x, int y, int w)
     int lo, hi;
     eta_range(&lo, &hi);
     range_words(lo, hi, rng, 64);
-    _snwprintf(clk, 299, L"It takes about %ls. The screen goes dark for a minute or "
-                         L"two.%ls", rng,
+    _snwprintf(clk, 299, L"About %ls total; the screen is dark for a minute or two.%ls", rng,
                disk_is_slow() == 1
                  ? L" This computer has an older, slower kind of drive." : L"");
     clk[299] = 0;
@@ -3350,6 +3335,13 @@ static ULONGLONG g_eta_shown;
 
 static void eta_reset(void) { g_eta_n = 0; g_eta_head = 0; g_eta_min = -1; g_eta_shown = 0; }
 
+static int eta_until_restart(float f, double rate)
+{
+    if (f >= 1.f) return 0;
+    if (f < 0.f || rate <= 0.0) return -1;
+    return (int)ceil((1.0 - (double)f) / rate / 60.0);
+}
+
 static void eta_sample(float f, ULONGLONG now)
 {
     int last = (g_eta_head + ETA_SAMPLES - 1) % ETA_SAMPLES;
@@ -3360,19 +3352,19 @@ static void eta_sample(float f, ULONGLONG now)
     int first = (g_eta_head + ETA_SAMPLES - g_eta_n) % ETA_SAMPLES;
     ULONGLONG dt = now - g_eta_s[first].t;
     float df = f - g_eta_s[first].f;
-    if (dt < 10000 || df < 0.004f) return;
+    if (dt < 10000) return;
+    if (df < 0.004f) { g_eta_min = -1; return; }
     double rate = (double)df / ((double)dt / 1000.0);
-    double rem = (1.0 - (double)f) / rate / 60.0 + after_restart_min();
-    int m = (int)ceil(rem);
+    int m = eta_until_restart(f, rate);
     if (g_eta_min < 0 || now - g_eta_shown > 5000) { g_eta_min = m; g_eta_shown = now; }
 }
 
 static void eta_words(int m, wchar_t *out, int cch)
 {
-    if (m <= 1)       wcscpy(out, L"About a minute left");
-    else if (m < 10)  _snwprintf(out, (size_t)cch, L"About %d minutes left", m);
-    else if (m < 60)  _snwprintf(out, (size_t)cch, L"About %d minutes left", ((m + 4) / 5) * 5);
-    else              wcscpy(out, L"More than an hour left");
+    if (m <= 1)       wcscpy(out, L"About a minute until Restart now");
+    else if (m < 10)  _snwprintf(out, (size_t)cch, L"About %d minutes until Restart now", m);
+    else if (m < 60)  _snwprintf(out, (size_t)cch, L"About %d minutes until Restart now", ((m + 4) / 5) * 5);
+    else              wcscpy(out, L"More than an hour until Restart now");
     out[cch - 1] = 0;
 }
 
@@ -3483,7 +3475,7 @@ static int page_progress(int x, int y, int w)
     y += bh + S(12);
 
     if (g_eta_min >= 0) eta_words(g_eta_min, buf, 520);
-    else wcscpy(buf, L"Working out how long this takes.");
+    else wcscpy(buf, L"Working out how long until Restart now.");
     y += text_draw(buf, g_f_body, C_INK2, x, y, narrow, DT_SINGLELINE) + S(g_short ? 20 : 32);
 
     static const wchar_t *const away[] = {
@@ -4554,7 +4546,7 @@ static void acc_page_name(wchar_t *out, int n)
             L"fit AurOS. If the power fails or the computer crashes during that step, Windows "
             L"or your files could be damaged and might not come back. Any change to a drive "
             L"carries some risk. Copy anything you can’t replace to a memory stick first. "
-            L"%ls The computer restarts once. It takes about %ls. By pressing Install AurOS "
+            L"%ls The computer restarts once. About %ls total. By pressing Install AurOS "
             L"you agree to the AurOS Terms; the button Read the Terms shows them. Press "
             L"Enter to install AurOS.",
             STYLES[style_ok() ? g_sel_style : 0].ready, rng);
@@ -4572,8 +4564,10 @@ static void acc_page_name(wchar_t *out, int n)
             SAY(L"Stopping. When the step it is on is done, everything is put back and "
                 L"this window closes by itself.");
         else
-            SAY(L"Setting up AurOS. You can walk away. When you come back, press "
-                L"Restart now.");
+            /* Keep this name stable while the measured number on screen
+             * changes, or MSAA announces the whole page every five seconds. */
+            SAY(L"Setting up AurOS. The time shown is until Restart now. You can walk "
+                L"away. When you come back, press Restart now.");
         break;
     default: break;
     }
@@ -6093,6 +6087,66 @@ static int nav_test(const char *dir)
         snprintf(what, sizeof what, "with the download already done: %d to %d minutes", lo, hi);
         nt_check(hi < shi && lo >= 5, what);
         InterlockedExchange(&g_dl_state, 0);
+
+        /* The running clock has a nearer endpoint: Restart now. Its measured
+         * rate must not quietly grow a guessed post-restart allowance, no
+         * matter which path or drive the install uses. */
+        for (int fast = 0; fast <= 1; fast++) {
+            for (int hdd = 0; hdd <= 1; hdd++) {
+                fx_machine(hdd);
+                g_ab_choice.fast_path = fast;
+                eta_reset();
+                eta_sample(.25f, 1000);
+                eta_sample(.50f, 61000); /* 25% in one minute: two remain */
+                snprintf(what, sizeof what, "%s on %s: measured time to Restart now is two minutes",
+                         fast ? "the fast install" : "the compatibility install",
+                         hdd ? "a hard disk" : "an SSD");
+                nt_check(g_eta_min == 2, what);
+            }
+        }
+        g_ab_choice.fast_path = 0;
+
+        wchar_t eta[96];
+        eta_words(1, eta, 96);
+        nt_check(!wcscmp(eta, L"About a minute until Restart now"),
+                 "one minute names the measured endpoint");
+        eta_words(11, eta, 96);
+        nt_check(!wcscmp(eta, L"About 15 minutes until Restart now"),
+                 "a measured estimate over ten minutes rounds up to five");
+        eta_words(60, eta, 96);
+        nt_check(!wcscmp(eta, L"More than an hour until Restart now"),
+                 "an hour keeps its honest broad wording and endpoint");
+
+        fx_machine(0); fx_ready();
+        g_page = PAGE_READY;
+        nt_drawn_reset(); render();
+        wchar_t spoken[900];
+        acc_page_name(spoken, 900);
+        nt_check(nt_drawn_count(L" total; the screen is dark") == 1 &&
+                 wcsstr(spoken, L" total. By pressing Install AurOS") != NULL,
+                 "the visible and screen-reader Ready estimates name the whole-journey endpoint");
+
+        /* Once the whole sample window is flat, an old estimate is no
+         * longer presented as current. */
+        eta_reset();
+        eta_sample(.25f, 1000);
+        eta_sample(.50f, 61000);
+        for (int i = 1; i <= ETA_SAMPLES; i++)
+            eta_sample(.50f, 61000 + (ULONGLONG)i * 3000);
+        nt_check(g_eta_min == -1, "a sustained stall withdraws the stale measured estimate");
+
+        /* What is drawn and what assistive technology reads use the same
+         * endpoint. */
+        fx_machine(0); fx_ready();
+        g_page = PAGE_PROGRESS; g_install_running = 1; g_install_finished = 0;
+        g_eta_min = 2;
+        nt_drawn_reset(); render();
+        acc_page_name(spoken, 900);
+        nt_check(nt_drawn_count(L"About 2 minutes until Restart now") == 1 &&
+                 wcsstr(spoken, L"The time shown is until Restart now") != NULL &&
+                 wcsstr(spoken, L"2 minutes") == NULL,
+                 "the visible and stable screen-reader progress wording names Restart now");
+        g_install_running = 0; g_eta_min = -1; g_page = PAGE_WELCOME;
     }
 
     if (g_nt) fprintf(g_nt, "\n12. her Wi-Fi: offered only when there is some, and when it travels\n");
