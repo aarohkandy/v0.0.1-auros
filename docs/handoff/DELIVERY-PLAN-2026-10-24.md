@@ -14,7 +14,7 @@ failures and superseded evidence deliberately.
 - Follow-up Wi-Fi fix `7210f1ef` / `f1683bd9` is on delivery, not in `3629b114`: defer plaintext carry-over until Restart now, clean uncertain failures, disclose password copy, avoid unsupported failure reassurance. Focused Windows workflow `40149373093` passed all seven jobs; normal/large-text disclosure screenshots were inspected. Fastpath remains non-default.
 - Default-fastpath promotion commit `65f55242` is prepared and independently reviewed in an isolated branch and MUST stay held until the exact fastpath BitLocker journey proves Windows return, restored protection and file-preserving Put Windows back. It must preserve generic-installer recovery coverage and matching versioned Terms/Privacy disclosures.
 - Independent current-source audit confirmed that generic installs reject personalized default-look receipts and launch proof rejects Software’s embedded VLC preview; exact regression tests pass.
-- Deployment wiring and runtime credential validation are integrated on delivery (`b6091c96` through `21b936bd`): 100 combined cloud tests and 29 workflow checks pass; the browser/API fixture uses disposable RSA credentials and all 556 checks pass. Build delivery remains disabled; no remote secrets or deployment were changed. Harness-only production multilingual reboot/focus/password certification is still being prepared against the retained fresh image, without another image build.
+- Deployment wiring and runtime credential validation are integrated on delivery (`b6091c96` through `21b936bd`): 100 combined cloud tests and 29 workflow checks pass; the browser/API fixture uses disposable RSA credentials and all 556 checks pass. Build delivery remains disabled; no remote secrets or deployment were changed. Harness-only production multilingual reboot/focus/password certification is running as `40150677765` on main `8a0d002d`, reusing the exact fresh image from `40148012574`. Delivery contains the same patch as `fe76b78f`; no image rebuild was dispatched. The separate push run `40150676528` is only the diagnostic gate, not runtime proof.
 - Public delivery remains disabled pending signing/service configuration and release proof. Managed profiles, physical-PC tests, contact/name decisions, held encryption work and unfinished Wishes actions remain open. No zero-vulnerability or end-to-end completion claim is justified.
 
 ## Starting evidence
@@ -821,3 +821,19 @@ No activation, real-model call, remote secret read or deployment was performed.
 A future main push touching cloud files can run the existing cloud deployment
 workflow; its two service switches must remain off until activation requirements
 are met.
+
+## Shipped multilingual two-boot certification dispatched
+
+Worker `703709d1` adds the explicit, mutually exclusive retained
+`fcitx_production_security_probe` mode. It distinguishes shipped Fcitx from
+legacy IBus conversion and judges exact service/configuration/password
+environment records, real distinct boot IDs, and unchanged configuration.
+The password Firefox test inherits the production input environment instead
+of forcing the test module/configuration. Firefox connection identity remains
+unproved. Harness selfchecks: 80/80; gate and workflow checks passed.
+
+Only these four diagnostic files were pushed to main as `8a0d002d`; the cloud
+and Wi-Fi follow-ups remain on delivery, and default promotion `65f55242`
+remains held. Runtime result is pending in
+[run 40150677765](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40150677765).
+Do not dispatch a duplicate or cite the push-only gate as runtime evidence.
