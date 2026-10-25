@@ -276,8 +276,9 @@ function validJob(value) {
   return value && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.id || "") &&
     /^sha256:[0-9a-f]{64}$/.test(value.recipe_id || "") && ["dispatch-uncertain", "queued", "running", "failed", "download-ready"].includes(value.state) && typeof value.download_ready === "boolean";
 }
-function safeDownload(value) {
-  if (!value || typeof value !== "object" || !/^AurOS-Custom-[0-9a-f]{64}\.exe$/.test(value.name || "") || !/^[0-9a-f]{64}$/.test(value.sha256 || "") || !Number.isSafeInteger(value.bytes) || value.bytes <= 0) return null;
+function safeDownload(value, recipeId) {
+  var name = value && typeof value.name === "string" ? /^AurOS-Custom-([0-9a-f]{40})-([0-9a-f]{64})\.exe$/.exec(value.name) : null;
+  if (!value || typeof value !== "object" || !name || recipeId !== "sha256:" + name[2] || !/^[0-9a-f]{64}$/.test(value.sha256 || "") || !Number.isSafeInteger(value.bytes) || value.bytes <= 0) return null;
   try {
     var url = new URL(value.url);
     var manifest = new URL(value.manifest_url);
@@ -310,7 +311,7 @@ async function checkStatus() {
       return;
     }
     if (job.state === "download-ready" || job.download_ready) {
-      var file = job.state === "download-ready" && job.download_ready ? safeDownload(job.download) : null;
+      var file = job.state === "download-ready" && job.download_ready ? safeDownload(job.download, job.recipe_id) : null;
       if (!file) throw new Error("The service did not provide a valid signed AurOS EXE. The download was blocked.");
       document.getElementById("build-choices").textContent = recipeSummary(activeReceipt.recipe);
       document.getElementById("build-file").textContent = file.name + " (" + file.bytes.toLocaleString() + " bytes)";

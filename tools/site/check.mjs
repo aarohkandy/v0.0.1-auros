@@ -701,11 +701,12 @@ for (const v of [
   }
   {
     const receipt = { api_origin: API, id: ID, token: TOKEN, recipe_id: RID, recipe: desktop };
-    const name = "AurOS-Custom-" + "a".repeat(64) + ".exe";
+    const authority = "c".repeat(40);
+    const name = "AurOS-Custom-" + authority + "-" + "a".repeat(64) + ".exe";
     const ready = { ...pending, state: "download-ready", download_ready: true, download: {
       name, sha256: "b".repeat(64), bytes: 123456,
       url: "https://github.com/aarohkandy/v0.0.1-auros/releases/download/custom-test/" + name,
-      manifest_url: "https://github.com/aarohkandy/v0.0.1-auros/releases/download/custom-test/AurOS-Custom-" + "a".repeat(64) + ".json",
+      manifest_url: "https://github.com/aarohkandy/v0.0.1-auros/releases/download/custom-test/AurOS-Custom-" + authority + "-" + "a".repeat(64) + ".json",
     } };
     const { ctx, page } = await buildVisit((route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(ready) }), receipt);
     await page.waitForSelector("#build-result:not([hidden])");
@@ -715,6 +716,21 @@ for (const v of [
     textFindings("request build ready", await page.evaluate(measureText));
     await ctx.close();
   }
+  for (const badName of [
+    "AurOS-Custom-" + "c".repeat(12) + "-" + "a".repeat(64) + ".exe",
+    "AurOS-Custom-" + "c".repeat(40) + "-" + "d".repeat(64) + ".exe",
+  ]) {
+    const receipt = { api_origin: API, id: ID, token: TOKEN, recipe_id: RID, recipe: desktop };
+    const bad = { ...pending, state: "download-ready", download_ready: true, download: {
+      name: badName, sha256: "b".repeat(64), bytes: 123456,
+      url: "https://github.com/aarohkandy/v0.0.1-auros/releases/download/custom-test/" + badName,
+      manifest_url: "https://github.com/aarohkandy/v0.0.1-auros/releases/download/custom-test/" + badName.replace(/\.exe$/, ".json"),
+    } };
+    const { ctx, page } = await buildVisit((route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(bad) }), receipt);
+    await page.waitForFunction(() => /valid signed AurOS EXE/i.test(document.getElementById("build-status").innerText));
+    check(await page.locator("#build-result").isHidden(), "request build: authority and recipe-qualified download names fail closed", badName);
+    await ctx.close();
+  }
 
   // One local seam test uses the shipped browser code and the real compiler,
   // build API and in-memory ledger together. Only the GitHub verifier result
@@ -722,7 +738,8 @@ for (const v of [
   {
     const siteOrigin = "https://site.example";
     const apiOrigin = "https://builds.integration.example";
-    const sourceSha = "a".repeat(40);
+    const authoritySha = "c".repeat(40);
+    const baseSha = "a".repeat(40);
     const expectedRecipe = { schema: "org.auros.recipe", version: 1, base: "desktop", preferences: { look: "dock", theme: "moss" } };
     const expectedCanonical = '{"base":"desktop","preferences":{"look":"dock","theme":"moss"},"schema":"org.auros.recipe","version":1}';
     const requests = [];
@@ -730,13 +747,13 @@ for (const v of [
     let statusChecks = 0;
     let dispatched;
     const github = {
-      findGreenBase: async () => ({ sourceSha, runId: 91, tag: "v0.1.0-aaaaaaa" }),
+      findGreenBase: async () => ({ authoritySha, baseSha, runId: 91, tag: "v0.1.0-aaaaaaa" }),
       discoverVerifiedDelivery: async () => ({ state: "absent" }),
       dispatch: async (request) => { dispatches++; dispatched = request; },
       status: async (request) => {
         statusChecks++;
         const suffix = request.recipeId.slice(7);
-        const name = `AurOS-Custom-${suffix}.exe`;
+        const name = `AurOS-Custom-${authoritySha}-${suffix}.exe`;
         const release = "https://github.com/aarohkandy/v0.0.1-auros/releases/download/v0.1.0-aaaaaaa/";
         return {
           state: "download-ready", runId: 44, signedArtifactId: 8,
@@ -800,7 +817,7 @@ for (const v of [
       "request build integration: the real ledger dispatches one canonical recipe and checks one mocked GitHub verifier verdict", JSON.stringify({ dispatches, statusChecks, recipe: dispatched?.recipe }));
     check(statusGets.length === 1 && /^Bearer [A-Za-z0-9_-]{32}$/.test(statusGets[0].authorization) && first.stored && first.stored.token === statusGets[0].authorization.slice(7),
       "request build integration: the opaque receipt is saved locally and sent only as a Bearer header");
-    check(first.href === `https://github.com/aarohkandy/v0.0.1-auros/releases/download/v0.1.0-aaaaaaa/AurOS-Custom-${first.stored.recipe_id.slice(7)}.exe` && first.hash === "b".repeat(64),
+    check(first.href === `https://github.com/aarohkandy/v0.0.1-auros/releases/download/v0.1.0-aaaaaaa/AurOS-Custom-${authoritySha}-${first.stored.recipe_id.slice(7)}.exe` && first.hash === "b".repeat(64),
       "request build integration: the browser shows the mocked verified-delivery URL and hash tied to its real recipe ID", JSON.stringify({ href: first.href, hash: first.hash }));
 
     const beforeReload = requests.length;

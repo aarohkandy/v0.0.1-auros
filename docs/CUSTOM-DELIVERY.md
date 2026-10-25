@@ -15,12 +15,16 @@ The browser can choose only the recipe-v1 `desktop` base and allowed `look`
 and `theme` values. It cannot choose a Git ref, workflow, repository, command,
 package, URL, or signing setting. The Worker recompiles the raw recipe and
 selects an existing successful `main` base build whose artifacts and exact
-prerelease tag still exist. It dispatches `.github/workflows/customize.yml` at
-that server-verified tag.
+prerelease assets still exist. It dispatches the current reviewed
+`.github/workflows/customize.yml` on `main`, while passing the reused base's
+SHA, run ID, and release namespace as separate inputs. The release tag pointer
+is not trusted as either identity.
 
 A result becomes `download-ready` only when all of these still agree:
 
-- the uniquely correlated workflow run and its source commit;
+- the uniquely correlated workflow run and its current `main` authority commit;
+- the reused base's distinct build run, source commit, release namespace, and
+  exact asset identities;
 - successful `package`, `sign / sign`, `certify / e2e (base)`,
   `certify / custom-certification`, and `publish` jobs;
 - the same-run signed-installer artifact;
@@ -30,10 +34,18 @@ A result becomes `download-ready` only when all of these still agree:
 - the release asset's canonical identity, byte count, and GitHub SHA-256
   digest against the immutable manifest.
 
-The first delivery for an exact base and recipe runs a real Windows installation
-certification and can take hours. Repeated matching requests reuse its verified
-installer. Do not advertise instant first-time delivery; a public rollout needs
-pre-certified common combinations or a measured shorter certification path.
+Published filenames are
+`AurOS-Custom-<40-character-authority-SHA>-<64-character-recipe-SHA>.exe`
+and the matching `.json`. The full authority SHA keeps deliveries created by
+different reviewed workflow revisions distinct even when they reuse one base
+and recipe. The browser checks both fields and requires the recipe suffix to
+match the submitted recipe.
+
+The first delivery for an exact authority, base, and recipe runs a real Windows
+installation certification and can take hours. Repeated matching requests
+reuse its verified installer. Do not advertise instant first-time delivery; a
+public rollout needs pre-certified common combinations or a measured shorter
+certification path.
 
 Readiness is cached for at most 15 seconds and then revalidated. A missing or
 changed asset revokes readiness on the next check. This is a check-time
@@ -128,14 +140,18 @@ Keep at least one fully green, released base younger than 30 days. Rebuild and
 release a base before expiry; do not delete its tag, prerelease, or required
 artifacts while requests may use it.
 
-Base discovery reads at most 50 recent releases, considers at most five that
-have the complete canonical AurOS release asset set, and asks for at most three
-successful `build.yml` runs at each candidate's exact tag commit. Each run is
-accepted only when it is a completed successful `main` push at that exact SHA
-and has one unexpired `auros-installer` and `auros-base-metadata` artifact.
-This is at most 26 GitHub API requests per lookup. Ambiguous runs, expired or
-duplicate artifacts, runs with more than 100 artifacts, tag/SHA mismatches, and
-candidates outside those explicit bounds fail closed.
+Base discovery reads at most 50 recent releases and considers at most five that
+have the complete canonical AurOS release asset set. It downloads each bounded
+`pieces.txt` only as an untrusted run/commit discovery hint, then reads that
+exact Actions run from the API. A base is accepted only when the API says the
+run is a completed successful `build.yml` `main` push in this repository, its
+full source SHA matches the hint, and it has exactly one unexpired
+`auros-installer` and `auros-base-metadata` artifact. The downloaded run-scoped
+metadata then binds the full base SHA, run, release namespace, installer, image,
+piece list, and hashes. Retargeting the release tag does not change that
+identity. Malformed or oversized hints, expired or duplicate artifacts, more
+than 100 artifacts, mismatched metadata, and candidates outside the explicit
+bounds fail closed.
 
 ### Pre-certify common recipes
 
@@ -150,30 +166,33 @@ requests for it; do not race an operator dispatch against a public submission.
 2. Generate a new lowercase UUID for `request_id` and retain it with the
    operator record. Never leave `request_id` empty. An empty/null identity
    cannot be correlated or adopted safely.
-3. Dispatch `customize.yml` at that exact verified base tag with the strict
-   canonical desktop recipe, the matching base build run ID, and that UUID.
+3. Dispatch the current `customize.yml` on `main` with the strict canonical
+   desktop recipe, the matching base build SHA, run ID, release namespace, and
+   that UUID.
 4. Approve both SignPath requests. Wait for both certification jobs and
    `publish` to succeed. Confirm the immutable `auros-custom-delivery` artifact
-   and the recipe-named release `.exe` and `.json` exist.
+   and the authority-and-recipe-named release `.exe` and `.json` exist.
 5. Within the immutable artifact's 30-day retention window, submit the same
    recipe once through the ordinary public flow. Its proof and network/global
    quota still apply. The service treats the release manifest only as a locator,
-   verifies the original run, every gate, signed and immutable artifacts, tag,
-   source, and current asset digest, then atomically records the canonical
+   verifies the original authority run, every gate, signed and immutable
+   artifacts, exact base run and assets, and current asset digest, then
+   atomically records the canonical
    delivery and returns a normal 24-hour receipt. It must not dispatch another
    customization run.
 
-Discovery for one exact base and recipe is serialized. A concurrent public
-submission receives `existing_delivery_busy` and may retry through the normal
+Discovery for one exact authority, base, and recipe is serialized. A concurrent
+public submission receives `existing_delivery_busy` and may retry through the normal
 proof-and-quota flow; it cannot make a second discovery or dispatch while the
 first submission is adopting or reserving that delivery.
 
 This same path can recover a lost canonical Durable Object record while the
 immutable artifact remains available. After that artifact expires, mutable
 release assets alone cannot prove the original delivery. The occupied recipe
-filenames then fail closed and must not be overwritten or rebuilt under a new
-request identity. Partial assets, an invalid UUID, a foreign or failed run, or
-any evidence mismatch also fail closed and consume the already-admitted quota.
+and authority-qualified filenames then fail closed and must not be overwritten
+or rebuilt under a new request identity. Partial assets, an invalid UUID, a
+foreign or failed run, or any evidence mismatch also fail closed and consume
+the already-admitted quota.
 
 ## Configuration, quotas, and receipts
 
@@ -193,7 +212,7 @@ The conservative defaults are:
 
 Keep the defaults for initial activation. Raise a limit only after examining
 signing capacity, GitHub Actions use, failures, and abuse. A repeated exact
-recipe/source request deduplicates its build, but it still consumes submission
+authority/base/recipe request deduplicates its build, but it still consumes submission
 quota so popular recipes cannot be used to exhaust receipt ownership for free.
 Proof of work is only an abuse cost, not authentication. The atomic per-network
 and global quotas are the actual bound on build and signing work. Sixteen bits
@@ -206,20 +225,21 @@ stored. Anyone holding the receipt can see that job's status and eventual
 download metadata; a lost receipt cannot be recovered.
 
 Receipt authorization records expire after 24 hours. Separately, the Durable
-Object retains one canonical record for each admitted exact base and recipe so
-a later receipt reuses the original request, certification, and signatures.
+Object retains one canonical record for each admitted exact authority, base,
+and recipe, so a later receipt reuses the original request, certification, and
+signatures.
 That record has no automatic expiry. It contains the bounded recipe and ID,
-source/base/original request/run identifiers, and, once verified, the exact
+authority/base/original request/run identifiers, and, once verified, the exact
 manifest plus the verified gate, Actions artifact, release, and asset
 identities. That bounded record replaces the dependency on GitHub retaining
 the completed run and artifacts forever; each status check still revalidates
-the live release tag, source commit, manifest bytes, asset identities, size,
-and digest. It never contains the receipt or a network identifier. Creating a
+the release namespace, manifest bytes, exact asset identities, size, and
+digest. It never contains the receipt or a network identifier. Creating a
 canonical record consumes the same atomic
 submission quota as a new build; the fixed recipe catalogue also bounds the
-number created for any base. Do not delete one while its release assets remain:
-without the original evidence, that occupied recipe filename must fail closed
-rather than sign a replacement under new provenance.
+number created for any authority and base. Do not delete one while its release assets remain:
+without the original evidence, that occupied authority-and-recipe filename
+must fail closed rather than sign a replacement under new provenance.
 
 The service stores salted network-prefix hashes for quota counting, not raw
 addresses. Daily counters can remain through the end of the following UTC day;
@@ -277,7 +297,7 @@ Do these in order. Do not activate a partly configured service.
     receipt, approve both SignPath requests, and verify the status progresses
     to `download-ready` only after both certification jobs and `publish`.
     Confirm the returned recipe ID,
-    source/base IDs, exact `.exe` name, byte count, and SHA-256 against the
+    authority/base IDs, exact `.exe` name, byte count, and SHA-256 against the
     immutable manifest, then verify Authenticode on a downloaded copy.
 
 Any mismatch means activation failed. Disable the API before investigating.
