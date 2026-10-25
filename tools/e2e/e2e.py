@@ -1544,8 +1544,11 @@ class Flow:
                         raise Failure(f"{STORE_QUERY}'s first-launch privacy dialog was not a "
                                       "single attributed Continue step: " +
                                       vision.text_of(words)[:500])
-                    self.m.click(*vision.centre(proceed),
-                                 label=f"continue {STORE_RESULT}'s first launch")
+                    if proceed == "focused default":
+                        self.m.key("ret", label=f"continue {STORE_RESULT}'s first launch")
+                    else:
+                        self.m.click(*vision.centre(proceed),
+                                     label=f"continue {STORE_RESULT}'s first launch")
                     privacy_continued = True
                     continue
                 if identity:
@@ -1574,8 +1577,11 @@ class Flow:
                                 raise Failure(f"{STORE_QUERY}'s first-launch privacy dialog was not a "
                                               "single attributed Continue step: " +
                                               vision.text_of(words)[:500])
-                            self.m.click(*vision.centre(proceed),
-                                         label=f"continue {STORE_RESULT}'s first launch")
+                            if proceed == "focused default":
+                                self.m.key("ret", label=f"continue {STORE_RESULT}'s first launch")
+                            else:
+                                self.m.click(*vision.centre(proceed),
+                                             label=f"continue {STORE_RESULT}'s first launch")
                             privacy_continued = True
                             continue
                     proven = self.program_window_proven(
@@ -1603,11 +1609,31 @@ class Flow:
 
     @classmethod
     def program_privacy_step(cls, words, screen_h, app_name):
-        """Return mapped identity and this dialog's exact Continue control."""
+        """Return mapped identity and this dialog's Continue action.
+
+        VLC's real first-launch dialog can put its focused Continue button far
+        to the right and below the title, where whole-screen OCR misses it.
+        The dialog body names VLC itself, so that text below the privacy title
+        is mapped-app attribution which Software's listing cannot supply.
+        """
         privacy = vision.find_text(words, "Privacy and Network Access Policy")
         if not privacy:
             return None
         px, py, pw, ph = privacy
+        identity = cls.program_window_identity(words, screen_h, app_name)
+        mapped_identity = cls.program_privacy_window_identity(words, screen_h, app_name)
+        if mapped_identity:
+            identity = mapped_identity
+        dialog_identity = None
+        named = vision.find_text(words, app_name + " media player")
+        if named:
+            _, ny, _, _ = named
+            ncx, _ = vision.centre(named)
+            if (py + ph < ny <= py + ph + 250 and
+                    px - 100 <= ncx <= px + pw + 400):
+                dialog_identity = "privacy dialog", named
+                if mapped_identity:
+                    identity = dialog_identity
         buttons = []
         for word in words:
             if re.sub(r"[^a-z]", "", word.get("text", "").lower()) != "continue":
@@ -1617,8 +1643,39 @@ class Flow:
             cx, cy = vision.centre(box)
             if px <= cx <= px + pw and py + ph < cy <= py + ph + 300:
                 buttons.append(box)
-        proceed = buttons[0] if len(buttons) == 1 else None
-        return cls.program_window_identity(words, screen_h, app_name), proceed
+        proceed = buttons[0] if identity and len(buttons) == 1 else None
+        if dialog_identity and mapped_identity and not buttons:
+            proceed = "focused default"
+        return identity, proceed
+
+    @classmethod
+    def program_privacy_window_identity(cls, words, screen_h, app_name):
+        """Prove the app window beside its dialog despite a one-letter OCR miss."""
+        controls = STORE_APP_CONTROLS.split("|")
+        proven = cls.program_window_proven(words, screen_h, app_name, controls)
+        if proven:
+            return proven[0]
+        top = max(120, screen_h // 5)
+        expected = re.sub(r"[^a-z0-9]", "", app_name.lower())
+        for word in words:
+            token = re.sub(r"[^a-z0-9]", "", word.get("text", "").lower())
+            if (word.get("y", 0) + word.get("h", 0) > top or
+                    len(token) != len(expected) or
+                    sum(a != b for a, b in zip(token, expected)) > 1):
+                continue
+            same_line = [other for other in words
+                         if other.get("line") == word.get("line") and
+                         word.get("x", 0) < other.get("x", 0) <= word.get("x", 0) + 160]
+            media = next((other for other in same_line
+                          if re.sub(r"[^a-z]", "", other.get("text", "").lower()) == "media"), None)
+            if not media:
+                continue
+            title = (word.get("x", 0), word.get("y", 0),
+                     media.get("x", 0) + media.get("w", 0) - word.get("x", 0),
+                     max(word.get("h", 0), media.get("h", 0)))
+            if len(cls.program_window_controls(words, controls, title)) >= 2:
+                return "title", title
+        return None
 
     @staticmethod
     def program_window_identity(words, screen_h, app_name):
