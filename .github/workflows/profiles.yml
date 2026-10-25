@@ -57,6 +57,11 @@ on:
         required: false
         default: false
         type: boolean
+      fcitx_production_security_probe:
+        description: Certify shipped FCITX focus, password and reboot behavior on a retained fresh image
+        required: false
+        default: false
+        type: boolean
 
 # contents: write is for the jobs that make or fill a release, and only
 # those (SEC-005): a job that runs a lot of code cannot replace what a
@@ -167,7 +172,11 @@ jobs:
               "fresh functional certification uses only shipped Fcitx":
                   profile.count("PROFILETEST_FCITX_PRODUCTION") == 1 and
                   "PROFILETEST_IBUS_FUNCTIONAL" not in profile and
-                  "PROFILETEST_FCITX_PRODUCTION" not in retest,
+                  retest.count("PROFILETEST_FCITX_PRODUCTION") == 1,
+              "production security is explicit and recorded":
+                  "--production-security '${" + "{ inputs.fcitx_production_security_probe }}'" in retest and
+                  'value["fcitx_production_security_probe"]' in retest and
+                  'PROFILETEST_FCITX_PRODUCTION="${' + '{ steps.mode.outputs.production }}"' in retest,
               "diagnostic probe options are validated together":
                   "profiletest-gate.py probe-mode" in retest,
           }
@@ -411,6 +420,7 @@ jobs:
             --x11 '${{ inputs.x11_panel_probe }}' \
             --fcitx '${{ inputs.fcitx_client_probe }}' \
             --security '${{ inputs.fcitx_security_probe }}' \
+            --production-security '${{ inputs.fcitx_production_security_probe }}' \
             --github-output "$GITHUB_OUTPUT"
       - name: accept only one completed main profiles run from this repository
         id: source
@@ -498,6 +508,7 @@ jobs:
             PROFILETEST_IBUS_X11_PROBE="${{ steps.mode.outputs.x11 }}" \
             PROFILETEST_FCITX_CLIENT_PROBE="${{ steps.mode.outputs.fcitx }}" \
             PROFILETEST_FCITX_SECURITY_PROBE="${{ steps.mode.outputs.security }}" \
+            PROFILETEST_FCITX_PRODUCTION="${{ steps.mode.outputs.production }}" \
             sh tools/profiletest.sh boot multilingual "$PWD/ev" 2>&1 | tee ev/multilingual-boot.txt
           rc=${PIPESTATUS[0]}
           set -e
@@ -509,7 +520,8 @@ jobs:
           DIAGNOSTIC_MODE='${{ steps.mode.outputs.mode }}' \
           X11_PANEL_PROBE='${{ steps.mode.outputs.x11 }}' \
           FCITX_CLIENT_PROBE='${{ steps.mode.outputs.fcitx }}' \
-          FCITX_SECURITY_PROBE='${{ steps.mode.outputs.security }}' python3 - <<'PY'
+          FCITX_SECURITY_PROBE='${{ steps.mode.outputs.security }}' \
+          FCITX_PRODUCTION_SECURITY_PROBE='${{ steps.mode.outputs.production }}' python3 - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -522,6 +534,7 @@ jobs:
           value["x11_panel_probe"] = os.environ["X11_PANEL_PROBE"] == "1"
           value["fcitx_client_probe"] = os.environ["FCITX_CLIENT_PROBE"] == "1"
           value["fcitx_security_probe"] = os.environ["FCITX_SECURITY_PROBE"] == "1"
+          value["fcitx_production_security_probe"] = os.environ["FCITX_PRODUCTION_SECURITY_PROBE"] == "1"
           temporary = path.with_suffix(".json.tmp")
           temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           temporary.replace(path)

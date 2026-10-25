@@ -69,6 +69,10 @@
 #                         for a fresh multilingual image only: exercise the
 #                         shipped Fcitx service in Mousepad and Firefox without
 #                         installing packages or replacing the service.
+#    PROFILETEST_FCITX_SECURITY_PROBE=1
+#                         with a retained Fcitx client or production run only:
+#                         add two real boots plus focus-transfer and synthetic
+#                         password-field suppression evidence.
 # ═══════════════════════════════════════════════════════════════════
 set -u
 cd "$(dirname "$0")/.."
@@ -510,8 +514,70 @@ exact_password_suppression() { # reduced evidence file
     ' "$1" 2>/dev/null
 }
 
-judge_fcitx_security_probe() { # evidence-root screenshot-root
-    D=$1; SHOTS=$2
+exact_shipped_restore() { # reduced production restore file
+    awk -F= '
+        BEGIN {
+            expected["ordinary_service_ready"]="1"
+            expected["user_config_unchanged"]="yes"
+            expected["cleanup_pids_gone"]="1"
+            expected["source"]="shipped-fcitx"
+            expected["service_start_rc"]="not-needed"
+            expected["service_active_seen"]="no"
+            expected["service_identity_seen"]="no"
+            expected["service_identity_stable_seen"]="no"
+            expected["pinyin_engine_seen"]="no"
+        }
+        NF != 2 || !($1 in expected) || seen[$1] || $2 != expected[$1] { bad=1 }
+        !seen[$1]++ { count++ }
+        END { exit bad || count != 9 }
+    ' "$1" 2>/dev/null
+}
+
+exact_shipped_process() { # reduced production process file
+    awk -F= '
+        BEGIN {
+            fixed["exe"]="/usr/bin/fcitx5"
+            fixed["cmdline"]="/usr/bin/fcitx5 -D"
+            fixed["unit"]="auros-fcitx.service"
+            fixed["ibus_inactive"]="yes"
+            fixed["display_unset"]="yes"
+            fixed["wayland_display_unset"]="yes"
+            fixed["service_owner_stable"]="yes"
+            variable["pid"]=1; variable["boot_id"]=1; variable["start_time"]=1
+            variable["config_hash"]=1
+        }
+        NF != 2 || (!( $1 in fixed) && !($1 in variable)) || seen[$1] { bad=1 }
+        ($1 in fixed) && $2 != fixed[$1] { bad=1 }
+        !seen[$1]++ { count++ }
+        END { exit bad || count != 11 }
+    ' "$1" 2>/dev/null \
+        && grep -Eq '^pid=[1-9][0-9]*$' "$1" 2>/dev/null \
+        && grep -Eq '^start_time=[1-9][0-9]*$' "$1" 2>/dev/null \
+        && grep -Eq '^config_hash=[0-9a-f]{64}$' "$1" 2>/dev/null \
+        && grep -Eq '^boot_id=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "$1" 2>/dev/null
+}
+
+exact_production_password_env() { # reduced inherited environment file
+    awk -F= '
+        BEGIN { expected["GDK_BACKEND"]="wayland"; expected["GTK_IM_MODULE"]="fcitx"; variable["WAYLAND_DISPLAY"]=1 }
+        NF != 2 || (!( $1 in expected) && !($1 in variable)) || seen[$1] { bad=1 }
+        ($1 in expected) && $2 != expected[$1] { bad=1 }
+        $1 == "WAYLAND_DISPLAY" && $2 == "" { bad=1 }
+        !seen[$1]++ { count++ }
+        END { exit bad || count != 3 }
+    ' "$1" 2>/dev/null
+}
+
+exact_production_reboot() { # reduced round-two reboot file
+    [ "$(cat "$1" 2>/dev/null)" = shipped_fcitx_autostart_ready=yes ]
+}
+
+judge_fcitx_security_probe() { # evidence-root screenshot-root [source]
+    D=$1; SHOTS=$2; SECURITY_SOURCE=${3:-retained-ibus-conversion}
+    case "$SECURITY_SOURCE" in
+      retained-ibus-conversion|shipped-fcitx) ;;
+      *) bad "Fcitx security evidence source is recognized" "$SECURITY_SOURCE"; return ;;
+    esac
     for round in 1 2; do
         R="$D/round$round"
         grep -qx 'status=pass' "$R/result" 2>/dev/null \
@@ -558,7 +624,17 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root
             && grep -qx '20' "$R/focus-b-sentinel.hex" 2>/dev/null \
             && ok "A to B to A revoked and freshly mapped the candidate in round $round" \
             || bad "A to B to A revoked and freshly mapped the candidate in round $round" "focus lifecycle evidence missing"
+        password_env_ok=yes
+        if [ "$SECURITY_SOURCE" = shipped-fcitx ]; then
+            exact_production_password_env "$R/password.env" || password_env_ok=no
+        else
+            grep -qx 'GTK_IM_MODULE=fcitx' "$R/password.env" 2>/dev/null \
+                && grep -qx 'GDK_BACKEND=wayland' "$R/password.env" 2>/dev/null \
+                && ! grep -q '^DISPLAY=' "$R/password.env" 2>/dev/null \
+                || password_env_ok=no
+        fi
         exact_password_suppression "$R/password-suppression.txt" \
+            && [ "$password_env_ok" = yes ] \
             && ok "the synthetic password field showed no observed popup or browser composition event in round $round" \
             || bad "the synthetic password field showed no observed popup or browser composition event in round $round" "bounded suppression evidence is missing or ambiguous"
         [ -s "$SHOTS/fcitx-round$round-focus-away.png" ] \
@@ -566,22 +642,46 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root
             && [ -s "$SHOTS/fcitx-round$round-password-masked.png" ] \
             && ok "round $round focus and masked-password screenshots were retained" \
             || bad "round $round focus and masked-password screenshots were retained" "security screenshot missing"
-        grep -qx 'ordinary_service_ready=1' "$R/restore.txt" 2>/dev/null \
+        service_ok=no
+        if [ "$SECURITY_SOURCE" = shipped-fcitx ]; then
+            exact_shipped_restore "$R/restore.txt" && service_ok=yes
+        elif grep -qx 'ordinary_service_ready=1' "$R/restore.txt" 2>/dev/null \
             && grep -qx 'user_config_unchanged=yes' "$R/restore.txt" 2>/dev/null \
             && grep -qx 'cleanup_pids_gone=1' "$R/restore.txt" 2>/dev/null \
-            && ok "round $round restored shipped IBus and removed transient processes" \
-            || bad "round $round restored shipped IBus and removed transient processes" "round cleanup evidence missing"
-        grep -qx 'exe=/usr/bin/fcitx5' "$R/fcitx.process" 2>/dev/null \
+            && grep -qx "source=$SECURITY_SOURCE" "$R/restore.txt" 2>/dev/null; then
+            service_ok=yes
+        fi
+        [ "$service_ok" = yes ] \
+            && ok "round $round preserved its shipped input service and removed transient processes" \
+            || bad "round $round preserved its shipped input service and removed transient processes" "round cleanup/source evidence missing"
+        process_ok=no
+        if [ "$SECURITY_SOURCE" = shipped-fcitx ]; then
+            exact_shipped_process "$R/fcitx.process" && process_ok=yes
+        elif grep -qx 'exe=/usr/bin/fcitx5' "$R/fcitx.process" 2>/dev/null \
             && grep -qx 'cmdline=/usr/bin/fcitx5 -D' "$R/fcitx.process" 2>/dev/null \
             && grep -qx 'display_unset=yes' "$R/fcitx.process" 2>/dev/null \
             && grep -qx 'wayland_display_unset=yes' "$R/fcitx.process" 2>/dev/null \
-            && grep -qx 'service_owner_stable=yes' "$R/fcitx.process" 2>/dev/null \
-            && ok "round $round retained the exact isolated Fcitx process" \
-            || bad "round $round retained the exact isolated Fcitx process" "process identity evidence missing"
+            && grep -qx 'service_owner_stable=yes' "$R/fcitx.process" 2>/dev/null; then
+            process_ok=yes
+        fi
+        [ "$process_ok" = yes ] \
+            && ok "round $round retained the exact Fcitx service identity" \
+            || bad "round $round retained the exact Fcitx service identity" "process identity evidence missing"
     done
-    grep -qx 'fcitx_autostart_before_explicit_launch=no' "$D/round2/reboot.txt" 2>/dev/null \
-        && ok "Fcitx did not autostart after the scratch reboot" \
-        || bad "Fcitx did not autostart after the scratch reboot" "round-two prelaunch evidence missing"
+    if [ "$SECURITY_SOURCE" = shipped-fcitx ]; then
+        exact_production_reboot "$D/round2/reboot.txt" \
+            && ok "the shipped Fcitx service autostarted after the real reboot" \
+            || bad "the shipped Fcitx service autostarted after the real reboot" "round-two autostart evidence missing"
+        boot1=$(sed -n 's/^boot_id=//p' "$D/round1/fcitx.process" 2>/dev/null)
+        boot2=$(sed -n 's/^boot_id=//p' "$D/round2/fcitx.process" 2>/dev/null)
+        [ -n "$boot1" ] && [ -n "$boot2" ] && [ "$boot1" != "$boot2" ] \
+            && ok "the two production rounds came from distinct real boots" \
+            || bad "the two production rounds came from distinct real boots" "boot identities match or are missing"
+    else
+        grep -qx 'fcitx_autostart_before_explicit_launch=no' "$D/round2/reboot.txt" 2>/dev/null \
+            && ok "Fcitx did not autostart after the scratch reboot" \
+            || bad "Fcitx did not autostart after the scratch reboot" "round-two prelaunch evidence missing"
+    fi
     h1=$(sed -n 's/^config_hash=//p' "$D/round1/fcitx.process" 2>/dev/null)
     h2=$(sed -n 's/^config_hash=//p' "$D/round2/fcitx.process" 2>/dev/null)
     [ -n "$h1" ] && [ "$h1" = "$h2" ] \
@@ -1208,6 +1308,16 @@ preclick_absence = text.index('[ ! -e "$password_focus" ] || fail "password focu
 password_click = text.index('act click-form', password_visible)
 if not password_visible < preclick_absence < password_click:
     raise SystemExit("password focus evidence must be absent immediately before the injected click")
+password_launch = text[text.index('if [ "$PRODUCTION" = 1 ]; then', password_test):password_visible]
+production_password, legacy_password = password_launch.split('\n    else\n', 1)
+if 'GTK_IM_MODULE=fcitx' in production_password or 'XDG_CONFIG_HOME="$CFG"' in production_password:
+    raise SystemExit("production password Firefox must inherit the shipped input configuration")
+if 'GTK_IM_MODULE=fcitx' not in legacy_password or 'XDG_CONFIG_HOME="$CFG"' not in legacy_password:
+    raise SystemExit("retained conversion password Firefox must keep its isolated configuration")
+round_two = text[text.index('if [ "$SECURITY" = 1 ] && [ "$security_round" = 2 ]'):text.index('\nif [ "$PRODUCTION" = 1 ]; then', text.index('if [ "$SECURITY" = 1 ] && [ "$security_round" = 2 ]'))]
+for required in ('shipped_fcitx_autostart_ready=yes', 'fcitx_autostart_before_explicit_launch=no'):
+    if required not in round_two:
+        raise SystemExit("round two must retain source-specific reboot evidence")
 restore = text[text.index('restore_and_finish()'):text.index('fail() {')]
 loop = restore[restore.index('ibus_deadline='):restore.index('unchanged=no')]
 for required in ('as_desktop_until "$ibus_deadline" systemctl --user is-active',
@@ -1299,7 +1409,8 @@ EOPY
     fi
     checked=$((checked+1))
     if PROFILETEST_FCITX_SECURITY_PROBE=1 PROFILETEST_FCITX_CLIENT_PROBE=0 \
-       sh tools/profiletest.sh boot multilingual 2>&1 | grep -Fq 'requires the Fcitx client probe'; then
+       sh tools/profiletest.sh boot multilingual 2>&1 \
+           | grep -Fq 'requires a Fcitx client or production probe'; then
         printf '    %-62s %s\n' "the Fcitx security stage cannot silently enable its prerequisite" "passes"
     else
         printf '    %-62s %s\n' "the Fcitx security stage cannot silently enable its prerequisite" "FAIL"
@@ -1314,8 +1425,9 @@ EOPY
         printf 'initial_unmapped_before_b_input=yes\nmapped_candidate_while_away=no\nreturn_map_epoch=fresh\npopup_input_grab=no\nb_saved_sentinel=20\na_saved_file_unchanged=yes\n' > "$R/focus-lifecycle.txt"
         printf '20\n' > "$R/focus-b-sentinel.hex"
         printf 'candidate_popup_creations=0\ncandidate_popup_maps=0\ncandidate_popup_configures=0\ncandidate_popup_grabs=0\nlayer_shell_objects=0\nobserved_candidate_popup=no\nfocus_event_observed=yes\nascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\nraw_password_focus_log_retained=no\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' > "$R/password-suppression.txt"
-        printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\ncleanup_pids_gone=1\n' > "$R/restore.txt"
-        printf 'exe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\nconfig_hash=abc\ndisplay_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\n' > "$R/fcitx.process"
+        printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\ncleanup_pids_gone=1\nsource=retained-ibus-conversion\n' > "$R/restore.txt"
+        printf 'exe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\nconfig_hash=abc\ndisplay_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\nboot_id=00000000-0000-4000-8000-00000000000%s\n' "$round" > "$R/fcitx.process"
+        printf 'GDK_BACKEND=wayland\nGTK_IM_MODULE=fcitx\nWAYLAND_DISPLAY=wayland-0\n' > "$R/password.env"
         for app in mousepad firefox; do
             printf '\344\275\240\345\245\275' > "$R/$app.txt"
             printf 'parented_mapped_popup_count=1\npopup_input_grab=no\nlayer_shell_objects=0\n' > "$R/$app-popup.txt"
@@ -1334,6 +1446,76 @@ EOPY
         printf '    %-62s %s\n' "complete bounded Fcitx security evidence" "accepted"
     else
         printf '    %-62s %s\n' "complete bounded Fcitx security evidence" "REFUSED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    production_security_fixture="$T/fcitx-production-security"
+    cp -R "$security_fixture" "$production_security_fixture"
+    for round in 1 2; do
+        R="$production_security_fixture/evidence/round$round"
+        printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\ncleanup_pids_gone=1\nsource=shipped-fcitx\nservice_start_rc=not-needed\nservice_active_seen=no\nservice_identity_seen=no\nservice_identity_stable_seen=no\npinyin_engine_seen=no\n' > "$R/restore.txt"
+        printf 'pid=123\nexe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\nconfig_hash=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ndisplay_unset=yes\nwayland_display_unset=yes\nservice_owner_stable=yes\nboot_id=10000000-0000-4000-8000-00000000000%s\nunit=auros-fcitx.service\nibus_inactive=yes\nstart_time=123\n' "$round" > "$R/fcitx.process"
+    done
+    printf 'shipped_fcitx_autostart_ready=yes\n' > "$production_security_fixture/evidence/round2/reboot.txt"
+    production_security_refuses() {
+        ( fail=0; checked=0; judge_fcitx_security_probe "$1/evidence" "$1/shots" shipped-fcitx >/dev/null 2>&1; echo "$fail" )
+    }
+    if [ "$(production_security_refuses "$production_security_fixture")" = 0 ]; then
+        printf '    %-62s %s\n' "complete shipped Fcitx security evidence" "accepted"
+    else
+        printf '    %-62s %s\n' "complete shipped Fcitx security evidence" "REFUSED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    cp "$production_security_fixture/evidence/round2/fcitx.process" "$T/production.process"
+    sed 's/10000000-0000-4000-8000-000000000002/10000000-0000-4000-8000-000000000001/' \
+        "$T/production.process" > "$production_security_fixture/evidence/round2/fcitx.process"
+    if [ "$(production_security_refuses "$production_security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "production security evidence from the same boot" "refused"
+    else
+        printf '    %-62s %s\n' "production security evidence from the same boot" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    cp "$T/production.process" "$production_security_fixture/evidence/round2/fcitx.process"
+    printf 'unit=auros-profiletest-fcitx-daemon\n' >> "$production_security_fixture/evidence/round1/fcitx.process"
+    if [ "$(production_security_refuses "$production_security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "production security evidence with contradictory service identity" "refused"
+    else
+        printf '    %-62s %s\n' "production security evidence with contradictory service identity" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed -i.bak '/^unit=auros-profiletest-fcitx-daemon$/d' "$production_security_fixture/evidence/round1/fcitx.process"
+    rm "$production_security_fixture/evidence/round1/fcitx.process.bak"
+    printf 'GTK_IM_MODULE=ibus\n' >> "$production_security_fixture/evidence/round1/password.env"
+    if [ "$(production_security_refuses "$production_security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "production password evidence with contradictory input module" "refused"
+    else
+        printf '    %-62s %s\n' "production password evidence with contradictory input module" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed -i.bak '/^GTK_IM_MODULE=ibus$/d' "$production_security_fixture/evidence/round1/password.env"
+    rm "$production_security_fixture/evidence/round1/password.env.bak"
+    printf 'boot_id=20000000-0000-4000-8000-000000000001\n' >> "$production_security_fixture/evidence/round1/fcitx.process"
+    if [ "$(production_security_refuses "$production_security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "production security evidence with duplicate boot identity" "refused"
+    else
+        printf '    %-62s %s\n' "production security evidence with duplicate boot identity" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed -i.bak '/^boot_id=20000000-/d' "$production_security_fixture/evidence/round1/fcitx.process"
+    rm "$production_security_fixture/evidence/round1/fcitx.process.bak"
+    printf 'source=retained-ibus-conversion\n' >> "$production_security_fixture/evidence/round1/restore.txt"
+    if [ "$(production_security_refuses "$production_security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "production security evidence with contradictory source" "refused"
+    else
+        printf '    %-62s %s\n' "production security evidence with contradictory source" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed -i.bak '/^source=retained-ibus-conversion$/d' "$production_security_fixture/evidence/round1/restore.txt"
+    rm "$production_security_fixture/evidence/round1/restore.txt.bak"
+    printf 'fcitx_autostart_before_explicit_launch=no\n' > "$production_security_fixture/evidence/round2/reboot.txt"
+    if [ "$(production_security_refuses "$production_security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "production security evidence without shipped reboot readiness" "refused"
+    else
+        printf '    %-62s %s\n' "production security evidence without shipped reboot readiness" "ACCEPTED"; fail=$((fail+1))
     fi
     checked=$((checked+1))
     password_evidence="$security_fixture/evidence/round1/password-suppression.txt"
@@ -1430,7 +1612,7 @@ if [ "$FCITX_CLIENT_PROBE" = 1 ] && { [ "$IBUS_X11_PROBE" = 1 ] || [ "$IBUS_FUNC
     exit 2
 fi
 if [ "$FCITX_PRODUCTION" = 1 ] && { [ "$FCITX_CLIENT_PROBE" = 1 ] || \
-     [ "$FCITX_SECURITY_PROBE" = 1 ] || [ "$IBUS_X11_PROBE" = 1 ] || \
+     [ "$IBUS_X11_PROBE" = 1 ] || \
      [ "$IBUS_FUNCTIONAL" = 1 ]; }; then
     echo "PROFILETEST_FCITX_PRODUCTION cannot be combined with another input-method probe"
     exit 2
@@ -1447,8 +1629,9 @@ if [ "$FCITX_PRODUCTION" = 1 ] && [ "$P" != multilingual ]; then
     echo "PROFILETEST_FCITX_PRODUCTION=1 is only valid for multilingual"
     exit 2
 fi
-if [ "$FCITX_SECURITY_PROBE" = 1 ] && [ "$FCITX_CLIENT_PROBE" != 1 ]; then
-    echo "PROFILETEST_FCITX_SECURITY_PROBE=1 requires the Fcitx client probe"
+if [ "$FCITX_SECURITY_PROBE" = 1 ] && \
+   [ "$FCITX_CLIENT_PROBE" != 1 ] && [ "$FCITX_PRODUCTION" != 1 ]; then
+    echo "PROFILETEST_FCITX_SECURITY_PROBE=1 requires a Fcitx client or production probe"
     exit 2
 fi
 INPUT_FUNCTIONAL=$IBUS_FUNCTIONAL
@@ -2027,6 +2210,9 @@ if [ "$FCITX_CLIENT_PROBE" = 1 ]; then
 fi
 if [ "$FCITX_PRODUCTION" = 1 ]; then
     judge_fcitx_production "$EV/fcitx" "$EV"
+    if [ "$FCITX_SECURITY_PROBE" = 1 ]; then
+        judge_fcitx_security_probe "$EV/fcitx" "$EV" shipped-fcitx
+    fi
 fi
 drawn_enough "$S1" && ok "the screen shows a desktop ($S1)" \
                    || bad "the screen shows a desktop" "$S1"
