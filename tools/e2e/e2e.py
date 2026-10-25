@@ -1631,37 +1631,77 @@ class Flow:
         The dialog body names VLC itself, so that text below the privacy title
         is mapped-app attribution which Software's listing cannot supply.
         """
-        privacy = vision.find_text(words, "Privacy and Network Access Policy")
+        top = max(120, screen_h // 5)
+        privacy = cls.program_unique_phrase(
+            words, ("Privacy and Network Access Policy",
+                    "Privacy Network Access Policy"),
+            lambda box: box[1] + box[3] <= top and box[3] >= 16)
         if not privacy:
             return None
         px, py, pw, ph = privacy
         identity = cls.program_window_identity(words, screen_h, app_name)
+        task_identity = cls.program_unique_phrase(
+            words, app_name + " media player",
+            lambda box: box[1] >= screen_h - top)
         mapped_identity = cls.program_privacy_window_identity(words, screen_h, app_name)
         if mapped_identity:
             identity = mapped_identity
         dialog_identity = None
-        named = vision.find_text(words, app_name + " media player")
+        named = cls.program_unique_phrase(
+            words, app_name + " media player",
+            lambda box: (py + ph < box[1] <= py + ph + 250 and
+                         px - 100 <= vision.centre(box)[0] <= px + pw + 400))
         if named:
-            _, ny, _, _ = named
-            ncx, _ = vision.centre(named)
-            if (py + ph < ny <= py + ph + 250 and
-                    px - 100 <= ncx <= px + pw + 400):
-                dialog_identity = "privacy dialog", named
-                if mapped_identity:
-                    identity = dialog_identity
+            dialog_identity = "privacy dialog", named
+            if mapped_identity:
+                identity = dialog_identity
+        continue_words = []
         buttons = []
         for word in words:
             if re.sub(r"[^a-z]", "", word.get("text", "").lower()) != "continue":
                 continue
+            continue_words.append(word)
             box = (word.get("x", 0), word.get("y", 0),
                    word.get("w", 0), word.get("h", 0))
             cx, cy = vision.centre(box)
             if px <= cx <= px + pw and py + ph < cy <= py + ph + 300:
                 buttons.append(box)
         proceed = buttons[0] if identity and len(buttons) == 1 else None
-        if dialog_identity and mapped_identity and not buttons:
+        if (dialog_identity and (mapped_identity or task_identity) and
+                not continue_words):
+            identity = dialog_identity
             proceed = "focused default"
         return identity, proceed
+
+    @staticmethod
+    def program_unique_phrase(words, phrase, in_band):
+        """One exact contiguous OCR phrase whose box is in ``in_band``."""
+        lines = {}
+        for word in words:
+            raw_line = word.get("line")
+            key = tuple(raw_line) if isinstance(raw_line, (list, tuple)) else (raw_line,)
+            lines.setdefault(key, []).append(word)
+        phrases = (phrase,) if isinstance(phrase, str) else phrase
+        wanted_phrases = [[re.sub(r"[^a-z0-9]", "", token.lower())
+                           for token in value.split()] for value in phrases]
+        found = []
+        for line in lines.values():
+            line = sorted(line, key=lambda word: word.get("x", 0))
+            tokens = [re.sub(r"[^a-z0-9]", "", word.get("text", "").lower())
+                      for word in line]
+            for wanted in wanted_phrases:
+                for start in range(len(tokens) - len(wanted) + 1):
+                    if tokens[start:start + len(wanted)] != wanted:
+                        continue
+                    matched = line[start:start + len(wanted)]
+                    x0 = min(word.get("x", 0) for word in matched)
+                    y0 = min(word.get("y", 0) for word in matched)
+                    x1 = max(word.get("x", 0) + word.get("w", 0) for word in matched)
+                    y1 = max(word.get("y", 0) + word.get("h", 0) for word in matched)
+                    box = x0, y0, x1 - x0, y1 - y0
+                    if in_band(box) and box not in found:
+                        found.append(box)
+        return found[0] if len(found) == 1 else None
 
     @classmethod
     def program_privacy_window_identity(cls, words, screen_h, app_name):

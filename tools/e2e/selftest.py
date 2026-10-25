@@ -921,7 +921,7 @@ def test_store_open_click_boundary():
 def test_program_launch_proof():
     """Store listing and preview text are not proof that the program launched."""
     try:
-        import e2e
+        import e2e, vision
     except ImportError:
         return
 
@@ -965,23 +965,77 @@ def test_program_launch_proof():
     failed = task + error_words
     check(e2e.AurFlow.program_launch_error(failed) == "Sorry, something went wrong",
           "launch: the real Software error toast is RED even if app identity also appears")
-    privacy = [word(text, 250 + offset * 85, 400, line=6)
+    privacy = [word(text, 250 + offset * 85, 80, line=6)
                for offset, text in enumerate(("Privacy", "and", "Network", "Access", "Policy"))]
     check(e2e.AurFlow.program_launch_error(privacy) is None and
           e2e.AurFlow.program_privacy_step(privacy, 800, "VLC") == (None, None),
           "launch: an unattributed privacy dialog is neither an app nor a store launch error")
     privacy_step = privacy + [word("VLC", 350, 688, line=2),
-                              word("Continue", 520, 520, line=7)]
+                              word("Continue", 520, 250, line=7)]
     privacy_identity, privacy_continue = e2e.AurFlow.program_privacy_step(
         privacy_step, 800, "VLC")
     check(privacy_identity[0] == "window task" and privacy_continue is not None and
           e2e.AurFlow.program_window_proven(privacy_step, 800, "VLC", controls) is None,
           "launch: attributed privacy Continue is a transition, never final app proof")
     wrong_continue = privacy + [word("VLC", 350, 688, line=2),
-                                word("Continued", 520, 520, line=7),
-                                word("Continue", 900, 520, line=8)]
+                                word("Continued", 520, 250, line=7),
+                                word("Continue", 900, 250, line=8)]
     check(e2e.AurFlow.program_privacy_step(wrong_continue, 800, "VLC")[1] is None,
           "launch: a prefix or unrelated Continue cannot satisfy VLC's modal")
+
+    body = [word(text, 350 + offset * 55, 180, w=50, line=27)
+            for offset, text in enumerate(("VLC", "media", "player"))]
+    vlc_task = [word(text, 800 + offset * 45, 688, w=40, line=28)
+                for offset, text in enumerate(("VLC", "media", "player"))]
+    task_modal = privacy + body + vlc_task
+    task_identity, task_continue = e2e.AurFlow.program_privacy_step(
+        task_modal, 800, "VLC")
+    check(task_identity[0] == "privacy dialog" and task_continue == "focused default",
+          "launch: exact modal body plus one exact VLC task permits one focused default")
+    check(e2e.AurFlow.program_privacy_step(
+              privacy + body, 800, "VLC")[1] is None,
+          "launch: dialog title and body without a mapped VLC task are inert")
+    foreign_task = [word(text, 800 + offset * 45, 688, w=40, line=28)
+                    for offset, text in enumerate(("Other", "media", "player"))]
+    check(e2e.AurFlow.program_privacy_step(
+              privacy + body + foreign_task, 800, "VLC")[1] is None,
+          "launch: a foreign app task cannot authorize VLC's focused default")
+    plural_body = [word(text, 350 + offset * 55, 180, w=50, line=27)
+                   for offset, text in enumerate(("VLC", "media", "players"))]
+    check(e2e.AurFlow.program_privacy_step(
+              privacy + plural_body + vlc_task, 800, "VLC")[1] is None,
+          "launch: a prefixed modal body cannot authorize the focused default")
+    duplicate_body = body + [word(text, 600 + offset * 55, 220, w=50, line=32)
+                             for offset, text in enumerate(("VLC", "media", "player"))]
+    check(e2e.AurFlow.program_privacy_step(
+              privacy + duplicate_body + vlc_task, 800, "VLC")[1] is None,
+          "launch: duplicate exact modal attribution is ambiguous and fails closed")
+    duplicate_task = vlc_task + [word(text, 600 + offset * 45, 650, w=40, line=29)
+                                 for offset, text in enumerate(("VLC", "media", "player"))]
+    check(e2e.AurFlow.program_privacy_step(
+              privacy + body + duplicate_task, 800, "VLC")[1] is None,
+          "launch: duplicate VLC tasks are ambiguous and fail closed")
+    check(e2e.AurFlow.program_privacy_step(
+              task_modal + [word("Continue", 1000, 500, line=31)], 800, "VLC")[1] is None,
+          "launch: fallback is forbidden when Continue OCR exists outside the dialog")
+    duplicate_dialog = privacy + [word(text, 500 + offset * 60, 120, w=55, line=30)
+                                  for offset, text in enumerate(
+                                      ("Privacy", "and", "Network", "Access", "Policy"))]
+    check(e2e.AurFlow.program_privacy_step(
+              duplicate_dialog + body + vlc_task, 800, "VLC") is None,
+          "launch: two top-level privacy dialogs are ambiguous and fail closed")
+
+    if shutil.which("tesseract"):
+        shot = vision.load(os.path.join(
+            fixtures, "program-open-vlc-privacy-task-40152103698.png"))
+        actual_words = vision.ocr(shot)
+        actual_identity, actual_continue = e2e.AurFlow.program_privacy_step(
+            actual_words, shot.shape[0], "VLC")
+        check(actual_identity[0] == "privacy dialog" and
+              actual_continue == "focused default",
+              "launch: run 40152103698's genuine VLC modal and task permit one Enter")
+    else:
+        check(True, "launch: real task/modal screenshot OCR waits for tesseract")
 
     real_privacy = json.load(open(os.path.join(fixtures, "program-open-vlc-privacy.json")))
     real_identity, real_continue = e2e.AurFlow.program_privacy_step(
