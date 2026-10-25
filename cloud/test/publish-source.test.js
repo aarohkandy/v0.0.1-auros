@@ -27,3 +27,16 @@ test('on-mode log proof requires both exact smoke refusal routes', () => {
   writeFileSync(file,'unparseable but nonempty\n');
   assert.notEqual(spawnSync(process.execPath,[new URL('./log-assert.mjs',import.meta.url).pathname,file,'on']).status,0);
 });
+
+test('publication logs reject unrelated traffic, other attempts and partial identity', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'auros-correlated-')); const file = join(dir,'logs');
+  const identity = {deployment_source:'a'.repeat(40), deployment_nonce:'b'.repeat(64), smoke_correlation:'c'.repeat(64)};
+  const expectedEnv = {...process.env, DEPLOYMENT_SOURCE_SHA:identity.deployment_source, DEPLOYMENT_NONCE:identity.deployment_nonce, SMOKE_CORRELATION_TOKEN:identity.smoke_correlation};
+  for (const [extra,success] of [[{},false],[identity,true],[{...identity,deployment_source:'d'.repeat(40)},false],[{...identity,deployment_nonce:'d'.repeat(64)},false],[{...identity,smoke_correlation:'d'.repeat(64)},false]]) {
+    const rows=['/v1/wish','/v1/ask'].map(route=>({ev:'req',route,status:401,...extra}));
+    writeFileSync(file,JSON.stringify(rows.map(x=>JSON.stringify(x)))+'\n');
+    const result=spawnSync(process.execPath,[new URL('./log-assert.mjs',import.meta.url).pathname,file,'on'],{env:expectedEnv});
+    assert.equal(result.status===0,success);
+  }
+  assert.notEqual(spawnSync(process.execPath,[new URL('./log-assert.mjs',import.meta.url).pathname,file,'on'],{env:{...expectedEnv,SMOKE_CORRELATION_TOKEN:''}}).status,0);
+});

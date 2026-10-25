@@ -104,6 +104,10 @@ esac
     FAKE_SECRET_LIST: JSON.stringify(["TOKEN_SECRET", ...secretNames].map((name) => ({ name, type: "secret_text" }))),
     COMMAND_RECORD: record,
     GITHUB_OUTPUT: join(dir, "github-output"),
+    GITHUB_ENV: join(dir, "github-env"),
+    DEPLOYMENT_SOURCE_SHA: "a".repeat(40),
+    DEPLOYMENT_NONCE: "b".repeat(64),
+    SMOKE_CORRELATION_TOKEN: "c".repeat(64),
     GITHUB_STEP_SUMMARY: join(dir, "summary"),
     ANTHROPIC_WORKSPACE_ID: "workspace-test",
     ANTHROPIC_API_KEY: "anthropic-do-not-print",
@@ -279,4 +283,16 @@ test("monitor and publisher share versioned public addresses", () => {
   assert.match(monitor, /tools\/site\/publish_settings.py --github-env/);
   assert.match(monitor, /s\/\^AUROS_WISHES_URL=\/WISHES_URL=\/p/);
   assert.doesNotMatch(monitor, /vars\.AUROS_(WISHES_URL|DOMAIN)/);
+});
+
+
+test("cloud evidence binds deployed identity before smoke and proof upload", () => {
+  assert.ok(workflow.indexOf('name: Public endpoint identifies the deployed Worker') < workflow.indexOf('name: Live end to end, with its logs captured'));
+  assert.ok(workflow.indexOf('name: Bind reusable cloud publication proof') > workflow.indexOf('node test/publication-evidence.mjs'));
+  assert.match(deployScript, /DEPLOYMENT_SOURCE_SHA:\$DEPLOYMENT_SOURCE_SHA/);
+  assert.match(deployScript, /DEPLOYMENT_NONCE:\$DEPLOYMENT_NONCE/);
+  assert.match(workerSecretsScript, /secret put SMOKE_CORRELATION_TOKEN/);
+  assert.doesNotMatch(deployScript, /--var.*SMOKE_CORRELATION_TOKEN/);
+  assert.match(workflow, /name: cloud-publication-proof-\$\{\{ github.run_attempt \}\}/);
+  assert.match(workflow, /src\/customize\/recipe-v1.schema.json/);
 });

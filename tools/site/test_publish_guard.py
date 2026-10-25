@@ -20,7 +20,7 @@ class PublicationTests(unittest.TestCase):
     def setUp(self):
         self.run = dict(id=12, run_attempt=1, head_sha=SHA, head_branch='main',
                         path='.github/workflows/cloud.yml', repository={'full_name': REPOSITORY},
-                        event='push', status='completed', conclusion='success')
+                        event='push', status='completed', conclusion='success', run_started_at='2026-10-24T10:00:00Z')
         self.jobs = [dict(name='deploy', conclusion='success', steps=[
             dict(name=name, conclusion='success') for name in guard.CLOUD_STEPS])]
         self.current = dict(source_sha=SHA, settings_sha256='e' * 64, variables={'AUROS_DOMAIN': '', 'AUROS_WISHES_URL': ''})
@@ -102,7 +102,7 @@ class PublicationTests(unittest.TestCase):
             guard.cloud_run_status(self.run, jobs, SHA, REPOSITORY)
 
     def test_absent_cloud_evidence_times_out_without_publish(self):
-        with self.assertRaisesRegex(ValueError, 'absent or timed out'):
+        with patch.object(guard, 'dependency_digest', return_value='d' * 64), self.assertRaisesRegex(ValueError, 'absent or timed out'):
             guard.wait_cloud(REPOSITORY, SHA, read=lambda *_: {'workflow_runs': [], 'total_count': 0}, deadline_seconds=0)
 
     def test_latest_attempt_not_old_success(self):
@@ -110,13 +110,13 @@ class PublicationTests(unittest.TestCase):
         def read(repo, suffix):
             calls.append(suffix)
             if 'workflows/' in suffix:
-                return {'workflow_runs': [{'id': 11}, {'id': 12}], 'total_count': 2}
-            if suffix == 'actions/runs/12':
+                return {'workflow_runs': [self.run], 'total_count': 1}
+            if suffix in ('actions/runs/12', 'actions/runs/12/attempts/2'):
                 return dict(self.run, conclusion='failure', run_attempt=2)
             if suffix == 'actions/runs/12/attempts/2/jobs?per_page=100':
                 return {'jobs': self.jobs, 'total_count': 1}
             raise AssertionError(suffix)
-        with self.assertRaises(ValueError):
+        with patch.object(guard, 'dependency_digest', return_value='d' * 64), self.assertRaises(ValueError):
             guard.wait_cloud(REPOSITORY, SHA, read=read, deadline_seconds=0)
         self.assertTrue(any('/attempts/2/jobs' in item for item in calls))
 
