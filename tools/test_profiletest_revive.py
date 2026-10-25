@@ -1,5 +1,6 @@
 """Reducers must reject false success, identity drift and unrelated OCR text."""
 import copy
+import gzip
 import importlib.util
 import json
 from pathlib import Path
@@ -132,6 +133,26 @@ class ReviveTest(unittest.TestCase):
         p = self.path / 'abiword.ocr.txt.binding.json'
         data = json.loads(p.read_text()); data['image_sha256'] = '0' * 64
         p.write_text(json.dumps(data)); self.refused()
+
+    def test_retained_image_identity_and_bytes(self):
+        image = self.path / 'image'; image.write_bytes(b'exact image')
+        packed = self.path / 'auros-revive.img.gz'
+        packed.write_bytes(gzip.compress(image.read_bytes()))
+        manifest = probe.retain(image, self.path, 'a' * 40, 'owner/repo', 123)
+        self.assertEqual(manifest['raw']['bytes'], 11)
+        self.assertEqual(manifest['profile'], 'revive')
+        self.assertEqual(manifest['image_run_id'], 123)
+        self.assertEqual(manifest['source_sha'], 'a' * 40)
+        self.assertEqual(json.loads((self.path / 'manifest.json').read_text()), manifest)
+        packed.write_bytes(gzip.compress(b'different image'))
+        with self.assertRaises(ValueError):
+            probe.retain(image, self.path, 'a' * 40, 'owner/repo', 123)
+        self.assertFalse((self.path / 'manifest.json').exists())
+
+    def test_retention_refuses_invalid_source(self):
+        for sha, repo, run in [('main', 'owner/repo', 1), ('a' * 40, 'owner/repo/extra', 1), ('a' * 40, 'owner/repo', 0)]:
+            with self.assertRaises(ValueError):
+                probe.retain('missing', self.path, sha, repo, run)
 
     def test_unknown_fields(self):
         self.result['unreviewed'] = True
