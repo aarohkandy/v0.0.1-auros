@@ -22,6 +22,14 @@ set -u
 export LC_ALL=C DEBIAN_FRONTEND=noninteractive
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 KR=$ROOT/rootfs/usr/share/keyrings/auros-archive-keyring.asc
+PROFILE=desktop
+case "$#:${1:-}" in
+    0:) ;;
+    2:--profile) PROFILE=$2 ;;
+    *) echo 'usage: channelcheck.sh [--profile desktop|revive|multilingual]' >&2; exit 2 ;;
+esac
+AC=(bash "$ROOT/build/aptchannel" --profile "$PROFILE")
+"${AC[@]}" descriptor >/dev/null || exit 2
 fail=0; checked=0
 ok()  { checked=$((checked+1)); printf '    %-66s ok\n' "$1"; }
 bad() { checked=$((checked+1)); fail=$((fail+1)); printf '    %-66s FAIL\n' "$1"; shift; for m in "$@"; do printf '      %s\n' "$m"; done; }
@@ -34,16 +42,16 @@ for i in 1 2 3; do
 done
 command -v gpg >/dev/null && command -v curl >/dev/null || need "could not install gnupg and curl"
 [ -s "$KR" ] || need "no committed keyring at $KR"
-URL=$(bash "$ROOT/build/aptchannel" url) || need "no address"
+URL=$("${AC[@]}" url) || need "no address"
 
 # apt, pointed at one source only, with the keyring as the image has it.
 mkdir -p /usr/share/keyrings /etc/apt/preferences.d
 cp "$KR" /usr/share/keyrings/auros-archive-keyring.asc
-cp "$ROOT/rootfs/etc/apt/preferences.d/auros" /etc/apt/preferences.d/
+"${AC[@]}" preferences > /etc/apt/preferences.d/auros
 only() { # URI  -> apt with just the AurOS source at URI, empty lists
     local T=$1 uri=$2
     rm -rf "$T"; mkdir -p "$T/parts" "$T/lists/partial" "$T/cache/archives/partial"
-    bash "$ROOT/build/aptchannel" source "$uri" > "$T/parts/auros.sources"
+    "${AC[@]}" source "$uri" > "$T/parts/auros.sources"
     O=(-o Dir::Etc::sourcelist=/dev/null -o Dir::Etc::sourceparts="$T/parts"
        -o Dir::State::lists="$T/lists" -o Dir::Cache="$T/cache" -o APT::Sandbox::User=root)
     A=(apt-get -q "${O[@]}"); C=(apt-cache "${O[@]}")
@@ -62,6 +70,12 @@ mkdir -p /tmp/dl && cd /tmp/dl && rm -f ./*.deb
 "${A[@]}" download auros auros-desktop auros-first auros-bootchain auros-ferry auros-config auros-archive-keyring > /tmp/dl.log 2>&1
 n=$(ls ./*.deb 2>/dev/null | wc -l)
 [ "$n" -ge 6 ] && ok "the packages download through apt, verified ($n .debs)" || bad "the packages download through apt, verified" "$n .debs" "$(tail -5 /tmp/dl.log)"
+seen_profile=
+for d in ./*.deb; do
+    identity=$("${AC[@]}" package-profile "$d") || { bad "downloaded package profile: $d"; continue; }
+    [ -z "$seen_profile" ] || [ "$seen_profile" = "$identity" ] || bad "mixed legacy and identified packages"
+    seen_profile=$identity
+done
 vs=$(for d in ./*.deb; do dpkg-deb -f "$d" Version; done | sort -u | wc -l)
 [ "$vs" = 1 ] && ok "every part is at one version" || bad "every part is at one version" "$(for d in ./*.deb; do echo "$d $(dpkg-deb -f "$d" Version)"; done)"
 cmp -s <(dpkg-deb --fsys-tarfile ./auros-archive-keyring_*.deb | tar -xO ./usr/share/keyrings/auros-archive-keyring.asc) "$KR" &&
@@ -71,8 +85,10 @@ cd /
 echo
 echo "== 2. the same index, re-signed with another key"
 rm -rf /tmp/evil && mkdir -p /tmp/evil/srv
-for f in Packages Packages.gz Release; do curl -fsSL --retry 3 -o "/tmp/evil/srv/$f" "$URL$f" || need "could not fetch $f"; done
+for f in Packages Packages.gz Release InRelease Release.gpg; do curl -fsSL --retry 3 -o "/tmp/evil/srv/$f" "$URL$f" || need "could not fetch $f"; done
 for f in $(sed -n 's/^Filename: \.\///p' /tmp/evil/srv/Packages); do curl -fsSL --retry 3 -o "/tmp/evil/srv/$f" "$URL$f" || need "could not fetch $f"; done
+"${AC[@]}" verify /tmp/evil/srv "$KR" >/tmp/profile-verify.log 2>&1 &&
+    ok "signed channel and package identities match $PROFILE" || bad "signed channel and package identities match $PROFILE" "$(cat /tmp/profile-verify.log)"
 export GNUPGHOME=/tmp/evil/g; mkdir -m 700 "$GNUPGHOME"
 gpg --batch --quiet --passphrase '' --quick-gen-key 'not AurOS' ed25519 sign 1d 2>/dev/null
 gpg --batch --yes --quiet --digest-algo SHA512 -u 'not AurOS' --clearsign -o /tmp/evil/srv/InRelease /tmp/evil/srv/Release
