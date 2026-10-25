@@ -2,18 +2,21 @@
 
 Owner authorization on 24 October 2026: implement, test adversarially, use bounded parallel agents, and push verified checkpoints to `aarohkandy/v0.0.1-auros`. The target is a nontechnical person describing the system they want, receiving it quickly, installing it safely, and using it without a terminal or helper.
 
-## Current checkpoint (25 October, 00:22 UTC)
+## Current checkpoint (25 October, 04:56 UTC)
 
-This section is the current summary; the chronological checkpoints below retain
-earlier failures and superseded evidence deliberately.
+Chronological entries below preserve failures, prior hypotheses and superseded evidence.
 
-- Candidate `e0d0aadc`, [build/release run 40138682256](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40138682256), passed its full image suite and published prerelease `v0.1.0-e0d0aad`. Source publication and notice checks passed. It is not public latest.
-- Exact-image [hardening run 40140266950](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40140266950) passed 72 hardening and 14 clock checks; `hardengate.sh` accepts it for this candidate.
-- All four Windows journeys failed: fastpath base clicked the search entry instead of the VLC result; ordinary base installed VLC but Open did not map a program window; ordinary BitLocker refused on its legacy path; fastpath BitLocker failed the harness's pre-install baseline capture. The strict launch check correctly rejected the store preview. App launch, encrypted-drive return and file-preserving recovery remain unproved. The older c1 app-launch result was invalidated and must not be reused.
-- The release Windows job failed its fastpath no-scroll fixture. The working branch already has its tested correction and a visible, accessible drive-protection confirmation, but this candidate does not contain them. Do not rerun the unchanged installer expecting a different result.
-- Multilingual diagnostic `40144734247` passed both boots of its then-current live checks, then failed evidence persistence. Follow-ups repair persistence, enforce a fresh focus marker and reject ambiguous password evidence. `40145440411` stopped at second-window visibility; `40145726339` attempt 1 stopped at an inconsistent Mozilla package index before testing. Attempt 2 is running. Full diagnostic proof remains open. Production remains IBus, with a stale startup warning visible in retained screenshots; Fcitx is not activated.
-- `codex/delivery` retains installer follow-ups, the software startup race repair, store selection/privacy-dialog test repairs, image-integrity checks, and reduced artifact downloads for the next combined candidate. Two focused reproductions launched real VLC from Software, including one byte-exact image; the original Open no-op remains an intermittent unresolved risk. Preserve exact source/artifact identity when using earlier evidence.
-- Public delivery remains disabled pending signing/service configuration and release proof. Managed profiles, physical-PC tests, contact/name decisions, held encryption work and unfinished Wishes actions remain open. No zero-vulnerability or end-to-end completion claim is justified.
+- Candidate `3629b114` fastpath base journey is now proven by `40153730622`: exact EXE `b5440e94d2a576e38003a2ff69bb440bc60a496cbe72e405c6ba1fd948a54e26`, website through Windows installation/restart and real installed VLC controls in 9m29s. Lead inspected the final actual-player screenshot. This is Windows 11 VM proof, not physical-PC, personalized signing, or later product changes.
+- Exact-image hardening `40151838977` passed 72 hardening and 14 clock checks. `hardengate.sh 40148012698` accepted exact source/image binding. Original candidate build/release `40148012698` remains failed because its earlier Windows harness lanes failed; it must not be represented as an overall green release. Full image suite, prerelease readback, navigation/download and site/source publication passed.
+- Exact BitLocker/putback run `40157169797` is CANCELLED/INCONCLUSIVE. FullyEncrypted/On/100%, baseline and exact EXE hash passed; named MSAA controls worked through Install. No visible progress for the final20 minutes; Restart, AurOS and putback were not reached. Artifact SHA `46494186fa27db0989140fa8282c6354420df9bf214799a9234f993cbd4f5543` under `/tmp/auros-40157169797-final.86OnPP/`. Code review found a concrete unbounded serial UIA/MSAA reader risk, not a confirmed root cause of this run. Bounded diagnostics, independent disk counters and per-request child-process accessibility isolation are integrated and pushed on delivery/candidate branches. Native Windows proof passed in full workflow `40161803540` at candidate `6a732d79`; one replacement encrypted-drive/putback run `40161971669` is active. Default promotion `65f55242` remains held.
+- Production multilingual diagnostic `40156605186` passed 71 checks across two real boots of candidate `3629b114`: exact composition, visible candidates, authenticated Mousepad focus transitions, standalone password value/focus/no composition and zero popup events through shutdown, service identity/autostart, unchanged settings and cleanup. Firefox connection identity and native form/navigation/password-manager behavior remain unproven. Artifact `12585600815` retains the evidence.
+- Delivery-only cache change `66ea5776` reuses the clean base Windows cache for BitLocker tests. Encryption is enabled and verified only in the disposable disk/firmware/TPM copy. Scoped independent review, E2E selftests on the worker branch and integrated workflow lint passed. It is held out of main for the next batched candidate, leaving the current test unchanged.
+- Delivery-only Wi-Fi fix `7210f1ef` / `f1683bd9` defers plaintext carry-over until Restart now, cleans uncertain failures and discloses the copy. Focused Windows `40149373093` passed seven jobs; normal/large-text screenshots were inspected. This is not in candidate `3629b114`.
+- Delivery-only cloud/customization/publisher integration passes 125 cloud tests, 56 customization tests, 38 publishing tests, 30 workflow checks and 560 browser/API checks. Public build delivery remains disabled. GitHub App, signing configuration, actual signed personalized delivery and owner setup are still required; no remote secret or service activation occurred.
+- Delivery-only night-light action `b1902a24` + `00e97b1e` implements strict boolean input, prior-state Undo, untinted screenshots and nonaccumulating full-frame tint. Lead found and worker fixed a reachable stale-layout sizing defect. Linux validation: 22 pixel/safety checks with sanitizers, 22 real-engine e2e checks, 8 UI checks, 37 mutants killed, both enabled/disabled shell builds, independent review. Wishes remains disabled/zero-budget; no physical-device performance claim and no image rebuild yet.
+- Main-based candidate branch `codex/product-batch-prepromotion` in `/tmp/auros-product-batch-prepromotion` is assembled through `a1a8caf5`, pushed for isolated Windows/recovery verification and without the held default. New site activation consistency, deterministic cloud concurrency, dormant profile update isolation/signed-index verification, Revive runtime probe and scoped installer ETA changes are included. Combined cloud108/108, site556/556, update85/85, profile reducer23, existing profile105 and workflow29 checks passed; native ETA build/nav/selftest passed under Wine. These are bounded local/integration results, not a green new image release.
+- Revive functional probe covers Firefox and AbiWord physical-input/document use under2GiB with exact process/display identity and post-use health checks; runtime remains unproven and Gnumeric remains untested. `[revive-functional]` selects its next image run and two-day exact-image retention. Personal profile update tooling is dormant; no non-desktop image channel or publishing was enabled.
+- Five profiles share the Ubuntu base; managed enrollment, remaining Wishes actions, held encryption integration, physical-PC campaign, product name/contact and public release conditions remain open. No full-product completion or zero-vulnerability claim is justified.
 
 ## Starting evidence
 
@@ -40,15 +43,15 @@ The completed path must connect request, validation, consent, artifact identity,
 - [x] Wishes UI owner: standalone paint/end-to-end harness seams repaired; the full Wishes UI, paint, end-to-end and mutation job passes on `c1ba6ee5`. Feature remains disabled pending its separate activation requirements.
 - [x] Installer safety owner: recover S-04, refuse before table commit when boot-entry creation fails, verify focused fault paths. Exact new-candidate Windows journey remains a separate release gate.
 - [x] Bootstrapper owner: recover B's protected Windows loader design and validate Windows runner hostile-DLL/junction cases. Physical Windows 11 proof remains separate.
-- [ ] Lead: integrate CIW regression coverage and verify the tests exercised match the shipped path.
+- [x] CIW regression coverage is integrated in the unit and shipped-image suites; the candidate image suite passed. Exact Windows and physical-machine proof remain Stage 3 gates.
 - [x] Independent handover review: kernel/modules, network/time, mounts, devices/display, PID1/services reviewed and concrete findings repaired. Runtime installed-session proof remains required.
 
 ### Stage 2 Build a reusable customization path
 
 - [x] Contract owner: strict schema, stable profile catalogue, deterministic compilation, policy preservation, hostile-input tests. Cross-Python depth behavior and dirty-CI fixture repair are included in the follow-up checkpoint.
 - [x] Website owner: accessible request/review flow and honest artifact status implemented; 548 browser checks pass, including the real local API/compiler/ledger with only GitHub verification mocked. Public build service remains disabled.
-- [ ] Delivery adapter: choose and implement authenticated recipe transport to the installer; pin base artifact and configuration digest; reject mismatches, stale/unsupported recipes and downgrade attempts.
-- [ ] Installer/first-boot adapter: apply only allowlisted preferences, retain policy constraints and rollback behavior, confirm requested result in the installed system.
+- [x] Delivery adapter implemented: bounded authenticated requests, fixed build workflow, exact base/artifact/digest binding, immutable signed evidence validation and stale/mismatch refusal. Service activation and one real signed personalized journey remain Stage 3 gates.
+- [x] Installer/first-boot adapter implemented: validated baked desktop recipes, checked restart handover, allowlisted atomic application/receipt and exact installed-state certification checks. A real signed personalized Windows installation remains unproved.
 - [x] Agent extension contract: permitted extension points and required tests documented in `docs/AGENT-EXTENSIONS.md`.
 - [ ] Wishes: finish missing action implementations/configuration/voice dependencies and real-image tests before enabling. No budget or model-spend changes without explicit accounting.
 
@@ -751,3 +754,257 @@ one desktop candidate with four Windows journeys, plus one fresh multilingual
 image/production functional test. Let exact-build hardening start automatically.
 No latest/public promotion. The next results must settle any remaining launch,
 BitLocker-return, recovery, and shipped-profile failures.
+
+## Candidate 3629b114 and corrected dispatch-control evidence
+
+Combined main candidate `3629b114d4bcd1ff74a18fbeb3072bc9d5512110` is under
+[build run 40148012698](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40148012698)
+and [multilingual run 40148012574](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40148012574).
+The same-commit standalone push E2E is intentionally skipped; release-called
+Windows journeys must run against this candidate. Do not manually duplicate
+hardening. The legal check passed; no image/installed-journey verdict yet.
+
+The direct installed-VLC control finally verified actual instrumentation in
+stock GNOME Software: action=5 launch job, exact Flatpak ownership/object ID,
+libflatpak success, and an app scope. Its screenshot **does not show mapped VLC**:
+lead inspection found only Software's embedded Big Buck Bunny preview. The
+diagnostic driver falsely matched preview text and stopped too early. The
+agent's initial mapped-window/root-cause claims were corrected; no production
+code uses that diagnostic driver. This control proves dispatch only, not first
+install, visible app readiness, or root cause of the earlier failures.
+
+Corrected evidence is `/tmp/auros-vlc-focused-control/focused-control-evidence/`,
+with `README.md` and `SCREENSHOT-INTERPRETATION.md`; archive SHA-256
+`abaac545801ff47c7aa94a8cbbedc886ee4e0615e5aad6d238b8cc09e905a1a2`.
+Remote mirror is `~/work/auros-vlc-exact/out/focused-control-evidence/`.
+Owned diagnostic overlays/processes were removed; exact original raw image
+remains verified. Earlier `0039-failure.png` genuinely shows VLC privacy/main
+windows but belongs to a different run. Keep these claims separate.
+
+The dispatch-control evidence now also contains the exact original interposer
+source and driver plus reproduction instructions. Rebuilding at the recorded
+path reproduced the shim hash. Its visual predicate defect remains explicitly
+documented; the preserved code is diagnostic-only.
+
+Fresh multilingual run `40148012574` passed 48 checks on candidate `3629b114`;
+lead inspected the actual Mousepad/Firefox candidate screenshots and exact
+`你好` outputs. Raw image SHA-256 is
+`42359c4847a1a696a21c5b5350f4574a2970bb1d4d8f7df42c8336157a1696fa`.
+This is one production functional boot, not the retained image's two-round
+security proof and not a multilingual Windows-install journey.
+
+Default-promotion preparation exposed a separate Wi-Fi persistence issue:
+plaintext carry-over data is written before Restart later returns. The next
+installer fix must delay that write until Restart now/arming, disclose the
+password copy beside the checkbox, and test waiting/abort/failure paths.
+Fastpath remains non-default. Transfer-report text now distinguishes Ferry's
+no-password behavior from Setup's optional connected-network carry-over.
+
+## Disabled delivery configuration checkpoint
+
+The workflow now stages the three custom-delivery secrets via stdin and passes
+the two App IDs as variables. Explicit enabled deployments require complete
+validated settings and pre-staged secret names. Runtime admission independently
+requires positive App IDs and an importable RSA key, covering manual deployments
+that bypass the workflow. Missing/invalid settings return opaque disabled
+responses. The missing-App-ID regression failed before the fix.
+
+Worker commits `409a0b75`, `d0eca3cb`, `09f81175`, and `e3992253` were reviewed
+and integrated as `b6091c96`, `d1839444`, `f5c5c218`, and `21b936bd`. Independent
+reviewers were `installed_vlc_launch/config_gate_review` and
+`delivery_deployment_wiring/wiring_final_review`. Lead caught the browser
+fixture integration dependency and corrected an unsupported assumption that
+the old Worker is disabled on every future enabled deployment.
+
+Combined cloud tests: 100/100; workflows: 29 valid; site fixture: 556/556.
+Owner App/signing configuration and disabled live-route proof remain required.
+No activation, real-model call, remote secret read or deployment was performed.
+A future main push touching cloud files can run the existing cloud deployment
+workflow; its two service switches must remain off until activation requirements
+are met.
+
+## Shipped multilingual two-boot certification dispatched
+
+Worker `703709d1` adds the explicit, mutually exclusive retained
+`fcitx_production_security_probe` mode. It distinguishes shipped Fcitx from
+legacy IBus conversion and judges exact service/configuration/password
+environment records, real distinct boot IDs, and unchanged configuration.
+The password Firefox test inherits the production input environment instead
+of forcing the test module/configuration. Firefox connection identity remains
+unproved. Harness selfchecks: 80/80; gate and workflow checks passed.
+
+Only these four diagnostic files were pushed to main as `8a0d002d`; the cloud
+and Wi-Fi follow-ups remain on delivery, and default promotion `65f55242`
+remains held. Runtime result is pending in
+[run 40150677765](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40150677765).
+Do not dispatch a duplicate or cite the push-only gate as runtime evidence.
+
+## Candidate Windows failure diagnosis and focused rerun
+
+Both base lanes in `40148012698` reached AurOS and a populated store, but the
+whole-screen OCR omitted the search query/result title. The old locator
+required that query anchor. Lead inspected fastpath `0050-failure.png`; actual
+VLC row is visible. Journals prove DHCP/DNS/catalogue ready before Software
+opened. Worker reproduced on ordinary and fastpath screenshots with Tesseract.
+`ebc553b7` crops the observed store body and requires an exact unique
+title/summary pair; actual-image and adverse fixtures plus independent review
+passed. This does not yet prove install or app launch.
+
+Fastpath BitLocker failed before installation: `function H` was shadowed by
+PowerShell alias `h=Get-History`, producing an Id conversion error in <1s, not
+a timeout or evaluated Windows-state mismatch. The same alias occurred in the
+final recovery snapshot. `38b741be` renames both helpers and all four calls;
+local source regressions pass, real Windows execution remains pending.
+
+Integrated delivery `0034a3ab`/`fdb2ee51`, main diagnostic `3df6181e`. Full
+E2E selftest passed after integration. One focused rerun:
+[40152103698](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40152103698),
+fastpath base + BitLocker with put-back enabled. Exact EXE SHA-256:
+`b5440e94d2a576e38003a2ff69bb440bc60a496cbe72e405c6ba1fd948a54e26`.
+No ordinary legacy rerun or full rebuild was started. Default promotion
+`65f55242` stays held; Wi-Fi/cloud follow-ups stay on delivery.
+
+## Second-editor proof repair rerun
+
+The generic 3% pixel-change predicate could miss nearly identical editor
+windows, and older apparent passes could be satisfied by unrelated
+notifications. New test content uses a fixed 24-row block staircase, with
+marker-specific visibility, exact second-process/argv/input environment,
+authenticated AurWL connection and mapped ordinary toplevel proof. Only an
+observed changed marker pixel authorizes the click; exact saved sentinel,
+unchanged first editor and full A-to-B-to-A lifecycle remain mandatory.
+Baseline/after frames and reduced failure facts are retained.
+
+Lead review additionally caught an EOF loop in the new frame parser and a
+font-rendering assumption about gaps between full-block text rows. Follow-up
+`8377624b` bounds/validates frames and recognizes touching-row width changes.
+Verification: 55 Python tests, 95 harness checks, gate/workflow checks, and
+independent re-review. These are harness results, not runtime proof.
+
+One retained fresh-image rerun:
+[40152195863](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40152195863),
+harness `d33b9994`, image from `40148012574`. No new OS image was built.
+
+## Exact-image follow-up, 25 October 02:16 UTC
+
+Focused Windows run `40152103698` base lane now passed store result recognition, installation and Open dispatch. Screenshot `0052-auto-auros-open-vlc.png` shows VLC's actual foreground Privacy and Network Access Policy window, with a separate VLC media player task. The lane FAILED because whole-screen OCR missed Continue and the harness did not permit its focused-default action from this modal/task identity. This is stronger launch evidence but not a complete app-use pass: a narrow, independently reviewed harness repair must still require real VLC controls after dismissal. BitLocker remains in progress; default-fastpath promotion remains held. Exact-candidate hardening run `40151838977` is also still in progress.
+
+VLC privacy-modal harness correction `fb0494ef` is integrated as delivery `c87dce98`, main `750fa4d5`. Exact unique dialog/body/full-task attribution and absence of Continue OCR permit only one focused-default action; final real VLC controls are still mandatory. Actual screenshot fixture plus missing/foreign/duplicate/preview negatives passed full local and Linux/Tesseract selftests and independent re-review. Base-only exact-installer run `40153730622` is in progress. The existing BitLocker lane `40152103698` remains separate and was not duplicated; it is still provisioning clean Windows before baseline/install proof.
+
+## Exact hardening and two-boot diagnostic, 25 October 02:21 UTC
+
+Hardening `40151838977` is green: 72 hardening checks (control-tied checks fail without controls), 14 clock checks, and exact-build release-gate verification. This is evidence for candidate `3629b114`, not its later follow-up changes or physical machines.
+
+Production multilingual diagnostic `40153523144` FAILED only the raw profile-hash equality check (1 of 69). Both complete guest rounds passed composition, authenticated Mousepad focus, password server result/no composition events, zero Firefox-popup activity in all observed phases, exact Fcitx process/service identity, cleanup and real reboot/autostart. Distinct boot IDs were verified. Lead inspected round2 masked screenshot: three bullets, no candidate popup; exact input is established by server evidence, not screenshot count. Firefox connection identity and popup attribution remain unproven. This successful popup observation does not explain the prior intermittent failure.
+
+User-profile hashes differ across boot. Runtime serialization is a hypothesis; exact changed bytes were not retained, so benign change is NOT established. The next diagnostic retains bounded profile-specific structure while preserving the failing raw-hash gate. Do not replace it with a looser semantic gate before identifying the actual difference. Evidence: `/tmp/auros-fcitx-production-security-40153523144`, artifact `12584070668`.
+
+## Remaining exact-runtime blockers, 25 October 02:34 UTC
+
+BitLocker run `40152103698` FAILED before restart: the PowerShell baseline repair is proven by complete `putback-before.json` and exact protector/partition/file/firmware evidence, but the harness could not obtain the visible Restart now button through UI Automation. It refused before suspension/restart. Exact foreground HWND/process and elevated helper were correct; the product exposes an MSAA accessibility tree, while the harness queried an empty UIA tree. A scoped cross-process MSAA lookup/probe is being prepared, preserving exact button identity, enabled state and geometry. No Windows-return or Put Windows back pass; default promotion remains held. Evidence `/tmp/auros-40152103698-bitlocker.63qxlo/extracted`.
+
+Multilingual diagnostic `40154456991` FAILED with useful exact evidence. Runtime profiles were unchanged within each round; immutable template unchanged at all four boundaries. Across reboot the runtime profile added seven comment records (77 bytes total) and a one-byte blank line. Every original non-comment record remained byte-identical and ordered; no setting changed. Cause is not established. Round2 additionally recorded exactly one unattributed, unmapped/unconfigured/ungrabbed popup creation after submit, with zero popup events during focus/input/screenshot phases. Exact password server input and zero composition events passed. These findings support reviewing a comments-only profile comparison and separating sensitive-focus observations from submission/navigation observations; no gate correction is accepted without adversarial tests/review. Artifact `12583823011`, local `/tmp/auros-fcitx-profile-drift-40154456991-v1`.
+
+## Exact fastpath base journey PASS, 25 October 02:36 UTC
+
+Run `40153730622` is SUCCESS with harness `750fa4d5`, product candidate `3629b114`, exact fastpath EXE SHA-256 `b5440e94d2a576e38003a2ff69bb440bc60a496cbe72e405c6ba1fd948a54e26`. Website → Windows installer → restart → AurOS onboarding → store → installed VLC → real foreground VLC player passed in 9m29s. Lead inspected `0052-program-open.png`: actual VLC title, menus, cone canvas, and player controls with a separate task; not the store preview. Scope start journal and installed-disk evidence agree. This proves the store locator and first-launch handling on those exact bytes.
+
+Sealed artifact `/tmp/auros-40153730622-base.Adop8g/unpacked/e2e-evidence-base-fastpath.zip`, SHA-256 `0b82935b52c17b0ce5a7c72050dcf5f59f1abe69501d05c6d556bbccf7a0d1b3`. Unpacked `/tmp/auros-40153730622-base.Adop8g/evidence`. This is Windows 11 VM proof for the fastpath base lane, not encrypted-drive return/putback, a personalized signed download, a physical PC, the later Wi-Fi follow-up, or the still-held default promotion.
+
+## Accessibility and input evidence follow-up
+
+The native accessibility probe has not passed yet. Runs `40155209229`, `40155547697`, `40155842399`, `40156128431`, and `40156524305` exposed, respectively, startup timing, PowerShell dynamic COM dispatch, passing RCWs through the PowerShell binder, then mutable/short-lived selftest snapshots. The current helper keeps COM entirely in C#, returns plain records, preserves exact HWND/PID/class/role/action identity, and keeps production reads explicitly fail-closed. Lead added the helper to Windows gate inputs and removed use of the automatic PowerShell `$Error` variable. Current main helper is `5cfaf8d5` (included in later main `0be3a3bc`); delivery equivalent through `8d2c630c`. No new BitLocker run was spent on these failed native probes.
+
+A truly stable, read-only `--accessibility-test` fixture is being prepared in the isolated accessibility branch. It must suppress manual/COM mutating actions as well as selftest auto-navigation. Source changes on main would trigger an expensive full image build, so this fixture must first be pushed only to its isolated branch and run with one explicit Windows workflow dispatch. Hold it for the next batched candidate; do not weaken the build gate or prematurely promote fastpath.
+
+Multilingual `40156051878` failed round1 on one unmapped popup creation after the form event despite prevented navigation. Exact input/focus/composition and closed-trace cleanup passed; reboot was not reached. Lead found and fixed false cgroup emptiness from stat size and silently ignored /proc inspection errors before this run. A standalone password-input fixture (`83284c3e`, delivery `5f04e7d0`, main `0be3a3bc`) avoids native form submission, verifies token-bound post-response input/focus, preserves strict zero-popup creation/mapping/configuration/grab through trace closure, and separates shutdown events. Run `40156605186` is pending on the same retained image `40148012574`; no image rebuild. Native form submission/navigation/password-manager behavior and Firefox connection identity remain unproven.
+
+## Production multilingual diagnostic PASS and encrypted-drive rerun
+
+`40156605186` PASSED 71/71 across two distinct boots of exact production image `3629b114` (retained `40148012574`), harness `0be3a3bc`. Composition/candidates, authenticated Mousepad focus revocation/remapping, standalone password exact value/no composition/continuous focus/zero popup events through shutdown, exact service identity/autostart, comment-only cross-boot profile differences and cleanup all passed. Lead visually inspected the Firefox candidate list. Artifact `12585600815`, local `/tmp/auros-fcitx-40156605186.H0VP3e`. Firefox connection identity and native form/navigation/password-manager scope remain unproven; masked screenshots do not independently prove the exact entered value. See the current section of MULTILINGUAL-INPUT-2026-10-24.md.
+
+Stable native accessibility branch run `40156916406` executed all exact positive and wrong/stale negative checks without exceptions, then failed solely because the last expected-negative helper exit code propagated out of the PowerShell step. A reporting-only fix is being prepared on that isolated branch. Based on the actual completed native assertions, ONE exact-candidate BitLocker/putback run `40157169797` was dispatched on main `0be3a3bc`; no installer/image rebuild or default promotion. The fixture source remains held outside main.
+
+Native accessibility proof is now PASS: branch run `40157223798`, Windows-source job `121061302872`, exact cross-process MSAA step SUCCESS with explicit `PASS: the exact cross-process MSAA controls were readable; wrong and stale HWNDs were refused`. Stable read-only fixture and checked-negative reporting commits `23eb5101` / `497a2175` are integrated on delivery as `87d70ba3` / `ebefe7be`, not on main; they join the next batched candidate. Normal product behavior and provider are unchanged outside the explicit noninteractive diagnostic mode. Overall branch workflow completion is separate from this verified native step. Exact BitLocker/putback `40157169797` remains running; default promotion stays held.
+
+## Native proof and cache checkpoint, 25 October 03:23 UTC
+
+The entire Windows workflow `40157223798` finished SUCCESS. Stable fixture/reporting changes are on delivery only. Cache reuse worker commit `08c42158` is integrated as `66ea5776`: base and BitLocker select identical clean M1 hardware/cache inputs; runtime fully encrypted/protection-on checks remain mandatory in an isolated copy. Independent review and worker E2E selftests passed, as did integrated workflow lint. No new image build, default promotion, or duplicate recovery run was dispatched.
+
+## Continued product integration, 25 October 03:33 UTC
+
+Prepared clean main-based branch `codex/product-batch-prepromotion` in `/tmp/auros-product-batch-prepromotion`, currently `64e6edba`. It combines the held Wi-Fi/Ferry, cloud, night-light/hardening, stable accessibility fixture and cache changes without default promotion. Existing local-compatible integration checks passed. It is not pushed and does not include `65f55242`; current recovery run `40157169797` remains active. Latest inspected M1 screenshot showed native Windows setup at 77%, so it was progressing, not stalled.
+
+Site activation consistency worker `9dc03ae2` / `8b8caf89` is integrated on delivery `2bb24a83` / `d7f48ae4` and candidate `4f66b2d1` / `52a3edd8`. Both Pages and release publishers now generate staged config and verify exact live CORS readiness with bounded read-only OPTIONS when enabled; disabled probes refuse before storage. Root caught the initially omitted release publisher and inconsistent origin canonicalization, both fixed and re-reviewed. Checked-in switches remain off. Worker: 107 cloud, 8 Python and 556 browser checks passed. Combined candidate cloud run exposed a timing-sensitive existing same-recipe concurrency test (actual 200/201 versus expected 201/503); diagnosis is active, not waived. Integrated browser rerun passed 556/556; integrated Python config and all 29 workflow checks passed.
+
+Dormant personal-profile update support worker `a883d97e` / `47318acd` is integrated on delivery `997dab11` / `d903613a` and candidate `8f90acdc` / `64e6edba`. Explicit desktop/revive/multilingual descriptors bind package/repository identity, with real apt cross-profile refusal; desktop's existing tag/label/suite/pin remain compatible. Non-desktop image activation and publication remain disabled. Root found a pre-existing verifier gap: signed Release missing mandatory index hashes was accepted. Six failures were reproduced; mandatory exact safe hashes for both indexes are now required before index reads. Final real Ubuntu update/key-rotation/rollback suite passed 85/85, including 14 signed hash-record negatives, with independent review. No live channel, signing key, or publication was changed.
+
+Build-request race closed: worker `9bca9d84`, delivery `a921c8d3`, candidate `723988e2`. The product correctly returns 200 for a late reuse; the old test's Promise.all did not guarantee overlapping discovery. Deterministic barriers now prove true overlap refuses the competing discovery, atomic quota admission and one dispatch; a separate late-reuse case verifies both receipts. Forty focused repetitions and independent review passed. Combined candidate cloud suite now passes 108/108; no production behavior was changed.
+
+## Revive real-use probe checkpoint
+
+Worker `e2a5438b` / `2e988cb5` / `ee460568` integrated on delivery as `976bea0d` / `5a075e32` / `c9295846`, candidate as `cce969fa` / `79b3147e` / `8d056667`. `[revive-functional]` selects a new opt-in 2048 MiB runtime probe for Firefox physical-key input and AbiWord saved-document use. Exact package executable/process/unit/display identity, screenshot/OCR binding, cleanup, OOM counters and post-use system health are required. Root found an unsupported Firefox launcher assumption and missing post-use health checks; follow-up invokes only the exact package-owned binary, records manager/app environments, and requires earlyoom active with no new failed units. Forced systemd cleanup is explicitly not normal Quit proof. Gnumeric remains untested.
+
+The exact tested compressed Revive image and source/profile/run/hash/size manifest are retained for two days only in functional runs, including runtime failures after successful build. No ordinary artifact/release or activation changes. Integrated validation passed 23 focused tests, 105 existing harness checks, profile gate selftest, all 29 workflow files and diff checks. No Revive image was built or run yet; runtime remains unproven. Main-based candidate head is `8d056667` and remains unpushed, without held default promotion. Exact BitLocker run `40157169797` has passed M1 and is in the installer journey; its latest recorded encrypted-drive preparation is still not full recovery proof.
+
+## Installer estimate clarity
+
+Live encrypted-drive setup exposed an inflated running estimate: it added a fixed 20-minute SSD/75-minute HDD post-restart allowance to measured remaining Windows work. Worker `0320ffa1`, delivery `13ae8236`, candidate `f0c35ff0` now explicitly estimates only time until Restart now, with matching stable accessibility wording and stale-estimate withdrawal on sustained stalls. Ready retains the deliberately broad whole-journey allowance, labeled total; no physical-PC timing claim was introduced. MinGW build, Wine native navtest/selftest including real calculation/rounding/stall/path/drive/wording tests, wordlint and independent review passed. Default promotion remains held.
+
+## Encrypted-drive run stopped as inconclusive, 25 October 04:09 UTC
+
+`40157169797` passed fresh Windows provisioning, FullyEncrypted/On/100% with TPM and RecoveryPassword protectors, exact installer hash verification, and named MSAA Next/Install controls. Install was clicked 03:43:03Z. Progress then remained at about 57% (engine60), with the last named-control log at03:45:04Z, unchanged through04:07:50Z. Root requested cancellation after preserving live evidence, rather than letting the default300-minute E2E deadline consume hours. This is an inconclusive run/harness stall, not a proven product failure. Restart warning, suspension, AurOS and Windows return/putback were NOT reached; default promotion remains held.
+
+Evidence `/tmp/auros-40157169797-live-040750/`; PNG SHA256 `c932bbb03f9b84c4be721965d3ff5075a4c517629a1da84beee8f9ffaa9c9079`, TXT `a2a903beb2314804abea1a8dcf8beb6c9abd625072e1696a9ba1ca57168571a9`, release `e2e-40157169797`, asset IDs674050914/674050915. Final cancellation artifacts are still being collected.
+
+Code audit found no worker/UI I/O lock cycle in normal installation. Shared early-download progress makes engine60 ambiguous between shrink, downloader wait, planning or raw-write start. Separately, the serial helper's UIA/MSAA calls have no in-guest deadline: a blocked provider can outlive the host timeout and prevent all later commands, including diagnostics. A bounded child-process accessibility reader and independent host QMP disk counters are being prepared and will receive Windows-native proof before a single replacement exact-installer run. No default promotion or new product image was dispatched.
+
+Cancelled run final archive `/tmp/auros-40157169797-final.86OnPP/raw/e2e-evidence-bitlocker-fastpath.zip`, SHA256 `46494186fa27db0989140fa8282c6354420df9bf214799a9234f993cbd4f5543`. Shots0025–0029 at03:48/03:53/03:58/04:03/04:08 are byte-identical. Final always-evidence upload succeeded; total run59m23s. Bounded diagnostics worker1510c457/2ae2422a are local delivery7bd52773/7a26488e; Windows-native proof still pending alongside accessibility isolation.
+
+## Bounded accessibility native verification, 25 October 04:20 UTC
+
+Worker `11bd6a6b` integrated as delivery `2ad92746`, candidate `6d677f8f`. Each windows/elements read executes in a fresh bounded PowerShell process; closed bounded requests, single-record JSON, output truncation refusal and verified termination prevent a blocked provider from permanently occupying the serial helper. Native coverage deliberately blocks a child, requires its readiness marker, verifies timeout/termination and immediately reads the exact live wizard PID/HWND through a fresh child. Existing positive/wrong/stale identity checks remain. E2E selftests, YAML and independent review passed; Windows-native proof remains pending.
+
+Both delivery and `codex/product-batch-prepromotion` are pushed. Exactly one Windows workflow `40161196147` was dispatched on candidate `6d677f8f`, pinned published release `v0.1.0-3629b11`. No main push, image rebuild, public activation or default promotion. Only after native proof passes, dispatch one replacement exact old fastpath BitLocker/putback journey with the cache/diagnostic fixes. Integration review and dormant personal-profile packaging design proceed independently.
+
+## Native failure evidence and publication boundary review
+
+Windows `40161196147` passed build, published installer, known-bad rejection, download, bounded diagnostic success/partial-timeout/truncation, initial exact MSAA read and forced-child termination. Recovery child exited before JSON; stderr had been discarded, so cause remains unknown. Worker `94828354` (delivery `45c97eec`, candidate `c998bf92`) preserves bounded native-test-only child error/phase evidence. Exactly one diagnostic rerun `40161496888` is active. No recovery rerun or main push yet. Persisting helper via changed boot.ps1 correctly invalidates the old golden cache; first new recovery run must provision Windows once, then the shared base cache can be reused.
+
+Read-only integration review found customization incorrectly treats the release tag target as exact built-source authority, despite documented release tagging of a newer main tip. A two-identity correction is being implemented in isolated worktree `/Users/aaroh/.codex/worktrees/customize-base-identity/auros`: current main workflow/signing authority remains distinct from exact reused base build SHA/run/artifacts; release tag is only the asset namespace. Exact signed/resource/manifest boundaries must remain strict, and public delivery remains disabled.
+
+The same review found both site publishers check before writing final served config and can overwrite newer activation/disable settings. A separate worker is consolidating deployment into one reusable publisher, staging/testing current authoritative main inside a shared queue and rechecking before deployment. Versioned nonsecret publishing settings replace repository-variable authority for these paths because the workflow token cannot be assumed to have Variables:read. No deployment or public activation is authorized by these implementation changes. These fixes remain under implementation/review, not proven complete.
+
+## Native isolation PASS, replacement recovery and current parallel fixes
+
+`40161496888` exposed contradictory status `child-exit` with final exit code0 after all child phases completed. Worker `c199b209` (candidate `6a732d79`, delivery `689aaea0`) pins/disposes the process handle, reads a refreshed exit code once, fails closed on missing exit status, and tests five fast zero exits plus deliberate exit7. Full Windows workflow `40161803540` PASSED, including source job121074920541: bounded diagnostic PASS04:27:10Z, isolation timeout/recovery PASS04:27:22Z, exact/wrong/stale HWND PASS04:27:25Z. This is hosted Windows evidence, not physical-PC proof.
+
+Exactly one replacement E2E `40161971669` runs on candidate `6a732d79` with old exact fastpath URL/hash, variants=bitlocker and bitlocker_putback=true. Main/default remain unchanged. Agent fix_wish_ui monitors; fresh M1 is expected due correct boot-script cache invalidation.
+
+Root replaced stale Ready screenshot using that successful native run's `wizard-shots-windows/hidpi-4a-ready.png`; PNG SHA a8ec0857bb8bb736590e7b22223533c93aaa9458f39f3b0587e8ac2919111284. Candidate `ac7eea21`, delivery `90000311`, both pushed. Actual PNG/JPEG inspected; full browser556/556 PASS. Other screenshot sources remain Wine and public physical-PC claims remain unchanged.
+
+Publisher worker local `705622a4` in `/tmp/auros-publish-ordering` is NOT integrated. Single authoritative reusable publisher/settings migration implemented and focused tests passed, but final review requires deployed-Worker identity/correlated smoke proof and resolution of exact-main cloud evidence versus path-filtered runs. Browser reruns incorporate the root screenshot fix. Customization worker `/Users/aaroh/.codex/worktrees/customize-base-identity/auros` continues separate authority/base provenance correction, bounded pieces-header discovery, immutable full-authority-SHA asset names, browser filename validation and race/collision tests. Neither stream may be called complete until final review and combined checks pass.
+
+## Customization identity integration verified
+
+Worker series `f14b2d55` through `4447c96c` is integrated on candidate through `2a2490cc`, delivery through `ad886a6c`; both pushed. Current audited workflow/signing SHA is distinct from exact reused base build SHA/run/tag. Bounded pieces.txt is discovery only; Actions run and run-bound artifacts establish base identity. Release tag pointer is not source authority. Strict v2 metadata and full40-character authority-qualified custom asset filenames prevent routine-main filename collisions; browser matches authority shape and submitted recipe. Cache keys bind authority/baseSHA/run/tag/recipe; exact tag is required on polling/cached evidence.
+
+Selection passes expected authority_sha and workflow checks it against actual GITHUB_SHA before packaging, catching dispatch races. Later routine main movement does not revoke an already trusted build or signed cached output. Lookup outage may only reuse a known canonical delivery with strict revalidation, never authorize a fresh dispatch. Root caught a new cross-step BASE_BUILD_TAG scope failure; regression failed before explicit step env binding and passed afterward.
+
+Combined candidate validation: cloud110/110, customize56/56, browser558/558 PASS, diff clean; workflow29 and independent review passed on the slice. Logs /tmp/auros-identity-{cloud,python,site}-integrated.log. No actual signed personalized journey or public activation yet; owner credentials remain required.
+
+Publisher `705622a4` remains held with active followups in /tmp/auros-publish-ordering. Final design binds health to deployed source/nonce plus separate masked smoke correlation, and reuses immutable successful cloud proof only for independently recomputed identical cloud dependency digests. Complete rolling31-day run inventory handles GitHub's documented30-day rerun window, bounded1000; failed latest matching attempts cannot fall back to stale success. This design is under implementation/testing, not yet integrated or claimed proven.
+
+## Publisher integration verified; recovery remains active
+
+Publisher worker705622a4 +6bce1edf integrated as candidate219f6691/a1a8caf5, delivery0f996bad/ed0ec9ed; both pushed. One reusable publisher stages/tests current main, hashes exact site bytes, rechecks source/settings/latest installer and serializes both callers. Nonsecret versioned publish-settings.json is authority for site/cloud/monitor URLs; no Variables:read credential assumption. Present CNAME must match; documented edge proxy may omit Pages CNAME. Existing installer-domain variable must align before enabled publishing.
+
+Worker health binds deployed sourceSHA/publicnonce; a separate masked per-attempt smoke token correlates service logs. Endpoint preflight checks exact configured default or custom-origin identity. Immutable exact-attempt proof binds GitHub metadata, successful real deploy/preflight/smoke steps, independently recomputed Git-object cloud dependency digest, and live source/nonce. Complete rolling31-day bounded inventory and final full inventory/attempt revalidation prevent old-run rerun or pagination races; irrelevant source digests are filtered before detailed attempt reads. A failed latest matching attempt cannot reuse older success. Unrelated site/docs/main changes can reuse an identical verified cloud dependency set, so no needless Worker redeployment. Cloud recipe-schema trigger omission is fixed. Off switches/budget remain unchanged; no live deployment or paid calls.
+
+Combined candidate: cloud125/125, publishing Python38/38, browser560/560, workflow30 PASS. Logs /tmp/auros-publisher-{cloud,python,site,workflow}-integrated.log. Worker also verified both staged enabled/disabled browser modes558/558 before identity integration.
+
+Helddefault65f55242 still NOT integrated. Apply-check now conflicts only structurally in tools/customize/test_base_build.py: retain v2 first WorkflowContractTests method, insert held test_personalized_installer_inherits_fastpath_default before test_extraction_creates_output_directory_before_all_five_resources. Its assertions stay unchanged: build/aurbridge defaults AUROS_FASTPATH:-1 and customized rebuild inherits it without override. Release/publication changes otherwise compose. Run exact workflow contract/customize/workflow checks after integration, only following recoveryPASS. Recovery40161971669 still healthy freshM1 at last observation; no restarted proof or main push.
+
+## Continued recovery and integration audit
+
+Recovery40161971669 completed fresh M1 and cache persistence and is now in M2/M3. Evidence at04:55:51Z shows the persisted helper running, SecureBoot on and BitLocker fixture encryption advancing86%→90% with TPM and RecoveryPassword protectors. Encryption, restart and recovery are not yet claimed. Focused independent audit of a1a8caf5 confirmed the earlier generic-default/personalized receipt confusion and exact-base-tag verification omissions are both fixed with regressions. Main and held default remain unchanged.
