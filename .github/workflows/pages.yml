@@ -73,7 +73,7 @@ jobs:
       - name: The site, with this repository written in
         run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"
       - name: Custom-build site configuration tests
-        run: python3 -I tools/site/test_build_service_config.py && python3 -I tools/site/test_publish_guard.py
+        run: python3 -I tools/site/test_build_service_config.py && python3 -I tools/site/test_publish_guard.py && python3 -I tools/site/test_cloud_dependency.py
       - name: Custom-build site configuration is coherent
         run: |
           site=$(sh tools/repo.sh site)

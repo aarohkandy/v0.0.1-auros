@@ -6,6 +6,7 @@ bodies are printed. All network/subprocess operations have explicit bounds.
 """
 import argparse
 import base64
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -19,12 +20,14 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_service_config import configuration
 from publish_settings import settings, values, validate_domain
+from cloud_dependency import dependency_digest, unpack_proof, validate_proof
 
 REPO = re.compile(r'[A-Za-z0-9-]+/[A-Za-z0-9_.-]+')
 SHA = re.compile(r'[0-9a-f]{40}')
 VARIABLES = ('AUROS_DOMAIN', 'AUROS_WISHES_URL')
 CLOUD_STEPS = {'Deploy', 'Worker secrets (stdin only, never echoed)',
-               'Custom delivery live preflight', 'Live end to end, with its logs captured'}
+               'Custom delivery live preflight', 'Live end to end, with its logs captured',
+               'Public endpoint identifies the deployed Worker', 'Bind reusable cloud publication proof'}
 
 
 def run(*args, env=None, timeout=30):
@@ -114,29 +117,133 @@ def cloud_run_status(run_value, jobs, sha, repository):
     return True
 
 
+def artifact_proof(repository, current, digest, read=api):
+    attempt = current['run_attempt']
+    response = read(repository, f'actions/runs/{current["id"]}/artifacts?per_page=100')
+    rows = response.get('artifacts')
+    if not isinstance(rows, list) or response.get('total_count') != len(rows) or len(rows) > 100:
+        raise ValueError('cloud proof artifact inventory incomplete')
+    matches = [row for row in rows if row.get('name') == f'cloud-publication-proof-{attempt}']
+    if len(matches) != 1:
+        raise ValueError('exact-attempt cloud proof absent or ambiguous')
+    artifact = matches[0]
+    if (artifact.get('expired') is not False or type(artifact.get('id')) is not int
+            or type(artifact.get('size_in_bytes')) is not int
+            or not 0 < artifact['size_in_bytes'] <= 32768
+            or artifact.get('workflow_run', {}).get('id') != current['id']
+            or artifact.get('workflow_run', {}).get('head_sha') != current['head_sha']):
+        raise ValueError('cloud proof artifact metadata invalid')
+    data = run('gh', 'api', f'repos/{repository}/actions/artifacts/{artifact["id"]}/zip', timeout=25)
+    return validate_proof(unpack_proof(data), repository, current['head_sha'], digest,
+                          current['id'], attempt)
+
+
+def cloud_snapshot(repository, since, read, matches=None):
+    rows = []
+    expected_total = None
+    for page in range(1, 11):
+        response = read(repository, f'actions/workflows/cloud.yml/runs?branch=main&created=%3E%3D{since}&per_page=100&page={page}')
+        batch, total = response.get('workflow_runs'), response.get('total_count')
+        if not isinstance(batch, list) or len(batch) > 100 or type(total) is not int or not 0 <= total <= 1000:
+            raise ValueError('cloud workflow inventory incomplete or exceeds 1000-run / 31-day bound')
+        if expected_total is None:
+            expected_total = total
+        elif total != expected_total:
+            raise ValueError('cloud inventory total changed during pagination')
+        rows.extend(batch)
+        if len(rows) >= total:
+            if len(rows) != total:
+                raise ValueError('cloud workflow inventory changed during read')
+            break
+    if len(rows) != expected_total:
+        raise ValueError('cloud workflow inventory incomplete after bounded pagination')
+    if any(type(row.get('id')) is not int for row in rows) or len({row['id'] for row in rows}) != len(rows):
+        raise ValueError('cloud workflow inventory invalid or repeated a run')
+    attempts = []
+    for row in rows:
+        source = row.get('head_sha')
+        if not isinstance(source, str) or not SHA.fullmatch(source):
+            raise ValueError('cloud inventory source unavailable')
+        if matches is not None and not matches(source):
+            # Retain every run/source in the full inventory fingerprint, but an
+            # immutable, different dependency set cannot supply reusable evidence.
+            attempts.append(dict(id=row['id'], head_sha=source, _irrelevant=True))
+            continue
+        current = read(repository, f'actions/runs/{row["id"]}')
+        attempt = current.get('run_attempt')
+        if current.get('id') != row['id'] or current.get('head_sha') != source or type(attempt) is not int or attempt < 1:
+            raise ValueError('cloud latest attempt unavailable')
+        exact = read(repository, f'actions/runs/{row["id"]}/attempts/{attempt}')
+        if any(exact.get(k) != current.get(k) for k in ('id', 'run_attempt', 'head_sha', 'status', 'conclusion')):
+            raise ValueError('cloud attempt source mismatch')
+        try:
+            started = datetime.fromisoformat(exact['run_started_at'].replace('Z', '+00:00'))
+            if started.tzinfo is None:
+                raise ValueError('cloud attempt start timezone missing')
+        except (KeyError, TypeError, AttributeError, ValueError) as error:
+            raise ValueError('cloud attempt start evidence missing') from error
+        exact['_attempt_started'] = started
+        attempts.append(exact)
+    return attempts
+
+
 def wait_cloud(repository, sha, read=api, deadline_seconds=600):
     end = time.monotonic() + deadline_seconds
+    original_read = read
+    def read(repo, suffix):
+        if deadline_seconds > 0 and time.monotonic() >= end:
+            raise ValueError('cloud proof inventory exceeded publication deadline')
+        return original_read(repo, suffix)
+    target = dependency_digest(repository, sha, read)
+    cache = {sha: target}
+    def matches(source):
+        if source not in cache:
+            cache[source] = dependency_digest(repository, source, read)
+        return cache[source] == target
+    # GitHub permits reruns only within 30 days; one extra day covers this
+    # workflow's bounded execution. https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs
+    since = (datetime.now(timezone.utc) - timedelta(days=31)).strftime('%Y-%m-%dT%H:%M:%SZ')
     while True:
-        runs = read(repository, f'actions/workflows/cloud.yml/runs?head_sha={sha}&per_page=100')
-        rows = runs.get('workflow_runs')
-        if not isinstance(rows, list) or runs.get('total_count', 0) > 100:
-            raise ValueError('cloud workflow inventory incomplete')
-        if rows:
-            latest = max(rows, key=lambda row: row['id'])
+        attempts = cloud_snapshot(repository, since, read, matches)
+        latest = None
+        # Inspect attempts newest first; older candidates cannot override the first
+        # matching dependency set, even when that newest attempt failed.
+        for row in sorted((item for item in attempts if not item.get('_irrelevant')),
+                          key=lambda row: (row['_attempt_started'], row['id']), reverse=True):
+            source = row.get('head_sha')
+            if source not in cache:
+                cache[source] = dependency_digest(repository, source, read)
+            if cache[source] == target:
+                latest = row
+                break
+        if latest is not None:
             current = read(repository, f'actions/runs/{latest["id"]}')
             attempt = current.get('run_attempt')
-            if type(attempt) is not int or attempt < 1:
-                raise ValueError('cloud attempt unavailable')
+            if type(attempt) is not int or attempt < 1 or attempt != latest['run_attempt']:
+                raise ValueError('cloud attempt changed after freshness ordering')
+            source = current.get('head_sha')
+            if source != latest['head_sha']:
+                raise ValueError('cloud run source changed')
             jobs = None
             if current.get('status') == 'completed':
                 response = read(repository, f'actions/runs/{latest["id"]}/attempts/{attempt}/jobs?per_page=100')
                 jobs = response.get('jobs')
-                if response.get('total_count', 0) > 100:
+                if not isinstance(jobs, list) or response.get('total_count') != len(jobs) or len(jobs) > 100:
                     raise ValueError('cloud job inventory incomplete')
-            if cloud_run_status(current, jobs, sha, repository):
-                return current['id']
+            if cloud_run_status(current, jobs, source, repository):
+                proof = artifact_proof(repository, current, target, read)
+                # Re-read all eligible attempts, including nonselected old run IDs:
+                # a newly failed rerun must never leave an older success usable.
+                refreshed = cloud_snapshot(repository, since, read, matches)
+                keys = ('id', 'run_attempt', 'head_sha', 'status', 'conclusion',
+                        'run_started_at', 'head_branch', 'path', 'event')
+                def identity(snapshot):
+                    return sorted(tuple(row.get(key) for key in keys) for row in snapshot)
+                if identity(refreshed) != identity(attempts):
+                    raise ValueError('cloud inventory or attempt changed while validating proof')
+                return proof
         if time.monotonic() >= end:
-            raise ValueError('same-source cloud evidence absent or timed out; run cloud on current main first')
+            raise ValueError('matching cloud evidence absent or timed out; run cloud on current main first')
         time.sleep(min(10, max(0, end - time.monotonic())))
 
 
@@ -218,7 +325,11 @@ def guard(repository, directory, state_path):
         return expected, env, site_url
     expected, env, site_url = verify()
     if expected['enabled']:
-        wait_cloud(repository, state['source_sha'])
+        proof = wait_cloud(repository, state['source_sha'])
+        if proof['api_origin'] != env['AUROS_WISHES_URL']:
+            raise ValueError('cloud proof API origin differs from current publishing authority')
+        run('node', 'cloud/test/deployment-preflight.mjs', proof['api_origin'],
+            proof['source_sha'], proof['deployment_nonce'], proof['deployed_url'], timeout=90)
         from urllib.parse import urlsplit
         parsed = urlsplit(site_url)
         run('node', 'cloud/test/build-preflight.mjs', env['AUROS_WISHES_URL'], 'on',

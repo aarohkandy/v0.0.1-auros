@@ -24,12 +24,13 @@ on:
     branches: [main]
     paths:
       - 'cloud/**'
-      - 'website/**'
-      - 'tools/site/**'
+      - 'tools/site/publish-settings.json'
+      - 'tools/site/publish_settings.py'
+      - 'tools/site/build_service_config.py'
+      - 'tools/site/require_current_main.sh'
+      - 'tools/site/cloud_dependency.py'
       - 'tools/repo.sh'
-      - '.github/workflows/pages.yml'
-      - '.github/workflows/publish-pages.yml'
-      - '.github/workflows/release.yml'
+      - 'src/customize/recipe-v1.schema.json'
       - 'docs/wish-v1.schema.json'
       - 'rootfs/usr/share/auros/help/**'
       - '.github/workflows/cloud.yml'
@@ -240,6 +241,15 @@ jobs:
           printf '%s' "$BUILD_CHALLENGE_SECRET" | timeout 120 npx --yes "$WRANGLER" secret put BUILD_CHALLENGE_SECRET
           printf '%s' "$GITHUB_APP_PRIVATE_KEY" | timeout 120 npx --yes "$WRANGLER" secret put GITHUB_APP_PRIVATE_KEY
 
+      - name: Fresh deployment and private smoke identities
+        if: steps.have.outputs.ok == 'true'
+        run: |
+          echo "DEPLOYMENT_SOURCE_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
+          echo "DEPLOYMENT_NONCE=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          correlation=$(openssl rand -hex 32)
+          echo "::add-mask::$correlation"
+          echo "SMOKE_CORRELATION_TOKEN=$correlation" >> "$GITHUB_ENV"
+
       - name: Deploy
         id: deploy
         if: steps.have.outputs.ok == 'true'
@@ -248,7 +258,7 @@ jobs:
           GITHUB_APP_INSTALLATION_ID: ${{ vars.GITHUB_APP_INSTALLATION_ID }}
         run: |
           bash ../tools/site/require_current_main.sh
-          extra=(--var "BUILD_ALLOWED_ORIGIN:$BUILD_PUBLISHED_ORIGIN")
+          extra=(--var "BUILD_ALLOWED_ORIGIN:$BUILD_PUBLISHED_ORIGIN" --var "DEPLOYMENT_SOURCE_SHA:$DEPLOYMENT_SOURCE_SHA" --var "DEPLOYMENT_NONCE:$DEPLOYMENT_NONCE")
           if [ -n "$ANTHROPIC_WORKSPACE_ID" ]; then extra+=(--var "ANTHROPIC_WORKSPACE_ID:$ANTHROPIC_WORKSPACE_ID"); fi
           if [ -n "$GITHUB_APP_ID" ]; then extra+=(--var "GITHUB_APP_ID:$GITHUB_APP_ID"); fi
           if [ -n "$GITHUB_APP_INSTALLATION_ID" ]; then extra+=(--var "GITHUB_APP_INSTALLATION_ID:$GITHUB_APP_INSTALLATION_ID"); fi
@@ -259,6 +269,7 @@ jobs:
             exit 1
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "DEPLOYED_URL=$url" >> "$GITHUB_ENV"
           echo "### Wishes service: $url" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Worker secrets (stdin only, never echoed)
@@ -276,6 +287,7 @@ jobs:
             # Made once, here, and never seen by anyone: tokens are signed with it.
             openssl rand -base64 48 | tr -d '\n' | timeout 120 npx --yes "$WRANGLER" secret put TOKEN_SECRET
           fi
+          printf '%s' "$SMOKE_CORRELATION_TOKEN" | timeout 120 npx --yes "$WRANGLER" secret put SMOKE_CORRELATION_TOKEN
           printf '%s' "$ANTHROPIC_API_KEY" | timeout 120 npx --yes "$WRANGLER" secret put ANTHROPIC_API_KEY
           if [ -n "$ALERT_URL" ]; then printf '%s' "$ALERT_URL" | timeout 120 npx --yes "$WRANGLER" secret put ALERT_URL; fi
           if [ "$CUSTOM_DELIVERY_ENABLED" != true ]; then
@@ -291,6 +303,10 @@ jobs:
           if grep -Eq '^DAILY_BUDGET_USD[[:space:]]*=[[:space:]]*"0(\.0*)?"' wrangler.toml; then m=off; else m=on; fi
           echo "expect=$m" >> "$GITHUB_OUTPUT"
           echo "### Wishes is $m (DAILY_BUDGET_USD in cloud/wrangler.toml)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Public endpoint identifies the deployed Worker
+        if: steps.have.outputs.ok == 'true'
+        run: timeout 90 node test/deployment-preflight.mjs "$AUROS_WISHES_URL" "$DEPLOYMENT_SOURCE_SHA" "$DEPLOYMENT_NONCE" "$DEPLOYED_URL"
 
       - name: Custom delivery live preflight
         if: steps.have.outputs.ok == 'true'
@@ -348,6 +364,18 @@ jobs:
           node test/publication-evidence.mjs "$CUSTOM_DELIVERY_ENABLED" "$smoke" "$log_proven"
           if [ "$smoke" = 3 ]; then echo "::warning::This runner's network had used its 3 registrations today; end-to-end part skipped"; exit 0; fi
           exit "$smoke"
+
+      - name: Bind reusable cloud publication proof
+        if: steps.have.outputs.ok == 'true'
+        working-directory: .
+        run: python3 -I tools/site/cloud_dependency.py --output "$RUNNER_TEMP/cloud-publication-proof.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.have.outputs.ok == 'true'
+        with:
+          name: cloud-publication-proof-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cloud-publication-proof.json
+          retention-days: 30
+          if-no-files-found: error
 
       - name: Real model on the acceptance and adversarial sets
         if: always() && steps.have.outputs.ok == 'true' && (steps.mode.outputs.expect == 'on' || inputs.eval)

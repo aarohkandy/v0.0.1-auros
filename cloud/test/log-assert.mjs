@@ -10,7 +10,15 @@ const mode = process.argv[3];
 const lines = readFileSync(process.argv[2], "utf8").split("\n").filter(Boolean).flatMap((l) => {
   try { return JSON.parse(l).map((m) => JSON.parse(m)); } catch { return []; }
 });
-const reqs = lines.filter((l) => l.ev === "req");
+const correlation = process.env.SMOKE_CORRELATION_TOKEN;
+const source = process.env.DEPLOYMENT_SOURCE_SHA;
+const nonce = process.env.DEPLOYMENT_NONCE;
+const bound = correlation !== undefined || source !== undefined || nonce !== undefined;
+if (bound && (!/^[a-f0-9]{64}$/.test(correlation || "") || !/^[a-f0-9]{40}$/.test(source || "") || !/^[a-f0-9]{64}$/.test(nonce || ""))) {
+  console.error("FAIL: missing or malformed deployment/log correlation"); process.exit(1);
+}
+const reqs = lines.filter((l) => l.ev === "req" && (!bound ||
+  l.smoke_correlation === correlation && l.deployment_source === source && l.deployment_nonce === nonce));
 const claudeRoutes = reqs.filter((l) => l.route === "/v1/wish" || l.route === "/v1/ask");
 const withTokens = claudeRoutes.filter((l) => "in" in l || "out" in l || "usd" in l || "cr" in l || "cw" in l);
 let bad = 0;
