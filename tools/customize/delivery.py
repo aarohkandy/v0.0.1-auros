@@ -124,13 +124,11 @@ def validate_request_id(request_id: str) -> str | None:
 
 def validate_source_ref(ref: str, source_sha: str, provenance_path: Path) -> None:
     provenance, _raw = _json(provenance_path)
-    _repository, base, _recipe = _validate_provenance(provenance)
-    if source_sha != base["head_sha"] or not COMMIT.fullmatch(source_sha):
-        _fail("workflow source does not match the selected green base build")
-    if ref == "refs/heads/main":
-        return
-    if ref != f"refs/tags/{base['tag']}":
-        _fail("workflow ref is neither main nor the exact verified base release tag")
+    _repository, authority, _base, _recipe = _validate_provenance(provenance)
+    if source_sha != authority["head_sha"] or not COMMIT.fullmatch(source_sha):
+        _fail("workflow source does not match the packaging authority")
+    if ref != "refs/heads/main":
+        _fail("custom packaging must run from main")
 
 
 def _validate_recipe(recipe: Any) -> dict[str, Any]:
@@ -158,7 +156,9 @@ def _validate_recipe(recipe: Any) -> dict[str, Any]:
     return recipe
 
 
-def _validate_provenance(value: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, Any]]:
+def _validate_provenance(
+    value: dict[str, Any],
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any]]:
     _exact(
         value,
         {
@@ -169,6 +169,7 @@ def _validate_provenance(value: dict[str, Any]) -> tuple[str, dict[str, Any], di
             "public_release",
             "download_ready",
             "repository",
+            "authority",
             "base_build",
             "recipe",
             "custom_installer",
@@ -178,7 +179,7 @@ def _validate_provenance(value: dict[str, Any]) -> tuple[str, dict[str, Any], di
     if (
         value.get("schema") != "org.auros.custom-package-provenance"
         or type(value.get("version")) is not int
-        or value.get("version") != 1
+        or value.get("version") != 2
     ):
         _fail("custom package provenance schema or version is invalid")
     if value.get("state") != "unsigned-custom-artifact":
@@ -188,6 +189,12 @@ def _validate_provenance(value: dict[str, Any]) -> tuple[str, dict[str, Any], di
     repository = value.get("repository")
     if not isinstance(repository, str) or not REPOSITORY.fullmatch(repository):
         _fail("provenance repository is invalid")
+    authority = value.get("authority")
+    if not isinstance(authority, dict):
+        _fail("provenance authority must be an object")
+    _exact(authority, {"head_sha"}, "provenance authority")
+    if not COMMIT.fullmatch(str(authority.get("head_sha"))):
+        _fail("provenance authority commit is invalid")
     base = value.get("base_build")
     if not isinstance(base, dict):
         _fail("base_build must be an object")
@@ -208,8 +215,12 @@ def _validate_provenance(value: dict[str, Any]) -> tuple[str, dict[str, Any], di
     )
     if type(base.get("run_id")) is not int or base["run_id"] <= 0:
         _fail("base build run is invalid")
-    if not COMMIT.fullmatch(str(base.get("head_sha"))) or not TAG.fullmatch(
-        str(base.get("tag"))
+    head_sha = str(base.get("head_sha"))
+    tag = str(base.get("tag"))
+    if (
+        not COMMIT.fullmatch(head_sha)
+        or not TAG.fullmatch(tag)
+        or tag.rsplit("-", 1)[1] != head_sha[:7]
     ):
         _fail("base source or tag is invalid")
     if base.get("profile") != "desktop":
@@ -232,7 +243,7 @@ def _validate_provenance(value: dict[str, Any]) -> tuple[str, dict[str, Any], di
         _fail("unsigned custom installer hash is invalid")
     if type(custom.get("bytes")) is not int or custom["bytes"] <= 0:
         _fail("unsigned custom installer size is invalid")
-    return repository, base, _validate_recipe(value.get("recipe"))
+    return repository, authority, base, _validate_recipe(value.get("recipe"))
 
 
 def _signing_provenance(path: Path) -> dict[str, str]:
@@ -454,11 +465,11 @@ def prepare(
     output_dir: Path,
 ) -> dict[str, Any]:
     provenance, provenance_raw = _json(provenance_path)
-    proven_repository, base, recipe = _validate_provenance(provenance)
+    proven_repository, authority, base, recipe = _validate_provenance(provenance)
     if repository != proven_repository or not REPOSITORY.fullmatch(repository):
         _fail("workflow repository does not match provenance")
-    if source_sha != base["head_sha"] or not COMMIT.fullmatch(source_sha):
-        _fail("workflow source does not match base provenance")
+    if source_sha != authority["head_sha"] or not COMMIT.fullmatch(source_sha):
+        _fail("workflow source does not match provenance authority")
     if type(workflow_run_id) is not int or workflow_run_id <= 0:
         _fail("custom workflow run ID is invalid")
     signing = _signing_provenance(signing_path)
@@ -525,15 +536,18 @@ def prepare(
     _copy(installer, output_dir / installer_name)
     plan = {
         "schema": "org.auros.custom-delivery-plan",
-        "version": 1,
+        "version": 2,
         "state": "verified-signed-awaiting-publication",
         "request_id": normalized_request_id,
         "repository": repository,
-        "source_sha": source_sha,
-        "workflow_run_id": workflow_run_id,
+        "authority": {
+            "head_sha": source_sha,
+            "workflow_run_id": workflow_run_id,
+        },
         "release_id": release.get("id"),
         "base_assets": base_assets,
         "base": {
+            "head_sha": base["head_sha"],
             "build_run_id": base["run_id"],
             "tag": base["tag"],
             "image_sha256": base["image_sha256"],
@@ -561,8 +575,7 @@ PLAN_FIELDS = {
     "state",
     "request_id",
     "repository",
-    "source_sha",
-    "workflow_run_id",
+    "authority",
     "release_id",
     "base_assets",
     "base",
@@ -580,7 +593,7 @@ def _plan(path: Path) -> dict[str, Any]:
     if (
         plan.get("schema") != "org.auros.custom-delivery-plan"
         or type(plan.get("version")) is not int
-        or plan.get("version") != 1
+        or plan.get("version") != 2
     ):
         _fail("delivery plan schema or version is invalid")
     if plan.get("state") != "verified-signed-awaiting-publication":
@@ -589,12 +602,21 @@ def _plan(path: Path) -> dict[str, Any]:
     if request_id is not None and not isinstance(request_id, str):
         _fail("delivery plan request_id is invalid")
     validate_request_id(request_id or "")
-    if not isinstance(plan.get("repository"), str) or not REPOSITORY.fullmatch(plan["repository"]):
+    if not isinstance(plan.get("repository"), str) or not REPOSITORY.fullmatch(
+        plan["repository"]
+    ):
         _fail("delivery plan repository is invalid")
-    if not COMMIT.fullmatch(str(plan.get("source_sha"))):
-        _fail("delivery plan source is invalid")
-    if type(plan.get("workflow_run_id")) is not int or plan["workflow_run_id"] <= 0:
-        _fail("delivery plan workflow run is invalid")
+    authority = plan.get("authority")
+    if not isinstance(authority, dict):
+        _fail("delivery plan authority is invalid")
+    _exact(authority, {"head_sha", "workflow_run_id"}, "plan authority")
+    if not COMMIT.fullmatch(str(authority.get("head_sha"))):
+        _fail("delivery plan authority source is invalid")
+    if (
+        type(authority.get("workflow_run_id")) is not int
+        or authority["workflow_run_id"] <= 0
+    ):
+        _fail("delivery plan authority run is invalid")
     if type(plan.get("release_id")) is not int or plan["release_id"] <= 0:
         _fail("delivery plan release is invalid")
     for field in ("existing_installer", "existing_manifest"):
@@ -605,11 +627,18 @@ def _plan(path: Path) -> dict[str, Any]:
     base = plan.get("base")
     if not isinstance(base, dict):
         _fail("delivery plan base is invalid")
-    _exact(base, {"build_run_id", "tag", "image_sha256", "image_bytes"}, "plan base")
+    _exact(
+        base,
+        {"head_sha", "build_run_id", "tag", "image_sha256", "image_bytes"},
+        "plan base",
+    )
     if type(base.get("build_run_id")) is not int or base["build_run_id"] <= 0:
         _fail("delivery plan base run is invalid")
-    if not TAG.fullmatch(str(base.get("tag"))) or not SHA256.fullmatch(
-        str(base.get("image_sha256"))
+    if (
+        not COMMIT.fullmatch(str(base.get("head_sha")))
+        or not TAG.fullmatch(str(base.get("tag")))
+        or str(base.get("tag")).rsplit("-", 1)[1] != str(base.get("head_sha"))[:7]
+        or not SHA256.fullmatch(str(base.get("image_sha256")))
     ):
         _fail("delivery plan base identity is invalid")
     if type(base.get("image_bytes")) is not int or base["image_bytes"] <= 0:
@@ -674,7 +703,7 @@ def _manifest_value(
         or release.get("prerelease") is not True
     ):
         _fail("base prerelease identity changed before manifest creation")
-    if release_source_sha != plan["source_sha"] or not COMMIT.fullmatch(
+    if release_source_sha != base["head_sha"] or not COMMIT.fullmatch(
         release_source_sha
     ):
         _fail("base release tag no longer resolves to the proven source")
@@ -696,14 +725,11 @@ def _manifest_value(
         _fail("published signed installer readback does not match")
     return {
         "schema": "org.auros.custom-delivery",
-        "version": 1,
+        "version": 2,
         "state": "download-ready",
         "request_id": plan["request_id"],
-        "source": {
-            "repository": plan["repository"],
-            "commit": plan["source_sha"],
-            "workflow_run_id": plan["workflow_run_id"],
-        },
+        "repository": plan["repository"],
+        "authority": plan["authority"],
         "base": base,
         "recipe": plan["recipe"],
         "installer": {
