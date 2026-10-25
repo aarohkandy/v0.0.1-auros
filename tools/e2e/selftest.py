@@ -426,6 +426,11 @@ def test_bitlocker_putback_contract():
           "Value.GetType().FullName" in storage_job and
           "profiletest" not in storage_job,
           "put-back: native storage diagnostic uses exact constants and reports only bounded shapes")
+    check("permissions:\n      contents: read" in storage_job and
+          "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\storage-diagnostic.ps1" in storage_job and
+          "[regex]::Matches($text, '(?m)^AUROS_PARTITION_FINGERPRINT_SELFTEST PASS\\r?$')" in storage_job and
+          ".Split('AUROS_PARTITION_FINGERPRINT_SELFTEST PASS')" not in storage_job,
+          "put-back: native storage diagnostic matches the guest's Windows PowerShell 5.1 runtime")
     wait_source = inspect.getsource(e2e.Flow.wait_windows_return)
     check(wait_source.index("self.write_bitlocker_return(evidence)") <
           wait_source.index("if time.time() > deadline"),

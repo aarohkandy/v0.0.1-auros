@@ -99,6 +99,8 @@ jobs:
   storage-diagnostic:
     needs: gate
     if: needs.gate.outputs.storage_diagnostic_only == 'true'
+    permissions:
+      contents: read
     concurrency: { group: 'windows-${{ github.ref }}-storage-diagnostic', cancel-in-progress: false }
     runs-on: windows-latest
     timeout-minutes: 10
@@ -165,10 +167,10 @@ jobs:
       - name: exact mock and read-only live Storage capture
         shell: pwsh
         run: |
-          & .\storage-diagnostic.ps1 2>&1 | Tee-Object storage-diagnostic.txt
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\storage-diagnostic.ps1 2>&1 | Tee-Object storage-diagnostic.txt
           if ($LASTEXITCODE -ne 0) { throw "storage diagnostic exited $LASTEXITCODE" }
           $text = Get-Content storage-diagnostic.txt -Raw
-          if (($text.Split('AUROS_PARTITION_FINGERPRINT_SELFTEST PASS').Count - 1) -ne 1) {
+          if (([regex]::Matches($text, '(?m)^AUROS_PARTITION_FINGERPRINT_SELFTEST PASS\r?$')).Count -ne 1) {
             throw "the exact mock fixture did not pass exactly once"
           }
           if ($text -notmatch 'AUROS_STORAGE_PHASE live-capture-pass') {
