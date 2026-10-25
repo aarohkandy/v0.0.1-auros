@@ -45,6 +45,11 @@ public sealed class E2eMsaaItem {
   public string KeyboardShortcut;
   public string DefaultAction;
 }
+public sealed class E2eMsaaSnapshotException : Exception {
+  public readonly int ComResult;
+  public E2eMsaaSnapshotException(string message, int comResult, Exception inner)
+    : base(message, inner) { ComResult = comResult; }
+}
 public static class E2eUser32 {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll", CharSet=CharSet.Unicode)]
@@ -74,24 +79,38 @@ public static class E2eUser32 {
       }
       List<E2eMsaaItem> result = new List<E2eMsaaItem>(count + 1);
       for (int child = 0; child <= count; child++) {
+        string operation = "accLocation";
         try {
           int x, y, width, height;
           accessible.accLocation(out x, out y, out width, out height, child);
+          operation = "get_accRole";
+          int role = Convert.ToInt32(accessible.get_accRole(child));
+          operation = "get_accName";
+          string name = accessible.get_accName(child);
+          operation = "get_accState";
+          int state = Convert.ToInt32(accessible.get_accState(child));
+          operation = "get_accKeyboardShortcut";
+          string keyboardShortcut = accessible.get_accKeyboardShortcut(child);
+          operation = "get_accDefaultAction";
+          string defaultAction = accessible.get_accDefaultAction(child);
           result.Add(new E2eMsaaItem {
             Child = child,
-            Role = Convert.ToInt32(accessible.get_accRole(child)),
-            Name = accessible.get_accName(child),
-            State = Convert.ToInt32(accessible.get_accState(child)),
+            Role = role,
+            Name = name,
+            State = state,
             X = x,
             Y = y,
             Width = width,
             Height = height,
-            KeyboardShortcut = accessible.get_accKeyboardShortcut(child),
-            DefaultAction = accessible.get_accDefaultAction(child)
+            KeyboardShortcut = keyboardShortcut,
+            DefaultAction = defaultAction
           });
         } catch (Exception ex) {
-          throw new InvalidOperationException(
-            "AurBridge MSAA child " + child + " could not be read exactly", ex);
+          int childHr = Marshal.GetHRForException(ex);
+          throw new E2eMsaaSnapshotException(
+            String.Format(
+              "AurBridge MSAA child {0} {1} failed ({2}, HRESULT 0x{3:X8}): {4}",
+              child, operation, ex.GetType().FullName, childHr, ex.Message), childHr, ex);
         }
       }
       return result.ToArray();
@@ -120,6 +139,19 @@ function Rect($e) {
 
 function ProcName($id) {
   try { (Get-Process -Id $id -ErrorAction Stop).ProcessName } catch { '' }
+}
+
+function IsTransientMsaaSnapshotError($record) {
+  $error = $record.Exception
+  while ($error) {
+    if ($error.GetType().FullName -ceq 'E2eMsaaSnapshotException') {
+      # E_INVALIDARG: the child stopped existing between child-count and its
+      # getter. The disconnected HRESULTs are the equivalent window teardown.
+      return $error.ComResult -in @(-2147024809, -2147417848, -2147220995)
+    }
+    $error = $error.InnerException
+  }
+  return $false
 }
 
 # AurBridge is one owner-drawn HWND. It deliberately exposes the widgets that
@@ -289,6 +321,8 @@ if ($MsaaProbePid -or $MsaaProbeHwnd -or $MsaaProbeWaitSec) {
   }
   $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $MsaaProbeWaitSec))
   $lastProbe = 'exact_windows=0'
+  $lastReadError = ''
+  $stableSignature = $null
   do {
     $wins = @($AE::RootElement.FindAll(
       $TS::Children, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
@@ -300,11 +334,24 @@ if ($MsaaProbePid -or $MsaaProbeHwnd -or $MsaaProbeWaitSec) {
         } catch { $false }
       })
     $lastProbe = "exact_windows=$($wins.Count)"
+    if ($wins.Count -ne 1) { $stableSignature = $null }
     if ($wins.Count -gt 1) {
       throw 'AurBridge MSAA probe: the requested process/HWND is ambiguous'
     }
     if ($wins.Count -eq 1) {
-      $items = @(AurBridgeMsaaElements $wins[0] @('Button','RadioButton','CheckBox','Pane') 80)
+      try {
+        $items = @(AurBridgeMsaaElements $wins[0] @('Button','RadioButton','CheckBox','Pane') 80)
+      } catch {
+        # --selftest advances its real window through pages and exits quickly.
+        # A page change can invalidate a captured child count mid-enumeration.
+        # Only this bounded native probe retries the whole exact snapshot;
+        # production element reads return the explicit error to their caller.
+        if (-not $MsaaProbeWaitSec -or -not (IsTransientMsaaSnapshotError $_)) { throw }
+        $stableSignature = $null
+        $lastReadError = "read_error=$_"
+        Start-Sleep -Milliseconds 50
+        continue
+      }
       $primary = @($items | Where-Object {
         $_.type -ceq 'Button' -and $_.key -ceq 'Enter' -and
         (!$MsaaProbePrimaryName -or $_.name -ceq $MsaaProbePrimaryName) -and
@@ -314,13 +361,24 @@ if ($MsaaProbePid -or $MsaaProbeHwnd -or $MsaaProbeWaitSec) {
       $enters = @($buttons | Where-Object { $_.key -ceq 'Enter' })
       $lastProbe = "exact_windows=1 pid=$($items[0].pid) controls=$($items.Count) buttons=$($buttons.Count) enter=$($enters.Count) expected=$($primary.Count)"
       if (-not $MsaaProbeWaitSec -or $primary.Count -eq 1) {
+        if ($MsaaProbeWaitSec) {
+          # Two identical complete reads prove this was a stable page, not a
+          # mixture of the widget lists on either side of a render transition.
+          $signature = $items | ConvertTo-Json -Depth 6 -Compress
+          if ($signature -cne $stableSignature) {
+            $stableSignature = $signature
+            Start-Sleep -Milliseconds 50
+            continue
+          }
+        }
         $items | ConvertTo-Json -Depth 6 -Compress
         exit 0
       }
+      $stableSignature = $null
     }
     Start-Sleep -Milliseconds 50
   } while ([DateTime]::UtcNow -lt $deadline)
-  throw "AurBridge MSAA probe: no single expected Enter button appeared on the exact process/HWND ($MsaaProbePrimaryName, enabled=$([bool]$MsaaProbePrimaryEnabled)); $lastProbe"
+  throw "AurBridge MSAA probe: no single expected Enter button appeared on the exact process/HWND ($MsaaProbePrimaryName, enabled=$([bool]$MsaaProbePrimaryEnabled)); $lastProbe; $lastReadError"
 }
 
 $who = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
