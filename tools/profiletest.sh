@@ -1109,6 +1109,33 @@ round_copy = text.index('find "$STATE" -maxdepth 1 -type f ! -name security-next
 final_report = text.index('say "fcitx-probe=$final_state', round_copy)
 if '\n    sync\n' not in text[round_copy:final_report]:
     raise SystemExit("each security round must persist its copied evidence before reporting done")
+early_reports = (
+    ('Noble package indexes unavailable',
+     'say "fcitx-probe=unavailable reason=Noble package indexes unavailable"'),
+    ('Noble Fcitx packages unavailable',
+     'say "fcitx-probe=unavailable reason=Noble Fcitx packages unavailable"'),
+    ('source-reviewed package versions mismatch',
+     'say "fcitx-probe=fail reason=source-reviewed package versions mismatch"'),
+)
+def early_flush_errors(source):
+    errors = []
+    for reason, marker in early_reports:
+        report = source.index(marker)
+        branch = source[source.rfind('\nif ', 0, report):report]
+        result = branch.rfind('> "$STATE/result"')
+        restore = branch.rfind('> "$STATE/restore.txt"')
+        persisted = branch.rfind('\n    sync\n')
+        if min(result, restore, persisted) < 0 or not result < restore < persisted:
+            errors.append(reason)
+    return errors
+if errors := early_flush_errors(text):
+    raise SystemExit(f"early exits must persist reduced evidence before done: {errors}")
+for reason, marker in early_reports:
+    report = text.index(marker)
+    persisted = text.rfind('\n    sync\n', 0, report)
+    mutant = text[:persisted] + text[persisted + len('\n    sync\n'):]
+    if reason not in early_flush_errors(mutant):
+        raise SystemExit(f"selftest did not reject missing early evidence flush: {reason}")
 host = open(sys.argv[2], encoding="utf-8").read()
 action_helper = host.index('ibus_host_action() {', host.index('# ── start it'))
 action_result = host[action_helper:host.index('\n}\n\nT0=', action_helper)]

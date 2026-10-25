@@ -111,6 +111,7 @@ if ! timeout 300 apt-get update -q > "$STATE/apt-update.log" 2>&1; then
     printf 'ordinary_service_ready=%s\nuser_config_unchanged=%s\n' \
         "$( [ "$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null)" = active ] && echo 1 || echo 0 )" \
         "$( [ "$(config_snapshot)" = "$config_before" ] && echo yes || echo no )" > "$STATE/restore.txt"
+    sync
     say "fcitx-probe=unavailable reason=Noble package indexes unavailable"; say done; exit 0
 fi
 if ! DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y -q --no-install-recommends \
@@ -119,6 +120,7 @@ if ! DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y -q --no-insta
     printf 'ordinary_service_ready=%s\nuser_config_unchanged=%s\n' \
         "$( [ "$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null)" = active ] && echo 1 || echo 0 )" \
         "$( [ "$(config_snapshot)" = "$config_before" ] && echo yes || echo no )" > "$STATE/restore.txt"
+    sync
     say "fcitx-probe=unavailable reason=Noble Fcitx packages unavailable"; say done; exit 0
 fi
 dpkg-query -W -f='${Package}=${Version}\n' fcitx5 fcitx5-frontend-gtk3 fcitx5-pinyin \
@@ -130,6 +132,7 @@ if ! grep -Fqx 'fcitx5=5.1.7-1build3' "$STATE/package-versions.txt" || \
     printf 'ordinary_service_ready=%s\nuser_config_unchanged=%s\n' \
         "$( [ "$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null)" = active ] && echo 1 || echo 0 )" \
         "$( [ "$(config_snapshot)" = "$config_before" ] && echo yes || echo no )" > "$STATE/restore.txt"
+    sync
     say "fcitx-probe=fail reason=source-reviewed package versions mismatch"; say done; exit 0
 fi
 
