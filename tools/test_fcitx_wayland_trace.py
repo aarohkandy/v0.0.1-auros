@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 import sys
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fcitx_wayland_trace import analyze, analyze_lifecycle, analyze_no_popup, analyze_toplevel
+from fcitx_wayland_trace import (ReducedEvidenceError, analyze, analyze_lifecycle,
+                                 analyze_no_popup, analyze_toplevel)
 
 # Exact closure_print syntax from Wayland 1.22.0 src/connection.c lines
 # 1286-1291, 1324-1328, and 1332-1345 (Noble's libwayland generation):
@@ -162,6 +165,111 @@ class TraceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already mapped"):
             analyze_no_popup(mapped_before + b"wl_display@1.sync(new id wl_callback@99)\n",
                              len(mapped_before))
+
+    def test_no_popup_failure_classifies_phases_objects_and_unmatched_events(self):
+        focus = PREFIX
+        before_input = b"xdg_popup@90.configure(1, 2, 3, 4)\n"
+        input_boundary = len(focus + before_input)
+        created = b'''xdg_wm_base@8.get_xdg_surface(new id xdg_surface@31, wl_surface@30)
+xdg_surface@31.get_popup(new id xdg_popup@32, xdg_surface@20, xdg_positioner@29)
+xdg_popup@32.configure(4, 8, 320, 90)
+wl_surface@30.attach(wl_buffer@44, 0, 0)
+wl_surface@30.commit()
+'''
+        screenshot_boundary = len(focus + before_input + created)
+        unmapped = b'''wl_surface@30.attach(nil, 0, 0)
+wl_surface@30.commit()
+'''
+        submit_boundary = len(focus + before_input + created + unmapped)
+        after_submit = b'''xdg_popup@32.grab(wl_seat@4, 7)
+xdg_surface@31.destroy()
+'''
+        raw = focus + before_input + created + unmapped + after_submit
+        with self.assertRaises(ReducedEvidenceError) as caught:
+            analyze_no_popup(raw, len(focus), input_boundary,
+                             screenshot_boundary, submit_boundary)
+        got = caught.exception.evidence
+        self.assertEqual(got["focus_to_input_configure_events"], 1)
+        self.assertEqual(got["candidate_popup_configures_unmatched"], 1)
+        self.assertEqual(got["input_to_screenshot_popup_events"], 1)
+        self.assertEqual(got["input_to_screenshot_map_events"], 1)
+        self.assertEqual(got["input_to_screenshot_configure_events"], 1)
+        self.assertEqual(got["candidate_popup_configures_matched"], 1)
+        self.assertEqual(got["after_submit_grab_events"], 1)
+        self.assertEqual(got["candidate_popup_grabs_matched"], 1)
+        self.assertEqual(got["candidate_objects_destroyed_after_focus"], 1)
+        self.assertEqual(got["connection_identity"], "unproven")
+        self.assertRegex(
+            str(got["candidate_object_1"]),
+            r"child:31,popup:32,wl:30,parent:20,parent_role:toplevel,.*"
+            r"map_count:1,unmap_count:1,configure_count:1,grab_count:1,destroyed:yes")
+
+    def test_no_popup_failure_output_is_bounded_and_contains_no_trace_text(self):
+        secret = b"synthetic-password-value"
+        repeated = b"".join(
+            (f"xdg_popup@{100 + index}.configure(1, 2, 3, 4)\n".encode("ascii") + secret + b"\n")
+            for index in range(40))
+        raw = PREFIX + repeated
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory) / "trace"
+            trace.write_bytes(raw)
+            run = subprocess.run(
+                [sys.executable, str(Path(__file__).with_name("fcitx_wayland_trace.py")),
+                 str(trace), "--after-byte", str(len(PREFIX)), "--no-popup"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn(b"candidate_popup_configures=40\n", run.stdout)
+        self.assertIn(b"reduced_events_recorded=32\n", run.stdout)
+        self.assertIn(b"reduced_events_omitted=8\n", run.stdout)
+        self.assertNotIn(secret, run.stdout + run.stderr)
+        self.assertNotIn(b"xdg_popup@", run.stdout + run.stderr)
+        self.assertNotIn(b"Traceback", run.stderr)
+
+    def test_no_popup_caps_candidate_object_records(self):
+        popups = b"".join(
+            f"xdg_wm_base@8.get_xdg_surface(new id xdg_surface@{200 + index}, wl_surface@{300 + index})\n"
+            f"xdg_surface@{200 + index}.get_popup(new id xdg_popup@{400 + index}, xdg_surface@20, xdg_positioner@29)\n"
+            .encode("ascii") for index in range(20))
+        with self.assertRaises(ReducedEvidenceError) as caught:
+            analyze_no_popup(PREFIX + popups, len(PREFIX))
+        got = caught.exception.evidence
+        self.assertEqual(got["candidate_objects_relevant"], 20)
+        self.assertEqual(got["candidate_objects_recorded"], 16)
+        self.assertEqual(got["candidate_objects_omitted"], 4)
+        self.assertIn("candidate_object_16", got)
+        self.assertNotIn("candidate_object_17", got)
+
+    def test_no_popup_success_records_ordered_boundaries_and_zero_activity(self):
+        raw = PREFIX + b"wl_display@1.sync(new id wl_callback@99)\n"
+        got = analyze_no_popup(raw, len(PREFIX), len(PREFIX),
+                               len(raw), len(raw))
+        self.assertEqual(got["observed_candidate_popup"], "no")
+        self.assertEqual(got["connection_identity"], "unproven")
+        self.assertEqual(got["candidate_objects_relevant"], 0)
+        self.assertEqual(got["input_to_screenshot_popup_events"], 0)
+        self.assertEqual(got["focus_boundary_byte"], len(PREFIX))
+        self.assertEqual(got["screenshot_boundary_byte"], len(raw))
+
+    def test_no_popup_rejects_unordered_phase_boundaries(self):
+        with self.assertRaisesRegex(ValueError, "not ordered"):
+            analyze_no_popup(PREFIX, 4, 3, 5, 6)
+
+    def test_no_popup_keeps_destroyed_surface_ids_fail_closed(self):
+        created = PREFIX + b'''xdg_wm_base@8.get_xdg_surface(new id xdg_surface@31, wl_surface@30)
+xdg_surface@31.get_popup(new id xdg_popup@32, xdg_surface@20, xdg_positioner@29)
+xdg_surface@31.destroy()
+wl_surface@30.destroy()
+'''
+        reused_map = b'''wl_surface@30.attach(wl_buffer@44, 0, 0)
+wl_surface@30.commit()
+'''
+        with self.assertRaises(ReducedEvidenceError) as caught:
+            analyze_no_popup(created + reused_map, len(created))
+        got = caught.exception.evidence
+        self.assertEqual(got["candidate_popup_maps"], 1)
+        self.assertIn("type:map", str(got["reduced_event_1"]))
+        self.assertIn("popup:0,child:0,candidate:no", str(got["reduced_event_1"]))
+        self.assertEqual(got["candidate_objects_relevant"], 0)
 
 if __name__ == "__main__":
     unittest.main()

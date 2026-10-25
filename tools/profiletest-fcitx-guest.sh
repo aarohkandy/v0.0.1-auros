@@ -217,6 +217,19 @@ fcitx_owner_pid() {
         org.freedesktop.DBus GetConnectionUnixProcessID s org.fcitx.Fcitx5 2>/dev/null \
         | awk '$1=="u" && $2 ~ /^[0-9]+$/ {print $2}'
 }
+fcitx_owner_name() {
+    as_fcitx_desktop busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
+        org.freedesktop.DBus GetNameOwner s org.fcitx.Fcitx5 2>/dev/null \
+        | awk '$1=="s" && $2 ~ /^"\:[0-9]+\.[0-9]+"$/ {gsub(/"/, "", $2); print $2}'
+}
+verify_fcitx_identity() { # expected unique D-Bus owner
+    expected_owner=$1
+    [ "$(fcitx_owner_name)" = "$expected_owner" ] \
+        && [ "$(fcitx_owner_pid)" = "$fcitx_pid" ] \
+        && [ "$(awk '{print $22}' "/proc/$fcitx_pid/stat" 2>/dev/null)" = "$fcitx_start" ] \
+        && [ "$(readlink "/proc/$fcitx_pid/exe" 2>/dev/null)" = /usr/bin/fcitx5 ] \
+        && [ "$(tr '\0' ' ' < "/proc/$fcitx_pid/cmdline" 2>/dev/null)" = '/usr/bin/fcitx5 -D ' ]
+}
 
 select_exact_pinyin() { # focused application name
     selected_for=$1; i=0
@@ -795,6 +808,13 @@ if [ "$SECURITY" = 1 ]; then
     fi
     act wait-form || fail "password form not visible"
     act baseline "fcitx-round$security_round-password-focus" || fail "password focus baseline failed"
+    password_fcitx_owner=$(fcitx_owner_name)
+    [ -n "$password_fcitx_owner" ] || fail "password Fcitx D-Bus owner unavailable"
+    verify_fcitx_identity "$password_fcitx_owner" \
+        || fail "Fcitx identity changed before password focus"
+    printf 'pid=%s\nstart_time=%s\nexe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\ndbus_owner=%s\nidentity_before_sensitive=yes\n' \
+        "$fcitx_pid" "$fcitx_start" "$password_fcitx_owner" \
+        > "$STATE/service-owner-sensitive.txt"
     password_boundary=$(wc -c < "$password_trace" | tr -d ' ')
     [ ! -e "$password_focus" ] || fail "password focused before injected click"
     act click-form || fail "password field focus failed"
@@ -803,8 +823,11 @@ if [ "$SECURITY" = 1 ]; then
     [ "$i" -lt 30 ] || fail "password focus event unavailable"
     act form-shot "fcitx-round$security_round-password-focused" \
         || fail "focused password form was not visible"
+    password_input_boundary=$(wc -c < "$password_trace" | tr -d ' ')
     act type-pinyin || fail "synthetic password input failed"
     act shot "fcitx-round$security_round-password-masked" || fail "masked password screenshot failed"
+    password_screenshot_boundary=$(wc -c < "$password_trace" | tr -d ' ')
+    password_submit_boundary=$(wc -c < "$password_trace" | tr -d ' ')
     act key ret || fail "synthetic password submit failed"
     i=0; while [ "$i" -lt 30 ] && [ ! -s "$password_summary" ]; do sleep .1; i=$((i+1)); done
     [ "$i" -lt 30 ] || fail "password result unavailable"
@@ -814,9 +837,20 @@ if [ "$SECURITY" = 1 ]; then
         && grep -qx 'composition_end_count=0' "$password_summary" \
         && grep -qx 'composition_input_count=0' "$password_summary" \
         || fail "password field composition suppression failed"
+    cat "$password_focus" > "$STATE/password-focus.txt"
+    cat "$password_summary" > "$STATE/password-summary.txt"
+    verify_fcitx_identity "$password_fcitx_owner" \
+        || fail "Fcitx identity changed during password test"
+    printf 'identity_after_sensitive=yes\n' >> "$STATE/service-owner-sensitive.txt"
     python3 /usr/lib/auros-profiletest/fcitx_wayland_trace.py "$password_trace" \
-        --after-byte "$password_boundary" --no-popup > "$STATE/password-suppression.txt" \
+        --after-byte "$password_boundary" --input-byte "$password_input_boundary" \
+        --screenshot-byte "$password_screenshot_boundary" \
+        --submit-byte "$password_submit_boundary" --no-popup \
+        > "$STATE/password-popup-events.txt" \
         2> "$STATE/password-suppression.stderr" || fail "password field popup suppression failed"
+    grep -E '^(candidate_popup_(creations|maps|configures|grabs)|layer_shell_objects|observed_candidate_popup)=' \
+        "$STATE/password-popup-events.txt" > "$STATE/password-suppression.txt" \
+        || fail "reduced password popup summary missing"
     cat "$password_focus" >> "$STATE/password-suppression.txt"
     cat "$password_summary" >> "$STATE/password-suppression.txt"
     trace_has_no_input_text "$password_trace" || fail "password protocol trace retained input text"
