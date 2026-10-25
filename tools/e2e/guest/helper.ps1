@@ -142,14 +142,14 @@ function ProcName($id) {
 }
 
 function IsTransientMsaaSnapshotError($record) {
-  $error = $record.Exception
-  while ($error) {
-    if ($error.GetType().FullName -ceq 'E2eMsaaSnapshotException') {
+  $exceptionCursor = $record.Exception
+  while ($exceptionCursor) {
+    if ($exceptionCursor.GetType().FullName -ceq 'E2eMsaaSnapshotException') {
       # E_INVALIDARG: the child stopped existing between child-count and its
       # getter. The disconnected HRESULTs are the equivalent window teardown.
-      return $error.ComResult -in @(-2147024809, -2147417848, -2147220995)
+      return $exceptionCursor.ComResult -in @(-2147024809, -2147417848, -2147220995)
     }
-    $error = $error.InnerException
+    $exceptionCursor = $exceptionCursor.InnerException
   }
   return $false
 }
