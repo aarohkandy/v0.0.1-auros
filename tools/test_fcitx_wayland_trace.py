@@ -196,6 +196,8 @@ xdg_surface@31.destroy()
         self.assertEqual(got["input_to_screenshot_configure_events"], 1)
         self.assertEqual(got["candidate_popup_configures_matched"], 1)
         self.assertEqual(got["after_submit_grab_events"], 1)
+        self.assertEqual(got["submit_to_stop_grab_events"], 1)
+        self.assertEqual(got["after_stop_grab_events"], 0)
         self.assertEqual(got["candidate_popup_grabs_matched"], 1)
         self.assertEqual(got["candidate_objects_destroyed_after_focus"], 1)
         self.assertEqual(got["connection_identity"], "unproven")
@@ -204,6 +206,21 @@ xdg_surface@31.destroy()
             str(got["candidate_object_1"]),
             r"child:31,popup:32,wl:30,parent:20,parent_role:toplevel,.*"
             r"map_count:1,unmap_count:1,configure_count:1,grab_count:1,destroyed:yes")
+
+    def test_no_popup_distinguishes_response_from_shutdown(self):
+        before_stop = b"xdg_popup@32.configure(1, 2, 3, 4)\n"
+        crossing_stop = b"xdg_popup@33.configure(1, 2, 3, 4)\n"
+        after_stop = b"xdg_popup@33.configure(1, 2, 3, 4)\n"
+        submit = len(PREFIX)
+        stop = len(PREFIX + before_stop) + 5
+        with self.assertRaises(ReducedEvidenceError) as caught:
+            analyze_no_popup(PREFIX + before_stop + crossing_stop + after_stop, submit,
+                             submit, submit, submit, stop)
+        got = caught.exception.evidence
+        self.assertEqual(got["submit_to_stop_configure_events"], 1)
+        self.assertEqual(got["after_stop_configure_events"], 2)
+        self.assertEqual(got["after_submit_configure_events"], 3)
+        self.assertEqual(got["stop_boundary_byte"], stop)
 
     def test_no_popup_failure_output_is_bounded_and_contains_no_trace_text(self):
         secret = b"synthetic-password-value"
