@@ -199,6 +199,7 @@ xdg_surface@31.destroy()
         self.assertEqual(got["candidate_popup_grabs_matched"], 1)
         self.assertEqual(got["candidate_objects_destroyed_after_focus"], 1)
         self.assertEqual(got["connection_identity"], "unproven")
+        self.assertEqual(got["popup_attribution"], "unproven")
         self.assertRegex(
             str(got["candidate_object_1"]),
             r"child:31,popup:32,wl:30,parent:20,parent_role:toplevel,.*"
@@ -245,6 +246,7 @@ xdg_surface@31.destroy()
                                len(raw), len(raw))
         self.assertEqual(got["observed_candidate_popup"], "no")
         self.assertEqual(got["connection_identity"], "unproven")
+        self.assertEqual(got["popup_attribution"], "unproven")
         self.assertEqual(got["candidate_objects_relevant"], 0)
         self.assertEqual(got["input_to_screenshot_popup_events"], 0)
         self.assertEqual(got["focus_boundary_byte"], len(PREFIX))
