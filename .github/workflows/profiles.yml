@@ -15,8 +15,9 @@
 #            one; desktop.profile, which they all inherit, builds all.
 #            [profiles:diagnostic] suppresses image builds only for a
 #            strict test/docs allowlist, so retained images can be reused.
-#            [ibus-functional] adds multilingual and makes only that job
-#            perform the opt-in two-boot Mousepad and Firefox Pinyin proof.
+#            [ibus-functional] is retained as the public trigger name for
+#            compatibility. It adds multilingual and makes only that fresh
+#            image run the shipped-Fcitx Mousepad and Firefox Pinyin proof.
 #   lint     seconds: tools/profiletest.sh selftest (every check fails
 #            on broken input) and lint (every package exists, no snap
 #            stubs, no unknown excludes) -- before an hour of builds.
@@ -163,6 +164,10 @@ jobs:
               "the FCITX security stage exists only in the retained diagnostic":
                   "PROFILETEST_FCITX_SECURITY_PROBE" not in profile and
                   retest.count("PROFILETEST_FCITX_SECURITY_PROBE") == 1,
+              "fresh functional certification uses only shipped Fcitx":
+                  profile.count("PROFILETEST_FCITX_PRODUCTION") == 1 and
+                  "PROFILETEST_IBUS_FUNCTIONAL" not in profile and
+                  "PROFILETEST_FCITX_PRODUCTION" not in retest,
               "diagnostic probe options are validated together":
                   "profiletest-gate.py probe-mode" in retest,
           }
@@ -323,11 +328,11 @@ jobs:
 
       - name: boot it to its desktop under KVM
         run: |
-          ibus_functional=0
+          fcitx_production=0
           if [ "${{ needs.gate.outputs.ibus_functional }}" = true ] && [ "$P" = multilingual ]; then
-            ibus_functional=1
+            fcitx_production=1
           fi
-          sudo env PATH="$PATH" PROFILETEST_IBUS_FUNCTIONAL="$ibus_functional" \
+          sudo env PATH="$PATH" PROFILETEST_FCITX_PRODUCTION="$fcitx_production" \
             sh tools/profiletest.sh boot "$P" "$PWD/ev" 2>&1 | tee "ev/$P-boot.txt"
 
       # Upload the small immutable manifest before its mutable release pieces.
