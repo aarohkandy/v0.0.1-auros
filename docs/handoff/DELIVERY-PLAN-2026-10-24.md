@@ -697,3 +697,21 @@ fresh focus-marker boundary and closed 15-key password evidence schema.
 Early unavailable exits also needed an evidence sync before the host stops QEMU;
 `a01e2b27` integrates the reviewed three-path repair and ordering regressions
 without changing package verification.
+
+## Candidate held: silent Open failure reproduced again
+
+The third untouched-image runtime run, using the corrected dialog harness,
+clicked a recognized Open at 00:20:16 and failed its unchanged launch deadline
+at 00:22:21. Only the store preview remained. The earlier two successful
+launches therefore do not close the real intermittent product defect. No next
+full candidate has been dispatched. Evidence is on homebase under
+`~/work/auros-vlc-exact/out/patched-diag/aur-journal.txt` and the associated flow.
+
+This recurrence has no canceled PackageKit transaction: resolve work completed,
+but no Flatpak application activation appeared. The shared-cancellable theory
+is not confirmed and must not drive a speculative package patch. A bounded
+diagnostic now traces the management-plugin ownership boundary in stock
+GNOME Software; missing ownership is a hypothesis, not a finding yet.
+Any eventual downstream package repair must preserve Ubuntu security-update
+supersession and exact source publication. A diverted/frozen replacement is
+not acceptable. Diagnostic instrumentation is not a production change.
