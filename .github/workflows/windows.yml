@@ -605,16 +605,43 @@ jobs:
           $exe = (Resolve-Path .\exe\aurbridge-wizard.exe).Path
           $helper = (Resolve-Path .\tools\e2e\guest\helper.ps1).Path
           $d = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\wiz-msaa"
-          $p = Start-Process -FilePath $exe -ArgumentList '--selftest', $d.FullName -PassThru
+          $probeOut = "$d\probe.json"
+          $probeErr = "$d\probe.err"
+          $probeReady = "$d\probe.ready"
+          # The selftest is deliberately short-lived. Start the exact-class
+          # watcher first; its returned PID must be the process launched below.
+          $probe = Start-Process -FilePath powershell.exe -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $helper,
+            '-MsaaProbeWaitSec', '30', '-MsaaProbePrimaryEnabled', '1',
+            '-MsaaProbeReadyFile', $probeReady
+          ) -RedirectStandardOutput $probeOut -RedirectStandardError $probeErr -PassThru
+          $p = $null
           try {
             # Unlike the in-process screen-reader check above, this uses the
             # production guest helper from a separate process. A clean runner
             # exposes Next; a runner that preflight validly blocks exposes one
             # of the stop page's exact primary labels instead.
-            $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper `
-              -MsaaProbePid $p.Id -MsaaProbeWaitSec 30 -MsaaProbePrimaryEnabled 1
-            if ($LASTEXITCODE -ne 0) { throw "the cross-process MSAA probe exited $LASTEXITCODE" }
+            $readyBy = [DateTime]::UtcNow.AddSeconds(20)
+            while (-not (Test-Path $probeReady) -and [DateTime]::UtcNow -lt $readyBy) {
+              if ($probe.HasExited) {
+                throw "the MSAA watcher exited before ready: $(Get-Content $probeErr -Raw)"
+              }
+              Start-Sleep -Milliseconds 50
+            }
+            if (-not (Test-Path $probeReady)) { throw 'the MSAA watcher was not ready in 20 seconds' }
+            $p = Start-Process -FilePath $exe -ArgumentList '--selftest', $d.FullName -PassThru
+            if (-not $probe.WaitForExit(45000)) {
+              $probe.Kill()
+              throw 'the cross-process MSAA probe did not finish'
+            }
+            if ($probe.ExitCode -ne 0) {
+              throw "the cross-process MSAA probe exited $($probe.ExitCode): $(Get-Content $probeErr -Raw)"
+            }
+            $raw = Get-Content $probeOut -Raw
             $items = @($raw | ConvertFrom-Json)
+            if (@($items | Where-Object { $_.pid -ne $p.Id }).Count) {
+              throw 'the MSAA adapter returned controls from a different process'
+            }
             $duplicateChildren = @($items | Group-Object hwnd, child | Where-Object Count -ne 1)
             if ($duplicateChildren.Count) { throw 'the MSAA adapter duplicated a child identity' }
             $pane = @($items | Where-Object {
@@ -642,8 +669,9 @@ jobs:
               -MsaaProbePid $p.Id -MsaaProbeHwnd ($hwnd + 1) 2>$null | Out-Null
             if ($LASTEXITCODE -eq 0) { throw 'the MSAA probe accepted the wrong HWND' }
           } finally {
-            if (-not $p.HasExited) { $p.Kill() }
-            [void]$p.WaitForExit(30000)
+            if (-not $probe.HasExited) { $probe.Kill() }
+            if ($p -and -not $p.HasExited) { $p.Kill() }
+            if ($p) { [void]$p.WaitForExit(30000) }
           }
           # The exact PID/HWND pair must stop being authority when its process
           # has gone away. PID reuse cannot revive a stale handle because the

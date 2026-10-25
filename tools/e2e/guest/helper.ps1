@@ -21,7 +21,8 @@ param(
   [int64]$MsaaProbeHwnd = 0,
   [int]$MsaaProbeWaitSec = 0,
   [string]$MsaaProbePrimaryName = '',
-  [int]$MsaaProbePrimaryEnabled = 1
+  [int]$MsaaProbePrimaryEnabled = 1,
+  [string]$MsaaProbeReadyFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -138,7 +139,7 @@ function AurBridgeMsaaElements($w, $types, $max) {
           name = $name; type = $type; rect = @($x, $y, $width, $height)
           enabled = -not [bool]($state -band 0x1); state = $state
           toggle = $toggle; doc = 0
-          window = $c.Name; proc = (ProcName $windowPid); aid = "msaa:$child"
+          window = $c.Name; proc = (ProcName $windowPid); pid = $windowPid; aid = "msaa:$child"
           key = $key; action = $action; hwnd = $hwnd.ToInt64(); child = $child
           source = 'AurBridge MSAA OBJID_CLIENT'
         }
@@ -163,7 +164,7 @@ function TopWindows {
       $c = $w.Current
       $out += [pscustomobject]@{
         name = $c.Name; cls = $c.ClassName; proc = (ProcName $c.ProcessId)
-        rect = (Rect $w); hwnd = [int64]$c.NativeWindowHandle
+        pid = $c.ProcessId; rect = (Rect $w); hwnd = [int64]$c.NativeWindowHandle
         foreground = ([int64]$c.NativeWindowHandle -eq $fg); offscreen = $c.IsOffscreen
       }
     } catch { }
@@ -245,17 +246,23 @@ function Elements($match, $types, $max) {
 # The Windows source test invokes this exact production helper from another
 # process. It proves the cross-process boundary that the wizard's own
 # in-process accessibility selftest cannot exercise.
-if ($MsaaProbePid -or $MsaaProbeHwnd) {
+if ($MsaaProbePid -or $MsaaProbeHwnd -or $MsaaProbeWaitSec) {
+  if ($MsaaProbeReadyFile) {
+    [IO.File]::WriteAllText($MsaaProbeReadyFile, "$PID", [Text.Encoding]::ASCII)
+  }
   $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $MsaaProbeWaitSec))
+  $lastProbe = 'exact_windows=0'
   do {
     $wins = @($AE::RootElement.FindAll(
       $TS::Children, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
         try {
           $wc = $_.Current
+          $wc.ClassName -ceq 'AurBridgeWizard' -and
           (!$MsaaProbePid -or $wc.ProcessId -eq $MsaaProbePid) -and
           (!$MsaaProbeHwnd -or [int64]$wc.NativeWindowHandle -eq $MsaaProbeHwnd)
         } catch { $false }
       })
+    $lastProbe = "exact_windows=$($wins.Count)"
     if ($wins.Count -gt 1) {
       throw 'AurBridge MSAA probe: the requested process/HWND is ambiguous'
     }
@@ -266,6 +273,9 @@ if ($MsaaProbePid -or $MsaaProbeHwnd) {
         (!$MsaaProbePrimaryName -or $_.name -ceq $MsaaProbePrimaryName) -and
         $_.enabled -eq [bool]$MsaaProbePrimaryEnabled
       })
+      $buttons = @($items | Where-Object { $_.type -ceq 'Button' })
+      $enters = @($buttons | Where-Object { $_.key -ceq 'Enter' })
+      $lastProbe = "exact_windows=1 pid=$($items[0].pid) controls=$($items.Count) buttons=$($buttons.Count) enter=$($enters.Count) expected=$($primary.Count)"
       if (-not $MsaaProbeWaitSec -or $primary.Count -eq 1) {
         $items | ConvertTo-Json -Depth 6 -Compress
         exit 0
@@ -273,7 +283,7 @@ if ($MsaaProbePid -or $MsaaProbeHwnd) {
     }
     Start-Sleep -Milliseconds 50
   } while ([DateTime]::UtcNow -lt $deadline)
-  throw "AurBridge MSAA probe: no single expected Enter button appeared on the exact process/HWND ($MsaaProbePrimaryName, enabled=$([bool]$MsaaProbePrimaryEnabled))"
+  throw "AurBridge MSAA probe: no single expected Enter button appeared on the exact process/HWND ($MsaaProbePrimaryName, enabled=$([bool]$MsaaProbePrimaryEnabled)); $lastProbe"
 }
 
 $who = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
