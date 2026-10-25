@@ -599,6 +599,58 @@ jobs:
           # A screen reader, asking Windows for the window's accessible
           # object, gets the page's words and its button by name.
           if (-not (Select-String -Path "$d\selftest.log" -Pattern 'screen reader    : "[^"]{10,}", [1-9][0-9]* parts, button "[^"]+"' -Quiet)) { throw "a screen reader gets nothing from the window" }
+      - name: an external helper reads the wizard's exact cross-process MSAA controls
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path .\exe\aurbridge-wizard.exe).Path
+          $helper = (Resolve-Path .\tools\e2e\guest\helper.ps1).Path
+          $d = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\wiz-msaa"
+          $p = Start-Process -FilePath $exe -ArgumentList '--selftest', $d.FullName -PassThru
+          try {
+            # Unlike the in-process screen-reader check above, this uses the
+            # production guest helper from a separate process. A clean runner
+            # exposes Next; a runner that preflight validly blocks exposes one
+            # of the stop page's exact primary labels instead.
+            $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper `
+              -MsaaProbePid $p.Id -MsaaProbeWaitSec 30 -MsaaProbePrimaryEnabled 1
+            if ($LASTEXITCODE -ne 0) { throw "the cross-process MSAA probe exited $LASTEXITCODE" }
+            $items = @($raw | ConvertFrom-Json)
+            $duplicateChildren = @($items | Group-Object hwnd, child | Where-Object Count -ne 1)
+            if ($duplicateChildren.Count) { throw 'the MSAA adapter duplicated a child identity' }
+            $pane = @($items | Where-Object {
+              $_.type -ceq 'Pane' -and $_.source -ceq 'AurBridge MSAA OBJID_CLIENT' -and
+              $_.hwnd -gt 0 -and $_.rect.Count -eq 4 -and $_.rect[2] -gt 0 -and $_.rect[3] -gt 0
+            })
+            if ($pane.Count -ne 1) { throw "the exact wizard exposed $($pane.Count) MSAA panes" }
+            $primary = @($items | Where-Object {
+              $_.type -ceq 'Button' -and $_.enabled -eq $true -and $_.key -ceq 'Enter' -and
+              $_.action -ceq 'Press' -and $_.source -ceq 'AurBridge MSAA OBJID_CLIENT' -and
+              $_.hwnd -eq $pane[0].hwnd -and $_.rect.Count -eq 4 -and
+              $_.rect[2] -ge 200 -and $_.rect[3] -ge 44
+            })
+            if ($primary.Count -ne 1) { throw "the exact wizard exposed $($primary.Count) enabled Enter buttons" }
+            $exactSelftestPrimaries = @('Next', 'Close AurOS Setup', 'Show a helper how',
+              'Check again', 'Fix these for me')
+            if ($exactSelftestPrimaries -cnotcontains $primary[0].name) {
+              throw "the real primary button has the unexpected name '$($primary[0].name)'"
+            }
+            $hwnd = [int64]$primary[0].hwnd
+
+            # A neighbouring or invented HWND must never inherit this process's
+            # authority.
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper `
+              -MsaaProbePid $p.Id -MsaaProbeHwnd ($hwnd + 1) 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { throw 'the MSAA probe accepted the wrong HWND' }
+          } finally {
+            if (-not $p.HasExited) { $p.Kill() }
+            [void]$p.WaitForExit(30000)
+          }
+          # The exact PID/HWND pair must stop being authority when its process
+          # has gone away. PID reuse cannot revive a stale handle because the
+          # helper checks both values against the live top-level window.
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper `
+            -MsaaProbePid $p.Id -MsaaProbeHwnd $hwnd 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw 'the MSAA probe accepted a stale process/HWND pair' }
       # THE WEBSITE'S INSTALLER PICTURES (D-P0-2): the three on the front page (website/assets/shots/
       # setup-check, setup-look, setup-ready) were made by Wine. These are every page drawn by real
       # Windows with this build's own letters; D takes them from the artifact once the wizard is

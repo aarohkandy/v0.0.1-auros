@@ -16,14 +16,32 @@
 # installer runs elevated, so this runs elevated too (a logon task with
 # the highest run level, guest/firstlogon.ps1): a normal process cannot
 # read an elevated window's controls.
+param(
+  [int]$MsaaProbePid = 0,
+  [int64]$MsaaProbeHwnd = 0,
+  [int]$MsaaProbeWaitSec = 0,
+  [string]$MsaaProbePrimaryName = '',
+  [int]$MsaaProbePrimaryEnabled = 1
+)
+
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'    # Invoke-WebRequest's bar costs seconds
 $hub = 'http://10.0.2.2:8000'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
-Add-Type @'
+Add-Type -AssemblyName Accessibility
+$accessibilityAssembly = [Accessibility.IAccessible].Assembly.Location
+Add-Type -ReferencedAssemblies $accessibilityAssembly -TypeDefinition @'
 using System; using System.Runtime.InteropServices;
 public static class E2eUser32 {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+  public static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder name, int count);
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+  [DllImport("oleacc.dll")]
+  public static extern int AccessibleObjectFromWindow(
+    IntPtr hwnd, int objectId, ref Guid iid,
+    [MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible accessible);
 }
 '@
 $AE = [System.Windows.Automation.AutomationElement]
@@ -43,6 +61,98 @@ function Rect($e) {
 
 function ProcName($id) {
   try { (Get-Process -Id $id -ErrorAction Stop).ProcessName } catch { '' }
+}
+
+# AurBridge is one owner-drawn HWND. It deliberately exposes the widgets that
+# receive its mouse and keyboard actions as simple children of an MSAA
+# IAccessible object. The generic UI Automation Window proxy claims a top-level
+# HWND before UIA's later MSAA proxy gets a chance, so FindAll(Descendants)
+# sees the window but none of those real controls. Read that exact OBJID_CLIENT
+# object when, and only when, this is the exact window already selected above.
+function AurBridgeMsaaElements($w, $types, $max) {
+  $c = $w.Current
+  $hwnd = [IntPtr][int64]$c.NativeWindowHandle
+  if ($hwnd -eq [IntPtr]::Zero) { throw 'AurBridge MSAA: the selected window has no HWND' }
+
+  [uint32]$windowPid = 0
+  if (-not [E2eUser32]::GetWindowThreadProcessId($hwnd, [ref]$windowPid) -or
+      $windowPid -ne [uint32]$c.ProcessId) {
+    throw 'AurBridge MSAA: the selected HWND is stale or belongs to another process'
+  }
+  $class = New-Object Text.StringBuilder 80
+  if (-not [E2eUser32]::GetClassName($hwnd, $class, $class.Capacity) -or
+      $class.ToString() -cne 'AurBridgeWizard' -or $c.ClassName -cne 'AurBridgeWizard') {
+    throw 'AurBridge MSAA: the selected HWND is not the exact AurBridgeWizard window'
+  }
+
+  [Guid]$iid = '618736e0-3c3d-11cf-810c-00aa00389b71'
+  [Accessibility.IAccessible]$acc = $null
+  # OBJID_CLIENT is -4; the signed and unsigned Win32 declarations carry the
+  # same four bits, while Windows PowerShell 5.1 cannot cast its signed
+  # 0xfffffffc literal to UInt32.
+  $hr = [E2eUser32]::AccessibleObjectFromWindow(
+          $hwnd, -4, [ref]$iid, [ref]$acc)
+  if ($hr -ne 0 -or $null -eq $acc) {
+    throw ('AurBridge MSAA: AccessibleObjectFromWindow failed (HRESULT 0x{0:X8})' -f $hr)
+  }
+
+  $roleNames = @{ 0x0a = 'Pane'; 0x2b = 'Button'; 0x2c = 'CheckBox'; 0x2d = 'RadioButton' }
+  $wanted = @{}; foreach ($t in $types) { $wanted[[string]$t] = $true }
+  $out = @()
+  try {
+    $count = [int]$acc.accChildCount
+    if ($count -lt 0 -or $count -gt 80) {
+      throw "AurBridge MSAA: implausible child count $count"
+    }
+    # CHILDID_SELF (0) is the warning Pane; positive IDs are the exact
+    # simple children backed by the wizard's current widget list.
+    $children = @(0)
+    if ($count -gt 0) { $children += 1..$count }
+    foreach ($child in $children) {
+      try {
+        $role = [Convert]::ToInt32($acc.get_accRole($child))
+        $type = $roleNames[$role]
+        if (-not $type) {
+          throw ('unexpected role 0x{0:x}' -f $role)
+        }
+        if (-not $wanted.ContainsKey($type)) { continue }
+        $name = [string]$acc.get_accName($child)
+        $state = [Convert]::ToInt32($acc.get_accState($child))
+        [int]$x = 0; [int]$y = 0; [int]$width = 0; [int]$height = 0
+        [void]$acc.accLocation([ref]$x, [ref]$y, [ref]$width, [ref]$height, $child)
+        if (-not $name -or $width -le 0 -or $height -le 0) {
+          throw 'empty name or rectangle'
+        }
+        # Invisible/off-screen MSAA children are not current controls. A
+        # disabled one remains visible in the result with enabled=false so
+        # the caller's exact security predicate rejects it explicitly.
+        if (($state -band 0x8000) -or ($state -band 0x10000)) { continue }
+        $key = [string]$acc.get_accKeyboardShortcut($child)
+        $action = [string]$acc.get_accDefaultAction($child)
+        if ($child -gt 0 -and -not $action) { throw 'control has no default action' }
+        $toggle = $null
+        if ($type -ceq 'CheckBox') {
+          $toggle = if ($state -band 0x10) { 'On' } else { 'Off' }
+        }
+        $out += [pscustomobject]@{
+          name = $name; type = $type; rect = @($x, $y, $width, $height)
+          enabled = -not [bool]($state -band 0x1); state = $state
+          toggle = $toggle; doc = 0
+          window = $c.Name; proc = (ProcName $windowPid); aid = "msaa:$child"
+          key = $key; action = $action; hwnd = $hwnd.ToInt64(); child = $child
+          source = 'AurBridge MSAA OBJID_CLIENT'
+        }
+        if ($out.Count -ge $max) { break }
+      } catch {
+        throw "AurBridge MSAA child $child could not be read exactly: $_"
+      }
+    }
+  } finally {
+    if ([Runtime.InteropServices.Marshal]::IsComObject($acc)) {
+      [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($acc)
+    }
+  }
+  return $out
 }
 
 function TopWindows {
@@ -72,10 +182,17 @@ function Elements($match, $types, $max) {
   else { $cond = New-Object System.Windows.Automation.OrCondition(,[System.Windows.Automation.Condition[]]$conds) }
   $out = @()
   foreach ($w in $AE::RootElement.FindAll($TS::Children, [System.Windows.Automation.Condition]::TrueCondition)) {
+    $isAurBridge = $false
     try {
       $c = $w.Current
       $p = ProcName $c.ProcessId
       if ($match -and -not ($c.Name -match $match -or $c.ClassName -match $match -or $p -match $match)) { continue }
+      if ($c.ClassName -ceq 'AurBridgeWizard') {
+        $isAurBridge = $true
+        $out += @(AurBridgeMsaaElements $w $types ($max - $out.Count))
+        if ($out.Count -ge $max) { return $out }
+        continue
+      }
       # Which of them belong to a web document, and how big it is: a
       # website fills the window, while Edge's own flyouts (downloads,
       # menus) are small documents too. The host uses the size so that a
@@ -114,9 +231,49 @@ function Elements($match, $types, $max) {
           if ($out.Count -ge $max) { return $out }
         } catch { }
       }
-    } catch { }
+    } catch {
+      # Ordinary Windows UIA trees race with windows opening and closing, so
+      # their historic best-effort behavior remains. AurBridge is the exact
+      # security-sensitive window selected above: an unreadable MSAA tree is
+      # an explicit helper error, never an empty result that invites OCR.
+      if ($isAurBridge) { throw }
+    }
   }
   return $out
+}
+
+# The Windows source test invokes this exact production helper from another
+# process. It proves the cross-process boundary that the wizard's own
+# in-process accessibility selftest cannot exercise.
+if ($MsaaProbePid -or $MsaaProbeHwnd) {
+  $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, $MsaaProbeWaitSec))
+  do {
+    $wins = @($AE::RootElement.FindAll(
+      $TS::Children, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
+        try {
+          $wc = $_.Current
+          (!$MsaaProbePid -or $wc.ProcessId -eq $MsaaProbePid) -and
+          (!$MsaaProbeHwnd -or [int64]$wc.NativeWindowHandle -eq $MsaaProbeHwnd)
+        } catch { $false }
+      })
+    if ($wins.Count -gt 1) {
+      throw 'AurBridge MSAA probe: the requested process/HWND is ambiguous'
+    }
+    if ($wins.Count -eq 1) {
+      $items = @(AurBridgeMsaaElements $wins[0] @('Button','RadioButton','CheckBox','Pane') 80)
+      $primary = @($items | Where-Object {
+        $_.type -ceq 'Button' -and $_.key -ceq 'Enter' -and
+        (!$MsaaProbePrimaryName -or $_.name -ceq $MsaaProbePrimaryName) -and
+        $_.enabled -eq [bool]$MsaaProbePrimaryEnabled
+      })
+      if (-not $MsaaProbeWaitSec -or $primary.Count -eq 1) {
+        $items | ConvertTo-Json -Depth 6 -Compress
+        exit 0
+      }
+    }
+    Start-Sleep -Milliseconds 50
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "AurBridge MSAA probe: no single expected Enter button appeared on the exact process/HWND ($MsaaProbePrimaryName, enabled=$([bool]$MsaaProbePrimaryEnabled))"
 }
 
 $who = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
