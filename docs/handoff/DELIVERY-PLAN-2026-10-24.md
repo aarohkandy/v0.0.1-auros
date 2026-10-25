@@ -14,7 +14,7 @@ failures and superseded evidence deliberately.
 - Follow-up Wi-Fi fix `7210f1ef` / `f1683bd9` is on delivery, not in `3629b114`: defer plaintext carry-over until Restart now, clean uncertain failures, disclose password copy, avoid unsupported failure reassurance. Focused Windows workflow `40149373093` passed all seven jobs; normal/large-text disclosure screenshots were inspected. Fastpath remains non-default.
 - Default-fastpath promotion commit `65f55242` is prepared and independently reviewed in an isolated branch and MUST stay held until the exact fastpath BitLocker journey proves Windows return, restored protection and file-preserving Put Windows back. It must preserve generic-installer recovery coverage and matching versioned Terms/Privacy disclosures.
 - Independent current-source audit confirmed that generic installs reject personalized default-look receipts and launch proof rejects Software’s embedded VLC preview; exact regression tests pass.
-- Two bounded follow-ups are active: deployment configuration wiring for the disabled personalized-delivery service, and harness-only production multilingual reboot/focus/password certification against the retained fresh image. Neither enables public delivery or starts another full image build.
+- Deployment wiring and runtime credential validation are integrated on delivery (`b6091c96` through `21b936bd`): 100 combined cloud tests and 29 workflow checks pass; the browser/API fixture uses disposable RSA credentials and all 556 checks pass. Build delivery remains disabled; no remote secrets or deployment were changed. Harness-only production multilingual reboot/focus/password certification is still being prepared against the retained fresh image, without another image build.
 - Public delivery remains disabled pending signing/service configuration and release proof. Managed profiles, physical-PC tests, contact/name decisions, held encryption work and unfinished Wishes actions remain open. No zero-vulnerability or end-to-end completion claim is justified.
 
 ## Starting evidence
@@ -798,3 +798,26 @@ installer fix must delay that write until Restart now/arming, disclose the
 password copy beside the checkbox, and test waiting/abort/failure paths.
 Fastpath remains non-default. Transfer-report text now distinguishes Ferry's
 no-password behavior from Setup's optional connected-network carry-over.
+
+## Disabled delivery configuration checkpoint
+
+The workflow now stages the three custom-delivery secrets via stdin and passes
+the two App IDs as variables. Explicit enabled deployments require complete
+validated settings and pre-staged secret names. Runtime admission independently
+requires positive App IDs and an importable RSA key, covering manual deployments
+that bypass the workflow. Missing/invalid settings return opaque disabled
+responses. The missing-App-ID regression failed before the fix.
+
+Worker commits `409a0b75`, `d0eca3cb`, `09f81175`, and `e3992253` were reviewed
+and integrated as `b6091c96`, `d1839444`, `f5c5c218`, and `21b936bd`. Independent
+reviewers were `installed_vlc_launch/config_gate_review` and
+`delivery_deployment_wiring/wiring_final_review`. Lead caught the browser
+fixture integration dependency and corrected an unsupported assumption that
+the old Worker is disabled on every future enabled deployment.
+
+Combined cloud tests: 100/100; workflows: 29 valid; site fixture: 556/556.
+Owner App/signing configuration and disabled live-route proof remain required.
+No activation, real-model call, remote secret read or deployment was performed.
+A future main push touching cloud files can run the existing cloud deployment
+workflow; its two service switches must remain off until activation requirements
+are met.
