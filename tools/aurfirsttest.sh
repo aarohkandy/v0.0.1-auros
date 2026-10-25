@@ -630,6 +630,7 @@ askf() { # word -> result; runs from an empty directory, so a name that was exec
     mkdir -p "$TMP/cwd"
     ( cd "$TMP/cwd" && AUROS_ANSWER_OUT="$AO" AUROS_STATE="$TMP/state2" AUROS_BIN="$TMP/bin" \
         AUROS_LOG="$TMP/answer.log" AF_RUN_USER="$AR" AUROS_FERRY="$TMP/ferry" \
+        AUROS_LOCK_CONF="$TMP/lock.conf" AUROS_LOCKCTL="$TMP/lockctl" \
         sh "$OLDPWD/rootfs/usr/lib/auros/answer.sh" >/dev/null 2>&1 )
     cat "$AO/result" 2>/dev/null
 }
@@ -647,6 +648,70 @@ R=$(askf "import:Mary Ann")
 grep -q -- '--user|Mary Ann|' "$TMP/ferry.args" \
   && ok "a name with a space reaches Ferry whole" \
   || bad "a name with a space reaches Ferry whole" "$(cat "$TMP/ferry.args")"
+
+# S4's temporary key deliberately opens the root while in-place encryption
+# runs. Once that feature is armed, no Windows files may be copied onto it
+# until lockctl proves that a PIN replaced the temporary key.
+cat > "$TMP/lockctl" <<EOF
+#!/bin/sh
+[ "\$1" = status ] || exit 2
+cat "$TMP/lock.status" 2>/dev/null
+exit "\$(cat "$TMP/lock.rc" 2>/dev/null || echo 0)"
+EOF
+chmod 755 "$TMP/lockctl"
+s4_import() { # label status rc expected
+    label=$1; status=$2; lrc=$3; expected=$4
+    printf 'armed=1\npartuuid=test\npcrs=\n' > "$TMP/lock.conf"
+    printf '%s\n' "$status" > "$TMP/lock.status"
+    printf '%s\n' "$lrc" > "$TMP/lock.rc"
+    : > "$TMP/ferry.args"
+    R=$(askf import:Harold)
+    case "$expected:$R" in
+      allow:*"result=ok"*)
+        grep -q '^run|' "$TMP/ferry.args" && ok "$label" \
+          || bad "$label" "Ferry was not run" ;;
+      refuse:*"result=refused"*)
+        [ ! -s "$TMP/ferry.args" ] && ok "$label" \
+          || bad "$label" "Ferry got: $(cat "$TMP/ferry.args")" ;;
+      *) bad "$label" "$(echo "$R" | tr '\n' ' ')" "Ferry got: $(cat "$TMP/ferry.args")" ;;
+    esac
+}
+s4_import "S4 with a PIN allows Windows files to be imported" \
+          'device=/dev/test
+state=pin
+pin=tpm' 0 allow
+for state in plain armed encrypting open-no-pin; do
+    s4_import "S4 state $state refuses before Ferry reads Windows" \
+              "device=/dev/test
+state=$state
+pin=none" 0 refuse
+done
+s4_import "an armed S4 helper failure refuses before Ferry" 'state=pin' 1 refuse
+s4_import "armed S4 status with no state refuses before Ferry" 'device=/dev/test' 0 refuse
+s4_import "armed S4 status with duplicate states refuses before Ferry" \
+          'state=pin
+state=pin' 0 refuse
+s4_import "armed S4 status with an unknown state refuses before Ferry" 'state=finished' 0 refuse
+mv "$TMP/lockctl" "$TMP/lockctl.away"; : > "$TMP/ferry.args"
+R=$(askf import:Harold)
+case "$R" in
+  *"result=refused"*) [ ! -s "$TMP/ferry.args" ] \
+      && ok "an unavailable armed S4 helper refuses before Ferry" \
+      || bad "an unavailable armed S4 helper refuses before Ferry" "Ferry got: $(cat "$TMP/ferry.args")" ;;
+  *) bad "an unavailable armed S4 helper refuses before Ferry" "$(echo "$R" | tr '\n' ' ')" ;;
+esac
+mv "$TMP/lockctl.away" "$TMP/lockctl"
+# A dormant/off S4 configuration must not turn the existing product into a
+# dependency on lockctl. Make the helper fail and prove Ferry still runs.
+printf 'armed=0\n' > "$TMP/lock.conf"; printf '1\n' > "$TMP/lock.rc"; : > "$TMP/ferry.args"
+R=$(askf import:Harold)
+case "$R" in
+  *"result=ok"*) grep -q '^run|' "$TMP/ferry.args" \
+      && ok "an unarmed S4 configuration leaves Ferry unchanged" \
+      || bad "an unarmed S4 configuration leaves Ferry unchanged" "Ferry was not run" ;;
+  *) bad "an unarmed S4 configuration leaves Ferry unchanged" "$(echo "$R" | tr '\n' ' ')" ;;
+esac
+rm -f "$TMP/lock.conf" "$TMP/lock.status" "$TMP/lock.rc"
 : > "$TMP/ferry.args"
 R=$(askf "import:Nobody")
 case "$R" in *"result=ok"*) bad "a person Windows does not have is not 'ok'" "$(echo "$R" | tr '\n' ' ')" ;;
