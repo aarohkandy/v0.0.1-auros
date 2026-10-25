@@ -746,11 +746,14 @@ for (const v of [
       },
     };
     const jobs = new BuildJobLedger(new MapStorage(), { perNet: 1, global: 3 });
+    const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
     const api = createBuildApi({
       env: {
         BUILD_REQUESTS_ENABLED: "1", BUILD_ALLOWED_ORIGIN: siteOrigin,
         BUILD_NETWORK_SECRET: "local-integration-network-key-long-enough",
         BUILD_CHALLENGE_SECRET: "local-integration-challenge-key-long-enough",
+        GITHUB_APP_ID: "12345", GITHUB_APP_INSTALLATION_ID: "67890",
+        GITHUB_APP_PRIVATE_KEY: privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
         BUILD_POW_BITS: "12", BUILD_REQUESTS_PER_NET: "1", BUILD_REQUESTS_GLOBAL: "3",
       },
       jobs, github, now: () => Date.parse("2026-10-24T12:00:00Z"),
