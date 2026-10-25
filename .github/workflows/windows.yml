@@ -599,6 +599,9 @@ jobs:
           # A screen reader, asking Windows for the window's accessible
           # object, gets the page's words and its button by name.
           if (-not (Select-String -Path "$d\selftest.log" -Pattern 'screen reader    : "[^"]{10,}", [1-9][0-9]* parts, button "[^"]+"' -Quiet)) { throw "a screen reader gets nothing from the window" }
+      - name: busy diagnostics finish or stop within their bound and keep partial evidence
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File tools/e2e/guest/helper.ps1 -BoundedDiagnosticSelftest
       - name: an external helper reads the wizard's exact cross-process MSAA controls
         shell: pwsh
         run: |
