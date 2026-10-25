@@ -400,10 +400,13 @@ export function createBuildApi({ env, jobs, github, now = Date.now }) {
   const perNet = Number(env.BUILD_REQUESTS_PER_NET || 1);
   const global = Number(env.BUILD_REQUESTS_GLOBAL || 5);
   const powBits = Number(env.BUILD_POW_BITS || 16);
-  const configured = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?$/.test(origin) &&
+  const staticConfigured = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?$/.test(origin) &&
     String(env.BUILD_NETWORK_SECRET || "").length >= 32 && String(env.BUILD_CHALLENGE_SECRET || "").length >= 32 &&
     Number.isInteger(perNet) && perNet >= 1 && perNet <= 3 &&
     Number.isInteger(global) && global >= 1 && global <= 20 && Number.isInteger(powBits) && powBits >= 12 && powBits <= 24;
+  let githubConfiguration;
+  const configured = () => staticConfigured &&
+    (githubConfiguration ??= githubAppConfigured(env));
   const corsFor = (request) => request.headers.get("origin") === origin ? { "access-control-allow-origin": origin, vary: "Origin" } : {};
   const authorizeOrigin = (request) => request.headers.get("origin") === origin;
   const receipt = () => b64(crypto.getRandomValues(new Uint8Array(24)));
@@ -411,10 +414,10 @@ export function createBuildApi({ env, jobs, github, now = Date.now }) {
     const url = new URL(request.url);
     const cors = corsFor(request);
     if (request.method === "OPTIONS") {
-      if (!enabled || !configured || !authorizeOrigin(request)) return response(403, { error: "builds_disabled" });
+      if (!enabled || !await configured() || !authorizeOrigin(request)) return response(403, { error: "builds_disabled" });
       return new Response(null, { status: 204, headers: { ...cors, "access-control-allow-methods": "GET, POST, OPTIONS", "access-control-allow-headers": "authorization, content-type, x-auros-challenge, x-auros-proof", "access-control-max-age": "600" } });
     }
-    if (!enabled || !configured) return response(503, { error: "builds_disabled", download_ready: false }, cors);
+    if (!enabled || !await configured()) return response(503, { error: "builds_disabled", download_ready: false }, cors);
     if (!authorizeOrigin(request)) return response(403, { error: "origin", download_ready: false });
     if (url.pathname === "/v1/builds/challenge" && request.method === "POST") {
       let raw;
@@ -736,6 +739,19 @@ function pemBytes(pem) {
   const version = Uint8Array.of(0x02, 0x01, 0x00);
   const rsa = Uint8Array.of(0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00);
   return item(0x30, Uint8Array.of(...version, ...rsa, ...item(0x04, der)));
+}
+
+async function githubAppConfigured(env) {
+  if (!/^[1-9][0-9]*$/.test(String(env.GITHUB_APP_ID || "")) ||
+      !/^[1-9][0-9]*$/.test(String(env.GITHUB_APP_INSTALLATION_ID || ""))) return false;
+  const key = String(env.GITHUB_APP_PRIVATE_KEY || "").replace(/\\n/g, "\n").trim();
+  if (!/^-----BEGIN (RSA PRIVATE KEY|PRIVATE KEY)-----\s+[A-Za-z0-9+/=\s]+\s+-----END \1-----$/.test(key)) return false;
+  try {
+    await crypto.subtle.importKey("pkcs8", pemBytes(key), { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function createGitHubAppRequest({ appId, installationId, privateKey, fetcher = fetch, now = Date.now }) {
