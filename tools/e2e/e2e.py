@@ -97,6 +97,125 @@ BITLOCKER_PAUSE_ACCESSIBLE = (
 )
 BITLOCKER_PAUSE_PRIMARY = "Pause protection and restart"
 BITLOCKER_PAUSE_SECONDARY = "Not yet"
+# One versioned serializer is injected into both put-back snapshots. It records
+# stable Storage-cmdlet identity and flags, not drive letters, access paths,
+# operational status, or an inaccurate claim to every raw GPT attribute.
+PUTBACK_PARTITION_FINGERPRINT_PS = (
+    "function Get-AurOSRequiredProperty([object]$Object,[string]$Name){"
+    "$p=$Object.PSObject.Properties[$Name];"
+    "if($null -eq $p -or $null -eq $p.Value){throw ('missing storage field '+$Name)};"
+    "$p.Value}; "
+    "function ConvertTo-AurOSGuid([object]$Value,[string]$Name){"
+    "$t=([string]$Value).Trim().Trim([char[]]'{}');$g=[Guid]::Empty;"
+    "if(!$t -or ![Guid]::TryParse($t,[ref]$g) -or $g -eq [Guid]::Empty){"
+    "throw ('invalid GPT identity '+$Name)};"
+    "$g.ToString('D').ToLowerInvariant()}; "
+    "function ConvertTo-AurOSFlag([object]$Value,[string]$Name){"
+    "$v=Get-AurOSRequiredProperty $Value $Name;"
+    "if($v -isnot [bool]){throw ('invalid storage flag '+$Name)};"
+    "if($v){'1'}else{'0'}}; "
+    "function Get-AurOSPartitionFingerprint([object[]]$Disks,[object[]]$Partitions){"
+    "$disks=@($Disks|Sort-Object Number);"
+    "$parts=@($Partitions|Sort-Object DiskNumber,Offset,PartitionNumber);"
+    "if($disks.Count -eq 0 -or $parts.Count -eq 0){throw 'storage map is empty'};"
+    "$diskNumbers=@($disks|ForEach-Object{[uint32](Get-AurOSRequiredProperty $_ 'Number')});"
+    "$rows=@('v1');"
+    "foreach($d in $disks){"
+    "$dn=[uint32](Get-AurOSRequiredProperty $d 'Number');"
+    "$style=([string](Get-AurOSRequiredProperty $d 'PartitionStyle')).ToLowerInvariant();"
+    "if($style -ne 'gpt'){throw ('disk is not GPT '+$dn)};"
+    "$dg=ConvertTo-AurOSGuid (Get-AurOSRequiredProperty $d 'Guid') ('disk '+$dn);"
+    "$rows+=('D|{0}|{1}|{2}|{3}|{4}|{5}'-f $dn,$dg,$style,"
+    "(ConvertTo-AurOSFlag $d 'IsReadOnly'),(ConvertTo-AurOSFlag $d 'IsOffline'),"
+    "(ConvertTo-AurOSFlag $d 'IsSystem'))};"
+    "foreach($p in $parts){"
+    "$dn=[uint32](Get-AurOSRequiredProperty $p 'DiskNumber');"
+    "if($diskNumbers -notcontains $dn){throw ('partition has no disk '+$dn)};"
+    "$pn=[uint32](Get-AurOSRequiredProperty $p 'PartitionNumber');"
+    "$pg=ConvertTo-AurOSGuid (Get-AurOSRequiredProperty $p 'Guid') ('partition '+$dn+':'+$pn);"
+    "$gt=ConvertTo-AurOSGuid (Get-AurOSRequiredProperty $p 'GptType') ('GPT type '+$dn+':'+$pn);"
+    "$rows+=('P|{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}|{9}|{10}|{11}'-f "
+    "$dn,$pn,[uint64](Get-AurOSRequiredProperty $p 'Offset'),"
+    "[uint64](Get-AurOSRequiredProperty $p 'Size'),$gt,$pg,"
+    "(ConvertTo-AurOSFlag $p 'IsReadOnly'),(ConvertTo-AurOSFlag $p 'IsOffline'),"
+    "(ConvertTo-AurOSFlag $p 'IsSystem'),(ConvertTo-AurOSFlag $p 'IsBoot'),"
+    "(ConvertTo-AurOSFlag $p 'IsHidden'),(ConvertTo-AurOSFlag $p 'NoDefaultDriveLetter'))};"
+    "$rows -join ';'}; "
+)
+# Snapshot the disk that contains Windows, including every partition on that
+# disk. Unrelated attached disks are outside put-back's restore boundary and
+# must not make the proof depend on their partition style or state.
+PUTBACK_PARTITION_FINGERPRINT_CAPTURE_PS = (
+    "$cpart=Get-Partition -DriveLetter C; "
+    "$systemDisk=[uint32]$cpart.DiskNumber; "
+    "$pm=Get-AurOSPartitionFingerprint -Disks @(Get-Disk -Number $systemDisk) "
+    "-Partitions @(Get-Partition -DiskNumber $systemDisk); "
+)
+# Executed by real Windows before its baseline is accepted. These are mocked
+# Storage-cmdlet objects, so the negative checks cannot touch a disk.
+PUTBACK_PARTITION_FINGERPRINT_SELFTEST_PS = (
+    "$td=[pscustomobject]@{Number=[uint32]0;PartitionStyle='GPT';"
+    "Guid='01234567-89ab-cdef-0123-456789abcdef';"
+    "IsReadOnly=$false;IsOffline=$false;IsSystem=$true};"
+    "$tp=[pscustomobject]@{DiskNumber=[uint32]0;PartitionNumber=[uint32]3;"
+    "Offset=[uint64]2048;Size=[uint64]1000;"
+    "GptType='e3c9e316-0b5c-4db8-817d-f92df00215ae';"
+    "Guid='11234567-89ab-cdef-0123-456789abcdef';"
+    "IsReadOnly=$false;IsOffline=$false;IsSystem=$true;IsBoot=$true;"
+    "IsHidden=$false;NoDefaultDriveLetter=$false};"
+    "$mockBase=Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp);"
+    "$mockWant='v1;D|0|01234567-89ab-cdef-0123-456789abcdef|gpt|0|0|1;"
+    "P|0|3|2048|1000|e3c9e316-0b5c-4db8-817d-f92df00215ae|"
+    "11234567-89ab-cdef-0123-456789abcdef|0|0|1|1|0|0';"
+    "if($mockBase -cne $mockWant){throw 'partition fingerprint fixture serialization changed'};"
+    "function Assert-AurOSFingerprintChanged([object]$Object,[string]$Property,[object]$NewValue,"
+    "[string]$Name,[object[]]$Disks,[object[]]$Partitions,[string]$Baseline){"
+    "$old=Get-AurOSRequiredProperty $Object $Property;"
+    "try{$Object.$Property=$NewValue;"
+    "$got=Get-AurOSPartitionFingerprint -Disks $Disks -Partitions $Partitions}"
+    "finally{$Object.$Property=$old};"
+    "if($got -ceq $Baseline){throw ('partition fingerprint ignored '+$Name)}};"
+    "function Assert-AurOSFingerprintFails([scriptblock]$Probe,[string]$Name){"
+    "$failed=$false;try{& $Probe|Out-Null}catch{$failed=$true};"
+    "if(!$failed){throw ('partition fingerprint accepted '+$Name)}};"
+    "Assert-AurOSFingerprintChanged -Object $td -Property 'Guid'"
+    " -NewValue '21234567-89ab-cdef-0123-456789abcdef' -Name 'disk GUID'"
+    " -Disks @($td) -Partitions @($tp) -Baseline $mockBase;"
+    "Assert-AurOSFingerprintChanged -Object $tp -Property 'Guid'"
+    " -NewValue '31234567-89ab-cdef-0123-456789abcdef' -Name 'partition GUID'"
+    " -Disks @($td) -Partitions @($tp) -Baseline $mockBase;"
+    "Assert-AurOSFingerprintChanged -Object $tp -Property 'GptType'"
+    " -NewValue 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b' -Name 'GPT type'"
+    " -Disks @($td) -Partitions @($tp) -Baseline $mockBase;"
+    "foreach($n in @('IsReadOnly','IsOffline','IsSystem')){"
+    "Assert-AurOSFingerprintChanged -Object $td -Property $n"
+    " -NewValue (-not [bool](Get-AurOSRequiredProperty $td $n))"
+    " -Name ('disk '+$n) -Disks @($td) -Partitions @($tp) -Baseline $mockBase};"
+    "foreach($n in @('IsReadOnly','IsOffline','IsSystem','IsBoot','IsHidden','NoDefaultDriveLetter')){"
+    "Assert-AurOSFingerprintChanged -Object $tp -Property $n"
+    " -NewValue (-not [bool](Get-AurOSRequiredProperty $tp $n))"
+    " -Name ('partition '+$n) -Disks @($td) -Partitions @($tp) -Baseline $mockBase};"
+    "Assert-AurOSFingerprintFails {$old=$tp.Guid;$tp.Guid=[Guid]::Empty;"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$tp.Guid=$old}} 'zero partition GUID';"
+    "Assert-AurOSFingerprintFails {$old=$td.Guid;$td.Guid=[Guid]::Empty;"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$td.Guid=$old}} 'zero disk GUID';"
+    "Assert-AurOSFingerprintFails {$old=$td.Guid;$td.Guid='not-a-guid';"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$td.Guid=$old}} 'invalid disk GUID';"
+    "Assert-AurOSFingerprintFails {$old=$tp.Guid;$tp.Guid='not-a-guid';"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$tp.Guid=$old}} 'invalid partition GUID';"
+    "Assert-AurOSFingerprintFails {$old=$tp.GptType;$tp.GptType='not-a-guid';"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$tp.GptType=$old}} 'invalid GPT type';"
+    "Assert-AurOSFingerprintFails {$old=$td.PartitionStyle;$td.PartitionStyle='MBR';"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$td.PartitionStyle=$old}} 'non-GPT disk';"
+    "Assert-AurOSFingerprintFails {$old=$tp.IsHidden;$tp.IsHidden='false';"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$tp.IsHidden=$old}} 'non-boolean flag';"
+    "$missing=[pscustomobject]@{DiskNumber=[uint32]0;PartitionNumber=[uint32]3;"
+    "Offset=[uint64]2048;Size=[uint64]1000;GptType=$tp.GptType;Guid=$tp.Guid;"
+    "IsReadOnly=$false;IsOffline=$false;IsSystem=$true;IsBoot=$true;IsHidden=$false};"
+    "Assert-AurOSFingerprintFails {Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($missing)}"
+    " 'missing NoDefaultDriveLetter';"
+    "'AUROS_PARTITION_FINGERPRINT_SELFTEST PASS'; "
+)
 DISK_GB = int(E("E2E_DISK_GB", "128"))
 DISK_THROTTLE = E("E2E_DISK_THROTTLE", "")     # e.g. bps=104857600,iops=120
 
@@ -963,14 +1082,14 @@ class Flow:
         token = "auros-e2e-windows-" + os.urandom(16).hex()
         out = self.guest(
             "$ErrorActionPreference='Stop'; "
+            + PUTBACK_PARTITION_FINGERPRINT_PS +
+            PUTBACK_PARTITION_FINGERPRINT_SELFTEST_PS +
             "function Get-AurOSSha256([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
             "([BitConverter]::ToString($a.ComputeHash([Text.Encoding]::UTF8.GetBytes($x)))-replace'-','').ToLowerInvariant()"
             "}finally{$a.Dispose()}}; "
             "$p=Join-Path $env:USERPROFILE 'Documents\\auros-e2e-before.txt'; "
             f"[IO.File]::WriteAllText($p,'{token}',[Text.Encoding]::ASCII); "
-            "$cpart=Get-Partition -DriveLetter C; "
-            "$pm=((Get-Partition|Sort-Object DiskNumber,Offset|ForEach-Object{"
-            "'{0}|{1}|{2}|{3}|{4}'-f $_.DiskNumber,$_.PartitionNumber,$_.Offset,$_.Size,$_.GptType})-join';'); "
+            + PUTBACK_PARTITION_FINGERPRINT_CAPTURE_PS +
             "$fwRaw=& bcdedit.exe /enum firmware 2>&1; if($LASTEXITCODE -ne 0){throw 'bcdedit failed'}; "
             "$fw=(($fwRaw|Out-String).Trim()); "
             "$h=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power').HiberbootEnabled; "
@@ -978,6 +1097,8 @@ class Flow:
             "firmware_sha256=(Get-AurOSSha256 $fw);hiberboot=[int]$h;"
             "canary_sha256=(Get-FileHash $p -Algorithm SHA256).Hash.ToLowerInvariant()}; "
             "'AUROS_PUTBACK_BASE '+($s|ConvertTo-Json -Compress)")
+        if out.splitlines().count("AUROS_PARTITION_FINGERPRINT_SELFTEST PASS") != 1:
+            raise Failure("the native Windows GPT fingerprint selftest did not pass exactly once")
         rows = [x[len("AUROS_PUTBACK_BASE "):] for x in out.splitlines()
                 if x.startswith("AUROS_PUTBACK_BASE ")]
         try:
@@ -2477,13 +2598,12 @@ class Flow:
         restored = "C:\\Users\\aurtest\\From AurOS\\Documents\\" + self.putback_fixture["name"]
         out = self.guest(
             "$ErrorActionPreference='Stop'; "
+            + PUTBACK_PARTITION_FINGERPRINT_PS +
             "function Get-AurOSSha256([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
             "([BitConverter]::ToString($a.ComputeHash([Text.Encoding]::UTF8.GetBytes($x)))-replace'-','').ToLowerInvariant()"
             "}finally{$a.Dispose()}}; "
             "$st=$null; try {$st=Get-Content 'C:\\ProgramData\\AurOS\\user\\status.json' -Raw|ConvertFrom-Json}catch{}; "
-            "$cpart=Get-Partition -DriveLetter C; "
-            "$pm=((Get-Partition|Sort-Object DiskNumber,Offset|ForEach-Object{"
-            "'{0}|{1}|{2}|{3}|{4}'-f $_.DiskNumber,$_.PartitionNumber,$_.Offset,$_.Size,$_.GptType})-join';'); "
+            + PUTBACK_PARTITION_FINGERPRINT_CAPTURE_PS +
             "$fwRaw=& bcdedit.exe /enum firmware 2>&1; if($LASTEXITCODE -ne 0){throw 'bcdedit failed'}; "
             "$fw=(($fwRaw|Out-String).Trim()); "
             "$h=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power').HiberbootEnabled; "
