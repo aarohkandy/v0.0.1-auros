@@ -1,6 +1,34 @@
-# Multilingual input: proven composition, unfinished candidate UI
+# Multilingual input: production Fcitx composition proven, delivery bounded
 
-## Evidence
+## Current production-image diagnostic proof
+
+Run `40156605186` passed 71/71 checks across two distinct real boots of
+production image source `3629b114`, retained from `40148012574` (raw SHA-256
+`42359c4847a1a696a21c5b5350f4574a2970bb1d4d8f7df42c8336157a1696fa`).
+Harness source was `0be3a3bc`; artifact `12585600815` is retained locally at
+`/tmp/auros-fcitx-40156605186.H0VP3e`.
+
+Both rounds proved exact `你好` in Mousepad and Firefox, visible candidate
+lists, authenticated Mousepad connection and A→B→A candidate revocation and
+remapping. The shipped Fcitx service autostarted after reboot and retained
+its measured identity. Standalone password input produced exact `nihao`,
+zero composition events and continuous focus. Closed traces contained zero
+popup creation/mapping/configuration/grabs in every phase, including browser
+shutdown. PID/unit/cgroup/writer cleanup passed.
+
+The immutable template was identical at every boundary. Runtime profile
+bytes stayed unchanged within each round; across reboot only comments and
+blank lines differed, with every ordered setting record byte-identical to
+the template. The comparison rejects setting or order changes.
+
+Limits: Firefox compositor connection identity and native form submission,
+navigation and password-manager behavior remain unproven. Screenshot timing
+varies: one password frame was blank, another showed two bullets; exact
+entered value is proved by the independent server result, not the image.
+This is retained production-image diagnostic proof, not multilingual Windows
+delivery or physical-PC certification. Historical investigations follow.
+
+## Historical initial evidence
 
 Candidate `c1ba6ee5`, profile run `40131473294`, passed exact Pinyin
 composition in Mousepad and Firefox, followed by a reboot and the same checks
@@ -319,25 +347,47 @@ artifact `12581007423` contains the successful second-attempt evidence.
 Automation and operators must select this evidence by exact artifact ID (and
 verify the embedded image/test identities), not take the first name match.
 
-## Smallest production-readiness step
+## Fresh production image result
 
-Make one explicit architecture decision: use Fcitx's GTK client-side candidate
-path for the multilingual profile, with no X11 panel exception and no new
-AurWL popup privilege. Then implement only that profile-scoped production
-slice: add the three proven Noble package names through the existing
-source-locked build, fail closed on an unreviewed resolved version, start the
-daemon with no display fallback, replace or disable `auros-ibus.service` only
-for the multilingual profile, set the GTK input-module environment, and
-install the minimal Pinyin configuration through the existing session/profile
-wiring. Exactly one input stack should be active in that session. Keep the
-desktop and other profiles unchanged.
+The profile-scoped production implementation is now in a fresh image and its
+bounded functional certification passed. Profile run `40148012574`, source
+`3629b114`, passed all 48 checks. The multilingual image SHA-256 is
+`42359c4847a1a696a21c5b5350f4574a2970bb1d4d8f7df42c8336157a1696fa`.
 
-Certify that fresh image once with the already-built end-to-end checks: exact
-Mousepad and Firefox composition, visible candidate state, Mousepad connection
-and A-to-B-to-A focus lifecycle, password suppression, reboot behavior,
-cleanup, and ordinary session startup. Record Firefox connection identity as
-an explicit remaining limitation unless the release claim requires it; in
-that case, add only a Firefox-specific connection proof before making a
-same-client security claim. Do not extend the shared-panel or compositor
-exception experiments. They address the rejected architecture rather than the
-smallest viable product path.
+This run exercised the shipped configuration rather than installing a
+temporary diagnostic stack. It verified the shipped `auros-fcitx.service`,
+the exact Fcitx executable and arguments, its D-Bus ownership, the absence of
+`DISPLAY` and `WAYLAND_DISPLAY` in the daemon, inactive conflicting IBus, the
+profile's GTK input-module environment and the live `pinyin` engine. The
+root-owned French keyboard/Pinyin default was used without replacing the
+user's configuration.
+
+In the same fresh boot, Mousepad saved and Firefox submitted the exact UTF-8
+text `你好`. Both applications emitted the bounded parented, non-grabbing
+popup syntax with no layer-shell object. Candidate and committed or submitted
+screenshots were retained; lead inspection confirmed a real visible candidate
+popup and the exact committed text in both applications. Raw protocol traces
+were removed after reduction, temporary application processes were cleaned
+up, and the shipped service and user configuration remained ready afterward.
+
+The result has exact limits:
+
+* It is one fresh-image functional boot. It does not repeat the shipped
+  production stack after a reboot. The earlier two-round security diagnostic
+  used an isolated temporary Fcitx stack and cannot be relabelled as a
+  production reboot certification.
+* Mousepad has the bounded authenticated compositor-connection evidence from
+  the earlier diagnostic. Firefox in this production run proves exact
+  composition and parented-popup syntax, but its Wayland connection identity
+  and candidate-pixel attribution remain unproven. Do not claim a verified
+  same-client identity for Firefox or generalize this result to every toolkit.
+* This profile image has not gone through the website-to-Windows delivery and
+  installation path and has not been proven on real Windows hardware. The run
+  certifies the fresh multilingual image under the profile KVM harness only.
+
+The shared X11-panel exception remains rejected. The shipped path uses the GTK
+client-owned candidate UI and adds no compositor popup privilege. The next
+delivery proof, if multilingual is offered as a downloadable choice, is the
+profile-specific website request through Windows installation into the same
+fresh image, while retaining the run and image hash above as the Linux-side
+functional anchor.
