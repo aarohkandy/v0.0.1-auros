@@ -2236,7 +2236,10 @@ send_qcode() { # one physical QMP qcode
 send_chord() { # two simultaneous physical QMP qcodes
     qmp "$Q" "{\"execute\":\"send-key\",\"arguments\":{\"keys\":[{\"type\":\"qcode\",\"data\":\"$1\"},{\"type\":\"qcode\",\"data\":\"$2\"}],\"hold-time\":60}}"
 }
-screen_changed() { # before.ppm after.ppm evidence -- fixed multiline marker
+screen_changed() { # before.ppm after.ppm -- generic 3% screen change
+    python3 "$ROOT/tools/fcitx_marker_visibility.py" --generic "$1" "$2"
+}
+marker_changed() { # before.ppm after.ppm evidence -- fixed staircase marker
     python3 "$ROOT/tools/fcitx_marker_visibility.py" "$1" "$2" "$3"
 }
 
@@ -2377,7 +2380,9 @@ ibus_host_action() {
             while [ "$tries" -lt 60 ] && [ -s "$before" ]; do
                 qmp "$Q" "{\"execute\":\"screendump\",\"arguments\":{\"filename\":\"$after\"}}" \
                     >/dev/null 2>&1 || break
-                if screen_changed "$before" "$after" "$visibility" > "$T/change-point-$1"; then
+                if { [ "$retain" = 1 ] && marker_changed "$before" "$after" "$visibility" \
+                     || [ "$retain" = 0 ] && screen_changed "$before" "$after"; } \
+                    > "$T/change-point-$1"; then
                     changed=1; break
                 fi
                 sleep 1; tries=$((tries + 1))

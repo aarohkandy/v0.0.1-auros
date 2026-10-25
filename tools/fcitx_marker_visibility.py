@@ -4,33 +4,71 @@ import argparse
 from pathlib import Path
 
 MARKER_SHA256 = "665cfe6eae08731ed61132f9c8ee8bea8b87da01eba84cc2215180b235a46fa1"
+MAX_DIMENSION = 8192
+MAX_HEADER = 4096
+MAX_FRAME_BYTES = MAX_DIMENSION * MAX_DIMENSION * 3 + MAX_HEADER
+
+
+class FrameError(ValueError):
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
 
 
 def read_ppm(path: Path):
-    data = path.read_bytes()
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise FrameError("unreadable") from exc
+    if size <= 0 or size > MAX_FRAME_BYTES:
+        raise FrameError("invalid-size")
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise FrameError("unreadable") from exc
     parts = []
     offset = 0
     while len(parts) < 4:
-        while data[offset:offset + 1].isspace():
+        while offset < len(data) and data[offset:offset + 1].isspace():
             offset += 1
+        if offset >= len(data) or offset > MAX_HEADER:
+            raise FrameError("malformed-header")
         if data[offset:offset + 1] == b"#":
-            while data[offset:offset + 1] not in (b"\n", b""):
+            while offset < len(data) and data[offset:offset + 1] != b"\n":
                 offset += 1
             continue
         end = offset
-        while not data[end:end + 1].isspace():
+        while end < len(data) and not data[end:end + 1].isspace():
             end += 1
+        if end == len(data) or end > MAX_HEADER:
+            raise FrameError("malformed-header")
         parts.append(data[offset:end])
         offset = end
-    offset += 1
-    return int(parts[1]), int(parts[2]), data[offset:]
+    if parts[0] != b"P6" or parts[3] != b"255":
+        raise FrameError("unsupported-header")
+    try:
+        width, height = int(parts[1]), int(parts[2])
+    except ValueError as exc:
+        raise FrameError("malformed-dimensions") from exc
+    if not 0 < width <= MAX_DIMENSION or not 0 < height <= MAX_DIMENSION:
+        raise FrameError("invalid-dimensions")
+    if data[offset:offset + 2] == b"\r\n":
+        offset += 2
+    elif data[offset:offset + 1].isspace():
+        offset += 1
+    else:
+        raise FrameError("missing-payload-separator")
+    payload = data[offset:]
+    if len(payload) != width * height * 3:
+        raise FrameError("invalid-payload-length")
+    return width, height, payload
 
 
 def analyze(before: Path, after: Path):
     width, height, first = read_ppm(before)
     width2, height2, second = read_ppm(after)
     if (width, height) != (width2, height2):
-        raise ValueError("frame dimensions changed")
+        raise FrameError("dimension-mismatch")
     changed = []
     total = 0
     rows = {}
@@ -43,17 +81,26 @@ def analyze(before: Path, after: Path):
                 changed.append((x, y, delta))
                 rows.setdefault(y, []).append(x)
     dense_rows = sorted(y for y, values in rows.items() if len(values) >= 5)
-    bands = []
+    row_records = []
     for y in dense_rows:
-        if not bands or y > bands[-1][-1] + 4:
-            bands.append([y])
+        points = [(x, row_y, delta) for x, row_y, delta in changed if row_y == y]
+        row_records.append((min(x for x, _, _ in points), y,
+                            max(x for x, _, _ in points), points))
+    steps = []
+    for record in row_records:
+        width = record[2] - record[0]
+        if (steps and record[1] <= steps[-1]["last_y"] + 4
+                and abs(record[0] - steps[-1]["left"]) <= 24
+                and abs(width - steps[-1]["width"]) <= 8):
+            steps[-1]["last_y"] = record[1]
+            steps[-1]["points"].extend(record[3])
         else:
-            bands[-1].append(y)
+            steps.append({"left": record[0], "top": record[1], "last_y": record[1],
+                          "right": record[2], "width": width, "points": list(record[3])})
     records = []
-    for band in bands:
-        points = [(x, y, delta) for x, y, delta in changed if y in set(band)]
-        records.append((min(x for x, _, _ in points), min(band),
-                        max(x for x, _, _ in points), max(band), points))
+    for step in steps:
+        records.append((step["left"], step["top"], step["right"],
+                        step["last_y"], step["points"]))
     paths = []
     for index, record in enumerate(records):
         best = [index]
@@ -97,16 +144,47 @@ def analyze(before: Path, after: Path):
     }
 
 
+def generic_click(before: Path, after: Path):
+    width, height, first = read_ppm(before)
+    width2, height2, second = read_ppm(after)
+    if (width, height) != (width2, height2):
+        raise FrameError("dimension-mismatch")
+    changed = []
+    total = 0
+    for y in range(0, height, 4):
+        for x in range(0, width, 4):
+            offset = (y * width + x) * 3
+            total += 1
+            if sum(abs(first[offset + i] - second[offset + i]) for i in range(3)) > 24:
+                changed.append((x, y))
+    if len(changed) * 100 < total * 3:
+        raise FrameError("insufficient-change")
+    return ((min(x for x, _ in changed) + max(x for x, _ in changed)) // 2,
+            (min(y for _, y in changed) + max(y for _, y in changed)) // 2)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("before", type=Path)
     parser.add_argument("after", type=Path)
-    parser.add_argument("evidence", type=Path)
+    parser.add_argument("evidence", type=Path, nargs="?")
+    parser.add_argument("--generic", action="store_true")
     args = parser.parse_args()
+    if args.generic:
+        if args.evidence is not None:
+            parser.error("generic mode does not write marker evidence")
+        try:
+            print(*generic_click(args.before, args.after))
+        except FrameError:
+            raise SystemExit(1)
+        return
+    if args.evidence is None:
+        parser.error("marker mode requires an evidence path")
     try:
         result = analyze(args.before, args.after)
-    except ValueError:
-        args.evidence.write_text("status=dimension-mismatch\n", encoding="ascii")
+    except FrameError as exc:
+        args.evidence.write_text(f"status=invalid-frame\nframe_error={exc.code}\n",
+                                 encoding="ascii")
         raise SystemExit(1)
     args.evidence.write_text("".join(f"{key}={value}\n" for key, value in result.items()),
                              encoding="ascii")
