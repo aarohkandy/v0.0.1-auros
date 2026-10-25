@@ -375,9 +375,9 @@ static int phase_consent(const ab_choice *c, pf_report *r, ab_machine *m,
         return -1;
     }
     /* THE FAST PATH NEVER NEEDS THE RECOVERY KEY: the drive is never
-     * decrypted and never mounted by anything but Windows, and its lock
-     * is paused for one restart (D11) -- which she was shown, in those
-     * words, on the page where she pressed Install. Without that, no. */
+     * decrypted and never mounted by anything but Windows, and its protection
+     * is paused across AurOS and until Windows starts again (D11) -- which
+     * she was shown on the page where she pressed Install. Without that, no. */
     if (m->fast) {
         if (m->bitlocker && !c->bitlocker_pause) {
             snprintf(why, n, "this computer's drive is locked with BitLocker, "
@@ -2428,8 +2428,8 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
 }
 
 /* THE LAST STEP, kept apart so it can wait for her press: copy the selected
- * Wi-Fi profile, pause the drive lock for one restart (D11), and set
- * BootNext. Idempotent: armed twice is armed once. */
+ * Wi-Fi profile, pause drive protection across AurOS and until Windows starts
+ * again (D11), and set BootNext. Idempotent: armed twice is armed once. */
 int ab_arm(ab_machine *m, ab_say say, void *ud, char *why, size_t n)
 {
     if (m->bootnext_set) return 0;
