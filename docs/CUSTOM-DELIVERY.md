@@ -74,12 +74,30 @@ least 32 characters:
 Generate and store each independently. Never reuse `TOKEN_SECRET`, an
 Anthropic key, a GitHub token, or either SignPath credential.
 
-The current `.github/workflows/cloud.yml` does **not** provision these three
-Worker secrets or the two GitHub App variables. Enabling the flag before a
-reviewed deployment-wiring change lands is incomplete and must fail closed.
-When that change is made, secret values must reach `wrangler secret put` on
-stdin with shell tracing disabled, following the existing `TOKEN_SECRET`
-pattern. Only secret names belong in logs or documentation.
+`.github/workflows/cloud.yml` reads these three values from like-named GitHub
+Actions secrets and provisions them as Worker secrets. It reads the two IDs
+from like-named GitHub Actions variables and passes them as Worker deployment
+variables. Secret values reach `wrangler secret put` only on stdin with shell
+tracing disabled; only their names may appear in logs.
+
+This wiring is deliberately two-stage. With `BUILD_REQUESTS_ENABLED = "0"`, a
+deployment stages any supplied custom-delivery settings while the API remains
+closed. Before a deployment with the switch set to `"1"`, the workflow
+requires all five GitHub settings and verifies that all three Worker secret
+names already exist. It also validates the secret lengths, positive decimal
+IDs, RSA private key, exact HTTPS origin, and fixed repository. A missing or invalid
+value, an unreadable secret list, or an unstaged Worker secret fails the
+workflow before the enabled version is deployed. On the later enabled run, the
+secrets are refreshed before `wrangler deploy`; following the activation order
+keeps the prior Worker disabled during that refresh. This means the first
+configured deployment must remain disabled.
+
+The secret-name check proves only that the three names were staged on the
+Worker. The disabled live-route checks in Activation step 8 are the separate
+proof that the reviewed disabled version and migration were actually deployed.
+Removing a GitHub secret while custom delivery is disabled does not delete the
+corresponding Worker secret; rotate it with a new value or remove it through
+the Cloudflare incident process.
 
 ## SignPath and publication
 
@@ -209,11 +227,13 @@ Cloudflare and GitHub retain their own service metadata under their policies.
 Do these in order. Do not activate a partly configured service.
 
 1. Leave `BUILD_REQUESTS_ENABLED = "0"`.
-2. Install the least-privilege GitHub App above on the one repository. Confirm
-   its IDs and private key are in the deployment secret path, without printing
-   their values.
-3. Add independent `BUILD_NETWORK_SECRET` and `BUILD_CHALLENGE_SECRET` values
-   through the same reviewed secret path.
+2. Install the least-privilege GitHub App above on the one repository. Add its
+   App ID as the GitHub Actions variable `GITHUB_APP_ID`, its repository
+   installation ID as `GITHUB_APP_INSTALLATION_ID`, and its private key as the
+   GitHub Actions secret `GITHUB_APP_PRIVATE_KEY`. Confirm only the setting
+   names, without printing their values.
+3. Add independent GitHub Actions secrets `BUILD_NETWORK_SECRET` and
+   `BUILD_CHALLENGE_SECRET`, each with at least 32 random characters.
 4. Set the exact `BUILD_ALLOWED_ORIGIN`; confirm the repository remains fixed
    as `BUILD_GITHUB_REPOSITORY` and the browser cannot supply either value.
 5. Complete [SIGNING.md](SIGNING.md), including two-factor authentication and
@@ -232,7 +252,8 @@ Do these in order. Do not activate a partly configured service.
    vulnerabilities. Review any full `npm audit` findings separately as
    described below.
 8. Deploy the reviewed Worker and Durable Object migration while still
-   disabled. Confirm ordinary health checks pass and both build POST routes
+   disabled. This stages the three Worker secrets and two deployment
+   variables. Confirm ordinary health checks pass and both build POST routes
    answer `503` with `builds_disabled`.
 9. Change only `BUILD_REQUESTS_ENABLED` to `"1"`, review that diff, and deploy.
 10. Submit one bounded desktop recipe from the configured origin. Preserve its
