@@ -47,6 +47,18 @@ test("enabled preflight rejects wrong CORS without trying a mutating request", a
   } finally { await live.close(); }
 });
 
+test("preflight refuses non-canonical serialized origins before fetch", async () => {
+  for (const api of ("https://worker.example/ https://WORKER.example https://worker.example:443").split(" ")) {
+    await assert.rejects(runBuildPreflight(api, "on", "https://site.example"), /exact HTTPS origin/);
+  }
+  const live = await server((_request, response) => { response.writeHead(500); response.end(); });
+  try {
+    for (const site of ("https://site.example/ https://SITE.example https://site.example:443").split(" ")) {
+      await assert.rejects(runBuildPreflight(live.origin, "on", site), /exact HTTPS origin/);
+    }
+  } finally { await live.close(); }
+});
+
 test("disabled preflight proves both POST routes fail before admission", async () => {
   const paths = [];
   const live = await server((request, response) => {

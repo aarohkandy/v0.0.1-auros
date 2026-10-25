@@ -21,10 +21,11 @@ the exact deterministic interpreter generated from `cloud/src/configure.js`;
 drifting. The words are used only to propose the same closed choices and are
 never put in the recipe. The school kiosk cannot take a public look override
 because its locked layout is policy. Saving a recipe remains local. When the
-separate custom-delivery switch is on, Pages writes `build-service.json` only
-into its staged artifact after an exact origin check and a read-only live CORS
-preflight. The adapter then sends only the reviewed recipe and exposes a
-download only after the service returns verified signed-delivery evidence.
+separate custom-delivery switch is on, both site publishers write
+`build-service.json` only into their staged artifact after an exact origin
+check and a read-only live CORS preflight. The adapter then sends only the
+reviewed recipe and exposes a download only after the service returns verified
+signed-delivery evidence.
 The checked-in `website/build-service.json` stays disabled, so a source copy or
 fork never starts sending requests by accident.
 

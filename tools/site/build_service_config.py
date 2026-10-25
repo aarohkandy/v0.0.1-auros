@@ -30,8 +30,11 @@ def exact_https_origin(value: str, label: str) -> str:
     labels = host.split(".")
     if not all(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label) for label in labels):
         raise ValueError(f"{label} must be one exact HTTPS origin")
-    authority = host if port is None else f"{host}:{port}"
-    return f"https://{authority}"
+    authority = host if port in (None, 443) else f"{host}:{port}"
+    canonical = f"https://{authority}"
+    if value != canonical:
+        raise ValueError(f"{label} must be serialized exactly as {canonical}")
+    return canonical
 
 
 def site_origin(value: str) -> str:

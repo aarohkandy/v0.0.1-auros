@@ -45,9 +45,17 @@ class BuildServiceConfigTest(unittest.TestCase):
         self.assertEqual(self.invoke(api="https://worker.example"), 1)
         self.assertFalse(self.output.exists())
 
+    def test_enabled_requires_exact_serialized_allowed_origin(self):
+        for value in ("https://owner.github.io/", "https://OWNER.github.io", "https://owner.github.io:443"):
+            with self.subTest(value=value):
+                self.write("1", value)
+                self.output.unlink(missing_ok=True)
+                self.assertEqual(self.invoke(api="https://worker.example"), 1)
+                self.assertFalse(self.output.exists())
+
     def test_enabled_refuses_missing_or_non_origin_worker_url(self):
         self.write("1", "https://owner.github.io")
-        for value in ("", "http://worker.example", "https://worker.example/path", "https://user@worker.example", "https://worker.example:99999", "https://wörker.example"):
+        for value in ("", "http://worker.example", "https://worker.example/path", "https://user@worker.example", "https://worker.example:99999", "https://wörker.example", "https://worker.example/", "https://WORKER.example", "https://worker.example:443"):
             with self.subTest(value=value):
                 self.output.unlink(missing_ok=True)
                 self.assertEqual(self.invoke(api=value), 1)
@@ -67,16 +75,21 @@ class BuildServiceConfigTest(unittest.TestCase):
                 self.assertEqual(self.invoke(), 1)
                 self.assertFalse(self.output.exists())
 
-    def test_pages_only_enables_the_staged_artifact_after_preflight(self):
+    def test_every_site_publisher_only_enables_its_staged_artifact_after_preflight(self):
         root = pathlib.Path(__file__).resolve().parents[2]
-        workflow = (root / ".github/workflows/pages.yml").read_text(encoding="utf-8")
+        pages = (root / ".github/workflows/pages.yml").read_text(encoding="utf-8")
+        release = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
         source = json.loads((root / "website/build-service.json").read_text(encoding="utf-8"))
         self.assertEqual(source, {"enabled": False, "api_origin": ""})
-        self.assertIn('--output "$RUNNER_TEMP/site/build-service.json"', workflow)
-        self.assertNotIn('--output "website/build-service.json"', workflow)
-        self.assertEqual(workflow.count('node cloud/test/build-preflight.mjs "$AUROS_WISHES_URL" on "$origin"'), 2)
-        self.assertLess(workflow.index("Configure the optional custom-build service in the staged site"),
-                        workflow.index("actions/upload-pages-artifact@"))
+        for name, workflow in (("pages", pages), ("release", release)):
+            with self.subTest(workflow=name):
+                self.assertIn('--output "$RUNNER_TEMP/site/build-service.json"', workflow)
+                self.assertNotIn('--output "website/build-service.json"', workflow)
+                self.assertIn('node cloud/test/build-preflight.mjs "$AUROS_WISHES_URL" on "$origin"', workflow)
+                self.assertLess(workflow.index("Configure the optional custom-build service in the staged site"),
+                                workflow.index("actions/upload-pages-artifact@"))
+        self.assertEqual(pages.count('node cloud/test/build-preflight.mjs "$AUROS_WISHES_URL" on "$origin"'), 2)
+        self.assertEqual(release.count('node cloud/test/build-preflight.mjs "$AUROS_WISHES_URL" on "$origin"'), 1)
 
 
 if __name__ == "__main__":
