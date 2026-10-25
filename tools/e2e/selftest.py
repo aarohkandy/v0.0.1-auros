@@ -413,6 +413,82 @@ def test_bitlocker_putback_contract():
           "put-back: a RED first or second protection state is recorded before failure")
 
 
+def test_grub_capture():
+    import e2e
+
+    captured_desktop = ("All my programs Everything on this computer "
+                        "Play a song or a film Internet Spreadsheets VLC")
+    check(e2e.Flow.boot_screen_kind(captured_desktop) == "auros-desktop",
+          "Windows return: the captured AurOS desktop is not mistaken for GRUB")
+    grub_text = "GNU GRUB AurOS AurOS (verbose boot) Windows Put Windows back (remove AurOS)"
+    check(e2e.Flow.boot_screen_kind(grub_text) == "grub",
+          "Windows return: the exact shipped verbose menu is GRUB")
+    check(e2e.Flow.boot_screen_kind("GNU GRUB rescue error: AurOS verbose boot Windows") == "unknown",
+          "Windows return: GRUB rescue or error text cannot impersonate the shipped menu")
+    check(e2e.Flow.boot_screen_kind("BitLocker recovery Enter the recovery key") == "unknown",
+          "Windows return: a recovery screen is never eligible for a retry")
+
+    class Clock:
+        now = 0.0
+        def time(self): return self.now
+        def sleep(self, seconds): self.now += seconds
+
+    class Machine:
+        def __init__(self, clock):
+            self.clock, self.starts, self.start_finished = clock, 0, []
+            self.stops, self.keys = [], []
+        def start(self):
+            self.starts += 1
+            self.clock.now += 0.2
+            self.start_finished.append(self.clock.now)
+        def auto_shots(self, every): pass
+        def key(self, key):
+            self.keys.append((key, self.clock.now, self.starts))
+            self.clock.now += 0.12
+        def screendump(self):
+            return captured_desktop if self.starts == 1 else grub_text
+        def save(self, img, label): pass
+        def stop(self, how, timeout): self.stops.append((how, timeout))
+
+    clock, old_time, old_ocr = Clock(), e2e.time, e2e.vision.ocr
+    machine = Machine(clock)
+    flow = object.__new__(e2e.Flow)
+    flow.m = machine
+    flow.rec = type("Recorder", (), {"log": lambda self, message: None})()
+    try:
+        e2e.time = clock
+        e2e.vision.ocr = lambda screen: [{"text": word} for word in screen.split()]
+        since = flow.start_at_grub_menu(attempts=2, pulse_seconds=0.8, scan_seconds=1)
+    finally:
+        e2e.time, e2e.vision.ocr = old_time, old_ocr
+    check(machine.starts == 2 and machine.stops == [("powerdown", 300)] and
+          since == machine.start_finished[-1],
+          "Windows return: an exact AurOS desktop gets one graceful retry with a fresh timestamp")
+    check(machine.keys and all(key == "up" for key, _, _ in machine.keys),
+          "Windows return: countdown capture uses a real key, never modifier-only Shift")
+    gaps = [round(machine.keys[i + 1][1] - machine.keys[i][1], 2)
+            for i in range(len(machine.keys) - 1)
+            if machine.keys[i + 1][2] == machine.keys[i][2]]
+    check(gaps and all(gap == 0.4 for gap in gaps),
+          "Windows return: blind capture keeps the intended 0.4-second key cadence")
+
+    clock = Clock()
+    unsafe = Machine(clock)
+    unsafe.screendump = lambda: "BitLocker recovery Enter the recovery key"
+    flow.m = unsafe
+    try:
+        e2e.time = clock
+        e2e.vision.ocr = lambda screen: [{"text": word} for word in screen.split()]
+        flow.start_at_grub_menu(attempts=2, pulse_seconds=0.4, scan_seconds=0.5)
+        refused = False
+    except e2e.Failure:
+        refused = True
+    finally:
+        e2e.time, e2e.vision.ocr = old_time, old_ocr
+    check(refused and unsafe.starts == 1 and not unsafe.stops,
+          "Windows return: an unknown or recovery screen fails without power cycling")
+
+
 def test_timings_summary():
     sys.path.insert(0, HERE)
     import tempfile as tf, vm
@@ -1491,6 +1567,7 @@ test_stops()
 test_bitlocker_verdict()
 test_bitlocker_pause_confirmation()
 test_bitlocker_putback_contract()
+test_grub_capture()
 test_timings_summary()
 test_windows_dry()
 test_aur_dry()
