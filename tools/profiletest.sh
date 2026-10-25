@@ -1617,7 +1617,8 @@ if not (identity_before < password_boundary < password_click < identity_after < 
         < unit_state < writer_inventory < closed_copy < popup_reduce):
     raise SystemExit("Fcitx identity must bind both sensitive-phase boundaries before reduction")
 if ('ControlGroup' not in text[unit_state:writer_inventory]
-        or 'password_cgroup_empty' not in text[unit_state:writer_inventory]):
+        or '--cgroup-root /sys/fs/cgroup --control-group "$password_control_group"'
+        not in text[unit_state:writer_inventory]):
     raise SystemExit("password trace closure must prove an empty stopped unit cgroup")
 password_launch = text[text.index('if [ "$PRODUCTION" = 1 ]; then', password_test):password_visible]
 production_password, legacy_password = password_launch.split('\n    else\n', 1)
