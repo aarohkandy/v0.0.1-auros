@@ -323,6 +323,7 @@ static wchar_t g_det_lang[96], g_det_kbd[96], g_det_tz[128];
 static int   g_shot_mode = 0;
 static int   g_nav_mode  = 0;
 static int   g_selftest  = 0;
+static int   g_accessibility_test = 0; /* read-only real HWND, held for an external probe */
 
 /* SET ONLY BY "Restart now". Nothing starts the install but her press:
  * the engine stops short of arming the next start (ab_choice.arm_later)
@@ -1629,6 +1630,7 @@ static DWORD WINAPI dl_worker(LPVOID p)
 
 static void download_begin(void)
 {
+    if (g_accessibility_test) return;
     if (g_dl_started) return;              /* once per run of the wizard */
     g_dl_started = 1;
     ab_lock_init();
@@ -1646,6 +1648,7 @@ static void download_begin(void)
 
 static void install_begin(void)
 {
+    if (g_accessibility_test) return;
     ab_lock_init();
     g_log_n = 0;
     for (int i = 0; i < N_PHASES; i++)
@@ -1733,6 +1736,7 @@ static void install_tick(void)
  * is undone -- which before the restart is all of it. */
 static void install_cancel(void)
 {
+    if (g_accessibility_test) return;
     if (g_ab_state == 1) return;      /* a phase is mid-write: see g_stop_wanted */
     g_aborts++;
     if (g_nav_mode || g_shot_mode) return;
@@ -1750,6 +1754,7 @@ static void install_cancel(void)
  * them deleted under it. */
 static void install_forget(void)
 {
+    if (g_accessibility_test) return;
     ab_cancel_downloads();
     if (g_dl_thread) {
         if (WaitForSingleObject(g_dl_thread, 30000) != WAIT_OBJECT_0) return;
@@ -4126,6 +4131,7 @@ static void check_advance(void)
  * is left armed under a computer that did not restart. */
 static void do_restart(void)
 {
+    if (g_accessibility_test) return;
     if (g_nav_mode || g_shot_mode) { g_nt_restarts++; return; }
     char why[PLAT_WHY] = "";
     g_restarting = 1;
@@ -4241,6 +4247,7 @@ static void widget_do(int id)
 /* Every press she makes comes through here (or the keyboard's, below). */
 static void widget_activate(int id)
 {
+    if (g_accessibility_test) return;
     if (press_allowed(id)) widget_do(id);
 }
 
@@ -4795,6 +4802,7 @@ static HRESULT STDMETHODCALLTYPE acc_accHitTest(IAccessible *t, LONG x, LONG y, 
 static HRESULT STDMETHODCALLTYPE acc_accDoDefaultAction(IAccessible *t, VARIANT v)
 {
     (void)t;
+    if (g_accessibility_test) return E_ACCESSDENIED;
     int c = acc_child(v);
     if (c < 0) return c == -1 ? DISP_E_MEMBERNOTFOUND : E_INVALIDARG;
     if (!g_w[c].enabled) return E_FAIL;
@@ -5011,7 +5019,7 @@ static void tick(void)
 
     /* --selftest: wait for the check, then press Enter (Next) and Tab,
      * the way a person with a keyboard would. */
-    if (g_selftest) {
+    if (g_selftest && !g_accessibility_test) {
         static int step = 0, at = 0;
         int settled = g_pf_valid && !g_checking &&
                       (g_page == PAGE_BLOCKED ||
@@ -5039,6 +5047,7 @@ static void tick(void)
 /* Every key, in one place, so --navtest presses the same ones. */
 static void on_key(WPARAM k)
 {
+    if (g_accessibility_test) return;
     int fk = (g_focus >= 0 && g_focus < g_nw) ? (int)g_w[g_focus].kind : -1;
     switch (k) {
     case VK_TAB:
@@ -5240,6 +5249,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         return 0;
 
     case WM_CLOSE:
+        if (g_accessibility_test) return 0;
         if (close_asked(h)) DestroyWindow(h);
         else InvalidateRect(h, NULL, FALSE);
         return 0;
@@ -6865,6 +6875,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
             g_selftest = 1;
             _snprintf(g_selftest_dir, sizeof g_selftest_dir - 1, "%s", __argv[++i]);
             g_selftest_dir[sizeof g_selftest_dir - 1] = 0;
+        }
+        else if (!strcmp(__argv[i], "--accessibility-test")) {
+            g_selftest = 1;
+            g_accessibility_test = 1;
         }
     }
 
