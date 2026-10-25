@@ -895,12 +895,15 @@ if [ "$SECURITY" = 1 ]; then
     password_load_state=$(printf '%s\n' "$password_unit_show" | sed -n 's/^LoadState=//p')
     password_active_state=$(printf '%s\n' "$password_unit_show" | sed -n 's/^ActiveState=//p')
     password_control_group=$(printf '%s\n' "$password_unit_show" | sed -n 's/^ControlGroup=//p')
-    password_cgroup_empty=yes
-    [ -z "$password_control_group" ] \
-        || [ ! -s "/sys/fs/cgroup$password_control_group/cgroup.procs" ] \
-        || password_cgroup_empty=no
-    case "$password_load_state:$password_active_state:$password_cgroup_empty" in
-      not-found::yes|not-found:inactive:yes|*:inactive:yes|*:failed:yes) ;;
+    if [ -z "$password_control_group" ]; then
+        password_cgroup_state=removed
+    else
+        password_cgroup_state=$(python3 /usr/lib/auros-profiletest/fcitx_trace_writers.py \
+            --cgroup-root /sys/fs/cgroup --control-group "$password_control_group") \
+            || fail "password Firefox cgroup inventory failed"
+    fi
+    case "$password_load_state:$password_active_state:$password_cgroup_state" in
+      not-found::removed|not-found:inactive:removed|*:inactive:empty|*:inactive:removed|*:failed:empty|*:failed:removed) ;;
       *) fail "password Firefox unit or cgroup remained active" ;;
     esac
     password_pid=
