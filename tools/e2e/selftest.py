@@ -399,7 +399,7 @@ def test_bitlocker_putback_contract():
           "AUROS_PARTITION_FINGERPRINT_SELFTEST PASS" in native_fixture and
           "native Windows GPT fingerprint selftest did not pass exactly once" in putback_guest_source,
           "put-back: actual baseline executes and requires the bounded native serializer fixture")
-    check("$mockWant='v1;D|" in native_fixture and
+    check("$mockWant='v2;D|" in native_fixture and
           all(name in native_fixture for name in
               ("disk GUID", "partition GUID", "GPT type", "zero disk GUID", "zero partition GUID",
                "invalid disk GUID", "invalid partition GUID", "invalid GPT type",
@@ -407,6 +407,16 @@ def test_bitlocker_putback_contract():
           "foreach($n in @('IsReadOnly','IsOffline','IsSystem'))" in native_fixture and
           "foreach($n in @('IsReadOnly','IsOffline','IsSystem','IsBoot','IsHidden','NoDefaultDriveLetter'))" in native_fixture,
           "put-back: native mock holds geometry while exercising every recorded identity and flag")
+    check("'unreported'" in fingerprint and
+          fingerprint.count("ConvertTo-AurOSNullablePartitionFlag $p") == 2 and
+          "ConvertTo-AurOSNullablePartitionFlag $p 'IsReadOnly'" in fingerprint and
+          "ConvertTo-AurOSNullablePartitionFlag $p 'NoDefaultDriveLetter'" in fingerprint and
+          "@('IsReadOnly','NoDefaultDriveLetter') -cnotcontains $Name" in fingerprint and
+          "foreach($n in @('IsReadOnly','NoDefaultDriveLetter'))" in native_fixture and
+          "missing IsReadOnly" in native_fixture and
+          "('null disk '+$n)" in native_fixture and
+          "('null partition '+$n)" in native_fixture,
+          "put-back: only two present-null partition CIM flags serialize as unreported")
     windows_workflow = open(os.path.join(HERE, "..", "..", ".github", "workflows",
                                          "windows.yml")).read()
     storage_job = windows_workflow.split("\n  storage-diagnostic:\n", 1)[1].split(
