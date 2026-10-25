@@ -1416,8 +1416,27 @@ def test_busy_wizard_diagnostic():
           "Read-DiagnosticOutput" in bounded.group(0),
           "busy diagnostic: timeout keeps bounded partial output without an unbounded wait")
     check("[switch]$BoundedDiagnosticSelftest" in helper and
-          "bounded diagnostic native probe: PASS" in helper,
-          "busy diagnostic: Windows has a native success and timeout probe")
+          "bounded diagnostic native probe: PASS" in helper and
+          "output_truncated" in helper and "('x' * 70000)" in helper,
+          "busy diagnostic: Windows probes success, timeout, and output truncation")
+    isolation = re.search(r"function Invoke-IsolatedAccessibility.*?^}", helper, re.S | re.M)
+    parser = re.search(r"function Parse-AccessibilityChildOutput.*?^}", helper, re.S | re.M)
+    check(isolation is not None and "Invoke-BoundedDiagnostic" in isolation.group(0) and
+          "$PSCommandPath" in isolation.group(0) and "request-too-large" in isolation.group(0),
+          "accessibility isolation: every UIA/MSAA request uses the bounded child runner")
+    check(parser is not None and "child-output-truncated" in parser.group(0) and
+          "child-output-not-one-json-record" in parser.group(0) and
+          "ConvertFrom-Json -ErrorAction Stop" in parser.group(0),
+          "accessibility isolation: truncated, extra, and malformed child JSON fail closed")
+    check("AccessibilityIsolationSelftest" in helper and
+          "Invoke-IsolatedAccessibility $request 5000 30000" in helper and
+          "accessibility-child-ready" in helper and
+          "accessibility isolation timeout and recovery: PASS" in helper,
+          "accessibility isolation: Windows times out a blocked provider then proves recovery")
+    boot = open(os.path.join(HERE, "guest", "boot.ps1")).read()
+    check("C:\\e2e\\helper.ps1" in boot and "WriteAllText" in boot and
+          "Invoke-Expression $code" not in boot,
+          "accessibility isolation: the fetched helper has an exact child-process entry path")
 
 
 test_expect()

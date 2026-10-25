@@ -24,7 +24,10 @@ param(
   [string]$MsaaProbePrimaryName = '',
   [int]$MsaaProbePrimaryEnabled = 1,
   [string]$MsaaProbeReadyFile = '',
-  [switch]$BoundedDiagnosticSelftest
+  [switch]$BoundedDiagnosticSelftest,
+  [string]$AccessibilityRequestBase64 = '',
+  [int]$AccessibilityChildBlockMs = 0,
+  [switch]$AccessibilityIsolationSelftest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,9 +38,17 @@ function Read-DiagnosticOutput([string]$path, [int]$maxBytes = 65536) {
   $stream = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read,
                             [IO.FileShare]::ReadWrite)
   try {
-    $bytes = New-Object byte[] $maxBytes
-    $count = $stream.Read($bytes, 0, $bytes.Length)
-    return [Text.Encoding]::UTF8.GetString($bytes, 0, $count).TrimStart([char]0xfeff)
+    $bytes = New-Object byte[] ($maxBytes + 1)
+    $count = 0
+    while ($count -lt $bytes.Length) {
+      $got = $stream.Read($bytes, $count, $bytes.Length - $count)
+      if ($got -le 0) { break }
+      $count += $got
+    }
+    return @{
+      text = [Text.Encoding]::UTF8.GetString($bytes, 0, [Math]::Min($count, $maxBytes)).TrimStart([char]0xfeff)
+      truncated = $count -gt $maxBytes
+    }
   } finally {
     $stream.Dispose()
   }
@@ -76,12 +87,18 @@ function Invoke-BoundedDiagnostic([string]$script, [int]$timeoutMs) {
       if ($process.ExitCode -ne 0) { $status = 'exit' }
     }
     $partial = ''
+    $truncated = $false
     $outputRead = $true
-    try { $partial = Read-DiagnosticOutput $stdout } catch { $outputRead = $false }
+    try {
+      $read = Read-DiagnosticOutput $stdout
+      $partial = $read.text
+      $truncated = [bool]$read.truncated
+    } catch { $outputRead = $false }
     return @{
       status = $status
       output = $partial
       output_read = $outputRead
+      output_truncated = $truncated
       exit_code = $(if ($verifiedExited) { [int]$process.ExitCode } else { $null })
     }
   } finally {
@@ -103,10 +120,15 @@ if ($BoundedDiagnosticSelftest) {
       $success.output.Trim() -cne 'bounded-success') {
     throw "bounded diagnostic success probe failed: $($success.status) '$($success.output)'"
   }
-  $timeout = Invoke-BoundedDiagnostic "Write-Output 'partial-before-timeout'; [Console]::Out.Flush(); Start-Sleep 10" 1000
+  $timeout = Invoke-BoundedDiagnostic "Write-Output 'partial-before-timeout'; [Console]::Out.Flush(); Start-Sleep 30" 5000
   if ($timeout.status -cne 'timeout' -or -not $timeout.output_read -or
-      $timeout.output -notmatch 'partial-before-timeout') {
+      $timeout.output_truncated -or $timeout.output -notmatch 'partial-before-timeout') {
     throw "bounded diagnostic timeout probe failed: $($timeout.status) '$($timeout.output)'"
+  }
+  $large = Invoke-BoundedDiagnostic "[Console]::Out.Write(('x' * 70000)); [Console]::Out.Flush()" 10000
+  if ($large.status -cne 'ok' -or -not $large.output_read -or
+      -not $large.output_truncated -or $large.output.Length -ne 65536) {
+    throw "bounded diagnostic truncation probe failed: $($large.status), truncated=$($large.output_truncated), length=$($large.output.Length)"
   }
   Write-Output 'bounded diagnostic native probe: PASS'
   exit 0
@@ -396,6 +418,150 @@ function Elements($match, $types, $max) {
   return $out
 }
 
+function AccessibilityChildResult([hashtable]$request) {
+  $allowed = @('op', 'match', 'types', 'max')
+  foreach ($name in @($request.Keys)) {
+    if ($allowed -cnotcontains [string]$name) { throw "unknown accessibility request field '$name'" }
+  }
+  $op = [string]$request.op
+  if ($op -ceq 'windows') {
+    if ($request.Keys.Count -ne 1) { throw 'windows accessibility request has extra fields' }
+    return @{ ok = $true; status = 'ok'; windows = @(TopWindows) }
+  }
+  if ($op -cne 'elements') { throw "unknown accessibility operation '$op'" }
+  if (-not $request.ContainsKey('types') -or $null -eq $request.types) {
+    throw 'elements accessibility request requires types'
+  }
+  $types = @($request.types)
+  if ($types.Count -lt 1 -or $types.Count -gt 16) { throw 'elements types count is outside 1..16' }
+  foreach ($type in $types) {
+    if ($type -isnot [string] -or $type.Length -lt 1 -or $type.Length -gt 40 -or
+        $type -cnotmatch '^[A-Za-z]+$') { throw 'elements contains an invalid control type' }
+  }
+  $match = if ($request.ContainsKey('match')) { [string]$request.match } else { '' }
+  if ($match.Length -gt 512) { throw 'elements match is longer than 512 characters' }
+  $max = if ($request.ContainsKey('max')) { [int]$request.max } else { 400 }
+  if ($max -lt 1 -or $max -gt 400) { throw 'elements max is outside 1..400' }
+  return @{ ok = $true; status = 'ok'; elements = @(Elements $match $types $max) }
+}
+
+function Parse-AccessibilityChildOutput($diagnostic) {
+  if ($diagnostic.status -cne 'ok') { throw "child-$($diagnostic.status)" }
+  if (-not $diagnostic.output_read) { throw 'child-output-unreadable' }
+  if ($diagnostic.output_truncated) { throw 'child-output-truncated' }
+  $text = [string]$diagnostic.output
+  $trimmed = $text.Trim()
+  if (-not $trimmed -or $trimmed[0] -cne '{' -or $trimmed[$trimmed.Length - 1] -cne '}' -or
+      $trimmed.Contains("`n") -or $trimmed.Contains("`r")) {
+    throw 'child-output-not-one-json-record'
+  }
+  try { $result = $trimmed | ConvertFrom-Json -ErrorAction Stop }
+  catch { throw 'child-output-invalid-json' }
+  if ($null -eq $result -or $result -isnot [pscustomobject] -or
+      $result.PSObject.Properties.Name -cnotcontains 'ok' -or
+      $result.PSObject.Properties.Name -cnotcontains 'status') {
+    throw 'child-output-invalid-schema'
+  }
+  return $result
+}
+
+function Invoke-IsolatedAccessibility([hashtable]$request, [int]$timeoutMs = 20000,
+                                      [int]$testBlockMs = 0) {
+  if (-not $PSCommandPath -or -not (Test-Path -LiteralPath $PSCommandPath -PathType Leaf)) {
+    return [pscustomobject]@{ ok = $false; status = 'helper-path-unavailable'; error = 'accessibility helper path is unavailable' }
+  }
+  $requestJson = $request | ConvertTo-Json -Depth 6 -Compress
+  $requestBytes = [Text.Encoding]::UTF8.GetBytes($requestJson)
+  if ($requestBytes.Length -gt 8192) {
+    return [pscustomobject]@{ ok = $false; status = 'request-too-large'; error = 'accessibility request exceeds 8192 bytes' }
+  }
+  $request64 = [Convert]::ToBase64String($requestBytes)
+  $quotedPath = $PSCommandPath.Replace("'", "''")
+  $script = "& '$quotedPath' -AccessibilityRequestBase64 '$request64' -AccessibilityChildBlockMs $testBlockMs"
+  $diagnostic = Invoke-BoundedDiagnostic $script $timeoutMs
+  try { return Parse-AccessibilityChildOutput $diagnostic }
+  catch {
+    $reason = [string]$_
+    return [pscustomobject]@{
+      ok = $false; status = $reason; error = "isolated accessibility request failed: $reason"
+      test_ready = [bool]($testBlockMs -gt 0 -and $diagnostic.output_read -and
+        -not $diagnostic.output_truncated -and $diagnostic.output -ceq 'accessibility-child-ready')
+    }
+  }
+}
+
+if ($AccessibilityRequestBase64) {
+  $child = $null
+  try {
+    if ($AccessibilityRequestBase64.Length -gt 12000 -or
+        $AccessibilityRequestBase64 -cnotmatch '^[A-Za-z0-9+/]+={0,2}$') {
+      throw 'invalid accessibility request encoding'
+    }
+    $bytes = [Convert]::FromBase64String($AccessibilityRequestBase64)
+    if ($bytes.Length -gt 8192) { throw 'accessibility request exceeds 8192 bytes' }
+    $json = [Text.UTF8Encoding]::new($false, $true)
+    $requestObject = ($json.GetString($bytes) | ConvertFrom-Json -ErrorAction Stop)
+    if ($requestObject -isnot [pscustomobject]) { throw 'accessibility request must be one object' }
+    $request = @{}
+    foreach ($property in $requestObject.PSObject.Properties) { $request[$property.Name] = $property.Value }
+    if ($AccessibilityChildBlockMs -lt 0 -or $AccessibilityChildBlockMs -gt 30000) {
+      throw 'accessibility child block is outside 0..30000 ms'
+    }
+    if ($AccessibilityChildBlockMs) {
+      [Console]::Out.Write('accessibility-child-ready')
+      [Console]::Out.Flush()
+      Start-Sleep -Milliseconds $AccessibilityChildBlockMs
+    }
+    $child = AccessibilityChildResult $request
+  } catch {
+    $child = @{ ok = $false; status = 'request-error'; error = [string]$_ }
+  }
+  $output = $child | ConvertTo-Json -Depth 8 -Compress
+  if ([Text.Encoding]::UTF8.GetByteCount($output) -gt 60000) {
+    $output = @{ ok = $false; status = 'response-too-large'; error = 'accessibility response exceeds 60000 bytes' } |
+      ConvertTo-Json -Compress
+  }
+  [Console]::Out.WriteLine($output)
+  exit 0
+}
+
+if ($AccessibilityIsolationSelftest) {
+  if ($MsaaProbePid -le 0 -or $MsaaProbeHwnd -le 0) {
+    throw 'accessibility isolation selftest requires an exact PID and HWND'
+  }
+  $fake = @{
+    status = 'ok'; output_read = $true; output_truncated = $false
+    output = '{"ok":true,"status":"ok"}' + [Environment]::NewLine + '{"extra":true}'
+  }
+  try { [void](Parse-AccessibilityChildOutput $fake); throw 'extra JSON output was accepted' }
+  catch { if ([string]$_ -cnotmatch 'child-output-not-one-json-record') { throw } }
+  $fake.output = '{"ok":true,"status":"ok"}'; $fake.output_truncated = $true
+  try { [void](Parse-AccessibilityChildOutput $fake); throw 'truncated JSON output was accepted' }
+  catch { if ([string]$_ -cnotmatch 'child-output-truncated') { throw } }
+
+  $request = @{ op = 'elements'; match = '^AurBridgeWizard$'; types = @('Button','RadioButton','CheckBox','Pane'); max = 80 }
+  $timed = Invoke-IsolatedAccessibility $request 5000 30000
+  if ($timed.ok -or $timed.status -cnotmatch 'child-timeout' -or -not $timed.test_ready) {
+    throw "blocked accessibility child did not time out exactly: $($timed.status)"
+  }
+  $recovered = Invoke-IsolatedAccessibility $request 20000
+  if (-not $recovered.ok -or $recovered.status -cne 'ok') {
+    throw "accessibility did not recover after timeout: $($recovered.status)"
+  }
+  $exact = @($recovered.elements | Where-Object {
+    $_.pid -eq $MsaaProbePid -and [int64]$_.hwnd -eq $MsaaProbeHwnd -and
+    $_.source -ceq 'AurBridge MSAA OBJID_CLIENT'
+  })
+  if ($exact.Count -lt 2 -or @($recovered.elements | Where-Object {
+      $_.source -ceq 'AurBridge MSAA OBJID_CLIENT' -and
+      ($_.pid -ne $MsaaProbePid -or [int64]$_.hwnd -ne $MsaaProbeHwnd)
+    }).Count) {
+    throw 'recovered accessibility result did not retain exact PID/HWND authority'
+  }
+  Write-Output 'accessibility isolation timeout and recovery: PASS'
+  exit 0
+}
+
 # The Windows source test invokes this exact production helper from another
 # process. It proves the cross-process boundary that the wizard's own
 # in-process accessibility selftest cannot exercise.
@@ -484,10 +650,20 @@ while ($true) {
   $t0 = Get-Date
   try {
     switch ($c.op) {
-      'windows'  { $res.windows = @(TopWindows) }
+      'windows'  {
+        $a = Invoke-IsolatedAccessibility @{ op = 'windows' }
+        $res.accessibility_status = $a.status
+        if (-not $a.ok) { $res.ok = $false; $res.error = $a.error }
+        else { $res.windows = @($a.windows) }
+      }
       'elements' {
         $max = 400; if ($c.max) { $max = [int]$c.max }
-        $res.elements = @(Elements $c.match @($c.types) $max)
+        $a = Invoke-IsolatedAccessibility @{
+          op = 'elements'; match = [string]$c.match; types = @($c.types); max = $max
+        }
+        $res.accessibility_status = $a.status
+        if (-not $a.ok) { $res.ok = $false; $res.error = $a.error }
+        else { $res.elements = @($a.elements) }
       }
       'run'      { $res.output = (Invoke-Expression $c.script 2>&1 | Out-String -Width 220) }
       'diagnostic' {
@@ -496,6 +672,7 @@ while ($true) {
         $res.diagnostic_status = $d.status
         $res.diagnostic_exit_code = $d.exit_code
         $res.diagnostic_output_read = $d.output_read
+        $res.diagnostic_output_truncated = $d.output_truncated
       }
       default    { $res.ok = $false; $res.error = "unknown op $($c.op)" }
     }
