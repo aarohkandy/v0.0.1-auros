@@ -158,6 +158,8 @@ static void fresh(shell_ctx *c)
     c->foot_hover = -1;
     c->screen_w = 1366;
     c->screen_h = 768 - foot_height(c);
+    c->output_w = 1366;
+    c->output_h = 768;
     c->allow_settings = 1;
     W.consent = 1;
     W.req_id = 0;

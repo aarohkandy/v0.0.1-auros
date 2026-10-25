@@ -143,6 +143,8 @@ int main(int argc, char **argv)
     C.foot_hover = -1;
     C.screen_w = 1366;
     C.screen_h = 768 - foot_height(&C);
+    C.output_w = 1366;
+    C.output_h = 768;
     C.allow_settings = 1;
     snprintf(C.layout_id, sizeof C.layout_id, "%s", "rail");
 
