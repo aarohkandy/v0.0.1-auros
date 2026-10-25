@@ -808,6 +808,74 @@ def test_store_result():
           "store result: duplicate exact result rows fail closed")
 
 
+def test_store_open_click_boundary():
+    """A details refresh cannot turn a previously seen Open into a stale click."""
+    try:
+        import e2e
+    except ImportError:
+        return
+
+    box = (500, 200, 120, 44)
+
+    old_buttons, old_ocr, old_text = (e2e.vision.find_buttons,
+                                      e2e.vision.ocr, e2e.vision.text_of)
+    labels = {box: "Open", (700, 200, 120, 44): "Open"}
+    try:
+        e2e.vision.find_buttons = lambda img, region, rgb: img.get(rgb, [])
+        e2e.vision.ocr = lambda img, found, psm=7: found
+        e2e.vision.text_of = lambda found: labels[found]
+        finder = object.__new__(e2e.AurFlow)
+        check(finder.store_open_button({e2e.STORE_ACCENTS[0]: [box]}) == ("Open", box),
+              "store Open: one exact readable main control is accepted")
+        labels[box] = "0pen"
+        check(finder.store_open_button({e2e.STORE_ACCENTS[0]: [box]}) is None,
+              "store Open: a fuzzy OCR reading cannot authorize a launch")
+        labels[box] = "Open"
+        check(finder.store_open_button({e2e.STORE_ACCENTS[0]:
+                                        [box, (700, 200, 120, 44)]}) is None,
+              "store Open: duplicate exact controls are ambiguous and refused")
+    finally:
+        e2e.vision.find_buttons, e2e.vision.ocr, e2e.vision.text_of = (old_buttons,
+                                                                       old_ocr, old_text)
+
+    class FakeMachine:
+        def __init__(self, frames):
+            self.frames = iter(frames)
+            self.clicks = []
+            self.saved = []
+            self.moved = False
+
+        def screendump(self):
+            return next(self.frames)
+
+        def save(self, img, label):
+            self.saved.append((img, label))
+
+        def click(self, x, y, validate=None):
+            self.moved = True
+            if validate is not None and not validate():
+                return False
+            self.clicks.append((x, y))
+            return True
+
+    def flow(frames):
+        f = object.__new__(e2e.AurFlow)
+        f.m = FakeMachine(frames)
+        f.log = lambda message: None
+        f.store_open_button = lambda img: (("Open", box) if img == "open" else None)
+        return f
+
+    refreshed = flow(["open", "loading-details"])
+    check(not refreshed.click_current_store_open() and refreshed.m.moved and
+          refreshed.m.clicks == [],
+          "store Open: a details refresh during pointer dwell issues no stale click")
+
+    stable = flow(["open", "open"])
+    check(stable.click_current_store_open() and
+          stable.m.clicks == [(608, 222)] and len(stable.m.saved) == 1,
+          "store Open: two stable live observations issue exactly one click")
+
+
 def test_program_launch_proof():
     """Store listing and preview text are not proof that the program launched."""
     try:
@@ -1074,6 +1142,7 @@ test_generic_default_verdicts()
 test_store_frame()
 test_store_content()
 test_store_result()
+test_store_open_click_boundary()
 test_program_launch_proof()
 test_label_contrast()
 test_store_button_colours()

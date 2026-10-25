@@ -1521,7 +1521,21 @@ class Flow:
                 raise Failure("the install did not finish in 45 minutes")
             self.m.shot("store-installed")
         with self.rec.phase("aurOS: open " + STORE_QUERY):
-            self.m.click(*vision.centre(done[1]), label="open the installed program: " + done[0])
+            # `done` came from an earlier frame. The details page can refresh
+            # between that frame and a press (the real store replaced Open with
+            # "Loading app details" during the old click's screenshot/dwell).
+            # Reacquire a stable, exact Open control from the live page; if it
+            # changes under observation, keep using the install loop's existing
+            # bounded deadline instead of pressing the cached coordinates.
+            opened = False
+            while time.time() < deadline and not opened:
+                opened = self.click_current_store_open()
+                if opened:
+                    break
+                self.log("the store's Open control changed before the press; waiting for the live control")
+                time.sleep(15)
+            if not opened:
+                raise Failure("the installed program never kept an exact Open control long enough to press")
             self.m.move(1150, 300)
             deadline = time.time() + 120
             privacy_continued = False
@@ -1804,6 +1818,62 @@ class Flow:
             for b in vision.find_buttons(img, (240, 100, 800, 330), rgb)[:1]:
                 return b, vision.text_of(vision.ocr(img, b, psm=7)).strip()     # '' if unreadable
         return None
+
+    def store_open_button(self, img):
+        """The one exact, readable Open/Launch main button, or None.
+
+        Unreadable buttons are useful while observing install progress, but are
+        not enough authority for the irreversible boundary between observing a
+        completed install and launching a program.
+        """
+        wanted = {re.sub(r"[^a-z0-9]", "", s.lower()): s
+                  for s in STORE_OPEN.split("|")}
+        found = []
+        for rgb in STORE_ACCENTS:
+            for box in vision.find_buttons(img, (240, 100, 800, 330), rgb):
+                raw = vision.text_of(vision.ocr(img, box, psm=7)).strip()
+                canonical = wanted.get(re.sub(r"[^a-z0-9]", "", raw.lower()))
+                if canonical and box not in [item[1] for item in found]:
+                    found.append((canonical, box))
+        return found[0] if len(found) == 1 else None
+
+    def click_current_store_open(self):
+        """Reacquire Open twice immediately before one press; fail closed.
+
+        Screen observation and virtual input cannot be atomic. Two consecutive
+        matching observations remove the known stale-frame/screenshot gap, and
+        the final press deliberately omits Machine.click's extra screenshot so
+        no additional stale coordinate is introduced.
+        """
+        first = self.store_open_button(self.m.screendump())
+        if not first:
+            return False
+        _, box = first
+        # Put the pointer's hot spot inside the right edge, away from the label.
+        # Machine.click then validates after its normal 150 ms pointer dwell and
+        # sends button-down immediately if the live exact control still encloses
+        # that hot spot.
+        x, y = box[0] + box[2] - 12, box[1] + box[3] // 2
+        live = {}
+
+        def still_open_here():
+            img = self.m.screendump()
+            current = self.store_open_button(img)
+            if not current:
+                return False
+            label, current_box = current
+            bx, by, bw, bh = current_box
+            if not (bx <= x < bx + bw and by <= y < by + bh):
+                return False
+            live.update(img=img, label=label)
+            return True
+
+        if not self.m.click(x, y, validate=still_open_here):
+            return False
+        self.m.save(live["img"], "click-open-the-installed-program")
+        self.log(f"click ({x},{y}) open the installed program: {live['label']} "
+                 "[live control checked after pointer dwell]")
+        return True
 
     @staticmethod
     def header_sig(img):

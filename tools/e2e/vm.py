@@ -502,9 +502,12 @@ class Machine:
             {"type": "abs", "data": {"axis": "x", "value": ax}},
             {"type": "abs", "data": {"axis": "y", "value": ay}}])
 
-    def click(self, x, y, button="left", double=False, label=None, hold=0.08, jiggle=False):
+    def click(self, x, y, button="left", double=False, label=None, hold=0.08, jiggle=False,
+              validate=None):
         """Move the tablet there, press and release. With a label, a
-        screenshot is kept first, with a marker where the click goes."""
+        screenshot is kept first, with a marker where the click goes. An
+        optional validator runs after the pointer settles and immediately
+        before button-down; returning false cancels the press."""
         if label:
             img = self.screendump()
             mark = img.copy()
@@ -522,6 +525,8 @@ class Machine:
                     time.sleep(0.12)
             self.move(x, y)
             time.sleep(0.15 if not jiggle else 0.5)
+            if validate is not None and not validate():
+                return False
             for _ in range(2 if double else 1):
                 self.qmp.cmd("input-send-event", events=[
                     {"type": "btn", "data": {"down": True, "button": button}}])
@@ -529,6 +534,7 @@ class Machine:
                 self.qmp.cmd("input-send-event", events=[
                     {"type": "btn", "data": {"down": False, "button": button}}])
                 time.sleep(0.12)
+        return True
 
     def scroll(self, x, y, clicks):
         """Mouse wheel: positive scrolls down."""
