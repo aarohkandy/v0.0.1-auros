@@ -462,12 +462,16 @@ jobs:
             [ -n "$tag" ] || { echo "no release tag in $url"; exit 1; }
             echo "image of $tag"
             for i in 1 2 3; do
-              gh release download "$tag" -R "$GITHUB_REPOSITORY" -p 'auros-desktop.img.gz.*' -D "$E2E_DIR/pieces" --clobber && break
+              gh release download "$tag" -R "$GITHUB_REPOSITORY" \
+                -p 'auros-desktop.img.gz.*' -p pieces.txt -p image.sha256 \
+                -D "$E2E_DIR/pieces" --clobber && break
               sleep $((i * 20))
             done
           fi
           ls -l "$E2E_DIR/pieces" | head -20
+          ( cd "$E2E_DIR/pieces" && sha256sum -c --quiet <(grep '^piece ' pieces.txt | awk '{print $4"  "$2}') )
           cat "$E2E_DIR"/pieces/auros-desktop.img.gz.* | gzip -dc > "$E2E_DIR/auros.img"
+          echo "$(cat "$E2E_DIR/pieces/image.sha256")  $E2E_DIR/auros.img" | sha256sum -c
           rm -rf "$E2E_DIR/pieces"
           ls -l "$E2E_DIR/auros.img"; df -h "$E2E_DIR"
       - name: AurOS alone - the first screen, the store, a program installed and opened
