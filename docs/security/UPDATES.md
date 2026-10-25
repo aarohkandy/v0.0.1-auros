@@ -484,6 +484,10 @@ wrong-profile packages, inconsistent index metadata, and mixed legacy/identified
 sets. Entirely untagged historical desktop archives remain accepted only as
 legacy desktop; this cannot retrospectively prove their build profile. Signed
 Release origin, label, suite and codename must match the selected descriptor.
+Its SHA256 section must bind exactly `Packages` and `Packages.gz` once each with
+valid digests and sizes; missing, duplicate, malformed or alternate-path records
+are refused before indexes are read. The decompressed index must match the plain
+index byte for byte.
 `tools/channelcheck.sh --profile ID` applies the same checks when an explicitly
 selected channel is eventually available; it does not create that channel.
 
@@ -497,10 +501,13 @@ installing its matching source, pin and unattended policy together, and proving
 actual update/rollback on that profile. The emitted unattended fragment contains
 only the AurOS origin; it must not replace the existing Ubuntu/Mozilla policy.
 
-Validation (2026-10-25): the focused update suite passed **71/71** in a disposable
+Validation (2026-10-25): the focused update suite passed **85/85** in a disposable
 Ubuntu 24.04 container, including the original signed-update, key rotation,
 conffile preservation and rollback checks. The new matrix also refused signed
-same-label/wrong-suite personal channels and a signed divergent compressed index.
+same-label/wrong-suite personal channels, a signed divergent compressed index,
+and 14 signed missing/malformed/duplicate index-binding variants. Before the
+binding fix, six of those negative cases reproduced acceptance of missing or
+duplicate SHA256 records; the completed suite rejects them.
 The modified live `channelcheck.sh` has not been run against a published personal
 channel because none is enabled; local signed repositories exercise its shared
 verifier. No profile source, public archive, signing key or workflow was activated.

@@ -578,11 +578,36 @@ cmd_verify() { # REPODIR KEYRING
     gpg --batch --quiet --decrypt "$out/InRelease" 2>/dev/null > "$tmp/r" || true
     cmp -s "$tmp/r" "$out/Release" || { rm -rf "$tmp"; die "InRelease does not carry this Release"; }
     release_identity "$out/Release"
+    # Parse into a checked file, not a process substitution: parser failure
+    # must propagate before either index is read. Only our two flat indexes
+    # are valid; missing/duplicate records must not make verification vacuous.
+    awk '
+        tolower($0) ~ /^sha256:/ {
+            sections++; active=1
+            if ($0 !~ /^SHA256:[ \t]*$/) bad=1
+            next
+        }
+        active && /^[^ \t]/ {
+            if ($0 !~ /^[A-Za-z0-9-]+:/) bad=1
+            active=0
+        }
+        active {
+            if (NF != 3 || length($1) != 64 || $1 ~ /[^0-9a-f]/ ||
+                $2 !~ /^(0|[1-9][0-9]*)$/ ||
+                ($3 != "Packages" && $3 != "Packages.gz")) {bad=1; next}
+            count[$3]++
+            print $1, $2, $3
+        }
+        END {if (bad || sections != 1 || count["Packages"] != 1 ||
+                 count["Packages.gz"] != 1) exit 1}
+    ' "$out/Release" > "$tmp/index-hashes" || {
+        rm -rf "$tmp"; die "Release must bind exactly Packages and Packages.gz with valid SHA256 records"
+    }
     local h sz f identity declared seen=
     while read -r h sz f; do
         [ "$(sha256sum "$out/$f" | cut -d' ' -f1)" = "$h" ] || { rm -rf "$tmp"; die "$f does not match Release"; }
         [ "$(stat -c %s "$out/$f")" = "$sz" ] || { rm -rf "$tmp"; die "$f is not the size Release says"; }
-    done < <(sed -n '/^SHA256:/,/^[A-Z]/p' "$out/Release" | sed -n 's/^ //p')
+    done < "$tmp/index-hashes"
     gzip -dc "$out/Packages.gz" > "$tmp/packages" || { rm -rf "$tmp"; die "invalid Packages.gz"; }
     cmp -s "$tmp/packages" "$out/Packages" || { rm -rf "$tmp"; die "Packages.gz differs from Packages"; }
     while read -r f h declared; do
