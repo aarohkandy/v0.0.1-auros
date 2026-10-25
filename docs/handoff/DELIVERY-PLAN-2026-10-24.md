@@ -715,3 +715,39 @@ GNOME Software; missing ownership is a hypothesis, not a finding yet.
 Any eventual downstream package repair must preserve Ubuntu security-update
 supersession and exact source publication. A diverted/frozen replacement is
 not acceptable. Diagnostic instrumentation is not a production change.
+
+## Combined candidate ready for exact-image verification
+
+`d91e61eb` fixes the demonstrated stale Open-coordinate boundary: the pointer
+settles first, then the exact unique control is read again and must contain
+the pointer before button-down. Refresh cancels the press within the existing
+readiness deadline. Dynamic refresh-during-dwell and exactly-one-press tests,
+independent review and integrated E2E selftests pass. UI observation/input still
+have an unavoidable scheduling gap; the next exact-image journey is required.
+No store package patch has been applied. The no-window failures alone do not
+prove a GNOME Software no-op because actual callback activation was unproved.
+
+The attempted ownership interposers were inconclusive: `/usr/local` overrides
+the package launcher, and the modified entries did not start the live process.
+The earlier purported verbose run likewise must not be cited as a verified
+verbose trace. Successful and failed visible journeys remain valid observations,
+but neither guessed cancellation nor absent ownership is established. A direct
+stock-binary control is being prepared with explicit process/hook validation.
+
+Multilingual diagnostic `40145726339` attempt 2 passed on harness `3b2fd5ea`.
+Use artifact **12581007423**, not stale same-name first-attempt **12581236003**;
+both round result directories and masked-password screenshots were checked.
+This is the bounded retained-image proof described in the multilingual handoff.
+
+`77c69144` and `9c7ab532` implement a multilingual-only Fcitx GTK stack and
+separate fresh-production certification, preserving retained IBus diagnostic
+semantics. Input wiring tests, 73 profile selfchecks, independent security
+review and workflow lint pass. A fresh image has not yet certified it. Other
+profiles keep their existing input-method behavior. Public profile delivery
+remains gated; Firefox compositor connection identity is still unproved.
+
+Batch one `[release] [e2e:none] [profiles multilingual] [ibus-functional]` push:
+one desktop candidate with four Windows journeys, plus one fresh multilingual
+image/production functional test. Let exact-build hardening start automatically.
+No latest/public promotion. The next results must settle any remaining launch,
+BitLocker-return, recovery, and shipped-profile failures.
