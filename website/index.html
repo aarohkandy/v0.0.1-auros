@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-build="default">
+<html lang="en" data-build="fastpath">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -232,7 +232,7 @@
             <span class="num" aria-hidden="true">3</span>
             <h3><span class="vh">Step 3: </span>Pick a look, then press Install&nbsp;AurOS</h3>
             <p>AurOS Setup checks your computer first. If anything would stop AurOS working, it tells you <b>before it changes Windows</b>.</p>
-            <p>As soon as it says your computer can take AurOS, it starts downloading about 2&nbsp;GB, and unpacks it into about 5&nbsp;GB more on your Windows drive, before you press <b data-ui="wizard">Install AurOS</b>. With a data limit, or on a phone&rsquo;s hotspot, close it and come back on a home connection.</p>
+            <p>As soon as it says your computer can take AurOS, it starts downloading about 2&nbsp;GB to your Windows drive, before you press <b data-ui="wizard">Install AurOS</b>. It keeps that download there while it gets AurOS ready; this version does not first unpack another 5&nbsp;GB file on Windows. With a data limit, or on a phone&rsquo;s hotspot, close it and come back on a home connection.</p>
             <p>Press <b data-ui="wizard">Next</b>, pick the look you like, press <b data-ui="wizard">Next</b> again, then <b data-ui="wizard">Install AurOS</b>. When Setup says Ready to restart, press <b data-ui="wizard">Restart now</b>. The computer then <b>restarts once, by itself</b>. <span data-claim="dark:minute-or-two">The screen goes dark for a minute or two.</span> Leave the computer switched on.</p>
             <p>Installing makes Windows smaller to fit AurOS, which changes how your drive is divided. Any change to a drive carries some risk, so copy photos you can&rsquo;t replace to a memory stick first.</p>
             <p data-claim="hold:rearms">When AurOS starts, it asks whether everything works. Until you answer, AurOS is set to start each time you switch on, and <b>Windows and your files are meant to stay on this computer.</b> If AurOS fails to start, the computer should start Windows instead. If it does not, ask someone to help (the button below).</p>
@@ -330,16 +330,16 @@
       <dl class="facts">
         <div><dt>How long it takes</dt><dd>About <span data-fact="time-ssd">25 to 60</span>&nbsp;minutes on a typical home internet connection. Older computers take longer, about <span data-fact="time-hdd">1 to 3 hours</span>. Our test computer, on a fast connection, took about <span data-fact="journey-ssd">8</span>&nbsp;minutes from pressing Get AurOS to AurOS asking if everything works. AurOS Setup tells you the time for your computer before you start.</dd></div>
         <div><dt>Which computers</dt><dd>A Windows&nbsp;10 or Windows&nbsp;11 computer made since about 2013. Not Macs, Chromebooks, phones or tablets.</dd></div>
-        <div><dt>The download</dt><dd>As soon as AurOS Setup says your computer can take AurOS, it starts downloading AurOS, about 2&nbsp;GB, and unpacks it into about 5&nbsp;GB more on your Windows drive, before you press <b data-ui="wizard">Install AurOS</b>. If your internet has a data limit, or you are on a phone&rsquo;s hotspot, close AurOS Setup instead. Closing it stops the download and normally deletes what it fetched.</dd></div>
+        <div><dt>The download</dt><dd>As soon as AurOS Setup says your computer can take AurOS, it starts downloading about 2&nbsp;GB to your Windows drive, before you press <b data-ui="wizard">Install AurOS</b>. It keeps that download there while it gets AurOS ready; this version does not first unpack another 5&nbsp;GB file on Windows. If your internet has a data limit, or you are on a phone&rsquo;s hotspot, close AurOS Setup instead. Closing it stops the download and normally deletes what it fetched.</dd></div>
         <div><dt>Room it needs</dt><dd>AurOS needs some empty room on your computer. AurOS Setup checks, and tells you if there isn&rsquo;t enough.</dd></div>
         <div><dt>Keep it plugged in</dt><dd data-claim="charger:required">Plug in the charger before you start, and leave it in until AurOS has started. AurOS Setup waits for it.</dd></div>
         <div><dt>Locked drives</dt><dd>
           <span data-build-for="default" data-claim="bitlocker:refuses">If Windows has locked this computer&rsquo;s drive, AurOS can&rsquo;t go on it yet. Many newer laptops do this by themselves. AurOS Setup checks, and tells you before it changes anything.</span>
-          <span data-build-for="fastpath" data-claim="bitlocker:pauses">If Windows has locked this computer&rsquo;s drive (many newer laptops do this by themselves), AurOS Setup pauses its protection. It stays paused until Windows turns it back on. Start Windows again to let that happen. While it is paused, anyone with this computer could read the Windows drive.</span>
+          <span data-build-for="fastpath" data-claim="bitlocker:pauses">If Windows has locked this computer&rsquo;s drive (many newer laptops do this by themselves), AurOS Setup explains this on the Ready page and asks again immediately before the restart. If you choose <b data-ui="wizard">Pause protection and restart</b>, protection stays paused until Windows turns it back on. Start Windows again to let that happen. While it is paused, anyone with this computer could read the Windows drive.</span>
         </dd></div>
         <div><dt>Your Wi-Fi</dt><dd>
           <span data-build-for="default" data-claim="wifi:stays-behind">AurOS doesn&rsquo;t bring your Wi-Fi across yet. After the restart, press <b data-ui="desktop">Wi-Fi</b> at the bottom left and choose your network. You will need its password, so have it to hand.</span>
-          <span data-build-for="fastpath" data-claim="wifi:comes-across">AurOS Setup offers to <b data-ui="wizard">Bring my Wi-Fi across</b>, ticked for you, so AurOS is online the moment it starts. Untick it if you would rather not.</span>
+          <span data-build-for="fastpath" data-claim="wifi:comes-across">AurOS Setup offers to <b data-ui="wizard">Bring my Wi-Fi across</b>, ticked for you. If Setup can copy the network you are using, AurOS can use it when it starts; otherwise AurOS asks you to connect. Untick it if you would rather enter the password in AurOS.</span>
         </dd></div>
         <div><dt>If AurOS can&rsquo;t go on your computer</dt><dd>AurOS Setup says so in plain words <b>before it changes anything</b>, and nothing on your computer has been changed.</dd></div>
         <div><dt>What AurOS can&rsquo;t do yet</dt><dd>AurOS can&rsquo;t read the screen aloud yet. Programs made for Windows don&rsquo;t run in AurOS.</dd></div>

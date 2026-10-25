@@ -42,9 +42,10 @@
 #             program from the store, on a real Windows 11 VM. Hours.
 #   site      the website as it will be deployed, checked the way she
 #             meets it (tools/site/check.mjs, as pages.yml does).
-#   e2e-fastpath  the same, for AurOS-Setup-fastpath.exe (the release built
-#             with AUROS_FASTPATH=1, published beside the normal installer
-#             when the tree has one); informative, not a gate of promote.
+#   e2e-fastpath  the same, for an optional nonidentical
+#             AurOS-Setup-fastpath.exe. Once fast path is the default, the
+#             duplicate asset is omitted and the ordinary gated e2e owns
+#             the BitLocker return and put-back proof.
 #   sources   the release's source code, as the release `sources-<tag>`
 #             (sources.yml, stream LEGAL), made and verified in this run.
 #   promote   [latest] only, and only after windows, e2e, site and sources passed
@@ -105,6 +106,7 @@ jobs:
     outputs:
       go: ${{ steps.w.outputs.go }}
       run-id: ${{ steps.w.outputs.run_id }}
+      built_sha: ${{ steps.w.outputs.built_sha }}
       latest: ${{ steps.w.outputs.latest }}
       allowed: ${{ steps.w.outputs.allowed }}
     steps:
@@ -180,7 +182,10 @@ jobs:
             go=true
           fi
           allowed=$(grep '^releasegate: ALLOWED' /tmp/gate.txt 2>/dev/null | sed 's/^releasegate: //' | paste -sd';' - | tr '|' '/' || true)
-          { echo "go=$go"; echo "run_id=$rid"; echo "latest=$latest"; echo "allowed=$allowed"; } | tee -a "$GITHUB_OUTPUT"
+          built_sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$rid" --jq .head_sha)
+          [[ $built_sha =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "::error::build run $rid has no canonical head SHA"; exit 1; }
+          { echo "go=$go"; echo "run_id=$rid"; echo "built_sha=$built_sha"; echo "latest=$latest"; echo "allowed=$allowed"; } | tee -a "$GITHUB_OUTPUT"
 
   # SIGNING (docs/SIGNING.md, decision D12). Sign the inner wizard first,
   # rebuild the kernel32-only bootstrap around those exact bytes, then sign
@@ -330,7 +335,7 @@ jobs:
             echo "- Same run, Linux: aurfirsttest, choicestest, nvramtest, bridgetest, manifesttest, signtest, Ferry's suite, and \`aurbridge.exe selftest\` under Wine."
             echo "- Same run, QEMU with KVM and OVMF (Microsoft's keys and Secure Boot where the test asks for them): installtest, nosticktest, firstboottest, choicesboottest, putbacktest, bootupdatetest; the power cut at every named instant of an install and of Put Windows back, with a memory stick (powercuttest) and without (powercut-nostick, the mode this installer ships)."
             [ -z "$ALLOWED" ] || echo "- **Allowed to fail, by name and date in \`.github/ci-allow.txt\`:** $ALLOWED"
-            echo "- After publishing ([run $GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)): every file read back from this release and compared, through GitHub's redirect, with a \`Range\` request answered 206; on a real Windows runner, this \`AurOS-Setup.exe\` started and passed its navigation test, and the installer's own WinHTTP code fetched the image from this release and checked it."
+            echo "- Pending in [this release run $GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID): after the prerelease is published, downstream jobs read every file back through GitHub's redirect, check a \`Range\` request, start this exact installer on a Windows runner, run its navigation test, fetch the image with its own WinHTTP code, and run the Windows-to-AurOS journeys. The linked run records whether those checks pass; this prerelease note does not claim that they have."
             echo
             echo "**Not tested here:** a real PC's disk being resized and written."
             echo
@@ -497,7 +502,7 @@ jobs:
           "fetched and checked in $([int]((Get-Date) - $t).TotalSeconds) s"
 
   e2e:
-    needs: publish
+    needs: [which, publish]
     if: ${{ !cancelled() && needs.publish.result == 'success' }}
     uses: ./.github/workflows/e2e.yml
     permissions:
@@ -506,14 +511,18 @@ jobs:
     with:
       installer_url: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}/AurOS-Setup.exe
       installer_sha256: ${{ needs.publish.outputs.setup_sha256 }}
+      installer_source_sha: ${{ needs.which.outputs.built_sha }}
       # base AND bitlocker: both are v0.1 gates (D13, LEAD-RESUME section 5) and promote asks for both
       variants: base,bitlocker
+      # AurOS-Setup.exe defaults to the fast path. Its exact BitLocker lane
+      # must prove the Windows return and Put Windows back before promotion.
+      bitlocker_putback: true
 
-  # The fast-path installer through the same real-Windows journey, when
-  # this release has one. NOT in promote's needs: the website's download is
-  # AurOS-Setup.exe, and the lead decides when the fast path replaces it.
+  # An optional nonidentical fast-path installer through the same journey.
+  # It is normally absent now that AurOS-Setup.exe defaults to the fast path.
+  # Keep this diagnostic lane for an explicitly different auxiliary build.
   e2e-fastpath:
-    needs: publish
+    needs: [which, publish]
     if: ${{ !cancelled() && needs.publish.result == 'success' && needs.publish.outputs.fastpath_sha256 != '' }}
     uses: ./.github/workflows/e2e.yml
     permissions:
@@ -522,6 +531,7 @@ jobs:
     with:
       installer_url: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}/AurOS-Setup-fastpath.exe
       installer_sha256: ${{ needs.publish.outputs.fastpath_sha256 }}
+      installer_source_sha: ${{ needs.which.outputs.built_sha }}
       variants: base,bitlocker
       bitlocker_putback: true
 

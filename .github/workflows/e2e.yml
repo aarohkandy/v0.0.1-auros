@@ -30,6 +30,7 @@ on:
     inputs:
       installer_url: {type: string, required: false, default: ''}
       installer_sha256: {type: string, required: false, default: ''}
+      installer_source_sha: {type: string, required: false, default: ''}
       installer_artifact: {type: string, required: false, default: ''}
       expected_recipe_id: {type: string, required: false, default: ''}
       expected_look: {type: string, required: false, default: ''}
@@ -46,6 +47,11 @@ on:
     inputs:
       installer_url: {type: string, required: false, default: ''}
       installer_sha256: {type: string, required: false, default: ''}
+      installer_source_sha:
+        description: Exact 40-hex commit that built a generic installer used for put-back
+        type: string
+        required: false
+        default: ''
       variants: {type: string, required: false, default: base}
       hdd_throttle: {type: string, required: false, default: ''}
       # variants=aur only: the image of this build run (its auros-pieces artifact)
@@ -91,6 +97,9 @@ jobs:
       variants: ${{ steps.g.outputs.variants }}
       aur: ${{ steps.g.outputs.aur }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
       - id: g
         env:
           MSG: ${{ github.event.head_commit.message }}
@@ -99,6 +108,7 @@ jobs:
           IN_URL: ${{ inputs.installer_url }}
           IN_ARTIFACT: ${{ inputs.installer_artifact }}
           IN_SHA256: ${{ inputs.installer_sha256 }}
+          IN_SOURCE_SHA: ${{ inputs.installer_source_sha }}
           EXPECTED_RECIPE_ID: ${{ inputs.expected_recipe_id }}
           EXPECTED_LOOK: ${{ inputs.expected_look }}
           EXPECTED_THEME: ${{ inputs.expected_theme }}
@@ -138,7 +148,7 @@ jobs:
               && [[ ,$IN_VARIANTS, == *,bitlocker,* ]] \
               || { echo "::error::put-back E2E requires an exact hash and the bitlocker variant"; exit 2; }
             if ! python3 <<'PY'
-          import os, re, urllib.parse
+          import os, re, subprocess, urllib.parse
           u = urllib.parse.urlsplit(os.environ['IN_URL'])
           want = '/' + os.environ['GITHUB_REPOSITORY'] + '/releases/download/'
           assert u.scheme == 'https' and u.netloc == 'github.com' and not u.query and not u.fragment
@@ -146,10 +156,18 @@ jobs:
           rest = u.path[len(want):]
           tag, sep, name = rest.partition('/')
           assert sep and re.fullmatch(r'[A-Za-z0-9._-]{1,128}', tag)
-          assert name == 'AurOS-Setup-fastpath.exe'
+          assert name in {'AurOS-Setup-fastpath.exe', 'AurOS-Setup.exe'}
+          if name == 'AurOS-Setup.exe':
+              sha = os.environ['IN_SOURCE_SHA']
+              assert re.fullmatch(r'[0-9a-f]{40}', sha)
+              assert tag.endswith('-' + sha[:7])
+              source = subprocess.check_output(
+                  ['git', 'show', sha + ':build/aurbridge'], text=True)
+              pattern = r'^if \[ "\$\{AUROS_FASTPATH:-(\d)\}" = 1 \]; then$'
+              assert re.findall(pattern, source, re.MULTILINE) == ['1']
           PY
             then
-              echo "::error::put-back E2E requires this repository's exact fastpath release URL"
+              echo "::error::put-back E2E requires this repository's exact put-back-capable release URL; AurOS-Setup.exe is accepted only when this source defaults to the fast path"
               exit 2
             fi
           fi
@@ -209,11 +227,14 @@ jobs:
     timeout-minutes: 355
     env:
       E2E_VARIANT: ${{ matrix.variant }}
-      # two installers in one run id (release.yml) must not share file names
+      # Two installers in one run id (release.yml) must not share file names.
+      # The auxiliary fastpath asset is omitted once it matches the default.
       E2E_LABEL: ${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}
       E2E_BITLOCKER_PUTBACK: ${{ inputs.bitlocker_putback && matrix.variant == 'bitlocker' && '1' || '0' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
 
       - name: the same-run personalized installer
         if: inputs.installer_artifact != ''
@@ -324,10 +345,12 @@ jobs:
         env:
           IN_URL: ${{ inputs.installer_url }}
           IN_SHA256: ${{ inputs.installer_sha256 }}
+          IN_SOURCE_SHA: ${{ inputs.installer_source_sha }}
         run: |
           if [ -n "$IN_URL" ]; then INSTALLER_URL=$IN_URL INSTALLER_SHA256=$IN_SHA256; fi
           echo "installer: $INSTALLER_URL (SHA-256 ${INSTALLER_SHA256:-not pinned})"
-          export INSTALLER_URL INSTALLER_SHA256
+          INSTALLER_SOURCE_SHA=$IN_SOURCE_SHA
+          export INSTALLER_URL INSTALLER_SHA256 INSTALLER_SOURCE_SHA
           [ -z "$INSTALLER_PATH" ] || INSTALLER_PATH=$(realpath "$INSTALLER_PATH")
           [ "$WEBSITE_DIR" = none ] || WEBSITE_DIR=$(realpath "$WEBSITE_DIR")
           # what is left of the job's 355 minutes, less time to publish

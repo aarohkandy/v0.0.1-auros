@@ -1,6 +1,6 @@
 # AurOS Disclaimer
 
-Version 3, 23 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. This page is not legal advice. It goes with the AurOS Terms.
+Version 4, 24 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. This page is not legal advice. It goes with the AurOS Terms.
 
 ## AurOS is free, and comes as it is
 
@@ -12,7 +12,7 @@ Installing AurOS changes how your computer's drive is divided. It makes Windows 
 
 ## What we have tested, and what we haven't
 
-Before a version of AurOS goes on this website, the whole install is run on a virtual computer that has Windows 11 on a fast drive. We also test putting Windows back on pretend disks, and we test cutting the power just before and just after each step. We can't test a power cut in the middle of making Windows smaller, which is the riskiest moment. Windows 10, older and slower computers, locked drives and small drives are not part of the test before a version goes out. The times we show are estimates. AurOS has not yet been tried on a real, physical computer, and computers differ a great deal. That is one more reason to copy your photos first.
+Before a version of AurOS goes on this website, the whole install is run on a virtual computer that has Windows 11 on a fast drive. We also run a separate install-and-return journey on a virtual Windows 11 computer whose drive is protected by BitLocker. We test putting Windows back on pretend disks, and we test cutting the power just before and just after each step. We can't test a power cut in the middle of making Windows smaller, which is the riskiest moment. Windows 10, older and slower computers and small drives are not part of the test before a version goes out. The times we show are estimates. AurOS has not yet been tried on a real, physical computer, and computers differ a great deal. That is one more reason to copy your photos first.
 
 ## You decide
 

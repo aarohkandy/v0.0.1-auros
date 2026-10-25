@@ -337,6 +337,23 @@ class PreserveProvenanceTests(unittest.TestCase):
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_personalized_installer_inherits_fastpath_default(self) -> None:
+        builder = (ROOT / "build/aurbridge").read_text(encoding="utf-8")
+        self.assertRegex(
+            builder,
+            r'if \[ "\$\{AUROS_FASTPATH:-1\}" = 1 \]; then\s+'
+            r'IMGDEF="\$IMGDEF -DAUROS_FASTPATH"',
+        )
+
+        workflow = (ROOT / ".github/workflows/customize.yml").read_text(
+            encoding="utf-8"
+        )
+        rebuild = workflow.split(
+            "- name: rebuild only the personalized installer", 1
+        )[1].split("- name:", 1)[0]
+        self.assertIn("AUROS_RELEASE=1 sh build/aurbridge", rebuild)
+        self.assertNotIn("AUROS_FASTPATH=", rebuild)
+
     def test_extraction_creates_output_directory_before_all_five_resources(self) -> None:
         workflow = (ROOT / ".github/workflows/customize.yml").read_text(encoding="utf-8")
         extraction = workflow.split(

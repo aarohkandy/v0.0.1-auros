@@ -1527,9 +1527,9 @@ static void choices_from_page(ab_choice *c)
 #ifdef AB_CHOICE_TERMS
     /* Install AurOS said "By pressing Install AurOS you agree to the AurOS
      * Terms"; the version she agreed to and when are written to the install
-     * journal, on this computer only (LEGAL item 2). "v3" is the Terms'
+     * journal, on this computer only (LEGAL item 2). "v4" is the Terms'
      * version, docs/legal/TERMS.md line 3. */
-    _snprintf(c->terms_version, sizeof c->terms_version - 1, "%s", "v3");
+    _snprintf(c->terms_version, sizeof c->terms_version - 1, "%s", "v4");
     c->terms_unix = (unsigned long long)time(NULL);
 #endif
 #ifdef AB_CHOICE_BITLOCKER_PAUSE
@@ -6447,8 +6447,8 @@ static int nav_test(const char *dir)
         memset(&c, 0, sizeof c);
         choices_from_page(&c);
 #ifdef AB_CHOICE_TERMS
-        nt_check(!strcmp(c.terms_version, "v3") && c.terms_unix > 1700000000ULL,
-                 "the engine is told which Terms she agreed to (v3) and when, for the install journal");
+        nt_check(!strcmp(c.terms_version, "v4") && c.terms_unix > 1700000000ULL,
+                 "the engine is told which Terms she agreed to (v4) and when, for the install journal");
 #endif
 
         /* Licenses is in the foot of every page */

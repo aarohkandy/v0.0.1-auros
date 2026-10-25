@@ -35,6 +35,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vision                                                    # noqa: E402
@@ -54,6 +55,7 @@ INSTALLER_URL = E("INSTALLER_URL") or (
                      stdout=subprocess.PIPE, text=True).stdout.strip()
     + "/raw/image-desktop/AurOS-Installer-test.exe")
 INSTALLER_SHA256 = E("INSTALLER_SHA256", "")
+INSTALLER_SOURCE_SHA = E("INSTALLER_SOURCE_SHA", "")
 # A file on the runner instead (an artifact from an earlier job): served
 # from this host and the website's download links are pointed at it.
 INSTALLER_PATH = E("INSTALLER_PATH", "")
@@ -156,17 +158,53 @@ def bitlocker_verdict(variant, vol, prot):
     return None
 
 
-def bitlocker_pause_lane_error(variant, putback, installer_name, installer_sha256):
-    """Fail closed unless pause-driving is the exact pinned fastpath lane."""
+def source_default_fastpath(source):
+    """Read the single build default. Ambiguous source is never authority."""
+    pattern = r'^if \[ "\$\{AUROS_FASTPATH:-(\d)\}" = 1 \]; then$'
+    matches = re.findall(pattern, source, re.MULTILINE)
+    if matches not in (["0"], ["1"]):
+        raise Failure("build/aurbridge has no single canonical AUROS_FASTPATH default")
+    return matches == ["1"]
+
+
+def release_installer(url, repository):
+    """Return the exact release tag and asset name, or None for another URL."""
+    try:
+        u = urllib.parse.urlsplit(url)
+    except ValueError:
+        return None
+    want = "/" + repository + "/releases/download/"
+    if (u.scheme != "https" or u.netloc != "github.com" or u.query or u.fragment or
+            not u.path.startswith(want)):
+        return None
+    tag, sep, name = u.path[len(want):].partition("/")
+    if not sep or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", tag):
+        return None
+    return tag, name
+
+
+def bitlocker_pause_lane_error(variant, putback, installer_name, installer_sha256,
+                               installer_url="", repository="", default_fastpath=False,
+                               installer_source_sha=""):
+    """Fail closed unless pause-driving is an exact pinned release lane."""
     if not putback:
         return None
     if variant != "bitlocker":
         return "E2E_BITLOCKER_PUTBACK is valid only for the bitlocker variant"
-    if installer_name != "AurOS-Setup-fastpath.exe":
-        return "BitLocker put-back requires AurOS-Setup-fastpath.exe"
     if not re.fullmatch(r"[0-9a-f]{64}", installer_sha256 or ""):
-        return "BitLocker put-back requires the fastpath installer's lowercase SHA-256"
-    return None
+        return "BitLocker put-back requires the installer's lowercase SHA-256"
+    exact = release_installer(installer_url, repository)
+    if exact is None or exact[1] != installer_name:
+        return "BitLocker put-back requires this repository's exact release URL"
+    if installer_name == "AurOS-Setup-fastpath.exe":
+        return None
+    if installer_name == "AurOS-Setup.exe" and default_fastpath:
+        if (not re.fullmatch(r"[0-9a-f]{40}", installer_source_sha or "") or
+                not exact[0].endswith("-" + installer_source_sha[:7])):
+            return "BitLocker put-back requires a release tag bound to its exact source commit"
+        return None
+    return ("BitLocker put-back requires AurOS-Setup-fastpath.exe, or AurOS-Setup.exe "
+            "from source whose canonical default enables the fast path")
 
 
 def bitlocker_pause_controls(named):
@@ -2300,8 +2338,22 @@ def cmd_aur(a):
 
 
 def cmd_flow(a):
+    repository = ""
+    default_fastpath = False
+    if BITLOCKER_PUTBACK:
+        repository = E("GITHUB_REPOSITORY") or subprocess.run(
+            ["sh", os.path.join(REPO, "tools", "repo.sh")], check=True,
+            stdout=subprocess.PIPE, text=True).stdout.strip()
+    if BITLOCKER_PUTBACK and INSTALLER_NAME == "AurOS-Setup.exe":
+        if not re.fullmatch(r"[0-9a-f]{40}", INSTALLER_SOURCE_SHA or ""):
+            raise Failure("generic put-back has no exact installer source commit")
+        source = subprocess.run(
+            ["git", "show", INSTALLER_SOURCE_SHA + ":build/aurbridge"], check=True,
+            stdout=subprocess.PIPE, text=True).stdout
+        default_fastpath = source_default_fastpath(source)
     lane_error = bitlocker_pause_lane_error(
-        VARIANT, BITLOCKER_PUTBACK, INSTALLER_NAME, INSTALLER_SHA256)
+        VARIANT, BITLOCKER_PUTBACK, INSTALLER_NAME, INSTALLER_SHA256,
+        INSTALLER_URL, repository, default_fastpath, INSTALLER_SOURCE_SHA)
     if lane_error:
         raise Failure(lane_error)
     f = Flow(a)
