@@ -42,15 +42,15 @@ The completed path must connect request, validation, consent, artifact identity,
 - [x] Wishes UI owner: standalone paint/end-to-end harness seams repaired; the full Wishes UI, paint, end-to-end and mutation job passes on `c1ba6ee5`. Feature remains disabled pending its separate activation requirements.
 - [x] Installer safety owner: recover S-04, refuse before table commit when boot-entry creation fails, verify focused fault paths. Exact new-candidate Windows journey remains a separate release gate.
 - [x] Bootstrapper owner: recover B's protected Windows loader design and validate Windows runner hostile-DLL/junction cases. Physical Windows 11 proof remains separate.
-- [ ] Lead: integrate CIW regression coverage and verify the tests exercised match the shipped path.
+- [x] CIW regression coverage is integrated in the unit and shipped-image suites; the candidate image suite passed. Exact Windows and physical-machine proof remain Stage 3 gates.
 - [x] Independent handover review: kernel/modules, network/time, mounts, devices/display, PID1/services reviewed and concrete findings repaired. Runtime installed-session proof remains required.
 
 ### Stage 2 Build a reusable customization path
 
 - [x] Contract owner: strict schema, stable profile catalogue, deterministic compilation, policy preservation, hostile-input tests. Cross-Python depth behavior and dirty-CI fixture repair are included in the follow-up checkpoint.
 - [x] Website owner: accessible request/review flow and honest artifact status implemented; 548 browser checks pass, including the real local API/compiler/ledger with only GitHub verification mocked. Public build service remains disabled.
-- [ ] Delivery adapter: choose and implement authenticated recipe transport to the installer; pin base artifact and configuration digest; reject mismatches, stale/unsupported recipes and downgrade attempts.
-- [ ] Installer/first-boot adapter: apply only allowlisted preferences, retain policy constraints and rollback behavior, confirm requested result in the installed system.
+- [x] Delivery adapter implemented: bounded authenticated requests, fixed build workflow, exact base/artifact/digest binding, immutable signed evidence validation and stale/mismatch refusal. Service activation and one real signed personalized journey remain Stage 3 gates.
+- [x] Installer/first-boot adapter implemented: validated baked desktop recipes, checked restart handover, allowlisted atomic application/receipt and exact installed-state certification checks. A real signed personalized Windows installation remains unproved.
 - [x] Agent extension contract: permitted extension points and required tests documented in `docs/AGENT-EXTENSIONS.md`.
 - [ ] Wishes: finish missing action implementations/configuration/voice dependencies and real-image tests before enabling. No budget or model-spend changes without explicit accounting.
 
