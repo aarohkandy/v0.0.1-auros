@@ -1,6 +1,34 @@
 # Multilingual input: production Fcitx composition proven, delivery bounded
 
-## Evidence
+## Current production-image diagnostic proof
+
+Run `40156605186` passed 71/71 checks across two distinct real boots of
+production image source `3629b114`, retained from `40148012574` (raw SHA-256
+`42359c4847a1a696a21c5b5350f4574a2970bb1d4d8f7df42c8336157a1696fa`).
+Harness source was `0be3a3bc`; artifact `12585600815` is retained locally at
+`/tmp/auros-fcitx-40156605186.H0VP3e`.
+
+Both rounds proved exact `你好` in Mousepad and Firefox, visible candidate
+lists, authenticated Mousepad connection and A→B→A candidate revocation and
+remapping. The shipped Fcitx service autostarted after reboot and retained
+its measured identity. Standalone password input produced exact `nihao`,
+zero composition events and continuous focus. Closed traces contained zero
+popup creation/mapping/configuration/grabs in every phase, including browser
+shutdown. PID/unit/cgroup/writer cleanup passed.
+
+The immutable template was identical at every boundary. Runtime profile
+bytes stayed unchanged within each round; across reboot only comments and
+blank lines differed, with every ordered setting record byte-identical to
+the template. The comparison rejects setting or order changes.
+
+Limits: Firefox compositor connection identity and native form submission,
+navigation and password-manager behavior remain unproven. Screenshot timing
+varies: one password frame was blank, another showed two bullets; exact
+entered value is proved by the independent server result, not the image.
+This is retained production-image diagnostic proof, not multilingual Windows
+delivery or physical-PC certification. Historical investigations follow.
+
+## Historical initial evidence
 
 Candidate `c1ba6ee5`, profile run `40131473294`, passed exact Pinyin
 composition in Mousepad and Firefox, followed by a reboot and the same checks
