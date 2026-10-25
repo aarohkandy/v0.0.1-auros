@@ -1433,6 +1433,11 @@ def test_busy_wizard_diagnostic():
           "accessibility-child-ready" in helper and
           "accessibility isolation timeout and recovery: PASS" in helper,
           "accessibility isolation: Windows times out a blocked provider then proves recovery")
+    check("Read-DiagnosticOutput $stderr 8192" in helper and
+          "AccessibilityChildEvidence" in helper and
+          "accessibility-phase=request-decoded" in helper and
+          "test_error = $(if ($testEvidence)" in helper,
+          "accessibility isolation: native failures retain bounded test-only stderr and phase evidence")
     boot = open(os.path.join(HERE, "guest", "boot.ps1")).read()
     check("C:\\e2e\\helper.ps1" in boot and "WriteAllText" in boot and
           "Invoke-Expression $code" not in boot,
