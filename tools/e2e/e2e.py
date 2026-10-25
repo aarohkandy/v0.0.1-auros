@@ -118,7 +118,7 @@ VARIANT_EXPECT = {
     # page is then optional, and the proofs are BitLocker fully encrypted when it
     # asks to restart, and (still to write) Windows coming back with it on.
     "bitlocker": {"page": r"is encrypted|encryption off|has locked", "fix": False, "restarts": 0, "optional": True,
-                  "why_red": "D13 needs BitLocker paused for one restart, never decrypted: A2's fast path"},
+                  "why_red": "D13 needs the supported explicit BitLocker pause-and-recovery path: A2's fast path"},
     "pending":   {"page": r"waiting (to|for a) restart|finish an update", "fix": True, "restarts": 1},
     # not a stop: the Ready page says the drive is the slow kind (the installer
     # asks the drive, seek_penalty), and the time it gives is the hard disk's
@@ -671,15 +671,16 @@ class Flow:
             time.sleep(every)
         return None, None, None
 
-    def wait_store_result(self, query, phrase, timeout, every=10):
-        """Wait for a named catalogue row, excluding the query field."""
+    def wait_store_result(self, phrase, timeout, every=10):
+        """Wait for one exact title in the store's detected results body."""
         deadline = time.time() + timeout
         while time.time() < deadline:
             if not self.m.alive():
                 raise Failure("the machine switched off")
             img = self.m.screendump()
-            words = vision.ocr(img)
-            found = self.store_result(words, img.shape[0], query, phrase)
+            region = self.store_results_region(img)
+            words = vision.ocr(img, region) if region else []
+            found = self.store_result(words, phrase)
             if found:
                 return found, words
             time.sleep(every)
@@ -734,7 +735,7 @@ class Flow:
         token = "auros-e2e-windows-" + os.urandom(16).hex()
         out = self.guest(
             "$ErrorActionPreference='Stop'; "
-            "function H([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
+            "function Get-AurOSSha256([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
             "([BitConverter]::ToString($a.ComputeHash([Text.Encoding]::UTF8.GetBytes($x)))-replace'-','').ToLowerInvariant()"
             "}finally{$a.Dispose()}}; "
             "$p=Join-Path $env:USERPROFILE 'Documents\\auros-e2e-before.txt'; "
@@ -745,8 +746,8 @@ class Flow:
             "$fwRaw=& bcdedit.exe /enum firmware 2>&1; if($LASTEXITCODE -ne 0){throw 'bcdedit failed'}; "
             "$fw=(($fwRaw|Out-String).Trim()); "
             "$h=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power').HiberbootEnabled; "
-            "$s=@{c_bytes=[uint64]$cpart.Size;c_offset=[uint64]$cpart.Offset;partition_sha256=(H $pm);"
-            "firmware_sha256=(H $fw);hiberboot=[int]$h;"
+            "$s=@{c_bytes=[uint64]$cpart.Size;c_offset=[uint64]$cpart.Offset;partition_sha256=(Get-AurOSSha256 $pm);"
+            "firmware_sha256=(Get-AurOSSha256 $fw);hiberboot=[int]$h;"
             "canary_sha256=(Get-FileHash $p -Algorithm SHA256).Hash.ToLowerInvariant()}; "
             "'AUROS_PUTBACK_BASE '+($s|ConvertTo-Json -Compress)")
         rows = [x[len("AUROS_PUTBACK_BASE "):] for x in out.splitlines()
@@ -762,7 +763,7 @@ class Flow:
                 or base["hiberboot"] not in (0, 1)
                 or any(not re.fullmatch(r"[0-9a-f]{64}", str(base[k]))
                        for k in ("partition_sha256", "firmware_sha256", "canary_sha256"))):
-            raise Failure("Windows did not return the exact pre-install put-back state")
+            raise Failure("the Windows put-back baseline snapshot was unavailable or invalid")
         protectors = self.bitlocker_evidence()["protectors"]
         if not {"Tpm", "RecoveryPassword"}.issubset({p["type"] for p in protectors}):
             raise Failure("the baseline BitLocker volume lacks its TPM or recovery protector")
@@ -1430,7 +1431,7 @@ class Flow:
                 self.m.type(STORE_QUERY, label="search")
                 self.m.key("ret")
                 # the catalogue can take a minute or two after first going online
-                found, _ = self.wait_store_result(STORE_QUERY, STORE_RESULT, 90, every=10)
+                found, _ = self.wait_store_result(STORE_RESULT, 90, every=10)
                 if found:
                     break
                 self.m.shot("store-no-result-yet")
@@ -1747,14 +1748,8 @@ class Flow:
         return (frame + 47, cy) if frame else None
 
     @staticmethod
-    def store_result(words, screen_h, query, phrase):
-        """The one exact result-title line below the typed query, or None.
-
-        Run 40138682256 exposed ``VLC`` in both places. A full-screen lookup
-        clicked the query at y=162 instead of the result at y=254. Relative
-        placement distinguishes them without assuming a window size, while an
-        exact, unique line refuses prefixes, descriptions and ambiguous rows.
-        """
+    def store_result(words, phrase):
+        """The one exact title/summary pair in a cropped results body."""
         lines = {}
         for word in words:
             raw_line = word.get("line")
@@ -1773,19 +1768,74 @@ class Flow:
             y1 = max(word.get("y", 0) + word.get("h", 0) for word in line)
             return x0, y0, x1 - x0, y1 - y0
 
-        want_query = re.sub(r"[^a-z0-9]", "", query.lower())
         want_result = re.sub(r"[^a-z0-9]", "", phrase.lower())
-        query_boxes = [box(line) for line in lines.values()
-                       if normalized(line) == want_query and
-                       box(line)[1] + box(line)[3] < screen_h // 4]
-        if len(query_boxes) != 1:
-            return None
-        query_box = query_boxes[0]
-        query_bottom = query_box[1] + query_box[3]
-        candidates = [box(line) for line in lines.values()
-                      if normalized(line) == want_result and
-                      box(line)[1] >= screen_h // 4 and box(line)[1] > query_bottom]
+        candidates = []
+        line_boxes = [(line, box(line)) for line in lines.values()]
+        for line, candidate in line_boxes:
+            if normalized(line) != want_result:
+                continue
+            cx, cy, _, ch = candidate
+            # A Software result row is a title followed closely by its summary,
+            # aligned at the same left edge.  Requiring that pair distinguishes
+            # the title from an exact app name appearing alone in a description
+            # or badge, while failing closed if OCR did not read the whole row.
+            above = [b for _, b in line_boxes
+                     if 0 <= cy - (b[1] + b[3]) <= 35 and abs(b[0] - cx) <= 16]
+            below = [b for _, b in line_boxes
+                     if 0 <= b[1] - (cy + ch) <= 35 and abs(b[0] - cx) <= 16]
+            if not above and below:
+                candidates.append(candidate)
         return candidates[0] if len(candidates) == 1 else None
+
+    @staticmethod
+    def store_results_region(img):
+        """The store body below its search field, derived from visible borders.
+
+        Whole-screen OCR omitted the visibly typed query and result title in
+        run 40148012698.  Cropping to the window body makes the title readable;
+        deriving every edge from the actual frame/search borders keeps the
+        query field, shell task, descriptions elsewhere, and fixed coordinates
+        from authorizing a click.
+        """
+        left = AurFlow.store_frame(img)
+        if left is None:
+            return None
+        lum = img.astype(np.int16).sum(axis=2) // 3
+
+        def runs(values):
+            out = []
+            for value in values:
+                value = int(value)
+                if not out or value != out[-1][1] + 1:
+                    out.append([value, value])
+                else:
+                    out[-1][1] = value
+            return out
+
+        vertical = runs(np.flatnonzero(lum[:, left] < 110))
+        vertical = [span for span in vertical if span[1] - span[0] >= 200]
+        if len(vertical) != 1:
+            return None
+        top, bottom = vertical[0]
+        height = bottom - top + 1
+        right_cols = np.flatnonzero(
+            (lum[top:bottom + 1, left + 200:] < 110).mean(axis=0) > 0.9)
+        if not len(right_cols):
+            return None
+        right = left + 200 + int(right_cols[0])
+        if right - left < 300:
+            return None
+
+        strong_rows = np.flatnonzero(
+            (lum[top:bottom + 1, left:right + 1] < 110).mean(axis=1) > 0.6) + top
+        header_rows = [span for span in runs(strong_rows)
+                       if span[1] < top + height // 2]
+        if len(header_rows) < 2:
+            return None
+        search_bottom = header_rows[-1][1]
+        if search_bottom <= top or search_bottom >= bottom:
+            return None
+        return left + 1, search_bottom + 1, right - left - 1, bottom - search_bottom - 1
 
     @staticmethod
     def store_frame(img):
@@ -2152,7 +2202,7 @@ class Flow:
         restored = "C:\\Users\\aurtest\\From AurOS\\Documents\\" + self.putback_fixture["name"]
         out = self.guest(
             "$ErrorActionPreference='Stop'; "
-            "function H([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
+            "function Get-AurOSSha256([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
             "([BitConverter]::ToString($a.ComputeHash([Text.Encoding]::UTF8.GetBytes($x)))-replace'-','').ToLowerInvariant()"
             "}finally{$a.Dispose()}}; "
             "$st=$null; try {$st=Get-Content 'C:\\ProgramData\\AurOS\\user\\status.json' -Raw|ConvertFrom-Json}catch{}; "
@@ -2167,7 +2217,7 @@ class Flow:
             "$tasks=@(Get-ScheduledTask -ErrorAction SilentlyContinue|Where-Object {$_.TaskName -like 'AurOS put-back*'}); "
             "$vols=@(Get-Volume -ErrorAction SilentlyContinue|Where-Object {$_.FileSystemLabel -eq 'AUROSHANDOV'}); "
             "$s=@{phase=$(if($st){[string]$st.phase}else{''});status_at=$(if($st){[string]$st.at}else{''});"
-            "c_bytes=[uint64]$cpart.Size;c_offset=[uint64]$cpart.Offset;partition_sha256=(H $pm);firmware_sha256=(H $fw);hiberboot=[int]$h;"
+            "c_bytes=[uint64]$cpart.Size;c_offset=[uint64]$cpart.Offset;partition_sha256=(Get-AurOSSha256 $pm);firmware_sha256=(Get-AurOSSha256 $fw);hiberboot=[int]$h;"
             "canary_sha256=$(if(Test-Path -LiteralPath $can){(Get-FileHash -LiteralPath $can -Algorithm SHA256).Hash.ToLowerInvariant()}else{''});"
             "restored_sha256=$(if(Test-Path -LiteralPath $rest){(Get-FileHash -LiteralPath $rest -Algorithm SHA256).Hash.ToLowerInvariant()}else{''});"
             "handover_volumes=[int]$vols.Count;putback_tasks=[int]$tasks.Count}; "
