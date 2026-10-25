@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Serve one synthetic password field and retain only boolean test results."""
 import argparse
+import hmac
 import http.server
 import os
+import secrets
+import threading
 import urllib.parse
 from pathlib import Path
 
-PAGE = b'''<!doctype html><meta charset="utf-8"><style>html,body,form{width:100%;height:100%;margin:0}form{position:relative;background:#01dead}input{position:absolute;left:15%;top:calc(50% - 70px);width:70%;height:140px;font-size:48px}input:focus{outline:12px solid #1234ef}</style><form autocomplete="off"><input type="password" name="value" autocomplete="new-password" aria-label="Synthetic password test"><input type="hidden" name="starts" value="0"><input type="hidden" name="updates" value="0"><input type="hidden" name="ends" value="0"><input type="hidden" name="compositioninputs" value="0"><input type="hidden" name="focusbefore" value="no"><input type="hidden" name="focusafter" value="no"><button hidden>Submit</button></form><script>let s=0,u=0,e=0,c=0;const i=document.querySelector('input[type=password]'),f=document.querySelector('form');i.addEventListener('focus',()=>fetch('/focused',{method:'POST',body:'focused=1'}));i.addEventListener('compositionstart',()=>s++);i.addEventListener('compositionupdate',()=>u++);i.addEventListener('compositionend',()=>e++);i.addEventListener('beforeinput',x=>{if(x.isComposing||String(x.inputType).includes('Composition'))c++});i.addEventListener('input',x=>{if(x.isComposing||String(x.inputType).includes('Composition'))c++});f.addEventListener('submit',async x=>{x.preventDefault();for(const [n,v] of [['starts',s],['updates',u],['ends',e],['compositioninputs',c],['focusbefore',document.activeElement===i?'yes':'no']])document.querySelector('[name='+n+']').value=v;const r=await fetch('/',{method:'POST',body:new URLSearchParams(new FormData(f))});if(!r.ok)return;document.querySelector('[name=focusafter]').value=document.activeElement===i?'yes':'no';fetch('/completed',{method:'POST',body:new URLSearchParams(new FormData(f))})})</script>'''
+PAGE = b'''<!doctype html><meta charset="utf-8"><style>html,body{width:100%;height:100%;margin:0}body{position:relative;background:#01dead}input{position:absolute;left:15%;top:calc(50% - 70px);width:70%;height:140px;font-size:48px}input:focus{outline:12px solid #1234ef}</style><input type="password" autocomplete="new-password" aria-label="Synthetic standalone password test"><script>let s=0,u=0,e=0,c=0,sent=false;const i=document.querySelector('input[type=password]');i.addEventListener('focus',()=>fetch('/focused',{method:'POST',body:'focused=1'}));i.addEventListener('compositionstart',()=>s++);i.addEventListener('compositionupdate',()=>u++);i.addEventListener('compositionend',()=>e++);i.addEventListener('beforeinput',x=>{if(x.isComposing||String(x.inputType).includes('Composition'))c++});i.addEventListener('input',x=>{if(x.isComposing||String(x.inputType).includes('Composition'))c++});const snapshot=focusafter=>new URLSearchParams({value:i.value,starts:String(s),updates:String(u),ends:String(e),compositioninputs:String(c),focusbefore:document.activeElement===i?'yes':'no',focusafter});i.addEventListener('keydown',async x=>{if(sent||!x.isTrusted||x.repeat||x.key!=='Enter'||x.isComposing||x.ctrlKey||x.altKey||x.metaKey||x.shiftKey||document.activeElement!==i)return;sent=true;x.preventDefault();x.stopImmediatePropagation();const r=await fetch('/',{method:'POST',body:snapshot('no')});if(!r.ok)return;const token=await r.text();await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);await new Promise(resolve=>setTimeout(resolve,0));const after=snapshot(document.activeElement===i?'yes':'no');after.set('token',token);fetch('/completed',{method:'POST',body:after})},true)</script>'''
 
 
 def bounded_focus(body: bytes) -> str:
@@ -15,35 +18,43 @@ def bounded_focus(body: bytes) -> str:
     return "focus_event_observed=yes\n"
 
 
-def bounded_result(body: bytes) -> str:
+def parsed_result(body: bytes, completion: bool = False) -> dict[str, str]:
     if len(body) > 256:
         raise ValueError("request body too large")
     values = urllib.parse.parse_qs(body.decode("ascii", "strict"),
                                   keep_blank_values=True, strict_parsing=True)
     counters = {"starts", "updates", "ends", "compositioninputs"}
-    if (set(values) != {"value", "focusbefore", "focusafter"} | counters
+    expected = {"value", "focusbefore", "focusafter"} | counters
+    if completion:
+        expected.add("token")
+    if (set(values) != expected
             or any(len(v) != 1 for v in values.values())):
         raise ValueError("unexpected request fields")
-    if values["focusbefore"] != ["yes"] or values["focusafter"] != ["no"]:
+    return {name: item[0] for name, item in values.items()}
+
+
+def bounded_result(body: bytes) -> tuple[str, dict[str, str]]:
+    values = parsed_result(body)
+    if values["focusbefore"] != "yes" or values["focusafter"] != "no":
         raise ValueError("password field was not focused before result submission")
-    numbers = {name: values[name][0] if values[name][0].isdigit() else "invalid" for name in counters}
-    return (f"ascii_value_exact={'yes' if values['value'][0] == 'nihao' else 'no'}\n"
+    counters = {"starts", "updates", "ends", "compositioninputs"}
+    numbers = {name: values[name] if values[name].isdigit() else "invalid" for name in counters}
+    result = (f"ascii_value_exact={'yes' if values['value'] == 'nihao' else 'no'}\n"
             f"composition_start_count={numbers['starts']}\n"
             f"composition_update_count={numbers['updates']}\n"
             f"composition_end_count={numbers['ends']}\n"
             f"composition_input_count={numbers['compositioninputs']}\n"
             "active_element_before_result=yes\n")
+    return result, values
 
 
-def bounded_completion(body: bytes) -> str:
-    if len(body) > 256:
-        raise ValueError("request body too large")
-    values = urllib.parse.parse_qs(body.decode("ascii", "strict"),
-                                  keep_blank_values=True, strict_parsing=True)
-    if (set(values) != {"value", "starts", "updates", "ends", "compositioninputs",
-                        "focusbefore", "focusafter"}
-            or any(len(v) != 1 for v in values.values())
-            or values["focusbefore"] != ["yes"] or values["focusafter"] != ["yes"]):
+def bounded_completion(body: bytes, token: str, initial: dict[str, str]) -> str:
+    values = parsed_result(body, completion=True)
+    if (not hmac.compare_digest(values.pop("token"), token)
+            or values != {**initial, "focusafter": "yes"}
+            or values["value"] != "nihao"
+            or any(values[name] != "0" for name in ("starts", "updates", "ends", "compositioninputs"))
+            or values["focusbefore"] != "yes"):
         raise ValueError("password field focus was not retained after result submission")
     return "active_element_after_result=yes\n"
 
@@ -56,6 +67,9 @@ def write_new(path: Path, result: str) -> None:
 
 
 def serve(output: Path, focus_output: Path, completion_output: Path, port: int) -> None:
+    session_lock = threading.Lock()
+    session: dict[str, object] = {}
+
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
@@ -78,17 +92,37 @@ def serve(output: Path, focus_output: Path, completion_output: Path, port: int) 
                 body = self.rfile.read(length)
                 if self.path == "/focused":
                     write_new(focus_output, bounded_focus(body))
+                    response = b""
                 elif self.path == "/":
-                    write_new(output, bounded_result(body))
+                    with session_lock:
+                        if session:
+                            raise ValueError("password result already accepted")
+                        reduced, initial = bounded_result(body)
+                        token = secrets.token_hex(32)
+                        write_new(output, reduced)
+                        session.update(token=token, initial=initial)
+                    response = token.encode("ascii")
                 elif self.path == "/completed":
-                    write_new(completion_output, bounded_completion(body))
+                    with session_lock:
+                        if set(session) != {"token", "initial"}:
+                            raise ValueError("password result is not initialized")
+                        reduced = bounded_completion(
+                            body, str(session["token"]), session["initial"])  # type: ignore[arg-type]
+                        write_new(completion_output, reduced)
+                        session["completed"] = True
+                    response = b""
                 else:
                     raise ValueError("unexpected request path")
             except (OSError, UnicodeError, ValueError):
                 self.send_error(400)
                 return
-            self.send_response(204)
+            self.send_response(200 if response else 204)
+            if response:
+                self.send_header("Content-Type", "text/plain; charset=us-ascii")
+                self.send_header("Content-Length", str(len(response)))
             self.end_headers()
+            if response:
+                self.wfile.write(response)
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.serve_forever()

@@ -243,19 +243,22 @@ class ReducedEvidenceError(ValueError):
 
 
 def _password_phase(line_end: int, after: int, input_after: int,
-                    screenshot_after: int, submit_after: int) -> str:
+                    screenshot_after: int, submit_after: int, stop_after: int) -> str:
     if line_end <= input_after:
         return "focus_to_input"
     if line_end <= screenshot_after:
         return "input_to_screenshot"
     if line_end <= submit_after:
         return "screenshot_to_submit"
-    return "after_submit"
+    if line_end <= stop_after:
+        return "submit_to_stop"
+    return "after_stop"
 
 
 def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
                      screenshot_after: int = None,
-                     submit_after: int = None) -> Dict[str, Union[str, int]]:
+                     submit_after: int = None,
+                     stop_after: int = None) -> Dict[str, Union[str, int]]:
     """Reject popup activity after sensitive focus and return redacted evidence.
 
     The candidate-prefixed compatibility counters conservatively include every
@@ -265,11 +268,12 @@ def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
     input_after = after if input_after is None else input_after
     screenshot_after = input_after if screenshot_after is None else screenshot_after
     submit_after = screenshot_after if submit_after is None else submit_after
-    if not 0 <= after <= input_after <= screenshot_after <= submit_after <= len(raw):
+    stop_after = len(raw) if stop_after is None else stop_after
+    if not 0 <= after <= input_after <= screenshot_after <= submit_after <= stop_after <= len(raw):
         raise ValueError("password trace boundaries are not ordered within the trace")
 
     phases = ("focus_to_input", "input_to_screenshot",
-              "screenshot_to_submit", "after_submit")
+              "screenshot_to_submit", "submit_to_stop", "after_stop")
     kinds = ("popup", "map", "configure", "grab")
     counts = {kind: 0 for kind in kinds}
     phase_counts = {(phase, kind): 0 for phase in phases for kind in kinds}
@@ -317,7 +321,7 @@ def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
             relevant.update(mapped_at_focus)
             checked_boundary = True
         phase = _password_phase(line_end, after, input_after,
-                                screenshot_after, submit_after)
+                                screenshot_after, submit_after, stop_after)
         surface = GET_SURFACE.search(line)
         if surface:
             xdg_to_wl[int(surface.group(1))] = int(surface.group(2))
@@ -453,10 +457,14 @@ def analyze_no_popup(raw: bytes, after: int, input_after: int = None,
         "input_boundary_byte": input_after,
         "screenshot_boundary_byte": screenshot_after,
         "submit_boundary_byte": submit_after,
+        "stop_boundary_byte": stop_after,
     }
     for phase in phases:
         for kind in kinds:
             evidence[f"{phase}_{kind}_events"] = phase_counts[(phase, kind)]
+    for kind in kinds:
+        evidence[f"after_submit_{kind}_events"] = (
+            phase_counts[("submit_to_stop", kind)] + phase_counts[("after_stop", kind)])
     for index, object_id in enumerate(relevant_objects[:16], 1):
         state = objects[object_id]
         evidence[f"candidate_object_{index}"] = (
@@ -544,6 +552,7 @@ def main() -> None:
     ap.add_argument("--input-byte", type=int)
     ap.add_argument("--screenshot-byte", type=int)
     ap.add_argument("--submit-byte", type=int)
+    ap.add_argument("--stop-byte", type=int)
     args = ap.parse_args()
     raw = args.trace.read_bytes()
     if args.lifecycle:
@@ -554,7 +563,7 @@ def main() -> None:
     elif args.no_popup:
         try:
             result = analyze_no_popup(raw, args.after_byte, args.input_byte,
-                                      args.screenshot_byte, args.submit_byte)
+                                      args.screenshot_byte, args.submit_byte, args.stop_byte)
         except ReducedEvidenceError as exc:
             for key, value in exc.evidence.items():
                 print(f"{key}={value}")
