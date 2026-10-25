@@ -2234,6 +2234,64 @@ class Flow:
         raise Failure(f"AurOS's start menu never highlighted '{name}': " +
                       vision.text_of(vision.ocr(self.m.screendump()))[:400])
 
+    @staticmethod
+    def boot_screen_kind(text):
+        """Classify only the two screens needed while returning to Windows.
+
+        The desktop signature is deliberately exact enough that an unknown boot,
+        installer, recovery, or write screen is never power-cycled for a retry.
+        """
+        plain = re.sub(r"[^a-z0-9]", "", text.lower())
+        unsafe = ("recovery", "error", "rescue")
+        menu = ("gnugrub", "aurosverboseboot", "windows")
+        if (not any(word in plain for word in unsafe) and
+                all(word in plain for word in menu) and plain.count("auros") >= 2):
+            return "grub"
+        desktop = ("allmyprograms", "everythingonthiscomputer", "playasongorafilm")
+        return "auros-desktop" if all(phrase in plain for phrase in desktop) else "unknown"
+
+    def start_at_grub_menu(self, attempts=2, pulse_seconds=40, scan_seconds=120):
+        """Start and stop GRUB's short countdown with a real navigation key.
+
+        Modifier-only Shift did not stop the countdown in run 40161971669.  Up is
+        harmless through firmware and is a real GRUB input.  If the exact AurOS
+        desktop appears, use the guest's normal ACPI shutdown and try once more;
+        every other unrecognised screen fails closed without a restart.
+        """
+        last_text = ""
+        for attempt in range(attempts):
+            self.m.start()
+            # This successful QMP start is the earliest event belonging to this
+            # attempt; do not let a delayed helper-up from the prior boot qualify.
+            since = time.time()
+            self.m.auto_shots(10)
+            end_pulses = time.time() + pulse_seconds
+            while time.time() < end_pulses:
+                self.m.key("up")
+                time.sleep(0.28)  # key() itself takes 0.12 s: one input each 0.4 s
+
+            kind = "unknown"
+            deadline = time.time() + scan_seconds
+            while time.time() < deadline:
+                img = self.m.screendump()
+                last_text = vision.text_of(vision.ocr(img))
+                kind = self.boot_screen_kind(last_text)
+                if kind == "grub":
+                    return since
+                if kind == "auros-desktop":
+                    break
+                self.log("start menu: not yet: " + last_text[:160])
+                self.m.key("up")
+
+            self.m.save(img, f"start-menu-missed-attempt-{attempt + 1}")
+            if kind != "auros-desktop" or attempt + 1 == attempts:
+                break
+            self.log("start menu: countdown escaped; gracefully stopping AurOS before one retry")
+            self.m.stop("powerdown", 300)
+
+        raise Failure("AurOS's GRUB start menu never showed after the restart: " +
+                      last_text[:300])
+
     def wait_windows_return(self, since, ordinal, reason, timeout=12 * 60):
         """Wait for Windows without ever exposing a recovery password, then
         record a sanitized protection state for this particular return."""
@@ -2294,29 +2352,10 @@ class Flow:
         from the menu's source (rootfs/usr/lib/auros/grub.cfg.in), NOT yet seen
         working: the first run that gets here shows how far it goes."""
         with self.rec.phase("windows: back from AurOS, through its own start menu"):
-            t = time.time()
-            self.m.start()
-            self.m.auto_shots(10)
             # The menu counts down 3 seconds and OCR takes longer than that, so first a
-            # key every 0.4 s, blind, for as long as the firmware and shim need (any key
-            # stops the countdown for good); only then look (run 40047642180 looked too
-            # early, the countdown ran out and AurOS's desktop came up).
-            end_blind = time.time() + 40
-            while time.time() < end_blind:
-                self.m.key("shift")
-                time.sleep(0.4)
-            seen_menu = False
-            deadline = time.time() + 120
-            while time.time() < deadline and not seen_menu:
-                self.m.key("shift")
-                words = vision.ocr(self.m.screendump())
-                seen_menu = bool(vision.find_text(words, "verbose") or vision.find_text(words, "GRUB"))
-                if not seen_menu:
-                    self.log("start menu: not yet: " + vision.text_of(words)[:160])
-            if not seen_menu:
-                self.m.shot("start-menu-never-showed")
-                raise Failure("AurOS's start menu never showed after the restart: " +
-                              vision.text_of(vision.ocr(self.m.screendump()))[:300])
+            # real key every 0.4 s, blind, for as long as firmware and shim need.
+            # Modifier-only Shift escaped to the desktop in run 40161971669.
+            t = self.start_at_grub_menu()
             self.m.shot("start-menu")
             self.pick_grub_entry("Windows")
             return self.wait_windows_return(
