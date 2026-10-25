@@ -447,7 +447,8 @@ test("canonical delivery identity survives ledger process eviction", async () =>
   const original = new BuildJobLedger(storage, cfg);
   const recipeId = "sha256:" + "c".repeat(64);
   const discoveryId = "32345678-1234-4123-8123-123456789abc";
-  assert.deepEqual(await original.beginDiscovery({ authoritySha: AUTHORITY_SHA, recipeId, id: discoveryId, now: 1 }), { state: "owner" });
+  const identity = { authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, baseTag: "v0.1.0-aaaaaaa", recipeId };
+  assert.deepEqual(await original.beginDiscovery({ ...identity, id: discoveryId, now: 1 }), { state: "owner" });
   const first = await original.reserve({ id: "12345678-1234-4123-8123-123456789abc", tokenHash: "first", authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, baseTag: "v0.1.0-aaaaaaa", recipeId, canonical: "{}", discoveryId, now: 1 });
   assert.equal(first.canonicalReuse, false);
   assert.equal(first.job.authoritySha, AUTHORITY_SHA);
@@ -461,6 +462,24 @@ test("canonical delivery identity survives ledger process eviction", async () =>
   assert.equal(second.canonicalReuse, true);
   assert.equal(second.job.deliveryRequestId, first.job.id);
   assert.equal(second.job.runId, 44);
+});
+
+test("canonical delivery keys isolate authority and exact base advances", async () => {
+  const ledger = new BuildJobLedger(new MapStorage(), { perNet: 1, global: 5 });
+  const recipeId = "sha256:" + "c".repeat(64);
+  const old = { authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, baseTag: "v0.1.0-aaaaaaa", recipeId };
+  const oldDiscovery = "32345678-1234-4123-8123-123456789abc";
+  await ledger.beginDiscovery({ ...old, id: oldDiscovery, now: 1 });
+  const first = await ledger.reserve({ ...old, id: "12345678-1234-4123-8123-123456789abc", tokenHash: "old", canonical: "{}", discoveryId: oldDiscovery, now: 1 });
+  assert.equal(first.canonicalReuse, false);
+
+  const advancedAuthority = { ...old, authoritySha: "c".repeat(40) };
+  assert.deepEqual(await ledger.beginDiscovery({ ...advancedAuthority, id: "42345678-1234-4123-8123-123456789abc", now: 2 }), { state: "owner" });
+  assert.equal(await ledger.delivery(advancedAuthority), null, "new authority cannot adopt the old authority delivery");
+
+  const advancedBase = { ...old, baseSha: "d".repeat(40), baseRunId: 92, baseTag: "v0.1.1-ddddddd" };
+  assert.deepEqual(await ledger.beginDiscovery({ ...advancedBase, id: "52345678-1234-4123-8123-123456789abc", now: 2 }), { state: "owner" });
+  assert.equal(await ledger.delivery(advancedBase), null, "new base cannot adopt the old base delivery");
 });
 
 test("concurrent status polls claim one GitHub lookup and failures back off", async () => {
@@ -560,7 +579,18 @@ function storedZip(name, contents) {
   return new Blob([local, central, end]);
 }
 
-function apiFixture({ run, buildRuns, recentBuildRuns = [], jobs = [], artifacts = [], artifactTotal = artifacts.length, releases = [], assetBody = "", evidenceZip = new Blob(), commitSha = SHA, mainSha = SHA }) {
+function baseReleaseAssets(tag, sha = SHA, runId = 7) {
+  const piecesBody = `# AurOS desktop ${tag}, commit ${sha.slice(0, 12)}, Actions run ${runId}\nbase https://example.invalid/${tag}/\npiece image.000 1 ${"0".repeat(64)}\n`;
+  const assets = ["AurOS-Setup.exe", "SHA256SUMS", "pieces.txt", "image.sha256", "image.bytes"].map((name, index) => ({
+    id: index + 1,
+    name,
+    size: name === "pieces.txt" ? new TextEncoder().encode(piecesBody).byteLength : 1,
+    url: `https://api.github.com/repos/owner/repo/releases/assets/${index + 1}`,
+  }));
+  return { assets, piecesBody };
+}
+
+function apiFixture({ run, buildRuns, recentBuildRuns = [], jobs = [], artifacts = [], artifactTotal = artifacts.length, releases = [], assetBody = "", piecesBody = "", evidenceZip = new Blob(), commitSha = SHA, mainSha = SHA }) {
   const seen = [];
   const request = async (url, init = {}) => {
     seen.push({ url, init });
@@ -577,6 +607,7 @@ function apiFixture({ run, buildRuns, recentBuildRuns = [], jobs = [], artifacts
     if (url.includes("/artifacts")) return new Response(JSON.stringify({ total_count: artifactTotal, artifacts }), { status: 200 });
     if (url.includes("/releases/tags/")) return new Response(JSON.stringify(releases[0]), { status: releases[0] ? 200 : 404 });
     if (url.includes("/releases?")) return new Response(JSON.stringify(releases), { status: 200 });
+    if (/\/releases\/assets\/3$/.test(url)) return new Response(piecesBody, { status: 200 });
     if (url.includes("/releases/assets/")) return new Response(assetBody, { status: 200 });
     if (url.includes("/dispatches")) return new Response(null, { status: 204 });
     throw new Error(url);
@@ -589,8 +620,8 @@ test("operator delivery discovery treats its manifest only as a locator and veri
   const recipeId = "sha256:" + "c".repeat(64);
   const suffix = recipeId.slice(7);
   const tag = "v0.1.0-aaaaaaa";
-  const installerName = `AurOS-Custom-${suffix}.exe`;
-  const manifestName = `AurOS-Custom-${suffix}.json`;
+  const installerName = `AurOS-Custom-${AUTHORITY_SHA}-${suffix}.exe`;
+  const manifestName = `AurOS-Custom-${AUTHORITY_SHA}-${suffix}.json`;
   const installerUrl = `https://github.com/owner/repo/releases/download/${tag}/${installerName}`;
   const run = { id: 44, display_title: `customize ${id}`, head_sha: AUTHORITY_SHA, head_branch: "main", event: "workflow_dispatch", path: ".github/workflows/customize.yml", status: "completed", conclusion: "success" };
   const jobs = [{ name: "package", conclusion: "success" }, { name: "sign / sign", conclusion: "success" }, { name: "certify / e2e (base)", conclusion: "success" }, { name: "certify / custom-certification", conclusion: "success" }, { name: "publish", conclusion: "success" }];
@@ -618,6 +649,9 @@ test("operator delivery discovery treats its manifest only as a locator and veri
   assert.equal(ready.state, "download-ready");
   assert.equal(ready.evidence.requestId, id);
 
+  const advancedAuthority = "f".repeat(40);
+  assert.equal((await f.github.discoverVerifiedDelivery({ authoritySha: advancedAuthority, baseSha: SHA, baseRunId: 91, baseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" } })).state, "absent", "old authority assets may coexist without colliding with new authority names");
+
   f = apiFixture({ run, jobs, artifacts, releases: [{ ...release, assets: [] }] });
   assert.equal((await f.github.discoverVerifiedDelivery({ authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, baseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" } })).state, "absent");
 
@@ -644,35 +678,48 @@ test("operator delivery discovery treats its manifest only as a locator and veri
   assert.equal((await f.github.discoverVerifiedDelivery({ authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, baseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" } })).state, "invalid", "unadopted expired immutable evidence is refused");
 });
 
-test("GitHub lookup pins the exact successful main push and dispatches fixed workflow/ref", async () => {
-  const base = { id: 7, head_sha: SHA, head_branch: "main", event: "push", status: "completed", conclusion: "success", path: ".github/workflows/build.yml" };
+test("GitHub lookup treats pieces as a hint and pins the exact successful repository run", async () => {
+  const base = { id: 7, head_sha: SHA, head_branch: "main", event: "push", status: "completed", conclusion: "success", path: ".github/workflows/build.yml", repository: { full_name: "owner/repo" } };
   const tag = "v0.1.0-aaaaaaa";
-  const artifacts = [{ name: "auros-installer", expired: false }, { name: "auros-base-metadata", expired: false }];
-  const releaseAssets = ["AurOS-Setup.exe", "SHA256SUMS", "pieces.txt", "image.sha256", "image.bytes"].map((name) => ({ name }));
-  const f = apiFixture({ run: base, artifacts, releases: [{ tag_name: tag, prerelease: true, draft: false, assets: releaseAssets }], mainSha: AUTHORITY_SHA });
+  const artifacts = [{ id: 21, name: "auros-installer", expired: false, workflow_run: { id: 7 } }, { id: 22, name: "auros-base-metadata", expired: false, workflow_run: { id: 7 } }];
+  const { assets: releaseAssets, piecesBody } = baseReleaseAssets(tag);
+  const f = apiFixture({ run: base, artifacts, releases: [{ tag_name: tag, prerelease: true, draft: false, assets: releaseAssets }], piecesBody, mainSha: AUTHORITY_SHA, commitSha: "b".repeat(40) });
   assert.deepEqual(await f.github.findGreenBase(), { authoritySha: AUTHORITY_SHA, baseSha: SHA, runId: 7, tag });
+  assert.equal(f.seen.some(({ url }) => url.includes("/commits/")), false, "a mutable tag pointer is never trusted as build identity");
+  assert.equal(f.seen.some(({ url }) => /\/actions\/runs\/7$/.test(url)), true, "the hint selects one exact run API resource");
+  assert.equal(f.seen.some(({ url }) => url.includes("/actions/workflows/build.yml/runs")), false);
   const id = "12345678-1234-4123-8123-123456789abc";
   await f.github.dispatch({ requestId: id, recipe: "{}", authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 7, baseTag: tag });
   const sent = f.seen.find((x) => x.url.includes("dispatches"));
   assert.deepEqual(JSON.parse(sent.init.body), { ref: "main", inputs: { recipe: "{}", base_build_sha: SHA, base_build_tag: tag, base_build_run_id: "7", request_id: id } });
 });
 
-test("base lookup is driven by canonical releases when hollow runs and unrelated releases hide it", async () => {
-  const base = { id: 7, head_sha: SHA, head_branch: "main", event: "push", status: "completed", conclusion: "success", path: ".github/workflows/build.yml" };
-  const hollow = Array.from({ length: 10 }, (_, i) => ({ ...base, id: 100 + i, head_sha: String(i).repeat(40) }));
+test("base lookup is driven by bounded release hints when unrelated releases hide it", async () => {
+  const base = { id: 7, head_sha: SHA, head_branch: "main", event: "push", status: "completed", conclusion: "success", path: ".github/workflows/build.yml", repository: { full_name: "owner/repo" } };
   const unrelated = Array.from({ length: 25 }, (_, i) => ({ tag_name: `profiles-${i}`, prerelease: true, draft: false, assets: [{ name: "profile-build.log" }] }));
   const tag = "v0.1.0-aaaaaaa";
-  const releaseAssets = ["AurOS-Setup.exe", "SHA256SUMS", "pieces.txt", "image.sha256", "image.bytes"].map((name) => ({ name }));
-  const artifacts = [{ name: "auros-installer", expired: false }, { name: "auros-base-metadata", expired: false }];
-  const f = apiFixture({ buildRuns: [base], recentBuildRuns: hollow, artifacts, releases: [...unrelated, { tag_name: tag, prerelease: true, draft: false, assets: releaseAssets }], mainSha: AUTHORITY_SHA });
+  const { assets: releaseAssets, piecesBody } = baseReleaseAssets(tag);
+  const artifacts = [{ id: 21, name: "auros-installer", expired: false, workflow_run: { id: 7 } }, { id: 22, name: "auros-base-metadata", expired: false, workflow_run: { id: 7 } }];
+  const f = apiFixture({ run: base, artifacts, releases: [...unrelated, { tag_name: tag, prerelease: true, draft: false, assets: releaseAssets }], piecesBody, mainSha: AUTHORITY_SHA });
   assert.deepEqual(await f.github.findGreenBase(), { authoritySha: AUTHORITY_SHA, baseSha: SHA, runId: 7, tag });
-  const buildQueries = f.seen.filter((x) => x.url.includes("/actions/workflows/build.yml/runs"));
-  assert.equal(buildQueries.length, 1);
-  assert.equal(new URL(buildQueries[0].url).searchParams.get("head_sha"), SHA);
   assert.ok(f.seen.length <= 27, "base discovery keeps its documented API request bound");
 
-  const overflow = apiFixture({ buildRuns: [base], artifacts, artifactTotal: 102, releases: [{ tag_name: tag, prerelease: true, draft: false, assets: releaseAssets }] });
+  const overflow = apiFixture({ run: base, artifacts, artifactTotal: 102, releases: [{ tag_name: tag, prerelease: true, draft: false, assets: releaseAssets }], piecesBody });
   await assert.rejects(() => overflow.github.findGreenBase(), /exact green released base unavailable/);
+
+  for (const [label, badPieces] of [
+    ["header tag", piecesBody.replace(tag, "v0.2.0-aaaaaaa")],
+    ["header prefix", piecesBody.replace(SHA.slice(0, 12), "c".repeat(12))],
+    ["header run", piecesBody.replace("Actions run 7", "Actions run 8")],
+    ["header grammar", piecesBody.replace("Actions run", "run")],
+  ]) {
+    const bad = apiFixture({ run: base, artifacts, releases: [{ tag_name: tag, prerelease: true, draft: false, assets: releaseAssets }], piecesBody: badPieces });
+    await assert.rejects(() => bad.github.findGreenBase(), /exact green released base unavailable/, label);
+  }
+  const wrongRepository = apiFixture({ run: { ...base, repository: { full_name: "attacker/repo" } }, artifacts, releases: [{ tag_name: tag, prerelease: true, draft: false, assets: releaseAssets }], piecesBody });
+  await assert.rejects(() => wrongRepository.github.findGreenBase(), /exact green released base unavailable/);
+  const duplicateArtifacts = apiFixture({ run: base, artifacts: [...artifacts, { ...artifacts[0], id: 23 }], releases: [{ tag_name: tag, prerelease: true, draft: false, assets: releaseAssets }], piecesBody });
+  await assert.rejects(() => duplicateArtifacts.github.findGreenBase(), /exact green released base unavailable/);
 });
 
 test("GitHub App request accepts the App's RSA key and never forwards auth to asset storage", async () => {
@@ -697,8 +744,8 @@ test("GitHub status binds correlation/source and requires package, sign, publish
   const recipeId = "sha256:" + "c".repeat(64);
   const suffix = recipeId.slice(7);
   const tag = "v0.1.0-aaaaaaa";
-  const installerName = `AurOS-Custom-${suffix}.exe`;
-  const manifestName = `AurOS-Custom-${suffix}.json`;
+  const installerName = `AurOS-Custom-${AUTHORITY_SHA}-${suffix}.exe`;
+  const manifestName = `AurOS-Custom-${AUTHORITY_SHA}-${suffix}.json`;
   const installerUrl = `https://github.com/owner/repo/releases/download/${tag}/${installerName}`;
   const run = { id: 44, display_title: `customize ${id}`, head_sha: AUTHORITY_SHA, head_branch: "main", event: "workflow_dispatch", path: ".github/workflows/customize.yml", status: "completed", conclusion: "success" };
   let f = apiFixture({ run: { ...run, head_sha: "c".repeat(40) } });
@@ -749,8 +796,9 @@ test("GitHub status binds correlation/source and requires package, sign, publish
   f = apiFixture({ run, jobs, artifacts: [], releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets: replacedIdentity }], assetBody: manifestText });
   assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" }, expectedRunId: 44, evidence: ready.evidence })).failure, "delivery_manifest_invalid", "asset replacement cannot inherit canonical evidence");
 
-  f = apiFixture({ run, jobs, artifacts: [], releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets }], assetBody: manifestText, commitSha: "b".repeat(40) });
-  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" }, expectedRunId: 44, evidence: ready.evidence })).failure, "delivery_manifest_invalid", "retargeted base tag is rejected");
+  f = apiFixture({ run, jobs, artifacts: [], releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets }], assetBody: manifestText, commitSha: "c".repeat(40) });
+  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" }, expectedRunId: 44, evidence: ready.evidence })).state, "download-ready", "a mutable tag pointer does not replace cached validated base identity");
+  assert.equal(f.seen.some(({ url }) => url.includes("/commits/")), false);
 
   f = apiFixture({ run, jobs, artifacts, releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets }], assetBody: JSON.stringify({ ...manifest, request_id: "22345678-1234-4123-8123-123456789abc" }), evidenceZip });
   assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_manifest_invalid");
