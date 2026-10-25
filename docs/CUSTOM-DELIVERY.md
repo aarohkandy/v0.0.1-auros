@@ -241,6 +241,8 @@ Do these in order. Do not activate a partly configured service.
    `BUILD_CHALLENGE_SECRET`, each with at least 32 random characters.
 4. Set the exact `BUILD_ALLOWED_ORIGIN`; confirm the repository remains fixed
    as `BUILD_GITHUB_REPOSITORY` and the browser cannot supply either value.
+   Confirm the existing repository variable `AUROS_WISHES_URL` is the Worker's
+   exact HTTPS origin, or that its documented `workers.dev` default is correct.
 5. Complete [SIGNING.md](SIGNING.md), including two-factor authentication and
    manual approval, then prove a signed custom run and its publish evidence.
 6. Confirm a recent successful `main` base run, its exact-source prerelease,
@@ -261,7 +263,17 @@ Do these in order. Do not activate a partly configured service.
    variables. Confirm ordinary health checks pass and both build POST routes
    answer `503` with `builds_disabled`.
 9. Change only `BUILD_REQUESTS_ENABLED` to `"1"`, review that diff, and deploy.
-10. Submit one bounded desktop recipe from the configured origin. Preserve its
+   The cloud workflow must pass the independent read-only build preflight. It
+   sends only CORS `OPTIONS`; it creates no challenge, quota row, job, workflow
+   dispatch, signing request, or model call.
+10. After the enabled cloud deployment succeeds, run `pages.yml`. Pages derives
+    the public site's exact origin, requires it to equal `BUILD_ALLOWED_ORIGIN`,
+    repeats the read-only live preflight, and writes the enabled
+    `build-service.json` only into the staged Pages artifact. The checked-in
+    file remains disabled. If the Pages run raced the cloud deployment and
+    failed its probe, rerun Pages; do not bypass the probe.
+11. Open the deployed `request.html` and submit one bounded desktop recipe.
+    Preserve its
     receipt, approve both SignPath requests, and verify the status progresses
     to `download-ready` only after both certification jobs and `publish`.
     Confirm the returned recipe ID,
@@ -273,6 +285,8 @@ Any mismatch means activation failed. Disable the API before investigating.
 ## Disable and incident response
 
 Set `BUILD_REQUESTS_ENABLED = "0"`, review the one-line change, and deploy it.
+Let the same push's Pages workflow publish the disabled staged configuration;
+if Pages did not run, dispatch it after the cloud deployment.
 This blocks new challenges, submissions, and status reads. Workflows already
 dispatched to GitHub continue independently, so inspect or cancel them in
 Actions when necessary. Disabling the API does not delete an installer already
