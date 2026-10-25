@@ -191,7 +191,7 @@ EOF
 fi
 chown -R "$desktop_user" "$RUNTIME"
 
-ibus_stopped=0; fcitx_pid=; mouse_pid=; mouse_b_pid=; firefox_pid=; password_pid=; http_pid=; password_http_pid=; password_summary=; password_focus=; connection_probe_pid=; final_state=fail; final_reason=unexpected_exit
+ibus_stopped=0; fcitx_pid=; mouse_pid=; mouse_b_pid=; firefox_pid=; password_pid=; http_pid=; password_http_pid=; password_summary=; password_focus=; connection_probe_pid=; connection_b_probe_pid=; connection_b_done=; final_state=fail; final_reason=unexpected_exit
 pid_gone() { [ -z "${1:-}" ] || [ ! -d "/proc/$1" ]; }
 wait_pid_gone() { p=$1; i=0; while [ "$i" -lt 30 ]; do pid_gone "$p" && return 0; sleep .1; i=$((i+1)); done; return 1; }
 wait_active() { u=$1; i=0; while [ "$i" -lt 30 ]; do [ "$(as_desktop systemctl --user is-active "$u" 2>/dev/null)" = active ] && return 0; sleep 1; i=$((i+1)); done; return 1; }
@@ -234,6 +234,16 @@ select_exact_pinyin() { # focused application name
 restore_and_finish() {
     cleanup_ok=1
     password_server_unit_stopped=0
+    if [ -n "${connection_b_probe_pid:-}" ]; then
+        : > "$connection_b_done"
+        wait "$connection_b_probe_pid" || cleanup_ok=0
+        connection_b_probe_pid=
+    fi
+    if [ -n "${connection_probe_pid:-}" ]; then
+        : > "$conn_done"
+        wait "$connection_probe_pid" || cleanup_ok=0
+        connection_probe_pid=
+    fi
     : > "$STATE/cleanup-units.txt"
     for u in auros-profiletest-fcitx-password-http auros-profiletest-fcitx-password auros-profiletest-fcitx-firefox \
              auros-profiletest-fcitx-mousepad-b auros-profiletest-fcitx-mousepad \
@@ -279,6 +289,7 @@ restore_and_finish() {
     fi
     password_http_pid=
     [ -z "${connection_probe_pid:-}" ] || { kill "$connection_probe_pid" 2>/dev/null || true; wait "$connection_probe_pid" 2>/dev/null || true; }
+    [ -z "${connection_b_probe_pid:-}" ] || { kill "$connection_b_probe_pid" 2>/dev/null || true; wait "$connection_b_probe_pid" 2>/dev/null || true; }
     cleanup_fcitx_pid=$fcitx_pid
     [ "$PRODUCTION" = 0 ] || cleanup_fcitx_pid=
     for p in "$password_pid" "$firefox_pid" "$mouse_b_pid" "$mouse_pid" "$cleanup_fcitx_pid"; do
@@ -474,7 +485,7 @@ run_app() { # app file/url trace unit
     app=$1; target=$2; trace=$3; unit=$4
     case "$app" in
       mousepad) command="mousepad $target";;
-      mousepad-isolated) command="mousepad --disable-server $target";;
+      mousepad-isolated) command="/usr/bin/mousepad --disable-server $target";;
       firefox) command="firefox --no-remote --new-instance --profile $RUNTIME/firefox-profile $target";;
       *) return 1;;
     esac
@@ -550,22 +561,95 @@ python3 /usr/lib/auros-profiletest/fcitx_wayland_trace.py "$mouse_trace" --after
 trace_has_no_input_text "$mouse_trace" || fail "Mousepad protocol trace retained input text"
 if [ "$SECURITY" = 1 ]; then
     away_boundary=$(wc -c < "$mouse_trace" | tr -d ' ')
-    mouse_b_file="$RUNTIME/mousepad-b.txt"; : > "$mouse_b_file"; chown "$desktop_user" "$mouse_b_file"
+    mouse_b_file="$RUNTIME/mousepad-b.txt"; : > "$mouse_b_file"
+    i=1
+    while [ "$i" -le 24 ]; do
+        printf '%02d ' "$i" >> "$mouse_b_file"
+        j=0; while [ "$j" -lt $((i * 2)) ]; do printf '█' >> "$mouse_b_file"; j=$((j + 1)); done
+        printf '\n' >> "$mouse_b_file"
+        i=$((i + 1))
+    done
+    mouse_b_marker_hash=$(sha256sum "$mouse_b_file" | awk '{print $1}')
+    [ "$mouse_b_marker_hash" = 665cfe6eae08731ed61132f9c8ee8bea8b87da01eba84cc2215180b235a46fa1 ] \
+        || fail "second Mousepad marker template mismatch"
+    chown "$desktop_user" "$mouse_b_file"
     mouse_b_trace="$RUNTIME/mousepad-b.trace"; : > "$mouse_b_trace"; chown "$desktop_user" "$mouse_b_trace"
-    act baseline fcitx-mousepad-b || fail "second Mousepad baseline failed"
+    mouse_b_evidence="fcitx-round$security_round-mousepad-b"
+    act baseline "$mouse_b_evidence" || fail "second Mousepad baseline failed"
     run_app mousepad-isolated "$mouse_b_file" "$mouse_b_trace" auros-profiletest-fcitx-mousepad-b \
         || fail "second Mousepad did not start"
     wait_active auros-profiletest-fcitx-mousepad-b || fail "second Mousepad did not stay active"
     mouse_b_pid=$(as_desktop systemctl --user show -p MainPID --value auros-profiletest-fcitx-mousepad-b 2>/dev/null)
     case "$mouse_b_pid" in ''|0|*[!0-9]*) fail "second Mousepad PID unavailable";; esac
-    act wait-change fcitx-mousepad-b || fail "second Mousepad did not map"
-    act click-change fcitx-mousepad-b || fail "second Mousepad focus failed"
+    python3 - "$mouse_b_pid" "$mouse_b_file" "$mouse_b_marker_hash" "$STATE/mousepad-b.process" <<'PY' \
+        || fail "second Mousepad process identity mismatch"
+import hashlib, os, pathlib, sys
+pid, target, marker_hash, output = sys.argv[1:]
+root = pathlib.Path('/proc') / pid
+try:
+    exe = os.readlink(root / 'exe')
+    argv = (root / 'cmdline').read_bytes().split(b'\0')
+    fields = (root / 'stat').read_text(encoding='ascii').rsplit(')', 1)[1].split()
+    env = dict(item.split(b'=', 1) for item in (root / 'environ').read_bytes().split(b'\0') if b'=' in item)
+    actual_hash = hashlib.sha256(pathlib.Path(target).read_bytes()).hexdigest()
+except (OSError, UnicodeDecodeError, ValueError, IndexError):
+    raise SystemExit(1)
+expected_argv = [b'/usr/bin/mousepad', b'--disable-server', os.fsencode(target), b'']
+if (exe != '/usr/bin/mousepad' or argv != expected_argv or actual_hash != marker_hash
+        or env.get(b'GDK_BACKEND') != b'wayland'
+        or env.get(b'GTK_IM_MODULE') != b'fcitx'
+        or not env.get(b'WAYLAND_DISPLAY') or b'DISPLAY' in env):
+    raise SystemExit(1)
+start = int(fields[19])
+pathlib.Path(output).write_text(
+    f'unit=auros-profiletest-fcitx-mousepad-b\npid={pid}\nstart_time={start}\n'
+    f'exe={exe}\nargv=/usr/bin/mousepad --disable-server <marker-file>\n'
+    f'marker_sha256={marker_hash}\ngdk_backend=wayland\ngtk_im_module=fcitx\n'
+    f'wayland_display_set=yes\ndisplay_unset=yes\n', encoding='ascii')
+PY
+    connection_b_ready="$RUNTIME/connection-b.ready"; connection_b_done="$RUNTIME/connection-b.done"
+    rm -f "$connection_b_ready" "$connection_b_done"
+    python3 /usr/lib/auros-profiletest/fcitx_connection_probe.py \
+        --app-pid "$mouse_b_pid" --service-main-pid "$shell_main_pid" \
+        --service-control-group "$shell_control_group" \
+        --service-invocation-id "$shell_invocation_id" --expected-uid "$desktop_uid" \
+        --display-path "$display_path" --trace "$mouse_b_trace" \
+        --ready "$connection_b_ready" --done "$connection_b_done" \
+        --output "$STATE/mousepad-b-connection.txt" \
+        > "$RUNTIME/connection-b.stdout" 2> "$RUNTIME/connection-b.stderr" &
+    connection_b_probe_pid=$!
+    i=0; while [ "$i" -lt 30 ] && [ ! -f "$connection_b_ready" ]; do
+        kill -0 "$connection_b_probe_pid" 2>/dev/null || break
+        sleep .1; i=$((i+1))
+    done
+    [ -f "$connection_b_ready" ] || fail "second Mousepad connection identity unavailable"
+    i=0
+    while [ "$i" -lt 30 ]; do
+        if python3 /usr/lib/auros-profiletest/fcitx_wayland_trace.py "$mouse_b_trace" \
+            --after-byte 0 --toplevel > "$STATE/mousepad-b-toplevel.tmp" \
+            2> "$STATE/mousepad-b-toplevel.stderr"; then
+            mv "$STATE/mousepad-b-toplevel.tmp" "$STATE/mousepad-b-toplevel.txt"
+            break
+        fi
+        sleep .1; i=$((i+1))
+    done
+    [ "$i" -lt 30 ] || fail "second Mousepad mapped toplevel unavailable"
+    act wait-change "$mouse_b_evidence" || fail "second Mousepad distinct content was not visible"
+    act click-change "$mouse_b_evidence" || fail "second Mousepad focus failed"
     act shot "fcitx-round$security_round-focus-away" || fail "focus-away screenshot failed"
     b_input_boundary=$(wc -c < "$mouse_trace" | tr -d ' ')
+    # French AZERTY: physical Q is logical A, so Ctrl+Q selects all.
+    act chord ctrl q || fail "second Mousepad marker select-all failed"
+    act key backspace || fail "second Mousepad marker clear failed"
     act key spc || fail "second Mousepad sentinel input failed"
     act chord ctrl s || fail "second Mousepad sentinel save failed"
     wait_hex_file "$mouse_b_file" 20 || fail "second Mousepad sentinel missing"
     [ ! -s "$mouse_file" ] || fail "first Mousepad changed while focus was away"
+    : > "$connection_b_done"
+    wait "$connection_b_probe_pid" || fail "second Mousepad connection interval failed"
+    connection_b_probe_pid=
+    grep -qx 'status=pass' "$STATE/mousepad-b-connection.txt" \
+        || fail "second Mousepad connection interval missing"
     as_desktop systemctl --user stop auros-profiletest-fcitx-mousepad-b >/dev/null 2>&1 \
         || fail "second Mousepad stop failed"
     wait_pid_gone "$mouse_b_pid" || fail "second Mousepad PID remained"

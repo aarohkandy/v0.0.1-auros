@@ -572,6 +572,131 @@ exact_production_reboot() { # reduced round-two reboot file
     [ "$(cat "$1" 2>/dev/null)" = shipped_fcitx_autostart_ready=yes ]
 }
 
+exact_mousepad_b_process() { # reduced second-editor process file
+    awk -F= '
+        BEGIN {
+            fixed["unit"]="auros-profiletest-fcitx-mousepad-b"
+            fixed["exe"]="/usr/bin/mousepad"
+            fixed["argv"]="/usr/bin/mousepad --disable-server <marker-file>"
+            fixed["gdk_backend"]="wayland"; fixed["gtk_im_module"]="fcitx"
+            fixed["wayland_display_set"]="yes"; fixed["display_unset"]="yes"
+            variable["pid"]=1; variable["start_time"]=1
+            fixed["marker_sha256"]="665cfe6eae08731ed61132f9c8ee8bea8b87da01eba84cc2215180b235a46fa1"
+        }
+        NF != 2 || (!($1 in fixed) && !($1 in variable)) || seen[$1] { bad=1 }
+        ($1 in fixed) && $2 != fixed[$1] { bad=1 }
+        !seen[$1]++ { count++ }
+        END { exit bad || count != 10 }
+    ' "$1" 2>/dev/null \
+        && grep -Eq '^pid=[1-9][0-9]*$' "$1" 2>/dev/null \
+        && grep -Eq '^start_time=[1-9][0-9]*$' "$1" 2>/dev/null \
+        && grep -qx 'marker_sha256=665cfe6eae08731ed61132f9c8ee8bea8b87da01eba84cc2215180b235a46fa1' "$1" 2>/dev/null
+}
+
+exact_mousepad_b_toplevel() { # reduced second-editor Wayland role file
+    awk -F= '
+        BEGIN { variable["toplevel_xdg_surface"]=1; variable["toplevel_wl_surface"]=1; fixed["mapped_toplevel_count"]="1"; fixed["layer_shell_objects"]="0" }
+        NF != 2 || (!($1 in fixed) && !($1 in variable)) || seen[$1] { bad=1 }
+        ($1 in fixed) && $2 != fixed[$1] { bad=1 }
+        ($1 in variable) && $2 !~ /^[1-9][0-9]*$/ { bad=1 }
+        !seen[$1]++ { count++ }
+        END { exit bad || count != 4 }
+    ' "$1" 2>/dev/null
+}
+
+exact_mousepad_b_visibility() { # reduced host frame-delta file
+    awk -F= '
+        BEGIN {
+            fixed["status"]="pass"; fixed["threshold_percent"]="3"
+            fixed["marker_template_sha256"]="665cfe6eae08731ed61132f9c8ee8bea8b87da01eba84cc2215180b235a46fa1"
+            variable["changed_samples"]=1; variable["total_samples"]=1
+            variable["marker_pattern_steps"]=1
+            variable["marker_bbox_left"]=1; variable["marker_bbox_top"]=1
+            variable["marker_bbox_right"]=1; variable["marker_bbox_bottom"]=1
+            variable["click_x"]=1; variable["click_y"]=1
+            variable["click_pixel_delta"]=1
+            for (key in fixed) expected[key]=1
+            for (key in variable) expected[key]=1
+        }
+        function number(value) { return value ~ /^-?[0-9]+$/ }
+        {
+            duplicate=seen[$1]++
+            if (NF != 2 || !($1 in expected) || duplicate) bad=1
+            if (!duplicate) count++
+            if (($1 in fixed) && $2 != fixed[$1]) bad=1
+            if (($1 in variable) && !number($2)) bad=1
+            value[$1]=$2
+        }
+        END {
+            if (bad || count != 13) exit 1
+            if (value["total_samples"] <= 0 || value["changed_samples"] * 100 < value["total_samples"] * 3) exit 1
+            if (value["marker_pattern_steps"] < 20) exit 1
+            if (value["marker_bbox_left"] < 0 || value["marker_bbox_top"] < 0) exit 1
+            if (value["marker_bbox_right"] - value["marker_bbox_left"] < 200) exit 1
+            if (value["marker_bbox_bottom"] - value["marker_bbox_top"] < 200) exit 1
+            if (value["click_x"] < value["marker_bbox_left"] || value["click_x"] > value["marker_bbox_right"]) exit 1
+            if (value["click_y"] < value["marker_bbox_top"] || value["click_y"] > value["marker_bbox_bottom"]) exit 1
+            if (value["click_pixel_delta"] <= 24) exit 1
+        }
+    ' "$1" 2>/dev/null
+}
+
+connection_interval_passed() { # exact authenticated connection reducer
+    awk -F= '
+        BEGIN {
+            split("status=pass children_at_boundaries=0 compositor_connections_at_boundaries=1 application_trace_writers_at_boundaries=1 foreign_trace_writers_at_boundaries=0 authenticated_probe_trace_writer_at_end=1 peer_pid=exact_aurshell peer_path=exact_wayland_display listener_inode=exact_wayland_display service_main_pid=exact_dbus_run_session compositor_exe=exact_usr_bin_aurshell service_invocation_id=exact_systemd_property_and_environment service_control_group=exact_systemd_property pam_session_cgroup=exact_expected_user_session_scope compositor_in_pam_session_cgroup=yes compositor_descends_from_service_main_pid=yes", claims, " ")
+            for (i in claims) { split(claims[i], pair, "="); fixed[pair[1]]=pair[2] }
+            observed="service_main_pid compositor_pid service_control_group pam_session_control_group"
+            split(observed, names, " "); for (i in names) identity["observed_" names[i]]=1
+            metrics="wayland_path_inode_count global_matching_listener_count after_wayland_path_inode_count after_global_matching_listener_count compositor_socket_fd_count matching_accepting_listener_fd_count matching_accepting_listener_open_description_count matching_accepting_listener_count application_descendant_count trace_writer_count application_trace_writer_count probe_trace_writer_count foreign_trace_writer_count application_socket_fd_count application_socket_inspection_error_count matching_compositor_connection_count trace_sink_identity_exact"
+            split(metrics, names, " ")
+            for (i in names) { metric["observed_start_" names[i]]=1; metric["observed_end_" names[i]]=1 }
+            fixed["observed_service_control_group"]="/system.slice/aurshell.service"
+            fixed["observed_start_global_matching_listener_count"]="1"; fixed["observed_end_global_matching_listener_count"]="1"
+            fixed["observed_start_after_global_matching_listener_count"]="1"; fixed["observed_end_after_global_matching_listener_count"]="1"
+            fixed["observed_start_matching_accepting_listener_open_description_count"]="1"; fixed["observed_end_matching_accepting_listener_open_description_count"]="1"
+            fixed["observed_start_matching_accepting_listener_count"]="1"; fixed["observed_end_matching_accepting_listener_count"]="1"
+            fixed["observed_start_application_descendant_count"]="0"; fixed["observed_end_application_descendant_count"]="0"
+            fixed["observed_start_trace_writer_count"]="1"; fixed["observed_end_trace_writer_count"]="2"
+            fixed["observed_start_application_trace_writer_count"]="1"; fixed["observed_end_application_trace_writer_count"]="1"
+            fixed["observed_start_probe_trace_writer_count"]="0"; fixed["observed_end_probe_trace_writer_count"]="1"
+            fixed["observed_start_foreign_trace_writer_count"]="0"; fixed["observed_end_foreign_trace_writer_count"]="0"
+            fixed["observed_start_application_socket_inspection_error_count"]="0"; fixed["observed_end_application_socket_inspection_error_count"]="0"
+            fixed["observed_start_matching_compositor_connection_count"]="1"; fixed["observed_end_matching_compositor_connection_count"]="1"
+            fixed["observed_start_trace_sink_identity_exact"]="yes"; fixed["observed_end_trace_sink_identity_exact"]="yes"
+            for (key in fixed) expected[key]=1
+            for (key in identity) expected[key]=1
+            for (key in metric) expected[key]=1
+        }
+        NF != 2 || !($1 in expected) || seen[$1] || $2 == "" { bad=1 }
+        ($1 in fixed) && $2 != fixed[$1] { bad=1 }
+        ($1 == "observed_service_main_pid" || $1 == "observed_compositor_pid") && $2 !~ /^[1-9][0-9]*$/ { bad=1 }
+        $1 == "observed_pam_session_control_group" && $2 !~ /^\/user[.]slice\/user-[0-9]+[.]slice\/session-[A-Za-z0-9_.:-]+[.]scope$/ { bad=1 }
+        ($1 in metric) && !($1 in fixed) && $2 !~ /^[1-9][0-9]*$/ { bad=1 }
+        !seen[$1]++ { count++ }
+        END { exit bad || count != 54 }
+    ' "$1" 2>/dev/null
+}
+
+exact_focus_lifecycle() {
+    awk -F= '
+        BEGIN {
+            fixed["initial_unmapped_before_b_input"]="yes"; fixed["mapped_candidate_while_away"]="no"
+            fixed["return_map_epoch"]="fresh"; fixed["popup_input_grab"]="no"; fixed["layer_shell_objects"]="0"
+            fixed["b_saved_sentinel"]="20"; fixed["a_saved_file_unchanged"]="yes"
+            variable["initial_popup_wl_surface"]=1; variable["return_popup_wl_surface"]=1; variable["return_popup_reused"]=1
+            for (key in fixed) expected[key]=1
+            for (key in variable) expected[key]=1
+        }
+        NF != 2 || !($1 in expected) || seen[$1] { bad=1 }
+        ($1 in fixed) && $2 != fixed[$1] { bad=1 }
+        ($1 ~ /_wl_surface$/) && $2 !~ /^[1-9][0-9]*$/ { bad=1 }
+        $1 == "return_popup_reused" && $2 != "yes" && $2 != "no" { bad=1 }
+        !seen[$1]++ { count++ }
+        END { exit bad || count != 10 }
+    ' "$1" 2>/dev/null
+}
+
 judge_fcitx_security_probe() { # evidence-root screenshot-root [source]
     D=$1; SHOTS=$2; SECURITY_SOURCE=${3:-retained-ibus-conversion}
     case "$SECURITY_SOURCE" in
@@ -597,30 +722,18 @@ judge_fcitx_security_probe() { # evidence-root screenshot-root [source]
             && grep -qx 'raw_protocol_logs_retained=no' "$R/protocol-summary.txt" 2>/dev/null \
             && ok "round $round repeated exact composition and popup predicates" \
             || bad "round $round repeated exact composition and popup predicates" "first-stage round evidence missing"
-        grep -qx 'status=pass' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'children_at_boundaries=0' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'compositor_connections_at_boundaries=1' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'application_trace_writers_at_boundaries=1' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'foreign_trace_writers_at_boundaries=0' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'authenticated_probe_trace_writer_at_end=1' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'peer_pid=exact_aurshell' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'peer_path=exact_wayland_display' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'listener_inode=exact_wayland_display' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'service_main_pid=exact_dbus_run_session' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'compositor_exe=exact_usr_bin_aurshell' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'service_invocation_id=exact_systemd_property_and_environment' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'service_control_group=exact_systemd_property' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'pam_session_cgroup=exact_expected_user_session_scope' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'compositor_in_pam_session_cgroup=yes' "$R/mousepad-connection.txt" 2>/dev/null \
-            && grep -qx 'compositor_descends_from_service_main_pid=yes' "$R/mousepad-connection.txt" 2>/dev/null \
+        connection_interval_passed "$R/mousepad-connection.txt" \
             && ok "Mousepad held one exact AurWL connection in round $round" \
             || bad "Mousepad held one exact AurWL connection in round $round" "pidfd/socket identity evidence missing"
-        grep -qx 'initial_unmapped_before_b_input=yes' "$R/focus-lifecycle.txt" 2>/dev/null \
-            && grep -qx 'mapped_candidate_while_away=no' "$R/focus-lifecycle.txt" 2>/dev/null \
-            && grep -qx 'return_map_epoch=fresh' "$R/focus-lifecycle.txt" 2>/dev/null \
-            && grep -qx 'popup_input_grab=no' "$R/focus-lifecycle.txt" 2>/dev/null \
-            && grep -qx 'b_saved_sentinel=20' "$R/focus-lifecycle.txt" 2>/dev/null \
-            && grep -qx 'a_saved_file_unchanged=yes' "$R/focus-lifecycle.txt" 2>/dev/null \
+        exact_mousepad_b_process "$R/mousepad-b.process" \
+            && exact_mousepad_b_toplevel "$R/mousepad-b-toplevel.txt" \
+            && connection_interval_passed "$R/mousepad-b-connection.txt" \
+            && exact_mousepad_b_visibility "$SHOTS/fcitx-round$round-mousepad-b-visibility.txt" \
+            && [ -s "$SHOTS/fcitx-round$round-mousepad-b-before.png" ] \
+            && [ -s "$SHOTS/fcitx-round$round-mousepad-b-after.png" ] \
+            && ok "the second Mousepad was a visible authenticated native toplevel in round $round" \
+            || bad "the second Mousepad was a visible authenticated native toplevel in round $round" "second-editor identity/map/frame evidence missing"
+        exact_focus_lifecycle "$R/focus-lifecycle.txt" \
             && grep -qx '20' "$R/focus-b-sentinel.hex" 2>/dev/null \
             && ok "A to B to A revoked and freshly mapped the candidate in round $round" \
             || bad "A to B to A revoked and freshly mapped the candidate in round $round" "focus lifecycle evidence missing"
@@ -1280,14 +1393,15 @@ EOF
         fail=$((fail+1))
     fi
     checked=$((checked+1))
-    if python3 -m unittest -q tools/test_fcitx_connection_probe.py tools/test_fcitx_password_server.py; then
-        printf '    %-62s %s\n' "the Fcitx connection and password reducers" "pass"
+    if python3 -m unittest -q tools/test_fcitx_connection_probe.py \
+        tools/test_fcitx_password_server.py tools/test_fcitx_marker_visibility.py; then
+        printf '    %-62s %s\n' "the Fcitx connection, password, and marker reducers" "pass"
     else
-        printf '    %-62s %s\n' "the Fcitx connection and password reducers" "FAIL"
+        printf '    %-62s %s\n' "the Fcitx connection, password, and marker reducers" "FAIL"
         fail=$((fail+1))
     fi
     checked=$((checked+1))
-    if python3 - tools/profiletest-fcitx-guest.sh tools/profiletest.sh <<'EOPY'
+    if python3 - tools/profiletest-fcitx-guest.sh tools/profiletest.sh .github/workflows/profiles.yml <<'EOPY'
 import sys
 text = open(sys.argv[1], encoding="utf-8").read()
 preflight = text.index('fcitx5-remote -m pinyin')
@@ -1300,6 +1414,33 @@ if not preflight < mouse_focus < mouse_select < firefox_focus < firefox_select:
 helper = text[text.index('select_exact_pinyin()'):text.index('restore_and_finish()')]
 if 'fcitx5-remote -s pinyin' not in helper or 'fcitx5-remote -n' not in helper:
     raise SystemExit("focused selector must set and verify the exact engine")
+security_start = text.index('if [ "$SECURITY" = 1 ]; then', text.index('trace_has_no_input_text "$mouse_trace"'))
+security_end = text.index('\nfi\n', security_start)
+security = text[security_start:security_end]
+ordered = (
+    "while [ \"$i\" -le 24 ]",
+    'run_app mousepad-isolated "$mouse_b_file"',
+    'mousepad-b.process',
+    'mousepad-b-connection.txt',
+    '--toplevel > "$STATE/mousepad-b-toplevel.tmp"',
+    'act wait-change "$mouse_b_evidence"',
+    'act click-change "$mouse_b_evidence"',
+    'act chord ctrl q',
+    'act key backspace',
+    'act key spc',
+    'wait_hex_file "$mouse_b_file" 20',
+    '[ ! -s "$mouse_file" ]',
+)
+positions = [security.index(item) for item in ordered]
+if positions != sorted(positions):
+    raise SystemExit("second-editor identity, observed click, AZERTY clearing, and sentinel proof are out of order")
+if ('/usr/bin/mousepad --disable-server' not in security
+        or "env.get(b'GDK_BACKEND') != b'wayland'" not in security
+        or 'gdk_backend=wayland' not in security):
+    raise SystemExit("second editor must be a distinct native Wayland Mousepad process")
+restore_probe = text[text.index('restore_and_finish()'):text.index(': > "$STATE/cleanup-units.txt"')]
+if restore_probe.index('connection_b_done') > restore_probe.index('connection_probe_pid'):
+    raise SystemExit("cleanup must finalize the second-editor interval before the first-editor interval")
 if 'top:calc(50% - 70px)' not in text or 'height:140px' not in text:
     raise SystemExit("Firefox field must be centered on the measured form click point")
 password_test = text.index('password_summary="$RUNTIME/password-summary"')
@@ -1392,6 +1533,16 @@ marker_write = failure.index(': > "$CHAN/failed-$id"')
 ack_write = failure.index('printf \'%s\\n\' "$id" > "$CHAN/.acks"')
 if marker_write > ack_write or 'if : > "$CHAN/failed-$id"; then' not in failure:
     raise SystemExit("an action failure must be published before its acknowledgement")
+wait_change = action_result[action_result.index('wait-change)'):action_result.index('wait-form)')]
+for required in ('fcitx-round*-mousepad-b', '$EV/$1-before.png', '$EV/$1-after.png', '$EV/$1-visibility.txt'):
+    if required not in wait_change:
+        raise SystemExit("second-editor baseline, final frame, and reduced delta must be retained")
+workflow = open(sys.argv[3], encoding="utf-8").read()
+for asset in ('ev/fcitx-round*-mousepad-b-before.png',
+              'ev/fcitx-round*-mousepad-b-after.png',
+              'ev/fcitx-round*-mousepad-b-visibility.txt'):
+    if workflow.count(asset) != 1:
+        raise SystemExit(f"diagnostic release must publish exactly one bounded asset glob: {asset}")
 EOPY
     then
         printf '    %-62s %s\n' "Fcitx centers each field before focused Pinyin selection" "passes"
@@ -1422,7 +1573,30 @@ EOPY
         R="$security_fixture/evidence/round$round"; mkdir -p "$R"
         printf 'status=pass\n' > "$R/result"
         printf 'status=pass\nchildren_at_boundaries=0\ncompositor_connections_at_boundaries=1\napplication_trace_writers_at_boundaries=1\nforeign_trace_writers_at_boundaries=0\nauthenticated_probe_trace_writer_at_end=1\npeer_pid=exact_aurshell\npeer_path=exact_wayland_display\nlistener_inode=exact_wayland_display\nservice_main_pid=exact_dbus_run_session\ncompositor_exe=exact_usr_bin_aurshell\nservice_invocation_id=exact_systemd_property_and_environment\nservice_control_group=exact_systemd_property\npam_session_cgroup=exact_expected_user_session_scope\ncompositor_in_pam_session_cgroup=yes\ncompositor_descends_from_service_main_pid=yes\nobserved_service_main_pid=100\nobserved_compositor_pid=102\nobserved_service_control_group=/system.slice/aurshell.service\nobserved_pam_session_control_group=/user.slice/user-1000.slice/session-c1.scope\n' > "$R/mousepad-connection.txt"
-        printf 'initial_unmapped_before_b_input=yes\nmapped_candidate_while_away=no\nreturn_map_epoch=fresh\npopup_input_grab=no\nb_saved_sentinel=20\na_saved_file_unchanged=yes\n' > "$R/focus-lifecycle.txt"
+        for phase in start end; do
+            for metric in wayland_path_inode_count global_matching_listener_count \
+                after_wayland_path_inode_count after_global_matching_listener_count compositor_socket_fd_count \
+                matching_accepting_listener_fd_count matching_accepting_listener_open_description_count \
+                matching_accepting_listener_count application_descendant_count trace_writer_count \
+                application_trace_writer_count probe_trace_writer_count foreign_trace_writer_count \
+                application_socket_fd_count application_socket_inspection_error_count \
+                matching_compositor_connection_count trace_sink_identity_exact; do
+                metric_value=1
+                case "$metric" in
+                  application_descendant_count|foreign_trace_writer_count|application_socket_inspection_error_count) metric_value=0 ;;
+                  probe_trace_writer_count) [ "$phase" = start ] && metric_value=0 ;;
+                  trace_writer_count) [ "$phase" = end ] && metric_value=2 ;;
+                  trace_sink_identity_exact) metric_value=yes ;;
+                esac
+                printf 'observed_%s_%s=%s\n' "$phase" "$metric" \
+                    "$metric_value" \
+                    >> "$R/mousepad-connection.txt"
+            done
+        done
+        cp "$R/mousepad-connection.txt" "$R/mousepad-b-connection.txt"
+        printf 'unit=auros-profiletest-fcitx-mousepad-b\npid=200\nstart_time=300\nexe=/usr/bin/mousepad\nargv=/usr/bin/mousepad --disable-server <marker-file>\nmarker_sha256=665cfe6eae08731ed61132f9c8ee8bea8b87da01eba84cc2215180b235a46fa1\ngdk_backend=wayland\ngtk_im_module=fcitx\nwayland_display_set=yes\ndisplay_unset=yes\n' > "$R/mousepad-b.process"
+        printf 'toplevel_xdg_surface=20\ntoplevel_wl_surface=19\nmapped_toplevel_count=1\nlayer_shell_objects=0\n' > "$R/mousepad-b-toplevel.txt"
+        printf 'initial_popup_wl_surface=30\nreturn_popup_wl_surface=31\ninitial_unmapped_before_b_input=yes\nmapped_candidate_while_away=no\nreturn_map_epoch=fresh\nreturn_popup_reused=no\npopup_input_grab=no\nlayer_shell_objects=0\nb_saved_sentinel=20\na_saved_file_unchanged=yes\n' > "$R/focus-lifecycle.txt"
         printf '20\n' > "$R/focus-b-sentinel.hex"
         printf 'candidate_popup_creations=0\ncandidate_popup_maps=0\ncandidate_popup_configures=0\ncandidate_popup_grabs=0\nlayer_shell_objects=0\nobserved_candidate_popup=no\nfocus_event_observed=yes\nascii_value_exact=yes\ncomposition_start_count=0\ncomposition_update_count=0\ncomposition_end_count=0\ncomposition_input_count=0\nraw_password_focus_log_retained=no\nraw_password_value_log_retained=no\nraw_password_event_log_retained=no\n' > "$R/password-suppression.txt"
         printf 'ordinary_service_ready=1\nuser_config_unchanged=yes\ncleanup_pids_gone=1\nsource=retained-ibus-conversion\n' > "$R/restore.txt"
@@ -1437,6 +1611,9 @@ EOPY
         printf x > "$security_fixture/shots/fcitx-round$round-focus-away.png"
         printf x > "$security_fixture/shots/fcitx-round$round-password-focused.png"
         printf x > "$security_fixture/shots/fcitx-round$round-password-masked.png"
+        printf x > "$security_fixture/shots/fcitx-round$round-mousepad-b-before.png"
+        printf x > "$security_fixture/shots/fcitx-round$round-mousepad-b-after.png"
+        printf 'status=pass\nmarker_template_sha256=665cfe6eae08731ed61132f9c8ee8bea8b87da01eba84cc2215180b235a46fa1\nchanged_samples=2200\ntotal_samples=64000\nthreshold_percent=3\nmarker_pattern_steps=24\nmarker_bbox_left=244\nmarker_bbox_top=120\nmarker_bbox_right=1034\nmarker_bbox_bottom=650\nclick_x=640\nclick_y=384\nclick_pixel_delta=255\n' > "$security_fixture/shots/fcitx-round$round-mousepad-b-visibility.txt"
     done
     printf 'fcitx_autostart_before_explicit_launch=no\n' > "$security_fixture/evidence/round2/reboot.txt"
     security_refuses() {
@@ -1448,6 +1625,123 @@ EOPY
         printf '    %-62s %s\n' "complete bounded Fcitx security evidence" "REFUSED"; fail=$((fail+1))
     fi
     checked=$((checked+1))
+    visibility="$security_fixture/shots/fcitx-round1-mousepad-b-visibility.txt"
+    sed 's/changed_samples=2200/changed_samples=100/' "$visibility" > "$visibility.tmp"; mv "$visibility.tmp" "$visibility"
+    if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "second Mousepad evidence below the visibility threshold" "refused"
+    else
+        printf '    %-62s %s\n' "second Mousepad evidence below the visibility threshold" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed 's/changed_samples=100/changed_samples=2200/' "$visibility" > "$visibility.tmp"; mv "$visibility.tmp" "$visibility"
+    sed 's/marker_pattern_steps=24/marker_pattern_steps=1/' "$visibility" > "$visibility.tmp"; mv "$visibility.tmp" "$visibility"
+    if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "screen change without the fixed multiline marker" "refused"
+    else
+        printf '    %-62s %s\n' "screen change without the fixed multiline marker" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed 's/marker_pattern_steps=1/marker_pattern_steps=24/' "$visibility" > "$visibility.tmp"; mv "$visibility.tmp" "$visibility"
+    sed 's/click_pixel_delta=255/click_pixel_delta=0/' "$visibility" > "$visibility.tmp"; mv "$visibility.tmp" "$visibility"
+    if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "second Mousepad click outside observed changed pixels" "refused"
+    else
+        printf '    %-62s %s\n' "second Mousepad click outside observed changed pixels" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed 's/click_pixel_delta=0/click_pixel_delta=255/' "$visibility" > "$visibility.tmp"; mv "$visibility.tmp" "$visibility"
+    printf 'argv=/usr/bin/mousepad <marker-file>\n' >> "$security_fixture/evidence/round1/mousepad-b.process"
+    if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "second Mousepad evidence with contradictory argv" "refused"
+    else
+        printf '    %-62s %s\n' "second Mousepad evidence with contradictory argv" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed -i.bak '/^argv=\/usr\/bin\/mousepad <marker-file>$/d' "$security_fixture/evidence/round1/mousepad-b.process"; rm "$security_fixture/evidence/round1/mousepad-b.process.bak"
+    sed 's/gdk_backend=wayland/gdk_backend=x11/' "$security_fixture/evidence/round1/mousepad-b.process" \
+        > "$security_fixture/evidence/round1/mousepad-b.process.tmp"
+    mv "$security_fixture/evidence/round1/mousepad-b.process.tmp" "$security_fixture/evidence/round1/mousepad-b.process"
+    if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "second Mousepad evidence with an X11 backend" "refused"
+    else
+        printf '    %-62s %s\n' "second Mousepad evidence with an X11 backend" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed 's/gdk_backend=x11/gdk_backend=wayland/' "$security_fixture/evidence/round1/mousepad-b.process" \
+        > "$security_fixture/evidence/round1/mousepad-b.process.tmp"
+    mv "$security_fixture/evidence/round1/mousepad-b.process.tmp" "$security_fixture/evidence/round1/mousepad-b.process"
+    printf 'mapped_toplevel_count=1\n' >> "$security_fixture/evidence/round1/mousepad-b-toplevel.txt"
+    if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "second Mousepad evidence with ambiguous mapped toplevels" "refused"
+    else
+        printf '    %-62s %s\n' "second Mousepad evidence with ambiguous mapped toplevels" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed -i.bak '$d' "$security_fixture/evidence/round1/mousepad-b-toplevel.txt"; rm "$security_fixture/evidence/round1/mousepad-b-toplevel.txt.bak"
+    sed 's/foreign_trace_writers_at_boundaries=0/foreign_trace_writers_at_boundaries=1/' \
+        "$security_fixture/evidence/round1/mousepad-b-connection.txt" > "$security_fixture/evidence/round1/mousepad-b-connection.tmp"
+    mv "$security_fixture/evidence/round1/mousepad-b-connection.tmp" "$security_fixture/evidence/round1/mousepad-b-connection.txt"
+    if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "second Mousepad evidence with a foreign trace writer" "refused"
+    else
+        printf '    %-62s %s\n' "second Mousepad evidence with a foreign trace writer" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed 's/foreign_trace_writers_at_boundaries=1/foreign_trace_writers_at_boundaries=0/' \
+        "$security_fixture/evidence/round1/mousepad-b-connection.txt" > "$security_fixture/evidence/round1/mousepad-b-connection.tmp"
+    mv "$security_fixture/evidence/round1/mousepad-b-connection.tmp" "$security_fixture/evidence/round1/mousepad-b-connection.txt"
+    b_connection="$security_fixture/evidence/round1/mousepad-b-connection.txt"
+    cp "$b_connection" "$b_connection.clean"
+    for mutation in duplicate contradictory unknown; do
+        case "$mutation" in
+          duplicate) printf 'status=pass\n' >> "$b_connection" ;;
+          contradictory) printf 'status=fail\n' >> "$b_connection" ;;
+          unknown) printf 'unreviewed_claim=yes\n' >> "$b_connection" ;;
+        esac
+        if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+            printf '    %-62s %s\n' "second Mousepad connection with $mutation data" "refused"
+        else
+            printf '    %-62s %s\n' "second Mousepad connection with $mutation data" "ACCEPTED"; fail=$((fail+1))
+        fi
+        checked=$((checked+1))
+        cp "$b_connection.clean" "$b_connection"
+    done
+    rm "$b_connection.clean"
+    sed 's/observed_start_foreign_trace_writer_count=0/observed_start_foreign_trace_writer_count=99/' \
+        "$b_connection" > "$b_connection.tmp"; mv "$b_connection.tmp" "$b_connection"
+    if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "second Mousepad connection with contradictory observed metric" "refused"
+    else
+        printf '    %-62s %s\n' "second Mousepad connection with contradictory observed metric" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    sed 's/observed_start_foreign_trace_writer_count=99/observed_start_foreign_trace_writer_count=0/' \
+        "$b_connection" > "$b_connection.tmp"; mv "$b_connection.tmp" "$b_connection"
+    printf '21\n' > "$security_fixture/evidence/round1/focus-b-sentinel.hex"
+    if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+        printf '    %-62s %s\n' "second Mousepad evidence with the wrong saved sentinel" "refused"
+    else
+        printf '    %-62s %s\n' "second Mousepad evidence with the wrong saved sentinel" "ACCEPTED"; fail=$((fail+1))
+    fi
+    checked=$((checked+1))
+    printf '20\n' > "$security_fixture/evidence/round1/focus-b-sentinel.hex"
+    lifecycle="$security_fixture/evidence/round1/focus-lifecycle.txt"
+    cp "$lifecycle" "$lifecycle.clean"
+    for mutation in duplicate contradictory unknown; do
+        case "$mutation" in
+          duplicate) printf 'return_map_epoch=fresh\n' >> "$lifecycle" ;;
+          contradictory) printf 'return_map_epoch=stale\n' >> "$lifecycle" ;;
+          unknown) printf 'unreviewed_claim=yes\n' >> "$lifecycle" ;;
+        esac
+        if [ "$(security_refuses "$security_fixture")" -ge 1 ]; then
+            printf '    %-62s %s\n' "focus lifecycle with $mutation data" "refused"
+        else
+            printf '    %-62s %s\n' "focus lifecycle with $mutation data" "ACCEPTED"; fail=$((fail+1))
+        fi
+        checked=$((checked+1))
+        cp "$lifecycle.clean" "$lifecycle"
+    done
+    rm "$lifecycle.clean"
     production_security_fixture="$T/fcitx-production-security"
     cp -R "$security_fixture" "$production_security_fixture"
     for round in 1 2; do
@@ -1572,7 +1866,7 @@ EOPY
         printf '    %-62s %s\n' "Fcitx security evidence missing focus revocation" "ACCEPTED"; fail=$((fail+1))
     fi
     checked=$((checked+1))
-    printf 'initial_unmapped_before_b_input=yes\nmapped_candidate_while_away=no\nreturn_map_epoch=fresh\npopup_input_grab=no\nb_saved_sentinel=20\na_saved_file_unchanged=yes\n' > "$security_fixture/evidence/round2/focus-lifecycle.txt"
+    printf 'initial_popup_wl_surface=30\nreturn_popup_wl_surface=31\ninitial_unmapped_before_b_input=yes\nmapped_candidate_while_away=no\nreturn_map_epoch=fresh\nreturn_popup_reused=no\npopup_input_grab=no\nlayer_shell_objects=0\nb_saved_sentinel=20\na_saved_file_unchanged=yes\n' > "$security_fixture/evidence/round2/focus-lifecycle.txt"
     sed 's/composition_update_count=0/composition_update_count=1/' \
         "$security_fixture/evidence/round1/password-suppression.txt" \
         > "$security_fixture/evidence/round1/password-suppression.tmp"
@@ -1942,33 +2236,13 @@ send_qcode() { # one physical QMP qcode
 send_chord() { # two simultaneous physical QMP qcodes
     qmp "$Q" "{\"execute\":\"send-key\",\"arguments\":{\"keys\":[{\"type\":\"qcode\",\"data\":\"$1\"},{\"type\":\"qcode\",\"data\":\"$2\"}],\"hold-time\":60}}"
 }
-screen_changed() { # before.ppm after.ppm -- more than 3% of sampled pixels changed visibly
-    python3 - "$1" "$2" <<'EOPY'
-import sys
-def ppm(path):
-    d=open(path,'rb').read(); parts=[]; i=0
-    while len(parts)<4:
-        while d[i:i+1].isspace(): i+=1
-        if d[i:i+1]==b'#':
-            while d[i:i+1] not in (b'\n',b''): i+=1
-            continue
-        j=i
-        while not d[j:j+1].isspace(): j+=1
-        parts.append(d[i:j]); i=j
-    i+=1
-    return int(parts[1]),int(parts[2]),d[i:]
-w,h,a=ppm(sys.argv[1]); w2,h2,b=ppm(sys.argv[2])
-if (w,h)!=(w2,h2): raise SystemExit(0)
-changed=total=0; xs=[]; ys=[]
-for y in range(0,h,4):
-    for x in range(0,w,4):
-        p=(y*w+x)*3; total+=1
-        if sum(abs(a[p+k]-b[p+k]) for k in range(3))>24:
-            changed+=1; xs.append(x); ys.append(y)
-if changed*100 < total*3: raise SystemExit(1)
-print((min(xs)+max(xs))//2, (min(ys)+max(ys))//2)
-EOPY
+screen_changed() { # before.ppm after.ppm -- generic 3% screen change
+    python3 "$ROOT/tools/fcitx_marker_visibility.py" --generic "$1" "$2"
 }
+marker_changed() { # before.ppm after.ppm evidence -- fixed staircase marker
+    python3 "$ROOT/tools/fcitx_marker_visibility.py" "$1" "$2" "$3"
+}
+
 candidate_changed() { # before.ppm after.ppm -- at least 0.25% changed
     python3 - "$1" "$2" <<'EOPY'
 import sys
@@ -2096,14 +2370,27 @@ ibus_host_action() {
         case "${1:-}" in ''|*[!A-Za-z0-9._-]*) action_ok=1 ;;
           *)
             before="$T/baseline-$1.ppm"; changed=0; tries=0
+            after="$T/change-$id.ppm"; retain=0
+            case "$1" in fcitx-round*-mousepad-b) retain=1; visibility="$EV/$1-visibility.txt";;
+              *) visibility="$T/change-visibility-$id.txt";; esac
+            if [ "$retain" = 1 ]; then
+                [ -s "$before" ] && shot_py "$before" "$EV/$1-before.png" >/dev/null \
+                    || action_ok=1
+            fi
             while [ "$tries" -lt 60 ] && [ -s "$before" ]; do
-                qmp "$Q" "{\"execute\":\"screendump\",\"arguments\":{\"filename\":\"$T/change-$id.ppm\"}}" \
+                qmp "$Q" "{\"execute\":\"screendump\",\"arguments\":{\"filename\":\"$after\"}}" \
                     >/dev/null 2>&1 || break
-                if screen_changed "$before" "$T/change-$id.ppm" > "$T/change-point-$1"; then
+                if { [ "$retain" = 1 ] && marker_changed "$before" "$after" "$visibility" \
+                     || [ "$retain" = 0 ] && screen_changed "$before" "$after"; } \
+                    > "$T/change-point-$1"; then
                     changed=1; break
                 fi
                 sleep 1; tries=$((tries + 1))
             done
+            if [ "$retain" = 1 ]; then
+                [ -s "$after" ] && shot_py "$after" "$EV/$1-after.png" >/dev/null \
+                    || action_ok=1
+            fi
             [ "$changed" = 1 ] || action_ok=1
             ;;
         esac

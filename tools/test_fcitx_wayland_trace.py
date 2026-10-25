@@ -3,7 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fcitx_wayland_trace import analyze, analyze_lifecycle, analyze_no_popup
+from fcitx_wayland_trace import analyze, analyze_lifecycle, analyze_no_popup, analyze_toplevel
 
 # Exact closure_print syntax from Wayland 1.22.0 src/connection.c lines
 # 1286-1291, 1324-1328, and 1332-1345 (Noble's libwayland generation):
@@ -15,6 +15,23 @@ POPUP = b'''[123457.001]  -> xdg_wm_base@8.get_xdg_surface(new id xdg_surface@31
 POPUP = POPUP.replace(b"[123457.004]", b"[123457.003] xdg_popup@32.configure(4, 8, 320, 90)\n[123457.004]")
 
 class TraceTest(unittest.TestCase):
+    def test_toplevel_requires_one_mapped_ordinary_surface(self):
+        mapped = PREFIX + b'''[123456.003]  -> wl_surface@19.attach(wl_buffer@40, 0, 0)\n[123456.004]  -> wl_surface@19.commit()\n'''
+        got = analyze_toplevel(mapped, 0)
+        self.assertEqual(got["mapped_toplevel_count"], 1)
+        self.assertEqual(got["toplevel_wl_surface"], 19)
+        for invalid in (
+            PREFIX,
+            mapped.replace(b"wl_buffer@40", b"nil"),
+            mapped + PREFIX.replace(b"xdg_surface@20", b"xdg_surface@50")
+                                  .replace(b"xdg_toplevel@21", b"xdg_toplevel@51")
+                                  .replace(b"wl_surface@19", b"wl_surface@49")
+                   + b"wl_surface@49.attach(wl_buffer@60, 0, 0)\nwl_surface@49.commit()\n",
+            mapped + b"zwlr_layer_shell_v1@9.get_layer_surface()\n",
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                analyze_toplevel(invalid, 0)
+
     def test_accepts_one_mapped_popup_with_toplevel_parent(self):
         got = analyze(PREFIX + POPUP, len(PREFIX))
         self.assertEqual(got["parent_xdg_surface"], 20)

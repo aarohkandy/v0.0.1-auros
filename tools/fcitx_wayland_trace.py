@@ -283,6 +283,56 @@ def analyze_no_popup(raw: bytes, after: int) -> Dict[str, Union[str, int]]:
         "observed_candidate_popup": "no",
     }
 
+
+def analyze_toplevel(raw: bytes, after: int) -> Dict[str, Union[str, int]]:
+    """Require exactly one mapped ordinary toplevel in one client trace."""
+    if after < 0 or after > len(raw):
+        raise ValueError("trace boundary is outside the trace")
+    xdg_to_wl = {}
+    toplevels = {}
+    pending = {}
+    for position, line in _lines(raw):
+        if position >= after and "layer_shell" in line:
+            raise ValueError("a layer-shell object appeared during toplevel mapping")
+        surface = GET_SURFACE.search(line)
+        if surface:
+            xdg_to_wl[int(surface.group(1))] = int(surface.group(2))
+        top = GET_TOPLEVEL.search(line)
+        if top:
+            xdg = int(top.group(1))
+            wl = xdg_to_wl.get(xdg)
+            if wl is not None:
+                toplevels[xdg] = [wl, False]
+        attach = ATTACH.search(line) if position >= after else None
+        if attach:
+            pending[int(attach.group(1))] = attach.group(2).strip() != "nil"
+        commit = COMMIT.search(line) if position >= after else None
+        if commit:
+            wl = int(commit.group(1))
+            if wl in pending:
+                for state in toplevels.values():
+                    if state[0] == wl:
+                        state[1] = pending[wl]
+                pending.pop(wl)
+        destroyed = XDG_DESTROY.search(line)
+        if destroyed:
+            toplevels.pop(int(destroyed.group(1)), None)
+        destroyed = WL_DESTROY.search(line)
+        if destroyed:
+            wl = int(destroyed.group(1))
+            for xdg, state in list(toplevels.items()):
+                if state[0] == wl:
+                    toplevels.pop(xdg)
+    mapped = [(xdg, state[0]) for xdg, state in toplevels.items() if state[1]]
+    if len(mapped) != 1:
+        raise ValueError(f"expected exactly one mapped toplevel, got {len(mapped)}")
+    return {
+        "toplevel_xdg_surface": mapped[0][0],
+        "toplevel_wl_surface": mapped[0][1],
+        "mapped_toplevel_count": 1,
+        "layer_shell_objects": 0,
+    }
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("trace", type=Path)
@@ -290,6 +340,7 @@ def main() -> None:
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--no-popup", action="store_true")
     mode.add_argument("--lifecycle", action="store_true")
+    mode.add_argument("--toplevel", action="store_true")
     ap.add_argument("--away-byte", type=int)
     ap.add_argument("--b-input-byte", type=int)
     ap.add_argument("--return-byte", type=int)
@@ -302,6 +353,8 @@ def main() -> None:
                                    args.b_input_byte, args.return_byte)
     elif args.no_popup:
         result = analyze_no_popup(raw, args.after_byte)
+    elif args.toplevel:
+        result = analyze_toplevel(raw, args.after_byte)
     else:
         result = analyze(raw, args.after_byte)
     for key, value in result.items():
