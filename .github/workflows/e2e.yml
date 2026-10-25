@@ -242,7 +242,8 @@ jobs:
         # runner step below installs its packages: this is why run
         # 39928216928 died here. Bounded apt, a few seconds.
         run: |
-          sh tools/apt.sh python3-numpy python3-pil
+          sh tools/apt.sh python3-numpy python3-pil tesseract-ocr
+          command -v tesseract >/dev/null
           python3 tools/e2e/selftest.py
 
       - name: which PC this is
@@ -431,7 +432,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: the harness's own checks
         run: |
-          sh tools/apt.sh python3-numpy python3-pil
+          sh tools/apt.sh python3-numpy python3-pil tesseract-ocr
+          command -v tesseract >/dev/null
           python3 tools/e2e/selftest.py
       - name: runner (disk, KVM, packages)
         run: |

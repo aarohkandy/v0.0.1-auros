@@ -414,7 +414,7 @@ def test_bitlocker_putback_contract():
 
 
 def test_grub_capture():
-    import e2e
+    import e2e, numpy as np
 
     captured_desktop = ("All my programs Everything on this computer "
                         "Play a song or a film Internet Spreadsheets VLC")
@@ -436,18 +436,41 @@ def test_grub_capture():
     # Windows-selected frame without inventing different colours or geometry.
     shot = e2e.vision.load(os.path.join(
         HERE, "fixtures", "run-40161971669-grub-auros-selected.png"))
-    aur_selected, aur_coverage = e2e.Flow.grub_row_selected(shot, 180, 201)
-    windows_selected, windows_coverage = e2e.Flow.grub_row_selected(shot, 239, 258)
-    check(aur_selected and aur_coverage > 0.45 and float(shot[180:201, :].mean()) < 110 and
-          not windows_selected and windows_coverage == 0,
+    selected = e2e.Flow.grub_selected_row_image(shot)
+    check(selected is not None and selected[1] > 0.45 and
+          float(shot[180:201, :].mean()) < 110,
           "Windows return: captured selected AurOS cannot authorize unselected Windows")
     windows_shot = shot.copy()
     windows_shot[180:201, 252:1029] = (0, 0, 0)
+    source_row = shot[239:258, 252:1029]
+    glyphs = source_row.min(axis=2) >= 180
     windows_shot[239:258, 252:1029] = (0, 152, 152)
-    windows_selected, windows_coverage = e2e.Flow.grub_row_selected(windows_shot, 239, 258)
-    wrong_selected, _ = e2e.Flow.grub_row_selected(windows_shot, 201, 220)
-    check(windows_selected and windows_coverage > 0.45 and not wrong_selected,
-          "Windows return: the observed cyan theme authorizes only the selected Windows row")
+    windows_shot[239:258, 252:1029][glyphs] = (0, 0, 0)
+    windows_selected = e2e.Flow.grub_selected_row_image(windows_shot)
+    check(windows_selected is not None and windows_selected[1] > 0.45,
+          "Windows return: the observed cyan theme isolates one synthesized selected row")
+    no_cyan = np.zeros_like(shot)
+    check(e2e.Flow.grub_selected_row_image(no_cyan) is None,
+          "Windows return: a screen without the observed cyan selection fails closed")
+    two_bands = no_cyan.copy()
+    two_bands[180:200, 252:1029] = (0, 152, 152)
+    two_bands[239:259, 252:1029] = (0, 152, 152)
+    check(e2e.Flow.grub_selected_row_image(two_bands) is None,
+          "Windows return: two possible cyan selections are ambiguous and fail closed")
+    blank_band = no_cyan.copy()
+    blank_band[239:259, 252:1029] = (0, 152, 152)
+    check(e2e.Flow.grub_selected_row_image(blank_band) is None,
+          "Windows return: a selected band without readable glyphs fails closed")
+    if shutil.which("tesseract"):
+        aur_text = e2e.vision.text_of(e2e.vision.ocr(selected[0], scale=3, psm=7))
+        windows_text = e2e.vision.text_of(e2e.vision.ocr(
+            windows_selected[0], scale=3, psm=7))
+        check(bool(aur_text.strip()) and
+              re.sub(r"[^a-z]", "", aur_text.lower()) != "windows" and
+              re.sub(r"[^a-z]", "", windows_text.lower()) == "windows",
+              "Windows return: real OCR reads only the selected normalized row label")
+    else:
+        check(True, "Windows return: selected-row OCR skipped explicitly (tesseract absent)")
 
     class Clock:
         now = 0.0
