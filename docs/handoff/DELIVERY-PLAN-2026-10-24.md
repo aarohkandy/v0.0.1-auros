@@ -772,8 +772,27 @@ install, visible app readiness, or root cause of the earlier failures.
 
 Corrected evidence is `/tmp/auros-vlc-focused-control/focused-control-evidence/`,
 with `README.md` and `SCREENSHOT-INTERPRETATION.md`; archive SHA-256
-`c8925fdeec6e9d3c2c62afff820543835ecbba3352d23e38d8ad37033161b851`.
+`abaac545801ff47c7aa94a8cbbedc886ee4e0615e5aad6d238b8cc09e905a1a2`.
 Remote mirror is `~/work/auros-vlc-exact/out/focused-control-evidence/`.
 Owned diagnostic overlays/processes were removed; exact original raw image
 remains verified. Earlier `0039-failure.png` genuinely shows VLC privacy/main
 windows but belongs to a different run. Keep these claims separate.
+
+The dispatch-control evidence now also contains the exact original interposer
+source and driver plus reproduction instructions. Rebuilding at the recorded
+path reproduced the shim hash. Its visual predicate defect remains explicitly
+documented; the preserved code is diagnostic-only.
+
+Fresh multilingual run `40148012574` passed 48 checks on candidate `3629b114`;
+lead inspected the actual Mousepad/Firefox candidate screenshots and exact
+`你好` outputs. Raw image SHA-256 is
+`42359c4847a1a696a21c5b5350f4574a2970bb1d4d8f7df42c8336157a1696fa`.
+This is one production functional boot, not the retained image's two-round
+security proof and not a multilingual Windows-install journey.
+
+Default-promotion preparation exposed a separate Wi-Fi persistence issue:
+plaintext carry-over data is written before Restart later returns. The next
+installer fix must delay that write until Restart now/arming, disclose the
+password copy beside the checkbox, and test waiting/abort/failure paths.
+Fastpath remains non-default. Transfer-report text now distinguishes Ferry's
+no-password behavior from Setup's optional connected-network carry-over.
