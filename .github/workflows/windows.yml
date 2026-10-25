@@ -32,6 +32,11 @@ on:
         description: "windows-published / windows-download test this release of this repository (empty: its newest AurOS release, a prerelease if that is all there is)"
         required: false
         default: ""
+      storage_diagnostic_only:
+        description: "Run only the read-only native Storage object diagnostic"
+        required: false
+        default: false
+        type: boolean
 
 # (Nothing in this workflow is fetched from the old repository any more. The "no release yet" fallback
 # made windows-published and windows-download green about files this repository never built, and the
@@ -53,15 +58,27 @@ jobs:
     timeout-minutes: 5
     outputs:
       run: ${{ steps.g.outputs.run }}
+      storage_diagnostic_only: ${{ steps.g.outputs.storage_diagnostic_only }}
     steps:
       - id: g
         env:
           MSG: ${{ github.event.head_commit.message }}
           BEFORE: ${{ github.event.before }}
           GH_TOKEN: ${{ github.token }}
+          STORAGE_DIAGNOSTIC_ONLY: ${{ inputs.storage_diagnostic_only }}
         run: |
           run=false
-          [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || run=true
+          diagnostic=false
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$STORAGE_DIAGNOSTIC_ONLY" = true ]; then
+            diagnostic=true
+          elif [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            run=true
+          fi
+          if [ "$diagnostic" = true ]; then
+            echo "run=false" | tee -a "$GITHUB_OUTPUT"
+            echo "storage_diagnostic_only=true" | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # The word counts in the SUBJECT only, as everywhere else.
           case "${MSG%%$'\n'*}" in *'[windows]'*) run=true ;; esac
           # The files this push changed; the push payload does not list them.
@@ -77,6 +94,92 @@ jobs:
             run=true
           fi
           echo "run=$run" | tee -a "$GITHUB_OUTPUT"
+          echo "storage_diagnostic_only=$diagnostic" | tee -a "$GITHUB_OUTPUT"
+
+  storage-diagnostic:
+    needs: gate
+    if: needs.gate.outputs.storage_diagnostic_only == 'true'
+    concurrency: { group: 'windows-${{ github.ref }}-storage-diagnostic', cancel-in-progress: false }
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: extract the exact put-back serializer and mock fixture
+        shell: pwsh
+        run: |
+          @'
+          import ast
+          from pathlib import Path
+
+          source = Path("tools/e2e/e2e.py").read_text(encoding="utf-8")
+          tree = ast.parse(source)
+          wanted = {
+              "PUTBACK_PARTITION_FINGERPRINT_PS",
+              "PUTBACK_PARTITION_FINGERPRINT_SELFTEST_PS",
+          }
+          values = {}
+          for node in tree.body:
+              if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                      and isinstance(node.targets[0], ast.Name) and node.targets[0].id in wanted:
+                  values[node.targets[0].id] = ast.literal_eval(node.value)
+          if set(values) != wanted or any(not isinstance(value, str) or not value for value in values.values()):
+              raise SystemExit("exact put-back PowerShell constants were not found")
+          script = "$ErrorActionPreference='Stop';" + values["PUTBACK_PARTITION_FINGERPRINT_PS"]
+          script += "Write-Output 'AUROS_STORAGE_PHASE mock-start';try{" \
+                    + values["PUTBACK_PARTITION_FINGERPRINT_SELFTEST_PS"] \
+                    + "}catch{Write-Output ('AUROS_STORAGE_PHASE mock-failed '+$_.Exception.Message);throw};"
+          script += r'''
+          Write-Output 'AUROS_STORAGE_PHASE live-inspect';
+          $cpart=Get-Partition -DriveLetter C;
+          $systemDisk=[uint32]$cpart.DiskNumber;
+          $disks=@(Get-Disk -Number $systemDisk);
+          $parts=@(Get-Partition -DiskNumber $systemDisk);
+          function Write-AurOSShape([string]$Kind,[object[]]$Objects,[string[]]$Required){
+            $index=0
+            foreach($o in $Objects){
+              $shape=[ordered]@{kind=$Kind;index=$index;class=$o.GetType().FullName;fields=[ordered]@{}}
+              foreach($name in $Required){
+                $property=$o.PSObject.Properties[$name]
+                if($null -eq $property){$state='absent'}
+                elseif($null -eq $property.Value){$state='null'}
+                else{$state=$property.Value.GetType().FullName}
+                $shape.fields[$name]=$state
+              }
+              'AUROS_STORAGE_SHAPE '+($shape|ConvertTo-Json -Compress -Depth 4)
+              $index++
+            }
+          }
+          Write-AurOSShape disk $disks @('Number','PartitionStyle','Guid','IsReadOnly','IsOffline','IsSystem')
+          Write-AurOSShape partition $parts @('DiskNumber','PartitionNumber','Offset','Size','GptType','Guid','IsReadOnly','IsOffline','IsSystem','IsBoot','IsHidden','NoDefaultDriveLetter')
+          Write-Output 'AUROS_STORAGE_PHASE live-capture-start';
+          try{
+            $null=Get-AurOSPartitionFingerprint -Disks $disks -Partitions $parts
+            Write-Output 'AUROS_STORAGE_PHASE live-capture-pass'
+          }catch{
+            Write-Output ('AUROS_STORAGE_PHASE live-capture-failed '+$_.Exception.Message)
+            throw
+          }
+          '''
+          Path("storage-diagnostic.ps1").write_text(script, encoding="utf-8")
+          '@ | python -
+      - name: exact mock and read-only live Storage capture
+        shell: pwsh
+        run: |
+          & .\storage-diagnostic.ps1 2>&1 | Tee-Object storage-diagnostic.txt
+          if ($LASTEXITCODE -ne 0) { throw "storage diagnostic exited $LASTEXITCODE" }
+          $text = Get-Content storage-diagnostic.txt -Raw
+          if (($text.Split('AUROS_PARTITION_FINGERPRINT_SELFTEST PASS').Count - 1) -ne 1) {
+            throw "the exact mock fixture did not pass exactly once"
+          }
+          if ($text -notmatch 'AUROS_STORAGE_PHASE live-capture-pass') {
+            throw "the live Storage capture did not pass"
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() && !cancelled() }}
+        with:
+          name: windows-storage-diagnostic
+          path: storage-diagnostic.txt
+          if-no-files-found: error
 
   # What a person downloads today, asked at run time, so promoting a
   # release edits nothing here: this repository's newest FULL release

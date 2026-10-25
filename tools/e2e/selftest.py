@@ -407,6 +407,25 @@ def test_bitlocker_putback_contract():
           "foreach($n in @('IsReadOnly','IsOffline','IsSystem'))" in native_fixture and
           "foreach($n in @('IsReadOnly','IsOffline','IsSystem','IsBoot','IsHidden','NoDefaultDriveLetter'))" in native_fixture,
           "put-back: native mock holds geometry while exercising every recorded identity and flag")
+    windows_workflow = open(os.path.join(HERE, "..", "..", ".github", "workflows",
+                                         "windows.yml")).read()
+    storage_job = windows_workflow.split("\n  storage-diagnostic:\n", 1)[1].split(
+        "\n  # What a person downloads", 1)[0]
+    gate_step = windows_workflow.split("\n  gate:\n", 1)[1].split(
+        "\n  storage-diagnostic:\n", 1)[0]
+    check("storage_diagnostic_only:" in windows_workflow and
+          gate_step.index('if [ "$diagnostic" = true ]') < gate_step.index("gh api") and
+          'echo "run=false"' in gate_step,
+          "put-back: storage-only dispatch skips every installer build and release lookup")
+    check("ast.parse(source)" in storage_job and
+          '"PUTBACK_PARTITION_FINGERPRINT_PS"' in storage_job and
+          '"PUTBACK_PARTITION_FINGERPRINT_SELFTEST_PS"' in storage_job and
+          "import e2e" not in storage_job and
+          "Get-Partition -DriveLetter C" in storage_job and
+          "AUROS_STORAGE_SHAPE" in storage_job and
+          "Value.GetType().FullName" in storage_job and
+          "profiletest" not in storage_job,
+          "put-back: native storage diagnostic uses exact constants and reports only bounded shapes")
     wait_source = inspect.getsource(e2e.Flow.wait_windows_return)
     check(wait_source.index("self.write_bitlocker_return(evidence)") <
           wait_source.index("if time.time() > deadline"),
