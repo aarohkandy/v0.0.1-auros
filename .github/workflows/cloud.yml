@@ -214,8 +214,8 @@ jobs:
           GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
         run: |
           set +x
-          # The existing Worker is still disabled here. Rotate its credentials
-          # before deploying the version that accepts build requests.
+          # On first activation, the runbook keeps the existing Worker disabled.
+          # Later enabled deploys reapply these values before the new code.
           printf '%s' "$BUILD_NETWORK_SECRET" | timeout 120 npx --yes "$WRANGLER" secret put BUILD_NETWORK_SECRET
           printf '%s' "$BUILD_CHALLENGE_SECRET" | timeout 120 npx --yes "$WRANGLER" secret put BUILD_CHALLENGE_SECRET
           printf '%s' "$GITHUB_APP_PRIVATE_KEY" | timeout 120 npx --yes "$WRANGLER" secret put GITHUB_APP_PRIVATE_KEY
