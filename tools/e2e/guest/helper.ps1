@@ -8,6 +8,7 @@
 #              rectangles, tick state, and whether they are part of a web
 #              page (UI Automation)
 #   run        a read-only diagnostic (file hashes, folder listings)
+#   diagnostic a read-only command in a child killed at its stated bound
 #
 # It never clicks, types or invokes anything: every press in this test is
 # made by the host through QEMU's keyboard and tablet, after the host has
@@ -22,12 +23,95 @@ param(
   [int]$MsaaProbeWaitSec = 0,
   [string]$MsaaProbePrimaryName = '',
   [int]$MsaaProbePrimaryEnabled = 1,
-  [string]$MsaaProbeReadyFile = ''
+  [string]$MsaaProbeReadyFile = '',
+  [switch]$BoundedDiagnosticSelftest
 )
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'    # Invoke-WebRequest's bar costs seconds
 $hub = 'http://10.0.2.2:8000'
+
+function Read-DiagnosticOutput([string]$path, [int]$maxBytes = 65536) {
+  $stream = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+                            [IO.FileShare]::ReadWrite)
+  try {
+    $bytes = New-Object byte[] $maxBytes
+    $count = $stream.Read($bytes, 0, $bytes.Length)
+    return [Text.Encoding]::UTF8.GetString($bytes, 0, $count).TrimStart([char]0xfeff)
+  } finally {
+    $stream.Dispose()
+  }
+}
+
+function Invoke-BoundedDiagnostic([string]$script, [int]$timeoutMs) {
+  if ($timeoutMs -lt 1000 -or $timeoutMs -gt 45000) {
+    throw 'diagnostic timeout must be from 1000 through 45000 ms'
+  }
+  $stdout = [IO.Path]::GetTempFileName()
+  $stderr = [IO.Path]::GetTempFileName()
+  $process = $null
+  $verifiedExited = $false
+  try {
+    $preamble = '[Console]::OutputEncoding = [Text.Encoding]::UTF8' + "`n"
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($preamble + $script))
+    $exe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $process = Start-Process -FilePath $exe -ArgumentList @(
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded
+    ) -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+    $status = 'ok'
+    if (-not $process.WaitForExit($timeoutMs)) {
+      try {
+        Stop-Process -Id $process.Id -Force -ErrorAction Stop
+      } catch {
+        $status = 'termination-failed'
+      }
+      if ($process.WaitForExit(5000) -and $process.HasExited) {
+        $verifiedExited = $true
+        if ($status -ne 'termination-failed') { $status = 'timeout' }
+      } else {
+        $status = 'termination-failed'
+      }
+    } else {
+      $verifiedExited = $true
+      if ($process.ExitCode -ne 0) { $status = 'exit' }
+    }
+    $partial = ''
+    $outputRead = $true
+    try { $partial = Read-DiagnosticOutput $stdout } catch { $outputRead = $false }
+    return @{
+      status = $status
+      output = $partial
+      output_read = $outputRead
+      exit_code = $(if ($verifiedExited) { [int]$process.ExitCode } else { $null })
+    }
+  } finally {
+    if ($process -and -not $verifiedExited) {
+      try {
+        Stop-Process -Id $process.Id -Force -ErrorAction Stop
+        $verifiedExited = $process.WaitForExit(1000) -and $process.HasExited
+      } catch { $verifiedExited = $false }
+    }
+    if (-not $process -or $verifiedExited) {
+      Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
+if ($BoundedDiagnosticSelftest) {
+  $success = Invoke-BoundedDiagnostic "Write-Output 'bounded-success'" 5000
+  if ($success.status -cne 'ok' -or -not $success.output_read -or
+      $success.output.Trim() -cne 'bounded-success') {
+    throw "bounded diagnostic success probe failed: $($success.status) '$($success.output)'"
+  }
+  $timeout = Invoke-BoundedDiagnostic "Write-Output 'partial-before-timeout'; [Console]::Out.Flush(); Start-Sleep 10" 1000
+  if ($timeout.status -cne 'timeout' -or -not $timeout.output_read -or
+      $timeout.output -notmatch 'partial-before-timeout') {
+    throw "bounded diagnostic timeout probe failed: $($timeout.status) '$($timeout.output)'"
+  }
+  Write-Output 'bounded diagnostic native probe: PASS'
+  exit 0
+}
+
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 Add-Type -AssemblyName Accessibility
 $accessibilityAssembly = [Accessibility.IAccessible].Assembly.Location
@@ -387,36 +471,6 @@ Post '/e2e/event?name=helper-up' @{
   elevated = $who.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Invoke-BoundedDiagnostic([string]$script, [int]$timeoutMs) {
-  if ($timeoutMs -lt 1000 -or $timeoutMs -gt 45000) {
-    throw 'diagnostic timeout must be from 1000 through 45000 ms'
-  }
-  $stdout = [IO.Path]::GetTempFileName()
-  $stderr = [IO.Path]::GetTempFileName()
-  $process = $null
-  try {
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
-    $exe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $process = Start-Process -FilePath $exe -ArgumentList @(
-      '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded
-    ) -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
-    if (-not $process.WaitForExit($timeoutMs)) {
-      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-      [void]$process.WaitForExit(5000)
-      throw "diagnostic child exceeded $timeoutMs ms and was stopped"
-    }
-    if ($process.ExitCode -ne 0) {
-      throw "diagnostic child exited $($process.ExitCode)"
-    }
-    return [IO.File]::ReadAllText($stdout)
-  } finally {
-    if ($process -and -not $process.HasExited) {
-      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-    }
-    Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction SilentlyContinue
-  }
-}
-
 while ($true) {
   try {
     $r = Invoke-WebRequest -UseBasicParsing "$hub/e2e/cmd" -TimeoutSec 40
@@ -436,7 +490,13 @@ while ($true) {
         $res.elements = @(Elements $c.match @($c.types) $max)
       }
       'run'      { $res.output = (Invoke-Expression $c.script 2>&1 | Out-String -Width 220) }
-      'diagnostic' { $res.output = Invoke-BoundedDiagnostic $c.script ([int]$c.timeout_ms) }
+      'diagnostic' {
+        $d = Invoke-BoundedDiagnostic $c.script ([int]$c.timeout_ms)
+        $res.output = $d.output
+        $res.diagnostic_status = $d.status
+        $res.diagnostic_exit_code = $d.exit_code
+        $res.diagnostic_output_read = $d.output_read
+      }
       default    { $res.ok = $false; $res.error = "unknown op $($c.op)" }
     }
   } catch { $res.ok = $false; $res.error = "$_" }
