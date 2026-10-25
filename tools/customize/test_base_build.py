@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,7 @@ from tools.customize.base_build import (  # noqa: E402
 REPO = "aarohkandy/v0.0.1-auros"
 RUN_ID = 40000000001
 HEAD = "a" * 40
+AUTHORITY = "f" * 40
 
 
 def raw_recipe(extra: dict[str, object] | None = None) -> bytes:
@@ -70,15 +72,32 @@ def request() -> dict[str, object]:
         repository=REPO,
         run_id=RUN_ID,
         head_sha=HEAD,
+        authority_sha=AUTHORITY,
         raw_recipe=raw_recipe(),
     )
 
 
 class RunValidationTests(unittest.TestCase):
+    def test_keeps_authority_separate_from_selected_base_identity(self) -> None:
+        result = validate_run(
+            good_run(),
+            good_artifacts(),
+            repository=REPO,
+            run_id=RUN_ID,
+            head_sha=HEAD,
+            authority_sha=AUTHORITY,
+            raw_recipe=raw_recipe(),
+        )
+        self.assertEqual(result["version"], 2)
+        self.assertEqual(result["authority"], {"head_sha": AUTHORITY})
+        self.assertEqual(result["base_build"]["head_sha"], HEAD)
+
     def test_accepts_exact_green_main_build_and_fixed_artifact_ids(self) -> None:
         result = request()
         self.assertEqual(result["base_build"]["artifacts"]["installer"]["id"], 101)
         self.assertEqual(result["base_build"]["artifacts"]["metadata"]["id"], 102)
+        self.assertEqual(result["authority"], {"head_sha": AUTHORITY})
+        self.assertEqual(result["base_build"]["head_sha"], HEAD)
         self.assertEqual(result["recipe"]["resolved_preferences"], {"look": "dock", "theme": "moss"})
 
     def test_rejects_wrong_run_branch_source_or_conclusion(self) -> None:
@@ -103,6 +122,7 @@ class RunValidationTests(unittest.TestCase):
                         repository=REPO,
                         run_id=RUN_ID,
                         head_sha=HEAD,
+                        authority_sha=AUTHORITY,
                         raw_recipe=raw_recipe(),
                     )
 
@@ -121,6 +141,7 @@ class RunValidationTests(unittest.TestCase):
                     repository=REPO,
                     run_id=RUN_ID,
                     head_sha=HEAD,
+                    authority_sha=AUTHORITY,
                     raw_recipe=raw_recipe(),
                 )
 
@@ -145,6 +166,7 @@ class RunValidationTests(unittest.TestCase):
                     repository=REPO,
                     run_id=RUN_ID,
                     head_sha=HEAD,
+                    authority_sha=AUTHORITY,
                     raw_recipe=attack,
                 )
 
@@ -186,6 +208,8 @@ class FileValidationTests(unittest.TestCase):
             self.assertEqual(provenance["state"], "validated-base-pending-unsigned-build")
             self.assertFalse(provenance["signed"])
             self.assertFalse(provenance["download_ready"])
+            self.assertEqual(provenance["version"], 2)
+            self.assertEqual(provenance["authority"], {"head_sha": AUTHORITY})
             self.assertEqual(provenance["base_build"]["head_sha"], HEAD)
 
     def test_rejects_changed_commit_hash_size_url_or_installer(self) -> None:
@@ -196,6 +220,13 @@ class FileValidationTests(unittest.TestCase):
         def mutate_image(metadata: Path, installer: Path) -> None:
             (metadata / "image.bytes").write_text("42\n", encoding="ascii")
 
+        def mutate_tag(metadata: Path, installer: Path) -> None:
+            path = metadata / "build-info.txt"
+            path.write_text(
+                path.read_text().replace("v0.1.0-aaaaaaa", "v9.9.9-fffffff"),
+                encoding="utf-8",
+            )
+
         def mutate_pieces(metadata: Path, installer: Path) -> None:
             path = metadata / "pieces.txt"
             path.write_text(path.read_text().replace("github.com", "attacker.invalid"), encoding="utf-8")
@@ -203,7 +234,13 @@ class FileValidationTests(unittest.TestCase):
         def mutate_installer(metadata: Path, installer: Path) -> None:
             installer.write_bytes(installer.read_bytes() + b"changed")
 
-        for mutation in (mutate_commit, mutate_image, mutate_pieces, mutate_installer):
+        for mutation in (
+            mutate_commit,
+            mutate_image,
+            mutate_tag,
+            mutate_pieces,
+            mutate_installer,
+        ):
             with self.subTest(mutation=mutation.__name__), tempfile.TemporaryDirectory() as directory:
                 metadata, installer = self.fixture(Path(directory))
                 mutation(metadata, installer)
@@ -214,7 +251,7 @@ class FileValidationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             metadata, base = self.fixture(Path(directory))
             provenance = validate_files(request(), metadata, base)
-            custom = Path(directory) / "AurOS-Setup-UNSIGNED.exe"
+            custom = Path(directory) / "AurOS-Setup.exe"
             custom.write_bytes(b"MZcustom")
             finished = finish_provenance(provenance, custom)
             self.assertEqual(finished["state"], "unsigned-custom-artifact")
@@ -222,11 +259,34 @@ class FileValidationTests(unittest.TestCase):
             self.assertFalse(finished["public_release"])
             self.assertFalse(finished["download_ready"])
             self.assertEqual(finished["custom_installer"]["filename"], custom.name)
-            info = package_build_info(finished, custom, HEAD, 50000000001)
-            self.assertIn(f"commit {HEAD}, run 50000000001", info)
+            info = package_build_info(finished, custom, AUTHORITY, 50000000001)
+            self.assertIn(f"commit {AUTHORITY}, run 50000000001", info)
+            self.assertIn(f"base tag v0.1.0-aaaaaaa, commit {HEAD}, run {RUN_ID}", info)
             self.assertIn(
                 "state unsigned-custom-artifact; not published or download-ready", info
             )
+
+    def test_request_and_pending_provenance_are_fail_closed_v2(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_name:
+            directory = Path(directory_name)
+            metadata, base = self.fixture(directory)
+            for mutation in (
+                lambda value: value.update({"version": 1}),
+                lambda value: value.update({"unknown": True}),
+                lambda value: value.pop("authority"),
+                lambda value: value["base_build"].update({"unknown": True}),
+            ):
+                value = request()
+                mutation(value)
+                with self.subTest(value=value), self.assertRaises(BaseBuildError):
+                    validate_files(value, metadata, base)
+
+            pending = validate_files(request(), metadata, base)
+            pending["authority"]["unknown"] = True
+            custom = directory / "AurOS-Setup.exe"
+            custom.write_bytes(b"MZcustom")
+            with self.assertRaises(BaseBuildError):
+                finish_provenance(pending, custom)
 
 
 class PreserveProvenanceTests(unittest.TestCase):
@@ -322,6 +382,7 @@ class PreserveProvenanceTests(unittest.TestCase):
             lambda value: value["base_build"].update(
                 {"pieces_base": "https://attacker.invalid/pieces/"}
             ),
+            lambda value: value["base_build"].update({"tag": "v9.9.9-fffffff"}),
             lambda value: value.update({"repository": "attacker.invalid/repo/path"}),
             lambda value: value["base_build"].update({"opaque": "claim"}),
         )
@@ -337,6 +398,33 @@ class PreserveProvenanceTests(unittest.TestCase):
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_workflow_keeps_authority_and_selected_base_inputs_separate(self) -> None:
+        workflow = (ROOT / ".github/workflows/customize.yml").read_text(encoding="utf-8")
+        for input_name in ("base_build_run_id", "base_build_sha", "base_build_tag"):
+            self.assertRegex(
+                workflow,
+                rf"(?m)^      {input_name}:\n(?:        .*\n)*?        required: true$",
+            )
+        self.assertIn('[ "$GITHUB_REF" = refs/heads/main ]', workflow)
+        validate = workflow.split(
+            "python3 tools/customize/base_build.py validate-run", 1
+        )[1].split("\n\n", 1)[0]
+        self.assertIn('--head-sha "$BASE_BUILD_SHA"', validate)
+        self.assertIn('--authority-sha "$GITHUB_SHA"', validate)
+        self.assertIn(
+            "explicit base_build_tag does not match validated base metadata",
+            workflow,
+        )
+        finish = workflow.split(
+            "python3 tools/customize/base_build.py finish", 1
+        )[1].split("\n\n", 1)[0]
+        self.assertIn('--source-sha "$GITHUB_SHA"', finish)
+        prepare = workflow.split(
+            "python3 tools/customize/delivery.py prepare", 1
+        )[1].split("\n\n", 1)[0]
+        self.assertIn('--source-sha "$GITHUB_SHA"', prepare)
+        self.assertIn('--release-source-sha "$(tr -d', prepare)
+
     def test_extraction_creates_output_directory_before_all_five_resources(self) -> None:
         workflow = (ROOT / ".github/workflows/customize.yml").read_text(encoding="utf-8")
         extraction = workflow.split(

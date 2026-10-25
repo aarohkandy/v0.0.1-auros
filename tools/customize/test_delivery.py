@@ -23,6 +23,7 @@ from tools.customize.delivery import (  # noqa: E402
 
 REPOSITORY = "aarohkandy/v0.0.1-auros"
 SOURCE = "b" * 40
+AUTHORITY = "a" * 40
 RUN_ID = 50000000001
 BASE_RUN_ID = 40000000001
 TAG = "v0.1.0-bbbbbbb"
@@ -56,12 +57,13 @@ class Fixture:
         self.image_bytes_path.write_text(str(self.image_bytes) + "\n", encoding="ascii")
         provenance = {
             "schema": "org.auros.custom-package-provenance",
-            "version": 1,
+            "version": 2,
             "state": "unsigned-custom-artifact",
             "signed": False,
             "public_release": False,
             "download_ready": False,
             "repository": REPOSITORY,
+            "authority": {"head_sha": AUTHORITY},
             "base_build": {
                 "run_id": BASE_RUN_ID,
                 "head_sha": SOURCE,
@@ -91,7 +93,7 @@ class Fixture:
         )
         self.signing = root / "signing-provenance.txt"
         values = {
-            "source_commit": SOURCE,
+            "source_commit": AUTHORITY,
             "build_run": str(RUN_ID),
             "unsigned_wizard_sha256": "7" * 64,
             "signed_wizard_sha256": "8" * 64,
@@ -170,7 +172,7 @@ class Fixture:
             image_sha_path=self.image_sha_path,
             image_bytes_path=self.image_bytes_path,
             repository=REPOSITORY,
-            source_sha=SOURCE,
+            source_sha=AUTHORITY,
             release_source_sha=SOURCE,
             workflow_run_id=RUN_ID,
             signed_sha256=self.signed_sha,
@@ -181,6 +183,17 @@ class Fixture:
 
 
 class DeliveryTests(unittest.TestCase):
+    def test_authority_and_base_release_identities_remain_distinct(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            fixture = Fixture(Path(name))
+            plan, _output = fixture.prepare()
+            self.assertEqual(plan["version"], 2)
+            self.assertEqual(
+                plan["authority"],
+                {"head_sha": AUTHORITY, "workflow_run_id": RUN_ID},
+            )
+            self.assertEqual(plan["base"]["head_sha"], SOURCE)
+
     def test_request_id_is_optional_or_canonical_uuid(self) -> None:
         self.assertIsNone(validate_request_id(""))
         self.assertEqual(validate_request_id(REQUEST_ID), REQUEST_ID)
@@ -188,15 +201,15 @@ class DeliveryTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(DeliveryError):
                 validate_request_id(value)
 
-    def test_source_ref_is_main_or_exact_verified_release_tag(self) -> None:
+    def test_source_ref_is_main_at_the_exact_authority(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             fixture = Fixture(Path(name))
-            validate_source_ref("refs/heads/main", SOURCE, fixture.provenance)
-            validate_source_ref(f"refs/tags/{TAG}", SOURCE, fixture.provenance)
+            validate_source_ref("refs/heads/main", AUTHORITY, fixture.provenance)
             for ref, source in (
-                ("refs/tags/v0.1.0-aaaaaaa", SOURCE),
-                ("refs/heads/feature", SOURCE),
-                (f"refs/tags/{TAG}", "d" * 40),
+                ("refs/tags/v0.1.0-aaaaaaa", AUTHORITY),
+                (f"refs/tags/{TAG}", AUTHORITY),
+                ("refs/heads/feature", AUTHORITY),
+                ("refs/heads/main", SOURCE),
             ):
                 with self.subTest(ref=ref, source=source), self.assertRaises(
                     DeliveryError
@@ -232,7 +245,7 @@ class DeliveryTests(unittest.TestCase):
                     "image_sha_path": fixture.image_sha_path,
                     "image_bytes_path": fixture.image_bytes_path,
                     "repository": REPOSITORY,
-                    "source_sha": SOURCE,
+                    "source_sha": AUTHORITY,
                     "release_source_sha": SOURCE,
                     "workflow_run_id": RUN_ID,
                     "signed_sha256": fixture.signed_sha,
@@ -273,6 +286,43 @@ class DeliveryTests(unittest.TestCase):
                 )
                 with self.assertRaises(DeliveryError):
                     fixture.prepare()
+
+    def test_provenance_and_delivery_plan_are_fail_closed_v2(self) -> None:
+        for mutation in (
+            lambda value: value.update({"version": 1}),
+            lambda value: value.update({"unknown": True}),
+            lambda value: value.pop("authority"),
+            lambda value: value["authority"].update({"unknown": True}),
+        ):
+            with tempfile.TemporaryDirectory() as name:
+                fixture = Fixture(Path(name))
+                document = json.loads(fixture.provenance.read_text(encoding="utf-8"))
+                mutation(document)
+                fixture.provenance.write_text(json.dumps(document), encoding="utf-8")
+                with self.assertRaises(DeliveryError):
+                    fixture.prepare()
+
+        for mutation in (
+            lambda value: value.update({"version": 1}),
+            lambda value: value.update({"unknown": True}),
+            lambda value: value.pop("authority"),
+            lambda value: value["base"].pop("head_sha"),
+        ):
+            with tempfile.TemporaryDirectory() as name:
+                fixture = Fixture(Path(name))
+                plan, output = fixture.prepare()
+                plan_path = output / "delivery-plan.json"
+                document = json.loads(plan_path.read_text(encoding="utf-8"))
+                mutation(document)
+                plan_path.write_text(json.dumps(document), encoding="utf-8")
+                with self.assertRaises(DeliveryError):
+                    make_manifest(
+                        plan_path,
+                        fixture.release,
+                        SOURCE,
+                        fixture.signed,
+                        output / plan["manifest_name"],
+                    )
 
     def test_rejects_release_url_substitution_and_existing_names(self) -> None:
         for mutation in ("url", "exe conflict", "manifest conflict"):
@@ -337,7 +387,9 @@ class DeliveryTests(unittest.TestCase):
                 manifest_path,
             )
             self.assertEqual(manifest["state"], "download-ready")
-            self.assertEqual(manifest["source"]["workflow_run_id"], RUN_ID)
+            self.assertEqual(manifest["authority"]["workflow_run_id"], RUN_ID)
+            self.assertEqual(manifest["authority"]["head_sha"], AUTHORITY)
+            self.assertEqual(manifest["base"]["head_sha"], SOURCE)
             fixture.add_asset(
                 manifest_name,
                 manifest_path.stat().st_size,

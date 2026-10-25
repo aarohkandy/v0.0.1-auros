@@ -89,108 +89,44 @@ def _exact_fields(value: dict[str, Any], expected: set[str], name: str) -> None:
         _fail(f"{name} fields are invalid (missing={missing}, unknown={unknown})")
 
 
-def _strict_json(data: bytes) -> dict[str, Any]:
+def _strict_json(data: bytes, name: str = "provenance") -> dict[str, Any]:
     def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
         value: dict[str, Any] = {}
         for key, item in items:
             if key in value:
-                _fail(f"provenance contains duplicate field {key!r}")
+                _fail(f"{name} contains duplicate field {key!r}")
             value[key] = item
         return value
 
     try:
         value = json.loads(data.decode("utf-8"), object_pairs_hook=pairs)
     except UnicodeDecodeError:
-        _fail("provenance is not UTF-8")
+        _fail(f"{name} is not UTF-8")
     except json.JSONDecodeError as exc:
-        _fail(f"provenance is not one JSON document: {exc}")
+        _fail(f"{name} is not one JSON document: {exc}")
     if not isinstance(value, dict):
-        _fail("provenance must be a JSON object")
+        _fail(f"{name} must be a JSON object")
     return value
 
 
-def validate_unsigned_provenance(value: dict[str, Any], installer: Path) -> None:
-    """Validate every claim retained beside a later signed installer."""
+def _validate_authority(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        _fail("authority must be an object")
+    _exact_fields(value, {"head_sha"}, "authority")
+    if not COMMIT.fullmatch(str(value.get("head_sha"))):
+        _fail("authority commit is invalid")
+    return value
 
-    _exact_fields(
-        value,
-        {
-            "schema",
-            "version",
-            "state",
-            "signed",
-            "public_release",
-            "download_ready",
-            "repository",
-            "base_build",
-            "recipe",
-            "custom_installer",
-        },
-        "provenance",
-    )
-    if (
-        value.get("schema") != "org.auros.custom-package-provenance"
-        or type(value.get("version")) is not int
-        or value.get("version") != 1
-    ):
-        _fail("provenance schema or version is invalid")
-    if value.get("state") != "unsigned-custom-artifact":
-        _fail("provenance does not describe an unsigned custom artifact")
-    for field in ("signed", "public_release", "download_ready"):
-        if value.get(field) is not False:
-            _fail(f"provenance {field} must remain false")
 
-    repository = value.get("repository")
-    if not isinstance(repository, str) or not re.fullmatch(
-        r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", repository
-    ):
-        _fail("provenance repository is invalid")
-    base = value.get("base_build")
-    if not isinstance(base, dict):
-        _fail("provenance base_build must be an object")
-    _exact_fields(
-        base,
-        {
-            "run_id",
-            "head_sha",
-            "tag",
-            "profile",
-            "installer_sha256",
-            "image_sha256",
-            "image_bytes",
-            "pieces_sha256",
-            "pieces_base",
-        },
-        "base_build",
-    )
-    if type(base.get("run_id")) is not int or base["run_id"] <= 0:
-        _fail("base build run ID is invalid")
-    if not COMMIT.fullmatch(str(base.get("head_sha"))):
-        _fail("base build source commit is invalid")
-    if not re.fullmatch(r"v[0-9A-Za-z.+-]+-[0-9a-f]{7}", str(base.get("tag"))):
-        _fail("base build tag is invalid")
-    if base.get("profile") != "desktop":
-        _fail("base build profile is not deliverable")
-    for field in ("installer_sha256", "image_sha256", "pieces_sha256"):
-        if not SHA256.fullmatch(str(base.get(field))):
-            _fail(f"base build {field} is invalid")
-    if type(base.get("image_bytes")) is not int or base["image_bytes"] <= 0:
-        _fail("base image size is invalid")
-    expected_base = (
-        f"https://github.com/{repository}/releases/download/{base['tag']}/"
-    )
-    if base.get("pieces_base") != expected_base:
-        _fail("base pieces URL does not match the repository and tag")
-
-    recipe = value.get("recipe")
-    if not isinstance(recipe, dict):
-        _fail("provenance recipe must be an object")
-    _exact_fields(recipe, {"id", "base", "resolved_preferences"}, "recipe")
-    if not re.fullmatch(r"sha256:[0-9a-f]{64}", str(recipe.get("id"))):
+def _validate_recipe_claim(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        _fail("recipe must be an object")
+    _exact_fields(value, {"id", "base", "resolved_preferences"}, "recipe")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", str(value.get("id"))):
         _fail("recipe identity is invalid")
-    if recipe.get("base") != "desktop":
+    if value.get("base") != "desktop":
         _fail("recipe base is not deliverable")
-    preferences = recipe.get("resolved_preferences")
+    preferences = value.get("resolved_preferences")
     if not isinstance(preferences, dict):
         _fail("resolved recipe preferences must be an object")
     _exact_fields(preferences, {"look", "theme"}, "resolved preferences")
@@ -204,6 +140,158 @@ def validate_unsigned_provenance(value: dict[str, Any], installer: Path) -> None
         "slate",
     }:
         _fail("resolved recipe theme is invalid")
+    return value
+
+
+def _validate_request(value: dict[str, Any]) -> None:
+    _exact_fields(
+        value,
+        {
+            "schema",
+            "version",
+            "state",
+            "repository",
+            "authority",
+            "base_build",
+            "recipe",
+        },
+        "request",
+    )
+    if (
+        value.get("schema") != "org.auros.custom-package-request"
+        or type(value.get("version")) is not int
+        or value.get("version") != 2
+    ):
+        _fail("request schema or version is invalid")
+    if value.get("state") != "validated-inputs":
+        _fail("request state is invalid")
+    repository = value.get("repository")
+    if not isinstance(repository, str) or not re.fullmatch(
+        r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", repository
+    ):
+        _fail("request repository is invalid")
+    _validate_authority(value.get("authority"))
+    base = value.get("base_build")
+    if not isinstance(base, dict):
+        _fail("request base_build must be an object")
+    _exact_fields(
+        base,
+        {"run_id", "head_sha", "workflow", "branch", "artifacts"},
+        "request base_build",
+    )
+    if type(base.get("run_id")) is not int or base["run_id"] <= 0:
+        _fail("request base build run is invalid")
+    if not COMMIT.fullmatch(str(base.get("head_sha"))):
+        _fail("request base build commit is invalid")
+    if base.get("workflow") != RUN_WORKFLOW or base.get("branch") != "main":
+        _fail("request base build workflow or branch is invalid")
+    artifacts = base.get("artifacts")
+    if not isinstance(artifacts, dict):
+        _fail("request artifacts must be an object")
+    _exact_fields(artifacts, {"installer", "metadata"}, "request artifacts")
+    for field, expected_name in (
+        ("installer", INSTALLER_ARTIFACT),
+        ("metadata", METADATA_ARTIFACT),
+    ):
+        artifact = artifacts.get(field)
+        if not isinstance(artifact, dict):
+            _fail(f"request {field} artifact must be an object")
+        _exact_fields(artifact, {"name", "id"}, f"request {field} artifact")
+        if (
+            artifact.get("name") != expected_name
+            or type(artifact.get("id")) is not int
+            or artifact["id"] <= 0
+        ):
+            _fail(f"request {field} artifact is invalid")
+    _validate_recipe_claim(value.get("recipe"))
+
+
+def _validate_base_claim(value: Any, repository: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        _fail("provenance base_build must be an object")
+    _exact_fields(
+        value,
+        {
+            "run_id",
+            "head_sha",
+            "tag",
+            "profile",
+            "installer_sha256",
+            "image_sha256",
+            "image_bytes",
+            "pieces_sha256",
+            "pieces_base",
+        },
+        "base_build",
+    )
+    if type(value.get("run_id")) is not int or value["run_id"] <= 0:
+        _fail("base build run ID is invalid")
+    head_sha = str(value.get("head_sha"))
+    if not COMMIT.fullmatch(head_sha):
+        _fail("base build source commit is invalid")
+    tag = str(value.get("tag"))
+    match = re.fullmatch(r"v([0-9A-Za-z.+-]+)-([0-9a-f]{7})", tag)
+    if not match or match.group(2) != head_sha[:7]:
+        _fail("base build tag is invalid")
+    if value.get("profile") != "desktop":
+        _fail("base build profile is not deliverable")
+    for field in ("installer_sha256", "image_sha256", "pieces_sha256"):
+        if not SHA256.fullmatch(str(value.get(field))):
+            _fail(f"base build {field} is invalid")
+    if type(value.get("image_bytes")) is not int or value["image_bytes"] <= 0:
+        _fail("base image size is invalid")
+    expected_base = f"https://github.com/{repository}/releases/download/{tag}/"
+    if value.get("pieces_base") != expected_base:
+        _fail("base pieces URL does not match the repository and tag")
+    return value
+
+
+def _validate_provenance_header(
+    value: dict[str, Any], state: str, fields: set[str]
+) -> tuple[str, dict[str, Any]]:
+    _exact_fields(value, fields, "provenance")
+    if (
+        value.get("schema") != "org.auros.custom-package-provenance"
+        or type(value.get("version")) is not int
+        or value.get("version") != 2
+    ):
+        _fail("provenance schema or version is invalid")
+    if value.get("state") != state:
+        _fail(f"provenance does not describe {state}")
+    for field in ("signed", "public_release", "download_ready"):
+        if value.get(field) is not False:
+            _fail(f"provenance {field} must remain false")
+    repository = value.get("repository")
+    if not isinstance(repository, str) or not re.fullmatch(
+        r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", repository
+    ):
+        _fail("provenance repository is invalid")
+    _validate_authority(value.get("authority"))
+    base = _validate_base_claim(value.get("base_build"), repository)
+    _validate_recipe_claim(value.get("recipe"))
+    return repository, base
+
+
+def validate_unsigned_provenance(value: dict[str, Any], installer: Path) -> None:
+    """Validate every claim retained beside a later signed installer."""
+
+    _validate_provenance_header(
+        value,
+        "unsigned-custom-artifact",
+        {
+            "schema",
+            "version",
+            "state",
+            "signed",
+            "public_release",
+            "download_ready",
+            "repository",
+            "authority",
+            "base_build",
+            "recipe",
+            "custom_installer",
+        },
+    )
 
     custom = value.get("custom_installer")
     if not isinstance(custom, dict):
@@ -254,6 +342,7 @@ def validate_run(
     repository: str,
     run_id: int,
     head_sha: str,
+    authority_sha: str,
     raw_recipe: bytes,
 ) -> dict[str, Any]:
     """Validate API data and return inert request/provenance input."""
@@ -261,7 +350,9 @@ def validate_run(
     if not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", repository):
         _fail("repository is not an owner/name")
     if run_id <= 0 or not COMMIT.fullmatch(head_sha):
-        _fail("run ID or packaging checkout SHA is invalid")
+        _fail("run ID or base build SHA is invalid")
+    if not COMMIT.fullmatch(authority_sha):
+        _fail("packaging authority SHA is invalid")
     if run.get("id") != run_id:
         _fail("GitHub returned a different build run")
     if run.get("name") != "build" or run.get("path") != RUN_WORKFLOW:
@@ -296,9 +387,10 @@ def validate_run(
 
     return {
         "schema": "org.auros.custom-package-request",
-        "version": 1,
+        "version": 2,
         "state": "validated-inputs",
         "repository": repository,
+        "authority": {"head_sha": authority_sha},
         "base_build": {
             "run_id": run_id,
             "head_sha": head_sha,
@@ -322,10 +414,9 @@ def validate_files(
 ) -> dict[str, Any]:
     """Cross-check the downloaded small metadata and normal base installer."""
 
-    if request.get("schema") != "org.auros.custom-package-request":
-        _fail("request file has the wrong schema")
-    base_build = request.get("base_build") or {}
-    repository = request.get("repository")
+    _validate_request(request)
+    base_build = request["base_build"]
+    repository = request["repository"]
     head_sha = base_build.get("head_sha")
     run_id = base_build.get("run_id")
     if not isinstance(repository, str) or not COMMIT.fullmatch(str(head_sha)) or type(run_id) is not int:
@@ -351,6 +442,9 @@ def validate_files(
     if not first or first.group(2) != head_sha or int(first.group(3)) != run_id:
         _fail("build-info does not identify the selected run and commit")
     tag = first.group(1)
+    tag_match = re.fullmatch(r"v([0-9A-Za-z.+-]+)-([0-9a-f]{7})", tag)
+    if not tag_match or tag_match.group(2) != head_sha[:7]:
+        _fail("build-info tag does not match the selected base commit")
 
     image_line = re.search(
         r"^image ([0-9]+) bytes, sha256 ([0-9a-f]{64}); gzip [0-9]+ bytes \(sha256 [0-9a-f]{64}\) in [0-9]+ pieces$",
@@ -392,12 +486,13 @@ def validate_files(
 
     return {
         "schema": "org.auros.custom-package-provenance",
-        "version": 1,
+        "version": 2,
         "state": "validated-base-pending-unsigned-build",
         "signed": False,
         "public_release": False,
         "download_ready": False,
         "repository": repository,
+        "authority": {"head_sha": request["authority"]["head_sha"]},
         "base_build": {
             "run_id": run_id,
             "head_sha": head_sha,
@@ -414,8 +509,24 @@ def validate_files(
 
 
 def finish_provenance(provenance: dict[str, Any], installer: Path) -> dict[str, Any]:
-    if provenance.get("state") != "validated-base-pending-unsigned-build":
-        _fail("provenance is not ready to record a custom build")
+    _validate_provenance_header(
+        provenance,
+        "validated-base-pending-unsigned-build",
+        {
+            "schema",
+            "version",
+            "state",
+            "signed",
+            "public_release",
+            "download_ready",
+            "repository",
+            "authority",
+            "base_build",
+            "recipe",
+        },
+    )
+    if installer.name != "AurOS-Setup.exe":
+        _fail("custom installer filename is invalid")
     try:
         size = installer.stat().st_size
         with installer.open("rb") as stream:
@@ -443,10 +554,11 @@ def package_build_info(
 ) -> str:
     """Build the signer-facing identity file without making a release claim."""
 
-    if provenance.get("state") != "unsigned-custom-artifact":
-        _fail("finished provenance is required for package build-info")
+    validate_unsigned_provenance(provenance, installer)
     if not COMMIT.fullmatch(source_sha) or run_id <= 0:
         _fail("custom package source or run identity is invalid")
+    if source_sha != provenance["authority"]["head_sha"]:
+        _fail("custom package source does not match provenance authority")
     base = provenance.get("base_build") or {}
     tag = base.get("tag")
     match = re.fullmatch(r"v([0-9A-Za-z.+-]+)-[0-9a-f]{7}", str(tag))
@@ -461,7 +573,7 @@ def package_build_info(
     return (
         f"tag custom-{recipe_id[7:19]} (os_version {match.group(1)}, commit {source_sha}, run {run_id})\n"
         "state unsigned-custom-artifact; not published or download-ready\n"
-        f"base tag {tag}, run {base.get('run_id')}, image sha256 {base.get('image_sha256')}\n"
+        f"base tag {tag}, commit {base.get('head_sha')}, run {base.get('run_id')}, image sha256 {base.get('image_sha256')}\n"
         f"AurOS-Setup.exe {custom['bytes']} bytes, sha256 {custom['sha256']}\n"
     )
 
@@ -497,6 +609,7 @@ def main(argv: list[str] | None = None) -> int:
     validate.add_argument("--repository", required=True)
     validate.add_argument("--run-id", required=True, type=int)
     validate.add_argument("--head-sha", required=True)
+    validate.add_argument("--authority-sha", required=True)
     validate.add_argument("--recipe-env", default="AUROS_RECIPE_JSON")
     validate.add_argument("--recipe-output", required=True, type=Path)
     validate.add_argument("--request", required=True, type=Path)
@@ -540,6 +653,7 @@ def main(argv: list[str] | None = None) -> int:
                 repository=args.repository,
                 run_id=args.run_id,
                 head_sha=args.head_sha,
+                authority_sha=args.authority_sha,
                 raw_recipe=raw.encode("utf-8"),
             )
             _write_json(args.request, result)
@@ -553,13 +667,13 @@ def main(argv: list[str] | None = None) -> int:
                 },
             )
         elif args.command == "verify-files":
-            request = json.loads(_read_text(args.request))
+            request = _strict_json(_read_text(args.request).encode("utf-8"), "request")
             _write_json(
                 args.provenance,
                 validate_files(request, args.metadata, args.installer),
             )
         elif args.command == "finish":
-            provenance = json.loads(_read_text(args.provenance))
+            provenance = _strict_json(_read_text(args.provenance).encode("utf-8"))
             finished = finish_provenance(provenance, args.installer)
             _write_json(args.provenance, finished)
             args.build_info.write_text(
