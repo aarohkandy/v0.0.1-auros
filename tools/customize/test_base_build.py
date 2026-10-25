@@ -400,12 +400,18 @@ class PreserveProvenanceTests(unittest.TestCase):
 class WorkflowContractTests(unittest.TestCase):
     def test_workflow_keeps_authority_and_selected_base_inputs_separate(self) -> None:
         workflow = (ROOT / ".github/workflows/customize.yml").read_text(encoding="utf-8")
-        for input_name in ("base_build_run_id", "base_build_sha", "base_build_tag"):
+        for input_name in (
+            "authority_sha",
+            "base_build_run_id",
+            "base_build_sha",
+            "base_build_tag",
+        ):
             self.assertRegex(
                 workflow,
                 rf"(?m)^      {input_name}:\n(?:        .*\n)*?        required: true$",
             )
         self.assertIn('[ "$GITHUB_REF" = refs/heads/main ]', workflow)
+        self.assertIn('[ "$AUTHORITY_SHA" = "$GITHUB_SHA" ]', workflow)
         validate = workflow.split(
             "python3 tools/customize/base_build.py validate-run", 1
         )[1].split("\n\n", 1)[0]
