@@ -4137,7 +4137,7 @@ static void do_restart(void)
         detail[PLAT_WHY - 1] = 0;
         _snwprintf(message, PLAT_WHY + 159,
                    L"AurOS could not prepare this restart.\n\n%ls\n\n"
-                   L"This computer still starts Windows as usual. You can press Restart now again.",
+                   L"The restart was not completed. After fixing the issue above, press Restart now again.",
                    detail);
         message[PLAT_WHY + 159] = 0;
         MessageBoxW(g_hwnd, message, L"AurOS Setup", MB_OK | MB_ICONWARNING);
@@ -5471,11 +5471,15 @@ static int shot_run(const char *dir)
     fx_machine(0); fx_ready();
 #if defined(AB_CHOICE_BRING_WIFI) && defined(AB_CHOICE_BITLOCKER_PAUSE)
     /* only when the engine can carry them (A2): her Wi-Fi, and the drive
-     * lock paused for one restart (D10, D11, D13) */
+     * protection pause that lasts until Windows starts again (D10, D11, D13) */
     g_report.wifi_connected = 1;
     snprintf(g_report.wifi_name, sizeof g_report.wifi_name, "HomeNet");
     g_report.volumes[0].bitlocker = 1;
     g_page = PAGE_READY; shot_save(dir, "4c-ready-wifi-lock");
+    for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_WIFI) g_focus = i;
+    g_focus_ring = 1; focus_visible();
+    shot_save(dir, "4c-ready-wifi-lock-choice");
+    g_focus = -1; g_focus_ring = 0; g_scroll[PAGE_READY] = 0;
     g_report.wifi_connected = 0; g_report.volumes[0].bitlocker = 0;
 #endif
     fx_machine(1); fx_ready(); g_sel_style = 2;
@@ -5535,6 +5539,12 @@ static int shot_run(const char *dir)
         g_report.volumes[0].bitlocker = 1;
 #endif
         g_page = PAGE_READY;   snprintf(n, sizeof n, "%s-4a-ready", SZ[k].pre);         shot_save(dir, n);
+#if defined(AB_CHOICE_BRING_WIFI) && defined(AB_CHOICE_BITLOCKER_PAUSE)
+        for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_WIFI) g_focus = i;
+        g_focus_ring = 1; focus_visible();
+        snprintf(n, sizeof n, "%s-4c-ready-wifi-choice", SZ[k].pre); shot_save(dir, n);
+        g_focus = -1; g_focus_ring = 0; g_scroll[PAGE_READY] = 0;
+#endif
         g_page = PAGE_PROGRESS;
         g_install_running = 1; g_install_finished = 0;
         g_ab_phase = AB_PREPARE; g_ab_pct = 41; g_eta_min = 12;
