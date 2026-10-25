@@ -3,18 +3,33 @@
 #include <stdint.h>
 
 #include "nightlight.h"
-#include "foot.h"
 
 static int usable(const surface *s)
 {
-    return s && s->px && s->w > 0 && s->h > 0 && s->stride >= s->w &&
-           (size_t)s->h <= SIZE_MAX / (size_t)s->stride;
+    if (!s || !s->px || s->w <= 0 || s->h <= 0 || s->stride < s->w) return 0;
+    if ((size_t)s->stride > SIZE_MAX / sizeof *s->px) return 0;
+    size_t row_bytes = (size_t)s->stride * sizeof *s->px;
+    return (size_t)s->h <= SIZE_MAX / row_bytes;
+}
+
+static int overlaps(const surface *a, const surface *b)
+{
+    /* Conservatively cover every byte from the first visible pixel through
+     * the last. Row padding may make that interval wider than the bytes we
+     * touch, which is preferable to accepting an ambiguous alias. */
+    size_t an = ((size_t)(a->h - 1) * (size_t)a->stride + (size_t)a->w) *
+                sizeof *a->px;
+    size_t bn = ((size_t)(b->h - 1) * (size_t)b->stride + (size_t)b->w) *
+                sizeof *b->px;
+    uintptr_t ap = (uintptr_t)a->px, bp = (uintptr_t)b->px;
+    if (an > UINTPTR_MAX - ap || bn > UINTPTR_MAX - bp) return 1;
+    return ap < bp + bn && bp < ap + an;
 }
 
 int nightlight_blit(surface *dst, const surface *src, int on)
 {
     if (!usable(dst) || !usable(src) || dst->w != src->w || dst->h != src->h ||
-        dst->px == src->px)
+        overlaps(dst, src))
         return -1;
 
     for (int y = 0; y < src->h; y++) {
@@ -43,9 +58,8 @@ int nightlight_set(shell_ctx *c, int on)
 {
     if (!c || (on != 0 && on != 1)) return 0;
     if (!c->night_frame && on) {
-        int h = c->screen_h + foot_height(c);
-        if (c->screen_w <= 0 || h <= 0) return 0;
-        c->night_frame = surface_new(c->screen_w, h);
+        if (c->output_w <= 0 || c->output_h <= 0) return 0;
+        c->night_frame = surface_new(c->output_w, c->output_h);
         if (!c->night_frame) return 0;
     }
     c->night_light = on;
@@ -54,16 +68,25 @@ int nightlight_set(shell_ctx *c, int on)
 
 surface *nightlight_frame(shell_ctx *c, surface *display)
 {
-    if (!c || !display || !c->night_frame) return display;
-    if (c->night_frame->w != display->w || c->night_frame->h != display->h)
-        return display;
+    if (!c || !display) return NULL;
+    if (!c->night_frame) return display;
+    if (c->night_frame->w != display->w || c->night_frame->h != display->h) {
+        surface *replacement = surface_new(display->w, display->h);
+        if (!replacement) {
+            nightlight_fini(c);
+            return NULL;
+        }
+        surface_free(c->night_frame);
+        c->night_frame = replacement;
+    }
     return c->night_frame;
 }
 
-void nightlight_present(shell_ctx *c, surface *display)
+int nightlight_present(shell_ctx *c, surface *display)
 {
-    if (!c || !display || !c->night_frame) return;
-    (void)nightlight_blit(display, c->night_frame, c->night_light);
+    if (!c || !display) return -1;
+    if (!c->night_frame) return 0;
+    return nightlight_blit(display, c->night_frame, c->night_light);
 }
 
 void nightlight_fini(shell_ctx *c)

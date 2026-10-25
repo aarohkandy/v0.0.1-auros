@@ -246,6 +246,10 @@ typedef struct shell_ctx_s {
      * rescue is most of the screen. docs/SHELLS.md states the rule:
      * one function owns geometry, called by painting AND hit-testing. */
     int   screen_w, screen_h;
+    /* Physical output dimensions do not change during this process. Keep
+     * them separate from screen_h, which excludes a band whose height can
+     * change before the main loop recomputes the layout. */
+    int   output_w, output_h;
     /* Once night light has been used, every frame is painted untinted here
      * and copied to scanout. Keeping the source separate prevents a second
      * repaint from warming pixels that were already warmed. */
