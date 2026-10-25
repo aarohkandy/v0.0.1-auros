@@ -47,6 +47,7 @@
 #include "run.h"
 #include "press.h"
 #include "textsys.h"
+#include "nightlight.h"
 #include "../aurwl/aurwl.h"
 #include "pad.h"
 #include "kms.h"
@@ -1754,6 +1755,10 @@ int main(int argc, char **argv)
 
         if (dirty) {
             surface *fb = kms_back_surface(disp);
+            /* Once night light has been used, paint into an untinted frame.
+             * The display copy is made only after every layer and the cursor,
+             * so client buffers stay untouched and tint cannot accumulate. */
+            surface *frame = nightlight_frame(&c, fb);
             /* Cleared before the archetype paints, so the rectangles it
              * records are this frame's and input routes against what is
              * on screen rather than what was. */
@@ -1764,35 +1769,35 @@ int main(int argc, char **argv)
              * at the bottom is unreachable from a layout by
              * construction rather than by agreement -- which is why no
              * archetype needed editing to gain it. */
-            surface body = *fb;
+            surface body = *frame;
             body.h = c.screen_h;
             L->paint(&c, &body, &f, wall);
             session_paint_full(&c, &body);
             session_paint_popups(&c, &body);
             /* Above the archetype and below the panels: a card must
              * not cover a screen she opened deliberately. */
-            if (!SHELL_PANEL_OPEN(&c)) notify_paint(&c, fb, &f);
-            net_paint(&c, fb, &f);
-            settings_paint(&c, fb, &f);
-            bt_paint(&c, fb, &f);
-            wish_paint(&c, fb, &f);
+            if (!SHELL_PANEL_OPEN(&c)) notify_paint(&c, frame, &f);
+            net_paint(&c, frame, &f);
+            settings_paint(&c, frame, &f);
+            bt_paint(&c, frame, &f);
+            wish_paint(&c, frame, &f);
             /* AFTER the other panels and BEFORE the band. It is the
              * only panel nothing opened on purpose, so it must not be
              * underneath one she did open -- and the band stays on top
              * because the way out of everything is always the band. */
-            welcome_paint(&c, fb, &f);
+            welcome_paint(&c, frame, &f);
             /* Over the welcome question too: a page shouting at her, or
              * a stranger's program arriving, outranks it. Under the band. */
-            guard_paint(&c, fb, &f);
-            foot_paint(&c, fb, &f);
+            guard_paint(&c, frame, &f);
+            foot_paint(&c, frame, &f);
             /* What a wish put on the screen: a fill covers everything,
              * the band included, until the first key or press; cards
              * stay inside the desktop's own height. */
-            wishover_paint(&c, fb, &f);
+            wishover_paint(&c, frame, &f);
             /* Last, over everything including the band: it is the
              * answer to a key that was just pressed, and an answer
              * behind a window is not one. */
-            osd_paint(&c, fb, &f);
+            osd_paint(&c, frame, &f);
             /* A picture of the screen, taken HERE -- after everything
              * has been painted and before it is handed to the display
              * -- because that is the only moment the thing she is
@@ -1822,7 +1827,7 @@ int main(int argc, char **argv)
                 snprintf(path, sizeof path, "%s/%s.png", dir, when);
                 /* It says WHERE it put it, because a file she cannot
                  * find is a file that does not exist. */
-                if (png_write_rgb(path, fb->px, fb->w, fb->h) == 0) {
+                if (png_write_rgb(path, frame->px, frame->w, frame->h) == 0) {
                     char msg[200];
                     snprintf(msg, sizeof msg,
                              "Picture saved in your Pictures folder: %s", when);
@@ -1833,7 +1838,11 @@ int main(int argc, char **argv)
                 dirty = 1;
             }
 
-            session_paint_cursor(&c, fb);
+            session_paint_cursor(&c, frame);
+            /* Display colour adjustment belongs after screenshots and after
+             * the cursor. It changes only the KMS copy, never the canonical
+             * frame or a client's retained surface. */
+            nightlight_present(&c, fb);
             /* A failed flip is not cosmetic: it means we no longer own
              * the display. Say so once rather than painting into the
              * void for the rest of the session. */
@@ -2389,6 +2398,7 @@ int main(int argc, char **argv)
     if (L->fini) L->fini(&c);
     free_fonts(&f);
     surface_free(wall);
+    nightlight_fini(&c);
     kms_close(disp);
     fprintf(stderr, "aurshell: exit\n");
     return 0;
