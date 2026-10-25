@@ -421,6 +421,13 @@ class WorkflowContractTests(unittest.TestCase):
             "explicit base_build_tag does not match validated base metadata",
             workflow,
         )
+        cross_check = workflow.split(
+            "- name: cross-check the archived installer and image metadata", 1
+        )[1].split("\n      - name:", 1)[0]
+        self.assertRegex(
+            cross_check,
+            r"(?m)^        env:\n          BASE_BUILD_TAG: \$\{\{ inputs[.]base_build_tag \}\}$",
+        )
         finish = workflow.split(
             "python3 tools/customize/base_build.py finish", 1
         )[1].split("\n\n", 1)[0]
