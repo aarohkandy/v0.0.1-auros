@@ -49,8 +49,11 @@ export LC_ALL=C DEBIAN_FRONTEND=noninteractive
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 AC="$ROOT/build/aptchannel"
 BREAK=""
+# --publisher-only runs package/publisher negatives without installing updates.
+PUBLISHER_ONLY=0
 for a in "$@"; do
     case "$a" in
+        --publisher-only) PUBLISHER_ONLY=1 ;;
         --break=trusted|--break=signedby|--break=pin|--break=origin|--break=keep) BREAK=${a#--break=} ;;
         *) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
     esac
@@ -287,6 +290,49 @@ PYFIX
     bash "$AC" --profile revive sign "$T/mutation-$mutation" "$A" >/dev/null || need "mutation signing failed"
     bash "$AC" --profile revive verify "$T/mutation-$mutation" "$T/A.asc" >/dev/null 2>&1 && bad "signed $mutation mutation refused" || ok "signed $mutation mutation refused"
 done
+# A signature authenticates only the named hashes. Both index files must be
+# bound to it exactly once; a valid package's own hashes cannot fill that gap.
+for mutation in missing-plain missing-gzip missing-both missing-stanza duplicate-record duplicate-stanza duplicate-stanza-space duplicate-stanza-case unindented-record traversal extra-record bad-size bad-hash extra-token; do
+    cp -a "$T/profile-revive" "$T/hash-$mutation"
+    python3 - "$T/hash-$mutation/Release" "$mutation" <<'PYHASH'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1]); mutation = sys.argv[2]
+lines = path.read_text().splitlines()
+start = lines.index("SHA256:")
+end = start + 1
+while end < len(lines) and lines[end].startswith(" "):
+    end += 1
+records = lines[start+1:end]
+assert len(records) == 2
+if mutation.startswith("missing-"):
+    if mutation == "missing-stanza":
+        lines[start:end] = []
+    else:
+        remove = {"missing-plain": {"Packages"}, "missing-gzip": {"Packages.gz"}, "missing-both": {"Packages", "Packages.gz"}}[mutation]
+        lines[start+1:end] = [r for r in records if r.split()[-1] not in remove]
+elif mutation == "duplicate-record":
+    lines[start+1:end] = records + [records[0]]
+elif mutation.startswith("duplicate-stanza"):
+    header = {"duplicate-stanza": "SHA256:", "duplicate-stanza-space": "SHA256: ", "duplicate-stanza-case": "sha256:"}[mutation]
+    lines[start:end] = ["SHA256:"] + records + [header] + records
+elif mutation == "unindented-record":
+    lines.insert(end, records[0].lstrip())
+else:
+    parts = records[0].split()
+    if mutation == "traversal": parts[2] = "../Packages"
+    elif mutation == "extra-record":
+        lines.insert(end, " " + " ".join(parts[:2] + ["Other"]))
+    elif mutation == "bad-size": parts[1] = "-1"
+    elif mutation == "bad-hash": parts[0] = "g" * 64
+    elif mutation == "extra-token": parts.append("unexpected")
+    if mutation != "extra-record": lines[start+1] = " " + " ".join(parts)
+path.write_text("\n".join(lines) + "\n")
+PYHASH
+    bash "$AC" --profile revive sign "$T/hash-$mutation" "$A" >/dev/null || need "hash mutation signing failed"
+    bash "$AC" --profile revive verify "$T/hash-$mutation" "$T/A.asc" >/dev/null 2>&1 && bad "signed $mutation hash records refused" || ok "signed $mutation hash records refused"
+done
+
 for profile in revive multilingual; do
     bash "$AC" --profile "$profile" image "$T/rfs-$profile" "$profile" 1 >/dev/null 2>"$T/log/image-guard" && bad "$profile image activation refused" || {
         grep -q 'profile image channels remain disabled' "$T/log/image-guard" && ok "$profile image activation refused" || bad "$profile image activation refused for intended reason"
@@ -295,6 +341,10 @@ done
 for invalid in office school-kiosk '' '../desktop'; do
     bash "$AC" --profile "$invalid" descriptor >/dev/null 2>&1 && bad "unavailable profile '$invalid' refused" || ok "unavailable profile '$invalid' refused"
 done
+if [ "$PUBLISHER_ONLY" = 1 ]; then
+    echo "updatetest publisher: $checked checks, $fail failed"
+    [ "$fail" = 0 ]; exit $?
+fi
 # One trusted signing key is intentionally shared: only label/suite policy
 # can reject a wrong channel, not a different signing key.
 cp "$T/A.asc" /usr/share/keyrings/auros-archive-keyring.asc
