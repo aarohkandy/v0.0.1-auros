@@ -325,7 +325,7 @@ load_profile() {
         esac
     fi
     case "${input_method:-}" in
-        ''|ibus) ;;
+        ''|ibus|fcitx) ;;
         *) die "profile '$profile_id' names unsupported input_method '$input_method'" ;;
     esac
 }
@@ -1624,6 +1624,7 @@ stage_overlay() {
     chmod 755 "$RFS/usr/lib/auros/first-session-probe" \
         || die "could not make the first-session probe executable"
     sh "$ROOT/build/configure-input-method" "$RFS" "${input_method:-}" \
+        "${keyboard_layout:-}" \
         || die "could not configure input method '${input_method:-none}'"
 
     # THE BOOT CHAIN BELONGS TO AUROS, NOT TO update-grub AND grub-install.

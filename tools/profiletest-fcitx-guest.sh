@@ -1,8 +1,9 @@
 #!/bin/sh
 # NOT PART OF AUROS. Injected only into a disposable profiletest image.
-# It installs Noble Fcitx packages in that copy, then proves composition and a
-# parented-popup protocol syntax. Connection identity and candidate pixels stay
-# explicitly unproven. It never writes expected text.
+# In legacy mode it installs Noble Fcitx packages into a retained IBus image.
+# Production mode instead certifies the already-shipped Fcitx service without
+# replacing it. Both prove composition and parented-popup protocol syntax;
+# Firefox connection identity and candidate-pixel attribution remain unproven.
 set -u
 S=/dev/ttyS0
 STATE=/var/lib/auros-profiletest/fcitx
@@ -12,6 +13,12 @@ say() { printf '\nPROFILETEST %s\n' "$*" > "$S"; }
 mkdir -p "$STATE" "$HOST" "$RUNTIME"
 SECURITY=0
 [ -f /usr/lib/auros-profiletest/fcitx-security.enabled ] && SECURITY=1
+PRODUCTION=0
+[ -f /usr/lib/auros-profiletest/fcitx-production.enabled ] && PRODUCTION=1
+[ "$PRODUCTION" = 0 ] || [ "$SECURITY" = 0 ] || {
+    printf 'status=fail\nreason=production and security modes cannot be combined\n' > "$STATE/result"
+    sync; say "fcitx-probe=fail reason=production and security modes cannot be combined"; say done; exit 0
+}
 security_round=1
 if [ "$SECURITY" = 1 ] && [ "$(cat "$STATE/security-next-round" 2>/dev/null)" = 2 ]; then
     security_round=2
@@ -87,7 +94,9 @@ display=$(printf '%s\n' "$user_env" | sed -n 's/^DISPLAY=//p' | tail -1)
 }
 
 config_snapshot() {
-    if [ -e "$desktop_home/.config/fcitx5" ]; then
+    if [ "$PRODUCTION" = 1 ] && [ -f "$desktop_home/.config/fcitx5/profile" ]; then
+        sha256sum "$desktop_home/.config/fcitx5/profile" | awk '{print $1}'
+    elif [ -e "$desktop_home/.config/fcitx5" ]; then
         tar -C "$desktop_home/.config" -cf - fcitx5 2>/dev/null | sha256sum | awk '{print $1}'
     else
         printf absent
@@ -101,12 +110,14 @@ for unit in auros-profiletest-fcitx-mousepad auros-profiletest-fcitx-mousepad-b 
     as_desktop systemctl --user stop "$unit" >/dev/null 2>&1 || true
 done
 printf 'diagnostic_only=yes\n' > "$STATE/probe.log"
+printf 'source=%s\n' "$( [ "$PRODUCTION" = 1 ] && echo shipped-fcitx || echo retained-ibus-conversion )" \
+    >> "$STATE/probe.log"
 printf 'focus_password_reboot_proof=unproven\n' >> "$STATE/probe.log"
 printf 'connection_identity=unproven\ncandidate_pixels_attributed=unproven\n' >> "$STATE/probe.log"
 [ "$SECURITY" = 0 ] || printf 'security_stage=yes\nsecurity_round=%s\n' "$security_round" >> "$STATE/probe.log"
 
 # Package failure is diagnostic unavailability, distinct from product failure.
-if ! timeout 300 apt-get update -q > "$STATE/apt-update.log" 2>&1; then
+if [ "$PRODUCTION" = 0 ] && ! timeout 300 apt-get update -q > "$STATE/apt-update.log" 2>&1; then
     printf 'status=unavailable\nreason=Noble package indexes unavailable\n' > "$STATE/result"
     printf 'ordinary_service_ready=%s\nuser_config_unchanged=%s\n' \
         "$( [ "$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null)" = active ] && echo 1 || echo 0 )" \
@@ -114,7 +125,7 @@ if ! timeout 300 apt-get update -q > "$STATE/apt-update.log" 2>&1; then
     sync
     say "fcitx-probe=unavailable reason=Noble package indexes unavailable"; say done; exit 0
 fi
-if ! DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y -q --no-install-recommends \
+if [ "$PRODUCTION" = 0 ] && ! DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y -q --no-install-recommends \
         fcitx5 fcitx5-frontend-gtk3 fcitx5-pinyin > "$STATE/apt-install.log" 2>&1; then
     printf 'status=unavailable\nreason=Noble Fcitx packages unavailable\n' > "$STATE/result"
     printf 'ordinary_service_ready=%s\nuser_config_unchanged=%s\n' \
@@ -136,9 +147,26 @@ if ! grep -Fqx 'fcitx5=5.1.7-1build3' "$STATE/package-versions.txt" || \
     say "fcitx-probe=fail reason=source-reviewed package versions mismatch"; say done; exit 0
 fi
 
-CFG="$RUNTIME/config"; CACHE="$RUNTIME/cache"; DATA="$RUNTIME/data"
-mkdir -p "$CFG/fcitx5" "$CACHE" "$DATA"
-cat > "$CFG/fcitx5/profile" <<'EOF'
+if [ "$PRODUCTION" = 1 ]; then
+    CFG="$desktop_home/.config"; CACHE="$desktop_home/.cache"; DATA="$desktop_home/.local/share"
+    [ "$(as_desktop systemctl --user is-active auros-fcitx.service 2>/dev/null)" = active ] || {
+        printf 'status=fail\nreason=shipped Fcitx service inactive\n' > "$STATE/result"
+        sync; say "fcitx-probe=fail reason=shipped Fcitx service inactive"; say done; exit 0
+    }
+    [ "$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null)" = inactive ] || {
+        printf 'status=fail\nreason=conflicting shipped IBus service active\n' > "$STATE/result"
+        sync; say "fcitx-probe=fail reason=conflicting shipped IBus service active"; say done; exit 0
+    }
+    grep -qx 'Default Layout=fr' "$CFG/fcitx5/profile" 2>/dev/null && \
+        grep -qx 'Name=keyboard-fr' "$CFG/fcitx5/profile" 2>/dev/null && \
+        grep -qx 'DefaultIM=pinyin' "$CFG/fcitx5/profile" 2>/dev/null || {
+            printf 'status=fail\nreason=shipped Fcitx profile mismatch\n' > "$STATE/result"
+            sync; say "fcitx-probe=fail reason=shipped Fcitx profile mismatch"; say done; exit 0
+        }
+else
+    CFG="$RUNTIME/config"; CACHE="$RUNTIME/cache"; DATA="$RUNTIME/data"
+    mkdir -p "$CFG/fcitx5" "$CACHE" "$DATA"
+    cat > "$CFG/fcitx5/profile" <<'EOF'
 [Groups/0]
 Name=Default
 Default Layout=us
@@ -155,6 +183,7 @@ Layout=
 [GroupOrder]
 0=Default
 EOF
+fi
 chown -R "$desktop_user" "$RUNTIME"
 
 ibus_stopped=0; fcitx_pid=; mouse_pid=; mouse_b_pid=; firefox_pid=; password_pid=; http_pid=; password_http_pid=; password_summary=; password_focus=; connection_probe_pid=; final_state=fail; final_reason=unexpected_exit
@@ -171,8 +200,12 @@ PY
 }
 
 as_fcitx_desktop() {
-    as_desktop env -u DISPLAY GTK_IM_MODULE=fcitx GDK_BACKEND=wayland WAYLAND_DISPLAY="$wayland" \
-        XDG_CONFIG_HOME="$CFG" XDG_CACHE_HOME="$CACHE" XDG_DATA_HOME="$DATA" "$@"
+    if [ "$PRODUCTION" = 1 ]; then
+        as_desktop env -u DISPLAY WAYLAND_DISPLAY="$wayland" "$@"
+    else
+        as_desktop env -u DISPLAY GTK_IM_MODULE=fcitx GDK_BACKEND=wayland WAYLAND_DISPLAY="$wayland" \
+            XDG_CONFIG_HOME="$CFG" XDG_CACHE_HOME="$CACHE" XDG_DATA_HOME="$DATA" "$@"
+    fi
 }
 fcitx_owner_pid() {
     as_fcitx_desktop busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
@@ -241,19 +274,36 @@ restore_and_finish() {
     fi
     password_http_pid=
     [ -z "${connection_probe_pid:-}" ] || { kill "$connection_probe_pid" 2>/dev/null || true; wait "$connection_probe_pid" 2>/dev/null || true; }
-    for p in "$password_pid" "$firefox_pid" "$mouse_b_pid" "$mouse_pid" "$fcitx_pid"; do
+    cleanup_fcitx_pid=$fcitx_pid
+    [ "$PRODUCTION" = 0 ] || cleanup_fcitx_pid=
+    for p in "$password_pid" "$firefox_pid" "$mouse_b_pid" "$mouse_pid" "$cleanup_fcitx_pid"; do
         [ -z "$p" ] || wait_pid_gone "$p" || cleanup_ok=0
     done
     ibus_start_rc=not-needed
-    if [ "$ibus_stopped" = 1 ]; then
+    if [ "$PRODUCTION" = 0 ] && [ "$ibus_stopped" = 1 ]; then
         ibus_start_rc=0
         as_desktop systemctl --user start auros-ibus.service >/dev/null 2>&1 \
             || { ibus_start_rc=$?; cleanup_ok=0; }
     fi
     ordinary=0
     ibus_active_seen=no; ibus_identity_seen=no; ibus_identity_stable_seen=no; ibus_pinyin_seen=no
-    ibus_deadline=$(( $(monotonic_ms) + 10000 ))
-    while [ "$(monotonic_ms)" -lt "$ibus_deadline" ]; do
+    if [ "$PRODUCTION" = 1 ]; then
+        service_pid=$(as_desktop systemctl --user show -p MainPID --value auros-fcitx.service 2>/dev/null)
+        owner=$(fcitx_owner_pid)
+        proc_env=$(tr '\0' '\n' < "/proc/$service_pid/environ" 2>/dev/null || true)
+        if [ "$(as_desktop systemctl --user is-active auros-fcitx.service 2>/dev/null)" = active ] && \
+           [ "$service_pid" = "$fcitx_pid" ] && [ "$owner" = "$fcitx_pid" ] && \
+           [ "$(awk '{print $22}' "/proc/$service_pid/stat" 2>/dev/null)" = "$fcitx_start" ] && \
+           [ "$(readlink "/proc/$service_pid/exe" 2>/dev/null)" = /usr/bin/fcitx5 ] && \
+           [ "$(tr '\0' ' ' < "/proc/$service_pid/cmdline" 2>/dev/null)" = '/usr/bin/fcitx5 -D ' ] && \
+           ! printf '%s\n' "$proc_env" | grep -Eq '^(DISPLAY|WAYLAND_DISPLAY)=' && \
+           [ "$(as_fcitx_desktop fcitx5-remote -m pinyin 2>/dev/null)" = pinyin ] && \
+           [ "$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null)" = inactive ]; then
+            ordinary=1
+        fi
+    else
+      ibus_deadline=$(( $(monotonic_ms) + 10000 ))
+      while [ "$(monotonic_ms)" -lt "$ibus_deadline" ]; do
         active_before=; active_before_rc=0
         active_before=$(as_desktop_until "$ibus_deadline" systemctl --user is-active \
             auros-ibus.service 2>/dev/null) || active_before_rc=$?
@@ -293,7 +343,8 @@ restore_and_finish() {
             fi
         fi
         sleep .25
-    done
+      done
+    fi
     unchanged=no; [ "$(config_snapshot)" = "$config_before" ] && unchanged=yes
     find "$RUNTIME" -name '*.trace' -type f -delete 2>/dev/null || cleanup_ok=0
     if find "$RUNTIME" -name '*.trace' -type f -print -quit 2>/dev/null | grep -q .; then
@@ -306,12 +357,17 @@ restore_and_finish() {
     printf 'raw_protocol_logs_retained=%s\n' "$raw_retained" > "$STATE/protocol-summary.txt"
     printf 'ordinary_service_ready=%s\nuser_config_unchanged=%s\ncleanup_pids_gone=%s\n' \
         "$ordinary" "$unchanged" "$cleanup_ok" > "$STATE/restore.txt"
+    printf 'source=%s\n' "$( [ "$PRODUCTION" = 1 ] && echo shipped-fcitx || echo retained-ibus-conversion )" \
+        >> "$STATE/restore.txt"
     printf 'service_start_rc=%s\nservice_active_seen=%s\nservice_identity_seen=%s\n' \
         "$ibus_start_rc" "$ibus_active_seen" "$ibus_identity_seen" >> "$STATE/restore.txt"
     printf 'service_identity_stable_seen=%s\npinyin_engine_seen=%s\n' \
         "$ibus_identity_stable_seen" "$ibus_pinyin_seen" >> "$STATE/restore.txt"
     if [ "$ordinary" != 1 ] || [ "$unchanged" != yes ] || [ "$cleanup_ok" != 1 ]; then
-        final_state=fail; final_reason=cleanup_or_IBus_restoration_failed
+        final_state=fail
+        if [ "$PRODUCTION" = 1 ]; then final_reason=cleanup_or_shipped_Fcitx_readiness_failed
+        else final_reason=cleanup_or_IBus_restoration_failed
+        fi
     fi
     printf 'status=%s\nreason=%s\n' "$final_state" "$final_reason" > "$STATE/result"
     sync
@@ -352,28 +408,39 @@ if [ "$SECURITY" = 1 ] && [ "$security_round" = 2 ]; then
     printf 'fcitx_autostart_before_explicit_launch=no\n' > "$STATE/reboot.txt"
 fi
 
-as_desktop systemctl --user stop auros-ibus.service >/dev/null 2>&1 || fail "could not stop shipped IBus"
-ibus_stopped=1
-[ "$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null)" = inactive ] \
-    || fail "shipped IBus remained active"
+if [ "$PRODUCTION" = 1 ]; then
+    [ "$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null)" = inactive ] \
+        || fail "conflicting shipped IBus remained active"
+    wait_active auros-fcitx.service || fail "shipped Fcitx did not stay active"
+    fcitx_pid=$(as_desktop systemctl --user show -p MainPID --value auros-fcitx.service 2>/dev/null)
+else
+    as_desktop systemctl --user stop auros-ibus.service >/dev/null 2>&1 || fail "could not stop shipped IBus"
+    ibus_stopped=1
+    [ "$(as_desktop systemctl --user is-active auros-ibus.service 2>/dev/null)" = inactive ] \
+        || fail "shipped IBus remained active"
 
-as_desktop systemd-run --user --quiet --collect --unit=auros-profiletest-fcitx-daemon \
-    --property=Type=exec --setenv="XDG_CONFIG_HOME=$CFG" --setenv="XDG_CACHE_HOME=$CACHE" \
-    --setenv="XDG_DATA_HOME=$DATA" --property="StandardOutput=append:$RUNTIME/fcitx.stdout" \
-    --property="StandardError=append:$RUNTIME/fcitx.stderr" \
-    -- /usr/bin/env -u DISPLAY -u WAYLAND_DISPLAY HOME="$desktop_home" \
-    XDG_RUNTIME_DIR="/run/user/$desktop_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$desktop_uid/bus" \
-    /usr/bin/fcitx5 -D \
-    || fail "could not start owned Fcitx"
-wait_active auros-profiletest-fcitx-daemon || fail "owned Fcitx did not stay active"
-fcitx_pid=$(as_desktop systemctl --user show -p MainPID --value auros-profiletest-fcitx-daemon 2>/dev/null)
+    as_desktop systemd-run --user --quiet --collect --unit=auros-profiletest-fcitx-daemon \
+        --property=Type=exec --setenv="XDG_CONFIG_HOME=$CFG" --setenv="XDG_CACHE_HOME=$CACHE" \
+        --setenv="XDG_DATA_HOME=$DATA" --property="StandardOutput=append:$RUNTIME/fcitx.stdout" \
+        --property="StandardError=append:$RUNTIME/fcitx.stderr" \
+        -- /usr/bin/env -u DISPLAY -u WAYLAND_DISPLAY HOME="$desktop_home" \
+        XDG_RUNTIME_DIR="/run/user/$desktop_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$desktop_uid/bus" \
+        /usr/bin/fcitx5 -D \
+        || fail "could not start owned Fcitx"
+    wait_active auros-profiletest-fcitx-daemon || fail "owned Fcitx did not stay active"
+    fcitx_pid=$(as_desktop systemctl --user show -p MainPID --value auros-profiletest-fcitx-daemon 2>/dev/null)
+fi
 case "$fcitx_pid" in ''|0|*[!0-9]*) fail "owned Fcitx PID unavailable";; esac
+fcitx_start=$(awk '{print $22}' "/proc/$fcitx_pid/stat" 2>/dev/null)
+case "$fcitx_start" in ''|*[!0-9]*) fail "owned Fcitx start time unavailable";; esac
 [ "$(readlink "/proc/$fcitx_pid/exe" 2>/dev/null)" = /usr/bin/fcitx5 ] || fail "owned Fcitx executable mismatch"
 [ "$(tr '\0' ' ' < "/proc/$fcitx_pid/cmdline" 2>/dev/null)" = '/usr/bin/fcitx5 -D ' ] \
     || fail "owned Fcitx arguments mismatch"
 owner=$(fcitx_owner_pid); [ "$owner" = "$fcitx_pid" ] || fail "Fcitx D-Bus owner mismatch"
 {
     printf 'pid=%s\nexe=/usr/bin/fcitx5\ncmdline=/usr/bin/fcitx5 -D\n' "$fcitx_pid"
+    [ "$PRODUCTION" = 0 ] || printf 'unit=auros-fcitx.service\nibus_inactive=yes\n'
+    printf 'start_time=%s\n' "$fcitx_start"
     printf 'config_hash=%s\n' "$(sha256sum "$CFG/fcitx5/profile" | awk '{print $1}')"
     tr '\0' '\n' < "/proc/$fcitx_pid/environ" | grep -q '^DISPLAY=' && echo display_unset=no || echo display_unset=yes
     tr '\0' '\n' < "/proc/$fcitx_pid/environ" | grep -q '^WAYLAND_DISPLAY=' && echo wayland_display_unset=no || echo wayland_display_unset=yes
@@ -398,14 +465,25 @@ run_app() { # app file/url trace unit
       firefox) command="firefox --no-remote --new-instance --profile $RUNTIME/firefox-profile $target";;
       *) return 1;;
     esac
-    # shellcheck disable=SC2086
-    as_desktop systemd-run --user --quiet --collect --unit="$unit" --property=Type=exec \
-        --property="StandardError=append:$trace" -- /usr/bin/env -u DISPLAY \
-        HOME="$desktop_home" XDG_RUNTIME_DIR="/run/user/$desktop_uid" \
-        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$desktop_uid/bus" \
-        GDK_BACKEND=wayland GTK_IM_MODULE=fcitx WAYLAND_DISPLAY="$wayland" \
-        XDG_CONFIG_HOME="$CFG" XDG_CACHE_HOME="$CACHE" XDG_DATA_HOME="$DATA" \
-        WAYLAND_DEBUG=client $command >/dev/null 2>&1
+    if [ "$PRODUCTION" = 1 ]; then
+        # GTK_IM_MODULE and the Fcitx configuration must come from the image.
+        # shellcheck disable=SC2086
+        as_desktop systemd-run --user --quiet --collect --unit="$unit" --property=Type=exec \
+            --property="StandardError=append:$trace" -- /usr/bin/env -u DISPLAY \
+            HOME="$desktop_home" XDG_RUNTIME_DIR="/run/user/$desktop_uid" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$desktop_uid/bus" \
+            GDK_BACKEND=wayland WAYLAND_DISPLAY="$wayland" WAYLAND_DEBUG=client \
+            $command >/dev/null 2>&1
+    else
+        # shellcheck disable=SC2086
+        as_desktop systemd-run --user --quiet --collect --unit="$unit" --property=Type=exec \
+            --property="StandardError=append:$trace" -- /usr/bin/env -u DISPLAY \
+            HOME="$desktop_home" XDG_RUNTIME_DIR="/run/user/$desktop_uid" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$desktop_uid/bus" \
+            GDK_BACKEND=wayland GTK_IM_MODULE=fcitx WAYLAND_DISPLAY="$wayland" \
+            XDG_CONFIG_HOME="$CFG" XDG_CACHE_HOME="$CACHE" XDG_DATA_HOME="$DATA" \
+            WAYLAND_DEBUG=client $command >/dev/null 2>&1
+    fi
 }
 
 mouse_file="$RUNTIME/mousepad.txt"; : > "$mouse_file"; chown "$desktop_user" "$mouse_file"
