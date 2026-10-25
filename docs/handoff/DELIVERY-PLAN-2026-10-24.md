@@ -2,7 +2,7 @@
 
 Owner authorization on 24 October 2026: implement, test adversarially, use bounded parallel agents, and push verified checkpoints to `aarohkandy/v0.0.1-auros`. The target is a nontechnical person describing the system they want, receiving it quickly, installing it safely, and using it without a terminal or helper.
 
-## Current checkpoint (24 October, 23:40 UTC)
+## Current checkpoint (25 October, 00:14 UTC)
 
 This section is the current summary; the chronological checkpoints below retain
 earlier failures and superseded evidence deliberately.
@@ -11,7 +11,7 @@ earlier failures and superseded evidence deliberately.
 - Exact-image [hardening run 40140266950](https://github.com/aarohkandy/v0.0.1-auros/actions/runs/40140266950) passed 72 hardening and 14 clock checks; `hardengate.sh` accepts it for this candidate.
 - All four Windows journeys failed: fastpath base clicked the search entry instead of the VLC result; ordinary base installed VLC but Open did not map a program window; ordinary BitLocker refused on its legacy path; fastpath BitLocker failed the harness's pre-install baseline capture. The strict launch check correctly rejected the store preview. App launch, encrypted-drive return and file-preserving recovery remain unproved. The older c1 app-launch result was invalidated and must not be reused.
 - The release Windows job failed its fastpath no-scroll fixture. The working branch already has its tested correction and a visible, accessible drive-protection confirmation, but this candidate does not contain them. Do not rerun the unchanged installer expecting a different result.
-- Multilingual first-stage typing passed in Mousepad and Firefox. Second-stage `40142892395` reached the Mousepad focus lifecycle but failed end attribution because the probe counted its own held trace descriptor as another writer. A separate IBus restoration readiness race is being repaired. Password/reboot proof remains pending. Production remains IBus; main contains diagnostic harness fixes, not an activated input replacement.
+- Multilingual diagnostic `40144734247` passed both boots of its live typing/focus/password/restoration checks, then failed because round-two evidence was not synced before shutdown. Main `18927e7b` fixes evidence persistence; `40145440411` is running. A precise follow-up review found two still-open proof gaps: no focus-marker absence assertion immediately before the click, and password evidence accepts extra/contradictory lines. Both require repair before closing this diagnostic. Production remains IBus, with a stale startup warning visible in retained screenshots; Fcitx is not activated.
 - `codex/delivery` retains the installer follow-ups and reduced artifact downloads for the next combined candidate. Preserve exact source/artifact identity when using any earlier evidence.
 - Public delivery remains disabled pending signing/service configuration and release proof. Managed profiles, physical-PC tests, contact/name decisions, held encryption work and unfinished Wishes actions remain open. No zero-vulnerability or end-to-end completion claim is justified.
 
@@ -637,3 +637,32 @@ VLC-focused exact-image parity run `40143621769` is testing the launch failure.
 Multilingual diagnostic `40143674648` uses main `7192fbd7` with the probe's own
 authenticated trace descriptor accounted for and bounded IBus readiness polling.
 No new product image has been built while these diagnoses are in flight.
+
+## Exact-image launch and diagnostic proof follow-up
+
+VLC parity run `40143621769` passed direct exported-desktop launch on candidate
+`e0d0aadc`; this does not prove Software Install → Open. The initial Wayland
+socket hypothesis was refuted in controlled experiments. A local click initially
+reported as Open was invalidated by screenshot review; a later recognized Open
+launched VLC. The exact SHA-verified candidate is now being exercised through
+the same-process store path with verbose Software logging. No speculative
+production workaround has been integrated.
+
+Multilingual run `40144734247` left passing round-two live evidence at the root
+but lost the copied round directory on immediate VM shutdown. The post-copy
+sync repair is integrated and run `40145440411` checks it. Rechecking old review
+findings exposed two unclosed boundaries: a stale earlier focus marker could
+satisfy the click proof, and independent line-presence checks do not reject
+duplicate/contradictory/unknown password evidence. These are assigned for a
+focused repair. Earlier ancestor-symlink and live-process cleanup findings are
+closed. Do not claim complete sensitive-field proof from the current run.
+
+A retained password screenshot also contains the shipped IBus Wayland-session
+warning. Execution ordering and source conditions support boot-time origin,
+but that artifact has no journal export; do not label attribution journal-proven.
+Production input architecture and that visible warning remain separate work.
+
+For the next candidate, one main push headed `[release] [e2e:none]` runs the
+prerelease build and four exact-installer Windows journeys. Allow its automatic
+exact-build hardening workflow to start after completion rather than manually
+duplicating it. No `[latest]` promotion is authorized by the present evidence.
