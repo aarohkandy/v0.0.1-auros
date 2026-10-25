@@ -167,8 +167,8 @@ requests for it; do not race an operator dispatch against a public submission.
    operator record. Never leave `request_id` empty. An empty/null identity
    cannot be correlated or adopted safely.
 3. Dispatch the current `customize.yml` on `main` with the strict canonical
-   desktop recipe, the matching base build SHA, run ID, release namespace, and
-   that UUID.
+   desktop recipe, the current `main` authority SHA, the matching base build
+   SHA, run ID, release namespace, and that UUID.
 4. Approve both SignPath requests. Wait for both certification jobs and
    `publish` to succeed. Confirm the immutable `auros-custom-delivery` artifact
    and the authority-and-recipe-named release `.exe` and `.json` exist.
