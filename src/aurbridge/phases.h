@@ -189,8 +189,9 @@ typedef struct {
      *
      *   bring_wifi       "Bring my Wi-Fi across", pre-ticked, untickable:
      *                    1 = shown AND still ticked. The connected
-     *                    network's name, security type and key go to
-     *                    \EFI\AurOS\ for the staging environment, which
+     *                    at Restart now, the connected network's name,
+     *                    security type and key go to \EFI\AurOS\ for the
+     *                    staging environment, which
      *                    makes a NetworkManager keyfile of them and
      *                    deletes the file. Never logged.
      *   bitlocker_pause  "Windows' drive lock is paused for one restart
@@ -275,6 +276,11 @@ typedef struct {
     int      fast_startup_off;
     int      esp_written;
     int      boot_made;
+    /* The Ready-page Wi-Fi choice is remembered until Restart now. The
+     * password itself is read and written only by ab_arm(), then removed
+     * again if that arming is taken back. */
+    int      bring_wifi;
+    int      wifi_cleanup_needed;
 
     /* ── the fast path (set by phase 0 when this run takes it) ──────── */
     int      fast;
@@ -309,11 +315,12 @@ int ab_run(ab_phase upto, const ab_choice *c, pf_report *r, ab_machine *m,
  * of it. Safe to call at any point, including twice. */
 void ab_abort(ab_machine *m, ab_say say, void *ud);
 
-/* The last step, when ab_choice.arm_later held it back: pause the drive
- * lock for one restart (D11) and set BootNext. 0 armed; -1 with a reason
- * (and nothing left armed). Idempotent. ab_disarm takes back just these
- * two, leaving the entry, the files and the download: for when the
- * restart did not happen after all. */
+/* The last step, when ab_choice.arm_later held it back: copy the selected
+ * Wi-Fi profile, pause the drive lock for one restart (D11), and set
+ * BootNext. 0 armed; -1 with a reason
+ * (and nothing left armed). Idempotent. ab_disarm takes back these
+ * changes, leaving the entry, the other files and the download: for when the
+ * restart did not happen after all; it also removes the Wi-Fi copy. */
 int  ab_arm(ab_machine *m, ab_say say, void *ud, char *why, size_t n);
 void ab_disarm(ab_machine *m, ab_say say, void *ud);
 

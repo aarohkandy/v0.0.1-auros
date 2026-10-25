@@ -3263,7 +3263,8 @@ static int page_ready(int x, int y, int w)
         title[199] = 0;
         int tw = narrow - S(14) - S(26) - S(16) - S(14);
         tog_h = S(14) * 2 + text_h(title, g_f_bodyb, tw, DT_WORDBREAK)
-              + text_h(L"So AurOS is online the moment it starts.", g_f_body, tw, DT_WORDBREAK) + S(2);
+              + text_h(L"Copies this Wi-Fi’s password to AurOS on this computer. "
+                       L"Not sent anywhere.", g_f_body, tw, DT_WORDBREAK) + S(2);
         if (tog_h < S(56)) tog_h = S(56);
     }
 
@@ -3293,7 +3294,8 @@ static int page_ready(int x, int y, int w)
     /* D10: her Wi-Fi, ticked for her, said by its own name. */
     if (tog_h) {
         y += toggle_row(ID_WIFI, g_bring_wifi, title,
-                        L"So AurOS is online the moment it starts.", x, y, narrow);
+                        L"Copies this Wi-Fi’s password to AurOS on this computer. "
+                        L"Not sent anywhere.", x, y, narrow);
     }
     return y - y0;
 }
@@ -4127,8 +4129,19 @@ static void do_restart(void)
     if (g_nav_mode || g_shot_mode) { g_nt_restarts++; return; }
     char why[PLAT_WHY] = "";
     g_restarting = 1;
-    if (ab_arm(&g_ab_machine, ab_say_cb, NULL, why, sizeof why) != 0 ||
-        plat_restart(why, sizeof why) != 0) {
+    if (ab_arm(&g_ab_machine, ab_say_cb, NULL, why, sizeof why) != 0) {
+        ab_disarm(&g_ab_machine, ab_say_cb, NULL);
+        g_restarting = 0;
+        wchar_t detail[PLAT_WHY], message[PLAT_WHY + 160];
+        MultiByteToWideChar(CP_UTF8, 0, why, -1, detail, PLAT_WHY);
+        detail[PLAT_WHY - 1] = 0;
+        _snwprintf(message, PLAT_WHY + 159,
+                   L"AurOS could not prepare this restart.\n\n%ls\n\n"
+                   L"This computer still starts Windows as usual. You can press Restart now again.",
+                   detail);
+        message[PLAT_WHY + 159] = 0;
+        MessageBoxW(g_hwnd, message, L"AurOS Setup", MB_OK | MB_ICONWARNING);
+    } else if (plat_restart(why, sizeof why) != 0) {
         ab_disarm(&g_ab_machine, ab_say_cb, NULL);
         g_restarting = 0;
         MessageBoxW(g_hwnd, L"The computer would not restart.\n\nNothing has been "
@@ -6078,6 +6091,9 @@ static int nav_test(const char *dir)
         for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_WIFI) box = i;
 #ifdef AB_CHOICE_BRING_WIFI
         nt_check(box >= 0 && g_bring_wifi, "on Wi-Fi: the box is there, ticked for her");
+        nt_check(nt_drawn_count(L"Copies this Wi-Fi’s password to AurOS on this computer. "
+                                L"Not sent anywhere.") >= 1,
+                 "the pre-ticked box says the password stays on this computer");
         nt_check(box < 0 || (g_w[box].r.bottom - g_w[box].r.top) >= S(44),
                  "the whole row is a target at least 44 px tall");
         widget_activate(ID_WIFI);

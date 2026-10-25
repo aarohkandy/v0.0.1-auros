@@ -2007,40 +2007,60 @@ static int wifi_text_ok(const char *ssid, const char *sec, const char *psk)
     return (lp >= 8 && lp <= 63) || hex;
 }
 
-static void write_wifi(const ab_choice *c, const char *esp, ab_say say, void *ud)
+static int clear_wifi(const char *esp, char *why, size_t n)
+{
+    char path[512];
+    snprintf(path, sizeof path, "%s/EFI/AurOS/wifi.conf", esp);
+    if (plat_file_delete(path, why, n) == 0) return 0;
+    return -1;
+}
+
+/* 1 written; 0 deliberately omitted/offline; -1 unsafe residue could not be
+ * removed, so the restart must not be armed. */
+static int write_wifi(const char *esp, ab_say say, void *ud,
+                      char *fatal, size_t fn)
 {
     char path[512], w[PLAT_WHY];
     snprintf(path, sizeof path, "%s/EFI/AurOS/wifi.conf", esp);
-    /* One an earlier attempt left is taken away first, whatever happens. */
-    plat_file_delete(path, w, sizeof w);
-    if (!c->bring_wifi) return;
     char ssid[64], sec[16], psk[128], why[PLAT_WHY];
     if (plat_wifi_profile(ssid, sizeof ssid, sec, sizeof sec, psk, sizeof psk,
                           why, sizeof why) != 0) {
         talk(say, ud, "your Wi-Fi was not carried across (%s); AurOS will ask "
                       "for it when it starts", why);
         wipe(psk, sizeof psk);
-        return;
+        return 0;
     }
     if (!wifi_text_ok(ssid, sec, psk)) {
         talk(say, ud, "your Wi-Fi was not carried across (its name or key is "
                       "not one AurOS can write down without doubt); AurOS will "
                       "ask for it when it starts");
         wipe(psk, sizeof psk);
-        return;
+        return 0;
     }
     char buf[256];
     int k = strcmp(sec, "open") == 0
           ? snprintf(buf, sizeof buf, "ssid=%s\nsecurity=open\n", ssid)
           : snprintf(buf, sizeof buf, "ssid=%s\nsecurity=%s\npsk=%s\n", ssid, sec, psk);
     wipe(psk, sizeof psk);
-    if (k <= 0 || (size_t)k >= sizeof buf) { wipe(buf, sizeof buf); return; }
-    if (plat_file_put(path, buf, (size_t)k, w, sizeof w) != 0)
+    if (k <= 0 || (size_t)k >= sizeof buf) { wipe(buf, sizeof buf); return 0; }
+    if (plat_file_put(path, buf, (size_t)k, w, sizeof w) != 0) {
         talk(say, ud, "your Wi-Fi could not be written down (%s); AurOS will "
                       "ask for it when it starts", w);
-    else
+        /* WriteFile and FlushFileBuffers can fail after putting some or all
+         * bytes down. Never mistake that failure for 'nothing was written'. */
+        if (clear_wifi(esp, w, sizeof w) != 0) {
+            snprintf(fatal, fn, "the incomplete Wi-Fi password copy could not "
+                                "be removed (%s). AurOS was not started.", w);
+            wipe(buf, sizeof buf);
+            return -1;
+        }
+    } else {
         talk(say, ud, "your Wi-Fi goes across with you");
+        wipe(buf, sizeof buf);
+        return 1;
+    }
     wipe(buf, sizeof buf);
+    return 0;
 }
 
 /* ── phase 3: the last thing before the restart ──────────────────── */
@@ -2367,7 +2387,15 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
         plat_payload_free();
         return -1;
     }
-    write_wifi(c, esp, say, ud);
+    /* A password left by an interrupted older attempt must not survive the
+     * waiting window. This run does not read or write the current password
+     * until Restart now is pressed in ab_arm(). */
+    if (clear_wifi(esp, why, n) != 0) {
+        plat_esp_close();
+        plat_payload_free();
+        return -1;
+    }
+    m->bring_wifi = c->bring_wifi;
     plat_esp_close();
     /* Anything that was unpacked to get here is gone again. The bytes
      * that matter are on the EFI partition now. */
@@ -2399,12 +2427,44 @@ static int phase_handoff(const ab_choice *c, pf_report *r, ab_machine *m,
     return ab_arm(m, say, ud, why, n);
 }
 
-/* THE LAST STEP, kept apart so it can wait for her press: pause the drive
- * lock for one restart (D11) and set BootNext. Idempotent: armed twice is
- * armed once. */
+/* THE LAST STEP, kept apart so it can wait for her press: copy the selected
+ * Wi-Fi profile, pause the drive lock for one restart (D11), and set
+ * BootNext. Idempotent: armed twice is armed once. */
 int ab_arm(ab_machine *m, ab_say say, void *ud, char *why, size_t n)
 {
     if (m->bootnext_set) return 0;
+    /* The password crosses onto the EFI partition at the Restart-now
+     * boundary, not while the window may wait for hours or days. A failed
+     * arm is followed by ab_disarm(), which removes this copy. */
+    if (m->bring_wifi) {
+        char esp[256], w[PLAT_WHY];
+        /* From here until a verified deletion, an old or partial file may
+         * exist. Keep this set across failures so the caller's ab_disarm()
+         * retries cleanup rather than forgetting the residue. */
+        m->wifi_cleanup_needed = 1;
+        if (plat_esp_open(esp, sizeof esp, w, sizeof w) != 0) {
+            snprintf(why, n, "the start-up partition could not be checked for "
+                             "an old Wi-Fi password copy (%s). AurOS was not "
+                             "started.", w);
+            return -1;
+        } else {
+            if (clear_wifi(esp, w, sizeof w) != 0) {
+                snprintf(why, n, "an old Wi-Fi password copy could not be "
+                                 "removed (%s). AurOS was not started.", w);
+                plat_esp_close();
+                return -1;
+            }
+            m->wifi_cleanup_needed = 0;
+            int wr = write_wifi(esp, say, ud, why, n);
+            if (wr < 0) {
+                m->wifi_cleanup_needed = 1;
+                plat_esp_close();
+                return -1;
+            }
+            m->wifi_cleanup_needed = wr;
+            plat_esp_close();
+        }
+    }
     /* D11: THE DRIVE LOCK, PAUSED FOR THE RESTART AND NEVER DECRYPTED.
      * -RebootCount 2: protection comes back by itself at the second
      * start of Windows, so the restart into AurOS and the first start of
@@ -2496,12 +2556,26 @@ int ab_run(ab_phase upto, const ab_choice *c, pf_report *r, ab_machine *m,
     return 0;
 }
 
-/* Take back the two things ab_arm does, and only those: the entry, the
- * files and the download stay, so she can press Restart now again. Safe at
- * any point, including twice. */
+/* Take back what ab_arm does: the Wi-Fi password copy, BootNext, and a drive
+ * lock pause that was ours. The entry, other files and the download stay, so
+ * she can press Restart now again. Safe at any point, including twice. */
 void ab_disarm(ab_machine *m, ab_say say, void *ud)
 {
     if (!m) return;
+    /* If Restart now could not complete, do not leave the password waiting
+     * on the EFI partition. A later press reads the current profile again. */
+    if (m->wifi_cleanup_needed) {
+        char esp[256], why[PLAT_WHY];
+        if (plat_esp_open(esp, sizeof esp, why, sizeof why) == 0) {
+            if (clear_wifi(esp, why, sizeof why) == 0)
+                m->wifi_cleanup_needed = 0;
+            else
+                talk(say, ud, "the Wi-Fi copy could NOT be removed (%s)", why);
+            plat_esp_close();
+        } else {
+            talk(say, ud, "the Wi-Fi copy could NOT be removed (%s)", why);
+        }
+    }
     /* AND BITLOCKER GOES BACK ON.
      *
      * Phase 1 suspends it with -RebootCount 0, which means "until
