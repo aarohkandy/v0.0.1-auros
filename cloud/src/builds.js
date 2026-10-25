@@ -199,7 +199,7 @@ function deliveryManifest(raw, expected) {
   if (!exact(m, ["schema", "version", "state", "request_id", "repository", "authority", "base", "recipe", "installer"], ["schema", "version", "state", "request_id", "repository", "authority", "base", "recipe", "installer"])) throw new Error("delivery manifest fields");
   if (m.schema !== "org.auros.custom-delivery" || m.version?.[JSON_NUMBER] !== "2" || m.state !== "download-ready" || m.request_id !== expected.requestId || m.repository !== expected.repository) throw new Error("delivery manifest identity");
   if (!exact(m.authority, ["head_sha", "workflow_run_id"], ["head_sha", "workflow_run_id"]) || m.authority.head_sha !== expected.authoritySha || integer(m.authority.workflow_run_id) !== expected.runId) throw new Error("delivery manifest authority");
-  if (!exact(m.base, ["head_sha", "build_run_id", "tag", "image_sha256", "image_bytes"], ["head_sha", "build_run_id", "tag", "image_sha256", "image_bytes"]) || m.base.head_sha !== expected.baseSha || integer(m.base.build_run_id) !== expected.baseRunId || !TAG.test(m.base.tag) || !m.base.tag.endsWith(`-${expected.baseSha.slice(0, 7)}`) || !HASH.test(m.base.image_sha256) || integer(m.base.image_bytes) === null) throw new Error("delivery manifest base");
+  if (!exact(m.base, ["head_sha", "build_run_id", "tag", "image_sha256", "image_bytes"], ["head_sha", "build_run_id", "tag", "image_sha256", "image_bytes"]) || m.base.head_sha !== expected.baseSha || integer(m.base.build_run_id) !== expected.baseRunId || m.base.tag !== expected.baseTag || !TAG.test(m.base.tag) || !m.base.tag.endsWith(`-${expected.baseSha.slice(0, 7)}`) || !HASH.test(m.base.image_sha256) || integer(m.base.image_bytes) === null) throw new Error("delivery manifest base");
   if (!exact(m.recipe, ["id", "base", "resolved_preferences"], ["id", "base", "resolved_preferences"]) || m.recipe.id !== expected.recipeId || m.recipe.base !== "desktop") throw new Error("delivery manifest recipe");
   const prefs = m.recipe.resolved_preferences;
   if (!exact(prefs, ["look", "theme"], ["look", "theme"]) || prefs.look !== expected.resolved.look || prefs.theme !== expected.resolved.theme) throw new Error("delivery manifest preferences");
@@ -560,7 +560,7 @@ export function createBuildApi({ env, jobs, github, now = Date.now }) {
           job = await jobs.update({ id: job.id, patch: { state: "failed", failure: "canonical_delivery_missing", download: null }, now: now() });
           return response(200, { id: job.id, recipe_id: job.recipeId, state: job.state, failure: job.failure, download_ready: false, download: null, expires_at: new Date(job.expiresAt).toISOString() }, cors);
         }
-        try { verdict = await github.status({ requestId: delivery.requestId, authoritySha: job.authoritySha, baseSha: job.baseSha, baseRunId: job.baseRunId, recipeId: job.recipeId, resolved, expectedRunId: delivery.runId, evidence: delivery.evidence }); }
+        try { verdict = await github.status({ requestId: delivery.requestId, authoritySha: job.authoritySha, baseSha: job.baseSha, baseRunId: job.baseRunId, recipeId: job.recipeId, resolved, expectedRunId: delivery.runId, evidence: delivery.evidence, expectedBaseTag: job.baseTag }); }
         catch {
           if (job.state === "download-ready") job = await jobs.update({ id: job.id, patch: { state: "queued", download: null, failure: null }, now: now() });
           return response(503, { error: "status_unavailable", state: job.state, download_ready: false }, cors);
@@ -632,7 +632,7 @@ export class GitHubBuilds {
     try { main = await this.api("/git/ref/heads/main"); }
     catch (error) { throw error instanceof GitHubHttpError ? error : new GitHubHttpError(503); }
     if (main?.object?.sha !== authoritySha) throw new GitHubHttpError(409);
-    await this.api("/actions/workflows/customize.yml/dispatches", { method: "POST", body: JSON.stringify({ ref: "main", inputs: { recipe, base_build_sha: baseSha, base_build_tag: baseTag, base_build_run_id: String(baseRunId), request_id: requestId } }) });
+    await this.api("/actions/workflows/customize.yml/dispatches", { method: "POST", body: JSON.stringify({ ref: "main", inputs: { recipe, authority_sha: authoritySha, base_build_sha: baseSha, base_build_tag: baseTag, base_build_run_id: String(baseRunId), request_id: requestId } }) });
   }
   async discoverVerifiedDelivery({ authoritySha, baseSha, baseRunId, baseTag, recipeId, resolved }) {
     if (!SHA.test(authoritySha || "") || !SHA.test(baseSha || "") || !Number.isInteger(baseRunId) || baseRunId <= 0 || !TAG.test(baseTag || "") || !RECIPE_ID.test(recipeId || "")) throw new Error("invalid discovery identity");
@@ -669,7 +669,7 @@ export class GitHubBuilds {
     let immutable = [];
     if (evidence) {
       const gatesExact = Array.isArray(evidence.gates) && evidence.gates.length === DELIVERY_GATES.length && evidence.gates.every((name, at) => name === DELIVERY_GATES[at]);
-      if (evidence.requestId !== requestId || evidence.runId !== expectedRunId || evidence.authoritySha !== authoritySha || evidence.baseSha !== baseSha || evidence.baseRunId !== baseRunId || !Number.isInteger(evidence.signedArtifactId) || evidence.signedArtifactId <= 0 || !Number.isInteger(evidence.immutableArtifactId) || evidence.immutableArtifactId <= 0 || !gatesExact) return { state: "failed", failure: "canonical_evidence_invalid" };
+      if (evidence.requestId !== requestId || evidence.runId !== expectedRunId || evidence.authoritySha !== authoritySha || evidence.baseSha !== baseSha || evidence.baseRunId !== baseRunId || (expectedBaseTag !== null && evidence.releaseTag !== expectedBaseTag) || !Number.isInteger(evidence.signedArtifactId) || evidence.signedArtifactId <= 0 || !Number.isInteger(evidence.immutableArtifactId) || evidence.immutableArtifactId <= 0 || !gatesExact) return { state: "failed", failure: "canonical_evidence_invalid" };
       run = { id: evidence.runId, display_title: `customize ${requestId}`, head_sha: authoritySha, head_branch: "main", event: "workflow_dispatch", path: ".github/workflows/customize.yml", status: "completed", conclusion: "success" };
     } else if (expectedRunId !== null) {
       if (!Number.isInteger(expectedRunId) || expectedRunId <= 0) return { state: "failed", failure: "foreign_run" };
@@ -695,6 +695,7 @@ export class GitHubBuilds {
       if (immutable.length !== 1 || !Number.isInteger(immutable[0].id) || immutable[0].id <= 0 || !Number.isInteger(immutable[0].size_in_bytes) || immutable[0].size_in_bytes <= 0 || immutable[0].size_in_bytes > ZIP_LIMIT) return { state: "failed", runId: run.id, failure: "delivery_evidence_missing" };
     }
     if (!RECIPE_ID.test(recipeId || "")) return { state: "failed", runId: run.id, failure: "recipe_identity_invalid" };
+    if (!TAG.test(expectedBaseTag || "") || !expectedBaseTag.endsWith(`-${baseSha.slice(0, 7)}`)) return { state: "failed", runId: run.id, failure: "base_identity_invalid" };
     const { manifestName, installerName } = customAssetNames(authoritySha, recipeId);
     const exactTag = evidence?.releaseTag || expectedBaseTag;
     const releases = exactTag ? [await this.api(`/releases/tags/${encodeURIComponent(exactTag)}`)] : await this.api("/releases?per_page=20");
@@ -735,7 +736,7 @@ export class GitHubBuilds {
         const zip = await readLimited(evidenceResponse, ZIP_LIMIT);
         if (!sameBytes(raw, storedZipFile(zip, manifestName))) throw new Error("mutable release manifest differs from immutable run evidence");
       }
-      const parsed = deliveryManifest(raw, { requestId, repository: this.repository, authoritySha, baseSha, runId: run.id, baseRunId, recipeId, resolved, installerName, installerUrl: expectedUrl, installerBytes: installerAsset.size, manifestUrl: manifestAsset.browser_download_url });
+      const parsed = deliveryManifest(raw, { requestId, repository: this.repository, authoritySha, baseSha, baseTag: expectedBaseTag, runId: run.id, baseRunId, recipeId, resolved, installerName, installerUrl: expectedUrl, installerBytes: installerAsset.size, manifestUrl: manifestAsset.browser_download_url });
       if (release.tag_name !== parsed.baseTag) throw new Error("release tag mismatch");
       if (installerAsset.digest !== `sha256:${parsed.download.sha256}`) throw new Error("release installer digest mismatch");
       const download = parsed.download;
