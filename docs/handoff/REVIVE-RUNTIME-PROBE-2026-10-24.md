@@ -30,3 +30,16 @@ real internet browsing, speed on old disks, physical PCs, or delivery through
 the Windows installer. A passing reducer on fixtures is only harness testing.
 A future exact-image run must supply the runtime evidence before any Revive
 readiness claim.
+
+For a fresh functional Revive build, Actions retains the exact raw image's
+gzip as `profile-revive-runtime-image` for **two days**, including when the
+runtime probe fails after image creation. It reuses the size-measurement gzip
+and records source SHA, repository, workflow, run ID, profile, raw/compressed
+sizes and SHA256 values in `manifest.json`. Creation checks the checkout SHA
+and decompresses the gzip to verify the exact raw digest. The large image is
+excluded from ordinary evidence artifacts and releases. Before any manual
+reuse, compare artifact run metadata with the manifest and verify both sizes
+and hashes; do not trust a downloaded filename alone. No generic retained
+Revive dispatch workflow is added. These artifacts may contain several GiB
+of compressed data and expire automatically, so preserve needed evidence
+before expiry.

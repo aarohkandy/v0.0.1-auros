@@ -313,6 +313,8 @@ jobs:
           exit $rc
 
       - name: how big it is
+        env:
+          PROFILE_SUBJECT: ${{ github.event.head_commit.message }}
         run: |
           img="out/auros-$P.img"
           raw=$(stat -c %s "$img")
@@ -327,6 +329,12 @@ jobs:
               --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" \
               --source-sha "$GITHUB_SHA" --output ev/multilingual-image-v1.json
             rm -f "$packed"
+          elif [ "$P" = revive ] && [[ "${PROFILE_SUBJECT%%$'\n'*}" == *"[revive-functional]"* ]]; then
+            mkdir -p ev/retained-revive
+            packed=ev/retained-revive/auros-revive.img.gz
+            pigz -9 -p "$(nproc)" -c "$img" > "$packed"
+            gz=$(stat -c %s "$packed")
+            python3 tools/profiletest-revive.py retain ev/retained-revive --image "$img"
           else
             gz=$(pigz -9 -p "$(nproc)" -c "$img" | wc -c)
           fi
@@ -352,6 +360,18 @@ jobs:
           sudo env PATH="$PATH" PROFILETEST_REVIVE_FUNCTIONAL="$revive_functional" PROFILETEST_FCITX_PRODUCTION="$fcitx_production" \
             sh tools/profiletest.sh boot "$P" "$PWD/ev" 2>&1 | tee "ev/$P-boot.txt"
 
+      # Keep only the exact functional Revive build, including failed probes.
+      # This uses the same gzip as size measurement, not a second rebuild.
+      - name: retain exact Revive image for bounded diagnostic reuse
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() && hashFiles('ev/retained-revive/manifest.json') != '' }}
+        with:
+          name: profile-revive-runtime-image
+          path: ev/retained-revive/
+          retention-days: 2
+          compression-level: 0
+          if-no-files-found: error
+
       # Upload the small immutable manifest before its mutable release pieces.
       # A later diagnostic trusts this artifact, then checks each release asset.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -361,6 +381,7 @@ jobs:
           path: |
             ev/
             !ev/retained/
+            !ev/retained-revive/
           if-no-files-found: ignore
 
       - name: publish the evidence

@@ -7,6 +7,7 @@ application automation. This program only seeds an EMPTY document.
 """
 import argparse
 import hashlib
+import gzip
 import struct
 import zlib
 import http.server
@@ -67,6 +68,45 @@ def identity(pid, unit, group, executable, uid):
         raise ValueError('process owner mismatch')
     return dict(pid=pid, start_ticks=int(stat[19]), exe=actual, unit=unit,
                 cgroup=group, uid=uid)
+
+
+def stream_digest(stream, limit):
+    total = 0
+    digest = hashlib.sha256()
+    while block := stream.read(1024 * 1024):
+        total += len(block)
+        if total > limit:
+            raise ValueError('retained image exceeds bound')
+        digest.update(block)
+    if not total:
+        raise ValueError('empty retained image')
+    return {'bytes': total, 'sha256': digest.hexdigest()}
+
+
+def retain(image, directory, source_sha, repository, run_id):
+    directory = Path(directory)
+    (directory / 'manifest.json').unlink(missing_ok=True)
+    if not re.fullmatch(r'[0-9a-f]{40}', source_sha) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
+        raise ValueError('invalid image source identity')
+    if type(run_id) is not int or run_id <= 0:
+        raise ValueError('invalid image run identity')
+    packed = directory / 'auros-revive.img.gz'
+    with open(image, 'rb') as stream:
+        raw_info = stream_digest(stream, 64 * 1024**3)
+    with packed.open('rb') as stream:
+        compressed_info = stream_digest(stream, 24 * 1024**3)
+    with gzip.open(packed, 'rb') as stream:
+        if stream_digest(stream, raw_info['bytes']) != raw_info:
+            raise ValueError('retained gzip differs from the tested image')
+    manifest = dict(schema='auros-revive-retained-v1', profile='revive',
+                    repository=repository, workflow='.github/workflows/profiles.yml',
+                    source_sha=source_sha, image_run_id=run_id,
+                    raw=raw_info, compressed=compressed_info,
+                    filename=packed.name)
+    pending = directory / '.manifest.pending'
+    pending.write_text(json.dumps(manifest, indent=2) + '\n')
+    pending.replace(directory / 'manifest.json')
+    return manifest
 
 
 def screenshot_binding(ocr_path):
@@ -356,11 +396,18 @@ if(e.key==='Enter'){e.preventDefault();fetch('/%s',{method:'POST',body:JSON.stri
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=('guest', 'reduce', 'visible', 'bind'))
+    parser.add_argument('mode', choices=('guest', 'reduce', 'visible', 'bind', 'retain'))
     parser.add_argument('directory', nargs='?')
+    parser.add_argument('--image', type=Path)
     args = parser.parse_args()
     if args.mode == 'guest':
         guest()
+    elif args.mode == 'retain':
+        source = os.environ['GITHUB_SHA']
+        checkout = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True, timeout=10).strip()
+        if checkout != source:
+            raise SystemExit('retained image checkout differs from run source')
+        retain(args.image, args.directory, source, os.environ['GITHUB_REPOSITORY'], int(os.environ['GITHUB_RUN_ID']))
     elif args.mode == 'bind':
         bind(args.directory)
     elif args.mode == 'visible':
