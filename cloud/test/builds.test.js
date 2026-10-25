@@ -353,7 +353,7 @@ test("download readiness is revalidated and revoked when current evidence change
   assert.equal(f.calls.status, 2);
 });
 
-test("expired receipts reuse the original canonical delivery without redispatch", async () => {
+test("failed lookup reuses only the existing canonical delivery without redispatch", async () => {
   let originalRequestId;
   let statusCalls = 0;
   let baseLookups = 0;
@@ -368,6 +368,7 @@ test("expired receipts reuse the original canonical delivery without redispatch"
     status: async (request) => {
       f.calls.status++;
       assert.equal(request.requestId, originalRequestId);
+      assert.equal(request.expectedBaseTag, "v0.1.0-aaaaaaa");
       statusCalls++;
       if (statusCalls === 1) return { state: "download-ready", runId: 44, signedArtifactId: 8, download: { name: "AurOS-Custom.exe", url: "https://github.com/owner/repo/releases/download/v0.1.0/AurOS-Custom.exe", sha256: "e".repeat(64), bytes: 1234 }, evidence: { ...evidence, requestId: originalRequestId } };
       assert.equal(request.expectedRunId, 44);
@@ -387,6 +388,27 @@ test("expired receipts reuse the original canonical delivery without redispatch"
   status = await (await f.call(repeated.body.status_url, { token: repeated.body.token })).json();
   assert.equal(status.state, "failed", "invalid canonical evidence fails closed");
   assert.equal(status.download_ready, false);
+  assert.equal(f.calls.dispatch, 1);
+});
+
+test("failed lookup refuses a malformed cached canonical delivery", async () => {
+  let lookups = 0;
+  const f = fixture({ env: { BUILD_REQUESTS_PER_NET: "3" }, github: {
+    findGreenBase: async () => {
+      lookups++;
+      if (lookups > 1) throw new Error("lookup unavailable");
+      return { authoritySha: AUTHORITY_SHA, baseSha: SHA, runId: 91, tag: "v0.1.0-aaaaaaa" };
+    },
+  } });
+  await submit(f);
+  const deliveryKey = [...f.storage.m.keys()].find((key) => key.startsWith("build-delivery:"));
+  const stored = await f.storage.get(deliveryKey);
+  stored.v.canonical = "{}";
+  await f.storage.put(deliveryKey, stored);
+  f.time.t += 24 * 60 * 60 * 1000 + 1;
+  const repeated = await submit(f);
+  assert.equal(repeated.res.status, 409);
+  assert.equal(repeated.body.error, "existing_delivery_conflict");
   assert.equal(f.calls.dispatch, 1);
 });
 
@@ -691,7 +713,7 @@ test("GitHub lookup treats pieces as a hint and pins the exact successful reposi
   const id = "12345678-1234-4123-8123-123456789abc";
   await f.github.dispatch({ requestId: id, recipe: "{}", authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 7, baseTag: tag });
   const sent = f.seen.find((x) => x.url.includes("dispatches"));
-  assert.deepEqual(JSON.parse(sent.init.body), { ref: "main", inputs: { recipe: "{}", base_build_sha: SHA, base_build_tag: tag, base_build_run_id: "7", request_id: id } });
+  assert.deepEqual(JSON.parse(sent.init.body), { ref: "main", inputs: { recipe: "{}", authority_sha: AUTHORITY_SHA, base_build_sha: SHA, base_build_tag: tag, base_build_run_id: "7", request_id: id } });
 });
 
 test("base lookup is driven by bounded release hints when unrelated releases hide it", async () => {
@@ -749,13 +771,13 @@ test("GitHub status binds correlation/source and requires package, sign, publish
   const installerUrl = `https://github.com/owner/repo/releases/download/${tag}/${installerName}`;
   const run = { id: 44, display_title: `customize ${id}`, head_sha: AUTHORITY_SHA, head_branch: "main", event: "workflow_dispatch", path: ".github/workflows/customize.yml", status: "completed", conclusion: "success" };
   let f = apiFixture({ run: { ...run, head_sha: "c".repeat(40) } });
-  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "foreign_run");
+  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, expectedBaseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "foreign_run");
   f = apiFixture({ run, jobs: [{ name: "package", conclusion: "success" }, { name: "sign", conclusion: "skipped" }] });
-  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_gate_failed");
+  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, expectedBaseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_gate_failed");
   const jobs = [{ name: "package", conclusion: "success" }, { name: "sign / sign", conclusion: "success" }, { name: "certify / e2e (base)", conclusion: "success" }, { name: "certify / custom-certification", conclusion: "success" }, { name: "publish", conclusion: "success" }];
   for (const required of ["certify / e2e (base)", "certify / custom-certification"]) {
     f = apiFixture({ run, jobs: jobs.filter((job) => job.name !== required) });
-    assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_gate_failed", `${required} is mandatory`);
+    assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, expectedBaseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_gate_failed", `${required} is mandatory`);
   }
   const assets = [
     { id: 10, name: manifestName, size: 900, url: "https://api.github.com/repos/owner/repo/releases/assets/10", browser_download_url: `https://github.com/owner/repo/releases/download/${tag}/${manifestName}` },
@@ -776,40 +798,48 @@ test("GitHub status binds correlation/source and requires package, sign, publish
     { id: 9, name: "auros-custom-delivery", expired: false, size_in_bytes: evidenceZip.size, archive_download_url: "https://api.github.com/repos/owner/repo/actions/artifacts/9/zip", workflow_run: { id: 44 } },
   ];
   f = apiFixture({ run, jobs, artifacts, releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets }], assetBody: manifestText, evidenceZip });
-  const ready = await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } });
+  const ready = await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, expectedBaseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" } });
   assert.equal(ready.state, "download-ready");
   assert.equal(ready.download.url, installerUrl);
   assert.equal(ready.download.sha256, "e".repeat(64));
   assert.equal(ready.evidence.authoritySha, AUTHORITY_SHA);
   assert.equal(ready.evidence.baseSha, SHA);
 
+  const alternateTag = "v0.1.0-alternate-aaaaaaa";
+  const alternateManifest = JSON.stringify({ ...manifest, base: { ...manifest.base, tag: alternateTag } });
+  f = apiFixture({ run, jobs, artifacts, releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets }], assetBody: alternateManifest, evidenceZip: storedZip(manifestName, alternateManifest) });
+  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, expectedBaseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_manifest_invalid", "manifest cannot substitute an alternate tag for the same base SHA");
+
+  const alternateTagEvidence = { ...ready.evidence, releaseTag: alternateTag };
+  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, expectedBaseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" }, expectedRunId: 44, evidence: alternateTagEvidence })).failure, "canonical_evidence_invalid", "cached evidence remains bound to the exact base tag");
+
   f = apiFixture({ run, jobs, artifacts: [], releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets }], assetBody: manifestText });
-  const afterExpiry = await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" }, expectedRunId: 44, evidence: ready.evidence });
+  const afterExpiry = await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, expectedBaseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" }, expectedRunId: 44, evidence: ready.evidence });
   assert.equal(afterExpiry.state, "download-ready", "persisted canonical evidence survives Actions artifact expiry");
   assert.equal(afterExpiry.download.sha256, "e".repeat(64));
   assert.equal(f.seen.some(({ url }) => url.includes("/actions/runs/")), false, "persisted verified gates do not depend on retained Actions run records");
 
   const missingCertification = { ...ready.evidence, gates: ready.evidence.gates.filter((name) => name !== "certify / custom-certification") };
-  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" }, expectedRunId: 44, evidence: missingCertification })).failure, "canonical_evidence_invalid");
+  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, expectedBaseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" }, expectedRunId: 44, evidence: missingCertification })).failure, "canonical_evidence_invalid");
 
   const replacedIdentity = assets.map((asset) => asset.name === installerName ? { ...asset, id: 12, url: "https://api.github.com/repos/owner/repo/releases/assets/12" } : asset);
   f = apiFixture({ run, jobs, artifacts: [], releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets: replacedIdentity }], assetBody: manifestText });
-  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" }, expectedRunId: 44, evidence: ready.evidence })).failure, "delivery_manifest_invalid", "asset replacement cannot inherit canonical evidence");
+  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, expectedBaseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" }, expectedRunId: 44, evidence: ready.evidence })).failure, "delivery_manifest_invalid", "asset replacement cannot inherit canonical evidence");
 
   f = apiFixture({ run, jobs, artifacts: [], releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets }], assetBody: manifestText, commitSha: "c".repeat(40) });
-  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" }, expectedRunId: 44, evidence: ready.evidence })).state, "download-ready", "a mutable tag pointer does not replace cached validated base identity");
+  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, expectedBaseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" }, expectedRunId: 44, evidence: ready.evidence })).state, "download-ready", "a mutable tag pointer does not replace cached validated base identity");
   assert.equal(f.seen.some(({ url }) => url.includes("/commits/")), false);
 
   f = apiFixture({ run, jobs, artifacts, releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets }], assetBody: JSON.stringify({ ...manifest, request_id: "22345678-1234-4123-8123-123456789abc" }), evidenceZip });
-  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_manifest_invalid");
+  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, expectedBaseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_manifest_invalid");
 
   const spoofedNumberManifest = JSON.stringify({ ...manifest, authority: { ...manifest.authority, workflow_run_id: { __jsonNumber: "44", value: 44 } } });
   f = apiFixture({ run, jobs, artifacts, releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets }], assetBody: spoofedNumberManifest, evidenceZip: storedZip(manifestName, spoofedNumberManifest) });
-  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_manifest_invalid");
+  assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, expectedBaseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, "delivery_manifest_invalid");
 
   for (const digest of [undefined, "sha256:not-a-hash", `sha256:${"f".repeat(64)}`]) {
     const replaced = assets.map((asset) => asset.name === installerName ? { ...asset, digest } : asset);
     f = apiFixture({ run, jobs, artifacts, releases: [{ id: 77, tag_name: tag, prerelease: true, draft: false, assets: replaced }], assetBody: manifestText, evidenceZip });
-    assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, digest?.startsWith("sha256:") && digest.length === 71 ? "delivery_manifest_invalid" : "delivery_asset_invalid");
+    assert.equal((await f.github.status({ requestId: id, authoritySha: AUTHORITY_SHA, baseSha: SHA, baseRunId: 91, expectedBaseTag: tag, recipeId, resolved: { look: "dock", theme: "moss" } })).failure, digest?.startsWith("sha256:") && digest.length === 71 ? "delivery_manifest_invalid" : "delivery_asset_invalid");
   }
 });
