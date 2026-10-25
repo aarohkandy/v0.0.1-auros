@@ -553,6 +553,9 @@ jobs:
     if: ${{ !cancelled() && needs.which.outputs.go == 'true' && needs.publish.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
+      AUROS_WISHES_URL: ${{ vars.AUROS_WISHES_URL || format('https://auros-wishes.{0}.workers.dev', github.repository_owner) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -589,6 +592,16 @@ jobs:
         env:
           PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
         run: node tools/site/check.mjs --dir "$RUNNER_TEMP/site"
+      - name: Configure the optional custom-build service in the staged site
+        run: |
+          site=$(sh tools/repo.sh site)
+          python3 -I tools/site/build_service_config.py \
+            --wrangler cloud/wrangler.toml --site-url "$site" \
+            --api-origin "$AUROS_WISHES_URL" --output "$RUNNER_TEMP/site/build-service.json"
+          if node -e 'process.exit(require(process.argv[1]).enabled === true ? 0 : 1)' "$RUNNER_TEMP/site/build-service.json"; then
+            origin=$(SITE="$site" node -e 'process.stdout.write(new URL(process.env.SITE).origin)')
+            node cloud/test/build-preflight.mjs "$AUROS_WISHES_URL" on "$origin"
+          fi
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: ${{ runner.temp }}/site
