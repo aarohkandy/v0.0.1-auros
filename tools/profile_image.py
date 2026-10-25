@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Retain and safely reuse one multilingual profile image for diagnostics."""
+"""Retain profile images and bind successful runtime evidence.
+
+Runtime records describe bounded evidence only. Consumers must validate the
+completed source run and live backing bytes; a record never authorizes delivery.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ from typing import Any, BinaryIO
 
 SCHEMA = "auros-profile-image-v1"
 DIAGNOSTIC_SCHEMA = "auros-profile-diagnostic-v1"
+RUNTIME_SCHEMA = "auros-profile-runtime-image-v1"
 WORKFLOW = ".github/workflows/profiles.yml"
 PROFILE = "multilingual"
 PIECE_PREFIX = "auros-multilingual.img.gz."
@@ -32,6 +37,7 @@ SHA = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 PIECE = re.compile(r"auros-multilingual\.img\.gz\.([0-9]{3})")
+RUNTIME_PROFILES = {"multilingual", "revive"}
 
 
 class RetentionError(ValueError):
@@ -81,16 +87,32 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
             pass
 
 
+def _parse_json(raw: bytes, name: str) -> dict[str, Any]:
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in items:
+            if key in value:
+                fail(f"{name} has duplicate fields")
+            value[key] = item
+        return value
+
+    try:
+        value = json.loads(raw, object_pairs_hook=pairs)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        fail(f"{name} is not valid JSON: {exc}")
+    if type(value) is not dict:
+        fail(f"{name} must be a JSON object")
+    return value
+
+
 def _load_json(path: Path, name: str, limit: int = MAX_MANIFEST_BYTES) -> tuple[dict[str, Any], bytes]:
     try:
         if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
             fail(f"{name} is missing, is a link, or is too large")
         raw = path.read_bytes()
-        value = json.loads(raw)
-    except (OSError, json.JSONDecodeError) as exc:
+    except OSError as exc:
         fail(f"{name} is not valid JSON: {exc}")
-    if type(value) is not dict:
-        fail(f"{name} must be a JSON object")
+    value = _parse_json(raw, name)
     return value, raw
 
 
@@ -372,6 +394,206 @@ def diagnostic(manifest: dict[str, Any], test_run_id: int, test_source_sha: str,
     }
 
 
+def _file_fact(value: Any, name: str, max_bytes: int = MAX_GZIP_BYTES) -> dict[str, Any]:
+    value = _exact(value, {"name", "bytes", "sha256"}, name)
+    if type(value["name"]) is not str or not value["name"] or "/" in value["name"] \
+            or "\\" in value["name"] or value["name"] in {".", ".."}:
+        fail(f"{name} has an unsafe name")
+    _integer(value["bytes"], f"{name} bytes", 1, max_bytes)
+    if type(value["sha256"]) is not str or not SHA256.fullmatch(value["sha256"]):
+        fail(f"{name} sha256 is invalid")
+    return value
+
+
+def validate_runtime_record(value: Any, repository: str | None = None,
+                            run_id: int | None = None, source_sha: str | None = None,
+                            profile: str | None = None,
+                            run_attempt: int | None = None) -> dict[str, Any]:
+    if repository is not None and (type(repository) is not str or not REPOSITORY.fullmatch(repository)):
+        fail("expected runtime repository is invalid")
+    if run_id is not None:
+        _integer(run_id, "expected runtime run_id", 1, 10**20)
+    if source_sha is not None and (type(source_sha) is not str or not SHA.fullmatch(source_sha)):
+        fail("expected runtime source SHA is invalid")
+    if profile is not None and (type(profile) is not str or profile not in RUNTIME_PROFILES):
+        fail("expected runtime profile is invalid")
+    if run_attempt is not None:
+        _integer(run_attempt, "expected runtime run_attempt", 1, 10**9)
+    root = _exact(value, {"schema", "state", "purpose", "profile", "repository", "workflow",
+                          "image_run_id", "image_source_sha", "source_manifest",
+                          "runtime_proof", "image", "storage", "availability"},
+                  "runtime image record")
+    if type(root["profile"]) is not str:
+        fail("runtime image profile is invalid")
+    if root["schema"] != RUNTIME_SCHEMA or root["state"] != "runtime-certified-evidence-only" \
+            or root["purpose"] != "profile-runtime-evidence" \
+            or root["workflow"] != WORKFLOW or root["profile"] not in RUNTIME_PROFILES:
+        fail("runtime image record has the wrong schema, state, profile, or workflow")
+    if profile is not None and root["profile"] != profile:
+        fail("runtime image record identifies another profile")
+    if type(root["repository"]) is not str or not REPOSITORY.fullmatch(root["repository"]):
+        fail("runtime image repository is invalid")
+    if repository is not None and root["repository"] != repository:
+        fail("runtime image record belongs to another repository")
+    _integer(root["image_run_id"], "image_run_id", 1, 10**20)
+    if run_id is not None and root["image_run_id"] != run_id:
+        fail("runtime image record belongs to another run")
+    if type(root["image_source_sha"]) is not str or not SHA.fullmatch(root["image_source_sha"]):
+        fail("runtime image source SHA is invalid")
+    if source_sha is not None and root["image_source_sha"] != source_sha:
+        fail("runtime image record belongs to another source SHA")
+
+    source = _exact(root["source_manifest"], {"name", "schema", "bytes", "sha256"},
+                    "source manifest identity")
+    expected_source = ((MANIFEST_NAME, SCHEMA) if root["profile"] == PROFILE
+                       else ("manifest.json", "auros-revive-retained-v1"))
+    if (source["name"], source["schema"]) != expected_source:
+        fail("runtime image record names the wrong source manifest")
+    _integer(source["bytes"], "source manifest bytes", 1, MAX_MANIFEST_BYTES)
+    if type(source["sha256"]) is not str or not SHA256.fullmatch(source["sha256"]):
+        fail("source manifest sha256 is invalid")
+
+    proof = _exact(root["runtime_proof"], {"run_id", "run_attempt", "source_sha", "job", "mode"},
+                   "runtime proof")
+    _integer(proof["run_id"], "runtime proof run_id", 1, 10**20)
+    _integer(proof["run_attempt"], "runtime proof run_attempt", 1, 10**9)
+    if run_attempt is not None and proof["run_attempt"] != run_attempt:
+        fail("runtime proof belongs to another run attempt")
+    if type(proof["source_sha"]) is not str or not SHA.fullmatch(proof["source_sha"]):
+        fail("runtime proof source SHA is invalid")
+    if type(proof["job"]) is not str or type(proof["mode"]) is not str:
+        fail("runtime proof job or mode is invalid")
+    expected_mode = ("multilingual-functional-v1" if root["profile"] == PROFILE
+                     else "revive-functional-v1")
+    if (proof["run_id"] != root["image_run_id"] or
+            proof["source_sha"] != root["image_source_sha"] or
+            proof["job"] != root["profile"] or proof["mode"] != expected_mode):
+        fail("runtime proof is not the image's exact functional profile job")
+
+    image = _exact(root["image"], {"bytes", "sha256", "compression",
+                                   "compressed_bytes", "compressed_sha256"}, "runtime image facts")
+    _integer(image["bytes"], "runtime image bytes", 1, MAX_IMAGE_BYTES)
+    _integer(image["compressed_bytes"], "runtime compressed bytes", 1, MAX_GZIP_BYTES)
+    if image["compression"] != "gzip" or any(
+            type(image[key]) is not str or not SHA256.fullmatch(image[key])
+            for key in ("sha256", "compressed_sha256")):
+        fail("runtime image hashes or compression are invalid")
+
+    storage = root["storage"]
+    if root["profile"] == "revive":
+        storage = _exact(storage, {"type", "artifact_name", "manifest_name", "files"},
+                         "runtime image storage")
+        if (storage["type"], storage["artifact_name"], storage["manifest_name"]) != (
+                "actions-artifact", "profile-revive-runtime-image", "manifest.json"):
+            fail("Revive runtime image storage identity is invalid")
+        if type(storage["files"]) is not list or len(storage["files"]) != 1:
+            fail("Revive runtime image storage must contain one gzip")
+        item = _file_fact(storage["files"][0], "Revive runtime image")
+        if item["name"] != "auros-revive.img.gz":
+            fail("Revive runtime image filename is invalid")
+    else:
+        storage = _exact(storage, {"type", "tag", "manifest_name", "files"},
+                         "runtime image storage")
+        if (storage["type"], storage["tag"], storage["manifest_name"]) != (
+                "profile-prerelease-pieces", f"profiles-{root['image_run_id']}", MANIFEST_NAME):
+            fail("Multilingual runtime image storage identity is invalid")
+        if type(storage["files"]) is not list or not 1 <= len(storage["files"]) <= MAX_PIECES:
+            fail("Multilingual runtime image storage has an invalid piece count")
+        for index, entry in enumerate(storage["files"]):
+            item = _file_fact(entry, f"Multilingual piece {index}", MAX_PIECE_BYTES)
+            match = PIECE.fullmatch(item["name"])
+            if not match or int(match.group(1)) != index:
+                fail("Multilingual runtime image pieces are not safe, ordered, and contiguous")
+            if index + 1 < len(storage["files"]) and item["bytes"] != MAX_PIECE_BYTES:
+                fail("every non-final runtime image piece must use the 90 MiB convention")
+    if sum(item["bytes"] for item in storage["files"]) != image["compressed_bytes"]:
+        fail("runtime storage sizes do not equal compressed_bytes")
+    if root["profile"] == "revive" and storage["files"][0]["sha256"] != image["compressed_sha256"]:
+        fail("Revive runtime storage hash differs from compressed_sha256")
+    availability = _exact(root["availability"], {"metadata_retention", "backing_retention", "access",
+                                                    "delivery_authorized"}, "runtime availability")
+    expected_backing = ("profile-prerelease-pruned" if root["profile"] == PROFILE
+                        else "actions-artifact-2-days")
+    if type(availability["delivery_authorized"]) is not bool:
+        fail("runtime delivery authority flag must be boolean")
+    if (availability["metadata_retention"], availability["backing_retention"],
+            availability["access"], availability["delivery_authorized"]) != (
+                "actions-artifact-30-days", expected_backing,
+                "requires-live-backing-validation", False):
+        fail("runtime image availability or delivery authority is invalid")
+    return root
+
+
+def runtime_record(source_raw: bytes, profile: str, repository: str,
+                   run_id: int, run_attempt: int, source_sha: str) -> dict[str, Any]:
+    if type(source_raw) is not bytes or type(profile) is not str or profile not in RUNTIME_PROFILES \
+            or type(repository) is not str or not REPOSITORY.fullmatch(repository) \
+            or type(source_sha) is not str or not SHA.fullmatch(source_sha):
+        fail("runtime profile or source identity is invalid")
+    _integer(run_id, "run_id", 1, 10**20)
+    _integer(run_attempt, "run_attempt", 1, 10**9)
+    if not 1 <= len(source_raw) <= MAX_MANIFEST_BYTES:
+        fail("source manifest is empty or oversized")
+    source = _parse_json(source_raw, "retained image manifest")
+    if profile == PROFILE:
+        manifest = validate_manifest(source, repository, run_id, source_sha)
+        image = manifest["image"]
+        source_name, source_schema = MANIFEST_NAME, SCHEMA
+        files = [dict(item) for item in manifest["pieces"]]
+        storage = {"type": "profile-prerelease-pieces", "tag": f"profiles-{run_id}",
+                   "manifest_name": MANIFEST_NAME, "files": files}
+    else:
+        manifest = _exact(source, {"schema", "profile", "repository", "workflow", "source_sha",
+                                   "image_run_id", "raw", "compressed", "filename"},
+                          "Revive retained image manifest")
+        _integer(manifest["image_run_id"], "Revive image_run_id", 1, 10**20)
+        if (manifest["schema"], manifest["profile"], manifest["repository"],
+                manifest["workflow"], manifest["source_sha"], manifest["image_run_id"],
+                manifest["filename"]) != ("auros-revive-retained-v1", "revive", repository,
+                                           WORKFLOW, source_sha, run_id, "auros-revive.img.gz"):
+            fail("Revive retained image manifest has the wrong identity")
+        raw = _exact(manifest["raw"], {"bytes", "sha256"}, "Revive raw image facts")
+        compressed = _exact(manifest["compressed"], {"bytes", "sha256"},
+                            "Revive compressed image facts")
+        _integer(raw["bytes"], "Revive raw image bytes", 1, MAX_IMAGE_BYTES)
+        _integer(compressed["bytes"], "Revive compressed image bytes", 1, MAX_GZIP_BYTES)
+        if any(type(item["sha256"]) is not str or not SHA256.fullmatch(item["sha256"])
+               for item in (raw, compressed)):
+            fail("Revive retained image hash is invalid")
+        image = {"bytes": raw["bytes"], "sha256": raw["sha256"],
+                 "gzip_bytes": compressed["bytes"], "gzip_sha256": compressed["sha256"]}
+        source_name, source_schema = "manifest.json", "auros-revive-retained-v1"
+        storage = {"type": "actions-artifact", "artifact_name": "profile-revive-runtime-image",
+                   "manifest_name": source_name,
+                   "files": [{"name": manifest["filename"], "bytes": compressed["bytes"],
+                              "sha256": compressed["sha256"]}]}
+    value = {
+        "schema": RUNTIME_SCHEMA,
+        "state": "runtime-certified-evidence-only",
+        "purpose": "profile-runtime-evidence",
+        "profile": profile,
+        "repository": repository,
+        "workflow": WORKFLOW,
+        "image_run_id": run_id,
+        "image_source_sha": source_sha,
+        "source_manifest": {"name": source_name, "schema": source_schema,
+                            "bytes": len(source_raw), "sha256": hashlib.sha256(source_raw).hexdigest()},
+        "runtime_proof": {"run_id": run_id, "run_attempt": run_attempt,
+                          "source_sha": source_sha, "job": profile,
+                          "mode": f"{profile}-functional-v1"},
+        "image": {"bytes": image["bytes"], "sha256": image["sha256"], "compression": "gzip",
+                  "compressed_bytes": image["gzip_bytes"],
+                  "compressed_sha256": image["gzip_sha256"]},
+        "storage": storage,
+        "availability": {"metadata_retention": "actions-artifact-30-days",
+                         "backing_retention": ("profile-prerelease-pruned" if profile == PROFILE
+                                               else "actions-artifact-2-days"),
+                         "access": "requires-live-backing-validation",
+                         "delivery_authorized": False},
+    }
+    return validate_runtime_record(value, repository, run_id, source_sha, profile, run_attempt)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -407,6 +629,14 @@ def main() -> int:
     diag.add_argument("--test-source-sha", required=True)
     diag.add_argument("--result", choices=("pass", "fail"), required=True)
     diag.add_argument("--output", type=Path, required=True)
+    certify = sub.add_parser("certify")
+    certify.add_argument("--source-manifest", type=Path, required=True)
+    certify.add_argument("--profile", choices=sorted(RUNTIME_PROFILES), required=True)
+    certify.add_argument("--repository", required=True)
+    certify.add_argument("--run-id", type=int, required=True)
+    certify.add_argument("--run-attempt", type=int, required=True)
+    certify.add_argument("--source-sha", required=True)
+    certify.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == "create":
@@ -433,10 +663,15 @@ def main() -> int:
             _, release_raw = _load_json(args.release_manifest, "downloaded release manifest")
             validate_downloaded_manifest(anchor_raw, release_raw)
             restore(anchor, args.pieces, args.output)
-        else:
+        elif args.command == "diagnostic":
             anchor, _ = _load_json(args.anchor, "immutable image manifest")
             _write_json(args.output, diagnostic(anchor, args.test_run_id,
                                                 args.test_source_sha, args.result))
+        else:
+            _, source_raw = _load_json(args.source_manifest, "retained image manifest")
+            _write_json(args.output, runtime_record(source_raw, args.profile,
+                                                    args.repository, args.run_id, args.run_attempt,
+                                                    args.source_sha))
     except RetentionError as exc:
         parser.error(str(exc))
     return 0
