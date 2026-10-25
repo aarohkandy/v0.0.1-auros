@@ -1,0 +1,70 @@
+# The only Pages publisher. Callers request publication, never supply authority
+# or an old artifact. Replaced pending requests still publish current main.
+name: publish-pages
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  actions: read
+  pages: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    concurrency:
+      group: auros-pages-authoritative-publisher
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INSTALLER_DOMAIN: ${{ vars.AUROS_DOMAIN }}
+    steps:
+      - name: Resolve authoritative main, never caller inputs
+        id: authority
+        shell: bash
+        run: |
+          sha=$(timeout 30 gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::Current main identity unavailable'; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ steps.authority.outputs.sha }}
+          persist-credentials: false
+      - name: Confirm the helper checkout identity
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.authority.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: The legal pack is ready for the public
+        run: python3 -I tools/legal/check.py --launch
+      - name: Playwright and Chromium
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/pw" playwright@1.56.1
+          timeout 600 "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+      - name: Stage authoritative configuration and verified latest release
+        run: python3 -I tools/site/publish_guard.py prepare --directory "$RUNNER_TEMP/site" --state "$RUNNER_TEMP/publish-state.json"
+      - name: Check the exact final staged site
+        env:
+          PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
+        run: node tools/site/check.mjs --dir "$RUNNER_TEMP/site"
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          name: authoritative-pages
+          path: ${{ runner.temp }}/site
+      - name: Revalidate current authority and completed cloud gates
+        run: python3 -I tools/site/publish_guard.py guard --directory "$RUNNER_TEMP/site" --state "$RUNNER_TEMP/publish-state.json"
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+        with:
+          artifact_name: authoritative-pages

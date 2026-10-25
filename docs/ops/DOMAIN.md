@@ -9,7 +9,13 @@ from it is stranded. So before the first real install (PLAN-END-TO-END §3,
 rule 1), every one of those addresses becomes the owner's own name, and
 Cloudflare passes each request on to GitHub (for now).
 
-**How.** One repository variable, `AUROS_DOMAIN` (for example `auros.app`).
+**How.** The installer/build repository variable `AUROS_DOMAIN` (for example
+`auros.app`) and the versioned public `domain` in
+`tools/site/publish-settings.json` must agree before custom delivery is enabled.
+The publisher refuses conflicting CNAME or installer-domain settings. Actions
+variables do not override the versioned site publishing settings.
+
+The build variable remains `AUROS_DOMAIN`.
 `tools/repo.sh` reads it, and everything that bakes an address asks
 `tools/repo.sh`:
 
@@ -47,6 +53,9 @@ Nothing below changes anything for a person until step 5, and nothing is built f
    ```
    For the second responder (halt and pause only, never publish), later: the same with `AUROS_HALT_TOKEN`, and the
    value goes to that person only.
+   Also commit the same domain in `tools/site/publish-settings.json`, with the
+   reviewed Worker HTTPS `api_origin`; align any Pages CNAME. Keep the custom
+   build switch disabled until the complete activation checks pass.
 4. **GitHub on the phone**: install the GitHub app and turn notifications on for this repository (Watch -> Custom ->
    Issues). The monitor's alerts are issues assigned to the owner; this is how they reach a phone.
 5. **Run `edge`** (Actions -> edge -> Run workflow). It publishes `get.`, `updates.`, `status.` and `www.` and the

@@ -24,6 +24,12 @@ on:
     branches: [main]
     paths:
       - 'cloud/**'
+      - 'website/**'
+      - 'tools/site/**'
+      - 'tools/repo.sh'
+      - '.github/workflows/pages.yml'
+      - '.github/workflows/publish-pages.yml'
+      - '.github/workflows/release.yml'
       - 'docs/wish-v1.schema.json'
       - 'rootfs/usr/share/auros/help/**'
       - '.github/workflows/cloud.yml'
@@ -50,6 +56,7 @@ defaults:
     working-directory: cloud
 
 env:
+  GH_TOKEN: ${{ github.token }}
   WRANGLER: wrangler@4.148.0
   WRANGLER_SEND_METRICS: 'false'
 
@@ -114,6 +121,11 @@ jobs:
       - if: steps.have.outputs.ok == 'true'
         run: timeout 300 npm ci --no-audit --no-fund
 
+      - name: Versioned publishing origin and installer-domain alignment
+        working-directory: .
+        env:
+          INSTALLER_DOMAIN: ${{ vars.AUROS_DOMAIN }}
+        run: python3 -I tools/site/publish_settings.py --cloud-check --github-env "$GITHUB_ENV"
       - name: Custom delivery configuration
         id: custom
         env:
@@ -129,7 +141,7 @@ jobs:
           enabled=$(grep -Ec '^BUILD_REQUESTS_ENABLED[[:space:]]*=[[:space:]]*"1"([[:space:]]*#.*)?$' wrangler.toml || true)
           if [ "$disabled" = 1 ] && [ "$enabled" = 0 ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            origin=$(sed -nE 's/^BUILD_ALLOWED_ORIGIN[[:space:]]*=[[:space:]]*"([^"[:space:]]*)"([[:space:]]*#.*)?$/\1/p' wrangler.toml)
+            origin="$BUILD_PUBLISHED_ORIGIN"
             echo "origin=$origin" >> "$GITHUB_OUTPUT"
             echo "Custom delivery remains disabled; any supplied credentials will be staged."
             exit 0
@@ -177,6 +189,10 @@ jobs:
             echo "::error title=Custom delivery configuration invalid::BUILD_ALLOWED_ORIGIN must be one exact HTTPS origin with no path."
             exit 1
           fi
+          if [ "$origin" != "$BUILD_PUBLISHED_ORIGIN" ]; then
+            echo "::error::BUILD_ALLOWED_ORIGIN differs from versioned publishing settings."
+            exit 1
+          fi
           if ! grep -Eq '^BUILD_GITHUB_REPOSITORY[[:space:]]*=[[:space:]]*"aarohkandy/v0\.0\.1-auros"([[:space:]]*#.*)?$' wrangler.toml; then
             echo "::error title=Custom delivery configuration invalid::BUILD_GITHUB_REPOSITORY is not the fixed reviewed repository."
             exit 1
@@ -216,6 +232,7 @@ jobs:
           BUILD_CHALLENGE_SECRET: ${{ secrets.BUILD_CHALLENGE_SECRET }}
           GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
         run: |
+          bash ../tools/site/require_current_main.sh
           set +x
           # On first activation, the runbook keeps the existing Worker disabled.
           # Later enabled deploys reapply these values before the new code.
@@ -230,7 +247,8 @@ jobs:
           GITHUB_APP_ID: ${{ vars.GITHUB_APP_ID }}
           GITHUB_APP_INSTALLATION_ID: ${{ vars.GITHUB_APP_INSTALLATION_ID }}
         run: |
-          extra=()
+          bash ../tools/site/require_current_main.sh
+          extra=(--var "BUILD_ALLOWED_ORIGIN:$BUILD_PUBLISHED_ORIGIN")
           if [ -n "$ANTHROPIC_WORKSPACE_ID" ]; then extra+=(--var "ANTHROPIC_WORKSPACE_ID:$ANTHROPIC_WORKSPACE_ID"); fi
           if [ -n "$GITHUB_APP_ID" ]; then extra+=(--var "GITHUB_APP_ID:$GITHUB_APP_ID"); fi
           if [ -n "$GITHUB_APP_INSTALLATION_ID" ]; then extra+=(--var "GITHUB_APP_INSTALLATION_ID:$GITHUB_APP_INSTALLATION_ID"); fi
@@ -251,6 +269,7 @@ jobs:
           GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
           CUSTOM_DELIVERY_ENABLED: ${{ steps.custom.outputs.enabled }}
         run: |
+          bash ../tools/site/require_current_main.sh
           set +x
           names=$(timeout 120 npx --yes "$WRANGLER" secret list --format json 2>/dev/null || echo '[]')
           if ! printf '%s' "$names" | grep -q '"TOKEN_SECRET"'; then
@@ -285,15 +304,17 @@ jobs:
           # Enabled readiness uses OPTIONS only: no quota, job, dispatch or
           # signing work is created. Disabled mode proves both POST doors stop
           # before their bodies or Durable Object state are touched.
-          timeout 45 node test/build-preflight.mjs "$URL" "$mode" "$BUILD_ALLOWED_ORIGIN"
+          timeout 45 node test/build-preflight.mjs "$AUROS_WISHES_URL" "$mode" "$BUILD_ALLOWED_ORIGIN"
 
       - name: Live end to end, with its logs captured
         if: steps.have.outputs.ok == 'true'
         env:
-          URL: ${{ steps.deploy.outputs.url }}
+          CUSTOM_DELIVERY_ENABLED: ${{ steps.custom.outputs.enabled }}
           EXPECT: ${{ steps.mode.outputs.expect }}
           SMOKE_SECRETS_FILE: ${{ runner.temp }}/never-logged.txt
         run: |
+          URL="$AUROS_WISHES_URL"
+          log_proven=0
           # The new version and its secrets take a few seconds to reach every location.
           for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
             curl -fsS --max-time 10 "$URL/v1/health" >/dev/null && break; sleep 5
@@ -322,7 +343,9 @@ jobs:
             node test/log-assert.mjs "$RUNNER_TEMP/service-logs.txt" "$EXPECT" > "$RUNNER_TEMP/assert.txt" || assert_failed=1
             tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/assert.txt"
             if [ -n "${assert_failed:-}" ]; then echo "::error::The service's logs do not match its mode ($EXPECT)"; exit 1; fi
+            log_proven=1
           fi
+          node test/publication-evidence.mjs "$CUSTOM_DELIVERY_ENABLED" "$smoke" "$log_proven"
           if [ "$smoke" = 3 ]; then echo "::warning::This runner's network had used its 3 registrations today; end-to-end part skipped"; exit 0; fi
           exit "$smoke"
 
