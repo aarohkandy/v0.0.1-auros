@@ -652,9 +652,12 @@ jobs:
         run: |
           sh tools/apt.sh gcc libc6-dev make python3 pkg-config libdbus-1-dev curl fonts-dejavu-core
           mkdir -p transcripts
-      - name: wishuitest (Wishes, what she sees and says; then 36 deliberate breakages)
+      - name: wishuitest (Wishes, what she sees and says; then 37 deliberate breakages)
         if: ${{ !cancelled() && matrix.suite == 'ui' }}
         run: sh tools/wishuitest.sh 2>&1 | tee transcripts/wishuitest.txt
+      - name: nightlighttest (completed-frame tint, stride and bounds)
+        if: ${{ !cancelled() && matrix.suite == 'ui' }}
+        run: sh tools/nightlighttest.sh 2>&1 | tee transcripts/nightlighttest.txt
       - name: wishgallerytest (every wish she can press is one the engine accepts)
         if: ${{ !cancelled() && matrix.suite == 'ui' }}
         run: sh tools/wishgallerytest.sh 2>&1 | tee transcripts/wishgallerytest.txt

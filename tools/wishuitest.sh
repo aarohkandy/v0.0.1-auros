@@ -25,6 +25,7 @@ SRCS="foot.c run.c draw.c shellcommon.c anim.c"
 build() {   # $1 = tree root, $2 = output (and $2-inert: the same panel built as the release is)
     cc -O1 -g -std=gnu11 -w $SAN -DAUROS_WISHES=1 -o "$2" "$1/tools/wishuitest.c" \
        "$1/src/aurshell/foot.c" "$1/src/aurshell/run.c" "$1/src/aurshell/draw.c" \
+       "$1/src/aurshell/nightlight.c" \
        "$1/src/aurshell/shellcommon.c" "$1/src/aurshell/anim.c" \
        "$1"/src/aurshell/layouts/[a-z]*.c "$1/src/common/theme.c" \
        "$1/src/common/font.c" "$1/src/common/png.c" \
@@ -60,6 +61,7 @@ wish.c^an overlong line is tolerated^if (len > WLINE_MAX) { k_close(c); return 1
 wish.c^control characters reach the screen^if (ch < 0x20) ch = ' ';^if (0) ch = ' ';
 wish.c^http addresses are opened^if (strncmp(u, "https://", 8) || strlen(u) > 200) return 0;^if (strlen(u) > 200) return 0;
 wish.c^a quote in an address is opened^|| *p == '"' || *p == '\'' || *p == '\\' ||^||
+wish.c^night light claims success without changing the display state^ok = nightlight_set(c, on);^ok = 1;
 wish.c^any look name is applied^if (!is_one_of(look, allowed)) return 0;^if (0) return 0;
 wish.c^Yes and No differ in size^for (int i = 0; i < n; i++) w[i] = maxw;^for (int i = 0; i < n; i++) w[i] = i ? maxw - 7 : maxw;
 wish.c^panel buttons shrink below 48 px^g->btn_h = (int)(36.f + 20.f * k); if (g->btn_h < 48) g->btn_h = 48;^g->btn_h = (int)(20.f + 20.f * k);
