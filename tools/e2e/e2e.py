@@ -140,7 +140,30 @@ def cmd_windows(a):
             m.shot("setup-loading")
         m.auto_shots(30)
         with rec.phase("windows: Setup, to the first logon"):
-            facts = hub.wait_event("firstlogon", timeout=min(left(), 120 * 60), alive=m.alive)
+            # Setup restarts the machine once; after that the firmware
+            # must find Windows on the disk. If it finds nothing it sits
+            # on its own front page for ever, which once cost a run the
+            # whole two-hour wait (run 40765534800). Look for that page
+            # between waits and say so at once.
+            deadline = time.time() + min(left(), 120 * 60)
+            started = time.time()
+            facts = None
+            while facts is None and time.time() < deadline:
+                facts = hub.wait_event("firstlogon", timeout=min(60, max(1, deadline - time.time())),
+                                       alive=m.alive)
+                if facts is None and m.alive():
+                    if time.time() - started < 15 * 60:
+                        # the first quarter hour, a picture a minute whether
+                        # or not the auto shots thought the screen changed:
+                        # run 40765534800 kept none between "Setup loading"
+                        # and the firmware's front page
+                        m.shot("setup-watch")
+                    words = vision.ocr(m.screendump())
+                    if vision.find_text(words, "Boot Maintenance Manager") or \
+                       vision.find_text(words, "Boot Manager") and vision.find_text(words, "Select Language"):
+                        m.shot("firmware-front-page")
+                        raise Failure("the firmware found nothing to boot after Setup's restart: "
+                                      "the screen is OVMF's front page (windows/shots/ has what Setup did first)")
             if facts is None:
                 raise Failure("Windows did not reach its first logon")
         with open(os.path.join(a.out, "windows-facts.json"), "w") as f:
