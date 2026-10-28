@@ -1,0 +1,4 @@
+Uncommitted work from worktree /private/tmp/claude-501/-Users-aaroh-auros/34740983-a98e-4c0a-aa70-34ed36aba268/scratchpad/lr
+branch feat/linux-restore @ d3136a7, last edited 2026-09-20 19:32 PDT, copied 2026-09-20 by auros-79.
+Apply: git -C <worktree on d3136a7> apply tracked.diff && cp -R untracked/. <worktree>/
+Not reviewed. Nothing was committed or changed in the worktree.

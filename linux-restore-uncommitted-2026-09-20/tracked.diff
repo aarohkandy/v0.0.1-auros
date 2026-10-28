@@ -1,0 +1,1815 @@
+diff --git a/cmd/auros-migrate/main.go b/cmd/auros-migrate/main.go
+index c028344..fb095c1 100644
+--- a/cmd/auros-migrate/main.go
++++ b/cmd/auros-migrate/main.go
+@@ -456,7 +456,7 @@ func resolveDestination(r *safety.Resolver, destFlag string, inventoryBytes int6
+ 		}
+ 		return d, nil
+ 	}
+-	d, rejected, err := r.Choose("auros-backup", inventoryBytes)
++	d, rejected, err := r.Choose(manifest.ArchiveSubdir, inventoryBytes)
+ 	if s := safety.DescribeRejections(rejected); s != "" {
+ 		fmt.Print("\n" + s)
+ 	}
+diff --git a/cmd/auros-migrate/main_test.go b/cmd/auros-migrate/main_test.go
+index 58e3450..2f434e5 100644
+--- a/cmd/auros-migrate/main_test.go
++++ b/cmd/auros-migrate/main_test.go
+@@ -8,6 +8,7 @@ import (
+ 	"testing"
+ 
+ 	"github.com/aarohkandy/auros-installer/internal/copyengine"
++	"github.com/aarohkandy/auros-installer/internal/manifest"
+ 	"github.com/aarohkandy/auros-installer/internal/safety"
+ 	"github.com/aarohkandy/auros-installer/internal/winenv"
+ )
+@@ -111,6 +112,27 @@ func TestResolveDestination_AcceptsARealDirectoryOnTheBackupDrive(t *testing.T)
+ 	}
+ }
+ 
++// The automatic choice puts the archive in the folder the Linux restore looks
++// in. The expected path is spelled as a LITERAL: sticks already in the field
++// carry exactly this name, so a change to it is a change the restore on those
++// sticks has to survive, and the person making it should have to edit this line
++// and read why. internal/manifest pins the constant; this pins the call site,
++// which is where the two halves drifted apart the first time — the migrate
++// side passed its own "auros-backup" and the restore never looked inside it.
++func TestResolveDestination_TheAutomaticChoiceIsTheFolderTheRestoreLooksIn(t *testing.T) {
++	r, _, dest := machine(t)
++	d, err := resolveDestination(r, "", 1<<20)
++	if err != nil {
++		t.Fatalf("resolveDestination: %v", err)
++	}
++	if got, want := d.Dir(), filepath.Join(dest, "auros-backup"); got != want {
++		t.Fatalf("the archive goes to %s; the restore on the new machine looks for %s", got, want)
++	}
++	if got := filepath.Base(d.Dir()); got != manifest.ArchiveSubdir {
++		t.Errorf("the migrate side chose %q and manifest.ArchiveSubdir is %q: the two halves disagree", got, manifest.ArchiveSubdir)
++	}
++}
++
+ // ---------- phase 1: OneDrive Files On-Demand ----------
+ 
+ func TestPlaceholderChoice_RefusesToStartUntilTheUserHasChosen(t *testing.T) {
+diff --git a/cmd/auros-restore/main.go b/cmd/auros-restore/main.go
+index 4cd6f42..bf82202 100644
+--- a/cmd/auros-restore/main.go
++++ b/cmd/auros-restore/main.go
+@@ -43,6 +43,12 @@ const (
+ 	exitAmbiguous    = 4 // several archives attached; the user must choose
+ 	exitNoArchive    = 5 // --require-archive was set and none was found
+ 	exitCannotReport = 6 // the restore ran but the user could not be told
++	// exitNoArchiveOnMedia: a removable drive IS attached and none of them
++	// holds a backup. Not a quiet no-op: on a machine running this program the
++	// most likely reason somebody plugged in a drive is that it is the backup,
++	// and the first version of this command answered "nothing to do", exit 0,
++	// for an archive it had simply failed to look inside.
++	exitNoArchiveOnMedia = 7
+ )
+ 
+ const usage = `auros-restore — put your files back on this computer.
+@@ -120,6 +126,15 @@ func run() (int, error) {
+ 	if err != nil {
+ 		return exitUsage, err
+ 	}
++	// Under a root run (an administrator with --home), everything this
++	// command creates in the home directory — the state directory, the log,
++	// the stamp, the report — is handed to whoever owns that home. Decided
++	// before anything is created, and a root run that cannot tell who that is
++	// stops here rather than leaving root-owned files the user cannot touch.
++	own, err := restore.OwnershipFor(layout.Home)
++	if err != nil {
++		return exitUsage, err
++	}
+ 
+ 	stateDir := filepath.Join(layout.Home, ".local", "state", "auros-restore")
+ 	stamp := cfg.stamp
+@@ -137,7 +152,7 @@ func run() (int, error) {
+ 	ctx, stop := signal.NotifyContext(context.Background(), signals.Interrupting()...)
+ 	defer stop()
+ 
+-	log, logPath := openLog(stateDir)
++	log, logPath := openLog(stateDir, own)
+ 	if log != nil {
+ 		defer log.Close()
+ 	}
+@@ -151,26 +166,22 @@ func run() (int, error) {
+ 	// ---- FIND ----
+ 	finder := &restore.Finder{Explicit: cfg.archive}
+ 	archives, err := finder.Find()
+-	switch {
+-	case errors.Is(err, restore.ErrAmbiguous):
+-		say("%v", err)
+-		logEvent("ambiguous", runlog.Fields{"count": len(archives)})
+-		return exitAmbiguous, nil
+-	case errors.Is(err, restore.ErrNoArchive):
+-		logEvent("no-archive", runlog.Fields{"searched": strings.Join(finder.Searched, " ")})
+-		if cfg.requireArchive {
+-			return exitNoArchive, err
++	if err != nil {
++		code, msg := findRefusal(err, cfg.requireArchive)
++		say("%s", msg)
++		logEvent("find-refused", runlog.Fields{
++			"exit": code, "error": err.Error(),
++			"searched":  strings.Join(finder.Searched, " "),
++			"removable": strings.Join(finder.SearchedRemovable, " "),
++			"count":     len(archives),
++		})
++		if code == exitOK || !cfg.quiet {
++			// Already said on the terminal. Under --quiet — which is how the
++			// login unit runs it — the returned error is the only thing that
++			// reaches the journal, so it is returned.
++			return code, nil
+ 		}
+-		// No backup attached is the ordinary state of a machine that was not
+-		// migrated. It is not an error and it does not get a scary note on the
+-		// desktop: a fresh Auros laptop has no archive and its owner should
+-		// never see a warning about one.
+-		say("No backup drive with files to restore is attached. Nothing to do.")
+-		return exitOK, nil
+-	case err != nil:
+-		say("The backup is there but cannot be read: %v", err)
+-		logEvent("archive-unreadable", runlog.Fields{"error": err.Error()})
+-		return exitArchiveBad, err
++		return code, err
+ 	}
+ 	a := archives[0]
+ 	say("Backup found: %s", a.Root)
+@@ -235,14 +246,12 @@ func run() (int, error) {
+ 		summary.NotifyAttempt = "not attempted (--no-notify)"
+ 	}
+ 
++	// Written ONCE, after the notification result is known; WriteReport
++	// records its own path before rendering. There is deliberately no second
++	// write "to fix it up": the first version had one, with O_TRUNC and its
++	// error discarded, and the run it was most likely to empty was the one that
++	// stopped because the disk was full.
+ 	reportPath, reportErr := restore.WriteReport(summary, layout)
+-	summary.ReportFilePath = reportPath
+-	if reportErr == nil {
+-		// Rendered once more now that the path and the notification result are
+-		// known, so the file on the desktop says what actually happened rather
+-		// than what was true a moment before it was written.
+-		_ = os.WriteFile(reportPath, []byte(restore.RenderReport(summary, layout)), 0o644)
+-	}
+ 
+ 	say("")
+ 	say("%s", restore.RenderReport(summary, layout))
+@@ -271,7 +280,7 @@ func run() (int, error) {
+ 		return exitIncomplete, runErr
+ 	}
+ 	if !cfg.dryRun {
+-		if err := writeStamp(stamp, summary); err != nil {
++		if err := writeStamp(stamp, summary, own); err != nil {
+ 			fmt.Fprintf(os.Stderr, "auros-restore: could not write the stamp file: %v\n", err)
+ 		}
+ 	}
+@@ -282,17 +291,20 @@ func run() (int, error) {
+ // not run it again. It is written ONLY on a clean run: a run that had a problem
+ // deserves another attempt at the next login, because the usual cause is a USB
+ // stick that was not plugged in yet.
+-func writeStamp(path string, s *restore.Summary) error {
+-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
++func writeStamp(path string, s *restore.Summary, own *restore.Ownership) error {
++	if err := restore.MkdirAllOwned(filepath.Dir(path), 0o700, own); err != nil {
+ 		return err
+ 	}
+ 	body := fmt.Sprintf("auros-restore finished cleanly\nfiles: %d\narchive: %s\nat: %s\n",
+ 		s.FilesRestored(), s.Archive.Digest, s.FinishedAt.Format(time.RFC3339))
+-	return os.WriteFile(path, []byte(body), 0o644)
++	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
++		return err
++	}
++	return own.Apply(path)
+ }
+ 
+-func openLog(stateDir string) (*runlog.Logger, string) {
+-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
++func openLog(stateDir string, own *restore.Ownership) (*runlog.Logger, string) {
++	if err := restore.MkdirAllOwned(stateDir, 0o700, own); err != nil {
+ 		return nil, ""
+ 	}
+ 	p := filepath.Join(stateDir, "restore.log")
+@@ -300,9 +312,50 @@ func openLog(stateDir string) (*runlog.Logger, string) {
+ 	if err != nil {
+ 		return nil, ""
+ 	}
++	if err := own.Apply(p); err != nil {
++		f.Close()
++		return nil, ""
++	}
+ 	return runlog.NewWriter(f, nil), p
+ }
+ 
++// findRefusal decides what the command does when the finder did not hand back
++// exactly one archive: the exit code, and the sentence the operator reads.
++//
++// It is a pure function so every branch can be driven from a test. The first
++// version was an inline switch that sent three different situations — nothing
++// attached; a drive attached with the archive one folder down, where the
++// finder never looked; and an --archive path the user typed wrong — to the
++// same "Nothing to do", exit 0. Only the first of those is a no-op.
++//
++// Each sentinel is matched by name and none wraps another, so an error this
++// function does not recognise falls through to the last branch and fails
++// closed.
++func findRefusal(err error, requireArchive bool) (int, string) {
++	switch {
++	case errors.Is(err, restore.ErrAmbiguous):
++		return exitAmbiguous, err.Error()
++	case errors.Is(err, restore.ErrExplicitArchiveMissing):
++		return exitUsage, fmt.Sprintf("There is no backup in the folder you gave with --archive.\n%v", err)
++	case errors.Is(err, restore.ErrNoArchiveOnAttachedMedia):
++		return exitNoArchiveOnMedia, fmt.Sprintf(
++			"A drive is plugged in, but no backup was found on it.\n"+
++				"If that drive IS your backup, do not wipe it — tell whoever set this computer up, "+
++				"and show them this:\n%v", err)
++	case errors.Is(err, restore.ErrNoArchive):
++		if requireArchive {
++			return exitNoArchive, err.Error()
++		}
++		// No backup attached is the ordinary state of a machine that was not
++		// migrated. It is not an error and it does not get a scary note on the
++		// desktop: a fresh Auros laptop has no archive and its owner should
++		// never see a warning about one.
++		return exitOK, "No backup drive with files to restore is attached. Nothing to do."
++	default:
++		return exitArchiveBad, fmt.Sprintf("The backup is there but cannot be read: %v", err)
++	}
++}
++
+ func progressPrinter(say func(string, ...any), quiet bool) func(done, total int, path string) {
+ 	if quiet {
+ 		return nil
+diff --git a/internal/manifest/manifest.go b/internal/manifest/manifest.go
+index 5b4ce66..89a77bc 100644
+--- a/internal/manifest/manifest.go
++++ b/internal/manifest/manifest.go
+@@ -43,6 +43,22 @@ const (
+ 	// FileName is the manifest's name inside MetaDir.
+ 	FileName = "manifest.tsv"
+ 
++	// ArchiveSubdir is the folder the Windows half creates on the destination
++	// volume and writes MetaDir inside. A stick therefore carries
++	// <mount>/auros-backup/_auros/manifest.tsv, not <mount>/_auros/manifest.tsv.
++	//
++	// It lives HERE, next to MetaDir and FileName, because the two halves of
++	// the product are different programs built from different entry points and
++	// they have to agree on this string exactly. They did not: the Windows side
++	// passed the literal "auros-backup" to safety.Resolver.Choose and the Linux
++	// side's finder only ever looked at mount points and their parents, so a
++	// complete, intact archive was reported as "no backup drive is attached" —
++	// at the one moment when the Windows disk has already been overwritten and
++	// the stick is the only copy of the user's work.
++	//
++	// One name, one place, and a test in each half that pins it.
++	ArchiveSubdir = "auros-backup"
++
+ 	// EmptySHA256 is the digest of zero bytes. A 0-byte file is ordinary, not an
+ 	// error, and this is what its entry must carry.
+ 	EmptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+diff --git a/internal/manifest/manifest_test.go b/internal/manifest/manifest_test.go
+index 2136a83..1e59489 100644
+--- a/internal/manifest/manifest_test.go
++++ b/internal/manifest/manifest_test.go
+@@ -296,3 +296,15 @@ func TestCopyHashed_ReportsShortWrite(t *testing.T) {
+ type shortWriter struct{}
+ 
+ func (shortWriter) Write(p []byte) (int, error) { return len(p) - 1, nil }
++
++// ArchiveSubdir is on sticks that already exist. The Windows half writes the
++// archive under it and the Linux half has to find it there, so a change to this
++// value is not a refactor: it is every stick made before the change becoming a
++// "no backup attached" on the machine that needs it. Pinned as a literal so the
++// person changing it has to change this line too, and read this.
++func TestArchiveSubdir_IsTheNameOnSticksInTheField(t *testing.T) {
++	if ArchiveSubdir != "auros-backup" {
++		t.Fatalf("ArchiveSubdir = %q. Sticks made by every earlier build carry \"auros-backup\"; "+
++			"the restore must keep finding those before this can change.", ArchiveSubdir)
++	}
++}
+diff --git a/internal/restore/archive.go b/internal/restore/archive.go
+index 06c7abf..c764b79 100644
+--- a/internal/restore/archive.go
++++ b/internal/restore/archive.go
+@@ -46,9 +46,28 @@ import (
+ 	"github.com/aarohkandy/auros-installer/internal/manifest"
+ )
+ 
++// The three "not found" outcomes are three DIFFERENT sentinels, and none of them
++// wraps another. That is deliberate: the caller decides an exit code by
++// matching them, and the first version collapsed all three into ErrNoArchive,
++// so "the stick is attached and the finder did not look inside it" and "you
++// typed the wrong path" were both reported as "no backup drive is attached,
++// nothing to do", exit 0, forever. A caller that forgets one of these now falls
++// through to its generic error branch, which fails closed.
+ var (
+-	// ErrNoArchive means no attached volume carried a readable manifest.
++	// ErrNoArchive means nothing that could plausibly carry an archive was
++	// attached: no removable volume was searched at all. This is the ordinary
++	// state of an Auros laptop that was never migrated, and the ONLY one of the
++	// three that is a quiet no-op.
+ 	ErrNoArchive = errors.New("restore: no archive found on any attached volume")
++	// ErrNoArchiveOnAttachedMedia means a removable volume WAS attached and
++	// searched, and held no manifest. That is not "nothing to do": it is a
++	// drive that somebody plugged in for a reason, and the most likely reason
++	// on a machine running this program is that it is the backup.
++	ErrNoArchiveOnAttachedMedia = errors.New("restore: a removable drive is attached and no backup was found on it")
++	// ErrExplicitArchiveMissing means --archive named a directory with no
++	// manifest in it or one level below. The user gave an instruction that
++	// could not be honoured, which is a usage error, never "nothing to do".
++	ErrExplicitArchiveMissing = errors.New("restore: the folder given with --archive does not hold a backup")
+ 	// ErrAmbiguous means several DIFFERENT archives are attached. We refuse to
+ 	// pick one. Restoring the wrong archive onto a fresh machine is not
+ 	// recoverable by the user, and "it chose the newest" is exactly the kind of
+@@ -102,8 +121,13 @@ type Finder struct {
+ 	// MetaDir overrides the metadata directory name. Empty means manifest.MetaDir.
+ 	MetaDir string
+ 	// Searched records every directory actually examined, so a "not found"
+-	// message can print where it looked instead of asserting an absence.
++	// message can print where it looked instead of asserting an absence. Each
++	// one was probed itself AND one level inside it.
+ 	Searched []string
++	// SearchedRemovable is the subset of Searched that looked like removable
++	// media. It is what separates ErrNoArchive from
++	// ErrNoArchiveOnAttachedMedia.
++	SearchedRemovable []string
+ }
+ 
+ // DefaultExtraRoots are the directories whose immediate children are
+@@ -136,8 +160,47 @@ var pseudoFS = map[string]bool{
+ 	"sysfs": true, "tracefs": true,
+ }
+ 
++// removableFS are filesystems a USB stick or external drive is formatted with.
++// The Windows half writes to whatever the school had, which is overwhelmingly
++// FAT32, exFAT or NTFS; the kernel reports NTFS as ntfs3 (in-kernel driver) or
++// fuseblk (ntfs-3g), and both are listed because which one a given image uses
++// is not something to remember.
++var removableFS = map[string]bool{
++	"vfat": true, "msdos": true, "exfat": true, "ntfs": true, "ntfs3": true,
++	"fuseblk": true, "udf": true, "iso9660": true, "hfsplus": true,
++}
++
++// removableParents are where udisks2 and fstab conventions mount removable
++// media. A mount under one of these is removable whatever its filesystem.
++var removableParents = []string{"/run/media", "/media", "/mnt"}
++
++func looksRemovable(path, fstype string) bool {
++	if removableFS[fstype] {
++		return true
++	}
++	for _, p := range removableParents {
++		if underPath(path, p) && filepath.Clean(path) != p {
++			return true
++		}
++	}
++	return false
++}
++
+ // Find returns every DISTINCT archive it can see.
+ //
++// Every candidate root is probed at three depths, in this order:
++//
++//	<root>/_auros/manifest.tsv                 an archive at the root itself
++//	<root>/auros-backup/_auros/manifest.tsv    where the Windows half puts it
++//	<root>/<any subdir>/_auros/manifest.tsv    anywhere one level down
++//
++// The second line is manifest.ArchiveSubdir, the SAME constant the Windows
++// side hands to safety.Resolver.Choose, and it is probed by name even when the
++// root cannot be listed. The third is the belt to its braces: a stick where
++// somebody renamed the folder, or an archive made by a build that spelled it
++// differently, is still found. It is one level, never a recursive walk — a
++// search that wandered through a 1 TB drive at login would be its own failure.
++//
+ // Two mount points showing the same archive — a USB stick bind-mounted twice,
+ // which is ordinary on a systemd machine — are one archive, not an ambiguity.
+ // Sameness is decided by os.SameFile on the manifest (device and inode), not by
+@@ -145,20 +208,22 @@ var pseudoFS = map[string]bool{
+ // two sticks.
+ func (f *Finder) Find() ([]*Archive, error) {
+ 	f.Searched = nil
++	f.SearchedRemovable = nil
+ 	meta := f.MetaDir
+ 	if meta == "" {
+ 		meta = manifest.MetaDir
+ 	}
+ 
+ 	type cand struct {
+-		root   string
+-		mount  string
+-		fstype string
++		root      string
++		mount     string
++		fstype    string
++		removable bool
+ 	}
+ 	var cands []cand
+ 	seenRoot := make(map[string]bool)
+ 
+-	add := func(root, mount, fstype string) {
++	add := func(root, mount, fstype string, removable bool) {
+ 		abs, err := filepath.Abs(root)
+ 		if err != nil {
+ 			return
+@@ -167,11 +232,11 @@ func (f *Finder) Find() ([]*Archive, error) {
+ 			return
+ 		}
+ 		seenRoot[abs] = true
+-		cands = append(cands, cand{root: abs, mount: mount, fstype: fstype})
++		cands = append(cands, cand{root: abs, mount: mount, fstype: fstype, removable: removable})
+ 	}
+ 
+ 	if f.Explicit != "" {
+-		add(f.Explicit, f.Explicit, "")
++		add(f.Explicit, f.Explicit, "", false)
+ 	} else {
+ 		mountsFn := f.Mounts
+ 		if mountsFn == nil {
+@@ -189,7 +254,7 @@ func (f *Finder) Find() ([]*Archive, error) {
+ 			if pseudoFS[m.FSType] {
+ 				continue
+ 			}
+-			add(m.Path, m.Path, m.FSType)
++			add(m.Path, m.Path, m.FSType, looksRemovable(m.Path, m.FSType))
+ 		}
+ 		extra := f.ExtraRoots
+ 		if extra == nil {
+@@ -202,7 +267,9 @@ func (f *Finder) Find() ([]*Archive, error) {
+ 			}
+ 			for _, e := range ents {
+ 				if e.IsDir() {
+-					add(filepath.Join(parent, e.Name()), parent, "")
++					// A child of a removable-media parent is removable media,
++					// whatever the mount list said about it.
++					add(filepath.Join(parent, e.Name()), parent, "", true)
+ 				}
+ 			}
+ 		}
+@@ -213,39 +280,61 @@ func (f *Finder) Find() ([]*Archive, error) {
+ 
+ 	var found []*Archive
+ 	var manifestInfos []os.FileInfo
++	seenProbe := make(map[string]bool)
+ 	for _, c := range cands {
+-		mp := filepath.Join(c.root, meta, manifest.FileName)
+ 		f.Searched = append(f.Searched, c.root)
+-		st, err := os.Stat(mp)
+-		if err != nil || !st.Mode().IsRegular() {
+-			continue
++		if c.removable {
++			f.SearchedRemovable = append(f.SearchedRemovable, c.root)
+ 		}
+-		dup := false
+-		for _, prev := range manifestInfos {
+-			if os.SameFile(prev, st) {
+-				dup = true
+-				break
++		for _, root := range probeRoots(c.root) {
++			if seenProbe[root] {
++				continue
+ 			}
++			seenProbe[root] = true
++			mp := filepath.Join(root, meta, manifest.FileName)
++			st, err := os.Stat(mp)
++			if err != nil || !st.Mode().IsRegular() {
++				continue
++			}
++			dup := false
++			for _, prev := range manifestInfos {
++				if os.SameFile(prev, st) {
++					dup = true
++					break
++				}
++			}
++			if dup {
++				continue
++			}
++			a, aerr := loadArchive(root, mp)
++			if aerr != nil {
++				// A manifest that is present but unreadable is a FINDING, not a
++				// non-result. It is returned as an error so the user is told their
++				// archive is damaged rather than told no archive exists.
++				return nil, fmt.Errorf("restore: %s: %w", mp, aerr)
++			}
++			a.MountPoint, a.FSType = c.mount, c.fstype
++			manifestInfos = append(manifestInfos, st)
++			found = append(found, a)
+ 		}
+-		if dup {
+-			continue
+-		}
+-		a, aerr := loadArchive(c.root, mp)
+-		if aerr != nil {
+-			// A manifest that is present but unreadable is a FINDING, not a
+-			// non-result. It is returned as an error so the user is told their
+-			// archive is damaged rather than told no archive exists.
+-			return nil, fmt.Errorf("restore: %s: %w", mp, aerr)
+-		}
+-		a.MountPoint, a.FSType = c.mount, c.fstype
+-		manifestInfos = append(manifestInfos, st)
+-		found = append(found, a)
+ 	}
+ 
+ 	sort.Slice(found, func(i, j int) bool { return found[i].Root < found[j].Root })
+ 
+ 	if len(found) == 0 {
+-		return nil, fmt.Errorf("%w (looked in: %s)", ErrNoArchive, strings.Join(f.Searched, ", "))
++		where := strings.Join(f.Searched, ", ")
++		switch {
++		case f.Explicit != "":
++			return nil, fmt.Errorf("%w: %s — looked for %s and for %s, and one folder deeper, and none of them is there",
++				ErrExplicitArchiveMissing, f.Explicit,
++				filepath.Join(f.Explicit, meta, manifest.FileName),
++				filepath.Join(f.Explicit, manifest.ArchiveSubdir, meta, manifest.FileName))
++		case len(f.SearchedRemovable) > 0:
++			return nil, fmt.Errorf("%w (looked on: %s, and one folder inside each)",
++				ErrNoArchiveOnAttachedMedia, strings.Join(f.SearchedRemovable, ", "))
++		default:
++			return nil, fmt.Errorf("%w (looked in: %s, and one folder inside each)", ErrNoArchive, where)
++		}
+ 	}
+ 	// Distinct archives with the same digest describe identical data. That is a
+ 	// copy of the same archive, not two answers, so it is not an ambiguity.
+@@ -267,6 +356,26 @@ func (f *Finder) Find() ([]*Archive, error) {
+ 	return found[:1], nil
+ }
+ 
++// probeRoots is every directory under root that may hold an archive: root
++// itself, the agreed subdirectory by name, and each immediate subdirectory.
++// The agreed name comes before the listing so that a root that cannot be
++// listed (permissions on a stick formatted by another machine) is still probed
++// where the archive actually is.
++func probeRoots(root string) []string {
++	out := []string{root, filepath.Join(root, manifest.ArchiveSubdir)}
++	ents, err := os.ReadDir(root)
++	if err != nil {
++		return out
++	}
++	for _, e := range ents {
++		if !e.IsDir() || e.Name() == manifest.ArchiveSubdir || e.Name() == manifest.MetaDir {
++			continue
++		}
++		out = append(out, filepath.Join(root, e.Name()))
++	}
++	return out
++}
++
+ func loadArchive(root, mp string) (*Archive, error) {
+ 	fh, err := os.Open(mp)
+ 	if err != nil {
+diff --git a/internal/restore/archive_test.go b/internal/restore/archive_test.go
+index fa87c36..466c466 100644
+--- a/internal/restore/archive_test.go
++++ b/internal/restore/archive_test.go
+@@ -228,8 +228,14 @@ func TestFind_AnEmptyDirectoryIsNotAnArchive(t *testing.T) {
+ 	if err := os.MkdirAll(filepath.Join(root, manifest.MetaDir), 0o755); err != nil {
+ 		t.Fatal(err)
+ 	}
++	// Asked for by path, so the refusal is the explicit one: the user named a
++	// folder and it is not a backup. It must not read as "nothing attached".
+ 	f := &Finder{Explicit: root}
+-	if _, err := f.Find(); !errors.Is(err, ErrNoArchive) {
+-		t.Fatalf("err = %v, want ErrNoArchive", err)
++	_, err := f.Find()
++	if !errors.Is(err, ErrExplicitArchiveMissing) {
++		t.Fatalf("err = %v, want ErrExplicitArchiveMissing", err)
++	}
++	if errors.Is(err, ErrNoArchive) {
++		t.Fatalf("an explicit path with no manifest also matches ErrNoArchive, so a caller would exit 0: %v", err)
+ 	}
+ }
+diff --git a/internal/restore/handlers.go b/internal/restore/handlers.go
+index 6056216..3e36271 100644
+--- a/internal/restore/handlers.go
++++ b/internal/restore/handlers.go
+@@ -24,8 +24,14 @@ type WiFiHandler struct {
+ 	SystemDirFor func(asRoot bool, staging string) (dir string, installed bool, why string)
+ 	// MaxBytes refuses a profile file that is implausibly large for one.
+ 	MaxBytes int64
++
++	// own is who the staged keyfiles are handed to under a root run. Set by
++	// Execute through ownerAware, never by a caller.
++	own *Ownership
+ }
+ 
++func (h *WiFiHandler) setOwner(o *Ownership) { h.own = o }
++
+ const defaultProfileMaxBytes = 1 << 20 // 1 MiB: a wireless profile is ~2 KB
+ 
+ // Handle implements Handler.
+@@ -82,6 +88,16 @@ func (h *WiFiHandler) Handle(_ context.Context, items []*Item) (*HandlerReport,
+ 		rep.Problems = append(rep.Problems, err.Error())
+ 		return rep, nil
+ 	}
++	// Staged in the user's home under a root run: hand them over, or the
++	// user's own session cannot read, install or delete them. INSTALLED ones
++	// are left exactly as netprofile wrote them — a keyfile in
++	// /etc/NetworkManager/system-connections belongs to root, and giving a
++	// Wi-Fi password in /etc to an ordinary user would be its own bug.
++	if !installed {
++		if oerr := h.own.ApplyTree(dir); oerr != nil {
++			rep.Problems = append(rep.Problems, "the staged Wi-Fi files are owned by the wrong account: "+oerr.Error())
++		}
++	}
+ 	for _, w := range written {
+ 		switch {
+ 		case w.Problem != "":
+@@ -117,8 +133,12 @@ type PrinterHandler struct {
+ 	// PlanPath is where the staged plan is written. Empty means no plan file
+ 	// is written and the decisions are reported only.
+ 	PlanPath string
++
++	own *Ownership
+ }
+ 
++func (h *PrinterHandler) setOwner(o *Ownership) { h.own = o }
++
+ // Handle implements Handler.
+ func (h *PrinterHandler) Handle(_ context.Context, items []*Item) (*HandlerReport, error) {
+ 	rep := &HandlerReport{Title: "Printers"}
+@@ -175,6 +195,8 @@ func (h *PrinterHandler) Handle(_ context.Context, items []*Item) (*HandlerRepor
+ 			rep.Problems = append(rep.Problems, "could not save the printer plan: "+err.Error())
+ 		} else if err := os.WriteFile(h.PlanPath, []byte(printers.RenderPlan(decisions)), 0o600); err != nil {
+ 			rep.Problems = append(rep.Problems, "could not save the printer plan: "+err.Error())
++		} else if err := h.own.ApplyTree(filepath.Dir(h.PlanPath)); err != nil {
++			rep.Problems = append(rep.Problems, "the printer plan is owned by the wrong account: "+err.Error())
+ 		}
+ 	}
+ 	rep.Lines = append(rep.Lines, "")
+diff --git a/internal/restore/layout.go b/internal/restore/layout.go
+index b03905a..4af3205 100644
+--- a/internal/restore/layout.go
++++ b/internal/restore/layout.go
+@@ -18,6 +18,14 @@ import (
+ type Layout struct {
+ 	Home string
+ 
++	// realHome is Home with every symlink resolved. Every "is this inside the
++	// home directory" question is asked of RESOLVED paths on both sides,
++	// because a lexical answer is the wrong one twice over: Fedora Atomic
++	// ships /home as a link to /var/home (so a resolved path compared with an
++	// unresolved home refuses every machine we sell), and a linked ~/Documents
++	// passes any lexical check while the bytes land wherever the link points.
++	realHome string
++
+ 	// dirs is the resolved XDG map, keyed by the spec's variable names.
+ 	dirs map[string]string
+ 	// source records where each answer came from, so the report can say
+@@ -77,7 +85,11 @@ func NewLayout(home, configHome string, env func(string) string) (*Layout, error
+ 		}
+ 	}
+ 
+-	l := &Layout{Home: home, dirs: map[string]string{}, source: map[string]string{}}
++	realHome, err := resolveDeep(home)
++	if err != nil {
++		return nil, fmt.Errorf("restore: resolving the links in home %q: %w", home, err)
++	}
++	l := &Layout{Home: home, realHome: realHome, dirs: map[string]string{}, source: map[string]string{}}
+ 
+ 	fromFile, fileErr := readUserDirs(filepath.Join(configHome, "user-dirs.dirs"), home)
+ 	for _, k := range xdgKeys {
+@@ -99,12 +111,31 @@ func NewLayout(home, configHome string, env func(string) string) (*Layout, error
+ 	// Refuse before planning, not during writing. A directory outside home is
+ 	// either a misconfiguration or an attack, and either way this program is
+ 	// the wrong thing to resolve it.
++	//
++	// Asked twice: of the path as configured, and of the path with every link
++	// in it resolved. The second is the one that matters. The first version
++	// asked only the first, so XDG_DOCUMENTS_DIR="$HOME/Documents" with
++	// ~/Documents a link to /data — an ordinary dual-drive 2012 laptop, or a
++	// link somebody put there on purpose — passed, and the restore wrote the
++	// user's files outside their home and called the run clean. The Windows
++	// half has resolved its destination through every link since the junction
++	// attack (internal/safety/destination.go); this is the same rule.
+ 	var bad []string
+ 	for _, k := range xdgKeys {
+ 		p := filepath.Clean(l.dirs[k])
+ 		l.dirs[k] = p
+ 		if !underPath(p, home) {
+ 			bad = append(bad, fmt.Sprintf("%s=%s (from %s)", k, p, l.source[k]))
++			continue
++		}
++		rp, rerr := resolveDeep(p)
++		if rerr != nil {
++			bad = append(bad, fmt.Sprintf("%s=%s (from %s) cannot be resolved: %v", k, p, l.source[k], rerr))
++			continue
++		}
++		if !underPath(rp, realHome) {
++			bad = append(bad, fmt.Sprintf("%s=%s (from %s) is a link: it really is %s, which is not inside %s",
++				k, p, l.source[k], rp, realHome))
+ 		}
+ 	}
+ 	if len(bad) > 0 {
+@@ -162,6 +193,39 @@ func readUserDirs(path, home string) (map[string]string, error) {
+ 	return out, nil
+ }
+ 
++// resolveDeep resolves every symlink in p that exists, and keeps the part that
++// does not exist yet as written.
++//
++// filepath.EvalSymlinks fails outright on a path whose last components have
++// not been created — which, on a fresh machine, is every destination this
++// program writes to — so the deepest EXISTING ancestor is resolved and the
++// missing remainder is appended to it. The remainder cannot contain a link,
++// because it does not exist; MkdirAll will create it as plain directories, and
++// the write path checks again once they do.
++func resolveDeep(p string) (string, error) {
++	p = filepath.Clean(p)
++	var rest []string
++	cur := p
++	for {
++		r, err := filepath.EvalSymlinks(cur)
++		if err == nil {
++			for i := len(rest) - 1; i >= 0; i-- {
++				r = filepath.Join(r, rest[i])
++			}
++			return filepath.Clean(r), nil
++		}
++		if !os.IsNotExist(err) {
++			return "", err
++		}
++		parent := filepath.Dir(cur)
++		if parent == cur {
++			return "", err
++		}
++		rest = append(rest, filepath.Base(cur))
++		cur = parent
++	}
++}
++
+ // underPath reports whether p is root or lies inside it, comparing whole
+ // segments so that /home/user2 is not treated as being inside /home/user.
+ func underPath(p, root string) bool {
+diff --git a/internal/restore/plan.go b/internal/restore/plan.go
+index e719e6b..80b5bc5 100644
+--- a/internal/restore/plan.go
++++ b/internal/restore/plan.go
+@@ -78,6 +78,11 @@ func buildPlanWith(a *Archive, l *Layout, r *Router) (*Plan, error) {
+ 	p := &Plan{Archive: a, Layout: l}
+ 	targets := make(map[string]string, len(entries)) // target -> entry path
+ 	var escapes []string
++	// Resolved once per directory, not once per file: 18,000 files live in a
++	// few hundred directories, and resolving a path walks it component by
++	// component.
++	realDir := make(map[string]string)
++	resolveErr := make(map[string]error)
+ 
+ 	for _, e := range entries {
+ 		// Re-validate the path rather than trusting it. The manifest was
+@@ -120,6 +125,26 @@ func buildPlanWith(a *Archive, l *Layout, r *Router) (*Plan, error) {
+ 					e.Path, target, l.Home))
+ 				continue
+ 			}
++			// And the same question asked of the path the bytes would REALLY
++			// go to, with every link that exists today resolved. The lexical
++			// check above cannot see a linked directory; this one is the
++			// reason a linked ~/Documents is refused before the first write
++			// instead of followed.
++			dir := filepath.Dir(target)
++			rd, seen := realDir[dir]
++			if !seen {
++				rd, resolveErr[dir] = resolveDeep(dir)
++				realDir[dir] = rd
++			}
++			if rerr := resolveErr[dir]; rerr != nil {
++				escapes = append(escapes, fmt.Sprintf("%q: cannot resolve %s: %v", e.Path, dir, rerr))
++				continue
++			}
++			if !underPath(rd, l.realHome) {
++				escapes = append(escapes, fmt.Sprintf("%q would be written to %s, which really is %s "+
++					"(a link), and that is not inside %s", e.Path, target, filepath.Join(rd, filepath.Base(target)), l.realHome))
++				continue
++			}
+ 			if prev, dup := targets[target]; dup {
+ 				return nil, fmt.Errorf("%w: %s — wanted by both %q and %q",
+ 					ErrTargetCollision, target, prev, e.Path)
+diff --git a/internal/restore/report.go b/internal/restore/report.go
+index bce3e2f..4f76e7c 100644
+--- a/internal/restore/report.go
++++ b/internal/restore/report.go
+@@ -39,13 +39,22 @@ func ReportName(s *Summary) string {
+ 	return ReportNameProblem
+ }
+ 
+-// WriteReport writes the report onto the desktop and returns its path.
++// WriteReport writes the report onto the desktop, records where in
++// s.ReportFilePath, and returns the path.
+ //
+ // If the desktop directory cannot be written, the report goes to the home
+ // directory instead — a report the user cannot find is the same as no report,
+ // but a report in the wrong place still beats an error message in a log.
++//
++// The report is rendered ONCE, after its own path is known, and written ONCE.
++// The first version rendered it here, then had the caller render it again and
++// write it a second time with os.WriteFile — which truncates first — "to say
++// what actually happened", with the error discarded. The run most likely to
++// make that second write fail is the one that stopped because the disk filled
++// up, and that run's file is the one called "PLEASE READ". A report that is
++// already correct is never truncated to improve it. Call this after
++// NotifyAttempt is set.
+ func WriteReport(s *Summary, l *Layout) (string, error) {
+-	body := RenderReport(s, l)
+ 	desktop, _ := l.Dir("XDG_DESKTOP_DIR")
+ 	candidates := []string{desktop, l.Home}
+ 	var lastErr error
+@@ -53,12 +62,15 @@ func WriteReport(s *Summary, l *Layout) (string, error) {
+ 		if dir == "" {
+ 			continue
+ 		}
+-		if err := os.MkdirAll(dir, 0o755); err != nil {
++		if err := mkdirAllOwned(dir, 0o755, s.own); err != nil {
+ 			lastErr = err
+ 			continue
+ 		}
+ 		p := filepath.Join(dir, ReportName(s))
+-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
++		prev := s.ReportFilePath
++		s.ReportFilePath = p
++		if err := writeReportFile(p, []byte(RenderReport(s, l)), s.own); err != nil {
++			s.ReportFilePath = prev
+ 			lastErr = err
+ 			continue
+ 		}
+@@ -75,6 +87,47 @@ func WriteReport(s *Summary, l *Layout) (string, error) {
+ 	return "", fmt.Errorf("restore: could not write the report: %w", lastErr)
+ }
+ 
++// writeReportFile writes the report beside its final name and renames it into
++// place, so that a failure part-way leaves the previous report (or none), never
++// a truncated one, and so that under a root run it is handed to the user before
++// it acquires its name.
++func writeReportFile(p string, body []byte, own *Ownership) error {
++	dir := filepath.Dir(p)
++	tmp, err := os.CreateTemp(dir, partialPrefix+"report-*"+partialSuffix)
++	if err != nil {
++		return err
++	}
++	tmpName := tmp.Name()
++	ok := false
++	defer func() {
++		if !ok {
++			tmp.Close()
++			os.Remove(tmpName)
++		}
++	}()
++	if _, err := tmp.Write(body); err != nil {
++		return err
++	}
++	if err := tmp.Sync(); err != nil {
++		return err
++	}
++	if err := tmp.Chmod(0o644); err != nil {
++		return err
++	}
++	if err := tmp.Close(); err != nil {
++		return err
++	}
++	if err := own.Apply(tmpName); err != nil {
++		return err
++	}
++	if err := os.Rename(tmpName, p); err != nil {
++		return err
++	}
++	ok = true
++	syncDir(dir)
++	return nil
++}
++
+ // RenderReport builds the text. It is a pure function of the summary so a test
+ // can assert what a user would actually read, rather than asserting that a
+ // function was called.
+@@ -216,6 +269,30 @@ func RenderReport(s *Summary, l *Layout) string {
+ 		rule()
+ 	}
+ 
++	if s.PreVerify != nil && len(s.PreVerify.Litter) > 0 {
++		// Named, because every file the program saw and did not act on is a
++		// discrepancy until somebody has been told about it. Not a problem:
++		// these are what Windows, a Mac or a Linux desktop leave in a folder
++		// somebody opened, and none of them was in the list of your files.
++		w("ON THE BACKUP DRIVE BUT NOT PART OF THE BACKUP")
++		w("")
++		verb := "are"
++		if len(s.PreVerify.Litter) == 1 {
++			verb = "is"
++		}
++		w("  %s beside your backup %s not in its list of files. These are the",
++			plural(len(s.PreVerify.Litter), "file", "files"), verb)
++		w("  kind of thing a computer leaves in any folder somebody opens (picture")
++		w("  thumbnails, folder settings), so they were not brought across and they")
++		w("  do not mean anything is wrong with your backup:")
++		w("")
++		for _, l := range s.PreVerify.Litter {
++			w("  %s", l)
++		}
++		w("")
++		rule()
++	}
++
+ 	w("DETAIL, FOR SOMEBODY WHO NEEDS IT")
+ 	w("")
+ 	if s.Archive != nil {
+@@ -231,6 +308,16 @@ func RenderReport(s *Summary, l *Layout) string {
+ 	if s.NotifyAttempt != "" {
+ 		w("  desktop popup      %s", s.NotifyAttempt)
+ 	}
++	if s.ReportFilePath != "" {
++		w("  this note          %s", s.ReportFilePath)
++	}
++	if n := len(s.PartialsSwept); n > 0 {
++		w("  tidied up          %s left half-written by an earlier run that was", plural(n, "file", "files"))
++		w("                     interrupted, and removed before anything was copied:")
++		for _, p := range s.PartialsSwept {
++			w("                       %s", p)
++		}
++	}
+ 	w("")
+ 	w("  You can run the restore again safely. It checks every file that is")
+ 	w("  already here and only writes the ones that are missing.")
+@@ -251,11 +338,11 @@ func problems(s *Summary) []string {
+ 			"the backup drive itself did not check out: %d of %d files disagreed with the list. "+
+ 				"NOTHING WAS WRITTEN to this computer.",
+ 			len(s.PreVerify.Disagreements), s.PreVerify.ManifestCount))
+-		if s.PreVerify.ManifestCount != s.PreVerify.DestinationCount {
++		if s.PreVerify.ManifestCount != s.PreVerify.Counted() {
+ 			out = append(out, fmt.Sprintf(
+ 				"the backup's list describes %d file(s) and the drive holds %d. Those are different "+
+ 					"numbers, so the drive is not the backup the list describes.",
+-				s.PreVerify.ManifestCount, s.PreVerify.DestinationCount))
++				s.PreVerify.ManifestCount, s.PreVerify.Counted()))
+ 		}
+ 		// NAMED, not counted. "1 of 1 files disagreed" is a swallowed
+ 		// discrepancy wearing a number: the user cannot act on it, cannot
+@@ -328,11 +415,19 @@ func plural(n int, one, many string) string {
+ 	return fmt.Sprintf("%d %s", n, many)
+ }
+ 
+-// renamedFiles lists every file that went in beside something else.
++// renamedFiles lists every file that is on this machine under a name other
++// than the one it had — whichever run put it there. Keyed on Result.Renamed,
++// never on the outcome: see Result.Renamed for the run-twice case that made
++// the outcome the wrong key.
+ func renamedFiles(s *Summary) []string {
+ 	var out []string
+ 	for _, r := range s.Results {
+-		if r.Outcome != OutPlacedAside {
++		if !r.Renamed {
++			continue
++		}
++		switch r.Outcome {
++		case OutWritten, OutAlreadyPresent, OutPlacedAside:
++		default:
+ 			continue
+ 		}
+ 		out = append(out, fmt.Sprintf("%s\n      is now: %s", r.Path, r.Final))
+diff --git a/internal/restore/run.go b/internal/restore/run.go
+index 6cca78c..04b8fb0 100644
+--- a/internal/restore/run.go
++++ b/internal/restore/run.go
+@@ -48,6 +48,15 @@ type Result struct {
+ 	Outcome Outcome
+ 	Final   string // where it actually ended up, for the file outcomes
+ 	Detail  string
++	// Renamed is true whenever Final is not the name the file had on Windows,
++	// WHICHEVER run put it there. It is a separate fact from Outcome on
++	// purpose: the first version derived "was this renamed" from
++	// Outcome == OutPlacedAside, so a second run — the documented recovery
++	// after any interruption, and what happens at every login until a run is
++	// clean — found its own earlier copy, reported OutAlreadyPresent, and the
++	// report stopped telling the user that the file under its own name is not
++	// theirs. The disclosure existed only on the run least likely to be read.
++	Renamed bool
+ }
+ 
+ // Summary is the whole run. It is what the desktop report is rendered from and
+@@ -67,6 +76,14 @@ type Summary struct {
+ 	StoppedEarly   string // non-empty when the run stopped before finishing
+ 	NotifyAttempt  string
+ 	ReportFilePath string
++	// PartialsSwept names every leftover temporary file from an earlier run
++	// that was killed mid-write, removed before this run wrote anything.
++	PartialsSwept []string
++
++	// own is who the files this run created were handed to, so the report
++	// written afterwards is handed over the same way. nil when nothing needed
++	// handing over.
++	own *Ownership
+ }
+ 
+ // Clean is the single question the whole program exists to answer, and it is
+@@ -92,6 +109,26 @@ func (s *Summary) Clean() bool {
+ 	if len(s.Results) != s.ManifestCount {
+ 		return false
+ 	}
++	// A problem in the Wi-Fi or printer handling makes the run unclean. The
++	// first version of this function never looked at the handler reports,
++	// although HandlerReport.Problems was documented as making the run
++	// not-clean: a refused keyfile, an unparseable profile, even "this build
++	// has no handler at all" produced "Your files are here", a calm popup, and
++	// a stamp that stopped the unit ever running again. The user deletes the
++	// archive after that.
++	//
++	// Skipped does NOT count, and that is a decision rather than an
++	// omission. A network the old machine knew but whose password was not in
++	// the backup is the ordinary case — it is named in the report as
++	// "NOT added — <why>" and there is nothing more the user can do about it
++	// here. Everything that went WRONG is a Problem, including every skip the
++	// handler could not explain; the handlers in this package add a Problem
++	// for each one.
++	for _, h := range []*HandlerReport{s.WiFi, s.Printers} {
++		if h != nil && len(h.Problems) > 0 {
++			return false
++		}
++	}
+ 	return true
+ }
+ 
+@@ -128,8 +165,24 @@ type Options struct {
+ 	// filesystem run out of room inside a unit test. SAFETY.md rule 8 — an
+ 	// option that could weaken a check never gets an exported off switch.
+ 	hookWriter func(path string, w io.Writer) io.Writer
++
++	// ownership, when non-nil, replaces the account the created files are
++	// handed to. UNEXPORTED, for the same reason as hookWriter: the production
++	// value is worked out inside Execute from the home directory and the
++	// effective uid, and an exported field here would be an off switch on the
++	// thing that stops a root run locking the user out of their own files.
++	// A test sets it so the handover can be watched on a machine that is not
++	// root.
++	ownership *Ownership
+ }
+ 
++// ownerAware is implemented by the handlers in this package, so that a root
++// run hands over what THEY create in the home directory too (the staged
++// keyfiles, the printer plan). The method is unexported, so only types in this
++// package can implement it; a handler from elsewhere is responsible for its own
++// files.
++type ownerAware interface{ setOwner(*Ownership) }
++
+ // Handler consumes the non-file parts of an archive.
+ type Handler interface {
+ 	// Handle is given the items and the archive root. It returns a report
+@@ -142,10 +195,13 @@ type HandlerReport struct {
+ 	Title string
+ 	// Lines are shown to the user verbatim, one per profile or printer.
+ 	Lines []string
+-	// Done and Skipped must sum to the number of items handled.
++	// Done and Skipped must sum to the number of items handled. Skipped is an
++	// EXPECTED outcome that the user is told about in Lines (a network with no
++	// saved password); it does not make the run unclean. See Summary.Clean.
+ 	Done, Skipped int
+ 	// Problems is non-empty when something went wrong. A non-empty Problems
+-	// makes the whole run not-clean.
++	// makes the whole run not-clean — enforced in Summary.Clean and pinned by
++	// TestSummary_AWiFiProblemMakesTheRunUnclean.
+ 	Problems []string
+ }
+ 
+@@ -198,17 +254,57 @@ func Execute(ctx context.Context, p *Plan, o Options) (*Summary, error) {
+ 			pre.Describe())
+ 	}
+ 
++	// ---- WHOSE FILES THESE ARE ----
++	//
++	// Decided before the first write, because a root run that cannot tell who
++	// owns the home must not write into it at all: every file would land
++	// owned by root, and the check afterwards would pass because root can read
++	// everything back.
++	own := o.ownership
++	if own == nil {
++		var oerr error
++		own, oerr = ownershipFor(p.Layout.Home, os.Geteuid())
++		if oerr != nil {
++			s.FinishedAt = now()
++			s.StoppedEarly = oerr.Error()
++			return s, oerr
++		}
++	}
++	s.own = own
++
++	// ---- SWEEP ----
++	//
++	// A temporary file from a run that was SIGKILLed, OOM-killed or had its
++	// power cut: the defer in writeAtomic that removes it never ran. It is
++	// debris, not data — its bytes never matched the manifest or it would have
++	// been renamed — and leaving it means one more stray file in the user's
++	// own Documents folder per interruption, forever. Swept BEFORE the first
++	// write so the sweep can never race a temporary file this run is writing.
++	if !o.DryRun {
++		s.PartialsSwept = sweepPartials(p)
++	}
++
+ 	// ---- WRITE ----
+ 	total := p.Count()
+ 	done := 0
+ 	buf := make([]byte, bufSize)
+ 
++	// reserved is every name some entry is going to be written under. An aside
++	// name ("notes (from Windows).txt") is chosen at write time, so without
++	// this it can land on another entry's REAL name — and when the two have the
++	// same bytes, the second is "already present" at the first one's file and
++	// one of the user's files ends up existing nowhere.
++	reserved := make(map[string]bool, len(p.Files))
++	for _, it := range p.Files {
++		reserved[filepath.Clean(it.Route.Target)] = true
++	}
++
+ 	for _, it := range p.Files {
+ 		if cerr := ctx.Err(); cerr != nil {
+ 			s.StoppedEarly = "interrupted: " + cerr.Error()
+ 			break
+ 		}
+-		res := placeOne(ctx, it, o.DryRun, buf, o.hookWriter)
++		res := placeOne(ctx, it, p.Layout, own, reserved, o.DryRun, buf, o.hookWriter)
+ 		s.add(res)
+ 		done++
+ 		if o.Progress != nil {
+@@ -233,6 +329,11 @@ func Execute(ctx context.Context, p *Plan, o Options) (*Summary, error) {
+ 	}
+ 
+ 	if s.StoppedEarly == "" {
++		for _, h := range []Handler{o.WiFiSink, o.PrinterSink} {
++			if oa, ok := h.(ownerAware); ok {
++				oa.setOwner(own)
++			}
++		}
+ 		s.WiFi = runHandler(ctx, o.WiFiSink, p.WiFi, "Wi-Fi networks")
+ 		s.Printers = runHandler(ctx, o.PrinterSink, p.Printers, "Printers")
+ 		for _, it := range p.WiFi {
+@@ -290,12 +391,22 @@ const noSpaceMarker = "the disk is full"
+ 
+ // placeOne writes a single file, and every branch it can take is an outcome the
+ // user is shown.
+-func placeOne(ctx context.Context, it *Item, dryRun bool, buf []byte, hook func(string, io.Writer) io.Writer) Result {
++func placeOne(ctx context.Context, it *Item, l *Layout, own *Ownership, reserved map[string]bool, dryRun bool, buf []byte, hook func(string, io.Writer) io.Writer) Result {
+ 	e := it.Entry
+ 	base := Result{Path: e.Path, Bucket: it.Route.Bucket}
+ 
+ 	target := it.Route.Target
+ 	for n := 0; ; n++ {
++		if target != it.Route.Target && reserved[filepath.Clean(target)] {
++			// Another entry's own name. Occupied, whatever is on disk there
++			// right now, and whatever bytes it holds.
++			if n > 1000 {
++				base.Outcome, base.Final, base.Detail = OutFailed, target, "too many files already occupy this name"
++				return base
++			}
++			target = aside(it.Route.Target, n)
++			continue
++		}
+ 		st, err := os.Lstat(target)
+ 		switch {
+ 		case os.IsNotExist(err):
+@@ -312,8 +423,13 @@ func placeOne(ctx context.Context, it *Item, dryRun bool, buf []byte, hook func(
+ 				sum, _, herr := manifest.HashFile(ctx, target, sha256.New(), buf)
+ 				if herr == nil && sum == e.SHA256 {
+ 					base.Outcome, base.Final = OutAlreadyPresent, target
+-					if n > 0 {
+-						base.Detail = "restored beside an existing file by an earlier run"
++					if target != it.Route.Target {
++						// An earlier run put it beside somebody else's file.
++						// That is STILL a rename the user has to be told
++						// about: the file under its own name is not theirs.
++						base.Renamed = true
++						base.Detail = "something was already called " + filepath.Base(it.Route.Target) +
++							"; yours is " + filepath.Base(target) + " (put there by an earlier run)"
+ 					}
+ 					return base
+ 				}
+@@ -340,22 +456,39 @@ func placeOne(ctx context.Context, it *Item, dryRun bool, buf []byte, hook func(
+ 		}
+ 		break
+ 	}
++	base.Renamed = target != it.Route.Target
+ 
+ 	if dryRun {
+ 		base.Outcome, base.Final, base.Detail = OutWritten, target, "dry run: not actually written"
+ 		return base
+ 	}
+ 
+-	if err := os.MkdirAll(filepath.Dir(target), os.FileMode(it.Route.DirMode)); err != nil {
++	dir := filepath.Dir(target)
++	// The plan checked every target with its links resolved. That was then;
++	// this is now, and a directory can have been swapped for a link since.
++	// So the check is made twice more, the way internal/safety/destination.go
++	// does it on the Windows side: once on the deepest part of the path that
++	// exists BEFORE anything is created (so MkdirAll cannot be led outside the
++	// home), and once on the whole directory AFTER it exists, immediately
++	// before the temporary file is created inside it.
++	if err := insideHome(dir, l); err != nil {
++		base.Outcome, base.Final, base.Detail = OutFailed, target, err.Error()
++		return base
++	}
++	if err := mkdirAllOwned(dir, os.FileMode(it.Route.DirMode), own); err != nil {
+ 		base.Outcome, base.Final, base.Detail = OutFailed, target, describeWriteErr(err)
+ 		return base
+ 	}
+-	if err := writeAtomic(ctx, it.Source, target, e, os.FileMode(it.Route.FileMode), buf, hook); err != nil {
++	if err := insideHome(dir, l); err != nil {
++		base.Outcome, base.Final, base.Detail = OutFailed, target, err.Error()
++		return base
++	}
++	if err := writeAtomic(ctx, it.Source, target, e, os.FileMode(it.Route.FileMode), own, buf, hook); err != nil {
+ 		base.Outcome, base.Final, base.Detail = OutFailed, target, describeWriteErr(err)
+ 		return base
+ 	}
+ 	base.Final = target
+-	if target != it.Route.Target {
++	if base.Renamed {
+ 		base.Outcome = OutPlacedAside
+ 		base.Detail = "something was already called " + filepath.Base(it.Route.Target) + "; yours is " + filepath.Base(target)
+ 		return base
+@@ -364,6 +497,56 @@ func placeOne(ctx context.Context, it *Item, dryRun bool, buf []byte, hook func(
+ 	return base
+ }
+ 
++// insideHome resolves every link in dir that exists and refuses unless the
++// result is inside the home directory, itself resolved. Both sides are
++// resolved: Fedora Atomic ships /home as a link to /var/home, so comparing a
++// resolved directory against an unresolved home would refuse every machine we
++// sell, and comparing two unresolved paths is the lexical check that let a
++// linked ~/Documents carry a payroll file out of the home.
++func insideHome(dir string, l *Layout) error {
++	real, err := resolveDeep(dir)
++	if err != nil {
++		return fmt.Errorf("cannot resolve %s: %v", dir, err)
++	}
++	if !underPath(real, l.realHome) {
++		return fmt.Errorf("%w: %s really is %s, which is not inside %s",
++			ErrPathEscape, dir, real, l.realHome)
++	}
++	return nil
++}
++
++// mkdirAllOwned is os.MkdirAll that also hands every directory it CREATED to
++// own. Directories that already existed are not touched: they belong to
++// whoever made them, and a restore that re-owned ~/Documents would be making a
++// decision that is not its to make.
++func mkdirAllOwned(dir string, mode os.FileMode, own *Ownership) error {
++	var created []string
++	if own != nil {
++		for p := dir; ; {
++			if _, err := os.Lstat(p); err == nil {
++				break
++			}
++			created = append(created, p)
++			parent := filepath.Dir(p)
++			if parent == p {
++				break
++			}
++			p = parent
++		}
++	}
++	if err := os.MkdirAll(dir, mode); err != nil {
++		return err
++	}
++	// Outermost first, so a directory is never owned by the user while its
++	// parent is still root's.
++	for i := len(created) - 1; i >= 0; i-- {
++		if err := own.Apply(created[i]); err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
+ func describeWriteErr(err error) string {
+ 	if isNoSpace(err) {
+ 		return noSpaceMarker + ": " + err.Error()
+@@ -383,14 +566,61 @@ func aside(p string, n int) string {
+ 	return filepath.Join(dir, fmt.Sprintf("%s (from Windows %d)%s", stem, n+1, ext))
+ }
+ 
++// partialPrefix and partialSuffix name the temporary file writeAtomic creates.
++// One definition, used by both the writer and the sweep, so the sweep cannot
++// drift into looking for a name the writer no longer uses.
++const (
++	partialPrefix = ".auros-restore-"
++	partialSuffix = ".part"
++)
++
++func isPartial(name string) bool {
++	return strings.HasPrefix(name, partialPrefix) && strings.HasSuffix(name, partialSuffix) &&
++		len(name) > len(partialPrefix)+len(partialSuffix)
++}
++
++// sweepPartials removes temporary files left by an earlier run that was killed
++// mid-write. It looks ONLY in the directories this plan will write into, and
++// only at their immediate entries: it has no business walking the rest of
++// somebody's home directory, and a name matching the pattern anywhere else is
++// not ours to delete. It removes regular files only.
++func sweepPartials(p *Plan) []string {
++	dirs := map[string]bool{}
++	for _, it := range p.Files {
++		dirs[filepath.Dir(it.Route.Target)] = true
++	}
++	var removed []string
++	for dir := range dirs {
++		ents, err := os.ReadDir(dir)
++		if err != nil {
++			continue // not created yet: nothing to sweep
++		}
++		for _, e := range ents {
++			if !e.Type().IsRegular() || !isPartial(e.Name()) {
++				continue
++			}
++			full := filepath.Join(dir, e.Name())
++			if os.Remove(full) == nil {
++				removed = append(removed, full)
++			}
++		}
++	}
++	sort.Strings(removed)
++	return removed
++}
++
+ // writeAtomic streams one file from the archive into place.
+ //
+ // The bytes are hashed AS THEY ARE WRITTEN and compared against the manifest
+ // BEFORE the rename. A file whose digest does not match never acquires its real
+ // name, so an interrupted or corrupted write cannot leave a plausible-looking
+ // wrong file in somebody's Documents folder. The temporary file is removed on
+-// every failure path.
+-func writeAtomic(ctx context.Context, src, dst string, e manifest.Entry, mode os.FileMode, buf []byte, hook func(string, io.Writer) io.Writer) error {
++// every failure path that returns; the ones that do not (a power cut) are
++// swept by the next run.
++//
++// When own is set, the temporary file is handed over BEFORE the rename, so the
++// file is never — not for an instant — under its real name and owned by root.
++func writeAtomic(ctx context.Context, src, dst string, e manifest.Entry, mode os.FileMode, own *Ownership, buf []byte, hook func(string, io.Writer) io.Writer) error {
+ 	dir := filepath.Dir(dst)
+ 	in, err := os.Open(src)
+ 	if err != nil {
+@@ -398,7 +628,7 @@ func writeAtomic(ctx context.Context, src, dst string, e manifest.Entry, mode os
+ 	}
+ 	defer in.Close()
+ 
+-	tmp, err := os.CreateTemp(dir, ".auros-restore-*.part")
++	tmp, err := os.CreateTemp(dir, partialPrefix+"*"+partialSuffix)
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -434,6 +664,9 @@ func writeAtomic(ctx context.Context, src, dst string, e manifest.Entry, mode os
+ 	if err := tmp.Close(); err != nil {
+ 		return err
+ 	}
++	if err := own.Apply(tmpName); err != nil {
++		return err
++	}
+ 	if e.ModTimeUnixNano != 0 {
+ 		mt := time.Unix(0, e.ModTimeUnixNano)
+ 		// A filesystem that will not carry the mtime is not a reason to fail
+@@ -518,6 +751,16 @@ func reVerify(ctx context.Context, results []Result, p *Plan, dryRun bool, buf [
+ 		byPath[it.Entry.Path] = it
+ 	}
+ 
++	// claimed maps each file on disk to the entry that says it is that file.
++	// Two entries claiming ONE file is the count-right-bytes-wrong failure:
++	// both hashes match because it is the same file hashed twice, the count
++	// is right because both entries were "restored", and one of the two
++	// files the user had does not exist anywhere. Plan-time collision checks
++	// cannot see it, because it arises at write time (an aside name landing on
++	// another entry's real name), so it is checked here on the results — which
++	// also catches any future routing rule that collides the same way.
++	claimed := make(map[string]string, len(results))
++
+ 	for _, res := range results {
+ 		rep.Accounted++
+ 		switch res.Outcome {
+@@ -526,6 +769,15 @@ func reVerify(ctx context.Context, results []Result, p *Plan, dryRun bool, buf [
+ 		default:
+ 			continue
+ 		}
++		key := filepath.Clean(res.Final)
++		if prev, dup := claimed[key]; dup {
++			rep.Disagreements = append(rep.Disagreements, fmt.Sprintf(
++				"%s: reported as restored to %s, which is the file %s was restored to — two entries, "+
++					"one file on disk, so one of them is not on this computer",
++				res.Path, res.Final, prev))
++			continue
++		}
++		claimed[key] = res.Path
+ 		if dryRun {
+ 			continue
+ 		}
+diff --git a/internal/verify/verify.go b/internal/verify/verify.go
+index 6d9b03e..b859b55 100644
+--- a/internal/verify/verify.go
++++ b/internal/verify/verify.go
+@@ -86,8 +86,24 @@ type Report struct {
+ 	Retried          int
+ 	BytesRead        int64
+ 	Disagreements    []Disagreement
+-	StartedAt        time.Time
+-	FinishedAt       time.Time
++	// Litter is every file at the destination that is NOT in the manifest and
++	// is something an operating system leaves in any folder a person opens:
++	// Thumbs.db, desktop.ini, a Mac's ._ files, a Linux desktop's .Trash-1000.
++	// Each is NAMED here and in Describe, and is not a disagreement. See
++	// isLitter for the list and for why it cannot hide a real file.
++	Litter     []string
++	StartedAt  time.Time
++	FinishedAt time.Time
++}
++
++// Counted is the number of files at the destination that count against the
++// manifest: everything that was found, less the named litter. The equality
++// Clean asks for is ManifestCount == Counted, and it is still exact.
++func (r *Report) Counted() int {
++	if r == nil {
++		return 0
++	}
++	return r.DestinationCount - len(r.Litter)
+ }
+ 
+ // Clean reports whether every file in the manifest was found at the destination
+@@ -101,7 +117,7 @@ func (r *Report) Clean() bool {
+ 	return r != nil &&
+ 		r.ManifestCount > 0 &&
+ 		len(r.Disagreements) == 0 &&
+-		r.ManifestCount == r.DestinationCount &&
++		r.ManifestCount == r.Counted() &&
+ 		r.Checked == r.ManifestCount
+ }
+ 
+@@ -114,6 +130,12 @@ func (r *Report) Describe() string {
+ 	if r.Retried > 0 {
+ 		fmt.Fprintf(&b, "        %d file(s) needed a second read\n", r.Retried)
+ 	}
++	if len(r.Litter) > 0 {
++		fmt.Fprintf(&b, "        %d file(s) beside the archive are not part of it and were not counted:\n", len(r.Litter))
++		for _, l := range r.Litter {
++			fmt.Fprintf(&b, "          %s\n", l)
++		}
++	}
+ 	if r.Clean() {
+ 		b.WriteString("        every file matched by count, size and SHA-256.\n")
+ 		return b.String()
+@@ -122,8 +144,8 @@ func (r *Report) Describe() string {
+ 	for _, d := range r.Disagreements {
+ 		fmt.Fprintf(&b, "  %s\n", d)
+ 	}
+-	if r.ManifestCount != r.DestinationCount {
+-		fmt.Fprintf(&b, "  COUNT MISMATCH: manifest %d, destination %d\n", r.ManifestCount, r.DestinationCount)
++	if r.ManifestCount != r.Counted() {
++		fmt.Fprintf(&b, "  COUNT MISMATCH: manifest %d, destination %d\n", r.ManifestCount, r.Counted())
+ 	}
+ 	return b.String()
+ }
+@@ -224,10 +246,23 @@ func Run(ctx context.Context, o Options) (*Report, error) {
+ 	// is not harmless: it means the destination is not the archive we think it
+ 	// is, and a restore would either copy a stranger's file onto the new machine
+ 	// or silently ignore it. Either way the count no longer means anything.
++	//
++	// EXCEPT litter. A Thumbs.db that Windows Explorer dropped when somebody
++	// opened the folder is not evidence that the archive is somebody else's,
++	// and the first version treated it exactly as if it were: one thumbnail
++	// cache beside a perfect archive made the Linux restore refuse the whole
++	// run with "THE ARCHIVE IS DAMAGED", and told a school that its only copy
++	// was not the backup the list describes. Litter is named, not counted,
++	// and never quarantined. Everything else still is.
+ 	extras := make([]string, 0, len(found))
+ 	for stored := range found {
++		if isLitter(stored) {
++			rep.Litter = append(rep.Litter, stored)
++			continue
++		}
+ 		extras = append(extras, stored)
+ 	}
++	sort.Strings(rep.Litter)
+ 	sort.Strings(extras)
+ 	for _, stored := range extras {
+ 		extra := manifest.Entry{Path: stored, Stored: stored}
+@@ -240,6 +275,58 @@ func Run(ctx context.Context, o Options) (*Report, error) {
+ 	return rep, nil
+ }
+ 
++// litterNames are files an operating system writes into a folder because a
++// person LOOKED at it. Compared case-insensitively on the last path segment.
++var litterNames = map[string]bool{
++	"thumbs.db":         true, // Windows Explorer thumbnail cache
++	"ehthumbs.db":       true, // Windows Media Center thumbnail cache
++	"ehthumbs_vista.db": true,
++	"desktop.ini":       true, // Windows folder view settings
++	".ds_store":         true, // macOS Finder view settings
++	".localized":        true, // macOS
++	".directory":        true, // KDE Dolphin folder view settings
++}
++
++// litterDirs are directories an operating system creates at the top of a
++// removable volume or in a folder it has been asked to delete from. Anything
++// inside one is litter. Compared case-insensitively on any path segment.
++var litterDirs = map[string]bool{
++	"$recycle.bin":              true, // Windows recycle bin on a removable drive
++	"system volume information": true, // Windows indexer / restore point metadata
++	".spotlight-v100":           true, // macOS Spotlight index
++	".fseventsd":                true, // macOS filesystem event log
++	".trashes":                  true, // macOS trash on a removable drive
++	".temporaryitems":           true, // macOS
++}
++
++// isLitter reports whether a file at the destination, WHICH THE MANIFEST DOES
++// NOT LIST, is operating-system noise rather than an unexplained file.
++//
++// It is only ever asked about files left over after every manifest entry has
++// been checked and removed from the scan, and that ordering is the whole
++// safety argument: a real Thumbs.db that was in the user's Pictures folder is
++// IN the manifest, is verified by size and hash like any other file, and never
++// reaches this function. Litter is not restored — the restore only ever writes
++// manifest entries — so calling a file litter can only change the COUNT, never
++// what lands on the user's machine.
++func isLitter(stored string) bool {
++	segs := strings.Split(stored, "/")
++	for _, seg := range segs[:len(segs)-1] {
++		low := strings.ToLower(seg)
++		if litterDirs[low] || strings.HasPrefix(low, ".trash-") {
++			// .Trash-<uid>: a Linux desktop's trash on a removable volume.
++			return true
++		}
++	}
++	last := segs[len(segs)-1]
++	if litterNames[strings.ToLower(last)] {
++		return true
++	}
++	// AppleDouble: "._report.txt" carries a Mac's resource fork for
++	// "report.txt". Always at least one character after the prefix.
++	return strings.HasPrefix(last, "._") && len(last) > 2
++}
++
+ func recordQuarantine(q *quarantine.Set, d Disagreement) {
+ 	if q == nil {
+ 		return
+diff --git a/tools/prove-red.sh b/tools/prove-red.sh
+index 5d9d3ef..49bcc32 100755
+--- a/tools/prove-red.sh
++++ b/tools/prove-red.sh
+@@ -275,6 +275,206 @@ m13() {
+ 		w("%s", preVerifyHeading)'
+ }
+ 
++# ── M14 ───────────────────────────────────────────────────────────────────
++# FATAL, and real: the finder stops looking one level down. The Windows half
++# writes <mount>/auros-backup/_auros/manifest.tsv; the first version of the
++# finder only ever stat'ed <mount>/_auros, so an intact archive was reported
++# as "no backup drive is attached", exit 0, after the Windows disk was gone.
++m14() {
++  mutate "$1/internal/restore/archive.go" \
++    '	out := []string{root, filepath.Join(root, manifest.ArchiveSubdir)}
++	ents, err := os.ReadDir(root)' \
++    '	out := []string{root}
++	ents, err := os.ReadDir(root)
++	ents = nil'
++}
++
++# ── M14b ──────────────────────────────────────────────────────────────────
++# The agreed name moves. Every stick made before the change carries the old
++# one, so this is pinned as a literal where the constant is defined...
++m14b() {
++  mutate "$1/internal/manifest/manifest.go" \
++    '	ArchiveSubdir = "auros-backup"' \
++    '	ArchiveSubdir = "auros-archive"'
++}
++
++# ── M14c ──────────────────────────────────────────────────────────────────
++# ...and where the Windows half uses it, which is where the halves drifted
++# apart the first time: its own literal instead of the shared constant.
++m14c() {
++  mutate "$1/cmd/auros-migrate/main.go" \
++    '	d, rejected, err := r.Choose(manifest.ArchiveSubdir, inventoryBytes)' \
++    '	d, rejected, err := r.Choose("auros-archive", inventoryBytes)'
++}
++
++# ── M15 ───────────────────────────────────────────────────────────────────
++# FATAL, and real: Summary.Clean stops reading the Wi-Fi and printer reports.
++# A refused keyfile became "Your files are here", a calm popup and a stamp
++# that stopped the unit ever running again.
++m15() {
++  mutate "$1/internal/restore/run.go" \
++    '		if h != nil && len(h.Problems) > 0 {
++			return false
++		}' \
++    '		if false && h != nil && len(h.Problems) > 0 {
++			return false
++		}'
++}
++
++# ── M16 ───────────────────────────────────────────────────────────────────
++# The layout's check goes back to being lexical: a user directory that is a
++# link out of the home passes because its NAME is inside the home.
++m16() {
++  mutate "$1/internal/restore/layout.go" \
++    '		if !underPath(rp, realHome) {
++			bad = append(bad, fmt.Sprintf("%s=%s (from %s) is a link' \
++    '		if false && !underPath(rp, realHome) {
++			bad = append(bad, fmt.Sprintf("%s=%s (from %s) is a link'
++}
++
++# ── M16b ──────────────────────────────────────────────────────────────────
++# The plan's check goes back to being lexical: a link one level INSIDE a user
++# directory — which the layout never looks at — carries the file out.
++m16b() {
++  mutate "$1/internal/restore/plan.go" \
++    '			if !underPath(rd, l.realHome) {' \
++    '			if false && !underPath(rd, l.realHome) {'
++}
++
++# ── M16c ──────────────────────────────────────────────────────────────────
++# The write path stops re-checking, so a directory swapped for a link AFTER
++# the plan was checked is followed. Both of its checks are removed; either one
++# alone is enough to refuse.
++m16c() {
++  mutate "$1/internal/restore/run.go" \
++    '	if err := insideHome(dir, l); err != nil {
++		base.Outcome, base.Final, base.Detail = OutFailed, target, err.Error()
++		return base
++	}
++	if err := mkdirAllOwned(' \
++    '	if err := mkdirAllOwned('
++  mutate "$1/internal/restore/run.go" \
++    '	if err := insideHome(dir, l); err != nil {
++		base.Outcome, base.Final, base.Detail = OutFailed, target, err.Error()
++		return base
++	}
++	if err := writeAtomic(' \
++    '	if err := writeAtomic('
++}
++
++# ── M17 ───────────────────────────────────────────────────────────────────
++# MAJOR, and real: a root run stops handing its files over. Every 0600 file
++# lands owned by root in a home owned by the user, and the re-check passes
++# because root can read it all back.
++m17() {
++  mutate "$1/internal/restore/owner.go" \
++    '	if o == nil {
++		return nil
++	}
++	fn := o.chown' \
++    '	if o == nil || true {
++		return nil
++	}
++	fn := o.chown'
++}
++
++# ── M18 ───────────────────────────────────────────────────────────────────
++# MAJOR, and real: "was this renamed" is derived from the outcome again, so
++# the second run — which finds its own earlier copy and says already-there —
++# stops telling the user that the file under its own name is not theirs.
++m18() {
++  mutate "$1/internal/restore/report.go" \
++    '		if !r.Renamed {
++			continue
++		}' \
++    '		if r.Outcome != OutPlacedAside {
++			continue
++		}'
++}
++
++# ── M19 ───────────────────────────────────────────────────────────────────
++# MAJOR, and real: a Thumbs.db beside the archive is counted as a stranger's
++# file again, and the restore tells a school its only copy is damaged.
++m19() {
++  mutate "$1/internal/verify/verify.go" \
++    '		if isLitter(stored) {' \
++    '		if false && isLitter(stored) {'
++}
++
++# ── M20 ───────────────────────────────────────────────────────────────────
++# The re-check stops asking whether two entries claim one file. Every hash
++# matches, because it is the same file hashed twice.
++m20() {
++  mutate "$1/internal/restore/run.go" \
++    '		if prev, dup := claimed[key]; dup {' \
++    '		if prev, dup := claimed[key]; false && dup {'
++}
++
++# ── M20b ──────────────────────────────────────────────────────────────────
++# The write path stops treating another entry's name as taken, so an aside
++# name lands on it and one of the user's files ends up existing nowhere.
++m20b() {
++  mutate "$1/internal/restore/run.go" \
++    '		if target != it.Route.Target && reserved[filepath.Clean(target)] {' \
++    '		if false && target != it.Route.Target && reserved[filepath.Clean(target)] {'
++}
++
++# ── M21 ───────────────────────────────────────────────────────────────────
++# An --archive path that holds nothing is reported as "no backup attached"
++# again, which the command answers with exit 0.
++m21() {
++  mutate "$1/internal/restore/archive.go" \
++    '		case f.Explicit != "":
++			return nil, fmt.Errorf("%w: %s' \
++    '		case false:
++			return nil, fmt.Errorf("%w: %s'
++}
++
++# ── M22 ───────────────────────────────────────────────────────────────────
++# The finder stops distinguishing an attached-and-empty drive from nothing
++# attached.
++m22() {
++  mutate "$1/internal/restore/archive.go" \
++    '		case len(f.SearchedRemovable) > 0:' \
++    '		case false:'
++}
++
++# ── M22b ──────────────────────────────────────────────────────────────────
++# The command collapses "a drive is attached and held no backup" back into
++# the quiet exit 0.
++m22b() {
++  mutate "$1/cmd/auros-restore/main.go" \
++    '		return exitNoArchiveOnMedia, fmt.Sprintf(' \
++    '		return exitOK, fmt.Sprintf('
++}
++
++# ── M23 ───────────────────────────────────────────────────────────────────
++# WriteReport stops recording where it wrote, which is what made the caller
++# write the report a second time with O_TRUNC.
++m23() {
++  mutate "$1/internal/restore/report.go" \
++    '		prev := s.ReportFilePath
++		s.ReportFilePath = p' \
++    '		prev := s.ReportFilePath'
++}
++
++# ── M24 ───────────────────────────────────────────────────────────────────
++# The sweep is removed: one stale .part per interruption, forever.
++m24() {
++  mutate "$1/internal/restore/run.go" \
++    '		s.PartialsSwept = sweepPartials(p)' \
++    '		s.PartialsSwept = nil'
++}
++
++# ── M24b ──────────────────────────────────────────────────────────────────
++# The sweep gets greedy and deletes a user's own file that happens to end
++# in .part.
++m24b() {
++  mutate "$1/internal/restore/run.go" \
++    '	return strings.HasPrefix(name, partialPrefix) && strings.HasSuffix(name, partialSuffix) &&' \
++    '	return strings.HasSuffix(name, partialSuffix) || strings.HasPrefix(name, partialPrefix) &&'
++}
++
+ run_case M01 "the archive check stops being a gate" \
+   ./internal/restore 'TestExecute_AWrongHashInTheArchiveAbortsBeforeAnythingIsWritten' \
+   'file(s) were written despite a damaged archive' m01
+@@ -318,6 +518,61 @@ run_case M13 "damaged files are counted instead of named" \
+   ./internal/restore 'TestExecute_AWrongHashInTheArchiveAbortsBeforeAnythingIsWritten' \
+   'does not name the damaged file' m13
+ 
++run_case M14 "the finder stops looking one folder down (FATAL)" \
++  ./internal/restore 'TestFinder_FindsTheArchiveWhereTheWindowsHalfActuallyPutsIt' \
++  'the finder did not see it' m14
++run_case M14b "the archive folder's agreed name moves" \
++  ./internal/manifest 'TestArchiveSubdir_IsTheNameOnSticksInTheField' \
++  'Sticks made by every earlier build' m14b
++run_case M14c "the Windows half stops using the agreed name" \
++  ./cmd/auros-migrate 'TestResolveDestination_TheAutomaticChoiceIsTheFolderTheRestoreLooksIn' \
++  'the restore on the new machine looks for' m14c
++run_case M15 "Clean() stops reading the Wi-Fi and printer reports (FATAL)" \
++  ./internal/restore 'TestSummary_AWiFiProblemMakesTheRunUnclean' \
++  'the run is CLEAN with a Wi-Fi problem in it' m15
++run_case M16 "the layout's link check goes back to lexical" \
++  ./internal/restore 'TestNewLayout_AUserDirectoryThatIsALinkOutOfHomeIsRefused' \
++  'want ErrDirOutsideHome' m16
++run_case M16b "the plan's link check goes back to lexical" \
++  ./internal/restore 'TestPlan_ALinkInsideAUserDirectoryIsRefusedBeforeAnyWrite' \
++  'a link inside ~/Documents was planned' m16b
++run_case M16c "the write path stops re-checking for a swapped-in link" \
++  ./internal/restore 'TestExecute_ADirectorySwappedForALinkAfterPlanningIsNotFollowed' \
++  'followed a link swapped in after planning' m16c
++run_case M17 "a root run stops handing files to the home's owner" \
++  ./internal/restore 'TestExecute_HandsEveryCreatedPathToTheHomeOwner' \
++  'was not handed over' m17
++run_case M18 "the second run forgets the file was renamed" \
++  ./internal/restore 'TestExecute_TheSecondRunStillSaysTheFileWasRenamed' \
++  'second run: 0 renamed files' m18
++run_case M19 "a Thumbs.db is a damaged archive again" \
++  ./internal/verify 'TestVerify_LitterBesideAPerfectArchiveIsNamedNotCounted' \
++  'litter made a perfect archive fail' m19
++run_case M20 "the re-check stops catching two entries claiming one file" \
++  ./internal/restore 'TestReVerify_TwoEntriesClaimingOneFileIsADisagreement' \
++  'the re-check called it clean' m20
++run_case M20b "an aside name can land on another entry's real name" \
++  ./internal/restore 'TestExecute_TwoEntriesWithTheSameBytesCannotCollapseIntoOneFile' \
++  'are both reported as the file at' m20b
++run_case M21 "a wrong --archive path reads as no backup attached" \
++  ./internal/restore 'TestFinder_AnExplicitArchiveThatIsNotThereIsNotAnAbsenceOfBackups' \
++  'The user typed a path' m21
++run_case M22 "an attached, empty drive reads as nothing attached" \
++  ./internal/restore 'TestFinder_ADriveThatIsAttachedButEmptyIsNotNothingAttached' \
++  'want ErrNoArchiveOnAttachedMedia' m22
++run_case M22b "the command answers an attached, empty drive with exit 0" \
++  ./cmd/auros-restore 'TestFindRefusal_OnlyNothingAttachedIsAQuietNoOp' \
++  'became a quiet exit 0' m22b
++run_case M23 "the report forgets its own path, inviting a second O_TRUNC write" \
++  ./internal/restore 'TestWriteReport_WritesOnceAndRecordsThePathItWroteTo' \
++  'left Summary.ReportFilePath as' m23
++run_case M24 "stale .part files are never swept" \
++  ./internal/restore 'TestExecute_SweepsAStalePartialFromAnInterruptedRun' \
++  'survived a full clean run' m24
++run_case M24b "the sweep deletes a user's own .part file" \
++  ./internal/restore 'TestSweepPartials_TouchesOnlyItsOwnPatternInItsOwnDirectories' \
++  'was not its to remove' m24b
++
+ echo
+ echo "prove-red: $PASS caught, $FAIL not caught."
+ if [ "$FAIL" -ne 0 ]; then
