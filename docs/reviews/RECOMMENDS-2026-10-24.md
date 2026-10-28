@@ -1,0 +1,1070 @@
+# Review: what the no-Recommends image silently lost
+
+_2026-10-24, `tools/workflows/auros-recommends-sweep.js`: the shipped package set replayed from build/forge on homebase (879 packages, 87 unsatisfied Recommends groups), five area judges, one skeptic per area. Raw: `docs/reviews/recsweep.json`._
+
+**Package source.** No published manifest matches current origin/main (e9e6b3c). Release v0.1.0-fc52718 has no package list; the only one is PACKAGES.txt in release sources-v0.1.0-618726b (older commit, ~828 packages). So I replayed build/forge's apt operations in ubuntu:24.04 on homebase: sources noble, noble-updates and noble-security as forge writes them; base = debootstrap minbase (91 packages, matches debootstrap --print-debs); pin_no_snap; full-upgrade; one 'apt-get install --no-install-recommends' of locales + packages_hardware/boot/base/security/desktop/files (from origin/main profiles/desktop.profile, which now includes librsvg2-common) + fonts-noto-cjk (fonts_cjk=yes); packages_exclude purge; Firefox from packages.mozilla.org (158.0.1~build1, no Recommends); gnome-software+packagekit+appstream; flatpak+gnome-software-plugin-flatpak+xdg-desktop-portal(+gtk); stage 3 build deps, purge and autoremove (libwayland-server0 and libxkbcommon0 kept); stage 4 aurosicons stub, purge of ubuntu-mono and humanity-icon-theme; harden's cups-browsed purge. Final state: 879 packages, dpkg audit clean. The count includes the aurosicons stub; it excludes the 7 AurOS-built packages (auros, auros-archive-keyring, -bootchain, -config, -desktop, -ferry, -first) that stage 6 adds. Their only Recommends are python3-cryptography and efibootmgr, both installed. Cross-check against PACKAGES.txt (618726b): identical except for changes since then (new: chrony, exfatprogs, ipp-usb, libnss-mdns, fonts-atkinson-hyperlegible, librsvg2-common, the LibreOffice Writer/Calc stack with carlito/caladea, heif-gdk-pixbuf, libheif-plugin-libde265, aurosicons; gone: fonts-inter, ubuntu-mono, humanity-icon-theme, and the binutils family of 7 that the old image kept). 'dropped' lists the 87 distinct unsatisfied Recommends groups (direct Recommends of installed packages only, as asked). A group counts as satisfied if any alternative is installed or provided by an installed package; version constraints were ignored. I name the package apt would install first. Entries tagged DELIBERATE, HANDLED, KNOWN or UNRESOLVABLE need no action. DELIBERATE PURGES AND PINS in build/forge, for the judges: (1) packages_exclude 'snapd ubuntu-advantage-tools popularity-contest' is a no-op, since none is installed without recommends. ubuntu-pro-client stays because gnome-software needs software-properties-gtk, which needs it; rootfs 20apt-esm-hook.conf neutralises its hook. (2) pin_no_snap pins snapd, and Ubuntu's firefox*, thunderbird*, chromium-browser*, chromium-chromedriver* and chromium-codecs-ffmpeg*, to -1; purge_snap_leftovers is a no-op here. (3) packages.mozilla.org supplies firefox* only (pin 1000; -1 for everything else). (4) trim_server_firmware removes mellanox-spectrum, marvell-prestera, netronome and qlogic if present; they are not installed. (5) Stage 3 installs gcc, libc6-dev, make, pkg-config, libdbus-1-dev, libwayland-dev, libwayland-bin, wayland-protocols and libxkbcommon-dev, then purges them and autoremoves 44 packages; none was a Recommends target. (6) unbrand_icons swaps ubuntu-mono and humanity-icon-theme for the empty stub aurosicons (Provides ubuntu-mono) and pins both to -1. (7) build/harden purges cups-browsed if present; it was never installed. (8) The profile comment drops mesa-vulkan-drivers on purpose. (9) rootfs 10-dns-resolved.conf (dns=default) covers the absence of systemd-resolved. (10) rootfs apt preferences 'auros' let AurOS's repository supply auros* only. Caveats: the docker base differs from minbase only by unminimize and usrmerge. Versions are noble-updates as of 2026-10-24. My notes on what each package does come from apt metadata, `dpkg -c` listings and repo greps; they are not tests.
+
+## graphics-icons-fonts-themes
+
+### [high] KEPT: tumbler
+
+**Breaks.** The image has no thumbnail service at all. Thunar (her Files) and Ristretto (her Photos) both request thumbnails over the D-Bus name org.freedesktop.thumbnails.Thumbnailer1, and nothing installed provides it, so every picture, iPhone HEIC photo and PDF in a folder is drawn as a generic icon. Ristretto's thumbnail strip is the same.
+
+**She notices.** She opens Pictures or Downloads in Files and sees rows of identical grey 'image' and 'document' icons, so she cannot tell which photo is the grandchild's without opening each one. Open/Attach/Upload dialogs in Firefox and LibreOffice also show no previews. GTK file choosers only display thumbnails that already exist in ~/.cache/thumbnails, and nothing creates them.
+
+**Fix.** Add `tumbler` to packages_files in profiles/desktop.profile (inherited by the office and revive profiles), with a comment saying why. Add it to the package list in tools/everydaytest.sh so a regression is caught. Do NOT add tumbler-plugins-extra: it Depends libgepub, which pulls libwebkit2gtk-4.1-0 and libjavascriptcoregtk-4.1-0 (the ~144 MB WebKit the profile already removed when it swapped atril for evince), about 25 more packages in all. Video thumbnails are the only thing given up.  ·  **Cost.** about 1.1 MB installed (tumbler 0.37 + tumbler-common 0.59 + libtumbler-1-0t64 0.10), 0.16 MB download, 3 packages and no new dependencies. tumblerd used about 30 MB RSS after thumbnailing a PNG and a PDF.
+
+**Skeptic.** Confirmed. I simulated apt --no-install-recommends on the full desktop profile plus store and flatpak (776 packages to install, about 865 with the base). tumbler, tumbler-common and libtumbler-1-0t64 are absent, and no package in that set Depends on them. The only relations are Recommends from thunar 4.18.8 and ristretto 0.13.1. Neither program can thumbnail without it. I read their sources: thunar/thunar-thumbnailer.c and ristretto/src/thumbnailer.c call only org.freedesktop.thumbnails.Thumbnailer1 through tumbler, and Thunar has no in-process fallback for local files. In a real install of thunar, ristretto, evince, gvfs and gnome-software, no D-Bus service file provides that name. The only *.thumbnailer files are evince's and librsvg's, and nothing reads them. In the repo, grep -i tumbler over build, profiles, rootfs, src and tools on origin/main finds nothing. docs/PLAN-END-TO-END.md still lists tumbler as a package to add, and the older docs/results/build-all.txt lists it under Recommended packages not installed. forge installs with --no-install-recommends everywhere, and thunar is her "Your files" and ristretto her "Photos", so she would see grey generic icons for every picture and PDF. The fix is cheap: 3 packages, about 1 MB. Do not add tumbler-plugins-extra (the finding says it pulls WebKit; I did not re-verify that).
+
+<details><summary>evidence</summary>
+
+Measured by installing the resolved desktop profile in a noble container (profile + forge lists + gnome-software/flatpak/portal-gtk, --no-install-recommends, 833 packages). Not installed: tumbler, tumbler-common, libtumbler-1-0t64. grep -a on /usr/bin/thunar and /usr/bin/ristretto shows both use org.freedesktop.thumbnails.Thumbnailer1. /usr/share/dbus-1/services has no thumbnails service. gdbus call to that name returns 'ServiceUnknown: not provided by any .service files'. The only *.thumbnailer files on the image are evince.thumbnailer and librsvg.thumbnailer, and tumbler 4.18.1 has no xdg-thumbnailer plugin, so nothing reads them. After installing just `tumbler`, tumblerd D-Bus-activates and GetSupported lists image/jpeg, png, heic, heif, avif, application/pdf and fonts. Queueing a PNG and a PDF produced thumbnails in ~/.cache/thumbnails/normal. HEIC support comes from the already-installed heif-gdk-pixbuf, and its deps (libpoppler-glib8t64, libgstreamer-plugins-base1.0-0, libjpeg8, libfreetype6, libxfce4util7) are all in the image already. In the repo, grep -i tumbler over build/ profiles/ rootfs/ src/ tools/ finds nothing. docs/PLAN-END-TO-END.md WP-25 lists tumbler as to be added, and docs/results/sites.md row 25 says '(WP-25 adds the thumbnailer)'. The profile and tools/everydaytest.sh took the other WP-25 packages (carlito, caladea, heif-gdk-pixbuf, libreoffice-*) but not tumbler. Also checked and cleared, no action: libgdk-pixbuf2.0-bin (only gdk-pixbuf-csource/pixdata/thumbnailer plus a .thumbnailer file no installed service reads; query-loaders is in libgdk-pixbuf-2.0-0 and loaders.cache lists svg and heif), libgtk-3-bin and libgtk-4-bin (gtk-launch, gtk-query-settings, gtk4-update-icon-cache and similar; no installed package or repo file calls them, and gtk-update-icon-cache IS installed), colord (no cupsd/ristretto/evince/LibreOffice link; cupsd talks to it over D-Bus only if present), libheif-plugin-aomenc (encode only; aomdec and libde265 are installed and loaders.cache's heif entry covers heic/heif/avif), mesa-vulkan-drivers (deliberate; Xwayland etc. do not need it), xfonts-base (Xwayland is started -rootless, and libXfont2 has built-in 'fixed' and 'cursor'), fonts-droid-fallback (only Ghostscript's last-resort CID substitute), default-libdecor-0-plugin-1 (Xwayland runs -rootless and aurwl implements xdg-decoration), gstreamer1.0-gtk3 (only for LibreOffice's avmedia-gstreamer backend, which is not installed), cursor theme (Adwaita cursors present, default theme alternative resolves).
+
+</details>
+
+### [medium] KEPT: webp-pixbuf-loader
+
+**Breaks.** gdk-pixbuf has no WebP loader. loaders.cache lists ani, bmp, gif, heif, icns, ico, pnm, qtif, svg, tga, tiff, xbm, xpm, plus built-in png and jpeg. build/forge's stage_file_types nevertheless sets image/webp=org.xfce.ristretto.desktop, and Ristretto decodes through gdk-pixbuf, so a .webp she double-clicks opens in Photos but cannot be decoded. Thunar/tumbler also cannot thumbnail it.
+
+**She notices.** A picture saved from a web page (Google Images, Facebook, Pinterest and similar often save as .webp) will not open in Photos. She gets an error or a blank window where a picture should be.
+
+**Fix.** Add webp-pixbuf-loader to packages_files in profiles/desktop.profile next to heif-gdk-pixbuf, with a one-line comment. Optionally extend tools/hardentest.sh's loader check to also require the webp (and heif) entry in loaders.cache.  ·  **Cost.** about 0.09 MB installed (webp-pixbuf-loader 43 KB + libwebpdemux2 44 KB; libwebp7 and libwebpmux3 are already installed), 24 KB download.
+
+**Skeptic.** Confirmed. In a real install of ristretto, heif-gdk-pixbuf, librsvg2-common and gnome-software with no recommends, GdkPixbuf.Pixbuf.get_formats() returns only ani, bmp, gif, heif/avif, icns, ico, jpeg, png, pnm, qtif, svg, tga, tiff, xbm and xpm. A real .webp made with cwebp fails to load with "Couldn't recognize the image file format", while the same image as PNG loads fine. ristretto 0.13.1 does not link libwebp (ldd and strings both clean), so it decodes only through gdk-pixbuf. apt-cache shows ristretto only Suggests webp-pixbuf-loader, and nothing else in the closure provides a WebP loader. build/forge maps image/webp to org.xfce.ristretto.desktop, so a double-clicked .webp goes to the one program that cannot read it. It is reachable because web pages often save images as WebP. The effect is real but moderate, not high. Cost is about 0.1 MB. Firefox and LibreOffice decode WebP themselves, so only Photos and Files are affected.
+
+<details><summary>evidence</summary>
+
+In the simulated image (see tumbler finding), webp-pixbuf-loader is absent and libgdk_pixbuf loaders.cache has no pixbufloader-webp. ldd /usr/bin/ristretto shows it links libgdk_pixbuf-2.0 and libexif. apt-cache depends ristretto shows 'Suggests: webp-pixbuf-loader' (and heif/avif/jxl loaders; heif is already added by the profile for the same reason). build/forge lines ~577-584 map image/webp and image/heic to Ristretto. With tumbler installed, GetSupported lacked image/webp and a .webp (made with cwebp) got no thumbnail. After `apt-get install --no-install-recommends webp-pixbuf-loader`, the postinst trigger put pixbufloader-webp into loaders.cache, GetSupported listed image/webp, and the .webp thumbnail was created. No existing hardentest check covers this, because hardentest.sh only asserts the SVG loader. Firefox and LibreOffice decode WebP themselves, so only Photos and Files are affected.
+
+</details>
+
+### [low] KEPT: va-driver-all (specifically i965-va-driver and mesa-va-drivers)
+
+**Breaks.** No VA-API driver is installed. mpv is unaffected, since its default is hwdec=no and no repo file sets it. Firefox is affected: it uses VA-API hardware decoding by default on Intel GPUs since Firefox 115 and on AMD since Firefox 136, and the pinned firefox_version is 140. Without a driver it falls back silently to CPU decoding. That is the 'choppy video on an old laptop' case, but only on machines where the GPU would have decoded the codec in hardware. I could not run Firefox on a GPU, so the size of the effect is unmeasured.
+
+**She notices.** Web video such as news clips or YouTube on a 2013-era dual-core laptop drops frames and runs the fan, while the same machine would play it smoothly with hardware decode.
+
+**Fix.** Optional, and worth deciding with the media judge. Add i965-va-driver and mesa-va-drivers (about 1.9 MB) to packages_desktop: this covers Intel up to about Kaby Lake plus AMD, which is the target hardware. Add intel-media-va-driver (13 MB) only if 2016+ Intel laptops matter. Update the profile's comment about hardware decode accordingly.  ·  **Cost.** 1.9 MB for i965-va-driver + mesa-va-drivers; about 15 MB for full va-driver-all (intel-media-va-driver 13.3 MB + libigdgmm12 + i965 1.8 MB + mesa 0.05 MB)
+
+<details><summary>evidence</summary>
+
+Simulated image: libva2, libva-drm2, libva-x11-2, libva-wayland2 and libavcodec60 (via mpv) are installed, but va-driver-all, mesa-va-drivers, i965-va-driver and intel-media-va-driver are all absent. `mpv --no-config --list-options` shows '--hwdec String list (default: no)'. grep for hwdec, vaapi and mpv.conf over build, rootfs, profiles, src and tools finds nothing. The Firefox defaults come from Phoronix/OMG!Ubuntu coverage of Firefox 115 and 136, not from Mozilla's release notes. apt -s install va-driver-all adds intel-media-va-driver (13.3 MB), libigdgmm12, i965-va-driver (1.8 MB) and mesa-va-drivers (0.05 MB). vdpau-driver-all (mesa-vdpau-drivers) only serves legacy VDPAU clients, which neither mpv nor Firefox use here, so skip it.
+
+</details>
+
+### [low] REFUTED: libgtk-4-media-gstreamer
+
+**Breaks.** GNOME Software 46 (the only GTK4 program in the image) plays an app's AppStream screenshot videos through GtkVideo. GTK4 loads the GStreamer media backend from /usr/lib/.../gtk-4.0/4.0.0/media/, and that directory does not exist on the image, so those video screenshots cannot play. Adding only this package would not fix it, because gstreamer1.0-plugins-good (webm/mp4 demux, VP8/VP9) is also absent. Few apps ship a screenshot video, so this affects only some store pages.
+
+**She notices.** On a store page for an app that has a demo video, the screenshot area stays blank or shows an error instead of playing.
+
+**Fix.** Leave as is unless store video previews matter. To enable them, add libgtk-4-media-gstreamer and gstreamer1.0-plugins-good (plus gstreamer1.0-libav if H.264 previews are wanted). Otherwise record it as a deliberate omission in the profile comments.  ·  **Cost.** 0.25 MB for libgtk-4-media-gstreamer alone, which is insufficient; about 11-12 MB installed with gstreamer1.0-plugins-good and its new dependencies (libgstreamer-gl1.0-0, libtag1v5, libv4l, libwavpack1, libshout3, libgpm2, libncurses6 and others); plus 0.28 MB for gstreamer1.0-libav.
+
+**Skeptic.** The mechanism is real but she would almost never hit it, so I am calling it unconfirmed as a user-facing break. libgtk-4-1 Recommends libgtk-4-media-gstreamer and it is absent. gnome-software 46.0 src/gs-screenshot-image.c does call gtk_video_set_filename, but only when a screenshot's media kind is AS_SCREENSHOT_MEDIA_KIND_VIDEO. Ordinary image screenshots and every symbolic icon are unaffected. I found no evidence that Flathub or Ubuntu AppStream data commonly carries screenshot videos, and I could not measure how many do. The fix is also incomplete and costs about 12 MB, because gstreamer1.0-plugins-good is needed as well. Record it as a deliberate omission rather than fixing it.
+
+<details><summary>evidence</summary>
+
+/usr/bin/gnome-software contains the strings 'Failed to download screenshot video', as_screenshot_get_videos, GtkVideo and gtk_video_set_filename. Only gnome-software and libadwaita are GTK4 users in the image. find /usr/lib -path '*gtk-4.0*' -name '*.so' finds only the cups and file print backends. gstreamer1.0-plugins-good is absent, and the sim shows adding it plus the module brings about 15 packages. libgtk-4-bin is not needed (gtk4-launch, gtk4-update-icon-cache etc. have no callers), and the GTK3 sibling gstreamer1.0-gtk3 is moot because libreoffice-avmedia-backend-gstreamer is not installed.
+
+</details>
+
+### [low] REFUTED: fonts-liberation-sans-narrow
+
+**Breaks.** Word documents set in Arial Narrow are not reflowed horizontally, but they do get taller lines. fontconfig and LibreOffice already substitute Nimbus Sans Narrow (from fonts-urw-base35, which libgs10-common Depends on), which has the same advance widths. Its line height is about 12% larger than Liberation Sans Narrow's. A form or table built in Arial Narrow can grow a few lines and push content onto the next page.
+
+**She notices.** Rarely: a downloaded or emailed Word form or table that used Arial Narrow comes out slightly longer, or its last row spills to a new page.
+
+**Fix.** Optional: add fonts-liberation-sans-narrow to packages_base next to the other fonts-* entries if exact Word pagination matters. The horizontal damage is already covered, so skipping it is defensible.  ·  **Cost.** 0.5 MB installed (494 KB), 0.2 MB download
+
+**Skeptic.** Something else provides the font, and the rest is a rare, cosmetic effect. In a real install of the profile's font set, fc-match "Arial Narrow" returns Nimbus Sans Narrow (NimbusSansNarrow-Regular.pfb). fonts-urw-base35 is in the simulated closure through libgs10-common, so widths and line breaks are preserved, as the finding itself says. What is left is a slightly taller line pitch in Word documents that use Arial Narrow, which very few of her documents would. I did not re-measure the 12% line-height difference. Calibri, Cambria, Arial, Times New Roman and Courier New already map to metric-compatible fonts. Adding 0.5 MB is harmless but unneeded.
+
+<details><summary>evidence</summary>
+
+Simulated image: fc-match 'Arial Narrow' gives Nimbus Sans Narrow:Regular, and fonts-liberation-sans-narrow is absent. I converted a test flat ODT (Arial Narrow 12 pt line, 3 words wide ~230 pt) to PDF with LibreOffice 24.2 headless. Before: pdffonts shows NimbusSansNarrow-Regular, and the last word 'dog' on line 1 ends at x=287.908, with a line pitch of 14.4 pt. After installing fonts-liberation-sans-narrow: LiberationSansNarrow, 'dog' ends at x=288.436 (0.5 pt apart over a 230 pt line, so line breaks are identical), and the line pitch is 12.85 pt. Calibri and Cambria map to Carlito and Caladea, and Arial, Times New Roman and Courier New map to Liberation, so only Arial Narrow is affected. Verdana, Tahoma and Georgia fall to DejaVu in every case, since no metric clone exists in the archive.
+
+</details>
+
+## media-sound-camera
+
+### [high] KEPT: libspa-0.2-bluetooth
+
+**Breaks.** Bluetooth headphones and speakers pair and show Connected, but PipeWire has no Bluetooth audio plugin, so no sound device ever appears. Sound keeps coming out of the laptop speakers. bluez is installed and the shell has a Headphones and mice panel, so the feature looks present but is dead.
+
+**She notices.** She pairs her wireless headphones in Settings, the panel says Connected, she plays a song and it still plays from the laptop speakers, or she hears nothing.
+
+**Fix.** Add libspa-0.2-bluetooth to packages_desktop in profiles/desktop.profile, next to pipewire, pipewire-pulse and wireplumber. Add a tools/imagetest-style assertion that libspa-bluez5.so exists in the image.  ·  **Cost.** 1.4 MB installed / 0.4 MB download (6 packages: libspa-0.2-bluetooth plus libfreeaptx0, libsbc1, liblc3-1, libldacbt-enc2, libldacbt-abr2)
+
+**Skeptic.** Confirmed. I simulated the full image set (profile lists plus store, flatpak, portal and CJK fonts, 880 packages) in a noble container. libspa-0.2-bluetooth is not in it, and nothing in build/forge installs it later. Only wireplumber and pipewire-pulse mention it, as Suggests. dpkg -c shows libspa-bluez5.so and the codec plugins are only in this package, not in libspa-0.2-modules. There is no other Bluetooth audio route: bluez-alsa and pulseaudio-module-bluetooth are not installed. WirePlumber's bluez script has the literal message "PipeWire's BlueZ SPA missing or broken. Bluetooth not supported." She would hit it. The shell has a Headphones and mice panel (bt.c), help/video-calls.html tells her to connect wireless headphones there, the installer's hardware verdict says "Your Bluetooth will work", and the day-1 checklist lists Bluetooth headphones. Adding it brings in 6 packages (libspa-0.2-bluetooth, libfreeaptx0, liblc3-1, libldacbt-abr2, libldacbt-enc2, libsbc1). I did not test a real headset.
+
+<details><summary>evidence</summary>
+
+Reproduced in a noble container holding the desktop+files+store package set installed with --no-install-recommends (842 packages). WirePlumber 0.4.17 with the bluez monitor's logind gating disabled logs: "SPA handle 'api.bluez5.enum.dbus' could not be loaded; is it installed?" followed by "PipeWire's BlueZ SPA missing or broken. Bluetooth not supported." After installing libspa-0.2-bluetooth the same run loads the plugin and its codec loaders (sbc, lc3, ldac). The container has no system bus, so it then stops at "failed to get dbus connection"; I could not test a real device. The only file providing that factory is /usr/lib/x86_64-linux-gnu/spa-0.2/bluez5/libspa-bluez5.so. src/aurshell/bt.c pairs and connects only through bluetoothctl and reads "Connected: yes", so the panel says Connected without any audio check. docs/PLAN-END-TO-END.md WP-25 says "add libspa-0.2-bluetooth" and the day-1 checklist says "Bluetooth headphones play sound". At origin/main b28851a, git grep for libspa|a2dp|bluez5 over build, profiles, rootfs and tools finds no libspa, and profiles/desktop.profile does not list it.
+
+</details>
+
+### [medium] KEPT: rtkit
+
+**Breaks.** PipeWire, WirePlumber and pipewire-pulse run at ordinary scheduling priority, with no realtime and no nice boost. Sound works, but the audio thread can starve and crackle or drop out when the CPU is busy. That is the normal state of the 2013-era laptops this targets: software H.264 decode in mpv or Firefox, plus a CPU-only compositor.
+
+**She notices.** Crackling or stuttering audio while a film or video call runs and the machine is working hard. Everything is fine when the machine is idle.
+
+**Fix.** Preferred: add rtkit to packages_desktop. It is the stock Ubuntu path, and build/forge seal_identity's 00-auros.preset will capture the enabled unit. Zero-package alternative: add pipewire to AUROS_GROUPS_WANT in build/forge, because pam_limits is already in rootfs/etc/pam.d/systemd-user.  ·  **Cost.** 0.1 MB installed / 0.03 MB download (1 package)
+
+**Skeptic.** The mechanism is confirmed, but the audible effect is not measured, so I rate it low to medium rather than medium. rtkit is absent from the closure, and only pipewire-bin recommends it. pipewire.service and wireplumber.service set no priority. The only other route is the @pipewire group rlimit file (25-pw-rlimits.conf), and build/forge's AUROS_GROUPS_WANT never adds that group. So module-rt cannot raise priority. Adding rtkit is one package, about 0.1 MB, with a D-Bus activated daemon. No one has measured xruns or crackle on slow hardware.
+
+<details><summary>evidence</summary>
+
+pipewire 1.0.5 module-rt run as an unprivileged user in the same package set. Rlimit attempt: "failed to set realtime policy: Operation not permitted". Portal attempt: "Can't find org.freedesktop.portal.Desktop". With a system bus up but no rtkit: "RTKit error: org.freedesktop.DBus.Error.ServiceUnknown", "RTKit does not give us MaxRealtimePriority, using 1", "MinNiceLevel, using 0", and "Realtime scheduling disabled". The rlimit fallback (/etc/security/limits.d/25-pw-rlimits.conf from pipewire-bin) only applies to group @pipewire, and build/forge AUROS_GROUPS_WANT="audio video input netdev bluetooth lpadmin" never adds that group. xdg-desktop-portal is installed, but its realtime path also ends at rtkit. rtkit ships rtkit-daemon.service (D-Bus activated), a polkit policy with allow_active and allow_inactive set to yes, and /usr/libexec/rtkit-daemon. Not measured: I could not generate CPU load or count xruns in a container.
+
+</details>
+
+### [medium] REFUTED: libmtp-runtime
+
+**Breaks.** The dropped-list description is wrong: this package is not the mtp-tools CLI. Its only program file is /usr/lib/udev/mtp-probe. libmtp-common's udev rule runs that probe to recognise any MTP phone that is not already in its hwdb. With the binary missing, an Android phone whose USB id is not in the list never gets ID_MTP_DEVICE, and gvfs-mtp-volume-monitor never offers it. Cross-area: phones.
+
+**She notices.** She plugs in her Android phone and picks File transfer on the phone. Nothing appears in Thunar's sidebar, so she cannot get her photos.
+
+**Fix.** Add libmtp-runtime to packages_files.  ·  **Cost.** 0.03 MB installed / 0.006 MB download
+
+**Skeptic.** Mostly refuted. The package holds only /usr/lib/udev/mtp-probe, and that is a fallback. 69-libmtp.rules acts at once on any device the hwdb already marks as MTP ("If we have a hwdb entry for this device, act immediately"). The hwdb has 1,412 entries and includes the mainstream phones I checked: Pixel 18d1:4ee1, Samsung 04e8:6860, Motorola, OnePlus, Xiaomi, Huawei, OPPO, Vivo and Sony. A phone left on Photo transfer (PTP) mode would also show through gvfs-gphoto2. The gap is real only for phones missing from the hwdb, which she is unlikely to own. It costs 6 KB if the owner wants it anyway. I did not test a real phone.
+
+<details><summary>evidence</summary>
+
+dpkg -c libmtp-runtime_1.1.21-3.1ubuntu1: only ./usr/lib/udev/mtp-probe plus docs. libmtp-common (installed via gvfs-backends) ships /usr/lib/udev/rules.d/69-libmtp.rules, where line 12 handles hwdb-known devices and line 39 is PROGRAM="/usr/lib/udev/mtp-probe /sys$env{DEVPATH} $attr{busnum} $attr{devnum}" for every other device. The rules and the 5,649-line hwdb are installed, the probe is not. gvfsd-mtp and gvfs-mtp-volume-monitor are installed. docs/PLAN-END-TO-END.md WP-25 lists libmtp-runtime and "Phone photos import", but profiles/desktop.profile does not. I did not test a real phone.
+
+</details>
+
+### [medium] REFUTED: usbmuxd
+
+**Breaks.** gvfs-backends is installed with gvfs-afc-volume-monitor and gvfsd-afc, which link libimobiledevice and libusbmuxd. libimobiledevice reaches an iPhone only through the usbmuxd daemon, which is missing, along with its udev rule 39-usbmuxd.rules that starts it. An iPhone's photos therefore never appear in Thunar. Cross-area: phones.
+
+**She notices.** She plugs in her iPhone, taps Trust, and Thunar shows nothing. The iPhone photo story the product promises fails silently.
+
+**Fix.** Add usbmuxd to packages_files. The daemon is started by udev only when an Apple device is plugged in.  ·  **Cost.** 0.1 MB installed / 0.04 MB download
+
+**Skeptic.** Refuted. gvfs-afc does need usbmuxd, which is missing. But an iPhone's photos have a second path that is in the image. libgphoto2's udev rule (60-libgphoto2-6t64.rules) sets ID_GPHOTO2 for any device with a PTP interface (*:060101:*), and its hwdb lists the iPhone as "PTP mode". gvfs-gphoto2-volume-monitor is in gvfs-backends, and gvfs's own source has a comment about working around bugs for devices "like the iPhone". So Thunar should list the phone as a camera with its photos, with no usbmuxd. This is from reading rules and source; I did not test a real iPhone. Adding usbmuxd would make gvfs-afc take the phone over instead, and I could not test which path works better, so only add it if a real-iPhone test shows a need.
+
+<details><summary>evidence</summary>
+
+On the container image, ldd /usr/libexec/gvfs-afc-volume-monitor shows libimobiledevice-1.0.so.6, libplist and libusbmuxd-2.0.so.6, and libimobiledevice6 is installed. The usbmuxd deb ships /usr/sbin/usbmuxd, usbmuxd.service and /usr/lib/udev/rules.d/39-usbmuxd.rules, none of which are on the image. git grep over build, profiles, rootfs and pkg finds no usbmuxd. docs/PLAN-END-TO-END.md WP-25 lists usbmuxd, but the profile does not. I did not test a real iPhone.
+
+</details>
+
+### [medium] KEPT: tumbler
+
+**Breaks.** No thumbnail service, so folders of photos, PDFs and videos show generic icons instead of previews. Cross-area: files. Includes the media angle, video thumbnails.
+
+**She notices.** Her Pictures or Downloads folder is a wall of identical file icons, and Ristretto's thumbnail strip is empty. She has to open files one by one to find the photo.
+
+**Fix.** Add tumbler and ffmpegthumbnailer to packages_files. Do NOT add tumbler-plugins-extra: it simulates to 30 packages and 135.5 MB, because libgepub-0.7-0 depends on libwebkit2gtk-4.1, the same WebKit that dropping atril avoided.  ·  **Cost.** 1.3 MB installed / 0.2 MB download (tumbler + ffmpegthumbnailer, 5 packages). tumbler-plugins-extra would be 135.5 MB installed / 35.9 MB download.
+
+**Skeptic.** Confirmed. tumbler (and libtumbler-1-0t64 and tumbler-common) are absent from the closure, and thunar and ristretto only Recommend them. I read Thunar 4.18.8's source: it requests thumbnails only from the tumbler D-Bus service, with no internal fallback. Nothing else on the image provides that service. So Pictures, Downloads and the Ristretto strip show generic icons, and she sees that every time she opens a photo folder. The fix works as proposed: tumbler's desktop-thumbnailer plugin loads *.thumbnailer files, so the evince, librsvg and ffmpegthumbnailer thumbnailers all work. Adding tumbler is 3 packages, and tumbler with ffmpegthumbnailer is 5 packages, both about 1.3 MB. Do not use tumbler-plugins-extra (it pulls in WebKit).
+
+<details><summary>evidence</summary>
+
+strings of /usr/bin/thunar and /usr/bin/ristretto show both talk only to D-Bus org.freedesktop.thumbnails.Thumbnailer1 (/org/freedesktop/thumbnails/Thumbnailer1). Ristretto even contains the text "Install Tumbler or another thumbnailing daemon". Nothing on the image implements that interface: /usr/share/thumbnailers has evince.thumbnailer and librsvg.thumbnailer, but no daemon to run them. tumbler base plugins are desktop, font, gst, jpeg, pixbuf and poppler. Its gst plugin cannot decode video here because the image has only gstreamer1.0-plugins-base. ffmpegthumbnailer ships /usr/share/thumbnailers/ffmpegthumbnailer.thumbnailer, and libavcodec is already present through mpv. docs/PLAN-END-TO-END.md WP-25 lists tumbler and ffmpegthumbnailer, but they are not in the profile. apt simulation on top of the image: tumbler is 3 packages (libtumbler-1-0t64, tumbler-common, tumbler) and tumbler plus ffmpegthumbnailer is 5 packages.
+
+</details>
+
+### [low] REFUTED: gstreamer1.0-gtk3
+
+**Breaks.** Writer or Calc cannot play a video or sound clip embedded in a document. Adding this package alone would not fix that: the image has only gstreamer1.0-plugins-base, which has no audio sink (the alsa sink is gstreamer1.0-alsa and the pulse sink is gstreamer1.0-pulseaudio, neither installed) and no mp3, mp4, h264, matroska or wav demuxers or decoders.
+
+**She notices.** A Word file with a video or sound inside it shows a blank box, and pressing play does nothing. Rare, because documents with embedded media are uncommon.
+
+**Fix.** Leave dropped, and accept that embedded media in documents does not play. If the owner wants it, the minimal working set is gstreamer1.0-gtk3 + gstreamer1.0-plugins-good + gstreamer1.0-pulseaudio (or gstreamer1.0-pipewire) + gstreamer1.0-libav.  ·  **Cost.** gstreamer1.0-gtk3 alone: 0.7 MB installed. Working set (gtk3 + plugins-good + libav, 16 packages): 11.2 MB installed / 3.3 MB download, plus the pulse or pipewire sink plugin.
+
+**Skeptic.** Not a defect. The finding itself says leave dropped. libreoffice-gtk3 only Recommends it, and it would be useless alone, because the image lacks the audio sinks and the demuxers and decoders (gstreamer1.0-plugins-good, -pulseaudio or -pipewire, -libav). Only embedded media in Writer or Calc documents is affected, which is rare.
+
+<details><summary>evidence</summary>
+
+strings of libvclplug_gtk3lo.so contain "gtksink", which is provided by gstreamer1.0-gtk3's libgstgtk.so. libreoffice-core's libavmediagst.so uses playbin, autovideosink and autoaudiosink and links libgstreamer-1.0. libreoffice-core Depends on libgstreamer1.0-0 and libgstreamer-plugins-base1.0-0 and only Suggests plugins-base, -good, -ugly, -bad and -libav. Installed gstreamer-1.0 plugin dir on the container image: adder app audioconvert audiomixer audiorate audioresample audiotestsrc compositor coreelements gio ogg opus playback rawparse subparse theora typefind videoconvertscale videorate videotestsrc volume vorbis, and nothing else. profiles/desktop.profile's own list says libreoffice-gtk3 is there "to draw like every other program", not for media.
+
+</details>
+
+### [low] REFUTED: libgtk-4-media-gstreamer
+
+**Breaks.** GTK4 GtkVideo has no media backend. GNOME Software, the only GTK4 program on the image, cannot show the screenshot videos some app pages carry. The screenshots themselves are images and are fine.
+
+**She notices.** On a rare Get more programs page that has a video screenshot, the video area is empty. Nothing else changes.
+
+**Fix.** Leave dropped.  ·  **Cost.** 0.8 MB installed alone; 11.3 MB installed with the gstreamer1.0-plugins-good and gstreamer1.0-libav decoders it would need to be useful
+
+**Skeptic.** Not a defect. GNOME Software is the only GTK4 program, and only the rare video screenshot on an app page would be empty. The finding itself says leave dropped, and the decoders it would need are not installed either.
+
+<details><summary>evidence</summary>
+
+A scan of ldd over /usr/bin and /usr/libexec on the container image finds libgtk-4 linked only by /usr/bin/gnome-software and gnome-software-cmd. strings of gnome-software contain gtk_video_set_filename, as_screenshot_get_videos and "Failed to download screenshot video". The deb ships only gtk-4.0/4.0.0/media/libmedia-gstreamer.so. Even with it, video screenshots (webm/vp9) would still need decoders from gstreamer1.0-plugins-good, which are not installed.
+
+</details>
+
+### [low] REFUTED: va-driver-all
+
+**Breaks.** Nothing visible. mpv silently decodes in software, which is also the only mode this compositor can use.
+
+**She notices.** She does not. Playback works the same.
+
+**Fix.** Leave dropped. Revisit only if aurwl gains linux-dmabuf.  ·  **Cost.** 15.4 MB installed / 3.4 MB download (5 packages: intel-media-va-driver 13.6, i965-va-driver 1.7, mesa-va-drivers about 0)
+
+**Skeptic.** No user-visible effect. mpv's shipped /etc/mpv/mpv.conf sets hwdec=vaapi, and without a VA driver mpv falls back silently to software decoding. The finding's own test shows this, and the compositor has no dmabuf path anyway.
+
+<details><summary>evidence</summary>
+
+Ubuntu's mpv ships /etc/mpv/mpv.conf containing hwdec=vaapi. Test on the container image (mpv 0.37.0, no VA driver, shipped config, H.264 file made with mpv's own encoder): "[vd] Looking at hwdec h264-vaapi... [vd] Using software decoding.", decode succeeds and exit code is 0, with no error shown. Adding drivers would not give zero-copy hardware decode anyway: docs/handoff/streams/WL.md (lines 93 and 108) states aurwl does not offer linux-dmabuf, every program falls back to shm, and GTK4's EGL fails. VA-API output needs a dmabuf path in mpv, and Firefox's VA-API decode is the same dependency.
+
+</details>
+
+### [low] REFUTED: vdpau-driver-all
+
+**Breaks.** Nothing. Neither mpv's shipped config (hwdec=vaapi) nor Firefox on Wayland uses VDPAU.
+
+**She notices.** She does not.
+
+**Fix.** Leave dropped.  ·  **Cost.** 0.07 MB installed (2 packages)
+
+**Skeptic.** No effect. mpv's config uses vaapi only, so nothing on the image uses VDPAU.
+
+<details><summary>evidence</summary>
+
+/etc/mpv/mpv.conf on the container image is hwdec=vaapi only. vdpau-driver-all pulls mesa-vdpau-drivers and a metapackage, about 0.07 MB. Same dmabuf limitation as va-driver-all (WL.md lines 93 and 108).
+
+</details>
+
+### [low] REFUTED: yt-dlp
+
+**Breaks.** mpv cannot play a pasted web-video URL. There is no way for her to give mpv a URL on this image, so nothing she can do is affected.
+
+**She notices.** She does not. Video sites play in Firefox.
+
+**Fix.** Leave dropped.  ·  **Cost.** 18.9 MB installed / 3.8 MB download (10 packages)
+
+**Skeptic.** No effect. mpv has no way for her to enter a web URL on this image. The archive's yt-dlp is also stale and would pull in 10 packages.
+
+<details><summary>evidence</summary>
+
+mpv's ytdl hook only runs for http(s) URLs. mpv.desktop on the container image runs "mpv --player-operation-mode=pseudo-gui -- %U" and claims no x-scheme-handler. mpv 0.37's input.conf has no clipboard-open binding, since zcat input.conf.gz | grep -i clipboard is empty. allow_tty=no means no terminal. The archive's yt-dlp is 2024.04.09, which stops extracting from video sites within weeks. Adding it installs 10 packages, including python3-requests, urllib3 and pycryptodome.
+
+</details>
+
+### [low] REFUTED: libaacs0
+
+**Breaks.** mpv cannot play AACS-encrypted commercial Blu-ray discs. Unencrypted discs, ISO files and BDMV folders play.
+
+**She notices.** Only if she inserts a commercial Blu-ray in an external drive. Most target laptops have no optical drive, and libaacs also needs a user-supplied KEYDB.cfg that is not part of the image.
+
+**Fix.** Leave dropped.  ·  **Cost.** 0.15 MB installed
+
+**Skeptic.** Negligible. It matters only for AACS-encrypted commercial Blu-rays, which needs an optical drive and a user-supplied KEYDB.cfg. Unencrypted discs, ISO files and BDMV folders play without it.
+
+<details><summary>evidence</summary>
+
+libbluray2 Recommends libaacs0 and Suggests libbluray-bdj. libbluray2 (1.3.4) is installed through mpv's hard Depends. The libaacs0 deb is a single library, 62.9 kB. I did not re-list its file contents. The KEYDB.cfg point is from libaacs's design, not checked here.
+
+</details>
+
+### [low] REFUTED: libpipewire-0.3-common
+
+**Breaks.** Nothing. It contains only docs.
+
+**She notices.** She does not.
+
+**Fix.** Leave dropped.  ·  **Cost.** 0.06 MB installed
+
+**Skeptic.** Confirmed docs-only. dpkg -c shows just changelog.Debian.gz and copyright. The PipeWire configs come from pipewire-bin (/usr/share/pipewire/pipewire.conf and client.conf), which I verified with dpkg -S.
+
+<details><summary>evidence</summary>
+
+dpkg -c libpipewire-0.3-common_1.0.5-1ubuntu3.3_all.deb lists only /usr/share/doc/libpipewire-0.3-common/changelog.Debian.gz and copyright. The configs come from pipewire-bin (/usr/share/pipewire/pipewire.conf, client.conf, pipewire-pulse.conf and others, plus /etc/security/limits.d/25-pw-rlimits.conf) and wireplumber (/usr/share/wireplumber). Running pipewire, wireplumber and pipewire-pulse as a user in the same set loaded those configs with no config-missing errors. The only warnings were mod.rt (no rtkit, see rtkit) and jackdbus-detect (harmless).
+
+</details>
+
+### [low] REFUTED: libspa-0.2-libcamera
+
+**Breaks.** PipeWire cannot see libcamera-only (MIPI or IPU6/IPU7) laptop cameras. USB webcams are unaffected: they are plain V4L2 devices, PipeWire's own spa-0.2/v4l2 plugin is installed, and /dev/video* is tagged uaccess by 70-uaccess.rules and the shell session is in group video. WirePlumber logs "SPA handle 'api.libcamera.enum.manager' could not be loaded" on every start, which is harmless.
+
+**She notices.** Only on a newer laptop whose built-in camera is MIPI-attached. The HW stream already knows about this class (IPU6/IPU7 seeds in docs/PLAN-END-TO-END.md WP-32), and libcamera alone would not make those work without out-of-tree drivers.
+
+**Fix.** Leave dropped.  ·  **Cost.** 2.6 MB installed / 0.7 MB download (5 packages incl. libcamera0.2)
+
+**Skeptic.** Not worth acting on. USB webcams use PipeWire's V4L2 plugin, which is installed. MIPI/IPU6 cameras also need out-of-tree drivers, and the hardware stream already reports "camera won't work yet" for that class. The WirePlumber warning is harmless.
+
+<details><summary>evidence</summary>
+
+WirePlumber log line above (my run). The installed spa-0.2 dir on the container image has v4l2 but no libcamera. tools/parity/guest/checks/call.sh in the repo exercises a /dev/video0 (vivid) camera plus a PipeWire microphone in a Firefox WebRTC call. I did not run it.
+
+</details>
+
+### [low] REFUTED: pocketsphinx-en-us
+
+**Breaks.** Nothing. libpocketsphinx3 is on the image only because libavfilter9 (from mpv) depends on it. The model is used only by ffmpeg's asr filter, which nothing here calls.
+
+**She notices.** She does not.
+
+**Fix.** Leave dropped. If wishes="on" is ever shipped, add espeak-ng explicitly.  ·  **Cost.** 36.1 MB installed / 26.1 MB download
+
+**Skeptic.** No effect. libpocketsphinx3 is present only because libavfilter9 (from mpv) depends on it, and only ffmpeg's asr filter uses the model. The 36 MB model is not worth shipping.
+
+<details><summary>evidence</summary>
+
+On the container image, apt-cache rdepends --installed libpocketsphinx3 returns only libavfilter9. docs/VOICE.md says the Wishes voice path uses whisper.cpp for speech-to-text and piper or espeak-ng for speech output, not pocketsphinx. Side note, only relevant if wishes="on": VOICE.md line 86 says espeak-ng is already in the image's package set, but the simulated desktop set contains only libflite1.
+
+</details>
+
+## printing-scanning-devices
+
+### [high] KEPT: libspa-0.2-bluetooth
+
+**Breaks.** Bluetooth headphones and speakers pair and connect (bluez and the aurshell 'Headphones and mice' panel work) but never produce sound. PipeWire's BlueZ plugin libspa-bluez5.so, which carries A2DP, HSP and HFP, ships only in this package.
+
+**She notices.** She presses 'Headphones and mice', pairs her headphones, and the panel says connected. The sound still comes from the laptop speakers or from nowhere, and the headphones never appear as a place sound can go. Mice and keyboards are unaffected, because HID goes through bluez and the kernel.
+
+**Fix.** Add libspa-0.2-bluetooth to packages_desktop in profiles/desktop.profile, next to pipewire-pulse. It pulls libsbc1, libldacbt-enc2, libldacbt-abr2, liblc3-1 and libfreeaptx0. Add a manifest check for /usr/lib/*/spa-0.2/bluez5/libspa-bluez5.so (imagetest), with a mutant that drops the package.  ·  **Cost.** 1.4 MB installed, 0.47 MB download (apt simulation: libspa-0.2-bluetooth 1075K plus 5 small libs)
+
+**Skeptic.** Confirmed. It is absent from the shipped manifest (fc52718 PACKAGES.txt; the profile diff since then is only librsvg2-common). Neither wireplumber nor pipewire-pulse depends on it, and nothing else in the image offers Bluetooth audio (no bluealsa, no pulseaudio). The libspa-0.2-modules .deb has no bluez5 directory, while the libspa-0.2-bluetooth .deb is the only provider of spa-0.2/bluez5/libspa-bluez5.so and the codec plugins. wireplumber's bluez.lua:393-397 logs "PipeWire's BlueZ SPA missing or broken. Bluetooth not supported." when it is missing. The aurshell bt.h header advertises the "Headphones and mice" panel, and WP-25 planned this package but it never landed. Real gap, and cheap to fix (about 1.4 MB, dependencies are small libs).
+
+<details><summary>evidence</summary>
+
+1) Manifest of the shipped image (release sources-v0.1.0-fc52718 PACKAGES.txt, 886 ubuntu binaries): pipewire, pipewire-bin, pipewire-pulse, wireplumber, libspa-0.2-modules and bluez are present, libspa-0.2-bluetooth is not. 2) I installed that closure (minus LibreOffice, Mesa, kernel and firmware) into ubuntu:24.04 on homebase. /usr/lib/x86_64-linux-gnu/spa-0.2/ has aec, alsa, audioconvert, audiomixer, audiotestsrc, avb, control, support, test, v4l2, videoconvert and videotestsrc, with no bluez5 directory. 3) /usr/share/wireplumber/scripts/monitors/bluez.lua:393-397 calls SpaDevice('api.bluez5.enum.dbus') and, on failure, logs "PipeWire's BlueZ SPA missing or broken. Bluetooth not supported." 4) The .deb libspa-0.2-bluetooth_1.0.5-1ubuntu3.3 contains spa-0.2/bluez5/libspa-bluez5.so and the sbc, ldac, lc3, aptx, faststream and opus codec plugins. 5) apt-cache depends shows wireplumber and pipewire-pulse only Suggest it, so no-install-recommends never pulls it. 6) At origin/main, grep of build/, profiles/ and rootfs/ for libspa, a2dp and bluealsa finds nothing. profiles/desktop.profile lists only 'pipewire pipewire-pulse wireplumber'. docs/PLAN-END-TO-END.md:46 says 'Bluetooth headphones play sound' and WP-25 (line 189) says 'add libspa-0.2-bluetooth'. It never landed. docs/handoff/streams/PARITY.md:44 lists libmtp as landed but not this package. src/aurshell/bt.c and bt.h build a headphones panel on top of it.
+
+</details>
+
+### [high] KEPT: system-config-printer-udev
+
+**Breaks.** Plugging in a USB printer that is not IPP-over-USB creates no print queue. That covers every printer the image says it handles through printer-driver-hpcups and printer-driver-gutenprint, meaning older HP, Epson and Canon models. The package ships the udev rule 70-printers.rules, the configure-printer@.service unit and udev-configure-printer/udev-add-printer, which auto-create the queue with the right PPD. Nothing else in the image does this, so the Print dialog lists no printer until she opens Printers and adds it by hand.
+
+**She notices.** She plugs in the printer she has owned for 15 years, presses Print from Letters or the browser, and the printer is not in the list. The driver packages are installed but never used until she finds the 'Printers' tile and works through Add.
+
+**Fix.** Add system-config-printer-udev to packages_hardware in profiles/desktop.profile next to system-config-printer. Add an imagetest assert for /usr/lib/udev/rules.d/70-printers.rules, or the /lib/udev/ equivalent, plus a mutant. If she should never have to touch Printers, consider a tiny AurOS oneshot that runs `lpadmin -m everywhere` for printers found by ippfind. It opens no listener, unlike cups-browsed.  ·  **Cost.** 0.07 MB installed, 0.02 MB download
+
+**Skeptic.** Confirmed. It is absent from the manifest and is only a Recommends of system-config-printer and system-config-printer-common. Its .deb is the only source of 70-printers.rules, configure-printer@.service and udev-add-printer, which call addPrinter with a matched PPD. The rule fires for USB printer-class devices and skips 7/1/4 (ipp-usb's case), so an older non-IPP-USB printer gets no queue without it. printer-driver-hpcups and gutenprint are installed but never used until she adds the printer by hand. python3-cups, python3-cupshelpers and python3-dbus are already in the image. No AurOS code runs lpadmin. Real gap, tiny cost (about 20 KB).
+
+<details><summary>evidence</summary>
+
+.deb contents: lib/udev/rules.d/70-printers.rules (fires on ID_USB_INTERFACES '*:0701??:*' except 070104, with SYSTEMD_WANTS=configure-printer@usb-BUS-DEV.service), lib/systemd/system/configure-printer@.service (ExecStart=/lib/udev/udev-configure-printer add), lib/udev/udev-add-printer (python: cupshelpers matches the device ID to a PPD, then c.addPrinter and activateNewPrinter). The rule deliberately skips 7/1/4 because that is ipp-usb's case. Not present in the closure install (no 70-printers.rules). All its Depends are already in the image (python3-cups, python3-cupshelpers, python3-dbus, libusb-1.0-0, libcups2t64, libudev1). No AurOS code creates queues: grep of src, rootfs and build at origin/main finds no lpadmin or lpinfo calls. tools/hardenboottest.sh:238-250 adds its test queue by hand with `lpadmin -m everywhere`. hw/lib/hwcompat.c:352-360 reports 'works' ('printer-model-driver: CUPS has a driver for this model (HP hpcups or Gutenprint) in the image') for USB printers, but that verdict is only true after a manual add. docs/handoff/streams/S1.md:49 says 'A real USB printer is unproven'. The manual path exists: forge:742 renames system-config-printer to 'Printers', and the cups-pk-helper polkit grants are in place.
+
+</details>
+
+### [medium] KEPT: eject
+
+**Breaks.** udisks' Drive.Eject method works by running the external command `eject <device>`. With no eject binary the job fails, gvfs passes the error up, and Thunar shows a 'Failed to eject' dialog. gvfs has already unmounted the volume by then, so no data is at risk, but the error appears on a routine action. It hits drives where Thunar takes the eject path and not the safely-remove (power-off) path: SD cards in a reader or the built-in slot, CD/DVD drives, and any USB stick not on udisks' short 'thumb drive' list that reports removable=1.
+
+**She notices.** She presses the eject arrow beside her camera's SD card, a DVD or a USB stick. The disk icon disappears, then an error box says it could not be ejected, and she is left unsure whether it is safe to pull.
+
+**Fix.** Add eject to packages_files in profiles/desktop.profile (udisks2 line). It Depends only on libc6 and libmount1. Add an imagetest assert for /usr/bin/eject.  ·  **Cost.** 0.10 MB installed, 0.025 MB download
+
+**Skeptic.** Confirmed from source. udisks2 2.10.1 handle_eject (udiskslinuxdrive.c:1105-1118) spawns "eject <dev>" and returns "Error ejecting" if that fails. The eject binary is absent from the manifest (it is only a udisks2 Recommends). gvfs gvfsudisks2drive.c uses can_stop (power-off) only for non-removable media, so SD cards (mmcblk is forced ejectable), optical drives and removable-flag USB sticks go through g_drive_eject. Thunar tries stop first, then eject, and shows a "Failed to eject" dialog on error (thunar-action-manager.c:3069). forge grants eject-media on purpose, so this path is meant to work. Data is safe because gvfs unmounts first, but a CD tray will not open and a routine action shows an error. Real gap, trivial cost (about 25 KB).
+
+<details><summary>evidence</summary>
+
+udisks2 2.10.1 src/udiskslinuxdrive.c:1105-1118 handle_eject spawns "eject %s" and returns 'Error ejecting %s: %s' on failure. The string 'eject %s' is in /usr/libexec/udisks2/udisksd in the installed closure, and /usr/bin/eject is absent there. gvfs monitor/udisks2/gvfsudisks2drive.c:215 sets can_eject from udisks 'ejectable' (sysfs removable=1). Lines 243-278 allow can_stop (power-off, no eject binary) only when !is_media_removable && !coldplug. eject_cb returns the error to the caller. Thunar thunar-device.c:818-848 tries g_drive_stop first, else g_drive_eject_with_operation. udisks drive_media_mapping (udiskslinuxdrive.c:363+) makes ID_DRIVE_THUMB drives non-removable, but 80-udisks2.rules:101-105 sets ID_DRIVE_THUMB only for Kingston DataTraveler, SanDisk Cruzer, HP v125w, Patriot and JetFlash/Transcend. ID_DRIVE_FLASH_SD and ID_CDROM* are force_removable, so they use eject. build/forge ~2144-2150 deliberately grants org.freedesktop.udisks2.eject-media and power-off-drive ('Thunar's safely remove'), so this path is intended to work. eject is not in the manifest, and it is only a udisks2 Recommends.
+
+</details>
+
+### [medium] REFUTED: usbmuxd
+
+**Breaks.** An iPhone or iPad plugged in by cable never appears in Files. gvfs-backends hard-depends on libimobiledevice6, libusbmuxd6 and libplist, so the client half of the afc backend is installed and has nothing to talk to. The daemon that multiplexes the phone's USB connection is only in usbmuxd.
+
+**She notices.** She plugs in her iPhone to get photos off it, as WP-25 expected ('Phone photos import'), and nothing shows up in Files. The phone itself does ask 'Trust this computer?', but only once usbmuxd is running.
+
+**Fix.** Add usbmuxd to packages_files in profiles/desktop.profile. libimobiledevice-utils is not needed: the gvfs afc backend does its own pairing. Add an imagetest assert for /usr/sbin/usbmuxd and 39-usbmuxd.rules.  ·  **Cost.** 0.125 MB installed, 0.04 MB download
+
+**Skeptic.** The claim that an iPhone never appears in Files does not hold. usbmuxd is only needed for the AFC backend. The image ships gvfs-backends with gvfs-gphoto2-volume-monitor and libgphoto2-6t64. The libgphoto2 hwdb marks Apple 05ac:12a8 (iPhone 5 and later) and 12ab (iPad Air) as ID_GPHOTO2=1 in PTP mode. The libgphoto2 rules also tag any 6/1/1 interface as ID_GPHOTO2, and systemd's 70-uaccess.rules gives the seat user access. gvfs's gphoto2 monitor has no Apple or AFC exclusion, and libgphoto2 ptp2 has iOS-specific handling (library.c:10119). So the phone shows up as a camera with its photos, which is the stated need (phone photos import, with HEIC handled by heif-gdk-pixbuf). I could not test with a real phone, so the claim stays unproven. AFC would only add full-file access, which she does not need.
+
+<details><summary>evidence</summary>
+
+gvfs 1.54.4 monitor/afc/afcvolumemonitor.c:103 calls idevice_event_subscribe(). That goes through libimobiledevice to libusbmuxd, which connects to the usbmuxd socket (/var/run/usbmuxd) and never sees a device when the daemon is absent. The usbmuxd .deb ships /usr/sbin/usbmuxd, usbmuxd.service and 39-usbmuxd.rules, which matches PRODUCT 5ac/12[9a]x/* and 5ac/8600/*, sets SYSTEMD_WANTS=usbmuxd.service and runs as user usbmux. In the closure install /usr/sbin/usbmuxd and 39-usbmuxd.rules do not exist. Only libusbmuxd6 and libimobiledevice6 are in the manifest. docs/PLAN-END-TO-END.md:189 (WP-25) lists 'usbmuxd, libimobiledevice-utils'. It never landed, and grep of build, profiles and rootfs for usbmuxd finds nothing. The profile comment motivating heif-gdk-pixbuf ('a photo from an iPhone') shows iPhone photos are expected. No AurOS-side import path exists (grep of src for afc, mtp, DCIM and usbmux finds nothing).
+
+</details>
+
+### [medium] KEPT: tumbler
+
+**Breaks.** Thunar and Ristretto show no previews. Photos, PDFs and phone or camera pictures appear as generic file icons. Thunar has no built-in thumbnailer: it only asks the org.xfce.Tumbler D-Bus service. This overlaps the graphics/icons area; I include it because phone and camera photo folders are the place she notices it first.
+
+**She notices.** She opens Pictures, or a folder copied from a camera or phone, and sees a grid of identical 'image' icons instead of tiny photos, so she cannot tell one picture from another.
+
+**Fix.** Add tumbler (not tumbler-plugins-extra) to packages_files in profiles/desktop.profile. Do NOT add tumbler-plugins-extra: apt simulation shows it drags libwebkit2gtk-4.1-0 and libjavascriptcoregtk (+139 MB installed). The base tumbler already covers images and PDFs. ffmpegthumbnailer (0.28 MB) gives video thumbnails, if wanted. Add an imagetest assert for tumblerd.  ·  **Cost.** 1.06 MB installed, 0.16 MB download (tumbler 366K, tumbler-common 588K, libtumbler 102K)
+
+**Skeptic.** Confirmed. It is absent from the manifest and is a Recommends of thunar and ristretto. Thunar 4.18.8 has no thumbnailer of its own. It only requests thumbnails over D-Bus from org.freedesktop.thumbnails.Thumbnailer1 (thunar-thumbnailer.c:806-817), which tumbler provides, and icon-factory only loads thumbnail files that already exist. Without it every photo or PDF is a generic icon in Files. The plain tumbler package (not -plugins-extra) covers pixbuf, jpeg, poppler, font and gst, and its dependencies (poppler-glib, gstreamer, cairo, pixbuf) are already installed. WP-25 planned it and it never landed. Real UX gap, about 1 MB.
+
+<details><summary>evidence</summary>
+
+Thunar 4.18.8 thunar/thunar-thumbnailer.c:41 says it is 'a class for requesting thumbnails from org.xfce.tumbler.*', and its file-support check goes through the tumbler proxy. thunar-icon-factory.c only loads existing thumbnails and requests new ones through the thumbnailer. The tumbler .deb ships tumblerd, the org.xfce.Tumbler.* dbus service files, and plugins for pixbuf, jpeg, poppler (PDF), font, desktop and gst. Not in the manifest. docs/PLAN-END-TO-END.md:189 (WP-25) lists tumbler and ffmpegthumbnailer as to-add, and they never landed.
+
+</details>
+
+### [medium] KEPT: dmsetup
+
+**Breaks.** The udev rules 55-dm.rules, 60-persistent-storage-dm.rules and 95-dm-notify.rules ship only in dmsetup. libdevmapper (used by libcryptsetup, hence by udisks2/libblockdev unlock of an encrypted USB stick) waits on a udev cookie that only 95-dm-notify.rules completes. This is derived from source and not run, because it needs a privileged host with device-mapper. The wait is a semop loop with no timeout, so unlocking a LUKS stick would block forever. The S4 disk-lock switch-on also installs only cryptsetup-bin, which would hit the same wait in lockctl.
+
+**She notices.** Today: a LUKS-encrypted USB stick (say one a relative encrypted) gets a passphrase prompt and then spins forever, even though the image's polkit rule grants encrypted-unlock for this. After S4 is switched on, the lockctl and cryptsetup calls on the live system would hang.
+
+**Fix.** Add dmsetup to packages_hardware (or base) in profiles/desktop.profile now, and add it to S4's switch-on list next to cryptsetup-bin. Test with a LUKS stick in a KVM boot, and run the S4 theftvm test with dmsetup removed to confirm the hang before relying on this.  ·  **Cost.** 0.25 MB installed, 0.08 MB download
+
+**Skeptic.** Confirmed by source, not by a run. A run needs a privileged host with a live udev, which I did not set up. libdm's _udev_wait (libdm-common.c:2729-2780) loops on semop with no timeout, and it is active whenever udev is running. cryptsetup 2.7.0 (lib/libdevmapper.c:1330-1363, 1400-1407) waits on a cookie for every activate and remove. The only provider of 95-dm-notify.rules (udevcomplete) and 55-dm.rules is the dmsetup .deb. The udev .deb has no dm rules, and dmsetup is absent from the manifest (libdevmapper1.02.1 only Recommends it). So unlocking a LUKS or BitLocker stick through udisks would block forever. forge grants encrypted-unlock on purpose. The frequency is low, since only an encrypted stick triggers it, but the cost is about 80 KB and the failure is a hang. Keep it, rated medium to low.
+
+<details><summary>evidence</summary>
+
+lvm2 2.03.16 libdm/libdm-common.c:2729-2780 _udev_wait does `while (semop(semid, &sb, 1) < 0) { if (errno==EINTR) goto repeat_wait; ...}` with no timeout. It is used whenever dm_udev_get_sync_support() is true (udev running, per _check_udev_is_running at 2320). cryptsetup 2.7.0 lib/libdevmapper.c:1292-1363 and 1383-1407 call dm_task_set_cookie then _dm_udev_wait for every activate and remove. The dmsetup .deb is the only file provider of 95-dm-notify.rules (`RUN+="/sbin/dmsetup udevcomplete $env{DM_COOKIE}"`) and 55-dm.rules. apt-cache: libdevmapper1.02.1 only Recommends dmsetup, libcryptsetup12 and cryptsetup-bin don't depend on it, and only the 'cryptsetup' package does. Manifest has libdevmapper1.02.1, libcryptsetup12 and libblockdev-crypto3 but no dmsetup. build/forge ~2144 grants org.freedesktop.udisks2.encrypted-unlock. docs/handoff/streams/S4.md:81 and tools/theftvm.sh:102 both install only `cryptsetup-bin` for the switch-on.
+
+</details>
+
+### [low] KEPT: libmtp-runtime
+
+**Breaks.** The auto-probe fallback in 69-libmtp.rules runs /usr/lib/udev/mtp-probe, which lives only in this package. Phones whose USB id is in libmtp's 1412-entry hwdb are tagged ID_MTP_DEVICE and work. A phone or tablet missing from that list is never tagged, so gvfs-mtp ignores it. The dropped-list note ('libmtp-common (udev rules) is installed') is right for known phones and wrong for unlisted ones.
+
+**She notices.** Rarely: a newer or lesser-known Android phone in 'File transfer' mode does not show up in Files, while a Samsung or Pixel phone does.
+
+**Fix.** Add libmtp-runtime to packages_files. It Depends only on libs already installed.  ·  **Cost.** 0.03 MB installed, 0.005 MB download
+
+**Skeptic.** Confirmed but low. 69-libmtp.rules falls back to /usr/lib/udev/mtp-probe for devices missing from the hwdb, and that binary ships only in libmtp-runtime (absent from the manifest). gvfs-mtp gates on ID_MTP_DEVICE (gmtpvolume.c:105, gmtpvolumemonitor.c:241), so unlisted phones are ignored. The 1412-entry hwdb covers the main vendors (Google, Samsung, Xiaomi, Huawei, Motorola, HTC, OnePlus, Oppo and others), so she will rarely hit it. I keep it because WP-25 planned this package, PARITY.md claims libmtp landed, and the fix is 6 KB with no new dependencies.
+
+<details><summary>evidence</summary>
+
+libmtp-common 69-libmtp.rules: `ENV{ID_MTP_DEVICE}=="1", SYMLINK+="libmtp-%k", GOTO="libmtp_rules_end"` for hwdb hits, then `PROGRAM="/usr/lib/udev/mtp-probe /sys$env{DEVPATH} $attr{busnum} $attr{devnum}", RESULT=="1", ... ENV{ID_MTP_DEVICE}="1"`. The libmtp-runtime .deb's only binary is /usr/lib/udev/mtp-probe, which is missing in the closure install. gvfs monitor/mtp/gmtpvolume.c:105 and gmtpvolumemonitor.c:241,257 gate on the ID_MTP_DEVICE property. The hwdb has 1412 entries and covers the main phones: Samsung 04e8:6860, Google 18d1:4ee1/4ee2, Motorola 22b8:2e82, OnePlus 2a70:f003, Xiaomi 2717:ff40, Fairphone 2ae5:6764, Oppo 22d9:2764, vivo 2d95:6002, LG 1004:633e, Huawei 12d1:107e. 50-udev-default.rules:19 imports hwdb for usb devices. libmtp9t64 itself is installed as a Depends of gvfs-backends. WP-25 (docs/PLAN-END-TO-END.md:189) listed libmtp-runtime and PARITY.md:44 says 'libmtp landed', but only libmtp9t64 and libmtp-common did.
+
+</details>
+
+### [low] REFUTED: cups-browsed
+
+**Breaks.** The removal is deliberate and should stay. The side effect is that no queue is ever created for network or IPP-USB printers, and LibreOffice only lists existing queues. GTK3 programs discover the same printers themselves, so printing works from Firefox and Evince but not from 'Letters' and 'Spreadsheets' until she adds the printer in Printers. Do not reinstall cups-browsed.
+
+**She notices.** Her Wi-Fi printer shows up in Firefox's print dialog but not in LibreOffice Writer's.
+
+**Fix.** Keep cups-browsed out. Either accept it, and teach the help page and Printers tile that LibreOffice needs the printer added once, or ship a small AurOS oneshot that adds `lpadmin -m everywhere` queues for printers `ippfind _ipp._tcp` sees. That opens no listener. A verification step: with an ippeveprinter on the LAN, check whether it appears in LibreOffice's Print dialog.  ·  **Cost.** 0
+
+**Skeptic.** The finding's own fix is to keep cups-browsed out, so there is no package to add. The purge in build/harden is deliberate (CVE-2024-47176), and the profile comment says printing works without it. Nothing in the image regressed. GTK print dialogs browse DNS-SD printers themselves. The remaining gap is that LibreOffice lists only configured queues. That is a design and UX question (queue creation via the Printers tile), not a dropped-Recommends bug. I did not verify the LibreOffice behavior.
+
+<details><summary>evidence</summary>
+
+Installed libprintbackend-cups.so (GTK3) contains avahi_create_browsers, avahi_service_browser_new_cb and the _ipp._tcp/_ipps._tcp service types, so GTK print dialogs browse DNS-SD printers on their own. libreoffice-core 24.2.7 libmergedlo.so contains cupsGetDests2 but not cupsEnumDests or any temporary-queue call, so LibreOffice lists only configured queues. build/harden:72-86 purges cups-browsed (CVE-2024-47176). PARITY.md:30 shows the print check does a manual 'driverless add', so queue creation by hand is what is tested. I did not run LibreOffice against a printer.
+
+</details>
+
+### [low] REFUTED: gnome-keyring
+
+**Breaks.** Passwords for network shares (smb, sftp, WebDAV, ftp) cannot be remembered. The save fails silently and she is asked again each time. For an encrypted drive, choosing 'Remember passphrase' makes the mount itself fail with 'Error storing passphrase in keyring'. Evince's 'remember PDF password' has no store either. I recommend NOT installing it as-is: with no PAM auto-unlock, gnome-keyring would pop up a 'choose a password for the new keyring' dialog the first time anything stores a secret, which is worse for her than the current behaviour.
+
+**She notices.** Only if she uses a network folder or an encrypted stick: the password prompt returns every time. A keyring-created-with-a-password dialog would appear if the package were added carelessly.
+
+**Fix.** Leave it out. If keyring storage is ever wanted, wire pam_gnome_keyring with an empty/auto password in the session first, then add the package.  ·  **Cost.** 7.5 MB installed, 1.6 MB download
+
+**Skeptic.** The finding itself says to leave it out, so it is not a fix. Adding it without PAM auto-unlock would raise a create-keyring password prompt, which is worse for her. gvfs only tries to store a password when she picks Remember in the prompt, and the default is forget. The dependency check shows it is only a Recommends of gvfs-backends and software-properties-gtk. No action.
+
+<details><summary>evidence</summary>
+
+gvfs 1.54.4 daemon/gvfskeyring.c:259-275 g_vfs_keyring_save_password returns secret_password_storev_sync's result and the caller ignores a FALSE, so there is no error shown. monitor/udisks2/gvfsudisks2volume.c:1143-1160,1260-1290 fails the LUKS mount if secret_password_store errors. libsecret users in the image: gvfs-daemons, gvfs-libs, evince. rootfs/etc/pam.d/aurshell has no pam_gnome_keyring, and the account password is locked (forge), so there is no unlock secret. Apt simulation of gnome-keyring: +9 packages (gcr4, libgck-1-0, libgcr-base-3-1, libgcr-ui-3-1, gcr, p11-kit-modules, p11-kit, pinentry-gnome3, gnome-keyring), 7.5 MB installed.
+
+</details>
+
+### [low] REFUTED: thermald
+
+**Breaks.** Already tracked as docs/security/FINDINGS.md SEC-065 (Low) and still not in the profile: Intel thermal daemon absent, so dusty 2013-era Intel laptops rely on the kernel's own throttling and can reach the critical trip and power off abruptly. Intel only; it exits on other CPUs.
+
+**She notices.** An old Intel laptop under load, with a clogged fan, shuts off suddenly with no warning.
+
+**Fix.** Add thermald to packages_hardware per SEC-065, and verify `systemctl is-active thermald` on Intel and a clean exit on AMD.  ·  **Cost.** 0.93 MB installed, 0.31 MB download (thermald 575K, libdbus-glib-1-2 203K, libupower-glib3 150K)
+
+**Skeptic.** Unproven benefit. This is not a regression or a broken feature, and docs/security/FINDINGS.md already tracks it as SEC-065 (Low). thermald does not prevent the kernel's critical-trip shutdown. Old 2013 ACPI laptops are throttled by the kernel's passive trips and by hardware thermal control. thermald matters mostly for newer DPTF-style platforms, and it is known to over-throttle some older CPUs, which would hurt the slow machines AurOS targets. It is only a Recommends of linux-image-generic. A design call, not a defect.
+
+<details><summary>evidence</summary>
+
+SEC-065 text: '`thermald` not installed (dropped as a Recommends)... Add `thermald` to `packages_hardware`'. grep of profiles, build and rootfs for thermald finds nothing. The thermald .deb ships /usr/sbin/thermald, thermald.service and a dbus policy, and Depends additionally on libdbus-glib-1-2 and libupower-glib3 (the library only, not the upower daemon). aurshell reads the battery from /sys/class/power_supply directly (src/aurshell/power.c:24) and does its own critical-battery sleep (watch.c:50-60), so upower itself is not needed.
+
+</details>
+
+### [low] REFUTED: NO ACTION: colord, gir1.2-secret-1, libpaper-utils, systemd-hwe-hwdb, libgphoto2-l10n, libaacs0, uuid-runtime, liblouisutdml-bin, printer-driver-braille
+
+**Breaks.** Nothing she would notice. Checked and cleared, listed so nobody re-investigates: colord is optional for CUPS; gir1.2-secret-1 is a try/except import used only for held-job passwords; libpaper-utils changes nothing; systemd-hwe-hwdb is nearly empty; the l10n, Blu-ray AACS, uuidgen and braille packages are irrelevant.
+
+**She notices.** She does not.
+
+**Fix.** none (no action)  ·  **Cost.** 0
+
+**Skeptic.** I agree, no action. colord Depends on libsane1 and libsane-common, so it is heavy, and cups uses it only on a best-effort basis. gir1.2-secret-1 is guarded by try/except ValueError in system-config-printer's jobviewer.py (lines 55-61). libpaper1's postinst writes /etc/papersize itself, and no AurOS script calls paperconf. systemd-hwe-hwdb is 4 hwdb files and 32 lines. libgphoto2-l10n is translations only. uuidgen is not called anywhere in the AurOS repo. The AACS and braille packages are irrelevant.
+
+<details><summary>evidence</summary>
+
+colord: cups 2.4.7 scheduler/colorman.c is best-effort D-Bus. colord_find_device on a missing service only logs at DEBUG and returns. Adding colord would drag in libsane1 and libsane-common (+20.9 MB installed). gir1.2-secret-1: system-config-printer jobviewer.py:55-60 wraps `gi.require_version('Secret','1')` in try/except ValueError (USE_SECRET=False), and Secret is used only to store a held-job password. libpaper-utils: libpaper1's postinst writes /etc/papersize itself from the debconf default (letter), so the paperconfig CLI is not needed. LibreOffice's libmergedlo.so only references PAPERSIZE and paperconf as optional sources. systemd-hwe-hwdb contents: 4 hwdb files, 32 lines total (a Dell Pro Rugged key, an HP EliteBoard mic key and one Dell LTE modem autosuspend entry). libgphoto2-l10n is translations only. libaacs0: libbluray dlopens it, and without a KEYDB it decrypts nothing anyway. uuid-runtime: no AurOS script calls uuidgen (grep of rootfs, src and build). printer-driver-braille is unresolvable in noble, and liblouisutdml-bin is for braille embossers.
+
+</details>
+
+## apps-flatpak-portals-network
+
+### [high] KEPT: libspa-0.2-bluetooth
+
+**Breaks.** Bluetooth headphones and speakers can pair but get no sound output. libspa-bluez5.so (PipeWire's only A2DP/HFP support, plus the SBC/LC3/LDAC/aptX/Opus codec plugins) ships only in this package. Without it WirePlumber has no bluez5 monitor and BlueZ has no audio endpoint to connect a headset to.
+
+**She notices.** She follows the Help page and pairs her wireless headphones. The panel reports a failure, or the headphones connect and the video call or song still comes out of the laptop speakers.
+
+**Fix.** Add libspa-0.2-bluetooth to packages_desktop in profiles/desktop.profile (and to any other profile that carries bluez). Add a hardentest-style check, like the librsvg2-common one, that spa-0.2/bluez5/libspa-bluez5.so exists whenever bluez and wireplumber are installed. Boot-test pairing a Bluetooth headset in a VM with a USB BT dongle.  ·  **Cost.** 0.46 MB download / 1.4 MB installed (+5 small libs: libsbc1, libfreeaptx0, liblc3-1, libldacbt-enc2, libldacbt-abr2)
+
+**Skeptic.** CONFIRMED. A noble apt simulation of the full desktop-profile closure (ubuntu:24.04 on homebase, noble+updates+security+Mozilla firefox 158.0.1, --no-install-recommends) leaves it out. Only pipewire-pulse and wireplumber Suggest it. The real forge log in the repo (docs/results/build-all.txt) lists it under 'Suggested packages' as not installed. libspa-bluez5.so and the codec plugins ship only in this package. libspa-0.2-modules and wireplumber do not carry them. wireplumber's own bluetooth.conf points at bluez5/libspa-bluez5, so the plugin it needs is missing. pulseaudio-module-bluetooth is not in the closure either, and BlueZ has no audio of its own. The product promises this path: src/aurshell/bt.c is the Headphones and mice panel, and the video-calls help page says to press it to connect wireless headphones. No test covers it. Not boot-tested with a headset.
+
+<details><summary>evidence</summary>
+
+Apt simulation of the full desktop-profile closure on noble (ubuntu:24.04 container on homebase, noble + updates + security, plus Mozilla's firefox 158.0.1 repo, 754 new packages). It reproduces the DROPPED list exactly, so the model is faithful. In it pipewire, pipewire-pulse, wireplumber and bluez are installed and libspa-0.2-bluetooth is not. `apt-cache show` for the two Suggesters confirms the Suggests lines. docs/results/build-all.txt (a real forge log in the repo) lists it under 'Suggested packages' and only ever shows 'Setting up libspa-0.2-modules', never the bluetooth one. Package contents (dpkg -c): usr/lib/x86_64-linux-gnu/spa-0.2/bluez5/libspa-bluez5.so and the codec .so files. The product promises this path: src/aurshell/bt.c is the 'Headphones and mice' panel, and rootfs/usr/share/auros/help/video-calls.html says 'Wireless headphones: in Settings, press Headphones and mice'. profiles/desktop.profile:78 says headphones are the reason bluez is installed. No test in tools/ checks for the plugin. Not run on a booted image; the conclusion comes from package contents and the BlueZ/WirePlumber design.
+
+</details>
+
+### [high] KEPT: unzip
+
+**Breaks.** 'Zip files' (xarchiver) is the default for application/zip, and it can neither open nor make a .zip. xarchiver has no archive library of its own (Depends: only libgtk-3, glib, gdk-pixbuf). It shells out to unzip/zip or to 7z/7za/7zr/7zz/unar, and none of those is in the image. `zip` is only a Suggests of xarchiver, so honouring the Recommends alone would still leave 'make a zip' broken.
+
+**She notices.** She double-clicks a .zip a relative emailed her (photos, a form). 'Zip files' opens with an error or an empty list, and 'make a zip' does nothing useful.
+
+**Fix.** Add unzip and zip to packages_files in profiles/desktop.profile (and 7zip if .7z is wanted). Add a real check: build a .zip, run `xarchiver --extract-to` or at least `command -v unzip zip`, in everydaytest.  ·  **Cost.** unzip 0.15 MB download / 0.31 MB installed; zip 0.15 / 0.47; 7zip 1.74 / 5.96
+
+**Skeptic.** CONFIRMED by functional test. In a container with xarchiver 0.5.4.22 and no unzip or 7z, 'xarchiver --extract-to out a.zip' extracted nothing. It opened an error dialog (a 534x112 window in Xvfb) and hung until timeout. With unzip installed, the same command extracted a.txt. unzip is only a Recommends of xarchiver, and the simulated closure lacks unzip, zip, 7zip, p7zip-full and unar. build/forge maps application/zip to xarchiver.desktop and names the app 'Zip files - Open or make a zip file'. The real forge log lists unzip as not installed. She would hit it by double-clicking a zip emailed to her. 'Make a zip' is inferred from the binary's strings and not tested.
+
+<details><summary>evidence</summary>
+
+strings on /usr/bin/xarchiver from the noble deb: the handler names unzip, zip, 7z, 7za, 7zr, 7zz, unar, plus the text 'the traditional unzip and zip will still be used' and a 'Prefer unzip for zip files' option. `apt-cache show xarchiver`: Depends has no libarchive. In the simulated closure unzip, zip, 7zip, p7zip, p7zip-full, unar and libarchive-tools are all absent. build/forge:626 maps application/zip to xarchiver.desktop and :746 names the app 'Zip files - Open or make a zip file'. docs/results/build-all.txt shows 'Setting up xarchiver' but no unzip. The only test, tools/everydaytest.sh:223, checks that a.zip maps to xarchiver.desktop and never extracts anything. tools/parity/guest/checks has no archive check. Only the failure path was inferred; I did not run xarchiver on a booted image.
+
+</details>
+
+### [medium] REFUTED: libmtp-runtime
+
+**Breaks.** An Android phone in 'File transfer' mode whose USB id is not already in libmtp's hardware database never gets the ID_MTP_DEVICE udev property, so the file manager never shows it. Phones whose ids are in 69-libmtp.hwdb still work.
+
+**She notices.** She plugs in a grandchild's or her own Android phone to move photos. Nothing appears in Your files, and the phone only shows a 'charging' notice.
+
+**Fix.** Add libmtp-runtime to packages_files in profiles/desktop.profile. Optionally add a check that /usr/lib/udev/mtp-probe exists whenever 69-libmtp.rules does.  ·  **Cost.** 0.01 MB download / 0.03 MB installed
+
+**Skeptic.** Technically true but the impact is a long tail. It is absent from the closure, and mtp-probe, the autoprobe fallback in 69-libmtp.rules, ships only in this package. But libmtp-common's hwdb (1412 entries) already sets ID_MTP_DEVICE=1 for the mainstream phones. I checked 16 of 20 sampled Pixel, Samsung, Motorola, OnePlus, Xiaomi, Huawei, LG and Oppo ids and found them present. The 4 misses were PTP-mode or probably wrong ids. All the modern vendor ids I tried have entries: HMD/Nokia, Fairphone, Honor, Nothing, Vivo, Tecno, Realme. Only a phone with an off-list vendor/product id would need the probe. Breakage is unmeasured and unlikely. Adding it is harmless (about 30 KB) if she wants belt-and-braces.
+
+<details><summary>evidence</summary>
+
+libmtp-common (installed) ships /usr/lib/udev/rules.d/69-libmtp.rules and hwdb.d/69-libmtp.hwdb. Rule line 39 is the autoprobe: for any USB device of class 00|02|06|ef|ff that is not already ID_MTP_DEVICE=1 it runs PROGRAM="/usr/lib/udev/mtp-probe ..." and only on RESULT==1 sets ID_MTP_DEVICE. /usr/lib/udev/mtp-probe is shipped only by libmtp-runtime (dpkg -c). gvfs-backends' gvfs-mtp-volume-monitor reads the ID_MTP_DEVICE property (string present in the binary). The simulated closure and docs/results/build-all.txt both have libmtp-common and libmtp9t64 but no libmtp-runtime. Nothing in build/, rootfs/ or tools/ mentions mtp. The fraction of phones that need the probe was not measured.
+
+</details>
+
+### [medium] REFUTED: usbmuxd
+
+**Breaks.** An iPhone or iPad plugged in by cable is not paired, so the afc backend that exposes its photos and files does nothing. The pairing step that USB tethering needs also never happens. The photos may still show up via the gphoto2/PTP backend.
+
+**She notices.** She plugs in her iPhone to copy photos. No iPhone appears in Your files, or it appears with no way in.
+
+**Fix.** Add usbmuxd to packages_files. It is a udev-started daemon that exits when the last Apple device is unplugged, so nothing stays resident.  ·  **Cost.** 0.04 MB download / 0.12 MB installed
+
+**Skeptic.** Absent from the closure, and gvfsd-afc is inert without it (confirmed in the gvfs source). But the one thing she would plug an iPhone in for, photos, still has a path. gvfs-backends depends on libgphoto2-6t64. libgphoto2's hwdb tags modern iPhone ids (05ac:12a8 and the neighbouring PTP ids) with ID_GPHOTO2=1, and ptp2.so lists 'Apple:iPhone (PTP mode)'. The gvfs gphoto2 monitor even carries an iPhone workaround comment, so the phone is an expected gphoto2 device. Actual breakage is not demonstrated (no iPhone hardware to test), the finding itself calls the fallback untested, and afc's file-sharing mode has no use in her flow. Unconfirmed, so refuted. Adding usbmuxd is cheap (0.12 MB) if iPhone file access is wanted later.
+
+<details><summary>evidence</summary>
+
+libimobiledevice6 is installed (gvfs-backends depends on it), so gvfsd-afc and gvfs-afc-volume-monitor are present but inert. strings on gvfsd-afc: 'libimobiledevice Error: No device found. Make sure usbmuxd is set up correctly.' The only thing that starts the daemon is /usr/lib/udev/rules.d/39-usbmuxd.rules (SYSTEMD_WANTS=usbmuxd.service) from the usbmuxd package, which is not in the closure (simulation; docs/results/build-all.txt). build/ and rootfs/ never mention it. Only the tools/everydaytest.sh .heic file-type check touches iPhone support, not cable access. The gphoto2 fallback was not tested.
+
+</details>
+
+### [medium] KEPT: eject
+
+**Breaks.** 'Eject' on a removable drive (USB stick, card reader, CD/DVD) fails. udisksd runs the external `eject` program for Drive.Eject, and it is not installed. The product's own permission list offers both 'Eject a USB stick' and 'Safely remove a USB stick'.
+
+**She notices.** She presses Eject on her USB stick or CD and gets an error dialog ('Error ejecting /dev/...'). She then pulls the stick out anyway.
+
+**Fix.** Add eject to packages_files. Extend permissions.sh or everydaytest to run `udisksctl`-level eject on a loop device or USB stand-in in the VM.  ·  **Cost.** 0.01 MB download / 0.04 MB installed
+
+**Skeptic.** CONFIRMED from source. udisks2 2.10.1 (udiskslinuxdrive.c) runs the external command 'eject <dev>' for Drive.Eject and returns 'Error ejecting <dev>' when it fails. Ejectable is just the sysfs 'removable' flag. The only sticks that skip it are those udisks marks ID_DRIVE_THUMB (named Kingston DataTraveler, SanDisk Cruzer, a few others), because they are then non-removable and get power-off. Other sticks, SD cards in readers and CD/DVD report removable=1. For them gvfs sets can_eject, and can_stop is false because media is removable. Thunar 4.18 therefore calls g_drive_eject_with_operation, which becomes Drive.Eject and the 'eject' spawn. The simulated closure and the real forge log both lack eject (udisks2 only Recommends it). build/forge grants udisks2.eject-media polkit specifically for this flow. She gets an error dialog after the volume is already unmounted. Not run on real hardware.
+
+<details><summary>evidence</summary>
+
+strings on /usr/libexec/udisks2/udisksd (udisks2 2.10.1): job name 'drive-eject', command text 'eject %s', error text 'Error ejecting %s: %s'. The simulated closure and the real build log lack `eject`; udisks2's Recommends line is 'dosfstools, e2fsprogs, eject, ntfs-3g, polkitd, libpam-systemd' and all but eject are installed. tools/permissions.sh:85-86 lists 'Eject a USB stick' (udisks2.eject-media) and 'Safely remove a USB stick' (udisks2.power-off-drive) as things the product offers, and build/forge grants both in polkit. tools/permissions.sh checks only that the polkit action exists, never that the eject runs. I did not trace which Thunar/GVfs menu entries call Drive.Eject rather than PowerOff.
+
+</details>
+
+### [medium] KEPT: libreoffice-math
+
+**Breaks.** Formula objects in documents cannot be drawn or edited. This covers Word equations in .docx, ODF formula objects, and Microsoft Equation objects in .doc, plus Insert > Object > Formula. The equation comes up blank or missing instead of the formula.
+
+**She notices.** A school or work Word file with an equation opens with a blank gap where the formula should be.
+
+**Fix.** Add libreoffice-math to packages_files in profiles/desktop.profile. Its .desktop and 'Math' launcher are not wanted in her program list; mark the launcher NoDisplay or add it to the rename/hide list.  ·  **Cost.** 0.61 MB download / 2.41 MB installed (libreoffice-math + libreoffice-uiconfig-math)
+
+**Skeptic.** CONFIRMED by functional test. A hand-built .docx with a Word (OMML) equation was converted to .odt by headless Writer, libreoffice-writer without Recommends. The equation vanished silently ('BeforeAfter'), with no Object folder in the odt. After installing libreoffice-math, the odt contained 'Object 1/content.xml' and the replacement image, and the formula was kept. So an equation is silently dropped, and lost for good if she re-saves the file. Only Recommended by libreoffice-writer, absent from the closure and the real forge log. Rare for her (a grandchild's school paper), but deterministic and silent when it happens. Cost 2.4 MB. Its launcher needs hiding if the curated program list does not already exclude it.
+
+<details><summary>evidence</summary>
+
+libreoffice-math ships libsmlo.so, libsmdlo.so, smath and math.xcd, and it registers the com.sun.star.comp.Math.* services (MathTypeFilter, FormulaDocument, XML importers). libwriterfilterlo.so (Writer's import filter) refers to com.sun.star.comp.Math.MathTypeFilter by service name only; Math's code is not linked in, so when the package is absent that service cannot be created. `apt-cache show libreoffice-writer`: Recommends: libreoffice-math. The profile comment on libreoffice (build/forge profile text, decision 14) says 'Writer and Calc only', which does not exclude Math. The simulated closure and docs/results/build-all.txt have no libreoffice-math. The exact on-screen result (blank frame vs error) was not reproduced; the inference is from package structure.
+
+</details>
+
+### [medium] KEPT: webp-pixbuf-loader
+
+**Breaks.** 'Photos' (ristretto) cannot open .webp pictures, which are what many websites hand out when she saves an image. libgdk-pixbuf-2.0-0 has no WebP loader, and the profile maps image/webp to ristretto.
+
+**She notices.** She saves a picture from a web page, double-clicks it in Your files, and Photos shows an error instead of the picture.
+
+**Fix.** Add webp-pixbuf-loader to packages_files. Extend the hardentest loader check from SVG to WebP and HEIF. Optional: libavif-gdk-pixbuf for AVIF (0.59 MB download / 1.7 MB installed).  ·  **Cost.** 0.01 MB download / 0.04 MB installed
+
+**Skeptic.** CONFIRMED by functional test. With the closure's gdk-pixbuf (png, jpeg, svg and heif/avif, but no webp), GdkPixbuf.Pixbuf.new_from_file on a valid .webp fails with 'Couldn't recognize the image file format'. After installing webp-pixbuf-loader the same file loads (32x32) with no manual cache step. ristretto links only libgdk_pixbuf for decoding (ldd), and build/forge sets image/webp=org.xfce.ristretto.desktop, so the product itself promises WebP opens in Photos. Only Suggested by ristretto, absent from the closure and the real forge log. WebP is what websites commonly hand out when she saves a picture. Cost about 40 KB.
+
+<details><summary>evidence</summary>
+
+build/forge:582 sets image/webp=org.xfce.ristretto.desktop. `apt-cache show ristretto`: Depends only libgdk-pixbuf-2.0-0, Suggests: heif-gdk-pixbuf, libavif-gdk-pixbuf, libjxl-gdk-pixbuf, webp-pixbuf-loader. Of those only heif-gdk-pixbuf is in the profile (and in the simulated closure). The package is 11 KB and needs only libwebp7, libwebpdemux2 and libwebpmux3, which are already present. The loaders.cache is rebuilt by libgdk-pixbuf-2.0-0's own trigger (interest-noawait on .../gdk-pixbuf-2.0/2.10.0/loaders; its postinst runs gdk-pixbuf-query-loaders), so installing the package is enough. Firefox decodes WebP itself, which is why the browser works and the viewer does not. The error dialog text was not captured.
+
+</details>
+
+### [medium] REFUTED: gnome-keyring
+
+**Breaks.** There is no Secret Service on the bus, and no Secret portal backend for xdg-desktop-portal. Flathub programs she installs (Zoom, Slack, Chrome, Spotify, Signal and similar) cannot store a login or token in the host keyring. libsecret also fails for gvfs 'remember password' on network shares and for Firefox's OS key store (libxul references libsecret-1.so.0), so those features are unavailable. Wi-Fi is unaffected.
+
+**She notices.** A Flathub chat or video program asks her to sign in again each time it starts, or says it cannot save her password.
+
+**Fix.** Do not just add the package. Either (a) accept the gap and say so in docs, or (b) add gnome-keyring plus a pre-seeded empty-password default 'login' keyring in /etc/skel/.local/share/keyrings (test in a VM that no dialog appears), and add org.freedesktop.impl.portal.Secret=gnome-keyring; to both portals.conf files in rootfs/usr/share/xdg-desktop-portal/. Add a boot test that calls Secret.CreateCollection from a Flatpak.  ·  **Cost.** 1.58 MB download / 7.29 MB installed (9 packages: gnome-keyring, gcr, gcr4, libgck-1-0, libgcr-base-3-1, libgcr-ui-3-1, p11-kit, p11-kit-modules, pinentry-gnome3)
+
+**Skeptic.** Absent (nothing else provides org.freedesktop.secrets or the Secret portal backend), but breakage is unconfirmed and the proposed fix is hazardous. The finding itself says no app was tested. Chromium and Electron programs fall back to their own basic store when there is no Secret Service. Firefox and gvfs only lose remember-forever features she does not use. Wi-Fi does not use it (NetworkManager stores the PSK itself). Adding the package alone would be worse: rootfs/etc/pam.d/aurshell is pam_permit with no password, so gnome-keyring would raise a new-keyring password prompt she cannot answer. That needs a designed pre-seeded empty keyring, which is a feature rather than a missing Recommends. Refuted for this sweep.
+
+<details><summary>evidence</summary>
+
+gnome-keyring deb: dbus services org.freedesktop.secrets, org.gnome.keyring and org.freedesktop.impl.portal.Secret, and /usr/share/xdg-desktop-portal/portals/gnome-keyring.portal (DBusName=org.freedesktop.secrets, UseIn=gnome). Nothing else in the closure provides org.freedesktop.impl.portal.Secret (gtk.portal's interface list has no Secret). libsecret-1-0 is installed. Wi-Fi does not need it: src/aurshell/net.c runs nmcli and polkit grants settings.modify.system (build/forge ~2050), so NetworkManager stores the PSK itself. xdg-desktop-portal 1.18.4 strings show a 'last-resort fallback' choice, so adding the package works even with rootfs/usr/share/xdg-desktop-portal/portals.conf saying default=gtk. CAUTION: rootfs/etc/pam.d/aurshell is pam_permit with no password, so nothing can unlock a keyring. On first use gnome-keyring asks for a new-keyring password through gcr's prompter, a dialog she cannot answer. Which Flathub apps actually fail without it was not tested.
+
+</details>
+
+### [low] REFUTED: libgtk-4-media-gstreamer
+
+**Breaks.** GNOME Software 46 (GTK4) plays video screenshots on an app's page through GtkVideo. With no media backend those few video previews show an error or nothing. App pages with picture screenshots, the install button and the stars are unaffected.
+
+**She notices.** Almost never: a store page with a video preview that does not play.
+
+**Fix.** Optional: add libgtk-4-media-gstreamer. Not needed for the product to work.  ·  **Cost.** 0.27 MB download / 0.89 MB installed (+libgstreamer-gl1.0-0, shared with gstreamer1.0-gtk3)
+
+**Skeptic.** Absent but unreachable in her flow. It only supplies GtkVideo's backend for the rare video screenshot on a Flathub app page. Without a backend GTK4 falls back to a no-media stub and nothing breaks. Even the finding grades it low and 'not needed for the product to work'.
+
+<details><summary>evidence</summary>
+
+strings on /usr/bin/gnome-software: gtk_video_set_filename. The package contains only gtk-4.0/4.0.0/media/libmedia-gstreamer.so (GTK4's only media-file backend). Absent from the simulated closure and the real build log. Few Flathub apps ship video previews, and none is reachable in her normal flow. Not tested.
+
+</details>
+
+### [low] REFUTED: fonts-liberation-sans-narrow
+
+**Breaks.** Word documents set in Arial Narrow fall back to a normal-width font and reflow (table columns, forms, line breaks). Everything in Arial, Calibri, Cambria and Times New Roman is already covered by liberation2, carlito and caladea.
+
+**She notices.** Rarely: a form or table from an older Word file is laid out slightly wrong.
+
+**Fix.** Optional: add fonts-liberation-sans-narrow to packages_files. It is tiny.  ·  **Cost.** 0.19 MB download / 0.48 MB installed
+
+**Skeptic.** Cosmetic and rare. The package is absent (fonts-liberation, installed as a LibreOffice dependency, only Recommends it), so Arial Narrow text falls back to a normal-width sans and can reflow. Arial, Calibri, Cambria and Times New Roman are all covered. No content is lost and no function breaks. She would rarely meet a document that depends on Arial Narrow.
+
+<details><summary>evidence</summary>
+
+fonts-liberation-sans-narrow ships LiberationSansNarrow-{Regular,Bold,Italic,BoldItalic}.ttf, the only Arial Narrow metric clone. The fonts-liberation2 package in the profile has no Narrow face (dpkg -c). fonts-liberation (1.x) is installed as a LibreOffice dependency; its Recommends is the only pointer to Narrow. Not reproduced with a real document.
+
+</details>
+
+### [low] REFUTED: gstreamer1.0-gtk3
+
+**Breaks.** Video or audio inserted into a Writer or Calc document will not play. Only embedded media is affected; Writer and Calc documents themselves and printing are not.
+
+**She notices.** Almost never.
+
+**Fix.** None needed; add only if media-in-documents is wanted.  ·  **Cost.** 0.24 MB download / 0.77 MB installed (+libgstreamer-gl1.0-0)
+
+**Skeptic.** Only Recommended by libreoffice-gtk3, for playing audio or video embedded in a Writer or Calc document. That is rare, and the documents, printing and editing are unaffected. Not part of the product's job.
+
+<details><summary>evidence</summary>
+
+libreoffice-gtk3 Recommends it for the GTK3 video sink (gtksink). libreoffice-core Suggests the gst plugin sets. Her tool is Writer/Calc (decision 14), and media in documents is rare. Not tested.
+
+</details>
+
+### [low] REFUTED: fwupd
+
+**Breaks.** GNOME Software has no Firmware page, and nothing can apply LVFS firmware or UEFI db/dbx updates. The fwupd plugin is compiled into the gnome-software package itself (libgs_plugin_fwupd.so) and simply finds no daemon.
+
+**She notices.** She does not.
+
+**Fix.** None. Do not add it. Revisit once the TPM re-seal exists, as UPDATES.md says.  ·  **Cost.** 7.62 MB download / 20.6 MB installed (18 packages, libfwupd3, libqmi, libmbim, tss2 libraries)
+
+**Skeptic.** Deliberate. Firmware updates are off by decision (docs/security/UPDATES.md, SEC-036). tools/updatepolicytest.sh fails the build if fwupd is installed, so adding it would break a gate. gnome-software only Recommends it. Not a gap.
+
+<details><summary>evidence</summary>
+
+DELIBERATE. docs/security/UPDATES.md section 'Firmware: off, by decision' (BitLocker recovery-key screen, TPM PCR changes, a dbx write could make AurOS unbootable). tools/updatepolicytest.sh lists fwupd among packages that must NOT be installed, so adding it would fail a gate. docs/security/FINDINGS.md SEC-036 records the drift. rootfs/usr/share/glib-2.0/schemas/90_auros-updates.gschema.override already hides store updates. profiles/revive.profile excludes it too. Future WP-53 in docs/PLAN-END-TO-END.md.
+
+</details>
+
+### [low] REFUTED: gnome-software-plugin-snap
+
+**Breaks.** Nothing, deliberately. The store has no Snap source.
+
+**She notices.** She does not.
+
+**Fix.** None.  ·  **Cost.** n/a (cannot install)
+
+**Skeptic.** Deliberate. Its Depends on snapd cannot be met because snapd is pinned to -1 (pin_no_snap in build/forge) and purged. The store intentionally has no Snap source, and adding the plugin would make the install fail.
+
+<details><summary>evidence</summary>
+
+DELIBERATE. Its Depends on snapd cannot be satisfied: snapd is pinned to -1 by pin_no_snap in build/forge, and my simulated install of the plugin failed with 'Depends: snapd but it is not installable'. docs/handoff/streams/C.md and build/forge purge_snap_leftovers guard the same decision.
+
+</details>
+
+### [low] REFUTED: p11-kit
+
+**Breaks.** Flatpak's session helper cannot start its p11-kit server, so sandboxed Flathub programs use the runtime's own CA store and miss any CA added to the host. Ordinary public HTTPS is unaffected.
+
+**She notices.** She does not.
+
+**Fix.** None for the desktop profile. A school profile that adds its own root CA would want p11-kit.  ·  **Cost.** 0.45 MB download / 2.43 MB installed (p11-kit, p11-kit-modules)
+
+**Skeptic.** Only flatpak's session helper uses it, to share private or added CAs with sandboxed programs. The sandbox's own Mozilla CA bundle still handles public HTTPS, and AurOS has no way to add private CAs. libp11-kit0 is present. Nothing she would ever notice.
+
+<details><summary>evidence</summary>
+
+strings on /usr/libexec/flatpak-session-helper (flatpak 1.14.6): 'p11-kit not found', 'starting p11-kit server', 'Unable to start p11-kit server', and /usr/bin/flatpak adds a p11-kit-client override to /run/flatpak/p11-kit/pkcs11 only when it is running; the helper then carries on. The freedesktop runtime has its own Mozilla CA bundle. AurOS installs ca-certificates and has no feature for adding private CAs. flatpak's other Recommends are all installed. build/forge flatpak triggers (desktop-database, gtk-update-icon-cache, mime-database) call tools that are present (desktop-file-utils, gtk-update-icon-cache, shared-mime-info).
+
+</details>
+
+### [low] REFUTED: modemmanager
+
+**Breaks.** Built-in or USB mobile-broadband modems (SIM cards, 3G/4G dongles in modem mode) are not offered by NetworkManager. Wi-Fi, Ethernet and USB tethering from an Android phone (which appears as a plain Ethernet device) are unaffected.
+
+**She notices.** Almost never.
+
+**Fix.** None.  ·  **Cost.** 2.11 MB download / 9.75 MB installed (+ libqmi, libmbim)
+
+**Skeptic.** Only needed for built-in or USB mobile-broadband modems (SIM data). There is no mobile-broadband UI in src/aurshell, which does Wi-Fi only via nmcli. Android USB tethering is a plain Ethernet device (cdc_ether/rndis) that NetworkManager already manages. Not her use case, and 9.75 MB installed.
+
+<details><summary>evidence</summary>
+
+The wwan plugin libnm-device-plugin-wwan.so is inside network-manager itself and stays idle without ModemManager. rootfs/etc/NetworkManager/conf.d/10-globally-managed-devices.conf lets NetworkManager manage every device including cdc_ether/rndis, so Android tethering needs no extra package. src/aurshell/net.c only handles Wi-Fi (nmcli), and there is no mobile-broadband, tether or VPN UI in src/aurshell or the help pages (grep). A 2013 laptop with a SIM slot is not the case this product targets.
+
+</details>
+
+### [low] REFUTED: network-manager-pptp
+
+**Breaks.** A PPTP VPN cannot be configured. There is no VPN screen anywhere in the shell, so this is not reachable.
+
+**She notices.** She does not.
+
+**Fix.** None.  ·  **Cost.** 0.62 MB download / 1.9 MB installed (with ppp, pptp-linux, libpcap, libibverbs)
+
+**Skeptic.** A PPTP VPN needs a VPN setup UI, and there is none in the shell or help pages. PPTP is also obsolete and insecure. Unreachable.
+
+<details><summary>evidence</summary>
+
+grep of src/aurshell and rootfs/usr/share/auros/help finds no VPN, mobile broadband, tether or hotspot UI. PPTP is also obsolete and insecure. `apt-cache show network-manager`: Recommends: ppp, dnsmasq-base, modemmanager, network-manager-pptp, wireless-regdb, wpasupplicant, libpam-systemd. wireless-regdb and wpasupplicant are installed (regulatory database present in the real build log).
+
+</details>
+
+### [low] REFUTED: ppp
+
+**Breaks.** Nothing. Only dial-up, PPPoE and PPTP link types use it, and none has a UI.
+
+**She notices.** She does not.
+
+**Fix.** None.  ·  **Cost.** 0.55 MB download / 1.58 MB installed
+
+**Skeptic.** Only for dial-up, PPPoE and PPTP links, none of which has a UI or a mention in the product. Unreachable.
+
+<details><summary>evidence</summary>
+
+Same grep as network-manager-pptp. DSL users on PPPoE would need the router in bridge mode anyway; nothing in the product mentions PPPoE.
+
+</details>
+
+### [low] REFUTED: dnsmasq-base
+
+**Breaks.** Only 'shared' connections (hotspot or internet sharing) use it. There is no UI for that.
+
+**She notices.** She does not.
+
+**Fix.** None.  ·  **Cost.** 0.42 MB download / 1.01 MB installed
+
+**Skeptic.** Only used for NetworkManager shared (hotspot or internet-sharing) connections. There is no UI for that. The image sets dns=default, so ordinary DNS does not use it either.
+
+<details><summary>evidence</summary>
+
+rootfs/etc/NetworkManager/conf.d/10-dns-resolved.conf sets dns=default, so NetworkManager does not use dnsmasq for ordinary DNS either. Same no-hotspot grep result.
+
+</details>
+
+### [low] REFUTED: p7zip-full
+
+**Breaks.** A transitional name for 7zip in noble. Without it .7z archives cannot be opened in 'Zip files'; .zip needs unzip, covered in its own entry.
+
+**She notices.** Rare: a .7z attachment will not open.
+
+**Fix.** If .7z matters, add 7zip, not the transitional p7zip-full.  ·  **Cost.** 1.74 MB download / 5.96 MB installed (7zip)
+
+**Skeptic.** Absent, and 7z or rar archives will not open in xarchiver. But .7z attachments are rare for her, and the real .zip break is covered by the unzip entry. Adding unzip fixes that. The name p7zip-full is a legacy package, and 7zip would be the one to add if .7z ever matters. Low value.
+
+<details><summary>evidence</summary>
+
+xarchiver strings list 7z/7za/7zr/7zz. The simulated closure has neither p7zip-full nor 7zip.
+
+</details>
+
+### [low] REFUTED: libgtk-4-bin
+
+**Breaks.** Nothing she would notice. It ships gtk4-launch, gtk4-update-icon-cache and builder/path tools. GNOME Software links the library, not these tools.
+
+**She notices.** She does not.
+
+**Fix.** None. Skip it: 12 MB is poor value.  ·  **Cost.** 3.20 MB download / 11.79 MB installed
+
+**Skeptic.** Ships only gtk4-launch, gtk4-update-icon-cache and builder/path/query/rendernode tools. A repo-wide grep of build, rootfs, src, shells, tools and profiles finds no caller of any of them. The Flatpak icon trigger uses gtk-update-icon-cache from the separate gtk-update-icon-cache package, which is in the closure. 12 MB installed for nothing.
+
+<details><summary>evidence</summary>
+
+dpkg -c lists only /usr/bin/gtk4-* tools. grep of build/ rootfs/ src/ tools/ finds no caller of gtk4-launch or gtk4-update-icon-cache. The Flatpak icon trigger (usr/share/flatpak/triggers/gtk-icon-cache.trigger) calls `gtk-update-icon-cache`, which is a separate package and is installed. GTK4 reads the same icon-theme.cache format.
+
+</details>
+
+### [low] REFUTED: libgtk-3-bin
+
+**Breaks.** Nothing. gtk-launch, gtk-query-settings, gtk-encode-symbolic-svg and broadwayd have no caller in this repo.
+
+**She notices.** She does not.
+
+**Fix.** None.  ·  **Cost.** 0.07 MB download / 0.31 MB installed
+
+**Skeptic.** Ships only broadwayd, gtk-builder-tool, gtk-encode-symbolic-svg, gtk-launch and gtk-query-settings. No caller anywhere in the repo (grep). The icon-cache tool is the separate gtk-update-icon-cache package, which is in the closure. In-process symbolic recolouring works through gdk-pixbuf and librsvg2-common.
+
+<details><summary>evidence</summary>
+
+grep of build/ rootfs/ src/ tools/ finds no gtk-launch or gtk-encode-symbolic-svg. GTK3's symbolic icon recolouring is done in-process through gdk-pixbuf and librsvg2-common, which the profile now installs.
+
+</details>
+
+### [low] REFUTED: libgdk-pixbuf2.0-bin
+
+**Breaks.** Nothing. Checked specifically because it is the same class as the SVG bug. The loaders.cache is rebuilt by libgdk-pixbuf-2.0-0's own postinst trigger, not by this package. The thumbnailer it ships is not used (no tumbler).
+
+**She notices.** She does not.
+
+**Fix.** None.  ·  **Cost.** 0.01 MB download / 0.07 MB installed
+
+**Skeptic.** Tested. In a container without libgdk-pixbuf2.0-bin, installing librsvg2-common and webp-pixbuf-loader updated loaders.cache by itself (svg and webp appeared in GdkPixbuf formats). libgdk-pixbuf-2.0-0's own postinst owns the cache rebuild. The bin package ships only gdk-pixbuf-csource, gdk-pixbuf-pixdata and gdk-pixbuf-thumbnailer, with no callers and no tumbler to use the thumbnailer.
+
+<details><summary>evidence</summary>
+
+libgdk-pixbuf-2.0-0 control: triggers interest-noawait on /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders; its postinst (triggered) runs /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders. libgdk-pixbuf2.0-bin ships only gdk-pixbuf-thumbnailer, csource and pixdata. tools/hardentest.sh:518-526 already asserts the SVG loader is in the cache.
+
+</details>
+
+### [low] REFUTED: aspell-en
+
+**Breaks.** Nothing: spell checking works. LibreOffice and Mousepad use hunspell (hunspell-en-us is installed), and Firefox carries its own en-US dictionary.
+
+**She notices.** She does not.
+
+**Fix.** None. Optionally name hunspell-en-us in packages_files so it does not depend on enchant.  ·  **Cost.** 0.37 MB download / 0.75 MB installed (with aspell)
+
+**Skeptic.** Spell checking works without it. hunspell-en-us is in the closure (pulled by libenchant-2-2 and satisfying libreoffice-common's dictionary Depends 'hunspell-en-us | ...'). LibreOffice and Mousepad use hunspell. aspell is not used by either, and Firefox carries its own dictionary. No functional gap.
+
+<details><summary>evidence</summary>
+
+hunspell-en-us is in the simulated closure and in docs/results/build-all.txt ('Setting up hunspell-en-us'). It arrives because libenchant-2-2 depends on 'hunspell-en-us | <hunspell-dictionary> | ...'. libreoffice-core depends on libhunspell-1.7-0 and has no aspell references (grep of its libraries). Firefox 158.0.1 deb: dictionaries/en-US.dic and .aff inside omni.ja. Caveat: LibreOffice's English dictionary exists only through that enchant dependency, so dropping mousepad/gspell would lose it. A non-English profile needs its own hunspell-xx.
+
+</details>
+
+### [low] REFUTED: enchant-2
+
+**Breaks.** Nothing. It is a command-line wrapper. The enchant library and its hunspell provider (enchant_hunspell.so) are inside libenchant-2-2.
+
+**She notices.** She does not.
+
+**Fix.** None.  ·  **Cost.** not measured (tiny)
+
+**Skeptic.** A command-line wrapper only. The enchant library and its hunspell provider live in libenchant-2-2, which is installed. Nothing calls the enchant-2 binary.
+
+<details><summary>evidence</summary>
+
+libenchant-2-2 file list: enchant-2/enchant_hunspell.so, enchant_aspell.so, enchant_hspell.so.
+
+</details>
+
+### [low] REFUTED: libpaper-utils
+
+**Breaks.** Nothing she would notice. LibreOffice runs `paperconf` to read /etc/papersize, and without it falls back to the locale (en_US gives Letter).
+
+**She notices.** She does not.
+
+**Fix.** None. If it is added, set /etc/papersize from the profile's locale first.  ·  **Cost.** 0.01 MB download / 0.03 MB installed
+
+**Skeptic.** LibreOffice runs paperconf only to read /etc/papersize and otherwise falls back to the locale (en_US gives Letter). The result is the same for her. The package could even introduce an unset debconf-derived default. No visible gap.
+
+<details><summary>evidence</summary>
+
+libmergedlo.so contains 'paperconf 2>/dev/null'. libpaper1's postinst writes /etc/papersize from a debconf answer the build never sets, so installing paperconf could make LibreOffice follow an unset or default value instead of the locale.
+
+</details>
+
+### [low] REFUTED: python3-uno
+
+**Breaks.** Only Python macros and Python-based LibreOffice extensions. The repo uses `soffice --headless --convert-to` (tools/parity/guest/checks/office.sh), which does not need it.
+
+**She notices.** She does not.
+
+**Fix.** None.  ·  **Cost.** 2.38 MB download / 9.24 MB installed
+
+**Skeptic.** Only for Python macros and Python-based LibreOffice extensions. Nothing in the repo does 'import uno', and the tools use 'soffice --headless --convert-to', which works without it. I also ran that conversion in my test container without it.
+
+<details><summary>evidence</summary>
+
+grep of src/ build/ rootfs/ tools/ finds no `import uno`. Not installed: libreoffice-script-provider-python.
+
+</details>
+
+### [low] REFUTED: packagekit-tools
+
+**Breaks.** Nothing. It ships pkcon and pkmon. GNOME Software uses the PackageKit daemon directly, and nothing in the repo calls pkcon.
+
+**She notices.** She does not.
+
+**Fix.** None.  ·  **Cost.** 0.03 MB download / 0.10 MB installed
+
+**Skeptic.** Ships only pkcon and pkmon. gnome-software talks to the packagekitd daemon directly, and nothing in the repo calls pkcon or pkmon (grep).
+
+<details><summary>evidence</summary>
+
+dpkg -c: usr/bin/pkcon, usr/bin/pkmon only. grep of build/ rootfs/ src/ tools/ finds no pkcon. The packagekit polkit grants in build/forge name the D-Bus actions.
+
+</details>
+
+### [low] REFUTED: apt-utils
+
+**Breaks.** Nothing visible. Installs and upgrades print a 'delaying package configuration, since apt-utils is not installed' notice in logs.
+
+**She notices.** She does not.
+
+**Fix.** None.  ·  **Cost.** 0.21 MB download / 0.64 MB installed
+
+**Skeptic.** Its only effect is the 'delaying package configuration' notice in logs. PackageKit and unattended-upgrades run non-interactive, so there is no debconf prompt that it would pre-seed. No visible gap.
+
+<details><summary>evidence</summary>
+
+PackageKit's apt backend and unattended-upgrades run non-interactive, so debconf never asks a question that apt-utils would pre-seed.
+
+</details>
+
+### [low] REFUTED: publicsuffix
+
+**Breaks.** No effect in her use. It only tightens cookie scoping in non-Firefox libsoup/curl clients (GNOME Software, wget). Firefox has its own list.
+
+**She notices.** She does not.
+
+**Fix.** None.  ·  **Cost.** 0.12 MB download / 0.37 MB installed
+
+**Skeptic.** Only tightens cookie scoping for non-Firefox libsoup and curl clients such as the store and wget. Firefox has its own list. Nothing she uses keeps a browsing cookie jar through libpsl, so there is no practical effect.
+
+<details><summary>evidence</summary>
+
+Consumers of libpsl in the closure are libsoup-3.0 (GNOME Software store traffic), curl, wget and NetworkManager. None keeps a browsing cookie jar. Firefox does not use it. The simulated closure lacks the package. The libpsl built-in fallback behaviour was not verified.
+
+</details>
+
+### [low] REFUTED: gnome-session-bin
+
+**Breaks.** Nothing she would meet. software-properties-gtk is only a dependency of GNOME Software and is reachable from its Software Repositories entry, which she has no reason to use.
+
+**She notices.** She does not.
+
+**Fix.** None.  ·  **Cost.** 0.24 MB download / 0.99 MB installed (+upower)
+
+**Skeptic.** Only an alternative in software-properties-gtk's Recommends ('gnome-session-bin | xfce4-session | mate-session-manager'). The package sits behind the store's Software Repositories dialog, which she has no reason to open. Pulling it in would also add upower. No gap.
+
+<details><summary>evidence</summary>
+
+rootfs/etc/apt/apt.conf.d/20apt-esm-hook.conf says gnome-software needs software-properties-gtk, which needs ubuntu-pro-client. The Recommends line is 'gnome-session-bin | xfce4-session | mate-session-manager'. What it is used for was not traced. Pulling it in would also bring upower and libupower-glib3.
+
+</details>
+
+### [low] REFUTED: at-spi2-core
+
+**Breaks.** GTK and Firefox log accessibility-bus warnings, and a screen reader or on-screen keyboard has nothing to talk to. No ordinary function is affected. Belongs to the accessibility sweep.
+
+**She notices.** Only if she needs a screen reader.
+
+**Fix.** Leave to the accessibility owner.  ·  **Cost.** 0.07 MB download / 0.22 MB installed (+libxtst6)
+
+**Skeptic.** Belongs to the accessibility sweep, not this one. No ordinary function depends on it: GTK and Firefox just fail the a11y bus lookup. No assistive technology ships on the Linux image (orca and onboard are absent, and a repo grep of build, rootfs, src and profiles finds no AT-SPI use). Owner of the a11y decision should decide it.
+
+<details><summary>evidence</summary>
+
+libatk-bridge2.0-0t64 is installed and looks for org.a11y.Bus, which at-spi2-core provides. The D-Bus lookup fails immediately when the service is unknown, so there is no startup delay. Not tested on a booted image.
+
+</details>
+
+## accessibility-language-input
+
+### [medium] KEPT: rtkit
+
+**Breaks.** PipeWire, WirePlumber and pipewire-pulse cannot get realtime or raised priority, so the audio thread stays an ordinary time-shared thread. The rlimit route is also closed, so nothing else gives them priority either.
+
+**She notices.** Music or a video call crackles or drops out when anything else is using the CPU (LibreOffice opening, a heavy web page, Zoom's video) on a dual-core 2013 laptop. Not measured on real hardware, so this is plausible rather than proven.
+
+**Fix.** Add rtkit to packages_desktop next to pipewire (it is D-Bus activated, so no boot cost until pipewire asks). All its dependencies are already in the image: dbus, polkitd, libcap2, adduser. Zero-package alternative: add the 'pipewire' group to AUROS_GROUPS_WANT. The group is created by pipewire's postinst, and rootfs/etc/pam.d/systemd-user already has pam_limits.so. To check on a booted image: journalctl --user -u pipewire shows no 'Realtime scheduling disabled', and chrt -p $(pgrep -x pipewire) is not SCHED_OTHER.  ·  **Cost.** 0.14 installed, 0.03 download
+
+**Skeptic.** Facts hold, severity is overstated (medium -> low). CONFIRMED: apt-cache shows pipewire-bin Recommends rtkit. The real office and multilingual build logs (release profiles-40042856709) list rtkit under 'Recommended packages' and not installed, and no profile or forge line names it. I reproduced pipewire 1.0.5 as a non-root user without rtkit: 'Realtime scheduling disabled', and pw-data-loop runs as TS, nice 0. Nothing else provides it. The rlimit file 25-pw-rlimits.conf applies only to @pipewire, and AUROS_GROUPS_WANT has no pipewire group. xdg-desktop-portal's Realtime portal is only an RTKit client (its binary references org.freedesktop.RealtimeKit1). The fix should work: the rtkit policy has allow_inactive=yes and allow_active=yes. Polkit 124's session monitor falls back to sd_uid_get_display() for processes in user@.service, so pipewire resolves to aurshell's PAM session. rtkit's deps are already present and it is 34 KB. NOT CONFIRMED: music crackling. I pinned non-RT pipewire and a playing stream to 2 cores with 5 CPU hogs (2.5x oversubscribed), 20 s each. At the default 1024/48000 and at 512 there were no extra xruns (1 per run, the same as the unloaded baseline). At 256/48000 (5 ms) there were 10-16 xruns against 1 unloaded. So only low-latency clients such as calls, under heavy load, would glitch. Not tested: the actual grant on a booted AurOS.
+
+<details><summary>evidence</summary>
+
+Test: noble container with the desktop.profile + store + flatpak package set (882 packages, no Recommends), pipewire 1.0.5 run as a non-root user without rtkit. The log says: 'failed to set realtime policy: Operation not permitted', 'Priority max (0) must be at least 11', then 'Realtime scheduling disabled: unsufficient realtime privileges, Portal not found on session bus, and no system bus for RTKit'. WirePlumber and pipewire-pulse log the same line. ps shows pw-data-loop as class TS (normal), nice 0. The container had no system bus; on AurOS there is one but no org.freedesktop.RealtimeKit1 service, so the outcome is the same. The only other route is pipewire's /etc/security/limits.d/25-pw-rlimits.conf, which applies only to group @pipewire. build/forge AUROS_GROUPS_WANT is 'audio video input netdev bluetooth lpadmin' (~line 1753), so no pipewire group. docs/handoff/streams/F.md already lists 'RealtimeKit missing' as noise in a booted AurOS journal (run 40016668568). rtkit would be allowed: its polkit actions acquire-real-time and acquire-high-priority are allow_active=yes. aurshell.service has PAMName=, so the session is a logind session, and rootfs 49-auros.rules only returns YES for listed actions and leaves the rest to the defaults. NOT tested: whether the realtime grant succeeds, because the container lacks CAP_SYS_RESOURCE.
+
+</details>
+
+### [medium] KEPT: hunspell-en-us (kept only by accident) and hunspell-<lang>, hyphen-en-us, mythes-en-us
+
+**Breaks.** (a) English (US) spell check in Writer works today only because libenchant-2-2 hard-depends on hunspell-en-us. libenchant-2-2 comes from libgspell-1-2, which comes from Mousepad. LibreOffice itself depends on no dictionary, so dropping or swapping Mousepad would silently remove Writer's spell check. (b) LibreOffice finds only en-US. For any other language (en-GB, en-AU, en-CA, es, fr, de ...) there is no dictionary, so no spell check at all. The installer hands the Windows language to the image without asking (src/aurbridge/wizard.c detect_defaults, rootfs/usr/lib/auros/choices.sh sets LANG). LibreOffice's default document language follows LANG, which I expect but did not test. (c) Hyphenation and thesaurus do not exist in any language. hyphen-en-us and mythes-en-us are Recommended only by the task-* desktop metapackages, so they were never on the dropped list.
+
+**She notices.** For a British, Australian, Canadian, Spanish or French Windows user, Writer never underlines a misspelling, and she believes her letter is fine. Thesaurus and hyphenation menu entries do nothing. A US-English user notices nothing today.
+
+**Fix.** Name hunspell-en-us in packages_files so it is manually installed and survives Mousepad changes (0.9 MB). If the product ships outside the US, add hunspell-en-gb (2.6 MB), hunspell-en-au and hunspell-en-ca (0.9 MB each). For other languages, have choices.sh or the multilingual profile add hunspell-<lang> for the chosen LANG: hunspell-es 2.0 MB, hunspell-de-de 1.9 MB, hunspell-fr-classical 2.9 MB. Optionally add hyphen-en-us (0.14 MB). Skip mythes-en-us (21.5 MB).  ·  **Cost.** 0.9 (en-US); 2.6 (en-GB); ~2-3 per extra language
+
+**Skeptic.** Only the en-GB/en-AU/en-CA/other-language dictionary gap survives; the rest is refuted. REFUTED: hunspell-en-us is not absent. It is in the NEW-packages list of the real office and multilingual build logs (via mousepad -> libgspell -> libenchant-2-2), and libhunspell-1.7-0's Recommends is satisfied. 'Kept by accident' is fragility, not a break today. hyphen-en-us and mythes-en-us are recommended by nothing installed (only task-* metas; the libreoffice metapackage merely Suggests them). Hyphenation is off by default and no thesaurus is expected. CONFIRMED (I ran headless LibreOffice 24.2 over UNO in noble): with libreoffice-writer alone, no dictionary exists. With hunspell-en-us added, hasLocale is True only for en-US and False for en-GB, en-AU, en-CA, fr, es and de. A new Writer document's CharLocale follows LANG: LANG=en_GB.UTF-8 gives en-GB. The chain is real. wizard.c detect_defaults turns Windows 'en-GB' into en_GB.UTF-8, the wizard lists 'English (United Kingdom)', and choices.sh generates the locale and writes /etc/default/locale. So a UK, AU or CA user gets a document language with no dictionary and Writer underlines nothing. Fix: hunspell-en-gb 2.6 MB, hunspell-en-au and hunspell-en-ca 0.9 MB each. Naming hunspell-en-us in packages_files (0.9 MB) is a cheap extra. Strictly this is locale coverage, not a dropped Recommends.
+
+<details><summary>evidence</summary>
+
+LibreOffice 24.2.7 on the full package set, queried over UNO. Spell locales: [en-US] only; hyphenator locales: []; thesaurus locales: []. hasLocale(en-GB), (fr-FR) and (es-ES) are all False. libmergedlo.so contains the paths '/usr/share/hunspell' and DICPATH, so en_US.dic/.aff in /usr/share/hunspell is what it loads. apt-cache depends libenchant-2-2 shows '|Depends: hunspell-en-us'. hunspell-en-us is also in the 'additional packages' list of the real office-profile build log (release profiles-40042856709, office-build.log.gz), next to libenchant-2-2 and libgspell-1-2. Neither package.profile nor build/forge names a dictionary.
+
+</details>
+
+### [medium] REFUTED: ibus-gtk3, ibus-gtk4, im-config (Recommends of ibus) and language-pack-gnome-<lang> (multilingual profile only)
+
+**Breaks.** Applies only to profiles/multilingual.profile (the desktop profile ships no IME by design). Its packages_extra installs ibus, ibus-pinyin, ibus-m17n and language-pack-fr/-zh-hans/-es/-ar under --no-install-recommends. (1) ibus installs without its GTK input-method modules (im-ibus.so is in ibus-gtk3, libim-ibus.so in ibus-gtk4) and without im-config, which sets the environment. (2) Nothing starts ibus-daemon. I found no XDG-autostart or Xsession handling in src/aurshell, build/ or rootfs/, and im-config only works through /etc/X11/Xsession.d and /etc/xdg/autostart. aurwl compiles in text-input-v3 only when wishes=on, and never input-method. So Pinyin cannot be typed even with the Recommends added back; the session also has to start ibus-daemon and set GTK_IM_MODULE. (3) language-pack-fr Depends only on language-pack-fr-base. The GTK/GNOME strings (gtk30.mo, gtk40.mo, gnome-software.mo, evince.mo, system-config-printer.mo) are in language-pack-gnome-fr-base, which nothing pulls in.
+
+**She notices.** A Chinese user of the multilingual build cannot type Chinese in any program. French, Spanish and Arabic users get an English file chooser, store, PDF viewer, printer dialog, LibreOffice and Firefox, although the profile says 'ready to go'.
+
+**Fix.** packages_extra += ibus-gtk3 ibus-gtk4 plus language-pack-gnome-{fr,zh-hans,es,ar} and libreoffice-l10n-{fr,zh-cn,es,ar}, plus the dictionaries from the previous finding. Add a session step (aurshell or a systemd --user unit) that starts 'ibus-daemon -drx' and sets GTK_IM_MODULE=ibus and XMODIFIERS when ibus is present; without it the packages do nothing. Check on a booted multilingual image that typing Pinyin works in Mousepad and in Firefox.  ·  **Cost.** ibus-gtk3 0.07 + ibus-gtk4 0.08 + im-config 0.34; each gnome language pack 8-12 installed (2.5 download); libreoffice-l10n ~4.5 per language
+
+**Skeptic.** The facts are right but she would never hit it. CONFIRMED: the real multilingual build log lists ibus-gtk, ibus-gtk3, ibus-gtk4 and im-config as recommended and not installed. language-pack-*-base are installed but no gnome packs. Nothing in src, build, rootfs or tools mentions ibus beyond the profile line, so nothing starts ibus-daemon. REFUTED AS A SHIPPED-IMAGE DEFECT: (1) multilingual is not what she gets. The wizard always writes 'desktop' (docs/issues/v3/05-installer-wizard.md 5.4), and the release assets contain only the desktop image. The multilingual build is a CI recipe whose log says update_channel=off. The desktop profile has no IME by design. (2) Adding the Recommends would not make Pinyin work. It needs a new session feature (start ibus-daemon, set GTK_IM_MODULE and XMODIFIERS), so this is a feature gap in an edition, not a missed dependency. (3) The English-only GTK strings are an already documented known issue (5.6: apps whose translations are in Ubuntu language packs stay English). Track it as multilingual-edition work, not as a dropped-Recommends fix.
+
+<details><summary>evidence</summary>
+
+apt-cache depends ibus gives Recommends ibus-gtk, ibus-gtk3, ibus-gtk4, im-config. dpkg -c on ibus-gtk3 and ibus-gtk4 shows the immodules above; im-config ships Xsession.d/70im-config_launch plus xdg/autostart/im-launch.desktop. The desktop image's /usr/lib/x86_64-linux-gnu/gtk-3.0/3.0.0/immodules lists im-am-et ... im-xim and no im-ibus. dpkg -c language-pack-fr-base contains only core strings (NetworkManager.mo, cups.mo, polkit-1.mo), while language-pack-gnome-fr-base holds the GTK ones. After installing all 882 packages, /usr/share/locale/fr/LC_MESSAGES is empty, because Ubuntu strips .mo files out of the packages. aurwl: build/forge ~1110 and 1183 compile text-input only if wishes_on.
+
+</details>
+
+### [low] REFUTED: language-pack-<lang>-base, language-pack-gnome-<lang>-base, libreoffice-l10n-<lang> (never Recommended by anything installed, so not on the dropped list); the dropped *-l10n packages are harmless
+
+**Breaks.** On the desktop profile, when the installer carries over a non-English Windows language, LANG becomes e.g. fr_FR.UTF-8 (locales is installed and locale-gen works), but no translated strings are installed. Ubuntu moves every .mo out of its packages into the language packs, so GTK apps, GNOME Software, LibreOffice and Firefox all stay English. aurshell is English-only today, so the result is an all-English desktop with a foreign date and number format. This is a product decision rather than a regression.
+
+**She notices.** A French or Spanish speaker finds every menu in English. The seven dropped l10n packages (about 1.6 MB together) change nothing she can see.
+
+**Fix.** Decide whether non-English is supported in v0.1. If not, say so in the product copy and leave the l10n packages dropped. If yes, have first boot (choices.sh) install language-pack-<lang>, language-pack-gnome-<lang>, libreoffice-l10n-<lang> and hunspell-<lang> for the chosen LANG when online, or ship the top few languages in the image.  ·  **Cost.** per language ~25-30 installed (~6 MB download) plus libreoffice-l10n ~4.5
+
+**Skeptic.** Not a dropped-dependency case, and already documented. CONFIRMED in apt: nothing recommends the gnome packs. language-pack-fr Depends only on language-pack-fr-base, and language-pack-gnome-fr-base is referenced only by the language-pack-* packages. libreoffice only Suggests libreoffice-l10n. So no Recommends was dropped and no librsvg-style regression exists. The effect (a French or Spanish Windows user gets English menus plus a foreign date format) is real but is a product decision. docs/issues/v3/05-installer-wizard.md 5.6 already states that the installer language sets the locale while apps whose translations are in Ubuntu language packs stay English until those packs are installed. The finder itself calls it a product decision, low. A package-list change cannot fix it: the language is only known at install time, so it needs an online first-boot install or per-language images. The seven dropped *-l10n packages only translate CLI and back-end messages. Nothing to change in the package lists.
+
+<details><summary>evidence</summary>
+
+With all 882 packages installed, /usr/share/locale/fr/LC_MESSAGES is empty. The French strings live only in language-pack-fr-base (13.9 MB installed) and language-pack-gnome-fr-base (12.0 MB installed). src/aurbridge/wizard.c:1733 maps the Windows locale name to a glibc name. build/forge ~222 says the language chosen in the installer 'had nothing to be generated with' before locales was added, and only locale-gen was fixed. The forge comment for the renamed apps already says names stay English until AurOS carries its own translations.
+
+</details>
+
+### [low] KEPT: NO ACTION - in-area packages checked and left dropped: at-spi2-core, aspell-en, enchant-2, libpipewire-0.3-common, pocketsphinx-en-us, default-libdecor-0-plugin-1, xauth, xfonts-base, x11-utils, x11-xserver-utils, libfile-mimeinfo-perl, libnet-dbus-perl, libx11-protocol-perl, systemd-hwe-hwdb, groff-base, libgtk-3-bin, libgtk-4-bin, libgdk-pixbuf2.0-bin
+
+**Breaks.** Nothing she would notice, with one latent exception: at-spi2-core is needed the day a screen reader is added.
+
+**She notices.** Does not.
+
+**Fix.** Leave all of these dropped. Revisit at-spi2-core when a screen reader is planned, and xfonts-base only if a legacy X11 program is promised.  ·  **Cost.** 0 (savings kept: about 50 MB, mostly pocketsphinx-en-us 37 + libgtk-4-bin 12)
+
+**Skeptic.** I tried to find a counterexample and found none, so leaving these dropped stands. Verified myself: libpipewire-0.3-common holds only changelog and copyright. pipewire, pipewire-pulse and wireplumber ran without it and 'pactl info' answered. The dropped xdg-utils Recommends (libfile-mimeinfo-perl, libnet-dbus-perl, libx11-protocol-perl, x11-utils, x11-xserver-utils) are used only by xdg-utils' generic fallbacks. xdg-open is diverted to gio (build/forge stage_xdg_open). Screen-blank inhibition runs through aurwl's idle-inhibit protocol, not xdg-screensaver. No src, build or rootfs file calls xset, xrandr, xprop, xrdb, xmodmap, xauth, gtk-launch, gdk-pixbuf-thumbnailer, mimeopen or groff. libgtk-3-bin, libgtk-4-bin and libgdk-pixbuf2.0-bin contain only CLI helpers. gtk-update-icon-cache is its own package. systemd-hwe-hwdb holds only Ubuntu hwdb data. at-spi2-core only provides the a11y bus services, which matters when a screen reader arrives. Two small caveats. First, the finder's evidence missed that xdg-mime 1.1.3 'query filetype' uses mimetype (libfile-mimeinfo-perl) or else /usr/bin/file. Neither is installed, which is the exit-4 failure the repo already found and sidestepped for xdg-open only. No shipped program was found calling it. Second, outside this list, tumbler (a Thunar Recommends) appears unrecommended-and-absent in the real build log, so Thunar probably shows no image thumbnails. That is for the file-manager area, not this list.
+
+<details><summary>evidence</summary>
+
+at-spi2-core (0.18 MB): GTK3 prints 'dbind-WARNING AT-SPI: Error retrieving accessibility bus address' and GTK4 a Gtk-WARNING to stderr. Both start immediately (first idle at 0.09 s for GTK3), tested under dbus-run-session + Xvfb without the package. docs/ACCESSIBILITY-CONFORMANCE.md says the desktop has no screen reader yet, and there is no on-screen keyboard (src/aurshell/net.c:1278). Add at-spi2-core (plus Orca and speech) only when that work starts. aspell-en (0.4 MB) and enchant-2 (0.06 MB): libenchant-2-2 ships the hunspell provider, and hunspell-en-us is installed (see the hunspell finding). libpipewire-0.3-common (0.06 MB): dpkg -c shows only changelog and copyright. client.conf and pipewire.conf come from pipewire-bin, which is installed, and the daemon, wpctl-style clients and pw-cat all ran. pocketsphinx-en-us (37 MB): libpocketsphinx3 comes only from libavfilter9 (ffmpeg's asr filter via mpv). The Wishes voice path is aurvoice with whisper.cpp, piper and pw-cat (src/aurwish/voice.c, docs/VOICE.md), the model pack arrives by update, and wishes=off. default-libdecor-0-plugin-1 (0.08 MB): libdecor is linked only by Xwayland and libsdl2 (mpv). Rootless Xwayland (aurwl xwm.inc: -rootless -wm) draws no frames, and aurwl offers xdg-decoration server-side to every toplevel (aurwl.c:3039-3100), so a plugin could only add a second title bar. xauth (0.07 MB): aurwl starts Xwayland with no -auth; xauth is a CLI for cookie files; the repo's own wltest-apps image (VLC, Zoom and Discord drawn through aurwl's Xwayland) installs xwayland with --no-install-recommends and no xauth. xfonts-base (7.2 MB): Xwayland carries the 'built-ins' font path (fixed and cursor); only legacy core-font clients (xlsfonts, old Tk/Motif/Java) would fail, and the same harness runs xterm/x11-apps without it. x11-utils and x11-xserver-utils (0.65 and 0.56 MB): no code in src/, build/ or rootfs/ calls xrandr, xset, xprop, xrdb or xmodmap. Only xdg-screensaver's generic X path uses xset, and it needs DISPLAY. libfile-mimeinfo-perl, libnet-dbus-perl and libx11-protocol-perl (0.1 to 0.6 MB): only xdg-open's generic fallback (mimeopen) and xdg-screensaver's gnome-screensaver branch use them; AurOS diverts xdg-open to a gio-open wrapper (build/forge stage_xdg_open, rootfs/usr/bin/xdg-open). systemd-hwe-hwdb (16 KB): the noble-updates version holds only two mic-mute key rules (Dell Pro Rugged, HP EliteBoard); 60-keyboard.hwdb is in udev. groff-base (3.7 MB): no man pages or terminal. libgtk-3-bin, libgtk-4-bin (0.3 and 12 MB) and libgdk-pixbuf2.0-bin: only CLI helpers. gtk-update-icon-cache is its own installed package, and the GTK3 immodules.cache exists. Wishes=on note: aurvoice's fallback voice espeak-ng is not installed by forge and is not a Recommends of anything, so before the Piper pack arrives there is no spoken answer.
+
+</details>
+

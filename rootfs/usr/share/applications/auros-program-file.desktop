@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Get more programs
+NoDisplay=true
+Exec=/usr/lib/auros/program-file %f
+MimeType=application/vnd.debian.binary-package;application/x-deb;application/x-rpm;application/x-msi;application/x-ms-dos-executable;application/x-msdownload;application/vnd.microsoft.portable-executable;application/vnd.openxmlformats-officedocument.presentationml.presentation;application/vnd.openxmlformats-officedocument.presentationml.slideshow;application/vnd.ms-powerpoint;application/vnd.oasis.opendocument.presentation;

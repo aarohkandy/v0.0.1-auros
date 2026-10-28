@@ -1,0 +1,236 @@
+/* aurwl.h — the Wayland server AurOS runs applications on.
+ *
+ * Until this existed, every window on an AurOS desktop was a picture of
+ * a window. The shell painted a title bar, a body and a shadow, and
+ * nothing was behind it, because there was no way for another process
+ * to hand us pixels. A desktop that cannot run a browser is not a
+ * desktop.
+ *
+ * WHY A WAYLAND SERVER AND NOT X11
+ *   We already own the two hard ends of the pipeline: kms.c scans out,
+ *   and the shell reads evdev. What was missing was only the middle --
+ *   a protocol by which another process gives us a buffer and receives
+ *   input. That is exactly what Wayland is. Taking X11 instead would
+ *   mean adopting Xorg, its drivers and a window manager: millions of
+ *   lines to solve a problem we had already solved at both ends, and an
+ *   input and output model the rest of the world is leaving.
+ *
+ * WHY libwayland-server AND NOT wlroots
+ *   wlroots would replace kms.c and our evdev handling -- the two
+ *   pieces most specifically ours, and the two that make the shell come
+ *   up on a 2013 laptop with no GPU driver worth the name. It would
+ *   also pin us to its API breaks. libwayland-server is not a framework
+ *   in that sense: it is the reference implementation of the wire
+ *   format and object lifetimes, the way libc is the reference
+ *   implementation of write(2). We take the wire, we keep the policy.
+ *
+ * WHAT THE SHELL STILL OWNS
+ *   Everything visible. aurwl never draws. It hands the shell a
+ *   `surface *` per window -- the same CPU pixel buffer type draw.c has
+ *   always composited -- and takes back geometry and input. The six
+ *   archetypes did not have to change to gain real windows, which is
+ *   the test of whether the seam was in the right place.
+ */
+#ifndef AUROS_AURWL_H
+#define AUROS_AURWL_H
+
+#include <stdint.h>
+#include <sys/types.h>
+#include "../aurshell/draw.h"
+
+typedef struct aurwl     aurwl;
+typedef struct aurwl_win aurwl_win;
+
+/* ── lifecycle ──────────────────────────────────────────────────── */
+
+/* Creates the display and binds an auto-named socket in XDG_RUNTIME_DIR.
+ * `w`/`h` and `refresh_mhz` describe the one output we advertise.
+ * Returns NULL with a message on stderr. */
+aurwl      *aurwl_create(int w, int h, int refresh_mhz);
+void        aurwl_destroy(aurwl *c);
+
+/* The value a client needs in WAYLAND_DISPLAY. aurwl_spawn() sets it. */
+const char *aurwl_socket(const aurwl *c);
+
+/* Poll this alongside the shell's input fds; call aurwl_dispatch() when
+ * it is readable, and once per frame regardless so timers and flushes
+ * are not starved. */
+int         aurwl_fd(const aurwl *c);
+void        aurwl_dispatch(aurwl *c);
+
+/* Tell clients the output changed size (VT return, mode set). */
+void        aurwl_resize_output(aurwl *c, int w, int h);
+
+/* ── windows ────────────────────────────────────────────────────── */
+
+/* Mapped toplevels, oldest first. The list is stable within a frame;
+ * a dispatch may add or remove entries, so re-read indices after one. */
+int         aurwl_window_count(const aurwl *c);
+aurwl_win  *aurwl_window_at(const aurwl *c, int i);
+
+/* Monotonic id, so the shell can match its own window records across
+ * frames without holding a pointer over a dispatch. */
+uint32_t    aurwl_win_id(const aurwl_win *w);
+const char *aurwl_win_title(const aurwl_win *w);
+const char *aurwl_win_app_id(const aurwl_win *w);
+/* Her text size (1.0 = normal). X programs read it as Xft.dpi on the X root, set when X starts and
+ * whenever this changes (xwm.inc); without it "Bigger" never reached VLC or Zoom. */
+void        aurwl_set_text_scale(aurwl *c, float scale);
+int         aurwl_win_is_x11(const aurwl_win *w);     /* an X program: it cannot say what a field holds */
+
+/* 1 when this toplevel draws its own title bar and window buttons (it
+ * negotiated no server-side decoration), so the shell must not draw a
+ * second set over the top of it. */
+int         aurwl_win_csd(const aurwl_win *w);
+
+/* What its own title bar asked of the shell since the last call -- a
+ * mask of AURWL_REQ_* -- and forget it. The shell decides what each means
+ * in its layout; a request it cannot honour is simply dropped. */
+enum { AURWL_REQ_MOVE = 1, AURWL_REQ_MAXIMIZE = 2, AURWL_REQ_RESTORE = 4,
+       AURWL_REQ_MINIMIZE = 8, AURWL_REQ_FULLSCREEN = 16, AURWL_REQ_UNFULLSCREEN = 32 };
+unsigned    aurwl_win_take_requests(aurwl_win *w);
+
+/* The window's current content: our own copy of the client's last
+ * committed buffer, so it stays valid and unchanging for as long as the
+ * shell needs to paint it. NULL before the first buffer arrives. */
+surface    *aurwl_win_content(aurwl_win *w);
+/* Where that content sits inside the client's surface -- the margin a
+ * toolkit reserves for its own shadow. Add it to any surface-local
+ * point measured against the content before handing it back. */
+void        aurwl_win_content_offset(const aurwl_win *w, int *x, int *y);
+/* The coordinate space the client expects to hear about -- the buffer's
+ * size, unless a viewport gave the surface a different logical one. A
+ * pointer position must be mapped into this before it is sent, or a
+ * client that uses a viewport is told the cursor is somewhere it is
+ * not. */
+void        aurwl_win_logical_size(const aurwl_win *w, int *lw, int *lh);
+
+/* What the client asked for, before the shell imposes anything. Zero
+ * until the first buffer. A layout may use it to size a new window
+ * sensibly instead of guessing. */
+void        aurwl_win_pref_size(const aurwl_win *w, int *w_out, int *h_out);
+
+/* The shell's decision. Sent to the client as an xdg_toplevel configure;
+ * repeated identical calls are dropped, so calling every frame is free.
+ * A zero width or height lets the client pick that dimension. */
+void        aurwl_win_configure(aurwl_win *w, int width, int height,
+                                int activated, int maximized, int fullscreen);
+
+/* Ask politely (the client may prompt about unsaved work), or don't. */
+void        aurwl_win_close(aurwl_win *w);
+void        aurwl_win_kill(aurwl_win *w);
+
+/* ── popups ─────────────────────────────────────────────────────── */
+
+/* Menus and dropdowns, which are separate surfaces the client positions
+ * relative to a parent. The shell paints them above their parent and
+ * must route input to them first, or a browser has no context menu. */
+int         aurwl_win_is_popup(const aurwl_win *w);
+aurwl_win  *aurwl_win_parent(const aurwl_win *w);
+/* A dialog's parent: the id (aurwl_win_id) of the window it belongs to, or 0. */
+uint32_t    aurwl_win_transient_for(const aurwl_win *w);
+void        aurwl_win_popup_offset(const aurwl_win *w, int *x, int *y);
+
+/* ── input ──────────────────────────────────────────────────────── */
+
+/* Keyboard focus. Passing NULL takes focus back for the shell itself,
+ * which is what a shell overlay or an empty desktop wants. */
+void        aurwl_set_focus(aurwl *c, aurwl_win *w);
+
+/* The dialog `w` is blocked on (it names `w` as its parent), or NULL. */
+aurwl_win  *aurwl_win_dialog(aurwl *c, const aurwl_win *w);
+aurwl_win  *aurwl_focus(const aurwl *c);
+
+/* Pointer, in surface-local coordinates. Pass NULL for `w` when the
+ * pointer is over the shell's own furniture rather than a window. */
+void        aurwl_pointer_motion(aurwl *c, aurwl_win *w, int sx, int sy, uint32_t time_ms);
+void        aurwl_pointer_button(aurwl *c, uint32_t button, int pressed, uint32_t time_ms);
+void        aurwl_pointer_axis(aurwl *c, int horizontal, double step, uint32_t time_ms);
+
+/* Raw evdev keycode -- not an ASCII character. The client owns the
+ * keymap we handed it and does its own translation, which is the only
+ * way a Greek or Dvorak layout works in an application we did not
+ * write. Returns 1 if a client consumed it. */
+int         aurwl_key(aurwl *c, uint32_t evdev_code, int pressed, uint32_t time_ms);
+
+/* Modifier state must be tracked even for keys the shell swallows, or
+ * the client's idea of Shift drifts from the user's. */
+void        aurwl_update_modifiers(aurwl *c);
+
+/* What this key actually TYPES, under the modifiers held right now,
+ * according to the keymap the compositor compiled. Writes a NUL
+ * terminated UTF-8 string and returns its length; 0 for keys that
+ * produce no text.
+ *
+ * The shell needs this for its own text fields -- searching for a
+ * program, typing a wireless password -- and the alternative it had was
+ * a hardcoded QWERTY table with no shift, no digits above the letters
+ * and no punctuation. On a French keyboard that table types q for a. A
+ * wireless password is case-sensitive and usually contains both, so it
+ * was not merely wrong abroad; it was unusable everywhere.
+ *
+ * Call this BEFORE handing the key to a client: xkb resolves a key
+ * against the modifier state as it was when the key went down, and
+ * aurwl_key() updates that state as part of delivering it. */
+int         aurwl_key_utf8(const aurwl *c, uint32_t evdev_code, char *out, size_t n);
+
+/* Bumped every time a client commits new pixels. The shell repaints
+ * only when something changed, and without this it would have no way to
+ * know that something did -- so it would either repaint forever or miss
+ * a cursor blinking in a text field. */
+uint32_t    aurwl_damage_seq(const aurwl *c);
+
+/* THE POINTER'S PICTURE, for the shell to draw at the pointer. What the
+ * program under the pointer asked for, or AURWL_CURSOR_DEFAULT (the shell's
+ * own arrow) when it asked for nothing or the pointer is not on a program:
+ *   AURWL_CURSOR_HIDDEN  draw nothing;
+ *   AURWL_CURSOR_IMAGE   *image (premultiplied ARGB, the program's own
+ *                        pixels, valid until the next dispatch) with its
+ *                        hotspot *hot_x,*hot_y in those pixels;
+ *   AURWL_CURSOR_SHAPE   *shape is a wp_cursor_shape_device_v1 shape number
+ *                        (1 default, 4 pointer/hand, 9 text, 13 move, ...);
+ *                        the shell draws its own picture for it.
+ * Any of the out pointers may be NULL. */
+enum { AURWL_CURSOR_DEFAULT = 0, AURWL_CURSOR_HIDDEN, AURWL_CURSOR_IMAGE, AURWL_CURSOR_SHAPE };
+int         aurwl_cursor(aurwl *c, surface **image, int *hot_x, int *hot_y, int *shape);
+
+/* While something is being dragged and its program gave it a picture: that
+ * picture, and where its top-left corner goes relative to the pointer. NULL
+ * otherwise. The shell paints it above everything, under the cursor. Pointer
+ * and button events go on being given to aurwl_pointer_*; while a drag runs
+ * they steer it instead of reaching any program, and a button RELEASE must
+ * be passed on even when it happens off every window, or the drag never ends. */
+surface    *aurwl_drag_icon(aurwl *c, int *dx, int *dy);
+
+/* The X display programs started by aurwl_spawn() find (":0"), or NULL when
+ * this machine has no Xwayland. The shell publishes it beside WAYLAND_DISPLAY
+ * so programs started some other way (a store's "Open") run too. Xwayland is
+ * started when the first X program connects, not before. */
+const char *aurwl_x_display(aurwl *c);
+
+/* 1 while a program that is playing something has asked the screen to stay
+ * on (zwp_idle_inhibitor_v1) AND the window it asked it for is on screen.
+ * The shell asks this where it decides the person has gone away: a film is
+ * two hours without a keypress. */
+int         aurwl_idle_inhibited(const aurwl *c);
+
+/* ── frame ──────────────────────────────────────────────────────── */
+
+/* Call after presenting. Fires frame callbacks, so clients that throttle
+ * to our refresh -- which is every toolkit -- draw their next frame. */
+void        aurwl_frame_done(aurwl *c, uint32_t time_ms);
+
+/* ── launching ──────────────────────────────────────────────────── */
+
+/* fork/exec with WAYLAND_DISPLAY, XDG_RUNTIME_DIR and a session
+ * environment. `argv` is NULL-terminated and is passed to execvp
+ * directly -- there is no shell. A .desktop Exec= line looks like a
+ * shell command and is not one: it has its own quoting rules, and
+ * handing it to /bin/sh turns every metacharacter in a file the user
+ * can write into an instruction. Returns the pid, or -1. */
+pid_t       aurwl_spawn(aurwl *c, const char *const argv[]);
+
+/* Reap exited children. Call each frame; cheap when there are none. */
+void        aurwl_reap(aurwl *c);
+
+#endif

@@ -1,0 +1,55 @@
+AUROS: THE SOURCE CODE, AND OUR WRITTEN OFFER OF IT
+
+Prepared by the AurOS project without a lawyer. Not legal advice.
+
+AurOS contains programs under the GNU General Public License (GPL), the GNU
+Lesser General Public License (LGPL), the Mozilla Public License and other
+licenses. For these programs you are entitled to the source code. We give
+it to you, and this is our written offer of it.
+
+WHERE IT IS
+
+Every AurOS release has a second release beside it on the project's
+releases page, named "sources-" followed by the name of the AurOS release.
+For example, the source for the release v0.1.0-618726b is the release
+sources-v0.1.0-618726b. The releases page is:
+
+    @AUROS_RELEASES@
+
+The sources release holds the Ubuntu source packages, in the exact
+versions that are in AurOS, as files you can download. Its file
+SOURCES.txt lists every program and where its source is. Firefox is made
+by Mozilla; SOURCES.txt gives the address where Mozilla publishes its
+source. AurOS's own code is under the MIT license and is in the same
+release. The programs inside the Windows installer AurOS-Setup.exe (the
+Linux kernel, the boot loader and the small system that runs after the
+restart) are covered by the same release.
+
+WHICH RELEASE YOU HAVE
+
+If this computer has the file /etc/auros/release, it names the release.
+If not, type "dpkg -l auros" in a terminal: the version shown is also
+written in the file PACKAGES.txt of the sources release that matches.
+If you have only the Windows installer AurOS-Setup.exe, the release is
+the one on whose page you found it. If you are not sure, write to us
+(below) and say what you can see.
+
+HOW LONG
+
+We keep each sources release for at least three years after the last day
+we offer the matching AurOS release for download, and for as long as we
+support it. We do not delete them before then.
+
+IF YOU CANNOT GET IT THAT WAY
+
+Write to CONTACT_EMAIL and say which release you have. We will send you
+the source on a USB stick or a disc, for no more than the cost of the
+medium and the postage. This offer is valid for at least three years
+after the last day we offer that release for download, and for as long
+as we support it.
+
+This offer is open to anyone, whether or not they have a copy of AurOS. Programs your computer later updates from Ubuntu
+or from Mozilla come with source from them, at their own addresses.
+
+Nothing here limits the rights that the licenses of these programs give
+you. If these words and a license disagree, the license wins.

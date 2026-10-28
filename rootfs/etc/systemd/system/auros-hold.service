@@ -1,0 +1,23 @@
+[Unit]
+Description=AurOS: tell the desktop what this computer is waiting for
+Documentation=man:aurfirst(8)
+# This used to ARM BootNext, and ran before the desktop. It now only
+# publishes what aurfirst finds (/run/auros-first.state) for the
+# desktop's first frame; arming moved to auros-keeper, which waits for a
+# desktop that works. A desktop that never appeared used to loop her
+# back into AurOS on every start (docs/safety/FINDINGS.md S-05, S-06).
+DefaultDependencies=no
+After=local-fs.target sys-firmware-efi-efivars.mount
+Before=display-manager.service aurshell.service multi-user.target
+ConditionPathExists=/sys/firmware/efi/efivars
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/aurfirst state
+StandardOutput=null
+RemainAfterExit=no
+TimeoutStartSec=30
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target

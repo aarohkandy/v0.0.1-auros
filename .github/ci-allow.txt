@@ -1,0 +1,12 @@
+# Jobs of a build run that may FAIL and still let a PRERELEASE through, by
+# name, with a reason and a date (UTC, inclusive). tools/releasegate.py reads
+# this; release.yml's `which` job runs it for every release and every
+# [publish]. A date in the past counts as no entry. Only `powercut / e2e (...)`
+# jobs can be listed: a failing build, unit or gating test always refuses.
+# An entry never lets the FULL release out ([latest]): that needs it green.
+#
+#   job name | expires YYYY-MM-DD | why
+#
+# (empty) 2026-10-23: the one entry, powercut-nostick-restore (S-01/S-02), was removed by
+# A2 when the fix landed (50d623c): that slice is green on build 39977172780 and locally
+# (57 checks, 0 failed; the whole suite 201/0).

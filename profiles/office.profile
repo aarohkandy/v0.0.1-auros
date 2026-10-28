@@ -1,0 +1,103 @@
+# ═══════════════════════════════════════════════════════════════════
+#  AurOS Profile — Office.
+#
+#  An organisation's fleet: a charity with forty donated laptops, a
+#  practice with six, a library with twelve. Not a kiosk -- the people
+#  using these machines do real work on them and need to be able to
+#  change things -- and not the personal desktop either, because
+#  somebody is responsible for all of them at once and has to be able
+#  to say what is on them.
+#
+#  THE LINE THIS PROFILE DRAWS, and it is a judgement rather than a
+#  fact: an administrator may decide what is INSTALLED and how updates
+#  arrive; a user may decide how her own machine LOOKS and behaves.
+#  Taking the second away is what makes managed fleets miserable, it
+#  buys the administrator almost nothing, and the moment a build takes
+#  it away somebody starts asking for a personal laptop instead.
+# ═══════════════════════════════════════════════════════════════════
+inherit="desktop"
+
+profile_id="office"
+profile_name="AurOS for Organisations"
+profile_description="A managed fleet: the same desktop, with the software set and the updates decided centrally."
+
+os_codename="Quarry"
+theme="slate"
+shell_archetype="rail"
+
+# ── what an organisation actually needs on the machine ─────────────
+#
+# NO `thunderbird` HERE, and not because mail does not matter. In
+# Ubuntu 24.04 the package called thunderbird is a 120 KB stub whose
+# only job is to install a snap; this image has no snapd, and
+# build/forge pins those stubs to -1 so neither the build nor the store
+# can install a program that is not there. Naming it made the whole
+# install line fail ("no installation candidate") and the office image
+# stopped building. Mail is the organisation's webmail in Firefox until
+# forge can fetch Thunderbird from a real repository the way it fetches
+# Firefox; tools/profiletest.sh lint refuses a stub on any list.
+packages_apps="libreoffice-writer libreoffice-calc libreoffice-impress
+               libreoffice-gtk4
+               evince
+               simple-scan
+               remmina remmina-plugin-rdp
+               keepassxc"
+
+packages_extra="cups cups-client cups-filters system-config-printer
+                avahi-daemon
+                sssd sssd-tools libnss-sss libpam-sss
+                openssh-client
+                ca-certificates"
+
+# ── what the administrator decides ─────────────────────────────────
+#
+# Installing software is the one thing held back, and not because users
+# are not to be trusted: it is because forty machines with forty
+# different sets of software is forty machines nobody can support, and
+# the person who has to support them is usually the one who volunteered.
+allow_user_install="no"
+
+# EVERYTHING ELSE SHE KEEPS. The wallpaper, the theme, the font size,
+# the keyboard layout, the clock format, whether the dock is on the left
+# -- none of it costs the administrator anything and all of it is the
+# difference between a computer somebody uses and a computer somebody is
+# issued.
+allow_settings_change="yes"
+allow_theme_change="yes"
+allow_network_change="yes"
+
+# A console is not a security boundary on a machine somebody has
+# physical access to, and pretending otherwise mostly stops the one
+# person who could have fixed something. It stays.
+allow_tty="yes"
+
+kiosk_mode="no"
+auto_login="no"
+
+# A NAME, BECAUSE THE IMAGE NEEDS ONE.
+#
+# This said "" and meant "the person who installs it chooses". Nothing
+# on the first boot creates an account, so that image would have had
+# nobody to log in as -- and forge found out forty minutes into the
+# build, with `usermod: user '' does not exist`. The first boot forces
+# a password change; an administrator who wants a different name
+# renames it, or rebuilds this profile with one. Deferring the choice
+# to the installer is a real thing to want and is not built yet.
+default_user="auros"
+
+# ── fleet ──────────────────────────────────────────────────────────
+#
+# Both of these are blank in the file as shipped and are filled in by
+# whoever rebuilds it for their organisation, which is the whole point
+# of a profile. A URL committed here would be a URL forty machines
+# check in to by accident.
+enrollment_url=""
+update_channel="managed"
+
+# Off, and it stays off even in a managed build. An administrator who
+# wants inventory has enrollment_url; turning on telemetry for a fleet
+# is deciding on forty people's behalf that their machines report what
+# they do, and that is not a decision a default should make.
+telemetry="off"
+
+screen_off_minutes="15"

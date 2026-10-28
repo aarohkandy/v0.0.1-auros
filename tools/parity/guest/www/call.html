@@ -1,0 +1,62 @@
+<!doctype html><meta charset="utf-8"><title>AurOS parity: a video call</title>
+<body style="font:20px sans-serif;margin:16px;background:#f4efe6">
+<h1>A call, with the camera and the microphone</h1>
+<p>You (left) and the other person (right), through a real WebRTC connection.</p>
+<video id="local" autoplay muted playsinline width="480"></video>
+<video id="remote" autoplay muted playsinline width="480"></video>
+<pre id="log"></pre>
+<script>
+const $ = id => document.getElementById(id);
+const log = m => { $('log').textContent += m + '\n'; };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const report = o => fetch('/call', {method: 'POST', body: JSON.stringify(o)});
+const stage = m => fetch('/call-stage', {method: 'POST', body: m});
+(async () => {
+  const r = {ok: false};
+  try {
+    stage('asking for camera and microphone');
+    const s = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}, audio: true});
+    r.video_label = s.getVideoTracks()[0] ? s.getVideoTracks()[0].label : '';
+    r.audio_label = s.getAudioTracks()[0] ? s.getAudioTracks()[0].label : '';
+    $('local').srcObject = s;
+    log('camera: ' + r.video_label + ' / microphone: ' + r.audio_label);
+    stage('got them: ' + r.video_label + ' / ' + r.audio_label);
+    const pc1 = new RTCPeerConnection(), pc2 = new RTCPeerConnection();
+    pc1.onicecandidate = e => e.candidate && pc2.addIceCandidate(e.candidate);
+    pc2.onicecandidate = e => e.candidate && pc1.addIceCandidate(e.candidate);
+    const got = new MediaStream();
+    pc2.ontrack = e => { got.addTrack(e.track); $('remote').srcObject = got; };
+    s.getTracks().forEach(t => pc1.addTrack(t, s));
+    const offer = await pc1.createOffer();
+    await pc1.setLocalDescription(offer); await pc2.setRemoteDescription(offer);
+    const answer = await pc2.createAnswer();
+    await pc2.setLocalDescription(answer); await pc1.setRemoteDescription(answer);
+    stage('connected, waiting for frames');
+    let v = {}, a = {};
+    for (let i = 0; i < 40; i++) {                       // up to 20 s
+      await sleep(500);
+      (await pc2.getStats()).forEach(x => {
+        if (x.type === 'inbound-rtp' && x.kind === 'video') v = x;
+        if (x.type === 'inbound-rtp' && x.kind === 'audio') a = x;
+      });
+      stage('loop ' + i + ' frames=' + (v.framesDecoded || 0) + ' audio=' + (a.packetsReceived || 0) + ' energy=' + (a.totalAudioEnergy || 0) + ' t=' + Math.round(performance.now()));
+      if ((v.framesDecoded || 0) >= 40 && (a.packetsReceived || 0) >= 60 && (a.totalAudioEnergy || 0) > 0) break;
+    }
+    r.frames_decoded = v.framesDecoded || 0;
+    r.audio_packets = a.packetsReceived || 0;
+    r.audio_energy = a.totalAudioEnergy || 0;
+    const rv = $('remote');
+    r.remote_size = rv.videoWidth + 'x' + rv.videoHeight;
+    // is the picture the other side sees a real picture (colour bars), not black?
+    const c = document.createElement('canvas'); c.width = 64; c.height = 48;
+    c.getContext('2d').drawImage(rv, 0, 0, 64, 48);
+    const d = c.getContext('2d').getImageData(0, 0, 64, 48).data, seen = new Set();
+    for (let i = 0; i < d.length; i += 4) seen.add((d[i] >> 5) + ',' + (d[i + 1] >> 5) + ',' + (d[i + 2] >> 5));
+    r.colours = seen.size;
+    r.ok = r.frames_decoded >= 40 && r.audio_packets >= 60 && r.colours >= 4;
+  } catch (e) { r.error = String(e); }
+  stage('finished: ' + JSON.stringify(r));
+  log(JSON.stringify(r));
+  report(r);
+})();
+</script>

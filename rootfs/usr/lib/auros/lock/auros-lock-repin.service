@@ -1,0 +1,15 @@
+# Enabled by `lockctl prepare` only (docs/security/THEFT.md section 6):
+# after the rescue code opened the drive at start, the PIN she chose
+# there is sealed in the security chip before her desktop comes up.
+[Unit]
+Description=AurOS: seal the PIN chosen at start
+ConditionPathExists=/run/auros-lock/repin
+After=local-fs.target tpm2.target
+Before=aurshell.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/auros/lock/lockctl repin
+
+[Install]
+WantedBy=multi-user.target

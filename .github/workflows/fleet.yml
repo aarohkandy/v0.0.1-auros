@@ -1,0 +1,47 @@
+# fleet.csv (WP-35, stream OPS): one row a day of how many people took AurOS: GitHub's own counter on the
+# installer of every full release, and, once the domain's gate exists, yesterday's count and the wave.
+# Kept as an asset of the prerelease tag `fleet` (never "latest"), so nothing is committed.
+# Read it:  gh release download fleet -p fleet.csv -R <repo> -O - | column -s, -t
+name: fleet
+
+on:
+  schedule:
+    - cron: '30 6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['tools/ops/fleet.py']
+
+# contents: write is for the jobs that make or fill a release, and only
+# those (SEC-005): a job that runs a lot of code cannot replace what a
+# person downloads.
+permissions:
+  contents: read
+
+concurrency:
+  group: fleet
+  cancel-in-progress: false
+
+jobs:
+  fleet:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: tools/ops
+      - run: python3 -I tools/ops/fleet.py --selftest
+      - name: add today's row
+        run: |
+          gh release view fleet >/dev/null 2>&1 || gh release create fleet --prerelease --title "AurOS fleet counts (data, not a release)" \
+            --notes "fleet.csv: one row a day (tools/ops/fleet.py). Not an AurOS release."
+          rm -f old.csv; gh release download fleet -p fleet.csv -O old.csv 2>/dev/null || true
+          python3 -I tools/ops/fleet.py old.csv > fleet.csv
+          cat fleet.csv
+          gh release upload fleet fleet.csv --clobber
+          { echo '### fleet.csv'; echo '```'; tail -8 fleet.csv; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,361 @@
+# AurOS end to end, on a real Windows, in a VM (tools/e2e/README.md).
+#
+# windows.yml starts the installer on a GitHub Windows runner, but that
+# machine cannot restart into the installer's second half. This runs a
+# real Windows 11 (Microsoft's evaluation ISO, installed unattended) in
+# QEMU/KVM on a Linux runner, with UEFI Secure Boot and Microsoft's keys,
+# a TPM 2.0 and an SSD, and does what a person does: the website in
+# Edge, the download, Windows' warnings, the wizard, the restart, the
+# staging screen, AurOS's first start, a program from the store. Every
+# press goes through the VM's keyboard and tablet; every screen is
+# kept. The evidence is attached to a prerelease named e2e-<run id>.
+#
+# It takes hours, so it runs only when this harness changes or the head
+# commit says [e2e]. The installed Windows is cached (key below), so
+# later runs skip Setup.
+#
+# Variants, one job each, two at a time (tools/e2e/README.md): base,
+# hdd, bitlocker, smalldisk, pending, win10. A harness change runs base;
+# in the head commit's subject "[e2e:all]" runs every variant,
+# "[e2e:base,hdd]" those, "[e2e:none]" nothing.
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  # release.yml calls this on a fresh prerelease (installer_url and its
+  # SHA-256); a person can start it from the Actions tab the same way.
+  # Without inputs the env pins below are what is tested.
+  workflow_call:
+    inputs:
+      installer_url: {type: string, required: false, default: ''}
+      installer_sha256: {type: string, required: false, default: ''}
+      variants: {type: string, required: false, default: base}
+      hdd_throttle: {type: string, required: false, default: ''}
+      build_run: {type: string, required: false, default: ''}
+  workflow_dispatch:
+    inputs:
+      installer_url: {type: string, required: false, default: ''}
+      installer_sha256: {type: string, required: false, default: ''}
+      variants: {type: string, required: false, default: base}
+      hdd_throttle: {type: string, required: false, default: ''}
+      # variants=aur only: the image of this build run (its auros-pieces artifact)
+      # instead of a release's, e.g. a green build newer than the last prerelease
+      build_run: {type: string, required: false, default: ''}
+
+# contents: write is for the jobs that make or fill a release, and only
+# those (SEC-005): a job that runs a lot of code cannot replace what a
+# person downloads.
+permissions:
+  contents: read
+
+env:
+  # What a person downloads. INSTALLER_SHA256 empty = accept and print.
+  # To test a fresh build instead, set INSTALLER_PATH to the file on the
+  # runner (an artifact from an earlier job); the website's links are
+  # then pointed at it, served from the runner.
+  # (a push or a hand-started run tests this prerelease; a run called by
+  # release.yml tests the release it just made: its inputs override these
+  # in the flow step)
+  INSTALLER_URL: https://github.com/aarohkandy/v0.0.1-auros/releases/download/v0.1.0-618726b/AurOS-Setup.exe
+  INSTALLER_SHA256: 5b875c0bd3b007ad9caab67732fe13a4fab828e6ee550c5b881863a6f2480b52
+  INSTALLER_PATH: ''
+  WEBSITE_DIR: website
+  # Windows: Microsoft's evaluation-center link; pinned hash once known.
+  WINDOWS_ISO_URL: ''
+  WINDOWS_ISO_SHA256: ''
+  # Bump to throw the cached Windows away.
+  GOLDEN_VERSION: '1'
+  E2E_VARIANTS: base,hdd,bitlocker,smalldisk,pending,win10
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+      variants: ${{ steps.g.outputs.variants }}
+      aur: ${{ steps.g.outputs.aur }}
+    steps:
+      - id: g
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+          BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+          IN_URL: ${{ inputs.installer_url }}
+          IN_VARIANTS: ${{ inputs.variants }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          # "aur" is not a Windows: it boots the AurOS image alone and drives its
+          # store (the M3 half), a few minutes instead of an hour. The rest are the
+          # matrix's variants.
+          emit() {
+            case ",$1," in *,aur,*) echo "aur=true" >> "$GITHUB_OUTPUT" ;; *) echo "aur=false" >> "$GITHUB_OUTPUT" ;; esac
+            echo "variants=$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps([x for x in sys.stdin.read().split(",") if x and x != "aur"]))')" | tee -a "$GITHUB_OUTPUT"
+          }
+          # called (release.yml) or started by hand: the inputs say it all
+          if [ -n "$IN_URL" ] || [ "$EVENT" = workflow_dispatch ]; then
+            echo "run=true" | tee -a "$GITHUB_OUTPUT"
+            emit "${IN_VARIANTS:-base}"
+            exit 0
+          fi
+          run=false
+          case "$MSG" in *'[e2e]'*) run=true ;; esac
+          # the files this push changed (the payload does not list them)
+          case "$BEFORE" in
+            ''|0000000000000000000000000000000000000000)
+              files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
+            *)
+              files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
+          esac
+          printf '%s\n' "$files"
+          # (the README alone is not worth hours of runner)
+          if printf '%s\n' "$files" | grep -v '^tools/e2e/README\.md$' |
+               grep -qE '^(tools/e2e/|\.github/workflows/e2e\.yml$)'; then
+            run=true
+          fi
+          # "[e2e:LIST]" in the subject: none, all, or these variants
+          list=$(printf '%s' "$MSG" | head -1 | sed -n 's/.*\[e2e:\([a-z0-9,]*\)\].*/\1/p')
+          case $list in
+            '')   list=base ;;
+            none) list=base run=false ;;
+            all)  list=$E2E_VARIANTS run=true ;;
+            *)    run=true ;;
+          esac
+          echo "run=$run" | tee -a "$GITHUB_OUTPUT"
+          emit "$list"
+
+  e2e:
+    needs: gate
+    if: needs.gate.outputs.run == 'true' && needs.gate.outputs.variants != '[]'
+    # One machine at a time per branch. On the job, not the workflow: every
+    # push runs the gate, and a workflow-wide group let a push that changes
+    # nothing here cancel a run that was waiting.
+    # (A called run is a release's: its own group per installer, so an
+    # [e2e] push queued behind it cannot replace it while it waits.)
+    concurrency:
+      group: e2e-${{ github.ref }}-${{ matrix.variant }}-${{ inputs.installer_sha256 }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      # the account's runners are shared by every stream (STREAMS.md: ≤ 2)
+      max-parallel: 2
+      matrix:
+        variant: ${{ fromJSON(needs.gate.outputs.variants) }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    timeout-minutes: 355
+    env:
+      E2E_VARIANT: ${{ matrix.variant }}
+      # two installers in one run id (release.yml) must not share file names
+      E2E_LABEL: ${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # seconds, before hours: the variants' expected words still match
+      # the wizard's, and the evidence still has somewhere to go
+      - name: the harness's own checks
+        # selftest.py imports vm.py (numpy) since e76010f, before the
+        # runner step below installs its packages: this is why run
+        # 39928216928 died here. Bounded apt, a few seconds.
+        run: |
+          sh tools/apt.sh python3-numpy python3-pil
+          python3 tools/e2e/selftest.py
+
+      - name: which PC this is
+        env:
+          HDD_THROTTLE: ${{ inputs.hdd_throttle }}
+        run: |
+          # GOLDEN: which installed Windows (cached separately); the rest
+          # is the machine around it
+          golden=$E2E_VARIANT disk=128 winver=11 throttle=
+          case $E2E_VARIANT in
+            base)      ;;
+            # a hard disk: ~100 MB/s and a number of random operations a second.
+            # 120 (a 5400 rpm laptop drive, QD1) made Windows take 18 minutes to
+            # boot (run 39972010732); 300 is a 7200 rpm drive with queueing.
+            hdd)       golden=base throttle=${HDD_THROTTLE:-bps=104857600,iops=300} ;;
+            bitlocker) ;;
+            smalldisk) disk=72 ;;
+            pending)   ;;
+            win10)     winver=10 ;;
+            *) echo "unknown variant $E2E_VARIANT"; exit 1 ;;
+          esac
+          { echo "E2E_GOLDEN=$golden"; echo "E2E_DISK_GB=$disk"
+            echo "WINDOWS_VERSION=$winver"; echo "E2E_DISK_THROTTLE=$throttle"; } | tee -a "$GITHUB_ENV"
+
+      - name: runner (disk, KVM, packages)
+        run: |
+          echo "E2E_T0=$(date +%s)" >> "$GITHUB_ENV"
+          bash tools/e2e/runner-setup.sh | tee -a "$GITHUB_ENV"
+
+      - name: the evidence's prerelease, refreshed while the run goes on
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash tools/e2e/publish.sh init
+          mkdir -p "$E2E_DIR/out"
+          nohup bash tools/e2e/publish.sh live "$E2E_DIR/out" >/dev/null 2>&1 &
+
+      - name: cache key for the installed Windows
+        id: key
+        run: |
+          h=$(cat tools/e2e/guest/autounattend.xml tools/e2e/guest/specialize.cmd \
+                  tools/e2e/guest/firstlogon.ps1 tools/e2e/guest/boot.ps1 \
+                  tools/e2e/guest/boot.vbs | sha256sum | cut -c1-16)
+          echo "key=e2e-windows-v$GOLDEN_VERSION-$E2E_GOLDEN-$E2E_DISK_GB-w$WINDOWS_VERSION-$h" | tee -a "$GITHUB_OUTPUT"
+
+      # Only the base Windows is cached: a golden is several GB and the
+      # repository's caches share 10 GB, so one per variant would push out
+      # every other workflow's (and each other). The rest install Windows
+      # afresh, about 15 minutes.
+      - name: the installed Windows, from the cache
+        id: golden
+        if: env.E2E_GOLDEN == 'base'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.E2E_DIR }}/golden
+          key: ${{ steps.key.outputs.key }}
+
+      - name: M1 - Windows from Microsoft's ISO, unattended, to the desktop
+        if: steps.golden.outputs.cache-hit != 'true'
+        timeout-minutes: 150
+        run: |
+          sh tools/e2e/get-windows.sh "$E2E_DIR/win.iso"
+          sh tools/e2e/mkanswer.sh "$E2E_DIR/answer.iso"
+          /usr/bin/python3 tools/e2e/e2e.py windows "$E2E_DIR/out/windows" "$E2E_DIR/golden" \
+              --iso "$E2E_DIR/win.iso" --answer "$E2E_DIR/answer.iso"
+          rm -f "$E2E_DIR/win.iso"
+          ls -la "$E2E_DIR/golden"; du -sh "$E2E_DIR/golden"; df -h "$E2E_DIR"
+
+      - name: keep the installed Windows for the next run
+        if: env.E2E_GOLDEN == 'base' && steps.golden.outputs.cache-hit != 'true' && success()
+        continue-on-error: true
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.E2E_DIR }}/golden
+          key: ${{ steps.key.outputs.key }}
+
+      - name: M2/M3 - website, download, wizard, restart, AurOS, the store
+        id: flow
+        env:
+          IN_URL: ${{ inputs.installer_url }}
+          IN_SHA256: ${{ inputs.installer_sha256 }}
+        run: |
+          if [ -n "$IN_URL" ]; then INSTALLER_URL=$IN_URL INSTALLER_SHA256=$IN_SHA256; fi
+          echo "installer: $INSTALLER_URL (SHA-256 ${INSTALLER_SHA256:-not pinned})"
+          export INSTALLER_URL INSTALLER_SHA256
+          [ -z "$INSTALLER_PATH" ] || INSTALLER_PATH=$(realpath "$INSTALLER_PATH")
+          [ "$WEBSITE_DIR" = none ] || WEBSITE_DIR=$(realpath "$WEBSITE_DIR")
+          # what is left of the job's 355 minutes, less time to publish
+          export INSTALLER_PATH WEBSITE_DIR E2E_MINUTES=$(( 330 - ($(date +%s) - E2E_T0) / 60 ))
+          /usr/bin/python3 tools/e2e/e2e.py flow "$E2E_DIR/out/flow" "$E2E_DIR/golden" "$E2E_DIR/work"
+
+      - name: M3 - the program is on AurOS's disk (machine off)
+        if: steps.flow.outcome == 'success'
+        run: /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/inspect" "$E2E_DIR/work"
+
+      # A failed flow: the staging screen gives only a verdict word, so read
+      # the disk with the machine off and say its reason again (ntfsresize's
+      # own words, the staging's journal and report). Evidence, not a verdict.
+      - name: what the disk says (the flow failed; machine off)
+        if: always() && steps.flow.outcome == 'failure'
+        continue-on-error: true
+        run: /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/diag" "$E2E_DIR/work" --diag
+
+      - name: publish the evidence (prerelease e2e-${{ github.run_id }})
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/e2e/publish.sh final "$E2E_DIR/out"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: e2e-evidence-${{ matrix.variant }}${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}
+          path: ${{ env.E2E_DIR }}/out/e2e-evidence-${{ matrix.variant }}${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}.zip
+          if-no-files-found: ignore
+
+  # The AurOS half alone: boot the image of the release under test (no Windows,
+  # no installer) and do what she does after "Yes, it all works": open "Get more
+  # programs", install a program, open it. A few minutes a try, so the store and
+  # its light-theme words can be fixed without a Windows install each time.
+  # Run it with: gh workflow run e2e.yml -f variants=aur [-f installer_url=...]
+  aur:
+    needs: gate
+    if: needs.gate.outputs.aur == 'true'
+    concurrency:
+      group: e2e-aur-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    timeout-minutes: 120
+    env:
+      E2E_VARIANT: aur
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: the harness's own checks
+        run: |
+          sh tools/apt.sh python3-numpy python3-pil
+          python3 tools/e2e/selftest.py
+      - name: runner (disk, KVM, packages)
+        run: |
+          echo "E2E_T0=$(date +%s)" >> "$GITHUB_ENV"
+          bash tools/e2e/runner-setup.sh | tee -a "$GITHUB_ENV"
+      - name: the evidence's prerelease, refreshed while the run goes on
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash tools/e2e/publish.sh init
+          mkdir -p "$E2E_DIR/out"
+          nohup bash tools/e2e/publish.sh live "$E2E_DIR/out" >/dev/null 2>&1 &
+      - name: the image under test (a build run's pieces, else the release's)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IN_URL: ${{ inputs.installer_url }}
+          BUILD_RUN: ${{ inputs.build_run }}
+        run: |
+          mkdir -p "$E2E_DIR/pieces"
+          if [ -n "$BUILD_RUN" ]; then
+            echo "image of build run $BUILD_RUN"
+            for i in 1 2 3; do
+              gh run download "$BUILD_RUN" -R "$GITHUB_REPOSITORY" -n auros-pieces -D "$E2E_DIR/pieces" && break
+              sleep $((i * 20))
+            done
+          else
+            url=${IN_URL:-$INSTALLER_URL}
+            tag=$(printf '%s' "$url" | sed -n 's|.*/releases/download/\([^/]*\)/.*|\1|p')
+            [ -n "$tag" ] || { echo "no release tag in $url"; exit 1; }
+            echo "image of $tag"
+            for i in 1 2 3; do
+              gh release download "$tag" -R "$GITHUB_REPOSITORY" -p 'auros-desktop.img.gz.*' -D "$E2E_DIR/pieces" --clobber && break
+              sleep $((i * 20))
+            done
+          fi
+          ls -l "$E2E_DIR/pieces" | head -20
+          cat "$E2E_DIR"/pieces/auros-desktop.img.gz.* | gzip -dc > "$E2E_DIR/auros.img"
+          rm -rf "$E2E_DIR/pieces"
+          ls -l "$E2E_DIR/auros.img"; df -h "$E2E_DIR"
+      - name: AurOS alone - the first screen, the store, a program installed and opened
+        id: flow
+        run: /usr/bin/python3 tools/e2e/e2e.py aur "$E2E_DIR/out/flow" "$E2E_DIR/auros.img" "$E2E_DIR/work"
+      - name: the program is on AurOS's disk (machine off)
+        if: steps.flow.outcome == 'success'
+        run: /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/inspect" "$E2E_DIR/work"
+      - name: what the disk says (the flow failed; machine off)
+        if: always() && steps.flow.outcome == 'failure'
+        continue-on-error: true
+        run: /usr/bin/python3 tools/e2e/e2e.py inspect "$E2E_DIR/out/diag" "$E2E_DIR/work" --diag
+      - name: publish the evidence (prerelease e2e-${{ github.run_id }})
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tools/e2e/publish.sh final "$E2E_DIR/out"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: e2e-evidence-aur
+          path: ${{ env.E2E_DIR }}/out/e2e-evidence-aur.zip
+          if-no-files-found: ignore

@@ -1,0 +1,196 @@
+[Unit]
+Description=AurOS desktop shell
+
+# NEVER STOP TRYING. In [Unit], which is where systemd.unit(5)
+# documents it and where systemd actually reads it.
+#
+# It was in [Service], and the booted machine said so on every start:
+# "aurshell.service:153: Unknown key name 'StartLimitIntervalSec' in
+# section 'Service', ignoring." So the setting was not in effect at
+# all -- after five failures in ten seconds the unit would have been
+# given up on, leaving a black screen, which is the one outcome this
+# line exists to prevent. A rate limit that silences the recovery
+# screen is worse than no recovery screen, because the machine looks
+# dead rather than sorry.
+#
+# The ExecStopPost below draws a screen that explains, and drawing it
+# already paces the restarts: a machine that cannot start its desktop
+# spends most of its time showing a person a sentence about that,
+# rather than a few seconds flapping and then giving up.
+StartLimitIntervalSec=0
+# There is no OnFailure= here any more, and that is deliberate.
+#
+# It was getty@tty1.service: a login prompt, on a machine whose owner
+# has never been told the account name, has never been told the
+# password, and whose password this image expires on purpose. To her
+# that is the same screen as a black one, and docs/EASY.md rule 1 says
+# no path in this product may bottom out at a command line.
+#
+# Replacing it with a second unit that drew a message did not work,
+# and the reason is worth keeping. Two units both wanting the screen
+# race, and the loser is always the message: first the shell's
+# TTYVHangup killed it with SIGHUP two seconds in, then adding
+# Conflicts= only changed the signal to SIGTERM. Both were watched
+# happening in the journal of a deliberately broken image.
+#
+# So the message is not a second unit. It is THIS unit's ExecStopPost,
+# below -- the shell's own failure, handled by the shell's own service,
+# with nothing to race against because there is nothing else running.
+After=auros-firstboot.service systemd-user-sessions.service
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+
+[Service]
+Type=simple
+# THE SHELL NEEDS A SESSION, not just a user.
+#
+# This is a systemd system service, so without PAM there is no logind
+# session behind it -- and polkit's shipped rules are written in terms
+# of one. Every action the distribution gates says `allow_active=yes`
+# for a person sitting at a local session and `auth_admin` for anything
+# else, and "anything else" is what this was.
+#
+# The consequence was not theoretical and it was not only about wifi.
+# The band's own Turn off button ran `systemctl poweroff`, polkit
+# refused it with no agent to ask, the return code was never looked at,
+# and the button did nothing at all, silently, forever. Plugging in a
+# USB stick failed the same way: udisks2's mount action is
+# `allow_active=yes` too.
+#
+# The wifi grant in /etc/polkit-1/rules.d was written for exactly this
+# problem and fixed exactly one button. Giving the service a session is
+# the general answer: it restores `allow_active` for everything the
+# distribution ships, rather than enumerating polkit actions one
+# discovered product bug at a time.
+#
+# It is our own PAM stack, not `login`, for a reason: a shipped image
+# expires the account's placeholder password on purpose, and the login
+# stack would refuse to open a session for an account in that state --
+# turning a deliberate security measure into a machine that does not
+# come up. Nothing here authenticates anybody. systemd has already
+# decided who runs this; PAM is here only to register the session.
+PAMName=aurshell
+# Wrapped in a session bus, and not as a nicety. A real desktop
+# application will not start at all without one: the first thing a
+# browser does on a machine with no session bus is fail with "Cannot
+# autolaunch D-Bus without X11 $DISPLAY" -- an error about X11, on a
+# machine that has no X11 and never will.
+#
+# This is a FLOOR, not the bus the desktop ends up on. logind gives
+# this user a bus of its own at $XDG_RUNTIME_DIR/bus, and everything
+# `systemd --user` starts -- wireplumber, pipewire-pulse, any portal --
+# is on that one. Two buses means the shell's applications cannot see
+# the rest of the desktop.
+#
+# It cannot be fixed by ordering, and that is worth writing down: the
+# user manager is started BY the logind session, and the logind session
+# is created by the PAMName= line above. Nothing can be ordered before
+# the thing that causes it. So aurshell adopts $XDG_RUNTIME_DIR/bus
+# itself the moment it appears -- a second or so into the boot, long
+# before anything is clicked -- and this wrapper is what a machine
+# whose user manager never starts falls back to. See run.c.
+# $AURSHELL_SAFE is empty unless the desktop has failed three times in
+# ten minutes; then it names the plain home and the machine's own
+# settings (aurshell.service.d/50-auros-safe-mode.conf, shell-guard).
+ExecStart=/usr/bin/dbus-run-session -- /usr/bin/aurshell $AURSHELL_SAFE
+
+# A Wayland socket has to live somewhere a client can find it, and a
+# system service gets no XDG_RUNTIME_DIR from anybody. This unit used
+# to answer that with Environment=XDG_RUNTIME_DIR=/run/auros.
+#
+# That is no longer the right answer, and it was quietly costing us
+# more than the Wayland socket. Now that PAMName= above gives this
+# service a real login session, logind creates /run/user/<uid> and
+# tells us about it -- and that is where the REST of the desktop's
+# sockets live. pipewire's is the one that matters: the sound server
+# is started by the user's own systemd, puts its socket there, and
+# nothing that looked in /run/auros was ever going to find it. The
+# machine had sound and no way to reach it.
+#
+# So the override is gone and PAM's answer is used. RuntimeDirectory
+# stays, because aurshell falls back to /run/auros if there is no
+# session at all, and the directory has to exist for that to work.
+RuntimeDirectory=auros
+RuntimeDirectoryMode=0700
+
+# The shell owns the display and reads evdev directly, so it needs the
+# tty and these groups rather than a seat from a display manager.
+#
+#   video   /dev/dri/card0 -- the display
+#   input   /dev/input/event* -- the keyboard, mouse and touchpad
+#   audio   so the person can hear things
+#
+# These are set here rather than left to the account's groups because
+# the requirement belongs to the service, not to whoever happens to run
+# it. The comment above said "the input group" for months while nothing
+# on the machine put anyone in it -- which nobody noticed, because
+# without a User= line this ran as root and group membership did not
+# matter.
+#
+# The User= itself is written by build/forge into a drop-in, because the
+# account name is a profile setting and this file is not templated.
+#
+# ONLY THE GROUPS THAT ALWAYS EXIST ARE NAMED HERE. systemd resolves
+# supplementary groups BEFORE ExecStart, and one it cannot resolve
+# aborts the unit with status=216/GROUP -- no desktop, and no aursorry
+# either, because the unit never ran. video, input and audio are
+# created by base packages and are always present.
+#
+# `bluetooth` and `lpadmin` are not: they exist only because bluez's
+# and cups-daemon's postinsts create them. Naming them here made the
+# desktop unbootable on any profile that trims those packages -- a
+# profile change, in a file that says nothing about systemd, producing
+# a black screen with no explanation anywhere. forge writes those into
+# the same drop-in that carries User=, filtered by which of them the
+# image actually has.
+SupplementaryGroups=video input audio
+# NO CAPABILITIES FOR THE SESSION: THE PROGRAMS CANNOT START WITH ANY.
+#
+# Measured in the booted image (PARITY, build 39972421083): aurshell, and
+# with it the session bus and every program it starts, carried
+# CAP_WAKE_ALARM in the inheritable, permitted, effective and ambient sets.
+# noble's bubblewrap (0.9.0, not setuid) refuses to run with ANY capability
+# ("bwrap: Unexpected capabilities but not setuid"), and bubblewrap is what
+# every Flatpak program starts through -- so all ten of the most used
+# programs installed fine from "Get more programs" and not one could open.
+#
+# Nothing in this tree grants it. Taking it out of the bounding set means
+# nothing below this line can have it, wherever it comes from (PAM, the
+# user manager, a default of the distribution), and the empty
+# AmbientCapabilities= says that no capability is handed to the session on
+# purpose. If a program of ours ever needs to wake the machine (a reminder
+# that wakes it from sleep), give THAT unit the capability; never the
+# session. tools/permissions.sh checks both lines and that nothing in the
+# unit or its drop-ins grants one back.
+CapabilityBoundingSet=~CAP_WAKE_ALARM
+AmbientCapabilities=
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+# WHEN THE SHELL FAILS, SAY SO, HERE.
+#
+# $SERVICE_RESULT is systemd's own word for how this unit ended, so a
+# clean stop -- a shutdown, a `systemctl stop`, the band's Turn off --
+# says nothing, and only an actual failure draws. aursorry paints one
+# screen, holds it long enough to read, and exits; systemd then applies
+# RestartSec and tries again. `-` so that a failure to apologise cannot
+# itself become the failure.
+ExecStopPost=-/bin/sh -c 'test "$SERVICE_RESULT" = success || /usr/bin/aursorry'
+
+Restart=on-failure
+RestartSec=2
+# No start limit. The usual reason for one is to stop a unit flapping,
+# and the message above already paces this: a machine that cannot start
+# its desktop spends most of its time showing a person a sentence about
+# that, rather than a few seconds flapping and then giving up on a
+# black screen. Giving up is the one outcome that helps nobody.
+#
+# Ctrl-Alt-F2 still reaches a console on a build with allow_tty="yes".
+# That is the technician's way in, and it is not the same thing as a
+# way in for the person who owns the machine.
+
+[Install]
+WantedBy=graphical.target

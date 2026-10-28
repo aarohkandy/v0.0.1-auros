@@ -1,0 +1,813 @@
+# The test suites, against one build's artifacts.
+#
+# Called by build.yml after every build (run-id = that run). Also runs on
+# its own when the head commit says [test]: then it tests the newest
+# build of this branch whose artifacts have not expired, without
+# building anything -- for a change to a test, or to see a flaky one
+# again. (workflow_dispatch would be the obvious way, and it only works
+# for workflows on the default branch.)
+#
+#   unit   the fast suites: aurfirsttest, choicestest (with the image's
+#          aurshell), nmtest, sessionenvtest, looktest, storetest,
+#          shrinktargettest, probetest, nvramtest, bridgetest,
+#          manifesttest, signtest, Ferry's, the console installer's
+#          selftest under Wine, and the data-safety suites that need no
+#          VM: gpttest, committest, bootchaintest
+#   wishes Wishes (W1/W2): wishuitest, wishgallerytest, wishpainttest, wishe2e,
+#          voicetest, each with its deliberate breakages. Apart from `unit`
+#          so that their 15 minutes cannot use up its 30 (build 39976151893).
+#   e2e    one job per end-to-end test, in QEMU with KVM: nosticktest,
+#          powercut-nostick (the power cut in the mode that ships, no
+#          memory stick: four jobs, S-11), powercuttest (the older mode,
+#          with a stick), firstboottest, installtest, bootupdatetest, updateboottest,
+#          choicesboottest, putbacktest, nmassumetest, storeoffline
+#
+# The scripts were written for a container without KVM, so each has
+# `-machine ...,accel=tcg` written into it. They are not edited for
+# this: a qemu-system-x86_64 earlier on PATH (/usr/local/bin, which
+# sudo's secure_path also puts first) turns accel=tcg into accel=kvm,
+# or into $AUROS_QEMU_ACCEL, and starts the real one.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      run-id:
+        description: the run whose artifacts are tested
+        type: string
+        required: true
+      suite:
+        description: gating (the suites a release waits for) or nostick (the power cut in the shipped mode, S-11)
+        type: string
+        default: gating
+
+permissions:
+  contents: read
+  actions: read
+
+# `bash` named explicitly is `bash -eo pipefail`; left to the default it
+# is `bash -e`, and `sh tools/x.sh | tee log` then passes whatever x
+# says.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  which:
+    # Decided without a runner where it can be: every push to the
+    # branch starts this workflow, and runners are shared by them all.
+    if: inputs.run-id != '' || contains(github.event.head_commit.message, '[test]') || contains(github.event.head_commit.message, '[test:nostick]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.w.outputs.go }}
+      run-id: ${{ steps.w.outputs.run_id }}
+      suite: ${{ steps.w.outputs.suite }}
+      matrix: ${{ steps.w.outputs.matrix }}
+    steps:
+      - id: w
+        env:
+          IN_RUN: ${{ inputs.run-id }}
+          IN_SUITE: ${{ inputs.suite }}
+          MSG: ${{ github.event.head_commit.message }}
+          BRANCH: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          go=false; rid=""
+          if [ -n "$IN_RUN" ]; then
+            go=true; rid=$IN_RUN
+          else
+            # In the subject line only, as in build.yml.
+            case "${MSG%%$'\n'*}" in *'[test]'*|*'[test:nostick]'*)
+              # The newest build of this branch with its artifacts still there.
+              rid=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=auros-installer&per_page=100" \
+                     --jq "[.artifacts[] | select(.expired == false and .workflow_run.head_branch == \"$BRANCH\") | .workflow_run.id] | first // empty")
+              [ -n "$rid" ] || { echo "::error::no build of $BRANCH has artifacts left; push with [build]"; exit 1; }
+              go=true ;;
+            esac
+          fi
+          suite=${IN_SUITE:-gating}
+          case "${MSG%%$'\n'*}" in *'[test:nostick]'*) [ -n "$IN_RUN" ] || suite=nostick ;; esac
+          echo "go=$go" | tee -a "$GITHUB_OUTPUT"
+          echo "run_id=$rid" | tee -a "$GITHUB_OUTPUT"
+          echo "suite=$suite" | tee -a "$GITHUB_OUTPUT"
+          # The KVM jobs of this suite, longest first (GitHub starts them
+          # in this order). gating is the suites build.yml's `tests` runs;
+          # nostick is the power cut in the mode that ships (S-11), run by
+          # build.yml's `powercut` job. BOTH are gates of a release
+          # (release.yml's `which`, tools/releasegate.py); the second may
+          # fail only as .github/ci-allow.txt says, with a date.
+          python3 - "$suite" <<'PY' | tee -a "$GITHUB_OUTPUT"
+          import json, sys
+          def t(test, label, args="", only="", image=False):
+              return {"test": test, "label": label, "args": args, "only": only, "image": image}
+          gating = [
+              t("nosticktest", "nosticktest"),
+              t("powercuttest", "powercuttest"),
+              t("firstboottest", "firstboottest", "desktop", image=True),
+              t("installtest", "installtest"),
+              t("bootupdatetest", "bootupdatetest", image=True),
+              # an AurOS update on the real image under Secure Boot: arrives
+              # while the desktop runs, a broken one undoes itself, the fix
+              # installs (S5; green 16/16 on aptrepo runs 39965081792 and
+              # 39967482502). ~12 minutes.
+              t("updateboottest", "updateboottest", image=True),
+              t("choicesboottest", "choicesboottest", image=True),
+              t("putbacktest", "putbacktest", image=True),
+              t("windowsboottest", "windowsboottest", image=True),
+              t("rollbacktest", "rollbacktest", image=True),
+              t("bootlocktest", "bootlocktest", image=True),
+              # The first desktop session inherits a card staging already
+              # brought up. Prove NetworkManager takes it over, and that the
+              # fix is what makes the difference (two real image boots).
+              t("nmassumetest", "nmassumetest", "out/auros-desktop.img", image=True),
+              # The store must still show programs and find VLC when there is
+              # no network. Keep its screenshots and GNOME Software logs with
+              # the job transcript.
+              t("storeoffline", "storeoffline", "out/auros-desktop.img $PWD/transcripts/storeoffline-out", image=True),
+              # CIW: the data-safety suites that need QEMU. failtest boots the full image with
+              # its desktop made to fail and looks at the screen (~7 minutes with a cold image).
+              t("failtest", "failtest", image=True),
+              t("matrixtest", "matrixtest"),
+              t("loadertest", "loadertest"),
+          ]
+          # tools/powercut-nostick.sh takes instants as arguments; with none it
+          # also runs "what the screen says" and the restore half. About 60
+          # minutes whole, so four jobs; each boots a reference install first.
+          nostick = [
+              t("powercut-nostick", "powercut-nostick-restore", only="restore"),
+              t("powercut-nostick", "powercut-nostick-commit", "commit-array commit-sector commit-backup boot-entry settle-end"),
+              t("powercut-nostick", "powercut-nostick-write", "write-mid write-end boot-mid boot-end"),
+              t("powercut-nostick", "powercut-nostick-early", "gate shrink-begin shrink-end mirror-end"),
+          ]
+          chosen = nostick if sys.argv[1] == "nostick" else gating
+          # two jobs with one label upload one artifact name twice (HTTP 409
+          # fails the second) and read as one job to tools/releasegate.py;
+          # run 39973122644 had updateboottest twice after two merges
+          labels = [e["label"] for e in chosen]
+          dup = sorted({l for l in labels if labels.count(l) > 1})
+          if dup:
+              sys.exit("duplicate matrix label(s): %s" % ", ".join(dup))
+          print("matrix=" + json.dumps({"include": chosen}))
+          PY
+          [ -z "$rid" ] || echo "testing the artifacts of $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$rid" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  unit:
+    needs: which
+    if: needs.which.outputs.go == 'true' && needs.which.outputs.suite == 'gating'
+    runs-on: ubuntu-24.04
+    # 45, not 30: a timeout shows as "cancelled" and the release gate reads it
+    # as a failure; run 40001908921's unit spent 5 minutes on one artifact
+    # download under load before it began and was cut at exactly 30.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: tools
+        run: |
+          sh tools/apt.sh \
+              gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev wine wine64 osslsigncode openssl python3 gcc libc6-dev make \
+              grub-common gdisk mtools dosfstools cpio sbsigntool libxml2-utils file \
+              binutils zstd e2fsprogs fonts-dejavu-core fonts-atkinson-hyperlegible ovmf pkg-config libdbus-1-dev libwayland-dev libxkbcommon-dev xkb-data exfatprogs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: auros-installer
+          path: dl/installer
+          run-id: ${{ needs.which.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: auros-rootfs
+          path: dl/rootfs
+          run-id: ${{ needs.which.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: the build's out/ and work/, put back where the tests look
+        id: setup
+        run: |
+          mkdir -p out transcripts
+          cp dl/installer/aurbridge.exe dl/installer/aurbridge-wizard.exe dl/installer/aurbridge-sim \
+             dl/installer/auros-staging.img dl/installer/auros-staging-vmlinuz dl/installer/auros-staging-*.efi out/
+          chmod +x out/aurbridge-sim
+          sudo mkdir -p work/forge/desktop
+          zstd -dc dl/rootfs/rootfs.tar.zst | sudo tar -C work/forge/desktop --numeric-owner -xf -
+          rm -rf dl/rootfs
+          # build/staging's tree (tools/machine.sh takes its modules).
+          # A build from before it was an artifact: remade from the same
+          # rootfs, which is where its modules come from, into a scratch
+          # out/ so the tested files are untouched.
+          if [ -f dl/installer/staging-work.tar.zst ]; then
+            zstd -dc dl/installer/staging-work.tar.zst | sudo tar -C work --numeric-owner -xf -
+          else
+            sudo AUROS_STAGING_OUT="$RUNNER_TEMP/staging-out" ./build/staging desktop > /dev/null
+          fi
+          sudo test -d work/staging/lib/modules
+          cat dl/installer/build-info.txt
+      - name: legal sources test and pack check (stream LEGAL; seconds)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          python3 -I tools/legal/sourcestest.py 2>&1 | tee transcripts/legal-sourcestest.txt
+          python3 -I tools/legal/check.py 2>&1 | tee transcripts/legal-check.txt
+      - name: repotest (no repository named by hand)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/repotest.sh 2>&1 | tee transcripts/repotest.txt
+      - name: staging kernel arguments (same hardening before and after handover)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: python3 -I tools/bootargstest.py 2>&1 | tee transcripts/bootargstest.txt
+      - name: customization recipe contract (strict data and profile policy)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: python3 -m unittest discover -s src/customize/tests -v 2>&1 | tee transcripts/customization.txt
+      - name: customization build adapter (typed overrides and source identity)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/customize/test.sh 2>&1 | tee transcripts/customization-build.txt
+      # WP-15 (stream OPS): once the owner sets the repository variable
+      # AUROS_DOMAIN, no GitHub or workers.dev address may be left in what
+      # an installed PC keeps. Until then it prints them and passes.
+      - name: addrtest (no GitHub address in the image, the staging environment, the exe)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        env:
+          AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
+        run: |
+          python3 -I tools/ops/addrtest.py --selftest 2>&1 | tee transcripts/addrtest.txt
+          sudo env AUROS_DOMAIN="$AUROS_DOMAIN" python3 -I tools/ops/addrtest.py --rootfs work/forge/desktop/rootfs \
+              --initramfs out/auros-staging.img --exe dl/installer/AurOS-Setup.exe 2>&1 | tee -a transcripts/addrtest.txt
+      - name: wishesoff (Wishes are not in the v0.1 image, D14)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          { sh tools/wishesoff.sh selftest && sh tools/wishesoff.sh work/forge/desktop/rootfs; } 2>&1 | tee transcripts/wishesoff.txt
+      - name: aurfirsttest
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/aurfirsttest.sh 2>&1 | tee transcripts/aurfirsttest.txt
+      - name: choicestest
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          # AURSHELL: the image's own aurshell, through the image's own
+          # loader and libraries, for the "the desktop starts as" checks.
+          R="$PWD/work/forge/desktop/rootfs"
+          printf '#!/bin/sh\nexec "%s/lib64/ld-linux-x86-64.so.2" --library-path "%s/usr/lib/x86_64-linux-gnu:%s/lib/x86_64-linux-gnu" "%s/usr/bin/aurshell" "$@"\n' \
+              "$R" "$R" "$R" "$R" > "$RUNNER_TEMP/aurshell"
+          chmod +x "$RUNNER_TEMP/aurshell"
+          AURSHELL="$RUNNER_TEMP/aurshell" sh tools/choicestest.sh 2>&1 | tee transcripts/choicestest.txt
+          grep -q 'the desktop starts as' transcripts/choicestest.txt \
+            || { echo "choicestest did not start the image's aurshell"; exit 1; }
+      - name: permissions (what she may do, and what nobody at the keyboard may)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo env RFS=work/forge/desktop/rootfs sh tools/permissions.sh 2>&1 | tee transcripts/permissions.txt
+      - name: journeytest (her first ten minutes, every look, both sizes)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/journeytest.sh 2>&1 | tee transcripts/journeytest.txt
+      - name: notifytest (programs can tell her things; nothing vanishes, nothing piles up)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/notifytest" tools/notifytest.c src/aurshell/notify.c \
+             src/aurshell/osd.c src/aurshell/foot.c src/aurshell/draw.c src/aurshell/shellcommon.c \
+             src/aurshell/anim.c src/aurshell/layouts/*.c src/common/theme.c src/common/font.c \
+             $(pkg-config --cflags --libs dbus-1) -I src/aurshell -I src/common -lm
+          "$RUNNER_TEMP/notifytest" 2>&1 | tee transcripts/notifytest.txt
+          # Without a bus the half that matters is skipped: not a pass.
+          grep -q 'the shell claims org.freedesktop.Notifications *ok' transcripts/notifytest.txt
+      - name: fonttest (every word in the weight the theme asked for)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/fonttest.sh 2>&1 | tee transcripts/fonttest.txt
+      - name: presstest (a double-click is one press)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/presstest" tools/presstest.c src/aurshell/press.c
+          "$RUNNER_TEMP/presstest" 2>&1 | tee transcripts/presstest.txt
+      - name: icontest (every icon told apart; the mark)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/icontest" tools/icontest.c src/aurshell/apps.c \
+             src/aurshell/appwatch.c src/aurshell/foot.c src/aurshell/draw.c \
+             src/aurshell/shellcommon.c src/aurshell/anim.c src/aurshell/layouts/*.c \
+             src/common/theme.c src/common/font.c src/common/png.c -I src/aurshell -I src/common -lm
+          "$RUNNER_TEMP/icontest" "$RUNNER_TEMP/icons.png" 2>&1 | tee transcripts/icontest.txt
+      - name: textsystest (Bigger reaches her programs)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/textsystest" tools/textsystest.c \
+             src/aurshell/textsys.c src/aurshell/run.c src/aurshell/cursor.c src/aurshell/draw.c \
+             -I src/aurshell -lm
+          "$RUNNER_TEMP/textsystest" 2>&1 | tee transcripts/textsystest.txt
+      - name: fallbacktest (letters the UI face lacks are drawn, not boxed)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/fallbacktest" tools/fallbacktest.c src/common/font.c -I src/common -lm
+          "$RUNNER_TEMP/fallbacktest" 2>&1 | tee transcripts/fallbacktest.txt
+      - name: lookboottest (the look she picked survives a restart)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          R="$PWD/work/forge/desktop/rootfs"
+          printf '#!/bin/sh\nexec "%s/lib64/ld-linux-x86-64.so.2" --library-path "%s/usr/lib/x86_64-linux-gnu:%s/lib/x86_64-linux-gnu" "%s/usr/bin/aurshell" "$@"\n' \
+              "$R" "$R" "$R" "$R" > "$RUNNER_TEMP/aurshell-look"
+          chmod +x "$RUNNER_TEMP/aurshell-look"
+          AURSHELL="$RUNNER_TEMP/aurshell-look" sh tools/lookboottest.sh 2>&1 | tee transcripts/lookboottest.txt
+      - name: cursortest (the pointer can be found, about 32 px)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: AURSHELL="$RUNNER_TEMP/aurshell-look" sh tools/cursortest.sh 2>&1 | tee transcripts/cursortest.txt
+      - name: nmtest (the image's NetworkManager - the cable is managed, names resolve)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: RFS=work/forge/desktop/rootfs sh tools/nmtest.sh 2>&1 | tee transcripts/nmtest.txt
+      - name: storecatalogue (the image carries Flathub catalogue - VLC is in it, and its icons - and the check is red on five broken trees)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          { sh tools/storecatalogue.sh selftest && sh tools/storecatalogue.sh work/forge/desktop/rootfs; } 2>&1 | tee transcripts/storecatalogue.txt
+      - name: softwarereadytest (the catalogue and apt's lists have a stamp each; why a step failed reaches the journal; three deliberate breakages)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          { sh tools/softwarereadytest.sh
+            for b in stamp why wake; do
+              if sh tools/softwarereadytest.sh --break=$b >/dev/null 2>&1; then echo "softwarereadytest: --break=$b was NOT caught"; exit 1; fi
+              echo "softwarereadytest: --break=$b is caught"
+            done; } 2>&1 | tee transcripts/softwarereadytest.txt
+      - name: everydaytest (printer.local resolves; Word and Excel open in Writer and Calc; every program's open goes where a double-click would)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: RFS=work/forge/desktop/rootfs sh tools/everydaytest.sh 2>&1 | tee transcripts/everydaytest.txt
+      - name: updatepolicytest (everything updates by itself; nothing interrupts her; the image's key)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo bash tools/updatepolicytest.sh static work/forge/desktop/rootfs 2>&1 | tee transcripts/updatepolicytest.txt
+      - name: updatepolicytest dryrun (would the built image's own unattended-upgrade install an Ubuntu security update? TM-1)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo bash tools/updatepolicytest.sh dryrun work/forge/desktop/rootfs 2>&1 | tee transcripts/updatepolicytest-dryrun.txt
+      - name: theme-test (every template resolves in every theme; text on an accent or error fill is 4.5:1 in all five, the Light one included)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/theme-test.sh 2>&1 | tee transcripts/theme-test.txt
+      - name: screentest (the staging screen - her sentences, no log lines, the code only on failure, and now the UI face, the heading and the mark)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/screentest.sh 2>&1 | tee transcripts/screentest.txt
+      - name: renametest (build/forge's own rename loop - Internet, Your files, Get more programs and the rest - on stand-in desktop files)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/renametest.sh 2>&1 | tee transcripts/renametest.txt
+      - name: contrast-test (the shell's palette in Light and Dark - text, rules and the words on the accent at 4.5:1 - and the other three themes' meaning pairs)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/contrast-test.sh 2>&1 | tee transcripts/contrast-test.txt
+      - name: unbrandtest container (Ubuntu's icon theme and name are gone, GTK's icons and Ubuntu's updates are not; the code of build/forge, on a clean Ubuntu 24.04)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: docker run --rm -v "$PWD":/w:ro ubuntu:24.04 bash /w/tools/unbrandtest.sh container 2>&1 | tee transcripts/unbrandtest.txt
+      - name: unbrandtest image (the built image keeps its name and its icons through a base-files update)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo bash tools/unbrandtest.sh image work/forge/desktop/rootfs 2>&1 | tee transcripts/unbrandtest-image.txt
+      - name: sessionenvtest
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/sessionenvtest" tools/sessionenvtest.c src/aurshell/run.c -I src/aurshell
+          "$RUNNER_TEMP/sessionenvtest" 2>&1 | tee transcripts/sessionenvtest.txt
+      - name: looktest
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/looktest" tools/looktest.c \
+             src/aurshell/settings.c src/aurshell/power.c src/aurshell/run.c \
+             src/aurshell/foot.c src/aurshell/welcome.c src/aurshell/draw.c \
+             src/aurshell/shellcommon.c src/aurshell/anim.c \
+             src/aurshell/layouts/[a-z]*.c src/common/theme.c src/common/font.c \
+             -I src/aurshell -I src/common -lm
+          "$RUNNER_TEMP/looktest" 2>&1 | tee transcripts/looktest.txt
+      - name: nvramtest
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo sh tools/nvramtest.sh 2>&1 | tee transcripts/nvramtest.txt
+      - name: handover mount rollback and cleanup
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/handover-mounttest.sh 2>&1 | tee transcripts/handover-mounttest.txt
+      - name: bridgetest
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/bridgetest.sh 2>&1 | tee transcripts/bridgetest.txt
+      - name: hwtest (the PC inventory and the compatibility matcher; stream HW)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/hw/hwtest.sh 2>&1 | tee transcripts/hwtest.txt
+      - name: helptest (the help pages work offline, in her words)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: python3 -I tools/helptest.py 2>&1 | tee transcripts/helptest.txt
+      - name: storetest (Get more programs within two presses of every home)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/storetest" tools/storetest.c src/aurshell/apps.c \
+             src/aurshell/appwatch.c src/aurshell/foot.c src/aurshell/draw.c \
+             src/aurshell/shellcommon.c src/aurshell/anim.c src/aurshell/layouts/*.c \
+             src/common/theme.c src/common/font.c -I src/aurshell -I src/common -lm
+          "$RUNNER_TEMP/storetest" 2>&1 | tee transcripts/storetest.txt
+      - name: welcometest (the question, whose files, the USB stick - what each button asks for)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/welcometest.d"
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/welcometest" tools/welcometest.c \
+             src/aurshell/welcome.c src/aurshell/run.c src/aurshell/foot.c src/aurshell/draw.c \
+             src/aurshell/shellcommon.c src/aurshell/anim.c src/aurshell/layouts/*.c \
+             src/common/theme.c src/common/font.c -I src/aurshell -I src/common -lm \
+             -DWELCOME_RUN="\"$RUNNER_TEMP/welcometest.d\"" \
+             -DWELCOME_ANSWER="\"$RUNNER_TEMP/welcometest.d/answer.d\"" \
+             -DWELCOME_STATE="\"$RUNNER_TEMP/welcometest.d/first.state\"" \
+             -DWELCOME_FERRY="\"$RUNNER_TEMP/welcometest.d/ferry\"" \
+             -DWELCOME_FOUND="\"$RUNNER_TEMP/welcometest.d/found.json\""
+          "$RUNNER_TEMP/welcometest" 2>&1 | tee transcripts/welcometest.txt
+      - name: windowspagetest (Put Windows back - her files first, and why when it cannot)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/windowspagetest.d/answer.d"
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/windowspagetest" tools/windowspagetest.c \
+             src/aurshell/settings.c src/aurshell/power.c src/aurshell/run.c \
+             src/aurshell/foot.c src/aurshell/welcome.c src/aurshell/draw.c \
+             src/aurshell/shellcommon.c src/aurshell/anim.c \
+             src/aurshell/layouts/[a-z]*.c src/common/theme.c src/common/font.c \
+             -I src/aurshell -I src/common -lm \
+             -DWELCOME_RUN="\"$RUNNER_TEMP/windowspagetest.d\"" \
+             -DWELCOME_ANSWER="\"$RUNNER_TEMP/windowspagetest.d/answer.d\"" \
+             -DWELCOME_STATE="\"$RUNNER_TEMP/windowspagetest.d/first.state\"" \
+             -DWELCOME_FERRY="\"$RUNNER_TEMP/windowspagetest.d/ferry\""
+          "$RUNNER_TEMP/windowspagetest" 2>&1 | tee transcripts/windowspagetest.txt
+      - name: targets (everything she has to press is big enough, at every size)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/targets" tools/targets.c src/aurshell/foot.c \
+             src/aurshell/draw.c src/aurshell/shellcommon.c src/aurshell/anim.c \
+             src/aurshell/net.c src/aurshell/settings.c src/aurshell/bt.c \
+             src/aurshell/welcome.c src/aurshell/run.c src/aurshell/power.c \
+             src/aurshell/layouts/*.c src/common/theme.c src/common/font.c \
+             -I src/aurshell -I src/common -lm
+          "$RUNNER_TEMP/targets" 2>&1 | tee transcripts/targets.txt
+      - name: csdtest (a program that draws its own title bar gets none of ours)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/csdtest" tools/csdtest.c src/aurshell/draw.c \
+             src/aurshell/shellcommon.c src/aurshell/anim.c src/aurshell/foot.c \
+             src/aurshell/layouts/[a-z]*.c src/common/theme.c src/common/font.c \
+             -I src/aurshell -I src/common -lm
+          "$RUNNER_TEMP/csdtest" 2>&1 | tee transcripts/csdtest.txt
+      - name: primarytest (one lit button per panel - Help, Settings and its pages, Wi-Fi, Bluetooth; the first-run screens are journeytest's)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          printf '<p>help</p>\n' > "$RUNNER_TEMP/index.html"
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/primarytest" tools/primarytest.c -DFOOT_HELP_PAGES="\"$RUNNER_TEMP/index.html\"" \
+             src/aurshell/settings.c src/aurshell/net.c src/aurshell/bt.c src/aurshell/power.c src/aurshell/run.c \
+             src/aurshell/foot.c src/aurshell/welcome.c src/aurshell/draw.c src/aurshell/shellcommon.c src/aurshell/anim.c \
+             src/aurshell/layouts/[a-z]*.c src/common/theme.c src/common/font.c -I src/aurshell -I src/common -lm
+          "$RUNNER_TEMP/primarytest" 2>&1 | tee transcripts/primarytest.txt
+      - name: floorstest (18 px words at every text size; 44 px controls on the screen in all four looks - dock cells, rail rows, taskbar rows, tiles, title-bar buttons)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cc -O2 -std=gnu11 -o "$RUNNER_TEMP/floorstest" tools/floorstest.c src/aurshell/draw.c \
+             src/aurshell/shellcommon.c src/aurshell/anim.c src/aurshell/foot.c \
+             src/aurshell/layouts/[a-z]*.c src/common/theme.c src/common/font.c \
+             -I src/aurshell -I src/common -lm
+          "$RUNNER_TEMP/floorstest" 2>&1 | tee transcripts/floorstest.txt
+      # CIW: the ten C unit tests tools/README.md lists that no workflow compiled.
+      # tools/ctests.sh builds and runs all of them and names the ones that fail.
+      - name: ctests (modal panels, hit-testing, the kiosk allow-list, launching, wifi, power, row stride, bluetooth, typing, touchpads)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/ctests.sh 2>&1 | tee transcripts/ctests.txt
+      - name: shrinktargettest
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/shrinktargettest.sh 2>&1 | tee transcripts/shrinktargettest.txt
+      # A real Windows volume makes ntfsresize print ~1,660 progress lines before
+      # its answer; the staging environment once dropped the answer and refused
+      # every real PC ("could be read but not measured"). This links the real
+      # shrink.c against a fake ntfsresize that prints 0 to 5000 of them.
+      - name: measuretest (the staging measures a real volume's ntfsresize output)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/e2e/measuretest.sh 2>&1 | tee transcripts/measuretest.txt
+      - name: probetest
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo sh tools/probetest.sh 2>&1 | tee transcripts/probetest.txt
+      - name: gapfencetest
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/gapfencetest.sh 2>&1 | tee transcripts/gapfencetest.txt
+      # The partition table and the commit point: the one-sector writes
+      # that decide whether her disk still has Windows on it.
+      - name: gpttest (the partition table, read and written back)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/gpttest.sh 2>&1 | tee transcripts/gpttest.txt
+      - name: committest (until LBA 1 lands, the old layout)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/committest.sh 2>&1 | tee transcripts/committest.txt
+      - name: bootchaintest (auros-bootchain refuses what would not start)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo sh tools/bootchaintest.sh work/forge/desktop/rootfs 2>&1 | tee transcripts/bootchaintest.txt
+      - name: grubshelltest (no grub menu AurOS writes offers a shell)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/grubshelltest.sh work/forge/desktop/rootfs 2>&1 | tee transcripts/grubshelltest.txt
+      # CIW: the data-safety and install scripts the docs call proof and no workflow ran
+      # (docs/reviews/CI-TRUTH-2026-10-24.md D.12). Each was shown to go red on a mutant of the
+      # code it guards (docs/handoff/streams/CIW.md). Root, because they mount, loop and resize.
+      - name: wrtest (writes land only where they were armed to; no second file may open a disk writably)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo sh tools/wrtest.sh 2>&1 | tee transcripts/wrtest.txt
+      - name: healthtest (it refuses a laptop on battery and a drive with a sector it cannot read)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/healthtest.sh 2>&1 | tee transcripts/healthtest.txt
+      - name: ntfstest (the NTFS reader refuses BitLocker, a dirty volume, a hibernated Windows, a busy log)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo sh tools/ntfstest.sh 2>&1 | tee transcripts/ntfstest.txt
+      - name: shrinktest (the one step with no way back - a real NTFS volume shrinks and every file survives)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sudo sh tools/shrinktest.sh 2>&1 | tee transcripts/shrinktest.txt
+      - name: termstest (the Terms she agreed to are in the install journal, and only then)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/termstest.sh 2>&1 | tee transcripts/termstest.txt
+      - name: handoverlinuxtest (her files, in a file in AurOS's root, at the disk address AurOS gives)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          # The runner's kernel (linux-azure) has no exfat driver: mount -t exfat finds
+          # /sbin/mount.exfat first when it exists, and exfat-fuse is the same format
+          # through FUSE. (modprobe first, in case a newer image has the driver.)
+          sudo modprobe exfat 2>/dev/null || { sh tools/apt.sh exfat-fuse; sudo ln -sf mount.exfat-fuse /sbin/mount.exfat; }
+          sudo sh tools/handoverlinuxtest.sh 2>&1 | tee transcripts/handoverlinuxtest.txt
+      - name: manifesttest (the published wizard)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/manifesttest.sh dl/installer/AurOS-Setup.exe 2>&1 | tee transcripts/manifesttest.txt
+      - name: Ferry (make && tests/run.sh)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          cd src/ferry && make && sh tests/run.sh 2>&1 | tee ../../transcripts/ferry.txt
+      - name: aurbridge-sim selftests
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          { out/aurbridge-sim gzselftest && out/aurbridge-sim sbselftest; } 2>&1 | tee transcripts/simselftest.txt
+      - name: aurbridge.exe selftest under Wine
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        env:
+          WINEDEBUG: -all
+          WINEDLLOVERRIDES: mscoree,mshtml=
+        run: |
+          wineboot -i >/dev/null 2>&1 || true
+          wine out/aurbridge.exe selftest 2>&1 | tee transcripts/wineselftest.txt
+      # CIW: exetest signs and rebuilds the installer (build/aurbridge) in this tree, so like
+      # signtest it must come after everything that reads out/.
+      - name: exetest (one file - the staging environment is inside the .exe, signing leaves it be, a download resumes)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/exetest.sh 2>&1 | tee transcripts/exetest.txt
+      # Last: its final check runs build/aurbridge in this tree, which
+      # rewrites out/.
+      - name: signtest
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: sh tools/signtest.sh 2>&1 | tee transcripts/signtest.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: transcripts-unit
+          path: transcripts/
+          retention-days: 30
+      # The end of each transcript, at the end of the log, which is the
+      # part the GitHub tools show (artifacts cannot be fetched from the
+      # development container).
+      - name: summary
+        if: ${{ !cancelled() }}
+        run: |
+          for f in transcripts/*.txt; do
+            echo "=== $(basename "$f" .txt)"; tail -n 3 "$f"
+          done
+
+  # CIW: the encrypted drive and its PIN (docs/security/THEFT.md), on a file against a
+  # software security chip. Apart from `unit` so that a runner without device-mapper or swtpm
+  # fails by itself and cannot take the unit gate down. The feature is switched off in the
+  # image; the test of the code that will turn it on is not.
+  theft:
+    needs: which
+    if: needs.which.outputs.go == 'true' && needs.which.outputs.suite == 'gating'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: tools
+        run: |
+          sh tools/apt.sh cryptsetup-bin libcryptsetup-dev systemd swtpm swtpm-tools tpm2-tools \
+              libtss2-tcti-swtpm0t64 gcc libc6-dev e2fsprogs util-linux fonts-dejavu-core
+          mkdir -p transcripts
+      - name: theftunit (the PIN, the rescue code, a wrong PIN, a locked chip, a different chip, no chip)
+        run: sudo bash tools/theftunit.sh 2>&1 | tee transcripts/theftunit.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: transcripts-theft
+          path: transcripts/
+          retention-days: 30
+
+  # Wishes (streams W1 and W2). These tests build and break whole copies of
+  # the tree (every mutant is a sanitized build), about 15 minutes of work; in
+  # the unit job they used up its 30 minutes and cancelled the steps after
+  # them (build 39976151893). Apart, with a limit of their own, they cannot
+  # take the unit gate down. The release gate does not read this job: Wishes
+  # are not in the v0.1 image (D14).
+  wishes:
+    needs: which
+    if: needs.which.outputs.go == 'true' && needs.which.outputs.suite == 'gating'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [ui, voice]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: tools
+        run: |
+          sh tools/apt.sh gcc libc6-dev make python3 pkg-config libdbus-1-dev curl fonts-dejavu-core
+          mkdir -p transcripts
+      - name: wishuitest (Wishes, what she sees and says; then 36 deliberate breakages)
+        if: ${{ !cancelled() && matrix.suite == 'ui' }}
+        run: sh tools/wishuitest.sh 2>&1 | tee transcripts/wishuitest.txt
+      - name: wishgallerytest (every wish she can press is one the engine accepts)
+        if: ${{ !cancelled() && matrix.suite == 'ui' }}
+        run: sh tools/wishgallerytest.sh 2>&1 | tee transcripts/wishgallerytest.txt
+      - name: wishpainttest (no word she has to read is ever cut off; then 8 deliberate breakages)
+        if: ${{ !cancelled() && matrix.suite == 'ui' }}
+        run: sh tools/wishpainttest.sh 2>&1 | tee transcripts/wishpainttest.txt
+      - name: wishe2e (the potato, end to end through W1's real engine)
+        if: ${{ !cancelled() && matrix.suite == 'ui' }}
+        run: sh tools/wishe2e.sh 2>&1 | tee transcripts/wishe2e.txt
+      - name: voicetest (aurvoice, her voice stays in memory; 17 deliberate breakages)
+        if: ${{ !cancelled() && matrix.suite == 'voice' }}
+        run: sh tools/voicetest.sh 2>&1 | tee transcripts/voicetest.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: transcripts-wishes-${{ matrix.suite }}
+          path: transcripts/
+          retention-days: 30
+      - name: summary
+        if: ${{ !cancelled() }}
+        run: |
+          for f in transcripts/*.txt; do
+            echo "=== $(basename "$f" .txt)"; tail -n 3 "$f"
+          done
+
+  # Stream WL2: the compositor's own tests were in fuzz.yml, which no release read (W16). As a job of
+  # tests.yml they are gates: releasegate.py refuses a release if any `tests / ...` job is not green,
+  # and requires `tests / wl (checks)` to exist. `mutants-N` break the compositor/shell in one
+  # place at a time (tools/wltest-sub-mutants.py, tools/notifytest-mutants.py) and require the
+  # test aimed at it to say FAIL, so a check that can no longer fail turns the release red.
+  wl:
+    needs: which
+    if: needs.which.outputs.go == 'true' && needs.which.outputs.suite == 'gating'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [checks, mutants-1, mutants-2, mutants-3, mutants-4]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: tools
+        run: |
+          sh tools/apt.sh clang gcc libc6-dev make python3 pkg-config libwayland-dev libxkbcommon-dev \
+              libdbus-1-dev dbus libglib2.0-bin xkb-data fonts-dejavu-core
+          mkdir -p transcripts
+      - name: fuzz regressions (every crash a fuzzer ever found, ASan + UBSan)
+        if: ${{ matrix.part == 'checks' }}
+        run: sh tools/fuzz/regress.sh "$RUNNER_TEMP/fuzz" 2>&1 | tee transcripts/fuzz-regress.txt
+      - name: wltest-sub (subsurfaces, pointer, drag and drop, idle, cursors; ASan + UBSan)
+        if: ${{ matrix.part == 'checks' }}
+        run: sh tools/wltest-sub.sh -asan 2>&1 | tee transcripts/wltest-sub.txt
+      - name: wltest-x (the X window manager and the clipboard bridge; ASan + UBSan)
+        if: ${{ matrix.part == 'checks' }}
+        run: sh tools/wltest-x.sh -asan 2>&1 | tee transcripts/wltest-x.txt
+      - name: wltest-xlife (Xwayland starts, is reaped, restarts, and eventually gives up; ASan + UBSan)
+        if: ${{ matrix.part == 'checks' }}
+        run: sh tools/wltest-xlife.sh -asan 2>&1 | tee transcripts/wltest-xlife.txt
+      - name: wltest-dialog (a dialog opens in front of its program in either mapping order)
+        if: ${{ matrix.part == 'checks' }}
+        run: timeout 300 sh tools/wltest-dialog.sh 2>&1 | tee transcripts/wltest-dialog.txt
+      - name: wltest-deco (a program's own title bar, the keyboard, the menus)
+        if: ${{ matrix.part == 'checks' }}
+        run: sh tools/wltest-deco.sh 2>&1 | tee transcripts/wltest-deco.txt
+      - name: wishtest-hook (the typed-word matcher never sees a secret or an X program)
+        if: ${{ matrix.part == 'checks' }}
+        run: |
+          cc -std=gnu11 -g -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all \
+             -I src/aurwl tools/wishtest-hook.c src/aurwl/wishhook.c -o "$RUNNER_TEMP/wishhook"
+          "$RUNNER_TEMP/wishhook" 2>&1 | tee transcripts/wishtest-hook.txt
+      - name: the screensaver service, with a deliberate breakage each (tools/notifytest-mutants.py)
+        if: ${{ matrix.part == 'checks' }}
+        run: python3 tools/notifytest-mutants.py 2>&1 | tee transcripts/notifytest-mutants.txt
+      - name: the compositor's mutants, a quarter each (tools/wltest-sub-mutants.py)
+        if: ${{ startsWith(matrix.part, 'mutants-') }}
+        run: python3 tools/wltest-sub-mutants.py --shard "${MATRIX_PART#mutants-}/4" 2>&1 | tee transcripts/mutants.txt
+        env:
+          MATRIX_PART: ${{ matrix.part }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: transcripts-wl-${{ matrix.part }}
+          path: transcripts/
+          retention-days: 30
+
+  e2e:
+    needs: which
+    if: needs.which.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      # The free plan runs 20 jobs at a time for the whole repository,
+      # and a dozen workflows share them (docs/handoff/STREAMS.md). Four
+      # lanes: the two ~25-minute tests each get a lane and the rest share
+      # two, so the suite takes as long as its longest test.
+      # (six: the gating suite has grown to twelve jobs; a lane limit of four
+      # put the slowest test behind others and added ~15 minutes to every release)
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.which.outputs.matrix) }}
+    name: e2e (${{ matrix.label }})
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: KVM, QEMU, OVMF
+        run: |
+          T0=$(date +%s); echo "T0=$T0" >> "$GITHUB_ENV"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+              sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sh tools/apt.sh \
+              qemu-system-x86 qemu-utils ovmf gdisk dosfstools mtools e2fsprogs cpio python3 \
+              zstd grub-common sbsigntool file binutils iproute2 gcc libc6-dev swtpm python3-cryptography fdisk
+          ls -l /dev/kvm
+          [ -w /dev/kvm ] || { echo "no usable /dev/kvm"; exit 1; }
+          ls -l /usr/share/OVMF/
+          dpkg -l ovmf qemu-system-x86 | tail -2
+          # accel=tcg -> accel=kvm, without touching the test scripts.
+          sudo tee /usr/local/bin/qemu-system-x86_64 >/dev/null <<'EOF'
+          #!/bin/sh
+          # CI only (tests.yml): the end-to-end tests ask for TCG because
+          # the container they were written in has no KVM.
+          accel="${AUROS_QEMU_ACCEL:-kvm}"
+          for a do
+              shift
+              case "$a" in *accel=tcg*) a=$(printf '%s' "$a" | sed "s/accel=tcg/accel=$accel/") ;; esac
+              set -- "$@" "$a"
+          done
+          exec /usr/bin/qemu-system-x86_64 "$@"
+          EOF
+          sudo chmod 755 /usr/local/bin/qemu-system-x86_64
+          sudo sh -c 'command -v qemu-system-x86_64'
+      - name: nmassumetest's isolated KVM image
+        if: matrix.test == 'nmassumetest'
+        run: docker build -t a2-kvm:latest tools/parity
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: auros-installer
+          path: dl/installer
+          run-id: ${{ needs.which.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: auros-rootfs
+          path: dl/rootfs
+          run-id: ${{ needs.which.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.image
+        with:
+          name: auros-pieces
+          path: dl/pieces
+          run-id: ${{ needs.which.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: the build's out/ and work/, put back where the tests look
+        run: |
+          mkdir -p out transcripts
+          cp dl/installer/aurbridge.exe dl/installer/aurbridge-wizard.exe dl/installer/aurbridge-sim \
+             dl/installer/auros-staging.img dl/installer/auros-staging-vmlinuz dl/installer/auros-staging-*.efi out/
+          chmod +x out/aurbridge-sim
+          sudo mkdir -p work/forge/desktop
+          zstd -dc dl/rootfs/rootfs.tar.zst | sudo tar -C work/forge/desktop --numeric-owner -xf -
+          rm -rf dl/rootfs
+          # build/staging's tree (tools/machine.sh takes its modules).
+          # A build from before it was an artifact: remade from the same
+          # rootfs, which is where its modules come from, into a scratch
+          # out/ so the tested files are untouched.
+          if [ -f dl/installer/staging-work.tar.zst ]; then
+            zstd -dc dl/installer/staging-work.tar.zst | sudo tar -C work --numeric-owner -xf -
+          else
+            sudo AUROS_STAGING_OUT="$RUNNER_TEMP/staging-out" ./build/staging desktop > /dev/null
+          fi
+          sudo test -d work/staging/lib/modules
+          if [ "${{ matrix.test }}" = powercuttest ] || [ "${{ matrix.test }}" = powercut-nostick ]; then
+            # Its own staging build, with fault injection compiled in
+            # (out/auros-staging-fault*; seconds). Never published.
+            sudo AURSTAGE_FAULT=1 ./build/staging desktop > /dev/null
+            sudo chown -R "$(id -u):$(id -g)" out
+          fi
+          if [ -d dl/pieces ]; then
+            # The pieces, joined and unpacked: the same bytes the
+            # installer would write, checked against the same hash.
+            ( cd dl/pieces && sha256sum -c --quiet <(grep '^piece ' pieces.txt | awk '{print $4"  "$2}') )
+            cat dl/pieces/auros-desktop.img.gz.* | gzip -dc | cp --sparse=always /dev/stdin out/auros-desktop.img
+            echo "$(cat dl/pieces/image.sha256)  out/auros-desktop.img" | sha256sum -c
+            rm -rf dl/pieces
+          fi
+          ls -la out
+          df -h /
+          echo "setup $(( $(date +%s) - T0 )) s" | tee transcripts/timing-${{ matrix.label }}.txt
+      - name: ${{ matrix.label }} under KVM
+        run: |
+          T=$(date +%s)
+          set +e
+          sudo env PATH="$PATH" ONLY="${{ matrix.only }}" sh tools/${{ matrix.test }}.sh ${{ matrix.args }} > transcripts/${{ matrix.label }}.txt 2>&1
+          rc=$?
+          set -e
+          cat transcripts/${{ matrix.label }}.txt
+          echo "${{ matrix.label }} exit=$rc $(( $(date +%s) - T )) s" | tee -a transcripts/timing-${{ matrix.label }}.txt
+          tail -3 transcripts/${{ matrix.label }}.txt >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: transcripts-${{ matrix.label }}
+          path: transcripts/
+          retention-days: 30

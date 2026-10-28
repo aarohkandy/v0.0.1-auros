@@ -1,0 +1,706 @@
+/* layouts/rail.c — the "Everything in a row" archetype.
+ *
+ * Everything open is one horizontal row of large cards. The focused card
+ * is centred; its neighbours peek in at both edges. Click a peeking card
+ * and it slides to the centre. Nothing overlaps, nothing minimises,
+ * nothing hides. Card 0 is Home and cannot be closed.
+ *
+ * The point: every other desktop splits the screen into the thing you
+ * are looking at and the machinery for reaching other things. That
+ * second layer is where people lose things. Here the row is both.
+ */
+#include "../shell.h"
+#include <string.h>
+#include <strings.h>
+#include <stdio.h>
+#include <math.h>
+
+#define CARD_W_FRAC 0.62f
+#define CARD_GAP    28
+#define HOME_TILES  6
+
+/* Rows on Home and in the list that are not a program. */
+#define ROW_ALL   (-2)     /* "All my programs"                      */
+#define ROW_BACK  (-3)     /* in the list: back to Home              */
+#define ROW_MORE  (-4)     /* in the list: the next page of it       */
+#define ROW_TOP   (-5)     /* in the list: from the last page, back to the first */
+#define LIST_MAX  (SHELL_MAX_APPS + 4)
+
+typedef struct {
+    tween slide;
+    int   hover_tile;
+    /* "All my programs" is showing in the Home card instead of Home.
+     * Not a seventh panel: it is Home's own second page, it belongs to
+     * this archetype only, and the way back is the first row of it. */
+    int   list;
+    int   list_first;      /* the entry at the top of the list's page */
+} rail_priv;
+
+static float clampf(float v, float a, float b) { return v < a ? a : (v > b ? b : v); }
+static rail_priv *P(shell_ctx *c) { return (rail_priv *)c->priv; }
+
+/* Cards are the Home card followed by one per open window. */
+static int card_count(shell_ctx *c) { return 1 + c->n_wins; }
+
+/* One function owns card geometry. Hit-testing and painting both call
+ * it, so a click always lands on what the user sees; deriving them
+ * separately is how a UI ends up off by the width of a shadow. */
+static rect card_rect(shell_ctx *c, int w, int h, int index)
+{
+    rail_priv *p = P(c);
+    int top = c->bar_h + 8 + c->margin;
+    int cw  = (int)((float)w * CARD_W_FRAC);
+    if (cw < 560 && w >= 560) cw = 560;          /* a name and what it does, side by side */
+    int ch  = h - top - 12;
+    float off = (float)index - (p ? p->slide.value : 0.f);
+
+    float d = fabsf(off);
+    float scale = 1.0f - clampf(d, 0.f, 2.f) * 0.055f;
+    int sw = (int)((float)cw * scale), sh = (int)((float)ch * scale);
+
+    rect r;
+    r.x = (w - cw) / 2 + (int)(off * (float)(cw + CARD_GAP)) + (cw - sw) / 2;
+    r.y = top + (ch - sh) / 2;
+    r.w = sw; r.h = sh;
+    return r;
+}
+
+/* How tall the Home card's headline block is. Deliberately FONT-FREE:
+ * l_motion hit-tests the rows and has no fonts to measure with, so a
+ * header measured from a font here and from a constant there would put
+ * the hover highlight a line away from the row under the pointer. A
+ * fraction of the card, clamped, is the same number in both passes on
+ * every panel. paint_home then sets the type INSIDE this band. */
+static int home_head(shell_ctx *c, rect a)
+{
+    /* Measured from the THEME's type scale rather than from the loaded
+     * font: font_size_lg is what load_fonts builds the display steps
+     * from, so this tracks a retheme without either pass having to
+     * open a font. The question at its display size (2.25 x the large
+     * step: 40 px), the sentence under it, and nothing else: no rule. */
+    float em = (float)theme_int(&c->theme, "font_size_lg", 18) * 2.25f;
+    float k = (c->text_scale > 0.1f) ? c->text_scale : 1.f;
+    float sm = (float)theme_int(&c->theme, "font_size", 20);
+    int head = (int)(((float)(c->padding + 10) + em * 1.25f + 12.f + sm * 1.5f + 16.f) * k);
+    /* At the largest text the question would eat the card: it is capped,
+     * and the headline steps down a size (paint_home) to fit. */
+    if (head > (int)((float)a.h * 0.34f)) head = (int)((float)a.h * 0.34f);
+    return head;
+}
+
+/* Home is an INDEX, not a grid of cards.
+ *
+ * It used to be COLS=3 ROWS=2: six identical rounded rectangles, each
+ * with a tinted halo disc, a centred icon, a centred name and a
+ * centred hint. That is the forbidden pattern exactly, and it is also
+ * a poor answer to the question the card is asking — six equal boxes
+ * say "these are six of the same kind of thing", when what the user
+ * needs is a list they can read down.
+ *
+ * So: full-bleed rows, one per app, ruled apart by a hairline, with
+ * the first entry set noticeably larger than the rest. The rhythm is
+ * uneven ON PURPOSE (LEAD below); a list whose every line is the same
+ * height has no first item, and a screen with no first item gives the
+ * eye nowhere to start.
+ *
+ * These rows are hover-only: l_click never asks for them (a Home card
+ * that is already centred has nothing to click through to), so the
+ * rect is free to be whatever composition reads best. It is still one
+ * function, still called by both the painter and l_motion. */
+/* How many rows Home can hold at this size and text: six when they can be
+ * 50 px each, fewer when the text is so big they could not be (the last
+ * two, All my programs and the store, never go). */
+static int home_cap(shell_ctx *c, rect a)
+{
+    int top = a.y + home_head(c, a);
+    int bot = a.y + a.h - c->padding;
+    int cap = (bot - top) / 50;
+    return cap < 3 ? 3 : (cap > HOME_TILES ? HOME_TILES : cap);
+}
+
+static rect tile_rect(shell_ctx *c, rect a, int index)
+{
+    /* Every row the same size: the first one is not more important than
+     * the rest, and a list whose rows differ makes her wonder why. */
+    int top = a.y + home_head(c, a);
+    int bot = a.y + a.h - c->padding;
+    int avail = bot - top;
+    int cap = home_cap(c, a);
+    if (avail < cap) avail = cap;
+    int unit = avail / cap;
+    rect t = { a.x, top + index * unit, a.w, unit };
+    return t;
+}
+
+/* WHAT IS ON HOME, in order. Six rows: the programs she reaches for
+ * (shell_home_pick, which also puts a program she has just installed
+ * in the last of them), then "All my programs", then "Get more
+ * programs" -- always the last two, always in the same place, however
+ * many programs this computer has.
+ *
+ * It was the first six programs by rank, and nothing else. The store
+ * ranked seventh, so on the default desktop of this product there was
+ * no way to install anything, and no way to reach any program past
+ * the sixth either. */
+static int home_rows(shell_ctx *c, rect a, int *rows)
+{
+    int pick[HOME_TILES];
+    int store = shell_store_app(c);
+    int cap = home_cap(c, a);
+    int n = shell_home_pick(c, cap - 1, pick);
+    int k = 0;
+    for (int i = 0; i < n; i++) {
+        if (store >= 0 && pick[i] == store) rows[k++] = ROW_ALL;
+        rows[k++] = pick[i];
+    }
+    if (store < 0) rows[k++] = ROW_ALL;
+    return k;
+}
+
+/* The words and mark of any row, a program or not. */
+static void row_face(const shell_ctx *c, int r, const char **name,
+                     const char **hint, shell_icon *ic)
+{
+    switch (r) {
+    case ROW_ALL:  *name = "All my programs";
+                   *hint = "Everything on this computer";
+                   *ic = ICON_LIST; return;
+    case ROW_BACK: *name = "Back to Home";
+                   *hint = "";
+                   *ic = ICON_BACK; return;
+    case ROW_MORE: *name = "Show more";
+                   *hint = "The rest of the list";
+                   *ic = ICON_FORWARD; return;
+    case ROW_TOP:  *name = "Back to the start of the list";
+                   *hint = "";
+                   *ic = ICON_LIST; return;
+    }
+    *name = c->apps[r].name;
+    *hint = c->apps[r].hint;
+    *ic   = c->apps[r].icon;
+}
+
+/* ── "All my programs" ────────────────────────────────────────────
+ *
+ * Every program, by name, in rows as tall as Home's, a page at a time.
+ * Pages and not scrolling, because scrolling is a gesture (EASY rule
+ * 5): the last row says "Show more" and is pressed like any other.
+ * The store is first, because the person reading a list of everything
+ * she has and not finding the thing is the person who wants it next. */
+static int list_entries(const shell_ctx *c, int *out)
+{
+    int n = 0, store = shell_store_app(c);
+    int first = n;
+    for (int i = 0; i < c->n_apps && n < LIST_MAX - 1; i++) {
+        if (i == store) continue;
+        /* insertion by name: what she looks for is a name */
+        int k = n++;
+        while (k > first && strcasecmp(c->apps[out[k - 1]].name, c->apps[i].name) > 0) {
+            out[k] = out[k - 1]; k--;
+        }
+        out[k] = i;
+    }
+    /* The way to more programs comes last, after everything she has
+     * (DESIGN-DIRECTION C P1-13): it is not one of them. */
+    if (store >= 0) out[n++] = store;
+    return n;
+}
+
+/* Rows of the list: the same band under the headline that Home's rows
+ * use, cut into rows no shorter than the 44px floor. */
+static int list_slots(const shell_ctx *c, rect a, int *row_h)
+{
+    int top = a.y + home_head((shell_ctx *)c, a);
+    int bot = a.y + a.h - c->padding;
+    int avail = bot - top;
+    int rh = avail / 6;
+    if (rh > 64) rh = 64;
+    if (rh < 48) rh = 48;
+    int n = avail / rh;
+    if (n < 3) n = 3;
+    if (n > 12) n = 12;
+    *row_h = rh;
+    return n;
+}
+
+static rect list_rect(const shell_ctx *c, rect a, int i)
+{
+    int rh;
+    list_slots(c, a, &rh);
+    int top = a.y + home_head((shell_ctx *)c, a);
+    rect t = { a.x, top + i * rh, a.w, rh };
+    return t;
+}
+
+/* What each visible row of the list is. Returns how many. */
+static int list_rows(const shell_ctx *c, rect a, int first, int *rows)
+{
+    int ent[LIST_MAX];
+    int n = list_entries(c, ent);
+    int rh, slots = list_slots(c, a, &rh);
+    int k = 0;
+    rows[k++] = ROW_BACK;
+    int room = slots - 1;
+    if (n <= room) {
+        for (int i = 0; i < n; i++) rows[k++] = ent[i];
+        return k;
+    }
+    /* More than fits: the last row is the way on. */
+    if (first < 0 || first >= n) first = 0;
+    int per = room - 1;
+    for (int i = first; i < n && i < first + per; i++) rows[k++] = ent[i];
+    rows[k++] = (first + per >= n) ? ROW_TOP : ROW_MORE;
+    return k;
+}
+
+static int list_per_page(const shell_ctx *c, rect a)
+{
+    int rh, slots = list_slots(c, a, &rh);
+    return slots - 2;
+}
+
+static void l_init(shell_ctx *c)
+{
+    static rail_priv priv;
+    memset(&priv, 0, sizeof priv);
+    priv.hover_tile = -1;
+    tween_set(&priv.slide, 0.f);
+    c->priv = &priv;
+    c->focus = -1;          /* -1 means Home is centred */
+}
+
+static void focus_card(shell_ctx *c, int idx, float secs)
+{
+    rail_priv *p = P(c);
+    int n = card_count(c);
+    if (idx < 0) idx = 0;
+    if (idx >= n) idx = n - 1;
+    c->focus = idx - 1;     /* card 0 is Home, so window i is card i+1 */
+    tween_to(&p->slide, (float)idx, secs, EASE_SPRING);
+}
+
+static float fa (font *f, float d) { return f ? font_ascent(f)  : d; }
+static float fdc(font *f, float d) { return f ? font_descent(f) : d; }
+
+static void paint_home(shell_ctx *c, surface *s, rect a, shell_fonts *f,
+                       float alpha, int focused)
+{
+    rail_priv *p = P(c);
+    int pad = c->padding + 10;
+
+    if (!focused) {
+        /* Peeking Home gets a labelled spine, not a shrunken index: six
+         * unreadable rows say nothing, "Home" says what a click does. */
+        int vx = a.x < 0 ? 0 : a.x;
+        int vw = (a.x + a.w) - vx;
+        if (vw <= 0) return;
+        int mx = vx + (vw < 140 ? vw/2 - 5 : pad);
+        draw_diamond(s, (float)mx + 7.f, (float)(a.y + 40), 14.f, c->accent, alpha);
+        if (vw >= 140)
+            shell_text(s, f->mid, (float)(mx + 24),
+                       shell_baseline(f->mid, (float)(a.y + 26), 28.f),
+                       "Home", c->fg_hi, alpha * 0.95f);
+        return;
+    }
+
+    float x    = (float)(a.x + pad);
+    float innw = (float)(a.w - pad * 2);
+
+    /* The headline, set as large as the card can carry it. Falling back
+     * a step rather than shrinking continuously keeps the two display
+     * sizes in the system the only two on screen. */
+    font *tf = f->huge;
+    {   /* the biggest step whose line (and the one under it) fits the head */
+        int room = home_head(c, a) - pad;
+        float sub = f->small ? font_line_height(f->small) * 1.3f : 24.f;
+        if (tf && font_line_height(tf) * 1.1f + sub > (float)room) tf = f->big;
+        if (tf && font_line_height(tf) * 1.1f + sub > (float)room) tf = f->dmid;
+    }
+    const char *Q = p->list ? "All my programs" : "What would you like to do?";
+    const char *SUB = p->list ? "Everything on this computer. Press one to open it."
+                              : "Pick one. You can always come back here.";
+    if (shell_text_w(tf, Q) > innw) tf = f->big;
+    if (shell_text_w(tf, Q) > innw) tf = f->dmid;
+
+    float hy = (float)(a.y + pad) + fa(tf, 30.f);
+    shell_text(s, tf, x, hy, Q, c->fg_hi, alpha * 0.98f);
+    /* The line under the question only when it fits whole: at the largest
+     * text it is the first thing to go (the question and the rows are not). */
+    if (shell_text_w(f->small, SUB) <= innw)
+        shell_text(s, f->small, x, hy + fdc(tf, 10.f) + 10.f + fa(f->small, 11.f),
+                   SUB, c->subtle, alpha * 0.98f);
+
+    int rows[LIST_MAX];
+    int nr = p->list ? list_rows(c, a, p->list_first, rows) : home_rows(c, a, rows);
+    for (int i = 0; i < nr; i++) {
+        rect t = p->list ? list_rect(c, a, i) : tile_rect(c, a, i);
+        int hot = (p->hover_tile == i);
+        uint32_t paper = c->surface_c;
+        const char *nm, *hn;
+        shell_icon ic;
+        row_face(c, rows[i], &nm, &hn, &ic);
+        int is_store = rows[i] >= 0 && c->apps[rows[i]].role == APP_ROLE_STORE;
+
+        /* Hover is a fill plus a bar down the left edge: no shadow, no
+         * glow, no ring -- the row simply becomes the piece of the page
+         * you are on. */
+        if (hot) {
+            draw_rect(s, t, c->surface_hi, alpha);
+            draw_rect(s, (rect){ t.x, t.y, 4, t.h }, c->accent, alpha);
+            paper = c->surface_hi;
+        }
+        /* A heavier rule over the two fixed rows at the foot of Home:
+         * they are ways to more programs, not programs. */
+        if (i > 0) {
+            int heavy = !p->list && rows[i] == ROW_ALL;
+            draw_hrule(s, t.x + pad, t.y, (int)innw, heavy ? 2 : 1,
+                       heavy ? c->fg : c->overlay, alpha * 0.95f);
+        }
+
+        font *nf = f->mid ? f->mid : f->small;
+        float by  = shell_baseline(nf, (float)t.y, (float)t.h);
+        float cy  = (float)t.y + (float)t.h * 0.5f;
+        float isz = 30.f;
+
+        /* The store's mark is in the signal colour: it is the one row
+         * that leads somewhere new. */
+        shell_icon_draw(s, ic, x + 17.f, cy, isz,
+                        is_store ? c->accent : (rows[i] >= 0 ? c->apps[rows[i]].tint : c->fg),
+                        paper, alpha);
+        /* Two columns: the name, and what it does when that fits WHOLE.
+         * Half a sentence is worse than none, so a line that does not
+         * fit is not drawn (the name always is). */
+        float name_x = x + 52.f;
+        float name_w = innw - 52.f;
+        float need = shell_text_w(nf, nm);
+        float hint_x = name_x + need + 28.f;
+        if (hint_x < x + innw * 0.5f) hint_x = x + innw * 0.5f;
+        font *hf = f->tiny ? f->tiny : f->small;
+        if (hn[0] && hf && hint_x + shell_text_w(hf, hn) <= x + innw)
+            shell_text(s, hf, hint_x, shell_baseline(hf, (float)t.y, (float)t.h),
+                       hn, c->subtle, alpha * 0.98f);
+        shell_text_elided(s, nf, name_x, by, name_w, nm, c->fg_hi, alpha * 0.98f);
+    }
+}
+
+static void paint_win(shell_ctx *c, surface *s, rect a, int wi, shell_fonts *f,
+                      float alpha, int focused)
+{
+    const win_entry *w = &c->wins[wi];
+    uint32_t ink = (w->app >= 0) ? c->apps[w->app].tint : c->fg;
+    shell_icon ic = (w->app >= 0) ? c->apps[w->app].icon : ICON_WINDOW;
+
+    /* A program that draws its own title bar is the whole card: a band
+     * with its name above a band with its name and its buttons is the
+     * two-sets-of-everything this look exists to avoid. */
+    if (w->csd && w->content) {
+        draw_content_fit(s, w->content, a, corners_all((float)c->radius), alpha);
+        draw_frame(s, a, 1, c->overlay, 1.f);
+        return;
+    }
+
+    /* A masthead, not a titlebar: a band of the deeper stock closed by
+     * a hairline, with the name set in the bold text cut. */
+    int th = 56;
+    rect tb = { a.x, a.y, a.w, th };
+    draw_rect(s, tb, c->bg_alt, alpha);
+    draw_hrule(s, a.x, a.y + th, a.w, 1, c->overlay, alpha);
+
+    /* Anchor the header to the VISIBLE region: a peeking card hangs off
+     * the screen, and a header at a.x lands out of view, leaving the
+     * card the user is invited to click with no label at all. */
+    int vx = a.x < 0 ? 0 : a.x;
+    shell_icon_draw(s, ic, (float)(vx + c->padding + 12), (float)(a.y + th/2), 26.f,
+                    ink, c->bg_alt, alpha * 0.95f);
+    shell_text(s, f->mid, (float)(vx + c->padding + 36),
+               shell_baseline(f->mid, (float)a.y, (float)th), w->title, c->fg_hi, alpha * 0.96f);
+
+    if (w->content) {
+        rect body = { a.x, a.y + th, a.w, a.h - th };
+        corners bc = { 0, 0, (float)c->radius, (float)c->radius };
+        draw_content_fit(s, w->content, body, bc, alpha);
+        return;
+    }
+
+    /* Nothing loaded yet. Set as a title page rather than as a centred
+     * icon with two centred captions under it: the mark sits on the
+     * left measure, the words hang off it, and a rule closes the
+     * block. The old version centred all three on the card's axis,
+     * which is the sixth copy of the same composition in this product. */
+    int pad = c->padding + 10;
+    float x  = (float)(a.x + pad);
+    float cy = (float)(a.y + th) + (float)(a.h - th) * 0.40f;
+    float isz = clampf((float)(a.h - th) * 0.14f, 26.f, 54.f);
+
+    shell_icon_draw(s, ic, x + isz * 0.5f, cy - isz * 1.35f, isz, ink,
+                    c->surface_c, alpha * 0.9f);
+    shell_text(s, f->big, x, cy + fa(f->big, 26.f) * 0.5f, w->title, c->fg_hi, alpha * 0.95f);
+    float sy = cy + fa(f->big, 26.f) * 0.5f + fdc(f->big, 8.f) + 14.f + fa(f->small, 11.f);
+    shell_text(s, f->small, x, sy,
+               w->subtitle[0] ? w->subtitle : "Opening…", c->subtle, alpha * 0.9f);
+    draw_hrule(s, (int)x, (int)(sy + fdc(f->small, 4.f) + 16.f),
+               (int)((float)(a.w - pad * 2) * 0.30f), 1, c->overlay, alpha);
+}
+
+static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wall)
+{
+    rail_priv *p = P(c);
+    if (wall) {
+        for (int y = 0; y < s->h && y < wall->h; y++)
+            memcpy(s->px + (size_t)y * s->stride, wall->px + (size_t)y * wall->stride,
+                   (size_t)(s->w < wall->w ? s->w : wall->w) * sizeof *s->px);
+    } else surface_fill(s, 0xFF000000u | c->bg);
+
+    int n = card_count(c);
+    for (int pass = 2; pass >= 0; pass--) {
+        for (int i = 0; i < n; i++) {
+            int dist = (int)fabsf((float)i - p->slide.value + 0.001f);
+            if (dist != pass) continue;
+            rect a = card_rect(c, s->w, s->h, i);
+            if (a.x > s->w || a.x + a.w < 0) continue;
+
+            float d = fabsf((float)i - p->slide.value);
+            /* Paper is opaque, so a card behind does NOT get more
+             * see-through: the sheet is filled at full strength and
+             * only its INK is stepped back. Fading the surface was
+             * what let the wallpaper show through a window, which is
+             * two things on screen where the archetype promises one. */
+            float alpha = clampf(1.f - d * 0.15f, 0.72f, 1.f);
+            int focused = (d < 0.5f);
+            /* Colour means state here and nothing else, so the rule is
+             * the accent for whichever card you are on, full stop. It
+             * used to be the app's own tint, which made "where am I"
+             * an answer that changed colour depending on which program
+             * you were in — a worse answer, and on a light theme a
+             * pastel one nobody could see. */
+            uint32_t ring = c->accent;
+
+            /* A sheet of paper: flat, opaque, square-cornered, and
+             * edged with a hairline. What marks the one you are on is
+             * a rule along its top edge in the signal colour — one
+             * mark, in one place, on one card. The version this
+             * replaces drew a 35px black shadow offset 14px, blurred
+             * the wallpaper behind the card, and then ringed the whole
+             * thing in the app's own pastel. Three depth cues for one
+             * piece of information. */
+            draw_round_rect(s, a, corners_all((float)c->radius), c->surface_c, 1.f);
+            draw_frame(s, a, 1, c->overlay, 1.f);
+            if (focused)
+                draw_hrule(s, a.x, a.y, a.w, 3, ring, alpha);
+
+            if (i == 0) paint_home(c, s, a, f, alpha, focused);
+            else paint_win(c, s, a, i - 1, f, alpha, focused);
+        }
+    }
+
+    /* The masthead. Deliberately NOT a taskbar: nothing here launches or
+     * switches, so there is exactly one way to move around. A flat band
+     * of the deeper stock, closed by one hairline — the way the top of
+     * a printed page is closed. */
+    int bh = c->bar_h + 8;
+    draw_rect(s, (rect){ 0, 0, s->w, bh }, c->bg_alt, 1.f);
+    draw_hrule(s, 0, bh, s->w, 1, c->overlay, 1.f);
+
+    /* A solid square, not a dot. A circle in the accent beside a word
+     * is the "brand bubble" every product page has; a square block of
+     * ink is a printer's mark, and it is one draw_rect. */
+    shell_wordmark(c, s, f, (float)c->margin, (float)bh * 0.5f);
+
+    if (c->show_clock) {
+        char hm[32], dt[48];
+        shell_clock(hm, sizeof hm, dt, sizeof dt);
+        float by = shell_baseline(f->mid, 0.f, (float)bh);
+        float rx = (float)(s->w - c->margin);
+        shell_text(s, f->mid, rx - shell_text_w(f->mid, hm), by, hm, c->fg_hi, 1.f);
+        rx -= shell_text_w(f->mid, hm) + 13.f;
+        /* A rule between the date and the time, because they are two
+         * different facts and a gap alone does not say so. */
+        draw_vrule(s, (int)rx, 9, bh - 18, 1, c->overlay, 1.f);
+        rx -= 13.f;
+        shell_text(s, f->small, rx - shell_text_w(f->small, dt),
+                   shell_baseline(f->small, 0.f, (float)bh), dt, c->subtle, 0.9f);
+        int cx = (int)(rx - shell_text_w(f->small, dt)) - 8;   /* opens Messages */
+        c->clock_r = (rect){ cx, 0, s->w - cx, bh };
+    }
+
+    /* Where you are in the row, as a ruler rather than as dots, and
+     * left-aligned to the page margin rather than centred on the
+     * screen. Centred dots under a centred card was the fourth axis of
+     * symmetry on one screen; a ruler that starts at the margin reads
+     * as a measure, which is what it is. */
+    if (c->show_positions && n > 1) {
+        int seg = 26, gap = 5, y = s->h - c->margin + 2;
+        for (int i = 0; i < n; i++) {
+            float d = fabsf((float)i - p->slide.value);
+            int cur = (d < 0.5f);
+            int x = c->margin + i * (seg + gap);
+            if (x + seg > s->w - c->margin) break;
+            draw_hrule(s, x, cur ? y - 2 : y, seg, cur ? 4 : 2,
+                       cur ? c->accent : c->muted, cur ? 1.f : 0.65f);
+        }
+    }
+}
+
+/* Open a thing from the Home card.
+ *
+ * If it is already open, go to it rather than opening a second copy.
+ * Rail's whole promise is that nothing can hide, and two cards showing
+ * the same thing is a way to get lost in the one archetype that is
+ * supposed to make that impossible. */
+/* Starting the program is shell_launch()'s job: it finds an existing
+ * window for the application or creates a slot AND asks the host to
+ * spawn it. Every archetype used to hand-roll the slot and never spawn
+ * anything, so every icon in this product opened a rectangle with a
+ * name in it and nothing behind the rectangle. */
+static void open_app(shell_ctx *c, int app)
+{
+    int i = shell_launch(c, app);
+    if (i >= 0) focus_card(c, i + 1, 0.36f);
+}
+
+static int l_click(shell_ctx *c, int x, int y)
+{
+    int n = card_count(c);
+
+    /* The Home card's tiles, FIRST -- before the card hit-test below,
+     * which would otherwise swallow the click.
+     *
+     * They highlight under the pointer, so they promise they can be
+     * clicked. Without this they were a lie: the card consumed the
+     * click and did nothing, so the very first thing anyone ever
+     * clicks in this operating system silently failed. Found by
+     * clicking one on a booted machine. */
+    if ((int)(P(c)->slide.value + 0.5f) == 0) {
+        rail_priv *p = P(c);
+        rect a = card_rect(c, c->screen_w, c->screen_h, 0);
+        int rows[LIST_MAX];
+        int nr = p->list ? list_rows(c, a, p->list_first, rows) : home_rows(c, a, rows);
+        for (int i = 0; i < nr; i++) {
+            rect t = p->list ? list_rect(c, a, i) : tile_rect(c, a, i);
+            if (x < t.x || x >= t.x + t.w || y < t.y || y >= t.y + t.h) continue;
+            switch (rows[i]) {
+            case ROW_ALL:  p->list = 1; p->list_first = 0; break;
+            case ROW_BACK: p->list = 0; break;
+            case ROW_MORE: p->list_first += list_per_page(c, a); break;
+            case ROW_TOP:  p->list_first = 0; break;
+            default:
+                /* Opening something from the list puts the list away:
+                 * coming back to Home later finds Home. */
+                p->list = 0;
+                open_app(c, rows[i]);
+                break;
+            }
+            p->hover_tile = -1;
+            return 1;
+        }
+    }
+
+    /* Front to back: the focused card is on top. */
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < n; i++) {
+            int cur = (i == (int)(P(c)->slide.value + 0.5f));
+            if ((pass == 0) != cur) continue;
+            rect a = card_rect(c, c->screen_w, c->screen_h, i);
+            if (x < a.x || x >= a.x + a.w || y < a.y || y >= a.y + a.h) continue;
+            if (!cur) { focus_card(c, i, 0.36f); return 1; }
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void l_motion(shell_ctx *c, int x, int y)
+{
+    rail_priv *p = P(c);
+    p->hover_tile = -1;
+    if (c->focus != -1) return;
+    rect a = card_rect(c, c->screen_w, c->screen_h, 0);
+    int rows[LIST_MAX];
+    int nr = p->list ? list_rows(c, a, p->list_first, rows) : home_rows(c, a, rows);
+    for (int i = 0; i < nr; i++) {
+        rect t = p->list ? list_rect(c, a, i) : tile_rect(c, a, i);
+        if (x >= t.x && x < t.x + t.w && y >= t.y && y < t.y + t.h) { p->hover_tile = i; return; }
+    }
+}
+
+static void l_key(shell_ctx *c, int k)
+{
+    int cur = (int)(P(c)->slide.value + 0.5f);
+    switch (k) {
+        case 105: focus_card(c, cur - 1, 0.30f); break;   /* KEY_LEFT  */
+        case 106: focus_card(c, cur + 1, 0.30f); break;   /* KEY_RIGHT */
+        case 102:                                         /* KEY_HOME  */
+            P(c)->list = 0;
+            focus_card(c, 0, 0.36f); break;
+        case 1:                                           /* KEY_ESC   */
+            /* Out of the list, back to Home: the way out of a page is
+             * the key that is the way out of everything. */
+            if (P(c)->list && cur == 0) { P(c)->list = 0; P(c)->hover_tile = -1; }
+            break;
+        default: break;
+    }
+}
+
+static int  l_step(shell_ctx *c, float dt) { return tween_step(&P(c)->slide, dt); }
+
+/* In a row of cards, "show me this window" means scroll the row until
+ * that card is the one in the middle. Setting c->focus alone would move
+ * the highlight without moving the row, leaving the focused card
+ * halfway off the screen -- which is exactly what a newly started
+ * application looked like before this existed. */
+static void l_present(shell_ctx *c, int win) { focus_card(c, win + 1, 0.30f); }
+static void l_fini(shell_ctx *c) { c->priv = NULL; }
+
+/* Every card is already as big as it gets, and nothing here is put
+ * away: the only thing a program's own bar can ask for that means
+ * anything is "get this out of my way", which is Home. */
+static void l_request(shell_ctx *c, int win, unsigned rq)
+{
+    if (rq & WREQ_MINIMIZE) { (void)win; P(c)->list = 0; focus_card(c, 0, 0.36f); }
+}
+
+/* The rows of the card in front, the neighbours that peek in at the sides (what is on screen of
+ * them, which is what she can press), and the window that is in front. */
+static int l_targets(shell_ctx *c, shell_target *o, int max)
+{
+    rail_priv *p = P(c);
+    int W = c->screen_w, H = c->screen_h, n = 0;
+    int cur = (int)(p->slide.value + 0.5f);
+    rect scr = { 0, 0, W, H };
+#define ADD(R, WHAT, KIND) do { rect r_ = (R); if (r_.w > 0 && r_.h > 0 && n < max) { \
+        o[n].r = r_; o[n].what = (WHAT); o[n].kind = (KIND); n++; } } while (0)
+    if (cur == 0) {
+        rect a = card_rect(c, W, H, 0);
+        int rows[LIST_MAX];
+        int nr = p->list ? list_rows(c, a, p->list_first, rows) : home_rows(c, a, rows);
+        for (int i = 0; i < nr; i++)
+            ADD(p->list ? list_rect(c, a, i) : tile_rect(c, a, i),
+                p->list ? "a row of the list of programs" : "a row of Home", TARGET_PRESS);
+    } else {
+        ADD(card_rect(c, W, H, cur), "a window", TARGET_WINDOW);
+    }
+    for (int i = 0; i < card_count(c); i++) {
+        if (i == cur) continue;
+        rect a = card_rect(c, W, H, i), v;
+        int x0 = a.x > 0 ? a.x : 0, y0 = a.y > 0 ? a.y : 0;
+        int x1 = a.x + a.w < scr.w ? a.x + a.w : scr.w, y1 = a.y + a.h < scr.h ? a.y + a.h : scr.h;
+        v = (rect){ x0, y0, x1 > x0 ? x1 - x0 : 0, y1 > y0 ? y1 - y0 : 0 };   /* what is on screen of it */
+        ADD(v, i == 0 ? "the Home card at the side" : "a window's card at the side", TARGET_PRESS);
+    }
+#undef ADD
+    return n;
+}
+
+const shell_layout layout_rail = {
+    .request = l_request,
+    .id = "rail",
+    .init = l_init,
+    .paint = l_paint,
+    .click = l_click,
+    .motion = l_motion,
+    .key = l_key,
+    .step = l_step,
+    .fini = l_fini,
+    .present = l_present,
+    .targets = l_targets,
+};

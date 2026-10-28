@@ -1,0 +1,7 @@
+node_modules/
+src/help.gen.js
+.wrangler/
+.dev.vars
+dist/
+live-eval.json
+deploy.log

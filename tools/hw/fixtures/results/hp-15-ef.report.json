@@ -1,0 +1,4 @@
+{"schema":1,"windows":{"name":"Windows 11 Home","display":"23H2","build":22631},
+ "system_drive":{"kind":0,"bitlocker":1},
+ "verdicts":[{"kind":"wifi","state":"partial","printer":-1},{"kind":"audio","state":"works","printer":-1},
+             {"kind":"camera","state":"works","printer":-1}]}

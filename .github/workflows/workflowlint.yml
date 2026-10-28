@@ -1,0 +1,43 @@
+# The rules every workflow keeps (tools/workflowlint.py): each file parses,
+# each job that runs steps has timeout-minutes, no apt-get is unbounded.
+# Runs only when a workflow (or the lint, or tools/apt.sh) changes: a
+# file that does not parse also stops every workflow that calls it, so
+# it is told at once, in plain words, instead of as "workflow file issue".
+name: workflowlint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'tools/workflowlint.py'
+      - 'tools/apt.sh'
+      - 'tools/releasegate.py'
+      - 'tools/hardengate.sh'
+      - 'tools/hardengatetest.sh'
+      - 'tools/sec004check.sh'
+      - 'tools/sec004checktest.sh'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: sh tools/apt.sh python3-yaml
+      - run: python3 -I tools/workflowlint.py selftest
+      - run: python3 -I tools/workflowlint.py
+      # The release gates refuse what they exist to refuse (a failing power
+      # cut; a [latest] without a passing hardening boot of its image).
+      - run: python3 -I tools/releasegate.py selftest
+      - run: sh tools/hardengatetest.sh
+      # SEC-004: the owner-side check of where the signing key lives is red for
+      # each missing step and green only when all are done.
+      - run: sh tools/sec004checktest.sh

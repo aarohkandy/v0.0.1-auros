@@ -1,0 +1,202 @@
+# The Wishes cloud service (cloud/, docs/CLOUD.md) on Cloudflare Workers.
+#
+# Always: the tests, with a mocked Claude. Then, only when the owner's
+# secrets exist (docs/OWNER-SETUP.md section 7), on main: deploy, set the
+# Worker's secrets, check the live service end to end (register -> wish ->
+# ask -> forget, the owner's potato and compass examples, the quota, no
+# token: 401), check its logs never hold a token, an id or her words, and run
+# the real model on the adversarial set. Without the secrets the deploy is
+# skipped with a notice and the run stays green.
+#
+# The kill switch: while cloud/wrangler.toml has DAILY_BUDGET_USD = "0" (Wishes
+# is not on for anyone yet, decision D14) the deployed Worker answers every wish
+# and ask with the plain 503 and never calls Anthropic. This workflow then
+# proves exactly that live (a registered token's wish -> 503; the Worker's own
+# logs show no token counts or cost) and skips the real-model eval, which would
+# otherwise spend the owner's key on every push. Dispatch with eval=true to run
+# it anyway. To turn Wishes on: set DAILY_BUDGET_USD to the day's dollars and push.
+#
+# Secret values are never printed: they reach wrangler on stdin only.
+name: cloud
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cloud/**'
+      - 'docs/wish-v1.schema.json'
+      - 'rootfs/usr/share/auros/help/**'
+      - '.github/workflows/cloud.yml'
+  workflow_dispatch:
+    inputs:
+      eval:
+        description: 'Run the real-model eval even while the kill switch is on (DAILY_BUDGET_USD = 0)'
+        type: boolean
+        default: false
+      probe:
+        description: 'Only ask the API which output schemas it compiles (test/schema-probe.mjs)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: cloud
+
+env:
+  WRANGLER: wrangler@4.148.0
+  WRANGLER_SEND_METRICS: 'false'
+
+jobs:
+  probe:
+    if: inputs.probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || secrets.ANTHROPIC_API }}
+      ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID || secrets.ANTHROPIC_WORKSPACE_ID }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: timeout 300 npm ci --no-audit --no-fund && node build-help.mjs
+      - run: timeout 300 node test/schema-probe.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
+  test:
+    if: ${{ !inputs.probe }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: timeout 300 npm ci --no-audit --no-fund
+      - run: timeout 300 npm test
+      - name: Load test (mocked Claude, 1,000 at once)
+        run: timeout 600 npm run load -- --quick
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && !inputs.probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY || secrets.ANTHROPIC_API }}
+      ALERT_URL: ${{ secrets.WISHES_ALERT_URL }}
+      # Only needed when the key is not scoped to a workspace (OWNER-SETUP 7); not secret.
+      ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID || secrets.ANTHROPIC_WORKSPACE_ID }}
+    steps:
+      - name: Secrets present?
+        id: have
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Wishes not deployed::The owner's secrets are not set (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, ANTHROPIC_API_KEY or ANTHROPIC_API). Tests passed; deploy skipped. See docs/OWNER-SETUP.md section 7."
+          fi
+        working-directory: .
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: steps.have.outputs.ok == 'true'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: steps.have.outputs.ok == 'true'
+        with:
+          node-version: 22
+      - if: steps.have.outputs.ok == 'true'
+        run: timeout 300 npm ci --no-audit --no-fund
+
+      - name: Deploy
+        id: deploy
+        if: steps.have.outputs.ok == 'true'
+        run: |
+          extra=()
+          if [ -n "$ANTHROPIC_WORKSPACE_ID" ]; then extra=(--var "ANTHROPIC_WORKSPACE_ID:$ANTHROPIC_WORKSPACE_ID"); fi
+          timeout 300 npx --yes "$WRANGLER" deploy "${extra[@]}" 2>&1 | tee deploy.log
+          url=$(grep -oE 'https://auros-wishes\.[a-z0-9-]+\.workers\.dev' deploy.log | head -1)
+          if [ -z "$url" ]; then
+            echo "::error::No workers.dev address in the deploy output. If it says to register a workers.dev subdomain: Cloudflare dashboard -> Workers & Pages -> pick a subdomain once (docs/OWNER-SETUP.md 7)."
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "### Wishes service: $url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Worker secrets (stdin only, never echoed)
+        if: steps.have.outputs.ok == 'true'
+        run: |
+          set +x
+          names=$(timeout 120 npx --yes "$WRANGLER" secret list --format json 2>/dev/null || echo '[]')
+          if ! printf '%s' "$names" | grep -q '"TOKEN_SECRET"'; then
+            # Made once, here, and never seen by anyone: tokens are signed with it.
+            openssl rand -base64 48 | tr -d '\n' | timeout 120 npx --yes "$WRANGLER" secret put TOKEN_SECRET
+          fi
+          printf '%s' "$ANTHROPIC_API_KEY" | timeout 120 npx --yes "$WRANGLER" secret put ANTHROPIC_API_KEY
+          if [ -n "$ALERT_URL" ]; then printf '%s' "$ALERT_URL" | timeout 120 npx --yes "$WRANGLER" secret put ALERT_URL; fi
+
+      - name: Mode (kill switch on or off)
+        id: mode
+        if: steps.have.outputs.ok == 'true'
+        run: |
+          if grep -Eq '^DAILY_BUDGET_USD[[:space:]]*=[[:space:]]*"0(\.0*)?"' wrangler.toml; then m=off; else m=on; fi
+          echo "expect=$m" >> "$GITHUB_OUTPUT"
+          echo "### Wishes is $m (DAILY_BUDGET_USD in cloud/wrangler.toml)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Live end to end, with its logs captured
+        if: steps.have.outputs.ok == 'true'
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+          EXPECT: ${{ steps.mode.outputs.expect }}
+          SMOKE_SECRETS_FILE: ${{ runner.temp }}/never-logged.txt
+        run: |
+          # The new version and its secrets take a few seconds to reach every location.
+          for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            curl -fsS --max-time 10 "$URL/v1/health" >/dev/null && break; sleep 5
+          done
+          timeout 300 npx --yes "$WRANGLER" tail auros-wishes --format json > "$RUNNER_TEMP/tail.json" 2>"$RUNNER_TEMP/tail.err" &
+          tail_pid=$!
+          sleep 15
+          echo "tail: $(wc -c < "$RUNNER_TEMP/tail.json") bytes so far; stderr: $(head -c 300 "$RUNNER_TEMP/tail.err")"
+          set +e
+          timeout 240 node test/smoke.mjs "$URL" | tee -a "$GITHUB_STEP_SUMMARY"
+          smoke=${PIPESTATUS[0]}
+          set -e
+          sleep 10
+          kill "$tail_pid" 2>/dev/null || true
+          wait "$tail_pid" 2>/dev/null || true
+          # Only the service's own log lines: the tail stream also carries
+          # Cloudflare's request metadata, which the service does not log.
+          node test/tail-logs.mjs "$RUNNER_TEMP/tail.json" "$RUNNER_TEMP/service-logs.txt"
+          if [ ! -s "$RUNNER_TEMP/service-logs.txt" ]; then
+            echo "::warning::wrangler tail captured no log lines; the log check could not run (tail stdout $(wc -c < "$RUNNER_TEMP/tail.json") bytes; stderr: $(head -c 300 "$RUNNER_TEMP/tail.err"))"
+          elif [ -s "$SMOKE_SECRETS_FILE" ] && grep -F -f "$SMOKE_SECRETS_FILE" -q "$RUNNER_TEMP/service-logs.txt"; then
+            echo "::error::The service logged a token, an install id or the words of a wish"; exit 1
+          else
+            echo "log check: none of the token, install id or wish words appear in the service's logs" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "The service's log lines (checked above; counts only):"; cat "$RUNNER_TEMP/service-logs.txt"; echo
+            node test/log-assert.mjs "$RUNNER_TEMP/service-logs.txt" "$EXPECT" > "$RUNNER_TEMP/assert.txt" || assert_failed=1
+            tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/assert.txt"
+            if [ -n "${assert_failed:-}" ]; then echo "::error::The service's logs do not match its mode ($EXPECT)"; exit 1; fi
+          fi
+          if [ "$smoke" = 3 ]; then echo "::warning::This runner's network had used its 3 registrations today; end-to-end part skipped"; exit 0; fi
+          exit "$smoke"
+
+      - name: Real model on the acceptance and adversarial sets
+        if: always() && steps.have.outputs.ok == 'true' && (steps.mode.outputs.expect == 'on' || inputs.eval)
+        run: timeout 600 npm run live-eval
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always() && steps.have.outputs.ok == 'true'
+        with:
+          name: cloud-evidence
+          path: |
+            cloud/live-eval.json
+            cloud/deploy.log
+          if-no-files-found: ignore

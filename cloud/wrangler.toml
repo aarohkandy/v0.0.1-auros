@@ -1,0 +1,48 @@
+# AurOS Wishes: one Worker + one Durable Object. Deployed by
+# .github/workflows/cloud.yml; secrets (ANTHROPIC_API_KEY, TOKEN_SECRET,
+# optional ALERT_URL) are set there, never here. docs/CLOUD.md explains each knob.
+name = "auros-wishes"
+main = "src/worker.js"
+compatibility_date = "2026-09-15"
+workers_dev = true
+
+[build]
+command = "node build-help.mjs"
+
+[vars]
+# THE KILL SWITCH (decision D14, docs/legal/COMPLIANCE.md AI-1): "0" means every
+# /v1/wish and /v1/ask answers the plain 503 "Wishes are resting" without calling
+# Anthropic. Wishes is not on for anyone yet, so it stays "0" until the Wishes
+# gates pass; then set it to "5" (the day's budget in dollars) and push. Nothing
+# else changes. (BANNED is a list of per-token tags, not a switch.)
+DAILY_BUDGET_USD = "0"
+# Where Wishes is offered (AI-6): ISO country codes; "*" = everywhere. Register,
+# wish and ask are refused elsewhere with 403; forget and health stay open.
+ALLOW_COUNTRIES = "US,CA,AU"
+QUOTA_ESTABLISHED = "20"
+QUOTA_NEW = "3"
+ESTABLISH_DAYS = "7"
+REGISTER_PER_NET = "3"
+MAX_INFLIGHT = "40"
+POW_BITS = "21"
+BANNED = ""
+
+[[durable_objects.bindings]]
+name = "LEDGER"
+class_name = "Ledger"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Ledger"]
+
+# Only the service's own log lines (counts, latency, tokens, cost) are kept:
+# Cloudflare's per-request invocation logs (which carry addresses) are off.
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+invocation_logs = false
+
+[observability.traces]
+enabled = false

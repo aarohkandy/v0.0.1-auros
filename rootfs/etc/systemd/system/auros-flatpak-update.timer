@@ -1,0 +1,12 @@
+# AurOS: half an hour after every start, then twice a day while the
+# computer stays on. docs/security/UPDATES.md
+[Unit]
+Description=Update the programs from Flathub, twice a day
+
+[Timer]
+OnBootSec=30min
+OnUnitActiveSec=12h
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

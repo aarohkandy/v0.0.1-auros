@@ -1,0 +1,21 @@
+# Commits a published build must contain, by hash, with what they fixed.
+# release.yml's `which` job checks that the built commit has each as an
+# ancestor, for every [release] and [publish], prerelease or full. Add a line
+# when a fix lands that no release may go out without; never remove one.
+#
+#   commit | what it fixed
+#
+956af4a|TM-1: Ubuntu's security updates were silently never installed (os-release name)
+6917bde|staging "cannot-measure": ntfsresize's answer was dropped on every real volume
+54b783b|aurwl: subsurfaces composited into the window (Firefox was blank)
+e1c8015|grub.cfg.in: the Windows start line carries lockdown=integrity too
+76d89b9|aurfirst: "Start AurOS from now on" was refused on a real install (efivarfs)
+7381d67|aurwl: clicks landed 20% off in GTK4 windows; the store's Install button never worked
+f38af6f|the Install label was unreadable (text on the accent)
+c74a440|signtest: its tree copy lacked docs/legal/notices, so tests / unit was red on every build before it
+afc82b8|release.yml publish: checkout ran after the download and deleted the installer, so no build before it can be published
+2f7ab0b|aurwl: a slow program's answers to its configures were refused, and its second window died
+e80590e|aurwl: the Wayland clipboard was served to every X program at all times (review W01/W05/W09/W19)
+402273f|the screen went dark in a VLC film or a Zoom call (no ScreenSaver inhibit); "Bigger text" never reached X programs
+63e1017a|same-boot installation preserves kernel hardening and rejects Windows environment kernel-argument injection
+2efb1d00|refuse before partition commit if boot entry creation fails; roll back failed same-boot mount moves

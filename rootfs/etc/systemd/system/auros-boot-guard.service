@@ -1,0 +1,20 @@
+[Unit]
+Description=AurOS: restart a start whose desktop never appeared
+Documentation=file:///usr/lib/auros/boot-guard
+# See /usr/lib/auros/boot-guard and, in grub.cfg.in, "boot counting".
+After=auros-boot-ok.service
+ConditionPathExists=/boot/grub/grubenv
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/auros/boot-guard
+# Its one sentence reaches the console too: a screen that says why the
+# computer restarted is better than one that just does.
+StandardOutput=journal+console
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

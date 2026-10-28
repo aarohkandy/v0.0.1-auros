@@ -1,0 +1,129 @@
+# shellcheck shell=bash
+# ═══════════════════════════════════════════════════════════════════
+#  build/harden — the hardening stage, sourced by build/forge
+#
+#  stage_harden  runs after stage 4 (configure): turns the firewall on,
+#                removes cups-browsed, stops avahi announcing the
+#                computer, enables the boot-time dpkg repair.
+#  harden_verify runs at the seal, before the squash: tools/hardentest.sh
+#                against the finished rootfs, and the build stops if any
+#                control is missing. The test that proves a control is
+#                the gate that ships it.
+#
+#  Everything else is plain files in rootfs/ (sysctl.d, modprobe.d,
+#  nftables.conf, journald.conf.d, the aurshell safe-mode drop-in,
+#  auros-dpkg-repair.service), laid down by stage 3 like the rest.
+#  docs/security/HARDENING.md has the why and the measured cost.
+# ═══════════════════════════════════════════════════════════════════
+
+# avahi-daemon.conf is a conffile with no .d directory, so its [publish]
+# keys are set in place: each one replaced, commented or not, or added.
+#
+#   no ipp-usb:   disable-publishing=yes. Nothing on this computer may
+#                 announce anything.
+#   with ipp-usb: a printer on a USB cable is found by CUPS through the
+#                 DNS-SD record ipp-usb registers with avahi (on the
+#                 loopback interface only: /etc/ipp-usb/ipp-usb.conf
+#                 says interface = loopback), which disable-publishing
+#                 would refuse. So publishing is allowed, with no hardware,
+#                 workstation or domain record. The host's own address
+#                 record (publish-addresses) is NOT turned off: the
+#                 printer's DNS-SD record names this computer as its host,
+#                 and a client (CUPS, ippfind) that cannot resolve that name
+#                 finds no printer -- measured. What keeps all of it off the
+#                 network is the firewall: an mDNS response leaving on a
+#                 real interface is dropped (rootfs/etc/nftables.conf,
+#                 output chain) and a question from the network is never
+#                 let in.
+harden_avahi_conf() { # file  mode (none|loopback)
+    case "$2" in
+        loopback) keys="disable-publishing=no publish-hinfo=no publish-workstation=no publish-domain=no" ;;
+        *)        keys="disable-publishing=yes" ;;
+    esac
+    awk -v keys="$keys" '
+        BEGIN { n = split(keys, K, " "); for (i = 1; i <= n; i++) { split(K[i], kv, "="); want[kv[1]] = kv[2]; order[i] = kv[1] } }
+        function flush(   i) { for (i = 1; i <= n; i++) if (!(order[i] in seen)) print order[i] "=" want[order[i]]; done = 1 }
+        /^\[/ { if (inpub && !done) flush(); inpub = ($0 == "[publish]") }
+        {
+            if (inpub) {
+                k = $0; sub(/^[#[:space:]]*/, "", k); sub(/[[:space:]]*=.*/, "", k)
+                if (k in want && $0 ~ /^[#[:space:]]*[A-Za-z-]+[[:space:]]*=/) { if (!(k in seen)) { print k "=" want[k]; seen[k] = 1 } ; next }
+            }
+            print
+        }
+        END { if (!done) { if (!insect) { print ""; print "[publish]" } flush() } }
+        /^\[publish\]$/ { insect = 1 }
+    ' "$1" > "$1.auros" && cat "$1.auros" > "$1" && rm -f "$1.auros"
+}
+
+stage_harden() {
+    step "hardening  firewall, printing, recovery"
+    chroot_prep
+
+    # ── the firewall ──────────────────────────────────────────────
+    [ -x "$RFS/usr/sbin/nft" ] || die "nftables is not installed, so this image would have no
+     firewall. It is in packages_security (profiles/desktop.profile)."
+    local err
+    err=$(inchroot "nft -c -f /etc/nftables.conf 2>&1") || die "/etc/nftables.conf does not load:
+     $err"
+    enable_unit nftables.service sysinit.target
+    note "firewall: nothing on the network can start a conversation"
+
+    # ── printing without cups-browsed ─────────────────────────────
+    # cups-browsed is the UDP 631 listener of the CVE-2024-47176 chain
+    # (a stranger's packet adds a printer whose driver runs a command).
+    # Printing does not need it: cups prints to USB and to network
+    # printers, and the print dialogs find Wi-Fi printers through avahi
+    # (CUPS temporary queues). Removed whichever profile brought it.
+    if pkg_installed cups-browsed; then
+        inchroot "apt-get purge -y cups-browsed >/dev/null 2>&1" || true
+        pkg_installed cups-browsed && die "could not remove cups-browsed"
+        note "printing: cups-browsed removed (CVE-2024-47176); cups and USB printing stay"
+    fi
+    if [ -f "$RFS/etc/avahi/avahi-daemon.conf" ]; then
+        if pkg_installed ipp-usb; then
+            harden_avahi_conf "$RFS/etc/avahi/avahi-daemon.conf" loopback
+            note "avahi: looks for printers; ipp-usb may register on this computer, which publishes nothing about itself"
+        else
+            harden_avahi_conf "$RFS/etc/avahi/avahi-daemon.conf" none
+            note "avahi: looks for printers, announces nothing"
+        fi
+    fi
+
+    # ── the clock ─────────────────────────────────────────────────
+    # chrony's own postinst enables it; this makes the image say so, and
+    # refuses one that has a second time daemon (they fight over the clock).
+    [ -f "$RFS/usr/lib/systemd/system/chrony.service" ] || [ -f "$RFS/lib/systemd/system/chrony.service" ] \
+        || die "chrony is not installed, so this image would have no time daemon. It is in packages_security (profiles/desktop.profile)."
+    enable_unit chrony.service multi-user.target
+    pkg_installed systemd-timesyncd && die "systemd-timesyncd and chrony are both installed: two time daemons"
+    note "clock: chrony, never writes the PC's hardware clock"
+
+    # ── no login on the serial console ────────────────────────────
+    # console=ttyS0 stays on the kernel line (the kernel log and the
+    # tests read the serial port), but systemd's getty generator turns it
+    # into `serial-getty@ttyS0`: a login prompt, on a machine in which
+    # nobody has a password to type. Masked whatever the profile says;
+    # the virtual consoles are forge's allow_tty, below it.
+    install -d "$RFS/etc/systemd/system"
+    for u in serial-getty@.service console-getty.service container-getty@.service; do
+        ln -sf /dev/null "$RFS/etc/systemd/system/$u"
+    done
+    note "no login prompt on the serial console"
+
+    # ── recovery ──────────────────────────────────────────────────
+    enable_unit auros-dpkg-repair.service multi-user.target
+    chmod 755 "$RFS/usr/lib/auros/shell-guard" "$RFS/usr/lib/auros/dpkg-repair"
+
+    chroot_done
+}
+
+harden_verify() {
+    local out
+    if ! out=$(RFS="$RFS" HARDEN_QUIET=1 sh "$ROOT/tools/hardentest.sh" 2>&1); then
+        printf '%s\n' "$out" >&2
+        die "this rootfs is missing hardening it must ship with (above).
+     Each line is a control in docs/security/HARDENING.md."
+    fi
+    note "hardening: $(printf '%s\n' "$out" | tail -1)"
+}

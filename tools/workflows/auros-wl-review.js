@@ -1,0 +1,35 @@
+export const meta = {
+  name: 'auros-wl-review',
+  description: 'Adversarial review of the compositor landing (subsurfaces..Xwayland WM and clipboard bridge): five lensed finders, two skeptics per finding',
+  phases: [
+    { title: 'Find', detail: 'security/privacy, hostile-client robustness, input/focus, test validity, integration' },
+    { title: 'Verify', detail: 'two skeptics with different lenses try to refute each finding' },
+  ],
+}
+
+const REPO = '/Users/aaroh/Desktop/auros v0.0.1/v0.0.1-auros'
+const GIT = `git -C "${REPO}"`
+const BASE = '54b783b^'
+const CTX = `AurOS is a Linux desktop for a great-grandmother; aurwl (src/aurwl/) is its Wayland compositor, which runs her whole session: if aurwl crashes or hangs, her screen dies. Stream WL just landed (commits ${BASE}..origin/main touching src/aurwl): subsurfaces, configure-serial window, drag and drop, cursor shapes, a GTK4 pointer-geometry fix, and ROOTLESS XWAYLAND with a hand-written X11 window manager (src/aurwl/xwm.inc, raw X11 wire protocol) and a clipboard bridge (src/aurwl/xclip.inc: CLIPBOARD both directions, any mime, INCR, 16 MiB cap). X programs are mostly Flatpaks (VLC, Zoom, Discord, Spotify). Tests: tools/wltest-* (wltest-x 29 scenarios), tools/wltest-sub-mutants.py, tools/fuzz/fuzz_xwm.c. Checkout ${REPO} (path has a space: quote it). READ-ONLY: \`${GIT} fetch -q origin\`, \`${GIT} diff ${BASE} origin/main -- src/aurwl tools src/aurshell/main.c build rootfs\`, \`${GIT} show origin/main:<path>\`, \`${GIT} grep -n <pat> origin/main -- <paths>\`. Also read docs/handoff/streams/WL.md. Never edit, check out, commit or push. Report only REAL defects with a concrete path from a real input or state to a wrong result (crash, hang, data/privacy leak, input going to the wrong program, a test that passes while the thing is broken, a security hole). No style nits. Each: file:line on origin/main, scenario, severity (blocker/high/medium/low), smallest correct fix.`
+
+const F = { type: 'object', properties: { findings: { type: 'array', items: { type: 'object', properties: {
+  title: { type: 'string' }, file: { type: 'string' }, line: { type: 'number' }, severity: { type: 'string', enum: ['blocker', 'high', 'medium', 'low'] },
+  scenario: { type: 'string' }, fix: { type: 'string' } }, required: ['title', 'file', 'severity', 'scenario', 'fix'] } } }, required: ['findings'] }
+const V = { type: 'object', properties: { refuted: { type: 'boolean' }, severity: { type: 'string' }, reason: { type: 'string' } }, required: ['refuted', 'reason'] }
+
+const LENSES = [
+  { key: 'privacy-security', q: 'Security and privacy of the X bridge. X11 has no clipboard or input isolation: does bridging the Wayland CLIPBOARD into X let ANY X client (a background Flatpak X app) read what she copies in a Wayland app (passwords from Firefox) without focus? Compare with KWin/mutter policy (only offer to X while an X window is focused). Can an X client inject input into Wayland windows, XGrabKeyboard/XGrabPointer to steal input while a Wayland window has focus, or spoof the shell (override-redirect window covering the panel, fake "Turn off" dialog, a full-screen undismissable window that traps her)? Can it steal focus? Is the Xwayland socket/abstract socket reachable by sandboxed Flatpaks that should not have X (only --socket=x11 apps)? Xauthority? Wishes typed-word triggers and password fields: do keystrokes typed into X apps reach the trigger matcher (c6394d7 password-field rules only know Wayland text-input)?' },
+  { key: 'hostile-client', q: 'Robustness against a buggy or hostile client: every X property/reply parsed in xwm.inc and xclip.inc (lengths, formats, counts, WM_NORMAL_HINTS, _NET_WM_NAME UTF-8, WM_CLASS, _MOTIF_WM_HINTS, INCR chunks), integer overflow, out-of-bounds reads, unbounded allocation (16 MiB cap really enforced on every path incl. INCR total and Wayland->X direction?), blocking reads/writes on the compositor main loop (a stalled INCR peer or a Wayland source that never closes its fd: does aurwl hang?), fd leaks, thousands of windows, Xwayland crashing or exiting (does aurwl survive, restart it, clean up surfaces?). Also the configure-serial window change (2f7ab0b) and the DnD code.' },
+  { key: 'input-focus', q: 'Input and focus correctness: focus handoff between X and Wayland windows (keyboard focus, X input focus, WM_TAKE_FOCUS, _NET_ACTIVE_WINDOW), menus/popups from X (override-redirect) positioning and dismissal, pointer coordinates for X windows and HiDPI/scale, the GTK4 geometry-first fix (7381d67) for windows whose geometry is unset or changes, clicks inside popovers, keyboard layout/keymap to Xwayland, modifier state stuck after focus change, full-screen X windows (VLC film) and the shell bar, closing an X window (WM_DELETE_WINDOW then kill?), a modal dialog behind its parent, Esc x3 / Ctrl+Alt+Del "get me out" still working when an X app grabs.' },
+  { key: 'test-validity', q: 'Test validity: can wltest-x, wltest-sub, wltest-deco, the mutant runner and fuzz_xwm pass while the real thing is broken? Look for scenarios that assert nothing meaningful, mutants that are equivalent or excluded, a fuzzer whose harness skips the real parse paths, tests that only run under a flag CI never sets, and whether these tests actually run in CI on every change to src/aurwl (read .github/workflows). Is the real-Flatpak proof (VLC/Zoom/Discord in a container with --no-sandbox) representative of the shipped image (zypak/sandbox on, real GPU path)?' },
+  { key: 'integration', q: 'Integration with the shipped image: is Xwayland installed in the image (build/forge, package list), started lazily with the right flags (-rootless, -terminate?, -listenfd, no TCP listen), is DISPLAY published to the systemd user env and D-Bus activation (C did 53b9971) and to Flatpak, what happens at first X connection during login (race), memory cost on a 4 GB 2013 laptop, does aurshell offscreen --with-app mode changes in src/aurshell/main.c leak into the booted path, and do Firefox (Wayland) and X apps share the clipboard as she expects (copy in VLC, paste in Firefox).' },
+]
+
+const results = await pipeline(LENSES,
+  l => agent(`${CTX}\n\nYour lens: ${l.key}. ${l.q}`, { label: `find:${l.key}`, phase: 'Find', schema: F }),
+  (r, l) => parallel((r ? r.findings : []).slice(0, 8).map(f => () =>
+    parallel(['code-trace: trace the exact code on origin/main; does the scenario really happen?', 'impact: grant it happens; is it real for her on the shipped image, and is the severity right?'].map(lens => () =>
+      agent(`${CTX}\n\nYou are a SKEPTIC. Try to REFUTE this finding. Lens: ${lens} Default refuted=true if you cannot confirm it from the code.\n\nFinding: ${JSON.stringify(f)}`, { label: `verify:${l.key}`, phase: 'Verify', schema: V })))
+      .then(vs => ({ ...f, lens: l.key, votes: vs.filter(Boolean), kept: vs.filter(Boolean).filter(v => !v.refuted).length >= 1 && vs.filter(Boolean).filter(v => v.refuted).length < 2 })))))
+const all = results.filter(Boolean).flat().filter(Boolean)
+return { kept: all.filter(f => f.kept), refuted: all.filter(f => !f.kept).map(f => f.title) }

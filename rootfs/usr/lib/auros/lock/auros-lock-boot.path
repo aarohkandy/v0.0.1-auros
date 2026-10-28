@@ -1,0 +1,13 @@
+# Enabled by `lockctl prepare` only. Whatever rewrites AurOS's menu
+# (auros-bootchain, from a kernel update or anything else), the copy on
+# the EFI partition follows (docs/security/THEFT.md section 2).
+[Unit]
+Description=AurOS: keep the menu on the EFI partition current
+ConditionPathExists=/etc/auros/lock
+
+[Path]
+PathChanged=/boot/grub/grub.cfg
+Unit=auros-lock-boot.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AurOS Setup (simulation for the people sessions)</title>
+<!--
+  THE WIZARD, AS PICTURES THAT ANSWER THE MOUSE. For the people sessions
+  (docs/usability/RUNNING-IT.md). It is not the installer and it installs
+  nothing. It shows the real screens from docs/shots/wizard/ and moves on
+  when she presses where the real button is. Every press, hit or miss, is
+  logged with the time; the observer downloads the log with L.
+
+  The window's X, and Stop, open the in-window question the real Setup
+  draws (docs/shots/wizard/5f and 5g), not a stock Windows box.
+
+  Observer keys (she never needs them):  1 happy path  2 PC needs fixing
+  3 locked drive (cannot go on)  4 install stops  |  H show the hot
+  spots  L download the log  R start again  N skip to the next screen.
+
+  WHEN THE SHOTS CHANGE (a restyle) press H and look: every box must sit on
+  its button. If not, edit HOT below: numbers are pixels of the 1120x690
+  picture. The detector that produced them is in RUNNING-IT.md.
+-->
+<style>
+  html,body{margin:0;height:100%;background:#2b3a4a;font-family:"Segoe UI",system-ui,sans-serif;overflow:hidden}
+  #stage{position:absolute;left:50%;top:50%;transform-origin:0 0}
+  #win{position:relative;background:#fff;box-shadow:0 12px 40px #0008;border:1px solid #888}
+  #bar{height:32px;background:#fff;display:flex;align-items:center;justify-content:space-between;font-size:13px;color:#111;border-bottom:1px solid #ddd}
+  #bar span{padding-left:12px}
+  #bar b{width:46px;height:32px;display:flex;align-items:center;justify-content:center;font-weight:400;font-size:15px;cursor:default}
+  #bar b:hover{background:#e81123;color:#fff}
+  #shot{position:relative}
+  #shot img{display:block}
+  .hot{position:absolute;outline:2px dashed #e0006a;background:#e0006a22;display:none}
+  body.show .hot{display:block}
+  #dark{position:absolute;inset:0;background:#000;color:#9aa;display:none;align-items:center;justify-content:center;font-size:20px;text-align:center}
+  #full{position:fixed;inset:0;background:#000;display:none}
+  #full img{width:100%;height:100%;object-fit:contain}
+  #hud{position:fixed;left:8px;bottom:6px;color:#9ab;font:11px/1.2 system-ui;opacity:.6}
+</style>
+</head>
+<body>
+<div id="stage"><div id="win">
+  <div id="bar"><span>AurOS Setup</span><b id="x" title="">&#10005;</b></div>
+  <div id="shot"><img id="img" alt=""><div id="dark"></div></div>
+</div></div>
+<div id="full"><img id="fimg" alt=""></div>
+<div id="hud"></div>
+<script>
+"use strict";
+var S = "../../shots/wizard/";
+var STAGING = "../../shots/staging-installing.png";
+// [x, y, w, h, label, go]   go = a page id, or a function name below.
+var HOT = {
+  checking:  { img:"1a-welcome-checking.png", auto:[5000,"ready"], hot:[[888,602,200,56,"Next (still checking)","early"]] },
+  ready:     { img:"1c-welcome-ready.png", hot:[[888,602,200,56,"Next","look"]] },
+  fix:       { img:"2a-blocked-fixable.png", hot:[[871,602,217,56,"Fix these for me","fixing"],[700,602,138,56,"Not now","closed"]] },
+  fixing:    { img:"1a-welcome-checking.png", auto:[6000,"ready"], hot:[] },
+  locked:    { img:"2g-blocked-encrypted-hard-disk.png", hot:[[846,602,242,56,"Close AurOS Setup","closed"]] },
+  look:      { img:"3a-style.png", hot:[
+      [312,103,380,198,"look: Like Windows","pick0"],[708,103,380,198,"look: Like a Mac","pick1"],
+      [312,317,380,198,"look: Big and simple","pick2"],[708,317,380,198,"look: One thing at a time","pick3"],
+      [733,602,138,56,"Back","ready"],[888,602,200,56,"Next","ready2"]] },
+  ready2:    { img:"4a-ready.png", hot:[[653,602,138,56,"Back","look"],[808,602,280,56,"Install AurOS","progress"]] },
+  progress:  { img:"5a-progress.png", auto:[25000,"restart"], x:"stopq", hot:[[949,602,139,56,"Stop","stopq"]] },
+  stopq:     { img:"5f-stop-question.png", hot:[[665,602,191,56,"Stop and undo","undone"],[888,602,200,56,"Keep going","progress"]] },
+  closeq:    { img:"5g-close-question-ready.png", hot:[[566,602,199,56,"Close and undo","undone"],[797,602,291,56,"Keep it and restart later","later"]] },
+  stopped:   { img:"5e-stopped.png", hot:[[717,602,138,56,"Not now","closed"],[888,602,200,56,"Try again","progress"]] },
+  restart:   { img:"5c-ready-to-restart.png", x:"closeq", hot:[[682,602,173,56,"Restart later","later"],[888,602,200,56,"Restart now","black"]] }
+};
+var SCEN = { "1":["checking","happy"], "2":["fix","fix"], "3":["locked","locked"], "4":["checking","stops"] };
+var $ = function(i){ return document.getElementById(i); };
+var t0, log = [], page, timer, scen = "1", picks = 0, phase = "wizard", darkTimer;
+
+function now(){ return Math.round(performance.now() - t0); }
+function rec(ev, x, y, label){ log.push([now(), ev, page, x==null?"":x, y==null?"":y, label||""].join(",")); hud(); }
+function hud(){ $("hud").textContent = scen+" · "+page+" · "+log.length+" events (L = save log)"; }
+function fit(){
+  var w = 1120+2, h = 690+33, k = Math.min(innerWidth/(w+40), innerHeight/(h+40));
+  var st = $("stage"); st.style.transform = "scale("+k+")";
+  st.style.marginLeft = (-w*k/2)+"px"; st.style.marginTop = (-h*k/2)+"px";
+}
+function show(id){
+  clearTimeout(timer); page = id; var p = HOT[id];
+  $("img").src = S + p.img;
+  var shot = $("shot"); Array.prototype.slice.call(shot.querySelectorAll(".hot")).forEach(function(n){ n.remove(); });
+  p.hot.forEach(function(b){ var d = document.createElement("div"); d.className = "hot";
+    d.style.cssText = "left:"+b[0]+"px;top:"+b[1]+"px;width:"+b[2]+"px;height:"+b[3]+"px"; d.title = b[4]; shot.appendChild(d); });
+  if (p.auto) timer = setTimeout(function(){ rec("auto", "", "", p.auto[1]); next(p.auto[1]); }, p.auto[0]);
+  rec("page", "", "", id);
+}
+function next(id){
+  if (id === "restart" && scen === "4") { show("stopped"); return; }
+  show(id);
+}
+function endAt(msg){
+  clearTimeout(timer); phase = "end"; $("full").style.display = "none"; $("dark").style.display = "none";
+  rec("end", "", "", msg);
+  $("dark").style.display = "flex"; $("dark").style.background = "#10151c";
+  $("dark").innerHTML = "<div>" + msg + "<br><br><small>(observer: press R to start again, L to save the log)</small></div>";
+}
+function goBlack(){
+  phase = "dark"; rec("dark-start"); $("dark").style.display = "flex"; $("dark").style.background = "#000";
+  $("dark").innerHTML = "<small style='opacity:.25'>(the screen is black)</small>";
+  $("stage").style.visibility = "visible";
+  darkTimer = setTimeout(function(){ staging(); }, 25000);
+}
+function staging(){
+  phase = "staging"; rec("staging-start"); $("dark").style.display = "none";
+  $("full").style.display = "block"; $("fimg").src = STAGING;
+  darkTimer = setTimeout(function(){ $("full").style.display = "none"; endAt("AurOS is installed and starting."); }, 40000);
+}
+function act(go, label){
+  if (go === "early") return;                              // pressed Next while it is still looking
+  if (go === "undone") { endAt("AurOS Setup closed. Everything was put back."); return; }
+  if (go === "closed") { endAt("AurOS Setup closed. Nothing on the computer was changed."); return; }
+  if (go === "later")  { endAt("AurOS Setup closed. AurOS goes on next time the computer restarts."); return; }
+  if (go === "black")  { goBlack(); return; }
+  if (/^pick/.test(go)) { picks++; var i = +go.slice(4);
+    var b = HOT.look.hot[i], d = document.createElement("div");
+    Array.prototype.slice.call($("shot").querySelectorAll(".pick")).forEach(function(n){ n.remove(); });
+    d.className = "pick"; d.style.cssText = "position:absolute;left:"+b[0]+"px;top:"+b[1]+"px;width:"+b[2]+"px;height:"+b[3]+"px;border:3px solid #0B5D4F;border-radius:12px;box-sizing:border-box;background:#0B5D4F14;pointer-events:none";
+    $("shot").appendChild(d); rec("pick", "", "", label); return; }
+  next(go);
+}
+$("shot").addEventListener("pointerdown", function(e){
+  if (phase !== "wizard") { rec("press-during-"+phase, e.clientX, e.clientY, ""); return; }
+  var r = $("img").getBoundingClientRect(), k = r.width/1120;
+  var x = Math.round((e.clientX-r.left)/k), y = Math.round((e.clientY-r.top)/k);
+  var hit = null; HOT[page].hot.forEach(function(b){ if (x>=b[0]&&x<b[0]+b[2]&&y>=b[1]&&y<b[1]+b[3]) hit = b; });
+  if (hit) { rec("hit", x, y, hit[4]); act(hit[5], hit[4]); } else rec("miss", x, y, "");
+});
+$("x").addEventListener("pointerdown", function(e){
+  e.stopPropagation(); var p = HOT[page];
+  if (phase !== "wizard") return;
+  rec("x", "", "", "window X");
+  if (p.x) show(p.x);                       // the in-window question, as the real Setup draws it
+  else endAt("AurOS Setup closed. Nothing on the computer was changed.");
+});
+function start(s){
+  scen = s; picks = 0; phase = "wizard"; log = []; t0 = performance.now(); clearTimeout(darkTimer);
+  $("full").style.display = "none"; $("dark").style.display = "none"; show(SCEN[s][0]);
+}
+document.addEventListener("keydown", function(e){
+  var k = e.key;
+  if (phase !== "wizard" && !/^[hlrn]$/i.test(k)) { rec("key-during-"+phase, "", "", k); return; }
+  if (/^[1-4]$/.test(k)) start(k);
+  else if (/^h$/i.test(k)) document.body.classList.toggle("show");
+  else if (/^r$/i.test(k)) start(scen);
+  else if (/^n$/i.test(k) && HOT[page] && HOT[page].auto) { clearTimeout(timer); next(HOT[page].auto[1]); }
+  else if (/^l$/i.test(k)) {
+    var a = document.createElement("a"); a.download = "wizard-sim-log-"+Date.now()+".csv";
+    a.href = URL.createObjectURL(new Blob(["ms,event,page,x,y,label\n"+log.join("\n")+"\n"], {type:"text/csv"})); a.click();
+  }
+});
+addEventListener("resize", fit); fit(); start("1");
+</script>
+</body>
+</html>

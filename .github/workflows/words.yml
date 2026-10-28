@@ -1,0 +1,49 @@
+# The words she reads (docs/DESIGN-DIRECTION.md section 4 and K P1-6,
+# docs/EASY.md rule 2), on every push that changes them:
+#   tools/wordlint.sh   website, help pages, installer, staging screens and
+#                       the whole desktop shell: forbidden words and names
+#   tools/helptest.py   the help pages: offline, her words, real buttons
+# Python's standard library only; a few seconds.
+name: words
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'rootfs/usr/share/auros/help/**'
+      - 'src/aurbridge/wizard.c'
+      - 'src/aurbridge/fix_win.c'
+      - 'src/aurstage/install.c'
+      - 'src/aurscreen/screen.c'
+      - 'src/aurshell/**'
+      - 'build/forge'
+      - 'docs/EASY.md'
+      - 'tools/wordlint.sh'
+      - 'tools/helptest.py'
+      - '.github/workflows/words.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: words-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  words:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: helptest (the help pages work offline, in her words, with real buttons)
+        run: python3 -I tools/helptest.py
+      - name: wordlint (no word she doesn't use, one name per thing)
+        run: |
+          set +e
+          sh tools/wordlint.sh > wordlint.txt 2>&1
+          rc=$?
+          cat wordlint.txt
+          { echo '### wordlint'; echo '```'; cat wordlint.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc

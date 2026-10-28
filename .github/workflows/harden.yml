@@ -1,0 +1,183 @@
+# The hardening, on the real image, booted (tools/hardenboottest.sh).
+#
+# Runs when:
+#   - a build finishes whose image changed something the hardening
+#     depends on (the files in HARDENING_INPUTS below, compared with
+#     the image the previous build made), or whose subject says [harden];
+#   - a push changes the test itself (or this file), or its subject
+#     says [harden]: then the newest build whose artifacts are still
+#     there is tested, without building anything.
+#
+# Evidence: the report is the job summary; the transcripts, serial logs
+# and what each boot recorded are the `hardenboot` artifact.
+# docs/security/HARDENING.md says what each line means.
+name: harden
+# The run's title names the build whose image it boots: a run started by a
+# workflow_run has the tip of main as its head_sha, not the build's, so the
+# title is the only record of which image was tested. release.yml's promote
+# (tools/hardengate.sh) looks for "harden of build run <id>"; any other
+# event keeps GitHub's default title (the single space).
+run-name: ${{ github.event_name == 'workflow_run' && format('harden of build run {0}', github.event.workflow_run.id) || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_id != '' && format('harden of build run {0}', github.event.inputs.run_id)) || ' ' }}
+
+on:
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: [build]
+    types: [completed]
+    branches: [main]
+  # By hand: gh workflow run harden.yml -f only=time [-f run_id=<build run>]
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'all, time (the clock test only) or hardening (the other one)'
+        default: all
+      run_id:
+        description: 'the build run whose image to test (default: the newest)'
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  HARDENING_INPUTS: '^(build/harden|build/forge|profiles/desktop\.profile|rootfs/etc/(sysctl\.d|modprobe\.d|nftables\.conf|systemd/journald\.conf\.d|avahi|cups|chrony|NetworkManager/dispatcher\.d)|rootfs/etc/systemd/system/(aurshell\.service|auros-dpkg-repair\.service)|rootfs/usr/lib/auros/(grub\.cfg\.in|bootchain|shell-guard|dpkg-repair|choices\.sh)|tools/hardenboottest\.sh|tools/timeboottest\.sh|tools/hardentest|\.github/workflows/harden\.yml)'
+
+jobs:
+  which:
+    # Not "the build succeeded": build.yml's conclusion includes its
+    # tests, and an image whose e2e flaked is still an image to check.
+    # Whether the run made an image at all is asked below.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.w.outputs.go }}
+      run-id: ${{ steps.w.outputs.run_id }}
+    steps:
+      - id: w
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          MSG: ${{ github.event.head_commit.message || github.event.workflow_run.head_commit.message }}
+          BEFORE: ${{ github.event.before }}
+          BUILD_RUN: ${{ github.event.workflow_run.id }}
+          BUILD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID_INPUT: ${{ github.event.inputs.run_id }}
+        run: |
+          R=$GITHUB_REPOSITORY; go=false; rid=""; files=""
+          # Image builds of main, newest first: "run-id sha".
+          gh api "repos/$R/actions/artifacts?name=auros-pieces&per_page=100" \
+            --jq '.artifacts[] | select(.expired == false and .workflow_run.head_branch == "main") | "\(.workflow_run.id) \(.workflow_run.head_sha)"' \
+            > /tmp/builds.txt || true
+          head -5 /tmp/builds.txt
+          SUBJ=${MSG%%$'\n'*}
+          # A [release] candidate's image is always tested: "no hardening input
+          # changed since the last image" is not "the last result was green" (the
+          # only boot runs since 22:20 UTC 2026-10-23 were red or cancelled, and
+          # every later run skipped, which looked like a pass).
+          case "$SUBJ" in *'[harden]'*|*'[release]'*) word=true ;; *) word=false ;; esac
+          if [ "$EVENT" = workflow_dispatch ]; then
+            rid=${RUN_ID_INPUT:-$(head -1 /tmp/builds.txt | cut -d' ' -f1)}
+            [ -n "$rid" ] || { echo "::error::no build of main has its image left; push with [build]"; exit 1; }
+            go=true
+          elif [ "$EVENT" = workflow_run ]; then
+            # Only a build that made an image; compared with the image before it.
+            if grep -q "^$BUILD_RUN " /tmp/builds.txt; then
+              rid=$BUILD_RUN
+              prev=$(awk -v r="$BUILD_RUN" 'f { print $2; exit } $1 == r { f = 1 }' /tmp/builds.txt)
+              if [ -n "$prev" ]; then files=$(gh api --paginate "repos/$R/compare/$prev...$BUILD_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; }; fi
+              [ -z "$prev" ] && word=true   # the first image there is: test it
+            fi
+          else
+            rid=$(head -1 /tmp/builds.txt | cut -d' ' -f1)
+            case "$BEFORE" in
+              ''|0000000000000000000000000000000000000000) files=$(gh api --paginate "repos/$R/commits/$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
+              *) files=$(gh api --paginate "repos/$R/compare/$BEFORE...$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
+            esac
+            # A push that changes the image itself waits for its build
+            # (the workflow_run above); this one only tests the test.
+            files=$(printf '%s\n' "$files" | grep -E '^(tools/hardenboottest\.sh|tools/timeboottest\.sh|tools/hardentest|\.github/workflows/harden\.yml)' || true)
+          fi
+          printf '%s\n' "$files" | sed -n '1,40p'
+          if [ -n "$rid" ] && { [ "$word" = true ] || printf '%s\n' "$files" | grep -qE "$HARDENING_INPUTS"; }; then go=true; fi
+          if [ "$word" = true ] && [ -z "$rid" ]; then echo "::error::no build of main has its image left; push with [build]"; exit 1; fi
+          echo "go=$go" | tee -a "$GITHUB_OUTPUT"
+          echo "run_id=$rid" | tee -a "$GITHUB_OUTPUT"
+          [ "$go" = true ] && echo "testing the image of $GITHUB_SERVER_URL/$R/actions/runs/$rid" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+  boot:
+    needs: which
+    if: needs.which.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    # One at a time, queued; the newest waiting one wins, a running one
+    # is never cancelled.
+    # A run started by hand has a queue of its own: the automatic ones
+    # (one per new image) replace each other while waiting for a runner,
+    # and must not replace somebody's deliberate request.
+    concurrency:
+      group: harden-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'main' }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: KVM, QEMU, OVMF
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+              sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sh tools/apt.sh qemu-system-x86 qemu-utils ovmf gdisk e2fsprogs python3 zstd dosfstools mtools
+          [ -w /dev/kvm ] || { echo "no usable /dev/kvm"; exit 1; }
+          ls -l /usr/share/OVMF/
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: auros-pieces
+          path: dl/pieces
+          run-id: ${{ needs.which.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: the image, from its pieces, checked against its hash
+        run: |
+          mkdir -p out
+          ( cd dl/pieces && sha256sum -c --quiet <(grep '^piece ' pieces.txt | awk '{print $4"  "$2}') )
+          cat dl/pieces/auros-desktop.img.gz.* | gzip -dc | cp --sparse=always /dev/stdin out/auros-desktop.img
+          echo "$(cat dl/pieces/image.sha256)  out/auros-desktop.img" | sha256sum -c
+          head -1 dl/pieces/pieces.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          rm -rf dl/pieces
+          df -h /
+      - name: hardenboottest under KVM
+        if: ${{ github.event.inputs.only != 'time' }}
+        run: |
+          set +e
+          sudo env PATH="$PATH" HARDEN_REPORT=out/hardenboot.md sh tools/hardenboottest.sh out/auros-desktop.img 2>&1 | tee out/hardenboottest.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          cat out/hardenboot.md >> "$GITHUB_STEP_SUMMARY" || true
+          exit $rc
+      # The clock, on the same image (tools/timeboottest.sh): a PC whose
+      # hardware clock Windows keeps in local time, online, three ways.
+      - name: timeboottest under KVM
+        if: ${{ !cancelled() && github.event.inputs.only != 'hardening' }}
+        run: |
+          set +e
+          sudo env PATH="$PATH" TIME_REPORT=out/timeboot.md sh tools/timeboottest.sh out/auros-desktop.img 2>&1 | tee out/timeboottest.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          cat out/timeboot.md >> "$GITHUB_STEP_SUMMARY" || true
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: hardenboot
+          path: |
+            out/hardenboot.md
+            out/hardenboot-evidence.tar.gz
+            out/hardenboottest.txt
+            out/timeboot.md
+            out/timeboot-evidence.tar.gz
+            out/timeboottest.txt
+          retention-days: 30

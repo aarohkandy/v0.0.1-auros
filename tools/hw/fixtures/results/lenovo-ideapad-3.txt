@@ -1,0 +1,9 @@
+machine: Lenovo IdeaPad 3 15ABA7
+date: 2026-11-03
+install: refused
+refused_because: the Windows drive is encrypted with BitLocker
+put_windows_back: not-tried
+data_loss: no
+wifi_worked: untested
+---
+Device encryption was on (Microsoft account).

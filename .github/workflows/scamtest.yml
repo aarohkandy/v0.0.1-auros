@@ -1,0 +1,83 @@
+# The scam protections (stream S2, docs/handoff/streams/S2.md), each
+# check proven able to fail:
+#
+#   tools/scamtest.sh               Firefox's policy against Firefox's own
+#                                   schemas; the remote-control gate (polkit
+#                                   rule + helper); the desktop's way out of
+#                                   a page and its install card (guardtest,
+#                                   rebuilt with 16 protections broken)
+#   tools/scamtest/firefoxlive.py   (inside scamtest.sh) Mozilla's Firefox, as the image
+#                                   carries it, on the shipped policy file: every
+#                                   policy active, preferences locked, no Terms-of-Use
+#                                   window, uBlock Origin installed, developer tools
+#                                   closed, and no crash report on a real crash
+#   tools/scamtest/polkit.sh        the same gate under a real polkitd 124 in
+#                                   an Ubuntu 24.04 container, with the
+#                                   desktop's own listener as a non-root user
+name: scamtest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'rootfs/etc/firefox/**'
+      - 'rootfs/etc/systemd/system/aurshell.service.d/60-auros-no-crash-reports.conf'
+      - 'rootfs/etc/polkit-1/**'
+      - 'rootfs/usr/lib/auros/remote-access-gate'
+      - 'rootfs/usr/lib/tmpfiles.d/auros-remote-access.conf'
+      - 'src/aurshell/guard.*'
+      - 'src/aurshell/foot.*'
+      - 'src/aurshell/main.c'
+      - 'src/aurshell/shell.h'
+      - 'tools/scamtest.sh'
+      - 'tools/scamtest/**'
+      - 'tools/guardtest.c'
+      - '.github/workflows/scamtest.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scamtest-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scamtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: What the tests need
+        run: |
+          for i in 1 2 3; do timeout 300 sudo apt-get update -qq && break; sleep 10; done
+          for i in 1 2 3; do
+            timeout 300 sudo apt-get install -y -qq --no-install-recommends \
+              python3-jsonschema libdbus-1-dev pkg-config fonts-dejavu-core && break
+            sleep 10
+          done
+      - name: Mozilla's Firefox, the one the image carries
+        run: |
+          # Mozilla's own instructions, as build/forge follows them (pin 1000 on
+          # their origin so Ubuntu's snap stub cannot win).
+          sudo install -d -m 0755 /etc/apt/keyrings
+          for i in 1 2 3; do
+            timeout 60 curl -fsSL https://packages.mozilla.org/apt/repo-signing-key.gpg \
+              | sudo tee /etc/apt/keyrings/packages.mozilla.org.asc >/dev/null && break
+            sleep 10
+          done
+          echo "deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main" \
+            | sudo tee /etc/apt/sources.list.d/mozilla.list >/dev/null
+          printf 'Package: *\nPin: origin packages.mozilla.org\nPin-Priority: 1000\n' \
+            | sudo tee /etc/apt/preferences.d/mozilla >/dev/null
+          for i in 1 2 3; do timeout 300 sudo apt-get update -qq && break; sleep 10; done
+          for i in 1 2 3; do timeout 600 sudo apt-get install -y -qq firefox && break; sleep 10; done
+          firefox --version
+      - name: scamtest (Firefox policy, remote-control gate, the way out of a page)
+        env:
+          SCAMTEST_NEED_FIREFOX: '1'
+        run: sh tools/scamtest.sh
+      - name: the gate under a real polkitd
+        run: |
+          timeout 900 docker run --rm -v "$PWD":/w -w /w ubuntu:24.04 \
+            sh tools/scamtest/polkit.sh --prove

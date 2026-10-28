@@ -1,0 +1,202 @@
+{
+ "setup_on_real_windows": false,
+ "pictures": {
+  "setup-check.jpg": {
+   "source": "docs/shots/wizard/hidpi-1c-welcome-ready.png",
+   "source_sha256": "2d258de5399f9792e658eca93fd3b058d7a442e809b86e861ff0852c23e7756e",
+   "says": [
+    "Let’s put AurOS on this computer",
+    "AurOS is a free, simple new way to use this computer. AurOS is made to keep Windows and your files. If AurOS isn’t for you, you can go back to Windows.",
+    "This computer can take AurOS.",
+    "Next, you pick how it looks.",
+    "AurOS, as it will look beside Windows. You pick the look next.",
+    "Licenses",
+    "Next"
+   ],
+   "rings": [
+    {
+     "for": "button",
+     "style": "left:72.4%;top:87.2%;width:23.8%;height:8.1%"
+    }
+   ]
+  },
+  "setup-look.jpg": {
+   "source": "docs/shots/wizard/hidpi-3a-style.png",
+   "source_sha256": "005f17e5def50eb888a77e98dec148687f5354f74208431bc09bb0e523a66cb0",
+   "says": [
+    "Pick the look you want",
+    "Like Windows",
+    "Like a Mac",
+    "Big and simple",
+    "One thing at a time",
+    "Chosen",
+    "Picked for you:",
+    "Licenses",
+    "Back",
+    "Next"
+   ],
+   "rings": [
+    {
+     "for": "card",
+     "style": "left:5.0%;top:17.3%;width:42.9%;height:25.3%"
+    },
+    {
+     "for": "button",
+     "style": "left:72.4%;top:87.2%;width:23.8%;height:8.1%"
+    }
+   ]
+  },
+  "setup-ready.jpg": {
+   "source": "docs/shots/wizard/hidpi-4a-ready.png",
+   "source_sha256": "b0e6aa0ae24a63ca954766033f3510e0be82dac46a710fbf7a2fc4dfe1f0702f",
+   "says": [
+    "Ready to install",
+    "Windows and your files are kept. Setup makes Windows smaller to fit AurOS. If the power fails or the computer crashes during that step, Windows or your files could be damaged and might not come back.",
+    "Any change to a drive carries some risk. Copy anything you can’t replace to a memory stick first.",
+    "Programs made for Windows don’t run in AurOS.",
+    "It will look like Windows: a bar along the bottom.",
+    "AurOS downloads while you wait, so stay connected to the internet.",
+    "The computer restarts once. Then AurOS asks if everything works. Press “No, go back to Windows” and it does.",
+    "It takes about 25 to 60 minutes. The screen goes dark for a minute or two.",
+    "Setup turns off Fast Startup and hibernation, and leaves a Windows task, “AurOS put-back”, that does nothing unless AurOS is removed.",
+    "By pressing Install AurOS you agree to the AurOS Terms.",
+    "Read the Terms",
+    "Licenses",
+    "Back",
+    "Install AurOS"
+   ],
+   "rings": [
+    {
+     "for": "button",
+     "style": "left:62.9%;top:87.2%;width:33.3%;height:8.1%"
+    }
+   ]
+  },
+  "look-taskbar.jpg": {
+   "source": "docs/shots/shells/taskbar-1366x768-desktop.png",
+   "source_sha256": "b978bdda4115182d9a8200fe0632f01110e46391d50c553abcb63e6c52ba902a",
+   "says": [
+    "All my programs",
+    "Everything on this computer",
+    "Internet",
+    "Websites, news and shopping",
+    "Photos",
+    "Look at your pictures",
+    "Your files",
+    "Everything you have saved",
+    "Documents",
+    "Read PDFs and documents",
+    "Music and video",
+    "Play a song or a film",
+    "Notes",
+    "Write and read plain notes",
+    "Calculator",
+    "Add up, and work things out",
+    "Zip files",
+    "Open or make a zip file",
+    "Printers",
+    "Set up or check a printer",
+    "Settings",
+    "Change how this computer works",
+    "Get more programs",
+    "Find and add programs",
+    "Nothing open yet.",
+    "Help",
+    "Wi-Fi",
+    "Smaller text",
+    "Bigger text",
+    "Turn off"
+   ],
+   "size": [
+    1366,
+    768
+   ]
+  },
+  "look-dock.jpg": {
+   "source": "docs/shots/shells/dock-1366x768-desktop.png",
+   "source_sha256": "0fe03908f48304fb87921e15d91dbe31ceab0d126203704bde263b6f35366082",
+   "says": [
+    "All my programs",
+    "Internet",
+    "Your files",
+    "Documents",
+    "Notes",
+    "Get more programs",
+    "Help",
+    "Wi-Fi",
+    "Settings",
+    "Smaller text",
+    "Bigger text",
+    "Turn off"
+   ],
+   "size": [
+    1366,
+    768
+   ]
+  },
+  "look-rail.jpg": {
+   "source": "docs/shots/shells/rail-1366x768-desktop.png",
+   "source_sha256": "65bbf1b18147e701f6faa17dc122d29d4a65d017fbf630c9d3d9cadcf24e5d06",
+   "says": [
+    "What would you like to do?",
+    "Pick one. You can always come back here.",
+    "Internet",
+    "Websites, news and shopping",
+    "Photos",
+    "Look at your pictures",
+    "Your files",
+    "Everything you have saved",
+    "Documents",
+    "Read PDFs and documents",
+    "All my programs",
+    "Everything on this computer",
+    "Get more programs",
+    "Find and add programs",
+    "Help",
+    "Wi-Fi",
+    "Settings",
+    "Smaller text",
+    "Bigger text",
+    "Turn off"
+   ],
+   "size": [
+    1366,
+    768
+   ]
+  },
+  "look-tiles.jpg": {
+   "source": "docs/shots/shells/tiles-1366x768-desktop.png",
+   "source_sha256": "0473870a5db07fbb17bc0260a2ccfed178dc8721bbf873daf99b7735015df2a9",
+   "says": [
+    "What would you like to do?",
+    "Previous page",
+    "Next page",
+    "Internet",
+    "Websites, news and shopping",
+    "Photos",
+    "Look at your pictures",
+    "Your files",
+    "Everything you have saved",
+    "Documents",
+    "Read PDFs and documents",
+    "Music and video",
+    "Play a song or a film",
+    "Notes",
+    "Write and read plain notes",
+    "Get more programs",
+    "Find and add programs",
+    "Home",
+    "Help",
+    "Wi-Fi",
+    "Settings",
+    "Smaller text",
+    "Bigger text",
+    "Turn off"
+   ],
+   "size": [
+    1366,
+    768
+   ]
+  }
+ }
+}

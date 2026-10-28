@@ -1,0 +1,38 @@
+# AurOS's own addresses (docs/ops/DOMAIN.md). Rendered by .github/workflows/edge.yml
+# (the blanks between at-signs filled in; nothing is deployed until the repository variable AUROS_DOMAIN
+# is set). Secrets OPS_TOKEN and HALT_TOKEN are set there, never here.
+name = "auros-edge"
+main = "src/worker.js"
+compatibility_date = "2026-09-15"
+workers_dev = false
+
+routes = [
+  { pattern = "@DOMAIN@", custom_domain = true },
+  { pattern = "www.@DOMAIN@", custom_domain = true },
+  { pattern = "get.@DOMAIN@", custom_domain = true },
+  { pattern = "updates.@DOMAIN@", custom_domain = true },
+  { pattern = "status.@DOMAIN@", custom_domain = true },
+]
+
+[vars]
+DOMAIN = "@DOMAIN@"
+GH_REPO = "@GH_REPO@"
+PAGES_ORIGIN = "@PAGES_ORIGIN@"
+# Daily download cap per wave, wave 0 first (closed). 0 in the last place = no cap.
+WAVE_CAPS = "0,25,100,300,0"
+
+[[durable_objects.bindings]]
+name = "OPS"
+class_name = "Ops"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Ops"]
+
+# No per-request logs: they would hold addresses.
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+invocation_logs = false

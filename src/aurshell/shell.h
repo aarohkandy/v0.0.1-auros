@@ -1,0 +1,586 @@
+/* shell.h — the contract every AurOS shell archetype implements.
+ *
+ * An archetype answers exactly one question: when you want to reach a
+ * different thing, what do you do? Colours are the theme; what the user
+ * is allowed to do is the policy; this is only the interaction model.
+ *
+ * Because all archetypes share this context, building a distribution
+ * with a different feel is choosing a .shell file — not writing code.
+ * That is the whole point of the split.
+ */
+#ifndef AUROS_SHELL_H
+#define AUROS_SHELL_H
+
+#include <stdint.h>
+#include <stddef.h>
+#include "draw.h"
+#include "anim.h"
+#include "../common/theme.h"
+#include "../common/font.h"
+
+/* 64, not 32. A person who has installed a dozen programs from the
+ * store on top of the image's own was already past 32, and the table
+ * was cut at the bottom of its rank order -- the store itself is
+ * ranked there, so the more she installed the more likely the way to
+ * install anything was the thing that fell off. */
+#define SHELL_MAX_APPS 64
+/* More than any real Exec= line, and a bound on what a hostile one can
+ * make us allocate. */
+#define APP_MAX_ARGS   16
+#define SHELL_MAX_WINS 32
+
+/* Icons are drawn from primitives, so they inherit theme colours, scale
+ * to any size without assets, and add nothing to the image. */
+typedef enum {
+    ICON_GLOBE, ICON_MAIL, ICON_PHOTOS, ICON_FILES,
+    ICON_SETTINGS, ICON_HELP, ICON_WINDOW, ICON_PLUS,
+    ICON_TEXT, ICON_MUSIC, ICON_TERMINAL, ICON_CALC,
+    /* "Get more programs": a carrier bag with a plus cut out of it.
+     * "All my programs": a stack of rows. Both added for the store on
+     * every home screen; see shell_home_pick(). */
+    ICON_STORE, ICON_LIST,
+    /* "Make a wish" (docs/AI.md §4): a speech bubble -- she says what
+     * she wants -- with three dots cut out of it. */
+    ICON_WISH,
+    /* No two things share a silhouette (DESIGN-DIRECTION §3): a page
+     * with a folded corner (Documents), a printer, a box with a zip,
+     * and a gear (Settings). The band's own: Wi-Fi, sound, bigger and
+     * smaller text, turn off, close, back, forward, and the check. */
+    ICON_DOC, ICON_PRINTER, ICON_ZIP, ICON_GEAR,
+    ICON_WIFI, ICON_SPEAKER, ICON_BIGGER, ICON_SMALLER, ICON_POWER,
+    ICON_CLOSE, ICON_BACK, ICON_FORWARD, ICON_CHECK,
+    ICON_N
+} shell_icon;
+
+/* What an entry IS, beyond being something to start. */
+enum {
+    APP_ROLE_PROGRAM = 0,
+    /* The store. Exactly one at most, always called "Get more
+     * programs", and every archetype gives it a place that does not
+     * move as more programs are installed (shell_home_pick). */
+    APP_ROLE_STORE,
+    /* The shell's own Settings, which opens the Settings panel rather
+     * than starting a program. */
+    APP_ROLE_SETTINGS,
+    /* "Make a wish" (src/aurshell/wish.c). Opens the Wishes panel, and
+     * shell_home_pick() gives it the place just before the store on
+     * every home, so it does not move as programs are installed. */
+    APP_ROLE_WISH
+};
+
+typedef struct {
+    char        id[32];
+    char        name[40];      /* the word the USER would use */
+    char        hint[56];      /* one line of plain language   */
+    shell_icon  icon;
+    uint32_t    tint;
+    int         pinned;        /* appears in a dock / favourites strip */
+    int         role;          /* APP_ROLE_*                            */
+    /* Nonzero when this program arrived while the desktop was running:
+     * installed a moment ago, from the store. Larger is newer. The home
+     * screens put the newest one where she will see it; 0 for
+     * everything that was already here when the desktop started. */
+    unsigned    fresh;
+    /* The argument vector that starts it: NUL-separated tokens, ending
+     * in a second NUL, with n_args of them. NOT a shell command line --
+     * a .desktop Exec= is parsed per the XDG quoting rules and handed
+     * to execv, so a semicolon or a backtick in a file the user can
+     * write is an argument rather than an instruction.
+     *
+     * An empty first token means there is nothing behind this icon,
+     * which today is true only of the shell's own Settings entry. */
+    char        exec[192];
+    int         n_args;
+    char        wm_class[64];  /* app_id a window reports; links the two */
+} app_entry;
+
+typedef struct {
+    char      title[64];
+    char      subtitle[96];
+    int       app;             /* index into ctx->apps, or -1        */
+    surface  *content;         /* live view; NULL draws a placeholder */
+    int       minimised;
+    rect      geom;            /* used by overlapping and tiled models */
+
+    /* The compositor window this entry stands for, or 0 while the
+     * application is still starting. A slot is created the instant the
+     * user clicks, because two seconds of nothing happening reads as a
+     * broken machine; the real window adopts the slot when it maps. */
+    uint32_t  wid;
+    int       starting;
+    uint32_t  start_ms;        /* when the wait began; 0 = not yet set */
+
+    /* The program draws its own title bar and window buttons (Firefox,
+     * GTK programs), so the archetype draws none over it: two sets of
+     * buttons, one above the other, is the thing nobody can work out.
+     * The footer's "Close this" is still the one place to close. */
+    int       csd;
+    /* The wid of the window this one is a dialog of (xdg set_parent, WM_TRANSIENT_FOR), 0 if none. */
+    uint32_t  dialog_of;
+    /* The program asked to fill the screen (a film's full-screen button,
+     * a page's video): it covers the whole desktop above the band, which
+     * stays, so "Close this" is always there. Cleared when it stops being
+     * the thing she is looking at. */
+    int       full;
+} win_entry;
+
+/* What a program's own title bar can ask of the archetype (the same bits
+ * as AURWL_REQ_*; session.c checks that they agree). */
+enum { WREQ_MOVE = 1, WREQ_MAXIMIZE = 2, WREQ_RESTORE = 4, WREQ_MINIMIZE = 8,
+       WREQ_FULLSCREEN = 16, WREQ_UNFULLSCREEN = 32 };
+
+/* A small wobble between press and release is a press, not a drag (DESIGN-DIRECTION,
+ * Input). A window of ours moves by its own title bar only once the pointer is
+ * DRAG_SLOP px from where it went down. A program's own bar asks for the move after
+ * its toolkit's threshold, so that one starts at once. */
+#define DRAG_SLOP 8
+static inline int drag_wobble(int x0, int y0, int x, int y)
+{
+    int dx = x - x0, dy = y - y0;
+    return dx * dx + dy * dy < DRAG_SLOP * DRAG_SLOP;
+}
+
+/* Two faces, not one, at two real weights.
+ *
+ * The old version of this struct was four SIZES of one file, which is
+ * why the desktop had no typographic hierarchy: size alone is a weak
+ * signal, and a 26px and a 19px cut of the same regular sans read as
+ * the same voice slightly louder. Here `huge`/`big`/`dmid` come from a
+ * bold DISPLAY serif and `mid`/`small`/`tiny`/`label` from a
+ * caption-optimised sans, `mid` and `label` being its BOLD cut. The
+ * contrast between a 42px bold serif and an 11px regular sans is the
+ * hierarchy; nothing needs a colour or a glow to be important.
+ *
+ * `lh` is the theme's line_height, carried here so that block spacing
+ * is a theme decision rather than a constant in six layouts. */
+typedef struct {
+    font *huge, *big, *dmid;      /* display face: headlines only     */
+    font *mid, *label;            /* text face, BOLD: names, rubrics  */
+    font *small, *tiny;           /* text face, regular: body, hints  */
+    float lh;
+} shell_fonts;
+
+typedef struct shell_ctx_s {
+    /* ── theme, resolved once ───────────────────────────────────── */
+    int      radius, radius_sm, margin, padding, border;
+    int      bar_h, blur_r, shadow_r;
+    float    panel_a, shadow_a;
+    uint32_t bg, bg_alt, surface_c, surface_hi, overlay;
+    uint32_t muted, subtle, fg, fg_hi;
+    uint32_t accent, accent_alt, accent_warm, err, ok, info;
+    char     brand[48];
+    theme_t  theme;
+
+    /* ── archetype parameters, from the .shell file ─────────────── */
+    char  layout_id[24];
+    char  shell_name[48];
+    int   target_large;        /* bigger targets and type            */
+    int   status_full;         /* the strip launches and switches    */
+    int   show_clock, show_positions;
+    int   workspaces;
+
+    /* Locked-archetype parameters. They live in the shared context
+     * rather than as constants in the layout so that an administrator
+     * changes behaviour by editing a .shell file, which is the entire
+     * point of splitting archetype from code. */
+    int   locked_autostart;       /* 1 = the first allowed app is showing  */
+    int   locked_show_switcher;   /* 0 auto (>1 app), 1 always, 2 never    */
+    int   locked_exit_combo;      /* 0 none, 1 an admin escape exists      */
+
+    /* ── policy, from the profile ───────────────────────────────── */
+    int   allow_install, allow_settings, allow_theme_change, kiosk;
+    /* wishes="off" in the policy (docs/AI.md section 7, change 12): an
+     * administrator, a school, a guest account. No Wish button anywhere,
+     * no My wishes row, nothing listening. */
+    int   no_wishes;
+    /* May the person using this machine choose its wifi? On a personal
+     * computer, obviously yes -- it is her house and her router. On a
+     * school laptop or a machine on a counter, the network is the
+     * owner's decision and not the user's, and a public terminal whose
+     * users can point it at any nearby wifi is a different product.
+     * It is its own switch rather than riding on allow_settings,
+     * because a build that pins the theme and the archetype has not
+     * thereby said the owner must retype the wifi password. */
+    int   allow_network;
+    /* After this many minutes with nobody touching it, the screen goes
+     * dark. 0 means never.
+     *
+     * A laptop whose panel never powers down is a laptop with an hour
+     * of battery -- the panel is most of what a 2013 machine spends
+     * its charge on -- and on a computer with no lock screen it is
+     * also the whole of privacy: a machine left on a kitchen table
+     * should not be showing her bank statement to the room. */
+    int   screen_off_min;
+    /* allow_tty is not cosmetic. Masking getty units does not stop a
+     * VT switch -- the kernel's VT layer handles the chord and needs no
+     * cooperation from userspace -- so the shell has to refuse the
+     * switch itself. See console_release() in main.c. */
+    int   allow_tty;
+    /* An empty string means every installed application. A non-empty
+     * one is an allow-list of desktop-file names, window classes or
+     * commands, and is enforced when the app table is built rather than
+     * when an icon is pressed -- see shell_scan_apps(). */
+    char  allowed_apps[256];
+    /* The other direction: everything EXCEPT these. An organisation
+     * usually wants a deny-list, not an allow-list, and this was
+     * written into /etc/auros/policy.conf by the build and read by
+     * nothing at all -- a knob that looked like a control and was not. */
+    char  blocked_apps[256];
+    /* Set when the policy file exists but could not be trusted. The
+     * allow-list is then not "empty" -- which would mean everything --
+     * but "nothing", which is the only safe reading of a lockdown file
+     * we failed to parse. */
+    int   deny_all_apps;
+
+    /* ── content ────────────────────────────────────────────────── */
+    app_entry apps[SHELL_MAX_APPS]; int n_apps;
+    win_entry wins[SHELL_MAX_WINS]; int n_wins;
+    int   focus;               /* index into wins, -1 for none/home  */
+    int   workspace;
+
+    /* ── the display ────────────────────────────────────────────── */
+    /* Set once by the host before init(), and it is what hit-testing
+     * must use. A layout that paints with the surface's size but
+     * hit-tests against a constant is off by however much the two
+     * differ -- which on the 1366x768 panels this product exists to
+     * rescue is most of the screen. docs/SHELLS.md states the rule:
+     * one function owns geometry, called by painting AND hit-testing. */
+    int   screen_w, screen_h;
+
+    /* ── input, updated before paint ────────────────────────────── */
+    /* mouse_down is set BEFORE click() is dispatched, and click() is
+     * dispatched on PRESS. Layouts start drags there and end them in
+     * motion() when mouse_down goes false, so the order matters. */
+    /* What the key currently being delivered TYPES, if anything: a
+     * NUL-terminated UTF-8 string from the real keymap. Empty for keys
+     * that are not text. An archetype with a text field reads this
+     * instead of guessing from the keycode, which is the only way a
+     * password with a capital letter or a French keyboard works. */
+    char  key_text[8];
+
+    int   mouse_x, mouse_y, mouse_down;
+    int   hover;               /* layout-defined hot item, -1 none   */
+
+    /* ── the band that is always there (src/aurshell/foot.c) ────── */
+    /* Her chosen text size, as a multiplier over the theme's sizes.
+     * Lives in her own settings, not the system theme, so changing how
+     * big the words are needs nothing privileged. */
+    float text_scale;
+    int   text_changed;        /* she just changed it; reload the fonts */
+    int   help_open;
+    /* The wifi panel, which lives behind the band's Internet button.
+     * Only the FLAG lives here, so foot.c can toggle it without
+     * dragging the whole network module into every harness that links
+     * the band. src/aurshell/net.c owns everything else about it. */
+    int   net_open;
+    /* The settings panel, behind the band's Settings button. Only the
+     * FLAG lives here, for the same reason net_open does: foot.c can
+     * toggle it without dragging the whole panel into every harness
+     * that links the band. src/aurshell/settings.c owns the rest. */
+    int   settings_open;
+    /* The headphones-and-mice panel. Same arrangement as the other
+     * two: only the flag lives here, src/aurshell/bt.c owns the rest. */
+    int   bt_open;
+    /* "AurOS is on this computer -- does it work?", which is phase 9 of
+     * docs/AURBRIDGE.md and the only thing in the product that asks it.
+     * Same arrangement again; src/aurshell/welcome.c owns the rest. It
+     * is the one panel nothing on the band opens: it opens itself, on
+     * the first frame of every session, until it has been answered. */
+    int   welcome_open;
+    /* "Get me out of this page", and "Before you install this" for a
+     * remote-control program. Same arrangement again: only the flag
+     * lives here, so Help (foot.c) can open it; src/aurshell/guard.c
+     * owns the rest. */
+    int   guard_open;
+    /* Wishes (docs/AI.md §4; src/aurshell/wish.c owns the rest). Same
+     * arrangement as the others: only the flags live here. wish_open is
+     * WISH_OPEN_ASK or WISH_OPEN_MINE; wishfill_open is set while a wish is
+     * filling the screen, which takes the keyboard like a panel does so
+     * the key that ends it never reaches the program underneath. */
+    int   wish_open;
+    int   wishfill_open;
+    /* A button outside Wishes asked it for something: WISH_CMD_* in
+     * wish.h. Help sets it (it cannot call into wish.c: every harness
+     * links the band without it); the host loop carries it out. */
+    int   want_wish;
+    /* A program the host should start, as an index into apps plus one,
+     * or 0. Set by things that are not the archetype -- the "VLC is
+     * ready" card -- because only the host knows the archetype's
+     * present(), and starting a program without it leaves the rail
+     * looking at Home while the program opens off to the side. */
+    int   want_launch;
+    /* Set by a panel that has changed something the shell reads from a
+     * file -- the archetype, the theme. The host notices it, rereads
+     * everything and rebuilds, which is the same path a SIGHUP takes.
+     * A panel does not get to reach into the host's state directly. */
+    int   want_reload;
+    int   foot_hover;          /* which button, -1 for none             */
+    int   no_foot;             /* a profile turned the band off         */
+    /* What she asked the machine to do with itself. The band sets it;
+     * the host carries it out. `1` off, `2` start again, `3` sleep. */
+    int   want_power_off;
+    int   power_open;          /* the three choices are on screen       */
+    /* Which of the three the KEYBOARD has landed on, as a P_* id, or 0
+     * for none. Separate from foot_hover because foot_motion() rebuilds
+     * that from the pointer every time any input event arrives, so a
+     * choice made with the arrow keys would be erased by the next key
+     * press -- including the one meant to confirm it. */
+    int   power_sel;
+
+    /* She pressed "Close this". Only the band sets it; the host does
+     * the closing, because which window is "this" is the session's
+     * business and not the band's. */
+    int   want_close_win;
+    /* She pressed the picture-of-the-screen key. The host takes it,
+     * because the host is the only thing that has the screen. */
+    int   want_screenshot;
+    /* One line the host wants said, briefly, in the middle of the
+     * screen: where a picture was saved, what could not be done. Empty
+     * when there is nothing to say. */
+    char  say[128];
+    /* Where the archetype drew its clock this frame, screen pixels, the
+     * full height of the strip it sits in; w 0 for none. Pressing it
+     * opens Messages (notify.h), and the card hangs from it. Written by
+     * the archetype's paint, read by notify.c and osd.c. */
+    rect  clock_r;
+
+    /* ── the running system ─────────────────────────────────────── */
+    /* The Wayland server applications connect to, or NULL. It is NULL
+     * in the preview renderer, the contact sheet and the hit-test
+     * harness -- which is why every use of it is guarded rather than
+     * assumed, and why a layout asks shell_launch() rather than
+     * reaching for it. */
+    struct aurwl *wl;
+    /* How the host actually starts a program. A function pointer rather
+     * than a direct call so that shellcommon.c -- which every preview
+     * and test harness links -- does not drag in the compositor. NULL
+     * means nothing starts, which is exactly right for a still render. */
+    int (*spawn)(struct shell_ctx_s *c, const char *argv_blob, int n_args);
+
+    /* ── per-layout scratch. Layouts own this; nothing else reads. */
+    void *priv;
+} shell_ctx;
+
+/* ONE test for "something is covering the desktop".
+ *
+ * There are seven of these now -- help, the wifi, Settings, headphones,
+ * the three power choices, the welcome question and guard.c's card -- and every place
+ * that has to behave
+ * differently while one is up was listing them by hand. Four such
+ * lists drifted apart: the scroll wheel knew about three of them, the
+ * right button about four, the key path about three, and the button
+ * release about two. So with the power question on screen a person
+ * could scroll the application hidden behind it, open a context menu
+ * in it, and press its keyboard shortcuts -- and with Settings or the
+ * headphones panel open, every key she typed was ALSO delivered to
+ * whatever had focus, which on that screen is a browser.
+ *
+ * A list that has to be updated in five places is a list that will be
+ * updated in four. */
+#define SHELL_PANEL_OPEN(c) \
+    ((c)->help_open || (c)->net_open || (c)->settings_open || \
+     (c)->bt_open   || (c)->power_open || (c)->welcome_open || \
+     (c)->guard_open || (c)->wish_open || (c)->wishfill_open)
+
+/* One thing an archetype draws that she presses (kind 0), or one window as the archetype placed
+ * it (kind 1), for whoever has to check them: tools/floorstest.c holds every kind-0 rectangle
+ * to the 44 px floor and every rectangle to the screen. `what` names it in a failure line. */
+typedef struct { rect r; const char *what; int kind; } shell_target;
+enum { TARGET_PRESS = 0, TARGET_WINDOW = 1 };
+
+typedef struct {
+    const char *id;
+    void (*init) (shell_ctx *c);
+    void (*paint)(shell_ctx *c, surface *s, shell_fonts *f, const surface *wall);
+    /* Return 1 if the click was consumed. Coordinates are screen px. */
+    int  (*click)(shell_ctx *c, int x, int y);
+    void (*motion)(shell_ctx *c, int x, int y);
+    void (*key)  (shell_ctx *c, int keycode);
+    int  (*step) (shell_ctx *c, float dt);   /* 1 while animating */
+    void (*fini) (shell_ctx *c);
+    /* A window just appeared, or the user asked for this one. Bring it
+     * to where the user is looking -- which in a carousel means
+     * scrolling to it and in a stack means raising it, and is why this
+     * cannot be done by setting c->focus from outside. Optional; the
+     * default is to set c->focus and let the archetype read it. */
+    void (*present)(shell_ctx *c, int win);
+    /* A window is about to be removed from c->wins, and everything
+     * above it will shift down by one. An archetype that keeps its own
+     * arrays indexed by slot number must shift them here -- which
+     * workspace each window is on, which are maximised, the stacking
+     * order. Optional, and only for archetypes that keep such arrays.
+     *
+     * Called for the path a real application exits through, which is
+     * the one that actually happens; an archetype's own close button
+     * does its bookkeeping inline. */
+    void (*removed)(shell_ctx *c, int win);
+    /* A window's own title bar asked for something (WREQ_* bits). An
+     * archetype acts on what it can and drops the rest: a button in the
+     * program's bar that did nothing is the one thing worse than none, so
+     * what the program is allowed to show follows from this (textsys.c's
+     * buttons). Optional. */
+    void (*request)(shell_ctx *c, int win, unsigned req);
+    /* 1 when the window is as large as this archetype ever makes it, so
+     * the program can show the right button. Optional; default 0. */
+    int  (*maxed)(const shell_ctx *c, int win);
+    /* Every control and window the archetype has on screen in the state c is in (its apps, its
+     * windows, whether its menu or finder is open, its size and her text size), from the same
+     * geometry functions painting and hit-testing use, so the harness measures what she presses.
+     * Returns how many it wrote, at most max. Optional. */
+    int  (*targets)(shell_ctx *c, shell_target *out, int max);
+} shell_layout;
+
+/* Shared helpers every layout may use, so six renderers do not each
+ * grow their own slightly different icon set or clock. */
+/* A mark, not an icon in the app-store sense: a solid silhouette in
+ * one ink with its interior detail KNOCKED OUT in the paper colour
+ * underneath, the way a woodcut or a signage pictogram works.
+ *
+ * `paper` is therefore not decoration — it is the colour the caller
+ * has just filled behind the mark, and the mark cuts holes in itself
+ * with it. Passing the wrong one shows, which is the point: a mark
+ * that does not know what it is sitting on cannot be solid.
+ *
+ * The version this replaces drew every one of the twelve as the same
+ * rounded box at the same 1.6px stroke with the same 20% tint fill,
+ * so ICON_MAIL, ICON_PHOTOS, ICON_WINDOW and ICON_TERMINAL were
+ * literally the same box with different lines in it. These have
+ * deliberately different visual weights — the globe is the heaviest
+ * thing in the set, settings the lightest — because a row of marks
+ * that all weigh the same is a row with no rhythm. */
+void shell_icon_draw(surface *s, shell_icon ic, float cx, float cy,
+                     float size, uint32_t ink, uint32_t paper, float a);
+void shell_text(surface *s, font *f, float x, float y_baseline,
+                const char *t, uint32_t col, float a);
+void shell_text_centred(surface *s, font *f, float cx, float y_baseline,
+                        const char *t, uint32_t col, float a);
+float shell_text_w(font *f, const char *t);
+/* Text that stops at a width, ending in an ellipsis if it had to.
+ * Application names come from packages and are as long as they like. */
+void shell_text_elided(surface *s, font *f, float x, float y, float max_w,
+                       const char *t, uint32_t col, float a);
+/* The brand's mark and name, once per screen; returns where it ends. */
+float shell_wordmark(shell_ctx *c, surface *s, shell_fonts *f, float x, float cy);
+int  shell_text_wrap(surface *s, font *f, float x, float y, float max_w,
+                     float lh, const char *t, uint32_t col, float a, int max_lines);
+int  shell_text_wrap_centred(surface *s, font *f, float x, float y, float max_w,
+                             float lh, const char *t, uint32_t col, float a, int max_lines);
+/* Letter-spaced text, for the small rubrics that label a region the
+ * way a folio labels a page. Drawn a codepoint at a time, so kerning
+ * is deliberately dropped: tracked capitals do not want it. */
+void shell_text_tracked(surface *s, font *f, float x, float y_baseline,
+                        const char *t, uint32_t col, float a, float track);
+float shell_text_tracked_w(font *f, const char *t, float track);
+/* Baseline that vertically centres text in a band of height h at y. */
+float shell_baseline(font *f, float y, float h);
+
+/* What an evdev key types when there is no keymap to ask -- the
+ * preview renderer, the harnesses, and the fallback mode on a real
+ * machine whose compositor could not start. Unshifted US QWERTY, 0 for
+ * keys that are not text. Anything with a keymap reads c->key_text
+ * instead and never calls this. */
+char shell_key_char(int evdev_code);
+void shell_clock(char *hm, size_t hm_n, char *date, size_t date_n);
+
+void shell_theme_load(shell_ctx *c, const theme_t *t);
+
+/* Open every face the archetypes expect, at the sizes the theme asks
+ * for, with fallbacks. ONE implementation: a harness that fills this
+ * struct by hand fills it wrongly the moment a face is added, and then
+ * renders a desktop that does not exist while reporting success. */
+void shell_fonts_load(shell_fonts *f, const shell_ctx *c);
+void shell_fonts_free(shell_fonts *f);
+/* The starter app set. Call AFTER shell_theme_load(): tints come from
+ * the theme's accents, because nothing may hardcode a colour. */
+void shell_seed_apps(shell_ctx *c);
+/* Loads a .shell archetype file into the ctx. Returns 0 on success. */
+int  shell_archetype_load(shell_ctx *c, const char *path);
+
+/* Replaces the seeded app table with what is actually installed, read
+ * from XDG desktop entries. This is what makes "install an application
+ * and it appears" true without the shell knowing anything about the
+ * application: a .deb drops a .desktop file, and the next scan finds
+ * it. Returns the number of apps found, or -1 if nothing was readable
+ * (in which case the caller keeps the seeded table). */
+int  shell_scan_apps(shell_ctx *c);
+
+/* Scan again while the desktop is running -- a program was installed or
+ * removed. Windows keep pointing at their own program (the table is
+ * re-sorted, so indices move), programs that were not there before are
+ * marked fresh, and the dock's favourites stay the favourites they
+ * were. Writes the indices of the new arrivals into added[] (up to
+ * max) and returns how many; -1 if nothing could be read, in which
+ * case the table is left exactly as it was. */
+int  shell_rescan_apps(shell_ctx *c, int *added, int max);
+
+/* ── the store, on every home screen ─────────────────────────────────
+ *
+ * The index of "Get more programs", or -1 when this machine has none
+ * (no store installed, or a profile that forbids installing). */
+int  shell_store_app(const shell_ctx *c);
+/* A program has just been installed: should the shell say so with a card ("VLC is ready: press here
+ * to open it")? Not while she is IN the store: its own page already has an Open button for that
+ * program, and two ways to the same thing is a question (F's real-Windows run, finding 9). */
+int  shell_want_ready_card(const shell_ctx *c);
+/* The index of "Make a wish", or -1 (a kiosk has none). src/aurshell/wish.c
+ * owns what it opens; every look places the button itself. */
+int  shell_wish_app(const shell_ctx *c);
+
+/* What a home screen with room for `cap` entries shows, in order, into
+ * out[] (at least cap ints). Returns how many.
+ *
+ * The store is ALWAYS the last of them when there is one, however many
+ * programs are installed and however they rank: that is the fixed
+ * place, and it was missing -- on the default desktop the store ranked
+ * seventh on a home that shows six. The rest are the table's own order
+ * (most-reached-for first), except that the newest program installed
+ * while the desktop was running takes the last of those places, so
+ * the thing she has just installed is on the screen she goes back to. */
+int  shell_home_pick(const shell_ctx *c, int cap, int *out);
+
+/* Every entry, for a layout that pages or scrolls through all of them:
+ * shell_home_pick(c, first_cap) first, then everything else in table
+ * order. out[] must hold n_apps ints. Returns n_apps. */
+int  shell_display_order(const shell_ctx *c, int first_cap, int *out);
+
+/* ── what was drawn where, for harnesses ────────────────────────────
+ *
+ * Off unless a harness turns it on. While on, every shell_text*() call
+ * records the exact string it drew -- after eliding, so a label cut to
+ * "Get more prog…" does not count as "Get more programs" -- and the
+ * box it occupies. tools/storetest.c presses words by finding them
+ * here, which is how a person finds them. */
+typedef struct { char s[72]; int x, y, w, h; } shell_text_rec;
+
+/* One panel, one primary action: how many buttons drawn as THE button (filled, the lit one) a
+ * panel's paint has made since a harness last zeroed this. Every panel's button painter adds one
+ * for a primary button; tools/primarytest.c holds each panel to one at most. */
+extern int shell_primary_n;
+#define SHELL_TEXT_LOG_MAX 512
+extern int            shell_text_log_on;
+extern int            shell_text_log_n;
+extern shell_text_rec shell_text_log[SHELL_TEXT_LOG_MAX];
+
+/* Start an application and give the user something to look at while it
+ * loads. Safe to call with no compositor; it then only marks the slot,
+ * which is what the preview renderers want. Returns the window index,
+ * or -1. */
+void shell_open_net(shell_ctx *c);   /* the Wi-Fi page, from anywhere */
+int  shell_launch(shell_ctx *c, int app);
+
+/* Ask a window to close, the way its own title bar button would. */
+void shell_close_win(shell_ctx *c, int win);
+
+/* Registry. Each layout lives in its own translation unit and exposes
+ * exactly one of these, so six of them can be written independently
+ * without touching a shared file. */
+extern const shell_layout layout_rail;
+extern const shell_layout layout_tiles;
+extern const shell_layout layout_locked;
+extern const shell_layout layout_taskbar;
+extern const shell_layout layout_dock;
+extern const shell_layout layout_workbench;
+
+const shell_layout *shell_layout_by_id(const char *id);
+
+#endif

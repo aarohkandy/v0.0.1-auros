@@ -1,0 +1,12 @@
+machine: Dell XPS 13 9343
+date: 2026-11-02
+install: ok
+minutes_to_yes: 41
+put_windows_back: ok
+data_loss: no
+wifi_worked: no
+sound_worked: yes
+camera_worked: yes
+printer_worked: untested
+---
+Broadcom BCM4352. The report said the Wi-Fi would not work; it did not.

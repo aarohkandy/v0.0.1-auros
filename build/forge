@@ -1,0 +1,2961 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════════
+#  forge — the AurOS image builder
+#
+#  Reads a profile and produces a bootable system. One profile file is
+#  the entire customization surface: branding, theme, locale, app set,
+#  lockdown policy. Changing what an organisation ships should never
+#  mean changing code.
+#
+#    forge build   PROFILE      run every stage
+#    forge build   --recipe F   validate F, then build its base profile
+#    forge resolve PROFILE|--recipe F   inspect the same inputs, build nothing
+#    forge stage   PROFILE N    run one stage (for iterating)
+#    forge list                 list profiles
+#    forge shell   PROFILE      chroot into the built rootfs
+#    forge clean   PROFILE
+# ═══════════════════════════════════════════════════════════════════
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROFILE_DIR="$ROOT/profiles"
+WORK="$ROOT/work/forge"
+OUT="${AUROS_OUTPUT_DIR:-$ROOT/out}"
+
+C_OK=$'\033[38;2;125;211;192m'; C_ERR=$'\033[38;2;242;120;141m'
+C_DIM=$'\033[38;2;110;120;134m'; C_RST=$'\033[0m'
+say()  { printf '%s::%s %s\n' "$C_OK"  "$C_RST" "$*"; }
+step() { printf '\n%s▸%s %s\n' "$C_OK" "$C_RST" "$*"; }
+note() { printf '%s   %s%s\n' "$C_DIM" "$*" "$C_RST"; }
+die()  { printf '%s::%s %s\n' "$C_ERR" "$C_RST" "$*" >&2; exit 1; }
+# Something is wrong but the image is still worth finishing. It goes to
+# stderr so it survives a build whose output is being piped somewhere.
+#
+# This did not exist while two places already called it, under
+# `set -euo pipefail`, where an unknown command ends the build. Neither
+# branch had run yet.
+warn() { printf '%s::%s %s\n' "$C_ERR" "$C_RST" "$*" >&2; }
+
+# A line in the image's own record of what went wrong while building
+# it. /etc/auros DOES NOT EXIST YET when the browser stage runs on a
+# fresh rootfs -- stage 3 is what creates it -- so the three places
+# that appended to the file directly worked only on a rootfs left over
+# from a previous build. The first profile ever built from scratch
+# after that died with "No such file or directory" in the middle of
+# stage 2, which is a long way from the line that caused it.
+warn_note() {
+    mkdir -p "$RFS/etc/auros"
+    printf '%s\n' "$*" >> "$RFS/etc/auros/build-warnings"
+}
+
+# The hardening stage and its seal-time check (stream S1).
+# shellcheck source=build/harden
+. "$ROOT/build/harden"
+# The compiler flags every C program we ship is built with (stream S3).
+# shellcheck source=build/cflags
+. "$ROOT/build/cflags"
+
+# ── profile loading, with single-parent inheritance ────────────────
+# D14: true when this profile puts Wishes in the image (wishes="on").
+# Stream W1's lines that build, install and enable aurwish are
+# `if wishes_on; then ... fi`.
+wishes_on() { [ "${wishes:-off}" = on ]; }
+
+# A recipe is untrusted JSON. Python validates it and returns five fixed,
+# tab-separated ASCII fields. Nothing from the recipe is sourced, evaluated,
+# expanded as a command, or used as a path. The checked-in base profile is
+# loaded first; only the two typed appearance variables are then replaced.
+parse_build_args() {
+    BUILD_PROFILE=""
+    BUILD_RECIPE=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --recipe)
+                [ $# -ge 2 ] || die "--recipe needs a JSON file"
+                [ -z "$BUILD_RECIPE" ] || die "--recipe was given twice"
+                BUILD_RECIPE=$2
+                shift 2
+                ;;
+            --*) die "unknown forge option: $1" ;;
+            *)
+                [ -z "$BUILD_PROFILE" ] || die "more than one profile was given"
+                BUILD_PROFILE=$1
+                shift
+                ;;
+        esac
+    done
+    [ -n "$BUILD_PROFILE" ] || [ -n "$BUILD_RECIPE" ] || \
+        die "give a profile or --recipe FILE"
+}
+
+reexec_recipe_from_snapshot() { # build|resolve, optional expected profile, raw recipe path
+    local command=$1 expected=${2:-} recipe=$3 commit snapshot recipe_path
+    [ -z "${AUROS_IMMUTABLE_COMMIT:-}" ] || return 0
+    commit=$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null) || \
+        die "recipe builds require a Git checkout with a known commit"
+    [ -z "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ] || \
+        die "recipe builds require a clean Git checkout"
+    if [ "$recipe" = - ]; then
+        recipe_path=-
+    else
+        [ -f "$recipe" ] || die "no recipe file: $recipe"
+        recipe_path=$(cd "$(dirname "$recipe")" && pwd)/$(basename "$recipe")
+    fi
+
+    snapshot=$(mktemp -d "${TMPDIR:-/tmp}/auros-forge-source.XXXXXX") || \
+        die "could not create an immutable source snapshot"
+    if ! git -C "$ROOT" archive --format=tar "$commit" | tar -xf - -C "$snapshot"; then
+        rm -rf -- "$snapshot"
+        die "could not extract source commit $commit"
+    fi
+    touch "$snapshot/.auros-forge-snapshot"
+    mkdir -p "$snapshot/work" "$snapshot/out"
+    chmod -R a-w "$snapshot"
+    chmod u+w "$snapshot/work" "$snapshot/out"
+
+    local child=("$snapshot/build/forge" "$command")
+    [ -z "$expected" ] || child+=("$expected")
+    child+=(--recipe "$recipe_path")
+    exec env AUROS_IMMUTABLE_COMMIT="$commit" \
+        AUROS_SNAPSHOT_DIR="$snapshot" AUROS_OUTPUT_DIR="$OUT" "${child[@]}"
+}
+
+forge_source_identity() {
+    FORGE_SOURCE_COMMIT=unknown
+    FORGE_SOURCE_DIRTY=unknown
+    if [ -n "${AUROS_IMMUTABLE_COMMIT:-}" ]; then
+        FORGE_SOURCE_COMMIT=$AUROS_IMMUTABLE_COMMIT
+        FORGE_SOURCE_DIRTY=false
+    elif FORGE_SOURCE_COMMIT=$(git -C "$ROOT" rev-parse --verify HEAD 2>/dev/null); then
+        if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
+            FORGE_SOURCE_DIRTY=true
+        else
+            FORGE_SOURCE_DIRTY=false
+        fi
+    else
+        FORGE_SOURCE_COMMIT=unknown
+    fi
+}
+
+resolve_build_input() { # optional expected profile, optional raw recipe
+    local expected=${1:-} recipe=${2:-} result
+    RECIPE_ACTIVE=""
+    RECIPE_ID=""
+    RECIPE_RECEIPT_B64=""
+    if [ -z "$recipe" ]; then
+        [ -n "$expected" ] || die "a profile is required without --recipe"
+        load_profile "$expected"
+        return
+    fi
+
+    forge_source_identity
+    local args=(python3 "$ROOT/src/customize/build_adapter.py" "$recipe"
+                --source-commit "$FORGE_SOURCE_COMMIT"
+                --source-dirty "$FORGE_SOURCE_DIRTY")
+    [ -z "$expected" ] || args+=(--expected-base "$expected")
+    result=$("${args[@]}") || die "recipe validation failed"
+    IFS=$'\t' read -r recipe_base recipe_look recipe_theme recipe_id receipt_b64 <<< "$result"
+
+    case "$recipe_base" in
+        desktop|multilingual|office|revive|school-kiosk) ;;
+        *) die "recipe adapter returned an unsupported base" ;;
+    esac
+    case "$recipe_look" in
+        dock|rail|taskbar|tiles) ;;
+        locked) [ "$recipe_base" = school-kiosk ] || \
+                    die "the locked look is reserved for school-kiosk" ;;
+        *) die "recipe adapter returned an unsupported look" ;;
+    esac
+    case "$recipe_theme" in
+        ember|moss|nocturne|sandstone|slate) ;;
+        *) die "recipe adapter returned an unsupported theme" ;;
+    esac
+    [[ "$recipe_id" =~ ^sha256:[0-9a-f]{64}$ ]] || \
+        die "recipe adapter returned an invalid recipe id"
+    case "$receipt_b64" in
+        ''|*[!A-Za-z0-9+/=]*) die "recipe adapter returned invalid receipt data" ;;
+    esac
+
+    load_profile "$recipe_base"
+    [ "$profile_id" = "$recipe_base" ] || \
+        die "recipe base '$recipe_base' loaded profile_id '$profile_id'"
+    shell_archetype=$recipe_look
+    theme=$recipe_theme
+    [ -f "$ROOT/shells/$shell_archetype.shell" ] || \
+        die "recipe selected missing shell '$shell_archetype'"
+    [ -f "$ROOT/themes/$theme.theme" ] || \
+        die "recipe selected missing theme '$theme'"
+    RECIPE_ACTIVE=1
+    RECIPE_ID=$recipe_id
+    RECIPE_RECEIPT_B64=$receipt_b64
+    RECIPE_SOURCE_COMMIT=$FORGE_SOURCE_COMMIT
+    RECIPE_SOURCE_DIRTY=$FORGE_SOURCE_DIRTY
+}
+
+write_recipe_receipt() { # destination, artifact-created true|false, optional artifact
+    local destination=$1 created=$2 artifact=${3:-}
+    if [ -z "${RECIPE_ACTIVE:-}" ]; then
+        rm -f "$destination"
+        return
+    fi
+    install -d "$(dirname "$destination")"
+    RECIPE_RECEIPT_B64=$RECIPE_RECEIPT_B64 python3 - \
+        "$destination" "$created" "$artifact" <<'PY'
+import base64
+import hashlib
+import json
+import os
+import pathlib
+import sys
+
+destination = pathlib.Path(sys.argv[1])
+document = json.loads(base64.b64decode(os.environ["RECIPE_RECEIPT_B64"], validate=True))
+document["artifact_created"] = sys.argv[2] == "true"
+if sys.argv[3]:
+    artifact = pathlib.Path(sys.argv[3])
+    digest = hashlib.sha256()
+    with artifact.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    document["artifact"] = {
+        "bytes": artifact.stat().st_size,
+        "name": artifact.name,
+        "sha256": digest.hexdigest(),
+    }
+temporary = destination.with_name(destination.name + ".new")
+temporary.write_text(
+    json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n",
+    encoding="ascii",
+)
+os.chmod(temporary, 0o644)
+temporary.replace(destination)
+PY
+}
+
+prepare_full_build() {
+    FORGE_FULL_BUILD=1
+    install -d "$OUT"
+    FORGE_FINAL_SQUASH="$OUT/$profile_id-$os_version.squashfs"
+    FORGE_PENDING_SQUASH="$FORGE_FINAL_SQUASH.incomplete"
+    FORGE_RECIPE_METADATA="$OUT/$profile_id-$os_version.recipe.json"
+    rm -f "$FORGE_FINAL_SQUASH" "$FORGE_PENDING_SQUASH" "$FORGE_RECIPE_METADATA"
+    if [ -n "${RECIPE_ACTIVE:-}" ]; then
+        [ "$RECIPE_SOURCE_COMMIT" != unknown ] && \
+        [ "$RECIPE_SOURCE_DIRTY" = false ] || \
+            die "recipe builds require a clean Git checkout with a known commit"
+    fi
+}
+
+verify_recipe_source() {
+    [ -n "${RECIPE_ACTIVE:-}" ] || return 0
+    forge_source_identity
+    [ "$FORGE_SOURCE_COMMIT" = "$RECIPE_SOURCE_COMMIT" ] && \
+    [ "$FORGE_SOURCE_DIRTY" = false ] || \
+        die "source changed during the recipe build; refusing to publish its metadata"
+}
+
+finalize_full_build() {
+    [ -n "${FORGE_PENDING_SQUASH:-}" ] && \
+    [ -f "$FORGE_PENDING_SQUASH" ] || die "the build produced no pending squashfs"
+    verify_recipe_source
+    mv "$FORGE_PENDING_SQUASH" "$FORGE_FINAL_SQUASH"
+    write_recipe_receipt "$FORGE_RECIPE_METADATA" true "$FORGE_FINAL_SQUASH"
+}
+
+print_resolved_build_input() {
+    python3 - "$profile_id" "$theme" "$shell_archetype" "${RECIPE_ID:-none}" <<'PY'
+import json
+import sys
+
+print(json.dumps({
+    "artifact_created": False,
+    "base_profile": sys.argv[1],
+    "recipe_id": sys.argv[4],
+    "resolved_preferences": {"look": sys.argv[3], "theme": sys.argv[2]},
+}, sort_keys=True, separators=(",", ":")))
+PY
+}
+
+load_profile() {
+    local name=$1 chain="" cur=$1 depth=0 f
+    while [ -n "$cur" ]; do
+        f="$PROFILE_DIR/$cur.profile"
+        [ -f "$f" ] || f="$cur"
+        [ -f "$f" ] || die "no such profile: $cur"
+        case " $chain " in *" $f "*) die "profile inherit cycle at $cur" ;; esac
+        chain="$f $chain"
+        cur=$(sed -n 's/^[[:space:]]*inherit="\{0,1\}\([A-Za-z0-9_-]*\)"\{0,1\}.*/\1/p' "$f" | head -1)
+        depth=$((depth+1)); [ $depth -gt 8 ] && die "inherit chain too deep"
+    done
+    for f in $chain; do
+        # shellcheck disable=SC1090
+        source "$f"
+    done
+    unset inherit 2>/dev/null || true
+    PROFILE="$name"
+    RFS="$WORK/$profile_id/rootfs"
+
+    # ── what the profile says, checked BEFORE anything acts on it ──
+    #
+    # default_user was validated in stage 4, two hundred lines after
+    # stage 4 had already used it to run `useradd`. A profile with an
+    # empty one -- which the office profile had, meaning "the person
+    # who installs it chooses" -- got as far as
+    #
+    #     usermod: user '' does not exist
+    #     :: could not put  in: sudo,audio,video,input,netdev,...
+    #
+    # after forty minutes of building, and the message names neither
+    # the profile nor the key. A check that runs after the thing it
+    # guards is not a check.
+    #
+    # And it is not deferrable: nothing on the first boot creates an
+    # account, so an image without one is an image nobody can log in
+    # to. A profile that wants the installer to choose the name has to
+    # wait for that to exist.
+    if [ "${kiosk_mode:-no}" != "yes" ]; then
+        case "${default_user:-}" in
+            '') die "profile '$profile_id' sets no default_user, and nothing
+     on the first boot creates an account -- the image would have
+     nobody to log in as. Name one." ;;
+            *[!a-z0-9_-]*)
+                die "profile '$profile_id': default_user '$default_user' is
+     not a plain account name." ;;
+        esac
+    fi
+}
+
+# Every chroot command runs with the API filesystems mounted and
+# services prevented from starting (policy-rc.d), which is what stops a
+# package's postinst from trying to talk to a systemd that isn't there.
+chroot_prep() {
+    mkdir -p "$RFS"/{proc,sys,dev,dev/pts,run}
+    mountpoint -q "$RFS/proc"    || mount -t proc  proc    "$RFS/proc"
+    mountpoint -q "$RFS/sys"     || mount -t sysfs sysfs   "$RFS/sys"
+    mountpoint -q "$RFS/dev"     || mount --bind /dev      "$RFS/dev"
+    mountpoint -q "$RFS/dev/pts" || mount -t devpts devpts "$RFS/dev/pts"
+    printf '#!/bin/sh\nexit 101\n' > "$RFS/usr/sbin/policy-rc.d"
+    chmod +x "$RFS/usr/sbin/policy-rc.d"
+    cp /etc/resolv.conf "$RFS/etc/resolv.conf" 2>/dev/null || true
+}
+chroot_done() {
+    # Guard: the EXIT trap fires even on paths that never loaded a
+    # profile (forge list), where RFS is unset.
+    [ -n "${RFS:-}" ] || return 0
+    rm -f "$RFS/usr/sbin/policy-rc.d"
+    # AND THE BUILD HOST'S RESOLVER, which chroot_prep copied in so
+    # that apt could reach the archive. It was never removed, and
+    # stage_squash squashes $RFS as it finds it -- so all five images
+    # shipped this builder's /etc/resolv.conf as a static file
+    # (`nameserver 8.8.8.8`) instead of letting the machine's own
+    # network manager write one. On a school or office network that
+    # only answers DNS from its own resolver -- which is the network
+    # school-kiosk exists for -- that is a machine that connects and
+    # then cannot look anything up.
+    rm -f "$RFS/etc/resolv.conf"
+    for m in dev/pts dev sys proc; do
+        mountpoint -q "$RFS/$m" && umount -lf "$RFS/$m" || true
+    done
+}
+forge_exit_cleanup() {
+    chroot_done 2>/dev/null || true
+    if [ -n "${AUROS_SNAPSHOT_DIR:-}" ] && \
+       [ -f "$AUROS_SNAPSHOT_DIR/.auros-forge-snapshot" ]; then
+        case "$(basename "$AUROS_SNAPSHOT_DIR")" in
+            auros-forge-source.??????)
+                chmod -R u+w "$AUROS_SNAPSHOT_DIR" 2>/dev/null || true
+                rm -rf -- "$AUROS_SNAPSHOT_DIR"
+                ;;
+            *) warn "refusing to remove unexpected snapshot path: $AUROS_SNAPSHOT_DIR" ;;
+        esac
+    fi
+}
+trap 'forge_exit_cleanup' EXIT
+
+inchroot() {
+    chroot "$RFS" /usr/bin/env -i \
+        HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        DEBIAN_FRONTEND=noninteractive LC_ALL=C \
+        ${http_proxy:+http_proxy="$http_proxy"} \
+        ${https_proxy:+https_proxy="$https_proxy"} \
+        /bin/bash -c "$*"
+}
+
+# AND AN ENABLE MUST WORK. `|| true` on a `systemctl enable` is what
+# let the ordering bug in stage_overlay live for as long as it did: an
+# image that boots to a console and an image that never asks whether
+# AurOS works both build cleanly and say nothing.
+#
+# Two checks, because one is not enough either way round. systemctl
+# exits non-zero for a unit it cannot find, which is the common case --
+# but it exits ZERO for a unit with no [Install] section and does
+# nothing at all, so the link itself is looked for afterwards.
+#
+# -L AND NOT -e. The link systemd writes is absolute and root-relative
+# -- `/etc/systemd/system/auros-hold.service` -- so from out here `-e`
+# resolves it against the BUILD HOST's root and finds nothing. The
+# first version of this check used -e and would have failed every
+# build on its first unit, with a message saying the opposite of what
+# had happened. Which is the joke: a check written to catch silence,
+# that would itself have lied.
+#
+# .wants OR .requires, because which one it is belongs to the unit's
+# [Install] section and not to this call site.
+enable_unit() { # unit  target
+    err=$(inchroot "systemctl enable $1 2>&1 >/dev/null") \
+        || die "systemctl enable $1 failed. The image would boot without it.
+     $err"
+    for _d in wants requires; do
+        if [ -L "$RFS/etc/systemd/system/$2.$_d/$1" ] ||
+           [ -e "$RFS/etc/systemd/system/$2.$_d/$1" ]; then return 0; fi
+    done
+    die "$1 was enabled and nothing appeared in $2.wants or $2.requires.
+     A unit with no [Install] section enables successfully and does
+     nothing; the image would boot without it."
+}
+
+# ── stage 1: bootstrap the base ────────────────────────────────────
+stage_bootstrap() {
+    step "stage 1/7  bootstrap $base_suite"
+    if [ -f "$RFS/.forge-bootstrapped" ]; then
+        note "already bootstrapped; skipping"; return 0
+    fi
+    rm -rf "$RFS"; mkdir -p "$RFS"
+    debootstrap --arch=amd64 --variant=minbase \
+        --components="$(echo "$base_components" | tr ' ' ',')" \
+        "$base_suite" "$RFS" "$base_mirror"
+
+    cat > "$RFS/etc/apt/sources.list" <<EOL
+deb $base_mirror $base_suite $base_components
+deb $base_mirror $base_suite-updates $base_components
+deb http://security.ubuntu.com/ubuntu $base_suite-security $base_components
+EOL
+    touch "$RFS/.forge-bootstrapped"
+    note "base is $(du -sh "$RFS" | cut -f1)"
+}
+
+# ── stage 2: packages ──────────────────────────────────────────────
+stage_packages() {
+    step "stage 2/7  packages"
+    # THIS RUN'S WARNINGS, NOT EVERY RUN'S.
+    #
+    # warn_note appends and nothing ever truncated, while stage 1 only
+    # wipes the rootfs on a first bootstrap -- so the file accumulated
+    # across every rebuild of a profile. The end-of-build refusals read
+    # it, so a tree that had once fallen back to Epiphany refused every
+    # later build for ever, INCLUDING ones that installed Firefox
+    # perfectly. A check that cannot be cleared by fixing the thing it
+    # is about is a check people turn off.
+    mkdir -p "$RFS/etc/auros"
+    : > "$RFS/etc/auros/build-warnings"
+    chroot_prep
+    # `locales` IN EVERY IMAGE, not in any one profile's list. Stage 4
+    # runs locale-gen and writes LANG from the profile whatever the
+    # profile says, and without this package there is no locale-gen:
+    # every image shipped LANG=en_US.UTF-8 naming a locale that did not
+    # exist, which glibc quietly turns into C -- and the language chosen
+    # in the installer had nothing to be generated with.
+    local pkgs="locales $packages_hardware $packages_boot $packages_base ${packages_security:-} $packages_desktop $packages_files $packages_apps $packages_extra"
+    # The letters this image can draw in. Not decoration: a page in a
+    # language with no font is a page of empty boxes, and this product
+    # promises a school can ship it in its own language.
+    case "${fonts_cjk:-no}" in
+        extra) pkgs="$pkgs fonts-noto-cjk fonts-noto-cjk-extra"
+               note "Chinese, Japanese and Korean: all weights (+305 MB)" ;;
+        yes)   pkgs="$pkgs fonts-noto-cjk"
+               note "Chinese, Japanese and Korean: one weight set (+91 MB)" ;;
+        no)    warn "fonts_cjk=no: Chinese, Japanese and Korean will draw as"
+               warn "empty boxes on this image, in applications and web pages" ;;
+        *)     die "fonts_cjk must be yes, extra or no (got '${fonts_cjk:-}')" ;;
+    esac
+    pkgs=$(echo "$pkgs" | tr -s ' \n' ' ')
+    note "installing: $(echo "$pkgs" | wc -w) packages"
+    # Before the first install, not after: a pin only stops what has
+    # not happened yet.
+    pin_no_snap
+    inchroot "apt-get update -qq"
+    # Every package the base already has, at its newest -updates and
+    # -security version first. debootstrap reads only the release
+    # pocket, and `install` upgrades only what a new package needs, so
+    # images shipped dozens of base packages (gpgv, libssl, util-linux,
+    # ...) with known fixes left out. docs/security/UPDATES.md
+    inchroot "apt-get -y --no-install-recommends full-upgrade" \
+        || die "could not bring the base up to date (apt-get full-upgrade)"
+    inchroot "apt-get install -y --no-install-recommends $pkgs" \
+        || die "package install failed — see the log above"
+    # ON ONE LINE, like the install list twelve lines above.
+    #
+    # A profile's package lists are written across several lines --
+    # every one in profiles/desktop.profile is -- and this one went
+    # into the chroot's shell verbatim, so the newlines became command
+    # separators: the first line purged, and every line after it was
+    # RUN. The revive profile's exclude list produced "tracker: command
+    # not found", "gnome-software: command not found", nothing was
+    # purged, and the build carried on as though it had been. It only
+    # ever worked because the three profiles that existed before had a
+    # single-line exclude.
+    if [ -n "${packages_exclude:-}" ]; then
+        excl=$(printf '%s' "$packages_exclude" | tr -s ' \n\t' ' ')
+        inchroot "apt-get purge -y $excl 2>/dev/null || true"
+    fi
+
+    stage_browser
+    stage_store
+    stage_file_types
+    # AND AGAIN, AFTER EVERYTHING THAT CAN INSTALL SOMETHING.
+    #
+    # The purge above runs before the browser stage, and the browser
+    # stage is exactly what put snapd back: every image built where
+    # Mozilla was unreachable tried `apt-get install firefox` against
+    # Ubuntu's archive, got the 120 KB package whose only job is to run
+    # `snap install`, and with it snapd (116 MB) -- installed, ii, on an
+    # image whose profile says packages_exclude="snapd". The pin in
+    # pin_no_snap now stops that happening; this removes whatever got
+    # in by some other road, and stage 6 refuses to seal an image that
+    # still has any of it.
+    purge_snap_leftovers
+    trim_server_firmware
+    inchroot "apt-get clean; rm -rf /var/lib/apt/lists/*"
+    chroot_done
+}
+
+# ── no snap, and none of the packages whose only job is to fetch one ──
+#
+# Ubuntu's firefox, thunderbird and chromium-browser are transitional
+# packages that install snapd and then a snap. This image has no snapd
+# by design, so on it each of them is a program that is not there --
+# and the store would offer them: she searches "Thunderbird", presses
+# Install on the Ubuntu one, and gets nothing. Pinned to -1 they can
+# never be installed, by this build or later by the store, and the
+# store shows the real program (Mozilla's, or Flathub's) instead.
+#
+# One stanza per pattern rather than a list on one line: whether apt
+# reads several names in one Package: field has changed between
+# versions, and a pin that quietly matches nothing is this whole bug
+# again.
+pin_no_snap() {
+    case " ${browser_source:-} " in
+        *" snap "*) warn "browser_source asks for a snap; snapd is not pinned out"
+                    return 0 ;;
+    esac
+    install -d "$RFS/etc/apt/preferences.d"
+    {
+        echo "# Written by build/forge. AurOS has no snap: these never install."
+        echo
+        printf 'Package: snapd\nPin: release a=*\nPin-Priority: -1\n'
+        for _p in 'firefox*' 'thunderbird*' 'chromium-browser*' \
+                  'chromium-chromedriver*' 'chromium-codecs-ffmpeg*'; do
+            printf '\nPackage: %s\nPin: release o=Ubuntu\nPin-Priority: -1\n' "$_p"
+        done
+    } > "$RFS/etc/apt/preferences.d/auros-no-snap"
+    note "snapd and Ubuntu's snap-only firefox/thunderbird/chromium pinned out"
+}
+
+# What is installed that is a snap, or exists only to fetch one. Names,
+# one per line; nothing when there is none.
+snap_leftovers() {
+    inchroot "dpkg-query -W -f='\${Package} \${Version} \${Status}\n' \
+              snapd firefox thunderbird chromium-browser 2>/dev/null || true" \
+        | awk '$NF == "installed" && ($1 == "snapd" || $2 ~ /snap/) { print $1 }'
+}
+
+purge_snap_leftovers() {
+    local left
+    left=$(snap_leftovers | tr '\n' ' ')
+    if [ -n "${left// /}" ]; then
+        note "removing snap leftovers: $left"
+        inchroot "apt-get purge -y $left" >/dev/null 2>&1 \
+            || warn "could not purge: $left"
+    fi
+}
+
+# ── firmware for machines that are not in anybody's house ──────────
+#
+# See packages_hardware in profiles/desktop.profile. If the metapackage
+# came in anyway (an older profile naming `linux-firmware`, or apt
+# preferring the real package over linux-firmware-minimal's Provides),
+# the four server pieces are removed here -- in ONE apt call that also
+# installs linux-firmware-minimal, so the kernel's dependency on
+# "linux-firmware" stays satisfied and apt has no reason to take
+# linux-image-generic with them. Checked afterwards anyway: a removal
+# that took the kernel meta with it would be an image that never takes
+# another kernel update.
+FW_SERVER="linux-firmware-mellanox-spectrum linux-firmware-marvell-prestera
+           linux-firmware-netronome linux-firmware-qlogic"
+pkg_installed() {
+    inchroot "dpkg-query -W -f='\${Status}' $1 2>/dev/null | grep -q 'ok installed'"
+}
+trim_server_firmware() {
+    local have="" p
+    for p in $FW_SERVER; do
+        if pkg_installed "$p"; then have="$have $p"; fi
+    done
+    if [ -z "$have" ]; then
+        note "no data-centre firmware in this image"
+        return 0
+    fi
+    local minus=""
+    for p in $have; do minus="$minus $p-"; done
+    if inchroot "apt-get install -y --no-install-recommends linux-firmware-minimal $minus" \
+            >/dev/null 2>&1; then
+        note "removed data-centre firmware:$have"
+    else
+        warn "could not remove data-centre firmware:$have"
+    fi
+    pkg_installed linux-image-generic || die "removing$have took linux-image-generic
+     with it; this image would never take another kernel update."
+}
+
+# ── the store, if this build wants one ────────────────────────────
+#
+# Optional on purpose. It is 35 packages and a background service, and
+# on a 2013 machine it is the slowest thing on the desktop. A build that
+# drops it can still install software: from the archive, and by
+# downloading a .deb and opening it, which is the path most people
+# actually use for the one program they came for.
+#
+# AND FLATHUB IN IT, because Ubuntu's archive does not have what she
+# came for. Chrome, Zoom, Spotify, WhatsApp clients: none of them are
+# in it, and Firefox and Thunderbird there are snap stubs (pinned out
+# above). With flatpak and the store's flatpak plugin, typing "Zoom"
+# into Get more programs finds Zoom. Measured against a desktop build:
+# 9 MB, because the store already brought bubblewrap, gpg and appstream.
+#
+# xdg-desktop-portal is how a Flathub program asks for a file she
+# chooses; without it "Open" in LibreOffice-from-Flathub falls back to
+# whatever the program can see by itself.
+stage_store() {
+    case "${software_store:-none}" in
+      none|"") note "no software store in this build"; return 0 ;;
+      gnome-software) ;;
+      *) die "unknown software_store: $software_store" ;;
+    esac
+    if inchroot "apt-get install -y --no-install-recommends gnome-software packagekit appstream"; then
+        note "gnome-software installed"
+    else
+        warn "gnome-software would not install; .deb files still open"
+        warn_note "store=MISSING"
+        return 0
+    fi
+    # A machine whose user may not install anything gets no Flathub: a
+    # store full of programs that all refuse is a store that lies.
+    case "$(printf '%s' "${allow_user_install:-yes}" | tr 'A-Z' 'a-z')" in
+        no|false|0|off|n)
+            note "allow_user_install=no: no Flathub in the store"
+            return 0 ;;
+    esac
+    if inchroot "apt-get install -y --no-install-recommends flatpak \
+                 gnome-software-plugin-flatpak xdg-desktop-portal xdg-desktop-portal-gtk"; then
+        note "flatpak and the store's Flathub plugin installed"
+    else
+        warn "flatpak would not install: the store has only Ubuntu's own programs"
+        warn_note "flatpak=MISSING"
+        return 0
+    fi
+    stage_flatpak_overrides
+    stage_flathub
+}
+
+# PROGRAMS FROM FLATHUB DRAW ON THIS DESKTOP'S OWN SCREEN, NOT ON AN X11 ONE.
+#
+# Electron and Chromium programs (WhatsApp, Teams, Spotify, Slack ...) start
+# with an X11 window unless told otherwise, and this desktop's X11 support
+# (Xwayland) is new. A system-wide override, in the file `flatpak override
+# --system` writes (/var/lib/flatpak/overrides/global), gives every program the
+# Wayland socket and tells Electron to use it when there is one; a program
+# that has no Wayland support in it is not harmed by either.
+#   sockets=wayland        the way to this desktop, for every program
+#   ELECTRON_OZONE_PLATFORM_HINT=auto   Electron 28 and later: Wayland if
+#                          it is there (older ones ignore it)
+#   XDG_SESSION_TYPE=wayland   what Chromium reads to choose its Ozone
+#                          platform when it is not told
+#   MOZ_ENABLE_WAYLAND=1   Firefox from Flathub
+# tools/everydaytest.sh reads the file back.
+stage_flatpak_overrides() {
+    install -d "$RFS/var/lib/flatpak/overrides"
+    cat > "$RFS/var/lib/flatpak/overrides/global" <<'EOL'
+[Context]
+sockets=wayland;
+
+[Environment]
+ELECTRON_OZONE_PLATFORM_HINT=auto
+XDG_SESSION_TYPE=wayland
+MOZ_ENABLE_WAYLAND=1
+EOL
+    note "Flathub programs are told to use this desktop's Wayland (global override)"
+}
+
+# ── Flathub: added now if this builder can reach it, else at first online ──
+#
+# The .flatpakrepo is a small INI file that carries Flathub's public
+# signing key inline. It is fetched over TLS from Flathub itself --
+# the same thing Flathub's own setup page tells everyone to run -- and
+# never typed in from memory: a wrong key would be a remote whose
+# every download fails its signature check.
+#
+# GitHub's runners can reach dl.flathub.org; the container this was
+# written in cannot. Either way the machine ends up with Flathub:
+# auros-software.service adds it the first time the computer is online
+# if the image does not already have it. Which of the two happened is
+# written into the image (/etc/auros/software-sources, and the build's
+# own record), so nobody has to guess afterwards.
+#
+# AND ITS CATALOGUE, so the store is never an empty page. GNOME Software
+# draws what is in /var/lib/flatpak/appstream/flathub; with nothing there
+# its first page is a header bar over a blank sheet (RC1 and RC6 on real
+# Windows: five minutes of it, then the journey gave up -- "failed to get
+# featured apps: no apps to show"). So the build fetches it here, the way
+# the first online start would: `flatpak update --appstream` writes the
+# listing (appstream.xml.gz) and the icons the store draws (64x64, 128x128).
+# It is dated the day of the build; auros-software.service refreshes it
+# the first time the computer is online, and the store shows this one in
+# the meantime, offline too. Measured: ~117 MB on disk, ~61 MB of the
+# download (docs/handoff/streams/STORE.md).
+#
+# A builder that can reach Flathub but cannot finish this is not a good
+# builder for a release: REQUIRE_FLATHUB_CATALOGUE=1 (build.yml sets it)
+# makes that fatal at the end of the build, as a missing browser is.
+stage_flathub_catalogue() {
+    local i dir="$RFS/var/lib/flatpak/appstream/flathub/x86_64/active" n=0
+    for i in 1 2 3; do
+        if inchroot "timeout 600 flatpak update --system --appstream flathub" 2>&1 | sed 's/^/   /'; then
+            [ -s "$dir/appstream.xml.gz" ] && break
+        fi
+        warn "Flathub's catalogue: try $i of 3 did not finish"; sleep $((i * 10))
+    done
+    # Not "a file exists": a listing that has the programs in it, VLC among them.
+    if [ -s "$dir/appstream.xml.gz" ]; then
+        n=$(zcat "$dir/appstream.xml.gz" | grep -c '<component' || true)
+    fi
+    # (a count, not grep -q: under pipefail grep -q ends zcat early and "fails")
+    if [ "$n" -ge 1000 ] && [ "$(zcat "$dir/appstream.xml.gz" | grep -c 'org.videolan.VLC' || true)" -ge 1 ]; then
+        note "Flathub's catalogue is in the image: $n programs, $(du -sm "$RFS/var/lib/flatpak" | cut -f1) MB under /var/lib/flatpak ($(du -sm "$dir/icons" | cut -f1) MB of icons)"
+        printf 'flathub_catalogue=build\nflathub_catalogue_date=%s\n' "$(date -u +%F)" \
+            >> "$RFS/etc/auros/software-sources"
+        warn_note "flathub_catalogue=build ($n programs)"
+    else
+        rm -rf "$RFS/var/lib/flatpak/appstream"
+        warn "Flathub's catalogue could not be put in the image ($n programs read)"
+        warn_note "flathub_catalogue=MISSING"
+        printf 'flathub_catalogue=first-online\n' >> "$RFS/etc/auros/software-sources"
+    fi
+}
+FLATHUB_URL="https://dl.flathub.org/repo/flathub.flatpakrepo"
+flatpakrepo_ok() {
+    grep -q '^\[Flatpak Repo\]' "$1" &&
+    grep -q '^Url=https://' "$1" &&
+    grep -q '^GPGKey=.' "$1"
+}
+stage_flathub() {
+    install -d "$RFS/usr/share/auros" "$RFS/etc/auros"
+    local repo="$RFS/usr/share/auros/flathub.flatpakrepo" sum=""
+    rm -f "$repo.new"
+    if curl -fsSL --max-time 60 "$FLATHUB_URL" -o "$repo.new" 2>/dev/null &&
+       flatpakrepo_ok "$repo.new"; then
+        mv -f "$repo.new" "$repo"
+        sum=$(sha256sum "$repo" | cut -d' ' -f1)
+        if inchroot "flatpak remote-add --system --if-not-exists flathub \
+                     /usr/share/auros/flathub.flatpakrepo" &&
+           inchroot "flatpak remotes --system --columns=name | grep -qx flathub"; then
+            printf 'flathub=build\nflathub_sha256=%s\n' "$sum" \
+                > "$RFS/etc/auros/software-sources"
+            warn_note "flathub=build ($sum)"
+            note "Flathub added to the image (flathub.flatpakrepo sha256 $sum)"
+            stage_flathub_catalogue
+            return 0
+        fi
+        warn "flatpak remote-add failed here; the first time it is online the"
+        warn "computer adds Flathub itself (auros-software.service)"
+    else
+        rm -f "$repo.new"
+        note "dl.flathub.org is not reachable from this builder: the computer"
+        note "adds Flathub itself the first time it is online (auros-software.service)"
+    fi
+    printf 'flathub=first-online\n' > "$RFS/etc/auros/software-sources"
+    warn_note "flathub=first-online"
+}
+
+# A network printer is found by a name such as printer.local, and only the
+# mdns4_minimal module turns that into an address. libnss-mdns's own
+# postinst is meant to add it to the hosts line; whether it does is not
+# something a printer that prints nothing can tell her, so it is made
+# certain here, and checked by tools/everydaytest.sh.
+stage_mdns() {
+    local _ns="$RFS/etc/nsswitch.conf"
+    if [ ! -f "$RFS/usr/lib/x86_64-linux-gnu/libnss_mdns4_minimal.so.2" ]; then
+        warn "libnss-mdns is not installed: printer.local cannot be found"
+        return 0
+    fi
+    [ -f "$_ns" ] || { warn "no /etc/nsswitch.conf to add mDNS to"; return 0; }
+    if grep -q '^hosts:.*mdns4_minimal' "$_ns"; then
+        note "mDNS names resolve (hosts: already says so)"
+        return 0
+    fi
+    # Before dns, and answered for a .local name only: [NOTFOUND=return]
+    # stops the search there, so an ordinary name still goes to dns.
+    sed -i -E 's/^(hosts:[[:space:]]+)(.*)\<dns\>/\1\2mdns4_minimal [NOTFOUND=return] dns/' "$_ns"
+    grep -q '^hosts:.*mdns4_minimal' "$_ns" \
+        || sed -i -E 's/^(hosts:[[:space:]]+.*)$/\1 mdns4_minimal [NOTFOUND=return] dns/' "$_ns"
+    grep -q '^hosts:.*mdns4_minimal' "$_ns" || die "could not add mDNS to /etc/nsswitch.conf"
+    note "mDNS names resolve: $(grep '^hosts:' "$_ns")"
+}
+
+# xdg-open, the program every other program calls to open a file or a link.
+# xdg-utils' own cannot tell what a local file IS unless the `file` program
+# is installed (xdg-mime query filetype fails, exit 4): a PDF, a photo or a
+# Word document a program asked to open went to the browser instead (PARITY).
+# GLib's `gio open` reads the same database and the same mimeapps.list the
+# file manager uses, so a double-click and a program's request end up in the
+# same place. The original is kept beside it (dpkg-divert, so a new xdg-utils
+# from Ubuntu does not take ours away) and is the fallback when gio is absent.
+stage_xdg_open() {
+    [ -x "$RFS/usr/bin/xdg-open" ] || { note "no xdg-open to replace"; return 0; }
+    if ! inchroot "dpkg-divert --local --rename --divert /usr/bin/xdg-open.distrib --add /usr/bin/xdg-open" >/dev/null 2>&1; then
+        warn "could not divert xdg-open; programs will open her files in the browser"
+        return 0
+    fi
+    install -m 0755 "$ROOT/rootfs/usr/bin/xdg-open" "$RFS/usr/bin/xdg-open"
+    note "xdg-open opens her files like the file manager does"
+}
+
+# ── what opens what ───────────────────────────────────────────────
+#
+# Installing a viewer is not the same as a file opening. Every one of
+# these packages ships a .desktop that CLAIMS a set of file types, and
+# with several installed the winner is whichever the database happens
+# to rank first -- which on a fresh image is arbitrary and, for a .deb,
+# is often an archive manager that will happily show her the inside of
+# an installer she wanted to run.
+#
+# So the defaults are stated. This is the same mimeapps.list any Linux
+# distribution ships; there is nothing AurOS-specific about the
+# mechanism, only about bothering to set it.
+stage_file_types() {
+    install -d "$RFS/etc/xdg"
+    cat > "$RFS/etc/xdg/mimeapps.list" <<'EOL'
+[Default Applications]
+# A program's installer file -- a .deb from a web page, a Windows .exe
+# she brought across. Programs come from "Get more programs", which
+# checks them first; opening one of these says so and opens the store
+# (rootfs/usr/lib/auros/program-file). An archive manager would show
+# her the inside of it instead, which is how a person ends up with a
+# folder full of files and no program.
+application/vnd.debian.binary-package=auros-program-file.desktop
+application/x-ms-dos-executable=auros-program-file.desktop
+application/x-msdownload=auros-program-file.desktop
+application/x-msi=auros-program-file.desktop
+
+# Pictures
+image/jpeg=org.xfce.ristretto.desktop
+image/png=org.xfce.ristretto.desktop
+image/gif=org.xfce.ristretto.desktop
+image/bmp=org.xfce.ristretto.desktop
+image/tiff=org.xfce.ristretto.desktop
+image/webp=org.xfce.ristretto.desktop
+image/heic=org.xfce.ristretto.desktop
+image/heif=org.xfce.ristretto.desktop
+
+# Documents she is most likely to have brought with her
+application/pdf=org.gnome.Evince.desktop
+text/plain=org.xfce.mousepad.desktop
+text/markdown=org.xfce.mousepad.desktop
+
+# Word and Excel files, and their open-format twins. A .docx IS a zip file,
+# so without these lines it opened the archive manager (PARITY): a person
+# who double-clicked a letter saw a list of XML files.
+application/vnd.openxmlformats-officedocument.wordprocessingml.document=libreoffice-writer.desktop
+application/vnd.openxmlformats-officedocument.wordprocessingml.template=libreoffice-writer.desktop
+application/msword=libreoffice-writer.desktop
+application/vnd.oasis.opendocument.text=libreoffice-writer.desktop
+application/rtf=libreoffice-writer.desktop
+application/vnd.openxmlformats-officedocument.spreadsheetml.sheet=libreoffice-calc.desktop
+application/vnd.ms-excel=libreoffice-calc.desktop
+application/vnd.oasis.opendocument.spreadsheet=libreoffice-calc.desktop
+text/csv=libreoffice-calc.desktop
+
+# A presentation: Impress is not on this image (decision 14). Opening one says
+# so in her words and opens the store, instead of showing the inside of the
+# file (rootfs/usr/lib/auros/program-file).
+application/vnd.openxmlformats-officedocument.presentationml.presentation=auros-program-file.desktop
+application/vnd.openxmlformats-officedocument.presentationml.slideshow=auros-program-file.desktop
+application/vnd.ms-powerpoint=auros-program-file.desktop
+application/vnd.oasis.opendocument.presentation=auros-program-file.desktop
+
+# Films and music
+video/mp4=mpv.desktop
+video/x-matroska=mpv.desktop
+video/webm=mpv.desktop
+video/mpeg=mpv.desktop
+video/quicktime=mpv.desktop
+video/x-msvideo=mpv.desktop
+audio/mpeg=mpv.desktop
+audio/mp4=mpv.desktop
+audio/x-wav=mpv.desktop
+audio/flac=mpv.desktop
+audio/ogg=mpv.desktop
+
+# Zip files and the rest
+application/zip=xarchiver.desktop
+application/x-tar=xarchiver.desktop
+application/gzip=xarchiver.desktop
+application/x-7z-compressed=xarchiver.desktop
+application/vnd.rar=xarchiver.desktop
+
+# Folders
+inode/directory=thunar.desktop
+EOL
+    # A link she presses in an email or a document opens in THE browser
+    # -- the one on her home screen -- and not in whichever of several
+    # programs that claim web pages the database ranks first. Once she
+    # installs Chrome from the store it claims them too, and then the
+    # one she was given is still the one that opens, until she says
+    # otherwise in Chrome.
+    local _web=""
+    for _d in firefox org.gnome.Epiphany; do
+        if [ -f "$RFS/usr/share/applications/$_d.desktop" ]; then _web="$_d.desktop"; break; fi
+    done
+    if [ -n "$_web" ]; then
+        printf '%s\n' "" "# Web pages and links" \
+            "x-scheme-handler/http=$_web" "x-scheme-handler/https=$_web" \
+            "text/html=$_web" "application/xhtml+xml=$_web" \
+            >> "$RFS/etc/xdg/mimeapps.list"
+        note "links open in $_web"
+    else
+        warn "no browser .desktop found; links have no default program"
+    fi
+
+    # LAST in the file: anything appended after this line would be read as a
+    # removed association.
+    #
+    # The archive manager must never be what a document opens in. Office files
+    # are zip files underneath, so it claims them by inheritance; Impress is
+    # not on this image (decision 14), so a presentation opens nothing rather
+    # than the inside of itself.
+    cat >> "$RFS/etc/xdg/mimeapps.list" <<'EOL'
+
+[Removed Associations]
+application/vnd.openxmlformats-officedocument.wordprocessingml.document=xarchiver.desktop;
+application/vnd.openxmlformats-officedocument.spreadsheetml.sheet=xarchiver.desktop;
+application/vnd.openxmlformats-officedocument.presentationml.presentation=xarchiver.desktop;
+application/vnd.oasis.opendocument.text=xarchiver.desktop;
+application/vnd.oasis.opendocument.spreadsheet=xarchiver.desktop;
+application/vnd.oasis.opendocument.presentation=xarchiver.desktop;
+EOL
+
+    # ── what these programs are CALLED ─────────────────────────────
+    #
+    # The names and one-line descriptions in the app list are the first
+    # words she reads on this machine, and by default they are written
+    # by Debian packagers for other Debian packagers:
+    #
+    #   thunar     "Browse the filesystem with the file manager"
+    #   gdebi      "Install and view software packages"
+    #   xarchiver  "Create, extract and modify archives"
+    #
+    # Every one of those uses a word docs/EASY.md rule 2 forbids, and
+    # tools/plainwords.sh cannot see them because they are not our
+    # strings -- they arrive with the package.
+    #
+    # So the handful of programs AurOS itself ships are renamed, as
+    # data rather than code: a .desktop in /usr/local/share, which the
+    # XDG search order puts ahead of /usr/share, so it survives the
+    # package being updated.
+    #
+    # THE TRANSLATED NAMES HAVE TO GO WITH THE NAME.
+    #
+    # The first version of this replaced the plain Name= and Comment=
+    # and left every Name[xx]= alone, on the reasoning that on a French
+    # machine the packager's French is better than our English. The
+    # reasoning was fine; the fact was not. Name[en_US] is a
+    # "translation" too, and the XDG rule -- which src/aurshell/apps.c
+    # implements correctly -- is that an exact language-and-country
+    # match beats the plain key. So on the default en_US build, a
+    # package that ships Name[en_US] kept it, and the rename did
+    # nothing at all.
+    #
+    # It was not theoretical and it was not subtle. atril ships
+    # Name[en_US]=Atril Document Viewer, and the very first screen of a
+    # freshly booted image read "Atril Document Viewer" in a list whose
+    # other rows said "Your files" and "Photos". It was found by
+    # booting the image and looking at it, which is the only way it
+    # could have been found.
+    #
+    # So the override drops every localised Name, Comment and
+    # GenericName. A translation of a name we have just replaced is a
+    # translation of a name that no longer exists, and keeping it means
+    # the rename applies on some machines and not others -- which is
+    # worse than either consistent answer.
+    #
+    # The cost is real and belongs here rather than in a surprise: these
+    # six plain names are English until AurOS carries its own
+    # translations, so a French build shows "Photos" and "Your files"
+    # rather than the packager's French. "Photos" is a French word.
+    # "Visionneur de documents Atril" is not a name anyone uses.
+    install -d "$RFS/usr/local/share/applications"
+    while IFS='|' read -r desk nm cm; do
+        [ -n "$desk" ] || continue
+        src="$RFS/usr/share/applications/$desk.desktop"
+        # A name in this table that matches no installed .desktop is a
+        # rename that silently does nothing -- which is how gnome-software
+        # kept the packagers' words while this table claimed to have
+        # replaced them. Say so.
+        if [ ! -f "$src" ]; then
+            warn "no $desk.desktop installed, so '$nm' renames nothing"
+            continue
+        fi
+        sed -e "s|^Name=.*|Name=$nm|" -e "s|^Comment=.*|Comment=$cm|" \
+            -e '/^Name\[/d' -e '/^Comment\[/d' -e '/^GenericName\[/d' \
+            "$src" > "$RFS/usr/local/share/applications/$desk.desktop"
+    done <<'EOL'
+firefox|Internet|Websites, news and shopping
+thunar|Your files|Everything you have saved
+mpv|Music and video|Play a song or a film
+mate-calc|Calculator|Add up, and work things out
+system-config-printer|Printers|Set up or check a printer
+org.gnome.Evince|Documents|Read PDFs and documents
+org.xfce.ristretto|Photos|Look at your pictures
+org.xfce.mousepad|Notes|Write and read plain notes
+xarchiver|Zip files|Open or make a zip file
+org.gnome.Software|Get more programs|Find and add programs
+libreoffice-writer|Letters|Write a letter, or open a Word file
+libreoffice-calc|Spreadsheets|Numbers in tables, or open an Excel file
+EOL
+
+    # libreoffice-math is installed so a formula inside a Word file is drawn,
+    # not so that "LibreOffice Math" sits among her programs: hide the launcher.
+    if [ -f "$RFS/usr/share/applications/libreoffice-math.desktop" ]; then
+        sed -e '/^NoDisplay=/d' -e 's/^\[Desktop Entry\]$/&\nNoDisplay=true/' \
+            "$RFS/usr/share/applications/libreoffice-math.desktop" \
+            > "$RFS/usr/local/share/applications/libreoffice-math.desktop"
+    fi
+
+    # ── a network printer's name, and opening her files ────────────
+    stage_mdns
+    stage_xdg_open
+
+    # The database the desktop actually reads. Without this the file
+    # above is a text file nobody consults.
+    inchroot "update-desktop-database /usr/share/applications >/dev/null 2>&1" || true
+    inchroot "update-mime-database /usr/share/mime >/dev/null 2>&1" || true
+
+    # Her folders -- Documents, Pictures, Downloads -- created with the
+    # names her language uses, which is what Ferry copies into and what
+    # the file manager opens on.
+    inchroot "xdg-user-dirs-update >/dev/null 2>&1" || true
+    note "file types set: a .deb installs, a PDF opens, a folder browses"
+}
+
+# ── browser: never let a desktop ship without one, silently ───────
+#
+# Ubuntu's `firefox` and `chromium-browser` are 120-kilobyte
+# TRANSITIONAL PACKAGES whose whole job is to run `snap install`, and
+# this build purges snapd. `apt-get install firefox` therefore exits 0,
+# prints nothing alarming, and leaves an image with no browser in it --
+# which is how an image can be built, tested, published and downloaded
+# before anybody notices. That is why there is a check below and not
+# just an install.
+#
+# Several sources are tried in order because "the browser" is one of the
+# two or three things a person opens this machine to do, and the places
+# it can be fetched from are exactly the places a corporate proxy, a
+# regional block or an air gap is likely to sit in front of.
+#
+#   mozilla-apt      Mozilla's own apt repository. Real .debs, updated
+#                    by the distribution's own machinery.
+#   mozilla-ppa      the mozillateam PPA on Launchpad, which is the
+#                    same binaries built for Ubuntu, and is reachable
+#                    on networks that block packages.mozilla.org.
+#   mozilla-tarball  the release tarball, checked against the SHA256SUMS
+#                    file Mozilla publishes beside it. No repository, no
+#                    apt, nothing to be blocked but ftp.mozilla.org.
+#   archive          whatever Ubuntu itself has -- which for Firefox is
+#                    the snap stub, and the check below catches it.
+#
+# And if none of them can be reached, the fallback is a REAL browser
+# from Ubuntu's archive rather than an apology -- but the build refuses
+# to finish quietly. See browser_fallback_ok.
+install_browser_pkg() {
+    inchroot "apt-get install -y --no-install-recommends $1" >/dev/null 2>&1
+}
+
+# WHAT THE PROFILE ASKED FOR, AS A COMMAND. A package is not a program:
+# epiphany-browser's binary is `epiphany`, and a check that looked for a
+# command named after the package would fail on a browser that is
+# installed and working.
+browser_command_of() {
+    case "$1" in
+      epiphany-browser) echo epiphany ;;
+      chromium-browser) echo chromium-browser ;;
+      *)                echo "$1" ;;
+    esac
+}
+
+# IS IT ACTUALLY THERE, AND IS IT ACTUALLY IT?
+#
+# Two questions, because apt answers neither. A transitional package
+# installs cleanly and ships no browser; a snap shim ships a shell
+# script that runs snapd, which on this image is not installed.
+browser_present() {
+    local cmd; cmd=$(browser_command_of "$1")
+    inchroot "command -v $cmd >/dev/null 2>&1" || return 1
+    # A two-byte read decides whether it is worth reading further. An
+    # ELF is a browser; a script that mentions snap is a note saying
+    # where the browser would have been.
+    inchroot "p=\$(command -v $cmd); \
+              case \"\$(head -c2 \"\$p\")\" in \
+                '#!') grep -qi snap \"\$p\" && exit 1 ;; \
+              esac; exit 0"
+}
+
+# Everything a failed repository leaves behind. An image whose first
+# `apt update` fails because of a repository WE added, on a machine
+# somebody has owned for five minutes, is our bug and not theirs.
+browser_unconfigure() {
+    rm -f "$RFS/etc/apt/sources.list.d/mozilla.list" \
+          "$RFS/etc/apt/sources.list.d/mozillateam.list" \
+          "$RFS/etc/apt/preferences.d/mozilla" \
+          "$RFS/etc/apt/keyrings/packages.mozilla.org.asc" \
+          "$RFS/etc/apt/keyrings/mozillateam.asc"
+}
+
+# Mozilla's own instructions for Debian and Ubuntu, step for step
+# (support.mozilla.org, "Install Firefox on Linux", .deb section): the
+# key from packages.mozilla.org, its fingerprint checked against the
+# one Mozilla publishes, the repository, and a pin of 1000 on Mozilla's
+# origin. Ubuntu's own firefox* is pinned to -1 by pin_no_snap, so the
+# snap stub cannot win even when this repository is unreachable -- the
+# install then fails, which is what sends the build to the next route.
+MOZILLA_KEY_FPR="35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3"
+try_mozilla_apt() {
+    inchroot "install -d -m 0755 /etc/apt/keyrings"
+    inchroot "curl -fsSL --max-time 30 https://packages.mozilla.org/apt/repo-signing-key.gpg \
+              -o /etc/apt/keyrings/packages.mozilla.org.asc" 2>/dev/null || return 1
+    # The fingerprint, with the build host's gpg (the image has none
+    # yet at this stage). A host with no gpg skips the check and says
+    # so; apt still verifies every download against the key.
+    if command -v gpg >/dev/null 2>&1; then
+        local fpr
+        fpr=$(gpg --show-keys --with-colons \
+                  "$RFS/etc/apt/keyrings/packages.mozilla.org.asc" 2>/dev/null \
+              | awk -F: '$1 == "fpr" { print $10; exit }')
+        if [ -z "$fpr" ]; then
+            note "could not read the fingerprint of Mozilla's key; apt still checks it"
+        elif [ "$fpr" != "$MOZILLA_KEY_FPR" ]; then
+            warn "packages.mozilla.org's key is $fpr, not Mozilla's published"
+            warn "$MOZILLA_KEY_FPR; not using it"
+            return 1
+        else
+            note "Mozilla's key fingerprint matches"
+        fi
+    else
+        note "no gpg on this build host; Mozilla's key fingerprint not checked"
+    fi
+    cat > "$RFS/etc/apt/sources.list.d/mozilla.list" <<'EOL'
+deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main
+EOL
+    # Firefox only. Mozilla's page pins EVERY package of its repository
+    # at 1000, which would let that repository replace any of Ubuntu's
+    # (libc included) and even downgrade them. The update policy lets
+    # unattended-upgrades take what this repository supplies
+    # (rootfs/etc/apt/apt.conf.d/53auros-updates), so it supplies
+    # Firefox and nothing else. docs/security/UPDATES.md
+    cat > "$RFS/etc/apt/preferences.d/mozilla" <<'EOL'
+Package: firefox*
+Pin: origin packages.mozilla.org
+Pin-Priority: 1000
+
+Package: *
+Pin: origin packages.mozilla.org
+Pin-Priority: -1
+EOL
+    inchroot "apt-get update -qq && apt-get install -y --no-install-recommends $browser" \
+        >/dev/null 2>&1
+}
+
+try_mozilla_ppa() {
+    inchroot "install -d -m 0755 /etc/apt/keyrings"
+    # The PPA's signing key, from the keyserver rather than from
+    # Launchpad's web pages: one host, one protocol, one thing to
+    # unblock. 0AB215679C571D1C8325275B9BDB3D89CE49EC21 is the
+    # mozillateam key.
+    inchroot "curl -fsSL --max-time 30 \
+              'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x0AB215679C571D1C8325275B9BDB3D89CE49EC21' \
+              -o /etc/apt/keyrings/mozillateam.asc" 2>/dev/null || return 1
+    [ -s "$RFS/etc/apt/keyrings/mozillateam.asc" ] || return 1
+    local codename
+    codename=$(. "$RFS/etc/os-release" 2>/dev/null; echo "${UBUNTU_CODENAME:-noble}")
+    cat > "$RFS/etc/apt/sources.list.d/mozillateam.list" <<EOL
+deb [signed-by=/etc/apt/keyrings/mozillateam.asc] https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu $codename main
+EOL
+    cat > "$RFS/etc/apt/preferences.d/mozilla" <<'EOL'
+Package: firefox*
+Pin: release o=LP-PPA-mozillateam
+Pin-Priority: 1000
+EOL
+    inchroot "apt-get update -qq && apt-get install -y --no-install-recommends $browser" \
+        >/dev/null 2>&1
+}
+
+# THE TARBALL, WITH ITS HASH CHECKED BEFORE IT IS UNPACKED.
+#
+# No repository and no apt: one host, one file, and the SHA256SUMS
+# Mozilla publishes beside it. It is the route that survives a network
+# where every apt host is blocked, and the only one where WE are
+# responsible for the integrity check -- so it is done here, against
+# the file from the release directory, and a mismatch is a refusal
+# rather than a warning.
+#
+# The updater is switched off in policies.json because the program
+# lives in /opt and runs as her: an updater that cannot write to its
+# own directory is a dialog box every morning that nothing can act on.
+try_mozilla_tarball() {
+    [ "$browser" = firefox ] || return 1
+    local v="${firefox_version:-}"
+    [ -n "$v" ] || return 1
+    local base="https://ftp.mozilla.org/pub/firefox/releases/$v/linux-x86_64/en-US"
+    local tar="firefox-$v.tar.bz2"
+    inchroot "cd /tmp && curl -fsSL --max-time 900 '$base/$tar' -o '$tar' && \
+              curl -fsSL --max-time 60 \
+                'https://ftp.mozilla.org/pub/firefox/releases/$v/SHA256SUMS' \
+                -o SHA256SUMS" >/dev/null 2>&1 || return 1
+    inchroot "cd /tmp && grep ' linux-x86_64/en-US/$tar\$' SHA256SUMS \
+              | sed 's#linux-x86_64/en-US/##' > want.sha && \
+              [ -s want.sha ] && sha256sum -c want.sha" >/dev/null 2>&1 || {
+        inchroot "rm -f /tmp/firefox-*.tar.bz2 /tmp/SHA256SUMS /tmp/want.sha"
+        return 1
+    }
+    inchroot "rm -rf /opt/firefox && mkdir -p /opt && \
+              tar -xjf /tmp/$tar -C /opt && \
+              ln -sf /opt/firefox/firefox /usr/bin/firefox && \
+              mkdir -p /opt/firefox/distribution && \
+              printf '%s\\n' '{ \"policies\": { \"DisableAppUpdate\": true } }' \
+                > /opt/firefox/distribution/policies.json && \
+              rm -f /tmp/$tar /tmp/SHA256SUMS /tmp/want.sha" >/dev/null 2>&1 || return 1
+    cat > "$RFS/usr/share/applications/firefox.desktop" <<'EOL'
+[Desktop Entry]
+Name=Firefox
+Comment=Browse the web
+Exec=/opt/firefox/firefox %u
+Icon=/opt/firefox/browser/chrome/icons/default/default128.png
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupNotify=true
+EOL
+    return 0
+}
+
+stage_browser_fallback() {
+    local why="$1" fb="${browser_fallback:-}"
+    if [ -z "$fb" ]; then
+        MISSING_BROWSER=1
+        warn_note "browser=MISSING"
+        say "${C_ERR}WARNING${C_RST}: $why, and no browser_fallback is set."
+        note "The image will have NO BROWSER. Do not ship this image."
+        return 0
+    fi
+    say "${C_ERR}NOTE${C_RST}: $why."
+    note "Falling back to $fb from the Ubuntu archive."
+    if install_browser_pkg "$fb" && browser_present "$fb"; then
+        BROWSER_SUBSTITUTED="$fb"
+        warn_note "browser=$fb (fallback; $why)"
+        note "$fb installed — the desktop has a working browser"
+    else
+        MISSING_BROWSER=1
+        warn_note "browser=MISSING"
+        say "${C_ERR}WARNING${C_RST}: the fallback browser $fb also failed to install."
+        note "The image will have NO BROWSER. Do not ship this image."
+    fi
+}
+
+stage_browser() {
+    BROWSER_SUBSTITUTED=""
+    case "${browser_source:-none}" in
+      none|"") note "no browser requested"; return 0 ;;
+    esac
+    local tried=""
+    local src
+    # browser_source may name one route or several, in order. A single
+    # name is what every profile said before this was a list, and it
+    # still means exactly what it meant.
+    for src in ${browser_source}; do
+        tried="$tried $src"
+        case "$src" in
+          archive)
+            note "trying $browser from the Ubuntu archive"
+            install_browser_pkg "$browser" || continue ;;
+          snap)
+            note "trying $browser as a snap"
+            inchroot "apt-get install -y --no-install-recommends snapd $browser" \
+                >/dev/null 2>&1 || continue ;;
+          mozilla-apt)
+            note "trying $browser from packages.mozilla.org"
+            try_mozilla_apt || { browser_unconfigure; continue; } ;;
+          mozilla-ppa)
+            note "trying $browser from the mozillateam PPA"
+            try_mozilla_ppa || { browser_unconfigure; continue; } ;;
+          mozilla-tarball)
+            note "trying the Firefox ${firefox_version:-?} tarball, hash-checked"
+            try_mozilla_tarball || continue ;;
+          *) die "unknown browser_source: $src" ;;
+        esac
+        # THE ONLY THING THAT COUNTS. apt exiting 0 is not a browser.
+        if browser_present "$browser"; then
+            note "$browser installed from $src"
+            warn_note "browser=$browser ($src)"
+            return 0
+        fi
+        note "$src reported success but left no $browser behind; going on"
+        case "$src" in mozilla-apt|mozilla-ppa) browser_unconfigure ;; esac
+    done
+    stage_browser_fallback "none of$tried could provide $browser"
+}
+
+# ── stage 3: overlay our own stack ─────────────────────────────────
+stage_overlay() {
+    step "stage 3/7  overlay the AurOS stack"
+
+    install -Dm755 "$ROOT/src/aurora/aurora"       "$RFS/usr/bin/aurora"
+    install -d "$RFS/usr/share/auros/themes" "$RFS/usr/share/auros/templates"
+    cp "$ROOT/themes"/*.theme          "$RFS/usr/share/auros/themes/"
+    cp "$ROOT/themes/templates"/*.tpl  "$RFS/usr/share/auros/templates/"
+
+    # Archetypes. All six ship on every image so a machine can be
+    # switched after the fact -- `aurshell --shell` for a try, or
+    # relinking active.shell to make it stick.
+    install -d "$RFS/usr/share/auros/shells"
+    cp "$ROOT/shells"/*.shell "$RFS/usr/share/auros/shells/"
+
+    # Our binaries, built against the target's glibc via the chroot so
+    # they link the same way every other package on the system does.
+    install -d "$RFS/usr/src/auros"
+    cp -r "$ROOT/src/common" "$ROOT/src/aurinit" "$ROOT/src/aurwall" "$ROOT/src/aurshell" \
+          "$ROOT/src/aurfetch" "$ROOT/src/ferry" "$ROOT/src/aurwl" "$ROOT/src/aurfirst" \
+          "$RFS/usr/src/auros/" 2>/dev/null || true
+    # Stream W1, owner decision D14: the Wishes engine's sources reach the
+    # image only when the profile says wishes="on". Nothing of it otherwise.
+    if wishes_on; then cp -r "$ROOT/src/aurwish" "$RFS/usr/src/auros/"; fi
+
+    chroot_prep
+    # The compositor needs libwayland-server and xkbcommon, and their
+    # headers plus wayland-scanner and the protocol XML at build time.
+    # The -dev packages and the scanner are purged again below; the two
+    # shared libraries stay, because without them nothing on the desktop
+    # can open a window.
+    inchroot "apt-get update -qq && apt-get install -y --no-install-recommends \
+              gcc libc6-dev make pkg-config libdbus-1-dev \
+              libwayland-dev libwayland-bin wayland-protocols libxkbcommon-dev" \
+        >/dev/null 2>&1 || true
+    inchroot "cd /usr/src/auros && \
+        gcc $HARDEN_CFLAGS -std=gnu11 -o /usr/sbin/aurinit aurinit/aurinit.c && \
+        gcc $HARDEN_CFLAGS -std=gnu11 -o /usr/bin/aurctl  aurinit/aurctl.c && \
+        gcc $HARDEN_CFLAGS -std=gnu11 -o /usr/bin/aurwall aurwall/main.c common/theme.c common/wall.c common/png.c -lm && \
+        gcc $HARDEN_CFLAGS -std=gnu11 -o /usr/bin/aursorry aurshell/sorry.c aurshell/kms.c \
+            aurshell/draw.c common/font.c common/png.c -lm && \
+        gcc $HARDEN_CFLAGS -std=gnu11 -Wall -Wextra -o /usr/sbin/aurfirst aurfirst/*.c -I aurfirst" \
+        || die "building the AurOS stack inside the image failed"
+
+    # Ferry — first-boot migration. Its own install.sh holds the list of
+    # its tools and builds its C helpers (hostile on-disk data, read as
+    # root) inside the image; scripts first, so the directory exists.
+    sh "$ROOT/src/ferry/install.sh" scripts "$RFS" \
+        || die "installing Ferry's tools into the image failed"
+    inchroot "sh /usr/src/auros/ferry/install.sh helpers /" \
+        || die "building Ferry's helpers inside the image failed"
+
+    # aurshell needs the kernel DRM headers and libm; it links nothing else.
+    # NB: do not pipe the compiler into tail here. A pipeline's exit
+    # status is the last command's, so `gcc ... | tail` reports success
+    # even when the compile failed -- which is exactly how a broken
+    # aurshell shipped as "built" once already.
+    # Every archetype is compiled in; the .shell file picks one at run
+    # time. They are small, and an image that cannot switch archetype
+    # without a rebuild is not the product we promised.
+    # The Wayland protocol marshalling code is generated, not vendored:
+    # it is a mechanical transform of XML the distribution already
+    # ships, and a checked-in copy is a copy that goes stale against the
+    # headers it is compiled against without anyone noticing.
+    #
+    # This is a hard failure rather than a fallback. There is no version
+    # of this product that cannot run an application, so an image that
+    # would ship without a compositor is not a lesser AurOS -- it is a
+    # desktop where every icon silently does nothing, discovered by the
+    # user, after the install.
+    inchroot "cd /usr/src/auros/aurwl && mkdir -p gen && \
+            for p in /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml \
+                     /usr/share/wayland-protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml \
+                     /usr/share/wayland-protocols/stable/viewporter/viewporter.xml \
+                     /usr/share/wayland-protocols/unstable/xdg-output/xdg-output-unstable-v1.xml \
+                     $(wishes_on && echo /usr/share/wayland-protocols/unstable/text-input/text-input-unstable-v3.xml); do \
+                n=\$(basename \$p .xml | sed -e 's/-unstable-v[13]//'); \
+                wayland-scanner server-header \$p gen/\$n-server.h || exit 1; \
+                wayland-scanner private-code  \$p gen/\$n-protocol.c || exit 1; \
+            done; \
+            for p in /usr/share/wayland-protocols/unstable/idle-inhibit/idle-inhibit-unstable-v1.xml \
+                     /usr/share/wayland-protocols/staging/cursor-shape/cursor-shape-v1.xml; do \
+                n=\$(basename \$p .xml | sed -e 's/-unstable-v[13]//' -e 's/-v1\$//'); \
+                wayland-scanner server-header \$p gen/\$n-server.h || exit 1; \
+                wayland-scanner private-code  \$p gen/\$n-protocol.inc || exit 1; \
+            done" \
+        || die "wayland-scanner failed: no compositor could be built"
+    # (The second loop is the protocols compiled INTO aurwl.c: .inc, so that no
+    # list of source files has to name them. See the include in aurwl.c.)
+
+    # The source list is READ FROM THE DIRECTORY, not typed out here. A
+    # hand-written list is a second place to remember, and it was
+    # already forgotten once: aurshell/foot.c -- the band carrying Help,
+    # the text size and Turn off -- was added to the shell and not to
+    # this line, so the very next image build would have stopped dead at
+    # eight undefined references. Nobody has to be careless for that;
+    # the file and the list are in different directories.
+    #
+    # shellpreview.c is excluded by name because it is a second program
+    # with its own main() that happens to live in the same folder.
+    # Every .c under aurshell that is not a SECOND PROGRAM. Excluded by
+    # having its own main(), not by being called shellpreview.c: the
+    # name is what this used to match, so the next tool parked in that
+    # directory would have been linked into the shell and the build
+    # would have died on "multiple definition of main".
+    #
+    # `|| true` on the substitution because under `set -e` a failing
+    # command substitution ends the build before the check below it can
+    # say anything useful -- which made that check dead code in exactly
+    # the case it was written for.
+    SHELL_SRC=$(cd "$ROOT/src" && {
+        for f in aurshell/*.c aurshell/layouts/*.c; do
+            [ -f "$f" ] || continue
+            grep -q '^int main(' "$f" && continue
+            printf '%s ' "$f"
+        done
+    }) || true
+    [ -n "${SHELL_SRC:-}" ] || die "no aurshell sources found to build"
+    # main.c IS the program, so it is added back by name -- the only
+    # main() the shell is allowed to have.
+    SHELL_SRC="aurshell/main.c $SHELL_SRC"
+    # inchroot hands its argument to a shell, so every path in this
+    # list is word-split and pathname-expanded a second time inside the
+    # image. A file called "my panel.c" would arrive as two arguments;
+    # one with a * in it would re-glob against /usr/src/auros. Nothing
+    # in this repository has such a name, and refusing is how it stays
+    # that way -- a build that mangles its own source list and then
+    # reports a compile error is a very slow way to find this out.
+    for _f in $SHELL_SRC; do
+        case "$_f" in
+            *[!a-zA-Z0-9._/-]*)
+                die "source file '$_f' has a character the build cannot pass through a shell safely" ;;
+        esac
+    done
+
+    # D14: Wishes are NOT in the v0.1 image. A profile says wishes="on"
+    # to put them in; anything else, or nothing, is off. It decides three
+    # things: the shell's Wishes doors (-DAUROS_WISHES, src/aurshell/
+    # aurfeatures.h), whether stream W1's forge lines build and start aurwish
+    # (`wishes_on`, defined at the top, for them to ask), and /etc/auros/features, which
+    # tools/wishesoff.sh checks on the finished image in CI.
+    local _wishes=0
+    [ "${wishes:-off}" = on ] && _wishes=1
+    install -d "$RFS/etc/auros"
+    printf 'wishes=%s\n' "$([ "$_wishes" = 1 ] && echo on || echo off)" > "$RFS/etc/auros/features"
+    note "wishes: $([ "$_wishes" = 1 ] && echo ON || echo off) (D14; profile variable wishes=)"
+    if inchroot "cd /usr/src/auros && gcc $HARDEN_CFLAGS -DAUROS_WISHES=$_wishes -std=gnu11 -o /usr/bin/aurshell \
+            $SHELL_SRC \
+            aurwl/aurwl.c $([ "$_wishes" = 1 ] && echo aurwl/wishhook.c aurwl/textinput.c aurwl/gen/text-input-protocol.c) aurwl/gen/xdg-shell-protocol.c \
+            aurwl/gen/xdg-decoration-protocol.c aurwl/gen/viewporter-protocol.c \
+            aurwl/gen/xdg-output-protocol.c \
+            common/theme.c common/wall.c common/font.c common/png.c \
+            -I aurwl/gen \$(pkg-config --cflags dbus-1) \
+            -lwayland-server -lxkbcommon \$(pkg-config --libs dbus-1) -lm"; then
+        note "aurshell built ($(du -h "$RFS/usr/bin/aurshell" | cut -f1)), with the compositor"
+    else
+        die "aurshell did not build - the image would boot to a console"
+    fi
+
+    # Stream W1 (D14): the Wishes engine, its user service and the sensor
+    # service it reads -- only when the profile says wishes="on". The sources
+    # were copied above only in that case, so an image without Wishes has no
+    # aurwish file anywhere (tools/wishesoff.sh checks the finished rootfs).
+    local _wishbin=""
+    if wishes_on; then
+        inchroot "apt-get install -y --no-install-recommends iio-sensor-proxy curl >/dev/null 2>&1" \
+            || warn "iio-sensor-proxy could not be installed: wishes about the compass, tilt or light stay unavailable"
+        inchroot "cd /usr/src/auros/aurwish && HARDEN_CFLAGS='$HARDEN_CFLAGS' sh build.sh /usr/bin/aurwish" \
+            || die "aurwish did not build"
+        install -D -m 0644 "$ROOT/src/aurwish/aurwish.service" "$RFS/etc/systemd/user/aurwish.service"
+        install -d "$RFS/etc/systemd/user/default.target.wants"
+        ln -sf ../aurwish.service "$RFS/etc/systemd/user/default.target.wants/aurwish.service"
+        python3 "$ROOT/src/aurwish/mksounds.py" "$RFS/usr/share/auros/sounds" \
+            || die "the Wishes sounds could not be made"
+        _wishbin="$RFS/usr/bin/aurwish"
+        note "aurwish built ($(du -h "$RFS/usr/bin/aurwish" | cut -f1)) and enabled for the user (wishes=on)"
+        # aurvoice: her voice in, the computer's voice out (src/aurwish/voice.c, docs/VOICE.md).
+        # aurwish starts it by its bare name, so it is in /usr/bin too. It downloads nothing:
+        # the voice pack (about 250 MB) is not in the image and arrives through the update
+        # channel (S5); until it does, "Say it" says the computer has no microphone it can use
+        # and offers to type the wish.
+        inchroot "install -d /usr/lib/auros && cd /usr/src/auros/aurwish && gcc $HARDEN_CFLAGS -std=gnu11 -Wall -Wextra -o /usr/lib/auros/aurvoice voice.c" \
+            || die "aurvoice did not build"
+        ln -sf /usr/lib/auros/aurvoice "$RFS/usr/bin/aurvoice"
+        _wishbin="$_wishbin $RFS/usr/lib/auros/aurvoice"
+        note "aurvoice built ($(du -h "$RFS/usr/lib/auros/aurvoice" | cut -f1))"
+    fi
+
+    # AND THE FLAGS ARE CHECKED ON THE BINARIES, not trusted from the
+    # command lines above: tools/checksec.sh (PIE, full RELRO, NX, CET,
+    # stack protector, FORTIFY), the same gate whose --selftest proves
+    # each check fails on a binary built without its flag.
+    # Ferry's programs are its compiled helpers; the rest of
+    # /usr/lib/ferry is shell scripts, which checksec rightly calls "not
+    # an ELF file". So: every ELF there, whatever its name.
+    local _cs _f _ferry=""
+    for _f in "$RFS"/usr/lib/ferry/*; do
+        [ "$(head -c 4 "$_f" 2>/dev/null)" = "$(printf '\177ELF')" ] && _ferry="$_ferry $_f"
+    done
+    [ -n "$_ferry" ] || die "no compiled Ferry helper in /usr/lib/ferry"
+    # shellcheck disable=SC2086
+    if ! _cs=$(sh "$ROOT/tools/checksec.sh" "$RFS/usr/sbin/aurinit" "$RFS/usr/bin/aurctl" \
+            "$RFS/usr/bin/aurwall" "$RFS/usr/bin/aursorry" "$RFS/usr/sbin/aurfirst" \
+            "$RFS/usr/bin/aurshell" $_wishbin $_ferry 2>&1); then
+        printf '%s\n' "$_cs" >&2
+        die "a program in this image was built without its hardening (above); build/cflags"
+    fi
+    note "compiler hardening: $(printf '%s\n' "$_cs" | tail -1)"
+
+    # ── THE WHOLE rootfs/ TREE, not a list of files from it ────────
+    #
+    # BEFORE THE `systemctl enable`s BELOW, AND THAT IS THE POINT.
+    # This block used to sit eighty lines further down, after
+    # chroot_done -- so every `systemctl enable` ran against an image
+    # in which the unit file being enabled did not exist yet. Each of
+    # them ended `|| true`, so each failed in silence.
+    #
+    # It worked anyway, on this machine, for the worst possible
+    # reason: work/forge/<profile>/rootfs is reused between builds, so
+    # the FIRST build laid the units down after failing to enable them
+    # and the SECOND build enabled the ones the first had left behind.
+    # A clean build of a profile enabled nothing at all, and a unit
+    # added since the last build of a profile -- auros-hold.service
+    # and auros-answer.path, which are the whole of phases 9 and 10 --
+    # would have been enabled by no build ever.
+    #
+    # rootfs/ in this repository is an overlay: whatever is under it
+    # lands at the same path in the image. It used to be copied as two
+    # named things -- the .service files and firstboot.sh -- which
+    # meant that adding a third file to the tree and forgetting to add
+    # a line here produced a file that exists in the repository, is
+    # reviewed, is committed, and is not on the machine.
+    #
+    # It happened the same day that comment was written: the PAM stack
+    # that gives the desktop a logind session, without which the Turn
+    # off button and mounting a USB stick are both refused by polkit,
+    # was written to rootfs/etc/pam.d/aurshell and would never have
+    # been copied anywhere.
+    #
+    # cp -a preserves modes, so an executable in the tree arrives
+    # executable; the explicit chmod below is for the one file whose
+    # mode matters enough to state twice.
+    [ -d "$ROOT/rootfs" ] || die "there is no rootfs/ to lay down. Every
+     unit file, the PAM stack and firstboot.sh live in it, and an image
+     without them boots to nothing."
+    # NOT `cp -a`, WHICH WOULD SHIP THE CHECKOUT'S OWNERSHIP.
+    #
+    # cp -a preserves owner AND rewrites the attributes of destination
+    # directories that already exist -- so $RFS/etc, $RFS/etc/pam.d and
+    # $RFS/etc/systemd/system take whatever uid owns the repository. On
+    # this machine that is root and nothing happens. A developer who
+    # clones as themselves and runs `sudo build/forge build desktop`
+    # ships an image whose /etc/pam.d and /etc/systemd/system are owned
+    # by uid 1000 -- which on the image is the default user, who can
+    # then rewrite the PAM stack and aurshell.service and be root.
+    #
+    # Modes are still preserved, which is what the executables in the
+    # tree need; only ownership is dropped, and root is what the
+    # umask-free copy then gives them.
+    cp -a --no-preserve=ownership "$ROOT/rootfs/." "$RFS/" \
+        || die "could not lay down rootfs/"
+    # Our gschema overrides (the store's update settings) take effect
+    # only once compiled; the packages' own triggers ran before this.
+    if [ -x "$RFS/usr/bin/glib-compile-schemas" ]; then
+        inchroot "glib-compile-schemas /usr/share/glib-2.0/schemas" \
+            || die "glib-compile-schemas failed on rootfs/usr/share/glib-2.0/schemas"
+    fi
+    # AND NOTHING THROUGH A MOUNT. This copy now runs inside the
+    # chroot_prep window, where $RFS/dev is a bind mount of the build
+    # host's /dev and /proc and /sys are mounted -- so a rootfs/dev/
+    # entry added one day would be written into the HOST's /dev, and a
+    # rootfs/proc/ placeholder would change the mode of a mount point
+    # this build is using. There is nothing like that in the tree and
+    # this is how it stays that way.
+    for _d in dev proc sys run; do
+        # An `if`, not `[ ] && die`: under `set -e` a false test at the
+        # end of an AND-list ends the build with no message -- which is
+        # the trap this same function's aurshell guard already carries
+        # a comment about, and which I walked straight into here.
+        if [ -e "$ROOT/rootfs/$_d" ]; then
+            die "rootfs/$_d exists. The overlay is copied while /dev,
+     /proc and /sys are mounted inside the image, so anything under
+     those names would be written to the build host."
+        fi
+    done
+    note "rootfs overlay: $(cd "$ROOT/rootfs" && find . -type f | wc -l) files"
+    # The written offer of source (docs/legal/SOURCES.md, stream LEGAL)
+    # names the releases page this build was published from: asked of
+    # tools/repo.sh like every other address, never typed into the tree.
+    if [ -f "$RFS/usr/share/doc/auros/SOURCE-OFFER" ]; then
+        _rel=$(sh "$ROOT/tools/repo.sh" releases) \
+            || die "tools/repo.sh has no releases address for the written offer of source"
+        sed "s|@AUROS_RELEASES@|$_rel|g" "$RFS/usr/share/doc/auros/SOURCE-OFFER" \
+            > "$RFS/usr/share/doc/auros/SOURCE-OFFER.stamped" \
+            && mv "$RFS/usr/share/doc/auros/SOURCE-OFFER.stamped" "$RFS/usr/share/doc/auros/SOURCE-OFFER" \
+            || die "could not write the releases address into the written offer of source"
+        if grep -q '@AUROS_[A-Z_]*@' "$RFS/usr/share/doc/auros/SOURCE-OFFER"; then
+            die "the written offer of source still has a placeholder nobody filled"
+        fi
+    fi
+    chmod 755 "$RFS/usr/lib/auros/firstboot.sh" 2>/dev/null || true
+    chmod 755 "$RFS/usr/lib/auros/choices.sh" 2>/dev/null || true
+    chmod 755 "$RFS/usr/lib/auros/software-ready.sh" "$RFS/usr/lib/auros/not-first-hour" \
+        2>/dev/null || true
+
+    # THE BOOT CHAIN BELONGS TO AUROS, NOT TO update-grub AND grub-install.
+    #
+    # Ubuntu's kernel, grub and shim packages call both from their
+    # maintainer scripts. update-grub would replace AurOS's hand-made
+    # menu -- the Windows entry and "Put Windows back" -- and
+    # grub-install would write to /boot/efi/EFI/ubuntu (where AurOS's
+    # firmware entry does not point) and reorder BootOrder. Diverted,
+    # both reach /usr/lib/auros/bootchain, and the three packages can
+    # take security updates like everything else (51auros-unattended).
+    # `--rename` keeps Ubuntu's own as *.ubuntu; a later package upgrade
+    # installs its new version there too, never over ours.
+    for _t in update-grub grub-install; do
+        inchroot "dpkg-divert --local --rename --divert /usr/sbin/$_t.ubuntu \
+                  --add /usr/sbin/$_t" >/dev/null \
+            || die "could not divert /usr/sbin/$_t"
+        install -m755 "$ROOT/rootfs/usr/lib/auros/$_t" "$RFS/usr/sbin/$_t"
+    done
+    ln -sf /usr/lib/auros/bootchain "$RFS/usr/sbin/auros-bootchain"
+    # And if anything does reach the real grub-install (a person typing
+    # update-grub.ubuntu's sibling by hand), it does not touch NVRAM.
+    #
+    # cloud_style_installation is the one that matters most, and it is
+    # not about clouds. Without it, grub-multi-install -- which the shim
+    # and grub postinsts run -- lists EVERY EFI System partition on the
+    # machine, offers them as install targets, and MOUNTS any it is told
+    # to use that is not mounted already. On an AurOS PC one of them is
+    # Windows' own, which R12 says this product never mounts. With it
+    # set, grub-multi-install calls grub-install (ours) once and exits:
+    # no list, no mount.
+    inchroot "printf '%s\n' \
+        'grub-efi-amd64 grub2/update_nvram boolean false' \
+        'grub-efi-amd64-signed grub2/update_nvram boolean false' \
+        'grub-efi-amd64 grub-efi/cloud_style_installation boolean true' \
+        | debconf-set-selections" || die "could not preseed grub's debconf answers"
+    inchroot "debconf-show grub-efi-amd64 | grep -q 'cloud_style_installation: true'" \
+        || die "grub-efi/cloud_style_installation did not take; grub-multi-install
+     would enumerate (and could mount) Windows' EFI partition"
+
+    enable_unit auros-firstboot.service multi-user.target
+    # Phases 9 and 10. The hold runs on every boot until somebody has
+    # answered; the path unit is how the desktop asks for the three
+    # things that have to happen as root. See src/aurfirst/aurfirst.h.
+    enable_unit auros-hold.service  multi-user.target
+    # "This start worked", said two minutes after the desktop is up; the
+    # start-up menu falls back to the kernel before without it
+    # (rootfs/usr/lib/auros/grub.cfg.in, boot counting).
+    enable_unit auros-boot-ok.service multi-user.target
+    enable_unit auros-boot-guard.service multi-user.target
+    # After the desktop has worked for a while: the way back into AurOS
+    # while she decides, and AurOS first again after an update moved it
+    # (rootfs/usr/lib/auros/keeper).
+    enable_unit auros-keeper.service multi-user.target
+    enable_unit auros-answer.path   multi-user.target
+    # The store's catalogue and Flathub, fetched the first time the
+    # computer is online (rootfs/usr/lib/auros/software-ready.sh).
+    enable_unit auros-software.service multi-user.target
+    # Her Flathub programs update by themselves (docs/security/UPDATES.md).
+    if [ -x "$RFS/usr/bin/flatpak" ]; then
+        enable_unit auros-flatpak-update.timer timers.target
+    fi
+    # Not `[ -x ... ] && enable_unit ...`: under `set -e` a false test
+    # at the end of a list ends the build with no message at all.
+    if [ -x "$RFS/usr/bin/aurshell" ]; then
+        enable_unit aurshell.service graphical.target
+    fi
+
+    # Headers and the code generator go; the shared libraries the shell
+    # now links against must not, so they are marked manual first --
+    # autoremove would otherwise take libwayland-server out from under
+    # the binary that needs it and the desktop would not start.
+    inchroot "apt-get install -y --no-install-recommends libwayland-server0 libxkbcommon0 >/dev/null 2>&1; \
+              apt-mark manual libwayland-server0 libxkbcommon0 >/dev/null 2>&1; \
+              apt-get purge -y gcc libc6-dev make pkg-config libdbus-1-dev libwayland-dev libwayland-bin \
+                               wayland-protocols libxkbcommon-dev >/dev/null 2>&1; \
+              apt-get autoremove -y >/dev/null 2>&1" || true
+    # The generated code is a build artifact; leaving it in the image
+    # ships source nobody will ever compile there.
+    rm -rf "$RFS/usr/src/auros/aurwl/gen"
+    chroot_done
+    rm -rf "$RFS/usr/src/auros"
+
+    # ── Resolve the theme's named fonts to files the rasterizer can
+    # actually read. Our engine renders TrueType `glyf` outlines; many
+    # modern UI fonts (Ubuntu's Inter among them) ship as OTF with CFF
+    # PostScript outlines and have no glyf table at all. Picking one of
+    # those silently yields a desktop with no text, so the font is
+    # verified here rather than discovered at boot.
+    install -d "$RFS/usr/share/auros/fonts"
+    #
+    # Two things this resolver has to do that the first version could
+    # not, and both are the reason the desktop had exactly one face in
+    # exactly one weight:
+    #
+    # 1. A WEIGHT IS A FILE. The reject list below used to drop every
+    #    candidate whose name contained Bold/SemiBold/Medium, which
+    #    made a display face structurally unreachable no matter what a
+    #    theme asked for. It now rejects weight variants only when the
+    #    caller did not ask for one, and accepts a literal filename
+    #    (PTF75F, IBMPlexSerif-SemiBold) when it did.
+    #
+    # 2. A VARIABLE FONT IS A TRAP. InterVariable.ttf and Karla[wght]
+    #    carry `glyf` + `fvar` + `gvar` and no static instances. Our
+    #    rasterizer ignores `fvar` entirely, so such a file LOADS,
+    #    returns success, and renders the default instance at weight
+    #    400 for ever. It fails by looking fine, which is worse than
+    #    failing loudly, so it is refused here by name.
+    resolve_font() {
+        _want=$1 _link=$2 _anyweight=${3:-0}
+        # Priority order matters: a plain find would happily return
+        # "-Bold" before "-Regular" because B sorts before R, and the
+        # whole UI would come up bold.
+        # A named weight is that exact file and nothing else. This used
+        # to add `${_want}*` as well, so a slot that said plain "Inter"
+        # matched every cut of the family and took the first in sort
+        # order -- Inter-Black.otf -- and every word on the desktop was
+        # drawn in the heaviest weight Inter has (tools/fonttest.sh).
+        # A plain family name falls through to the Regular search below.
+        if [ "$_anyweight" = 1 ]; then
+            _pats="${_want}.ttf ${_want}.otf"
+        else
+            _pats="${_want}-Regular.ttf ${_want}-Regular.otf
+                   ${_want}Regular.ttf ${_want}Regular.otf
+                   ${_want}.ttf ${_want}.otf
+                   ${_want}-Book.ttf ${_want}*.ttf ${_want}*.otf"
+        fi
+        for _pat in $_pats; do
+            for _cand in $(find "$RFS/usr/share/fonts" -iname "$_pat" 2>/dev/null | sort); do
+                _base=$(basename "$_cand")
+                # A weight variant is only wrong when nobody asked for
+                # one. `font_display` asking for PT Serif Bold must not
+                # be answered with PT Serif Regular.
+                if [ "$_anyweight" != 1 ]; then
+                    case "$_base" in
+                        *Bold*|*Italic*|*Oblique*|*Light*|*Thin*|*Black*|*Medium*|*SemiBold*|*Extra*)
+                            continue ;;
+                    esac
+                fi
+                case "$_base" in *"["*|*Variable*|*VF.ttf|*VF.otf) continue ;; esac
+                # The font must carry outlines our rasterizer can read.
+                # It handles BOTH TrueType 'glyf' (quadratic) and
+                # OpenType 'CFF ' (Type 2 charstrings, cubic), so accept
+                # either. Checking matters: a font with neither -- a
+                # bitmap-only or CFF2 font -- renders no text at all, and
+                # a desktop with no text is not a recoverable state.
+                if ! head -c 4096 "$_cand" | grep -aqE 'glyf|CFF '; then continue; fi
+                # ...and it must not be a variable font wearing a glyf
+                # table, for the reason above.
+                if head -c 4096 "$_cand" | grep -aq 'fvar'; then
+                    note "font $_base is variable (fvar); refusing -- it would render weight 400 for ever"
+                    continue
+                fi
+                ln -sf "${_cand#"$RFS"}" "$RFS/usr/share/auros/fonts/$_link.ttf"
+                note "font $_link -> $_base"
+                return 0
+            done
+        done
+        return 1
+    }
+    _key() { sed -n "s/^$1=\"\(.*\)\"/\1/p" "$ROOT/themes/$theme.theme" 2>/dev/null | head -1; }
+    _sans=$(_key font_sans)
+    _mono=$(_key font_mono)
+    _disp=$(_key font_display)
+    _text=$(_key font_text)
+    _tbold=$(_key font_text_bold)
+    resolve_font "${_sans:-AtkinsonHyperlegible}" "${_sans:-AtkinsonHyperlegible}" || {
+        note "WARNING: '${_sans:-AtkinsonHyperlegible}' has no TrueType outlines here; using DejaVu Sans"
+        resolve_font DejaVuSans "${_sans:-AtkinsonHyperlegible}" || true
+    }
+    resolve_font "${_mono:-JetBrainsMono}" "${_mono:-JetBrainsMono}" || {
+        note "WARNING: '${_mono:-JetBrainsMono}' unavailable; using DejaVu Sans Mono"
+        resolve_font DejaVuSansMono "${_mono:-JetBrainsMono}" || true
+    }
+    # The three shell faces. Each falls back to the text face, then to
+    # Clear Sans, then to DejaVu -- never to nothing, because a desktop
+    # with no text is not a recoverable state. Weight-qualified names
+    # are allowed here (third argument), which is the whole point.
+    # Every theme's faces, not only this build's: all of them ship, she
+    # can pick any in Settings, and a theme that inherits its fonts names
+    # them in its parent's file, which _key above never reads.
+    _all=$(sed -nE 's/^font_(display|text|text_bold)="([^"]*)".*/\2/p' \
+               "$ROOT"/themes/*.theme 2>/dev/null | sort -u)
+    for _slot in "${_disp:-}" "${_text:-}" "${_tbold:-}" $_all; do
+        [ -n "$_slot" ] || continue
+        resolve_font "$_slot" "$_slot" 1 || resolve_font "$_slot" "$_slot" || {
+            note "WARNING: font '$_slot' not found; falling back"
+            resolve_font ClearSans-Regular "$_slot" 1 ||
+            resolve_font DejaVuSans "$_slot" || true
+        }
+    done
+
+    # The six aurinit service files used to be copied again here, by
+    # name, from the directory the overlay above already brought over
+    # whole -- with `2>/dev/null || true`, so a renamed source
+    # directory would have been silent. That is the exact pattern the
+    # overlay's own comment exists to condemn. Gone; one copy, of the
+    # whole tree, that fails loudly.
+    [ -d "$RFS/etc/auros/services" ] || die "the overlay did not bring
+     etc/auros/services. aurinit would start nothing."
+    note "aurinit, aurctl, aurwall, aurora, aurfirst, ferry installed"
+}
+
+# ── names that are not ours to wear ────────────────────────────────
+#
+# docs/legal/COMPLIANCE.md TM-1 and LIC-5; `tools/legal/check.py image`
+# reads the result, tools/hardentest.sh checks it at the seal.
+#
+# WHO THE IMAGE SAYS IT IS. base-files owns /usr/lib/os-release (not a
+# conffile: every update of base-files unpacks Ubuntu's over ours) and
+# /etc/lsb-release (a conffile, kept only when the update is told to
+# keep it). A local diversion sends the package's copies to *.distrib at
+# its next unpack and leaves the real names to us, so no update can put
+# "Ubuntu" back. (--no-rename: base-files is Essential, and dpkg-divert
+# warns that moving its files aside by hand is dangerous. Ours is written
+# over the old file at the real name instead.)
+# lsb_release -c still says noble and -r still 24.04: the tools that
+# read them (software-properties, a PPA) mean Ubuntu's series. Only the
+# name changes, and ${distro_id} with it, which is why the update policy
+# (53auros-updates) names Ubuntu's origins literally and why
+# tools/updatepolicytest.sh dryrun is the proof that fixes still install.
+divert_identity() {
+    local f
+    for f in /usr/lib/os-release /etc/lsb-release; do
+        [ -n "$(inchroot "dpkg-divert --list $f")" ] && continue
+        inchroot "dpkg-divert --local --no-rename --divert $f.distrib --add $f" >/dev/null \
+            || die "could not divert $f"
+    done
+}
+
+write_lsb_release() {
+    local rel cn
+    # Release and codename are Ubuntu's: read from the file as it is (Ubuntu's on
+    # the first run, our own copy of them on a re-run).
+    rel=$(sed -n 's/^DISTRIB_RELEASE=//p' "$RFS/etc/lsb-release")
+    cn=$(sed -n 's/^DISTRIB_CODENAME=//p' "$RFS/etc/lsb-release")
+    [ -n "$rel" ] && [ -n "$cn" ] \
+        || die "/etc/lsb-release names no release or codename; lsb_release -c would be empty."
+    printf 'DISTRIB_ID=%s\nDISTRIB_RELEASE=%s\nDISTRIB_CODENAME=%s\nDISTRIB_DESCRIPTION="%s %s"\n' \
+        "${brand_name// /}" "$rel" "$cn" "$brand_name" "$os_version" > "$RFS/etc/lsb-release"
+}
+
+# UBUNTU'S ICON THEME. adwaita-icon-theme, which GTK itself depends on,
+# depends on ubuntu-mono, and that on humanity-icon-theme: Ubuntu's own
+# artwork, which this image may not carry. They cannot just be purged --
+# apt would take adwaita and with it every GTK program's icons. So a
+# package with no files, aurosicons, Provides ubuntu-mono (the
+# dependency stays met, dpkg and apt stay consistent), the two go, and a
+# pin keeps apt from fetching them back. The plan is checked first: if
+# apt would remove anything else, the build stops.
+#
+# NOT NAMED auros-*. Everything in that namespace is a part of the update
+# channel (build/aptchannel): keep-previous keeps the set of them for a
+# rollback only if every one is at the version of `auros` itself, and
+# rollback pins them all. A part with no .deb in the channel and a version
+# of its own (this was auros-icon-theme, 1) made keep-previous keep nothing
+# and updateboottest's rollback fail on the first build that had it.
+# build/sources counts it as AurOS's own code by name (OWN_STUBS), and
+# tools/hardentest.sh checks that every auros-* package has one version.
+unbrand_icons() {
+    pkg_installed ubuntu-mono || pkg_installed humanity-icon-theme || return 0
+    local d="$RFS/tmp/aurosicons" plan p
+    rm -rf "$d"; mkdir -p "$d/DEBIAN"
+    cat > "$d/DEBIAN/control" <<EOL
+Package: aurosicons
+Version: 1
+Architecture: all
+Maintainer: AurOS <noreply@auros.invalid>
+Section: misc
+Priority: optional
+Provides: ubuntu-mono
+Description: answers adwaita-icon-theme's need for ubuntu-mono
+ GTK depends on adwaita-icon-theme, which depends on ubuntu-mono, Ubuntu's own
+ artwork. This package has no files; it only answers that dependency, so the
+ artwork can be left out of AurOS.
+EOL
+    inchroot "dpkg-deb --root-owner-group --build /tmp/aurosicons /tmp/aurosicons.deb >/dev/null \
+              && dpkg -i /tmp/aurosicons.deb >/dev/null" \
+        || die "could not install aurosicons"
+    rm -rf "$d" "$RFS/tmp/aurosicons.deb"
+    plan=$(inchroot "apt-get -s purge ubuntu-mono humanity-icon-theme" | awk '/^(Remv|Purg) /{print $2}')
+    for p in $plan; do
+        case $p in ubuntu-mono|humanity-icon-theme) ;;
+            *) die "purging Ubuntu's icon theme would also remove $p; build/forge unbrand_icons
+     must be taught what now depends on it." ;;
+        esac
+    done
+    inchroot "apt-get purge -y ubuntu-mono humanity-icon-theme" >/dev/null \
+        || die "could not purge ubuntu-mono"
+    install -d "$RFS/etc/apt/preferences.d"
+    {
+        echo "# Written by build/forge. Ubuntu's icon artwork is not in AurOS; aurosicons"
+        echo "# answers the dependency on it."
+        for p in ubuntu-mono humanity-icon-theme; do
+            printf '\nPackage: %s\nPin: release a=*\nPin-Priority: -1\n' "$p"
+        done
+    } > "$RFS/etc/apt/preferences.d/auros-no-ubuntu-icons"
+    note "ubuntu-mono and humanity-icon-theme gone; aurosicons answers adwaita's dependency"
+}
+
+# ── stage 4: identity, locale, users, policy ───────────────────────
+stage_configure() {
+    step "stage 4/7  configure"
+    chroot_prep
+
+    # On Ubuntu /etc/os-release is a symlink into /usr/lib, so the real
+    # file is written there and /etc just points at it. Writing through
+    # the symlink and then replacing it is how you end up with a
+    # dangling /etc/os-release and a system that cannot name itself.
+    rm -f "$RFS/etc/os-release"
+    mkdir -p "$RFS/usr/lib"
+    divert_identity
+    cat > "$RFS/usr/lib/os-release" <<EOL
+NAME="$brand_name"
+PRETTY_NAME="$brand_name $os_version"
+ID=$brand_short
+ID_LIKE=ubuntu
+VERSION="$os_version ($os_codename)"
+VERSION_ID="$os_version"
+VERSION_CODENAME=$os_codename
+UBUNTU_CODENAME=$base_suite
+HOME_URL="$brand_url"
+LOGO=auros
+EOL
+    ln -sf ../usr/lib/os-release "$RFS/etc/os-release"
+    write_lsb_release
+    unbrand_icons
+    # The release this image belongs to (build.yml hands over its tag): the written offer of source
+    # tells her to look here to find the matching sources-<release> (docs/legal/SOURCES.md).
+    if [ -n "${AUROS_BUILD_TAG:-}" ]; then
+        case "$AUROS_BUILD_TAG" in
+            *[!0-9A-Za-z.+-]*) die "AUROS_BUILD_TAG '$AUROS_BUILD_TAG' is not a release name" ;;
+        esac
+        mkdir -p "$RFS/etc/auros"
+        printf '%s\n' "$AUROS_BUILD_TAG" > "$RFS/etc/auros/release"
+    fi
+    echo "$brand_short" > "$RFS/etc/hostname"
+
+    # Branding the login prompts. Without this the first thing a user
+    # sees after install is "Ubuntu 24.04 LTS", which is both confusing
+    # and a promise we did not make.
+    printf '%s %s \\n \\l\n\n' "$brand_name" "$os_version" > "$RFS/etc/issue"
+    printf '%s %s\n' "$brand_name" "$os_version" > "$RFS/etc/issue.net"
+    : > "$RFS/etc/motd"
+    # Ubuntu's dynamic MOTD advertises Ubuntu Pro and Landscape.
+    for f in 10-help-text 50-motd-news 88-esm-announce 91-contract-ua-esm-status 91-release-upgrade; do
+        rm -f "$RFS/etc/update-motd.d/$f"
+    done
+    [ -d "$RFS/etc/update-motd.d" ] && cat > "$RFS/etc/update-motd.d/00-auros" <<'EOM'
+#!/bin/sh
+[ -f /etc/auros/motd ] && cat /etc/auros/motd
+EOM
+    [ -f "$RFS/etc/update-motd.d/00-auros" ] && chmod +x "$RFS/etc/update-motd.d/00-auros"
+
+    printf '127.0.0.1\tlocalhost\n127.0.1.1\t%s\n' "$brand_short" > "$RFS/etc/hosts"
+
+    inchroot "ln -sf /usr/share/zoneinfo/$timezone /etc/localtime" || true
+    echo "$locale UTF-8" > "$RFS/etc/locale.gen"
+    for l in ${extra_locales:-}; do echo "$l UTF-8" >> "$RFS/etc/locale.gen"; done
+    inchroot "locale-gen >/dev/null 2>&1" || true
+    echo "LANG=$locale" > "$RFS/etc/default/locale"
+    cat > "$RFS/etc/default/keyboard" <<EOL
+XKBMODEL="pc105"
+XKBLAYOUT="$keyboard_layout"
+XKBVARIANT="${keyboard_variant:-}"
+BACKSPACE="guess"
+EOL
+
+    # The groups this account needs, and why each one is here. Every
+    # one of them is a thing that is refused without it, and refused
+    # silently -- which is the shape of bug this product keeps finding.
+    #
+    #   (NOT sudo. It used to be here, "so a person who set the machine
+    #   up can repair it", beside the same password on every machine --
+    #   which made every program she runs, and anyone at her keyboard,
+    #   root. What she needs that is privileged goes through the narrow
+    #   polkit grants below or the root-side answer path; repair is the
+    #   recovery start-up, not her account.)
+    #   audio      the sound card
+    #   video      /dev/dri, and the backlight, via the udev rule in
+    #              rootfs/usr/lib/udev/rules.d/60-auros-backlight.rules
+    #   input      the keyboard, mouse and touchpad, read directly
+    #   netdev     the network
+    #   bluetooth  talking to bluez. This one is NOT load-bearing on
+    #              this image, and the commit that added it said it was.
+    #              bluetooth.conf does name the group -- and the stanza
+    #              after the one that was read is
+    #                <policy context="default">
+    #                  <allow send_destination="org.bluez"/>
+    #              so on bluez 5.72 every user may talk to org.bluez
+    #              already. It is kept because it costs nothing and is
+    #              what a distribution with a stricter policy would
+    #              need; it is not asserted anywhere, because failing a
+    #              build over a condition nothing requires is its own
+    #              kind of false alarm.
+    #              What IS worth writing down: Bluetooth does not go
+    #              through polkit at all. Five polkit grants were added
+    #              for it from memory and every one named an action
+    #              that does not exist.
+    #   lpadmin    adding a printer. cups-files.conf says
+    #              "SystemGroup lpadmin root", and that is the whole of
+    #              its authorisation: without this she can print to a
+    #              printer somebody else set up and can never set one
+    #              up herself
+    #
+    # Not all of them exist on every image. bluetooth and lpadmin are
+    # created by bluez's and cups-daemon's postinsts, so a profile that
+    # trims packages_hardware has neither -- and `usermod -aG` is
+    # all-or-nothing: one missing group means ZERO groups added, exit
+    # 6. That was being run with `>/dev/null 2>&1 || true`, which threw
+    # away the output, the error and the status, in the ONE case the
+    # line exists for (a rebuild into a rootfs whose account already
+    # exists -- useradd below is guarded by `id -u`).
+    #
+    # So: ask which ones exist, add those, and say what was missing.
+    AUROS_GROUPS_WANT="audio video input netdev bluetooth lpadmin"
+    AUROS_GROUPS=""
+    AUROS_GROUPS_MISSING=""
+    for _g in $AUROS_GROUPS_WANT; do
+        if inchroot "getent group $_g >/dev/null 2>&1"; then
+            AUROS_GROUPS="${AUROS_GROUPS:+$AUROS_GROUPS,}$_g"
+        else
+            AUROS_GROUPS_MISSING="${AUROS_GROUPS_MISSING:+$AUROS_GROUPS_MISSING }$_g"
+        fi
+    done
+    [ -n "$AUROS_GROUPS" ] || die "not one of the groups the desktop needs exists in this image"
+    if [ -n "$AUROS_GROUPS_MISSING" ]; then
+        warn "these groups are not in this image: $AUROS_GROUPS_MISSING"
+        warn "whatever each one gates is unavailable. If that was not"
+        warn "intended, the package that creates it has been trimmed."
+    fi
+    inchroot "id -u $default_user >/dev/null 2>&1 || \
+              useradd -m -s /bin/bash -G '$AUROS_GROUPS' '$default_user'" \
+        || die "could not create the account $default_user"
+    # And on an image whose account already existed from an earlier
+    # build, the groups are added rather than assumed. NOT silenced:
+    # this failing is the thing that leaves a desktop with no sound, no
+    # screen brightness and no keyboard.
+    inchroot "usermod -aG '$AUROS_GROUPS' '$default_user'" \
+        || die "could not put $default_user in: $AUROS_GROUPS"
+    # NO PASSWORD AT ALL, not a placeholder one. This was `auros` on
+    # every machine, "expired" -- which nothing ever asked her to
+    # change, because nothing in this product asks for a password. The
+    # desktop starts without one (aurshell.service, pam_permit), so a
+    # locked account loses her nothing and leaves nobody a password to
+    # know. A build that may not lock it does not ship.
+    inchroot "usermod -p '!' '$default_user' && passwd -l root >/dev/null" \
+        || die "could not lock the passwords of $default_user and root"
+    # Nor in sudo from an earlier build of this rootfs.
+    inchroot "gpasswd -d '$default_user' sudo >/dev/null 2>&1" || true
+
+    # NO `splash`. A DATED TRAP, DEFUSED WHERE THE ROOTFS IS BUILT.
+    #
+    # /etc/grub.d/10_linux keys `vt.handoff=7` off the word `splash` on
+    # the kernel command line. vt.handoff means "plymouth owns VT7 and
+    # will hand it back". This image has no plymouth -- 0 packages --
+    # so nothing hands anything back: the ACTIVE VT after boot is 7,
+    # the desktop's logind session is on VT1 and therefore INACTIVE,
+    # and every `allow_active` in every policy file on the machine
+    # starts refusing in silence. Sleep, Thunar's "safely remove",
+    # unlocking an encrypted stick, logind's own SetBrightness.
+    #
+    # build/mkimage already writes a grub.cfg by hand without it. But
+    # the base bootstrap leaves "quiet splash" in /etc/default/grub,
+    # and the first kernel upgrade runs zz-update-grub, which
+    # regenerates grub.cfg FROM THAT FILE. So the machine would work
+    # perfectly until the day it was updated, and then quietly stop
+    # being able to sleep, with nothing to connect the two events.
+    if [ -f "$RFS/etc/default/grub" ]; then
+        # Separate -e flags, with the continuations OUTSIDE the quotes.
+        # Written as one quoted script with backslash-newlines first,
+        # which is not a continuation inside single quotes -- the
+        # backslash and the newline are both part of the string, so sed
+        # got a multi-line script and said "unterminated address
+        # regex". Caught by running the build, which is the only thing
+        # that would have caught it.
+        sed -i -e 's/^\(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*\)splash\([^"]*"\)/\1\2/' \
+               -e 's/^\(GRUB_CMDLINE_LINUX_DEFAULT="\)[[:space:]]*/\1/' \
+               -e 's/[[:space:]]*"$/"/' \
+               "$RFS/etc/default/grub"
+        if grep -q 'splash' "$RFS/etc/default/grub"; then
+            warn "splash is still on the kernel command line and this image"
+            warn "has no plymouth: after the first kernel upgrade the active"
+            warn "VT will be 7 and the desktop's session will be inactive."
+        else
+            note "no splash on the kernel command line (there is no plymouth"
+            note "to hand VT7 back, and vt.handoff would deactivate the session)"
+        fi
+    fi
+
+    # THE DESKTOP DOES NOT RUN AS ROOT.
+    #
+    # It did. aurshell.service had no User= line, so the shell, the
+    # compositor and every program either of them started ran as root --
+    # including the browser, on a machine whose owner cannot evaluate
+    # what that means. Chrome refuses to start as root at all, so the
+    # single application this product exists to provide would not have
+    # come up.
+    #
+    # The account name is a profile setting and the unit file is not
+    # templated, so the User= goes in a drop-in written here. The groups
+    # it needs are in the unit itself, where the requirement belongs.
+    install -d "$RFS/etc/systemd/system/aurshell.service.d"
+    #
+    # The unit names only the groups that always exist (see its own
+    # comment). The optional two go here, where the build knows whether
+    # this image has them -- because a SupplementaryGroups= entry that
+    # does not resolve aborts the unit with 216/GROUP before ExecStart,
+    # which is a black screen that nothing on the machine can explain.
+    AUROS_UNIT_GROUPS=""
+    for _g in bluetooth lpadmin; do
+        case ",$AUROS_GROUPS," in
+            *",$_g,"*) AUROS_UNIT_GROUPS="${AUROS_UNIT_GROUPS:+$AUROS_UNIT_GROUPS }$_g" ;;
+        esac
+    done
+    cat > "$RFS/etc/systemd/system/aurshell.service.d/user.conf" <<EOL
+[Service]
+User=$default_user
+EOL
+    if [ -n "$AUROS_UNIT_GROUPS" ]; then
+        printf 'SupplementaryGroups=%s\n' "$AUROS_UNIT_GROUPS" \
+            >> "$RFS/etc/systemd/system/aurshell.service.d/user.conf"
+    fi
+
+    # The archetype. This one symlink decides how the whole computer
+    # behaves; everything else in this stage only decides how it looks.
+    install -d "$RFS/etc/auros/shell"
+    if [ -f "$RFS/usr/share/auros/shells/${shell_archetype}.shell" ]; then
+        ln -sf "/usr/share/auros/shells/${shell_archetype}.shell" \
+               "$RFS/etc/auros/shell/active.shell"
+        note "archetype: $shell_archetype"
+    else
+        if [ -n "${RECIPE_ACTIVE:-}" ]; then
+            die "recipe selected shell '$shell_archetype', but it is missing from the rootfs"
+        fi
+        ln -sf "/usr/share/auros/shells/rail.shell" \
+               "$RFS/etc/auros/shell/active.shell"
+        note "archetype '$shell_archetype' not found - falling back to rail"
+    fi
+
+    # ── ONE reading of every yes/no, before anything acts on it ────
+    #
+    # The shell reads policy.conf as `!= "no"`, and the build read its
+    # own profile variable as `= "yes"`. Those are not the same
+    # question. allow_network_change="YES" gave a band with an Internet
+    # button and no rule letting it do anything -- a control that looks
+    # like a control and is not, which is the failure this whole
+    # feature was written to avoid, reintroduced by the two halves
+    # disagreeing about what a yes is.
+    #
+    # So the answer is normalised here, once, and everything downstream
+    # -- policy.conf and the polkit rule alike -- uses the normalised
+    # value.
+    yesno() {
+        case "$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')" in
+            no|false|0|off|n) printf 'no'  ;;
+            *)                printf 'yes' ;;
+        esac
+    }
+    allow_user_install=$(yesno "${allow_user_install:-yes}")
+    allow_settings_change=$(yesno "${allow_settings_change:-yes}")
+    allow_theme_change=$(yesno "${allow_theme_change:-yes}")
+    allow_tty=$(yesno "${allow_tty:-yes}")
+    allow_network_change=$(yesno "${allow_network_change:-yes}")
+    kiosk_mode=$(yesno "${kiosk_mode:-no}")
+    # Minutes, not a yes/no, and clamped here as well as in the shell:
+    # a profile that says 100000 is a machine whose screen never goes
+    # off, which on a laptop is an hour of battery thrown away.
+    case "${screen_off_minutes:-10}" in
+        ''|*[!0-9]*) warn "screen_off_minutes='${screen_off_minutes:-}' is not a number; using 10"
+                     screen_off_minutes=10 ;;
+    esac
+    [ "${screen_off_minutes:-10}" -le 120 ] 2>/dev/null || screen_off_minutes=120
+    auto_login=$(yesno "${auto_login:-no}")
+
+    # A kiosk's network is the administrator's, not the user's, and the
+    # band shows no Internet button on one. The policy file has to say
+    # the same thing the machine does: a kiosk image whose policy.conf
+    # read "allow_network_change = yes" was stating the opposite of the
+    # truth to anyone -- an administrator, a later tool, this build --
+    # who read it to find out what the machine allows.
+    if [ "$kiosk_mode" = "yes" ]; then allow_network_change="no"; fi
+
+    # The policy file is what aurshell and the settings app consult.
+    # Lockdown is enforced by the shell reading this, not by hiding menus.
+    install -d "$RFS/etc/auros"
+    cat > "$RFS/etc/auros/policy.conf" <<EOL
+# Generated by forge from profile '$profile_id'. Machine-readable policy.
+profile              = $profile_id
+shell_archetype      = ${shell_archetype:-rail}
+kiosk_mode           = $kiosk_mode
+allowed_apps         = ${allowed_apps:-}
+blocked_apps         = ${blocked_apps:-}
+allow_user_install   = $allow_user_install
+allow_settings_change= $allow_settings_change
+allow_theme_change   = $allow_theme_change
+allow_network_change = $allow_network_change
+allow_tty            = $allow_tty
+screen_off_minutes   = ${screen_off_minutes:-10}
+auto_login           = $auto_login
+default_user         = $default_user
+enrollment_url       = ${enrollment_url:-}
+update_channel       = ${update_channel:-stable}
+telemetry            = ${telemetry:-off}
+EOL
+
+    # ── letting the person at this computer use this computer ──────
+    #
+    # Everything below is one problem with one shape. aurshell runs as
+    # a systemd service, and polkit's shipped rules are written in
+    # terms of a logind SESSION: every action the distribution gates
+    # says allow_active=yes for a person sitting at a local session and
+    # auth_admin for anything else. A service is "anything else".
+    #
+    # The service now asks PAM for a session (see PAMName= in
+    # rootfs/etc/systemd/system/aurshell.service), which is the real
+    # fix and restores allow_active for everything the distribution
+    # ships. This file is the belt to that pair of braces: if the
+    # session does not materialise on some machine, these three things
+    # still work rather than failing silently, which is how they failed
+    # before anyone noticed.
+    #
+    #   turning the computer off   the band's Turn off button ran
+    #                              systemctl poweroff, polkit refused
+    #                              it, nothing looked at the result,
+    #                              and the button did nothing at all
+    #   a USB stick                udisks2's mount action is gated the
+    #                              same way, so "files open" stopped at
+    #                              the edge of the built-in disk
+    #   the wifi                   which is what started all this
+    #   INSTALLING ANYTHING        which is the one that matters most
+    #
+    # That last one is the product's central sentence. The store's
+    # packagekit install, remove and update actions are auth_admin, and
+    # there is no authentication agent in this session for a prompt to
+    # appear in, so ungranted they fail in silence.
+    #
+    # A downloaded .deb is NOT granted any more. It was, through gdebi's
+    # pkexec action -- which made "a program she runs opens a .deb" the
+    # same thing as "root, no password". Programs come from the store
+    # until the PIN (docs/security/THEFT.md) can stand in front of that.
+    #
+    # Granting them is what allow_user_install="yes" already means. The
+    # profile asks "may users install software?", and on a personal
+    # computer the user IS the owner -- the same trust Windows extends
+    # to a sole administrator. A build that answers "no" grants none of
+    # it, which is the whole point of the knob.
+    #
+    # package-install-untrusted is deliberately NOT granted. It is
+    # "install this package although nothing vouches for it".
+    #
+    # A kiosk gets none of any of this: its user turns nothing off,
+    # mounts nothing, chooses no network and installs nothing. That is
+    # the whole difference between a personal computer and a machine on
+    # a counter.
+    if [ "$kiosk_mode" != "yes" ]; then
+        case "$default_user" in
+            ''|*[!a-z0-9_-]*)
+                die "default_user '$default_user' is not a plain account name" ;;
+        esac
+        # mkdir, not `install -d`: polkitd's own postinst sets this
+        # directory to 0750 root:polkitd on purpose, and install -d
+        # applies its default 0755 to a directory that already exists.
+        # The build was quietly widening a permission the distribution
+        # had deliberately narrowed, on every run -- and mkdir alone
+        # does not put back what an earlier build already widened, so
+        # the mode is restored explicitly, inside the image where the
+        # polkitd group number is the image's own.
+        mkdir -p "$RFS/etc/polkit-1/rules.d"
+        inchroot "chown root:polkitd /etc/polkit-1/rules.d && \
+                  chmod 0750 /etc/polkit-1/rules.d" >/dev/null 2>&1 || true
+
+        # An older build of this same image left a rule file under a
+        # different name. A generated file that is not regenerated is a
+        # file that keeps saying what the build used to think, and this
+        # one grants permissions.
+        rm -f "$RFS/etc/polkit-1/rules.d/49-auros-network.rules"
+
+        install_cases=""
+        if [ "$allow_user_install" = "yes" ]; then
+            install_cases='    case "org.freedesktop.packagekit.package-install":
+    case "org.freedesktop.packagekit.package-remove":
+    case "org.freedesktop.packagekit.system-update":'
+        fi
+
+        net_cases=""
+        if [ "$allow_network_change" = "yes" ]; then
+            net_cases='    case "org.freedesktop.NetworkManager.network-control":
+    case "org.freedesktop.NetworkManager.enable-disable-network":
+    case "org.freedesktop.NetworkManager.enable-disable-wifi":
+    case "org.freedesktop.NetworkManager.wifi.scan":
+    case "org.freedesktop.NetworkManager.settings.modify.own":
+    case "org.freedesktop.NetworkManager.settings.modify.system":'
+        fi
+
+        # SETTING UP A PRINTER, WITH THE ACTION IDS READ OUT OF THE FILE.
+        #
+        # lpadmin is necessary and nowhere near sufficient. cupsd.conf
+        # gates CUPS-Add-Modify-Printer with `AuthType Default / Require
+        # user @SYSTEM` -- an authentication, through PAM service `cups`,
+        # against a password this product has no screen to ask for and
+        # no valid value to give. So "she can set one up herself" was
+        # false, and the packages that make it true were 46 MB of
+        # drivers with no door.
+        #
+        # cups-pk-helper is that door: the D-Bus service every other
+        # desktop's printer settings uses, gated by polkit rather than
+        # by a password. Its actions are GENERATED FROM ITS OWN POLICY
+        # FILE rather than typed here. Five action ids for Bluetooth
+        # were once written from memory into this same rule and every
+        # one of them named something that does not exist; a list read
+        # off the installed file cannot make that mistake, and cannot
+        # go stale when the package changes either.
+        print_cases=""
+        cups_policy="$RFS/usr/share/polkit-1/actions/org.opensuse.cupspkhelper.mechanism.policy"
+        if [ "$allow_user_install" = "yes" ] && [ -f "$cups_policy" ]; then
+            n_print=0
+            while read -r _a; do
+                [ -n "$_a" ] || continue
+                print_cases="$print_cases    case \"$_a\":
+"
+                n_print=$((n_print + 1))
+            done <<EOP
+$(sed -n 's/.*<action id="\(org\.opensuse\.cupspkhelper\.[^"]*\)".*/\1/p' "$cups_policy")
+EOP
+            # Trailing newline would put a blank line in the switch.
+            print_cases=${print_cases%
+}
+            if [ "$n_print" -gt 0 ]; then
+                note "$default_user may set up a printer ($n_print permissions, read from cups-pk-helper)"
+            else
+                warn "cups-pk-helper's policy file names no actions this build"
+                warn "recognises, so adding a printer will ask for a password"
+                warn "that nothing in this product can supply."
+            fi
+        elif [ "$allow_user_install" = "yes" ]; then
+            warn "cups-pk-helper is not in this image, so adding a printer will"
+            warn "ask for a password nothing here can supply. Only printers"
+            warn "cups-browsed discovers by itself will work."
+        fi
+
+        # FLATHUB, BY THE SAME METHOD: the action ids read out of the
+        # policy file flatpak installed, then kept only if they are on
+        # this list. Installing, removing and updating programs and the
+        # runtimes they need, and refreshing the catalogue. NOT
+        # configure-remote or configure -- adding a new software source
+        # is what package-install-untrusted is on the apt side, and is
+        # not granted there either -- and not override-parental-controls.
+        #
+        # noble's flatpak already lets an active, local member of sudo
+        # install without a password. This is the belt to that pair of
+        # braces, for the same reason the rest of this file is: a
+        # session that is not "active" on some machine is a store whose
+        # Install button asks for a password nothing here can supply.
+        flatpak_cases=""
+        fp_policy="$RFS/usr/share/polkit-1/actions/org.freedesktop.Flatpak.policy"
+        if [ "$allow_user_install" = "yes" ] && [ -f "$fp_policy" ]; then
+            n_fp=0
+            while read -r _a; do
+                case "$_a" in
+                    org.freedesktop.Flatpak.app-install|org.freedesktop.Flatpak.runtime-install|\
+                    org.freedesktop.Flatpak.app-uninstall|org.freedesktop.Flatpak.runtime-uninstall|\
+                    org.freedesktop.Flatpak.app-update|org.freedesktop.Flatpak.runtime-update|\
+                    org.freedesktop.Flatpak.update-remote|org.freedesktop.Flatpak.appstream-update|\
+                    org.freedesktop.Flatpak.metadata-update|org.freedesktop.Flatpak.modify-repo) ;;
+                    *) continue ;;
+                esac
+                flatpak_cases="$flatpak_cases    case \"$_a\":
+"
+                n_fp=$((n_fp + 1))
+            done <<EOP
+$(sed -n 's/.*<action id="\(org\.freedesktop\.Flatpak\.[^"]*\)".*/\1/p' "$fp_policy")
+EOP
+            flatpak_cases=${flatpak_cases%
+}
+            if [ "$n_fp" -ge 4 ]; then
+                note "$default_user may install programs from Flathub ($n_fp permissions, read from flatpak)"
+            else
+                warn "flatpak's policy file names only $n_fp of the actions the store"
+                warn "needs; installing from Flathub may ask for a password."
+            fi
+        elif [ "$allow_user_install" = "yes" ] && [ -x "$RFS/usr/bin/flatpak" ]; then
+            warn "flatpak is installed and its permission list is not; installing"
+            warn "from Flathub will ask for a password nothing here can supply."
+        fi
+
+        cat > "$RFS/etc/polkit-1/rules.d/49-auros.rules" <<EOL
+// Generated by forge from profile '$profile_id'.
+//
+// The person sitting at this computer may turn it off, open a disk
+// they plugged into it, choose its wifi, and install the programs they
+// downloaded. On a personal machine that is the owner deciding about
+// their own machine, and it is what every other desktop grants a local
+// session. Which of these appear is decided by the profile.
+polkit.addRule(function(action, subject) {
+    if (subject.user !== "$default_user") { return undefined; }
+    switch (action.id) {
+    case "org.freedesktop.login1.power-off":
+    case "org.freedesktop.login1.power-off-multiple-sessions":
+    case "org.freedesktop.login1.reboot":
+    case "org.freedesktop.login1.reboot-multiple-sessions":
+    // The third button on the same screen. Its shipped default is
+    // allow_active=yes, which is why it appeared to work -- and which
+    // means it stops working the moment the session is not active,
+    // with no agent to ask and nothing on screen to explain it. The
+    // other two on that screen are granted outright; so is this.
+    case "org.freedesktop.login1.suspend":
+    case "org.freedesktop.login1.suspend-multiple-sessions":
+    case "org.freedesktop.udisks2.filesystem-mount":
+    case "org.freedesktop.udisks2.eject-media":
+    // Thunar's "safely remove", which is the honest way to take a USB
+    // stick out and is the one a person is told to use. Ungranted, it
+    // is an allow_active grant like suspend was: fine until it is not,
+    // and silent when it is not.
+    case "org.freedesktop.udisks2.power-off-drive":
+    case "org.freedesktop.udisks2.encrypted-unlock":
+    case "org.freedesktop.timedate1.set-timezone":
+$install_cases
+$flatpak_cases
+$net_cases
+$print_cases
+        return polkit.Result.YES;
+    }
+    return undefined;
+});
+EOL
+        chmod 644 "$RFS/etc/polkit-1/rules.d/49-auros.rules"
+        note "$default_user may turn this computer off and open a USB stick"
+        if [ "$allow_user_install" = "yes" ]; then
+            note "$default_user may install a program they downloaded"
+        else
+            note "$default_user may NOT install software (profile policy)"
+        fi
+        if [ "$allow_network_change" = "yes" ]; then
+            note "$default_user may choose the wifi"
+        else
+            note "$default_user may NOT change the network (profile policy)"
+        fi
+        # The rule is inert without the thing that reads it, and the
+        # failure would be invisible: the button appears, presses, and
+        # refuses.
+        #
+        # Checked by looking, not by asking. `pkaction --action-id`
+        # talks to the running authority over D-Bus, and there is no
+        # authority running inside a chroot -- so that check failed on
+        # a correctly built image and printed a warning that was simply
+        # wrong. What can be established here is what is INSTALLED: the
+        # daemon, and the catalogue of actions the rule above names.
+        if [ ! -x "$RFS/usr/lib/polkit-1/polkitd" ] &&
+           [ ! -x "$RFS/usr/libexec/polkitd" ]; then
+            warn "polkitd is not in this image, so Turn off, mounting a USB"
+            warn "stick and the Internet button will all refuse. Add polkitd"
+            warn "to the profile's packages."
+        elif ! inchroot "grep -rqs org.freedesktop.login1.power-off \
+                         /usr/share/polkit-1/actions/"; then
+            warn "this image has no permission rules for turning the computer"
+            warn "off, so the band's Turn off button will do nothing."
+        fi
+    else
+        rm -f "$RFS/etc/polkit-1/rules.d/49-auros.rules" \
+              "$RFS/etc/polkit-1/rules.d/49-auros-network.rules"
+        note "a kiosk: nothing on this machine may be changed by its user"
+    fi
+
+    # No login prompt on any console. A login prompt is a question with
+    # no answer here (no account has a password), on a black screen she
+    # reaches by an accidental Ctrl-Alt-F2. tty1 is the desktop's.
+    if [ "$allow_tty" = "no" ]; then
+        inchroot "systemctl mask getty@tty1.service getty@tty2.service getty@tty3.service \
+                  getty@tty4.service getty@tty5.service getty@tty6.service >/dev/null 2>&1" \
+            || die "could not switch the console login prompts off"
+        install -d "$RFS/etc/systemd/logind.conf.d"
+        printf '[Login]\nNAutoVTs=0\nReserveVT=0\n' > "$RFS/etc/systemd/logind.conf.d/50-auros-no-console.conf"
+        note "no console login prompts"
+    fi
+    # (A sudoers "lockdown" for allow_user_install=no lived here. It was
+    # negations only, which grant nothing and forbid nothing; nobody is
+    # in sudo now, and installing is refused by polkit granting nothing.)
+    rm -f "$RFS/etc/sudoers.d/90-auros-lockdown"
+
+    # ── memory, on a machine that has very little of it ────────────
+    #
+    # Both of these are profile keys that used to be written in a
+    # profile and read by nothing, which is worse than not having them:
+    # the file says the machine gets compressed swap and an out-of-
+    # memory killer, and it does not, and the only way to find out is
+    # to watch a 2 GB laptop thrash.
+    #
+    # They are written only when the profile asks, and only when the
+    # package that reads them is actually installed -- a config file
+    # for a program that is not there is the same lie in a different
+    # place.
+    if [ -n "${zram_percent:-}" ]; then
+        if [ -f "$RFS/usr/sbin/zramswap" ] || [ -f "$RFS/usr/bin/zramswap" ] \
+           || [ -f "$RFS/lib/systemd/system/zramswap.service" ]; then
+            cat > "$RFS/etc/default/zramswap" <<EOZ
+# Written by forge from the profile. Compressed swap in RAM: on a
+# machine with two gigabytes this is the difference between "the
+# browser has four tabs open" and "the disk has been thrashing for a
+# minute", because the thing being avoided is the disk.
+ALGO=${zram_algorithm:-zstd}
+PERCENT=$zram_percent
+PRIORITY=100
+EOZ
+            enable_unit zramswap.service multi-user.target
+            note "zram: ${zram_percent}% of RAM, ${zram_algorithm:-zstd}"
+        else
+            warn "the profile asks for zram and zram-tools is not installed;
+     add it to packages_extra or remove zram_percent."
+        fi
+    fi
+    if [ -n "${earlyoom_min_free_percent:-}" ]; then
+        if [ -f "$RFS/usr/bin/earlyoom" ] || [ -f "$RFS/usr/sbin/earlyoom" ]; then
+            cat > "$RFS/etc/default/earlyoom" <<EOE
+# Written by forge from the profile. Kill the one runaway process while
+# the machine is still responding, rather than let the kernel's OOM
+# killer arrive twenty seconds after she has given up and held the
+# power button. -r 0 keeps it quiet in the log; --avoid protects the
+# things whose death would take the session with them.
+EARLYOOM_ARGS="-m $earlyoom_min_free_percent -r 0 --avoid '(^|/)(aurshell|systemd|Xwayland)$' --prefer '(^|/)(firefox|chrome|chromium|soffice)'"
+EOE
+            enable_unit earlyoom.service multi-user.target
+            note "earlyoom: steps in below ${earlyoom_min_free_percent}% free"
+        else
+            warn "the profile asks for earlyoom and it is not installed;
+     add it to packages_extra or remove earlyoom_min_free_percent."
+        fi
+    fi
+
+    chroot_done
+    note "identity: $brand_name $os_version ($os_codename), locale $locale, kiosk=$kiosk_mode"
+}
+
+# ── stage 5: theme ─────────────────────────────────────────────────
+stage_theme() {
+    step "stage 5/7  theme: $theme"
+    if [ -n "${RECIPE_ACTIVE:-}" ] && \
+       [ ! -f "$RFS/usr/share/auros/themes/$theme.theme" ]; then
+        die "recipe selected theme '$theme', but it is missing from the rootfs"
+    fi
+    chroot_prep
+    inchroot "aurora set $theme" || die "aurora could not apply '$theme'"
+    inchroot "aurwall --conf /etc/auros/shell.conf --out /usr/share/auros/wallpaper.png \
+              --width 1920 --height 1080 >/dev/null 2>&1" || note "wallpaper deferred to first boot"
+    inchroot "grep -q auros /etc/profile || echo '[ -f /etc/auros/prompt.sh ] && . /etc/auros/prompt.sh' >> /etc/profile" || true
+    inchroot "grep -q auros-motd /etc/profile || echo '[ -f /etc/auros/motd ] && cat /etc/auros/motd  # auros-motd' >> /etc/profile" || true
+
+    # ── AND NOW MAKE APPLICATIONS ACTUALLY USE IT ──────────────────
+    #
+    # aurora has just rendered /etc/auros/gtk/gtk.css, whose own first
+    # comment says it is "present so third-party GTK apps land inside
+    # the theme instead of punching a bright hole in it". Nothing read
+    # it. Not one file on the machine imported it, so every GTK
+    # application -- which is every application this product ships --
+    # came up in stock light Adwaita inside a dark desktop.
+    #
+    # Seen by booting the image and opening the file manager: a white
+    # window, with white sidebars and black text, in the middle of a
+    # near-black screen. The product's whole argument is that the look
+    # is total and hers, and the first thing she opens ignored it.
+    #
+    # GTK3 loads, in this order: the named theme, then
+    # $XDG_CONFIG_HOME/gtk-3.0/gtk.css. There is no system-wide file in
+    # that list -- /etc/xdg is not consulted for it -- so the import
+    # goes in the account's own config, and in /etc/skel so that an
+    # account made later gets it too. GTK4 reads the same shape one
+    # directory along.
+    theme_variant=$(sed -n 's/^theme_variant="\(.*\)"/\1/p' \
+                    "$RFS/usr/share/auros/themes/$theme.theme" 2>/dev/null | head -1)
+    [ -n "$theme_variant" ] || theme_variant="dark"
+    [ "$theme_variant" = "light" ] && prefer_dark=0 || prefer_dark=1
+
+    for _home in "$RFS/etc/skel" "$RFS/home/$default_user"; do
+        [ -d "$_home" ] || continue
+        for _v in 3.0 4.0; do
+            install -d -m 755 "$_home/.config/gtk-$_v"
+            cat > "$_home/.config/gtk-$_v/gtk.css" <<'EOL'
+/* Written by forge. The one line that makes the desktop's colours
+   reach the programs running on it. Edit /etc/auros/gtk/gtk.css, or
+   better, the theme it is rendered from. */
+@import url("file:///etc/auros/gtk/gtk.css");
+EOL
+            cat > "$_home/.config/gtk-$_v/settings.ini" <<EOL
+[Settings]
+gtk-application-prefer-dark-theme=$prefer_dark
+gtk-icon-theme-name=Adwaita
+gtk-font-name=$(sed -n 's/^font_sans="\(.*\)"/\1/p' \
+                "$RFS/usr/share/auros/themes/$theme.theme" 2>/dev/null | head -1 \
+                | sed 's/\([a-z]\)\([A-Z]\)/\1 \2/g') 14
+gtk-cursor-theme-size=32
+gtk-enable-animations=1
+EOL
+        done
+    done
+    # The files were written as root into her home; they are hers.
+    if [ -d "$RFS/home/$default_user" ]; then
+        inchroot "chown -R $default_user:$default_user /home/$default_user/.config" || true
+    fi
+    note "the theme reaches GTK applications ($theme_variant, prefer-dark=$prefer_dark)"
+    chroot_done
+}
+
+# ── stage 6: squashfs ──────────────────────────────────────────────
+# WHAT MUST BE TRUE OF A ROOTFS BEFORE IT BECOMES AN IMAGE.
+#
+# enable_unit checks each link at the moment it makes it. This checks
+# they are all still there at the last moment before the rootfs is
+# sealed -- after the apt purge, after stage 4's configure, after the
+# theme. Two different questions: "did the enable work" and "did
+# anything undo it", and only the second survives a stage added later
+# that resets /etc/systemd/system.
+#
+# -L, not -e. The link is absolute and root-relative, so -e resolves it
+# against the BUILD HOST and finds nothing. I have now written that bug
+# twice -- once in enable_unit and once in the script that was supposed
+# to verify the images afterwards, where it reported four units missing
+# from five builds that had enabled them correctly. Hence this living
+# here, in the build, instead of in a shell script beside it.
+squash_preconditions() {
+    local missing=""
+    local f
+    for f in usr/sbin/aurfirst \
+             usr/bin/aurshell \
+             usr/lib/auros/answer.sh \
+             usr/lib/auros/firstboot.sh \
+             usr/lib/auros/choices.sh \
+             usr/lib/auros/software-ready.sh \
+             usr/lib/auros/not-first-hour \
+             etc/systemd/system/auros-software.service \
+             etc/systemd/system/apt-daily-upgrade.service.d/50-auros-first-hour.conf \
+             usr/lib/auros/bootchain \
+             usr/lib/auros/grub.cfg.in \
+             usr/lib/auros/start-windows \
+             usr/lib/auros/boot-ok \
+             usr/lib/auros/boot-guard \
+             usr/lib/auros/desktop-up \
+             usr/lib/auros/keeper \
+             usr/lib/auros/grubenv \
+             usr/lib/python3/dist-packages/cryptography \
+             usr/sbin/update-grub.ubuntu \
+             usr/sbin/grub-install.ubuntu \
+             etc/apt/apt.conf.d/52auros-bootchain \
+             etc/systemd/system/auros-hold.service \
+             etc/systemd/system/auros-boot-ok.service \
+             etc/systemd/system/auros-boot-guard.service \
+             etc/systemd/system/auros-keeper.service \
+             etc/systemd/system/auros-answer.path \
+             etc/systemd/system/auros-answer.service \
+             etc/systemd/system/auros-firstboot.service \
+             etc/auros/services; do
+        [ -e "$RFS/$f" ] || missing="$missing
+       $f"
+    done
+    # The enables, by the link systemd actually writes.
+    for f in multi-user.target.wants/auros-hold.service \
+             multi-user.target.wants/auros-boot-ok.service \
+             multi-user.target.wants/auros-boot-guard.service \
+             multi-user.target.wants/auros-keeper.service \
+             multi-user.target.wants/auros-answer.path \
+             multi-user.target.wants/auros-firstboot.service \
+             multi-user.target.wants/auros-software.service \
+             graphical.target.wants/aurshell.service; do
+        [ -L "$RFS/etc/systemd/system/$f" ] ||
+        [ -e "$RFS/etc/systemd/system/$f" ] || missing="$missing
+       etc/systemd/system/$f  (enabled?)"
+    done
+    # Present is not enough for these two: a grub package upgrade that
+    # ran before the divert put Ubuntu's back over ours.
+    for f in update-grub grub-install; do
+        grep -q /usr/lib/auros/bootchain "$RFS/usr/sbin/$f" 2>/dev/null ||
+            missing="$missing
+       usr/sbin/$f  (is Ubuntu's, not auros-bootchain)"
+    done
+    if [ -n "$missing" ]; then
+        die "this rootfs is not ready to become an image. Missing:$missing
+     Phases 9 and 10 -- the question AurOS asks on first boot, the
+     confirmation, and the gate in front of Ferry -- are those units.
+     An image without them installs and then never asks whether it
+     worked, and BootOrder is never handed over."
+    fi
+    note "phases 9 and 10 are in this rootfs and enabled"
+}
+
+# ── what an image may not carry, removed or refused at the last moment ──
+#
+# Stage 3 runs `apt-get update` again to fetch a compiler, and nothing
+# cleaned up after it: every image shipped 214 MB of apt lists and
+# 165 MB of apt caches (pkgcache.bin, srcpkgcache.bin and the .debs it
+# had downloaded) -- weeks out of date by the time anybody used them,
+# regenerated by apt on first use anyway, and inside every download. The
+# lists are fetched fresh the first time the computer is online
+# (auros-software.service), which is also when they would be needed.
+#
+# And no snap. pin_no_snap and purge_snap_leftovers are the mechanism;
+# this is the refusal, at the one moment nothing can come after it.
+seal_rootfs() {
+    local left before after
+    case " ${browser_source:-} " in
+        *" snap "*) ;;
+        *)  left=$(snap_leftovers | tr '\n' ' ')
+            if [ -n "${left// /}" ]; then
+                die "this image still has $left installed. snapd is 116 MB that
+     does nothing on AurOS, and a snap-transitional firefox is a browser
+     that is not there. See pin_no_snap in build/forge."
+            fi ;;
+    esac
+    if [ "${browser:-}" = firefox ] && browser_present firefox &&
+       pkg_installed epiphany-browser; then
+        warn "Firefox AND the fallback browser are both in this image; the"
+        warn "fallback (and its own copy of WebKit) is about 125 MB of nothing."
+    fi
+    # What this image ships with a known fix left out, by the lists of
+    # this build (stage 2 upgrades everything; this says whether it
+    # held). tools/updatepolicytest.sh reads it.
+    local pending
+    pending=$(inchroot "apt-get -s full-upgrade 2>/dev/null" | grep -c '^Inst ' || true)
+    warn_note "pending_updates=${pending:-unknown}"
+    before=$(du -sxm "$RFS" | cut -f1)
+    find "$RFS/var/lib/apt/lists" -maxdepth 2 -type f ! -name lock -delete 2>/dev/null || true
+    rm -f "$RFS/var/cache/apt/pkgcache.bin" "$RFS/var/cache/apt/srcpkgcache.bin"
+    find "$RFS/var/cache/apt/archives" -maxdepth 2 -type f -name '*.deb' -delete 2>/dev/null || true
+    after=$(du -sxm "$RFS" | cut -f1)
+    note "sealed: apt's lists and caches removed, ${before} MB -> ${after} MB of rootfs"
+    warn_note "rootfs_mb=$after"
+    seal_identity
+}
+
+# EVERY COMPUTER IS ITS OWN COMPUTER.
+#
+# systemd's postinst made a machine id while the image was being built, so
+# every AurOS PC shared one: a network sees it as the DHCP client id, and it
+# seeds other per-machine names (BT, 2026-10-23). Empty is what systemd reads
+# as "first start": it makes a new one then, and keeps it.
+#
+# What a first start also means has to be held still, because it is not
+# only the id. systemd runs its first-boot work then: (1) systemd-firstboot
+# asks questions on the console -- masked, her answers were made in the
+# installer; (2) it applies its preset policy, which on Ubuntu ENABLES
+# systemd-networkd, -resolved and -timesyncd beside NetworkManager and chrony
+# and would enable every other unit that has an [Install] and is not named.
+# So the preset is frozen to what this image has enabled right now, and
+# "disable *" for the rest: the first start changes nothing but the id.
+# tools/hardentest.sh checks all of it.
+seal_identity() {
+    : > "$RFS/etc/machine-id"
+    mkdir -p "$RFS/var/lib/dbus"
+    ln -sfn /etc/machine-id "$RFS/var/lib/dbus/machine-id"
+    # The random seed is per computer too (it is only ever read, but a copy
+    # shared by every PC is the same mistake in a smaller place).
+    rm -f "$RFS/var/lib/systemd/random-seed"
+    ln -sfn /dev/null "$RFS/etc/systemd/system/systemd-firstboot.service"
+    install -d "$RFS/etc/systemd/system-preset"
+    {
+        echo "# Written by build/forge (seal_identity): what this image has enabled, and nothing else."
+        echo "# A first start applies the preset policy; this file puts it where the build left it."
+        find "$RFS/etc/systemd/system" -mindepth 2 -maxdepth 2 \( -path '*.wants/*' -o -path '*.requires/*' \) \
+             \( -type l -o -type f \) -printf '%f\n' 2>/dev/null | sort -u | sed 's/^/enable /'
+        echo "disable *"
+    } > "$RFS/etc/systemd/system-preset/00-auros.preset"
+    note "its own machine id at first start (empty /etc/machine-id); the first start changes no unit"
+}
+
+stage_squash() {
+    step "stage 6/7  compress"
+    # Put the validated request beside the installed system's other identity
+    # records. A legacy or staged non-recipe build removes any receipt left in
+    # a reused rootfs, so it cannot claim somebody else's customization.
+    write_recipe_receipt "$RFS/etc/auros/customization-receipt.json" false
+    # AurOS's own files become dpkg packages and the signed apt source is
+    # pinned, so a fix can reach a computer already installed. Last, so
+    # dpkg records the files as every earlier stage left them.
+    "$ROOT/build/aptchannel" image "$RFS" "$profile_id" "$os_version" \
+        || die "AurOS's update channel could not be set up (build/aptchannel, docs/security/UPDATES.md)"
+    seal_rootfs
+    squash_preconditions
+    harden_verify
+    mkdir -p "$OUT"
+    local final_sq="$OUT/$profile_id-$os_version.squashfs"
+    local sq="$final_sq"
+    if [ "${FORGE_FULL_BUILD:-0}" = 1 ]; then
+        sq="$final_sq.incomplete"
+        FORGE_FINAL_SQUASH=$final_sq
+        FORGE_PENDING_SQUASH=$sq
+    fi
+    local receipt="$OUT/$profile_id-$os_version.recipe.json"
+    # A failed new build must not leave an older customization receipt beside
+    # its output name. The new receipt appears only after squashfs succeeds.
+    rm -f "$receipt" "$sq"
+    mksquashfs "$RFS" "$sq" -comp zstd -Xcompression-level 15 -noappend -quiet \
+        -e "$RFS/.forge-bootstrapped"
+    if [ "${FORGE_FULL_BUILD:-0}" != 1 ]; then
+        write_recipe_receipt "$receipt" true "$sq"
+    fi
+    note "$(basename "$sq")  $(du -h "$sq" | cut -f1)"
+}
+
+# ── stage 7: bootable artifacts ────────────────────────────────────
+stage_image() {
+    step "stage 7/7  bootable image"
+    note "handled by build/mkimage (raw image for AurBridge) — see docs/AURBRIDGE.md"
+}
+
+run_stage() {
+    case $1 in
+        1) stage_bootstrap ;; 2) stage_packages ;; 3) stage_overlay ;;
+        4) stage_configure; stage_harden ;; 5) stage_theme ;; 6) stage_squash ;;
+        7) stage_image ;;
+        *) die "no such stage: $1" ;;
+    esac
+}
+
+case "${1:-}" in
+    build)
+        parse_build_args "${@:2}"
+        if [ -n "$BUILD_RECIPE" ]; then
+            reexec_recipe_from_snapshot build "$BUILD_PROFILE" "$BUILD_RECIPE"
+        fi
+        resolve_build_input "$BUILD_PROFILE" "$BUILD_RECIPE"
+        prepare_full_build
+        say "forging '$profile_name' ($profile_id)"
+        for s in 1 2 3 4 5 6 7; do run_stage $s; done
+
+        # The one check that runs at the end, because it is the one
+        # thing a person would notice within a minute and we would not.
+        #
+        # stage_browser() has printed "Do not ship this image" since the
+        # day it was written, set MISSING_BROWSER=1, and then exited 0 --
+        # so the build said "is built" in green underneath the warning
+        # and nothing stopped. A warning that does not fail the build is
+        # a warning nobody reads twice.
+        #
+        # A desktop with no browser is not a lesser AurOS. It is the one
+        # application this product exists to provide, missing, on a
+        # machine someone just gave us their whole computer for.
+        # Both signals: the variable, and the line written into the
+        # image. The variable is what stage_browser sets; the file is
+        # what survives if a stage is ever wrapped in a subshell, which
+        # is exactly the sort of refactor that would silently switch
+        # this check off.
+        if [ "${browser_source:-none}" != "none" ] && \
+           { [ "${MISSING_BROWSER:-0}" = 1 ] ||
+             grep -q '^browser=MISSING$' "$RFS/etc/auros/build-warnings" 2>/dev/null; }; then
+            printf '\n'
+            die "this image has NO BROWSER and will not be built.
+     $profile_id asked for '$browser' from '$browser_source'; neither it
+     nor the fallback could be installed. Set browser_source=\"archive\"
+     to take one from Ubuntu's own archive, or browser_source=\"none\"
+     if you genuinely want a machine that cannot open a web page."
+        fi
+        # AND A SUBSTITUTION IS NOT A SUCCESS EITHER, unless somebody
+        # said so in the profile.
+        #
+        # This is the check that was missing when five images were
+        # built, published and their manifests written, every one of
+        # them shipping Epiphany under a profile that asks for Firefox
+        # -- because the builder could not reach packages.mozilla.org
+        # and falling back is what the code was told to do. Nothing
+        # failed. The note was in the build log, one line among
+        # hundreds, and the images looked finished.
+        #
+        # A fallback is the right behaviour for somebody building for
+        # themselves on a train. It is the wrong behaviour for an
+        # artifact somebody else will download, and the difference
+        # between those two is a sentence in the profile, not a guess
+        # here. browser_fallback_ok="yes" -- or ALLOW_BROWSER_FALLBACK=1
+        # for a one-off -- says the substitution is acceptable, and it
+        # is still written into the manifest either way.
+        # BOTH SIGNALS, for the reason the check above gives: the
+        # variable is what stage_browser sets, and the line in the
+        # image is what survives a refactor that wraps a stage in a
+        # subshell -- which is exactly the change that would switch
+        # this off without anybody meaning to.
+        if { [ -n "${BROWSER_SUBSTITUTED:-}" ] ||
+             grep -q '^browser=.*(fallback;' "$RFS/etc/auros/build-warnings" 2>/dev/null; } && \
+           [ "${browser_fallback_ok:-no}" != yes ] && \
+           [ "${ALLOW_BROWSER_FALLBACK:-0}" != 1 ]; then
+            printf '\n'
+            die "this image has '${BROWSER_SUBSTITUTED:-a fallback browser}' where
+     $profile_id asked for '$browser', and will not be built.
+     Every source in browser_source=\"$browser_source\" was unreachable
+     from this machine. On a network that blocks them, the fix is the
+     network; if this build is for you rather than for somebody else,
+     set browser_fallback_ok=\"yes\" in the profile or run
+     ALLOW_BROWSER_FALLBACK=1 build/forge build $profile_id."
+        fi
+        # AND AN EMPTY STORE IS NOT A SUCCESS. The catalogue is what her first
+        # "Get more programs" shows; a release without it opens a blank page
+        # (stage_flathub_catalogue). build.yml sets REQUIRE_FLATHUB_CATALOGUE=1,
+        # because GitHub's runners can reach Flathub; a build on a machine that
+        # cannot says so in build-warnings and still finishes.
+        if [ "${REQUIRE_FLATHUB_CATALOGUE:-0}" = 1 ] && [ -x "$RFS/usr/bin/flatpak" ] && \
+           grep -q '^flathub_catalogue=MISSING$\|^flathub=first-online$' "$RFS/etc/auros/build-warnings" 2>/dev/null; then
+            printf '\n'
+            die "this image has NO CATALOGUE for Get more programs and will not be built.
+     Flathub could not be reached, or its listing could not be read, from
+     this machine (see the lines above). Her first store page would be empty.
+     Unset REQUIRE_FLATHUB_CATALOGUE for a build that is not for release."
+        fi
+        finalize_full_build
+        printf '\n%s::%s %s is built.\n' "$C_OK" "$C_RST" "$brand_name $os_version" ;;
+    resolve)
+        parse_build_args "${@:2}"
+        if [ -n "$BUILD_RECIPE" ]; then
+            reexec_recipe_from_snapshot resolve "$BUILD_PROFILE" "$BUILD_RECIPE"
+        fi
+        resolve_build_input "$BUILD_PROFILE" "$BUILD_RECIPE"
+        print_resolved_build_input ;;
+    stage)
+        load_profile "${2:?usage: forge stage PROFILE N}"
+        run_stage "${3:?which stage?}" ;;
+    shell)
+        load_profile "${2:?usage: forge shell PROFILE}"
+        chroot_prep; chroot "$RFS" /bin/bash || true; chroot_done ;;
+    clean)
+        load_profile "${2:?usage: forge clean PROFILE}"
+        chroot_done 2>/dev/null || true
+        rm -rf "${WORK:?}/$profile_id"; say "cleaned $profile_id" ;;
+    list)
+        for f in "$PROFILE_DIR"/*.profile; do
+            [ -f "$f" ] || continue
+            n=$(basename "$f" .profile)
+            d=$(sed -n 's/^profile_description="\(.*\)"/\1/p' "$f" | head -1)
+            printf '  %-16s %s\n' "$n" "$d"
+        done ;;
+    *)
+        cat <<EOU
+forge — the AurOS image builder
+
+  forge build PROFILE       build a complete image
+  forge build --recipe FILE build from a validated customization recipe
+  forge build PROFILE --recipe FILE
+                            require the recipe to use PROFILE
+  forge resolve PROFILE     inspect build inputs without building
+  forge resolve --recipe FILE [PROFILE]
+                            validate and resolve a recipe without building
+  forge stage PROFILE N     run a single stage (1-7)
+  forge shell PROFILE       chroot into the built rootfs
+  forge clean PROFILE       remove the work tree
+  forge list                list profiles
+
+Profiles live in $PROFILE_DIR
+EOU
+        ;;
+esac

@@ -1,0 +1,512 @@
+# The fast path's Windows half, on real Windows (docs/AURBRIDGE.md,
+# "Fast path: status"; stream A2).
+#
+#   build        aurbridge.exe from this commit, on Linux
+#   gapselftest  a throwaway VHDX shaped like a PC: Windows' own online
+#                shrink, raw writes into the gap only, both fences shown
+#                refusing, the files and chkdsk checked independently,
+#                and the undo
+#
+# Its own workflow, not a job in windows.yml: it takes minutes, and
+# windows.yml is the queue every stream's push waits in. It runs when
+# the fast path's code changes, and by hand (workflow_dispatch).
+name: fastpath
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/aurbridge/**
+      - src/aurstage/gpt.*
+      - src/aurstage/plan.*
+      - src/aurscreen/**
+      - rootfs/usr/lib/auros/wifi-across.sh
+      # Only the tests this workflow runs: a push that changes some other stream's
+      # tools/*test.sh must not queue Windows runners and cancel the run for the
+      # commit that did change the fast path.
+      - tools/aborttest.sh
+      - tools/armtest.sh
+      - tools/esptest.sh
+      - tools/wifitest.sh
+      - tools/bridgetest.sh
+      - tools/screentest.sh
+      - tools/handovertest.ps1
+      - tools/fastpath-mutant.sh
+      - tools/planted*.c
+      - rootfs/usr/lib/auros/handover.sh
+      - build/aurbridge
+      - .github/workflows/fastpath.yml
+  # By hand, optionally with a MUTANT: an engine (or a disk) broken on
+  # purpose by tools/fastpath-mutant.sh. Every mutant must turn the run
+  # red, at the check named in that script; a mutant that stays green is
+  # a check that checks nothing (docs/handoff/FIELD-MANUAL.md section 6.2).
+  workflow_dispatch:
+    inputs:
+      mutant:
+        description: "none, or a mutant from tools/fastpath-mutant.sh (the run must then go red)"
+        default: none
+
+concurrency:
+  group: fastpath-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: toolchain
+        timeout-minutes: 12
+        run: |
+          for i in 1 2 3; do
+            sudo timeout 150 apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+              && sudo timeout 300 apt-get install -y -q gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 libxml2-utils gdisk cpio && exit 0
+            echo "::warning::apt try $i did not finish; trying again"
+            sleep 10
+          done
+          exit 1
+      - name: a deliberately broken engine, when one was asked for
+        if: github.event_name == 'workflow_dispatch' && inputs.mutant != 'none'
+        env: { MUTANT: "${{ inputs.mutant }}" }
+        run: sh tools/fastpath-mutant.sh "$MUTANT"
+      - name: build/aurbridge
+        run: sh build/aurbridge
+      # SEC-003: a DLL the installer is LINKED against is resolved before main from the
+      # folder it sits in. Only Windows' KnownDLLs (always taken from System32) may be linked;
+      # anything else is loaded by name, from System32, when it is first needed.
+      - name: the installer is linked against KnownDLLs only
+        run: |
+          known=" advapi32 kernel32 user32 gdi32 shell32 ole32 oleaut32 setupapi msvcrt ws2_32 shlwapi comdlg32 imm32 psapi rpcrt4 sechost combase wldap32 nsi normaliz imagehlp clbcatq coml2 msctf shcore gdiplus "
+          bad=""
+          for f in out/aurbridge.exe out/aurbridge-wizard.exe; do
+              for d in $(x86_64-w64-mingw32-objdump -p "$f" | sed -n 's/^\tDLL Name: //p' | tr 'A-Z' 'a-z' | sed 's/\.dll$//'); do
+                  case "$known" in *" $d "*) ;; *) bad="$bad $f:$d" ;; esac
+              done
+          done
+          [ -z "$bad" ] || { echo "linked against DLLs that are not KnownDLLs:$bad"; exit 1; }
+          echo "ok: every linked DLL is a KnownDLL"
+      - name: the engine against a simulated machine (aborttest, bridgetest)
+        run: |
+          sh tools/aborttest.sh
+          sh tools/armtest.sh
+          sh tools/esptest.sh
+          sh tools/wifitest.sh
+          sh tools/bridgetest.sh
+          sh tools/screentest.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: exe
+          path: |
+            out/aurbridge.exe
+            out/aurbridge-wizard.exe
+      # Programs that must never run: the same names Windows' own tools have,
+      # put beside the installer by the runcheck job below (SEC-002).
+      - name: planted programs
+        run: |
+          mkdir -p planted
+          for n in schtasks mountvol manage-bde powercfg bcdedit icacls netsh reg; do
+              x86_64-w64-mingw32-gcc -O1 -o "planted/$n.exe" tools/planted.c
+          done
+          # And DLLs the installer loads by bare name at run time (SEC-003).
+          for n in wlanapi winhttp oleacc; do
+              x86_64-w64-mingw32-gcc -O1 -shared -o "planted/$n.dll" tools/planted_dll.c
+          done
+          x86_64-w64-mingw32-gcc -O1 -shared -o planted/winspool.drv tools/planted_dll.c
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: planted
+          path: planted/
+      # THE SAME INSTALLER WITH THE FAST PATH ON, for the real-Windows e2e
+      # (stream F points INSTALLER_URL at this): the Wi-Fi tick, the drive
+      # lock line and the fast path are compiled in. The default build above
+      # is what ships until the journey is green with this one.
+      - name: the installer with the fast path ON (AUROS_FASTPATH=1)
+        run: |
+          mkdir -p fast
+          AUROS_FASTPATH=1 sh build/aurbridge
+          cp out/aurbridge.exe out/aurbridge-wizard.exe fast/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: exe-fast
+          path: fast/
+
+  gapselftest:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: exe, path: exe }
+      - name: a throwaway disk shaped like a PC's, full of known files
+        shell: pwsh
+        run: |
+          $vhd = "$env:RUNNER_TEMP\gap.vhdx"
+          @"
+          create vdisk file="$vhd" maximum=3072 type=expandable
+          select vdisk file="$vhd"
+          attach vdisk
+          "@ | Set-Content "$env:RUNNER_TEMP\mk.txt"
+          diskpart /s "$env:RUNNER_TEMP\mk.txt" | Out-String | Write-Output
+          if ($LASTEXITCODE -ne 0) { throw "diskpart exited $LASTEXITCODE" }
+          $n = (Get-DiskImage -ImagePath $vhd).Number
+          if ($null -eq $n) { Get-Disk | Format-Table Number, FriendlyName, Location, PartitionStyle | Out-String | Write-Output; throw "the new disk is not visible" }
+          $d = Get-Disk -Number $n
+          if ($d.PartitionStyle -ne 'RAW' -or $d.IsSystem -or $d.IsBoot) { throw "disk $n is not the new empty disk" }
+          Initialize-Disk -Number $d.Number -PartitionStyle GPT
+          $p = New-Partition -DiskNumber $d.Number -Size 2048MB -AssignDriveLetter
+          Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel AURGAP -Confirm:$false | Out-Null
+          # WinRE's place: right after Windows, so the shrink makes a gap between them.
+          New-Partition -DiskNumber $d.Number -Size 512MB -GptType '{de94bba4-06d1-4d40-a16a-bfd50179d6ac}' | Out-Null
+          $p = Get-Partition -DiskNumber $d.Number -PartitionNumber $p.PartitionNumber
+          $L = "$($p.DriveLetter):"
+          # Known files: 300 of them, 1 KB to 2 MB, random content.
+          New-Item -ItemType Directory -Force "$L\photos" | Out-Null
+          $rng = [System.Random]::new(23)
+          for ($i = 0; $i -lt 300; $i++) {
+            $b = [byte[]]::new($rng.Next(1024, 2MB)); $rng.NextBytes($b)
+            [System.IO.File]::WriteAllBytes("$L\photos\img$i.bin", $b)
+          }
+          Get-ChildItem "$L\photos" | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash) $([IO.Path]::GetFileName($_.Path))" } | Set-Content "$env:RUNNER_TEMP\before.txt"
+          Get-Partition -DiskNumber $d.Number | Format-Table PartitionNumber, Offset, Size, Type, GptType -AutoSize | Out-String | Write-Output
+          "DISK=$($d.Number)" | Out-File -Append $env:GITHUB_ENV
+          "PART=$($p.PartitionNumber)" | Out-File -Append $env:GITHUB_ENV
+          "LETTER=$L" | Out-File -Append $env:GITHUB_ENV
+          "GUID=$((Get-Disk -Number $d.Number).Guid)" | Out-File -Append $env:GITHUB_ENV
+          "ORIG=$($p.Size)" | Out-File -Append $env:GITHUB_ENV
+      - name: it refuses the runner's own disk and a disk it was not named
+        shell: pwsh
+        run: |
+          $sys = (Get-Disk | Where-Object IsSystem | Select-Object -First 1)
+          .\exe\aurbridge.exe gapselftest $sys.Number 1 $sys.Guid write 64 16 | Tee-Object -FilePath sys.log
+          if ($LASTEXITCODE -eq 0) { throw "IT RAN ON THE SYSTEM DISK" }
+          if (-not (Select-String -Path sys.log -Pattern 'running from' -Quiet)) { throw "refused, but not for being the system disk" }
+          .\exe\aurbridge.exe gapselftest $env:DISK $env:PART '{00000000-0000-0000-0000-000000000000}' write 64 16 | Tee-Object -FilePath guid.log
+          if ($LASTEXITCODE -eq 0) { throw "it ran on a disk it was not named" }
+          if (-not (Select-String -Path guid.log -Pattern 'not the disk that was named' -Quiet)) { throw "refused, but not for the GUID" }
+          "both refused"
+          # pwsh steps exit with the last native command's code, which here
+          # is the (wanted) refusal; this step's verdict is the throws above.
+          exit 0
+      - name: the engine shrinks with Windows' own shrink and writes only into the gap
+        shell: pwsh
+        run: |
+          .\exe\aurbridge.exe gapselftest $env:DISK $env:PART $env:GUID write 768 256 | Tee-Object -FilePath write.log
+          if ($LASTEXITCODE -ne 0) { throw "gapselftest write exited $LASTEXITCODE" }
+          if (-not (Select-String -Path write.log -Pattern 'verdict=ok phase=write' -Quiet)) { throw "no verdict=ok" }
+          $refused = (Select-String -Path write.log -Pattern 'fence1 refused=').Count
+          if ($refused -ne 6) { throw "fence one refused $refused writes, not 6" }
+          if (-not (Select-String -Path write.log -Pattern 'fence1 arm-refused' -Quiet)) { throw "a gap reaching into NTFS was armed" }
+          if (-not (Select-String -Path write.log -Pattern 'fence2 ntfs=1' -Quiet)) { throw "Windows did not refuse the raw write into NTFS" }
+          Get-Partition -DiskNumber $env:DISK | Format-Table PartitionNumber, Offset, Size, GptType -AutoSize | Out-String | Write-Output
+      - name: "mutant file-changed: one of her files is changed behind the engine's back"
+        if: github.event_name == 'workflow_dispatch' && inputs.mutant == 'file-changed'
+        shell: pwsh
+        run: '[System.IO.File]::AppendAllText("$env:LETTER\photos\img7.bin", "x")'
+      - name: checked independently while it is shrunk -- the files, chkdsk, and the raw bytes in the gap
+        shell: pwsh
+        run: |
+          $now = (Get-Partition -DiskNumber $env:DISK -PartitionNumber $env:PART).Size
+          if ($now -ge [int64]$env:ORIG) { throw "not smaller: $now" }
+          Get-ChildItem "$env:LETTER\photos" | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash) $([IO.Path]::GetFileName($_.Path))" } | Set-Content "$env:RUNNER_TEMP\during.txt"
+          if (Compare-Object (Get-Content "$env:RUNNER_TEMP\before.txt") (Get-Content "$env:RUNNER_TEMP\during.txt")) { throw "A FILE CHANGED" }
+          "300 files identical"
+          $r = Repair-Volume -DriveLetter $env:LETTER[0] -Scan
+          "Repair-Volume -Scan: $r"
+          if ("$r" -ne 'NoErrorsFound') { throw "chkdsk found errors: $r" }
+          # The gap, read raw from the disk by .NET, not by the engine.
+          $line = Select-String -Path write.log -Pattern 'gapselftest write seconds' | Select-Object -First 1
+          if ($line.Line -notmatch 'root_off=(\d+) root_len=(\d+) root_sha=([0-9a-f]+)') { throw "no root extent in the log" }
+          $off = [int64]$Matches[1]; $len = [int64]$Matches[2]; $want = $Matches[3]
+          $fs = [System.IO.FileStream]::new("\\.\PhysicalDrive$($env:DISK)", 'Open', 'Read', 'ReadWrite', 1MB, [System.IO.FileOptions]::None)
+          $fs.Seek($off, 'Begin') | Out-Null
+          $sha = [System.Security.Cryptography.SHA256]::Create()
+          $buf = [byte[]]::new(1MB); $left = $len
+          while ($left -gt 0) { $k = $fs.Read($buf, 0, [Math]::Min(1MB, $left)); if ($k -le 0) { throw "short read" }; $sha.TransformBlock($buf, 0, $k, $null, 0) | Out-Null; $left -= $k }
+          $sha.TransformFinalBlock([byte[]]::new(0), 0, 0) | Out-Null
+          $fs.Dispose()
+          $got = -join ($sha.Hash | ForEach-Object { $_.ToString('x2') })
+          "gap bytes read raw: $got"
+          if ($got -ne $want) { throw "the gap does not hold what the engine says it wrote: $got vs $want" }
+      - name: the undo grows it back, and the files are still the files
+        shell: pwsh
+        run: |
+          .\exe\aurbridge.exe gapselftest $env:DISK $env:PART $env:GUID undo $env:ORIG | Tee-Object -FilePath undo.log
+          if ($LASTEXITCODE -ne 0) { throw "gapselftest undo exited $LASTEXITCODE" }
+          $now = (Get-Partition -DiskNumber $env:DISK -PartitionNumber $env:PART).Size
+          if ($now -ne [int64]$env:ORIG) { throw "after the undo it is $now, not $env:ORIG" }
+          Get-ChildItem "$env:LETTER\photos" | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash) $([IO.Path]::GetFileName($_.Path))" } | Set-Content "$env:RUNNER_TEMP\after.txt"
+          if (Compare-Object (Get-Content "$env:RUNNER_TEMP\before.txt") (Get-Content "$env:RUNNER_TEMP\after.txt")) { throw "A FILE CHANGED" }
+          $r = Repair-Volume -DriveLetter $env:LETTER[0] -Scan
+          if ("$r" -ne 'NoErrorsFound') { throw "chkdsk found errors after the undo: $r" }
+          "grown back to $now bytes; 300 files identical; chkdsk clean"
+      - name: with BitLocker on the throwaway disk, if this runner has BitLocker
+        shell: pwsh
+        run: |
+          if (-not (Get-Command Enable-BitLocker -ErrorAction SilentlyContinue)) {
+            "SKIPPED: this runner has no BitLocker (the feature is not installed, and installing it needs a restart)"
+            exit 0
+          }
+          $pw = ConvertTo-SecureString 'AurOS-test-only-1234' -AsPlainText -Force
+          Enable-BitLocker -MountPoint $env:LETTER -PasswordProtector -Password $pw -UsedSpaceOnly -SkipHardwareTest | Out-Null
+          for ($i = 0; $i -lt 120 -and (Get-BitLockerVolume $env:LETTER).VolumeStatus -ne 'FullyEncrypted'; $i++) { Start-Sleep 5 }
+          Get-BitLockerVolume $env:LETTER | Format-List MountPoint, VolumeStatus, ProtectionStatus, EncryptionPercentage | Out-String | Write-Output
+          .\exe\aurbridge.exe gapselftest $env:DISK $env:PART $env:GUID write 768 256 | Tee-Object -FilePath bl.log
+          if ($LASTEXITCODE -ne 0) { throw "with BitLocker on, gapselftest write exited $LASTEXITCODE" }
+          Get-ChildItem "$env:LETTER\photos" | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash) $([IO.Path]::GetFileName($_.Path))" } | Set-Content "$env:RUNNER_TEMP\bl.txt"
+          if (Compare-Object (Get-Content "$env:RUNNER_TEMP\before.txt") (Get-Content "$env:RUNNER_TEMP\bl.txt")) { throw "A FILE CHANGED under BitLocker" }
+          .\exe\aurbridge.exe gapselftest $env:DISK $env:PART $env:GUID undo $env:ORIG
+          if ($LASTEXITCODE -ne 0) { throw "with BitLocker on, the undo exited $LASTEXITCODE" }
+          "shrink, gap write and undo all worked with BitLocker on; nothing was decrypted"
+
+  # SEC-002: a program planted beside the installer is never started by it.
+  # The installer runs elevated from Downloads, a folder anything can write
+  # to, and used to start schtasks / mountvol / manage-bde by bare name.
+  runcheck:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: exe, path: exe }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: planted, path: exe }
+      - name: bare names resolve to Windows' own programs, and nothing else starts
+        shell: pwsh
+        run: |
+          Set-Location exe
+          Remove-Item PLANTED-RAN.txt, C:\PLANTED-RAN-ELEVATED.txt -ErrorAction SilentlyContinue
+          $fail = $false
+          foreach ($c in 'schtasks /?', 'schtasks.exe /?', 'powercfg /?', 'manage-bde -?', 'bcdedit /?', 'netsh /?', 'mountvol /?') {
+              $o = .\aurbridge.exe runcheck $c
+              "$c -> $o"
+              # Windows' own program ran (its exit code may be -1, as manage-bde's
+              # usage page is) and the resolver did not refuse it.
+              if ($o -notmatch 'runcheck rc=-?\d+ tail=' -or $o -match 'belong to Windows') { $fail = $true; "no answer for $c" }
+          }
+          if ($fail) { throw "one of Windows' own programs did not start" }
+          if (Test-Path PLANTED-RAN.txt) { throw "A PLANTED PROGRAM RAN (beside the exe)" }
+          if (Test-Path C:\PLANTED-RAN-ELEVATED.txt) { throw "A PLANTED PROGRAM RAN (elevated marker)" }
+          # The real one answered: schtasks prints its own usage.
+          $o = .\aurbridge.exe runcheck 'schtasks /?'
+          if ($o -notmatch 'SCHTASKS') { throw "schtasks did not run (or the wrong one did): $o" }
+          # Absolute paths: Windows' own, accepted; anything else refused.
+          $o = .\aurbridge.exe runcheck "$env:SystemRoot\System32\schtasks.exe /?"
+          if ($o -notmatch 'SCHTASKS') { throw "the absolute system path was refused: $o" }
+          foreach ($c in "$PWD\schtasks.exe /?", 'C:\Users\Public\evil.exe', "$env:SystemRoot\System32\..\..\Users\x.exe", 'cmd.exe /c echo hi', 'notepad') {
+              $o = .\aurbridge.exe runcheck $c
+              "$c -> $o"
+              if ($o -notmatch 'rc=-1' -or $o -notmatch 'belong to Windows') { throw "was not refused: $c -> $o" }
+          }
+          if (Test-Path PLANTED-RAN.txt) { throw "A PLANTED PROGRAM RAN (after the refusals)" }
+          # The helper page is opened through Explorer, by its full path (SEC-002 sibling):
+          # with an explorer.exe planted beside the installer, the one it names is Windows' own.
+          Copy-Item schtasks.exe explorer.exe
+          $o = .\aurbridge.exe explorercheck
+          "explorercheck -> $o"
+          $want = Join-Path (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').SystemRoot 'explorer.exe'
+          if ($o -notmatch '^explorercheck rc=0 path=(.+)$' -or $Matches[1].Trim() -ne $want) { throw "the helper is opened with $o, not $want" }
+          if ($Matches[1] -like "$PWD*") { throw "the helper would be opened with the program beside the installer" }
+          Remove-Item explorer.exe
+          "ok: only Windows' own programs start, and a planted one never does"
+
+      # SEC-003: the same folder holds a wlanapi.dll, a winspool.drv, a winhttp.dll and
+      # an oleacc.dll that write a marker when loaded. The installer loads all four by
+      # name from System32 (the Wi-Fi check, the printer inventory, the download, the
+      # screen-reader object); WINHTTP and OLEACC used to be linked, so they were
+      # resolved before main from this very folder.
+      - name: a DLL planted beside the installer is never loaded
+        shell: pwsh
+        run: |
+          Set-Location exe
+          Remove-Item C:\PLANTED-DLL-RAN.txt -ErrorAction SilentlyContinue
+          foreach ($f in 'wlanapi.dll', 'winspool.drv', 'winhttp.dll', 'oleacc.dll', 'aurbridge-wizard.exe') {
+              if (-not (Test-Path $f)) { throw "setup: $f is not here" }
+          }
+          $null = .\aurbridge.exe preflight 2>&1 | Out-String
+          $null = .\aurbridge.exe report "$env:RUNNER_TEMP\rep" 2>&1 | Out-String
+          # the download: winhttp is loaded now, from System32, and the connection is refused
+          "piece-list`nbase http://127.0.0.1:9/`n" | Set-Content -Encoding ASCII "$env:RUNNER_TEMP\pieces.txt"
+          $o = .\aurbridge.exe getimage "$env:RUNNER_TEMP\pieces.txt" "$env:RUNNER_TEMP\img" 0000000000000000000000000000000000000000000000000000000000000000 1 2>&1 | Out-String
+          "getimage: $o"
+          # the wizard: oleacc and winhttp were linked, so merely starting it used to load them
+          $null = .\aurbridge-wizard.exe --report "$env:RUNNER_TEMP\rep2" 2>&1 | Out-String
+          if (Test-Path C:\PLANTED-DLL-RAN.txt) { throw "A PLANTED DLL WAS LOADED by the installer" }
+          "ok: DLLs the installer names are looked for in System32 only"
+
+  # SEC-001 / SEC-010: the folder the download lives in. Made with an ACL that
+  # admits SYSTEM and Administrators only; a folder somebody else made (a
+  # junction, a file, a stranger's) is moved aside, never followed.
+  dircheck:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: exe, path: exe }
+      - name: the download folder is private, and a planted one is never used
+        shell: pwsh
+        run: |
+          $exe = "$PWD\exe\aurbridge.exe"
+          $root = 'C:\AurOS-dircheck'
+          Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory $root | Out-Null
+          function Who($d) { (Get-Acl $d).Access | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique }
+          function Private($d, $label) {
+            $a = Get-Acl $d
+            $who = Who $d
+            "$label : protected=$($a.AreAccessRulesProtected) owner=$($a.Owner) who=$($who -join ', ')"
+            if (-not $a.AreAccessRulesProtected) { throw "$label : inherits permissions from its parent" }
+            $bad = $who | Where-Object { $_ -ne 'NT AUTHORITY\SYSTEM' -and $_ -ne 'BUILTIN\Administrators' }
+            if ($bad) { throw "$label : somebody else can use it: $($bad -join ', ')" }
+            if ($who.Count -ne 2) { throw "$label : expected exactly SYSTEM and Administrators, got $($who -join ', ')" }
+          }
+
+          # 1. a folder that is not there: made, private, and what is put in it is private too
+          $o = & $exe dircheck "$root\fresh"; $o
+          if ($o -notmatch 'rc=0') { throw "fresh folder: $o" }
+          Private "$root\fresh" 'fresh'
+          Set-Content "$root\fresh\x.txt" 'x'
+          $inner = Who "$root\fresh\x.txt"
+          if (($inner | Where-Object { $_ -ne 'NT AUTHORITY\SYSTEM' -and $_ -ne 'BUILTIN\Administrators' })) { throw "a file made inside it is open to: $($inner -join ', ')" }
+
+          # 2. a folder an older installer made, open to Users: kept, locked, its file still there
+          New-Item -ItemType Directory "$root\older" | Out-Null
+          Set-Content "$root\older\piece-1" 'kept'
+          if (-not ((Who "$root\older") -contains 'BUILTIN\Users')) { throw "setup: the older folder is not open to Users, so this proves nothing" }
+          $o = & $exe dircheck "$root\older"; $o
+          if ($o -notmatch 'rc=0') { throw "older folder: $o" }
+          Private "$root\older" 'older'
+          if ((Get-Content "$root\older\piece-1") -ne 'kept') { throw "the older folder's file was lost" }
+          if ((Who "$root\older\piece-1") -contains 'BUILTIN\Users') { throw "the file already in it still lets Users in" }
+
+          # 3. a junction where the folder should be: moved aside, NEVER followed
+          New-Item -ItemType Directory "$root\elsewhere" | Out-Null
+          $before = (Get-Acl "$root\elsewhere").AccessToString
+          New-Item -ItemType Junction -Path "$root\jn" -Target "$root\elsewhere" | Out-Null
+          $o = & $exe dircheck "$root\jn"; $o
+          if ($o -notmatch 'rc=0') { throw "junction: $o" }
+          if ((Get-Item "$root\jn").Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "the junction is still there: the folder was followed" }
+          Private "$root\jn" 'junction replaced'
+          if (-not (Get-ChildItem $root -Directory -Filter 'jn.moved-aside-*')) { throw "the junction was not moved aside" }
+          if (@(Get-ChildItem "$root\elsewhere" -Force).Count -ne 0) { throw "something was written through the junction" }
+          if ((Get-Acl "$root\elsewhere").AccessToString -ne $before) { throw "the junction's target had its permissions changed" }
+
+          # 4. a plain file where the folder should be
+          Set-Content "$root\afile" 'not a folder'
+          $o = & $exe dircheck "$root\afile"; $o
+          if ($o -notmatch 'rc=0') { throw "a file in the way: $o" }
+          if (-not (Test-Path "$root\afile" -PathType Container)) { throw "no folder where the file was" }
+          Private "$root\afile" 'file replaced'
+          if (-not (Get-ChildItem $root -File -Filter 'afile.moved-aside-*')) { throw "the file was not moved aside" }
+
+          # 5a. a file moved in from somewhere users can write takes the folder's
+          #     permissions and an Administrators owner (SEC-010)
+          New-Item -ItemType Directory "$root\downloads" | Out-Null
+          $src = "$root\downloads\from-downloads.img"
+          Set-Content $src 'an image'
+          if (-not ((Who $src) -contains 'BUILTIN\Users')) { throw "setup: the source file is not open to Users, so this proves nothing" }
+          $o = & $exe dircheck rename $src "$root\fresh\moved-in.img"; $o
+          if ($o -notmatch 'rc=0') { throw "moving a file in: $o" }
+          $a = Get-Acl "$root\fresh\moved-in.img"
+          "moved-in file: owner=$($a.Owner) who=$((Who "$root\fresh\moved-in.img") -join ', ')"
+          if (($a.Owner -ne 'BUILTIN\Administrators') -and ($a.Owner -ne 'NT AUTHORITY\SYSTEM')) { throw "the moved-in file is still owned by $($a.Owner)" }
+          if (((Who "$root\fresh\moved-in.img") | Where-Object { $_ -ne 'NT AUTHORITY\SYSTEM' -and $_ -ne 'BUILTIN\Administrators' })) { throw "the moved-in file is still open to somebody else" }
+
+          # 5. who a folder may be owned by
+          $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          foreach ($t in @(@('S-1-5-18',1), @('S-1-5-32-544',1), @('S-1-5-32-545',0), @('S-1-1-0',0), @('S-1-5-11',0), @($me,0), @('not-a-sid',0))) {
+            $o = & $exe dircheck sid $t[0]; $o
+            if ($o -notmatch "trusted=$($t[1])") { throw "owner $($t[0]) should be trusted=$($t[1]): $o" }
+          }
+
+          # 6. a folder somebody else owns: moved aside. Making one needs the
+          #    privilege to give files away; if this runner will not, say so
+          #    rather than pass for it.
+          New-Item -ItemType Directory "$root\strangers" | Out-Null
+          Set-Content "$root\strangers\theirs" 'theirs'
+          icacls "$root\strangers" /setowner 'BUILTIN\Users' | Out-Null
+          $owner = (Get-Acl "$root\strangers").Owner
+          if ($owner -eq 'BUILTIN\Users') {
+            $o = & $exe dircheck "$root\strangers"; $o
+            if ($o -notmatch 'rc=0') { throw "stranger's folder: $o" }
+            Private "$root\strangers" "stranger's folder replaced"
+            if (@(Get-ChildItem "$root\strangers" -Force).Count -ne 0) { throw "the stranger's folder was used, with their file in it" }
+            if (-not (Get-ChildItem $root -Directory -Filter 'strangers.moved-aside-*')) { throw "the stranger's folder was not moved aside" }
+          } else {
+            "SKIPPED the stranger-owned folder: this runner would not give a folder to Users (owner stayed $owner)"
+          }
+          Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+          "ok: a private folder, a junction never followed, a file moved aside, a stranger's owner refused"
+
+  # The Windows half of "Put Windows back with her files" (docs/AURBRIDGE.md, the
+  # handover): a throwaway disk with a stand-in C:, a handover partition filled as AurOS
+  # fills it, and the put-back script run against it -- happy, a cut, hostile lists, links
+  # planted in her profile, a report that lies, a changed file, no DONE, no room, BitLocker.
+  # Needs no build: it tests the script in the source. The job after it checks that the
+  # installer carries exactly that script and registers the task correctly.
+  handover:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Only the putback-* mutants break what this job tests (the others break the
+      # installer's source, which the build job above applies). Applied without a
+      # `|| true`: a mutant that fails to apply ("mutant void") must stop the job, or
+      # the clean test runs and the "must go red" run reads green (CI-truth E.16).
+      - name: a deliberately broken script, when one was asked for
+        if: github.event_name == 'workflow_dispatch' && startsWith(inputs.mutant, 'putback-')
+        shell: bash
+        env: { MUTANT: "${{ inputs.mutant }}" }
+        run: bash tools/fastpath-mutant.sh "$MUTANT"
+      - name: her files reach Windows, are checked there, and only then does anything go
+        shell: pwsh
+        run: |
+          ./tools/handovertest.ps1 -Script "$PWD\src\aurbridge\putback.ps1" 2>&1 | Tee-Object -FilePath handover.log
+          if ($LASTEXITCODE -ne 0) { throw "handovertest exited $LASTEXITCODE" }
+          if (Select-String -Path handover.log -Pattern ' FAIL$' -Quiet) { throw "a check failed" }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: handover-log
+          path: handover.log
+
+  taskreg:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: exe, path: exe }
+      - name: the installer carries exactly the script in the source
+        shell: pwsh
+        run: |
+          .\exe\aurbridge.exe putback-script "$env:RUNNER_TEMP\shipped.ps1"
+          # (the checkout on Windows has CRLF line ends; the installer was built from LF)
+          $a = (Get-Content -Raw "$env:RUNNER_TEMP\shipped.ps1") -replace "`r`n", "`n"
+          $b = (Get-Content -Raw src\aurbridge\putback.ps1) -replace "`r`n", "`n"
+          if ($a -ne $b) { throw "the installer carries a different script" }
+          "ok: the shipped script is the one in the source"
+      - name: the startup task is registered the way the install registers it, and taken away again
+        shell: pwsh
+        run: |
+          $exe = "$PWD\exe\aurbridge.exe"
+          $o = & $exe putback-task add '{00000000-0000-0000-0000-000000000000}' 1048576 1073741824 2147483648; $o
+          if ($LASTEXITCODE -ne 0) { throw "registering the task: $o" }
+          $t = Get-ScheduledTask -TaskName 'AurOS put-back'
+          $arg = $t.Actions[0].Arguments
+          "task: $($t.Actions[0].Execute) $arg  principal=$($t.Principal.UserId) state=$($t.State)"
+          if ($t.Principal.UserId -ne 'SYSTEM') { throw "the task does not run as SYSTEM" }
+          if ($arg -notmatch '-File .*ProgramData.*AurOS.*putback\.ps1') { throw "the task does not run the script from ProgramData" }
+          $d = Join-Path $env:ProgramData 'AurOS'
+          foreach ($f in 'putback.ps1', 'putback.json', 'user\savefiles.ps1') {
+              if (-not (Test-Path "$d\$f")) { throw "$f is not there" }
+              $who = (Get-Acl "$d\$f").Access | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique
+              if ($who | Where-Object { $_ -ne 'NT AUTHORITY\SYSTEM' -and $_ -ne 'BUILTIN\Administrators' }) { throw "$f can be written by $($who -join ', ')" }
+          }
+          $o = & $exe putback-task remove; $o
+          if ($LASTEXITCODE -ne 0) { throw "removing the task: $o" }
+          if (Get-ScheduledTask -TaskName 'AurOS put-back' -ErrorAction SilentlyContinue) { throw "the task is still registered" }
+          if ((Test-Path "$d\putback.ps1") -or (Test-Path "$d\user\savefiles.ps1")) { throw "the script was left behind" }
+          "ok: registered as SYSTEM, running a script only SYSTEM and Administrators can write, and gone again"

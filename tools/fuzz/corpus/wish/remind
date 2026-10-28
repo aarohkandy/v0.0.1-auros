@@ -1,0 +1,2 @@
+remind me to call mum at nine
+{"v":1,"when":{"type":"time","at":"09:00"},"do":[{"type":"remind","text":"Call mum"},{"type":"play_sound","sound":"chime"}]}

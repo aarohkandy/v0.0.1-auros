@@ -1,0 +1,742 @@
+/* boot.c — coming up, without systemd and without udev.
+ *
+ * The two things this file exists to avoid are the two things a
+ * general-purpose init would do for us:
+ *
+ *   MOUNTING. systemd would bring generators and automounts, and the
+ *   one thing this environment must never do is mount the Windows
+ *   volume. ntfsresize refuses a mounted volume, and a volume mounted
+ *   read-write for an instant is a volume whose journal has changed.
+ *   Nothing here mounts anything except the kernel's own pseudo
+ *   filesystems.
+ *
+ *   DRIVERS. udev would load them, and udev is a daemon, a rule
+ *   language and a database to carry in an initramfs that is trying to
+ *   stay under eighty megabytes. What udev actually does for us is one
+ *   thing -- read the modalias the kernel wrote for each device and
+ *   ask modprobe for it -- and that is forty lines.
+ */
+#define _GNU_SOURCE
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <sys/mount.h>
+#include <sys/socket.h>
+#include <sys/reboot.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <time.h>
+
+#include "aurstage.h"
+#include "handover-mount.h"
+
+/* ── the kernel command line ─────────────────────────────────────── */
+
+static int cmdline_slurp(char *buf, size_t n)
+{
+    int fd = open("/proc/cmdline", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    ssize_t k = read(fd, buf, n - 1);
+    close(fd);
+    if (k <= 0) return -1;
+    buf[k] = 0;
+    return 0;
+}
+
+int stage_cmdline_has(const char *word)
+{
+    char buf[4096];
+    if (cmdline_slurp(buf, sizeof buf) != 0) return 0;
+    return strstr(buf, word) != NULL;
+}
+
+int stage_cmdline_value(const char *key, char *out, size_t n)
+{
+    char buf[4096];
+    if (cmdline_slurp(buf, sizeof buf) != 0) return -1;
+    char *p = strstr(buf, key);
+    if (!p) return -1;
+    p += strlen(key);
+    size_t i = 0;
+    while (*p && *p != ' ' && *p != '\n' && i + 1 < n) out[i++] = *p++;
+    out[i] = 0;
+    return i ? 0 : -1;
+}
+
+/* How much memory the kernel says could be had, in bytes, out of
+ * /proc/meminfo's MemAvailable. 0 when it will not say, which every
+ * caller treats as "not enough": the one that asks is about to hold a
+ * copy of this machine's startup in memory and nowhere else. */
+uint64_t stage_mem_available(void)
+{
+    int fd = open("/proc/meminfo", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char buf[4096];
+    ssize_t k = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (k <= 0) return 0;
+    buf[k] = 0;
+    const char *p = strstr(buf, "MemAvailable:");
+    if (!p) return 0;
+    unsigned long long kb = strtoull(p + 13, NULL, 10);
+    return (uint64_t)kb * 1024;
+}
+
+/* ── saying things ───────────────────────────────────────────────── */
+
+static int log_fd = -1;
+
+/* Everything said, kept (the newest are lost if it ever fills: the first words are the
+ * reason), and handed to the SAVER when a verdict is given. The saver is registered by main()
+ * (stage_log_set_saver) and writes the words to the EFI partition (stagelog.c): this file only
+ * keeps them, so the tests that link it alone need nothing else. */
+static char   g_ring[48 * 1024];
+static size_t g_ringn;
+static void (*g_saver)(const char *text, size_t n);
+static int  g_saving;
+void stage_log_set_saver(void (*f)(const char *text, size_t n)) { g_saver = f; }
+
+/* ── the screen ──────────────────────────────────────────────────
+ *
+ * src/aurscreen paints what this says as a progress screen instead of
+ * console text (docs/issues/v3/05, 5.5). It is fed through a PIPE, not
+ * a file: the write gate above allows no new open() of anything
+ * writable in this directory, and a pipe needs none. The write end is
+ * non-blocking and SIGPIPE is ignored, so a screen that is slow,
+ * crashed or absent drops lines and costs the install nothing -- the
+ * console line above has already been written either way.
+ *
+ * Lines said before the screen starts (the first three) are kept and
+ * handed over when it does, so its first picture is not blank. */
+static int   screen_fd  = -1;
+static pid_t screen_pid = -1;
+static char  early[8][512];
+static int   n_early;
+
+static void screen_line(const char *line, size_t n)
+{
+    if (screen_fd >= 0) {
+        ssize_t ignored = write(screen_fd, line, n); (void)ignored;
+    } else if (screen_pid < 0 && n_early < 8) {
+        snprintf(early[n_early++], sizeof early[0], "%s", line);
+    }
+}
+
+void stage_screen_start(void)
+{
+    static const char *const PROG = "/usr/bin/aurscreen";
+    if (screen_pid >= 0) return;
+    if (access(PROG, X_OK) != 0 || stage_cmdline_has("aurstage.noscreen")) return;
+    signal(SIGPIPE, SIG_IGN);
+    int p[2];
+    if (pipe2(p, O_CLOEXEC) != 0) return;
+    pid_t pid = fork();
+    if (pid < 0) { close(p[0]); close(p[1]); return; }
+    if (pid == 0) {
+        dup2(p[0], 0);           /* dup2 clears close-on-exec on 0 */
+        execl(PROG, PROG, (char *)NULL);
+        _exit(127);
+    }
+    close(p[0]);
+    fcntl(p[1], F_SETFL, fcntl(p[1], F_GETFL) | O_NONBLOCK);
+    screen_fd = p[1];
+    screen_pid = pid;
+    for (int i = 0; i < n_early; i++) {
+        ssize_t ignored = write(screen_fd, early[i], strlen(early[i])); (void)ignored;
+    }
+}
+
+/* Before switch_root: the screen holds the display, and AurOS's own
+ * desktop has to be able to take it. Closing the pipe tells it to
+ * stop listening; SIGTERM tells it to let go of the display. */
+void stage_screen_stop(void)
+{
+    if (screen_fd >= 0) { close(screen_fd); screen_fd = -1; }
+    if (screen_pid <= 0) return;
+    kill(screen_pid, SIGTERM);
+    for (int i = 0; i < 40; i++) {
+        if (waitpid(screen_pid, NULL, WNOHANG) == screen_pid) { screen_pid = 0; return; }
+        struct timespec t = { 0, 50 * 1000 * 1000 };
+        nanosleep(&t, NULL);
+    }
+    /* Bounded even now: a process stuck inside the display driver does
+     * not die on SIGKILL until it leaves it, and the handover to AurOS
+     * is not going to wait on a progress screen. If it is still there,
+     * it is left; switch_root does not need it gone, only quiet. */
+    kill(screen_pid, SIGKILL);
+    for (int i = 0; i < 40; i++) {
+        if (waitpid(screen_pid, NULL, WNOHANG) == screen_pid) break;
+        struct timespec t = { 0, 50 * 1000 * 1000 };
+        nanosleep(&t, NULL);
+    }
+    screen_pid = 0;
+}
+
+/* A long step's percentage, to the screen only: the console already
+ * has its own dots, and a hundred lines of numbers there helps nobody. */
+void stage_progress(int pct)
+{
+    if (screen_fd < 0) return;
+    char b[32];
+    int n = snprintf(b, sizeof b, "aurstage-progress %d\n", pct);
+    if (n > 0) { ssize_t ignored = write(screen_fd, b, (size_t)n); (void)ignored; }
+}
+
+void stage_screen_note(const char *fmt, ...)
+{
+    if (screen_fd < 0) return;
+    char b[160];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(b, sizeof b - 1, fmt, ap);
+    va_end(ap);
+    if (n <= 0) return;
+    if (n > (int)sizeof b - 2) n = (int)sizeof b - 2;
+    b[n++] = '\n';
+    ssize_t ignored = write(screen_fd, b, (size_t)n); (void)ignored;
+}
+
+void stage_restart_soon(void)
+{
+    char v[16];
+    long secs = 60;
+    if (stage_cmdline_value("aurstage.restart_after=", v, sizeof v) == 0)
+        secs = strtol(v, NULL, 10);
+    if (secs <= 0) return;
+    if (secs > 600) secs = 600;
+    stage_say("this computer will restart by itself in %ld seconds", secs);
+    for (long s = secs; s > 0; s--) {
+        stage_screen_note("aurstage-countdown %ld", s);
+        sleep(1);
+    }
+    sync();
+    reboot(RB_AUTOBOOT);
+}
+
+static void say_v(const char *tag, const char *fmt, va_list ap)
+{
+    char line[512];
+    /* snprintf RETURNS WHAT IT WOULD HAVE WRITTEN, not what it wrote.
+     * Adding the two up and handing the total to write() meant that a
+     * message longer than this buffer printed however many bytes of
+     * the stack followed it, straight to the console. Nothing reaches
+     * 512 characters today; the longest sentence in the program is
+     * about 200. That is not a reason, it is luck, and it is one long
+     * format string from ending. */
+    int n = snprintf(line, sizeof line, "aurstage: %s", tag);
+    if (n < 0 || n >= (int)sizeof line) n = (int)sizeof line - 1;
+    int k = vsnprintf(line + n, sizeof line - (size_t)n, fmt, ap);
+    if (k < 0) k = 0;
+    n += k;
+    if (n >= (int)sizeof line) n = (int)sizeof line - 1;
+    if (n < (int)sizeof line - 1) { line[n++] = '\n'; }
+    line[n] = 0;
+    /* The console first and always: if the log cannot be opened, or
+     * the machine dies before it is, the screen is what is left. */
+    ssize_t ignored = write(2, line, (size_t)n); (void)ignored;
+    if (log_fd >= 0) { ignored = write(log_fd, line, (size_t)n); (void)ignored; }
+    if (g_ringn + (size_t)n < sizeof g_ring) { memcpy(g_ring + g_ringn, line, (size_t)n); g_ringn += (size_t)n; }
+    screen_line(line, (size_t)n);
+    /* A verdict is the end of the story: write it down while the machine is still up. */
+    if (g_saver && !g_saving && strstr(line, "aurstage-report v1")) {
+        g_saving = 1;
+        g_saver(g_ring, g_ringn);
+        g_saving = 0;
+    }
+}
+
+void stage_say(const char *fmt, ...)
+{ va_list ap; va_start(ap, fmt); say_v("", fmt, ap); va_end(ap); }
+
+void stage_warn(const char *fmt, ...)
+{ va_list ap; va_start(ap, fmt); say_v("WARNING: ", fmt, ap); va_end(ap); }
+
+/* ── the kernel's own filesystems ────────────────────────────────── */
+
+int stage_mount_pseudo(void)
+{
+    struct { const char *src, *dst, *type; unsigned long flags; const char *data; } M[] = {
+        { "proc",     "/proc",    "proc",     MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL },
+        { "sysfs",    "/sys",     "sysfs",    MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL },
+        { "devtmpfs", "/dev",     "devtmpfs", MS_NOSUID, NULL },
+        /* This mount is carried into the installed system, where /run belongs to root. */
+        { "tmpfs",    "/run",     "tmpfs",    MS_NOSUID | MS_NODEV, "mode=0755" },
+        /* Boot entries cannot be read or armed from Linux without
+         * this, and stage C has to be able to put BootOrder back. It
+         * is mounted read-only here: stage A writes nothing, and that
+         * includes NVRAM. */
+        { "efivarfs", "/sys/firmware/efi/efivars", "efivarfs", MS_RDONLY, NULL },
+        /* Only so that stage_say_secure() can read the kernel's
+         * lockdown mode off /sys/kernel/security/lockdown. */
+        { "securityfs", "/sys/kernel/security", "securityfs",
+          MS_RDONLY | MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL },
+    };
+    int bad = 0;
+    for (size_t i = 0; i < sizeof M / sizeof M[0]; i++) {
+        mkdir(M[i].dst, 0755);
+        if (mount(M[i].src, M[i].dst, M[i].type, M[i].flags, M[i].data) == 0) continue;
+        if (errno == EBUSY) continue;                /* already there */
+        /* efivarfs is absent on a BIOS machine, which this product
+         * refuses anyway -- but it refuses it with a sentence, not by
+         * failing to boot. */
+        if (!strcmp(M[i].type, "efivarfs")) {
+            stage_warn("no EFI variables (%s). This machine may be BIOS-only.",
+                       strerror(errno));
+            continue;
+        }
+        if (!strcmp(M[i].type, "securityfs")) continue;   /* a line less */
+        stage_warn("could not mount %s (%s)", M[i].dst, strerror(errno));
+        bad++;
+    }
+    return bad == 0;
+}
+
+/* ── Secure Boot, and what it does to this kernel ────────────────
+ *
+ * One line, because a photo of this screen is how a failed install is
+ * reported and "was Secure Boot on?" is the first question anybody
+ * asks. With it on, this kernel is locked down: modules must be
+ * signed, and a few ways into the kernel's memory are shut. Nothing
+ * this program does needs any of those -- ntfs3 and the disk drivers
+ * come signed with the kernel, raw writes to a disk and EFI variables
+ * are not what lockdown restricts -- and tools/nosticktest.sh installs
+ * with it on to prove that rather than assert it. */
+void stage_say_secure(void)
+{
+    int sb = -1;
+    unsigned char v[8];
+    int fd = open("/sys/firmware/efi/efivars/"
+                  "SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c",
+                  O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        /* efivarfs: four bytes of attributes, then the one byte */
+        if (read(fd, v, sizeof v) == 5) sb = v[4] ? 1 : 0;
+        close(fd);
+    }
+    char lk[128] = "", mode[32] = "";
+    fd = open("/sys/kernel/security/lockdown", O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        ssize_t k = read(fd, lk, sizeof lk - 1);
+        close(fd);
+        if (k > 0) {
+            lk[k] = 0;
+            char *o = strchr(lk, '['), *c = o ? strchr(o, ']') : NULL;
+            if (o && c && (size_t)(c - o - 1) < sizeof mode) {
+                memcpy(mode, o + 1, (size_t)(c - o - 1));
+                mode[c - o - 1] = 0;
+            }
+        }
+    }
+    stage_say("secure   Secure Boot %s; kernel lockdown %s",
+              sb == 1 ? "on" : sb == 0 ? "off" : "unknown",
+              mode[0] ? mode : "unknown");
+}
+
+/* ── drivers, the way udev does it, without udev ─────────────────── */
+
+static int run(const char *const argv[])
+{
+    pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        int nul = open("/dev/null", O_WRONLY);
+        if (nul >= 0) { dup2(nul, 1); dup2(nul, 2); }
+        execv(argv[0], (char *const *)argv);
+        _exit(127);
+    }
+    int st = 0;
+    if (waitpid(pid, &st, 0) != pid) return -1;
+    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+}
+
+/* Every device the kernel has found has written what it is into
+ * `modalias`. Handing each of those to modprobe is the whole of what
+ * udev's coldplug does for us. */
+static int modalias_walk(const char *dir, int depth, int *loaded)
+{
+    if (depth > 12) return 0;
+    DIR *dp = opendir(dir);
+    if (!dp) return 0;
+    struct dirent *e;
+    while ((e = readdir(dp))) {
+        if (e->d_name[0] == '.') continue;
+        char path[1024];
+        int n = snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+        if (n < 0 || n >= (int)sizeof path) continue;
+
+        if (!strcmp(e->d_name, "modalias")) {
+            int fd = open(path, O_RDONLY | O_CLOEXEC);
+            if (fd < 0) continue;
+            char alias[256];
+            ssize_t k = read(fd, alias, sizeof alias - 1);
+            close(fd);
+            if (k <= 0) continue;
+            alias[k] = 0;
+            while (k > 0 && (alias[k - 1] == '\n' || alias[k - 1] == ' '))
+                alias[--k] = 0;
+            if (!alias[0]) continue;
+            const char *argv[] = { "/sbin/modprobe", "-q", alias, NULL };
+            if (run(argv) == 0) (*loaded)++;
+            continue;
+        }
+        struct stat st;
+        if (lstat(path, &st) != 0) continue;
+        if (S_ISLNK(st.st_mode)) continue;   /* symlinks loop forever */
+        if (S_ISDIR(st.st_mode)) modalias_walk(path, depth + 1, loaded);
+    }
+    closedir(dp);
+    return 0;
+}
+
+int stage_load_modules(void)
+{
+    int loaded = 0;
+    modalias_walk("/sys/devices", 0, &loaded);
+    /* The filesystems we will need to READ. Not ntfs3: this
+     * environment never mounts the Windows volume, and a module that
+     * is not loaded cannot be mounted by accident. */
+    static const char *FS[] = { "ext4", "vfat", "nls_iso8859_1", "crc32c" };
+    for (size_t i = 0; i < sizeof FS / sizeof FS[0]; i++) {
+        const char *argv[] = { "/sbin/modprobe", "-q", FS[i], NULL };
+        if (run(argv) == 0) loaded++;
+    }
+    return loaded;
+}
+
+int stage_wait_for_disks(int timeout_ms)
+{
+    /* A USB or NVMe controller can take seconds to enumerate, and an
+     * installer that decided there was no disk because it asked too
+     * early is an installer that refuses on perfectly good hardware. */
+    struct timespec step = { 0, 200 * 1000 * 1000 };
+    for (int waited = 0; waited <= timeout_ms; waited += 200) {
+        stage_machine m;
+        if (stage_survey(&m) > 0) {
+            for (int i = 0; i < m.n_disks; i++)
+                if (m.disk[i].n_parts > 0) return 1;
+        }
+        nanosleep(&step, NULL);
+    }
+    return 0;
+}
+
+/* ── handing over ────────────────────────────────────────────────── */
+
+/* Move the pseudo filesystems across rather than unmounting them: the
+ * system we are about to become needs them, and remounting from
+ * inside a switch_root that has already thrown away the old root is
+ * not something to attempt. */
+static int carry_across(const char *from, const char *to)
+{
+    if (mkdir(to, 0755) != 0 && errno != EEXIST) {
+        stage_warn("could not prepare %s for handover (%s)", to, strerror(errno));
+        return -1;
+    }
+    if (mount(from, to, NULL, MS_MOVE, NULL) != 0) {
+        stage_warn("could not carry %s across (%s)", from, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+static int carry_back(const char *from, const char *to)
+{
+    if (mount(from, to, NULL, MS_MOVE, NULL) != 0) {
+        stage_warn("could not put %s back after a failed handover (%s)", to, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+static void reboot_broken_handover(void)
+{
+    stage_warn("the staging environment could not be restored; restarting with a clean kernel");
+    sync();
+    reboot(RB_AUTOBOOT);
+    for (;;) pause();
+}
+
+typedef struct {
+    const char *new_root;
+    int efivars_detached;
+    int efivars_made_rw;
+    int securityfs_detached;
+} handover_cleanup;
+
+static int carry_move(const char *from, const char *to, void *ud)
+{
+    (void)ud;
+    return carry_across(from, to);
+}
+
+static int carry_rollback(const char *from, const char *to, void *ud)
+{
+    (void)ud;
+    return carry_back(from, to);
+}
+
+static int handover_cleanup_failed(void *ud)
+{
+    handover_cleanup *c = ud;
+    int failed = 0;
+    if (c->securityfs_detached &&
+        mount("securityfs", "/sys/kernel/security", "securityfs",
+              MS_RDONLY | MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) != 0) {
+        stage_warn("could not restore staging's securityfs after failed handover (%s)",
+                   strerror(errno));
+        failed = 1;
+    }
+    if (c->efivars_detached &&
+        mount("efivarfs", "/sys/firmware/efi/efivars", "efivarfs", MS_RDONLY, NULL) != 0) {
+        stage_warn("could not restore staging's firmware variables after failed handover (%s)",
+                   strerror(errno));
+        failed = 1;
+    }
+    if (c->efivars_made_rw &&
+        mount("efivarfs", "/sys/firmware/efi/efivars", "efivarfs",
+              MS_REMOUNT | MS_RDONLY, NULL) != 0) {
+        stage_warn("could not restore staging's firmware variables read-only after failed handover (%s)",
+                   strerror(errno));
+        failed = 1;
+    }
+    if (chdir("/") != 0) failed = 1;
+    if (umount(c->new_root) != 0) {
+        stage_warn("could not unmount the new root after failed handover (%s)", strerror(errno));
+        failed = 1;
+    }
+    return failed ? -1 : 0;
+}
+
+/* Empty the initramfs so its memory is given back, then become the
+ * real root. This is the ordinary switch_root dance and the ordinary
+ * hazards apply: PID 1 may not have a cwd inside what it is about to
+ * delete, and the delete must not cross into the new root. */
+static void wipe_initramfs(int root_dev, const char *dir, int depth)
+{
+    if (depth > 16) return;
+    DIR *dp = opendir(dir);
+    if (!dp) return;
+    struct dirent *e;
+    while ((e = readdir(dp))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char path[1024];
+        int n = snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+        if (n < 0 || n >= (int)sizeof path) continue;
+        struct stat st;
+        if (lstat(path, &st) != 0) continue;
+        /* Never leave the initramfs's own device. The new root is
+         * already mounted at /newroot by now, and deleting into it
+         * would be deleting the system we are about to run. */
+        if ((int)st.st_dev != root_dev) continue;
+        if (S_ISDIR(st.st_mode)) {
+            wipe_initramfs(root_dev, path, depth + 1);
+            rmdir(path);
+        } else {
+            unlink(path);
+        }
+    }
+    closedir(dp);
+}
+
+/* The hardware probe brings wired interfaces up to read carrier state. The kernel state is then
+ * carried into AurOS in this same boot, where NetworkManager can mistake it for an externally
+ * configured connection and never ask for a lease. Put every non-loopback interface back down. */
+static void reset_network(void)
+{
+    int s = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (s < 0) {
+        stage_warn("could not reset network interfaces before handover (%s)", strerror(errno));
+        return;
+    }
+    DIR *d = opendir("/sys/class/net");
+    if (!d) {
+        stage_warn("could not list network interfaces before handover (%s)", strerror(errno));
+        close(s);
+        return;
+    }
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.' || !strcmp(e->d_name, "lo")) continue;
+        if (strlen(e->d_name) >= IFNAMSIZ) {
+            stage_warn("refusing to truncate a network interface name before handover");
+            continue;
+        }
+        struct ifreq r;
+        memset(&r, 0, sizeof r);
+        memcpy(r.ifr_name, e->d_name, strlen(e->d_name) + 1);
+        if (ioctl(s, SIOCGIFFLAGS, &r) != 0) {
+            stage_warn("could not read network interface %s before handover (%s)",
+                       e->d_name, strerror(errno));
+            continue;
+        }
+        if (!(r.ifr_flags & IFF_UP)) continue;
+        r.ifr_flags &= (short)~IFF_UP;
+        if (ioctl(s, SIOCSIFFLAGS, &r) != 0)
+            stage_warn("could not put network interface %s down before handover (%s)",
+                       e->d_name, strerror(errno));
+    }
+    closedir(d);
+    close(s);
+}
+
+/* wr_scratch holds up to a gigabyte and a copy of the machine's EFI files here while the install
+ * runs. The checked copy is on disk before handover, so retaining saved.bin in the /run carried
+ * into AurOS only wastes RAM and exposes those files to the installed session. */
+static void forget_saved_scratch(void)
+{
+    if (unlink("/run/aurstage/saved.bin") != 0 && errno != ENOENT)
+        stage_warn("could not release the saved start-up copy before handover (%s)",
+                   strerror(errno));
+    if (rmdir("/run/aurstage") != 0 && errno != ENOENT && errno != ENOTEMPTY)
+        stage_warn("could not remove staging's scratch directory before handover (%s)",
+                   strerror(errno));
+}
+
+int stage_switch_root(const char *root_dev)
+{
+    const char *NEW = "/newroot";
+    handover_cleanup cleanup = { NEW, 0, 0, 0 };
+    stage_screen_stop();
+    if (mkdir(NEW, 0755) != 0 && errno != EEXIST) {
+        stage_warn("cannot prepare the new root (%s)", strerror(errno));
+        return -1;
+    }
+
+    /* READ-ONLY *AND* noload, AND THE SECOND HALF IS THE POINT.
+     *
+     * MS_RDONLY does not stop ext4 replaying its journal. A read-only
+     * mount of an unclean filesystem recovers it -- the kernel writes
+     * to the device -- and `noload` is the option that says do not.
+     * So the old comment here was exactly backwards: it claimed a
+     * read-only mount was safer than a writable one that "succeeds and
+     * replays a journal", when a read-only mount replays it too.
+     *
+     * This matters beyond tidiness. build/staging's grep gate looks
+     * for writable open() flags, and a mount(2) is invisible to it, so
+     * nothing would have caught this. And the claim stagetest.sh makes
+     * on every case -- the whole disk, byte for byte unchanged -- was
+     * only true because the test's root filesystem is always clean.
+     * The first power-pull test in stage C would have produced an
+     * unclean one and quietly falsified it.
+     *
+     * An unclean root that we refuse to recover will fail to mount, and
+     * that is the right outcome: the installed system's own init
+     * recovers it, on purpose, when it is allowed to write. */
+    if (mount(root_dev, NEW, "ext4", MS_RDONLY, "noload") != 0) {
+        stage_warn("cannot mount %s as the new root (%s)",
+                   root_dev, strerror(errno));
+        return -1;
+    }
+    struct stat st;
+    if (stat("/newroot/sbin/init", &st) != 0 &&
+        stat("/newroot/usr/sbin/init", &st) != 0 &&
+        stat("/newroot/lib/systemd/systemd", &st) != 0 &&
+        stat("/newroot/usr/lib/systemd/systemd", &st) != 0) {
+        stage_warn("%s has no init in it; not handing over", root_dev);
+        umount(NEW);
+        return -1;
+    }
+    if (stat("/", &st) != 0) {
+        stage_warn("cannot identify the staging root (%s)", strerror(errno));
+        umount(NEW);
+        return -1;
+    }
+    int initramfs_dev = (int)st.st_dev;
+    stage_say("handing over to the system on %s, in this same boot", root_dev);
+
+    /* THE VARIABLE STORE IS LEFT FOR THE NEW SYSTEM TO MOUNT, THE NORMAL WAY.
+     * Staging mounts efivarfs read-only on purpose and writes through a remount of its
+     * own; /sys goes across in the SAME boot, so on a real install the new system's
+     * first start had a read-only store and "Yes, it all works" was refused ("this
+     * computer would not let AurOS change what it starts", RC1 on real Windows; BT's
+     * aurfirst remounts on EROFS as well). Staging is finished writing by now, so the
+     * mount is dropped and systemd mounts its own, writable, with nosuid/nodev/noexec.
+     * If it is busy it is made writable instead. A BIOS machine has none. fasttest
+     * checks what the new system finds. */
+    if (umount2("/sys/firmware/efi/efivars", 0) == 0) {
+        cleanup.efivars_detached = 1;
+    } else if (errno != EINVAL && errno != ENOENT) {
+        if (mount("efivarfs", "/sys/firmware/efi/efivars", "efivarfs",
+                  MS_REMOUNT, NULL) != 0) {
+            stage_warn("could not make the firmware variable store writable for handover (%s)",
+                       strerror(errno));
+            goto handover_failed;
+        }
+        cleanup.efivars_made_rw = 1;
+    }
+
+    /* securityfs is mounted read-only for staging's lockdown line. AppArmor writes its profiles
+     * there, so leave it for the installed system to mount with its normal flags. */
+    if (umount2("/sys/kernel/security", 0) == 0) {
+        cleanup.securityfs_detached = 1;
+    } else if (errno != EINVAL && errno != ENOENT) {
+        stage_warn("could not unmount staging's securityfs before handover (%s)",
+                   strerror(errno));
+        goto handover_failed;
+    }
+
+    /* Enter the new root before moving any mount. This proves the cwd needed by
+     * wipe_initramfs is available while failure is still fully recoverable. */
+    if (chdir(NEW) != 0) {
+        stage_warn("could not enter the new root (%s)", strerror(errno));
+        goto handover_failed;
+    }
+    reset_network();
+    forget_saved_scratch();
+
+    static const handover_mount CARRY[] = {
+        { "/dev",  "/newroot/dev" },
+        { "/proc", "/newroot/proc" },
+        { "/sys",  "/newroot/sys" },
+        { "/run",  "/newroot/run" },
+    };
+    int moved = handover_move_transaction(CARRY, sizeof CARRY / sizeof CARRY[0],
+                                          carry_move, carry_rollback,
+                                          handover_cleanup_failed, &cleanup);
+    if (moved != 0) {
+        if (moved == -2) reboot_broken_handover();
+        return -1;
+    }
+
+    wipe_initramfs(initramfs_dev, "/", 0);
+    if (mount(".", "/", NULL, MS_MOVE, NULL) != 0) {
+        stage_warn("could not move the new root into place (%s)",
+                   strerror(errno));
+        reboot_broken_handover();
+    }
+    if (chroot(".") != 0) {
+        stage_warn("could not enter the installed filesystem (%s)", strerror(errno));
+        reboot_broken_handover();
+    }
+    if (chdir("/") != 0) {
+        stage_warn("could not enter the installed system's root directory (%s)", strerror(errno));
+        reboot_broken_handover();
+    }
+
+    /* Whatever the installed system uses as PID 1. systemd first
+     * because that is what this image actually ships; the others are
+     * there so a differently-built root is not a dead end. */
+    static const char *INITS[] = {
+        "/sbin/init", "/usr/sbin/init",
+        "/lib/systemd/systemd", "/usr/lib/systemd/systemd", NULL
+    };
+    for (int i = 0; INITS[i]; i++) {
+        if (access(INITS[i], X_OK) != 0) continue;
+        char *const argv[] = { (char *)INITS[i], NULL };
+        execv(INITS[i], argv);
+    }
+    stage_warn("nothing in the new root would start as init");
+    reboot_broken_handover();
+
+handover_failed:
+    if (handover_cleanup_failed(&cleanup) != 0) reboot_broken_handover();
+    return -1;
+}

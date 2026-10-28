@@ -1,0 +1,508 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  aurbridge — build the Windows half of the installer
+#
+#  Two binaries out of one set of sources:
+#
+#    aurbridge.exe          the console tool. `preflight` returns 0 for
+#                           go and 1 for blocked, which CI depends on.
+#    aurbridge-wizard.exe   the thing a person double-clicks.
+#
+#  WHY A SCRIPT RATHER THAN THE COMMENT IT REPLACES. The build line
+#  lived in a comment at the top of wizard.c, which means it was right
+#  until the day somebody added a source file. The phase engine is a
+#  new translation unit and that day is today.
+#
+#    ./build/aurbridge            build both
+#    ./build/aurbridge test       build, then run the console tool
+#                                 under wine as far as wine will go
+# ═══════════════════════════════════════════════════════════════════
+set -eu
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SRC="$ROOT/src/aurbridge"
+OUT="$ROOT/out"
+CC="${CC:-x86_64-w64-mingw32-gcc}"
+
+C_OK=$(printf '\033[38;2;125;211;192m'); C_DIM=$(printf '\033[38;2;110;120;134m')
+C_ERR=$(printf '\033[38;2;242;120;141m'); C_RST=$(printf '\033[0m')
+step() { printf '\n%s▸%s %s\n' "$C_OK" "$C_RST" "$*"; }
+note() { printf '%s   %s%s\n' "$C_DIM" "$*" "$C_RST"; }
+die()  { printf '%s::%s %s\n' "$C_ERR" "$C_RST" "$*" >&2; exit 1; }
+
+command -v "$CC" >/dev/null 2>&1 || die "no $CC — install mingw-w64"
+mkdir -p "$OUT"
+
+# Every .c in the directory except the two that hold a main(). A source
+# file left out of a hand-written list still links, and the checks it
+# was written to perform simply do not happen -- the staging build
+# learned that the expensive way.
+# THE RULE IS IN THE FILE NAMES, so a new source file lands in the
+# right binary without anybody remembering to edit this:
+#
+#   main.c, wizard.c   have a main() of their own
+#   *_win.c            Windows only
+#   *_sim.c, simmain.c the host-side simulation only, never shipped
+#
+# Everything else is shared. A hand-written list is how a file gets
+# left out and the checks in it simply do not happen; a rule is at
+# least wrong in a way somebody can see.
+LIB=""; WINONLY=""; SIMONLY=""
+for f in "$SRC"/*.c; do
+    b=$(basename "$f")
+    case "$b" in
+      main.c|wizard.c)   continue ;;
+      simmain.c|*_sim.c) SIMONLY="$SIMONLY $f"; continue ;;
+      *_win.c)           WINONLY="$WINONLY $f"; continue ;;
+    esac
+    LIB="$LIB $f"
+done
+# AND TWO FILES FROM THE STAGING ENVIRONMENT, compiled into both halves:
+# the partition-table reader and the planner. The fast path lays out the
+# gap on Windows (src/aurbridge/phases.c), and the staging environment
+# checks the same layout after the restart; one source for both is the
+# only way they cannot drift. Both are pure C over buffers (gpt.c keeps
+# its POSIX-only reader behind _WIN32).
+STAGE_SHARED="$ROOT/src/aurstage/gpt.c $ROOT/src/aurstage/plan.c"
+STAGE_INC="-I $ROOT/src/aurstage"
+LIB="$LIB $STAGE_SHARED"
+# AND THE HARDWARE MATCHER (stream HW): hw/lib/hwcompat.c judges the PC's
+# devices against hw/compat.json, which tools/hw/gen-compat.py made from
+# the image. The facts become C here, from the committed JSON, so a build
+# needs python3 (it already does) and no image.
+HWGEN="$OUT/hw"
+python3 -I "$ROOT/tools/hw/gen-header.py" "$HWGEN" \
+    || die "hw/compat.json could not be turned into the matcher's tables"
+LIB="$LIB $ROOT/hw/lib/hwcompat.c"
+STAGE_INC="$STAGE_INC -I $SRC -I $ROOT/hw/lib -I $HWGEN"
+note "shared:$(echo "$LIB" | sed "s|$SRC/||g; s|$ROOT/src/||g")"
+note "windows:$(echo "$WINONLY" | sed "s|$SRC/||g")"
+note "simulated:$(echo "$SIMONLY" | sed "s|$SRC/||g")"
+LIB="$LIB $WINONLY"
+
+# EVERY STOP HAS A SHORT LINE. The page a stopped check lands on shows
+# each problem as one short line and what the installer does about it
+# (src/aurbridge/fix.h). A new check in preflight.c without its line there
+# would fall back to a paragraph; refuse that here instead of noticing
+# on somebody's screen.
+for id in $(grep -o 'add(r, "[a-z0-9-]*", "[A-Z0-9]*", PF_BLOCK' "$SRC/preflight.c" \
+            | cut -d'"' -f2 | sort -u); do
+    grep -q "{ \"$id\"," "$SRC/fix_win.c" \
+        || die "preflight can stop with \"$id\", and fix_win.c has no line for it"
+done
+
+# -municode is NOT used: main.c is a plain main() and the wizard has
+# its own WinMain. Unicode comes from the W-suffixed APIs, which is
+# the only way that works the same on Windows 7 and 11.
+WARN="-Wall -Wextra -Wno-unused-parameter -std=gnu11"
+# ASLR (64-bit), DEP and the stack protector for the two .exe files;
+# checked on the binaries below by tools/checksec.sh (stream S3).
+# shellcheck source=build/cflags
+. "$ROOT/build/cflags"
+
+# ── what this installer carries and where it fetches from ──────────
+#
+# ONE FILE SOMEBODY DOUBLE-CLICKS. It was three: the wizard, plus a
+# kernel and an initramfs that had to be sitting in the same folder,
+# and a person who downloads one of three and double-clicks it is told
+# "the copy of AurOS to install could not be found" -- a true sentence
+# about a mistake we made.
+#
+# The staging environment is about 28 MB, which is an ordinary size for
+# an installer, so it goes INSIDE the executable as a PE resource --
+# the mechanism Authenticode already covers, so carrying a payload and
+# being signed do not fight. The image is five gigabytes and does not
+# go inside anything, so its address and its hash are baked in instead
+# and the installer downloads it, resuming.
+#
+# Both are optional here. A developer build with neither produces the
+# arrangement this product had before -- everything beside the exe --
+# and says so; AUROS_RELEASE=1 refuses that, because an installer that
+# tells a stranger to go and find two more files is not the product.
+KERNEL="${AUROS_STAGING_KERNEL:-$OUT/auros-staging-vmlinuz}"
+INITRD="${AUROS_STAGING_INITRD:-$OUT/auros-staging.img}"
+# The signed way in: see build/staging and phase_handoff in phases.c.
+SHIMEFI="${AUROS_STAGING_SHIM:-$OUT/auros-staging-shimx64.efi}"
+GRUBEFI="${AUROS_STAGING_GRUB:-$OUT/auros-staging-grubx64.efi}"
+MOKMEFI="${AUROS_STAGING_MOKMGR:-$OUT/auros-staging-mmx64.efi}"
+IMGDEF=""
+# THE FAST PATH, off until it is proven end to end (docs/AURBRIDGE.md, "Fast
+# path: status"). AUROS_FASTPATH=1 builds the installer with it ON: Windows
+# makes the room, AurOS is written into it while the image downloads, the
+# Ready page offers the Wi-Fi tick and says the drive lock is paused for one
+# restart (D10, D11). The real-Windows e2e builds this way to prove it; the
+# default flips when that is green.
+if [ "${AUROS_FASTPATH:-0}" = 1 ]; then
+    IMGDEF="$IMGDEF -DAUROS_FASTPATH"
+    note "the fast path is ON in this build"
+fi
+[ -n "${AUROS_IMAGE_URL:-}" ] && \
+    IMGDEF="$IMGDEF -DAUROS_IMAGE_URL=\"$AUROS_IMAGE_URL\""
+[ -n "${AUROS_IMAGE_SHA256:-}" ] && \
+    IMGDEF="$IMGDEF -DAUROS_IMAGE_SHA256=\"$AUROS_IMAGE_SHA256\""
+[ -n "${AUROS_IMAGE_BYTES:-}" ] && \
+    IMGDEF="$IMGDEF -DAUROS_IMAGE_BYTES=${AUROS_IMAGE_BYTES}ULL"
+
+# ── where the image is published in pieces ─────────────────────────
+#
+# AUROS_IMAGE_PIECES names a piece list (src/aurbridge/phases.h has the
+# format). It is baked into the wizard as a C string in a generated
+# header, and the header is written on EVERY build -- empty when there
+# is no list -- so a list from yesterday's build cannot ride along in
+# today's. The characters are checked first: this text becomes C source.
+BAKED="$OUT/aurbridge-baked.h"
+{
+    printf '/* generated by build/aurbridge; do not edit */\n'
+    printf '#define AUROS_PIECES_TEXT \\\n'
+    if [ -n "${AUROS_IMAGE_PIECES:-}" ]; then
+        [ -f "$AUROS_IMAGE_PIECES" ] || die "AUROS_IMAGE_PIECES=$AUROS_IMAGE_PIECES is not a file"
+        if LC_ALL=C grep -q '[^A-Za-z0-9 ._:/#,+-]' "$AUROS_IMAGE_PIECES"; then
+            die "the piece list has characters in it that do not belong in an
+     address, a file name or a hash; refusing to bake it into C"
+        fi
+        [ -n "${AUROS_IMAGE_SHA256:-}" ] && [ -n "${AUROS_IMAGE_BYTES:-}" ] \
+            || die "AUROS_IMAGE_PIECES is set without AUROS_IMAGE_SHA256 and
+     AUROS_IMAGE_BYTES. The pieces are checked one by one; what they unpack
+     to is checked against those two, and without them it would not be."
+        while IFS= read -r line; do printf '    "%s\\n" \\\n' "$line"; done \
+            < "$AUROS_IMAGE_PIECES"
+    fi
+    printf '    ""\n'
+} > "$BAKED"
+
+# ── which Microsoft key the shim is signed with ────────────────────
+#
+# Preflight asks the firmware's db whether it trusts that key before
+# anything is changed (src/aurbridge/sbdb.h): a Secured-core PC that
+# trusts only Windows would otherwise refuse shim at the restart and
+# install nothing. The names are read off the shim itself, so a shim
+# signed with Microsoft's 2023 key is checked for that key.
+SHIM_CAS=""
+if [ -f "$SHIMEFI" ] && command -v sbverify >/dev/null 2>&1; then
+    SHIM_CAS=$(sbverify --list "$SHIMEFI" 2>/dev/null |
+        sed -n 's|^ *- subject: .*/CN=\(Microsoft[^/]*UEFI CA[^/]*\)$|\1|p' | sort -u)
+fi
+if [ -n "$SHIM_CAS" ] && printf '%s\n' "$SHIM_CAS" | LC_ALL=C grep -q '[^A-Za-z0-9 .-]'; then
+    die "the shim's signer has a name this build will not put into C: $SHIM_CAS"
+fi
+{
+    printf '#define AUROS_SHIM_CAS \\\n'
+    # "if", not "[ ] &&": as the loop's last command a false test is the
+    # loop's status, and under set -e an empty list (no shim, a developer
+    # build) ended the whole build here without a word.
+    printf '%s\n' "$SHIM_CAS" | while IFS= read -r ca; do
+        if [ -n "$ca" ]; then printf '    "%s\\n" \\\n' "$ca"; fi
+    done
+    printf '    ""\n'
+} >> "$BAKED"
+if [ -n "$SHIM_CAS" ]; then
+    note "Secure Boot: preflight checks the firmware trusts $(printf '%s' "$SHIM_CAS" | tr '\n' ',' | sed 's/,$//')"
+elif [ "${AUROS_RELEASE:-0}" = 1 ]; then
+    die "cannot tell which Microsoft key $SHIMEFI is signed with (is sbverify
+     installed?), so preflight could not check a Secure Boot PC trusts it"
+else
+    note "Secure Boot: no signed shim to read; a PC with it on is refused"
+fi
+[ -n "${AUROS_IMAGE_PIECES:-}" ] && \
+    note "the image is fetched in $(grep -c '^piece ' "$AUROS_IMAGE_PIECES") pieces"
+
+# ── the website the wizard names (src/aurbridge/fix_win.c) ─────────
+# From the repository this installer is built for (tools/repo.sh:
+# AUROS_REPO, else GITHUB_REPOSITORY, else the origin remote), so moving
+# to another repository edits nothing here. tools/repo.sh lets through
+# only the characters of a GitHub owner and name, so it is safe as C.
+SITE_HOST=$(sh "$ROOT/tools/repo.sh" host) \
+    || die "cannot tell which repository this installer is for; set AUROS_REPO=owner/name"
+printf '#define AUROS_SITE_W L"%s"\n' "$SITE_HOST" >> "$BAKED"
+note "the website it names: $SITE_HOST"
+
+# ── the put-back script, into a header (src/aurbridge/putback.ps1) ──
+# The startup task runs it from %ProgramData%\AurOS; the installer carries it
+# as bytes. od, not xxd: it is in every POSIX userland.
+{
+    printf 'static const unsigned char PUTBACK_PS1[] = {\n'
+    od -An -v -tu1 "$SRC/putback.ps1" | sed 's/^ *//; s/  */,/g; s/$/,/'
+    printf '0};\nstatic const unsigned PUTBACK_PS1_LEN = sizeof PUTBACK_PS1 - 1;\n'
+} > "$OUT/aurbridge-putback.h"
+
+PAYLOAD_OBJ=""
+if [ -f "$KERNEL" ] && [ -f "$INITRD" ]; then
+    step "the staging environment, into the executable"
+    RC="$OUT/aurbridge-payload.rc"
+    # windres reads the file names out of the .rc, so they are written
+    # as absolute paths and the ids are the two plat.h knows about.
+    # RCDATA is 10; naming it numerically means nothing has to agree
+    # about a string.
+    {
+        printf '1 10 "%s"\n' "$KERNEL"
+        printf '2 10 "%s"\n' "$INITRD"
+        if [ -f "$SHIMEFI" ] && [ -f "$GRUBEFI" ]; then
+            printf '3 10 "%s"\n' "$SHIMEFI"
+            printf '4 10 "%s"\n' "$GRUBEFI"
+            [ -f "$MOKMEFI" ] && printf '5 10 "%s"\n' "$MOKMEFI"
+        fi
+    } > "$RC"
+    if [ -f "$SHIMEFI" ] && [ -f "$GRUBEFI" ]; then
+        # A shim somebody other than Microsoft signed is a shim no
+        # firmware with Secure Boot on will start. Asked of the file,
+        # when there is something to ask with.
+        if command -v sbverify >/dev/null 2>&1; then
+            sbverify --list "$SHIMEFI" 2>/dev/null | grep -q 'Microsoft' \
+                || die "$SHIMEFI is not signed by Microsoft; it would not start
+     on a machine with Secure Boot on"
+        fi
+        note "and the signed shim and grub that start it with Secure Boot on"
+    elif [ "${AUROS_RELEASE:-0}" = 1 ]; then
+        die "no signed shim and grub to carry (run ./build/staging), so the
+     installer would not start on a machine with Secure Boot on"
+    else
+        note "NOT carried: signed shim and grub. This build works only with"
+        note "Secure Boot off; a release build refuses to be made this way."
+    fi
+    WINDRES="${WINDRES:-x86_64-w64-mingw32-windres}"
+    command -v "$WINDRES" >/dev/null 2>&1 \
+        || die "no $WINDRES — install mingw-w64 (binutils)"
+    "$WINDRES" -O coff -i "$RC" -o "$OUT/aurbridge-payload.o" \
+        || die "the staging environment could not be put into the installer"
+    PAYLOAD_OBJ="$OUT/aurbridge-payload.o"
+    note "$(du -h "$KERNEL" | cut -f1) kernel + $(du -h "$INITRD" | cut -f1) initramfs"
+else
+    note "no staging environment to embed (run ./build/staging first)"
+fi
+
+# ── the wizard's manifest: ask for administrator rights up front ────
+# requireAdministrator, because every check preflight makes reads the raw
+# disk and the firmware, and without it a double-click landed on a refusal
+# page whose remedy was "right-click and choose Run as administrator": a
+# step the people this is for do not know exists. With it, Windows asks
+# the ordinary "do you want to allow this app" question before the window
+# opens. supportedOS names 7 through 11, so that Windows does not run the
+# program under compatibility shims for an older version.
+#
+# The manifest carries no comments. Everything in it ships byte for byte,
+# and the one it had held "--", which XML forbids inside a comment: on
+# the first real Windows PC the wizard would not start at all ("its
+# side-by-side configuration is incorrect"), while Wine loaded it without
+# a murmur. So it is checked strictly here, and again inside the .exe
+# once it is linked (tools/pe_payload.py check; tools/manifesttest.sh).
+#
+# The console tool is left without one: it is what CI and a person at a
+# prompt run, and preflight already says plainly when it is not elevated.
+WINDRES="${WINDRES:-x86_64-w64-mingw32-windres}"
+MANIFEST_OBJ=""
+python3 "$ROOT/tools/pe_payload.py" check "$SRC/aurbridge.manifest" >/dev/null \
+    || die "the wizard's manifest is one Windows would refuse; the wizard would not start"
+# WITH IT, ITS NAME AND ITS ICON (src/aurbridge/aurbridge-info.rc): what
+# SmartScreen, the administrator question and the Downloads folder show
+# before it runs. AUROS_VERSION=x.y.z sets the version they show.
+VER="${AUROS_VERSION:-0.1.0}"
+case "$VER" in
+    [0-9]*.[0-9]*.[0-9]*) ;;
+    *) die "AUROS_VERSION=$VER is not x.y.z" ;;
+esac
+VMAJ=$(echo "$VER" | cut -d. -f1); VMIN=$(echo "$VER" | cut -d. -f2)
+VPAT=$(echo "$VER" | cut -d. -f3 | sed 's/[^0-9].*//')
+# THE LICENCES AND THE TERMS TRAVEL INSIDE THE .EXE (LIC-3, LIA-1; stream
+# LEGAL, docs/handoff/streams/LEGAL.md item 7): RCDATA 200 is the licences
+# and notices, 202 the Terms, both UTF-8, shown by the Licenses button and
+# by "Read the Terms" with no internet. docs/legal/notices/ is generated
+# (python3 tools/legal/notices.py). The releases address is stamped into
+# the notices here, from tools/repo.sh like every other address, and a
+# placeholder left behind refuses the build: a licence text that names no
+# place to get the source is a text that breaks the offer it makes.
+NOTICES_SRC="$ROOT/docs/legal/notices"
+for f in NOTICES.txt TERMS.txt; do
+    [ -s "$NOTICES_SRC/$f" ] || die "docs/legal/notices/$f is missing or empty (python3 tools/legal/notices.py makes it)"
+done
+_rel=$(sh "$ROOT/tools/repo.sh" releases) \
+    || die "tools/repo.sh has no releases address to stamp into the licence text"
+sed "s|@AUROS_RELEASES@|$_rel|g" "$NOTICES_SRC/NOTICES.txt" > "$OUT/auros-notices.txt"
+cp "$NOTICES_SRC/TERMS.txt" "$OUT/auros-terms.txt"
+if grep -q '@AUROS_' "$OUT/auros-notices.txt" "$OUT/auros-terms.txt"; then
+    die "the licence text still has an unstamped @AUROS_ placeholder (build/aurbridge stamps only @AUROS_RELEASES@)"
+fi
+if command -v "$WINDRES" >/dev/null 2>&1; then
+    printf '1 24 "%s"\n#include "aurbridge-info.rc"\n' "$SRC/aurbridge.manifest" \
+        > "$OUT/aurbridge-manifest.rc"
+    "$WINDRES" -O coff --include-dir "$SRC" --include-dir "$OUT" \
+        -DAUROS_VER_MAJOR="$VMAJ" -DAUROS_VER_MINOR="$VMIN" -DAUROS_VER_PATCH="${VPAT:-0}" \
+        -DAUROS_VER_STR="\\\"$VER\\\"" \
+        -i "$OUT/aurbridge-manifest.rc" -o "$OUT/aurbridge-manifest.o" \
+        || die "the wizard's manifest, name and icon would not build"
+    MANIFEST_OBJ="$OUT/aurbridge-manifest.o"
+elif [ "${AUROS_RELEASE:-0}" = 1 ]; then
+    die "no $WINDRES, so the wizard would not ask for administrator rights"
+fi
+
+step "aurbridge.exe (console)"
+# shellcheck disable=SC2086
+$CC -O2 $HARDEN_PE $WARN $IMGDEF -I "$OUT" $STAGE_INC -o "$OUT/aurbridge.exe" "$SRC/main.c" $LIB $PAYLOAD_OBJ \
+    -lsetupapi -lcfgmgr32 \
+    || die "the console tool did not build"
+note "$(du -h "$OUT/aurbridge.exe" | cut -f1)"
+
+step "aurbridge-wizard.exe"
+# shellcheck disable=SC2086
+$CC -O2 $HARDEN_PE $WARN $IMGDEF -I "$OUT" $STAGE_INC -mwindows -o "$OUT/aurbridge-wizard.exe" \
+    "$SRC/wizard.c" $LIB $PAYLOAD_OBJ $MANIFEST_OBJ \
+    -lgdi32 -lcomctl32 -lsetupapi -lcfgmgr32 \
+    -loleaut32 -lole32 -luuid \
+    || die "the wizard did not build"
+note "$(du -h "$OUT/aurbridge-wizard.exe" | cut -f1)"
+if [ -n "$MANIFEST_OBJ" ]; then
+    python3 "$ROOT/tools/pe_payload.py" check "$OUT/aurbridge-wizard.exe" >/dev/null \
+        || die "the manifest inside aurbridge-wizard.exe is one Windows would refuse"
+    note "manifest inside the .exe checked: Windows can load it"
+fi
+
+CS=$(sh "$ROOT/tools/checksec.sh" "$OUT/aurbridge.exe" "$OUT/aurbridge-wizard.exe" 2>&1) \
+    || { printf '%s\n' "$CS" >&2; die "the installer was built without ASLR or DEP (above)"; }
+note "ASLR + DEP checked on both .exe files"
+
+# ONLY WINDOWS' OWN DLLs. A .exe that imports a DLL no PC has does not
+# start ("libssp-0.dll was not found"): a hardening flag once did that
+# to both. Every import must be one of these.
+OBJDUMP="${OBJDUMP:-x86_64-w64-mingw32-objdump}"
+WINDLLS='advapi32|bcrypt|cfgmgr32|comctl32|crypt32|dwmapi|gdi32|kernel32|msvcrt|ole32|oleacc|oleaut32|psapi|setupapi|shell32|shlwapi|user32|uxtheme|version|winhttp|ws2_32'
+if command -v "$OBJDUMP" >/dev/null 2>&1; then
+    for exe in "$OUT/aurbridge.exe" "$OUT/aurbridge-wizard.exe"; do
+        BAD=$("$OBJDUMP" -p "$exe" | sed -n 's/^[[:space:]]*DLL Name: //p' | tr 'A-Z' 'a-z' |
+              sed 's/[.]dll$//' | grep -vxE "$WINDLLS" | tr '\n' ' ')
+        [ -z "$BAD" ] || die "$(basename "$exe") needs DLLs no Windows PC has: $BAD"
+    done
+    note "both .exe files use only Windows' own DLLs"
+elif [ "${AUROS_RELEASE:-0}" = 1 ]; then
+    die "no $OBJDUMP to check which DLLs the installer needs"
+fi
+
+# NO BARE LoadLibrary (SEC-003). A DLL named without a folder is looked for in
+# the program's own folder before System32, and the program runs as
+# administrator from Downloads. Every load by name goes through
+# plat_load_system_dll() (src/aurbridge/plat_win.c: System32 only), the one
+# place a LoadLibrary call may stand; a new bare call is refused here, before
+# it can ship. (Which DLLs the .exe is LINKED against is the KnownDLLs gate in
+# .github/workflows/fastpath.yml; that is a different hole and not repeated.)
+BARE=$(awk '
+    FNR == 1 { skip = 0 }
+    /^void \*plat_load_system_dll\(/ { skip = 1 }
+    skip { if ($0 ~ /^}/) skip = 0; next }
+    /^[[:space:]]*(\/\*|\*|\/\/)/ { next }
+    /LoadLibrary(Ex)?[AW]?[[:space:]]*\(|LoadPackagedLibrary/ { print FILENAME ":" FNR ": " $0 }
+' "$SRC"/*.c "$SRC"/*.h)
+[ -z "$BARE" ] || { printf '%s\n' "$BARE" >&2; die "a DLL is loaded by name outside plat_load_system_dll() (SEC-003)"; }
+note "no program text loads a DLL by a bare name"
+
+# ── the host-side simulation ───────────────────────────────────────
+#
+# out/aurbridge-sim runs the SAME phase engine against a computer made
+# of files, so that the memory stick and the journal the installer is
+# tested with are the ones AurBridge produces rather than ones a test
+# wrote to match. It is built with the host compiler and is never
+# shipped -- and the build refuses to put a simulated platform into a
+# Windows binary, which is the one way this could go badly wrong.
+step "aurbridge-sim (not shipped)"
+HOSTCC="${HOSTCC:-cc}"
+if command -v "$HOSTCC" >/dev/null 2>&1; then
+    SIMLIB=""
+    for f in "$SRC"/format.c "$SRC"/phases.c "$SRC"/bootargs.c "$SRC"/inflate.c "$SRC"/sbdb.c; do SIMLIB="$SIMLIB $f"; done
+    SIMLIB="$SIMLIB $STAGE_SHARED"
+    # shellcheck disable=SC2086
+    $HOSTCC -O2 $WARN -I "$OUT" $STAGE_INC -o "$OUT/aurbridge-sim" $SIMLIB $SIMONLY \
+        || die "the simulation did not build"
+    note "$(du -h "$OUT/aurbridge-sim" | cut -f1)"
+else
+    note "no host compiler; skipped"
+fi
+
+# And the gate: no simulated platform may be inside anything shipped.
+for exe in "$OUT/aurbridge.exe" "$OUT/aurbridge-wizard.exe"; do
+    if strings "$exe" 2>/dev/null | grep -q 'a simulated computer made of files'; then
+        die "$(basename "$exe") contains the simulated platform. A shipped
+     binary that can pretend to write to a disk is the worst thing in
+     this tree; refusing to publish it."
+    fi
+done
+note "neither shipped binary contains the simulation"
+
+# ── the name on the front ──────────────────────────────────────────
+#
+# SmartScreen puts a full-screen panel in front of an unsigned
+# executable downloaded from the internet, and its only visible button
+# says "Don't run". For this product that is not a rough edge: it is
+# the people it was built for being unable to start it, and the people
+# who get past it having just been taught to ignore a warning before
+# handing a program their whole disk.
+#
+# UNSIGNED BY THE OWNER'S DECISION (2026-10-23: no keys, no
+# certificates, no Microsoft services). A release used to refuse to be
+# built without a signature; it no longer does, because there will not
+# be one. The person is shown the clicks past the warnings instead
+# (docs/SIGNING.md). If signing material is ever configured, build/sign
+# still signs and verifies, release or not.
+# ── what a release must carry ──────────────────────────────────────
+step "checking what this installer carries"
+if [ -n "$PAYLOAD_OBJ" ]; then
+    note "the staging environment is inside both binaries"
+elif [ "${AUROS_RELEASE:-0}" = 1 ]; then
+    die "this is a release build and the installer carries no staging
+     environment, so it would tell a stranger to go and find two more
+     files. Run ./build/staging first."
+else
+    note "NOT carried: a release build will refuse this"
+fi
+if [ -n "${AUROS_IMAGE_PIECES:-}" ]; then
+    note "it will fetch the image in pieces from $(sed -n 's/^base //p' "$AUROS_IMAGE_PIECES" | head -1)"
+elif [ -n "${AUROS_IMAGE_URL:-}" ]; then
+    [ -n "${AUROS_IMAGE_SHA256:-}" ] \
+        || die "AUROS_IMAGE_URL is set and AUROS_IMAGE_SHA256 is not.
+     An installer that downloads five gigabytes and cannot say what they
+     should be is an installer that will write anything it is handed."
+    # AND HOW BIG IT WILL BE, because phase 0 asks whether the memory
+    # stick is large enough before there is a file to measure. Without
+    # this it guesses six gigabytes and then quotes the guess to the
+    # user in megabytes -- so somebody with a stick between the real
+    # figure and the guess is told, precisely and falsely, to go and
+    # buy a larger one.
+    [ -n "${AUROS_IMAGE_BYTES:-}" ] \
+        || die "AUROS_IMAGE_URL is set and AUROS_IMAGE_BYTES is not.
+     Phase 0 has to know how much room the memory stick needs before the
+     image has been downloaded, and a guess is a refusal with a number
+     in it that is not true."
+    note "it will fetch the image from $AUROS_IMAGE_URL"
+elif [ "${AUROS_RELEASE:-0}" = 1 ]; then
+    die "this is a release build and no AUROS_IMAGE_URL was given, so
+     the installer would expect a five gigabyte file to be sitting
+     beside it. Set AUROS_IMAGE_URL and AUROS_IMAGE_SHA256."
+else
+    note "no image address: it will expect one beside itself"
+fi
+
+step "signing"
+if sh "$ROOT/build/sign" --configured 2>/dev/null; then
+    sh "$ROOT/build/sign" "$OUT/aurbridge.exe" "$OUT/aurbridge-wizard.exe" \
+        || die "the installer could not be signed"
+else
+    note "unsigned, by design: AurOS ships without a code-signing key"
+    note "(docs/SIGNING.md says what the person sees and clicks)"
+fi
+
+if [ "${1:-}" = "test" ]; then
+    step "self-test"
+    # WHAT WINE CAN AND CANNOT SAY. It has no real disks, no BitLocker,
+    # no BCD store and no firmware variables, so a preflight run under
+    # it exercises the parsing, the report and the exit-code contract
+    # and nothing about a real machine. That is still worth running on
+    # every build: it is the difference between "it compiles" and "it
+    # starts".
+    if command -v wine >/dev/null 2>&1; then
+        WINEDEBUG=-all wine "$OUT/aurbridge.exe" selftest 2>/dev/null \
+            && note "selftest passed under wine" \
+            || note "selftest did not pass under wine (it may need a real machine)"
+    else
+        note "no wine here; skipped"
+    fi
+    # The part that does not need a machine at all, and is where the
+    # bytes both halves depend on are actually checked.
+    sh "$ROOT/tools/bridgetest.sh" || die "the two halves disagree"
+fi
+
+printf '\n%s::%s %s\n' "$C_OK" "$C_RST" "$OUT/aurbridge.exe, $OUT/aurbridge-wizard.exe"

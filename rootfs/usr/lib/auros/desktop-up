@@ -1,0 +1,36 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  desktop-up SECONDS — returns once the desktop has been running for
+#  that long, without restarting. The one answer to "has this start
+#  worked?" that auros-boot-ok (a kernel and a desktop that can be
+#  trusted) and auros-keeper (what the next start is) both ask.
+#
+#  Not "the kernel booted" and not "multi-user.target was reached": a
+#  start that shows her nothing is a failed start. aurshell.service
+#  active for that long since it last (re)started is the best proof
+#  there is without the shell telling us; a crash loop never gets there.
+#  A system with no aurshell.service (a server image) is up when it has
+#  been up that long.
+#
+#  Never returns on a desktop that does not come up: callers are
+#  services that simply stay waiting, which costs nothing.
+# ═══════════════════════════════════════════════════════════════════
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+N=${1:-120}
+SHELLUNIT=${AUROS_SHELL_UNIT:-aurshell.service}
+have_shell=yes
+systemctl cat "$SHELLUNIT" >/dev/null 2>&1 || have_shell=no
+while :; do
+    up=$(cut -d. -f1 /proc/uptime)
+    if [ "$have_shell" = yes ]; then
+        if [ "$(systemctl show -p ActiveState --value "$SHELLUNIT" 2>/dev/null)" = active ]; then
+            since=$(systemctl show -p ActiveEnterTimestampMonotonic --value "$SHELLUNIT" 2>/dev/null)
+            since=$(( ${since:-0} / 1000000 ))
+            [ $(( up - since )) -ge "$N" ] && exit 0
+        fi
+    else
+        [ "$up" -ge "$N" ] && exit 0
+    fi
+    sleep 5
+done

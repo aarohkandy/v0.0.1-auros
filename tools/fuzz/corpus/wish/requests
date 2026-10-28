@@ -1,0 +1,10 @@
+{"id":1,"op":"hello"}
+{"id":2,"op":"consent","version":1}
+{"id":3,"op":"list"}
+{"op":"typed","word":"potato"}
+{"id":4,"op":"today"}
+{"op":"app","app":"firefox"}
+{"op":"hold","reasons":["password","call"]}
+{"id":5,"op":"all_off"}
+{"id":6,"op":"undo"}
+{"id":7,"op":"wish","said":"x"}

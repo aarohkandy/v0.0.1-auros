@@ -1,0 +1,14 @@
+atkinson-next-400.woff2, -700.woff2, -800.woff2
+
+Atkinson Hyperlegible Next, version 2.001 (Regular, Bold, ExtraBold), by the
+Atkinson Hyperlegible Next Project Authors, for the Braille Institute:
+https://github.com/googlefonts/atkinson-hyperlegible-next (commit 7925f50).
+SIL Open Font License 1.1: see OFL.txt.
+
+Changes, made by tools/site/plainzero.py:
+- the zero is drawn without its slash (the outline of the capital O, narrowed
+  to the zero's width), because a slashed zero reads as a strange letter in
+  "10 to 25 minutes";
+- subset to Latin-1, Latin Extended-A and the punctuation the website uses;
+- WOFF2.
+Nothing else is changed.

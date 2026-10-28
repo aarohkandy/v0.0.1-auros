@@ -1,0 +1,21 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  keeper — keep this computer coming back to AurOS, once AurOS works
+#
+#  Waits until the desktop has been running for AUROS_KEEPER_SECS
+#  (default 30), then `aurfirst hold`:
+#    - while she has not answered "does it work?", the next start
+#      reaches AurOS once more (BootNext);
+#    - once she said it works, and something has put Windows first
+#      again, AurOS goes back to the front of the start-up list.
+#  It used to run BEFORE the desktop existed, so a desktop that never
+#  appeared (graphics, a bad update) re-armed the way back into AurOS on
+#  every start, and the only way out was a menu she could not use
+#  (docs/safety/FINDINGS.md S-05, S-06). Now a start that did not reach
+#  a working desktop arms nothing, and the next start is Windows.
+#
+#  AUROS_KEEPER_SECS is for tools/firstboottest.sh and nothing else.
+# ═══════════════════════════════════════════════════════════════════
+LIB=${AUROS_LIB:-/usr/lib/auros}
+"$LIB/desktop-up" "${AUROS_KEEPER_SECS:-30}" || exit 1
+exec /usr/sbin/aurfirst hold

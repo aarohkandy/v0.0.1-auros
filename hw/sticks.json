@@ -1,0 +1,121 @@
+{
+  "_about": "The USB Wi-Fi sticks AurOS tells people to buy. A stick is listed only if its CHIP has a driver in the kernel of the AurOS image AND in the newer (HWE) kernel, with the firmware that driver needs in the image: tools/hw/sticks.py checks every id below against hw/compat.json and hw/compat-hwe-wifi.json, writes the list into website/advanced.html (#wifi-sticks) and fails if any page, sentence or help text recommends a stick without naming a chip from this file. Products are examples from public lists of Linux-friendly sticks (morrownr's 'Plug and Play' list on GitHub, and hardware databases for the MT7601U ones); makers change the chip inside a model between versions, so the page tells the reader to buy by the chip and to check the version. NEVER list the Realtek RTL8811AU/8812AU/8821AU/8814AU sticks (see 'avoid'). 'tried' is false until the lab (docs/results/hardware/CAMPAIGN.md, the three sticks) has run each chip in AurOS; the page says so while it is false.",
+  "page": "advanced.html#wifi-sticks",
+  "data": {
+    "image": "hw/compat.json",
+    "hwe": "hw/compat-hwe-wifi.json"
+  },
+  "tried": false,
+  "chips": [
+    {
+      "id": "mt7612u",
+      "name": "MediaTek MT7612U",
+      "aliases": [],
+      "module": "mt76x2u",
+      "what": "fast: 2.4 and 5 GHz, USB 3, \"AC1200\"",
+      "ids": [
+        "0e8d:7612",
+        "0846:9053"
+      ],
+      "products": [
+        {
+          "name": "ALFA AWUS036ACM",
+          "id": null
+        },
+        {
+          "name": "Panda Wireless PAU0D",
+          "id": null
+        },
+        {
+          "name": "NETGEAR A6210",
+          "id": "0846:9053"
+        }
+      ]
+    },
+    {
+      "id": "mt7921au",
+      "name": "MediaTek MT7921AU",
+      "aliases": [
+        "MT7921"
+      ],
+      "module": "mt7921u",
+      "what": "newest: Wi-Fi 6 and 6E, 2.4 and 5 GHz, \"AX1800\" or \"AXE3000\"",
+      "ids": [
+        "0e8d:7961",
+        "0846:9060",
+        "0846:9065",
+        "35bc:0107"
+      ],
+      "products": [
+        {
+          "name": "ALFA AWUS036AXML",
+          "id": "0e8d:7961"
+        },
+        {
+          "name": "NETGEAR A8000 (the AXE3000 one)",
+          "id": "0846:9060"
+        },
+        {
+          "name": "EDUP EP-AX1672",
+          "id": "0e8d:7961"
+        },
+        {
+          "name": "Fenvi FU-AX1800, only the one whose listing says MT7921 (Fenvi also sells a look-alike with a Realtek chip)",
+          "id": "0e8d:7961"
+        }
+      ]
+    },
+    {
+      "id": "mt7610u",
+      "name": "MediaTek MT7610U",
+      "aliases": [],
+      "module": "mt76x0u",
+      "what": "medium: 2.4 and 5 GHz, USB 2, \"AC600\"",
+      "ids": [
+        "0e8d:7610",
+        "148f:761a"
+      ],
+      "products": [
+        {
+          "name": "ALFA AWUS036ACHM",
+          "id": null
+        },
+        {
+          "name": "Panda Wireless PAU0B",
+          "id": null
+        }
+      ]
+    },
+    {
+      "id": "mt7601u",
+      "name": "MediaTek MT7601U",
+      "aliases": [],
+      "module": "mt7601u",
+      "what": "plain and cheap: 2.4 GHz only, \"N150\"",
+      "ids": [
+        "148f:7601",
+        "2001:3d04",
+        "0b05:17d3"
+      ],
+      "products": [
+        {
+          "name": "TP-Link TL-WN727N, version 4 only",
+          "id": "148f:7601"
+        },
+        {
+          "name": "D-Link DWA-127, revision B1 only",
+          "id": "2001:3d04"
+        },
+        {
+          "name": "ASUS USB-N10, version 2 only",
+          "id": "0b05:17d3"
+        }
+      ]
+    }
+  ],
+  "avoid": {
+    "chips": "Realtek RTL8811AU, RTL8812AU, RTL8821AU and RTL8814AU",
+    "examples": "the TP-Link Archer T2U Nano and many cheap \"AC600\" and \"AC1200\" sticks",
+    "why": "their drivers are very new in the kernel and have not been tried on AurOS"
+  }
+}

@@ -1,0 +1,167 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  ferry-files — bring the user's documents across, and never lie about
+#  what came.
+#
+#  This is where a migration is trusted or not. The failure mode we
+#  refuse to have is the invisible one: a filename appears in the new
+#  Documents folder and the user believes the file is there, when in
+#  fact only a OneDrive placeholder was copied (a stub, or an I/O error
+#  turned into a zero-byte file). The spec calls this "the #1 invisible
+#  data-loss path", and everything below is built around not taking it.
+#
+#  Two rules, both absolute:
+#    1. NEVER assume \Users\<name>\Documents. The location of every
+#       known folder is resolved from the User Shell Folders registry
+#       key, because OneDrive's "back up your folders" silently moves
+#       Desktop/Documents/Pictures into the sync root. (Resolution lives
+#       in ferry-common.sh:resolve_known_folder and is shared with
+#       detect so the two never disagree.)
+#    2. NEVER silently copy a stub, NEVER silently skip one. Every file
+#       is classified by ferry-winattr BEFORE it is copied. Hydrated
+#       files are copied; placeholders, reparse points, encrypted files
+#       and anything ambiguous are LISTED in the report, by name, with
+#       what they are — so the user can hydrate them in OneDrive and
+#       run Ferry again, or knows exactly what did not come.
+#
+#  Idempotent and resumable: safe_copy writes through a temp file and
+#  never overwrites; a re-run copies only what is missing. Progress is
+#  emitted per file so the UI has a live bar.
+#
+#    ferry-files                 import into the XDG dirs
+#    ferry-files --only Pictures import one folder
+#    ferry-files --dry-run       classify and report, copy nothing
+#    ferry-files --include-onedrive   also traverse into the sync root
+# ═══════════════════════════════════════════════════════════════════
+set -eu
+. "$(dirname "$0")/ferry-common.sh"
+
+ONLY=""
+INCLUDE_ONEDRIVE=0
+
+while [ $# -gt 0 ]; do
+    common_opt "$@"
+    if [ "${_consumed:-0}" -gt 0 ]; then shift "$_consumed"; continue; fi
+    case $1 in
+        --only) ONLY=${2:?--only needs a folder label}; shift 2 ;;
+        --include-onedrive) INCLUDE_ONEDRIVE=1; shift ;;
+        -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) die "unknown option '$1'" ;;
+    esac
+done
+
+[ -n "$FERRY_ROOT" ] || die "ferry-files needs a mounted Windows volume (--root)"
+stage_begin files
+require_clean_volume "$FERRY_ROOT" "$FERRY_DEV"
+resolve_target
+select_profile || die "could not identify which Windows profile to import (pass --user NAME)"
+say "importing files for '$_WIN_USERNAME' -> $FERRY_HOME"
+# Remembered, so that "Put Windows back" saves her new files into the
+# same Windows user's folder (ferry-back).
+[ "$FERRY_DRYRUN" = 1 ] || printf '%s\n' "$_WIN_USERNAME" > "$FERRY_STATE/winuser"
+
+# Who the files are for: ferry-copy becomes this user before it opens
+# anything in her home, so root never writes there.
+AS=$(copy_as)
+
+# Every folder that resolved becomes one job for ONE ferry-copy run, so
+# the total is known before the first byte moves and the time left she
+# is shown covers all six folders, not the current one.
+_skipped=0     # a folder she would expect that could not be brought
+set --
+while IFS='|' read -r _label _val _xdg _def; do
+    [ -n "$_label" ] || continue
+    [ -z "$ONLY" ] || [ "$ONLY" = "$_label" ] || continue
+
+    _r=$(resolve_known_folder "$_val" "$_def")
+    _status=$(printf '%s' "$_r" | cut -f1)
+    _src=$(printf '%s' "$_r" | cut -f2)
+    _raw=$(printf '%s' "$_r" | cut -f4)
+
+    case "$_status" in
+        ok) : ;;
+        off-volume)
+            note files skipped "$_label" \
+                "Windows kept this folder on another drive ('$_raw'), which is not part of this computer's disk. Copy it across by hand."
+            _skipped=1
+            continue ;;
+        unc)
+            note files skipped "$_label" \
+                "Windows kept this folder on a network drive ('$_raw'). Copy it across by hand."
+            _skipped=1
+            continue ;;
+        unresolved)
+            note files skipped "$_label" \
+                "Windows says this folder is at '$_raw', which AurOS could not find on this computer. Copy it across by hand if you need it."
+            _skipped=1
+            continue ;;
+        missing)
+            note files info "$_label" \
+                "the folder the registry names ('$_raw') does not exist on the volume; nothing to import"
+            continue ;;
+    esac
+    set -- "$@" --job "$_label" "$_src" "$(xdg_dir "$_xdg" "$_def")"
+done <<EOF
+$FERRY_FOLDERS
+EOF
+
+# OneDrive is opt-in (spec §8, "ask first"): it can be huge and much of
+# it is online-only. When asked, its whole folder is one more job, with
+# exactly the same placeholder rules.
+if [ "$INCLUDE_ONEDRIVE" = 1 ] && [ -n "$_WIN_ONEDRIVE" ]; then
+    _od=$(path_ci "$FERRY_ROOT" "$(win_to_rel "$_WIN_ONEDRIVE")" 2>/dev/null || true)
+    [ -n "$_od" ] && [ -d "$_od" ] && set -- "$@" --job OneDrive "$_od" "$FERRY_HOME/OneDrive"
+fi
+
+RC=0
+# A resumed import (some of it already here) skips the room test: what is
+# there would be counted twice. A first one is refused up front if her
+# files would not fit with room left over for AurOS itself.
+_resume=""
+awk -F'\t' '$2 == "files" && ($3 == "copy" || $3 == "collision") { f = 1 } END { exit !f }' \
+    "$FERRY_STATE/manifest.tsv" 2>/dev/null && _resume=--no-room-check
+if [ $# -gt 0 ]; then
+    # shellcheck disable=SC2086
+    ferry-copy $AS $_resume --state "$FERRY_STATE" --stage files \
+        $([ "$FERRY_DRYRUN" = 1 ] && echo --dry-run) "$@" || RC=$?
+fi
+case "$RC" in
+    0|2) : ;;
+    4) stage_fail files "not enough room"; exit 4 ;;
+    *) stage_fail files "ferry-copy exit $RC"; die "copying the folders failed (exit $RC)" ;;
+esac
+
+if [ "$INCLUDE_ONEDRIVE" = 1 ]; then
+    :
+elif [ -n "$_WIN_ONEDRIVE" ]; then
+    _od=$(path_ci "$FERRY_ROOT" "$(win_to_rel "$_WIN_ONEDRIVE")" 2>/dev/null || true)
+    if [ -n "$_od" ]; then
+        _ph=$(find "$_od" -type f -print0 2>/dev/null | ferry-winattr -0 | grep -c '^placeholder' || echo 0)
+        note files manual "OneDrive" \
+            "a OneDrive folder is present with $_ph online-only file(s); re-run with --include-onedrive to import the downloaded ones, or sign in to OneDrive on Linux to get everything"
+    fi
+fi
+
+# Write user-dirs.dirs so the desktop honours the same folders -- as
+# her, through as_her, never as root into a path she controls.
+if [ "$FERRY_DRYRUN" = 0 ] && [ ! -e "$FERRY_HOME/.config/user-dirs.dirs" ]; then
+    {
+        echo '# Written by Ferry. XDG user directories.'
+        printf '%s\n' "$FERRY_FOLDERS" | while IFS='|' read -r _l _v _x _d; do
+            [ -n "$_l" ] || continue
+            printf '%s="$HOME/%s"\n' "$_x" "$_d"
+        done
+    } | as_her sh -c 'mkdir -p "$1/.config" && cat > "$1/.config/user-dirs.dirs"' sh "$FERRY_HOME" \
+        || warn "could not write user-dirs.dirs"
+fi
+
+_copied=$(awk -F'\t' -v s=files '$2==s && ($3=="copy"||$3=="collision")' "$FERRY_STATE/manifest.tsv" 2>/dev/null | wc -l | tr -d ' ')
+say "files: $_copied file(s) imported for $_WIN_USERNAME"
+# A folder that could not be brought is not a success, and a stage that
+# was not a success must not be recorded as done: `ferry run` skips done
+# stages, so a retry (after she has fixed what was in the way) would
+# otherwise skip this one and report that everything came.
+[ "$_skipped" = 0 ] || [ "$RC" != 0 ] || RC=2
+if [ "$RC" = 0 ]; then stage_done files "$_copied files"
+else stage_fail files "exit $RC: $_copied files"; fi
+exit "$RC"

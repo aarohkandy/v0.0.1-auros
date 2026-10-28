@@ -1,0 +1,929 @@
+[
+ {
+  "area": "safety",
+  "items": [
+   {
+    "id": "S-01",
+    "title": "Restore erases a partition added after the install and grows C: over it",
+    "owner": "A2",
+    "status": "closed",
+    "fix_evidence": "src/aurstage/rescue.c:886-918 foreign_partition() (with is_auros_own() at :861): every used live entry must be AurOS's own, a captured entry (same GUID, same extent), or Windows' own made shorter ONLY where an AurOS partition now starts in the room it gave up (:907). Called at :1278 before fde_guard (:1291) and before the first write (ESP write starts ~:1556); refuses with 'Something on this computer's drive has changed since AurOS was installed'. Landed in c994042, tightened in 50d623c.",
+    "test_evidence": "tools/powercut-nostick.sh:352-385 block 'a partition that was not AurOS's', kind 'new': checks 'a partition added after the install: Put Windows back refuses', '...and says why, in words', '...and the disk is byte for byte untouched' (partition carved from the tail of AUROS-ROOT, not literally the hole after C:, same code path). Red-before observed: run 39962229132 (fb82014) job powercut-nostick-restore failed 3 of 57 in this block; green after: run 40026374421 (9dde7e6) job 120668280354, 57 checks 0 wrong. Runs in CI: build.yml:432 'powercut' job -> tests.yml suite nostick (label powercut-nostick-restore, ONLY=restore), and release.yml 'which' -> tools/releasegate.py refuses a release unless it is green. No in-repo mutant for it.",
+    "proven_where": "KVM (QEMU+OVMF on GitHub runners) against a 3 GiB emulated Windows disk (ntfsfix -d stands in for Windows' own chkdsk). Never on real Windows, real firmware or a real disk. tools/e2e (real Windows 11 VM) never runs Put Windows back. rescue.c, powercut-nostick.sh and the restore slice are unchanged between 9dde7e6 and origin/main 7b87093.",
+    "what_is_left": "Nothing in code. Residual: the full gate for the current tip (RC5, run 40040610042 at 9dc73fe) was still running at 23:48 UTC; last complete green is 40026374421. A false refusal (Windows Update legitimately resizing WinRE) strands Put Windows back with a 'ask someone' sentence; fail-safe, not data loss."
+   },
+   {
+    "id": "S-02",
+    "title": "Restore silently removes any partition Windows or she created after the install, then grows C: over it",
+    "owner": "A2",
+    "status": "closed",
+    "fix_evidence": "Same function as S-01: rescue.c:886-918 foreign_partition(), called at :1278. Both variants are covered: a new partition (new GUID) is 'not captured and not AurOS's', and a resized WinRE (same GUID, shorter) fails the ':907' rule because no AurOS partition starts in the room it gave up. is_auros_own() (:861) also accepts AUROS-HANDOVER, the one extra partition the installer can make.",
+    "test_evidence": "tools/powercut-nostick.sh:352-385 kind 'changed': 'a recovery partition resized after the install: Put Windows back refuses' + '...and says why, in words' + '...and the disk is byte for byte untouched'. This is the exact case that was red: run 39962229132 (fb82014) failed these 3 of 57; fixed by 50d623c; green in run 40026374421 job 120668280354. In CI as for S-01 (build.yml powercut job, release gate). The finding's literal 'new Setup-made recovery partition after C:' is not a separate case but is the S-01 'new' path.",
+    "proven_where": "KVM/OVMF emulated disk only, as S-01. Whether Windows Setup really creates a new recovery partition this way was never confirmed (finding's own caveat).",
+    "what_is_left": "Nothing in code. Same residuals as S-01 (tip run in progress; never on real hardware)."
+   },
+   {
+    "id": "S-03",
+    "title": "No-stick restore writes the table before the EFI partition (power cut leaves no Windows, no way back)",
+    "owner": "A2",
+    "status": "closed",
+    "fix_evidence": "src/aurstage/rescue.c:1556-1604 the EFI partition is restored FIRST and only megabytes that differ are written (fault point restore-esp-mid at :1592); the table steps follow at :1605-1663 (restore-array :1622, restore-sector :1630, restore-backup :1663), then the NTFS grow. A cut before the table leaves AurOS in the table, so the saved copy is still findable and the restore can be run again. c994042.",
+    "test_evidence": "tools/powercut-nostick.sh:287-350 (RESTORE_POINTS restore-esp-mid restore-array restore-sector restore-backup restore-grow; tear_esp makes two places in the ESP differ): at restore-esp-mid and restore-array 'AurOS is still in the table (6 partitions): it can be run again' (:325) and 'running it again finishes the job' (:328) plus full-size/byte-for-byte checks; at the later instants 'the EFI partition is byte-for-byte what it was (restored before the table)' (:341). A table-first order would fail the 6-partition check. Green in run 40026374421 job 120668280354 (57 checks); runs in CI as S-01. No red-before CI run exists for this one (the reorder landed before the restore slice ran in CI).",
+    "proven_where": "KVM/OVMF emulated disk, no-stick mode (the mode that ships). Never real hardware.",
+    "what_is_left": "The finding's 'fuller fix' is not done: a cut AFTER LBA 1 (restore-sector/backup/grow) cannot be re-run in no-stick mode, and those test cases only assert Windows starts with all files and the three partitions are back; they do not assert C:'s filesystem got its space back (that assert exists only for the two re-runnable instants). Nothing else regrows the legacy-path filesystem (the put-back startup task is registered on the fast path, phases.c:1821). Loss is room, not data."
+   },
+   {
+    "id": "S-04",
+    "title": "Boot entry cannot be written (NVRAM full), install still 'succeeds'",
+    "owner": "A2",
+    "status": "partial",
+    "fix_evidence": "src/aurstage/nvram.c:450 nvram_probe() writes an entry of the real size under 'AurOS probe', reads it back, deletes it; called at the gate of both install paths, src/aurstage/install.c:380 and :919, refusing 'no-startup-room' with nothing changed. src/aurstage/loader.c:187-200: where a new entry has no room, nvram_boot_repurpose() (nvram.c:489) overwrites the installer's own entry in its slot. Commit 0d0e047.",
+    "test_evidence": "tools/nvramtest.sh:360-396 ('a start-up menu with no room for a new entry'): 'a new entry has no room (the premise)', '...and the probe says so, before anything is committed', 'the installer's own entry is replaced in its own slot (Boot0000)', 'with room, the probe passes', '...and leaves nothing behind'. Runs in CI: tests.yml 'nvramtest' step in the unit job (green in run 40026374421). GAPS: it tests the two functions in isolation against a fake efivarfs dir whose 'full' is all 8191 Boot#### numbers taken, not exhausted bytes; nothing exercises install.c's call (grep for 'no-startup-room' finds only src), and nothing exercises loader_register()'s fallback. Deleting the probe call in install.c:380/:919 or the repurpose branch in loader.c:194 leaves every test green. The finding's own test (loader_register must not end verdict=installed) does not exist.",
+    "proven_where": "Unit (fake efivarfs files). The happy path of the same code runs in every KVM installtest/nosticktest. Never on a real firmware with a byte-full NVRAM store; the 5 KB kernel reserve premise was never checked.",
+    "what_is_left": "Add a test through install.c/loader_register with a store that is full by bytes (expect refuse before commit, and verdict != installed) so the wiring is covered; optionally the distinct aurfirst phase for 'AUROS-BOOT exists but no entry names it' (not done)."
+   },
+   {
+    "id": "S-05",
+    "title": "The 'keep coming back to AurOS' hold runs before the desktop, so a desktop that never appears loops her into AurOS",
+    "owner": "C",
+    "status": "closed",
+    "fix_evidence": "rootfs/etc/systemd/system/auros-hold.service:15-20 now only runs 'aurfirst state' (publishes /run/auros-first.state, arms nothing). Arming moved to rootfs/etc/systemd/system/auros-keeper.service -> rootfs/usr/lib/auros/keeper: 'desktop-up 30 && aurfirst hold', where desktop-up (rootfs/usr/lib/auros/desktop-up) returns only after aurshell.service has been active 30 s and never on a crash loop. Enabled in build/forge:1382-1391. 69ca6b1; af_hold in src/aurfirst/state.c unchanged since except that commit.",
+    "test_evidence": "tools/firstboottest.sh case D (lines 393-419, 'a desktop that never appears, on a machine nobody has answered'): 'so nothing arms the way back into AurOS' (BootNext empty), 'the next start goes to Windows first', '...and never to AurOS's own entry'. Would fail if the hold armed BootNext again. CI: tests.yml gating matrix 'firstboottest' (image=True), 41 checks ok in run 40026374421 job 120668282211. Commit message states D was red on the old image.",
+    "proven_where": "KVM + OVMF with persistent NVRAM, booting the REAL built image; the 'press' and the 'no desktop' are stand-ins (aurshell forced down; a unit writes the answer word). Real firmware untested. Real Windows 11 VM e2e reached AurOS's first screen but never exercises a failing desktop.",
+    "what_is_left": "Not covered: a desktop that draws but has dead input (the skeptics' point). No staging-side display probe (S-06's extra). Case F/efivarfs remount fix 76d89b9 and its test are newer than the last complete green; RC5 run 40040610042 was still in progress."
+   },
+   {
+    "id": "S-06",
+    "title": "While AurOS is unconfirmed, the hold re-arms BootNext even when the desktop never starts",
+    "owner": "C",
+    "status": "closed",
+    "fix_evidence": "Same change as S-05 (auros-hold.service, auros-keeper.service, keeper, desktop-up; 69ca6b1). The website promise 'if AurOS ever fails to start, I start Windows by myself' is now true for a desktop that never reaches 30 s of uptime.",
+    "test_evidence": "Same as S-05: tools/firstboottest.sh case D in the CI gating matrix; passes in run 40026374421.",
+    "proven_where": "KVM/OVMF on the real image, stand-in for the button press; never real firmware.",
+    "what_is_left": "The finding's 'first-boot display probe in staging' is not done, and a black screen where aurshell stays up for 30 s (never crashes) still keeps arming the way back into AurOS (the finding's own residual)."
+   },
+   {
+    "id": "S-07",
+    "title": "A brand-new kernel becomes the default before it has ever booted; nothing detects a failed boot",
+    "owner": "C",
+    "status": "closed",
+    "fix_evidence": "rootfs/usr/lib/auros/grub.cfg.in:95-137 boot counting: each AurOS entry runs auros_count (:115) adding to auros_try in grubenv; at 2+ unconfirmed starts the newest is stored as auros_bad and default=auros-previous (:129-134) when an auros_prev kernel exists. rootfs/usr/lib/auros/boot-ok + auros-boot-ok.service clear the count after the desktop has been up 2 minutes; rootfs/usr/lib/auros/boot-guard + auros-boot-guard.service reboot a counted start not confirmed in 15 minutes (4be9741). 69ca6b1.",
+    "test_evidence": "tools/rollbacktest.sh (21 checks in run 40026374421 job 120668282283), CI gating matrix 'rollbacktest' (image=True), Secure Boot on: 'it panicked twice, and was restarted each time by panic=10', 'the third start was the kernel before it', '...and the desktop came up', '...and that start was confirmed', 'no panic: the bad kernel is not tried again', 'the new kernel started twice, and twice showed no desktop ... restarted by auros-boot-guard'. Mutants ROLLBACKTEST_MUTANT=nocount|noclear|noguard turn it red (documented 17/21 with guard off) but are run by hand, not in CI. Finding named bootupdatetest boot 4; rollbacktest replaced it.",
+    "proven_where": "KVM/OVMF Secure Boot on the real image; 'bad kernel' = a signed good kernel with a dead initramfs. Never real hardware.",
+    "what_is_left": "A kernel that hangs before userspace WITHOUT panicking is not simulated (test header says so; no hardware watchdog, no softlockup_panic); the mechanism counts it only after she power-cycles twice. Docs over-claim lines the finding listed (README.md:57, how-it-works.html:239) were not re-read here."
+   },
+   {
+    "id": "S-08",
+    "title": "Ferry reports success when it copied nothing",
+    "owner": "R",
+    "status": "closed",
+    "fix_evidence": "src/ferry/ferry:196-203 choose_user settles whose files before any stage (exit 6 with names), :148-166 stage_if_needed maps stage results to exit 0/2/4/1 and records a partial stage as not done, ferry:223 exits with RUN_RC. rootfs/usr/lib/auros/answer.sh:296-345 maps to result=empty (files=0), choose (users=..), refused, partial, failed, ok(files=N), and accepts import:NAME (answer.sh:63-70) as --user. The FINDINGS 'still open' sentence is STALE: src/aurfirst/request.c:75-105,205 now accepts import:NAME and src/aurshell/welcome.c:374-416,1054 shows the W_WHOSE choice and the W_EMPTY screen. 895297d plus follow-ups.",
+    "test_evidence": "src/ferry/tests/run.sh:825-881 'whose files, and what counts as success (S-08)' (two accounts both with files -> exit 6, nothing copied, names listed; chosen user brings only theirs; Videos on another drive -> exit 2 and not recorded done; empty Windows -> files=0); src/ferry/tests/answertest.sh:54-76 (empty vs ok vs choose vs failed vs import:Harold); tools/aurfirsttest.sh:610-676 (import:NAME carried out, hostile names refused); tools/welcometest.c:402-445 ('several people and no way to tell: the answer is a question', 'an empty Windows is its own screen, not an error'). All in the tests.yml unit job (step 'Ferry (make && tests/run.sh)': 'ferry tests: 266 passed, 0 failed' in run 40026374421). Mutants in src/ferry/tests/mutants.sh are manual.",
+    "proven_where": "Unit only (fake Windows tree, stand-in ferry in answertest, stand-in result files in welcometest). tools/e2e (real Windows 11) never presses 'Bring my files across' (e2e.py:989 just dismisses the panel). CI runs Ferry's suite as a non-root user, so root-only checks are skipped ('as root: skipped').",
+    "what_is_left": "No end-to-end run of the import with two real Windows accounts on the booted image."
+   },
+   {
+    "id": "S-09",
+    "title": "/usr/bin/ferry symlink breaks Ferry",
+    "owner": "R",
+    "status": "closed",
+    "fix_evidence": "src/ferry/ferry:51 SELF=$(dirname \"$(readlink -f \"$0\")\") and src/ferry/ferry-common.sh:42 FERRY_BIN resolved with readlink -f; install.sh still symlinks /usr/bin/ferry to /usr/lib/ferry/ferry. 895297d.",
+    "test_evidence": "src/ferry/tests/run.sh:543 'ferry started through a link finds its own tools' (links the source ferry into a scratch dir and runs it with a minimal PATH); reverting SELF to cd/pwd makes the link target's sibling lookup fail. 'ok' in the unit job of run 40026374421. mutants.sh:103-106 puts exactly that bug back (manual). Not literally install.sh into a scratch root as the finding asked, but same mechanism.",
+    "proven_where": "Unit on Linux, plus a one-off homebase run of sandbox.sh which installs Ferry via install.sh and starts /usr/bin/ferry (895297d message). Not shown on a booted image.",
+    "what_is_left": "Nothing material."
+   },
+   {
+    "id": "S-10",
+    "title": "auros-answer.service sandbox blocks the import",
+    "owner": "R",
+    "status": "partial",
+    "fix_evidence": "rootfs/etc/systemd/system/auros-answer.service: :17 RuntimeDirectory=auros-answer ferry, :27 TimeoutStartSec=infinity (R-19 too), :30 ProtectSystem=strict, :38 ProtectHome=no, :41 StateDirectory=ferry, :50 ReadWritePaths=... -/boot/grub -/home. 895297d.",
+    "test_evidence": "The finding's test exists: src/ferry/tests/sandbox.sh runs 'ferry run' under every [Service] property of the unit file as root under systemd, from a tree and from a real NTFS loop volume (895297d: 11/11 with the fix, 3/11 with the old unit, so red before / green after). BUT no .github workflow runs it (grep for sandbox.sh/insystemd.sh in .github is empty; it needs root + systemd PID 1, run by hand with src/ferry/tests/insystemd.sh in a homebase container). What CI does cover: run.sh:931-933 'auros-answer.service has no time limit that could kill a long import', answertest.sh (result mapping with a stub ferry), and putbacktest runs the real unit in the booted image but with a stub /usr/bin/ferry. Reverting ProtectHome/StateDirectory/RuntimeDirectory would stay green in CI.",
+    "proven_where": "Once, by hand, in a throwaway systemd container on homebase (real NTFS loop volume, real unit properties). Never in CI, never in the booted image, never on real Windows.",
+    "what_is_left": "Put sandbox.sh in a CI job (privileged systemd container or the KVM image) or have a booted-image test press 'import'. The separate XDG chown hardening point is covered only by a root-only Ferry check that CI skips."
+   },
+   {
+    "id": "S-11",
+    "title": "powercuttest misses the shipped mode and runs in no CI job",
+    "owner": "E CI",
+    "status": "partial",
+    "fix_evidence": "tools/powercut-nostick.sh (the shipped no-stick mode; includes mirror-end) runs as 4 jobs on every build that touches build/ src/ rootfs/ profiles/ themes/ shells/: build.yml:430-436 'powercut' job -> tests.yml:126-131 suite nostick (restore, commit, write, early). Release gate: build.yml:446-447 'release' needs powercut; release.yml:120-135 'which' runs tools/releasegate.py (MIN_POWERCUT=4, every job green or on .github/ci-allow.txt with an expiry; never for [latest]); ci-allow.txt is now empty. The stick-mode powercuttest is also in the gating matrix (tests.yml:108). Docs qualify '138' as stick mode (docs/PLAN.md:294, docs/results/README.md:18, README.md:74-79).",
+    "test_evidence": "The jobs themselves: run 40026374421 (9dde7e6) shows all four powercut / e2e (powercut-nostick-*) jobs green plus tests / e2e (powercuttest), and release / which green; earlier run 39962229132 showed the restore slice red until S-01/S-02 were fixed, so the gate bites. releasegate.py has a selftest (14 cases) but NO workflow runs it (grep of .github and tools finds only release.yml:133 using the gate itself).",
+    "proven_where": "CI on GitHub runners with KVM; the gate has refused a failing slice in practice (39962229132).",
+    "what_is_left": "Two of the three missing instants are still not injectable: no 'shrink-mid' (a cut inside ntfsresize, the riskiest moment; website/disclaimer.html says it cannot be tested) and no 'settle-mid'; no fault_maybe point for them exists in src/aurstage. Wire releasegate.py selftest into a workflow. Also: stagekvm.yml (path-triggered staging-from-source runner) is red at its build step on the last pushes (40040368744), so it adds no proof right now."
+   },
+   {
+    "id": "S-12",
+    "title": "Clock-behind refusal for every PC west of UTC",
+    "owner": "A2",
+    "status": "closed",
+    "fix_evidence": "src/aurstage/journal.c:242 JOURNAL_RTC_SLACK_S (15 h) and :244-262 journal_clock(): 'behind' only when now+15h < written_unix; the call is journal.c:461 inside journal_check. a993bd0. East-of-UTC only brings the 3-day staleness closer.",
+    "test_evidence": "tools/bridgetest.sh:69-110 'the clock check: local-time clocks pass, a dead battery does not' links the real journal_clock(): UTC-8, UTC-12 and UTC+13 -> MATCH; 2010 CMOS, 17 h behind, zero -> JOURNAL_CLOCK; 4 days -> STALE. Reverting to now<written fails the UTC-8 case. CI: tests.yml unit job 'bridgetest' (ok in run 40026374421). Also tools/stagetest.sh:355-372 (real staging kernel, journals +/- hours) in stagekvm.yml, a non-gating, path-triggered workflow that is red at its build step at the tip.",
+    "proven_where": "Unit plus staging under KVM. QEMU's RTC is UTC, so a Windows-style local-time RTC is only simulated by offsetting written_unix, never produced. The real-Windows e2e VM passes through staging but its RTC mode is not shown.",
+    "what_is_left": "Nothing in code; no real west-of-UTC PC run."
+   },
+   {
+    "id": "S-20",
+    "title": "EFI partition checked with a 1 MiB margin, files stay for good",
+    "owner": "B",
+    "status": "partial",
+    "fix_evidence": "FINDINGS status line is STALE in both directions. Preflight: src/aurbridge/preflight.c:1349-1353 esp_need() = carried (or 33 MiB) + 21 MiB, used at :1448; leftovers from an earlier attempt count as room (:1456-1466). Engine: src/aurbridge/phases.c:2061 esp_room() also adds 21 MiB (was 1). Abort: src/aurbridge/phases.c:2540-2551 ab_abort deletes the eight \\EFI\\AurOS files it wrote. Files of a COMPLETED install (staging.efi, staging.img, ~33 MB) still stay on the ESP by design for Put Windows back; the ~4.5 MB of first-stage files are not removed after install.",
+    "test_evidence": "preflight.c:2081-2085 selftests 'ESP: a release's 33 MiB needs 54 MiB free, not 34' and 'ESP: 40 MiB free does not fit what the restart then needs' (red if the margin goes back to 1 MiB): run by 'wine out/aurbridge.exe selftest' in the tests.yml unit job and on a real Windows Server runner in windows.yml:185-191. windows.yml:395-430 fills a real 95 MB ESP to 10 MB free and expects esp-low-space, and expects own leftovers to count as room (does not discriminate 1 vs 21 MiB). tools/aborttest.sh:78-81 'nothing is left under \\EFI\\AurOS' runs in fastpath.yml (path-gated; green at 40038449074). No test at all for phases.c esp_room's margin (static function; the finding's 'both must refuse at 40 MiB' is only half there).",
+    "proven_where": "Unit/Wine, GitHub Windows Server runner for the preflight side, simulated machine for abort. Never an OEM PC with a 100 MB ESP; the 21 MiB is the review's number ('measure it and tighten' comment in phases.c) and the free space left after a finished install was not measured.",
+    "what_is_left": "Add a test that esp_room refuses at 40 MiB free; measure the real post-install free space on a 100 MB ESP; decide on deleting first-stage files after install; the 13-15 MB Windows servicing figure is unverified."
+   },
+   {
+    "id": "S-22",
+    "title": "Early download is not counted by the check that passes",
+    "owner": "B",
+    "status": "open",
+    "fix_evidence": "Not fixed. preflight.c:1293 check_volumes still tests only 'giveable < PF_AUROS_NEED' (28 GiB, preflight.h:162) with no term for the image; grep of preflight.c finds no notion of the downloaded image. wizard.c:3974-4011 check_passed() still calls download_begin() on the first clean check. Only a partial engine-side mitigation exists: phases.c:325-350 phase_inspect (no-stick) subtracts the not-yet-downloaded remainder (image_expect - bytes already in C:\\AurOS) from the stale report's giveable, so the late engine gate is correct, but the first check that starts the download is still too lenient and the re-check after the download lands is unchanged.",
+    "test_evidence": "None. No test where C: gives 30 GB with no image must block insufficient-space but passes with the image already in \\AurOS (the finding's test). The FINDINGS 'open' status is accurate.",
+    "proven_where": "Never run.",
+    "what_is_left": "Credit already-downloaded bytes in check_volumes: giveable >= PF_AUROS_NEED + max(0, AUROS_IMAGE_BYTES - bytes in C:\\AurOS\\auros-desktop.img); re-measure after the download wait or hold Install until it finishes; add the two-case unit test in preflight.c's selftest."
+   }
+  ],
+  "challenges": [
+   {
+    "id": "S-01",
+    "verdict": "upheld",
+    "claimed": "closed",
+    "corrected_status": "closed",
+    "reason": "Fix verified on origin/main 82bb79a: src/aurstage/rescue.c:886-918 foreign_partition() (is_auros_own :861), called at :1278 before fde_guard (:1291) and before the first ESP write (:1556-1600). The refusal text at :1281 is the only place 'has changed since AurOS was installed' exists, so tools/powercut-nostick.sh:352-395 (kind 'new': 'refuses' / 'says why, in words' / 'byte for byte untouched') goes red if the call is removed. It runs in CI: build.yml:432 powercut job -> tests.yml:127 (powercut-nostick-restore, ONLY=restore). Corrections to the claim: (1) the observed red in run 39962229132 (fb82014) was ONLY kind 'changed' (3 FAIL lines), run against c994042's looser foreign_partition. kind 'new' was green there, so 'new' has never been seen red; it is red by construction only. (2) The test block runs to :395, not :385. (3) The byte-for-byte check passes aurstage.nolog; shipped refusals still write a verdict log to the ESP (main.c:584). (4) The check is skipped when the live table is unreadable (live_ok false, :1277). Proven on KVM/OVMF only. The restore job is green on the RC5 tip build 9dc73fe (run 40040610042, job 120713156861, conclusion success), and rescue.c is unchanged since."
+   },
+   {
+    "id": "S-02",
+    "verdict": "upheld",
+    "claimed": "closed",
+    "corrected_status": "closed",
+    "reason": "Same function and call site as S-01 (rescue.c:886-918, :1278). The resized-WinRE rule is the :907-912 branch: same start, shorter end, accepted only if an AurOS-own partition starts in (e->last, cl]. Test: powercut-nostick.sh:376-382 and :384-394 (kind 'changed'). Run 39962229132 showed it red (3 FAIL) and run 40026374421 job 120668280354 showed it green with 57 checks, a genuine red/green pair. The red was against the looser pre-50d623c rule, not a build with no check at all, so it proves the tightening, not the whole function. A Setup-made new recovery partition is a new GUID and falls to the 'new' path of S-01. The test uses type 0700 for the added partition rather than 2700; the check ignores type, so this is harmless. In CI via build.yml:432 and tests.yml:127. KVM only. Whether Windows really creates such a partition remains unconfirmed, as the finding itself says."
+   },
+   {
+    "id": "S-03",
+    "verdict": "upheld",
+    "claimed": "closed",
+    "corrected_status": "closed",
+    "reason": "Verified: rescue.c:1556-1603 restores the EFI partition first (only chunks that differ, fault point restore-esp-mid :1592); the table steps follow at :1605-1666 (restore-array :1622, restore-sector :1630, restore-backup :1663); the grow comes after. powercut-nostick.sh:306-349 asserts 6 partitions and a successful re-run at restore-esp-mid and restore-array, and ESP byte-equality at the later instants. Only restore-esp-mid actually discriminates the order: with a table-first order the cut image has 3 partitions and the :325 check fails. restore-array was re-runnable under the old order too. No CI run ever showed it red, so that is reasoning only. It is green in run 40026374421 and in the RC5 restore job. Caveats: (1) the finding's own scenario that a cut at restore-sector/backup leaves a shrunk NTFS and no re-run is NOT fixed. Those cases (:333-348) assert only that the 3 partitions are back, Windows files are intact and the table is valid; none checks that C:'s filesystem regrew. (2) The test boots the staging kernel directly with a host-directory ESP, so 're-run' means staging runs again, not that firmware/GRUB can reach the restore entry. Upheld because the finding's specified fix and test are present; the residual is room, not data."
+   },
+   {
+    "id": "S-04",
+    "verdict": "upheld",
+    "claimed": "partial",
+    "corrected_status": "partial",
+    "reason": "Partial is right, and the code gap is worse than the claim says. Present: nvram.c:450 nvram_probe(), called at install.c:380 and :919 with a 'no-startup-room' refusal before any write; loader.c:194 repurposes the installer's own slot; nvram.c:489. tools/nvramtest.sh:360-396 runs in the CI unit job (tests.yml:322; the 'a start-up menu with no room' lines are ok in run 40026374421). Gaps confirmed: (1) install.c:476-480 and :1141 still treat a loader_register failure as a warning and carry on to verdict=installed (:501), which is the finding's original complaint; only the gate probe guards it now. (2) The 'full' store in the test is 8191 empty Boot#### files, i.e. no free number, not a store full by bytes, so the ENOSPC path is never exercised. (3) grep finds no test mentioning 'no-startup-room', and no test goes through loader_register or install.c. Deleting install.c:380/:919 or the loader.c:194 branch leaves every test green. (4) The finding's distinct aurfirst phase for 'AUROS-BOOT exists but no entry names it' is not done. Unit/fake efivarfs only. The 5 KB reserve premise is unverified."
+   },
+   {
+    "id": "S-05",
+    "verdict": "upheld",
+    "claimed": "closed",
+    "corrected_status": "closed",
+    "reason": "Verified: auros-hold.service:16 runs only 'aurfirst state', and main.c:55-78 shows state publishes without arming. Arming is in auros-keeper.service -> rootfs/usr/lib/auros/keeper:20-21 ('desktop-up 30 && aurfirst hold'); desktop-up:24-36 returns only after aurshell.service has been active >= N s since its last (re)start. Enabled at build/forge:1382-1391. af_hold is called from the 'hold' command only. firstboottest.sh case D (:393-419) is in the gating matrix (tests.yml:109, runs A-F). Its 'so nothing arms the way back' and 'next start goes to Windows first' checks are ok in run 40026374421, and firstboottest is green on the RC5 tip build (job 120713166137). Red-before rests on the commit message only. Fidelity gaps: D overrides aurshell with ExecStart=/bin/false and Restart=no (firstboottest.sh:232), while the shipped unit has Restart=on-failure, RestartSec=2, StartLimitIntervalSec=0. The crash-loop case therefore follows from desktop-up's logic and is not exercised. The installer's own BootNext (loader.c:200/208) is armed in the same boot as the hand-over, so a dead desktop on the very first start probably costs one extra restart into AurOS before Windows; D starts from a BootNext the firmware consumes at start and does not show this. Dead-input desktops are not covered. KVM/OVMF only."
+   },
+   {
+    "id": "S-06",
+    "verdict": "upheld",
+    "claimed": "closed",
+    "corrected_status": "closed",
+    "reason": "Same change and test as S-05 (keeper, desktop-up, auros-hold.service; firstboottest.sh case D, green in run 40026374421 and on the RC5 tip build). The cited residual is real: a shell that stays active for 30 s with a black screen still arms BootNext (desktop-up has no display check), and the finding's optional 'first-boot display probe in staging if cheap' is not done. Test-fidelity point specific to S-06's wording ('crash loop'): case D uses Restart=no, not the shipped Restart=on-failure loop. A loop that survives >= 30 s per cycle would still arm. Also note S-06 covers only the unconfirmed state; after 'it works' BootOrder already has AurOS first (state.c:384-396), so a permanently dead desktop after confirmation is outside this item. Stand-in button press; real firmware untested."
+   },
+   {
+    "id": "S-07",
+    "verdict": "upheld",
+    "claimed": "closed",
+    "corrected_status": "closed",
+    "reason": "Verified: grub.cfg.in:93-137 (auros_count at :162, :168; fallback to auros-previous at :129-134), boot-ok:26-39 (desktop-up gate, clears auros_try), boot-guard:24-37 plus the units. tools/rollbacktest.sh generates the menu with the real 'bootchain menu' (:97), runs under Secure Boot (OVMF .ms.fd), and asserts panic x2 -> previous kernel -> desktop -> confirmed -> bad kernel not retried; a newer kernel still tried; a desktop that never appears restarted twice by auros-boot-guard. It is in the gating matrix (tests.yml:120) and green in run 40026374421 job 120668282283. The mutants (nocount/noclear/noguard, :126-131) are manual, not in any workflow. Residuals: (1) the finding's scenario includes 'hangs'; a kernel that hangs before userspace without panicking is not simulated (header :41). Recovery then needs two manual power-cycles, though the grub count is the same mechanism. (2) README.md:57 still says 'automatic fallback' unqualified; PLAN.md:36 is accurate; the how-it-works.html:239 line no longer matches 'previous kernel'. (3) Only a kernel that has a predecessor can fall back. KVM only."
+   },
+   {
+    "id": "S-08",
+    "verdict": "upheld",
+    "claimed": "closed",
+    "corrected_status": "closed",
+    "reason": "Verified end to end. ferry:197-205 (choose_user, exit 6), :148-165 (stage exit mapping), :223; signal_done always writes files=N (ferry-common.sh:476); answer.sh:297-339 maps empty / ok / refused / choose / partial / failed; answer.sh:63-73 and request.c:105-215 accept import:NAME with name_ok(); welcome.c:410-417 and :1050-1058 show W_WHOSE and W_EMPTY. The claim's 'FINDINGS still open' sentence is indeed stale. Tests: src/ferry/tests/run.sh:825-881, answertest.sh:54-76, welcometest and aurfirsttest import:Harold. All ran in the CI unit job in run 40026374421 ('ferry tests: 266 passed, 0 failed'; the lines 'import:Harold is carried out' and 'an empty Windows is its own screen' are ok). Caveats: unit only. answertest uses a stub ferry; welcometest uses stand-in result files. The real-Windows tools/e2e never presses 'Bring my files across'. Root-only checks are skipped in CI ('as root: skipped'). answer.sh would write result=ok without files= if ferry.done were missing (the signal write is '|| true'), a minor residual. The tests and answer.sh were unchanged between the green run and the tip."
+   },
+   {
+    "id": "S-09",
+    "verdict": "upheld",
+    "claimed": "closed",
+    "corrected_status": "closed",
+    "reason": "Verified: src/ferry/ferry:51 SELF=$(dirname \"$(readlink -f \"$0\")\") and ferry-common.sh:42 FERRY_BIN likewise. install.sh:47 links only /usr/bin/ferry, and every other caller (answer.sh, firstboot.sh) uses /usr/bin/ferry or /usr/lib/ferry/..., so no other symlinked entry point still uses dirname \"$0\" (ferry-detect/report/back do, but are only run from /usr/lib/ferry). Test: src/ferry/tests/run.sh:539-544 'ferry started through a link finds its own tools' links the source ferry into a scratch dir and runs it with PATH=/usr/bin:/bin; reverting SELF to a plain dirname leaves ferry-common.sh unfound and the assert goes red. It is ok in the CI unit job (run 40026374421, 266 passed). The mutant in mutants.sh is manual. The test does not run install.sh into a scratch root as the finding asked; same mechanism. Unit on Linux; not shown on a booted image."
+   },
+   {
+    "id": "S-10",
+    "verdict": "upheld",
+    "claimed": "partial",
+    "corrected_status": "partial",
+    "reason": "Partial is right. Code on main: auros-answer.service:17 RuntimeDirectory=auros-answer ferry, :27 TimeoutStartSec=infinity, :30 ProtectSystem=strict, :38 ProtectHome=no, :41 StateDirectory=ferry, :50 ReadWritePaths with -/home. The finding's test exists, src/ferry/tests/sandbox.sh (every [Service] property, real loop NTFS), but no workflow runs it: grep for sandbox.sh and insystemd in .github is empty, and CI covers only a text grep for TimeoutStartSec=infinity (run.sh:931-934) plus answertest with a stub ferry. putbacktest replaces /usr/bin/ferry with a stub (putbacktest.sh:160-162). Reverting ProtectHome, StateDirectory or RuntimeDirectory stays green in CI. Correction to the claim: the by-hand proof was not 'once'. 895297d recorded 11/11 vs 3/11, and bc565af records 38/38 and 1a8c819 adds scenario 5, all on homebase, after the unit's last edit (933acf5). But answer.sh and Ferry changed afterwards (1c1b77d, 03ce09a, 1d79930) with no recorded sandbox re-run. The XDG-chown hardening point is covered only by root-only checks that CI skips. Never in the booted image or on real Windows."
+   },
+   {
+    "id": "S-11",
+    "verdict": "upheld",
+    "claimed": "partial",
+    "corrected_status": "partial",
+    "reason": "Partial is right. Verified wiring: build.yml:430-436 powercut job calls tests.yml with suite nostick; tests.yml:126-131 four slices (restore, commit, write, early incl. mirror-end); build.yml:446-447 release needs powercut; release.yml:128-145 runs tools/releasegate.py (MIN_POWERCUT=4); .github/ci-allow.txt is empty; run 40026374421 shows releasegate 'ok, publishable'; run 39962229132 had the restore slice red, so the gate bites. All four powercut slices are also green on the RC5 build 9dc73fe (run 40040610042). Unfixed: the finding asked for shrink-mid and settle-mid; the fault_maybe() inventory in src/aurstage has no such points (only gate, shrink-begin, shrink-end, mirror-end, write-mid/end, boot-mid/end, boot-entry, settle-end, restore-*, capture-mid, handover-checked). Only mirror-end of the three was added. releasegate.py selftest (14 cases) is referenced by no workflow (grep of .github finds only the release.yml:133 run). stagekvm.yml is red at its setup step on the latest push (run 40040368744, 'the rootfs, and this commit's engine and staging environments'), so it adds no proof. Docs now qualify 138 as stick mode (PLAN.md:294, results/README.md:18)."
+   },
+   {
+    "id": "S-12",
+    "verdict": "upheld",
+    "claimed": "closed",
+    "corrected_status": "closed",
+    "reason": "Verified: src/aurstage/journal.c:242 JOURNAL_RTC_SLACK_S = 15 h; :244-262 journal_clock() refuses 'behind' only when now+15h < written (and now <= 0); called from journal_check at :461. I found no other place in aurstage that compares Windows-written time with the kernel clock. main.c:543 compares aurstage.asked, which answer.sh reads from the same RTC file, so both sides are read alike. Test: tools/bridgetest.sh:64-106 links the real journal_clock() and asserts UTC-8, UTC-12 and UTC+13 -> MATCH, 2010/zero/17 h behind -> CLOCK, 4 days -> STALE. Reverting to now < written turns the UTC-8 case red. Runs in the CI unit job (bridgetest ok in run 40026374421). stagetest.sh:362-373 adds the staging-kernel cases, but stagekvm.yml is red at setup, so only the unit test gates. QEMU's RTC is UTC; the local-time clock is simulated by offsetting written_unix. No real west-of-UTC machine."
+   },
+   {
+    "id": "S-20",
+    "verdict": "upheld",
+    "claimed": "partial",
+    "corrected_status": "partial",
+    "reason": "Partial is right. Verified: preflight.c:1349-1353 esp_need() = carried (or 33 MiB) + 21 MiB, used at :1448, with leftovers counted at :1455-1466; phases.c:2054-2061 esp_room adds 21 MiB (it landed inside the unrelated commit 33c51fa); ab_abort deletes the eight files (phases.c:2540-2553). Tests: preflight selftest lines ('ESP: a release's 33 MiB needs 54 MiB free, not 34', '40 MiB free does not fit what the restart then needs') run under Wine in the CI unit job and are ok in run 40026374421. aborttest.sh:78-81 ('nothing is left under \\EFI\\AurOS') runs in fastpath.yml (path-triggered by src/aurbridge/**; the aborttest/esptest step ran in run 40038449074 whose jobs were green). windows.yml:395-430 fills the ESP to 10 MB free, which fails under a 1 MiB margin too, so it does not discriminate. Open: no test exercises esp_room's margin (static; the string 'does not have room for what AurOS' appears in no test), so the finding's 'both must refuse at 40 MiB' is half there. The files of a COMPLETED install (staging.efi/img ~33 MB) and the ~4.5 MB first-stage files still stay on the ESP. Post-install free space and the 21 MiB figure were never measured. Windows 10-15 MB servicing need is unverified."
+   }
+  ]
+ },
+ {
+  "area": "security",
+  "items": [
+   {
+    "id": "SEC-001",
+    "title": "Image trust root in user-writable C:\\AurOS; baked hash never reached staging",
+    "status": "closed",
+    "fix_evidence": "Engine hashes the image it already matched to the baked hash and puts root/boot lengths + SHA-256 in the journal on the ESP: src/aurbridge/phases.c:1470-1471 and 2155-2164 (no-stick and fast path), format.c:520-539. Staging holds the manifest to the journal before touching anything: src/aurstage/image.c:440 image_bind(), called at src/aurstage/install.c:741 (refuse 'image-not-ours'). Fast path re-hashes the gap against the journal at install.c:416. C:\\AurOS made SYSTEM+Administrators only via plat_dir_private, src/aurbridge/plat_win.c:1207 (SDDL D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)); callers phases.c:893,1054. Commit 63e237b.",
+    "test_evidence": "tools/nosticktest.sh:226 'an image swapped for another, its manifest rewritten to agree: refused' (swap built at lines 138-157; expects 'is not the one the installer put there', which only image_bind emits, and 'disk byte-for-byte unchanged'); tools/bridgetest.sh:441-512 (image_bind unit: root/boot hash, length, missing-hash cases). ACL part: .github/workflows/fastpath.yml:331 job dircheck (inherits/Users-open/junction/stranger-owner cases) with mutants dir-open-acl, dir-follows-links, dir-any-owner, file-keeps-acl in tools/fastpath-mutant.sh (all proven red per docs/handoff/streams/A2.md). nosticktest runs in .github/workflows/tests.yml:107 (gating e2e matrix, part of tools/releasegate.py) and stagekvm.yml:37; bridgetest in tests.yml:322 and fastpath.yml:95. No in-repo mutant for image_bind; the 'red with image_bind off' claim is a one-off manual run (SESSION-2026-10-23-B.md:220). The test would still go red on revert because the expected refusal text only exists in image_bind.",
+    "proven_where": "KVM/VM (nosticktest: tests / e2e (nosticktest) success in build runs 40017741766 [RC1 fc52718] and 40026374421 [RC3 9dde7e6]; no relevant file changed since) + unit (bridgetest) + real Windows runner for the ACL half (fastpath run 40038449074 at aaa3f12, dircheck success; src/aurbridge unchanged since). stagekvm.yml (duplicate path-triggered run) is currently red in setup (windres 'Permission denied' on out/auros-staging-vmlinuz, run 40040368744), not on the check.",
+    "what_is_left": "Nothing for this item. Adjacent and still open: SEC-009 (payloads unpacked to %TEMP% before the ESP copy; A2.md 'Not done' item 5). image_bind is only in the no-stick branch (install.c:731-743); stick mode is not shipped.",
+    "owner": "A2 (done)"
+   },
+   {
+    "id": "SEC-002",
+    "title": "Elevated installer starts schtasks/mountvol/manage-bde by bare name",
+    "status": "closed",
+    "fix_evidence": "src/aurbridge/plat_win.c:1732 resolve_program() resolves a whitelist of bare names (manage-bde, powercfg, schtasks, mountvol, bcdedit, icacls, netsh, reg, diskpart, powershell) to GetSystemDirectoryW, accepts only absolute paths under it (under_sysdir :1722, no '..'), and plat_run :1792 hands the result to CreateProcessW as lpApplicationName with lpCurrentDirectory = system dir (:1830). Every other launch routes through plat_run (callers fix_win.c:478,490, phases.c:419,2392,2402,2484, plat_win.c:658,1355,1371,1914); grep finds no other CreateProcess/system()/WinExec in src/aurbridge. Commit 2f2a890.",
+    "test_evidence": ".github/workflows/fastpath.yml:265 job runcheck, step 'bare names resolve to Windows' own programs, and nothing else starts': planted schtasks/mountvol/manage-bde/powercfg/bcdedit/icacls/netsh/reg .exe (built from tools/planted.c) sit beside aurbridge.exe; fails if PLANTED-RAN.txt or C:\\PLANTED-RAN-ELEVATED.txt appears, requires real SCHTASKS usage text, and requires refusal of '$PWD\\schtasks.exe', C:\\Users\\Public\\evil.exe, System32\\..\\..\\ traversal, 'cmd.exe /c', 'notepad'. Reverting to CreateProcessW(NULL,...) would run the planted exe and turn it red. No named mutant for this one in tools/fastpath-mutant.sh. fastpath.yml is push-triggered on src/aurbridge/**, not a release gate in tools/releasegate.py.",
+    "proven_where": "Real Windows (GitHub windows-latest runner): fastpath run 40038449074 at aaa3f12, runcheck success. src/aurbridge has not changed since.",
+    "what_is_left": "One untested sibling: src/aurbridge/wizard.c:2491 ShellExecuteW(..., L\"explorer.exe\", ...) names explorer.exe bare from the elevated wizard; runcheck does not cover it (ShellExecute search order vs the exe's folder/cwd was not verified). Low severity, cheap fix: pass %SystemRoot%\\explorer.exe.",
+    "owner": "A2 (done); B owns wizard.c:2491"
+   },
+   {
+    "id": "SEC-003",
+    "title": "No DLL search-order hardening in the elevated installer",
+    "status": "closed",
+    "fix_evidence": "plat_harden_dll_search() is the first call in main (src/aurbridge/main.c:355) and WinMain (wizard.c:6309): SetDefaultDllDirectories(0x800) else SetDllDirectoryW(L\"\") (plat_win.c:1150-1162). Every by-name load goes through plat_load_system_dll (plat_win.c:1074, LOAD_LIBRARY_SEARCH_SYSTEM32): wlanapi (plat_win.c:855, preflight.c:1922), winspool (hwinv_win.c:214), iphlpapi (hwinv_win.c:83), winhttp (plat_win.c:2263, first use), oleacc (wizard.c:64, first use), wtsapi32 (wizard.c:6395). WINHTTP and OLEACC are no longer linked (build/aurbridge link lines :339-348). Commits 63e237b, 1d8196c.",
+    "test_evidence": ".github/workflows/fastpath.yml:78 build gate 'the installer is linked against KnownDLLs only' (objdump of both exes against a KnownDLL list: advapi32 kernel32 user32 gdi32 shell32 ole32 oleaut32 setupapi msvcrt ws2_32 shlwapi ...; fails on anything else, so cfgmgr32/comctl32/winhttp/oleacc/dwmapi imports would go red). fastpath.yml:309 step 'a DLL planted beside the installer is never loaded' (planted wlanapi.dll, winspool.drv, winhttp.dll, oleacc.dll; runs preflight, report, getimage, wizard --report; fails if C:\\PLANTED-DLL-RAN.txt appears). tools/fastpath-mutant.sh: no-dll-protection (both layers removed) -> red; link-oleacc -> red (proven on real Windows per A2.md). no-dll-harden and no-dll-flag each stay green alone by design (each layer covers the other). Note build/aurbridge:365 has a looser 21-DLL allow-list (includes cfgmgr32, comctl32, winhttp, oleacc, version); only the fastpath.yml gate is strict, and fastpath.yml is not a release gate.",
+    "proven_where": "Real Windows (windows-latest): fastpath run 40038449074 at aaa3f12, build + runcheck success; src/aurbridge and build/aurbridge unchanged since.",
+    "what_is_left": "Nothing blocking. No planted cfgmgr32.dll/comctl32.dll canary (the finding named them); the link-time KnownDLL gate stands in for it. B's held fb463fb (sysdll_*) is moot.",
+    "owner": "A2 (done)"
+   },
+   {
+    "id": "SEC-004",
+    "title": "Apt signing key is a repository-level secret; main unprotected",
+    "status": "owner-decision",
+    "fix_evidence": "Workflow side only: .github/workflows/aptrepo.yml:189 puts the publish job in 'environment: apt-signing' (the only job naming secrets.AUROS_APT_SIGNING_KEY, :203). Settings side NOT applied, checked read-only with gh api on 2026-10-23: environments/apt-signing has protection_rules [] and deployment_branch_policy null (no reviewer, any branch); repo-level secret AUROS_APT_SIGNING_KEY still listed under actions/secrets; environments/apt-signing/secrets total_count 0; rulesets [] and branches/main/protection 404 (main can be force-pushed/deleted). So a workflow on any pushed branch can still read the key today. Steps are written in docs/OWNER-SETUP.md 4a-lock (lines ~150-200).",
+    "test_evidence": "tools/workflowlint.py rule 6 (line 58-62) fails any job that names AUROS_APT_SIGNING_KEY outside environment apt-signing; selftest cases at lines 97-100; runs in .github/workflows/workflowlint.yml on workflow changes (latest runs success, e.g. 40041756960). Revert of the 'environment:' line would go red. This test cannot see the live repository settings, which are the actual control; no canary-branch check exists.",
+    "proven_where": "Unit/lint only (workflowlint.yml). The control itself (environment reviewer + main-only deployment + secret moved + main ruleset) has never been run or verified: absent.",
+    "what_is_left": "Owner clicks, docs/OWNER-SETUP.md 4a-lock: required reviewer = aarohkandy, deployment branches = main only, `gh secret set --env apt-signing` then `gh secret delete AUROS_APT_SIGNING_KEY`, branch ruleset on main (restrict deletion + block force-push, no PR requirement). Then a throwaway-branch canary printing whether the key is visible must say no. Until then SEC-004 is fully exploitable by anyone with push access.",
+    "owner": "Owner (repository settings); E for the canary"
+   },
+   {
+    "id": "SEC-005",
+    "title": "Release assets mutable; many long jobs hold contents: write",
+    "status": "open",
+    "fix_evidence": "Core control absent. gh api repos/aarohkandy/v0.0.1-auros/immutable-releases returns enabled:false. Job-level 'contents: write' is still held by aptrepo.yml:191, build.yml:455, drill.yml:28, e2e.yml:147,293, fleet.yml:29, othersys.yml:76,94, parity.yml:119, profiles.yml:113,261, release.yml:264,537,550,567,616, sources.yml:152. The apt channel is still a Release tag 'apt' filled with `gh release upload --clobber` (aptrepo.yml:310-319); evidence/fleet/profile releases are still uploaded with --clobber (tools/e2e/publish.sh, tools/othersys/publish.sh, profiles.yml:238, fleet.yml:46). Incidental hardening that did land: actions pinned to 40-char SHAs and no workflow-level contents: write (tools/workflowlint.py rules 4-5, lines 15-18); default workflow token is read. The 'external watchdog' is .github/workflows/monitor.yml (hourly deep check, tools/ops/monitor.py:115-126) but it compares AurOS-Setup.exe to SHA256SUMS fetched from the same mutable release, so an attacker who replaces the exe replaces the sums too.",
+    "test_evidence": "Only tools/workflowlint.py rules 4-5 (selftest lines 93-96) in workflowlint.yml, which would catch workflow-level contents: write or an unpinned action; nothing tests release immutability (`gh release upload --clobber` failing with 422) or independent hashing.",
+    "proven_where": "Lint only for the incidental parts; the finding's control has never run. docs/OWNER-SETUP.md 4d says do not tick immutability until streams F/P/H move their evidence uploads to draft-then-publish.",
+    "what_is_left": "(1) Move apt channel and evidence/fleet/profile uploads off published releases (second repo or gh-pages; draft-then-publish), (2) owner ticks Settings > Releases > Enable release immutability and verifies `.enabled` true and clobber fails, (3) restrict contents: write to the job that creates the release, (4) make the watchdog hash against a value held outside the release (e.g. a committed or Pages-served hash, or the release.yml-recorded sha), (5) set sha_pinning_required (actions/permissions shows false, allowed_actions all).",
+    "owner": "E + owner (setting); F/P/H for evidence uploads"
+   },
+   {
+    "id": "SEC-006",
+    "title": "No boot counting: a kernel that loads then panics reboots into itself forever",
+    "status": "closed",
+    "fix_evidence": "rootfs/usr/lib/auros/grub.cfg.in:93-137: auros_count (called in the AurOS and verbose entries, lines 162,168) bumps auros_try in ($root)/boot/grub/grubenv; at 2+ unconfirmed starts auros_bad=@KVER@ is saved and default becomes auros-previous; the mark is sticky until a different newest kernel is rendered (line 133). rootfs/usr/lib/auros/boot-ok (service auros-boot-ok.service, enabled at build/forge:1386) clears auros_try only after the desktop has been up N=120 s (via desktop-up), and clears auros_bad if the running kernel is the bad one. rootfs/usr/lib/auros/grubenv merges keys (the answer.sh clobber problem is fixed). bootchain:288-299 emits auros-previous/auros_prev only when 2+ kernels exist. Companion auros-boot-guard (rootfs/usr/lib/auros/boot-guard) restarts when a start is not confirmed. Commits 69ca6b1, 4be9741.",
+    "test_evidence": "tools/rollbacktest.sh: boots the real image under OVMF Secure Boot with a newest kernel whose initramfs dies (panic=10 loop); run 1 must panic twice then start the previous kernel and confirm; run 2 stays on previous without a panic; run 3 a newer kernel arrives and a start cut short is not a verdict; run 4 confirmed; run 5 desktop never appears and boot-guard restarts twice then falls back. Built-in mutants ROLLBACKTEST_MUTANT=nocount|noclear|noguard (lines 126,266,294) are manual only. Runs in tests.yml:120 (gating e2e matrix, image=True, counted by tools/releasegate.py). bootchaintest.sh runs at tests.yml:410.",
+    "proven_where": "KVM/VM (QEMU + OVMF + Secure Boot): tests / e2e (rollbacktest) success in build runs 40017741766 (RC1) and 40026374421 (RC3); only aa50e9f (src/aurstage) changed any related file since. RC5 run 40040610042 was still in progress at audit time. 21/21 per BT.md.",
+    "what_is_left": "Nothing for the finding. Not covered by the test (stated in its header): a kernel that hangs without a panic, and a desktop crash loop at full WP-30. When S4 switches on, lockctl boot-sync moves grubenv to the ESP: the grubenv path assumptions here must be re-checked then.",
+    "owner": "BT (done)"
+   },
+   {
+    "id": "SEC-007",
+    "title": "No time daemon; Windows RTC in local time so apt rejects Release files",
+    "status": "closed",
+    "fix_evidence": "profiles/desktop.profile:200 packages_security includes chrony (all profiles inherit); build/harden:94-100 enables chrony.service and dies if chrony is missing or systemd-timesyncd is also installed; rootfs/etc/chrony/chrony.conf has NO rtcsync (Windows' clock never written in UTC), makestep 1 -1, port 0/cmdport 0, plus rootfs/etc/chrony/sources.d/auros-nts.sources (3 NTS servers) with Ubuntu pool servers as the unauthenticated fallback; rootfs/usr/lib/auros/choices.sh:170-195 clock_local() writes /etc/adjtime LOCAL (unless rtc=utc) and steps a clock 10 min..15 h behind. Commit 4c16e98.",
+    "test_evidence": "tools/timeboottest.sh (KVM, OVMF, QEMU -rtc base=localtime in America/Los_Angeles, online): 'before' variant must show the bug (apt 'not valid yet'), 'ntponly' and 'after' must step the clock within 5 s, apt accepts Release files, RTC still LOCAL after sync, restart comes up right before the network, chrony listens on no port; 14 checks. Runs in .github/workflows/harden.yml job `boot`. Static: tools/hardentest.sh runs at every image seal (build/harden:123) with mutants in tools/hardentest-mutants.sh:114-127 (add rtcsync, drop NTS sources, unwant chrony.service, drop adjtime LOCAL logic); tools/choicestest.sh:108 (tests.yml:219) asserts adjtime line 3 is LOCAL.",
+    "proven_where": "KVM (Actions): harden run 40032935166 (53b9971), step 'timeboottest under KVM' success, log 'timeboottest: 14 checks, all ok'. Caveat: that same job's hardenboottest step failed 1/68 (USB printing / avahi, unrelated, fixed in c56e891), and every later harden boot job was red, cancelled or skipped until a10d966 (always boot for [release]); a post-fix boot run was not yet complete at audit. harden.yml is not a release gate in tools/releasegate.py; the static hardentest at seal is.",
+    "what_is_left": "Nothing for the finding. Re-run harden.yml on RC5 to get a green boot job on the current head (c56e891/23abec0 touched profiles/desktop.profile after the last green timeboottest).",
+    "owner": "S1 (done)"
+   },
+   {
+    "id": "SEC-008",
+    "title": "Shipped images have no disk encryption (S4 built but switched off)",
+    "status": "open",
+    "fix_evidence": "Not on main in any active form. build/mkimage:86 still does plain `mkfs.ext4 -L AUROS-ROOT`. main holds only the inert first S4 slice (commits c7cdd52, f2594ff): docs/security/THEFT.md, src/aurshell/lockpin.c, rootfs/usr/lib/auros/lock/{lockctl,encrypt-init,initramfs-hook,initramfs-script,boot-sync-hook,units}, tools/theftunit.sh, tools/theftvm.sh. Nothing builds or wires them: grep of build/, profiles/, .github/ for cryptsetup, lockpin, aurlock, `lockctl prepare` is empty; no theft.yml exists. The later S4 work (41 commits on branch wt-s4: real-image KVM + swtpm proof, PIN/rescue pages, Adiantum) is held unpushed (docs/handoff/MORNING-REPORT.md:118, SESSION-2026-10-23-B.md:247); not on origin/main.",
+    "test_evidence": "tools/theftunit.sh exists on main (49 checks per docs/handoff/streams/S4.md) but no workflow runs it or tools/theftvm.sh. The finding's test (blkid shows crypto_LUKS on the root partition after install, marker absent from raw partition) does not exist on main.",
+    "proven_where": "Never run in CI. Per S4 notes (branch only): proven on homebase and a real-image VM under swtpm, not reproducible from main.",
+    "what_is_left": "Owner says 'push S4's commits' (or allow agent pushes), then lead approval to switch on. Still missing per S4.md/FINDINGS: theft.yml (KVM+swtpm) in CI, A2 leaving the last 32 MiB of root outside the filesystem, aurshell PIN + rescue-code pages and 'locking your drive' progress page, forge switch-on (cryptsetup-bin, libtss2, build aurlock-pin, call `lockctl prepare`), aurfirst root_disk() following dm slaves, answer.sh using the ESP grubenv, WP-59 backup/rescue-code gate. Also decides D13 BitLocker PCs and the handover-refuses-encrypted-root interaction.",
+    "owner": "Owner (push the held commits; PIN/recovery-code policy) then S4/A2/C"
+   },
+   {
+    "id": "SEC-014",
+    "title": "GRUB has no password, ships a root-shell entry, and has a serial terminal",
+    "status": "closed",
+    "fix_evidence": "rootfs/usr/lib/auros/grub.cfg.in:28-42 (@GRUBLOCK@) renders `set superusers=\"auros\"` + `password_pbkdf2` (rootfs/usr/lib/auros/bootchain:244 lock_line: 32 random bytes thrown away, only the PBKDF2-SHA512 hash kept at var/lib/auros/grub-lock, mode 600; `relock` makes a new one per machine at first start, rootfs/usr/lib/auros/firstboot.sh:27). `e`, `c` and any entry not marked --unrestricted ask for a name. AurOS (:159), verbose (:165), previous kernel (bootchain:208), Windows (:204,221), Put Windows back (:246-250) are --unrestricted; aurinit (:179) is not. The init=/bin/bash recovery entry is gone (grub.cfg.in:171-174; GRUB_DISABLE_RECOVERY=true at build/mkimage:122). render_menu refuses a template with no lock, a locked ordinary start, or an init=/bin/(ba|da)sh line (bootchain:311-321). Commit c506219.",
+    "test_evidence": "tools/bootchaintest.sh:130-165 (superuser present, hash not password, hash kept 0600, relock changes it, ordinary starts --unrestricted, aurinit restricted, no shell entry, template without the lock refused with yesterday's menu kept); runs in tests.yml:410 (unit). tools/bootlocktest.sh (real image, OVMF Secure Boot, presses keys: `e` and `c` ask for a user name, Windows entry does not, AurOS starts hands-off; manual mutants LOCKTEST_MUTANT=nolock|lockedboot): tests.yml:121 gating e2e. tools/grubshelltest.sh (tests.yml:413) and tools/hardenboottest.sh:438 (controls-removed variant) also cover it.",
+    "proven_where": "KVM/VM under Secure Boot: tests / e2e (bootlocktest) success in runs 40017741766 and 40026374421 (no related change since); unit (bootchaintest, grubshelltest).",
+    "what_is_left": "Two items from the finding's control were not taken: the serial terminal is still in the shipped menu (grub.cfg.in:24-26 `serial ...; terminal_input console serial`; the lock still applies on it, but it is a physical-access console on every machine), and there is deliberately no repair path (nobody knows the password; the finding asked for a repair path via sulogin). Decide whether to strip the serial lines outside test builds.",
+    "owner": "BT (done); owner decision on repair access"
+   },
+   {
+    "id": "SEC-029",
+    "title": "No lock screen; boot goes straight to an unauthenticated desktop",
+    "status": "open",
+    "fix_evidence": "Not on main. No src/aurshell/lockscreen.c, no rootfs/etc/pam.d/aurlock (only pam.d/aurshell, whose auth is pam_permit, lines 15-16, and pam.d/systemd-user). rootfs/etc/systemd/logind.conf.d/50-auros.conf:28 IdleAction=ignore; idle only blanks the panel (src/aurshell/main.c:1376-1392). No PrepareForSleep hook. The design (lock on resume/idle with PIN, built only together with SEC-008) lives in the held S4 branch (S4.md next-steps item 3), not on origin/main.",
+    "test_evidence": "None. The finding's test (wake the VM with a key; PIN page appears and the desktop is unreachable until the PIN is entered) does not exist on main, and no workflow runs anything for it.",
+    "proven_where": "Never run.",
+    "what_is_left": "Depends on SEC-008: needs `lockctl set-pin` (the account is locked, `usermod -p '!'`), lockscreen.c + pam.d/aurlock + logind PrepareForSleep hook, then a KVM wake test. Needs the owner's decision on a PIN for elderly users and on whether kiosk keeps auto-start. Nothing to review on main until the S4 commits are pushed.",
+    "owner": "Owner (PIN policy; push S4) then S4/C"
+   },
+   {
+    "id": "SEC-CAND-MOZILLA",
+    "title": "Candidate (FINDINGS.md 3.12): Mozilla apt origin missing from unattended-upgrades allow-list",
+    "status": "closed",
+    "fix_evidence": "Candidate is false on current main. rootfs/etc/apt/apt.conf.d/53auros-updates:34-35 Origins-Pattern includes \"site=packages.mozilla.org\" and \"origin=LP-PPA-mozillateam\" (plus Ubuntu noble-security/-updates and the AurOS repo); Automatic-Reboot stays \"false\" (:52). build/forge:849-890 try_mozilla_apt installs Mozilla's key (fingerprint-checked), source list and a firefox*-only pin at preferences.d/mozilla (forge:884,888) -- the file is generated at build, not shipped in rootfs/etc/apt/preferences.d (only `auros` is). Firefox's own updater is off (rootfs/etc/firefox/policies/policies.json DisableAppUpdate), so apt is the only updater. The RC build log (run 40026374421) shows `browser=firefox (mozilla-apt)` and 'Mozilla's key fingerprint matches'.",
+    "test_evidence": "tools/updatepolicytest.sh:87-88 asserts both origins are in Origins-Pattern (static, tests.yml:292-294, unit job, gating) and :123-148 checks the pin allows firefox* only and that an installed firefox has a Mozilla source. Runtime: aptrepo.yml:158-171 'Firefox updates by itself, never while it is open' runs `updatepolicytest.sh firefox` against real packages.mozilla.org, then re-runs it with --break=origin (deletes the packages.mozilla.org line, updatepolicytest.sh:417) and requires exit 1, so reverting the line goes red. The aptrepo.yml runtime job runs on pushes touching the channel files, not on every build.",
+    "proven_where": "Unit/static in every gating build; real Firefox from packages.mozilla.org in a throwaway ubuntu:24.04 container on Actions (aptrepo.yml, with the broken-origin mutant).",
+    "what_is_left": "Residual hole: if the build falls to the third source in profiles/desktop.profile:282 (`mozilla-apt mozilla-ppa mozilla-tarball`), build/forge:931-958 installs Firefox to /opt/firefox from a hash-checked tarball with DisableAppUpdate and no apt source, so it never updates, and build.yml:219 only warns for browser=MISSING or '(fallback;', not for '(mozilla-tarball)'. RC builds used mozilla-apt, but a release gate should fail on browser=...(mozilla-tarball).",
+    "owner": "S5/E (gate on the tarball route)"
+   }
+  ],
+  "challenges": [
+   {
+    "id": "SEC-001",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Could not refute. Audited origin/main bce1904 (cited files identical to 82bb79a except tools/releasegate.py and build/forge). FIX: engine hashes both extents after ensure_image matched the baked hash (phases.c:1469-1470; journal filled 2153-2154; ensure_image folder lock 1054). The writer refuses a no-stick journal without 64-hex hashes (format.c:499-505, bridgetest asserts WROTE-WITHOUT-HASHES) and the reader refuses one too (journal.c:173-187). staging: g_nostick comes from the journal's image_on (install.c:567); image_bind image.c:440 runs at install.c:741; image_verify then hashes the root AND boot extents (image.c:~490-560), so a manifest rewritten to agree cannot pass. plat_dir_private plat_win.c:1207 (SDDL D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)); callers phases.c:893 (fetch_pieces) and 1054 (ensure_image). TESTS: tools/nosticktest.sh:226-227 'an image swapped for another, its manifest rewritten to agree: refused' flips a root byte and recomputes the manifest root hash (131-157). Without image_bind, image_verify passes, so the expected text 'is not the one the installer put there' (only emitted at image.c:450) never appears and the disk is not left unchanged: red on revert. Runs in tests.yml:107 (blocking e2e matrix). Job log of RC3 run 40026374421 shows the check 'ok'; RC5 run 40040610042 (9dc73fe) nosticktest success. bridgetest.sh:441-512 has 7 image_bind EXPECTs (tests.yml:325-327 unit and fastpath.yml:95, both blocking; RC5 bridgetest success). ACL half: fastpath.yml:331 dircheck; step conclusions read from run 40038449074 (aaa3f12): build, dircheck, runcheck all success; mutants dir-open-acl, dir-follows-links, dir-any-owner, file-keeps-acl were red in dispatch runs 40010002921..40012335766 (dircheck step failed, I read two). Call sites are covered by aborttest.sh:94-115 on the simulated machine (fastpath.yml:91). CAVEATS that do not change the status: (1) the fast-path half (install.c:416 gap re-hash) is tested only by fasttest.sh:~660-680 in stagekvm.yml, which is not gating and red in setup (run 40040368744), and the fast path is off by default; (2) the journal hash is a SECOND read of the file (phases.c ~1440-1470) after ensure_image's whole-file hash, so a writer already holding an open handle (a file left in a pre-fix open folder, or the image_alt_path rename case) has a window; the original finding's 'FILE_SHARE_READ only until restart' was not done; (3) there is no in-repo mutant for image_bind, and the 'red with it off' run is a one-off note (SESSION-2026-10-23-B.md:220); (4) 'ESP is admin-only' is the finding's premise, not tested. Proven: KVM (nosticktest) + unit (bridgetest) + real Windows runner (ACL half only). Not run on a real Windows end to end."
+   },
+   {
+    "id": "SEC-002",
+    "claimed": "closed",
+    "verdict": "downgrade",
+    "corrected_status": "partial",
+    "reason": "The named path is closed, but the same exploit class remains in the elevated wizard, untested. CLOSED PART (verified): resolve_program plat_win.c:1732 (whitelist to GetSystemDirectoryW, under_sysdir 1722 rejects '..', anything else 'belong to Windows' refusal); plat_run 1792 passes it as lpApplicationName with lpCurrentDirectory=system dir (1809, 1830). All plat_run callers are the ones cited (fix_win.c:478,490; phases.c:419,2392,2402,2484; plat_win.c:658,1355,1371,1914; main.c:386 runcheck). A grep for CreateProcess|WinExec|system(|popen|_spawn|LoadLibrary in src/aurbridge and src/aurscreen finds only plat_win.c:1830 (CreateProcessW). TEST: fastpath.yml:265 runcheck, step 'bare names resolve to Windows' own programs' (274-302), uses tools/planted.c built as schtasks/mountvol/manage-bde/powercfg/bcdedit/icacls/netsh/reg beside the exe. A revert to CreateProcessW(NULL,...) would run the planted exe, which writes PLANTED-RAN.txt, so the step fails. Step success read from run 40038449074 (aaa3f12) on windows-latest; src/aurbridge unchanged since. No named mutant (fastpath-mutant.sh has none). fastpath.yml is push-only with a paths filter and is not in releasegate.py or release.yml, so a regression would be seen on main but would not block a release. WHY DOWNGRADE: wizard.c:2491 still does ShellExecuteW(g_hwnd, L\"open\", L\"explorer.exe\", ...) with a bare name from an elevated wizard (open_helper, reachable whenever a blocking check has a helper URL). That is the same class of bug (a bare exe name resolved from a user-writable download folder/cwd) via a different API. Nothing plants explorer.exe in runcheck, ShellExecute's search of the working directory vs System32 was never verified, and the cited grep only looked for CreateProcess-style names. The fix is one line (full %SystemRoot%\\explorer.exe) plus a planted explorer.exe in runcheck. Until then: PARTIAL. Proven where: real Windows (runner) for plat_run only; the ShellExecute path is never run."
+   },
+   {
+    "id": "SEC-003",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Could not refute. FIX verified at the exact lines: plat_harden_dll_search() is the first statement of main (main.c:355) and WinMain (wizard.c:6309); body plat_win.c:1150-1162 (SetDefaultDllDirectories(0x800) else SetDllDirectoryW(L\"\")); plat_load_system_dll plat_win.c:1074-1086 (LoadLibraryExW 0x800, full System32 path fallback). Every by-name load in src/aurbridge goes through it: wlanapi plat_win.c:855 and preflight.c:1922, iphlpapi hwinv_win.c:83, winspool hwinv_win.c:214, winhttp plat_win.c:2263, oleacc wizard.c:64, wtsapi32 wizard.c:6395; the only other LoadLibrary is the helper itself (plat_win.c:1085); GetModuleHandle calls are kernel32/user32 (already loaded). build/aurbridge:339-348 still lists -lcfgmgr32 and -lcomctl32, but no CM_* or InitCommonControls symbols are used (grep empty), so they produce no import; the strict gate confirms it. TEST: fastpath.yml:78-88 'the installer is linked against KnownDLLs only' (objdump both exes vs a KnownDLL list; step success in run 40038449074) and fastpath.yml:309-326 'a DLL planted beside the installer is never loaded' (planted wlanapi.dll, winspool.drv, winhttp.dll, oleacc.dll via tools/planted_dll.c; runs preflight, report, getimage, wizard --report; fails if C:\\PLANTED-DLL-RAN.txt exists). Both are non-vacuous: mutant link-oleacc failed exactly the KnownDLL step (run 40013596316) and no-dll-protection failed exactly the planted-DLL step (run 40015943375). no-dll-harden and no-dll-flag stay green alone by design (each layer covers the other, run 40012944230 success). CAVEATS: the strict list is checked only on the default build (the AUROS_FASTPATH exe in fast/ is not objdumped, though it differs only by a -D flag); build/aurbridge:365 allow-list is looser (cfgmgr32, comctl32, winhttp, oleacc, version, dwmapi, uxtheme, bcrypt, crypt32), so the shipped build.yml build would not catch a regression by itself; fastpath.yml is not a release gate (see SEC-002). No planted cfgmgr32/comctl32/dwmapi/iphlpapi/wtsapi32 canary; the link gate stands in for the first two. Proven: real Windows runner (build + runcheck), aaa3f12; src/aurbridge and build/aurbridge unchanged since."
+   },
+   {
+    "id": "SEC-006",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Could not refute. FIX verified in rootfs/usr/lib/auros/grub.cfg.in: auros_count 115-126 (bumps auros_try with save_env to ($root)/boot/grub/grubenv); decision 127-137 (only when auros_prev is set and not the restore; try 2/3/4 saves auros_bad=@KVER@ and default=auros-previous; sticky while auros_bad equals the newest kernel). auros_count is called in AurOS (162) and verbose (168) and in bootchain's PREVIOUS entry; the Windows entries (204-207, 221) and the restore do not count, so going to Windows cannot trigger a false rollback. bootchain emits set auros_prev=1 and fallback only with 2+ kernels. boot-ok clears auros_try after desktop-up N=120 s, and clears auros_bad only if the running kernel is the bad one; boot-guard reboots after 900 s unconfirmed; grubenv merges keys with an atomic 1024-byte write; forge enables both units (build/forge:1386-1387). TEST: tools/rollbacktest.sh (real image, OVMF Secure Boot, KVM) in tests.yml:120 with image=True, blocking e2e matrix. Log lines read from RC1 40017741766 and RC3 40026374421 (both success; 21 checks including 'panicked twice', 'third start was the kernel before it', 'cut-short start does not send it back', boot-guard restarts twice); RC5 40040610042 (9dc73fe) rollbacktest success. tests.yml:413-415 bootchaintest (unit) also success at RC5. The three mutants (nocount, noclear, noguard; script lines 126-131) are manual only: BT.md:52 records nocount and noclear red, BT.md:102 noguard 17/21; not in CI. Revert-red follows by reading: without auros_count the third start stays on the panicking kernel. NOT covered (stated in the script header): a kernel hang without panic, and a desktop crash loop. Minor: two sub-120 s starts in a row would also set the sticky bad mark on a good kernel when two kernels exist. Files unchanged since RC3 (git diff 9dde7e6..origin/main shows no change under rootfs/usr/lib/auros). Proven: KVM/OVMF Secure Boot e2e + unit."
+   },
+   {
+    "id": "SEC-007",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Upheld, with a sharper statement of where it is proven. FIX verified: profiles/desktop.profile:200 packages_security includes chrony; build/harden 'the clock' block enables chrony.service and dies if chrony is missing or systemd-timesyncd is also installed; rootfs/etc/chrony/chrony.conf has no rtcsync directive (only comment text), makestep 1 -1, port 0, cmdport 0, plus sources.d/auros-nts.sources; rootfs/usr/lib/auros/choices.sh:170-195 clock_local writes adjtime LOCAL (unless rtc=utc) and steps a clock 10 min..15 h behind. TESTS: (a) static tools/hardentest.sh:362-402 runs at every image seal (build/harden:123), inside the blocking build job, so adding rtcsync, dropping chrony or the NTS file, or dropping the adjtime logic fails the build. Its mutants (hardentest-mutants.sh:125-138) run only inside harden.yml's boot job. (b) tools/timeboottest.sh (KVM, QEMU -rtc base=localtime, America/Los_Angeles, online): I read the job log of harden run 40032935166 (53b9971): 'before' premise off by -25201 s and apt 'not valid yet' (apt exit 100); chrony alone steps within 9 s; after: right time, apt exit 0, RTC still local after the sync, after a RESTART right time before any network (adjtime LOCAL), no listening port; 'timeboottest: 14 checks, all ok'. It ran against the image's own chrony files (no overlay note). WHERE IT STANDS NOW: timeboottest runs only in harden.yml job boot, which runs only when hardening inputs change or the subject says [harden]/[release]. That job was last green for the clock step at 53b9971; since then boot runs were cancelled (40038550550, 40040445303) or red (5900a11 dispatch 40039599328: hardenboottest 2 of 67, timeboottest skipped by only=hardening), and the harden runs at 82bb79a and later have boot skipped, which looks like a pass but tested nothing. Files behind the fix are unchanged since 53b9971 (the only rootfs/profile changes are the avahi/nftables comments, librsvg2-common, unbranding). NEW since the audit: commit 6f0cdde (17:02 PDT) makes a [latest] promote require that build's harden boot job to be green (releasegate.py harden, release.yml promote, tools/hardengate.sh), so timeboottest now gates the full release but not prereleases. The earlier statement that harden is not a release gate is out of date for --latest. Not tested: a Windows that keeps its RTC in UTC (nothing in AurBridge writes rtc=utc; chrony would correct it once online). Proven: KVM once (53b9971) + static gate on every build."
+   },
+   {
+    "id": "SEC-014",
+    "claimed": "closed",
+    "verdict": "downgrade",
+    "corrected_status": "partial",
+    "reason": "The password and shell-entry parts are closed and tested, but the finding's title and control name a third part that is still shipped. CLOSED (verified): grub.cfg.in:28-42 @GRUBLOCK@ renders set superusers=\"auros\" plus a PBKDF2-SHA512 hash (bootchain lock_line; 32 random bytes discarded; hash kept 0600 at var/lib/auros/grub-lock; relock per machine). AurOS (159), verbose (165), previous kernel (bootchain PREVIOUS), Windows (204, 221), Put Windows back (246-250) are --unrestricted; aurinit (179) is not. The init=/bin/bash entry is gone (171-174) and GRUB_DISABLE_RECOVERY=true is in build/mkimage. render_menu refuses a template with no lock, a locked ordinary start, or a shell line (bootchain:314-320). TESTS: bootchaintest.sh:130-165 (tests.yml:413-415, unit, blocking; RC5 success); grubshelltest.sh (tests.yml:416-418; scans template, bootchain, mkimage, lockctl, phases.c and the rendered menu; RC5 success); bootlocktest.sh in tests.yml:121 (real image, Secure Boot, presses e and c and sees 'Enter username', Windows entry starts without asking, ordinary start never asks; success in RC1 40017741766 and RC3 40026374421 logs, RC5 still running when last checked). Mutants nolock and lockedboot are manual only. STILL OPEN: the FINDINGS.md text and title say 'has a serial terminal' and the control says 'Remove the serial terminal outside test builds'. grub.cfg.in:24-26 still ships `serial --unit=0 --speed=115200; terminal_input console serial; terminal_output console serial`, build/mkimage:124 sets GRUB_SERIAL_COMMAND, and every entry keeps console=ttyS0,115200n8. Nothing strips them for non-test builds (grep finds no other serial handling). The superuser lock still applies on that terminal and build/harden masks serial-getty/console-getty (no login prompt), which are real mitigations, but the control as written is not met. The repair-path part of the control is also not met, deliberately (nobody knows the password; owner decision per the claim). Stripping the serial lines would break rollbacktest, bootlocktest and bootupdatetest, which read the menu over serial, so this needs a test-build switch, not a deletion. PARTIAL until the serial terminal is removed or the owner accepts it in writing. Proven: KVM Secure Boot e2e + unit for the lock; the serial part is open, never tested."
+   },
+   {
+    "id": "SEC-CAND-MOZILLA",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Candidate is false on main and the claim stands; one of its caveats is wrong. VERIFIED: rootfs/etc/apt/apt.conf.d/53auros-updates:30-36 Origins-Pattern has \"site=packages.mozilla.org\" (34) and \"origin=LP-PPA-mozillateam\" (35); Automatic-Reboot \"false\" (52). rootfs/etc/firefox/policies/policies.json:3 DisableAppUpdate true. build/forge:849-893 try_mozilla_apt writes sources.list.d/mozilla.list and preferences.d/mozilla (firefox* at 1000, everything else from that origin at -1); try_mozilla_ppa 895-917; only preferences.d/auros is in rootfs/etc/apt. TESTS: tools/updatepolicytest.sh:86-89 asserts both origins in apt-config dump of the built rootfs, run at tests.yml:292-294 (blocking unit job, no continue-on-error anywhere in tests.yml; RC5 step success). Reverting the line turns it red. Runtime: aptrepo.yml:156-171 runs `updatepolicytest.sh firefox` (real packages.mozilla.org, real unattended-upgrade, stand-in Firefox 100.0 updated, not updated while open) then `--break=origin`, which deletes the packages.mozilla.org line from the repo's own 53auros-updates (updatepolicytest.sh:417) and the step requires exit 1. The step ran green on aptrepo runs 40042981951 and 40042987246 (6f0cdde, test job fx=success). That job runs only when channel files change or on a [latest] workflow_run, so it is not on every build. CORRECTION to what_is_left: the tarball fallback is NOT an ungated hole. updatepolicytest.sh:142-143 fails (bad 'Firefox is a package, updated by apt') whenever /opt/firefox exists, i.e. whenever forge fell to try_mozilla_tarball (build/forge:931-967), and that static test runs in the blocking tests / unit job that releasegate.py requires. build.yml:219 only warns, but the unit gate catches it later in the same pipeline. What is not caught: a build with no browser at all (browser=MISSING) passes this test with a note. Proven: unit/static in every gating build (RC5 updatepolicytest static and dryrun success) and real Mozilla repo in a throwaway ubuntu:24.04 container on Actions with a broken-origin mutant. Never run on a real installed machine."
+   }
+  ]
+ },
+ {
+  "area": "design",
+  "items": [
+   {
+    "id": "D-P0-1",
+    "title": "Website: stop walking her through switching off Smart App Control; delete the dead SIGNED branch in door.js",
+    "status": "closed",
+    "fix_evidence": "website/index.html:219-225: the Smart App Control block is one sentence plus a 'Show a helper how' button to advanced.html#smart-app-control. The switch-off steps exist only in website/advanced.html:60-79, behind a 'Read this before switching it off' warn box. website/assets/door.js has no 'signed' branch (0 matches).",
+    "test_evidence": "tools/site/check.mjs STALE rule :553 (any page except advanced.html that says switching Smart App Control/it off fails) and the B-06 check :721 (block says it is a Windows setting, links the helper, says nothing was changed). Runs in .github/workflows/pages.yml job `check`; green run 40038609889 (afc82b8), after the last website commit 0f356d8.",
+    "proven_where": "unit: headless Chromium (Playwright) on the stamped site. The Edge and UAC drawings follow real Edge from the real-Windows-11 e2e run 39923720924. Never on a real PC.",
+    "what_is_left": "Wording deliberately differs from the spec: a later walkthrough audit chose 'a Windows setting ... someone who knows computers can change it', and B-06 forbids the spec's 'can't go on this computer yet' on the front page. pages.yml `deploy` is skipped (no full release, legal launch gate), so the site is not live.",
+    "owner": "D (website)"
+   },
+   {
+    "id": "D-P0-2",
+    "title": "Website step 3 shows the real installer: three real Setup screens with numbered rings",
+    "status": "partial",
+    "fix_evidence": "website/index.html:230-262: h3 'Pick a look, then press Install AurOS' (:233) and three pictures (assets/shots/setup-check.jpg, setup-look.jpg, setup-ready.jpg) with .ring elements numbered 1..3 (:245-262).",
+    "test_evidence": "check.mjs:589 (circles count 1..n per picture group), :418 (every picture exists), :573 data-ui (button words must exist in wizard.c), STALE bans 'yellow' wording (wordlint, words.yml). Nothing compares a picture with the current wizard.",
+    "proven_where": "Pictures are Wine renderings of the wizard (docs/handoff/streams/B.md:41,317), not real Windows; DESIGN-DIRECTION section 6 rule 13 forbids Wine shots. setup-ready.jpg (07:16) predates the Ready page change 9693e80 (14:39: agreement sentence, Read the Terms, Licenses, extra risk lines); compare docs/shots/wizard/hidpi-4a-ready.png.",
+    "what_is_left": "Retake the wizard shots on a real Windows runner (B P2-18) after the wizard freezes, regenerate the three crops with tools/site/pictures.py, and add a check that ties them to the current Ready page.",
+    "owner": "D (website) / B (installer)"
+   },
+   {
+    "id": "D-P0-3",
+    "title": "Website: one true picture of her screen (Like Windows, Light, real content, Help visible)",
+    "status": "partial",
+    "fix_evidence": "website/index.html:82 and :301-315 use assets/shots/look-*.jpg: Light theme, Like Windows first, clock 09:41, Help in the bottom bar, no Email copy.",
+    "test_evidence": "check.mjs:627-637 only: one look at a time, four buttons, arrow keys, all four show without script. No check that a picture matches the current shell.",
+    "proven_where": "unit (the pictures come from tools/site/aurshell-shots on Linux with docker, not from the real image).",
+    "what_is_left": "The pictures are stale (last changed 6845420, 02:07 on 10-23), older than the shell rework 0d2d9c6 (06:33) and the fresh set docs/shots/shells (14d8e93, 13:20). look-taskbar.jpg shows menu text cut with '...' ('All my progra...', 'Everything you have saved, i...'), a footer without icons or outlines, and Printers and Settings with one icon, which icontest forbids. Re-shoot at current main (tools/site/aurshell-shots/shots.sh) and show at 560 px or wider.",
+    "owner": "D (website) / C (desktop)"
+   },
+   {
+    "id": "D-P0-4",
+    "title": "Website: time and loss told up front",
+    "status": "closed",
+    "fix_evidence": "website/index.html:46 ('About 25 to 60 minutes (a guess)'), :330 (SSD range, hard disk '1 to 3 hours'), :357 FAQ ('anything you saved in AurOS goes with it' for Put Windows back; AurOS stays, nothing deleted, after No, go back to Windows), and the ask picture :276.",
+    "test_evidence": "check.mjs:570 data-fact time-ssd/time-hdd must equal wizard.c eta_range; :573 data-ui pins the 'No, go back to Windows' line to welcome.c (SAY_NO :458); :722 A-09 loss sentence. All in pages.yml `check`.",
+    "proven_where": "unit (headless Chromium reading the installer and desktop sources).",
+    "what_is_left": "The spec's 'About 10 to 25 minutes' became Setup's honest 25 to 60 (check.mjs STALE bans 'about 10 minutes'). The journey floor (check.mjs:607-610) is inert: tools/site/journey.json is null. 'Not yet tested on a real computer' (index.html:46) is stale next to the real-Windows-11 8-minute fast-path journey, though the default build the button serves has the fast path off. The FAQ's Put Windows back loss sentence is not pinned to settings.c.",
+    "owner": "D (website)"
+   },
+   {
+    "id": "D-P0-5",
+    "title": "Website: a 48 px helper button at every step, not a text link",
+    "status": "closed",
+    "fix_evidence": "website/index.html:116, :190, :240: <p class=\"helper\"><a class=\"btn2\" href=\"guide.html\">Stuck? Ask someone to help</a>, one per step.",
+    "test_evidence": "check.mjs:719 (A-06): exactly 3 helper buttons, text exactly 'Stuck? Ask someone to help', height >= 48, href guide.html. STALE :550 bans the spec's 'Stuck? Show a helper'. pages.yml `check`.",
+    "proven_where": "unit (headless Chromium at 1366x768 and 390x844).",
+    "what_is_left": "Label differs from the spec on purpose (walkthrough A-06). 'Bottom-left of the step card' is not asserted.",
+    "owner": "D (website)"
+   },
+   {
+    "id": "B-P0-1",
+    "title": "Installer: light restyle in one block (paper, ink, one green; no ribbons or violet)",
+    "status": "partial",
+    "fix_evidence": "src/aurbridge/wizard.c:143-156 C_* defines are the Light token table (C_BG F6F2E9, C_ACCENT 0B5D4F, C_ON_ACCENT white, C_WARN 8A5A12). C_ACCENT_ALT, BACKDROP ribbons and the violet dot are gone (0 grep hits). Sidebar 280 px, folded below 1100 px (:1866). Screens: docs/shots/wizard/hidpi-4a-ready.png, 3a-style.png.",
+    "test_evidence": "No test asserts a colour or a wizard contrast ratio. navtest (wizard.c:5405 nt_check; sections 3b, 4, 4b, 14) renders every page but stays green with the old palette; tools/contrast.c reads shell.conf only.",
+    "proven_where": "real Windows Server: windows.yml `windows-source` runs --navtest and --selftest (green on main, run 40038449315, wizard.c unchanged since 12d5373). Real-Windows-11 e2e journeys pass through it (runs 40025060913 / 40025046920). Shots are Wine.",
+    "what_is_left": "Pin the palette: a navtest check that each text/background pair drawn from the C_* defines is 4.5:1 or better. Retake shots on real Windows.",
+    "owner": "B (installer)"
+   },
+   {
+    "id": "B-P0-2",
+    "title": "Installer: one press is one press (700 ms after a page change, 500 ms repeat)",
+    "status": "closed",
+    "fix_evidence": "wizard.c:1186-1203 (PRESS_SETTLE_MS 700, PRESS_REPEAT_MS 500, press_allowed), used by mouse (widget_activate :4111-4114) and keyboard (:4914). Ready's 'Install AurOS' is a check-mark button with 'This starts the install.' above it (hidpi-4a-ready.png).",
+    "test_evidence": "navtest 3b (wizard.c:5506-5534): two clicks on Next 300 ms apart land on Ready, not the install; Enter within 700 ms does nothing; two Enters 200 ms apart land on Ready; one press goes through and its echo does not. windows.yml `windows-source` fails on any [FAIL] (windows.yml:432-436, 492-495).",
+    "proven_where": "real Windows Server navtest (run 40038449315); real-Windows e2e: 'double-click safe' (run 39959577778).",
+    "what_is_left": "Nothing for the P0.",
+    "owner": "B (installer)"
+   },
+   {
+    "id": "B-P0-3",
+    "title": "Installer: embeds Atkinson Hyperlegible Next 400/700/800 at the specified sizes",
+    "status": "closed",
+    "fix_evidence": "wizard.c:4218-4262 (FACE_TEXT 'Atkinson Hyperlegible Next', FACE_DISPLAY '... ExtraBold', AddFontMemResourceEx :4232, Segoe UI fallback); src/aurbridge/fonts/atkinsonnext-{400,700,800}.ttf with OFL.txt. Sizes wizard.c:586-594 (title 32, h3 22, body 20, small 18, button 20); dense mode never below 18 (:4247).",
+    "test_evidence": "navtest 14 (wizard.c:6259-6283): every codepoint every page draws is in the face (GetGlyphIndicesW on the real font in the real DC) and 'the face loaded from inside the .exe'. Commit 7f4e150 reports it red with a typed U+203A put back.",
+    "proven_where": "real Windows Server (windows-source).",
+    "what_is_left": "None for the P0.",
+    "owner": "B (installer)"
+   },
+   {
+    "id": "B-P0-4",
+    "title": "Installer: no countdown; nothing restarts without her press",
+    "status": "closed",
+    "fix_evidence": "COUNTDOWN_SECONDS is gone (0 hits). Finish page 'Ready to restart' with Restart now / Restart later (wizard.c:3321-3330, :3803). The only reboot is ExitWindowsEx(EWX_REBOOT|EWX_FORCEIFHUNG) at plat_win.c:2009, reached from do_restart (wizard.c:4019) on her press.",
+    "test_evidence": "navtest 8 (wizard.c:5798-5822): 2000 ticks (two minutes) restart nothing, Esc does nothing, Restart later only waits, Restart now is the one thing that restarts; 8b (:5824) a fix that restarts Windows asks her to save first. windows.yml `windows-source`.",
+    "proven_where": "real Windows Server navtest; real-Windows-11 e2e presses Restart now (morning-report journey).",
+    "what_is_left": "Spec says 'Restart later: AurOS goes on next time you restart'; the page says 'this window waits' (wizard.c:3328). A wording call.",
+    "owner": "B (installer)"
+   },
+   {
+    "id": "B-P0-5",
+    "title": "Installer: Secure Boot page ('One setting needs changing first', Show a helper how, Copy for a helper)",
+    "status": "partial",
+    "fix_evidence": "wizard.c:2373-2445 (sb_page, sb_helper, copy_for_helper), title at :2567, primary label :3434, screen-reader text :4380-4384. sbdb.c's 'It trusts ...' clause is now conditional; the duplicate WHAT TO DO paragraph is gone.",
+    "test_evidence": "navtest 14 (wizard.c:6277-6281) draws the page once, for the glyph audit only. Nothing asserts the title, the Show a helper how / Not now buttons, or that the technical paragraph stays out of the main view. sbselftest covers the judgement, not the wording.",
+    "proven_where": "Wine shots (docs/shots/wizard/2c-blocked-secure-boot.png, 2d-*). Never on a PC whose Secure Boot lacks the third-party CA; the e2e VM trusts it.",
+    "what_is_left": "navtest checks for the page's title, buttons, Copy for a helper putting the paragraph on the clipboard, and where Not now lands.",
+    "owner": "B (installer)"
+   },
+   {
+    "id": "B-P0-6",
+    "title": "Installer: every failure is one of four plain sentences; raw text goes to the log",
+    "status": "partial",
+    "fix_evidence": "wizard.c:1993-2012 plain_failure() returns the four sentences; used at :2551 (fix line) and :3341 (install-stopped page); raw text goes to OutputDebugStringW only.",
+    "test_evidence": "None. No nt_check or other test reaches plain_failure or the install-stopped page.",
+    "proven_where": "never run on a real failure.",
+    "what_is_left": "A navtest case per sentence and for the stopped page. The mapping is substring-based (any 'server' or 'connect' means internet).",
+    "owner": "B (installer)"
+   },
+   {
+    "id": "B-P0-7",
+    "title": "Installer: look picker is a 2x2 grid, no scrolling, Chosen with a check mark",
+    "status": "closed",
+    "fix_evidence": "wizard.c:2791-2840 (cards: name, check mark and 'Chosen'), line under the grid 'Picked for you: ...' (:4402), layout :1861-1890. Screen: docs/shots/wizard/3a-style.png.",
+    "test_evidence": "navtest 4b (wizard.c:5569-5632): at 1024x530, 1366x663@144dpi and 1680x1035@144dpi the look page fits without scrolling and all four cards are on screen. navtest 5 (:5635+): names equal the website's, each card travels its shell and theme. windows.yml `windows-source`.",
+    "proven_where": "real Windows Server navtest; shot is Wine.",
+    "what_is_left": "The 3 px ink focus ring is not asserted. The name-only fallback has not been needed.",
+    "owner": "B (installer)"
+   },
+   {
+    "id": "B-P0-8",
+    "title": "Installer: no printed web addresses; Show a helper how opens the page",
+    "status": "partial",
+    "fix_evidence": "No http, github or .html literal in wizard.c or fix_win.c strings (0 hits). The helper page opens from a button (fix_win.c:195 ADVANCED, :236-240).",
+    "test_evidence": "None. wordlint does not forbid addresses; tools/ops/addrtest.py (tests.yml addrtest) checks GitHub addresses in the exe and passes until AUROS_DOMAIN is set.",
+    "proven_where": "Wine shots 2b and 2f only.",
+    "what_is_left": "A wordlint or navtest rule that no drawn string contains '://' or '.html'.",
+    "owner": "B (installer)"
+   },
+   {
+    "id": "B-P0-9",
+    "title": "Installer: plain words on the fix pages",
+    "status": "partial",
+    "fix_evidence": "src/aurbridge/fix_win.c:26-190: 'Windows has locked this computer's drive', 'This drive can't be divided any further', 'Drive C: isn't formatted the usual way', and so on. The Recycle Bin line is gone because the Recycle Bin is no longer emptied.",
+    "test_evidence": "wordlint (words.yml; EASY rule-2 list read from docs/EASY.md; 0 problems on fix_win.c) and navtest 7 (wizard.c:5701+: every known stop has one short line and one short fix). BIOS, NTFS, Storage Spaces and 'start-up area' are not in EASY's list, so reverting those lines stays green.",
+    "proven_where": "unit; real Windows navtest; Wine shots.",
+    "what_is_left": "The no-internet line still names chips (MT7612U, MT7921, MT7601U). Add the spec's words to wordlint.",
+    "owner": "B (installer)"
+   },
+   {
+    "id": "C-P0-1",
+    "title": "Shell reads theme font names from /usr/share/auros/fonts/<name>.ttf",
+    "status": "closed",
+    "fix_evidence": "src/aurshell/shellcommon.c:778-791 open_font_primary loads <AUROS_FONT_DIR>/<name>.ttf for any name without '.', so it cannot climb out of the directory; open_font adds the DejaVu per-glyph fallback (:771-776). shellpreview.c goes through the same shell_fonts_load.",
+    "test_evidence": "tools/fonttest.sh: 'font_text=\"Narrow\" draws in the face named Narrow', plus the faces every theme names resolve to the right cut. Runs in .github/workflows/tests.yml unit (:247). tools/fallbacktest.c (:270) covers the fallback.",
+    "proven_where": "unit; CI job 120707344335 (run 40038558072, RC3 e480808) had fonttest and fallbacktest green. Design files unchanged since except a harness flag.",
+    "what_is_left": "The shell still uses Atkinson Hyperlegible v1 from apt (themes/nocturne.theme:100-103) with a slashed zero, not Next 400/700/800 (P1/P2). Website, installer and staging use Next.",
+    "owner": "C (desktop)"
+   },
+   {
+    "id": "C-P0-2",
+    "title": "Light is the default everywhere; Dark is a choice; retired colours gone",
+    "status": "partial",
+    "fix_evidence": "profiles/desktop.profile:38 theme=\"sandstone\"; themes/sandstone.theme is the Light tokens (solid wall); nocturne.theme:14 is 'Light writing on a dark background' with blur 0, opacity_panel 1.00, animation 120/ease; synthwave.theme is gone; Settings lists only sandstone and nocturne (src/aurshell/settings.c:386); the register mark is gone (src/common/wall.c:472); only teal left is lockpin.c:380, a default.",
+    "test_evidence": "No test pins the default theme or the token hexes. tools/contrast.c --strict is run by no workflow (I ran it on all five rendered themes: all pass, but it has no on-accent pair). profiletest only compares a booted machine with its own profile. looktest drives Settings, Colors, Sandstone. theme-test.sh pins on-accent only.",
+    "proven_where": "unit (journeytest shots), KVM (profiles.yml desktop photograph), real-Windows e2e shows the Light desktop (run 40040689945).",
+    "what_is_left": "Add tools/contrast.c --strict to tests.yml with an on-accent pair, and a check that desktop.profile and every wizard look name sandstone. Settings Colors has no picture of each choice. lockpin.c:380 teal default.",
+    "owner": "C (desktop)"
+   },
+   {
+    "id": "C-P0-3",
+    "title": "Staging screens: UI face, no log lines, helper code only on failure, step N of M, minutes left",
+    "status": "partial",
+    "fix_evidence": "src/aurscreen/screen.c: UI face with DejaVu fallback (:436-450; build/staging:402-404 copies ui.ttf and ui-bold.ttf), Light tokens and drawn mark (:511), title 'AurOS didn't go on this time' (:493), 'Step %d of %d' (:547), 'About %d minutes left.' (:273), helper number in three groups at 26 px and 'If you need help, read this number to them.' only when stopped (:505, :575-583). Smallest normal text 19 px (:503-505).",
+    "test_evidence": "tools/screentest.sh (run by .github/workflows/fastpath.yml, path-filtered to src/aurscreen): step sentences match install.c; no size, device or log line reaches the screen; ETA is measured; 'step 4 of 7'; failure has her words, where Windows is, what to press, no AurBridge or 'Start installing'; nine-digit code only on failure; restore says the screen goes black then Windows starts, about two minutes. Not asserted: the fonts shipped, the title string, the mark.",
+    "proven_where": "unit (state parser) and real-Windows e2e runs through the staging screen (40025060913 / 40025046920). The committed staging pictures (docs/shots/staging-*.png, 10-04) are old and dark.",
+    "what_is_left": "The 'Show details for a helper' button is not built: the screen has no input (it paints from a pipe under PID 1), so a helper adds aurstage.details to the kernel line. Regenerate staging shots with tools/screenshots-staging.sh. Not run on tests.yml.",
+    "owner": "C (desktop)"
+   },
+   {
+    "id": "C-P0-3b",
+    "title": "Staging failure screen restarts the computer by itself with a visible countdown",
+    "status": "owner-decision",
+    "fix_evidence": "Failure text says 'This computer will restart by itself in N seconds' (asserted in tools/screentest.sh). DESIGN-DIRECTION section 3 Motion says nothing counts down except a restart she pressed for.",
+    "test_evidence": "tools/screentest.sh requires the countdown wording, so the test enforces the opposite of the rule.",
+    "proven_where": "unit; real-Windows e2e refusal screen (run 39923720924 before the rewrite).",
+    "what_is_left": "Owner decides: keep the automatic return to Windows (nobody holds a power button; safer if she is away) and amend the rule, or add a Restart now button, which needs input handling in aurscreen.",
+    "owner": "lead / owner"
+   },
+   {
+    "id": "C-P0-4",
+    "title": "Names: Wi-Fi, Internet, All my programs, the four looks; locked and workbench hidden",
+    "status": "closed",
+    "fix_evidence": "build/forge:738 'firefox|Internet|Websites, news and shopping'; footer label Wi-Fi (foot.c:47); taskbar 'All my programs' (layouts/taskbar.c:805, :913); shells/*.shell shell_name 'Like Windows', 'Like a Mac', 'Big and simple', 'One thing at a time'; settings.c:339-351 offers locked and workbench only to a machine already using them.",
+    "test_evidence": "tools/journeytest.sh (tests.yml:234) per look and size: 'the band says Wi-Fi', 'the browser is called Internet', 'the button is called All my programs', 'Get more programs is on her desktop'. tools/choicestest.sh and looktest (:312); wizard navtest 5 pins the look names to the website.",
+    "proven_where": "unit; CI unit job 120707344335 green on these; KVM image boots.",
+    "what_is_left": "None for the P0.",
+    "owner": "C (desktop)"
+   },
+   {
+    "id": "C-P0-5",
+    "title": "First run: 'Does everything work?' with Yes / Let me look first / No, each with its consequence",
+    "status": "closed",
+    "fix_evidence": "src/aurshell/welcome.c:747-779 (heading 'Does everything work?', 'Saving your answer.', 'Open Your files to see them.', 'Press Restart now to go back to Windows.'); SAY_NO :458; Yes and No each confirm on their own page. Shot: docs/shots/shells/taskbar-1024x600-asks.png.",
+    "test_evidence": "tools/welcometest.c (tests.yml:342): no button writes an answer; Yes and No ask again on their own page; Escape answers nothing; refusal screen. journeytest asserts the question, the lines under each answer, nothing under 18 px, no '...'.",
+    "proven_where": "unit; KVM firstboottest / aurfirsttest; real-Windows e2e reached the question at +8:06 and answered Yes (runs 40025060913, 40040689945).",
+    "what_is_left": "Only one check ('Does the internet work? Open Internet'); the spec's second, 'Can you see your photos? Open Your files', is absent.",
+    "owner": "C (desktop)"
+   },
+   {
+    "id": "C-P0-6",
+    "title": "Nothing vanishes, nothing piles up: persistent notification card, Messages list, no timers",
+    "status": "closed",
+    "fix_evidence": "src/aurshell/notify.c:472 (expire_timeout is not read), osd.c; one card, '3 messages', Messages list from the clock.",
+    "test_evidence": "tools/notifytest.c over a real session bus (tests.yml:237; it also requires the shell to claim org.freedesktop.Notifications) and journeytest.sh: 'the card stays until she presses OK', 'three become one card that says 3 messages', 'the clock opens Messages', 'the card and the line cover no button, the clock or the band'.",
+    "proven_where": "unit with a real bus; KVM image; real-Windows e2e saw the persistent 'VLC media player is ready ... OK' card (run 40040689945).",
+    "what_is_left": "F.md finding 9: that card sits over the top of the store page while the store's own Open button is below, two ways to one thing.",
+    "owner": "C (desktop)"
+   },
+   {
+    "id": "C-P0-7",
+    "title": "Shell: one press is one press (700 ms / 500 ms) and an 8 px press slop",
+    "status": "closed",
+    "fix_evidence": "src/aurshell/press.c; main.c:1213-1217, :2028, :2085 call it; 8 px slop for window moves in commit cc07a47 (layouts/taskbar.c:1125).",
+    "test_evidence": "tools/presstest.c (tests.yml:250), which also reads main.c to check the loop asks; tools/csdtest.c ('a wobble of the hand between press and release is a press, not a drag (8 px)'). Both in tests.yml unit.",
+    "proven_where": "unit (CI job 120707344335 green).",
+    "what_is_left": "None.",
+    "owner": "C (desktop)"
+   },
+   {
+    "id": "C-P0-8",
+    "title": "Unique icons, Zip files fallback fixed, the mark drawn in the shell",
+    "status": "closed",
+    "fix_evidence": "src/aurshell/apps.c:421-438 (Archiving to ICON_ZIP, Printing to ICON_PRINTER before Settings); draw.c:518 draw_diamond; 28 distinct icons. Shot docs/shots/shells/taskbar-1366x768-desktop.png shows each program with its own icon.",
+    "test_evidence": "tools/icontest.c (tests.yml:255): every icon pair differs by 12% or more of its pixels at 24/32/48/64 px; the shipped programs get ten different icons; the diamond's area, solidity and height. Exempt pairs: Settings/gear and A+/A-.",
+    "proven_where": "unit (CI job 120707344335 green).",
+    "what_is_left": "Website pictures still show the old icons (see D-P0-3).",
+    "owner": "C (desktop)"
+   },
+   {
+    "id": "K-P0-1",
+    "title": "Helper pages the installer and website point to (Smart App Control warning first, Secure Boot, BIOS to UEFI, RST to AHCI)",
+    "status": "partial",
+    "fix_evidence": "website/advanced.html: sections bios, rst, smart-app-control (warn box 'Read this before switching it off' before the steps, :60-79), secure-boot, room. fix_win.c:195-240 sends the installer to them.",
+    "test_evidence": "check.mjs:351 requires all five sections and :347 applies the text floors (18 px, 4.5:1) at two sizes; :364 limits links; tools/helptest.py (words.yml). Nothing asserts the warning comes before step 1.",
+    "proven_where": "unit.",
+    "what_is_left": "A check that the Smart App Control warning box precedes the steps.",
+    "owner": "K (help) / D (website)"
+   },
+   {
+    "id": "K-P0-2",
+    "title": "One truth about going back, in every place",
+    "status": "closed",
+    "fix_evidence": "welcome.c:458 SAY_NO ('AurOS stays on this computer, with anything you saved in it. Nothing is deleted.'); settings.c:378 and :757 ('Anything you saved in AurOS goes with it'); website/index.html:239, :276, :357; rootfs/usr/share/auros/help/windows.html:23.",
+    "test_evidence": "check.mjs:573 data-ui 'desktop' requires the website sentence to be a literal in the shell source; welcometest.c; tools/helptest.py (words.yml).",
+    "proven_where": "unit.",
+    "what_is_left": "The FAQ's Put Windows back sentence is not pinned to settings.c.",
+    "owner": "K (help)"
+   },
+   {
+    "id": "THEME-ON",
+    "title": "Known bug: aurora on() picked dark text on the dark green accent in Light (GNOME Software Install button unreadable)",
+    "status": "closed",
+    "fix_evidence": "Fixed on main in f38af6f (16:46): src/aurora/aurora:125-130 on() returns whichever of bg and fg_hi has the higher WCAG contrast. Sandstone text on the accent is paper at 6.98:1 (was ink at 2.28:1), on the error colour 6.66:1 (was 2.39:1); the other four themes were 7.5-8.9:1. Same token feeds gtk.css suggested-action, destructive-action, row:selected, theme_selected_fg_color, terminal cursor_text. Star icons fixed separately in 14b3d2a.",
+    "test_evidence": "tools/theme-test.sh:113-156 renders every @X|on@ in every template for every theme and requires 4.5:1, plus bg-on-accent for the shell's primary button (f85c35c). I ran it on origin/main: 77 checks pass. With the old on() restored in a scratch copy it fails: sandstone accent 2.28:1 and err 2.39:1. Wired into tests.yml unit (:298). e2e d540727 adds vision.label_contrast, selftested, for the store button.",
+    "proven_where": "unit only. The step has not run in CI yet: `tests` was skipped on 82bb79a and RC5 (9dc73fe) predates the fix. The real image and the real store button are not yet re-shot.",
+    "what_is_left": "Next RC build runs theme-test in tests / unit; an `[e2e:aur]` run confirms the Install label at 4.5:1 or better.",
+    "owner": "C (desktop) / F (e2e)"
+   },
+   {
+    "id": "THEME-CONTRAST-TEST",
+    "title": "Does any test enforce contrast for third-party app theming?",
+    "status": "partial",
+    "fix_evidence": "Yes, narrowly: tools/theme-test.sh section 4 holds text on accent and error fills (GTK buttons, selected rows, terminal cursor) to 4.5:1 in all five themes. Light and Dark token tables otherwise pass tools/contrast.c --strict (run by hand).",
+    "test_evidence": "Not covered: other themes/templates/gtk.css pairs (disabled button text, headerbar, selection overlay, focus ring and entry border, scrollbar, tooltip), the terminal ANSI palette against bg, and apps that ignore gtk.css (Qt, Firefox, Electron; there is no Qt template). tools/contrast.c, which holds the shell palette, is run by no workflow and has no on-accent pair. The only pixel check on a real third-party window is e2e label_contrast for the store Install button, on manual [e2e:aur] dispatch.",
+    "proven_where": "unit (theme-test); e2e aur variant only by hand.",
+    "what_is_left": "Put contrast.c --strict in tests.yml; add the remaining gtk.css pairs and ANSI-on-bg to theme-test; run the e2e contrast check on every candidate.",
+    "owner": "C (desktop) / lead"
+   },
+   {
+    "id": "EASY-TEXT-18",
+    "title": "EASY / DESIGN-DIRECTION floor: text at least 18 px",
+    "status": "partial",
+    "fix_evidence": "Website CSS; installer type table wizard.c:586-594 (smallest 18, dense mode 18/28); shell themes/nocturne.theme:105-107 (20/18/18, inherited by sandstone) and dmid 1.2 (shellcommon.c:863); staging 19 px (screen.c:503-505; 14 px monospace only for helper details); GTK programs 14 pt (build/forge:2316-2318). EASY.md has no numeric floor; the 18 px floor is DESIGN-DIRECTION sections 3 and 6.8.",
+    "test_evidence": "Website: check.mjs:239-243 on every real page at 1366x768, 1920x1080, 390x844 plus advanced.html (pages.yml). Help pages: helptest.py:322 (words.yml). Shell: journeytest.sh:98,104 'nothing under 18 px', only on the first-start, her-files and USB-stick screens. Installer and the rest of the shell: no assertion.",
+    "proven_where": "website unit (headless Chromium); shell unit on a few screens.",
+    "what_is_left": "A size floor test for the installer and for the shell's Settings, Wi-Fi, Bluetooth, taskbar, dock, rail and tiles screens. Text inside raster pictures is not measured.",
+    "owner": "lead"
+   },
+   {
+    "id": "EASY-TARGETS-44",
+    "title": "EASY rule 4: every target at least 44 px on its short side at 1024x600",
+    "status": "partial",
+    "fix_evidence": "Installer buttons and cards (navtest checks 44 at 96 dpi; spec asks 48); shell footer buttons at least 96x48, power choices, Help, Wi-Fi, Settings, Bluetooth and welcome panels; website 'Get AurOS' 56 and helper buttons 48.",
+    "test_evidence": "Installer: navtest section 4 (wizard.c:5421-5435, 5539-5568). Shell: tools/targets.c (tests.yml:371): footer, power, help, Wi-Fi, Settings, Bluetooth, welcome pages at 1024x600/1366x768/1920x1080 and four text scales. Website: check.mjs:275 (56 px) and :719 (48 px) only. tools/hittest.c is run by no workflow.",
+    "proven_where": "unit; installer on real Windows Server.",
+    "what_is_left": "Not measured: the shell's dock cells, rail rows, taskbar list rows, tiles, window title-bar buttons (targets.c says archetype internals do not publish geometry); other website links; third-party apps.",
+    "owner": "C (desktop) / D (website)"
+   },
+   {
+    "id": "EASY-CONTRAST-4.5",
+    "title": "Contrast of 4.5:1 or better for everything she reads",
+    "status": "partial",
+    "fix_evidence": "Website, help pages, Light and Dark tokens (themes/sandstone.theme, nocturne.theme), wizard palette (wizard.c:143-156), staging constants. I computed the Light accent pairs: paper on 0B5D4F 6.98:1, ink on paper 15.9:1.",
+    "test_evidence": "Website: check.mjs:244 from computed styles (text over pictures is skipped). Help: helptest.py 'light/dark: every text colour 4.5:1 or better, every border too' (words.yml). Shell: theme-test.sh on-accent pairs only (unit, not yet run in CI). tools/contrast.c is not in any workflow. Installer and staging: no check.",
+    "proven_where": "website and help unit; shell on-accent unit by hand.",
+    "what_is_left": "Wire contrast.c --strict, add a wizard palette check, and add the other GTK pairs.",
+    "owner": "lead"
+   },
+   {
+    "id": "EASY-JARGON",
+    "title": "EASY rule 2: no word she does not use",
+    "status": "partial",
+    "fix_evidence": "wordlint 0 problems on origin/main (I ran it). Covers website/*.html except advanced.html and licenses.html, help pages, wizard.c, fix_win.c, install.c, screen.c, welcome.c.",
+    "test_evidence": "tools/wordlint.sh in .github/workflows/words.yml (latest run 40042626072 green) plus tools/helptest.py. It does not scan the rest of src/aurshell. Running it on those files finds: bare 'Close' buttons in the Wi-Fi, Bluetooth and Settings panels (net.c:648, bt.c:414, settings.c:474) and 'session' in layouts/locked.c:569 (hidden look). 'SSID' at net.c:365 is a matcher, not shown.",
+    "proven_where": "unit.",
+    "what_is_left": "Add src/aurshell/*.c, preflight.c and sbdb.c strings to wordlint; replace the three bare Close labels; add BIOS, NTFS, UEFI and chip names for non-helper text.",
+    "owner": "K (help) / C (desktop)"
+   },
+   {
+    "id": "EASY-ONE-NEXT-STEP",
+    "title": "One obvious next step on every screen; failures say what to do",
+    "status": "partial",
+    "fix_evidence": "Wizard primary button always present, with 'Pick a look first.' when too early (wizard.c:3472); first-run question has one green Yes, the safe middle button and the separated No; staging failure says what to press.",
+    "test_evidence": "navtest sections 3 and 4 (wizard.c:5481-5568), e2e 6f93b79 'primary button is always pressable', welcometest, screentest ('what to press, by its name on the button').",
+    "proven_where": "installer on real Windows Server; first-run and staging in unit and real-Windows e2e.",
+    "what_is_left": "No test that every shell panel (Settings, Wi-Fi, Bluetooth, Help) has one primary action. Installer failure sentences are untested (B-P0-6). The store (third party) is not covered.",
+    "owner": "lead"
+   },
+   {
+    "id": "OBS-REAL-IMAGE",
+    "title": "Seen on the real Light image in the e2e run and not fixed on main: VLC first-run dialog off-screen, duplicate Open paths, half-hidden Home panel",
+    "status": "open",
+    "fix_evidence": "docs/handoff/streams/F.md finding 9 (run 40040689945): VLC's 'Privacy and Network Access' dialog opens half off the left edge behind VLC's window with Continue at the edge (flow/shots/0033-program-open.png), so she cannot read or press it; the 'VLC is ready' card sits over the store page (0030-store-installed.png); the store window leaves the shell's Home panel half-hidden beside it. No commit on main addresses these. The store's missing star icons are fixed (14b3d2a, hardentest +14, not yet seen on a built image).",
+    "test_evidence": "None. e2e only records it.",
+    "proven_where": "real-Windows e2e screenshots only.",
+    "what_is_left": "Place new windows fully on screen, bring first-run dialogs to the front, give each action one path, and add a window-bounds check to the e2e aur variant.",
+    "owner": "C (desktop) / WL (compositor)"
+   }
+  ],
+  "challenges": [
+   {
+    "id": "D-P0-1",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Confirmed on origin/main (b28851a; diff vs the bce1904 snapshot is one docs line). website/index.html:219-225 is one paragraph plus a btn2 to advanced.html#smart-app-control. The steps exist only in advanced.html (SAC section, warn box 'Read this before switching it off' before 'The switch'). door.js has 0 'signed' hits (a Python regex scan, because a shell grep wrapper misbehaved). `git log -S'var SIGNED'` shows it was removed in 54fd273. check.mjs:553 (STALE, excludes advanced.html) and :721 (B-06) exist. pages.yml run 40038609889 (afc82b8, after the last website commit 0f356d8) has job `check` green, and its log shows 'ok promises index.html: never says /switch(ing)...off/' and 'ok B-06'. The old 998057f text ('switch it off') would trip the STALE regex. Gaps: the regex misses 'turn off' phrasing, and deleting the SIGNED branch has no test of its own. The site is not live (deploy skipped); release.yml has its own pages job. Proven by headless Chromium only, never on a real PC."
+   },
+   {
+    "id": "D-P0-2",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Partial is right, and the shortfall is bigger than stated. The three pictures and the retitle are on main (index.html:230-262). The rings number 1 to 4 across the three pictures, not 1..3; check.mjs:589 counts per step group. There is no test tying a picture to the wizard. setup-ready.jpg is from c2adf6c (07:16) and setup-check.jpg from 6845420 (02:07), both before 9693e80 (14:39) rewrote Ready and the first page. I viewed them against docs/shots/wizard/hidpi-4a-ready.png and hidpi-1c-welcome-ready.png. The site picture says 'Windows and all your files stay' and 'Windows stays, with all your files'. The real page now says 'Windows and your files are kept ... could be damaged' and 'made to keep Windows and your files', and adds 'Read the Terms' and Licenses. So the site picture promises more than the installer now says. The sources are Wine renders (B.md:41,317), which DESIGN-DIRECTION rule 13 forbids. Nothing forces tools/site/pictures.py to be re-run."
+   },
+   {
+    "id": "D-P0-3",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Confirmed partial. I viewed look-taskbar.jpg (6845420, 02:07, older than the shell rework 0d2d9c6 at 06:33). It shows truncated rows ('Everything you have saved, i...', 'All my progra...'). Printers and Settings share one icon. The footer has no icons. The shot is an empty desktop with 'Nothing open yet', so the spec's real-content bullet (news page in Internet, 12 family photos) is unmet. That is missing from the claim's list. The only tests are check.mjs:627-637 (tab behaviour); no check covers picture content, size or freshness. The hero image shows the footer as a dark bar on the Light theme."
+   },
+   {
+    "id": "D-P0-4",
+    "claimed": "closed",
+    "verdict": "downgrade",
+    "corrected_status": "partial",
+    "reason": "The time half is pinned. data-fact time-ssd/time-hdd are checked against wizard.c eta_range by check.mjs, and the 'about 10 minutes' STALE rule is real. The loss half is not. The spec requires the FAQ 'Can I go back?' to gain the loss sentence. index.html:357 has it ('anything you saved in AurOS goes with it'), but check.mjs has no assertion on it. A regex scan finds no 'go back', 'put windows back' or 'anything you saved' in check.mjs. The cited :722 'A-09' test checks the other FAQ ('Will I lose my files?': no absolute No, 'made to keep', memory stick), so it is mis-cited as the loss sentence. The auditor's own what_is_left admits the sentence is unpinned. Deleting it would stay green, so a CLOSED test criterion fails. Also, 'Not yet tested on a real computer' (index.html:46) conflicts with the real-Windows-11 e2e runs, and the journey floor is inert."
+   },
+   {
+    "id": "D-P0-5",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Confirmed. index.html:116, :190 and :240 each have `<p class=helper><a class=btn2 href=guide.html>Stuck? Ask someone to help`. site.css .btn2 has min-height 52. check.mjs:719 asserts count 3, exact text, height >= 48 and href; the STALE rule at :550 bans the old label. CI run 40038609889 log: 'ok A-06: each step has a 48px button...'. Nit: that check runs at the default 1366x768 only, not also 390x844 as claimed. Bottom-left placement is unasserted, as the claim already says."
+   },
+   {
+    "id": "B-P0-1",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Fix confirmed: wizard.c:143-156 C_* table; no C_ACCENT_ALT or backdrop ribbons (the only hit is a comment at :554); g_side = 280 px when lw >= 1100. No test asserts a colour or a wizard contrast ratio. navtest on real Windows (windows-source job 120703863661, 164 PASS, 0 FAIL, run 40038449315) renders every page but would pass with the old palette. The only palette-adjacent pins are tools/e2e/selftest.py:267-268 (white on #0B5D4F) and e2e.py:76, which finds the button by colour. Both run on manual e2e dispatch only. Shots are Wine. Cited e2e runs 40025060913/40025046920 are conclusion=failure overall (the store step). The wizard steps in them passed."
+   },
+   {
+    "id": "B-P0-2",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Confirmed. wizard.c:1186-1203 defines press_allowed (700/500 ms). Every entry point goes through it: widget_activate :4111-4113 (used by WM_LBUTTONUP :5079 and the accessibility path :5022) and the keyboard path :4914. navtest 3b (:5506-5534) asserts landing on Ready, not the install. windows-source run 40038449315 logs PASS for all four checks ('two clicks on Next within 300 ms land on Ready...' etc.). It would go red if reverted. The test uses a simulated clock, so the logic is exercised and GetTickCount64 is not. Run 39959577778 is a windows.yml run, not an e2e."
+   },
+   {
+    "id": "B-P0-3",
+    "claimed": "closed",
+    "verdict": "downgrade",
+    "corrected_status": "partial",
+    "reason": "Code matches the spec: .rc resources 100-102 AURFONT, fonts_load with AddFontMemResourceEx, TYPE sizes 32/22/20/20/18/18/20, Segoe fallback. The tests pin less than 'closed' implies. navtest 14 asserts (a) every glyph drawn exists in whatever font is selected and (b) g_face_ok_early, i.e. the three resources loaded. Nothing asserts that GDI resolves FACE_TEXT at FW_BOLD and FACE_DISPLAY to the embedded 700/800 cuts. A Python scan finds no GetTextFace or tmFaceName in src/aurbridge. If the legacy family-name trick failed, GDI would substitute a font, and the glyph check could still pass. Nothing asserts the sizes either; the auditor's own EASY-TEXT-18 says the installer has no size assertion. Real-Windows evidence covers loading only."
+   },
+   {
+    "id": "B-P0-4",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Confirmed. A scan of src finds COUNTDOWN gone and a single ExitWindowsEx(EWX_REBOOT|EWX_FORCEIFHUNG) at plat_win.c:2009, reached only from plat_restart, called from do_restart (wizard.c:4019, on her press) and fix_win.c:506 (the fix path, which asks first). navtest 8 (:5798-5822) and 8b log PASS on real Windows Server: 2000 ticks restart nothing, Esc does nothing, Later only waits, Now is the only restart. The restart call is stubbed in nav mode; the real call is exercised only in e2e. Caveat: staging failure screens still say 'restart by itself in 41 seconds' (screentest.sh:127). That is the Linux staging side, a different component."
+   },
+   {
+    "id": "B-P0-5",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Confirmed partial. wizard.c:2373-2445 (sb_page, sb_helper, copy_for_helper), title :2567, label :3434 and SR text :4380 exist. navtest 14 only calls render() on the page (:6277-6281), a glyph audit. Nothing asserts the title, the Show a helper how, Not now or Copy for a helper buttons, or that the clipboard gets the paragraph. A scan finds no 'One setting needs changing' or 'Copy for a helper' outside wizard.c. The auditor slightly under-credits sbselftest (tests.yml:429, windows.yml:169, build.yml:315): it does assert the conditional 'It trusts:' clause and 'Save and exit.' in sbdb.c:457. The duplicated WHAT TO DO is gone."
+   },
+   {
+    "id": "B-P0-6",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Partial is right, and the mapping is worse than 'substring-based'. plain_failure (wizard.c:1993-2012) checks the net words first. plat_win.c:2428 produces 'this computer ran out of room for the download.' That contains 'download', so a full disk during download shows 'The internet stopped partway. Check you're online', the wrong sentence. The spec's 'ran out of room' sentence is shadowed for that case. No test reaches plain_failure or the install-stopped page; a scan of tools/ for the four sentences finds nothing. The 5e-stopped shot is generated by a shots mode, not asserted. Never run on a real failure."
+   },
+   {
+    "id": "B-P0-7",
+    "claimed": "closed",
+    "verdict": "downgrade",
+    "corrected_status": "partial",
+    "reason": "What is pinned: navtest 4b (:5569-5632) on real Windows Server asserts that at 1024x530, 1366x663@144 and 1680x1035@144 the look page fits without scrolling and all four W_CARDs are on screen. Navtest 5 pins names and travel. What is not pinned, though the title claims it: the 'Chosen' label and check mark (card_name/chosen_pill, wizard.c:2815-2840), the 2x2 shape, the 3 px selected border and the focus ring. A scan of navtest for Chosen or glyph_check finds only the screen-reader name (:6036). A single column of name-only cards would pass 'all four on screen', and removing the check mark would stay green. The non-colour selection cue and the grid shape are visual-only, from Wine shots."
+   },
+   {
+    "id": "B-P0-8",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Confirmed. wizard.c and fix_win.c contain no http, github or '://' string; fix_helper_url (fix_win.c:236-240) opens #bios, #rst or #wifi-stick from a button, and the address is baked in (AUROS_SITE_W). Nothing enforces it: wordlint's c_strings skips space-free strings, which includes addresses, and addrtest only checks GitHub addresses. Caveat for the gate: the Pages deploy is skipped, so those helper links 404 until the first full release and a pages run."
+   },
+   {
+    "id": "B-P0-9",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Confirmed. fix_win.c:26-150 has the plain titles ('Windows has locked this computer's drive', 'isn't formatted the usual way', ...). I ran tools/wordlint.sh and got 0 problems. docs/EASY.md's forbidden list has no BIOS, NTFS, UEFI, firmware or Storage Spaces; it does have partition and driver. So reverting those lines stays green. navtest 7 checks length only. The no-internet line still names chips (fix_win.c:153). The Recycle Bin behaviour was replaced, not copied: temp-file sweep with navtest PASS lines."
+   },
+   {
+    "id": "C-P0-1",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Confirmed. shellcommon.c:769-791 open_font loads AUROS_FONT_DIR/<name>.ttf only for a name with no '.' (cannot climb out of the directory), with the DejaVu per-glyph fallback. shellpreview.c:56 uses shell_fonts_load. tools/fonttest.sh builds a real aurshell fixture and asserts the 'Narrow' face is used. The RC5 unit log (job 120713166109) shows 'ok font_text=\"Narrow\" draws in the face named Narrow', so the compile branch was not skipped. The RC3 job 120707344335 is `failure`, but only at signtest (step 52); steps 14-39 are success. Since RC3 (e480808) the only src/aurshell change is a --type harness flag in main.c. The shell still ships Atkinson v1, not Next (P1)."
+   },
+   {
+    "id": "C-P0-2",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Confirmed partial. desktop.profile:38 theme=sandstone; sandstone.theme is 'Light' with wall_style=solid; nocturne.theme has the Dark name, blur 0, opacity 1.00, animation 120/ease; synthwave is gone; settings.c:386 lists only sandstone and nocturne; no teal or violet remains except lockpin.c:380. Gaps: Settings Colors has no picture of each choice (add_choice, text only). tools/contrast.c is in no workflow or script (confirmed); I built it and ran --strict on all five rendered themes, and all pass. Nothing pins desktop.profile or the token hexes. The auditor under-credits navtest 5, which pins every wizard card to theme=sandstone. Evidence labels: run 40040689945 is the AurOS-alone variant, not Windows."
+   },
+   {
+    "id": "C-P0-3",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Confirmed partial. screen.c has the UI face with DejaVu fallback (:436-450; build/staging:402-404 copies the Next 400/700 as ui.ttf and ui-bold.ttf), 'AurOS didn't go on this time' :493, 'Step %d of %d' :547, 'About %d minutes left.' :273, and the helper number only when stopped. The Show details for a helper button does not exist (only an aurstage.details kernel flag). tools/screentest.sh is wired only in fastpath.yml:96, path-filtered; it ran green on aa50e9f (run 40025571889). It does not assert the font, title or mark; a scan shows ui.ttf tested only in screenshots-staging.sh. The committed staging shots are from 10-04."
+   },
+   {
+    "id": "C-P0-4",
+    "claimed": "closed",
+    "verdict": "downgrade",
+    "corrected_status": "partial",
+    "reason": "Code is on main: forge:738 Internet, foot.c:47 Wi-Fi, 'All my programs' (layouts/taskbar.c:805,913), shell_name in shells/*.shell, and locked/workbench offered only to a machine already on them (settings.c:339-351). The tests cover less. Pinned: journeytest (RC5 log) asserts the band says Wi-Fi, All my programs, and Get more programs on her desktop, by drawing the real shell. 'the browser is called Internet' uses a fixture .desktop (journeytest.sh:34, 'e firefox \"Internet\"'), so build/forge's rename is untested; the same hard-coded fixture is in storetest.c:84. The dock look skips the Internet check. No test asserts the four shell_name strings in shells/*.shell (a scan of tools/ finds only plainwords.sh jargon scan, not in CI). No test asserts the locked/workbench hiding; looktest.c has no such check. The wizard and website names are pinned (navtest 5, check.mjs), but those are the installer's names, not the desktop's."
+   },
+   {
+    "id": "C-P0-5",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Confirmed. welcome.c:747-779 and :519 (order Yes, Later, No), a 32 px 'wide' gap before No (:584,:636), SAY_NO :458, and Yes/No each confirm on their own page. welcometest (RC5 log) passes: 'no button on the question writes an answer', 'Yes asks again, on its own page', 'escape answers nothing'. journeytest passes the 18 px and 'what No does is on the screen' checks on every look. website/index.html:276 is pinned to SAY_NO by data-ui. Button order and the gap are code-only (n == 4 is asserted, not order). Only one check by design ('Check one thing first'). Evidence caveats: run 40025060913 reached the question at +8:06 and answered Yes, but the run is `failure` at 'open the store' (M3). Run 40040689945 is the AurOS-alone variant, with no Windows."
+   },
+   {
+    "id": "C-P0-6",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Confirmed. notify.c:472 does not read expire_timeout; there is no timer in osd.c. notifytest.c, in tests.yml:237 and green in RC5, asserts 'a card asked to last 1 ms is still there 4.5 s later', 'an on-screen message is still there 3.5 s later... and goes at her next press', 'six at once are ONE card', 'a 6 messages button' and the Messages list. It would go red if reverted. journeytest adds 'the card stays until she presses OK', '3 messages', and 'covers no button/clock/band'. The VLC card was seen in the aur variant (a KVM VM of AurOS alone), not on real Windows, so the label 'real-Windows e2e' is wrong."
+   },
+   {
+    "id": "C-P0-7",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Confirmed. press.c (700 ms after change, 500 ms repeat within 24 px) is called by main.c; presstest.c asserts 699/700 ms boundaries and that main.c contains press_screen and press_filter. csdtest asserts the 8 px wobble is a press (DRAG_SLOP, shell.h:134, used in dock.c:856 and taskbar.c:1125). Both pass in the RC5 unit job (steps 17 and 39). Nit: the cited main.c line numbers (1213-1217, 2028, 2085) are stale; they are now :1231, :2046, :2103, off by about 18. The test is a unit test with a simulated clock; not seen on hardware."
+   },
+   {
+    "id": "C-P0-8",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Confirmed. apps.c:421-422 maps Archiving to ICON_ZIP and Printing to ICON_PRINTER ahead of Settings, and draw_diamond (draw.c:518) is used in shellcommon.c:623, rail.c:298 and taskbar.c:803. icontest.c, tests.yml step 18 (green in RC5 job 120713166109), asserts the pairwise 12% pixel difference at four sizes, ten distinct icons for shipped programs, and the diamond's area and height. It would go red if the fallback were reverted. The website pictures still show the old icons (D-P0-3)."
+   },
+   {
+    "id": "K-P0-1",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Confirmed partial. advanced.html has ids smart-app-control (warn box before 'The switch'), secure-boot, bios, rst, room, wifi-stick and wifi-sticks. check.mjs:347-351 asserts only five ids exist (bios, rst, smart-app-control, secure-boot, room) and the text floors. It does not assert that the warning precedes step 1. It does not assert #wifi-stick, which fix_win.c:240 links for no-internet. A rename would silently break the installer link. The helper pages are not live: the pages deploy is skipped, so the installer's 'Show a helper how' opens a 404 until the first full release."
+   },
+   {
+    "id": "K-P0-2",
+    "claimed": "closed",
+    "verdict": "downgrade",
+    "corrected_status": "partial",
+    "reason": "The words are consistent in every place I read (welcome.c:458, settings.c:378/757, terms.html:98, guide.html:55/62, windows.html:23/27, index.html:239/276/357). Only one sentence is machine-pinned: the decline sentence is a data-ui on index.html:276 and must be a literal in the shell source (UI.desktop in check.mjs). The other half of the finding, what Put Windows back removes, is pinned nowhere. The check.mjs data-ui marks at index.html:239/357 pin button names only. settings.c:757 splits the sentence across two string literals, so the literal-match could not pin it anyway. welcometest.c asserts no sentence text, windowspagetest.c has no 'goes with it' assertion, and helptest.py has no sentence check. The auditor admits the FAQ sentence is unpinned. Reverting the settings.c, windows.html or guide.html loss sentences would stay green."
+   },
+   {
+    "id": "THEME-ON",
+    "claimed": "closed",
+    "verdict": "upheld",
+    "reason": "Confirmed by mutation. src/aurora/aurora:125-130 picks the higher-contrast of bg and fg_hi (f38af6f). I ran tools/theme-test.sh on the snapshot: 77 checks pass; sandstone on accent 6.98:1 and on err 6.66:1. In a scratch copy with the old `lum(c) > 0.55 ? bg : fg_hi` restored it fails: sandstone text on accent 2.28:1, on err 2.39:1. gtk.css.tpl:23,53,55,72 use |on, so the fix reaches the Install button's CSS. It is wired into tests.yml (unit, line ~298) but has never run in CI: RC3 and RC5 unit jobs predate the step, and the RC6 tests run is still pending. The real store button on a rebuilt image is unverified; the e2e label_contrast check is manual-dispatch only."
+   },
+   {
+    "id": "THEME-CONTRAST-TEST",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Confirmed. theme-test.sh section 4 covers only |on| fills (accent, err), plus bg on accent for the shell's primary button. It does not cover the other gtk.css pairs, ANSI against bg, or Qt/Firefox/Electron (no Qt template exists in themes/templates). tools/contrast.c is in no workflow (scan of .github/workflows and tools/*.sh finds no reference); I ran it by hand with --strict and all five themes pass, but it has no on-accent pair. The theme-test step has not run in CI yet. The only real third-party pixel check (e2e label_contrast) is manual dispatch."
+   },
+   {
+    "id": "EASY-TEXT-18",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Confirmed. Website: check.mjs textFindings at 1366x768 and 390x844 for every page and advanced.html, green in pages run 40038609889. Help pages: helptest.py. Shell: journeytest asserts under-18 only on the first-run, files and USB-stick screens, and its filter excludes the footer buttons (Help, Wi-Fi, Settings, Smaller, Bigger, Turn off). Installer sizes (TYPE table) are code-only, with no assertion. Staging and the rest of the shell are untested. Partial stands."
+   },
+   {
+    "id": "EASY-TARGETS-44",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Confirmed. Installer: navtest PASS lines '...all >= 44 px' for welcome, look, ready, progress (and 'only buttons' for stop/restart) on real Windows Server. Shell: tools/targets.c runs as the 'targets' step in the RC5 unit job. tools/hittest.c is in no workflow (scan confirmed). The website asserts only the 56 px Get AurOS and the 48 px helper buttons. The listed shell areas (dock cells, rail rows, taskbar list rows, tiles, title-bar buttons) have no geometry test."
+   },
+   {
+    "id": "EASY-CONTRAST-4.5",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Confirmed. The website is checked from computed styles (textFindings 4.5:1, green in the pages run). Help pages are covered by helptest. The wizard palette has no test (the C_* defines are commented, not asserted). tools/contrast.c is in no workflow; I ran --strict on all five rendered themes and they pass, but dividers on nocturne are 4.12:1, below the 4.5 the wizard comment claims for rules. Staging has no check. Partial stands."
+   },
+   {
+    "id": "EASY-JARGON",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Confirmed by running tools/wordlint.sh: 0 problems on its default surfaces (website/*.html, help pages, wizard.c, fix_win.c, install.c, screen.c, welcome.c; words.yml green on run 40042626072). Scope is only those files (wordlint.sh:126). Running it on src/aurshell/*.c and layouts/*.c finds bare 'Close' at net.c:648, bt.c:414 and settings.c:474, and 'session' at layouts/locked.c:569. preflight.c and sbdb.c strings are not scanned (hits for PC, AurBridge, partition). The wizard falls back to r->title only for results the fix table lacks (wizard.c:2133, :2525). No change to partial."
+   },
+   {
+    "id": "EASY-ONE-NEXT-STEP",
+    "claimed": "partial",
+    "verdict": "upheld",
+    "reason": "Confirmed. wizard.c:3472 'Pick a look first.'; navtest sections 3/4 on real Windows; e2e 6f93b79 'primary button is always pressable' is on main (tools/e2e/e2e.py, manual dispatch). welcometest and screentest cover first-run and staging. There is no test that each Settings, Wi-Fi, Bluetooth or Help panel has one primary action. Installer failure sentences are untested (see B-P0-6, where one mapping is also wrong), and the store is third-party. Partial stands."
+   }
+  ]
+ }
+]

@@ -1,0 +1,69 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  encrypt-init DEV — the first, short step of encrypting AurOS's
+#  partition in place (docs/security/THEFT.md section 1)
+#
+#  Runs in the initramfs (local-top/auros-lock), on the partition
+#  before anything has mounted it; the tests run the same file
+#  (tools/theftunit.sh). Seconds, not minutes: the filesystem gives up
+#  its last 32 MiB, a LUKS2 header goes in front with a temporary key,
+#  and the first 16 MiB of data moves to the end. The rest of the drive
+#  is encrypted while AurOS runs (lockctl encrypt-pass), with LUKS2's
+#  own resilience journal, so a power cut anywhere is resumed.
+#
+#  Exit 0: the partition is LUKS2 now (or was already). Exit 1: refused,
+#  and the partition is exactly as it was apart from, at most, a
+#  filesystem 32 MiB smaller -- AurOS starts plain, as before.
+#
+#  KNOWN WINDOW: resize2fs is not power-cut safe while it moves blocks
+#  out of the last 32 MiB. On a fresh install those blocks are almost
+#  always free and the shrink only rewrites the group descriptors, but
+#  "almost" is not "always": the install (stream A2) should leave the
+#  last 32 MiB of the partition outside the filesystem, and then no
+#  shrink happens here at all (it is skipped when there is room).
+# ═══════════════════════════════════════════════════════════════════
+set -u
+DEV=${1:?usage: encrypt-init DEV}
+TEMP_KEY='AurOS: no PIN has been chosen yet'   # = lockctl, = src/aurshell/lockpin.c
+SHIFT=$((32 * 1024 * 1024))
+
+log()    { echo "auros-lock: $*" >&2; }
+refuse() { log "not encrypting: $*"; exit 1; }
+
+cryptsetup isLuks "$DEV" 2>/dev/null && exit 0
+[ "$(blkid -o value -s TYPE "$DEV" 2>/dev/null)" = ext4 ] || refuse "$DEV is not ext4"
+
+e2fsck -p -f "$DEV" >/dev/null 2>&1
+rc=$?
+[ "$rc" -le 1 ] || refuse "the filesystem check said $rc"
+
+size=$(blockdev --getsize64 "$DEV") || refuse "cannot read the partition's size"
+bs=$(dumpe2fs -h "$DEV" 2>/dev/null | sed -n 's/^Block size: *//p')
+blocks=$(dumpe2fs -h "$DEV" 2>/dev/null | sed -n 's/^Block count: *//p')
+[ -n "$bs" ] && [ -n "$blocks" ] || refuse "cannot read the filesystem's size"
+room=$(( (size - SHIFT) / 4096 * 4096 ))
+[ "$room" -gt $((1024 * 1024 * 1024)) ] || refuse "the partition is too small"
+if [ $((bs * blocks)) -gt "$room" ]; then
+    resize2fs "$DEV" "$((room / 1024))K" >/dev/null 2>&1 || refuse "the filesystem could not give up 32 MiB"
+fi
+
+# A CPU with AES instructions: AES-XTS. Without (Atom, Celeron N, old
+# Pentium): Adiantum, which is fast in software (THEFT.md section 7).
+if [ "${AUROS_LOCK_NOAES:-0}" != 1 ] && grep -qw aes /proc/cpuinfo; then
+    cipher=aes-xts-plain64; bits=512
+else
+    cipher=xchacha12,aes-adiantum-plain64; bits=256
+fi
+
+printf '%s' "$TEMP_KEY" | cryptsetup reencrypt --encrypt --init-only --batch-mode \
+    --type luks2 --reduce-device-size 32M --sector-size 4096 \
+    --cipher "$cipher" --key-size "$bits" --pbkdf pbkdf2 --pbkdf-force-iterations 1000 \
+    --key-slot 0 --key-file - "$DEV" >/dev/null 2>&1
+rc=$?
+# Even a failure can leave a header behind (a power cut between the
+# move and the end): then it is LUKS2, and opening it finishes the move.
+if cryptsetup isLuks "$DEV" 2>/dev/null; then
+    log "the drive is being encrypted ($cipher)"
+    exit 0
+fi
+refuse "cryptsetup said $rc"

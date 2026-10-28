@@ -1,0 +1,39 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  boot-guard — a start whose desktop never appears restarts by itself
+#
+#  The start-up menu counts starts nothing confirmed and uses the kernel
+#  before after two in a row (grub.cfg.in, "boot counting"). A kernel
+#  that panics restarts the computer itself (panic=10). A kernel that
+#  boots but cannot show her a desktop -- a graphics driver that hangs --
+#  restarts nothing: the screen is black or says "sorry", and she holds
+#  the power button. This is the restart for her: if this start has not
+#  been confirmed (auros-boot-ok removes the count once the desktop has
+#  been up two minutes) within AUROS_GUARD_SECS (default 15 minutes, far
+#  more than any start needs), restart. The count is already one more, so
+#  the second such start lands on the kernel before.
+#
+#  It does nothing on a start the menu did not count (the installer's
+#  hand-over, a machine whose menu has no counting): no auros_try, no
+#  restart.
+#
+#  AUROS_GUARD_SECS is for tools/rollbacktest.sh and nothing else.
+# ═══════════════════════════════════════════════════════════════════
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+N=${AUROS_GUARD_SECS:-900}
+F=${AUROS_GRUBENV:-/boot/grub/grubenv}
+counted() { grep -aq '^auros_try=' "$F" 2>/dev/null; }
+
+i=0
+while [ "$i" -lt "$N" ]; do
+    counted || exit 0                  # confirmed (or never counted): nothing to do
+    sleep 5; i=$((i + 5))
+done
+counted || exit 0
+echo "boot-guard: this start was not confirmed in ${N}s; restarting"
+sync
+systemctl reboot 2>/dev/null
+sleep 60                               # systemd is shutting down; if it is not, force it
+echo b > /proc/sysrq-trigger 2>/dev/null
+exit 0

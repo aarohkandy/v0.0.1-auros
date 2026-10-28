@@ -1,0 +1,68 @@
+// AurOS: what installs by itself, every day, with nobody asked.
+// docs/security/UPDATES.md is the whole policy; tools/updatetest.sh,
+// tools/updatepolicytest.sh and tools/updateboottest.sh prove it.
+//
+// LITERAL ORIGINS, NOT ${distro_id}/${distro_codename}. Those two come
+// from `lsb_release`, which reads /etc/os-release, and AurOS's
+// os-release says NAME="AurOS" and VERSION_CODENAME=Nocturne (and
+// base-files may put Ubuntu's back one day). With the variables,
+// Ubuntu's own 50unattended-upgrades allows "AurOS:Nocturne-security",
+// which no repository has, and Ubuntu's security updates are silently
+// never installed. Proven on the built image by `updatepolicytest.sh
+// dryrun`. These patterns name the repositories and mean the same on
+// any image; the upgrade to the next Ubuntu release changes them
+// (docs/security/UPDATES.md). Ubuntu's stock lines stay in
+// 50unattended-upgrades and are harmless.
+//
+//   Ubuntu's security fixes (noble-security).
+//   Ubuntu's -updates: the bug fixes. Ubuntu Desktop installs them
+//     after a weekly "updates are available" question; AurOS asks no
+//     question, so without this line she would never get a single one.
+//     They arrive phased, as on every Ubuntu: a few percent of
+//     computers first, the rest only if no regression is reported.
+//   AurOS's own fixes, from AurOS's signed repository
+//     (sources.list.d/auros.sources, Signed-By pinned to AurOS's key;
+//     preferences.d/auros lets it supply only auros* packages).
+//   Firefox, from Mozilla's repository or the mozillateam PPA (the
+//     image has one or the other; preferences.d/mozilla lets it supply
+//     firefox* only). Firefox's own updater is off (policies.json),
+//     because apt is how it updates; without these lines it never did.
+Unattended-Upgrade::Origins-Pattern {
+        "origin=Ubuntu,archive=noble-security";
+        "origin=Ubuntu,archive=noble-updates";
+        "origin=AurOS,label=AurOS,archive=stable";
+        "site=packages.mozilla.org";
+        "origin=LP-PPA-mozillateam";
+};
+
+// Nobody is at a terminal to answer "keep your version of this setting
+// or take the new one?", and unattended-upgrades skips any package that
+// would ask -- for good, silently, and with it every package that must
+// move at the same time (all of AurOS's do). So the question is
+// answered in advance: a setting changed on this computer is kept, and
+// everything else is updated. tools/updatetest.sh proves it.
+DPkg::Options {
+        "--force-confdef";
+        "--force-confold";
+};
+
+// Never a restart she did not choose. A new kernel waits for the next
+// time she starts the computer (Ubuntu's default too; written down so
+// nothing changes it by accident).
+Unattended-Upgrade::Automatic-Reboot "false";
+
+// After apt moves AurOS's own packages forward, keep the set from
+// before, so an update that breaks the desktop can be undone
+// (/usr/lib/auros/rollback, called by shell-guard).
+DPkg::Post-Invoke { "[ ! -x /usr/lib/auros/keep-previous ] || /usr/lib/auros/keep-previous"; };
+
+// apt may delete a package file as soon as it is installed. The copy in
+// apt's cache is where keep-previous takes the new set from.
+APT::Keep-Downloaded-Packages "true";
+
+// AurOS's name is not in Ubuntu's table of releases (distro-info), so
+// unattended-upgrade logged "Could not figure out development release:
+// ... auros.csv" on every run. AurOS is never a development series; skip
+// the lookup (the only other effect of "false" is to refuse to run when
+// the description says "(development branch)", which AurOS's never does).
+Unattended-Upgrade::DevRelease "false";

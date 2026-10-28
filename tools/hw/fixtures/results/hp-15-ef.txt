@@ -1,0 +1,10 @@
+machine: HP 15-ef
+date: 2026-11-04
+install: ok
+minutes_to_yes: 55
+put_windows_back: ok
+data_loss: no
+wifi_worked: yes
+camera_worked: no
+sound_worked: yes
+---

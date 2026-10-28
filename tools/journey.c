@@ -1,0 +1,361 @@
+/* journey.c — her first ten minutes, every screen, as she sees them.
+ *
+ * The owner's order: first start -> "Does everything work?" -> the look
+ * she picked -> online -> her desktop -> "Get more programs" -> VLC is
+ * ready -> it opens. Rendered for one look at one size, through the
+ * shipping paint code (archetype, panels, card, band) in the order the
+ * main loop paints them, against a folder of .desktop files standing in
+ * for the image (AUROS_APP_DIRS, as tools/storetest.c does).
+ *
+ * It reaches the wifi panel's private state by including net.c, the way
+ * tools/netsheet.c does: no door is cut into shipping code for a picture.
+ *
+ *   cc -O2 -std=gnu11 -o /tmp/journey tools/journey.c \
+ *      -DWELCOME_STATE='"/tmp/journey.state"' src/aurshell/welcome.c src/aurshell/run.c \
+ *      src/aurshell/notify.c src/aurshell/osd.c src/aurshell/foot.c src/aurshell/draw.c \
+ *      src/aurshell/shellcommon.c src/aurshell/anim.c src/aurshell/apps.c \
+ *      src/aurshell/layouts/[*].c src/common/theme.c src/common/wall.c \
+ *      src/common/font.c src/common/png.c $(pkg-config --cflags --libs dbus-1) -lm
+ *   AUROS_APP_DIRS=<dir> AURSHELL_CLOCK=1761206400 \
+ *      /tmp/journey <shell.conf> <look> <w> <h> <outdir> [vlc-dir]
+ *
+ * Writes <outdir>/<look>-<w>x<h>-<n>-<step>.png (asks, sure, yes, desktop,
+ * online, ready, opens). tools/journeytest.sh
+ * builds it and checks the words each screen must (and must not) say.
+ */
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+#include "../src/aurshell/net.c"
+#include "../src/aurshell/foot.h"
+#include "../src/aurshell/welcome.h"
+#include "../src/aurshell/notify.h"
+#include "../src/aurshell/osd.h"
+#include "../src/common/wall.h"
+#include "../src/common/png.h"
+
+#ifndef WELCOME_STATE_FILE
+#define WELCOME_STATE_FILE WELCOME_STATE
+#endif
+
+static shell_ctx c;
+static const shell_layout *L;
+static shell_fonts F;
+static surface *S, *WALL;
+static char outdir[256], tag[64];
+static int step_no;
+
+static void settle(void) { if (L->step) for (int i = 0; i < 120; i++) L->step(&c, 0.05f); }
+
+/* One frame, in the main loop's order, logged so the test can read it. */
+static void shot(const char *name)
+{
+    draw_track_reset();
+    shell_text_log_n = 0;
+    /* The question is opaque paper over the desktop: what is under it is
+     * not what she reads, so it is not logged as what the screen said. */
+    shell_text_log_on = !c.welcome_open;
+    surface body = *S;
+    body.h = c.screen_h;
+    L->paint(&c, &body, &F, WALL);
+    shell_text_log_on = 1;
+    shell_primary_n = 0;                      /* what the panels paint next: one lit button at most */
+    if (!SHELL_PANEL_OPEN(&c)) notify_paint(&c, S, &F);
+    net_paint(&c, S, &F);
+    welcome_paint(&c, S, &F);
+    foot_paint(&c, S, &F);
+    osd_paint(&c, S, &F);
+    shell_text_log_on = 0;
+    int primaries = shell_primary_n;
+
+    char p[512];
+    snprintf(p, sizeof p, "%s/%s-%d-%s.png", outdir, tag, ++step_no, name);
+    uint32_t *o = malloc((size_t)S->w * S->h * sizeof *o);
+    if (!o) exit(1);
+    for (int i = 0; i < S->w * S->h; i++) o[i] = S->px[i] & 0xFFFFFFu;
+    if (png_write_rgb(p, o, S->w, S->h) < 0) { fprintf(stderr, "cannot write %s\n", p); exit(1); }
+    free(o);
+    /* What the screen said, one line per run of words, for the test. */
+    printf("== %s\n", p);
+    for (int i = 0; i < shell_text_log_n; i++)
+        if (shell_text_log[i].w > 0) printf("   %s\n", shell_text_log[i].s);
+    /* And how tall each was drawn (ascent + descent: 22 for 18 px type,
+     * 14 for 12 px), so a test can hold a sentence to the 18 px floor. */
+    for (int i = 0; i < shell_text_log_n; i++)
+        if (shell_text_log[i].w > 0)
+            printf("## %d %s\n", shell_text_log[i].h, shell_text_log[i].s);
+    /* And how many buttons were drawn as THE button (one primary action per panel). */
+    printf("&& primary %d\n", primaries);
+}
+
+/* NEVER COVERS A BUTTON (docs/DESIGN-DIRECTION.md §5 C6).
+ *
+ * What counts as a button is decided by the pointer: the archetype is
+ * painted with the pointer nowhere, then with it at each point of a
+ * grid over `r` (and along every edge of `r`, where a button that is
+ * only just under the card would otherwise be missed), and a point
+ * where the picture changes is a point on something she can press --
+ * hover is the one thing every button in every look answers (§3
+ * Input). A heading nobody can press never changes the picture; a
+ * program row, a tile or a window button does. `r` must also stay off
+ * the clock, which is how Messages opens, and off the band. */
+static uint64_t desk_hash(int x, int y)
+{
+    static surface *T;
+    if (!T) T = surface_new(S->w, S->h);
+    c.mouse_x = x; c.mouse_y = y;
+    if (L->motion) L->motion(&c, x, y);
+    settle();
+    draw_track_reset();
+    surface body = *T;
+    body.h = c.screen_h;
+    L->paint(&c, &body, &F, WALL);
+    uint64_t h = 1469598103934665603ull;
+    for (int yy = 0; yy < c.screen_h; yy++)
+        for (int xx = 0; xx < T->w; xx++)
+            h = (h ^ T->px[(size_t)yy * T->stride + xx]) * 1099511628211ull;
+    return h;
+}
+
+static void probe(rect r, const char *what)
+{
+    if (r.w <= 0) return;
+    printf("   [%s at %d,%d %dx%d]\n", what, r.x, r.y, r.w, r.h);
+    rect k = c.clock_r;
+    if (k.w > 0 && r.x < k.x + k.w && k.x < r.x + r.w && r.y < k.y + k.h && k.y < r.y + r.h)
+        printf("   OVER THE CLOCK: %s\n", what);
+    if (r.y + r.h > c.screen_h) printf("   OVER THE BAND: %s\n", what);
+    int mx = c.mouse_x, my = c.mouse_y;
+    uint64_t none = desk_hash(-1, -1);
+    int hits = 0, tried = 0;
+    for (int iy = 0, lasty = 0; !lasty; iy++) {
+        int y = r.y + 1 + iy * 12;
+        if (y >= r.y + r.h - 2) { y = r.y + r.h - 2; lasty = 1; }
+        for (int ix = 0, lastx = 0; !lastx; ix++) {
+            int x = r.x + 1 + ix * 12;
+            if (x >= r.x + r.w - 2) { x = r.x + r.w - 2; lastx = 1; }
+            tried++;
+            if (desk_hash(x, y) != none && hits++ < 3)
+                printf("   PRESSABLE under %s at %d,%d\n", what, x, y);
+            desk_hash(-1, -1);
+        }
+    }
+    printf("   [%s: %d places tried, %d on a button]\n", what, tried, hits);
+    c.mouse_x = mx; c.mouse_y = my;
+    desk_hash(mx, my);
+}
+
+static int app_index(const char *id)
+{
+    for (int i = 0; i < c.n_apps; i++) if (!strcmp(c.apps[i].id, id)) return i;
+    return -1;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc < 6) {
+        fprintf(stderr, "usage: journey <shell.conf> <look> <w> <h> <outdir> [vlc-app-dir]\n");
+        return 2;
+    }
+    int w = atoi(argv[3]), h = atoi(argv[4]);
+    snprintf(outdir, sizeof outdir, "%s", argv[5]);
+    snprintf(tag, sizeof tag, "%s-%dx%d", argv[2], w, h);
+
+    theme_t t = {0};
+    if (theme_load(&t, argv[1]) < 0) { fprintf(stderr, "cannot read %s\n", argv[1]); return 1; }
+    memset(&c, 0, sizeof c);
+    shell_theme_load(&c, &t);
+    char shf[128];
+    snprintf(shf, sizeof shf, "shells/%s.shell", argv[2]);
+    if (shell_archetype_load(&c, shf) < 0) { fprintf(stderr, "no %s\n", shf); return 1; }
+    c.allow_install = c.allow_settings = c.allow_theme_change = c.allow_network = 1;
+    c.text_scale = getenv("JOURNEY_SCALE") ? (float)atof(getenv("JOURNEY_SCALE")) : 1.f;
+    c.focus = c.hover = c.foot_hover = -1;
+    c.mouse_x = c.mouse_y = -1;
+    shell_seed_apps(&c);
+    if (shell_scan_apps(&c) <= 0) { fprintf(stderr, "AUROS_APP_DIRS found nothing\n"); return 1; }
+    L = shell_layout_by_id(c.layout_id);
+    c.screen_w = w;
+    c.screen_h = h - foot_height(&c);
+    if (L->init) L->init(&c);
+    shell_fonts_load(&F, &c);
+
+    S = surface_new(w, h);
+    WALL = surface_new(w, h);
+    uint32_t *tmp = malloc((size_t)w * h * sizeof *tmp);
+    if (!S || !WALL || !tmp) return 1;
+    wall_render(tmp, w, h, &t);
+    for (int i = 0; i < w * h; i++) WALL->px[i] = 0xFF000000u | tmp[i];
+    free(tmp);
+    settle();
+
+    /* 1. The first start: AurOS asks. */
+    FILE *st = fopen(WELCOME_STATE_FILE, "w");
+    if (!st) { perror(WELCOME_STATE_FILE); return 1; }
+    fputs("phase=asking\n", st);
+    fclose(st);
+    welcome_init(&c);
+    shot("asks");
+
+    /* 2. She pressed "Yes, it all works": it asks once more. */
+    welcome_set_page(W_SURE_YES);
+    shot("sure");
+
+    /* 3. And "Start AurOS from now on". */
+    welcome_set_page(W_CONFIRMED);
+    shot("yes");
+
+    /* 3b. Her files (docs/FERRY.md): whose, while they come, and none. */
+    c.welcome_open = 1;
+    welcome_test_people("Bob,Harold");
+    welcome_test_state(0, 0, 0, 0, "");
+    welcome_set_page(W_WHOSE);
+    shot("whose");
+    welcome_test_state(0, 0, 0, 0, "Copying your Pictures: 1,200 of 5,000 files. About 4 minutes left.");
+    welcome_set_page(W_IMPORTING);
+    shot("bringing");
+    welcome_test_state(0, 0, 0, 0, "");
+    welcome_set_page(W_EMPTY);
+    shot("empty");
+
+    /* 3c. "Save my files to a USB stick first", from Settings: plug it in,
+     * choose, saving, done -- and why Windows could not hold her files. */
+    welcome_test_state(1, 0, 0, 0, "");
+    welcome_test_sticks("");
+    welcome_set_page(W_STICK_PLUG);
+    shot("stick-plug");
+    welcome_test_sticks("/dev/sdb1\tSanDisk (16 GB)\t16000000000\texfat\n/dev/sdc1\tBACKUP (500 GB)\t500000000000\tntfs\n");
+    welcome_set_page(W_STICK_PICK);
+    shot("stick-pick");
+    welcome_test_state(1, 0, 0, 0, "Saving your Pictures: 1,200 of 5,000 files. About 4 minutes left.");
+    welcome_set_page(W_STICK_SAVING);
+    shot("stick-saving");
+    welcome_test_state(1, 1, 5000, 0, "");
+    welcome_set_page(W_STICK_DONE);
+    shot("stick-done");
+    welcome_test_blocked("toomany");
+    welcome_set_page(W_BLOCKED);
+    shot("blocked");
+    welcome_test_state(0, 0, 0, 0, "");
+
+    /* 3. Her desktop, in the look she picked. */
+    c.welcome_open = 0;
+    settle();
+    shot("desktop");
+
+    /* 3d. Help, on a computer that has Wishes: the two buttons under "Show me how". */
+    {
+        int had = shell_wish_app(&c) >= 0, added = 0;
+        if (!had && c.n_apps < SHELL_MAX_APPS) {
+            memset(&c.apps[c.n_apps], 0, sizeof c.apps[0]);
+            c.apps[c.n_apps].role = APP_ROLE_WISH;
+            snprintf(c.apps[c.n_apps].id, sizeof c.apps[0].id, "wish");
+            c.n_apps++; added = 1;
+        }
+        c.help_open = 1;
+        shot("help");
+        /* Every sentence on the panel is ON the panel (not under the band). */
+        for (int i = 0; i < shell_text_log_n; i++)
+            if (shell_text_log[i].w > 0 && shell_text_log[i].y + shell_text_log[i].h > c.screen_h + 2 &&
+                shell_text_log[i].y < c.screen_h + 200 &&
+                strstr(shell_text_log[i].s, "Press Help again") != NULL)
+                printf("   HELP TEXT OFF THE PANEL: %s\n", shell_text_log[i].s);
+        c.help_open = 0;
+        if (added) c.n_apps--;
+    }
+
+    /* 4. Online: her own wifi came across from Windows and is in use. */
+    {
+        static char list[] = "*:Sky-8F2A:76:WPA2\n :BT-HomeHub-2200:52:WPA2\n :Ann's iPhone:38:WPA2\n";
+        static char saved[] = "Sky-8F2A:802-11-wireless\n";
+        N.n_saved = net_parse_saved(saved, N.saved, NET_MAX_SAVED);
+        N.n_aps = net_parse_list(list, N.aps, NET_MAX_AP,
+                                 (const char (*)[NET_NAME_MAX])N.saved, N.n_saved);
+        N.have_wifi = 1; N.asked_devices = 1; N.scanning = 0;
+        N.page = P_LIST; N.sel = -1; N.hover_act = -1;
+        c.net_open = 1;
+        shot("online");
+        c.net_open = 0;
+    }
+
+    /* 5. She installed VLC from "Get more programs": the table is read
+     * again (as appwatch makes the shell do) and the card says so. She
+     * is IN the store when it does -- so the program list of "Like
+     * Windows", which opens by itself on an empty desktop, is shut. */
+    if (argc > 6) {
+        int sa = shell_store_app(&c);
+        if (sa >= 0) {
+            int sw_ = shell_launch(&c, sa);
+            if (sw_ >= 0) {
+                if (L->present) L->present(&c, sw_); else c.focus = sw_;
+                settle();
+            }
+        }
+        char dirs[1024];
+        const char *had = getenv("AUROS_APP_DIRS");
+        snprintf(dirs, sizeof dirs, "%s:%s", had ? had : "", argv[6]);
+        setenv("AUROS_APP_DIRS", dirs, 1);
+        int added[8];
+        /* She is IN the store: its page has the Open button, so there is no card (one path). */
+        printf("&& ready-card-in-store %d\n", shell_want_ready_card(&c));
+        for (int i = 0; i < c.n_wins; i++)           /* then she goes elsewhere (Home): the card is how she hears */
+            if (c.wins[i].app >= 0 && c.wins[i].app < c.n_apps && c.apps[c.wins[i].app].role == APP_ROLE_STORE) c.wins[i].minimised = 1;
+        c.focus = -1;
+        printf("&& ready-card-elsewhere %d\n", shell_want_ready_card(&c));
+        int k = shell_rescan_apps(&c, added, 8);
+        for (int i = 0; i < k && i < 3; i++) {
+            char sum[96];
+            snprintf(sum, sizeof sum, "%s is ready", c.apps[added[i]].name);
+            notify_local_open(sum, "Press here to open it.", c.apps[added[i]].id);
+        }
+        settle();
+        shot("ready");
+
+        /* 5b. Two more arrive: still ONE card, which says so. */
+        notify_local("The battery is getting low", "Plug this computer in soon.");
+        notify_local("The USB stick can be taken out", "Everything has been written to it.");
+        shot("messages");
+        {
+            notify_view v; notify_view_now(&c, &v);
+            notify_geom g; notify_layout(c.screen_w, c.screen_h + v.foot_h, &v, &g);
+            probe(g.card, "the card");        /* the tallest it gets: 3 messages */
+        }
+
+        /* 5c. She presses the clock: Messages, newest first. */
+        rect ck = c.clock_r;
+        notify_click(&c, ck.x + ck.w / 2, ck.y + ck.h / 2);
+        shot("list");
+
+        /* 5d. She closes it, and turns the sound up: a line in the
+         * strip, which stays until her next press. */
+        {
+            notify_view v; notify_view_now(&c, &v);
+            notify_geom g; notify_layout(c.screen_w, c.screen_h + v.foot_h, &v, &g);
+            notify_click(&c, g.close.x + 2, g.close.y + 2);
+        }
+        osd_show(OSD_VOLUME, 45);
+        shot("sound");
+        osd_press();
+        osd_say("Picture saved in your Pictures folder: Screen 2025-10-23 08.00.00");
+        shot("said");
+        probe(osd_box(), "the line");
+        osd_press();
+
+
+        /* 6. She pressed the card: VLC opens. */
+        int a = k > 0 ? added[0] : app_index("org.videolan.VLC");
+        notify_fini();
+        /* What the main loop does with a card's program. */
+        int wi = a >= 0 ? shell_launch(&c, a) : -1;
+        if (wi >= 0) {
+            if (L->present) L->present(&c, wi); else c.focus = wi;
+            settle();
+            shot("opens");
+        }
+    }
+    return 0;
+}

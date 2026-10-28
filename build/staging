@@ -1,0 +1,652 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════════
+#  staging — build the AurOS staging initramfs.
+#
+#  The one restart in this product lands here. This is the environment
+#  that does every destructive step, because it is the only place on
+#  the machine where recovery code can run while the disk is being
+#  rearranged. See docs/AURBRIDGE.md, and src/aurstage/aurstage.h for
+#  what it does and, more importantly, what it must never do.
+#
+#    ./build/staging [PROFILE]        -> out/auros-staging.img
+#
+#  WHY THIS IS NOT `update-initramfs`
+#
+#  initramfs-tools produces an environment whose whole purpose is to
+#  find a root filesystem and get out of the way, using udev and a
+#  pile of shell. This one has to stay up for forty minutes on a 5400
+#  rpm disk, talk to a person while it does, and above all never mount
+#  the Windows volume -- which an automount rule or a helpful udev rule
+#  will do for you without being asked. ntfsresize refuses a mounted
+#  volume, and a volume mounted read-write for an instant is a volume
+#  whose journal has changed.
+#
+#  WHAT GOES IN, AND WHY IT IS THIS SMALL
+#
+#  No firmware. linux-firmware is 700 MB to 1.5 GB and even a WiFi-only
+#  subset is 150-400 MB, against an OEM ESP that is commonly 100 MB and
+#  nearly full. The hardware probe happens in phase 7 instead, from the
+#  root filesystem we have just written and verified, using ITS modules
+#  and ITS firmware. That is strictly better than carrying firmware,
+#  not a compromise: docs/AURBRIDGE.md sets it out.
+# ═══════════════════════════════════════════════════════════════════
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROFILE="${1:-desktop}"
+RFS="$ROOT/work/forge/$PROFILE/rootfs"
+# AUROS_STAGING_OUT: somewhere else to put it. tools/nvramtest.sh
+# builds this to prove its gate fires; doing that into out/ rewrote the
+# staging image the end-to-end tests had just tested (new mtimes, new
+# bytes) -- and the installer embeds whatever is in out/.
+OUT="${AUROS_STAGING_OUT:-$ROOT/out}"
+# A fault-injection image never overwrites the real one.
+SUF=""
+[ "${AURSTAGE_FAULT:-0}" = 1 ] && SUF="-fault"
+WORK="$ROOT/work/staging"
+
+C_OK=$'\033[38;2;125;211;192m'; C_ERR=$'\033[38;2;242;120;141m'
+C_DIM=$'\033[38;2;110;120;134m'; C_WRN=$'\033[38;2;240;186;104m'
+C_RST=$'\033[0m'
+step() { printf '\n%s▸%s %s\n' "$C_OK" "$C_RST" "$*"; }
+note() { printf '%s   %s%s\n' "$C_DIM" "$*" "$C_RST"; }
+# Something the builder must see and that does not stop the build. It
+# did not exist here either, and the one caller added below runs under
+# `set -euo pipefail`, where an unknown command ends the build -- in
+# the branch that only a fault-injection build reaches, so nothing
+# would have noticed until somebody needed it.
+warn() { printf '%s!!%s %s\n' "$C_WRN" "$C_RST" "$*" >&2; }
+die()  { printf '%s::%s %s\n' "$C_ERR" "$C_RST" "$*" >&2; exit 1; }
+
+[ -d "$RFS" ] || die "no rootfs at $RFS — run ./build/forge build $PROFILE first"
+KVER=$(ls "$RFS/lib/modules" 2>/dev/null | head -1)
+[ -n "$KVER" ] || die "no kernel modules in $RFS"
+
+rm -rf "$WORK"; mkdir -p "$WORK" "$OUT"
+cd "$WORK"
+
+step "laying out the initramfs"
+mkdir -p proc sys dev run tmp newroot sbin bin lib lib64 usr/lib etc \
+         "lib/modules/$KVER"
+
+# /dev/console and /dev/null have to exist BEFORE devtmpfs is mounted,
+# or PID 1 has nowhere to say anything and no /dev/null to send a
+# child's noise to. Everything else arrives with devtmpfs.
+mknod -m 600 dev/console c 5 1 2>/dev/null || true
+mknod -m 666 dev/null    c 1 3 2>/dev/null || true
+
+step "the staging init"
+# THE WRITE GATE.
+#
+# aurstage.h used to say the whole directory writes nothing, and that
+# was true because one function opened block devices and opened them
+# O_RDONLY. Stage C has to write, so the rule changes shape rather
+# than being dropped: EXACTLY ONE FILE may open a device writably, and
+# the build refuses an image where any other one does.
+#
+# That is what keeps wr.c worth having. Its value is not that it
+# bounds-checks -- anybody can bounds-check -- it is that there is
+# nowhere else to write from, so the whole destructive surface of this
+# program is one file a person can read in an afternoon. A gate that
+# merely counted writable opens would let the second one in silently.
+#
+# The exceptions are named, not pattern-matched, because an exception a
+# regular expression grants is an exception nobody reviewed: wr.c,
+# /dev/null in boot.c, and nvram.c.
+#
+# NVRAM.C IS A SECOND GATE, NOT A HOLE IN THE FIRST. Writing a boot
+# entry needs O_WRONLY|O_CREAT on a file under efivarfs, and there were
+# three ways to allow it: widen this pattern, move NVRAM into wr.c, or
+# name a second writer with a second rule. The first is the exception
+# nobody reviewed. The second makes wr.c's one sentence -- every disk
+# write is in this file -- false. So: a second file, with its own
+# checks below, which are tighter than this one's. A wrong Boot####
+# costs a machine that will not start at all, with no error message.
+# COMMENTS ARE NOT CODE, and the gate could not tell. It read the
+# whole file, so a comment EXPLAINING why something is opened
+# read-only -- which names the flag it is not using -- stopped the
+# build. The fix is not to write worse comments: it is to look at the
+# code. `gcc -fpreprocessed -dD -E` removes comments and leaves
+# everything else alone, without expanding a single #include.
+WRITER="wr.c"
+NVWRITER="nvram.c"
+LOGWRITER="stagelog.c"
+BAD=""
+for f in "$ROOT"/src/aurstage/*.c; do
+    case "$(basename "$f")" in "$WRITER"|"$NVWRITER"|"$LOGWRITER") continue ;; esac
+    # NOT A PIPELINE INTO grep -q. Under `set -o pipefail`, grep -q
+    # closes its input as soon as it matches, gcc takes a SIGPIPE, and
+    # the pipeline "fails" on success -- which made this gate report
+    # that wr.c had stopped writing. Captured first, searched second.
+    # AND A FILE THAT WOULD NOT PREPROCESS IS A REFUSAL, not an empty
+    # answer. `gcc -fpreprocessed -dD -E` exits non-zero on a lexical
+    # error -- an unterminated comment or string -- and `|| true` then
+    # made `code` empty, `hit` empty, and the file waved through in
+    # silence. "EXACTLY ONE FILE may open a device writably" became
+    # "exactly one file, plus anything that fails to preprocess".
+    if ! code=$(gcc -fpreprocessed -dD -E "$f" 2>/dev/null); then
+        die "$(basename "$f") could not be read as C, so the write gate
+     could not look at it. Refusing to build an image containing a file
+     nothing has checked."
+    fi
+    # THE STDIO FAMILY TOO. A gate that lists only the open(2) flags is
+    # a gate `fopen(dev, "r+b")` walks through.
+    #
+    # And the /dev/null exception is the exact call rather than the
+    # whole line: `grep -v '/dev/null'` dropped every line containing
+    # it, so `open(p[0] ? p : "/dev/null", O_RDWR|O_CREAT, 0644)` was
+    # accepted -- an exception a regular expression granted, which is
+    # the thing the paragraph above says must never happen.
+    hit=$(printf '%s\n' "$code" \
+          | grep -nE 'O_RDWR|O_WRONLY|O_CREAT|O_TRUNC|O_APPEND|creat\(|openat\(|fopen\(|freopen\(|fdopen\(|popen\(|ftruncate\(' \
+          | grep -vE 'open *\( *"/dev/null"' || true)
+    [ -n "$hit" ] && BAD="$BAD
+$(basename "$f"): $hit"
+done
+# AND THE HEADERS, because `-fpreprocessed` does not process #include
+# and that is a door.
+#
+# A review walked through it: two macros in a header of its own --
+# `#define NV_OPEN_FLAGS (O_RDWR|O_CREAT)` and `#define NV_DEV
+# "/dev/sda"` -- and a .c that names neither flag nor device passed
+# every check above. Expanding the includes properly is not the answer
+# either: libc's own headers DECLARE fopen and popen and contain
+# _PC_NO_TRUNC, so the gate would refuse the whole tree. What is ours
+# is what is scanned: no header in this directory has any business
+# naming an open flag, so any that does is the refusal.
+for h in "$ROOT"/src/aurstage/*.h; do
+    if ! hcode=$(gcc -fpreprocessed -dD -E -x c "$h" 2>/dev/null); then
+        die "$(basename "$h") could not be read as C, so the write gate
+     could not look at it."
+    fi
+    hhit=$(printf '%s\n' "$hcode" \
+           | grep -nE 'O_RDWR|O_WRONLY|O_CREAT|O_TRUNC|O_APPEND' || true)
+    [ -n "$hhit" ] && BAD="$BAD
+$(basename "$h"): $hhit"
+done
+if [ -n "$BAD" ]; then
+    printf '%s\n' "$BAD" >&2
+    die "only $WRITER may write to a disk. Something else tried."
+fi
+# ── the dry run's estimate must be the size the builder makes ──────
+#
+# LOADER_BOOT_TYPICAL_MB is what stage B counts for the partition AurOS
+# starts from, on a machine with no stick in it to measure. It is only
+# true because build/mkimage makes that partition exactly that size,
+# and nothing but this connects the two.
+#
+# The cost of them drifting is a false refusal -- the dry run telling
+# somebody with an ordinary laptop that there is not enough room, which
+# is what happened when this number was loader.h's disbelief ceiling
+# instead of a size. A false refusal is silent: the person just goes
+# away.
+LTYP=$(sed -n 's/^#define LOADER_BOOT_TYPICAL_MB *\([0-9]*\).*/\1/p' \
+       "$ROOT/src/aurstage/loader.h" | head -1)
+MKESP=$(sed -n 's/^ESP_MB="\${ESP_MB:-\([0-9]*\)}".*/\1/p' \
+        "$ROOT/build/mkimage" | head -1)
+[ -n "$LTYP" ] && [ -n "$MKESP" ] \
+    || die "could not read LOADER_BOOT_TYPICAL_MB from loader.h or ESP_MB
+     from build/mkimage. One of them moved, and the dry run's estimate
+     of how much room an install needs rests on the two agreeing."
+[ "$LTYP" = "$MKESP" ] \
+    || die "loader.h says the part that starts the computer is ${LTYP} MiB and
+     build/mkimage makes it ${MKESP} MiB. The dry run would tell people
+     the wrong thing about whether their computer has room."
+
+# And the writer must still exist, or the gate above is vacuous and
+# passes a tree in which somebody deleted it and moved the writes.
+[ -f "$ROOT/src/aurstage/$WRITER" ] \
+    || die "$WRITER is missing; the write gate would pass anything"
+wcode=$(gcc -fpreprocessed -dD -E "$ROOT/src/aurstage/$WRITER" 2>/dev/null || true)
+case "$wcode" in
+  *O_RDWR*) ;;
+  *) die "$WRITER no longer opens anything writable; where did the writes go?" ;;
+esac
+# AND THE DISK WRITER MAY NOT WRITE NVRAM EITHER. The two gates are
+# only two gates while each covers one thing.
+case "$wcode" in
+  *efivars*) die "$WRITER has started writing EFI variables; that belongs in $NVWRITER" ;;
+esac
+
+# ── the second gate: EFI variables ─────────────────────────────────
+#
+# nvram.c is allowed the writable open the loop above refuses
+# everywhere else, and pays for it with four checks the others do not
+# face. All of them are on the PREPROCESSED source, for the same
+# reason: a comment explaining what a file does not do is not the file
+# doing it.
+[ -f "$ROOT/src/aurstage/$NVWRITER" ] \
+    || die "$NVWRITER is missing; nothing may write EFI variables"
+if ! nvcode=$(gcc -fpreprocessed -dD -E "$ROOT/src/aurstage/$NVWRITER" 2>/dev/null); then
+    die "$NVWRITER could not be read as C, so the NVRAM gate could not
+     look at it."
+fi
+# THE ORDER OF THESE IS THE ORDER OF THEIR MESSAGES, and it matters.
+# The read-write check was last, so a file that had swapped O_WRONLY
+# for O_RDWR -- which is the dangerous change, the one that turns the
+# NVRAM writer into something that can open a disk -- was refused by
+# check 3 with "no longer writes anything". A true sentence about the
+# wrong thing sends the next reader looking in the wrong place.
+#
+# 1. It opens nothing read-write, which is the flag a block device is
+#    opened with everywhere in this tree.
+case "$nvcode" in
+  *O_RDWR*) die "$NVWRITER opens something read-write; only $WRITER may" ;;
+esac
+# 2. It never names a device. A file that may open things writably and
+#    can also name /dev/sda is the first gate undone by the second.
+case "$nvcode" in
+  */dev/*) die "$NVWRITER names a device. Only $WRITER may touch one." ;;
+esac
+# 3. It still writes something, or this gate is guarding nothing and
+#    the writes have moved somewhere unwatched.
+case "$nvcode" in
+  *O_WRONLY*) ;;
+  *) die "$NVWRITER no longer writes anything; where did the boot entry go?" ;;
+esac
+# 4. It writes EFI variables and nothing else: the only path it may
+#    build is under the efivarfs mount point.
+case "$nvcode" in
+  *"/sys/firmware/efi/efivars"*) ;;
+  *) die "$NVWRITER does not name the efivarfs mount point; it may write
+     nothing else, so it must say where it writes" ;;
+esac
+
+# ── the third gate: the log on the EFI partition ───────────────────
+#
+# stagelog.c is allowed one writable open, of \EFI\AurOS\stage.log on a FAT file
+# system the kernel has mounted, so that a refusal leaves its reason somewhere other
+# than a screen that restarts. Checks tighter than the first gate's, on the preprocessed
+# source, for the same reasons as the second:
+[ -f "$ROOT/src/aurstage/$LOGWRITER" ] \
+    || die "$LOGWRITER is missing; the log gate would be guarding nothing"
+if ! lgcode=$(gcc -fpreprocessed -dD -E "$ROOT/src/aurstage/$LOGWRITER" 2>/dev/null); then
+    die "$LOGWRITER could not be read as C, so the log gate could not look at it."
+fi
+# 1. nothing read-write (the flag a block device is opened with everywhere in this tree)
+case "$lgcode" in
+  *O_RDWR*) die "$LOGWRITER opens something read-write; only $WRITER may" ;;
+esac
+# 2. it never names a device node: the partition is handed to it, and it can open nothing
+#    under /dev
+case "$lgcode" in
+  */dev/*) die "$LOGWRITER names a device. Only $WRITER may touch one." ;;
+esac
+# 3. it still writes something, or the gate guards nothing
+case "$lgcode" in
+  *O_WRONLY*) ;;
+  *) die "$LOGWRITER no longer writes anything; where did the log go?" ;;
+esac
+# 4. what it writes is the one file, under the one mount point
+case "$lgcode" in
+  *"/EFI/AurOS/stage.log"*) ;;
+  *) die "$LOGWRITER does not name \\EFI\\AurOS\\stage.log; it may write nothing else" ;;
+esac
+# 5. and the other two writers never write it
+case "$wcode" in *stage.log*) die "$WRITER writes the log; that belongs in $LOGWRITER" ;; esac
+
+# Every .c in the directory, not a list that has to be remembered: a
+# stage B file left out of a hand-written list links and runs, and the
+# check it was written to perform simply does not happen.
+# STATICALLY LINKED, AND THAT IS NOT A PREFERENCE.
+#
+# The three helper programs get the image's own loader, its own
+# --library-path, and an assertion that their closure is not empty.
+# `init` got none of that: it was compiled on the BUILD HOST, linked
+# dynamically, and then run against whatever libc happened to be in
+# the image because ntfsresize needed one. Build on Ubuntu 24.04
+# (glibc 2.39) against a 22.04 rootfs (glibc 2.35) and PID 1 dies with
+# "GLIBC_2.38 not found" -- which in PID 1 is a kernel panic, the
+# exact screen of hexadecimal main.c's own header says must never
+# happen. Nothing in the build would have noticed.
+#
+# Linking it statically removes the question rather than answering it.
+# FAULT INJECTION IS OFF UNLESS SOMEBODY ASKED FOR IT, IN WORDS.
+#
+# src/aurstage/fault.c compiles to nothing without -DAURSTAGE_FAULT, so
+# an ordinary image cannot be made to stop halfway through rewriting a
+# partition table by anything on the kernel command line. Asking for
+# one is AURSTAGE_FAULT=1 in the environment, it changes the name of
+# the image, and the image says so on every boot.
+FAULTDEF=""
+if [ "${AURSTAGE_FAULT:-0}" = 1 ]; then
+    FAULTDEF="-DAURSTAGE_FAULT"
+    warn "building a FAULT INJECTION image: aurstage.die_at= will stop"
+    warn "this machine dead in the middle of writing to a disk."
+fi
+# shellcheck source=build/cflags
+. "$ROOT/build/cflags"
+# shellcheck disable=SC2086
+gcc $HARDEN_STATIC -std=gnu11 -Wall -Wextra $FAULTDEF -o init \
+    "$ROOT"/src/aurstage/*.c -I "$ROOT/src/aurstage" \
+    || die "aurstage did not build"
+# NOT A PIPELINE INTO grep -q. Third time in this file; see the two
+# notes above. `file` writes one short line so the race is narrow, but
+# a narrow race that dies on a CORRECT build is still a build that
+# fails for a reason nobody can find.
+FILEOUT=$(file init 2>/dev/null || true)
+case "$FILEOUT" in
+  *"statically linked"*|*"static-pie linked"*) ;;
+  *) die "init is not statically linked; PID 1 would depend on the build host" ;;
+esac
+
+# AND THE GATE IS ON THE BINARY, not on the source.
+#
+# The source can be right while the build is wrong -- a stale object, a
+# Makefile that kept a define, somebody's editor. What ships is the
+# binary, so the binary is what is searched. `strings` rather than
+# grep: the flag lives in .rodata and grep on a 1 MB static binary
+# matches all sorts of things.
+# NOT A PIPELINE INTO grep -q, FOR THE SECOND TIME IN THIS FILE.
+#
+# Under `set -o pipefail`, grep -q closes its input the moment it
+# matches, `strings` takes a SIGPIPE, and the pipeline reports failure
+# ON SUCCESS. The write gate above carries the same note because it made
+# the same mistake first, and I made it again here twenty lines later.
+#
+# What it cost: the fault-injection build died with "the flag is not in
+# the binary" when the flag was in the binary -- annoying -- and the
+# ordinary build's check could never fire at all, which is the one that
+# stops an image that can be told to stop mid-write from shipping.
+# Captured first, searched second.
+FLAGS=$(strings init 2>/dev/null || true)
+case "$FLAGS" in
+  *aurstage.die_at=*) HAVE_FAULT=1 ;;
+  *)                  HAVE_FAULT=0 ;;
+esac
+if [ -z "$FAULTDEF" ]; then
+    [ "$HAVE_FAULT" = 0 ] \
+        || die "this image can be told to stop in the middle of writing to a
+     disk, and nobody asked for that. src/aurstage/fault.c is meant to
+     compile to nothing without -DAURSTAGE_FAULT. Refusing to pack it."
+else
+    [ "$HAVE_FAULT" = 1 ] \
+        || die "a fault-injection image was asked for and the flag is not in
+     the binary, so every power-cut test would silently pass."
+fi
+unset FLAGS
+note "init $(du -h init | cut -f1)"
+
+# ── the screen ─────────────────────────────────────────────────────
+#
+# src/aurscreen: the progress screen PID 1 feeds through a pipe
+# (docs/issues/v3/05, 5.5). Static for the same reason as init, and
+# outside src/aurstage so the write gate above keeps covering every
+# file in that directory without an exception. It needs the kernel's
+# simpledrm (built in on Ubuntu's kernel: the firmware's own
+# framebuffer, no GPU driver) and two fonts; without either it exits
+# and the console text is what is left, as before.
+mkdir -p usr/bin usr/share/fonts/truetype/dejavu
+# shellcheck disable=SC2086
+gcc $HARDEN_STATIC -std=gnu11 -Wall -Wextra -o usr/bin/aurscreen \
+    "$ROOT/src/aurscreen/screen.c" "$ROOT/src/aurshell/kms.c" \
+    "$ROOT/src/aurshell/draw.c" "$ROOT/src/common/font.c" "$ROOT/src/common/png.c" -lm \
+    || die "aurscreen did not build"
+case "$(file usr/bin/aurscreen 2>/dev/null || true)" in
+  *"statically linked"*|*"static-pie linked"*) ;;
+  *) die "aurscreen is not statically linked" ;;
+esac
+# Position-independent, full RELRO, NX, CET: proved on the binaries
+# (tools/checksec.sh; it says why ssp/fortify cannot be read from a
+# static binary).
+CS=$(sh "$ROOT/tools/checksec.sh" init usr/bin/aurscreen 2>&1) \
+    || { printf '%s\n' "$CS" >&2; die "PID 1 or its screen was built without its hardening (above)"; }
+note "compiler hardening: $(printf '%s\n' "$CS" | tail -1)"
+for f in DejaVuSans.ttf DejaVuSans-Bold.ttf; do
+    cp "$RFS/usr/share/fonts/truetype/dejavu/$f" usr/share/fonts/truetype/dejavu/ \
+        || die "no $f in $RFS for the staging screen"
+done
+# The same face as the installer and the desktop (docs/DESIGN-DIRECTION.md
+# section 3, "Type"): about 50 KB each. DejaVu stays as the fallback.
+mkdir -p usr/share/auros/fonts
+cp "$ROOT/src/aurbridge/fonts/atkinsonnext-400.ttf" usr/share/auros/fonts/ui.ttf \
+    || die "no UI face for the staging screen"
+cp "$ROOT/src/aurbridge/fonts/atkinsonnext-700.ttf" usr/share/auros/fonts/ui-bold.ttf \
+    || die "no bold UI face for the staging screen"
+note "aurscreen $(du -h usr/bin/aurscreen | cut -f1), with the UI face and DejaVu Sans as fallback"
+
+# ── the programs it shells out to ──────────────────────────────────
+#
+# Each is here because writing our own would be worse:
+#
+#   modprobe    the kernel's own module loader. Asking it for a
+#               modalias is the whole of what udev coldplug does for
+#               us; reimplementing dependency resolution is not worth
+#               a line.
+#   ntfsinfo    NOT used by src/aurstage, which reads the volume
+#               itself -- it is here for a person on the end of a
+#               telephone to run when a machine comes back with a
+#               refusal nobody expected. (This comment used to claim
+#               it was "what decides whether we are allowed to proceed
+#               at all", which was never true of this program.)
+#   ntfsresize  docs/AURBRIDGE.md: "We do not write our own NTFS
+#               resizer. That is how a few unreadable files become an
+#               unmountable volume." Stage B calls it with
+#               --no-action; stage C for the real thing.
+#   ntfsinfo    the on-disk NTFS state -- volume flags, the $LogFile
+#               restart area, hiberfil.sys -- which is what decides
+#               whether we are allowed to proceed at all. Windows
+#               saying it shut down cleanly is not the authority here.
+step "the programs it shells out to"
+copy_prog() {
+    local src="$RFS$1" dst="$2"
+    [ -f "$src" ] || die "$1 is not in the image; the staging environment needs it"
+    install -D -m 755 "$src" "$dst"
+    note "$(basename "$1")"
+}
+copy_prog /usr/sbin/modprobe   sbin/modprobe
+copy_prog /usr/sbin/ntfsresize sbin/ntfsresize
+copy_prog /usr/bin/ntfsinfo    sbin/ntfsinfo
+#   e2fsck      resize2fs REFUSES outright with "Please run 'e2fsck -f'
+#               first" whenever s_lastcheck is older than s_mtime, and
+#               that is true of every image build/mkimage produces --
+#               it makes the filesystem and then mounts it to fill it.
+#               Without this the AurOS root never grows, silently, on
+#               every single install.
+#   resize2fs   grows the root into the partition the person chose.
+#
+# Both come from the PROFILE'S ROOTFS, like everything else here, so
+# the checker, the resizer and the filesystem all come from one place.
+# A build host with newer e2fsprogs writes features the rootfs's tools
+# do not know, and that failure lands after the commit.
+copy_prog /usr/sbin/e2fsck     sbin/e2fsck
+copy_prog /usr/sbin/resize2fs  sbin/resize2fs
+
+# ── the libraries those programs need, worked out rather than listed ─
+#
+# A hand-written library list is a list that goes stale the first time
+# the base image updates, and goes stale silently: the binary is
+# present, the initramfs builds, and the machine stops at a loader
+# error in front of somebody whose photos are on the disk. So the
+# closure is computed, from the image's own loader, every build.
+step "their libraries"
+LDSO=$(cd "$RFS" && ls lib64/ld-linux-x86-64.so.2 lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 2>/dev/null | head -1)
+[ -n "$LDSO" ] || die "no dynamic loader in the image"
+install -D -m 755 "$RFS/$LDSO" "$LDSO"
+# The kernel and every ELF interpreter path expect the loader at
+# /lib64/ld-linux-x86-64.so.2. If that IS where it already went, do not
+# "helpfully" replace it with a link to itself -- ln -sf will, and the
+# result is an image in which nothing dynamically linked can start,
+# with the `|| true` swallowing the only clue.
+if [ "$LDSO" != "lib64/ld-linux-x86-64.so.2" ]; then
+    ln -sf "/$LDSO" lib64/ld-linux-x86-64.so.2 2>/dev/null || true
+fi
+
+# --library-path IS NOT OPTIONAL HERE, and leaving it out is how this
+# shipped broken once. The image's loader run from the build host
+# resolves DT_NEEDED against the HOST's paths, so ntfsresize -- which
+# needs libntfs-3g.so.89, a library the host does not have -- failed
+# to resolve, --list printed an error instead of a list, and the loop
+# below quietly added nothing. The image built, packed and booted.
+# The failure only appeared at the point ntfsresize was first actually
+# run, inside QEMU, in tools/stagetest.sh: "error while loading shared
+# libraries". Everything up to there had said it was fine.
+LIBPATH="$RFS/lib/x86_64-linux-gnu:$RFS/lib64:$RFS/usr/lib/x86_64-linux-gnu"
+libs_of() {
+    # The image's own loader, asked about the image's own binary,
+    # searching the image's own directories. --list is read-only and
+    # does not run anything. Paths come back host-absolute, so the
+    # image prefix is taken back off.
+    "$RFS/$LDSO" --library-path "$LIBPATH" --list "$1" 2>/dev/null \
+        | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i }' \
+        | sed "s|^$RFS||"
+}
+# AND SEPARATELY: DID ANY OF THEM NOT RESOLVE?
+#
+# The awk above keeps fields beginning with "/". An unresolved library
+# prints "libfoo.so.1 => not found", which has none -- so it is
+# silently dropped while its siblings resolve, the count comes out
+# non-zero, and the "closure is empty" guard below passes. The fix
+# that added --library-path caught ALL libraries missing and not ONE,
+# which is the commoner shape of the same bug.
+# NOT A PIPELINE INTO grep -c EITHER. Under `set -o pipefail` a loader
+# that fails makes the whole pipeline fail, `|| true` swallows it, and
+# the answer comes back "0" -- "none missing" -- when the question was
+# never asked. Captured first, counted second, and a loader that says
+# nothing at all is a refusal.
+unresolved() {
+    _lines=$("$RFS/$LDSO" --library-path "$LIBPATH" --list "$1" 2>/dev/null || true)
+    if [ -z "$_lines" ]; then printf 'unreadable'; return; fi
+    printf '%s\n' "$_lines" | grep -c "not found" || true
+}
+n_lib=0
+for prog in sbin/modprobe sbin/ntfsresize sbin/ntfsinfo \
+            sbin/e2fsck sbin/resize2fs; do
+    got=0
+    for lib in $(libs_of "$WORK/$prog"); do
+        # A LIBRARY THAT RESOLVED OUTSIDE THE IMAGE IS A MISSING ONE.
+        #
+        # ld.so --library-path still falls back to the SYSTEM search
+        # path, so a library present on this builder and absent from
+        # the rootfs comes back as /lib/x86_64-linux-gnu/libfoo.so.1 --
+        # which `sed "s|^$RFS||"` leaves alone, so `[ -f "$RFS$lib" ]`
+        # is false and it was simply skipped. `got` stayed above zero
+        # because its siblings resolved inside the image, and
+        # unresolved() counted zero because the loader had printed no
+        # "not found". The program then failed the first time it ran
+        # inside QEMU, with "error while loading shared libraries",
+        # which is the exact history this block exists to have fixed.
+        if [ ! -f "$RFS$lib" ]; then
+            die "$prog needs $lib, and it resolved to a library on THIS
+     builder rather than one inside the image. The image would ship
+     without it and the program would not start on a user's machine."
+        fi
+        got=$((got + 1))
+        [ -f ".$lib" ] && continue
+        install -D -m 755 "$RFS$lib" ".$lib"
+        n_lib=$((n_lib + 1))
+    done
+    # AND IT IS A FAILURE IF A PROGRAM RESOLVES TO NOTHING. Every one
+    # of these is dynamically linked; a closure of zero means the
+    # question was not answered, not that the answer was "none".
+    [ "$got" -gt 0 ] || die "could not work out what $prog needs to run"
+    miss=$(unresolved "$WORK/$prog")
+    [ "$miss" = "0" ] || die "$prog needs $miss librar(y/ies) the image does not have"
+done
+note "$n_lib libraries"
+
+# ── modules ────────────────────────────────────────────────────────
+#
+# Enough to SEE a disk on the machines this product exists for, and
+# nothing else. 155 MB of modules ship in the image; what is needed to
+# find a block device is a small fraction of that, and the budget is
+# an ESP that is commonly 100 MB and nearly full.
+#
+# ntfs3 is in it for ONE path: the no-stick mode reads the AurOS image
+# out of \AurOS\ on the Windows drive, through a read-only mount made
+# by src/aurstage/winvol.c and nowhere else. boot.c still never loads
+# it; a module that is only ever loaded on purpose is not mounted by
+# accident.
+#
+# mmc is in it because preflight accepts an eMMC system disk as the PC's
+# own drive (32/64 GB budget laptops): without mmc_block and the sdhci
+# host drivers the staging environment would see no disk at all on the
+# machine it was told it could install on, after the restart.
+#
+# VMD is in this list for a specific reason: on Intel RST machines the
+# disk is invisible without it, and "this computer has no disk" is the
+# worst possible thing to tell somebody about a computer they are
+# looking at.
+step "modules"
+MOD_DIRS="
+kernel/drivers/ata
+kernel/drivers/nvme
+kernel/drivers/scsi
+kernel/drivers/usb/storage
+kernel/drivers/usb/host
+kernel/drivers/usb/common
+kernel/drivers/block
+kernel/drivers/pci/controller
+kernel/drivers/mmc
+kernel/drivers/virtio
+kernel/fs/ext4
+kernel/fs/fat
+kernel/fs/nls
+kernel/fs/ntfs3
+kernel/lib
+kernel/crypto
+"
+for d in $MOD_DIRS; do
+    [ -d "$RFS/lib/modules/$KVER/$d" ] || continue
+    mkdir -p "lib/modules/$KVER/$(dirname "$d")"
+    cp -a "$RFS/lib/modules/$KVER/$d" "lib/modules/$KVER/$d"
+done
+# modules.dep and friends, so modprobe can resolve what it is given.
+for f in modules.builtin modules.builtin.modinfo modules.order; do
+    [ -f "$RFS/lib/modules/$KVER/$f" ] && cp -a "$RFS/lib/modules/$KVER/$f" "lib/modules/$KVER/$f"
+done
+# THE IMAGE'S depmod, NOT THE BUILD HOST'S.
+#
+# The build host may not have one at all -- this one does not -- and
+# if it did, it would be a different kmod reading modules built by a
+# different kernel. Running the image's own binary through the image's
+# own loader needs no chroot and no root, and it is the version that
+# will be reading these modules on the machine.
+"$RFS/$LDSO" --library-path "$RFS/lib/x86_64-linux-gnu:$RFS/lib64:$RFS/usr/lib/x86_64-linux-gnu" \
+    "$RFS/usr/sbin/depmod" -b "$WORK" "$KVER" \
+    || die "depmod failed; modprobe would find nothing and no disk would appear"
+note "$(find lib/modules -name '*.ko*' | wc -l) modules, $(du -sh lib/modules | cut -f1)"
+# THE DRIVERS PREFLIGHT PROMISES, checked by name. A directory that moved
+# in a new kernel package is a directory this loop silently skips, and
+# the machine it was skipped for is told after the restart that it has
+# no disk.
+for need in nvme ahci mmc_block sdhci-pci vmd; do
+    find "lib/modules/$KVER" -name "$need.ko*" | grep -q . \
+        || die "the staging environment has no $need driver; a PC preflight
+     accepts would show no disk after the restart"
+done
+
+# ── the archive ────────────────────────────────────────────────────
+step "packing"
+find . -print0 | cpio --null -o --format=newc --quiet | gzip -9 > "$OUT/auros-staging$SUF.img"
+SZ=$(du -h "$OUT/auros-staging$SUF.img" | cut -f1)
+
+# The kernel that goes with it. They are a pair: modules built for one
+# kernel do not load into another, and shipping them separately is how
+# that gets discovered on somebody's laptop.
+cp -a "$RFS/boot/vmlinuz-$KVER" "$OUT/auros-staging$SUF-vmlinuz"
+
+# AND THE SIGNED WAY IN. Started directly, this kernel is refused by any
+# firmware with Secure Boot on: it is signed by Canonical, and firmware
+# trusts Microsoft. AurBridge therefore starts it through the image's own
+# Microsoft-signed shim and Canonical-signed grub -- the same two files
+# build/mkimage copies for the installed system -- and carries them in
+# the installer beside the kernel. Taken from the image, never rebuilt:
+# their signatures are the whole point of them.
+# The same choice as build/mkimage, by the same program: one rule for
+# which shim is good enough, refused rather than fallen back from.
+SHIM_SRC=$("$ROOT/build/shimpick" "$RFS") || die "no shim the installer can carry"
+GRUB_SRC="$RFS/usr/lib/grub/x86_64-efi-signed/grubx64.efi.signed"
+[ -n "$SHIM_SRC" ] && [ -f "$GRUB_SRC" ] \
+    || die "no signed shim and grub in $RFS; the installer could not start
+     this environment on a machine with Secure Boot on"
+cp "$SHIM_SRC" "$OUT/auros-staging$SUF-shimx64.efi"
+cp "$GRUB_SRC" "$OUT/auros-staging$SUF-grubx64.efi"
+cp "$RFS/usr/lib/shim/mmx64.efi" "$OUT/auros-staging$SUF-mmx64.efi" 2>/dev/null || true
+
+printf '\n%s::%s %s  (%s, kernel %s)\n' "$C_OK" "$C_RST" \
+       "$OUT/auros-staging$SUF.img" "$SZ" "$KVER"
+printf '%s   %s%s\n' "$C_DIM" \
+  "boot it with: aurstage.dry   (look and change nothing)" "$C_RST"
+printf '%s   %s%s\n' "$C_DIM" \
+  "         or:  aurstage.root=/dev/vda3   (hand over to that system)" "$C_RST"

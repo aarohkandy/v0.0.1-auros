@@ -1,0 +1,16 @@
+# Enabled by `lockctl prepare` only (docs/security/THEFT.md section 1).
+[Unit]
+Description=AurOS: finish encrypting the drive
+ConditionPathExists=/etc/auros/lock
+After=local-fs.target
+
+[Service]
+# exec, not oneshot: a oneshot wanted by multi-user.target would hold
+# the start of the desktop for the whole pass.
+Type=exec
+ExecStart=/usr/lib/auros/lock/lockctl encrypt-pass
+Nice=19
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

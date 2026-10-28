@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code signing policy &mdash; AurOS</title>
+<meta name="description" content="Who may put a signature on AurOS Setup, how it is done, and what the signature means and does not mean.">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#FBFAF7">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='8'%20fill='%231C1916'/%3E%3Crect%20x='10'%20y='10'%20width='12'%20height='12'%20rx='2'%20fill='%23FBFAF7'%20transform='rotate(45%2016%2016)'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the policy</a>
+
+<header class="bar">
+  <div class="wrap bar-in">
+    <a class="brand" href="index.html"><span class="mark" aria-hidden="true"></span>AurOS</a>
+    <a class="bar-link" href="index.html">Back to the simple page</a>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="page-head" aria-labelledby="policy-title">
+    <div class="narrow">
+      <h1 id="policy-title">Code signing policy</h1>
+      <p class="lede">AurOS Setup is the one file you download and open. A signature from SignPath Foundation would say that this file came out of the build described below and that nobody changed it afterwards. It would not say that the program is safe, and it would not mean the Foundation vouches for what AurOS does. This page says who may sign it, how that is done, and what a signature does not promise.</p>
+      <ul class="toc" aria-label="On this page">
+        <li><a href="#now">Where this stands today</a></li>
+        <li><a href="#what">What is signed, and by whom</a></li>
+        <li><a href="#who">Who decides</a></li>
+        <li><a href="#how">How a release gets its signature</a></li>
+        <li><a href="#privacy">Privacy</a></li>
+        <li><a href="#report">If something looks wrong</a></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="doc sand" id="now" aria-labelledby="now-title">
+    <div class="narrow">
+      <h2 id="now-title">Where this stands today</h2>
+      <p><b>AurOS Setup has no signature yet.</b> That is why Windows asks a few extra questions before it opens (the simple page shows them). We plan to apply to SignPath Foundation, which gives free signing certificates to open-source projects. When it is granted, every release of AurOS Setup will be signed as described below, and this page will say so.</p>
+      <p class="note">Not in use yet. If the application is accepted, this page will say: free code signing provided by <a href="https://signpath.io">SignPath.io</a>, certificate by <a href="https://signpath.org">SignPath Foundation</a>. SignPath is not connected to AurOS today.</p>
+      <p>A signature is not a promise that a program is good. It says <i>who</i> published it and that it is unchanged since they did. Windows may still ask a new file a question or two until enough people have opened it.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc" id="what" aria-labelledby="what-title">
+    <div class="narrow">
+      <h2 id="what-title">What is signed, and by whom</h2>
+      <ul>
+        <li><p><b>Only AurOS Setup</b> (<span class="words">AurOS-Setup.exe</span>), the Windows program on the download button. Nothing else we publish is signed this way.</p></li>
+        <li><p><b>Only a file built from the source code in the open</b>, on GitHub&rsquo;s own build computers, from the public project page. Never a file built on someone&rsquo;s own computer, and never a file from another project.</p></li>
+        <li><p>The signature is made by SignPath, which keeps the key in secure hardware. Nobody on the AurOS team ever holds the key.</p></li>
+      </ul>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc sand" id="who" aria-labelledby="who-title">
+    <div class="narrow">
+      <h2 id="who-title">Who decides</h2>
+      <p>Three jobs, each with a name. Today one person holds all three; when the team grows, more people will be listed here.</p>
+      <ul>
+        <li><p><b>Author</b> (may change the code without a second look): <b>@aarohkandy</b>.</p></li>
+        <li><p><b>Reviewer</b> (looks at every change that comes from anyone else before it is accepted): <b>@aarohkandy</b>.</p></li>
+        <li><p><b>Approver</b> (says yes, by hand, to each release before it is signed): <b>@aarohkandy</b>.</p></li>
+      </ul>
+      <p>Everyone in these jobs signs in to GitHub and to SignPath with a second step (two-factor sign-in), so a stolen password alone is not enough.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc" id="how" aria-labelledby="how-title">
+    <div class="narrow">
+      <h2 id="how-title">How a release gets its signature</h2>
+      <ol class="doing">
+        <li><p>A new version is built from the public source on GitHub, and tested: the installer and the system it installs are started in virtual computers.</p></li>
+        <li><p>The build sends the finished AurOS Setup to SignPath. SignPath checks that it really came from this project&rsquo;s build on GitHub, not from someone holding a password.</p></li>
+        <li><p>The approver looks at the release and approves it, or doesn&rsquo;t. Nothing is signed until a person says yes.</p></li>
+        <li><p>The signed file comes back. The build checks the signature, and checks that the file inside is exactly the one it sent, byte for byte apart from the signature itself. If either check fails, nothing is published.</p></li>
+        <li><p>The signed file is started on a real Windows computer, and a whole install is run with it, before it becomes the download on the front page.</p></li>
+      </ol>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc sand" id="privacy" aria-labelledby="privacy-title">
+    <div class="narrow">
+      <h2 id="privacy-title">Privacy</h2>
+      <p><b>AurOS Setup does not send any information about you or your computer to us.</b> The only thing it asks the internet for is AurOS itself: when you press <span class="words">Install</span> it downloads the pieces of AurOS from GitHub, which is the one thing you asked it to do. GitHub sees your internet address, as it does for any download. Nothing is sent to the AurOS project. More on the <a href="privacy.html">privacy page</a>.</p>
+      <p>The website uses no cookies and no tracking, and loads nothing from any other server.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc" id="report" aria-labelledby="report-title">
+    <div class="narrow">
+      <h2 id="report-title">If something looks wrong</h2>
+      <p>If a file says it is AurOS Setup but you think it is not ours, or a signature looks wrong, don&rsquo;t open it. Tell us on <a href="https://github.com/@AUROS_REPO@/issues">the AurOS project page</a>, or read how to report a security problem privately on <a href="https://github.com/@AUROS_REPO@/security/policy">the security page</a>. Don&rsquo;t include passwords or anything else private.</p>
+      <p class="note"><b>AurOS will never phone you.</b> Nobody from AurOS will ever ask to connect to your computer, or ask for a card number, a password or gift cards.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <ul class="foot-links">
+      <li><a href="index.html">The simple page</a></li>
+      <li><a href="advanced.html">For someone who knows computers</a></li>
+      <li><a href="https://github.com/@AUROS_REPO@/issues">Ask a question</a></li>
+      <li><a href="https://github.com/@AUROS_REPO@">The source code</a></li>
+    </ul>
+    <!-- legal-footer: written by tools/legal/mkpages.py, the same on every page -->
+    <ul class="foot-links foot-legal">
+      <li><a href="licenses.html">Licenses and source code</a></li>
+      <li><a href="terms.html">Terms</a></li>
+      <li><a href="disclaimer.html">Disclaimer</a></li>
+      <li><a href="privacy.html">Privacy</a></li>
+    </ul>
+    <p>No cookies and no ads. This site collects nothing about you. GitHub, which hosts it, keeps its own records of the internet addresses that visit. Write to us: CONTACT_EMAIL.</p>
+    <p>AurOS&rsquo;s own code is free software (MIT license). It includes programs by others, each under its own license: <a href="licenses.html">licenses and source code</a>. Set in Atkinson Hyperlegible Next (<a href="assets/fonts/OFL.txt">license</a>).</p>
+    <p>AurOS is built from Ubuntu 24.04 LTS software that we have put together and changed. It is not made, endorsed or supported by Canonical. Windows, Microsoft, Edge, BitLocker, Defender and SmartScreen are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome and Safe Browsing are trademarks of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. Linux is the registered trademark of Linus Torvalds in the U.S. and other countries. Intel is a trademark of Intel Corporation or its subsidiaries. Other names are trademarks of their owners. AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, or otherwise approved by Apple Inc. The names are used only to say what a program is, what AurOS is made from, or what it works with.</p>
+    <!-- /legal-footer -->
+  </div>
+</footer>
+</body>
+</html>

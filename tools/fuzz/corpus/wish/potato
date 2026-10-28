@@ -1,0 +1,2 @@
+potato
+{"v":1,"when":{"type":"typed_word","word":"potato"},"do":[{"type":"fill_screen","emoji":"🥔","seconds":3}]}

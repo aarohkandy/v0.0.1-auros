@@ -1,0 +1,717 @@
+# Publish one build of AurOS as a GitHub Release, and check what was
+# published.
+#
+# Two ways in:
+#
+#   - build.yml calls it after a [release] commit's build and tests
+#     pass (run-id = that run).
+#   - a commit whose message says [publish] promotes a build that
+#     already ran: the newest build of this branch whose build job and
+#     every test job passed, or the run named with [publish RUN-ID].
+#     Nothing is rebuilt, so the published files are exactly the tested
+#     ones, an hour sooner. (workflow_dispatch would be the obvious way,
+#     and it only works for workflows on the default branch.)
+#
+# The release is v<os_version>-<sha7 of the BUILT commit> -- the address
+# baked into that build's installer -- and is always made a prerelease
+# first. [latest] asks the promote job to make it the full release once
+# every check has passed, including the real-Windows end-to-end run of
+# THIS AurOS-Setup.exe in this same run. Only a full release moves
+# releases/latest/download/AurOS-Setup.exe, which the website links to.
+#
+#   sign      only when signing is switched on (docs/SIGNING.md: the
+#             repository variable SIGNPATH_ORGANIZATION_ID exists; the
+#             secret SIGNPATH_API_TOKEN must then too): the unsigned
+#             AurOS-Setup.exe is sent to SignPath from this run, the job
+#             waits for the owner's approval there, and the file that
+#             comes back is checked (tools/signed-check.sh) before
+#             anything is published. Skipped cleanly otherwise.
+#   publish   the release, with AurOS-Setup.exe (the signed one if sign
+#             ran), the image pieces,
+#             pieces.txt, SHA256SUMS, image.sha256 and image.bytes; then
+#             every file read back from its public address, through
+#             GitHub's 302, with a Range request answered 206 where it
+#             was asked to start.
+#   windows   on a real Windows runner: the published AurOS-Setup.exe
+#             starts and passes its navigation test, and the installer's
+#             own WinHTTP code fetches the image from the release and
+#             checks it.
+#   e2e       beside windows: e2e.yml (stream F's) on this release's
+#             AurOS-Setup.exe, its SHA-256 handed over, so a file that
+#             does not hash to what was built is refused: the website in
+#             Edge, the download, the wizard, the restart, AurOS, a
+#             program from the store, on a real Windows 11 VM. Hours.
+#   site      the website as it will be deployed, checked the way she
+#             meets it (tools/site/check.mjs, as pages.yml does).
+#   e2e-fastpath  the same, for AurOS-Setup-fastpath.exe (the release built
+#             with AUROS_FASTPATH=1, published beside the normal installer
+#             when the tree has one); informative, not a gate of promote.
+#   sources   the release's source code, as the release `sources-<tag>`
+#             (sources.yml, stream LEGAL), made and verified in this run.
+#   promote   [latest] only, and only after windows, e2e, site and sources passed
+#             in THIS run: makes the release the full, latest one.
+#             Nothing is pinned by hand.
+#   pages     after promote: deploys the site that was checked to GitHub
+#             Pages (a release made with GITHUB_TOKEN starts no other
+#             workflow). Needs the owner's one click: Settings -> Pages
+#             -> Source: GitHub Actions.
+#
+# So `[release] [latest]` in a subject goes build -> tests -> prerelease
+# -> windows + e2e -> promote -> Pages with nobody touching it, and
+# `[release]` alone stops after e2e. `[publish RUN-ID] [latest]` runs
+# e2e again on that build before promoting it.
+#
+# A flaky test: re-run the failed jobs of the build run (the run page's
+# "Re-run failed jobs", or the GitHub tools' rerun_failed_jobs); the jobs
+# API reports each job's latest attempt, so [publish RUN-ID] then sees
+# the pass.
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      run-id:
+        type: string
+        required: true
+      latest:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+# `bash` named explicitly is `bash -eo pipefail`; left to the default it
+# is `bash -e`, and `sh tools/x.sh | tee log` then passes whatever x
+# says.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  which:
+    # Decided without a runner where it can be: every push to the
+    # branch starts this workflow, and runners are shared by them all.
+    # [publish ...] opens the SUBJECT (after an optional [othersys-skip]): a
+    # commit whose BODY merely mentions it (a message explaining what
+    # [publish] does) used to start this job, say go=false and leave a
+    # workflow run that read "success" with nothing published -- a hollow
+    # green two runs cited (CI-truth). The expression cannot cut at the end
+    # of the first line, so the subject's start is what it can see.
+    if: inputs.run-id != '' || startsWith(github.event.head_commit.message, '[publish') || startsWith(github.event.head_commit.message, '[othersys-skip] [publish')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      go: ${{ steps.w.outputs.go }}
+      run-id: ${{ steps.w.outputs.run_id }}
+      latest: ${{ steps.w.outputs.latest }}
+      allowed: ${{ steps.w.outputs.allowed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0   # .github/release-requires.txt asks about ancestors
+      - id: w
+        env:
+          IN_RUN: ${{ inputs.run-id }}
+          IN_LATEST: ${{ inputs.latest }}
+          MSG: ${{ github.event.head_commit.message }}
+          BRANCH: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          go=false; rid=""; latest=false; allowed=""
+          # MAY THIS BUILD BE PUBLISHED, for both ways in. The jobs are
+          # asked, not the run's conclusion (which a later failure in an
+          # unrelated job would also decide), and tools/releasegate.py
+          # decides: build, unit and every gating test green; the power
+          # cut in the mode that ships (S-11) green, or failing only as
+          # .github/ci-allow.txt says, by name, with a reason and a date
+          # that has not passed. A failing power-cut job not on that list
+          # refuses the release. (A run called from build.yml used to
+          # skip this and trust `needs`; it was the hole the security
+          # review found.)
+          gate() {
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$1/jobs?per_page=100" --jq '.jobs[] | "\(.name)|\(.conclusion)"' > /tmp/jobs.txt || return 1
+            cat /tmp/jobs.txt
+            # Files, not a pipe: under pipefail a SIGPIPE in the middle
+            # would turn "refused" into "passed".
+            python3 -I tools/releasegate.py /tmp/jobs.txt .github/ci-allow.txt $( [ "$latest" = true ] && echo --latest ) > /tmp/gate.txt 2>&1 && g=0 || g=$?
+            # The fixes this build must contain (.github/release-requires.txt):
+            # a build from before a security or install fix is never
+            # published, as a prerelease or otherwise.
+            head=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$1" --jq .head_sha) || return 1
+            while IFS='|' read -r sha why; do
+              sha=$(printf '%s' "$sha" | tr -d ' ')
+              case "$sha" in ''|'#'*) continue ;; esac
+              if ! git merge-base --is-ancestor "$sha" "$head" 2>/dev/null; then
+                echo "releasegate: REFUSED: build ${head:0:7} does not contain $sha ($why)" >> /tmp/gate.txt; g=1
+              fi
+            done < .github/release-requires.txt
+            # The full release also needs the hardening boot test of THIS
+            # build's image to have passed (tools/hardengate.sh): harden.yml
+            # starts after a build run finishes, so a [latest] is
+            # [publish RUN-ID] [latest] on a build whose harden is done.
+            if [ "$latest" = true ]; then
+              sh tools/hardengate.sh "$1" > /tmp/harden.txt 2>&1 || { cat /tmp/harden.txt >> /tmp/gate.txt; g=1; }
+            fi
+            cat /tmp/gate.txt
+            return $g
+          }
+          if [ -n "$IN_RUN" ]; then
+            go=true; rid=$IN_RUN; latest=$IN_LATEST
+            gate "$rid" || { echo "::error::run $rid may not be published: see the refusals above"; exit 1; }
+          else
+            # In the subject line only, as in build.yml.
+            SUBJ=${MSG%%$'\n'*}
+            case "$SUBJ" in *'[publish'*) ;; *) echo "go=false" >> "$GITHUB_OUTPUT"; exit 0 ;; esac
+            case "$SUBJ" in *'[latest]'*) latest=true ;; esac
+            rid=$(printf '%s' "$SUBJ" | sed -n 's/.*\[publish \([0-9][0-9]*\)\].*/\1/p' | head -1)
+            if [ -n "$rid" ]; then
+              gate "$rid" || { echo "::error::run $rid may not be published: see the refusals above"; exit 1; }
+            else
+              found=""
+              for r in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?branch=$BRANCH&per_page=30" --jq '.workflow_runs[].id'); do
+                if gate "$r" >/dev/null 2>&1; then found=$r; break; fi
+              done
+              [ -n "$found" ] || { echo "::error::no build of $BRANCH may be published (build, tests and the power cut in the shipped mode, or an allow-list entry for the last)"; exit 1; }
+              rid=$found
+              gate "$rid"
+            fi
+            go=true
+          fi
+          allowed=$(grep '^releasegate: ALLOWED' /tmp/gate.txt 2>/dev/null | sed 's/^releasegate: //' | paste -sd';' - | tr '|' '/' || true)
+          { echo "go=$go"; echo "run_id=$rid"; echo "latest=$latest"; echo "allowed=$allowed"; } | tee -a "$GITHUB_OUTPUT"
+
+  # SIGNING (docs/SIGNING.md, decision D12). The variable is the switch:
+  # while SIGNPATH_ORGANIZATION_ID does not exist this job is skipped, no
+  # runner is used, and the release is unsigned exactly as before. Once it
+  # exists the secret SIGNPATH_API_TOKEN must too (and build.yml passes
+  # secrets down: `secrets: inherit`), and nothing is published unless
+  # the file that comes back is signed and is the file that was built --
+  # there is no quiet fallback to an unsigned release.
+  sign:
+    needs: which
+    if: needs.which.outputs.go == 'true' && vars.SIGNPATH_ORGANIZATION_ID != ''
+    runs-on: ubuntu-24.04
+    # waits for a person to approve in SignPath (up to 4 hours)
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      unsigned_sha256: ${{ steps.u.outputs.sha256 }}
+      signed_sha256: ${{ steps.s.outputs.sha256 }}
+    env:
+      TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      RID: ${{ needs.which.outputs.run-id }}
+    steps:
+      - name: the token is here, and this run built the file
+        run: |
+          [ -n "$TOKEN" ] || { echo "::error::SIGNPATH_ORGANIZATION_ID is set, so signing is on, but the secret SIGNPATH_API_TOKEN is empty or not passed to release.yml (build.yml needs secrets: inherit). Add the secret, or delete the variable to ship unsigned."; exit 1; }
+          # SignPath ties a signing request to the build that made the
+          # file. A file built by an earlier run ([publish RUN-ID]) has
+          # no such tie from this run, so it is refused rather than
+          # signed or quietly published unsigned.
+          [ "$RID" = "$GITHUB_RUN_ID" ] || { echo "::error::signing is on, and this file was built by run $RID, not by this run ($GITHUB_RUN_ID). Signed releases come from a [release] commit, where the build and the signature are one run."; exit 1; }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: sh tools/apt.sh osslsigncode python3
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: auros-installer
+          path: dl
+          run-id: ${{ needs.which.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - id: u
+        name: the unsigned file, on its own
+        run: |
+          mkdir unsigned signed
+          cp dl/AurOS-Setup.exe unsigned/
+          echo "sha256=$(sha256sum unsigned/AurOS-Setup.exe | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - id: up
+        # SignPath only accepts a file this run stored as an artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: auros-setup-unsigned
+          path: unsigned/AurOS-Setup.exe
+          retention-days: 30
+          if-no-files-found: error
+      - name: submit the signing request, and wait for the approver
+        # pinned to the commit of v3.0
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'auros' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.up.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 14400
+          output-artifact-directory: signed
+      - name: what came back is signed, by them, and is the file that was built
+        run: |
+          ls -l signed
+          sh tools/signed-check.sh unsigned/AurOS-Setup.exe signed/AurOS-Setup.exe
+      - id: s
+        run: echo "sha256=$(sha256sum signed/AurOS-Setup.exe | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: auros-setup-signed
+          path: signed/AurOS-Setup.exe
+          retention-days: 30
+          if-no-files-found: error
+
+  publish:
+    needs: [which, sign]
+    # `sign` is skipped (signing off) or succeeded; if it ran and failed,
+    # nothing is published.
+    if: ${{ !cancelled() && needs.which.result == 'success' && needs.which.outputs.go == 'true' && (needs.sign.result == 'success' || needs.sign.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # One publish per build at a time: a second request for the same
+    # build waits, then fails at `gh release create`, which is right.
+    concurrency:
+      group: release-${{ github.ref }}-${{ needs.which.outputs.run-id }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      tag: ${{ steps.files.outputs.tag }}
+      setup_sha256: ${{ steps.files.outputs.setup_sha256 }}
+      fastpath_sha256: ${{ steps.files.outputs.fastpath_sha256 }}
+      image_sha256: ${{ steps.files.outputs.image_sha256 }}
+      image_bytes: ${{ steps.files.outputs.image_bytes }}
+      signed: ${{ steps.files.outputs.signed }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RID: ${{ needs.which.outputs.run-id }}
+      SIGNED: ${{ needs.sign.result == 'success' }}
+      ALLOWED: ${{ needs.which.outputs.allowed }}
+      UNSIGNED_SHA256: ${{ needs.sign.outputs.unsigned_sha256 }}
+      SIGNED_SHA256: ${{ needs.sign.outputs.signed_sha256 }}
+    steps:
+      # tools/legal/notes.sh (the written offer of source) lives in the tree.
+      # FIRST: checkout cleans untracked files, and it once ran after the
+      # downloads and deleted dist/installer (RC3's publish, run 40026374421).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: auros-installer
+          path: dist/installer
+          run-id: ${{ needs.which.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.sign.result == 'success'
+        with:
+          name: auros-setup-signed
+          path: dist/signed
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: auros-pieces
+          path: dist/pieces
+          run-id: ${{ needs.which.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: the files, and what was tested where
+        id: files
+        run: |
+          cat dist/installer/build-info.txt
+          if [ "$SIGNED" = true ]; then
+            # The signed file replaces the unsigned one, after proof that
+            # it is that file plus a signature (the sign job did this;
+            # asked again of the bytes about to be published).
+            [ "$(sha256sum dist/installer/AurOS-Setup.exe | cut -d' ' -f1)" = "$UNSIGNED_SHA256" ] \
+              || { echo "::error::the build's AurOS-Setup.exe is not the one that was sent for signing"; exit 1; }
+            [ "$(sha256sum dist/signed/AurOS-Setup.exe | cut -d' ' -f1)" = "$SIGNED_SHA256" ] \
+              || { echo "::error::the signed AurOS-Setup.exe is not the one the sign job verified"; exit 1; }
+            cp dist/signed/AurOS-Setup.exe dist/installer/AurOS-Setup.exe
+            echo "signed AurOS-Setup.exe replaces the build's (unsigned $UNSIGNED_SHA256)"
+          fi
+          # The tag is the one baked into this build's installer.
+          TAG=$(sed -n 's|^base https://[^ ]*/\([^/]*\)/$|\1|p' dist/pieces/pieces.txt | head -1)
+          COMMIT=$(grep -o 'commit [0-9a-f]\{40\}' dist/installer/build-info.txt | head -1 | cut -d' ' -f2)
+          [ -n "$TAG" ] && [ -n "$COMMIT" ] || { echo "cannot tell which tag or commit this build is"; exit 1; }
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          mkdir -p rel
+          cp dist/installer/AurOS-Setup.exe dist/pieces/pieces.txt dist/pieces/auros-desktop.img.gz.* rel/
+          # The fast-path installer, if this build made one (build.yml):
+          # beside the normal one, never instead of it, never what the
+          # website links to.
+          fastpath=""
+          if [ -f dist/installer/AurOS-Setup-fastpath.exe ]; then
+            cp dist/installer/AurOS-Setup-fastpath.exe rel/
+            fastpath=$(sha256sum rel/AurOS-Setup-fastpath.exe | cut -d' ' -f1)
+          fi
+          # What the whole image hashes to and its size, for whoever
+          # checks a download of it (windows.yml's windows-download).
+          cp dist/pieces/image.sha256 dist/pieces/image.bytes rel/
+          # The pieces are the ones the list names, before anything is published.
+          ( cd rel && grep '^piece ' pieces.txt | awk '{print $4"  "$2}' | sha256sum -c --quiet )
+          ( cd rel && sha256sum AurOS-Setup.exe $( [ -f AurOS-Setup-fastpath.exe ] && echo AurOS-Setup-fastpath.exe ) \
+              pieces.txt auros-desktop.img.gz.* > SHA256SUMS )
+          img=$(cat dist/pieces/image.sha256); bytes=$(cat dist/pieces/image.bytes)
+          setup=$(sha256sum rel/AurOS-Setup.exe | cut -d' ' -f1)
+          dl=$(du -cb rel/auros-desktop.img.gz.* | tail -1 | cut -f1)
+          n=$(ls rel/auros-desktop.img.gz.* | wc -l)
+          { echo "tag=$TAG"; echo "signed=$SIGNED"; echo "setup_sha256=$setup"; echo "fastpath_sha256=$fastpath"; echo "image_sha256=$img"; echo "image_bytes=$bytes"; } >> "$GITHUB_OUTPUT"
+          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RID"
+          if [ "$SIGNED" = true ]; then
+            site="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"
+            SIGLINE="AurOS-Setup.exe is signed. Free code signing provided by SignPath.io, certificate by SignPath Foundation. Code signing policy: $site/code-signing.html . It is the file the build made (SHA-256 \`$UNSIGNED_SHA256\`) plus a signature, checked byte for byte before this was published. Windows may still ask a new file a question or two."
+          else
+            SIGLINE="AurOS-Setup.exe is not signed yet. Windows asks before it starts it: in Edge, *Keep* and then *Keep anyway*; on the blue SmartScreen panel, *More info* and then *Run anyway*. On a PC with Smart App Control on, that has to be switched off first."
+          fi
+          {
+            echo "AurOS desktop $TAG, built from \`$COMMIT\` and tested by [Actions run $RID]($run)."
+            echo
+            echo "**To install:** download \`AurOS-Setup.exe\` and open it. It downloads the rest itself."
+            echo
+            echo "$SIGLINE"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Installer | \`AurOS-Setup.exe\`, $(stat -c %s rel/AurOS-Setup.exe) bytes, SHA-256 \`$setup\` |"
+            [ -z "$fastpath" ] || echo "| Fast-path installer | \`AurOS-Setup-fastpath.exe\`, SHA-256 \`$fastpath\`: the same release built with the fast path (\`AUROS_FASTPATH=1\`). For testing; the website does not link to it, and it is not signed. |"
+            echo "| Image | $bytes bytes, SHA-256 \`$img\` |"
+            echo "| Download | $dl bytes of gzip in $n pieces of 90 MiB (\`pieces.txt\`); the installer fetches, checks and resumes them |"
+            echo
+            echo "**What was tested, and where:**"
+            echo
+            echo "- Built on GitHub's ubuntu-24.04 runner ([run $RID]($run)): \`build/all desktop\` without \`ALLOW_BROWSER_FALLBACK\`, \`build/staging\`, \`AUROS_RELEASE=1 build/aurbridge\`; the pieces put back together and checked by the installer's own phase engine and inflater (\`aurbridge-sim getimage\`)."
+            echo "- Same run, Linux: aurfirsttest, choicestest, nvramtest, bridgetest, manifesttest, signtest, Ferry's suite, and \`aurbridge.exe selftest\` under Wine."
+            echo "- Same run, QEMU with KVM and OVMF (Microsoft's keys and Secure Boot where the test asks for them): installtest, nosticktest, firstboottest, choicesboottest, putbacktest, bootupdatetest; the power cut at every named instant of an install and of Put Windows back, with a memory stick (powercuttest) and without (powercut-nostick, the mode this installer ships)."
+            [ -z "$ALLOWED" ] || echo "- **Allowed to fail, by name and date in \`.github/ci-allow.txt\`:** $ALLOWED"
+            echo "- After publishing ([run $GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)): every file read back from this release and compared, through GitHub's redirect, with a \`Range\` request answered 206; on a real Windows runner, this \`AurOS-Setup.exe\` started and passed its navigation test, and the installer's own WinHTTP code fetched the image from this release and checked it."
+            echo
+            echo "**Not tested here:** a real PC's disk being resized and written."
+            echo
+            echo "What the image recorded while it was built (\`/etc/auros/build-warnings\`):"
+            echo '```'
+            if [ -s dist/installer/build-warnings ]; then cat dist/installer/build-warnings; else echo "(nothing)"; fi
+            echo '```'
+          } > notes.md
+          # The written offer of source: where this release's sources are and how
+          # to ask (stream LEGAL; the words come from one file, and the
+          # `sources` job below makes the release they point to).
+          { echo; sh tools/legal/notes.sh line "$TAG"; } >> notes.md
+          cat notes.md
+          # ALWAYS a prerelease here, [latest] or not: nothing becomes
+          # what the website's link serves until it has been read back
+          # and started on Windows (the promote job, below).
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName >/dev/null 2>&1; then
+            # Published before (a [publish] [latest] of an existing
+            # prerelease): the same build or a refusal, and the checks
+            # below run again on what is there.
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -p AurOS-Setup.exe -D was --clobber
+            [ "$(sha256sum was/AurOS-Setup.exe | cut -d' ' -f1)" = "$setup" ] \
+              || { echo "::error::release $TAG exists with a different AurOS-Setup.exe"; exit 1; }
+            echo "release $TAG already exists with this build's AurOS-Setup.exe"
+            # Releases from before these two were assets get them now.
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber rel/image.sha256 rel/image.bytes \
+                $( [ -n "$fastpath" ] && echo rel/AurOS-Setup-fastpath.exe )
+          else
+            # WHERE THE TAG GOES. The workflow token may create a tag only
+            # at the tip of a branch: probed on 2026-10-23 (run 39923676690,
+            # a probe workflow since deleted), `gh release create --target
+            # <sha>` was accepted for the tip of main and answered 403
+            # "Resource not accessible by integration" for every older
+            # commit, workflow files changed or not -- which is why the
+            # [release] of 618726b failed (35 minutes of tests later it
+            # was no longer the tip) and why one [publish] worked (its own
+            # commit was). So the tag goes on the tip of the default branch
+            # when this is published, and the notes say which commit the
+            # files were built from and which run tested them. Nothing a
+            # person downloads depends on where the tag points: the
+            # address baked into the installer names the tag, not a commit.
+            def=$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)
+            printf '\n(The tag points at the tip of `%s` when this was published, because the workflow token may only tag a branch head. The files attached were built from `%s` and tested by [run %s](%s).)\n' \
+                "$def" "$COMMIT" "$RID" "$run" >> notes.md
+            echo "event=$GITHUB_EVENT_NAME run_sha=$GITHUB_SHA built_commit=$COMMIT tag_target=$def"
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$def" --prerelease \
+                --title "AurOS $TAG" --notes-file notes.md \
+                rel/AurOS-Setup.exe $( [ -n "$fastpath" ] && echo rel/AurOS-Setup-fastpath.exe ) \
+                rel/pieces.txt rel/SHA256SUMS rel/image.sha256 rel/image.bytes \
+                rel/auros-desktop.img.gz.*
+          fi
+
+      - name: what a person downloads is what was built
+        run: |
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          mkdir -p back && cd back
+          for f in AurOS-Setup.exe $( [ -f ../rel/AurOS-Setup-fastpath.exe ] && echo AurOS-Setup-fastpath.exe ) pieces.txt SHA256SUMS image.sha256 image.bytes; do
+            curl -fsSL --retry 5 -o "$f" "$base/$f"
+            cmp "$f" "../rel/$f"
+          done
+          sha256sum AurOS-Setup.exe
+          # Every piece through the address baked into the installer,
+          # which answers 302 to a signed storage URL.
+          base2=$(sed -n 's/^base //p' pieces.txt)
+          grep '^piece ' pieces.txt | while read -r _ name bytes sha; do
+            got=$(curl -fsSL --retry 5 "$base2$name" | sha256sum | cut -d' ' -f1)
+            [ "$got" = "$sha" ] || { echo "$name: $got, wanted $sha"; exit 1; }
+            echo "$name ok"
+          done
+          # Resuming: a Range request, through the redirect, is a 206
+          # that starts where it was asked to.
+          first=$(grep -m1 '^piece ' pieces.txt | cut -d' ' -f2)
+          curl -fsSL -r 1000000-1000099 -D hdr.txt -o part.bin "$base2$first"
+          grep -iE '^HTTP/[0-9.]+ 302' hdr.txt
+          grep -iE '^HTTP/[0-9.]+ 206' hdr.txt
+          grep -i '^content-range: bytes 1000000-1000099/' hdr.txt
+          dd if="../rel/$first" of=want.bin bs=100 skip=10000 count=1 status=none
+          cmp part.bin want.bin
+          grep -i '^location:' hdr.txt | sed 's/?.*//'
+          echo "redirect followed, Range honoured"
+
+  # EXPLICIT `if` ON EVERY JOB AFTER publish. A skipped job upstream (here
+  # `sign`, when signing is off) makes the default `success()` skip every
+  # job below it, even though publish itself ran on its own `if`: RC1
+  # (run 40017741766) published its prerelease and then skipped windows,
+  # both e2e jobs, promote and pages. Each of these now asks for exactly
+  # what it needs from its direct needs.
+  windows:
+    needs: [which, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      TAG: ${{ needs.publish.outputs.tag }}
+      SETUP_SHA256: ${{ needs.publish.outputs.setup_sha256 }}
+      SIGNED: ${{ needs.publish.outputs.signed }}
+      FASTPATH_SHA256: ${{ needs.publish.outputs.fastpath_sha256 }}
+      IMAGE_SHA256: ${{ needs.publish.outputs.image_sha256 }}
+      IMAGE_BYTES: ${{ needs.publish.outputs.image_bytes }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: auros-installer
+          path: exe
+          run-id: ${{ needs.which.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: the published installer, downloaded, starts
+        shell: pwsh
+        run: |
+          $base = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:TAG"
+          Invoke-WebRequest -Uri "$base/AurOS-Setup.exe" -OutFile AurOS-Setup.exe
+          $h = (Get-FileHash AurOS-Setup.exe -Algorithm SHA256).Hash.ToLower()
+          "SHA-256 $h"
+          if ($h -ne $env:SETUP_SHA256) { throw "the release's AurOS-Setup.exe is not the one built" }
+          $sig = (Get-AuthenticodeSignature .\AurOS-Setup.exe)
+          "Authenticode: $($sig.Status), $($sig.SignerCertificate.Subject)"
+          # Windows' own verdict, not ours: a signed release must say Valid.
+          if ($env:SIGNED -eq 'true' -and $sig.Status -ne 'Valid') { throw "the release is signed, and Windows says $($sig.Status)" }
+          if ($env:SIGNED -ne 'true' -and $sig.Status -ne 'NotSigned') { throw "the release is not meant to be signed, and Windows says $($sig.Status)" }
+          $exe = (Resolve-Path .\AurOS-Setup.exe).Path
+          $d = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\pub"
+          $p = Start-Process -FilePath $exe -ArgumentList '--navtest', $d.FullName -Wait -PassThru
+          Get-Content "$d\navtest.log"
+          if ($p.ExitCode -ne 0) { throw "--navtest exited $($p.ExitCode)" }
+          if (Select-String -Path "$d\navtest.log" -Pattern '\[FAIL\]' -Quiet) { throw "navtest has FAIL lines" }
+          if (-not (Select-String -Path "$d\navtest.log" -Pattern '\[PASS\]' -Quiet)) { throw "navtest passed nothing" }
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited) { throw "the wizard exited on its own, code $($p.ExitCode)" }
+          $p.Kill()
+          "the published installer was running after 8 seconds"
+      - name: the fast-path installer, if published, is the one built and starts
+        if: ${{ needs.publish.outputs.fastpath_sha256 != '' }}
+        shell: pwsh
+        run: |
+          $base = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:TAG"
+          Invoke-WebRequest -Uri "$base/AurOS-Setup-fastpath.exe" -OutFile AurOS-Setup-fastpath.exe
+          $h = (Get-FileHash AurOS-Setup-fastpath.exe -Algorithm SHA256).Hash.ToLower()
+          "SHA-256 $h"
+          if ($h -ne $env:FASTPATH_SHA256) { throw "the release's AurOS-Setup-fastpath.exe is not the one built" }
+          $exe = (Resolve-Path .\AurOS-Setup-fastpath.exe).Path
+          $d = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\pubfp"
+          $p = Start-Process -FilePath $exe -ArgumentList '--navtest', $d.FullName -Wait -PassThru
+          Get-Content "$d\navtest.log"
+          if ($p.ExitCode -ne 0) { throw "--navtest exited $($p.ExitCode)" }
+          if (Select-String -Path "$d\navtest.log" -Pattern '\[FAIL\]' -Quiet) { throw "navtest has FAIL lines" }
+          if (-not (Select-String -Path "$d\navtest.log" -Pattern '\[PASS\]' -Quiet)) { throw "navtest passed nothing" }
+          "the fast-path installer passed its navigation test"
+      - name: WinHTTP fetches the image from the release, through the redirect
+        shell: pwsh
+        run: |
+          $list = "$env:RUNNER_TEMP\pieces.txt"
+          Invoke-WebRequest -Uri "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:TAG/pieces.txt" -OutFile $list
+          $out = "$env:RUNNER_TEMP\auros-desktop.img"
+          $t = Get-Date
+          .\exe\aurbridge.exe getimage $list $out $env:IMAGE_SHA256 $env:IMAGE_BYTES | Tee-Object -FilePath getimage.log
+          if ($LASTEXITCODE -ne 0) { throw "getimage exited $LASTEXITCODE" }
+          if (-not (Select-String -Path getimage.log -Pattern 'verdict=ok' -Quiet)) { throw "no verdict=ok" }
+          "fetched and checked in $([int]((Get-Date) - $t).TotalSeconds) s"
+
+  e2e:
+    needs: publish
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    uses: ./.github/workflows/e2e.yml
+    permissions:
+      contents: write
+    with:
+      installer_url: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}/AurOS-Setup.exe
+      installer_sha256: ${{ needs.publish.outputs.setup_sha256 }}
+      # base AND bitlocker: both are v0.1 gates (D13, LEAD-RESUME section 5) and promote asks for both
+      variants: base,bitlocker
+
+  # The fast-path installer through the same real-Windows journey, when
+  # this release has one. NOT in promote's needs: the website's download is
+  # AurOS-Setup.exe, and the lead decides when the fast path replaces it.
+  e2e-fastpath:
+    needs: publish
+    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.publish.outputs.fastpath_sha256 != '' }}
+    uses: ./.github/workflows/e2e.yml
+    permissions:
+      contents: write
+    with:
+      installer_url: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}/AurOS-Setup-fastpath.exe
+      installer_sha256: ${{ needs.publish.outputs.fastpath_sha256 }}
+
+  # THE SOURCE CODE of what was just published, as its sibling release
+  # `sources-<tag>` (stream LEGAL, docs/legal/SOURCES.md): the Ubuntu source
+  # packages in the exact versions in the image, NOTICES.txt, Firefox's
+  # source, AurOS's own; published as a draft, completed, checked against
+  # GitHub's digests, downloaded again and verified. A published release is
+  # only verified, never rewritten. promote waits for it.
+  sources:
+    needs: [which, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    uses: ./.github/workflows/sources.yml
+    secrets: inherit
+    permissions:
+      contents: write
+      actions: read
+    with:
+      run-id: ${{ needs.which.outputs.run-id }}
+      tag: ${{ needs.publish.outputs.tag }}
+
+  # Before anything is promoted, not after: a site that fails its check
+  # stops the promote, instead of leaving a new release behind an old
+  # website. What is checked is what pages deploys (this run's
+  # github-pages artifact).
+  site:
+    needs: [which, publish]
+    # publish: release.json below records its AurOS-Setup.exe hash
+    if: ${{ !cancelled() && needs.which.outputs.go == 'true' && needs.publish.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Playwright and Chromium
+        # its --with-deps runs apt-get: bounded here
+        timeout-minutes: 10
+        run: |
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/pw" playwright@1.56.1
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+      # A release that is about to become [latest] is not made public while the legal pack is not ready
+      # (stream LEGAL: the owner's mailbox, the installer's agreement line and Licenses button, the
+      # reviews). The step says what is missing. Other runs are not held up by it.
+      - name: the legal pack is ready for the public (tools/legal/check.py --launch)
+        if: needs.which.outputs.latest == 'true'
+        run: python3 -I tools/legal/check.py --launch
+      # website/ names no repository; this one is written in (as pages.yml does).
+      - name: the site, with this repository written in
+        run: sh tools/site/stamp.sh website "$RUNNER_TEMP/site"
+      # THE HASH THAT IS NOT A RELEASE ASSET (SEC-005). Pages serves this file once `pages`
+      # deploys it (a [latest] only); tools/ops/monitor.py --deep compares the exe it
+      # downloads from releases/latest with it. SHA256SUMS lives in the release, so whoever
+      # can replace the exe there can replace that too; this cannot be replaced from there.
+      - name: release.json, the recorded hash of this release's AurOS-Setup.exe
+        env:
+          TAG: ${{ needs.publish.outputs.tag }}
+          SETUP_SHA256: ${{ needs.publish.outputs.setup_sha256 }}
+        run: |
+          printf '%s' "$SETUP_SHA256" | grep -qE '^[0-9a-f]{64}$' || { echo "::error::no SHA-256 for AurOS-Setup.exe from publish"; exit 1; }
+          printf '{"tag":"%s","file":"AurOS-Setup.exe","sha256":"%s","run":"%s"}\n' "$TAG" "$SETUP_SHA256" "$GITHUB_RUN_ID" > "$RUNNER_TEMP/site/release.json"
+          cat "$RUNNER_TEMP/site/release.json"
+      - name: the front door, checked the way she meets it
+        env:
+          PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
+        run: node tools/site/check.mjs --dir "$RUNNER_TEMP/site"
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: ${{ runner.temp }}/site
+
+  promote:
+    needs: [which, publish, windows, e2e, site, sources]
+    if: ${{ !cancelled() && needs.which.outputs.latest == 'true' && needs.publish.result == 'success' && needs.windows.result == 'success' && needs.e2e.result == 'success' && needs.site.result == 'success' && needs.sources.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.publish.outputs.tag }}
+      SETUP_SHA256: ${{ needs.publish.outputs.setup_sha256 }}
+      RID: ${{ needs.which.outputs.run-id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: the hardening boot test passed on THIS build's image
+        run: |
+          # harden.yml (job boot) boots the image of a finished build and
+          # runs tools/hardenboottest.sh. Not the newest harden run: the
+          # one whose title names this build run (tools/hardengate.sh).
+          # `which` asked already; this is the check that decides.
+          sh tools/hardengate.sh "$RID" || { echo "::error::no passing hardening boot of build run $RID's image; $TAG stays a prerelease"; exit 1; }
+      - name: a real Windows installed THIS AurOS-Setup.exe end to end, in this run
+        run: |
+          # `needs` already says e2e did not fail. This asks the jobs
+          # themselves (tools/releasegate.py e2e): the real-Windows journey of
+          # THIS release's AurOS-Setup.exe passed in the variants base AND
+          # bitlocker (D13), and no other variant of it failed. The jobs were
+          # handed this release's address and SHA-256 (the e2e job above) and
+          # refuse a download that does not hash to it. A skipped job, or the
+          # fast path's, is not one.
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" \
+              --jq '.jobs[] | "\(.name)|\(.conclusion)"' > /tmp/jobs.txt
+          grep -E '^e2e( |-)' /tmp/jobs.txt || true
+          python3 -I tools/releasegate.py e2e /tmp/jobs.txt || { echo "::error::no passing real-Windows e2e of AurOS-Setup.exe $SETUP_SHA256 in base and bitlocker in this run; $TAG stays a prerelease"; exit 1; }
+          echo "e2e passed in $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID on AurOS-Setup.exe $SETUP_SHA256"
+      - name: the full release
+        run: |
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest
+          curl -fsSL --retry 5 -o latest.exe "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/AurOS-Setup.exe"
+          [ "$(sha256sum latest.exe | cut -d' ' -f1)" = "$SETUP_SHA256" ] \
+            || { echo "::error::releases/latest/download/AurOS-Setup.exe is not this build's"; exit 1; }
+          echo "releases/latest/download/AurOS-Setup.exe is now $SETUP_SHA256"
+
+  # The website, deployed the moment its download link has something
+  # new behind it. A release made with GITHUB_TOKEN starts no other
+  # workflow, and pages.yml cannot be dispatched from here (dispatch
+  # only works for workflows on the default branch), so the deploy is
+  # done here, with the same actions pages.yml uses. Its own job, so a
+  # repository without Pages switched on fails here and not in promote.
+  pages:
+    needs: promote
+    if: ${{ !cancelled() && needs.promote.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: the website's download link answers, and Pages is on
+        run: |
+          code=$(curl -sS -L -o /dev/null -r 0-0 -w '%{http_code}' \
+                 "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/AurOS-Setup.exe")
+          case "$code" in 200|206) echo "releases/latest/download/AurOS-Setup.exe answers $code" ;;
+            *) echo "::error::releases/latest/download/AurOS-Setup.exe answers $code"; exit 1 ;; esac
+          if ! gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type > /tmp/pages.txt 2>/dev/null; then
+            echo "::error::Enable Pages: Settings → Pages → Source: GitHub Actions (the release itself is published)"
+            exit 1
+          fi
+          echo "Pages is on ($(cat /tmp/pages.txt))"
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+      # the github-pages artifact the site job checked
+      - id: deploy
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

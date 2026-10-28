@@ -1,0 +1,31 @@
+# shellcheck shell=sh
+# build/cflags -- the hardening every C program we ship is compiled with.
+#
+# Sourced by build/forge, build/staging and build/aurbridge; one place,
+# so the three cannot drift. tools/checksec.sh is the gate that proves
+# each flag reached the binary (and, with --selftest, that it fails on
+# a binary built without them). Ferry's helpers carry the same line in
+# src/ferry/install.sh, which builds inside the image where this file
+# is not.
+#
+# Ubuntu's gcc already defaults to most of these. They are spelled out
+# because a default is not a promise: another toolchain, or a later
+# Ubuntu, may not -- and -z now (full RELRO) is not a default at all.
+
+# Linux programs (dynamically linked).
+HARDEN_CFLAGS="-O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
+-fstack-clash-protection -fcf-protection=full -fPIE -pie -Wl,-z,relro,-z,now"
+
+# Linux programs that must be static (PID 1 of the staging environment
+# and its screen): the same, position-independent all the same, so even
+# PID 1 gets ASLR.
+HARDEN_STATIC="-O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong \
+-fstack-clash-protection -fcf-protection=full -fPIE -static-pie -Wl,-z,relro,-z,now"
+
+# The Windows installer (mingw-w64): ASLR with a 64-bit base, DEP, and
+# the stack protector. -static: Ubuntu's mingw-w64 (gcc 13-win32) takes
+# __stack_chk_fail from libssp-0.dll, which no Windows PC has, so without
+# it the installer would not start at all; with it the stack protector is
+# linked in and the .exe imports only Windows' own DLLs (build/aurbridge
+# checks that).
+HARDEN_PE="-static -fstack-protector-strong -Wl,--dynamicbase,--nxcompat,--high-entropy-va"

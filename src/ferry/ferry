@@ -1,0 +1,416 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  ferry — first-boot migration, orchestrated.
+#
+#  Runs the stages in the exact order the spec prescribes (§8), because
+#  the order is load-bearing: WiFi first so the machine is online, which
+#  is what makes every later re-sync possible; then the safe, no-prompt
+#  imports; then the things that need the user to decide.
+#
+#      AUTOMATIC (safe, no prompts)          ASK FIRST
+#      1  wifi      -> list her networks     onedrive   (ferry-files --include-onedrive)
+#      2  settings  -> tz/locale/keyboard    (passwords: never, by design)
+#      3  files     -> known folders         mail       (re-add IMAP)
+#      4  firefox   -> whole profile         printers / mapped drives
+#      5  wallpaper (part of settings)       apps       (user picks)
+#      ── always at the end: the report ──
+#
+#  Every stage is idempotent and records its own completion, so `ferry
+#  run` after a crash resumes: finished stages are skipped, a
+#  part-finished one re-runs and copies only what is missing. The one
+#  hard gate is the volume state — a hibernated or dirty partition is
+#  refused before any stage starts, with the reason and the fix.
+#
+#    ferry detect [...]        find Windows (read-only), print JSON
+#    ferry run [--auto] [--plain]
+#                              mount, run the automatic stages, report
+#                              (--plain: only her plain lines on stdout);
+#                              exit 0 all came, 2 something did not (it is
+#                              in the report), 3 refused (hibernated or
+#                              dirty volume), 6 several Windows accounts
+#                              and no way to tell whose files (the names
+#                              are in $FERRY_STATE/users; run again with
+#                              --user NAME), 1 could not import at all
+#    ferry <stage> [...]       one stage (wifi|files|firefox|settings|…)
+#    ferry back [--plain]      the way back: save her AurOS files into
+#                              Windows (before "Put Windows back");
+#                              exit 0 all saved, 2 some not, 3 drive not
+#                              shut down properly, 4 not enough room,
+#                              5 drive could not be opened, 7 no Windows
+#                              drive on this computer at all, 1 failed
+#    ferry handover --need     bytes the handover volume must hold
+#    ferry stick list | DEVICE [--plain]
+#                              save her AurOS files on a USB stick
+#    ferry report [--json]     the what-could-not-migrate report
+#    ferry status              where a resumed run would pick up
+#    ferry unmount             release the read-only mount
+# ═══════════════════════════════════════════════════════════════════
+set -eu
+# /usr/bin/ferry is a link to /usr/lib/ferry/ferry; the tools are beside
+# the real file, not beside the link (which is where answer.sh calls it).
+SELF=$(dirname "$(readlink -f "$0")")
+. "$SELF/ferry-common.sh"
+
+MOUNTED_HERE=0
+
+# "The Windows drive could not be opened" is exit 5 on the way back (a
+# distinct answer for the desktop), a plain failure on the way in.
+mdie() { if [ "${FERRY_RW:-0}" = 1 ]; then warn "$*"; exit 5; fi; die "$*"; }
+
+# Bring up the read-only mount if we were given a device, or find one.
+ensure_mounted() {
+    if [ -n "$FERRY_ROOT" ]; then
+        is_windows_root "$FERRY_ROOT" || die "$FERRY_ROOT is not a Windows volume"
+        return 0
+    fi
+    if [ -z "$FERRY_DEV" ]; then
+        # Auto-pick the one Windows volume. Refuse to guess between two.
+        # (FERRY_PROBE_DEVS: the devices to look at, for tests; otherwise
+        # every partition the kernel lists.)
+        _cands="" _unopened=0
+        _devs=${FERRY_PROBE_DEVS:-$(awk 'NR>2 && $4 ~ /[0-9]$/ {print "/dev/" $4}' /proc/partitions 2>/dev/null)}
+        for _d in $_devs; do
+            [ -b "$_d" ] || continue
+            _n=$(basename "$_d")
+            _m="$FERRY_MNT/probe.$_n"
+            if mount_ro "$_d" "$_m" 2>/dev/null; then
+                if is_windows_root "$_m"; then _cands="$_cands $_d"; fi
+                unmount_ro "$_m"; rmdir "$_m" 2>/dev/null || true
+            else
+                # Not mountable. Most partitions are not Windows and should
+                # not be: an NTFS or BitLocker one that will not open might
+                # BE Windows (locked, or not shut down properly), which is
+                # a different answer from "there is no Windows here".
+                case "$(blkid -o value -s TYPE "$_d" 2>/dev/null)" in
+                    ntfs|BitLocker) _unopened=1 ;;
+                esac
+            fi
+        done
+        set -- $_cands
+        if [ $# -eq 0 ] && [ "$_unopened" = 0 ] && [ "${FERRY_RW:-0}" = 1 ]; then
+            # The way back, she HAS files, and there is no Windows drive of any
+            # kind on this computer: nowhere to save them. Exit 7 -- a stop,
+            # with its own word, because it is not "could not be opened"
+            # (answer.sh does not put Windows back; her files are untouched).
+            warn "no Windows drive on this computer to save files in"
+            exit 7
+        fi
+        [ $# -ge 1 ] || mdie "no Windows partition found on any disk"
+        [ $# -eq 1 ] || mdie "found more than one Windows partition ($*); choose one with --device"
+        FERRY_DEV=$1
+    fi
+    mount_ro "$FERRY_DEV" "$FERRY_MNT" || \
+        mdie "could not mount $FERRY_DEV read-only (is ntfs3 or ntfs-3g available?)"
+    FERRY_ROOT=$FERRY_MNT
+    MOUNTED_HERE=1
+    say "mounted $FERRY_DEV read-only at $FERRY_MNT ($(awk -v m="$FERRY_MNT" '$2 == m { t = $3 } END { print t }' /proc/mounts))"
+    if [ "${FERRY_RW:-0}" = 1 ]; then
+        # The way back writes. Look first (read-only), then remount for
+        # writing as her, so that a hibernated or dirty drive is refused
+        # before anything can be written to it.
+        require_clean_volume "$FERRY_ROOT" "$FERRY_DEV"
+        unmount_ro "$FERRY_MNT"
+        mount_rw "$FERRY_DEV" "$FERRY_MNT" "$(id -u "$FERRY_OWNER")" "$(id -g "$FERRY_OWNER")" || \
+            { MOUNTED_HERE=0; mdie "could not open $FERRY_DEV for writing (is ntfs-3g available?)"; }
+        say "mounted $FERRY_DEV for writing at $FERRY_MNT"
+    fi
+}
+
+maybe_unmount() {
+    [ "$MOUNTED_HERE" = 1 ] || return 0
+    unmount_ro "$FERRY_MNT" && say "unmounted $FERRY_MNT" || \
+        warn "could not unmount $FERRY_MNT"
+    MOUNTED_HERE=0
+}
+
+# Pass the resolved mount + destination down to a stage tool, so a stage
+# invoked through `ferry run` sees exactly what the orchestrator chose.
+run_stage() {
+    _tool=$1; shift
+    "$SELF/$_tool" \
+        ${FERRY_ROOT:+--root "$FERRY_ROOT"} \
+        ${FERRY_DEV:+--device "$FERRY_DEV"} \
+        ${FERRY_WINUSER:+--user "$FERRY_WINUSER"} \
+        ${FERRY_HOME:+--home "$FERRY_HOME"} \
+        ${FERRY_OWNER:+--owner "$FERRY_OWNER"} \
+        ${FERRY_STATE:+--state "$FERRY_STATE"} \
+        ${FERRY_PROGRESS:+--progress "$FERRY_PROGRESS"} \
+        $([ "$FERRY_DRYRUN" = 1 ] && echo --dry-run) \
+        "$@"
+}
+
+# A stage runs unless it already finished — that is the whole of resume.
+# Its exit says what the run as a whole will say: 2 "something of hers
+# did not come" (a stage that broke counts as that), 1 only when the
+# files stage itself broke -- her files are the point, and "Your files
+# are here" must never follow a run that copied none.
+RUN_RC=0
+stage_if_needed() {
+    _name=$1 _tool=$2; shift 2
+    if [ "$(stage_status "$_name")" = done ] && [ "${FERRY_FORCE:-0}" != 1 ]; then
+        say "$_name: already done, skipping (use --force to redo)"
+        return 0
+    fi
+    say "── $_name ──"
+    _rc=0
+    run_stage "$_tool" "$@" || _rc=$?
+    case "$_rc" in
+        0) : ;;
+        2) [ "$RUN_RC" = 1 ] || [ "$RUN_RC" = 4 ] || RUN_RC=2 ;;
+        4) RUN_RC=4 ;;                       # not enough room on this computer
+        3) exit 3 ;;
+        *) warn "$_name did not complete (exit $_rc; see report)"
+           if [ "$_name" = files ]; then RUN_RC=1; elif [ "$RUN_RC" = 0 ]; then RUN_RC=2; fi ;;
+    esac
+}
+
+# What she reads, one short line at a time: the welcome panel shows the
+# newest line of whatever `ferry run --plain` prints. Everything else
+# Ferry says goes to STATE/ferry.log, for whoever helps her.
+plain() { [ "${FERRY_PLAIN_FD:-}" = 3 ] && printf '%s\n' "$*" >&3; return 0; }
+
+_cmd_run() {
+    trap maybe_unmount EXIT
+    _auto=1 _plain=0
+    while [ $# -gt 0 ]; do
+        common_opt "$@"                      # --user NAME, --root DIR, ...
+        if [ "${_consumed:-0}" -gt 0 ]; then shift "$_consumed"; continue; fi
+        case "$1" in --auto) _auto=1 ;; --all) _auto=0 ;; --plain) _plain=1 ;; esac
+        shift
+    done
+    ferry_state_init
+    if [ "$_plain" = 1 ]; then
+        exec 3>&1 >>"$FERRY_STATE/ferry.log" 2>&1
+        FERRY_PLAIN_FD=3; export FERRY_PLAIN_FD
+        echo "=== ferry run $(now) ==="
+    fi
+    plain "Looking at the Windows part of this computer."
+    ensure_mounted
+    # The gate: refuse the whole run on a bad volume, once, up front, so
+    # the user gets one clear message instead of five stage failures.
+    require_clean_volume "$FERRY_ROOT" "$FERRY_DEV"
+
+    # WHOSE files, settled once and before any stage. A stage that cannot
+    # tell used to die on its own and be swallowed, and the run ended
+    # "fine" with an empty home. Now: the chosen account, the only one
+    # with files, or a stop (exit 6) with the names for the desktop to ask.
+    _cr=0; choose_user || _cr=$?
+    case "$_cr" in
+        0) : ;;
+        6) plain "More than one person uses Windows on this computer."
+           warn "several Windows accounts and no way to tell whose files; see $FERRY_STATE/users"
+           exit 6 ;;
+        *) plain "AurOS could not find a Windows user to bring files from."
+           die "no Windows user found on $FERRY_ROOT" ;;
+    esac
+
+    # Spec §8 automatic order.
+    stage_if_needed wifi     ferry-wifi
+    stage_if_needed settings ferry-settings
+    stage_if_needed files    ferry-files
+    plain "Bringing your bookmarks across."
+    stage_if_needed firefox  ferry-firefox
+
+    maybe_unmount
+    printf '\n'
+    "$SELF/ferry-report" ${FERRY_STATE:+--state "$FERRY_STATE"}
+    # Her own copy of what happened, in her Home, written as her.
+    resolve_target
+    "$SELF/ferry-report" ${FERRY_STATE:+--state "$FERRY_STATE"} --plain |
+        as_her sh -c 'cat > "$1/What came from Windows.txt"' sh "$FERRY_HOME" ||
+        warn "could not write the report into $FERRY_HOME"
+    say "migration run complete (exit $RUN_RC)"
+    exit "$RUN_RC"
+}
+
+# A run is announced as finished only once it is (the desktop waits for
+# this before asking "Can you see your photos?"), whatever way it ended.
+cmd_run() {
+    ferry_state_init
+    signal_clear
+    ( _cmd_run "$@" ) && _rc=0 || _rc=$?
+    signal_done import "$_rc" files firefox
+    exit "$_rc"
+}
+
+# THE WAY BACK. Her AurOS files into Windows, before "Put Windows back"
+# removes AurOS. See ferry-back. Exit: 0 all saved, 2 some not, 3 the
+# Windows drive was not shut down properly, 4 not enough room, 5 the
+# Windows drive could not be opened, 1 failed.
+_cmd_back() {
+    FERRY_RW=1; export FERRY_RW
+    trap maybe_unmount EXIT
+    _plain=0 _to=""
+    while [ $# -gt 0 ]; do
+        common_opt "$@"
+        if [ "${_consumed:-0}" -gt 0 ]; then shift "$_consumed"; continue; fi
+        case "$1" in --plain) _plain=1 ;; --to) _to=${2:?--to needs a device}; shift ;; esac
+        shift
+    done
+    ferry_state_init
+    rm -f "$FERRY_STATE/state/back.via"
+    if [ "$_plain" = 1 ]; then
+        exec 3>&1 >>"$FERRY_STATE/ferry.log" 2>&1
+        FERRY_PLAIN_FD=3; export FERRY_PLAIN_FD
+        echo "=== ferry back $(now) ==="
+    fi
+    # Who the files are, and are for, before anything is opened.
+    resolve_target
+    [ -n "$FERRY_OWNER" ] || die "no AurOS user whose files to save"
+    # NOTHING TO SAVE: say so and leave the Windows drive alone.
+    if ! aurhome_has_files; then
+        say "no files of hers in AurOS to save"
+        exit 8                               # (cmd_back: "nothing to save", counted as ok)
+    fi
+    # A handover volume, if one was made for this (labelled AUROSHANDOV, or
+    # named by --to / FERRY_HANDOVER_DEV): her files go onto it, checked, for
+    # Windows to take into her folders with its own driver. Otherwise they
+    # are written into Windows directly (ferry-back).
+    _hv=${_to:-$(find_handover || true)}
+    if [ -n "$_hv" ]; then
+        printf 'handover\n' > "$FERRY_STATE/state/back.via"
+        plain "Getting ready to save your files."
+        if [ -d "$_hv" ]; then run_stage ferry-handover --dir "$_hv"      # a folder (tests)
+        else run_stage ferry-handover --volume "$_hv"; fi
+        return
+    fi
+    plain "Getting ready to save your files in Windows."
+    ensure_mounted
+    run_stage ferry-back
+}
+
+# "Save my files to a USB stick first": the same copier and the same
+# read-back, onto a stick she has chosen, in a folder she can open on any
+# computer. `ferry stick list` names the sticks (one per line: device,
+# a plain name, bytes, file system); `ferry stick DEVICE` saves.
+sticks_list() {
+    lsblk -bPno NAME,SIZE,RM,TRAN,FSTYPE,LABEL,MODEL,TYPE 2>/dev/null | awk '
+        function v(k,   m, t) { if (match($0, "(^| )" k "=\"[^\"]*\"")) { t = substr($0, RSTART, RLENGTH); sub(/^ /, "", t); m = substr(t, length(k) + 3, length(t) - length(k) - 3); gsub(/\\x20/, " ", m); return m } return "" }
+        { type = v("TYPE"); fs = v("FSTYPE"); rm = v("RM"); tr = v("TRAN") }
+        (type == "part" || type == "disk") && (rm == "1" || tr == "usb") && (fs == "exfat" || fs == "vfat" || fs == "ntfs") {
+            gb = v("SIZE") / 1000000000
+            name = v("LABEL"); if (name == "") name = v("MODEL"); if (name == "") name = "USB stick"
+            printf "/dev/%s\t%s (%.0f GB)\t%s\t%s\n", v("NAME"), name, gb, v("SIZE"), fs }'
+}
+_cmd_stick() {
+    trap maybe_unmount EXIT
+    _plain=0 _dev=""
+    while [ $# -gt 0 ]; do
+        common_opt "$@"
+        if [ "${_consumed:-0}" -gt 0 ]; then shift "$_consumed"; continue; fi
+        case "$1" in --plain) _plain=1 ;; *) _dev=$1 ;; esac
+        shift
+    done
+    [ -n "$_dev" ] || die "usage: ferry stick list | ferry stick DEVICE [--plain]"
+    ferry_state_init
+    if [ "$_plain" = 1 ]; then
+        exec 3>&1 >>"$FERRY_STATE/ferry.log" 2>&1
+        FERRY_PLAIN_FD=3; export FERRY_PLAIN_FD
+        echo "=== ferry stick $(now) ==="
+    fi
+    resolve_target
+    [ -n "$FERRY_OWNER" ] || die "no AurOS user whose files to save"
+    if ! aurhome_has_files; then say "no files of hers in AurOS to save"; exit 8; fi
+    plain "Getting ready to save your files on the USB stick."
+    if [ -d "$_dev" ]; then run_stage ferry-handover --stick --dir "$_dev"      # a folder (tests)
+    else run_stage ferry-handover --stick --volume "$_dev"; fi
+}
+cmd_stick() {
+    if [ "${1:-}" = list ]; then sticks_list; return 0; fi
+    ferry_state_init
+    signal_clear
+    case " $* " in *" --plain "*) _PLAIN_OUT=1 ;; esac
+    ( _cmd_stick "$@" ) && _rc=0 || _rc=$?
+    _nothing=0
+    if [ "$_rc" = 8 ]; then _rc=0; _nothing=1; fi
+    _bn=$(awk -F'\t' '$2 == "stick" && ($3 == "copy" || $3 == "collision")' "$FERRY_STATE/manifest.tsv" 2>/dev/null | wc -l | tr -d ' ')
+    case "$_rc" in
+        0) if [ "$_nothing" = 1 ] || [ "${_bn:-0}" = 0 ]; then last_line "You had no files to save on the USB stick."
+           elif [ "$_bn" = 1 ]; then last_line "Your file is saved on the USB stick, in the folder \"From AurOS\"."
+           else last_line "Your $_bn files are saved on the USB stick, in the folder \"From AurOS\"."; fi ;;
+        2) last_line "Some of your files could not be saved on the USB stick." ;;
+        4) : ;;
+        5) last_line "AurOS could not open the USB stick to save your files." ;;
+        *) last_line "AurOS could not save your files on the USB stick." ;;
+    esac
+    if [ "$_nothing" = 1 ]; then FERRY_SIGNAL_FILES=0 signal_done stick "$_rc" stick
+    else signal_done stick "$_rc" stick; fi
+    exit "$_rc"
+}
+# The last plain line is printed after the subshell (which owned FD 3)
+# is gone, so it is the newest line in putback.log.
+last_line() { [ "${_PLAIN_OUT:-0}" = 1 ] && printf '%s\n' "$*"; return 0; }
+cmd_back() {
+    ferry_state_init
+    signal_clear
+    ( _cmd_back "$@" ) && _rc=0 || _rc=$?
+    _nothing=0
+    if [ "$_rc" = 8 ]; then _rc=0; _nothing=1; fi
+    _stg=back
+    [ "$(cat "$FERRY_STATE/state/back.via" 2>/dev/null)" != handover ] || _stg=handover
+    _bn=$(awk -F'\t' -v s="$_stg" '$2 == s && ($3 == "copy" || $3 == "collision")' "$FERRY_STATE/manifest.tsv" 2>/dev/null | wc -l | tr -d ' ')
+    case "$_rc" in
+        0) if [ "$_nothing" = 1 ] || [ "${_bn:-0}" = 0 ]; then last_line "You had no files to save in Windows."
+           elif [ "$_stg" = handover ]; then
+               # Not in Windows yet: Windows takes them from here, checked.
+               if [ "$_bn" = 1 ]; then last_line "Your file is saved and checked, ready for Windows."
+               else last_line "Your $_bn files are saved and checked, ready for Windows."; fi
+           elif [ "$_bn" = 1 ]; then last_line "Your file is saved in Windows, in the folder \"From AurOS\"."
+           else last_line "Your $_bn files are saved in Windows, in the folder \"From AurOS\"."; fi ;;
+        2) last_line "Some of your files could not be saved in Windows." ;;
+        3) last_line "Windows was not shut down properly. Start Windows, shut it down fully, then try again." ;;
+        7) last_line "AurOS found no Windows drive on this computer, so your files could not be saved in Windows. Nothing of yours was deleted." ;;
+        4) : ;;                                  # ferry-copy has said how much room is missing
+        5) last_line "AurOS could not open the Windows drive to save your files." ;;
+        *) last_line "AurOS could not save your files in Windows." ;;
+    esac
+    # With nothing to save the count is 0 whatever earlier runs saved.
+    if [ "$_nothing" = 1 ]; then FERRY_SIGNAL_FILES=0 signal_done back "$_rc" back
+    else signal_done back "$_rc" "$_stg"; fi
+    exit "$_rc"
+}
+
+cmd_status() {
+    ferry_state_init
+    printf '  %sFerry stage status%s\n' "$C_OK" "$C_RST"
+    for _s in wifi settings files firefox; do
+        _st=$(stage_status "$_s")
+        printf '    %-10s %s\n' "$_s" "$_st"
+    done
+}
+
+_cmd=${1:-help}; [ $# -gt 0 ] && shift || true
+case "$_cmd" in
+    detect)   "$SELF/ferry-detect" "$@" ;;
+    wifi|settings|files|firefox)
+        # A single stage: parse common opts to find --root/--device, then
+        # mount if needed and delegate.
+        while [ $# -gt 0 ]; do
+            common_opt "$@"
+            if [ "${_consumed:-0}" -gt 0 ]; then shift "$_consumed"; continue; fi
+            break
+        done
+        ensure_mounted
+        run_stage "ferry-$_cmd" "$@"
+        maybe_unmount ;;
+    run)      cmd_run "$@" ;;
+    stick)    cmd_stick "$@" ;;
+    handover)
+        while [ $# -gt 0 ]; do
+            common_opt "$@"
+            if [ "${_consumed:-0}" -gt 0 ]; then shift "$_consumed"; continue; fi
+            break
+        done
+        resolve_target
+        run_stage ferry-handover "$@" ;;
+    back)     case " $* " in *" --plain "*) _PLAIN_OUT=1 ;; esac; cmd_back "$@" ;;
+    report)   "$SELF/ferry-report" "$@" ;;
+    status)   cmd_status "$@" ;;
+    unmount|umount)
+        while [ $# -gt 0 ]; do common_opt "$@"; [ "${_consumed:-0}" -gt 0 ] && shift "$_consumed" || break; done
+        unmount_ro "$FERRY_MNT" && say "unmounted $FERRY_MNT" || warn "nothing mounted at $FERRY_MNT" ;;
+    backend)  ferry-hive backend ;;
+    version|--version) printf 'ferry %s\n' "$FERRY_VERSION" ;;
+    help|-h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//' ;;
+    *) die "unknown command '$_cmd' (try: ferry help)" ;;
+esac

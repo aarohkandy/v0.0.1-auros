@@ -1,0 +1,56 @@
+FICTIONAL: a made-up Dell XPS 13 9343, to show what a report looks like.
+The real file is AurOS-report.txt, written by "AurOS-Setup.exe --report".
+
+AurOS - what is inside this PC
+==============================
+Made 2026-11-02 14:05 (this PC's clock) by AurOS Setup (PC report, format 1).
+Nothing on this PC was changed. This file holds no serial numbers, no PC name,
+no user name, no Wi-Fi name and no file names.
+
+THIS PC
+  Maker and model   Dell Inc. XPS 13 9343
+  Family            XPS
+  Firmware          Dell Inc. A13 09/20/2018
+  Processor         Intel(R) Core(TM) i5-5200U CPU @ 2.20GHz (4 threads)
+  Memory            8.0 GB
+  Windows           Windows 10 Home 22H2 (build 19045)
+  Starts up with    UEFI, Secure Boot on
+  Battery           yes (a laptop or tablet)
+  Drive Windows is on  256.0 GB, solid state (fast), 121.0 GB free
+                       LITEON CV1-8B256
+  BitLocker         Windows drive encrypted: no;  any drive encrypted: no
+
+WOULD THE AurOS INSTALLER ACCEPT THIS PC?
+  Yes.  (0 reasons to stop, 1 things to know)
+  [WARN] Fast Startup is on; the installer will switch it off  (fast-startup)
+
+WHAT WILL WORK (the sentences she would be shown)
+  Your Wi-Fi won't work with AurOS yet, and this computer has no place for a network cable, so AurOS would have no internet. A USB Wi-Fi stick can fix this. Press Show a helper how to see which kind. Plug one in and start again. Nothing has been changed.
+      (wifi-broadcom-wl-only: Broadcom Wi-Fi chip that Linux only drives with Broadcom's own closed driver (wl). The image carries the bus module (bcma/ssb) for it and no Wi-Fi driver, and wl cannot be installed on a computer with no other internet.)
+  Your Bluetooth will work.
+      (bluetooth-driver: driver: module btusb in the image's kernel 6.8.0-147-generic, and its firmware is in the image (checked for the driver, not for this exact chip))
+  Your sound will work.
+      (audio-driver: sound driver: module snd_hda_intel in the image's kernel 6.8.0-147-generic, and its firmware is in the image (checked for the driver, not for this exact chip))
+  Your camera will work.
+      (camera-driver: camera driver: module uvcvideo in the image's kernel 6.8.0-147-generic, and its firmware is in the image (checked for the driver, not for this exact chip))
+  Your screen will work.
+      (gpu-driver: graphics driver: module i915 in the image's kernel 6.8.0-147-generic, and its firmware is in the image (checked for the driver, not for this exact chip))
+  Your printer will work.
+      (printer-model-driver: CUPS has a driver for this model (HP hpcups or Gutenprint) in the image)
+
+DEVICES WINDOWS SEES (7 kept, 0 skipped as plumbing)
+  Wi-Fi              PCI 14E4:43B1  Dell Wireless 1560 802.11ac  [Windows uses this now]  sub 105B:0608
+  Bluetooth          USB 0A5C:216F  Dell Wireless 1560 Bluetooth
+  Sound              PCI 8086:9CA0  Intel(R) Display Audio  sub 1028:0679
+  Camera             USB 0C45:6A0A  Integrated Webcam
+  Screen chip        PCI 8086:1616  Intel(R) HD Graphics 5500  sub 1028:0679
+  Windows has NO driver for these:
+  No driver          PCI 8086:9CA4  PCI Device
+  Everything else on the PCI and USB buses:
+                     PCI 8086:9CB1  Intel USB xHCI
+
+PRINTERS (the names are the ones set up in Windows: they may be somebody's own words)
+  HP DeskJet 2540  [default]
+      driver: HP DeskJet 2540 series
+      port: USB001 (USB)  USB 03F0:9411
+      id: HPDeskJet_2540_seriesA1B2

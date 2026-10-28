@@ -1,0 +1,28 @@
+# Copy this to <vendor-model>.txt (lower case, dashes: dell-xps-13-9343.txt) and fill it in.
+# Copy the PC's AurOS-report.json next to it as <vendor-model>.report.json.
+# Every line is "key: value". Leave a line out if it does not apply.
+machine: Dell XPS 13 9343
+date: 2026-11-02
+installer: AurOS-Setup.exe from the prerelease, first 8 letters of its SHA-256: 1a2b3c4d
+# install: ok | refused | failed | not-tried
+install: ok
+# if refused: the sentence the installer showed (or its code from the report)
+refused_because:
+minutes_to_yes: 41
+# put_windows_back: ok | failed | not-tried
+put_windows_back: ok
+# power_pull: ok | failed | not-tried   (only after the lead says it is safe, docs/results/hardware/CAMPAIGN.md)
+power_pull: not-tried
+data_loss: no
+# screen_ok: yes | slow | no
+screen_ok: yes
+# What really happened in AurOS: yes | no | n/a (the PC has none) | untested
+wifi_worked: yes
+sound_worked: yes
+camera_worked: n/a
+bluetooth_worked: yes
+printer_worked: untested
+scanner_worked: untested
+fingerprint_worked: n/a
+---
+Anything else: what looked wrong, what she would have been confused by, where the photos are.

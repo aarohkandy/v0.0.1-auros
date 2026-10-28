@@ -1,0 +1,464 @@
+/* plat.h — everything AurBridge does that touches the world.
+ *
+ * WHY THERE IS A LAYER HERE AT ALL, when the whole program only ever
+ * runs on Windows.
+ *
+ * The phase engine is the half of this product that decides what
+ * happens to a stranger's disk before the restart. It cannot be tested
+ * on the machine it is written on: there is no Windows here, wine does
+ * not do raw disk handles or EFI variables, and the one thing that
+ * must never be done to test it is to run it against a real computer
+ * and see.
+ *
+ * So every call that leaves the program goes through this header, and
+ * there are two implementations of it:
+ *
+ *   plat_win.c  the real one: CreateFileW on \\.\PhysicalDriveN,
+ *               DeviceIoControl, SetFirmwareEnvironmentVariableExW,
+ *               mountvol for the EFI partition.
+ *   plat_sim.c  a machine made of ordinary files -- a directory with
+ *               disk0.img, disk1.img, an esp/ tree and an efivars
+ *               file. Built with the HOST compiler and never shipped,
+ *               so the phase engine can be run end to end against the
+ *               same synthetic machine tools/machine.sh gives the
+ *               staging environment -- and the stick it produces is
+ *               then the stick the installer is tested with.
+ *
+ *               It used to say "builds for Linux as well as for
+ *               Windows", and it does not any more: its plat_fetch is
+ *               a socket client behind #ifndef _WIN32, so a Windows
+ *               link of it fails on an undefined symbol. Nothing
+ *               builds it that way and nothing should -- build/aurbridge
+ *               refuses to put the simulated platform into a shipped
+ *               binary at all -- but a header that describes a
+ *               property the tree does not have is a header somebody
+ *               will rely on.
+ *
+ * That last sentence is the whole point. Before this, the test's
+ * memory stick and journal were written by a python heredoc that
+ * agreed with aurstage because both were written by the same person on
+ * the same afternoon. Now the thing under test writes them.
+ *
+ * WHAT IS NOT BEHIND THIS LINE: anything destructive to the machine's
+ * own disk. AurBridge never writes to it. Phases 0 to 3 write to the
+ * memory stick, to files on the EFI partition, and to two firmware
+ * variables, and that is the complete list -- which is why
+ * plat_disk_write() refuses any disk that is not the nominated stick.
+ */
+#ifndef AURBRIDGE_PLAT_H
+#define AURBRIDGE_PLAT_H
+
+#include <stddef.h>
+#include <stdint.h>
+#include "format.h"       /* fmt_extent, for the gap fence below */
+
+/* One sentence, in her words, whenever something returns non-zero. */
+#define PLAT_WHY 400
+
+/* ── disks ───────────────────────────────────────────────────────── */
+
+typedef struct {
+    int      index;            /* PhysicalDriveN                      */
+    uint64_t size_bytes;
+    uint32_t logical_sector;
+    char     serial[64];
+    char     model[128];
+    int      removable;
+} plat_disk;
+
+/* How many disks, and what they are. Read-only; opens nothing
+ * writable. */
+int plat_disks(plat_disk *out, int max);
+
+int plat_read(int disk_index, uint64_t off, void *buf, size_t n,
+              char *why, size_t wn);
+
+/* THE ONLY WRITE PATH TO A DISK IN THIS PROGRAM, and it refuses every
+ * disk but the one plat_allow_write() has nominated. Nominating is a
+ * separate call, made once, from the phase that has just checked the
+ * serial number against what the user chose -- so that "write to the
+ * stick" and "which disk is the stick" are two decisions in two places
+ * rather than one argument that can be wrong. */
+void plat_allow_write(int disk_index);
+int  plat_write(int disk_index, uint64_t off, const void *buf, size_t n,
+                char *why, size_t wn);
+int  plat_flush(int disk_index, char *why, size_t wn);
+/* Tell the operating system the disk's layout changed. */
+int  plat_reread(int disk_index, char *why, size_t wn);
+
+/* ── the fast path: raw writes into the freed gap ─────────────────────
+ *
+ * The stick fence above refuses every disk but the nominated stick. The
+ * fast path (docs/AURBRIDGE.md D1) has no stick: it shrinks C: with
+ * Windows' own online shrink and writes AurOS's partitions into the
+ * unallocated gap that frees, ON THE SYSTEM DISK ITSELF. So the fence
+ * changes shape rather than being dropped, and it is STRICTER:
+ *
+ *   - A gap write may land only inside the window plat_gap_allow()
+ *     nominated, and only where no partition is. The live partition
+ *     table is re-read (not a cached copy) when the window is armed,
+ *     immediately before the write loop, and every write is checked
+ *     against both the window and those live extents -- a byte on or
+ *     past any partition is REFUSED, never clamped.
+ *   - Windows itself refuses a raw write inside a mounted volume's
+ *     extents, and the fast path does NOT lock or dismount anything, so
+ *     that refusal stands as a live second fence against a table that
+ *     changes mid-write.
+ *
+ * The stick path (plat_allow_write/plat_write) is untouched and still
+ * serves the legacy staging-shrink install. The two never share state:
+ * a disk armed for gap writes is not armed for stick writes and vice
+ * versa. plat_disk_parts() exposes the live extents for the planner and
+ * the self-test. */
+int  plat_disk_parts(int disk_index, fmt_extent *out, int max,
+                     int *n_out, char *why, size_t wn);
+int  plat_gap_allow(int disk_index, uint64_t lo, uint64_t hi,
+                    char *why, size_t wn);
+void plat_gap_forbid(void);
+int  plat_gap_write(int disk_index, uint64_t off, const void *buf, size_t n,
+                    char *why, size_t wn);
+int  plat_gap_flush(int disk_index, char *why, size_t wn);
+
+/* TEST ONLY (`aurbridge gapselftest`): does WINDOWS refuse a raw write
+ * at `off`, which the caller places inside a mounted volume? The first
+ * fence is bypassed on purpose, and the bytes written are the bytes
+ * that are already there, so the probe changes nothing even when the
+ * answer is "no". 1 = Windows refused (the second fence stands), 0 =
+ * Windows accepted it, -1 = the probe could not run. The simulation has
+ * no second fence and says so (-1). */
+int  plat_gap_os_fence_probe(int disk_index, uint64_t off, char *why, size_t wn);
+
+/* What Windows says partition `part_number` (1-based) on this disk is
+ * now, and the smallest and largest it could be resized to in place
+ * (Get-PartitionSupportedSize), and where it starts (bytes) -- which is
+ * how a caller checks that Windows' partition number names the entry it
+ * means. Read-only, but slow: Windows analyses the volume to answer. Any
+ * of the four pointers may be NULL. */
+int  plat_shrink_limits(int disk_index, int part_number, uint64_t *now,
+                        uint64_t *smallest, uint64_t *largest,
+                        uint64_t *offset, char *why, size_t wn);
+
+/* Shrink the system volume with WINDOWS' OWN online shrink (works with
+ * BitLocker on; no decryption). `part_number` is the 1-based GPT entry
+ * of C:. Never below what Windows allows, rounded up to a megabyte. On
+ * return *achieved_bytes is the partition's new size read back from the
+ * LIVE table -- never assumed to be what was asked for, because
+ * unmovable files can stop the shrink short (and it is filled in even
+ * when the shrink stopped part-way and this returns -1). 0, or -1 with a
+ * sentence. The simulation emulates it with ntfsresize + a GPT entry
+ * rewrite, exactly what Windows leaves behind. */
+int  plat_shrink_system(int disk_index, int part_number,
+                        uint64_t target_bytes, uint64_t *achieved_bytes,
+                        char *why, size_t wn);
+/* Grow it back (the undo of a shrink): to `to_bytes`, or to the largest
+ * Windows allows if that is less, or to the largest if `to_bytes` is 0.
+ * Never past the size it was, so space that was unallocated before the
+ * install stays unallocated. *achieved_bytes (may be NULL) is read back.
+ * 0, or -1 with a sentence. */
+int  plat_grow_system(int disk_index, int part_number, uint64_t to_bytes,
+                      uint64_t *achieved_bytes, char *why, size_t wn);
+
+/* ── her Wi-Fi, the one network she is on (decision D10) ──────────────
+ * The documented WLAN API, the same call `netsh wlan show profile
+ * key=clear` makes: the CONNECTED network's profile, asked for with its
+ * key (WLAN_PROFILE_GET_PLAINTEXT_KEY, which an administrator may ask
+ * for). Only that one network. Nothing here stores or logs the key; the
+ * caller writes it where the installer says and wipes its buffer.
+ *   ssid      the network's name, printable ASCII only
+ *   security  "wpa-psk", "sae" or "open"
+ *   psk       the passphrase (8..63 characters) or 64 hex digits; empty
+ *             for "open"
+ * 0 when there is one to carry; -1 with a sentence in `why` when there is
+ * not (not on Wi-Fi, a work or school sign-in, a name or key AurOS cannot
+ * write down safely). The simulation reads $AURBRIDGE_SIM/wifi.txt:
+ * ssid, security, key, one per line. */
+int plat_wifi_profile(char *ssid, size_t sn, char *security, size_t secn,
+                      char *psk, size_t pn, char *why, size_t wn);
+
+/* "PUT WINDOWS BACK", THE WINDOWS HALF (the fast path). After the fast
+ * path, C: is smaller than it was, and the staging environment cannot
+ * grow it back (it never touches C:, which may be BitLocker-encrypted),
+ * so Windows does: a startup task, run as SYSTEM, that grows the
+ * partition at byte `win_offset` of the disk whose GPT GUID is
+ * `disk_guid` back toward `orig_bytes` whenever the space after it is
+ * unallocated again -- AurOS removed by "Put Windows back", or never
+ * committed because the install stopped -- and only while it is at
+ * least `shrunk_bytes` (a size she chose herself is left alone). It
+ * removes itself once C: is whole. Its script lives inside the task,
+ * which only an administrator can change. 0, or -1 with a sentence. */
+int plat_putback_task(const char *disk_guid, uint64_t win_offset,
+                      uint64_t shrunk_bytes, uint64_t orig_bytes,
+                      char *why, size_t wn);
+/* What plat_fast_startup_off found: whether hiberfil.sys was there (1/0) and
+ * HiberbootEnabled's value (-1: none), or -1 -1 when it never ran. The
+ * put-back task puts both back when it has given C: its room, so "Put
+ * Windows back" leaves hibernation as she had it (docs/safety S-23). */
+void plat_fast_startup_was(int *hibfile, int *hiberboot);
+/* And take it away again (an abort that grew C: back itself). */
+int plat_putback_task_remove(char *why, size_t wn);
+/* The put-back script exactly as the task runs it (src/aurbridge/putback.ps1), for
+ * `aurbridge putback-script PATH`, which CI uses to test the shipped bytes. NULL in the
+ * simulated machine. */
+const unsigned char *plat_putback_script(unsigned *len);
+
+/* ── ordinary files ──────────────────────────────────────────────── */
+
+int plat_file_size(const char *path, uint64_t *out);
+int plat_file_read(const char *path, uint64_t off, void *buf, size_t n,
+                   char *why, size_t wn);
+/* Whole-file copy into a directory that may be on the EFI partition.
+ * Creates the directories it needs. */
+int plat_file_copy(const char *from, const char *to, char *why, size_t wn);
+int plat_file_put(const char *to, const void *buf, size_t n,
+                  char *why, size_t wn);
+/* Add to the end of a file that already exists. The journal is four
+ * hundred bytes going on the end of a 13 MB staging image, on an EFI
+ * partition, on a ten-year-old laptop -- and the alternative is
+ * reading the whole thing into memory and writing it back, which is
+ * what this replaced. */
+int plat_file_append(const char *to, const void *buf, size_t n,
+                     char *why, size_t wn);
+/* THE FOLDER THE DOWNLOAD LIVES IN (SEC-001, SEC-010). Makes `path` if it is
+ * not there, with an ACL that admits only SYSTEM and the Administrators; lays
+ * the same ACL over a folder this installer made earlier; and MOVES ASIDE,
+ * never deletes, anything already at that name that is not a plain folder
+ * (a junction, a link, a file) or is owned by anyone else. -1 with the reason
+ * if it cannot be done: nothing is downloaded into a folder that was not
+ * checked. Call before the first file is written there. */
+int plat_dir_private(const char *path, char *why, size_t wn);
+/* Is the account with this SID ("S-1-5-32-544") one a folder may be owned by
+ * and still be trusted? SYSTEM and the Administrators only. Exposed for the
+ * installer's own check on real Windows (main.c dircheck). */
+int plat_sid_is_trusted_owner(const char *sid_text);
+/* FIRST STATEMENT OF main AND WinMain (SEC-003). Every DLL this program loads
+ * by name from here on (wlanapi, iphlpapi, winspool, dwmapi, ...) is looked
+ * for in System32 only -- not in the folder the installer was downloaded to,
+ * which anything can write to and which Windows searches first by default.
+ * A no-op in the simulated machine. */
+void plat_harden_dll_search(void);
+/* Load one of Windows' own DLLs BY NAME FROM SYSTEM32 ONLY (SEC-003): the same
+ * guarantee as the call above, held per call. NULL if it is not there. Returns
+ * a Windows module handle as a void *, so this header stays free of windows.h. */
+void *plat_load_system_dll(const char *name);
+/* Remove a file this program made. 0 if it is gone afterwards,
+ * including when it was never there. */
+int plat_file_delete(const char *path, char *why, size_t wn);
+/* Rename `from` to `to`, replacing `to`. On Windows a rename across
+ * volumes becomes a copy and a delete, which is what moving an image
+ * from beside the installer onto the Windows drive needs. */
+int plat_file_rename(const char *from, const char *to, char *why, size_t wn);
+
+/* How much room is left on the volume holding `path` -- which need not
+ * exist yet; the DIRECTORY it would go in is what is asked about. 0 if
+ * this computer will not say, which is not a refusal: a machine that
+ * cannot answer is not a machine to stop. */
+uint64_t plat_free_space(const char *path);
+
+/* ── what the installer carries inside itself ────────────────────── */
+/*
+ * THE PRODUCT IS ONE FILE SOMEBODY DOUBLE-CLICKS, and for a long time
+ * it was three: the wizard, plus a kernel and an initramfs that had to
+ * be sitting in the same folder. A person who downloads one of three
+ * files and double-clicks it gets "the copy of AurOS to install could
+ * not be found", which is a true sentence about a mistake we made.
+ *
+ * The staging environment is about 28 MB, which is an ordinary size
+ * for an installer, so it travels INSIDE the executable. On Windows
+ * that is a PE resource -- the mechanism Authenticode already covers,
+ * so signing and carrying a payload do not fight. The simulation has
+ * no PE, so it reads the same names out of a directory, which is also
+ * what a developer build does.
+ *
+ * `name` is one of the PAYLOAD_* names below. On success `path` holds
+ * somewhere the caller may read the bytes from, and plat_payload_free()
+ * removes anything that had to be unpacked to get there.
+ */
+#define PAYLOAD_KERNEL  "staging-kernel"
+#define PAYLOAD_INITRD  "staging-initrd"
+/* THE WAY IN UNDER SECURE BOOT. The staging kernel is signed by
+ * Canonical, and firmware trusts Microsoft: started directly, as the
+ * boot entry used to, a machine with Secure Boot on -- which is nearly
+ * every Windows 10 and 11 PC -- refuses it, consumes BootNext, and
+ * comes back to Windows with nothing done. So the entry starts the same
+ * Microsoft-signed shim and Canonical-signed grub the installed system
+ * boots through, and grub starts the kernel. Carried as three more
+ * resources; see phase_handoff. */
+#define PAYLOAD_SHIM    "staging-shim"
+#define PAYLOAD_GRUB    "staging-grub"
+#define PAYLOAD_MOKMGR  "staging-mokmgr"
+
+int  plat_payload(const char *name, char *path, size_t pn,
+                  char *why, size_t wn);
+void plat_payload_free(void);
+/* 1 if this binary is carrying the payload rather than expecting it in
+ * a folder. The release build refuses to publish one that is not. */
+int  plat_payload_embedded(void);
+/* How many bytes of start-up files this binary carries (all five
+ * payloads), or 0 if it carries none. Preflight measures the EFI
+ * partition against this rather than against a guess: the guess (96 MB)
+ * told a real Windows machine with 61 MB free that it did not have room
+ * for the 33 MB that actually go there. */
+uint64_t plat_payload_bytes(void);
+
+/* ── fetching the image ──────────────────────────────────────────── */
+/*
+ * The image is five gigabytes and does not go inside anything. It is
+ * downloaded, once, into a file beside the installer -- and RESUMED
+ * rather than restarted, because the people this product is for are on
+ * the connections that drop.
+ *
+ * `have` is how many bytes are already in `dest`; the fetch continues
+ * from there with a Range request and refuses a server that ignores
+ * it rather than silently writing the first megabyte into the middle
+ * of the file. `progress` returns non-zero to cancel.
+ */
+int plat_fetch(const char *url, const char *dest,
+               int (*progress)(uint64_t got, uint64_t total, void *ud),
+               void *ud, char *why, size_t wn);
+
+/* ── the EFI System Partition ────────────────────────────────────── */
+
+/* Give the ESP a path we can write files into, and take it away again.
+ * R12: it is never reformatted, and nothing here removes a file it did
+ * not put there. `root` comes back as something to prefix a path with,
+ * e.g. "S:" or "/mnt/esp". */
+int  plat_esp_open(char *root, size_t n, char *why, size_t wn);
+void plat_esp_close(void);
+
+/* ── the firmware ────────────────────────────────────────────────── */
+
+/* Find the boot entry whose description is exactly `desc`, or -1.
+ *
+ * BY DESCRIPTION, POSITIVELY. Never "the entries we did not record",
+ * which also selects the Fedora somebody installed last month and the
+ * vendor's diagnostics entry that was never in BootOrder. */
+int plat_boot_find(const char *desc, uint16_t *num_out,
+                   char *why, size_t wn);
+
+/* WHICH PARTITION THE LOADER IS ON, which a boot entry cannot do
+ * without.
+ *
+ * The first version of plat_boot_make() built a device path containing
+ * only File(\EFI\AurOS\staging.efi) and an end node, on the reasoning
+ * that naming the partition would mean naming one the staging
+ * environment is about to change the table of. A review pointed out
+ * two things: the firmware has nothing to resolve a bare file path
+ * against -- LoadImage calls LocateDevicePath, which needs a device
+ * node, so every machine would have consumed BootNext and loaded
+ * nothing -- and the reasoning was wrong anyway, because the install
+ * only ever carves partitions out of the gap the shrink makes and
+ * leaves the EFI partition's entry exactly as it found it.
+ *
+ * So the short-form Hard Drive path is built, as efibootmgr does:
+ * HD(number, GPT, partition-GUID, start, size) / File(...) / End. */
+typedef struct {
+    uint32_t number;        /* 1-based partition number               */
+    uint64_t first_lba;
+    uint64_t blocks;
+    uint8_t  guid[16];      /* the PARTITION's unique GUID, as on disk */
+} plat_partition;
+
+/* Create (or replace) a boot entry pointing at `loader` on the
+ * partition `on`, with `cmdline` as its optional data. Returns the
+ * Boot#### number. */
+int plat_boot_make(const char *desc, const plat_partition *on,
+                   const char *loader, const char *cmdline,
+                   uint16_t *num_out, char *why, size_t wn);
+
+/* Let go of the memory stick: close the raw handle and unlock the
+ * volumes that were dismounted to get it. Safe at any time, including
+ * twice, including when nothing was ever taken.
+ *
+ * It exists because an aborted phase 2 used to leave the stick locked
+ * and dismounted -- invisible in Explorer -- for the life of the
+ * process, and left the next write pointed at the dead handle. */
+void plat_release(void);
+
+/* Set BootNext, which is one-shot: the firmware clears it as it uses
+ * it, so a machine that fails to start AurOS comes back to Windows by
+ * itself with nobody doing anything. BootOrder is never touched. */
+int plat_boot_next(uint16_t num, char *why, size_t wn);
+/* And take it away again, for an abort before the restart. */
+int plat_boot_next_clear(char *why, size_t wn);
+/* Remove Boot#### `num`, which this program made (plat_boot_make), for
+ * an abort before the restart. BootOrder never named it, so nothing
+ * else changes. */
+int plat_boot_delete(uint16_t num, char *why, size_t wn);
+
+/* Secure Boot: -1 not known, 0 off, 1 on. On Windows, what Windows
+ * itself records; in the simulation, the file secureboot ("1"). */
+int plat_secure_boot(void);
+
+/* One of the firmware's signature databases, "db" (the signers Secure
+ * Boot trusts) or "dbx" (what it has revoked), as the variable's data
+ * (src/aurbridge/sbdb.h reads them). Reading only; it needs
+ * SeSystemEnvironmentPrivilege like everything else here. In the
+ * simulation, the files db.bin and dbx.bin. */
+int plat_efi_sigdb(const char *name, unsigned char *buf, size_t cap,
+                   size_t *got, char *why, size_t wn);
+
+/* ── running something else ──────────────────────────────────────── */
+
+/* `tail` gets the last of its output, which is what an error message
+ * needs. Returns the exit status, or -1 if it would not start. */
+int plat_run(const char *cmdline, char *tail, size_t n);
+
+/* THE ONE PLACE EXPLORER IS NAMED (SEC-002 sibling): the wizard opens a helper
+ * page "as her, not as administrator" through Explorer, and a bare
+ * "explorer.exe" from an elevated program in Downloads starts whatever is
+ * beside it first. This is the full path of Windows' own explorer.exe (the
+ * Windows folder, not System32), UTF-8, or -1 when it is not there. */
+int plat_explorer_path(char *out, size_t n);
+
+/* ── Fast Startup, off ──────────────────────────────────────────────
+ *
+ * The first thing an install does. With Fast Startup on, Windows'
+ * "shut down" hibernates the kernel and leaves every NTFS volume
+ * half-mounted; resuming that after the partitions have moved writes a
+ * stale view of the disk back over it (R2). It used to be a refusal
+ * whose remedy said "AurBridge can switch Fast Startup off for you" --
+ * and nothing did. Now this does: HiberbootEnabled=0 and
+ * `powercfg /hibernate off` (which also removes hiberfil.sys), then
+ * both are read back. 0 when both are off, -1 with a sentence. */
+int plat_fast_startup_off(char *why, size_t wn);
+/* And back the way plat_fast_startup_off found them -- Fast Startup and
+ * hibernation each on again only if it was on before -- for an install
+ * that did not happen. Safe to call any number of times, and a no-op
+ * when nothing was switched off. */
+void plat_fast_startup_restore(void);
+
+/* ── keeping the computer awake ──────────────────────────────────────
+ *
+ * The whole Windows-side run -- the five-gigabyte download most of all
+ * -- outlasts a laptop's display and sleep timers when it is left
+ * alone, which is exactly what a person does while a progress bar
+ * fills. A machine that sleeps mid-download wakes to a dropped
+ * transfer; one that sleeps between "ready to restart" and the restart
+ * is worse. SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+ * holds off system sleep (the screen may still blank) until it is
+ * cleared or the thread that set it exits, so plat_keep_awake() is
+ * called from the thread that lives the whole time -- the wizard's UI
+ * thread -- and plat_let_sleep() gives the timers back at the end.
+ * Both are safe to call more than once. */
+void plat_keep_awake(void);
+void plat_let_sleep(void);
+
+/* ── the one restart ─────────────────────────────────────────────── */
+
+/* Restart the computer, now. The wizard's last button, after phase 3:
+ * the staging environment is armed with BootNext and this is the
+ * restart it is waiting for. A restart, never a shut down -- with Fast
+ * Startup on, Windows' "shut down" leaves the drive half-asleep, which
+ * the staging environment refuses to touch. */
+int plat_restart(char *why, size_t wn);
+
+/* ── which implementation is this ────────────────────────────────── */
+
+/* 1 when this is the simulated machine. Everything user-facing says
+ * so, loudly: a simulation that could be mistaken for the real thing
+ * is how somebody ends up believing a test result about a machine that
+ * was never touched. */
+int plat_is_sim(void);
+const char *plat_name(void);
+
+#endif

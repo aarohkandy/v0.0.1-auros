@@ -1,0 +1,212 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  ferry-handover — her AurOS files onto a volume Windows will read,
+#  checked, before AurOS is removed.
+#
+#  Two targets, one copier (ferry-copy --to-windows):
+#
+#   the HANDOVER VOLUME (exFAT, label AUROSHANDOV, made by the put-back
+#   step; found by label, FERRY_HANDOVER_DEV or --volume). Windows, when
+#   it takes AurOS away, copies from it into her profile with its own
+#   NTFS driver. The layout is a contract (docs/FERRY.md):
+#
+#     AurOS-handover/version             1
+#     AurOS-handover/manifest.tsv        #-lines, then FOLDER PATH SIZE SHA256 MTIME
+#     AurOS-handover/manifest.sha256     sha256 of manifest.tsv
+#     AurOS-handover/files/<FOLDER>/...  the files, with Windows-legal names
+#     AurOS-handover/DONE                written LAST: ok, files=, bytes=, at=
+#
+#   a USB STICK she chooses ("Save my files to a USB stick first"):
+#   "From AurOS/<Folder>/...", a MANIFEST.tsv and a "Read me.txt": a
+#   folder she can open on any computer. No DONE.
+#
+#  DONE is the only word for "complete", and it is written only after
+#  everything was flushed, the volume was UNMOUNTED, mounted again
+#  READ-ONLY (so nothing is served from memory) and every file read back
+#  from it matched the hash taken from her disk when it was copied. A
+#  file that was damaged on the way to the disk is found here, while AurOS
+#  is still there, not after it has been removed.
+#
+#    ferry-handover --need                 print the bytes the volume needs
+#    ferry-handover --volume DEV [--stick] copy, verify, finish
+#    ferry-handover --dir DIR              the same into a folder (tests)
+#
+#  exit 0 done · 2 some files could not be saved · 4 not enough room ·
+#  5 the volume would not open · 1 failed, or what was read back did not
+#  match (nothing is marked done)
+# ═══════════════════════════════════════════════════════════════════
+set -eu
+. "$(dirname "$0")/ferry-common.sh"
+
+DEVICE="" DIR="" STICK=0 NEED=0
+while [ $# -gt 0 ]; do
+    common_opt "$@"
+    if [ "${_consumed:-0}" -gt 0 ]; then shift "$_consumed"; continue; fi
+    case $1 in
+        --volume) DEVICE=${2:?--volume needs a device}; shift 2 ;;
+        --dir)    DIR=${2:?--dir needs a folder}; shift 2 ;;
+        --stick)  STICK=1; shift ;;
+        --need)   NEED=1; shift ;;
+        -h|--help) sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) die "unknown option '$1'" ;;
+    esac
+done
+STAGE=handover; WHERE="for Windows"
+[ "$STICK" = 0 ] || { STAGE=stick; WHERE="on the USB stick"; }
+FERRY_STAGE=$STAGE
+resolve_target
+[ -n "$FERRY_OWNER" ] || die "no AurOS user whose files to save (pass --owner NAME)"
+
+SKIPS="--skip .~lock.*# --skip .directory --skip-dir .Trash-* --skip-dir .thumbnails"
+# One "LABEL<TAB>SOURCE" line per folder she has anything in. A shortcut
+# or a plain file where a folder should be is not followed and not lost
+# sight of: it is noted, and the run ends "some could not be saved" (exit 2),
+# never "done".
+FOLDERLINES="" BAD=0
+while IFS='|' read -r _label _val _xdg _def; do
+    [ -n "$_label" ] || continue
+    _src=$(xdg_dir "$_xdg" "$_def")
+    if [ -L "$_src" ] || { [ -e "$_src" ] && [ ! -d "$_src" ]; }; then
+        note "${STAGE:-handover}" blocked "$_label" "This is a shortcut to somewhere else, not a folder, so AurOS did not follow it. Copy it by hand."
+        BAD=1; continue
+    fi
+    [ -d "$_src" ] || continue
+    [ -n "$(as_her find "$_src" -mindepth 1 \( -name '.Trash-*' -o -name '.thumbnails' \) -prune \
+            -o ! -name '.~lock.*#' ! -name .directory -print -quit 2>/dev/null)" ] || continue
+    FOLDERLINES="$FOLDERLINES$_label	$_src
+"
+done <<EOF1
+$FERRY_FOLDERS
+EOF1
+folders() { printf '%s' "$FOLDERLINES"; }
+
+# ── --need: what the volume has to hold. The files in whole clusters, the
+#    manifest, DONE and its neighbours, the received.tsv Windows adds, and
+#    1 MiB of slack.
+if [ "$NEED" = 1 ]; then
+    CL=${FERRY_CLUSTER:-131072}
+    set --
+    while IFS='	' read -r _l _s; do [ -n "$_l" ] && set -- "$@" --job "$_l" "$_s" /nonexistent/$_l; done <<EOF2
+$(folders)
+EOF2
+    [ $# -gt 0 ] || { echo 0; exit 0; }
+    # shellcheck disable=SC2086
+    set -- $(ferry-copy $(copy_as) --to-windows --print-need --cluster "$CL" $SKIPS "$@")
+    _bytes=$1 _files=$2
+    echo $(( _bytes + 512 * _files * 2 + 8 * CL + (1 << 20) ))
+    exit 0
+fi
+
+stage_begin "$STAGE"
+H_NAME="AurOS-handover"; [ "$STICK" = 0 ] || H_NAME="From AurOS"
+MNT=${FERRY_HANDOVER_MNT:-/run/ferry/handover}
+MOUNTED=0
+cleanup() { [ "$MOUNTED" = 0 ] || { sync -f "$MNT" 2>/dev/null || true; umount "$MNT" 2>/dev/null || true; MOUNTED=0; }; }
+trap cleanup EXIT
+
+_u=""; _g=""
+if [ -n "$DEVICE" ]; then
+    _u=$(id -u "$FERRY_OWNER"); _g=$(id -g "$FERRY_OWNER")
+    mount_vol "$DEVICE" "$MNT" rw "$_u" "$_g" || { warn "could not open $DEVICE to save files on it"; exit 5; }
+    MOUNTED=1
+    ROOT=$MNT
+elif [ -n "$DIR" ]; then
+    ROOT=$DIR
+else
+    die "ferry-handover needs --volume or --dir"
+fi
+H="$ROOT/$H_NAME"
+FILES="$H/files"; [ "$STICK" = 0 ] || FILES="$H"
+say "saving $FERRY_OWNER's files on ${DEVICE:-$DIR} ($H_NAME)"
+
+# Start clean: nothing says "complete" or "received" until it is true.
+as_her sh -c 'mkdir -p "$1" "$2" && rm -f "$1/DONE" "$1/manifest.tsv" "$1/manifest.sha256" "$1/received.tsv" "$1/MANIFEST.tsv" "$1/.rows"' sh "$H" "$FILES" ||
+    { warn "could not prepare $H"; exit 5; }
+
+set --
+while IFS='	' read -r _l _s; do [ -n "$_l" ] && set -- "$@" --job "$_l" "$_s" "$FILES/$_l"; done <<EOF2
+$(folders)
+EOF2
+RC=0
+if [ $# -gt 0 ]; then
+    # shellcheck disable=SC2086
+    ferry-copy $(copy_as) --state "$FERRY_STATE" --stage "$STAGE" --to-windows --where "$WHERE" --reserve 1048576 \
+        --manifest "$H/.rows" $SKIPS "$@" || RC=$?
+else
+    : > "$H/.rows"; chown "$FERRY_OWNER" "$H/.rows" 2>/dev/null || true
+fi
+case "$RC" in 0|2|4) : ;; *) stage_fail "$STAGE" "ferry-copy exit $RC"; exit 1 ;; esac
+[ "$RC" = 0 ] || { stage_fail "$STAGE" "exit $RC"; exit "$RC"; }
+# A folder that could not be followed is something that was not saved.
+[ "$BAD" = 0 ] || { stage_fail "$STAGE" "a folder could not be saved"; exit 2; }
+
+# The manifest: header, then the rows in a fixed order. (On a stick it is
+# MANIFEST.tsv from the start: a FAT stick is case-blind, so renaming
+# manifest.tsv to MANIFEST.tsv would be renaming a file onto itself.)
+MANF=manifest.tsv; [ "$STICK" = 0 ] || MANF=MANIFEST.tsv
+WU=$(cat "$FERRY_STATE/winuser" 2>/dev/null || true)
+{
+    printf '#ferry-handover\t1\n'
+    [ -z "$WU" ] || printf '#windows-user\t%s\n' "$WU"
+    printf '#aur-user\t%s\n#created\t%s\n' "$FERRY_OWNER" "$(now)"
+    LC_ALL=C sort -t '	' -k1,1 -k2,2 "$H/.rows"
+} | as_her sh -c 'cat > "$1"' sh "$H/$MANF"
+NF=$(grep -vc '^#' "$H/$MANF" || true)
+NB=$(awk -F'\t' '/^#/ {next} {b += $3} END {print b + 0}' "$H/$MANF")
+as_her rm -f "$H/.rows"
+if [ "$STICK" = 0 ]; then
+    ( cd "$H" && sha256sum manifest.tsv ) | as_her sh -c 'cat > "$1"' sh "$H/manifest.sha256"
+    printf '1\n' | as_her sh -c 'cat > "$1"' sh "$H/version"
+    printf 'This volume holds the files that were saved in AurOS, for Windows to copy\ninto your folders. It is made and read by AurOS and Windows; there is nothing\nfor you to do with it.\n' |
+        as_her sh -c 'cat > "$1"' sh "$H/README.txt"
+else
+    printf 'These are the files you saved while you used AurOS.\r\nOpen the folders beside this note to see them.\r\n' |
+        as_her sh -c 'cat > "$1"' sh "$H/Read me.txt"
+fi
+MAN="$H/$MANF"
+
+# ── Read it back. Flushed, unmounted, mounted again read-only: what is
+#    read now comes off the volume, not out of memory.
+sync -f "$ROOT" 2>/dev/null || true
+if [ -n "$DEVICE" ]; then
+    umount "$MNT" || { warn "could not release $DEVICE"; exit 1; }
+    MOUNTED=0
+    mount_vol "$DEVICE" "$MNT" ro "$_u" "$_g" || { warn "could not read $DEVICE back"; exit 1; }
+    MOUNTED=1
+fi
+# Test seam: damage one file after it was written, to prove the read-back
+# catches it. Never set outside tests/run.sh.
+if [ -n "${FERRY_TEST_CORRUPT:-}" ] && [ -z "$DEVICE" ]; then
+    _victim=$(awk -F'\t' '!/^#/ && $3 > 0 { print $1 "/" $2; exit }' "$MAN")
+    [ -z "$_victim" ] || printf 'X' | dd of="$FILES/$_victim" bs=1 count=1 conv=notrunc 2>/dev/null
+fi
+BAD=0
+VL=$(mktemp "${TMPDIR:-/tmp}/ferryverify.XXXXXX")
+trap 'rm -f "$VL"; cleanup' EXIT
+awk -F'\t' '!/^#/ { printf "%s  %s/%s\n", $4, $1, $2 }' "$MAN" > "$VL"
+if [ -s "$VL" ]; then
+    ( cd "$FILES" && sha256sum -c --quiet "$VL" ) >"$FERRY_STATE/handover-verify.log" 2>&1 || BAD=1
+fi
+if [ "$BAD" = 1 ]; then
+    note "$STAGE" blocked "Your files" "What was written could not be read back the same, so nothing was marked as saved."
+    warn "read-back mismatch; see $FERRY_STATE/handover-verify.log"
+    stage_fail "$STAGE" "read-back mismatch"
+    exit 1
+fi
+_back_n=$(grep -vc '^#' "$MAN" || true)
+[ "$_back_n" = "$NF" ] || { stage_fail "$STAGE" "manifest changed"; exit 1; }
+
+# ── Only now: complete.
+if [ "$STICK" = 0 ]; then
+    if [ -n "$DEVICE" ]; then
+        umount "$MNT"; MOUNTED=0
+        mount_vol "$DEVICE" "$MNT" rw "$_u" "$_g" || { warn "could not finish $DEVICE"; exit 1; }
+        MOUNTED=1
+    fi
+    printf 'ok\nfiles=%s\nbytes=%s\nat=%s\n' "$NF" "$NB" "$(now)" | as_her sh -c 'cat > "$1"' sh "$H/DONE"
+fi
+sync -f "$ROOT" 2>/dev/null || true
+cleanup
+say "$STAGE: $NF file(s), $NB byte(s) saved and read back"
+stage_done "$STAGE" "$NF files"
+exit 0

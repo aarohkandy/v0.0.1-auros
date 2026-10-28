@@ -1,0 +1,144 @@
+# ═══════════════════════════════════════════════════════════════════
+#  AurOS Theme — Nocturne
+#  The default. Deep atmospheric blue-black with an aurora-teal glow.
+#
+#  This file is the ONLY thing you need to edit to reskin AurOS.
+#  Run `aurora set nocturne` and every surface in the system —
+#  wallpaper, bar, palette, terminal, TTY, bootloader, splash —
+#  is regenerated from these values.
+#
+#  Format: plain `key="value"` pairs. No parser, no dependencies.
+#  See docs/THEMING.md for the full schema reference.
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Identity ───────────────────────────────────────────────────────
+theme_name="Light writing on a dark background"
+theme_author="AurOS"
+theme_variant="dark"
+theme_description="Light writing on a dark background."
+
+# ── Core palette ───────────────────────────────────────────────────
+# A near-neutral ladder, cool but barely. Eight steps from the desktop
+# void to emphasis text, with nothing between them that reads as a
+# colour -- the variation between surfaces is meant to be felt and not
+# noticed, which is what "subtle background variation" means and what a
+# saturated gradient is the opposite of.
+#
+# `overlay` is far brighter than it used to be, and it will look wrong
+# to anyone who reaches for a divider by eye. This design replaced
+# shadows with hairlines, so the rules ARE the structure, and a rule at
+# 1.4:1 against its surface is structure nobody can see. At #6E7680 it
+# is 3.69:1 against a card and 3.26:1 against a hovered row -- the worst
+# case in the theme, which is the one that has to pass.
+# docs/DESIGN.md sets 3:1 as the floor; tools/contrast.c --strict is
+# the check, and two independent redesigns failed it before this.
+bg="#121417"           # desktop void / deepest background
+bg_alt="#181B1F"       # panels, bar background
+surface="#1E2226"      # cards, windows, menus
+surface_hi="#203630"   # hover / selected row
+overlay="#838B95"      # borders, dividers, separators -- load-bearing
+muted="#A3AAB2"        # disabled text, inactive glyphs
+subtle="#C3C8CE"       # secondary text, captions
+fg="#ECEEF0"           # primary text
+fg_hi="#ECEEF0"        # emphasis, active title
+
+# ── Accents ────────────────────────────────────────────────────────
+# One colour, and it means one thing: THIS IS WHERE YOU ARE. The focus
+# ring, the selected row's edge, the active workspace, the cursor.
+# Nothing decorative is allowed to use it, which is what keeps it
+# meaning anything.
+#
+# It used to be #7DD3C0 with #A78BFA beside it -- mint teal and
+# lavender violet, the single most recognisable machine-generated
+# colour pair there is, restated as the two wallpaper ribbons so that
+# the desktop itself WAS the gradient, and cycled down the app list for
+# variety. Brass on near-black is the opposite decision: warm, single,
+# and old enough to have been printed.
+accent="#5DBB9E"       # the one signal: focus, selection, cursor
+# A different KIND of thing, not a second flavour of the same thing --
+# see docs/THEMING.md. Cool and quiet: informational, not actionable.
+accent_alt="#C3C8CE"
+accent_warm="#4AA388"  # the signal, one step down, for a resting state
+
+# ── Semantic ───────────────────────────────────────────────────────
+# These are allowed to be colours, because each one carries a meaning
+# the user already knows.
+ok="#5DBB9E"
+warn="#E0B060"
+err="#E07A6E"
+info="#C3C8CE"
+
+# ── ANSI 16 (terminal + TTY console) ───────────────────────────────
+# A terminal has sixteen colours because programs address them by
+# number and expect red to be red. These stay recognisable and are
+# muted to sit in the same room as the rest of the palette.
+ansi0="#191D21"   ansi8="#7A8187"
+ansi1="#C96A5E"   ansi9="#DE8578"
+ansi2="#8FB573"   ansi10="#A8CB8C"
+ansi3="#C89B4A"   ansi11="#DDB365"
+ansi4="#7C8B9B"   ansi12="#95A4B4"
+ansi5="#A08099"   ansi13="#B99AB2"
+ansi6="#6F9A96"   ansi14="#8BB4B0"
+ansi7="#D9DDE1"   ansi15="#F4F6F8"
+
+# ── Geometry (pixels) ──────────────────────────────────────────────
+radius="12"            # window + panel corner radius
+radius_sm="8"          # buttons, pills, small chips
+gap="12"               # gap between tiled windows
+margin="14"            # gap from screen edge
+border="2"             # focus border thickness
+bar_height="50"        # top bar height
+padding="14"           # internal padding of panels
+
+# ── Typography ─────────────────────────────────────────────────────
+# Three shell faces, two weights of the one family the image ships:
+# Atkinson Hyperlegible (Braille Institute, SIL OFL), made for low vision
+# -- its I, l and 1 are different shapes. Headings and names in Bold,
+# everything she reads in Regular. Each is an exact file name
+# (build/forge links /usr/share/auros/fonts/<name>.ttf to it), because
+# the plain family name means its Regular cut and nothing heavier.
+font_display="AtkinsonHyperlegible-Bold"
+font_text="AtkinsonHyperlegible-Regular"
+font_text_bold="AtkinsonHyperlegible-Bold"
+font_sans="AtkinsonHyperlegible"
+font_mono="JetBrainsMono"
+font_size="20"         # base UI size (px)
+font_size_sm="18"
+font_size_lg="18"
+line_height="1.45"
+
+# ── Effects ────────────────────────────────────────────────────────
+# Off, and the primitives are still in draw.c because a future theme
+# may want them. This design separates surfaces with rules and with a
+# value step between them, not with a blur and a black shadow -- which
+# were the two most expensive things the shell did, on the hardware it
+# exists to rescue, in service of the look it was trying to stop having.
+blur="0"               # 1 = blur behind panels
+blur_radius="0"
+shadow="0"
+shadow_opacity="0.00"
+shadow_radius="0"
+opacity_panel="1.00"   # bar / palette translucency
+opacity_inactive="1.00"
+animation_ms="120"
+animation_curve="ease"   # spring | ease | linear
+
+# ── Wallpaper (procedurally generated, no image files) ─────────────
+# letterpress: laid paper, one off-centre tint block, a hairline rule.
+# The desktop used to be two saturated ribbons interpolated between the
+# accent pair -- which made the background the forbidden gradient, at
+# full screen, behind everything. docs/THEMING.md used to tell theme
+# authors to do this on purpose; it no longer does.
+wall_style="solid"  # letterpress | aurora | mesh | waves | gradient | noise | solid
+wall_c1="#121417"      # the stock
+wall_c2="#121417"      # the deeper stock, for the tint block
+wall_c3="#121417"      # the rule -- the one accent, once
+wall_c4="#121417"      # the second block
+wall_intensity="0"  # how far the stock varies; not a brightness
+wall_grain="0"      # film grain, hides banding
+wall_vignette="0"
+
+# ── Branding ───────────────────────────────────────────────────────
+brand_glyph="◆"
+brand_text="AurOS"
+cursor_size="24"

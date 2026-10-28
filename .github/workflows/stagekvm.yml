@@ -1,0 +1,139 @@
+# The staging environment, built from THIS commit, under KVM (stream A2).
+#
+# tests.yml tests a build's own artifacts. This builds the install engine
+# (build/aurbridge, build/staging, the fault-injection staging) from the
+# commit under test, on top of the newest build's rootfs, and runs the
+# install engine's end-to-end scripts against it -- so a change to
+# src/aurstage is proven before an image build exists for it.
+#
+#   push    when the install engine or these scripts change: the default set
+#   by hand workflow_dispatch, `tests` = space-separated scripts with
+#           their arguments separated by ':'
+#           (e.g. "powercut-nostick:shrink-end:commit-sector nosticktest")
+name: stagekvm
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/aurstage/**
+      - src/aurbridge/phases.*
+      - src/aurbridge/plat_sim.c
+      - src/aurbridge/plat.h
+      - src/aurscreen/**
+      - tools/fasttest.sh
+      - src/aurbridge/simmain.c
+      - src/aurbridge/format.*
+      - build/staging
+      - tools/powercut-nostick.sh
+      - tools/nosticktest.sh
+      - tools/stagetest.sh
+      - tools/machine.sh
+      - .github/workflows/stagekvm.yml
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: "scripts in tools/ (no .sh), arguments joined by ':'"
+        default: "fasttest powercut-nostick nosticktest stagetest"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: stagekvm-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  kvm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: the newest build with its rootfs still there
+        id: which
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          rid=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=auros-rootfs&per_page=100" \
+                 --jq '[.artifacts[] | select(.expired == false) | .workflow_run.id] | first // empty')
+          [ -n "$rid" ] || { echo "::error::no build has its rootfs left; push with [build]"; exit 1; }
+          echo "run_id=$rid" | tee -a "$GITHUB_OUTPUT"
+      - name: KVM, QEMU, OVMF, the toolchain
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+              sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sh tools/apt.sh \
+              qemu-system-x86 qemu-utils ovmf gdisk dosfstools mtools e2fsprogs cpio python3 \
+              zstd grub-common sbsigntool file binutils iproute2 gcc libc6-dev gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev \
+              libxml2-utils busybox-static exfatprogs
+          [ -w /dev/kvm ] || { echo "no usable /dev/kvm"; exit 1; }
+          # the handover scenario mounts an exFAT volume on the runner; the azure kernel keeps exfat in -extra
+          sudo apt-get install -y --no-install-recommends "linux-modules-extra-$(uname -r)" >/dev/null 2>&1 || true
+          sudo modprobe exfat || echo "::warning::this runner's kernel has no exfat; the handover scenario will fail"
+          sudo tee /usr/local/bin/qemu-system-x86_64 >/dev/null <<'EOF'
+          #!/bin/sh
+          # CI only: the scripts ask for TCG; this runner has KVM.
+          for a do
+              shift
+              case "$a" in *accel=tcg*) a=$(printf '%s' "$a" | sed "s/accel=tcg/accel=kvm/") ;; esac
+              set -- "$@" "$a"
+          done
+          exec /usr/bin/qemu-system-x86_64 "$@"
+          EOF
+          sudo chmod 755 /usr/local/bin/qemu-system-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: auros-rootfs
+          path: dl/rootfs
+          run-id: ${{ steps.which.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: auros-installer
+          path: dl/installer
+          run-id: ${{ steps.which.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: the rootfs, and this commit's engine and staging environments
+        run: |
+          mkdir -p out transcripts
+          sudo mkdir -p work/forge/desktop
+          zstd -dc dl/rootfs/rootfs.tar.zst | sudo tar -C work/forge/desktop --numeric-owner -xf -
+          rm -rf dl/rootfs
+          zstd -dc dl/installer/staging-work.tar.zst | sudo tar -C work --numeric-owner -xf -
+          sudo ./build/staging desktop > transcripts/build-staging.txt 2>&1 || { tail -20 transcripts/build-staging.txt; exit 1; }
+          # (the engine carries the signed shim and grub the line above leaves in out/, so it is built after it;
+          # sudo made out/ and work/ root's, and the engine's build runs as the runner)
+          sudo chown -R "$(id -u):$(id -g)" out work
+          sh build/aurbridge > transcripts/build-aurbridge.txt 2>&1 || { tail -20 transcripts/build-aurbridge.txt; exit 1; }
+          sudo AURSTAGE_FAULT=1 ./build/staging desktop > transcripts/build-staging-fault.txt 2>&1 || { tail -20 transcripts/build-staging-fault.txt; exit 1; }
+          ls -la out
+      - name: the scripts, under KVM
+        env:
+          TESTS: ${{ inputs.tests || 'fasttest powercut-nostick nosticktest stagetest' }}
+        run: |
+          rc=0
+          for t in $TESTS; do
+            name=${t%%:*}; args=$(printf '%s' "$t" | cut -s -d: -f2- | tr ':' ' ')
+            echo "::group::$name $args"
+            T=$(date +%s)
+            # (bash -e: a failing test must not end the step; the others still run)
+            r=0; sudo env PATH="$PATH" sh "tools/$name.sh" $args > "transcripts/$name.txt" 2>&1 || r=$?
+            cat "transcripts/$name.txt"
+            echo "::endgroup::"
+            echo "$name $args: exit=$r in $(( $(date +%s) - T )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+            tail -3 "transcripts/$name.txt" >> "$GITHUB_STEP_SUMMARY"
+            [ "$r" = 0 ] || rc=1
+          done
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: transcripts-stagekvm
+          path: transcripts/
+          retention-days: 30

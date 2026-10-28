@@ -1,0 +1,2392 @@
+/* ═══════════════════════════════════════════════════════════════════
+ *  aurshell — the AurOS desktop shell
+ *
+ *  Paints directly to a DRM/KMS scanout buffer. No X11, no Wayland
+ *  compositor, no Mesa anywhere in this path.
+ *
+ *  This file owns the machinery only: the display, input, the frame
+ *  loop and the theme. WHAT is drawn belongs entirely to the selected
+ *  archetype (one file per layout under src/aurshell/layouts),
+ *  chosen by a .shell file. That separation is the product: shipping
+ *  a differently-behaving desktop is picking a different .shell, not
+ *  writing code.
+ * ═══════════════════════════════════════════════════════════════════ */
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <dirent.h>
+#include <errno.h>
+#include <time.h>
+#include <signal.h>
+#include <poll.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <linux/input.h>
+#include <linux/kd.h>
+#include <linux/vt.h>
+#include <sys/inotify.h>
+
+#include "shell.h"
+#include "session.h"
+#include "foot.h"
+#include "net.h"
+#include "power.h"
+#include "osd.h"
+#include "notify.h"
+#include "settings.h"
+#include "bt.h"
+#include "welcome.h"
+#include "guard.h"
+#include "wish.h"
+#include "wishover.h"
+#include "watch.h"
+#include "appwatch.h"
+#include "run.h"
+#include "press.h"
+#include "textsys.h"
+#include "../aurwl/aurwl.h"
+#include "pad.h"
+#include "kms.h"
+#include "../common/wall.h"
+#include "../common/png.h"
+
+#define MAX_INPUT_DEV 16
+
+static volatile sig_atomic_t want_reload  = 0;
+static volatile sig_atomic_t want_quit    = 0;
+static volatile sig_atomic_t want_release = 0;
+static volatile sig_atomic_t want_acquire = 0;
+static void on_hup(int s)  { (void)s; want_reload = 1; }
+static void on_term(int s) { (void)s; want_quit = 1; }
+static void on_rel(int s)  { (void)s; want_release = 1; }
+static void on_acq(int s)  { (void)s; want_acquire = 1; }
+
+/* ── the console ─────────────────────────────────────────────────────
+ *
+ * A shell that paints to KMS is still sitting on a text console that
+ * the kernel is driving, and that console keeps its own claims on the
+ * keyboard and the VT. Left alone:
+ *
+ *   - every keystroke is echoed into the tty underneath our pixels,
+ *     so a stray keypress scrolls a login prompt through the desktop;
+ *   - Ctrl-Alt-Del reboots the machine;
+ *   - Ctrl-Alt-F2 switches VT, which revokes DRM master. Every present
+ *     after that silently fails and the display never comes back. On a
+ *     school machine that is a three-key denial of service.
+ *
+ * So: put the VT in graphics mode, take the keyboard off the console's
+ * translation layer, and ask the kernel to ASK US before switching away
+ * (VT_PROCESS) rather than doing it behind our back. The signals are
+ * the kernel's half of that conversation.
+ *
+ * Every one of these is restored on exit. A shell that leaves a console
+ * in K_OFF is a machine with no keyboard. */
+typedef struct {
+    int fd;                    /* /dev/tty0, or -1 if we have no console */
+    int saved_kbmode;
+    int have_kbmode;
+    int saved_kdmode;
+    int have_kdmode;
+    struct vt_mode saved_vtmode;
+    int have_vtmode;
+    int active;                /* 0 while another VT has the display     */
+    int refuse_switch;         /* managed machine: no VT switching       */
+} console;
+
+static console g_con = { -1, 0, 0, 0, 0, {0,0,0,0,0}, 0, 1, 0 };
+
+#define VT_RELSIG  SIGUSR1
+#define VT_ACQSIG  SIGUSR2
+
+/* THE TTY systemd ALREADY GAVE US, not one we open by name.
+ *
+ * `StandardInput=tty` with `TTYPath=/dev/tty1` means file descriptor 0
+ * IS /dev/tty1, opened by systemd as root before it dropped to
+ * User=auros. Opening /dev/tty0 ourselves fails with EACCES on the
+ * shipped image -- tty0 is root:tty crw--w----, and the desktop does
+ * not run as root -- so every protection below was silently off. The
+ * console went on echoing keys under the desktop's pixels,
+ * Ctrl-Alt-Del rebooted the machine, and Ctrl-Alt-F2 revoked DRM
+ * master with no VT_PROCESS handler to notice: on a school machine, a
+ * three-key way to a screen that never comes back.
+ *
+ * Found by booting the image and reading one line of its journal:
+ * "aurshell: no console (Permission denied)". It cannot be found any
+ * other way, because the code has a graceful fallback and the
+ * graceful fallback is the bug.
+ *
+ * It is also the RIGHT tty rather than merely a usable one. /dev/tty0
+ * means "whichever VT is active right now", while the session this
+ * shell owns is on VT1; the two coincided by luck. */
+static int console_open(void)
+{
+    char kbtype;
+    /* KDGKBTYPE is the standard "is this fd a virtual console?". */
+    if (ioctl(STDIN_FILENO, KDGKBTYPE, &kbtype) == 0) {
+        int fd = fcntl(STDIN_FILENO, F_DUPFD_CLOEXEC, 3);
+        if (fd >= 0) return fd;
+    }
+    /* Not started by systemd, or started without a TTYPath. logind
+     * names the VT this session owns, and logind has chowned it to
+     * this user -- which /dev/tty0 is not. */
+    const char *vtnr = getenv("XDG_VTNR");
+    char path[32];
+    if (vtnr && *vtnr && strspn(vtnr, "0123456789") == strlen(vtnr) &&
+        strlen(vtnr) < 6)
+        snprintf(path, sizeof path, "/dev/tty%s", vtnr);
+    else
+        snprintf(path, sizeof path, "%s", "/dev/tty0");
+    return open(path, O_RDWR | O_CLOEXEC);
+}
+
+static void console_take(console *k, int refuse_switch)
+{
+    k->active = 1;
+    k->refuse_switch = refuse_switch;
+    k->fd = console_open();
+    if (k->fd < 0) {
+        fprintf(stderr, "aurshell: no console (%s) — the tty keeps the "
+                        "keyboard and VT switching stays live\n", strerror(errno));
+        return;
+    }
+
+    if (ioctl(k->fd, KDGKBMODE, &k->saved_kbmode) == 0) k->have_kbmode = 1;
+    /* K_OFF, not K_RAW: K_OFF stops the console translating keys at all
+     * without us having to feed it. We read evdev directly, so the
+     * console has no business seeing the keyboard. It also disables
+     * Ctrl-Alt-Del and the VT-switch chords, which is the point. */
+    if (ioctl(k->fd, KDSKBMODE, K_OFF) < 0) {
+        k->have_kbmode = 0;
+        fprintf(stderr, "aurshell: could not silence the console keyboard (%s)\n",
+                strerror(errno));
+    }
+
+    if (ioctl(k->fd, KDGETMODE, &k->saved_kdmode) == 0) k->have_kdmode = 1;
+    if (ioctl(k->fd, KDSETMODE, KD_GRAPHICS) < 0) k->have_kdmode = 0;
+
+    struct vt_mode vm;
+    if (ioctl(k->fd, VT_GETMODE, &vm) == 0) {
+        k->saved_vtmode = vm; k->have_vtmode = 1;
+        vm.mode   = VT_PROCESS;
+        vm.waitv  = 0;
+        vm.relsig = VT_RELSIG;
+        vm.acqsig = VT_ACQSIG;
+        if (ioctl(k->fd, VT_SETMODE, &vm) < 0) {
+            k->have_vtmode = 0;
+            fprintf(stderr, "aurshell: VT_SETMODE failed (%s) — a VT switch "
+                            "will take the display away without warning\n",
+                    strerror(errno));
+        }
+    }
+}
+
+/* The kernel is asking whether it may hand the display to another VT.
+ * This is the conversation VT_PROCESS bought us, and it is the whole
+ * reason a VT switch no longer leaves a dead screen behind:
+ *
+ *   VT_RELDISP 1  -- yes, take it. We drop DRM master first, stop
+ *                    painting, and wait to be told we have it back.
+ *   VT_RELDISP 0  -- no. The kernel abandons the switch.
+ *
+ * A managed machine refuses. That is what `allow_tty = no` has to mean
+ * if it means anything: masking getty units is not enough, because the
+ * switch itself is handled by the kernel's VT layer and nothing in
+ * userspace has to cooperate for the display to be lost. Anywhere else
+ * we say yes -- reaching a console is a feature on a personal machine,
+ * and refusing would be us deciding what the owner may do with their
+ * own computer. */
+static void console_release(console *k, int drm_fd)
+{
+    if (k->fd < 0) return;
+    if (k->refuse_switch) {
+        ioctl(k->fd, VT_RELDISP, 0);
+        return;
+    }
+    kms_drop_master(drm_fd);
+    k->active = 0;
+    ioctl(k->fd, VT_RELDISP, 1);
+}
+
+static void console_acquire(console *k, int drm_fd)
+{
+    if (k->fd < 0) return;
+    ioctl(k->fd, VT_RELDISP, VT_ACKACQ);
+    kms_set_master(drm_fd);
+    k->active = 1;
+}
+
+static void console_give_back(console *k)
+{
+    if (k->fd < 0) return;
+    if (k->have_vtmode) ioctl(k->fd, VT_SETMODE, &k->saved_vtmode);
+    if (k->have_kdmode) ioctl(k->fd, KDSETMODE, k->saved_kdmode);
+    if (k->have_kbmode) ioctl(k->fd, KDSKBMODE, k->saved_kbmode);
+    close(k->fd);
+    k->fd = -1;
+}
+
+/* Keep the pointer on the screen at the moment it moves, not at the end
+ * of the batch. A relative device can accumulate well past the edge
+ * inside one drain, and a click dispatched at that coordinate misses
+ * every target while the cursor is drawn at the edge -- which is
+ * precisely the dock and taskbar case, where users shove the mouse into
+ * the edge on purpose. */
+static void clamp_pointer(shell_ctx *c, int w, int h)
+{
+    if (c->mouse_x < 0) c->mouse_x = 0;
+    if (c->mouse_y < 0) c->mouse_y = 0;
+    if (c->mouse_x >= w) c->mouse_x = w - 1;
+    if (c->mouse_y >= h) c->mouse_y = h - 1;
+}
+
+/* ── fonts ───────────────────────────────────────────────────────── */
+/* The type system lives in shellcommon.c, with the struct that
+ * describes it. It used to live here, and every preview and test
+ * harness carried its own partial copy -- so when the four faces became
+ * seven, the harnesses silently left three of them NULL and rendered
+ * pictures of a desktop that does not exist. Two of them "passed"
+ * while doing it. */
+static void load_fonts(shell_fonts *f, const shell_ctx *c) { shell_fonts_load(f, c); }
+static void free_fonts(shell_fonts *f) { shell_fonts_free(f); }
+
+/* ── input ───────────────────────────────────────────────────────────
+ *
+ * Reading evdev directly means classifying devices ourselves, and the
+ * classification is where naive shells go wrong. Three rules, each
+ * learned from a device that breaks the obvious version:
+ *
+ * 1. A device is not ONE thing. A wireless keyboard with a built-in
+ *    trackpad is a single event node that is both a keyboard and a
+ *    pointer. `kind` is therefore a bitmask, not an enum -- as an enum,
+ *    such a device is classified as a pointer and every keystroke is
+ *    silently dropped.
+ *
+ * 2. A touchpad is NOT an absolute device, even though it reports
+ *    ABS_X/ABS_Y. Every Synaptics and Elan pad does. Treated as
+ *    absolute, the pointer teleports to wherever on the pad the finger
+ *    lands. INPUT_PROP_POINTER vs INPUT_PROP_DIRECT is the real
+ *    discriminator: DIRECT means the user touches the thing they are
+ *    pointing at (a touchscreen), POINTER means they do not (a pad).
+ *
+ * 3. BTN_TOUCH is only a click on a DIRECT device. On a touchpad it
+ *    fires on every finger-down and finger-up, so honouring it there
+ *    means the user cannot move the pointer without clicking.
+ */
+typedef struct {
+    int fd[MAX_INPUT_DEV];
+    int kind[MAX_INPUT_DEV];
+    /* Axis ranges read once at open. EVIOCGABS per motion event is an
+     * ioctl per sample on a device that can report at 250 Hz. */
+    int ax_lo[MAX_INPUT_DEV], ax_hi[MAX_INPUT_DEV];
+    int ay_lo[MAX_INPUT_DEV], ay_hi[MAX_INPUT_DEV];
+    pad_state pad[MAX_INPUT_DEV];
+    char name[MAX_INPUT_DEV][32];
+    int n;
+    int notify_fd;             /* inotify on /dev/input, for hotplug   */
+} input_set;
+
+static int has_bit(const unsigned long *b, int bit)
+{ return (b[bit / (8 * sizeof(long))] >> (bit % (8 * sizeof(long)))) & 1; }
+
+/* Read what the kernel knows about a device and hand the decision to
+ * pad_classify(), which is pure and therefore tested. */
+static int classify(int fd)
+{
+    unsigned long ev = 0;
+    if (ioctl(fd, EVIOCGBIT(0, sizeof ev), &ev) < 0) return 0;
+
+    dev_caps d;
+    memset(&d, 0, sizeof d);
+
+    unsigned long key[(KEY_MAX / (8 * sizeof(long))) + 1];
+    memset(key, 0, sizeof key);
+    int have_key = (ev & (1u << EV_KEY)) &&
+                   ioctl(fd, EVIOCGBIT(EV_KEY, sizeof key), key) >= 0;
+    if (have_key) {
+        d.has_btn_finger = has_bit(key, BTN_TOOL_FINGER);
+        for (int k = KEY_Q; k <= KEY_P; k++) if (has_bit(key, k)) d.letter_keys++;
+    }
+
+    unsigned long prop[(INPUT_PROP_MAX / (8 * sizeof(long))) + 1];
+    memset(prop, 0, sizeof prop);
+    ioctl(fd, EVIOCGPROP(sizeof prop), prop);   /* absent on old kernels */
+    d.prop_direct = has_bit(prop, INPUT_PROP_DIRECT);
+
+    if (ev & (1u << EV_REL)) {
+        unsigned long rel[(REL_MAX / (8 * sizeof(long))) + 1];
+        memset(rel, 0, sizeof rel);
+        if (ioctl(fd, EVIOCGBIT(EV_REL, sizeof rel), rel) >= 0)
+            d.has_rel_xy = has_bit(rel, REL_X) && has_bit(rel, REL_Y);
+    }
+    if (ev & (1u << EV_ABS)) {
+        unsigned long abs_[(ABS_MAX / (8 * sizeof(long))) + 1];
+        memset(abs_, 0, sizeof abs_);
+        if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof abs_), abs_) >= 0)
+            d.has_abs_xy = has_bit(abs_, ABS_X) ||
+                           has_bit(abs_, ABS_MT_POSITION_X);
+    }
+    return pad_classify(&d);
+}
+
+/* Absolute devices report in their own units; scale to the screen. */
+static void abs_range(int fd, int axis, int *lo, int *hi)
+{
+    struct input_absinfo ai;
+    *lo = 0; *hi = 0;
+    if (ioctl(fd, EVIOCGABS(axis), &ai) == 0 && ai.maximum > ai.minimum)
+        { *lo = ai.minimum; *hi = ai.maximum; }
+}
+
+static int64_t now_ms(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
+}
+
+static int pad_event_kind(int code)
+{
+    switch (code) {
+    case BTN_TOUCH:            return PAD_TOUCH;
+    case BTN_TOOL_FINGER:      return PAD_FINGER;
+    case BTN_TOOL_DOUBLETAP:   return PAD_DOUBLETAP;
+    case BTN_TOOL_TRIPLETAP:   return PAD_TRIPLETAP;
+    case BTN_TOOL_QUADTAP:     return PAD_QUADTAP;
+    default:                   return -1;
+    }
+}
+
+static int input_have(const input_set *s, const char *node)
+{
+    for (int i = 0; i < s->n; i++) if (!strcmp(s->name[i], node)) return 1;
+    return 0;
+}
+
+/* Opens any /dev/input/eventN we do not already hold. Safe to call
+ * repeatedly; that is how hotplug works. Returns how many were added. */
+static int input_scan(input_set *s, int grab)
+{
+    int added = 0;
+    DIR *d = opendir("/dev/input");
+    if (!d) return 0;
+    struct dirent *e;
+    while ((e = readdir(d)) && s->n < MAX_INPUT_DEV) {
+        if (strncmp(e->d_name, "event", 5) != 0) continue;
+        if (input_have(s, e->d_name)) continue;
+        char p[288];
+        snprintf(p, sizeof p, "/dev/input/%s", e->d_name);
+        int fd = open(p, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        if (fd < 0) continue;
+        int k = classify(fd);
+        if (!k) { close(fd); continue; }
+        int i = s->n;
+        s->fd[i] = fd; s->kind[i] = k;
+        s->ax_lo[i] = s->ax_hi[i] = s->ay_lo[i] = s->ay_hi[i] = 0;
+        if (k & (DEV_ABS | DEV_PAD)) {
+            abs_range(fd, ABS_X, &s->ax_lo[i], &s->ax_hi[i]);
+            abs_range(fd, ABS_Y, &s->ay_lo[i], &s->ay_hi[i]);
+        }
+        pad_reset(&s->pad[i], s->ax_lo[i], s->ax_hi[i],
+                              s->ay_lo[i], s->ay_hi[i]);
+        snprintf(s->name[i], sizeof s->name[i], "%.31s", e->d_name);
+        /* Kiosk: take the device away from everyone else, so a key
+         * combination cannot reach another reader. This is what makes
+         * the lockdown a property of the system rather than of us
+         * choosing not to act on a keystroke. */
+        if (grab) ioctl(fd, EVIOCGRAB, 1);
+        s->n++; added++;
+    }
+    closedir(d);
+    return added;
+}
+
+static void input_drop(input_set *s, int i)
+{
+    close(s->fd[i]);
+    s->n--;
+    if (i != s->n) {
+        s->fd[i]    = s->fd[s->n];    s->kind[i]  = s->kind[s->n];
+        s->ax_lo[i] = s->ax_lo[s->n]; s->ax_hi[i] = s->ax_hi[s->n];
+        s->ay_lo[i] = s->ay_lo[s->n]; s->ay_hi[i] = s->ay_hi[s->n];
+        s->pad[i] = s->pad[s->n];
+        memcpy(s->name[i], s->name[s->n], sizeof s->name[i]);
+    }
+}
+
+static void input_open_all(input_set *s, int grab)
+{
+    memset(s, 0, sizeof *s);
+    s->notify_fd = -1;
+#ifdef IN_NONBLOCK
+    /* Hotplug. Without this, a mouse plugged in after the desktop
+     * appears does nothing until a reboot -- and if we win the race
+     * against udev at boot, we can come up with no input at all. */
+    s->notify_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (s->notify_fd >= 0 &&
+        inotify_add_watch(s->notify_fd, "/dev/input", IN_CREATE | IN_ATTRIB) < 0) {
+        close(s->notify_fd); s->notify_fd = -1;
+    }
+#endif
+    input_scan(s, grab);
+}
+
+/* ── software cursor ─────────────────────────────────────────────────
+ * Drawn by us because there is no compositor to do it. The dark outline
+ * is not decoration: without it the pointer vanishes over a pale
+ * wallpaper on a light theme, and a pointer you cannot find is the
+ * fastest way to make someone believe the machine has frozen.
+ * The pictures (arrow, hand, text cursor, ... and what a program asks
+ * for) are src/aurshell/cursor.c; session_paint_cursor() chooses. */
+
+
+static void build_wallpaper(surface **wall, int w, int h, const theme_t *t)
+{
+    if (*wall) surface_free(*wall);
+    *wall = surface_new(w, h);
+    if (!*wall) return;
+    uint32_t *tmp = malloc((size_t)w * h * sizeof *tmp);
+    if (!tmp) return;
+    wall_render(tmp, w, h, t);
+    for (int i = 0; i < w * h; i++) (*wall)->px[i] = 0xFF000000u | tmp[i];
+    free(tmp);
+}
+
+/* Policy fails CLOSED, and says so.
+ *
+ * The obvious version returns silently on a missing or empty file and
+ * leaves the permissive defaults in place. That turns a truncated write
+ * on a failing disk, or one typo in a deployment script, into a school
+ * laptop that quietly boots as a fully open desktop -- with nothing in
+ * the log to say why. A restriction that evaporates when its config is
+ * unreadable is not a restriction.
+ *
+ * `present` is what distinguishes "no policy was ever installed" (a
+ * personal machine: open, as intended) from "a policy file exists but
+ * we could not read or parse it" (something is wrong: lock down). */
+static void load_policy(shell_ctx *c, const char *path)
+{
+    theme_t p = {0};
+    c->allow_install = c->allow_settings = c->allow_theme_change = 1;
+    c->allow_tty = 1;
+    c->allow_network = 1;
+    c->screen_off_min = 10;
+    c->kiosk = 0;
+    c->allowed_apps[0] = 0;
+    c->blocked_apps[0] = 0;
+    c->deny_all_apps = 0;
+
+    struct stat st;
+    int present = (stat(path, &st) == 0);
+
+    if (theme_load(&p, path) < 0) {
+        if (present) {
+            fprintf(stderr, "aurshell: %s exists but could not be read — "
+                            "locking down\n", path);
+            c->allow_install = c->allow_settings = c->allow_theme_change = 0;
+            c->allow_tty = 0;
+            c->allow_network = 0;
+            c->kiosk = 1;
+            c->screen_off_min = 10;
+            /* Failing closed has to include the applications, or a
+             * machine whose policy file is corrupt keeps its lockdown
+             * flags and loses the only thing that limited what can be
+             * launched on it. */
+            c->deny_all_apps = 1;
+        } else {
+            fprintf(stderr, "aurshell: no %s — unmanaged machine, "
+                            "no restrictions\n", path);
+        }
+        return;
+    }
+    if (p.n == 0) {
+        fprintf(stderr, "aurshell: %s is empty or unparseable — locking down\n",
+                path);
+        c->allow_install = c->allow_settings = c->allow_theme_change = 0;
+        c->allow_tty = 0;
+        c->allow_network = 0;
+        c->kiosk = 1;
+        c->deny_all_apps = 1;
+        return;
+    }
+    c->allow_install      = strcmp(theme_str(&p, "allow_user_install",    "yes"), "no") != 0;
+    c->allow_settings     = strcmp(theme_str(&p, "allow_settings_change", "yes"), "no") != 0;
+    c->allow_theme_change = strcmp(theme_str(&p, "allow_theme_change",    "yes"), "no") != 0;
+    c->allow_tty          = strcmp(theme_str(&p, "allow_tty",             "yes"), "no") != 0;
+    c->allow_network      = strcmp(theme_str(&p, "allow_network_change",  "yes"), "no") != 0;
+    c->kiosk              = strcmp(theme_str(&p, "kiosk_mode",            "no"),  "yes") == 0;
+    c->no_wishes          = strcmp(theme_str(&p, "wishes",                "on"),  "off") == 0;
+    /* Clamped, not trusted. A profile that says 100000 is a machine
+     * whose screen never goes off; one that says -1 would have been an
+     * enormous unsigned wait. Two hours is longer than anybody means
+     * by "after a while" and still an answer. */
+    c->screen_off_min     = theme_int(&p, "screen_off_minutes", 10);
+    if (c->screen_off_min < 0)   c->screen_off_min = 0;
+    if (c->screen_off_min > 120) c->screen_off_min = 120;
+    snprintf(c->allowed_apps, sizeof c->allowed_apps, "%s",
+             theme_str(&p, "allowed_apps", ""));
+    snprintf(c->blocked_apps, sizeof c->blocked_apps, "%s",
+             theme_str(&p, "blocked_apps", ""));
+}
+
+/* Volume, mute and brightness. Returns 1 if the key was one of them.
+ *
+ * Steps of five, not one: a key held down repeats, and a control that
+ * needs twenty presses to cross its range is one nobody uses. Five is
+ * twenty presses end to end, which is about right for a held key and
+ * not so coarse that the quiet end is unreachable. */
+#define STEP 5
+
+static int media_key(shell_ctx *c, int code)
+{
+    int v;
+    switch (code) {
+    case KEY_VOLUMEUP:
+        v = power_volume();
+        if (v < 0) return 1;                 /* no sound: swallow it
+                                              * anyway, or the key
+                                              * types into whatever is
+                                              * focused */
+        v += STEP; if (v > 100) v = 100;
+        power_volume_set(v);
+        osd_show(OSD_VOLUME, v);
+        return 1;
+    case KEY_VOLUMEDOWN:
+        v = power_volume();
+        if (v < 0) return 1;
+        v -= STEP; if (v < 0) v = 0;
+        power_volume_set(v);
+        osd_show(power_muted() ? OSD_MUTED : OSD_VOLUME, v);
+        return 1;
+    case KEY_MUTE: {
+        int m = !power_muted();
+        power_mute_set(m);
+        osd_show(m ? OSD_MUTED : OSD_VOLUME, power_volume());
+        return 1;
+    }
+    case KEY_SYSRQ:                 /* Print Screen, on every keyboard */
+        c->want_screenshot = 1;
+        return 1;
+    case KEY_BRIGHTNESSUP:
+    case KEY_BRIGHTNESSDOWN: {
+        /* The panel's own units, not percentage points. Reading the
+         * percentage and adding five to it is dead on every panel
+         * whose range is smaller than about twenty steps -- and the
+         * indicator showed the number she asked for, so the screen
+         * stayed put while the picture of it climbed. */
+        int got = power_brightness_step(code == KEY_BRIGHTNESSUP ? +1 : -1);
+        if (got >= 0) osd_show(OSD_BRIGHTNESS, got);
+        return 1;                            /* ours either way */
+    }
+    default:
+        break;
+    }
+    (void)c;
+    return 0;
+}
+
+/* ── where programs from Flathub are found ───────────────────────────
+ *
+ * flatpak puts what it installs -- the program's .desktop file, its
+ * icons, the file types it opens -- under two "exports" directories,
+ * and announces them by adding both to XDG_DATA_DIRS in
+ * /etc/profile.d and in systemd's user environment generator. Neither
+ * reaches this process: it is a system service, started by no login
+ * shell and no user manager. So every program the desktop starts --
+ * the store, the file manager, a browser asked to open a PDF --
+ * searched only /usr/share, and a program she had just installed from
+ * Flathub was invisible to all of them: the store's own Open button
+ * worked and nothing else knew the program existed.
+ *
+ * Added in front, user's own first, the order flatpak itself uses, and
+ * only if they are not already there. Done once, before anything is
+ * started, so every child inherits it. */
+static int path_list_has(const char *list, const char *dir)
+{
+    size_t n = strlen(dir);
+    for (const char *p = list; p && *p; ) {
+        const char *e = strchr(p, ':');
+        size_t len = e ? (size_t)(e - p) : strlen(p);
+        if (len == n && !strncmp(p, dir, n)) return 1;
+        if (len == n + 1 && !strncmp(p, dir, n) && p[n] == '/') return 1;
+        p = e ? e + 1 : NULL;
+    }
+    return 0;
+}
+
+static void flatpak_data_dirs(void)
+{
+    const char *cur = getenv("XDG_DATA_DIRS");
+    /* The specification's default, which is what an unset variable
+     * means -- replacing it with only the flatpak directories would
+     * hide everything in /usr/share instead. */
+    if (!cur || !*cur) cur = "/usr/local/share:/usr/share";
+    char add[2][320];
+    int na = 0;
+    const char *home = getenv("HOME");
+    if (home && *home && strlen(home) < 200)
+        snprintf(add[na++], sizeof add[0], "%s/.local/share/flatpak/exports/share", home);
+    snprintf(add[na++], sizeof add[0], "%s", "/var/lib/flatpak/exports/share");
+
+    char out[4096];
+    size_t w = 0;
+    out[0] = 0;
+    for (int i = 0; i < na; i++) {
+        if (path_list_has(cur, add[i])) continue;
+        int k = snprintf(out + w, sizeof out - w, "%s:", add[i]);
+        if (k < 0 || (size_t)k >= sizeof out - w) return;
+        w += (size_t)k;
+    }
+    if (!w) return;                       /* both already there */
+    int k = snprintf(out + w, sizeof out - w, "%s", cur);
+    if (k < 0 || (size_t)k >= sizeof out - w) return;   /* absurd; leave it */
+    setenv("XDG_DATA_DIRS", out, 1);
+}
+
+/* What she is looking at, as one number: which panel, and which page of
+ * it. Any change starts the dead time of "one press is one press". Not a
+ * guard -- nothing is ENABLED by it -- so it names the flags itself; it
+ * is a function, with `->`, so tools/modaltest.c (which hunts for guards
+ * written as a list of `c.<panel>_open`) does not mistake it for one. */
+static unsigned screen_signature(const shell_ctx *c)
+{
+    return (unsigned)(c->help_open | c->net_open << 1 | c->settings_open << 2 |
+                      c->bt_open << 3 | c->power_open << 4 | c->welcome_open << 5 |
+                      c->guard_open << 6 | c->wish_open << 7 |
+                      c->wishfill_open << 20) |
+           (unsigned)(c->welcome_open ? welcome_page() : 0) << 8 |
+           (unsigned)(c->settings_open ? settings_page() : 0) << 12 |
+           (unsigned)(c->net_open ? net_page() : 0) << 16 |
+           /* Wishes changes page by itself (asking, waiting, the answer),
+            * so a second press of a double-click must not land on the
+            * button that appears where the first one was. */
+           (unsigned)(c->wish_open ? wish_page() : 0) << 21;
+}
+
+int main(int argc, char **argv)
+{
+    flatpak_data_dirs();
+    /* HER copy first, the machine's second.
+     *
+     * /etc/auros belongs to whoever set the computer up, and it has to
+     * stay that way: policy.conf lives beside these and a user who
+     * could write it could lift their own lock-down. So the settings
+     * she is allowed to change are written into her own config
+     * directory and read from there in preference, which needs no
+     * privilege at all and is what every Unix desktop has always done.
+     *
+     * policy.conf is deliberately NOT in this list. */
+    char user_conf[512] = {0}, user_shell[512] = {0};
+    const char *home = getenv("HOME");
+    if (home && *home) {
+        snprintf(user_conf,  sizeof user_conf,  "%s/.config/auros/shell.conf", home);
+        snprintf(user_shell, sizeof user_shell, "%s/.config/auros/active.shell", home);
+    }
+    /* Chosen again on every reload, not once. A fresh image has no
+     * user copy of either file, so choosing once meant that the moment
+     * Settings WROTE one -- which is the only thing Settings does --
+     * the shell went on reading the machine's copy and the change she
+     * had just made did nothing. */
+    int   conf_forced = 0, shell_forced = 0;
+    const char *conf   = "/etc/auros/shell.conf";
+    const char *shellf = "/etc/auros/shell/active.shell";
+    const char *policy = "/etc/auros/policy.conf";
+    const char *card = NULL, *png_out = NULL;
+    int png_w = 1600, png_h = 900, nopen = 0, once = 0, frames = 1;
+    int mouse_x0 = -1, mouse_y0 = -1, input_test = 0;
+    const char *with_app = NULL; int app_wait = 12;
+    int click_x[8], click_y[8], n_click = 0;       /* --click X Y: harness only, see the --with-app loop */
+    const char *type_text = NULL;                   /* --type TEXT: harness only, typed after the last click */
+
+    for (int i = 1; i < argc; i++) {
+        if      (!strcmp(argv[i], "--conf")   && i+1 < argc) { conf   = argv[++i]; conf_forced  = 1; }
+        else if (!strcmp(argv[i], "--shell")  && i+1 < argc) { shellf = argv[++i]; shell_forced = 1; }
+        else if (!strcmp(argv[i], "--policy") && i+1 < argc) policy = argv[++i];
+        else if (!strcmp(argv[i], "--card")   && i+1 < argc) card   = argv[++i];
+        else if (!strcmp(argv[i], "--png")    && i+1 < argc) png_out = argv[++i];
+        else if (!strcmp(argv[i], "--size")   && i+2 < argc) { png_w = atoi(argv[++i]); png_h = atoi(argv[++i]); }
+        else if (!strcmp(argv[i], "--open")   && i+1 < argc) nopen = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--mouse")  && i+2 < argc) { mouse_x0 = atoi(argv[++i]); mouse_y0 = atoi(argv[++i]); }
+        else if (!strcmp(argv[i], "--click")  && i+2 < argc && n_click < 8) { click_x[n_click] = atoi(argv[++i]); click_y[n_click++] = atoi(argv[++i]); }
+        else if (!strcmp(argv[i], "--type")   && i+1 < argc) type_text = argv[++i];
+        else if (!strcmp(argv[i], "--frames") && i+1 < argc) frames = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--with-app") && i+1 < argc) with_app = argv[++i];
+        else if (!strcmp(argv[i], "--app-wait") && i+1 < argc) app_wait = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--once")) once = 1;
+        else if (!strcmp(argv[i], "--input-test")) input_test = 1;
+        else if (!strcmp(argv[i], "--help")) {
+            fputs("aurshell [--shell FILE] [--conf FILE] [--policy FILE]\n"
+                  "         [--card /dev/dri/cardN] [--png OUT --size W H]\n"
+                  "         [--frames N] [--open N] [--once] [--input-test]\n"
+                  "         [--with-app CMD [--app-wait SECONDS] [--mouse X Y] [--click X Y]... [--type TEXT]]\n"
+                  "  --with-app  start the compositor, launch CMD, wait for its\n"
+                  "              window and render the desktop with the real\n"
+                  "              application in it. This is how the shell is\n"
+                  "              checked against actual software without a\n"
+                  "              screen: the pixels in the window came from\n"
+                  "              another process or the test is worthless.\n"
+                  "  --input-test  print every input device this machine has,\n"
+                  "              how the shell classifies it, and every event\n"
+                  "              it produces, with the pointer position each\n"
+                  "              one results in. Run this first when someone\n"
+                  "              says the mouse does not work.\n"
+                  "  --frames N  with --png: paint N times and report the median\n"
+                  "              paint in ms, excluding startup and wallpaper.\n"
+                  "              This is the number that matters on old hardware.\n", stderr);
+            return 0;
+        }
+    }
+
+    signal(SIGHUP,  on_hup);
+    signal(SIGTERM, on_term);
+    signal(SIGINT,  on_term);
+    signal(VT_RELSIG, on_rel);
+    signal(VT_ACQSIG, on_acq);
+
+    /* HER copy wins whenever it exists, asked fresh each time. A
+     * command line that named a file is never second-guessed.
+     *
+     * BEFORE the theme is read, not after. It used to be picked three
+     * lines below theme_load(), so the first frame of every session was
+     * drawn from the machine's copy: the look she chose in Settings
+     * lasted until the next restart, while Settings went on saying she
+     * had chosen it (tools/lookboottest.sh). */
+    #define PICK_HERS(dst, user, forced, fallback) do {                       \
+        if (!(forced))                                                        \
+            (dst) = ((user)[0] && access((user), R_OK) == 0) ? (user)          \
+                                                            : (fallback);     \
+    } while (0)
+    PICK_HERS(conf,   user_conf,  conf_forced,  "/etc/auros/shell.conf");
+    PICK_HERS(shellf, user_shell, shell_forced, "/etc/auros/shell/active.shell");
+
+    theme_t t = {0};
+    if (theme_load(&t, conf) < 0)
+        fprintf(stderr, "aurshell: no %s — using built-in defaults\n", conf);
+
+    shell_ctx c;
+    memset(&c, 0, sizeof c);
+    shell_theme_load(&c, &t);
+
+    /* Policy BEFORE the archetype, because it decides what a missing
+     * archetype should fall back to. */
+    load_policy(&c, policy);
+
+    if (shell_archetype_load(&c, shellf) < 0) {
+        /* The safe default depends on what the machine is for. On a
+         * managed machine it is `locked`, because falling back to an
+         * open desktop is the failure a school cannot tolerate. On an
+         * unmanaged one it is `rail`, the only archetype in which a
+         * thing cannot be hidden. */
+        const char *fb = c.kiosk ? "locked" : "rail";
+        fprintf(stderr, "aurshell: no %s — defaulting to the %s archetype\n",
+                shellf, fb);
+        snprintf(c.layout_id, sizeof c.layout_id, "%s", fb);
+        c.show_clock = 1;
+    }
+    /* The seeded table is the fallback, not the source of truth: it is
+     * what a still render and a machine with no desktop files get. What
+     * is actually installed wins, because "install an application and
+     * it appears" is a promise the shell cannot keep from a table
+     * compiled into it. */
+    /* Her text size, from her own settings, before any font is opened. */
+    c.text_scale = foot_load_text_scale();
+    c.foot_hover = -1;
+    /* A kiosk that forbids both settings and shutdown has nothing to put
+     * in the band, and an empty band is furniture. Help alone still
+     * earns it everywhere else. */
+    c.no_foot = 0;
+
+    shell_seed_apps(&c);
+    int scanned = shell_scan_apps(&c);
+    if (scanned > 0)
+        fprintf(stderr, "aurshell: %d application%s installed\n",
+                scanned, scanned == 1 ? "" : "s");
+    else
+        fprintf(stderr, "aurshell: no desktop entries found — "
+                        "showing the built-in placeholder set\n");
+    /* And from now on, whenever they change. Not in the still-render
+     * path below, which paints once and exits. */
+    if (!png_out && !input_test && appwatch_open() < 0)
+        fprintf(stderr, "aurshell: cannot watch for new programs (%s) -- a "
+                        "program installed now appears after a restart\n",
+                strerror(errno));
+
+    c.mouse_x = mouse_x0;
+    c.mouse_y = mouse_y0;
+    c.hover = -1;
+    c.focus = -1;
+
+    for (int i = 0; i < nopen && i < SHELL_MAX_WINS; i++) {
+        c.wins[i].app = i % c.n_apps;
+        snprintf(c.wins[i].title, sizeof c.wins[i].title, "%s", c.apps[c.wins[i].app].name);
+        c.n_wins++;
+    }
+    if (c.n_wins) c.focus = 0;
+
+    const shell_layout *L = shell_layout_by_id(c.layout_id);
+    fprintf(stderr, "aurshell: archetype '%s' (%s)\n", L->id, c.shell_name);
+
+    shell_fonts f;
+    load_fonts(&f, &c);
+    if (!f.small) fprintf(stderr, "aurshell: no usable font — running without text\n");
+
+    /* ── headless: one frame to a PNG, through the identical path ── */
+    if (png_out) {
+        if (png_w <= 0 || png_h <= 0 ||
+            (long long)png_w * png_h > 64LL * 1024 * 1024) {
+            fprintf(stderr, "aurshell: --size %dx%d is not a usable image\n",
+                    png_w, png_h);
+            free_fonts(&f); return 1;
+        }
+        surface *s = surface_new(png_w, png_h), *wall = NULL;
+        if (!s) { fprintf(stderr, "aurshell: out of memory\n");
+                  free_fonts(&f); return 1; }
+        build_wallpaper(&wall, png_w, png_h, &t);
+        c.screen_w = png_w;
+        c.screen_h = png_h - foot_height(&c);
+        if (L->init) L->init(&c);
+
+        /* Offscreen, but with real applications in it. Everything below
+         * -- the compositor, the reconcile, the routing -- is the same
+         * code the booted machine runs; only the destination differs. */
+        if (with_app) {
+            if (!getenv("XDG_RUNTIME_DIR")) {
+                char rd[64];
+                snprintf(rd, sizeof rd, "/run/user/%u", (unsigned)getuid());
+                if (mkdir(rd, 0700) < 0 && errno != EEXIST)
+                    snprintf(rd, sizeof rd, "%s", "/tmp");
+                setenv("XDG_RUNTIME_DIR", rd, 1);
+            }
+            c.wl = aurwl_create(png_w, c.screen_h, 60000);
+            if (!c.wl) { fprintf(stderr, "aurshell: no compositor\n");
+                         free_fonts(&f); return 1; }
+            aurwl_set_text_scale(c.wl, c.text_scale);        /* X programs get her size (Xft.dpi), as on the real desktop */
+            c.spawn = session_spawn;
+            fprintf(stderr, "aurshell: WAYLAND_DISPLAY=%s, starting %s\n",
+                    aurwl_socket(c.wl), with_app);
+            /* A development harness runs whatever command the person at the
+             * keyboard typed, so /bin/sh is the right thing here and is chosen
+             * explicitly. The product path has no shell: an Exec= line from a file
+             * on disk is parsed into an argv and handed to execvp. */
+            const char *argv_sh[] = { "/bin/sh", "-c", with_app, NULL };
+            if (aurwl_spawn(c.wl, argv_sh) < 0) {
+                fprintf(stderr, "aurshell: could not start it\n");
+                free_fonts(&f); return 1;
+            }
+            struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
+            int click_done = 0, click_stage = 0; uint32_t click_next = 0;
+            size_t type_i = 0; uint32_t type_next = 0;
+            for (;;) {
+                struct timespec tn; clock_gettime(CLOCK_MONOTONIC, &tn);
+                uint32_t el = (uint32_t)((tn.tv_sec - t0.tv_sec) * 1000
+                                       + (tn.tv_nsec - t0.tv_nsec) / 1000000);
+                if (el > (uint32_t)app_wait * 1000u) break;
+                struct pollfd wp = { aurwl_fd(c.wl), POLLIN, 0 };
+                poll(&wp, 1, 16);
+                aurwl_dispatch(c.wl);
+                aurwl_reap(c.wl);
+                session_sync(&c, L);
+                aurwl_frame_done(c.wl, el);
+                /* Paint each pass: the tracker records where windows
+                 * landed, and a client that never learns its size keeps
+                 * redrawing the same first frame. */
+                /* Animations have to run here too, or a carousel that
+                 * was asked to scroll to a new window never arrives and
+                 * the render shows the window halfway off the screen --
+                 * which looks like a placement bug and is a missing
+                 * clock tick. */
+                if (L->step) L->step(&c, 0.016f);
+                draw_track_reset();
+                surface wbody = *s;
+                wbody.h = c.screen_h;
+                L->paint(&c, &wbody, &f, wall);
+                /* As the real loop does, so menus and full-screen windows are
+                 * where the pointer is routed against (the --click path). */
+                session_paint_full(&c, &wbody);
+                session_paint_popups(&c, &wbody);
+                /* The pointer is where --mouse put it, so the program under
+                 * it is told and answers with the picture it wants. */
+                if (c.mouse_x >= 0) session_motion(&c, c.mouse_x, c.mouse_y);
+                /* --click: the pointer goes to each screen point a third of the
+                 * way in, rests 400 ms, presses, 100 ms later lets go, and
+                 * waits 2.5 s -- through the same session_button the real
+                 * mouse uses, windows configured by the shell every frame. */
+                if (click_done < n_click && el > (uint32_t)app_wait * 333u && el >= click_next) {
+                    int cx = click_x[click_done], cy = click_y[click_done];
+                    if (click_stage == 0)      { c.mouse_x = cx; c.mouse_y = cy; session_motion(&c, cx, cy);
+                                                 click_stage = 1; click_next = el + 400; }
+                    else if (click_stage == 1) { session_button(&c, cx, cy, 0x110, 1);
+                                                 click_stage = 2; click_next = el + 100; }
+                    else                       { session_button(&c, cx, cy, 0x110, 0);
+                                                 click_stage = 0; click_done++; click_next = el + 2500; }
+                }
+                /* --type: letters, digits and spaces, one key every 80 ms, through the shell's
+                 * own key path, once the clicks are done and a second has passed. */
+                if (type_text && type_text[type_i] && click_done >= n_click && el > (uint32_t)app_wait * 333u &&
+                    el >= click_next + 1000 && el >= type_next) {
+                    static const char *rows[3] = { "qwertyuiop", "asdfghjkl", "zxcvbnm" };
+                    static const int base[3] = { 16, 30, 44 };
+                    char ch = type_text[type_i++];
+                    int code = -1;
+                    for (int r = 0; r < 3; r++) { const char *q = strchr(rows[r], ch); if (ch && q) code = base[r] + (int)(q - rows[r]); }
+                    if (ch >= '1' && ch <= '9') code = 2 + (ch - '1');
+                    if (ch == '0') code = 11;
+                    if (ch == ' ') code = 57;
+                    if (ch == '\\' && type_text[type_i] == 'n') { type_i++; code = 28; }      /* a typed \n is Enter */
+                    if (code > 0) { session_key(&c, code, 1); session_key(&c, code, 0); }
+                    type_next = el + 80;
+                }
+                /* As the real loop: the keyboard goes where the shell says. (This used to give the oldest
+                 * window the keyboard whenever nothing had it, which hid every focus defect from the
+                 * real-program runs.) */
+                session_focus_follow(&c);
+            }
+            fprintf(stderr, "aurshell: %d window%s on the desktop\n",
+                    c.n_wins, c.n_wins == 1 ? "" : "s");
+            for (int i = 0; i < c.n_wins; i++)
+                fprintf(stderr, "  %-40s %s\n", c.wins[i].title,
+                        c.wins[i].content ? "live" : "no content");
+        }
+
+        if (L->motion && c.mouse_x >= 0) L->motion(&c, c.mouse_x, c.mouse_y);
+
+        /* Paint-only timing. The whole process also builds a wallpaper
+         * and loads fonts, which happen once at login and drown the
+         * number that actually decides whether the desktop feels alive. */
+        if (frames < 1) frames = 1;
+        double *ms = frames > 1 ? malloc((size_t)frames * sizeof *ms) : NULL;
+        for (int fr = 0; fr < frames; fr++) {
+            struct timespec a, b;
+            clock_gettime(CLOCK_MONOTONIC, &a);
+            draw_track_reset();
+            surface body = *s;
+            body.h = c.screen_h;
+            L->paint(&c, &body, &f, wall);
+            session_paint_full(&c, &body);
+            session_paint_popups(&c, &body);
+            foot_paint(&c, s, &f);
+            clock_gettime(CLOCK_MONOTONIC, &b);
+            if (ms) ms[fr] = (double)(b.tv_sec - a.tv_sec) * 1e3
+                           + (double)(b.tv_nsec - a.tv_nsec) / 1e6;
+        }
+        if (ms) {
+            for (int i = 1; i < frames; i++)      /* insertion sort: tiny n */
+                for (int j = i; j > 0 && ms[j] < ms[j-1]; j--) {
+                    double t = ms[j]; ms[j] = ms[j-1]; ms[j-1] = t;
+                }
+            fprintf(stderr, "aurshell: %s %dx%d  paint median %.1f ms  "
+                            "(min %.1f, max %.1f, n=%d)\n",
+                    L->id, png_w, png_h, ms[frames/2], ms[0], ms[frames-1], frames);
+            free(ms);
+        }
+        /* The cursor belongs in a screenshot too: it is part of the
+         * frame the user sees, and leaving it out once cost an hour of
+         * chasing a pointer bug that a screenshot would have shown. */
+        if (c.mouse_x >= 0 && c.mouse_y >= 0)
+            session_paint_cursor(&c, s);
+
+        uint32_t *o = malloc((size_t)png_w * png_h * sizeof *o);
+        if (!o) { fprintf(stderr, "aurshell: out of memory\n");
+                  surface_free(s); surface_free(wall); free_fonts(&f); return 1; }
+        for (size_t i = 0; i < (size_t)png_w * png_h; i++) o[i] = s->px[i] & 0xFFFFFFu;
+        int rc = png_write_rgb(png_out, o, png_w, png_h);
+        free(o); surface_free(s); surface_free(wall);
+        if (L->fini) L->fini(&c);
+        free_fonts(&f);
+        fprintf(stderr, "aurshell: wrote %s (%dx%d, %s)\n", png_out, png_w, png_h, L->id);
+        return rc;
+    }
+
+    /* ── the diagnostic ─────────────────────────────────────────── */
+    if (input_test) {
+        /* Line-buffered: a diagnostic that shows nothing until it is
+         * killed is not a diagnostic, and this one is meant to be piped
+         * into a support ticket. */
+        setvbuf(stdout, NULL, _IOLBF, 0);
+        input_set in;
+        input_open_all(&in, 0);
+        printf("%d device%s the shell will listen to "
+               "(anything not listed was examined and ignored):\n\n",
+               in.n, in.n == 1 ? "" : "s");
+        for (int i = 0; i < in.n; i++) {
+            char nm[128] = "?";
+            ioctl(in.fd[i], EVIOCGNAME(sizeof nm), nm);
+            printf("  /dev/input/%-9s %-38s", in.name[i], nm);
+            int k = in.kind[i];
+            printf(" %s%s%s%s%s\n",
+                   (k & DEV_KBD)    ? "keyboard "    : "",
+                   (k & DEV_REL)    ? "mouse "       : "",
+                   (k & DEV_PAD)    ? "touchpad "    : "",
+                   (k & DEV_DIRECT) ? "touchscreen " :
+                   (k & DEV_ABS)    ? "tablet "      : "",
+                   k ? "" : "(ignored)");
+            if (k & (DEV_ABS | DEV_PAD))
+                printf("  %-9s   %-38s x %d..%d, y %d..%d\n", "",
+                       "", in.ax_lo[i], in.ax_hi[i], in.ay_lo[i], in.ay_hi[i]);
+        }
+        if (!in.n) printf("  none. Check that this user can read "
+                          "/dev/input/event* (the `input` group).\n");
+        printf("\nMove the pointer and press things. Ctrl-C to stop.\n"
+               "A pointer that does not change below is the bug.\n\n");
+
+        shell_ctx d;
+        memset(&d, 0, sizeof d);
+        d.mouse_x = 640; d.mouse_y = 400;
+        while (!want_quit) {
+            struct pollfd pfd[MAX_INPUT_DEV];
+            for (int i = 0; i < in.n; i++) { pfd[i].fd = in.fd[i]; pfd[i].events = POLLIN; }
+            if (poll(pfd, in.n, 1000) <= 0) continue;
+            for (int i = in.n - 1; i >= 0; i--) {
+                if (pfd[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                    printf("  %-9s WENT AWAY\n", in.name[i]);
+                    input_drop(&in, i); continue;
+                }
+                if (!(pfd[i].revents & POLLIN)) continue;
+                struct input_event ev;
+                while (read(in.fd[i], &ev, sizeof ev) == (ssize_t)sizeof ev) {
+                    const char *t = ev.type == EV_REL ? "REL" :
+                                    ev.type == EV_ABS ? "ABS" :
+                                    ev.type == EV_KEY ? "KEY" :
+                                    ev.type == EV_SYN ? "SYN" : "???";
+                    if (ev.type == EV_SYN) {
+                        if ((in.kind[i] & DEV_PAD) && ev.code == SYN_REPORT)
+                            pad_synced(&in.pad[i]);
+                        continue;
+                    }
+                    if (ev.type == EV_REL) {
+                        if (ev.code == REL_X) d.mouse_x += ev.value;
+                        if (ev.code == REL_Y) d.mouse_y += ev.value;
+                        clamp_pointer(&d, 1280, 800);
+                    } else if (ev.type == EV_ABS && (in.kind[i] & DEV_PAD)) {
+                        int axis = (ev.code == ABS_Y || ev.code == ABS_MT_POSITION_Y);
+                        int step = pad_delta(&in.pad[i], axis, ev.value);
+                        if (axis) d.mouse_y += step; else d.mouse_x += step;
+                        clamp_pointer(&d, 1280, 800);
+                    } else if (ev.type == EV_ABS && (in.kind[i] & DEV_ABS)) {
+                        if (ev.code == ABS_X && in.ax_hi[i] > in.ax_lo[i])
+                            d.mouse_x = (int)((int64_t)(ev.value - in.ax_lo[i]) * 1280
+                                              / (in.ax_hi[i] - in.ax_lo[i] + 1));
+                        if (ev.code == ABS_Y && in.ay_hi[i] > in.ay_lo[i])
+                            d.mouse_y = (int)((int64_t)(ev.value - in.ay_lo[i]) * 800
+                                              / (in.ay_hi[i] - in.ay_lo[i] + 1));
+                        clamp_pointer(&d, 1280, 800);
+                    }
+                    printf("  %-9s %s code %-4d value %-8d -> pointer %4d,%4d\n",
+                           in.name[i], t, ev.code, ev.value, d.mouse_x, d.mouse_y);
+                    fflush(stdout);
+                }
+            }
+        }
+        for (int i = 0; i < in.n; i++) close(in.fd[i]);
+        if (in.notify_fd >= 0) close(in.notify_fd);
+        free_fonts(&f);
+        return 0;
+    }
+
+    kms_display *disp = kms_open(card);
+    if (!disp) return 1;
+    fprintf(stderr, "aurshell: %dx%d on connector %u\n",
+            disp->width, disp->height, disp->connector_id);
+
+    /* The console owns the keyboard and the VT until we say otherwise.
+     * Without this the shell is painting over a text console that is
+     * still echoing every keystroke, Ctrl-Alt-Del still reboots, and
+     * Ctrl-Alt-F2 still switches away -- taking DRM master with it and
+     * leaving a dead display behind. On a managed machine that is a
+     * three-key denial of service; on any machine it is a bug. */
+    console_take(&g_con, !c.allow_tty);
+
+    c.screen_w = disp->width;
+    c.screen_h = disp->height - foot_height(&c);
+
+    /* A Wayland socket has to live somewhere a client can find it, and
+     * so does the sound server's, and the portal's, and everything
+     * else a desktop talks to. Normally logind has already made
+     * /run/user/<uid> and put it in the environment, which is where
+     * every one of those things looks -- so the right thing is to use
+     * what we were given and not invent our own.
+     *
+     * This is only a fallback for the case where nothing gave us one:
+     * a build with no session, or a PAM stack that did not run. The
+     * shell still comes up; it is the other half of the desktop that
+     * quietly will not be found. */
+    const char *rt = getenv("XDG_RUNTIME_DIR");
+    if (!rt || !*rt) {
+        char rd[64];
+        snprintf(rd, sizeof rd, "/run/user/%u", (unsigned)getuid());
+        if (mkdir(rd, 0700) < 0 && errno != EEXIST)
+            snprintf(rd, sizeof rd, "%s", "/run/auros");
+        if (access(rd, W_OK) < 0) snprintf(rd, sizeof rd, "%s", "/tmp");
+        setenv("XDG_RUNTIME_DIR", rd, 1);
+        fprintf(stderr, "aurshell: no XDG_RUNTIME_DIR — using %s. Sound and "
+                        "anything else in the user session will not be "
+                        "found.\n", rd);
+    }
+    /* Ask the sound server how loud it is ONCE, here, while the
+     * machine is still starting and a few hundred milliseconds cost
+     * nothing. Every later reader uses the answer. Doing it lazily
+     * meant the first press of Settings paid for it, on the one screen
+     * that has to feel immediate. */
+    power_refresh();
+
+    c.wl = aurwl_create(disp->width, c.screen_h, disp->refresh_mhz);    /* the screen the windows have: not the band */
+    if (c.wl) aurwl_set_text_scale(c.wl, c.text_scale);             /* X programs get her size (Xft.dpi) when X starts (W32) */
+    if (c.wl) {
+        c.spawn = session_spawn;
+        fprintf(stderr, "aurshell: applications may connect on WAYLAND_DISPLAY=%s\n",
+                aurwl_socket(c.wl));
+    } else {
+        /* The desktop still works; it just cannot run anything. Saying
+         * so plainly beats a machine where every icon silently does
+         * nothing and nobody can tell why. */
+        fprintf(stderr, "aurshell: NO COMPOSITOR — applications cannot start\n");
+    }
+
+    surface *wall = NULL;
+    build_wallpaper(&wall, disp->width, disp->height, &t);
+    if (L->init) L->init(&c);
+
+    input_set in;
+    input_open_all(&in, c.kiosk);
+    int n_kbd = 0, n_ptr = 0;
+    for (int i = 0; i < in.n; i++) {
+        if (in.kind[i] & DEV_KBD)            n_kbd++;
+        if (in.kind[i] & (DEV_REL | DEV_ABS)) n_ptr++;
+    }
+    fprintf(stderr, "aurshell: %d keyboard%s, %d pointer%s%s%s\n",
+            n_kbd, n_kbd == 1 ? "" : "s", n_ptr, n_ptr == 1 ? "" : "s",
+            c.kiosk ? ", grabbed (kiosk)" : "",
+            in.notify_fd >= 0 ? ", hotplug on" : ", NO HOTPLUG");
+    if (!n_ptr) fprintf(stderr, "aurshell: no pointer found — "
+                                "keyboard only until one is plugged in\n");
+
+    /* Start the pointer centred so it is findable on the first frame. */
+    c.mouse_x = disp->width / 2;
+    c.mouse_y = disp->height / 2;
+
+
+    struct timespec last;
+    clock_gettime(CLOCK_MONOTONIC, &last);
+
+    /* Damage tracking. A desktop that repaints four times a second
+     * forever keeps a fanless machine warm and its battery flat for no
+     * benefit whatsoever: the pixels are identical. Repaint when
+     * something actually changed -- input, an animation, a new minute
+     * on the clock, a theme reload, or losing and regaining the VT. */
+    int dirty = 1, last_min = -1;
+    uint32_t last_damage = 0;
+    int super_down = 0;
+    static uint32_t key_seen[24];             /* the keys a program has seen go down (and so must see come up) */
+    /* PHASE 9, ASKED ONCE PER SESSION AND NOT BY A BUTTON.
+     *
+     * Nothing on the band opens this one: it opens itself, here, if
+     * aurfirst says this machine is waiting to be told AurOS works,
+     * and it comes back the next time the machine is switched on if
+     * she closed it without answering. See src/aurshell/welcome.h. */
+    welcome_init(&c);
+    /* Her size from last time, handed to her programs again: the
+     * settings daemon may have been reset, and a program started now
+     * should open at the size she chose. Not in a still render. */
+    if (c.text_scale < 0.99f || c.text_scale > 1.01f) textsys_apply(c.text_scale);
+    /* The buttons her programs' own title bars show are this look's. */
+    textsys_buttons(L->id);
+    /* The wifi panel as of the last pass, and what had the keyboard
+     * before it took it. See the transition handler in the loop. */
+    int net_open_last = 0;
+    int set_open_last = 0;
+    int wish_open_last = 0;
+    int bt_open_last  = 0;
+    /* Who had the keyboard before a panel took it. A WINDOW ID and not
+     * a pointer: the window can be destroyed while the panel is up --
+     * closing a browser from its own menu, or an application that
+     * crashes -- and handing a freed pointer back to the compositor is
+     * a use-after-free reachable by waiting. An id that no longer
+     * resolves simply gives focus to nobody. */
+    uint32_t panel_prev_focus = 0;
+    int      panel_open_last  = 0;
+    /* One bit per evdev keycode: the keys the shell itself swallowed on
+     * the way down, so their release is swallowed too. KEY_MAX is 767. */
+    uint32_t media_held[(KEY_MAX + 32) / 32] = {0};
+    /* Which window was last ASKED to close, and when. A second press
+     * inside this window stops it outright. */
+    #define CLOSE_INSIST_MS 6000
+    uint32_t close_asked_wid = 0, close_asked_ms = 0;
+    /* THE SCREEN GOES DARK WHEN NOBODY IS THERE.
+     *
+     * `screen_dark` is what the panel is doing, not what we asked it
+     * to do: kms_screen_off() fails on a driver with no DPMS property
+     * at all (simpledrm has none), and in that case the shell paints
+     * black instead -- worth less, since the backlight stays on, and
+     * not nothing. Either way nothing else is painted, which is most
+     * of the saving on a machine that composites on the CPU. */
+    int64_t  last_input_ms = now_ms();
+    int      screen_dark = 0, dark_is_dpms = 0;
+    /* Everything that arrives in this long after the screen comes back
+     * is thrown away. Not just the one event that woke it: a click is
+     * a press AND a release, a double-click is four, and a key held
+     * down at a dark screen repeats. Delivering the tail of that to a
+     * desktop she has not seen yet is how a wake-up press lands on
+     * whatever was under the pointer. */
+    #define WAKE_DEADTIME_MS 250
+    int64_t  woke_at_ms = 0;
+
+    press_state pr = {0};
+    while (!want_quit) {
+        /* What she is looking at, for "one press is one press": any
+         * change of panel, page or question starts the dead time. */
+        press_screen(&pr, now_ms(), screen_signature(&c));
+        if (want_reload || c.want_reload) {
+            want_reload = 0;
+            c.want_reload = 0;
+
+            /* Which files to read is part of what a reload reloads. A
+             * fresh image has no user copy of either, so the first
+             * thing Settings does -- write one -- is invisible to a
+             * shell that resolved these once at start-up. */
+            PICK_HERS(conf,   user_conf,  conf_forced,  "/etc/auros/shell.conf");
+            PICK_HERS(shellf, user_shell, shell_forced, "/etc/auros/shell/active.shell");
+
+            theme_t nt = {0};
+            if (theme_load(&nt, conf) == 0) {
+                t = nt;
+                shell_theme_load(&c, &t);
+                free_fonts(&f);
+                load_fonts(&f, &c);
+                build_wallpaper(&wall, disp->width, disp->height, &t);
+                fprintf(stderr, "aurshell: theme reloaded\n");
+                dirty = 1;
+            }
+
+            /* THE ARCHETYPE, which is the other half of a reload and
+             * was not in it.
+             *
+             * Settings says "Press one. The desktop changes straight
+             * away." It wrote the symlink, set want_reload, and this
+             * block reloaded the colours -- so the screen flickered
+             * and came back looking exactly the same, arranged exactly
+             * the same way, until the machine was restarted. The one
+             * sentence on that page was false. */
+            if (shell_archetype_load(&c, shellf) == 0) {
+                /* by_id() never returns NULL -- an id it does not know
+                 * falls back to `rail`, the one nothing can hide in --
+                 * so the name in the context is corrected from the
+                 * layout actually chosen rather than from the file. */
+                const shell_layout *NL = shell_layout_by_id(c.layout_id);
+                snprintf(c.layout_id, sizeof c.layout_id, "%s", NL->id);
+                if (NL != L) {
+                    /* The one it is leaving puts its own things away:
+                     * every archetype owns a c->priv it allocated, and
+                     * swapping without this leaks it AND hands the new
+                     * archetype a pointer to the old one's state. */
+                    /* The one it is leaving puts its own things away.
+                     * Every archetype's priv is a function-scope
+                     * static that its init() memsets, so nothing is
+                     * freed here -- but fini() is still what marks the
+                     * old one as no longer running, and init() is what
+                     * gives the new one a state that is its own. */
+                    if (L->fini) L->fini(&c);
+                    c.priv = NULL;
+                    L = NL;
+                    if (L->init) L->init(&c);
+                    textsys_buttons(L->id);
+                    fprintf(stderr, "aurshell: archetype now '%s' (%s)\n",
+                            L->id, c.shell_name);
+                    /* AND THE KEYBOARD GOES WHERE THE NEW ONE SAYS.
+                     *
+                     * init() decides what is focused, and rail's says
+                     * "Home, nothing" -- while the compositor still
+                     * had the browser. Leaving those two disagreeing
+                     * is the "the window drawn as active and the
+                     * window receiving keys are two different windows"
+                     * defect, arrived at from a new direction. It also
+                     * has to survive the panel's focus restore below,
+                     * so the remembered window is dropped too. */
+                    panel_prev_focus = 0;
+                    if (c.wl) {
+                        aurwl_win *nf = (c.focus >= 0 && c.focus < c.n_wins)
+                                      ? session_win(&c, c.wins[c.focus].wid)
+                                      : NULL;
+                        aurwl_set_focus(c.wl, nf);
+                        if (nf) panel_prev_focus = c.wins[c.focus].wid;
+                    }
+                }
+                dirty = 1;
+            } else {
+                /* Unreadable. The running archetype is still the
+                 * running one, and the name must go on saying so. */
+                snprintf(c.layout_id, sizeof c.layout_id, "%s", L->id);
+            }
+            /* The band's height follows BOTH the archetype's target
+             * size and the theme's font size, so the body it leaves is
+             * remeasured on every reload -- not only on the branch
+             * where the archetype could be read. A theme change with
+             * an unreadable active.shell used to leave the archetype
+             * painting into a body of the wrong height. */
+            c.screen_h = disp->height - foot_height(&c);
+            session_fit_output(&c, disp->width);
+        }
+
+        /* A VT switch away means another process owns the display.
+         * Painting into a buffer nothing scans out is wasted work, and
+         * the ioctls fail anyway, so stop until we are back. */
+        if (want_release) {
+            want_release = 0;
+            console_release(&g_con, disp->fd);
+        }
+        if (want_acquire) {
+            want_acquire = 0;
+            console_acquire(&g_con, disp->fd);
+            dirty = 1;
+        }
+        if (!g_con.active) {
+            struct pollfd idle = { -1, 0, 0 };
+            poll(&idle, 0, 120);
+            continue;
+        }
+
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        float dt = (float)(now.tv_sec - last.tv_sec)
+                 + (float)(now.tv_nsec - last.tv_nsec) / 1e9f;
+        last = now;
+        if (dt > 0.25f) dt = 0.25f;          /* a stall must not teleport */
+
+        /* ONE place notices the wifi panel opening and closing.
+         *
+         * Three things can toggle it -- the band's button, Close inside
+         * the panel, Escape -- and the work that has to happen on each
+         * transition is the same. Doing it at the button was doing it
+         * in one of the three places, so closing the panel from inside
+         * it left the keyboard pointed at nothing and the nmcli it had
+         * running still running.
+         *
+         * The panel is modal, so opening it takes the keyboard off
+         * whatever had it. Without that her password is typed into a
+         * browser's address bar as well as into the box she is looking
+         * at. The leave that goes with it is also what makes the
+         * application let go of any key it thought was held. */
+        if (c.bt_open != bt_open_last) {
+            if (c.bt_open) bt_opened(&c);
+            else           bt_closed(&c);
+            bt_open_last = c.bt_open;
+            dirty = 1;
+        }
+        if (c.settings_open != set_open_last) {
+            if (c.settings_open) settings_opened(&c);
+            else                 settings_closed(&c);
+            set_open_last = c.settings_open;
+            dirty = 1;
+        }
+        /* Wishes: the same transition, in the same place. */
+        if (!c.wish_open != !wish_open_last) {
+            if (c.wish_open) wish_opened(&c);
+            else             wish_closed(&c);
+            dirty = 1;
+        }
+        wish_open_last = c.wish_open;
+        /* Has she gone? The clock is monotonic and the comparison is
+         * against the last INPUT, not the last repaint: a video
+         * playing does not count as somebody being there, which is
+         * wrong for a film and right for a machine that was left
+         * showing one. A player that wants to stop this asks for an
+         * idle inhibitor (Firefox, mpv and VLC all do while a video
+         * plays); aurwl answers whether one is on a window that is on
+         * screen, and that counts as her being here -- as of now, so the
+         * ten minutes start when the film ends, not two hours ago.
+         * (stream WL's edit; stream C owns this file) */
+        /* ...and so does a program that asked over D-Bus (VLC, Zoom: notify.c, org.freedesktop.ScreenSaver) */
+        if ((c.wl && aurwl_idle_inhibited(c.wl)) || notify_idle_inhibited()) last_input_ms = now_ms();
+        if (c.screen_off_min > 0 && !screen_dark) {
+            int64_t idle = now_ms() - last_input_ms;
+            if (idle > (int64_t)c.screen_off_min * 60000) {
+                screen_dark = 1;
+                dark_is_dpms = (kms_screen_off(disp, 1) == 0);
+                if (!dark_is_dpms) {
+                    surface *fb = kms_back_surface(disp);
+                    if (fb) {
+                        rect all = { 0, 0, fb->w, fb->h };
+                        draw_rect(fb, all, 0x000000, 1.f);
+                        kms_flip(disp);
+                    }
+                }
+                fprintf(stderr, "aurshell: screen off after %d minutes\n",
+                        c.screen_off_min);
+            }
+        }
+
+        /* One session bus, not two: logind's, once it appears. See
+         * run.c -- this cannot be an ordering dependency, because the
+         * thing to be ordered after is created by this unit's own PAM
+         * stack. */
+        if (run_adopt_user_bus())
+            fprintf(stderr, "aurshell: using the session bus logind made\n");
+        /* And tell that bus where the screen is, so the portal Flathub
+         * programs open their Open and Save dialogs through can find it
+         * (run.h, run_publish_env). */
+        if (c.wl && run_publish_env(aurwl_socket(c.wl), aurwl_x_display(c.wl)))
+            fprintf(stderr, "aurshell: told the session where this desktop is "
+                            "(WAYLAND_DISPLAY=%s, DISPLAY=%s)\n", aurwl_socket(c.wl),
+                    aurwl_x_display(c.wl) ? aurwl_x_display(c.wl) : "none");
+        /* Idempotent, rate-limited inside, and it notices for itself
+         * when the address has changed -- which the line above is not
+         * the only thing that can do, since a spawn adopts too. */
+        notify_open();
+        /* Read the bus HERE, every pass, rather than only when its fd
+         * is readable. libdbus buffers: a message can be complete in
+         * the connection's own queue with nothing left on the socket,
+         * and a loop that only dispatches on POLLIN sits on it until
+         * the next message arrives to wake it. The fd stays in poll()
+         * so an idle desktop still wakes promptly; this is what makes
+         * sure it is never the only way. */
+        if (notify_pump(&c))  dirty = 1;
+        /* A remote-control program being installed: polkit stopped it,
+         * and the card asks her (guard.h). */
+        if (guard_pump(&c)) dirty = 1;
+        /* One line a panel wants said (c.say), said once. */
+        if (c.say[0]) { osd_say(c.say); c.say[0] = 0; dirty = 1; }
+
+        /* A PROGRAM WAS INSTALLED (or removed). Read the table again
+         * and show it, now -- see appwatch.h. The archetype is told
+         * where the pointer is so that whatever is highlighted is the
+         * thing under it in the new table and not in the old one. */
+        appwatch_pump();
+        if (appwatch_due()) {
+            int added[8];
+            int want_card = shell_want_ready_card(&c);     /* before the table changes under the indices */
+            int k = shell_rescan_apps(&c, added, 8);
+            if (k >= 0) {
+                fprintf(stderr, "aurshell: programs changed: %d on this "
+                                "computer, %d new\n", c.n_apps, k);
+                if (L->motion && c.mouse_x >= 0) L->motion(&c, c.mouse_x, c.mouse_y);
+                /* In her words, and the card is the shortcut: pressing
+                 * it opens the program. Three at most -- a system update
+                 * that adds a dozen helpers is not a dozen pieces of news. */
+                for (int i = 0; want_card && i < k && i < 3; i++) {
+                    char sum[96];
+                    snprintf(sum, sizeof sum, "%s is ready", c.apps[added[i]].name);
+                    notify_local_open(sum, "Press here to open it.", c.apps[added[i]].id);
+                }
+                dirty = 1;
+            }
+        }
+        /* A card asked for a program (she pressed "VLC is ready"), or a
+         * panel did. Started here, where the archetype's present() is,
+         * so the rail scrolls to it and the tiles grow into it. */
+        {
+            char oid[32];
+            if (notify_take_open(oid, sizeof oid))
+                for (int i = 0; i < c.n_apps; i++)
+                    if (!strcmp(c.apps[i].id, oid)) { c.want_launch = i + 1; break; }
+            if (c.want_launch > 0 && c.want_launch <= c.n_apps && !SHELL_PANEL_OPEN(&c)) {
+                int wi = shell_launch(&c, c.want_launch - 1);
+                if (wi >= 0) {
+                    if (L->present) L->present(&c, wi); else c.focus = wi;
+                }
+                dirty = 1;
+            }
+            c.want_launch = 0;
+        }
+        power_step();
+        if (settings_step(&c)) dirty = 1;
+        /* The handful of things this computer should speak up about
+         * without being asked. Today that is the battery: reading it
+         * and warning about it are not the same feature, and a laptop
+         * that dies in the middle of a sentence has not been unhelpful
+         * once, it has lost her work. */
+        if (watch_tick(&c)) dirty = 1;
+        if (c.net_open != net_open_last) {
+            if (c.net_open) net_opened(&c);
+            else            net_closed(&c);
+            net_open_last = c.net_open;
+            dirty = 1;
+        }
+
+        /* ONE PLACE DECIDES WHO HAS THE KEYBOARD.
+         *
+         * A panel is modal, so opening one takes the keyboard off
+         * whatever had it, and closing it gives the keyboard back. The
+         * leave that goes with the taking is also what makes the
+         * application let go of any key it thought was held.
+         *
+         * Only the wifi panel used to do this -- it was written where
+         * the wifi panel is opened. So the wifi PASSWORD was kept away
+         * from the browser behind it, and then Settings and the
+         * headphones panel were added beside it and every keystroke
+         * typed into either one was ALSO delivered to that browser:
+         * the same defect, in the two panels written after the fix.
+         *
+         * Driven off SHELL_PANEL_OPEN, so a sixth panel is covered by
+         * existing. */
+        int panel_now = SHELL_PANEL_OPEN(&c) ? 1 : 0;
+        if (panel_now != panel_open_last) {
+            if (c.wl) {
+                if (panel_now) {
+                    aurwl_win *had = aurwl_focus(c.wl);
+                    panel_prev_focus = had ? aurwl_win_id(had) : 0;
+                    aurwl_set_focus(c.wl, NULL);
+                } else {
+                    aurwl_set_focus(c.wl, session_win(&c, panel_prev_focus));
+                    panel_prev_focus = 0;
+                }
+            }
+            panel_open_last = panel_now;
+            dirty = 1;
+        }
+
+        /* Clients first: a window that arrived, moved or repainted has
+         * to be in the list before the archetype lays the list out. */
+        /* Each subsystem waits for its own children; the wifi panel's
+         * nmcli is not the compositor's to collect, and there may be
+         * no compositor at all. */
+        net_reap();
+        bt_reap();
+        if (welcome_step(&c)) dirty = 1;
+        /* The engine's socket, the microphone, and what a wish has put
+         * on the screen -- whether or not the panel is open. */
+        if (wish_step(&c)) dirty = 1;
+        if (c.want_wish) { wish_command(&c, c.want_wish); c.want_wish = 0; dirty = 1; }
+        run_reap();
+        /* The indicator needs one more frame AFTER it goes, to paint
+         * the screen without it. Without the falling edge it stayed on
+         * screen until something else happened to cause a repaint --
+         * which on an idle desktop is never. */
+        {
+            static int osd_was = 0;
+            int osd_now = osd_visible() ? 1 : 0;
+            if (osd_now != osd_was) dirty = 1;   /* it has no clock now */
+            osd_was = osd_now;
+        }
+        if (c.wl) {
+            aurwl_dispatch(c.wl);
+            aurwl_reap(c.wl);
+            int before = c.n_wins;
+            session_sync(&c, L);
+            if (!SHELL_PANEL_OPEN(&c)) session_focus_follow(&c);    /* keys go to the window she is looking at */
+            uint32_t seq = aurwl_damage_seq(c.wl);
+            if (seq != last_damage || c.n_wins != before) { last_damage = seq; dirty = 1; }
+        }
+
+        /* She changed the size of the words. Reopen every face at the
+         * new size and repaint -- the band's own height follows the
+         * type, so the screen re-lays-out around it in the same frame
+         * and she sees the result of the press immediately. */
+        if (c.text_changed) {
+            c.text_changed = 0;
+            textsys_apply(c.text_scale);      /* and her programs' */
+            if (c.wl) aurwl_set_text_scale(c.wl, c.text_scale);   /* ...the X ones too */
+            free_fonts(&f);
+            load_fonts(&f, &c);
+            c.screen_h = disp->height - foot_height(&c);
+            session_fit_output(&c, disp->width);
+            dirty = 1;
+        }
+
+        /* She pressed Turn off. Ask systemd, and if that is not there,
+         * fall back to the kernel -- a machine that cannot be shut down
+         * is a machine she unplugs, and unplugging is how filesystems
+         * get corrupted. */
+        /* She asked for whatever she is looking at to be closed. The
+         * band sets the flag and the host does it, because which
+         * window is "this" is the session's business. */
+        if (c.want_close_win) {
+            /* 2 is "Get me out of this page" (guard.c): stop it NOW. A
+             * scam page is the one thing that answers a polite request
+             * by asking her something else. */
+            int force = (c.want_close_win == 2);
+            c.want_close_win = 0;
+            /* ONLY the window she is looking at, and only when the
+             * archetype says there IS one.
+             *
+             * `c.focus == -1` is not "no windows open". In rail it is
+             * the documented "Home is centred", and in tiles it is
+             * "back on the page of buttons, nothing is on" -- and the
+             * band draws Close this whenever any window exists. So
+             * falling back to the last slot meant that pressing
+             * "Close this" while looking at Home asked the browser to
+             * close. Harmless while the button was a no-op; the moment
+             * it was wired to a real close request it became "a button
+             * that closes a document you are not looking at, with
+             * unsaved work in it". */
+            int w = (c.focus >= 0 && c.focus < c.n_wins) ? c.focus : -1;
+            if (w < 0) {
+                osd_say(c.n_wins > 0
+                        ? "Press the thing you want to close first."
+                        : "There is nothing open to close.");
+            } else if (c.wins[w].wid) {
+                /* A real window is ASKED, the way its own title bar
+                 * button would ask, so a document with unsaved changes
+                 * still gets to object. The slot goes when the client
+                 * actually goes.
+                 *
+                 * This half was never written. shell_close_win()
+                 * returns immediately on a slot that has a window --
+                 * its comment says the host does the asking -- and the
+                 * host did not ask. So "Close this", a button that is
+                 * on screen at all times, did nothing whatsoever: the
+                 * failure shell.h calls worse than having no control. */
+                aurwl_win *win = session_win(&c, c.wins[w].wid);
+                if (win) {
+                    /* SECOND PRESS MEANS IT. A client is ASKED first,
+                     * so a document with unsaved changes gets to put
+                     * its own question on the screen. But a client
+                     * that is wedged never answers, and a button that
+                     * politely asks a dead program forever is the
+                     * no-op this was written to stop being. So the
+                     * second press within a few seconds takes it. */
+                    uint32_t nowm = (uint32_t)now_ms();
+                    if (force) {
+                        aurwl_win_kill(win);
+                        osd_say("That page is closed.");
+                        close_asked_wid = 0;
+                    } else if (close_asked_wid == c.wins[w].wid &&
+                        (uint32_t)(nowm - close_asked_ms) < CLOSE_INSIST_MS) {
+                        aurwl_win_kill(win);
+                        osd_say("That program was not answering, so it was "
+                                "stopped.");
+                        close_asked_wid = 0;
+                    } else {
+                        aurwl_win_close(win);
+                        close_asked_wid = c.wins[w].wid;
+                        close_asked_ms  = nowm;
+                    }
+                } else {
+                    /* The compositor has no such window any more, so
+                     * the slot is the shell's to remove -- and
+                     * shell_close_win() refuses a slot that still
+                     * carries a wid, so the wid is cleared first.
+                     * Without that this arm was unreachable code
+                     * wearing the shape of a handler. */
+                    c.wins[w].wid = 0;
+                    shell_close_win(&c, w);
+                }
+            } else {
+                /* A slot with nothing behind it yet -- an application
+                 * that is still starting, or one that failed to. That
+                 * one is the shell's own to remove. */
+                shell_close_win(&c, w);
+            }
+            dirty = 1;
+        }
+
+        /* AFTER the close above: the sound "Get me out" turned off comes
+         * back only once the page that was making it has gone. */
+        if (guard_step(&c)) dirty = 1;
+
+        if (c.want_power_off) {
+            int what = c.want_power_off;
+            c.want_power_off = 0;
+            /* 1 off, 2 start again, 3 sleep -- see foot.h. Sleep is
+             * the one that does NOT end the session, so the shell goes
+             * on running and paints again when the machine wakes. */
+            static const char *VERB[4] = { NULL, "poweroff", "reboot", "suspend" };
+            static const char *SAID[4] = { NULL, "shutting down",
+                                           "restarting", "going to sleep" };
+            if (what < 1 || what > 3) what = 1;
+            fprintf(stderr, "aurshell: %s at the user's request\n", SAID[what]);
+            const char *argv_off[] = { "/usr/bin/systemctl", VERB[what], NULL };
+
+            /* WAIT FOR IT, AND LOOK AT HOW IT ENDED.
+             *
+             * This used to spawn and call that success. A `systemctl
+             * suspend` that policy refuses forks perfectly and exits
+             * 1, so the button did nothing, silently -- which is word
+             * for word the bug aurshell.service was written to fix,
+             * re-committed one layer up by the code that read its
+             * commit message.
+             *
+             * All three of these are ASYNCHRONOUS logind calls:
+             * systemctl returns as soon as logind has accepted the
+             * job, not when the machine is off. A refusal comes back
+             * just as quickly. So the wait here is short -- it is
+             * bounded by how long the screen may sit still, and 1.2s
+             * is already generous for a D-Bus round trip on a 2013
+             * laptop.
+             *
+             * It must stay short for a reason that is not comfort.
+             * Nothing is painted and nothing is read while this
+             * blocks, and that includes VT_RELDISP: with VT_PROCESS
+             * set, the kernel waits for this process to acknowledge a
+             * VT switch, so a long block here is Ctrl-Alt-F2 hanging
+             * for the whole budget. */
+            int rc = run_status(argv_off, 1200);
+            static const char *SORRY[4] = {
+                NULL,
+                "This computer would not turn off. Try again in a moment.",
+                "This computer would not restart. Try again in a moment.",
+                "This computer will not go to sleep."
+            };
+            if (rc == RUN_NOSTART) {
+                /* It never started -- no fork, no exec, nothing. NOT
+                 * the same answer as "still running", which is what
+                 * both used to be. A machine out of process slots is
+                 * exactly the machine somebody is reaching for Turn
+                 * off on, and it was getting a button that did nothing
+                 * and said nothing. */
+                fprintf(stderr, "aurshell: could not start systemctl %s\n",
+                        VERB[what]);
+                osd_say(SORRY[what]);
+            } else if (rc == RUN_RUNNING || rc == 0) {
+                /* Accepted, or still working on it. Either way the
+                 * machine is on its way and the screen should stop. */
+            } else {
+                fprintf(stderr, "aurshell: systemctl %s exited %d\n",
+                        VERB[what], rc);
+                osd_say(SORRY[what]);
+            }
+            dirty = 1;
+        }
+
+        int animating = L->step ? L->step(&c, dt) : 0;
+        if (animating) dirty = 1;
+
+        if (c.show_clock) {
+            time_t tt = time(NULL);
+            struct tm tm_;
+            if (localtime_r(&tt, &tm_) && tm_.tm_min != last_min) {
+                last_min = tm_.tm_min; dirty = 1;
+            }
+        }
+
+        if (dirty) {
+            surface *fb = kms_back_surface(disp);
+            /* Cleared before the archetype paints, so the rectangles it
+             * records are this frame's and input routes against what is
+             * on screen rather than what was. */
+            draw_track_reset();
+            /* The archetype gets a surface that is SHORTER than the
+             * screen: same pixels, same stride, fewer rows. Every
+             * primitive in draw.c and font.c clips to s->h, so the band
+             * at the bottom is unreachable from a layout by
+             * construction rather than by agreement -- which is why no
+             * archetype needed editing to gain it. */
+            surface body = *fb;
+            body.h = c.screen_h;
+            L->paint(&c, &body, &f, wall);
+            session_paint_full(&c, &body);
+            session_paint_popups(&c, &body);
+            /* Above the archetype and below the panels: a card must
+             * not cover a screen she opened deliberately. */
+            if (!SHELL_PANEL_OPEN(&c)) notify_paint(&c, fb, &f);
+            net_paint(&c, fb, &f);
+            settings_paint(&c, fb, &f);
+            bt_paint(&c, fb, &f);
+            wish_paint(&c, fb, &f);
+            /* AFTER the other panels and BEFORE the band. It is the
+             * only panel nothing opened on purpose, so it must not be
+             * underneath one she did open -- and the band stays on top
+             * because the way out of everything is always the band. */
+            welcome_paint(&c, fb, &f);
+            /* Over the welcome question too: a page shouting at her, or
+             * a stranger's program arriving, outranks it. Under the band. */
+            guard_paint(&c, fb, &f);
+            foot_paint(&c, fb, &f);
+            /* What a wish put on the screen: a fill covers everything,
+             * the band included, until the first key or press; cards
+             * stay inside the desktop's own height. */
+            wishover_paint(&c, fb, &f);
+            /* Last, over everything including the band: it is the
+             * answer to a key that was just pressed, and an answer
+             * behind a window is not one. */
+            osd_paint(&c, fb, &f);
+            /* A picture of the screen, taken HERE -- after everything
+             * has been painted and before it is handed to the display
+             * -- because that is the only moment the thing she is
+             * looking at exists in one buffer. The band and the panels
+             * included, which is the point: a picture that leaves out
+             * the thing she is asking about is not evidence.
+             *
+             * Not a developer's convenience. It is what a person is
+             * asked for when they telephone somebody about a computer,
+             * and this product's whole audience is people who will be
+             * doing exactly that. */
+            if (c.want_screenshot) {
+                c.want_screenshot = 0;
+                char dir[512], path[640];
+                const char *home = getenv("HOME");
+                if (home && *home) {
+                    snprintf(dir, sizeof dir, "%s/Pictures", home);
+                    mkdir(dir, 0755);
+                } else {
+                    snprintf(dir, sizeof dir, "%s", "/tmp");
+                }
+                time_t tt = time(NULL);
+                struct tm tm_;
+                char when[40] = "picture";
+                if (localtime_r(&tt, &tm_))
+                    strftime(when, sizeof when, "Screen %Y-%m-%d %H.%M.%S", &tm_);
+                snprintf(path, sizeof path, "%s/%s.png", dir, when);
+                /* It says WHERE it put it, because a file she cannot
+                 * find is a file that does not exist. */
+                if (png_write_rgb(path, fb->px, fb->w, fb->h) == 0) {
+                    char msg[200];
+                    snprintf(msg, sizeof msg,
+                             "Picture saved in your Pictures folder: %s", when);
+                    osd_say(msg);
+                } else {
+                    osd_say("That picture could not be saved.");
+                }
+                dirty = 1;
+            }
+
+            session_paint_cursor(&c, fb);
+            /* A failed flip is not cosmetic: it means we no longer own
+             * the display. Say so once rather than painting into the
+             * void for the rest of the session. */
+            if (kms_flip(disp) < 0 && g_con.active) {
+                static int moaned = 0;
+                if (!moaned++) fprintf(stderr, "aurshell: display present failed "
+                                               "— lost DRM master?\n");
+            }
+            /* Every toolkit throttles itself to this. Without it a
+             * client draws exactly one frame and then waits forever,
+             * which looks like an application that has hung. */
+            if (c.wl) {
+                struct timespec ft; clock_gettime(CLOCK_MONOTONIC, &ft);
+                aurwl_frame_done(c.wl, (uint32_t)(ft.tv_sec * 1000u + ft.tv_nsec / 1000000u));
+            }
+            dirty = 0;
+        }
+        if (once) break;
+
+        /* Animating: poll briefly so the next frame is soon. Idle: wait
+         * a full second; with damage tracking there is nothing to do
+         * until an event arrives, and the clock is handled above. */
+        /* The devices, plus EVERY other thing this loop waits on. The
+         * bound was `+ 4` and there are now six of them -- inotify,
+         * the compositor, nmcli, bluetoothctl, the bus and the program
+         * directories (appwatch.c) -- so adding
+         * the fifth wrote one pollfd past the end of a stack array.
+         * Counted from the list rather than from memory, and checked,
+         * because the next one added would have done it again. */
+        #define POLL_EXTRAS 7
+        struct pollfd pfd[MAX_INPUT_DEV + POLL_EXTRAS];
+        int np = 0;
+        /* How many device slots pfd[] describes. The walk below indexes
+         * pfd[] BY DEVICE INDEX, so it must not run past this even if
+         * in.n changes -- which it did: a hotplug was handled before
+         * the walk, so in.n grew and the new device's slot was read
+         * from whatever came next in pfd[], the inotify or Wayland or
+         * nmcli fd. A device that had just been plugged in could be
+         * dropped on the spot because a different fd had POLLHUP. */
+        int n_polled = in.n;
+        for (int i = 0; i < in.n; i++) { pfd[np].fd = in.fd[i]; pfd[np].events = POLLIN; np++; }
+        int noti = -1;
+        if (in.notify_fd >= 0) { noti = np; pfd[np].fd = in.notify_fd;
+                                 pfd[np].events = POLLIN; np++; }
+        int wlfd = -1;
+        if (c.wl) { wlfd = np; pfd[np].fd = aurwl_fd(c.wl); pfd[np].events = POLLIN; np++; }
+        /* Whatever the wifi panel has running. A look for networks
+         * takes several seconds on a radio that has to sweep every
+         * channel; waiting for it in line would stop the screen, and
+         * polling for it here costs nothing when nothing is running. */
+        int netfd = -1, netslot = -1;
+        if ((netfd = net_fd()) >= 0) {
+            netslot = np; pfd[np].fd = netfd;
+            pfd[np].events = POLLIN; np++;
+        }
+        /* In poll() so that a message arriving on an idle desktop
+         * wakes it at once. It is READ at the top of the loop, not
+         * here -- see the note there. */
+        int nofd = notify_fd();
+        if (nofd >= 0) { pfd[np].fd = nofd; pfd[np].events = POLLIN; np++; }
+        /* A program being installed. Read at the top of the loop, like
+         * the bus; here so an idle desktop wakes for it. */
+        int awfd = appwatch_fd();
+        if (awfd >= 0) { pfd[np].fd = awfd; pfd[np].events = POLLIN; np++; }
+        /* The Wishes engine: an overlay a wish asks for arrives here. */
+        int wsfd = wish_fd();
+        if (wsfd >= 0) { pfd[np].fd = wsfd; pfd[np].events = POLLIN; np++; }
+        int btfd = -1, btslot = -1;
+        if ((btfd = bt_fd()) >= 0) {
+            btslot = np; pfd[np].fd = btfd;
+            pfd[np].events = POLLIN; np++;
+        }
+        /* With a client on screen the wait is short: it is drawing, and
+         * the next thing to happen is its next buffer, not a keystroke. */
+        int wait_ms = screen_dark ? 1000
+                    : (animating || settings_dragging()) ? 8
+                    : (c.n_wins > 0 ? 16 : 1000);
+        /* Something in the middle of joining the session bus would be
+         * slept straight through otherwise: see notify.h. */
+        int nw = notify_wait_ms();
+        if (nw >= 0 && nw < wait_ms) wait_ms = nw;
+        /* Something the root side is doing on the desktop's behalf --
+         * a boot entry being written, somebody's documents being
+         * copied -- answers in a file rather than on an fd, so the
+         * wait is shortened only while one is in flight. An idle
+         * desktop that polls four times a second for a file nobody is
+         * going to write is a laptop with an hour less battery. */
+        int ww = welcome_wait_ms();
+        if (ww >= 0 && ww < wait_ms) wait_ms = ww;
+        int aw = appwatch_wait_ms();
+        if (aw >= 0 && aw < wait_ms) wait_ms = aw;
+        int wsw = wish_wait_ms();
+        if (wsw >= 0 && wsw < wait_ms) wait_ms = wsw;
+        if (np > (int)(sizeof pfd / sizeof pfd[0])) {
+            /* Unreachable by construction; here because the thing it
+             * guards is a stack overflow and "unreachable" is what was
+             * believed about the last one. */
+            fprintf(stderr, "aurshell: %d fds to wait on, room for %d\n",
+                    np, (int)(sizeof pfd / sizeof pfd[0]));
+            np = (int)(sizeof pfd / sizeof pfd[0]);
+        }
+        if (poll(pfd, np, wait_ms) <= 0) continue;
+        (void)wlfd;
+
+        if (netslot >= 0 && (pfd[netslot].revents & (POLLIN | POLLHUP | POLLERR)))
+            if (net_pump(&c)) dirty = 1;
+        if (btslot >= 0 && (pfd[btslot].revents & (POLLIN | POLLHUP | POLLERR)))
+            if (bt_pump(&c)) dirty = 1;
+
+
+        /* Walk backwards: dropping a device compacts the array, so a
+         * forward walk would skip the entry moved into the hole. Bounded
+         * by n_polled, not by in.n, for the reason given where it is
+         * set -- and the hotplug scan that GROWS in.n happens after
+         * this loop, not before it. */
+        for (int i = n_polled - 1; i >= 0; i--) {
+            short re = pfd[i].revents;
+            /* POLLERR/POLLHUP arrive whether or not we asked for them,
+             * and the kernel keeps reporting them forever once a device
+             * is gone. Skipping the fd without closing it turns poll()
+             * into a busy loop -- a shipped desktop pinning a core at
+             * 100% because someone unplugged a mouse. */
+            if (re & (POLLERR | POLLHUP | POLLNVAL)) {
+                fprintf(stderr, "aurshell: input device %s went away\n", in.name[i]);
+                input_drop(&in, i);
+                continue;
+            }
+            if (!(re & POLLIN)) continue;
+
+            struct input_event ev;
+            ssize_t got;
+            while ((got = read(in.fd[i], &ev, sizeof ev)) == (ssize_t)sizeof ev) {
+                /* ANY real event means somebody is here. SYN is not a
+                 * real event -- it is punctuation the kernel sends
+                 * after the others -- so counting it would mean a
+                 * device that syncs on a timer keeps the screen on
+                 * forever. */
+                if (ev.type != EV_SYN) {
+                    int64_t tnow = now_ms();
+                    last_input_ms = tnow;
+                    wish_input_seen();
+                    if (screen_dark) {
+                        /* THE PRESS THAT WAKES IT DOES NOTHING ELSE.
+                         *
+                         * A key pressed at a dark screen must not also
+                         * be typed, and a click must not also press
+                         * whatever happens to be under the pointer --
+                         * which on a desktop she cannot see is any
+                         * button on it, including Turn off. */
+                        screen_dark = 0;
+                        if (dark_is_dpms) kms_screen_off(disp, 0);
+                        dark_is_dpms = 0;
+                        woke_at_ms = tnow;
+                        dirty = 1;
+                        fprintf(stderr, "aurshell: screen on\n");
+                        continue;
+                    }
+                    /* ...and neither does the rest of what she did
+                     * while it was dark. */
+                    if (woke_at_ms &&
+                        tnow - woke_at_ms < WAKE_DEADTIME_MS) continue;
+                    woke_at_ms = 0;
+                }
+                if (ev.type == EV_SYN) {
+                    /* The kernel dropped events because we were too slow
+                     * painting. Anything we think is held down may not
+                     * be; the safe assumption is nothing is. */
+                    if (ev.code == SYN_DROPPED) c.mouse_down = 0;
+                    else if (ev.code == SYN_REPORT && (in.kind[i] & DEV_PAD))
+                        pad_synced(&in.pad[i]);
+                    continue;
+                }
+                if (ev.type == EV_REL) {
+                    if (ev.code == REL_X) c.mouse_x += ev.value;
+                    if (ev.code == REL_Y) c.mouse_y += ev.value;
+                    /* A browser that cannot scroll is a poster of a
+                     * browser, so the wheel is routed even though no
+                     * archetype has ever used it. */
+                    /* Not through a panel. The wheel is the natural
+                     * way to ask a list for more of itself, and doing
+                     * it over a panel used to scroll the application
+                     * hidden behind it. This knew about three of the
+                     * five panels. */
+                    if ((ev.code == REL_WHEEL || ev.code == REL_HWHEEL) &&
+                        !SHELL_PANEL_OPEN(&c))
+                        session_scroll(&c, c.mouse_x, c.mouse_y,
+                                       ev.code == REL_HWHEEL, -(double)ev.value);
+                    clamp_pointer(&c, disp->width, disp->height);
+                    dirty = 1;
+                } else if (ev.type == EV_ABS && (in.kind[i] & DEV_ABS)) {
+                    /* +1 because the range is inclusive: a tap on the
+                     * rightmost column reports `maximum`, and dividing
+                     * by (hi - lo) maps that to exactly `width` -- one
+                     * pixel off the screen, missing every target. */
+                    if (ev.code == ABS_X || ev.code == ABS_MT_POSITION_X) {
+                        int lo = in.ax_lo[i], hi = in.ax_hi[i];
+                        if (hi > lo)
+                            c.mouse_x = (int)((int64_t)(ev.value - lo) * disp->width
+                                              / (hi - lo + 1));
+                    } else if (ev.code == ABS_Y || ev.code == ABS_MT_POSITION_Y) {
+                        int lo = in.ay_lo[i], hi = in.ay_hi[i];
+                        if (hi > lo)
+                            c.mouse_y = (int)((int64_t)(ev.value - lo) * disp->height
+                                              / (hi - lo + 1));
+                    }
+                    clamp_pointer(&c, disp->width, disp->height);
+                    dirty = 1;
+                } else if (ev.type == EV_ABS && (in.kind[i] & DEV_PAD)) {
+                    int axis = (ev.code == ABS_Y || ev.code == ABS_MT_POSITION_Y);
+                    if (ev.code == ABS_X || ev.code == ABS_Y ||
+                        ev.code == ABS_MT_POSITION_X || ev.code == ABS_MT_POSITION_Y) {
+                        int step = pad_delta(&in.pad[i], axis, ev.value);
+                        if (step) {
+                            if (axis) c.mouse_y += step; else c.mouse_x += step;
+                            clamp_pointer(&c, disp->width, disp->height);
+                            dirty = 1;
+                        }
+                    }
+                } else if (ev.type == EV_KEY && (in.kind[i] & DEV_PAD) &&
+                           pad_event_kind(ev.code) >= 0) {
+                    if (pad_button(&in.pad[i], pad_event_kind(ev.code),
+                                   ev.value != 0, now_ms()) &&
+                        press_accept(&pr, now_ms(), c.mouse_x, c.mouse_y)) {
+                        /* A tap is a press and a release in one go, so
+                         * the layout sees the same sequence a physical
+                         * click produces and drags still work.
+                         *
+                         * It goes through the same three doors a mouse
+                         * click does, in the same order. It used to go
+                         * straight to the archetype -- past the band
+                         * and past whatever panel was covering the
+                         * screen -- which meant that on a laptop, whose
+                         * touchpad is the only pointer it has, tapping
+                         * the wifi panel started whatever icon happened
+                         * to be underneath it. */
+                        c.mouse_down = 1;
+                        osd_press();    /* goes; the tap still lands (osd.h) */
+                        /* A wish's fill is over everything, so it is
+                         * asked first; the press that ends it is used up. */
+                        int pad_taken = wishover_click(&c, c.mouse_x, c.mouse_y);
+                        if (!pad_taken)
+                            pad_taken = foot_click(&c, c.mouse_x, c.mouse_y);
+                        if (!pad_taken && !SHELL_PANEL_OPEN(&c))
+                            pad_taken = notify_click(&c, c.mouse_x, c.mouse_y);
+                        /* THE WELCOME QUESTION IS ASKED FIRST, because
+                         * it is painted last. Click order and paint
+                         * order have to be each other's mirror or a
+                         * press lands on something she cannot see. The
+                         * band stays ahead of it: the way out of
+                         * everything is always the band. */
+                        if (!pad_taken)
+                            pad_taken = guard_click(&c, c.mouse_x, c.mouse_y);
+                        if (!pad_taken)
+                            pad_taken = welcome_click(&c, c.mouse_x, c.mouse_y);
+                        if (!pad_taken) pad_taken = wish_click(&c, c.mouse_x, c.mouse_y);
+                        if (!pad_taken) pad_taken = net_click(&c, c.mouse_x, c.mouse_y);
+                        if (!pad_taken)
+                            pad_taken = settings_click(&c, c.mouse_x, c.mouse_y);
+                        if (!pad_taken)
+                            pad_taken = bt_click(&c, c.mouse_x, c.mouse_y);
+                        if (!pad_taken)
+                            pad_taken = session_button(&c, c.mouse_x, c.mouse_y,
+                                                       BTN_LEFT, 1);
+                        if (!pad_taken && L->click) L->click(&c, c.mouse_x, c.mouse_y);
+                        c.mouse_down = 0;
+                        if (!pad_taken) {
+                            session_button(&c, c.mouse_x, c.mouse_y, BTN_LEFT, 0);
+                            if (L->motion) L->motion(&c, c.mouse_x, c.mouse_y);
+                        }
+                    }
+                    dirty = 1;
+                } else if (ev.type == EV_KEY) {
+                    /* BTN_TOUCH is a click only where the user is
+                     * touching the thing they are pointing at. On a
+                     * touchpad it fires on every finger-down and lift,
+                     * so honouring it there means the pointer cannot be
+                     * moved without clicking something. */
+                    int is_btn = (ev.code == BTN_LEFT) ||
+                                 (ev.code == BTN_TOUCH && (in.kind[i] & DEV_DIRECT));
+                    if (is_btn && !press_filter(&pr, ev.value != 0, now_ms(),
+                                                c.mouse_x, c.mouse_y)) {
+                        /* A press that is ignored is ignored whole. */
+                        c.mouse_down = 0;
+                        continue;
+                    }
+                    if (is_btn) {
+                        c.mouse_down = (ev.value != 0);
+                        /* Dispatch on PRESS. Release would let a user
+                         * abort a mis-click by sliding off the target,
+                         * which is nicer -- but every archetype that
+                         * supports dragging starts the drag in click()
+                         * and ends it in motion() when the button comes
+                         * up, so a release-dispatched click sets and
+                         * cancels the drag in the same instant. Press
+                         * is also what every other desktop does. */
+                        /* The band is tested before anything else. It
+                         * is the way out, and a way out that can be
+                         * covered by whatever is on screen is not one. */
+                        int taken = 0;
+                        if (ev.value) osd_press();  /* goes; the press still lands */
+                        /* A wish's fill or card is drawn over everything
+                         * else, so it answers first. */
+                        if (ev.value) taken = wishover_click(&c, c.mouse_x, c.mouse_y);
+                        if (!taken && ev.value) taken = foot_click(&c, c.mouse_x, c.mouse_y);
+                        else if (!ev.value && (wishover_take_release() ||
+                                               c.foot_hover >= 0 || SHELL_PANEL_OPEN(&c)))
+                            taken = 1;
+
+                        /* A panel covers the desktop while it is up, so it
+                         * answers before the desktop does -- for the
+                         * same reason the band answers before it. */
+                        /* A card is dismissed by pressing it, and it
+                         * is tested before the panels and before the
+                         * desktop because it is drawn on top of both.
+                         * Not before the band: the band is the way
+                         * out, and a card never covers it. */
+                        if (!taken && ev.value && !SHELL_PANEL_OPEN(&c))
+                            taken = notify_click(&c, c.mouse_x, c.mouse_y);
+                        if (!taken && ev.value) {
+                            /* Painted last, so asked first. See the
+                             * note on the other click path. */
+                            taken = guard_click(&c, c.mouse_x, c.mouse_y);
+                            if (!taken)
+                                taken = welcome_click(&c, c.mouse_x, c.mouse_y);
+                            if (!taken)
+                                taken = wish_click(&c, c.mouse_x, c.mouse_y);
+                            if (!taken)
+                                taken = net_click(&c, c.mouse_x, c.mouse_y);
+                            if (!taken)
+                                taken = settings_click(&c, c.mouse_x, c.mouse_y);
+                            if (!taken)
+                                taken = bt_click(&c, c.mouse_x, c.mouse_y);
+                            /* Anything still not taken, with a panel on
+                             * screen, is swallowed: a press that fell
+                             * through would reach whatever she was
+                             * doing before she opened it. */
+                            if (!taken && SHELL_PANEL_OPEN(&c)) taken = 1;
+                        } else if (!taken && SHELL_PANEL_OPEN(&c)) {
+                            taken = 1;
+                        }
+
+                        /* A click that lands on an application's own
+                         * pixels is that application's. Letting the
+                         * archetype also act on it is how a desktop
+                         * ends up closing a window because the user
+                         * pressed a button inside it. */
+                        if (!taken)
+                            taken = session_button(&c, c.mouse_x, c.mouse_y,
+                                                   BTN_LEFT, ev.value != 0);
+                        if (!taken) {
+                            if (ev.value && L->click) L->click(&c, c.mouse_x, c.mouse_y);
+                            if (!ev.value && L->motion) L->motion(&c, c.mouse_x, c.mouse_y);
+                        }
+                        dirty = 1;
+                    } else if ((ev.code == BTN_RIGHT || ev.code == BTN_MIDDLE) &&
+                               !SHELL_PANEL_OPEN(&c)) {
+                        /* Not while a panel is covering the screen: a
+                         * right-click on the wifi panel used to open a
+                         * context menu in the hidden application and
+                         * move the keyboard to it, painted underneath
+                         * the panel and so invisible.
+                         *
+                         * Context menus arrive as popups, which is why
+                         * the right button is worth forwarding even
+                         * though no archetype has a use for it. */
+                        session_button(&c, c.mouse_x, c.mouse_y, ev.code, ev.value != 0);
+                        dirty = 1;
+                    } else if (in.kind[i] & DEV_KBD) {
+                        if (ev.value == 1) osd_press();   /* the key still goes on */
+                        if (ev.code == KEY_LEFTMETA || ev.code == KEY_RIGHTMETA)
+                            super_down = (ev.value != 0);
+
+                        if (ev.value && ev.code == KEY_ESC && c.kiosk) continue;
+
+                        /* THE KEYS NO PAGE CAN HAVE. Escape three times,
+                         * or Ctrl+Alt+Delete, opens "Get me out of this
+                         * page" -- seen here, before any program is
+                         * told, so nothing on screen can swallow them
+                         * (guard.h). The press that opens it, and its
+                         * release, go nowhere else. */
+                        if (guard_watch_key(&c, ev.code, ev.value, now_ms())) {
+                            c.key_text[0] = 0;
+                            dirty = 1;
+                            continue;
+                        }
+
+                        /* Super belongs to the desktop, always. Without
+                         * one chord the shell keeps for itself, a
+                         * full-screen application is a machine the user
+                         * cannot get out of -- which on a kiosk is the
+                         * whole product and everywhere else is a trap. */
+                        /* What this key TYPES, from the keymap the
+                         * machine is actually configured with, read
+                         * BEFORE the key is delivered: xkb resolves a
+                         * keycode against the modifier state as of
+                         * key-down, and session_key() is what advances
+                         * that state. Read it afterwards and every
+                         * capital letter comes back lowercase.
+                         *
+                         * This is what makes a wifi password with a
+                         * capital in it, or any keyboard that is not
+                         * American, work at all. Cleared again after
+                         * dispatch so no archetype can read a stale
+                         * character on the next key. */
+                        c.key_text[0] = 0;
+                        if (ev.value && c.wl)
+                            aurwl_key_utf8(c.wl, ev.code, c.key_text,
+                                           sizeof c.key_text);
+
+                        /* The keys that are printed on the keyboard
+                         * and pressed without being taught: volume,
+                         * mute and brightness. They are handled here,
+                         * before anything else gets a say, because
+                         * they belong to the machine rather than to
+                         * whatever is on screen -- the same reason
+                         * the band is tested before the archetype.
+                         *
+                         * A person turning the sound down while a
+                         * video is playing is not talking to the
+                         * video. */
+                        /* A key taken on the way DOWN is taken on the
+                         * way UP as well. Without the second half, the
+                         * release of Volume Down was delivered to the
+                         * focused application -- which for a toolkit
+                         * that tracks key state is a key it never saw
+                         * pressed, and for one that acts on release is
+                         * a keystroke it was never meant to get. */
+                        if (ev.value) {
+                            if (media_key(&c, ev.code)) {
+                                media_held[ev.code >> 5] |= 1u << (ev.code & 31);
+                                c.key_text[0] = 0;
+                                dirty = 1;
+                                continue;
+                            }
+                        } else if (media_held[ev.code >> 5] & (1u << (ev.code & 31))) {
+                            media_held[ev.code >> 5] &= ~(1u << (ev.code & 31));
+                            c.key_text[0] = 0;
+                            continue;
+                        }
+
+                        /* session_key() ALWAYS runs, whatever is on
+                         * screen, because aurwl_key() underneath it is
+                         * the one place in this program where xkb
+                         * learns that a key moved -- and the character
+                         * read one line above comes out of xkb.
+                         *
+                         * The first version of the wifi panel skipped
+                         * it while the panel was up, to keep the
+                         * password away from the application behind.
+                         * The effect was that Shift was never recorded,
+                         * so the password field could not type a
+                         * capital letter: the exact defect the commit
+                         * before it was written to fix. It also dropped
+                         * every key RELEASE, leaving a held key stuck
+                         * down in whatever was running.
+                         *
+                         * The password is kept away from the
+                         * application by taking keyboard focus off it
+                         * while the panel is open (below), which is
+                         * what a modal panel does everywhere and which
+                         * also tells the application to let go of
+                         * whatever it thought was held. */
+                        int consumed = 0;
+                        { int kr = session_key_super(&c, key_seen, ev.code, ev.value, super_down); if (kr > 0) consumed = kr; }
+
+                        /* A panel on screen is modal, so it answers the
+                         * keyboard and NOTHING behind it does -- not
+                         * the archetype, and (via the focus block far
+                         * above) not the application either.
+                         *
+                         * Help and the power question were missing from
+                         * this chain entirely. With either up, every
+                         * key she pressed went to the archetype, and
+                         * the power question had no key that dismissed
+                         * it at all: a full-screen state with no way
+                         * out for anyone not using a mouse. */
+                        if (SHELL_PANEL_OPEN(&c)) {
+                            /* ENTER DOES NOT REPEAT. value 2 is the
+                             * keyboard's auto-repeat, and a held Enter
+                             * used to press whatever was selected over
+                             * and over -- on the Put Windows back page,
+                             * that is both of its two presses in half a
+                             * second. Arrows still repeat: that is how a
+                             * slider is moved by holding a key. */
+                            if (ev.value == 1 || (ev.value == 2 && ev.code != 28)) {
+                                /* A wish's fill first: the key that ends it
+                                 * is used up (docs/AI.md §3.5). */
+                                if      (c.wishfill_open) wishover_key(&c, ev.code);
+                                else if (c.guard_open)    guard_key(&c, ev.code);
+                                else if (c.net_open)      net_key(&c, ev.code);
+                                else if (c.settings_open) settings_key(&c, ev.code);
+                                else if (c.bt_open)       bt_key(&c, ev.code);
+                                else if (c.welcome_open)  welcome_key(&c, ev.code);
+                                else if (c.wish_open)     wish_key(&c, ev.code);
+                                else                      foot_key(&c, ev.code);
+                            }
+                            c.key_text[0] = 0;
+                            dirty = 1;
+                            continue;
+                        }
+                        /* Messages is open: Escape puts it away (notify.h). */
+                        if (ev.value == 1 && notify_key(&c, ev.code)) {
+                            c.key_text[0] = 0; dirty = 1; continue;
+                        }
+                        if (!consumed && ev.value && L->key) L->key(&c, ev.code);
+                        c.key_text[0] = 0;
+                        dirty = 1;
+                    }
+                }
+            }
+            /* A device that vanished between poll() and read() reports
+             * ENODEV rather than a POLLHUP we have already consumed. */
+            if (got < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+                fprintf(stderr, "aurshell: input device %s failed (%s)\n",
+                        in.name[i], strerror(errno));
+                input_drop(&in, i);
+                continue;
+            }
+            foot_motion(&c, c.mouse_x, c.mouse_y);
+            net_motion(&c, c.mouse_x, c.mouse_y);
+            settings_motion(&c, c.mouse_x, c.mouse_y);
+            bt_motion(&c, c.mouse_x, c.mouse_y);
+            welcome_motion(&c, c.mouse_x, c.mouse_y);
+            guard_motion(&c, c.mouse_x, c.mouse_y);
+            wish_motion(&c, c.mouse_x, c.mouse_y);
+            wishover_motion(&c, c.mouse_x, c.mouse_y);
+            session_motion(&c, c.mouse_x, c.mouse_y);
+            if (L->motion) L->motion(&c, c.mouse_x, c.mouse_y);
+        }
+
+        /* A device appeared. LAST, so that in.n grows only after every
+         * pfd[] slot the walk above needs has been read. */
+        if (noti >= 0 && (pfd[noti].revents & POLLIN)) {
+            char buf[4096];
+            while (read(in.notify_fd, buf, sizeof buf) > 0) { }
+            int added = input_scan(&in, c.kiosk);
+            if (added) {
+                fprintf(stderr, "aurshell: %d input device%s appeared\n",
+                        added, added == 1 ? "" : "s");
+                dirty = 1;
+            }
+        }
+    }
+
+    net_fini();
+    bt_fini();
+    notify_fini();
+    appwatch_close();
+    if (c.wl) aurwl_destroy(c.wl);
+    for (int i = 0; i < in.n; i++) { ioctl(in.fd[i], EVIOCGRAB, 0); close(in.fd[i]); }
+    if (in.notify_fd >= 0) close(in.notify_fd);
+    console_give_back(&g_con);
+    if (L->fini) L->fini(&c);
+    free_fonts(&f);
+    surface_free(wall);
+    kms_close(disp);
+    fprintf(stderr, "aurshell: exit\n");
+    return 0;
+}

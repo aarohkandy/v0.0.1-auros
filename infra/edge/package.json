@@ -1,0 +1,8 @@
+{
+  "name": "auros-edge",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "description": "AurOS's own addresses on Cloudflare: get., updates., status., www. and the site, passing on to GitHub; the daily download cap (docs/ops/DOMAIN.md, LAUNCH.md)",
+  "scripts": { "test": "node --test test/*.test.js" }
+}

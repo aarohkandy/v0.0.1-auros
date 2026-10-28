@@ -1,0 +1,54 @@
+# The legal checks (stream LEGAL): the source-release tool against a pretend
+# Launchpad, and the consistency of the licence, terms and privacy texts
+# (tools/legal/check.py). No network, no build, a minute. Runs only when a
+# file it checks changes.
+name: legal
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'build/sources'
+      - 'tools/legal/**'
+      - 'docs/legal/**'
+      - 'docs/RELINK.md'
+      - 'LICENSE'
+      - 'README.md'
+      - 'website/**'
+      - 'rootfs/usr/share/doc/auros/**'
+      - 'rootfs/usr/share/auros/help/**'
+      - 'src/aurwl/gen/**'
+      - 'src/aurbridge/wizard.c'
+      - 'src/aurstage/install.c'
+      - 'src/aurscreen/screen.c'
+      - 'src/aurshell/welcome.c'
+      - '.github/workflows/legal.yml'
+      - '.github/workflows/sources.yml'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  legal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: legal-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: build/sources against a pretend Launchpad, the publisher against a pretend GitHub, and their mutants
+        run: |
+          python3 -I tools/legal/sourcestest.py
+          python3 -I tools/legal/sourcestest.py --mutants
+          python3 -I tools/legal/publishtest.py
+          python3 -I tools/legal/publishtest.py --mutants
+          python3 -I tools/legal/stagingcheck.py selftest
+      - name: the legal texts keep their promises
+        run: |
+          python3 -I tools/legal/check.py selftest
+          python3 -I tools/legal/check.py

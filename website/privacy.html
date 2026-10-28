@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy &mdash; AurOS</title>
+<meta name="description" content="What AurOS collects (nothing), and which other organizations&#x27; servers your computer talks to.">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#F6F2E9">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Cpath%20d='M16%202L30%2016L16%2030L2%2016Z'%20fill='%230B5D4F'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to the text</a>
+
+<header class="bar">
+  <div class="wrap bar-in">
+    <a class="brand" href="index.html"><svg class="mark" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M5 0L10 5L5 10L0 5Z"/></svg>AurOS</a>
+    <a class="bar-link" href="index.html">Back to the simple page</a>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="page-head" aria-labelledby="page-title">
+    <div class="narrow">
+      <h1 id="page-title">AurOS Privacy</h1>
+      <p class="note">Version 3, 23 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. This page is not legal advice.</p>
+      <p class="lede">Who is responsible: the person who makes AurOS, on the AurOS project page on GitHub. There is no company yet. To ask us anything about privacy, write to CONTACT_EMAIL.</p>
+      <ul class="toc" aria-label="On this page">
+        <li><a href="#1-in-short">1. In short</a></li>
+        <li><a href="#2-the-website">2. The website</a></li>
+        <li><a href="#3-auros-setup-auros-setup-exe">3. AurOS Setup (AurOS-Setup.exe)</a></li>
+        <li><a href="#4-auros-on-your-computer">4. AurOS on your computer</a></li>
+        <li><a href="#5-if-you-write-to-us">5. If you write to us</a></li>
+        <li><a href="#6-children">6. Children</a></li>
+        <li><a href="#7-your-rights">7. Your rights</a></li>
+        <li><a href="#8-changes">8. Changes</a></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="doc sand" id="1-in-short" aria-labelledby="1-in-short-title">
+    <div class="narrow">
+      <h2 id="1-in-short-title">1. In short</h2>
+      <ul>
+        <li><p>AurOS does not collect information about you or your computer. There is no account, no sign-in and no tracking on the website, in AurOS Setup, or on your computer, and AurOS shows no adverts of its own. (If you write to us, we keep what you send: section 5.)</p></li>
+        <li><p>AurOS Setup and AurOS send nothing about you or your computer to us. Your files, your passwords and what you do stay on your computer.</p></li>
+        <li><p>To work, your computer does talk to <b>other organizations’ servers</b>: GitHub, Ubuntu, Mozilla, Flathub, Google’s Safe Browsing and others (section 4). They see what any website you visit sees, such as your internet address. We don’t control their records, and each has its own privacy policy.</p></li>
+        <li><p>If we ever add something that sends anything about you or your computer to us, we will say so on this page <b>before</b> the update that does it.</p></li>
+      </ul>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc" id="2-the-website" aria-labelledby="2-the-website-title">
+    <div class="narrow">
+      <h2 id="2-the-website-title">2. The website</h2>
+      <p>The website uses no cookies, no analytics and no tracking, and it loads nothing from any other server: its fonts and pictures come from the same place as its pages.</p>
+      <p>It is hosted by <b>GitHub Pages</b>. GitHub, Inc. (owned by Microsoft) receives your internet (IP) address and details about your browser when you visit, and keeps them in its own records, under GitHub’s privacy statement. We don’t receive those records.</p>
+      <p>If the website, the downloads or the updates are ever served from a web address we own, the visit will pass through <b>Cloudflare</b>, which carries it to GitHub. Cloudflare sees internet addresses like any web host and keeps its own records under its own policy. We will count downloads there without keeping anyone’s address.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc sand" id="3-auros-setup-auros-setup-exe" aria-labelledby="3-auros-setup-auros-setup-exe-title">
+    <div class="narrow">
+      <h2 id="3-auros-setup-auros-setup-exe-title">3. AurOS Setup (AurOS-Setup.exe)</h2>
+      <p>AurOS Setup runs on your Windows computer. To decide whether AurOS can go on it safely, it <b>looks at your computer</b>: the Windows version, the kind of firmware, how the drive is divided and how much room is free, whether the drive is locked, the drive’s health, the name of the Wi-Fi network you are connected to, the printers, camera and Bluetooth devices attached, your language, keyboard and time zone, and similar facts. <b>It looks at these on your computer and does not send them anywhere.</b> If you press <b>Save a report for a helper</b>, Setup writes two files, AurOS-report.txt and AurOS-report.json, on your Desktop. They list your computer’s maker and model, its parts and the names of your printers and other devices, not your Wi-Fi name. Setup sends them nowhere. If Windows backs up your Desktop (OneDrive often does), Windows may copy them there. They go to a helper only if you give them.</p>
+      <p>As soon as Setup finds that AurOS can go on your computer, it starts downloading AurOS (about 2 GB at the time of writing, and on the version offered today about 5 GB more when it is unpacked) from <b>GitHub Releases</b>, while you read the pages and before you press Install AurOS. GitHub sees your internet address, as it does for any download. The download goes into a folder called AurOS on your Windows drive. If you close Setup before you press Install AurOS, Setup stops the download and normally deletes it; if Setup is stopped some other way, for example by a power cut, part of it may stay there, and you may delete the folder.</p>
+      <p>While it works, Setup writes notes on your computer so that it can finish, or undo, the install after the restart. They stay on your computer. We see them only if you send them to us yourself.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc" id="4-auros-on-your-computer" aria-labelledby="4-auros-on-your-computer-title">
+    <div class="narrow">
+      <h2 id="4-auros-on-your-computer-title">4. AurOS on your computer</h2>
+      <p>AurOS doesn’t send us usage numbers, crash reports or a list of your programs. Ubuntu’s usage counter (“popularity contest”) is left out of AurOS on purpose. Ubuntu’s paid “Ubuntu Pro” program is still on the computer, because other software needs it, but it is switched off, and so are Ubuntu’s daily news messages.</p>
+      <p>To keep your computer working and safe, AurOS and the programs it comes with mainly connect to the services below while you are online. Each sees your internet address and what is being downloaded.</p>
+      <ul>
+        <li><p><b>Ubuntu’s software archive</b>. Canonical Ltd. Security fixes for the system, and the software list</p></li>
+        <li><p><b>Mozilla’s software archive</b>. Mozilla (for some versions of AurOS, the Mozilla Team’s archive on Launchpad, which Canonical runs). Firefox and its updates</p></li>
+        <li><p><b>Firefox’s own services</b>. Mozilla. Add-ons (including uBlock Origin, from addons.mozilla.org), block lists and checking whether you are online. Firefox’s usage reports (telemetry) are switched off.</p></li>
+        <li><p><b>uBlock Origin’s lists</b>. The list makers (several are hosted on GitHub). Keeping the ad and scam block lists up to date</p></li>
+        <li><p><b>Safe Browsing, inside Firefox</b>. Google. Warns before a dangerous website or download. Firefox checks addresses against a list it downloads. For some downloads it sends the file’s web address, a fingerprint of the file and similar details (not the file itself) to Google to check it. This check is always on in AurOS’s Firefox.</p></li>
+        <li><p><b>The search box in Firefox</b>. The search engine Firefox is set to (Google, unless you change it). Firefox sends what you type, and suggestions for it, to that search engine. AurOS does not change Firefox’s search engine.</p></li>
+        <li><p><b>Flathub</b>. Flathub, with the GNOME Foundation and partners. The catalog and downloads in <b>Get more programs</b>. The store may also ask the GNOME project’s review service for ratings.</p></li>
+        <li><p><b>AurOS’s update channel</b>. GitHub, Inc. (GitHub Releases). AurOS’s own updates</p></li>
+        <li><p><b>Time servers</b>. Ubuntu, the NTP pool, Cloudflare, Netnod, PTB. Keeping the clock right</p></li>
+      </ul>
+      <p>This list comes from how AurOS is built. We have not yet watched a running computer to see everything it contacts, so a small helper service may be missing from it. A test that watches is planned, and this list will be checked against it.</p>
+      <p><b>Programs you add</b> through Get more programs, and <b>websites you visit</b>, have their own privacy policies. We don’t control what they collect.</p>
+      <p><b>Copying your Windows files.</b> If a version of AurOS offers to copy your documents, pictures and browser bookmarks from Windows, that copying happens entirely on your computer, from one part of the drive to another. Nothing is uploaded. Passwords saved in your Windows browser are never copied.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc sand" id="5-if-you-write-to-us" aria-labelledby="5-if-you-write-to-us-title">
+    <div class="narrow">
+      <h2 id="5-if-you-write-to-us-title">5. If you write to us</h2>
+      <p>If you write to us, or open an issue on the AurOS project page on GitHub, we see what you write and the name you use there. Issues on GitHub are <b>public and stay there</b>, so never put passwords, recovery keys, private files or photos of your screen with private things on it in an issue. We use what you send only to answer you and to fix AurOS. We keep emails for as long as we need them to help you and fix AurOS, normally no more than 12 months, and then delete them. A report about a problem is kept for as long as it takes to fix the problem and to meet our legal duties.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc" id="6-children" aria-labelledby="6-children-title">
+    <div class="narrow">
+      <h2 id="6-children-title">6. Children</h2>
+      <p>AurOS is for adults. It is not aimed at children, and it collects nothing from anyone.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc sand" id="7-your-rights" aria-labelledby="7-your-rights-title">
+    <div class="narrow">
+      <h2 id="7-your-rights-title">7. Your rights</h2>
+      <p>Because AurOS does not collect information about the people who use it, there is usually nothing for us to show, correct or delete. If you think we hold something about you, for example an email you sent, write to CONTACT_EMAIL. We will tell you what we hold and, if you wish, delete it, normally within 30 days. If you live where the law gives you more rights over information about you, for example in the United Kingdom or the European Union, you can use them the same way, and you can complain to the data protection authority where you live. AurOS is made for people in the United States for now.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+
+  <section class="doc" id="8-changes" aria-labelledby="8-changes-title">
+    <div class="narrow">
+      <h2 id="8-changes-title">8. Changes</h2>
+      <p>If this page changes, the new version will be on the website with a new date and number, before the change takes effect. If AurOS ever starts to send anything new about you or your computer to anyone, we will say so on this page <b>before</b> the update that does it.</p>
+      <p class="totop"><a href="#main">Back to the top</a></p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <ul class="foot-links">
+      <li><a href="index.html">The simple page</a></li>
+      <li><a href="advanced.html">For someone who knows computers</a></li>
+      <li><a href="https://github.com/@AUROS_REPO@/issues">Ask a question</a></li>
+      <li><a href="https://github.com/@AUROS_REPO@">The source code</a></li>
+    </ul>
+    <!-- legal-footer: written by tools/legal/mkpages.py, the same on every page -->
+    <ul class="foot-links foot-legal">
+      <li><a href="licenses.html">Licenses and source code</a></li>
+      <li><a href="terms.html">Terms</a></li>
+      <li><a href="disclaimer.html">Disclaimer</a></li>
+      <li><a href="privacy.html">Privacy</a></li>
+    </ul>
+    <p>No cookies and no ads. This site collects nothing about you. GitHub, which hosts it, keeps its own records of the internet addresses that visit. Write to us: CONTACT_EMAIL.</p>
+    <p>AurOS&rsquo;s own code is free software (MIT license). It includes programs by others, each under its own license: <a href="licenses.html">licenses and source code</a>. Set in Atkinson Hyperlegible Next (<a href="assets/fonts/OFL.txt">license</a>).</p>
+    <p>AurOS is built from Ubuntu 24.04 LTS software that we have put together and changed. It is not made, endorsed or supported by Canonical. Windows, Microsoft, Edge, BitLocker, Defender and SmartScreen are trademarks of the Microsoft group of companies. Mac and macOS are trademarks of Apple Inc. Google Chrome and Safe Browsing are trademarks of Google LLC. Ubuntu is a registered trademark of Canonical Ltd. Firefox is a trademark of the Mozilla Foundation. Linux is the registered trademark of Linus Torvalds in the U.S. and other countries. Intel is a trademark of Intel Corporation or its subsidiaries. Other names are trademarks of their owners. AurOS is not made, approved or supported by any of them, and has not been authorized, sponsored, or otherwise approved by Apple Inc. The names are used only to say what a program is, what AurOS is made from, or what it works with.</p>
+    <!-- /legal-footer -->
+  </div>
+</footer>
+</body>
+</html>

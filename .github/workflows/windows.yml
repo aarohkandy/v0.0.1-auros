@@ -1,0 +1,756 @@
+# Does the installer start on real Windows?
+#
+# Every test before this ran the Windows half under Wine, and Wine loaded
+# a manifest that real Windows refuses: the first real PC could not start
+# the wizard at all ("its side-by-side configuration is incorrect",
+# docs/issues/v3/01-sxs-manifest.md). These jobs run on a real Windows
+# Server VM. They are read-only: preflight only reads, the wizard's
+# --selftest and --navtest only render and report, and getimage writes
+# files to the runner's temp directory.
+#
+#   gate               only for a push that changes what these jobs test
+#                      (the installer's sources and build), or says
+#                      [windows] in its subject, or a manual run
+#   build              the .exe files, from this commit, on Linux
+#   windows-source     those .exe files, started on Windows
+#   pins               what a person downloads today: this repository's
+#                      newest full release, asked at run time
+#   windows-published  that AurOS-Setup.exe, started on Windows, checked
+#                      against the release's SHA256SUMS
+#   windows-known-bad  the 2026-09-25 test build must FAIL to start here,
+#                      or the jobs above prove nothing
+#   windows-download   WinHTTP fetches the published image pieces and
+#                      the installer's own inflater checks them
+name: windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "windows-published / windows-download test this release of this repository (empty: its newest AurOS release, a prerelease if that is all there is)"
+        required: false
+        default: ""
+
+# (Nothing in this workflow is fetched from the old repository any more. The "no release yet" fallback
+# made windows-published and windows-download green about files this repository never built, and the
+# known-bad installer is now this build's own wizard with a spoiled manifest: docs/reviews/CI-TRUTH-2026-10-24.md.)
+
+# ONE OF EACH JOB AT A TIME PER BRANCH, NEVER CANCELLED, AND ONLY FOR
+# PUSHES THAT NEED IT. The group used to be on the workflow: every push
+# joined it, GitHub keeps one pending run per group, and with many
+# agents pushing docs every run was replaced while it waited -- in the
+# new repository this workflow never finished once. Now the gate decides
+# first, and each job that runs has its own group (a job whose `if` is
+# false never joins one), so a docs push replaces nothing, a run that
+# has started always finishes, and a fast stream of pushes still cannot
+# fill the 20-job pool.
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.g.outputs.run }}
+    steps:
+      - id: g
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+          BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run=false
+          [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || run=true
+          # The word counts in the SUBJECT only, as everywhere else.
+          case "${MSG%%$'\n'*}" in *'[windows]'*) run=true ;; esac
+          # The files this push changed; the push payload does not list them.
+          case "$BEFORE" in
+            ''|0000000000000000000000000000000000000000)
+              files=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq '.files[].filename') ;;
+            *)
+              files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '.files[].filename') ;;
+          esac
+          printf '%s\n' "$files" > /tmp/files.txt
+          # What build/aurbridge compiles and reads, and this file.
+          if grep -qE '^(src/aurbridge/|src/aurstage/(gpt|plan)\.[ch]$|build/aurbridge$|hw/(lib/|compat\.json$)|tools/(pe_payload\.py|repo\.sh|manifesttest\.sh|hw/gen-header\.py|dllcanary\.sh|dllcanary/.*)$|\.github/workflows/windows\.yml$)' /tmp/files.txt; then
+            run=true
+          fi
+          echo "run=$run" | tee -a "$GITHUB_OUTPUT"
+
+  # What a person downloads today, asked at run time, so promoting a
+  # release edits nothing here: this repository's newest FULL release
+  # (releases/latest never names a prerelease) -- its AurOS-Setup.exe
+  # with the hash its SHA256SUMS gives, its pieces.txt, and the image's
+  # image.sha256 and image.bytes. Only while this repository has no full
+  # release at all (a 404): the old repository's v4 files, pinned by
+  # hash. Anything else (the API down, a release missing a file) fails
+  # here rather than quietly testing the old files.
+  pins:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    concurrency: { group: 'windows-${{ github.ref }}-pins', cancel-in-progress: false }
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      published_url: ${{ steps.p.outputs.published_url }}
+      published_sha256: ${{ steps.p.outputs.published_sha256 }}
+      pieces_url: ${{ steps.p.outputs.pieces_url }}
+      image_sha256: ${{ steps.p.outputs.image_sha256 }}
+      image_bytes: ${{ steps.p.outputs.image_bytes }}
+      tested: ${{ steps.p.outputs.tested }}
+    steps:
+      # WHAT A PERSON DOWNLOADS, asked at run time: the release named in the
+      # `release_tag` input of a manual run, else this repository's NEWEST AurOS
+      # release, a prerelease if that is all there is (releases/latest never names
+      # one, and answered "none" here for weeks). It must carry AurOS-Setup.exe,
+      # SHA256SUMS, pieces.txt, image.sha256 and image.bytes. With nothing to test
+      # this job FAILS with the reason: a green here must mean a file of this
+      # repository was started on Windows, never that a file of another one was.
+      - id: p
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_IN: ${{ inputs.release_tag }}
+        run: |
+          set -u
+          code=$(curl -sS --retry 5 -o releases.json -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+                 "https://api.github.com/repos/$GITHUB_REPOSITORY/releases?per_page=50")
+          [ "$code" = 200 ] || { echo "::error::the releases API answered $code"; cat releases.json; exit 1; }
+          python3 - > pick.env <<'PY'
+          import json, os, re, shlex
+          want = os.environ.get("TAG_IN", "").strip()
+          need = {"AurOS-Setup.exe", "SHA256SUMS", "pieces.txt", "image.sha256", "image.bytes"}
+          skipped = []
+          for r in json.load(open("releases.json")):
+              t = r["tag_name"]
+              if r.get("draft"):
+                  continue
+              if want and t != want:
+                  continue
+              if not want and not re.match(r"^v[0-9]", t):
+                  continue                       # sources-*, apt, profiles-*: not an AurOS release
+              have = {a["name"] for a in r.get("assets", [])}
+              if need <= have:
+                  print("tag=%s" % shlex.quote(t))
+                  print("kind=%s" % shlex.quote("prerelease" if r.get("prerelease") else "full release"))
+                  raise SystemExit(0)
+              skipped.append("%s lacks %s" % (t, ", ".join(sorted(need - have))))
+          print("none=1")
+          print("why=%s" % shlex.quote("; ".join(skipped[:5]) or ("no release named %s" % want if want else "no AurOS release at all")))
+          PY
+          . ./pick.env
+          if [ "${none:-}" = 1 ]; then
+            msg="NOTHING TO TEST: $GITHUB_REPOSITORY has no AurOS release with an installer and an image (${why}). windows-published and windows-download did not run, and this job is red on purpose: a green here would say nothing about this repository's files."
+            echo "::error::$msg"
+            echo "### $msg" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+          for f in SHA256SUMS image.sha256 image.bytes; do curl -fsSL --retry 5 -o "$f" "$base/$f"; done
+          published_url=$base/AurOS-Setup.exe
+          published_sha256=$(awk '$2 == "AurOS-Setup.exe" || $2 == "*AurOS-Setup.exe" {print $1}' SHA256SUMS)
+          pieces_url=$base/pieces.txt
+          image_sha256=$(tr -d ' \r\n' < image.sha256)
+          image_bytes=$(tr -d ' \r\n' < image.bytes)
+          [[ $published_sha256 =~ ^[0-9a-f]{64}$ && $image_sha256 =~ ^[0-9a-f]{64}$ && $image_bytes =~ ^[0-9]+$ ]] \
+            || { echo "::error::$tag: no AurOS-Setup.exe in SHA256SUMS, or no image.sha256/image.bytes"; exit 1; }
+          tested="the $kind $tag of $GITHUB_REPOSITORY"
+          [ "$kind" = prerelease ] && tested="$tested (a prerelease: not what the website links to yet)"
+          { echo "published_url=$published_url"; echo "published_sha256=$published_sha256"
+            echo "pieces_url=$pieces_url"; echo "image_sha256=$image_sha256"; echo "image_bytes=$image_bytes"
+            echo "tested=$tested"; } | tee -a "$GITHUB_OUTPUT"
+          echo "what a person downloads, tested here: $tested" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    concurrency: { group: 'windows-${{ github.ref }}-build', cancel-in-progress: false }
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: toolchain
+        # Twice on 2026-10-23 this step sat in apt-get update until the
+        # run was cancelled by hand. Each try is bounded and retried, so
+        # a stuck mirror costs minutes, not the run. Only the 64-bit C
+        # compiler and its binutils (windres, objdump): the "mingw-w64"
+        # package is 277 MB with the 32-bit and C++ halves, and the
+        # runners' mirror gave 40 KB/s on 2026-10-23 -- every try timed out.
+        timeout-minutes: 12
+        run: |
+          for i in 1 2 3; do
+            sudo timeout 150 apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+              && sudo timeout 300 apt-get install -y -q gcc-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64 libxml2-utils && exit 0
+            echo "::warning::apt try $i did not finish; trying again"
+            sleep 10
+          done
+          exit 1
+      - name: build/aurbridge
+        run: sh build/aurbridge
+      - name: manifest gate (tools/manifesttest.sh)
+        run: sh tools/manifesttest.sh out/aurbridge-wizard.exe
+      # THE KNOWN-BAD, FROM THIS BUILD: the wizard with '--' written into its manifest, which is
+      # what failed on the first real PC. windows-known-bad must see Windows refuse it.
+      - name: known-bad build (the same program with a manifest Windows refuses)
+        run: |
+          mkdir -p out/known-bad
+          python3 tools/pe_payload.py dashed out/aurbridge-wizard.exe out/known-bad/known-bad.exe
+          ! python3 tools/pe_payload.py check out/known-bad/known-bad.exe
+      - name: host-side selftests
+        run: |
+          out/aurbridge-sim gzselftest
+          out/aurbridge-sim sbselftest
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: known-bad
+          path: out/known-bad/known-bad.exe
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: exe
+          path: |
+            out/aurbridge.exe
+            out/aurbridge-wizard.exe
+      # The pieces of the DLL-planting test (SEC-003): a DLL that only says
+      # it was loaded, and a program that loads DLLs the unhardened way.
+      - name: DLL-planting test pieces (tools/dllcanary.sh)
+        run: sh tools/dllcanary.sh out/canary
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary
+          path: out/canary
+
+  windows-source:
+    needs: build
+    concurrency: { group: 'windows-${{ github.ref }}-windows-source', cancel-in-progress: false }
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: exe, path: exe }
+      - name: console tool starts and passes its selftest
+        shell: pwsh
+        run: |
+          .\exe\aurbridge.exe version
+          if ($LASTEXITCODE -ne 0) { throw "version exited $LASTEXITCODE" }
+          .\exe\aurbridge.exe selftest
+          if ($LASTEXITCODE -ne 0) { throw "selftest exited $LASTEXITCODE" }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: canary, path: canary }
+      - name: a DLL planted beside the installer is never loaded (SEC-003)
+        shell: pwsh
+        run: |
+          # The installer runs as administrator from Downloads, a folder
+          # any program she runs can write to. Windows looks in the
+          # program's own folder BEFORE System32 for every DLL that is not
+          # a KnownDLL, so a winhttp.dll or oleacc.dll dropped beside
+          # AurOS-Setup.exe used to be loaded with the administrator token.
+          # Here a "canary" DLL (tools/dllcanary/canary.c, it writes
+          # <name>.loaded when anything loads it) is put beside both
+          # programs under the name of every DLL they must take from
+          # System32 only, and the programs are run through everything
+          # that loads a DLL, with that folder as the current folder too.
+          # The names the installer loads BY NAME are the core (winhttp, oleacc, wlanapi,
+          # iphlpapi, winspool, wtsapi32) with dwmapi, which a window's theme may ask for.
+          # comctl32.dll is in the second list: on a real Windows even a program that
+          # looks in its own folder gets the system's own copy (the side-by-side store
+          # wins, seen on windows-latest), so a planted one cannot be tested.
+          # cfgmgr32.dll, cryptbase.dll and cryptsp.dll are NOT here: Windows itself takes
+          # them from the program's folder before main (next step), and a planted
+          # cfgmgr32.dll stops the programs from starting at all.
+          function Die($m) { Write-Host "::error::$m"; exit 1 }
+          $core  = 'winhttp.dll','oleacc.dll','wlanapi.dll','iphlpapi.dll','winspool.drv','wtsapi32.dll','dwmapi.dll'
+          $extra = 'comctl32.dll','uxtheme.dll','version.dll'
+          $names = $core + $extra
+          $d = Join-Path $env:RUNNER_TEMP 'planted'
+          New-Item -ItemType Directory -Force -Path $d, "$d\r1", "$d\r2", "$d\r3" | Out-Null
+          Copy-Item exe\aurbridge.exe, exe\aurbridge-wizard.exe, canary\control.exe $d
+          foreach ($n in $names) { Copy-Item canary\canary.dll (Join-Path $d $n) }
+          Push-Location $d
+          # 1. THE CONTROL: a program that loads these names the way an
+          # unhardened one does finds the planted copies. If it did not,
+          # "the installer did not load them" would prove nothing.
+          .\control.exe @names
+          $speak = @($names | Where-Object { Test-Path "$d\$_.loaded" })
+          "the control loaded the planted copy of: $($speak -join ', ')"
+          $silent = @($core | Where-Object { $speak -notcontains $_ })
+          if ($silent) { Die "the planted copy of $($silent -join ', ') was not loaded even by a program that looks in its own folder, so this test cannot speak for it" }
+          Get-ChildItem $d -Filter *.loaded | Remove-Item
+          # 2. THE INSTALLER, through everything that loads a DLL: the
+          # report (iphlpapi, winspool), preflight (wlanapi), the window and the
+          # screen reader (oleacc, wtsapi32), a download (winhttp).
+          # (the exit codes are kept and judged AFTER the markers: a planted DLL that was
+          # loaded makes a program fail to start, and which one ran is the useful message)
+          $codes = @()
+          .\aurbridge.exe version
+          $codes += "version $LASTEXITCODE"
+          .\aurbridge.exe selftest
+          $codes += "selftest $LASTEXITCODE"
+          .\aurbridge.exe preflight
+          $codes += "preflight $(if ($LASTEXITCODE -le 1) { 0 } else { $LASTEXITCODE })"
+          .\aurbridge.exe report "$d\r1"
+          $codes += "report $LASTEXITCODE"
+          $p = Start-Process -FilePath "$d\aurbridge-wizard.exe" -ArgumentList '--report', "$d\r1" -WorkingDirectory $d -Wait -PassThru
+          $codes += "wizard --report $($p.ExitCode)"
+          $p = Start-Process -FilePath "$d\aurbridge-wizard.exe" -ArgumentList '--navtest', "$d\r2" -WorkingDirectory $d -Wait -PassThru
+          $codes += "wizard --navtest $($p.ExitCode)"
+          $p = Start-Process -FilePath "$d\aurbridge-wizard.exe" -ArgumentList '--selftest', "$d\r3" -WorkingDirectory $d -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); $codes += "wizard --selftest never finished" }
+          else { $codes += "wizard --selftest $($p.ExitCode)" }
+          # a download to a port nobody listens on: it must get as far as
+          # the network, which a WinHTTP that failed to load cannot
+          $z = '0' * 64
+          "base http://127.0.0.1:9/`npiece p.bin 1000 $z" | Out-File -Encoding ascii "$d\pieces.txt"
+          # into a folder of its own that does not exist yet (SEC-010: the download
+          # folder is made private, and one the installer did not make is moved aside)
+          cmd /c "aurbridge.exe getimage pieces.txt dl\x.img $z 1000 > fetch.log 2>&1"
+          Get-Content "$d\fetch.log" | Select-Object -Last 3
+          $reached = Select-String -Path "$d\fetch.log" -Pattern 'could not reach' -Quiet
+          Pop-Location
+          # 3. NOT ONE PLANTED DLL WAS LOADED, and every program ran to its end.
+          "exit codes: $($codes -join '; ')"
+          # what a failing program said (navtest's FAIL lines), so the cause is in this log
+          foreach ($l in "$d\r2\navtest.log", "$d\r3\selftest.log") {
+            if (Test-Path $l) { Select-String -Path $l -Pattern '\[FAIL\]|FAILED' | ForEach-Object { $_.Line } | Select-Object -First 12 }
+          }
+          $hit = @(Get-ChildItem $d -Filter *.loaded)
+          if ($hit) { Die "the installer loaded a DLL planted beside it: $($hit.Name -join ', ')   ($($codes -join '; '))" }
+          $failed = @($codes | Where-Object { $_ -notmatch ' 0$' })
+          if ($failed) { Die "a program did not run to its end with the planted DLLs beside it: $($failed -join '; ')" }
+          if (-not $reached) { Die "the download did not get as far as the network (WinHTTP did not load)" }
+          if (-not (Select-String -Path "$d\r3\selftest.log" -Pattern 'screen reader    : "[^"]{10,}"' -Quiet)) { Die "the window test did not reach the screen reader (oleacc never ran)" }
+          "none of the $($names.Count) planted DLLs was loaded"
+          "### A DLL planted beside the installer (SEC-003)`nnone of $($names.Count) planted DLLs ($($names -join ', ')) was loaded by the console tool or the window, while a program that looks in its own folder loaded $($speak.Count) of them." | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          exit 0
+      # THE PART OF SEC-003 THAT IS NOT CLOSED, kept in view. This very test found it
+      # on windows-latest (2026-10-24, runs 40043760099 and 40047918166): before main,
+      # while Windows loads the programs' own system DLLs, a cfgmgr32.dll in the
+      # programs' folder is taken instead of the system's (and, both being written to
+      # fail, stops the program), and a cryptbase.dll or cryptsp.dll there is loaded and run.
+      # Windows resolves the DLLs those DLLs need by the ordinary search, programs' folder
+      # first, and a program has no switch for it before it starts: not KnownDLLs-only
+      # imports, not SetDefaultDllDirectories in main, not the load configuration's
+      # dependent load flags (tried: they protect a program's OWN imports and not these).
+      # This step goes RED and the job stays green until a fix is found (continue-on-error).
+      - name: KNOWN OPEN (SEC-003), DLLs Windows still takes from the installer folder before main
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $open = @()
+          foreach ($n in 'cfgmgr32.dll','cryptbase.dll','cryptsp.dll') {
+            $d = Join-Path $env:RUNNER_TEMP ('open-' + ($n -replace '\.','_'))
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+            Copy-Item exe\aurbridge.exe, exe\aurbridge-wizard.exe $d
+            Copy-Item canary\canary.dll (Join-Path $d $n)
+            foreach ($exe in 'aurbridge.exe','aurbridge-wizard.exe') {
+              $a = if ($exe -eq 'aurbridge.exe') { 'version' } else { '--report', "$d\r" }
+              if ($exe -ne 'aurbridge.exe') { New-Item -ItemType Directory -Force -Path "$d\r" | Out-Null }
+              $p = Start-Process -FilePath "$d\$exe" -ArgumentList $a -WorkingDirectory $d -PassThru
+              $state = if ($p.WaitForExit(15000)) { "exit $($p.ExitCode)" } else { $p.Kill(); 'stopped at start-up (waiting)' }
+              if ((Test-Path "$d\$n.loaded") -or $state -like 'stopped*') {
+                $open += "$exe took the planted $n from its own folder ($state)"
+              }
+              Remove-Item "$d\$n.loaded" -ErrorAction SilentlyContinue
+            }
+          }
+          if ($open) {
+            "### SEC-003 is NOT fully closed`n" + (($open | ForEach-Object { "- $_" }) -join "`n") | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            $open
+            throw "SEC-003 residual: $($open.Count) planted DLL(s) were taken from the installer's folder before main"
+          }
+          "no planted DLL was taken before main"
+      - name: the PC report, from the console tool and from the installer (read-only)
+        shell: pwsh
+        run: |
+          # `AurOS-Setup.exe --report` (stream HW, src/aurbridge/hwinv.h):
+          # what is inside this PC, as plain text and JSON. Two files,
+          # nothing else written. The wizard is a windowed program, so it
+          # is started and waited for.
+          $d = Join-Path $env:RUNNER_TEMP 'report'
+          New-Item -ItemType Directory -Force -Path "$d\console", "$d\wizard" | Out-Null
+          .\exe\aurbridge.exe report "$d\console"
+          if ($LASTEXITCODE -ne 0) { throw "report exited $LASTEXITCODE" }
+          $p = Start-Process -FilePath (Resolve-Path .\exe\aurbridge-wizard.exe).Path -ArgumentList '--report', "$d\wizard" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "--report exited $($p.ExitCode)" }
+          foreach ($w in 'console', 'wizard') {
+            foreach ($f in 'AurOS-report.txt', 'AurOS-report.json') {
+              if (-not (Test-Path "$d\$w\$f")) { throw "$w did not write $f" }
+            }
+            $j = Get-Content "$d\$w\AurOS-report.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($j.schema -ne 1) { throw "${w}: schema is $($j.schema)" }
+            if (-not $j.machine.cpu) { throw "${w}: the report has no processor" }
+            if ($j.windows.build -lt 10000) { throw "${w}: the report has no Windows build" }
+            if ($j.installer.checked -ne $true) { throw "${w}: the installer's own check is missing from the report" }
+            "${w}: $($j.devices.Count) devices kept, $($j.devices_skipped) skipped, $($j.printers.Count) printers"
+          }
+          Get-Content "$d\wizard\AurOS-report.txt"
+          "### The PC report on a real Windows VM (read-only)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          '```' | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          Get-Content "$d\wizard\AurOS-report.txt" -Encoding UTF8 | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          '```' | Out-File $env:GITHUB_STEP_SUMMARY -Append
+      - name: preflight on a real Windows machine (read-only)
+        shell: pwsh
+        run: |
+          .\exe\aurbridge.exe preflight
+          $code = $LASTEXITCODE
+          .\exe\aurbridge.exe preflight --json | Out-File preflight.json
+          # 0 = go, 1 = blocked. A server VM may well be blocked; what
+          # must not happen is a crash or any other code.
+          if ($code -ne 0 -and $code -ne 1) { throw "preflight exited $code" }
+          Get-Content preflight.json
+          # A finding that fires on a machine that does not have the thing
+          # is a false alarm: this VM has no Intel storage and a
+          # Microsoft virtual disk.
+          if (Select-String -Path preflight.json -Pattern '"intel-rst"' -Quiet) { throw "intel-rst on a VM without Intel storage" }
+          exit 0
+      - name: BitLocker is read from the disk, not from the volume's own view
+        shell: pwsh
+        run: |
+          # Windows shows a BitLocker drive that is on, suspended, "used space
+          # only", waiting for activation or decrypting as plain NTFS through
+          # the volume; only the disk under it says -FVE-FS-. The check used
+          # to read the volume, so every one of those passed. This runner
+          # has no BitLocker, so the disk is told to say it
+          # (AURBRIDGE_TEST_FVE, which can only refuse): the same code runs.
+          $plain = ((.\exe\aurbridge.exe preflight --json | Out-String | ConvertFrom-Json).findings |
+                      Where-Object id -eq 'bitlocker-system')
+          if ($plain) { throw "a runner without BitLocker was said to have it: $($plain.detail)" }
+          $env:AURBRIDGE_TEST_FVE = '1'
+          $j = .\exe\aurbridge.exe preflight --json | Out-String | ConvertFrom-Json
+          $code = $LASTEXITCODE
+          Remove-Item Env:AURBRIDGE_TEST_FVE
+          $f = $j.findings | Where-Object id -eq 'bitlocker-system'
+          if (-not $f) { throw "the disk said BitLocker and preflight did not: the volume's view still decides" }
+          if ($f.severity -ne 'block') { throw "BitLocker is a $($f.severity), not a stop" }
+          if ($code -ne 1) { throw "preflight exited $code with BitLocker on the disk, not 1 (blocked)" }
+          $v = $j.volumes | Where-Object { $_.mount -eq $env:SystemDrive } | Select-Object -First 1
+          if ($v.bitlocker -ne 1) { throw "the system volume is not marked BitLocker: $($v.bitlocker)" }
+          "the disk said BitLocker: preflight stops, and the volume is marked"
+          exit 0
+      - name: the storage check finds the real controller's driver
+        shell: pwsh
+        run: |
+          # Asked independently of AurBridge: the drivers from the system
+          # disk up through its parents, the way Device Manager has them.
+          $n = (Get-Disk | Where-Object IsSystem | Select-Object -First 1).Number
+          $id = (Get-CimInstance Win32_DiskDrive | Where-Object Index -eq $n).PNPDeviceID
+          $chain = @()
+          while ($id) {
+            $svc = (Get-PnpDeviceProperty -InstanceId $id -KeyName DEVPKEY_Device_Service -ErrorAction SilentlyContinue).Data
+            $chain += "$id [$svc]"
+            if ($svc -and $svc -ne 'disk' -and -not $ctl) { $ctl = $svc }
+            $id = (Get-PnpDeviceProperty -InstanceId $id -KeyName DEVPKEY_Device_Parent -ErrorAction SilentlyContinue).Data
+          }
+          $chain
+          if (-not $ctl) { throw "no controller driver found above the system disk" }
+          "the system disk's controller is run by $ctl"
+          # Told to treat that driver as Intel's, the check has to name it.
+          $env:AURBRIDGE_TEST_RST_SERVICE = $ctl
+          .\exe\aurbridge.exe preflight --json | Out-File rst.json
+          $f = Get-Content rst.json -Raw | ConvertFrom-Json
+          $hit = $f.findings | Where-Object id -eq 'intel-rst'
+          if (-not $hit) { throw "told $ctl is Intel's, the check did not find it: the walk is not reaching the controller" }
+          if ($hit.detail -notmatch [regex]::Escape($ctl)) { throw "it fired, but not about $ctl : $($hit.detail)" }
+          "found: $($hit.detail)"
+          exit 0
+      - name: the install switches Fast Startup off itself
+        shell: pwsh
+        run: |
+          # Switched ON first, the way most home PCs have it, and the
+          # preflight must then say it will be switched off -- not refuse.
+          $k = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power'
+          Set-ItemProperty -Path $k -Name HiberbootEnabled -Value 1 -Type DWord
+          powercfg /hibernate on 2>&1 | Out-String | Write-Output
+          $f = (.\exe\aurbridge.exe preflight --json | Out-String | ConvertFrom-Json).findings |
+                 Where-Object id -eq 'fast-startup'
+          if (-not $f) { throw "with Fast Startup on, preflight did not notice" }
+          if ($f.severity -ne 'info') { throw "Fast Startup is still a refusal: $($f.severity)" }
+          .\exe\aurbridge.exe fast-startup-off
+          if ($LASTEXITCODE -ne 0) { throw "fast-startup-off exited $LASTEXITCODE" }
+          $v = (Get-ItemProperty -Path $k -Name HiberbootEnabled).HiberbootEnabled
+          if ($v -ne 0) { throw "HiberbootEnabled is still $v" }
+          if (Test-Path "$env:SystemDrive\hiberfil.sys") { throw "hiberfil.sys is still there" }
+          $f = (.\exe\aurbridge.exe preflight --json | Out-String | ConvertFrom-Json).findings |
+                 Where-Object id -eq 'fast-startup'
+          if ($f) { throw "after switching it off, preflight still mentions Fast Startup" }
+          "Fast Startup was on, and the installer switched it off"
+          exit 0
+      - name: the Fix button deletes only old temporary files, never hers
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          # What Windows' own Disk Cleanup calls "Temporary files": files in
+          # the two temp folders that nothing has written for a week. Those
+          # must go. A file written today, a file in her Recycle Bin, a
+          # junction in %TEMP% and somebody's file behind it must all stay:
+          # a recursive delete that follows the link would delete theirs.
+          $keep = "$env:SystemDrive\keep-me"
+          New-Item -ItemType Directory -Force $keep | Out-Null
+          Set-Content "$keep\photo.txt" 'somebody''s file'
+          New-Item -ItemType Directory -Force "$env:TEMP\aurtest\deeper" | Out-Null
+          $old = (Get-Date).AddDays(-10)
+          foreach ($f in "$env:TEMP\aurtest\deeper\junk.tmp", "$env:WINDIR\Temp\aurtest-junk.tmp") {
+            Set-Content $f 'junk'
+            $i = Get-Item $f; $i.CreationTime = $old; $i.LastWriteTime = $old
+          }
+          Set-Content "$env:TEMP\aurtest-today.tmp" 'written today'
+          cmd /c mklink /J "$env:TEMP\aurtest-link" $keep | Out-Null
+          if (-not (Test-Path "$env:TEMP\aurtest-link\photo.txt")) { throw "the junction was not made" }
+          # Something of hers in the Recycle Bin.
+          Set-Content "$keep\binned.txt" 'hers, deleted to the Recycle Bin'
+          Add-Type -AssemblyName Microsoft.VisualBasic
+          [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile("$keep\binned.txt", 'OnlyErrorDialogs', 'SendToRecycleBin')
+          $before = @((New-Object -ComObject Shell.Application).NameSpace(10).Items()).Count
+          if ($before -lt 1) { "::warning::this runner has no Recycle Bin to test with" }
+          # TEMP and TMP are ordinary settings and can point at her documents.
+          # The fix sweeps the two Temp folders by their names and must
+          # leave an old file in whatever TEMP says alone.
+          $docs = "$keep\documents"
+          New-Item -ItemType Directory -Force $docs | Out-Null
+          Set-Content "$docs\her-old-letter.txt" 'her letter, a month old'
+          $i = Get-Item "$docs\her-old-letter.txt"; $i.CreationTime = $old; $i.LastWriteTime = $old
+          $realTemp = $env:TEMP; $realTmp = $env:TMP
+          $env:TEMP = $docs; $env:TMP = $docs
+          .\exe\aurbridge.exe fix insufficient-space
+          $code = $LASTEXITCODE
+          $env:TEMP = $realTemp; $env:TMP = $realTmp
+          if ($code -ne 0) { throw "fix insufficient-space exited $code" }
+          if (-not (Test-Path "$docs\her-old-letter.txt")) { throw "AN OLD FILE IN THE FOLDER TEMP POINTED AT WAS DELETED: the fix follows TEMP" }
+          if (Test-Path "$env:TEMP\aurtest\deeper\junk.tmp") { throw "an old file in %TEMP% is still there" }
+          if (Test-Path "$env:WINDIR\Temp\aurtest-junk.tmp") { throw "an old file in Windows\Temp is still there" }
+          if (-not (Test-Path "$env:TEMP\aurtest-today.tmp")) { throw "A FILE WRITTEN TODAY WAS DELETED" }
+          if (-not (Test-Path "$env:TEMP\aurtest-link")) { throw "the junction was removed: links are left alone" }
+          if (-not (Test-Path "$keep\photo.txt")) { throw "THE FILE BEHIND THE JUNCTION WAS DELETED" }
+          $after = @((New-Object -ComObject Shell.Application).NameSpace(10).Items()).Count
+          if ($after -lt $before) { throw "THE RECYCLE BIN WAS EMPTIED: $before items before, $after after" }
+          # Nothing a program cannot fix is attempted, and an encrypted
+          # drive is never decrypted (owner decision D11).
+          .\exe\aurbridge.exe fix firmware-bios
+          if ($LASTEXITCODE -ne 2) { throw "fix firmware-bios exited $LASTEXITCODE, not 2" }
+          .\exe\aurbridge.exe fix bitlocker-system
+          if ($LASTEXITCODE -ne 2) { throw "fix bitlocker-system exited $LASTEXITCODE, not 2" }
+          "old temp files deleted; today's file, the Recycle Bin and the file behind the link untouched"
+          exit 0
+      - name: after a restart it asks for, the installer opens again by itself
+        shell: pwsh
+        run: |
+          $tn = 'AurOS installer - continue'
+          .\exe\aurbridge.exe resume-arm
+          if ($LASTEXITCODE -ne 0) { throw "resume-arm exited $LASTEXITCODE" }
+          $x = schtasks.exe /query /tn $tn /xml | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "the task was not created" }
+          if ($x -notmatch '--resume') { throw "the task does not pass --resume" }
+          if ($x -notmatch 'aurbridge\.exe') { throw "the task does not start the installer" }
+          if ($x -notmatch 'LogonTrigger') { throw "the task does not run at sign-in" }
+          if ($x -notmatch 'HighestAvailable') { throw "the task does not run with the rights the installer needs" }
+          # It runs with her highest rights and no question, so it must
+          # start a copy only an administrator can change -- never the
+          # file in Downloads (or here), which any program she runs can.
+          $copy = Join-Path ${env:ProgramFiles} 'AurOS Setup\aurbridge.exe'
+          if ($x -notmatch [regex]::Escape($copy)) { throw "the task does not start the copy in Program Files: $x" }
+          if ($x -match [regex]::Escape((Resolve-Path .\exe).Path)) { throw "THE TASK STARTS THE FILE IT WAS RUN FROM" }
+          if (-not (Test-Path $copy)) { throw "the copy is not there" }
+          $h1 = (Get-FileHash .\exe\aurbridge.exe).Hash; $h2 = (Get-FileHash $copy).Hash
+          if ($h1 -ne $h2) { throw "the copy is not the installer: $h2, not $h1" }
+          $acl = (Get-Acl (Split-Path $copy)).Access | Where-Object {
+            $_.IdentityReference -match 'Users|Everyone|Authenticated' -and
+            $_.FileSystemRights -match 'Write|Modify|FullControl|CreateFiles' -and $_.AccessControlType -eq 'Allow' }
+          if ($acl) { throw "people without administrator rights can change the copy: $($acl | Out-String)" }
+          .\exe\aurbridge.exe resume-done
+          schtasks.exe /query /tn $tn 2>&1 | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "the task is still there after resume-done" }
+          if (Test-Path $copy) { throw "the copy is still there after resume-done" }
+          "the task starts an administrator-only copy with --resume at sign-in, and both go again"
+          exit 0
+      - name: an earlier attempt's files on the start-up partition count as room
+        shell: pwsh
+        run: |
+          # This VM's EFI partition is 95 MB with about 61 MB free. Fill it
+          # to 10 MB free, first with a file where an earlier AurOS attempt
+          # leaves its own (which the next one replaces, so it is room),
+          # then with somebody else's file (which is not). The first must
+          # pass and the second must refuse, or the check is not looking.
+          # The VM is thrown away after the run.
+          mountvol S: /S
+          if (-not (Test-Path S:\EFI)) { throw "the EFI partition did not mount" }
+          function Fill($path) {
+            $free = ([System.IO.DriveInfo]::new('S')).AvailableFreeSpace
+            fsutil file createnew $path ([int64]($free - 10MB)) | Out-Null
+          }
+          function EspFinding() {
+            (.\exe\aurbridge.exe preflight --json | Out-String | ConvertFrom-Json).findings |
+              Where-Object { $_.id -like 'esp-*' } | Select-Object -First 1
+          }
+          New-Item -ItemType Directory -Force S:\EFI\AurOS | Out-Null
+          Fill S:\EFI\AurOS\staging.img
+          $ours = EspFinding
+          Remove-Item S:\EFI\AurOS -Recurse -Force
+          Fill S:\EFI\not-aurOS.bin
+          $theirs = EspFinding
+          Remove-Item S:\EFI\not-aurOS.bin -Force
+          mountvol S: /D
+          "with AurOS's own leftovers: $($ours.id): $($ours.detail)"
+          "with somebody else's file:  $($theirs.id): $($theirs.detail)"
+          if ($ours.id -ne 'esp-space') { throw "an earlier attempt's files were not counted as room" }
+          if ($theirs.id -ne 'esp-low-space') { throw "a full partition was not refused: the check is not looking" }
+          exit 0
+      - name: wizard starts, navigates, runs preflight
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path .\exe\aurbridge-wizard.exe).Path
+          $d = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\wiz"
+          $p = Start-Process -FilePath $exe -ArgumentList '--navtest', $d.FullName -Wait -PassThru
+          Get-Content "$d\navtest.log"
+          if ($p.ExitCode -ne 0) { throw "--navtest exited $($p.ExitCode)" }
+          if (Select-String -Path "$d\navtest.log" -Pattern '\[FAIL\]' -Quiet) { throw "navtest has FAIL lines" }
+          if (-not (Select-String -Path "$d\navtest.log" -Pattern '\[PASS\]' -Quiet)) { throw "navtest passed nothing" }
+          $p = Start-Process -FilePath $exe -ArgumentList '--selftest', $d.FullName -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw "--selftest did not finish in 3 minutes" }
+          Get-Content "$d\selftest.log"
+          if (-not (Select-String -Path "$d\selftest.log" -Pattern 'window created   : yes' -Quiet)) { throw "no window" }
+          if (-not (Select-String -Path "$d\selftest.log" -Pattern 'preflight done   : 1' -Quiet)) { throw "preflight did not finish" }
+          # A screen reader, asking Windows for the window's accessible
+          # object, gets the page's words and its button by name.
+          if (-not (Select-String -Path "$d\selftest.log" -Pattern 'screen reader    : "[^"]{10,}", [1-9][0-9]* parts, button "[^"]+"' -Quiet)) { throw "a screen reader gets nothing from the window" }
+      # THE WEBSITE'S INSTALLER PICTURES (D-P0-2): the three on the front page (website/assets/shots/
+      # setup-check, setup-look, setup-ready) were made by Wine. These are every page drawn by real
+      # Windows with this build's own letters; D takes them from the artifact once the wizard is
+      # frozen. Evidence, not a gate (a failure here is red on the step and the job stays green).
+      - name: every page as real Windows draws it (the website's pictures come from here)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP 'shots'
+          New-Item -ItemType Directory -Force -Path "$d\png" | Out-Null
+          $p = Start-Process -FilePath (Resolve-Path .\exe\aurbridge-wizard.exe).Path -ArgumentList '--shot', $d -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "--shot exited $($p.ExitCode)" }
+          $bmps = @(Get-ChildItem $d -Filter *.bmp | ForEach-Object { $_.FullName })
+          if ($bmps.Count -lt 40) { throw "only $($bmps.Count) pictures were drawn" }
+          python tools\wizard\bmp2png.py --out "$d\png" @bmps
+          "$($bmps.Count) pictures drawn by real Windows" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          Copy-Item "$d\png" "$PWD\wizard-shots-windows" -Recurse
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: wizard-shots-windows
+          path: wizard-shots-windows
+          if-no-files-found: ignore
+      - name: the installer says its own name, and has its icon
+        shell: pwsh
+        run: |
+          # What SmartScreen's "Run anyway", the administrator question and
+          # the Downloads folder show before it runs (src/aurbridge/aurbridge-info.rc).
+          $v = (Get-Item .\exe\aurbridge-wizard.exe).VersionInfo
+          $v | Format-List ProductName, FileDescription, CompanyName, FileVersion, OriginalFilename
+          if ($v.ProductName -ne 'AurOS') { throw "ProductName is '$($v.ProductName)'" }
+          if ($v.FileDescription -ne 'AurOS Setup') { throw "FileDescription is '$($v.FileDescription)'" }
+          if ($v.CompanyName -ne 'AurOS') { throw "CompanyName is '$($v.CompanyName)'" }
+          Add-Type -AssemblyName System.Drawing
+          $i = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path .\exe\aurbridge-wizard.exe).Path)
+          $b = $i.ToBitmap()
+          $c = $b.GetPixel([int]($b.Width / 2), [int]($b.Height / 2))
+          "icon centre: $c"
+          # the teal diamond, not Windows' blank program icon
+          if (-not ($c.G -gt 150 -and $c.B -gt 130 -and $c.R -lt 160)) { throw "the icon is not AurOS's: centre pixel $c" }
+      - name: wizard starts the way a double-click starts it
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath (Resolve-Path .\exe\aurbridge-wizard.exe).Path -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited) { throw "the wizard exited on its own, code $($p.ExitCode)" }
+          $p.Kill()
+          "the wizard was running after 8 seconds"
+
+  windows-published:
+    needs: pins
+    concurrency: { group: 'windows-${{ github.ref }}-windows-published', cancel-in-progress: false }
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PUBLISHED_URL: ${{ needs.pins.outputs.published_url }}
+      PUBLISHED_SHA256: ${{ needs.pins.outputs.published_sha256 }}
+    steps:
+      - name: download what a person downloads
+        shell: pwsh
+        env:
+          TESTED: ${{ needs.pins.outputs.tested }}
+        run: |
+          "### windows-published started $env:TESTED" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          Invoke-WebRequest -Uri $env:PUBLISHED_URL -OutFile AurOS-Installer-test.exe
+          $h = (Get-FileHash AurOS-Installer-test.exe -Algorithm SHA256).Hash.ToLower()
+          "SHA-256 $h"
+          if ($h -ne $env:PUBLISHED_SHA256) { throw "the published file is not the one its release lists" }
+      - name: it starts, navigates, runs preflight
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path .\AurOS-Installer-test.exe).Path
+          $d = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\pub"
+          $p = Start-Process -FilePath $exe -ArgumentList '--navtest', $d.FullName -Wait -PassThru
+          Get-Content "$d\navtest.log"
+          if ($p.ExitCode -ne 0) { throw "--navtest exited $($p.ExitCode)" }
+          if (Select-String -Path "$d\navtest.log" -Pattern '\[FAIL\]' -Quiet) { throw "navtest has FAIL lines" }
+          $p = Start-Process -FilePath $exe -ArgumentList '--selftest', $d.FullName -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw "--selftest did not finish in 3 minutes" }
+          Get-Content "$d\selftest.log"
+          if (-not (Select-String -Path "$d\selftest.log" -Pattern 'window created   : yes' -Quiet)) { throw "no window" }
+          if (-not (Select-String -Path "$d\selftest.log" -Pattern 'preflight done   : 1' -Quiet)) { throw "preflight did not finish" }
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited) { throw "the wizard exited on its own, code $($p.ExitCode)" }
+          $p.Kill()
+          "the published installer was running after 8 seconds"
+
+  windows-known-bad:
+    needs: [gate, build]
+    if: needs.gate.outputs.run == 'true'
+    concurrency: { group: 'windows-${{ github.ref }}-windows-known-bad', cancel-in-progress: false }
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: known-bad, path: . }
+      - name: the build that failed on the first real PC fails here too
+        shell: pwsh
+        run: |
+          # known-bad.exe is this build's wizard with a manifest Windows refuses (build job).
+          Copy-Item known-bad.exe bad.exe
+          $started = $true
+          try {
+            $p = Start-Process -FilePath (Resolve-Path .\bad.exe).Path -PassThru -ErrorAction Stop
+            Start-Sleep -Seconds 5
+            if ($p.HasExited) { $started = $false; "exited with $($p.ExitCode)" } else { $p.Kill() }
+          } catch {
+            $started = $false
+            "refused, as on the real PC: $($_.Exception.Message)"
+          }
+          if ($started) { throw "the known-bad build started: this machine cannot tell a good installer from a bad one" }
+
+  windows-download:
+    needs: [build, pins]
+    concurrency: { group: 'windows-${{ github.ref }}-windows-download', cancel-in-progress: false }
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      IMAGE_PIECES_URL: ${{ needs.pins.outputs.pieces_url }}
+      IMAGE_SHA256: ${{ needs.pins.outputs.image_sha256 }}
+      IMAGE_BYTES: ${{ needs.pins.outputs.image_bytes }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { name: exe, path: exe }
+      - name: WinHTTP fetches the published image, and it checks out
+        shell: pwsh
+        env:
+          TESTED: ${{ needs.pins.outputs.tested }}
+        run: |
+          "### windows-download fetched the image of $env:TESTED" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          $list = "$env:RUNNER_TEMP\pieces.txt"
+          Invoke-WebRequest -Uri $env:IMAGE_PIECES_URL -OutFile $list
+          $out = "$env:RUNNER_TEMP\auros-desktop.img"
+          .\exe\aurbridge.exe getimage $list $out $env:IMAGE_SHA256 $env:IMAGE_BYTES | Tee-Object -FilePath getimage.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { throw "getimage exited $code" }
+          if (-not (Select-String -Path getimage.log -Pattern 'verdict=ok' -Quiet)) { throw "no verdict=ok" }
+
+  # The fast path's Windows half (gapselftest) is in fastpath.yml, its own
+  # queue: it takes minutes and this workflow is the one every push waits on.

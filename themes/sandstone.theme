@@ -1,0 +1,38 @@
+# AurOS Theme — Light (id sandstone). THE DEFAULT, on every surface:
+# warm paper, black ink, one green that always means "this way".
+# Tokens: docs/DESIGN-DIRECTION.md §3 "Colour: Light". Every pair is
+# checked by tools/contrast.c --strict.
+inherit="nocturne"
+
+theme_name="Light"
+theme_variant="light"
+theme_description="Dark writing on light paper."
+
+bg="#F6F2E9"         # paper: page, desktop
+bg_alt="#ECE6DA"     # soft: bars, alternate sections
+surface="#FCFAF5"    # card: windows, menus, dialogs (not pure white: glare)
+surface_hi="#E1ECE7" # selected: the chosen row or card only
+overlay="#6E675C"    # rule: every border and outline (4.5:1 or more)
+muted="#5C6066"      # quiet: legal lines only
+subtle="#3A3D42"     # ink-2: secondary text
+fg="#17181A"         # ink: everything she reads or acts on
+fg_hi="#17181A"
+
+accent="#0B5D4F"       # go: the way forward, and what she chose
+accent_alt="#3A3D42"
+accent_warm="#07463B"  # go, pressed
+ok="#0B5D4F"  warn="#8A5A12"  err="#9E2B22"  info="#3A3D42"
+
+ansi0="#17181A"  ansi8="#5C6066"
+ansi1="#9E2B22"  ansi9="#B5392F"
+ansi2="#0B5D4F"  ansi10="#137565"
+ansi3="#8A5A12"  ansi11="#946318"
+ansi4="#2F5A8A"  ansi12="#3D6FA6"
+ansi5="#6E4A78"  ansi13="#835C8E"
+ansi6="#1F6C6A"  ansi14="#267875"
+ansi7="#F6F2E9"  ansi15="#FCFAF5"
+
+# Paper, and nothing printed on it.
+wall_style="solid"
+wall_c1="#F6F2E9"  wall_c2="#F6F2E9"  wall_c3="#F6F2E9"  wall_c4="#F6F2E9"
+wall_intensity="0"  wall_grain="0"  wall_vignette="0"

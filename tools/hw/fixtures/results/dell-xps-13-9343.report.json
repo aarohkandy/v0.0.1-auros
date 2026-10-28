@@ -1,0 +1,4 @@
+{"schema":1,"machine":{"vendor":"Dell"},"windows":{"name":"Windows 10 Home","display":"22H2","build":19045},
+ "system_drive":{"kind":1,"bitlocker":0},
+ "verdicts":[{"kind":"wifi","state":"wont","printer":-1},{"kind":"audio","state":"works","printer":-1},
+             {"kind":"camera","state":"works","printer":-1}]}

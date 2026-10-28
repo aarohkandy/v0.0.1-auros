@@ -1,0 +1,7 @@
+#!/bin/sh
+# /etc/kernel/postinst.d/zzz-auros-lock and /etc/initramfs/post-update.d/
+# zzz-auros-lock (linked by `lockctl prepare`): a new kernel or initramfs
+# is copied to the EFI partition, which is where an encrypted AurOS
+# starts from (docs/security/THEFT.md section 2). "zzz" so that it runs
+# after zz-update-grub has written the new menu.
+exec /usr/lib/auros/lock/lockctl boot-sync

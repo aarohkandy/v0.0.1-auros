@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AurOS wish v1",
+  "description": "What the cloud may hand the computer (docs/AI.md sections 2 and 7). Shared by the engine (W1, src/aurwish) and the cloud (CL, cloud/). Every object is closed and every choice is an anyOf of closed variants, so at most one variant matches. Lengths count Unicode code points; the engine also applies the grapheme, byte, free-text, trigger/action and floor rules of AI.md 7.3-7.5 in code. The cloud's checks save cost only (AI.md 7.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "when", "do", "enabled"],
+  "properties": {
+    "v": { "type": "integer", "const": 1 },
+    "when": { "$ref": "#/$defs/when" },
+    "do": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "$ref": "#/$defs/action" } },
+    "enabled": { "type": "boolean" }
+  },
+  "$defs": {
+    "name": {
+      "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[\\p{L}\\p{N}][\\p{L}\\p{N} '&+._-]*$",
+      "description": "a name as she said it; the engine matches it to something installed (app, theme) or to a bookmark or sites.json (site), and refuses when nothing matches"
+    },
+    "seconds_fill": { "type": "integer", "minimum": 1, "maximum": 10 },
+    "change": { "type": "integer", "minimum": -50, "maximum": 50 },
+    "size": { "type": "string", "enum": ["normal", "bigger", "biggest"] },
+    "hhmm": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "HH:MM, 24-hour, her local wall-clock time" },
+    "emoji": {
+      "type": "string",
+      "description": "the shipped allowlist: food, animals, hearts, flowers, sky, weather, celebrations, smiles",
+      "enum": [
+        "🥔", "🍎", "🍌", "🍓", "🍒", "🍕", "🍰", "🧁", "🍪", "🍩", "☕", "🍵",
+        "🐶", "🐱", "🐰", "🐻", "🐼", "🐨", "🐸", "🐢", "🐠", "🐦", "🦋", "🐝",
+        "❤️", "🧡", "💛", "💚", "💙", "💜",
+        "🌸", "🌻", "🌷", "🌹", "🌼", "🍀",
+        "⭐", "🌟", "✨", "🌙", "☀️", "🌈",
+        "☁️", "⛅", "🌧️", "❄️", "⛄",
+        "🎉", "🎈", "🎂", "🎁", "🎊", "🎄", "🎃", "🥳",
+        "😀", "😊", "😂", "😍", "👍"
+      ]
+    },
+    "when": {
+      "anyOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["type"],
+          "properties": { "type": { "type": "string", "enum": ["now", "startup", "plugged_in", "unplugged", "usb_inserted"] } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "word"],
+          "properties": {
+            "type": { "type": "string", "const": "typed_word" },
+            "word": { "type": "string", "minLength": 4, "maxLength": 32, "pattern": "^\\p{L}+$", "description": "one word, letters only" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "at"],
+          "properties": {
+            "type": { "type": "string", "const": "time" },
+            "at": { "$ref": "#/$defs/hhmm" },
+            "days": {
+              "type": "array", "minItems": 1, "maxItems": 7, "uniqueItems": true,
+              "items": { "type": "string", "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] },
+              "description": "omitted = every day"
+            }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "minutes"],
+          "properties": { "type": { "type": "string", "const": "every" }, "minutes": { "type": "integer", "minimum": 5, "maximum": 1440 } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "app_name"],
+          "properties": { "type": { "type": "string", "const": "app_opened" }, "app_name": { "$ref": "#/$defs/name" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "percent"],
+          "properties": { "type": { "type": "string", "const": "battery_below" }, "percent": { "type": "integer", "minimum": 5, "maximum": 50 } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "minutes"],
+          "properties": { "type": { "type": "string", "const": "idle" }, "minutes": { "type": "integer", "minimum": 1, "maximum": 240 } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "sensor", "heading", "tolerance_deg"],
+          "properties": {
+            "type": { "type": "string", "const": "sensor" },
+            "sensor": { "type": "string", "const": "compass" },
+            "heading": { "type": "string", "enum": ["north", "east", "south", "west"] },
+            "tolerance_deg": { "type": "integer", "minimum": 5, "maximum": 45 }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "sensor", "orientation"],
+          "properties": {
+            "type": { "type": "string", "const": "sensor" },
+            "sensor": { "type": "string", "const": "tilt" },
+            "orientation": { "type": "string", "enum": ["normal", "left", "right", "upside_down"] }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "sensor", "below_lux"],
+          "properties": {
+            "type": { "type": "string", "const": "sensor" },
+            "sensor": { "type": "string", "const": "light" },
+            "below_lux": { "type": "integer", "minimum": 0, "maximum": 100000 }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "sensor", "above_lux"],
+          "properties": {
+            "type": { "type": "string", "const": "sensor" },
+            "sensor": { "type": "string", "const": "light" },
+            "above_lux": { "type": "integer", "minimum": 0, "maximum": 100000 }
+          }
+        }
+      ]
+    },
+    "action": {
+      "anyOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "emoji", "seconds"],
+          "properties": { "type": { "type": "string", "const": "fill_screen" }, "emoji": { "$ref": "#/$defs/emoji" }, "seconds": { "$ref": "#/$defs/seconds_fill" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "text", "seconds"],
+          "properties": {
+            "type": { "type": "string", "const": "fill_screen" },
+            "text": { "type": "string", "minLength": 1, "maxLength": 24, "description": "free text: only her own words (AI.md 7.3)" },
+            "seconds": { "$ref": "#/$defs/seconds_fill" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "text"],
+          "properties": { "type": { "type": "string", "const": "show_message" }, "text": { "type": "string", "minLength": 1, "maxLength": 140, "description": "free text: only her own words (AI.md 7.3)" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "text"],
+          "properties": { "type": { "type": "string", "const": "remind" }, "text": { "type": "string", "minLength": 1, "maxLength": 140, "description": "free text: only her own words (AI.md 7.3)" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "text"],
+          "properties": { "type": { "type": "string", "const": "speak" }, "text": { "type": "string", "minLength": 1, "maxLength": 200, "description": "free text: only her own words (AI.md 7.3)" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type"],
+          "properties": { "type": { "type": "string", "const": "speak_time" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "sound"],
+          "properties": { "type": { "type": "string", "const": "play_sound" }, "sound": { "type": "string", "enum": ["chime", "bell", "birds", "applause", "gentle"] } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "set_percent"],
+          "properties": { "type": { "type": "string", "const": "brightness" }, "set_percent": { "type": "integer", "minimum": 30, "maximum": 100 } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "change_percent"],
+          "properties": { "type": { "type": "string", "const": "brightness" }, "change_percent": { "$ref": "#/$defs/change" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "set_percent"],
+          "properties": { "type": { "type": "string", "const": "volume" }, "set_percent": { "type": "integer", "minimum": 20, "maximum": 80 } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "change_percent"],
+          "properties": { "type": { "type": "string", "const": "volume" }, "change_percent": { "$ref": "#/$defs/change" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "app_name"],
+          "properties": { "type": { "type": "string", "const": "open_app" }, "app_name": { "$ref": "#/$defs/name" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "site"],
+          "properties": { "type": { "type": "string", "const": "open_website" }, "site": { "$ref": "#/$defs/name" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "look"],
+          "properties": { "type": { "type": "string", "const": "set_look" }, "look": { "type": "string", "enum": ["taskbar", "dock", "rail", "tiles"] } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "size"],
+          "properties": { "type": { "type": "string", "const": "set_text_size" }, "size": { "$ref": "#/$defs/size" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "size"],
+          "properties": { "type": { "type": "string", "const": "pointer_size" }, "size": { "$ref": "#/$defs/size" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "color"],
+          "properties": { "type": { "type": "string", "const": "set_wallpaper" }, "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "theme_name"],
+          "properties": { "type": { "type": "string", "const": "set_wallpaper" }, "theme_name": { "$ref": "#/$defs/name" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "on"],
+          "properties": { "type": { "type": "string", "const": "night_light" }, "on": { "type": "boolean" } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["type", "on"],
+          "properties": { "type": { "type": "string", "const": "do_not_disturb" }, "on": { "type": "boolean" }, "until": { "$ref": "#/$defs/hhmm" } }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "_about": "Hand-written half of hw/compat.json. tools/hw/gen-compat.py merges this with what it reads from the image (modules.alias, firmware, printer drivers) and writes hw/compat.json; tools/hw/gen-header.py turns that into hw/lib/hwcompat_data.h and hwcompat_words.h. Edit THIS file, never compat.json. Every 'says' is a sentence she reads: no jargon (docs/EASY.md rule 2), 'computer' not 'PC', checked by tools/wordlint.sh. 'why' is for the report and for us.",
+
+  "words": {
+    "wifi.works":       "Your Wi-Fi will work.",
+    "wifi.partial":     "Your Wi-Fi will work, but it may be slower or drop out sometimes.",
+    "wifi.wont":        "Your Wi-Fi won't work with AurOS yet. A network cable will. A USB Wi-Fi stick can also fix this. Press Show a helper how to see which kind.",
+    "wifi.wont_alone":  "Your Wi-Fi won't work with AurOS yet, and this computer has no place for a network cable, so AurOS would have no internet. A USB Wi-Fi stick can fix this. Press Show a helper how to see which kind. Plug one in and start again. Nothing has been changed.",
+    "wifi.unknown":     "We can't tell if your Wi-Fi will work. A network cable will, if you have one.",
+    "ethernet.works":   "Your network cable will work.",
+    "ethernet.wont":    "Your network cable socket won't work with AurOS yet.",
+    "ethernet.unknown": "We can't tell if your network cable socket will work.",
+    "bluetooth.works":  "Your Bluetooth will work.",
+    "bluetooth.wont":   "Your Bluetooth won't work yet.",
+    "bluetooth.unknown":"We can't tell if your Bluetooth will work.",
+    "audio.works":      "Your sound will work.",
+    "audio.wont":       "Your sound won't work yet.",
+    "audio.unknown":    "We can't tell if your sound will work.",
+    "camera.works":     "Your camera will work.",
+    "camera.wont":      "Your camera won't work yet.",
+    "camera.unknown":   "We can't tell if your camera will work.",
+    "gpu.works":        "Your screen will work.",
+    "gpu.partial":      "Your screen will work, but games and 3D programs will be slow.",
+    "gpu.unknown":      "We can't tell how well your screen will work.",
+    "printer.works":    "Your printer will work.",
+    "printer.no_scan":  "Your printer will print, but its scanner won't work yet.",
+    "printer.wont":     "Your printer won't work yet. Connecting it to Wi-Fi, if it can, is the way to make it work.",
+    "printer.windows_only": "Your printer only works with Windows. A newer printer, or one that connects through Wi-Fi, will work with AurOS.",
+    "printer.unknown":  "We can't tell if your printer will work. Most printers made in the last ten years do.",
+    "scanner.works":    "Your scanner will work.",
+    "scanner.wont":     "Your scanner won't work yet.",
+    "fingerprint.wont": "Your fingerprint reader won't work. You will sign in with a short number instead."
+  },
+
+  "links": {
+    "wifi.sticks": "advanced.html#wifi-sticks"
+  },
+
+  "rules": [
+    { "id": "wifi-broadcom-wl-only", "verdict": "wifi", "state": "wont", "says": "wifi.wont",
+      "vid": "14e4", "need": "nodriver",
+      "why": "Broadcom Wi-Fi chip that Linux only drives with Broadcom's own closed driver (wl). The image carries the bus module (bcma/ssb) for it and no Wi-Fi driver, and wl cannot be installed on a computer with no other internet." },
+    { "id": "wifi-broadcom-usb-wl-only", "verdict": "wifi", "state": "wont", "says": "wifi.wont",
+      "bus": "usb", "vid": "0a5c", "need": "nodriver",
+      "why": "Broadcom USB Wi-Fi: same as the PCI chips, only wl drives it." },
+    { "id": "wifi-realtek-8922ae-newer-kernel", "verdict": "wifi", "state": "wont", "says": "wifi.wont",
+      "bus": "pci", "vid": "10ec", "did": ["8922"], "need": "nodriver",
+      "why": "Realtek RTL8922AE (Wi-Fi 7): its driver (rtw89_8922ae) is in newer kernels than the image's." },
+    { "id": "wifi-realtek-rtw89-unsteady", "verdict": "wifi", "state": "partial", "says": "wifi.partial",
+      "bus": "pci", "vid": "10ec", "did": ["8852", "b852", "c852", "b851"], "need": "driver",
+      "why": "Realtek RTL8852/8851 (rtw89): the driver and firmware are in the image, but many owners report dropped connections until power saving is switched off. Not yet checked on this image: a lab machine with one of these is wanted (docs/results/hardware/CAMPAIGN.md)." },
+
+    { "id": "wifi-realtek-8723be-weak-signal", "verdict": "wifi", "state": "partial", "says": "wifi.partial",
+      "bus": "pci", "vid": "10ec", "did": ["b723"], "need": "driver",
+      "why": "Realtek RTL8723BE (very common in 2014-2016 budget laptops): the driver and firmware are in the image, but this chip is widely reported to have a weak signal until its antenna setting is changed (ant_sel). Not yet checked on this image." },
+
+    { "id": "camera-intel-ipu", "verdict": "camera", "state": "wont", "says": "camera.wont",
+      "bus": "pci", "vid": "8086", "did": ["9d32", "9a19", "4e19", "465d", "462e", "a75d", "7d19", "645d", "b05d"],
+      "any_kind": true,
+      "why": "The camera is on an Intel image-processing unit (IPU3/IPU6/IPU7: laptops since about 2016 with a camera that is not a USB one). It needs Intel's own software on top of the kernel driver (IPU6/IPU7 drivers are not even in the 6.8 kernel), and AurOS has neither yet." },
+
+    { "id": "gpu-nvidia-nouveau-only", "verdict": "gpu", "state": "partial", "says": "gpu.partial",
+      "bus": "pci", "vid": "10de",
+      "why": "Nvidia graphics: AurOS ships the open nouveau driver (and the GSP firmware), not Nvidia's own, so 3D and games are slower than in Windows. A computer with a second, Intel or AMD, graphics chip uses that instead and is fine." },
+
+    { "id": "fingerprint-goodix", "verdict": "fingerprint", "state": "wont", "says": "fingerprint.wont",
+      "vid": "27c6", "any_kind": true, "unless_feature": "fprintd",
+      "why": "Goodix fingerprint sensor: most are not supported by Linux's fingerprint library at all, and the image has no fingerprint service." },
+    { "id": "fingerprint-any", "verdict": "fingerprint", "state": "wont", "says": "fingerprint.wont",
+      "unless_feature": "fprintd",
+      "why": "The image has no fingerprint service (fprintd), so no reader works." },
+
+    { "id": "printer-canon-capt", "verdict": "printer", "state": "wont", "says": "printer.windows_only",
+      "name_has": ["LBP2900", "LBP3000", "LBP3010", "LBP3018", "LBP3050", "LBP6000", "LBP6018", "LBP6020", "LBP6030"],
+      "why": "Canon LBP 'CAPT' laser printers: Windows-only language; Linux needs Canon's closed CAPT driver, which AurOS does not ship." },
+    { "id": "printer-hp-zjs", "verdict": "printer", "state": "wont", "says": "printer.windows_only",
+      "name_has": ["LaserJet P1005", "LaserJet P1006", "LaserJet P1007", "LaserJet P1008", "LaserJet P1102", "LaserJet P1505", "LaserJet P1566", "LaserJet P1606", "LaserJet Professional M1136", "LaserJet Professional M1212", "LaserJet Professional M1217", "LaserJet M1136", "LaserJet M1212", "LaserJet M1217"],
+      "unless_feature": "foo2zjs",
+      "why": "HP LaserJet 'ZjStream' printers: they print nothing until the host sends them firmware and a special page format (foo2zjs/HPLIP plug-in), neither of which the image has." }
+  ]
+}

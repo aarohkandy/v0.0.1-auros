@@ -1,0 +1,135 @@
+# Traps: things that already went wrong here
+
+Every one of these happened on this project and cost time. Most look
+reasonable until they bite.
+
+## Testing
+
+- **Never rebuild anything a running test reads.** Twice, `./build/staging`
+  ran while `installtest` was reading `out/auros-staging.img`. The
+  failures that produced were then blamed on real bugs, and later a real
+  bug was blamed on the race. Freeze the tree, and checksum the
+  artifacts before and after the run.
+- **Prove a check fails before believing it passes.** Break the thing it
+  checks (revert the fix, stub the function) and watch it go red. Checks
+  in this project have passed while testing nothing:
+  - a `sed` that matched nothing
+  - a loop that printed "ok" unconditionally
+  - a fixture that firmware quietly removed
+  - a file that pre-dated the build
+- **A test that passes because the environment tidied up is not a
+  test.** OVMF deletes or replaces some planted boot entries.
+  `firstboottest` case C now checks its own fixture first for exactly
+  this reason.
+- **Check the failure path too.** Check what a test does when the
+  fixture is wrong, the tool is missing, or the read fails. `2>/dev/null
+  || ok` has turned "could not read" into "passed" here more than once.
+- **Warnings need a check.** The second copy of the "way back" was not
+  written to any machine for a whole day. The install only printed a
+  warning, since that step is deliberately non-fatal. Nothing read the
+  warning until a restore case six checks later failed with a
+  misleading message.
+
+- **Wine is not Windows.** Wine loaded a manifest real Windows refuses
+  ("side-by-side configuration is incorrect"), so the first real PC could
+  not start an installer every test had passed. Anything shipped for
+  Windows is started on a real Windows VM before it is published
+  (`.github/workflows/windows.yml`); a hash check proves the file is the
+  file, not that it runs.
+- **A unit test runs outside the sandbox the real thing runs in.**
+  `aurfirsttest` drove `answer.sh` with every "Put Windows back" case
+  green; inside `auros-answer.service` (`ProtectSystem=strict`) `/run`
+  and `/boot` are read-only and it failed on the first real boot. Test
+  a root-side change in the booted image (`firstboottest`,
+  `putbacktest`), not only in the scratch directory.
+- **A check that stops firing may have stopped looking.** When a false
+  alarm is fixed, also prove the check still fires on the real thing
+  (the Intel RST walk is told a real driver is Intel's, and must name
+  it).
+
+## Shell and build
+
+- **`[ -e link ]` follows the link.** systemd's enable links are
+  absolute and root-relative (`/etc/systemd/system/x.service`). From
+  outside the chroot, `-e` resolves them against the build host and
+  says they are missing. Use `-L`. This bug was written twice.
+- **`pkill -f pattern` matches the shell running it** when the pattern
+  is in its own command line, and kills it (exit 144). Kill by PID.
+  (It happened again on 2026-09-26, with this line already written
+  here. Read the list before the command, not after.)
+- **A test killed by a signal does not run its EXIT trap** under `sh`;
+  `/tmp/installtest.lock` and the scratch directory stay behind and the
+  next end-to-end test refuses to start. Remove them by hand.
+- **Under `set -e`, `[ test ] && action` ends the script silently** when
+  the test is false. Use `if`.
+- **`forge build`'s stage 7 is a deliberate no-op.** Images come from
+  `build/all` (build, `mkimage`, hash, compress, verify by decompressing,
+  write the manifest, reclaim). A script that called `forge build` and
+  deleted the old images first destroyed all five and made none.
+- **`build/all` keeps `work/forge/desktop/rootfs` on purpose.**
+  `build/staging` and every end-to-end test take tools out of it.
+  Cleaning it breaks them all.
+- **`systemctl enable` inside a chroot needs the unit file to exist
+  first.** The overlay that installs the units once ran after the
+  enables, each ending `|| true`. It only worked because work trees were
+  reused between builds.
+
+## Firmware and boot
+
+- **A bare `File()` device path does not boot.** Firmware answers
+  `EFI_NOT_FOUND`. Boot entries need `HD(partition, GPT, GUID, start,
+  size)/File(...)`.
+- **The staging kernel is Canonical-signed, not Microsoft-signed.**
+  Firmware with Secure Boot on refuses it unless it is loaded through
+  shim. Tests using `-kernel` bypass this completely.
+- **OVMF prints which entry it tries and starts**, for example `BdsDxe:
+  starting Boot0002 "AurOS"`, on the serial console. That is how a test
+  tells "started from its own entry" from "rescued by the removable-media
+  fallback".
+- **OVMF appends its own entries** to `BootOrder`, as vendor firmware
+  does. Assert on what comes first, not on exact equality.
+- **`/sys` reports partition offsets in 512-byte units** whatever the
+  disk's sector size. GPT LBAs are in logical-sector units, so a 4Kn
+  disk is 8x off if you mix them.
+
+## The boot chain (2026-10-04)
+
+- **`sbverify --cert X` is not a trust check.** It trusts the
+  certificates a signature carries, and passes a real shim against a
+  certificate made up a moment ago. `osslsigncode verify -CAfile` is
+  stricter but refuses an intermediate as the anchor, which is what UEFI
+  db holds. `rootfs/usr/lib/auros/bootchain` verifies the Authenticode
+  digest, the signed attributes and the chain itself
+  (python3-cryptography); `tools/bootchaintest.sh` has a forged shim
+  that carries Microsoft's real 2011 CA to keep it honest.
+- **grub's `fallback` is a number.** Ubuntu's 2.12 reads it with
+  `grub_strtoul` and unsets anything else, so `set fallback=some-id`
+  is silently nothing, and a kernel that does not start is retried at
+  every timeout forever.
+- **The shim and grub postinsts do nothing without
+  `/boot/grub/x86_64-efi/core.efi`.** A machine whose grub was never
+  installed by grub-install gets new packages and the old boot chain.
+- **Under Secure Boot, Canonical's grub refuses `loadfont` and every
+  module from disk.** Each refusal prints "prohibited by secure boot
+  policy"; `search` with a `fs.lst` beside it prints one per filesystem
+  module per partition. No modules at the prefix, no gfxterm.
+- **PE section names over eight bytes are `/N`**, an offset into the
+  COFF string table. shim's `.sbatlevel` and `.vendor_cert` are both
+  stored that way; a parser keyed on the raw name finds neither, and an
+  SBAT check against an empty level passes everything.
+- **A shim writes its SBAT level into NVRAM the first time it runs**,
+  and nothing lowers it. A shim newer than the grub beside it is a
+  machine broken for good, not until the next update.
+- **`rm -rf *` after a `cd` in the same command is refused by the
+  harness**, rightly. Extract into a fresh `mktemp -d` instead.
+
+## Environment
+
+- The cloud container is **ephemeral**. `out/` and `work/` are not in
+  git, so push anything worth keeping.
+- **Disk is tight.** Roughly 8–16 GB free; one image build peaks at
+  about 9.5 GB. Build one profile at a time.
+- **No KVM.** QEMU runs in software emulation, so booting the full
+  desktop image takes several minutes.
+- **Network:** every Mozilla and Launchpad host returns 403, so there is
+  no Firefox. Most other hosts, including the Ubuntu archive, work.

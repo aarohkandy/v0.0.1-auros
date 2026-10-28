@@ -1,0 +1,34 @@
+#!/bin/sh
+# remote-access-gate NAME USER -- has she said yes to this program?
+#
+# Run by polkitd (as user polkitd, read-only filesystem, no network)
+# from /etc/polkit-1/rules.d/40-auros-remote-access.rules, only when
+# somebody is installing a program that lets someone else control this
+# computer. NAME is the matched word ("anydesk"), USER the person.
+#
+#   exit 0   she pressed "I called someone I know" in the last 15
+#            minutes: /run/auros-remote-access/NAME exists, is hers,
+#            and is fresh. The install goes ahead.
+#   exit 1   she has not. The install is refused, and the desktop is
+#            told so it can ask her (a signal on the system bus, which
+#            src/aurshell/guard.c listens for).
+#
+# It writes nothing anywhere; polkitd could not let it if it tried.
+set -u
+DIR=${AUROS_REMOTE_DIR:-/run/auros-remote-access}
+DBUS_SEND=${AUROS_DBUS_SEND:-/usr/bin/dbus-send}
+
+name=${1:-}
+user=${2:-}
+# Both become part of a file name and a find expression: plain words only.
+case "$name" in ''|*[!a-z0-9]*) exit 1 ;; esac
+case "$user" in ''|-*|*[!a-z0-9_.-]*) exit 1 ;; esac
+
+if [ -n "$(find "$DIR" -maxdepth 1 -type f -name "$name" -user "$user" \
+               -mmin -15 2>/dev/null)" ]; then
+    exit 0
+fi
+
+"$DBUS_SEND" --system --type=signal /org/auros/Guard \
+    org.auros.Guard.RemoteAccess "string:$name" 2>/dev/null || true
+exit 1

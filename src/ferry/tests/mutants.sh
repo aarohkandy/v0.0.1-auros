@@ -1,0 +1,290 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  Prove the checks bite. Each mutant puts ONE known bug back into a
+#  copy of Ferry; the suite must then fail the check named beside it.
+#  A check that stays green with its bug back is not a test.
+#
+#    ONLY="once broke" sh tests/mutants.sh   (just those whose check matches)
+#    sh tests/mutants.sh          (root-only mutants run when root:
+#                                  use tests/asroot.sh's container)
+# ═══════════════════════════════════════════════════════════════════
+set -u
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+REPO=$(cd "$HERE/../.." 2>/dev/null && pwd)
+caught=0; missed=0
+
+mutant() { # FILE OLD NEW CHECK [root|user]
+    # ONLY=text runs just the mutants whose named check contains it.
+    case "$4" in *"${ONLY:-}"*) : ;; *) return ;; esac
+    [ "${5:-}" = root ] && [ "$(id -u)" != 0 ] && { echo "  skip (needs root) $4"; return; }
+    # As root her uid cannot write the outside folder either way.
+    [ "${5:-}" = user ] && [ "$(id -u)" = 0 ] && { echo "  skip (as a user only) $4"; return; }
+    # A copy of the tree the suite looks at: src/ferry, and (when this is
+    # a checkout) the two files outside it that Ferry's behaviour ends in,
+    # answer.sh and the unit, at the same relative places.
+    W=$(mktemp -d "${TMPDIR:-/tmp}/ferrymut.XXXXXX")
+    trap 'rm -rf "$W"' EXIT
+    trap 'rm -rf "$W"; exit 130' INT TERM HUP
+    mkdir -p "$W/src" "$W/rootfs/usr/lib/auros" "$W/rootfs/etc/systemd/system" "$W/tools"
+    cp -r "$HERE" "$W/src/ferry"
+    rm -rf "$W/src/ferry/build"
+    for _f in rootfs/usr/lib/auros/answer.sh rootfs/etc/systemd/system/auros-answer.service tools/checksec.sh; do
+        [ -f "$REPO/$_f" ] && cp "$REPO/$_f" "$W/$_f"
+    done
+    case "$1" in rootfs/*|tools/*) _target="$W/$1" ;; *) _target="$W/src/ferry/$1" ;; esac
+    if ! python3 - "$_target" "$2" "$3" <<'PY'
+import sys
+p, old, new = sys.argv[1:4]
+s = open(p).read()
+if s.count(old) != 1:
+    sys.exit("mutation does not apply exactly once")
+open(p, "w").write(s.replace(old, new))
+PY
+    then missed=$((missed+1)); echo "  BROKEN MUTANT  $4"; rm -rf "$W"; return; fi
+    # Output to a FILE, never straight into `grep -q`: grep -q leaves at the
+    # first match, the suite then dies of SIGPIPE half-way and leaves its
+    # test directory behind (340 MB, once per mutant).
+    (cd "$W/src/ferry" && make -s >/dev/null 2>&1; sh tests/run.sh > "$W/out.txt" 2>&1)
+    if grep -qF "FAIL $4" "$W/out.txt"; then
+        caught=$((caught+1)); echo "  caught  $4"
+    else
+        missed=$((missed+1)); echo "  MISSED  $4"
+    fi
+    rm -rf "$W"
+}
+
+# The OneDrive tag used to mean "not here": every file of a OneDrive
+# Documents folder was skipped.
+mutant winattr.c 'if (tag && tag_is_alias(tag)) return "reparse";' \
+    'if (tag) return "placeholder";' \
+    "a OneDrive file that IS on this computer comes across"
+mutant copy.c 'if (suspect && !nonzero) {' 'if (0) {' \
+    "a file of nothing but zeros and no blocks is not copied as a picture"
+mutant copy.c 'renameat2(p->dfd, p->tmp, p->dfd, cand, RENAME_NOREPLACE) == 0) { placed = n; break; }' \
+    'renameat(p->dfd, p->tmp, p->dfd, cand) == 0) { placed = n; break; }' \
+    "...and neither earlier file was touched"
+mutant copy.c 'if (n == 1) snprintf(suf, sizeof suf, " (from %s)", from_word);' \
+    'if (n >= 1) snprintf(suf, sizeof suf, " (from %s)", from_word);' \
+    "a second collision gets '(from Windows 2)'"
+mutant copy.c '#define NAME_LIMIT  255' '#define NAME_LIMIT  300' \
+    "a name with no room for '(from Windows)' is shortened, not lost"
+mutant copy.c "dst[i] = (src[i] == '\\t' || src[i] == '\\n' || src[i] == '\\r') ? ' ' : src[i];" \
+    'dst[i] = src[i];' \
+    "no ledger row is split by a tab or newline in a name"
+mutant copy.c '    futimens(df, ts);' '    (void)ts;' \
+    "the date a file was last changed comes with it"
+mutant copy.c '            clean_temps(dfd);' '            ;' \
+    "a temporary from a run that was cut off is gone"
+mutant copy.c 'int pct = work_total > 0 ? (int)(work_done * 100 / work_total) : 100;' \
+    'int pct = disp_total > 0 ? (int)(disp_done * 100 / disp_total) : 100;' \
+    "progress is by bytes"
+mutant copy.c 'O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (jobs[i].srcfd' 'O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (jobs[i].srcfd' \
+    "...and nothing came through it"
+mutant ferry-common.sh '..) return 1 ;; esac' '..) : ;; esac' \
+    "a '..' in a registry folder does not reach outside the volume"
+mutant ferry-common.sh '        [ -L "$_cur/$_c" ] && return 1' '        :' \
+    "a junction inside a folder's path is not followed"
+mutant ferry-common.sh '        *) _v="" ;;
+    esac
+    printf' '        *) : ;;
+    esac
+    printf' \
+    "a user-dirs.dirs pointing out of her home is not obeyed (absolute)" user
+mutant ferry-firefox 'for _n in $SKIP_FILES $SECRET_FILES; do' 'for _n in $SKIP_FILES; do' \
+    "logins.json (saved passwords) NOT copied"
+# The import in its real context (commit 2).
+# (the check that never matched /proc/mounts' format, put back)
+mutant ferry-common.sh 'is_ro_mount() {' \
+    'is_ro_mount() { grep -q " $1 .*[(,]ro[,)]" "${FERRY_MOUNTS:-/proc/mounts}"; return; }
+is_ro_mount_unused() {' \
+    "a read-only mount is recognised as read-only"
+mutant ferry 'SELF=$(dirname "$(readlink -f "$0")")' 'SELF=$(cd "$(dirname "$0")" && pwd)' \
+    "ferry started through a link finds its own tools"
+mutant ferry-common.sh 'FERRY_BIN=$(dirname "$(readlink -f "$0")" 2>/dev/null || echo /usr/lib/ferry)' \
+    'FERRY_BIN=$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo /usr/lib/ferry)' \
+    "ferry started through a link finds its own tools"
+mutant ferry '        2) [ "$RUN_RC" = 1 ] || RUN_RC=2 ;;' '        2) : ;;' \
+    "some files online-only: exit 2"
+mutant ferry 'if [ "$_name" = files ]; then RUN_RC=1;' 'if false; then RUN_RC=1;' \
+    "her files could not be copied at all: exit 1, never 'partial'" root
+mutant copy.c '    if (disp_total > 0 && came == 0 && !dry_run) return 1;' '    (void)came;' \
+    "her files could not be copied at all: exit 1, never 'partial'" root
+
+# Plain words (commit 3).
+mutant ferry '        exec 3>&1 >>"$FERRY_STATE/ferry.log" 2>&1
+        FERRY_PLAIN_FD=3; export FERRY_PLAIN_FD
+        echo "=== ferry run $(now) ==="' '        exec 3>&1
+        FERRY_PLAIN_FD=3; export FERRY_PLAIN_FD
+        echo "=== ferry run $(now) ==="' \
+    "--plain prints nothing but plain sentences"
+mutant ferry-files '"Windows kept this folder on another drive' '"the registry redirects this folder to another drive' \
+    "...and has no jargon in it"
+
+# Her browser (commit 4).
+mutant ffhash.c '#define K0 0xc3a5c85c97cb3127ULL' '#define K0 0xc3a5c85c97cb3128ULL' \
+    "/usr/lib/firefox is 4F96D1932A9F858E, as the real Firefox calls it"
+mutant ffhash.c '    uint64_t a = f64(s) * K1, b = f64(s + 8);' '    uint64_t a = f64(s) * K1 + 1, b = f64(s + 8);' \
+    "/usr/lib/firefox is 4F96D1932A9F858E, as the real Firefox calls it"
+mutant ffhash.c '    uint64_t a = f64(s) + (n + f64(s + n - 16)) * K0;' '    uint64_t a = f64(s) + (n + f64(s + n - 15)) * K0;' \
+    "...a path of the longer kind (33-64 bytes) agrees too"
+mutant ffhash.c '    if (n > 64) {' '    if (n > 640) {' \
+    "...a path it cannot vouch for is refused (exit 2)"
+mutant ferry-firefox "if (!hasinst) printf " "if (0) printf " \
+    "Firefox is told to open her Windows profile ([Install<name>] Default=)"
+mutant ferry-firefox 'if (sec ~ /^Profile[0-9]+$/) { k = substr(sec, 8) + 0; if (k + 1 > nxt) nxt = k + 1 }' \
+    'if (sec ~ /^Profile[0-9]+$/) { k = substr(sec, 8) + 0; if (k + 2 > nxt) nxt = k + 2 }' \
+    "an existing profiles.ini: ours is [Profile2], numbering stays unbroken (Firefox stops at a gap)"
+mutant ferry-firefox 'if [ -d "$FERRY_HOME/.config/mozilla/firefox" ]; then' 'if false; then' \
+    "where Firefox keeps its profiles in ~/.config/mozilla/firefox, that is where it goes"
+mutant ferry-firefox 'elif ff_used_here; then _switch=0;' 'elif false; then _switch=0;' \
+    "after she used Firefox here, it is NOT switched away from her profile"
+mutant ferry-firefox 'if ff_running; then _switch=0;' 'if false; then _switch=0;' \
+    "while Firefox is open, its profiles.ini is left alone"
+mutant ferry-firefox '    case " $_ours fromwindows.default-release " in *" ${_cur##*/} "*) return 1 ;; esac' '    :' \
+    "...and a second go does not mistake its own profile for hers (bookmarks stay in Firefox)"
+mutant ferry-firefox 'elif [ -z "$FF_HASH" ]; then _switch=0;' 'elif false; then _switch=0;' \
+    "...her bookmarks still wait in her Home"
+mutant chromemarks.c '        if (!strncasecmp(url, ok[i], strlen(ok[i]))) return 1;' '        return 1;' \
+    "...a javascript: bookmark (a program) does not come"
+mutant chromemarks.c "        case '<': fputs(\"&lt;\", stdout); break;" '' \
+    "...a title that is markup is escaped"
+mutant chromemarks.c '        if (++depth > MAX_DEPTH) goto bad;' '        ++depth;' \
+    "200,000 nested brackets: refused, not a crash (exit 2)"
+
+# The way back (her AurOS files into Windows).
+mutant copy.c '"<>:\"/\\|?*"' '"<>\"/\\|?*"' \
+    "a colon becomes an underscore"
+mutant copy.c '        have = nreg_get(R, low);
+        if (have) {' '        have = NULL;
+        if (have) {' \
+    "...hers lands beside it"
+mutant copy.c '    if (!r->cap) return NULL;' '    return NULL;
+    if (!r->cap) return NULL;' \
+    "Report.docx and report.docx are kept apart (Windows sees them as one name)"
+mutant copy.c '            if (bad && o + 1 <= NAME_LIMIT)' '            if (0)' \
+    "CON is a device name in Windows: it is saved as _CON.txt"
+mutant copy.c '        if (free_b >= 0 && free_b < want) {' '        if (0) {' \
+    "not enough room in Windows: exit 4"
+mutant copy.c '                cls = S_ISREG(st.st_mode) ? "hydrated" : S_ISLNK(st.st_mode) ? "link" : "special";' \
+    '                cls = "hydrated";' \
+    "ferry back succeeds (exit 0)"
+mutant ferry-back "--skip .~lock.*# " "" "an editor's lock file is not hers"
+mutant ferry-back '    case "$RC" in 0|2|4) : ;;' '    case "$RC" in 0|2) : ;;' \
+    "not enough room in Windows: exit 4"
+mutant ferry-back 'require_clean_volume "$FERRY_ROOT" "$FERRY_DEV"' ':' \
+    "a hibernated Windows is refused (exit 3)"
+mutant ferry 'signal_done back "$_rc" back' ':' \
+    "the completion signal says: back, ok, and how many files"
+mutant ferry 'signal_done import "$_rc" files firefox' ':' \
+    "the completion signal says: import, partial, and how many files"
+mutant ferry-common.sh '        0) _res=ok ;;' '        0) _res=partial ;;' \
+    "the completion signal says: back, ok, and how many files"
+
+mutant ffhash.c '        char hex[24];
+        snprintf(hex, sizeof hex, "%016llX", (unsigned long long)cityhash64(w, n));
+        puts(hex);' '        printf("%016llX\n", (unsigned long long)cityhash64(w, n));' \
+    "every compiled helper carries the hardening the image build demands (PIE, RELRO, stack protector...)"
+
+# Found by the fuzzers; kept found.
+mutant hivepeek.c '    int64_t s;
+    if (off == 0xffffffffu) return 0;' '    int32_t s;
+    if (off == 0xffffffffu) return 0;' \
+    "inputs that once broke the registry reader replay clean (a hostile cell size)"
+mutant chromemarks.c '    if (end - p >= 4 && (!strncmp(p, "true", 4) || !strncmp(p, "null", 4))) {' \
+    '    if ((!strncmp(p, "true", 4) || !strncmp(p, "null", 4))) {' \
+    "inputs that once broke the bookmarks reader replay clean (a file cut off mid-word)"
+mutant copy.c '        stem = cut > 0 ? cut : room;' '        stem = cut;' \
+    "inputs that once broke the name maker replay clean (a name of stray bytes)"
+
+# Whose files, and what counts as success (S-08); the one-hour kill (R-19).
+mutant ferry-files '[ "$_skipped" = 0 ] || [ "$RC" != 0 ] || RC=2' ':' \
+    "Videos kept on another drive: the files stage is partial (exit 2), not ok"
+mutant ferry-files 'if [ "$RC" = 0 ]; then stage_done files "$_copied files"
+else stage_fail files "exit $RC: $_copied files"; fi' 'stage_done files "$_copied files"' \
+    "...and it is not recorded as done"
+mutant ferry-common.sh '    if [ "$_nw" = 1 ]; then' '    if [ "$_nw" -ge 1 ]; then' \
+    "two accounts, both with files: Ferry stops (exit 6), never 'ok'"
+mutant ferry-common.sh '    [ -n "$_rows" ] || return 1
+    _n=$(printf' '    _n=1; _rows=$(printf "%s\n" "$_rows" | head -1)
+    [ -n "$_rows" ] || return 1
+    _n=$(printf' \
+    "two accounts, both with files: Ferry stops (exit 6), never 'ok'"
+mutant ferry '           exit 6 ;;' '           exit 0 ;;' \
+    "two accounts, both with files: Ferry stops (exit 6), never 'ok'"
+mutant ferry-report '    [ -z "$_wu" ] || printf' '    [ -n "$_wu" ] || printf' \
+    "...and her report says which account"
+mutant rootfs/usr/lib/auros/answer.sh '[ "${nfiles:-x}" = 0 ]' '[ "${nfiles:-x}" = zero ]' \
+    "Ferry exits 0 but nothing came: NOT ok (empty)"
+mutant rootfs/usr/lib/auros/answer.sh 'elif [ "$frc" = 6 ]; then' 'elif [ "$frc" = 66 ]; then' \
+    "several accounts: choose"
+mutant rootfs/usr/lib/auros/answer.sh '            timeout "${AUROS_IMPORT_LIMIT:-43200}" "$FERRY" run --auto --plain --user "$iuser" >>"$OUT/import.log" 2>&1' \
+    '            timeout "${AUROS_IMPORT_LIMIT:-43200}" "$FERRY" run --auto --plain >>"$OUT/import.log" 2>&1' \
+    "import:Harold: Ferry is told --user Harold"
+mutant rootfs/usr/lib/auros/answer.sh "    case \"\$iuser\" in ''|-*) iuser=- ;; esac" "    :" \
+    "a name that starts with a dash is not accepted"
+mutant rootfs/etc/systemd/system/auros-answer.service 'TimeoutStartSec=infinity' 'TimeoutStartSec=3600' \
+    "auros-answer.service has no time limit that could kill a long import"
+
+mutant copy.c '        if (to_win) want = need_bytes + need_bytes / 50 + (64ll << 20);
+        else {' '        if (to_win) want = need_bytes + need_bytes / 50 + (64ll << 20);
+        else if (0) {' \
+    "room for the files but not for AurOS's own reserve (500 MB free): refused too"
+mutant copy.c '    if (!dry_run && !no_room_check && need_bytes > 0) {' '    if (!dry_run && need_bytes > 0) {' \
+    "a resumed import is not refused for room (what is there would be counted twice)"
+mutant ferry-files '    4) stage_fail files "not enough room"; exit 4 ;;' '    4) stage_fail files "not enough room"; exit 1 ;;' \
+    "not enough room on this computer for her files: exit 4"
+mutant ferry '        4) RUN_RC=4 ;;                       # not enough room on this computer' '        4) : ;;' \
+    "ferry run with no room says so: exit 4"
+mutant rootfs/usr/lib/auros/answer.sh 'elif [ "$frc" = 4 ]; then' 'elif [ "$frc" = 44 ]; then' \
+    "...and it says there is not enough room"
+
+mutant ferry '    if ! aurhome_has_files; then
+        say "no files of hers in AurOS to save"
+        exit 0
+    fi' '    :' \
+    "nothing to save: a hibernated Windows is not even looked at (exit 0, not 3)"
+mutant ferry-common.sh "            if [ -L \"\$_src\" ]; then _any=1; break; fi" "            :" \
+    "a shortcut where Documents should be counts as something to save (stops: exit 2)"
+mutant ferry-common.sh "-name '.Trash-*' -o -name '.thumbnails' \\) -prune" "-name '.Trash-x' -o -name '.thumbnails' \\) -prune" \
+    "a trash folder and an editor's lock file are not files to save (exit 0, drive not looked at)"
+
+# The handover volume and the stick.
+mutant copy.c '        if (fd_rows >= 0) sha_update(&sh, buf, (size_t)k);' '' \
+    "...the photo's hash in the manifest is the hash of the file on HER disk"
+mutant ferry-handover 'if [ -s "$VL" ]; then' 'if false; then' \
+    "a file damaged after it was written: found by the read-back (exit 1)"
+mutant ferry-handover '[ "$BAD" = 0 ] || { stage_fail "$STAGE" "a folder could not be saved"; exit 2; }' ':' \
+    "a shortcut where Documents should be: some could not be saved (exit 2)"
+mutant ferry-handover '( cd "$H" && sha256sum manifest.tsv ) |' '( cd "$H" && sha256sum version ) |' \
+    "...and the Windows side's reference checks pass (tests/verify-handover.sh)"
+mutant ferry-handover '# ── Only now: complete.
+if [ "$STICK" = 0 ]; then' '# ── Only now: complete.
+if true; then' \
+    "...and no DONE (it is not a handover for Windows to consume)"
+mutant ferry '    [ "$(cat "$FERRY_STATE/state/back.via" 2>/dev/null)" != handover ] || _stg=handover' '    :' \
+    "...the screen is told it is checked and ready for Windows (not 'in Windows')"
+mutant ferry 'function v(k,   m, t) { if (match($0, "(^| )" k' 'function v(k,   m, t) { if (match($0, k' \
+    "ferry stick list names only the sticks she could use, in plain words"
+
+mutant copy.c "stem[3] >= '0' && stem[3] <= '9');       /* COM0 and LPT0 too: the Windows side refuses them */" "stem[3] >= '1' && stem[3] <= '9');" \
+    "...COM0 and LPT0 in particular are not left as they were"
+mutant copy.c '        if (fd_rows >= 0 && u16len(drel) + (*drel ? 1 : 0) + u16len(want) > WIN_REL_MAX) {' '        if (0) {' \
+    "a path longer than 600 characters: some could not be saved (exit 2)"
+
+# Root: the escalation the lead's review named.
+# Without the switch to her, the self-check refuses to copy at all...
+mutant copy.c 'if (setgroups(1, &gg) || setresgid(g, g, g) || setresuid(u, u, u))' \
+    'if (0)' "her files did come, and every one of them is hers" root
+# ...and without the self-check too, root writes through her symlink.
+mutant copy.c '            if (setgroups(1, &gg) || setresgid(g, g, g) || setresuid(u, u, u))
+                die("could not become %u:%u: %s", u, g, strerror(errno));
+            if (u != 0 && setuid(0) == 0) die("still root after dropping privileges");' \
+    '            (void)gg;' "nothing was written through her symlinks into a root-owned folder" root
+mutant copy.c '        die("will not write into a home as root (pass --as UID:GID)");' '        ;' \
+    "ferry-copy refuses to write as root without --as (exit 1)" root
+
+echo
+printf 'mutants: %d caught, %d missed\n' "$caught" "$missed"
+[ "$missed" -eq 0 ]

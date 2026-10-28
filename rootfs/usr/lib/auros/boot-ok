@@ -1,0 +1,41 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════════════
+#  boot-ok — "this start worked", said when it is true
+#
+#  The start-up menu (grub.cfg.in) counts every start of an AurOS
+#  kernel in grub's environment block (auros_try) and falls back to the
+#  kernel before when two in a row were never confirmed. This is the
+#  confirming: the desktop has been running, without restarting, for
+#  two minutes. Not "the kernel booted" and not "multi-user.target was
+#  reached" -- a kernel that starts and shows her nothing is a failed
+#  start, and the whole point is that she never has to say so.
+#
+#  Then it clears the count, and if the kernel running is the one the
+#  menu had set aside as bad (auros_bad), forgets that too: it has just
+#  shown it works.
+#
+#  AUROS_BOOT_OK_SECS is for tools/rollbacktest.sh and nothing else.
+# ═══════════════════════════════════════════════════════════════════
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+N=${AUROS_BOOT_OK_SECS:-120}
+LIB=${AUROS_LIB:-/usr/lib/auros}
+F=${AUROS_GRUBENV:-/boot/grub/grubenv}
+
+# The desktop up for N seconds (the same answer auros-keeper asks for).
+"$LIB/desktop-up" "$N" || exit 0
+
+# A handover file from a "Put Windows back" that was not carried out is room she may need.
+# (This start is running, so the request was not acted on.)
+rm -f "${AUROS_STATE:-/var/lib/auros}/handover.img" "${AUROS_STATE:-/var/lib/auros}/handover.dev"
+
+[ -f "$F" ] || exit 0
+run=$(uname -r)
+bad=$(sed -n 's/^auros_bad=//p' "$F" 2>/dev/null | head -1)
+if [ -n "$bad" ] && [ "$bad" = "$run" ]; then
+    "$LIB/grubenv" unset auros_try auros_bad
+else
+    "$LIB/grubenv" unset auros_try
+fi
+echo "boot-ok: this start of $run is confirmed"
+exit 0
