@@ -152,7 +152,6 @@
       setTimeout(function () {
         here.textContent = here.getAttribute("data-say") || "You are here: your browser is asking if you trust the file.";
         var step = $("step-download");
-        if (step && step.closest(".slide")) step = step.closest(".slide"); /* the whole slide, title and all */
         if (step) step.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
       }, 600);
     });
@@ -183,20 +182,5 @@
         else if (v && v.bitness === "32") showElsewhere("win32");
       }, function () { /* unsure: keep the button */ });
     }
-  }
-
-  /* ── the slides (index.html): the dot of the slide she is on ─────── */
-  var dots = [].slice.call(document.querySelectorAll(".dots a"));
-  if (dots.length && "IntersectionObserver" in window) {
-    var seen = new IntersectionObserver(function (es) {
-      es.forEach(function (e) {
-        if (!e.isIntersecting) return;
-        dots.forEach(function (d) {
-          if (d.getAttribute("href") === "#" + e.target.id) d.setAttribute("aria-current", "true");
-          else d.removeAttribute("aria-current");
-        });
-      });
-    }, { threshold: 0.55 });
-    dots.forEach(function (d) { var s = $(d.getAttribute("href").slice(1)); if (s) seen.observe(s); });
   }
 })();

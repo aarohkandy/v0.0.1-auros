@@ -441,92 +441,179 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
   a { color: inherit; text-decoration: none; }
 }
 
-/* ── the front page as slides (index.html) ──────────────────────────
- * One idea per screen, the way AurOS Setup goes: each slide fills the
- * screen under the bar and ends in a big Next. On a big screen they snap
- * one at a time; on a phone they only lean towards it, because a slide
- * can be taller than the screen. Without script: an ordinary page. */
-html.slides { scroll-padding-top: 70px; }
-@media (min-width: 901px) and (min-height: 640px) { html.slides { scroll-snap-type: y mandatory; } }
-@media (max-width: 900px), (max-height: 639px) { html.slides { scroll-snap-type: y proximity; } }
-.slide { min-height: calc(100vh - 70px); min-height: calc(100svh - 70px); scroll-snap-align: start; display: flex; flex-direction: column; padding-block: clamp(28px, 5vh, 56px) 20px; }
-.slide > .wrap { margin-block: auto; }
-.slide.soft { background: var(--soft); }
-.slides .foot { scroll-snap-align: end; }
-.slide-title { font-size: clamp(34px, 4vw, 52px); line-height: 1.1; font-weight: 800; letter-spacing: -0.01em; margin-bottom: 16px; }
-.lede { font-size: clamp(21px, 1.8vw, 25px); line-height: 1.45; color: var(--ink-2); max-width: 34em; }
-.lede b { color: var(--ink); }
-.slide-next { text-align: center; margin: 0; padding-top: 28px; }
-.next { display: inline-flex; align-items: center; gap: 12px; min-height: 56px; padding: 0 28px; border-radius: 999px; border: 2px solid var(--rule); background: var(--card); color: var(--ink); font: 700 21px/1.2 var(--face); text-decoration: none; }
-.next:hover { border-color: var(--ink); }
-.next svg { width: 24px; height: 24px; flex: none; }
-.slide-more { margin-top: 28px; }
-
-/* 1. the start: the words and the button on the left, her screen on the right */
-.slide.hero { text-align: left; padding-top: clamp(24px, 5vh, 56px); }
-.hero-in { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 6fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
-.hero-copy h1 { font-size: clamp(40px, 4.2vw, 62px); line-height: 1.04; letter-spacing: -0.02em; margin-bottom: 18px; }
-.slide.hero .promise { margin: 0 0 28px; text-wrap: pretty; }
-.slide .getbox { align-items: flex-start; gap: 14px; }
-.small-print { font-size: 19px; line-height: 1.45; color: var(--quiet); }
-.hero-shot.device { width: 100%; margin: 0; }
-.hero-shot .device-screen { width: 100%; }
-.hero-shot .caption { font-size: 18px; }
-@media (max-width: 900px) {
-  .hero-in { grid-template-columns: minmax(0, 1fr); }
-  .hero-shot.device { width: min(100%, 640px); margin: 8px auto 0; }
+/* ── the front page (index.html, <html class="moon">) ───────────────
+ * First light: AurOS's name is the dawn, so the page opens on one. A
+ * painted sky over hills, a big serif headline with one word on a
+ * sticker, and pressable things drawn like stickers too: a 2px ink edge
+ * and a hard ink shadow that she pushes down when she presses. One blue
+ * means "this way". The sky and hills are CSS and inline SVG: the page
+ * still asks no other server for anything. */
+.moon {
+  --paper: #F6F5F1;
+  --soft: #ECEAE4;
+  --card: #FFFFFF;
+  --ink: #1D1D1F;
+  --ink-2: #3D3D42;
+  --quiet: #55555B;
+  --blue: #2457C9;
+  --blue-dark: #1B46A6;
+  --shade: #17120E;
+  --serif: ui-serif, "New York", "Iowan Old Style", Georgia, "Times New Roman", serif;
+  scroll-padding-top: 96px;
 }
-@media (max-width: 480px) { .hero-copy h1 { font-size: 40px; } }
+.moon body { background: var(--paper); }
 
-/* 2. three steps: what she presses, drawn like the buttons she will see,
- * with the same yellow ring as the pictures on install.html */
-.trio { list-style: none; margin: 32px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
-.card { display: flex; flex-direction: column; background: var(--card); border-radius: 16px; padding: clamp(22px, 2.4vw, 32px); }
-.card .num { font-size: 56px; margin-bottom: 8px; }
-.card h3 { font-size: clamp(26px, 2.2vw, 30px); line-height: 1.2; font-weight: 800; margin-bottom: 10px; }
-.card p { color: var(--ink-2); }
-.card p b { color: var(--ink); }
-.you-press { margin-top: auto !important; padding-top: 24px; display: flex; flex-wrap: wrap; gap: 22px 26px; }
-.key { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border: 1px solid #B9B9B9; border-radius: 6px; background: #FFFFFF; color: #1A1A1A; font: 400 19px/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; box-shadow: 0 0 0 2px var(--ink), 0 0 0 5px var(--marker), 0 0 0 7px var(--ink); }
-.key.go { background: var(--go); border-color: var(--go); color: #FFFFFF; font: 700 19px/1.2 var(--face); }
-@media (max-width: 900px) { .trio { grid-template-columns: minmax(0, 1fr); } .you-press { padding-top: 16px; } }
+/* the bar: a glass pill floating over the sky */
+.moon .bar { top: 12px; margin-bottom: -84px; background: transparent; border: 0; pointer-events: none; }
+.moon .bar-in { pointer-events: auto; min-height: 64px; padding: 0 10px 0 22px; border-radius: 999px; background: rgba(246, 245, 241, 0.82); -webkit-backdrop-filter: blur(14px) saturate(1.3); backdrop-filter: blur(14px) saturate(1.3); box-shadow: 0 0 0 1px rgba(29, 29, 31, 0.08), 0 8px 24px rgba(23, 18, 14, 0.08); }
+.moon .bar-link { text-decoration-thickness: 1px; }
+.moon .brand { font-size: 22px; }
+.moon .mark { fill: var(--blue); }
 
-/* 3. the looks: the picture fits the screen with the tabs above it */
-.slide.looks .slide-title { text-align: center; margin-bottom: 24px; }
-.slide.looks .device { width: min(100%, 900px, calc((100vh - 360px) * 1.7)); margin: 0 auto; }
-.slide.looks .look figcaption { margin-top: 14px; }
-.slide.looks .look h3 { font-size: 26px; }
+/* buttons: a pill with an ink edge and a hard shadow, pushed down when pressed */
+.moon .get, .moon .pill { background: var(--blue); color: #fff; border: 2px solid var(--shade); border-radius: 999px; box-shadow: 4px 4px 0 var(--shade); text-decoration: none; transition: transform .12s, box-shadow .12s; }
+.moon .get { min-height: 68px; padding: 0 38px; font-size: 24px; }
+.moon .pill { min-height: 48px; box-shadow: 3px 3px 0 var(--shade); }
+.moon .get:hover, .moon .pill:hover { background: var(--blue-dark); transform: translate(-1px, -1px); box-shadow: 5px 5px 0 var(--shade); }
+.moon .get:active, .moon .pill:active { transform: translate(3px, 3px); box-shadow: 1px 1px 0 var(--shade); }
+.moon .btn2 { background: var(--card); color: var(--ink); border: 2px solid var(--shade); border-radius: 999px; box-shadow: 3px 3px 0 var(--shade); text-decoration: none; }
+.moon .btn2:hover { border-color: var(--shade); transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--shade); }
+@media (prefers-reduced-motion: reduce) { .moon .get, .moon .pill { transition: none; } }
 
-/* 4. going back */
-.back-in { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
-.back-in .lede + .lede { margin-top: 18px; }
-.back-in .ask-fig { margin: 0; }
-.back-in .ask { padding: 28px; }
-.back-in .ask-r { grid-template-columns: minmax(0, 1fr); }
-@media (max-width: 900px) { .back-in { grid-template-columns: minmax(0, 1fr); } }
+.moon h2, .moon h3 { font-family: var(--serif); font-weight: 600; letter-spacing: -0.01em; }
 
-/* 5. questions, then the button again */
-.qa-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 56px; margin-top: 12px; }
-.qa-grid .qa { display: block; padding: 22px 0; border-top: 2px solid var(--soft); }
-.qa-grid .qa h3 { margin-bottom: 8px; }
-@media (max-width: 900px) { .qa-grid { grid-template-columns: minmax(0, 1fr); } }
-.slide .again { text-align: left; margin-top: 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px 28px; }
-.slide .again .get { margin-top: 0; }
-
-/* where she is: one dot per slide, at the right, on wide screens only */
-.dots { display: none; }
-@media (min-width: 1280px) {
-  .js .dots { display: flex; flex-direction: column; position: fixed; right: 16px; top: 50%; transform: translateY(-50%); z-index: 9; }
-  .dots a { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; }
-  .dots a::before { content: ""; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--ink-2); background: transparent; }
-  .dots a[aria-current="true"]::before { background: var(--ink); border-color: var(--ink); }
+/* 1. the dawn */
+.moon .hero { position: relative; isolation: isolate; text-align: center; padding-top: 128px; overflow: hidden;
+  background:
+    radial-gradient(ellipse 55% 40% at 50% 74%, rgba(255, 205, 160, 0.85), rgba(255, 205, 160, 0) 70%),
+    linear-gradient(180deg, #A3B7D3 0%, #C3C6D8 26%, #E4CCC0 52%, #F2DDCB 66%, #F6F5F1 100%); }
+.sky { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+.hills { position: absolute; left: 0; bottom: 0; width: 100%; height: 48%; }
+.moon .hero h1 { font-family: var(--serif); font-weight: 600; font-size: clamp(40px, 5.3vw, 76px); line-height: 1.06; letter-spacing: -0.02em; max-width: 14em; margin: 0 auto 20px; }
+.sticker { display: inline-block; font: 800 0.8em/1 var(--face); text-transform: uppercase; letter-spacing: 0.02em; padding: 0.1em 0.22em 0.06em; margin-inline: 0.04em; color: var(--ink); background: var(--marker); border: 3px solid var(--shade); border-radius: 0.14em; box-shadow: 0.07em 0.07em 0 var(--shade); transform: rotate(-4deg) translateY(-0.06em); }
+@media (prefers-reduced-motion: no-preference) {
+  .js .sticker { animation: slap .45s cubic-bezier(.2, 1.6, .4, 1) .1s both; }
+  @keyframes slap { from { transform: rotate(-16deg) scale(1.9); opacity: 0; } to { transform: rotate(-4deg) translateY(-0.06em); opacity: 1; } }
 }
+.moon .hero .promise { color: var(--ink-2); max-width: 32em; margin: 0 auto 30px; }
+.moon .getbox { gap: 14px; }
+.moon .facts-line { max-width: 40em; color: var(--ink-2); }
+.small-print { font-size: 19px; line-height: 1.45; }
+.moon .elsewhere { background: rgba(255, 255, 255, 0.9); border: 2px solid var(--shade); border-radius: 24px; box-shadow: 6px 6px 0 var(--shade); }
+.moon .hero .device { position: relative; width: min(100%, 980px); margin: clamp(44px, 7vh, 72px) auto 0; }
+.moon .hero .device-screen { border-radius: 16px 16px 0 0; }
+.moon .hero .caption { color: var(--ink-2); padding-bottom: 32px; }
+/* little notes around the computer, the way it feels to use */
+.chips { display: none; list-style: none; margin: 0; padding: 0; }
+@media (min-width: 1100px) {
+  .chips { display: block; }
+  .chip { position: absolute; display: flex; align-items: center; gap: 12px; padding: 10px 20px 10px 10px; background: var(--card); border: 2px solid var(--shade); border-radius: 999px; box-shadow: 4px 4px 0 var(--shade); font-weight: 700; font-size: 20px; white-space: nowrap; }
+  .chip.c1 { left: -56px; top: 16%; transform: rotate(-3deg); }
+  .chip.c2 { right: -64px; top: 36%; transform: rotate(2.5deg); }
+  .chip.c3 { left: -24px; top: 62%; transform: rotate(-1.5deg); }
+}
+.chip-i { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; background: var(--marker); color: var(--ink); flex: none; }
+.chip-i svg { width: 22px; height: 22px; }
+
+/* 2. one breath */
+.say { padding-block: clamp(72px, 12vh, 140px); text-align: center; }
+.say-mark { width: 44px; height: 44px; fill: var(--blue); margin: 0 auto 28px; display: block; transform: rotate(0deg); }
+.say-big { font: 500 clamp(30px, 3.4vw, 48px)/1.22 var(--serif); letter-spacing: -0.01em; max-width: 22em; margin: 0 auto; text-wrap: balance; }
+
+/* sections */
+.sec { padding-block: clamp(56px, 9vh, 112px); }
+.sec-head { max-width: 40rem; margin-bottom: clamp(36px, 5vw, 64px); }
+.sec-head.center { max-width: 52rem; margin-inline: auto; text-align: center; }
+.sec-head h2 { font-size: clamp(36px, 4.4vw, 60px); line-height: 1.08; margin-bottom: 16px; }
+.sec-head p { font-size: clamp(21px, 1.7vw, 24px); color: var(--ink-2); }
+.sec-more { margin-top: clamp(32px, 4vw, 48px); }
+.sec-more.center { text-align: center; }
+
+/* 3. the steps: words on one side, what she presses drawn on the other */
+.rows { list-style: none; margin: 0; padding: 0; }
+.row { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: clamp(28px, 5vw, 80px); align-items: center; padding-block: clamp(32px, 5vw, 56px); border-top: 1px solid #D8D5CC; }
+.row:nth-child(even) .row-text { order: 2; }
+#step-download { scroll-margin-top: 96px; }
+.row-n { display: block; font-size: 21px; color: var(--quiet); margin-bottom: 14px; }
+.row h3 { font-size: clamp(34px, 3.6vw, 52px); line-height: 1.08; margin-bottom: 14px; }
+.row-text p { color: var(--ink-2); font-size: clamp(21px, 1.7vw, 24px); }
+.row-text p b { color: var(--ink); }
+.panel { display: flex; align-items: center; justify-content: center; min-height: clamp(240px, 26vw, 340px); padding: clamp(28px, 4vw, 48px) 24px; border-radius: 28px; }
+.p1 { background: linear-gradient(160deg, #CBD6E8, #E9E2EC); }
+.p2 { background: linear-gradient(160deg, #F1D9C9, #EDE4DA); }
+.p3 { background: linear-gradient(160deg, #D5E3D9, #E9E7DE); }
+.mini { width: min(100%, 420px); background: var(--card); border: 2px solid var(--shade); border-radius: 18px; box-shadow: 8px 8px 0 var(--shade); padding: 0 24px 30px; }
+.mini-top { display: flex; align-items: center; gap: 8px; margin: 0 -24px 26px; padding: 10px 18px; border-bottom: 2px solid var(--shade); font-weight: 700; font-size: 19px; }
+.mini-top::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: #D5D2CA; box-shadow: 18px 0 0 #D5D2CA, 36px 0 0 #D5D2CA; margin-right: 44px; }
+.you-press { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 18px 20px; margin: 0; }
+.then { color: var(--quiet); font-size: 19px; }
+.key { display: inline-flex; align-items: center; min-height: 48px; padding: 0 18px; border: 1px solid #B9B9B9; border-radius: 6px; background: #FFFFFF; color: #1A1A1A; font: 400 20px/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; box-shadow: 0 0 0 2px var(--ink), 0 0 0 6px var(--marker), 0 0 0 8px var(--ink); }
+.key.go { background: var(--blue); border-color: var(--blue); color: #FFFFFF; font: 700 21px/1.2 var(--face); }
+@media (max-width: 860px) {
+  .row { grid-template-columns: minmax(0, 1fr); }
+  .row:nth-child(even) .row-text { order: 0; }
+}
+
+/* 4. the looks */
+.moon .looks-tabs button { border: 2px solid var(--shade); border-radius: 999px; background: var(--card); box-shadow: 3px 3px 0 var(--shade); padding: 0 22px; }
+.moon .looks-tabs button:hover { border-color: var(--shade); }
+.moon .looks-tabs button[aria-selected="true"] { border: 2px solid var(--shade); background: var(--marker); padding: 0 22px; }
+.moon .looks .device { width: min(100%, 960px); }
+.moon .look h3 { font-size: clamp(30px, 2.8vw, 40px); }
+
+/* 5. going back: the evening after the dawn */
+.dusk { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); gap: clamp(32px, 5vw, 72px); align-items: center; padding: clamp(32px, 6vw, 80px); border-radius: 36px; color: #FFFFFF;
+  background: radial-gradient(ellipse 70% 60% at 85% 110%, rgba(240, 150, 120, 0.55), rgba(240, 150, 120, 0) 70%), linear-gradient(160deg, #1C2440 0%, #2E3560 55%, #5B4A6E 100%); }
+.dusk h2 { font-size: clamp(38px, 4.4vw, 60px); line-height: 1.06; margin-bottom: 20px; }
+.dusk-text p { font-size: clamp(21px, 1.7vw, 24px); color: #EDEBF5; }
+.dusk-text p b { color: #FFFFFF; }
+.dusk .ask-fig { margin: 0; }
+.dusk .ask { color: var(--ink); background: var(--card); border: 2px solid var(--shade); border-radius: 18px; padding: 28px; box-shadow: 8px 8px 0 var(--shade); }
+.dusk .ask-r { grid-template-columns: minmax(0, 1fr); }
+.moon .a-btn.primary { background: var(--blue); border-color: var(--blue); }
+@media (max-width: 860px) { .dusk { grid-template-columns: minmax(0, 1fr); border-radius: 24px; } }
+
+/* 6. what it costs */
+.price { max-width: 600px; margin: 0 auto; background: var(--card); border: 2px solid var(--shade); border-radius: 28px; box-shadow: 8px 8px 0 var(--shade); padding: clamp(28px, 5vw, 48px); }
+.price-big { font: 600 clamp(72px, 9vw, 112px)/1 var(--serif); letter-spacing: -0.03em; margin-bottom: 12px; }
+.price-sub { font-weight: 700; }
+.ticks { list-style: none; margin: 24px 0 32px; padding: 20px 0 0; border-top: 1px solid #D8D5CC; display: grid; gap: 12px; }
+.ticks li { display: flex; gap: 14px; align-items: baseline; }
+.ticks li::before { content: ""; flex: none; width: 14px; height: 8px; border: solid var(--blue); border-width: 0 0 3px 3px; transform: rotate(-45deg) translateY(-4px); }
+.price .again { text-align: left; }
+.price .get { width: 100%; margin-top: 0; }
+
+/* 7. questions: one per line, the answer beside it */
+.qa-list { max-width: 980px; margin: 0 auto; }
+.qa-list .qa { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 8px 48px; padding: 28px 0; border-top: 1px solid #D8D5CC; }
+.qa-list .qa:last-child { border-bottom: 1px solid #D8D5CC; }
+.qa-list .qa h3 { font-size: clamp(26px, 2.2vw, 30px); line-height: 1.2; }
+.qa-list .qa p { color: var(--ink-2); }
+@media (max-width: 760px) { .qa-list .qa { grid-template-columns: minmax(0, 1fr); } }
+
+/* the footer ends on the name, very big and very quiet (a picture of it: no text to read) */
+.moon .foot { border-top: 1px solid #D8D5CC; padding-bottom: 0; overflow: hidden; }
+.wordmark { height: clamp(90px, 21vw, 300px); margin-top: 32px; }
+.wordmark::before { content: "AurOS"; display: block; text-align: center; font: 800 clamp(120px, 28vw, 400px)/0.9 var(--face); letter-spacing: -0.04em; color: transparent; background: linear-gradient(180deg, #DAD7CF, rgba(218, 215, 207, 0)); -webkit-background-clip: text; background-clip: text; }
+
+/* a way to help, always one press away on a big screen */
+.helpchip { display: none; }
+@media (min-width: 1100px) {
+  .helpchip { position: fixed; right: 20px; bottom: 20px; z-index: 9; display: inline-flex; align-items: center; gap: 12px; min-height: 56px; padding: 6px 22px 6px 8px; background: var(--card); color: var(--ink); border: 2px solid var(--shade); border-radius: 999px; box-shadow: 4px 4px 0 var(--shade); font-weight: 700; font-size: 19px; text-decoration: none; }
+  .helpchip:hover { transform: translate(-1px, -1px); box-shadow: 5px 5px 0 var(--shade); }
+  .moon .foot { padding-bottom: 0; }
+}
+
+/* on a phone: the message for another computer comes first, so its button is on the first screen */
+@media (max-width: 600px) {
+  .moon .hero { padding-top: 104px; }
+  .moon .bar-in { padding-left: 16px; }
+  .moon .get { padding: 0 30px; }
+}
+.moon.k-phone .hero { padding-top: 96px; }
+.moon.k-phone .hero h1 { font-size: 34px; margin-bottom: 12px; }
 
 /* install.html: the top of the page */
 .page-top { padding-block: clamp(40px, 7vh, 72px) clamp(32px, 5vh, 56px); }
 .page-top h1 { font-size: clamp(40px, 4.6vw, 60px); line-height: 1.08; font-weight: 800; letter-spacing: -0.015em; margin-bottom: 14px; }
 .page-top .promise { margin: 0 0 28px; text-align: left; }
-.slide.looks .device-screen { width: 92%; }
-/* on a phone the message for another computer comes first, so its button is on the first screen */
-.k-phone .slide.hero { padding-top: 12px; }
-.k-phone .hero-copy h1 { font-size: 32px; margin-bottom: 10px; }
