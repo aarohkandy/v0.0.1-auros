@@ -18,7 +18,7 @@ Who is responsible: the person who makes AurOS, on the AurOS project page on Git
 
 The website uses no cookies, no analytics and no tracking, and it loads nothing from any other server: its fonts and pictures come from the same place as its pages.
 
-It is hosted by GitHub Pages. GitHub, Inc. (owned by Microsoft) receives your internet (IP) address and details about your browser when you visit, and keeps them in its own records, under GitHub's privacy statement. We don't receive those records.
+It is hosted by Vercel. Vercel Inc. receives your internet (IP) address and details about your browser when you visit, and keeps them in its own records, under Vercel's privacy policy. We don't receive those records. The Get AurOS button downloads AurOS Setup from GitHub Releases, and GitHub, Inc. (owned by Microsoft) sees your address the same way, under GitHub's privacy statement.
 
 If the website, the downloads or the updates are ever served from a web address we own, the visit will pass through Cloudflare, which carries it to GitHub. Cloudflare sees internet addresses like any web host and keeps its own records under its own policy. We will count downloads there without keeping anyone's address.
 

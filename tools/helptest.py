@@ -34,7 +34,7 @@ one of them. Fails if:
     (read from src/aurshell/foot.c), so "press Help, then ..." is true;
   - what "Put Windows back" removes is not said in the one pinned sentence
     in every place that says it (the Settings screen twice, the windows help
-    page, the printable guide and the front page's questions);
+    page, the printable guide and the install page's small print);
   - a page spells out a web address: the pages work offline and are not
     rebuilt when the project moves, so they name no address at all.
 
@@ -356,7 +356,7 @@ def main():
     n_win = len(loss.findall(" ".join(" ".join(wins.text).split()))) if wins else 0
     places = [("src/aurshell/settings.c", 2, "the Settings screen (its row and its page)"),
               ("website/guide.html", 1, "the printable guide"),
-              ("website/index.html", 1, "the front page's questions")]
+              ("website/install.html", 1, "the install page's small print")]
     lost = [] if n_win >= 1 else ["the windows help page"]
     for path, want, what in places:
         got = loss_in(path)

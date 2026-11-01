@@ -440,3 +440,93 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
   .sheet { padding: 0; max-width: none; }
   a { color: inherit; text-decoration: none; }
 }
+
+/* ── the front page as slides (index.html) ──────────────────────────
+ * One idea per screen, the way AurOS Setup goes: each slide fills the
+ * screen under the bar and ends in a big Next. On a big screen they snap
+ * one at a time; on a phone they only lean towards it, because a slide
+ * can be taller than the screen. Without script: an ordinary page. */
+html.slides { scroll-padding-top: 70px; }
+@media (min-width: 901px) and (min-height: 640px) { html.slides { scroll-snap-type: y mandatory; } }
+@media (max-width: 900px), (max-height: 639px) { html.slides { scroll-snap-type: y proximity; } }
+.slide { min-height: calc(100vh - 70px); min-height: calc(100svh - 70px); scroll-snap-align: start; display: flex; flex-direction: column; padding-block: clamp(28px, 5vh, 56px) 20px; }
+.slide > .wrap { margin-block: auto; }
+.slide.soft { background: var(--soft); }
+.slides .foot { scroll-snap-align: end; }
+.slide-title { font-size: clamp(34px, 4vw, 52px); line-height: 1.1; font-weight: 800; letter-spacing: -0.01em; margin-bottom: 16px; }
+.lede { font-size: clamp(21px, 1.8vw, 25px); line-height: 1.45; color: var(--ink-2); max-width: 34em; }
+.lede b { color: var(--ink); }
+.slide-next { text-align: center; margin: 0; padding-top: 28px; }
+.next { display: inline-flex; align-items: center; gap: 12px; min-height: 56px; padding: 0 28px; border-radius: 999px; border: 2px solid var(--rule); background: var(--card); color: var(--ink); font: 700 21px/1.2 var(--face); text-decoration: none; }
+.next:hover { border-color: var(--ink); }
+.next svg { width: 24px; height: 24px; flex: none; }
+.slide-more { margin-top: 28px; }
+
+/* 1. the start: the words and the button on the left, her screen on the right */
+.slide.hero { text-align: left; padding-top: clamp(24px, 5vh, 56px); }
+.hero-in { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 6fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
+.hero-copy h1 { font-size: clamp(40px, 4.2vw, 62px); line-height: 1.04; letter-spacing: -0.02em; margin-bottom: 18px; }
+.slide.hero .promise { margin: 0 0 28px; text-wrap: pretty; }
+.slide .getbox { align-items: flex-start; gap: 14px; }
+.small-print { font-size: 19px; line-height: 1.45; color: var(--quiet); }
+.hero-shot.device { width: 100%; margin: 0; }
+.hero-shot .device-screen { width: 100%; }
+.hero-shot .caption { font-size: 18px; }
+@media (max-width: 900px) {
+  .hero-in { grid-template-columns: minmax(0, 1fr); }
+  .hero-shot.device { width: min(100%, 640px); margin: 8px auto 0; }
+}
+@media (max-width: 480px) { .hero-copy h1 { font-size: 40px; } }
+
+/* 2. three steps: what she presses, drawn like the buttons she will see,
+ * with the same yellow ring as the pictures on install.html */
+.trio { list-style: none; margin: 32px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.card { display: flex; flex-direction: column; background: var(--card); border-radius: 16px; padding: clamp(22px, 2.4vw, 32px); }
+.card .num { font-size: 56px; margin-bottom: 8px; }
+.card h3 { font-size: clamp(26px, 2.2vw, 30px); line-height: 1.2; font-weight: 800; margin-bottom: 10px; }
+.card p { color: var(--ink-2); }
+.card p b { color: var(--ink); }
+.you-press { margin-top: auto !important; padding-top: 24px; display: flex; flex-wrap: wrap; gap: 22px 26px; }
+.key { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border: 1px solid #B9B9B9; border-radius: 6px; background: #FFFFFF; color: #1A1A1A; font: 400 19px/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; box-shadow: 0 0 0 2px var(--ink), 0 0 0 5px var(--marker), 0 0 0 7px var(--ink); }
+.key.go { background: var(--go); border-color: var(--go); color: #FFFFFF; font: 700 19px/1.2 var(--face); }
+@media (max-width: 900px) { .trio { grid-template-columns: minmax(0, 1fr); } .you-press { padding-top: 16px; } }
+
+/* 3. the looks: the picture fits the screen with the tabs above it */
+.slide.looks .slide-title { text-align: center; margin-bottom: 24px; }
+.slide.looks .device { width: min(100%, 900px, calc((100vh - 360px) * 1.7)); margin: 0 auto; }
+.slide.looks .look figcaption { margin-top: 14px; }
+.slide.looks .look h3 { font-size: 26px; }
+
+/* 4. going back */
+.back-in { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
+.back-in .lede + .lede { margin-top: 18px; }
+.back-in .ask-fig { margin: 0; }
+.back-in .ask { padding: 28px; }
+.back-in .ask-r { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 900px) { .back-in { grid-template-columns: minmax(0, 1fr); } }
+
+/* 5. questions, then the button again */
+.qa-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 56px; margin-top: 12px; }
+.qa-grid .qa { display: block; padding: 22px 0; border-top: 2px solid var(--soft); }
+.qa-grid .qa h3 { margin-bottom: 8px; }
+@media (max-width: 900px) { .qa-grid { grid-template-columns: minmax(0, 1fr); } }
+.slide .again { text-align: left; margin-top: 32px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px 28px; }
+.slide .again .get { margin-top: 0; }
+
+/* where she is: one dot per slide, at the right, on wide screens only */
+.dots { display: none; }
+@media (min-width: 1280px) {
+  .js .dots { display: flex; flex-direction: column; position: fixed; right: 16px; top: 50%; transform: translateY(-50%); z-index: 9; }
+  .dots a { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; }
+  .dots a::before { content: ""; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--ink-2); background: transparent; }
+  .dots a[aria-current="true"]::before { background: var(--ink); border-color: var(--ink); }
+}
+
+/* install.html: the top of the page */
+.page-top { padding-block: clamp(40px, 7vh, 72px) clamp(32px, 5vh, 56px); }
+.page-top h1 { font-size: clamp(40px, 4.6vw, 60px); line-height: 1.08; font-weight: 800; letter-spacing: -0.015em; margin-bottom: 14px; }
+.page-top .promise { margin: 0 0 28px; text-align: left; }
+.slide.looks .device-screen { width: 92%; }
+/* on a phone the message for another computer comes first, so its button is on the first screen */
+.k-phone .slide.hero { padding-top: 12px; }
+.k-phone .hero-copy h1 { font-size: 32px; margin-bottom: 10px; }

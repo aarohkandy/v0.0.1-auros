@@ -42,7 +42,7 @@
               : /Firefox\/|FxiOS\//.test(ua) ? "firefox"
               : (/Chrome\/|CriOS\//.test(ua) && !/OPR\/|Opera|Vivaldi|YaBrowser|SamsungBrowser/.test(ua)) ? "chrome"
               : "";
-  if (browser) {
+  if (browser && $("all-browsers-row")) {
     root.classList.add("browser-known", "b-" + browser);
     $("all-browsers-row").hidden = false;
     $("all-browsers").addEventListener("click", function () {
@@ -68,6 +68,7 @@
   }
 
   function showElsewhere(kind) {
+    if (!$("elsewhere")) return; /* install.html: the steps are the page */
     root.classList.add("is-elsewhere", "k-" + kind);
     $("getbox").hidden = true;
     $("elsewhere").hidden = false;
@@ -98,7 +99,7 @@
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, fallback);
     else fallback();
   }
-  $("copy-link").addEventListener("click", copyLink);
+  if ($("copy-link")) $("copy-link").addEventListener("click", copyLink);
 
   /* "Send this page to myself": the phone's own share sheet (Messages,
    * Mail, Notes, AirDrop...), where it has one. She picks where it goes;
@@ -149,8 +150,9 @@
     a.addEventListener("click", function () {
       if (!here || root.classList.contains("is-elsewhere")) return;
       setTimeout(function () {
-        here.textContent = "You are here: your browser is asking if you trust the file. Follow the numbered circles.";
+        here.textContent = here.getAttribute("data-say") || "You are here: your browser is asking if you trust the file.";
         var step = $("step-download");
+        if (step && step.closest(".slide")) step = step.closest(".slide"); /* the whole slide, title and all */
         if (step) step.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
       }, 600);
     });
@@ -160,7 +162,7 @@
   if (kind && kind !== "windows") {
     showElsewhere(kind);
   } else if (kind === "windows") {
-    if (/Windows NT (5|6)\./.test(ua)) $("old-win").hidden = false;
+    if (/Windows NT (5|6)\./.test(ua) && $("old-win")) $("old-win").hidden = false;
     var uad = navigator.userAgentData;
     var hints = uad && typeof uad.getHighEntropyValues === "function";
     /* Without Chrome's hints (Firefox), the old UA string still tells
@@ -181,5 +183,20 @@
         else if (v && v.bitness === "32") showElsewhere("win32");
       }, function () { /* unsure: keep the button */ });
     }
+  }
+
+  /* ── the slides (index.html): the dot of the slide she is on ─────── */
+  var dots = [].slice.call(document.querySelectorAll(".dots a"));
+  if (dots.length && "IntersectionObserver" in window) {
+    var seen = new IntersectionObserver(function (es) {
+      es.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        dots.forEach(function (d) {
+          if (d.getAttribute("href") === "#" + e.target.id) d.setAttribute("aria-current", "true");
+          else d.removeAttribute("aria-current");
+        });
+      });
+    }, { threshold: 0.55 });
+    dots.forEach(function (d) { var s = $(d.getAttribute("href").slice(1)); if (s) seen.observe(s); });
   }
 })();
