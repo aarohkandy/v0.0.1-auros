@@ -174,6 +174,43 @@
     smaller.hidden = bigger.hidden = false;
   }
 
+  /* Her wish "Potatoes": type potato anywhere (or press the word on the
+   * page) and the screen fills with them, as Wishes does it
+   * (src/aurshell/wishgallery.c); any key, or Stop this wish, ends it. */
+  var spud = null, typed = "";
+  function potatoes() {
+    if (spud) return;
+    spud = document.createElement("div");
+    spud.className = "potatoes";
+    spud.setAttribute("role", "dialog");
+    spud.setAttribute("aria-label", "Your wish: Potatoes");
+    var bar = document.createElement("p");
+    bar.className = "potato-bar";
+    bar.textContent = "Your wish “Potatoes”. Press any key to close it.";
+    var stop = document.createElement("button");
+    stop.className = "btn2"; stop.type = "button"; stop.textContent = "Stop this wish";
+    stop.addEventListener("click", noPotatoes);
+    bar.appendChild(stop); spud.appendChild(bar);
+    var cols = Math.ceil(innerWidth / 110), rows = Math.ceil(innerHeight / 100);
+    for (var y = 0; y < rows; y++) for (var x = 0; x < cols; x++) {
+      var p = document.createElement("span");
+      p.className = "p"; p.setAttribute("aria-hidden", "true"); p.textContent = "🥔";
+      p.style.cssText = "left:" + (x * 110 + Math.random() * 40 - 20) + "px;top:" + (y * 100 + Math.random() * 40 + 10) +
+        "px;--s:" + Math.round(56 + Math.random() * 40) + "px;--r:" + Math.round(Math.random() * 80 - 40) + "deg;--d:" + (Math.random() * 0.6).toFixed(2) + "s";
+      spud.appendChild(p);
+    }
+    spud.addEventListener("click", function (e) { if (e.target === spud || e.target.className === "p") noPotatoes(); });
+    document.body.appendChild(spud);
+    stop.focus();
+  }
+  function noPotatoes() { if (spud) { spud.remove(); spud = null; } }
+  document.addEventListener("keydown", function (e) {
+    if (spud) { if (e.key !== "Tab") { e.preventDefault(); noPotatoes(); } return; }
+    if (e.key.length === 1) typed = (typed + e.key.toLowerCase()).slice(-6);
+    if (typed === "potato") { typed = ""; potatoes(); }
+  });
+  if ($("potato")) $("potato").addEventListener("click", potatoes);
+
   var kind = osKind();
   if (kind && kind !== "windows") {
     showElsewhere(kind);
