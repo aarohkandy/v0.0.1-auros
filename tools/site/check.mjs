@@ -979,7 +979,7 @@ for (const [at, want] of [
     check(gh.length === 0, `promises ${p}: every GitHub address is ${AUROS_REPO}'s`, gh.map((l) => l.href).join(" "));
     check(!/(\+?\d{1,3}[ .-])?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}/.test(text) && !links.some((l) => /^tel:/i.test(l.href)), `promises ${p}: no phone number, no tel: link (AurOS has no phone line, and never phones)`);
     if (p === "guide.html") check(text.includes(PAGES_HOST.replace(/\/$/, "")), `promises ${p}: the printed sheet says where to go (${PAGES_HOST.replace(/\/$/, "")})`);
-    if (p === "index.html") {
+    if (p === "install.html") {
       // Numbered circles: in each picture group they count 1, 2, 3... with none missed or repeated.
       const groups = await page.evaluate(() => [...document.querySelectorAll(".step")].flatMap((li) => {
         const parts = li.querySelector(".browser") ? [...li.querySelectorAll(".browser")] : [li];
@@ -1108,15 +1108,18 @@ for (const [at, want] of [
       if (sel === "#get") await shot(page, "index-after-press.png");
       await ctx.close();
     }
-    // A-06 and B-03 and B-06 and A-09, on the front page
+    // A-06, B-03 and B-06 on install.html (the steps in full); A-09 on the front page
     {
-      const { ctx, page } = await visit({ name: "walkthrough index", ua: UA.winEdge, uad: UAD.winX64 });
+      const front = await visit({ name: "walkthrough index", ua: UA.winEdge, uad: UAD.winX64 });
+      const files = await front.page.evaluate(() => { const h = [...document.querySelectorAll(".qa h3")].find((x) => /lose my files/i.test(x.innerText)); return h ? h.parentElement.innerText : ""; });
+      await front.ctx.close();
+      const { ctx, page } = await visit({ name: "walkthrough install", url: HOME + "install.html", ua: UA.winEdge, uad: UAD.winX64 });
       const t = await page.evaluate(() => ({
         helpers: [...document.querySelectorAll(".step .helper a")].map((a) => ({ text: a.innerText, h: a.getBoundingClientRect().height, href: a.getAttribute("href") })),
         three: (document.querySelector("#steps .head p:last-child") || {}).innerText || "",
         sac: (() => { const e = document.getElementById("smart-app-control"); return e ? { text: e.innerText, link: !!e.querySelector('a[href="advanced.html#smart-app-control"]') } : null; })(),
-        files: (() => { const h = [...document.querySelectorAll(".qa h3")].find((x) => /lose my files/i.test(x.innerText)); return h ? h.parentElement.innerText : ""; })(),
       }));
+      t.files = files;
       check(t.helpers.length === 3 && t.helpers.every((a) => a.text === "Stuck? Ask someone to help" && a.h >= 48 && a.href === "guide.html"), "A-06: each step has a 48px button that says Stuck? Ask someone to help, to the page that tells her what to do", JSON.stringify(t.helpers));
       check(/keep\b[^.]*run anyway[^.]*\byes\b/i.test(t.three) && /never[^.]*delete[^.]*don.t run[^.]*\bno\b/i.test(t.three) && /numbered circles/i.test(t.three), "B-03: before step 1, the three answers once (Keep, Run anyway, Yes) and the three never to press (Delete, Don't run, No)", JSON.stringify(t.three));
       check(t.sac && t.sac.link && /windows setting/i.test(t.sac.text) && /nothing was changed/i.test(t.sac.text) && !/can.t go on this computer/i.test(t.sac.text), "B-06: Smart App Control is a Windows setting a helper can change, not \"AurOS can't go on\"; nothing was changed; with the way to the helper's page", t.sac ? JSON.stringify(t.sac.text) : "no #smart-app-control");
@@ -1187,7 +1190,7 @@ for (const [at, want] of [
     }
     // The page: the rings, and the note about how the Setup pictures were made.
     {
-      const { ctx, page } = await visit({ name: "pictures on the page", ua: UA.winEdge, uad: UAD.winX64 });
+      const { ctx, page } = await visit({ name: "pictures on the page", url: HOME + "install.html", ua: UA.winEdge, uad: UAD.winX64 });
       const got = await page.evaluate(() => [...document.querySelectorAll(".shot")].map((f) => ({ img: (f.querySelector("img") || {}).getAttribute ? f.querySelector("img").getAttribute("src").split("/").pop() : "", w: +f.querySelector("img").getAttribute("width"), h: +f.querySelector("img").getAttribute("height"),
         rings: [...f.querySelectorAll(".ring")].map((r) => ({ n: r.dataset.n, style: r.getAttribute("style").replace(/\s+/g, "") })) })));
       const want = { "setup-check.jpg": ["1"], "setup-look.jpg": ["2", "3"], "setup-ready.jpg": ["4"] };
@@ -1200,7 +1203,11 @@ for (const [at, want] of [
       const note = await page.evaluate(() => { const n = document.getElementById("setup-note"); return n ? { text: n.innerText, shown: n.getClientRects().length > 0 } : null; });
       if (P && P.setup_on_real_windows === false) check(note && note.shown && /test computer/i.test(note.text), "pictures: the Setup pictures are test renders, and the page says so", JSON.stringify(note));
       else check(!note, "pictures: the Setup pictures are real Windows screenshots now, so the 'test computer' note is gone", JSON.stringify(note));
-      // The looks: shown big enough to read (560px or wider), the size they were made at, and each one the real thing.
+      await ctx.close();
+    }
+    // The looks (on the front page): shown big enough to read (560px or wider), the size they were made at, and each one the real thing.
+    {
+      const { ctx, page } = await visit({ name: "looks on the page", ua: UA.winEdge, uad: UAD.winX64 });
       const widths = [];
       for (const id of ["taskbar", "dock", "rail", "tiles"]) {
         await page.click(`#tab-${id}`);
