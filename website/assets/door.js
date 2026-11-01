@@ -157,6 +157,23 @@
     });
   });
 
+  /* Smaller text and Bigger text, as on AurOS's own bottom bar: the whole
+   * page, a step at a time, remembered on this computer (nowhere else). */
+  var smaller = $("text-smaller"), bigger = $("text-bigger");
+  if (smaller && bigger && "zoom" in root.style) {
+    var sizes = [1, 1.15, 1.3, 1.5], at = 0;
+    try { at = Math.max(0, sizes.indexOf(Number(localStorage.getItem("auros-text")))); } catch (e) { /* private window: start at 1 */ }
+    var size = function (d) {
+      at = Math.min(sizes.length - 1, Math.max(0, at + d));
+      root.style.zoom = at ? String(sizes[at]) : "";
+      try { localStorage.setItem("auros-text", String(sizes[at])); } catch (e) { /* not remembered, still bigger */ }
+    };
+    size(0);
+    smaller.addEventListener("click", function () { size(-1); });
+    bigger.addEventListener("click", function () { size(1); });
+    smaller.hidden = bigger.hidden = false;
+  }
+
   var kind = osKind();
   if (kind && kind !== "windows") {
     showElsewhere(kind);
