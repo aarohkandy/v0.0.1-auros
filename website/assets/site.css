@@ -450,11 +450,20 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
  * line. Help and the text size float in the bottom corners, as on AurOS.
  * The words never sit on the picture without the dark behind them (the
  * frame is #070B10 under the sky), so the contrast check measures them. */
-.home { --page: #ECE8E1; --night: #070B10; --moon: #F4F1EA; --quiet-night: #C9D2DA; --line: #D6D0C5; --band: #0B5D4F; --bar-ink: #16181B; --wide: 1480px; --gutter: clamp(20px, 4vw, 72px); }
+/* The whole page is night: the tokens turn over (ink is the light now),
+ * and the few pieces that show a light screen (a picture of Windows or
+ * AurOS Setup, the box for another computer, "you are here") turn them
+ * back. The accent is AurOS's own aurora teal. */
+.home { --page: #0C1117; --night: #070B10; --moon: #F4F1EA; --quiet-night: #C3CDD6; --aurora: #7DD3C0; --band: #0B5D4F; --bar-ink: #16181B; --wide: 1480px; --gutter: clamp(20px, 4vw, 72px);
+  --paper: #0C1117; --soft: #121920; --card: #151C24; --ink: #F4F1EA; --ink-2: #C3CDD6; --quiet: #AAB5BF; --rule: #66717C; --line: rgba(244, 241, 234, 0.16); --selected: #E1ECE7; }
+.home .elsewhere, .home .s3-pic, .home .laptop-screen, .home .here, .home .potato-bar {
+  --paper: #F6F2E9; --soft: #ECE6DA; --card: #FCFAF5; --ink: #17181A; --ink-2: #3A3D42; --quiet: #5C6066; --rule: #6E675C; --line: #D9D2C5; }
 .home body { background: var(--page); }
+.home .skip { background: var(--moon); color: var(--night); }
+.home ::selection { background: var(--aurora); color: var(--night); }
 
 /* 1. the canvas */
-.home .hero { position: relative; isolation: isolate; overflow: hidden; margin: 12px; border-radius: 30px; background: var(--night); color: #FFFFFF; text-align: center; display: flex; flex-direction: column; align-items: center; padding: 0 var(--gutter); min-height: calc(100vh - 24px); min-height: calc(100svh - 24px); }
+.home .hero { position: relative; isolation: isolate; overflow: clip; margin: 12px; border-radius: 30px; background: var(--night); color: #FFFFFF; text-align: center; display: flex; flex-direction: column; align-items: center; padding: 0 var(--gutter); min-height: calc(100vh - 24px); min-height: calc(100svh - 24px); }
 .hero-sky { position: absolute; inset: 0; z-index: -1; width: 100%; height: 100%; object-fit: cover; object-position: 50% 18%; }
 
 /* the bar: links on the sky, the name in a notch the colour of the page */
@@ -467,14 +476,14 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 .notch::before, .notch::after { content: ""; position: absolute; top: 0; width: 24px; height: 24px; background: radial-gradient(circle at var(--x) 100%, rgba(236, 232, 225, 0) 23.5px, var(--page) 24px); }
 .notch::before { right: 100%; --x: 0; }
 .notch::after { left: 100%; --x: 100%; }
-.home .brand { font-size: 26px; letter-spacing: -0.01em; min-height: 48px; }
+.home .brand { font-size: 26px; letter-spacing: -0.01em; min-height: 48px; color: var(--moon); }
+.home .mark path { fill: var(--aurora); }
 .home .pill { background: var(--moon); color: var(--night); border-radius: 999px; padding: 0 24px; }
 .home .pill:hover { background: #FFFFFF; }
 .home .hero :focus-visible { outline-color: #FFFFFF; }
 
-.home .hero h1 { font-size: clamp(42px, 6.3vw, 120px); line-height: 0.98; font-weight: 800; letter-spacing: -0.04em; max-width: 11em; margin: clamp(40px, 9vh, 104px) auto 0; text-wrap: balance; }
-.home .hero .promise { color: var(--quiet-night); font-size: clamp(20px, 1.6vw, 24px); margin: 18px auto 0; max-width: 30em; }
-.home .hero .promise strong { color: #FFFFFF; }
+.cry { font: 800 clamp(42px, 6vw, 116px)/0.98 var(--face); letter-spacing: -0.045em; max-width: 12em; margin: clamp(36px, 8vh, 96px) auto 0; text-wrap: balance; }
+.home .hero h1 { font-size: clamp(20px, 1.6vw, 25px); line-height: 1.35; font-weight: 700; letter-spacing: 0; color: var(--aurora); max-width: 30em; margin: 22px auto 0; text-wrap: balance; }
 .home .getbox { align-items: center; gap: 14px; margin-top: 30px; }
 .ctas { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin: 0; }
 .home .hero .get { background: var(--moon); color: var(--night); border-radius: 999px; min-height: 64px; padding: 0 34px; font-size: 23px; }
@@ -484,10 +493,11 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 .home .hero .facts-line, .home .hero .old-win { color: var(--quiet-night); font-size: 19px; max-width: 48em; }
 .home .hero .facts-line b { color: #FFFFFF; }
 .home .elsewhere { margin-top: 30px; color: var(--ink); background: var(--moon); border: 0; border-radius: 22px; text-align: left; }
+.home .here:not(:empty) { color: #17181A !important; }
 .home .elsewhere .get.share { background: var(--band); color: #FFFFFF; }
 
 /* AurOS, rising from the bottom edge of the frame */
-.laptop { order: 9; position: relative; margin: clamp(36px, 6vh, 64px) 0 0; width: min(66vw, 1120px); margin-bottom: calc(-0.28 * min(66vw, 1120px)); }
+.laptop { order: 9; position: relative; margin: clamp(24px, 4vh, 48px) 0 0; width: min(66vw, 1120px); margin-bottom: calc(-0.28 * min(66vw, 1120px)); }
 .laptop-lid { position: relative; background: linear-gradient(180deg, #2B2D31, #17181B); border-radius: 22px 22px 0 0; padding: 2.2% 2.2% 0; box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.16), 0 -30px 120px -20px rgba(125, 211, 192, 0.35); }
 .laptop-lid::before { content: ""; position: absolute; top: 0.9%; left: 50%; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%; background: #3E4147; }
 .laptop-screen { border-radius: 6px 6px 0 0; overflow: hidden; background: var(--soft); }
@@ -518,11 +528,22 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 }
 
 /* sections: wide, and little to read */
-.home .sec { padding-block: clamp(72px, 11vh, 144px); }
+.home .sec { padding-block: clamp(80px, 13vh, 168px); }
 .sec-title { font-size: clamp(36px, 4.4vw, 76px); line-height: 1; font-weight: 800; letter-spacing: -0.035em; margin-bottom: 18px; max-width: 16em; text-wrap: balance; }
 .sec-lede { font-size: clamp(21px, 1.6vw, 25px); line-height: 1.4; color: var(--ink-2); max-width: 32em; }
 .sec-lede b { color: var(--ink); }
 .home .sec-more { margin-top: 40px; }
+
+/* the strip: a few true words sliding past, two rows going opposite ways */
+.strip { overflow: clip; padding-block: clamp(40px, 7vh, 88px); }
+.strip-row { display: flex; gap: 0; margin: 0; white-space: nowrap; font: 800 clamp(40px, 6.4vw, 118px)/1.1 var(--face); letter-spacing: -0.04em; color: var(--moon); width: max-content; }
+.strip-row span { display: inline-flex; align-items: center; }
+.strip-row span::after { content: ""; width: 0.32em; height: 0.32em; margin: 0 0.5em; background: var(--aurora); transform: rotate(45deg); }
+.strip-row.rev { color: transparent; -webkit-text-stroke: 1.5px rgba(244, 241, 234, 0.75); margin-top: 6px; }
+.strip-row.rev span::before { content: attr(data-t); }
+.strip-row.rev span::after { background: transparent; box-shadow: inset 0 0 0 2px var(--aurora); }
+.sec-title span { color: var(--quiet-night); }
+.sec-title span span { color: inherit; }
 
 /* 2. two pieces of the real screen */
 .feats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(16px, 2vw, 28px); margin-top: clamp(32px, 4vw, 56px); }
@@ -548,14 +569,15 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 @media (max-width: 860px) { .feats { grid-template-columns: minmax(0, 1fr); } }
 
 /* 3. the four looks, in a green frame */
-.home .looks { margin: 0 12px; border-radius: 30px; background: var(--band); color: var(--moon); }
-.home .looks .sec-title { color: var(--moon); }
+.home .looks { margin: 0 12px; border-radius: 30px; background: linear-gradient(180deg, #0B5D4F, #073B33); color: var(--moon); }
+.home .looks .sec-title span { color: #BFE3D9; }
+.home .looks .sec-title { color: var(--moon); margin-bottom: 36px; }
 .home .looks .sec-lede { color: #D7E6E0; margin-bottom: 36px; }
 .home .looks .sec-lede b { color: var(--moon); }
 .home .looks-tabs { justify-content: flex-start; }
 .home .looks-tabs button { background: transparent; color: var(--moon); border: 2px solid rgba(244, 241, 234, 0.6); border-radius: 999px; padding: 0 24px; }
 .home .looks-tabs button:hover { border-color: var(--moon); background: rgba(255, 255, 255, 0.08); }
-.home .looks-tabs button[aria-selected="true"] { background: var(--moon); color: var(--ink); border: 2px solid var(--moon); padding: 0 24px; }
+.home .looks-tabs button[aria-selected="true"] { background: var(--moon); color: #17181A; border: 2px solid var(--moon); padding: 0 24px; }
 .home .looks-tabs button:focus-visible { outline-color: var(--marker); }
 .home .looks .device { width: 100%; margin: 0; }
 .home .looks .device-screen { width: 100%; background: #17181B; border-radius: 20px 20px 0 0; padding: 1.4% 1.4% 1.6%; }
@@ -566,12 +588,12 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 
 /* 4. three steps, each with the picture she will see and its numbered circle */
 .steps3 { list-style: none; margin: clamp(32px, 4vw, 56px) 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(16px, 2vw, 28px); }
-.s3 { display: flex; flex-direction: column; background: #FBF9F5; border-radius: 28px; padding: 16px 16px 30px; }
+.s3 { display: flex; flex-direction: column; background: var(--card); border-radius: 28px; padding: 16px 16px 30px; }
 .s3 .here:not(:empty) { margin: 0 0 14px; }
 .s3 h3 { display: flex; align-items: center; gap: 14px; font-size: clamp(25px, 2vw, 30px); line-height: 1.15; font-weight: 800; letter-spacing: -0.01em; margin: 26px 12px 8px; }
 .s3 > p:not(.here) { color: var(--ink-2); margin: 0 12px; }
 .s3 > p b { color: var(--ink); }
-.s3-n { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 42px; height: 42px; border-radius: 50%; background: var(--marker); border: 2px solid var(--ink); font: 800 22px/1 var(--face); color: var(--ink); }
+.s3-n { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 42px; height: 42px; border-radius: 50%; background: var(--marker); border: 2px solid var(--ink); font: 800 22px/1 var(--face); color: #17181A; border-color: #17181A; }
 .s3-pic { min-height: 230px; border-radius: 18px; padding: 24px 24px 28px; display: flex; flex-direction: column; font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
 .s3-pic p { margin: 0; }
 .sb-row { margin-top: auto !important; display: flex; padding-left: 64px; }
@@ -593,23 +615,23 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 /* 5. going back */
 .back-in { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: clamp(32px, 5vw, 96px); align-items: center; }
 .back-in .ask-fig { margin: 0; }
-.back-in .ask { background: #FBF9F5; border: 0; border-radius: 28px; padding: 36px; }
+.back-in .ask { background: var(--card); border: 0; border-radius: 28px; padding: 36px; }
 .back-in .ask-r { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 900px) { .back-in { grid-template-columns: minmax(0, 1fr); } }
 
 /* 6. the honest bit: four lines, said plainly */
 .home .honest { padding-top: 0; }
 .truths { list-style: none; margin: clamp(24px, 3vw, 40px) 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(16px, 2vw, 28px); counter-reset: truth; }
-.truths li { counter-increment: truth; padding-top: 22px; border-top: 2px solid var(--ink); font-size: clamp(21px, 1.6vw, 24px); line-height: 1.35; font-weight: 700; }
-.truths li::before { content: counter(truth); display: block; margin-bottom: 14px; font: 800 19px/1 var(--face); color: var(--ink-2); }
+.truths li { counter-increment: truth; padding-top: 22px; border-top: 2px solid var(--aurora); font-size: clamp(21px, 1.6vw, 24px); line-height: 1.35; font-weight: 700; }
+.truths li::before { content: "0" counter(truth); display: block; margin-bottom: 14px; font: 800 clamp(40px, 4vw, 64px)/1 var(--face); letter-spacing: -0.04em; color: var(--aurora); }
 @media (max-width: 1100px) { .truths { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .truths { grid-template-columns: minmax(0, 1fr); } }
 
 /* 7. Wishes: built, not switched on yet, said above the title and under the picture */
 .wishes-in { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(32px, 5vw, 96px); align-items: center; }
-.soon { display: inline-block; margin: 0 0 20px; padding: 6px 16px; border: 2px solid var(--ink); border-radius: 999px; font-weight: 700; font-size: 19px; }
+.soon { display: inline-block; margin: 0 0 20px; padding: 6px 16px; color: var(--aurora); border: 2px solid var(--aurora); border-radius: 999px; font-weight: 700; font-size: 19px; }
 .asks { list-style: none; margin: 28px 0 0; padding: 0; display: grid; gap: 10px; }
-.asks li { justify-self: start; padding: 12px 20px; background: #FBF9F5; border-radius: 18px 18px 18px 4px; font-size: 21px; }
+.asks li { justify-self: start; padding: 12px 20px; background: var(--card); border-radius: 18px 18px 18px 4px; font-size: 21px; }
 .psst { margin-top: 28px; color: var(--ink-2); }
 .potato-btn { font: inherit; font-weight: 700; color: var(--ink); background: none; border: 0; padding: 0 2px; text-decoration: underline; text-decoration-style: wavy; text-decoration-thickness: 2px; text-underline-offset: 0.25em; cursor: pointer; }
 .wish-shot { margin: 0; }
@@ -625,7 +647,7 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 @media (max-width: 760px) { .qa-list .qa { grid-template-columns: minmax(0, 1fr); } }
 
 /* 9. the button once more, on the night sky */
-.finale { position: relative; isolation: isolate; overflow: hidden; margin: 0 12px; border-radius: 30px; background: var(--night); color: #FFFFFF; text-align: center; padding: clamp(96px, 18vh, 200px) var(--gutter); }
+.finale { position: relative; isolation: isolate; overflow: clip; margin: 0 12px; border-radius: 30px; background: var(--night); color: #FFFFFF; text-align: center; padding: clamp(96px, 18vh, 200px) var(--gutter); }
 .finale h2 { font-size: clamp(40px, 6vw, 112px); line-height: 1; font-weight: 800; letter-spacing: -0.04em; margin-bottom: 36px; }
 .home .finale .again { text-align: center; }
 .home .finale .get { background: var(--moon); color: var(--night); border-radius: 999px; min-height: 64px; padding: 0 34px; font-size: 23px; box-shadow: none; margin: 0; }
@@ -633,6 +655,7 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 .home .finale .else-short { color: #FFFFFF; }
 .finale a:not(.get) { color: #FFFFFF; }
 .home .foot { border-top: 0; }
+.home .foot a { color: var(--moon); }
 
 /* Help and the text size: AurOS's buttons, floating in the bottom corners.
  * On a short window (zoomed right in), and where AurOS can't go (sending
@@ -653,9 +676,45 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 @media print { .osbar { display: none; } }
 .home.is-elsewhere .osbar { position: static; padding-top: 14px; }
 .home.is-elsewhere body { padding-bottom: 0; }
-.home.k-phone .hero h1 { font-size: 32px; margin-top: 6px; }
-.home.k-phone .hero .promise { font-size: 19px; margin-top: 8px; }
+.home.k-phone .cry { font-size: 30px; margin-top: 8px; }
+.home.k-phone .hero h1 { font-size: 19px; margin-top: 10px; }
 .home.k-phone .elsewhere { margin-top: 12px; padding-top: 16px; }
+
+/* Motion that answers her scrolling (CSS scroll-driven animations: Edge,
+ * Chrome; elsewhere the page simply stands still, as it does for anyone
+ * who has asked for less motion). The first screen starts where it is
+ * drawn above, so nothing on it waits for a scroll to be readable. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    /* AurOS swings up flat and comes forward; the words lift away */
+    .home .laptop { transform-origin: 50% 100%; animation: rise linear both; animation-timeline: scroll(root); animation-range: 0 85vh; }
+    @keyframes rise { from { transform: perspective(1600px) rotateX(14deg) scale(0.95); } to { transform: perspective(1600px) rotateX(0deg) scale(1.12) translateY(-14%); } }
+    .home .cry, .home .hero h1, .home .getbox { animation: lift linear both; animation-timeline: scroll(root); animation-range: 0 60vh; }
+    @keyframes lift { to { transform: translateY(-90px); opacity: 0; } }
+    .home .hero-sky { animation: drift linear both; animation-timeline: scroll(root); animation-range: 0 100vh; }
+    @keyframes drift { to { transform: scale(1.15) translateY(6%); } }
+    /* the strip slides one way, its second row the other */
+    .strip-row { animation: slide linear both; animation-timeline: view(); }
+    .strip-row.rev { animation-name: slide-back; }
+    @keyframes slide { from { transform: translateX(4%); } to { transform: translateX(-38%); } }
+    @keyframes slide-back { from { transform: translateX(-38%); } to { transform: translateX(4%); } }
+    /* each title rises into place as it comes into view */
+    .reveal { animation: up linear both; animation-timeline: view(); animation-range: entry 0% entry 70%; }
+    @keyframes up { from { opacity: 0; transform: translateY(70px); } }
+    /* the three steps arrive one after another */
+    .s3 { animation: up linear both; animation-timeline: view(); animation-range: entry 0% entry 60%; }
+    .s3:nth-child(2) { animation-range: entry 10% entry 75%; }
+    .s3:nth-child(3) { animation-range: entry 20% entry 90%; }
+    /* the looks come forward; the honest lines arrive in turn; the end grows */
+    .home .looks .look.on .device { animation: forward linear both; animation-timeline: view(); animation-range: entry 0% cover 40%; }
+    @keyframes forward { from { transform: scale(0.86) translateY(40px); opacity: 0.4; } }
+    .truths li { animation: up linear both; animation-timeline: view(); animation-range: entry 0% entry 80%; }
+    .wish-shot img { animation: tilt linear both; animation-timeline: view(); animation-range: entry 0% cover 50%; }
+    @keyframes tilt { from { transform: perspective(1400px) rotateY(-18deg) rotateX(6deg) scale(0.92); } }
+    .grow { animation: grow linear both; animation-timeline: view(); animation-range: entry 0% cover 45%; }
+    @keyframes grow { from { transform: scale(0.7); opacity: 0.3; } }
+  }
+}
 
 /* the potatoes (assets/door.js): her wish "Potatoes", as Wishes draws it */
 .potatoes { position: fixed; inset: 0; z-index: 30; overflow: hidden; background: rgba(246, 242, 233, 0.35); }
