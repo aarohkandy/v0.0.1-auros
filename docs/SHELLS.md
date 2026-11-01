@@ -186,6 +186,11 @@ reason — and the floor is a floor, not a ceiling, because the person who
 picks the largest text is the person who needs the way out largest of
 all.
 
+Its buttons are filled keys, and each group of them sits in its own
+fixed dark tray. Between the trays the wallpaper shows through, so the
+desktop runs to the bottom edge, but nothing a theme draws there can
+reach a key: the trays and keys are the fixed colours.
+
 **What a kiosk gets.** Help and nothing else. A kiosk has no way to turn
 the machine off and no network of its own to choose: an administrator
 sets a kiosk's network, and a public terminal whose users can point it

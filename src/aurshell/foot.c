@@ -15,12 +15,16 @@
  *
  * Deliberately not from the theme. See foot.h. These two are a 13.9:1
  * pair, which is well past the 4.5:1 text floor with room for a theme
- * author to have done something unexpected around them. */
-#define FOOT_BG     0x14171Bu
-#define FOOT_INK    0xECEFF2u
+ * author to have done something unexpected around them. A button is a
+ * filled key on a tray, its edge 3.3:1 against the tray; the words are
+ * 12:1 on the key. */
+#define FOOT_BG     0x0F1113u
+#define FOOT_INK    0xF2F3F5u
 #define FOOT_DIM    0x9BA3ABu
 #define FOOT_RULE   0x6E7680u
-#define FOOT_HOT    0x23272Du
+#define FOOT_HOT    0x3A3F46u
+#define FOOT_KEY    0x2A2E34u
+#define FOOT_EDGE   0x60666Fu
 
 /* The BUTTONS are at least 48px on their shorter side (DESIGN-DIRECTION
  * §3; docs/EASY.md rule 4 says 44), so the band has to be tall enough to
@@ -39,6 +43,9 @@
 #define SCALE_MIN   0.80f
 #define SCALE_MAX   2.00f
 #define SCALE_STEP  0.15f
+
+static const surface *backdrop;
+void foot_set_backdrop(const surface *wall) { backdrop = wall; }
 
 enum { B_HELP, B_NET, B_SETTINGS, B_CLOSE, B_SMALLER, B_BIGGER,
        B_POWER, B_N };
@@ -381,20 +388,21 @@ void foot_save_text_scale(float scale)
 
 /* ── painting ───────────────────────────────────────────────────────*/
 
-/* An outlined box on the fixed colours: a 2 px rule, radius 8, the
- * icon above its label. Hover changes only the rule. */
+/* A key on the fixed colours: filled, a 2 px edge, radius 12, the icon
+ * above its label. Hover lightens the key and whitens the edge. */
 static void paint_button(surface *s, shell_fonts *f, rect r, shell_icon ic,
                          const char *label, int hot, int icon)
 {
-    corners rr = corners_all(8.f);
-    draw_round_rect(s, r, rr, hot ? FOOT_HOT : FOOT_BG, 1.f);
-    draw_round_rect_border(s, r, rr, 2.f, hot ? FOOT_INK : FOOT_DIM, 1.f);
+    corners rr = corners_all(12.f);
+    draw_round_rect(s, r, rr, hot ? FOOT_HOT : FOOT_KEY, 1.f);
+    draw_round_rect_border(s, r, rr, 2.f, hot ? FOOT_INK : FOOT_EDGE, 1.f);
     font *ft = f->label ? f->label : (f->mid ? f->mid : f->small);
     float by;
     if (icon) {
         float isz = 22.f;
         float icy = (float)r.y + 6.f + isz * 0.5f;
-        shell_icon_draw(s, ic, (float)r.x + (float)r.w * 0.5f, icy, isz, FOOT_INK, FOOT_BG, 1.f);
+        shell_icon_draw(s, ic, (float)r.x + (float)r.w * 0.5f, icy, isz, FOOT_INK,
+                        hot ? FOOT_HOT : FOOT_KEY, 1.f);
         if (!ft) return;
         by = (float)r.y + (float)r.h - 8.f - font_descent(ft);
     } else {
@@ -571,12 +579,33 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
         }
     }
 
-    rect band = { 0, top, s->w, h };
-    draw_rect(s, band, FOOT_BG, 1.f);
-    draw_hrule(s, 0, top, s->w, 1, FOOT_RULE, 1.f);
-
     rect r[B_N]; int which[B_N];
     int n = foot_buttons(c, s->w, s->h, r, which);
+    if (backdrop && backdrop->w == s->w && backdrop->h == s->h) {
+        /* The desktop runs to the bottom edge; each group of buttons sits
+         * in its own tray on it. The trays are the fixed colour, so what a
+         * theme puts on the wallpaper is only ever seen between them. */
+        for (int y = top; y < s->h; y++)
+            memcpy(&s->px[(size_t)y * (size_t)s->stride], &backdrop->px[(size_t)y * (size_t)backdrop->stride],
+                   (size_t)s->w * sizeof s->px[0]);
+        for (int left = 1; left >= 0; left--) {
+            int x0 = s->w, y0 = s->h, x1 = -1, y1 = -1;
+            for (int i = 0; i < n; i++) {
+                int l = which[i] == B_HELP || which[i] == B_NET || which[i] == B_SETTINGS || which[i] == B_CLOSE;
+                if (l != left) continue;
+                if (r[i].x < x0) x0 = r[i].x;
+                if (r[i].y < y0) y0 = r[i].y;
+                if (r[i].x + r[i].w > x1) x1 = r[i].x + r[i].w;
+                if (r[i].y + r[i].h > y1) y1 = r[i].y + r[i].h;
+            }
+            if (x1 >= 0)
+                draw_round_rect(s, (rect){ x0 - 4, y0 - 4, x1 - x0 + 8, y1 - y0 + 8 },
+                                corners_all(16.f), FOOT_BG, 1.f);
+        }
+    } else {
+        draw_rect(s, (rect){ 0, top, s->w, h }, FOOT_BG, 1.f);
+        draw_hrule(s, 0, top, s->w, 1, FOOT_RULE, 1.f);
+    }
     for (int i = 0; i < n; i++)
         paint_button(s, f, r[i], ICON[which[i]], LABEL[which[i]],
                      c->foot_hover == which[i], with_icons(c));

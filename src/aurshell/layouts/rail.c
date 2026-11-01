@@ -345,8 +345,8 @@ static void paint_home(shell_ctx *c, surface *s, rect a, shell_fonts *f,
          * glow, no ring -- the row simply becomes the piece of the page
          * you are on. */
         if (hot) {
-            draw_rect(s, t, c->surface_hi, alpha);
-            draw_rect(s, (rect){ t.x, t.y, 4, t.h }, c->accent, alpha);
+            draw_round_rect(s, t, corners_all((float)c->radius_sm), c->surface_hi, alpha);
+            draw_round_rect(s, (rect){ t.x + 8, t.y + 12, 4, t.h - 24 }, corners_all(2.f), c->accent, alpha);
             paper = c->surface_hi;
         }
         /* A heavier rule over the two fixed rows at the foot of Home:
@@ -395,7 +395,7 @@ static void paint_win(shell_ctx *c, surface *s, rect a, int wi, shell_fonts *f,
      * two-sets-of-everything this look exists to avoid. */
     if (w->csd && w->content) {
         draw_content_fit(s, w->content, a, corners_all((float)c->radius), alpha);
-        draw_frame(s, a, 1, c->overlay, 1.f);
+        draw_round_rect_border(s, a, corners_all((float)c->radius), 1.f, c->overlay, 1.f);
         return;
     }
 
@@ -403,7 +403,7 @@ static void paint_win(shell_ctx *c, surface *s, rect a, int wi, shell_fonts *f,
      * a hairline, with the name set in the bold text cut. */
     int th = 56;
     rect tb = { a.x, a.y, a.w, th };
-    draw_rect(s, tb, c->bg_alt, alpha);
+    draw_round_rect(s, tb, (corners){ (float)c->radius, (float)c->radius, 0.f, 0.f }, c->bg_alt, alpha);
     draw_hrule(s, a.x, a.y + th, a.w, 1, c->overlay, alpha);
 
     /* Anchor the header to the VISIBLE region: a peeking card hangs off
@@ -467,39 +467,28 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
              * two things on screen where the archetype promises one. */
             float alpha = clampf(1.f - d * 0.15f, 0.72f, 1.f);
             int focused = (d < 0.5f);
-            /* Colour means state here and nothing else, so the rule is
-             * the accent for whichever card you are on, full stop. It
-             * used to be the app's own tint, which made "where am I"
-             * an answer that changed colour depending on which program
-             * you were in — a worse answer, and on a light theme a
-             * pastel one nobody could see. */
-            uint32_t ring = c->accent;
-
-            /* A sheet of paper: flat, opaque, square-cornered, and
-             * edged with a hairline. What marks the one you are on is
-             * a rule along its top edge in the signal colour — one
-             * mark, in one place, on one card. The version this
+            /* A sheet of paper: flat, opaque, and edged with a hairline,
+             * its edge following its corners. What marks the one you are
+             * on is a 2px ink edge, as in every other look -- one mark,
+             * in one place, on one card. The version this
              * replaces drew a 35px black shadow offset 14px, blurred
              * the wallpaper behind the card, and then ringed the whole
              * thing in the app's own pastel. Three depth cues for one
              * piece of information. */
             draw_round_rect(s, a, corners_all((float)c->radius), c->surface_c, 1.f);
-            draw_frame(s, a, 1, c->overlay, 1.f);
-            if (focused)
-                draw_hrule(s, a.x, a.y, a.w, 3, ring, alpha);
-
             if (i == 0) paint_home(c, s, a, f, alpha, focused);
             else paint_win(c, s, a, i - 1, f, alpha, focused);
+            /* The edge last, so nothing inside the card covers its corners. */
+            draw_round_rect_border(s, a, corners_all((float)c->radius), focused ? 2.f : 1.f,
+                                   focused ? c->fg : c->overlay, 1.f);
         }
     }
 
     /* The masthead. Deliberately NOT a taskbar: nothing here launches or
      * switches, so there is exactly one way to move around. A flat band
-     * of the deeper stock, closed by one hairline — the way the top of
-     * a printed page is closed. */
+     * of the deeper stock, set off by its value alone: no rule under it. */
     int bh = c->bar_h + 8;
     draw_rect(s, (rect){ 0, 0, s->w, bh }, c->bg_alt, 1.f);
-    draw_hrule(s, 0, bh, s->w, 1, c->overlay, 1.f);
 
     /* A solid square, not a dot. A circle in the accent beside a word
      * is the "brand bubble" every product page has; a square block of
@@ -513,9 +502,6 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
         float rx = (float)(s->w - c->margin);
         shell_text(s, f->mid, rx - shell_text_w(f->mid, hm), by, hm, c->fg_hi, 1.f);
         rx -= shell_text_w(f->mid, hm) + 13.f;
-        /* A rule between the date and the time, because they are two
-         * different facts and a gap alone does not say so. */
-        draw_vrule(s, (int)rx, 9, bh - 18, 1, c->overlay, 1.f);
         rx -= 13.f;
         shell_text(s, f->small, rx - shell_text_w(f->small, dt),
                    shell_baseline(f->small, 0.f, (float)bh), dt, c->subtle, 0.9f);

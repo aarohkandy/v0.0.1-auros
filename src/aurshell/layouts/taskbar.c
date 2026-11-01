@@ -651,8 +651,8 @@ static void paint_window(shell_ctx *c, surface *s, shell_fonts *f, int i,
      * the first for good measure. Three cues for one bit of state.
      *
      * Here: the focused window sits on the brightest stock, everything
-     * behind it on the bar's deeper stock, and the one in use carries
-     * a rule along its top edge in the signal colour. */
+     * behind it on the bar's deeper stock, and the one in use has a
+     * 2px ink edge. */
     draw_round_rect(s, a, fc, focused ? c->surface_c : c->bg_alt, alpha);
 
     /* Its own title bar and buttons: the program's picture, in a plain
@@ -660,7 +660,7 @@ static void paint_window(shell_ctx *c, surface *s, shell_fonts *f, int i,
      * window is one object whatever its own corners are. */
     if (c->wins[i].csd && c->wins[i].content) {
         draw_content_fit(s, c->wins[i].content, a, fc, alpha);
-        draw_frame(s, a, focused ? 2 : 1, focused ? c->fg : c->overlay, alpha);
+        draw_round_rect_border(s, a, fc, focused ? 2.f : 1.f, focused ? c->fg : c->overlay, alpha);
         return;
     }
 
@@ -669,8 +669,7 @@ static void paint_window(shell_ctx *c, surface *s, shell_fonts *f, int i,
         draw_round_rect(s, tb, tc, focused ? c->bg_alt : c->bg, alpha);
         draw_hrule(s, a.x, a.y + th - 1, a.w, 1, c->overlay, alpha);
 
-        draw_frame(s, a, focused ? 2 : 1, focused ? c->fg : c->overlay, alpha);
-        if (focused) draw_hrule(s, a.x, a.y, a.w, 3, c->accent, alpha);
+        draw_round_rect_border(s, a, fc, focused ? 2.f : 1.f, focused ? c->fg : c->overlay, alpha);
 
         /* Title row: icon, name, and the subtitle trailing it when there is
          * room — the same line a browser would put a page title on. */
@@ -702,7 +701,7 @@ static void paint_window(shell_ctx *c, surface *s, shell_fonts *f, int i,
                        alpha * (focused ? 1.f : 0.7f));
         }
     } else {
-        draw_frame(s, a, focused ? 2 : 1, focused ? c->fg : c->overlay, alpha);
+        draw_round_rect_border(s, a, fc, focused ? 2.f : 1.f, focused ? c->fg : c->overlay, alpha);
     }
 
     rect body = win_part(c, c->screen_w, c->screen_h, i, WP_BODY);
@@ -757,8 +756,8 @@ static void paint_task_button(shell_ctx *c, surface *s, shell_fonts *f, int i, r
      * bottom — and the same underline, shorter, under every other
      * button, so the mark that meant "this one" also appeared on all
      * the ones it did not mean. */
-    if (on) draw_rect(s, (rect){ b.x, b.y, 4, b.h }, c->accent, 1.f);
-    draw_frame(s, b, on ? 2 : 1, on ? c->fg : c->overlay, mini ? 0.6f : 1.f);
+    if (on) draw_round_rect(s, (rect){ b.x + 8, b.y + 12, 4, b.h - 24 }, corners_all(2.f), c->accent, 1.f);
+    draw_round_rect_border(s, b, corners_all(r), on ? 2.f : 1.f, on ? c->fg : c->overlay, mini ? 0.6f : 1.f);
 
     int narrow = b.w < 64;
     float cx = narrow ? (float)b.x + (float)b.w * 0.5f : (float)b.x + (on ? 20.f : 16.f);
@@ -786,10 +785,8 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
      * launcher hard left, buttons filling the middle, indicators and
      * the clock hard right — so it needs no invented asymmetry. What
      * it needed was to stop being frosted glass: a flat band of the
-     * deeper stock, closed by a 2px rule, the way the foot of a
-     * printed page is closed. */
+     * deeper stock, set off from the desktop by its value alone. */
     draw_rect(s, bar, c->bg_alt, 1.f);
-    draw_hrule(s, 0, bar.y, W, 2, c->overlay, 1.f);
 
     /* Launcher. The label is the affordance: a migrant should not have
      * to learn what a glyph means to find their programs. */
@@ -797,8 +794,8 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
     int lhot = (p->hover_slot == SLOT_LAUNCH) || p->menu_open;
     uint32_t lp = p->menu_open ? c->surface_c : (lhot ? c->surface_hi : c->bg);
     draw_round_rect(s, l, corners_all((float)c->radius_sm), lp, 1.f);
-    if (p->menu_open) draw_rect(s, (rect){ l.x, l.y, 4, l.h }, c->accent, 1.f);
-    draw_frame(s, l, p->menu_open ? 2 : 1, p->menu_open ? c->fg : c->overlay, 1.f);
+    if (p->menu_open) draw_round_rect(s, (rect){ l.x + 8, l.y + 12, 4, l.h - 24 }, corners_all(2.f), c->accent, 1.f);
+    draw_round_rect_border(s, l, corners_all((float)c->radius_sm), p->menu_open ? 2.f : 1.f, p->menu_open ? c->fg : c->overlay, 1.f);
     /* A block of ink, not a dot in a halo. This is the one control on
      * the bar that is not a window, so it wears the brand's own mark. */
     draw_diamond(s, (float)l.x + 22.f, (float)l.y + (float)l.h * 0.5f, 14.f, c->accent, 1.f);
@@ -813,7 +810,7 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
     if (wr.w > 0) {
         int whot = (p->hover_slot == SLOT_WISH);
         draw_round_rect(s, wr, corners_all((float)c->radius_sm), whot ? c->surface_hi : c->bg, 1.f);
-        draw_frame(s, wr, whot ? 2 : 1, whot ? c->fg : c->overlay, 1.f);
+        draw_round_rect_border(s, wr, corners_all((float)c->radius_sm), whot ? 2.f : 1.f, whot ? c->fg : c->overlay, 1.f);
         int wa = shell_wish_app(c);
         shell_icon_draw(s, ICON_WISH, (float)wr.x + 24.f, (float)wr.y + (float)wr.h / 2.f, 24.f,
                         c->fg, whot ? c->surface_hi : c->bg, 1.f);
@@ -877,7 +874,6 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
         rect cr = bar_slot(c, W, H, SLOT_CLOCK);
         char hm[32], dt[48];
         shell_clock(hm, sizeof hm, dt, sizeof dt);
-        draw_vrule(s, cr.x - 6, cr.y + 4, cr.h - 8, 1, c->overlay, 1.f);
         /* The time, once and large: the date is on the top bar of the
          * other looks and was a second line here that did not fit. */
         shell_text(s, f->mid, (float)(cr.x + cr.w) - shell_text_w(f->mid, hm),
@@ -902,8 +898,7 @@ static void paint_menu(shell_ctx *c, surface *s, shell_fonts *f)
     corners mc = corners_all(r);
 
     draw_round_rect(s, a, mc, c->surface_c, t);
-    draw_frame(s, a, 1, c->fg, t);
-    draw_hrule(s, a.x, a.y, a.w, 3, c->accent, t);
+    draw_round_rect_border(s, a, mc, 2.f, c->overlay, t);
 
     int row_h_, col_w_, head;
     menu_metrics(c, &row_h_, &col_w_, &head);
@@ -929,8 +924,8 @@ static void paint_menu(shell_ctx *c, surface *s, shell_fonts *f)
         rect hit = { row.x + 2, row.y + 1, row.w - 4, row.h - 2 };
         uint32_t paper = c->surface_c;
         if (hot) {
-            draw_rect(s, hit, c->surface_hi, t);
-            draw_rect(s, (rect){ hit.x, hit.y, 4, hit.h }, c->accent, t);
+            draw_round_rect(s, hit, corners_all((float)c->radius_sm), c->surface_hi, t);
+            draw_round_rect(s, (rect){ hit.x + 8, hit.y + 12, 4, hit.h - 24 }, corners_all(2.f), c->accent, t);
             paper = c->surface_hi;
         }
         /* One hairline between rows instead of a box around each: the
@@ -992,7 +987,6 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
         int sh = strip_h(c);
         rect st = { 0, 0, s->w, sh };
         draw_rect(s, st, c->bg_alt, 1.f);
-        draw_hrule(s, 0, sh, s->w, 1, c->overlay, 1.f);
         shell_wordmark(c, s, f, (float)c->margin, (float)sh * 0.5f);
         if (c->show_clock) {
             char hm[32], dt[48];
@@ -1001,7 +995,6 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
             shell_text(s, f->mid, rx - shell_text_w(f->mid, hm),
                        shell_baseline(f->mid, 0.f, (float)sh), hm, c->fg_hi, 1.f);
             rx -= shell_text_w(f->mid, hm) + 13.f;
-            draw_vrule(s, (int)rx, 7, sh - 14, 1, c->overlay, 1.f);
             rx -= 13.f;
             shell_text(s, f->small, rx - shell_text_w(f->small, dt),
                        shell_baseline(f->small, 0.f, (float)sh), dt, c->subtle, 0.9f);

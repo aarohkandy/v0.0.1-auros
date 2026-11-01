@@ -102,6 +102,7 @@ wall_vignette="0.45"
 
 # ── Branding ───────────────────────────────────────────────────────
 brand_glyph="◆"  brand_text="AurOS"  cursor_size="24"
+icon_tiles="0"            # 1: each program its own fixed colour tile, mark in white
 ```
 
 ### Inheritance
