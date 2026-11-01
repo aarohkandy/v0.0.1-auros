@@ -593,9 +593,9 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 }
 @media (max-width: 420px) { .os-btn { min-width: 0; padding: 4px 10px; } .osbar { gap: 8px; } }
 @media print { .osbar { display: none; } }
-/* on a phone the job is sending the link: the message and its button come first, and the bar waits at the end */
-.home.k-phone .osbar { position: static; }
-.home.k-phone body { padding-bottom: 0; }
+/* not a computer AurOS goes on (a phone, a Mac...): the job is sending the link, so its buttons come first and the bar waits at the end */
+.home.is-elsewhere .osbar { position: static; }
+.home.is-elsewhere body { padding-bottom: 0; }
 .home.k-phone .hero { padding-top: 20px; }
 .home.k-phone .hero h1 { font-size: 34px; margin-bottom: 12px; }
 .home.k-phone .hero .promise { margin-bottom: 18px; }
