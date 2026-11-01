@@ -20,6 +20,8 @@
 # (https://example.org/, https://updates.example.org/apt/,
 # https://get.example.org/download, https://get.example.org/), which
 # Cloudflare passes on to GitHub (infra/edge). Unset or empty: GitHub's.
+# AUROS_SITE=host: the website's own address (site, host) when it is not on
+# GitHub Pages, e.g. Vercel; everything else stays as above.
 # A computer keeps the addresses it was built with for good, so nothing
 # she installs may be built before the domain is set (PLAN-END-TO-END §3).
 #
@@ -85,6 +87,18 @@ if [ -n "$dom" ]; then
     [ "$bad" = 0 ] || { echo "tools/repo.sh: AUROS_DOMAIN \"$dom\" is not a domain name" >&2; exit 1; }
     host="$dom/"; apt="https://updates.$dom/apt/"
     download="https://get.$dom/download"; get="https://get.$dom/"
+fi
+# AUROS_SITE=auros.vercel.app: the website is hosted somewhere else (Vercel,
+# tools/site/vercel-build.sh); only site and host change, the downloads stay.
+site_host=$(printf '%s' "${AUROS_SITE:-}" | tr 'A-Z' 'a-z')
+if [ -n "$site_host" ]; then
+    case "$site_host" in
+        *[!a-z0-9.-]*|.*|*.|-*|*-|*..*|*.-*|*-.*) bad=1 ;;
+        *.*) bad=0 ;;
+        *) bad=1 ;;
+    esac
+    [ "$bad" = 0 ] || { echo "tools/repo.sh: AUROS_SITE \"$site_host\" is not a host name" >&2; exit 1; }
+    host="$site_host/"
 fi
 
 case "${1:-repo}" in

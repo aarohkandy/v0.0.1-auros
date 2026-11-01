@@ -12,6 +12,9 @@ permissions:
 
 jobs:
   publish:
+    # The site is on Vercel (vercel.json). Repository variable AUROS_PAGES=on
+    # brings GitHub Pages back; off, this is skipped instead of failing.
+    if: vars.AUROS_PAGES == 'on'
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     concurrency:

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "",
+  "buildCommand": "sh tools/site/vercel-build.sh",
+  "outputDirectory": ".vercel-site",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- website tools/site tools/repo.sh vercel.json"
+}

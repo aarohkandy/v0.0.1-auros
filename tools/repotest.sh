@@ -57,6 +57,13 @@ grep -rIq 'href="https://get.example.org/"' "$t/site-d" || bad "a site stamped w
 grep -rIqiE '(href|src)="[^"]*github\.io' "$t/site-d" --include='*.html' && bad "a site stamped with AUROS_DOMAIN still links to github.io"
 grep -rIqF "example.org" "$t/site-d/guide.html" || bad "the printable guide does not say example.org"
 
+# 2c. ... and hosted elsewhere (Vercel): the guide says that address, downloads stay GitHub's.
+AUROS_REPO=Some-One/their-copy AUROS_SITE=their-copy.vercel.app sh tools/site/stamp.sh website "$t/site-v" > /dev/null || bad "stamp.sh failed with AUROS_SITE"
+grep -rIqF "their-copy.vercel.app" "$t/site-v/guide.html" || bad "the printable guide does not say their-copy.vercel.app"
+grep -rIqF 'href="https://github.com/Some-One/their-copy/releases/latest/download/AurOS-Setup.exe"' "$t/site-v/index.html" ||
+    bad "a site stamped with AUROS_SITE no longer downloads from GitHub's latest release"
+AUROS_REPO=Some-One/their-copy AUROS_SITE='evil.example/x' sh tools/repo.sh host > /dev/null 2>&1 && bad "tools/repo.sh took an AUROS_SITE with a path"
+
 # 3. tools/repo.sh, told the repository.
 want() { got=$(AUROS_REPO=$1 sh tools/repo.sh "$2" 2>/dev/null) || got="(refused)"
          [ "$got" = "$3" ] || bad "AUROS_REPO=$1 repo.sh $2 gave $got, not $3"; }
