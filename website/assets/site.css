@@ -442,23 +442,27 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 }
 
 /* ── the front page (index.html, <html class="home">) ───────────────
- * The page is a piece of AurOS. It wears AurOS's top bar and its dark
- * bottom bar of big labelled buttons (Help, Smaller text, Bigger text),
- * which work here as they do there; what she learns on this page is how
- * AurOS works. The pictures are the real screens: a laptop on a block of
- * the green that means "this way", pieces of the screen where the words
- * say what they show, and the four looks on a green band. Text is left
- * aligned, lines stay short, and nothing moves by itself. */
-.home { --bar-ink: #16181B; --line: #D9D2C5; --band: #0B5D4F; --band-text: #F6F2E9; --band-quiet: #D7E6E0; }
+ * AurOS's personality, top to bottom: the patient grandchild who speaks
+ * plainly, owns up to what isn't done, and is allowed to be a little
+ * silly. The page runs from first light (Aur-: the hero in morning sun)
+ * to night (AurOS's own aurora wallpaper at the end). It wears AurOS's
+ * top bar and its dark bottom bar, whose Help, Smaller text and Bigger
+ * text work here as they do there. Every picture is a real screen.
+ * Text is left aligned and lines stay short; nothing moves by itself,
+ * except potatoes, and only when she asks for them. */
+.home { --sun: #FFC46B; --night: #05090D; --bar-ink: #16181B; --line: #D9D2C5; --band: #0B5D4F; --band-text: #F6F2E9; --band-quiet: #D7E6E0; }
 .home .bar { background: #EEE7DA; border-bottom: 1px solid var(--line); }
 .home .bar-in { min-height: 64px; }
 .home .brand { font-size: 22px; }
 
 /* 1. what it is, the button, and the real thing */
-.home .hero { text-align: left; padding: clamp(36px, 6vh, 64px) 0 clamp(40px, 6vh, 72px); overflow: hidden; overflow: clip; }
+.home .hero { text-align: left; padding: clamp(32px, 5vh, 56px) 0 clamp(40px, 6vh, 72px); overflow: hidden; overflow: clip;
+  background: radial-gradient(ellipse 60% 75% at 82% 58%, rgba(255, 196, 107, 0.55), rgba(255, 196, 107, 0) 70%), linear-gradient(180deg, #F3E9DA, var(--paper) 70%); }
+.hello { font: 800 clamp(40px, 4.1vw, 60px)/1.02 var(--face); letter-spacing: -0.03em; margin: 0 0 18px; max-width: 12em; text-wrap: balance; }
+.hello span { color: var(--go); }
 .home .hero-in { display: grid; grid-template-columns: minmax(0, 11fr) minmax(0, 10fr); gap: clamp(32px, 4.5vw, 64px); align-items: center; }
-.home .hero h1 { font-size: clamp(42px, 4.3vw, 62px); line-height: 1.04; letter-spacing: -0.025em; margin-bottom: 20px; max-width: 11em; }
-.home .hero .promise { margin: 0 0 28px; max-width: 26em; text-wrap: pretty; }
+.home .hero h1 { font-size: clamp(24px, 1.9vw, 28px); line-height: 1.3; font-weight: 700; letter-spacing: -0.005em; margin-bottom: 10px; max-width: 24em; }
+.home .hero .promise { margin: 0 0 26px; max-width: 26em; text-wrap: pretty; color: var(--ink-2); }
 .home .getbox { align-items: flex-start; gap: 14px; }
 .home .get { border-radius: 12px; box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.22); }
 .home .facts-line { max-width: 30em; }
@@ -468,19 +472,18 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 /* the laptop: drawn, on a green block that runs off the right edge */
 .laptop { position: relative; margin: 0; }
 .laptop-stage { position: relative; isolation: isolate; width: 112%; }
-.laptop-stage::before { content: ""; position: absolute; z-index: -1; top: 34%; bottom: -36px; left: 14%; right: -100vw; background: var(--band); border-radius: 28px 0 0 28px; }
+.laptop-stage::before { content: ""; position: absolute; z-index: -1; inset: -18% -24% -22% -16%; background: radial-gradient(closest-side, rgba(255, 190, 95, 0.75), rgba(255, 190, 95, 0.25) 55%, rgba(255, 190, 95, 0)); }
 .laptop-lid { position: relative; background: linear-gradient(180deg, #2B2D31, #1A1B1E); border-radius: 20px 20px 6px 6px; padding: 2.4% 2.4% 3%; box-shadow: inset 0 0 0 1.5px #44474D; }
 .laptop-lid::before { content: ""; position: absolute; top: 1%; left: 50%; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; background: #3E4147; }
 .laptop-screen { border-radius: 4px; overflow: hidden; background: var(--soft); }
 .laptop-screen img { width: 100%; }
 .laptop-base { position: relative; height: clamp(12px, 1.25vw, 18px); margin: 0 -4%; background: linear-gradient(180deg, #F2EDE4 0%, #D3CBBD 45%, #9E968A 100%); border-radius: 2px 2px 18px 18px / 2px 2px 100% 100%; box-shadow: 0 18px 24px -14px rgba(0, 0, 0, 0.45); }
 .laptop-base::before { content: ""; position: absolute; left: 50%; top: 0; width: 13%; height: 38%; transform: translateX(-50%); background: #C2BAAB; border-radius: 0 0 8px 8px; }
-.home .hero-shot .caption { text-align: left; margin: 56px 0 0; color: var(--ink-2); font-size: 19px; }
+.home .hero-shot .caption { text-align: left; margin: 36px 0 0; color: var(--ink-2); font-size: 19px; }
 @media (max-width: 900px) {
   .home .hero-in { grid-template-columns: minmax(0, 1fr); }
   .laptop-stage { width: 100%; }
-  .laptop-stage::before { left: -100vw; border-radius: 0; }
-  .home .hero h1 { max-width: 12em; }
+  .home .hero h1 { max-width: none; }
 }
 
 /* sections */
@@ -565,15 +568,52 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 .back-in .ask-r { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 900px) { .back-in { grid-template-columns: minmax(0, 1fr); } }
 
-/* 6. questions, one to a line, and the button once more */
+/* the honest bit: what isn't done yet, before she asks */
+.home .wishes { background: var(--soft); }
+.truths { list-style: none; margin: clamp(28px, 4vw, 48px) 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 clamp(32px, 5vw, 72px); counter-reset: truth; }
+.truths li { padding: 26px 0 28px 64px; border-top: 2px solid var(--ink); position: relative; counter-increment: truth; }
+.truths li::before { content: counter(truth); position: absolute; left: 0; top: 24px; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--ink); color: var(--paper); font: 800 21px/1 var(--face); }
+.truths h3 { font-size: clamp(24px, 2vw, 28px); line-height: 1.2; font-weight: 800; margin-bottom: 8px; }
+.truths p { color: var(--ink-2); }
+@media (max-width: 860px) { .truths { grid-template-columns: minmax(0, 1fr); } }
+
+/* Wishes: built, not switched on yet; said on the picture and above the title */
+.wishes-in { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: clamp(32px, 5vw, 72px); align-items: center; }
+.soon { display: inline-block; margin: 0 0 18px; padding: 6px 14px; border: 2px solid var(--ink); border-radius: 999px; font-weight: 700; font-size: 19px; }
+.asks-lead { margin: 22px 0 10px; font-weight: 700; }
+.asks { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.asks li { display: inline-block; justify-self: start; padding: 12px 20px; background: var(--card); border: 1px solid var(--line); border-radius: 16px 16px 16px 4px; font-size: 21px; }
+.psst { margin-top: 26px; color: var(--ink-2); }
+.potato-btn { font: inherit; font-weight: 700; color: var(--ink); background: none; border: 0; padding: 0 2px; text-decoration: underline; text-decoration-style: wavy; text-decoration-thickness: 2px; text-underline-offset: 0.25em; cursor: pointer; min-height: 0; }
+.wish-shot { margin: 0; }
+.wish-shot img { width: 100%; border-radius: 16px; border: 1px solid var(--line); box-shadow: 0 30px 60px -36px rgba(23, 24, 26, 0.45); transform: rotate(1.2deg); }
+.wish-shot figcaption { margin-top: 18px; color: var(--ink-2); font-size: 19px; }
+@media (max-width: 900px) { .wishes-in { grid-template-columns: minmax(0, 1fr); } .wish-shot img { transform: none; } }
+
+/* 6. questions, one to a line */
 .qa-list { margin-top: clamp(28px, 4vw, 48px); border-bottom: 1px solid var(--line); }
 .qa-list .qa { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 8px 48px; padding: 28px 0; border-top: 1px solid var(--line); }
 .qa-list .qa h3 { font-size: clamp(25px, 2vw, 29px); line-height: 1.2; font-weight: 800; }
 .qa-list .qa p { color: var(--ink-2); max-width: 34em; }
 @media (max-width: 760px) { .qa-list .qa { grid-template-columns: minmax(0, 1fr); } }
-.home .again { text-align: left; margin-top: clamp(48px, 7vw, 88px); display: flex; flex-wrap: wrap; align-items: center; gap: 20px 32px; }
-.home .again .again-title { font-size: clamp(32px, 3vw, 42px); font-weight: 800; letter-spacing: -0.02em; margin: 0; color: var(--ink); }
-.home .again .get { margin-top: 0; }
+/* goodnight: AurOS's own night wallpaper, and the button once more */
+.night { position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: flex-end; min-height: clamp(560px, 58vw, 860px); background: var(--night); color: #FFFFFF; padding-block: 120px clamp(40px, 6vh, 72px); }
+/* the lights in the top half, the words over the dark hills below them */
+.night-sky { position: absolute; inset: 0; z-index: -1; width: 100%; height: 100%; object-fit: cover; object-position: 50% 0%; }
+.night h2 { font-size: clamp(38px, 4.4vw, 64px); line-height: 1.05; font-weight: 800; letter-spacing: -0.025em; max-width: 13em; margin-bottom: 36px; }
+.home .night .again { text-align: left; }
+.home .night .again .get { margin-top: 0; background: var(--paper); color: var(--ink); box-shadow: none; }
+.home .night .again .get:hover { background: #FFFFFF; }
+.home .night .else-short { color: #FFFFFF; }
+.night a:not(.get) { color: #FFFFFF; }
+.night-cap { margin: clamp(40px, 6vh, 72px) 0 0; font-size: 19px; color: #C9D3DA; }
+
+/* the potatoes (assets/door.js): her wish "Potatoes", as Wishes draws it */
+.potatoes { position: fixed; inset: 0; z-index: 30; overflow: hidden; background: rgba(246, 242, 233, 0.35); }
+.potatoes .p { position: absolute; font-size: var(--s, 72px); line-height: 1; transform: rotate(var(--r, 0deg)); animation: plop .35s cubic-bezier(.2, 1.4, .4, 1) var(--d, 0s) both; }
+@keyframes plop { from { opacity: 0; transform: rotate(var(--r, 0deg)) scale(.2); } }
+@media (prefers-reduced-motion: reduce) { .potatoes .p { animation: none; } }
+.potato-bar { position: absolute; left: 0; right: 0; top: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; padding: 14px var(--gutter); background: var(--card); border-bottom: 2px solid var(--ink); font-weight: 700; }
 
 /* AurOS's bottom bar: always there, big buttons with their names on them.
  * On a short window (zoomed right in) it sits at the end of the page
@@ -597,7 +637,8 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 .home.is-elsewhere .osbar { position: static; }
 .home.is-elsewhere body { padding-bottom: 0; }
 .home.k-phone .hero { padding-top: 20px; }
-.home.k-phone .hero h1 { font-size: 34px; margin-bottom: 12px; }
+.home.k-phone .hello { font-size: 30px; margin-bottom: 10px; }
+.home.k-phone .hero h1 { font-size: 21px; margin-bottom: 6px; }
 .home.k-phone .hero .promise { margin-bottom: 18px; }
 
 /* install.html: the top of the page */

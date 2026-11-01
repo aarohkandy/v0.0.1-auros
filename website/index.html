@@ -35,8 +35,9 @@
   <section class="hero" id="top" aria-labelledby="hero-title">
     <div class="wrap hero-in">
       <div class="hero-copy">
-        <h1 id="hero-title">A simple new way to use your computer.</h1>
-        <p class="promise">AurOS is free, and goes on the Windows computer you already have. <strong>Windows and your files stay</strong>, and you can go back.</p>
+        <p class="hello">Computers got complicated. <span>Yours doesn&rsquo;t have to be.</span></p>
+        <h1 id="hero-title">AurOS is a simple new way to use the computer you already have.</h1>
+        <p class="promise">It&rsquo;s free. <strong>Windows and your files stay</strong>, and you can go back.</p>
 
         <div class="getbox" id="getbox">
           <!-- Every download link on the site carries this same address
@@ -48,7 +49,7 @@
             <span>Get AurOS</span>
           </a>
           <p class="facts-line not-sure">Not sure which Windows you have? Press <b>Get AurOS</b>. Setup checks, and <span data-claim="stop:nothing-changed">changes nothing if it can&rsquo;t go on</span>.</p>
-          <p class="facts-line small-print">About <span data-fact="time-ssd">25 to 60</span>&nbsp;minutes. <span data-claim="tested:virtual">Tried so far on a virtual Windows&nbsp;11 computer, not a real one.</span> Copy photos you can&rsquo;t replace to a memory stick first.</p>
+          <p class="facts-line small-print">About <span data-fact="time-ssd">25 to 60</span>&nbsp;minutes. <span data-claim="tested:virtual">Tried so far on a virtual Windows&nbsp;11 computer, not a real one.</span></p>
           <p class="old-win" id="old-win" hidden>AurOS needs Windows&nbsp;10 or&nbsp;11, and this computer may have an older Windows. AurOS Setup checks first and tells you.</p>
         </div>
 
@@ -85,7 +86,7 @@
         <div class="laptop-lid"><div class="laptop-screen"><img src="assets/shots/look-rail.jpg" width="1366" height="768" alt="AurOS, Big and simple: a page that asks What would you like to do?, with six big choices: Internet, Photos, Your files, Documents, All my programs and Get more programs. Along the bottom: Help, Wi-Fi, Settings, Smaller text, Bigger text and Turn off."></div></div>
         <div class="laptop-base"></div>
         </div>
-        <figcaption class="caption" id="hero-cap">AurOS, as it really looks. It asks what you&rsquo;d like to do.</figcaption>
+        <figcaption class="caption" id="hero-cap">AurOS, as it really looks: it starts by asking.</figcaption>
       </figure>
     </div>
   </section>
@@ -94,12 +95,12 @@
        with a piece of the real screen. -->
   <section class="sec" id="simpler" aria-labelledby="simpler-title">
     <div class="wrap">
-      <h2 class="sec-title" id="simpler-title">Simple, the way you&rsquo;d want it.</h2>
+      <h2 class="sec-title" id="simpler-title">It asks what you&rsquo;d like to do. Then it gets out of the way.</h2>
       <div class="feats">
         <article class="feat">
           <div class="crop crop-list"><img src="assets/shots/look-rail.jpg" width="1366" height="768" loading="lazy" alt="A piece of AurOS: What would you like to do? Pick one. You can always come back here. Then Internet, Photos and Your files, one under the other."></div>
-          <h3>It asks what you&rsquo;d like to do.</h3>
-          <p>Internet, photos, your files. Each one is a big button with its name written on it, not a little picture to guess at.</p>
+          <h3>Words, not puzzles.</h3>
+          <p>Every button says what it does: Internet, Photos, Your files. No little pictures to guess at.</p>
         </article>
         <article class="feat">
           <div class="bar-pic">
@@ -107,7 +108,7 @@
             <div class="crop crop-bar right"><img src="assets/shots/look-rail.jpg" width="1366" height="768" loading="lazy" alt=""></div>
           </div>
           <h3>The buttons you need never move.</h3>
-          <p>Help, Wi-Fi, Bigger text and Turn off are always along the bottom. This page has the same bar. <span class="try">Try <b>Bigger text</b>.</span></p>
+          <p>Help, Wi-Fi, Bigger text and Turn off live along the bottom, always. This page has the same bar. <span class="try">Go on, press <b>Bigger text</b>.</span></p>
         </article>
       </div>
     </div>
@@ -149,8 +150,8 @@
        on install.html. -->
   <section class="sec" id="steps" aria-labelledby="steps-title">
     <div class="wrap">
-      <h2 class="sec-title" id="steps-title">Putting it on: three steps.</h2>
-      <p class="sec-lede">Your browser and Windows don&rsquo;t know AurOS yet, so they ask if you trust it. Press the button in the numbered circle.</p>
+      <h2 class="sec-title" id="steps-title">Putting it on takes three steps.</h2>
+      <p class="sec-lede">Your browser and Windows haven&rsquo;t met AurOS before, so they ask if you trust it. They ask about every new program. Press the button in the numbered circle.</p>
       <ol class="steps3">
         <li class="s3" id="step-download">
           <p class="here" id="here" role="status" data-say="You are here: your browser is asking if you trust the file. Press the button in the numbered circle."></p>
@@ -188,7 +189,7 @@
   <section class="sec goback" id="going-back" aria-labelledby="back-title">
     <div class="wrap back-in">
       <div>
-        <h2 class="sec-title" id="back-title">Don&rsquo;t like it? Go back.</h2>
+        <h2 class="sec-title" id="back-title">Changed your mind? Go back.</h2>
         <p class="sec-lede">After the restart, AurOS asks if everything works. Until you say yes, Windows and your files are meant to stay on this computer.</p>
         <p class="sec-lede">Press <b data-ui="desktop">No, go back to Windows</b> and Windows starts the next time. Nothing is deleted.</p>
       </div>
@@ -205,25 +206,71 @@
     </div>
   </section>
 
-  <!-- 6. Short answers, and the button again. -->
+  <!-- The honest bit: what is not done yet, said before she asks. Each
+       line is true for this build (check.mjs reads data-claim). -->
+  <section class="sec honest" id="honest" aria-labelledby="honest-title">
+    <div class="wrap">
+      <h2 class="sec-title" id="honest-title">The honest bit.</h2>
+      <p class="sec-lede">Before you press anything, here&rsquo;s what isn&rsquo;t done yet.</p>
+      <ul class="truths">
+        <li><h3>It hasn&rsquo;t been on a real computer yet.</h3><p><span data-claim="tested:virtual">So far it has been tried on a virtual Windows&nbsp;11 computer, not a real one.</span> You&rsquo;d be one of the first.</p></li>
+        <li><h3>Your Windows programs won&rsquo;t come with you.</h3><p>AurOS has its own programs for the internet, photos, music and notes, and many more, free.</p></li>
+        <li><h3>Changing a drive is never risk-free.</h3><p>AurOS is made to keep Windows and your files. Still, copy the photos you treasure onto a memory stick first.</p></li>
+        <li><h3>Wishes isn&rsquo;t switched on yet.</h3><p>It&rsquo;s the part we&rsquo;re proudest of. <a href="#wishes">Here it is.</a></p></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- Wishes: built, not in this first version (profiles/desktop.profile,
+       D14). Shown as a picture with that said on it, never as a promise. -->
+  <section class="sec wishes" id="wishes" aria-labelledby="wishes-title">
+    <div class="wrap wishes-in">
+      <div>
+        <p class="soon">Not in AurOS yet</p>
+        <h2 class="sec-title" id="wishes-title">One day, you&rsquo;ll just ask.</h2>
+        <p class="sec-lede">Wishes is AurOS learning to do what you ask, in your own words. Type it or say it, then press <b>Yes</b>. It&rsquo;s built, but it isn&rsquo;t switched on in this first version.</p>
+        <p class="asks-lead">Some of the ideas it offers:</p>
+        <ul class="asks">
+          <li>&ldquo;Remind me to take my pills at 9&rdquo;</li>
+          <li>&ldquo;Play birdsong when I switch on&rdquo;</li>
+          <li>&ldquo;Say good morning to me at 8&rdquo;</li>
+        </ul>
+        <p class="psst">Psst. Type the word <button type="button" class="potato-btn" id="potato">potato</button>.</p>
+      </div>
+      <figure class="wish-shot">
+        <img src="assets/shots/wishes-ask.jpg" width="1366" height="768" loading="lazy" alt="A picture of Wishes, which isn't in AurOS yet: What would you like your computer to do? A box to type in, a Say it button, and ideas to press, such as Remind me to take my pills at 9, and Play birdsong when I switch on.">
+        <figcaption>A picture of Wishes. It isn&rsquo;t switched on in AurOS yet.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 6. Short answers. -->
   <section class="sec" id="questions" aria-labelledby="faq-title">
     <div class="wrap">
-      <h2 class="sec-title" id="faq-title">Questions people ask.</h2>
+      <h2 class="sec-title" id="faq-title">Questions people ask us.</h2>
       <div class="qa-list">
         <div class="qa"><h3>Is it free?</h3><div><p>Yes. No ads and no subscription.</p></div></div>
         <div class="qa"><h3>Will I lose my files?</h3><div><p>AurOS is made to keep your files, but any change to a drive carries some risk. Copy the photos you treasure onto a memory stick first.</p></div></div>
-        <div class="qa"><h3>Will my Windows programs work?</h3><div><p>No. AurOS has its own programs for the internet, photos, music and notes, and many more, free.</p></div></div>
+        <div class="qa"><h3>Do I need to be good with computers?</h3><div><p>No. If you can press a button that says what it does, you can use AurOS. And <b>Help</b> is always at the bottom of the screen.</p></div></div>
         <div class="qa" id="help"><h3>What if I get stuck?</h3><div><p>Press <b>Help</b> at the bottom of this page. It opens <a href="guide.html">a one-page guide</a> to print for whoever helps you. <b>AurOS will never phone you</b> or ask for a card number, a password or gift cards.</p></div></div>
       </div>
       <p class="sec-more"><a href="install.html#good-to-know">How long it takes, which computers, and your privacy</a></p>
+    </div>
+  </section>
+
+  <!-- Goodnight: AurOS's own night wallpaper (the Nocturne look), and the button once more. -->
+  <section class="night" id="goodnight" aria-labelledby="night-title">
+    <img class="night-sky" src="assets/shots/night-aurora.jpg" width="1280" height="744" loading="lazy" alt="">
+    <div class="wrap night-in">
+      <h2 id="night-title">Turn it off tonight. It&rsquo;ll be just as simple in the morning.</h2>
       <div class="again">
-        <p class="again-title">Ready when you are.</p>
         <a class="get get-again" data-download href="https://github.com/@AUROS_REPO@/releases/latest/download/AurOS-Setup.exe">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 20h16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Get AurOS</span>
         </a>
         <p class="else-short">AurOS goes on a Windows computer. <a href="#top">Send yourself the link</a> and open it there.</p>
       </div>
+      <p class="night-cap">The sky behind this is AurOS&rsquo;s own night wallpaper.</p>
     </div>
   </section>
 </main>
