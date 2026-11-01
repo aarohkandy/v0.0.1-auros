@@ -16,110 +16,108 @@
 <body>
 <a class="skip" href="#get">Skip to the download</a>
 
-<!-- The page wears AurOS's own clothes: its bar along the top, and its
-     dark bar of big buttons along the bottom (Help, Smaller text, Bigger
-     text), which work here the way they work in AurOS. What she learns on
-     this page is how AurOS works. -->
-<header class="bar">
-  <div class="wrap bar-in">
-    <a class="brand" href="index.html"><svg class="mark" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M5 0L10 5L5 10L0 5Z"/></svg>AurOS</a>
-    <a class="bar-link wide-only" href="#steps">How it goes on</a>
-    <a class="bar-link wide-only" href="#questions">Questions</a>
-    <a class="pill" data-download href="https://github.com/@AUROS_REPO@/releases/latest/download/AurOS-Setup.exe">Get AurOS</a>
-  </div>
-</header>
-
 <main id="main">
 
-  <!-- 1. What it is, the button, and the real thing. -->
+  <!-- The first screen is one framed canvas: AurOS's own night wallpaper
+       (the aurora, Nocturne), the name in a notch at the top, one line,
+       the button, and AurOS itself rising from the bottom edge. -->
   <section class="hero" id="top" aria-labelledby="hero-title">
-    <div class="wrap hero-in">
-      <div class="hero-copy">
-        <p class="hello">Computers got complicated. <span>Yours doesn&rsquo;t have to be.</span></p>
-        <h1 id="hero-title">AurOS is a simple new way to use the computer you already have.</h1>
-        <p class="promise">It&rsquo;s free. <strong>Windows and your files stay</strong>, and you can go back.</p>
+    <img class="hero-sky" src="assets/shots/night-aurora.jpg" width="1024" height="595" alt="">
+    <header class="bar">
+      <nav class="bar-side" aria-label="On this page">
+        <a class="bar-link" href="#steps">How it goes on</a>
+        <a class="bar-link" href="#looks">Four looks</a>
+        <a class="bar-link" href="#questions">Questions</a>
+      </nav>
+      <div class="notch"><a class="brand" href="index.html"><svg class="mark" viewBox="0 0 10 10" aria-hidden="true" focusable="false"><path d="M5 0L10 5L5 10L0 5Z"/></svg>AurOS</a></div>
+      <div class="bar-side end"><a class="pill" data-download href="https://github.com/@AUROS_REPO@/releases/latest/download/AurOS-Setup.exe">Get AurOS</a></div>
+    </header>
 
-        <div class="getbox" id="getbox">
-          <!-- Every download link on the site carries this same address
-               (tools/site/stamp.sh writes the repository in; assets/door.js
-               works it out again on any github.io site), and
-               tools/site/check.mjs checks all of them. -->
-          <a class="get" id="get" href="https://github.com/@AUROS_REPO@/releases/latest/download/AurOS-Setup.exe">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 20h16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <span>Get AurOS</span>
-          </a>
-          <p class="facts-line not-sure">Not sure which Windows you have? Press <b>Get AurOS</b>. Setup checks, and <span data-claim="stop:nothing-changed">changes nothing if it can&rsquo;t go on</span>.</p>
-          <p class="facts-line small-print">About <span data-fact="time-ssd">25 to 60</span>&nbsp;minutes. <span data-claim="tested:virtual">Tried so far on a virtual Windows&nbsp;11 computer, not a real one.</span></p>
-          <p class="old-win" id="old-win" hidden>AurOS needs Windows&nbsp;10 or&nbsp;11, and this computer may have an older Windows. AurOS Setup checks first and tells you.</p>
-        </div>
+    <h1 id="hero-title">A simple new way to use your computer.</h1>
+    <p class="promise">Free. Windows and your files stay, and you can go back.</p>
 
-        <!-- Instead of the button when this is not a Windows computer AurOS
-             can go on (assets/door.js). Never shown without script. -->
-        <div class="elsewhere" id="elsewhere" hidden>
-          <h2 class="else-title" data-kind="phone">Open this page on your Windows computer.</h2>
-          <h2 class="else-title" data-kind="mac chromeos linux">Open this page on the Windows computer you want to change.</h2>
-          <h2 class="else-title" data-kind="arm win32">AurOS can&rsquo;t go on this computer.</h2>
-          <p data-kind="phone">AurOS goes on a Windows computer, not a phone. Send yourself the link:</p>
-          <p data-kind="mac">This is a Mac, and AurOS goes on a Windows computer. Send yourself the link:</p>
-          <p data-kind="chromeos">This is a Chromebook, and AurOS goes on a Windows computer. Send yourself the link:</p>
-          <p data-kind="linux">This computer isn&rsquo;t running Windows, and AurOS goes on a Windows computer. Send yourself the link:</p>
-          <p data-kind="arm">It has a different kind of chip inside (called ARM, as in Snapdragon laptops), and AurOS only works on the usual kind. Have another Windows computer? Send yourself the link:</p>
-          <p data-kind="win32">It has the older, 32-bit kind of Windows, and AurOS needs the 64-bit kind. Have another Windows computer? Send yourself the link:</p>
-          <div class="else-actions">
-            <button class="get share" type="button" id="share-link" hidden>
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 15V3m0 0L7.5 7.5M12 3l4.5 4.5M5 12v8h14v-8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <span>Send this page to myself</span></button>
-            <button class="btn2" type="button" id="copy-link">
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 9h11v11H9zM5 15H4V4h11v1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>
-              Copy the link</button>
-            <a class="btn2" id="mail-link" href="mailto:?subject=AurOS">
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18v12H3zM3 6l9 7 9-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>
-              Email me the link</a>
-          </div>
-          <p class="copied" id="copied" role="status" aria-live="polite"></p>
-          <p class="anyway" data-kind="mac chromeos linux arm win32"><a data-download href="https://github.com/@AUROS_REPO@/releases/latest/download/AurOS-Setup.exe">Download the Windows file anyway</a></p>
-        </div>
-      </div>
-
-      <figure class="laptop hero-shot" aria-labelledby="hero-cap">
-        <div class="laptop-stage">
-        <div class="laptop-lid"><div class="laptop-screen"><img src="assets/shots/look-rail.jpg" width="1366" height="768" alt="AurOS, Big and simple: a page that asks What would you like to do?, with six big choices: Internet, Photos, Your files, Documents, All my programs and Get more programs. Along the bottom: Help, Wi-Fi, Settings, Smaller text, Bigger text and Turn off."></div></div>
-        <div class="laptop-base"></div>
-        </div>
-        <figcaption class="caption" id="hero-cap">AurOS, as it really looks: it starts by asking.</figcaption>
-      </figure>
+    <div class="getbox" id="getbox">
+      <!-- Every download link on the site carries this same address
+           (tools/site/stamp.sh writes the repository in; assets/door.js
+           works it out again on any github.io site), and
+           tools/site/check.mjs checks all of them. -->
+      <p class="ctas">
+        <a class="get" id="get" href="https://github.com/@AUROS_REPO@/releases/latest/download/AurOS-Setup.exe">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 20h16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Get AurOS</span>
+        </a>
+        <a class="ghost" href="#steps">How it goes on</a>
+      </p>
+      <p class="facts-line not-sure">Not sure which Windows you have? Press <b>Get AurOS</b>. Setup checks, and <span data-claim="stop:nothing-changed">changes nothing if it can&rsquo;t go on</span>.</p>
+      <p class="old-win" id="old-win" hidden>AurOS needs Windows&nbsp;10 or&nbsp;11, and this computer may have an older Windows. AurOS Setup checks first and tells you.</p>
     </div>
+
+    <!-- Instead of the button when this is not a Windows computer AurOS
+         can go on (assets/door.js). Never shown without script. -->
+    <div class="elsewhere" id="elsewhere" hidden>
+      <h2 class="else-title" data-kind="phone">Open this page on your Windows computer.</h2>
+      <h2 class="else-title" data-kind="mac chromeos linux">Open this page on the Windows computer you want to change.</h2>
+      <h2 class="else-title" data-kind="arm win32">AurOS can&rsquo;t go on this computer.</h2>
+      <p data-kind="phone">AurOS goes on a Windows computer, not a phone. Send yourself the link:</p>
+      <p data-kind="mac">This is a Mac, and AurOS goes on a Windows computer. Send yourself the link:</p>
+      <p data-kind="chromeos">This is a Chromebook, and AurOS goes on a Windows computer. Send yourself the link:</p>
+      <p data-kind="linux">This computer isn&rsquo;t running Windows, and AurOS goes on a Windows computer. Send yourself the link:</p>
+      <p data-kind="arm">It has a different kind of chip inside (called ARM, as in Snapdragon laptops), and AurOS only works on the usual kind. Have another Windows computer? Send yourself the link:</p>
+      <p data-kind="win32">It has the older, 32-bit kind of Windows, and AurOS needs the 64-bit kind. Have another Windows computer? Send yourself the link:</p>
+      <div class="else-actions">
+        <button class="get share" type="button" id="share-link" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 15V3m0 0L7.5 7.5M12 3l4.5 4.5M5 12v8h14v-8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Send this page to myself</span></button>
+        <button class="btn2" type="button" id="copy-link">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 9h11v11H9zM5 15H4V4h11v1" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>
+          Copy the link</button>
+        <a class="btn2" id="mail-link" href="mailto:?subject=AurOS">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 6h18v12H3zM3 6l9 7 9-7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>
+          Email me the link</a>
+      </div>
+      <p class="copied" id="copied" role="status" aria-live="polite"></p>
+      <p class="anyway" data-kind="mac chromeos linux arm win32"><a data-download href="https://github.com/@AUROS_REPO@/releases/latest/download/AurOS-Setup.exe">Download the Windows file anyway</a></p>
+    </div>
+
+    <figure class="laptop hero-shot">
+      <div class="laptop-lid"><div class="laptop-screen"><img src="assets/shots/look-rail.jpg" width="1366" height="768" alt="AurOS, as it really looks, Big and simple: a page that asks What would you like to do?, with six big choices: Internet, Photos, Your files, Documents, All my programs and Get more programs. Along the bottom: Help, Wi-Fi, Settings, Smaller text, Bigger text and Turn off."></div></div>
+    </figure>
+
+    <a class="sat sat-looks" href="#looks">
+      <span class="faces" aria-hidden="true"><img src="assets/shots/thumb-taskbar.jpg" width="160" height="90" loading="lazy" alt=""><img src="assets/shots/thumb-dock.jpg" width="160" height="90" loading="lazy" alt=""><img src="assets/shots/thumb-rail.jpg" width="160" height="90" loading="lazy" alt=""><img src="assets/shots/thumb-tiles.jpg" width="160" height="90" loading="lazy" alt=""></span>
+      <span>Four looks to pick from</span>
+    </a>
+    <a class="sat sat-wish" href="#wishes"><span class="sat-k">Not in AurOS yet</span><span>Wishes: just say what you&rsquo;d like.</span></a>
   </section>
 
-  <!-- 2. Why it is simpler: two things she will notice first, each shown
-       with a piece of the real screen. -->
+  <!-- Why it is simpler: two pieces of the real screen. -->
   <section class="sec" id="simpler" aria-labelledby="simpler-title">
     <div class="wrap">
-      <h2 class="sec-title" id="simpler-title">It asks what you&rsquo;d like to do. Then it gets out of the way.</h2>
+      <h2 class="sec-title" id="simpler-title">It asks what you&rsquo;d like to do.</h2>
       <div class="feats">
         <article class="feat">
           <div class="crop crop-list"><img src="assets/shots/look-rail.jpg" width="1366" height="768" loading="lazy" alt="A piece of AurOS: What would you like to do? Pick one. You can always come back here. Then Internet, Photos and Your files, one under the other."></div>
           <h3>Words, not puzzles.</h3>
-          <p>Every button says what it does: Internet, Photos, Your files. No little pictures to guess at.</p>
+          <p>Every button says what it does.</p>
         </article>
         <article class="feat">
           <div class="bar-pic">
             <div class="crop crop-bar left"><img src="assets/shots/look-rail.jpg" width="1366" height="768" loading="lazy" alt="Pieces of AurOS: the bar along the bottom of the screen. At the left: Help, Wi-Fi and Settings. At the right: Smaller text, Bigger text and Turn off."></div>
             <div class="crop crop-bar right"><img src="assets/shots/look-rail.jpg" width="1366" height="768" loading="lazy" alt=""></div>
           </div>
-          <h3>The buttons you need never move.</h3>
-          <p>Help, Wi-Fi, Bigger text and Turn off live along the bottom, always. This page has the same bar. <span class="try">Go on, press <b>Bigger text</b>.</span></p>
+          <h3>Help and Bigger text never move.</h3>
+          <p>This page has them too, at the bottom. <span class="try">Try <b>Bigger text</b>.</span></p>
         </article>
       </div>
     </div>
   </section>
 
-  <!-- 3. The four looks: real pictures of AurOS (aurshell, the Light
+  <!-- The four looks: real pictures of AurOS (aurshell, the Light
        theme every look gets), worded as AurOS Setup words them. -->
   <section class="sec looks" id="looks" aria-labelledby="looks-title">
     <div class="wrap">
       <h2 class="sec-title" id="looks-title">Four looks. Pick the one that feels like home.</h2>
-      <p class="sec-lede">You pick one while AurOS goes on. To change it later, press <b>Settings</b>, then <b>How this computer works</b>.</p>
+      <p class="sec-lede">You can change it later in <b>Settings</b>.</p>
       <div class="looks-tabs" role="tablist" aria-label="The four looks" hidden>
         <button type="button" role="tab" id="tab-taskbar" aria-controls="look-taskbar" aria-selected="true"><svg class="check" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12.5l5 5L20 6.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Like Windows</button>
         <button type="button" role="tab" id="tab-dock" aria-controls="look-dock" aria-selected="false" tabindex="-1"><svg class="check" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12.5l5 5L20 6.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>Like a Mac</button>
@@ -145,13 +143,13 @@
     </div>
   </section>
 
-  <!-- 4. What she presses, in order, each with the picture she will see,
+  <!-- What she presses, in order, each with the picture she will see,
        and the numbered circles install.html uses. Every screen in full is
        on install.html. -->
   <section class="sec" id="steps" aria-labelledby="steps-title">
     <div class="wrap">
-      <h2 class="sec-title" id="steps-title">Putting it on takes three steps.</h2>
-      <p class="sec-lede">Your browser and Windows haven&rsquo;t met AurOS before, so they ask if you trust it. They ask about every new program. Press the button in the numbered circle.</p>
+      <h2 class="sec-title" id="steps-title">Three steps to put it on.</h2>
+      <p class="sec-lede">About <span data-fact="time-ssd">25 to 60</span>&nbsp;minutes. Press the button in each numbered circle.</p>
       <ol class="steps3">
         <li class="s3" id="step-download">
           <p class="here" id="here" role="status" data-say="You are here: your browser is asking if you trust the file. Press the button in the numbered circle."></p>
@@ -185,13 +183,12 @@
     </div>
   </section>
 
-  <!-- 5. The promise she needs before she presses anything: she can go back. -->
+  <!-- The promise she needs before she presses anything: she can go back. -->
   <section class="sec goback" id="going-back" aria-labelledby="back-title">
     <div class="wrap back-in">
       <div>
         <h2 class="sec-title" id="back-title">Changed your mind? Go back.</h2>
-        <p class="sec-lede">After the restart, AurOS asks if everything works. Until you say yes, Windows and your files are meant to stay on this computer.</p>
-        <p class="sec-lede">Press <b data-ui="desktop">No, go back to Windows</b> and Windows starts the next time. Nothing is deleted.</p>
+        <p class="sec-lede">After the restart, AurOS asks. Press <b data-ui="desktop">No, go back to Windows</b> and Windows starts next time. Nothing is deleted.</p>
       </div>
       <figure class="ask-fig">
         <div class="ask" role="img" aria-label="Picture of AurOS after the restart, asking: Does everything work? Three answers: Yes, it all works; Let me look first; No, go back to Windows.">
@@ -206,17 +203,15 @@
     </div>
   </section>
 
-  <!-- The honest bit: what is not done yet, said before she asks. Each
-       line is true for this build (check.mjs reads data-claim). -->
+  <!-- The honest bit: what is not done yet, said before she asks. -->
   <section class="sec honest" id="honest" aria-labelledby="honest-title">
     <div class="wrap">
       <h2 class="sec-title" id="honest-title">The honest bit.</h2>
-      <p class="sec-lede">Before you press anything, here&rsquo;s what isn&rsquo;t done yet.</p>
       <ul class="truths">
-        <li><h3>It hasn&rsquo;t been on a real computer yet.</h3><p><span data-claim="tested:virtual">So far it has been tried on a virtual Windows&nbsp;11 computer, not a real one.</span> You&rsquo;d be one of the first.</p></li>
-        <li><h3>Your Windows programs won&rsquo;t come with you.</h3><p>AurOS has its own programs for the internet, photos, music and notes, and many more, free.</p></li>
-        <li><h3>Changing a drive is never risk-free.</h3><p>AurOS is made to keep Windows and your files. Still, copy the photos you treasure onto a memory stick first.</p></li>
-        <li><h3>Wishes isn&rsquo;t switched on yet.</h3><p>It&rsquo;s the part we&rsquo;re proudest of. <a href="#wishes">Here it is.</a></p></li>
+        <li><span data-claim="tested:virtual">Tried so far on a virtual Windows&nbsp;11 computer, not a real one.</span></li>
+        <li>Windows programs don&rsquo;t run in AurOS. It has its own, free.</li>
+        <li>Any change to a drive carries some risk. Copy your photos first.</li>
+        <li>Wishes isn&rsquo;t switched on yet.</li>
       </ul>
     </div>
   </section>
@@ -228,9 +223,7 @@
       <div>
         <p class="soon">Not in AurOS yet</p>
         <h2 class="sec-title" id="wishes-title">One day, you&rsquo;ll just ask.</h2>
-        <p class="sec-lede">Wishes is AurOS learning to do what you ask, in your own words. Type it or say it, then press <b>Yes</b>. It&rsquo;s built, but it isn&rsquo;t switched on in this first version.</p>
-        <p class="asks-lead">Some of the ideas it offers:</p>
-        <ul class="asks">
+        <ul class="asks" aria-label="Ideas Wishes offers">
           <li>&ldquo;Remind me to take my pills at 9&rdquo;</li>
           <li>&ldquo;Play birdsong when I switch on&rdquo;</li>
           <li>&ldquo;Say good morning to me at 8&rdquo;</li>
@@ -239,43 +232,40 @@
       </div>
       <figure class="wish-shot">
         <img src="assets/shots/wishes-ask.jpg" width="1366" height="768" loading="lazy" alt="A picture of Wishes, which isn't in AurOS yet: What would you like your computer to do? A box to type in, a Say it button, and ideas to press, such as Remind me to take my pills at 9, and Play birdsong when I switch on.">
-        <figcaption>A picture of Wishes. It isn&rsquo;t switched on in AurOS yet.</figcaption>
+        <figcaption>Wishes is built, but not switched on in this first version.</figcaption>
       </figure>
     </div>
   </section>
 
-  <!-- 6. Short answers. -->
+  <!-- Short answers. -->
   <section class="sec" id="questions" aria-labelledby="faq-title">
     <div class="wrap">
-      <h2 class="sec-title" id="faq-title">Questions people ask us.</h2>
+      <h2 class="sec-title" id="faq-title">Questions.</h2>
       <div class="qa-list">
         <div class="qa"><h3>Is it free?</h3><div><p>Yes. No ads and no subscription.</p></div></div>
         <div class="qa"><h3>Will I lose my files?</h3><div><p>AurOS is made to keep your files, but any change to a drive carries some risk. Copy the photos you treasure onto a memory stick first.</p></div></div>
-        <div class="qa"><h3>Do I need to be good with computers?</h3><div><p>No. If you can press a button that says what it does, you can use AurOS. And <b>Help</b> is always at the bottom of the screen.</p></div></div>
-        <div class="qa" id="help"><h3>What if I get stuck?</h3><div><p>Press <b>Help</b> at the bottom of this page. It opens <a href="guide.html">a one-page guide</a> to print for whoever helps you. <b>AurOS will never phone you</b> or ask for a card number, a password or gift cards.</p></div></div>
+        <div class="qa"><h3>Do I need to be good with computers?</h3><div><p>No. Every button says what it does, and <b>Help</b> is always at the bottom.</p></div></div>
+        <div class="qa" id="help"><h3>What if I get stuck?</h3><div><p>Print <a href="guide.html">the one-page guide</a> for whoever helps you. <b>AurOS will never phone you</b> or ask for a card number, a password or gift cards.</p></div></div>
       </div>
       <p class="sec-more"><a href="install.html#good-to-know">How long it takes, which computers, and your privacy</a></p>
     </div>
   </section>
 
-  <!-- Goodnight: AurOS's own night wallpaper (the Nocturne look), and the button once more. -->
-  <section class="night" id="goodnight" aria-labelledby="night-title">
-    <img class="night-sky" src="assets/shots/night-aurora.jpg" width="1280" height="744" loading="lazy" alt="">
-    <div class="wrap night-in">
-      <h2 id="night-title">Turn it off tonight. It&rsquo;ll be just as simple in the morning.</h2>
-      <div class="again">
-        <a class="get get-again" data-download href="https://github.com/@AUROS_REPO@/releases/latest/download/AurOS-Setup.exe">
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 20h16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>Get AurOS</span>
-        </a>
-        <p class="else-short">AurOS goes on a Windows computer. <a href="#top">Send yourself the link</a> and open it there.</p>
-      </div>
-      <p class="night-cap">The sky behind this is AurOS&rsquo;s own night wallpaper.</p>
+  <!-- The button once more, on the same night sky. -->
+  <section class="finale" aria-labelledby="end-title">
+    <img class="hero-sky" src="assets/shots/night-aurora.jpg" width="1024" height="595" loading="lazy" alt="">
+    <h2 id="end-title">Ready when you are.</h2>
+    <div class="again">
+      <a class="get get-again" data-download href="https://github.com/@AUROS_REPO@/releases/latest/download/AurOS-Setup.exe">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 20h16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Get AurOS</span>
+      </a>
+      <p class="else-short">AurOS goes on a Windows computer. <a href="#top">Send yourself the link</a> and open it there.</p>
     </div>
   </section>
 </main>
 
-<!-- AurOS's bottom bar, on this page: Help, and the text size. -->
+<!-- AurOS's bottom buttons, on this page: Help, and the text size. -->
 <nav class="osbar" aria-label="Help and text size">
   <a class="os-btn" href="guide.html"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M9.2 9.3a2.9 2.9 0 015.6.9c0 2-2.8 2.4-2.8 4.1M12 17.6v.1" fill="none" stroke="#16181B" stroke-width="2.4" stroke-linecap="round"/></svg>Help</a>
   <span class="os-gap"></span>
