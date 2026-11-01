@@ -165,9 +165,37 @@ static void arc_line(surface *s, float ox, float oy, float r, float from, float 
     }
 }
 
+/* Each program its own colour tile, its mark in white, when the theme
+ * says icon_tiles=1 (Light does). A tile is how she tells programs apart
+ * at a glance, which is the one job a colour may do here that is not
+ * state. The colours are fixed rather than themed, like the band's, so
+ * white on every one of them is checked once: 5.2:1 to 9:1. Only marks of
+ * 26px or more get a tile; the band, the bar and the tray stay plain. */
+static int icon_tiles;
+static uint32_t icon_tile(shell_icon ic)
+{
+    switch (ic) {
+    case ICON_GLOBE:   return 0x1565C0;   case ICON_PHOTOS:  return 0xC2410C;
+    case ICON_FILES:   return 0x0E7490;   case ICON_DOC:     return 0x4F46B5;
+    case ICON_MUSIC:   return 0xBE185D;   case ICON_TEXT:    return 0xA15C07;
+    case ICON_ZIP:     return 0x7A5418;   case ICON_PRINTER: return 0x3F6212;
+    case ICON_STORE:   return 0x0B5D4F;   case ICON_LIST:    return 0x27303D;
+    case ICON_GEAR: case ICON_SETTINGS: return 0x52525B;
+    default:           return 0x3F4A5A;
+    }
+}
+
 void shell_icon_draw(surface *s, shell_icon ic, float cx, float cy, float sz,
                      uint32_t ink, uint32_t paper, float a)
 {
+    if (icon_tiles && sz >= 26.f) {
+        float w = sz * 1.36f;
+        paper = icon_tile(ic);
+        ink = 0xFFFFFF;
+        draw_round_rect(s, (rect){ (int)(cx - w * 0.5f), (int)(cy - w * 0.5f), (int)w, (int)w },
+                        corners_all(w * 0.26f), paper, a);
+        sz *= 0.78f;
+    }
     float u = sz / 24.f;
 #define GX(v) (cx + (v) * u)
 #define GY(v) (cy + (v) * u)
@@ -708,6 +736,7 @@ void shell_theme_load(shell_ctx *c, const theme_t *t)
     c->err        = theme_color(t, "col_err",         theme_color(t, "err", 0xF2788D));
     c->ok         = theme_color(t, "col_ok",          theme_color(t, "ok", 0x0B5D4F));
     c->info       = theme_color(t, "col_info",        theme_color(t, "info", 0x82AAFF));
+    icon_tiles = theme_int(t, "icon_tiles", 0);
     snprintf(c->brand, sizeof c->brand, "%s", theme_str(t, "brand_text", "AurOS"));
 
     /* docs/SHELLS.md:180 -- "No archetype may hardcode a colour." The

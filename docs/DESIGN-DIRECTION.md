@@ -114,13 +114,19 @@ installer to the desktop.
 
 ### Colour: Light (default; theme id `sandstone`, shown as "Light")
 
+**Owner decision, 2026-11-01: the "Sky" look.** White cards on a soft colour-field
+sky, each program its own colour tile with a white mark, roomier rounded shapes,
+and the bottom keys in two fixed dark trays over the desktop. It was picked from
+seven rendered directions (`docs/shots/shells/` shows it). Where it departs from
+this document, the departure is written in place below and marked *Sky*.
+
 | Token (theme key) | Hex | Use | Contrast |
 |---|---|---|---|
-| paper (`bg`) | `#F6F2E9` | page, desktop, wizard content | — |
-| soft (`bg_alt`) | `#ECE6DA` | bars, wizard sidebar, alternate sections | — |
-| card (`surface`) | `#FCFAF5` | windows, menus, dialogs (not pure white: glare) | — |
+| paper (`bg`) | `#F5F7FA` (*Sky*; the installer keeps `#F6F2E9`) | page, desktop, wizard content | — |
+| soft (`bg_alt`) | `#FAFBFC` (*Sky*; installer `#ECE6DA`) | bars, wizard sidebar, alternate sections | — |
+| card (`surface`) | `#FFFFFF` (*Sky*; installer `#FCFAF5`) | windows, menus, dialogs | — |
 | selected (`surface_hi`) | `#E1ECE7` | the chosen row or card only (never hover) | — |
-| rule (`overlay`) | `#6E675C` | every border and outline | 5.0 paper, 4.5 soft, 5.4 card, 4.6 selected |
+| rule (`overlay`) | `#687079` (*Sky*; installer `#6E675C`) | every border and outline | 4.7 paper, 5.0 card |
 | ink (`fg`, `fg_hi`) | `#17181A` | all text she must read or act on, focus ring, warning text | 15.9 paper, 14.3 soft, 14.7 selected |
 | ink-2 (`subtle`) | `#3A3D42` | secondary text, "why can't I press this" explanations | 9.8 paper, 8.8 soft, 9.0 selected |
 | quiet (`muted`) | `#5C6066` | **legal lines only** | 5.7 paper, 5.1 soft |
@@ -239,7 +245,7 @@ A 4 px base. Steps: **4 · 8 · 12 · 16 · 24 · 32 · 48 · 64**.
 
 ### Radii
 
-**8** for buttons, fields and chips. **12** for cards, menus and dialogs. **0**
+**8** for buttons, fields and chips. **12** for cards, menus and dialogs. (*Sky*: the desktop uses 14 and 22, the band's keys 12, and every outline follows the corners of the fill it edges.) **0**
 for surfaces that meet a screen or window edge. Focus ring follows its
 element's radius + 3. The website's 14/16/18 go to 8/12.
 
@@ -259,8 +265,9 @@ element's radius + 3. The website's 14/16/18 go to 8/12.
   joins (`draw_line` already rounds). Ink; the accent only when selected.
 - Rendered at 32 (lists), 48 (tiles, footer) and 64 (dock).
 - **Every icon has a text label of at least 18 px.** No icon-only buttons.
-- No halo discs, no tinted backgrounds, and **no two things share a
-  silhouette.** The required set (about eight are new: printer, zip, Wi-Fi,
+- No halo discs, and **no two things share a silhouette.** (*Sky*: in Light, a
+  program's mark of 26 px or more sits on its own fixed colour tile, the mark in
+  white, 5.2:1 to 9:1. `icon_tiles` in the theme; colours in `shellcommon.c`.) The required set (about eight are new: printer, zip, Wi-Fi,
   speaker, A+, A−, power, notes):
 
 | Thing | Icon |
@@ -616,8 +623,9 @@ first. Until then D ships text fixes only.
    - Keep two groups. Left from the corner: **Help**, Wi-Fi, Settings, **Close
      this** (whenever a window is open, last so the others never move). Right
      from the corner: **Turn off**, Bigger text, 24 px gap, Smaller text.
-   - Each item: 2 px rule outline on the fixed colours, radius 8, at least
-     96×48, icon above label. Above 1.3× text the bar wraps to two rows.
+   - Each item: a filled key with a 2 px edge on the fixed colours, radius 12,
+     at least 96×48, icon above label. (*Sky*: each group sits in a fixed dark
+     tray over the wallpaper, `foot_set_backdrop()`; the keys never move.) Above 1.3× text the bar wraps to two rows.
    - In Like Windows the footer folds into the one 56 px taskbar: **All my
      programs** hard left, Help after it (≥16 px gap, different outline), the
      rest as above. No second bar.
@@ -692,8 +700,9 @@ first. Until then D ships text fixes only.
 3. **Don't use colour as the only signal.** Selected has a check mark and a
    word; warnings have an icon; pictures say "numbered circles". Cover the
    colour and the meaning must survive.
-4. **No gradients, glows, blur, translucency, shadows or halo discs.** Separate
-   surfaces with value steps and rules.
+4. **No glows, blur, translucency, shadows or halo discs, and no gradients on
+   anything she reads or presses.** Separate surfaces with value steps and rules.
+   (*Sky*: the Light wallpaper is a soft `mesh` sky, behind everything.)
 5. **Don't type the mark,** and don't draw it with GDI `Polygon`. Use
    `fill_diamond`.
 6. **Don't reach for OpenType features** to fix a glyph. Fix the font file.

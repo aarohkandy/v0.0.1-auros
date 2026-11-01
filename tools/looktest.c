@@ -207,7 +207,7 @@ int main(void)
     paint();
     {
         static const struct { const char *label, *bg, *accent; } L[] = {
-            { "Light", "F6F2E9", "0B5D4F" }, { "Light writing on a dark background", "121417", "5DBB9E" } };
+            { "Light", "F5F7FA", "0B5D4F" }, { "Light writing on a dark background", "121417", "5DBB9E" } };
         for (int k = 0; k < 2; k++) {
             int ly = -1, lx = -1;
             for (int i = 0; i < shell_text_log_n; i++)

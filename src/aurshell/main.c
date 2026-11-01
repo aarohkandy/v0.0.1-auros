@@ -972,6 +972,7 @@ int main(int argc, char **argv)
             L->paint(&c, &body, &f, wall);
             session_paint_full(&c, &body);
             session_paint_popups(&c, &body);
+            foot_set_backdrop(wall);
             foot_paint(&c, s, &f);
             clock_gettime(CLOCK_MONOTONIC, &b);
             if (ms) ms[fr] = (double)(b.tv_sec - a.tv_sec) * 1e3
@@ -1797,6 +1798,7 @@ int main(int argc, char **argv)
             /* Over the welcome question too: a page shouting at her, or
              * a stranger's program arriving, outranks it. Under the band. */
             guard_paint(&c, frame, &f);
+            foot_set_backdrop(wall);
             foot_paint(&c, frame, &f);
             /* What a wish put on the screen: a fill covers everything,
              * the band included, until the first key or press; cards
