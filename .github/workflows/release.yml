@@ -648,7 +648,8 @@ jobs:
   # repository without Pages switched on fails here and not in promote.
   pages:
     needs: promote
-    if: ${{ !cancelled() && needs.promote.result == 'success' }}
+    # The site is on Vercel (vercel.json); repository variable AUROS_PAGES=on brings Pages back.
+    if: ${{ !cancelled() && needs.promote.result == 'success' && vars.AUROS_PAGES == 'on' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

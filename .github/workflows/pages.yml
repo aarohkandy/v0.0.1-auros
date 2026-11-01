@@ -99,7 +99,8 @@ jobs:
 
   deploy:
     needs: check
-    if: needs.check.outputs.download == 'yes'
+    # The site is on Vercel (vercel.json); repository variable AUROS_PAGES=on brings Pages back.
+    if: needs.check.outputs.download == 'yes' && vars.AUROS_PAGES == 'on'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:
