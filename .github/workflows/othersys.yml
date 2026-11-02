@@ -46,7 +46,7 @@ jobs:
             ''|0000000000000000000000000000000000000000)
               files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
             *)
-              files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA?per_page=100" --jq '.files[].filename') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
+              files=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA?per_page=100" --jq 'if (.files|length) >= 300 then error("300 or more files: compare may have cut the list short") else .files[].filename end') || { echo "::error::GitHub did not list the files this push changed: failing closed (a gate must not skip on an API error)"; exit 1; } ;;
           esac
           if printf '%s\n' "$files" | grep -qE '^(src/othersys/|tools/othersys/|\.github/workflows/othersys\.yml$)'; then
             run=true
