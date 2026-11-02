@@ -50,7 +50,10 @@ def _github_files(pages: object) -> list[str]:
     if not isinstance(pages, list) or not pages:
         raise ValueError("GitHub returned no changed-file pages")
     result: list[str] = []
-    for page in pages:
+    for i, page in enumerate(pages):
+        # A compare's later pages carry only commits: files is null there.
+        if i and isinstance(page, dict) and page.get("files") is None:
+            continue
         if not isinstance(page, dict) or not isinstance(page.get("files"), list):
             raise ValueError("GitHub changed-file page has no files array")
         for entry in page["files"]:
@@ -268,6 +271,14 @@ def _selftest() -> None:
         pass
     else:
         raise AssertionError("rename without previous_filename accepted")
+    assert _github_files([{"files": [{"filename": "docs/a.md"}]}, {"files": None}, {}]) == ["docs/a.md"]
+    for pages in ([{"files": None}], [{}], [{"files": []}, {"files": "x"}]):
+        try:
+            _github_files(pages)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"pages without a files array accepted: {pages!r}")
     assert decide("[revive-functional]", ["docs/note.md"])["list"] == ["revive"]
     assert decide("[profiles office] [revive-functional]", ["docs/note.md"])["list"] == ["office", "revive"]
     assert not decide("[profiles:diagnostic] [revive-functional]", ["docs/note.md"])["go"]
