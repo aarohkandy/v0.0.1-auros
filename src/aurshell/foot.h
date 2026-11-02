@@ -92,6 +92,11 @@ void foot_open_only(shell_ctx *c, int *flag);
  * into its shorter one. */
 void foot_paint(shell_ctx *c, surface *full, shell_fonts *f);
 
+/* The wallpaper, full screen size. With it the desktop runs to the bottom
+ * edge and the buttons sit in two fixed dark trays on it; without it (or
+ * at another size) the band is one solid strip, as before. */
+void foot_set_backdrop(const surface *wall);
+
 /* Screen coordinates, full height. Returns 1 if the band took it, in
  * which case the archetype must not also act on it. */
 int  foot_click(shell_ctx *c, int x, int y);

@@ -74,7 +74,7 @@
   },
   "look-taskbar.jpg": {
    "source": "docs/shots/shells/taskbar-1366x768-desktop.png",
-   "source_sha256": "b978bdda4115182d9a8200fe0632f01110e46391d50c553abcb63e6c52ba902a",
+   "source_sha256": "072d82a3cb04b4309c8cec02e67f158991952d1cdcf47237a9a29d78f3817507",
    "says": [
     "All my programs",
     "Everything on this computer",
@@ -114,7 +114,7 @@
   },
   "look-dock.jpg": {
    "source": "docs/shots/shells/dock-1366x768-desktop.png",
-   "source_sha256": "0fe03908f48304fb87921e15d91dbe31ceab0d126203704bde263b6f35366082",
+   "source_sha256": "d9869ed360d18c4029888eefe91894f037601ab15edb30a35d4329708e031059",
    "says": [
     "All my programs",
     "Internet",
@@ -136,7 +136,7 @@
   },
   "look-rail.jpg": {
    "source": "docs/shots/shells/rail-1366x768-desktop.png",
-   "source_sha256": "65bbf1b18147e701f6faa17dc122d29d4a65d017fbf630c9d3d9cadcf24e5d06",
+   "source_sha256": "3b8abc8e8538d6fe69e897c646e513d0b441be98c2a0423d5b32c280b9093798",
    "says": [
     "What would you like to do?",
     "Pick one. You can always come back here.",
@@ -166,7 +166,7 @@
   },
   "look-tiles.jpg": {
    "source": "docs/shots/shells/tiles-1366x768-desktop.png",
-   "source_sha256": "0473870a5db07fbb17bc0260a2ccfed178dc8721bbf873daf99b7735015df2a9",
+   "source_sha256": "24e7d591b042552963dd55fa3d8d27d8717cbc50d79a0f458e56231ef9d5d3a7",
    "says": [
     "What would you like to do?",
     "Previous page",

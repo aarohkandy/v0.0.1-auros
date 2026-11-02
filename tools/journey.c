@@ -67,6 +67,7 @@ static void shot(const char *name)
     if (!SHELL_PANEL_OPEN(&c)) notify_paint(&c, S, &F);
     net_paint(&c, S, &F);
     welcome_paint(&c, S, &F);
+    foot_set_backdrop(WALL);
     foot_paint(&c, S, &F);
     osd_paint(&c, S, &F);
     shell_text_log_on = 0;

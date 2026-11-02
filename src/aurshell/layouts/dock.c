@@ -468,9 +468,7 @@ static void paint_win(shell_ctx *c, surface *s, shell_fonts *f, int i, int focus
     /* An unfocused window still needs an edge: on a light theme its
      * surface and the wallpaper are close enough in value that without
      * one the window stops having a shape. */
-    draw_frame(s, a, focused ? 2 : 1, focused ? c->fg : c->overlay, 1.f);
-    /* Not over a program's own title bar: three pixels of its tab strip. */
-    if (focused && th > 0) draw_hrule(s, a.x, a.y, a.w, 3, c->accent, 1.f);
+    draw_round_rect_border(s, a, rc, focused ? 2.f : 1.f, focused ? c->fg : c->overlay, 1.f);
 }
 
 /* ── painting: the dock ─────────────────────────────────────────── */
@@ -571,8 +569,8 @@ static void paint_find(shell_ctx *c, surface *s, shell_fonts *f)
         rect r = { a.x, a.y + FIND_TOP + i * FIND_ROW_H, a.w, FIND_ROW_H };
         uint32_t paper = c->surface_c;
         if (i == p->find_sel) {
-            draw_rect(s, r, c->surface_hi, al);
-            draw_rect(s, (rect){ r.x, r.y, 4, r.h }, c->accent, al);
+            draw_round_rect(s, r, corners_all((float)c->radius_sm), c->surface_hi, al);
+            draw_round_rect(s, (rect){ r.x + 8, r.y + 12, 4, r.h - 24 }, corners_all(2.f), c->accent, al);
             paper = c->surface_hi;
         }
         if (i) draw_hrule(s, r.x + pad, r.y, r.w - pad * 2, 1, c->overlay, al * 0.9f);
@@ -643,7 +641,6 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
      * there would be two spots. */
     int bh = c->bar_h;
     draw_rect(s, (rect){ 0, 0, s->w, bh }, c->bg_alt, 1.f);
-    draw_hrule(s, 0, bh, s->w, 1, c->overlay, 1.f);
     shell_wordmark(c, s, f, (float)c->margin, (float)bh * 0.5f);
 
     if (c->show_clock) {
@@ -653,7 +650,6 @@ static void l_paint(shell_ctx *c, surface *s, shell_fonts *f, const surface *wal
         shell_text(s, f->mid, rx - shell_text_w(f->mid, hm),
                    shell_baseline(f->mid, 0.f, (float)bh), hm, c->fg_hi, 1.f);
         rx -= shell_text_w(f->mid, hm) + 13.f;
-        draw_vrule(s, (int)rx, 8, bh - 16, 1, c->overlay, 1.f);
         rx -= 13.f;
         shell_text(s, f->small, rx - shell_text_w(f->small, dt),
                    shell_baseline(f->small, 0.f, (float)bh), dt, c->subtle, 0.9f);
