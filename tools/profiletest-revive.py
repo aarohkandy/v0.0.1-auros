@@ -1,0 +1,473 @@
+#!/usr/bin/env python3
+"""Bounded Revive Firefox/AbiWord probe and strict evidence reduction.
+
+No Gnumeric, network browsing, performance, physical-PC or Windows-delivery
+claim. Keyboard input is supplied by the host's QMP channel, never by DOM or
+application automation. This program only seeds an EMPTY document.
+"""
+import argparse
+import hashlib
+import gzip
+import struct
+import zlib
+import http.server
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import secrets
+import subprocess
+import sys
+import threading
+import time
+import xml.etree.ElementTree as ET
+
+STATE = Path('/var/lib/auros-profiletest/revive')
+RUNTIME = Path('/tmp/auros-profiletest-revive')
+HOST = Path('/run/auros-profiletest-host')
+SENTINEL = 'reviveletter'
+BROWSER = 'reviveproof'
+
+
+def read_json(path):
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError('duplicate evidence key')
+            result[key] = value
+        return result
+    data = Path(path).read_bytes()
+    if len(data) > 65536:
+        raise ValueError('oversized evidence')
+    return json.loads(data, object_pairs_hook=pairs)
+
+
+def document_text(path):
+    data = Path(path).read_bytes()
+    if len(data) > 1048576 or b'<!ENTITY' in data:
+        raise ValueError('unbounded or external document')
+    root = ET.fromstring(data)
+    local = lambda tag: tag.rsplit('}', 1)[-1]
+    if local(root.tag) != 'abiword':
+        raise ValueError('not an AbiWord document')
+    return '\n'.join(''.join(p.itertext()) for p in root.iter()
+                     if local(p.tag) == 'p')
+
+
+def identity(pid, unit, group, executable, uid):
+    proc = Path('/proc') / str(pid)
+    actual = os.readlink(proc / 'exe')
+    stat = (proc / 'stat').read_text().rsplit(')', 1)[1].split()
+    owner = (proc / 'status').read_text()
+    cgroup = (proc / 'cgroup').read_text().splitlines()
+    if actual != executable or f'0::{group}' not in cgroup:
+        raise ValueError('process executable or unit cgroup mismatch')
+    if not re.search(rf'^Uid:\s+{uid}\s+{uid}\s+{uid}\s+{uid}$', owner, re.M):
+        raise ValueError('process owner mismatch')
+    return dict(pid=pid, start_ticks=int(stat[19]), exe=actual, unit=unit,
+                cgroup=group, uid=uid)
+
+
+def stream_digest(stream, limit):
+    total = 0
+    digest = hashlib.sha256()
+    while block := stream.read(1024 * 1024):
+        total += len(block)
+        if total > limit:
+            raise ValueError('retained image exceeds bound')
+        digest.update(block)
+    if not total:
+        raise ValueError('empty retained image')
+    return {'bytes': total, 'sha256': digest.hexdigest()}
+
+
+def retain(image, directory, source_sha, repository, run_id):
+    directory = Path(directory)
+    (directory / 'manifest.json').unlink(missing_ok=True)
+    if not re.fullmatch(r'[0-9a-f]{40}', source_sha) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
+        raise ValueError('invalid image source identity')
+    if type(run_id) is not int or run_id <= 0:
+        raise ValueError('invalid image run identity')
+    packed = directory / 'auros-revive.img.gz'
+    with open(image, 'rb') as stream:
+        raw_info = stream_digest(stream, 64 * 1024**3)
+    with packed.open('rb') as stream:
+        compressed_info = stream_digest(stream, 24 * 1024**3)
+    with gzip.open(packed, 'rb') as stream:
+        if stream_digest(stream, raw_info['bytes']) != raw_info:
+            raise ValueError('retained gzip differs from the tested image')
+    manifest = dict(schema='auros-revive-retained-v1', profile='revive',
+                    repository=repository, workflow='.github/workflows/profiles.yml',
+                    source_sha=source_sha, image_run_id=run_id,
+                    raw=raw_info, compressed=compressed_info,
+                    filename=packed.name)
+    pending = directory / '.manifest.pending'
+    pending.write_text(json.dumps(manifest, indent=2) + '\n')
+    pending.replace(directory / 'manifest.json')
+    return manifest
+
+
+def screenshot_binding(ocr_path):
+    ocr_path = Path(ocr_path)
+    image = ocr_path.with_name(ocr_path.name.removesuffix('.ocr.txt') + '.png')
+    data = image.read_bytes()
+    if not data.startswith(b'\x89PNG\r\n\x1a\n') or len(data) > 5000000:
+        raise ValueError('invalid screenshot')
+    offset = 8
+    chunks = []
+    packed = bytearray()
+    while offset < len(data):
+        if offset + 12 > len(data):
+            raise ValueError('truncated PNG')
+        length, kind = struct.unpack('>I4s', data[offset:offset+8])
+        end = offset + 12 + length
+        if end > len(data):
+            raise ValueError('truncated PNG chunk')
+        content = data[offset+8:end-4]
+        crc = struct.unpack('>I', data[end-4:end])[0]
+        if zlib.crc32(kind + content) & 0xffffffff != crc:
+            raise ValueError('PNG checksum mismatch')
+        chunks.append(kind)
+        if kind == b'IHDR' and content != struct.pack('>IIBBBBB', 1280, 800, 8, 2, 0, 0, 0):
+            raise ValueError('unexpected screenshot dimensions or encoding')
+        if kind == b'IDAT':
+            packed.extend(content)
+        if kind == b'IEND' and content:
+            raise ValueError('invalid PNG end')
+        offset = end
+    if chunks != [b'IHDR', b'IDAT', b'IEND']:
+        raise ValueError('screenshot is not the host encoder output')
+    decoder = zlib.decompressobj()
+    raw = decoder.decompress(bytes(packed), 800 * (1280 * 3 + 1) + 1)
+    if (len(raw) != 800 * (1280 * 3 + 1) or not decoder.eof or decoder.unused_data
+            or decoder.unconsumed_tail or any(raw[y * (1280 * 3 + 1)] != 0 for y in range(800))):
+        raise ValueError('invalid screenshot pixel stream')
+    text = ocr_path.read_bytes()
+    if len(text) > 65536:
+        raise ValueError('oversized OCR')
+    return {'image_sha256': hashlib.sha256(data).hexdigest(),
+            'ocr_sha256': hashlib.sha256(text).hexdigest()}
+
+
+def bind(path):
+    value = screenshot_binding(path)
+    Path(str(path) + '.binding.json').write_text(json.dumps(value) + '\n')
+
+
+def visible(path):
+    name = Path(path).name
+    words = {'browser-ready.ocr.txt': ('revivebrowser',),
+             'firefox.ocr.txt': ('revivebrowser', BROWSER),
+             'abiword.ocr.txt': (SENTINEL,),
+             'letter-ready.ocr.txt': ('abiword',)}.get(name)
+    if words is None:
+        raise ValueError('unknown visible application evidence')
+    text = Path(path).read_text()
+    if len(text) > 65536:
+        raise ValueError('oversized OCR evidence')
+    tokens = re.findall(r'[a-z]+', text.lower())
+    if name == 'letter-ready.ocr.txt':
+        if 'abiword' not in tokens:
+            raise ValueError('AbiWord window not visible')
+        return
+    if any(tokens.count(word) != 1 for word in words):
+        raise ValueError('exact unique visible words missing')
+
+
+def validate_health(health):
+    keys = {'earlyoom_before', 'earlyoom_after', 'system_failed_before',
+            'system_failed_after', 'user_failed_before', 'user_failed_after'}
+    if type(health) is not dict or set(health) != keys:
+        raise ValueError('missing system health boundary')
+    if health['earlyoom_before'] != 'active' or health['earlyoom_after'] != 'active':
+        raise ValueError('earlyoom did not stay active')
+    for scope in ('system', 'user'):
+        for phase in ('before', 'after'):
+            value = health[f'{scope}_failed_{phase}']
+            if (type(value) is not list or any(type(item) is not str or not item for item in value)
+                    or value != sorted(set(value))):
+                raise ValueError('invalid failed-unit inventory')
+        if set(health[f'{scope}_failed_after']) - set(health[f'{scope}_failed_before']):
+            raise ValueError('new failed units after application use')
+
+
+def reduce(directory):
+    directory = Path(directory)
+    result = read_json(directory / 'result.json')
+    if set(result) != {'schema', 'status', 'apps', 'oom_before', 'oom_after',
+                       'earlyoom_kills', 'mem_kib', 'cleanup', 'reason', 'health',
+                       'manager_display', 'firefox_package_owner', 'cleanup_method'}:
+        raise ValueError('unexpected result fields')
+    if result['schema'] != 'revive-runtime-v1' or result['status'] != 'pass' or result['reason']:
+        raise ValueError('guest did not finish')
+    if not 1800000 <= result['mem_kib'] <= 2097152:
+        raise ValueError('probe was not run with the 2 GiB budget')
+    if any(type(result[k]) is not int or result[k] < 0 for k in ('oom_before', 'oom_after', 'earlyoom_kills')):
+        raise ValueError('invalid OOM counters')
+    if result['oom_before'] != result['oom_after'] or result['earlyoom_kills'] != 0 or result['cleanup'] is not True:
+        raise ValueError('OOM or incomplete cleanup')
+    validate_health(result['health'])
+    display = result['manager_display']
+    if (type(display) is not dict or set(display) != {'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR'}
+            or any(type(value) is not str or not value or '\n' in value for value in display.values())):
+        raise ValueError('user manager display environment missing')
+    if result['firefox_package_owner'] != 'firefox: /usr/lib/firefox/firefox-bin':
+        raise ValueError('Firefox executable is not the reviewed package member')
+    if result['cleanup_method'] != 'systemd-stop':
+        raise ValueError('unknown cleanup method')
+    if set(result['apps']) != {'firefox', 'abiword'}:
+        raise ValueError('missing application')
+    for app, record in result['apps'].items():
+        if set(record) != {'before', 'after', 'stopped', 'display'} or record['stopped'] is not True:
+            raise ValueError('application lifecycle incomplete')
+        before, after = record['before'], record['after']
+        if before != after or set(before) != {'pid', 'start_ticks', 'exe', 'unit', 'cgroup', 'uid'}:
+            raise ValueError('application identity changed')
+        if record['display'] != display or display['XDG_RUNTIME_DIR'] != '/run/user/' + str(before['uid']):
+            raise ValueError('application did not inherit the recorded display environment')
+        expected = {'firefox': ('/usr/lib/firefox/firefox-bin',),
+                    'abiword': ('/usr/bin/abiword',)}[app]
+        if before['exe'] not in expected or before['unit'] != f'auros-profiletest-revive-{app}.service':
+            raise ValueError('wrong executable or unit')
+        if not before['cgroup'].endswith('/' + before['unit']) or any(
+                type(before[k]) is not int or before[k] <= 0 for k in ('pid', 'start_ticks', 'uid')):
+            raise ValueError('invalid process identity')
+    browser = read_json(directory / 'browser.json')
+    if browser != {'value': BROWSER, 'trusted_keys': len(BROWSER), 'focused': True, 'trusted_submit': True}:
+        raise ValueError('browser did not receive real focused keyboard input')
+    if document_text(directory / 'letter.abw') != SENTINEL:
+        raise ValueError('saved document has wrong text')
+    for app, words in (('firefox', ('revivebrowser', BROWSER)), ('abiword', (SENTINEL,))):
+        visible(directory / f'{app}.ocr.txt')
+        ocr = directory / f'{app}.ocr.txt'
+        if read_json(str(ocr) + '.binding.json') != screenshot_binding(ocr):
+            raise ValueError('OCR does not belong to this screenshot')
+    return 'PASS: Firefox keyboard submission and AbiWord saved document under 2 GiB; Gnumeric unproven'
+
+
+def guest():
+    STATE.mkdir(parents=True, exist_ok=True)
+    RUNTIME.mkdir(mode=0o755, exist_ok=True)
+    report = dict(schema='revive-runtime-v1', status='fail', apps={}, oom_before=-1,
+                  oom_after=-2, earlyoom_kills=-1, mem_kib=0, cleanup=False, reason='unexpected exit',
+                  health={}, manager_display={}, firefox_package_owner='', cleanup_method='systemd-stop')
+    def say(message):
+        with open('/dev/ttyS0', 'w') as serial:
+            serial.write('\nPROFILETEST ' + message + '\n')
+    def run(*args):
+        return subprocess.check_output(args, text=True, timeout=25).strip()
+    uid = os.stat('/run/auros').st_uid
+    account = pwd.getpwuid(uid)
+    env = ['env', 'HOME=' + account.pw_dir, 'XDG_RUNTIME_DIR=/run/user/' + str(uid),
+           'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/' + str(uid) + '/bus']
+    def user(*args):
+        return run('runuser', '-u', account.pw_name, '--', *env, *args)
+    def ctl(*args):
+        return user('systemctl', '--user', *args)
+    def failed_units(command):
+        return sorted(set(line.split()[0] for line in command('list-units', '--state=failed',
+                          '--all', '--no-legend', '--plain', '--no-pager').splitlines() if line.strip()))
+    def systemctl(*args):
+        return run('systemctl', *args)
+    def health(phase):
+        report['health']['earlyoom_' + phase] = systemctl('is-active', 'earlyoom.service')
+        report['health']['system_failed_' + phase] = failed_units(systemctl)
+        report['health']['user_failed_' + phase] = failed_units(ctl)
+    def oom():
+        return int(dict(line.split() for line in Path('/proc/vmstat').read_text().splitlines())['oom_kill'])
+    sequence = 0
+    def action(verb):
+        nonlocal sequence
+        sequence += 1
+        say(f'revive-do={sequence} {verb}')
+        end = time.monotonic() + 100
+        while time.monotonic() < end:
+            if (HOST / f'failed-{sequence}').exists():
+                raise ValueError('host action failed: ' + verb)
+            if int((HOST / 'acks').read_text()) >= sequence:
+                return
+            time.sleep(.25)
+        raise ValueError('host action timed out: ' + verb)
+    active = {}
+    server = None
+    start = str(int(time.time()))
+    def stop(app):
+        pid, unit, group, exe = active[app]
+        ctl('stop', unit)
+        end = time.monotonic() + 10
+        while time.monotonic() < end:
+            group_path = Path('/sys/fs/cgroup' + group)
+            processes = []
+            if group_path.exists():
+                for path in group_path.rglob('cgroup.procs'):
+                    processes.extend(path.read_text().split())
+            if not Path('/proc', str(pid)).exists() and not processes:
+                del active[app]
+                return
+            time.sleep(.2)
+        raise ValueError('application processes survived stop')
+    def launch(app, exe, *args):
+        unit = f'auros-profiletest-revive-{app}.service'
+        expected_exe = exe
+        user('systemd-run', '--user', '--quiet', '--unit=' + unit,
+             '--property=Type=exec', '--property=TimeoutStopSec=5', '--', exe, *args)
+        end = time.monotonic() + 20
+        while time.monotonic() < end:
+            pid = int(ctl('show', '-p', 'MainPID', '--value', unit))
+            if pid:
+                group = ctl('show', '-p', 'ControlGroup', '--value', unit)
+                active[app] = (pid, unit, group, expected_exe)
+                # Launch the package-owned binary directly; never infer a
+                # launcher's final executable from its process name.
+                if os.readlink(Path('/proc') / str(pid) / 'exe') != expected_exe:
+                    time.sleep(.2)
+                    continue
+                record = identity(pid, unit, group, expected_exe, uid)
+                process_env = dict(item.split('=', 1) for item in
+                                   (Path('/proc') / str(pid) / 'environ').read_text().split('\0')
+                                   if '=' in item)
+                inherited = {key: process_env.get(key, '') for key in report['manager_display']}
+                if inherited != report['manager_display']:
+                    raise ValueError('application display environment mismatch')
+                report['apps'][app] = {'before': record, 'after': None, 'stopped': False, 'display': inherited}
+                return
+            time.sleep(.2)
+        raise ValueError('application did not start')
+    def finish(app):
+        pid, unit, group, exe = active[app]
+        report['apps'][app]['after'] = identity(pid, unit, group, exe, uid)
+        stop(app)
+        report['apps'][app]['stopped'] = True
+    try:
+        if any(STATE.iterdir()) or any(RUNTIME.iterdir()):
+            raise ValueError('stale probe state refused')
+        HOST.mkdir(parents=True, exist_ok=True)
+        run('modprobe', '9pnet_virtio')
+        run('mount', '-t', '9p', '-o', 'trans=virtio,version=9p2000.L,ro,cache=none', 'profiletest', str(HOST))
+        report['mem_kib'] = int(re.search(r'^MemTotal:\s+(\d+)', Path('/proc/meminfo').read_text(), re.M)[1])
+        report['oom_before'] = oom()
+        manager = dict(line.split('=', 1) for line in ctl('show-environment').splitlines() if '=' in line)
+        report['manager_display'] = {key: manager.get(key, '') for key in ('DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR')}
+        if (not manager.get('DISPLAY') or not manager.get('WAYLAND_DISPLAY')
+                or manager.get('XDG_RUNTIME_DIR') != '/run/user/' + str(uid)):
+            raise ValueError('user manager display environment unavailable')
+        health('before')
+        report['firefox_package_owner'] = run('dpkg-query', '-S', '/usr/lib/firefox/firefox-bin')
+        if report['firefox_package_owner'] != 'firefox: /usr/lib/firefox/firefox-bin':
+            raise ValueError('unexpected Firefox package owner')
+        token = secrets.token_hex(16)
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path != '/' + token:
+                    self.send_error(404); return
+                page = '''<!doctype html><meta charset="utf-8"><style>body{font:36px sans-serif;background:white}input{font-size:36px;width:80%%}</style><h1>revivebrowser</h1><input autofocus><script>
+const input=document.querySelector('input');let keys=0;
+input.addEventListener('keydown',e=>{if(e.isTrusted&&e.key.length===1)keys++;
+if(e.key==='Enter'){e.preventDefault();fetch('/%s',{method:'POST',body:JSON.stringify({value:input.value,trusted_keys:keys,focused:document.activeElement===input,trusted_submit:e.isTrusted})});}});
+</script>''' % token
+                data = page.encode()
+                self.send_response(200); self.send_header('Content-Type', 'text/html'); self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data)
+            def do_POST(self):
+                length = int(self.headers.get('Content-Length', '0'))
+                if self.path != '/' + token or not 0 < length < 1024 or (STATE / 'browser.json').exists():
+                    self.send_error(400); return
+                data = self.rfile.read(length)
+                json.loads(data)
+                pending = STATE / '.browser.json.pending'
+                pending.write_bytes(data)
+                pending.replace(STATE / 'browser.json')
+                self.send_response(204); self.end_headers()
+            def log_message(self, *_):
+                pass
+        server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        profile = RUNTIME / 'browser'
+        profile.mkdir()
+        (profile / 'user.js').write_text('user_pref("browser.shell.checkDefaultBrowser", false);\nuser_pref("browser.aboutwelcome.enabled", false);\nuser_pref("browser.startup.homepage_override.mstone", "ignore");\n')
+        run('chown', '-R', str(uid), str(RUNTIME))
+        firefox = '/usr/lib/firefox/firefox-bin'
+        launch('firefox', firefox, '--no-remote', '--new-instance', '--profile', str(profile), f'http://127.0.0.1:{server.server_port}/{token}')
+        action('revive-visible browser-ready')
+        action('revive-type browser')
+        action('key ret')
+        action('revive-visible firefox')
+        deadline = time.monotonic() + 10
+        while not (STATE / 'browser.json').exists() and time.monotonic() < deadline:
+            time.sleep(.2)
+        if read_json(STATE / 'browser.json') != {'value': BROWSER, 'trusted_keys': len(BROWSER), 'focused': True, 'trusted_submit': True}:
+            raise ValueError('browser input mismatch')
+        finish('firefox')
+        server.shutdown(); server.server_close(); server = None
+        document = RUNTIME / 'letter.abw'
+        document.write_text('<?xml version="1.0"?><abiword xmlns="http://www.abisource.com/awml.dtd" version="1.0"><section><p></p></section></abiword>')
+        os.chown(document, uid, account.pw_gid)
+        if document_text(document) != '':
+            raise ValueError('document was not empty')
+        launch('abiword', '/usr/bin/abiword', str(document))
+        action('revive-visible letter-ready')
+        action('revive-type letter')
+        action('chord ctrl s')
+        action('revive-visible abiword')
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            try:
+                if document_text(document) == SENTINEL:
+                    break
+            except (ET.ParseError, OSError):
+                pass  # A bounded retry while the application replaces its file.
+            time.sleep(.5)
+        if document_text(document) != SENTINEL:
+            raise ValueError('saved AbiWord text differs')
+        (STATE / 'letter.abw').write_bytes(document.read_bytes())
+        finish('abiword')
+        report['status'], report['reason'] = 'pass', ''
+    except Exception as error:
+        report['reason'] = str(error)[:500]
+    finally:
+        try:
+            for app in list(active):
+                stop(app)
+            if server:
+                server.shutdown(); server.server_close()
+            report['cleanup'] = True
+            health('after')
+            validate_health(report['health'])
+            report['oom_after'] = oom()
+            earlyoom = run('journalctl', '-b', '-u', 'earlyoom.service', '--since=@' + start, '--no-pager', '-o', 'cat')
+            report['earlyoom_kills'] = len(re.findall(r'(?i)(sending SIG(?:TERM|KILL)|killed process)', earlyoom))
+            (STATE / 'earlyoom.log').write_text(earlyoom)
+            if report['oom_before'] != report['oom_after'] or report['earlyoom_kills']:
+                report['status'], report['reason'] = 'fail', 'OOM activity during applications'
+        except Exception as error:
+            report['status'], report['reason'] = 'fail', 'cleanup: ' + str(error)[:500]
+        (STATE / 'result.json').write_text(json.dumps(report, indent=2) + '\n')
+        os.sync()
+        say('revive-probe=' + report['status'])
+        say('done')
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('mode', choices=('guest', 'reduce', 'visible', 'bind', 'retain'))
+    parser.add_argument('directory', nargs='?')
+    parser.add_argument('--image', type=Path)
+    args = parser.parse_args()
+    if args.mode == 'guest':
+        guest()
+    elif args.mode == 'retain':
+        source = os.environ['GITHUB_SHA']
+        checkout = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True, timeout=10).strip()
+        if checkout != source:
+            raise SystemExit('retained image checkout differs from run source')
+        retain(args.image, args.directory, source, os.environ['GITHUB_REPOSITORY'], int(os.environ['GITHUB_RUN_ID']))
+    elif args.mode == 'bind':
+        bind(args.directory)
+    elif args.mode == 'visible':
+        try:
+            visible(args.directory)
+        except (ValueError, OSError):
+            raise SystemExit(1)
+    else:
+        print(reduce(args.directory))

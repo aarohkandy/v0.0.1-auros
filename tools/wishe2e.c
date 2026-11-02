@@ -96,6 +96,8 @@ static int listed(void)      { return W.page == WP_MINE; }
 static int bigger(void)      { return C.text_scale > 1.25f; }
 static int undo_there(void)  { return wish_undo_offered(); }
 static int normal(void)      { return C.text_scale > 0.95f && C.text_scale < 1.05f; }
+static int night_on(void)    { return C.night_light == 1; }
+static int night_off(void)   { return C.night_light == 0; }
 
 static wish_target *find(wish_target *t, int n, int kind, int arg)
 {
@@ -141,6 +143,8 @@ int main(int argc, char **argv)
     C.foot_hover = -1;
     C.screen_w = 1366;
     C.screen_h = 768 - foot_height(&C);
+    C.output_w = 1366;
+    C.output_h = 768;
     C.allow_settings = 1;
     snprintf(C.layout_id, sizeof C.layout_id, "%s", "rail");
 
@@ -216,6 +220,25 @@ int main(int argc, char **argv)
     ok("the Undo card is there", ui >= 0);
     if (ui >= 0) { wishover_click(&C, ut[ui].r.x + 3, ut[ui].r.y + 3); wishover_take_release(); }
     ok("Undo my last wish: the engine puts the words back", pump(8000, normal));
+
+    /* Another built-in wish, through the same real engine, reaches the
+     * completed-frame colour adapter and carries its previous state back
+     * through the engine's ordinary Undo path. */
+    C.wish_open = WISH_OPEN_ASK;
+    wish_opened(&C);
+    before = service_calls(service_log);
+    press(WT_GALLERY, -1);
+    press_item(7);                                        /* Switch the night light on */
+    ok("the built-in night-light wish is checked locally",
+       pump(8000, on_confirm) && strstr(W.sentence, "warm night colours") &&
+       service_calls(service_log) == before);
+    press(WT_YES, -1);
+    ok("Yes: the real engine switches the completed display path to warm colours",
+       pump(8000, night_on) && C.night_frame != NULL);
+    wish_undo(&C);
+    ok("Undo: the real engine restores the previous night-light state",
+       pump(8000, night_off));
+    nightlight_fini(&C);
 
     printf("\n%d checks, %d failed\n", checked, failed);
     return failed ? 1 : 0;

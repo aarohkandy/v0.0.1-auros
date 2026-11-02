@@ -234,14 +234,29 @@ int main(int argc, char **argv)
          * variables between these lines. */
         printf("aurbridge-report v1 step=prepared bootnext=%d\n", m.bootnext_set);
         fflush(stdout);
+        /* Models the wizard's Restart later button: the process stays
+         * prepared without ever calling ab_arm(). */
+        if (getenv("AURBRIDGE_RESTART_LATER")) return 0;
         char awhy[PLAT_WHY] = "";
         int arc = ab_arm(&m, say, NULL, awhy, sizeof awhy);
+        if (arc != 0) {
+            fprintf(stderr, "aurbridge: NOT ARMED: %s\n", awhy);
+            /* The real wizard does this before returning to Restart now. */
+            ab_disarm(&m, say, NULL);
+        }
         printf("aurbridge-report v1 step=armed rc=%d bootnext=%d\n", arc, m.bootnext_set);
         fflush(stdout);
         if (getenv("AURBRIDGE_DISARM")) {
             ab_disarm(&m, say, NULL);
             printf("aurbridge-report v1 step=disarmed bootnext=%d entry=%d\n",
                    m.bootnext_set, m.boot_made);
+            if (getenv("AURBRIDGE_REARM")) {
+                awhy[0] = 0;
+                arc = ab_arm(&m, say, NULL, awhy, sizeof awhy);
+                if (arc != 0) fprintf(stderr, "aurbridge: NOT REARMED: %s\n", awhy);
+                printf("aurbridge-report v1 step=rearmed rc=%d bootnext=%d\n",
+                       arc, m.bootnext_set);
+            }
         }
     }
     /* And taken back, the way closing the window takes it back

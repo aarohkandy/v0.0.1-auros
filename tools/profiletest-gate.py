@@ -25,6 +25,7 @@ def _diagnostic_path(value: str) -> bool:
         or value in {
             "tools/profile_image.py",
             "tools/test_profile_image.py",
+            "tools/test_profiletest_revive.py",
             "tools/x11_xres_probe.py",
             "tools/test_x11_xres_probe.py",
             "tools/profiletest-fcitx-guest.sh",
@@ -101,6 +102,9 @@ def decide(subject: str, files: list[str]) -> dict[str, object]:
         # Preserve the old gate's fail-closed treatment of an incomplete
         # marker: a typo must cost builds, never suppress them.
         wanted = all_profiles.copy()
+
+    if "[revive-functional]" in subject and "revive" not in wanted:
+        wanted.append("revive")
 
     ibus = "[ibus-functional]" in subject
     if ibus and "multilingual" not in wanted:
@@ -264,6 +268,9 @@ def _selftest() -> None:
         pass
     else:
         raise AssertionError("rename without previous_filename accepted")
+    assert decide("[revive-functional]", ["docs/note.md"])["list"] == ["revive"]
+    assert decide("[profiles office] [revive-functional]", ["docs/note.md"])["list"] == ["office", "revive"]
+    assert not decide("[profiles:diagnostic] [revive-functional]", ["docs/note.md"])["go"]
     print("profiletest gate selftest: pass")
 
 

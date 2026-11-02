@@ -526,6 +526,17 @@ int plat_file_put(const char *to, const void *buf, size_t n,
     mkparents(to);
     int fd = open(to, O_WRONLY | O_CREAT | O_TRUNC | OPENFLAGS, 0644);
     if (fd < 0) { snprintf(why, wn, "%s could not be written", to); return -1; }
+    const char *wifi_fail = strstr(to, "/wifi.conf")
+                          ? getenv("AURBRIDGE_SIM_FAIL_WIFI_PUT") : NULL;
+    if (wifi_fail) {
+        size_t put = !strcmp(wifi_fail, "full") ? n : n / 2;
+        ssize_t wrote = put ? write(fd, buf, put) : 0;
+        (void)wrote;
+        fsync(fd);
+        close(fd);
+        snprintf(why, wn, "%s simulated a failed write", to);
+        return -1;
+    }
     const char *p = buf;
     while (n) {
         ssize_t k = write(fd, p, n);
@@ -614,6 +625,13 @@ int plat_file_copy(const char *from, const char *to, char *why, size_t wn)
 
 int plat_esp_open(char *root, size_t n, char *why, size_t wn)
 {
+    static unsigned calls;
+    calls++;
+    const char *fail_at = getenv("AURBRIDGE_SIM_FAIL_ESP_OPEN_AT");
+    if (fail_at && strtoul(fail_at, NULL, 10) == calls) {
+        snprintf(why, wn, "the simulated EFI partition would not open");
+        return -1;
+    }
     char p[600];
     simpath(p, sizeof p, "esp");
     MKDIR(p);
@@ -729,6 +747,10 @@ int plat_boot_make(const char *desc, const plat_partition *on,
 
 int plat_boot_next(uint16_t num, char *why, size_t wn)
 {
+    if (getenv("AURBRIDGE_SIM_FAIL_BOOTNEXT")) {
+        snprintf(why, wn, "this simulated computer refused BootNext");
+        return -1;
+    }
     char v[16];
     snprintf(v, sizeof v, "%04X", num);
     if (var_set("BootNext", v) != 0) {
@@ -897,6 +919,15 @@ void plat_let_sleep(void) { }
 
 int plat_file_delete(const char *path, char *why, size_t wn)
 {
+    static unsigned wifi_calls;
+    if (strstr(path, "/wifi.conf")) {
+        wifi_calls++;
+        const char *fail_at = getenv("AURBRIDGE_SIM_FAIL_WIFI_DELETE_AT");
+        if (fail_at && strtoul(fail_at, NULL, 10) == wifi_calls) {
+            snprintf(why, wn, "%s simulated a failed removal", path);
+            return -1;
+        }
+    }
     if (unlink(path) == 0 || errno == ENOENT) return 0;
     snprintf(why, wn, "%s could not be removed", path);
     return -1;

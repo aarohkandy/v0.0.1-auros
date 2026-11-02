@@ -74,7 +74,8 @@ human_bytes() {
 # The always-true limitations. These are printed even when no stage hit
 # them, because the honesty is the point: the user should not have to
 # discover next week that Chrome passwords were never coming.
-CANNOT='Saved passwords (Firefox, Edge, Chrome, Wi-Fi, Windows)|never copied or decrypted, on purpose; websites and Wi-Fi networks ask for each one once, and Windows still has them while it is on the disk
+CANNOT='Saved passwords (Firefox, Edge, Chrome, Windows)|not copied by Ferry; sign in to websites again
+Saved Wi-Fi passwords|not copied by Ferry; Setup can separately copy only the connected network when you choose to carry it over
 Chrome, Edge and Brave cookies and sign-ins|sealed to your Windows sign-in; sign in to each website again
 Windows Credential Manager entries, RDP and app tokens|encrypted to your Windows login and unrecoverable offline
 OneDrive online-only files|live on the server, not the disk; hydrate them in OneDrive (or sign in on Linux) and they come across

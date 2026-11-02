@@ -24,6 +24,7 @@ echo "== building the engine (test build) and the client"
 TEST=1 sh "$ROOT/src/aurwish/build.sh" "$T/aurwish" >/dev/null 2>"$T/build.err" || { cat "$T/build.err"; exit 1; }
 cc -O1 -g -std=gnu11 -w -DAUROS_WISHES=1 -o "$T/wishe2e" "$ROOT/tools/wishe2e.c" \
    "$ROOT/src/aurshell/foot.c" "$ROOT/src/aurshell/run.c" "$ROOT/src/aurshell/draw.c" \
+   "$ROOT/src/aurshell/nightlight.c" \
    "$ROOT/src/aurshell/shellcommon.c" "$ROOT/src/aurshell/anim.c" \
    "$ROOT"/src/aurshell/layouts/[a-z]*.c "$ROOT/src/common/theme.c" "$ROOT/src/common/font.c" \
    "$ROOT/src/common/png.c" -I "$ROOT/src/aurshell" -I "$ROOT/src/common" -lm

@@ -260,8 +260,10 @@ image. Proposal (owners: stream S5 for the channel, W1 for the reader):
   normal updates; no image rebuild. The image build installs the package's
   current version, so a fresh install works at once.
 - Until the package exists, the build can write the same file from a
-  repository variable `AUROS_WISHES_URL`, the way the repository address is
-  baked in today (`tools/repo.sh`).
+  `AUROS_WISHES_URL` build environment value (`tools/repo.sh`). Public
+  publication, cloud preflight and monitoring instead share versioned
+  `tools/site/publish-settings.json`; no repository URL variable overrides it.
+  A service migration must explicitly align the installed configuration package.
 
 ## 7. Knobs (`cloud/wrangler.toml` [vars]; push to change)
 

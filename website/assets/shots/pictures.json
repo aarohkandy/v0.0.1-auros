@@ -48,7 +48,7 @@
   },
   "setup-ready.jpg": {
    "source": "docs/shots/wizard/hidpi-4a-ready.png",
-   "source_sha256": "b0e6aa0ae24a63ca954766033f3510e0be82dac46a710fbf7a2fc4dfe1f0702f",
+   "source_sha256": "a8ec0857bb8bb736590e7b22223533c93aaa9458f39f3b0587e8ac2919111284",
    "says": [
     "Ready to install",
     "Windows and your files are kept. Setup makes Windows smaller to fit AurOS. If the power fails or the computer crashes during that step, Windows or your files could be damaged and might not come back.",
@@ -57,7 +57,7 @@
     "It will look like Windows: a bar along the bottom.",
     "AurOS downloads while you wait, so stay connected to the internet.",
     "The computer restarts once. Then AurOS asks if everything works. Press “No, go back to Windows” and it does.",
-    "It takes about 25 to 60 minutes. The screen goes dark for a minute or two.",
+    "About 25 to 60 minutes total; the screen is dark for a minute or two.",
     "Setup turns off Fast Startup and hibernation, and leaves a Windows task, “AurOS put-back”, that does nothing unless AurOS is removed.",
     "By pressing Install AurOS you agree to the AurOS Terms.",
     "Read the Terms",

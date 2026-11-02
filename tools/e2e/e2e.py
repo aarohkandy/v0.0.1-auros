@@ -97,6 +97,168 @@ BITLOCKER_PAUSE_ACCESSIBLE = (
 )
 BITLOCKER_PAUSE_PRIMARY = "Pause protection and restart"
 BITLOCKER_PAUSE_SECONDARY = "Not yet"
+# One versioned serializer is injected into both put-back snapshots. It records
+# stable Storage-cmdlet GUID/geometry and exposed CIM flag states, not drive
+# letters, access paths, operational status, or every raw GPT attribute. Some
+# Windows partitions expose two present-but-null flags; that state is retained
+# as "unreported" rather than being treated as false.
+PUTBACK_PARTITION_FINGERPRINT_PS = (
+    "function Get-AurOSRequiredProperty([object]$Object,[string]$Name){"
+    "$p=$Object.PSObject.Properties[$Name];"
+    "if($null -eq $p -or $null -eq $p.Value){throw ('missing storage field '+$Name)};"
+    "$p.Value}; "
+    "function ConvertTo-AurOSGuid([object]$Value,[string]$Name){"
+    "$t=([string]$Value).Trim().Trim([char[]]'{}');$g=[Guid]::Empty;"
+    "if(!$t -or ![Guid]::TryParse($t,[ref]$g) -or $g -eq [Guid]::Empty){"
+    "throw ('invalid GPT identity '+$Name)};"
+    "$g.ToString('D').ToLowerInvariant()}; "
+    "function ConvertTo-AurOSFlag([object]$Value,[string]$Name){"
+    "$v=Get-AurOSRequiredProperty $Value $Name;"
+    "if($v -isnot [bool]){throw ('invalid storage flag '+$Name)};"
+    "if($v){'1'}else{'0'}}; "
+    "function ConvertTo-AurOSNullablePartitionFlag([object]$Value,[string]$Name){"
+    "if(@('IsReadOnly','NoDefaultDriveLetter') -cnotcontains $Name){"
+    "throw ('unreported partition flag is not allowed '+$Name)};"
+    "$p=$Value.PSObject.Properties[$Name];"
+    "if($null -eq $p){throw ('missing storage field '+$Name)};"
+    "if($null -eq $p.Value){return 'unreported'};"
+    "ConvertTo-AurOSFlag $Value $Name}; "
+    "function Get-AurOSPartitionFingerprint([object[]]$Disks,[object[]]$Partitions){"
+    "$disks=@($Disks|Sort-Object Number);"
+    "$parts=@($Partitions|Sort-Object DiskNumber,Offset,PartitionNumber);"
+    "if($disks.Count -eq 0 -or $parts.Count -eq 0){throw 'storage map is empty'};"
+    "$diskNumbers=@($disks|ForEach-Object{[uint32](Get-AurOSRequiredProperty $_ 'Number')});"
+    "$rows=@('v2');"
+    "foreach($d in $disks){"
+    "$dn=[uint32](Get-AurOSRequiredProperty $d 'Number');"
+    "$style=([string](Get-AurOSRequiredProperty $d 'PartitionStyle')).ToLowerInvariant();"
+    "if($style -ne 'gpt'){throw ('disk is not GPT '+$dn)};"
+    "$dg=ConvertTo-AurOSGuid (Get-AurOSRequiredProperty $d 'Guid') ('disk '+$dn);"
+    "$rows+=('D|{0}|{1}|{2}|{3}|{4}|{5}'-f $dn,$dg,$style,"
+    "(ConvertTo-AurOSFlag $d 'IsReadOnly'),(ConvertTo-AurOSFlag $d 'IsOffline'),"
+    "(ConvertTo-AurOSFlag $d 'IsSystem'))};"
+    "foreach($p in $parts){"
+    "$dn=[uint32](Get-AurOSRequiredProperty $p 'DiskNumber');"
+    "if($diskNumbers -notcontains $dn){throw ('partition has no disk '+$dn)};"
+    "$pn=[uint32](Get-AurOSRequiredProperty $p 'PartitionNumber');"
+    "$pg=ConvertTo-AurOSGuid (Get-AurOSRequiredProperty $p 'Guid') ('partition '+$dn+':'+$pn);"
+    "$gt=ConvertTo-AurOSGuid (Get-AurOSRequiredProperty $p 'GptType') ('GPT type '+$dn+':'+$pn);"
+    "$rows+=('P|{0}|{1}|{2}|{3}|{4}|{5}|{6}|{7}|{8}|{9}|{10}|{11}'-f "
+    "$dn,$pn,[uint64](Get-AurOSRequiredProperty $p 'Offset'),"
+    "[uint64](Get-AurOSRequiredProperty $p 'Size'),$gt,$pg,"
+    "(ConvertTo-AurOSNullablePartitionFlag $p 'IsReadOnly'),"
+    "(ConvertTo-AurOSFlag $p 'IsOffline'),"
+    "(ConvertTo-AurOSFlag $p 'IsSystem'),(ConvertTo-AurOSFlag $p 'IsBoot'),"
+    "(ConvertTo-AurOSFlag $p 'IsHidden'),"
+    "(ConvertTo-AurOSNullablePartitionFlag $p 'NoDefaultDriveLetter'))};"
+    "$rows -join ';'}; "
+)
+# Snapshot the disk that contains Windows, including every partition on that
+# disk. Unrelated attached disks are outside put-back's restore boundary and
+# must not make the proof depend on their partition style or state.
+PUTBACK_PARTITION_FINGERPRINT_CAPTURE_PS = (
+    "$cpart=Get-Partition -DriveLetter C; "
+    "$systemDisk=[uint32]$cpart.DiskNumber; "
+    "$pm=Get-AurOSPartitionFingerprint -Disks @(Get-Disk -Number $systemDisk) "
+    "-Partitions @(Get-Partition -DiskNumber $systemDisk); "
+)
+# Executed by real Windows before its baseline is accepted. These are mocked
+# Storage-cmdlet objects, so the negative checks cannot touch a disk.
+PUTBACK_PARTITION_FINGERPRINT_SELFTEST_PS = (
+    "$td=[pscustomobject]@{Number=[uint32]0;PartitionStyle='GPT';"
+    "Guid='01234567-89ab-cdef-0123-456789abcdef';"
+    "IsReadOnly=$false;IsOffline=$false;IsSystem=$true};"
+    "$tp=[pscustomobject]@{DiskNumber=[uint32]0;PartitionNumber=[uint32]3;"
+    "Offset=[uint64]2048;Size=[uint64]1000;"
+    "GptType='e3c9e316-0b5c-4db8-817d-f92df00215ae';"
+    "Guid='11234567-89ab-cdef-0123-456789abcdef';"
+    "IsReadOnly=$false;IsOffline=$false;IsSystem=$true;IsBoot=$true;"
+    "IsHidden=$false;NoDefaultDriveLetter=$false};"
+    "$mockBase=Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp);"
+    "$mockWant='v2;D|0|01234567-89ab-cdef-0123-456789abcdef|gpt|0|0|1;"
+    "P|0|3|2048|1000|e3c9e316-0b5c-4db8-817d-f92df00215ae|"
+    "11234567-89ab-cdef-0123-456789abcdef|0|0|1|1|0|0';"
+    "if($mockBase -cne $mockWant){throw 'partition fingerprint fixture serialization changed'};"
+    "$tp.IsReadOnly=$null;$tp.NoDefaultDriveLetter=$null;"
+    "$mockNull=Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp);"
+    "$mockNullWant='v2;D|0|01234567-89ab-cdef-0123-456789abcdef|gpt|0|0|1;"
+    "P|0|3|2048|1000|e3c9e316-0b5c-4db8-817d-f92df00215ae|"
+    "11234567-89ab-cdef-0123-456789abcdef|unreported|0|1|1|0|unreported';"
+    "if($mockNull -cne $mockNullWant){throw 'partition nullable flags were not retained'};"
+    "$tp.IsReadOnly=$false;$tp.NoDefaultDriveLetter=$false;"
+    "function Assert-AurOSFingerprintChanged([object]$Object,[string]$Property,[object]$NewValue,"
+    "[string]$Name,[object[]]$Disks,[object[]]$Partitions,[string]$Baseline){"
+    "$old=Get-AurOSRequiredProperty $Object $Property;"
+    "try{$Object.$Property=$NewValue;"
+    "$got=Get-AurOSPartitionFingerprint -Disks $Disks -Partitions $Partitions}"
+    "finally{$Object.$Property=$old};"
+    "if($got -ceq $Baseline){throw ('partition fingerprint ignored '+$Name)}};"
+    "function Assert-AurOSFingerprintFails([scriptblock]$Probe,[string]$Name){"
+    "$failed=$false;try{& $Probe|Out-Null}catch{$failed=$true};"
+    "if(!$failed){throw ('partition fingerprint accepted '+$Name)}};"
+    "Assert-AurOSFingerprintChanged -Object $td -Property 'Guid'"
+    " -NewValue '21234567-89ab-cdef-0123-456789abcdef' -Name 'disk GUID'"
+    " -Disks @($td) -Partitions @($tp) -Baseline $mockBase;"
+    "Assert-AurOSFingerprintChanged -Object $tp -Property 'Guid'"
+    " -NewValue '31234567-89ab-cdef-0123-456789abcdef' -Name 'partition GUID'"
+    " -Disks @($td) -Partitions @($tp) -Baseline $mockBase;"
+    "Assert-AurOSFingerprintChanged -Object $tp -Property 'GptType'"
+    " -NewValue 'c12a7328-f81f-11d2-ba4b-00a0c93ec93b' -Name 'GPT type'"
+    " -Disks @($td) -Partitions @($tp) -Baseline $mockBase;"
+    "foreach($n in @('IsReadOnly','IsOffline','IsSystem')){"
+    "Assert-AurOSFingerprintChanged -Object $td -Property $n"
+    " -NewValue (-not [bool](Get-AurOSRequiredProperty $td $n))"
+    " -Name ('disk '+$n) -Disks @($td) -Partitions @($tp) -Baseline $mockBase};"
+    "foreach($n in @('IsReadOnly','IsOffline','IsSystem','IsBoot','IsHidden','NoDefaultDriveLetter')){"
+    "Assert-AurOSFingerprintChanged -Object $tp -Property $n"
+    " -NewValue (-not [bool](Get-AurOSRequiredProperty $tp $n))"
+    " -Name ('partition '+$n) -Disks @($td) -Partitions @($tp) -Baseline $mockBase};"
+    "foreach($n in @('IsReadOnly','NoDefaultDriveLetter')){"
+    "$old=$tp.$n;try{"
+    "$tp.$n=$null;$u=Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp);"
+    "$tp.$n=$false;$f=Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp);"
+    "$tp.$n=$true;$t=Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)"
+    "}finally{$tp.$n=$old};"
+    "if($u -ceq $f -or $u -ceq $t -or $f -ceq $t){"
+    "throw ('partition fingerprint ignored partition nullable '+$n)}};"
+    "foreach($n in @('IsReadOnly','IsOffline','IsSystem')){"
+    "Assert-AurOSFingerprintFails {$old=$td.$n;try{$td.$n=$null;"
+    "Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$td.$n=$old}}"
+    " ('null disk '+$n)};"
+    "foreach($n in @('IsOffline','IsSystem','IsBoot','IsHidden')){"
+    "Assert-AurOSFingerprintFails {$old=$tp.$n;try{$tp.$n=$null;"
+    "Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$tp.$n=$old}}"
+    " ('null partition '+$n)};"
+    "foreach($n in @('IsReadOnly','NoDefaultDriveLetter')){"
+    "Assert-AurOSFingerprintFails {$old=$tp.$n;try{$tp.$n='false';"
+    "Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$tp.$n=$old}}"
+    " ('non-boolean nullable partition '+$n)};"
+    "Assert-AurOSFingerprintFails {$old=$tp.Guid;$tp.Guid=[Guid]::Empty;"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$tp.Guid=$old}} 'zero partition GUID';"
+    "Assert-AurOSFingerprintFails {$old=$td.Guid;$td.Guid=[Guid]::Empty;"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$td.Guid=$old}} 'zero disk GUID';"
+    "Assert-AurOSFingerprintFails {$old=$td.Guid;$td.Guid='not-a-guid';"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$td.Guid=$old}} 'invalid disk GUID';"
+    "Assert-AurOSFingerprintFails {$old=$tp.Guid;$tp.Guid='not-a-guid';"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$tp.Guid=$old}} 'invalid partition GUID';"
+    "Assert-AurOSFingerprintFails {$old=$tp.GptType;$tp.GptType='not-a-guid';"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$tp.GptType=$old}} 'invalid GPT type';"
+    "Assert-AurOSFingerprintFails {$old=$td.PartitionStyle;$td.PartitionStyle='MBR';"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$td.PartitionStyle=$old}} 'non-GPT disk';"
+    "Assert-AurOSFingerprintFails {$old=$tp.IsHidden;$tp.IsHidden='false';"
+    "try{Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($tp)}finally{$tp.IsHidden=$old}} 'non-boolean flag';"
+    "$missing=[pscustomobject]@{DiskNumber=[uint32]0;PartitionNumber=[uint32]3;"
+    "Offset=[uint64]2048;Size=[uint64]1000;GptType=$tp.GptType;Guid=$tp.Guid;"
+    "IsReadOnly=$false;IsOffline=$false;IsSystem=$true;IsBoot=$true;IsHidden=$false};"
+    "Assert-AurOSFingerprintFails {Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($missing)}"
+    " 'missing NoDefaultDriveLetter';"
+    "$missingReadOnly=[pscustomobject]@{DiskNumber=[uint32]0;PartitionNumber=[uint32]3;"
+    "Offset=[uint64]2048;Size=[uint64]1000;GptType=$tp.GptType;Guid=$tp.Guid;"
+    "IsOffline=$false;IsSystem=$true;IsBoot=$true;IsHidden=$false;NoDefaultDriveLetter=$false};"
+    "Assert-AurOSFingerprintFails {Get-AurOSPartitionFingerprint -Disks @($td) -Partitions @($missingReadOnly)}"
+    " 'missing IsReadOnly';"
+    "'AUROS_PARTITION_FINGERPRINT_SELFTEST PASS'; "
+)
 DISK_GB = int(E("E2E_DISK_GB", "128"))
 DISK_THROTTLE = E("E2E_DISK_THROTTLE", "")     # e.g. bps=104857600,iops=120
 
@@ -134,10 +296,153 @@ PRIMARY_RGB = ((0x7D, 0xD3, 0xC0), (0x0B, 0x5D, 0x4F), (0x5D, 0xBB, 0x9E))
 # Edge's words for a download it holds back until the person says keep
 WARN_RX = (r"(isn.t commonly downloaded|can.t be downloaded securely|might be dangerous|"
            r"download blocked|was blocked|unsafe|couldn.t verify)")
+BUSY_DIAGNOSTIC_INTERVAL = 5 * 60
+BUSY_DIAGNOSTIC_TIMEOUT = 55
+BUSY_DIAGNOSTIC_GUEST_TIMEOUT_MS = 40 * 1000
 
 
 def left():
     return DEADLINE - time.time()
+
+
+def busy_diagnostic_due(idle_since, last_diagnostic, now):
+    """One diagnostic per five quiet minutes, never a burst after a delay."""
+    return (now - idle_since >= BUSY_DIAGNOSTIC_INTERVAL and
+            now - last_diagnostic >= BUSY_DIAGNOSTIC_INTERVAL)
+
+
+def busy_wizard_script(pid):
+    """A bounded-output, read-only Windows snapshot for a busy installer.
+
+    Command lines are inspected only to classify Resize-Partition. They are
+    deliberately absent from every object written to the evidence.
+    """
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        raise ValueError("the wizard PID is not a positive integer")
+    return rf'''
+$ErrorActionPreference = 'Stop'
+$rootPid = {pid}
+Write-Output 'AURBUSY v1'
+try {{
+  $root = @(Get-CimInstance Win32_Process -Filter ("ProcessId = {{0}}" -f $rootPid))
+  $children = @(Get-CimInstance Win32_Process -Filter ("ParentProcessId = {{0}}" -f $rootPid) |
+    Sort-Object ProcessId)
+  $rows = @($root) + @($children | Select-Object -First 15)
+  foreach ($row in $rows | Sort-Object ProcessId) {{
+    try {{
+      $runtime = Get-Process -Id $row.ProcessId -ErrorAction Stop
+      $cpu = if ($null -eq $runtime.CPU) {{ $null }} else {{ [Math]::Round([double]$runtime.CPU, 3) }}
+      $resize = $false
+      if ($row.ProcessId -ne $rootPid) {{
+        $resize = [bool]($row.CommandLine -match '(?i)(^|[ ;''"])(Resize-Partition)([ ;''"]|$)')
+      }}
+      [pscustomobject]@{{ kind='process'; role=$(if ($row.ProcessId -eq $rootPid) {{'wizard'}} else {{'child'}});
+        name=$row.Name; pid=[int]$row.ProcessId; parent=[int]$row.ParentProcessId;
+        responding=[bool]$runtime.Responding; cpu_seconds=$cpu; resize_partition=$resize }} |
+        ConvertTo-Json -Compress
+    }} catch {{
+      Write-Output ('AURBUSY ERROR process-row pid=' + $row.ProcessId + ' ' + $_.Exception.GetType().FullName)
+    }}
+  }}
+  [pscustomobject]@{{ kind='processes'; child_shown=[int][Math]::Min($children.Count, 15);
+    child_total=[int]$children.Count; capped=[bool]($children.Count -gt 15) }} |
+    ConvertTo-Json -Compress
+}} catch {{
+  Write-Output ('AURBUSY ERROR process ' + $_.Exception.GetType().FullName)
+}}
+try {{
+  $part = Get-Partition -DriveLetter C -ErrorAction Stop
+  [pscustomobject]@{{ kind='partition'; disk=[int]$part.DiskNumber;
+    partition=[int]$part.PartitionNumber; offset=[uint64]$part.Offset; size=[uint64]$part.Size }} |
+    ConvertTo-Json -Compress
+  $vol = Get-Volume -DriveLetter C -ErrorAction Stop
+  [pscustomobject]@{{ kind='volume'; size=[uint64]$vol.Size;
+    free=[uint64]$vol.SizeRemaining; health=[string]$vol.HealthStatus }} |
+    ConvertTo-Json -Compress
+}} catch {{
+  Write-Output ('AURBUSY ERROR storage ' + $_.Exception.GetType().FullName)
+}}
+try {{
+  $pieces = @(Get-ChildItem -LiteralPath 'C:\AurOS' -File -Filter '*.gz.*' -ErrorAction Stop |
+    Sort-Object Name | Select-Object -First 65)
+  foreach ($piece in $pieces | Select-Object -First 64) {{
+    [pscustomobject]@{{ kind='piece'; name=$piece.Name; length=[uint64]$piece.Length;
+      modified_utc=$piece.LastWriteTimeUtc.ToString('o') }} | ConvertTo-Json -Compress
+  }}
+  [pscustomobject]@{{ kind='pieces'; shown=[int][Math]::Min($pieces.Count, 64);
+    capped=[bool]($pieces.Count -gt 64) }} | ConvertTo-Json -Compress
+}} catch [System.Management.Automation.ItemNotFoundException] {{
+  [pscustomobject]@{{ kind='pieces'; shown=0; capped=$false; directory='absent' }} |
+    ConvertTo-Json -Compress
+}} catch {{
+  Write-Output ('AURBUSY ERROR pieces ' + $_.Exception.GetType().FullName)
+}}
+Write-Output 'AURBUSY done'
+'''.strip()
+
+
+def busy_wizard_summary(out):
+    """Safe bounded summary for driver.log and its three-minute live tail."""
+    processes, storage, pieces, errors = [], {}, None, []
+    piece_bytes, piece_newest = 0, None
+    for line in out.splitlines():
+        if line.startswith("AURBUSY ERROR"):
+            safe = re.fullmatch(r"AURBUSY ERROR [a-z-]+(?: pid=\d+)? [A-Za-z0-9_.]+", line)
+            errors.append(safe.group(0) if safe else "AURBUSY ERROR malformed")
+            continue
+        if not line.startswith("{"):
+            continue
+        try:
+            item = json.loads(line)
+        except (TypeError, ValueError):
+            errors.append("AURBUSY ERROR malformed-json")
+            continue
+        kind = item.get("kind")
+        if kind == "process" and len(processes) < 16:
+            processes.append("%s:%s:%s:responding=%s:cpu=%s:resize=%s" % (
+                item.get("role"), item.get("name"), item.get("pid"),
+                str(item.get("responding")).lower(), item.get("cpu_seconds"),
+                str(item.get("resize_partition")).lower()))
+        elif kind in ("partition", "volume"):
+            storage[kind] = item
+        elif kind == "piece":
+            length, modified = item.get("length"), item.get("modified_utc")
+            if isinstance(length, int) and length >= 0:
+                piece_bytes += length
+            if isinstance(modified, str) and (piece_newest is None or modified > piece_newest):
+                piece_newest = modified
+        elif kind == "pieces":
+            pieces = item
+    p = storage.get("partition", {})
+    v = storage.get("volume", {})
+    fields = ["process=" + (",".join(processes) if processes else "none"),
+              "C=partition-size:%s volume-size:%s free:%s health:%s" %
+              (p.get("size"), v.get("size"), v.get("free"), v.get("health"))]
+    if pieces is not None:
+        fields.append("pieces=shown:%s bytes:%s newest:%s capped:%s" %
+                      (pieces.get("shown"), piece_bytes, piece_newest,
+                       str(pieces.get("capped")).lower()))
+    if errors:
+        fields.append("errors=" + ",".join(errors[:4]))
+    return " | ".join(fields)[:1200]
+
+
+def busy_blockstats_summary(rows):
+    """Only activity counters for the exact VM disk; never node filenames."""
+    disks = [row for row in (rows or []) if row.get("device") == "disk0"]
+    if len(disks) != 1 or not isinstance(disks[0].get("stats"), dict):
+        raise ValueError(f"query-blockstats returned {len(disks)} exact disk0 records")
+    stats = disks[0]["stats"]
+    names = ("rd_operations", "rd_bytes", "wr_operations", "wr_bytes", "flush_operations")
+    values = {}
+    for name in names:
+        value = stats.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"query-blockstats has no nonnegative {name}")
+        values[name] = value
+    return ("disk0 read_requests={rd_operations} read_bytes={rd_bytes} "
+            "write_requests={wr_operations} write_bytes={wr_bytes} "
+            "flush_requests={flush_operations}").format(**values)
 
 
 def bitlocker_verdict(variant, vol, prot):
@@ -619,9 +924,94 @@ class Flow:
     def guest(self, script, timeout=120):
         r = self.hub.ask("run", script=script, timeout=timeout)
         out = (r or {}).get("output") or (r or {}).get("error") or "(no answer)"
-        with open(os.path.join(self.a.out, "guest-diagnostics.log"), "a") as f:
-            f.write(f"--- {time.strftime('%H:%M:%S')} {script}\n{out}\n")
+        self.record_guest_diagnostic(script, out)
         return out
+
+    def record_guest_diagnostic(self, label, out):
+        with open(os.path.join(self.a.out, "guest-diagnostics.log"), "a") as f:
+            f.write(f"--- {time.strftime('%H:%M:%S')} {label}\n{out}\n")
+
+    def record_busy_wizard_diagnostic(self, pid, out):
+        label = "busy wizard snapshot" + (f" pid={pid}" if isinstance(pid, int) else "")
+        try:
+            self.record_guest_diagnostic(label, out)
+            return True
+        except OSError as exc:
+            self.log("busy wizard diagnostic: evidence write failed: " + type(exc).__name__)
+            return False
+
+    def busy_blockstats_diagnostic(self):
+        """Snapshot host-observed disk activity even if the guest helper is stuck."""
+        try:
+            summary = busy_blockstats_summary(self.m.qmp.cmd("query-blockstats"))
+        except Exception as exc:
+            self.log("busy wizard disk diagnostic failed: " + type(exc).__name__)
+            return False
+        self.log("busy wizard disk diagnostic: " + summary)
+        return True
+
+    def busy_wizard_diagnostic(self, win):
+        """Record a read-only snapshot without interrupting an installation."""
+        pid = (win or {}).get("pid")
+        if not win or pid is None:
+            out = "not run: exact wizard identity unavailable from the guest window helper"
+            self.record_busy_wizard_diagnostic(pid, out)
+            self.log("busy wizard diagnostic: " + out)
+            return False
+        try:
+            script = busy_wizard_script(pid)
+        except (TypeError, ValueError) as exc:
+            out = f"not run: {exc}"
+            self.record_busy_wizard_diagnostic(pid, out)
+            self.log("busy wizard diagnostic: " + out)
+            return False
+        try:
+            result = self.hub.ask("diagnostic", script=script,
+                                  timeout_ms=BUSY_DIAGNOSTIC_GUEST_TIMEOUT_MS,
+                                  timeout=BUSY_DIAGNOSTIC_TIMEOUT)
+        except Exception as exc:
+            # Do not let telemetry stop a still-active disk operation, and do
+            # not copy exception text that might contain a command line.
+            out = "failed: helper call raised " + type(exc).__name__
+            self.record_busy_wizard_diagnostic(pid, out)
+            self.log("busy wizard diagnostic: " + out)
+            return False
+        if result is None:
+            out = f"failed: helper timed out after {BUSY_DIAGNOSTIC_TIMEOUT} seconds"
+        elif not result.get("ok"):
+            # A helper-level error can echo its input, so don't persist it.
+            out = "failed: guest helper rejected the diagnostic command"
+        else:
+            out = result.get("output") or "failed: guest helper returned no output"
+            diagnostic_status = result.get("diagnostic_status", "ok")
+            status_words = {
+                "timeout": ("child exceeded %d ms and its exit was verified" %
+                            BUSY_DIAGNOSTIC_GUEST_TIMEOUT_MS),
+                "termination-failed": "child termination could not be verified within 5000 ms",
+                "exit": "child exited nonzero",
+            }
+            if diagnostic_status != "ok":
+                safe_status = status_words.get(diagnostic_status, "unknown helper status")
+                out = out.rstrip() + "\nAURBUSY STATUS " + safe_status + "\n"
+            if result.get("diagnostic_output_read", True) is not True:
+                out = out.rstrip() + "\nAURBUSY STATUS partial output could not be read\n"
+        wrote = self.record_busy_wizard_diagnostic(pid, out)
+        complete = out.startswith("AURBUSY v1") and out.rstrip().endswith("AURBUSY done")
+        ok = complete and "AURBUSY ERROR" not in out
+        diagnostic_status = (result or {}).get("diagnostic_status", "ok")
+        output_read = (result or {}).get("diagnostic_output_read", True) is True
+        if ok and diagnostic_status == "ok" and output_read:
+            status = "recorded | " + busy_wizard_summary(out)
+        elif not output_read:
+            status = "partial output read failed | " + busy_wizard_summary(out)
+        elif diagnostic_status in ("timeout", "termination-failed", "exit"):
+            status = diagnostic_status + " with partial evidence | " + busy_wizard_summary(out)
+        elif complete:
+            status = "recorded with explicit section errors | " + busy_wizard_summary(out)
+        else:
+            status = "incomplete output (full result is in guest-diagnostics.log)"
+        self.log("busy wizard diagnostic: " + status)
+        return ok and diagnostic_status == "ok" and output_read and wrote
 
     def click_el(self, e, why):
         x, y, w, h = e["rect"]
@@ -735,14 +1125,14 @@ class Flow:
         token = "auros-e2e-windows-" + os.urandom(16).hex()
         out = self.guest(
             "$ErrorActionPreference='Stop'; "
+            + PUTBACK_PARTITION_FINGERPRINT_PS +
+            PUTBACK_PARTITION_FINGERPRINT_SELFTEST_PS +
             "function Get-AurOSSha256([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
             "([BitConverter]::ToString($a.ComputeHash([Text.Encoding]::UTF8.GetBytes($x)))-replace'-','').ToLowerInvariant()"
             "}finally{$a.Dispose()}}; "
             "$p=Join-Path $env:USERPROFILE 'Documents\\auros-e2e-before.txt'; "
             f"[IO.File]::WriteAllText($p,'{token}',[Text.Encoding]::ASCII); "
-            "$cpart=Get-Partition -DriveLetter C; "
-            "$pm=((Get-Partition|Sort-Object DiskNumber,Offset|ForEach-Object{"
-            "'{0}|{1}|{2}|{3}|{4}'-f $_.DiskNumber,$_.PartitionNumber,$_.Offset,$_.Size,$_.GptType})-join';'); "
+            + PUTBACK_PARTITION_FINGERPRINT_CAPTURE_PS +
             "$fwRaw=& bcdedit.exe /enum firmware 2>&1; if($LASTEXITCODE -ne 0){throw 'bcdedit failed'}; "
             "$fw=(($fwRaw|Out-String).Trim()); "
             "$h=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power').HiberbootEnabled; "
@@ -750,6 +1140,8 @@ class Flow:
             "firmware_sha256=(Get-AurOSSha256 $fw);hiberboot=[int]$h;"
             "canary_sha256=(Get-FileHash $p -Algorithm SHA256).Hash.ToLowerInvariant()}; "
             "'AUROS_PUTBACK_BASE '+($s|ConvertTo-Json -Compress)")
+        if out.splitlines().count("AUROS_PARTITION_FINGERPRINT_SELFTEST PASS") != 1:
+            raise Failure("the native Windows GPT fingerprint selftest did not pass exactly once")
         rows = [x[len("AUROS_PUTBACK_BASE "):] for x in out.splitlines()
                 if x.startswith("AUROS_PUTBACK_BASE ")]
         try:
@@ -1098,6 +1490,7 @@ class Flow:
         pause_warning_checked = False
         seen_events = len(self.m.qmp.events)
         last_text, text_since = "", time.time()
+        last_busy_diagnostic = idle_since
         last_sig, cand = None, [None, 0.0]     # the button about to be pressed, since when
         run_start = time.time()                # when the label pressed now was first pressed
         rect = self.wizard_rect()
@@ -1287,8 +1680,13 @@ class Flow:
                     else:
                         self.m.key("end", label="nothing to click: scroll to the end")
                     idle_since = time.time()
-                if time.time() - idle_since > 300 and int(time.time() - idle_since) % 300 < 15:
+                now = time.time()
+                if busy_diagnostic_due(idle_since, last_busy_diagnostic, now):
                     self.log("wizard waiting: " + text[-300:])
+                    if installing and busy:
+                        self.busy_blockstats_diagnostic()
+                        self.busy_wizard_diagnostic(win)
+                    last_busy_diagnostic = now
                 time.sleep(15 if busy else 5)
             raise Failure("ran out of time in the wizard")
         except BaseException:
@@ -1976,29 +2374,131 @@ class Flow:
     # -- D13, after AurOS: Windows comes back, with BitLocker on, no recovery key asked --
     def pick_grub_entry(self, name, tries=12):
         """In AurOS's start menu (text GRUB): move down until the line that
-        says exactly `name` is the highlighted one (its row is light: the
-        selected row is drawn inverted), then Enter. Fails with what is shown."""
+        says exactly `name` is the highlighted cyan row, then Enter. Fails
+        with what is shown."""
         for i in range(tries):
             img = self.m.screendump()
-            words = vision.ocr(img)
-            lines = {}
-            for w in words:
-                lines.setdefault(w["line"], []).append(w)
-            for ws in lines.values():
-                text = " ".join(w["text"] for w in ws)
-                if re.sub(r"[^a-z]", "", text.lower()) == re.sub(r"[^a-z]", "", name.lower()):
-                    y0 = max(0, min(w["y"] for w in ws) - 2)
-                    y1 = min(img.shape[0], max(w["y"] + w["h"] for w in ws) + 2)
-                    lum = float(img[y0:y1, :].mean())
-                    self.log(f"start menu: '{text}' row brightness {lum:.0f}")
-                    if lum > 110:                      # the selected row is light
-                        self.m.key("ret", label=f"start menu: {name}")
-                        return
+            selected = self.grub_selected_row_image(img)
+            if selected is not None:
+                row, coverage, bounds = selected
+                text = vision.text_of(vision.ocr(row, scale=3, psm=7))
+                self.log(f"start menu: selected row '{text}' cyan coverage {coverage:.3f} "
+                         f"at {bounds}")
+                if (re.sub(r"[^a-z]", "", text.lower()) ==
+                        re.sub(r"[^a-z]", "", name.lower())):
+                    self.m.key("ret", label=f"start menu: {name}")
+                    return
             self.m.key("down", label="start menu: down" if i == 0 else None)
             time.sleep(1.2)
         self.m.shot("start-menu-no-entry")
         raise Failure(f"AurOS's start menu never highlighted '{name}': " +
                       vision.text_of(vision.ocr(self.m.screendump()))[:400])
+
+    @staticmethod
+    def grub_selected_row_image(img):
+        """Return the readable selected row in the shipped GRUB theme.
+
+        Run 40161971669 proved the highlight is cyan RGB(0,152,152), whose
+        whole-screen mean is dark.  Locate its one full-width band, replace only
+        that observed cyan with white so Tesseract can retain the black glyphs,
+        and reject unsupported or ambiguous themes instead of guessing.
+        """
+        delta = np.abs(img[:, :, 1].astype(np.int16) - img[:, :, 2].astype(np.int16))
+        cyan = ((img[:, :, 0] <= 20) & (img[:, :, 1] >= 140) &
+                (img[:, :, 1] <= 165) & (img[:, :, 2] >= 140) &
+                (img[:, :, 2] <= 165) & (delta <= 8))
+        active = np.flatnonzero(cyan.mean(axis=1) >= 0.45)
+        if not len(active):
+            return None
+        breaks = np.flatnonzero(np.diff(active) != 1)
+        groups = np.split(active, breaks + 1)
+        if len(groups) != 1 or len(groups[0]) < 8:
+            return None
+        y0, y1 = int(groups[0][0]), int(groups[0][-1]) + 1
+        xs = np.flatnonzero(cyan[y0:y1].any(axis=0))
+        if not len(xs):
+            return None
+        x0, x1 = int(xs[0]), int(xs[-1]) + 1
+        coverage = float(cyan[y0:y1].mean())
+        row = img[y0:y1, x0:x1].copy()
+        row_cyan = cyan[y0:y1, x0:x1]
+        row[row_cyan] = (255, 255, 255)
+        # Remove the hundreds of blank pixels to the right.  Tesseract psm 7
+        # drops the short label when it occupies only a few percent of a line.
+        ink_y, ink_x = np.nonzero(row.max(axis=2) <= 40)
+        if not len(ink_x):
+            return None
+        tx0, tx1 = max(0, int(ink_x.min()) - 8), min(row.shape[1], int(ink_x.max()) + 9)
+        ty0, ty1 = max(0, int(ink_y.min()) - 2), min(row.shape[0], int(ink_y.max()) + 3)
+        row = row[ty0:ty1, tx0:tx1]
+        return row, coverage, (x0, y0, x1, y1)
+
+    @staticmethod
+    def boot_screen_kind(text):
+        """Classify only the two screens needed while returning to Windows.
+
+        The desktop signature is deliberately exact enough that an unknown boot,
+        installer, recovery, or write screen is never power-cycled for a retry.
+        """
+        plain = re.sub(r"[^a-z0-9]", "", text.lower())
+        unsafe = ("recovery", "error", "rescue")
+        if any(word in plain for word in unsafe):
+            return "unknown"
+        # The boot screenshot from run 40161971669 has the GNU GRUB header,
+        # but entry OCR is the authority: themes may omit or miss that header.
+        menu = ("aurosverboseboot", "windows")
+        if all(word in plain for word in menu) and plain.count("auros") >= 2:
+            return "grub"
+        desktop = ("allmyprograms", "everythingonthiscomputer", "playasongorafilm")
+        return "auros-desktop" if all(phrase in plain for phrase in desktop) else "unknown"
+
+    def start_at_grub_menu(self, attempts=2, pulse_seconds=40, scan_seconds=120):
+        """Start and stop GRUB's short countdown with a real navigation key.
+
+        Modifier-only Shift did not stop the countdown in run 40161971669.  Up is
+        harmless through firmware and is a real GRUB input.  If the exact AurOS
+        desktop appears, use the guest's normal ACPI shutdown and try once more;
+        every other unrecognised screen fails closed without a restart.
+        """
+        last_text = ""
+        for attempt in range(attempts):
+            self.m.start()
+            # This successful QMP start is the earliest event belonging to this
+            # attempt; do not let a delayed helper-up from the prior boot qualify.
+            since = time.time()
+            self.m.auto_shots(10)
+            end_pulses = time.time() + pulse_seconds
+            while time.time() < end_pulses:
+                self.m.key("up")
+                time.sleep(0.28)  # key() itself takes 0.12 s: one input each 0.4 s
+
+            kind = "unknown"
+            deadline = time.time() + scan_seconds
+            while time.time() < deadline:
+                img = self.m.screendump()
+                last_text = vision.text_of(vision.ocr(img))
+                kind = self.boot_screen_kind(last_text)
+                if kind == "grub":
+                    return since
+                if kind == "auros-desktop":
+                    break
+                self.log("start menu: not yet: " + last_text[:160])
+                self.m.key("up")
+
+            self.m.save(img, f"start-menu-missed-attempt-{attempt + 1}")
+            if kind != "auros-desktop" or attempt + 1 == attempts:
+                break
+            self.log("start menu: countdown escaped; gracefully stopping AurOS before one retry")
+            # Machine.stop() eventually forces QMP quit/kill.  A retry may only
+            # follow a guest-confirmed ACPI shutdown, never that cleanup fallback.
+            self.m.auto_shots(None)
+            self.m.qmp.cmd("system_powerdown")
+            if not self.m.wait_exit(300):
+                raise Failure("AurOS did not complete a graceful shutdown before boot-menu retry")
+            self.log("qemu: AurOS completed the graceful retry shutdown")
+
+        raise Failure("AurOS's GRUB start menu never showed after the restart: " +
+                      last_text[:300])
 
     def wait_windows_return(self, since, ordinal, reason, timeout=12 * 60):
         """Wait for Windows without ever exposing a recovery password, then
@@ -2060,29 +2560,10 @@ class Flow:
         from the menu's source (rootfs/usr/lib/auros/grub.cfg.in), NOT yet seen
         working: the first run that gets here shows how far it goes."""
         with self.rec.phase("windows: back from AurOS, through its own start menu"):
-            t = time.time()
-            self.m.start()
-            self.m.auto_shots(10)
             # The menu counts down 3 seconds and OCR takes longer than that, so first a
-            # key every 0.4 s, blind, for as long as the firmware and shim need (any key
-            # stops the countdown for good); only then look (run 40047642180 looked too
-            # early, the countdown ran out and AurOS's desktop came up).
-            end_blind = time.time() + 40
-            while time.time() < end_blind:
-                self.m.key("shift")
-                time.sleep(0.4)
-            seen_menu = False
-            deadline = time.time() + 120
-            while time.time() < deadline and not seen_menu:
-                self.m.key("shift")
-                words = vision.ocr(self.m.screendump())
-                seen_menu = bool(vision.find_text(words, "verbose") or vision.find_text(words, "GRUB"))
-                if not seen_menu:
-                    self.log("start menu: not yet: " + vision.text_of(words)[:160])
-            if not seen_menu:
-                self.m.shot("start-menu-never-showed")
-                raise Failure("AurOS's start menu never showed after the restart: " +
-                              vision.text_of(vision.ocr(self.m.screendump()))[:300])
+            # real key every 0.4 s, blind, for as long as firmware and shim need.
+            # Modifier-only Shift escaped to the desktop in run 40161971669.
+            t = self.start_at_grub_menu()
             self.m.shot("start-menu")
             self.pick_grub_entry("Windows")
             return self.wait_windows_return(
@@ -2243,13 +2724,12 @@ class Flow:
         restored = "C:\\Users\\aurtest\\From AurOS\\Documents\\" + self.putback_fixture["name"]
         out = self.guest(
             "$ErrorActionPreference='Stop'; "
+            + PUTBACK_PARTITION_FINGERPRINT_PS +
             "function Get-AurOSSha256([string]$x){$a=[Security.Cryptography.SHA256]::Create();try{"
             "([BitConverter]::ToString($a.ComputeHash([Text.Encoding]::UTF8.GetBytes($x)))-replace'-','').ToLowerInvariant()"
             "}finally{$a.Dispose()}}; "
             "$st=$null; try {$st=Get-Content 'C:\\ProgramData\\AurOS\\user\\status.json' -Raw|ConvertFrom-Json}catch{}; "
-            "$cpart=Get-Partition -DriveLetter C; "
-            "$pm=((Get-Partition|Sort-Object DiskNumber,Offset|ForEach-Object{"
-            "'{0}|{1}|{2}|{3}|{4}'-f $_.DiskNumber,$_.PartitionNumber,$_.Offset,$_.Size,$_.GptType})-join';'); "
+            + PUTBACK_PARTITION_FINGERPRINT_CAPTURE_PS +
             "$fwRaw=& bcdedit.exe /enum firmware 2>&1; if($LASTEXITCODE -ne 0){throw 'bcdedit failed'}; "
             "$fw=(($fwRaw|Out-String).Trim()); "
             "$h=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power').HiberbootEnabled; "

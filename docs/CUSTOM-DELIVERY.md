@@ -15,12 +15,16 @@ The browser can choose only the recipe-v1 `desktop` base and allowed `look`
 and `theme` values. It cannot choose a Git ref, workflow, repository, command,
 package, URL, or signing setting. The Worker recompiles the raw recipe and
 selects an existing successful `main` base build whose artifacts and exact
-prerelease tag still exist. It dispatches `.github/workflows/customize.yml` at
-that server-verified tag.
+prerelease assets still exist. It dispatches the current reviewed
+`.github/workflows/customize.yml` on `main`, while passing the reused base's
+SHA, run ID, and release namespace as separate inputs. The release tag pointer
+is not trusted as either identity.
 
 A result becomes `download-ready` only when all of these still agree:
 
-- the uniquely correlated workflow run and its source commit;
+- the uniquely correlated workflow run and its current `main` authority commit;
+- the reused base's distinct build run, source commit, release namespace, and
+  exact asset identities;
 - successful `package`, `sign / sign`, `certify / e2e (base)`,
   `certify / custom-certification`, and `publish` jobs;
 - the same-run signed-installer artifact;
@@ -30,10 +34,18 @@ A result becomes `download-ready` only when all of these still agree:
 - the release asset's canonical identity, byte count, and GitHub SHA-256
   digest against the immutable manifest.
 
-The first delivery for an exact base and recipe runs a real Windows installation
-certification and can take hours. Repeated matching requests reuse its verified
-installer. Do not advertise instant first-time delivery; a public rollout needs
-pre-certified common combinations or a measured shorter certification path.
+Published filenames are
+`AurOS-Custom-<40-character-authority-SHA>-<64-character-recipe-SHA>.exe`
+and the matching `.json`. The full authority SHA keeps deliveries created by
+different reviewed workflow revisions distinct even when they reuse one base
+and recipe. The browser checks both fields and requires the recipe suffix to
+match the submitted recipe.
+
+The first delivery for an exact authority, base, and recipe runs a real Windows
+installation certification and can take hours. Repeated matching requests
+reuse its verified installer. Do not advertise instant first-time delivery; a
+public rollout needs pre-certified common combinations or a measured shorter
+certification path.
 
 Readiness is cached for at most 15 seconds and then revalidated. A missing or
 changed asset revokes readiness on the next check. This is a check-time
@@ -74,12 +86,35 @@ least 32 characters:
 Generate and store each independently. Never reuse `TOKEN_SECRET`, an
 Anthropic key, a GitHub token, or either SignPath credential.
 
-The current `.github/workflows/cloud.yml` does **not** provision these three
-Worker secrets or the two GitHub App variables. Enabling the flag before a
-reviewed deployment-wiring change lands is incomplete and must fail closed.
-When that change is made, secret values must reach `wrangler secret put` on
-stdin with shell tracing disabled, following the existing `TOKEN_SECRET`
-pattern. Only secret names belong in logs or documentation.
+`.github/workflows/cloud.yml` reads these three values from like-named GitHub
+Actions secrets and provisions them as Worker secrets. It reads the two IDs
+from like-named GitHub Actions variables and passes them as Worker deployment
+variables. Secret values reach `wrangler secret put` only on stdin with shell
+tracing disabled; only their names may appear in logs.
+
+This wiring is deliberately two-stage. With `BUILD_REQUESTS_ENABLED = "0"`, a
+deployment stages any supplied custom-delivery settings while the API remains
+closed. Before a deployment with the switch set to `"1"`, the workflow
+requires all five GitHub settings and verifies that all three Worker secret
+names already exist. It also validates the secret lengths, positive decimal
+IDs, RSA private key, exact HTTPS origin, and fixed repository. A missing or invalid
+value, an unreadable secret list, or an unstaged Worker secret fails the
+workflow before the enabled version is deployed. On the later enabled run, the
+secrets are refreshed before `wrangler deploy`. During first activation,
+following the activation order keeps the prior Worker disabled during that
+refresh. Subsequent enabled deployments may refresh an already enabled Worker;
+reapplying unchanged values is harmless. An intentional
+`BUILD_CHALLENGE_SECRET` rotation invalidates unexpired five-minute challenges,
+and changing `BUILD_NETWORK_SECRET` changes the pseudonymous network quota keys.
+Schedule either rotation accordingly. This means the first configured
+deployment must remain disabled.
+
+The secret-name check proves only that the three names were staged on the
+Worker. The disabled live-route checks in Activation step 8 are the separate
+proof that the reviewed disabled version and migration were actually deployed.
+Removing a GitHub secret while custom delivery is disabled does not delete the
+corresponding Worker secret; rotate it with a new value or remove it through
+the Cloudflare incident process.
 
 ## SignPath and publication
 
@@ -105,14 +140,18 @@ Keep at least one fully green, released base younger than 30 days. Rebuild and
 release a base before expiry; do not delete its tag, prerelease, or required
 artifacts while requests may use it.
 
-Base discovery reads at most 50 recent releases, considers at most five that
-have the complete canonical AurOS release asset set, and asks for at most three
-successful `build.yml` runs at each candidate's exact tag commit. Each run is
-accepted only when it is a completed successful `main` push at that exact SHA
-and has one unexpired `auros-installer` and `auros-base-metadata` artifact.
-This is at most 26 GitHub API requests per lookup. Ambiguous runs, expired or
-duplicate artifacts, runs with more than 100 artifacts, tag/SHA mismatches, and
-candidates outside those explicit bounds fail closed.
+Base discovery reads at most 50 recent releases and considers at most five that
+have the complete canonical AurOS release asset set. It downloads each bounded
+`pieces.txt` only as an untrusted run/commit discovery hint, then reads that
+exact Actions run from the API. A base is accepted only when the API says the
+run is a completed successful `build.yml` `main` push in this repository, its
+full source SHA matches the hint, and it has exactly one unexpired
+`auros-installer` and `auros-base-metadata` artifact. The downloaded run-scoped
+metadata then binds the full base SHA, run, release namespace, installer, image,
+piece list, and hashes. Retargeting the release tag does not change that
+identity. Malformed or oversized hints, expired or duplicate artifacts, more
+than 100 artifacts, mismatched metadata, and candidates outside the explicit
+bounds fail closed.
 
 ### Pre-certify common recipes
 
@@ -127,30 +166,33 @@ requests for it; do not race an operator dispatch against a public submission.
 2. Generate a new lowercase UUID for `request_id` and retain it with the
    operator record. Never leave `request_id` empty. An empty/null identity
    cannot be correlated or adopted safely.
-3. Dispatch `customize.yml` at that exact verified base tag with the strict
-   canonical desktop recipe, the matching base build run ID, and that UUID.
+3. Dispatch the current `customize.yml` on `main` with the strict canonical
+   desktop recipe, the current `main` authority SHA, the matching base build
+   SHA, run ID, release namespace, and that UUID.
 4. Approve both SignPath requests. Wait for both certification jobs and
    `publish` to succeed. Confirm the immutable `auros-custom-delivery` artifact
-   and the recipe-named release `.exe` and `.json` exist.
+   and the authority-and-recipe-named release `.exe` and `.json` exist.
 5. Within the immutable artifact's 30-day retention window, submit the same
    recipe once through the ordinary public flow. Its proof and network/global
    quota still apply. The service treats the release manifest only as a locator,
-   verifies the original run, every gate, signed and immutable artifacts, tag,
-   source, and current asset digest, then atomically records the canonical
+   verifies the original authority run, every gate, signed and immutable
+   artifacts, exact base run and assets, and current asset digest, then
+   atomically records the canonical
    delivery and returns a normal 24-hour receipt. It must not dispatch another
    customization run.
 
-Discovery for one exact base and recipe is serialized. A concurrent public
-submission receives `existing_delivery_busy` and may retry through the normal
+Discovery for one exact authority, base, and recipe is serialized. A concurrent
+public submission receives `existing_delivery_busy` and may retry through the normal
 proof-and-quota flow; it cannot make a second discovery or dispatch while the
 first submission is adopting or reserving that delivery.
 
 This same path can recover a lost canonical Durable Object record while the
 immutable artifact remains available. After that artifact expires, mutable
 release assets alone cannot prove the original delivery. The occupied recipe
-filenames then fail closed and must not be overwritten or rebuilt under a new
-request identity. Partial assets, an invalid UUID, a foreign or failed run, or
-any evidence mismatch also fail closed and consume the already-admitted quota.
+and authority-qualified filenames then fail closed and must not be overwritten
+or rebuilt under a new request identity. Partial assets, an invalid UUID, a
+foreign or failed run, or any evidence mismatch also fail closed and consume
+the already-admitted quota.
 
 ## Configuration, quotas, and receipts
 
@@ -170,7 +212,7 @@ The conservative defaults are:
 
 Keep the defaults for initial activation. Raise a limit only after examining
 signing capacity, GitHub Actions use, failures, and abuse. A repeated exact
-recipe/source request deduplicates its build, but it still consumes submission
+authority/base/recipe request deduplicates its build, but it still consumes submission
 quota so popular recipes cannot be used to exhaust receipt ownership for free.
 Proof of work is only an abuse cost, not authentication. The atomic per-network
 and global quotas are the actual bound on build and signing work. Sixteen bits
@@ -183,20 +225,21 @@ stored. Anyone holding the receipt can see that job's status and eventual
 download metadata; a lost receipt cannot be recovered.
 
 Receipt authorization records expire after 24 hours. Separately, the Durable
-Object retains one canonical record for each admitted exact base and recipe so
-a later receipt reuses the original request, certification, and signatures.
+Object retains one canonical record for each admitted exact authority, base,
+and recipe, so a later receipt reuses the original request, certification, and
+signatures.
 That record has no automatic expiry. It contains the bounded recipe and ID,
-source/base/original request/run identifiers, and, once verified, the exact
+authority/base/original request/run identifiers, and, once verified, the exact
 manifest plus the verified gate, Actions artifact, release, and asset
 identities. That bounded record replaces the dependency on GitHub retaining
 the completed run and artifacts forever; each status check still revalidates
-the live release tag, source commit, manifest bytes, asset identities, size,
-and digest. It never contains the receipt or a network identifier. Creating a
+the release namespace, manifest bytes, exact asset identities, size, and
+digest. It never contains the receipt or a network identifier. Creating a
 canonical record consumes the same atomic
 submission quota as a new build; the fixed recipe catalogue also bounds the
-number created for any base. Do not delete one while its release assets remain:
-without the original evidence, that occupied recipe filename must fail closed
-rather than sign a replacement under new provenance.
+number created for any authority and base. Do not delete one while its release assets remain:
+without the original evidence, that occupied authority-and-recipe filename
+must fail closed rather than sign a replacement under new provenance.
 
 The service stores salted network-prefix hashes for quota counting, not raw
 addresses. Daily counters can remain through the end of the following UTC day;
@@ -209,13 +252,21 @@ Cloudflare and GitHub retain their own service metadata under their policies.
 Do these in order. Do not activate a partly configured service.
 
 1. Leave `BUILD_REQUESTS_ENABLED = "0"`.
-2. Install the least-privilege GitHub App above on the one repository. Confirm
-   its IDs and private key are in the deployment secret path, without printing
-   their values.
-3. Add independent `BUILD_NETWORK_SECRET` and `BUILD_CHALLENGE_SECRET` values
-   through the same reviewed secret path.
+2. Install the least-privilege GitHub App above on the one repository. Add its
+   App ID as the GitHub Actions variable `GITHUB_APP_ID`, its repository
+   installation ID as `GITHUB_APP_INSTALLATION_ID`, and its private key as the
+   GitHub Actions secret `GITHUB_APP_PRIVATE_KEY`. Confirm only the setting
+   names, without printing their values.
+3. Add independent GitHub Actions secrets `BUILD_NETWORK_SECRET` and
+   `BUILD_CHALLENGE_SECRET`, each with at least 32 random characters.
 4. Set the exact `BUILD_ALLOWED_ORIGIN`; confirm the repository remains fixed
    as `BUILD_GITHUB_REPOSITORY` and the browser cannot supply either value.
+   Set `tools/site/publish-settings.json` to the reviewed public domain and
+   exact Worker `api_origin`, or keep its explicit empty defaults. These
+   versioned settings govern site publishing and cloud CORS/preflight; Actions
+   variables no longer override these public publishing addresses. If choosing
+   a custom domain, also align the installer/build variable `AUROS_DOMAIN` and
+   Pages CNAME before activation. Enabled publication refuses a mismatch.
 5. Complete [SIGNING.md](SIGNING.md), including two-factor authentication and
    manual approval, then prove a signed custom run and its publish evidence.
 6. Confirm a recent successful `main` base run, its exact-source prerelease,
@@ -232,14 +283,30 @@ Do these in order. Do not activate a partly configured service.
    vulnerabilities. Review any full `npm audit` findings separately as
    described below.
 8. Deploy the reviewed Worker and Durable Object migration while still
-   disabled. Confirm ordinary health checks pass and both build POST routes
+   disabled. This stages the three Worker secrets and two deployment
+   variables. Confirm ordinary health checks pass and both build POST routes
    answer `503` with `builds_disabled`.
 9. Change only `BUILD_REQUESTS_ENABLED` to `"1"`, review that diff, and deploy.
-10. Submit one bounded desktop recipe from the configured origin. Preserve its
+   The cloud workflow must pass the independent read-only build preflight. It
+   sends only CORS `OPTIONS`; it creates no challenge, quota row, job, workflow
+   dispatch, signing request, or model call.
+10. After the enabled cloud deployment succeeds, run `pages.yml` on main.
+    Both Pages callers use one serialized publisher that checks out current
+    main, stages the final generated `build-service.json`, and browser-tests
+    that exact tree. Enabled publication waits up to ten minutes for a
+    successful cloud workflow with the identical cloud dependency digest and actual deployment, secrets,
+    live preflight and live smoke steps; a skipped/probe-only green run is
+    insufficient. It then repeats read-only preflight and rechecks current
+    main, versioned settings, tested bytes and the latest installer identity
+    immediately before deploying. The checked-in website configuration stays
+    disabled. If main advances during publication, rerun Pages on current
+    main; if the cloud dependencies lack retained evidence, run cloud on that main first.
+11. Open the deployed `request.html` and submit one bounded desktop recipe.
+    Preserve its
     receipt, approve both SignPath requests, and verify the status progresses
     to `download-ready` only after both certification jobs and `publish`.
     Confirm the returned recipe ID,
-    source/base IDs, exact `.exe` name, byte count, and SHA-256 against the
+    authority/base IDs, exact `.exe` name, byte count, and SHA-256 against the
     immutable manifest, then verify Authenticode on a downloaded copy.
 
 Any mismatch means activation failed. Disable the API before investigating.
@@ -247,6 +314,10 @@ Any mismatch means activation failed. Disable the API before investigating.
 ## Disable and incident response
 
 Set `BUILD_REQUESTS_ENABLED = "0"`, review the one-line change, and deploy it.
+Let the same push's Pages workflow publish the disabled staged configuration;
+if Pages did not run, dispatch it on current main. Publishing the disabled
+site does not wait for cloud completion; disabling the API remains a separate
+required incident action.
 This blocks new challenges, submissions, and status reads. Workflows already
 dispatched to GitHub continue independently, so inspect or cancel them in
 Actions when necessary. Disabling the API does not delete an installer already
@@ -273,3 +344,55 @@ tool or built-in Node harness, or upgrading once `autocannon` removes the
 vulnerable chain. A package override to `uuid>=11.1.1` is acceptable only after
 the full load test proves `hyperid` compatibility. No dependency was changed
 as part of this runbook.
+
+## Publishing authority and queued releases
+
+`tools/site/publish-settings.json` is the nonsecret, versioned public-address
+source of truth. Its schema accepts only `version`, `domain` and `api_origin`;
+empty strings explicitly select the existing GitHub Pages/workers.dev defaults.
+The publish guard reads the file at an exact current-main SHA using the normal
+`contents: read` token. It does not need the Variables REST permission or an
+additional personal token. The API switch remains in `cloud/wrangler.toml`.
+Its enabled `BUILD_ALLOWED_ORIGIN` must equal the origin derived from these
+settings; cloud deployment also passes that derived origin explicitly.
+
+A release's source-specific website test still gates product promotion.
+Hours later its Pages job requests publication of newly checked **current
+main**, never uploads its old prepared site. Both callers enter one reusable
+publisher with `cancel-in-progress: false`. GitHub may replace one pending
+request with another; every pending request means the same operation, publish
+current authority, so an old release request cannot replace an incident-disable
+request with an old enabled artifact. A main/settings/release change during a
+running publish fails explicitly. Recover with a manual Pages run on current
+main; this does not undo or repeat product-release promotion.
+
+The publisher downloads the actual latest public installer, verifies its
+size and available GitHub digest, records its independently computed SHA256,
+and refuses if that release asset changes before deployment. Public URL
+settings do not migrate addresses already baked into installers: choosing a
+custom domain still requires aligned build settings and a new verified release.
+
+A configured Pages CNAME must match the versioned domain. An absent Pages
+CNAME is allowed because `infra/edge` can proxy the custom domain to Pages;
+this is not proof that DNS or edge routing is configured. Verify that routing
+as part of domain setup before activation. Cloud mutation steps also refuse
+a source that is no longer current main, within the serialized cloud workflow.
+
+Cloud evidence can be reused across website, OS and documentation changes only
+when the exact versioned dependency inventory matches. The publisher independently
+recomputes Git-tree digests at both sources, validates a bounded proof artifact
+against its exact successful run attempt, and refuses newer matching failed
+attempts. Proofs are retained for 30 days. The complete run search covers 31 days
+and refuses overflow above 1,000 runs; GitHub [limits reruns to 30 days](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs),
+and this workflow's bounded jobs fit inside the additional day. Expired evidence
+requires a fresh cloud run, not a fallback to an unverifiable old success.
+
+The public endpoint must return that deployment's exact source SHA and random
+public deployment nonce, including through a custom domain. The default
+workers.dev URL must also equal the deploy command's URL. A separate random
+smoke correlation value is masked and synchronized through the existing secrets
+step; it is never included in health responses. Only exact matching request
+headers add its bounded correlation fields to the Worker's logs. The smoke
+assertions require matching source, deployment nonce, correlation value and
+expected routes. A nonempty unrelated tail cannot prove the deployment. All
+identity reads and disabled-mode smoke checks avoid model calls.

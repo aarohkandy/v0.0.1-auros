@@ -23,6 +23,7 @@
 #include "draw.h"
 #include "run.h"
 #include "settings.h"
+#include "nightlight.h"
 
 #define TEXT_MAX   300         /* the service takes 300 characters      */
 #define SENT_MAX   480
@@ -367,6 +368,36 @@ static const char *js_next(const char *p, const char *e)
     if (p >= e || *p != ',') return NULL;
     return js_ws(p + 1, e);
 }
+
+#if AUROS_WISHES
+/* Exactly these two keys, once each at most. Shell actions came through the
+ * engine's validator, but this is the last boundary before changing pixels:
+ * a duplicate or an extra field must not acquire a second meaning here. */
+static int js_only2(const char *p, const char *e, const char *a, const char *b)
+{
+    p = js_ws(p, e);
+    if (p >= e || *p++ != '{') return 0;
+    unsigned seen = 0;
+    p = js_ws(p, e);
+    if (p < e && *p == '}') return js_ws(p + 1, e) == e;
+    for (;;) {
+        const char *ke = js_skip(p, e, 1);
+        char key[32];
+        if (!ke || js_str(p, ke, key, sizeof key) < 0) return 0;
+        unsigned bit = !strcmp(key, a) ? 1u : !strcmp(key, b) ? 2u : 0u;
+        if (!bit || (seen & bit)) return 0;
+        seen |= bit;
+        p = js_ws(ke, e);
+        if (p >= e || *p++ != ':') return 0;
+        p = js_skip(p, e, 1);
+        if (!p) return 0;
+        p = js_ws(p, e);
+        if (p < e && *p == ',') { p = js_ws(p + 1, e); continue; }
+        if (p < e && *p == '}') return js_ws(p + 1, e) == e;
+        return 0;
+    }
+}
+#endif
 
 /* Her words, quoted for a JSON line. */
 static void js_quote(char *out, size_t n, const char *s)
@@ -1014,6 +1045,20 @@ static void do_shell(shell_ctx *c, const char *L, const char *E)
                        (be - b == 5 && !memcmp(b, "false", 5)));
         }
 #if AUROS_WISHES
+        else if (!strcmp(type, "night_light")) {
+            const char *be, *b = js_get(d, de, "on", &be);
+            int on = -1;
+            if (b && be - b == 4 && !memcmp(b, "true", 4)) on = 1;
+            if (b && be - b == 5 && !memcmp(b, "false", 5)) on = 0;
+            if (on >= 0 && js_only2(d, de, "type", "on")) {
+                int old = c->night_light ? 1 : 0;
+                ok = nightlight_set(c, on);
+                if (ok)
+                    snprintf(prev, sizeof prev,
+                             "{\"type\":\"night_light\",\"on\":%s}",
+                             old ? "true" : "false");
+            }
+        }
         else if (!strcmp(type, "set_wallpaper")) {
             char theme[48], old[48];
             const char *ce, *ne;
@@ -1030,7 +1075,7 @@ static void do_shell(shell_ctx *c, const char *L, const char *E)
             }
         }
 #endif
-        /* Color wallpaper, night_light and pointer_size have
+        /* Color wallpaper and pointer_size have
          * no control in this shell yet: refused honestly, nothing faked. */
     }
     if (prev[0])

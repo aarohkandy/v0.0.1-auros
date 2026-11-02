@@ -120,3 +120,21 @@ the immutable manifest and every release asset before unpacking, and records the
 SHA separately from the current test source SHA. This is diagnostic evidence only. It does not
 certify a new production image. Only the newest retained multilingual image is kept; after its
 small Actions artifact expires, reuse fails closed and a new `[ibus-functional]` build is needed.
+
+### Re-run only the Revive functional diagnostic
+
+A `[revive-functional]` push retains its exact Revive image for two days even when Firefox or
+AbiWord use fails after the image was built. During that window, run the current functional harness
+against those same bytes without rebuilding:
+
+```
+gh workflow run profiles.yml --ref main -f retained_revive_run_id=<source-run-id>
+```
+
+Provide exactly one retained run input. The workflow accepts only the exact latest attempt of a
+completed main push whose Revive image-build, packaging, and retention steps succeeded. It downloads
+the unique live artifact by ID, checks GitHub's artifact digest and bounded ZIP contents, then checks
+the manifest, gzip, and restored raw-image identities before booting. Its result records the source
+attempt and artifact separately from the current test run and remains diagnostic evidence only; it
+does not create profile delivery metadata or authorize publication. An expired or ambiguous artifact
+requires a new `[revive-functional]` build.

@@ -373,10 +373,216 @@ def test_bitlocker_putback_contract():
           putback_guest_source.count("(Get-AurOSSha256 $pm)") == 2 and
           putback_guest_source.count("(Get-AurOSSha256 $fw)") == 2,
           "put-back: both snapshots avoid PowerShell's h/Get-History alias")
+    fingerprint = e2e.PUTBACK_PARTITION_FINGERPRINT_PS
+    required = ("'Guid'", "'GptType'", "'IsReadOnly'",
+                "'IsOffline'", "'IsSystem'", "'IsBoot'", "'IsHidden'",
+                "'NoDefaultDriveLetter'", "'PartitionStyle'", "[Guid]::TryParse",
+                "[Guid]::Empty", "invalid storage flag")
+    check(all(field in fingerprint for field in required) and
+          "'DriveLetter'" not in fingerprint and "'AccessPaths'" not in fingerprint,
+          "put-back: shared fingerprint requires GPT identities and stable flags only")
+    check(putback_guest_source.count("PUTBACK_PARTITION_FINGERPRINT_PS") == 2 and
+          putback_guest_source.count("PUTBACK_PARTITION_FINGERPRINT_CAPTURE_PS") == 2 and
+          putback_guest_source.count("function Get-AurOSPartitionFingerprint") == 0 and
+          fingerprint.count("function Get-AurOSPartitionFingerprint") == 1 and
+          e2e.PUTBACK_PARTITION_FINGERPRINT_CAPTURE_PS.count(
+              "$pm=Get-AurOSPartitionFingerprint") == 1,
+          "put-back: baseline and final use one identical versioned partition serializer")
+    capture = e2e.PUTBACK_PARTITION_FINGERPRINT_CAPTURE_PS
+    check("Get-Partition -DriveLetter C" in capture and
+          "Get-Disk -Number $systemDisk" in capture and
+          "Get-Partition -DiskNumber $systemDisk" in capture and
+          "@(Get-Disk)" not in capture and "@(Get-Partition)" not in capture,
+          "put-back: snapshots cover only the Windows system disk, not unrelated host disks")
+    native_fixture = e2e.PUTBACK_PARTITION_FINGERPRINT_SELFTEST_PS
+    check(putback_guest_source.count("PUTBACK_PARTITION_FINGERPRINT_SELFTEST_PS") == 1 and
+          "AUROS_PARTITION_FINGERPRINT_SELFTEST PASS" in native_fixture and
+          "native Windows GPT fingerprint selftest did not pass exactly once" in putback_guest_source,
+          "put-back: actual baseline executes and requires the bounded native serializer fixture")
+    check("$mockWant='v2;D|" in native_fixture and
+          all(name in native_fixture for name in
+              ("disk GUID", "partition GUID", "GPT type", "zero disk GUID", "zero partition GUID",
+               "invalid disk GUID", "invalid partition GUID", "invalid GPT type",
+               "non-GPT disk", "non-boolean flag", "missing NoDefaultDriveLetter")) and
+          "foreach($n in @('IsReadOnly','IsOffline','IsSystem'))" in native_fixture and
+          "foreach($n in @('IsReadOnly','IsOffline','IsSystem','IsBoot','IsHidden','NoDefaultDriveLetter'))" in native_fixture,
+          "put-back: native mock holds geometry while exercising every recorded identity and flag")
+    check("'unreported'" in fingerprint and
+          fingerprint.count("ConvertTo-AurOSNullablePartitionFlag $p") == 2 and
+          "ConvertTo-AurOSNullablePartitionFlag $p 'IsReadOnly'" in fingerprint and
+          "ConvertTo-AurOSNullablePartitionFlag $p 'NoDefaultDriveLetter'" in fingerprint and
+          "@('IsReadOnly','NoDefaultDriveLetter') -cnotcontains $Name" in fingerprint and
+          "foreach($n in @('IsReadOnly','NoDefaultDriveLetter'))" in native_fixture and
+          "missing IsReadOnly" in native_fixture and
+          "('null disk '+$n)" in native_fixture and
+          "('null partition '+$n)" in native_fixture,
+          "put-back: only two present-null partition CIM flags serialize as unreported")
+    windows_workflow = open(os.path.join(HERE, "..", "..", ".github", "workflows",
+                                         "windows.yml")).read()
+    storage_job = windows_workflow.split("\n  storage-diagnostic:\n", 1)[1].split(
+        "\n  # What a person downloads", 1)[0]
+    gate_step = windows_workflow.split("\n  gate:\n", 1)[1].split(
+        "\n  storage-diagnostic:\n", 1)[0]
+    check("storage_diagnostic_only:" in windows_workflow and
+          gate_step.index('if [ "$diagnostic" = true ]') < gate_step.index("gh api") and
+          'echo "run=false"' in gate_step,
+          "put-back: storage-only dispatch skips every installer build and release lookup")
+    check("ast.parse(source)" in storage_job and
+          '"PUTBACK_PARTITION_FINGERPRINT_PS"' in storage_job and
+          '"PUTBACK_PARTITION_FINGERPRINT_SELFTEST_PS"' in storage_job and
+          "import e2e" not in storage_job and
+          "Get-Partition -DriveLetter C" in storage_job and
+          "AUROS_STORAGE_SHAPE" in storage_job and
+          "Value.GetType().FullName" in storage_job and
+          "profiletest" not in storage_job,
+          "put-back: native storage diagnostic uses exact constants and reports only bounded shapes")
+    check("permissions:\n      contents: read" in storage_job and
+          "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\storage-diagnostic.ps1" in storage_job and
+          "[regex]::Matches($text, '(?m)^AUROS_PARTITION_FINGERPRINT_SELFTEST PASS\\r?$')" in storage_job and
+          ".Split('AUROS_PARTITION_FINGERPRINT_SELFTEST PASS')" not in storage_job,
+          "put-back: native storage diagnostic matches the guest's Windows PowerShell 5.1 runtime")
     wait_source = inspect.getsource(e2e.Flow.wait_windows_return)
     check(wait_source.index("self.write_bitlocker_return(evidence)") <
           wait_source.index("if time.time() > deadline"),
           "put-back: a RED first or second protection state is recorded before failure")
+
+
+def test_grub_capture():
+    import e2e, numpy as np
+
+    captured_desktop = ("All my programs Everything on this computer "
+                        "Play a song or a film Internet Spreadsheets VLC")
+    check(e2e.Flow.boot_screen_kind(captured_desktop) == "auros-desktop",
+          "Windows return: the captured AurOS desktop is not mistaken for GRUB")
+    grub_text = "GNU GRUB AurOS AurOS (verbose boot) Windows Put Windows back (remove AurOS)"
+    check(e2e.Flow.boot_screen_kind(grub_text) == "grub",
+          "Windows return: the exact shipped verbose menu is GRUB")
+    check(e2e.Flow.boot_screen_kind("GNU GRUB rescue error: AurOS verbose boot Windows") == "unknown",
+          "Windows return: GRUB rescue or error text cannot impersonate the shipped menu")
+    check(e2e.Flow.boot_screen_kind(captured_desktop + " BitLocker recovery") == "unknown",
+          "Windows return: recovery text also disqualifies an otherwise exact desktop")
+    check(e2e.Flow.boot_screen_kind("BitLocker recovery Enter the recovery key") == "unknown",
+          "Windows return: a recovery screen is never eligible for a retry")
+
+    # Exact retained frame from run 40161971669: AurOS is selected and Windows
+    # is not.  Its cyan selection has a dark whole-row mean, which caught the
+    # old brightness test.  Move only that observed theme band to synthesize a
+    # Windows-selected frame without inventing different colours or geometry.
+    shot = e2e.vision.load(os.path.join(
+        HERE, "fixtures", "run-40161971669-grub-auros-selected.png"))
+    selected = e2e.Flow.grub_selected_row_image(shot)
+    check(selected is not None and selected[1] > 0.45 and
+          float(shot[180:201, :].mean()) < 110,
+          "Windows return: captured selected AurOS cannot authorize unselected Windows")
+    windows_shot = shot.copy()
+    windows_shot[180:201, 252:1029] = (0, 0, 0)
+    source_row = shot[239:258, 252:1029]
+    glyphs = source_row.min(axis=2) >= 180
+    windows_shot[239:258, 252:1029] = (0, 152, 152)
+    windows_shot[239:258, 252:1029][glyphs] = (0, 0, 0)
+    windows_selected = e2e.Flow.grub_selected_row_image(windows_shot)
+    check(windows_selected is not None and windows_selected[1] > 0.45,
+          "Windows return: the observed cyan theme isolates one synthesized selected row")
+    no_cyan = np.zeros_like(shot)
+    check(e2e.Flow.grub_selected_row_image(no_cyan) is None,
+          "Windows return: a screen without the observed cyan selection fails closed")
+    two_bands = no_cyan.copy()
+    two_bands[180:200, 252:1029] = (0, 152, 152)
+    two_bands[239:259, 252:1029] = (0, 152, 152)
+    check(e2e.Flow.grub_selected_row_image(two_bands) is None,
+          "Windows return: two possible cyan selections are ambiguous and fail closed")
+    blank_band = no_cyan.copy()
+    blank_band[239:259, 252:1029] = (0, 152, 152)
+    check(e2e.Flow.grub_selected_row_image(blank_band) is None,
+          "Windows return: a selected band without readable glyphs fails closed")
+    if shutil.which("tesseract"):
+        aur_text = e2e.vision.text_of(e2e.vision.ocr(selected[0], scale=3, psm=7))
+        windows_text = e2e.vision.text_of(e2e.vision.ocr(
+            windows_selected[0], scale=3, psm=7))
+        check(bool(aur_text.strip()) and
+              re.sub(r"[^a-z]", "", aur_text.lower()) != "windows" and
+              re.sub(r"[^a-z]", "", windows_text.lower()) == "windows",
+              "Windows return: real OCR reads only the selected normalized row label")
+    else:
+        check(True, "Windows return: selected-row OCR skipped explicitly (tesseract absent)")
+
+    class Clock:
+        now = 0.0
+        def time(self): return self.now
+        def sleep(self, seconds): self.now += seconds
+
+    class Machine:
+        def __init__(self, clock):
+            self.clock, self.starts, self.start_finished = clock, 0, []
+            self.keys, self.powerdowns = [], []
+            self.qmp = type("QMP", (), {"cmd": lambda qmp, op: self.powerdowns.append(op)})()
+        def start(self):
+            self.starts += 1
+            self.clock.now += 0.2
+            self.start_finished.append(self.clock.now)
+        def auto_shots(self, every): pass
+        def key(self, key):
+            self.keys.append((key, self.clock.now, self.starts))
+            self.clock.now += 0.12
+        def screendump(self):
+            return captured_desktop if self.starts == 1 else grub_text
+        def save(self, img, label): pass
+        def wait_exit(self, timeout): return True
+
+    clock, old_time, old_ocr = Clock(), e2e.time, e2e.vision.ocr
+    machine = Machine(clock)
+    flow = object.__new__(e2e.Flow)
+    flow.m = machine
+    flow.rec = type("Recorder", (), {"log": lambda self, message: None})()
+    try:
+        e2e.time = clock
+        e2e.vision.ocr = lambda screen: [{"text": word} for word in screen.split()]
+        since = flow.start_at_grub_menu(attempts=2, pulse_seconds=0.8, scan_seconds=1)
+    finally:
+        e2e.time, e2e.vision.ocr = old_time, old_ocr
+    check(machine.starts == 2 and machine.powerdowns == ["system_powerdown"] and
+          since == machine.start_finished[-1],
+          "Windows return: an exact AurOS desktop gets one graceful retry with a fresh timestamp")
+    check(machine.keys and all(key == "up" for key, _, _ in machine.keys),
+          "Windows return: countdown capture uses a real key, never modifier-only Shift")
+    gaps = [round(machine.keys[i + 1][1] - machine.keys[i][1], 2)
+            for i in range(len(machine.keys) - 1)
+            if machine.keys[i + 1][2] == machine.keys[i][2]]
+    check(gaps and all(gap == 0.4 for gap in gaps),
+          "Windows return: blind capture keeps the intended 0.4-second key cadence")
+
+    clock = Clock()
+    unsafe = Machine(clock)
+    unsafe.screendump = lambda: captured_desktop + " BitLocker recovery Enter the recovery key"
+    flow.m = unsafe
+    try:
+        e2e.time = clock
+        e2e.vision.ocr = lambda screen: [{"text": word} for word in screen.split()]
+        flow.start_at_grub_menu(attempts=2, pulse_seconds=0.4, scan_seconds=0.5)
+        refused = False
+    except e2e.Failure:
+        refused = True
+    finally:
+        e2e.time, e2e.vision.ocr = old_time, old_ocr
+    check(refused and unsafe.starts == 1 and not unsafe.powerdowns,
+          "Windows return: an unknown or recovery screen fails without power cycling")
+
+    clock = Clock()
+    stuck = Machine(clock)
+    stuck.screendump = lambda: captured_desktop
+    stuck.wait_exit = lambda timeout: False
+    flow.m = stuck
+    try:
+        e2e.time = clock
+        e2e.vision.ocr = lambda screen: [{"text": word} for word in screen.split()]
+        flow.start_at_grub_menu(attempts=2, pulse_seconds=0.4, scan_seconds=0.5)
+        refused = False
+    except e2e.Failure:
+        refused = True
+    finally:
+        e2e.time, e2e.vision.ocr = old_time, old_ocr
+    check(refused and stuck.starts == 1 and stuck.powerdowns == ["system_powerdown"],
+          "Windows return: an unconfirmed ACPI shutdown forbids retry and forced quit/kill")
 
 
 def test_timings_summary():
@@ -1227,12 +1433,237 @@ def test_image_integrity_step():
           "image download: pieces and reconstructed image are verified by the real workflow step")
 
 
+def test_busy_wizard_diagnostic():
+    try:
+        import e2e
+    except ImportError:
+        return
+
+    check(not e2e.busy_diagnostic_due(100.0, 100.0, 399.9),
+          "busy diagnostic: it does not run before five quiet minutes")
+    check(e2e.busy_diagnostic_due(100.0, 100.0, 400.0),
+          "busy diagnostic: it is due at five quiet minutes")
+    check(not e2e.busy_diagnostic_due(100.0, 400.0, 699.9),
+          "busy diagnostic: it cannot burst twice within five minutes")
+
+    script = e2e.busy_wizard_script(4242)
+    check("$rootPid = 4242" in script and "ParentProcessId = {0}" in script,
+          "busy diagnostic: process selection is the exact wizard and its direct children")
+    check("Resize-Partition" in script and "CommandLine" in script and
+          "command_line=" not in script.lower(),
+          "busy diagnostic: a command line is classified but never an output field")
+    check("Get-Partition -DriveLetter C" in script and "Get-Volume -DriveLetter C" in script,
+          "busy diagnostic: storage reads are limited to drive C")
+    check("Get-ChildItem -LiteralPath 'C:\\AurOS'" in script and
+          "Get-FileHash" not in script and "Get-Content" not in script,
+          "busy diagnostic: piece evidence is metadata only, never hashing or content")
+    summary = e2e.busy_wizard_summary(
+        'AURBUSY v1\n'
+        '{"kind":"process","role":"wizard","name":"AurOS-Setup.exe","pid":4242,'
+        '"parent":10,"responding":true,"cpu_seconds":1.25,"resize_partition":false}\n'
+        '{"kind":"partition","disk":0,"partition":3,"offset":1,"size":900}\n'
+        '{"kind":"volume","size":900,"free":300,"health":"Healthy"}\n'
+        '{"kind":"piece","name":"do-not-copy-this-name","length":123,"modified_utc":"now"}\n'
+        '{"kind":"pieces","shown":4,"capped":false}\nAURBUSY done\n')
+    check("wizard:AurOS-Setup.exe:4242" in summary and "partition-size:900" in summary and
+          "free:300" in summary and "pieces=shown:4 bytes:123 newest:now" in summary and
+          "do-not-copy-this-name" not in summary,
+          "busy diagnostic: the live tail summarizes state without piece names")
+    blockstats = e2e.busy_blockstats_summary([
+        {"device": "disk0", "stats": {"rd_operations": 12, "rd_bytes": 34,
+                                        "wr_operations": 56, "wr_bytes": 78,
+                                        "flush_operations": 9},
+         "node-name": "secret-node", "inserted": {"file": "/secret/disk.qcow2"}},
+        {"device": "unrelated", "stats": {}}
+    ])
+    check(blockstats == ("disk0 read_requests=12 read_bytes=34 write_requests=56 "
+                         "write_bytes=78 flush_requests=9") and
+          "secret" not in blockstats and "/" not in blockstats,
+          "busy diagnostic: QMP evidence is exact disk counters without names or paths")
+
+    class FakeHub:
+        def __init__(self, result=None, error=None):
+            self.result, self.error, self.calls = result, error, []
+
+        def ask(self, op, **kw):
+            self.calls.append((op, kw))
+            if self.error:
+                raise self.error
+            return self.result
+
+    class FakeRec:
+        def __init__(self): self.lines = []
+        def log(self, line): self.lines.append(line)
+
+    def flow(out, hub):
+        f = e2e.Flow.__new__(e2e.Flow)
+        f.a = type("Args", (), {"out": out})()
+        f.hub, f.rec = hub, FakeRec()
+        return f
+
+    class FakeQmp:
+        def __init__(self, result=None, error=None): self.result, self.error = result, error
+        def cmd(self, name):
+            if self.error: raise self.error
+            return self.result
+
+    with tempfile.TemporaryDirectory() as t:
+        f = flow(t, FakeHub())
+        f.m = type("Machine", (), {"qmp": FakeQmp([
+            {"device": "disk0", "stats": {"rd_operations": 1, "rd_bytes": 2,
+                                            "wr_operations": 3, "wr_bytes": 4,
+                                            "flush_operations": 5}}
+        ])})()
+        check(f.busy_blockstats_diagnostic() and "read_requests=1" in f.rec.lines[-1],
+              "busy diagnostic: host disk counters work without the guest helper")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "output": "AURBUSY v1\nAURBUSY done\n"})
+        f = flow(t, hub)
+        check(f.busy_wizard_diagnostic({"pid": 4242}),
+              "busy diagnostic: a complete bounded snapshot is accepted")
+        check(hub.calls[0][0] == "diagnostic" and
+              hub.calls[0][1]["timeout"] == e2e.BUSY_DIAGNOSTIC_TIMEOUT <= 60 and
+              hub.calls[0][1]["timeout_ms"] == e2e.BUSY_DIAGNOSTIC_GUEST_TIMEOUT_MS <
+              e2e.BUSY_DIAGNOSTIC_TIMEOUT * 1000,
+              "busy diagnostic: a killed-on-timeout guest command precedes the host bound")
+        evidence = open(os.path.join(t, "guest-diagnostics.log")).read()
+        check("busy wizard snapshot pid=4242" in evidence and "AURBUSY done" in evidence and
+              "busy wizard diagnostic: recorded" in f.rec.lines[-1],
+              "busy diagnostic: successful output is appended to guest evidence")
+
+    with tempfile.TemporaryDirectory() as t:
+        secret = "SECRET --token should-never-enter-evidence"
+        hub = FakeHub({"ok": False, "error": secret})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": 4242}),
+              "busy diagnostic: helper rejection is diagnostic, not fatal")
+        evidence = open(os.path.join(t, "guest-diagnostics.log")).read()
+        check("rejected" in evidence and secret not in evidence,
+              "busy diagnostic: helper errors are explicit without leaking raw input")
+
+    partial = ('AURBUSY v1\n'
+               '{"kind":"process","role":"wizard","name":"AurOS-Setup.exe",'
+               '"pid":4242,"responding":true,"cpu_seconds":2.5,'
+               '"resize_partition":false}\n')
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "diagnostic_status": "timeout", "output": partial})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": 4242}) and
+              "timeout with partial evidence" in f.rec.lines[-1] and
+              "wizard:AurOS-Setup.exe:4242" in f.rec.lines[-1],
+              "busy diagnostic: timeout keeps and live-summarizes partial process evidence")
+        evidence = open(os.path.join(t, "guest-diagnostics.log")).read()
+        check("AURBUSY v1" in evidence and "exit was verified" in evidence and
+              "was stopped" not in evidence,
+              "busy diagnostic: timeout claims only a verified exit")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "diagnostic_status": "termination-failed",
+                       "output": partial})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": 4242}) and
+              "termination-failed with partial evidence" in f.rec.lines[-1],
+              "busy diagnostic: failed termination is explicit and retains partial evidence")
+        evidence = open(os.path.join(t, "guest-diagnostics.log")).read()
+        check("termination could not be verified within 5000 ms" in evidence,
+              "busy diagnostic: failed termination never claims the child stopped")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "diagnostic_status": "timeout",
+                       "diagnostic_output_read": False, "output": ""})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": 4242}) and
+              "partial output read failed" in f.rec.lines[-1],
+              "busy diagnostic: an unreadable partial file is explicit and nonfatal")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "output":
+                       "AURBUSY v1\nAURBUSY ERROR storage Example.Type\nAURBUSY done\n"})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": 4242}) and
+              "recorded with explicit section errors" in f.rec.lines[-1],
+              "busy diagnostic: a section failure stays explicit without aborting the flow")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub(None)
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": 4242}),
+              "busy diagnostic: timeout is diagnostic, not fatal")
+        evidence = open(os.path.join(t, "guest-diagnostics.log")).read()
+        check("timed out after 55 seconds" in evidence,
+              "busy diagnostic: timeout evidence names the exact bound")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "output": "should not run"})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic({"pid": "4242"}) and not hub.calls,
+              "busy diagnostic: a non-integer PID is refused before guest execution")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "output": "should not run"})
+        f = flow(t, hub)
+        check(not f.busy_wizard_diagnostic(None) and not hub.calls and
+              "exact wizard identity unavailable" in f.rec.lines[-1],
+              "busy diagnostic: missing wizard identity is explicit without a guest command")
+
+    with tempfile.TemporaryDirectory() as t:
+        hub = FakeHub({"ok": True, "output": "AURBUSY v1\nAURBUSY done\n"})
+        f = flow(t, hub)
+        f.record_guest_diagnostic = lambda label, out: (_ for _ in ()).throw(OSError("disk full"))
+        check(not f.busy_wizard_diagnostic({"pid": 4242}) and
+              f.rec.lines[-2].endswith("evidence write failed: OSError"),
+              "busy diagnostic: an evidence write failure is explicit and does not abort the flow")
+
+    helper = open(os.path.join(HERE, "guest", "helper.ps1")).read()
+    bounded = re.search(r"function Invoke-BoundedDiagnostic.*?^}", helper, re.S | re.M)
+    check(bounded is not None and "WaitForExit($timeoutMs)" in bounded.group(0) and
+          "Stop-Process" in bounded.group(0) and "WaitForExit()" not in bounded.group(0) and
+          "Read-DiagnosticOutput" in bounded.group(0) and
+          "[void]$process.Handle" in bounded.group(0) and
+          "$process.Dispose()" in bounded.group(0) and
+          "$process.Refresh()" in bounded.group(0) and
+          "if ($exitCode -ne 0)" in bounded.group(0) and
+          "exit_code = $exitCode" in bounded.group(0),
+          "busy diagnostic: timeout keeps bounded partial output without an unbounded wait")
+    check("[switch]$BoundedDiagnosticSelftest" in helper and
+          "bounded diagnostic native probe: PASS" in helper and
+          "output_truncated" in helper and "('x' * 70000)" in helper and
+          "foreach ($n in 1..5)" in helper and
+          "Invoke-BoundedDiagnostic 'exit 7'" in helper,
+          "busy diagnostic: Windows probes quick exits, nonzero, timeout, and output truncation")
+    isolation = re.search(r"function Invoke-IsolatedAccessibility.*?^}", helper, re.S | re.M)
+    parser = re.search(r"function Parse-AccessibilityChildOutput.*?^}", helper, re.S | re.M)
+    check(isolation is not None and "Invoke-BoundedDiagnostic" in isolation.group(0) and
+          "$PSCommandPath" in isolation.group(0) and "request-too-large" in isolation.group(0),
+          "accessibility isolation: every UIA/MSAA request uses the bounded child runner")
+    check(parser is not None and "child-output-truncated" in parser.group(0) and
+          "child-output-not-one-json-record" in parser.group(0) and
+          "ConvertFrom-Json -ErrorAction Stop" in parser.group(0),
+          "accessibility isolation: truncated, extra, and malformed child JSON fail closed")
+    check("AccessibilityIsolationSelftest" in helper and
+          "Invoke-IsolatedAccessibility $request 5000 30000" in helper and
+          "accessibility-child-ready" in helper and
+          "accessibility isolation timeout and recovery: PASS" in helper,
+          "accessibility isolation: Windows times out a blocked provider then proves recovery")
+    check("Read-DiagnosticOutput $stderr 8192" in helper and
+          "AccessibilityChildEvidence" in helper and
+          "accessibility-phase=request-decoded" in helper and
+          "test_error = $(if ($testEvidence)" in helper,
+          "accessibility isolation: native failures retain bounded test-only stderr and phase evidence")
+    boot = open(os.path.join(HERE, "guest", "boot.ps1")).read()
+    check("C:\\e2e\\helper.ps1" in boot and "WriteAllText" in boot and
+          "Invoke-Expression $code" not in boot,
+          "accessibility isolation: the fetched helper has an exact child-process entry path")
+
+
 test_expect()
 test_wizard_contract()
 test_stops()
 test_bitlocker_verdict()
 test_bitlocker_pause_confirmation()
 test_bitlocker_putback_contract()
+test_grub_capture()
 test_timings_summary()
 test_windows_dry()
 test_aur_dry()
@@ -1255,5 +1686,6 @@ test_edge_item()
 test_publish()
 test_first_session_probe()
 test_image_integrity_step()
+test_busy_wizard_diagnostic()
 print(f"\n{len(fails)} failed" if fails else "\nall passed")
 sys.exit(1 if fails else 0)

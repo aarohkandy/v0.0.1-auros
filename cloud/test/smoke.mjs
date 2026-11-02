@@ -11,11 +11,14 @@ import { ALL } from "./helpers.js";
 const base = (process.argv[2] || "").replace(/\/$/, "");
 if (!/^https:\/\/|^http:\/\/127\.0\.0\.1:/.test(base)) { console.error("usage: node test/smoke.mjs https://<service>"); process.exit(2); }
 
+const correlation = process.env.SMOKE_CORRELATION_TOKEN;
+if (correlation !== undefined && !/^[a-f0-9]{64}$/.test(correlation)) throw new Error("invalid smoke correlation");
+const correlationHeaders = correlation ? { "x-auros-smoke-correlation": correlation } : {};
 let failed = 0;
 const check = (ok, what, detail = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${what}${detail ? " — " + detail : ""}`); if (!ok) failed++; };
 const post = async (path, body, token) => {
   const t = Date.now();
-  const r = await fetch(base + path, { method: "POST", headers: { "content-type": "application/json", ...(token ? { authorization: "Bearer " + token } : {}) }, body: JSON.stringify(body) });
+  const r = await fetch(base + path, { method: "POST", headers: { ...correlationHeaders, "content-type": "application/json", ...(token ? { authorization: "Bearer " + token } : {}) }, body: JSON.stringify(body) });
   const text = await r.text();
   return { status: r.status, body: text ? JSON.parse(text) : null, ms: Date.now() - t };
 };
@@ -37,7 +40,12 @@ const POTATO = "every time I type potato, fill my screen with potatoes";
 const NORTH = "when my laptop points north, make the screen brighter";
 const PRINT = "How do I print a letter?";
 
-const health = await (await fetch(base + "/v1/health")).json().catch(() => ({}));
+const health = await (await fetch(base + "/v1/health", { headers: correlationHeaders, cache: "no-store", redirect: "error" })).json().catch(() => ({}));
+if (process.env.DEPLOYMENT_SOURCE_SHA || process.env.DEPLOYMENT_NONCE || correlation) {
+  if (!/^[a-f0-9]{40}$/.test(process.env.DEPLOYMENT_SOURCE_SHA || "") || !/^[a-f0-9]{64}$/.test(process.env.DEPLOYMENT_NONCE || "") || !correlation || health.deployment?.source_sha !== process.env.DEPLOYMENT_SOURCE_SHA || health.deployment?.nonce !== process.env.DEPLOYMENT_NONCE) {
+    console.error("FAIL: smoke endpoint does not identify this deployment"); process.exit(1);
+  }
+}
 const expect = process.env.EXPECT || health.wishes; // "off" = resting (the kill switch), "on" = answering
 const resting = expect === "off" || expect === "resting";
 check(health.ok === true && health.wishes === (resting ? "resting" : "on"), "health", `wishes: ${health.wishes}, expected ${resting ? "resting" : "on"}`);

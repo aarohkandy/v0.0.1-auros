@@ -70,8 +70,11 @@ For shell actions, return success only after applying the change; retain the
 previous value for reversal where appropriate. Do not add an action to the
 advertised supported set while the shell merely recognizes its name. As of this
 checkpoint, `src/aurshell/wish.c` applies installed wallpaper themes through the
-shared Settings helper and records a validated previous theme for Undo. Raw
-wallpaper colors, night light and pointer size remain refused. Its
+shared Settings helper and records a validated previous theme for Undo. It also
+has a tested CPU completed-frame adapter for `night_light`, with exact boolean
+input and prior-state Undo; this held implementation is not exposed while Wishes
+remains disabled, and its performance on physical target hardware is unproved.
+Raw wallpaper colors and pointer size remain refused. Its
 do-not-disturb adapter validates
 the event and acknowledges the engine's already-applied suppression of Wishes
 interruptions. This does not control other applications' notifications, and

@@ -340,7 +340,8 @@ machine hit each item, because the honesty is the product.
 | Print & device drivers | hardware/OS-specific | Linux supplies its own |
 | Windows Hello PIN / biometrics | sealed to this PC's TPM | set up again |
 | Outlook `.ost` / Windows Mail store | server caches | re-add the account; it re-syncs |
-| Saved passwords of any kind (Firefox, Chrome, Edge, Wi-Fi, Windows) | never copied or decrypted, on purpose | websites and networks ask once |
+| Saved passwords (Firefox, Chrome, Edge, Windows) | not copied by Ferry | sign in to websites again |
+| Saved Wi-Fi passwords | not copied by Ferry; Setup can separately copy only the connected network when the person chooses carry-over | other networks ask for their password again |
 
 ---
 
