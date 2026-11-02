@@ -1,7 +1,7 @@
 /* AurOS website: one stylesheet for every page.
  *
  * docs/DESIGN-DIRECTION.md is the law here: the printed instructions in
- * the box. Warm paper, black ink, one green that always means "this way"
+ * the box, in AurOS's Light ("Sky"). Cool paper, white cards, black ink, one green that always means "this way"
  * (the button, the chosen look, the mark) and nothing else. Light only.
  * Links are ink with an underline. The numbered circles in the pictures
  * are the one yellow, with an ink edge. Pressable things have a 2px rule
@@ -20,11 +20,12 @@
 .addr { font-family: "AurOS Zero", var(--face); font-weight: 700; overflow-wrap: anywhere; }
 
 :root {
-  --paper: #F6F2E9;
-  --soft: #ECE6DA;
-  --card: #FCFAF5;
+  --paper: #F5F7FA;
+  --soft: #E9EEF3;
+  --card: #FFFFFF;
   --selected: #E1ECE7;
-  --rule: #6E675C;
+  --rule: #687079;
+  --line: #D5DBE1;
   --ink: #17181A;
   --ink-2: #3A3D42;
   --quiet: #5C6066;
@@ -131,8 +132,8 @@ button.get { border: 0; cursor: pointer; }
 .device { width: min(100%, 1060px); margin: clamp(48px, 7vh, 72px) auto 0; }
 .device-screen { width: 86%; margin: 0 auto; background: var(--ink); border-radius: 12px 12px 0 0; padding: 1.9% 1.9% 2.2%; }
 .device-screen img { width: 100%; background: var(--soft); }
-.device-base { height: clamp(10px, 1.7vw, 20px); background: #CFC8BB; border-radius: 0 0 50% 50% / 0 0 100% 100%; position: relative; }
-.device-base::before { content: ""; position: absolute; left: 50%; top: 0; width: 14%; height: 40%; transform: translateX(-50%); background: #B4AC9E; border-radius: 0 0 8px 8px; }
+.device-base { height: clamp(10px, 1.7vw, 20px); background: #C9CFD6; border-radius: 0 0 50% 50% / 0 0 100% 100%; position: relative; }
+.device-base::before { content: ""; position: absolute; left: 50%; top: 0; width: 14%; height: 40%; transform: translateX(-50%); background: #AEB5BD; border-radius: 0 0 8px 8px; }
 .caption { color: var(--ink-2); font-size: 19px; margin: 16px auto 0; text-align: center; }
 
 /* ── sections ───────────────────────────────────────────────────── */
@@ -277,7 +278,7 @@ html[data-build="default"] [data-build-for="fastpath"], html[data-build="fastpat
 .fig-note { color: var(--ink-2); margin-top: 14px; }
 
 /* "Does everything work?", drawn in AurOS's own words (welcome.c) */
-.ask { max-width: 760px; background: var(--paper); border: 1px solid #D9D2C5; border-radius: 12px; padding: 24px 24px 28px 64px; }
+.ask { max-width: 760px; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 24px 24px 28px 64px; }
 .ask-title { font: 800 28px/1.2 var(--face); margin-bottom: 10px; }
 .ask-q { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--soft); font-weight: 700; }
 .ask-q .a-btn { flex: none; }
@@ -442,63 +443,51 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 }
 
 /* ── the front page (index.html, <html class="home">) ───────────────
- * The first screen is one framed canvas, edge to edge: AurOS's own night
- * wallpaper (the aurora), the name in a notch cut into the top of the
- * frame, one line, the button, and AurOS itself rising from the bottom
- * edge. Everything else on that screen is small and off to the sides.
- * Below it the page stays wide and says little: a title, a picture, a
- * line. Help and the text size float in the bottom corners, as on AurOS.
- * The words never sit on the picture without the dark behind them (the
- * frame is #070B10 under the sky), so the contrast check measures them. */
-/* The whole page is night: the tokens turn over (ink is the light now),
- * and the few pieces that show a light screen (a picture of Windows or
- * AurOS Setup, the box for another computer, "you are here") turn them
- * back. The accent is AurOS's own aurora teal. */
-.home { --page: #0C1117; --night: #070B10; --moon: #F4F1EA; --quiet-night: #C3CDD6; --aurora: #7DD3C0; --band: #0B5D4F; --bar-ink: #16181B; --wide: 1480px; --gutter: clamp(20px, 4vw, 72px);
-  --paper: #0C1117; --soft: #121920; --card: #151C24; --ink: #F4F1EA; --ink-2: #C3CDD6; --quiet: #AAB5BF; --rule: #66717C; --line: rgba(244, 241, 234, 0.16); --selected: #E1ECE7; }
-.home .elsewhere, .home .s3-pic, .home .laptop-screen, .home .here, .home .potato-bar {
-  --paper: #F6F2E9; --soft: #ECE6DA; --card: #FCFAF5; --ink: #17181A; --ink-2: #3A3D42; --quiet: #5C6066; --rule: #6E675C; --line: #D9D2C5; }
+ * The first screen is one framed canvas, edge to edge: AurOS's own Light
+ * wallpaper (the soft sky, rendered by src/common/wall.c), the name in a
+ * notch cut into the top of the frame, one line, the button, and AurOS
+ * itself rising from the bottom edge. Everything else on that screen is
+ * small and off to the sides. Below it the page stays wide and says
+ * little: a title, a picture, a line. Help and the text size float in the
+ * bottom corners as on AurOS: keys in a fixed dark tray. The words never
+ * sit on the picture without the sky's deepest blue behind them (#B9E0F2
+ * under the picture), so the contrast check measures them. */
+.home { --page: #F5F7FA; --sky: #B9E0F2; --bar-ink: #0F1113; --key: #2A2E34; --key-edge: #60666F; --wide: 1480px; --gutter: clamp(20px, 4vw, 72px); }
 .home body { background: var(--page); }
-.home .skip { background: var(--moon); color: var(--night); }
-.home ::selection { background: var(--aurora); color: var(--night); }
+.home ::selection { background: #C8EEDF; color: var(--ink); }
 
 /* 1. the canvas */
-.home .hero { position: relative; isolation: isolate; overflow: clip; margin: 12px; border-radius: 30px; background: var(--night); color: #FFFFFF; text-align: center; display: flex; flex-direction: column; align-items: center; padding: 0 var(--gutter); min-height: calc(100vh - 24px); min-height: calc(100svh - 24px); }
+.home .hero { position: relative; isolation: isolate; overflow: clip; margin: 12px; border-radius: 30px; background: var(--sky); color: var(--ink); text-align: center; display: flex; flex-direction: column; align-items: center; padding: 0 var(--gutter); min-height: calc(100vh - 24px); min-height: calc(100svh - 24px); }
 .hero-sky { position: absolute; inset: 0; z-index: -1; width: 100%; height: 100%; object-fit: cover; object-position: 50% 18%; }
 
 /* the bar: links on the sky, the name in a notch the colour of the page */
 .home .bar { position: relative; z-index: 2; align-self: stretch; display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; background: none; border: 0; min-height: 0; }
 .bar-side { display: flex; align-items: center; gap: clamp(16px, 2.2vw, 36px); padding-top: 14px; }
 .bar-side.end { justify-content: flex-end; }
-.home .bar-link { color: #FFFFFF; font-size: 19px; text-decoration-thickness: 1px; text-underline-offset: 0.3em; min-height: 48px; }
+.home .bar-link { color: var(--ink); font-size: 19px; text-decoration-thickness: 1px; text-underline-offset: 0.3em; min-height: 48px; }
 .home .bar-link:hover { text-decoration-thickness: 2px; }
 .notch { position: relative; background: var(--page); padding: 10px 44px 14px; border-radius: 0 0 24px 24px; }
 .notch::before, .notch::after { content: ""; position: absolute; top: 0; width: 24px; height: 24px; background: radial-gradient(circle at var(--x) 100%, rgba(236, 232, 225, 0) 23.5px, var(--page) 24px); }
 .notch::before { right: 100%; --x: 0; }
 .notch::after { left: 100%; --x: 100%; }
-.home .brand { font-size: 26px; letter-spacing: -0.01em; min-height: 48px; color: var(--moon); }
-.home .mark path { fill: var(--aurora); }
-.home .pill { background: var(--moon); color: var(--night); border-radius: 999px; padding: 0 24px; }
-.home .pill:hover { background: #FFFFFF; }
-.home .hero :focus-visible { outline-color: #FFFFFF; }
+.home .brand { font-size: 26px; letter-spacing: -0.01em; min-height: 48px; }
+.home .pill { border-radius: 999px; padding: 0 24px; }
 
 .cry { font: 800 clamp(42px, 6vw, 116px)/0.98 var(--face); letter-spacing: -0.045em; max-width: 12em; margin: clamp(36px, 8vh, 96px) auto 0; text-wrap: balance; }
-.home .hero h1 { font-size: clamp(20px, 1.6vw, 25px); line-height: 1.35; font-weight: 700; letter-spacing: 0; color: var(--aurora); max-width: 30em; margin: 22px auto 0; text-wrap: balance; }
+.home .hero h1 { font-size: clamp(20px, 1.6vw, 25px); line-height: 1.35; font-weight: 700; letter-spacing: 0; color: var(--ink-2); max-width: 30em; margin: 22px auto 0; text-wrap: balance; }
 .home .getbox { align-items: center; gap: 14px; margin-top: 30px; }
 .ctas { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin: 0; }
-.home .hero .get { background: var(--moon); color: var(--night); border-radius: 999px; min-height: 64px; padding: 0 34px; font-size: 23px; }
-.home .hero .get:hover { background: #FFFFFF; }
-.ghost { display: inline-flex; align-items: center; min-height: 64px; padding: 0 30px; border: 2px solid rgba(255, 255, 255, 0.6); border-radius: 999px; color: #FFFFFF; font-weight: 700; font-size: 21px; text-decoration: none; }
-.ghost:hover { border-color: #FFFFFF; background: rgba(255, 255, 255, 0.08); }
-.home .hero .facts-line, .home .hero .old-win { color: var(--quiet-night); font-size: 19px; max-width: 48em; }
-.home .hero .facts-line b { color: #FFFFFF; }
-.home .elsewhere { margin-top: 30px; color: var(--ink); background: var(--moon); border: 0; border-radius: 22px; text-align: left; }
+.home .hero .get { border-radius: 999px; min-height: 64px; padding: 0 34px; font-size: 23px; }
+.ghost { display: inline-flex; align-items: center; min-height: 64px; padding: 0 30px; border: 2px solid var(--ink); border-radius: 999px; color: var(--ink); font-weight: 700; font-size: 21px; text-decoration: none; }
+.ghost:hover { background: rgba(255, 255, 255, 0.55); }
+.home .hero .facts-line, .home .hero .old-win { color: var(--ink-2); font-size: 19px; max-width: 48em; }
+.home .hero .facts-line b { color: var(--ink); }
+.home .elsewhere { margin-top: 30px; color: var(--ink); background: var(--card); border: 0; border-radius: 22px; text-align: left; }
 .home .here:not(:empty) { color: #17181A !important; }
-.home .elsewhere .get.share { background: var(--band); color: #FFFFFF; }
 
 /* AurOS, rising from the bottom edge of the frame */
 .laptop { order: 9; position: relative; margin: clamp(24px, 4vh, 48px) 0 0; width: min(66vw, 1120px); margin-bottom: calc(-0.28 * min(66vw, 1120px)); }
-.laptop-lid { position: relative; background: linear-gradient(180deg, #2B2D31, #17181B); border-radius: 22px 22px 0 0; padding: 2.2% 2.2% 0; box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.16), 0 -30px 120px -20px rgba(125, 211, 192, 0.35); }
+.laptop-lid { position: relative; background: linear-gradient(180deg, #2B2D31, #17181B); border-radius: 22px 22px 0 0; padding: 2.2% 2.2% 0; box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.16), 0 -24px 90px -30px rgba(23, 24, 26, 0.35); }
 .laptop-lid::before { content: ""; position: absolute; top: 0.9%; left: 50%; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%; background: #3E4147; }
 .laptop-screen { border-radius: 6px 6px 0 0; overflow: hidden; background: var(--soft); }
 .laptop-screen img { width: 100%; }
@@ -506,14 +495,14 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 /* small things at the sides of the first screen, on a big screen only */
 .sat { display: none; }
 @media (min-width: 1500px) {
-  .sat { position: absolute; z-index: 2; bottom: 112px; display: flex; align-items: center; gap: 16px; max-width: 18em; color: #FFFFFF; font-size: 19px; line-height: 1.35; text-align: left; text-decoration: none; }
+  .sat { position: absolute; z-index: 2; bottom: 112px; display: flex; align-items: center; gap: 16px; max-width: 18em; color: var(--ink); font-size: 19px; line-height: 1.35; text-align: left; text-decoration: none; }
   .sat:hover span:last-child { text-decoration: underline; }
   .sat-looks { left: 40px; max-width: none; white-space: nowrap; }
-  .sat-wish { right: 40px; flex-direction: column; align-items: flex-start; gap: 6px; padding: 18px 22px; background: rgba(7, 11, 16, 0.72); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 20px; }
-  .sat-k { font-weight: 700; color: var(--quiet-night); }
+  .sat-wish { right: 40px; flex-direction: column; align-items: flex-start; gap: 6px; padding: 18px 22px; background: rgba(255, 255, 255, 0.85); border-radius: 20px; }
+  .sat-k { font-weight: 700; color: var(--ink-2); }
 }
 .faces { display: grid; grid-template-columns: repeat(2, 80px); gap: 6px; flex: none; }
-.faces img { width: 80px; height: 45px; border-radius: 6px; border: 2px solid rgba(255, 255, 255, 0.85); background: var(--soft); }
+.faces img { width: 80px; height: 45px; border-radius: 6px; border: 2px solid #FFFFFF; background: var(--soft); }
 
 /* on a phone or a short window the canvas is as tall as it needs, and AurOS shows whole */
 @media (max-width: 760px) {
@@ -536,18 +525,18 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 
 /* the strip: a few true words sliding past, two rows going opposite ways */
 .strip { overflow: clip; padding-block: clamp(40px, 7vh, 88px); }
-.strip-row { display: flex; gap: 0; margin: 0; white-space: nowrap; font: 800 clamp(40px, 6.4vw, 118px)/1.1 var(--face); letter-spacing: -0.04em; color: var(--moon); width: max-content; }
+.strip-row { display: flex; gap: 0; margin: 0; white-space: nowrap; font: 800 clamp(40px, 6.4vw, 118px)/1.1 var(--face); letter-spacing: -0.04em; color: var(--ink); width: max-content; }
 .strip-row span { display: inline-flex; align-items: center; }
-.strip-row span::after { content: ""; width: 0.32em; height: 0.32em; margin: 0 0.5em; background: var(--aurora); transform: rotate(45deg); }
-.strip-row.rev { color: transparent; -webkit-text-stroke: 1.5px rgba(244, 241, 234, 0.75); margin-top: 6px; }
+.strip-row span::after { content: ""; width: 0.32em; height: 0.32em; margin: 0 0.5em; background: var(--go); transform: rotate(45deg); }
+.strip-row.rev { color: transparent; -webkit-text-stroke: 1.5px var(--ink-2); margin-top: 6px; }
 .strip-row.rev span::before { content: attr(data-t); }
-.strip-row.rev span::after { background: transparent; box-shadow: inset 0 0 0 2px var(--aurora); }
-.sec-title span { color: var(--quiet-night); }
+.strip-row.rev span::after { background: transparent; box-shadow: inset 0 0 0 2px var(--go); }
+.sec-title span { color: var(--quiet); }
 .sec-title span span { color: inherit; }
 
 /* 2. two pieces of the real screen */
 .feats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(16px, 2vw, 28px); margin-top: clamp(32px, 4vw, 56px); }
-.feat { background: #FBF9F5; border-radius: 28px; padding: clamp(16px, 1.6vw, 24px) clamp(16px, 1.6vw, 24px) clamp(24px, 2.4vw, 36px); }
+.feat { background: var(--card); border-radius: 28px; padding: clamp(16px, 1.6vw, 24px) clamp(16px, 1.6vw, 24px) clamp(24px, 2.4vw, 36px); }
 .feat h3 { font-size: clamp(26px, 2.2vw, 36px); line-height: 1.1; font-weight: 800; letter-spacing: -0.02em; margin: 28px 12px 8px; }
 .feat p { color: var(--ink-2); margin: 0 12px; }
 .try b { color: var(--ink); }
@@ -559,7 +548,7 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
  * other at full size, on the bar's own dark */
 .crop-list { aspect-ratio: 568 / 336; border: 1px solid var(--line); }
 .crop-list img { width: 240.49%; left: -46.13%; top: -22.62%; }
-.crop-list::after { content: ""; position: absolute; inset: 0 0 0 74%; background: linear-gradient(90deg, rgba(250, 247, 240, 0), #FAF7F0 92%); }
+.crop-list::after { content: ""; position: absolute; inset: 0 0 0 74%; background: linear-gradient(90deg, rgba(255, 255, 255, 0), #FFFFFF 92%); }
 .bar-pic { aspect-ratio: 568 / 336; display: flex; flex-direction: column; justify-content: center; gap: 22px; padding: 0 6%; border-radius: 18px; background: var(--bar-ink); }
 .crop-bar { border-radius: 0; background: var(--bar-ink); }
 .crop-bar.left { width: 66%; aspect-ratio: 324 / 68; }
@@ -568,23 +557,21 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 .crop-bar.right img { width: 309.05%; left: -208.14%; top: -1027.94%; }
 @media (max-width: 860px) { .feats { grid-template-columns: minmax(0, 1fr); } }
 
-/* 3. the four looks, in a green frame */
-.home .looks { margin: 0 12px; border-radius: 30px; background: linear-gradient(180deg, #0B5D4F, #073B33); color: var(--moon); }
-.home .looks .sec-title span { color: #BFE3D9; }
-.home .looks .sec-title { color: var(--moon); margin-bottom: 36px; }
-.home .looks .sec-lede { color: #D7E6E0; margin-bottom: 36px; }
-.home .looks .sec-lede b { color: var(--moon); }
+/* 3. the four looks, framed in the same sky they sit on in AurOS */
+.home .looks { margin: 0 12px; border-radius: 30px; background: var(--sky) url("shots/sky-day.jpg") 50% 50% / cover; }
+.home .looks .sec-title { margin-bottom: 36px; }
+.home .looks .sec-title span, .home .looks .sec-lede { color: var(--ink-2); }
+.home .looks .sec-lede { margin-bottom: 36px; }
 .home .looks-tabs { justify-content: flex-start; }
-.home .looks-tabs button { background: transparent; color: var(--moon); border: 2px solid rgba(244, 241, 234, 0.6); border-radius: 999px; padding: 0 24px; }
-.home .looks-tabs button:hover { border-color: var(--moon); background: rgba(255, 255, 255, 0.08); }
-.home .looks-tabs button[aria-selected="true"] { background: var(--moon); color: #17181A; border: 2px solid var(--moon); padding: 0 24px; }
-.home .looks-tabs button:focus-visible { outline-color: var(--marker); }
+.home .looks-tabs button { background: rgba(255, 255, 255, 0.7); border-radius: 999px; padding: 0 24px; }
+.home .looks-tabs button:hover { border-color: var(--ink); background: #FFFFFF; }
+.home .looks-tabs button[aria-selected="true"] { background: var(--go); color: #FFFFFF; border: 2px solid var(--go); padding: 0 24px; }
 .home .looks .device { width: 100%; margin: 0; }
 .home .looks .device-screen { width: 100%; background: #17181B; border-radius: 20px 20px 0 0; padding: 1.4% 1.4% 1.6%; }
 .home .looks .device-base { display: none; }
 .home .look figcaption { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 20px; text-align: left; margin: 22px 0 0; max-width: none; }
-.home .look h3 { color: var(--moon); font-size: clamp(26px, 2.2vw, 34px); margin: 0; }
-.home .look figcaption p { color: #D7E6E0; margin: 0; }
+.home .look h3 { font-size: clamp(26px, 2.2vw, 34px); margin: 0; }
+.home .look figcaption p { color: var(--ink-2); margin: 0; }
 
 /* 4. three steps, each with the picture she will see and its numbered circle */
 .steps3 { list-style: none; margin: clamp(32px, 4vw, 56px) 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(16px, 2vw, 28px); }
@@ -622,14 +609,14 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 /* 6. the honest bit: four lines, said plainly */
 .home .honest { padding-top: 0; }
 .truths { list-style: none; margin: clamp(24px, 3vw, 40px) 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(16px, 2vw, 28px); counter-reset: truth; }
-.truths li { counter-increment: truth; padding-top: 22px; border-top: 2px solid var(--aurora); font-size: clamp(21px, 1.6vw, 24px); line-height: 1.35; font-weight: 700; }
-.truths li::before { content: "0" counter(truth); display: block; margin-bottom: 14px; font: 800 clamp(40px, 4vw, 64px)/1 var(--face); letter-spacing: -0.04em; color: var(--aurora); }
+.truths li { counter-increment: truth; padding-top: 22px; border-top: 2px solid var(--ink); font-size: clamp(21px, 1.6vw, 24px); line-height: 1.35; font-weight: 700; }
+.truths li::before { content: "0" counter(truth); display: block; margin-bottom: 14px; font: 800 clamp(40px, 4vw, 64px)/1 var(--face); letter-spacing: -0.04em; color: var(--quiet); }
 @media (max-width: 1100px) { .truths { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .truths { grid-template-columns: minmax(0, 1fr); } }
 
 /* 7. Wishes: built, not switched on yet, said above the title and under the picture */
 .wishes-in { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(32px, 5vw, 96px); align-items: center; }
-.soon { display: inline-block; margin: 0 0 20px; padding: 6px 16px; color: var(--aurora); border: 2px solid var(--aurora); border-radius: 999px; font-weight: 700; font-size: 19px; }
+.soon { display: inline-block; margin: 0 0 20px; padding: 6px 16px; color: var(--ink-2); border: 2px solid var(--rule); border-radius: 999px; font-weight: 700; font-size: 19px; }
 .asks { list-style: none; margin: 28px 0 0; padding: 0; display: grid; gap: 10px; }
 .asks li { justify-self: start; padding: 12px 20px; background: var(--card); border-radius: 18px 18px 18px 4px; font-size: 21px; }
 .psst { margin-top: 28px; color: var(--ink-2); }
@@ -646,23 +633,20 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 .qa-list .qa p { color: var(--ink-2); max-width: 34em; }
 @media (max-width: 760px) { .qa-list .qa { grid-template-columns: minmax(0, 1fr); } }
 
-/* 9. the button once more, on the night sky */
-.finale { position: relative; isolation: isolate; overflow: clip; margin: 0 12px; border-radius: 30px; background: var(--night); color: #FFFFFF; text-align: center; padding: clamp(96px, 18vh, 200px) var(--gutter); }
+/* 9. the button once more, on the sky */
+.finale { position: relative; isolation: isolate; overflow: clip; margin: 0 12px; border-radius: 30px; background: var(--sky); color: var(--ink); text-align: center; padding: clamp(96px, 18vh, 200px) var(--gutter); }
 .finale h2 { font-size: clamp(40px, 6vw, 112px); line-height: 1; font-weight: 800; letter-spacing: -0.04em; margin-bottom: 36px; }
 .home .finale .again { text-align: center; }
-.home .finale .get { background: var(--moon); color: var(--night); border-radius: 999px; min-height: 64px; padding: 0 34px; font-size: 23px; box-shadow: none; margin: 0; }
-.home .finale .get:hover { background: #FFFFFF; }
-.home .finale .else-short { color: #FFFFFF; }
-.finale a:not(.get) { color: #FFFFFF; }
+.home .finale .get { border-radius: 999px; min-height: 64px; padding: 0 34px; font-size: 23px; box-shadow: none; margin: 0; }
+.home .finale .else-short { color: var(--ink-2); }
 .home .foot { border-top: 0; }
-.home .foot a { color: var(--moon); }
 
 /* Help and the text size: AurOS's buttons, floating in the bottom corners.
  * On a short window (zoomed right in), and where AurOS can't go (sending
  * the link is the job there), they wait at the end of the page instead. */
 .osbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: flex; gap: 10px; padding: 0 max(14px, env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); pointer-events: none; }
 .os-gap { flex: 1; }
-.os-btn { pointer-events: auto; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 104px; min-height: 64px; padding: 4px 14px; border: 2px solid #6A6E75; border-radius: 14px; background: var(--bar-ink); color: #FFFFFF; font: 700 18px/1.15 var(--face); text-decoration: none; cursor: pointer; box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5); }
+.os-btn { pointer-events: auto; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 104px; min-height: 64px; padding: 4px 14px; border: 2px solid var(--key-edge); border-radius: 12px; background: var(--key); color: #F2F3F5; font: 700 18px/1.15 var(--face); text-decoration: none; cursor: pointer; box-shadow: 0 0 0 4px var(--bar-ink), 0 12px 30px -8px rgba(15, 17, 19, 0.45); }
 .os-btn svg { width: 24px; height: 24px; }
 .os-btn:hover { border-color: #FFFFFF; }
 .os-btn:focus-visible { outline: 4px solid var(--marker); outline-offset: 2px; }
@@ -717,7 +701,7 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 }
 
 /* the potatoes (assets/door.js): her wish "Potatoes", as Wishes draws it */
-.potatoes { position: fixed; inset: 0; z-index: 30; overflow: hidden; background: rgba(246, 242, 233, 0.35); }
+.potatoes { position: fixed; inset: 0; z-index: 30; overflow: hidden; background: rgba(245, 247, 250, 0.35); }
 .potatoes .p { position: absolute; font-size: var(--s, 72px); line-height: 1; transform: rotate(var(--r, 0deg)); animation: plop .35s cubic-bezier(.2, 1.4, .4, 1) var(--d, 0s) both; }
 @keyframes plop { from { opacity: 0; transform: rotate(var(--r, 0deg)) scale(.2); } }
 @media (prefers-reduced-motion: reduce) { .potatoes .p { animation: none; } }
