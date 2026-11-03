@@ -719,6 +719,25 @@ def test_download_waits_for_page():
     check(done == ["click"], "website: a download link listed before its document is waited for, not scrolled away from")
 
 
+def test_nbd_partitions_wait_for_udev():
+    """Run 41699122050 listed /dev straight after partprobe and found no
+    partition of the installed disk; the helper waits for udev's nodes."""
+    try:
+        import e2e
+    except ImportError:
+        return
+    looks = [["nbd7"], ["nbd7"], ["nbd7", "nbd7p1", "nbd7p2", "nbd0p1"]]
+    saved = (e2e.os.listdir, e2e.run, e2e.time.sleep)
+    try:
+        e2e.os.listdir = lambda d: looks.pop(0) if len(looks) > 1 else looks[0]
+        e2e.run = lambda *a, **k: None
+        e2e.time.sleep = lambda s: None
+        got = e2e.nbd_partitions("/dev/nbd7", None)
+    finally:
+        (e2e.os.listdir, e2e.run, e2e.time.sleep) = saved
+    check(got == ["nbd7p1", "nbd7p2"], "put-back: the installed disk's partitions are waited for after partprobe")
+
+
 def test_aur_dry():
     """e2e.py aur against a fake machine whose screen says what AurOS says:
     first screen, the question answered, the store entered, its Failure
@@ -1750,6 +1769,7 @@ test_grub_capture()
 test_timings_summary()
 test_windows_dry()
 test_download_waits_for_page()
+test_nbd_partitions_wait_for_udev()
 test_aur_dry()
 test_label_is()
 test_canon_label()

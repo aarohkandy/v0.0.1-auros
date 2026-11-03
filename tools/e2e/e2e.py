@@ -591,6 +591,23 @@ def parse_bitlocker_evidence(text):
     return state
 
 
+def nbd_partitions(dev, rec, timeout=20):
+    """The partition nodes of an attached disk, once udev has made them.
+
+    partprobe returns before udev creates /dev/nbdNpM: run 41699122050 listed
+    /dev straight after it, found nothing, and called the installed disk
+    empty. Settle, then wait for at least one node (a disk always has some
+    here), up to `timeout` seconds."""
+    base = os.path.basename(dev)
+    run(["sudo", "udevadm", "settle", f"--timeout={timeout}"], rec, check=False)
+    deadline = time.time() + timeout
+    while True:
+        parts = sorted(p for p in os.listdir("/dev") if p.startswith(base + "p"))
+        if parts or time.time() > deadline:
+            return parts
+        time.sleep(1)
+
+
 def bitlocker_return_verdict(state, baseline_protectors=None):
     """A return to Windows is green only with encryption and protection on."""
     if state["volume_status"] != "FullyEncrypted":
@@ -2691,9 +2708,8 @@ class Flow:
         try:
             time.sleep(3)
             run(["sudo", "partprobe", dev], self.rec, check=False)
-            base = os.path.basename(dev)
             candidates = []
-            for part in sorted(p for p in os.listdir("/dev") if p.startswith(base + "p")):
+            for part in nbd_partitions(dev, self.rec):
                 path = "/dev/" + part
                 fs = run(["sudo", "blkid", "-o", "value", "-s", "TYPE", path], self.rec,
                          check=False).stdout.strip()
@@ -3452,8 +3468,7 @@ def cmd_inspect(a):
             out.append(run(["lsblk", "-o", "NAME,SIZE,FSTYPE,LABEL,PARTLABEL", dev], rec, check=False).stdout)
             mnt = os.path.join(a.work, "mnt")
             os.makedirs(mnt, exist_ok=True)
-            base = os.path.basename(dev)
-            parts = sorted(p for p in os.listdir("/dev") if p.startswith(base + "p"))
+            parts = nbd_partitions(dev, rec)
             for p in parts:
                 fs = run(["sudo", "blkid", "-o", "value", "-s", "TYPE", "/dev/" + p], rec,
                          check=False).stdout.strip()
