@@ -483,6 +483,11 @@ def test_grub_capture():
     windows_selected = e2e.Flow.grub_selected_row_image(windows_shot)
     check(windows_selected is not None and windows_selected[1] > 0.45,
           "Windows return: the observed cyan theme isolates one synthesized selected row")
+    row_is = e2e.Flow.grub_row_is
+    check(row_is("*xWindows", "Windows") and row_is("Windows", "Windows") and
+          not row_is("*Put Windows back remove AurOS)", "Windows") and
+          not row_is("xAurOS", "Windows") and not row_is("*AurOS (aurinit, experimental)", "AurOS"),
+          "Windows return: run 41572426817's '*xWindows' is Windows; Put Windows back never is")
     no_cyan = np.zeros_like(shot)
     check(e2e.Flow.grub_selected_row_image(no_cyan) is None,
           "Windows return: a screen without the observed cyan selection fails closed")

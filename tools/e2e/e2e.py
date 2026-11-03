@@ -2415,8 +2415,7 @@ class Flow:
                 text = vision.text_of(vision.ocr(row, scale=3, psm=7))
                 self.log(f"start menu: selected row '{text}' cyan coverage {coverage:.3f} "
                          f"at {bounds}")
-                if (re.sub(r"[^a-z]", "", text.lower()) ==
-                        re.sub(r"[^a-z]", "", name.lower())):
+                if self.grub_row_is(text, name):
                     self.m.key("ret", label=f"start menu: {name}")
                     return
             self.m.key("down", label="start menu: down" if i == 0 else None)
@@ -2424,6 +2423,16 @@ class Flow:
         self.m.shot("start-menu-no-entry")
         raise Failure(f"AurOS's start menu never highlighted '{name}': " +
                       vision.text_of(vision.ocr(self.m.screendump()))[:400])
+
+    @staticmethod
+    def grub_row_is(text, name):
+        """The highlighted row reads exactly `name`. OCR puts a stray mark or
+        two before every highlighted row ('xAurOS', '*xWindows' in run
+        41572426817), so up to two leading letters are allowed; nothing after
+        the name is, so 'Put Windows back' is never 'Windows'."""
+        plain = re.sub(r"[^a-z]", "", text.lower())
+        return re.fullmatch(r"[a-z]{0,2}" + re.escape(re.sub(r"[^a-z]", "", name.lower())),
+                            plain) is not None
 
     @staticmethod
     def grub_selected_row_image(img):
