@@ -2858,8 +2858,14 @@ class Flow:
             if not remove:
                 raise Failure("Put Windows back did not offer removal: " + vision.text_of(words)[:400])
             self.m.click(*vision.centre(remove), label="Put Windows back: first deliberate press")
-            time.sleep(2.0)
-            armed, words = self.ocr_find("Press again to restart and remove AurOS")
+            # The pointer rests on the row it pressed and splits its new label
+            # for OCR ("rest|art": run 41737516450 had it armed on screen).
+            self.m.move(1150, 300)
+            for _ in range(3):
+                time.sleep(1.5)
+                armed, words = self.ocr_find("Press again to restart and remove AurOS")
+                if armed:
+                    break
             if not armed:
                 raise Failure("Put Windows back did not arm its second press: " + vision.text_of(words)[:400])
             self.putback_requested_at = time.time()
