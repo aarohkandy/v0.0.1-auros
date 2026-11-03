@@ -1,31 +1,17 @@
-# Text that waits for the fast path (NOT published)
+# Fast-path promotion record
 
-Prepared by the AurOS agents without a lawyer (D15). The fast path (`AUROS_FASTPATH`, decisions D1, D10, D11) is off in
-the default `AurOS-Setup.exe`, so the published Terms and Privacy say nothing about carrying her Wi-Fi across or pausing
-the drive lock: a policy that describes a feature the shipped file does not have is wrong. **The day the default flips
-(`build/aurbridge`), these sentences go into `TERMS.md` section 4 and `PRIVACY.md` section 3 in the same commit** (the site
-check goes red until the website's two wordings follow). They were rewritten after the skeptic review, which found that
-the earlier text ("paused for one restart", "only if you say yes", "never switched off") did not match the code.
+Prepared by the AurOS agents without a lawyer (D15). The public wording that waited here is now in Terms version 4,
+Privacy version 6 and the website beside the default-fast-path switch. It describes the implementation after the
+Restart-now Wi-Fi boundary and cleanup tests in `tools/wifitest.sh`.
 
-Written from the code at 2026-10-24 (`src/aurbridge/phases.c`, `wizard.c`); re-read it before use.
+Keep these constraints when the wording changes:
 
-**Terms, section 4 (what Setup does), add:**
-
-> On a computer whose drive Windows has locked (BitLocker), Setup pauses the drive's protection. The files stay encrypted,
-> but while protection is paused anyone who has the computer could read the Windows drive. Start Windows again to let
-> Windows turn protection back on; until Windows reports that it has, protection remains paused. Setup does not decrypt the
-> drive or remove BitLocker. Setup also copies the Wi-Fi network you are connected to (its name and password) to
-> a place on the computer's start-up partition, so that AurOS can get online when it starts; it is ticked for you on the
-> Ready screen and you can untick it. The copy is not encrypted while it waits there, and AurOS deletes it once it has
-> stored the password.
-
-`phases.c` requests `-RebootCount 2`, but that setting alone does not prove which boots Windows counts when the first boot
-is AurOS. Do not state a restart count or automatic-resume instant until the real journey records Windows' protection
-status after the AurOS handover and after each later Windows start. The start-up partition is never BitLocker-encrypted.
-Whether "AurOS deletes it" holds in every failure path is open: see `COMPLIANCE.md` 4.8 item 4; do not publish the last
-sentence until `tools/wifitest.sh` proves it for a failed install.
-
-**Privacy, section 3, add:** the same Wi-Fi sentence: read on the same computer, never sent over the internet.
-
-**Ready page:** the pre-ticked Wi-Fi box must say, in its own line, "Copies this Wi-Fi's password to AurOS on this computer.
-Not sent anywhere." (COMPLIANCE 4.8 item 4), and the drive-protection line must use the same no-count wording above.
+- Do not promise how many boots BitLocker protection stays paused. `phases.c` requests `-RebootCount 2`, but Windows'
+  observed protection state is the authority. Say that it stays paused until Windows reports otherwise and tell the
+  person to start Windows again.
+- Say that the Wi-Fi copy on the start-up partition is not encrypted, is never sent over the internet, and is deleted
+  when AurOS reads it whether or not AurOS can use it.
+- Do not say every Wi-Fi can be copied. Unsupported and unreadable profiles continue installing and ask the person to
+  connect from AurOS.
+- The default-fast-path installer keeps the compressed download on Windows while it prepares AurOS; it does not first
+  unpack another roughly 5 GB image file there.

@@ -5,7 +5,7 @@
     python3 -I tools/releasegate.py harden ROWS RUN-ID   did the hardening boot of THIS build's image pass?
     python3 -I tools/releasegate.py e2e JOBS             did a real Windows install THIS AurOS-Setup.exe, base AND bitlocker?
     python3 -I tools/releasegate.py selftest             each rule refuses what it exists to refuse
-    python3 -I tools/releasegate.py signed VALUE         public promotion requires this publish's signed=true
+    python3 -I tools/releasegate.py signed VALUE         a signed channel: this publish's signed=true (not a promotion gate: D7)
 
 JOBS is the build run's job list (release.yml's `which` job fetches it
 from the Actions API); ALLOW is .github/ci-allow.txt; TODAY is a UTC date

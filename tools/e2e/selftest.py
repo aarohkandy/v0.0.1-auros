@@ -153,18 +153,50 @@ def test_bitlocker_pause_confirmation():
         return
 
     sha = "a" * 64
+    source_sha = "b" * 40
+    repo = "aarohkandy/v0.0.1-auros"
+    generic_url = f"https://github.com/{repo}/releases/download/v0.1.0-{source_sha[:7]}/AurOS-Setup.exe"
+    fastpath_url = f"https://github.com/{repo}/releases/download/v0.1.0-test/AurOS-Setup-fastpath.exe"
     check(e2e.bitlocker_pause_lane_error(
-              "bitlocker", True, "AurOS-Setup-fastpath.exe", sha) is None,
+              "bitlocker", True, "AurOS-Setup-fastpath.exe", sha,
+              fastpath_url, repo, False) is None,
           "pause warning: only the SHA-pinned fastpath BitLocker lane may drive it")
-    for variant, putback, name, digest, why in (
-            ("base", True, "AurOS-Setup-fastpath.exe", sha, "base variant"),
-            ("bitlocker", True, "AurOS-Setup.exe", sha, "generic installer"),
-            ("bitlocker", True, "AurOS-Setup-fastpath.exe", "", "missing hash"),
-            ("bitlocker", True, "AurOS-Setup-fastpath.exe", "A" * 64, "noncanonical hash")):
-        check(e2e.bitlocker_pause_lane_error(variant, putback, name, digest) is not None,
+    check(e2e.bitlocker_pause_lane_error(
+              "bitlocker", True, "AurOS-Setup.exe", sha,
+              generic_url, repo, True, source_sha) is None,
+          "pause warning: the exact generic installer is allowed when source defaults fastpath on")
+    for variant, putback, name, digest, url, default_fast, built_sha, why in (
+            ("base", True, "AurOS-Setup-fastpath.exe", sha, fastpath_url, False, "", "base variant"),
+            ("bitlocker", True, "AurOS-Setup.exe", sha, generic_url, False, source_sha, "generic installer with old source default"),
+            ("bitlocker", True, "AurOS-Setup-other.exe", sha,
+             f"https://github.com/{repo}/releases/download/v0.1.0-test/AurOS-Setup-other.exe", False, "", "arbitrary installer"),
+            ("bitlocker", True, "AurOS-Setup-fastpath.exe", "", fastpath_url, False, "", "missing hash"),
+            ("bitlocker", True, "AurOS-Setup-fastpath.exe", "A" * 64, fastpath_url, False, "", "noncanonical hash"),
+            ("bitlocker", True, "AurOS-Setup.exe", sha,
+             "https://github.com/elsewhere/project/releases/download/v1/AurOS-Setup.exe", True, source_sha, "external repository"),
+            ("bitlocker", True, "AurOS-Setup.exe", sha, generic_url + "?changed=1", True, source_sha, "release URL query"),
+            ("bitlocker", True, "AurOS-Setup.exe", sha,
+             f"https://github.com/{repo}/releases/download/v0.1.0-ccccccc/AurOS-Setup.exe",
+             True, source_sha, "old build URL with a different source commit"),
+            ("bitlocker", True, "AurOS-Setup.exe", sha, generic_url, True, "", "missing source commit")):
+        check(e2e.bitlocker_pause_lane_error(
+                  variant, putback, name, digest, url, repo, default_fast, built_sha) is not None,
               f"pause warning: {why} is refused")
     check(e2e.bitlocker_pause_lane_error("base", False, "anything.exe", "") is None,
           "pause warning: ordinary lanes remain unchanged")
+    check(e2e.source_default_fastpath('if [ "${AUROS_FASTPATH:-1}" = 1 ]; then'),
+          "pause warning: the canonical source default is read as fastpath on")
+    check(not e2e.source_default_fastpath('if [ "${AUROS_FASTPATH:-0}" = 1 ]; then'),
+          "pause warning: an explicit legacy source default is read as fastpath off")
+    for malformed in ("", 'if [ "${AUROS_FASTPATH:-2}" = 1 ]; then',
+                      'if [ "${AUROS_FASTPATH:-1}" = 1 ]; then\n'
+                      'if [ "${AUROS_FASTPATH:-0}" = 1 ]; then'):
+        try:
+            e2e.source_default_fastpath(malformed)
+            refused = False
+        except e2e.Failure:
+            refused = True
+        check(refused, "pause warning: an absent, invalid or ambiguous source default is refused")
 
     restart = {"type": "Button", "name": "Restart now", "enabled": True,
                "key": "Enter", "rect": [600, 600, 200, 50]}
@@ -349,13 +381,25 @@ def test_bitlocker_putback_contract():
 
     workflow = open(os.path.join(HERE, "..", "..", ".github", "workflows", "e2e.yml")).read()
     release = open(os.path.join(HERE, "..", "..", ".github", "workflows", "release.yml")).read()
+    build_workflow = open(os.path.join(HERE, "..", "..", ".github", "workflows", "build.yml")).read()
     fastpath = release.split("\n  e2e-fastpath:\n", 1)[-1].split("\n  # THE SOURCE CODE", 1)[0]
-    ordinary = release.split("\n  e2e:\n", 1)[-1].split("\n  # The fast-path", 1)[0]
-    check("bitlocker_putback: true" in fastpath and "bitlocker_putback" not in ordinary,
-          "put-back: only the diagnostic fastpath release lane enables the destructive leg")
-    check("name == 'AurOS-Setup-fastpath.exe'" in workflow and
+    ordinary = release.split("\n  e2e:\n", 1)[-1].split("\n  # An optional nonidentical", 1)[0]
+    check("bitlocker_putback: true" in fastpath and "bitlocker_putback: true" in ordinary,
+          "put-back: both exact release lanes enable the destructive leg after default promotion")
+    check("name in {'AurOS-Setup-fastpath.exe', 'AurOS-Setup.exe'}" in workflow and
+          "re.findall(pattern, source, re.MULTILINE) == ['1']" in workflow and
+          "tag.endswith('-' + sha[:7])" in workflow and
+          "['git', 'show', sha + ':build/aurbridge']" in workflow and
           "^[0-9a-f]{64}$" in workflow and "*,bitlocker,*" in workflow,
-          "put-back: workflow requires the exact fastpath name, SHA-256 and BitLocker variant")
+          "put-back: workflow binds an exact capable name and default to the release's source, SHA-256 and BitLocker variant")
+    check("installer_source_sha: ${{ needs.which.outputs.built_sha }}" in ordinary and
+          "needs: [which, publish]" in ordinary,
+          "put-back: the ordinary release lane passes the exact build-run source commit")
+    check("Fast path is the default" in build_workflow and
+          'grep -Fq \'if [ "${AUROS_FASTPATH:-1}" = 1 ]; then\'' in build_workflow and
+          "duplicate asset not published" in build_workflow and
+          "AUROS_FASTPATH not wired" not in build_workflow,
+          "put-back: an identical explicit build is recorded as the default, never as unwired")
     check("UNSAFE-DISK-ATTACHED.txt" in workflow,
           "put-back: failure diagnostics never reopen an overlay whose detach was unproven")
     flow_source = open(os.path.join(HERE, "e2e.py")).read().split("def cmd_flow(a):", 1)[-1]

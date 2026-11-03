@@ -1,6 +1,6 @@
 # AurOS Privacy
 
-Version 5, 24 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. This page is not legal advice.
+Version 6, 24 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. This page is not legal advice.
 
 Who is responsible: the person who makes AurOS, on the AurOS project page on GitHub. There is no company yet. To ask us anything about privacy, write to CONTACT_EMAIL.
 
@@ -38,9 +38,11 @@ Building and signing use **GitHub Actions**, **GitHub Releases** and, when signi
 
 AurOS Setup runs on your Windows computer. To decide whether AurOS can go on it safely, it **looks at your computer**: the Windows version, the kind of firmware, how the drive is divided and how much room is free, whether the drive is locked, the drive's health, the name of the Wi-Fi network you are connected to, the printers, camera and Bluetooth devices attached, your language, keyboard and time zone, and similar facts. **It looks at these on your computer and does not send them anywhere.** If you press **Save a report for a helper**, Setup writes two files, AurOS-report.txt and AurOS-report.json, on your Desktop. They list your computer's maker and model, its parts and the names of your printers and other devices, not your Wi-Fi name. Setup sends them nowhere. If Windows backs up your Desktop (OneDrive often does), Windows may copy them there. They go to a helper only if you give them.
 
-As soon as Setup finds that AurOS can go on your computer, it starts downloading AurOS (about 2 GB at the time of writing, and on the version offered today about 5 GB more when it is unpacked) from **GitHub Releases**, while you read the pages and before you press Install AurOS. GitHub sees your internet address, as it does for any download. The download goes into a folder called AurOS on your Windows drive. If you close Setup before you press Install AurOS, Setup stops the download and normally deletes it; if Setup is stopped some other way, for example by a power cut, part of it may stay there, and you may delete the folder.
+As soon as Setup finds that AurOS can go on your computer, it starts downloading AurOS (about 2 GB at the time of writing) from **GitHub Releases**, while you read the pages and before you press Install AurOS. GitHub sees your internet address, as it does for any download. On the version offered today, Setup keeps the downloaded pieces on the Windows drive while it gets AurOS ready; it does not first unpack another 5 GB file there. If you close Setup before you press Install AurOS, Setup stops the download and normally deletes what it fetched; if Setup is stopped some other way, for example by a power cut, part of it may stay there, and you may delete it.
 
 While it works, Setup writes notes on your computer so that it can finish, or undo, the install after the restart. They stay on your computer. We see them only if you send them to us yourself.
+
+If you leave **Bring my Wi-Fi across** ticked, Setup reads the network you are using and, if it can copy that kind of network, writes its name and password (if it has one) to the start-up partition on this same computer when you press **Restart now**. The copy is not encrypted while it waits there. It is not sent to us or over the internet. AurOS deletes the copy when it reads it on first start, whether or not it can use it. If Setup cannot copy the network, AurOS starts without it and asks you to connect.
 
 ## 4. AurOS on your computer
 

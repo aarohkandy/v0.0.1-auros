@@ -279,10 +279,8 @@ jobs:
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           T=$(date +%s)
-          # THE FAST PATH, until it is the default (stream A2): a commit
-          # whose SUBJECT says [fastpath] builds the installer with it on --
-          # Windows makes the room, the Wi-Fi tick, the drive-lock line --
-          # so the real-Windows e2e can be pointed at a fast-path prerelease.
+          # The fast path is the default. Keep accepting the historical
+          # [fastpath] subject marker as an explicit request for the same build.
           case "$(printf '%s' "$COMMIT_MSG" | head -1)" in
               *'[fastpath]'*) export AUROS_FASTPATH=1; echo "the fast path is ON in this installer" | tee -a dist/installer/build-info.txt ;;
           esac
@@ -354,15 +352,13 @@ jobs:
           kill %1 2>/dev/null || true
           echo "getimage-local $(( $(date +%s) - T )) s" >> dist/installer/timings.txt
 
-      # THE FAST-PATH INSTALLER, beside the normal one and never instead
-      # of it (docs/AURBRIDGE.md "Fast path"; lead's order 2026-10-23).
-      # The same release build with AUROS_FASTPATH=1: A2's engine that
+      # THE OPTIONAL FAST-PATH INSTALLER. Rebuild explicitly with
+      # AUROS_FASTPATH=1: A2's engine that
       # shrinks Windows with Windows' own online shrink instead of
       # ntfsresize in the staging environment. It is published as the
-      # separate asset AurOS-Setup-fastpath.exe, listed in SHA256SUMS,
-      # and the website's link (AurOS-Setup.exe) never points at it. If
-      # the tree does not read AUROS_FASTPATH yet, the two builds are
-      # byte-identical and there is nothing to publish: said, not faked.
+      # separate asset AurOS-Setup-fastpath.exe only when it differs from
+      # the default. With fast path already the default the inner programs
+      # must be byte-identical, so the duplicate asset is omitted.
       # Last of the steps that use out/, because build/aurbridge writes
       # there: the normal executables are put back afterwards.
       - name: the same installer, built with AUROS_FASTPATH=1
@@ -379,9 +375,11 @@ jobs:
           python3 tools/pe_payload.py get out/aurbridge-setup.exe 300 /tmp/fastpath-inner.exe
           python3 tools/pe_payload.py get dist/installer/AurOS-Setup.exe 300 /tmp/normal-inner.exe
           if cmp -s /tmp/fastpath-inner.exe /tmp/normal-inner.exe; then
-            echo "::notice title=No fast-path installer::AUROS_FASTPATH=1 changed nothing in this tree (build/aurbridge does not read it yet), so there is nothing to publish beside AurOS-Setup.exe"
+            grep -Fq 'if [ "${AUROS_FASTPATH:-1}" = 1 ]; then' build/aurbridge \
+              || { echo "::error::explicit fastpath bytes equal the default, but build/aurbridge does not canonically default to fastpath"; exit 1; }
+            echo "::notice title=Fast path is the default::the explicit AUROS_FASTPATH=1 build matches AurOS-Setup.exe, so the duplicate asset is omitted"
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "fastpath: identical to the normal installer (AUROS_FASTPATH not wired in this tree): not published" | tee -a dist/installer/build-info.txt
+            echo "fastpath: identical to the default-fastpath AurOS-Setup.exe: duplicate asset not published" | tee -a dist/installer/build-info.txt
           else
             cp out/aurbridge-setup.exe dist/installer/AurOS-Setup-fastpath.exe
             # the same gates the normal installer passed

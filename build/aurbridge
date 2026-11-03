@@ -125,13 +125,12 @@ SHIMEFI="${AUROS_STAGING_SHIM:-$OUT/auros-staging-shimx64.efi}"
 GRUBEFI="${AUROS_STAGING_GRUB:-$OUT/auros-staging-grubx64.efi}"
 MOKMEFI="${AUROS_STAGING_MOKMGR:-$OUT/auros-staging-mmx64.efi}"
 IMGDEF=""
-# THE FAST PATH, off until it is proven end to end (docs/AURBRIDGE.md, "Fast
-# path: status"). AUROS_FASTPATH=1 builds the installer with it ON: Windows
-# makes the room, AurOS is written into it while the image downloads, the
-# Ready page offers the Wi-Fi tick and says the drive lock is paused for one
-# restart (D10, D11). The real-Windows e2e builds this way to prove it; the
-# default flips when that is green.
-if [ "${AUROS_FASTPATH:-0}" = 1 ]; then
+# THE FAST PATH. The default installer uses it: Windows makes the room,
+# AurOS is written into it while the image downloads, and the Ready page
+# offers the Wi-Fi choice and explains BitLocker protection before a second,
+# explicit confirmation at Restart now (D10, D11). AUROS_FASTPATH=0 remains
+# the deliberate compatibility build for bounded comparisons.
+if [ "${AUROS_FASTPATH:-1}" = 1 ]; then
     IMGDEF="$IMGDEF -DAUROS_FASTPATH"
     note "the fast path is ON in this build"
 fi
