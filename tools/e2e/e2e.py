@@ -591,6 +591,23 @@ def parse_bitlocker_evidence(text):
     return state
 
 
+def installed_home(root):
+    """The person's home in a mounted AurOS root, relative to it: uid 1000's
+    entry in its etc/passwd (build/forge's default_user, "auros" in the
+    desktop profile; run 41716687764 looked for a "her" that no image has).
+    None when there is no such user or the home is outside home/."""
+    try:
+        with open(os.path.join(root, "etc/passwd")) as fh:
+            for line in fh:
+                f = line.rstrip("\n").split(":")
+                if len(f) >= 6 and f[2] == "1000":
+                    home = f[5].strip("/")
+                    return home if re.fullmatch(r"home/[a-z_][a-z0-9_-]*", home) else None
+    except OSError:
+        pass
+    return None
+
+
 def nbd_partitions(dev, rec, timeout=20):
     """The partition nodes of an attached disk, once udev has made them.
 
@@ -2719,8 +2736,9 @@ class Flow:
                        check=False).returncode != 0:
                     continue
                 try:
+                    home = installed_home(mnt)
                     if os.path.isfile(os.path.join(mnt, "usr/lib/auros/answer.sh")) and \
-                            os.path.isdir(os.path.join(mnt, "home/her/Documents")):
+                            home and os.path.isdir(os.path.join(mnt, home)):
                         present = [rel for rel in APP_FILES.split()
                                    if os.path.lexists(os.path.join(mnt, rel))]
                         candidates.append((path, present))
@@ -2737,10 +2755,15 @@ class Flow:
                    check=False).returncode != 0:
                 raise Failure("could not mount the installed AurOS root for the fixture")
             try:
-                docs = os.path.join(mnt, "home/her/Documents")
+                home = os.path.join(mnt, installed_home(mnt) or "missing-home")
+                docs = os.path.join(home, "Documents")
                 dest = os.path.join(docs, fixture["name"])
-                if os.path.islink(docs) or os.path.lexists(dest):
+                if os.path.islink(home) or os.path.islink(docs) or os.path.lexists(dest):
                     raise Failure("refusing an unexpected Documents link or existing fixture path")
+                if not os.path.isdir(docs):
+                    # Her Documents folder, as the file manager would make it.
+                    run(["sudo", "mkdir", "--", docs], self.rec)
+                    run(["sudo", "chown", "--reference=" + home, "--", docs], self.rec)
                 run(["sudo", "cp", "--", local, dest], self.rec)
                 run(["sudo", "chown", "--reference=" + docs, "--", dest], self.rec)
                 run(["sudo", "chmod", "0644", "--", dest], self.rec)

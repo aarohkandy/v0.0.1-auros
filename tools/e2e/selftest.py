@@ -738,6 +738,25 @@ def test_nbd_partitions_wait_for_udev():
     check(got == ["nbd7p1", "nbd7p2"], "put-back: the installed disk's partitions are waited for after partprobe")
 
 
+def test_installed_home_from_passwd():
+    """The put-back fixture goes into the image's own person, read from
+    etc/passwd, not a guessed name (run 41716687764)."""
+    try:
+        import e2e
+    except ImportError:
+        return
+    with tempfile.TemporaryDirectory() as t:
+        os.makedirs(f"{t}/etc")
+        with open(f"{t}/etc/passwd", "w") as fh:
+            fh.write("root:x:0:0:root:/root:/bin/bash\nauros:x:1000:1000:AurOS:/home/auros:/bin/bash\n")
+        ok = e2e.installed_home(t) == "home/auros"
+        with open(f"{t}/etc/passwd", "w") as fh:
+            fh.write("evil:x:1000:1000::/etc/../root:/bin/sh\n")
+        refused = e2e.installed_home(t) is None
+    check(ok and refused and e2e.installed_home("/nonexistent") is None,
+          "put-back: the fixture's home is uid 1000's from the image, and only under home/")
+
+
 def test_aur_dry():
     """e2e.py aur against a fake machine whose screen says what AurOS says:
     first screen, the question answered, the store entered, its Failure
@@ -1770,6 +1789,7 @@ test_timings_summary()
 test_windows_dry()
 test_download_waits_for_page()
 test_nbd_partitions_wait_for_udev()
+test_installed_home_from_passwd()
 test_aur_dry()
 test_label_is()
 test_canon_label()
