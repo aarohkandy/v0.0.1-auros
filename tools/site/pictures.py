@@ -188,7 +188,7 @@ def main():
     for name, source in LOOKS:
         path = os.path.join(src_dir, source)
         im = Image.open(path).convert("RGB")
-        im.save(os.path.join(OUT, name), "JPEG", quality=82, optimize=True, progressive=True)
+        im.save(os.path.join(OUT, name), "JPEG", quality=72, optimize=True, progressive=True)   # screenshots of flat UI: 72 reads the same, and the first screen has a 300 KB budget
         meta["pictures"][name] = {"source": os.path.relpath(path, REPO), "source_sha256": sha(path), "says": SAYS[name], "size": list(im.size)}
         print("%s: %dx%d" % (name, im.size[0], im.size[1]))
     with open(os.path.join(OUT, "pictures.json"), "w") as f:

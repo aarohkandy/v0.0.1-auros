@@ -301,7 +301,7 @@ html[data-build="default"] [data-build-for="fastpath"], html[data-build="fastpat
 .look figcaption { text-align: center; max-width: 34rem; margin: 24px auto 0; }
 .look h3 { font-size: clamp(26px, 2.4vw, 32px); font-weight: 800; margin-bottom: 6px; }
 .look figcaption p { color: var(--ink-2); }
-.js .looks-tabs-on .look:not(.on) { display: none; }
+.js .looks .look:not(.on) { display: none; }   /* not waiting for door.js: until it runs, a lazy picture in the stacked layout still loads */
 .looks:not(.looks-tabs-on) .look + .look { margin-top: 72px; }
 .looks-more { text-align: center; color: var(--ink-2); margin-top: clamp(40px, 5vw, 56px); }
 
