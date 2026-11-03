@@ -504,8 +504,12 @@ jobs:
           # to read the volume, so every one of those passed. This runner
           # has no BitLocker, so the disk is told to say it
           # (AURBRIDGE_TEST_FVE, which can only refuse): the same code runs.
+          # The installer is the fast path (the default since 9000afaf): Setup
+          # pauses BitLocker (D11), so it is a fact on the Ready page, never a
+          # stop, and must not change preflight's verdict on this runner.
           $plain = ((.\exe\aurbridge.exe preflight --json | Out-String | ConvertFrom-Json).findings |
                       Where-Object id -eq 'bitlocker-system')
+          $plainCode = $LASTEXITCODE
           if ($plain) { throw "a runner without BitLocker was said to have it: $($plain.detail)" }
           $env:AURBRIDGE_TEST_FVE = '1'
           $j = .\exe\aurbridge.exe preflight --json | Out-String | ConvertFrom-Json
@@ -513,11 +517,12 @@ jobs:
           Remove-Item Env:AURBRIDGE_TEST_FVE
           $f = $j.findings | Where-Object id -eq 'bitlocker-system'
           if (-not $f) { throw "the disk said BitLocker and preflight did not: the volume's view still decides" }
-          if ($f.severity -ne 'block') { throw "BitLocker is a $($f.severity), not a stop" }
-          if ($code -ne 1) { throw "preflight exited $code with BitLocker on the disk, not 1 (blocked)" }
+          if ($f.severity -ne 'info') { throw "BitLocker is a $($f.severity); the fast path pauses it, so it is info" }
+          if ($f.remedy -notmatch 'pause') { throw "BitLocker's remedy does not say Setup pauses it: $($f.remedy)" }
+          if ($code -ne $plainCode) { throw "BitLocker on the disk changed preflight's exit from $plainCode to $code" }
           $v = $j.volumes | Where-Object { $_.mount -eq $env:SystemDrive } | Select-Object -First 1
           if ($v.bitlocker -ne 1) { throw "the system volume is not marked BitLocker: $($v.bitlocker)" }
-          "the disk said BitLocker: preflight stops, and the volume is marked"
+          "the disk said BitLocker: preflight reads it, the volume is marked, and Setup will pause it"
           exit 0
       - name: the storage check finds the real controller's driver
         shell: pwsh
