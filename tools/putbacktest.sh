@@ -242,8 +242,14 @@ while True:
         time.sleep(0.1)
 stream = sock.makefile("rwb", buffering=0)
 stream.readline()
+# Alt+SysRq+S first: the guest's own emergency sync (kernel.sysrq=176
+# allows it), so the journal it kept in memory is on the disk before
+# the VM is killed. It changes nothing in the guest's timing until the
+# hang is already a hang.
+keys = [{"type": "qcode", "data": k} for k in ("alt", "sysrq", "s")]
 for command in (
     {"execute": "qmp_capabilities"},
+    {"execute": "send-key", "arguments": {"keys": keys}},
     {"execute": "screendump", "arguments": {"filename": sys.argv[2]}},
 ):
     stream.write(json.dumps(command).encode() + b"\n")
@@ -253,6 +259,8 @@ for command in (
             break
         if "error" in reply:
             raise RuntimeError(reply["error"])
+    if command["execute"] == "send-key":
+        time.sleep(5)
 sock.close()
 PY
 }
@@ -271,6 +279,17 @@ save_guest_evidence() { # boot
         for f in "$T/m/var/lib/auros-e2e"/answer.log.* "$T/m/var/lib/auros-e2e"/result.*; do
             [ -f "$f" ] || continue
             tail -c 262144 "$f" > "$EVIDENCE/$(basename "$f")"
+        done
+        # The serial line ends at the initramfs (`quiet`); what stalled a
+        # shutdown is in the journal, and unattended-upgrades' own log.
+        # Written, not copied: the guest's modes would keep them from the
+        # upload, which does not run as root.
+        tail -c 262144 "$T/m/var/log/unattended-upgrades/unattended-upgrades-shutdown.log" \
+            > "$EVIDENCE/unattended-upgrades-shutdown-$1.log" 2>/dev/null || :
+        for j in "$T/m/var/log/journal"/*/system.journal; do
+            [ -f "$j" ] || continue
+            journalctl --file "$j" -b 0 -o short-monotonic --no-pager \
+                > "$EVIDENCE/journal-$1.txt" 2>&1 || :
         done
         umount_root
     else
@@ -319,6 +338,8 @@ Path(sys.argv[1]).write_text("x" * (1048576 + 17) + "\nguest metadata\n")
 GUEST_PY
     printf 'answer metadata\n' > "$T/m/var/lib/auros-e2e/answer.log.1"
     printf 'result metadata\n' > "$T/m/var/lib/auros-e2e/result.1"
+    mkdir -p "$T/m/var/log/unattended-upgrades"
+    printf 'shutdown metadata\n' > "$T/m/var/log/unattended-upgrades/unattended-upgrades-shutdown.log"
     cat > "$S/bin/qemu-system-x86_64" <<'QEMU_PY'
 #!/usr/bin/env python3
 import json, socket, sys, time
@@ -329,7 +350,7 @@ with open(serial, "wb") as out:
 s = socket.socket(socket.AF_UNIX); s.bind(qmp); s.listen(1)
 c, _ = s.accept(); f = c.makefile("rwb", buffering=0)
 f.write(b'{"QMP":{"version":{}}}\n')
-for _ in range(2):
+for _ in range(3):
     command = json.loads(f.readline())
     if command.get("execute") == "screendump":
         with open(command["arguments"]["filename"], "wb") as out:
@@ -352,7 +373,8 @@ GRUB_SH
     elapsed=$(( $(date +%s) - started ))
     bad=0
     [ "$rc" -eq 124 ] || { echo "timeout selftest: expected 124, got $rc"; bad=1; }
-    [ "$elapsed" -le 5 ] || { echo "timeout selftest: deadline took ${elapsed}s"; bad=1; }
+    # The deadline, and the guest's emergency sync (5 s) after it.
+    [ "$elapsed" -le 10 ] || { echo "timeout selftest: deadline took ${elapsed}s"; bad=1; }
     [ "$QP" = "" ] || { echo "timeout selftest: QEMU was not reaped"; bad=1; }
     [ "$(wc -c < "$EVIDENCE/serial-1.log")" -eq 1048576 ] \
         || { echo "timeout selftest: serial evidence was not capped"; bad=1; }
@@ -362,6 +384,8 @@ GRUB_SH
         || { echo "timeout selftest: grubenv evidence missing"; bad=1; }
     grep -q 'answer metadata' "$EVIDENCE/answer.log.1" \
         || { echo "timeout selftest: answer evidence missing"; bad=1; }
+    grep -q 'shutdown metadata' "$EVIDENCE/unattended-upgrades-shutdown-1.log" \
+        || { echo "timeout selftest: unattended-upgrades evidence missing"; bad=1; }
     [ "$(head -c 2 "$EVIDENCE/framebuffer-1.ppm")" = P6 ] \
         || { echo "timeout selftest: framebuffer evidence missing"; bad=1; }
     rm -rf "$S"
