@@ -1986,8 +1986,9 @@ class Flow:
             if not opened:
                 raise Failure("the installed program never kept an exact Open control long enough to press")
             self.m.move(1150, 300)
-            deadline = time.time() + 120
-            privacy_continued = False
+            pressed_at = time.time()
+            deadline = pressed_at + 120
+            privacy_continued = pressed_again = False
             while time.time() < deadline:
                 time.sleep(5)
                 img = self.m.screendump()
@@ -2000,6 +2001,17 @@ class Flow:
                 identity = self.program_window_identity(words, img.shape[0], STORE_RESULT)
                 privacy_step = self.program_privacy_step(
                     words, img.shape[0], STORE_RESULT)
+                if (privacy_step is None and not identity and not pressed_again and
+                        time.time() - pressed_at > 30):
+                    # The store can drop a press while its page redraws after
+                    # an install (release run 41582366908: the click reached
+                    # the kernel, nothing was launched). A person presses
+                    # again; once, on a live Open control, within the deadline.
+                    pressed_again = True
+                    if self.click_current_store_open():
+                        self.log(f"{STORE_RESULT} had not opened after 30 s; pressed Open once more")
+                        self.m.move(1150, 300)
+                    continue
                 if privacy_step is not None:
                     identity, proceed = privacy_step
                     action = self.privacy_action(identity, proceed, privacy_continued)
