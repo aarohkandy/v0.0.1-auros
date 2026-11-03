@@ -71,8 +71,8 @@ env:
   # (a push or a hand-started run tests this prerelease; a run called by
   # release.yml tests the release it just made: its inputs override these
   # in the flow step)
-  INSTALLER_URL: https://github.com/aarohkandy/v0.0.1-auros/releases/download/v0.1.0-618726b/AurOS-Setup.exe
-  INSTALLER_SHA256: 5b875c0bd3b007ad9caab67732fe13a4fab828e6ee550c5b881863a6f2480b52
+  INSTALLER_URL: https://github.com/aarohkandy/v0.0.1-auros/releases/download/v0.1.0-11f3f6e/AurOS-Setup.exe
+  INSTALLER_SHA256: 7335a1ee0a9439a47830a01b7017dfe87da92b7b16578b29aacec451a7550eb9
   INSTALLER_PATH: ''
   WEBSITE_DIR: website
   # Windows: Microsoft's evaluation-center link; pinned hash once known.

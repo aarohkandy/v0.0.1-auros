@@ -1195,11 +1195,13 @@ class Flow:
             for attempt in range(12):
                 every = self.elements("msedge", ["CheckBox", "Hyperlink", "Button"])
                 els = [e for e in every if self.is_page(e)]
-                # Edge can list the page's links before it reports their
-                # document: the button is on screen, so wait for the document
-                # instead of scrolling away from it.
-                if (waited < 4 and not self.pick(els, DOWNLOAD_LINK, ("Hyperlink", "Button"))
-                        and self.pick(every, DOWNLOAD_LINK, ("Hyperlink", "Button"), page=False)):
+                # Edge can show the page before its accessibility tree has it
+                # (no page element at all), or list the links before their
+                # document: wait for the page instead of scrolling away from
+                # a button that is on screen (runs 41539330147, 41565994300).
+                if waited < 6 and (not els or (
+                        not self.pick(els, DOWNLOAD_LINK, ("Hyperlink", "Button"))
+                        and self.pick(every, DOWNLOAD_LINK, ("Hyperlink", "Button"), page=False))):
                     waited += 1
                     time.sleep(3)
                     continue
@@ -1962,7 +1964,11 @@ class Flow:
                     words, img.shape[0], STORE_RESULT)
                 if privacy_step is not None:
                     identity, proceed = privacy_step
-                    if not identity or not proceed or privacy_continued:
+                    action = self.privacy_action(identity, proceed, privacy_continued)
+                    if action == "wait":
+                        self.log("privacy dialog not yet attributed to a mapped program; waiting")
+                        continue
+                    if action == "fail":
                         self.m.save(img, "program-launch-failed")
                         raise Failure(f"{STORE_QUERY}'s first-launch privacy dialog was not a "
                                       "single attributed Continue step: " +
@@ -1995,7 +2001,11 @@ class Flow:
                             words, img.shape[0], STORE_RESULT)
                         if privacy_step is not None:
                             identity, proceed = privacy_step
-                            if not identity or not proceed or privacy_continued:
+                            action = self.privacy_action(identity, proceed, privacy_continued)
+                            if action == "wait":
+                                self.log("privacy dialog not yet attributed to a mapped program; waiting")
+                                continue
+                            if action == "fail":
                                 self.m.save(img, "program-launch-failed")
                                 raise Failure(f"{STORE_QUERY}'s first-launch privacy dialog was not a "
                                               "single attributed Continue step: " +
@@ -2021,6 +2031,18 @@ class Flow:
                 raise Failure(f"{STORE_QUERY} never opened a mapped program window in 2 minutes; "
                               "the store's listing and preview are not a running app: " +
                               vision.text_of(vision.ocr(img))[:500])
+
+    @staticmethod
+    def privacy_action(identity, proceed, continued):
+        """What to do with VLC's first-launch privacy dialog: "press" its one
+        Continue, "wait" while nothing ties it to a mapped VLC window yet (VLC
+        can map its main window a moment after the dialog: run 41565994300,
+        fast path; the 2-minute deadline still decides), or "fail"."""
+        if continued:
+            return "fail"
+        if not identity:
+            return "wait"
+        return "press" if proceed else "fail"
 
     @staticmethod
     def program_launch_error(words):

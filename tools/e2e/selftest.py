@@ -652,7 +652,8 @@ def test_download_waits_for_page():
     except ImportError:
         return
     link = lambda doc: {"type": "Hyperlink", "name": "Get AurOS", "rect": [440, 473, 226, 65], "doc": doc}
-    scans, done = [[link(0)], [link(825000)]], []
+    chrome = {"type": "Button", "name": "Favorites", "rect": [1073, 44, 32, 32], "doc": 0}
+    scans, done = [[chrome], [link(0)], [link(825000)]], []
     f = types.SimpleNamespace(
         rec=types.SimpleNamespace(phase=lambda name: contextlib.nullcontext()),
         m=types.SimpleNamespace(key=lambda *a, **k: done.append("key"),
@@ -1227,6 +1228,13 @@ def test_program_launch_proof():
     check(e2e.AurFlow.program_privacy_step(
               privacy + body, 800, "VLC")[1] is None,
           "launch: dialog title and body without a mapped VLC task are inert")
+    act = e2e.AurFlow.privacy_action
+    check(act(*e2e.AurFlow.program_privacy_step(privacy + body, 800, "VLC"), False) == "wait" and
+          act(task_identity, task_continue, False) == "press",
+          "launch: run 41565994300's dialog before VLC's window is waited on, then pressed once VLC's task shows")
+    check(act(task_identity, task_continue, True) == "fail" and
+          act(task_identity, None, False) == "fail" and act(None, None, True) == "fail",
+          "launch: a second privacy dialog, or an attributed one without one Continue, still fails")
     foreign_task = [word(text, 800 + offset * 45, 688, w=40, line=28)
                     for offset, text in enumerate(("Other", "media", "player"))]
     check(e2e.AurFlow.program_privacy_step(
