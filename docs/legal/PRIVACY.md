@@ -42,7 +42,7 @@ As soon as Setup finds that AurOS can go on your computer, it starts downloading
 
 While it works, Setup writes notes on your computer so that it can finish, or undo, the install after the restart. They stay on your computer. We see them only if you send them to us yourself.
 
-If you leave **Bring my Wi-Fi across** ticked, Setup reads the network you are using and, if it can copy that kind of network, writes its name and password (if it has one) to the start-up partition on this same computer when you press **Restart now**. The copy is not encrypted while it waits there. It is not sent to us or over the internet. AurOS deletes the copy when it reads it on first start, whether or not it can use it. If Setup cannot copy the network, AurOS starts without it and asks you to connect.
+If you leave **Bring my Wi-Fi across** ticked, Setup reads the network you are using and, if it can copy that kind of network, writes its name and password (if it has one) to the small part of the drive the computer starts from on this same computer when you press **Restart now**. The copy is not encrypted while it waits there. It is not sent to us or over the internet. AurOS deletes the copy when it reads it on first start, whether or not it can use it. If Setup cannot copy the network, AurOS starts without it and asks you to connect.
 
 ## 4. AurOS on your computer
 
