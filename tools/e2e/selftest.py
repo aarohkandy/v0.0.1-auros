@@ -643,6 +643,32 @@ def test_windows_dry():
         (e2e.Machine, e2e.Hub, e2e.pass_cd_prompt, e2e.run, e2e.time.sleep, e2e.OVMF_VARS) = saved
 
 
+def test_download_waits_for_page():
+    """Edge listed the page's Get AurOS before it reported its document; the
+    driver pressed End and scrolled away from the button for good (run
+    41539330147). It must wait for the document while the button is on screen."""
+    try:
+        import e2e, contextlib, types
+    except ImportError:
+        return
+    link = lambda doc: {"type": "Hyperlink", "name": "Get AurOS", "rect": [440, 473, 226, 65], "doc": doc}
+    scans, done = [[link(0)], [link(825000)]], []
+    f = types.SimpleNamespace(
+        rec=types.SimpleNamespace(phase=lambda name: contextlib.nullcontext()),
+        m=types.SimpleNamespace(key=lambda *a, **k: done.append("key"),
+                                scroll=lambda *a, **k: done.append("scroll")),
+        elements=lambda *a, **k: scans.pop(0) if len(scans) > 1 else scans[0],
+        click_el=lambda e, why: done.append("click"),
+        pick=e2e.Flow.pick, is_page=e2e.Flow.is_page)
+    saved = e2e.time.sleep
+    try:
+        e2e.time.sleep = lambda s: None
+        e2e.Flow.click_download(f)
+    finally:
+        e2e.time.sleep = saved
+    check(done == ["click"], "website: a download link listed before its document is waited for, not scrolled away from")
+
+
 def test_aur_dry():
     """e2e.py aur against a fake machine whose screen says what AurOS says:
     first screen, the question answered, the store entered, its Failure
@@ -1666,6 +1692,7 @@ test_bitlocker_putback_contract()
 test_grub_capture()
 test_timings_summary()
 test_windows_dry()
+test_download_waits_for_page()
 test_aur_dry()
 test_label_is()
 test_canon_label()

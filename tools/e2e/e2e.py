@@ -1191,9 +1191,18 @@ class Flow:
         with self.rec.phase("edge: press the website's download button"):
             # The button as a person finds it: on screen, or further down
             # (End, then the wheel). Any boxes that gate it get ticked.
-            for attempt in range(8):
-                els = [e for e in self.elements("msedge", ["CheckBox", "Hyperlink", "Button"])
-                       if self.is_page(e)]
+            waited = 0
+            for attempt in range(12):
+                every = self.elements("msedge", ["CheckBox", "Hyperlink", "Button"])
+                els = [e for e in every if self.is_page(e)]
+                # Edge can list the page's links before it reports their
+                # document: the button is on screen, so wait for the document
+                # instead of scrolling away from it.
+                if (waited < 4 and not self.pick(els, DOWNLOAD_LINK, ("Hyperlink", "Button"))
+                        and self.pick(every, DOWNLOAD_LINK, ("Hyperlink", "Button"), page=False)):
+                    waited += 1
+                    time.sleep(3)
+                    continue
                 boxes = [e for e in els if e.get("type") == "CheckBox" and e.get("toggle") == "Off"]
                 if boxes:
                     self.click_el(boxes[0], "website tick: " + (boxes[0].get("name") or "")[:40])
@@ -1204,7 +1213,7 @@ class Flow:
                     self.click_el(link, "website: " + (link.get("name") or "download")[:40])
                     time.sleep(5)
                     return
-                if attempt == 0:
+                if attempt == waited:
                     self.m.key("end", label="look further down the page")
                 else:
                     self.m.scroll(640, 400, 5)
