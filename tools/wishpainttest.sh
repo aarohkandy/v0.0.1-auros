@@ -22,7 +22,8 @@ mkdir -p "$T/st" "$PNG"
 build() {   # $1 = tree, $2 = output
     ${CC:-cc} -O2 -std=gnu11 -w -DAUROS_WISHES=1 ${CFLAGS:-} -o "$2" "$1/tools/wishsheet.c" \
        "$1/src/aurshell/wishover.c" "$1/src/aurshell/foot.c" "$1/src/aurshell/run.c" \
-       "$1/src/aurshell/apps.c" "$1/src/aurshell/draw.c" "$1/src/aurshell/shellcommon.c" \
+       "$1/src/aurshell/apps.c" "$1/src/aurshell/draw.c" "$1/src/aurshell/nightlight.c" \
+       "$1/src/aurshell/shellcommon.c" \
        "$1/src/aurshell/anim.c" "$1"/src/aurshell/layouts/[a-z]*.c "$1/src/common/theme.c" \
        "$1/src/common/font.c" "$1/src/common/png.c" "$1/src/common/wall.c" \
        -I "$1/src/aurshell" -lm
