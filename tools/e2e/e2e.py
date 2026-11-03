@@ -1492,6 +1492,7 @@ class Flow:
         """Wait for, record and return the exact safe pause question."""
         deadline = time.time() + 30
         last = "the installer exposed no readable controls"
+        closed_cover = False
         while time.time() < deadline:
             if not self.m.alive():
                 raise Failure("Windows restarted before the BitLocker pause was explicitly confirmed")
@@ -1502,6 +1503,16 @@ class Flow:
                 primary, secondary = bitlocker_pause_controls(named)
             except Failure as e:
                 last = str(e)
+                # Run 41722210728: Windows Security opened its Protection
+                # updates window over Setup just as the question came up.
+                # Close that app's window once (Defender itself keeps running).
+                if not closed_cover and any(
+                        w.get("proc") == "SecHealthUI" or w.get("name") == "Windows Security"
+                        for w in self.windows()):
+                    closed_cover = True
+                    self.log("Windows Security's window covers Setup; closing it")
+                    self.guest("Stop-Process -Name SecHealthUI -ErrorAction SilentlyContinue", timeout=30)
+                    deadline = max(deadline, time.time() + 15)
                 time.sleep(1)
                 continue
             # The wizard deliberately ignores action presses during the first
@@ -1806,11 +1817,20 @@ class Flow:
             b, words = self.ocr_find("Yes, it all works")
             if not b:
                 raise Failure("the Yes button went away")
-            self.m.click(*vision.centre(b), label="AurOS: Yes, it all works")
-            time.sleep(10)
+            for attempt in range(3):
+                self.m.click(*vision.centre(b), label="AurOS: Yes, it all works")
+                time.sleep(10)
+                img = self.m.screendump()
+                words = vision.ocr(img)
+                # The question still asking is a press that did not land (run
+                # 41722210728, a slow runner): press the same button again.
+                b = vision.find_text(words, "Yes, it all works")
+                if not b:
+                    break
+                self.log(f"'Yes, it all works' is still asking after press {attempt + 1}")
+            else:
+                raise Failure("AurOS's 'Does everything work?' question took no press of Yes in 3 tries")
             self.m.shot("after-yes")
-            img = self.m.screendump()
-            words = vision.ocr(img)
             self.log("after yes: " + vision.text_of(words)[:600])
             # The newer first start asks once more: "Start AurOS from now on?" with
             # a button of that name (the lowest match: its heading says it too).
