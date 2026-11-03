@@ -2466,11 +2466,15 @@ int ab_arm(ab_machine *m, ab_say say, void *ud, char *why, size_t n)
         }
     }
     /* D11: THE DRIVE LOCK, PAUSED FOR THE RESTART AND NEVER DECRYPTED.
-     * -RebootCount 2: protection comes back by itself at the second
-     * start of Windows, so the restart into AurOS and the first start of
-     * Windows after it never ask for the recovery key. Last but one, so
-     * that nothing after it can fail and leave it paused; ab_abort
-     * turns it back on. Shown to her on the Ready page, and agreed. */
+     * -RebootCount 1, the step firmware updaters use: Windows counts its
+     * own starts, not AurOS's, so the first start of Windows after
+     * AurOS unlocks without the recovery key and turns protection back
+     * on, sealed to the start-up AurOS left (D13; release run
+     * 41582366908 saw 2 leave it off at that start). Nothing after the
+     * restart reads C: (staging and the handover never open it). Last
+     * but one, so that nothing after it can fail and leave it paused;
+     * ab_abort turns it back on. Shown to her on the Ready page, and
+     * agreed. */
     if (m->fast && m->bitlocker) {
         char tail[512], cmd[200];
         /* WHAT THIS PAUSED, AND ONLY THAT. If something else has already
@@ -2491,7 +2495,7 @@ int ab_arm(ab_machine *m, ab_say say, void *ud, char *why, size_t n)
             /* Recorded BEFORE the command: a pause that half happened is
              * resumed too. */
             m->bitlocker_suspended = 1;
-            snprintf(cmd, sizeof cmd, "manage-bde -protectors -disable %s -RebootCount 2",
+            snprintf(cmd, sizeof cmd, "manage-bde -protectors -disable %s -RebootCount 1",
                      m->sysdrive);
             if (plat_run(cmd, tail, sizeof tail) != 0) {
                 snprintf(why, n,

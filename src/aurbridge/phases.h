@@ -197,7 +197,7 @@ typedef struct {
      *   bitlocker_pause  "Windows' drive protection is paused until
      *                    Windows starts again": shown, and she
      *                    pressed Install. Protectors on C: are suspended
-     *                    (-RebootCount 2) right before the restart is
+     *                    (-RebootCount 1) right before the restart is
      *                    armed; nothing is ever decrypted; an abort
      *                    resumes them.
      *

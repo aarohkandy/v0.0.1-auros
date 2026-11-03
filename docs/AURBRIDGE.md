@@ -1087,7 +1087,7 @@ journey passes with the fast build, base and BitLocker.
 | the engine's prepared mode: inspect, shrink, fetch pieces, stream them into the gap, read back, hash, hand off | `phases.c` (`fast_inspect`, `phase_prepare_gap`) |
 | the journal `image_on=gap` | `format.c` / `journal.c` |
 | staging's gap mode: verify, mirror the way back, commit, register, hand over -- never mounts C: | `install.c` (`install_gap`) |
-| BitLocker paused for two restarts (`manage-bde -protectors -disable -RebootCount 2`), resumed on every abort path | `ab_arm` / `ab_disarm` / `ab_abort` |
+| BitLocker paused until Windows next starts (`manage-bde -protectors -disable -RebootCount 1`: Windows counts only its own starts), resumed on every abort path | `ab_arm` / `ab_disarm` / `ab_abort` |
 | the Wi-Fi network she is on, carried as a 0600 NetworkManager keyfile; the ESP copy deleted | `write_wifi`, `rootfs/usr/lib/auros/wifi-across.sh` |
 | the SYSTEM startup task that grows C: back and restores hibernation, registered right after the shrink | `plat_putback_task` |
 | closing the installer undoes everything | `ab_abort` |

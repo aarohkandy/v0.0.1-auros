@@ -15,7 +15,7 @@
 #                      Windows is what it was, AurOS starts
 #    BitLocker-shaped  C: carries "-FVE-FS-". Without her agreement to
 #                      pause its lock the engine REFUSES, disk untouched;
-#                      with it, the pause is -RebootCount 2 (never a
+#                      with it, the pause is -RebootCount 1 (never a
 #                      decrypt), and staging installs WITHOUT ONE BYTE of
 #                      C: changing (hashed before and after) or mounting
 #    abort             C: is its original size again, byte for byte, and
@@ -356,9 +356,9 @@ new_machine fve fve
 if run_engine AURBRIDGE_BITLOCKER_PAUSE=1 && grep -q 'verdict=armed' "$S/out"; then
     ok "with it: armed, the fast way"
 else bad "with it: armed, the fast way" "$(cat "$S/out") $(tail -3 "$S/err")"; fi
-grep -q "manage-bde -protectors -disable C: -RebootCount 2" "$S/sim/ran.log" \
-    && ok "the lock is paused for TWO restarts, by the step firmware updaters use" \
-    || bad "the lock is paused for two restarts" "$(cat "$S/sim/ran.log" 2>/dev/null | tail -3)"
+grep -q "manage-bde -protectors -disable C: -RebootCount 1" "$S/sim/ran.log" \
+    && ok "the lock is paused until Windows next starts, by the step firmware updaters use" \
+    || bad "the lock is paused until Windows next starts" "$(cat "$S/sim/ran.log" 2>/dev/null | tail -3)"
 grep -qiE "decrypt|-off|-Disable-BitLocker|RebootCount 0" "$S/sim/ran.log" && bad "nothing is ever decrypted" "$(grep -iE 'decrypt|-off|RebootCount 0' "$S/sim/ran.log")" \
     || ok "...and nothing is ever decrypted, and never paused until further notice"
 [ "$(dd if="$S/disk.img" bs=1 skip=$((P2S*512+3)) count=8 status=none)" = '-FVE-FS-' ] \

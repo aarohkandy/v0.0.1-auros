@@ -122,7 +122,7 @@ Briefs for the streams whose briefs are not spelled out in STREAMS.md:
   planner + journal `image_on=gap`, engine prepared-mode phases (Windows online
   shrink during download → streamed gap write → verify), staging prepared mode
   (never mount the BitLocker NTFS), Wi-Fi keyfile handoff, BitLocker protector
-  suspend (`-RebootCount 2`), Put-Windows-back startup task (admin-only path),
+  suspend (`-RebootCount 1`), Put-Windows-back startup task (admin-only path),
   simulation + power-cut tests. Wire into the wizard only when all green, by
   defining `bring_wifi`, `bitlocker_pause`, `AB_CHOICE_BRING_WIFI`,
   `AB_CHOICE_BITLOCKER_PAUSE` in `src/aurbridge/phases.h` (the wizard switches on
