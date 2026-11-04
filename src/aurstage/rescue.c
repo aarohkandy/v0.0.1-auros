@@ -920,6 +920,7 @@ static int foreign_partition(const gpt_table *live, const uint8_t *cap_arr,
 static int fde_guard(int disk_fd, uint32_t sector,
                      const gpt_table *live, int live_ok,
                      const uint8_t *cap_arr, uint32_t n_ent, uint32_t ent_sz,
+                     const rescue_payload *pl,
                      char *why, size_t n)
 {
     uint8_t first[4096];
@@ -1002,6 +1003,36 @@ static int fde_guard(int disk_fd, uint32_t sector,
             return -1;
         }
         if (ntfs_is_bitlocker(first)) {
+            /* WHAT DESTROYS IT: its extent changing (or its entry going or
+             * coming), or a saved section being written over it ($Boot,
+             * which the grow loop then resizes from). A BitLocker volume is
+             * captured as nothing (rescue_capture), so one whose entry is
+             * the same in both tables and that no section touches is left
+             * byte for byte as it is -- Windows' own C: on a fast-path
+             * install, which Windows shrank itself and grows back itself
+             * (putback.ps1). Every other case is refused as before
+             * (release run 41772301361 refused that C:). */
+            uint64_t ll = 0, cl = 0;
+            int lh = 0, ch = 0, touched = 0;
+            if (live_ok)
+                for (uint32_t k = 0; k < live->n_entries; k++)
+                    if (gpt_used(&live->ent[k]) && live->ent[k].first == f) {
+                        lh = 1; ll = live->ent[k].last;
+                    }
+            for (uint32_t j = 0; j < n_ent; j++) {
+                const uint8_t *e = cap_arr + (uint64_t)j * ent_sz;
+                int used = 0;
+                for (int q = 0; q < 16; q++) if (e[q]) { used = 1; break; }
+                if (used && rd64(e + 32) == f) { ch = 1; cl = rd64(e + 40); }
+            }
+            if (lh && ch && ll == cl) {
+                for (uint32_t i = 0; i < pl->n_sections; i++) {
+                    uint64_t s0 = pl->sec[i].disk_lba;
+                    uint64_t s1 = s0 + (pl->sec[i].lba_count ? pl->sec[i].lba_count : 1) - 1;
+                    if (s0 <= ll && s1 >= f) { touched = 1; break; }
+                }
+                if (!touched) continue;
+            }
             snprintf(why, n,
                      "REFUSING: the part of this disk starting at block %llu "
                      "is BitLocker-encrypted, and putting the saved layout "
@@ -1288,7 +1319,7 @@ int rescue_restore(const char *disk_dev, const rescue_area *area,
         }
     }
 
-    if (fde_guard(disk_fd, sec, &live, live_ok, cap_arr, n_ent, ent_sz,
+    if (fde_guard(disk_fd, sec, &live, live_ok, cap_arr, n_ent, ent_sz, &p,
                   why, n) != 0) {
         free(cap_arr); free(cap_aarr); close(stick); close(disk_fd);
         return -1;

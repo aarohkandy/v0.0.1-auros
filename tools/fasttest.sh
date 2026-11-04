@@ -686,6 +686,20 @@ refuse "blocks inside Windows' own partition" "$(( P2S + 8 )),$HCOUNT,$HSHA" "no
 refuse "a record that cannot be read" "nonsense" "cannot be read"
 set -- $(mach_part "$MTMP/inst.img" AUROS-ROOT)
 refuse "blocks that end after AurOS's own space" "$(( $3 - HCOUNT / 2 )),$HCOUNT,$HSHA" "not inside AurOS's own space"
+# A drive that was NTFS when the way back was saved and is BitLocker now (Windows 11 turns
+# it on by itself): the restore would write its saved boot sector into it, so it refuses.
+# (A volume that was BitLocker at the install is saved as nothing and left alone: rescue.c
+# fde_guard, and the BitLocker put-back of the real-Windows e2e.)
+cp --sparse=always "$MTMP/inst.img" "$MTMP/fve-later.img"
+printf '\055FVE-FS\055' | dd of="$MTMP/fve-later.img" bs=1 seek=$((P2S*512+3)) conv=notrunc status=none
+FVE_SHA=$(whole_sha "$MTMP/fve-later.img")
+if restore_end "$MTMP/fve-later.img" "aurstage.handover=$REC"; then
+    grep -aq 'verdict=restore-failed' "$MTMP/out.txt" && grep -aq 'BitLocker-encrypted' "$MTMP/out.txt" \
+        && ok "Windows' drive turned BitLocker after the install: refused, saying so" \
+        || bad "Windows' drive turned BitLocker after the install: refused" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -3)"
+else bad "BitLocker after the install: the restore ends" "$(grep -a 'aurstage' "$MTMP/out.txt" | tail -3)"; fi
+[ "$(whole_sha "$MTMP/run.img")" = "$FVE_SHA" ] && ok "...and the disk is byte for byte untouched" || bad "...and the disk is byte for byte untouched"
+rm -f "$MTMP/fve-later.img"
 
 # (3) the power goes at each instant; what is left is whole, and the restore can be run again
 for pt in handover-checked restore-esp-mid restore-array restore-sector restore-backup; do
