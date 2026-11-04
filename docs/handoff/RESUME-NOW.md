@@ -1,5 +1,8 @@
 # RESUME NOW
 
+> **Newest (2026-11-04, evening): read `docs/handoff/SESSION-2026-11-04.md` first**: the plan to
+> finish everything, candidate `4e7957d5` mid-flight, five fix lanes on local `agent/*` branches.
+
 > **Newest (2026-11-04): read `docs/handoff/SESSION-2026-11-03.md` first** — what is proven on
 > real Windows, the candidate in flight and the exact steps to promote it, the decisions made,
 > and what is still open. The rest of this file describes 2026-10-23 and is history.
