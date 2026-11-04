@@ -2935,6 +2935,18 @@ class Flow:
                 last = e
                 time.sleep(20)
         else:
+            # What Windows' own put-back task did, kept before the failure is
+            # raised (release run 41780979384 ended with phase '' and nothing
+            # to say why).
+            self.guest(
+                "Get-ChildItem -Force C:\\ProgramData\\AurOS -Recurse -ErrorAction SilentlyContinue | "
+                "Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-String -Width 220; "
+                "'== putback.log'; Get-Content -Tail 120 C:\\ProgramData\\AurOS\\putback.log -ErrorAction SilentlyContinue; "
+                "'== savefiles.log'; Get-Content -Tail 60 C:\\ProgramData\\AurOS\\user\\savefiles.log -ErrorAction SilentlyContinue; "
+                "'== tasks'; Get-ScheduledTask | Where-Object TaskName -like '*AurOS*' | ForEach-Object { "
+                "$i = $_ | Get-ScheduledTaskInfo; '{0} | {1} | last {2} | result 0x{3:x} | {4}' -f $_.TaskName, $_.State, $i.LastRunTime, $i.LastTaskResult, "
+                "(($_.Actions | ForEach-Object { $_.Execute + ' ' + $_.Arguments }) -join ' ; ') }",
+                timeout=120)
             raise Failure(f"put-back did not reach verified completion in 30 minutes: {last}")
         first_path = os.path.join(self.a.out, "bitlocker-return-1.json")
         if not os.path.isfile(first_path):
