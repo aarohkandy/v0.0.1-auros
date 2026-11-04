@@ -30,6 +30,7 @@ extra=()
 v=$variant
 if [ "$variant" = nofixup ]; then extra=(--skip-fixup); v=ntfs; fi
 case $variant in xubuntu|ubuntucinnamon|ubuntu-budgie|powercut) v=ntfs ;; esac
+[ "$variant" = powercut ] && extra=(--hold-late)
 extra+=(--system "$here/../../src/othersys/systems/$system.json")
 python3 -I "$here/mkdisk.py" --iso "$ISO" --variant "$v" --out "$OS_DIR/work-$variant" \
     --test-hooks "$here/hooks" "${extra[@]}" > "$out/mkdisk.log" 2>&1 || { tail -40 "$out/mkdisk.log"; exit 1; }

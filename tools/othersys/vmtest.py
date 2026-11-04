@@ -21,8 +21,9 @@ none). Phases:
   afteryes      BootNext cleared: BootOrder alone now starts Ubuntu
   moknegative   a MOK request planted on a copy of the firmware: the
                 blue-screen check must FAIL here, proving it can see one
-  powercut      (alone) the plug pulled the moment the installer has put
-                Ubuntu first: the next start must be Windows
+  powercut      (alone) the plug pulled after the installer has put Ubuntu
+                first and before late-commands run: the next start must be
+                Windows
 
 Each phase records wall-clock time. Every check is recorded with what it
 was expected to do; "must fail" checks prove the check can fail.
@@ -365,12 +366,13 @@ def phase_boot(rec, work, plan, name, timeout=20 * 60):
 
 
 def phase_powercut(rec, work, plan, boot, layout, before):
-    """Pull the plug the moment the installer has put Ubuntu first (the
-    guard's log line says it has, and has put Windows back): the next
-    start must be Windows, with Windows untouched."""
+    """Pull the plug between the installer's firmware write and late: the
+    seed's first late-command (hooks hold, powercut variant only) waits
+    for the guard's log line, sends the log, says LATE-HELD and sleeps.
+    The next start must be Windows, with Windows untouched."""
     vm = VM(rec, work, 'powercut')
     exited, secs, marks = vm.run(timeout=60 * 60, every=30,
-                                 stop_on=('othersys: guard: Boot', 'OTHERSYS-TEST LATE-DONE',
+                                 stop_on=('OTHERSYS-TEST LATE-HELD', 'OTHERSYS-TEST LATE-DONE',
                                           'OTHERSYS-TEST INSTALL-ERROR'))
     vm.shot('cut')
     vm.proc.kill()          # SIGKILL: no shutdown, no flush in the guest
@@ -380,7 +382,9 @@ def phase_powercut(rec, work, plan, boot, layout, before):
     rec.check('powercut', 'the installer put Ubuntu first and the guard put Windows back',
               checks.check_marker(t, 'othersys: guard: Boot'))
     rec.check('powercut', 'the cut came before the install finished',
-              [] if 'OTHERSYS-TEST LATE-DONE' not in t else ['the install had already finished'])
+              ([] if 'OTHERSYS-TEST LATE-HELD' in t else ['late was never held']) +
+              (['the install had already finished'] if 'OTHERSYS-TEST LATE-DONE' in t else []) +
+              (['late had already run'] if 'othersys: late:' in t else []))
     v = vars_live(os.path.join(work, 'vars.fd'))
     rec.log('[powercut] firmware at the cut: BootOrder %s BootNext %s' % (','.join(checks.order(v)), checks.bootnext(v)))
     rec.check('powercut', 'at the cut: BootOrder starts Windows first',

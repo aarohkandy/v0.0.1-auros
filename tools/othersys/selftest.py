@@ -341,6 +341,69 @@ def test_plan(d, layout):
     expect('plan: the good layout is still accepted', [] if r.returncode == 0 else [r.stderr], False)
 
 
+def late_commands(d):
+    return json.loads(open(os.path.join(d, 'seed/user-data')).read().split('\n', 1)[1])['autoinstall']['late-commands']
+
+
+def test_powercut(d, layout):
+    """The power-cut variant stops before late-commands, on a serial marker
+    sent after the guard's log line (not on a timer)."""
+    hooks = os.path.join(HERE, 'hooks')
+    for extra, want in (((), False), (('--test-hooks', hooks), False),
+                        (('--test-hooks', hooks, '--test-hold-late'), True)):
+        run_plan(d, layout, extra)
+        late = late_commands(d)
+        held = bool(late) and late[0].endswith('hooks hold') and late[1].endswith('othersys.py late')
+        expect('plan %s: late-commands %s' % (' '.join(extra) or 'no test switches',
+                                              'hold first, then late' if want else 'run late at once'),
+               [] if held == want else [str(late)], False)
+    script = open(os.path.join(hooks, 'hooks')).read()
+    log, tty = os.path.join(d, 'othersys.log'), os.path.join(d, 'ttyS0')
+    script = (script.replace('/run/othersys/log', log).replace('/dev/ttyS0', tty)
+              .replace('sleep 3600', 'true').replace('-ge 30', '-ge 1'))
+    open(os.path.join(d, 'hooks.sh'), 'w').write(script)
+    for what, text, ok in (('after the guard acted', 'x\n2026 othersys: guard: Boot0004 was put ahead\n', True),
+                           ('before the guard acted', 'x\n', False)):
+        open(log, 'w').write(text)
+        open(tty, 'w').close()
+        sh('sh', os.path.join(d, 'hooks.sh'), 'hold')
+        out = open(tty).read()
+        got = out.find('othersys: guard: Boot') >= 0 and out.find('OTHERSYS-TEST LATE-HELD') > out.find('guard: Boot')
+        expect('hold hook: marker follows the guard\'s log line (%s)' % what,
+               [] if got == ok and 'OTHERSYS-TEST LATE-HELD' in out else [repr(out)], False)
+
+
+def check_boot_next_last(m, fv, plan, machine_after_curtin):
+    # BootNext is armed after the helper is in the new system: until then a
+    # power cut anywhere in late must still start Windows
+    seen = []
+
+    def helper_ok(plan_, target, st):
+        seen.append(fv.get('BootNext'))
+
+    def helper_dies(plan_, target, st):
+        seen.append(fv.get('BootNext'))
+        raise RuntimeError('power cut')
+
+    real_helper = m.install_helper
+    for name, helper, test, armed in (('the helper installs', helper_ok, {}, True),
+                                      ('the helper is cut off', helper_dies, {}, False),
+                                      ('TEST skip_fixup', helper_ok, {'skip_fixup': True}, False)):
+        machine_after_curtin()
+        del seen[:]
+        m.install_helper = helper
+        try:
+            m.cmd_late(dict(plan, test=test))
+        except RuntimeError:
+            pass
+        finally:
+            m.install_helper = real_helper
+        expect('late, %s: BootNext was not armed while the helper was going in' % name,
+               [] if seen == [None] else [repr(seen)], False)
+        expect('late, %s: BootNext %s afterwards' % (name, 'is Ubuntu' if armed else 'stays unarmed'),
+               [] if fv.get('BootNext') == (b'\x04\x00' if armed else None) else [repr(fv.get('BootNext'))], False)
+
+
 # ----------------------------------------------------------- othersys.py
 
 class FakeEfivars:
@@ -399,7 +462,8 @@ def test_helper(d):
     expect('late: nothing but the restart entry left BootOrder',
            [] if set(o) == {'0002', '0000', '0001', '0004', '0005'} else ['order %s' % o], False)
     expect('late: the restart entry is deleted', [] if fv.get('Boot0003') is None else ['still there'], False)
-    expect('late: BootNext = Ubuntu', [] if fv.get('BootNext') == b'\x04\x00' else [repr(fv.get('BootNext'))], False)
+    expect('late: the fix-up alone arms no BootNext (that is the last thing late does)',
+           [] if fv.get('BootNext') is None else [repr(fv.get('BootNext'))], False)
     expect('late: Ubuntu right after what Windows recorded', [] if o[:4] == ['0002', '0000', '0001', '0004'] else [str(o)], False)
     # sabotage: the test switch that skips the fix-up leaves Ubuntu first, and the order check sees it
     machine_after_curtin()
@@ -410,6 +474,7 @@ def test_helper(d):
     fv.put('Boot0003', hd_option('Some vendor tool', '\\EFI\\vendor\\tool.efi', win_esp, 1))
     m.firmware_fixup(plan, {})
     expect('late: a foreign Boot0003 is left alone', [] if fv.get('Boot0003') else ['deleted'], False)
+    check_boot_next_last(m, fv, plan, machine_after_curtin)
     # MOK
     fv.put('MokNew', b'x' * 40, m.SHIM)
     fv.put('MokAuth', b'y' * 32, m.SHIM)
@@ -427,6 +492,7 @@ def test_helper(d):
     expect('guard: no BootNext armed (a power cut now starts Windows)', [] if fv.get('BootNext') is None else ['armed'], False)
     expect('guard: Windows already first: no write', [] if m.windows_first_again(plan, 'guard') is None else ['wrote'], False)
     m.firmware_fixup(plan, {})
+    m.set_boot_next(4)
     o = fv.order()
     expect('guard then late: Windows first, BootNext Ubuntu, restart entry gone',
            [] if o[0] == '0002' and fv.get('BootNext') == b'\x04\x00' and fv.get('Boot0003') is None else [str(o)], False)
@@ -436,7 +502,7 @@ def test_helper(d):
            [] if fv.order()[0] == '0004' else [str(fv.order())], False)
     # the error handler: after curtin's write, and after late armed BootNext
     for when, prep in (('after the installer\'s firmware write', lambda: None),
-                       ('after late armed BootNext', lambda: m.firmware_fixup(plan, {}))):
+                       ('after late armed BootNext', lambda: (m.firmware_fixup(plan, {}), m.set_boot_next(4)))):
         machine_after_curtin()
         prep()
         m.cmd_error(dict(plan, system='ubuntu-26.04.1-desktop'))
@@ -598,6 +664,7 @@ def main():
     try:
         disk, layout = test_checks(d)
         test_plan(d, layout)
+        test_powercut(d, layout)
         test_helper(d)
         test_verify(d)
     finally:

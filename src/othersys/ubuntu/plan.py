@@ -205,6 +205,8 @@ def main():
     ap.add_argument('--out', required=True)
     ap.add_argument('--password-out')
     ap.add_argument('--test-hooks', help='TEST ONLY: a directory of hooks for the VM test')
+    ap.add_argument('--test-hold-late', action='store_true',
+                    help='TEST ONLY (with --test-hooks): stop before late-commands for the power-cut test')
     ap.add_argument('--test-skip-fixup', action='store_true',
                     help='TEST ONLY: leave the firmware as Ubuntu\'s installer leaves it')
     a = ap.parse_args()
@@ -287,6 +289,8 @@ def main():
         early.insert(0, 'systemd-run --unit=othersys-serial -p StandardOutput=file:/dev/ttyS0 '
                         'journalctl -f -o short-monotonic --no-pager || true')
         late.append('/bin/sh /run/othersys/lib/test/hooks late /target')
+        if a.test_hold_late:
+            late.insert(0, '/bin/sh /run/othersys/lib/test/hooks hold')
         errors.append('/bin/sh /run/othersys/lib/test/hooks error || true')
 
     ai = {
