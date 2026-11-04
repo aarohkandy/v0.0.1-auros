@@ -22,7 +22,7 @@
 7. actions/checkout comes before any download-artifact in a job: checkout
    cleans untracked files, so after a download it deletes what was
    downloaded (RC3's publish, run 40026374421: dist/installer was gone).
-8. A job that calls e2e.yml (release.yml's e2e, e2e-fastpath) journeys EVERY
+8. A job that calls e2e.yml (release.yml's e2e) journeys EVERY
    prerelease on real Windows: it must not wait for [latest] or promote.
 10. The update-signing key comes LAST. It is named by one step at most, not
    in the job's own `env`; that step has at least three steps before it and

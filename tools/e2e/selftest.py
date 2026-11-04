@@ -106,9 +106,11 @@ def test_wizard_contract():
     check(checked == shipped,
           f"wizard: generic E2E checks the shipped default look/theme {shipped} (got {checked})")
     release = open(os.path.join(HERE, "..", "..", ".github", "workflows", "release.yml")).read()
-    fastpath = release.split("\n  e2e-fastpath:\n", 1)[-1].split("\n  # THE SOURCE CODE", 1)[0]
-    check("variants: base,bitlocker" in fastpath,
-          "release: fast-path runs both the base and BitLocker journeys")
+    ordinary = release.split("\n  e2e:\n", 1)[-1].split("\n  # THE SOURCE CODE", 1)[0]
+    check("variants: base,bitlocker" in ordinary,
+          "release: the e2e job runs both the base and BitLocker journeys")
+    check("e2e-fastpath" not in release and "AurOS-Setup-fastpath" not in release,
+          "release: the retired fast-path twin lane and asset are gone")
 
 
 def test_stops():
@@ -159,19 +161,19 @@ def test_bitlocker_pause_confirmation():
     fastpath_url = f"https://github.com/{repo}/releases/download/v0.1.0-test/AurOS-Setup-fastpath.exe"
     check(e2e.bitlocker_pause_lane_error(
               "bitlocker", True, "AurOS-Setup-fastpath.exe", sha,
-              fastpath_url, repo, False) is None,
-          "pause warning: only the SHA-pinned fastpath BitLocker lane may drive it")
+              fastpath_url, repo, True, source_sha) is not None,
+          "pause warning: the retired AurOS-Setup-fastpath.exe asset may not drive it")
     check(e2e.bitlocker_pause_lane_error(
               "bitlocker", True, "AurOS-Setup.exe", sha,
               generic_url, repo, True, source_sha) is None,
           "pause warning: the exact generic installer is allowed when source defaults fastpath on")
     for variant, putback, name, digest, url, default_fast, built_sha, why in (
-            ("base", True, "AurOS-Setup-fastpath.exe", sha, fastpath_url, False, "", "base variant"),
+            ("base", True, "AurOS-Setup.exe", sha, generic_url, True, source_sha, "base variant"),
             ("bitlocker", True, "AurOS-Setup.exe", sha, generic_url, False, source_sha, "generic installer with old source default"),
             ("bitlocker", True, "AurOS-Setup-other.exe", sha,
              f"https://github.com/{repo}/releases/download/v0.1.0-test/AurOS-Setup-other.exe", False, "", "arbitrary installer"),
-            ("bitlocker", True, "AurOS-Setup-fastpath.exe", "", fastpath_url, False, "", "missing hash"),
-            ("bitlocker", True, "AurOS-Setup-fastpath.exe", "A" * 64, fastpath_url, False, "", "noncanonical hash"),
+            ("bitlocker", True, "AurOS-Setup.exe", "", generic_url, True, source_sha, "missing hash"),
+            ("bitlocker", True, "AurOS-Setup.exe", "A" * 64, generic_url, True, source_sha, "noncanonical hash"),
             ("bitlocker", True, "AurOS-Setup.exe", sha,
              "https://github.com/elsewhere/project/releases/download/v1/AurOS-Setup.exe", True, source_sha, "external repository"),
             ("bitlocker", True, "AurOS-Setup.exe", sha, generic_url + "?changed=1", True, source_sha, "release URL query"),
@@ -267,7 +269,7 @@ def test_bitlocker_pause_confirmation():
                        "key": "Enter", "rect": [600, 600, 200, 50]}
     flow = object.__new__(e2e.Flow)
     flow.m = FakeMachine()
-    flow.wizard_win = lambda: {"proc": "AurOS-Setup-fastpath", "rect": [0, 0, 1000, 700]}
+    flow.wizard_win = lambda: {"proc": "AurOS-Setup", "rect": [0, 0, 1000, 700]}
     flow.wizard_named = lambda win: [restart_control]
     flow.bitlocker_state = lambda why: ("FullyEncrypted", "On", 100.0)
     flow.prove_pause_not_armed(0)
@@ -382,11 +384,10 @@ def test_bitlocker_putback_contract():
     workflow = open(os.path.join(HERE, "..", "..", ".github", "workflows", "e2e.yml")).read()
     release = open(os.path.join(HERE, "..", "..", ".github", "workflows", "release.yml")).read()
     build_workflow = open(os.path.join(HERE, "..", "..", ".github", "workflows", "build.yml")).read()
-    fastpath = release.split("\n  e2e-fastpath:\n", 1)[-1].split("\n  # THE SOURCE CODE", 1)[0]
-    ordinary = release.split("\n  e2e:\n", 1)[-1].split("\n  # An optional nonidentical", 1)[0]
-    check("bitlocker_putback: true" in fastpath and "bitlocker_putback: true" in ordinary,
-          "put-back: both exact release lanes enable the destructive leg after default promotion")
-    check("name in {'AurOS-Setup-fastpath.exe', 'AurOS-Setup.exe'}" in workflow and
+    ordinary = release.split("\n  e2e:\n", 1)[-1].split("\n  # THE SOURCE CODE", 1)[0]
+    check("bitlocker_putback: true" in ordinary,
+          "put-back: the release's e2e lane enables the destructive leg after default promotion")
+    check("assert name == 'AurOS-Setup.exe'" in workflow and "AurOS-Setup-fastpath" not in workflow and
           "re.findall(pattern, source, re.MULTILINE) == ['1']" in workflow and
           "tag.endswith('-' + sha[:7])" in workflow and
           "['git', 'show', sha + ':build/aurbridge']" in workflow and
@@ -395,11 +396,8 @@ def test_bitlocker_putback_contract():
     check("installer_source_sha: ${{ needs.which.outputs.built_sha }}" in ordinary and
           "needs: [which, publish]" in ordinary,
           "put-back: the ordinary release lane passes the exact build-run source commit")
-    check("Fast path is the default" in build_workflow and
-          'grep -Fq \'if [ "${AUROS_FASTPATH:-1}" = 1 ]; then\'' in build_workflow and
-          "duplicate asset not published" in build_workflow and
-          "AUROS_FASTPATH not wired" not in build_workflow,
-          "put-back: an identical explicit build is recorded as the default, never as unwired")
+    check("AurOS-Setup-fastpath" not in build_workflow and "fastpath_sha256" not in build_workflow,
+          "put-back: build.yml no longer rebuilds a twin installer")
     check("UNSAFE-DISK-ATTACHED.txt" in workflow,
           "put-back: failure diagnostics never reopen an overlay whose detach was unproven")
     flow_source = open(os.path.join(HERE, "e2e.py")).read().split("def cmd_flow(a):", 1)[-1]
@@ -1510,16 +1508,13 @@ exit 0
 
 def test_publish():
     want = {"ok": "e2e-222 e2e-evidence-base.zip", "sha403": "e2e-222 e2e-evidence-base.zip",
-            "all403": "e2e-111 r222-e2e-evidence-base.zip", "none": None,
-            # one run id, two installers: the second's files must not overwrite the first's
-            "label": "e2e-222 e2e-evidence-base-fastpath.zip"}
+            "all403": "e2e-111 r222-e2e-evidence-base.zip", "none": None}
     for mode, upload in want.items():
         with tempfile.TemporaryDirectory() as t:
             os.makedirs(f"{t}/bin"); os.makedirs(f"{t}/out/flow/shots")
             open(f"{t}/bin/gh", "w").write(FAKE_GH); os.chmod(f"{t}/bin/gh", 0o755)
             open(f"{t}/out/flow/timings.md", "w").write("# t\n\n| a | 1 |\n")
-            env = dict(os.environ, T=t, MODE="ok" if mode == "label" else mode,
-                       E2E_LABEL="-fastpath" if mode == "label" else "", PATH=f"{t}/bin:" + os.environ["PATH"], GH_TOKEN="x",
+            env = dict(os.environ, T=t, MODE=mode, PATH=f"{t}/bin:" + os.environ["PATH"], GH_TOKEN="x",
                        GH_REPO="o/r", GITHUB_RUN_ID="222", GITHUB_SHA="abc", E2E_VARIANT="base",
                        E2E_PUBLISH_STATE=f"{t}/state", GITHUB_STEP_SUMMARY=f"{t}/summary")
             pub = os.path.join(HERE, "publish.sh")
@@ -1531,7 +1526,7 @@ def test_publish():
             else:
                 check(ups == "", f"publish ({mode}): nothing is uploaded")
             warned = "::warning::" in a.stdout + a.stderr
-            quiet = mode in ("ok", "label")
+            quiet = mode == "ok"
             check(warned == (not quiet), f"publish ({mode}): {'no warning' if quiet else 'warns'}")
             check(a.returncode == 0 and b.returncode == 0, f"publish ({mode}): never fails the job")
 

@@ -1071,8 +1071,7 @@ online shrink of C:, AurOS's two partitions written raw into the room it
 frees as the pieces inflate, and after the restart only a check, the GPT
 commit and the handover to AurOS -- about a minute -- with BitLocker PCs
 installed without decryption. **It is built and sits behind
-`AUROS_FASTPATH=1`** (`build/aurbridge`; or `[fastpath]` in a commit subject
-for `build.yml`; `fastpath.yml` uploads the installer as artifact `exe-fast`).
+`AUROS_FASTPATH=1`** (`build/aurbridge`; `fastpath.yml` uploads the installer as artifact `exe-fast`).
 The default build is the legacy staging-shrink path and is unchanged. The
 `AB_CHOICE_*` macros in `phases.h` are defined only under that switch; flip
 them (and the site's wording, one constant) only when the real-Windows e2e

@@ -501,14 +501,12 @@ def bitlocker_pause_lane_error(variant, putback, installer_name, installer_sha25
     exact = release_installer(installer_url, repository)
     if exact is None or exact[1] != installer_name:
         return "BitLocker put-back requires this repository's exact release URL"
-    if installer_name == "AurOS-Setup-fastpath.exe":
-        return None
     if installer_name == "AurOS-Setup.exe" and default_fastpath:
         if (not re.fullmatch(r"[0-9a-f]{40}", installer_source_sha or "") or
                 not exact[0].endswith("-" + installer_source_sha[:7])):
             return "BitLocker put-back requires a release tag bound to its exact source commit"
         return None
-    return ("BitLocker put-back requires AurOS-Setup-fastpath.exe, or AurOS-Setup.exe "
+    return ("BitLocker put-back requires AurOS-Setup.exe "
             "from source whose canonical default enables the fast path")
 
 

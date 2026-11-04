@@ -42,10 +42,6 @@
 #             program from the store, on a real Windows 11 VM. Hours.
 #   site      the website as it will be deployed, checked the way she
 #             meets it (tools/site/check.mjs, as pages.yml does).
-#   e2e-fastpath  the same, for an optional nonidentical
-#             AurOS-Setup-fastpath.exe. Once fast path is the default, the
-#             duplicate asset is omitted and the ordinary gated e2e owns
-#             the BitLocker return and put-back proof.
 #   sources   the release's source code, as the release `sources-<tag>`
 #             (sources.yml, stream LEGAL), made and verified in this run.
 #   promote   [latest] only, and only after windows, e2e, site and sources passed
@@ -218,7 +214,6 @@ jobs:
     outputs:
       tag: ${{ steps.files.outputs.tag }}
       setup_sha256: ${{ steps.files.outputs.setup_sha256 }}
-      fastpath_sha256: ${{ steps.files.outputs.fastpath_sha256 }}
       image_sha256: ${{ steps.files.outputs.image_sha256 }}
       image_bytes: ${{ steps.files.outputs.image_bytes }}
       signed: ${{ steps.files.outputs.signed }}
@@ -286,27 +281,19 @@ jobs:
           mkdir -p rel
           cp dist/installer/AurOS-Setup.exe dist/pieces/pieces.txt dist/pieces/auros-desktop.img.gz.* rel/
           if [ "$SIGNED" = true ]; then cp rel-signing-provenance.txt rel/AurOS-Setup-signing-provenance.txt; fi
-          # The fast-path installer, if this build made one (build.yml):
-          # beside the normal one, never instead of it, never what the
-          # website links to.
-          fastpath=""
-          if [ -f dist/installer/AurOS-Setup-fastpath.exe ]; then
-            cp dist/installer/AurOS-Setup-fastpath.exe rel/
-            fastpath=$(sha256sum rel/AurOS-Setup-fastpath.exe | cut -d' ' -f1)
-          fi
           # What the whole image hashes to and its size, for whoever
           # checks a download of it (windows.yml's windows-download).
           cp dist/pieces/image.sha256 dist/pieces/image.bytes rel/
           # The pieces are the ones the list names, before anything is published.
           ( cd rel && grep '^piece ' pieces.txt | awk '{print $4"  "$2}' | sha256sum -c --quiet )
-          ( cd rel && sha256sum AurOS-Setup.exe $( [ -f AurOS-Setup-fastpath.exe ] && echo AurOS-Setup-fastpath.exe ) \
+          ( cd rel && sha256sum AurOS-Setup.exe \
               $( [ -f AurOS-Setup-signing-provenance.txt ] && echo AurOS-Setup-signing-provenance.txt ) \
               pieces.txt auros-desktop.img.gz.* > SHA256SUMS )
           img=$(cat dist/pieces/image.sha256); bytes=$(cat dist/pieces/image.bytes)
           setup=$(sha256sum rel/AurOS-Setup.exe | cut -d' ' -f1)
           dl=$(du -cb rel/auros-desktop.img.gz.* | tail -1 | cut -f1)
           n=$(ls rel/auros-desktop.img.gz.* | wc -l)
-          { echo "tag=$TAG"; echo "signed=$SIGNED"; echo "setup_sha256=$setup"; echo "fastpath_sha256=$fastpath"; echo "image_sha256=$img"; echo "image_bytes=$bytes"; } >> "$GITHUB_OUTPUT"
+          { echo "tag=$TAG"; echo "signed=$SIGNED"; echo "setup_sha256=$setup"; echo "image_sha256=$img"; echo "image_bytes=$bytes"; } >> "$GITHUB_OUTPUT"
           run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RID"
           if [ "$SIGNED" = true ]; then
             site="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}"
@@ -325,7 +312,6 @@ jobs:
             echo "|---|---|"
             echo "| Installer | \`AurOS-Setup.exe\`, $(stat -c %s rel/AurOS-Setup.exe) bytes, SHA-256 \`$setup\` |"
             [ "$SIGNED" != true ] || echo "| Signing provenance | \`AurOS-Setup-signing-provenance.txt\`: source commit and hashes of the original wizard, signed wizard, rebuilt outer and signed outer |"
-            [ -z "$fastpath" ] || echo "| Fast-path installer | \`AurOS-Setup-fastpath.exe\`, SHA-256 \`$fastpath\`: the same release built with the fast path (\`AUROS_FASTPATH=1\`). For testing; the website does not link to it, and it is not signed. |"
             echo "| Image | $bytes bytes, SHA-256 \`$img\` |"
             echo "| Download | $dl bytes of gzip in $n pieces of 90 MiB (\`pieces.txt\`); the installer fetches, checks and resumes them |"
             echo
@@ -362,7 +348,6 @@ jobs:
             echo "release $TAG already exists with this build's AurOS-Setup.exe"
             # Releases from before these two were assets get them now.
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber rel/image.sha256 rel/image.bytes \
-                $( [ -n "$fastpath" ] && echo rel/AurOS-Setup-fastpath.exe ) \
                 $( [ -f rel/AurOS-Setup-signing-provenance.txt ] && echo rel/AurOS-Setup-signing-provenance.txt )
           else
             # WHERE THE TAG GOES. The workflow token may create a tag only
@@ -384,7 +369,7 @@ jobs:
             echo "event=$GITHUB_EVENT_NAME run_sha=$GITHUB_SHA built_commit=$COMMIT tag_target=$def"
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$def" --prerelease \
                 --title "AurOS $TAG" --notes-file notes.md \
-                rel/AurOS-Setup.exe $( [ -n "$fastpath" ] && echo rel/AurOS-Setup-fastpath.exe ) \
+                rel/AurOS-Setup.exe \
                 $( [ -f rel/AurOS-Setup-signing-provenance.txt ] && echo rel/AurOS-Setup-signing-provenance.txt ) \
                 rel/pieces.txt rel/SHA256SUMS rel/image.sha256 rel/image.bytes \
                 rel/auros-desktop.img.gz.*
@@ -395,7 +380,6 @@ jobs:
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
           mkdir -p back && cd back
           for f in AurOS-Setup.exe \
-              $( [ -f ../rel/AurOS-Setup-fastpath.exe ] && echo AurOS-Setup-fastpath.exe ) \
               $( [ -f ../rel/AurOS-Setup-signing-provenance.txt ] && echo AurOS-Setup-signing-provenance.txt ) \
               pieces.txt SHA256SUMS image.sha256 image.bytes; do
             curl -fsSL --retry 5 -o "$f" "$base/$f"
@@ -437,7 +421,6 @@ jobs:
       TAG: ${{ needs.publish.outputs.tag }}
       SETUP_SHA256: ${{ needs.publish.outputs.setup_sha256 }}
       SIGNED: ${{ needs.publish.outputs.signed }}
-      FASTPATH_SHA256: ${{ needs.publish.outputs.fastpath_sha256 }}
       IMAGE_SHA256: ${{ needs.publish.outputs.image_sha256 }}
       IMAGE_BYTES: ${{ needs.publish.outputs.image_bytes }}
     steps:
@@ -472,23 +455,6 @@ jobs:
           if ($p.HasExited) { throw "the wizard exited on its own, code $($p.ExitCode)" }
           $p.Kill()
           "the published installer was running after 8 seconds"
-      - name: the fast-path installer, if published, is the one built and starts
-        if: ${{ needs.publish.outputs.fastpath_sha256 != '' }}
-        shell: pwsh
-        run: |
-          $base = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:TAG"
-          Invoke-WebRequest -Uri "$base/AurOS-Setup-fastpath.exe" -OutFile AurOS-Setup-fastpath.exe
-          $h = (Get-FileHash AurOS-Setup-fastpath.exe -Algorithm SHA256).Hash.ToLower()
-          "SHA-256 $h"
-          if ($h -ne $env:FASTPATH_SHA256) { throw "the release's AurOS-Setup-fastpath.exe is not the one built" }
-          $exe = (Resolve-Path .\AurOS-Setup-fastpath.exe).Path
-          $d = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\pubfp"
-          $p = Start-Process -FilePath $exe -ArgumentList '--navtest', $d.FullName -Wait -PassThru
-          Get-Content "$d\navtest.log"
-          if ($p.ExitCode -ne 0) { throw "--navtest exited $($p.ExitCode)" }
-          if (Select-String -Path "$d\navtest.log" -Pattern '\[FAIL\]' -Quiet) { throw "navtest has FAIL lines" }
-          if (-not (Select-String -Path "$d\navtest.log" -Pattern '\[PASS\]' -Quiet)) { throw "navtest passed nothing" }
-          "the fast-path installer passed its navigation test"
       - name: WinHTTP fetches the image from the release, through the redirect
         shell: pwsh
         run: |
@@ -516,23 +482,6 @@ jobs:
       variants: base,bitlocker
       # AurOS-Setup.exe defaults to the fast path. Its exact BitLocker lane
       # must prove the Windows return and Put Windows back before promotion.
-      bitlocker_putback: true
-
-  # An optional nonidentical fast-path installer through the same journey.
-  # It is normally absent now that AurOS-Setup.exe defaults to the fast path.
-  # Keep this diagnostic lane for an explicitly different auxiliary build.
-  e2e-fastpath:
-    needs: [which, publish]
-    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.publish.outputs.fastpath_sha256 != '' }}
-    uses: ./.github/workflows/e2e.yml
-    permissions:
-      contents: write
-      actions: read
-    with:
-      installer_url: https://github.com/${{ github.repository }}/releases/download/${{ needs.publish.outputs.tag }}/AurOS-Setup-fastpath.exe
-      installer_sha256: ${{ needs.publish.outputs.fastpath_sha256 }}
-      installer_source_sha: ${{ needs.which.outputs.built_sha }}
-      variants: base,bitlocker
       bitlocker_putback: true
 
   # THE SOURCE CODE of what was just published, as its sibling release

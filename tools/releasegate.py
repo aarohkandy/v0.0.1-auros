@@ -43,8 +43,7 @@ The rules (docs/safety/FINDINGS.md S-11 is why the power-cut ones are here):
      release.yml as job `e2e`) of the release's own AurOS-Setup.exe passed in
      the variants base AND bitlocker (D13): JOBS are the run's "name|conclusion"
      lines; `e2e / e2e (base)` and `e2e / e2e (bitlocker)` must both be
-     success, and no other `e2e / e2e (...)` job may have failed. The fast
-     path's jobs (`e2e-fastpath / ...`) never count for this.
+     success, and no other `e2e / e2e (...)` job may have failed.
 
 ALLOW lines:  job name | expires YYYY-MM-DD (UTC, inclusive) | why
 e.g.          powercut / e2e (powercut-nostick-early)|2026-10-30|S-03: ...
@@ -176,14 +175,13 @@ def selftest():
         got = bool(judge_e2e("\n".join(jobs)))
         print("    %-62s %s" % (what, "ok" if got == want_refused else "FAIL"))
         bad += got != want_refused
-    ok2 = ["e2e / gate|success", "e2e / e2e (base)|success", "e2e / e2e (bitlocker)|success", "e2e-fastpath / e2e (base)|success"]
+    ok2 = ["e2e / gate|success", "e2e / e2e (base)|success", "e2e / e2e (bitlocker)|success"]
     ec("base and bitlocker both green pass", ok2, False)
     ec("base only is refused", [j for j in ok2 if "bitlocker" not in j], True)
-    ec("bitlocker only is refused", [j for j in ok2 if "(base)|success" not in j or "fastpath" in j], True)
+    ec("bitlocker only is refused", [j for j in ok2 if "(base)|success" not in j], True)
     ec("bitlocker red is refused", [j.replace("bitlocker)|success", "bitlocker)|failure") for j in ok2], True)
     ec("bitlocker skipped is refused", [j.replace("bitlocker)|success", "bitlocker)|skipped") for j in ok2], True)
     ec("base cancelled is refused", [j.replace("e2e / e2e (base)|success", "e2e / e2e (base)|cancelled") for j in ok2], True)
-    ec("the fast path's two green jobs do not stand in", ["e2e-fastpath / e2e (base)|success", "e2e-fastpath / e2e (bitlocker)|success"], True)
     ec("a third variant failing is refused", ok2 + ["e2e / e2e (hdd)|failure"], True)
     ec("no e2e jobs at all is refused", [], True)
     t = "harden of build run 900"
