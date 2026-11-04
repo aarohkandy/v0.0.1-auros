@@ -50,6 +50,12 @@ $PS1 = Join-Path $work 'putback.ps1'
 if ($Script) { Copy-Item $Script $PS1 }
 else { & $Exe putback-script $PS1 }
 if (-not (Test-Path $PS1)) { throw 'no put-back script to test' }
+# Release run 41791299949: she was signed in before the SYSTEM task registered the one that
+# saves her files, its logon trigger never fired, and C: stayed small for twelve hours.
+$src = Get-Content -Raw -LiteralPath $PS1
+$reg = $src.IndexOf("Register-ScheduledTask -TaskName 'AurOS put-back (your files)'")
+$run = $src.IndexOf("Start-ScheduledTask -TaskName 'AurOS put-back (your files)'")
+Ok "the task that saves her files is started at once, not only at her next sign-in" ($reg -ge 0 -and $run -gt $reg)
 
 # ---- the fixture: what AurOS would have put in the handover volume ------------------------------
 $rng = [System.Random]::new(4242)

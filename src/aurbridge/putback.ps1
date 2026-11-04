@@ -405,6 +405,14 @@ try {
                 Register-ScheduledTask -TaskName 'AurOS put-back (your files)' -Action $a -Trigger $t -Principal $pr -Force `
                     -Description 'Saves the files you kept in AurOS in your Windows folders.' | Out-Null
                 Log "the task that saves her files is registered for $account"
+                # She may be signed in already (Windows signs in by itself, or she was quicker
+                # than this task): then the logon trigger never fires and her files wait for her
+                # next sign-in (release run 41791299949). Start it now; with nobody signed in
+                # an interactive task does not run, and the trigger is still there.
+                try {
+                    Start-ScheduledTask -TaskName 'AurOS put-back (your files)'
+                    Log 'the task that saves her files was started (for a session already signed in)'
+                } catch { Log ('the task that saves her files could not be started now: ' + $_.Exception.Message) }
             }
             $until = (Get-Date).AddHours(12)
             while (-not (All-Saved $m.Rows $prof)) {
