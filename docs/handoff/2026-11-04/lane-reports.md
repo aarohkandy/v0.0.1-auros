@@ -1,7 +1,7 @@
 # Lane reports, verbatim from the workflow journal (2026-11-04)
 
-Each entry is one agent's structured report: implementers (impl:*), adversarial reviewers (attack:*), fixers (fix:*).
-Regenerate while the workflow still runs: see SESSION-2026-11-04.md.
+Each entry is one agent's structured report: implementers (impl:*), adversarial reviewers (attack:*).
+The workflow was stopped at the handover; this is everything it produced.
 
 ## impl:othersys-cinnamon
 
@@ -147,6 +147,33 @@ Regenerate while the workflow still runs: see SESSION-2026-11-04.md.
       "file": ".github/workflows/build.yml",
       "what": "The build.yml check that build/aurbridge defaults to the fast path is gone, so the default is no longer checked on every build. Coverage is still real but sits in cheaper places, and the agent said this itself.",
       "evidence": "The default is still checked in e2e.yml:165 (put-back runs only), tools/e2e/e2e.py:468 (source_default_fastpath), tools/customize/test_base_build.py:441-445 (a unit test of the same grep) and tools/site/check.mjs:920 (DEFAULT_FAST against the site's data-build attribute). Only the build.yml copy was dropped, and it ran only when the twin matched, which in practice never happened."
+    }
+  ]
+}
+```
+
+## attack:othersys-cinnamon:1
+
+```json
+{
+  "verdict": "sound",
+  "issues": [
+    {
+      "severity": "minor",
+      "what": "The firstboot hang at switch-root is not fixed. The firstboot checks (SESSION-UP, ISO gone, root grown, BootNext) will only flip if the hang does not recur. The agent says this plainly. My check: two earlier runs passed Cinnamon firstboot in about 55 s with every check yes (41538432102, 41538963268). Both ran the same src/othersys code as the failing run 41539330303, because the only diff between those commits is 5 lines in .github/workflows. So the hang is not tied to the helper code, but nothing here shows whether it is a flake or a Cinnamon-specific first-start problem.",
+      "evidence": "git diff --stat 00797e0e 6ae5e01 -- src/othersys tools/othersys .github shows only .github/workflows changes. Results of 41538432102 and 41538963268 show 'firstboot power on to the desktop session' at 54.4 s and 55.4 s. Run 41539330303 serial-firstboot.log ends at 'Starting initrd-switch-root.service' with no output from the new root's systemd. The lead should expect the Cinnamon firstboot to possibly fail again on the next VM run."
+    },
+    {
+      "severity": "minor",
+      "what": "The new selftest case replaces m.STATE_DIR, m.INBOX and m.remove_iso and puts them back at the end of the case, not in try/finally. If cmd_boot raises, the module stays pointing at the temp paths and the monkeypatched remove_iso. Only the failure path is affected. It also covers only the 'boot is slow, answer arrives meanwhile' order. The 'answer first, boot after' order is not tested, though it is trivially correct because boot reloads state under the lock.",
+      "file": "tools/othersys/selftest.py",
+      "evidence": "Diff lines: real_dirs/real_remove_iso are restored after racer.join() and the expect() calls, with no finally."
+    },
+    {
+      "severity": "minor",
+      "what": "The lock file is opened before cmd_boot's 'no state' check. If cmd_boot or cmd_answer is run by hand where /var/lib/auros-othersys does not exist, the user gets a FileNotFoundError traceback, not the old clean 'boot: no state; this system was not installed by AurOS' log line. The boot unit's ConditionPathExists=state.json and the answer .path unit's PathExists guard mean systemd never hits this, so I rate it cosmetic.",
+      "file": "src/othersys/ubuntu/othersys.py",
+      "evidence": "The one_at_a_time wrapper does open(os.path.join(STATE_DIR,'lock'),'w') before fn(plan) runs. Both units are guarded as described: auros-othersys-boot.service has ConditionPathExists=/var/lib/auros-othersys/state.json, and auros-othersys-answer.path has PathExists=.../inbox/answer."
     }
   ]
 }
