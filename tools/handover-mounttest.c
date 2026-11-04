@@ -231,6 +231,15 @@ int main(void)
     failed += check(rc == -1 && bad_kill.signals == 3 && bad_kill.waits == 4,
                     "a failed SIGKILL cannot be mistaken for a stopped screen", &(fixture){0});
 
+    /* What the display shows between the progress screen letting go and AurOS's own starting. */
+    const char *notice = HANDOVER_NOTICE;
+    int plain = !strstr(notice, "aurstage") && !strstr(notice, "/dev") && !strstr(notice, "verdict");
+    for (const char *q = notice + 4; *q; q++)          /* after the clear-screen code */
+        if (*q >= '0' && *q <= '9') plain = 0;
+    failed += check(strncmp(notice, "\033[2J", 4) == 0 && strstr(notice, "Starting it now.") &&
+                    strstr(notice, "Please don't press anything.") && plain,
+                    "the console is cleared and says in her words what is happening", &(fixture){0});
+
     int mounted = 1;
     transient_fixture busy = { .fail_unmount = 1 };
     rc = transient_mount_cleanup("/run/aurstage/esp", "/run/aurstage", &mounted,

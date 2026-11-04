@@ -12,6 +12,9 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Isrc/aurstage \
 grep -q 'stage_handover_set_cleanup(release_staging_mounts)' src/aurstage/main.c
 grep -q 'if (stage_screen_stop() != 0) return -1;' src/aurstage/boot.c
 grep -q 'if (forget_saved_scratch() != 0) goto handover_failed;' src/aurstage/boot.c
+# ...and the notice is said after the screen is gone, only if one was up
+grep -q 'if (screen_was_up) {' src/aurstage/boot.c
+grep -q 'write(2, HANDOVER_NOTICE' src/aurstage/boot.c
 
 # answer.sh takes the handover only when [ -x /usr/lib/auros/handover.sh ];
 # it was checked in 0644 from 2026-10-23, so every fast-path Put Windows

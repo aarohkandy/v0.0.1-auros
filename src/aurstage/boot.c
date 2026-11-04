@@ -123,6 +123,7 @@ void stage_handover_set_cleanup(int (*f)(char *why, size_t n))
  * handed over when it does, so its first picture is not blank. */
 static int   screen_fd  = -1;
 static pid_t screen_pid = -1;
+static int   screen_was_up;      /* a progress screen held the display, and has let go */
 static char  early[8][512];
 static int   n_early;
 
@@ -191,6 +192,7 @@ int stage_screen_stop(void)
         return -1;
     }
     screen_pid = 0;
+    screen_was_up = 1;
     return 0;
 }
 
@@ -692,6 +694,10 @@ int stage_switch_root(const char *root_dev)
     }
     int initramfs_dev = (int)st.st_dev;
     stage_say("handing over to the system on %s, in this same boot", root_dev);
+    /* Only where a screen was showing her something: with none, the console IS the screen. */
+    if (screen_was_up) {
+        ssize_t ignored = write(2, HANDOVER_NOTICE, sizeof HANDOVER_NOTICE - 1); (void)ignored;
+    }
 
     /* THE VARIABLE STORE IS LEFT FOR THE NEW SYSTEM TO MOUNT, THE NORMAL WAY.
      * Staging mounts efivarfs read-only on purpose and writes through a remount of its
