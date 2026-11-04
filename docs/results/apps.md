@@ -11,6 +11,10 @@ the shell does (the Exec line, with `WAYLAND_DISPLAY` and the shell's environmen
 
 ## Result: build 40008758721 (commit 2e04025, has the capability fix 6b6c438), run 40012157679
 
+Newest run (41817427536, build 41780979384): all ten install and open a window. Install times 4 to 60 s on a datacentre link. One check is
+red in 5 of the last 7 nightlies: `apps.whatsapp.visible`, the WhatsApp wrapper's window opens and the page in it stays blank (0 to 0.6 %
+of the screen changes; need 1.5 %). Not a known gap, because it passed once (41434074065). The table below is the first run.
+
 | program (Flathub id) | installs | window | notes |
 |---|---|---|---|
 | WhatsApp, an unofficial web wrapper (com.ktechpit.whatsie) | 42 s, 329 MB | opens in 2 s | |
@@ -21,8 +25,8 @@ the shell does (the Exec line, with `WAYLAND_DISPLAY` and the shell's environmen
 | Photos (org.gnome.gThumb) | 3 s, 26 MB | opens in 2 s | |
 | LibreOffice (org.libreoffice.LibreOffice) | 21 s, 804 MB | opens in 1 s | also in the image as debs now |
 | Chromium, the call browser (org.chromium.Chromium) | 13 s, 471 MB | opens in 1 s | shows its own "Additional Terms of Service" window first |
-| **Zoom** (us.zoom.Zoom) | 63 s, 16 MB | **no window** | X11-only Flatpak, this desktop has no Xwayland: starts, logs nothing, shows nothing (WP-22) |
-| **VLC** (org.videolan.VLC) | 37 s, 139 MB | **no window** | X11-only: `main interface error: no suitable interface module` (WP-22) |
+| Zoom (us.zoom.Zoom) | 60 s, 16 MB | opens in 4 s | X11-only Flatpak; opens through Xwayland since run 41434074065. Was: no window (WP-22) |
+| VLC (org.videolan.VLC) | 35 s, 150 MB | opens in 1 s | X11-only, through Xwayland; its first window is the privacy question, with Continue. Was: no window (WP-22) |
 
 Store catalogue: a search for "Zoom" answers 2 s after the check begins (plan: 30 s). All ten together take 7.3 GB of
 runtimes and apps on disk (the runtimes are shared: freedesktop 25.08 with the codecs extension, GNOME 50, KDE 6.11 and
@@ -46,12 +50,14 @@ one-line candidate (`CapabilityBoundingSet=~CAP_WAKE_ALARM`) end to end (`--opt 
 The other WP-25 additions measured: ipp-usb 6.1 MB, libmagic-mgc 8.3 MB (so the `file` data is there; the `file` program
 itself is not), libheif 0.8 MB + heif-gdk-pixbuf, libmtp 0.5 MB, libimobiledevice 0.2 MB, libnss-mdns 0.14 MB, fonts-crosextra
 Carlito and Caladea 3 MB. Decision on the owner's question 14 (Writer and Calc as debs from main): they ship, 304 MB installed.
+Since then: Solitaire (`aisleriot`, 73 MB installed, 53 of them guile), printer-driver-escpr and -brlaser (0.6 MB), 2026-11-04.
 
 ## Known gaps (tools/parity/known-gaps.txt)
 
 | gap | cost / fix |
 |---|---|
-| Zoom, VLC and every other X11-only program: no window | a rootful Xwayland fallback in aurshell (WP-22); the `xwayland` package is already in the image (2.3 MB installed); what is missing is the shell side. Until then hide such programs from the store |
-| `xdg-open <file>` cannot tell what any local file is | `file` package (0.1 MB; libmagic data is already there) or an `xdg-open` that calls `gio open`; 0 MB |
-| Firefox first-run Terms of Use window | a policy/pref change; 0 MB (stream S2) |
-| Evince keeps a PDF box only after she leaves it | viewer decision (WP-56) |
+| ~~Zoom, VLC and every other X11-only program: no window~~ | done: they open through Xwayland (run 41434074065 on) |
+| ~~`xdg-open <file>` cannot tell what any local file is~~ | done: our `xdg-open` hands the file to `gio open` (`a430c5f1`); `office.types` now asks that |
+| ~~Firefox first-run Terms of Use window~~ | done: `SkipTermsOfUse` in the policy |
+| ~~Evince keeps a PDF box only after she leaves it~~ | passes in every nightly since 2026-10-25 |
+| WhatsApp's page stays blank in the VM | cause unknown (the VM's software drawing, or the wrapper); `apps.whatsapp.visible` fails 5 nights in 7 |

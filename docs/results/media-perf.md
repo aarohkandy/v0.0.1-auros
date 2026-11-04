@@ -33,3 +33,25 @@ dropped count moves by tens: the runner shares its CPU.)
   against the compositor's frame callbacks (stream WL).
 - Widevine/Netflix is not tested: it needs the Widevine CDM (a download from Google, `media.gmp-widevinecdm`) and an
   `EncryptedMediaExtensions` policy decision; v0.2 (WP-56).
+
+## The nightlies since (2026-11-04: all seven `parity` runs, `gh release view parity-<run>`)
+
+Frames shown / dropped in 9 s, the same three films. Same method; each night is a different runner.
+
+| night (parity run) | build | 360p MP4 | 360p DASH | 720p MP4 |
+|---|---|---|---|---|
+| 40176517727 (10-25) | 40148012698 | 249 / 113 | 251 / 73 | 292 / 152 |
+| 40295632841 (10-26) | 40148012698 | 244 / 126 | 228 / 57 | 282 / 137 |
+| 40477392945 (10-27) | 40148012698 | 237 / 114 | 232 / 95 | 280 / 121 |
+| 40665951771 (10-28) | 40148012698 | 242 / 123 | 239 / 124 | 281 / 147 |
+| 41434074065 (11-02) | 41329982398 | 233 / **0** | 231 / 39 | 280 / **2** |
+| 41622813565 (11-03) | 41591240360 | 233 / 122 | 251 / 131 | 288 / 177 |
+| 41817427536 (11-04) | 41780979384 | 242 / 117 | 245 / 118 | 288 / 138 |
+
+Six nights of seven drop between a quarter and 61 % of the frames, the same build four nights running; one night dropped none.
+The cause of the clean night is not found. Only two commits touched the compositor or the shell between its build and the
+next (the night light of the Wishes, 10-24, which v0.1 does not ship), and the first four nights, whose build predates
+them, drop as many frames as the last two. Treat the runner as the first suspect and the older "11 to 16 %" above as the best
+case, not the usual one. Sound was out of the decoder every night. Nobody has a number for a real old laptop with a
+graphics chip (WP-33): until then "YouTube plays smoothly" is **unproven**, and "YouTube has sound" is proven only as far as
+the decoder.

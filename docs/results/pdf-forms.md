@@ -17,7 +17,7 @@ compressed object stream).
 |---|---|
 | form opens, boxes shown | pass (`pdfform.visible`) |
 | fill two boxes, press Tab, Save a copy: both values in the file | pass (`pdfform.saved`) |
-| fill two boxes and Save a copy straight away | the LAST box is lost (`pdfform.last-box` fails): Evince keeps a box once she leaves it. Tab, Enter, Esc and a click on another box all make it keep it. |
+| fill two boxes and Save a copy straight away | the LAST box was lost on build 956af4a (Evince keeps a box once she leaves it). `pdfform.last-box` has passed in every nightly since 2026-10-25 (seven), so it is no longer a known gap. |
 
 On Windows or a Mac a typed value is kept the moment it is typed. This is a known gap until the viewer decision (WP-56):
 either accept Evince with a one-line hint, or Firefox's PDF viewer (pdf.js: `pdfjs.enableScripting` is locked off by policy, so
