@@ -167,8 +167,10 @@ To remove AurOS and give Windows all of its drive back:
   that appears for three seconds when AurOS starts), choose **Put Windows
   back (remove AurOS)**, then **Yes**.
 
-Everything saved inside AurOS goes with it; copy what you want to keep
-onto a memory stick first. If the restore stops with a sentence and
+Her Documents, Pictures, Music, Videos, Desktop and Downloads are copied
+into Windows first, into "From AurOS" in her user folder (programs and
+settings are not); if they cannot be, nothing is removed and she can use
+"Save my files to a USB stick first". If the restore stops with a sentence and
 `verdict=...`, take a photo of the screen, as with the install.
 
 This is in the v3 image, which is what the installer downloads from

@@ -97,17 +97,18 @@ Checked in code: `aurfirst decline` sets the next start to Windows and deletes n
 | Let me look first | Nothing changes. AurOS asks again the next time it starts. |
 | No, go back to Windows | Windows starts the next time this computer starts. AurOS stays on this computer, with anything you saved in it. Nothing is deleted. |
 | Declined screen | AurOS is still on this computer, but Windows starts. To use AurOS again, or to remove it, ask someone who knows computers. |
-| Put Windows back (Settings) | This computer restarts and removes AurOS. Anything you saved in AurOS goes with it. Windows gets all its space back. |
-| D's FAQ "Can I go back?" (add) | Put Windows back removes AurOS, and anything you saved in AurOS goes with it, so copy what you want to keep onto a memory stick first. |
+| Put Windows back (Settings) | This computer restarts and removes AurOS. Your documents, pictures, music and videos are copied into Windows first. If they cannot be, nothing is removed. |
+| D's FAQ "Can I go back?" (add) | Put Windows back removes AurOS. Your documents, pictures, music and videos are copied into Windows first, into a folder called From AurOS. If your files cannot all be copied, nothing is removed, and you can save them to a memory stick instead. |
 
-**What "Put Windows back" removes is ONE pinned sentence: "Anything you saved in AurOS goes with it."**
-helptest fails unless it is in every place that says it: settings.c twice (its row and its page, each a
-single string literal), windows.html, guide.html, and index.html's "Can I go back?" answer (the first
-letter may be lower case there). Change the sentence in all of them together and in helptest's `loss`
-pattern, or it is red. D owns index.html and guide.html: keep it. Open question for the lead and C: R's
-Put Windows back now copies her Documents, Pictures, Desktop, Downloads, Music and Videos into her
-Windows folder under "From AurOS" first (answer.sh back_files). The pinned sentence is the cautious one
-(everything else goes); when the screens say "your files are saved to Windows first", change it here.
+**What "Put Windows back" does with her files is ONE pinned sentence: "Your documents, pictures, music and
+videos are copied into Windows first."** (It was "Anything you saved in AurOS goes with it." until the
+fast-path installer became the default; both kinds of install copy her Documents, Pictures, Desktop,
+Downloads, Music and Videos into "From AurOS" in her Windows user folder before anything is removed --
+`answer.sh back_files` -- and stop, removing nothing, when they cannot.) helptest fails unless it is in
+every place that says it: settings.c's page (one string literal; the row's line is too short to hold
+it, so it says "Your files are copied into Windows first." and `tools/windowspagetest.c` pins that),
+windows.html, guide.html and install.html. Change the sentence in all of them together and in
+helptest's `loss` pattern, or it is red.
 
 C's declined screen today says "You can start it again from the menu when you switch on":
 after a decline Windows is the firmware default, so that menu is the firmware's (timed, and

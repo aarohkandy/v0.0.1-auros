@@ -934,10 +934,13 @@ for (const [at, want] of [
     wifi: has("AB_CHOICE_BRING_WIFI", fast) ? "comes-across" : "stays-behind",
     hold: fs.existsSync(path.join(REPO, "rootfs/etc/systemd/system/auros-hold.service")) && /int af_hold\(/.test(read("src/aurfirst/state.c")) ? "rearms" : "windows-first",
     charger: /\{\s*"not-on-ac",\s*FIX_WAIT/.test(fixWin) ? "required" : "not-required",
-    // Put Windows back: settings.c says on the row and on its page that what she saved in AurOS goes with it,
-    // and the help page says the same (K's one truth): the FAQ's loss sentence is tied to both.
-    putback: /add_choice\("putback",[\s\S]{0,160}?Anything you saved in AurOS goes with it\./.test(read("src/aurshell/settings.c"))
-          && /Anything you saved in AurOS goes with it/.test(read("rootfs/usr/share/auros/help/windows.html")) ? "removes-saved" : "other",
+    // Put Windows back: answer.sh copies her six folders into Windows before it arms the restore (a
+    // fast-path install by way of the handover volume, any other straight into C:), and refuses, removing
+    // nothing, when it cannot. settings.c says so on the row and on its page, and the help page says the same.
+    putback: /elif ! back_files; then/.test(read("rootfs/usr/lib/auros/answer.sh"))
+          && /add_choice\("putback",[\s\S]{0,160}?Your files are copied into Windows first\./.test(read("src/aurshell/settings.c"))
+          && /Your documents, pictures, music and videos are copied into Windows first\./.test(read("src/aurshell/settings.c"))
+          && /Your documents, pictures, music and videos are copied into Windows first/.test(read("rootfs/usr/share/auros/help/windows.html")) ? "carries-files" : "other",
     // How far AurOS has been tried: tools/site/journey.json counts runs on a real computer (F's e2e is a virtual one).
     tested: (() => { try { return JSON.parse(read("tools/site/journey.json")).real_pc_runs > 0 ? "real" : "virtual"; } catch { return "unknown"; } })(),
     dark: /Restart now: the screen goes black for a minute or two/.test(wizard) ? "minute-or-two" : "other",
@@ -965,6 +968,7 @@ for (const [at, want] of [
     [/no firefox/i, "the image has Firefox (build/forge)"],
     [/\bunplug|\b(\d+|any|every|no) power cuts?\b|power cuts? (are|is|can|won.t|cannot|can.t)\b/i, "no promise about surviving a power cut is proven for this build"],
     [/(bring|brings|bringing) (copies of )?(your|her) (documents|files|pictures)|files across/i, "bringing her files across does not work yet (docs/ATLAS.md, section 8, gap 1)"],
+    [/saved in AurOS goes with it/i, "Put Windows back copies her documents, pictures, music and videos into Windows first (answer.sh back_files); it only stops and removes nothing when it cannot"],
     // (There was a regex here for "updates itself": since the update channel was proven (S5,
     // aptrepo.yml) that is true while the computer is online, and the Terms say it in their words.
     // What the site must not do is promise an update that cannot be restarted-into or is instant:)
