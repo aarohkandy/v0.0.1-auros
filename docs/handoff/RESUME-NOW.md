@@ -1,5 +1,9 @@
 # RESUME NOW
 
+> **Newest (2026-11-04): read `docs/handoff/SESSION-2026-11-03.md` first** — what is proven on
+> real Windows, the candidate in flight and the exact steps to promote it, the decisions made,
+> and what is still open. The rest of this file describes 2026-10-23 and is history.
+
 > **If you have only the repository: read `START-HERE.md` (repo root) first.**
 
 > **04:35: every parallel stream, its files and its standing brief are in
