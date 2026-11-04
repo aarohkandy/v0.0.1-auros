@@ -36,7 +36,19 @@ one of them. Fails if:
     in every place that says it (the Settings screen twice, the windows help
     page, the printable guide and the install page's small print);
   - a page spells out a web address: the pages work offline and are not
-    rebuilt when the project moves, so they name no address at all.
+    rebuilt when the project moves, so they name no address at all;
+  - a question she may be stuck on (QUESTIONS below: the internet, her
+    pictures and her Windows files, bigger letters, printing, music, a video
+    call, a letter, email, a new program, turning it off, a frozen or dark
+    screen, a forgotten PIN, a phone call or a page that says her computer is
+    infected, going back to Windows, who to ask) has no page, a page that no
+    longer says the words that answer it, or a page the index does not reach;
+  - a page is longer than two screens (see SCREEN_PX), or does not point to
+    "Who do I ask?";
+  - a page says a thing about the desktop that the desktop's code no longer
+    does (SAYS: the sentences it quotes; CODE_FACTS: how long the screen
+    stays lit, how long "Close this" waits for its second press, what the
+    power button and the lid do; Printers, which the desktop hides).
 
 Standard library only; no browser needed.
 """
@@ -52,9 +64,64 @@ import helppics                    # noqa: E402  (draws the pictures; shares the
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 
-TOPICS = ["getting-online.html", "programs.html", "printing.html",
-          "video-calls.html", "something-wrong.html", "windows.html",
-          "never-call.html", "licenses.html"]
+# What the index lists, one card each, in her words.
+TOPICS = ["getting-online.html", "my-files.html", "everyday.html", "programs.html",
+          "printing.html", "video-calls.html", "words-and-sound.html", "turn-off.html",
+          "something-wrong.html", "scary-page.html", "never-call.html", "windows.html",
+          "forgot-pin.html", "ask-someone.html", "licenses.html"]
+# Pages the topics lead on to (windows.html links both). They lead back too.
+SUBPAGES = ["remove-auros.html", "first-days.html"]
+ASK = "ask-someone.html"
+
+# "I'm stuck" must always have an answer: each question she may be stuck on, the
+# page that answers it, and the words that make it an answer (the buttons she
+# presses and the thing it is about). Whoever moves or empties one is red.
+QUESTIONS = [
+    ("how do I get on the internet",          "getting-online.html", ["Wi-Fi", "Connect", "cable", "Internet"]),
+    ("how do I get on Wi-Fi after moving house", "getting-online.html", ["new home", "new internet box", "password"]),
+    ("where are my pictures",                 "my-files.html", ["Photos", "Pictures", "Your files"]),
+    ("where are my Windows files",            "my-files.html", ["still in Windows", "Bring my files across", "Not now"]),
+    ("how do I make the letters bigger",      "words-and-sound.html", ["Bigger text", "Smaller text", "Ctrl"]),
+    ("how do I make the sound louder",        "words-and-sound.html", ["How loud the sound is", "Settings"]),
+    ("how do I print",                        "printing.html", ["Print", "printer"]),
+    ("how do I listen to music or watch a video", "everyday.html", ["Music and video", "Your files"]),
+    ("how do I video call my family",         "video-calls.html", ["camera and microphone", "Allow", "link"]),
+    ("how do I write a letter",               "everyday.html", ["Letters", "Save"]),
+    ("how do I use email",                    "everyday.html", ["Email", "Internet"]),
+    ("how do I install something",            "programs.html", ["Get more programs", "Install", "Open"]),
+    ("how do I turn it off",                  "turn-off.html", ["Turn off", "Turn it off", "Start it again"]),
+    ("a program is stuck",                    "something-wrong.html", ["Close this", "Count to three"]),
+    ("it is frozen",                          "something-wrong.html", ["Nothing on the screen answers", "power button", "Start it again"]),
+    ("the screen went dark",                  "something-wrong.html", ["The screen went dark", "any key"]),
+    ("I forgot my PIN",                       "forgot-pin.html", ["I forgot my PIN", "rescue code", "paper"]),
+    ("someone phoned, saying Microsoft",      "never-call.html", ["Microsoft", "Hang up", "trick"]),
+    ("someone phoned and I let them in",      "never-call.html", ["If you already let someone in", "Turn it off", "bank"]),
+    ("a website says my computer is infected", "scary-page.html", ["virus", "Get me out of this page", "Close this page"]),
+    ("how do I go back to Windows",           "windows.html", ["Put Windows back", "Start Windows this once"]),
+    ("how do I remove AurOS",                 "remove-auros.html", ["Remove AurOS and put Windows back", "Save my files to a USB stick first"]),
+    ("what the first question does",          "first-days.html", ["Yes, it all works", "No, go back to Windows", "Let me look first"]),
+    ("who do I ask",                          ASK, ["someone you trust", "photo"]),
+]
+
+# The sentences the pages quote, as the desktop says them: each must be on the
+# page and be (part of) a string in the desktop's own code.
+SAYS = [
+    ("turn-off.html", "What should this computer do?"),
+    ("never-call.html", "Before you install this"),
+    ("forgot-pin.html", "Type your PIN to start AurOS"),
+    ("forgot-pin.html", "six groups of four numbers"),
+    ("forgot-pin.html", "Pick 4 to 6 numbers you will remember"),
+    ("my-files.html", "Does everything work?"),
+    ("first-days.html", "Does everything work?"),
+]
+
+# "A screen" is 750 px of page at 100% text: the panel of a 1366x768 laptop less
+# the bar at the bottom, with room to spare. (At the smallest panel, 1024x600,
+# it is about 450 px, so these pages are three screens there. Sizes are modelled
+# from the stylesheet below; measured in a browser at 1024 px wide, the model
+# is within 6%, and no page measures over 1430 px.)
+SCREEN_PX = 750
+MAX_SCREENS = 2
 
 fails = []
 passes = 0
@@ -151,7 +218,7 @@ def band_labels():
 
 # Buttons in other people's programs that the pages name: Firefox's camera
 # question, the print window, and Get more programs (GNOME Software).
-OTHER_BUTTONS = {"Allow", "Block", "Print", "Install", "Open", "Installed", "Uninstall"}
+OTHER_BUTTONS = {"Allow", "Block", "Print", "Install", "Open", "Installed"}
 
 
 def desktop_words():
@@ -165,7 +232,9 @@ def desktop_words():
                     src = fh.read()
                     # A preview or test program (its own main) makes up
                     # sample text; the shell is main.c and the rest.
-                    if f != "main.c" and re.search(r"^int main\(", src, re.M):
+                    # (lockpin.c has a main of its own, and is also the PIN
+                    # page she sees at the start: its words are real.)
+                    if f not in ("main.c", "lockpin.c") and re.search(r"^int main\(", src, re.M):
                         continue
                     # Comments quote button words too ("Let me look first"
                     # used to say...), so they are taken out first.
@@ -212,6 +281,125 @@ def tokens(block):
     return dict(re.findall(r"--([a-z0-9-]+)\s*:\s*(#[0-9A-Fa-f]{3,6})", block))
 
 
+class Tall(html.parser.HTMLParser):
+    """How tall a page is at 100% text and 1024 px wide, from help.css's own
+    numbers (a 32 px line, 750 px of text, margins as the stylesheet has them).
+    A model, not a browser: it wraps by counting letters, and a browser measured
+    it within 6% on every page here. Enough to say "a wall of words" and "not"."""
+
+    # letters to a line: h1, h2, a card of the index, a numbered step, a list
+    # item or a paragraph, the lede, a paragraph in a box
+    CPL = dict(h1=38, h2=59, card=27, ol=74, p=86, lede=81, box=81)
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.h = 66 + 8 + 48          # the bar, the top of main, the foot of main
+        self.buf, self.cur, self.ctx, self.svg, self.cards = None, None, [], 0, []
+
+    def lines(self, text, cpl):
+        return max(1, -(-len(" ".join("".join(text).split())) // cpl))
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        cls = (a.get("class") or "").split()
+        if tag == "svg":
+            self.svg += 1
+            self.h += 144               # a picture of the bar and its margins
+            return
+        if self.svg:
+            return
+        if tag in ("ol", "ul", "dl", "div"):
+            self.ctx.append((tag, cls))
+        topics = any(c[0] == "ul" and "topics" in c[1] for c in self.ctx)
+        if tag in ("h1", "h2", "p", "li", "dt", "dd") or (tag == "b" and topics):
+            self.buf, self.cur = [], (tag, cls, list(self.ctx))
+        if tag == "span" and "press" in cls and self.buf is not None:
+            self.buf.append("xx")       # a pressable word has a frame round it
+
+    def handle_endtag(self, tag):
+        if tag == "svg":
+            self.svg -= 1
+            return
+        if self.svg:
+            return
+        if tag in ("ol", "ul", "dl", "div") and self.ctx:
+            t, c = self.ctx.pop()
+            if t == "ul" and "topics" in c:       # two columns of cards
+                rows = [self.cards[i:i + 2] for i in range(0, len(self.cards), 2)]
+                self.h += 48 + sum(max(r) + 12 for r in rows)
+            else:
+                self.h += {"ol": 24, "ul": 16, "dl": 24, "div": 24 + (32 if "warn" in c else 0)}[t]
+        if self.buf is None or self.cur is None or self.cur[0] != tag:
+            return
+        t, cls, ctx = self.cur
+        inside = lambda x: any(c[0] == x for c in ctx)
+        C = self.CPL
+        if t == "b":
+            self.cards.append(self.lines(self.buf, C["card"]) * 34 + 36)
+        elif t == "li" and any("topics" in c[1] for c in ctx):
+            pass
+        elif t == "h1":
+            self.h += self.lines(self.buf, C["h1"]) * 48 + 44
+        elif t == "h2":
+            self.h += self.lines(self.buf, C["h2"]) * 34 + 56
+        elif t == "li" and inside("ol"):
+            self.h += self.lines(self.buf, C["ol"]) * 32 + 20
+        elif t == "li":
+            self.h += self.lines(self.buf, C["p"]) * 32 + 8
+        elif t in ("dt", "dd"):
+            self.h += self.lines(self.buf, C["p"]) * 32 + (16 if t == "dt" else 8)
+        elif "lede" in cls:
+            self.h += self.lines(self.buf, C["lede"]) * 32 + 16
+        elif "done" in cls:
+            self.h += 74 + self.lines(self.buf, C["p"]) * 32 + 16
+        else:
+            self.h += self.lines(self.buf, C["box"] if inside("div") else C["p"]) * 32 + 16
+        self.buf, self.cur = None, None
+
+    def handle_data(self, data):
+        if self.buf is not None and not self.svg:
+            self.buf.append(data)
+
+
+def page_height(text):
+    t = Tall()
+    t.feed(text)
+    return t.h
+
+
+def read(path):
+    try:
+        with open(os.path.join(REPO, path), encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def code_facts(flat):
+    """What the pages promise about how the desktop behaves, read from the code
+    that does it, so that changing the code (or the page) turns this red."""
+    main_c = read("src/aurshell/main.c")
+    wait = re.search(r"#define\s+CLOSE_INSIST_MS\s+(\d+)", main_c)
+    check(bool(wait) and int(wait.group(1)) >= 4000 and "aurwl_win_kill(win)" in main_c,
+          'a second press of Close this stops a program that does not answer, and waits 4 s or more for it (the page says "Count to three")',
+          f"CLOSE_INSIST_MS is {wait.group(1) if wait else 'gone'}")
+    dark = re.search(r'theme_int\(&p,\s*"screen_off_minutes",\s*(\d+)\)', main_c)
+    check(bool(dark) and dark.group(1) == "10" and "ten minutes" in flat.get("something-wrong.html", ""),
+          'the screen goes dark after ten minutes, as the stuck page says', f"the desktop says {dark.group(1) if dark else '?'}")
+    check("woke_at_ms = tnow;" in main_c and "screen_dark = 0;" in main_c,
+          "the press that wakes a dark screen does nothing else (the stuck page says so)")
+    logind = read("rootfs/etc/systemd/logind.conf.d/50-auros.conf")
+    check("HandlePowerKey=poweroff" in logind and "HandleLidSwitch=suspend" in logind,
+          "the power button turns the computer off and closing the lid puts it to sleep (the turn-off page says so)")
+    check(re.search(r"keeps its size until it is\s+reopened", read("src/aurshell/textsys.h")) is not None,
+          "a program that was already open keeps its words until it is opened again (the bigger words page says so)")
+    # Ubuntu's Printers entry is in the Settings category X-GNOME-Settings-Panel, which the
+    # desktop leaves out of her programs (apps.c is_settings_page): the pages cannot send her there.
+    hidden = 'has_cat(e, "X-GNOME-Settings-Panel")' in read("src/aurshell/apps.c")
+    check(not (hidden and re.search(r"\bPrinters\b", flat.get("printing.html", ""))),
+          "the printing page does not send her to a Printers program that the desktop does not list")
+
+
 def main():
     args = sys.argv[1:]
     d = os.path.join(REPO, "rootfs", "usr", "share", "auros", "help")
@@ -222,7 +410,7 @@ def main():
     # 1. the pages
     pages = sorted(f for f in os.listdir(d) if f.endswith(".html")) if os.path.isdir(d) else []
     check("index.html" in pages, "index.html exists")
-    for t in TOPICS:
+    for t in TOPICS + SUBPAGES:
         check(t in pages, f"{t} exists")
     check(os.path.isfile(os.path.join(d, "help.css")), "help.css exists")
 
@@ -269,13 +457,46 @@ def main():
         listed = {r.partition("#")[0] for r in idx.refs}
         check(all(t in listed for t in TOPICS), "the index links every topic",
               ", ".join(t for t in TOPICS if t not in listed))
-    for t in TOPICS:
+    wins_pg = parsed.get("windows.html")
+    reached = {r.partition("#")[0] for r in wins_pg.refs} if wins_pg else set()
+    check(all(t in reached for t in SUBPAGES), "windows.html leads on to every page under it",
+          ", ".join(t for t in SUBPAGES if t not in reached))
+    for t in TOPICS + SUBPAGES:
         pg = parsed.get(t)
         if not pg:
             continue
         check("index.html" in pg.refs, f"{t}: a way back to all the help")
         words = " ".join(pg.text)
         check("Close this" in words, f"{t}: says how to close it (Close this)")
+        # She may be stuck on any page, and the answer to that is always one press away.
+        if t != ASK:
+            check(ASK in {r.partition("#")[0] for r in pg.refs}, f"{t}: points to Who do I ask?")
+
+    # 4b. every question she may be stuck on has a page, reached from the index
+    flat = {p: " ".join(html.unescape(" ".join(pg.text)).split()) for p, pg in parsed.items()}
+    linked = {r.partition("#")[0] for r in (idx.refs if idx else [])} | set(SUBPAGES)
+    gaps = []
+    for q, page, words in QUESTIONS:
+        if page not in flat:
+            gaps.append(f"{q}: no {page}")
+            continue
+        if page not in linked:
+            gaps.append(f"{q}: the index does not reach {page}")
+        miss = [w for w in words if w not in flat[page]]
+        if miss:
+            gaps.append(f"{q}: {page} no longer says {', '.join(repr(m) for m in miss)}")
+    check(not gaps, f"every question she may be stuck on has a page that answers it ({len(QUESTIONS)})",
+          "; ".join(gaps[:6]))
+
+    # 4c. no page is longer than two screens
+    css_text = open(os.path.join(d, "help.css"), encoding="utf-8").read() if os.path.isfile(os.path.join(d, "help.css")) else ""
+    long_ = []
+    for p in pages:
+        px = page_height(open(os.path.join(d, p), encoding="utf-8").read())
+        if px > MAX_SCREENS * SCREEN_PX:
+            long_.append(f"{p} is about {px} px, {px / SCREEN_PX:.1f} screens")
+    check(not long_, f"no page is longer than {MAX_SCREENS} screens ({MAX_SCREENS * SCREEN_PX} px at 100% text)",
+          "; ".join(long_))
 
     # 5. pictures: words for whoever cannot see them, the bar as it is
     labels, show_me = band_labels()
@@ -332,6 +553,14 @@ def main():
     n_press = sum(len(pg.presses) for pg in parsed.values())
     check(not unknown, f"every button the pages name is a button that exists ({n_press} checked)",
           "; ".join(unknown[:8]))
+    said = []
+    for page, phrase in SAYS:
+        if phrase not in flat.get(page, ""):
+            said.append(f'{page} does not say "{phrase}"')
+        elif not any(phrase in straight(w) for w in known):
+            said.append(f'"{phrase}" on {page} is not on any screen of the desktop')
+    check(not said, f"the screens the pages quote say what the pages say ({len(SAYS)} checked)", "; ".join(said))
+    code_facts(flat)
 
     # 5c. one truth about going back: what happens to her files. The words for
     # each answer agree everywhere; what "Put Windows back" does with what she
@@ -359,7 +588,11 @@ def main():
     places = [("src/aurshell/settings.c", 1, "the Settings screen (its page; its row is too short to hold it, windowspagetest checks that)"),
               ("website/guide.html", 1, "the printable guide"),
               ("website/install.html", 1, "the install page's small print")]
+    rem = parsed.get("remove-auros.html")
+    n_rem = len(loss.findall(" ".join(" ".join(rem.text).split()))) if rem else 0
     lost = [] if n_win >= 1 else ["the windows help page"]
+    if n_rem < 1:
+        lost.append("the remove AurOS help page")
     for path, want, what in places:
         got = loss_in(path)
         if got is None or got < want:
@@ -376,8 +609,10 @@ def main():
                 stale.append(path)
         except OSError:
             pass
-    if wins and old.search(" ".join(" ".join(wins.text).split())):
-        stale.append("the windows help page")
+    for pg_name in ("windows.html", "remove-auros.html"):
+        pg_ = parsed.get(pg_name)
+        if pg_ and old.search(" ".join(" ".join(pg_.text).split())):
+            stale.append("the " + pg_name + " help page")
     check(not stale, "no page says her files go with AurOS (they are copied into Windows first)", "still in " + "; ".join(stale))
 
     # 6. no web address on any page
