@@ -20,7 +20,7 @@ a security problem.
 > switched on once, in **Settings → Code security → Private
 > vulnerability reporting → Enable**. Until it is, the link above says
 > the feature is off; in that case write to the security contact:
-> **CONTACT_EMAIL**.
+> **aarohkandy@gmail.com**.
 
 Helpful things to include, as far as you can:
 

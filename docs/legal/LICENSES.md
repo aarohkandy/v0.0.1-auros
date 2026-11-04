@@ -12,7 +12,7 @@ If this computer has the file /etc/auros/release, it names the release. If not, 
 
 We keep each sources release for at least three years after the last day we offer the matching AurOS release for download, and for as long as we support it. We do not delete them before then.
 
-**If you cannot get the source that way,** write to CONTACT_EMAIL and say which release you have. We will send you the source on a USB stick or a disc, for no more than the cost of the medium and the postage. This offer is open to anyone, whether or not they have a copy of AurOS. Programs your computer later updates from Ubuntu or from Mozilla come with source from them, at their own addresses.
+**If you cannot get the source that way,** write to aarohkandy@gmail.com and say which release you have. We will send you the source on a USB stick or a disc, for no more than the cost of the medium and the postage. This offer is open to anyone, whether or not they have a copy of AurOS. Programs your computer later updates from Ubuntu or from Mozilla come with source from them, at their own addresses.
 
 Nothing here limits the rights that the licenses of these programs give you. If these words and a license disagree, the license wins.
 

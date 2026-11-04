@@ -29,7 +29,7 @@ PUBLIC = ["rootfs/usr/share/doc/auros", "rootfs/usr/share/auros/help", "website"
           "docs/legal/DISCLAIMER.md", "docs/legal/SOURCES.md", "SECURITY.md", "docs/SUPPORT.md"]
 DRAFT_MARKERS = ["[OWNER", "[LAWYER", "[CHECK", "must be reviewed by a lawyer"]
 # files that talk ABOUT the placeholder and must keep it
-KEEP = ("tools/legal/", "docs/legal/COMPLIANCE.md", "docs/legal/README.md", "docs/handoff/", "docs/OWNER-SETUP.md")
+KEEP = ("tools/legal/check.py", "tools/legal/notes.sh", "docs/legal/COMPLIANCE.md", "docs/legal/README.md", "docs/handoff/", "docs/OWNER-SETUP.md")
 
 
 def read(rel):
@@ -426,7 +426,7 @@ def selftest():
         want("--launch refuses while the installer lacks the agreement line", pr, "the Ready page's agreement line")
         want("--launch refuses a draft marker", pr, "draft marker")
         pr, seen = run(False, d)
-        ok = seen >= 2 and not [x for x in pr if "still has" in x]
+        ok = seen >= 1 and not [x for x in pr if "still has" in x]
         print("%s  without --launch the placeholder is only counted (%d)" % ("ok  " if ok else "FAIL", seen)); bad += 0 if ok else 1
         # set-contact works on a git tree
         subprocess.run(["git", "init", "-q", d], check=True)

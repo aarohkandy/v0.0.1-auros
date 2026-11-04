@@ -111,7 +111,7 @@ FOOTER = """    <!-- legal-footer: written by tools/legal/mkpages.py, the same o
       <li><a href="disclaimer.html">Disclaimer</a></li>
       <li><a href="privacy.html">Privacy</a></li>
     </ul>
-    <p>No cookies or ads. Read how requests are handled on our <a href="privacy.html">Privacy page</a>. Vercel, which hosts this site, and GitHub, which hosts the download, keep their own records of the internet addresses that visit. Write to us: CONTACT_EMAIL.</p>
+    <p>No cookies or ads. Read how requests are handled on our <a href="privacy.html">Privacy page</a>. Vercel, which hosts this site, and GitHub, which hosts the download, keep their own records of the internet addresses that visit. Write to us: aarohkandy@gmail.com.</p>
     <p>AurOS&rsquo;s own code is free software (MIT license). It includes programs by others, each under its own license: <a href="licenses.html">licenses and source code</a>. Set in Atkinson Hyperlegible Next (<a href="assets/fonts/OFL.txt">license</a>).</p>
     <p>%s %s</p>
     <!-- /legal-footer -->""" % (html.escape(UBUNTU, quote=False), html.escape(TM, quote=False))

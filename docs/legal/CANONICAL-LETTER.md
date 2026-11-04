@@ -41,4 +41,4 @@ If anything in this is a problem for you, please tell us and we will change it.
 
 Thank you for Ubuntu.
 
-[owner's name], AurOS, CONTACT_EMAIL
+[owner's name], AurOS, aarohkandy@gmail.com

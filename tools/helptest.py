@@ -368,7 +368,9 @@ def main():
     # 6. no web address on any page
     addr = []
     for p, pg in parsed.items():
-        text = html.unescape(" ".join(pg.text))
+        # An address to write to is not a web address (the source offer
+        # on licenses.html must name one: tools/legal/check.py set-contact).
+        text = re.sub(r"[\w.+-]+@[\w-]+(\.[\w-]+)+", " ", html.unescape(" ".join(pg.text)))
         for m in re.finditer(r"(https?://|www\.|github\.(com|io)|\b[\w-]+\.(com|org|net|io)\b)", text, re.I):
             addr.append(f"{m.group(0)} on {p}")
     check(not addr, "no page spells out a web address", "; ".join(addr[:8]))

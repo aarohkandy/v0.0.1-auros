@@ -21,7 +21,7 @@ Paid human help and donations are not the trigger.*
 **What already serves the story:** an SBOM per release (WP-68), a declared support period (Ubuntu 24.04
 security until April 2029, conditional on the project continuing: `docs/security/UPDATES.md`), the
 reporting playbook (`docs/ops/INCIDENTS.md`), `SECURITY.md` and a contact point (needs the mailbox:
-`CONTACT_EMAIL`).
+`aarohkandy@gmail.com`).
 
 **Before any sale of AurOS itself or pre-installed computers:** a notified-body quote (tens of
 thousands of euros, unverified) or exclude the EU from the sale. Operating systems are Annex III

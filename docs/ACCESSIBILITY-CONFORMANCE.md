@@ -11,5 +11,5 @@ Prepared by the AurOS agents without a lawyer (D15). `docs/legal/COMPLIANCE.md` 
 Scope: no EU-directed marketing, no sale to EU consumers and no EU pre-installed computers until the
 EN 301 549 / EAA work (WP-66, WP-67) is done. A site accessibility statement page follows the scan:
 "We aim for WCAG 2.2 level AA. What AurOS cannot do yet: ... If you cannot use any part of this
-site or AurOS Setup, write to CONTACT_EMAIL and we will reply as soon as we can, usually within a
+site or AurOS Setup, write to aarohkandy@gmail.com and we will reply as soon as we can, usually within a
 week." (dated; not a "5 working days" promise one person cannot keep).

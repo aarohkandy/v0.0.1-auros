@@ -1,6 +1,6 @@
 # AurOS Terms
 
-Version 4, 24 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. These Terms are not legal advice. If anything here is unclear, write to us before you use AurOS: CONTACT_EMAIL.
+Version 4, 24 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. These Terms are not legal advice. If anything here is unclear, write to us before you use AurOS: aarohkandy@gmail.com.
 
 **Plain version:** AurOS is free and has no guarantee. Changing a drive can go wrong, so copy what you can't replace to a memory stick first. We will never phone you or ask for card numbers, passwords or gift cards. The rest is detail.
 
@@ -104,8 +104,8 @@ You can stop using AurOS at any time, and **Put Windows back** removes it (and c
 
 ## 12. Problems
 
-If you have a problem with AurOS, write to us first at CONTACT_EMAIL and we will try to put it right. These Terms do not take away any right you have by law where you live.
+If you have a problem with AurOS, write to us first at aarohkandy@gmail.com and we will try to put it right. These Terms do not take away any right you have by law where you live.
 
 ## Contact
 
-CONTACT_EMAIL. For help using AurOS, see the help on the website. To report a security problem, see the security page on the AurOS project page.
+aarohkandy@gmail.com. For help using AurOS, see the help on the website. To report a security problem, see the security page on the AurOS project page.

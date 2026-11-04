@@ -366,7 +366,7 @@ async function enableBuildService() {
     if (!apiOrigin) return;
     buildBox.hidden = false;
     document.getElementById("request-boundary").innerHTML = "The file records your choices for a builder or helper. Today&rsquo;s <span class=\"file\">AurOS-Setup.exe</span> does not read it. Saving the recipe stays local; the optional tested-build request below sends only the reviewed recipe fields.";
-    document.querySelector(".foot-legal + p").textContent = "No cookies and no ads. The optional build service receives only the reviewed recipe fields, keeps a job and receipt hash, and keeps one-way network hashes to prevent abuse. GitHub, which hosts this site, keeps its own records of the internet addresses that visit. Write to us: CONTACT_EMAIL.";
+    document.querySelector(".foot-legal + p").textContent = "No cookies and no ads. The optional build service receives only the reviewed recipe fields, keeps a job and receipt hash, and keeps one-way network hashes to prevent abuse. GitHub, which hosts this site, keeps its own records of the internet addresses that visit. Write to us: aarohkandy@gmail.com.";
     buildController = { choicesChanged: function () {
       buildResult.hidden = true;
       if (activeReceipt && !sameRecipe(activeReceipt.recipe, recipe())) setBuildStatus("These choices differ from the saved build request. Its status remains tied to: " + recipeSummary(activeReceipt.recipe) + ".", false);

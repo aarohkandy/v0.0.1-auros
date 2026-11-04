@@ -2,7 +2,7 @@ AUROS PRIVACY
 
 Version 6, 24 October 2026. Written by the person who makes AurOS, with the help of AI software, and without a lawyer. This page is not legal advice.
 
-Who is responsible: the person who makes AurOS, on the AurOS project page on GitHub. There is no company yet. To ask us anything about privacy, write to CONTACT_EMAIL.
+Who is responsible: the person who makes AurOS, on the AurOS project page on GitHub. There is no company yet. To ask us anything about privacy, write to aarohkandy@gmail.com.
 
 1. In short
 -----------
@@ -84,7 +84,7 @@ AurOS is for adults and is not aimed at children. The optional custom-build serv
 7. Your rights
 --------------
 
-AurOS Setup and AurOS do not collect information about the people who use them, so there is usually nothing for us to show, correct or delete. The optional custom-build service has no account and knows a current request by its opaque job number and secret receipt. Its temporary authorization job expires after 24 hours, but the canonical technical delivery record and public GitHub build record have no automatic deletion; the canonical record has no receipt or network identity. If you think we hold something about you, for example an email you sent or a build receipt, write to CONTACT_EMAIL. We will tell you what we can identify from what you provide and respond to a deletion request where it applies, normally within 30 days. If you live where the law gives you more rights over information about you, for example in the United Kingdom or the European Union, you can use them the same way, and you can complain to the data protection authority where you live. AurOS is made for people in the United States for now.
+AurOS Setup and AurOS do not collect information about the people who use them, so there is usually nothing for us to show, correct or delete. The optional custom-build service has no account and knows a current request by its opaque job number and secret receipt. Its temporary authorization job expires after 24 hours, but the canonical technical delivery record and public GitHub build record have no automatic deletion; the canonical record has no receipt or network identity. If you think we hold something about you, for example an email you sent or a build receipt, write to aarohkandy@gmail.com. We will tell you what we can identify from what you provide and respond to a deletion request where it applies, normally within 30 days. If you live where the law gives you more rights over information about you, for example in the United Kingdom or the European Union, you can use them the same way, and you can complain to the data protection authority where you live. AurOS is made for people in the United States for now.
 
 8. Changes
 ----------
