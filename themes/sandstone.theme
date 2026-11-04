@@ -14,8 +14,8 @@ bg_alt="#FAFBFC"     # soft: bars, alternate sections
 surface="#FFFFFF"    # card: windows, menus, dialogs
 surface_hi="#E1ECE7" # selected: the chosen row or card only
 overlay="#687079"    # rule: every border and outline (4.7:1 or more)
-muted="#5C6066"      # quiet: legal lines only
-subtle="#3A3D42"     # ink-2: secondary text
+muted="#464A51"      # quiet: hints and legal lines (7:1 or more, painted at full strength)
+subtle="#33363B"     # ink-2: secondary text (7:1 or more even at the shell's 85%)
 fg="#17181A"         # ink: everything she reads or acts on
 fg_hi="#17181A"
 

@@ -196,7 +196,7 @@ function measureText() {
     const fg = parse(cs.color), bg = background(el);
     const cr = bg && fg ? ratio(over(fg, bg), bg) : null;
     out.push({ text: t.textContent.trim().slice(0, 60), tag: el.tagName.toLowerCase() + (el.id ? "#" + el.id : "") + (el.className && typeof el.className === "string" ? "." + el.className.trim().split(/\s+/).join(".") : ""),
-      size: parseFloat(cs.fontSize), contrast: cr });
+      size: parseFloat(cs.fontSize), contrast: cr, drawing: !!el.closest(".win, .ss, .uac, .edge") });
   }
   return out;
 }
@@ -246,6 +246,11 @@ function textFindings(name, items) {
     small.slice(0, 6).map((i) => `${i.size}px "${i.text}" <${i.tag}>`).join("; "));
   check(low.length === 0, `${name}: all text 4.5:1 or better`,
     low.slice(0, 6).map((i) => `${i.contrast.toFixed(2)}:1 "${i.text}" <${i.tag}>`).join("; "));
+  // Poor eyes: our own words clear 7:1, not only 4.5. The .win, .ss, .uac and .edge pictures of Windows' own
+  // dialogs are drawn in Windows' colours, so they are the one exception.
+  const low7 = items.filter((i) => !i.drawing && i.contrast !== null && i.contrast < 7);
+  check(low7.length === 0, `${name}: our own text 7:1 or better`,
+    low7.slice(0, 6).map((i) => `${i.contrast.toFixed(2)}:1 "${i.text}" <${i.tag}>`).join("; "));
   const min = items.reduce((m, i) => (i.contrast !== null && i.contrast < m.c ? { c: i.contrast, t: i.text } : m), { c: 99, t: "" });
   if (items.length) console.log(`     lowest contrast ${min.c.toFixed(2)}:1 ("${min.t}")`);
 }

@@ -8,6 +8,8 @@
  *             (every layout publishes them: shell_layout.targets)
  *   bounds    a window is placed wholly on the screen, in every look, whatever size it
  *             asked for and wherever it asked to be (OBS-REAL-IMAGE)
+ *   quiet     the hint and a window's subtitle, as painted, clear 7:1 on the Light look
+ *             (the shell draws them at part strength; the ink the eye gets is what counts)
  *
  *   cc -O2 -std=gnu11 -o /tmp/floorstest tools/floorstest.c src/aurshell/draw.c \
  *      src/aurshell/shellcommon.c src/aurshell/anim.c src/aurshell/foot.c \
@@ -18,6 +20,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
+#include <unistd.h>
 
 #include "../src/aurshell/shell.h"
 #include "../src/aurshell/foot.h"
@@ -62,10 +66,14 @@ static const char *NAMES[] = { "Internet", "Your files", "Music and video", "Pho
                                "Spreadsheets", "Notes", "Printers", "Calculator", "Documents",
                                "Zip files", "Get more programs" };
 
+static int none_in_use;             /* set: no window is the one in use (so none is painted over by the one that is) */
+static const char *light_conf;       /* set: the shell.conf of the Light look; unset: the built-in colours */
+
 static void make(rig *r, const char *look, int W, int H, float scale, int napps, int nwins, int csd0)
 {
     memset(&r->c, 0, sizeof r->c);
     theme_t t = {0};
+    if (light_conf && theme_load(&t, light_conf) < 0) { fprintf(stderr, "cannot read %s\n", light_conf); exit(2); }
     shell_theme_load(&r->c, &t);
     char shf[96];
     snprintf(shf, sizeof shf, "shells/%s.shell", look);
@@ -79,6 +87,7 @@ static void make(rig *r, const char *look, int W, int H, float scale, int napps,
     if (r->s) { surface_free(r->s); r->s = NULL; }
     if (!r->app) { r->app = surface_new(900, 600); for (int i = 0; i < r->app->w * r->app->h; i++) r->app->px[i] = 0xFF12AB34u; }
     r->s = surface_new(W, H);
+    for (int i = 0; i < W * H; i++) r->s->px[i] = 0xFF000000u | r->c.bg;     /* the desktop under it, as the real shell lays it */
     shell_fonts_free(&r->f);
     memset(&r->f, 0, sizeof r->f);
     shell_fonts_load(&r->f, &r->c);
@@ -94,19 +103,57 @@ static void make(rig *r, const char *look, int W, int H, float scale, int napps,
         win_entry *e = &r->c.wins[i];
         memset(e, 0, sizeof *e);
         snprintf(e->title, sizeof e->title, "A program %d", i + 1);
+        snprintf(e->subtitle, sizeof e->subtitle, "A page title");
         e->app = i < napps ? i : -1;
         e->content = r->app;
         e->wid = (uint32_t)(7 + i);
         e->csd = (i == 0) ? csd0 : 0;
     }
     r->c.n_wins = nwins;
-    r->c.focus = nwins ? 0 : -1;
+    r->c.focus = (nwins && !none_in_use) ? 0 : -1;
     if (r->L->init) r->L->init(&r->c);
     for (int i = 0; i < nwins; i++) if (r->L->present) r->L->present(&r->c, i);
     if (r->L->step) for (int i = 0; i < 80; i++) r->L->step(&r->c, 0.05f);
     surface body = *r->s; body.h = r->c.screen_h;
     draw_track_reset();
     r->L->paint(&r->c, &body, &r->f, NULL);
+}
+
+/* The ratio of the darkest pixel in a drawn word's box to the lightest: what the eye gets of it. */
+static double lum8(uint32_t p)
+{
+    double v[3] = { (double)((p >> 16) & 0xFF), (double)((p >> 8) & 0xFF), (double)(p & 0xFF) };
+    for (int i = 0; i < 3; i++) { v[i] /= 255.0; v[i] = v[i] <= 0.03928 ? v[i] / 12.92 : pow((v[i] + 0.055) / 1.055, 2.4); }
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+}
+static double word_ratio(const surface *s, const shell_text_rec *t)
+{
+    double lo = 2, hi = -1;
+    for (int y = t->y; y < t->y + t->h; y++)
+        for (int x = t->x; x < t->x + t->w; x++) {
+            if (x < 0 || y < 0 || x >= s->w || y >= s->h) continue;
+            double l = lum8(s->px[y * s->stride + x]);
+            if (l < lo) lo = l;
+            if (l > hi) hi = l;
+        }
+    return hi < 0 ? 0 : (hi + 0.05) / (lo + 0.05);
+}
+
+/* Painted with the text log on, then every drawn copy of `word` is measured (the least readable counts). */
+static void quiet(const char *look, int nwins, const char *word)
+{
+    rig R; memset(&R, 0, sizeof R);
+    shell_text_log_n = 0; shell_text_log_on = 1;
+    none_in_use = nwins > 0;                     /* a window she is not using is the dimmer one */
+    make(&R, look, 1366, 768, 1.f, 12, nwins, 0);
+    none_in_use = 0;
+    shell_text_log_on = 0;
+    double worst = 99; int seen = 0;
+    for (int i = 0; i < shell_text_log_n; i++)
+        if (!strcmp(shell_text_log[i].s, word)) { double r = word_ratio(R.s, &shell_text_log[i]); seen++; if (r < worst) worst = r; }
+    char nm[120];
+    snprintf(nm, sizeof nm, "%s, %d program(s) open, none in use: \"%s\" is 7:1 as painted (%.1f:1, drawn %d time(s))", look, nwins, word, worst, seen);
+    ok(nm, seen > 0 && worst >= 7.0);
 }
 
 static const struct { int w, h; } SIZES[] = { { 1024, 600 }, { 1366, 768 }, { 1920, 1080 } };
@@ -195,6 +242,23 @@ int main(void)
     floors("dock", S_WINS);    floors("dock", S_MANY);    floors("dock", S_FIND);   floors("dock", S_HOME);   floors("dock", S_BUSY);
     floors("rail", S_WINS);    floors("rail", S_MANY);   floors("rail", S_HOME);   floors("rail", S_LIST);
     floors("tiles", S_WINS);   floors("tiles", S_MANY);   floors("tiles", S_HOME);  floors("tiles", S_PAGES);
+    /* The Light look, rendered the way contrast-test.sh renders it (aurora, from the repository root). */
+    char dir[64], cmd[600];
+    snprintf(dir, sizeof dir, "/tmp/floorstest.%d", (int)getpid());
+    snprintf(cmd, sizeof cmd,
+             "mkdir -p %s/st && echo sandstone > %s/st/theme && tail -n +2 themes/templates/shell.conf.tpl | "
+             "AURORA_THEMES=themes AURORA_TEMPLATES=themes/templates AURORA_STATE=%s/st AURORA_CACHE=%s/c "
+             "./src/aurora/aurora render > %s/light.conf", dir, dir, dir, dir, dir);
+    if (system(cmd) != 0) { fprintf(stderr, "could not render the Light look\n"); return 2; }
+    char conf[100]; snprintf(conf, sizeof conf, "%s/light.conf", dir);
+    light_conf = conf;
+    printf("\nquiet words: 7:1 as painted, on the Light look\n");
+    quiet("taskbar", 0, "Nothing open yet.");
+    quiet("taskbar", 1, "A page title");
+    quiet("dock", 1, "A page title");
+    light_conf = NULL;
+    snprintf(cmd, sizeof cmd, "rm -rf %s", dir);
+    if (system(cmd) != 0) fprintf(stderr, "could not remove %s\n", dir);
     printf("\n%d checks, %d failed\n", checked, fail);
     return fail ? 1 : 0;
 }

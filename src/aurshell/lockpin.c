@@ -378,7 +378,7 @@ static void look_load(look *L, const char *theme_path, int h)
     L->bg     = theme_color(&t, "bg",      0xF5F7FA);
     L->ink    = theme_color(&t, "fg_hi",   0x17181A);
     L->body   = theme_color(&t, "fg",      0x17181A);
-    L->dim    = theme_color(&t, "subtle",  0x3A3D42);
+    L->dim    = theme_color(&t, "subtle",  0x33363B);
     L->faint  = theme_color(&t, "overlay", 0x687079);
     L->accent = theme_color(&t, "accent",  0x0B5D4F);
     L->bad    = theme_color(&t, "err",     0x9E2B22);

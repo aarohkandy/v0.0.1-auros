@@ -128,8 +128,8 @@ this document, the departure is written in place below and marked *Sky*.
 | selected (`surface_hi`) | `#E1ECE7` | the chosen row or card only (never hover) | — |
 | rule (`overlay`) | `#687079` (*Sky*; installer `#6E675C`) | every border and outline | 4.7 paper, 5.0 card |
 | ink (`fg`, `fg_hi`) | `#17181A` | all text she must read or act on, focus ring, warning text | 15.9 paper, 14.3 soft, 14.7 selected |
-| ink-2 (`subtle`) | `#3A3D42` | secondary text, "why can't I press this" explanations | 9.8 paper, 8.8 soft, 9.0 selected |
-| quiet (`muted`) | `#5C6066` | **legal lines only** | 5.7 paper, 5.1 soft |
+| ink-2 (`subtle`) | `#3A3D42` (*Sky* desktop `#33363B`: the shell paints it at 85%, still 7:1) | secondary text, "why can't I press this" explanations | 9.8 paper, 8.8 soft, 9.0 selected |
+| quiet (`muted`) | `#5C6066` (*Sky* website and desktop `#464A51`: 7:1 on every ground) | **legal lines, and the hint in the taskbar** | 5.7 paper, 5.1 soft (`#464A51`: 8.3 paper, 7.6 soft) |
 | go (`accent`) | `#0B5D4F` | primary fill, selected border, mark | white on it 7.8; as text 7.0 paper |
 | go-dark (`accent_warm`) | `#07463B` | primary pressed | white on it 10.8 |
 | warn (`warn`) | `#8A5A12` icon and left bar on `#F7EBD2` | only "you need to do this"; the text is ink | ink on tint 15.0; icon 5.0 |

@@ -421,7 +421,7 @@ static void paint_win(shell_ctx *c, surface *s, shell_fonts *f, int i, int focus
             float dx = tx + nw + 14.f;
             draw_vrule(s, (int)dx, a.y + 13, th - 26, 1, c->overlay, al);
             shell_text(s, f->small, dx + 12.f, shell_baseline(f->small, (float)a.y, (float)th),
-                       w->subtitle, c->subtle, al * (focused ? 0.9f : 0.6f));
+                       w->subtitle, c->subtle, al);
         }
 
         /* Minimise then close. Minimising is safe here precisely because the

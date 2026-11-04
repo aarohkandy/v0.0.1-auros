@@ -692,7 +692,7 @@ static void paint_window(shell_ctx *c, surface *s, shell_fonts *f, int i,
                                        room - used - 16.f);
             shell_text(s, f->small, tx + used + 14.f,
                        shell_baseline(f->small, (float)a.y, (float)th), sub,
-                       c->muted, alpha * (focused ? 0.85f : 0.6f));
+                       c->muted, alpha);
         }
 
         for (int part = WP_MIN; part <= WP_CLOSE; part++) {
@@ -832,7 +832,7 @@ static void paint_bar(shell_ctx *c, surface *s, shell_fonts *f)
                                     "Nothing open yet.",
                                     hb, sizeof hb, (float)tray0.x - hx - 16.f);
         shell_text(s, f->small, hx, shell_baseline(f->small, (float)l.y, (float)l.h),
-                   hint, c->muted, 0.85f);
+                   hint, c->muted, 1.f);
     }
     int dropped = 0, last_x = 0;
     for (int i = 0; i < c->n_wins; i++) {
@@ -965,7 +965,7 @@ static void paint_menu(shell_ctx *c, surface *s, shell_fonts *f)
         snprintf(more, sizeof more, "…and %d more", c->n_apps - shown);
         shell_text(s, f->small, (float)row.x + 44.f,
                    shell_baseline(f->small, (float)row.y, (float)row.h),
-                   more, c->muted, t * 0.85f);
+                   more, c->muted, t);
     }
 }
 
