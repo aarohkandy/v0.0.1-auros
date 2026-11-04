@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Letters and Spreadsheets (LibreOffice Writer and Calc), the way she should meet them.
+  LibreOffice reads every .xcu under /etc/libreoffice/registry/data before her own settings;
+  nothing here stops her changing any of it in Tools > Options.
+
+  1. No "Tip of the Day" window. Every first start opened one on top of her letter (a picture of
+     menus and "Run this action now...", in the PARITY run of 2026-11-04).
+  2. A letter is saved as a Word file (.docx) and a table as an Excel file (.xlsx). The people she
+     sends them to use Windows; a .odt or .ods is a file whose icon and name mean nothing to them. This is the
+     choice the Save window offers first, so she presses Save and not a list of formats.
+  3. No "Keep current format?" question when she saves a Word or Excel file she opened. It offers two
+     buttons named after file formats, and one of them leaves her letter in a form her friend cannot open.
+-->
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <item oor:path="/org.openoffice.Office.Common/Misc">
+    <prop oor:name="ShowTipOfTheDay" oor:op="fuse"><value>false</value></prop>
+  </item>
+  <item oor:path="/org.openoffice.Office.Common/Save/Document">
+    <prop oor:name="WarnAlienFormat" oor:op="fuse"><value>false</value></prop>
+  </item>
+  <item oor:path="/org.openoffice.Setup/Office/Factories/com.sun.star.text.TextDocument">
+    <prop oor:name="ooSetupFactoryDefaultFilter" oor:op="fuse"><value>MS Word 2007 XML</value></prop>
+  </item>
+  <item oor:path="/org.openoffice.Setup/Office/Factories/com.sun.star.sheet.SpreadsheetDocument">
+    <prop oor:name="ooSetupFactoryDefaultFilter" oor:op="fuse"><value>Calc MS Excel 2007 XML</value></prop>
+  </item>
+</oor:items>

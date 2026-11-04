@@ -1024,6 +1024,7 @@ xarchiver|Zip files|Open or make a zip file
 org.gnome.Software|Get more programs|Find and add programs
 libreoffice-writer|Letters|Write a letter, or open a Word file
 libreoffice-calc|Spreadsheets|Numbers in tables, or open an Excel file
+sol|Solitaire|Play cards
 EOL
 
     # libreoffice-math is installed so a formula inside a Word file is drawn,
@@ -1041,6 +1042,13 @@ EOL
     # The database the desktop actually reads. Without this the file
     # above is a text file nobody consults.
     inchroot "update-desktop-database /usr/share/applications >/dev/null 2>&1" || true
+    # The renamed copies above live in /usr/local/share/applications, which
+    # the line before does not index. A renamed program (Music and video,
+    # Photos, Letters ...) then answered for the few types listed in
+    # mimeapps.list and for nothing else: a .wmv, .wma, .aac or .flv had no
+    # program at all, and a link to an email address opened nothing (PARITY,
+    # tools/parity/guest/checks/types.sh).
+    inchroot "update-desktop-database /usr/local/share/applications >/dev/null 2>&1" || true
     inchroot "update-mime-database /usr/share/mime >/dev/null 2>&1" || true
 
     # Her folders -- Documents, Pictures, Downloads -- created with the
