@@ -84,16 +84,19 @@ Windows machine before it is published (`.github/workflows/windows.yml`).
 
 ## Running it
 
-1. Download `AurOS-Installer-test.exe` from
-   https://github.com/ComputerDude771/auros-from-scratch/raw/image-desktop/AurOS-Installer-test.exe
-   and double-click it. (Its SHA-256 is in the `image-desktop`
-   branch's README, with what was tested on real Windows.)
-2. Windows shows **"Windows protected your PC"**, because the file is
-   not signed yet. Click **More info**, then **Run anyway**.
-   (If there is no *Run anyway*, the PC has Smart App Control on, and
-   an unsigned installer cannot run on it. Use a different PC.)
-3. Windows asks **"Do you want to allow this app to make changes?"** →
-   **Yes**.
+1. On the AurOS website, press **Get AurOS**. Edge says the file
+   *"isn't commonly downloaded"* (it is not signed, and never will be:
+   D7). Press **Keep**, then **Keep anyway** (it is behind the
+   small arrow next to *Delete*), then **Open file**. This is what the
+   real-Windows-11 run showed (`docs/handoff/SESSION-2026-11-03.md`).
+2. Some PCs, or other browsers, also show a blue **"Windows protected
+   your PC"** (it did not in that Edge run). Click **More info**, then
+   **Run anyway**. (If there is no *Run anyway*, the PC has Smart App
+   Control on, and an unsigned installer cannot run on it. Use a
+   different PC.)
+3. Windows asks **"Do you want to allow this app from an unknown
+   publisher to make changes to your device?"** (*Publisher: Unknown*:
+   same reason) → **Yes**.
 4. **The first page checks the PC by itself** while you read it (it only
    reads). When it says *This computer can take AurOS*, press **Next**.
    If something stops it, the page says what in one line each; press
@@ -139,9 +142,12 @@ Pictures of every page: `docs/shots/wizard/`.
 - On its first start AurOS applies what you chose in the installer. The
   language sets dates, numbers and the programs that carry their own
   translations; AurOS's own menus are English for now.
-- When AurOS starts, it asks **whether it works**. Say **yes** to make
-  AurOS what the PC starts from now on; say **no** and the PC goes back
-  to starting Windows. Windows is still there either way.
+- When AurOS starts, it asks **"Does everything work?"**. Press **Yes,
+  it all works** and it asks once more (**Start AurOS from now on**,
+  or **Not yet** to go back to the question); then it offers **Bring my
+  files across** (or **Not now**: files already in Windows stay there).
+  Say **no** and the PC goes back to starting Windows. Windows is still
+  there either way.
 
 ## Getting to Windows afterwards
 
