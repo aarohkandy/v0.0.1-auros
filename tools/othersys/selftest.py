@@ -488,6 +488,34 @@ def test_helper(d):
         st = {'ubuntu_entry': '0004'}
         m.take_answer(st)
         expect('answer %r -> %s first' % (word.strip(), first), [] if fv.order()[0] == first else [str(fv.order())], False)
+    # boot and the answer service start together when an answer is already
+    # waiting (the VM's confirm phase). Boot is the slow one there (on its
+    # first start it grows the root): the answer service runs meanwhile,
+    # and "yes" must still be what is left
+    import threading
+    import time
+    real_dirs = m.STATE_DIR, m.INBOX
+    m.STATE_DIR = os.path.join(d, 'state')
+    m.INBOX = os.path.join(m.STATE_DIR, 'inbox')
+    os.makedirs(m.INBOX, exist_ok=True)
+    machine_after_curtin()
+    m.firmware_fixup(plan, {})
+    json.dump({'system': 'x', 'ubuntu_entry': '0004'}, open(os.path.join(m.STATE_DIR, 'state.json'), 'w'))
+    open(os.path.join(m.INBOX, 'answer'), 'w').write('yes\n')
+    racer = threading.Thread(target=m.cmd_answer, args=(plan,))
+
+    def slow_remove_iso(plan, state):
+        racer.start()
+        time.sleep(1)
+    real_remove_iso, m.remove_iso = m.remove_iso, slow_remove_iso
+    m.cmd_boot(plan)
+    racer.join()
+    m.remove_iso = real_remove_iso
+    expect('boot and answer at once: "yes" puts Ubuntu first, the hold does not undo it',
+           [] if fv.order()[0] == '0004' else ['BootOrder %s' % fv.order()], False)
+    expect('boot and answer at once: state.json keeps the answer',
+           [] if m.load_state().get('answer') == 'yes' else ['state %r' % m.load_state()], False)
+    m.STATE_DIR, m.INBOX = real_dirs
     # restored_order never drops a number, for any order it is given
     import itertools
     bad = []

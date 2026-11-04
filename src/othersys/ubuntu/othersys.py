@@ -47,6 +47,7 @@ not depend on anything the installer may or may not have put there
 (efibootmgr, for one, is not in the installed package list).
 """
 import fcntl
+import functools
 import json
 import os
 import re
@@ -577,6 +578,23 @@ def load_state():
         return {}
 
 
+def one_at_a_time(fn):
+    """boot and answer each read state.json, act on the firmware, and write
+    state.json back, and systemd starts them together when an answer is
+    already waiting. Unlocked, the slower one worked from a copy that
+    predates the other: boot's hold put Windows first again after the
+    answer service had said yes, and then wrote a state without the answer
+    (seen on Ubuntu Cinnamon, whose first start was the slow one: it also
+    grows the root). So only one runs at a time, and each reads state
+    after taking its turn."""
+    @functools.wraps(fn)
+    def locked(plan):
+        with open(os.path.join(STATE_DIR, 'lock'), 'w') as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            return fn(plan)
+    return locked
+
+
 def save_state(state):
     tmp = os.path.join(STATE_DIR, 'state.json.new')
     with open(tmp, 'w') as f:
@@ -731,6 +749,7 @@ def take_answer(state):
         log('answer: later')
 
 
+@one_at_a_time
 def cmd_boot(plan):
     state = load_state()
     if not state:
@@ -753,6 +772,7 @@ def cmd_boot(plan):
     save_state(state)
 
 
+@one_at_a_time
 def cmd_answer(plan):
     state = load_state()
     take_answer(state)
