@@ -3389,6 +3389,19 @@ def aur_root_report(rec, mnt, out_dir, expected_personalization=None,
         "ls -laR var/lib/auros etc/auros 2>&1 | head -60; "
         "for f in var/lib/auros/software-ready*; do echo \"== $f\"; head -c 2000 \"$f\" 2>&1; echo; done; "
         "ls -la etc/systemd/system/*.wants 2>&1 | grep -i 'auros\\|software' | head"))
+    # Put Windows back's own records (run 41756814221 refused 'locked' twice
+    # with none of this kept): which way answer.sh could take, and why.
+    records = sh(
+        "echo '== etc/auros/installer-choices.conf'; cat etc/auros/installer-choices.conf 2>&1; "
+        "echo '== handover.sh, answer.sh, ferry'; ls -l usr/lib/auros/handover.sh usr/lib/auros/answer.sh usr/bin/ferry 2>&1; "
+        "echo '== var/log/auros-answer.log (last 200 lines)'; tail -n 200 var/log/auros-answer.log 2>&1; "
+        "echo '== var/lib/auros'; ls -la var/lib/auros 2>&1; "
+        "for f in var/lib/auros/*.log var/lib/auros/handover.dev; do [ -f \"$f\" ] && { echo \"== $f\"; tail -c 4000 \"$f\"; }; done; true")
+    try:
+        with open(os.path.join(out_dir, "putback-records.txt"), "w") as fh:
+            fh.write(records)
+    except OSError:
+        pass
     jd = f"{mnt}/var/log/journal"
     full = run(["sudo", "sh", "-c",
                 f"journalctl -D {jd} --no-pager -o short-iso --list-boots 2>&1 | head -20; echo '-----'; "

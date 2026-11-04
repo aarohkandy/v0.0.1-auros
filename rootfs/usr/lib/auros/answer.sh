@@ -452,7 +452,10 @@ case "$word" in
         say "result=failed"
         say "note=the files that put Windows back are not on this computer any more"
     elif ! back_files; then
-        :   # back_files has said why
+        # back_files has said why; what Ferry and the handover said goes in
+        # this log too, because $OUT is gone after the restart.
+        echo "putback: saving her files failed; putback.log follows"
+        tail -c 8000 "$OUT/putback.log" 2>/dev/null
     elif ! read_asked; then
         say "result=failed"
         say "note=AurOS could not read this computer's clock"
