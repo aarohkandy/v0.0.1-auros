@@ -391,8 +391,7 @@ def firmware_fixup(plan, state):
     recorded = [int(x, 16) for x in plan['bootorder_before']]
     new = restored_order(recorded, cur, ours)
     set_boot_order(new)
-    set_boot_next(ours)
-    log('late: BootOrder %s (Windows first), BootNext %04X' % (fmt(new), ours))
+    log('late: BootOrder %s (Windows first)' % fmt(new))
     state['bootorder_after_fixup'] = fmt(new)
 
 
@@ -566,6 +565,13 @@ def cmd_late(plan, target='/target'):
     firmware_fixup(plan, state)
     cancel_mok(state)
     install_helper(plan, target, state)
+    # last, so a power cut anywhere in late starts Windows: BootNext brings
+    # her to Ubuntu once, and until the helper is in it nothing there asks
+    # her anything, removes the ISO partition or keeps Windows first
+    if not plan['test'].get('skip_fixup'):
+        ours = int(state['ubuntu_entry'], 16)
+        set_boot_next(ours)
+        log('late: BootNext %04X' % ours)
 
 
 # -------------------------------------------------------------------- boot
