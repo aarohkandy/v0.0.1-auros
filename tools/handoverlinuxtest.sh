@@ -123,6 +123,27 @@ PART="/dev/${lb}p2"
 mount "$PART" "$T/root"
 rm -f "$STATE/handover.img" "$STATE/handover.dev"
 
+# ── the state directory behind a bind mount, as auros-answer.service sees it ─
+# ReadWritePaths=/var/lib/auros makes it one inside the unit, and findmnt then
+# names the source "/dev/sda5[/var/lib/auros]": release run 41762636775 refused
+# a plain ext4 root as "not on a plain partition" (exit 5, shown as locked).
+mkdir -p "$T/bind"
+if mount --bind "$STATE" "$T/bind"; then
+    BDEV=$(AUROS_HANDOVER_RESERVE=67108864 AUROS_STATE="$T/bind" AUROS_FERRY="$T/ferry" sh "$H" prepare 2>"$T/err"); rc=$?
+    [ "$rc" = 0 ] && [ -b "$BDEV" ] && ok "prepare through a bind mount of the state directory" \
+        || bad "prepare through a bind mount of the state directory" "exit $rc: $(cat "$T/err")"
+    if [ "$rc" = 0 ]; then
+        BREC=$(AUROS_STATE="$T/bind" AUROS_FERRY="$T/ferry" sh "$H" finish 2>"$T/err"); rc=$?
+        [ "$rc" = 0 ] && [ -n "$BREC" ] && ok "...and finish gives a record through it" \
+            || bad "...and finish gives a record through it" "exit $rc: $(cat "$T/err")"
+    fi
+    AUROS_STATE="$T/bind" sh "$H" cancel
+    umount "$T/bind"
+else
+    bad "setup: bind-mount the state directory" "mount --bind failed"
+fi
+rm -f "$STATE/handover.img" "$STATE/handover.dev"
+
 # ── a file that was never written is caught by reading the disk ───────
 # Stale bytes on the disk first, so that "allocated but never written" differs from zeros.
 head -c 100000000 /dev/urandom > "$STATE/junk" 2>/dev/null; sync; rm -f "$STATE/junk"; sync

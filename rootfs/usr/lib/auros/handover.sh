@@ -70,7 +70,9 @@ extents() {
 where() {
     fstype=$(stat -f -c %T "$1" 2>/dev/null)
     case "$fstype" in ext2/ext3|ext4) ;; *) say "the AurOS root is $fstype, not ext4"; return 1 ;; esac
-    src=$(findmnt -no SOURCE -T "$1" 2>/dev/null)
+    # --nofsroot: inside auros-answer.service ReadWritePaths= makes the state
+    # directory a bind mount, which findmnt would name "/dev/sda5[/var/lib/auros]".
+    src=$(findmnt -no SOURCE --nofsroot -T "$1" 2>/dev/null)
     case "$src" in
         /dev/mapper/*|/dev/dm-*) say "the AurOS root is on an encrypted or mapped volume"; return 1 ;;
     esac
