@@ -40,3 +40,13 @@ else
     result print.pdf fail "no PDF came out of the printer; adding it said: ${ADD:-nothing}"
 fi
 lpadmin -x parity 2>/dev/null
+
+# A printer from before about 2015 speaks no driverless language and needs a driver. CUPS lists the drivers it
+# has (the ones a USB printer is matched to when it is plugged in): one for each of the four brands in her house.
+models=$(lpinfo -m 2>/dev/null)
+miss=""
+for m in hpcups gutenprint epson-escpr brlaser; do
+    echo "$models" | grep -qi "$m" || miss="$miss $m"
+done
+if [ -z "$miss" ]; then result print.drivers pass "CUPS has drivers for HP (hpcups), Canon and Epson photo (gutenprint), Epson (escpr) and Brother (brlaser)"
+else result print.drivers fail "no driver for:$miss (lpinfo -m lists $(echo "$models" | wc -l) models)"; fi

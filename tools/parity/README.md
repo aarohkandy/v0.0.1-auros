@@ -8,9 +8,10 @@ State, findings and next steps: `docs/handoff/streams/PARITY.md`. Results: `docs
 | `desktop` | desktop, network and sound come up |
 | `call` | a real V4L2 camera (kernel `vivid`) and a PipeWire microphone (a tone) go through WebRTC in Firefox; the far side gets video and sound; the window shows the page (`call.visible`) |
 | `film` | an H.264/AAC MP4 and a DASH stream (Media Source, separate audio and video) play with sound; the window shows the picture |
-| `print` | a printer on "another machine" (a network namespace, ippeveprinter + mDNS) is found over DNS-SD, added driverless, a job arrives as a PDF |
-| `office` | xdg-open can type a docx/xlsx/pdf; something sensible opens them; Writer and Calc open and save them |
+| `print` | a printer on "another machine" (a network namespace, ippeveprinter + mDNS) is found over DNS-SD, added driverless, a job arrives as a PDF; and CUPS has drivers for the older printers of HP, Canon, Epson and Brother (`print.drivers`) |
+| `office` | xdg-open is ours and GLib's database types a docx/xlsx/pdf; something sensible opens them; Writer and Calc open and save them |
 | `pdfform` | double-click a form, click boxes, type, Save a copy: both boxes are in the file |
+| `types` | what a double-click opens, asked of the desktop's own file database (no window): pictures, PDF, letters, tables, notes, music and video (Windows Media too), zip, installers and presentations, folders, web links and `mailto:`, each by the name her screen shows; and Solitaire is among her programs |
 | `apps` | the top ten Flathub programs install with no password, get a launcher, open a window (separate, long run) |
 
 ## Run it

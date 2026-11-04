@@ -34,7 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OVMF_CODE = os.environ.get("OVMF_CODE", "/usr/share/OVMF/OVMF_CODE_4M.fd")
 OVMF_VARS = os.environ.get("OVMF_VARS", "/usr/share/OVMF/OVMF_VARS_4M.fd")
 W, H = 1280, 800
-ALL = ["desktop", "call", "film", "print", "office", "pdfform"]    # apps is a separate, long run
+ALL = ["desktop", "call", "film", "print", "office", "pdfform", "types"]    # apps is a separate, long run
 
 QCODE = {}
 for c in "abcdefghijklmnopqrstuvwxyz0123456789":
