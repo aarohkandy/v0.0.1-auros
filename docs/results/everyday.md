@@ -19,7 +19,7 @@ Evidence used, nothing else:
 |---|---|---|---|
 | the browser opens, a real site works | works (a page loads in Firefox; the call page showed in it) | P `firefox`, `everyday-call.png`; J ran Get more programs, which needs the net | nothing |
 | email in the browser (Gmail, Outlook) | **unproven**: no run has signed in to a mail site. Nothing in the policy blocks one; HTTPS-only is forced, which is right for mail | none | nothing (see "Not in this lane") |
-| a link to an email address (`mailto:`) | **broken**: nothing was registered, so a click did nothing | C: `gio mime x-scheme-handler/mailto` said "No default applications" | now goes to Internet (Firefox); what Firefox does with it next is **unproven**; see the first fix below |
+| a link to an email address (`mailto:`) | **broken**: nothing was registered, so a click did nothing | C: `gio mime x-scheme-handler/mailto` said "No default applications" | is registered to Internet (Firefox) now; what Firefox does with a link the desktop hands back to it (a chooser, a loop, nothing) is **unproven**, so `types` notes it and does not pass it; see the first fix below |
 | a video call (camera and microphone) | works in the VM with a virtual camera and microphone: both reach the far side, the window shows the picture. The permission question Firefox asks (Allow) is **unproven**: the test turns it off | P `call.webrtc`, `call.visible` | nothing |
 | YouTube and films, with sound | sound leaves the decoder for H.264/AAC and for a DASH stream, window shows the picture. **Smooth playback is not**: 57 to 177 of 230 to 290 frames were dropped in 6 of 7 nightlies on a VM with no graphics card (one night: 0 to 39). Real speakers and a real old laptop are unproven | P `film.*`, table in media-perf.md | media-perf.md brought up to date |
 | photos from a phone | **unproven**: libmtp and gphoto2 are in; an iPhone has no usbmuxd (read, not tested: docs/reviews/RECOMMENDS-2026-10-24.md). A phone photo is `.heic`, and that opens in Photos | C: `.heic` opens Photos | nothing |
@@ -49,6 +49,11 @@ had: `pdfform.last-box` and `firefox.firstrun` passed in all seven nightlies (th
 `SkipTermsOfUse`), and `office.types` was measuring `xdg-mime`, which our `xdg-open` no longer asks. A failed nightly emails the
 owner. `python3 tools/parity/selftest.py` replays a healthy night against the file.
 
+**The same nightly would have gone red the other way until a build exists.** The nightly tests the newest existing build, which
+has neither Solitaire, the drivers nor the second index. So `known-gaps.txt` lists `types.*` and `print.drivers` as `~pending`
+(they may fail or pass; `tools/parity/README.md`), and `selftest.py` replays such a night: exit 0 with the lines, 1 without.
+After the first nightly on a build carrying this branch, delete the `~` lines.
+
 ## Not in this lane (found, not changed)
 
 - **Firefox has no start page and no bookmarks** (`rootfs/etc/firefox/policies/policies.json`): "Internet" opens Firefox Home, a
@@ -60,4 +65,9 @@ owner. `python3 tools/parity/selftest.py` replays a healthy night against the fi
 - **WhatsApp from the store**: its window opens, and in 5 of 7 nightlies the page stays blank (`apps.whatsapp.visible`). It is not a
   known gap, because it passes on some nights. Cause unknown; it may be the VM's software drawing.
 - `.github/workflows/parity.yml` line 40 lists the checks in a description; `types` is not in the list (text only).
+- **"Keep current format?" is off for every format, not only Word and Excel** (LibreOffice has one switch): a CSV or RTF she opens
+  and saves is written as it was, without the question (`auros.xcu`). Without it, Letters would ask on every first Save of a new
+  letter, because Word is now its default. The owner can choose the other trade.
+- **Two Solitaires in the store, possibly**: the image has one (apt); `tools/parity/guest/apps.tsv` still installs the Flathub
+  `org.gnome.Aisleriot` as a store test, and what "Get more programs" shows for it beside the installed one has not been looked at.
 - Frames dropped on the no-graphics-card VM: nobody has a number for a real old laptop (WP-33).

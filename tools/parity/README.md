@@ -42,6 +42,10 @@ checks run as the desktop's own user with the environment the shell publishes. T
 
 `known-gaps.txt`: a check that fails today for a named reason is shown as `GAP` and does not fail the job; a gap that
 starts passing FAILS the job until its line is deleted. So a fix cannot go unnoticed and a gap cannot hide a regression.
+A name written `~NAME` is pending: the nightly tests the newest EXISTING build, so a check added together with the change
+it proves fails there until a build carries the change. A pending check may fail (GAP) or pass without failing the job;
+delete the line after the first night on a build that has the change. `python3 -I tools/parity/selftest.py` replays
+healthy and old-image nights against the file.
 
 Red proofs: `--without PKG` removes a package before the desktop starts (in the overlay) and `--expect-fail CHECKS` makes
 the run demand that those checks fail. Used: `--without firefox` (call, film), `--without evince` (pdfform),

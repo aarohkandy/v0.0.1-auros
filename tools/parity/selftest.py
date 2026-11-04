@@ -8,7 +8,10 @@ Standard library only; runs on a Mac.
 
 1. A healthy night (every check passes, as in nightly 41817427536) must exit 0 with the shipped known-gaps.txt.
    A gap that passes fails the run (run.py), so a stale line there is a red nightly, and an email to the owner.
-2. The files the `types` and `print` checks stand on: the programs in the profile, the LibreOffice settings, the
+   So must a night on the newest EXISTING image, which lacks this branch's changes: the checks added with them fail
+   there, and only the ~pending lines of known-gaps.txt keep that night green. A failure that is not listed, and a
+   plain gap that passes, must still be red.
+2.The files the `types` and `print` checks stand on: the programs in the profile, the LibreOffice settings, the
    two lines of build/forge. The checks prove them on the built image; this is what makes a deleted line loud
    before a build is spent on it.
 """
@@ -53,12 +56,13 @@ class Nothing:
         return lambda *a, **k: None
 
 
-def healthy_night(gaps_file):
+def night(gaps_text, failing=()):
+    """run.main() on a night where the checks in `failing` fail and the rest of HEALTHY pass; its exit code."""
     tmp = tempfile.mkdtemp(prefix="parity-selftest.")
     try:
-        shutil.copy(gaps_file, os.path.join(tmp, "known-gaps.txt"))
+        open(os.path.join(tmp, "known-gaps.txt"), "w").write(gaps_text)
         results = {"desktop": {"status": "pass", "detail": "up"}}
-        results.update({n: {"status": "pass", "detail": "fine"} for n in HEALTHY})
+        results.update({n: {"status": "fail" if n in failing else "pass", "detail": "fine"} for n in HEALTHY})
         saved = (run.HERE, run.Disk, run.Qemu, run.inject, run.drive, sys.argv, sys.stdout)
         run.HERE, run.Disk, run.Qemu, run.inject = tmp, Nothing, Nothing, lambda *a, **k: None
         run.drive = lambda *a, **k: (results, [], True, 1)
@@ -78,8 +82,17 @@ def healthy_night(gaps_file):
 
 gaps = sys.argv[sys.argv.index("--gaps") + 1] if "--gaps" in sys.argv else os.path.join(HERE, "known-gaps.txt")
 print("a healthy night against %s" % os.path.relpath(gaps, ROOT))
-rc = healthy_night(gaps)
-check("every check passes: the run exits 0 (no gap that passes is left in known-gaps.txt)", rc == 0, "exit code %r" % rc)
+shipped = open(gaps).read()
+rc = night(shipped)
+check("every check passes: the run exits 0 (no plain gap that passes is left in known-gaps.txt)", rc == 0, "exit code %r" % rc)
+pending = [ln.split()[0][1:] for ln in shipped.splitlines() if ln.startswith("~")]
+check("known-gaps.txt has pending lines (the newest existing image predates this branch)", len(pending) > 0)
+check("an older image: the checks added here fail, the run still exits 0", night(shipped, pending) == 0)
+check("  ... but exits 1 with no pending lines (red proof: they are what keep it green)",
+      night("", pending) == 1)
+check("  ... and exits 1 when a check that is not listed fails too", night(shipped, pending + ["print.discover"]) == 1)
+check("  ... and a plain gap that passes is still red", night("types.pdf  x\n") == 1)
+check("  ... and a pending line that passes is not", night("~types.pdf  x\n") == 0)
 check("the types check is one of the default checks", "types" in run.ALL)
 check("every sub-check types.sh reports is one this test knows",
       sorted(re.findall(r"^types (\w+) ", open(os.path.join(HERE, "guest/checks/types.sh")).read(), re.M) + ["solitaire"])
@@ -100,9 +113,13 @@ for pkg, why in (("aisleriot", "Solitaire"), ("printer-driver-escpr", "Epson dri
     check("the profile installs %s (%s)" % (pkg, why), pkg in profile)
 
 forge = read("build/forge")
+code = "\n".join(ln for ln in forge.splitlines() if not ln.lstrip().startswith("#"))    # a commented-out line is no line
 check("build/forge indexes /usr/local/share/applications, where the renamed launchers live",
-      "update-desktop-database /usr/local/share/applications" in forge)
-check("build/forge calls sol.desktop Solitaire", re.search(r"^sol\|Solitaire\|", forge, re.M) is not None)
+      re.search(r'^\s*inchroot "update-desktop-database /usr/local/share/applications\b', code, re.M) is not None)
+# the table of renamed programs: from `done <<'EOL'` (the loop above it reads these rows) to the line EOL
+table = re.search(r"^\s*done <<'EOL'\n(.*?)^EOL$", code, re.M | re.S)
+check("build/forge calls sol.desktop Solitaire, in the table of renamed programs",
+      table is not None and re.search(r"^sol\|Solitaire\|", table.group(1), re.M) is not None)
 
 xcu = os.path.join(ROOT, "rootfs/etc/libreoffice/registry/data/auros.xcu")
 want = {("/org.openoffice.Office.Common/Misc", "ShowTipOfTheDay"): "false",

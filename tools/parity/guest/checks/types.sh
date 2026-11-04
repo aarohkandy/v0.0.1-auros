@@ -38,7 +38,10 @@ types installer "Get more programs" application/vnd.debian.binary-package applic
                 application/x-ms-dos-executable application/x-msdownload \
                 application/vnd.openxmlformats-officedocument.presentationml.presentation application/vnd.ms-powerpoint
 types folders   "Your files" inode/directory
-types web       "Internet" x-scheme-handler/http x-scheme-handler/https text/html x-scheme-handler/mailto
+types web       "Internet" x-scheme-handler/http x-scheme-handler/https text/html
+# A link to an email address is REGISTERED to Internet by the same index, but what Firefox does with a mailto: link the
+# desktop hands back to it (a chooser, a loop, nothing) has not been tried: so it is a note, not a pass.
+note "mailto: is registered to \"$(nameof "$(gio mime x-scheme-handler/mailto 2>&1 | sed -n 's/^Default application for.*: //p' | head -1)")\"; what Firefox does with it next is untested"
 
 # Solitaire is on her list of programs, under that name
 if [ "$(nameof sol.desktop)" = Solitaire ] && command -v sol >/dev/null 2>&1; then
