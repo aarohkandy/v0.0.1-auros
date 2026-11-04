@@ -315,9 +315,8 @@ jobs:
           out/aurbridge-sim sbselftest
 
       # Small, immutable inputs for rebuilding only the installer around this
-      # exact green desktop image. Copy them before the optional fast-path
-      # rebuild touches out/: build-info therefore identifies the normal
-      # installer archived by this same run.
+      # exact green desktop image: build-info identifies the installer archived
+      # by this same run.
       - name: reusable base image metadata
         run: |
           mkdir -p dist/base-metadata
