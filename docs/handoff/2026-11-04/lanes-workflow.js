@@ -1,3 +1,8 @@
+// REFERENCE ONLY: the script as it ran on 2026-11-04; nothing executes it.
+// Before re-running it: check each report's branch against /^agent\/[A-Za-z0-9._-]+(-r[0-9]+)?$/ (or use
+// the lane's own branch), pass agent reports as fenced untrusted data rather than instructions, and enforce
+// no-push mechanically (e.g. git remote set-url --push origin no_push) instead of by prompt text.
+
 export const meta = {
   name: 'auros-finish-lanes',
   description: 'Five AurOS lanes (put-back wording, retire fastpath lane, othersys powercut/budgie/cinnamon): implement in worktrees, adversarially review, fix',
