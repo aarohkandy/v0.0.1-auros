@@ -33,10 +33,7 @@ set -uo pipefail
 what=$1
 run=${GITHUB_RUN_ID:-local}
 url=${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}
-# E2E_LABEL ("-fastpath"): when one run tests two installers (release.yml calls
-# this for AurOS-Setup.exe and for AurOS-Setup-fastpath.exe, both "base", in one
-# run id), their files must not overwrite each other (e2e-evidence-base.zip).
-variant=${E2E_VARIANT:-base}${E2E_LABEL:-}
+variant=${E2E_VARIANT:-base}
 STATE=${E2E_PUBLISH_STATE:-${RUNNER_TEMP:-/tmp}/e2e-publish-$run.state}
 have_gh() { [ -n "${GH_TOKEN:-}" ]; }
 # gh works out the repository from the git checkout it runs in; the

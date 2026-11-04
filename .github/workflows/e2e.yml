@@ -156,15 +156,14 @@ jobs:
           rest = u.path[len(want):]
           tag, sep, name = rest.partition('/')
           assert sep and re.fullmatch(r'[A-Za-z0-9._-]{1,128}', tag)
-          assert name in {'AurOS-Setup-fastpath.exe', 'AurOS-Setup.exe'}
-          if name == 'AurOS-Setup.exe':
-              sha = os.environ['IN_SOURCE_SHA']
-              assert re.fullmatch(r'[0-9a-f]{40}', sha)
-              assert tag.endswith('-' + sha[:7])
-              source = subprocess.check_output(
-                  ['git', 'show', sha + ':build/aurbridge'], text=True)
-              pattern = r'^if \[ "\$\{AUROS_FASTPATH:-(\d)\}" = 1 \]; then$'
-              assert re.findall(pattern, source, re.MULTILINE) == ['1']
+          assert name == 'AurOS-Setup.exe'
+          sha = os.environ['IN_SOURCE_SHA']
+          assert re.fullmatch(r'[0-9a-f]{40}', sha)
+          assert tag.endswith('-' + sha[:7])
+          source = subprocess.check_output(
+              ['git', 'show', sha + ':build/aurbridge'], text=True)
+          pattern = r'^if \[ "\$\{AUROS_FASTPATH:-(\d)\}" = 1 \]; then$'
+          assert re.findall(pattern, source, re.MULTILINE) == ['1']
           PY
             then
               echo "::error::put-back E2E requires this repository's exact put-back-capable release URL; AurOS-Setup.exe is accepted only when this source defaults to the fast path"
@@ -227,9 +226,6 @@ jobs:
     timeout-minutes: 355
     env:
       E2E_VARIANT: ${{ matrix.variant }}
-      # Two installers in one run id (release.yml) must not share file names.
-      # The auxiliary fastpath asset is omitted once it matches the default.
-      E2E_LABEL: ${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}
       E2E_BITLOCKER_PUTBACK: ${{ inputs.bitlocker_putback && matrix.variant == 'bitlocker' && '1' || '0' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -402,8 +398,8 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: e2e-evidence-${{ matrix.variant }}${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}
-          path: ${{ env.E2E_DIR }}/out/e2e-evidence-${{ matrix.variant }}${{ contains(inputs.installer_url, 'fastpath') && '-fastpath' || '' }}.zip
+          name: e2e-evidence-${{ matrix.variant }}
+          path: ${{ env.E2E_DIR }}/out/e2e-evidence-${{ matrix.variant }}.zip
           if-no-files-found: ignore
 
   custom_certification:
