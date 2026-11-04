@@ -89,6 +89,20 @@ static void field(const char *blob, const char *key, char *out, size_t n)
     }
 }
 
+/* The root side writes a note as a clause ("this computer would not let AurOS change what it
+ * starts"). Under "That did not work" it is a sentence, so it starts with a capital and stops
+ * with a full stop. */
+static void as_sentence(char *t, size_t n)
+{
+    size_t k = strlen(t);
+    if (!k) return;
+    if (t[0] >= 'a' && t[0] <= 'z') t[0] = (char)(t[0] - 'a' + 'A');
+    if (t[k - 1] != '.' && t[k - 1] != '!' && t[k - 1] != '?' && k + 1 < n) {
+        t[k] = '.';
+        t[k + 1] = 0;
+    }
+}
+
 /* What aurfirst last said about this machine. */
 static void read_state(char *phase, size_t n)
 {
@@ -405,6 +419,7 @@ int welcome_step(shell_ctx *c)
     W.asked = 0;
     W.partial = 0;
     snprintf(W.note, sizeof W.note, "%s", note);
+    as_sentence(W.note, sizeof W.note);
     W.files = atoi(files);
 
     if (!strcmp(req, "import") && !strcmp(res, "choose")) {
@@ -809,6 +824,22 @@ static int body_of(int page, int partial, const char *lines[3])
     int n = 0;
     static char count[96];
     switch (page) {
+    case W_SURE_YES:
+        /* Tell her before: it is not a one-way door. Put Windows back is the Settings row
+         * (settings.c R_WINDOWS), on a computer that came from Windows. */
+        lines[n++] = "If you change your mind, press Settings, then Put Windows back.";
+        break;
+    case W_SURE_NO:
+        /* Tell her before: after this she cannot start AurOS herself (aurfirst decline; the
+         * page that follows says the same, after it is too late to choose). */
+        lines[n++] = "AurOS will not start again by itself.";
+        lines[n++] = "To use it again, ask someone who knows computers.";
+        break;
+    case W_CONFIRMED:
+        /* The first time she is on her own with it. Help is in the bar at the bottom of the
+         * screen in every look, at its left end (foot.c), and its first page is "Getting online". */
+        lines[n++] = "If you get stuck, press Help at the bottom left of the screen.";
+        break;
     case W_IMPORTING:
         /* What Ferry says it is doing: "Copying your Pictures: 1,200 of
          * 5,000 files. About 4 minutes left." (never a file's name). */

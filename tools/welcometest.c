@@ -111,6 +111,27 @@ static int press(shell_ctx *c, int page, int can_import, const char *want)
     return 0;
 }
 
+/* Is `words` among the words the panel paints, on the page it is on? (shell_text_log: what
+ * windowspagetest reads Settings by.) A line may be wrapped, so ask for a phrase short enough to
+ * sit on one line of a 1366 px screen. */
+static shell_fonts F_;
+static surface *SURF_;
+static int says(shell_ctx *c, const char *words)
+{
+    c->welcome_open = 1;
+    shell_text_log_n = 0; shell_text_log_on = 1;
+    welcome_paint(c, SURF_, &F_);
+    shell_text_log_on = 0;
+    for (int i = 0; i < shell_text_log_n; i++)
+        if (strstr(shell_text_log[i].s, words) && shell_text_log[i].w > 0) return 1;
+    return 0;
+}
+static int says_page(shell_ctx *c, int page, const char *words)
+{
+    welcome_set_page(page);
+    return says(c, words);
+}
+
 /* A stand-in for `ferry stick list`: prints whatever is in sticks.txt. */
 static void fake_ferry(const char *list)
 {
@@ -552,6 +573,30 @@ int main(void)
         welcome_open_blocked(&c, "noroom");
         welcome_key(&c, 1);
         ok("escape is \"Keep AurOS\", never an answer", c.welcome_open == 0 && !asked_now()[0]);
+    }
+
+    /* WHAT THE PAGES SAY, before she presses, in words that match what the code does. */
+    printf("\n  what the pages tell her\n");
+    {
+        shell_fonts_load(&F_, &c);
+        SURF_ = surface_new(c.screen_w, 768);
+        ok("\"Yes\" says it can be undone, and where",
+           says_page(&c, W_SURE_YES, "press Settings, then Put Windows back"));
+        ok("\"No\" says, before it is pressed, that she cannot start AurOS again herself",
+           says_page(&c, W_SURE_NO, "AurOS will not start again by itself") &&
+           says(&c, "ask someone who knows computers"));
+        ok("after \"Yes\" she is told where help is",
+           says_page(&c, W_CONFIRMED, "press Help at the bottom left"));
+        /* a note from the root side is a clause: it is shown as a sentence */
+        unlink(WELCOME_RUN "/answer");
+        press(&c, W_SURE_YES, 0, "confirm");
+        c.welcome_open = 1;
+        put(WELCOME_ANSWER "/result",
+            "request=confirm\nresult=failed\nnote=this computer would not let AurOS change what it starts\n");
+        welcome_step(&c);
+        ok("a failure's reason starts with a capital and ends with a full stop",
+           welcome_page() == W_TROUBLE &&
+           says(&c, "This computer would not let AurOS change what it starts."));
     }
 
     wipe();
