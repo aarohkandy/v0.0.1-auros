@@ -40,6 +40,8 @@ permissions:
 # Empty until he sets the repository variable: GitHub's addresses.
 env:
   AUROS_DOMAIN: ${{ vars.AUROS_DOMAIN }}
+  # The website is on Vercel, not Pages: the installer's help links go there.
+  AUROS_SITE: ${{ vars.AUROS_SITE || '1os.vercel.app' }}
 
 # `bash` named explicitly is `bash -eo pipefail`; left to the default it
 # is `bash -e`, and `sh tools/x.sh | tee log` then passes whatever x
