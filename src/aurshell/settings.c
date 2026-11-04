@@ -396,7 +396,7 @@ static void fill_page(shell_ctx *c)
         add_choice("windows", "Start Windows this once",
                    "The computer restarts into Windows. AurOS starts again after that.");
         add_choice("putback", "Remove AurOS and put Windows back",
-                   "Anything you saved in AurOS goes with it.");
+                   "Your files are copied into Windows first.");
         S.cur_ch = 0;
         return;
     }
@@ -786,7 +786,8 @@ void settings_paint(shell_ctx *c, surface *s, shell_fonts *f)
         : S.page == SET_PAGE_LOOK  ? "Press one to try it."
         : S.page == SET_PAGE_WINDOWS
             ? "This computer restarts and removes AurOS. "
-              "Anything you saved in AurOS goes with it. Windows gets all its space back."
+              "Your documents, pictures, music and videos are copied into Windows first. "
+              "If they cannot be, nothing is removed."
                                    : "Anything you change here you can change back.";
     if (bodyf)
     {

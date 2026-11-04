@@ -117,6 +117,19 @@ int main(void)
     ok(shown("Keep AurOS") && shown("Start Windows this once") && shown("Remove AurOS and put Windows back"),
        "...beside the three it already had");
 
+    /* What removing AurOS does with her files. Both kinds of install copy her folders into
+     * Windows first (answer.sh back_files) and refuse, removing nothing, when they cannot; the
+     * page used to say they "go with" AurOS. */
+    /* (a row's line is CHOICE_LEN - 1 characters at most: the long form is on the page) */
+    ok(shown("Your files are copied into Windows first."),
+       "the row that removes AurOS says her files are copied into Windows first");
+    ok(shown_start("This computer restarts and removes AurOS."), "...under a page that says what it does");
+    paint();
+    int gone = 0;
+    for (int i = 0; i < shell_text_log_n; i++)
+        if (strstr(shell_text_log[i].s, "goes with it")) gone = 1;
+    ok(!gone, "...and nowhere does the page say her files go with AurOS");
+
     char got[96];
     ok(press("Save my files to a USB stick first"), "she presses it");
     ok(C.welcome_open == 1 && welcome_page() == W_STICK_PLUG,

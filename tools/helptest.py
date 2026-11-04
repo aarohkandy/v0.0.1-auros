@@ -333,12 +333,14 @@ def main():
     check(not unknown, f"every button the pages name is a button that exists ({n_press} checked)",
           "; ".join(unknown[:8]))
 
-    # 5c. one truth about going back: the loss half. The words for each answer
-    # agree everywhere; what "Put Windows back" REMOVES is said once, and every
-    # place that says it carries it verbatim (the first letter may be a capital
-    # or not: it begins a sentence in some places and not in others). Whoever
-    # changes the sentence changes LOSS and every place together, or this is red.
-    loss = re.compile(r"[Aa]nything you saved in AurOS goes with it\b")
+    # 5c. one truth about going back: what happens to her files. The words for
+    # each answer agree everywhere; what "Put Windows back" does with what she
+    # saved is said once (both kinds of install copy her six folders into
+    # Windows first, answer.sh back_files), and every place that says it
+    # carries it verbatim (the first letter may be a capital or not: it begins
+    # a sentence in some places and not in others). Whoever changes the sentence
+    # changes LOSS and every place together, or this is red.
+    loss = re.compile(r"[Yy]our documents, pictures, music and videos are copied into Windows first\b")
     def loss_in(path):
         full = os.path.join(REPO, path)
         try:
@@ -354,7 +356,7 @@ def main():
         return len(loss.findall(" ".join(" ".join(pg.text).split())))
     wins = parsed.get("windows.html")
     n_win = len(loss.findall(" ".join(" ".join(wins.text).split()))) if wins else 0
-    places = [("src/aurshell/settings.c", 2, "the Settings screen (its row and its page)"),
+    places = [("src/aurshell/settings.c", 1, "the Settings screen (its page; its row is too short to hold it, windowspagetest checks that)"),
               ("website/guide.html", 1, "the printable guide"),
               ("website/install.html", 1, "the install page's small print")]
     lost = [] if n_win >= 1 else ["the windows help page"]
@@ -362,8 +364,21 @@ def main():
         got = loss_in(path)
         if got is None or got < want:
             lost.append(f"{what} ({path}: {got} of {want})")
-    check(not lost, "what Put Windows back removes is one sentence in every place: "
-          '"Anything you saved in AurOS goes with it."', "missing in " + "; ".join(lost))
+    check(not lost, "what Put Windows back does with her files is one sentence in every place: "
+          '"Your documents, pictures, music and videos are copied into Windows first."', "missing in " + "; ".join(lost))
+    # ...and the old one, which was true of no install since the way back saved her files,
+    # does not creep back in anywhere she reads
+    old = re.compile(r"[Aa]nything you saved in AurOS goes with it\b")
+    stale = []
+    for path in ["src/aurshell/settings.c", "website/guide.html", "website/install.html", "website/index.html"]:
+        try:
+            if old.search(open(os.path.join(REPO, path), encoding="utf-8").read()):
+                stale.append(path)
+        except OSError:
+            pass
+    if wins and old.search(" ".join(" ".join(wins.text).split())):
+        stale.append("the windows help page")
+    check(not stale, "no page says her files go with AurOS (they are copied into Windows first)", "still in " + "; ".join(stale))
 
     # 6. no web address on any page
     addr = []
