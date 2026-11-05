@@ -67,7 +67,7 @@ REPO = os.path.dirname(HERE)
 # What the index lists, one card each, in her words.
 TOPICS = ["getting-online.html", "my-files.html", "everyday.html", "programs.html",
           "printing.html", "video-calls.html", "words-and-sound.html", "turn-off.html",
-          "something-wrong.html", "scary-page.html", "never-call.html", "windows.html",
+          "computer-full.html", "something-wrong.html", "scary-page.html", "never-call.html", "windows.html",
           "forgot-pin.html", "ask-someone.html", "licenses.html"]
 # Pages the topics lead on to (windows.html links both). They lead back too.
 SUBPAGES = ["remove-auros.html", "first-days.html"]
@@ -90,6 +90,7 @@ QUESTIONS = [
     ("how do I use email",                    "everyday.html", ["Email", "Internet"]),
     ("how do I install something",            "programs.html", ["Get more programs", "Install", "Open"]),
     ("how do I turn it off",                  "turn-off.html", ["Turn off", "Turn it off", "Start it again"]),
+    ("a message says the computer is getting full", "computer-full.html", ["getting full", "Downloads", "Delete", "Empty Trash"]),
     ("a program is stuck",                    "something-wrong.html", ["Close this", "Count to three"]),
     ("it is frozen",                          "something-wrong.html", ["Nothing on the screen answers", "power button", "Start it again"]),
     ("the screen went dark",                  "something-wrong.html", ["The screen went dark", "any key"]),
@@ -218,7 +219,8 @@ def band_labels():
 
 # Buttons in other people's programs that the pages name: Firefox's camera
 # question, the print window, and Get more programs (GNOME Software).
-OTHER_BUTTONS = {"Allow", "Block", "Print", "Install", "Open", "Installed"}
+# (and "Add", the Printers window's own button, and "Trash" and "Empty Trash", in her files.)
+OTHER_BUTTONS = {"Allow", "Block", "Print", "Install", "Open", "Installed", "Add", "Trash", "Empty Trash"}
 
 
 def desktop_words():
@@ -394,11 +396,25 @@ def code_facts(flat):
     check(re.search(r"keeps its size until it is\s+reopened", read("src/aurshell/textsys.h")) is not None,
           "a program that was already open keeps its words until it is opened again (the bigger words page says so)")
     # Ubuntu's Printers entry is in the Settings category X-GNOME-Settings-Panel, which the
-    # desktop leaves out of her programs (apps.c is_settings_page): the pages cannot send her there.
+    # desktop leaves out of her programs (apps.c is_settings_page): the way to it is the
+    # Settings row, which starts the tool (settings.c R_PRINTERS), and the page says so.
+    settings_c = read("src/aurshell/settings.c")
+    check('case R_PRINTERS: return "Printers";' in settings_c and "c->spawn(c, blob, 1)" in settings_c,
+          "Settings has a Printers row that starts the printer tool (the printing page sends her there)")
+    printing = flat.get("printing.html", "")
+    check(re.search(r"Press Settings at the bottom of the screen, then Printers", printing) is not None,
+          "the printing page says how to reach it: Settings, then Printers")
+    check('case R_FILES:   return "Bring my files across";' in settings_c and
+          re.search(r"press Settings at the bottom of the screen, then Bring my files across", flat.get("my-files.html", "")) is not None,
+          "the files page says where \"Not now\" leaves them: Settings, then Bring my files across (a Settings row)")
+    # A program that has frozen never answers "Close this". The first press says on the screen
+    # that a second one stops it (main.c), as the help page says.
+    check("press Close this again." in read("src/aurshell/main.c") and
+          re.search(r"press Close this again", flat.get("something-wrong.html", ""), re.I) is not None,
+          "the first press of Close this says on the screen to press it again (the stuck page says so too)")
     hidden = 'has_cat(e, "X-GNOME-Settings-Panel")' in read("src/aurshell/apps.c")
-    check(not (hidden and re.search(r"\bPrinters\b", flat.get("printing.html", ""))),
+    check(not (hidden and re.search(r"\bPrinters\b", printing) and "R_PRINTERS" not in settings_c),
           "the printing page does not send her to a Printers program that the desktop does not list")
-
 
 def main():
     args = sys.argv[1:]

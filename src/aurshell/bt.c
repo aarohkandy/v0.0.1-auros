@@ -481,16 +481,27 @@ static void bt_layout(const shell_ctx *c, int sw, int sh,
     case BT_JOINED:  which[na++] = A_CLOSE; break;
     case BT_TROUBLE: which[na++] = A_AGAIN; which[na++] = A_CLOSE; break;
     }
+    /* Each as wide as its own words need (and no narrower than before): one width for all drew
+     * a long label past its box from 150% text up. Squeezed, together, only if the row is full. */
+    int aw[A_N], sum = 0;
+    for (int i = 0; i < na; i++) {
+        aw[i] = (int)(40.f + 11.f * k * (float)strlen(ACT_LABEL[which[i]]));
+        if (aw[i] < act_w) aw[i] = act_w;
+        sum += aw[i];
+    }
     if (na > 0) {
         int room = g->cw - (na - 1) * gap;
-        if (act_w * na > room) act_w = room / na;
-        if (act_w < 44) act_w = 44;
+        if (sum > room)
+            for (int i = 0; i < na; i++) {
+                aw[i] = aw[i] * room / sum;
+                if (aw[i] < 44) aw[i] = 44;
+            }
     }
     int ax = g->gx;
     for (int i = 0; i < na; i++) {
-        g->acts[i] = (rect){ ax, acts_y, act_w, act_h };
+        g->acts[i] = (rect){ ax, acts_y, aw[i], act_h };
         g->act[i]  = which[i];
-        ax += act_w + gap;
+        ax += aw[i] + gap;
     }
     g->n_acts = na;
 }

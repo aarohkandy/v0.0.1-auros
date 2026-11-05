@@ -36,6 +36,19 @@ static surface *SURF;
 
 static void reset_view(void) { shell_text_log_n = 0; shell_text_log_on = 1; shell_primary_n = 0; }
 static void end_view(void)   { shell_text_log_on = 0; }
+/* The words of a button are inside its box: press at the left end and at the right end of them and
+ * both must be that button. (One width for every button drew a long label past its box.) */
+static int words_at(const char *words, int right, int *x, int *y)
+{
+    for (int i = 0; i < shell_text_log_n; i++)
+        if (!strcmp(shell_text_log[i].s, words)) {
+            *x = right ? shell_text_log[i].x + shell_text_log[i].w - 2 : shell_text_log[i].x + 2;
+            *y = shell_text_log[i].y + shell_text_log[i].h / 2;
+            return 1;
+        }
+    return 0;
+}
+
 static int press(const char *words)
 {
     reset_view(); settings_paint(&C, SURF, &F); end_view();
@@ -52,10 +65,10 @@ int main(void)
 {
     FILE *h = fopen("/tmp/primarytest.index.html", "w"); if (h) { fputs("<p>help</p>\n", h); fclose(h); }
     static const struct { int w, h; } SIZES[] = { { 1024, 600 }, { 1366, 768 } };
-    static const float SCALES[] = { 1.0f, 1.5f };
+    static const float SCALES[] = { 1.0f, 1.5f, 2.0f };
     char home[64]; snprintf(home, sizeof home, "/tmp/primarytest.%d", (int)getpid()); mkdir(home, 0700); setenv("HOME", home, 1);
     for (size_t sz = 0; sz < 2; sz++)
-        for (size_t k = 0; k < 2; k++) {
+        for (size_t k = 0; k < 3; k++) {
             memset(&C, 0, sizeof C);
             theme_t t = {0};
             shell_theme_load(&C, &t);
@@ -104,6 +117,25 @@ int main(void)
             snprintf(w, sizeof w, "%s: Bluetooth draws at most one lit button", at);
             ok(shell_primary_n <= 1, w);
             C.bt_open = 0;
+
+            /* The close buttons of Wi-Fi and Bluetooth, at both ends of their words. */
+            for (int end = 0; end < 2; end++) {
+                int x, y;
+                C.net_open = 1; net_opened(&C);
+                reset_view(); net_paint(&C, SURF, &F); end_view();
+                snprintf(w, sizeof w, "%s: the %s end of \"Close Wi-Fi\" is that button", at, end ? "right" : "left");
+                int found = words_at("Close Wi-Fi", end, &x, &y);
+                if (found) { net_motion(&C, x, y); net_click(&C, x, y); }
+                ok(!found || C.net_open == 0, w);
+                C.net_open = 0; net_closed(&C);
+                C.bt_open = 1; bt_opened(&C);
+                reset_view(); bt_paint(&C, SURF, &F); end_view();
+                snprintf(w, sizeof w, "%s: the %s end of \"Close Bluetooth\" is that button", at, end ? "right" : "left");
+                found = words_at("Close Bluetooth", end, &x, &y);
+                if (found) bt_click(&C, x, y);
+                ok(!found || C.bt_open == 0, w);
+                C.bt_open = 0;
+            }
         }
     char rm[120]; snprintf(rm, sizeof rm, "rm -rf '%s'", home);
     if (system(rm) != 0) fprintf(stderr, "could not remove %s\n", home);

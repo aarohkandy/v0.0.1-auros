@@ -24,6 +24,11 @@
 #include "../src/aurshell/foot.h"
 #include "../src/aurshell/welcome.h"
 
+/* The network, as net.c would say it (welcome.c asks for it when net.c is linked; here it is
+ * this). Not static: it is the symbol welcome.c's weak reference finds. */
+static int net_up = 1;
+int net_online(void) { return net_up; }
+
 static int fail = 0, checked = 0;
 static void ok(const char *what, int good)
 {
@@ -687,6 +692,142 @@ int main(void)
         ok("a failure's reason starts with a capital and ends with a full stop",
            welcome_page() == W_TROUBLE &&
            says(&c, "This computer would not let AurOS change what it starts."));
+    }
+
+
+    /* THE SECOND PAGE EARNS ITS PLACE, AND "NOT YET" SAYS WHAT IS WAITING. Yes asked "Start AurOS
+     * from now on?" and said, in the same words as the line beside Yes, what Yes does; Not yet
+     * went back to a page that looked as if nothing had happened. */
+    printf("\n  the second page, and Not yet\n");
+    {
+        put(WELCOME_STATE, "phase=asking\n");
+        welcome_init(&c);
+        ok("beside Yes, the question says what Yes does",
+           says_page(&c, W_ASK, "AurOS starts every time from now on."));
+        ok("the second page says what follows, not that sentence again, and not \"the last step\" (a screen follows)",
+           says_page(&c, W_SURE_YES, "After this, AurOS starts every time you switch this computer on.") &&
+           !says(&c, "AurOS starts every time from now on") && !says(&c, "last step"));
+        ok("...and it still says Windows and her files stay, and the way back",
+           says(&c, "Windows and its files are meant to stay on this computer.") &&
+           says(&c, "press Settings, then Put Windows back"));
+        ok("the first question, before anything, is just \"Check one thing first.\"",
+           says_page(&c, W_ASK, "Check one thing first.") && !says(&c, "Nothing has changed yet"));
+        unlink(WELCOME_RUN "/answer");
+        press_nth(&c, W_SURE_YES, 1);                  /* Not yet */
+        ok("\"Not yet\" goes back to the question and asks for nothing",
+           welcome_page() == W_ASK && !asked_now()[0]);
+        ok("...which now says nothing has changed, and that it asks again until she answers",
+           says(&c, "Nothing has changed yet. AurOS asks this again until you answer.") &&
+           !says(&c, "Check one thing first."));
+        ok("Escape on the second page says the same", ({
+               welcome_set_page(W_ASK); welcome_init(&c);          /* a fresh start */
+               welcome_set_page(W_SURE_YES); c.welcome_open = 1;
+               welcome_key(&c, 1);
+               welcome_page() == W_ASK && says(&c, "Nothing has changed yet");
+           }));
+        press_nth(&c, W_ASK, 1);                       /* Yes again */
+        ok("pressing Yes again is a new question (the sentence goes)",
+           welcome_page() == W_SURE_YES);
+        welcome_init(&c);
+        ok("and the next start asks it afresh",
+           says_page(&c, W_ASK, "Check one thing first."));
+    }
+
+    /* NOT CONNECTED YET, ON A COMPUTER THAT HAS JUST STARTED, IS NOT TRUE: a cable takes up to
+     * a minute to be given an address, and she was told, and sent to Wi-Fi. */
+    printf("\n  the internet check\n");
+    {
+        put(WELCOME_STATE, "phase=asking\n");
+        welcome_init(&c);
+        net_up = 0; welcome_test_uptime(10);
+        ok("just started, no network yet: it says it is looking",
+           says_page(&c, W_ASK, "Checking the internet. One moment.") && !says(&c, "Not connected"));
+        ok("...and the button is the Wi-Fi one, which is where help is", says(&c, "Open Wi-Fi"));
+        welcome_set_page(W_ASK); c.welcome_open = 1;
+        welcome_step(&c);
+        ok("...and the panel asks to be woken every second while it looks", welcome_wait_ms() == 1000);
+        ok("...and nothing is repainted until it knows more", welcome_step(&c) == 0);
+        welcome_test_uptime(200);
+        ok("after a minute and a half it says it is not connected, and the screen follows",
+           welcome_step(&c) == 1 && says(&c, "Not connected to the internet yet.") && says(&c, "Open Wi-Fi"));
+        ok("...and the panel stops waking", welcome_wait_ms() == -1);
+        net_up = 1;
+        ok("a network that arrives is noticed", welcome_step(&c) == 1 &&
+           says(&c, "Does the internet work?") && says(&c, "Open Internet"));
+        net_up = 0; welcome_test_uptime(10);
+        {   /* pressing the check while it looks opens the Wi-Fi page, not a browser's error page */
+            welcome_set_page(W_ASK); c.welcome_open = 1;
+            c.n_apps = 1; memset(&c.apps[0], 0, sizeof c.apps[0]); c.apps[0].icon = ICON_GLOBE;
+            c.want_launch = 0; c.net_open = 0;
+            welcome_view v = { W_ASK, 0 };
+            rect b[16];
+            welcome_targets(&c, c.screen_w, c.screen_h, &v, b, 16);
+            welcome_click(&c, b[0].x + b[0].w / 2, b[0].y + b[0].h / 2);
+            ok("pressing it while it looks opens Wi-Fi, not a browser", c.net_open == 1 && c.want_launch == 0);
+            c.net_open = 0; c.n_apps = 0; c.welcome_open = 1;
+        }
+        net_up = 1; welcome_test_uptime(-1);
+    }
+
+    /* "NOT NOW ... YOU CAN DO THIS LATER FROM SETTINGS" has to be true: Settings offers it. */
+    printf("\n  bringing her files across, from Settings\n");
+    {
+        put(WELCOME_FOUND, "{\"device\":\"/dev/sda2\",\"windows\":\"10\",\"clean\":true}\n");
+        put(WELCOME_STATE, "phase=asking\nconverted=yes\n");
+        ok("not offered while the first question is open (the root side would refuse it)", !welcome_can_bring());
+        put(WELCOME_STATE, "phase=done\nconverted=yes\n");
+        ok("offered once she has said yes, and there is a Windows to read", welcome_can_bring());
+        put(WELCOME_STATE, "phase=declined\nconverted=yes\n");
+        ok("not on a computer that said no", !welcome_can_bring());
+        put(WELCOME_STATE, "phase=done\nconverted=yes\n");
+        unlink(WELCOME_FOUND);
+        ok("not when there is no Windows on the disk", !welcome_can_bring());
+        put(WELCOME_FOUND, "{\"device\":\"/dev/sda2\",\"windows\":\"10\",\"clean\":true}\n");
+
+        welcome_init(&c);
+        unlink(WELCOME_RUN "/answer"); unlink(WELCOME_ANSWER "/result");
+        welcome_open_bring(&c);
+        ok("it opens on its own screen", c.welcome_open == 1 && welcome_page() == W_BRING);
+        ok("...and asks nothing until she presses", !asked_now()[0]);
+        ok("...which says what it does", says(&c, "Bring my files across") &&
+           says(&c, "Your documents and pictures are still in Windows.") && says(&c, "Nothing in Windows changes."));
+        ok("\"Bring my files across\" asks for import, the way the first start does",
+           press_nth(&c, W_BRING, 0) > 0 && !strcmp(asked_now(), "import") && welcome_page() == W_IMPORTING);
+        put(WELCOME_ANSWER "/result", "request=import\nresult=empty\nfiles=0\n");
+        welcome_step(&c);
+        ok("nothing to bring is a calm screen that says so, in these words, not the USB stick's",
+           welcome_page() == W_EMPTY && says(&c, "No files to bring across") && !says(&c, "No files to save"));
+        c.welcome_open = 1;
+        press_nth(&c, W_EMPTY, 0);
+        ok("...and Done closes it", c.welcome_open == 0);
+        unlink(WELCOME_RUN "/answer"); unlink(WELCOME_ANSWER "/result");
+        welcome_open_bring(&c);
+        press_nth(&c, W_BRING, 0);
+        put(WELCOME_ANSWER "/result", "request=import\nresult=refused\nnote=AurOS has not been confirmed yet\n");
+        welcome_step(&c);
+        ok("a refusal is trouble, in her words", welcome_page() == W_TROUBLE && says(&c, "AurOS has not been confirmed yet."));
+        unlink(WELCOME_RUN "/answer");
+        press_nth(&c, W_TROUBLE, 0);                     /* Try again */
+        ok("\"Try again\" is this question again, not the USB stick's", welcome_page() == W_BRING);
+        unlink(WELCOME_RUN "/answer"); unlink(WELCOME_ANSWER "/result");
+        welcome_open_bring(&c);
+        press_nth(&c, W_BRING, 0);
+        put(WELCOME_ANSWER "/result", "request=import\nresult=ok\nfiles=12\n");
+        welcome_step(&c);
+        ok("when they are here, it says so and offers to open them, and Done (not \"Start using AurOS\")",
+           welcome_page() == W_IMPORTED && says(&c, "Your files are here") && says(&c, "Open Your files") &&
+           says(&c, "Done") && !says(&c, "Start using AurOS"));
+        unlink(WELCOME_RUN "/answer"); unlink(WELCOME_ANSWER "/result");
+        welcome_open_bring(&c);
+        welcome_key(&c, 1);
+        ok("Escape and \"Not now\" leave it, asking for nothing",
+           c.welcome_open == 0 && !asked_now()[0]);
+        welcome_open_bring(&c);
+        press_nth(&c, W_BRING, 1);
+        ok("...Not now closes it", c.welcome_open == 0 && !asked_now()[0]);
+        welcome_open_stick(&c);
+        ok("the USB stick's pages are not the bring page afterwards", welcome_page() != W_BRING);
+        c.welcome_open = 0;
     }
 
     wipe();

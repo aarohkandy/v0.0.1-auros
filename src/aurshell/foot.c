@@ -335,19 +335,44 @@ static int help_button_at(const shell_ctx *c, int x, int y)
            x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
 }
 
+/* A help page in a NEW window, because a new window is what the shell brings to the front. A
+ * page handed to a browser that is already open becomes a tab in a window she may not be
+ * looking at. `url` is a file:// address inside the help folder. */
+static void spawn_help(shell_ctx *c, const char *url)
+{
+    static const char SCRIPT[] =
+        "command -v firefox >/dev/null 2>&1 && exec firefox --new-window \"$0\"; "
+        "exec xdg-open \"$0\"";
+    char blob[sizeof SCRIPT + 600];
+    size_t n = 0;
+    n += (size_t)snprintf(blob + n, sizeof blob - n, "sh") + 1;
+    n += (size_t)snprintf(blob + n, sizeof blob - n, "-c") + 1;
+    n += (size_t)snprintf(blob + n, sizeof blob - n, "%s", SCRIPT) + 1;
+    if (strlen(url) + n + 2 >= sizeof blob) return;
+    n += (size_t)snprintf(blob + n, sizeof blob - n, "%s", url) + 1;
+    blob[n] = 0;
+    c->spawn(c, blob, 4);
+}
+
 static void open_help_pages(shell_ctx *c)
 {
     c->help_open = 0;
     if (!c->spawn || !help_pages_here()) return;
-    /* A NEW window, because a new window is what the shell brings to
-     * the front. A page handed to a browser that is already open
-     * becomes a tab in a window she may not be looking at. */
-    static const char ARGV[] =
-        "sh\0-c\0"
-        "command -v firefox >/dev/null 2>&1 && exec firefox --new-window \"$0\"; "
-        "exec xdg-open \"$0\"\0"
-        "file://" FOOT_HELP_PAGES;
-    c->spawn(c, ARGV, 4);
+    spawn_help(c, "file://" FOOT_HELP_PAGES);
+}
+
+/* One page of the help, from a card (watch.c: "help:computer-full"): the page's name, letters
+ * and hyphens only, in the folder the index is in. */
+void foot_open_help_page(shell_ctx *c, const char *page)
+{
+    if (!c->spawn || !help_pages_here() || !page || !*page || strlen(page) > 40) return;
+    for (const char *p = page; *p; p++)
+        if (!((*p >= 'a' && *p <= 'z') || *p == '-')) return;
+    char url[400];
+    const char *slash = strrchr(FOOT_HELP_PAGES, '/');
+    int dir = slash ? (int)(slash - FOOT_HELP_PAGES) + 1 : 0;
+    snprintf(url, sizeof url, "file://%.*s%s.html", dir, FOOT_HELP_PAGES, page);
+    spawn_help(c, url);
 }
 
 /* ── her chosen size, kept where she can own it ─────────────────────
@@ -488,30 +513,41 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
             x = (int)((float)(s->w / 12) < 20.f ? 20 : s->w / 12);
             y = hb.y + hb.h + (int)(28.f * k);
         }
+        static const char *LINES[] = {
+            "This bar at the bottom is always here. It never goes away.",
+            "",
+            "Bigger text and Smaller text change the size of the words.",
+            "If the words have become too big to use, press Smaller text.",
+            "",
+            "Wi-Fi shows the networks in range, so you can join yours.",
+            "",
+            "Settings has the brightness, the sound and the clock.",
+            "",
+            "Close this shuts whatever you are looking at.",
+            "",
+            "Turn off shuts the computer down properly.",
+            "",
+            "Press Help again to close this.",
+            NULL
+        };
         if (big) {
+            /* The heading gives up some of its space below it before a sentence has to be
+             * lost: in the real face at 1024 x 600 the buttons above and the sentences below
+             * left the last one ten pixels short, under the band. */
+            float step = font_line_height(big) * 1.6f;
+            if (body) {
+                int nn = 0, bl = 0;
+                for (; LINES[nn]; nn++) if (!LINES[nn][0]) bl++;
+                float fl = font_line_height(body);
+                float least = (float)(nn - bl - 1) * fl * 1.05f + (float)bl * fl * 0.45f + fl;
+                if ((float)y + step + least > (float)top - 4.f) step = font_line_height(big) * 1.15f;
+            }
             shell_text(s, big, (float)x, (float)y + font_ascent(big),
                        "Where you are", FOOT_INK, 1.f);
-            y += (int)(font_line_height(big) * 1.6f);
+            y += (int)step;
         }
         if (body) {
             float lh = font_line_height(body) * 1.45f;
-            static const char *LINES[] = {
-                "This bar at the bottom is always here. It never goes away.",
-                "",
-                "Bigger text and Smaller text change the size of the words.",
-                "If the words have become too big to use, press Smaller text.",
-                "",
-                "Wi-Fi shows the networks in range, so you can join yours.",
-                "",
-                "Settings has the brightness, the sound and the clock.",
-                "",
-                "Close this shuts whatever you are looking at.",
-                "",
-                "Turn off shuts the computer down properly.",
-                "",
-                "Press Help again to close this.",
-                NULL
-            };
             /* ALL OF IT ON THE PANEL. At 1024 x 600 the last two lines (Turn off, and how
              * to close this) went under the band, and with the buttons above it more
              * did. When it does not fit, the blank lines between the thoughts give up

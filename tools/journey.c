@@ -259,11 +259,13 @@ int main(int argc, char **argv)
         }
         c.help_open = 1;
         shot("help");
-        /* Every sentence on the panel is ON the panel (not under the band). */
+        /* Every sentence on the panel is ON the panel (not under the band): any sentence (the
+         * band's own labels are short) that starts below where the band does. It was only the
+         * last one that was asked about, and only in whatever face the build host had. */
         for (int i = 0; i < shell_text_log_n; i++)
-            if (shell_text_log[i].w > 0 && shell_text_log[i].y + shell_text_log[i].h > c.screen_h + 2 &&
-                shell_text_log[i].y < c.screen_h + 200 &&
-                strstr(shell_text_log[i].s, "Press Help again") != NULL)
+            if (shell_text_log[i].w > 0 && strlen(shell_text_log[i].s) > 24 &&
+                shell_text_log[i].y + shell_text_log[i].h > c.screen_h + 2 &&
+                shell_text_log[i].y < c.screen_h + 200)
                 printf("   HELP TEXT OFF THE PANEL: %s\n", shell_text_log[i].s);
         c.help_open = 0;
         if (added) c.n_apps--;

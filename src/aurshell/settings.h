@@ -74,6 +74,8 @@ typedef struct {
     int windows;     /* 1 if this computer came from Windows, so
                         "Put Windows back" is a row              */
     int wishes;      /* 1 if Wishes is on this computer: "My wishes" */
+    int printers;    /* 1 if the printer tool is here: "Printers"    */
+    int files;       /* 1 if her files are still in Windows: "Bring my files across" */
 } set_view;
 
 int  settings_targets(const shell_ctx *c, int sw, int sh, const set_view *v,
