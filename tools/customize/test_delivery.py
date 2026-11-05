@@ -609,7 +609,7 @@ class WorkflowContractTests(unittest.TestCase):
     def test_every_release_e2e_caller_grants_reusable_permissions(self) -> None:
         release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         callers = release.split("uses: ./.github/workflows/e2e.yml")
-        self.assertEqual(len(callers), 3)
+        self.assertEqual(len(callers), 2)  # one e2e job since the fast-path twin was retired
         for caller in callers[1:]:
             permissions = caller.split("with:", 1)[0]
             self.assertIn("contents: write", permissions)
