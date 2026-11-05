@@ -377,8 +377,9 @@ def card_button(path):
 
 
 def desktop_up(rows, bpp):
-    """The shell is drawing: a dark bar along the bottom and a light, non-black page above it."""
-    bar, body = rows[780][640 * bpp:640 * bpp + 3], rows[300][640 * bpp:640 * bpp + 3]
+    """The shell is drawing: dark buttons at the bottom left and a light, non-black page above it. Not the bottom
+    middle: there the Sky look shows the wallpaper between its two clusters of buttons."""
+    bar, body = rows[780][105 * bpp:105 * bpp + 3], rows[300][640 * bpp:640 * bpp + 3]
     return sum(bar) < 150 and sum(body) > 300
 
 

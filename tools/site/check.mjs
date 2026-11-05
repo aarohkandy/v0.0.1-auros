@@ -304,8 +304,8 @@ for (const v of [
   { name: "32-bit Windows (Edge's hints)", ua: UA.winEdge, uad: { platform: "Windows", architecture: "x86", bitness: "32", mobile: false }, want: /can.t go on this computer/i },
   { name: "Mac (Safari)", ua: UA.macSafari, uad: null, want: /open this page on (the|your) Windows computer/i, shots: ["index-mac.png"] },
   { name: "Mac (Chrome)", ua: UA.macChrome, uad: UAD.mac, want: /open this page on (the|your) Windows computer/i },
-  { name: "iPhone", device: "iPhone 13", uad: null, want: /open this page on (the|your) Windows computer/i, shots: ["index-phone-fold.png"], init: { fn: () => Object.defineProperty(navigator, "share", { configurable: true, value: () => Promise.resolve() }) } },
-  { name: "Android phone", device: "Pixel 7", uad: UAD.android, want: /open this page on (the|your) Windows computer/i },
+  { name: "iPhone", device: "iPhone 13", uad: null, want: /^get ready/i, shots: ["index-phone-fold.png"], init: { fn: () => Object.defineProperty(navigator, "share", { configurable: true, value: () => Promise.resolve() }) } },
+  { name: "Android phone", device: "Pixel 7", uad: UAD.android, want: /^get ready/i },
   { name: "Chromebook", ua: UA.chromeOS, uad: UAD.chromeOS, want: /open this page on (the|your) Windows computer/i },
   { name: "Linux", ua: UA.linux, uad: UAD.linux, want: /open this page on (the|your) Windows computer/i },
 ]) {
@@ -323,6 +323,18 @@ for (const v of [
   check(copy, `${v.name}: a "Copy the link" button`);
   const g = await page.evaluate(rectOf, "#get");
   check(!g || !g.shown, `${v.name}: the big download button is not offered`);
+  if (v.device) {
+    // A phone or tablet is offered no download anywhere: not on the front page, not on the page that explains it.
+    const links = (p) => p.evaluate(() => document.querySelectorAll('#get, [data-download], a[href$=".exe"]').length);
+    const inst = await ctx.newPage();
+    await inst.goto(HOME + "install.html");
+    await inst.waitForTimeout(300);
+    const note = await inst.evaluate(rectOf, "#phone-note");
+    check((await links(page)) === 0 && (await links(inst)) === 0 && note && note.shown, `${v.name}: no download link on the front page or install.html, and install.html says why`);
+    const short = await page.evaluate(() => ({ h: document.documentElement.scrollHeight, gone: ["#steps", "#going-back", "#wishes", ".strip"].every((s) => !document.querySelector(s).getClientRects().length), dead: [...document.querySelectorAll('main a[href*="#step"]')].filter((a) => a.getClientRects().length).length, ready: /memory stick/.test(document.querySelector(".ready").innerText) }));
+    check(short.gone && short.dead === 0 && short.ready && short.h < 6500, `${v.name}: a short page, no Windows steps, and the three things to get ready`, JSON.stringify(short));
+    await inst.close();
+  }
   if (v.name === "iPhone" || v.name.startsWith("Windows on ARM")) textFindings(v.name, await page.evaluate(measureText));
   for (const f of v.shots || []) await shot(page, f);
   await ctx.close();

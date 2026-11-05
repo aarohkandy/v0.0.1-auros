@@ -69,7 +69,18 @@
     return u;
   }
 
+  /* A phone or tablet can't run the file, so no page offers it, install.html
+   * included. The Windows steps aren't on the phone's home page: links to them
+   * go to install.html, which is there to be read. */
+  function noDownload() {
+    root.classList.add("k-phone");
+    [].forEach.call(document.querySelectorAll("#get, [data-download], .skip"), function (a) { a.remove(); });
+    [].forEach.call(document.querySelectorAll('a[href^="#step"]'), function (a) { a.href = "install.html"; });
+    if ($("phone-note")) $("phone-note").hidden = false;
+  }
+
   function showElsewhere(kind) {
+    if (kind === "phone") noDownload();
     if (!$("elsewhere")) return; /* install.html: the steps are the page */
     root.classList.add("is-elsewhere", "k-" + kind);
     $("getbox").hidden = true;

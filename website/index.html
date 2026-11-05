@@ -55,10 +55,10 @@
     <!-- Instead of the button when this is not a Windows computer AurOS
          can go on (assets/door.js). Never shown without script. -->
     <div class="elsewhere" id="elsewhere" hidden>
-      <h2 class="else-title" data-kind="phone">Open this page on your Windows computer.</h2>
+      <h2 class="else-title" data-kind="phone">Get ready.</h2>
       <h2 class="else-title" data-kind="mac chromeos linux">Open this page on the Windows computer you want to change.</h2>
       <h2 class="else-title" data-kind="arm win32">AurOS can&rsquo;t go on this computer.</h2>
-      <p data-kind="phone">AurOS goes on a Windows computer, not a phone. Send yourself the link:</p>
+      <p data-kind="phone">AurOS goes on a Windows computer, so there&rsquo;s nothing to download on a phone or tablet. Send yourself the link:</p>
       <p data-kind="mac">This is a Mac, and AurOS goes on a Windows computer. Send yourself the link:</p>
       <p data-kind="chromeos">This is a Chromebook, and AurOS goes on a Windows computer. Send yourself the link:</p>
       <p data-kind="linux">This computer isn&rsquo;t running Windows, and AurOS goes on a Windows computer. Send yourself the link:</p>
@@ -76,6 +76,14 @@
           Email me the link</a>
       </div>
       <p class="copied" id="copied" role="status" aria-live="polite"></p>
+      <div class="ready" data-kind="phone">
+        <h3>Before you sit down at the computer</h3>
+        <ul>
+          <li>Copy the photos you treasure onto a memory stick.</li>
+          <li>On a laptop, plug in the charger.</li>
+          <li>Give it about <span data-fact="time-ssd">25 to 60</span>&nbsp;minutes.</li>
+        </ul>
+      </div>
       <p class="anyway" data-kind="mac chromeos linux arm win32"><a data-download href="https://github.com/@AUROS_REPO@/releases/latest/download/AurOS-Setup.exe">Download the Windows file anyway</a></p>
     </div>
 

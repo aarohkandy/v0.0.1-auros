@@ -672,6 +672,28 @@ kbd { font: 700 19px/1 ui-monospace, Consolas, "SF Mono", monospace; padding: 2p
 .home.k-phone .cry { font-size: 30px; margin-top: 8px; }
 .home.k-phone .hero h1 { font-size: 19px; margin-top: 10px; }
 .home.k-phone .elsewhere { margin-top: 12px; padding-top: 16px; }
+/* A phone gets a short page: getting ready, what AurOS looks like, and the
+ * honest answers. The Windows steps can't be done here (install.html still
+ * explains them), and a laptop's sections shrink badly. */
+.home.k-phone :is(.strip, #steps, #going-back, #wishes) { display: none; }
+.home.k-phone .hero { padding-bottom: 0; }
+.home.k-phone .laptop { width: 100%; margin: 22px 0 0; animation: none; }
+.home.k-phone :is(.cry, .hero h1) { animation: none; }
+.home.k-phone .sec { padding-block: 44px; }
+.home.k-phone .sec-title { font-size: 34px; margin-bottom: 14px; }
+.home.k-phone .looks-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 20px; }
+.home.k-phone .looks-tabs button { justify-content: center; padding: 8px 6px; font-size: 18px; line-height: 1.15; text-align: center; }
+.home.k-phone .look figcaption { margin-top: 16px; text-align: left; }
+.home.k-phone .finale { margin: 0 8px; border-radius: 22px; padding: 44px 20px; }
+.home.k-phone .finale h2 { font-size: 34px; margin-bottom: 14px; }
+.home.k-phone .osbar { background: none; padding-top: 16px; }
+.home.k-phone .os-gap { display: none; }
+.home.k-phone .os-btn { flex: 1 1 0; min-width: 0; }
+.ready { margin-top: 20px; padding-top: 16px; border-top: 2px solid var(--soft); }
+.ready h3 { font-size: 21px; line-height: 1.25; font-weight: 800; margin-bottom: 8px; }
+.ready ul { margin: 0; padding-left: 1.1em; }
+.ready li + li { margin-top: 6px; }
+.phone-note { color: var(--ink); font-weight: 700; }
 
 /* Motion that answers her scrolling (CSS scroll-driven animations: Edge,
  * Chrome; elsewhere the page simply stands still, as it does for anyone
