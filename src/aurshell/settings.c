@@ -684,6 +684,9 @@ static void set_layout(const shell_ctx *c, int sw, int sh,
     }
     if (na > 0) {
         int room = g->cw - (na - 1) * gap;
+        /* A paged list says "n of 4" at the right end of this row, beside "Show more", where
+         * nothing else is: on the sentence's line it was drawn over the sentence. */
+        if (total > g->n_vis) room -= (int)(40.f * k) + 32;
         if (sum > room)
             for (int i = 0; i < na; i++) {
                 aw[i] = aw[i] * room / sum;
@@ -981,11 +984,12 @@ void settings_paint(shell_ctx *c, surface *s, shell_fonts *f)
         }
     }
 
-    if (total > g.n_rows && tiny) {
+    if (total > g.n_rows && tiny && g.n_acts) {
         char more[48];
         snprintf(more, sizeof more, "%d of %d", from + g.n_rows, total);
         float w = shell_text_w(tiny, more);
-        shell_text(s, tiny, (float)(g.gx + g.cw) - w, (float)g.sub_y,
+        shell_text(s, tiny, (float)(g.gx + g.cw) - w,
+                   shell_baseline(tiny, (float)g.acts[0].y, (float)g.acts[0].h),
                    more, c->fg, 0.5f);
     }
 

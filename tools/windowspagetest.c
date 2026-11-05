@@ -257,6 +257,61 @@ int main(void)
         C.settings_open = 1; settings_opened(&C);
     }
 
+    /* THE "n of 4" AND THE SENTENCE. When the choices do not all fit ("Show more"), the page said how far
+     * down she was on the sentence's own first line, at the right. The sentence ran the whole
+     * width, so its first line was drawn over it: 125% on 1024x600, 185-200% on 1366x768. This
+     * paints the page at every size Settings offers (80% to 200%), on both small screens, and
+     * holds every other word on it clear of the "n of 4". */
+    printf("Put Windows back: nothing is drawn over the \"n of 4\", at every size\n");
+    {
+        static const int SW[2] = { 1024, 1366 }, SH[2] = { 600, 768 };
+        surface *was = SURF;
+        float was_scale = C.text_scale;
+        int was_w = C.screen_w, was_h = C.screen_h;
+        int sizes = 0, pagers = 0, over = 0;
+        char first[160] = "";
+        for (int sc = 0; sc < 2; sc++) {
+            surface *scr = surface_new(SW[sc], SH[sc]);
+            SURF = scr;
+            C.screen_w = SW[sc];
+            for (int pct = 80; pct <= 200; pct++) {
+                C.text_scale = (float)pct / 100.f;
+                C.screen_h = SH[sc] - foot_height(&C);
+                shell_fonts_load(&F, &C);
+                C.settings_open = 1; settings_opened(&C);
+                for (int i = 0; i < 12 && !shown("Put Windows back"); i++) press("Show more");
+                if (!press("Put Windows back")) continue;
+                sizes++;
+                paint();
+                int pi = -1, a, b;
+                for (int i = 0; i < shell_text_log_n; i++)
+                    if (sscanf(shell_text_log[i].s, "%d of %d", &a, &b) == 2 && shell_text_log[i].w > 0) pi = i;
+                if (pi < 0) continue;            /* every row fits: no "n of 4" to draw over */
+                pagers++;
+                shell_text_rec p = shell_text_log[pi];
+                for (int i = 0; i < shell_text_log_n; i++) {
+                    shell_text_rec r = shell_text_log[i];
+                    if (i == pi || r.w <= 0) continue;
+                    if (r.x < p.x + p.w && p.x < r.x + r.w && r.y < p.y + p.h && p.y < r.y + r.h) {
+                        if (!over++)
+                            snprintf(first, sizeof first, "%dx%d at %d%%: \"%.40s\" over \"%s\"",
+                                     SW[sc], SH[sc], pct, r.s, p.s);
+                        break;
+                    }
+                }
+            }
+            SURF = was;
+            surface_free(scr);
+        }
+        if (over) printf("    first: %s (%d of %d sizes with an \"n of 4\" have a word over it)\n", first, over, pagers);
+        ok(sizes == 2 * 121, "the page opens at all 121 sizes on both screens (242 paints)");
+        ok(pagers > 0, "...and the \"n of 4\" is on it at some of them (so the check below is not empty)");
+        ok(over == 0, "...and no word on the page is drawn over the \"n of 4\", at any size, on either screen");
+        C.text_scale = was_scale; C.screen_w = was_w; C.screen_h = was_h;
+        shell_fonts_load(&F, &C);
+        C.settings_open = 1; settings_opened(&C);
+    }
+
     printf("Put Windows back: her files first\n");
     ok(press("Put Windows back"), "\"Put Windows back\" opens its page");
     ok(shown("Save my files to a USB stick first"), "the page has \"Save my files to a USB stick first\"");
