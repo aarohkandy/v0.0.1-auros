@@ -84,17 +84,40 @@ static const pair PAIRS[] = {
   { "col_overlay", "col_bg",      "a divider on the desktop",        4.5, ADVISORY },
 };
 
+/* --poor-eyes: the words she reads at a glance clear 7:1 as the shell really paints them.
+ * The shell draws secondary text at 85% and a hint at full strength, so the ratio is taken
+ * of the blended colour, not of the token. Light only (the Dark look is held to 4.5). */
+typedef struct { const char *fg, *bg, *what; double alpha; } dimpair;
+static const dimpair DIM[] = {
+  { "col_fg",     "col_surface", "body text on a card",               1.00 },
+  { "col_fg",     "col_bar_bg",  "body text in the bar",              1.00 },
+  { "col_subtle", "col_surface", "secondary text on a card (at 85%)", 0.85 },
+  { "col_subtle", "col_bar_bg",  "secondary text in the bar (at 85%)",0.85 },
+  { "col_subtle", "col_bg",      "secondary text on the desktop (at 85%)", 0.85 },
+  { "col_muted",  "col_surface", "a hint on a card",                  1.00 },
+  { "col_muted",  "col_bar_bg",  "a hint in the bar",                 1.00 },
+};
+
+static uint32_t blend(uint32_t f, uint32_t b, double a)
+{
+    uint32_t o = 0;
+    for (int s = 16; s >= 0; s -= 8)
+        o |= (uint32_t)((double)((f >> s) & 0xFF) * a + (double)((b >> s) & 0xFF) * (1 - a) + 0.5) << s;
+    return o;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
         fprintf(stderr, "usage: contrast <shell.conf> [...]\n");
         return 2;
     }
-    int fail = 0, strict = 0;
+    int fail = 0, strict = 0, eyes = 0;
     for (int a = 1; a < argc; a++) if (!strcmp(argv[a], "--strict")) strict = 1;
+    for (int a = 1; a < argc; a++) if (!strcmp(argv[a], "--poor-eyes")) eyes = 1;
 
     for (int a = 1; a < argc; a++) {
-        if (!strcmp(argv[a], "--strict")) continue;
+        if (!strncmp(argv[a], "--", 2)) continue;
         theme_t t = {0};
         if (theme_load(&t, argv[a]) < 0) {
             fprintf(stderr, "cannot read %s\n", argv[a]);
@@ -114,6 +137,15 @@ int main(int argc, char **argv)
                    PAIRS[i].what);
             if (ok) continue;
             if (hard) { bad++; fail = 1; } else warned++;
+        }
+        if (eyes) {
+            for (unsigned i = 0; i < sizeof DIM / sizeof *DIM; i++) {
+                uint32_t bg = theme_color(&t, DIM[i].bg, 0);
+                uint32_t fg = blend(theme_color(&t, DIM[i].fg, 0), bg, DIM[i].alpha);
+                double r = ratio(fg, bg);
+                printf("  %-4s %5.2f:1  (needs 7.0)  %s\n", r >= 7.0 ? "ok" : "FAIL", r, DIM[i].what);
+                if (r < 7.0) { bad++; fail = 1; }
+            }
         }
         if (bad)          printf("  UNREADABLE IN PLACES\n\n");
         else if (warned)  printf("  legible, but %d advisory below target "

@@ -96,3 +96,4 @@ wall_vignette     = @wall_vignette@
 brand_glyph       = @brand_glyph@
 brand_text        = @brand_text@
 cursor_size       = @cursor_size|int@
+icon_tiles        = @icon_tiles|int@

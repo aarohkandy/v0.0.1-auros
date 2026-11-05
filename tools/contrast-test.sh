@@ -3,6 +3,7 @@
 # in the three that only a profile turns on. Renders shell.conf from every theme with aurora,
 # builds contrast.c, and holds:
 #   sandstone (Light) and nocturne (Dark)   every pair, rules included (--strict)
+#   sandstone (Light) alone                  the words she reads at 7:1, as painted (--poor-eyes)
 #   ember, moss, slate                       the pairs that carry meaning (rules are advisory)
 # Pairs include the words on an accent fill (aurora's @accent|on@ and the shell's primary
 # button). tools/theme-test.sh holds the GTK and terminal pairs.
@@ -22,6 +23,7 @@ for th in themes/*.theme; do
 done
 fail=0
 "$T/contrast" --strict "$T/sandstone.conf" "$T/nocturne.conf" || fail=1
+"$T/contrast" --poor-eyes "$T/sandstone.conf" || fail=1   # Light: the words she reads clear 7:1, as the shell paints them
 "$T/contrast" "$T/ember.conf" "$T/moss.conf" "$T/slate.conf" || fail=1
 if [ $fail = 0 ]; then echo "contrast-test: every pair holds"; else echo "contrast-test: FAILED"; fi
 exit $fail

@@ -405,8 +405,8 @@ static void paint_tile(shell_ctx *c, surface *s, shell_fonts *f, int app,
     /* Hover is an inset bar down the left edge, the cheapest possible
      * anti-glassmorphism primitive and the one GOV.UK uses for exactly
      * this job. No shadow, no glow, no second ring. */
-    if (hot) draw_rect(s, (rect){ t.x, t.y, 4, t.h }, c->accent, alpha);
-    draw_frame(s, t, 1, hot ? c->muted : c->overlay, alpha);
+    if (hot) draw_round_rect(s, (rect){ t.x + 8, t.y + 12, 4, t.h - 24 }, corners_all(2.f), c->accent, alpha);
+    draw_round_rect_border(s, t, cr, 1.f, hot ? c->muted : c->overlay, alpha);
 
     /* The lead item's mark is nearly twice the others'. Together with
      * the display face two steps up, that is the whole of the
@@ -471,8 +471,7 @@ static void paint_open(shell_ctx *c, surface *s, shell_fonts *f,
 
     draw_round_rect(s, a, cr, c->surface_c, 1.f);
     if (t < 0.995f) {
-        draw_frame(s, a, 1, c->overlay, 1.f - t * 0.4f);
-        draw_hrule(s, a.x, a.y, a.w, 3, c->accent, 1.f - t);
+        draw_round_rect_border(s, a, cr, 1.f, c->overlay, 1.f - t * 0.4f);
     }
 
     if (win->content)
@@ -569,7 +568,6 @@ static void paint_strip(shell_ctx *c, surface *s, shell_fonts *f, int w, float t
     rect r = { 0, 0, w, bh };
 
     draw_rect(s, r, c->bg_alt, 1.f);
-    draw_hrule(s, 0, bh, w, 1, c->overlay, 1.f);
     float brand_end = shell_wordmark(c, s, f, (float)c->margin, (float)bh * 0.5f);
 
     if (c->show_clock) {
@@ -579,7 +577,6 @@ static void paint_strip(shell_ctx *c, surface *s, shell_fonts *f, int w, float t
         shell_text(s, f->mid, rx - shell_text_w(f->mid, hm),
                    shell_baseline(f->mid, 0.f, (float)bh), hm, c->fg_hi, 1.f);
         rx -= shell_text_w(f->mid, hm) + 13.f;
-        draw_vrule(s, (int)rx, 9, bh - 18, 1, c->overlay, 1.f);
         rx -= 13.f;
         shell_text(s, f->small, rx - shell_text_w(f->small, dt),
                    shell_baseline(f->small, 0.f, (float)bh), dt, c->subtle, 0.9f);
@@ -600,7 +597,6 @@ static void paint_strip(shell_ctx *c, surface *s, shell_fonts *f, int w, float t
     /* After the brand, separated by a rule: a masthead reads left to
      * right as two facts, not as one string that happens to wrap. */
     float gx = brand_end + 18.f;
-    if (p->win >= 0) draw_vrule(s, (int)gx, 9, bh - 18, 1, c->overlay, 1.f);
     gx += 18.f;
     float na = clampf(t * 2.5f - 1.5f, 0.f, 1.f);
     if (na > 0.f && p->win >= 0) {
@@ -622,7 +618,6 @@ static void paint_homebar(shell_ctx *c, surface *s, shell_fonts *f, int w, int h
     /* A 2px rule closes the foot of the page, the way a rule closes a
      * printed footer. Heavier than the hairlines inside the page, so
      * the permanent chrome reads as a different order of thing. */
-    draw_hrule(s, 0, bar.y, w, 2, c->overlay, 1.f);
 
     rect b = home_btn_rect(c, w, h);
     corners cr = corners_all((float)c->radius);
@@ -637,7 +632,7 @@ static void paint_homebar(shell_ctx *c, surface *s, shell_fonts *f, int w, int h
      * must not be a half-blended nothing-colour. */
     float k = clampf(t * 2.f, 0.f, 1.f);
     draw_round_rect(s, b, cr, hot ? c->surface_hi : c->surface_c, 1.f - k);
-    draw_frame(s, b, 2, hot ? c->accent : c->fg, 1.f - k);
+    draw_round_rect_border(s, b, cr, 2.f, hot ? c->accent : c->fg, 1.f - k);
     if (k > 0.005f) draw_round_rect(s, b, cr, c->accent, k);
 
     /* The word, not a glyph. The shared mark set has no house and no

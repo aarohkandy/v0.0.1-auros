@@ -96,7 +96,7 @@ export_theme() {
         case "$_k" in
             theme_*|bg*|surface*|overlay|muted|subtle|fg*|accent*|ok|warn|err|info|\
             ansi*|radius*|gap|margin|border|bar_height|padding|font_*|line_height|\
-            blur*|shadow*|opacity_*|animation_*|wall_*|brand_*|cursor_*)
+            blur*|shadow*|opacity_*|animation_*|wall_*|brand_*|cursor_*|icon_*)
                 export "$_k" ;;
         esac
     done

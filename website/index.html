@@ -6,7 +6,7 @@
 <title>AurOS: a simple new way to use your computer</title>
 <meta name="description" content="AurOS is a free, simple system for the Windows computer you already have. AurOS is made to keep Windows and your files, and to let you go back. Any change to a drive carries some risk.">
 <meta name="color-scheme" content="light">
-<meta name="theme-color" content="#EEE7DA">
+<meta name="theme-color" content="#F5F7FA">
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Cpath%20d='M16%202L30%2016L16%2030L2%2016Z'%20fill='%230B5D4F'/%3E%3C/svg%3E">
 <link rel="preload" href="assets/fonts/atkinson-next-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="assets/fonts/atkinson-next-800.woff2" as="font" type="font/woff2" crossorigin>
@@ -18,11 +18,11 @@
 
 <main id="main">
 
-  <!-- The first screen is one framed canvas: AurOS's own night wallpaper
-       (the aurora, Nocturne), the name in a notch at the top, one line,
+  <!-- The first screen is one framed canvas: AurOS's own Light wallpaper
+       (the soft sky, drawn by src/common/wall.c), the name in a notch at the top, one line,
        the button, and AurOS itself rising from the bottom edge. -->
   <section class="hero" id="top" aria-labelledby="hero-title">
-    <img class="hero-sky" src="assets/shots/night-aurora.jpg" width="1024" height="595" alt="">
+    <img class="hero-sky" src="assets/shots/sky-day.jpg" width="640" height="372" alt="">
     <header class="bar">
       <nav class="bar-side" aria-label="On this page">
         <a class="bar-link" href="#steps">How it goes on</a>
@@ -236,9 +236,9 @@
     </div>
   </section>
 
-  <!-- The button once more, on the same night sky. -->
+  <!-- The button once more, on the same sky. -->
   <section class="finale" aria-labelledby="end-title">
-    <img class="hero-sky" src="assets/shots/night-aurora.jpg" width="1024" height="595" loading="lazy" alt="">
+    <img class="hero-sky" src="assets/shots/sky-day.jpg" width="640" height="372" loading="lazy" alt="">
     <h2 id="end-title" class="grow">Ready when you are.</h2>
     <div class="again">
       <a class="get get-again" data-download href="https://github.com/@AUROS_REPO@/releases/latest/download/AurOS-Setup.exe">
@@ -252,7 +252,7 @@
 
 <!-- AurOS's bottom buttons, on this page: Help, and the text size. -->
 <nav class="osbar" aria-label="Help and text size">
-  <a class="os-btn" href="guide.html"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M9.2 9.3a2.9 2.9 0 015.6.9c0 2-2.8 2.4-2.8 4.1M12 17.6v.1" fill="none" stroke="#16181B" stroke-width="2.4" stroke-linecap="round"/></svg>Help</a>
+  <a class="os-btn" href="guide.html"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10" fill="currentColor"/><path d="M9.2 9.3a2.9 2.9 0 015.6.9c0 2-2.8 2.4-2.8 4.1M12 17.6v.1" fill="none" stroke="#2A2E34" stroke-width="2.4" stroke-linecap="round"/></svg>Help</a>
   <span class="os-gap"></span>
   <button class="os-btn" type="button" id="text-smaller" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 20L9 4l6 16M5.3 14h7.4M17 5h5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Smaller text</button>
   <button class="os-btn" type="button" id="text-bigger" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 20L9 4l6 16M5.3 14h7.4M19.5 2.5v5M17 5h5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Bigger text</button>
