@@ -41,10 +41,13 @@ static struct {
     struct timespec asked_at; /* when the request went in: an answer older than this is not its answer */
     int  ctx;               /* 1: opened from Settings, not the first start */
     int  from_blocked;      /* the stick was offered because Windows could not hold her files */
+    int  net_seen;          /* what the check last showed, so a change is repainted */
+    int  deferred;          /* she pressed "Not yet": the question is open, nothing is decided */
+    int  bring;             /* opened from Settings to bring her files across (ctx too) */
     char why[16];           /* why Put Windows back could not save them  */
     char progress[160];     /* the newest plain line of the running copy */
     int  files;             /* how many files the copy says it saved     */
-} W = { .hover_act = -1, .sel = 0 };
+} W = { .hover_act = -1, .sel = 0, .net_seen = 99 };
 
 static uint32_t now_ms_(void)
 {
@@ -56,7 +59,29 @@ static uint32_t now_ms_(void)
  * table; a harness that does not link net.c has no opinion, which here
  * means "online" -- the check then simply offers the internet. */
 extern int net_online(void) __attribute__((weak));
-static int offline_now_(void) { return net_online && net_online() == 0; }
+
+/* A computer that has only just started has not found its network yet. A cable is up in a
+ * few seconds and sometimes takes a minute, and Wi-Fi she has used before joins by itself:
+ * saying "Not connected to the internet yet" in that time tells her something that is not
+ * true (and sends her to Wi-Fi on a computer that has a cable). So for the first minute and
+ * a half the check says it is looking, and only after that says it is not connected. */
+#define NET_GRACE_S 90
+static int test_uptime = -1;
+void welcome_test_uptime(int seconds) { test_uptime = seconds; }
+static int uptime_s_(void)
+{
+    if (test_uptime >= 0) return test_uptime;
+    struct timespec ts;
+    clock_gettime(CLOCK_BOOTTIME, &ts);
+    return (int)ts.tv_sec;
+}
+enum { NET_LOOKING = -1, NET_OFF = 0, NET_ON = 1 };
+static int net_state_(void)
+{
+    /* a harness that does not link net.c has no opinion: "online" */
+    if (!net_online || net_online()) return NET_ON;
+    return uptime_s_() < NET_GRACE_S ? NET_LOOKING : NET_OFF;
+}
 
 /* ── reading the two files this panel is allowed to read ─────────── */
 
@@ -298,6 +323,7 @@ static int progress_look(const char *log)
 static void open_stick_page(shell_ctx *c)
 {
     W.ctx = 1;
+    W.bring = 0;
     sticks_look();
     W.page = W.n_sticks ? W_STICK_PICK : W_STICK_PLUG;
     W.sel = 0; W.keyed = 0; W.note[0] = 0; W.progress[0] = 0;
@@ -313,10 +339,30 @@ void welcome_open_stick(shell_ctx *c)
 void welcome_open_blocked(shell_ctx *c, const char *why)
 {
     W.ctx = 1;
+    W.bring = 0;
     W.from_blocked = 1;
     snprintf(W.why, sizeof W.why, "%s", why ? why : "");
     W.page = W_BLOCKED;
     W.sel = 0; W.keyed = 0; W.note[0] = 0;
+    c->welcome_open = 1;
+}
+
+/* Only once she has answered Yes (answer.sh refuses "import" before that), and only when
+ * there is a Windows to read: the same two facts the first start used to offer it. */
+int welcome_can_bring(void)
+{
+    char phase[32];
+    read_state(phase, sizeof phase);
+    return !strcmp(phase, "done") && windows_worth_importing();
+}
+
+void welcome_open_bring(shell_ctx *c)
+{
+    W.ctx = 1;
+    W.bring = 1;
+    W.from_blocked = 0;
+    W.page = W_BRING;
+    W.sel = 0; W.keyed = 0; W.note[0] = 0; W.progress[0] = 0;
     c->welcome_open = 1;
 }
 
@@ -337,6 +383,7 @@ int welcome_init(shell_ctx *c)
     char phase[32];
     read_state(phase, sizeof phase);
     W.can_import = windows_worth_importing();
+    W.deferred = 0;
     W.page = W_ASK;
     W.sel = 0;
     /* ONLY WHILE THE QUESTION IS OPEN. A machine that answered it
@@ -350,6 +397,8 @@ int welcome_init(shell_ctx *c)
 int welcome_wait_ms(void)
 {
     if (W.asked) return 200;
+    /* The internet check is still looking: it turns into an answer by itself. */
+    if (W.net_seen == NET_LOOKING) return 1000;
     /* Looking for a stick she is about to plug in: twice a second is plenty. */
     if (W.page == W_STICK_PLUG || W.page == W_STICK_PICK) return 500;
     return -1;
@@ -366,8 +415,12 @@ int welcome_step(shell_ctx *c)
         c->welcome_open = 1;
         return 1;
     }
-    if (!c->welcome_open) return 0;
+    if (!c->welcome_open) { W.net_seen = 99; return 0; }
     int dirty = 0;
+    if (W.page == W_ASK) {
+        int ns = net_state_();
+        if (ns != W.net_seen) { W.net_seen = ns; dirty = 1; }
+    }
     /* Plugging a stick in moves the page on by itself. */
     if ((W.page == W_STICK_PLUG || W.page == W_STICK_PICK) && !W.asked &&
         (uint32_t)(now_ms_() - W.looked_at) >= 2000) {
@@ -540,7 +593,7 @@ static int actions_for(const welcome_view *v, int *which)
         else which[n++] = A_START;
         break;
     case W_IMPORTING: break;
-    case W_IMPORTED: which[n++] = A_FILES; which[n++] = A_START; break;
+    case W_IMPORTED: which[n++] = A_FILES; which[n++] = W.ctx ? A_DONE : A_START; break;
     case W_DECLINED: which[n++] = A_RESTART; which[n++] = A_RESTART_LATER; break;
     case W_TROUBLE:  which[n++] = A_AGAIN; which[n++] = W.ctx ? A_SKIP : A_LATER; break;
     case W_WHOSE:
@@ -556,6 +609,7 @@ static int actions_for(const welcome_view *v, int *which)
     case W_STICK_SAVING: break;
     case W_STICK_DONE:  which[n++] = A_DONE; break;
     case W_BLOCKED:     which[n++] = A_BLOCK_STICK; which[n++] = A_KEEP; break;
+    case W_BRING:       which[n++] = A_IMPORT; which[n++] = A_SKIP; break;
     }
     return n;
 }
@@ -768,7 +822,8 @@ static const char *head_of(int page)
     case W_IMPORTED:  return "Your files are here";
     case W_DECLINED:  return "Windows starts next time";
     case W_WHOSE:     return "Whose files?";
-    case W_EMPTY:     return W.ctx ? "No files to save" : "No files to bring across";
+    case W_BRING:     return "Bring my files across";
+    case W_EMPTY:     return W.ctx && !W.bring ? "No files to save" : "No files to bring across";
     case W_STICK_PLUG:   return "Plug in a USB stick";
     case W_STICK_PICK:   return "Which USB stick?";
     case W_STICK_SAVING: return "Saving your files";
@@ -781,8 +836,14 @@ static const char *head_of(int page)
 static const char *sub_of(int page, int can_import)
 {
     switch (page) {
-    case W_ASK:       return "Check one thing first.";
-    case W_SURE_YES:  return SAY_YES;
+    /* After "Not yet" nothing has been decided, and she is told so: the question is still
+     * open, and it stays open (welcome.h: it comes back every start until it is answered). */
+    case W_ASK:       return W.deferred
+                          ? "Nothing has changed yet. AurOS asks this again until you answer."
+                          : "Check one thing first.";
+    /* The page before it said what Yes does (SAY_YES). This one is the last step, and says
+     * what the green button makes final, so the two are not the same sentence twice. */
+    case W_SURE_YES:  return "This is the last step. After it, AurOS starts every time you switch this computer on.";
     case W_SURE_NO:   return SAY_NO;
     case W_WORKING:   return "";
     case W_CONFIRMED: return can_import
@@ -793,7 +854,9 @@ static const char *sub_of(int page, int can_import)
     case W_IMPORTED:  return "Open Your files to see them.";
     case W_DECLINED:  return "Press Restart now to go back to Windows.";
     case W_WHOSE:     return "More than one person uses Windows on this computer.";
-    case W_EMPTY:     return W.ctx
+    case W_BRING:     return "Your documents and pictures are still in Windows. "
+                            "AurOS can copy them here.";
+    case W_EMPTY:     return W.ctx && !W.bring
                           ? "There were no documents, pictures, music or videos of yours in AurOS to save."
                           : "AurOS looked in Windows and found no documents, pictures, music or videos.";
     case W_STICK_PLUG:   return "AurOS will save your documents, pictures, music and videos on it.";
@@ -825,6 +888,7 @@ static int body_of(int page, int partial, const char *lines[3])
     static char count[96];
     switch (page) {
     case W_SURE_YES:
+        lines[n++] = "Windows and its files are meant to stay on this computer.";
         /* Tell her before: it is not a one-way door. Put Windows back is the Settings row
          * (settings.c R_WINDOWS), on a computer that came from Windows. */
         lines[n++] = "If you change your mind, press Settings, then Put Windows back.";
@@ -845,6 +909,9 @@ static int body_of(int page, int partial, const char *lines[3])
          * 5,000 files. About 4 minutes left." (never a file's name). */
         if (W.progress[0]) lines[n++] = W.progress;
         lines[n++] = "Leave the computer on until this finishes.";
+        break;
+    case W_BRING:
+        lines[n++] = "Nothing in Windows changes.";
         break;
     case W_WHOSE:
         lines[n++] = "Press the name of the person whose files you want here. Nothing in Windows changes.";
@@ -968,16 +1035,17 @@ void welcome_paint(shell_ctx *c, surface *s, shell_fonts *f)
     /* The check: a question on the left, its button on the right, a rule
      * under it. Offline it says so, and the button opens Wi-Fi. */
     if (g.check_y && name) {
-        int offline = offline_now_();
-        const char *q = offline ? "Not connected to the internet yet."
-                                : "Does the internet work?";
+        int ns = net_state_();
+        const char *q = ns == NET_OFF     ? "Not connected to the internet yet."
+                      : ns == NET_LOOKING ? "Checking the internet. One moment."
+                                          : "Does the internet work?";
         int bh = g.acts[0].h;
         shell_text(s, name, (float)g.gx,
                    shell_baseline(name, (float)g.check_y, (float)bh), q, c->fg, 1.f);
         draw_hrule(s, g.gx, g.check_y + bh + (int)(8.f * k), g.cw, 1, c->overlay, 1.f);
     }
 
-    int offline = g.check_y ? offline_now_() : 0;
+    int offline = g.check_y ? net_state_() != NET_ON : 0;
     for (int i = 0; i < g.n_acts; i++) {
         int id = g.act[i];
         int primary = id == A_YES || id == A_SURE_YES || id == A_SURE_NO ||
@@ -1024,9 +1092,9 @@ static int do_action(shell_ctx *c, int id)
 {
     const char *trouble = "AurOS could not reach the part of itself that changes this.";
     switch (id) {
-    case A_YES: W.page = W_SURE_YES; W.sel = 0; return 1;
-    case A_NO:  W.page = W_SURE_NO;  W.sel = 0; return 1;
-    case A_NOT_YET: W.page = W_ASK;  W.sel = 0; return 1;
+    case A_YES: W.page = W_SURE_YES; W.sel = 0; W.deferred = 0; return 1;
+    case A_NO:  W.page = W_SURE_NO;  W.sel = 0; W.deferred = 0; return 1;
+    case A_NOT_YET: W.page = W_ASK;  W.sel = 0; W.deferred = 1; return 1;
     case A_SURE_YES:
     case A_SURE_NO:
         if (ask_for(id == A_SURE_YES ? "confirm" : "decline") == 0) {
@@ -1042,6 +1110,7 @@ static int do_action(shell_ctx *c, int id)
                         "AurOS could not start bringing your files across."); }
         return 1;
     case A_AGAIN:
+        if (W.bring) { welcome_open_bring(c); return 1; }  /* bringing her files starts over */
         if (W.ctx) { open_stick_page(c); return 1; }      /* the stick flow starts over */
         W.page = W_ASK; W.sel = 0; W.note[0] = 0;
         return 1;
@@ -1063,7 +1132,7 @@ static int do_action(shell_ctx *c, int id)
     case A_NET:
         /* Offline, "Open Internet" would show a browser error page and
          * nowhere to go: open the Wi-Fi page instead (E-02). */
-        if (offline_now_()) {
+        if (net_state_() != NET_ON) {
             shell_open_net(c);
             W.checking = 1; W.check_panel = 1; W.check_wins = c->n_wins;
             return 1;
@@ -1163,7 +1232,7 @@ int welcome_key(shell_ctx *c, int k)
     case 1:
         /* ESCAPE IS "LET ME LOOK FIRST", NEVER AN ANSWER -- and on a
          * confirming page it is "Not yet". */
-        if (W.page == W_SURE_YES || W.page == W_SURE_NO) { W.page = W_ASK; W.sel = 0; }
+        if (W.page == W_SURE_YES || W.page == W_SURE_NO) { W.page = W_ASK; W.sel = 0; W.deferred = 1; }
         else c->welcome_open = 0;
         return 1;
     }

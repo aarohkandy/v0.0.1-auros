@@ -463,7 +463,8 @@ jobs:
              -DWELCOME_RUN="\"$RUNNER_TEMP/windowspagetest.d\"" \
              -DWELCOME_ANSWER="\"$RUNNER_TEMP/windowspagetest.d/answer.d\"" \
              -DWELCOME_STATE="\"$RUNNER_TEMP/windowspagetest.d/first.state\"" \
-             -DWELCOME_FERRY="\"$RUNNER_TEMP/windowspagetest.d/ferry\""
+             -DWELCOME_FERRY="\"$RUNNER_TEMP/windowspagetest.d/ferry\"" \
+             -DWELCOME_FOUND="\"$RUNNER_TEMP/windowspagetest.d/found.json\""
           "$RUNNER_TEMP/windowspagetest" 2>&1 | tee transcripts/windowspagetest.txt
       - name: targets (everything she has to press is big enough, at every size)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}

@@ -19,7 +19,8 @@
  *      -DWELCOME_RUN='"/tmp/windowspagetest.d"' \
  *      -DWELCOME_ANSWER='"/tmp/windowspagetest.d/answer.d"' \
  *      -DWELCOME_STATE='"/tmp/windowspagetest.d/first.state"' \
- *      -DWELCOME_FERRY='"/tmp/windowspagetest.d/ferry"' && /tmp/windowspagetest
+ *      -DWELCOME_FERRY='"/tmp/windowspagetest.d/ferry"' \
+ *      -DWELCOME_FOUND='"/tmp/windowspagetest.d/found.json"' && /tmp/windowspagetest
  */
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -31,6 +32,15 @@
 #include "../src/aurshell/settings.h"
 #include "../src/aurshell/welcome.h"
 #include "../src/aurshell/foot.h"
+
+/* A program started, as the shell's spawn hook would be told. */
+static char spawned[400];
+static int spawn_hook(shell_ctx *c, const char *blob, int n)
+{
+    (void)c; (void)n;
+    snprintf(spawned, sizeof spawned, "%s", blob);
+    return 0;
+}
 
 static int fails, checks;
 static void ok(int c, const char *w) { checks++; if (!c) fails++; printf("  %-72s %s\n", w, c ? "ok" : "FAIL"); }
@@ -110,6 +120,71 @@ int main(void)
     C.text_scale = 1.5f;
     ok(shown("150%"), "bigger words say 150%");
     C.text_scale = 1.f;
+
+    /* Two things the first start and the help pages promise are in Settings. "Not now" on
+     * "Bring my files across" said "You can do this later from Settings", and Windows' disk is
+     * hidden from the file manager (81-auros-windows-disk.rules), so the files were out of
+     * reach; and printing.html had no way to add a printer. */
+    printf("Settings: Printers, and Bring my files across\n");
+    {
+        char tool[400];
+        snprintf(tool, sizeof tool, "%s/printers", WELCOME_RUN);
+        put(tool, "#!/bin/sh\nexit 0\n");
+        chmod(tool, 0755);
+        setenv("AUROS_PRINTER_TOOL", tool, 1);
+        put(WELCOME_FOUND, "{\"device\":\"/dev/sda2\",\"windows\":\"10\",\"clean\":true}\n");
+        C.spawn = spawn_hook;
+        C.settings_open = 1;
+        settings_opened(&C);
+        /* (the list may have more rows than fit: the page's own "Show more" brings the rest) */
+        ok(shown("Printers") || (press("Show more") && shown("Printers")), "the first page has a Printers row");
+        settings_opened(&C);
+        ok(shown("Bring my files across") || (press("Show more") && shown("Bring my files across")),
+           "...and a \"Bring my files across\" row, the one \"Not now\" promised");
+        spawned[0] = 0;
+        settings_opened(&C);
+        if (!shown("Printers")) press("Show more");
+        ok(press("Printers"), "she presses Printers");
+        ok(!strcmp(spawned, tool), "...which starts the printer tool, by its own name");
+        ok(C.settings_open == 0, "...and Settings steps aside so that its window is what she sees");
+        C.settings_open = 1;
+        settings_opened(&C);
+        if (!shown("Bring my files across")) press("Show more");
+        unlink(WELCOME_RUN "/answer");
+        C.welcome_open = 0;
+        ok(press("Bring my files across"), "she presses Bring my files across");
+        ok(C.welcome_open == 1 && welcome_page() == W_BRING,
+           "...the screen that offers to copy them opens");
+        char asked[96];
+        ok(!slurp(WELCOME_RUN "/answer", asked, sizeof asked), "...and nothing is asked until she presses its button");
+        C.welcome_open = 0;
+
+        /* and not offered where it would not work */
+        C.settings_open = 1;
+        put(WELCOME_STATE, "phase=asking\nconverted=yes\n");
+        settings_opened(&C);
+        ok(!shown("Bring my files across") && !(press("Show more") && shown("Bring my files across")),
+           "while the first question is still open there is no such row (the root side would refuse it)");
+        put(WELCOME_STATE, "phase=done\nconverted=yes\n");
+        unlink(WELCOME_FOUND);
+        settings_opened(&C);
+        ok(!shown("Bring my files across") && !(press("Show more") && shown("Bring my files across")),
+           "on a computer with no Windows to read there is no such row");
+        put(WELCOME_FOUND, "{\"device\":\"/dev/sda2\",\"windows\":\"10\",\"clean\":true}\n");
+        setenv("AUROS_PRINTER_TOOL", WELCOME_RUN "/no-such-tool", 1);
+        settings_opened(&C);
+        ok(!shown("Printers") && !(press("Show more") && shown("Printers")),
+           "with no printer tool installed there is no Printers row (a row that does nothing is worse than none)");
+        setenv("AUROS_PRINTER_TOOL", tool, 1);
+        snprintf(C.allowed_apps, sizeof C.allowed_apps, "%s", "firefox");
+        settings_opened(&C);
+        ok(!shown("Printers") && !(press("Show more") && shown("Printers")),
+           "where only some programs are allowed, no Printers row either");
+        C.allowed_apps[0] = 0;
+        settings_opened(&C);
+        C.settings_open = 1;
+        settings_opened(&C);
+    }
 
     printf("Put Windows back: her files first\n");
     ok(press("Put Windows back"), "\"Put Windows back\" opens its page");

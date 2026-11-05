@@ -330,6 +330,8 @@ static void settings(const char *label)
             v.sound     = (hw >> 2) & 1;
             v.windows   = (hw >> 3) & 1;     /* the Put Windows back row */
             v.wishes    = 1;                 /* the My wishes row (src/aurshell/wish.c) */
+            v.printers  = 1;                 /* Printers, and Bring my files across */
+            v.files     = 1;
             /* A list page with forty places on it, and the same page
              * scrolled -- the paged view has its own geometry and the
              * wifi panel's harness never measured one. */

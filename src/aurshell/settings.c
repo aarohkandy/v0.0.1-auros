@@ -31,10 +31,13 @@ enum {
     R_WORDS,       /* the text scale           */
     R_BATTERY,     /* a readout, not a control */
     R_BT,          /* opens the headphones panel */
+    R_PRINTERS,    /* opens the printer tool: where a printer is added */
     R_WISHES,      /* opens My wishes (src/aurshell/wish.c) */
     R_TIME,        /* opens a page             */
     R_SHELL,       /* opens a page             */
     R_LOOK,        /* opens a page             */
+    R_FILES,       /* opens the "Bring my files across" screen: the one the
+                      first start offered and she pressed "Not now" on */
     R_WINDOWS,     /* opens a page: put Windows back, on a machine
                       that came from Windows and only there */
     R_N
@@ -50,6 +53,8 @@ static int row_applies(int row, const set_view *v)
     if (row == R_SOUND)   return v->sound;
     if (row == R_BATTERY) return v->battery;
     if (row == R_WINDOWS) return v->windows;
+    if (row == R_PRINTERS) return v->printers;
+    if (row == R_FILES)   return v->files;
     if (row == R_WISHES)  return AUROS_WISHES && v->wishes;   /* D14: not in the v0.1 image */
     return 1;
 }
@@ -177,6 +182,8 @@ static struct {
      * `armed` is the first of the two presses; `asked` means the word
      * has gone to the root side and this panel is waiting to hear. */
     int converted;
+    int printers;              /* the printer tool is here and she may start it */
+    int files;                 /* her files are still in Windows to bring across */
     int armed;
     uint32_t armed_at;         /* when the first press was, in ms        */
     int asked;
@@ -197,6 +204,8 @@ static set_view view_now(const shell_ctx *c)
     v.sound     = S.volume >= 0;
     v.n_rows    = S.n_ch;
     v.windows   = S.converted;
+    v.printers  = S.printers;
+    v.files     = S.files;
     v.wishes    = shell_wish_app(c) >= 0;
     return v;
 }
@@ -473,6 +482,39 @@ static int ask_root(const char *word)
 
 int settings_page(void) { return S.page; }
 
+/* The printer tool, which build/forge's rename calls "Printers". Its launcher is a settings
+ * page as far as the program list is concerned (apps.c hides those), so this row is where she
+ * finds it. Only where the tool is installed (a control that does nothing is worse than none)
+ * and where nobody has limited which programs she may start. */
+static const char *printer_tool(void) { return dir_of("AUROS_PRINTER_TOOL", "/usr/bin/system-config-printer"); }
+static int printers_here(const shell_ctx *c)
+{
+    if (c->kiosk || c->deny_all_apps || c->allowed_apps[0] || c->blocked_apps[0]) return 0;
+    return c->spawn && access(printer_tool(), X_OK) == 0;
+}
+
+/* What pressing one of the rows that is not a slider and not a page does. */
+static void open_row(shell_ctx *c, int which)
+{
+    if (which == R_BT) foot_open_only(c, &c->bt_open);
+    if (which == R_WISHES) { foot_open_only(c, &c->wish_open); c->wish_open = WISH_OPEN_MINE; }
+    if (which == R_PRINTERS) {
+        /* Its own window, over the desktop: Settings steps aside, as it does for Close. */
+        static char blob[320];
+        size_t l = snprintf(blob, sizeof blob - 1, "%s", printer_tool());
+        if (l + 2 < sizeof blob) { blob[l + 1] = 0; c->settings_open = 0; c->spawn(c, blob, 1); }
+    }
+    if (which == R_FILES) welcome_open_bring(c);
+    if (which == R_TIME)  { S.page = SET_PAGE_TIME;  S.first_row = 0;
+                            S.sel = -1; fill_page(c); }
+    if (which == R_SHELL) { S.page = SET_PAGE_SHELL; S.first_row = 0;
+                            S.sel = -1; fill_page(c); }
+    if (which == R_LOOK)  { S.page = SET_PAGE_LOOK;  S.first_row = 0;
+                            S.sel = -1; fill_page(c); }
+    if (which == R_WINDOWS) { S.page = SET_PAGE_WINDOWS; S.first_row = 0;
+                              S.sel = -1; fill_page(c); }
+}
+
 void settings_opened(shell_ctx *c)
 {
     (void)c;
@@ -490,6 +532,8 @@ void settings_opened(shell_ctx *c)
     S.volume    = power_volume();
     S.muted     = power_muted();
     S.converted = came_from_windows();
+    S.printers  = printers_here(c);
+    S.files     = welcome_can_bring();
 }
 
 void settings_closed(shell_ctx *c) { (void)c; S.drag_row = -1; }
@@ -647,10 +691,12 @@ static const char *row_name(int which)
     case R_WORDS:   return "How big the words are";
     case R_BATTERY: return "Battery";
     case R_BT:      return "Headphones and mice";
+    case R_PRINTERS: return "Printers";
     case R_WISHES:  return "My wishes";
     case R_TIME:    return "The time and date";
     case R_SHELL:   return "How this computer works";
     case R_LOOK:    return "Colors";
+    case R_FILES:   return "Bring my files across";
     case R_WINDOWS: return "Put Windows back";
     }
     return "";
@@ -679,6 +725,12 @@ static void row_value(const shell_ctx *c, int which, char *out, size_t n)
         break;
     case R_BT:
         snprintf(out, n, "%s", "Connect one without a cable");
+        break;
+    case R_PRINTERS:
+        snprintf(out, n, "%s", "Add a printer, or check yours");
+        break;
+    case R_FILES:
+        snprintf(out, n, "%s", "Copy your files from Windows");
         break;
     case R_WISHES:
         snprintf(out, n, "%s", "See them, turn them on or off");
@@ -1431,16 +1483,7 @@ int settings_click(shell_ctx *c, int x, int y)
              * screens that do the same kind of job must not behave
              * differently. Settings is the index; the panel is the
              * thing. */
-            if (which == R_BT) foot_open_only(c, &c->bt_open);
-            if (which == R_WISHES) { foot_open_only(c, &c->wish_open); c->wish_open = WISH_OPEN_MINE; }
-            if (which == R_TIME)  { S.page = SET_PAGE_TIME;  S.first_row = 0;
-                                    S.sel = -1; fill_page(c); }
-            if (which == R_SHELL) { S.page = SET_PAGE_SHELL; S.first_row = 0;
-                                    S.sel = -1; fill_page(c); }
-            if (which == R_LOOK)  { S.page = SET_PAGE_LOOK;  S.first_row = 0;
-                                    S.sel = -1; fill_page(c); }
-            if (which == R_WINDOWS) { S.page = SET_PAGE_WINDOWS; S.first_row = 0;
-                                      S.sel = -1; fill_page(c); }
+            open_row(c, which);
             return 1;
         }
     }
@@ -1480,16 +1523,7 @@ int settings_key(shell_ctx *c, int k)
     }
     if (k == 28 && S.sel >= 0) {                              /* Enter */
         int which = row_at(&v, S.sel);
-        if (which == R_BT) foot_open_only(c, &c->bt_open);
-        if (which == R_WISHES) { foot_open_only(c, &c->wish_open); c->wish_open = WISH_OPEN_MINE; }
-        if (which == R_TIME)  { S.page = SET_PAGE_TIME;  S.first_row = 0;
-                                S.sel = -1; fill_page(c); }
-        if (which == R_SHELL) { S.page = SET_PAGE_SHELL; S.first_row = 0;
-                                S.sel = -1; fill_page(c); }
-        if (which == R_LOOK)  { S.page = SET_PAGE_LOOK;  S.first_row = 0;
-                                S.sel = -1; fill_page(c); }
-        if (which == R_WINDOWS) { S.page = SET_PAGE_WINDOWS; S.first_row = 0;
-                                  S.sel = -1; fill_page(c); }
+        open_row(c, which);
         return 1;
     }
     if ((k == 105 || k == 106) && S.sel >= 0) {     /* left / right */
