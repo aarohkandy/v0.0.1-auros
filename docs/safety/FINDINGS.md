@@ -10,22 +10,24 @@
 
 **Pairs with one root cause.** These were reported twice from different angles and are kept as separate entries so neither is lost. Fix each pair once: S-01/S-02, S-05/S-06, S-07/S-18, S-14/S-15 (S-03 is a third face of the same restore ordering).
 
+**Re-checked 2026-11-04** (branch `wave/safety`, code at `aec0d0fe`). Every high entry (S-01 to S-12) and the two entries that said open or partly (S-20, S-22) was traced in the current code; each now carries a "Status (2026-11-04 ...)" line with the file and line of the fix and the test that pins it. All twelve highs are fixed in the code. S-22 was fixed in `a69819ab` while this file still said open. The KVM tests behind S-01 to S-03, S-05 to S-07 and S-12 were not run in that check.
+
 ## Index
 
 | ID | Sev | Owner | Title | Where | Status on main (5c16a39) |
 |---|---|---|---|---|---|
-| S-01 | high | A2 | Restore erases a partition added after the install and grows C: over it | `src/aurstage/rescue.c:879` | fixed in `c994042` (foreign_partition(): refused before any write; powercut-nostick "a partition that was not AurOS's") |
-| S-02 | high | A2 | Same defect, second report | `src/aurstage/rescue.c:1200` | fixed in `c994042` (same) |
-| S-03 | high | A2 | No-stick restore writes the table before the EFI partition | `src/aurstage/rescue.c:1297` | fixed in `c994042` (the EFI partition is restored first, only differing megabytes) |
-| S-04 | high | A2 | Boot entry cannot be written (NVRAM full), install still "succeeds" | `src/aurstage/loader.c:187` | fixed in `0d0e047` (nvram_probe at the gate of both paths; nvram_boot_repurpose; nvramtest 27 checks) |
-| S-05 | high | C | The hold re-arms AurOS before the desktop exists | `rootfs/etc/systemd/system/auros-hold.service:19` | fixed in 69ca6b1 (auros-hold only publishes; auros-keeper arms BootNext after the desktop has worked 30 s; firstboottest D red on the old image, green now) |
-| S-06 | high | C | Same defect, second report | `rootfs/etc/systemd/system/auros-hold.service:19` | fixed in 69ca6b1 (same change as S-05) |
-| S-07 | high | C | New kernel is the default before it has ever booted | `rootfs/usr/lib/auros/bootchain:257` | fixed in 69ca6b1 (WP-30 minimal: grub boot counting, auros-boot-ok, previous kernel after two unconfirmed starts; rollbacktest 16/16, counter mutants red) |
-| S-08 | high | R | Ferry reports success when it copied nothing | `src/ferry/ferry:97` | fixed in Ferry and `answer.sh`; the panel must ask whose files (`result=choose`) and show `result=empty` (C) |
-| S-09 | high | R | `/usr/bin/ferry` symlink breaks Ferry | `src/ferry/install.sh:41` | fixed |
-| S-10 | high | R | `auros-answer.service` sandbox blocks the import | `rootfs/etc/systemd/system/auros-answer.service:22` | fixed |
-| S-11 | high | E CI | powercuttest misses the shipped mode and runs in no CI job | `tools/powercuttest.sh:162` | addressed in CI (E, run 39962229132): the shipped no-stick mode runs in four jobs on every build and gates every release; one slice is red (S-01/S-02) |
-| S-12 | high | A2 | Clock-behind refusal for every PC west of UTC | `src/aurstage/journal.c:404` | fixed |
+| S-01 | high | A2 | Restore erases a partition added after the install and grows C: over it | `src/aurstage/rescue.c:879` | fixed in `c994042` (foreign_partition(): refused before any write; powercut-nostick "a partition that was not AurOS's"); re-checked 2026-11-04 on `aec0d0fe`, still true |
+| S-02 | high | A2 | Same defect, second report | `src/aurstage/rescue.c:1200` | fixed in `c994042` (same); re-checked 2026-11-04 on `aec0d0fe`, still true |
+| S-03 | high | A2 | No-stick restore writes the table before the EFI partition | `src/aurstage/rescue.c:1297` | fixed in `c994042` (the EFI partition is restored first, only differing megabytes); re-checked 2026-11-04 on `aec0d0fe`, still true |
+| S-04 | high | A2 | Boot entry cannot be written (NVRAM full), install still "succeeds" | `src/aurstage/loader.c:187` | fixed in `0d0e047` (nvram_probe at the gate of both paths; nvram_boot_repurpose; nvramtest 27 checks); re-checked 2026-11-04 on `aec0d0fe`, still true |
+| S-05 | high | C | The hold re-arms AurOS before the desktop exists | `rootfs/etc/systemd/system/auros-hold.service:19` | fixed in 69ca6b1 (auros-hold only publishes; auros-keeper arms BootNext after the desktop has worked 30 s; firstboottest D red on the old image, green now); re-checked 2026-11-04 on `aec0d0fe`, still true |
+| S-06 | high | C | Same defect, second report | `rootfs/etc/systemd/system/auros-hold.service:19` | fixed in 69ca6b1 (same change as S-05); re-checked 2026-11-04 on `aec0d0fe`, still true |
+| S-07 | high | C | New kernel is the default before it has ever booted | `rootfs/usr/lib/auros/bootchain:257` | fixed in 69ca6b1 (WP-30 minimal: grub boot counting, auros-boot-ok, previous kernel after two unconfirmed starts; rollbacktest 16/16, counter mutants red); re-checked 2026-11-04 on `aec0d0fe`, still true |
+| S-08 | high | R | Ferry reports success when it copied nothing | `src/ferry/ferry:97` | fixed in Ferry and `answer.sh`; the panel must ask whose files (`result=choose`) and show `result=empty` (C); re-checked 2026-11-04 on `aec0d0fe`, still true |
+| S-09 | high | R | `/usr/bin/ferry` symlink breaks Ferry | `src/ferry/install.sh:41` | fixed; re-checked 2026-11-04 on `aec0d0fe`, still true |
+| S-10 | high | R | `auros-answer.service` sandbox blocks the import | `rootfs/etc/systemd/system/auros-answer.service:22` | fixed; re-checked 2026-11-04 on `aec0d0fe`, still true |
+| S-11 | high | E CI | powercuttest misses the shipped mode and runs in no CI job | `tools/powercuttest.sh:162` | addressed in CI (E, run 39962229132): the shipped no-stick mode runs in four jobs on every build and gates every release; one slice is red (S-01/S-02); re-checked 2026-11-04 on `aec0d0fe`, still true |
+| S-12 | high | A2 | Clock-behind refusal for every PC west of UTC | `src/aurstage/journal.c:404` | fixed; re-checked 2026-11-04 on `aec0d0fe`, still true |
 | S-13 | medium | B | BitLocker C: passes preflight in every state | `src/aurbridge/preflight.c:1601` | fixed |
 | S-14 | medium | A2 | A restore that stops after the table rewrite can never be finished | `src/aurstage/rescue.c:1475` | fixed in `c994042` + `0d0e047` (ESP first; growability asked before the first write) |
 | S-15 | medium | A2 | Restore commits table and ESP before checking C: can be grown | `src/aurstage/rescue.c:1475` | fixed in `0d0e047` (growable() before the first write; ntfs_read_state unsure until looked at) |
@@ -33,9 +35,9 @@
 | S-17 | medium | A2 | A retry captures the shrunk C: as the original | `src/aurstage/rescue.c:590` | fixed |
 | S-18 | medium | A2 | A kernel that loads and then panics is chosen at every start | `rootfs/usr/lib/auros/grub.cfg.in:3` | fixed in 69ca6b1 (same change as S-07) |
 | S-19 | medium | A2 | Two ESPs: boot entry names a partition the files were not copied to | `src/aurbridge/phases.c:239` | fixed |
-| S-20 | medium | B | EFI partition checked with a 1 MiB margin, files stay for good | `src/aurbridge/preflight.c:1405` | partly fixed |
+| S-20 | medium | B | EFI partition checked with a 1 MiB margin, files stay for good | `src/aurbridge/preflight.c:1405` | room check fixed in `619d439` + `a69819ab`, re-checked 2026-11-04; the ~33 MB of AurOS files left on the EFI partition after an install is by design |
 | S-21 | medium | B | RAID system volume passes preflight; staging cannot find it | `src/aurbridge/preflight.c:1757` | fixed |
-| S-22 | medium | B | Early download is not counted by the check that passes | `src/aurbridge/preflight.c:1267` | open |
+| S-22 | medium | B | Early download is not counted by the check that passes | `src/aurbridge/preflight.c:1267` | fixed in `a69819ab`; re-checked 2026-11-04 (this said: open) |
 | S-23 | medium | A2 | Hibernation switched off for good, even after Stop | `src/aurbridge/plat_win.c:1391` | fixed: Stop/abort in `fe7702f`; the Put Windows back leg in `0d0e047` (the put-back task restores hibernation) |
 | S-24 | medium | A2 + B | When Windows moves itself first in BootOrder, nothing brings AurOS back | `src/aurfirst/state.c:377` | fixed in 69ca6b1 (the keeper puts AurOS first again once she confirmed and the desktop works; never after she said no; firstboottest E, aurfirsttest). Windows-side keeper task is WP-77, not done |
 | S-25 | medium | C + A2 | Deleting AUROS-ROOT in Disk Management leaves a `grub>` prompt | `build/mkimage:253` | fixed in 69ca6b1 (build/mkimage: the ESP grub.cfg exits to the firmware with a plain sentence; windowsboottest F). The encrypted layout writes its own cfg: rootfs/usr/lib/auros/lock/lockctl needs the same else/exit |
@@ -48,6 +50,7 @@
 ### S-01 | high | Restore erases a partition added after the install and grows C: over it
 - **Owner:** A2
 - **Where:** `src/aurstage/rescue.c:879` (`fde_guard`, 838-933; pre-write loop 1200-1243)
+- **Status (2026-11-04, code read on `aec0d0fe`):** verified fixed. `src/aurstage/rescue.c:886` `foreign_partition()` accepts a live entry only if it is AurOS's own (`is_auros_own`, :860), a captured entry with the same GUID and extent, or Windows' own made smaller by the install with an AurOS partition starting in the room it gave up. It runs at :1309, before `fde_guard` and before any write, and refuses with the disk untouched. Test: `tools/powercut-nostick.sh:352` ("a partition that was not AurOS's"), KVM, not run in this check.
 - **Status on main:** open (`rescue.c` has one change since, `88b928f`, unrelated).
 - **Scenario:** The install fills the gap after C: with AurOS, so the only way to new space afterwards is to shrink C: again. In Windows she or a helper shrinks C: in Disk Management and makes a D: for photos in the hole. Later she presses Put Windows back. The checks pass: disk size, DiskGUID, BitLocker, and "NTFS larger than captured" (C: is now smaller). The captured table has no entry for D:, so it is written over the live one, then `ntfsresize` grows C: across D:'s extent. The screen says "Windows is back exactly as it was."
 - **Evidence:** Nothing compares the live table with captured entries plus the three AurOS partitions. The comment at 879-881 says an unreproduced entry "must not be encrypted", so an unencrypted one is deleted unchecked. No test adds a partition after the install.
@@ -58,6 +61,7 @@
 ### S-02 | high | Restore silently removes any partition Windows or she created after the install, then grows C: over it
 - **Owner:** A2
 - **Where:** `src/aurstage/rescue.c:1200`
+- **Status (2026-11-04, code read on `aec0d0fe`):** verified fixed, same code as S-01: a recovery partition made after the install is neither AurOS's, nor a captured entry, nor a shrunk captured one, so it is foreign and the restore refuses. Same test.
 - **Status on main:** open. Same root cause as S-01; fix once.
 - **Scenario:** As S-01, with a second trigger: a Windows feature update that finds WinRE too small shrinks C: and creates a new recovery partition after it (the KB5034441 / 0x80070643 family). Restore deletes that entry, and C: grows over its extent. Reset this PC then points at a partition that no longer exists.
 - **Evidence:** `rescue.c:1200-1243` compares only each captured NTFS volume's size; `fde_guard` looks only for `-FVE-FS-`. The grow at 1488 writes NTFS metadata over the new extent.
@@ -68,6 +72,7 @@
 ### S-03 | high (entered as blocker) | Put Windows back, no-stick mode: the table is restored before the EFI partition, so a power cut during the EFI copy can leave no working Windows and no way back
 - **Owner:** A2
 - **Where:** `src/aurstage/rescue.c:1297` (table steps 1269-1322; EFI copy 1330-1365)
+- **Status (2026-11-04, code read on `aec0d0fe`):** verified fixed. The EFI partition is written first (`rescue.c:1590-1630`, cut point `restore-esp-mid` at :1623), the table after it (:1653-1694), the grow last (:1838). Test: `tools/powercut-nostick.sh:322-350` ("the EFI partition is byte-for-byte what it was (restored before the table)"), KVM, not run in this check. Still true, as the entry says: a cut after LBA 1 cannot be rerun without a stick; Windows then starts with the right table and only the room is unused.
 - **Status on main:** open. `437e947` added the restore instants to `tools/powercut-nostick.sh` and says they run "after the restore reorder that follows"; the reorder itself has not landed.
 - **Scenario:** The wizard ships no-stick mode only, so the one saved copy is the AUROS-SAVED partition on her own disk. She uses Windows from the AurOS menu for weeks; Windows changes boot files or the BCD on the EFI partition. She presses Put Windows back. The restore writes the original table first, which removes AUROS-SAVED, AUROS-ROOT and AUROS-BOOT from the table, then streams the install-day EFI partition over the live one. The battery dies mid-stream. The EFI partition is now a mix of two moments and Windows Boot Manager fails. Running the restore again finds no copy (`rescue_find_n` locates it only through the live table), and AurOS's GRUB, which holds the restore menu, is gone too. A cut at `restore-sector` or `restore-backup` leaves Windows with a shrunk NTFS and no rerun.
 - **Evidence:** `rescue_find_n` (65-93) finds copies only by `RESCUE_TYPE_GUID` in the live table. `powercuttest.sh:228-253` reruns only with a stick image attached, so "running it again finishes the job" is untested for the shipped mode.
@@ -78,6 +83,7 @@
 ### S-04 | high | If the staging environment cannot write the "AurOS" boot entry (NVRAM full), the install still ends as a success and the next restart goes to Windows for good
 - **Owner:** A2
 - **Where:** `src/aurstage/loader.c:187` (and `install.c:794-799`, `src/aurfirst/state.c:272,329`)
+- **Status (2026-11-04, code read on `aec0d0fe`):** verified fixed. `nvram_probe()` (`src/aurstage/nvram.c:463`) writes an entry of the real size, reads it back and removes it; it gates both install paths (`install.c:380`, `install.c:945`) before the plan and any write, and refuses `no-startup-room`. Test: `tools/nvramtest.sh` (29 checks, incl. "the probe says so, before anything is committed"), run green on a Linux box on this commit.
 - **Status on main:** open (`loader.c` and `nvram.c` unchanged; `loader_register` has no retry or reuse).
 - **Scenario:** An old Lenovo or HP has a nearly full NVRAM store (AURBRIDGE.md:85-87 calls this "not rare"). The Windows half writes the "AurOS Installer" entry with `SetFirmwareEnvironmentVariable`; after the GPT commit, staging's write of the second entry fails. The installer entry is only deleted after the new one succeeds. `install.c` treats the failure as a warning on a console line that scrolls away, hands over to AurOS, and reports installed. In AurOS no entry names AUROS-BOOT, so the phase is "not-converted", the welcome question is never asked, `confirm` stamps nothing and Put Windows back fails. Next power-on goes to Windows. Windows was shrunk and AurOS is reachable only from the firmware boot menu.
 - **Evidence:** `loader.c:187` then `203` (forget only on success); `nvram.c:392-396,411` fail without retry; `find_cb` reuses an entry only with the same description and partition GUID, so the installer entry is never reused.
@@ -88,6 +94,7 @@
 ### S-05 | high | The "keep coming back to AurOS" hold runs before the desktop, so a desktop that never appears loops her back into AurOS before she has said yes
 - **Owner:** C
 - **Where:** `rootfs/etc/systemd/system/auros-hold.service:19` (`src/aurfirst/state.c:370-394`)
+- **Status (2026-11-04, code read on `aec0d0fe`):** verified fixed. `auros-hold.service:16` runs `aurfirst state`, which only publishes (`src/aurfirst/main.c:51`); the arming is `rootfs/usr/lib/auros/keeper:21`, after `desktop-up` (`auros-keeper.service`). Test: `tools/firstboottest.sh` case D (KVM, not run in this check).
 - **Status on main:** fixed in 69ca6b1 (auros-hold only publishes; auros-keeper arms BootNext after the desktop has worked 30 s; firstboottest D red on the old image, green now).
 - **Scenario:** The install boot ends in AurOS with BootNext armed. On her PC the kernel boots but aurshell fails every time (graphics or KMS). `auros-hold` runs `Before=aurshell.service`, so `af_hold` re-arms BootNext on every boot while the question is unanswered. `aursorry` tells her to hold the power button and switch on again; that goes straight back to AurOS. Windows is reachable only by arrowing to "Windows" in GRUB's 3-second menu or the firmware boot key. The promise in AURBRIDGE.md ("the moment it does not work the firmware falls through to BootOrder") holds only for failures before the unit runs.
 - **Evidence:** `af_hold` checks stamps, default and BootNext only. `aurshell.service` has `Restart=on-failure` and `StartLimitIntervalSec=0`, so nothing ever gives up or disarms. `shell-guard` safe mode changes arguments, not the hardware fault.
@@ -98,6 +105,7 @@
 ### S-06 | high | While AurOS is unconfirmed, the hold re-arms BootNext even when the desktop never starts, so a desktop crash loop keeps her in AurOS
 - **Owner:** C
 - **Where:** `rootfs/etc/systemd/system/auros-hold.service:19`
+- **Status (2026-11-04, code read on `aec0d0fe`):** verified fixed, same change as S-05.
 - **Status on main:** fixed in 69ca6b1 (same change as S-05).
 - **Scenario:** As S-05, found from the "life inside AurOS" angle: the only exit is "No, go back to Windows" on the welcome panel, which lives in the desktop that never starts. The website promises "if AurOS ever fails to start, I start Windows by myself" (`website/index.html:287,361`, `how-it-works.html:175,314`).
 - **Evidence:** As S-05. The staging probe checks Wi-Fi, backlight, sound and carrier only; it never starts a display.
@@ -108,6 +116,7 @@
 ### S-07 | high | A brand-new kernel becomes the default before it has ever booted, and nothing detects a failed boot
 - **Owner:** C (S1 for the template)
 - **Where:** `rootfs/usr/lib/auros/bootchain:257` (`grub.cfg.in:3`, `:39`)
+- **Status (2026-11-04, code read on `aec0d0fe`):** verified fixed. `rootfs/usr/lib/auros/grub.cfg.in:121-146` counts unconfirmed starts (`auros_count`), marks the newest kernel bad after two (`auros_bad`) and chooses `auros-previous`; `auros-boot-ok.service` clears the count once the desktop has been up. Test: `tools/rollbacktest.sh` (KVM, not run in this check).
 - **Status on main:** fixed in 69ca6b1 (WP-30 minimal: grub boot counting, auros-boot-ok, previous kernel after two unconfirmed starts; rollbacktest 16/16, counter mutants red).
 - **Scenario:** After she says yes, AurOS is first in BootOrder. Unattended upgrades install a new Ubuntu kernel; `update-grub` is diverted to `bootchain menu`, which writes the newest kernel as entry 0 with `set default=0`. On her hardware it hangs, black-screens or panics (`panic=10` reboots into the same entry). GRUB's `fallback` to "AurOS (previous kernel)" fires only when GRUB cannot load the entry, never once the kernel has started. Every power-on repeats; the previous kernel and Windows need arrow keys inside a 3-second menu. Choosing "previous" boots once; the next start is the broken kernel again.
 - **Evidence:** `bootupdatetest.sh` boot 3 only damages a kernel's signature so shim refuses it. The docs claim a rollback that does not exist: `rootfs/etc/sysctl.d/61-auros-reliability.conf`, `README.md:57`, `website/how-it-works.html:239`, `docs/security/PLAN.md:36`.
@@ -118,6 +127,7 @@
 ### S-08 | high | Ferry reports success when it copied nothing: a stage that dies is downgraded to a warning
 - **Owner:** R
 - **Where:** `src/ferry/ferry:97`
+- **Status (2026-11-04, code read on `aec0d0fe`):** verified fixed on the root side. `rootfs/usr/lib/auros/answer.sh:344-348` says `result=empty` when Ferry brought 0 files, :362 `result=choose` for several Windows accounts, :412 the same for the stick. Test: `src/ferry/tests/run.sh:863`. How the panel words `empty` is another lane's text (`src/aurshell/welcome.c`) and was not checked here.
 - **Status on main:** fixed by `895297d` (exit codes 0 all came, 2 something did not, 3 refused, 1 nothing came; `answer.sh` maps 1 to `result=failed`) and by the commit that follows it (R, 2026-10-23). Now: (1) `ferry run` settles whose files BEFORE any stage (`choose_user`): `--user NAME`, else the only account, else the only one that has files of its own (said in her report: `From the Windows account "Bob"`), else it stops with exit 6 and the names in `/var/lib/ferry/users`; `answer.sh` answers `result=choose`, `users=Bob,Harold`, and accepts the reply `import:NAME` (passed only as `--user NAME`, never interpreted). (2) A folder she would expect that cannot come (Windows kept Videos on another drive, a network share, a path that does not resolve) makes the stage partial (exit 2), never ok. (3) A stage that was only partly done is recorded as failed, not done, so a retry redoes it instead of skipping it and saying all is well. (4) Exit 0 with nothing copied is `result=empty` (`files=0`), not ok; `result=ok` carries `files=N`. (5) Not enough room: exit 4 / `result=failed` / `code=4`. Tests: `src/ferry/tests/run.sh` ("whose files, and what counts as success"), `tests/answertest.sh`, each with a mutant in `tests/mutants.sh`. **Still open, not Ferry's:** `src/aurfirst/request.c` accepts only the four fixed words, so `import:NAME` cannot reach `answer.sh` yet, and `welcome.c` must show a "whose files?" choice for `result=choose` and a plain sentence for `result=empty`; until then two accounts that both have files end in the honest `chooseuser`/`result=choose` stop instead of a false success.
 - **Scenario:** A Windows PC with two real accounts (hers and her husband's, or hers plus an admin a grandson made). `ferry-settings`, `ferry-files` and `ferry-firefox` each `die` with "could not identify which Windows profile to import". `stage_if_needed` swallowed each with `|| warn`, `ferry run` exited 0, `answer.sh` wrote `result=ok`, and the panel said "Your files are here" with an empty home folder and no retry. A Ferry that dies before any stage exited 1, which became `partial`, which showed the same headline.
 - **Evidence:** Reproduced in a scratch copy with a fake volume (Margaret and Harold): rc 0, three "could not identify" errors, empty destination, stage status files left at `running`.
@@ -128,6 +138,7 @@
 ### S-09 | high | "Bring my files across" cannot work in the shipped image: `/usr/bin/ferry` is a symlink, so Ferry sources its library from `/usr/bin` and dies before reading anything
 - **Owner:** R
 - **Where:** `src/ferry/install.sh:41` (`src/ferry/ferry:32`)
+- **Status (2026-11-04, code read on `aec0d0fe`):** verified fixed. `src/ferry/install.sh:47` still links `/usr/bin/ferry`, and `src/ferry/ferry:51` finds its own folder with `readlink -f`, so the link no longer breaks it. Test: `src/ferry/tests/run.sh` (ferry.yml), not run in this check.
 - **Status on main:** fixed in `895297d` (`SELF=$(dirname "$(readlink -f "$0")")`).
 - **Scenario:** `answer.sh` runs `/usr/bin/ferry run --auto`; `SELF` resolves to `/usr/bin`, `. /usr/bin/ferry-common.sh` does not exist, dash exits 2, `answer.sh` maps that to `partial`, and the panel says "Your files are here". Nothing was copied.
 - **Evidence:** Reproduced under dash through a symlink in a scratch root: "No such file", non-zero; the real path prints `ferry 0.1.0`. No test called `/usr/bin/ferry`.
@@ -138,6 +149,7 @@
 ### S-10 | high | `auros-answer.service`'s sandbox blocks the import even with the symlink fixed
 - **Owner:** R
 - **Where:** `rootfs/etc/systemd/system/auros-answer.service:22` (`ProtectHome=yes`, `ProtectSystem=strict`, `ReadWritePaths` at 31)
+- **Status (2026-11-04, code read on `aec0d0fe`):** verified fixed. `rootfs/etc/systemd/system/auros-answer.service:17` gives the unit its own `ferry` runtime directory, with `ReadWritePaths` for the rest. Test: `src/ferry/tests/sandbox.sh` via `insystemd.sh` (ferry.yml), not run in this check.
 - **Status on main:** fixed in `895297d` (`StateDirectory=ferry`, `RuntimeDirectory`, `ProtectHome=no` with `ReadWritePaths`, proof by `src/ferry/tests/sandbox.sh` under systemd). Caution: the unit still has `TimeoutStartSec=3600`, see Refuted R-19.
 - **Scenario:** Inside the unit `ferry_state_init`'s `mkdir -p /var/lib/ferry` fails (read-only), Ferry exits 1, `answer.sh` writes `result=partial` and the panel says "Your files are here". Past that, `/run/ferry/windows` is read-only and `/home` is empty, so nothing could be copied.
 - **Evidence:** `ferry-common.sh:26-27,97`; the unit's `ReadWritePaths` listed only `/var/lib/auros /var/log /run/auros-answer /run/auros -/boot/grub`; `docs/handoff/TRAPS.md:40-45` records the same class of bug for putback.
@@ -148,6 +160,7 @@
 ### S-11 | high | powercuttest does not test the mode that ships, misses three dangerous instants, and runs in no CI job, yet the README and website say "138/138"
 - **Owner:** E CI
 - **Where:** `tools/powercuttest.sh:162`
+- **Status (2026-11-04, code read on `aec0d0fe`):** verified in the CI configuration. `.github/workflows/tests.yml:177-179` runs `powercut-nostick` in three slices on every build, `stagekvm.yml:37` by default, and `tools/releasegate.py` gates the release on it. Not run in this check.
 - **Status on main:** addressed in CI by E, 2026-10-23. (1) `powercuttest` (the stick mode, 138 checks at 18 instants) is in the `tests.yml` gating matrix: `tests / e2e (powercuttest)` green in run 39905858387. (2) The shipped no-stick mode, `tools/powercut-nostick.sh`, runs on every build as `tests.yml` suite `nostick`, four jobs (`powercut / e2e (...)` in `build.yml`), and is a gate of every release: `release.yml`'s `which` job runs `tools/releasegate.py` for `[release]` and `[publish]` alike, and refuses unless every power-cut job is green or is named in `.github/ci-allow.txt` with a reason and an expiry date; an allow-list entry lets a prerelease out and never the full release (`[latest]`). Selftest 14 cases, and the real `which` script on fixtures. First full run, 39962229132 (fb82014): the `early`, `write` and `commit` slices (all 13 install instants) are green; the `restore` slice fails 3 of 57 checks, all in "a partition that was not AurOS's" (a recovery partition resized after the install: Put Windows back does not refuse). That is S-01/S-02 (A2's), allow-listed until 2026-10-26 for prereleases. (3) The docs no longer claim counts CI does not produce: 138 is the stick mode at 18 instants (not "seventeen"), README, tools/README, docs/PLAN and docs/results say "with a memory stick". Not done: `mirror-end` is in the no-stick loop but an instant inside `ntfsresize` and `settle-mid` still are not, and the website's wording is D's to check against these counts.
 - **Scenario:** The wizard ships no-stick only (`wizard.c:1285`). powercuttest builds a stick and a journal without `image_on`, so every cut is checked with the stick's copy and record. Run against the shipped mode its own checks "Windows can be put back" (shrink-end through commit-array) and "running it again finishes the job" (restore-sector onward) would fail. `mirror-end` (`install.c:657`) is not in the loop.
 - **Evidence:** 18 `fault_maybe` points in `src`; `grep -rn powercuttest .github` was empty at the reviewed commit; `website/how-it-works.html:212`, `docs/results/README.md:18`.
@@ -158,6 +171,7 @@
 ### S-12 | high | Every install west of UTC is refused with "clock-behind", because the staging kernel reads Windows' local-time RTC as UTC
 - **Owner:** A2
 - **Where:** `src/aurstage/journal.c:404`
+- **Status (2026-11-04, code read on `aec0d0fe`):** verified fixed. `src/aurstage/journal.c:242-262` refuses only a clock more than 15 hours behind the journal. Test: `tools/stagetest.sh:364-377` (Pacific time recognised, 17 h behind refused), KVM, not run in this check.
 - **Status on main:** **fixed** in `a993bd0` (`journal_clock()`, 15 h slack, tested by `tools/bridgetest.sh`). The reviewed commit predates the fix; the third skeptic refuted it for that reason.
 - **Scenario:** `phases.c:1569` stamps `written_unix = time(NULL)` (true UTC). Windows keeps the RTC in local time; staging's kernel takes the RTC as UTC, so `time()` is 4-10 h behind in the Americas, `now < written_unix` returns `JOURNAL_CLOCK`, and `install.c` refuses on every retry.
 - **Evidence:** A compiled harness gave `verdict=clock-behind` for a journal 5 h ahead. Tests wrote the host's `date +%s` and QEMU's RTC defaults to UTC, so none could catch it.
@@ -242,6 +256,7 @@
 ### S-20 | medium | Room on the EFI partition is checked against a 1 MiB margin, and the ~33 MB of AurOS files stay there for good, leaving Windows unable to update its start-up files
 - **Owner:** B
 - **Where:** `src/aurbridge/preflight.c:1405` (`phases.c:1491`)
+- **Status (2026-11-04, code read on `aec0d0fe`):** half verified. The room check is now the same in both places: `src/aurbridge/preflight.c:1399` (`esp_need`) and `src/aurbridge/phases.c:2111` (`esp_room`, carried + 21 MiB). Test: `tools/esptest.sh` (53 MiB free refused, 56 MiB enough); run on a Linux box on this commit: 11/11 green, and with `esp_room` changed back to +1 MiB the 40 and 53 MiB cases go red. `ab_abort` does remove the eight files for a run that never reached the restart (`phases.c:2654`). Still true, by design: after a finished install the ~33 MB stay on the EFI partition, because Put Windows back and the menu need `staging.efi` and `staging.img`.
 - **Status on main:** partly fixed. `619d439` made preflight ask for carried + 21 MiB. The `esp_room` check in `phases.c` still adds only 1 MiB (the commit asks A2 to match it). I did not find `ab_abort` deleting the files.
 - **Scenario:** An OEM PC with a 100 MB ESP and 34-48 MB free passes both checks, phase 3 copies about 33 MB, and 1-15 MB is left. Windows servicing wants about 13-15 MB (Microsoft KB3086249 as quoted on Microsoft Q&A); updates fail and roll back until the space is recovered. The files are kept for "Put Windows back", and an aborted attempt leaves them too.
 - **Evidence:** `fix_win.c:132` marks `esp-low-space` as cannot-fix; `answer.sh` and `grub.cfg.in:128-138` depend on `staging.efi`/`staging.img` staying.
@@ -262,6 +277,7 @@
 ### S-22 | medium | The early download is not counted by the check that passes, so the next check blocks her on space the installer itself used; the "fix" then empties her Recycle Bin and tells her to move her files
 - **Owner:** B
 - **Where:** `src/aurbridge/preflight.c:1267` (`wizard.c:3125`, `phases.c:305-330`)
+- **Status (2026-11-04, code read on `aec0d0fe`):** verified fixed in `a69819ab`. `src/aurbridge/preflight.c:1004-1030` (`image_still_to_come`, `space_enough`) makes `check_volumes` (:1318-1350) require AurOS's need plus the part of the image not yet on C:, crediting what is already in `\AurOS`; `phases.c:331-355` asks the same at Install. It is not asked in the fast path (the default build, `AB_CHOICE_FAST_PATH`): the image never sits on C: there, and `fast_inspect` (`phases.c:1516`) asks Windows' own online-shrink limits instead. Tests: the `room:` checks (`preflight.c:2405-2413`), which run on the Windows runner only, not here.
 - **Status on main:** open (no image term in `check_volumes`; `download_begin()` still starts on the first clean check).
 - **Scenario:** C: can give up 28-33 GB, so the first check passes and `download_begin()` starts. 5-7 GB lands in `C:\AurOS`. At Start installing, preflight runs again with less giveable and blocks `insufficient-space`. "Fix these for me" cannot free the installer's own space and shows "Move big files off C:". If she presses Install while the download still runs, the re-check can pass and `phase_inspect` then uses a stale report.
 - **Evidence:** `AURBRIDGE.md:746` promises 28 GB plus the image is checked before anything is downloaded.
