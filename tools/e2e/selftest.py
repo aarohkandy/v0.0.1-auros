@@ -349,18 +349,35 @@ def test_bitlocker_putback_contract():
         rejected = True
     check(rejected, "put-back: missing protector identities are refused")
 
+    def fw_list(*order):
+        """`bcdedit /enum firmware` as Windows prints it, entries in this order."""
+        ids = {"Windows Boot Manager": "{bootmgr}", "AurOS": "{a0}", "AurOS Installer": "{a1}",
+               "UEFI QEMU HARDDISK": "{d0}", "ubuntu": "{u0}"}
+        out = ["Firmware Boot Manager", "---------------------", "identifier              {fwbootmgr}"]
+        out += [("displayorder            " if i == 0 else " " * 24) + ids[d] for i, d in enumerate(order)]
+        out += ["timeout                 0", ""]
+        for d in order:
+            title = "Windows Boot Manager" if ids[d] == "{bootmgr}" else "Firmware Application (101fffff)"
+            out += [title, "-" * len(title), f"identifier              {ids[d]}"]
+            if ids[d] == "{bootmgr}":
+                out += ["device                  partition=\\Device\\HarddiskVolume1",
+                        "path                    \\EFI\\Microsoft\\Boot\\bootmgfw.efi"]
+            out += [f"description             {d}", ""]
+        return "\r\n".join(out)
+
+    fw_before = fw_list("Windows Boot Manager", "UEFI QEMU HARDDISK")
     base = {"c_bytes": 1000, "c_offset": 2048, "partition_sha256": "e" * 64,
-            "firmware_sha256": "f" * 64, "hiberboot": 1, "canary_sha256": "a" * 64}
+            "firmware_boot": fw_before, "hiberboot": 1, "canary_sha256": "a" * 64}
     fixture = {"sha256": "b" * 64}
     final = {"phase": "finished", "status_at": "2026-10-24T22:00:00Z",
              "c_bytes": 1000, "c_offset": 2048, "partition_sha256": "e" * 64,
-             "firmware_sha256": "f" * 64, "hiberboot": 1,
+             "firmware_boot": fw_before, "hiberboot": 1,
              "canary_sha256": "a" * 64, "restored_sha256": "b" * 64,
              "handover_volumes": 0, "putback_tasks": 0}
     check(not e2e.putback_completion_errors(base, fixture, final),
           "put-back: exact completed Windows state is green")
     mutations = (("phase", "error"), ("c_bytes", 999), ("c_offset", 999),
-                 ("partition_sha256", "0" * 64), ("firmware_sha256", "1" * 64), ("hiberboot", 0),
+                 ("partition_sha256", "0" * 64), ("hiberboot", 0),
                  ("canary_sha256", "c" * 64), ("restored_sha256", "d" * 64),
                  ("handover_volumes", 1), ("putback_tasks", 1))
     for field, value in mutations:
@@ -369,6 +386,26 @@ def test_bitlocker_putback_contract():
               f"put-back: mismatched {field} fails closed")
     check(e2e.putback_completion_errors(base, fixture, {}),
           "put-back: missing final state fails closed")
+    # The list after a real put-back: AurOS's dead lines stay, on purpose
+    # (docs/AURBRIDGE.md), even ahead of Windows: the firmware skips them.
+    for order, want, why in (
+            (("AurOS", "Windows Boot Manager", "AurOS Installer", "UEFI QEMU HARDDISK"), True,
+             "AurOS's own dead lines stay, by design"),
+            (("Windows Boot Manager", "UEFI QEMU HARDDISK"), True, "the list exactly as it was"),
+            (("UEFI QEMU HARDDISK", "Windows Boot Manager"), False, "Windows no longer starts first"),
+            (("Windows Boot Manager",), False, "an entry of hers is gone"),
+            (("Windows Boot Manager", "UEFI QEMU HARDDISK", "ubuntu"), False,
+             "a line that is not AurOS's own stayed behind")):
+        now = dict(final, firmware_boot=fw_list(*order))
+        check(not e2e.putback_completion_errors(base, fixture, now) if want
+              else e2e.putback_completion_errors(base, fixture, now),
+              f"put-back firmware: {why}")
+    for junk in ("", "bcdedit failed", None, 7):
+        check(e2e.putback_completion_errors(base, fixture, dict(final, firmware_boot=junk)),
+              f"put-back firmware: unreadable list ({junk!r}) fails closed")
+        check(e2e.putback_completion_errors(dict(base, firmware_boot=junk), fixture,
+                                            dict(final, firmware_boot=junk)),
+              f"put-back firmware: two unreadable lists are not 'the same' ({junk!r})")
     check(e2e.putback_completion_errors(base, fixture, final, 1800000000),
           "put-back: a stale finished status cannot satisfy a new request")
 
@@ -413,7 +450,7 @@ def test_bitlocker_putback_contract():
     check("function H" not in putback_guest_source and
           putback_guest_source.count("function Get-AurOSSha256") == 2 and
           putback_guest_source.count("(Get-AurOSSha256 $pm)") == 2 and
-          putback_guest_source.count("(Get-AurOSSha256 $fw)") == 2,
+          putback_guest_source.count("firmware_boot=$fw") == 2,
           "put-back: both snapshots avoid PowerShell's h/Get-History alias")
     fingerprint = e2e.PUTBACK_PARTITION_FINGERPRINT_PS
     required = ("'Guid'", "'GptType'", "'IsReadOnly'",
