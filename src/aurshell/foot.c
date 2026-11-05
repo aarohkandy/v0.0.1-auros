@@ -488,30 +488,41 @@ void foot_paint(shell_ctx *c, surface *s, shell_fonts *f)
             x = (int)((float)(s->w / 12) < 20.f ? 20 : s->w / 12);
             y = hb.y + hb.h + (int)(28.f * k);
         }
+        static const char *LINES[] = {
+            "This bar at the bottom is always here. It never goes away.",
+            "",
+            "Bigger text and Smaller text change the size of the words.",
+            "If the words have become too big to use, press Smaller text.",
+            "",
+            "Wi-Fi shows the networks in range, so you can join yours.",
+            "",
+            "Settings has the brightness, the sound and the clock.",
+            "",
+            "Close this shuts whatever you are looking at.",
+            "",
+            "Turn off shuts the computer down properly.",
+            "",
+            "Press Help again to close this.",
+            NULL
+        };
         if (big) {
+            /* The heading gives up some of its space below it before a sentence has to be
+             * lost: in the real face at 1024 x 600 the buttons above and the sentences below
+             * left the last one ten pixels short, under the band. */
+            float step = font_line_height(big) * 1.6f;
+            if (body) {
+                int nn = 0, bl = 0;
+                for (; LINES[nn]; nn++) if (!LINES[nn][0]) bl++;
+                float fl = font_line_height(body);
+                float least = (float)(nn - bl - 1) * fl * 1.05f + (float)bl * fl * 0.45f + fl;
+                if ((float)y + step + least > (float)top - 4.f) step = font_line_height(big) * 1.15f;
+            }
             shell_text(s, big, (float)x, (float)y + font_ascent(big),
                        "Where you are", FOOT_INK, 1.f);
-            y += (int)(font_line_height(big) * 1.6f);
+            y += (int)step;
         }
         if (body) {
             float lh = font_line_height(body) * 1.45f;
-            static const char *LINES[] = {
-                "This bar at the bottom is always here. It never goes away.",
-                "",
-                "Bigger text and Smaller text change the size of the words.",
-                "If the words have become too big to use, press Smaller text.",
-                "",
-                "Wi-Fi shows the networks in range, so you can join yours.",
-                "",
-                "Settings has the brightness, the sound and the clock.",
-                "",
-                "Close this shuts whatever you are looking at.",
-                "",
-                "Turn off shuts the computer down properly.",
-                "",
-                "Press Help again to close this.",
-                NULL
-            };
             /* ALL OF IT ON THE PANEL. At 1024 x 600 the last two lines (Turn off, and how
              * to close this) went under the band, and with the buttons above it more
              * did. When it does not fit, the blank lines between the thoughts give up

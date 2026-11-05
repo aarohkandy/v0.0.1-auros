@@ -48,6 +48,16 @@ tail -n +2 themes/templates/shell.conf.tpl | \
     AURORA_THEMES=themes AURORA_TEMPLATES=themes/templates \
     AURORA_STATE="$T/st" AURORA_CACHE="$T/st/c" ./src/aurora/aurora render \
     > "$T/look.conf" 2>/dev/null
+# The faces she really reads (the repository's Atkinson files), not whatever wider face the
+# build host falls back to: a sentence that fits in DejaVu can still run off the panel in
+# Atkinson, and the other way round (found by the Sky look's pictures, as tools/wishpainttest.sh).
+F=$PWD/src/aurbridge/fonts
+for f in atkinsonnext-400 atkinsonnext-700 atkinsonnext-800; do [ -s "$F/$f.ttf" ] || { echo "journeytest: no $F/$f.ttf"; exit 2; }; done
+sed -e "s#^font_display .*#font_display = $F/atkinsonnext-800.ttf#" \
+    -e "s#^font_text .*#font_text = $F/atkinsonnext-400.ttf#" \
+    -e "s#^font_text_bold .*#font_text_bold = $F/atkinsonnext-700.ttf#" \
+    -e "s#^font_sans .*#font_sans = $F/atkinsonnext-400.ttf#" "$T/look.conf" > "$T/look.atk" && mv "$T/look.atk" "$T/look.conf"
+grep -q 'atkinsonnext-400' "$T/look.conf" || { echo "journeytest: could not point the look at the Atkinson faces"; exit 2; }
 
 fail=0 n=0
 ok() { n=$((n + 1)); if [ "$2" = 0 ]; then echo "    ok    $1"; else echo "    FAIL  $1"; fail=1; fi; }
