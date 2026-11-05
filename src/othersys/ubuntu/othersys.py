@@ -8,19 +8,25 @@ prepares the disk from Windows (the partitions, the verified ISO, a small
 FAT partition with Ubuntu's own boot chain and the answer file) and arms
 BootNext; Ubuntu's own installer, running unattended, formats and fills
 only the partitions it is named. This program is everything AurOS does
-on the Linux side, and it runs in three places:
+on the Linux side, and it runs in these places:
 
   early   in the live installer, before anything is written: finds the
           disk by its GPT GUID, compares every partition with what
           Windows recorded, refuses on any difference, and tells the
           installer which device the disk is.
+  guard   in the live installer, from the early check on, once a second:
+          the moment Ubuntu's installer puts its own entry first, puts
+          Windows' order back. A power cut during the install then starts
+          Windows, except in the second between the installer's write and
+          the guard's next look.
   late    in the live installer, after Ubuntu's installer has finished:
           undoes what Ubuntu's installer did to the firmware (it puts its
           own "ubuntu" entry FIRST in BootOrder, and nothing in autoinstall
           can stop it: curtin calls grub-multi-install with no arguments),
-          removes the entry AurOS made for the restart, arms BootNext at
-          Ubuntu, cancels any MOK enrolment queued during the install,
-          and installs the rest of this program into the new system.
+          removes the entry AurOS made for the restart, cancels any MOK
+          enrolment queued during the install, installs the rest of this
+          program into the new system, and only then arms BootNext at
+          Ubuntu, so a power cut before that point starts Windows.
   boot    in the installed Ubuntu, every boot, before the desktop: the
           first time, removes the temporary ISO partition and gives its
           space to Ubuntu; until she has answered "does everything work?",
@@ -531,7 +537,9 @@ def cmd_guard(plan):
     the moment the installer puts Ubuntu first, put Windows back first.
     Without this, a power cut between the installer's firmware write and
     the late fix-up would start a half-installed Ubuntu; with it, Windows.
-    The late fix-up then arms BootNext as before."""
+    It polls once a second, so a cut inside that second, after the write
+    and before the next look, still starts Ubuntu. The late fix-up arms
+    BootNext only at its very end."""
     if plan['test'].get('skip_fixup'):
         log('guard: TEST: not guarding')
         return
