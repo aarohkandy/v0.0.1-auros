@@ -112,6 +112,12 @@ int main(void)
     foot_open_help_page(&c, "");
     ok("a name that is not letters and hyphens opens nothing", spawn_n == 0);
 
+    printf("\nthe clock\n");
+    ok("the first time it is asked it is due, even on a computer that has been on for 30 days",
+       watch_due(30u * 24 * 3600 * 1000, 0, 0) && watch_due(5, 0, 0));
+    ok("after that, not before the time it set", !watch_due(1000, 2000, 1) && watch_due(2000, 2000, 1) && watch_due(3000, 2000, 1));
+    ok("...also across the clock's wrap", watch_due(0x100, 0xFFFFFF00u, 1) && !watch_due(0xFFFFFE00u, 0xFFFFFF00u, 1));
+
     printf("\nwatchtest: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

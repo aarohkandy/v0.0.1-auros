@@ -614,8 +614,9 @@ int main(void)
         welcome_init(&c);
         ok("beside Yes, the question says what Yes does",
            says_page(&c, W_ASK, "AurOS starts every time from now on."));
-        ok("the second page is the last step, not that sentence again",
-           says_page(&c, W_SURE_YES, "This is the last step") && !says(&c, "AurOS starts every time from now on"));
+        ok("the second page says what follows, not that sentence again, and not \"the last step\" (a screen follows)",
+           says_page(&c, W_SURE_YES, "After this, AurOS starts every time you switch this computer on.") &&
+           !says(&c, "AurOS starts every time from now on") && !says(&c, "last step"));
         ok("...and it still says Windows and her files stay, and the way back",
            says(&c, "Windows and its files are meant to stay on this computer.") &&
            says(&c, "press Settings, then Put Windows back"));

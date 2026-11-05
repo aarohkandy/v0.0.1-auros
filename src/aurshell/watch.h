@@ -27,6 +27,9 @@
  * pointless. Returns 1 if it said something, so the host repaints. */
 int watch_tick(shell_ctx *c);
 
+/* Is it time, by a millisecond clock that wraps? `set` is whether `next` has been set yet. */
+int watch_due(uint32_t now, uint32_t next, int set);
+
 /* The levels, named so the harness and the code cannot drift.
  *
  * LOW is a nudge while there is still time to find the cable. VERY_LOW

@@ -841,9 +841,10 @@ static const char *sub_of(int page, int can_import)
     case W_ASK:       return W.deferred
                           ? "Nothing has changed yet. AurOS asks this again until you answer."
                           : "Check one thing first.";
-    /* The page before it said what Yes does (SAY_YES). This one is the last step, and says
-     * what the green button makes final, so the two are not the same sentence twice. */
-    case W_SURE_YES:  return "This is the last step. After it, AurOS starts every time you switch this computer on.";
+    /* The page before it said what Yes does (SAY_YES). This one says what the green button
+     * leads to, so the two are not the same sentence twice. It must not say "the last step": a
+     * screen follows it (W_CONFIRMED, where the files can be brought across). */
+    case W_SURE_YES:  return "After this, AurOS starts every time you switch this computer on.";
     case W_SURE_NO:   return SAY_NO;
     case W_WORKING:   return "";
     case W_CONFIRMED: return can_import

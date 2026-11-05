@@ -16,9 +16,11 @@
  * sequence rather than silence. */
 static struct {
     uint32_t next_ms;
+    int armed;
     int said_low, said_very, said_critical;
     int was_plugged;
     uint32_t disk_next_ms;
+    int disk_armed;
     int said_disk;
 } W;
 
@@ -27,6 +29,14 @@ static uint32_t now_ms(void)
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (uint32_t)(t.tv_sec * 1000u + t.tv_nsec / 1000000u);
+}
+
+/* Is it time? A clock that starts at 0 and is compared as a signed difference reads "not yet"
+ * for the first 24.8 days it could be asked -- so a shell started on a computer that had been on
+ * for longer never looked at the battery or the room left. Nothing is due-yet before it is set. */
+int watch_due(uint32_t now, uint32_t next, int set)
+{
+    return !set || (int32_t)(now - next) >= 0;
 }
 
 /* What `df` calls Use%: used of (used + what she can still have), so the reserve the file
@@ -59,7 +69,8 @@ int watch_disk_check(shell_ctx *c, int used)
 /* Once a minute: where her files are (her own folder, else the whole computer). */
 static int disk_tick(shell_ctx *c)
 {
-    if ((int32_t)(now_ms() - W.disk_next_ms) < 0) return 0;
+    if (!watch_due(now_ms(), W.disk_next_ms, W.disk_armed)) return 0;
+    W.disk_armed = 1;
     W.disk_next_ms = now_ms() + 60000;
     const char *home = getenv("HOME");
     int used = watch_disk_used(home && *home ? home : "/");
@@ -137,7 +148,8 @@ static int battery_tick(shell_ctx *c)
 
 int watch_tick(shell_ctx *c)
 {
-    if ((int32_t)(now_ms() - W.next_ms) < 0) return 0;
+    if (!watch_due(now_ms(), W.next_ms, W.armed)) return 0;
+    W.armed = 1;
     W.next_ms = now_ms() + 1000;
     int said_disk = disk_tick(c);
     int said_battery = battery_tick(c);
