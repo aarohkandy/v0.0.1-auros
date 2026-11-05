@@ -1662,6 +1662,10 @@ int main(int argc, char **argv)
                         aurwl_win_close(win);
                         close_asked_wid = c.wins[w].wid;
                         close_asked_ms  = nowm;
+                        /* A frozen program never answers, and nothing else on the screen
+                         * would say that a second press is what stops it. */
+                        osd_say("Asking it to close. If it is still here in a few seconds, "
+                                "press Close this again.");
                     }
                 } else {
                     /* The compositor has no such window any more, so

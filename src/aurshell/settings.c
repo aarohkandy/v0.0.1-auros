@@ -487,11 +487,13 @@ int settings_page(void) { return S.page; }
 /* The printer tool, which build/forge's rename calls "Printers". Its launcher is a settings
  * page as far as the program list is concerned (apps.c hides those), so this row is where she
  * finds it. Only where the tool is installed (a control that does nothing is worse than none)
- * and where nobody has limited which programs she may start. */
+ * and where nobody has limited which programs she may start. Not where she may not add things
+ * to the computer either: build/forge grants the printer permission only with allow_user_install,
+ * and without it the tool's Add asks for a password nobody here can give. */
 static const char *printer_tool(void) { return dir_of("AUROS_PRINTER_TOOL", "/usr/bin/system-config-printer"); }
 static int printers_here(const shell_ctx *c)
 {
-    if (c->kiosk || c->deny_all_apps || c->allowed_apps[0] || c->blocked_apps[0]) return 0;
+    if (c->kiosk || !c->allow_install || c->deny_all_apps || c->allowed_apps[0] || c->blocked_apps[0]) return 0;
     return c->spawn && access(printer_tool(), X_OK) == 0;
 }
 

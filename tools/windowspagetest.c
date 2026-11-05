@@ -126,7 +126,7 @@ int main(void)
 
     theme_t t = {0};
     shell_theme_load(&C, &t);
-    C.allow_settings = C.allow_theme_change = C.allow_network = 1;
+    C.allow_settings = C.allow_theme_change = C.allow_network = C.allow_install = 1;
     C.text_scale = 1.f; C.foot_hover = -1;
     snprintf(C.layout_id, sizeof C.layout_id, "rail");
     C.screen_w = 1280; C.screen_h = 800 - foot_height(&C);
@@ -202,6 +202,15 @@ int main(void)
         ok(!shown("Printers") && !(press("Show more") && shown("Printers")),
            "where only some programs are allowed, no Printers row either");
         C.allowed_apps[0] = 0;
+        /* build/forge gives her the printer permission only when she may add things to the
+         * computer; without it the tool's Add asks for a password nobody here can give. */
+        C.allow_install = 0;
+        settings_opened(&C);
+        ok(!shown("Printers") && !(press("Show more") && shown("Printers")),
+           "where she may not add things to the computer, no Printers row (its Add would ask for a password)");
+        C.allow_install = 1;
+        settings_opened(&C);
+        ok(shown("Printers") || (press("Show more") && shown("Printers")), "...and with it allowed again, the row is back");
         settings_opened(&C);
         C.settings_open = 1;
         settings_opened(&C);

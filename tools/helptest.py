@@ -407,6 +407,11 @@ def code_facts(flat):
     check('case R_FILES:   return "Bring my files across";' in settings_c and
           re.search(r"press Settings at the bottom of the screen, then Bring my files across", flat.get("my-files.html", "")) is not None,
           "the files page says where \"Not now\" leaves them: Settings, then Bring my files across (a Settings row)")
+    # A program that has frozen never answers "Close this". The first press says on the screen
+    # that a second one stops it (main.c), as the help page says.
+    check("press Close this again." in read("src/aurshell/main.c") and
+          re.search(r"press Close this again", flat.get("something-wrong.html", ""), re.I) is not None,
+          "the first press of Close this says on the screen to press it again (the stuck page says so too)")
     hidden = 'has_cat(e, "X-GNOME-Settings-Panel")' in read("src/aurshell/apps.c")
     check(not (hidden and re.search(r"\bPrinters\b", printing) and "R_PRINTERS" not in settings_c),
           "the printing page does not send her to a Printers program that the desktop does not list")
