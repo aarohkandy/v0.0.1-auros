@@ -21,6 +21,7 @@ on:
     branches: [main]
     paths:
       - 'rootfs/etc/firefox/**'
+      - 'rootfs/usr/share/auros/start/**'
       - 'rootfs/etc/systemd/system/aurshell.service.d/60-auros-no-crash-reports.conf'
       - 'rootfs/etc/polkit-1/**'
       - 'rootfs/usr/lib/auros/remote-access-gate'

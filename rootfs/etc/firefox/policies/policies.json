@@ -8,6 +8,24 @@
     "OverrideFirstRunPage": "",
     "OverridePostUpdatePage": "",
     "SkipTermsOfUse": true,
+    "DisableFirefoxAccounts": true,
+
+    "Homepage": {
+      "URL": "file:///usr/share/auros/start/index.html",
+      "Locked": true,
+      "StartPage": "homepage-locked"
+    },
+    "Handlers": {
+      "schemes": {
+        "mailto": {
+          "action": "useHelperApp",
+          "ask": false,
+          "handlers": [
+            { "name": "Gmail", "uriTemplate": "https://mail.google.com/mail/?extsrc=mailto&url=%s" }
+          ]
+        }
+      }
+    },
 
     "HttpsOnlyMode": "force_enabled",
     "SSLVersionMin": "tls1.2",
