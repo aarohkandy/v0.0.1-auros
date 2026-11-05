@@ -2,7 +2,7 @@
 """mkdisk — a disk as a Windows PC leaves it after AurOS's Windows side.
 
     mkdisk.py --iso ISO --variant ntfs|bitlocker --out DIR [--test-hooks DIR]
-              [--skip-fixup] [--disk-gib 48]
+              [--skip-fixup] [--hold-late] [--disk-gib 48]
 
 Writes DIR/disk.raw (sparse), DIR/vars.fd (OVMF, Microsoft's keys, Secure
 Boot on, with the firmware state Windows would leave), and the records
@@ -121,6 +121,7 @@ def main():
     ap.add_argument('--out', required=True)
     ap.add_argument('--test-hooks')
     ap.add_argument('--skip-fixup', action='store_true')
+    ap.add_argument('--hold-late', action='store_true')
     ap.add_argument('--disk-gib', type=int, default=48)
     ap.add_argument('--system', default=SYSTEM, help='a src/othersys/systems/*.json')
     ap.add_argument('--iso-head-mib', type=int, default=0,
@@ -291,6 +292,8 @@ def main():
         cmd += ['--test-hooks', a.test_hooks]
     if a.skip_fixup:
         cmd += ['--test-skip-fixup']
+    if a.hold_late:
+        cmd += ['--test-hold-late']
     sh(*cmd)
     fat(os.path.join(work, 'p5.img'), p[5][1] * 512, 'CIDATA', seed_tree(seed))
     put(disk, p[5][0] * 512, os.path.join(work, 'p5.img'))
