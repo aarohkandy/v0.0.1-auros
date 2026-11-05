@@ -69,6 +69,27 @@ static int shown_start(const char *prefix)
         if (!strncmp(shell_text_log[i].s, prefix, strlen(prefix)) && shell_text_log[i].w > 0) return 1;
     return 0;
 }
+/* Is `part` inside any word the panel painted? (A sentence wraps over several lines.) */
+static int shown_has(const char *part)
+{
+    paint();
+    for (int i = 0; i < shell_text_log_n; i++)
+        if (strstr(shell_text_log[i].s, part) && shell_text_log[i].w > 0) return 1;
+    return 0;
+}
+/* Press at the left end or the right end of the painted words `words`: 0 left, 1 right. */
+static int press_end(const char *words, int right)
+{
+    paint();
+    for (int i = 0; i < shell_text_log_n; i++)
+        if (!strcmp(shell_text_log[i].s, words)) {
+            int x = right ? shell_text_log[i].x + shell_text_log[i].w - 2 : shell_text_log[i].x + 2;
+            int y = shell_text_log[i].y + shell_text_log[i].h / 2;
+            settings_motion(&C, x, y);
+            return settings_click(&C, x, y);
+        }
+    return -1;
+}
 static int press(const char *words)
 {
     paint();
@@ -186,6 +207,47 @@ int main(void)
         settings_opened(&C);
     }
 
+    /* BIG WORDS ON THE SMALLEST PANEL. The buttons at the foot of Settings were all one width, and
+     * at the biggest words "Close Settings" was drawn past its box into "Show more"; and at 150%
+     * the page that says what removing AurOS loses was cut to one line, "Your documents, pict". */
+    printf("Settings with big words on the smallest panel\n");
+    {
+        surface *small = surface_new(1024, 600);
+        surface *was = SURF;
+        float was_scale = C.text_scale;
+        int was_w = C.screen_w, was_h = C.screen_h;
+        C.screen_w = 1024;
+        SURF = small;
+        C.text_scale = 2.0f;
+        C.screen_h = 600 - foot_height(&C);
+        shell_fonts_load(&F, &C);
+        C.settings_open = 1;
+        settings_opened(&C);
+        int l = press_end("Close Settings", 0);
+        ok(l == 1 && C.settings_open == 0, "at 200%, the left end of \"Close Settings\" closes Settings");
+        C.settings_open = 1; settings_opened(&C);
+        int r = press_end("Close Settings", 1);
+        ok(r == 1 && C.settings_open == 0, "...and so does the right end of its words (the box is as wide as they are)");
+        C.settings_open = 1; settings_opened(&C);
+        press_end("Show more", 1);
+        ok(C.settings_open == 1, "...and the right end of \"Show more\" is Show more, not Close");
+
+        C.text_scale = 1.5f;
+        C.screen_h = 600 - foot_height(&C);
+        shell_fonts_load(&F, &C);
+        C.settings_open = 1; settings_opened(&C);
+        for (int i = 0; i < 12 && !shown("Put Windows back"); i++) press("Show more");
+        ok(press("Put Windows back"), "at 150%, she opens Put Windows back");
+        /* (the text log keeps 72 letters of a line: the last sentence starts in the second line) */
+        ok(shown_has("If they cannot be"), "...and its sentence goes on past the first line, to what happens if they cannot be");
+
+        SURF = was;
+        C.text_scale = was_scale; C.screen_w = was_w; C.screen_h = was_h;
+        shell_fonts_load(&F, &C);
+        surface_free(small);
+        C.settings_open = 1; settings_opened(&C);
+    }
+
     printf("Put Windows back: her files first\n");
     ok(press("Put Windows back"), "\"Put Windows back\" opens its page");
     ok(shown("Save my files to a USB stick first"), "the page has \"Save my files to a USB stick first\"");
@@ -199,6 +261,8 @@ int main(void)
     ok(shown("Your files are copied into Windows first."),
        "the row that removes AurOS says her files are copied into Windows first");
     ok(shown_start("This computer restarts and removes AurOS."), "...under a page that says what it does");
+    ok(shown("Your files are copied onto a stick. Nothing is removed."),
+       "the USB stick row says in full that nothing is removed (it was cut off after \"Not\")");
     paint();
     int gone = 0;
     for (int i = 0; i < shell_text_log_n; i++)

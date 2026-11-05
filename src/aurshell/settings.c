@@ -396,8 +396,10 @@ static void fill_page(shell_ctx *c)
         add_choice("keep", "Keep AurOS", "Nothing changes");
         /* BEFORE the two that change something: her files first. Saves them
          * on a USB stick she plugs in, and removes nothing (welcome.c). */
+        /* (A row's line is CHOICE_LEN - 1 characters at most. This one was longer and was
+         * cut after "Not", on the page where she decides whether to remove AurOS.) */
         add_choice("stick", "Save my files to a USB stick first",
-                   "Your documents, pictures, music and videos are copied onto a stick. Nothing is removed.");
+                   "Your files are copied onto a stick. Nothing is removed.");
         /* START WINDOWS, THIS ONCE: one press, and nothing is removed.
          * The firmware starts Windows itself (BootNext), so a PC with
          * BitLocker does not ask for its recovery key, and AurOS starts
@@ -601,9 +603,11 @@ static void set_layout(const shell_ctx *c, int sw, int sh,
     /* The one page whose sentence must be read whole (it says what is
      * lost) gets room for it to wrap. */
     if (v->page == SET_PAGE_WINDOWS) {
-        /* ...but never at the cost of the two choices under it. */
-        int extra = (int)(52.f * k);
-        int spare = last_y - (int)(14.f * k) - g->list_y - 2 * g->row_h;
+        /* ...and the sentence comes first: at 150% on the smallest panel it was cut after one
+         * line, "Your documents, pict", on the page that says what is lost. The choices under
+         * it page ("Show more") before the sentence loses its lines; one is always in view. */
+        int extra = (int)(64.f * k);
+        int spare = last_y - (int)(14.f * k) - g->list_y - g->row_h;
         if (extra > spare) extra = spare > 0 ? spare : 0;
         g->list_y += extra;
     }
@@ -667,16 +671,28 @@ static void set_layout(const shell_ctx *c, int sw, int sh,
     if (v->page != SET_PAGE_MAIN) which[na++] = A_BACK;
     if (total > g->n_vis) which[na++] = A_MORE;
     which[na++] = A_CLOSE;
+    /* Each as wide as its own words need (and no narrower than before): one width for all
+     * left "Close Settings" drawn past its box into "Show more" from 150% text up. Only if
+     * they cannot all fit in the row are they squeezed, together. */
+    int aw[A_N], sum = 0;
+    for (int i = 0; i < na; i++) {
+        aw[i] = (int)(40.f + 11.f * k * (float)strlen(ACT_LABEL[which[i]]));
+        if (aw[i] < act_w) aw[i] = act_w;
+        sum += aw[i];
+    }
     if (na > 0) {
         int room = g->cw - (na - 1) * gap;
-        if (act_w * na > room) act_w = room / na;
-        if (act_w < 44) act_w = 44;
+        if (sum > room)
+            for (int i = 0; i < na; i++) {
+                aw[i] = aw[i] * room / sum;
+                if (aw[i] < 44) aw[i] = 44;
+            }
     }
     int ax = g->gx;
     for (int i = 0; i < na; i++) {
-        g->acts[i] = (rect){ ax, acts_y, act_w, act_h };
+        g->acts[i] = (rect){ ax, acts_y, aw[i], act_h };
         g->act[i]  = which[i];
-        ax += act_w + gap;
+        ax += aw[i] + gap;
     }
     g->n_acts = na;
 }
