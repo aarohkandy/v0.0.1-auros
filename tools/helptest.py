@@ -409,7 +409,8 @@ def code_facts(flat):
           "the files page says where \"Not now\" leaves them: Settings, then Bring my files across (a Settings row)")
     # A program that has frozen never answers "Close this". The first press says on the screen
     # that a second one stops it (main.c), as the help page says.
-    check("press Close this again." in read("src/aurshell/main.c") and
+    check("If it asks you something, answer it." in read("src/aurshell/main.c") and
+          "press Close this again." in read("src/aurshell/main.c") and
           re.search(r"press Close this again", flat.get("something-wrong.html", ""), re.I) is not None,
           "the first press of Close this says on the screen to press it again (the stuck page says so too)")
     hidden = 'has_cat(e, "X-GNOME-Settings-Panel")' in read("src/aurshell/apps.c")
