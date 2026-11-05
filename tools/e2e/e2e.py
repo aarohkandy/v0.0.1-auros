@@ -638,21 +638,68 @@ def bitlocker_return_verdict(state, baseline_protectors=None):
     return None
 
 
+# What a firmware boot list is made of once AurOS's own lines are set aside.
+# docs/AURBRIDGE.md: "The dead entry is left in the firmware, deliberately":
+# Put Windows back writes nothing to NVRAM, so these two stay, inert, with
+# their partition gone. Nothing else may change.
+AUROS_FIRMWARE_ENTRIES = ("AurOS", "AurOS Installer")
+
+
+def firmware_boot_view(text):
+    """`bcdedit /enum firmware` as (the first entry, every entry), without
+    AurOS's own lines, or None when it cannot be read: unreadable is never
+    "the same". Order past the first is the firmware's business (OVMF
+    rearranges its own device entries), so it is not compared; who starts
+    first, and what is on the list, are."""
+    if not isinstance(text, str):
+        return None
+    blocks, key = [], None
+    for line in text.splitlines():
+        if not line.strip():
+            key = None
+            continue
+        if set(line.strip()) == {"-"}:
+            blocks.append({})
+            key = None
+            continue
+        if not blocks:
+            continue
+        m = re.match(r"(\S+)\s+(.+?)\s*$", line)
+        if m and not line[0].isspace():
+            key = m.group(1)
+            blocks[-1].setdefault(key, []).append(m.group(2))
+        elif key:
+            blocks[-1][key].append(line.strip())
+    by_id = {b["identifier"][0]: b for b in blocks if "identifier" in b}
+    fw = by_id.get("{fwbootmgr}")
+    if not fw or "displayorder" not in fw or "{bootmgr}" not in by_id:
+        return None
+    entries = []
+    for ident in fw["displayorder"]:
+        b = by_id.get(ident)
+        if b is None or "description" not in b:
+            return None
+        if b["description"][0] not in AUROS_FIRMWARE_ENTRIES:
+            entries.append((b["description"][0], b.get("path", [""])[0]))
+    return (entries[0], sorted(entries)) if entries else None
+
+
 def putback_completion_errors(base, fixture, state, requested_at=None):
     """Return every fail-closed mismatch in Windows' final put-back report."""
     required = {"phase", "status_at", "c_bytes", "c_offset", "partition_sha256",
-                "firmware_sha256", "hiberboot", "canary_sha256", "restored_sha256",
+                "firmware_boot", "hiberboot", "canary_sha256", "restored_sha256",
                 "handover_volumes", "putback_tasks"}
     if not isinstance(state, dict) or set(state) != required:
         return ["completion report schema is missing or unexpected"]
+    firmware = firmware_boot_view(state["firmware_boot"])
     checks = (
         (state["phase"] == "finished", f"put-back phase is {state['phase']!r}, not 'finished'"),
         (state["c_bytes"] == base["c_bytes"], "Windows C: was not restored to its original size"),
         (state["c_offset"] == base["c_offset"], "Windows C: moved from its original partition offset"),
         (state["partition_sha256"] == base["partition_sha256"],
          "the original partition map was not restored exactly"),
-        (state["firmware_sha256"] == base["firmware_sha256"],
-         "the original firmware boot entries were not restored exactly"),
+        (firmware is not None and firmware == firmware_boot_view(base["firmware_boot"]),
+         "the firmware's boot list is not what it was, AurOS's own lines aside"),
         (state["hiberboot"] == base["hiberboot"], "Fast Startup was not restored"),
         (state["canary_sha256"] == base["canary_sha256"], "the original Windows canary changed"),
         (state["restored_sha256"] == fixture["sha256"], "the AurOS file was not restored byte-for-byte"),
@@ -1209,7 +1256,7 @@ class Flow:
             "$fw=(($fwRaw|Out-String).Trim()); "
             "$h=(Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power').HiberbootEnabled; "
             "$s=@{c_bytes=[uint64]$cpart.Size;c_offset=[uint64]$cpart.Offset;partition_sha256=(Get-AurOSSha256 $pm);"
-            "firmware_sha256=(Get-AurOSSha256 $fw);hiberboot=[int]$h;"
+            "firmware_boot=$fw;hiberboot=[int]$h;"
             "canary_sha256=(Get-FileHash $p -Algorithm SHA256).Hash.ToLowerInvariant()}; "
             "'AUROS_PUTBACK_BASE '+($s|ConvertTo-Json -Compress)")
         if out.splitlines().count("AUROS_PARTITION_FINGERPRINT_SELFTEST PASS") != 1:
@@ -1221,12 +1268,13 @@ class Flow:
         except ValueError:
             base = None
         if (not isinstance(base, dict) or set(base) != {"c_bytes", "c_offset", "partition_sha256",
-                                                        "firmware_sha256", "hiberboot", "canary_sha256"}
+                                                        "firmware_boot", "hiberboot", "canary_sha256"}
                 or not isinstance(base["c_bytes"], int) or base["c_bytes"] <= 0
                 or not isinstance(base["c_offset"], int) or base["c_offset"] <= 0
                 or base["hiberboot"] not in (0, 1)
+                or firmware_boot_view(base["firmware_boot"]) is None
                 or any(not re.fullmatch(r"[0-9a-f]{64}", str(base[k]))
-                       for k in ("partition_sha256", "firmware_sha256", "canary_sha256"))):
+                       for k in ("partition_sha256", "canary_sha256"))):
             raise Failure("the Windows put-back baseline snapshot was unavailable or invalid")
         protectors = self.bitlocker_evidence()["protectors"]
         if not {"Tpm", "RecoveryPassword"}.issubset({p["type"] for p in protectors}):
@@ -2893,7 +2941,7 @@ class Flow:
             "$tasks=@(Get-ScheduledTask -ErrorAction SilentlyContinue|Where-Object {$_.TaskName -like 'AurOS put-back*'}); "
             "$vols=@(Get-Volume -ErrorAction SilentlyContinue|Where-Object {$_.FileSystemLabel -eq 'AUROSHANDOV'}); "
             "$s=@{phase=$(if($st){[string]$st.phase}else{''});status_at=$(if($st){[string]$st.at}else{''});"
-            "c_bytes=[uint64]$cpart.Size;c_offset=[uint64]$cpart.Offset;partition_sha256=(Get-AurOSSha256 $pm);firmware_sha256=(Get-AurOSSha256 $fw);hiberboot=[int]$h;"
+            "c_bytes=[uint64]$cpart.Size;c_offset=[uint64]$cpart.Offset;partition_sha256=(Get-AurOSSha256 $pm);firmware_boot=$fw;hiberboot=[int]$h;"
             "canary_sha256=$(if(Test-Path -LiteralPath $can){(Get-FileHash -LiteralPath $can -Algorithm SHA256).Hash.ToLowerInvariant()}else{''});"
             "restored_sha256=$(if(Test-Path -LiteralPath $rest){(Get-FileHash -LiteralPath $rest -Algorithm SHA256).Hash.ToLowerInvariant()}else{''});"
             "handover_volumes=[int]$vols.Count;putback_tasks=[int]$tasks.Count}; "
