@@ -59,6 +59,8 @@ fi
 mount -o remount,ro / 2>/dev/null
 say "Windows could not be started from this menu."
 say "Your files have not been touched."
-say "This computer will restart in a moment, and AurOS will start."
+# Only what this script knows: it restarts. What starts next is the firmware's
+# choice (BootOrder, BootNext), and nothing here has looked at either.
+say "This computer will restart in a moment."
 sleep 15
 restart
