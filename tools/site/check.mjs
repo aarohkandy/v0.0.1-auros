@@ -1170,6 +1170,42 @@ for (const [at, want] of [
       check(!/^No\./.test(t.files) && /made to keep/i.test(t.files) && /memory stick/i.test(t.files), "A-09: \"Will I lose my files?\" does not say an absolute No beside advice to copy photos: it says made to keep, and copy what you treasure first", JSON.stringify(t.files));
       await ctx.close();
     }
+    // gm-site: the front page says what real Edge shows (docs/handoff e2e shots 0012-0015: a trash can and a small
+    // three-dot button; its menu is Delete, Keep; then a box whose black button is DELETE, with Keep anyway behind the
+    // small arrow beside it), where Run anyway hides, what to do if she pressed Delete, who and what it costs, the
+    // promise in the strip is solid ink, and an old Windows is not told that Setup checks it.
+    {
+      const { ctx, page } = await visit({ name: "gm-site front page", ua: UA.winEdge, uad: UAD.winX64 });
+      const f = await page.evaluate(() => {
+        const step = (n) => { const e = document.querySelectorAll(".steps3 > li")[n]; return e ? e.innerText.replace(/\s+/g, " ") : ""; };
+        const rev = document.querySelector(".strip-row.rev span");
+        const cs = rev ? getComputedStyle(rev) : null;
+        const ink = cs ? cs.color.match(/[\d.]+/g).map(Number) : [0, 0, 0, 0];
+        const safe = document.getElementById("safe"), strip = document.querySelector(".strip");
+        return { one: step(0), two: step(1), safe: safe ? safe.innerText.replace(/\s+/g, " ") : "", safeAbove: !!(safe && strip && (safe.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING)),
+          stroke: cs ? cs.webkitTextStrokeWidth : null, alpha: ink.length > 3 ? ink[3] : 1, dark: Math.max(ink[0], ink[1], ink[2]),
+          pic: [...document.querySelectorAll("#step-download .s3-pic .hit")].map((e) => e.innerText.trim()),
+          page: document.body.innerText.replace(/\s+/g, " ") };
+      });
+      check(!/Press Keep, then Keep anyway\./.test(f.one) && f.pic.length === 4, "gm-site: step 1 does not draw one big Keep button (Edge shows a trash can and three dots, then Delete with a small arrow)", JSON.stringify(f.pic));
+      check(f.pic.join("|") === "\u2026|Keep||Keep anyway", "gm-site: step 1's picture rings the three dots, Keep, the small arrow and Keep anyway, as real Edge", JSON.stringify(f.pic));
+      check(/three dots/i.test(f.one) && /small arrow beside Delete/i.test(f.one) && /Keep anyway/.test(f.one) && /Do not press Delete\./.test(f.one) && /press Get AurOS again/.test(f.one), "gm-site: step 1 names the three dots, the small arrow beside Delete, Keep anyway, and says not to press Delete, and what to do if she did", f.one);
+      check(/Delete/.test(f.one) && /Cancel/.test(f.one), "gm-site: step 1's picture shows the black Delete beside Cancel, so she knows the box when she meets it", f.one);
+      check(/More info[^.]*Run anyway/.test(f.two) && /Yes, the white button/.test(f.two), "gm-site: step 2 says More info comes before Run anyway, and Yes is the white button", f.two);
+      check(f.safeAbove && /Is this safe\?/.test(f.safe) && /Who made it\?/.test(f.safe) && /What does it cost\?/.test(f.safe) && /one person/i.test(f.safe) && /Nothing\./.test(f.safe) && /warn/i.test(f.safe), "gm-site: before the steps, in plain words, Is this safe, Who made it, What does it cost (and why Edge and Windows warn)", f.safe);
+      check(f.stroke === "0px" && f.alpha > 0.9 && f.dark < 60, "gm-site: the second row in the strip (Never phones you...) is solid ink, not an outline", `stroke ${f.stroke}, alpha ${f.alpha}, darkest channel ${f.dark}`);
+      check(/at least \d+ GB of empty room on your Windows drive/.test(f.page), "gm-site: the front page says how much empty room AurOS needs (a data-fact the promises check ties to preflight.h)", "");
+      check(/Smart App Control/.test(f.page) && /antivirus/i.test(f.page) && /404/.test(f.page) && /Not found/.test(f.page) && /try again in an hour/.test(f.page), "gm-site: the front page says what to do if Windows or an antivirus stops the file, and if the download link says 404", "");
+      await ctx.close();
+      const old = await visit({ name: "gm-site Windows 7", ua: UA.winEdge.replace("Windows NT 10.0", "Windows NT 6.1"), uad: UAD.winX64 });
+      const ow = await old.page.evaluate(() => { const e = document.getElementById("old-win"); return { shown: !!e && e.getClientRects().length > 0, text: e ? e.innerText : "" }; });
+      check(ow.shown && /not been tried/i.test(ow.text) && /ask someone/i.test(ow.text) && !/checks first|tells you/i.test(ow.text), "gm-site: on an older Windows the page says AurOS has not been tried there (Setup has no Windows-version check, so it must not say it checks)", JSON.stringify(ow));
+      await old.ctx.close();
+      const inst = await visit({ name: "gm-site install", url: HOME + "install.html", ua: UA.winEdge, uad: UAD.winX64 });
+      const it = await inst.page.evaluate(() => document.body.innerText.replace(/\s+/g, " "));
+      check(/404/.test(it) && /Not found/.test(it) && /try again in an hour/.test(it), "gm-site: install.html also says what to do if the download link says 404 (nothing is wrong with her computer)", "");
+      await inst.ctx.close();
+    }
     // A-06 (what she does when stuck, first), B-04 (the keyboard for the small buttons): the page the button opens
     for (const v of [{ name: "1366x768", viewport: { width: 1366, height: 768 } }, { name: "390x844", viewport: { width: 390, height: 844 } }]) {
       const { ctx, page } = await visit({ name: "guide " + v.name, url: HOME + "guide.html", ua: UA.winEdge, uad: UAD.winX64, viewport: v.viewport });
