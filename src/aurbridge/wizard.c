@@ -2742,6 +2742,10 @@ static int stop_line(const pf_result *r, int cannot, wchar_t *prob, wchar_t *fix
  * fixes. "Nothing ... has been changed" is said only when both are untouched. */
 static int fixes_done(void)
 {
+    /* Opened again after the restart a fix asked for (g_resumed): g_fx is per process and starts
+     * empty, but the fixes ran in the window before -- the restart is one, and the others run in the
+     * same pass, just before it (fix_worker). Only that window is gone, not what it did. */
+    if (g_resumed) return 1;
     for (int k = 0; k < g_fx_n; k++) if (g_fx[k].state != FS_NONE) return 1;
     return 0;
 }
@@ -3538,15 +3542,17 @@ static int step_of(int phase)
     L"Restart now: the screen goes black for a minute or two. That is normal. " \
     L"Do not press the power button or any key."
 /* What a browser saved does not come to AurOS (docs/FERRY.md, "What cannot migrate"), and
- * she is still in Windows here, where she can look the ones that matter up. One short line:
- * Ready has no room for another row (--navtest 4: it must fit 1366x768, and does to the pixel). */
-#define RESTART_PASSWORDS_SAYS L"Make sure you know your email and bank passwords."
+ * she is still in Windows here, where she can look the ones that matter up. It is said in
+ * the page's own subtitle, under "Ready to restart" and beside the Restart now button, because
+ * that is the one place on this page that is above the fold at every size (--navtest 19). */
+#define RESTART_SAVE_SAYS \
+    L"Save your work, and know your email and bank passwords."
 #define RESTART_THEN_SAYS \
     L"Then you see \u201CAurOS is starting\u201D and \u201CInstalling AurOS\u201D, for " \
-    L"several minutes. The computer restarts by itself."
+    L"several minutes. The computer restarts by itself, and AurOS asks if everything works."
 #define RESTART_LATER_SAYS \
-    L"Restart later: this window waits. Setup has already turned off Fast Startup and " \
-    L"put AurOS\u2019s start-up files here."
+    L"Restart later: nothing restarts until you come back and press Restart now. Setup has " \
+    L"already turned off Fast Startup and put AurOS\u2019s start-up files here."
 
 static int page_progress(int x, int y, int w)
 {
@@ -3555,12 +3561,10 @@ static int page_progress(int x, int y, int w)
     wchar_t buf[520];
 
     if (install_ok()) {
-        y += page_head(L"Ready to restart",
-                       L"Save anything you\u2019re working on, then press Restart now.",
+        y += page_head(L"Ready to restart", RESTART_SAVE_SAYS L" Then press Restart now.",
                        x, y, w) + S(g_dense ? 12 : g_short ? 20 : 32);
-        static const wchar_t *const what[] = { RESTART_NOW_SAYS, RESTART_PASSWORDS_SAYS,
-                                               RESTART_THEN_SAYS, RESTART_LATER_SAYS };
-        y += note_box(NULL, what, 4, x, y, narrow);
+        static const wchar_t *const what[] = { RESTART_NOW_SAYS, RESTART_THEN_SAYS, RESTART_LATER_SAYS };
+        y += note_box(NULL, what, 3, x, y, narrow);
         return y - y0;
     }
 
@@ -4027,7 +4031,9 @@ static void draw_footer(void)
         /* Stop is offered only while stopping is safe: AurOS has only been
          * downloading, and nothing on the computer has been changed */
         SEC(L"Stop", ID_STOP, 1);
-        lands = L"Nothing has been changed yet.";
+        /* the download has been filling C:\\AurOS since the check passed; Stop and undo removes it
+         * (WM_DESTROY, install_forget), and the engine has not touched Windows (g_ab_gate 0) */
+        lands = L"Stop: Setup closes and removes the download. Windows and your files are not changed.";
     } else if (g_page == PAGE_BLOCKED && (sb_page() || !any_cannot())) {
         SEC(L"Not now", ID_QUIT, 1);
         if (!sb_page() && helper_url()) SEC(L"Show a helper how", ID_HELPER, 0);   /* the USB stick list */
@@ -4701,9 +4707,8 @@ static void acc_page_name(wchar_t *out, int n)
     }
     case PAGE_PROGRESS:
         if (install_ok())
-            SAY(L"Ready to restart. Save anything you’re working on, then press "
-                L"Enter to restart now. " RESTART_NOW_SAYS L" " RESTART_PASSWORDS_SAYS L" "
-                RESTART_THEN_SAYS L" " RESTART_LATER_SAYS);
+            SAY(L"Ready to restart. " RESTART_SAVE_SAYS L" Then press Enter to restart now. "
+                RESTART_NOW_SAYS L" " RESTART_THEN_SAYS L" " RESTART_LATER_SAYS);
         else if (install_failed())
             SAY(L"The install stopped. %ls %ls " STOPPED_HELP L" Press Enter to try again.",
                 stopped_reason(), stopped_safe());
@@ -5979,10 +5984,14 @@ static int nav_test(const char *dir)
                     render();
                     g_nt_mark = NULL;
                     int seen = g_nt_mark_bottom >= 0 && (g_nt_mark_bottom - g_body.top) * 100 <= g_view_h * 65;
+                    g_nt_mark = L"know your email and bank passwords"; g_nt_mark_bottom = -1;
+                    render();
+                    g_nt_mark = NULL;
+                    seen = seen && g_nt_mark_bottom >= 0 && (g_nt_mark_bottom - g_body.top) * 100 <= g_view_h * 65;
                     scroll_by(g_content_h);
                     render();
                     snprintf(what, sizeof what, "the restart page on %s may scroll (%d px of %d), with the black "
-                             "screen and the power button above the fold, and its end can be reached",
+                             "screen, the power button and her passwords above the fold, and its end can be reached",
                              SZ[k].name, g_content_h, g_view_h);
                     nt_check(seen && g_scroll[scr_i()] == g_content_h - g_view_h, what);
                     g_scroll[scr_i()] = 0;
@@ -6500,10 +6509,15 @@ static int nav_test(const char *dir)
                  "... and Stop and undo then closes at once, and the engine never starts");
         g_install_running = 1; g_stop_wanted = 0; g_confirm = 0;
         InterlockedExchange(&g_ab_gate, 0);
+        nt_drawn_reset();
         render();
         int stop = 0;
         for (int i = 0; i < g_nw; i++) if (g_w[i].id == ID_STOP) stop = 1;
         nt_check(stop, "while only downloading there is a Stop button");
+        /* the download has been on C: since the check passed, so Stop never says nothing has been changed */
+        nt_check(nt_drawn_count(L"Stop: Setup closes and removes the download. Windows and your files are not changed.") == 1 &&
+                 !nt_drawn_count(L"Nothing has been changed"),
+                 "... and says what Stop does: the download goes, Windows and her files stay as they are");
         InterlockedExchange(&g_ab_gate, 1);
         render();
         stop = 0;
@@ -7124,14 +7138,18 @@ static int nav_test(const char *dir)
                  "the last page still says the screen goes black for a minute or two (the website quotes it)");
         nt_check(nt_drawn_count(L"That is normal") == 1 && nt_drawn_count(L"Do not press the power button") == 1,
                  "... that it is normal, and not to press the power button");
-        nt_check(nt_drawn_count(L"Save anything you’re working on") == 1 &&
+        nt_check(nt_drawn_count(L"Save your work, and know your email and bank passwords.") == 1 &&
                  wcsstr(rn, L"Do not press the power button") && wcsstr(rn, L"That is normal"),
                  "... and a screen reader is told the same, after being told to save her work");
-        nt_check(nt_drawn_count(L"Make sure you know your email and bank passwords.") == 1 &&
-                 wcsstr(rn, L"Make sure you know your email and bank passwords") &&
-                 wcsstr(rn, L"Do not press the power button") < wcsstr(rn, L"Make sure you know your email"),
-                 "... and, second, to know her email and bank passwords before she presses it, to the eye and to "
-                 "a screen reader");
+        nt_check(wcsstr(rn, L"know your email and bank passwords") &&
+                 wcsstr(rn, L"know your email and bank passwords") < wcsstr(rn, L"Do not press the power button") &&
+                 wcsstr(rn, L"Then press Enter to restart now"),
+                 "... and to know her email and bank passwords before she presses it (a browser's saved ones "
+                 "do not come to AurOS: docs/FERRY.md), first, to a screen reader");
+        nt_check(wcsstr(rn, L"AurOS asks if everything works") && wcsstr(rn, L"nothing restarts until you come back and press Restart now") &&
+                 nt_drawn_count(L"AurOS asks if everything works") == 1 &&
+                 nt_drawn_count(L"nothing restarts until you come back and press Restart now") == 1,
+                 "... and that AurOS asks if everything works, and that Restart later restarts nothing (tools/armtest.sh)");
 
         /* the stop: is her computer all right, what to do, who to ask */
         InterlockedExchange(&g_ab_state, 3);
@@ -7208,19 +7226,21 @@ static int nav_test(const char *dir)
          * has been filling C:\\AurOS since the first check passed, and a fix may have run. The head, what a
          * screen reader is told, and the Not now line say the same thing. */
         {
-            static const struct { int dl, fx, img; const wchar_t *says; const char *name; } B[] = {
-                { 0, 0, 0, L"Nothing on this computer has been changed.", "a first check that stops" },
-                { 1, 0, 0, L"The only thing Setup has put on this computer is the part of AurOS it has downloaded to drive C:. Closing this window removes it.",
+            static const struct { int dl, fx, img, res; const wchar_t *says; const char *name; } B[] = {
+                { 0, 0, 0, 0, L"Nothing on this computer has been changed.", "a first check that stops" },
+                { 1, 0, 0, 0, L"The only thing Setup has put on this computer is the part of AurOS it has downloaded to drive C:. Closing this window removes it.",
                   "a stop while the download runs" },
-                { 2, 0, 0, L"The only thing Setup has put on this computer is the part of AurOS it has downloaded to drive C:.",
+                { 2, 0, 0, 0, L"The only thing Setup has put on this computer is the part of AurOS it has downloaded to drive C:.",
                   "a stop with the download done" },
-                { 3, 0, 0, L"The only thing Setup has put on this computer is the part of AurOS it has downloaded to drive C:.",
+                { 3, 0, 0, 0, L"The only thing Setup has put on this computer is the part of AurOS it has downloaded to drive C:.",
                   "a stop with the download stopped" },
-                { 0, 0, 1, L"The only thing Setup has put on this computer is the part of AurOS it has downloaded to drive C:.",
+                { 0, 0, 1, 0, L"The only thing Setup has put on this computer is the part of AurOS it has downloaded to drive C:.",
                   "a stop after an install tried and was taken back" },
-                { 0, 1, 0, L"Setup has only done the fixes you asked for.", "a stop after a fix ran" },
-                { 2, 1, 0, L"Setup has only done the fixes you asked for, and downloaded part of AurOS to drive C:. Closing this window removes the download.",
+                { 0, 1, 0, 0, L"Setup has only done the fixes you asked for.", "a stop after a fix ran" },
+                { 2, 1, 0, 0, L"Setup has only done the fixes you asked for, and downloaded part of AurOS to drive C:. Closing this window removes the download.",
                   "a stop after a fix ran and the download is done" },
+                { 0, 0, 0, 1, L"Setup has only done the fixes you asked for.",
+                  "a stop in the window that opened again after the restart a fix asked for (no fix is remembered in it)" },
             };
             static const char *const KIND[] = { "an ordinary stop", "a stop she cannot clear", "the Secure Boot page" };
             memset(&g_ab_machine, 0, sizeof g_ab_machine);
@@ -7229,6 +7249,7 @@ static int nav_test(const char *dir)
                 for (int kind = 0; kind < 3; kind++) {
                     fx_machine(0);
                     g_fx_n = 0; memset(g_fx, 0, sizeof g_fx);
+                    g_resumed = B[b].res;
                     g_ab_choice.image_path[0] = B[b].img ? 'C' : 0;
                     InterlockedExchange(&g_dl_state, B[b].dl);
                     if (B[b].fx) { g_fx_n = 1; snprintf(g_fx[0].id, sizeof g_fx[0].id, "pending-reboot"); g_fx[0].state = FS_DONE; }
@@ -7261,6 +7282,7 @@ static int nav_test(const char *dir)
                     }
                 }
             g_fx_n = 0; memset(g_fx, 0, sizeof g_fx);
+            g_resumed = 0;
             g_ab_choice.image_path[0] = 0;
             InterlockedExchange(&g_dl_state, 0);
             memset(&g_report, 0, sizeof g_report);
@@ -7348,6 +7370,15 @@ static int nav_test(const char *dir)
                     render();
                     g_nt_mark = NULL;
                     snprintf(what, sizeof what, "the last page: \"Do not press the power button\" is above the fold on %s "
+                             "(ends %d px down of %d; 65%% at most)", SZ[k].name,
+                             (int)(g_nt_mark_bottom - g_body.top), g_view_h);
+                    nt_check(g_nt_mark_bottom >= 0 &&
+                             (g_nt_mark_bottom - g_body.top) * 100 <= g_view_h * 65, what);
+                    /* ... and so must the passwords: she is still in Windows here and can look them up */
+                    g_nt_mark = L"know your email and bank passwords"; g_nt_mark_bottom = -1;
+                    render();
+                    g_nt_mark = NULL;
+                    snprintf(what, sizeof what, "the last page: knowing her email and bank passwords is above the fold on %s "
                              "(ends %d px down of %d; 65%% at most)", SZ[k].name,
                              (int)(g_nt_mark_bottom - g_body.top), g_view_h);
                     nt_check(g_nt_mark_bottom >= 0 &&
