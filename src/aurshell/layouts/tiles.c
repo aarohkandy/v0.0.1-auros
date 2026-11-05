@@ -615,9 +615,6 @@ static void paint_homebar(shell_ctx *c, surface *s, shell_fonts *f, int w, int h
     rect bar = homebar_rect(c, w, h);
 
     draw_rect(s, bar, c->bg_alt, 1.f);
-    /* A 2px rule closes the foot of the page, the way a rule closes a
-     * printed footer. Heavier than the hairlines inside the page, so
-     * the permanent chrome reads as a different order of thing. */
 
     rect b = home_btn_rect(c, w, h);
     corners cr = corners_all((float)c->radius);
