@@ -60,6 +60,8 @@ jobs:
       AUROS_SECOND_RESPONDER: ${{ vars.AUROS_SECOND_RESPONDER }}
       OPS_TOKEN: ${{ secrets.AUROS_OPS_TOKEN }}
       OUTCOMES_URL: ${{ vars.AUROS_OUTCOMES_URL }}
+      # The website is on Vercel, not Pages: the address the builds bake, or "site" watches a 404.
+      AUROS_SITE: ${{ vars.AUROS_SITE || '1os.vercel.app' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
