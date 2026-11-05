@@ -42,9 +42,11 @@ KEEP_FROM_X = 420          # 280 px of step list, at 1.5x
 
 # Set to True only when the three Setup pictures are screenshots of AurOS Setup
 # on a real Windows PC (docs/shots/wizard retaken by B, P2-18).
-# Ready was refreshed from hosted Windows run 40161803540, source 6a732d79,
-# artifact wizard-shots-windows. The other Setup renders remain Wine captures;
-# this mixed set is not physical-PC evidence.
+# Ready was first refreshed from hosted Windows run 40161803540, source 6a732d79,
+# artifact wizard-shots-windows. It is now a Wine capture of the current Setup (its
+# "settings that make Windows start faster" row is new), taken with --shot and without
+# the Wi-Fi and drive-protection fixture, as that one was. Like the other two Setup
+# renders it is not physical-PC evidence; retake it from a hosted run when there is one.
 REAL_WINDOWS = False
 
 # Every line of text each picture shows, as the source writes it.
@@ -79,7 +81,7 @@ SAYS = {
         "AurOS downloads while you wait, so stay connected to the internet.",
         "The computer restarts once. Then AurOS asks if everything works. Press “No, go back to Windows” and it does.",
         "About 25 to 60 minutes total; the screen is dark for a minute or two.",
-        "Setup turns off Fast Startup and hibernation, and leaves a Windows task, “AurOS put-back”, that does nothing unless AurOS is removed.",
+        "Setup turns off the settings that make Windows start faster, and leaves a small note that does nothing unless AurOS is removed.",
         "By pressing Install AurOS you agree to the AurOS Terms.",
         "Read the Terms",
         "Licenses",
