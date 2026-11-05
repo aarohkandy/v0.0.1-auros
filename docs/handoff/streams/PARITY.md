@@ -14,7 +14,7 @@ Owns: `tools/parity/**`, `tools/apptest*`, `.github/workflows/parity.yml`
 
 Everything lives in `tools/parity/` (README.md there: how it works, how to run, what is simulated). CI: `.github/workflows/parity.yml`
 (nightly 03:17 UTC, `[parity]` / `[parity RUN-ID]` in a commit subject, or `gh workflow run parity.yml --ref main -f run-id=<build run>
-[-f checks=call,film,print,office,pdfform,apps] [-f apps=vlc,solitaire] [-f apt=libnss-mdns] [-f opt=perf,capfix]`). One run at a time
+[-f checks=call,film,print,office,pdfform,apps] [-f apps=vlc,thunderbird] [-f apt=libnss-mdns] [-f opt=perf,capfix]`). One run at a time
 (concurrency on the job, queued; a second dispatch REPLACES a queued one). Evidence: prerelease `parity-<run>` (every screenshot, results.md/json,
 serial log). Pick the image by build run id: the newest run with an `auros-pieces` artifact
 (`gh api "repos/aarohkandy/v0.0.1-auros/actions/artifacts?name=auros-pieces"`; a build.yml run whose `build` job was skipped has none).

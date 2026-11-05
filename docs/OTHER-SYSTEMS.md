@@ -39,10 +39,13 @@ LIVE       casper boots the ISO partition (live-media=, nopersistent);
            AUROS-OS-ROOT (ext4, /); every other partition is listed with
            preserve + offset + size + type + GUID; installs grub+shim to
            \EFI\ubuntu on AUROS-OS-ESP and puts "ubuntu" FIRST in BootOrder
+  guard    othersys.py guard, from the early check until power off, once a
+           second: if something is ahead of what Windows recorded, Windows'
+           order goes back in front (a power cut now starts Windows)
   late     othersys.py late: BootOrder back to Windows-first (Ubuntu after
-           what Windows recorded), BootNext = ubuntu, "AurOS Installer"
-           entry deleted, queued MOK requests cancelled, update_nvram=false,
-           autologin, the helper + units installed; power off
+           what Windows recorded), "AurOS Installer" entry deleted, queued
+           MOK requests cancelled, update_nvram=false, autologin, the
+           helper + units installed; only then BootNext = ubuntu; power off
 UBUNTU, every boot until she answers (auros-othersys-boot.service)
            first boot: delete AUROS-OS-ISO (by number + GUID + name + ISO
            UUID) and grow the root into it; then the hold: Windows first,
@@ -87,7 +90,8 @@ Found while building this; each is checked by `tools/othersys/selftest.py`.
    on the kernel command line (the latter also skips the scan of all disks).
 4. **curtin puts "ubuntu" first in BootOrder, and autoinstall cannot
    stop it** (research §3.3: `grub-multi-install` with no arguments).
-   Fence: `late` restores Windows-first and arms BootNext; the boot unit
+   Fence: the `guard` puts Windows first again during the install; `late`
+   restores Windows-first and arms BootNext as its last step; the boot unit
    re-asserts it every boot until "yes" (an update to shim/grub that
    re-promotes Ubuntu is put back), and `grub2/update_nvram=false` is
    preseeded. The `nofixup` VM variant proves the check catches what the
@@ -243,7 +247,11 @@ cannot give. To bring it back: restore
 - Xubuntu and Ubuntu Cinnamon 26.04 have a manifest and a matrix entry
   each.
 - The Windows-side reader of `AurOSOtherSysAnswer` and the put-back.
-- Power cut between curtin's NVRAM write and `late`: Ubuntu first with a
-  half-installed system. The boot unit does not exist yet at that point;
-  the fix belongs in a Windows-side check of the journal on the next
-  Windows start, or in the grub.cfg on the seed (re-run the install).
+- Power cut between curtin's NVRAM write and the guard's next look: the
+  guard polls once a second, so for up to about a second Ubuntu is first
+  with a half-installed system. Any cut after that starts Windows, and
+  `late` arms BootNext only after everything else is done. The boot unit
+  does not exist yet in that second; closing it would need a Windows-side
+  check of the journal on the next Windows start, or the grub.cfg on the
+  seed (re-run the install). The test cuts the power just after the guard
+  acts, not inside that second.
