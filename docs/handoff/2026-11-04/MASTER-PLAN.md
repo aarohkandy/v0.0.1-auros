@@ -12,11 +12,12 @@ warnings, the three screens and the restart, and can then live on it without any
 - **The Vercel code is in the repo and working**: `vercel.json` + `tools/site/vercel-build.sh`. Two Vercel
   projects build from `main`: `1os.vercel.app` and `v001-auros.vercel.app`, both public. Docs-only commits
   show as CANCELED there on purpose (`ignoreCommand`); that is not a failure.
-- **Blocker 1: the Get AurOS button 404s.** No release is latest. Candidate `4e7957d5` is in CI;
-  the owner approved promoting it when green.
+- **Blocker 1: the Get AurOS button 404s.** No release is latest. Candidate `4e7957d5` failed its
+  bitlocker e2e on a test that contradicted the design (see `SESSION-2026-11-04.md`); `e503f76c`
+  replaced it and is green.
 - **Blocker 2: the installer's help address 404s.** It bakes `aarohkandy.github.io/v0.0.1-auros`, and Pages is
   off. Fix: the workflows pass `AUROS_SITE` so builds bake the Vercel address (default `1os.vercel.app`,
-  `vars.AUROS_SITE` overrides). Takes effect from the second release; candidate `4e7957d5` keeps the dead link.
+  `vars.AUROS_SITE` overrides). `e503f76c` has it.
   Turning Pages on instead (`AUROS_PAGES=on`) was refused by the agent's permission check as a new public
   surface, so it stays the owner's choice.
 - Legal launch gate: passes, 0 problems.
@@ -31,10 +32,12 @@ warnings, the three screens and the restart, and can then live on it without any
    - `othersys-powercut`, `othersys-budgie`;
    - `gm-wizard`, `gm-boot`, `gm-help`, `gm-everyday`, `safety`;
    - a final critic: what would still stop her?
-3. **Candidate.** When `4e7957d5` and its harden are green: `[publish 41917933517] [latest]`. The button works from here.
+3. **Candidate.** `e503f76c` (build run 41939828813) and its harden are green. `[publish 41939828813] [latest]`
+   was refused by the agent's permission check (public surface), so publishing is the owner's step.
 4. **Integrate.** The lead reads every diff, merges into `wave/base`, runs every check.
-5. **One push to main** with `[othersys]`: one VM run proves all othersys lanes.
-6. **Second release** with everything: `[release]` → harden → `[publish N] [latest]`. Never both in one commit.
+5. **One push to main** with `[release] [othersys]`: one VM run proves all othersys lanes, and the same
+   commit is the second release.
+6. **Then** harden → `[publish N] [latest]`, the owner's step as above. Never `[release] [latest]` in one commit.
 7. **Walk it live** from `1os.vercel.app`, then update `SESSION-2026-11-04.md`.
 
 ## What no agent can do
