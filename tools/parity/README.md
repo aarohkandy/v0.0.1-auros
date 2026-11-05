@@ -12,13 +12,13 @@ State, findings and next steps: `docs/handoff/streams/PARITY.md`. Results: `docs
 | `office` | xdg-open is ours and GLib's database types a docx/xlsx/pdf; something sensible opens them; Writer and Calc open and save them |
 | `pdfform` | double-click a form, click boxes, type, Save a copy: both boxes are in the file |
 | `types` | what a double-click opens, asked of the desktop's own file database (no window): pictures, PDF, letters, tables, notes, music and video (Windows Media too), zip, installers and presentations, folders, web links and `mailto:`, each by the name her screen shows; and Solitaire is among her programs |
-| `apps` | the top ten Flathub programs install with no password, get a launcher, open a window (separate, long run) |
+| `apps` | the top nine Flathub programs install with no password, get a launcher, open a window (separate, long run) |
 
 ## Run it
 
 ```sh
 sudo python3 tools/parity/run.py --image auros-desktop.img --out parity-out [--checks call,film] [--apt libnss-mdns]
-sudo sh tools/apptest.sh --image auros-desktop.img --out apptest-out [--apps vlc,solitaire]
+sudo sh tools/apptest.sh --image auros-desktop.img --out apptest-out [--apps vlc,thunderbird]
 ```
 
 Needs root (loop mount), KVM, `qemu-system-x86 qemu-utils ovmf gdisk`. The image is the RAW disk

@@ -20,7 +20,7 @@ of the screen changes; need 1.5 %). Not a known gap, because it passed once (414
 | WhatsApp, an unofficial web wrapper (com.ktechpit.whatsie) | 42 s, 329 MB | opens in 2 s | |
 | Teams, Skype's successor (com.github.IsmaelMartinez.teams_for_linux) | 10 s, 360 MB | opens in 2 s | Electron, uses Wayland |
 | Spotify (com.spotify.Client) | 17 s, 14 MB | opens in 1 s | |
-| Solitaire (org.gnome.Aisleriot) | 26 s, 83 MB | opens in 1 s | |
+| Solitaire (org.gnome.Aisleriot) | 26 s, 83 MB | opens in 1 s | first run only; the row left `apps.tsv` on 2026-11-04 because Solitaire is now in the image (`aisleriot`) |
 | Thunderbird (org.mozilla.thunderbird) | 9 s, 343 MB | opens in 2 s | the old id org.mozilla.Thunderbird is end-of-life and installs the ESR under a different launcher name |
 | Photos (org.gnome.gThumb) | 3 s, 26 MB | opens in 2 s | |
 | LibreOffice (org.libreoffice.LibreOffice) | 21 s, 804 MB | opens in 1 s | also in the image as debs now |

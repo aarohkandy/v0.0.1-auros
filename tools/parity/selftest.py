@@ -107,7 +107,7 @@ def read(rel):
 print("the files the checks stand on")
 profile = {w for ln in read("profiles/desktop.profile").splitlines() if not ln.lstrip().startswith("#")
            for w in re.split(r'[\s="]+', ln) if w}
-for pkg, why in (("aisleriot", "Solitaire"), ("printer-driver-escpr", "Epson drivers"),
+for pkg, why in (("printer-driver-escpr", "Epson drivers"),
                  ("printer-driver-brlaser", "Brother drivers"), ("printer-driver-hpcups", "HP drivers"),
                  ("printer-driver-gutenprint", "Canon and Epson photo drivers")):
     check("the profile installs %s (%s)" % (pkg, why), pkg in profile)
@@ -116,10 +116,7 @@ forge = read("build/forge")
 code = "\n".join(ln for ln in forge.splitlines() if not ln.lstrip().startswith("#"))    # a commented-out line is no line
 check("build/forge indexes /usr/local/share/applications, where the renamed launchers live",
       re.search(r'^\s*inchroot "update-desktop-database /usr/local/share/applications\b', code, re.M) is not None)
-# the table of renamed programs: from `done <<'EOL'` (the loop above it reads these rows) to the line EOL
-table = re.search(r"^\s*done <<'EOL'\n(.*?)^EOL$", code, re.M | re.S)
-check("build/forge calls sol.desktop Solitaire, in the table of renamed programs",
-      table is not None and re.search(r"^sol\|Solitaire\|", table.group(1), re.M) is not None)
+# (the table of renamed programs, Solitaire's row too, is pinned by tools/renametest.sh; aisleriot by tools/everydaytest.sh)
 
 xcu = os.path.join(ROOT, "rootfs/etc/libreoffice/registry/data/auros.xcu")
 want = {("/org.openoffice.Office.Common/Misc", "ShowTipOfTheDay"): "false",

@@ -54,7 +54,7 @@ has() { printf '%s\n' "$PKGS" | grep -qx "$1"; }
 for p in libnss-mdns libreoffice-writer libreoffice-calc libreoffice-gtk3 \
          fonts-crosextra-carlito fonts-crosextra-caladea heif-gdk-pixbuf libheif-plugin-libde265 libglib2.0-bin \
          tumbler libspa-0.2-bluetooth system-config-printer-udev unzip zip eject dmsetup webp-pixbuf-loader rtkit \
-         libreoffice-math hunspell-en-us hyphen-en-us mythes-en-us libmtp-runtime; do
+         libreoffice-math hunspell-en-us hyphen-en-us mythes-en-us libmtp-runtime aisleriot; do
     if has "$p"; then ok "$p is in the image"; else bad "$p is NOT in the profile"; fi
 done
 for p in libreoffice-impress libreoffice-draw libreoffice-base default-jre openjdk-17-jre libreoffice-java-common tumbler-plugins-extra; do

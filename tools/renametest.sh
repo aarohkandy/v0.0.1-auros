@@ -67,6 +67,7 @@ want org.xfce.ristretto Photos
 want org.xfce.mousepad Notes
 want xarchiver "Zip files"
 want system-config-printer Printers
+want sol Solitaire
 # a name in the table that matches no installed file renames nothing, and says so
 rm -f "$RFS/usr/share/applications/firefox.desktop" "$RFS/usr/local/share/applications/firefox.desktop"
 sh -c "warn() { echo WARN \"\$*\"; }; . '$T/loop.sh'" > "$T/out2" 2>&1

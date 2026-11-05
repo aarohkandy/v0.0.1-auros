@@ -65,9 +65,15 @@ After the first nightly on a build carrying this branch, delete the `~` lines.
 - **WhatsApp from the store**: its window opens, and in 5 of 7 nightlies the page stays blank (`apps.whatsapp.visible`). It is not a
   known gap, because it passes on some nights. Cause unknown; it may be the VM's software drawing.
 - `.github/workflows/parity.yml` line 40 lists the checks in a description; `types` is not in the list (text only).
-- **"Keep current format?" is off for every format, not only Word and Excel** (LibreOffice has one switch): a CSV or RTF she opens
-  and saves is written as it was, without the question (`auros.xcu`). Without it, Letters would ask on every first Save of a new
-  letter, because Word is now its default. The owner can choose the other trade.
-- **Two Solitaires in the store, possibly**: the image has one (apt); `tools/parity/guest/apps.tsv` still installs the Flathub
-  `org.gnome.Aisleriot` as a store test, and what "Get more programs" shows for it beside the installed one has not been looked at.
+- **"Keep current format?" is off for every format, not only Word and Excel** (LibreOffice has one switch): a CSV, plain-text or RTF
+  file she opens and saves is written as it was, without the question (`auros.xcu`). That is a real loss: a CSV drops formulas and
+  extra sheets, a text file drops all formatting, an RTF drops what RTF cannot carry, and she is told nothing. Decision, 2026-11-04,
+  reversible: kept off. The setting `WarnAlienFormat` has no per-format form; scoping it to Word and Excel would mean editing the
+  filters' own flags (the `ALIEN` flag in `/org.openoffice.TypeDetection.Filter`), which was not tried because no LibreOffice was
+  available to see what it does. Without the switch off, Letters would ask on every first Save of a new letter, because Word is now
+  its default. To go back: delete the `WarnAlienFormat` item in `rootfs/etc/libreoffice/registry/data/auros.xcu` and its line in
+  `tools/parity/selftest.py`. The owner can choose the other trade.
+- **Two Solitaires in the store, possibly**: the image has one (apt). The nightly's Flathub `org.gnome.Aisleriot` row is gone from
+  `tools/parity/guest/apps.tsv` (a store install of it tested nothing the other nine do not; decided 2026-11-04, reversible by putting
+  the row back), but what "Get more programs" shows for Solitaire beside the installed one has still not been looked at.
 - Frames dropped on the no-graphics-card VM: nobody has a number for a real old laptop (WP-33).
