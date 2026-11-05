@@ -1024,6 +1024,22 @@ static int space_enough(uint64_t giveable, uint64_t image_bytes, uint64_t have)
     return giveable >= PF_AUROS_NEED + image_still_to_come(image_bytes, have);
 }
 
+/* How much of the copy of AurOS is already in <drive>\AurOS. A profile with
+ * no image name has none there: the whole copy still counts, so the space
+ * check is asked either way and can only get stricter. (This used to end
+ * check_volumes on the spot, which dropped the check for every drive.) */
+static uint64_t image_on_disk(const char *drive, const char *profile)
+{
+    char path[MAX_PATH + 48], image_name[40];
+    uint64_t have = 0;
+    if (ab_profile_image_name(profile, image_name, sizeof image_name) != 0)
+        return 0;
+    snprintf(path, sizeof path, "%s\\AurOS\\%s", drive, image_name);
+    if (plat_file_size(path, &have) != 0)
+        return 0;
+    return have;
+}
+
 static void bitmap_scan(const BYTE *bits, uint64_t nbits, uint64_t base,
                         uint64_t *used, uint64_t *end)
 {
@@ -1321,16 +1337,9 @@ static void check_volumes(pf_report *r)
                 uint64_t giveable = shrink_giveable(v->offline_shrinkable);
                 uint64_t img = 0, have = 0;
 #ifndef AB_CHOICE_FAST_PATH
-                {   /* the copy that is downloading into C:\AurOS, and what of it is there */
-                    char dir[16], path[64], image_name[40];
-                    snprintf(dir, sizeof dir, "%s", drive);
-                    if (ab_profile_image_name(ab_recipe_image_profile(), image_name,
-                                              sizeof image_name) != 0)
-                        return;
-                    snprintf(path, sizeof path, "%s\\AurOS\\%s", dir, image_name);
-                    img = AUROS_IMAGE_BYTES ? AUROS_IMAGE_BYTES : 6ULL * 1024 * 1024 * 1024;
-                    plat_file_size(path, &have);
-                }
+                /* the copy that is downloading into C:\AurOS, and what of it is there */
+                img  = AUROS_IMAGE_BYTES ? AUROS_IMAGE_BYTES : 6ULL * 1024 * 1024 * 1024;
+                have = image_on_disk(drive, ab_recipe_image_profile());
 #endif
                 uint64_t more = image_still_to_come(img, have);
 
@@ -2411,6 +2420,32 @@ int pf_selftest(void)
         t("room: half arrived leaves 2.5 GB to come, still more than 2 GB over",
           !space_enough(spare, img, img / 2) && space_enough(PF_AUROS_NEED + 3 * G, img, img / 2));
         t("room: more on disk than expected never underflows", image_still_to_come(img, img * 2) == 0);
+        /* S-22 edge: a profile with no image name must not drop the check.
+         * Nothing of the copy can be credited, so the spare room above is
+         * not enough; the real file of a known profile still is. */
+        t("room: a profile with no image name credits nothing, so the check still refuses",
+          image_on_disk("C:", "../desktop") == 0 && image_on_disk("C:", NULL) == 0 &&
+          !space_enough(spare, img, image_on_disk("C:", "../desktop")));
+        {
+            char dir[MAX_PATH + 16], f[MAX_PATH + 48];
+            DWORD n = GetTempPathA(MAX_PATH, dir);
+            FILE *fp = NULL;
+            if (n > 0 && n < MAX_PATH) {
+                if (dir[n - 1] == '\\') dir[n - 1] = 0;
+                snprintf(f, sizeof f, "%s\\AurOS", dir);
+                CreateDirectoryA(f, NULL);
+                snprintf(f, sizeof f, "%s\\AurOS\\auros-desktop.img", dir);
+                fp = fopen(f, "wb");
+            }
+            t("room: a known profile is credited with the bytes already in \\AurOS",
+              fp && fwrite("0123456789", 1, 10, fp) == 10 && fflush(fp) == 0 &&
+              image_on_disk(dir, "desktop") == 10);
+            if (fp) {
+                fclose(fp); remove(f);
+                snprintf(f, sizeof f, "%s\\AurOS", dir);
+                RemoveDirectoryA(f);
+            }
+        }
     }
 
     {   /* Numbers the user is asked to act on. */
