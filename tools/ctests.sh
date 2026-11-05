@@ -5,6 +5,7 @@
 #   modaltest   one panel covers the desktop at a time; Escape gets out
 #   hittest     a click lands where the look painted; nothing highlights that cannot be pressed
 #   kiosktest   the school-kiosk allow-list is what the product says it is
+#   appstest    a hidden tool stays hidden; Letters is one of the four on her dock
 #   launchtest  can she start a program from every home
 #   nettest     what nmcli prints becomes what she reads
 #   powertest   battery and brightness, from constructed machines
@@ -44,6 +45,7 @@ ONLY="$*"
 run modaltest  $S/foot.c $DRAW
 run hittest    $DRAW
 run kiosktest  $S/apps.c $DRAW
+run appstest   $S/apps.c $DRAW
 run launchtest $DRAW
 run nettest    $S/net.c $DRAW
 run powertest  $S/power.c $S/run.c

@@ -277,7 +277,13 @@ static int read_entry(const char *path, entry *e, const char *lang, const char *
     }
     fclose(fp);
 
-    if (!e->is_app || e->hidden || e->no_display) return -1;
+    /* -2: this file says "do not show me". Not the same as a file that could not be
+     * read (-1): a copy of an entry in a directory searched later REPLACES the
+     * earlier one, so a copy that hides itself hides the program (build/forge
+     * does exactly this for the tools she should never meet), and the scan
+     * must drop the earlier copy rather than keep showing it. */
+    if (e->is_app && (e->hidden || e->no_display)) return -2;
+    if (!e->is_app) return -1;
     if (!shown_here(e) || is_settings_page(e)) return -1;
     if (!e->exec[0]) return -1;
     strip_field_codes(e->exec);
@@ -453,19 +459,24 @@ static int rank_of(const entry *e)
     if (has_cat(e, "WebBrowser"))                             return 0;
     if (has_cat(e, "FileManager") || has_cat(e, "FileTools")) return 1;
     if (has_cat(e, "Email"))                                  return 2;
-    if (has_cat(e, "Office") || has_cat(e, "WordProcessor")
-     || has_cat(e, "TextEditor"))                             return 3;
+    /* Letters (a word processor) is hers to write with, so it has a place of its own
+     * before the other office programs. It used to tie with Documents (the PDF
+     * reader), Notes and Spreadsheets and sort among them by its first letter, so
+     * whether it made the four on her dock (the first four programs, see
+     * shell_scan_apps) depended on what else was installed. */
+    if (has_cat(e, "WordProcessor"))                          return 3;
+    if (has_cat(e, "Office") || has_cat(e, "TextEditor"))     return 4;
     if (has_cat(e, "Photography") || has_cat(e, "Graphics")
-     || has_cat(e, "Viewer"))                                 return 4;
+     || has_cat(e, "Viewer"))                                 return 5;
     if (has_cat(e, "AudioVideo") || has_cat(e, "Audio")
-     || has_cat(e, "Video") || has_cat(e, "Player"))          return 5;
-    if (has_cat(e, "PackageManager"))                         return 6;
-    if (has_cat(e, "Settings") || has_cat(e, "System"))        return 8;
-    if (has_cat(e, "TerminalEmulator"))                       return 9;
+     || has_cat(e, "Video") || has_cat(e, "Player"))          return 6;
+    if (has_cat(e, "PackageManager"))                         return 7;
+    if (has_cat(e, "Settings") || has_cat(e, "System"))        return 9;
+    if (has_cat(e, "TerminalEmulator"))                       return 10;
     /* Utilities last but one: real, occasionally wanted, never the
      * thing she opened the computer to do. */
-    if (has_cat(e, "Utility"))                                return 7;
-    return 6;
+    if (has_cat(e, "Utility"))                                return 8;
+    return 7;
 }
 
 /* ── the scan ───────────────────────────────────────────────────── */
@@ -622,7 +633,15 @@ int shell_scan_apps(shell_ctx *c)
             char path[512];
             snprintf(path, sizeof path, "%s/%s", dir, de->d_name);
             entry e;
-            if (read_entry(path, &e, lang[0] ? lang : NULL, ll[0] ? ll : NULL) < 0) continue;
+            int got = read_entry(path, &e, lang[0] ? lang : NULL, ll[0] ? ll : NULL);
+            if (got == -2) {
+                char hid[128];
+                snprintf(hid, sizeof hid, "%.*s", (int)(len - 8), de->d_name);
+                for (int i = 0; i < n; i++)
+                    if (!strcmp(list[i].file, hid)) { list[i] = list[--n]; break; }
+                continue;
+            }
+            if (got < 0) continue;
             if (!e.name[0]) snprintf(e.name, sizeof e.name, "%s", de->d_name);
 
             /* Split first, so the allow-list sees the real program. */
