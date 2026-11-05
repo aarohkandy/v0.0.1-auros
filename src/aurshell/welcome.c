@@ -828,10 +828,11 @@ static int body_of(int page, int partial, const char *lines[3])
         /* Tell her before: it is not a one-way door. Put Windows back is the Settings row
          * (settings.c R_WINDOWS), on a computer that came from Windows. It can be
          * refused (her files cannot be saved in Windows first, a partition added since
-         * is not AurOS's); the Settings page then says "Nothing has changed: <why>"
-         * (settings.c putback_answered), so the line promises that and no more. */
+         * is not AurOS's). Settings usually says why (settings.c putback_answered), but
+         * not always -- no reason in the answer, or no answer at all -- so the line says
+         * only that it can fail, and does not promise an explanation. */
         lines[n++] = "If you change your mind, press Settings, then Put Windows back.";
-        lines[n++] = "If AurOS cannot do that, it will tell you why.";
+        lines[n++] = "Sometimes that cannot be done.";
         break;
     case W_SURE_NO:
         /* Tell her before: after this she cannot start AurOS herself (aurfirst decline; the

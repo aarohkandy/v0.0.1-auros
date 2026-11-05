@@ -2426,22 +2426,28 @@ int pf_selftest(void)
         t("room: a profile with no image name credits nothing, so the check still refuses",
           image_on_disk("C:", "../desktop") == 0 && image_on_disk("C:", NULL) == 0 &&
           !space_enough(spare, img, image_on_disk("C:", "../desktop")));
-        {
+        {   /* The writer is closed before the size is asked: plat_file_size opens
+             * the file for reading and shares only reads, so a file still open for
+             * writing would refuse it and the check would fail for the wrong reason. */
             char dir[MAX_PATH + 16], f[MAX_PATH + 48];
             DWORD n = GetTempPathA(MAX_PATH, dir);
-            FILE *fp = NULL;
+            int wrote = 0;
             if (n > 0 && n < MAX_PATH) {
+                FILE *fp;
                 if (dir[n - 1] == '\\') dir[n - 1] = 0;
                 snprintf(f, sizeof f, "%s\\AurOS", dir);
                 CreateDirectoryA(f, NULL);
                 snprintf(f, sizeof f, "%s\\AurOS\\auros-desktop.img", dir);
                 fp = fopen(f, "wb");
+                if (fp) {
+                    wrote = fwrite("0123456789", 1, 10, fp) == 10;
+                    wrote = fclose(fp) == 0 && wrote;
+                }
             }
             t("room: a known profile is credited with the bytes already in \\AurOS",
-              fp && fwrite("0123456789", 1, 10, fp) == 10 && fflush(fp) == 0 &&
-              image_on_disk(dir, "desktop") == 10);
-            if (fp) {
-                fclose(fp); remove(f);
+              wrote && image_on_disk(dir, "desktop") == 10);
+            if (n > 0 && n < MAX_PATH) {
+                remove(f);
                 snprintf(f, sizeof f, "%s\\AurOS", dir);
                 RemoveDirectoryA(f);
             }

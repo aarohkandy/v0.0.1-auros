@@ -582,8 +582,9 @@ int main(void)
         SURF_ = surface_new(c.screen_w, 768);
         ok("\"Yes\" says it can be undone, and where",
            says_page(&c, W_SURE_YES, "press Settings, then Put Windows back"));
-        ok("...and does not promise it: it says she will be told if it cannot",
-           says_page(&c, W_SURE_YES, "it will tell you why"));
+        ok("...and does not promise it will work, nor that a reason will be given",
+           says_page(&c, W_SURE_YES, "Sometimes that cannot be done") &&
+           !says_page(&c, W_SURE_YES, "tell you why"));
         ok("\"No\" says, before it is pressed, that she cannot start AurOS again herself",
            says_page(&c, W_SURE_NO, "AurOS will not start again by itself") &&
            says(&c, "ask someone who knows computers"));
