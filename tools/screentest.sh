@@ -185,14 +185,21 @@ case "$S" in *"para=The screen goes black, then Windows starts. About two minute
 
 S=$( say "AurOS staging environment" "this is the one restart; nothing has been changed yet" \
          "5 drivers loaded" "this machine has 3 disks" | st install)
-# "Getting ready" is the word the installer's last page tells her to expect (src/aurbridge/wizard.c).
+# The installer's last page tells her what the next minutes look like: "AurOS is starting" (the line
+# phases.c has grub write, the first thing on the screen after the black) and "Installing AurOS" (this
+# screen's heading, checked below). The screen's own first sentence is "Getting ready" and the page does
+# not promise it, so what the page does promise is read where it is said, not from any other "Getting
+# ready" in wizard.c (the consent page's title was once the only thing that satisfied this check).
 case "$S" in *"para=Getting ready. About one minute. Please don't press anything."*)
     case "$S" in *"drivers loaded"*) bad "start-up: her sentence, not the technician's lines" "$S" ;;
         *) ok "start-up: Getting ready, about a minute, don't press anything" ;; esac ;;
     *) bad "start-up: Getting ready, about a minute" "$S" ;; esac
-grep -q 'Getting ready' src/aurbridge/wizard.c \
-    && ok "...which is the word the installer's last page promised" \
-    || bad "...which is the word the installer's last page promised" "src/aurbridge/wizard.c no longer says Getting ready"
+NOW=$(sed -n '/^#define RESTART_NOW_SAYS/,/^#define RESTART_LATER_SAYS/p' src/aurbridge/wizard.c)
+case "$NOW" in *'u201CAurOS is starting'*'u201CInstalling AurOS'*) \
+    grep -q "echo 'AurOS is starting\." src/aurbridge/phases.c \
+        && ok "...and the installer's last page promises the line the firmware screen shows before it" \
+        || bad "...and the installer's last page promises the line the firmware screen shows before it" "src/aurbridge/phases.c no longer echoes 'AurOS is starting.'" ;;
+    *) bad "...and the installer's last page promises the line the firmware screen shows before it" "RESTART_NOW_SAYS in src/aurbridge/wizard.c no longer names AurOS is starting and Installing AurOS" ;; esac
 
 # A SCREEN THAT DOES NOT MOVE LOOKS LIKE A COMPUTER THAT HAS STOPPED. The step under way has dots that
 # change every second, and the line that says a still bar is no fault comes after 15 seconds of nothing,

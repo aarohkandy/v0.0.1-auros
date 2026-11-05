@@ -42,6 +42,7 @@ static void wipe(void)
     unlink(WELCOME_RUN "/ferry");
     unlink(WELCOME_STATE);
     unlink(WELCOME_FOUND);
+    unlink(WELCOME_RUN "/real.conf");
 }
 
 /* The answer directory, when the fixture puts it inside WELCOME_RUN --
@@ -130,6 +131,32 @@ static int says_page(shell_ctx *c, int page, const char *words)
 {
     welcome_set_page(page);
     return says(c, words);
+}
+
+/* Is one sentence drawn on top of another on this page? (Two lines of the same sentence sit
+ * one line-height apart and do not touch; a few pixels of a letter's tail are not a collision.)
+ * Fills `why` with the two that collide. */
+static int drawn_over(shell_ctx *c, int page, char *why, size_t n)
+{
+    welcome_set_page(page);
+    c->welcome_open = 1;
+    shell_text_log_n = 0; shell_text_log_on = 1;
+    welcome_paint(c, SURF_, &F_);
+    shell_text_log_on = 0;
+    for (int i = 0; i < shell_text_log_n; i++)
+        for (int j = i + 1; j < shell_text_log_n; j++) {
+            const shell_text_rec *a = &shell_text_log[i], *b = &shell_text_log[j];
+            if (a->w <= 0 || b->w <= 0) continue;
+            int top = a->y > b->y ? a->y : b->y;
+            int bot = a->y + a->h < b->y + b->h ? a->y + a->h : b->y + b->h;
+            int lef = a->x > b->x ? a->x : b->x;
+            int rig = a->x + a->w < b->x + b->w ? a->x + a->w : b->x + b->w;
+            if (bot - top > 6 && rig - lef > 2) {
+                snprintf(why, n, "\"%.30s\" and \"%.30s\"", a->s, b->s);
+                return 1;
+            }
+        }
+    return 0;
 }
 
 /* A stand-in for `ferry stick list`: prints whatever is in sticks.txt. */
@@ -587,6 +614,66 @@ int main(void)
            says(&c, "ask someone who knows computers"));
         ok("after \"Yes\" she is told where help is",
            says_page(&c, W_CONFIRMED, "press Help at the bottom left"));
+        /* A SENTENCE THAT WRAPS MUST NOT LAND ON THE ONE UNDER IT. The heading's sentence is
+         * laid out by a count of lines made before any font is loaded; one press of Bigger text
+         * (110%) wrapped it to a second line the layout had not left room for, and "If you change
+         * your mind..." was drawn over its last word. Drawn here as the image draws it: 20 px
+         * type in a face as wide as the one it ships (Atkinson Next, the installer's own, is
+         * within 1% of it on that sentence), at every size she can ask for, on both screens. */
+        {
+            char cwd[400], face[460], face_b[460], conf[512];
+            if (getcwd(cwd, sizeof cwd)) {
+                snprintf(face, sizeof face, "%s/src/aurbridge/fonts/atkinsonnext-400.ttf", cwd);
+                snprintf(face_b, sizeof face_b, "%s/src/aurbridge/fonts/atkinsonnext-700.ttf", cwd);
+            } else face[0] = face_b[0] = 0;
+            snprintf(conf, sizeof conf,
+                     "font_display = %s\nfont_text = %s\nfont_text_bold = %s\nfont_sans = %s\n"
+                     "font_size = 20\nfont_size_sm = 18\nfont_size_lg = 18\nline_height = 1.45\n",
+                     face_b, face, face_b, face);
+            put(WELCOME_RUN "/real.conf", conf);
+            theme_t rt; memset(&rt, 0, sizeof rt);
+            shell_ctx r; memset(&r, 0, sizeof r);
+            int have = theme_load(&rt, WELCOME_RUN "/real.conf") >= 0;
+            if (have) {
+                /* ...and the face really loaded (a path the theme reader cut short falls back to
+                 * a wider face, and the check would pass on the wrong thing): that sentence is
+                 * about 835 px at 20 px in the face the image ships. */
+                shell_theme_load(&r, &rt);
+                r.text_scale = 1.f;
+                shell_fonts_free(&F_);
+                shell_fonts_load(&F_, &r);
+                float w = F_.small ? shell_text_w(F_.small, "AurOS starts every time from now on. "
+                                                  "Windows and its files are meant to stay on this computer.") : 0.f;
+                have = w > 790.f && w < 880.f;
+            }
+            ok("the image's own type sizes and a face as wide as its face are there to draw with", have);
+            if (have) {
+                static const float SC[] = { 0.80f, 0.95f, 1.10f, 1.25f, 1.40f, 1.55f, 1.70f, 1.85f, 2.00f };
+                static const int PG[] = { W_SURE_YES, W_SURE_NO, W_CONFIRMED };
+                static const char *const PN[] = { "Start AurOS from now on?", "No", "AurOS starts from now on" };
+                static const int SZ[2][2] = { { 1366, 768 }, { 1024, 600 } };
+                char why[96];
+                int clean = 1;
+                for (int z = 0; z < 2; z++)
+                    for (size_t k = 0; k < sizeof SC / sizeof SC[0]; k++) {
+                        r.text_scale = SC[k];
+                        r.screen_w = SZ[z][0];
+                        r.screen_h = SZ[z][1] - foot_height(&r);
+                        shell_fonts_free(&F_);
+                        shell_fonts_load(&F_, &r);
+                        for (int p = 0; p < 3; p++)
+                            if (drawn_over(&r, PG[p], why, sizeof why)) {
+                                clean = 0;
+                                printf("      %s at %dx%d, text %d%%: %s\n", PN[p],
+                                       SZ[z][0], SZ[z][1], (int)(SC[k] * 100.f + 0.5f), why);
+                            }
+                    }
+                ok("no sentence on those three pages is drawn over another, at any text size", clean);
+                shell_fonts_free(&F_);
+                shell_fonts_load(&F_, &c);
+            }
+            unlink(WELCOME_RUN "/real.conf");
+        }
         /* a note from the root side is a clause: it is shown as a sentence */
         unlink(WELCOME_RUN "/answer");
         press(&c, W_SURE_YES, 0, "confirm");

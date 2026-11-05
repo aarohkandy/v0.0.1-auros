@@ -568,6 +568,8 @@ static const char *sub_of(int page, int can_import);
  * reserved is never less than what is drawn. */
 static int lines_for(const char *t, int w, float k)
 {
+    /* Smaller text stops at an 18 px floor (shellcommon.c FLOOR): the words are not 80% as wide. */
+    if (k < 1.f) k = 1.f;
     int cpl = (int)((float)w / (9.4f * k)); if (cpl < 8) cpl = 8;
     int n = ((int)strlen(t) + cpl - 1) / cpl;
     return n < 1 ? 1 : n;
@@ -601,9 +603,11 @@ static void welcome_layout(const shell_ctx *c, int sw, int sh,
 
     g->head_y = (int)((float)sh * 0.12f + 40.f * k);
     g->sub_y  = g->head_y + (int)(44.f * k);
-    int per_line = (int)((float)g->cw / (8.f * k)); if (per_line < 10) per_line = 10;
+    /* The sentence under the heading is counted as every other is: the count it had (8 px a
+     * letter) was short of the face's width, so a sentence that wrapped at one press of Bigger
+     * text was drawn over the line below it. */
     const char *sub0 = sub_of(v->page, v->can_import);
-    int sub_lines = sub0[0] ? 1 + (int)strlen(sub0) / per_line : 1;
+    int sub_lines = sub0[0] ? lines_for(sub0, g->cw, k) : 1;
     if (sub_lines > 3) sub_lines = 3;
     g->body_y = g->sub_y + (int)(8.f * k) + sub_lines * (int)(30.f * k);
 
