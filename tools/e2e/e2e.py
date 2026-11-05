@@ -542,6 +542,11 @@ def bitlocker_restart_control_error(putback, installing, named_primary, raw_labe
     """The weakening warning may be entered only from exact Restart now."""
     if not putback or not installing:
         return None
+    # A stray window (OneDrive's sign-in, run 41939828813) can swallow the press:
+    # the same page still stands. Pressing Install AurOS again opens no warning.
+    if (len(named_primary) == 1 and named_primary[0].get("name") == "Install AurOS" and
+            raw_label == "Install AurOS" and label == "Install AurOS"):
+        return None
     exact = (len(named_primary) == 1 and named_primary[0].get("name") == "Restart now" and
              raw_label == "Restart now" and label == "Restart now")
     return None if exact else (

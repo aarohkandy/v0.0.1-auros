@@ -213,6 +213,13 @@ def test_bitlocker_pause_confirmation():
             ([restart, dict(restart)], "Restart now", "Restart now", "duplicate named primary")):
         check(e2e.bitlocker_restart_control_error(True, True, named, raw, canonical) is not None,
               f"pause warning: {why} is refused before any click")
+    still = {**restart, "name": "Install AurOS"}
+    check(e2e.bitlocker_restart_control_error(
+              True, True, [still], "Install AurOS", "Install AurOS") is None,
+          "pause warning: a press a stray window swallowed may be pressed again")
+    check(e2e.bitlocker_restart_control_error(
+              True, True, [], "Install AurOS", "Install AurOS") is not None,
+          "pause warning: Install AurOS read only by OCR is still refused")
     check(e2e.bitlocker_restart_control_error(True, False, [], "?", "?") is None,
           "pause warning: pre-install wizard pages retain their existing driver")
 

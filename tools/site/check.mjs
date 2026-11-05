@@ -239,10 +239,8 @@ async function visit({ name, url = HOME, ua, uad, viewport = { width: 1366, heig
   return { ctx, page };
 }
 
-// What GitHub would answer, without the network: the release API the press asks (status 200 or 404, after ms),
-// and the download address itself, which answers a file.
-async function githubSays(page, status, ms = 0) {
-  await page.route("https://api.github.com/**", async (route) => { if (ms) await new Promise((r) => setTimeout(r, ms)); return route.fulfill({ status, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: status === 404 ? '{"message":"Not Found"}' : "{}" }); });
+// What GitHub's download address answers, without the network: a file.
+async function githubSays(page) {
   await page.route("https://github.com/**", (route) => route.fulfill({ status: 200, headers: { "content-type": "application/octet-stream", "content-disposition": "attachment; filename=AurOS-Setup.exe" }, body: "x" }));
 }
 
@@ -1147,7 +1145,7 @@ for (const [at, want] of [
     // A-05: after the press she is shown where she is: step 1, "your browser is asking"; the download still goes ahead.
     for (const sel of ["#get", ".bar .pill"]) {
       const { ctx, page } = await visit({ name: "A-05 " + sel, ua: UA.winEdge, uad: UAD.winX64, viewport: { width: 1366, height: 768 } });
-      await githubSays(page, 200);
+      await githubSays(page);
       const gotFile = page.waitForEvent("download", { timeout: 8000 }).then(() => true, () => false);
       const before = await page.evaluate(() => { const e = document.getElementById("here"); return e ? e.innerText.trim() : "missing"; });
       await page.click(sel);
@@ -1157,7 +1155,7 @@ for (const [at, want] of [
       check(before === "", `A-05 ${sel}: before the press nothing says "you are here"`, JSON.stringify(before));
       check(after.shown && /you are here/i.test(after.text) && /asking if you trust the file/i.test(after.text) && after.live, `A-05 ${sel}: after the press, "You are here: your browser is asking if you trust the file", announced`, JSON.stringify(after));
       check(after.y > 300 && after.top >= 0 && after.top < 300, `A-05 ${sel}: and step 1 is brought into view`, `step 1 at ${Math.round(after.top)}, scrolled ${Math.round(after.y)}`);
-      check(await gotFile, `A-05 ${sel}: the page does not stop the download (GitHub says a release is there, so the file comes)`);
+      check(await gotFile, `A-05 ${sel}: the page does not stop the download `);
       if (sel === "#get") await shot(page, "index-after-press.png");
       await ctx.close();
     }
@@ -1222,30 +1220,10 @@ for (const [at, want] of [
       const it = await inst.page.evaluate(() => document.body.innerText.replace(/\s+/g, " "));
       check(/404/.test(it) && /Not found/.test(it) && /try again later/.test(it) && !/in an hour/.test(it), "gm-site: install.html also says what to do if the download link says 404 (nothing is wrong with her computer)", "");
       await inst.ctx.close();
-      // The press asks GitHub's release API first. Its 404 (no release open: "latest" skips pre-releases) keeps her on the
-      // page with a kind message instead of GitHub's bare 404 page; any other answer, or none, goes on to the file.
-      for (const [url, sel] of [[HOME, "#get"], [HOME, ".bar .pill"], [HOME + "install.html", "#get"]]) {
-        for (const [say, ms, what, comes] of [[404, 0, "no release open", false], [200, 0, "a release open", true], [403, 0, "GitHub's limit reached", true], [200, 5500, "no answer in 4 seconds", true]]) {
-          const v = await visit({ name: `gm-site download ${what}`, url, ua: UA.winEdge, uad: UAD.winX64 });
-          await githubSays(v.page, say, ms);
-          const asked = [];
-          v.page.on("request", (rq) => { if (/^https:\/\/github\.com\//.test(rq.url())) asked.push(rq.url()); });
-          const file = v.page.waitForEvent("download", { timeout: ms ? 9000 : 3000 }).then(() => true, () => false);
-          await v.page.click(sel);
-          const got = await file;
-          const m = await v.page.evaluate(() => { const e = document.getElementById("not-ready"); return { shown: !!e && e.getClientRects().length > 0, text: e ? e.innerText.replace(/\s+/g, " ") : "", alert: e ? e.getAttribute("role") : null, here: document.getElementById("here") ? document.getElementById("here").innerText : "" }; });
-          const at = `gm-site ${url.endsWith("install.html") ? "install" : "front"} ${sel}, ${what}`;
-          if (comes) check(got && !m.shown, `${at}: the file comes and no message is shown`, JSON.stringify({ got, m }));
-          else check(!got && asked.length === 0 && m.shown && m.alert === "alert" && /can.t be downloaded right now/.test(m.text) && /nothing is wrong with your computer/i.test(m.text) && /try again later/.test(m.text) && /Is AurOS working today\?/.test(m.text) && !/in an hour/.test(m.text), `${at}: she stays here, GitHub's 404 page is never opened, and a kind message says nothing is wrong and to try later`, JSON.stringify({ got, asked, m }));
-          if (!comes && sel === "#get" && url === HOME) { // pressing again once a release is open: the message goes and the file comes
-            await v.page.unroute("https://api.github.com/**");
-            await githubSays(v.page, 200);
-            const again = v.page.waitForEvent("download", { timeout: 3000 }).then(() => true, () => false);
-            await v.page.click("#get");
-            check(await again && await v.page.evaluate(() => document.getElementById("not-ready").hidden), `${at}: pressing again once a release is open brings the file and takes the message away`);
-          }
-          await v.ctx.close();
-        }
+      // The press stays the browser's own click: the one the real Windows journey proves. No script stands in its way.
+      {
+        const door = fs.readFileSync(path.join(SITE, "assets/door.js"), "utf8");
+        check(!/api\.github\.com|location\.href\s*=\s*DOWNLOAD/.test(door), "gm-site: door.js never reroutes the Get AurOS press or asks anyone about it");
       }
       // A visit that is not Edge is not shown Edge's boxes as if they were its own.
       for (const [name, ua, uad] of [["Chrome", UA.winChrome, UAD.winX64], ["Firefox", UA.winFirefox, null]]) {

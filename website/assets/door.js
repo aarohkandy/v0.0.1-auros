@@ -145,45 +145,17 @@
   /* After the press on a Windows computer: the browser's warning appears at the
    * top right while this page still shows the button, and step 1 (with the
    * picture of that warning) is two screens down. Say where she is, and bring
-   * step 1 up. */
+   * step 1 up. Nothing here stops the download. */
   var here = $("here");
-  var notReady = $("not-ready");
   var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  function pressed() {
-    if (notReady) notReady.hidden = true;
-    if (!here || root.classList.contains("is-elsewhere")) return;
-    setTimeout(function () {
-      here.textContent = here.getAttribute("data-say") || "You are here: your browser is asking if you trust the file.";
-      var step = $("step-download");
-      if (step) step.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
-    }, 600);
-  }
-
-  /* With no release open yet, GitHub answers the download address with its own
-   * bare 404 page and she would be left on it. So before sending her there, ask
-   * GitHub's API the same question (its 404 means the same thing); only that one
-   * answer keeps her here, with a kind message. Any other answer (a limit, no
-   * network, no reply in 4 seconds) goes on to the download as it always did.
-   * Nothing is asked until she presses. Only for GitHub's own release address:
-   * the owner's domain and a test copy skip it. */
-  var rel = /^https:\/\/github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/releases\/latest\/download\//.exec(DOWNLOAD_URL);
-  var gate = !!(rel && notReady && window.fetch);
-  function released(then) {
-    var done = false;
-    function end(ok) { if (!done) { done = true; then(ok); } }
-    setTimeout(function () { end(true); }, 4000);
-    fetch("https://api.github.com/repos/" + rel[1] + "/releases/latest", { headers: { Accept: "application/vnd.github+json" } })
-      .then(function (r) { end(r.status !== 404); }, function () { end(true); });
-  }
   [].forEach.call(document.querySelectorAll("#get, [data-download]"), function (a) {
-    a.addEventListener("click", function (e) {
-      if (!gate || e.defaultPrevented || e.button || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || root.classList.contains("is-elsewhere")) return pressed();
-      e.preventDefault();
-      released(function (ok) {
-        if (ok) { pressed(); location.href = DOWNLOAD_URL; return; }
-        notReady.hidden = false;
-        notReady.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" });
-      });
+    a.addEventListener("click", function () {
+      if (!here || root.classList.contains("is-elsewhere")) return;
+      setTimeout(function () {
+        here.textContent = here.getAttribute("data-say") || "You are here: your browser is asking if you trust the file.";
+        var step = $("step-download");
+        if (step) step.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+      }, 600);
     });
   });
 
