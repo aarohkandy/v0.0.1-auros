@@ -210,10 +210,38 @@ prerelease `othersys-<run id>` (`<variant>-results.md`,
   random bytes with `-FVE-FS-`), `nofixup` (proves the Windows-first
   check fails on what the installer really leaves).
 
+## Withdrawn: Ubuntu Budgie 26.04
+
+Not offered (agent decision, 2026-11-04; reversible). The only real VM
+run (Actions run 41539330303, prerelease `othersys-41539330303`) never got
+as far as our seed. Xubuntu, from the same installer snap
+(`ubuntu-desktop-bootstrap` 589), casper 26.04.2 and the same kernel
+image, with the same kernel command line and the same VM, shows systemd
+on the screen by 40 s and runs the seed's early commands at 59 s. Budgie
+stopped at the last line casper prints before it hands over to systemd
+("Get:5 file:/cdrom resolute/restricted amd64 Packages") and stayed there
+until the 4800 s deadline: 241 screenshots the same, no systemd line, no
+journal on the serial port, so the early check, the install and the NVRAM
+steps never ran. The seed, `plan.py` and the manifest are not involved.
+
+What is different in Budgie's own image (read from the ISO, nothing
+booted): its live session is a Wayland session (`budgie-desktop-live`,
+labwc) that starts the installer from a user service once
+`budgie-session-binary` is up, `mdadm` is in the live layer, and its
+initrd adds an efivarfs mount and mdadm hooks. Which of these stops the
+boot is not known; finding out needs a boot of the unmodified ISO with
+systemd's own debug output on the serial port, which the unattended proof
+cannot give. To bring it back: restore
+`src/othersys/systems/ubuntu-budgie-26.04.1-desktop.json` from commit
+`df35590b`, add `ubuntu-budgie` to the matrix in
+`.github/workflows/othersys.yml` and to the two `case` lines in
+`tools/othersys/run.sh`, and take it out of `WITHDRAWN` in
+`tools/othersys/selftest.py`.
+
 ## Next
 
-- Xubuntu, Ubuntu Cinnamon, Ubuntu Budgie 26.04: same installer; a
-  manifest each (URL, hash, `source_id`, sizes) and a matrix entry.
+- Xubuntu and Ubuntu Cinnamon 26.04 have a manifest and a matrix entry
+  each.
 - The Windows-side reader of `AurOSOtherSysAnswer` and the put-back.
 - Power cut between curtin's NVRAM write and `late`: Ubuntu first with a
   half-installed system. The boot unit does not exist yet at that point;

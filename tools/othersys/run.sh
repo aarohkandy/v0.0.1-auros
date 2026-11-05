@@ -2,7 +2,7 @@
 # run.sh VARIANT: one variant of the othersys proof on an Actions runner.
 #   ntfs       the whole P1 flow on a Windows with NTFS
 #   bitlocker  the same with a BitLocker-shaped Windows partition
-#   xubuntu, ubuntucinnamon, ubuntu-budgie   the same flow, that flavour
+#   xubuntu, ubuntucinnamon   the same flow, that flavour
 #   powercut   the plug pulled the moment the installer puts Ubuntu
 #              first: the next start must be Windows
 #   nofixup    install only, AurOS's firmware fix-up switched off: proves
@@ -20,7 +20,7 @@ T0=$(date +%s)
 step() { echo "| $1 | $2 |" >> "$out/steps.md"; }
 t=$(date +%s)
 system=ubuntu-26.04.1-desktop
-case $variant in xubuntu|ubuntucinnamon|ubuntu-budgie) system=$variant-26.04.1-desktop ;; esac
+case $variant in xubuntu|ubuntucinnamon) system=$variant-26.04.1-desktop ;; esac
 bash "$here/getiso.sh" "$OS_DIR/iso" "$system" | tee "$out/getiso.log"
 ISO=$(sed -n 's/^ISO=//p' "$out/getiso.log")
 step "download + verify the ISO (Actions network)" $(( $(date +%s) - t ))
@@ -29,7 +29,7 @@ t=$(date +%s)
 extra=()
 v=$variant
 if [ "$variant" = nofixup ]; then extra=(--skip-fixup); v=ntfs; fi
-case $variant in xubuntu|ubuntucinnamon|ubuntu-budgie|powercut) v=ntfs ;; esac
+case $variant in xubuntu|ubuntucinnamon|powercut) v=ntfs ;; esac
 [ "$variant" = powercut ] && extra=(--hold-late)
 extra+=(--system "$here/../../src/othersys/systems/$system.json")
 python3 -I "$here/mkdisk.py" --iso "$ISO" --variant "$v" --out "$OS_DIR/work-$variant" \

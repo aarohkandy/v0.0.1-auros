@@ -25,6 +25,7 @@ mtools, openssl and OVMF's variable store:
 import importlib.util
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -43,6 +44,8 @@ PLAN = os.path.join(REPO, 'src/othersys/ubuntu/plan.py')
 SYSTEM = os.path.join(REPO, 'src/othersys/systems/ubuntu-26.04.1-desktop.json')
 OVMF_VARS = '/usr/share/OVMF/OVMF_VARS_4M.ms.fd'
 MiB = 1 << 20
+# Systems taken out of what AurOS offers, with the reason in docs/OTHER-SYSTEMS.md.
+WITHDRAWN = ('ubuntu-budgie',)
 fails = 0
 count = 0
 
@@ -659,6 +662,47 @@ def test_verify(d):
     expect('verify: a file that is not the ISO fails', v.check_iso(system, iso), True)
 
 
+def offered_problems(manifests, matrix, runsh):
+    """What is wrong with the list of systems AurOS offers: every flavour
+    with a manifest is run by the VM matrix and by run.sh, nothing is run
+    that is not offered, and a withdrawn system is nowhere."""
+    base = {'ntfs', 'powercut', 'bitlocker', 'nofixup'}
+    flavours = {v for v in matrix if v not in base}
+    bad = []
+    for v in sorted(flavours - set(manifests)):
+        bad.append('the matrix runs %s, which has no manifest' % v)
+    for v in sorted(set(manifests) - flavours):
+        bad.append('%s is offered but the matrix does not prove it' % v)
+    if set(runsh) != flavours:
+        bad.append('run.sh knows %s, the matrix runs %s' % (sorted(runsh), sorted(flavours)))
+    for w in WITHDRAWN:
+        for where, names in (('manifests', manifests), ('matrix', matrix), ('run.sh', runsh)):
+            if w in names:
+                bad.append('%s is withdrawn (docs/OTHER-SYSTEMS.md) but is still in %s' % (w, where))
+    return bad
+
+
+def test_offered():
+    print('== the offered systems, the VM matrix and run.sh agree')
+    sysdir = os.path.join(REPO, 'src/othersys/systems')
+    suffix = '-26.04.1-desktop'
+    manifests = [f[:-len(suffix + '.json')] for f in sorted(os.listdir(sysdir))
+                 if f.endswith(suffix + '.json') and f != 'ubuntu' + suffix + '.json']
+    yml = open(os.path.join(REPO, '.github/workflows/othersys.yml')).read()
+    matrix = re.search(r'variant: \[([^\]]*)\]', yml).group(1).replace(' ', '').split(',')
+    sh_text = open(os.path.join(HERE, 'run.sh')).read()
+    runsh = re.search(r'case \$variant in ([^)]*)\) system=\$variant-', sh_text).group(1).split('|')
+    expect('offered systems = matrix = run.sh, no withdrawn system', offered_problems(manifests, matrix, runsh), False)
+    expect('offered: a flavour the matrix does not run is caught',
+           offered_problems(manifests + ['lubuntu'], matrix, runsh), True)
+    expect('offered: a matrix variant with no manifest is caught',
+           offered_problems(manifests, matrix + ['kubuntu'], runsh + ['kubuntu']), True)
+    expect('offered: a run.sh that lost a flavour is caught',
+           offered_problems(manifests, matrix, runsh[1:]), True)
+    expect('offered: a withdrawn system is caught wherever it is',
+           offered_problems(manifests + ['ubuntu-budgie'], matrix + ['ubuntu-budgie'], runsh + ['ubuntu-budgie']), True)
+
+
 def main():
     d = tempfile.mkdtemp(prefix='othersys-selftest-')
     try:
@@ -667,6 +711,7 @@ def main():
         test_powercut(d, layout)
         test_helper(d)
         test_verify(d)
+        test_offered()
     finally:
         shutil.rmtree(d, ignore_errors=True)
     print('\n%d checked, %d not as expected' % (count, fails))
