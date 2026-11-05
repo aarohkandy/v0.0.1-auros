@@ -51,9 +51,9 @@ reasonable until they bite.
 
 - **Vercel's skip rule once looked only at the last commit.** A docs-only commit on
   top of a batch left the whole batch undeployed while Vercel said success
-  (`b4ecb6ec`). It now compares with the last deployed commit, and if that commit is
-  out of its shallow clone, git fails and Vercel builds. After a site push, look at the
-  live page, not the status.
+  (`b4ecb6ec`). It now compares with the last deployed commit. That commit can be out of
+  Vercel's shallow clone, and any exit but 0 or 1 fails the deployment, so the rule ends
+  `|| exit 1`: when in doubt, build. After a site push, look at the live page, not the status.
 
 - **`[ -e link ]` follows the link.** systemd's enable links are
   absolute and root-relative (`/etc/systemd/system/x.service`). From

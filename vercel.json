@@ -4,5 +4,5 @@
   "installCommand": "",
   "buildCommand": "sh tools/site/vercel-build.sh",
   "outputDirectory": ".vercel-site",
-  "ignoreCommand": "git diff --quiet ${VERCEL_GIT_PREVIOUS_SHA:-HEAD^} HEAD -- website tools/site tools/repo.sh vercel.json"
+  "ignoreCommand": "git diff --quiet ${VERCEL_GIT_PREVIOUS_SHA:-HEAD^} HEAD -- website tools/site tools/repo.sh vercel.json || exit 1"
 }
