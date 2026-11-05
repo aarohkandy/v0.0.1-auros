@@ -316,8 +316,9 @@ make_nv no-windows
 menu_default windows
 power_on -no-reboot
 grep -aq 'BitLocker=yes' "$SER.txt" && grep -aq 'Windows could not be started from this menu' "$SER.txt" \
-  && ok "it found the BitLocker volume and said it could not" \
-  || bad "it found the BitLocker volume and said it could not" "$(grep -a 'start-windows\|aurfirst\|Windows could' "$SER.txt" | head -4)"
+  && grep -aq 'and AurOS will start' "$SER.txt" \
+  && ok "it found the BitLocker volume and said it could not, and what happens next" \
+  || bad "it found the BitLocker volume and said it could not, and what happens next" "$(grep -a 'start-windows\|aurfirst\|Windows could' "$SER.txt" | head -4)"
 mount_root; GL=$(grub-editenv "$T/m/boot/grub/grubenv" list 2>/dev/null); umount_root
 case "$GL" in *auros_win=chain*) bad "...and asked grub for no chainload" "$GL" ;;
     *) ok "...and asked grub for no chainload" ;; esac

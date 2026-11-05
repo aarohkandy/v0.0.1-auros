@@ -5,6 +5,7 @@ The normal boot menu is the independent policy oracle: staging must keep its
 kernel protections when it becomes the first desktop without a reboot.
 """
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -107,6 +108,22 @@ int main(int argc, char **argv) {
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0)
         self.assertIn("lockdown=integrity", result.stdout.split())
+
+    def test_kernel_does_not_write_over_the_screen(self):
+        """The first start printed the kernel's complaints about Windows' own drives
+        before AurOS's first screen, because Ubuntu's 10-console-messages.conf lets
+        errors (level 3) through. What systemd-sysctl leaves in force is the last
+        assignment in file-name order, and Ubuntu's file is named 10-."""
+        files = sorted((ROOT / "rootfs/etc/sysctl.d").glob("*.conf"), key=lambda f: f.name)
+        got = None
+        for f in files:
+            for line in f.read_text().splitlines():
+                m = re.match(r"\s*kernel\.printk\s*=\s*(\d+)", line)
+                if m:
+                    got = (f.name, int(m.group(1)))
+        self.assertIsNotNone(got, "no kernel.printk in rootfs/etc/sysctl.d")
+        self.assertGreater(got[0], "10-console-messages.conf")
+        self.assertLessEqual(got[1], 3, got)
 
 
 if __name__ == "__main__":

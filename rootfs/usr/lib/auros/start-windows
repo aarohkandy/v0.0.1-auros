@@ -58,6 +58,7 @@ if [ "$bitlocker" = no ] && mount -o remount,rw / && "$LIB/grubenv" set auros_wi
 fi
 mount -o remount,ro / 2>/dev/null
 say "Windows could not be started from this menu."
-say "This computer will restart in a moment."
+say "Your files have not been touched."
+say "This computer will restart in a moment, and AurOS will start."
 sleep 15
 restart

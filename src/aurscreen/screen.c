@@ -325,7 +325,13 @@ static void compose(state *s)
           : s->where == W_AUROS ? "AurOS is on this computer. It will start now."
           : s->where == W_WINDOWS ? "AurOS is on this computer, and Windows will start first."
           : "Setup stopped. If Windows does not start, ask someone to help you.";
-        const char *next = s->countdown >= 0 ? cd : NULL;
+        /* Said only where it is true: nothing was changed, so the restart reaches Windows
+         * (aurstage's stop_here and a refusal above the line; src/aurstage/install.c). */
+        char nx[200] = "";
+        if (s->countdown >= 0)
+            snprintf(nx, sizeof nx, "%s%s", cd,
+                     s->where == W_UNTOUCHED ? " Windows will start as usual." : "");
+        const char *next = nx[0] ? nx : NULL;
         const char *again = (s->where == W_AUROS || s->where == W_WINDOWS) ? NULL
             : "To try again, open AurOS Setup in Windows and press Install AurOS.";
         set_para(s, what, state_line, next, again);
@@ -405,7 +411,7 @@ static void feed(state *s, char *line)
 
     if (!strcmp(t, "AurOS staging environment")) {
         set_para(s, s->mode == M_RESTORE ? "Getting ready to put Windows back. About a minute."
-                  : s->mode == M_INSTALL ? "AurOS is starting. About one minute. Please don't press anything."
+                  : s->mode == M_INSTALL ? "Getting ready. About one minute. Please don't press anything."
                   : "Looking at this computer. Nothing will be changed.",
                  NULL, NULL, NULL);
         return;
@@ -488,6 +494,14 @@ static int wrapped(surface *s, font *f, int x, int y, int width, const char *t,
     return y;
 }
 
+/* A screen that does not move looks like a computer that has stopped. The step under way has
+ * dots after it, one to three, one more each second (the screen repaints once a second), so there
+ * is always something moving where she is looking; and the line saying a still bar is no fault
+ * comes after 15 seconds of nothing, not 40. */
+#define STILL_AFTER 15
+static int dots(const state *st) { return 1 + (int)st->now % 3; }
+static int still(const state *st) { return st->now - st->last_move > STILL_AFTER; }
+
 static const char *title_of(const state *st)
 {
     if (st->mode == M_RESTORE)
@@ -563,7 +577,7 @@ static void paint(surface *s, const state *st)
                  et[0] ? ". " : "", et);
         text(s, small, L, y, step_t, INK, 1.f);
         y += small ? (int)(font_line_height(small) * 1.4f) : 24;
-        if (long_step || (st->now - st->last_move) > 40) {
+        if (long_step || still(st)) {
             text(s, small, L, y, "It can look still. Nothing is wrong.", INK2, 1.f);
             y += small ? (int)(font_line_height(small) * 1.4f) : 24;
         }
@@ -582,7 +596,9 @@ static void paint(surface *s, const state *st)
             else if (now) { draw_circle(s, dx, dy, 7.f * k, INK, 1.f);
                             draw_circle(s, dx, dy, 3.5f * k, PAPER, 1.f); }
             else draw_circle(s, dx, dy, 4.f * k, RULE, 1.f);
-            text(s, small, L + (int)(30 * k), y + (int)(2 * k), STEP[i].label, c, 1.f);
+            char lbl[80];
+            snprintf(lbl, sizeof lbl, "%s%.*s", STEP[i].label, now ? dots(st) : 0, "...");
+            text(s, small, L + (int)(30 * k), y + (int)(2 * k), lbl, c, 1.f);
             y += small ? (int)(font_line_height(small) * 1.5f) : 24;
         }
     }
@@ -658,7 +674,7 @@ static void init_state(state *st, int mode, int details)
      * minutes of black before the screen came up are over, and the next
      * few are not a crash (D-01). */
     if (mode == M_INSTALL)
-        set_para(st, "AurOS is starting. About one minute. Please don't press anything.", NULL, NULL, NULL);
+        set_para(st, "Getting ready. About one minute. Please don't press anything.", NULL, NULL, NULL);
     else if (mode == M_RESTORE)
         set_para(st, "Getting ready to put Windows back. About a minute.", NULL, NULL, NULL);
 }
@@ -697,10 +713,11 @@ int main(int argc, char **argv)
                 for (char *q = c; *q; q++) if (*q == ' ') *q = '_';   /* one field */
             }
             printf("mode=%d gap=%d step=%d position=%d of=%d label=%s pct=%d stopped=%d "
-                   "handover=%d finished=%d verdict=%s eta=%d where=%d code=%s countdown=%d\n",
+                   "handover=%d finished=%d verdict=%s eta=%d where=%d code=%s countdown=%d "
+                   "dots=%d still=%d\n",
                    st.mode, st.gap, st.step, position(&st), shown_steps(&st), STEP[st.step].label,
                    st.pct, st.stopped, st.handover, st.finished,
-                   st.verdict[0] ? st.verdict : "-", e < 0 ? -1 : (int)e, st.where, c, st.countdown);
+                   st.verdict[0] ? st.verdict : "-", e < 0 ? -1 : (int)e, st.where, c, st.countdown, dots(&st), still(&st));
             for (int i = 0; i < st.npara; i++) printf("para=%s\n", st.para[i]);
             /* What a picture of this state would show: the heading, the face it is set in, the
              * colour of the mark and of the page (tools/screentest.sh holds them to the Light
@@ -753,7 +770,20 @@ int main(int argc, char **argv)
         }
         if (d && (st.dirty || st.mode == M_INSTALL)) {
             surface *s = kms_back_surface(d);
-            if (s) { paint(s, &st); kms_flip(d); }
+            if (s) {
+                paint(s, &st);
+                /* THE DISPLAY CAN GO AWAY UNDER US. aurstage loads the image's own drivers to
+                 * check this computer works (probe.c); a graphics driver among them replaces the
+                 * screen the firmware gave us, every flip then fails, and the console's log
+                 * lines show through for the rest of the install (real Windows 11 run, 2026-11-04,
+                 * the shots after "Checking AurOS works here"). Let go and ask again: the open
+                 * above finds the new one. */
+                if (kms_flip(d) < 0) {
+                    kms_close(d);
+                    d = NULL;
+                    next_open = st.now + 0.5;
+                }
+            }
             st.dirty = 0;
         }
         struct pollfd p = { 0, POLLIN, 0 };

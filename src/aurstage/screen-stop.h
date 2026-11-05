@@ -41,4 +41,16 @@ static inline int screen_stop_process(pid_t pid, int attempts,
     return waited == 0 ? 0 : -1;
 }
 
+/* WHAT THE CONSOLE SAYS WHEN THE PROGRESS SCREEN HAS LET GO AND AUROS'S OWN HAS NOT YET STARTED.
+ * The display then shows the console, which is every line aurstage said, in the kernel's small
+ * type: log lines, a start-up entry number, a device name, "verdict=installed" (real Windows 11
+ * run, 2026-11-04, ten seconds or more on a fast disk). This clears them and says what is
+ * happening in her words. It is written straight to the console, not through stage_say: it is
+ * for her, not for the log. Nothing in it is a name, a path or a number
+ * (tools/handover-mounttest.c). */
+#define HANDOVER_NOTICE \
+    "\033[2J\033[H\n" \
+    "  AurOS is installed. Starting it now.\n\n" \
+    "  This can take a minute. Please don't press anything.\n"
+
 #endif

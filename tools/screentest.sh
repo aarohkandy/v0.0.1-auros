@@ -145,8 +145,16 @@ S=$( { say "" "Everything AurOS can check has been checked." \
 [ "$(fld "$S" stopped)" = 1 ] && ok "a refusal: stopped" || bad "a refusal: stopped" "$S"
 case "$S" in *"para=Nothing on this computer has been changed."*) ok "...and it says nothing has been changed (it is true)" ;;
     *) bad "...and it says nothing has been changed" "$S" ;; esac
+# ...and tells her Windows starts, because after a refusal above the line the restart reaches it.
+S=$( { say "" "Everything AurOS can check has been checked." \
+        "aurstage-report v1 verdict=refused-bitlocker record=refused -"; printf 'aurstage-now untouched\naurstage-countdown 41\n'; } | st install)
+case "$S" in *"para=This computer will restart by itself in 41 seconds. Windows will start as usual."*)
+    ok "...and that Windows will start as usual, with the restart" ;;
+    *) bad "...and that Windows will start as usual, with the restart" "$S" ;; esac
 # Where the disk has changed, it must NOT say so.
-S=$( { part; say "aurstage-report v1 verdict=copy-failed record=failed -"; printf 'aurstage-now smaller\n'; } | st install)
+S=$( { part; say "aurstage-report v1 verdict=copy-failed record=failed -"; printf 'aurstage-now smaller\naurstage-countdown 41\n'; } | st install)
+case "$S" in *"Windows will start as usual"*) bad "after the shrink it does not promise Windows 'as usual' beside the countdown" "$S" ;;
+    *) ok "after the shrink it does not promise Windows 'as usual' beside the countdown" ;; esac
 case "$S" in *"nothing on this computer has been changed"*|*"Nothing on this computer has been changed"*)
     bad "after the shrink it never says nothing has changed" "$S" ;;
     *) ok "after the shrink it never says nothing has changed" ;; esac
@@ -177,10 +185,30 @@ case "$S" in *"para=The screen goes black, then Windows starts. About two minute
 
 S=$( say "AurOS staging environment" "this is the one restart; nothing has been changed yet" \
          "5 drivers loaded" "this machine has 3 disks" | st install)
-case "$S" in *"para=AurOS is starting. About one minute. Please don't press anything."*)
+# "Getting ready" is the word the installer's last page tells her to expect (src/aurbridge/wizard.c).
+case "$S" in *"para=Getting ready. About one minute. Please don't press anything."*)
     case "$S" in *"drivers loaded"*) bad "start-up: her sentence, not the technician's lines" "$S" ;;
-        *) ok "start-up: AurOS is starting, about a minute, don't press anything" ;; esac ;;
-    *) bad "start-up: AurOS is starting, about a minute" "$S" ;; esac
+        *) ok "start-up: Getting ready, about a minute, don't press anything" ;; esac ;;
+    *) bad "start-up: Getting ready, about a minute" "$S" ;; esac
+grep -q 'Getting ready' src/aurbridge/wizard.c \
+    && ok "...which is the word the installer's last page promised" \
+    || bad "...which is the word the installer's last page promised" "src/aurbridge/wizard.c no longer says Getting ready"
+
+# A SCREEN THAT DOES NOT MOVE LOOKS LIKE A COMPUTER THAT HAS STOPPED. The step under way has dots that
+# change every second, and the line that says a still bar is no fault comes after 15 seconds of nothing,
+# on any step (the staging step 7, "Checking AurOS works here", took 45 s and showed neither).
+echo
+echo "  not looking stuck"
+chk() { { tm 1; say "AurOS staging environment"; tm 5; say "" "Saving this computer's Windows startup, so it can be put back."
+          tm 6; say "" "Checking that this computer works under AurOS."; tm "$1"; } | st install; }
+D1=$(fld "$(chk 100)" dots); D2=$(fld "$(chk 101)" dots); D3=$(fld "$(chk 102)" dots); D4=$(fld "$(chk 103)" dots)
+[ -n "$D1" ] && [ "$D1" != "$D2" ] && [ "$D2" != "$D3" ] && [ "$D1" = "$D4" ] \
+    && ok "the step under way has dots that change every second ($D1 $D2 $D3 $D4)" \
+    || bad "the step under way has dots that change every second" "dots: '$D1' '$D2' '$D3' '$D4'"
+[ "$(fld "$(chk 15)" still)" = 0 ] && [ "$(fld "$(chk 20)" still)" = 0 ] && [ "$(fld "$(chk 22)" still)" = 1 ] \
+    && ok "a step that has not moved for 15 seconds says it can look still; one that has not for 14 does not" \
+    || bad "a step that has not moved for 15 seconds says it can look still" \
+           "6+14: $(fld "$(chk 20)" still)  6+16: $(fld "$(chk 22)" still)"
 S=$( say "AurOS staging environment" "5 drivers loaded" "── putting Windows back ──" \
          "checking the saved copy on /dev/vdb" "restoring /dev/vda" | st restore)
 case "$S" in *"para=Putting Windows back."*) ok "a restore under way: says what it is doing" ;;
@@ -218,6 +246,18 @@ R=$( { say "" "Windows is back." "aurstage-report v1 verdict=restored record=don
 mk=$(printf '%s\n' "$G" | sed -n 's/^mark=//p'); gr=$(printf '%s\n' "$G" | sed -n 's/^ground=//p')
 [ "$mk" = 0B5D4F ] && ok "the mark is drawn, in the go green (0B5D4F)" || bad "the mark is drawn, in the go green" "colour at its middle: $mk"
 [ "$gr" = F6F2E9 ] && ok "on paper (F6F2E9): the Light look, not the old dark one" || bad "on paper (F6F2E9)" "colour of the page: $gr"
+
+# THE DISPLAY GOES AWAY MID-INSTALL (a graphics driver replaces the firmware's: probe.c loads the image's
+# drivers) and the screen must ask for the new one. A fake display in place of kms.c; the first flip fails.
+echo
+echo "  the display is taken away"
+gcc -O2 -std=gnu11 -Wall -Wextra -Werror -Dmain=aurscreen_main -c -o "$T/screen.o" src/aurscreen/screen.c 2>"$T/kms.cc" \
+    && gcc -O2 -std=gnu11 -Wall -Wextra -Werror -o "$T/kmstest" tools/screenkmstest.c "$T/screen.o" \
+       src/aurshell/draw.c src/common/font.c src/common/png.c -lm 2>>"$T/kms.cc" \
+    || { echo "the display test did not build"; sed -n 1,10p "$T/kms.cc"; exit 1; }
+K=$("$T/kmstest"); krc=$?
+[ "$krc" = 0 ] && ok "a flip that fails: the display is closed and opened again ($K)" \
+    || bad "a flip that fails: the display is closed and opened again" "$K"
 
 echo
 echo "  pictures"
